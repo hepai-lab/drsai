@@ -55,7 +55,7 @@ const checks = [
   [
     "main process implements Authorization Code + PKCE over loopback",
     auth.includes("getOidcMetadata") &&
-      auth.includes('"http://localhost:8081/api"') &&
+      auth.includes('"https://aitest.ihep.ac.cn/api"') &&
       auth.includes("/.well-known/openid-configuration") &&
       auth.includes("Loading OIDC discovery") &&
       auth.includes("metadata.authorization_endpoint") &&
@@ -237,12 +237,12 @@ const checks = [
       e2eOidc.includes("OPENDRSAI_E2E_OIDC_AUTO_CALLBACK") &&
       e2eOidc.includes("OPENDRSAI_E2E_OIDC_EXTERNAL_ISSUER") &&
       e2eOidc.includes("OPENDRSAI_E2E_OIDC_USE_SOURCE") &&
-      e2eHaiOidc.includes('OPENDRSAI_E2E_OIDC_EXTERNAL_ISSUER ||= "http://localhost:8081/api"') &&
+      e2eHaiOidc.includes('OPENDRSAI_E2E_OIDC_EXTERNAL_ISSUER ||= "https://aitest.ihep.ac.cn/api"') &&
       e2eHaiOidc.includes('OPENDRSAI_E2E_OIDC_USE_SOURCE ||= "1"') &&
       e2eHaiOidc.includes('await import("./verify-e2e-oidc-login.mjs")') &&
       packageJson.includes('"verify:oidc-dev-env": "node scripts/verify-oidc-dev-env.mjs"') &&
       devEnvVerifier.includes('"http://localhost:3000"') &&
-      devEnvVerifier.includes('"http://localhost:8081/api"') &&
+      devEnvVerifier.includes('"https://aitest.ihep.ac.cn/api"') &&
       devEnvVerifier.includes("/.well-known/openid-configuration") &&
       devEnvVerifier.includes("/.well-known/jwks.json") &&
       devEnvVerifier.includes("code_challenge_method") &&

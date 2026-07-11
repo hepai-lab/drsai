@@ -1238,6 +1238,46 @@ check("packaged app smoke verifies real main, preload, and IPC", () => {
     smokeHook.includes("bundledBackendAvailable") &&
     smokeHook.includes("api.saveApiKey") &&
     smokeHook.includes("api.startChat") &&
+    smokeHook.includes("prepareChannelImportFixture") &&
+    smokeHook.includes("api.importChannelContext") &&
+    smokeHook.includes("limit: 6") &&
+    smokeHook.includes("packaged-channel-import.md") &&
+    smokeHook.includes("packaged.cypress-results.json") &&
+    smokeHook.includes("packaged-channel-import.png") &&
+    smokeHook.includes("packaged-results.sarif.json") &&
+    smokeHook.includes("packaged-slack-export.json") &&
+    smokeHook.includes("packaged-message.emlx") &&
+    smokeHook.includes("channelImportViaPreloadIpc") &&
+    smokeHook.includes("channelImportMarkdownSummary") &&
+    smokeHook.includes("channelImportCypressSummary") &&
+    smokeHook.includes("channelImportImageSummary") &&
+    smokeHook.includes("channelImportSarifSummary") &&
+    smokeHook.includes("channelImportChatExportSummary") &&
+    smokeHook.includes("channelImportEmlxSummary") &&
+    smokeHook.includes("secret-packaged-cypress-token") &&
+    smokeHook.includes("secret-packaged-slack-token") &&
+    smokeHook.includes("secret-packaged-emlx-token") &&
+    smokeHook.includes("Image metadata preview") &&
+    smokeHook.includes("SARIF static analysis result preview") &&
+    smokeHook.includes("js/path-injection") &&
+    smokeHook.includes("application/sarif+json") &&
+    smokeHook.includes("Chat export JSON preview (Slack export JSON") &&
+    smokeHook.includes("application/vnd.drsai.chat-export+json") &&
+    smokeHook.includes("Apple Mail EMLX envelope metadata was stripped") &&
+    smokeHook.includes("message/rfc822") &&
+    smokeHook.includes("channelImportNoProviderSend") &&
+    smokeHook.includes("prepareIdeContextFixtures") &&
+    smokeHook.includes("api.getIdeContext") &&
+    smokeHook.includes("ideContextViaPreloadIpc") &&
+    smokeHook.includes("ideContextSources") &&
+    smokeHook.includes("ideContextCurrentFiles") &&
+    smokeHook.includes("ideContextSelections") &&
+    smokeHook.includes("ideContextWorkspaceBounded") &&
+    smokeHook.includes('"vscode", "jetbrains", "visual_studio"') &&
+    smokeHook.includes("packaged vscode IDE selection") &&
+    smokeHook.includes("packaged jetbrains IDE selection") &&
+    smokeHook.includes("packaged visual_studio IDE selection") &&
+    smokeHook.includes('join(drsaiDir, "ide-context.json")') &&
     smokeHook.includes("api.openPath") &&
     smoke.includes("release\", \"win-unpacked\", \"OpenDrSai.exe") &&
     smoke.includes("startFakeGateway") &&

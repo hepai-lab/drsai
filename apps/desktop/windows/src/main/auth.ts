@@ -36,7 +36,7 @@ const DESKTOP_AUTH_BASE_URL =
 const OIDC_ISSUER =
   process.env.OPENDRSAI_OIDC_ISSUER?.replace(/\/+$/, "") ||
   process.env.HAI_OIDC_ISSUER?.replace(/\/+$/, "") ||
-  "http://localhost:8081/api";
+  "https://aitest.ihep.ac.cn/api";
 const OIDC_CLIENT_ID = process.env.OPENDRSAI_OIDC_CLIENT_ID || "opendrsai-desktop";
 const OIDC_BASE_SCOPE = "openid email profile roles groups hai_api";
 const OIDC_AUTH_TIMEOUT_MS = 5 * 60 * 1000;
@@ -1060,7 +1060,9 @@ async function getOidcMetadata(): Promise<OidcProviderMetadata> {
     throw new Error(`Could not load OIDC discovery from ${discoveryUrl}.`);
   }
   if (payload.issuer !== OIDC_ISSUER) {
-    throw new Error("OIDC discovery issuer does not match the configured auth service.");
+    throw new Error(
+      `OIDC discovery issuer does not match the configured auth service. Expected ${OIDC_ISSUER}, received ${payload.issuer || "missing issuer"}.`,
+    );
   }
   if (
     typeof payload.authorization_endpoint !== "string" ||
@@ -1318,25 +1320,42 @@ function successHtml(): string {
 <html lang="en">
   <head>
     <meta charset="utf-8">
-    <title>Signed in</title>
+    <title>Login successful</title>
     <style>
-      body { font: 16px sans-serif; text-align: center; padding: 48px; color: #172033; }
+      body { font: 16px "Segoe UI", "Open Sans", Arial, sans-serif; text-align: center; padding: 48px; color: #172033; }
       p { color: #536074; }
     </style>
   </head>
   <body>
-    <h1>Signed in</h1>
+    <h1>&#30331;&#24405;&#25104;&#21151;</h1>
     <p id="message">正在打开 OpenDrSai...</p>
     <p><a href="${OIDC_AUTH_COMPLETE_DEEP_LINK}">打开 OpenDrSai</a></p>
     <script>
+      document.getElementById("message").textContent =
+        "Opening OpenDrSai. This page will close automatically.";
+      document.querySelector("a").textContent = "Open OpenDrSai";
+      function closePage() {
+        window.open("", "_self");
+        window.close();
+      }
+      window.addEventListener("blur", function () {
+        setTimeout(closePage, 300);
+      }, { once: true });
+      document.addEventListener("visibilitychange", function () {
+        if (document.hidden) setTimeout(closePage, 300);
+      });
       setTimeout(function () {
         window.location.href = "${OIDC_AUTH_COMPLETE_DEEP_LINK}";
       }, 150);
       setTimeout(function () {
-        window.close();
+        closePage();
         document.getElementById("message").textContent =
           "如果没有自动回到 OpenDrSai，可以点击“打开 OpenDrSai”，或手动关闭此标签页。";
-      }, 30000);
+      }, 1200);
+      setTimeout(function () {
+        document.getElementById("message").textContent =
+          "OpenDrSai has been opened. You can close this page if it is still visible.";
+      }, 1500);
     </script>
   </body>
 </html>`;

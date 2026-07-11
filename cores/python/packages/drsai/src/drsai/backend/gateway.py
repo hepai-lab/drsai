@@ -3659,7 +3659,8 @@ def main():
     NOTE: This is the legacy OpenAI-compatible SSE gateway used by the
     Electron desktop app. The new TUI uses ``drsai.backend.tui_gateway``
     (JSON-RPC). This module is preserved for desktop compatibility and
-    will be deprecated when the Electron client migrates to JSON-RPC.
+    wil
+    l be deprecated when the Electron client migrates to JSON-RPC.
     """
     import sys
     sys.stderr.write(

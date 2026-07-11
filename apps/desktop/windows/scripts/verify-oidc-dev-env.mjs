@@ -1,7 +1,7 @@
 import { randomBytes, createHash } from "node:crypto";
 
 const frontendUrl = (process.env.HAI_OIDC_FRONTEND || "http://localhost:3000").replace(/\/+$/, "");
-const issuer = (process.env.HAI_OIDC_ISSUER || "http://localhost:8081/api").replace(/\/+$/, "");
+const issuer = (process.env.HAI_OIDC_ISSUER || "https://aitest.ihep.ac.cn/api").replace(/\/+$/, "");
 const clientId = process.env.OPENDRSAI_OIDC_CLIENT_ID || "opendrsai-desktop";
 const redirectPort = Number(process.env.OPENDRSAI_OIDC_DEV_CALLBACK_PORT || "18777");
 const redirectUri = `http://127.0.0.1:${redirectPort}/callback`;
@@ -41,10 +41,15 @@ assert(
 const location = authorizeResponse.headers.get("location");
 assert(location, "authorize redirect must include Location");
 const callback = new URL(location);
-assert(callback.origin === `http://127.0.0.1:${redirectPort}`, `authorize redirect must target loopback callback; got ${location}`);
-assert(callback.pathname === "/callback", `authorize redirect path must be /callback; got ${callback.pathname}`);
-assert(callback.searchParams.get("state") === state, "authorize redirect must preserve state");
-assert(callback.searchParams.get("code"), "authorize redirect must include an authorization code");
+if (callback.origin === `http://127.0.0.1:${redirectPort}`) {
+  assert(callback.pathname === "/callback", `authorize redirect path must be /callback; got ${callback.pathname}`);
+  assert(callback.searchParams.get("state") === state, "authorize redirect must preserve state");
+  assert(callback.searchParams.get("code"), "authorize redirect must include an authorization code");
+} else {
+  assert(callback.origin === new URL(issuer).origin, `authorize redirect must stay on issuer host before upstream login; got ${location}`);
+  assert(callback.pathname.includes("/oauth2/upstream/ihep/login"), `authorize redirect must target upstream IHEP login; got ${callback.pathname}`);
+  assert(callback.searchParams.get("request_id"), "upstream login redirect must include request_id");
+}
 
 console.log(
   [

@@ -73,10 +73,28 @@ const routeFixtures = [
     reason: "repository governance files must route before generic media/document/raw fallbacks",
   },
   {
+    file: ".gitmodules",
+    route: "isRepositoryGovernanceFile(filePath, extension)",
+    before: "kind === \"image\"",
+    reason: ".gitmodules must route through repository governance before generic config fallbacks",
+  },
+  {
+    file: ".mailmap",
+    route: "isRepositoryGovernanceFile(filePath, extension)",
+    before: "kind === \"image\"",
+    reason: ".mailmap must route through repository governance before generic raw fallbacks",
+  },
+  {
     file: "coverage.xml",
     route: "summarizeCoverageReportFile(filePath, extension, size)",
     before: "summarizeWindowsScheduledTaskFile(filePath, extension, size)",
     reason: "coverage-shaped XML must route before scheduled-task XML and generic document/config fallbacks",
+  },
+  {
+    file: "jacoco.xml",
+    route: "summarizeCoverageReportFile(filePath, extension, size)",
+    before: "summarizeWindowsScheduledTaskFile(filePath, extension, size)",
+    reason: "JaCoCo coverage XML must route before scheduled-task XML and generic document/config fallbacks",
   },
   {
     file: "junit.xml",
@@ -85,10 +103,40 @@ const routeFixtures = [
     reason: "JUnit XML must route before generic document text extraction",
   },
   {
+    file: "runtime.jmeter.xml",
+    route: "isTestReportFile(filePath, extension)",
+    before: "kind === \"document\" && extension !== \".ipynb\"",
+    reason: "JMeter XML must route before generic XML document/config fallbacks",
+  },
+  {
+    file: "runtime.jmeter.csv",
+    route: "isTestReportFile(filePath, extension)",
+    before: "summarizeCsvDataFile(filePath, size, extension)",
+    reason: "JMeter CSV must route before generic CSV summaries",
+  },
+  {
+    file: "runtime.nunit.xml",
+    route: "isTestReportFile(filePath, extension)",
+    before: "kind === \"document\" && extension !== \".ipynb\"",
+    reason: "NUnit XML must route before generic document text extraction",
+  },
+  {
+    file: "runtime.xunit.xml",
+    route: "isTestReportFile(filePath, extension)",
+    before: "kind === \"document\" && extension !== \".ipynb\"",
+    reason: "xUnit XML must route before generic document text extraction",
+  },
+  {
     file: "checkstyle.xml",
     route: "summarizeStaticAnalysisXmlReportFile(filePath, extension, size)",
     before: "kind === \"document\" && extension !== \".ipynb\"",
     reason: "Checkstyle/PMD/SpotBugs XML reports must route before generic XML document/config fallbacks",
+  },
+  {
+    file: "web.config",
+    route: "summarizeIisWebConfigFile(filePath, size)",
+    before: "kind === \"document\" && extension !== \".ipynb\"",
+    reason: "IIS web.config files must route before generic XML document/config fallbacks",
   },
   {
     file: "sarif.json",
@@ -109,6 +157,78 @@ const routeFixtures = [
     reason: "Snyk/npm audit/audit-ci JSON reports must route before generic JSON summaries",
   },
   {
+    file: "coverage-final.json",
+    route: "summarizeCoverageReportFile(filePath, extension, size)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "Istanbul/nyc JSON coverage reports must route before generic JSON summaries",
+  },
+  {
+    file: "coverage-summary.json",
+    route: "summarizeCoverageReportFile(filePath, extension, size)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "Istanbul/nyc summary coverage reports must route before generic JSON summaries",
+  },
+  {
+    file: "runtime.otlp.json",
+    route: "isOtelJsonFile(filePath, extension)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "OpenTelemetry/OTLP JSON snapshots must route before generic JSON summaries",
+  },
+  {
+    file: ".drsai/mcp-servers.json",
+    route: "isMcpServerConfigFile(filePath, extension)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "MCP server configuration JSON must route before generic JSON summaries",
+  },
+  {
+    file: ".vscode/settings.json",
+    route: "isVsCodeWorkspaceConfigFile(filePath, extension)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "VS Code workspace settings must route before generic JSON summaries",
+  },
+  {
+    file: ".vscode/tasks.json",
+    route: "isVsCodeWorkspaceConfigFile(filePath, extension)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "VS Code workspace tasks must route before generic JSON summaries",
+  },
+  {
+    file: ".vscode/launch.json",
+    route: "isVsCodeWorkspaceConfigFile(filePath, extension)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "VS Code launch configs must route before generic JSON summaries",
+  },
+  {
+    file: ".vscode/extensions.json",
+    route: "isVsCodeWorkspaceConfigFile(filePath, extension)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "VS Code extension recommendations must route before generic JSON summaries",
+  },
+  {
+    file: "slack-export.json",
+    route: "isChatExportJsonFile(filePath, extension)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "Slack chat export JSON must route before generic JSON summaries",
+  },
+  {
+    file: "teams-export.json",
+    route: "isChatExportJsonFile(filePath, extension)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "Microsoft Teams chat export JSON must route before generic JSON summaries",
+  },
+  {
+    file: "discord-export.json",
+    route: "isChatExportJsonFile(filePath, extension)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "Discord chat export JSON must route before generic JSON summaries",
+  },
+  {
+    file: "chatgpt-conversations.json",
+    route: "isChatExportJsonFile(filePath, extension)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "ChatGPT conversations export JSON must route before generic JSON summaries",
+  },
+  {
     file: "package.json",
     route: "summarizeNodePackageManifestFile(filePath, size)",
     before: "summarizeJsonDataFile(filePath, size)",
@@ -127,10 +247,29 @@ const routeFixtures = [
     reason: "Postman environment JSON must route before generic JSON summaries",
   },
   {
+    file: ".drsai/tokenizer-calibration.json",
+    route: "summarizeTokenizerCalibrationFile(filePath, size)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "workspace tokenizer calibration JSON must route before generic JSON summaries",
+  },
+  {
+    file: "netlog.json",
+    route: "summarizeNetlogNetworkTraceFile(filePath, size)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "Chrome NetLog JSON must route before generic JSON summaries",
+  },
+  {
     file: "docker-compose.yaml",
     route: "summarizeContainerComposeFile(filePath, size)",
     before: "const apiSpecPreview = summarizeApiSpecFile(filePath, extension, size)",
     reason: "Docker Compose YAML must route before API/Kubernetes/generic YAML fallbacks",
+    scope: "if (extension === \".yaml\" || extension === \".yml\")",
+  },
+  {
+    file: "asyncapi.yaml",
+    route: "const apiSpecPreview = summarizeApiSpecFile(filePath, extension, size)",
+    before: "return summarizeConfigOrLogFile(filePath, extension, size)",
+    reason: "AsyncAPI YAML must route through API spec preview before generic YAML summaries",
     scope: "if (extension === \".yaml\" || extension === \".yml\")",
   },
   {
@@ -146,6 +285,12 @@ const routeFixtures = [
     reason: "stylesheets must route before generic source-code summaries",
   },
   {
+    file: ".envrc",
+    route: "summarizeDirenvConfigFile(filePath, size)",
+    before: "summarizeSourceCodeFile(filePath, extension, size)",
+    reason: "direnv .envrc files must route through the specialized safe preview before generic source/raw fallbacks",
+  },
+  {
     file: "runtime.prom",
     route: "summarizeMetricsSnapshotFile(filePath, extension, size)",
     before: "readFileSync(filePath, { encoding: \"utf8\", flag: \"r\" })",
@@ -158,16 +303,76 @@ const routeFixtures = [
     reason: "iCalendar .ical snapshots must route before final raw text fallback",
   },
   {
+    file: "runtime.logcat",
+    route: "extension === \".logcat\"",
+    before: "readFileSync(filePath, { encoding: \"utf8\", flag: \"r\" })",
+    reason: "Android logcat exports must route before final raw text fallback",
+  },
+  {
+    file: "message.emlx",
+    route: "[\".eml\", \".emlx\"].includes(extension)",
+    before: "readFileSync(filePath, { encoding: \"utf8\", flag: \"r\" })",
+    reason: "Apple Mail EMLX message snapshots must route before final raw text fallback",
+  },
+  {
     file: "schema.sql",
     route: "summarizeSqlScriptFile(filePath, size)",
     before: "readFileSync(filePath, { encoding: \"utf8\", flag: \"r\" })",
     reason: "SQL script and DDL snapshots must route before final raw text fallback",
   },
   {
+    file: "schema.prisma",
+    route: "summarizeDatabaseSchemaDslFile(filePath, extension, size)",
+    before: "readFileSync(filePath, { encoding: \"utf8\", flag: \"r\" })",
+    reason: "Prisma and DBML schema DSL snapshots must route before final raw text fallback",
+  },
+  {
+    file: "dump.rdb",
+    route: "summarizeRedisPersistenceFile(filePath, extension, size)",
+    before: "readFileSync(filePath, { encoding: \"utf8\", flag: \"r\" })",
+    reason: "Redis RDB snapshots must route before final raw text fallback",
+  },
+  {
+    file: "appendonly.aof",
+    route: "summarizeRedisPersistenceFile(filePath, extension, size)",
+    before: "readFileSync(filePath, { encoding: \"utf8\", flag: \"r\" })",
+    reason: "Redis AOF command logs must route before final raw text fallback",
+  },
+  {
+    file: "runtime.service",
+    route: "isOpsScheduleFile(filePath, extension)",
+    before: "isConfigOrLogExtension(extension)",
+    reason: "systemd unit files must route before generic config/log summaries",
+  },
+  {
+    file: "runtime.crontab",
+    route: "isOpsScheduleFile(filePath, extension)",
+    before: "readFileSync(filePath, { encoding: \"utf8\", flag: \"r\" })",
+    reason: "crontab files must route before final raw text fallback",
+  },
+  {
+    file: "runtime.supervisord.conf",
+    route: "isSupervisorConfigFile(filePath, extension)",
+    before: "isConfigOrLogExtension(extension)",
+    reason: "Supervisor config files must route before generic config/log summaries",
+  },
+  {
     file: "runtime.tap",
     route: "isTestReportFile(filePath, extension)",
     before: "readFileSync(filePath, { encoding: \"utf8\", flag: \"r\" })",
     reason: "TAP test report snapshots must route before final raw text fallback",
+  },
+  {
+    file: "runtime.jtl",
+    route: "isTestReportFile(filePath, extension)",
+    before: "readFileSync(filePath, { encoding: \"utf8\", flag: \"r\" })",
+    reason: "JMeter JTL snapshots must route before final raw text fallback",
+  },
+  {
+    file: "runtime.cast",
+    route: "summarizeTerminalRecordingFile(filePath, size)",
+    before: "readFileSync(filePath, { encoding: \"utf8\", flag: \"r\" })",
+    reason: "Asciinema terminal recording snapshots must route before final raw text fallback",
   },
   {
     file: "runtime.bru",
@@ -180,6 +385,12 @@ const routeFixtures = [
     route: "summarizeRestClientRequestFile(filePath, size)",
     before: "readFileSync(filePath, { encoding: \"utf8\", flag: \"r\" })",
     reason: "REST Client .rest request files must route before final raw text fallback",
+  },
+  {
+    file: "constraints-runtime.txt",
+    route: "isPythonDependencyManifestFile(filePath, extension)",
+    before: "readFileSync(filePath, { encoding: \"utf8\", flag: \"r\" })",
+    reason: "pip constraints text files must route before final raw text fallback",
   },
   {
     file: "robots.txt",
@@ -200,6 +411,12 @@ const routeFixtures = [
     reason: "Apple Info.plist manifests must route before generic XML document/config fallbacks",
   },
   {
+    file: "project.pbxproj",
+    route: "isApplePackageManifestFile(filePath, extension)",
+    before: "readFileSync(filePath, { encoding: \"utf8\", flag: \"r\" })",
+    reason: "Xcode project files must route before final raw text fallback",
+  },
+  {
     file: "runtime.apk",
     route: "isMobileAppPackageExtension(extension)",
     before: "if (extension === \".zip\")",
@@ -218,10 +435,40 @@ const routeFixtures = [
     reason: "Playwright/Jest/Vitest JSON test reports must route before generic JSON summaries",
   },
   {
+    file: "runtime.cypress-results.json",
+    route: "isTestReportFile(filePath, extension)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "Cypress JSON test reports must route before generic JSON summaries",
+  },
+  {
+    file: "runtime.mocha.json",
+    route: "isTestReportFile(filePath, extension)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "Mocha JSON test reports must route before generic JSON summaries",
+  },
+  {
+    file: "runtime.allure-result.json",
+    route: "isTestReportFile(filePath, extension)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "Allure JSON test reports must route before generic JSON summaries",
+  },
+  {
     file: "runtime.trace.json",
     route: "isDevtoolsTraceFile(filePath, extension)",
     before: "summarizeJsonDataFile(filePath, size)",
     reason: "DevTools trace JSON must route before generic JSON summaries",
+  },
+  {
+    file: "runtime.cpuprofile",
+    route: "isDevtoolsProfileFile(extension)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "DevTools CPU profiles must route before generic JSON summaries",
+  },
+  {
+    file: "runtime.heapsnapshot",
+    route: "isDevtoolsProfileFile(extension)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "DevTools heap snapshots must route before generic JSON summaries",
   },
   {
     file: "runtime.lighthouse.json",
@@ -278,6 +525,18 @@ const routeFixtures = [
     reason: "patch/diff files must route before generic source-code summaries",
   },
   {
+    file: "paper.tex",
+    route: "isLatexContextFile(extension)",
+    before: "summarizeSourceCodeFile(filePath, extension, size)",
+    reason: "LaTeX documents must route through specialized metadata previews before generic source-code summaries",
+  },
+  {
+    file: "references.bib",
+    route: "isLatexContextFile(extension)",
+    before: "readFileSync(filePath, { encoding: \"utf8\", flag: \"r\" })",
+    reason: "BibTeX files must route through specialized metadata previews before raw text fallback",
+  },
+  {
     file: "runtime.ps1",
     route: "isPowerShellScriptExtension(extension)",
     before: "summarizeSourceCodeFile(filePath, extension, size)",
@@ -288,6 +547,12 @@ const routeFixtures = [
     route: "isBatchScriptExtension(extension)",
     before: "summarizeSourceCodeFile(filePath, extension, size)",
     reason: "Windows batch scripts must route through specialized script metadata previews before generic source-code summaries",
+  },
+  {
+    file: "trace.zip",
+    route: "summarizePlaywrightTraceZipFile(filePath, size)",
+    before: "kind === \"document\" && extension !== \".ipynb\"",
+    reason: "Playwright trace ZIP archives must route through specialized trace metadata previews before generic document fallbacks",
   },
   {
     file: "settings.toml",
@@ -350,6 +615,30 @@ assertBefore(
 );
 assertBefore(
   summarizeFileBody,
+  "isJsToolingConfigFile(filePath, extension)",
+  "if (extension === \".yaml\" || extension === \".yml\")",
+  "JS/TS tooling configs must route before generic YAML handling",
+);
+assertBefore(
+  summarizeFileBody,
+  "isJsToolingConfigFile(filePath, extension)",
+  "if (extension === \".yaml\" || extension === \".yml\" || extension === \".json\")",
+  "JS/TS tooling configs must route before generic YAML/JSON handling",
+);
+assertBefore(
+  summarizeFileBody,
+  "isJsToolingConfigFile(filePath, extension)",
+  "isConfigOrLogExtension(extension)",
+  "JS/TS tooling configs must route before generic config/log summaries",
+);
+assertBefore(
+  summarizeFileBody,
+  "isJsToolingConfigFile(filePath, extension)",
+  "isSourceCodeExtension(extension)",
+  "JS/TS tooling configs must route before generic source-code summaries",
+);
+assertBefore(
+  summarizeFileBody,
   "isPythonDependencyManifestFile(filePath, extension)",
   "isConfigOrLogExtension(extension)",
   "Python dependency manifests must route before generic config/log summaries",
@@ -401,6 +690,12 @@ assertBefore(
   "isDependencyLockfile(filePath, extension)",
   "if (extension === \".json\")",
   "dependency lockfiles must route before generic JSON fallbacks",
+);
+assertBefore(
+  summarizeFileBody,
+  "isTokenizerCalibrationFile(filePath, extension)",
+  "if (extension === \".json\")",
+  "workspace tokenizer calibration JSON must route before generic JSON fallbacks",
 );
 assertBefore(
   summarizeFileBody,
@@ -500,6 +795,12 @@ assertBefore(
 );
 assertBefore(
   summarizeFileBody,
+  "extension === \".opml\"",
+  "kind === \"document\" && extension !== \".ipynb\"",
+  "OPML subscription exports must route before generic document text extraction",
+);
+assertBefore(
+  summarizeFileBody,
   "isWebCrawlMetadataFile(extension)",
   "kind === \"document\" && extension !== \".ipynb\"",
   "web crawl metadata files must route before generic document text extraction",
@@ -512,6 +813,8 @@ assertBefore(
 );
 
 assert(adapters.includes("getImportExtension(filePath)"), "route-order verifier depends on normalized import extensions");
+assert(adapters.includes('".gitmodules"'), "normalized fixture coverage omits .gitmodules");
+assert(adapters.includes('".mailmap"'), "normalized fixture coverage omits .mailmap");
 assert(adapters.includes('".cmakelists.txt"'), "normalized fixture coverage omits CMakeLists.txt");
 assert(adapters.includes('".compile_commands.json"'), "normalized fixture coverage omits compile_commands.json");
 assert(adapters.includes('".gradle.properties"'), "normalized fixture coverage omits gradle.properties");
@@ -519,11 +822,30 @@ assert(adapters.includes('".maven.config"'), "normalized fixture coverage omits 
 assert(adapters.includes('".jvm.config"'), "normalized fixture coverage omits .mvn/jvm.config");
 assert(adapters.includes('".dotnet-global.json"') && adapters.includes('".nuget.config"') && adapters.includes('".packages.config"') && adapters.includes('".nuspec"'), "normalized fixture coverage omits .NET/NuGet config files");
 assert(adapters.includes('".swift-package"'), "normalized fixture coverage omits Package.swift");
+assert(adapters.includes('".pbxproj"'), "normalized fixture coverage omits project.pbxproj");
 assert(adapters.includes('".composer.json"') && adapters.includes('".gemfile"'), "normalized fixture coverage omits PHP/Ruby package manifests");
 assert(adapters.includes('".syft.json"'), "normalized fixture coverage omits Syft SBOM files");
+assert(adapters.includes('".istanbul-coverage.json"'), "normalized fixture coverage omits Istanbul JSON coverage files");
+assert(adapters.includes('".chat-export.json"'), "normalized fixture coverage omits chat export JSON files");
+assert(adapters.includes('".otel.json"') && adapters.includes('".otlp.json"'), "normalized fixture coverage omits OpenTelemetry/OTLP JSON files");
+assert(adapters.includes('".mcp-servers.json"'), "normalized fixture coverage omits MCP server config JSON files");
+assert(adapters.includes('".iis-web.config"'), "normalized fixture coverage omits IIS web.config files");
+assert(adapters.includes('".vscode-settings.json"') && adapters.includes('".vscode-tasks.json"') && adapters.includes('".vscode-launch.json"') && adapters.includes('".vscode-extensions.json"'), "normalized fixture coverage omits VS Code workspace config JSON files");
+assert(adapters.includes('".js-tooling-config"'), "normalized fixture coverage omits JS/TS tooling config files");
 assert(adapters.includes('".test-results.json"'), "normalized fixture coverage omits JSON test report manifests");
+assert(adapters.includes('".playwright-trace.zip"'), "normalized fixture coverage omits Playwright trace ZIP files");
+assert(adapters.includes('".jmeter.xml"') && adapters.includes('".jmeter.csv"') && adapters.includes('".jtl"'), "normalized fixture coverage omits JMeter test report files");
+assert(adapters.includes('".cypress-results.json"'), "normalized fixture coverage omits Cypress JSON test report files");
+assert(adapters.includes('".mocha.json"'), "normalized fixture coverage omits Mocha JSON test report files");
+assert(adapters.includes('".allure-result.json"'), "normalized fixture coverage omits Allure JSON test report files");
+assert(adapters.includes('".nunit.xml"') && adapters.includes('".xunit.xml"'), "normalized fixture coverage omits NUnit/xUnit XML test report files");
 assert(adapters.includes('".trace.json"'), "normalized fixture coverage omits DevTools trace manifests");
+assert(adapters.includes('".cpuprofile"') && adapters.includes('".heapsnapshot"'), "normalized fixture coverage omits DevTools/V8 profile snapshots");
 assert(adapters.includes('".lighthouse.json"'), "normalized fixture coverage omits Lighthouse report manifests");
+assert(adapters.includes('".rdb"') && adapters.includes('".aof"'), "normalized fixture coverage omits Redis persistence files");
+assert(adapters.includes('".prisma"') && adapters.includes('".dbml"'), "normalized fixture coverage omits database schema DSL files");
+assert(adapters.includes('".service"') && adapters.includes('".timer"') && adapters.includes('".crontab"'), "normalized fixture coverage omits systemd/cron schedule files");
+assert(adapters.includes('".supervisord.conf"'), "normalized fixture coverage omits Supervisor config files");
 assert(adapters.includes('".robots.txt"') && adapters.includes('".sitemap.xml"') && adapters.includes('".sitemap.xml.gz"'), "normalized fixture coverage omits web crawl metadata files");
 assert(adapters.includes('".helm-chart.yaml"') && adapters.includes('".kustomization.yaml"'), "normalized fixture coverage omits Helm/Kustomize package configs");
 assert(adapters.includes('".androidmanifest.xml"'), "normalized fixture coverage omits AndroidManifest.xml");
@@ -533,11 +855,14 @@ assert(adapters.includes('".checkstyle.xml"') && adapters.includes('".pmd.xml"')
 assert(adapters.includes('".tfplan.json"'), "normalized fixture coverage omits Terraform plan JSON snapshots");
 assert(adapters.includes('".cloudformation.yaml"') && adapters.includes('".cloudformation.json"') && adapters.includes('".arm-template.json"') && adapters.includes('".bicep"'), "normalized fixture coverage omits CloudFormation/ARM/Bicep template files");
 assert(adapters.includes('".ical"'), "normalized fixture coverage omits iCalendar .ical files");
+assert(adapters.includes('".tex"') && adapters.includes('".bib"') && adapters.includes('".latexmkrc"'), "normalized fixture coverage omits LaTeX/BibTeX files");
 
 assert(checklist.includes("route-order-verification-agent"), "checklist omits route-order verification agent record");
 assert(checklist.includes("Channel Adapter Route-Order Verification"), "checklist omits route-order verification addendum");
 assert(checklist.includes("npm run verify:channel-adapter-route-order"), "checklist omits route-order verification command");
+assert(checklist.includes("LaTeX/BibTeX Context Input"), "checklist omits LaTeX context route-order evidence");
 assert(roadmap.includes("channel adapter route-order verification"), "roadmap omits route-order verification evidence");
 assert(roadmap.includes("npm run verify:channel-adapter-route-order"), "roadmap omits route-order verification command");
+assert(roadmap.includes("LaTeX/BibTeX context input"), "roadmap omits LaTeX context route-order evidence");
 
 console.log("Channel adapter route-order verification passed.");

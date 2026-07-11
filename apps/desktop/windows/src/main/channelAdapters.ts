@@ -62,12 +62,20 @@ const MAX_SCIENTIFIC_CONTAINER_ITEM_PREVIEW = 12;
 const MAX_HAR_PREVIEW_BYTES = 192 * 1024;
 const MAX_HAR_ENTRY_PREVIEW = 8;
 const MAX_HAR_HEADER_PREVIEW = 8;
+const MAX_NETLOG_PREVIEW_BYTES = 192 * 1024;
+const MAX_NETLOG_EVENT_PREVIEW = 16;
+const MAX_NETLOG_PARAM_PREVIEW = 10;
 const MAX_DEVTOOLS_TRACE_PREVIEW_BYTES = 192 * 1024;
 const MAX_DEVTOOLS_TRACE_EVENT_PREVIEW = 16;
 const MAX_DEVTOOLS_TRACE_ARG_PREVIEW = 8;
+const MAX_DEVTOOLS_PROFILE_PREVIEW_BYTES = 192 * 1024;
+const MAX_DEVTOOLS_PROFILE_ITEM_PREVIEW = 16;
 const MAX_LIGHTHOUSE_REPORT_PREVIEW_BYTES = 192 * 1024;
 const MAX_LIGHTHOUSE_AUDIT_PREVIEW = 12;
 const MAX_LIGHTHOUSE_CATEGORY_PREVIEW = 8;
+const MAX_OTEL_JSON_PREVIEW_BYTES = 192 * 1024;
+const MAX_OTEL_SIGNAL_PREVIEW = 12;
+const MAX_OTEL_ATTRIBUTE_PREVIEW = 16;
 const MAX_PCAP_PREVIEW_BYTES = 256 * 1024;
 const MAX_PCAP_PACKET_PREVIEW = 8;
 const MAX_PCAP_BLOCK_PREVIEW = 12;
@@ -76,6 +84,12 @@ const MAX_API_ENDPOINT_PREVIEW = 16;
 const MAX_API_SECURITY_PREVIEW = 8;
 const MAX_POSTMAN_ENVIRONMENT_PREVIEW_BYTES = 96 * 1024;
 const MAX_POSTMAN_ENVIRONMENT_ITEM_PREVIEW = 16;
+const MAX_TOKENIZER_CALIBRATION_PREVIEW_BYTES = 96 * 1024;
+const MAX_TOKENIZER_CALIBRATION_ITEM_PREVIEW = 16;
+const MAX_MCP_SERVER_CONFIG_PREVIEW_BYTES = 96 * 1024;
+const MAX_MCP_SERVER_CONFIG_ITEM_PREVIEW = 16;
+const MAX_VSCODE_WORKSPACE_CONFIG_PREVIEW_BYTES = 96 * 1024;
+const MAX_VSCODE_WORKSPACE_CONFIG_ITEM_PREVIEW = 16;
 const MAX_REST_CLIENT_PREVIEW_BYTES = 96 * 1024;
 const MAX_REST_CLIENT_REQUEST_PREVIEW = 16;
 const MAX_REST_CLIENT_HEADER_PREVIEW = 12;
@@ -92,6 +106,7 @@ const MAX_KUBERNETES_PREVIEW_BYTES = 128 * 1024;
 const MAX_KUBERNETES_RESOURCE_PREVIEW = 16;
 const MAX_KUBERNETES_CONTAINER_PREVIEW = 12;
 const MAX_KUBERNETES_REFERENCE_PREVIEW = 12;
+const MAX_KUBERNETES_DETAIL_PREVIEW = 16;
 const MAX_KUBERNETES_PACKAGE_CONFIG_PREVIEW_BYTES = 96 * 1024;
 const MAX_KUBERNETES_PACKAGE_CONFIG_ITEM_PREVIEW = 16;
 const MAX_GEOSPATIAL_PREVIEW_BYTES = 192 * 1024;
@@ -99,10 +114,13 @@ const MAX_GEOSPATIAL_FEATURE_PREVIEW = 16;
 const MAX_GEOSPATIAL_COORDINATE_PREVIEW = 12;
 const MAX_FEED_PREVIEW_BYTES = 128 * 1024;
 const MAX_FEED_ITEM_PREVIEW = 12;
+const MAX_OPML_OUTLINE_PREVIEW = 16;
 const MAX_WEB_CRAWL_METADATA_PREVIEW_BYTES = 128 * 1024;
 const MAX_WEB_CRAWL_METADATA_ITEM_PREVIEW = 16;
 const MAX_ANDROID_MANIFEST_PREVIEW_BYTES = 128 * 1024;
 const MAX_ANDROID_MANIFEST_ITEM_PREVIEW = 16;
+const MAX_ANDROID_LOGCAT_PREVIEW_BYTES = 128 * 1024;
+const MAX_ANDROID_LOGCAT_LINE_PREVIEW = 16;
 const MAX_APPLE_INFO_PLIST_PREVIEW_BYTES = 128 * 1024;
 const MAX_APPLE_INFO_PLIST_ITEM_PREVIEW = 16;
 const MAX_MOBILE_APP_PACKAGE_PREVIEW_BYTES = 512 * 1024;
@@ -145,6 +163,10 @@ const MAX_CONFIG_LOG_PREVIEW_BYTES = 64 * 1024;
 const MAX_CONFIG_KEYS_PREVIEW = 24;
 const MAX_CONFIG_SCHEMA_HINTS = 8;
 const MAX_CI_WORKFLOW_PREVIEW_ITEMS = 12;
+const MAX_TERMINAL_RECORDING_PREVIEW_BYTES = 128 * 1024;
+const MAX_TERMINAL_RECORDING_EVENT_PREVIEW = 12;
+const MAX_DIRENV_CONFIG_PREVIEW_BYTES = 64 * 1024;
+const MAX_DIRENV_CONFIG_ITEM_PREVIEW = 16;
 const MAX_METRICS_SNAPSHOT_PREVIEW_BYTES = 128 * 1024;
 const MAX_METRICS_SNAPSHOT_ITEM_PREVIEW = 16;
 const MAX_CONTAINER_CONFIG_PREVIEW_BYTES = 96 * 1024;
@@ -190,6 +212,7 @@ const MAX_COVERAGE_PACKAGE_PREVIEW = 12;
 const MAX_TEST_REPORT_PREVIEW_BYTES = 128 * 1024;
 const MAX_TEST_REPORT_CASE_PREVIEW = 16;
 const MAX_TEST_REPORT_FAILURE_PREVIEW = 8;
+const MAX_TEST_REPORT_DETAIL_PREVIEW = 8;
 const MAX_PYTHON_DEPENDENCY_PREVIEW_BYTES = 128 * 1024;
 const MAX_PYTHON_DEPENDENCY_ITEM_PREVIEW = 16;
 const MAX_CARGO_MANIFEST_PREVIEW_BYTES = 96 * 1024;
@@ -198,6 +221,8 @@ const MAX_DART_PUBSPEC_PREVIEW_BYTES = 96 * 1024;
 const MAX_DART_PUBSPEC_ITEM_PREVIEW = 16;
 const MAX_APPLE_PACKAGE_MANIFEST_PREVIEW_BYTES = 96 * 1024;
 const MAX_APPLE_PACKAGE_MANIFEST_ITEM_PREVIEW = 16;
+const MAX_XCODE_PROJECT_PREVIEW_BYTES = 128 * 1024;
+const MAX_XCODE_PROJECT_ITEM_PREVIEW = 16;
 const MAX_PHP_RUBY_PACKAGE_MANIFEST_PREVIEW_BYTES = 96 * 1024;
 const MAX_PHP_RUBY_PACKAGE_MANIFEST_ITEM_PREVIEW = 16;
 const MAX_ELIXIR_HASKELL_PACKAGE_MANIFEST_PREVIEW_BYTES = 96 * 1024;
@@ -208,6 +233,8 @@ const MAX_NODE_PACKAGE_MANIFEST_PREVIEW_BYTES = 128 * 1024;
 const MAX_NODE_PACKAGE_MANIFEST_ITEM_PREVIEW = 16;
 const MAX_NODE_PACKAGE_MANAGER_CONFIG_PREVIEW_BYTES = 64 * 1024;
 const MAX_NODE_PACKAGE_MANAGER_CONFIG_ITEM_PREVIEW = 16;
+const MAX_JS_TOOLING_CONFIG_PREVIEW_BYTES = 96 * 1024;
+const MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW = 16;
 const MAX_JVM_BUILD_CONFIG_PREVIEW_BYTES = 64 * 1024;
 const MAX_JVM_BUILD_CONFIG_ITEM_PREVIEW = 16;
 const MAX_JAVA_BUILD_ARTIFACT_PREVIEW_BYTES = 256 * 1024;
@@ -227,15 +254,28 @@ const MAX_PATCH_PREVIEW_BYTES = 128 * 1024;
 const MAX_PATCH_FILE_PREVIEW = 16;
 const MAX_PATCH_CONFLICT_TARGET_BYTES = 256 * 1024;
 const MAX_PATCH_CONTEXT_LINES = 24;
+const MAX_LATEX_PREVIEW_BYTES = 128 * 1024;
+const MAX_LATEX_ITEM_PREVIEW = 16;
 const MAX_POWERSHELL_SCRIPT_PREVIEW_BYTES = 96 * 1024;
 const MAX_POWERSHELL_SCRIPT_ITEM_PREVIEW = 16;
 const MAX_BATCH_SCRIPT_PREVIEW_BYTES = 96 * 1024;
 const MAX_BATCH_SCRIPT_ITEM_PREVIEW = 16;
 const MAX_SQL_SCRIPT_PREVIEW_BYTES = 96 * 1024;
+const MAX_DATABASE_SCHEMA_DSL_PREVIEW_BYTES = 96 * 1024;
+const MAX_DATABASE_SCHEMA_DSL_ITEM_PREVIEW = 16;
 const MAX_SOURCE_CODE_SYMBOLS = 18;
 const MAX_SOURCE_CODE_INSIGHT_CUES = 8;
 const MAX_SQLITE_SCHEMA_SCAN_BYTES = 256 * 1024;
 const MAX_SQLITE_SCHEMA_SNIPPETS = 8;
+const MAX_REDIS_PERSISTENCE_PREVIEW_BYTES = 128 * 1024;
+const MAX_REDIS_AOF_COMMAND_PREVIEW = 16;
+const MAX_REDIS_RDB_STRING_PREVIEW = 16;
+const MAX_OPS_SCHEDULE_PREVIEW_BYTES = 96 * 1024;
+const MAX_OPS_SCHEDULE_ITEM_PREVIEW = 16;
+const MAX_IIS_WEB_CONFIG_PREVIEW_BYTES = 96 * 1024;
+const MAX_IIS_WEB_CONFIG_ITEM_PREVIEW = 16;
+const MAX_SUPERVISOR_CONFIG_PREVIEW_BYTES = 96 * 1024;
+const MAX_SUPERVISOR_CONFIG_ITEM_PREVIEW = 16;
 const MAX_MBOX_PREVIEW_MESSAGES = 4;
 const MAX_OUTLOOK_MSG_PREVIEW_BYTES = 256 * 1024;
 const MAX_OUTLOOK_MSG_STRING_PREVIEW = 12;
@@ -253,6 +293,7 @@ const MAX_NESTED_ARCHIVE_PREVIEW_ENTRIES = 4;
 const MAX_NESTED_ARCHIVE_PREVIEW_INPUT_BYTES = 384 * 1024;
 const MAX_NESTED_ARCHIVE_PREVIEW_OUTPUT_BYTES = 512 * 1024;
 const MAX_NESTED_ARCHIVE_INSPECTION_DEPTH = 2;
+const MAX_PLAYWRIGHT_TRACE_ENTRY_PREVIEW = 12;
 const NESTED_ARCHIVE_EXTENSIONS = new Set([
   ".7z",
   ".bz2",
@@ -294,6 +335,8 @@ const MAX_DATABASE_SNAPSHOT_BYTES = 96 * 1024;
 const MAX_LOG_MONITOR_CONFIG_BYTES = 32 * 1024;
 const MAX_LOG_MONITOR_DELTA_BYTES = 64 * 1024;
 const MAX_LOG_MONITOR_LINES = 24;
+const MAX_CHAT_EXPORT_PREVIEW_BYTES = 128 * 1024;
+const MAX_CHAT_EXPORT_MESSAGE_PREVIEW = 8;
 const MAX_OUTBOUND_TARGET_LENGTH = 240;
 const MAX_OUTBOUND_SUBJECT_LENGTH = 160;
 const MAX_OUTBOUND_BODY_LENGTH = 4000;
@@ -322,11 +365,14 @@ const SKIPPED_DIRECTORIES = new Set([
 
 const IMPORTABLE_EXTENSIONS = new Set([
   ".7z",
+  ".aof",
   ".ansible-inventory",
   ".aab",
   ".apk",
   ".bat",
   ".bash",
+  ".bib",
+  ".bibtex",
   ".bicep",
   ".bicepparam",
   ".blg",
@@ -334,6 +380,7 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".c",
   ".cabal",
   ".cat",
+  ".cast",
   ".cc",
   ".checkstyle.xml",
   ".cjs",
@@ -341,6 +388,8 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".cmake",
   ".cmakelists.txt",
   ".codeowners",
+  ".cpuprofile",
+  ".chat-export.json",
   ".cloudformation.json",
   ".cloudformation.yaml",
   ".compile_commands.json",
@@ -351,9 +400,12 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".csproj",
   ".css",
   ".csv",
+  ".cron",
+  ".crontab",
   ".arrow",
   ".dart",
   ".db",
+  ".dbml",
   ".dmp",
   ".dotnet-global.json",
   ".dockerfile",
@@ -367,12 +419,14 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".dwg",
   ".dxf",
   ".eml",
+  ".emlx",
   ".epub",
   ".etl",
   ".evtx",
   ".editorconfig",
   ".asc",
   ".androidmanifest.xml",
+  ".logcat",
   ".appx",
   ".appxmanifest",
   ".appxbundle",
@@ -399,23 +453,30 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".go.work",
   ".gv",
   ".gql",
+  ".graphml",
   ".gpx",
   ".h5",
+  ".heapsnapshot",
   ".helm-chart.yaml",
   ".gradle",
   ".gradle.kts",
   ".gradle.properties",
   ".gitattributes",
   ".gitignore",
+  ".gitmodules",
+  ".mailmap",
   ".graphql",
   ".env",
+  ".envrc",
   ".exe",
   ".htm",
   ".html",
   ".h",
   ".hpp",
   ".http",
+  ".iis-web.config",
       ".ini",
+  ".istanbul-coverage.json",
   ".inf",
   ".info.plist",
       ".intoto.jsonl",
@@ -428,12 +489,21 @@ const IMPORTABLE_EXTENSIONS = new Set([
       ".war",
       ".ear",
       ".class",
-      ".java",
+  ".java",
+  ".jmeter.csv",
+  ".jmeter.xml",
+  ".jtl",
   ".junit.xml",
+  ".nunit.xml",
+  ".otel.json",
+  ".otlp.json",
   ".lighthouse.json",
   ".test-results.json",
+  ".tokenizer-calibration.json",
+  ".playwright-trace.zip",
   ".trace.json",
   ".js",
+  ".js-tooling-config",
   ".jsx",
   ".key",
   ".kml",
@@ -441,6 +511,7 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".jvm.config",
   ".jpg",
   ".bmp",
+  ".latexmkrc",
   ".less",
   ".license",
   ".lcov",
@@ -481,9 +552,11 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".mat",
   ".mm",
   ".mdmp",
+  ".mcp-servers.json",
   ".mhtml",
   ".mbox",
   ".metrics",
+  ".netlog.json",
   ".msg",
   ".nc",
   ".ndjson",
@@ -496,11 +569,13 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".ods",
   ".odt",
   ".ogg",
+  ".opml",
   ".otf",
   ".obj",
   ".openmetrics",
   ".patch",
   ".parquet",
+  ".path",
   ".pcap",
   ".pcapng",
   ".pem",
@@ -511,11 +586,13 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".php",
   ".podfile",
   ".podfile.lock",
+  ".pbxproj",
   ".podspec",
   ".ppt",
   ".pptm",
   ".png",
   ".pptx",
+  ".prisma",
   ".prom",
   ".proto",
   ".ps1",
@@ -530,6 +607,7 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".py",
   ".rb",
   ".rar",
+  ".rdb",
   ".rest",
   ".reg",
   ".diff",
@@ -543,6 +621,8 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".sarif.json",
   ".scss",
   ".security-audit.json",
+  ".service",
+  ".supervisord.conf",
   ".sh",
   ".sha1",
   ".sha256",
@@ -551,6 +631,7 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".sln",
   ".sitemap.xml",
   ".sitemap.xml.gz",
+  ".socket",
   ".sql",
   ".stack.yaml",
   ".scala",
@@ -572,11 +653,13 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".tar",
   ".tar.gz",
   ".tgz",
+  ".timer",
   ".props",
   ".tf",
   ".tf.json",
   ".tfplan.json",
   ".tfvars",
+  ".tex",
   ".toml",
   ".topojson",
   ".trx",
@@ -593,6 +676,10 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".vcard",
   ".vcf",
   ".vbproj",
+  ".vscode-extensions.json",
+  ".vscode-launch.json",
+  ".vscode-settings.json",
+  ".vscode-tasks.json",
   ".vtt",
   ".wasm",
   ".wav",
@@ -607,6 +694,7 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".xls",
   ".xlsm",
   ".xlsx",
+  ".xunit.xml",
   ".xml",
   ".yaml",
   ".yml",
@@ -3835,6 +3923,7 @@ function createImportItem(
   const extension = getImportExtension(filePath);
   const kind = getItemKind(extension);
   const summary = summarizeFile(workspacePath, filePath, kind, size);
+  const mime = getImportMime(filePath, extension);
   return {
     id: `file-input:${relativePath}`,
     adapterId: "file-input",
@@ -3845,9 +3934,16 @@ function createImportItem(
     relativePath,
     summary,
     size,
-    mime: getMime(extension),
+    mime,
     truncated: summary.length >= MAX_TEXT_BYTES,
   };
+}
+
+function getImportMime(filePath: string, extension: string): string {
+  if (isChatExportJsonFile(filePath, extension)) {
+    return "application/vnd.drsai.chat-export+json";
+  }
+  return getMime(extension);
 }
 
 function isInsideWorkspace(workspacePath: string, candidatePath: string): boolean {
@@ -3861,6 +3957,19 @@ function isInsideWorkspace(workspacePath: string, candidatePath: string): boolea
 
 function getImportExtension(filePath: string): string {
   const name = basename(filePath).toLowerCase();
+  const normalizedPath = filePath.replace(/\\/g, "/").toLowerCase();
+  if (normalizedPath.endsWith("/.vscode/settings.json")) {
+    return ".vscode-settings.json";
+  }
+  if (normalizedPath.endsWith("/.vscode/tasks.json")) {
+    return ".vscode-tasks.json";
+  }
+  if (normalizedPath.endsWith("/.vscode/launch.json")) {
+    return ".vscode-launch.json";
+  }
+  if (normalizedPath.endsWith("/.vscode/extensions.json")) {
+    return ".vscode-extensions.json";
+  }
   if (name === "codeowners") {
     return ".codeowners";
   }
@@ -3872,6 +3981,12 @@ function getImportExtension(filePath: string): string {
   }
   if (name === ".gitignore" || name.endsWith(".gitignore")) {
     return ".gitignore";
+  }
+  if (name === ".gitmodules") {
+    return ".gitmodules";
+  }
+  if (name === ".mailmap") {
+    return ".mailmap";
   }
   if (
     name === "license" ||
@@ -3940,6 +4055,21 @@ function getImportExtension(filePath: string): string {
   if (name === ".env" || name.startsWith(".env.") || name.endsWith(".env.local")) {
     return ".env";
   }
+  if (name === ".envrc" || name.endsWith(".envrc")) {
+    return ".envrc";
+  }
+  if (name === "crontab" || name.endsWith(".crontab")) {
+    return ".crontab";
+  }
+  if (name.endsWith(".cron")) {
+    return ".cron";
+  }
+  if (name === "supervisord.conf" || name.endsWith(".supervisord.conf")) {
+    return ".supervisord.conf";
+  }
+  if (name === "latexmkrc" || name === ".latexmkrc") {
+    return ".latexmkrc";
+  }
   if (
     name === "dockerfile" ||
     name.startsWith("dockerfile.") ||
@@ -3973,6 +4103,29 @@ function getImportExtension(filePath: string): string {
     return ".sarif.json";
   }
   if (
+    name === "netlog.json" ||
+    name === "chrome-netlog.json" ||
+    name === "edge-netlog.json" ||
+    name.endsWith(".netlog.json")
+  ) {
+    return ".netlog.json";
+  }
+  if (
+    name === "slack-export.json" ||
+    name === "slack-messages.json" ||
+    name === "teams-export.json" ||
+    name === "teams-messages.json" ||
+    name === "discord-export.json" ||
+    name === "discord-messages.json" ||
+    name === "chatgpt-conversations.json" ||
+    name.endsWith(".slack-export.json") ||
+    name.endsWith(".teams-export.json") ||
+    name.endsWith(".discord-export.json") ||
+    name.endsWith(".chat-export.json")
+  ) {
+    return ".chat-export.json";
+  }
+  if (
     name === "snyk.json" ||
     name === "npm-audit.json" ||
     name === "audit-ci.json" ||
@@ -3988,6 +4141,15 @@ function getImportExtension(filePath: string): string {
   }
   if (name === "lcov.info" || name.endsWith(".lcov.info")) {
     return ".lcov";
+  }
+  if (
+    name === "coverage-final.json" ||
+    name === "coverage-summary.json" ||
+    name.endsWith(".coverage-final.json") ||
+    name.endsWith(".coverage-summary.json") ||
+    name.endsWith(".istanbul-coverage.json")
+  ) {
+    return ".istanbul-coverage.json";
   }
   if (
     name === "checkstyle.xml" ||
@@ -4011,15 +4173,96 @@ function getImportExtension(filePath: string): string {
     return ".junit.xml";
   }
   if (
+    name === "jmeter-results.xml" ||
+    name === "jmeter-report.xml" ||
+    name.endsWith(".jmeter.xml")
+  ) {
+    return ".jmeter.xml";
+  }
+  if (
+    name === "jmeter-results.csv" ||
+    name === "jmeter-report.csv" ||
+    name.endsWith(".jmeter.csv")
+  ) {
+    return ".jmeter.csv";
+  }
+  if (name.endsWith(".nunit.xml")) {
+    return ".nunit.xml";
+  }
+  if (name.endsWith(".xunit.xml")) {
+    return ".xunit.xml";
+  }
+  if (
     name.endsWith(".playwright.json") ||
     name.endsWith(".jest.json") ||
     name.endsWith(".vitest.json") ||
+    name.endsWith(".cypress-results.json") ||
+    name.endsWith(".cypress-report.json") ||
+    name.endsWith(".mocha.json") ||
+    name.endsWith(".mocha-report.json") ||
+    name.endsWith(".allure-result.json") ||
+    name.endsWith(".allure-results.json") ||
+    name.endsWith(".allure.json") ||
     name === "playwright-report.json" ||
+    name === "cypress-results.json" ||
+    name === "cypress-report.json" ||
+    name === "mocha.json" ||
+    name === "mocha-report.json" ||
+    name === "allure-result.json" ||
+    name === "allure-results.json" ||
     name === "test-results.json" ||
     name === "test-results-jest.json" ||
     name === "test-results-vitest.json"
   ) {
     return ".test-results.json";
+  }
+  if (
+    name === "trace.zip" ||
+    name === "playwright-trace.zip" ||
+    name.endsWith(".trace.zip")
+  ) {
+    return ".playwright-trace.zip";
+  }
+  if (
+    name === "eslint.config.js" ||
+    name === "eslint.config.mjs" ||
+    name === "eslint.config.cjs" ||
+    name === ".eslintrc" ||
+    name === ".eslintrc.json" ||
+    name === ".eslintrc.js" ||
+    name === ".eslintrc.cjs" ||
+    name === ".eslintrc.yaml" ||
+    name === ".eslintrc.yml" ||
+    name === ".prettierrc" ||
+    name === ".prettierrc.json" ||
+    name === ".prettierrc.js" ||
+    name === ".prettierrc.cjs" ||
+    name === ".prettierrc.yaml" ||
+    name === ".prettierrc.yml" ||
+    name === "prettier.config.js" ||
+    name === "prettier.config.cjs" ||
+    name === "prettier.config.mjs" ||
+    name === "biome.json" ||
+    name === "biome.jsonc" ||
+    name === ".stylelintrc" ||
+    name === ".stylelintrc.json" ||
+    name === ".stylelintrc.yaml" ||
+    name === ".stylelintrc.yml" ||
+    name === "stylelint.config.js" ||
+    name === "stylelint.config.cjs" ||
+    name === "stylelint.config.mjs" ||
+    name === "jest.config.js" ||
+    name === "jest.config.cjs" ||
+    name === "jest.config.mjs" ||
+    name === "jest.config.ts" ||
+    name === "vitest.config.js" ||
+    name === "vitest.config.mjs" ||
+    name === "vitest.config.ts" ||
+    name === "playwright.config.js" ||
+    name === "playwright.config.mjs" ||
+    name === "playwright.config.ts"
+  ) {
+    return ".js-tooling-config";
   }
   if (
     name === "lhr.json" ||
@@ -4037,6 +4280,42 @@ function getImportExtension(filePath: string): string {
     name.endsWith(".devtools.json")
   ) {
     return ".trace.json";
+  }
+  if (
+    name === "otlp.json" ||
+    name === "opentelemetry.json" ||
+    name === "otel-traces.json" ||
+    name === "otel-logs.json" ||
+    name === "otel-metrics.json" ||
+    name.endsWith(".otlp.json")
+  ) {
+    return ".otlp.json";
+  }
+  if (name.endsWith(".otel.json")) {
+    return ".otel.json";
+  }
+  if (
+    name === "mcp-servers.json" ||
+    name === "mcp-server-config.json" ||
+    name.endsWith(".mcp-servers.json") ||
+    name.endsWith(".mcp-server-config.json")
+  ) {
+    return ".mcp-servers.json";
+  }
+  if (
+    normalizedPath.endsWith("/.drsai/tokenizer-calibration.json") ||
+    name === "tokenizer-calibration.json" ||
+    name.endsWith(".tokenizer-calibration.json")
+  ) {
+    return ".tokenizer-calibration.json";
+  }
+  if (
+    name === "web.config" ||
+    name === "applicationhost.config" ||
+    name.endsWith(".iis.config") ||
+    name.endsWith(".web.config")
+  ) {
+    return ".iis-web.config";
   }
   if (name.endsWith(".cdx.json")) {
     return ".cdx.json";
@@ -4135,8 +4414,20 @@ function getImportExtension(filePath: string): string {
   if (name === "podfile.lock") {
     return ".podfile.lock";
   }
+  if (name === "project.pbxproj" || name.endsWith(".pbxproj")) {
+    return ".pbxproj";
+  }
   if (name === "androidmanifest.xml") {
     return ".androidmanifest.xml";
+  }
+  if (
+    name === "logcat.txt" ||
+    name === "logcat.log" ||
+    name === "adb-logcat.log" ||
+    name.endsWith(".logcat.txt") ||
+    name.endsWith(".logcat.log")
+  ) {
+    return ".logcat";
   }
   if (name === "info.plist") {
     return ".info.plist";
@@ -4153,13 +4444,14 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
   if ([".avi", ".m4v", ".mkv", ".mov", ".mp4", ".webm"].includes(extension)) return "video";
   if ([".srt", ".vtt"].includes(extension)) return "voice_transcript";
   if (extension === ".ics" || extension === ".ical") return "meeting";
-  if ([".db", ".sqlite", ".sqlite3", ".sql"].includes(extension)) return "database_table";
+  if ([".aof", ".db", ".dbml", ".prisma", ".rdb", ".sqlite", ".sqlite3", ".sql"].includes(extension)) return "database_table";
   if (
     [
       ".7z",
       ".aab",
       ".apk",
       ".androidmanifest.xml",
+      ".logcat",
       ".info.plist",
       ".atom",
       ".arrow",
@@ -4174,6 +4466,8 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
       ".cmake",
       ".cmakelists.txt",
       ".codeowners",
+      ".cpuprofile",
+      ".chat-export.json",
       ".compile_commands.json",
       ".csproj",
       ".doc",
@@ -4186,6 +4480,7 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
       ".dwg",
       ".dxf",
       ".eml",
+      ".emlx",
       ".epub",
       ".etl",
       ".evtx",
@@ -4195,19 +4490,23 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
       ".htm",
       ".html",
       ".geojson",
+      ".iis-web.config",
       ".glb",
       ".gltf",
       ".gitattributes",
       ".gitignore",
+      ".mailmap",
       ".gradle",
       ".gradle.kts",
       ".gradle.properties",
+      ".graphml",
       ".gv",
       ".gpx",
       ".h5",
       ".hdf5",
       ".helm-chart.yaml",
       ".hdmp",
+      ".heapsnapshot",
       ".inf",
       ".jvm.config",
       ".markdown",
@@ -4219,6 +4518,7 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
       ".mermaid",
       ".mdmp",
       ".mhtml",
+      ".mcp-servers.json",
       ".metrics",
       ".mmd",
       ".mix.exs",
@@ -4230,10 +4530,12 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
       ".nc",
       ".notice",
       ".nuget.config",
+      ".nunit.xml",
       ".odp",
       ".ods",
       ".odt",
       ".nuspec",
+      ".opml",
       ".otf",
       ".obj",
       ".openmetrics",
@@ -4244,6 +4546,7 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
       ".parquet",
       ".podfile",
       ".podfile.lock",
+      ".pbxproj",
       ".podspec",
       ".pmd.xml",
       ".ppt",
@@ -4254,8 +4557,9 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
       ".props",
       ".puml",
       ".plantuml",
-      ".rar",
-      ".reg",
+  ".rar",
+  ".rdb",
+  ".reg",
       ".robots.txt",
       ".rss",
       ".rtf",
@@ -4263,16 +4567,22 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
       ".sarif.json",
       ".security-audit.json",
       ".spotbugs.xml",
+      ".jmeter.csv",
+      ".jmeter.xml",
+      ".jtl",
       ".junit.xml",
       ".kustomization.yaml",
       ".lighthouse.json",
+      ".playwright-trace.zip",
       ".test-results.json",
+      ".xunit.xml",
       ".trace.json",
       ".sln",
       ".sitemap.xml",
       ".sitemap.xml.gz",
       ".ipa",
       ".ipynb",
+      ".js-tooling-config",
       ".stack.yaml",
       ".kml",
       ".lcov",
@@ -4297,6 +4607,10 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
       ".vcard",
       ".vcf",
       ".vbproj",
+      ".vscode-extensions.json",
+      ".vscode-launch.json",
+      ".vscode-settings.json",
+      ".vscode-tasks.json",
       ".wer",
       ".webloc",
       ".woff",
@@ -4389,6 +4703,9 @@ function summarizeFile(
   if (isAndroidManifestFile(filePath, extension)) {
     return summarizeAndroidManifestFile(filePath, size);
   }
+  if (extension === ".logcat") {
+    return summarizeAndroidLogcatFile(filePath, size);
+  }
   if (isAppleInfoPlistFile(filePath, extension)) {
     return summarizeAppleInfoPlistFile(filePath, size);
   }
@@ -4400,6 +4717,9 @@ function summarizeFile(
   }
   if (extension === ".zip") {
     return summarizeZipArchiveFile(filePath, size);
+  }
+  if (extension === ".playwright-trace.zip") {
+    return summarizePlaywrightTraceZipFile(filePath, size);
   }
   if (extension === ".tar") {
     return summarizeTarArchiveFile(filePath, size);
@@ -4419,8 +4739,14 @@ function summarizeFile(
   if (kind === "database_table" && [".db", ".sqlite", ".sqlite3"].includes(extension)) {
     return summarizeSqliteDatabaseFile(filePath, size);
   }
+  if (kind === "database_table" && [".aof", ".rdb"].includes(extension)) {
+    return summarizeRedisPersistenceFile(filePath, extension, size);
+  }
   if (kind === "database_table" && extension === ".sql") {
     return summarizeSqlScriptFile(filePath, size);
+  }
+  if (kind === "database_table" && [".prisma", ".dbml"].includes(extension)) {
+    return summarizeDatabaseSchemaDslFile(filePath, extension, size);
   }
   if (isDiagramSourceExtension(extension)) {
     return summarizeDiagramSourceFile(filePath, extension, size);
@@ -4440,6 +4766,12 @@ function summarizeFile(
   if (isWindowsScheduledTaskFile(extension) || (extension === ".xml" && looksLikeWindowsScheduledTaskXml(filePath))) {
     return summarizeWindowsScheduledTaskFile(filePath, extension, size);
   }
+  if (isOpsScheduleFile(filePath, extension)) {
+    return summarizeOpsScheduleFile(filePath, extension, size);
+  }
+  if (isSupervisorConfigFile(filePath, extension)) {
+    return summarizeSupervisorConfigFile(filePath, size);
+  }
   if (extension === ".xml" && looksLikeTestReportXml(filePath)) {
     return summarizeTestReportFile(filePath, extension, size);
   }
@@ -4454,6 +4786,9 @@ function summarizeFile(
   }
   if (isNodePackageManagerConfigFile(filePath, extension)) {
     return summarizeNodePackageManagerConfigFile(filePath, extension, size);
+  }
+  if (isJsToolingConfigFile(filePath, extension)) {
+    return summarizeJsToolingConfigFile(filePath, size);
   }
   if (isCargoManifestFile(filePath, extension)) {
     return summarizeCargoManifestFile(filePath, size);
@@ -4491,8 +4826,26 @@ function summarizeFile(
   if (isDevtoolsTraceFile(filePath, extension)) {
     return summarizeDevtoolsTraceFile(filePath, size);
   }
+  if (isDevtoolsProfileFile(extension)) {
+    return summarizeDevtoolsProfileFile(filePath, extension, size);
+  }
   if (isLighthouseReportFile(filePath, extension)) {
     return summarizeLighthouseReportFile(filePath, size);
+  }
+  if (isOtelJsonFile(filePath, extension)) {
+    return summarizeOtelJsonFile(filePath, size);
+  }
+  if (isMcpServerConfigFile(filePath, extension)) {
+    return summarizeMcpServerConfigFile(filePath, size);
+  }
+  if (isTokenizerCalibrationFile(filePath, extension)) {
+    return summarizeTokenizerCalibrationFile(filePath, size);
+  }
+  if (isIisWebConfigFile(filePath, extension)) {
+    return summarizeIisWebConfigFile(filePath, size);
+  }
+  if (isVsCodeWorkspaceConfigFile(filePath, extension)) {
+    return summarizeVsCodeWorkspaceConfigFile(filePath, extension, size);
   }
   if (extension === ".bru") {
     return summarizeBrunoCollectionFile(filePath, size);
@@ -4533,6 +4886,10 @@ function summarizeFile(
   if ((extension === ".yaml" || extension === ".yml") && detectCiWorkflowKind(filePath)) {
     return summarizeConfigOrLogFile(filePath, extension, size);
   }
+  if (extension === ".yaml" || extension === ".yml" || extension === ".json") {
+    const kubernetesPreview = summarizeKubernetesManifestFile(filePath, extension, size);
+    if (kubernetesPreview) return kubernetesPreview;
+  }
   if (isAnsibleAutomationFile(filePath, extension)) {
     return summarizeAnsibleAutomationFile(filePath, extension, size);
   }
@@ -4544,6 +4901,9 @@ function summarizeFile(
   }
   if (isColumnarDataExtension(extension)) {
     return summarizeColumnarDataFile(filePath, extension, size);
+  }
+  if (extension === ".opml") {
+    return summarizeOpmlSubscriptionFile(filePath, size);
   }
   if (isFeedDocumentExtension(extension) || (extension === ".xml" && looksLikeFeedXml(filePath))) {
     return summarizeFeedDocumentFile(filePath, extension, size);
@@ -4557,8 +4917,14 @@ function summarizeFile(
   if (extension === ".har") {
     return summarizeHarNetworkTraceFile(filePath, size);
   }
+  if (extension === ".netlog.json") {
+    return summarizeNetlogNetworkTraceFile(filePath, size);
+  }
   if (extension === ".pcap" || extension === ".pcapng") {
     return summarizePacketCaptureFile(filePath, extension, size);
+  }
+  if (isChatExportJsonFile(filePath, extension)) {
+    return summarizeChatExportJsonFile(filePath, size);
   }
   if (extension === ".json") {
     if (isSarifResultFile(filePath, extension)) {
@@ -4579,19 +4945,34 @@ function summarizeFile(
     if (isLighthouseReportFile(filePath, extension)) {
       return summarizeLighthouseReportFile(filePath, size);
     }
+    if (isOtelJsonFile(filePath, extension)) {
+      return summarizeOtelJsonFile(filePath, size);
+    }
+    if (isMcpServerConfigFile(filePath, extension)) {
+      return summarizeMcpServerConfigFile(filePath, size);
+    }
+    if (isTokenizerCalibrationFile(filePath, extension)) {
+      return summarizeTokenizerCalibrationFile(filePath, size);
+    }
+    if (isVsCodeWorkspaceConfigFile(filePath, extension)) {
+      return summarizeVsCodeWorkspaceConfigFile(filePath, extension, size);
+    }
     if (isCloudIacTemplateFile(filePath, extension)) {
       return summarizeCloudIacTemplateFile(filePath, extension, size);
     }
+    const kubernetesPreview = summarizeKubernetesManifestFile(filePath, extension, size);
+    if (kubernetesPreview) return kubernetesPreview;
     const apiSpecPreview = summarizeApiSpecFile(filePath, extension, size);
     if (apiSpecPreview) return apiSpecPreview;
     const postmanEnvironmentPreview = summarizePostmanEnvironmentFile(filePath, size);
     if (postmanEnvironmentPreview) return postmanEnvironmentPreview;
-    const kubernetesPreview = summarizeKubernetesManifestFile(filePath, extension, size);
-    if (kubernetesPreview) return kubernetesPreview;
     return summarizeJsonDataFile(filePath, size);
   }
   if (extension === ".jsonl" || extension === ".ndjson") {
     return summarizeJsonLinesDataFile(filePath, extension, size);
+  }
+  if (extension === ".cast") {
+    return summarizeTerminalRecordingFile(filePath, size);
   }
   if (extension === ".yaml" || extension === ".yml") {
     if (isContainerComposeFile(filePath, extension)) {
@@ -4600,20 +4981,26 @@ function summarizeFile(
     if (isCloudIacTemplateFile(filePath, extension)) {
       return summarizeCloudIacTemplateFile(filePath, extension, size);
     }
-    const apiSpecPreview = summarizeApiSpecFile(filePath, extension, size);
-    if (apiSpecPreview) return apiSpecPreview;
     const kubernetesPreview = summarizeKubernetesManifestFile(filePath, extension, size);
     if (kubernetesPreview) return kubernetesPreview;
+    const apiSpecPreview = summarizeApiSpecFile(filePath, extension, size);
+    if (apiSpecPreview) return apiSpecPreview;
     return summarizeConfigOrLogFile(filePath, extension, size);
   }
   if (isPatchDiffExtension(extension)) {
     return summarizePatchDiffFile(workspacePath, filePath, extension, size);
+  }
+  if (isLatexContextFile(extension)) {
+    return summarizeLatexContextFile(filePath, extension, size);
   }
   if (isPowerShellScriptExtension(extension)) {
     return summarizePowerShellScriptFile(filePath, extension, size);
   }
   if (isBatchScriptExtension(extension)) {
     return summarizeBatchScriptFile(filePath, extension, size);
+  }
+  if (isDirenvConfigFile(extension)) {
+    return summarizeDirenvConfigFile(filePath, size);
   }
   if (isSourceCodeExtension(extension)) {
     return summarizeSourceCodeFile(filePath, extension, size);
@@ -4628,8 +5015,8 @@ function summarizeFile(
     return summarizeConfigOrLogFile(filePath, extension, size);
   }
   if (kind === "document" && extension !== ".ipynb") {
-    if (extension === ".eml") {
-      return summarizeEmailMessage(filePath, size);
+    if ([".eml", ".emlx"].includes(extension)) {
+      return summarizeEmailMessage(filePath, size, extension);
     }
     if (extension === ".mbox") {
       return summarizeMailboxArchive(filePath, size);
@@ -4665,6 +5052,132 @@ function summarizeFile(
 
 function isConfigOrLogExtension(extension: string): boolean {
   return [".env", ".ini", ".log", ".toml", ".xml", ".yaml", ".yml"].includes(extension);
+}
+
+interface DirenvConfigPreview {
+  exportedKeys: string[];
+  dotenvTargets: string[];
+  useDirectives: string[];
+  layoutDirectives: string[];
+  watchTargets: string[];
+  sourceTargets: string[];
+  riskCues: string[];
+  sampleLines: string[];
+}
+
+function isDirenvConfigFile(extension: string): boolean {
+  return extension === ".envrc";
+}
+
+function summarizeDirenvConfigFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_DIRENV_CONFIG_PREVIEW_BYTES)).toString("utf8");
+    const preview = parseDirenvConfigPreview(raw);
+    return [
+      `direnv .envrc preview (${formatBytes(size)}).`,
+      preview.exportedKeys.length > 0
+        ? `Exported environment keys (${preview.exportedKeys.length}${preview.exportedKeys.length >= MAX_DIRENV_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.exportedKeys.join(", ")}.`
+        : "Exported environment keys: none detected in the bounded preview.",
+      preview.dotenvTargets.length > 0
+        ? `dotenv targets: ${preview.dotenvTargets.join(", ")}.`
+        : "dotenv targets: none detected.",
+      preview.useDirectives.length > 0
+        ? `use directives: ${preview.useDirectives.join(", ")}.`
+        : "use directives: none detected.",
+      preview.layoutDirectives.length > 0
+        ? `layout directives: ${preview.layoutDirectives.join(", ")}.`
+        : "layout directives: none detected.",
+      preview.watchTargets.length > 0
+        ? `watch targets: ${preview.watchTargets.join(", ")}.`
+        : "watch targets: none detected.",
+      preview.sourceTargets.length > 0
+        ? `source targets: ${preview.sourceTargets.join(", ")}.`
+        : "source targets: none detected.",
+      preview.riskCues.length > 0
+        ? `Static risk cues: ${preview.riskCues.join(", ")}.`
+        : "Static risk cues: none detected in the bounded preview.",
+      preview.sampleLines.length > 0
+        ? `Sanitized line samples: ${preview.sampleLines.join(" | ")}.`
+        : "Sanitized line samples: none detected.",
+      "Ready for explicit attachment after visible review; .envrc was parsed as bounded workspace-local text only, direnv was not executed, no shell command was run, environment variables were not loaded or expanded, dotenv/source targets were not opened, credentials were not resolved, and no network call or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `direnv .envrc ready for explicit attachment (${formatBytes(size)}).`,
+      "The bounded local .envrc preview could not be read; direnv was not executed, no shell command was run, environment variables were not loaded, and no network call or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseDirenvConfigPreview(raw: string): DirenvConfigPreview {
+  const exportedKeys = new Set<string>();
+  const dotenvTargets = new Set<string>();
+  const useDirectives = new Set<string>();
+  const layoutDirectives = new Set<string>();
+  const watchTargets = new Set<string>();
+  const sourceTargets = new Set<string>();
+  const riskCues = new Set<string>();
+  const sampleLines: string[] = [];
+  const lines = normalizeTextPreview(raw).split("\n");
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const maskedLine = maskPotentialSecretValues(redactUrlQuerySecrets(trimmed));
+    if (sampleLines.length < MAX_DIRENV_CONFIG_ITEM_PREVIEW) {
+      sampleLines.push(clampSingleLine(maskedLine, 220));
+    }
+    collectDirenvExportKey(trimmed, exportedKeys);
+    collectDirenvDirective(trimmed, "dotenv", dotenvTargets);
+    collectDirenvDirective(trimmed, "dotenv_if_exists", dotenvTargets);
+    collectDirenvDirective(trimmed, "use", useDirectives);
+    collectDirenvDirective(trimmed, "layout", layoutDirectives);
+    collectDirenvDirective(trimmed, "watch_file", watchTargets);
+    collectDirenvDirective(trimmed, "source_env", sourceTargets);
+    collectDirenvDirective(trimmed, "source_up", sourceTargets);
+    collectDirenvRiskCue(trimmed, riskCues);
+  }
+
+  return {
+    exportedKeys: [...exportedKeys],
+    dotenvTargets: [...dotenvTargets],
+    useDirectives: [...useDirectives],
+    layoutDirectives: [...layoutDirectives],
+    watchTargets: [...watchTargets],
+    sourceTargets: [...sourceTargets],
+    riskCues: [...riskCues],
+    sampleLines,
+  };
+}
+
+function collectDirenvExportKey(line: string, keys: Set<string>): void {
+  if (keys.size >= MAX_DIRENV_CONFIG_ITEM_PREVIEW) return;
+  const match = line.match(/^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/);
+  if (match?.[1]) keys.add(clampSingleLine(match[1], 100));
+}
+
+function collectDirenvDirective(line: string, directive: string, values: Set<string>): void {
+  if (values.size >= MAX_DIRENV_CONFIG_ITEM_PREVIEW) return;
+  const match = line.match(new RegExp(`^${directive}\\b\\s*(.*)$`, "i"));
+  if (!match) return;
+  const value = clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets((match[1] || "").replace(/['"]/g, "").trim() || "(default)")), 140);
+  values.add(value);
+}
+
+function collectDirenvRiskCue(line: string, riskCues: Set<string>): void {
+  if (riskCues.size >= MAX_DIRENV_CONFIG_ITEM_PREVIEW) return;
+  const cuePatterns: Array<[RegExp, string]> = [
+    [/\b(curl|wget|Invoke-WebRequest|iwr|Invoke-RestMethod|irm)\b/i, "network download/request"],
+    [/\b(eval|source|source_env|source_up)\b|^\s*\.\s+/i, "dynamic sourcing/execution"],
+    [/\b(direnv\s+allow|direnv\s+reload)\b/i, "direnv runtime command"],
+    [/\b(npm|pnpm|yarn|bun|pip|python|poetry|uv|cargo|go|dotnet|docker|kubectl)\b/i, "toolchain command"],
+    [/\b(rm|del|Remove-Item|mv|move|cp|copy)\b/i, "filesystem mutation"],
+    [/\b(pass|op|aws\s+secretsmanager|gcloud\s+secrets|az\s+keyvault)\b/i, "secret lookup"],
+  ];
+  for (const [pattern, label] of cuePatterns) {
+    if (pattern.test(line)) riskCues.add(label);
+    if (riskCues.size >= MAX_DIRENV_CONFIG_ITEM_PREVIEW) return;
+  }
 }
 
 interface AndroidManifestPreview {
@@ -4797,6 +5310,104 @@ function readAndroidAttribute(attrs: Map<string, string>, name: string): string 
 
 function sanitizeAndroidManifestValue(value: string): string {
   return clampSingleLine(maskPotentialSecretValues(value), 140);
+}
+
+interface AndroidLogcatPreviewLine {
+  timestamp: string;
+  pid: string;
+  tid: string;
+  priority: string;
+  tag: string;
+  message: string;
+}
+
+function summarizeAndroidLogcatFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_ANDROID_LOGCAT_PREVIEW_BYTES).toString("utf8");
+    const preview = parseAndroidLogcatPreview(raw);
+    const priorities = summarizeAndroidLogcatPriorities(preview.lines);
+    const tags = uniquePreviewValues(preview.lines.map((line) => line.tag).filter(Boolean), MAX_ANDROID_LOGCAT_LINE_PREVIEW);
+    const pids = uniquePreviewValues(preview.lines.map((line) => line.pid).filter(Boolean), MAX_ANDROID_LOGCAT_LINE_PREVIEW);
+    const samples = preview.lines
+      .slice(0, MAX_ANDROID_LOGCAT_LINE_PREVIEW)
+      .map((line, index) => `${index + 1}. ${line.timestamp} ${line.priority}/${line.tag}(${line.pid}:${line.tid}): ${line.message}`);
+    return [
+      `Android logcat export preview (${formatBytes(size)}).`,
+      `Parsed logcat lines: ${preview.lineCount}${preview.lineCount > preview.lines.length ? `; showing first ${preview.lines.length}` : ""}.`,
+      `Priorities: ${priorities || "none detected"}.`,
+      tags.length > 0 ? `Tags (${tags.length}${tags.length >= MAX_ANDROID_LOGCAT_LINE_PREVIEW ? "+" : ""}): ${tags.join(", ")}.` : "Tags: none detected in the bounded local preview.",
+      pids.length > 0 ? `Process ids (${pids.length}${pids.length >= MAX_ANDROID_LOGCAT_LINE_PREVIEW ? "+" : ""}): ${pids.join(", ")}.` : "",
+      samples.length > 0 ? `Sample lines:\n${samples.join("\n")}` : "Sample lines: no standard logcat records were detected in the bounded local preview.",
+      raw.length >= MAX_ANDROID_LOGCAT_PREVIEW_BYTES || preview.truncated
+        ? `Preview was capped at ${formatBytes(MAX_ANDROID_LOGCAT_PREVIEW_BYTES)} or line limits.`
+        : "",
+      "Ready for explicit attachment after visible review; Android logcat text was parsed from bounded workspace-local bytes only, likely secrets were redacted, and no adb/logcat command, device/emulator access, live log streaming, package install, network call, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Android logcat export ready for explicit attachment (${formatBytes(size)}).`,
+      "No adb/logcat command, device/emulator access, live log streaming, package install, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function summarizeAndroidLogcatPriorities(lines: AndroidLogcatPreviewLine[]): string {
+  const counts = new Map<string, number>();
+  for (const line of lines) {
+    if (!line.priority) continue;
+    counts.set(line.priority, (counts.get(line.priority) ?? 0) + 1);
+  }
+  return [...counts.entries()].map(([priority, count]) => `${priority}: ${count}`).join(", ");
+}
+
+function parseAndroidLogcatPreview(raw: string): {
+  lines: AndroidLogcatPreviewLine[];
+  lineCount: number;
+  truncated: boolean;
+} {
+  const lines: AndroidLogcatPreviewLine[] = [];
+  let lineCount = 0;
+  for (const rawLine of raw.replace(/^\uFEFF/, "").split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("--------- beginning of ")) continue;
+    const parsed = parseAndroidLogcatLine(line);
+    if (!parsed) continue;
+    lineCount += 1;
+    if (lines.length < MAX_ANDROID_LOGCAT_LINE_PREVIEW) {
+      lines.push(parsed);
+    }
+  }
+  return {
+    lines,
+    lineCount,
+    truncated: lineCount > lines.length,
+  };
+}
+
+function parseAndroidLogcatLine(line: string): AndroidLogcatPreviewLine | null {
+  const standard = line.match(/^(\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3,6})\s+(\d+)\s+(\d+)\s+([VDIWEAF])\s+([^:]+):\s*(.*)$/);
+  if (standard) {
+    return {
+      timestamp: standard[1],
+      pid: standard[2],
+      tid: standard[3],
+      priority: standard[4],
+      tag: clampSingleLine(standard[5], 80),
+      message: maskPotentialSecretValues(clampSingleLine(standard[6], 220)),
+    };
+  }
+  const brief = line.match(/^([VDIWEAF])\/([^(\s]+)\s*\(\s*(\d+)\s*\):\s*(.*)$/);
+  if (brief) {
+    return {
+      timestamp: "no timestamp",
+      pid: brief[3],
+      tid: brief[3],
+      priority: brief[1],
+      tag: clampSingleLine(brief[2], 80),
+      message: maskPotentialSecretValues(clampSingleLine(brief[4], 220)),
+    };
+  }
+  return null;
 }
 
 interface AppleInfoPlistPreview {
@@ -5065,12 +5676,16 @@ function isRepositoryGovernanceFile(filePath: string, extension: string): boolea
     extension === ".editorconfig" ||
     extension === ".gitattributes" ||
     extension === ".gitignore" ||
+    extension === ".gitmodules" ||
+    extension === ".mailmap" ||
     extension === ".license" ||
     extension === ".notice" ||
     name === "codeowners" ||
     name === ".editorconfig" ||
     name === ".gitattributes" ||
     name === ".gitignore" ||
+    name === ".gitmodules" ||
+    name === ".mailmap" ||
     name.endsWith(".gitignore") ||
     name === "license" ||
     name === "license.md" ||
@@ -5117,6 +5732,8 @@ function describeRepositoryGovernanceFile(filePath: string, extension: string): 
   if (extension === ".editorconfig" || name === ".editorconfig") return "EditorConfig style policy";
   if (extension === ".gitattributes" || name === ".gitattributes") return "Git attributes policy";
   if (extension === ".gitignore" || name.endsWith(".gitignore")) return "Git ignore patterns";
+  if (extension === ".gitmodules" || name === ".gitmodules") return "Git submodule mapping";
+  if (extension === ".mailmap" || name === ".mailmap") return "Git mailmap identity mapping";
   if (extension === ".license" || name.startsWith("license") || name.startsWith("copying")) return "license text";
   if (extension === ".notice" || name.startsWith("notice")) return "notice text";
   return "repository governance text";
@@ -5166,7 +5783,58 @@ function summarizeRepositoryPolicyRules(lines: string[], extension: string): str
       ? `Git ignore patterns (${patterns.length}${patterns.length >= MAX_REPOSITORY_GOVERNANCE_ITEM_PREVIEW ? "+" : ""}): ${patterns.join(", ")}.`
       : "Git ignore patterns: none detected in the bounded preview.";
   }
+  if (extension === ".gitmodules") {
+    return summarizeGitmodulesPolicy(lines);
+  }
+  if (extension === ".mailmap") {
+    return summarizeGitMailmapPolicy(lines);
+  }
   return "";
+}
+
+function summarizeGitMailmapPolicy(lines: string[]): string {
+  const mappings = lines
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#"))
+    .map((line) => clampSingleLine(maskMailmapEmails(line), 140))
+    .slice(0, MAX_REPOSITORY_GOVERNANCE_ITEM_PREVIEW);
+  return mappings.length > 0
+    ? `Git mailmap identity mappings (${mappings.length}${mappings.length >= MAX_REPOSITORY_GOVERNANCE_ITEM_PREVIEW ? "+" : ""}): ${mappings.join(" | ")}.`
+    : "Git mailmap identity mappings: none detected in the bounded preview.";
+}
+
+function maskMailmapEmails(line: string): string {
+  return line.replace(/<([^<>\s@]+)@([^<>\s]+)>/g, "<[redacted]@$2>");
+}
+
+function summarizeGitmodulesPolicy(lines: string[]): string {
+  const modules: Array<{ name: string; values: string[] }> = [];
+  let current: { name: string; values: string[] } | null = null;
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#") || line.startsWith(";")) continue;
+    const sectionMatch = line.match(/^\[submodule\s+"([^"]+)"\]$/i);
+    if (sectionMatch?.[1]) {
+      current = { name: clampSingleLine(sectionMatch[1], 80), values: [] };
+      modules.push(current);
+      if (modules.length >= MAX_REPOSITORY_GOVERNANCE_ITEM_PREVIEW) break;
+      continue;
+    }
+    if (!current) continue;
+    const keyMatch = line.match(/^([A-Za-z0-9_.-]+)\s*=\s*(.+)$/);
+    if (!keyMatch?.[1] || !keyMatch?.[2]) continue;
+    const key = keyMatch[1].toLowerCase();
+    if (!["path", "url", "branch", "update", "shallow", "ignore"].includes(key)) continue;
+    const value = clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(keyMatch[2])), 120);
+    current.values.push(`${key}=${value}`);
+  }
+  const summaries = modules
+    .filter((module) => module.values.length > 0)
+    .map((module) => `${module.name}: ${module.values.slice(0, 5).join(", ")}`)
+    .slice(0, MAX_REPOSITORY_GOVERNANCE_ITEM_PREVIEW);
+  return summaries.length > 0
+    ? `Git submodule mappings (${summaries.length}${summaries.length >= MAX_REPOSITORY_GOVERNANCE_ITEM_PREVIEW ? "+" : ""}): ${summaries.join(" | ")}.`
+    : "Git submodule mappings: none detected in the bounded preview.";
 }
 
 function summarizeRepositoryLicenseNotice(lines: string[], extension: string): string {
@@ -5204,6 +5872,10 @@ function isStylesheetFile(extension: string): boolean {
 
 function isPatchDiffExtension(extension: string): boolean {
   return extension === ".diff" || extension === ".patch";
+}
+
+function isLatexContextFile(extension: string): boolean {
+  return [".tex", ".bib", ".bibtex", ".latexmkrc"].includes(extension);
 }
 
 function isFeedDocumentExtension(extension: string): boolean {
@@ -5290,7 +5962,7 @@ function isCadDrawingExtension(extension: string): boolean {
 }
 
 function isDiagramSourceExtension(extension: string): boolean {
-  return [".drawio", ".dot", ".gv", ".mmd", ".mermaid", ".puml", ".plantuml"].includes(extension);
+  return [".drawio", ".dot", ".graphml", ".gv", ".mmd", ".mermaid", ".puml", ".plantuml"].includes(extension);
 }
 
 function isWindowsScheduledTaskFile(extension: string): boolean {
@@ -5324,6 +5996,8 @@ function isPythonDependencyManifestFile(filePath: string, extension: string): bo
     name === "conda-env.yml" ||
     name === "conda-env.yaml" ||
     name === "uv.lock" ||
+    /^constraints(?:[-_.][a-z0-9_.-]+)?\.txt$/i.test(name) ||
+    (extension === ".txt" && name.includes("constraints")) ||
     /^requirements(?:[-_.][a-z0-9_.-]+)?\.txt$/i.test(name) ||
     (extension === ".txt" && name.includes("requirements"))
   );
@@ -5352,10 +6026,12 @@ function isDartPubspecManifestFile(filePath: string, extension: string): boolean
 function isApplePackageManifestFile(filePath: string, extension: string): boolean {
   const name = basename(filePath).toLowerCase();
   return (
-    [".swift-package", ".podfile", ".podfile.lock", ".podspec"].includes(extension) ||
+    [".swift-package", ".podfile", ".podfile.lock", ".pbxproj", ".podspec"].includes(extension) ||
     name === "package.swift" ||
     name === "podfile" ||
     name === "podfile.lock" ||
+    name === "project.pbxproj" ||
+    name.endsWith(".pbxproj") ||
     name.endsWith(".podspec")
   );
 }
@@ -5399,6 +6075,29 @@ function isNodePackageManagerConfigFile(filePath: string, extension: string): bo
     name === ".yarnrc.yaml" ||
     name === ".pnpmfile.cjs" ||
     name === ".npmignore"
+  );
+}
+
+function isJsToolingConfigFile(filePath: string, extension: string): boolean {
+  const name = basename(filePath).toLowerCase();
+  return (
+    extension === ".js-tooling-config" ||
+    name === "eslint.config.js" ||
+    name === "eslint.config.mjs" ||
+    name === "eslint.config.cjs" ||
+    name === ".eslintrc" ||
+    name.startsWith(".eslintrc.") ||
+    name === ".prettierrc" ||
+    name.startsWith(".prettierrc.") ||
+    name.startsWith("prettier.config.") ||
+    name === "biome.json" ||
+    name === "biome.jsonc" ||
+    name === ".stylelintrc" ||
+    name.startsWith(".stylelintrc.") ||
+    name.startsWith("stylelint.config.") ||
+    name.startsWith("jest.config.") ||
+    name.startsWith("vitest.config.") ||
+    name.startsWith("playwright.config.")
   );
 }
 
@@ -5575,7 +6274,10 @@ function parsePythonDependencyManifestPreview(
   const buildBackends = new Set<string>();
   const lines = normalizeTextPreview(raw).split("\n");
 
-  if (/^requirements(?:[-_.][a-z0-9_.-]+)?\.txt$/i.test(name) || (extension === ".txt" && name.includes("requirements"))) {
+  if (/^constraints(?:[-_.][a-z0-9_.-]+)?\.txt$/i.test(name) || (extension === ".txt" && name.includes("constraints"))) {
+    dependencyGroups.add("constraints");
+    collectRequirementLines(lines, packageNames, indexHints);
+  } else if (/^requirements(?:[-_.][a-z0-9_.-]+)?\.txt$/i.test(name) || (extension === ".txt" && name.includes("requirements"))) {
     dependencyGroups.add("requirements");
     collectRequirementLines(lines, packageNames, indexHints);
   } else if (name === "pyproject.toml") {
@@ -5633,6 +6335,7 @@ function describePythonDependencyManifestFormat(name: string): string {
   if (name === "pipfile") return "Pipfile";
   if (name === "uv.lock") return "uv lock";
   if (name.endsWith(".yml") || name.endsWith(".yaml")) return "Conda environment YAML";
+  if (name.includes("constraints")) return "constraints.txt";
   if (name.includes("requirements")) return "requirements.txt";
   return "Python dependency manifest";
 }
@@ -5830,7 +6533,7 @@ interface CoverageReportPreview {
 }
 
 function isCoverageReportFile(filePath: string, extension: string): boolean {
-  return extension === ".lcov" || (extension === ".xml" && looksLikeCoverageReportXml(filePath));
+  return extension === ".lcov" || extension === ".istanbul-coverage.json" || (extension === ".xml" && looksLikeCoverageReportXml(filePath));
 }
 
 function looksLikeCoverageReportXml(filePath: string): boolean {
@@ -5850,7 +6553,11 @@ function looksLikeCoverageReportXml(filePath: string): boolean {
 function summarizeCoverageReportFile(filePath: string, extension: string, size: number): string {
   try {
     const raw = readFileHeader(filePath, Math.min(size, MAX_COVERAGE_REPORT_PREVIEW_BYTES)).toString("utf8");
-    const preview = extension === ".lcov" ? parseLcovCoverageReport(raw) : parseXmlCoverageReport(raw);
+    const preview = extension === ".lcov"
+      ? parseLcovCoverageReport(raw)
+      : extension === ".istanbul-coverage.json"
+      ? parseIstanbulCoverageJsonReport(raw)
+      : parseXmlCoverageReport(raw);
     const lineRate = formatCoverageRate(preview.lineRate, preview.coveredLines, preview.totalLines);
     const branchRate = formatCoverageRate(preview.branchRate, preview.coveredBranches, preview.totalBranches);
     return [
@@ -5903,6 +6610,117 @@ function parseLcovCoverageReport(raw: string): CoverageReportPreview {
     totalBranches,
     truncated: raw.length >= MAX_COVERAGE_REPORT_PREVIEW_BYTES || files.length >= MAX_COVERAGE_FILE_PREVIEW,
   };
+}
+
+function parseIstanbulCoverageJsonReport(raw: string): CoverageReportPreview {
+  const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+  const record = isRecord(parsed) ? parsed : {};
+  const summaryLines = readIstanbulCoverageSummaryMetric(record, "lines");
+  const summaryBranches = readIstanbulCoverageSummaryMetric(record, "branches");
+  const hasSummaryShape = hasIstanbulCoverageSummaryShape(record);
+  const files: string[] = [];
+  let totalLines = summaryLines.total ?? 0;
+  let coveredLines = summaryLines.covered ?? 0;
+  let totalBranches = summaryBranches.total ?? 0;
+  let coveredBranches = summaryBranches.covered ?? 0;
+  for (const [key, value] of Object.entries(record)) {
+    if (key === "total" || !isRecord(value)) continue;
+    const path = readJsonString(value, "path") || key;
+    if (files.length < MAX_COVERAGE_FILE_PREVIEW) {
+      files.push(clampSingleLine(maskPotentialSecretPathSegments(path), 160));
+    }
+    if (summaryLines.total === null) {
+      const lineSummary = readIstanbulCoverageMetric(value, "lines");
+      if (lineSummary.total !== null) {
+        totalLines += lineSummary.total;
+        coveredLines += lineSummary.covered ?? 0;
+      } else {
+        const statementCounts = readJsonNumberValues(value.s);
+        totalLines += statementCounts.total;
+        coveredLines += statementCounts.covered;
+      }
+    }
+    if (summaryBranches.total === null) {
+      const branchSummary = readIstanbulCoverageMetric(value, "branches");
+      if (branchSummary.total !== null) {
+        totalBranches += branchSummary.total;
+        coveredBranches += branchSummary.covered ?? 0;
+      } else {
+        const branchCounts = readIstanbulBranchCounts(value.b);
+        totalBranches += branchCounts.total;
+        coveredBranches += branchCounts.covered;
+      }
+    }
+  }
+  return {
+    format: hasSummaryShape ? "Istanbul JSON Summary" : "Istanbul JSON",
+    files,
+    packages: [],
+    lineRate: summaryLines.rate,
+    branchRate: summaryBranches.rate,
+    coveredLines,
+    totalLines,
+    coveredBranches,
+    totalBranches,
+    truncated: raw.length >= MAX_COVERAGE_REPORT_PREVIEW_BYTES || files.length >= MAX_COVERAGE_FILE_PREVIEW,
+  };
+}
+
+function hasIstanbulCoverageSummaryShape(record: Record<string, unknown>): boolean {
+  if (isRecord(record.total) && (isRecord(record.total.lines) || isRecord(record.total.branches))) return true;
+  return Object.entries(record).some(([key, value]) =>
+    key !== "total" && isRecord(value) && (isRecord(value.lines) || isRecord(value.branches)),
+  );
+}
+
+function readIstanbulCoverageSummaryMetric(record: Record<string, unknown>, key: "lines" | "branches"): {
+  covered: number | null;
+  total: number | null;
+  rate: number | null;
+} {
+  const total = isRecord(record.total) ? record.total : null;
+  return readIstanbulCoverageMetric(total, key);
+}
+
+function readIstanbulCoverageMetric(record: Record<string, unknown> | null, key: "lines" | "branches"): {
+  covered: number | null;
+  total: number | null;
+  rate: number | null;
+} {
+  const metric = record && isRecord(record[key]) ? record[key] : null;
+  if (!metric) return { covered: null, total: null, rate: null };
+  const covered = readJsonNumber(metric, "covered");
+  const count = readJsonNumber(metric, "total");
+  const pct = readJsonNumber(metric, "pct");
+  return {
+    covered,
+    total: count,
+    rate: pct !== null ? pct / 100 : null,
+  };
+}
+
+function readJsonNumberValues(value: unknown): { covered: number; total: number } {
+  if (!isRecord(value)) return { covered: 0, total: 0 };
+  const counts = Object.values(value).filter((item): item is number => typeof item === "number" && Number.isFinite(item));
+  return {
+    covered: counts.filter((count) => count > 0).length,
+    total: counts.length,
+  };
+}
+
+function readIstanbulBranchCounts(value: unknown): { covered: number; total: number } {
+  if (!isRecord(value)) return { covered: 0, total: 0 };
+  let covered = 0;
+  let total = 0;
+  for (const item of Object.values(value)) {
+    const counts = Array.isArray(item) ? item : [item];
+    for (const count of counts) {
+      if (typeof count !== "number" || !Number.isFinite(count)) continue;
+      total += 1;
+      if (count > 0) covered += 1;
+    }
+  }
+  return { covered, total };
 }
 
 function parseXmlCoverageReport(raw: string): CoverageReportPreview {
@@ -6012,6 +6830,9 @@ function readOptionalCoverageNumber(value: string | undefined): number | null {
 }
 
 function formatCoverageRate(rate: number | null, covered: number | null, total: number | null): string {
+  if (rate !== null && covered !== null && total !== null && total > 0) {
+    return `${Math.round(rate * 1000) / 10}% (${covered}/${total})`;
+  }
   if (rate !== null) return `${Math.round(rate * 1000) / 10}%`;
   if (covered !== null && total !== null && total > 0) {
     return `${Math.round((covered / total) * 1000) / 10}% (${covered}/${total})`;
@@ -6035,6 +6856,7 @@ interface TestReportPreview {
   skipped: number;
   durationSeconds: number | null;
   failedCases: string[];
+  detailLines?: string[];
   resultSummary: string;
   truncated: boolean;
 }
@@ -6043,6 +6865,11 @@ function isTestReportFile(filePath: string, extension: string): boolean {
   return (
     extension === ".trx" ||
     extension === ".junit.xml" ||
+    extension === ".jmeter.xml" ||
+    extension === ".jmeter.csv" ||
+    extension === ".jtl" ||
+    extension === ".nunit.xml" ||
+    extension === ".xunit.xml" ||
     extension === ".tap" ||
     extension === ".tap13" ||
     extension === ".test-results.json" ||
@@ -6054,7 +6881,13 @@ function isTestReportFile(filePath: string, extension: string): boolean {
 function looksLikeTestReportXml(filePath: string): boolean {
   try {
     const raw = readFileHeader(filePath, Math.min(MAX_TEST_REPORT_PREVIEW_BYTES, 16 * 1024)).toString("utf8");
-    return /<(testsuites|testsuite|TestRun)\b/i.test(raw) && /<(testcase|UnitTestResult|ResultSummary|Counters)\b/i.test(raw);
+    return (
+      (
+        /<(testsuites|testsuite|TestRun|test-run|assemblies|assembly)\b/i.test(raw) &&
+        /<(testcase|test-case|test|UnitTestResult|ResultSummary|Counters)\b/i.test(raw)
+      ) ||
+      looksLikeJmeterXmlTestReport(raw)
+    );
   } catch {
     return false;
   }
@@ -6065,6 +6898,9 @@ function looksLikeJsonTestReport(filePath: string): boolean {
     const raw = readFileHeader(filePath, Math.min(MAX_TEST_REPORT_PREVIEW_BYTES, 32 * 1024)).toString("utf8");
     const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
     if (!isRecord(parsed)) return false;
+    if (Array.isArray(parsed.runs) && hasAnyProperty(parsed, ["totalTests", "totalPassed", "totalFailed"])) return true;
+    if (looksLikeMochaJsonTestReportRecord(parsed)) return true;
+    if (looksLikeAllureJsonTestReportRecord(parsed)) return true;
     if (Array.isArray(parsed.suites) && (isRecord(parsed.stats) || parsed.config !== undefined)) return true;
     if (Array.isArray(parsed.testResults) && hasAnyProperty(parsed, ["numTotalTests", "numPassedTests", "numFailedTests", "numPendingTests"])) return true;
     if (Array.isArray(parsed.testResults) && parsed.testResults.some((entry) => isRecord(entry) && Array.isArray(entry.assertionResults))) return true;
@@ -6079,8 +6915,16 @@ function summarizeTestReportFile(filePath: string, extension: string, size: numb
     const raw = readFileHeader(filePath, Math.min(size, MAX_TEST_REPORT_PREVIEW_BYTES)).toString("utf8");
     const preview = extension === ".tap" || extension === ".tap13" || looksLikeTapTestReport(raw)
       ? parseTapTestReport(raw)
+      : extension === ".jmeter.xml" || looksLikeJmeterXmlTestReport(raw)
+      ? parseJmeterXmlTestReport(raw)
+      : extension === ".jmeter.csv" || extension === ".jtl"
+      ? parseJmeterDelimitedTestReport(raw)
       : extension === ".trx" || /<TestRun\b/i.test(raw)
       ? parseTrxTestReport(raw)
+      : extension === ".nunit.xml" || /<test-run\b/i.test(raw)
+      ? parseNunitXmlTestReport(raw)
+      : extension === ".xunit.xml" || /<assemblies\b/i.test(raw) || (/<assembly\b/i.test(raw) && /<collection\b/i.test(raw))
+      ? parseXunitXmlTestReport(raw)
       : extension === ".test-results.json" || looksLikeJsonTestReportText(raw)
       ? parseJsonTestReport(raw)
       : parseJunitTestReport(raw);
@@ -6091,6 +6935,9 @@ function summarizeTestReportFile(filePath: string, extension: string, size: numb
         ? `Suites (${preview.suites.length}${preview.suites.length >= MAX_TEST_REPORT_CASE_PREVIEW ? "+" : ""}): ${preview.suites.join(", ")}.`
         : "Suites: none named in the bounded preview.",
       preview.durationSeconds !== null ? `Duration: ${preview.durationSeconds.toFixed(3)} seconds.` : "",
+      preview.detailLines && preview.detailLines.length > 0
+        ? `Local report details: ${preview.detailLines.join(" | ")}.`
+        : "",
       preview.failedCases.length > 0
         ? `Failure/error previews (${preview.failedCases.length}${preview.failedCases.length >= MAX_TEST_REPORT_FAILURE_PREVIEW ? "+" : ""}): ${preview.failedCases.join(" | ")}.`
         : "Failure/error previews: none detected in the bounded preview.",
@@ -6133,6 +6980,7 @@ function parseJunitTestReport(raw: string): TestReportPreview {
   }
   const suiteCaseCount = sumXmlNumericAttributes(suiteAttrs, "tests");
   const cases = suiteCaseCount > 0 ? suiteCaseCount : caseMatches.length;
+  const detailLines = collectJunitReportDetails(raw);
   return {
     format: "JUnit XML",
     suites,
@@ -6142,9 +6990,74 @@ function parseJunitTestReport(raw: string): TestReportPreview {
     skipped,
     durationSeconds: Number.isFinite(durationSeconds) && durationSeconds > 0 ? durationSeconds : null,
     failedCases,
+    detailLines,
     resultSummary: `Cases: ${cases}; failures: ${failures}; errors: ${errors}; skipped: ${skipped}.`,
-    truncated: raw.length >= MAX_TEST_REPORT_PREVIEW_BYTES || caseMatches.length > MAX_TEST_REPORT_CASE_PREVIEW,
+    truncated: raw.length >= MAX_TEST_REPORT_PREVIEW_BYTES || caseMatches.length > MAX_TEST_REPORT_CASE_PREVIEW || detailLines.length >= MAX_TEST_REPORT_DETAIL_PREVIEW,
   };
+}
+
+function collectJunitReportDetails(raw: string): string[] {
+  return collectXmlTestReportDetails(raw, "JUnit");
+}
+
+function collectXmlTestReportDetails(raw: string, label: string): string[] {
+  const details: string[] = [];
+  const propertySamples = collectJunitPropertySamples(raw);
+  if (propertySamples.length > 0) {
+    details.push(`${label} properties: ${propertySamples.join(", ")}`);
+  }
+  const attachmentSamples = collectJunitAttachmentSamples(raw);
+  if (attachmentSamples.length > 0) {
+    details.push(`${label} attachment cues: ${attachmentSamples.join(", ")}`);
+  }
+  return details.slice(0, MAX_TEST_REPORT_DETAIL_PREVIEW);
+}
+
+function collectJunitPropertySamples(raw: string): string[] {
+  const properties: string[] = [];
+  for (const match of raw.matchAll(/<property\b([^>]*?)(?:\/>|>([\s\S]*?)<\/property>)/gi)) {
+    if (properties.length >= MAX_TEST_REPORT_DETAIL_PREVIEW) break;
+    const attrs = readXmlAttributes(match[1] ?? "");
+    const name = attrs.get("name") || attrs.get("key") || "";
+    if (!name) continue;
+    const rawValue = attrs.get("value") || decodeXmlEntities((match[2] ?? "").replace(/<[^>]+>/g, " ")).trim();
+    properties.push(formatJunitKeyValueSample(name, rawValue));
+  }
+  return uniquePreviewValues(properties, MAX_TEST_REPORT_DETAIL_PREVIEW);
+}
+
+function collectJunitAttachmentSamples(raw: string): string[] {
+  const attachments: string[] = [];
+  for (const match of raw.matchAll(/<attachment\b([^>]*?)(?:\/>|>([\s\S]*?)<\/attachment>)/gi)) {
+    if (attachments.length >= MAX_TEST_REPORT_DETAIL_PREVIEW) break;
+    const attrs = readXmlAttributes(match[1] ?? "");
+    const value =
+      attrs.get("path") ||
+      attrs.get("file") ||
+      attrs.get("href") ||
+      attrs.get("source") ||
+      attrs.get("name") ||
+      decodeXmlEntities((match[2] ?? "").replace(/<[^>]+>/g, " ")).trim();
+    if (value) attachments.push(maskPotentialSecretPathSegments(clampSingleLine(value, 140)));
+  }
+  const diagnosticText = [...raw.matchAll(/<(?:system-out|system-err|output)\b[^>]*>([\s\S]*?)<\/(?:system-out|system-err|output)>/gi)]
+    .map((match) => decodeXmlEntities((match[1] ?? "").replace(/<[^>]+>/g, " ")))
+    .join("\n");
+  for (const match of diagnosticText.matchAll(/\[\[ATTACHMENT\|([^\]\r\n]+)\]\]|(?:^|\n)\s*(?:attachment|artifact)\s*:\s*([^\r\n]+)/gi)) {
+    if (attachments.length >= MAX_TEST_REPORT_DETAIL_PREVIEW) break;
+    const value = match[1] || match[2] || "";
+    if (value) attachments.push(maskPotentialSecretPathSegments(clampSingleLine(value, 140)));
+  }
+  return uniquePreviewValues(attachments, MAX_TEST_REPORT_DETAIL_PREVIEW);
+}
+
+function formatJunitKeyValueSample(name: string, rawValue: string): string {
+  const key = clampSingleLine(name, 80);
+  if (!rawValue) return key;
+  const value = isSensitiveFieldName(key)
+    ? "[redacted]"
+    : maskPotentialSecretValues(clampSingleLine(rawValue, 120));
+  return `${key}=${value}`;
 }
 
 function parseTrxTestReport(raw: string): TestReportPreview {
@@ -6178,10 +7091,287 @@ function parseTrxTestReport(raw: string): TestReportPreview {
   };
 }
 
+function parseNunitXmlTestReport(raw: string): TestReportPreview {
+  const runAttrs = readXmlAttributes(raw.match(/<test-run\b([^>]*)>/i)?.[1] ?? "");
+  const suiteMatches = [...raw.matchAll(/<test-suite\b([^>]*)>/gi)];
+  const testMatches = [...raw.matchAll(/<test-case\b([^>]*?)(?:\/>|>([\s\S]*?)<\/test-case>)/gi)];
+  const failedCases: string[] = [];
+  const suites = suiteMatches
+    .map((match) => readXmlAttributes(match[1] ?? ""))
+    .map((attrs) => attrs.get("fullname") || attrs.get("name") || "")
+    .filter(Boolean)
+    .map((name) => clampSingleLine(name, 120))
+    .slice(0, MAX_TEST_REPORT_CASE_PREVIEW);
+  let passed = 0;
+  let failures = 0;
+  let skipped = 0;
+
+  for (const match of testMatches) {
+    const attrs = readXmlAttributes(match[1] ?? "");
+    const body = match[2] ?? "";
+    const result = attrs.get("result") || attrs.get("label") || "Unknown";
+    if (/^Passed$/i.test(result)) passed += 1;
+    else if (/^(Skipped|Ignored|Inconclusive)$/i.test(result)) skipped += 1;
+    else {
+      failures += 1;
+      if (failedCases.length < MAX_TEST_REPORT_FAILURE_PREVIEW) {
+        failedCases.push(formatTestCasePreview(attrs, body));
+      }
+    }
+  }
+
+  const cases = readXmlNumber(runAttrs, "testcasecount") || readXmlNumber(runAttrs, "total") || testMatches.length;
+  const runFailed = readXmlNumber(runAttrs, "failed");
+  const runSkipped = readXmlNumber(runAttrs, "skipped") + readXmlNumber(runAttrs, "inconclusive");
+  const runPassed = readXmlNumber(runAttrs, "passed");
+  const durationSeconds = readXmlNumber(runAttrs, "duration") || sumXmlNumericAttributes(
+    testMatches.map((match) => readXmlAttributes(match[1] ?? "")),
+    "duration",
+  );
+  const detailLines = collectXmlTestReportDetails(raw, "NUnit");
+
+  return {
+    format: "NUnit XML",
+    suites,
+    cases,
+    failures: runFailed || failures,
+    errors: 0,
+    skipped: runSkipped || skipped,
+    durationSeconds: Number.isFinite(durationSeconds) && durationSeconds > 0 ? durationSeconds : null,
+    failedCases,
+    detailLines,
+    resultSummary: `Cases: ${cases}; passed: ${runPassed || passed}; non-passing: ${runFailed || failures}; skipped: ${runSkipped || skipped}.`,
+    truncated: raw.length >= MAX_TEST_REPORT_PREVIEW_BYTES || testMatches.length > MAX_TEST_REPORT_CASE_PREVIEW || detailLines.length >= MAX_TEST_REPORT_DETAIL_PREVIEW,
+  };
+}
+
+function parseXunitXmlTestReport(raw: string): TestReportPreview {
+  const assemblyAttrs = [...raw.matchAll(/<assembly\b([^>]*)>/gi)].map((match) => readXmlAttributes(match[1] ?? ""));
+  const collectionMatches = [...raw.matchAll(/<collection\b([^>]*?)(?:\/>|>([\s\S]*?)<\/collection>)/gi)];
+  const testMatches = [...raw.matchAll(/<test\b([^>]*?)(?:\/>|>([\s\S]*?)<\/test>)/gi)];
+  const failedCases: string[] = [];
+  const suites = collectionMatches
+    .map((match) => readXmlAttributes(match[1] ?? ""))
+    .map((attrs) => attrs.get("name") || "")
+    .filter(Boolean)
+    .map((name) => clampSingleLine(name, 120))
+    .slice(0, MAX_TEST_REPORT_CASE_PREVIEW);
+  let passed = 0;
+  let failures = 0;
+  let skipped = 0;
+
+  for (const match of testMatches) {
+    const attrs = readXmlAttributes(match[1] ?? "");
+    const body = match[2] ?? "";
+    const result = attrs.get("result") || "Unknown";
+    if (/^Pass$/i.test(result)) passed += 1;
+    else if (/^Skip$/i.test(result)) skipped += 1;
+    else {
+      failures += 1;
+      if (failedCases.length < MAX_TEST_REPORT_FAILURE_PREVIEW) {
+        failedCases.push(formatTestCasePreview(attrs, body));
+      }
+    }
+  }
+
+  const assemblyTotal = sumXmlNumericAttributes(assemblyAttrs, "total");
+  const assemblyFailed = sumXmlNumericAttributes(assemblyAttrs, "failed");
+  const assemblySkipped = sumXmlNumericAttributes(assemblyAttrs, "skipped");
+  const assemblyPassed = sumXmlNumericAttributes(assemblyAttrs, "passed");
+  const durationSeconds = sumXmlNumericAttributes(assemblyAttrs, "time") || sumXmlNumericAttributes(
+    testMatches.map((match) => readXmlAttributes(match[1] ?? "")),
+    "time",
+  );
+  const cases = assemblyTotal || testMatches.length;
+  const detailLines = collectXmlTestReportDetails(raw, "xUnit");
+
+  return {
+    format: "xUnit XML",
+    suites,
+    cases,
+    failures: assemblyFailed || failures,
+    errors: 0,
+    skipped: assemblySkipped || skipped,
+    durationSeconds: Number.isFinite(durationSeconds) && durationSeconds > 0 ? durationSeconds : null,
+    failedCases,
+    detailLines,
+    resultSummary: `Cases: ${cases}; passed: ${assemblyPassed || passed}; non-passing: ${assemblyFailed || failures}; skipped: ${assemblySkipped || skipped}.`,
+    truncated: raw.length >= MAX_TEST_REPORT_PREVIEW_BYTES || testMatches.length > MAX_TEST_REPORT_CASE_PREVIEW || detailLines.length >= MAX_TEST_REPORT_DETAIL_PREVIEW,
+  };
+}
+
+function looksLikeJmeterXmlTestReport(raw: string): boolean {
+  return /<testResults\b/i.test(raw) && /<(?:httpSample|sample)\b/i.test(raw);
+}
+
+function parseJmeterXmlTestReport(raw: string): TestReportPreview {
+  const sampleMatches = [...raw.matchAll(/<(httpSample|sample)\b([^>]*?)(?:\/>|>([\s\S]*?)<\/\1>)/gi)];
+  const failedCases: string[] = [];
+  const suites: string[] = [];
+  let passed = 0;
+  let failures = 0;
+  let durationMs = 0;
+
+  for (const match of sampleMatches) {
+    const attrs = readXmlAttributes(match[2] ?? "");
+    const label = attrs.get("lb") || attrs.get("label") || attrs.get("tn") || "(unnamed JMeter sample)";
+    const threadGroup = attrs.get("tn");
+    const success = attrs.get("s") || attrs.get("success") || "";
+    const elapsed = readXmlNumber(attrs, "t") || readXmlNumber(attrs, "time");
+    durationMs += elapsed;
+    if (threadGroup && suites.length < MAX_TEST_REPORT_CASE_PREVIEW) {
+      suites.push(clampSingleLine(maskPotentialSecretValues(threadGroup), 120));
+    }
+    if (/^true$/i.test(success)) {
+      passed += 1;
+      continue;
+    }
+    failures += 1;
+    if (failedCases.length < MAX_TEST_REPORT_FAILURE_PREVIEW) {
+      const responseCode = attrs.get("rc") || attrs.get("responseCode") || "unknown";
+      const responseMessage = attrs.get("rm") || attrs.get("responseMessage") || "";
+      failedCases.push(clampSingleLine(
+        `${maskPotentialSecretValues(label)} [${responseCode}]${responseMessage ? `: ${maskPotentialSecretValues(responseMessage)}` : ""}`,
+        240,
+      ));
+    }
+  }
+
+  const cases = sampleMatches.length;
+  const detailLines = collectJmeterXmlReportDetails(raw);
+  return {
+    format: "JMeter XML",
+    suites: [...new Set(suites)].slice(0, MAX_TEST_REPORT_CASE_PREVIEW),
+    cases,
+    failures,
+    errors: 0,
+    skipped: 0,
+    durationSeconds: durationMs > 0 ? durationMs / 1000 : null,
+    failedCases,
+    detailLines,
+    resultSummary: `Samples: ${cases}; passed: ${passed}; non-passing: ${failures}.`,
+    truncated: raw.length >= MAX_TEST_REPORT_PREVIEW_BYTES || sampleMatches.length > MAX_TEST_REPORT_CASE_PREVIEW || detailLines.length >= MAX_TEST_REPORT_DETAIL_PREVIEW,
+  };
+}
+
+function collectJmeterXmlReportDetails(raw: string): string[] {
+  const details: string[] = [];
+  const assertionSamples: string[] = [];
+  for (const match of raw.matchAll(/<assertionResult\b[^>]*>([\s\S]*?)<\/assertionResult>/gi)) {
+    if (assertionSamples.length >= MAX_TEST_REPORT_DETAIL_PREVIEW) break;
+    const body = match[1] ?? "";
+    const name = decodeXmlEntities(body.match(/<name\b[^>]*>([\s\S]*?)<\/name>/i)?.[1] ?? "").replace(/<[^>]+>/g, " ").trim();
+    const failure = decodeXmlEntities(body.match(/<failureMessage\b[^>]*>([\s\S]*?)<\/failureMessage>/i)?.[1] ?? "").replace(/<[^>]+>/g, " ").trim();
+    const sample = [name, failure].filter(Boolean).join(": ");
+    if (sample) assertionSamples.push(maskPotentialSecretValues(clampSingleLine(sample, 160)));
+  }
+  if (assertionSamples.length > 0) {
+    details.push(`JMeter assertion cues: ${uniquePreviewValues(assertionSamples, MAX_TEST_REPORT_DETAIL_PREVIEW).join(", ")}`);
+  }
+
+  const responseDataSamples: string[] = [];
+  for (const match of raw.matchAll(/<responseData\b[^>]*>([\s\S]*?)<\/responseData>/gi)) {
+    if (responseDataSamples.length >= MAX_TEST_REPORT_DETAIL_PREVIEW) break;
+    const value = decodeXmlEntities(match[1] ?? "").replace(/<[^>]+>/g, " ").trim();
+    if (value) responseDataSamples.push(maskPotentialSecretValues(clampSingleLine(value, 160)));
+  }
+  if (responseDataSamples.length > 0) {
+    details.push(`JMeter response-data cues: ${uniquePreviewValues(responseDataSamples, MAX_TEST_REPORT_DETAIL_PREVIEW).join(", ")}`);
+  }
+  return details.slice(0, MAX_TEST_REPORT_DETAIL_PREVIEW);
+}
+
+function parseJmeterDelimitedTestReport(raw: string): TestReportPreview {
+  const rows = parseDelimitedPreviewRows(raw, ",");
+  const header = rows[0] ?? [];
+  const samples = rows.slice(1);
+  const failedCases: string[] = [];
+  const suites = header.length > 0 ? [`Columns: ${header.slice(0, 8).join(", ")}`] : [];
+  const findIndex = (...names: string[]): number =>
+    header.findIndex((column) => names.some((name) => column.toLowerCase() === name.toLowerCase()));
+  const labelIndex = findIndex("label", "sampler label", "name");
+  const successIndex = findIndex("success", "s");
+  const responseCodeIndex = findIndex("responsecode", "rc");
+  const responseMessageIndex = findIndex("responsemessage", "rm");
+  const elapsedIndex = findIndex("elapsed", "t", "time");
+  const threadIndex = findIndex("threadname", "thread", "tn");
+  const failureMessageIndex = findIndex("failuremessage", "assertionfailuremessage", "assertion message", "message");
+  let passed = 0;
+  let failures = 0;
+  let durationMs = 0;
+
+  for (const row of samples) {
+    const success = successIndex >= 0 ? row[successIndex] : "";
+    const elapsed = elapsedIndex >= 0 ? Number.parseFloat(row[elapsedIndex] || "0") : 0;
+    if (Number.isFinite(elapsed)) durationMs += elapsed;
+    if (/^true$/i.test(success)) {
+      passed += 1;
+      continue;
+    }
+    failures += 1;
+    if (failedCases.length < MAX_TEST_REPORT_FAILURE_PREVIEW) {
+      const label = labelIndex >= 0 ? row[labelIndex] : "(unnamed JMeter sample)";
+      const responseCode = responseCodeIndex >= 0 ? row[responseCodeIndex] : "unknown";
+      const responseMessage = responseMessageIndex >= 0 ? row[responseMessageIndex] : "";
+      failedCases.push(clampSingleLine(
+        `${maskPotentialSecretValues(label || "(unnamed JMeter sample)")} [${responseCode || "unknown"}]${responseMessage ? `: ${maskPotentialSecretValues(responseMessage)}` : ""}`,
+        240,
+      ));
+    }
+  }
+
+  const detailLines = collectJmeterDelimitedReportDetails(samples, threadIndex, failureMessageIndex);
+  return {
+    format: "JMeter JTL/CSV",
+    suites,
+    cases: samples.length,
+    failures,
+    errors: 0,
+    skipped: 0,
+    durationSeconds: durationMs > 0 ? durationMs / 1000 : null,
+    failedCases,
+    detailLines,
+    resultSummary: `Samples: ${samples.length}; passed: ${passed}; non-passing: ${failures}.`,
+    truncated: raw.length >= MAX_TEST_REPORT_PREVIEW_BYTES || samples.length >= MAX_CSV_PREVIEW_ROWS || detailLines.length >= MAX_TEST_REPORT_DETAIL_PREVIEW,
+  };
+}
+
+function collectJmeterDelimitedReportDetails(samples: string[][], threadIndex: number, failureMessageIndex: number): string[] {
+  const details: string[] = [];
+  if (threadIndex >= 0) {
+    const threadSamples = uniquePreviewValues(
+      samples
+        .map((row) => row[threadIndex] || "")
+        .filter(Boolean)
+        .map((value) => maskPotentialSecretValues(clampSingleLine(value, 120))),
+      MAX_TEST_REPORT_DETAIL_PREVIEW,
+    );
+    if (threadSamples.length > 0) {
+      details.push(`JMeter thread cues: ${threadSamples.join(", ")}`);
+    }
+  }
+  if (failureMessageIndex >= 0) {
+    const failureSamples = uniquePreviewValues(
+      samples
+        .map((row) => row[failureMessageIndex] || "")
+        .filter(Boolean)
+        .map((value) => maskPotentialSecretValues(clampSingleLine(value, 160))),
+      MAX_TEST_REPORT_DETAIL_PREVIEW,
+    );
+    if (failureSamples.length > 0) {
+      details.push(`JMeter CSV failure details: ${failureSamples.join(", ")}`);
+    }
+  }
+  return details.slice(0, MAX_TEST_REPORT_DETAIL_PREVIEW);
+}
+
 function looksLikeJsonTestReportText(raw: string): boolean {
   try {
     const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
     if (!isRecord(parsed)) return false;
+    if (Array.isArray(parsed.runs) && hasAnyProperty(parsed, ["totalTests", "totalPassed", "totalFailed"])) return true;
+    if (looksLikeMochaJsonTestReportRecord(parsed)) return true;
+    if (looksLikeAllureJsonTestReportRecord(parsed)) return true;
     if (Array.isArray(parsed.suites) && (isRecord(parsed.stats) || parsed.config !== undefined)) return true;
     if (Array.isArray(parsed.testResults) && hasAnyProperty(parsed, ["numTotalTests", "numPassedTests", "numFailedTests", "numPendingTests"])) return true;
     if (Array.isArray(parsed.testResults) && parsed.testResults.some((entry) => isRecord(entry) && Array.isArray(entry.assertionResults))) return true;
@@ -6195,6 +7385,15 @@ function parseJsonTestReport(raw: string): TestReportPreview {
   const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
   if (!isRecord(parsed)) {
     return emptyJsonTestReportPreview("JSON test report");
+  }
+  if (Array.isArray(parsed.runs) && hasAnyProperty(parsed, ["totalTests", "totalPassed", "totalFailed"])) {
+    return parseCypressJsonTestReport(parsed);
+  }
+  if (looksLikeMochaJsonTestReportRecord(parsed)) {
+    return parseMochaJsonTestReport(parsed);
+  }
+  if (looksLikeAllureJsonTestReportRecord(parsed)) {
+    return parseAllureJsonTestReport(parsed);
   }
   if (Array.isArray(parsed.suites)) {
     return parsePlaywrightJsonTestReport(parsed);
@@ -6284,6 +7483,280 @@ function parsePlaywrightJsonTestReport(record: Record<string, unknown>): TestRep
     resultSummary: `Cases: ${cases}; passed: ${passed}; non-passing: ${failures}; skipped: ${skipped}.`,
     truncated: JSON.stringify(record).length >= MAX_TEST_REPORT_PREVIEW_BYTES || cases > MAX_TEST_REPORT_CASE_PREVIEW,
   };
+}
+
+function parseCypressJsonTestReport(record: Record<string, unknown>): TestReportPreview {
+  const suites: string[] = [];
+  const failedCases: string[] = [];
+  let cases = readJsonNumber(record, "totalTests") ?? 0;
+  let passed = readJsonNumber(record, "totalPassed") ?? 0;
+  let failures = readJsonNumber(record, "totalFailed") ?? 0;
+  let skipped = (readJsonNumber(record, "totalPending") ?? 0) + (readJsonNumber(record, "totalSkipped") ?? 0);
+  let durationMs = readJsonNumber(record, "totalDuration") ?? 0;
+  const hasTopLevelDuration = durationMs > 0;
+
+  for (const run of readJsonArray(record, "runs")) {
+    if (!isRecord(run)) continue;
+    const spec = isRecord(run.spec) ? run.spec : {};
+    const specName = readJsonString(spec, "relative") || readJsonString(spec, "name");
+    if (specName && suites.length < MAX_TEST_REPORT_CASE_PREVIEW) {
+      suites.push(clampSingleLine(maskPotentialSecretValues(specName), 120));
+    }
+    if (!hasTopLevelDuration) {
+      durationMs += readJsonNumber(run, "stats.wallClockDuration") ?? 0;
+    }
+    for (const test of readJsonArray(run, "tests")) {
+      if (!isRecord(test)) continue;
+      const state = (readJsonString(test, "state") || "unknown").toLowerCase();
+      const title = readCypressTestTitle(test);
+      if (cases === 0) cases += 1;
+      if (passed === 0 && state === "passed") passed += 1;
+      if (skipped === 0 && (state === "pending" || state === "skipped")) skipped += 1;
+      if (!/^(passed|pending|skipped)$/i.test(state) && failedCases.length < MAX_TEST_REPORT_FAILURE_PREVIEW) {
+        const attempts = readJsonArray(test, "attempts").filter(isRecord);
+        const lastAttempt = attempts.at(-1);
+        const error = readJsonString(test, "displayError") || readJsonString(lastAttempt?.error, "message");
+        failedCases.push(clampSingleLine(`${title} [${state}]${error ? `: ${maskPotentialSecretValues(error)}` : ""}`, 240));
+      }
+    }
+  }
+
+  if (cases === 0) cases = passed + failures + skipped;
+  if (failures === 0 && failedCases.length > 0) failures = failedCases.length;
+
+  return {
+    format: "Cypress JSON",
+    suites,
+    cases,
+    failures,
+    errors: 0,
+    skipped,
+    durationSeconds: durationMs > 0 ? durationMs / 1000 : null,
+    failedCases,
+    resultSummary: `Cases: ${cases}; passed: ${passed}; non-passing: ${failures}; skipped: ${skipped}.`,
+    truncated: JSON.stringify(record).length >= MAX_TEST_REPORT_PREVIEW_BYTES || cases > MAX_TEST_REPORT_CASE_PREVIEW,
+  };
+}
+
+function readCypressTestTitle(test: Record<string, unknown>): string {
+  const titleParts = readJsonArray(test, "title")
+    .map((part) => typeof part === "string" ? part : "")
+    .filter(Boolean);
+  const title = titleParts.length > 0 ? titleParts.join(" > ") : readJsonString(test, "title");
+  return clampSingleLine(maskPotentialSecretValues(title || "(unnamed Cypress test)"), 160);
+}
+
+function looksLikeMochaJsonTestReportRecord(record: Record<string, unknown>): boolean {
+  return (
+    isRecord(record.stats) &&
+    hasAnyProperty(record.stats, ["tests", "passes", "failures", "pending", "duration"]) &&
+    (
+      Array.isArray(record.tests) ||
+      Array.isArray(record.failures) ||
+      Array.isArray(record.passes) ||
+      Array.isArray(record.pending) ||
+      Array.isArray(record.results)
+    )
+  );
+}
+
+function parseMochaJsonTestReport(record: Record<string, unknown>): TestReportPreview {
+  const stats = isRecord(record.stats) ? record.stats : {};
+  const suites: string[] = [];
+  const failedCases: string[] = [];
+  const tests: Record<string, unknown>[] = [];
+  let cases = readJsonNumber(stats, "tests") ?? 0;
+  let passed = readJsonNumber(stats, "passes") ?? 0;
+  let failures = readJsonNumber(stats, "failures") ?? 0;
+  const skipped = readJsonNumber(stats, "pending") ?? 0;
+  const durationMs = readJsonNumber(stats, "duration") ?? 0;
+
+  const collectSuite = (suite: unknown): void => {
+    if (!isRecord(suite)) return;
+    const suiteTitle = readJsonString(suite, "fullTitle") || readJsonString(suite, "title") || readJsonString(suite, "file");
+    if (suiteTitle && suites.length < MAX_TEST_REPORT_CASE_PREVIEW) {
+      suites.push(clampSingleLine(maskPotentialSecretValues(suiteTitle), 120));
+    }
+    for (const test of readJsonArray(suite, "tests")) {
+      if (isRecord(test)) tests.push(test);
+    }
+    for (const child of readJsonArray(suite, "suites")) collectSuite(child);
+  };
+
+  for (const test of readJsonArray(record, "tests")) {
+    if (isRecord(test)) tests.push(test);
+  }
+  for (const result of readJsonArray(record, "results")) {
+    if (!isRecord(result)) continue;
+    const file = readJsonString(result, "file");
+    if (file && suites.length < MAX_TEST_REPORT_CASE_PREVIEW) {
+      suites.push(clampSingleLine(maskPotentialSecretValues(file), 120));
+    }
+    for (const suite of readJsonArray(result, "suites")) collectSuite(suite);
+    for (const test of readJsonArray(result, "tests")) {
+      if (isRecord(test)) tests.push(test);
+    }
+  }
+
+  const failureRecords = readJsonArray(record, "failures").filter(isRecord);
+  const candidateFailures = failureRecords.length > 0
+    ? failureRecords
+    : tests.filter((test) => /^(failed|fail)$/i.test(readJsonString(test, "state")));
+
+  for (const test of candidateFailures) {
+    if (failedCases.length >= MAX_TEST_REPORT_FAILURE_PREVIEW) break;
+    const title = readJsonString(test, "fullTitle") || readJsonString(test, "title") || "(unnamed Mocha test)";
+    const err = isRecord(test.err) ? test.err : {};
+    const error = readJsonString(err, "message") || readJsonString(test, "err") || readJsonString(test, "error");
+    failedCases.push(clampSingleLine(`${maskPotentialSecretValues(title)} [failed]${error ? `: ${maskPotentialSecretValues(error)}` : ""}`, 240));
+  }
+
+  if (cases === 0) cases = tests.length || passed + failures + skipped;
+  if (passed === 0 && tests.length > 0) {
+    passed = tests.filter((test) => /^passed$/i.test(readJsonString(test, "state"))).length;
+  }
+  if (failures === 0 && failedCases.length > 0) failures = failedCases.length;
+
+  return {
+    format: "Mocha JSON",
+    suites,
+    cases,
+    failures,
+    errors: 0,
+    skipped,
+    durationSeconds: durationMs > 0 ? durationMs / 1000 : null,
+    failedCases,
+    resultSummary: `Cases: ${cases}; passed: ${passed}; non-passing: ${failures}; skipped: ${skipped}.`,
+    truncated: JSON.stringify(record).length >= MAX_TEST_REPORT_PREVIEW_BYTES || cases > MAX_TEST_REPORT_CASE_PREVIEW,
+  };
+}
+
+function looksLikeAllureJsonTestReportRecord(record: Record<string, unknown>): boolean {
+  const status = readJsonString(record, "status");
+  return Boolean(
+    status &&
+      hasAnyProperty(record, ["uuid", "historyId", "testCaseId", "fullName", "name"]) &&
+      (
+        isRecord(record.statusDetails) ||
+        Array.isArray(record.labels) ||
+        Array.isArray(record.steps) ||
+        Array.isArray(record.attachments)
+      ),
+  );
+}
+
+function parseAllureJsonTestReport(record: Record<string, unknown>): TestReportPreview {
+  const status = (readJsonString(record, "status") || "unknown").toLowerCase();
+  const rawName = readJsonString(record, "fullName") || readJsonString(record, "name") || "(unnamed Allure test)";
+  const name = clampSingleLine(maskPotentialSecretValues(rawName), 160);
+  const labels = readJsonArray(record, "labels").filter(isRecord);
+  const suites = labels
+    .filter((label) => /^(parentSuite|suite|subSuite)$/i.test(readJsonString(label, "name")))
+    .map((label) => readJsonString(label, "value"))
+    .filter(Boolean)
+    .map((label) => clampSingleLine(maskPotentialSecretValues(label), 120))
+    .slice(0, MAX_TEST_REPORT_CASE_PREVIEW);
+  const statusDetails = isRecord(record.statusDetails) ? record.statusDetails : {};
+  const error = readJsonString(statusDetails, "message") || readJsonString(statusDetails, "trace");
+  const nonPassing = /^(failed|broken|unknown)$/i.test(status) ? 1 : 0;
+  const skipped = /^(skipped|pending)$/i.test(status) ? 1 : 0;
+  const passed = status === "passed" ? 1 : 0;
+  const failedCases = nonPassing > 0
+    ? [clampSingleLine(`${name} [${status}]${error ? `: ${maskPotentialSecretValues(error)}` : ""}`, 240)]
+    : [];
+  const durationMs = (() => {
+    const stop = readJsonNumber(record, "stop") ?? 0;
+    const start = readJsonNumber(record, "start") ?? 0;
+    return stop > start ? stop - start : 0;
+  })();
+  const detailLines = collectAllureJsonReportDetails(record);
+
+  return {
+    format: "Allure JSON",
+    suites,
+    cases: 1,
+    failures: nonPassing,
+    errors: 0,
+    skipped,
+    durationSeconds: durationMs > 0 ? durationMs / 1000 : null,
+    failedCases,
+    detailLines,
+    resultSummary: `Cases: 1; passed: ${passed}; non-passing: ${nonPassing}; skipped: ${skipped}.`,
+    truncated: JSON.stringify(record).length >= MAX_TEST_REPORT_PREVIEW_BYTES || detailLines.length >= MAX_TEST_REPORT_DETAIL_PREVIEW,
+  };
+}
+
+function collectAllureJsonReportDetails(record: Record<string, unknown>): string[] {
+  const details: string[] = [];
+  const labels = readJsonArray(record, "labels").filter(isRecord);
+  const labelSamples = labels
+    .map((label) => {
+      const key = readJsonString(label, "name");
+      const value = readJsonString(label, "value");
+      if (!key || !value) return "";
+      return formatAllureKeyValueSample(key, value);
+    })
+    .filter(Boolean);
+  if (labelSamples.length > 0) {
+    details.push(`Allure labels: ${uniquePreviewValues(labelSamples, MAX_TEST_REPORT_DETAIL_PREVIEW).join(", ")}`);
+  }
+
+  const linkSamples = readJsonArray(record, "links")
+    .filter(isRecord)
+    .map((link) => {
+      const name = readJsonString(link, "name") || readJsonString(link, "type") || "link";
+      const url = readJsonString(link, "url");
+      return url
+        ? `${maskPotentialSecretValues(clampSingleLine(name, 80))}=${maskPotentialSecretValues(clampSingleLine(url, 140))}`
+        : maskPotentialSecretValues(clampSingleLine(name, 120));
+    })
+    .filter(Boolean);
+  if (linkSamples.length > 0) {
+    details.push(`Allure links: ${uniquePreviewValues(linkSamples, MAX_TEST_REPORT_DETAIL_PREVIEW).join(", ")}`);
+  }
+
+  const attachmentSamples = readJsonArray(record, "attachments")
+    .filter(isRecord)
+    .map((attachment) => {
+      const name = readJsonString(attachment, "name") || "attachment";
+      const source = readJsonString(attachment, "source");
+      const type = readJsonString(attachment, "type");
+      const sourcePart = source ? ` -> ${maskPotentialSecretPathSegments(clampSingleLine(source, 120))}` : "";
+      const typePart = type ? ` (${maskPotentialSecretValues(clampSingleLine(type, 80))})` : "";
+      return `${maskPotentialSecretValues(clampSingleLine(name, 80))}${sourcePart}${typePart}`;
+    })
+    .filter(Boolean);
+  if (attachmentSamples.length > 0) {
+    details.push(`Allure attachment cues: ${uniquePreviewValues(attachmentSamples, MAX_TEST_REPORT_DETAIL_PREVIEW).join(", ")}`);
+  }
+
+  const stepSamples = readJsonArray(record, "steps")
+    .filter(isRecord)
+    .map((step) => {
+      const name = readJsonString(step, "name") || "(unnamed step)";
+      const status = readJsonString(step, "status") || "unknown";
+      return `${maskPotentialSecretValues(clampSingleLine(name, 100))} [${maskPotentialSecretValues(clampSingleLine(status, 40))}]`;
+    })
+    .filter(Boolean);
+  if (stepSamples.length > 0) {
+    details.push(`Allure steps: ${uniquePreviewValues(stepSamples, MAX_TEST_REPORT_DETAIL_PREVIEW).join(", ")}`);
+  }
+
+  const statusDetails = isRecord(record.statusDetails) ? record.statusDetails : {};
+  const trace = readJsonString(statusDetails, "trace");
+  if (trace) {
+    details.push(`Allure status trace cue: ${maskPotentialSecretValues(clampSingleLine(trace, 160))}`);
+  }
+
+  return details.slice(0, MAX_TEST_REPORT_DETAIL_PREVIEW);
+}
+
+function formatAllureKeyValueSample(name: string, rawValue: string): string {
+  const key = clampSingleLine(name, 80);
+  const value = isSensitiveFieldName(key)
+    ? "[redacted]"
+    : maskPotentialSecretValues(clampSingleLine(rawValue, 120));
+  return `${key}=${value}`;
 }
 
 function parseJestVitestJsonTestReport(record: Record<string, unknown>): TestReportPreview {
@@ -6445,7 +7918,7 @@ function countNonPassingOutcomes(outcomeCounts: Map<string, number>): number {
 function formatTestCasePreview(attrs: Map<string, string>, body: string): string {
   const name = attrs.get("name") || attrs.get("testName") || attrs.get("className") || attrs.get("classname") || "(unnamed test)";
   const className = attrs.get("classname") || attrs.get("className") || "";
-  const outcome = attrs.get("outcome") || (/<error\b/i.test(body) ? "error" : /<failure\b/i.test(body) ? "failure" : "non-passing");
+  const outcome = attrs.get("outcome") || attrs.get("result") || (/<error\b/i.test(body) ? "error" : /<failure\b/i.test(body) ? "failure" : "non-passing");
   const message = extractXmlFailureMessage(body);
   return clampSingleLine(
     `${className ? `${className}.` : ""}${name} [${outcome}]${message ? `: ${message}` : ""}`,
@@ -6456,10 +7929,10 @@ function formatTestCasePreview(attrs: Map<string, string>, body: string): string
 function extractXmlFailureMessage(body: string): string {
   const attrs = readXmlAttributes(body.match(/<(failure|error|Message)\b([^>]*)>/i)?.[2] ?? "");
   const attrMessage = attrs.get("message");
-  if (attrMessage) return clampSingleLine(attrMessage, 160);
+  if (attrMessage) return clampSingleLine(maskPotentialSecretValues(attrMessage), 160);
   const bodyMatch = body.match(/<(?:failure|error|Message|StdOut|StdErr)\b[^>]*>([\s\S]*?)<\/(?:failure|error|Message|StdOut|StdErr)>/i);
   return bodyMatch?.[1]
-    ? clampSingleLine(decodeXmlEntities((bodyMatch[1] ?? "").replace(/<[^>]+>/g, " ")), 160)
+    ? clampSingleLine(maskPotentialSecretValues(decodeXmlEntities((bodyMatch[1] ?? "").replace(/<[^>]+>/g, " "))), 160)
     : "";
 }
 
@@ -7685,6 +9158,8 @@ function summarizeDiagramSourceFile(filePath: string, extension: string, size: n
     const preview =
       extension === ".drawio"
         ? summarizeDrawioDiagramPreview(normalized)
+        : extension === ".graphml"
+          ? summarizeGraphmlDiagramPreview(normalized)
         : extension === ".dot" || extension === ".gv"
           ? summarizeGraphvizDiagramPreview(normalized)
         : extension === ".mmd" || extension === ".mermaid"
@@ -7695,7 +9170,7 @@ function summarizeDiagramSourceFile(filePath: string, extension: string, size: n
       .map((line) => line.trim())
       .filter((line) => line && !line.startsWith("%%") && !line.startsWith("'") && !line.startsWith("//"))
       .slice(0, 10)
-      .map(maskPotentialSecretValues)
+      .map(maskDiagramSourceSampleLine)
       .join("\n");
     return [
       `Diagram source preview (${formatBytes(size)}).`,
@@ -7712,6 +9187,13 @@ function summarizeDiagramSourceFile(filePath: string, extension: string, size: n
       "No diagram renderer, Graphviz, PlantUML/Java process, browser/webview startup, script execution, network call, or provider send was performed.",
     ].join("\n").slice(0, MAX_TEXT_BYTES);
   }
+}
+
+function maskDiagramSourceSampleLine(line: string): string {
+  return maskPotentialSecretValues(line).replace(
+    /(<data\b[^>]*\bkey=["'][^"']*(?:token|secret|password|passwd|pwd|api[_-]?key|private[_-]?key|credential)[^"']*["'][^>]*>)([\s\S]*?)(<\/data>)/gi,
+    "$1[redacted]$3",
+  );
 }
 
 function summarizeDrawioDiagramPreview(raw: string): string {
@@ -7736,6 +9218,74 @@ function summarizeDrawioDiagramPreview(raw: string): string {
       ? `Compressed diagram payloads detected: ${compressedPayloads}; payloads were not rendered or executed.`
       : "Compressed diagram payloads: none detected in the bounded preview.",
   ].join("\n");
+}
+
+function summarizeGraphmlDiagramPreview(raw: string): string {
+  const graphHints = [...raw.matchAll(/<graph\b([^>]*)>/gi)]
+    .map((match, index) => {
+      const attrs = match[1] ?? "";
+      const id = readXmlAttribute(attrs, "id");
+      const edgeDefault = readXmlAttribute(attrs, "edgedefault");
+      return clampSingleLine(
+        [id || `graph-${index + 1}`, edgeDefault ? `edgedefault=${edgeDefault}` : ""].filter(Boolean).join(" "),
+        120,
+      );
+    })
+    .filter(Boolean)
+    .slice(0, MAX_DIAGRAM_SOURCE_ITEM_PREVIEW);
+  const nodeHints = [...raw.matchAll(/<node\b([^>]*)>/gi)]
+    .map((match) => readXmlAttribute(match[1] ?? "", "id"))
+    .filter(Boolean)
+    .map((value) => clampSingleLine(maskPotentialSecretValues(value), 100))
+    .slice(0, MAX_DIAGRAM_SOURCE_ITEM_PREVIEW);
+  const edgeHints = [...raw.matchAll(/<edge\b([^>]*)>/gi)]
+    .map((match) => {
+      const attrs = match[1] ?? "";
+      const id = readXmlAttribute(attrs, "id");
+      const source = readXmlAttribute(attrs, "source");
+      const target = readXmlAttribute(attrs, "target");
+      return clampSingleLine(
+        [id, source && target ? `${source}->${target}` : ""].filter(Boolean).join(" "),
+        140,
+      );
+    })
+    .filter(Boolean)
+    .map(maskPotentialSecretValues)
+    .slice(0, MAX_DIAGRAM_SOURCE_ITEM_PREVIEW);
+  const keyHints = [...raw.matchAll(/<key\b([^>]*)>/gi)]
+    .map((match) => {
+      const attrs = match[1] ?? "";
+      const name = readXmlAttribute(attrs, "attr.name") || readXmlAttribute(attrs, "id");
+      const target = readXmlAttribute(attrs, "for");
+      return clampSingleLine([name, target ? `for=${target}` : ""].filter(Boolean).join(" "), 120);
+    })
+    .filter(Boolean)
+    .slice(0, MAX_DIAGRAM_SOURCE_ITEM_PREVIEW);
+  const dataHints = [...raw.matchAll(/<data\b[^>]*\bkey=["']([^"']+)["'][^>]*>([\s\S]*?)<\/data>/gi)]
+    .map((match) => {
+      const key = decodeXmlEntities(match[1] ?? "");
+      const value = decodeXmlEntities(stripHtmlTags(match[2] ?? "")).replace(/\s+/g, " ").trim();
+      const safeValue = /(?:token|secret|password|passwd|pwd|api[_-]?key|private[_-]?key|credential)/i.test(`${key} ${value}`)
+        ? "[redacted]"
+        : maskPotentialSecretValues(value);
+      return clampSingleLine(maskPotentialSecretValues(`${key}=${safeValue}`), 140);
+    })
+    .filter((value) => value && !value.endsWith("="))
+    .slice(0, MAX_DIAGRAM_SOURCE_ITEM_PREVIEW);
+  return [
+    "Format: GraphML XML diagram source.",
+    graphHints.length > 0 ? `Graphs: ${graphHints.join(" | ")}.` : "Graphs: none detected in the bounded preview.",
+    nodeHints.length > 0 ? `Nodes: ${nodeHints.join(" | ")}.` : "Nodes: none detected in the bounded preview.",
+    edgeHints.length > 0 ? `Edges: ${edgeHints.join(" | ")}.` : "Edges: none detected in the bounded preview.",
+    keyHints.length > 0 ? `Keys: ${keyHints.join(" | ")}.` : "Keys: none detected in the bounded preview.",
+    dataHints.length > 0 ? `Data labels: ${dataHints.join(" | ")}.` : "Data labels: none detected in the bounded preview.",
+  ].join("\n");
+}
+
+function readXmlAttribute(attributes: string, name: string): string {
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = attributes.match(new RegExp(`\\b${escapedName}\\s*=\\s*["']([^"']*)["']`, "i"));
+  return match?.[1] ? decodeXmlEntities(match[1]).trim() : "";
 }
 
 function summarizeMermaidDiagramPreview(raw: string): string {
@@ -11787,6 +13337,10 @@ function readYamlKeyValuePreview(line: string): { key: string; value: string } |
 }
 
 function summarizeApplePackageManifestFile(filePath: string, extension: string, size: number): string {
+  if (extension === ".pbxproj") {
+    return summarizeXcodeProjectFile(filePath, size);
+  }
+
   try {
     const raw = readFileHeader(filePath, Math.min(MAX_APPLE_PACKAGE_MANIFEST_PREVIEW_BYTES, MAX_TEXT_BYTES * 16)).toString("utf8");
     const lines = raw.replace(/\r\n/g, "\n").split("\n");
@@ -11827,9 +13381,107 @@ function describeApplePackageManifestFormat(filePath: string, extension: string)
   const name = basename(filePath).toLowerCase();
   if (extension === ".swift-package" || name === "package.swift") return "Swift Package manifest";
   if (extension === ".podfile.lock" || name === "podfile.lock") return "CocoaPods Podfile.lock";
+  if (extension === ".pbxproj" || name === "project.pbxproj" || name.endsWith(".pbxproj")) return "Xcode project.pbxproj";
   if (extension === ".podfile" || name === "podfile") return "CocoaPods Podfile";
   if (extension === ".podspec" || name.endsWith(".podspec")) return "CocoaPods podspec";
   return "Apple package manifest";
+}
+
+function summarizeXcodeProjectFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(MAX_XCODE_PROJECT_PREVIEW_BYTES, MAX_TEXT_BYTES * 32)).toString("utf8");
+    const text = normalizeTextPreview(raw);
+    const objects = collectXcodeProjectObjects(text);
+    const buildConfigurations = collectXcodeProjectBuildConfigurations(text);
+    const buildSettings = collectXcodeProjectBuildSettings(text);
+    const sourceHints = collectXcodeProjectSourceHints(text);
+    return [
+      `Xcode project.pbxproj preview (${formatBytes(size)}).`,
+      objects.length > 0
+        ? `Project objects (${objects.length}${objects.length >= MAX_XCODE_PROJECT_ITEM_PREVIEW ? "+" : ""}): ${objects.join(", ")}.`
+        : "Project objects: none detected in the bounded local preview.",
+      buildConfigurations.length > 0
+        ? `Build configurations (${buildConfigurations.length}${buildConfigurations.length >= MAX_XCODE_PROJECT_ITEM_PREVIEW ? "+" : ""}): ${buildConfigurations.join(", ")}.`
+        : "Build configurations: none detected in the bounded local preview.",
+      buildSettings.length > 0
+        ? `Build setting hints (${buildSettings.length}${buildSettings.length >= MAX_XCODE_PROJECT_ITEM_PREVIEW ? "+" : ""}): ${buildSettings.join(", ")}.`
+        : "Build setting hints: none detected in the bounded local preview.",
+      sourceHints.length > 0
+        ? `Source/product hints (${sourceHints.length}${sourceHints.length >= MAX_XCODE_PROJECT_ITEM_PREVIEW ? "+" : ""}): ${sourceHints.join(", ")}.`
+        : "Source/product hints: none detected in the bounded local preview.",
+      raw.length >= MAX_XCODE_PROJECT_PREVIEW_BYTES ? `Xcode project preview was capped at ${formatBytes(MAX_XCODE_PROJECT_PREVIEW_BYTES)}.` : "",
+      "Ready for explicit attachment after visible review; Xcode project metadata was parsed from bounded workspace-local text only, with likely secrets redacted and no Xcode project load, xcodebuild command, simulator/device access, package resolution, signing credential lookup, network call, or provider send performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Xcode project.pbxproj ready for explicit attachment (${formatBytes(size)}).`,
+      "Xcode project preview could not read bounded local text.",
+      "No Xcode project load, xcodebuild command, simulator/device access, package resolution, signing credential lookup, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function collectXcodeProjectObjects(raw: string): string[] {
+  const objects = new Set<string>();
+  const patterns = [
+    /\bisa\s*=\s*(PBXProject|PBXNativeTarget|PBXAggregateTarget|PBXGroup|PBXFileReference|PBXSourcesBuildPhase|PBXResourcesBuildPhase|XCBuildConfiguration|XCConfigurationList)\s*;/g,
+    /\/\*\s*([^*]{1,80})\s*\*\/\s*=\s*\{\s*isa\s*=\s*(PBXNativeTarget|PBXAggregateTarget|PBXProject|PBXGroup|PBXFileReference)/g,
+  ];
+  for (const pattern of patterns) {
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(raw)) && objects.size < MAX_XCODE_PROJECT_ITEM_PREVIEW) {
+      const objectName = match[2] ? `${match[2]} ${match[1]?.trim()}` : match[1];
+      if (objectName) objects.add(clampSingleLine(maskPotentialSecretValues(objectName), 100));
+    }
+  }
+  return [...objects].slice(0, MAX_XCODE_PROJECT_ITEM_PREVIEW);
+}
+
+function collectXcodeProjectBuildConfigurations(raw: string): string[] {
+  const values = new Set<string>();
+  let match: RegExpExecArray | null;
+  const pattern = /\bname\s*=\s*("?)(Debug|Release|AdHoc|Development|Staging|Production|[A-Za-z0-9_. -]{1,60})\1\s*;/g;
+  while ((match = pattern.exec(raw)) && values.size < MAX_XCODE_PROJECT_ITEM_PREVIEW) {
+    if (match[2]) values.add(clampSingleLine(maskPotentialSecretValues(match[2]), 80));
+  }
+  return [...values].slice(0, MAX_XCODE_PROJECT_ITEM_PREVIEW);
+}
+
+function collectXcodeProjectBuildSettings(raw: string): string[] {
+  const settings = new Set<string>();
+  const patterns: Array<[string, RegExp]> = [
+    ["PRODUCT_BUNDLE_IDENTIFIER", /\bPRODUCT_BUNDLE_IDENTIFIER\s*=\s*([^;\n]+);/g],
+    ["DEVELOPMENT_TEAM", /\bDEVELOPMENT_TEAM\s*=\s*([^;\n]+);/g],
+    ["IPHONEOS_DEPLOYMENT_TARGET", /\bIPHONEOS_DEPLOYMENT_TARGET\s*=\s*([^;\n]+);/g],
+    ["MACOSX_DEPLOYMENT_TARGET", /\bMACOSX_DEPLOYMENT_TARGET\s*=\s*([^;\n]+);/g],
+    ["SWIFT_VERSION", /\bSWIFT_VERSION\s*=\s*([^;\n]+);/g],
+    ["CODE_SIGN_STYLE", /\bCODE_SIGN_STYLE\s*=\s*([^;\n]+);/g],
+  ];
+  for (const [key, pattern] of patterns) {
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(raw)) && settings.size < MAX_XCODE_PROJECT_ITEM_PREVIEW) {
+      const rawValue = match[1]?.replace(/^"|"$/g, "").trim() || "";
+      const value = key === "DEVELOPMENT_TEAM" ? "[redacted]" : clampSingleLine(maskPotentialSecretValues(rawValue), 100);
+      settings.add(`${key}=${value}`);
+    }
+  }
+  return [...settings].slice(0, MAX_XCODE_PROJECT_ITEM_PREVIEW);
+}
+
+function collectXcodeProjectSourceHints(raw: string): string[] {
+  const hints = new Set<string>();
+  const patterns = [
+    /\bpath\s*=\s*("?)([^";\n]+\.(?:swift|m|mm|h|storyboard|xib|xcassets|plist|framework|appex|app))\1\s*;/gi,
+    /\bproductName\s*=\s*("?)([^";\n]{1,80})\1\s*;/g,
+    /\bproductType\s*=\s*("?)([^";\n]{1,100})\1\s*;/g,
+  ];
+  for (const pattern of patterns) {
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(raw)) && hints.size < MAX_XCODE_PROJECT_ITEM_PREVIEW) {
+      hints.add(clampSingleLine(maskPotentialSecretValues(match[2]?.trim() || ""), 100));
+    }
+  }
+  return [...hints].slice(0, MAX_XCODE_PROJECT_ITEM_PREVIEW);
 }
 
 function collectApplePackageManifestMetadata(lines: string[], extension: string): string[] {
@@ -12585,6 +14237,188 @@ function collectNodePackageManagerHints(lines: string[], extension: string): str
   return [...hints].slice(0, MAX_NODE_PACKAGE_MANAGER_CONFIG_ITEM_PREVIEW);
 }
 
+function summarizeJsToolingConfigFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(
+      filePath,
+      Math.min(MAX_JS_TOOLING_CONFIG_PREVIEW_BYTES, MAX_TEXT_BYTES * 24),
+    ).toString("utf8");
+    const normalized = normalizeTextPreview(raw);
+    const tool = describeJsToolingConfig(filePath);
+    const parsed = parseJsToolingConfigObject(filePath, normalized);
+    const schemaHints = collectJsToolingSchemaHints(tool, parsed, normalized);
+    const ruleHints = collectJsToolingRuleHints(tool, parsed, normalized);
+    const executionHints = collectJsToolingExecutionHints(normalized);
+    const sampleLines = normalized
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith("//") && !line.startsWith("#"))
+      .slice(0, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)
+      .map((line) => clampSingleLine(maskPotentialSecretValues(line), 220));
+    return [
+      `JS/TS tooling config preview (${tool}, ${formatBytes(size)}).`,
+      schemaHints.length > 0
+        ? `Tooling metadata (${schemaHints.length}${schemaHints.length >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${schemaHints.join(", ")}.`
+        : "Tooling metadata: none detected in the bounded local preview.",
+      ruleHints.length > 0
+        ? `Rule/project hints (${ruleHints.length}${ruleHints.length >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${ruleHints.join(", ")}.`
+        : "Rule/project hints: none detected in the bounded local preview.",
+      executionHints.length > 0
+        ? `Static risk cues: ${executionHints.join(", ")}.`
+        : "Static risk cues: no command-like hooks detected in the bounded local preview.",
+      sampleLines.length > 0
+        ? `Sanitized line samples:\n${sampleLines.map((line, index) => `${index + 1}. ${line}`).join("\n")}`
+        : "Sanitized line samples: none detected in the bounded local preview.",
+      normalized.length >= MAX_JS_TOOLING_CONFIG_PREVIEW_BYTES
+        ? `JS/TS tooling config preview was capped at ${formatBytes(MAX_JS_TOOLING_CONFIG_PREVIEW_BYTES)}.`
+        : "",
+      "Ready for explicit attachment after visible review; JS/TS tooling metadata was parsed from bounded workspace-local text/JSON only, with likely secrets redacted and no node/npm/pnpm/Yarn/Bun command, lint/test/format runner, Playwright browser launch, config module import, environment loading, plugin resolution, network call, credential lookup, or provider send performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `JS/TS tooling config ready for explicit attachment (${formatBytes(size)}).`,
+      "Config preview could not read bounded local text.",
+      "No node/npm/pnpm/Yarn/Bun command, lint/test/format runner, Playwright browser launch, config module import, environment loading, plugin resolution, network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function describeJsToolingConfig(filePath: string): string {
+  const name = basename(filePath).toLowerCase();
+  if (name.includes("eslint")) return "ESLint";
+  if (name.includes("prettier")) return "Prettier";
+  if (name.includes("biome")) return "Biome";
+  if (name.includes("stylelint")) return "Stylelint";
+  if (name.includes("jest")) return "Jest";
+  if (name.includes("vitest")) return "Vitest";
+  if (name.includes("playwright")) return "Playwright";
+  return "JS/TS tooling";
+}
+
+function parseJsToolingConfigObject(filePath: string, raw: string): unknown {
+  const name = basename(filePath).toLowerCase();
+  if (
+    name.endsWith(".json") ||
+    name.endsWith(".jsonc") ||
+    name === ".eslintrc" ||
+    name === ".prettierrc" ||
+    name === ".stylelintrc"
+  ) {
+    try {
+      return parseJsoncLike(raw);
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+function collectJsToolingSchemaHints(tool: string, parsed: unknown, raw: string): string[] {
+  const hints = new Set<string>();
+  const lines = raw.split("\n");
+  if (isRecord(parsed)) {
+    for (const key of readObjectKeys(parsed, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`${key} key`);
+      if (hints.size >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW) return [...hints];
+    }
+  }
+  const lower = raw.toLowerCase();
+  for (const token of [
+    "extends",
+    "plugins",
+    "rules",
+    "overrides",
+    "parserOptions",
+    "ignorePatterns",
+    "tabWidth",
+    "singleQuote",
+    "semi",
+    "formatter",
+    "linter",
+    "testEnvironment",
+    "setupFiles",
+    "coverage",
+    "projects",
+    "webServer",
+    "use",
+  ]) {
+    if (lower.includes(token.toLowerCase())) hints.add(`${token} cue`);
+    if (hints.size >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW) return [...hints];
+  }
+  if (tool === "Playwright") {
+    for (const project of collectRegexGroup(raw, /name\s*:\s*["']([^"']+)["']/g, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`project=${project}`);
+    }
+  }
+  if (tool === "ESLint" || tool === "Stylelint" || tool === "Prettier") {
+    for (const key of extractYamlMapKeysUnderSection(lines, "rules", MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`rule ${key}`);
+    }
+  }
+  return [...hints].slice(0, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW);
+}
+
+function collectJsToolingRuleHints(tool: string, parsed: unknown, raw: string): string[] {
+  const hints = new Set<string>();
+  if (isRecord(parsed)) {
+    const ruleKeys = readObjectKeys(parsed.rules, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW);
+    for (const rule of ruleKeys) hints.add(rule);
+    for (const key of ["extends", "plugins", "files", "ignores", "projects", "coverageProvider", "testEnvironment"]) {
+      const value = parsed[key];
+      if (typeof value === "string") hints.add(`${key}: ${clampSingleLine(value, 120)}`);
+      if (Array.isArray(value)) {
+        const items = value
+          .filter((item): item is string => typeof item === "string")
+          .map((item) => clampSingleLine(item, 120))
+          .slice(0, 4);
+        if (items.length > 0) hints.add(`${key}: ${items.join(", ")}`);
+      }
+      if (isRecord(value)) {
+        const keys = readObjectKeys(value, 4);
+        if (keys.length > 0) hints.add(`${key}: ${keys.join(", ")}`);
+      }
+      if (hints.size >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW) return [...hints];
+    }
+  }
+  for (const match of raw.matchAll(/["']([^"']+(?:\/|-)[^"']+)["']\s*:\s*(?:["']?(?:error|warn|off|0|1|2)|\[)/gi)) {
+    if (match[1]) hints.add(clampSingleLine(match[1], 120));
+    if (hints.size >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW) break;
+  }
+  if (tool === "Vitest" || tool === "Jest") {
+    for (const cue of collectRegexGroup(raw, /\b(environment|coverage|include|exclude|setupFiles|testMatch)\s*:\s*([^,\n}]+)/g, 8)) {
+      hints.add(clampSingleLine(cue, 120));
+    }
+  }
+  if (tool === "Playwright") {
+    for (const cue of collectRegexGroup(raw, /\b(baseURL|browserName|trace|screenshot|video|workers|retries)\s*:\s*([^,\n}]+)/g, 8)) {
+      hints.add(clampSingleLine(cue, 120));
+    }
+  }
+  return [...hints].slice(0, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW);
+}
+
+function collectJsToolingExecutionHints(raw: string): string[] {
+  const hints = new Set<string>();
+  const lower = raw.toLowerCase();
+  if (lower.includes("webserver")) hints.add("webServer declaration");
+  if (/\b(command|globalsetup|globalteardown|setupfilesafterenv|setupfiles)\b/i.test(raw)) hints.add("setup/command declaration");
+  if (/\bprocess\.env\b/.test(raw)) hints.add("environment-variable reference");
+  if (/\brequire\s*\(|\bimport\s+/.test(raw)) hints.add("module import reference");
+  if (/\bexec(File|Sync)?\b|\bspawn(Sync)?\b/.test(raw)) hints.add("child-process token");
+  return [...hints].slice(0, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW);
+}
+
+function collectRegexGroup(raw: string, pattern: RegExp, limit: number): string[] {
+  const values: string[] = [];
+  for (const match of raw.matchAll(pattern)) {
+    const value = match[2] ? `${match[1]}: ${match[2]}` : match[1];
+    if (!value) continue;
+    values.push(clampSingleLine(maskPotentialSecretValues(value), 160));
+    if (values.length >= limit) break;
+  }
+  return values;
+}
+
 function summarizeNodePackageDependencyMaps(record: Record<string, unknown>): string[] {
   return [
     "dependencies",
@@ -13150,6 +14984,145 @@ function summarizeLogText(raw: string, size: number): string {
   ].join("\n").slice(0, MAX_TEXT_BYTES);
 }
 
+interface TerminalRecordingPreview {
+  header: Record<string, unknown> | null;
+  eventCount: number;
+  outputEvents: number;
+  inputEvents: number;
+  resizeEvents: number;
+  commandHints: string[];
+  riskHints: string[];
+  outputSamples: string[];
+  invalidLines: number;
+  truncated: boolean;
+}
+
+function summarizeTerminalRecordingFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_TERMINAL_RECORDING_PREVIEW_BYTES).toString("utf8");
+    const preview = parseAsciinemaCastPreview(raw);
+    const header = preview.header ?? {};
+    const width = typeof header.width === "number" ? header.width : null;
+    const height = typeof header.height === "number" ? header.height : null;
+    const duration = typeof header.duration === "number" ? `${Math.round(header.duration * 10) / 10}s` : "not declared";
+    const command = typeof header.command === "string" ? maskPotentialSecretValues(header.command) : "";
+    return [
+      `Terminal recording preview (Asciinema cast, ${formatBytes(size)}).`,
+      `Header: version=${typeof header.version === "number" ? header.version : "unknown"}; terminal=${width && height ? `${width}x${height}` : "not declared"}; duration=${duration}${command ? `; command=${command}` : ""}.`,
+      `Events in bounded preview: ${preview.eventCount}; output=${preview.outputEvents}; input=${preview.inputEvents}; resize=${preview.resizeEvents}; invalid lines skipped=${preview.invalidLines}${preview.truncated ? "; preview byte limit reached" : ""}.`,
+      preview.commandHints.length > 0
+        ? `Command/prompt hints (${preview.commandHints.length}${preview.commandHints.length >= MAX_TERMINAL_RECORDING_EVENT_PREVIEW ? "+" : ""}): ${preview.commandHints.join(" | ")}.`
+        : "Command/prompt hints: none detected in the bounded preview.",
+      preview.riskHints.length > 0
+        ? `Risk cues (${preview.riskHints.length}${preview.riskHints.length >= MAX_TERMINAL_RECORDING_EVENT_PREVIEW ? "+" : ""}): ${preview.riskHints.join(" | ")}.`
+        : "Risk cues: none detected in the bounded preview.",
+      preview.outputSamples.length > 0
+        ? `Output samples:\n${preview.outputSamples.map((line) => `- ${line}`).join("\n")}`
+        : "Output samples: none detected in the bounded preview.",
+      "Ready for explicit attachment after visible review; terminal recording events were parsed from bounded workspace-local bytes only, ANSI controls and likely secrets were redacted, and no terminal replay, shell command execution, process spawn, filesystem mutation, credential lookup, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Terminal recording ready for explicit attachment (${formatBytes(size)}).`,
+      "Asciinema cast preview read bounded local bytes only; no terminal replay, shell command execution, process spawn, filesystem mutation, credential lookup, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseAsciinemaCastPreview(raw: string): TerminalRecordingPreview {
+  const lines = raw
+    .replace(/^\uFEFF/, "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter(Boolean);
+  let header: Record<string, unknown> | null = null;
+  let invalidLines = 0;
+  let eventCount = 0;
+  let outputEvents = 0;
+  let inputEvents = 0;
+  let resizeEvents = 0;
+  const commandHints = new Set<string>();
+  const riskHints = new Set<string>();
+  const outputSamples: string[] = [];
+
+  for (const [index, line] of lines.entries()) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      invalidLines += 1;
+      continue;
+    }
+    if (index === 0 && parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      header = parsed as Record<string, unknown>;
+      continue;
+    }
+    if (!Array.isArray(parsed)) {
+      invalidLines += 1;
+      continue;
+    }
+    eventCount += 1;
+    const type = typeof parsed[1] === "string" ? parsed[1] : "";
+    const payload = typeof parsed[2] === "string" ? parsed[2] : "";
+    if (type === "o") {
+      outputEvents += 1;
+      collectTerminalRecordingLineHints(payload, commandHints, riskHints, outputSamples);
+    } else if (type === "i") {
+      inputEvents += 1;
+      collectTerminalRecordingLineHints(payload, commandHints, riskHints, []);
+    } else if (type === "r") {
+      resizeEvents += 1;
+    }
+  }
+
+  return {
+    header,
+    eventCount,
+    outputEvents,
+    inputEvents,
+    resizeEvents,
+    commandHints: [...commandHints].slice(0, MAX_TERMINAL_RECORDING_EVENT_PREVIEW),
+    riskHints: [...riskHints].slice(0, MAX_TERMINAL_RECORDING_EVENT_PREVIEW),
+    outputSamples: outputSamples.slice(0, MAX_TERMINAL_RECORDING_EVENT_PREVIEW),
+    invalidLines,
+    truncated: raw.length >= MAX_TERMINAL_RECORDING_PREVIEW_BYTES,
+  };
+}
+
+function collectTerminalRecordingLineHints(
+  payload: string,
+  commandHints: Set<string>,
+  riskHints: Set<string>,
+  outputSamples: string[],
+): void {
+  const clean = stripAnsiControls(payload)
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .map((line) => maskPotentialSecretValues(clampSingleLine(line.trim(), 220)))
+    .filter(Boolean);
+  for (const line of clean) {
+    if (outputSamples.length < MAX_TERMINAL_RECORDING_EVENT_PREVIEW) {
+      outputSamples.push(line);
+    }
+    if (/[$>#]\s*[A-Za-z0-9_.:/\\-]+/.test(line) || /\b(npm|pnpm|yarn|python|node|git|cargo|pytest|powershell|pwsh)\b/i.test(line)) {
+      commandHints.add(line.replace(/^.*?([$>#]\s*)/, "").slice(0, 180));
+    }
+    const riskMatches = line.match(/\b(error|failed|exception|traceback|permission denied|access denied|fatal|warning)\b/gi);
+    if (riskMatches) {
+      for (const match of riskMatches) riskHints.add(match.toLowerCase());
+    }
+  }
+}
+
+function stripAnsiControls(value: string): string {
+  return value
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g, "")
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "");
+}
+
 function summarizeStylesheetFile(filePath: string, extension: string, size: number): string {
   try {
     const raw = readFileHeader(
@@ -13531,6 +15504,218 @@ function summarizeSourceCodeReviewHints(lines: string[]): string {
   return hints.length > 0
     ? `Static review hints: ${hints.join("; ")}.`
     : "Static review hints: no TODO/FIXME markers, obvious secret keys, or very long lines detected in the bounded preview.";
+}
+
+function summarizeLatexContextFile(filePath: string, extension: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(MAX_LATEX_PREVIEW_BYTES, MAX_TEXT_BYTES * 24)).toString("utf8");
+    const normalized = normalizeTextPreview(raw);
+    const lines = normalized.split("\n");
+    const preview = extension === ".bib" || extension === ".bibtex"
+      ? parseBibtexPreview(normalized)
+      : extension === ".latexmkrc"
+        ? parseLatexmkrcPreview(lines)
+        : parseLatexDocumentPreview(lines);
+    const sample = preview.sampleLines.length > 0
+      ? `Bounded text sample:\n${preview.sampleLines.join("\n")}`
+      : "Bounded text sample: no readable LaTeX/BibTeX lines were found.";
+    return [
+      `LaTeX context preview (${describeLatexContextKind(extension)}, ${formatBytes(size)}).`,
+      preview.documentMetadata.length > 0
+        ? `Document metadata (${preview.documentMetadata.length}${preview.documentMetadata.length >= MAX_LATEX_ITEM_PREVIEW ? "+" : ""}): ${preview.documentMetadata.join(" | ")}.`
+        : "Document metadata: none detected in the bounded preview.",
+      preview.structure.length > 0
+        ? `Structure hints (${preview.structure.length}${preview.structure.length >= MAX_LATEX_ITEM_PREVIEW ? "+" : ""}): ${preview.structure.join(" | ")}.`
+        : "Structure hints: none detected in the bounded preview.",
+      preview.references.length > 0
+        ? `Reference hints (${preview.references.length}${preview.references.length >= MAX_LATEX_ITEM_PREVIEW ? "+" : ""}): ${preview.references.join(", ")}.`
+        : "Reference hints: none detected in the bounded preview.",
+      preview.formulas.length > 0
+        ? `Formula/math hints (${preview.formulas.length}${preview.formulas.length >= MAX_LATEX_ITEM_PREVIEW ? "+" : ""}): ${preview.formulas.join(", ")}.`
+        : "Formula/math hints: none detected in the bounded preview.",
+      preview.bibliography.length > 0
+        ? `Bibliography hints (${preview.bibliography.length}${preview.bibliography.length >= MAX_LATEX_ITEM_PREVIEW ? "+" : ""}): ${preview.bibliography.join(" | ")}.`
+        : "Bibliography hints: none detected in the bounded preview.",
+      preview.riskCues.length > 0
+        ? `Risk cues (${preview.riskCues.length}${preview.riskCues.length >= MAX_LATEX_ITEM_PREVIEW ? "+" : ""}): ${preview.riskCues.join(", ")}.`
+        : "Risk cues: none detected in the bounded preview.",
+      sample,
+      raw.length >= MAX_LATEX_PREVIEW_BYTES ? `Preview was capped at ${formatBytes(MAX_LATEX_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; LaTeX/BibTeX metadata was parsed from bounded workspace-local text only, likely secrets were redacted, \\input/include targets and bibliography files were listed but not opened, and no latexmk/pdflatex/xelatex/lualatex/bibtex/biber command, PDF compilation, shell escape, file mutation, package download, credential lookup, network call, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `LaTeX context file ready for explicit attachment (${formatBytes(size)}).`,
+      "LaTeX/BibTeX preview could not read bounded local text; no TeX engine, BibTeX/Biber, PDF compilation, shell escape, file mutation, package download, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function describeLatexContextKind(extension: string): string {
+  return (
+    {
+      ".tex": "TeX/LaTeX document",
+      ".bib": "BibTeX bibliography",
+      ".bibtex": "BibTeX bibliography",
+      ".latexmkrc": "latexmk configuration",
+    }[extension] ?? "LaTeX context"
+  );
+}
+
+interface LatexContextPreview {
+  documentMetadata: string[];
+  structure: string[];
+  references: string[];
+  formulas: string[];
+  bibliography: string[];
+  riskCues: string[];
+  sampleLines: string[];
+}
+
+function parseLatexDocumentPreview(lines: string[]): LatexContextPreview {
+  const documentMetadata = new Set<string>();
+  const structure = new Set<string>();
+  const references = new Set<string>();
+  const formulas = new Set<string>();
+  const bibliography = new Set<string>();
+  const riskCues = new Set<string>();
+
+  for (const line of lines) {
+    const trimmed = stripLatexComment(line).trim();
+    if (!trimmed) continue;
+    const classMatch = trimmed.match(/\\documentclass(?:\[[^\]]*])?\{([^}]+)}/);
+    if (classMatch?.[1]) documentMetadata.add(`documentclass=${sanitizeLatexPreviewValue(classMatch[1])}`);
+    for (const packageMatch of trimmed.matchAll(/\\usepackage(?:\[[^\]]*])?\{([^}]+)}/g)) {
+      for (const item of splitLatexList(packageMatch[1])) documentMetadata.add(`package=${item}`);
+    }
+    for (const sectionMatch of trimmed.matchAll(/\\(part|chapter|section|subsection|subsubsection)\*?\{([^}]+)}/g)) {
+      structure.add(`${sectionMatch[1]}=${sanitizeLatexPreviewValue(sectionMatch[2])}`);
+    }
+    for (const includeMatch of trimmed.matchAll(/\\(?:input|include|subfile|includegraphics|addbibresource|bibliography)\s*(?:\[[^\]]*])?\{([^}]+)}/g)) {
+      const command = includeMatch[0].match(/\\([A-Za-z]+)/)?.[1] ?? "include";
+      const value = sanitizeLatexPreviewValue(includeMatch[1]);
+      if (command === "bibliography" || command === "addbibresource") bibliography.add(`${command}=${value}`);
+      else structure.add(`${command}=${value}`);
+    }
+    for (const labelMatch of trimmed.matchAll(/\\label\{([^}]+)}/g)) references.add(`label=${sanitizeLatexPreviewValue(labelMatch[1])}`);
+    for (const citeMatch of trimmed.matchAll(/\\(?:cite|citep|citet|parencite|textcite|autocite)(?:\[[^\]]*])*\{([^}]+)}/g)) {
+      for (const key of splitLatexList(citeMatch[1])) references.add(`cite=${key}`);
+    }
+    for (const refMatch of trimmed.matchAll(/\\(?:ref|eqref|pageref|autoref|cref|Cref)\{([^}]+)}/g)) {
+      references.add(`ref=${sanitizeLatexPreviewValue(refMatch[1])}`);
+    }
+    for (const envMatch of trimmed.matchAll(/\\begin\{(equation\*?|align\*?|gather\*?|multline\*?|split|tikzpicture|figure|table)\}/g)) {
+      const env = envMatch[1] ?? "";
+      if (/equation|align|gather|multline|split|tikzpicture/.test(env)) formulas.add(`environment=${env}`);
+      else structure.add(`environment=${env}`);
+    }
+    if (/\$\$|\\\[|\\\]|\\\(|\\\)/.test(trimmed)) formulas.add("inline/display math markers");
+    if (/\\write18|\\input\s*\||\\openout|\\read|\\immediate|shell-escape/i.test(trimmed)) riskCues.add("TeX shell/file side-effect primitive");
+    if (/\b(token|secret|password|api[_-]?key|credential)\b/i.test(trimmed)) riskCues.add("credential-shaped value redacted");
+    if (documentMetadata.size + structure.size + references.size + formulas.size + bibliography.size >= MAX_LATEX_ITEM_PREVIEW * 4) break;
+  }
+
+  return {
+    documentMetadata: uniquePreviewValues([...documentMetadata], MAX_LATEX_ITEM_PREVIEW),
+    structure: uniquePreviewValues([...structure], MAX_LATEX_ITEM_PREVIEW),
+    references: uniquePreviewValues([...references], MAX_LATEX_ITEM_PREVIEW),
+    formulas: uniquePreviewValues([...formulas], MAX_LATEX_ITEM_PREVIEW),
+    bibliography: uniquePreviewValues([...bibliography], MAX_LATEX_ITEM_PREVIEW),
+    riskCues: uniquePreviewValues([...riskCues], MAX_LATEX_ITEM_PREVIEW),
+    sampleLines: latexSampleLines(lines),
+  };
+}
+
+function parseBibtexPreview(raw: string): LatexContextPreview {
+  const lines = raw.split("\n");
+  const bibliography: string[] = [];
+  const documentMetadata = new Set<string>();
+  const riskCues = new Set<string>();
+  for (const match of raw.matchAll(/@([A-Za-z]+)\s*\{\s*([^,\s]+)\s*,([\s\S]*?)(?=\n\s*@|\s*$)/g)) {
+    const type = sanitizeLatexPreviewValue(match[1]);
+    const key = sanitizeLatexPreviewValue(match[2]);
+    const body = match[3] || "";
+    const title = sanitizeLatexPreviewValue(readBibtexField(body, "title"));
+    const year = sanitizeLatexPreviewValue(readBibtexField(body, "year"));
+    const author = sanitizeLatexPreviewValue(readBibtexField(body, "author"));
+    bibliography.push([`${type}:${key}`, title ? `title=${title}` : "", year ? `year=${year}` : ""].filter(Boolean).join(" "));
+    if (author) documentMetadata.add(`author=${author}`);
+    if (/\b(token|secret|password|api[_-]?key|credential)\b/i.test(body)) riskCues.add("credential-shaped field redacted");
+    if (bibliography.length >= MAX_LATEX_ITEM_PREVIEW) break;
+  }
+  return {
+    documentMetadata: uniquePreviewValues([...documentMetadata], MAX_LATEX_ITEM_PREVIEW),
+    structure: [],
+    references: [],
+    formulas: [],
+    bibliography: uniquePreviewValues(bibliography, MAX_LATEX_ITEM_PREVIEW),
+    riskCues: uniquePreviewValues([...riskCues], MAX_LATEX_ITEM_PREVIEW),
+    sampleLines: latexSampleLines(lines),
+  };
+}
+
+function parseLatexmkrcPreview(lines: string[]): LatexContextPreview {
+  const documentMetadata = new Set<string>();
+  const riskCues = new Set<string>();
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const assignment = trimmed.match(/^\$?([A-Za-z_][A-Za-z0-9_]*)\s*=/);
+    if (assignment?.[1]) documentMetadata.add(`setting=${sanitizeLatexPreviewValue(assignment[1])}`);
+    if (/\b(?:pdflatex|xelatex|lualatex|bibtex|biber|makeindex|shell_escape|system|exec)\b/i.test(trimmed)) {
+      riskCues.add("latexmk command/runtime setting");
+    }
+    if (/\b(token|secret|password|api[_-]?key|credential)\b/i.test(trimmed)) riskCues.add("credential-shaped value redacted");
+    if (documentMetadata.size >= MAX_LATEX_ITEM_PREVIEW) break;
+  }
+  return {
+    documentMetadata: uniquePreviewValues([...documentMetadata], MAX_LATEX_ITEM_PREVIEW),
+    structure: [],
+    references: [],
+    formulas: [],
+    bibliography: [],
+    riskCues: uniquePreviewValues([...riskCues], MAX_LATEX_ITEM_PREVIEW),
+    sampleLines: latexSampleLines(lines),
+  };
+}
+
+function stripLatexComment(line: string): string {
+  let escaped = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (char === "\\" && !escaped) {
+      escaped = true;
+      continue;
+    }
+    if (char === "%" && !escaped) return line.slice(0, index);
+    escaped = false;
+  }
+  return line;
+}
+
+function splitLatexList(value: string | undefined): string[] {
+  return (value || "")
+    .split(",")
+    .map(sanitizeLatexPreviewValue)
+    .filter(Boolean)
+    .slice(0, MAX_LATEX_ITEM_PREVIEW);
+}
+
+function readBibtexField(body: string, fieldName: string): string {
+  const match = body.match(new RegExp(`${escapeRegex(fieldName)}\\s*=\\s*(?:\\{([^{}]*(?:\\{[^{}]*}[^{}]*)*)}|\"([^\"]*)\"|([^,\\n]+))`, "i"));
+  return match?.[1] || match?.[2] || match?.[3] || "";
+}
+
+function sanitizeLatexPreviewValue(value: string | undefined): string {
+  return clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets((value || "").replace(/[{}]/g, " ").trim())), 140);
+}
+
+function latexSampleLines(lines: string[]): string[] {
+  return lines
+    .map((line) => stripLatexComment(line).trim())
+    .filter(Boolean)
+    .map((line) => clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(line)), 160))
+    .slice(0, 10);
 }
 
 function isPowerShellScriptExtension(extension: string): boolean {
@@ -14179,10 +16364,10 @@ function summarizeCiWorkflowFileHints(filePath: string, raw: string, extension: 
   const kind = detectCiWorkflowKind(filePath);
   if (!kind) return "";
   const lines = normalizeTextPreview(raw).split("\n");
-  const triggers = extractCiWorkflowTriggers(lines, kind);
-  const jobs = extractCiWorkflowJobs(lines, kind);
-  const stages = extractCiWorkflowListValues(lines, "stages").slice(0, MAX_CI_WORKFLOW_PREVIEW_ITEMS);
-  const runners = extractCiWorkflowValueSamples(lines, ["runs-on", "vmImage", "image"]).slice(
+  const triggers = redactCiWorkflowSamples(extractCiWorkflowTriggers(lines, kind));
+  const jobs = redactCiWorkflowSamples(extractCiWorkflowJobs(lines, kind));
+  const stages = redactCiWorkflowSamples(extractCiWorkflowListValues(lines, "stages")).slice(0, MAX_CI_WORKFLOW_PREVIEW_ITEMS);
+  const runners = redactCiWorkflowSamples(extractCiWorkflowValueSamples(lines, ["runs-on", "vmImage", "image"])).slice(
     0,
     MAX_CI_WORKFLOW_PREVIEW_ITEMS,
   );
@@ -14202,6 +16387,10 @@ function summarizeCiWorkflowFileHints(filePath: string, raw: string, extension: 
     `Step/task cues in bounded preview: ${stepCount}.`,
     "Ready for explicit attachment after visible review; CI workflow metadata was parsed from bounded local YAML only, and no CI runner, shell command, provider API call, secret retrieval, network call, or provider send was performed.",
   ].filter(Boolean).join("\n");
+}
+
+function redactCiWorkflowSamples(samples: string[]): string[] {
+  return samples.map((sample) => clampSingleLine(maskPotentialSecretValues(sample), 120));
 }
 
 function detectCiWorkflowKind(filePath: string): { id: string; label: string } | null {
@@ -14411,6 +16600,304 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
+function isOpsScheduleFile(filePath: string, extension: string): boolean {
+  const name = basename(filePath || "").toLowerCase();
+  return (
+    [".service", ".timer", ".socket", ".path", ".cron", ".crontab"].includes(extension) ||
+    name === "crontab"
+  );
+}
+
+function summarizeOpsScheduleFile(filePath: string, extension: string, size: number): string {
+  try {
+    const raw = readFileHeader(
+      filePath,
+      Math.min(MAX_OPS_SCHEDULE_PREVIEW_BYTES, MAX_TEXT_BYTES * 24),
+    ).toString("utf8");
+    const lines = normalizeTextPreview(raw).split("\n");
+    if (isSystemdUnitExtension(extension)) {
+      const preview = parseSystemdUnitPreview(lines);
+      return [
+        `systemd unit file preview (${formatBytes(size)}).`,
+        preview.sections.length > 0
+          ? `Sections (${preview.sections.length}${preview.sections.length >= MAX_OPS_SCHEDULE_ITEM_PREVIEW ? "+" : ""}): ${preview.sections.join(", ")}.`
+          : "Sections: none detected in the bounded preview.",
+        preview.identity.length > 0
+          ? `Unit identity: ${preview.identity.join("; ")}.`
+          : "Unit identity: none detected in the bounded preview.",
+        preview.triggers.length > 0
+          ? `Trigger hints: ${preview.triggers.join("; ")}.`
+          : "Trigger hints: none detected in the bounded preview.",
+        preview.commands.length > 0
+          ? `Command hints: ${preview.commands.join("; ")}.`
+          : "Command hints: none detected in the bounded preview.",
+        preview.install.length > 0
+          ? `Install hints: ${preview.install.join("; ")}.`
+          : "Install hints: none detected in the bounded preview.",
+        raw.length >= MAX_OPS_SCHEDULE_PREVIEW_BYTES
+          ? `Preview was capped at ${formatBytes(MAX_OPS_SCHEDULE_PREVIEW_BYTES)} or item limits.`
+          : "",
+        "Ready for explicit attachment after visible review; systemd unit metadata was parsed from bounded workspace-local text only, and no systemctl command, service start/stop/reload, timer enablement, shell execution, credential lookup, network call, or provider send was performed.",
+      ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+    }
+
+    const preview = parseCronSchedulePreview(lines);
+    return [
+      `Cron schedule file preview (${formatBytes(size)}).`,
+      preview.environmentKeys.length > 0
+        ? `Environment keys (${preview.environmentKeys.length}${preview.environmentKeys.length >= MAX_OPS_SCHEDULE_ITEM_PREVIEW ? "+" : ""}): ${preview.environmentKeys.join(", ")}.`
+        : "Environment keys: none detected in the bounded preview.",
+      preview.schedules.length > 0
+        ? `Schedule entries (${preview.schedules.length}${preview.schedules.length >= MAX_OPS_SCHEDULE_ITEM_PREVIEW ? "+" : ""}):\n${preview.schedules.map((entry) => `- ${entry}`).join("\n")}`
+        : "Schedule entries: none detected in the bounded preview.",
+      raw.length >= MAX_OPS_SCHEDULE_PREVIEW_BYTES || preview.truncated
+        ? `Preview was capped at ${formatBytes(MAX_OPS_SCHEDULE_PREVIEW_BYTES)} or item limits.`
+        : "",
+      "Ready for explicit attachment after visible review; cron metadata was parsed from bounded workspace-local text only, command values were redacted where secret-shaped, and no crontab install, scheduler mutation, shell execution, credential lookup, network call, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Operations schedule file ready for explicit attachment (${formatBytes(size)}).`,
+      "No systemctl command, crontab install, scheduler mutation, shell execution, credential lookup, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function isSystemdUnitExtension(extension: string): boolean {
+  return [".service", ".timer", ".socket", ".path"].includes(extension);
+}
+
+function parseSystemdUnitPreview(lines: string[]): {
+  sections: string[];
+  identity: string[];
+  triggers: string[];
+  commands: string[];
+  install: string[];
+} {
+  const sections = new Set<string>();
+  const identity = new Set<string>();
+  const triggers = new Set<string>();
+  const commands = new Set<string>();
+  const install = new Set<string>();
+  let section = "";
+
+  for (const rawLine of lines) {
+    const trimmed = rawLine.trim();
+    if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith(";")) continue;
+    const sectionMatch = trimmed.match(/^\[([A-Za-z0-9_.-]+)\]$/);
+    if (sectionMatch?.[1]) {
+      section = sectionMatch[1];
+      if (sections.size < MAX_OPS_SCHEDULE_ITEM_PREVIEW) sections.add(section);
+      continue;
+    }
+    const keyValue = trimmed.match(/^([A-Za-z][A-Za-z0-9_.-]*)\s*=\s*(.*)$/);
+    if (!keyValue?.[1]) continue;
+    const key = keyValue[1];
+    const value = sanitizeOpsScheduleValue(keyValue[2] || "");
+    const summary = `${key}=${value || "[empty]"}`;
+    if (["Description", "Documentation"].includes(key) && identity.size < MAX_OPS_SCHEDULE_ITEM_PREVIEW) {
+      identity.add(clampSingleLine(summary, 140));
+    }
+    if (
+      /^(OnCalendar|OnBootSec|OnUnitActiveSec|OnUnitInactiveSec|OnStartupSec|Unit|PathExists|PathChanged|ListenStream|ListenDatagram)$/i.test(key) &&
+      triggers.size < MAX_OPS_SCHEDULE_ITEM_PREVIEW
+    ) {
+      triggers.add(clampSingleLine(summary, 140));
+    }
+    if (/^(ExecStart|ExecStop|ExecReload|ExecStartPre|ExecStartPost|Type|User|Group|WorkingDirectory)$/i.test(key)) {
+      if (commands.size < MAX_OPS_SCHEDULE_ITEM_PREVIEW) commands.add(clampSingleLine(summary, 180));
+    }
+    if ((section === "Install" || /^(WantedBy|RequiredBy|Alias)$/i.test(key)) && install.size < MAX_OPS_SCHEDULE_ITEM_PREVIEW) {
+      install.add(clampSingleLine(summary, 140));
+    }
+  }
+
+  return {
+    sections: [...sections],
+    identity: [...identity],
+    triggers: [...triggers],
+    commands: [...commands],
+    install: [...install],
+  };
+}
+
+function parseCronSchedulePreview(lines: string[]): {
+  environmentKeys: string[];
+  schedules: string[];
+  truncated: boolean;
+} {
+  const environmentKeys = new Set<string>();
+  const schedules: string[] = [];
+  let candidateCount = 0;
+
+  for (const rawLine of lines) {
+    const trimmed = rawLine.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const envMatch = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=/);
+    if (envMatch?.[1]) {
+      if (environmentKeys.size < MAX_OPS_SCHEDULE_ITEM_PREVIEW) environmentKeys.add(envMatch[1]);
+      continue;
+    }
+    const schedule = formatCronScheduleEntry(trimmed);
+    if (!schedule) continue;
+    candidateCount += 1;
+    if (schedules.length < MAX_OPS_SCHEDULE_ITEM_PREVIEW) schedules.push(schedule);
+  }
+
+  return {
+    environmentKeys: [...environmentKeys],
+    schedules,
+    truncated: candidateCount > schedules.length,
+  };
+}
+
+function formatCronScheduleEntry(line: string): string {
+  const special = line.match(/^(@(?:reboot|yearly|annually|monthly|weekly|daily|midnight|hourly))\s+(.+)$/i);
+  if (special?.[1]) {
+    return `${special[1]} -> ${sanitizeOpsScheduleValue(special[2] || "")}`;
+  }
+  const parts = line.split(/\s+/);
+  if (parts.length < 6) return "";
+  const schedule = parts.slice(0, 5).join(" ");
+  if (!/^[\d*,/\-A-Za-z?]+\s+[\d*,/\-A-Za-z?]+\s+[\d*,/\-A-Za-z?]+\s+[\d*,/\-A-Za-z?]+\s+[\d*,/\-A-Za-z?]+$/.test(schedule)) {
+    return "";
+  }
+  return `${schedule} -> ${sanitizeOpsScheduleValue(parts.slice(5).join(" "))}`;
+}
+
+function sanitizeOpsScheduleValue(value: string): string {
+  return clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(value.replace(/\s+/g, " ").trim())), 220);
+}
+
+function isSupervisorConfigFile(filePath: string, extension: string): boolean {
+  const name = basename(filePath || "").toLowerCase();
+  return extension === ".supervisord.conf" || name === "supervisord.conf" || name.endsWith(".supervisord.conf");
+}
+
+function summarizeSupervisorConfigFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(
+      filePath,
+      Math.min(MAX_SUPERVISOR_CONFIG_PREVIEW_BYTES, MAX_TEXT_BYTES * 24),
+    ).toString("utf8");
+    const preview = parseSupervisorConfigPreview(normalizeTextPreview(raw).split("\n"));
+    return [
+      `Supervisor config preview (${formatBytes(size)}).`,
+      preview.sections.length > 0
+        ? `Sections (${preview.sections.length}${preview.sections.length >= MAX_SUPERVISOR_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.sections.join(", ")}.`
+        : "Sections: none detected in the bounded preview.",
+      preview.programs.length > 0
+        ? `Program/group hints (${preview.programs.length}${preview.programs.length >= MAX_SUPERVISOR_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.programs.join(", ")}.`
+        : "Program/group hints: none detected in the bounded preview.",
+      preview.commands.length > 0
+        ? `Command hints: ${preview.commands.join("; ")}.`
+        : "Command hints: none detected in the bounded preview.",
+      preview.processSettings.length > 0
+        ? `Process settings: ${preview.processSettings.join("; ")}.`
+        : "Process settings: none detected in the bounded preview.",
+      preview.environmentKeys.length > 0
+        ? `Environment keys (${preview.environmentKeys.length}${preview.environmentKeys.length >= MAX_SUPERVISOR_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.environmentKeys.join(", ")}.`
+        : "Environment keys: none detected in the bounded preview.",
+      preview.includeHints.length > 0
+        ? `Include/log hints: ${preview.includeHints.join("; ")}.`
+        : "Include/log hints: none detected in the bounded preview.",
+      raw.length >= MAX_SUPERVISOR_CONFIG_PREVIEW_BYTES
+        ? `Preview was capped at ${formatBytes(MAX_SUPERVISOR_CONFIG_PREVIEW_BYTES)} or item limits.`
+        : "",
+      "Ready for explicit attachment after visible review; Supervisor metadata was parsed from bounded workspace-local INI text only, command and URL secret values were redacted, include targets were not read, and no supervisord or supervisorctl command, process start/stop/reload, credential lookup, network call, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Supervisor config ready for explicit attachment (${formatBytes(size)}).`,
+      "No supervisord or supervisorctl command, process start/stop/reload, credential lookup, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseSupervisorConfigPreview(lines: string[]): {
+  sections: string[];
+  programs: string[];
+  commands: string[];
+  processSettings: string[];
+  environmentKeys: string[];
+  includeHints: string[];
+} {
+  const sections = new Set<string>();
+  const programs = new Set<string>();
+  const commands = new Set<string>();
+  const processSettings = new Set<string>();
+  const environmentKeys = new Set<string>();
+  const includeHints = new Set<string>();
+  let section = "";
+
+  for (const rawLine of lines) {
+    const trimmed = rawLine.trim();
+    if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith(";")) continue;
+    const sectionMatch = trimmed.match(/^\[([A-Za-z0-9_.:-]+)\]$/);
+    if (sectionMatch?.[1]) {
+      section = sectionMatch[1];
+      if (sections.size < MAX_SUPERVISOR_CONFIG_ITEM_PREVIEW) sections.add(section);
+      const programMatch = section.match(/^(program|group|eventlistener):(.+)$/i);
+      if (programMatch?.[2] && programs.size < MAX_SUPERVISOR_CONFIG_ITEM_PREVIEW) {
+        programs.add(`${programMatch[1]}:${clampSingleLine(programMatch[2], 80)}`);
+      }
+      continue;
+    }
+
+    const keyValue = trimmed.match(/^([A-Za-z][A-Za-z0-9_.-]*)\s*=\s*(.*)$/);
+    if (!keyValue?.[1]) continue;
+    const key = keyValue[1];
+    const value = sanitizeSupervisorConfigValue(keyValue[2] || "");
+    const summary = `${key}=${value || "[empty]"}`;
+
+    if (key.toLowerCase() === "command" && commands.size < MAX_SUPERVISOR_CONFIG_ITEM_PREVIEW) {
+      commands.add(clampSingleLine(summary, 180));
+      continue;
+    }
+    if (key.toLowerCase() === "environment") {
+      for (const environmentKey of extractSupervisorEnvironmentKeys(keyValue[2] || "")) {
+        if (environmentKeys.size >= MAX_SUPERVISOR_CONFIG_ITEM_PREVIEW) break;
+        environmentKeys.add(environmentKey);
+      }
+      continue;
+    }
+    if (/^(directory|user|autostart|autorestart|numprocs|priority|stopsignal|startsecs|stopwaitsecs|redirect_stderr)$/i.test(key)) {
+      if (processSettings.size < MAX_SUPERVISOR_CONFIG_ITEM_PREVIEW) {
+        processSettings.add(clampSingleLine(summary, 140));
+      }
+      continue;
+    }
+    if (/^(files|stdout_logfile|stderr_logfile|childlogdir|serverurl)$/i.test(key)) {
+      if (includeHints.size < MAX_SUPERVISOR_CONFIG_ITEM_PREVIEW) {
+        includeHints.add(clampSingleLine(`${section ? `${section}.` : ""}${summary}`, 160));
+      }
+    }
+  }
+
+  return {
+    sections: [...sections],
+    programs: [...programs],
+    commands: [...commands],
+    processSettings: [...processSettings],
+    environmentKeys: [...environmentKeys],
+    includeHints: [...includeHints],
+  };
+}
+
+function extractSupervisorEnvironmentKeys(value: string): string[] {
+  const keys = new Set<string>();
+  const matches = value.matchAll(/(?:^|,)\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/g);
+  for (const match of matches) {
+    if (match[1]) keys.add(match[1]);
+    if (keys.size >= MAX_SUPERVISOR_CONFIG_ITEM_PREVIEW) break;
+  }
+  return [...keys];
+}
+
+function sanitizeSupervisorConfigValue(value: string): string {
+  return clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(value.replace(/\s+/g, " ").trim())), 220);
+}
+
 function summarizeSqliteDatabaseFile(filePath: string, size: number): string {
   try {
     const buffer = readFileHeader(filePath, MAX_SQLITE_SCHEMA_SCAN_BYTES);
@@ -14438,6 +16925,177 @@ function summarizeSqliteDatabaseFile(filePath: string, size: number): string {
       "No database connection, credential access, SQL execution, schema sampling query, network call, or provider send was performed.",
     ].join("\n").slice(0, MAX_TEXT_BYTES);
   }
+}
+
+function summarizeRedisPersistenceFile(filePath: string, extension: string, size: number): string {
+  try {
+    const buffer = readFileHeader(filePath, Math.min(size, MAX_REDIS_PERSISTENCE_PREVIEW_BYTES));
+    if (extension === ".rdb") {
+      const preview = parseRedisRdbPreview(buffer);
+      return [
+        `Redis RDB snapshot metadata preview (${formatBytes(size)}).`,
+        preview.version
+          ? `Header: REDIS RDB version ${preview.version}.`
+          : "Header: Redis RDB magic/version was not detected in the bounded local preview.",
+        preview.stringHints.length > 0
+          ? `Printable metadata/key hints (${preview.stringHints.length}${preview.truncated ? "+" : ""}): ${preview.stringHints.join(", ")}.`
+          : "Printable metadata/key hints: none detected in the bounded local preview.",
+        buffer.length >= MAX_REDIS_PERSISTENCE_PREVIEW_BYTES
+          ? `Preview was capped at ${formatBytes(MAX_REDIS_PERSISTENCE_PREVIEW_BYTES)}.`
+          : "",
+        "Ready for explicit attachment after visible review; Redis RDB bytes were parsed from a bounded workspace-local header/string window only, values were not decoded, no Redis server/client process, key scan, command replay, credential lookup, network call, or provider send was performed.",
+      ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+    }
+    const raw = buffer.toString("utf8");
+    const preview = parseRedisAofPreview(raw);
+    const commandSummary = [...preview.commandCounts.entries()]
+      .slice(0, MAX_REDIS_AOF_COMMAND_PREVIEW)
+      .map(([command, count]) => `${command} (${count})`)
+      .join(", ");
+    return [
+      `Redis AOF command preview (${formatBytes(size)}).`,
+      preview.commandCount > 0
+        ? `Commands detected: ${preview.commandCount}.`
+        : "Commands detected: none in the bounded local preview.",
+      commandSummary ? `Command types: ${commandSummary}.` : "",
+      preview.samples.length > 0
+        ? `Command samples:\n${preview.samples.map((sample) => `- ${sample}`).join("\n")}`
+        : "Command samples: none detected in the bounded local preview.",
+      preview.truncated || buffer.length >= MAX_REDIS_PERSISTENCE_PREVIEW_BYTES
+        ? `Preview was capped at ${formatBytes(MAX_REDIS_PERSISTENCE_PREVIEW_BYTES)} or command limits.`
+        : "",
+      "Ready for explicit attachment after visible review; Redis AOF commands were parsed from bounded workspace-local text only, command values and AUTH arguments were not expanded, and no Redis server/client process, command replay, key scan, credential lookup, network call, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Redis persistence file ready for explicit attachment (${formatBytes(size)}).`,
+      "No Redis server/client process, command replay, key scan, credential lookup, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseRedisRdbPreview(buffer: Buffer): { version: string; stringHints: string[]; truncated: boolean } {
+  const magic = buffer.length >= 9 ? buffer.subarray(0, 5).toString("ascii") : "";
+  const version = magic === "REDIS" ? buffer.subarray(5, 9).toString("ascii").replace(/\D/g, "") : "";
+  const printable = buffer
+    .toString("latin1")
+    .replace(/[^\x20-\x7E]+/g, "\n")
+    .split("\n")
+    .map((value) => sanitizeRedisRdbStringHint(value.trim()))
+    .filter((value) => value.length >= 3 && !/^REDIS\d{4}$/i.test(value))
+    .map((value) => clampSingleLine(value, 80));
+  const hints = uniquePreviewValues(printable, MAX_REDIS_RDB_STRING_PREVIEW);
+  return {
+    version,
+    stringHints: hints,
+    truncated: printable.length > hints.length,
+  };
+}
+
+function sanitizeRedisRdbStringHint(value: string): string {
+  if (/(?:token|secret|password|passwd|pwd|api[_-]?key|private[_-]?key|credential)/i.test(value)) {
+    return "[redacted-sensitive-string]";
+  }
+  return maskPotentialSecretValues(value);
+}
+
+function parseRedisAofPreview(raw: string): {
+  commandCount: number;
+  commandCounts: Map<string, number>;
+  samples: string[];
+  truncated: boolean;
+} {
+  const normalized = raw.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const lines = normalized.split("\n");
+  const commandCounts = new Map<string, number>();
+  const samples: string[] = [];
+  let commandCount = 0;
+  let index = 0;
+  while (index < lines.length && commandCount < MAX_REDIS_AOF_COMMAND_PREVIEW * 4) {
+    const line = lines[index]?.trim() ?? "";
+    if (!line) {
+      index += 1;
+      continue;
+    }
+    let parts: string[] | null = null;
+    if (/^\*\d+$/.test(line)) {
+      const declaredParts = Number(line.slice(1));
+      const parsed = parseRedisRespArray(lines, index + 1, declaredParts);
+      parts = parsed.parts;
+      index = parsed.nextIndex;
+    } else {
+      parts = parseRedisPlainCommandLine(line);
+      index += 1;
+    }
+    const command = (parts?.[0] || "").trim().toUpperCase();
+    if (!command) continue;
+    commandCount += 1;
+    commandCounts.set(command, (commandCounts.get(command) ?? 0) + 1);
+    if (samples.length < MAX_REDIS_AOF_COMMAND_PREVIEW) {
+      samples.push(formatRedisAofCommandSample(command, parts || []));
+    }
+  }
+  return {
+    commandCount,
+    commandCounts,
+    samples,
+    truncated: commandCount >= MAX_REDIS_AOF_COMMAND_PREVIEW * 4 || index < lines.length - 1,
+  };
+}
+
+function parseRedisRespArray(
+  lines: string[],
+  startIndex: number,
+  declaredParts: number,
+): { parts: string[]; nextIndex: number } {
+  const parts: string[] = [];
+  let index = startIndex;
+  for (let partIndex = 0; partIndex < declaredParts && index < lines.length; partIndex += 1) {
+    const header = lines[index]?.trim() ?? "";
+    if (/^\$-?\d+$/.test(header)) {
+      const length = Number(header.slice(1));
+      index += 1;
+      if (length < 0) {
+        parts.push("");
+        continue;
+      }
+      parts.push(lines[index] ?? "");
+      index += 1;
+      continue;
+    }
+    parts.push(header.replace(/^[+:]/, ""));
+    index += 1;
+  }
+  return { parts, nextIndex: index };
+}
+
+function parseRedisPlainCommandLine(line: string): string[] {
+  const parts = line.match(/"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|[^\s]+/g) || [];
+  return parts.map((part) => part.replace(/^['"]|['"]$/g, ""));
+}
+
+function formatRedisAofCommandSample(command: string, parts: string[]): string {
+  if (command === "AUTH") return "AUTH [arguments redacted]";
+  if (command === "SELECT") {
+    const db = sanitizeRedisPreviewToken(parts[1] || "");
+    return db ? `SELECT db ${db}` : "SELECT";
+  }
+  const key = sanitizeRedisPreviewToken(parts[1] || "");
+  const suffix = key ? ` ${key}` : "";
+  const valueBoundary =
+    parts.length > 2 && !["DEL", "EXISTS", "EXPIRE", "PEXPIRE", "TTL", "PTTL", "UNLINK"].includes(command)
+      ? " [values not expanded]"
+      : "";
+  return `${command}${suffix}${valueBoundary}`;
+}
+
+function sanitizeRedisPreviewToken(value: string): string {
+  const clamped = clampSingleLine(value.replace(/[^\x20-\x7E]+/g, " "), 100);
+  if (!clamped) return "";
+  if (/(?:token|secret|password|passwd|pwd|api[_-]?key|private[_-]?key|credential)/i.test(clamped)) {
+    return maskPotentialSecretValues(`key=${clamped}`).replace(/^key=/, "");
+  }
+  return maskPotentialSecretValues(clamped);
 }
 
 function summarizeSqlScriptFile(filePath: string, size: number): string {
@@ -14505,6 +17163,234 @@ function summarizeSqlScriptFile(filePath: string, size: number): string {
       "No database connection, credential access, SQL execution, schema sampling query, network call, or provider send was performed.",
     ].join("\n").slice(0, MAX_TEXT_BYTES);
   }
+}
+
+function summarizeDatabaseSchemaDslFile(filePath: string, extension: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_DATABASE_SCHEMA_DSL_PREVIEW_BYTES)).toString("utf8");
+    const preview = parseDatabaseSchemaDslPreview(raw, extension);
+    const label = extension === ".prisma" ? "Prisma schema" : "DBML schema";
+    return [
+      `${label} preview (${formatBytes(size)}).`,
+      preview.sources.length > 0
+        ? `Datasource/env hints: ${preview.sources.join("; ")}.`
+        : "Datasource/env hints: none detected in the bounded preview.",
+      preview.models.length > 0
+        ? `Models/tables (${preview.models.length}${preview.models.length >= MAX_DATABASE_SCHEMA_DSL_ITEM_PREVIEW ? "+" : ""}):\n${preview.models.map((model) => `- ${model}`).join("\n")}`
+        : "Models/tables: none detected in the bounded preview.",
+      preview.fields.length > 0
+        ? `Field hints (${preview.fields.length}${preview.fields.length >= MAX_DATABASE_SCHEMA_DSL_ITEM_PREVIEW ? "+" : ""}): ${preview.fields.join(" | ")}.`
+        : "Field hints: none detected in the bounded preview.",
+      preview.relationships.length > 0
+        ? `Relationship hints (${preview.relationships.length}${preview.relationships.length >= MAX_DATABASE_SCHEMA_DSL_ITEM_PREVIEW ? "+" : ""}): ${preview.relationships.join(" | ")}.`
+        : "Relationship hints: none detected in the bounded preview.",
+      preview.enums.length > 0
+        ? `Enum hints (${preview.enums.length}${preview.enums.length >= MAX_DATABASE_SCHEMA_DSL_ITEM_PREVIEW ? "+" : ""}): ${preview.enums.join(" | ")}.`
+        : "",
+      preview.sampleLines.length > 0
+        ? `Schema text preview:\n${preview.sampleLines.join("\n")}`
+        : "",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_DATABASE_SCHEMA_DSL_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; database schema DSL was parsed from bounded workspace-local text only, datasource URL/env values were not expanded, and no Prisma/dbml-cli/migration command, ORM client generation, database connection, credential lookup, network call, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Database schema DSL file ready for explicit attachment (${formatBytes(size)}).`,
+      "No Prisma/dbml-cli/migration command, ORM client generation, database connection, credential lookup, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseDatabaseSchemaDslPreview(raw: string, extension: string): {
+  sources: string[];
+  models: string[];
+  fields: string[];
+  relationships: string[];
+  enums: string[];
+  sampleLines: string[];
+  truncated: boolean;
+} {
+  const text = stripDatabaseSchemaDslComments(stripUtf8Bom(raw));
+  return extension === ".prisma" ? parsePrismaSchemaPreview(text, raw) : parseDbmlSchemaPreview(text, raw);
+}
+
+function parsePrismaSchemaPreview(text: string, raw: string): {
+  sources: string[];
+  models: string[];
+  fields: string[];
+  relationships: string[];
+  enums: string[];
+  sampleLines: string[];
+  truncated: boolean;
+} {
+  const sources = new Set<string>();
+  const models = new Set<string>();
+  const fields = new Set<string>();
+  const relationships = new Set<string>();
+  const enums = new Set<string>();
+  const modelNames = new Set<string>();
+
+  for (const match of text.matchAll(/\bmodel\s+([A-Za-z_][\w]*)\s*\{([\s\S]*?)\}/g)) {
+    if (!match[1] || !match[2]) continue;
+    modelNames.add(match[1]);
+  }
+
+  for (const match of text.matchAll(/\bdatasource\s+([A-Za-z_][\w]*)\s*\{([\s\S]*?)\}/g)) {
+    if (!match[1] || !match[2]) continue;
+    if (sources.size >= MAX_DATABASE_SCHEMA_DSL_ITEM_PREVIEW) break;
+    const provider = match[2].match(/\bprovider\s*=\s*"([^"]+)"/)?.[1] || "";
+    const envKey = match[2].match(/\burl\s*=\s*env\("([^"]+)"\)/)?.[1] || "";
+    const bits = [`datasource ${match[1]}`];
+    if (provider) bits.push(`provider=${sanitizeDatabaseSchemaDslHint(provider)}`);
+    if (envKey) bits.push(`url env=${sanitizeDatabaseSchemaDslHint(envKey)}`);
+    sources.add(bits.join(" "));
+  }
+
+  for (const match of text.matchAll(/\bmodel\s+([A-Za-z_][\w]*)\s*\{([\s\S]*?)\}/g)) {
+    if (!match[1] || !match[2]) continue;
+    const model = match[1];
+    if (models.size < MAX_DATABASE_SCHEMA_DSL_ITEM_PREVIEW) models.add(model);
+    for (const rawLine of match[2].split("\n")) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith("@@")) continue;
+      const fieldMatch = line.match(/^([A-Za-z_][\w]*)\s+([A-Za-z_][\w]*(?:\[\])?|\w+\?)\s*(.*)$/);
+      if (!fieldMatch?.[1] || !fieldMatch[2]) continue;
+      const fieldName = fieldMatch[1];
+      const fieldType = fieldMatch[2];
+      const attributes = fieldMatch[3] || "";
+      if (fields.size < MAX_DATABASE_SCHEMA_DSL_ITEM_PREVIEW) {
+        const markers = [
+          attributes.includes("@id") ? "@id" : "",
+          attributes.includes("@unique") ? "@unique" : "",
+          attributes.includes("@relation") ? "@relation" : "",
+          attributes.includes("@default") ? "@default" : "",
+        ].filter(Boolean).join(" ");
+        fields.add(sanitizeDatabaseSchemaDslHint(`${model}.${fieldName}: ${fieldType}${markers ? ` ${markers}` : ""}`));
+      }
+      if (
+        relationships.size < MAX_DATABASE_SCHEMA_DSL_ITEM_PREVIEW &&
+        (attributes.includes("@relation") || modelNames.has(fieldType.replace(/\?|\[\]/g, "")))
+      ) {
+        relationships.add(sanitizeDatabaseSchemaDslHint(`${model}.${fieldName} -> ${fieldType.replace(/\?|\[\]/g, "")}`));
+      }
+    }
+  }
+
+  for (const match of text.matchAll(/\benum\s+([A-Za-z_][\w]*)\s*\{([\s\S]*?)\}/g)) {
+    if (!match[1] || !match[2] || enums.size >= MAX_DATABASE_SCHEMA_DSL_ITEM_PREVIEW) continue;
+    const values = match[2]
+      .split(/\s+/)
+      .map((value) => value.trim())
+      .filter((value) => /^[A-Za-z_][\w]*$/.test(value))
+      .slice(0, 8);
+    enums.add(`${match[1]}=${values.join("/")}`);
+  }
+
+  return {
+    sources: [...sources],
+    models: [...models],
+    fields: [...fields],
+    relationships: [...relationships],
+    enums: [...enums],
+    sampleLines: collectDatabaseSchemaDslSampleLines(raw),
+    truncated:
+      raw.length >= MAX_DATABASE_SCHEMA_DSL_PREVIEW_BYTES ||
+      fields.size >= MAX_DATABASE_SCHEMA_DSL_ITEM_PREVIEW ||
+      relationships.size >= MAX_DATABASE_SCHEMA_DSL_ITEM_PREVIEW,
+  };
+}
+
+function parseDbmlSchemaPreview(text: string, raw: string): {
+  sources: string[];
+  models: string[];
+  fields: string[];
+  relationships: string[];
+  enums: string[];
+  sampleLines: string[];
+  truncated: boolean;
+} {
+  const models = new Set<string>();
+  const fields = new Set<string>();
+  const relationships = new Set<string>();
+  const enums = new Set<string>();
+
+  for (const match of text.matchAll(/\bTable\s+(?:"([^"]+)"|`([^`]+)`|([A-Za-z_][\w.]*))\s*\{([\s\S]*?)\}/gi)) {
+    const table = match[1] || match[2] || match[3] || "";
+    const body = match[4] || "";
+    if (!table) continue;
+    if (models.size < MAX_DATABASE_SCHEMA_DSL_ITEM_PREVIEW) models.add(sanitizeDatabaseSchemaDslHint(table));
+    for (const rawLine of body.split("\n")) {
+      const line = rawLine.trim();
+      if (!line || /^indexes\b/i.test(line) || /^[{}]$/.test(line)) continue;
+      const fieldMatch = line.match(/^(?:"([^"]+)"|`([^`]+)`|([A-Za-z_][\w]*))\s+([A-Za-z_][\w.()<>\[\]]*)\s*(?:\[(.*?)\])?/);
+      if (!fieldMatch) continue;
+      const fieldName = fieldMatch[1] || fieldMatch[2] || fieldMatch[3] || "";
+      const fieldType = fieldMatch[4] || "";
+      const settings = fieldMatch[5] || "";
+      if (fields.size < MAX_DATABASE_SCHEMA_DSL_ITEM_PREVIEW) {
+        const markers = [
+          /\bpk\b/i.test(settings) ? "pk" : "",
+          /\bunique\b/i.test(settings) ? "unique" : "",
+          /\bnot\s+null\b/i.test(settings) ? "not null" : "",
+        ].filter(Boolean).join(", ");
+        fields.add(sanitizeDatabaseSchemaDslHint(`${table}.${fieldName}: ${fieldType}${markers ? ` [${markers}]` : ""}`));
+      }
+      const refMatch = settings.match(/\bref\s*:\s*([<>-]+)\s*([A-Za-z_][\w.]*)(?:\s*\.\s*([A-Za-z_][\w]*))?/i);
+      if (refMatch && relationships.size < MAX_DATABASE_SCHEMA_DSL_ITEM_PREVIEW) {
+        relationships.add(sanitizeDatabaseSchemaDslHint(`${table}.${fieldName} ${refMatch[1]} ${refMatch[2]}${refMatch[3] ? `.${refMatch[3]}` : ""}`));
+      }
+    }
+  }
+
+  for (const match of text.matchAll(/\bRef\b[^\n{]*(?:\{[^}]*\}|[^\n]*)/gi)) {
+    if (!match[0] || relationships.size >= MAX_DATABASE_SCHEMA_DSL_ITEM_PREVIEW) break;
+    relationships.add(sanitizeDatabaseSchemaDslHint(match[0].replace(/\s+/g, " ")));
+  }
+
+  for (const match of text.matchAll(/\bEnum\s+(?:"([^"]+)"|`([^`]+)`|([A-Za-z_][\w.]*))\s*\{([\s\S]*?)\}/gi)) {
+    if (enums.size >= MAX_DATABASE_SCHEMA_DSL_ITEM_PREVIEW) break;
+    const enumName = match[1] || match[2] || match[3] || "";
+    const values = (match[4] || "")
+      .split(/\s+/)
+      .map((value) => value.trim().replace(/^['"`]|['"`]$/g, ""))
+      .filter((value) => /^[A-Za-z_][\w-]*$/.test(value))
+      .slice(0, 8);
+    if (enumName) enums.add(`${sanitizeDatabaseSchemaDslHint(enumName)}=${values.join("/")}`);
+  }
+
+  return {
+    sources: [],
+    models: [...models],
+    fields: [...fields],
+    relationships: [...relationships],
+    enums: [...enums],
+    sampleLines: collectDatabaseSchemaDslSampleLines(raw),
+    truncated:
+      raw.length >= MAX_DATABASE_SCHEMA_DSL_PREVIEW_BYTES ||
+      fields.size >= MAX_DATABASE_SCHEMA_DSL_ITEM_PREVIEW ||
+      relationships.size >= MAX_DATABASE_SCHEMA_DSL_ITEM_PREVIEW,
+  };
+}
+
+function stripDatabaseSchemaDslComments(raw: string): string {
+  return raw
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .split(/\r?\n/)
+    .map((line) => line.replace(/(^|\s)(\/\/|#).*/, "$1").trimEnd())
+    .join("\n");
+}
+
+function collectDatabaseSchemaDslSampleLines(raw: string): string[] {
+  return normalizeTextPreview(stripDatabaseSchemaDslComments(raw))
+    .split("\n")
+    .map((line) => sanitizeDatabaseSchemaDslHint(line.trim()))
+    .filter(Boolean)
+    .slice(0, 12);
+}
+
+function sanitizeDatabaseSchemaDslHint(value: string): string {
+  const tokenRedacted = value.replace(/\bsecret[-_][A-Za-z0-9._-]+/gi, "[redacted]");
+  return clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(tokenRedacted)), 180);
 }
 
 function summarizeSqlStatementKinds(statements: string[]): string[] {
@@ -14806,7 +17692,7 @@ function summarizeApiSpecFile(filePath: string, extension: string, size: number)
       endpointLines.length > 0
         ? `Endpoint samples:\n${endpointLines.join("\n")}`
         : "Endpoint samples: none detected in the bounded local preview.",
-      "Ready for explicit attachment after visible review; Postman/OpenAPI/Swagger/Insomnia metadata was parsed from bounded local text only, sensitive URL values were redacted, and no request execution, mock server startup, credential lookup, network call, or provider send was performed.",
+      "Ready for explicit attachment after visible review; Postman/OpenAPI/Swagger/AsyncAPI/Insomnia metadata was parsed from bounded local text only, sensitive URL values were redacted, and no request execution, broker connection, mock server startup, credential lookup, network call, or provider send was performed.",
     ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
   } catch {
     return null;
@@ -14823,6 +17709,9 @@ function parseJsonApiSpecPreview(raw: string): ApiSpecPreview | null {
   if (!isPlainRecord(parsed)) return null;
   if (typeof parsed.openapi === "string" || typeof parsed.swagger === "string") {
     return parseOpenApiRecord(parsed, typeof parsed.openapi === "string" ? "OpenAPI" : "Swagger");
+  }
+  if (typeof parsed.asyncapi === "string") {
+    return parseAsyncApiRecord(parsed);
   }
   if (isPlainRecord(parsed.info) && Array.isArray(parsed.item)) {
     const schema = readRecordString(parsed.info, "schema");
@@ -14855,6 +17744,117 @@ function parseOpenApiRecord(record: Record<string, unknown>, label: string): Api
     endpoints,
     security,
   };
+}
+
+function parseAsyncApiRecord(record: Record<string, unknown>): ApiSpecPreview {
+  const info = isPlainRecord(record.info) ? record.info : {};
+  const channels = isPlainRecord(record.channels) ? record.channels : {};
+  const servers = readAsyncApiServers(record);
+  const endpoints = extractAsyncApiEndpoints(record, channels);
+  const security = extractAsyncApiSecurity(record);
+  return {
+    format: `AsyncAPI ${record.asyncapi}`,
+    title: readRecordString(info, "title"),
+    version: readRecordString(info, "version"),
+    servers,
+    endpoints,
+    security,
+  };
+}
+
+function readAsyncApiServers(record: Record<string, unknown>): string[] {
+  const servers = new Set<string>();
+  const serverRecords = isPlainRecord(record.servers) ? record.servers : {};
+  for (const [name, value] of Object.entries(serverRecords)) {
+    if (!isPlainRecord(value)) continue;
+    const url = readRecordString(value, "url") || readRecordString(value, "host");
+    const protocol = readRecordString(value, "protocol");
+    const label = [name, protocol ? `(${protocol})` : "", url].filter(Boolean).join(" ");
+    if (label) servers.add(clampSingleLine(label, 180));
+    if (servers.size >= 8) break;
+  }
+  return [...servers];
+}
+
+function extractAsyncApiEndpoints(
+  record: Record<string, unknown>,
+  channels: Record<string, unknown>,
+): ApiSpecEndpointPreview[] {
+  const endpoints: ApiSpecEndpointPreview[] = [];
+  for (const [channelName, channelValue] of Object.entries(channels)) {
+    if (!isPlainRecord(channelValue)) continue;
+    const address = readRecordString(channelValue, "address") || channelName;
+    for (const action of ["publish", "subscribe"]) {
+      const operation = channelValue[action];
+      if (!isPlainRecord(operation)) continue;
+      endpoints.push({
+        method: action,
+        path: clampSingleLine(address, 180),
+        name: readAsyncApiOperationName(operation),
+      });
+      if (endpoints.length >= MAX_API_ENDPOINT_PREVIEW * 2) return endpoints;
+    }
+  }
+
+  const operations = isPlainRecord(record.operations) ? record.operations : {};
+  for (const [operationName, operationValue] of Object.entries(operations)) {
+    if (!isPlainRecord(operationValue)) continue;
+    const action = readRecordString(operationValue, "action") || "operation";
+    const channel = resolveAsyncApiOperationChannel(operationValue, channels);
+    endpoints.push({
+      method: action,
+      path: clampSingleLine(channel, 180),
+      name: clampSingleLine(
+        readRecordString(operationValue, "operationId") ||
+          readRecordString(operationValue, "summary") ||
+          operationName,
+        120,
+      ),
+    });
+    if (endpoints.length >= MAX_API_ENDPOINT_PREVIEW * 2) return endpoints;
+  }
+  return endpoints;
+}
+
+function readAsyncApiOperationName(operation: Record<string, unknown>): string | undefined {
+  const value =
+    readRecordString(operation, "operationId") ||
+    readRecordString(operation, "summary") ||
+    readRecordString(operation, "description");
+  return value ? clampSingleLine(value, 120) : undefined;
+}
+
+function resolveAsyncApiOperationChannel(
+  operation: Record<string, unknown>,
+  channels: Record<string, unknown>,
+): string {
+  const channel = operation.channel;
+  if (isPlainRecord(channel)) {
+    const ref = readRecordString(channel, "$ref");
+    if (ref) {
+      const key = ref.split("/").pop() || ref;
+      const referenced = channels[key];
+      if (isPlainRecord(referenced)) {
+        return readRecordString(referenced, "address") || key;
+      }
+      return key;
+    }
+    return readRecordString(channel, "address") || readRecordString(channel, "name") || "unknown channel";
+  }
+  if (typeof channel === "string") return channel;
+  return "unknown channel";
+}
+
+function extractAsyncApiSecurity(record: Record<string, unknown>): string[] {
+  const security = new Set<string>();
+  const components = isPlainRecord(record.components) ? record.components : {};
+  const securitySchemes = isPlainRecord(components.securitySchemes) ? components.securitySchemes : {};
+  for (const [name, value] of Object.entries(securitySchemes)) {
+    const type = isPlainRecord(value) ? readRecordString(value, "type") : "";
+    security.add(clampSingleLine(type ? `${name} (${type})` : name, 120));
+    if (security.size >= MAX_API_SECURITY_PREVIEW) break;
+  }
+  return [...security];
 }
 
 function readOpenApiServers(record: Record<string, unknown>): string[] {
@@ -15156,6 +18156,8 @@ function parseYamlApiSpecPreview(raw: string): ApiSpecPreview | null {
   const text = normalizeTextPreview(raw);
   const insomniaPreview = parseYamlInsomniaExportPreview(text);
   if (insomniaPreview) return insomniaPreview;
+  const asyncApiPreview = parseYamlAsyncApiPreview(text);
+  if (asyncApiPreview) return asyncApiPreview;
   if (!/^\s*(openapi|swagger)\s*:/im.test(text)) return null;
   const lines = text.split("\n");
   const formatLine = lines.find((line) => /^\s*(openapi|swagger)\s*:/i.test(line)) || "";
@@ -15202,6 +18204,109 @@ function parseYamlApiSpecPreview(raw: string): ApiSpecPreview | null {
 
   return {
     format: `OpenAPI/Swagger YAML${version ? ` ${version}` : ""}`,
+    title,
+    version: infoVersion,
+    servers: [...servers].slice(0, 8),
+    endpoints,
+    security: [...security].slice(0, MAX_API_SECURITY_PREVIEW),
+  };
+}
+
+function parseYamlAsyncApiPreview(text: string): ApiSpecPreview | null {
+  if (!/^\s*asyncapi\s*:/im.test(text)) return null;
+  const lines = text.split("\n");
+  const endpoints: ApiSpecEndpointPreview[] = [];
+  const servers = new Set<string>();
+  const security = new Set<string>();
+  const channelNames = new Set<string>();
+  let title = "";
+  let infoVersion = "";
+  let asyncApiVersion = "";
+  let currentChannel = "";
+  let inChannels = false;
+  let inServers = false;
+  let inSecuritySchemes = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const asyncApiMatch = trimmed.match(/^asyncapi\s*:\s*(.+)$/i);
+    if (!asyncApiVersion && asyncApiMatch?.[1]) asyncApiVersion = cleanYamlScalar(asyncApiMatch[1]);
+    const titleMatch = trimmed.match(/^title\s*:\s*(.+)$/i);
+    if (!title && titleMatch?.[1]) title = cleanYamlScalar(titleMatch[1]);
+    const versionMatch = trimmed.match(/^version\s*:\s*(.+)$/i);
+    if (!infoVersion && versionMatch?.[1]) infoVersion = cleanYamlScalar(versionMatch[1]);
+
+    if (/^channels\s*:/i.test(trimmed)) {
+      inChannels = true;
+      inServers = false;
+      inSecuritySchemes = false;
+      continue;
+    }
+    if (/^servers\s*:/i.test(trimmed)) {
+      inServers = true;
+      inChannels = false;
+      inSecuritySchemes = false;
+      continue;
+    }
+    if (/^securitySchemes\s*:/i.test(trimmed)) {
+      inSecuritySchemes = true;
+      inChannels = false;
+      inServers = false;
+      continue;
+    }
+
+    if (/^\S/.test(line) && !/^(channels|servers|components|securitySchemes)\s*:/i.test(trimmed)) {
+      inChannels = false;
+      inServers = false;
+      inSecuritySchemes = false;
+    }
+
+    if (inServers) {
+      const urlMatch = trimmed.match(/^(url|host)\s*:\s*(.+)$/i);
+      if (urlMatch?.[2]) servers.add(clampSingleLine(cleanYamlScalar(urlMatch[2]), 180));
+      const protocolMatch = trimmed.match(/^protocol\s*:\s*(.+)$/i);
+      if (protocolMatch?.[1]) servers.add(clampSingleLine(`protocol ${cleanYamlScalar(protocolMatch[1])}`, 180));
+    }
+
+    if (inSecuritySchemes) {
+      const schemeMatch = line.match(/^\s{2,8}([A-Za-z0-9_.-]+)\s*:\s*$/);
+      if (schemeMatch?.[1] && !["type", "scheme", "name", "in"].includes(schemeMatch[1])) {
+        security.add(clampSingleLine(schemeMatch[1], 120));
+      }
+    }
+
+    if (!inChannels) continue;
+    const channelMatch = line.match(/^\s{2,6}["']?([^:'"]+)["']?\s*:\s*(?:#.*)?$/);
+    if (channelMatch?.[1] && !["publish", "subscribe", "message", "parameters"].includes(channelMatch[1])) {
+      currentChannel = cleanYamlScalar(channelMatch[1]);
+      channelNames.add(currentChannel);
+      continue;
+    }
+    const addressMatch = trimmed.match(/^address\s*:\s*(.+)$/i);
+    if (addressMatch?.[1] && currentChannel) {
+      currentChannel = cleanYamlScalar(addressMatch[1]);
+      channelNames.add(currentChannel);
+      continue;
+    }
+    const operationMatch = trimmed.match(/^(publish|subscribe)\s*:/i);
+    if (operationMatch?.[1] && currentChannel) {
+      endpoints.push({
+        method: operationMatch[1],
+        path: clampSingleLine(currentChannel, 180),
+      });
+      if (endpoints.length >= MAX_API_ENDPOINT_PREVIEW * 2) break;
+    }
+  }
+
+  if (endpoints.length === 0) {
+    for (const channel of channelNames) {
+      endpoints.push({ method: "channel", path: clampSingleLine(channel, 180) });
+      if (endpoints.length >= MAX_API_ENDPOINT_PREVIEW * 2) break;
+    }
+  }
+
+  return {
+    format: `AsyncAPI YAML${asyncApiVersion ? ` ${asyncApiVersion}` : ""}`,
     title,
     version: infoVersion,
     servers: [...servers].slice(0, 8),
@@ -15391,6 +18496,7 @@ interface KubernetesResourcePreview {
   containers: string[];
   images: string[];
   references: string[];
+  details: string[];
 }
 
 interface KubernetesManifestPreview {
@@ -15636,6 +18742,8 @@ function summarizeKubernetesManifestFile(filePath: string, extension: string, si
       .slice(0, MAX_KUBERNETES_CONTAINER_PREVIEW);
     const references = uniqueKubernetesValues(preview.resources.flatMap((resource) => resource.references))
       .slice(0, MAX_KUBERNETES_REFERENCE_PREVIEW);
+    const details = uniqueKubernetesValues(preview.resources.flatMap((resource) => resource.details))
+      .slice(0, MAX_KUBERNETES_DETAIL_PREVIEW);
     return [
       `Kubernetes manifest preview (${formatBytes(size)}).`,
       `Format: ${preview.format}.`,
@@ -15652,6 +18760,9 @@ function summarizeKubernetesManifestFile(filePath: string, extension: string, si
       references.length > 0
         ? `Config/secret/storage references: ${references.join(", ")}.`
         : "Config/secret/storage references: none detected in the bounded local preview.",
+      details.length > 0
+        ? `Local resource details: ${details.join(" | ")}.`
+        : "Local resource details: none detected in the bounded local preview.",
       preview.truncated ? `Kubernetes preview was capped at ${formatBytes(MAX_KUBERNETES_PREVIEW_BYTES)} or item limits.` : "",
       "Ready for explicit attachment after visible review; Kubernetes manifest metadata was parsed from bounded local JSON/YAML text only, secret values were not expanded, and no kubectl command, cluster connection, manifest apply, image pull, registry lookup, network call, or provider send was performed.",
     ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
@@ -15704,7 +18815,9 @@ function readJsonKubernetesResourcePreview(record: Record<string, unknown>): Kub
   const containers = new Set<string>();
   const images = new Set<string>();
   const references = new Set<string>();
+  const details = new Set<string>();
   collectJsonKubernetesWorkloadHints(record, containers, images, references, 0);
+  collectJsonKubernetesResourceDetails(record, kind, details);
   return {
     apiVersion: clampSingleLine(apiVersion, 80),
     kind: clampSingleLine(kind, 80),
@@ -15713,7 +18826,85 @@ function readJsonKubernetesResourcePreview(record: Record<string, unknown>): Kub
     containers: [...containers].slice(0, MAX_KUBERNETES_CONTAINER_PREVIEW),
     images: [...images].slice(0, MAX_KUBERNETES_CONTAINER_PREVIEW),
     references: [...references].slice(0, MAX_KUBERNETES_REFERENCE_PREVIEW),
+    details: [...details].slice(0, MAX_KUBERNETES_DETAIL_PREVIEW),
   };
+}
+
+function collectJsonKubernetesResourceDetails(
+  record: Record<string, unknown>,
+  kind: string,
+  details: Set<string>,
+): void {
+  const normalizedKind = kind.toLowerCase();
+  const spec = isPlainRecord(record.spec) ? record.spec : {};
+  const metadata = isPlainRecord(record.metadata) ? record.metadata : {};
+  collectJsonKubernetesSelectorDetails(spec, details);
+  collectJsonKubernetesSelectorDetails(metadata, details);
+
+  if (normalizedKind === "service") {
+    for (const port of readRecordArray(spec, "ports").slice(0, MAX_KUBERNETES_DETAIL_PREVIEW)) {
+      if (!isPlainRecord(port)) continue;
+      const label = readRecordString(port, "name");
+      const servicePort = readKubernetesRecordScalar(port, "port");
+      const targetPort = readKubernetesRecordScalar(port, "targetPort");
+      const protocol = readRecordString(port, "protocol");
+      const portText = [label ? `${label}:` : "", servicePort || "(port?)", targetPort ? `->${targetPort}` : "", protocol ? `/${protocol}` : ""]
+        .join("")
+        .trim();
+      if (portText) details.add(`Service port ${clampSingleLine(portText, 120)}`);
+    }
+  }
+
+  if (normalizedKind === "ingress") {
+    for (const rule of readRecordArray(spec, "rules").slice(0, MAX_KUBERNETES_DETAIL_PREVIEW)) {
+      if (!isPlainRecord(rule)) continue;
+      const host = readRecordString(rule, "host");
+      if (host) details.add(`Ingress host ${clampSingleLine(host, 120)}`);
+      const http = isPlainRecord(rule.http) ? rule.http : {};
+      for (const path of readRecordArray(http, "paths").slice(0, MAX_KUBERNETES_DETAIL_PREVIEW)) {
+        if (!isPlainRecord(path)) continue;
+        const pathValue = readRecordString(path, "path");
+        if (pathValue) details.add(`Ingress path ${clampSingleLine(pathValue, 120)}`);
+      }
+    }
+  }
+
+  if (normalizedKind === "configmap" || normalizedKind === "secret") {
+    for (const key of collectJsonKubernetesKeyNames(record, ["data", "binaryData", "stringData"])) {
+      details.add(`${normalizedKind === "secret" ? "Secret key" : "ConfigMap key"} ${key}`);
+    }
+  }
+}
+
+function readKubernetesRecordScalar(record: Record<string, unknown>, key: string): string {
+  const value = readRecordValue(record, key);
+  return ["string", "number", "boolean"].includes(typeof value)
+    ? clampSingleLine(String(value), 120)
+    : "";
+}
+
+function collectJsonKubernetesSelectorDetails(record: Record<string, unknown>, details: Set<string>): void {
+  const selector = isPlainRecord(record.selector) ? record.selector : {};
+  const matchLabels = isPlainRecord(selector.matchLabels) ? selector.matchLabels : selector;
+  const labels = collectJsonKubernetesKeyValuePairs(matchLabels);
+  if (labels.length > 0) details.add(`Selector ${labels.join(", ")}`);
+}
+
+function collectJsonKubernetesKeyNames(record: Record<string, unknown>, keys: string[]): string[] {
+  const values: string[] = [];
+  for (const key of keys) {
+    const section = readRecordValue(record, key);
+    if (!isPlainRecord(section)) continue;
+    values.push(...Object.keys(section).map((name) => clampSingleLine(name, 120)));
+  }
+  return uniqueKubernetesValues(values).slice(0, MAX_KUBERNETES_DETAIL_PREVIEW);
+}
+
+function collectJsonKubernetesKeyValuePairs(record: Record<string, unknown>): string[] {
+  return Object.entries(record)
+    .filter(([, value]) => ["string", "number", "boolean"].includes(typeof value))
+    .map(([key, value]) => `${clampSingleLine(key, 80)}=${clampSingleLine(String(value), 80)}`)
+    .slice(0, MAX_KUBERNETES_DETAIL_PREVIEW);
 }
 
 function collectJsonKubernetesWorkloadHints(
@@ -15787,6 +18978,7 @@ function readYamlKubernetesResourcePreview(doc: string): KubernetesResourcePrevi
   const containers = new Set<string>();
   const images = new Set<string>();
   const references = new Set<string>();
+  const details = new Set<string>();
 
   for (const line of lines) {
     const trimmed = line.trim();
@@ -15829,7 +19021,7 @@ function readYamlKubernetesResourcePreview(doc: string): KubernetesResourcePrevi
     if (directReference?.[1] && directReference[2]) {
       references.add(`${directReference[1]}:${cleanYamlScalar(directReference[2])}`);
     }
-    const nestedReference = trimmed.match(/^(secretRef|configMapRef)\s*:\s*(?:#.*)?$/);
+    const nestedReference = trimmed.match(/^(?:-\s*)?(secretRef|configMapRef)\s*:\s*(?:#.*)?$/);
     if (nestedReference?.[1]) {
       referenceContext = { key: nestedReference[1], indent };
       continue;
@@ -15845,6 +19037,8 @@ function readYamlKubernetesResourcePreview(doc: string): KubernetesResourcePrevi
     }
   }
 
+  collectYamlKubernetesResourceDetails(lines, kind, details);
+
   if (!apiVersion || !kind) return null;
   return {
     apiVersion,
@@ -15854,7 +19048,157 @@ function readYamlKubernetesResourcePreview(doc: string): KubernetesResourcePrevi
     containers: [...containers].slice(0, MAX_KUBERNETES_CONTAINER_PREVIEW),
     images: [...images].slice(0, MAX_KUBERNETES_CONTAINER_PREVIEW),
     references: [...references].slice(0, MAX_KUBERNETES_REFERENCE_PREVIEW),
+    details: [...details].slice(0, MAX_KUBERNETES_DETAIL_PREVIEW),
   };
+}
+
+function collectYamlKubernetesResourceDetails(lines: string[], kind: string, details: Set<string>): void {
+  const normalizedKind = kind.toLowerCase();
+  collectYamlKubernetesSelectorDetails(lines, details);
+
+  if (normalizedKind === "service") {
+    for (const port of collectYamlKubernetesServicePorts(lines)) {
+      details.add(`Service port ${port}`);
+    }
+  }
+
+  if (normalizedKind === "ingress") {
+    for (const host of collectYamlScalarValues(lines, "host")) {
+      details.add(`Ingress host ${host}`);
+    }
+    for (const path of collectYamlScalarValues(lines, "path")) {
+      details.add(`Ingress path ${path}`);
+    }
+  }
+
+  if (normalizedKind === "configmap" || normalizedKind === "secret") {
+    for (const key of collectYamlKubernetesDataKeys(lines)) {
+      details.add(`${normalizedKind === "secret" ? "Secret key" : "ConfigMap key"} ${key}`);
+    }
+  }
+}
+
+function collectYamlKubernetesSelectorDetails(lines: string[], details: Set<string>): void {
+  const pairs: string[] = [];
+  let selectorIndent: number | null = null;
+  let matchLabelsIndent: number | null = null;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const indent = line.length - line.trimStart().length;
+    if (/^selector\s*:\s*(?:#.*)?$/.test(trimmed)) {
+      selectorIndent = indent;
+      matchLabelsIndent = null;
+      continue;
+    }
+    if (selectorIndent !== null && indent <= selectorIndent && !/^selector\s*:/.test(trimmed)) {
+      selectorIndent = null;
+      matchLabelsIndent = null;
+    }
+    if (selectorIndent === null || indent <= selectorIndent) continue;
+    if (/^matchLabels\s*:\s*(?:#.*)?$/.test(trimmed)) {
+      matchLabelsIndent = indent;
+      continue;
+    }
+    const activeIndent = matchLabelsIndent ?? selectorIndent;
+    if (indent <= activeIndent) continue;
+    const pair = trimmed.match(/^([A-Za-z0-9_.\/-]+)\s*:\s*(.+)$/);
+    if (pair?.[1] && pair[2] && !["matchExpressions"].includes(pair[1])) {
+      pairs.push(`${cleanYamlScalar(pair[1])}=${cleanYamlScalar(pair[2])}`);
+    }
+    if (pairs.length >= MAX_KUBERNETES_DETAIL_PREVIEW) break;
+  }
+
+  if (pairs.length > 0) details.add(`Selector ${uniqueKubernetesValues(pairs).join(", ")}`);
+}
+
+function collectYamlKubernetesServicePorts(lines: string[]): string[] {
+  const ports: string[] = [];
+  let portsIndent: number | null = null;
+  let current: Record<string, string> = {};
+
+  const flush = () => {
+    const port = current.port || current.targetPort || current.name;
+    if (!port) {
+      current = {};
+      return;
+    }
+    const value = [
+      current.name ? `${current.name}:` : "",
+      current.port || "(port?)",
+      current.targetPort ? `->${current.targetPort}` : "",
+      current.protocol ? `/${current.protocol}` : "",
+    ].join("");
+    ports.push(clampSingleLine(value, 120));
+    current = {};
+  };
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const indent = line.length - line.trimStart().length;
+    if (/^ports\s*:\s*(?:#.*)?$/.test(trimmed)) {
+      portsIndent = indent;
+      continue;
+    }
+    if (portsIndent !== null && indent <= portsIndent && !/^ports\s*:/.test(trimmed)) {
+      flush();
+      portsIndent = null;
+    }
+    if (portsIndent === null || indent <= portsIndent) continue;
+    const listPair = trimmed.match(/^-\s*([A-Za-z][\w-]*)\s*:\s*(.+)$/);
+    if (listPair) {
+      flush();
+      current[listPair[1]] = cleanYamlScalar(listPair[2]);
+      continue;
+    }
+    if (trimmed.startsWith("-")) {
+      flush();
+      continue;
+    }
+    const pair = trimmed.match(/^([A-Za-z][\w-]*)\s*:\s*(.+)$/);
+    if (pair?.[1] && pair[2] && ["name", "port", "targetPort", "protocol"].includes(pair[1])) {
+      current[pair[1]] = cleanYamlScalar(pair[2]);
+    }
+    if (ports.length >= MAX_KUBERNETES_DETAIL_PREVIEW) break;
+  }
+  flush();
+  return uniqueKubernetesValues(ports).slice(0, MAX_KUBERNETES_DETAIL_PREVIEW);
+}
+
+function collectYamlScalarValues(lines: string[], key: string): string[] {
+  const pattern = new RegExp(`^(?:-\\s*)?${escapeRegExp(key)}\\s*:\\s*(.+)$`);
+  const values: string[] = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const match = trimmed.match(pattern);
+    if (match?.[1]) values.push(cleanYamlScalar(match[1]));
+    if (values.length >= MAX_KUBERNETES_DETAIL_PREVIEW) break;
+  }
+  return uniqueKubernetesValues(values).slice(0, MAX_KUBERNETES_DETAIL_PREVIEW);
+}
+
+function collectYamlKubernetesDataKeys(lines: string[]): string[] {
+  const keys: string[] = [];
+  let dataIndent: number | null = null;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const indent = line.length - line.trimStart().length;
+    if (/^(data|binaryData|stringData)\s*:\s*(?:#.*)?$/.test(trimmed)) {
+      dataIndent = indent;
+      continue;
+    }
+    if (dataIndent !== null && indent <= dataIndent && !/^(data|binaryData|stringData)\s*:/.test(trimmed)) {
+      dataIndent = null;
+    }
+    if (dataIndent === null || indent <= dataIndent) continue;
+    const key = trimmed.match(/^([A-Za-z0-9_.\/-]+)\s*:/);
+    if (key?.[1]) keys.push(cleanYamlScalar(key[1]));
+    if (keys.length >= MAX_KUBERNETES_DETAIL_PREVIEW) break;
+  }
+  return uniqueKubernetesValues(keys).slice(0, MAX_KUBERNETES_DETAIL_PREVIEW);
 }
 
 function uniqueKubernetesValues(values: string[]): string[] {
@@ -16491,6 +19835,14 @@ interface FeedDocumentPreview {
   items: string[];
 }
 
+interface OpmlSubscriptionPreview {
+  title: string | null;
+  owners: string[];
+  outlines: string[];
+  feeds: string[];
+  sites: string[];
+}
+
 interface RobotsTxtPreview {
   userAgents: string[];
   allowed: string[];
@@ -16643,6 +19995,76 @@ function summarizeFeedDocumentFile(filePath: string, extension: string, size: nu
       "Feed preview could not parse bounded local XML; no remote feed fetch, script execution, browser profile access, network call, credential lookup, or provider send was performed.",
     ].join("\n");
   }
+}
+
+function summarizeOpmlSubscriptionFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_FEED_PREVIEW_BYTES).toString("utf8");
+    const preview = parseOpmlSubscriptionPreview(raw);
+    return [
+      `OPML subscription export preview (${formatBytes(size)}).`,
+      `Title: ${preview.title || "none detected in the bounded local preview"}.`,
+      preview.owners.length > 0
+        ? `Owner metadata: ${preview.owners.join(", ")}.`
+        : "Owner metadata: none detected in the bounded local preview.",
+      preview.outlines.length > 0
+        ? `Outline titles (${preview.outlines.length}${preview.outlines.length >= MAX_OPML_OUTLINE_PREVIEW ? "+" : ""}): ${preview.outlines.join(" | ")}.`
+        : "Outline titles: none detected in the bounded local preview.",
+      preview.feeds.length > 0
+        ? `Feed URLs (${preview.feeds.length}${preview.feeds.length >= MAX_OPML_OUTLINE_PREVIEW ? "+" : ""}): ${preview.feeds.join(" | ")}.`
+        : "Feed URLs: none detected in the bounded local preview.",
+      preview.sites.length > 0
+        ? `Site URLs: ${preview.sites.join(" | ")}.`
+        : "Site URLs: none detected in the bounded local preview.",
+      "Ready for explicit attachment after visible review; OPML subscription metadata was parsed from bounded workspace-local XML only, feed URLs were not fetched, outlines were not expanded from remote sources, scripts were not executed, and no browser profile access, network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `OPML subscription export ready for explicit attachment (${formatBytes(size)}).`,
+      "OPML preview could not parse bounded local XML; no feed URL fetch, browser profile access, script execution, network call, credential lookup, or provider send was performed.",
+    ].join("\n");
+  }
+}
+
+function parseOpmlSubscriptionPreview(raw: string): OpmlSubscriptionPreview {
+  const xml = raw.replace(/^\uFEFF/, "");
+  const title = firstXmlTagValue(xml, "title");
+  const ownerName = firstXmlTagValue(xml, "ownerName");
+  const ownerEmail = firstXmlTagValue(xml, "ownerEmail");
+  const outlines: string[] = [];
+  const feeds: string[] = [];
+  const sites: string[] = [];
+
+  for (const match of xml.matchAll(/<outline\b([^>]*)\/?>/gi)) {
+    const attrs = match[1] || "";
+    const titleValue =
+      readXmlAttribute(attrs, "text") ||
+      readXmlAttribute(attrs, "title") ||
+      readXmlAttribute(attrs, "description");
+    if (titleValue && !outlines.includes(titleValue)) outlines.push(titleValue);
+
+    const feedUrl = readXmlAttribute(attrs, "xmlUrl");
+    if (feedUrl && !feeds.includes(feedUrl)) feeds.push(feedUrl);
+
+    const siteUrl = readXmlAttribute(attrs, "htmlUrl") || readXmlAttribute(attrs, "url");
+    if (siteUrl && !sites.includes(siteUrl)) sites.push(siteUrl);
+
+    if (
+      outlines.length >= MAX_OPML_OUTLINE_PREVIEW &&
+      feeds.length >= MAX_OPML_OUTLINE_PREVIEW &&
+      sites.length >= MAX_OPML_OUTLINE_PREVIEW
+    ) {
+      break;
+    }
+  }
+
+  return {
+    title,
+    owners: [ownerName, ownerEmail].filter((value): value is string => Boolean(value)).slice(0, 4),
+    outlines: outlines.slice(0, MAX_OPML_OUTLINE_PREVIEW),
+    feeds: feeds.map(redactUrlQuerySecrets).slice(0, MAX_OPML_OUTLINE_PREVIEW),
+    sites: sites.map(redactUrlQuerySecrets).slice(0, MAX_OPML_OUTLINE_PREVIEW),
+  };
 }
 
 function looksLikeFeedXml(filePath: string): boolean {
@@ -16914,6 +20336,134 @@ function uniquePreviewValues(values: string[], limit: number): string[] {
   return [...new Set(values.filter(Boolean))].slice(0, limit);
 }
 
+interface DevtoolsProfilePreview {
+  format: "CPU profile" | "Heap snapshot";
+  primaryCounts: string[];
+  functionHints: string[];
+  stringHints: string[];
+  truncated: boolean;
+}
+
+function isDevtoolsProfileFile(extension: string): boolean {
+  return extension === ".cpuprofile" || extension === ".heapsnapshot";
+}
+
+function summarizeDevtoolsProfileFile(filePath: string, extension: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_DEVTOOLS_PROFILE_PREVIEW_BYTES).toString("utf8");
+    const value = JSON.parse(raw.replace(/^\uFEFF/, ""));
+    const preview =
+      extension === ".cpuprofile"
+        ? parseCpuProfilePreview(value, raw.length >= MAX_DEVTOOLS_PROFILE_PREVIEW_BYTES)
+        : parseHeapSnapshotPreview(value, raw.length >= MAX_DEVTOOLS_PROFILE_PREVIEW_BYTES);
+    return [
+      `DevTools/V8 ${preview.format} preview (${formatBytes(size)}).`,
+      preview.primaryCounts.length > 0
+        ? `Profile counts: ${preview.primaryCounts.join("; ")}.`
+        : "Profile counts: none detected in the bounded local JSON.",
+      preview.functionHints.length > 0
+        ? `Function/source hints (${preview.functionHints.length}${preview.functionHints.length >= MAX_DEVTOOLS_PROFILE_ITEM_PREVIEW ? "+" : ""}): ${preview.functionHints.join(" | ")}.`
+        : "Function/source hints: none detected in bounded profile metadata.",
+      preview.stringHints.length > 0
+        ? `Heap/string hints (${preview.stringHints.length}${preview.stringHints.length >= MAX_DEVTOOLS_PROFILE_ITEM_PREVIEW ? "+" : ""}): ${preview.stringHints.join(" | ")}.`
+        : "Heap/string hints: none detected in bounded profile metadata.",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_DEVTOOLS_PROFILE_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; DevTools/V8 profile metadata was parsed from bounded workspace-local JSON only, sampled values were redacted, heap objects were not expanded, and no Chrome/Edge/DevTools launch, profile replay, heap inspection runtime, source-map resolution, credential lookup, network call, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `DevTools/V8 profile file ready for explicit attachment (${formatBytes(size)}).`,
+      "Profile preview could not parse bounded local JSON; no Chrome/Edge/DevTools launch, profile replay, heap inspection runtime, source-map resolution, credential lookup, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseCpuProfilePreview(value: unknown, byteTruncated: boolean): DevtoolsProfilePreview {
+  const root = isRecord(value) ? value : {};
+  const nodes = Array.isArray(readRecordValue(root, "nodes")) ? readRecordValue(root, "nodes") as unknown[] : [];
+  const samples = Array.isArray(readRecordValue(root, "samples")) ? readRecordValue(root, "samples") as unknown[] : [];
+  const timeDeltas = Array.isArray(readRecordValue(root, "timeDeltas")) ? readRecordValue(root, "timeDeltas") as unknown[] : [];
+  const startTime = readTraceNumber(root, "startTime");
+  const endTime = readTraceNumber(root, "endTime");
+  const totalDeltaUs = timeDeltas
+    .map((delta) => (typeof delta === "number" && Number.isFinite(delta) ? delta : 0))
+    .reduce((sum, delta) => sum + delta, 0);
+  const functionHints = nodes
+    .filter((node): node is Record<string, unknown> => isRecord(node))
+    .map(formatCpuProfileNodeHint)
+    .filter(Boolean)
+    .slice(0, MAX_DEVTOOLS_PROFILE_ITEM_PREVIEW);
+  const primaryCounts = [
+    `nodes=${nodes.length}`,
+    `samples=${samples.length}`,
+    `timeDeltas=${timeDeltas.length}`,
+    totalDeltaUs > 0 ? `sampledTime=${Math.round(totalDeltaUs / 1000)}ms` : "",
+    endTime > startTime && startTime > 0 ? `wallTime=${Math.round((endTime - startTime) / 1000)}ms` : "",
+  ].filter(Boolean);
+  return {
+    format: "CPU profile",
+    primaryCounts,
+    functionHints: uniquePreviewValues(functionHints, MAX_DEVTOOLS_PROFILE_ITEM_PREVIEW),
+    stringHints: [],
+    truncated:
+      byteTruncated ||
+      nodes.length >= MAX_DEVTOOLS_PROFILE_ITEM_PREVIEW ||
+      functionHints.length >= MAX_DEVTOOLS_PROFILE_ITEM_PREVIEW,
+  };
+}
+
+function formatCpuProfileNodeHint(node: Record<string, unknown>): string {
+  const callFrameValue = readRecordValue(node, "callFrame");
+  const callFrame = isRecord(callFrameValue) ? callFrameValue : {};
+  const functionName = clampSingleLine(readRecordString(callFrame, "functionName") || "(anonymous)", 120);
+  const url = sanitizeDevtoolsProfileSample(readRecordString(callFrame, "url"));
+  const lineNumber = readTraceNumber(callFrame, "lineNumber");
+  const hitCount = readTraceNumber(node, "hitCount");
+  return [
+    functionName,
+    url ? `url=${url}` : "",
+    lineNumber > 0 ? `line=${lineNumber}` : "",
+    hitCount > 0 ? `hits=${hitCount}` : "",
+  ].filter(Boolean).join(" ");
+}
+
+function parseHeapSnapshotPreview(value: unknown, byteTruncated: boolean): DevtoolsProfilePreview {
+  const root = isRecord(value) ? value : {};
+  const snapshotValue = readRecordValue(root, "snapshot");
+  const snapshot = isRecord(snapshotValue) ? snapshotValue : {};
+  const nodeCount = readTraceNumber(snapshot, "node_count");
+  const edgeCount = readTraceNumber(snapshot, "edge_count");
+  const traceFunctionCount = readTraceNumber(snapshot, "trace_function_count");
+  const nodes = Array.isArray(readRecordValue(root, "nodes")) ? readRecordValue(root, "nodes") as unknown[] : [];
+  const edges = Array.isArray(readRecordValue(root, "edges")) ? readRecordValue(root, "edges") as unknown[] : [];
+  const strings = Array.isArray(readRecordValue(root, "strings")) ? readRecordValue(root, "strings") as unknown[] : [];
+  const stringHints = strings
+    .filter((item): item is string => typeof item === "string")
+    .map(sanitizeDevtoolsProfileSample)
+    .filter((item) => item && !/^(object|array|string|number|code|hidden|closure|native|synthetic)$/i.test(item))
+    .slice(0, MAX_DEVTOOLS_PROFILE_ITEM_PREVIEW);
+  return {
+    format: "Heap snapshot",
+    primaryCounts: [
+      `nodes=${nodeCount || nodes.length}`,
+      `edges=${edgeCount || edges.length}`,
+      traceFunctionCount ? `traceFunctions=${traceFunctionCount}` : "",
+      `strings=${strings.length}`,
+    ].filter(Boolean),
+    functionHints: [],
+    stringHints: uniquePreviewValues(stringHints, MAX_DEVTOOLS_PROFILE_ITEM_PREVIEW),
+    truncated:
+      byteTruncated ||
+      strings.length >= MAX_DEVTOOLS_PROFILE_ITEM_PREVIEW ||
+      stringHints.length >= MAX_DEVTOOLS_PROFILE_ITEM_PREVIEW,
+  };
+}
+
+function sanitizeDevtoolsProfileSample(value: string): string {
+  return clampSingleLine(maskPotentialSecretValues(value), 180)
+    .replace(/([?&][^=&#]*(?:token|secret|password|passwd|pwd|api[_-]?key|private[_-]?key|credential|auth|session|cookie|signature)[^=&#]*=)[^&#\s]+/gi, "$1[redacted]");
+}
+
 interface LighthouseReportPreview {
   requestedUrl: string;
   finalUrl: string;
@@ -17035,6 +20585,1245 @@ function formatLighthouseAudit(id: string, value: unknown): string {
 function formatLighthouseScore(value: unknown): string {
   if (typeof value !== "number" || !Number.isFinite(value)) return "n/a";
   return `${Math.round(value * 100)}`;
+}
+
+interface OtelJsonPreview {
+  spanCount: number;
+  logCount: number;
+  metricCount: number;
+  services: string[];
+  spans: string[];
+  logs: string[];
+  metrics: string[];
+  attributeKeys: string[];
+  truncated: boolean;
+}
+
+function isOtelJsonFile(filePath: string, extension: string): boolean {
+  if (extension === ".otel.json" || extension === ".otlp.json") return true;
+  if (extension !== ".json") return false;
+  const name = basename(filePath).toLowerCase();
+  if (
+    name === "otlp.json" ||
+    name === "opentelemetry.json" ||
+    name === "otel-traces.json" ||
+    name === "otel-logs.json" ||
+    name === "otel-metrics.json" ||
+    name.endsWith(".otlp.json") ||
+    name.endsWith(".otel.json")
+  ) {
+    return true;
+  }
+  try {
+    const raw = readFileHeader(filePath, MAX_OTEL_JSON_PREVIEW_BYTES).toString("utf8");
+    return looksLikeOtelJson(JSON.parse(raw.replace(/^\uFEFF/, "")));
+  } catch {
+    return false;
+  }
+}
+
+function summarizeOtelJsonFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_OTEL_JSON_PREVIEW_BYTES)).toString("utf8");
+    const preview = parseOtelJsonPreview(JSON.parse(raw.replace(/^\uFEFF/, "")), raw.length >= MAX_OTEL_JSON_PREVIEW_BYTES);
+    return [
+      `OpenTelemetry/OTLP JSON preview (${formatBytes(size)}).`,
+      `Signals in bounded sample: spans=${preview.spanCount}${preview.truncated ? "+" : ""}; logs=${preview.logCount}${preview.truncated ? "+" : ""}; metrics=${preview.metricCount}${preview.truncated ? "+" : ""}.`,
+      preview.services.length > 0
+        ? `Service/resource hints (${preview.services.length}${preview.services.length >= MAX_OTEL_SIGNAL_PREVIEW ? "+" : ""}): ${preview.services.join(", ")}.`
+        : "Service/resource hints: none detected in bounded OTLP metadata.",
+      preview.spans.length > 0
+        ? `Span samples (${preview.spans.length}${preview.spans.length >= MAX_OTEL_SIGNAL_PREVIEW ? "+" : ""}): ${preview.spans.join(" | ")}.`
+        : "Span samples: none detected in bounded OTLP metadata.",
+      preview.logs.length > 0
+        ? `Log samples (${preview.logs.length}${preview.logs.length >= MAX_OTEL_SIGNAL_PREVIEW ? "+" : ""}): ${preview.logs.join(" | ")}.`
+        : "Log samples: none detected in bounded OTLP metadata.",
+      preview.metrics.length > 0
+        ? `Metric samples (${preview.metrics.length}${preview.metrics.length >= MAX_OTEL_SIGNAL_PREVIEW ? "+" : ""}): ${preview.metrics.join(", ")}.`
+        : "Metric samples: none detected in bounded OTLP metadata.",
+      preview.attributeKeys.length > 0
+        ? `Attribute keys (${preview.attributeKeys.length}${preview.attributeKeys.length >= MAX_OTEL_ATTRIBUTE_PREVIEW ? "+" : ""}): ${preview.attributeKeys.join(", ")}.`
+        : "Attribute keys: none detected in bounded OTLP metadata.",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_OTEL_JSON_PREVIEW_BYTES)} or signal/key limits.` : "",
+      "Ready for explicit attachment after visible review; OpenTelemetry JSON was parsed from bounded workspace-local JSON only, attribute values were redacted or not expanded, and no collector connection, span/log/metric export, trace replay, service discovery, network call, credential lookup, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `OpenTelemetry/OTLP JSON file ready for explicit attachment (${formatBytes(size)}).`,
+      "OTLP preview could not parse bounded local JSON; no collector connection, span/log/metric export, trace replay, service discovery, network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function looksLikeOtelJson(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return (
+    Array.isArray(readRecordValue(value, "resourceSpans")) ||
+    Array.isArray(readRecordValue(value, "resourceLogs")) ||
+    Array.isArray(readRecordValue(value, "resourceMetrics"))
+  );
+}
+
+function parseOtelJsonPreview(value: unknown, byteTruncated: boolean): OtelJsonPreview {
+  const root = isRecord(value) ? value : {};
+  const resourceSpans = readRecordArray(root, "resourceSpans");
+  const resourceLogs = readRecordArray(root, "resourceLogs");
+  const resourceMetrics = readRecordArray(root, "resourceMetrics");
+  const services: string[] = [];
+  const spans: string[] = [];
+  const logs: string[] = [];
+  const metrics: string[] = [];
+  const attributeKeys = new Set<string>();
+
+  for (const resource of [...resourceSpans, ...resourceLogs, ...resourceMetrics]) {
+    if (!isRecord(resource)) continue;
+    collectOtelResourceHints(resource, services, attributeKeys);
+    if (services.length >= MAX_OTEL_SIGNAL_PREVIEW && attributeKeys.size >= MAX_OTEL_ATTRIBUTE_PREVIEW) break;
+  }
+
+  for (const resource of resourceSpans) {
+    if (!isRecord(resource)) continue;
+    for (const scope of readRecordArray(resource, "scopeSpans")) {
+      if (!isRecord(scope)) continue;
+      for (const span of readRecordArray(scope, "spans")) {
+        if (!isRecord(span)) continue;
+        collectOtelAttributeKeys(readRecordArray(span, "attributes"), attributeKeys);
+        if (spans.length < MAX_OTEL_SIGNAL_PREVIEW) {
+          spans.push(formatOtelSpan(span));
+        }
+      }
+    }
+  }
+
+  for (const resource of resourceLogs) {
+    if (!isRecord(resource)) continue;
+    for (const scope of readRecordArray(resource, "scopeLogs")) {
+      if (!isRecord(scope)) continue;
+      for (const record of readRecordArray(scope, "logRecords")) {
+        if (!isRecord(record)) continue;
+        collectOtelAttributeKeys(readRecordArray(record, "attributes"), attributeKeys);
+        if (logs.length < MAX_OTEL_SIGNAL_PREVIEW) {
+          logs.push(formatOtelLogRecord(record));
+        }
+      }
+    }
+  }
+
+  for (const resource of resourceMetrics) {
+    if (!isRecord(resource)) continue;
+    for (const scope of readRecordArray(resource, "scopeMetrics")) {
+      if (!isRecord(scope)) continue;
+      for (const metric of readRecordArray(scope, "metrics")) {
+        if (!isRecord(metric)) continue;
+        if (metrics.length < MAX_OTEL_SIGNAL_PREVIEW) {
+          metrics.push(formatOtelMetric(metric));
+        }
+      }
+    }
+  }
+
+  return {
+    spanCount: countOtelSignals(resourceSpans, "scopeSpans", "spans"),
+    logCount: countOtelSignals(resourceLogs, "scopeLogs", "logRecords"),
+    metricCount: countOtelSignals(resourceMetrics, "scopeMetrics", "metrics"),
+    services: uniquePreviewValues(services, MAX_OTEL_SIGNAL_PREVIEW),
+    spans: uniquePreviewValues(spans, MAX_OTEL_SIGNAL_PREVIEW),
+    logs: uniquePreviewValues(logs, MAX_OTEL_SIGNAL_PREVIEW),
+    metrics: uniquePreviewValues(metrics, MAX_OTEL_SIGNAL_PREVIEW),
+    attributeKeys: [...attributeKeys].slice(0, MAX_OTEL_ATTRIBUTE_PREVIEW),
+    truncated:
+      byteTruncated ||
+      spans.length >= MAX_OTEL_SIGNAL_PREVIEW ||
+      logs.length >= MAX_OTEL_SIGNAL_PREVIEW ||
+      metrics.length >= MAX_OTEL_SIGNAL_PREVIEW ||
+      attributeKeys.size >= MAX_OTEL_ATTRIBUTE_PREVIEW,
+  };
+}
+
+function readRecordArray(record: Record<string, unknown>, key: string): unknown[] {
+  const value = readRecordValue(record, key);
+  return Array.isArray(value) ? value : [];
+}
+
+function collectOtelResourceHints(resourceEnvelope: Record<string, unknown>, services: string[], attributeKeys: Set<string>): void {
+  const resource = readRecordValue(resourceEnvelope, "resource");
+  if (!isRecord(resource)) return;
+  const attributes = readRecordArray(resource, "attributes");
+  collectOtelAttributeKeys(attributes, attributeKeys);
+  for (const attribute of attributes) {
+    if (!isRecord(attribute)) continue;
+    const key = readRecordString(attribute, "key");
+    const value = readOtelAnyValue(readRecordValue(attribute, "value"));
+    if (!key || !value) continue;
+    if (key === "service.name" || key === "service.namespace" || key === "service.instance.id" || key.startsWith("deployment.")) {
+      services.push(clampSingleLine(`${key}=${maskPotentialSecretValues(value)}`, 160));
+    }
+  }
+}
+
+function collectOtelAttributeKeys(attributes: unknown[], attributeKeys: Set<string>): void {
+  for (const attribute of attributes) {
+    if (!isRecord(attribute)) continue;
+    const key = clampSingleLine(readRecordString(attribute, "key"), 100);
+    if (key) attributeKeys.add(key);
+    if (attributeKeys.size >= MAX_OTEL_ATTRIBUTE_PREVIEW) return;
+  }
+}
+
+function countOtelSignals(resources: unknown[], scopeKey: string, itemKey: string): number {
+  let count = 0;
+  for (const resource of resources) {
+    if (!isRecord(resource)) continue;
+    for (const scope of readRecordArray(resource, scopeKey)) {
+      if (!isRecord(scope)) continue;
+      count += readRecordArray(scope, itemKey).length;
+    }
+  }
+  return count;
+}
+
+function formatOtelSpan(span: Record<string, unknown>): string {
+  const name = clampSingleLine(maskPotentialSecretValues(readRecordString(span, "name") || "unnamed span"), 120);
+  const kind = clampSingleLine(readRecordString(span, "kind"), 60);
+  const status = readRecordValue(span, "status");
+  const statusCode = isRecord(status) ? clampSingleLine(readRecordString(status, "code"), 60) : "";
+  return [name, kind ? `kind=${kind}` : "", statusCode ? `status=${statusCode}` : ""].filter(Boolean).join(" ");
+}
+
+function formatOtelLogRecord(record: Record<string, unknown>): string {
+  const severity = clampSingleLine(readRecordString(record, "severityText"), 60);
+  const body = clampSingleLine(maskPotentialSecretValues(readOtelAnyValue(readRecordValue(record, "body"))), 140);
+  return [severity || "log", body].filter(Boolean).join(": ");
+}
+
+function formatOtelMetric(metric: Record<string, unknown>): string {
+  const name = clampSingleLine(maskPotentialSecretValues(readRecordString(metric, "name") || "unnamed metric"), 120);
+  const unit = clampSingleLine(readRecordString(metric, "unit"), 40);
+  const type = ["gauge", "sum", "histogram", "exponentialHistogram", "summary"].find((key) => isRecord(readRecordValue(metric, key)));
+  return [name, type ? `type=${type}` : "", unit ? `unit=${unit}` : ""].filter(Boolean).join(" ");
+}
+
+function readOtelAnyValue(value: unknown): string {
+  if (!isRecord(value)) return "";
+  const scalar =
+    readRecordString(value, "stringValue") ||
+    readRecordString(value, "intValue") ||
+    readRecordString(value, "doubleValue") ||
+    readRecordString(value, "boolValue");
+  if (scalar) return scalar;
+  const rawValue = readRecordValue(value, "value");
+  if (typeof rawValue === "string" || typeof rawValue === "number" || typeof rawValue === "boolean") {
+    return String(rawValue);
+  }
+  return "";
+}
+
+function isMcpServerConfigFile(filePath: string, extension: string): boolean {
+  const name = basename(filePath).toLowerCase();
+  return (
+    extension === ".mcp-servers.json" ||
+    name === "mcp-servers.json" ||
+    name === "mcp-server-config.json" ||
+    name.endsWith(".mcp-servers.json") ||
+    name.endsWith(".mcp-server-config.json")
+  );
+}
+
+function summarizeMcpServerConfigFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_MCP_SERVER_CONFIG_PREVIEW_BYTES)).toString("utf8");
+    const preview = parseMcpServerConfigPreview(JSON.parse(raw.replace(/^\uFEFF/, "")));
+    return [
+      `MCP server configuration preview (${formatBytes(size)}).`,
+      preview.serverCount !== null ? `Servers declared: ${preview.serverCount}.` : "Servers declared: unavailable in bounded JSON preview.",
+      preview.servers.length > 0
+        ? `Server previews (${preview.servers.length}${preview.truncated ? "+" : ""}): ${preview.servers.join(" | ")}.`
+        : "Server previews: none detected in common mcpServers/servers shapes.",
+      preview.commands.length > 0
+        ? `Command hints (${preview.commands.length}${preview.commands.length >= MAX_MCP_SERVER_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.commands.join(", ")}.`
+        : "Command hints: none detected.",
+      preview.envKeys.length > 0
+        ? `Environment keys (${preview.envKeys.length}${preview.envKeys.length >= MAX_MCP_SERVER_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.envKeys.join(", ")}.`
+        : "Environment keys: none detected; environment values were not expanded.",
+      preview.urlHints.length > 0
+        ? `Remote URL hints (${preview.urlHints.length}${preview.urlHints.length >= MAX_MCP_SERVER_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.urlHints.join(", ")}.`
+        : "Remote URL hints: none detected.",
+      preview.schemaHints.length > 0
+        ? `Local schema hints (${preview.schemaHints.length}${preview.schemaHints.length >= MAX_MCP_SERVER_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.schemaHints.join(" | ")}.`
+        : "Local schema hints: no structural issues detected in the bounded JSON preview.",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_MCP_SERVER_CONFIG_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; MCP server configuration was parsed and structurally checked from bounded workspace-local JSON only, environment values and token-like URLs were redacted, no stdio/server process was started, no resources/tools enumeration or tool call was performed, and no network call or provider send happened.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `MCP server configuration ready for explicit attachment (${formatBytes(size)}).`,
+      "No MCP stdio/server process was started, resources/tools were not enumerated, tools were not called, environment values were not expanded, and no network call or provider send happened.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseMcpServerConfigPreview(value: unknown): {
+  serverCount: number | null;
+  servers: string[];
+  commands: string[];
+  envKeys: string[];
+  urlHints: string[];
+  schemaHints: string[];
+  truncated: boolean;
+} {
+  const records = collectMcpServerConfigRecords(value);
+  const servers: string[] = [];
+  const commands: string[] = [];
+  const envKeys = new Set<string>();
+  const urlHints = new Set<string>();
+  const schemaHints: string[] = [];
+
+  for (const record of records.slice(0, MAX_MCP_SERVER_CONFIG_ITEM_PREVIEW)) {
+    const name = clampSingleLine(maskPotentialSecretValues(record.name), 80) || "(unnamed)";
+    const command = readRecordString(record.config, "command");
+    const transport = readRecordString(record.config, "transport") || readRecordString(record.config, "type");
+    const url = readRecordString(record.config, "url") || readRecordString(record.config, "endpoint");
+    const args = readRecordValue(record.config, "args");
+    const disabled = readRecordValue(record.config, "disabled");
+    collectMcpServerConfigSchemaHints({
+      name,
+      command,
+      transport,
+      url,
+      args,
+      disabled,
+      env: readRecordValue(record.config, "env"),
+    }, schemaHints);
+    const serverParts = [
+      name,
+      command ? `command=${clampSingleLine(maskPotentialSecretValues(command), 80)}` : "",
+      transport ? `transport=${clampSingleLine(maskPotentialSecretValues(transport), 60)}` : "",
+      url ? `url=${clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(url)), 100)}` : "",
+      Array.isArray(args) ? `args=${args.length}` : "",
+      typeof disabled === "boolean" ? `disabled=${disabled}` : "",
+    ].filter(Boolean);
+    servers.push(serverParts.join(" "));
+    if (command) commands.push(clampSingleLine(maskPotentialSecretValues(command), 80));
+    if (url) urlHints.add(clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(url)), 120));
+
+    const env = readRecordValue(record.config, "env");
+    if (isRecord(env)) {
+      for (const key of Object.keys(env)) {
+        if (envKeys.size >= MAX_MCP_SERVER_CONFIG_ITEM_PREVIEW) break;
+        envKeys.add(clampSingleLine(maskPotentialSecretValues(key), 80));
+      }
+    }
+  }
+
+  return {
+    serverCount: records.length,
+    servers: uniquePreviewValues(servers, MAX_MCP_SERVER_CONFIG_ITEM_PREVIEW),
+    commands: uniquePreviewValues(commands, MAX_MCP_SERVER_CONFIG_ITEM_PREVIEW),
+    envKeys: [...envKeys].slice(0, MAX_MCP_SERVER_CONFIG_ITEM_PREVIEW),
+    urlHints: [...urlHints].slice(0, MAX_MCP_SERVER_CONFIG_ITEM_PREVIEW),
+    schemaHints: uniquePreviewValues(schemaHints, MAX_MCP_SERVER_CONFIG_ITEM_PREVIEW),
+    truncated:
+      records.length > MAX_MCP_SERVER_CONFIG_ITEM_PREVIEW ||
+      envKeys.size >= MAX_MCP_SERVER_CONFIG_ITEM_PREVIEW ||
+      urlHints.size >= MAX_MCP_SERVER_CONFIG_ITEM_PREVIEW ||
+      schemaHints.length >= MAX_MCP_SERVER_CONFIG_ITEM_PREVIEW,
+  };
+}
+
+function collectMcpServerConfigSchemaHints(
+  record: {
+    name: string;
+    command: string;
+    transport: string;
+    url: string;
+    args: unknown;
+    disabled: unknown;
+    env: unknown;
+  },
+  output: string[],
+): void {
+  if (output.length >= MAX_MCP_SERVER_CONFIG_ITEM_PREVIEW) return;
+  const hints: string[] = [];
+  const hasCommand = Boolean(record.command);
+  const hasUrl = Boolean(record.url);
+  if (!hasCommand && !hasUrl) hints.push("missing command/url");
+  if (hasCommand && hasUrl) hints.push("both command and url declared");
+  if (record.args !== undefined && !Array.isArray(record.args)) hints.push("args is not an array");
+  if (record.env !== undefined && !isRecord(record.env)) hints.push("env is not an object");
+  if (record.disabled !== undefined && typeof record.disabled !== "boolean") hints.push("disabled is not boolean");
+  const transport = record.transport.toLowerCase();
+  if (transport && !["stdio", "sse", "http", "streamable-http", "websocket"].includes(transport)) {
+    hints.push(`unknown transport=${clampSingleLine(maskPotentialSecretValues(record.transport), 40)}`);
+  }
+  if (hints.length > 0) {
+    output.push(`${record.name}: ${hints.join(", ")}`);
+  }
+}
+
+function collectMcpServerConfigRecords(value: unknown): { name: string; config: Record<string, unknown> }[] {
+  const output: { name: string; config: Record<string, unknown> }[] = [];
+  const collectMap = (candidate: unknown): void => {
+    if (!isRecord(candidate)) return;
+    for (const [name, config] of Object.entries(candidate)) {
+      if (isRecord(config)) {
+        output.push({ name, config });
+      }
+    }
+  };
+
+  if (isRecord(value)) {
+    collectMap(readRecordValue(value, "mcpServers"));
+    collectMap(readRecordValue(value, "servers"));
+    const serverArray = readRecordValue(value, "serverConfigs");
+    if (Array.isArray(serverArray)) {
+      for (const entry of serverArray) {
+        if (!isRecord(entry)) continue;
+        output.push({
+          name: readRecordString(entry, "name") || readRecordString(entry, "id") || `server-${output.length + 1}`,
+          config: entry,
+        });
+      }
+    }
+  } else if (Array.isArray(value)) {
+    for (const entry of value) {
+      if (!isRecord(entry)) continue;
+      output.push({
+        name: readRecordString(entry, "name") || readRecordString(entry, "id") || `server-${output.length + 1}`,
+        config: entry,
+      });
+    }
+  }
+
+  return output;
+}
+
+function isTokenizerCalibrationFile(filePath: string, extension: string): boolean {
+  const normalizedPath = filePath.replace(/\\/g, "/").toLowerCase();
+  const name = basename(filePath).toLowerCase();
+  return (
+    extension === ".tokenizer-calibration.json" ||
+    normalizedPath.endsWith("/.drsai/tokenizer-calibration.json") ||
+    name === "tokenizer-calibration.json" ||
+    name.endsWith(".tokenizer-calibration.json")
+  );
+}
+
+function summarizeTokenizerCalibrationFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_TOKENIZER_CALIBRATION_PREVIEW_BYTES)).toString("utf8");
+    const preview = parseTokenizerCalibrationPreview(JSON.parse(raw.replace(/^\uFEFF/, "")));
+    return [
+      `Tokenizer calibration preview (${formatBytes(size)}).`,
+      `Models with calibration samples: ${preview.modelCount}.`,
+      preview.modelPreviews.length > 0
+        ? `Model previews (${preview.modelPreviews.length}${preview.truncated ? "+" : ""}): ${preview.modelPreviews.join(" | ")}.`
+        : "Model previews: none detected in common models[] calibration shapes.",
+      preview.samplePreviews.length > 0
+        ? `Sample previews (${preview.samplePreviews.length}${preview.truncated ? "+" : ""}): ${preview.samplePreviews.join(" | ")}.`
+        : "Sample previews: none detected.",
+      preview.factorPreviews.length > 0
+        ? `Local heuristic ratios (${preview.factorPreviews.length}${preview.truncated ? "+" : ""}): ${preview.factorPreviews.join(" | ")}.`
+        : "Local heuristic ratios: unavailable; no valid sample/token pairs were found.",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_TOKENIZER_CALIBRATION_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; tokenizer calibration metadata was parsed from bounded workspace-local JSON only, sample text was redacted for likely secrets, no provider tokenizer call, model API request, network call, credential lookup, calibration write, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Tokenizer calibration ready for explicit attachment (${formatBytes(size)}).`,
+      "The bounded local tokenizer calibration JSON preview could not be parsed; no provider tokenizer call, model API request, network call, credential lookup, calibration write, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseTokenizerCalibrationPreview(value: unknown): {
+  modelCount: number;
+  modelPreviews: string[];
+  samplePreviews: string[];
+  factorPreviews: string[];
+  truncated: boolean;
+} {
+  const records = collectTokenizerCalibrationRecords(value);
+  const modelPreviews: string[] = [];
+  const samplePreviews: string[] = [];
+  const factorPreviews: string[] = [];
+  let totalSamples = 0;
+
+  for (const record of records.slice(0, MAX_TOKENIZER_CALIBRATION_ITEM_PREVIEW)) {
+    const keys = record.keys.length > 0 ? record.keys.join("/") : "(unnamed model)";
+    const samples = record.samples.slice(0, MAX_TOKENIZER_CALIBRATION_ITEM_PREVIEW);
+    totalSamples += record.samples.length;
+    const tokenValues = samples
+      .map((sample) => sample.tokens)
+      .filter((tokens): tokens is number => typeof tokens === "number" && Number.isFinite(tokens) && tokens > 0);
+    const tokenRange = tokenValues.length
+      ? `${Math.min(...tokenValues)}-${Math.max(...tokenValues)} tokens`
+      : "no valid token counts";
+    modelPreviews.push(clampSingleLine(`${keys}: ${record.samples.length} sample${record.samples.length === 1 ? "" : "s"}, ${tokenRange}`, 180));
+
+    for (const sample of samples) {
+      if (samplePreviews.length >= MAX_TOKENIZER_CALIBRATION_ITEM_PREVIEW) break;
+      const sampleText = clampSingleLine(maskPotentialSecretValues(sample.sample), 120);
+      samplePreviews.push(`${keys}: ${sample.tokens} tokens for "${sampleText}"`);
+    }
+
+    const ratios = samples
+      .map((sample) => {
+        const heuristic = estimateTokenizerCalibrationHeuristicTokens(sample.sample);
+        if (!heuristic || typeof sample.tokens !== "number" || !Number.isFinite(sample.tokens) || sample.tokens <= 0) return null;
+        return sample.tokens / heuristic;
+      })
+      .filter((ratio): ratio is number => typeof ratio === "number" && Number.isFinite(ratio) && ratio > 0)
+      .sort((left, right) => left - right);
+    if (ratios.length > 0 && factorPreviews.length < MAX_TOKENIZER_CALIBRATION_ITEM_PREVIEW) {
+      const median = ratios[Math.floor(ratios.length / 2)];
+      const min = ratios[0];
+      const max = ratios[ratios.length - 1];
+      const spread = ratios.length > 1 ? Math.round(((max - min) / Math.max(0.01, median)) * 100) : 0;
+      factorPreviews.push(`${keys}: median x${median.toFixed(2)}, spread ${spread}%`);
+    }
+  }
+
+  return {
+    modelCount: records.length,
+    modelPreviews: uniquePreviewValues(modelPreviews, MAX_TOKENIZER_CALIBRATION_ITEM_PREVIEW),
+    samplePreviews: uniquePreviewValues(samplePreviews, MAX_TOKENIZER_CALIBRATION_ITEM_PREVIEW),
+    factorPreviews: uniquePreviewValues(factorPreviews, MAX_TOKENIZER_CALIBRATION_ITEM_PREVIEW),
+    truncated:
+      records.length > MAX_TOKENIZER_CALIBRATION_ITEM_PREVIEW ||
+      totalSamples > MAX_TOKENIZER_CALIBRATION_ITEM_PREVIEW ||
+      samplePreviews.length >= MAX_TOKENIZER_CALIBRATION_ITEM_PREVIEW,
+  };
+}
+
+function collectTokenizerCalibrationRecords(value: unknown): Array<{
+  keys: string[];
+  samples: Array<{ sample: string; tokens: number }>;
+}> {
+  const models = isRecord(value) && Array.isArray(readRecordValue(value, "models"))
+    ? readRecordValue(value, "models") as unknown[]
+    : Array.isArray(value)
+      ? value
+      : [];
+  const output: Array<{ keys: string[]; samples: Array<{ sample: string; tokens: number }> }> = [];
+  for (const item of models) {
+    if (!isRecord(item)) continue;
+    const keys = [
+      readRecordString(item, "alias"),
+      readRecordString(item, "model"),
+      readRecordString(item, "display_name"),
+    ].filter(Boolean).map((key) => clampSingleLine(maskPotentialSecretValues(key), 80));
+    const sampleValue = readRecordValue(item, "samples") ?? readRecordValue(item, "tokenizer_calibration");
+    if (!Array.isArray(sampleValue)) continue;
+    const samples = sampleValue
+      .map((entry) => {
+        if (!isRecord(entry)) return null;
+        const sample = readRecordString(entry, "sample");
+        const tokensValue = readRecordValue(entry, "tokens");
+        const tokens = typeof tokensValue === "number" && Number.isFinite(tokensValue) ? Math.floor(tokensValue) : 0;
+        if (!sample || tokens <= 0) return null;
+        return { sample, tokens };
+      })
+      .filter((entry): entry is { sample: string; tokens: number } => Boolean(entry))
+      .slice(0, MAX_TOKENIZER_CALIBRATION_ITEM_PREVIEW);
+    if (samples.length > 0) output.push({ keys, samples });
+  }
+  return output;
+}
+
+function estimateTokenizerCalibrationHeuristicTokens(text: string): number {
+  const normalized = text.trim();
+  if (!normalized) return 0;
+  const cjkChars = (normalized.match(/[\u3400-\u9fff\uf900-\ufaff]/g) || []).length;
+  const asciiWords = (normalized.match(/[A-Za-z0-9_]+/g) || [])
+    .reduce((total, word) => total + Math.max(1, Math.ceil(word.length / 4)), 0);
+  const punctuation = (normalized.match(/[^\sA-Za-z0-9_\u3400-\u9fff\uf900-\ufaff]/g) || []).length;
+  const newlines = (normalized.match(/\n/g) || []).length;
+  return Math.max(1, Math.ceil(cjkChars + asciiWords + punctuation * 0.5 + newlines * 0.25));
+}
+
+interface IisWebConfigPreview {
+  format: string;
+  appSettings: string[];
+  connectionStrings: string[];
+  handlers: string[];
+  modules: string[];
+  auth: string[];
+  rewriteRules: string[];
+  aspNetHints: string[];
+  locations: string[];
+  truncated: boolean;
+}
+
+function isIisWebConfigFile(filePath: string, extension: string): boolean {
+  const name = basename(filePath).toLowerCase();
+  return (
+    extension === ".iis-web.config" ||
+    name === "web.config" ||
+    name === "applicationhost.config" ||
+    name.endsWith(".iis.config") ||
+    name.endsWith(".web.config")
+  );
+}
+
+function summarizeIisWebConfigFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_IIS_WEB_CONFIG_PREVIEW_BYTES)).toString("utf8");
+    const preview = parseIisWebConfigPreview(filePath, raw);
+    return [
+      `IIS web.config preview (${preview.format}, ${formatBytes(size)}).`,
+      preview.appSettings.length > 0
+        ? `App settings (${preview.appSettings.length}${preview.appSettings.length >= MAX_IIS_WEB_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.appSettings.join(" | ")}.`
+        : "App settings: none detected in the bounded XML preview.",
+      preview.connectionStrings.length > 0
+        ? `Connection strings (${preview.connectionStrings.length}${preview.connectionStrings.length >= MAX_IIS_WEB_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.connectionStrings.join(" | ")}.`
+        : "Connection strings: none detected; connection string values were not expanded.",
+      preview.handlers.length > 0
+        ? `Handlers (${preview.handlers.length}${preview.handlers.length >= MAX_IIS_WEB_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.handlers.join(" | ")}.`
+        : "Handlers: none detected in the bounded XML preview.",
+      preview.modules.length > 0
+        ? `Modules (${preview.modules.length}${preview.modules.length >= MAX_IIS_WEB_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.modules.join(" | ")}.`
+        : "Modules: none detected in the bounded XML preview.",
+      preview.auth.length > 0
+        ? `Authentication hints: ${preview.auth.join(" | ")}.`
+        : "Authentication hints: none detected in the bounded XML preview.",
+      preview.rewriteRules.length > 0
+        ? `Rewrite rules (${preview.rewriteRules.length}${preview.rewriteRules.length >= MAX_IIS_WEB_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.rewriteRules.join(" | ")}.`
+        : "Rewrite rules: none detected in the bounded XML preview.",
+      preview.aspNetHints.length > 0
+        ? `ASP.NET hints: ${preview.aspNetHints.join(" | ")}.`
+        : "ASP.NET hints: none detected in the bounded XML preview.",
+      preview.locations.length > 0
+        ? `Location paths (${preview.locations.length}${preview.locations.length >= MAX_IIS_WEB_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.locations.join(", ")}.`
+        : "Location paths: none detected in the bounded XML preview.",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_IIS_WEB_CONFIG_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; IIS web configuration was parsed from bounded workspace-local XML only, appSetting secret-shaped values and URL query values were redacted, connection string values were not expanded, and no IIS service, appcmd, PowerShell, ASP.NET runtime, config transform, filesystem mutation, network call, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `IIS web.config file ready for explicit attachment (${formatBytes(size)}).`,
+      "No IIS service, appcmd, PowerShell, ASP.NET runtime, config transform, filesystem mutation, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseIisWebConfigPreview(filePath: string, raw: string): IisWebConfigPreview {
+  const normalized = normalizeTextPreview(raw);
+  const appSettingsSection = extractXmlSection(normalized, "appSettings");
+  const connectionStringsSection = extractXmlSection(normalized, "connectionStrings");
+  const handlersSection = extractXmlSection(normalized, "handlers");
+  const modulesSection = extractXmlSection(normalized, "modules");
+  const rewriteSection = extractXmlSection(normalized, "rewrite");
+  const systemWebSection = extractXmlSection(normalized, "system.web");
+  const systemWebServerSection = extractXmlSection(normalized, "system.webServer");
+  const authSection = `${systemWebSection}\n${systemWebServerSection}`;
+
+  return {
+    format: basename(filePath).toLowerCase() === "applicationhost.config" ? "IIS applicationHost.config" : "IIS web.config",
+    appSettings: collectIisAppSettings(appSettingsSection),
+    connectionStrings: collectIisConnectionStrings(connectionStringsSection),
+    handlers: collectIisNamedPathTags(handlersSection, "add", ["name", "path", "verb", "modules"]),
+    modules: collectIisNamedPathTags(modulesSection, "add", ["name", "type"]),
+    auth: collectIisAuthenticationHints(authSection || normalized),
+    rewriteRules: collectIisRewriteRules(rewriteSection),
+    aspNetHints: collectIisAspNetHints(systemWebSection || normalized),
+    locations: collectIisLocationPaths(normalized),
+    truncated: raw.length >= MAX_IIS_WEB_CONFIG_PREVIEW_BYTES,
+  };
+}
+
+function collectIisAppSettings(section: string): string[] {
+  return collectIisTagAttributes(section, "add", MAX_IIS_WEB_CONFIG_ITEM_PREVIEW)
+    .map((attrs) => {
+      const key = attrs.get("key") || attrs.get("name") || "";
+      const value = attrs.get("value") || "";
+      if (!key) return "";
+      const safeValue = isSensitiveConfigKey(key)
+        ? "[redacted]"
+        : clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(value)), 120);
+      return value
+        ? `${clampSingleLine(maskPotentialSecretValues(key), 80)}=${safeValue}`
+        : clampSingleLine(maskPotentialSecretValues(key), 80);
+    })
+    .filter(Boolean);
+}
+
+function isSensitiveConfigKey(key: string): boolean {
+  return /(?:token|secret|password|passwd|pwd|api[_-]?key|private[_-]?key|credential)/i.test(key);
+}
+
+function collectIisConnectionStrings(section: string): string[] {
+  return collectIisTagAttributes(section, "add", MAX_IIS_WEB_CONFIG_ITEM_PREVIEW)
+    .map((attrs) => {
+      const name = attrs.get("name") || "";
+      if (!name) return "";
+      const provider = attrs.get("providerName");
+      return [
+        clampSingleLine(maskPotentialSecretValues(name), 80),
+        provider ? `provider=${clampSingleLine(maskPotentialSecretValues(provider), 80)}` : "",
+      ].filter(Boolean).join(" ");
+    })
+    .filter(Boolean);
+}
+
+function collectIisNamedPathTags(section: string, tagName: string, keys: string[]): string[] {
+  return collectIisTagAttributes(section, tagName, MAX_IIS_WEB_CONFIG_ITEM_PREVIEW)
+    .map((attrs) => keys
+      .map((key) => {
+        const value = attrs.get(key);
+        return value ? `${key}=${clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(value)), 80)}` : "";
+      })
+      .filter(Boolean)
+      .join(" "))
+    .filter(Boolean);
+}
+
+function collectIisAuthenticationHints(section: string): string[] {
+  const hints = new Set<string>();
+  for (const attrs of collectIisTagAttributes(section, "authentication", MAX_IIS_WEB_CONFIG_ITEM_PREVIEW)) {
+    const mode = attrs.get("mode");
+    if (mode) hints.add(`authentication mode=${clampSingleLine(maskPotentialSecretValues(mode), 60)}`);
+  }
+  for (const tag of ["anonymousAuthentication", "windowsAuthentication", "basicAuthentication", "clientCertificateMappingAuthentication"]) {
+    for (const attrs of collectIisTagAttributes(section, tag, MAX_IIS_WEB_CONFIG_ITEM_PREVIEW)) {
+      const enabled = attrs.get("enabled");
+      hints.add(`${tag}${enabled ? ` enabled=${clampSingleLine(enabled, 20)}` : ""}`);
+    }
+  }
+  return [...hints].slice(0, MAX_IIS_WEB_CONFIG_ITEM_PREVIEW);
+}
+
+function collectIisRewriteRules(section: string): string[] {
+  return collectIisTagBlocks(section, "rule", MAX_IIS_WEB_CONFIG_ITEM_PREVIEW).map((block) => {
+    const ruleAttrs = readIisXmlAttributes(block.attrs);
+    const actionAttrs = readIisXmlAttributes(block.body.match(/<action\b([^>]*)\/?>/i)?.[1] ?? "");
+    const matchAttrs = readIisXmlAttributes(block.body.match(/<match\b([^>]*)\/?>/i)?.[1] ?? "");
+    return [
+      ruleAttrs.get("name") ? `name=${clampSingleLine(maskPotentialSecretValues(ruleAttrs.get("name") ?? ""), 80)}` : "",
+      matchAttrs.get("url") ? `match=${clampSingleLine(redactUrlQuerySecrets(matchAttrs.get("url") ?? ""), 80)}` : "",
+      actionAttrs.get("type") ? `action=${clampSingleLine(maskPotentialSecretValues(actionAttrs.get("type") ?? ""), 60)}` : "",
+      actionAttrs.get("url") ? `url=${clampSingleLine(redactUrlQuerySecrets(actionAttrs.get("url") ?? ""), 120)}` : "",
+    ].filter(Boolean).join(" ");
+  }).filter(Boolean);
+}
+
+function collectIisAspNetHints(section: string): string[] {
+  const hints = new Set<string>();
+  for (const attrs of collectIisTagAttributes(section, "compilation", MAX_IIS_WEB_CONFIG_ITEM_PREVIEW)) {
+    const framework = attrs.get("targetFramework");
+    if (framework) hints.add(`compilation targetFramework=${clampSingleLine(framework, 60)}`);
+    const debug = attrs.get("debug");
+    if (debug) hints.add(`compilation debug=${clampSingleLine(debug, 20)}`);
+  }
+  for (const attrs of collectIisTagAttributes(section, "httpRuntime", MAX_IIS_WEB_CONFIG_ITEM_PREVIEW)) {
+    const framework = attrs.get("targetFramework");
+    if (framework) hints.add(`httpRuntime targetFramework=${clampSingleLine(framework, 60)}`);
+    const maxRequestLength = attrs.get("maxRequestLength");
+    if (maxRequestLength) hints.add(`httpRuntime maxRequestLength=${clampSingleLine(maxRequestLength, 40)}`);
+  }
+  return [...hints].slice(0, MAX_IIS_WEB_CONFIG_ITEM_PREVIEW);
+}
+
+function collectIisLocationPaths(raw: string): string[] {
+  return collectIisTagAttributes(raw, "location", MAX_IIS_WEB_CONFIG_ITEM_PREVIEW)
+    .map((attrs) => attrs.get("path") || "")
+    .filter(Boolean)
+    .map((path) => clampSingleLine(maskPotentialSecretPathSegments(path), 120));
+}
+
+function extractXmlSection(raw: string, tagName: string): string {
+  const escaped = escapeRegExp(tagName);
+  return raw.match(new RegExp(`<${escaped}\\b[\\s\\S]*?<\\/${escaped}>`, "i"))?.[0] ?? "";
+}
+
+function collectIisTagAttributes(raw: string, tagName: string, limit: number): Map<string, string>[] {
+  const attrs: Map<string, string>[] = [];
+  const escaped = escapeRegExp(tagName);
+  for (const match of raw.matchAll(new RegExp(`<${escaped}\\b([^>]*)\\/?>`, "gi"))) {
+    attrs.push(readIisXmlAttributes(match[1] ?? ""));
+    if (attrs.length >= limit) break;
+  }
+  return attrs;
+}
+
+function collectIisTagBlocks(raw: string, tagName: string, limit: number): { attrs: string; body: string }[] {
+  const blocks: { attrs: string; body: string }[] = [];
+  const escaped = escapeRegExp(tagName);
+  for (const match of raw.matchAll(new RegExp(`<${escaped}\\b([^>]*)>([\\s\\S]*?)<\\/${escaped}>`, "gi"))) {
+    blocks.push({ attrs: match[1] ?? "", body: match[2] ?? "" });
+    if (blocks.length >= limit) break;
+  }
+  return blocks;
+}
+
+function readIisXmlAttributes(rawAttributes: string): Map<string, string> {
+  const attrs = new Map<string, string>();
+  for (const match of rawAttributes.matchAll(/([A-Za-z_:][\w:.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
+    attrs.set(match[1] ?? "", decodeXmlEntities(match[2] ?? match[3] ?? ""));
+  }
+  return attrs;
+}
+
+function isVsCodeWorkspaceConfigFile(filePath: string, extension: string): boolean {
+  if (
+    [
+      ".vscode-settings.json",
+      ".vscode-tasks.json",
+      ".vscode-launch.json",
+      ".vscode-extensions.json",
+    ].includes(extension)
+  ) return true;
+  const normalizedPath = filePath.replace(/\\/g, "/").toLowerCase();
+  return (
+    normalizedPath.endsWith("/.vscode/settings.json") ||
+    normalizedPath.endsWith("/.vscode/tasks.json") ||
+    normalizedPath.endsWith("/.vscode/launch.json") ||
+    normalizedPath.endsWith("/.vscode/extensions.json")
+  );
+}
+
+function summarizeVsCodeWorkspaceConfigFile(filePath: string, extension: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_VSCODE_WORKSPACE_CONFIG_PREVIEW_BYTES)).toString("utf8");
+    const value = parseJsoncLike(raw);
+    const preview = readVsCodeWorkspaceConfigPreview(filePath, extension, value);
+    return [
+      `VS Code workspace config preview (${preview.format}, ${formatBytes(size)}).`,
+      preview.settings.length > 0
+        ? `Settings keys (${preview.settings.length}${preview.settings.length >= MAX_VSCODE_WORKSPACE_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.settings.join(", ")}.`
+        : "Settings keys: none detected in the bounded preview.",
+      preview.tasks.length > 0
+        ? `Task definitions (${preview.tasks.length}${preview.tasks.length >= MAX_VSCODE_WORKSPACE_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.tasks.join(" | ")}.`
+        : "Task definitions: none detected in the bounded preview.",
+      preview.debugConfigurations.length > 0
+        ? `Debug configurations (${preview.debugConfigurations.length}${preview.debugConfigurations.length >= MAX_VSCODE_WORKSPACE_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.debugConfigurations.join(" | ")}.`
+        : "Debug configurations: none detected in the bounded preview.",
+      preview.extensionRecommendations.length > 0
+        ? `Extension recommendations (${preview.extensionRecommendations.length}${preview.extensionRecommendations.length >= MAX_VSCODE_WORKSPACE_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.extensionRecommendations.join(", ")}.`
+        : "Extension recommendations: none detected in the bounded preview.",
+      preview.inputs.length > 0
+        ? `Input/problem matcher hints (${preview.inputs.length}${preview.inputs.length >= MAX_VSCODE_WORKSPACE_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.inputs.join(", ")}.`
+        : "Input/problem matcher hints: none detected in the bounded preview.",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_VSCODE_WORKSPACE_CONFIG_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; VS Code workspace configuration was parsed from bounded workspace-local JSON/JSONC only, setting values and command variables were not resolved, no VS Code process, task/debug launch, extension install, terminal command, network call, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `VS Code workspace config ready for explicit attachment (${formatBytes(size)}).`,
+      "VS Code config preview could not parse bounded local JSON/JSONC; no VS Code process, task/debug launch, extension install, terminal command, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseJsoncLike(raw: string): unknown {
+  return JSON.parse(stripJsonComments(raw.replace(/^\uFEFF/, "")).replace(/,\s*([}\]])/g, "$1"));
+}
+
+function stripJsonComments(raw: string): string {
+  let output = "";
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < raw.length; index += 1) {
+    const char = raw[index] || "";
+    const next = raw[index + 1] || "";
+    if (inString) {
+      output += char;
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+    if (char === "\"") {
+      inString = true;
+      output += char;
+      continue;
+    }
+    if (char === "/" && next === "/") {
+      while (index < raw.length && !/[\r\n]/.test(raw[index] || "")) index += 1;
+      output += "\n";
+      continue;
+    }
+    if (char === "/" && next === "*") {
+      index += 2;
+      while (index < raw.length && !((raw[index] || "") === "*" && (raw[index + 1] || "") === "/")) index += 1;
+      index += 1;
+      output += " ";
+      continue;
+    }
+    output += char;
+  }
+  return output;
+}
+
+function readVsCodeWorkspaceConfigPreview(
+  filePath: string,
+  extension: string,
+  value: unknown,
+): {
+  format: string;
+  settings: string[];
+  tasks: string[];
+  debugConfigurations: string[];
+  extensionRecommendations: string[];
+  inputs: string[];
+  truncated: boolean;
+} {
+  const record = isRecord(value) ? value : {};
+  const settings = extension === ".vscode-settings.json"
+    ? Object.keys(record).map(sanitizeVsCodeConfigValue)
+    : [];
+  const taskRecords = readRecordArray(record, "tasks").filter(isRecord);
+  const tasks = taskRecords
+    .slice(0, MAX_VSCODE_WORKSPACE_CONFIG_ITEM_PREVIEW)
+    .map(formatVsCodeTaskPreview)
+    .filter(Boolean);
+  const debugRecords = readRecordArray(record, "configurations").filter(isRecord);
+  const debugConfigurations = debugRecords
+    .slice(0, MAX_VSCODE_WORKSPACE_CONFIG_ITEM_PREVIEW)
+    .map(formatVsCodeDebugConfigurationPreview)
+    .filter(Boolean);
+  const extensionRecommendations = [
+    ...readRecordArray(record, "recommendations")
+      .filter((item): item is string => typeof item === "string")
+      .map(sanitizeVsCodeConfigValue),
+    ...readRecordArray(record, "unwantedRecommendations")
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => `unwanted:${sanitizeVsCodeConfigValue(item)}`),
+  ].slice(0, MAX_VSCODE_WORKSPACE_CONFIG_ITEM_PREVIEW);
+  const inputs = [
+    ...taskRecords.flatMap((task) => readVsCodeProblemMatcherHints(task)),
+    ...readRecordArray(record, "inputs").filter(isRecord).map(formatVsCodeInputPreview),
+  ]
+    .filter(Boolean)
+    .slice(0, MAX_VSCODE_WORKSPACE_CONFIG_ITEM_PREVIEW);
+  return {
+    format: readVsCodeWorkspaceConfigFormat(filePath, extension),
+    settings: uniquePreviewValues(settings, MAX_VSCODE_WORKSPACE_CONFIG_ITEM_PREVIEW),
+    tasks: uniquePreviewValues(tasks, MAX_VSCODE_WORKSPACE_CONFIG_ITEM_PREVIEW),
+    debugConfigurations: uniquePreviewValues(debugConfigurations, MAX_VSCODE_WORKSPACE_CONFIG_ITEM_PREVIEW),
+    extensionRecommendations: uniquePreviewValues(extensionRecommendations, MAX_VSCODE_WORKSPACE_CONFIG_ITEM_PREVIEW),
+    inputs: uniquePreviewValues(inputs, MAX_VSCODE_WORKSPACE_CONFIG_ITEM_PREVIEW),
+    truncated:
+      JSON.stringify(value).length >= MAX_VSCODE_WORKSPACE_CONFIG_PREVIEW_BYTES ||
+      settings.length > MAX_VSCODE_WORKSPACE_CONFIG_ITEM_PREVIEW ||
+      taskRecords.length > MAX_VSCODE_WORKSPACE_CONFIG_ITEM_PREVIEW ||
+      debugRecords.length > MAX_VSCODE_WORKSPACE_CONFIG_ITEM_PREVIEW,
+  };
+}
+
+function readVsCodeWorkspaceConfigFormat(filePath: string, extension: string): string {
+  if (extension === ".vscode-settings.json") return "VS Code settings.json";
+  if (extension === ".vscode-tasks.json") return "VS Code tasks.json";
+  if (extension === ".vscode-launch.json") return "VS Code launch.json";
+  if (extension === ".vscode-extensions.json") return "VS Code extensions.json";
+  return `VS Code ${basename(filePath)}`;
+}
+
+function formatVsCodeTaskPreview(task: Record<string, unknown>): string {
+  const label = readRecordString(task, "label") || readRecordString(task, "taskName") || "(unnamed task)";
+  const type = readRecordString(task, "type");
+  const command = readRecordString(task, "command");
+  return [
+    sanitizeVsCodeConfigValue(label),
+    type ? `type=${sanitizeVsCodeConfigValue(type)}` : "",
+    command ? `command=${sanitizeVsCodeConfigValue(command)}` : "",
+  ].filter(Boolean).join(" ");
+}
+
+function formatVsCodeDebugConfigurationPreview(config: Record<string, unknown>): string {
+  const name = readRecordString(config, "name") || "(unnamed config)";
+  const type = readRecordString(config, "type");
+  const request = readRecordString(config, "request");
+  const program = readRecordString(config, "program");
+  return [
+    sanitizeVsCodeConfigValue(name),
+    type ? `type=${sanitizeVsCodeConfigValue(type)}` : "",
+    request ? `request=${sanitizeVsCodeConfigValue(request)}` : "",
+    program ? `program=${sanitizeVsCodeConfigValue(program)}` : "",
+  ].filter(Boolean).join(" ");
+}
+
+function readVsCodeProblemMatcherHints(task: Record<string, unknown>): string[] {
+  const value = readRecordValue(task, "problemMatcher");
+  const values = Array.isArray(value) ? value : [value];
+  return values
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => `problemMatcher=${sanitizeVsCodeConfigValue(item)}`);
+}
+
+function formatVsCodeInputPreview(input: Record<string, unknown>): string {
+  const id = readRecordString(input, "id") || "(unnamed input)";
+  const type = readRecordString(input, "type");
+  return [sanitizeVsCodeConfigValue(id), type ? `type=${sanitizeVsCodeConfigValue(type)}` : ""]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function sanitizeVsCodeConfigValue(value: string): string {
+  const masked = clampSingleLine(maskPotentialSecretValues(value), 120);
+  if (masked.includes("[redacted]")) return masked;
+  if (/(?:token|secret|password|passwd|pwd|api[_-]?key|private[_-]?key|credential)/i.test(masked)) {
+    return "[redacted]";
+  }
+  return masked;
+}
+
+interface ChatExportMessagePreview {
+  channel: string;
+  sender: string;
+  timestamp: string;
+  text: string;
+}
+
+interface ChatExportPreview {
+  format: string;
+  messages: ChatExportMessagePreview[];
+  messageCount: number;
+  channels: string[];
+  participants: string[];
+  truncated: boolean;
+}
+
+function isChatExportJsonFile(filePath: string, extension: string): boolean {
+  if (extension === ".chat-export.json") return true;
+  if (extension !== ".json") return false;
+  try {
+    const raw = readFileHeader(filePath, MAX_CHAT_EXPORT_PREVIEW_BYTES).toString("utf8");
+    return looksLikeChatExportJsonValue(JSON.parse(raw.replace(/^\uFEFF/, "")), basename(filePath).toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+function summarizeChatExportJsonFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_CHAT_EXPORT_PREVIEW_BYTES)).toString("utf8");
+    const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+    const preview = parseChatExportJsonPreview(parsed, basename(filePath).toLowerCase(), raw.length >= MAX_CHAT_EXPORT_PREVIEW_BYTES);
+    return [
+      `Chat export JSON preview (${preview.format}, ${formatBytes(size)}).`,
+      `Messages in bounded preview: ${preview.messageCount}${preview.truncated ? "+" : ""}.`,
+      `Channels/conversations: ${preview.channels.length > 0 ? preview.channels.join(", ") : "none detected"}.`,
+      `Participants: ${preview.participants.length > 0 ? preview.participants.join(", ") : "none detected"}.`,
+      "Message samples:",
+      preview.messages.length > 0
+        ? preview.messages.map((message, index) => formatChatExportMessagePreview(message, index)).join("\n")
+        : "No readable message samples were found in the bounded preview.",
+      "Ready for explicit attachment after visible review; chat export JSON was parsed from bounded workspace-local bytes only, with likely-secret redaction and no Slack/Teams/ChatGPT/OpenAI connector login, no Discord connector login, provider API call, attachment download, network call, or provider send performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Chat export JSON ready for explicit attachment (${formatBytes(size)}).`,
+      "No Slack/Teams/ChatGPT/OpenAI connector login, no Discord connector login, provider API call, attachment download, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function looksLikeChatExportJsonValue(value: unknown, fileName: string): boolean {
+  if (looksLikeChatGptConversationsExport(value)) return true;
+  const records = getChatExportRecords(value);
+  if (records.length === 0) return false;
+  if (/(slack|teams|discord|chat-export|messages)/i.test(fileName)) {
+    return records.some((record) => hasChatExportMessageShape(record));
+  }
+  return records.some((record) => hasSpecificChatExportMessageShape(record));
+}
+
+function parseChatExportJsonPreview(value: unknown, fileName: string, byteTruncated: boolean): ChatExportPreview {
+  if (looksLikeChatGptConversationsExport(value)) {
+    return parseChatGptConversationsExport(value, byteTruncated);
+  }
+  const records = getChatExportRecords(value).filter(hasChatExportMessageShape);
+  const format = inferChatExportJsonFormat(records, fileName);
+  const messages = records
+    .slice(0, MAX_CHAT_EXPORT_MESSAGE_PREVIEW)
+    .map((record) => toChatExportMessagePreview(record));
+  return {
+    format,
+    messages,
+    messageCount: records.length,
+    channels: uniqueLimited(messages.map((message) => message.channel).filter(Boolean), MAX_CHAT_EXPORT_MESSAGE_PREVIEW),
+    participants: uniqueLimited(messages.map((message) => message.sender).filter(Boolean), MAX_CHAT_EXPORT_MESSAGE_PREVIEW),
+    truncated: byteTruncated || records.length > messages.length,
+  };
+}
+
+function looksLikeChatGptConversationsExport(value: unknown): value is Record<string, unknown>[] {
+  return Array.isArray(value) && value.some((item) => isRecord(item) && isRecord(item.mapping) && readRecordString(item, "title"));
+}
+
+function parseChatGptConversationsExport(value: Record<string, unknown>[], byteTruncated: boolean): ChatExportPreview {
+  const messages: ChatExportMessagePreview[] = [];
+  let messageCount = 0;
+  for (const conversation of value) {
+    const title = clampSingleLine(readRecordString(conversation, "title") || "ChatGPT conversation", 120);
+    const mapping = isRecord(conversation.mapping) ? conversation.mapping : {};
+    for (const node of Object.values(mapping)) {
+      if (!isRecord(node) || !isRecord(node.message)) continue;
+      const message = node.message;
+      const text = readChatGptMessageText(message);
+      if (!text) continue;
+      messageCount += 1;
+      if (messages.length >= MAX_CHAT_EXPORT_MESSAGE_PREVIEW) continue;
+      const author = isRecord(message.author) ? message.author : {};
+      messages.push({
+        channel: title,
+        sender: clampSingleLine(readRecordString(author, "role") || "unknown-role", 80),
+        timestamp: formatChatExportTimestamp(readRecordValue(message, "create_time")),
+        text,
+      });
+    }
+  }
+  return {
+    format: "ChatGPT conversations JSON",
+    messages,
+    messageCount,
+    channels: uniqueLimited(value.map((conversation) => readRecordString(conversation, "title")).filter(Boolean), MAX_CHAT_EXPORT_MESSAGE_PREVIEW),
+    participants: uniqueLimited(messages.map((message) => message.sender).filter(Boolean), MAX_CHAT_EXPORT_MESSAGE_PREVIEW),
+    truncated: byteTruncated || messageCount > messages.length,
+  };
+}
+
+function readChatGptMessageText(message: Record<string, unknown>): string {
+  const content = isRecord(message.content) ? message.content : {};
+  const parts = readRecordValue(content, "parts");
+  const text = Array.isArray(parts)
+    ? parts.map((part) => typeof part === "string" ? part : "").filter(Boolean).join("\n")
+    : readRecordString(content, "text");
+  return clampSingleLine(maskPotentialSecretValues(stripHtmlTags(text)), 260);
+}
+
+function getChatExportRecords(value: unknown): Record<string, unknown>[] {
+  const records: Record<string, unknown>[] = [];
+  const pushRecords = (items: unknown[], inheritedChannel = ""): void => {
+    for (const item of items) {
+      if (!isRecord(item)) continue;
+      records.push(inheritedChannel && !readChatExportChannel(item) ? { ...item, channel: inheritedChannel } : item);
+    }
+  };
+  if (Array.isArray(value)) {
+    pushRecords(value);
+    return records;
+  }
+  if (!isRecord(value)) return records;
+  pushRecords(readSnapshotArray(value.messages));
+  pushRecords(readSnapshotArray(value.items));
+  for (const collectionKey of ["channels", "conversations", "threads"]) {
+    for (const collection of readSnapshotArray(value[collectionKey])) {
+      if (!isRecord(collection)) continue;
+      const channel = readRecordString(collection, "name") ||
+        readRecordString(collection, "title") ||
+        readRecordString(collection, "channel") ||
+        readRecordString(collection, "channelName");
+      pushRecords(readSnapshotArray(collection.messages), channel);
+      pushRecords(readSnapshotArray(collection.items), channel);
+    }
+  }
+  return records;
+}
+
+function hasChatExportMessageShape(record: Record<string, unknown>): boolean {
+  return Boolean(readChatExportText(record) && (readChatExportSender(record) || readChatExportTimestamp(record) || readChatExportChannel(record)));
+}
+
+function hasSpecificChatExportMessageShape(record: Record<string, unknown>): boolean {
+  return Boolean(
+      (readRecordString(record, "type").toLowerCase() === "message" && readRecordString(record, "ts") && readRecordString(record, "text")) ||
+      (isRecord(record.body) && (isRecord(record.from) || readRecordString(record, "createdDateTime"))) ||
+      (isRecord(record.author) && readRecordString(record, "content") && (readRecordString(record, "channel_id") || readRecordString(record, "guild_id"))) ||
+      (readRecordString(record, "user") && readRecordString(record, "text") && readRecordString(record, "ts")),
+  );
+}
+
+function inferChatExportJsonFormat(records: Record<string, unknown>[], fileName: string): string {
+  if (/slack/i.test(fileName) || records.some((record) => readRecordString(record, "ts") && readRecordString(record, "user"))) {
+    return "Slack export JSON";
+  }
+  if (/teams/i.test(fileName) || records.some((record) => isRecord(record.body) || isRecord(record.from))) {
+    return "Microsoft Teams export JSON";
+  }
+  if (/discord/i.test(fileName) || records.some((record) => isRecord(record.author) && readRecordString(record, "content"))) {
+    return "Discord export JSON";
+  }
+  return "Chat export JSON";
+}
+
+function toChatExportMessagePreview(record: Record<string, unknown>): ChatExportMessagePreview {
+  return {
+    channel: clampSingleLine(maskPotentialSecretValues(readChatExportChannel(record) || "unknown-channel"), 100),
+    sender: clampSingleLine(maskPotentialSecretValues(readChatExportSender(record) || "unknown-sender"), 100),
+    timestamp: clampSingleLine(maskPotentialSecretValues(readChatExportTimestamp(record)), 80),
+    text: clampSingleLine(maskPotentialSecretValues(stripHtmlTags(readChatExportText(record))), 260),
+  };
+}
+
+function readChatExportChannel(record: Record<string, unknown>): string {
+  return readRecordString(record, "channel") ||
+    readRecordString(record, "channelName") ||
+    readRecordString(record, "conversation") ||
+    readRecordString(record, "conversationName") ||
+    readRecordString(record, "guild") ||
+    readRecordString(record, "guildName") ||
+    readRecordString(record, "server") ||
+    readRecordString(record, "serverName") ||
+    readRecordString(record, "thread") ||
+    readRecordString(record, "threadName") ||
+    readRecordString(record, "channel_id") ||
+    readRecordString(record, "guild_id");
+}
+
+function readChatExportSender(record: Record<string, unknown>): string {
+  const from = isRecord(record.from) ? record.from : null;
+  const user = from && isRecord(from.user) ? from.user : null;
+  const author = isRecord(record.author) ? record.author : null;
+  return readRecordString(record, "sender") ||
+    (author
+      ? readRecordString(author, "displayName") ||
+        readRecordString(author, "global_name") ||
+        readRecordString(author, "username") ||
+        readRecordString(author, "name") ||
+        readRecordString(author, "id")
+      : readRecordString(record, "author")) ||
+    readRecordString(record, "user_name") ||
+    readRecordString(record, "username") ||
+    readRecordString(record, "user") ||
+    (from ? readRecordString(from, "displayName") || readRecordString(from, "email") : "") ||
+    (user ? readRecordString(user, "displayName") || readRecordString(user, "email") : "");
+}
+
+function readChatExportTimestamp(record: Record<string, unknown>): string {
+  return readRecordString(record, "timestamp") ||
+    readRecordString(record, "createdAt") ||
+    readRecordString(record, "createdDateTime") ||
+    readRecordString(record, "sentAt") ||
+    readRecordString(record, "ts");
+}
+
+function readChatExportText(record: Record<string, unknown>): string {
+  const body = isRecord(record.body) ? record.body : null;
+  return readRecordString(record, "text") ||
+    readRecordString(record, "message") ||
+    readRecordString(record, "summary") ||
+    readRecordString(record, "content") ||
+    (body ? readRecordString(body, "content") : "");
+}
+
+function formatChatExportTimestamp(value: unknown): string {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return new Date(value * 1000).toISOString();
+  }
+  return typeof value === "string" ? value : "";
+}
+
+function formatChatExportMessagePreview(message: ChatExportMessagePreview, index: number): string {
+  return `${index + 1}. [${message.channel}] ${message.sender}${message.timestamp ? ` at ${message.timestamp}` : ""}: ${message.text}`;
+}
+
+function uniqueLimited(values: string[], limit: number): string[] {
+  return [...new Set(values.map((value) => clampSingleLine(value, 100)).filter(Boolean))].slice(0, limit);
 }
 
 function summarizeJsonDataFile(filePath: string, size: number): string {
@@ -17357,6 +22146,14 @@ interface HarPreviewEntry {
   responseHeaders: string[];
 }
 
+interface NetlogPreviewEvent {
+  type: string;
+  source: string;
+  phase: string;
+  time: string;
+  details: string[];
+}
+
 function summarizeHarNetworkTraceFile(filePath: string, size: number): string {
   try {
     const raw = readFileHeader(filePath, MAX_HAR_PREVIEW_BYTES).toString("utf8");
@@ -17392,6 +22189,50 @@ function summarizeHarNetworkTraceFile(filePath: string, size: number): string {
     } catch {
       return [
         `HAR network trace ready for explicit attachment (${formatBytes(size)}).`,
+        "No browser profile access, request replay, network call, credential lookup, or provider send was performed.",
+      ].join("\n").slice(0, MAX_TEXT_BYTES);
+    }
+  }
+}
+
+function summarizeNetlogNetworkTraceFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_NETLOG_PREVIEW_BYTES).toString("utf8");
+    const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+    const events = extractNetlogEvents(parsed);
+    const previewEvents = events.slice(0, MAX_NETLOG_EVENT_PREVIEW).map((event) => readNetlogPreviewEvent(event, parsed));
+    const eventTypes = summarizeCounts(previewEvents.map((event) => event.type).filter(Boolean));
+    const sources = summarizeCounts(previewEvents.map((event) => event.source).filter(Boolean));
+    const phases = summarizeCounts(previewEvents.map((event) => event.phase).filter(Boolean));
+    const details = uniquePreviewValues(previewEvents.flatMap((event) => event.details), MAX_NETLOG_PARAM_PREVIEW);
+    return [
+      `Chrome NetLog network trace preview (${formatBytes(size)}).`,
+      `Events: ${events.length}${events.length > previewEvents.length ? `; showing first ${previewEvents.length}` : ""}.`,
+      `Event types: ${eventTypes || "none detected"}.`,
+      `Sources: ${sources || "none detected"}.`,
+      `Phases: ${phases || "none detected"}.`,
+      details.length > 0
+        ? `URL/host/detail samples: ${details.join(" | ")}.`
+        : "URL/host/detail samples: none detected in the bounded NetLog preview.",
+      previewEvents.length > 0
+        ? `Event samples:\n${previewEvents.map(summarizeNetlogPreviewEvent).join("\n")}`
+        : "Event samples: none detected in the bounded NetLog preview.",
+      "Ready for explicit attachment after visible review; Chrome/Edge NetLog JSON was parsed from a bounded local byte sample, URL/token/cookie/header-like values were redacted, and no browser profile access, request replay, network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    try {
+      const preview = readFileHeader(filePath, Math.min(MAX_NETLOG_PREVIEW_BYTES, MAX_TEXT_BYTES))
+        .toString("utf8")
+        .replace(/\s+/g, " ")
+        .trim();
+      return [
+        `Chrome NetLog network trace ready for explicit attachment (${formatBytes(size)}). Structured preview was unavailable from the bounded local byte sample.`,
+        maskPotentialSecretValues(preview).slice(0, MAX_TEXT_BYTES - 380) || "No readable NetLog text preview was found.",
+        "No browser profile access, request replay, network call, credential lookup, or provider send was performed.",
+      ].join("\n").slice(0, MAX_TEXT_BYTES);
+    } catch {
+      return [
+        `Chrome NetLog network trace ready for explicit attachment (${formatBytes(size)}).`,
         "No browser profile access, request replay, network call, credential lookup, or provider send was performed.",
       ].join("\n").slice(0, MAX_TEXT_BYTES);
     }
@@ -17746,6 +22587,81 @@ function readNumberLabel(value: unknown, suffix: string): string {
   return Number.isFinite(numeric) ? `${Math.round(numeric)} ${suffix}` : "unknown";
 }
 
+function extractNetlogEvents(parsed: unknown): Record<string, unknown>[] {
+  if (!isRecord(parsed) || !Array.isArray(parsed.events)) return [];
+  return parsed.events.filter(isRecord);
+}
+
+function readNetlogPreviewEvent(event: Record<string, unknown>, parsed: unknown): NetlogPreviewEvent {
+  const params = isRecord(event.params) ? event.params : {};
+  return {
+    type: normalizeNetlogConstant(readRecordValue(event, "type"), parsed, "logEventTypes") || "event",
+    source: describeNetlogSource(event.source, parsed),
+    phase: normalizeNetlogConstant(readRecordValue(event, "phase"), parsed, "logEventPhase") || readRecordString(event, "phase") || "phase",
+    time: readNetlogTime(event),
+    details: collectNetlogDetailSamples(params),
+  };
+}
+
+function summarizeNetlogPreviewEvent(event: NetlogPreviewEvent, index: number): string {
+  const details = event.details.length > 0 ? ` details: ${event.details.join(", ")};` : "";
+  return `- ${index + 1}. ${event.type} ${event.phase}; source ${event.source}; time ${event.time};${details}`;
+}
+
+function normalizeNetlogConstant(value: unknown, parsed: unknown, group: string): string {
+  if (typeof value === "string") return clampSingleLine(value, 120);
+  if (typeof value !== "number") return "";
+  const constants = isRecord(parsed) && isRecord(parsed.constants) ? parsed.constants : {};
+  const mapping = isRecord(constants[group]) ? constants[group] : {};
+  const match = Object.entries(mapping).find(([, raw]) => Number(raw) === value)?.[0];
+  return match ? clampSingleLine(match, 120) : String(value);
+}
+
+function describeNetlogSource(value: unknown, parsed: unknown): string {
+  if (!isRecord(value)) return "source";
+  const type = normalizeNetlogConstant(readRecordValue(value, "type"), parsed, "logSourceType");
+  const id = readRecordValue(value, "id");
+  const idLabel = typeof id === "number" || typeof id === "string" ? `#${id}` : "";
+  return clampSingleLine([type || "source", idLabel].filter(Boolean).join(" "), 120);
+}
+
+function readNetlogTime(event: Record<string, unknown>): string {
+  const raw = readRecordValue(event, "time");
+  if (typeof raw === "number" && Number.isFinite(raw)) return `${Math.round(raw)} ms`;
+  if (typeof raw === "string" && raw.trim()) return maskPotentialSecretValues(raw.trim()).slice(0, 80);
+  return "unknown";
+}
+
+function collectNetlogDetailSamples(params: Record<string, unknown>): string[] {
+  const details: string[] = [];
+  for (const [key, value] of Object.entries(params)) {
+    const normalizedKey = clampSingleLine(key, 80);
+    if (!normalizedKey) continue;
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      details.push(`${normalizedKey}=${sanitizeNetlogValue(String(value))}`);
+    } else if (Array.isArray(value)) {
+      const primitives = value
+        .filter((item) => ["string", "number", "boolean"].includes(typeof item))
+        .slice(0, 3)
+        .map((item) => sanitizeNetlogValue(String(item)));
+      if (primitives.length > 0) details.push(`${normalizedKey}=[${primitives.join(", ")}]`);
+    } else if (isRecord(value)) {
+      for (const [childKey, childValue] of Object.entries(value).slice(0, 4)) {
+        if (["string", "number", "boolean"].includes(typeof childValue)) {
+          details.push(`${normalizedKey}.${clampSingleLine(childKey, 60)}=${sanitizeNetlogValue(String(childValue))}`);
+        }
+      }
+    }
+    if (details.length >= MAX_NETLOG_PARAM_PREVIEW) break;
+  }
+  return uniquePreviewValues(details, MAX_NETLOG_PARAM_PREVIEW);
+}
+
+function sanitizeNetlogValue(value: string): string {
+  if (/^https?:\/\//i.test(value)) return redactHarUrl(value);
+  return clampSingleLine(maskPotentialSecretValues(value), 180);
+}
+
 function summarizeCounts(values: string[]): string {
   const counts = new Map<string, number>();
   for (const value of values) {
@@ -18059,6 +22975,7 @@ type ChannelImageMetadata = {
   format?: string;
   dimensions?: string;
   detail?: string;
+  colorProfile?: string;
   text?: string;
 };
 
@@ -18087,6 +23004,7 @@ function summarizeImage(filePath: string, extension: string, size: number): stri
     metadata?.format ? `Format: ${metadata.format}.` : "",
     metadata?.dimensions ? `Dimensions: ${metadata.dimensions}.` : "",
     metadata?.detail ? `Header details: ${metadata.detail}.` : "",
+    metadata?.colorProfile ? `Color profile hints: ${metadata.colorProfile}.` : "",
     metadata?.text ? `SVG text preview: ${metadata.text}` : "",
   ].filter(Boolean);
   if (details.length === 0) {
@@ -18095,7 +23013,7 @@ function summarizeImage(filePath: string, extension: string, size: number): stri
   return [
     `Image metadata preview (${formatBytes(size)}).`,
     ...details,
-    "Ready for explicit attachment after visible review; no OCR, vision model, network call, or provider send was performed. No image renderer startup, pixel decode, animation playback, or color-profile validation was performed.",
+    "Ready for explicit attachment after visible review; no OCR, vision model, network call, or provider send was performed. No image renderer startup, pixel decode, animation playback, ICC/profile validation, or pixel color conversion was performed.",
   ].join("\n").slice(0, MAX_TEXT_BYTES);
 }
 
@@ -18125,7 +23043,11 @@ function readPngDimensions(buffer: Buffer): ChannelImageMetadata | null {
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
     return null;
   }
-  return { format: "PNG", dimensions: `${width} x ${height} px` };
+  return {
+    format: "PNG",
+    dimensions: `${width} x ${height} px`,
+    colorProfile: summarizePngColorProfile(buffer),
+  };
 }
 
 function readJpegDimensions(buffer: Buffer): ChannelImageMetadata | null {
@@ -18133,6 +23055,10 @@ function readJpegDimensions(buffer: Buffer): ChannelImageMetadata | null {
     return null;
   }
   let offset = 2;
+  let dimensions: string | undefined;
+  let precision: number | undefined;
+  let componentCount: number | undefined;
+  const colorHints: string[] = [];
   while (offset + 9 < buffer.length) {
     if (buffer[offset] !== 0xff) {
       offset += 1;
@@ -18147,16 +23073,126 @@ function readJpegDimensions(buffer: Buffer): ChannelImageMetadata | null {
     const segmentLength = buffer.readUInt16BE(offset);
     if (segmentLength < 2 || offset + segmentLength > buffer.length) break;
     if (isJpegStartOfFrame(marker) && segmentLength >= 7) {
+      precision = buffer[offset + 2];
       const height = buffer.readUInt16BE(offset + 3);
       const width = buffer.readUInt16BE(offset + 5);
+      componentCount = buffer[offset + 7];
       if (width > 0 && height > 0) {
-        return { format: "JPEG", dimensions: `${width} x ${height} px` };
+        dimensions = `${width} x ${height} px`;
       }
-      return null;
+    }
+    const segmentDataOffset = offset + 2;
+    const segmentDataLength = segmentLength - 2;
+    if (marker === 0xe2 && segmentDataLength >= 14) {
+      const signature = buffer.subarray(segmentDataOffset, segmentDataOffset + 12).toString("latin1");
+      if (signature === "ICC_PROFILE\0") {
+        const sequence = buffer[segmentDataOffset + 12];
+        const total = buffer[segmentDataOffset + 13];
+        colorHints.push(`ICC_PROFILE APP2 segment ${sequence}/${total}`);
+      }
+    }
+    if (marker === 0xee && segmentDataLength >= 12) {
+      const signature = buffer.subarray(segmentDataOffset, segmentDataOffset + 5).toString("ascii");
+      if (signature === "Adobe") {
+        const transform = buffer[segmentDataOffset + 11];
+        colorHints.push(`Adobe APP14 transform ${transform}`);
+      }
+    }
+    if (marker === 0xe1 && segmentDataLength >= 6) {
+      const signature = buffer.subarray(segmentDataOffset, segmentDataOffset + 6).toString("latin1");
+      if (signature === "Exif\0\0") {
+        colorHints.push("EXIF APP1 metadata present");
+      }
     }
     offset += segmentLength;
   }
-  return null;
+  if (!dimensions) return null;
+  if (precision) colorHints.unshift(`${precision}-bit sample precision`);
+  if (componentCount) colorHints.unshift(`${componentCount} color components`);
+  return {
+    format: "JPEG",
+    dimensions,
+    ...(colorHints.length > 0 ? { colorProfile: uniqueBounded(colorHints, 6).join(", ") } : {}),
+  };
+}
+
+function summarizePngColorProfile(buffer: Buffer): string | undefined {
+  if (buffer.length < 33) return undefined;
+  const bitDepth = buffer[24];
+  const colorType = buffer[25];
+  const hints = [
+    Number.isFinite(bitDepth) ? `bit depth ${bitDepth}` : "",
+    `color type ${describePngColorType(colorType)}`,
+  ].filter(Boolean);
+  let offset = 8;
+  while (offset + 12 <= buffer.length && hints.length < 8) {
+    const chunkLength = buffer.readUInt32BE(offset);
+    const chunkType = buffer.subarray(offset + 4, offset + 8).toString("ascii");
+    const dataOffset = offset + 8;
+    const nextOffset = dataOffset + chunkLength + 4;
+    if (chunkLength > 1024 * 1024 || nextOffset > buffer.length) break;
+    if (chunkType === "sRGB" && chunkLength >= 1) {
+      hints.push(`sRGB ${describePngRenderingIntent(buffer[dataOffset])}`);
+    } else if (chunkType === "gAMA" && chunkLength >= 4) {
+      const gamma = buffer.readUInt32BE(dataOffset) / 100000;
+      hints.push(`gAMA ${trimNumber(gamma)}`);
+    } else if (chunkType === "iCCP" && chunkLength >= 3) {
+      const profileName = readNullTerminatedLatin1(buffer, dataOffset, Math.min(dataOffset + 80, dataOffset + chunkLength));
+      hints.push(`iCCP ${profileName || "profile"} compressed`);
+    } else if (chunkType === "cHRM") {
+      hints.push("cHRM chromaticities present");
+    } else if (chunkType === "PLTE") {
+      hints.push(`PLTE ${Math.floor(chunkLength / 3)} color entries`);
+    } else if (chunkType === "tRNS") {
+      hints.push("tRNS transparency present");
+    } else if (chunkType === "IEND") {
+      break;
+    }
+    offset = nextOffset;
+  }
+  return hints.length > 0 ? uniqueBounded(hints, 8).join(", ") : undefined;
+}
+
+function describePngColorType(value: number): string {
+  switch (value) {
+    case 0:
+      return "grayscale";
+    case 2:
+      return "truecolor";
+    case 3:
+      return "indexed-color";
+    case 4:
+      return "grayscale with alpha";
+    case 6:
+      return "truecolor with alpha";
+    default:
+      return `unknown ${value}`;
+  }
+}
+
+function describePngRenderingIntent(value: number): string {
+  switch (value) {
+    case 0:
+      return "perceptual";
+    case 1:
+      return "relative colorimetric";
+    case 2:
+      return "saturation";
+    case 3:
+      return "absolute colorimetric";
+    default:
+      return `intent ${value}`;
+  }
+}
+
+function readNullTerminatedLatin1(buffer: Buffer, start: number, end: number): string {
+  const terminator = buffer.indexOf(0, start);
+  const stop = terminator >= start && terminator < end ? terminator : end;
+  return buffer.subarray(start, stop).toString("latin1").replace(/[^\x20-\x7e]+/g, " ").trim().slice(0, 60);
+}
+
+function uniqueBounded(values: string[], limit: number): string[] {
+  return [...new Set(values.filter(Boolean))].slice(0, limit);
 }
 
 function isJpegStartOfFrame(marker: number | undefined): boolean {
@@ -18191,11 +23227,76 @@ function readGifDimensions(buffer: Buffer): ChannelImageMetadata | null {
   const packed = buffer.length > 10 ? buffer[10] : 0;
   const globalColorTable = Boolean(packed & 0x80);
   const colorCount = globalColorTable ? 2 ** ((packed & 0x07) + 1) : 0;
+  const animationHints = summarizeGifAnimationHints(buffer);
   return {
     format: buffer.subarray(0, 6).toString("ascii"),
     dimensions: `${width} x ${height} px`,
-    detail: globalColorTable ? `global color table ${colorCount} colors` : "no global color table flag",
+    detail: [
+      globalColorTable ? `global color table ${colorCount} colors` : "no global color table flag",
+      animationHints,
+    ].filter(Boolean).join(", "),
   };
+}
+
+function summarizeGifAnimationHints(buffer: Buffer): string | undefined {
+  if (buffer.length < 13) return undefined;
+  const packed = buffer[10];
+  let offset = 13 + (packed & 0x80 ? 3 * 2 ** ((packed & 0x07) + 1) : 0);
+  let frames = 0;
+  let graphicControlExtensions = 0;
+  let loopCount: number | undefined;
+  while (offset < buffer.length) {
+    const marker = buffer[offset];
+    if (marker === 0x3b) break;
+    if (marker === 0x2c) {
+      if (offset + 10 > buffer.length) break;
+      frames += 1;
+      const imagePacked = buffer[offset + 9];
+      offset += 10 + (imagePacked & 0x80 ? 3 * 2 ** ((imagePacked & 0x07) + 1) : 0);
+      if (offset >= buffer.length) break;
+      offset = skipGifSubBlocks(buffer, offset + 1);
+      continue;
+    }
+    if (marker === 0x21 && offset + 2 < buffer.length) {
+      const label = buffer[offset + 1];
+      if (label === 0xf9 && offset + 8 <= buffer.length) {
+        graphicControlExtensions += 1;
+        offset += 8;
+        continue;
+      }
+      if (label === 0xff && offset + 14 <= buffer.length) {
+        const blockSize = buffer[offset + 2];
+        const appName = buffer.subarray(offset + 3, offset + 3 + blockSize).toString("ascii");
+        const dataOffset = offset + 3 + blockSize;
+        if (appName === "NETSCAPE2.0" && dataOffset + 4 < buffer.length && buffer[dataOffset] >= 3 && buffer[dataOffset + 1] === 1) {
+          loopCount = buffer.readUInt16LE(dataOffset + 2);
+        }
+        offset = skipGifSubBlocks(buffer, dataOffset);
+        continue;
+      }
+      offset = skipGifSubBlocks(buffer, offset + 2);
+      continue;
+    }
+    offset += 1;
+  }
+  const hints = [
+    frames > 0 ? `animation frames ${frames}` : "",
+    graphicControlExtensions > 0 ? `graphic control extensions ${graphicControlExtensions}` : "",
+    typeof loopCount === "number" ? `loop count ${loopCount === 0 ? "forever" : loopCount}` : "",
+  ].filter(Boolean);
+  return hints.length > 0 ? `Animation hints: ${hints.join(", ")}` : undefined;
+}
+
+function skipGifSubBlocks(buffer: Buffer, offset: number): number {
+  let current = offset;
+  while (current < buffer.length) {
+    const blockLength = buffer[current];
+    current += 1;
+    if (blockLength === 0) break;
+    current += blockLength;
+    if (current > buffer.length) return buffer.length;
+  }
+  return current;
 }
 
 function readWebpDimensions(buffer: Buffer): ChannelImageMetadata | null {
@@ -18219,7 +23320,10 @@ function readWebpDimensions(buffer: Buffer): ChannelImageMetadata | null {
       return {
         format: "WebP VP8X",
         dimensions: `${width} x ${height} px`,
-        detail: summarizeWebpFlags(flags),
+        detail: [
+          summarizeWebpFlags(flags),
+          summarizeWebpAnimationHints(buffer),
+        ].filter(Boolean).join(", "),
       };
     }
     if (chunkType === "VP8 " && chunkSize >= 10) {
@@ -18238,6 +23342,29 @@ function readWebpDimensions(buffer: Buffer): ChannelImageMetadata | null {
     offset = dataOffset + chunkSize + (chunkSize % 2);
   }
   return { format: "WebP", detail: "RIFF WEBP header found; dimensions unavailable in bounded header" };
+}
+
+function summarizeWebpAnimationHints(buffer: Buffer): string | undefined {
+  let offset = 12;
+  let animationFrames = 0;
+  let loopCount: number | undefined;
+  while (offset + 8 <= buffer.length) {
+    const chunkType = buffer.subarray(offset, offset + 4).toString("ascii");
+    const chunkSize = buffer.readUInt32LE(offset + 4);
+    const dataOffset = offset + 8;
+    if (chunkSize > 1024 * 1024 || dataOffset + chunkSize > buffer.length) break;
+    if (chunkType === "ANIM" && chunkSize >= 6) {
+      loopCount = buffer.readUInt16LE(dataOffset + 4);
+    } else if (chunkType === "ANMF") {
+      animationFrames += 1;
+    }
+    offset = dataOffset + chunkSize + (chunkSize % 2);
+  }
+  const hints = [
+    animationFrames > 0 ? `animation frames ${animationFrames}` : "",
+    typeof loopCount === "number" ? `loop count ${loopCount === 0 ? "forever" : loopCount}` : "",
+  ].filter(Boolean);
+  return hints.length > 0 ? `Animation hints: ${hints.join(", ")}` : undefined;
 }
 
 function summarizeWebpFlags(flags: number): string {
@@ -18390,11 +23517,6 @@ function parseSvgDimension(value: string | undefined): string | undefined {
 
 function trimNumber(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/\.?0+$/, "");
-}
-
-function readXmlAttribute(tag: string, attribute: string): string | undefined {
-  const match = tag.match(new RegExp(`\\s${attribute}=["']([^"']+)["']`, "i"));
-  return match?.[1];
 }
 
 function extractSvgTextPreview(svg: string): string {
@@ -18926,30 +24048,46 @@ function summarizeDocumentText(filePath: string, extension: string, size: number
   return "";
 }
 
-function summarizeEmailMessage(filePath: string, size: number): string {
+function summarizeEmailMessage(filePath: string, size: number, extension = ".eml"): string {
   try {
-    const raw = readFileSync(filePath, "utf8").slice(0, MAX_TEXT_BYTES);
+    const raw = normalizeEmailMessageRaw(
+      readFileSync(filePath, "utf8").slice(0, MAX_TEXT_BYTES),
+      extension,
+    );
     const message = parseEmailMessage(raw);
     const headers = [
-      message.from ? `From: ${message.from}` : "",
-      message.to ? `To: ${message.to}` : "",
-      message.cc ? `Cc: ${message.cc}` : "",
-      message.subject ? `Subject: ${message.subject}` : "",
-      message.date ? `Date: ${message.date}` : "",
+      message.from ? `From: ${maskPotentialSecretValues(message.from)}` : "",
+      message.to ? `To: ${maskPotentialSecretValues(message.to)}` : "",
+      message.cc ? `Cc: ${maskPotentialSecretValues(message.cc)}` : "",
+      message.subject ? `Subject: ${maskPotentialSecretValues(message.subject)}` : "",
+      message.date ? `Date: ${maskPotentialSecretValues(message.date)}` : "",
     ].filter(Boolean);
-    const body = message.body || "No readable plain-text body preview was found.";
+    const body = message.body
+      ? maskPotentialSecretValues(message.body)
+      : "No readable plain-text body preview was found.";
     return [
       `Email message preview (${formatBytes(size)}).`,
+      extension === ".emlx" ? "Apple Mail EMLX envelope metadata was stripped before parsing." : "",
       ...headers,
       `Body: ${body}`,
       "Ready for explicit attachment after visible review; no IMAP/SMTP login, mailbox sync, network call, or provider send was performed.",
-    ].join("\n").slice(0, MAX_TEXT_BYTES);
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
   } catch {
     return [
       `Email message file ready for explicit attachment (${formatBytes(size)}).`,
       "No IMAP/SMTP login, mailbox sync, network call, or provider send was performed.",
     ].join("\n").slice(0, MAX_TEXT_BYTES);
   }
+}
+
+function normalizeEmailMessageRaw(raw: string, extension: string): string {
+  if (extension !== ".emlx") return raw;
+  const withoutBom = raw.replace(/^\uFEFF/, "");
+  const withoutLengthLine = withoutBom.replace(/^\d+\s*(?:\r?\n|$)/, "");
+  return withoutLengthLine
+    .replace(/\r\n/g, "\n")
+    .replace(/\n<\?xml[\s\S]*$/i, "")
+    .replace(/\n<plist[\s\S]*$/i, "");
 }
 
 function summarizeMailboxArchive(filePath: string, size: number): string {
@@ -20187,6 +25325,92 @@ type ChannelRarMetadata = {
   firstHeaderSize?: number;
 };
 
+type PlaywrightTraceZipPreview = {
+  traceEntries: string[];
+  networkEntries: string[];
+  resourceCount: number;
+  screenshotCount: number;
+  videoCount: number;
+  metadataEntries: string[];
+  largestEntries: string[];
+};
+
+function summarizePlaywrightTraceZipFile(filePath: string, size: number): string {
+  try {
+    const buffer = readFileHeader(filePath, Math.min(size, MAX_ARCHIVE_PREVIEW_BYTES));
+    const { entries, truncated } = readZipArchiveMetadata(buffer);
+    const preview = summarizePlaywrightTraceZipEntries(entries);
+    return [
+      `Playwright trace ZIP preview (${formatBytes(size)}).`,
+      `${entries.filter((entry) => !entry.directory).length} file entr${entries.filter((entry) => !entry.directory).length === 1 ? "y" : "ies"} found in the bounded local header scan.`,
+      truncated ? "Trace archive preview was truncated before every entry could be listed." : "",
+      preview.traceEntries.length > 0
+        ? `Trace event entries: ${preview.traceEntries.join(", ")}.`
+        : "Trace event entries: none detected in the bounded local header scan.",
+      preview.networkEntries.length > 0
+        ? `Network trace entries: ${preview.networkEntries.join(", ")}.`
+        : "Network trace entries: none detected in the bounded local header scan.",
+      `Resource/media cues: resources=${preview.resourceCount}; screenshots=${preview.screenshotCount}; videos=${preview.videoCount}.`,
+      preview.metadataEntries.length > 0
+        ? `Metadata entries: ${preview.metadataEntries.join(", ")}.`
+        : "Metadata entries: none detected in the bounded local header scan.",
+      preview.largestEntries.length > 0
+        ? `Largest bounded entries: ${preview.largestEntries.join(", ")}.`
+        : "Largest bounded entries: none detected.",
+      "Ready for explicit attachment after visible review; Playwright trace ZIP metadata was parsed from bounded workspace-local archive headers only, trace resources were not extracted, browser profiles were not opened, the Playwright trace viewer was not launched, tests were not rerun, and no network call, credential lookup, artifact download, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Playwright trace ZIP ready for explicit attachment (${formatBytes(size)}).`,
+      "Trace archive preview could not parse readable local ZIP headers; trace resources were not extracted, Playwright was not launched, tests were not rerun, and no network call, artifact download, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function summarizePlaywrightTraceZipEntries(entries: ChannelZipEntryMetadata[]): PlaywrightTraceZipPreview {
+  const files = entries.filter((entry) => !entry.directory);
+  const traceEntries: string[] = [];
+  const networkEntries: string[] = [];
+  const metadataEntries: string[] = [];
+  let resourceCount = 0;
+  let screenshotCount = 0;
+  let videoCount = 0;
+
+  for (const entry of files) {
+    const name = entry.name.replace(/\\/g, "/");
+    const lower = name.toLowerCase();
+    const shortName = clampSingleLine(name, 120);
+    if (/(^|\/)(trace|[0-9]+-trace)\.trace$/.test(lower) || lower.endsWith(".trace")) {
+      if (traceEntries.length < MAX_PLAYWRIGHT_TRACE_ENTRY_PREVIEW) traceEntries.push(shortName);
+    }
+    if (/(^|\/)(trace|[0-9]+-trace)\.network$/.test(lower) || lower.endsWith(".network")) {
+      if (networkEntries.length < MAX_PLAYWRIGHT_TRACE_ENTRY_PREVIEW) networkEntries.push(shortName);
+    }
+    if (lower.includes("/resources/") || lower.startsWith("resources/")) resourceCount += 1;
+    if (/\.(png|jpe?g|webp)$/i.test(lower)) screenshotCount += 1;
+    if (/\.(webm|mp4|m4v)$/i.test(lower)) videoCount += 1;
+    if (/(^|\/)(test|trace|actions|stacks|sources|metadata)\.(json|txt|stacks)$/.test(lower)) {
+      if (metadataEntries.length < MAX_PLAYWRIGHT_TRACE_ENTRY_PREVIEW) metadataEntries.push(shortName);
+    }
+  }
+
+  const largestEntries = files
+    .filter((entry) => typeof entry.uncompressedSize === "number")
+    .sort((left, right) => (right.uncompressedSize ?? 0) - (left.uncompressedSize ?? 0))
+    .slice(0, MAX_PLAYWRIGHT_TRACE_ENTRY_PREVIEW)
+    .map((entry) => `${clampSingleLine(entry.name, 100)} (${formatBytes(entry.uncompressedSize ?? 0)})`);
+
+  return {
+    traceEntries,
+    networkEntries,
+    resourceCount,
+    screenshotCount,
+    videoCount,
+    metadataEntries,
+    largestEntries,
+  };
+}
+
 function summarizeZipArchiveFile(filePath: string, size: number): string {
   try {
     const buffer = readFileHeader(filePath, Math.min(size, MAX_ARCHIVE_PREVIEW_BYTES));
@@ -21346,6 +26570,7 @@ function getMime(extension: string): string {
     {
       ".7z": "application/x-7z-compressed",
       ".aab": "application/vnd.android.aab",
+      ".aof": "application/vnd.redis.aof",
       ".ansible-inventory": "text/x-ansible-inventory",
       ".androidmanifest.xml": "application/vnd.android.package-archive.manifest+xml",
       ".apk": "application/vnd.android.package-archive",
@@ -21359,6 +26584,8 @@ function getMime(extension: string): string {
       ".attestation.json": "application/vnd.in-toto+json",
       ".bat": "text/x-msdos-batch",
       ".bash": "text/x-shellscript",
+      ".bib": "text/x-bibtex",
+      ".bibtex": "text/x-bibtex",
       ".bicep": "text/x-bicep",
       ".bicepparam": "text/x-bicep-params",
       ".blg": "application/vnd.ms-perfmon",
@@ -21367,23 +26594,29 @@ function getMime(extension: string): string {
       ".c": "text/x-c",
       ".cabal": "text/x-cabal",
       ".cat": "application/vnd.ms-pki.seccat",
+      ".cast": "application/vnd.asciinema.cast",
       ".cc": "text/x-c++",
       ".checkstyle.xml": "application/vnd.checkstyle+xml",
       ".cjs": "text/javascript",
       ".cmd": "text/x-msdos-batch",
       ".cfg": "text/plain",
       ".codeowners": "text/x-codeowners",
+      ".cpuprofile": "application/vnd.v8.cpuprofile+json",
+      ".chat-export.json": "application/vnd.drsai.chat-export+json",
       ".cloudformation.json": "application/vnd.aws.cloudformation.template+json",
       ".cloudformation.yaml": "application/vnd.aws.cloudformation.template+yaml",
       ".composer.json": "application/vnd.composer+json",
       ".cpp": "text/x-c++",
+      ".cron": "text/x-crontab",
+      ".crontab": "text/x-crontab",
       ".cs": "text/x-csharp",
       ".csproj": "application/msbuild+xml",
       ".css": "text/css",
       ".csv": "text/csv",
-      ".dart": "text/x-dart",
-      ".db": "application/vnd.sqlite3",
-      ".dmp": "application/vnd.microsoft.minidump",
+  ".dart": "text/x-dart",
+  ".db": "application/vnd.sqlite3",
+      ".dbml": "text/x-dbml",
+  ".dmp": "application/vnd.microsoft.minidump",
       ".dockerfile": "text/x-dockerfile",
       ".dockerignore": "text/plain",
       ".doc": "application/msword",
@@ -21395,7 +26628,9 @@ function getMime(extension: string): string {
       ".drawio": "application/vnd.jgraph.mxfile",
       ".dwg": "image/vnd.dwg",
       ".dxf": "image/vnd.dxf",
+      ".graphml": "application/graphml+xml",
       ".eml": "message/rfc822",
+      ".emlx": "message/rfc822",
       ".epub": "application/epub+zip",
       ".etl": "application/vnd.ms-etl",
       ".editorconfig": "text/x-editorconfig",
@@ -21410,6 +26645,7 @@ function getMime(extension: string): string {
       ".der": "application/pkix-cert",
       ".diff": "text/x-diff",
       ".env": "text/plain",
+      ".envrc": "text/x-direnv",
       ".exe": "application/vnd.microsoft.portable-executable",
       ".evtx": "application/vnd.ms-windows-eventlog",
       ".fsproj": "application/msbuild+xml",
@@ -21428,11 +26664,14 @@ function getMime(extension: string): string {
       ".gltf": "model/gltf+json",
       ".gitattributes": "text/x-gitattributes",
       ".gitignore": "text/x-gitignore",
+      ".gitmodules": "text/x-gitmodules",
+      ".mailmap": "text/x-mailmap",
       ".h5": "application/x-hdf5",
       ".har": "application/har+json",
       ".hcl": "text/x-hcl",
       ".hdf5": "application/x-hdf5",
       ".hdmp": "application/vnd.microsoft.minidump",
+      ".heapsnapshot": "application/vnd.v8.heapsnapshot+json",
       ".helm-chart.yaml": "application/vnd.cncf.helm.chart+yaml",
       ".go": "text/x-go",
       ".gql": "application/graphql",
@@ -21445,7 +26684,9 @@ function getMime(extension: string): string {
       ".h": "text/x-c",
       ".hpp": "text/x-c++",
       ".http": "message/http",
+      ".iis-web.config": "application/vnd.microsoft.iis.config+xml",
       ".ini": "text/plain",
+      ".istanbul-coverage.json": "application/vnd.istanbul.coverage+json",
       ".inf": "text/x-setup-inf",
       ".info.plist": "application/x-apple-plist+xml",
       ".intoto.jsonl": "application/vnd.in-toto+jsonl",
@@ -21459,11 +26700,20 @@ function getMime(extension: string): string {
       ".ear": "application/java-archive",
       ".class": "application/java-vm",
       ".java": "text/x-java-source",
+      ".jmeter.csv": "text/csv+jmeter",
+      ".jmeter.xml": "application/vnd.jmeter+xml",
+      ".jtl": "text/csv+jmeter",
       ".junit.xml": "application/junit+xml",
+      ".nunit.xml": "application/vnd.nunit+xml",
+      ".otel.json": "application/vnd.opentelemetry.otlp+json",
+      ".otlp.json": "application/vnd.opentelemetry.otlp+json",
       ".lighthouse.json": "application/vnd.lighthouse.report+json",
+      ".playwright-trace.zip": "application/vnd.playwright.trace+zip",
       ".test-results.json": "application/vnd.drsai.test-results+json",
+      ".tokenizer-calibration.json": "application/vnd.drsai.tokenizer-calibration+json",
       ".trace.json": "application/x-chrome-trace+json",
       ".js": "text/javascript",
+      ".js-tooling-config": "application/vnd.drsai.js-tooling-config",
       ".jsx": "text/jsx",
       ".key": "application/pem-certificate-chain",
       ".kml": "application/vnd.google-earth.kml+xml",
@@ -21473,10 +26723,12 @@ function getMime(extension: string): string {
       ".jpeg": "image/jpeg",
       ".jpg": "image/jpeg",
       ".jvm.config": "text/x-jvm-config",
+      ".latexmkrc": "text/x-latexmkrc",
       ".less": "text/less",
       ".license": "text/plain",
       ".lcov": "text/x-lcov",
       ".lnk": "application/x-ms-shortcut",
+      ".logcat": "text/x-android-logcat",
       ".log": "text/plain",
       ".lock": "text/plain",
       ".lua": "text/x-lua",
@@ -21492,8 +26744,10 @@ function getMime(extension: string): string {
       ".msixbundle": "application/vnd.ms-appxBundle",
       ".m4a": "audio/mp4",
       ".m4v": "video/x-m4v",
+      ".mcp-servers.json": "application/vnd.modelcontextprotocol.servers+json",
       ".mermaid": "text/vnd.mermaid",
       ".metrics": "text/plain; version=0.0.4",
+      ".netlog.json": "application/vnd.chromium.netlog+json",
       ".mkv": "video/x-matroska",
       ".mov": "video/quicktime",
       ".mp4": "video/mp4",
@@ -21519,11 +26773,13 @@ function getMime(extension: string): string {
       ".ods": "application/vnd.oasis.opendocument.spreadsheet",
       ".odt": "application/vnd.oasis.opendocument.text",
       ".ogg": "audio/ogg",
+      ".opml": "text/x-opml+xml",
       ".otf": "font/otf",
       ".obj": "model/obj",
       ".openmetrics": "application/openmetrics-text",
       ".patch": "text/x-diff",
       ".parquet": "application/vnd.apache.parquet",
+      ".path": "text/x-systemd-unit",
       ".pcap": "application/vnd.tcpdump.pcap",
       ".pcapng": "application/x-pcapng",
       ".pem": "application/pem-certificate-chain",
@@ -21534,11 +26790,13 @@ function getMime(extension: string): string {
       ".pdf": "application/pdf",
       ".podfile": "text/x-cocoapods-podfile",
       ".podfile.lock": "text/x-cocoapods-lockfile",
+      ".pbxproj": "application/vnd.apple.xcode.pbxproj",
       ".podspec": "text/x-cocoapods-podspec",
       ".ppt": "application/vnd.ms-powerpoint",
       ".pptm": "application/vnd.ms-powerpoint.presentation.macroEnabled.12",
       ".png": "image/png",
       ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      ".prisma": "application/vnd.prisma.schema",
       ".proto": "text/x-protobuf",
       ".prom": "text/plain; version=0.0.4",
       ".props": "application/msbuild+xml",
@@ -21554,6 +26812,7 @@ function getMime(extension: string): string {
       ".py": "text/x-python",
       ".rb": "text/x-ruby",
       ".rar": "application/vnd.rar",
+      ".rdb": "application/vnd.redis.rdb",
       ".reg": "text/x-windows-registry",
       ".rest": "message/http",
       ".r": "text/x-r-source",
@@ -21566,6 +26825,8 @@ function getMime(extension: string): string {
       ".sarif.json": "application/sarif+json",
       ".scss": "text/x-scss",
       ".security-audit.json": "application/vnd.drsai.security-scan+json",
+      ".service": "text/x-systemd-unit",
+      ".supervisord.conf": "text/x-supervisord-conf",
       ".sh": "text/x-shellscript",
       ".sha1": "text/plain",
       ".sha256": "text/plain",
@@ -21576,6 +26837,7 @@ function getMime(extension: string): string {
       ".sln": "text/plain",
       ".stack.yaml": "application/vnd.haskell.stack-yaml",
       ".scala": "text/x-scala",
+      ".socket": "text/x-systemd-unit",
       ".sql": "text/sql",
       ".spdx": "text/spdx",
       ".spdx.json": "application/spdx+json",
@@ -21596,6 +26858,8 @@ function getMime(extension: string): string {
       ".tar.gz": "application/gzip",
       ".targets": "application/msbuild+xml",
       ".tgz": "application/gzip",
+      ".timer": "text/x-systemd-unit",
+      ".tex": "text/x-tex",
       ".tf": "text/x-terraform",
       ".tf.json": "application/x-terraform+json",
       ".tfplan.json": "application/vnd.terraform.plan+json",
@@ -21603,6 +26867,7 @@ function getMime(extension: string): string {
       ".toml": "application/toml",
       ".topojson": "application/topo+json",
       ".trx": "application/vnd.ms-trx+xml",
+      ".xunit.xml": "application/vnd.xunit+xml",
       ".tif": "image/tiff",
       ".tiff": "image/tiff",
       ".tsv": "text/tab-separated-values",
@@ -21615,6 +26880,10 @@ function getMime(extension: string): string {
       ".vcard": "text/vcard",
       ".vcf": "text/vcard",
       ".vbproj": "application/msbuild+xml",
+      ".vscode-extensions.json": "application/vnd.code.extensions+json",
+      ".vscode-launch.json": "application/vnd.code.launch+json",
+      ".vscode-settings.json": "application/vnd.code.settings+json",
+      ".vscode-tasks.json": "application/vnd.code.tasks+json",
       ".vtt": "text/vtt",
       ".wasm": "application/wasm",
       ".wav": "audio/wav",

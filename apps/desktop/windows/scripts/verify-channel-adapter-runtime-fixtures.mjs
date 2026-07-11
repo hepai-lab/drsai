@@ -110,6 +110,17 @@ function writeZipFixture(filePath) {
   ]));
 }
 
+function writePlaywrightTraceZipFixture(filePath) {
+  writeFileSync(filePath, Buffer.concat([
+    zipLocalEntry("trace.trace", JSON.stringify({ type: "context-options", browserName: "chromium" })),
+    zipLocalEntry("trace.network", JSON.stringify({ method: "GET", url: "https://example.test?token=secret-trace-token" })),
+    zipLocalEntry("resources/runtime-request.txt", "Runtime trace resource body"),
+    zipLocalEntry("resources/runtime-screenshot.png", "PNG screenshot placeholder"),
+    zipLocalEntry("runtime-video.webm", "WEBM video placeholder"),
+    zipLocalEntry("test.json", JSON.stringify({ title: "Runtime Playwright trace" })),
+  ]));
+}
+
 function writeOfficeZipFixture(filePath, entries) {
   writeFileSync(filePath, Buffer.concat(entries.map(([name, contents]) => zipLocalEntry(name, contents))));
 }
@@ -525,6 +536,44 @@ function writeFlacFixture(filePath) {
   writeFileSync(filePath, Buffer.concat([Buffer.from("fLaC", "ascii"), metadataHeader, streamInfo]));
 }
 
+function writeWavFixture(filePath) {
+  const dataBytes = 176400;
+  const riffSize = 36 + dataBytes;
+  const buffer = Buffer.alloc(44 + dataBytes);
+  buffer.write("RIFF", 0, "ascii");
+  buffer.writeUInt32LE(riffSize, 4);
+  buffer.write("WAVE", 8, "ascii");
+  buffer.write("fmt ", 12, "ascii");
+  buffer.writeUInt32LE(16, 16);
+  buffer.writeUInt16LE(1, 20);
+  buffer.writeUInt16LE(2, 22);
+  buffer.writeUInt32LE(44100, 24);
+  buffer.writeUInt32LE(176400, 28);
+  buffer.writeUInt16LE(4, 32);
+  buffer.writeUInt16LE(16, 34);
+  buffer.write("data", 36, "ascii");
+  buffer.writeUInt32LE(dataBytes, 40);
+  writeFileSync(filePath, buffer);
+}
+
+function writeMp3Fixture(filePath) {
+  const titleText = Buffer.from("\0Runtime MP3", "latin1");
+  const titleFrame = Buffer.alloc(10 + titleText.length);
+  titleFrame.write("TIT2", 0, "ascii");
+  titleFrame.writeUInt32BE(titleText.length, 4);
+  titleText.copy(titleFrame, 10);
+  const id3Body = Buffer.concat([titleFrame]);
+  const id3Header = Buffer.alloc(10);
+  id3Header.write("ID3", 0, "ascii");
+  id3Header[3] = 3;
+  id3Header[6] = (id3Body.length >> 21) & 0x7f;
+  id3Header[7] = (id3Body.length >> 14) & 0x7f;
+  id3Header[8] = (id3Body.length >> 7) & 0x7f;
+  id3Header[9] = id3Body.length & 0x7f;
+  const frameHeader = Buffer.from([0xff, 0xfb, 0x90, 0x64]);
+  writeFileSync(filePath, Buffer.concat([id3Header, id3Body, frameHeader, Buffer.alloc(4096)]));
+}
+
 function mp4Box(type, contents) {
   const header = Buffer.alloc(8);
   header.writeUInt32BE(8 + contents.length, 0);
@@ -564,6 +613,125 @@ function writeOggFixture(filePath) {
   header.write("OggS", 0, "ascii");
   header[26] = 1;
   writeFileSync(filePath, Buffer.concat([header, Buffer.from([packet.length]), packet]));
+}
+
+function pngChunk(type, data = Buffer.alloc(0)) {
+  const header = Buffer.alloc(8);
+  header.writeUInt32BE(data.length, 0);
+  header.write(type, 4, "ascii");
+  return Buffer.concat([header, data, Buffer.alloc(4)]);
+}
+
+function writePngColorProfileFixture(filePath) {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(64, 0);
+  ihdr.writeUInt32BE(32, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  const gama = Buffer.alloc(4);
+  gama.writeUInt32BE(45455, 0);
+  writeFileSync(filePath, Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk("IHDR", ihdr),
+    pngChunk("sRGB", Buffer.from([0])),
+    pngChunk("gAMA", gama),
+    pngChunk("iCCP", Buffer.concat([Buffer.from("Runtime RGB\0", "latin1"), Buffer.from([0, 1, 2, 3])])),
+    pngChunk("IEND"),
+  ]));
+}
+
+function jpegSegment(marker, data = Buffer.alloc(0)) {
+  const header = Buffer.alloc(4);
+  header[0] = 0xff;
+  header[1] = marker;
+  header.writeUInt16BE(data.length + 2, 2);
+  return Buffer.concat([header, data]);
+}
+
+function writeJpegColorProfileFixture(filePath) {
+  const sof = Buffer.alloc(15);
+  sof[0] = 8;
+  sof.writeUInt16BE(32, 1);
+  sof.writeUInt16BE(48, 3);
+  sof[5] = 3;
+  sof[6] = 1;
+  sof[7] = 0x11;
+  sof[8] = 0;
+  sof[9] = 2;
+  sof[10] = 0x11;
+  sof[11] = 1;
+  sof[12] = 3;
+  sof[13] = 0x11;
+  sof[14] = 1;
+  const adobe = Buffer.alloc(12);
+  Buffer.from("Adobe", "ascii").copy(adobe, 0);
+  adobe[11] = 1;
+  writeFileSync(filePath, Buffer.concat([
+    Buffer.from([0xff, 0xd8]),
+    jpegSegment(0xe2, Buffer.concat([Buffer.from("ICC_PROFILE\0", "latin1"), Buffer.from([1, 1, 0, 0])])),
+    jpegSegment(0xee, adobe),
+    jpegSegment(0xc0, sof),
+    Buffer.from([0xff, 0xd9]),
+  ]));
+}
+
+function riffChunk(type, data) {
+  const header = Buffer.alloc(8);
+  header.write(type, 0, "ascii");
+  header.writeUInt32LE(data.length, 4);
+  return Buffer.concat([header, data, data.length % 2 ? Buffer.from([0]) : Buffer.alloc(0)]);
+}
+
+function writeGifAnimationFixture(filePath) {
+  const logicalScreen = Buffer.alloc(7);
+  logicalScreen.writeUInt16LE(32, 0);
+  logicalScreen.writeUInt16LE(16, 2);
+  logicalScreen[4] = 0x80;
+  const globalColorTable = Buffer.from([0x00, 0x00, 0x00, 0xff, 0xff, 0xff]);
+  const netscapeExtension = Buffer.concat([
+    Buffer.from([0x21, 0xff, 0x0b]),
+    Buffer.from("NETSCAPE2.0", "ascii"),
+    Buffer.from([0x03, 0x01, 0x00, 0x00, 0x00]),
+  ]);
+  const frame = Buffer.concat([
+    Buffer.from([0x21, 0xf9, 0x04, 0x00, 0x0a, 0x00, 0x00, 0x00]),
+    Buffer.from([0x2c, 0x00, 0x00, 0x00, 0x00]),
+    Buffer.from([0x20, 0x00, 0x10, 0x00, 0x00]),
+    Buffer.from([0x02, 0x02, 0x4c, 0x01, 0x00]),
+  ]);
+  writeFileSync(filePath, Buffer.concat([
+    Buffer.from("GIF89a", "ascii"),
+    logicalScreen,
+    globalColorTable,
+    netscapeExtension,
+    frame,
+    frame,
+    Buffer.from([0x3b]),
+  ]));
+}
+
+function writeWebpAnimationFixture(filePath) {
+  const vp8x = Buffer.alloc(10);
+  vp8x[0] = 0x12;
+  vp8x.writeUIntLE(39, 4, 3);
+  vp8x.writeUIntLE(23, 7, 3);
+  const anim = Buffer.alloc(6);
+  anim.writeUInt16LE(0, 4);
+  const frame = Buffer.alloc(16);
+  frame.writeUIntLE(39, 6, 3);
+  frame.writeUIntLE(23, 9, 3);
+  frame.writeUIntLE(100, 12, 3);
+  const body = Buffer.concat([
+    Buffer.from("WEBP", "ascii"),
+    riffChunk("VP8X", vp8x),
+    riffChunk("ANIM", anim),
+    riffChunk("ANMF", frame),
+    riffChunk("ANMF", frame),
+  ]);
+  const riffHeader = Buffer.alloc(8);
+  riffHeader.write("RIFF", 0, "ascii");
+  riffHeader.writeUInt32LE(body.length, 4);
+  writeFileSync(filePath, Buffer.concat([riffHeader, body]));
 }
 
 async function loadChannelAdapters(tempRoot) {
@@ -610,9 +778,17 @@ assert(roadmap.includes("runtime document/archive golden fixtures"), "roadmap om
 assert(checklist.includes("runtime-package-manifest-golden-agent"), "checklist omits runtime package/config golden fixture agent record");
 assert(checklist.includes("runtime package/config golden fixtures"), "checklist omits runtime package/config golden fixture evidence");
 assert(roadmap.includes("runtime package/config golden fixtures"), "roadmap omits runtime package/config golden fixture evidence");
+assert(checklist.includes("CocoaPods Runtime Package Fixtures"), "checklist omits CocoaPods runtime package fixture addendum");
+assert(checklist.includes("`Podfile`, `Podfile.lock`, `project.pbxproj`, `RuntimeFixture.podspec`"), "checklist omits CocoaPods/Xcode runtime fixture file evidence");
+assert(roadmap.includes("CocoaPods runtime package fixtures"), "roadmap omits CocoaPods runtime package fixture addendum");
+assert(roadmap.includes("`Podfile`, `Podfile.lock`, `project.pbxproj`, `RuntimeFixture.podspec`"), "roadmap omits CocoaPods/Xcode runtime fixture file evidence");
 assert(checklist.includes("runtime-python-dependency-golden-agent"), "checklist omits runtime Python dependency golden fixture agent record");
 assert(checklist.includes("runtime Python dependency manifest golden fixtures"), "checklist omits runtime Python dependency fixture evidence");
 assert(roadmap.includes("runtime Python dependency golden fixtures"), "roadmap omits runtime Python dependency fixture evidence");
+assert(checklist.includes("Python Constraints Text Input"), "checklist omits Python constraints text input addendum");
+assert(checklist.includes("`constraints-runtime.txt`"), "checklist omits Python constraints runtime fixture evidence");
+assert(roadmap.includes("Python constraints text input"), "roadmap omits Python constraints input addendum");
+assert(roadmap.includes("`constraints-runtime.txt`"), "roadmap omits Python constraints runtime fixture evidence");
 assert(checklist.includes("runtime-personal-info-golden-agent"), "checklist omits runtime personal-info golden fixture agent record");
 assert(checklist.includes("runtime personal-info golden fixtures"), "checklist omits runtime personal-info golden fixture evidence");
 assert(roadmap.includes("runtime personal-info golden fixtures"), "roadmap omits runtime personal-info golden fixture evidence");
@@ -624,6 +800,11 @@ assert(roadmap.includes("runtime Windows telemetry golden fixtures"), "roadmap o
 assert(checklist.includes("runtime-security-artifact-golden-agent"), "checklist omits runtime security artifact golden fixture agent record");
 assert(checklist.includes("runtime security/SBOM/binary artifact golden fixtures"), "checklist omits runtime security/SBOM/binary artifact fixture evidence");
 assert(roadmap.includes("runtime security/SBOM/binary artifact golden fixtures"), "roadmap omits runtime security/SBOM/binary artifact fixture evidence");
+assert(checklist.includes("sarif-json-runtime-variant-agent"), "checklist omits SARIF JSON runtime variant agent record");
+assert(checklist.includes("SARIF JSON Extension Runtime Fixture"), "checklist omits SARIF JSON runtime fixture evidence");
+assert(checklist.includes("`results.sarif.json`") && checklist.includes("CodeQL tool evidence"), "checklist omits SARIF JSON fixture detail evidence");
+assert(roadmap.includes("SARIF JSON extension runtime fixture"), "roadmap omits SARIF JSON runtime fixture evidence");
+assert(roadmap.includes("`results.sarif.json`") && roadmap.includes("CodeQL tool evidence"), "roadmap omits SARIF JSON fixture detail evidence");
 assert(checklist.includes("security-scan-report-input-agent"), "checklist omits security scan report input agent record");
 assert(checklist.includes("Security scan report input"), "checklist omits security scan report input evidence");
 assert(roadmap.includes("Security scan report input"), "roadmap omits security scan report input evidence");
@@ -639,12 +820,22 @@ assert(roadmap.includes("runtime Office/workbook golden fixtures"), "roadmap omi
 assert(checklist.includes("runtime-data-network-golden-agent"), "checklist omits runtime data/network golden fixture agent record");
 assert(checklist.includes("runtime data/network golden fixtures"), "checklist omits runtime data/network golden fixture evidence");
 assert(roadmap.includes("runtime data/network golden fixtures"), "roadmap omits runtime data/network fixture evidence");
+assert(checklist.includes("netlog-network-trace-agent"), "checklist omits Chrome NetLog network trace agent record");
+assert(checklist.includes("Chrome NetLog Network Trace Input"), "checklist omits Chrome NetLog input addendum");
+assert(checklist.includes("runtime NetLog golden fixture"), "checklist omits runtime NetLog golden fixture evidence");
+assert(roadmap.includes("Chrome NetLog JSON input"), "roadmap omits Chrome NetLog input addendum");
+assert(roadmap.includes("runtime NetLog golden fixture"), "roadmap omits runtime NetLog golden fixture evidence");
 assert(checklist.includes("runtime-test-report-golden-agent"), "checklist omits runtime test report golden fixture agent record");
 assert(checklist.includes("runtime test report golden fixtures"), "checklist omits runtime test report fixture evidence");
 assert(roadmap.includes("runtime test report golden fixtures"), "roadmap omits runtime test report fixture evidence");
 assert(checklist.includes("runtime-content-media-golden-agent"), "checklist omits runtime content/media golden fixture agent record");
 assert(checklist.includes("runtime content/media golden fixtures"), "checklist omits runtime content/media fixture evidence");
 assert(roadmap.includes("runtime content/media golden fixtures"), "roadmap omits runtime content/media fixture evidence");
+assert(checklist.includes("latex-context-agent"), "checklist omits LaTeX context agent record");
+assert(checklist.includes("LaTeX/BibTeX Context Input"), "checklist omits LaTeX context input addendum");
+assert(checklist.includes("runtime `paper.tex`, `references.bib`, and `latexmkrc` fixtures"), "checklist omits LaTeX runtime fixture evidence");
+assert(roadmap.includes("LaTeX/BibTeX context input"), "roadmap omits LaTeX context input addendum");
+assert(roadmap.includes("runtime `paper.tex`, `references.bib`, and `latexmkrc` fixtures"), "roadmap omits LaTeX runtime fixture evidence");
 assert(checklist.includes("runtime-font-container-variant-agent"), "checklist omits runtime font container variant agent record");
 assert(checklist.includes("runtime WOFF/WOFF2 font golden fixtures"), "checklist omits runtime WOFF/WOFF2 font fixture evidence");
 assert(roadmap.includes("runtime WOFF/WOFF2 font golden fixtures"), "roadmap omits runtime WOFF/WOFF2 font fixture evidence");
@@ -666,6 +857,10 @@ assert(roadmap.includes("runtime 3D model golden fixtures"), "roadmap omits runt
 assert(checklist.includes("runtime-scheduled-task-golden-agent"), "checklist omits runtime scheduled task golden fixture agent record");
 assert(checklist.includes("runtime scheduled task golden fixture"), "checklist omits runtime scheduled task golden fixture evidence");
 assert(roadmap.includes("runtime scheduled task golden fixture"), "roadmap omits runtime scheduled task fixture evidence");
+assert(checklist.includes("WAV/MP3 Runtime Audio Golden Fixtures"), "checklist omits WAV/MP3 runtime audio fixture evidence");
+assert(checklist.includes("`runtime.wav` and `runtime.mp3` selected-file imports"), "checklist omits WAV/MP3 runtime audio fixture file evidence");
+assert(roadmap.includes("WAV/MP3 runtime audio golden fixtures"), "roadmap omits WAV/MP3 runtime audio fixture evidence");
+assert(roadmap.includes("`runtime.wav` and `runtime.mp3`"), "roadmap omits WAV/MP3 runtime audio fixture file evidence");
 assert(checklist.includes("runtime extended audio golden fixtures"), "checklist omits runtime extended audio fixture evidence");
 assert(roadmap.includes("runtime extended audio golden fixtures"), "roadmap omits runtime extended audio fixture evidence");
 assert(checklist.includes("runtime static analysis XML golden fixture"), "checklist omits runtime static analysis XML fixture evidence");
@@ -673,9 +868,15 @@ assert(roadmap.includes("runtime static analysis XML golden fixture"), "roadmap 
 assert(checklist.includes("runtime-ci-workflow-golden-agent"), "checklist omits runtime CI/CD workflow golden fixture agent record");
 assert(checklist.includes("runtime CI/CD workflow golden fixtures"), "checklist omits runtime CI/CD workflow fixture evidence");
 assert(roadmap.includes("runtime CI/CD workflow golden fixtures"), "roadmap omits runtime CI/CD workflow fixture evidence");
+assert(checklist.includes("Expanded CI/CD Runtime Workflow Fixtures"), "checklist omits expanded CI/CD runtime fixture addendum");
+assert(roadmap.includes("expanded CI/CD runtime workflow fixtures"), "roadmap omits expanded CI/CD runtime fixture addendum");
+assert(checklist.includes("Bitbucket Pipelines, CircleCI, and Buildkite") && roadmap.includes("Bitbucket Pipelines, CircleCI, and Buildkite"), "docs omit expanded CI/CD provider runtime coverage");
 assert(checklist.includes("runtime-repository-governance-golden-agent"), "checklist omits runtime repository governance golden fixture agent record");
 assert(checklist.includes("runtime repository governance golden fixtures"), "checklist omits runtime repository governance fixture evidence");
+assert(checklist.includes("gitmodules-governance-input-agent"), "checklist omits .gitmodules governance fixture agent record");
+assert(checklist.includes("runtime `.gitmodules` golden fixture"), "checklist omits .gitmodules runtime fixture evidence");
 assert(roadmap.includes("runtime repository governance golden fixtures"), "roadmap omits runtime repository governance fixture evidence");
+assert(roadmap.includes("Gitmodules repository governance input"), "roadmap omits .gitmodules governance input evidence");
 assert(checklist.includes("runtime-lockfile-golden-agent"), "checklist omits runtime lockfile golden fixture agent record");
 assert(checklist.includes("runtime dependency lockfile golden fixtures"), "checklist omits runtime dependency lockfile fixture evidence");
 assert(roadmap.includes("runtime dependency lockfile golden fixtures"), "roadmap omits runtime dependency lockfile fixture evidence");
@@ -691,15 +892,62 @@ assert(roadmap.includes("runtime package/config variant golden fixtures"), "road
 assert(checklist.includes("runtime-lcov-coverage-golden-agent"), "checklist omits runtime LCOV coverage golden fixture agent record");
 assert(checklist.includes("runtime LCOV coverage golden fixture"), "checklist omits runtime LCOV coverage fixture evidence");
 assert(roadmap.includes("runtime LCOV coverage golden fixture"), "roadmap omits runtime LCOV coverage fixture evidence");
+assert(checklist.includes("istanbul-coverage-json-agent"), "checklist omits Istanbul JSON coverage agent record");
+assert(checklist.includes("Istanbul JSON Coverage Input"), "checklist omits Istanbul JSON coverage evidence");
+assert(checklist.includes("coverage-summary-aggregation-agent"), "checklist omits Istanbul coverage-summary agent record");
+assert(checklist.includes("Istanbul Coverage Summary Aggregation"), "checklist omits Istanbul coverage-summary evidence");
+assert(roadmap.includes("Istanbul JSON coverage input"), "roadmap omits Istanbul JSON coverage evidence");
+assert(roadmap.includes("Istanbul coverage-summary aggregation"), "roadmap omits Istanbul coverage-summary evidence");
+assert(checklist.includes("chat-export-json-input-agent"), "checklist omits chat export JSON input agent record");
+assert(checklist.includes("Chat Export JSON Input"), "checklist omits chat export JSON evidence");
+assert(checklist.includes("`slack-export.json`") && checklist.includes("`teams-export.json`") && checklist.includes("`discord-export.json`") && checklist.includes("`chatgpt-conversations.json`"), "checklist omits chat export fixture detail evidence");
+assert(roadmap.includes("Chat export JSON input"), "roadmap omits chat export JSON evidence");
+assert(roadmap.includes("Slack/Teams/ChatGPT"), "roadmap omits chat export provider boundary evidence");
+assert(checklist.includes("otel-json-input-agent"), "checklist omits OpenTelemetry JSON input agent record");
+assert(checklist.includes("OpenTelemetry OTLP JSON Input"), "checklist omits OpenTelemetry JSON evidence");
+assert(checklist.includes("`runtime.otlp.json`") && checklist.includes("span/log/metric evidence"), "checklist omits OpenTelemetry runtime fixture detail evidence");
+assert(roadmap.includes("OpenTelemetry OTLP JSON input"), "roadmap omits OpenTelemetry JSON evidence");
+assert(roadmap.includes("span/log/metric evidence"), "roadmap omits OpenTelemetry fixture detail evidence");
+assert(checklist.includes("mcp-server-config-context-agent"), "checklist omits MCP server config context agent record");
+assert(checklist.includes("MCP Server Config File Input"), "checklist omits MCP server config evidence");
+assert(checklist.includes("`.drsai/mcp-servers.json`"), "checklist omits MCP server config fixture detail evidence");
+assert(roadmap.includes("MCP server config file input"), "roadmap omits MCP server config evidence");
+assert(roadmap.includes("`.drsai/mcp-servers.json`"), "roadmap omits MCP server config fixture detail evidence");
+assert(checklist.includes("MCP Config Local Schema Hints"), "checklist omits MCP config schema hint evidence");
+assert(checklist.includes("brokenLegacy: missing command/url"), "checklist omits MCP config schema hint runtime evidence");
+assert(roadmap.includes("MCP config local schema hints"), "roadmap omits MCP config schema hint evidence");
+assert(roadmap.includes("brokenLegacy: missing command/url"), "roadmap omits MCP config schema hint runtime evidence");
+assert(checklist.includes("vscode-workspace-config-agent"), "checklist omits VS Code workspace config agent record");
+assert(checklist.includes("VS Code Workspace Config Input"), "checklist omits VS Code workspace config evidence");
+assert(checklist.includes("`.vscode/settings.json`, `.vscode/tasks.json`, `.vscode/launch.json`, and `.vscode/extensions.json`"), "checklist omits VS Code workspace config fixture detail evidence");
+assert(roadmap.includes("VS Code workspace config input"), "roadmap omits VS Code workspace config evidence");
+assert(roadmap.includes("Runtime build task"), "roadmap omits VS Code task fixture evidence");
+assert(checklist.includes("js-tooling-config-agent"), "checklist omits JS/TS tooling config agent record");
+assert(checklist.includes("JS/TS Tooling Config Input"), "checklist omits JS/TS tooling config evidence");
+assert(checklist.includes("`.eslintrc.json`, `.prettierrc.yaml`, `biome.jsonc`, `vitest.config.ts`, and `playwright.config.ts`"), "checklist omits JS/TS tooling config fixture detail evidence");
+assert(roadmap.includes("JS/TS tooling config input"), "roadmap omits JS/TS tooling config evidence");
+assert(roadmap.includes("ESLint/Prettier/Biome/Stylelint/Jest/Vitest/Playwright"), "roadmap omits JS/TS tooling config tool coverage");
+assert(checklist.includes("iis-web-config-agent"), "checklist omits IIS web.config agent record");
+assert(checklist.includes("runtime `web.config` golden fixture"), "checklist omits IIS web.config runtime fixture evidence");
+assert(roadmap.includes("IIS web.config file input"), "roadmap omits IIS web.config input evidence");
+assert(roadmap.includes("runtime `web.config` golden fixture"), "roadmap omits IIS web.config runtime fixture evidence");
 assert(checklist.includes("coverage-clover-golden-agent"), "checklist omits Clover coverage golden fixture agent record");
 assert(checklist.includes("runtime Clover coverage golden fixture"), "checklist omits Clover coverage fixture evidence");
 assert(roadmap.includes("runtime Clover coverage golden fixture"), "roadmap omits Clover coverage fixture evidence");
+assert(checklist.includes("jacoco-coverage-runtime-agent"), "checklist omits JaCoCo coverage runtime fixture agent record");
+assert(checklist.includes("runtime JaCoCo coverage golden fixture"), "checklist omits JaCoCo coverage fixture evidence");
+assert(checklist.includes("`jacoco.xml`") && checklist.includes("JaCoCo XML `<report>` / `<counter>`"), "checklist omits JaCoCo fixture detail evidence");
+assert(roadmap.includes("runtime JaCoCo coverage golden fixture"), "roadmap omits JaCoCo coverage fixture evidence");
+assert(roadmap.includes("`jacoco.xml`") && roadmap.includes("JaCoCo XML `<report>` / `<counter>`"), "roadmap omits JaCoCo fixture detail evidence");
 assert(checklist.includes("runtime-scientific-columnar-variant-agent"), "checklist omits runtime scientific/container and Feather variant fixture agent record");
 assert(checklist.includes("runtime scientific/container and Feather variant golden fixtures"), "checklist omits runtime scientific/container and Feather variant fixture evidence");
 assert(roadmap.includes("runtime scientific/container and Feather variant golden fixtures"), "roadmap omits runtime scientific/container and Feather variant fixture evidence");
 assert(checklist.includes("runtime-env-config-golden-agent"), "checklist omits runtime .env config golden fixture agent record");
 assert(checklist.includes("runtime .env configuration golden fixture"), "checklist omits runtime .env config fixture evidence");
 assert(roadmap.includes("runtime .env configuration golden fixture"), "roadmap omits runtime .env config fixture evidence");
+assert(checklist.includes("direnv-envrc-input-agent"), "checklist omits direnv .envrc input agent record");
+assert(checklist.includes("runtime `.envrc` golden fixture"), "checklist omits direnv .envrc runtime fixture evidence");
+assert(roadmap.includes("direnv .envrc file input"), "roadmap omits direnv .envrc input evidence");
 assert(checklist.includes("runtime-delimited-data-golden-agent"), "checklist omits runtime delimited data golden fixture agent record");
 assert(checklist.includes("runtime CSV/TSV structured data golden fixtures"), "checklist omits runtime delimited data fixture evidence");
 assert(roadmap.includes("runtime CSV/TSV structured data golden fixtures"), "roadmap omits runtime delimited data fixture evidence");
@@ -709,15 +957,20 @@ try {
   const workspace = join(tempRoot, "workspace");
   mkdirSync(workspace, { recursive: true });
   const githubWorkflowDir = join(workspace, ".github", "workflows");
+  const drsaiDir = join(workspace, ".drsai");
   const codeownersPath = join(workspace, "CODEOWNERS");
   const editorconfigPath = join(workspace, ".editorconfig");
   const gitattributesPath = join(workspace, ".gitattributes");
   const gitignorePath = join(workspace, ".gitignore");
+  const gitmodulesPath = join(workspace, ".gitmodules");
+  const mailmapPath = join(workspace, ".mailmap");
   const licensePath = join(workspace, "LICENSE");
   const noticePath = join(workspace, "NOTICE");
   const dotenvPath = join(workspace, ".env.runtime");
+  const envrcPath = join(workspace, ".envrc");
   const packagePath = join(workspace, "package.json");
   const yarnrcPath = join(workspace, ".yarnrc.yml");
+  const mcpServersPath = join(drsaiDir, "mcp-servers.json");
   const packageLockPath = join(workspace, "package-lock.json");
   const pnpmLockPath = join(workspace, "pnpm-lock.yaml");
   const yarnLockPath = join(workspace, "yarn.lock");
@@ -725,12 +978,26 @@ try {
   const goSumPath = join(workspace, "go.sum");
   const coveragePath = join(workspace, "coverage.xml");
   const lcovPath = join(workspace, "lcov.info");
+  const istanbulCoveragePath = join(workspace, "coverage-final.json");
+  const istanbulCoverageSummaryPath = join(workspace, "coverage-summary.json");
   const cloverPath = join(workspace, "clover.xml");
+  const jacocoPath = join(workspace, "jacoco.xml");
   const checkstylePath = join(workspace, "runtime.checkstyle.xml");
   const junitPath = join(workspace, "runtime.junit.xml");
+  const jmeterXmlPath = join(workspace, "runtime.jmeter.xml");
+  const jmeterCsvPath = join(workspace, "runtime.jmeter.csv");
+  const nunitPath = join(workspace, "runtime.nunit.xml");
+  const xunitPath = join(workspace, "runtime.xunit.xml");
   const trxPath = join(workspace, "runtime.trx");
   const tapPath = join(workspace, "runtime.tap");
   const playwrightJsonPath = join(workspace, "runtime.playwright.json");
+  const cypressJsonPath = join(workspace, "runtime.cypress-results.json");
+  const mochaJsonPath = join(workspace, "runtime.mocha.json");
+  const allureJsonPath = join(workspace, "runtime.allure-result.json");
+  const slackExportPath = join(workspace, "slack-export.json");
+  const teamsExportPath = join(workspace, "teams-export.json");
+  const discordExportPath = join(workspace, "discord-export.json");
+  const chatgptConversationsPath = join(workspace, "chatgpt-conversations.json");
   const stylePath = join(workspace, "style.css");
   const metricsPath = join(workspace, "runtime.prom");
   const metricsExtensionPath = join(workspace, "runtime.metrics");
@@ -743,6 +1010,11 @@ try {
   const githubActionsPath = join(githubWorkflowDir, "runtime.yml");
   const gitlabCiPath = join(workspace, ".gitlab-ci.yml");
   const azurePipelinesPath = join(workspace, "azure-pipelines.yml");
+  const bitbucketPipelinesPath = join(workspace, "bitbucket-pipelines.yml");
+  const circleCiDir = join(workspace, ".circleci");
+  const circleCiConfigPath = join(circleCiDir, "config.yml");
+  const buildkiteDir = join(workspace, ".buildkite");
+  const buildkitePipelinePath = join(buildkiteDir, "pipeline.yml");
   const composePath = join(workspace, "docker-compose.yaml");
   const cmakePath = join(workspace, "CMakeLists.txt");
   const compileCommandsPath = join(workspace, "compile_commands.json");
@@ -758,8 +1030,10 @@ try {
   const nuspecPath = join(workspace, "RuntimeFixture.nuspec");
   const goModPath = join(workspace, "go.mod");
   const requirementsPath = join(workspace, "requirements-dev.txt");
+  const constraintsPath = join(workspace, "constraints-runtime.txt");
   const pdfPath = join(workspace, "fixture.pdf");
   const zipPath = join(workspace, "fixture.zip");
+  const playwrightTraceZipPath = join(workspace, "trace.zip");
   const stlPath = join(workspace, "fixture.stl");
   const objPath = join(workspace, "runtime.obj");
   const gltfPath = join(workspace, "runtime.gltf");
@@ -772,6 +1046,10 @@ try {
   const pubspecPath = join(workspace, "pubspec.yaml");
   const pubspecLockPath = join(workspace, "pubspec.lock");
   const packageSwiftPath = join(workspace, "Package.swift");
+  const podfilePath = join(workspace, "Podfile");
+  const podfileLockPath = join(workspace, "Podfile.lock");
+  const pbxprojPath = join(workspace, "project.pbxproj");
+  const podspecPath = join(workspace, "RuntimeFixture.podspec");
   const composerPath = join(workspace, "composer.json");
   const gemfilePath = join(workspace, "Gemfile");
   const gemspecPath = join(workspace, "runtime_fixture.gemspec");
@@ -780,6 +1058,7 @@ try {
   const stackPath = join(workspace, "stack.yaml");
   const cabalPath = join(workspace, "runtime-fixture.cabal");
   const emlPath = join(workspace, "message.eml");
+  const emlxPath = join(workspace, "message.emlx");
   const mboxPath = join(workspace, "mailbox.mbox");
   const vcardPath = join(workspace, "contact.vcf");
   const icsPath = join(workspace, "calendar.ics");
@@ -795,6 +1074,7 @@ try {
   const infPath = join(workspace, "runtime.inf");
   const catPath = join(workspace, "runtime.cat");
   const openApiPath = join(workspace, "openapi.yaml");
+  const asyncApiPath = join(workspace, "asyncapi.yaml");
   const insomniaPath = join(workspace, "insomnia.json");
   const postmanEnvironmentPath = join(workspace, "runtime.postman_environment.json");
   const brunoPath = join(workspace, "runtime.bru");
@@ -805,7 +1085,10 @@ try {
   const dockerfilePath = join(workspace, "Dockerfile");
   const chartPath = join(workspace, "Chart.yaml");
   const kustomizationPath = join(workspace, "kustomization.yaml");
+  const kubernetesManifestPath = join(workspace, "runtime-kubernetes.yaml");
+  const iisWebConfigPath = join(workspace, "web.config");
   const sarifPath = join(workspace, "results.sarif");
+  const sarifJsonPath = join(workspace, "results.sarif.json");
   const securityAuditPath = join(workspace, "npm-audit.json");
   const cyclonedxPath = join(workspace, "cyclonedx.json");
   const spdxPath = join(workspace, "runtime.spdx");
@@ -826,6 +1109,7 @@ try {
   const dxfPath = join(workspace, "runtime.dxf");
   const mermaidPath = join(workspace, "runtime.mmd");
   const graphvizPath = join(workspace, "runtime.dot");
+  const graphmlPath = join(workspace, "runtime.graphml");
   const scssPath = join(workspace, "runtime.scss");
   const msgPath = join(workspace, "runtime.msg");
   const lnkPath = join(workspace, "runtime.lnk");
@@ -841,11 +1125,23 @@ try {
   const xlsPath = join(workspace, "runtime.xls");
   const sqlitePath = join(workspace, "runtime.sqlite");
   const sqlPath = join(workspace, "schema.sql");
+  const prismaPath = join(workspace, "schema.prisma");
+  const dbmlPath = join(workspace, "runtime.dbml");
+  const redisRdbPath = join(workspace, "dump.rdb");
+  const redisAofPath = join(workspace, "appendonly.aof");
+  const systemdServicePath = join(workspace, "runtime.service");
+  const cronSchedulePath = join(workspace, "runtime.crontab");
+  const supervisorConfigPath = join(workspace, "runtime.supervisord.conf");
   const csvPath = join(workspace, "runtime.csv");
   const tsvPath = join(workspace, "runtime.tsv");
   const jsonlPath = join(workspace, "events.jsonl");
+  const terminalRecordingPath = join(workspace, "runtime.cast");
   const harPath = join(workspace, "runtime.har");
+  const netlogPath = join(workspace, "netlog.json");
+  const otelPath = join(workspace, "runtime.otlp.json");
   const devtoolsTracePath = join(workspace, "runtime.trace.json");
+  const cpuProfilePath = join(workspace, "runtime.cpuprofile");
+  const heapSnapshotPath = join(workspace, "runtime.heapsnapshot");
   const lighthousePath = join(workspace, "runtime.lighthouse.json");
   const pcapPath = join(workspace, "runtime.pcap");
   const pcapngPath = join(workspace, "runtime.pcapng");
@@ -862,19 +1158,40 @@ try {
   const weblocPath = join(workspace, "runtime.webloc");
   const rssPath = join(workspace, "feed.rss");
   const atomPath = join(workspace, "feed.atom");
+  const opmlPath = join(workspace, "subscriptions.opml");
   const robotsPath = join(workspace, "robots.txt");
   const sitemapPath = join(workspace, "sitemap.xml");
   const sitemapGzipPath = join(workspace, "sitemap.xml.gz");
   const srtPath = join(workspace, "captions.srt");
   const vttPath = join(workspace, "captions.vtt");
   const androidManifestPath = join(workspace, "AndroidManifest.xml");
+  const androidLogcatPath = join(workspace, "runtime.logcat");
   const infoPlistPath = join(workspace, "Info.plist");
   const apkPath = join(workspace, "runtime.apk");
   const aabPath = join(workspace, "runtime.aab");
   const ipaPath = join(workspace, "runtime.ipa");
+  const wavPath = join(workspace, "runtime.wav");
+  const mp3Path = join(workspace, "runtime.mp3");
   const flacPath = join(workspace, "runtime.flac");
   const m4aPath = join(workspace, "runtime.m4a");
   const oggPath = join(workspace, "runtime.ogg");
+  const pngColorPath = join(workspace, "runtime-color.png");
+  const jpegColorPath = join(workspace, "runtime-color.jpg");
+  const gifAnimationPath = join(workspace, "runtime-animated.gif");
+  const webpAnimationPath = join(workspace, "runtime-animated.webp");
+  const texPath = join(workspace, "paper.tex");
+  const bibPath = join(workspace, "references.bib");
+  const latexmkrcPath = join(workspace, "latexmkrc");
+  const vscodeDir = join(workspace, ".vscode");
+  const vscodeSettingsPath = join(vscodeDir, "settings.json");
+  const vscodeTasksPath = join(vscodeDir, "tasks.json");
+  const vscodeLaunchPath = join(vscodeDir, "launch.json");
+  const vscodeExtensionsPath = join(vscodeDir, "extensions.json");
+  const eslintConfigPath = join(workspace, ".eslintrc.json");
+  const prettierConfigPath = join(workspace, ".prettierrc.yaml");
+  const biomeConfigPath = join(workspace, "biome.jsonc");
+  const vitestConfigPath = join(workspace, "vitest.config.ts");
+  const playwrightConfigPath = join(workspace, "playwright.config.ts");
 
   writeText(codeownersPath, [
     "# Runtime ownership fixture",
@@ -902,6 +1219,18 @@ try {
     "release/",
     "*.local",
   ].join("\n"));
+  writeText(gitmodulesPath, [
+    '[submodule "runtime-tools"]',
+    "  path = vendor/runtime-tools",
+    "  url = https://example.test/opendrsai/runtime-tools.git?token=secret-gitmodules-token",
+    "  branch = main",
+    "  update = checkout",
+    "  shallow = true",
+  ].join("\n"));
+  writeText(mailmapPath, [
+    "Runtime Canonical <canonical@example.test> Runtime Alias <alias@example.test>",
+    "Release Engineer <release@example.test> <old-release@example.test>",
+  ].join("\n"));
   writeText(licensePath, [
     "MIT License",
     "",
@@ -921,6 +1250,17 @@ try {
     "DUPLICATE_KEY=first",
     "DUPLICATE_KEY=second",
   ].join("\n"));
+  writeText(envrcPath, [
+    "export RUNTIME_ENV=dev",
+    "export API_TOKEN=secret-envrc-token",
+    "dotenv .env.runtime",
+    "dotenv_if_exists .env.local",
+    "use node 22",
+    "layout python .venv",
+    "watch_file pyproject.toml",
+    "source_env .env.shared",
+    "curl https://example.test/bootstrap.sh?token=secret-envrc-query",
+  ].join("\n"));
   writeText(packagePath, JSON.stringify({
     name: "runtime-fixture-app",
     version: "1.0.0",
@@ -939,6 +1279,134 @@ try {
     "npmScopes:",
     "  runtime:",
     "    npmRegistryServer: https://npm.example.test?token=secret-yarn-token",
+  ].join("\n"));
+  mkdirSync(drsaiDir, { recursive: true });
+  writeText(mcpServersPath, JSON.stringify({
+    mcpServers: {
+      filesystem: {
+        command: "node",
+        args: ["./tools/filesystem-mcp.js", "--workspace", "."],
+        env: {
+          MCP_API_TOKEN: "secret-mcp-token",
+          SAFE_MODE: "review",
+        },
+      },
+      remoteDocs: {
+        transport: "sse",
+        url: "https://mcp.example.test/sse?token=secret-mcp-url-token",
+        disabled: true,
+      },
+      brokenLegacy: {
+        args: "--workspace .",
+        env: "SECRET=secret-mcp-inline",
+        transport: "named-pipe",
+        disabled: "no",
+      },
+    },
+  }, null, 2));
+  mkdirSync(vscodeDir, { recursive: true });
+  writeText(vscodeSettingsPath, [
+    "{",
+    "  // Runtime fixture uses JSONC comments.",
+    "  \"editor.formatOnSave\": true,",
+    "  \"python.defaultInterpreterPath\": \"${workspaceFolder}/.venv/Scripts/python.exe\",",
+    "  \"terminal.integrated.env.windows\": {",
+    "    \"API_TOKEN\": \"secret-vscode-settings-token\"",
+    "  },",
+    "}",
+  ].join("\n"));
+  writeText(vscodeTasksPath, JSON.stringify({
+    version: "2.0.0",
+    tasks: [
+      {
+        label: "Runtime build task",
+        type: "shell",
+        command: "npm run build -- --token=secret-vscode-task-token",
+        problemMatcher: "$tsc",
+      },
+    ],
+    inputs: [
+      {
+        id: "runtimeTarget",
+        type: "pickString",
+        options: ["desktop", "backend"],
+      },
+    ],
+  }, null, 2));
+  writeText(vscodeLaunchPath, JSON.stringify({
+    version: "0.2.0",
+    configurations: [
+      {
+        name: "Runtime renderer debug",
+        type: "node",
+        request: "launch",
+        program: "${workspaceFolder}/apps/desktop/windows/src/main/index.ts",
+      },
+    ],
+  }, null, 2));
+  writeText(vscodeExtensionsPath, JSON.stringify({
+    recommendations: [
+      "ms-vscode.vscode-typescript-next",
+      "dbaeumer.vscode-eslint",
+    ],
+    unwantedRecommendations: [
+      "runtime.secret-extension-token",
+    ],
+  }, null, 2));
+  writeText(eslintConfigPath, JSON.stringify({
+    extends: ["eslint:recommended", "plugin:@typescript-eslint/recommended"],
+    plugins: ["@typescript-eslint", "react-hooks"],
+    parserOptions: {
+      project: "./tsconfig.json",
+      ecmaVersion: 2024,
+    },
+    rules: {
+      "no-console": "warn",
+      "@typescript-eslint/no-explicit-any": "error",
+      "runtime/secret-token": "secret-eslint-token",
+    },
+    ignorePatterns: ["release/**"],
+  }, null, 2));
+  writeText(prettierConfigPath, [
+    "printWidth: 100",
+    "singleQuote: true",
+    "semi: false",
+    "plugins:",
+    "  - prettier-plugin-tailwindcss",
+    "runtimeToken: secret-prettier-token",
+  ].join("\n"));
+  writeText(biomeConfigPath, [
+    "{",
+    "  // Runtime fixture JSONC.",
+    "  \"formatter\": { \"enabled\": true, \"indentStyle\": \"space\" },",
+    "  \"linter\": { \"enabled\": true, \"rules\": { \"suspicious\": { \"noDebugger\": \"error\" } } },",
+    "  \"javascript\": { \"formatter\": { \"quoteStyle\": \"single\" } },",
+    "  \"runtimeToken\": \"secret-biome-token\"",
+    "}",
+  ].join("\n"));
+  writeText(vitestConfigPath, [
+    "import { defineConfig } from 'vitest/config';",
+    "export default defineConfig({",
+    "  test: {",
+    "    environment: 'jsdom',",
+    "    setupFiles: ['./tests/setup.ts'],",
+    "    coverage: { provider: 'v8', reporter: ['text', 'lcov'] },",
+    "    apiToken: process.env.SECRET_VITEST_TOKEN,",
+    "  },",
+    "});",
+  ].join("\n"));
+  writeText(playwrightConfigPath, [
+    "import { defineConfig, devices } from '@playwright/test';",
+    "export default defineConfig({",
+    "  testDir: './e2e',",
+    "  retries: 1,",
+    "  webServer: { command: 'npm run dev -- --token=secret-playwright-token', url: 'http://127.0.0.1:5173' },",
+    "  use: { baseURL: 'https://example.test?token=secret-playwright-token', trace: 'on-first-retry', screenshot: 'only-on-failure' },",
+    "  projects: [",
+    "    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },",
+    "    { name: 'webkit', use: { ...devices['Desktop Safari'] } },",
+    "  ],",
+    "});",
   ].join("\n"));
   writeText(packageLockPath, JSON.stringify({
     name: "runtime-fixture-app",
@@ -1037,6 +1505,38 @@ try {
     "LH:0",
     "end_of_record",
   ].join("\n"));
+  writeText(istanbulCoveragePath, JSON.stringify({
+    "src/chatbar/istanbul.ts": {
+      path: "src/chatbar/istanbul.ts",
+      s: { 0: 1, 1: 0, 2: 1 },
+      b: { 0: [1, 0], 1: [1, 1] },
+    },
+    "src/chatbar/secret-token-coverage.ts": {
+      path: "src/chatbar/secret-token-coverage.ts",
+      s: { 0: 0 },
+      b: {},
+    },
+  }, null, 2));
+  writeText(istanbulCoverageSummaryPath, JSON.stringify({
+    total: {
+      lines: { total: 8, covered: 6, skipped: 0, pct: 75 },
+      branches: { total: 5, covered: 3, skipped: 0, pct: 60 },
+      statements: { total: 8, covered: 6, skipped: 0, pct: 75 },
+      functions: { total: 3, covered: 2, skipped: 0, pct: 66.66 },
+    },
+    "src/chatbar/summary.ts": {
+      lines: { total: 5, covered: 4, skipped: 0, pct: 80 },
+      branches: { total: 3, covered: 2, skipped: 0, pct: 66.66 },
+      statements: { total: 5, covered: 4, skipped: 0, pct: 80 },
+      functions: { total: 2, covered: 2, skipped: 0, pct: 100 },
+    },
+    "src/chatbar/secret-token-summary.ts": {
+      lines: { total: 3, covered: 2, skipped: 0, pct: 66.66 },
+      branches: { total: 2, covered: 1, skipped: 0, pct: 50 },
+      statements: { total: 3, covered: 2, skipped: 0, pct: 66.66 },
+      functions: { total: 1, covered: 0, skipped: 0, pct: 0 },
+    },
+  }, null, 2));
   writeText(cloverPath, [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<coverage generated="1783677600" clover="4.5.2">',
@@ -1048,6 +1548,22 @@ try {
     '    </package>',
     "  </project>",
     "</coverage>",
+  ].join("\n"));
+  writeText(jacocoPath, [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<report name="jacoco-runtime-fixture">',
+    '  <package name="chatbar/runtime">',
+    '    <sourcefile name="RuntimeCoverage.java">',
+    '      <counter type="LINE" missed="3" covered="9"/>',
+      '      <counter type="BRANCH" missed="1" covered="3"/>',
+    "    </sourcefile>",
+    '    <sourcefile name="secret-token-coverage.java">',
+    '      <counter type="LINE" missed="1" covered="1"/>',
+    "    </sourcefile>",
+    "  </package>",
+    '  <counter type="LINE" missed="3" covered="9"/>',
+    '  <counter type="BRANCH" missed="1" covered="3"/>',
+    "</report>",
   ].join("\n"));
   writeText(checkstylePath, [
     '<?xml version="1.0" encoding="UTF-8"?>',
@@ -1062,11 +1578,53 @@ try {
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<testsuites name="runtime-fixture-suites" tests="3" failures="1" errors="0" skipped="1" time="4.25">',
     '  <testsuite name="RuntimeFixtureSuite" tests="3" failures="1" errors="0" skipped="1" time="4.25">',
+    '    <properties>',
+    '      <property name="browser" value="chromium" />',
+    '      <property name="api.token" value="secret-junit-token" />',
+    '    </properties>',
     '    <testcase classname="RuntimeFixture" name="passes" time="1.00" />',
-    '    <testcase classname="RuntimeFixture" name="fails" time="2.00"><failure message="expected runtime value">Assertion failed</failure></testcase>',
+    '    <testcase classname="RuntimeFixture" name="fails" time="2.00"><failure message="expected runtime value">Assertion failed</failure><system-out>[[ATTACHMENT|artifacts/runtime-failure.png]]&#10;artifact: artifacts/secret-token-trace.zip</system-out></testcase>',
     '    <testcase classname="RuntimeFixture" name="skips" time="0.00"><skipped /></testcase>',
     "  </testsuite>",
     "</testsuites>",
+  ].join("\n"));
+  writeText(jmeterXmlPath, [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<testResults version="1.2">',
+    '  <httpSample t="120" lt="80" ts="1783677600000" s="true" lb="GET /chat" rc="200" rm="OK" tn="Runtime JMeter Thread Group 1-1" />',
+    '  <httpSample t="345" lt="300" ts="1783677601000" s="false" lb="POST /provider" rc="500" rm="JMeter failure token=secret-jmeter-token" tn="Runtime JMeter Thread Group 1-1"><assertionResult><name>Runtime provider SLA</name><failure>true</failure><failureMessage>JMeter assertion token=secret-jmeter-assertion</failureMessage></assertionResult><responseData>Runtime response body token=secret-jmeter-response</responseData></httpSample>',
+    "  <sample t=\"90\" ts=\"1783677602000\" s=\"true\" lb=\"Local queue drain\" rc=\"200\" rm=\"OK\" tn=\"Runtime JMeter Thread Group 1-2\" />",
+    "</testResults>",
+  ].join("\n"));
+  writeText(jmeterCsvPath, [
+    "timeStamp,elapsed,label,responseCode,responseMessage,success,threadName,assertionFailureMessage",
+    "1783677600000,100,CSV GET /chat,200,OK,true,Runtime JMeter CSV Thread Group,",
+    "1783677601000,280,CSV POST /provider,503,CSV failure token=secret-jmeter-csv-token,false,Runtime JMeter CSV Thread Group,CSV assertion token=secret-jmeter-csv-assertion",
+    "1783677602000,75,CSV local queue,200,OK,true,Runtime JMeter CSV Thread Group,",
+  ].join("\n"));
+  writeText(nunitPath, [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<test-run id="2" testcasecount="3" result="Failed" total="3" passed="1" failed="1" skipped="1" duration="5.50">',
+    '  <properties><property name="target.framework" value="net8.0" /><property name="api.token" value="secret-nunit-property" /></properties>',
+    '  <test-suite type="Assembly" name="Runtime.NUnit.dll" fullname="Runtime.NUnit">',
+    '    <test-case name="RuntimeNUnitPass" fullname="Runtime.NUnit.RuntimeNUnitPass" result="Passed" duration="1.00" />',
+    '    <test-case name="RuntimeNUnitFail" fullname="Runtime.NUnit.RuntimeNUnitFail" result="Failed" duration="3.00"><failure><message>NUnit runtime failure token=secret-nunit-token</message></failure><output>artifact: artifacts/secret-nunit-token.log</output></test-case>',
+    '    <test-case name="RuntimeNUnitSkip" fullname="Runtime.NUnit.RuntimeNUnitSkip" result="Skipped" duration="0.00" />',
+    "  </test-suite>",
+    "</test-run>",
+  ].join("\n"));
+  writeText(xunitPath, [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    "<assemblies>",
+    '  <assembly name="Runtime.Xunit.dll" total="3" passed="1" failed="1" skipped="1" time="6.25">',
+    '    <collection name="Runtime xUnit Collection" total="3" passed="1" failed="1" skipped="1" time="6.25">',
+    '      <property name="runtime" value="win11" /><property name="api.token" value="secret-xunit-property" />',
+      '      <test name="RuntimeXunitPass" type="Runtime.Xunit" method="RuntimeXunitPass" result="Pass" time="1.00" />',
+      '      <test name="RuntimeXunitFail" type="Runtime.Xunit" method="RuntimeXunitFail" result="Fail" time="4.00"><failure><message>xUnit runtime failure token=secret-xunit-token</message></failure><output>[[ATTACHMENT|artifacts/secret-xunit-token.zip]]</output></test>',
+      '      <test name="RuntimeXunitSkip" type="Runtime.Xunit" method="RuntimeXunitSkip" result="Skip" time="0.00" />',
+    "    </collection>",
+    "  </assembly>",
+    "</assemblies>",
   ].join("\n"));
   writeText(trxPath, [
     '<?xml version="1.0" encoding="UTF-8"?>',
@@ -1114,6 +1672,171 @@ try {
       },
     ],
   }, null, 2));
+  writeText(cypressJsonPath, JSON.stringify({
+    totalTests: 4,
+    totalPassed: 2,
+    totalFailed: 1,
+    totalPending: 1,
+    totalSkipped: 0,
+    totalDuration: 4123,
+    runs: [
+      {
+        spec: { relative: "cypress/e2e/runtime.cy.ts", name: "runtime.cy.ts" },
+        stats: { tests: 4, passes: 2, failures: 1, pending: 1, skipped: 0, wallClockDuration: 4123 },
+        tests: [
+          { title: ["Runtime Cypress Suite", "renders composer"], state: "passed", attempts: [{ state: "passed" }] },
+          {
+            title: ["Runtime Cypress Suite", "blocks failed provider send"],
+            state: "failed",
+            displayError: "Cypress runtime failure token=secret-cypress-token",
+            attempts: [{ state: "failed", error: { message: "attempt token=secret-cypress-attempt" } }],
+          },
+          { title: ["Runtime Cypress Suite", "keeps pending connector"], state: "pending", attempts: [] },
+        ],
+      },
+    ],
+  }, null, 2));
+  writeText(mochaJsonPath, JSON.stringify({
+    stats: {
+      suites: 1,
+      tests: 4,
+      passes: 2,
+      pending: 1,
+      failures: 1,
+      duration: 2789,
+    },
+    tests: [
+      { title: "renders composer", fullTitle: "Runtime Mocha Suite renders composer", state: "passed", duration: 120 },
+      {
+        title: "blocks failed provider send",
+        fullTitle: "Runtime Mocha Suite blocks failed provider send",
+        state: "failed",
+        duration: 240,
+        err: { message: "Mocha runtime failure token=secret-mocha-token" },
+      },
+      { title: "keeps pending connector", fullTitle: "Runtime Mocha Suite keeps pending connector", state: "pending", duration: 0 },
+    ],
+    failures: [
+      {
+        title: "blocks failed provider send",
+        fullTitle: "Runtime Mocha Suite blocks failed provider send",
+        err: { message: "Mocha runtime failure token=secret-mocha-token" },
+      },
+    ],
+    results: [
+      {
+        file: "test/runtime-mocha.spec.ts",
+        suites: [{ title: "Runtime Mocha Suite", fullTitle: "Runtime Mocha Suite", tests: [] }],
+      },
+    ],
+  }, null, 2));
+  writeText(allureJsonPath, JSON.stringify({
+    uuid: "allure-runtime-uuid",
+    historyId: "allure-runtime-history",
+    testCaseId: "allure-runtime-case",
+    name: "blocks failed provider send",
+    fullName: "Runtime Allure Suite blocks failed provider send",
+    status: "failed",
+    statusDetails: {
+      message: "Allure runtime failure token=secret-allure-token",
+      trace: "stack trace token=secret-allure-trace",
+    },
+    labels: [
+      { name: "parentSuite", value: "Runtime Allure Parent" },
+      { name: "suite", value: "Runtime Allure Suite" },
+      { name: "severity", value: "critical" },
+      { name: "api.token", value: "secret-allure-label-token" },
+    ],
+    links: [
+      { name: "runtime issue", type: "issue", url: "https://tracker.example.test/DRSAI-42?token=secret-allure-link-token" },
+    ],
+    steps: [
+      { name: "Attach local context", status: "passed" },
+      { name: "Avoid provider send", status: "failed" },
+    ],
+    attachments: [
+      { name: "local screenshot", source: "artifacts/secret-allure-attachment.png", type: "image/png" },
+    ],
+    start: 1000,
+    stop: 2450,
+  }, null, 2));
+  writeText(slackExportPath, JSON.stringify([
+    {
+      type: "message",
+      channel: "runtime-slack-channel",
+      user: "U12345",
+      ts: "1783677600.000100",
+      text: "Slack runtime export message token=secret-slack-export-token",
+    },
+    {
+      type: "message",
+      channel: "runtime-slack-channel",
+      user: "U23456",
+      ts: "1783677660.000200",
+      text: "Second Slack export message for reviewed handoff.",
+    },
+  ], null, 2));
+  writeText(teamsExportPath, JSON.stringify({
+    messages: [
+      {
+        channelName: "Runtime Teams Channel",
+        from: { user: { displayName: "Ada Reviewer" } },
+        createdDateTime: "2026-07-10T08:00:00Z",
+        body: { content: "<p>Teams runtime export message token=secret-teams-export-token</p>" },
+      },
+      {
+        channelName: "Runtime Teams Channel",
+        from: { user: { displayName: "Grace Builder" } },
+        createdDateTime: "2026-07-10T08:01:00Z",
+        body: { content: "Second Teams export message for visible review." },
+      },
+    ],
+  }, null, 2));
+  writeText(discordExportPath, JSON.stringify({
+    guild: { id: "G123", name: "Runtime Discord Guild" },
+    channel: { id: "C456", name: "runtime-discord-channel" },
+    messages: [
+      {
+        id: "M1",
+        guildName: "Runtime Discord Guild",
+        channel: "runtime-discord-channel",
+        channel_id: "C456",
+        guild_id: "G123",
+        author: { id: "D12345", username: "runtime_discord_user", global_name: "Discord Reviewer" },
+        timestamp: "2026-07-10T08:02:00Z",
+        content: "Discord runtime export message token=secret-discord-export-token",
+      },
+      {
+        id: "M2",
+        guildName: "Runtime Discord Guild",
+        channel: "runtime-discord-channel",
+        author: { id: "D23456", username: "runtime_builder" },
+        timestamp: "2026-07-10T08:03:00Z",
+        content: "Second Discord export message for visible review.",
+      },
+    ],
+  }, null, 2));
+  writeText(chatgptConversationsPath, JSON.stringify([
+    {
+      title: "Runtime ChatGPT Conversation",
+      mapping: {
+        root: {
+          message: {
+            author: { role: "user" },
+            create_time: 1783677600,
+            content: { parts: ["ChatGPT export prompt token=secret-chatgpt-export-token"] },
+          },
+        },
+        assistant: {
+          message: {
+            author: { role: "assistant" },
+            create_time: 1783677660,
+            content: { parts: ["ChatGPT export answer for reviewed local context."] },
+          },
+        },
+      },
+    },
+  ], null, 2));
   writeText(stylePath, [
     ":root { --accent: #005fcc; }",
     "@media screen and (min-width: 640px) {",
@@ -1188,6 +1911,9 @@ try {
   writeNetcdfFixture(netcdfPath);
   writeMatlabMatFixture(matPath);
   mkdirSync(githubWorkflowDir, { recursive: true });
+  mkdirSync(circleCiDir, { recursive: true });
+  mkdirSync(buildkiteDir, { recursive: true });
+  mkdirSync(drsaiDir, { recursive: true });
   writeText(githubActionsPath, [
     "name: Runtime CI",
     "on:",
@@ -1223,7 +1949,42 @@ try {
     "  - job: runtime_windows",
     "    steps:",
     "      - task: NodeTool@0",
-    "      - script: npm test -- --token secret-ci-token",
+      "      - script: npm test -- --token secret-ci-token",
+  ].join("\n"));
+  writeText(bitbucketPipelinesPath, [
+    "pipelines:",
+    "  default:",
+    "    - step:",
+    "        name: runtime-bitbucket",
+    "        image: node:22",
+    "        script:",
+    "          - npm test -- --token secret-ci-token",
+    "  branches:",
+    "    main:",
+    "      - step:",
+    "          name: release",
+  ].join("\n"));
+  writeText(circleCiConfigPath, [
+    "version: 2.1",
+    "jobs:",
+    "  runtime-circle:",
+    "    docker:",
+    "      - image: cimg/node:22.0",
+    "    steps:",
+    "      - checkout",
+    "      - run: npm test -- --token secret-ci-token",
+    "workflows:",
+    "  runtime:",
+    "    jobs:",
+    "      - runtime-circle",
+  ].join("\n"));
+  writeText(buildkitePipelinePath, [
+    "steps:",
+    "  - label: runtime-buildkite",
+    "    command: npm test -- --token secret-ci-token",
+    "    plugins:",
+    "      - docker#v5.11.0:",
+    "          image: node:22",
   ].join("\n"));
   writeText(composePath, [
     "services:",
@@ -1259,6 +2020,107 @@ try {
     "    newTag: v1.2.3",
     "patches:",
     "  - path: patches/deployment.yaml",
+  ].join("\n"));
+  writeText(iisWebConfigPath, [
+    '<?xml version="1.0" encoding="utf-8"?>',
+    "<configuration>",
+    "  <appSettings>",
+    '    <add key="FeatureFlag" value="enabled" />',
+    '    <add key="ApiSecret" value="secret-iis-token" />',
+    "  </appSettings>",
+    "  <connectionStrings>",
+    '    <add name="RuntimeDb" connectionString="Server=runtime;Password=secret-iis-db-password" providerName="System.Data.SqlClient" />',
+    "  </connectionStrings>",
+    "  <system.web>",
+    '    <compilation debug="false" targetFramework="4.8" />',
+    '    <httpRuntime targetFramework="4.8" maxRequestLength="4096" />',
+    '    <authentication mode="Windows" />',
+    "  </system.web>",
+    "  <system.webServer>",
+    "    <handlers>",
+    '      <add name="RuntimeHandler" path="api/*" verb="GET,POST" modules="ManagedPipelineHandler" />',
+    "    </handlers>",
+    "    <modules>",
+    '      <add name="RuntimeModule" type="Runtime.Module, Runtime" />',
+    "    </modules>",
+    "    <security>",
+    "      <authentication>",
+    '        <anonymousAuthentication enabled="false" />',
+    '        <windowsAuthentication enabled="true" />',
+    "      </authentication>",
+    "    </security>",
+    "    <rewrite>",
+    "      <rules>",
+    '        <rule name="Runtime rewrite">',
+    '          <match url="^api/(.*)" />',
+    '          <action type="Rewrite" url="https://runtime.example.test/{R:1}?token=secret-iis-url-token" />',
+    "        </rule>",
+    "      </rules>",
+    "    </rewrite>",
+    "  </system.webServer>",
+    '  <location path="admin/secret-iis-area" />',
+    "</configuration>",
+  ].join("\n"));
+  writeText(kubernetesManifestPath, [
+    "apiVersion: apps/v1",
+    "kind: Deployment",
+    "metadata:",
+    "  name: runtime-api",
+    "  namespace: runtime-system",
+    "spec:",
+    "  selector:",
+    "    matchLabels:",
+    "      app: runtime-api",
+    "  template:",
+    "    spec:",
+    "      serviceAccountName: runtime-runner",
+    "      containers:",
+    "        - name: api",
+    "          image: ghcr.io/example/runtime-api:v1.2.3",
+    "          envFrom:",
+    "            - configMapRef:",
+    "                name: runtime-config",
+    "---",
+    "apiVersion: v1",
+    "kind: Service",
+    "metadata:",
+    "  name: runtime-api",
+    "  namespace: runtime-system",
+    "spec:",
+    "  selector:",
+    "    app: runtime-api",
+    "  ports:",
+    "    - name: http",
+    "      port: 80",
+    "      targetPort: 8080",
+    "      protocol: TCP",
+    "---",
+    "apiVersion: networking.k8s.io/v1",
+    "kind: Ingress",
+    "metadata:",
+    "  name: runtime-api",
+    "spec:",
+    "  rules:",
+    "    - host: runtime.example.test",
+    "      http:",
+    "        paths:",
+    "          - path: /api",
+    "            pathType: Prefix",
+    "---",
+    "apiVersion: v1",
+    "kind: ConfigMap",
+    "metadata:",
+    "  name: runtime-config",
+    "data:",
+    "  APP_MODE: runtime",
+    "  LOG_LEVEL: debug",
+    "---",
+    "apiVersion: v1",
+    "kind: Secret",
+    "metadata:",
+    "  name: runtime-secret",
+    "stringData:",
+    "  api-token: secret-kubernetes-token",
   ].join("\n"));
   writeText(cmakePath, [
     "cmake_minimum_required(VERSION 3.22)",
@@ -1374,8 +2236,15 @@ try {
     "pytest==8.3.4",
     "-r requirements.txt",
   ].join("\n"));
+  writeText(constraintsPath, [
+    "--extra-index-url https://packages.example.test/simple?token=secret-constraints-token",
+    "requests==2.32.3",
+    "httpx==0.27.2",
+    "-c base-constraints.txt",
+  ].join("\n"));
   writePdfFixture(pdfPath);
   writeZipFixture(zipPath);
+  writePlaywrightTraceZipFixture(playwrightTraceZipPath);
   writeStlFixture(stlPath);
   writeText(objPath, [
     "# Runtime OBJ fixture",
@@ -1498,6 +2367,76 @@ try {
     '  targets: [.target(name: "RuntimeFixture")]',
     ")",
   ].join("\n"));
+  writeText(podfilePath, [
+    "platform :ios, '16.0'",
+    "source 'https://cdn.cocoapods.org/'",
+    "use_frameworks!",
+    "target 'RuntimeFixtureApp' do",
+    "  pod 'Alamofire', '~> 5.9'",
+    "  pod 'RuntimeFixtureKit', :path => './RuntimeFixtureKit'",
+    "end",
+  ].join("\n"));
+  writeText(podfileLockPath, [
+    "PODS:",
+    "  - Alamofire (5.9.1)",
+    "  - RuntimeFixtureKit (0.1.0)",
+    "DEPENDENCIES:",
+    "  - Alamofire (~> 5.9)",
+    "  - RuntimeFixtureKit (from `./RuntimeFixtureKit`)",
+    "SPEC CHECKSUMS:",
+    "  Alamofire: 0123456789abcdef0123456789abcdef01234567",
+    "  RuntimeFixtureKit: abcdef0123456789abcdef0123456789abcdef01",
+    "COCOAPODS: 1.15.2",
+  ].join("\n"));
+  writeText(pbxprojPath, [
+    "// !$*UTF8*$!",
+    "{",
+    "  objects = {",
+    "    1D6058900D05DD3D006BFB54 /* RuntimeFixtureApp */ = {",
+    "      isa = PBXNativeTarget;",
+    "      name = RuntimeFixtureApp;",
+    "      productName = RuntimeFixtureApp;",
+    "      productType = com.apple.product-type.application;",
+    "    };",
+    "    1D6058910D05DD3D006BFB54 /* RuntimeFixtureTests */ = {",
+    "      isa = PBXNativeTarget;",
+    "      name = RuntimeFixtureTests;",
+    "      productName = RuntimeFixtureTests;",
+    "      productType = com.apple.product-type.bundle.unit-test;",
+    "    };",
+    "    1D6058920D05DD3D006BFB54 /* AppDelegate.swift */ = {",
+    "      isa = PBXFileReference;",
+    "      path = AppDelegate.swift;",
+    "    };",
+    "    1D6058930D05DD3D006BFB54 /* RuntimeFixture.xcassets */ = {",
+    "      isa = PBXFileReference;",
+    "      path = RuntimeFixture.xcassets;",
+    "    };",
+    "    1D6058940D05DD3D006BFB54 /* Debug */ = {",
+    "      isa = XCBuildConfiguration;",
+    "      name = Debug;",
+    "      buildSettings = {",
+    "        PRODUCT_BUNDLE_IDENTIFIER = org.opendrsai.runtime.ios;",
+    "        DEVELOPMENT_TEAM = SECRETTEAM;",
+    "        IPHONEOS_DEPLOYMENT_TARGET = 17.0;",
+    "        SWIFT_VERSION = 5.10;",
+    "        CODE_SIGN_STYLE = Automatic;",
+    "      };",
+    "    };",
+    "  };",
+    "}",
+  ].join("\n"));
+  writeText(podspecPath, [
+    "Pod::Spec.new do |s|",
+    "  s.name = 'RuntimeFixtureKit'",
+    "  s.version = '0.1.0'",
+    "  s.summary = 'Runtime fixture CocoaPods package'",
+    "  s.ios.deployment_target = '16.0'",
+    "  s.swift_version = '5.10'",
+    "  s.source_files = 'Sources/**/*.swift'",
+    "  s.dependency 'Alamofire', '~> 5.9'",
+    "end",
+  ].join("\n"));
   writeText(composerPath, JSON.stringify({
     name: "example/runtime-fixture",
     type: "project",
@@ -1562,6 +2501,17 @@ try {
     "Date: Thu, 9 Jul 2026 09:30:00 +0000",
     "",
     "This is a bounded runtime email fixture body.",
+  ].join("\n"));
+  writeText(emlxPath, [
+    "292",
+    "From: Runtime Sender <sender@example.test>",
+    "To: Reviewer <reviewer@example.test>",
+    "Subject: Runtime Apple Mail fixture",
+    "Date: Thu, 9 Jul 2026 09:45:00 +0000",
+    "",
+    "This is a bounded runtime Apple Mail EMLX body.",
+    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+    "<plist version=\"1.0\"><dict><key>flags</key><integer>0</integer></dict></plist>",
   ].join("\n"));
   writeText(mboxPath, [
     "From sender@example.test Thu Jul 09 09:30:00 2026",
@@ -1711,6 +2661,29 @@ try {
     "      type: http",
     "      scheme: bearer",
   ].join("\n"));
+  writeText(asyncApiPath, [
+    "asyncapi: 2.6.0",
+    "info:",
+    "  title: Runtime Fixture Events",
+    "  version: 1.0.0",
+    "servers:",
+    "  production:",
+    "    url: mqtts://broker.example.test/runtime?token=secret-asyncapi-token",
+    "    protocol: mqtt",
+    "channels:",
+    "  runtime/runs/started:",
+    "    subscribe:",
+    "      operationId: onRuntimeRunStarted",
+    "      message:",
+    "        name: RuntimeRunStarted",
+    "  runtime/runs/commands:",
+    "    publish:",
+    "      operationId: publishRuntimeCommand",
+    "components:",
+    "  securitySchemes:",
+    "    brokerToken:",
+    "      type: httpApiKey",
+  ].join("\n"));
   writeText(insomniaPath, JSON.stringify({
     _type: "export",
     __export_format: 4,
@@ -1823,6 +2796,24 @@ try {
             message: { text: "Token-like value detected in fixture" },
             locations: [
               { physicalLocation: { artifactLocation: { uri: "src/runtime.ts" }, region: { startLine: 12 } } },
+            ],
+          },
+        ],
+      },
+    ],
+  }, null, 2));
+  writeText(sarifJsonPath, JSON.stringify({
+    version: "2.1.0",
+    runs: [
+      {
+        tool: { driver: { name: "CodeQL", rules: [{ id: "js/path-injection" }] } },
+        results: [
+          {
+            ruleId: "js/path-injection",
+            level: "error",
+            message: { text: "User-controlled path reaches filesystem operation" },
+            locations: [
+              { physicalLocation: { artifactLocation: { uri: "src/routes.ts" }, region: { startLine: 44 } } },
             ],
           },
         ],
@@ -2106,6 +3097,18 @@ try {
     "  }",
     "}",
   ].join("\n"));
+  writeText(graphmlPath, [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    '  <key id="label" for="node" attr.name="runtimeLabel" attr.type="string"/>',
+    '  <key id="secret" for="edge" attr.name="edgeToken" attr.type="string"/>',
+    '  <graph id="RuntimeGraph" edgedefault="directed">',
+    '    <node id="Runtime"><data key="label">Runtime node</data></node>',
+    '    <node id="Review"><data key="label">Review node</data></node>',
+    '    <edge id="runtime-edge" source="Runtime" target="Review"><data key="secret">secret-graphml-token</data></edge>',
+    '  </graph>',
+    "</graphml>",
+  ].join("\n"));
   writeText(scssPath, [
     "$runtime-gap: 8px;",
     ":root { --runtime-accent: #0b6bcb; }",
@@ -2179,6 +3182,83 @@ try {
     "CREATE INDEX idx_runtime_users_org ON runtime_users(org_id);",
     "SELECT id, email FROM runtime_users;",
   ].join("\n"));
+  writeText(prismaPath, [
+    'datasource db {',
+    '  provider = "postgresql"',
+    '  url      = env("DATABASE_URL")',
+    '}',
+    '',
+    'model RuntimeOrg {',
+    '  id    Int @id @default(autoincrement())',
+    '  name  String @unique',
+    '  users RuntimeUser[]',
+    '}',
+    '',
+    'model RuntimeUser {',
+    '  id     Int @id @default(autoincrement())',
+    '  email  String @unique',
+    '  orgId  Int',
+    '  org    RuntimeOrg @relation(fields: [orgId], references: [id])',
+    '  token  String? @default("secret-prisma-token")',
+    '}',
+    '',
+    'enum RuntimeRole { ADMIN VIEWER }',
+  ].join("\n"));
+  writeText(dbmlPath, [
+    'Table runtime_orgs {',
+    '  id int [pk]',
+    '  name varchar [unique]',
+    '}',
+    '',
+    'Table runtime_users {',
+    '  id int [pk]',
+    '  org_id int [ref: > runtime_orgs.id]',
+    '  email varchar [unique]',
+    '  api_token varchar [note: "secret-dbml-token"]',
+    '}',
+    '',
+    'Enum runtime_role { admin viewer }',
+    'Ref: runtime_users.org_id > runtime_orgs.id',
+  ].join("\n"));
+  writeFileSync(redisRdbPath, Buffer.concat([
+    Buffer.from("REDIS0009", "ascii"),
+    Buffer.from([0xfa, 0x09]),
+    Buffer.from("redis-ver", "utf8"),
+    Buffer.from([0x06]),
+    Buffer.from("7.2.4", "utf8"),
+    Buffer.from([0xfe, 0x00, 0xfb, 0x02, 0x00]),
+    Buffer.from("runtime:user:1", "utf8"),
+    Buffer.from([0x00]),
+    Buffer.from("secret-rdb-token", "utf8"),
+    Buffer.from([0xff]),
+  ]));
+  writeText(redisAofPath, [
+    "*2\r\n$6\r\nSELECT\r\n$1\r\n0\r\n",
+    "*3\r\n$3\r\nSET\r\n$14\r\nruntime:user:1\r\n$23\r\nsecret-redis-aof-token\r\n",
+    "*3\r\n$5\r\nHSET\r\n$17\r\nruntime:profile:1\r\n$5\r\nemail\r\n",
+    "*2\r\n$4\r\nAUTH\r\n$22\r\nsecret-auth-credential\r\n",
+  ].join(""));
+  writeText(systemdServicePath, [
+    "[Unit]",
+    "Description=Runtime scheduler service",
+    "Documentation=https://example.test/runbook?token=secret-systemd-url-token",
+    "",
+    "[Service]",
+    "Type=simple",
+    "User=drsai",
+    "WorkingDirectory=/srv/runtime",
+    "ExecStart=/usr/bin/node /srv/runtime/worker.js --api-key secret-systemd-token",
+    "ExecReload=/bin/kill -HUP $MAINPID",
+    "",
+    "[Install]",
+    "WantedBy=multi-user.target",
+  ].join("\n"));
+  writeText(cronSchedulePath, [
+    "SHELL=/bin/bash",
+    "MAILTO=ops@example.test",
+    "*/15 * * * * /usr/local/bin/runtime-sync --token secret-cron-token",
+    "@daily /usr/local/bin/runtime-cleanup --mode safe",
+  ].join("\n"));
   writeText(csvPath, [
     "user_id,event_name,status,api_token",
     "1,runtime-open,active,secret-csv-token",
@@ -2194,6 +3274,15 @@ try {
   writeText(jsonlPath, [
     JSON.stringify({ user_id: 1, event_name: "runtime-open", api_token: "secret-jsonl-token" }),
     JSON.stringify({ user_id: 2, event_name: "runtime-close", success: true }),
+  ].join("\n"));
+  writeText(terminalRecordingPath, [
+    JSON.stringify({ version: 2, width: 100, height: 30, duration: 2.4, command: "pwsh -NoProfile" }),
+    JSON.stringify([0.1, "o", "\u001b[32mPS C:\\repo> npm run verify -- --token=secret-cast-token\u001b[0m\r\n"]),
+    JSON.stringify([0.8, "o", "Runtime terminal output warning: provider retry token=secret-cast-output\r\n"]),
+    JSON.stringify([1.2, "i", "git status\r"]),
+    JSON.stringify([1.6, "r", "120x40"]),
+    JSON.stringify([2.0, "o", "fatal: Runtime terminal failed with access denied\r\n"]),
+    "not-json",
   ].join("\n"));
   writeText(harPath, JSON.stringify({
     log: {
@@ -2214,6 +3303,122 @@ try {
       ],
     },
   }, null, 2));
+  writeText(netlogPath, JSON.stringify({
+    constants: {
+      logEventTypes: {
+        URL_REQUEST_START_JOB: 1,
+        HTTP_TRANSACTION_SEND_REQUEST_HEADERS: 2,
+        SSL_CONNECT_JOB_CONNECT: 3,
+      },
+      logSourceType: {
+        URL_REQUEST: 1,
+        SOCKET: 2,
+      },
+      logEventPhase: {
+        PHASE_BEGIN: 0,
+        PHASE_END: 1,
+      },
+    },
+    events: [
+      {
+        time: "1783598400123",
+        type: 1,
+        phase: 0,
+        source: { id: 7, type: 1 },
+        params: {
+          url: "https://api.example.test/netlog?token=secret-netlog-token",
+          method: "GET",
+          load_flags: 0,
+        },
+      },
+      {
+        time: "1783598400456",
+        type: 2,
+        phase: 1,
+        source: { id: 7, type: 1 },
+        params: {
+          headers: ["authorization: Bearer secret-netlog-token", "accept: application/json"],
+          host: "api.example.test",
+        },
+      },
+      {
+        time: "1783598400500",
+        type: 3,
+        phase: 1,
+        source: { id: 8, type: 2 },
+        params: {
+          net_error: -101,
+          remote_endpoint: "203.0.113.10:443",
+        },
+      },
+    ],
+  }, null, 2));
+  writeText(otelPath, JSON.stringify({
+    resourceSpans: [
+      {
+        resource: {
+          attributes: [
+            { key: "service.name", value: { stringValue: "checkout-api" } },
+            { key: "deployment.environment", value: { stringValue: "staging" } },
+          ],
+        },
+        scopeSpans: [
+          {
+            scope: { name: "runtime-fixture" },
+            spans: [
+              {
+                traceId: "0af7651916cd43dd8448eb211c80319c",
+                spanId: "b7ad6b7169203331",
+                name: "POST /checkout",
+                kind: "SPAN_KIND_SERVER",
+                status: { code: "STATUS_CODE_ERROR" },
+                attributes: [
+                  { key: "http.route", value: { stringValue: "/checkout" } },
+                  { key: "authorization", value: { stringValue: "Bearer secret-otel-token" } },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+    resourceLogs: [
+      {
+        resource: {
+          attributes: [{ key: "service.name", value: { stringValue: "checkout-api" } }],
+        },
+        scopeLogs: [
+          {
+            logRecords: [
+              {
+                severityText: "ERROR",
+                body: { stringValue: "payment provider failed token=secret-otel-token" },
+                attributes: [{ key: "error.type", value: { stringValue: "ProviderTimeout" } }],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+    resourceMetrics: [
+      {
+        resource: {
+          attributes: [{ key: "service.name", value: { stringValue: "checkout-api" } }],
+        },
+        scopeMetrics: [
+          {
+            metrics: [
+              {
+                name: "checkout.latency",
+                unit: "ms",
+                histogram: { dataPoints: [] },
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  }, null, 2));
   writeText(devtoolsTracePath, JSON.stringify({
     traceEvents: [
       { ph: "M", pid: 100, tid: 1, name: "process_name", args: { name: "Renderer" } },
@@ -2223,6 +3428,31 @@ try {
       { ph: "I", pid: 100, tid: 7, ts: 185000, cat: "blink.user_timing", name: "RuntimeMark", args: { marker: "runtime-ready" } },
     ],
     metadata: { source: "runtime fixture" },
+  }, null, 2));
+  writeText(cpuProfilePath, JSON.stringify({
+    startTime: 1000,
+    endTime: 250000,
+    nodes: [
+      { id: 1, callFrame: { functionName: "(root)", url: "", lineNumber: 0 }, hitCount: 0 },
+      { id: 2, callFrame: { functionName: "RuntimeMain", url: "file:///workspace/src/runtime.ts?token=secret-profile-token", lineNumber: 42 }, hitCount: 7 },
+      { id: 3, callFrame: { functionName: "renderWidget", url: "webpack://runtime/widget.ts", lineNumber: 12 }, hitCount: 3 },
+    ],
+    samples: [2, 2, 3],
+    timeDeltas: [1000, 2000, 3000],
+  }, null, 2));
+  writeText(heapSnapshotPath, JSON.stringify({
+    snapshot: {
+      meta: {
+        node_fields: ["type", "name", "id", "self_size", "edge_count", "trace_node_id"],
+        node_types: [["hidden", "array", "string", "object", "code", "closure", "regexp", "number", "native", "synthetic"]],
+      },
+      node_count: 3,
+      edge_count: 2,
+      trace_function_count: 1,
+    },
+    nodes: [9, 1, 1, 0, 0, 0],
+    edges: [1, 2],
+    strings: ["", "RuntimeHeapRoot", "RuntimeLeakCandidate", "https://example.test?token=secret-heap-token"],
   }, null, 2));
   writeText(lighthousePath, JSON.stringify({
     lighthouseVersion: "12.8.0",
@@ -2327,6 +3557,20 @@ try {
     "<entry><title>Runtime Atom Entry</title><link href=\"https://feeds.example.test/atom/1\" /><updated>2026-07-10T09:00:00Z</updated></entry>",
     "</feed>",
   ].join("\n"));
+  writeText(opmlPath, [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<opml version="2.0">',
+    "<head>",
+    "<title>Runtime Feed Subscriptions</title>",
+    "<ownerName>Runtime Reader</ownerName>",
+    "</head>",
+    "<body>",
+    '<outline text="Engineering" title="Engineering">',
+    '<outline text="Runtime OPML Feed" type="rss" xmlUrl="https://feeds.example.test/opml.xml?token=secret-opml-token" htmlUrl="https://feeds.example.test/opml" />',
+    "</outline>",
+    "</body>",
+    "</opml>",
+  ].join("\n"));
   writeText(robotsPath, [
     "User-agent: *",
     "Disallow: /private",
@@ -2381,6 +3625,13 @@ try {
     "  </application>",
     "</manifest>",
   ].join("\n"));
+  writeText(androidLogcatPath, [
+    "--------- beginning of main",
+    "07-11 10:05:03.125  1234  1234 I ActivityTaskManager: START u0 {act=android.intent.action.MAIN cmp=org.opendrsai.runtime/.MainActivity}",
+    "07-11 10:05:04.222  1234  1300 W NetworkMonitor: token=secret-logcat-token connection retry for api.example.test",
+    "07-11 10:05:05.333  2222  2225 E AndroidRuntime: Runtime crash diagnostic token=secret-crash-token",
+    "D/DrSaiMobile( 3333): brief format message token=secret-brief-token",
+  ].join("\n"));
   writeText(infoPlistPath, [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
@@ -2408,9 +3659,65 @@ try {
   writeMobileAppPackageFixture(apkPath, "apk");
   writeMobileAppPackageFixture(aabPath, "aab");
   writeMobileAppPackageFixture(ipaPath, "ipa");
+  writeText(supervisorConfigPath, [
+    "[supervisord]",
+    "logfile=/var/log/supervisor/runtime.log",
+    "childlogdir=/var/log/supervisor",
+    "",
+    "[program:runtime-worker]",
+    "command=/usr/local/bin/runtime-worker --token secret-supervisor-token --url https://ops.example.test/run?token=secret-supervisor-url-token",
+    "directory=/srv/runtime",
+    "user=runtime",
+    "autostart=true",
+    "autorestart=unexpected",
+    "environment=RUNTIME_TOKEN=\"secret-supervisor-env-token\",RUNTIME_MODE=\"fixture\"",
+    "stdout_logfile=/var/log/supervisor/runtime-worker.out.log",
+    "",
+    "[group:runtime]",
+    "programs=runtime-worker",
+    "",
+    "[include]",
+    "files=/etc/supervisor/conf.d/*.conf",
+  ].join("\n"));
+  writeText(texPath, [
+    "\\documentclass[11pt]{article}",
+    "\\usepackage{amsmath,graphicx}",
+    "\\addbibresource{references.bib}",
+    "\\title{Runtime LaTeX Fixture}",
+    "\\begin{document}",
+    "\\section{Runtime Method}\\label{sec:runtime}",
+    "We cite \\cite{runtime2026,secretCitationToken} and reference \\ref{eq:runtime}.",
+    "\\begin{equation}\\label{eq:runtime}",
+    "E = mc^2",
+    "\\end{equation}",
+    "\\includegraphics{figures/runtime-plot.png}",
+    "\\input{sections/results}",
+    "% token=secret-latex-comment-token",
+    "\\end{document}",
+  ].join("\n"));
+  writeText(bibPath, [
+    "@article{runtime2026,",
+    "  author = {Ada Reviewer and Grace Builder},",
+    "  title = {Runtime Fixture for Local LaTeX Context},",
+    "  year = {2026},",
+    "  note = {token=secret-bib-token}",
+    "}",
+  ].join("\n"));
+  writeText(latexmkrcPath, [
+    "$pdf_mode = 1;",
+    "$pdflatex = 'pdflatex -interaction=nonstopmode %O %S';",
+    "$bibtex = 'bibtex %O %B';",
+    "$api_token = 'secret-latexmk-token';",
+  ].join("\n"));
+  writeWavFixture(wavPath);
+  writeMp3Fixture(mp3Path);
   writeFlacFixture(flacPath);
   writeM4aFixture(m4aPath);
   writeOggFixture(oggPath);
+  writePngColorProfileFixture(pngColorPath);
+  writeJpegColorProfileFixture(jpegColorPath);
+  writeGifAnimationFixture(gifAnimationPath);
+  writeWebpAnimationFixture(webpAnimationPath);
 
   const adapters = await loadChannelAdapters(tempRoot);
   assert(typeof adapters.importChannelContext === "function", "compiled adapter module does not export importChannelContext");
@@ -2454,6 +3761,25 @@ try {
   assert(
     result.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
     "runtime fixture import lost read-only verification copy",
+  );
+
+  const constraintsRuntimeResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [
+      constraintsPath,
+    ],
+    limit: 2,
+  });
+
+  assert(
+    constraintsRuntimeResult.items.length === 1,
+    `expected 1 imported constraints runtime fixture item, got ${constraintsRuntimeResult.items.length}: ${constraintsRuntimeResult.items.map((item) => item.title).join(", ")}`,
+  );
+  assert(constraintsRuntimeResult.truncated === false, "constraints runtime fixture import should not be truncated");
+  assert(
+    constraintsRuntimeResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "constraints runtime fixture import lost read-only verification copy",
   );
 
   const scientificVariantResult = adapters.importChannelContext({
@@ -2548,6 +3874,24 @@ try {
     "script runtime fixture import lost read-only verification copy",
   );
 
+  const latexRuntimeResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [
+      texPath,
+      bibPath,
+      latexmkrcPath,
+    ],
+    limit: 3,
+  });
+
+  assert(latexRuntimeResult.items.length === 3, `expected 3 imported LaTeX runtime fixture items, got ${latexRuntimeResult.items.length}`);
+  assert(latexRuntimeResult.truncated === false, "LaTeX runtime fixture import should not be truncated");
+  assert(
+    latexRuntimeResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "LaTeX runtime fixture import lost read-only verification copy",
+  );
+
   const repositoryGovernanceResult = adapters.importChannelContext({
     adapterId: "file-input",
     workspacePath: workspace,
@@ -2556,13 +3900,15 @@ try {
       editorconfigPath,
       gitattributesPath,
       gitignorePath,
+      gitmodulesPath,
+      mailmapPath,
       licensePath,
       noticePath,
     ],
-    limit: 8,
+    limit: 9,
   });
 
-  assert(repositoryGovernanceResult.items.length === 6, `expected 6 imported repository governance runtime fixture items, got ${repositoryGovernanceResult.items.length}`);
+  assert(repositoryGovernanceResult.items.length === 8, `expected 8 imported repository governance runtime fixture items, got ${repositoryGovernanceResult.items.length}`);
   assert(repositoryGovernanceResult.truncated === false, "repository governance runtime fixture import should not be truncated");
   assert(
     repositoryGovernanceResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
@@ -2574,15 +3920,71 @@ try {
     workspacePath: workspace,
     paths: [
       dotenvPath,
+      envrcPath,
     ],
     limit: 2,
   });
 
-  assert(configRuntimeResult.items.length === 1, `expected 1 imported .env config runtime fixture item, got ${configRuntimeResult.items.length}`);
+  assert(configRuntimeResult.items.length === 2, `expected 2 imported config runtime fixture items, got ${configRuntimeResult.items.length}`);
   assert(configRuntimeResult.truncated === false, ".env config runtime fixture import should not be truncated");
   assert(
     configRuntimeResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
     ".env config runtime fixture import lost read-only verification copy",
+  );
+
+  const mcpConfigResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [
+      mcpServersPath,
+    ],
+    limit: 2,
+  });
+
+  assert(mcpConfigResult.items.length === 1, `expected 1 imported MCP server config runtime fixture item, got ${mcpConfigResult.items.length}`);
+  assert(mcpConfigResult.truncated === false, "MCP server config runtime fixture import should not be truncated");
+  assert(
+    mcpConfigResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "MCP server config runtime fixture import lost read-only verification copy",
+  );
+
+  const vscodeConfigResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [
+      vscodeSettingsPath,
+      vscodeTasksPath,
+      vscodeLaunchPath,
+      vscodeExtensionsPath,
+    ],
+    limit: 4,
+  });
+
+  assert(vscodeConfigResult.items.length === 4, `expected 4 imported VS Code config runtime fixture items, got ${vscodeConfigResult.items.length}`);
+  assert(vscodeConfigResult.truncated === false, "VS Code config runtime fixture import should not be truncated");
+  assert(
+    vscodeConfigResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "VS Code config runtime fixture import lost read-only verification copy",
+  );
+
+  const jsToolingConfigResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [
+      eslintConfigPath,
+      prettierConfigPath,
+      biomeConfigPath,
+      vitestConfigPath,
+      playwrightConfigPath,
+    ],
+    limit: 5,
+  });
+
+  assert(jsToolingConfigResult.items.length === 5, `expected 5 imported JS/TS tooling config runtime fixture items, got ${jsToolingConfigResult.items.length}`);
+  assert(jsToolingConfigResult.truncated === false, "JS/TS tooling config runtime fixture import should not be truncated");
+  assert(
+    jsToolingConfigResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "JS/TS tooling config runtime fixture import lost read-only verification copy",
   );
 
   const ciWorkflowResult = adapters.importChannelContext({
@@ -2592,11 +3994,14 @@ try {
       githubActionsPath,
       gitlabCiPath,
       azurePipelinesPath,
+      bitbucketPipelinesPath,
+      circleCiConfigPath,
+      buildkitePipelinePath,
     ],
     limit: 6,
   });
 
-  assert(ciWorkflowResult.items.length === 3, `expected 3 imported CI/CD workflow runtime fixture items, got ${ciWorkflowResult.items.length}`);
+  assert(ciWorkflowResult.items.length === 6, `expected 6 imported CI/CD workflow runtime fixture items, got ${ciWorkflowResult.items.length}`);
   assert(ciWorkflowResult.truncated === false, "CI/CD workflow runtime fixture import should not be truncated");
   assert(
     ciWorkflowResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
@@ -2608,15 +4013,22 @@ try {
     workspacePath: workspace,
     paths: [
       junitPath,
+      jmeterXmlPath,
+      jmeterCsvPath,
+      nunitPath,
+      xunitPath,
       trxPath,
       tapPath,
       playwrightJsonPath,
+      cypressJsonPath,
+      mochaJsonPath,
+      allureJsonPath,
       checkstylePath,
     ],
-    limit: 5,
+    limit: 12,
   });
 
-  assert(testReportResult.items.length === 5, `expected 5 imported runtime test/static report fixture items, got ${testReportResult.items.length}`);
+  assert(testReportResult.items.length === 12, `expected 12 imported runtime test/static report fixture items, got ${testReportResult.items.length}`);
   assert(testReportResult.truncated === false, "runtime test report fixture import should not be truncated");
   assert(
     testReportResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
@@ -2629,16 +4041,38 @@ try {
     paths: [
       coveragePath,
       lcovPath,
+      istanbulCoveragePath,
+      istanbulCoverageSummaryPath,
       cloverPath,
+      jacocoPath,
     ],
-    limit: 4,
+    limit: 7,
   });
 
-  assert(coverageReportResult.items.length === 3, `expected 3 imported coverage runtime fixture items, got ${coverageReportResult.items.length}`);
+  assert(coverageReportResult.items.length === 6, `expected 6 imported coverage runtime fixture items, got ${coverageReportResult.items.length}`);
   assert(coverageReportResult.truncated === false, "coverage runtime fixture import should not be truncated");
   assert(
     coverageReportResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
     "coverage runtime fixture import lost read-only verification copy",
+  );
+
+  const chatExportResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [
+      slackExportPath,
+      teamsExportPath,
+      discordExportPath,
+      chatgptConversationsPath,
+    ],
+    limit: 6,
+  });
+
+  assert(chatExportResult.items.length === 4, `expected 4 imported chat export runtime fixture items, got ${chatExportResult.items.length}`);
+  assert(chatExportResult.truncated === false, "chat export runtime fixture import should not be truncated");
+  assert(
+    chatExportResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "chat export runtime fixture import lost read-only verification copy",
   );
 
   const documentArchiveResult = adapters.importChannelContext({
@@ -2647,12 +4081,13 @@ try {
     paths: [
       pdfPath,
       zipPath,
+      playwrightTraceZipPath,
       stlPath,
     ],
     limit: 8,
   });
 
-  assert(documentArchiveResult.items.length === 3, `expected 3 imported document/archive runtime fixture items, got ${documentArchiveResult.items.length}`);
+  assert(documentArchiveResult.items.length === 4, `expected 4 imported document/archive runtime fixture items, got ${documentArchiveResult.items.length}`);
   assert(documentArchiveResult.truncated === false, "document/archive runtime fixture import should not be truncated");
   assert(
     documentArchiveResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
@@ -2740,11 +4175,32 @@ try {
     "Python dependency runtime fixture import lost read-only verification copy",
   );
 
+  const appleManifestVariantResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [
+      packageSwiftPath,
+      podfilePath,
+      podfileLockPath,
+      pbxprojPath,
+      podspecPath,
+    ],
+    limit: 8,
+  });
+
+  assert(appleManifestVariantResult.items.length === 5, `expected 5 imported Apple package runtime fixture items, got ${appleManifestVariantResult.items.length}`);
+  assert(appleManifestVariantResult.truncated === false, "Apple package runtime fixture import should not be truncated");
+  assert(
+    appleManifestVariantResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "Apple package runtime fixture import lost read-only verification copy",
+  );
+
   const personalInfoResult = adapters.importChannelContext({
     adapterId: "file-input",
     workspacePath: workspace,
     paths: [
       emlPath,
+      emlxPath,
       mboxPath,
       vcardPath,
       icsPath,
@@ -2753,7 +4209,7 @@ try {
     limit: 8,
   });
 
-  assert(personalInfoResult.items.length === 5, `expected 5 imported personal-info runtime fixture items, got ${personalInfoResult.items.length}`);
+  assert(personalInfoResult.items.length === 6, `expected 6 imported personal-info runtime fixture items, got ${personalInfoResult.items.length}`);
   assert(personalInfoResult.truncated === false, "personal-info runtime fixture import should not be truncated");
   assert(
     personalInfoResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
@@ -2812,11 +4268,56 @@ try {
     "API/schema/container runtime fixture import lost read-only verification copy",
   );
 
+  const asyncApiResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [
+      asyncApiPath,
+    ],
+    limit: 2,
+  });
+
+  assert(asyncApiResult.items.length === 1, `expected 1 imported AsyncAPI runtime fixture item, got ${asyncApiResult.items.length}`);
+  assert(asyncApiResult.truncated === false, "AsyncAPI runtime fixture import should not be truncated");
+
+  const kubernetesManifestResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [
+      kubernetesManifestPath,
+    ],
+    limit: 2,
+  });
+
+  assert(kubernetesManifestResult.items.length === 1, `expected 1 imported Kubernetes manifest runtime fixture item, got ${kubernetesManifestResult.items.length}`);
+  assert(kubernetesManifestResult.truncated === false, "Kubernetes manifest runtime fixture import should not be truncated");
+  assert(
+    kubernetesManifestResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "Kubernetes manifest runtime fixture import lost read-only verification copy",
+  );
+
+  const iisWebConfigResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [
+      iisWebConfigPath,
+    ],
+    limit: 2,
+  });
+
+  assert(iisWebConfigResult.items.length === 1, `expected 1 imported IIS web.config runtime fixture item, got ${iisWebConfigResult.items.length}`);
+  assert(iisWebConfigResult.truncated === false, "IIS web.config runtime fixture import should not be truncated");
+  assert(
+    iisWebConfigResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "IIS web.config runtime fixture import lost read-only verification copy",
+  );
+
   const securityArtifactResult = adapters.importChannelContext({
     adapterId: "file-input",
     workspacePath: workspace,
     paths: [
       sarifPath,
+      sarifJsonPath,
       securityAuditPath,
       cyclonedxPath,
       spdxPath,
@@ -2831,7 +4332,7 @@ try {
     limit: 12,
   });
 
-  assert(securityArtifactResult.items.length === 11, `expected 11 imported security/SBOM/binary runtime fixture items, got ${securityArtifactResult.items.length}`);
+  assert(securityArtifactResult.items.length === 12, `expected 12 imported security/SBOM/binary runtime fixture items, got ${securityArtifactResult.items.length}`);
   assert(securityArtifactResult.truncated === false, "security/SBOM/binary runtime fixture import should not be truncated");
   assert(
     securityArtifactResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
@@ -2852,12 +4353,13 @@ try {
       dxfPath,
       mermaidPath,
       graphvizPath,
+      graphmlPath,
       scssPath,
     ],
     limit: 12,
   });
 
-  assert(opsDesignResult.items.length === 11, `expected 11 imported ops/design runtime fixture items, got ${opsDesignResult.items.length}`);
+  assert(opsDesignResult.items.length === 12, `expected 12 imported ops/design runtime fixture items, got ${opsDesignResult.items.length}`);
   assert(opsDesignResult.truncated === false, "ops/design runtime fixture import should not be truncated");
   assert(
     opsDesignResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
@@ -2933,6 +4435,117 @@ try {
     "data/network runtime fixture import lost read-only verification copy",
   );
 
+  const terminalRecordingResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [terminalRecordingPath],
+    limit: 1,
+  });
+
+  assert(terminalRecordingResult.items.length === 1, `expected 1 imported terminal recording runtime fixture item, got ${terminalRecordingResult.items.length}`);
+  assert(terminalRecordingResult.truncated === false, "terminal recording runtime fixture import should not be truncated");
+  assert(
+    terminalRecordingResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "terminal recording runtime fixture import lost read-only verification copy",
+  );
+
+  const databaseSchemaDslResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [
+      prismaPath,
+      dbmlPath,
+    ],
+    limit: 2,
+  });
+
+  assert(databaseSchemaDslResult.items.length === 2, `expected 2 imported database schema DSL runtime fixture items, got ${databaseSchemaDslResult.items.length}`);
+  assert(databaseSchemaDslResult.truncated === false, "database schema DSL runtime fixture import should not be truncated");
+  assert(
+    databaseSchemaDslResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "database schema DSL runtime fixture import lost read-only verification copy",
+  );
+
+  const devtoolsProfileResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [
+      cpuProfilePath,
+      heapSnapshotPath,
+    ],
+    limit: 2,
+  });
+
+  assert(devtoolsProfileResult.items.length === 2, `expected 2 imported DevTools/V8 profile runtime fixture items, got ${devtoolsProfileResult.items.length}`);
+  assert(devtoolsProfileResult.truncated === false, "DevTools/V8 profile runtime fixture import should not be truncated");
+  assert(
+    devtoolsProfileResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "DevTools/V8 profile runtime fixture import lost read-only verification copy",
+  );
+
+  const redisPersistenceResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [
+      redisRdbPath,
+      redisAofPath,
+    ],
+    limit: 2,
+  });
+
+  assert(redisPersistenceResult.items.length === 2, `expected 2 imported Redis persistence runtime fixture items, got ${redisPersistenceResult.items.length}`);
+  assert(redisPersistenceResult.truncated === false, "Redis persistence runtime fixture import should not be truncated");
+  assert(
+    redisPersistenceResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "Redis persistence runtime fixture import lost read-only verification copy",
+  );
+
+  const opsScheduleResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [
+      systemdServicePath,
+      cronSchedulePath,
+      supervisorConfigPath,
+    ],
+    limit: 3,
+  });
+
+  assert(opsScheduleResult.items.length === 3, `expected 3 imported ops schedule runtime fixture items, got ${opsScheduleResult.items.length}`);
+  assert(opsScheduleResult.truncated === false, "ops schedule runtime fixture import should not be truncated");
+  assert(
+    opsScheduleResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "ops schedule runtime fixture import lost read-only verification copy",
+  );
+
+  const netlogResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [netlogPath],
+    limit: 1,
+  });
+
+  assert(netlogResult.items.length === 1, `expected 1 imported NetLog runtime fixture item, got ${netlogResult.items.length}`);
+  assert(netlogResult.truncated === false, "NetLog runtime fixture import should not be truncated");
+  assert(
+    netlogResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "NetLog runtime fixture import lost read-only verification copy",
+  );
+
+  const otelResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [otelPath],
+    limit: 1,
+  });
+
+  assert(otelResult.items.length === 1, `expected 1 imported OpenTelemetry runtime fixture item, got ${otelResult.items.length}`);
+  assert(otelResult.truncated === false, "OpenTelemetry runtime fixture import should not be truncated");
+  assert(
+    otelResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "OpenTelemetry runtime fixture import lost read-only verification copy",
+  );
+
   const delimitedDataResult = adapters.importChannelContext({
     adapterId: "file-input",
     workspacePath: workspace,
@@ -2977,6 +4590,20 @@ try {
     "content/media runtime fixture import lost read-only verification copy",
   );
 
+  const opmlSubscriptionResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [opmlPath],
+    limit: 1,
+  });
+
+  assert(opmlSubscriptionResult.items.length === 1, `expected 1 imported OPML runtime fixture item, got ${opmlSubscriptionResult.items.length}`);
+  assert(opmlSubscriptionResult.truncated === false, "OPML runtime fixture import should not be truncated");
+  assert(
+    opmlSubscriptionResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "OPML runtime fixture import lost read-only verification copy",
+  );
+
   const fontContainerVariantResult = adapters.importChannelContext({
     adapterId: "file-input",
     workspacePath: workspace,
@@ -2999,12 +4626,13 @@ try {
     workspacePath: workspace,
     paths: [
       androidManifestPath,
+      androidLogcatPath,
       infoPlistPath,
     ],
-    limit: 4,
+    limit: 5,
   });
 
-  assert(mobileManifestResult.items.length === 2, `expected 2 imported mobile manifest runtime fixture items, got ${mobileManifestResult.items.length}`);
+  assert(mobileManifestResult.items.length === 3, `expected 3 imported mobile manifest runtime fixture items, got ${mobileManifestResult.items.length}`);
   assert(mobileManifestResult.truncated === false, "mobile manifest runtime fixture import should not be truncated");
   assert(
     mobileManifestResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
@@ -3033,6 +4661,8 @@ try {
     adapterId: "file-input",
     workspacePath: workspace,
     paths: [
+      wavPath,
+      mp3Path,
       flacPath,
       m4aPath,
       oggPath,
@@ -3040,11 +4670,30 @@ try {
     limit: 8,
   });
 
-  assert(audioResult.items.length === 3, `expected 3 imported audio runtime fixture items, got ${audioResult.items.length}`);
+  assert(audioResult.items.length === 5, `expected 5 imported audio runtime fixture items, got ${audioResult.items.length}`);
   assert(audioResult.truncated === false, "audio runtime fixture import should not be truncated");
   assert(
     audioResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
     "audio runtime fixture import lost read-only verification copy",
+  );
+
+  const imageColorResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [
+      pngColorPath,
+      jpegColorPath,
+      gifAnimationPath,
+      webpAnimationPath,
+    ],
+    limit: 6,
+  });
+
+  assert(imageColorResult.items.length === 4, `expected 4 imported image color/runtime fixture items, got ${imageColorResult.items.length}`);
+  assert(imageColorResult.truncated === false, "image color runtime fixture import should not be truncated");
+  assert(
+    imageColorResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "image color runtime fixture import lost read-only verification copy",
   );
 
   const packageSummary = summaryFor(result, "package.json");
@@ -3062,6 +4711,72 @@ try {
   assert(yarnrcSummary.includes("[redacted]") && !yarnrcSummary.includes("secret-yarn-token"), ".yarnrc.yml summary omitted token redaction evidence");
   assert(yarnrcSummary.includes("no npm, pnpm, Yarn, Bun, node command"), ".yarnrc.yml summary omitted no-package-manager safety copy");
 
+  const mcpConfigSummary = summaryFor(mcpConfigResult, "mcp-servers.json");
+  assert(mcpConfigSummary.includes("MCP server configuration preview"), "mcp-servers.json did not use MCP server config preview");
+  assert(mcpConfigSummary.includes("Servers declared: 3"), "mcp-servers.json summary omitted server count");
+  assert(mcpConfigSummary.includes("filesystem command=node"), "mcp-servers.json summary omitted stdio command evidence");
+  assert(mcpConfigSummary.includes("remoteDocs") && mcpConfigSummary.includes("transport=sse"), "mcp-servers.json summary omitted remote transport evidence");
+  assert(mcpConfigSummary.includes("MCP_API_TOKEN") && mcpConfigSummary.includes("SAFE_MODE"), "mcp-servers.json summary omitted env key evidence");
+  assert(mcpConfigSummary.includes("https://mcp.example.test/sse?token=[redacted]"), "mcp-servers.json summary omitted URL redaction evidence");
+  assert(mcpConfigSummary.includes("Local schema hints") && mcpConfigSummary.includes("brokenLegacy: missing command/url"), "mcp-servers.json summary omitted local schema hint evidence");
+  assert(mcpConfigSummary.includes("args is not an array") && mcpConfigSummary.includes("env is not an object"), "mcp-servers.json summary omitted MCP schema shape evidence");
+  assert(mcpConfigSummary.includes("unknown transport=named-pipe") && mcpConfigSummary.includes("disabled is not boolean"), "mcp-servers.json summary omitted MCP transport/disabled schema evidence");
+  assert(!mcpConfigSummary.includes("secret-mcp"), "mcp-servers.json summary leaked MCP secret values");
+  assert(mcpConfigSummary.includes("no stdio/server process was started"), "mcp-servers.json summary omitted no-runtime safety copy");
+
+  const vscodeSettingsSummary = summaryFor(vscodeConfigResult, "settings.json");
+  assert(vscodeSettingsSummary.includes("VS Code workspace config preview (VS Code settings.json"), "settings.json did not use VS Code config preview");
+  assert(vscodeSettingsSummary.includes("editor.formatOnSave") && vscodeSettingsSummary.includes("python.defaultInterpreterPath"), "settings.json summary omitted setting key evidence");
+  assert(!vscodeSettingsSummary.includes("secret-vscode-settings-token"), "settings.json summary leaked setting secret value");
+  assert(vscodeSettingsSummary.includes("no VS Code process, task/debug launch, extension install"), "settings.json summary omitted no-runtime safety copy");
+  assert(vscodeConfigResult.items.find((item) => item.title === "settings.json")?.mime === "application/vnd.code.settings+json", "settings.json MIME provenance is missing");
+
+  const vscodeTasksSummary = summaryFor(vscodeConfigResult, "tasks.json");
+  assert(vscodeTasksSummary.includes("VS Code workspace config preview (VS Code tasks.json"), "tasks.json did not use VS Code config preview");
+  assert(vscodeTasksSummary.includes("Runtime build task") && vscodeTasksSummary.includes("problemMatcher=$tsc"), "tasks.json summary omitted task/problem matcher evidence");
+  assert(vscodeTasksSummary.includes("runtimeTarget type=pickString"), "tasks.json summary omitted input evidence");
+  assert(vscodeTasksSummary.includes("token=[redacted]") && !vscodeTasksSummary.includes("secret-vscode-task-token"), "tasks.json summary omitted command redaction evidence");
+
+  const vscodeLaunchSummary = summaryFor(vscodeConfigResult, "launch.json");
+  assert(vscodeLaunchSummary.includes("Runtime renderer debug") && vscodeLaunchSummary.includes("type=node"), "launch.json summary omitted debug configuration evidence");
+  assert(vscodeLaunchSummary.includes("request=launch"), "launch.json summary omitted request evidence");
+
+  const vscodeExtensionsSummary = summaryFor(vscodeConfigResult, "extensions.json");
+  assert(vscodeExtensionsSummary.includes("ms-vscode.vscode-typescript-next"), "extensions.json summary omitted extension recommendation evidence");
+  assert(vscodeExtensionsSummary.includes("unwanted:[redacted]"), "extensions.json summary omitted unwanted extension redaction evidence");
+  assert(vscodeConfigResult.items.find((item) => item.title === "extensions.json")?.mime === "application/vnd.code.extensions+json", "extensions.json MIME provenance is missing");
+
+  const eslintSummary = summaryFor(jsToolingConfigResult, ".eslintrc.json");
+  assert(eslintSummary.includes("JS/TS tooling config preview (ESLint"), ".eslintrc.json did not use JS/TS tooling config preview");
+  assert(eslintSummary.includes("extends key") && eslintSummary.includes("rules key"), ".eslintrc.json summary omitted ESLint metadata evidence");
+  assert(eslintSummary.includes("no-console") && eslintSummary.includes("@typescript-eslint/no-explicit-any"), ".eslintrc.json summary omitted rule evidence");
+  assert(!eslintSummary.includes("secret-eslint-token"), ".eslintrc.json summary leaked sensitive rule value");
+  assert(eslintSummary.includes("no node/npm/pnpm/Yarn/Bun command, lint/test/format runner"), ".eslintrc.json summary omitted no-runner safety copy");
+  assert(jsToolingConfigResult.items.every((item) => item.mime === "application/vnd.drsai.js-tooling-config"), "JS/TS tooling config MIME provenance is missing");
+
+  const prettierSummary = summaryFor(jsToolingConfigResult, ".prettierrc.yaml");
+  assert(prettierSummary.includes("JS/TS tooling config preview (Prettier"), ".prettierrc.yaml did not use JS/TS tooling config preview");
+  assert(prettierSummary.includes("printWidth") && prettierSummary.includes("singleQuote") && prettierSummary.includes("prettier-plugin-tailwindcss"), ".prettierrc.yaml summary omitted formatter metadata evidence");
+  assert(!prettierSummary.includes("secret-prettier-token"), ".prettierrc.yaml summary leaked token value");
+
+  const biomeSummary = summaryFor(jsToolingConfigResult, "biome.jsonc");
+  assert(biomeSummary.includes("JS/TS tooling config preview (Biome"), "biome.jsonc did not use JS/TS tooling config preview");
+  assert(biomeSummary.includes("formatter key") && biomeSummary.includes("linter key"), "biome.jsonc summary omitted Biome key evidence");
+  assert(biomeSummary.includes("noDebugger"), "biome.jsonc summary omitted linter rule evidence");
+  assert(!biomeSummary.includes("secret-biome-token"), "biome.jsonc summary leaked token value");
+
+  const vitestSummary = summaryFor(jsToolingConfigResult, "vitest.config.ts");
+  assert(vitestSummary.includes("JS/TS tooling config preview (Vitest"), "vitest.config.ts did not use JS/TS tooling config preview");
+  assert(vitestSummary.includes("environment: 'jsdom'") && vitestSummary.includes("coverage"), "vitest.config.ts summary omitted test environment/coverage evidence");
+  assert(vitestSummary.includes("environment-variable reference") && vitestSummary.includes("module import reference"), "vitest.config.ts summary omitted static risk cues");
+  assert(vitestSummary.includes("config module import, environment loading, plugin resolution"), "vitest.config.ts summary omitted no-import/no-env safety copy");
+
+  const playwrightSummary = summaryFor(jsToolingConfigResult, "playwright.config.ts");
+  assert(playwrightSummary.includes("JS/TS tooling config preview (Playwright"), "playwright.config.ts did not use JS/TS tooling config preview");
+  assert(playwrightSummary.includes("project=chromium") && playwrightSummary.includes("project=webkit"), "playwright.config.ts summary omitted project evidence");
+  assert(playwrightSummary.includes("webServer declaration") && playwrightSummary.includes("Playwright browser launch"), "playwright.config.ts summary omitted webServer/no-browser evidence");
+  assert(playwrightSummary.includes("token=[redacted]") && !playwrightSummary.includes("secret-playwright-token"), "playwright.config.ts summary omitted token redaction evidence");
+
   const coverageSummary = summaryFor(result, "coverage.xml");
   assert(coverageSummary.includes("Coverage report preview"), "coverage.xml did not use coverage report preview");
   assert(coverageSummary.includes("Line coverage"), "coverage.xml summary omitted coverage rates");
@@ -3073,6 +4788,18 @@ try {
   assert(lcovSummary.includes("src/chatbar/runtime.ts") && lcovSummary.includes("src/chatbar/[redacted].ts"), "lcov.info summary omitted file evidence or secret redaction");
   assert(!lcovSummary.includes("secret-token"), "lcov.info summary leaked secret-like path segment");
   assert(lcovSummary.includes("no test runner, coverage tool"), "lcov.info summary omitted no-runner safety copy");
+  const istanbulCoverageSummary = summaryFor(coverageReportResult, "coverage-final.json");
+  assert(istanbulCoverageSummary.includes("Coverage report preview (Istanbul JSON"), "coverage-final.json did not use Istanbul JSON coverage report preview");
+  assert(istanbulCoverageSummary.includes("50% (2/4)") && istanbulCoverageSummary.includes("75% (3/4)"), "coverage-final.json summary omitted Istanbul statement/branch counts");
+  assert(istanbulCoverageSummary.includes("src/chatbar/istanbul.ts") && istanbulCoverageSummary.includes("src/chatbar/[redacted].ts"), "coverage-final.json summary omitted file evidence or secret redaction");
+  assert(!istanbulCoverageSummary.includes("secret-token"), "coverage-final.json summary leaked secret-like path segment");
+  assert(istanbulCoverageSummary.includes("no test runner, coverage tool"), "coverage-final.json summary omitted no-runner safety copy");
+  const istanbulSummaryJson = summaryFor(coverageReportResult, "coverage-summary.json");
+  assert(istanbulSummaryJson.includes("Coverage report preview (Istanbul JSON Summary"), "coverage-summary.json did not use Istanbul summary coverage preview");
+  assert(istanbulSummaryJson.includes("75% (6/8)") && istanbulSummaryJson.includes("60% (3/5)"), "coverage-summary.json summary omitted total line/branch counts");
+  assert(istanbulSummaryJson.includes("src/chatbar/summary.ts") && istanbulSummaryJson.includes("src/chatbar/[redacted].ts"), "coverage-summary.json summary omitted file evidence or secret redaction");
+  assert(!istanbulSummaryJson.includes("secret-token"), "coverage-summary.json summary leaked secret-like path segment");
+  assert(istanbulSummaryJson.includes("no test runner, coverage tool"), "coverage-summary.json summary omitted no-runner safety copy");
   const cloverSummary = summaryFor(coverageReportResult, "clover.xml");
   assert(cloverSummary.includes("Coverage report preview (Clover XML"), "clover.xml did not use Clover coverage report preview");
   assert(cloverSummary.includes("70% (7/10)") && cloverSummary.includes("75% (3/4)"), "clover.xml summary omitted Clover statement/conditional coverage counts");
@@ -3080,13 +4807,63 @@ try {
   assert(cloverSummary.includes("src/chatbar/runtime.ts") && cloverSummary.includes("src/chatbar/[redacted].ts"), "clover.xml summary omitted file evidence or secret redaction");
   assert(!cloverSummary.includes("secret-token"), "clover.xml summary leaked secret-like path segment");
   assert(cloverSummary.includes("no test runner, coverage tool"), "clover.xml summary omitted no-runner safety copy");
+  const jacocoSummary = summaryFor(coverageReportResult, "jacoco.xml");
+  assert(jacocoSummary.includes("Coverage report preview (JaCoCo XML"), "jacoco.xml did not use JaCoCo coverage report preview");
+  assert(jacocoSummary.includes("75% (9/12)") && jacocoSummary.includes("75% (3/4)"), "jacoco.xml summary omitted JaCoCo line/branch coverage counts");
+  assert(jacocoSummary.includes("chatbar/runtime"), "jacoco.xml summary omitted package evidence");
+  assert(jacocoSummary.includes("RuntimeCoverage.java") && jacocoSummary.includes("[redacted].java"), "jacoco.xml summary omitted file evidence or secret redaction");
+  assert(!jacocoSummary.includes("secret-token"), "jacoco.xml summary leaked secret-like path segment");
+  assert(jacocoSummary.includes("no test runner, coverage tool"), "jacoco.xml summary omitted no-runner safety copy");
 
   const junitSummary = summaryFor(testReportResult, "runtime.junit.xml");
   assert(junitSummary.includes("Test report preview (JUnit XML"), "runtime.junit.xml did not use JUnit test report preview");
   assert(junitSummary.includes("Cases: 3; failures: 1; errors: 0; skipped: 1"), "runtime.junit.xml summary omitted case/failure counts");
   assert(junitSummary.includes("RuntimeFixtureSuite"), "runtime.junit.xml summary omitted suite evidence");
   assert(junitSummary.includes("RuntimeFixture.fails [failure]"), `runtime.junit.xml summary omitted failure preview evidence: ${junitSummary}`);
+  assert(junitSummary.includes("JUnit properties: browser=chromium, api.token=[redacted]"), "runtime.junit.xml summary omitted property detail evidence");
+  assert(junitSummary.includes("JUnit attachment cues: artifacts/runtime-failure.png, artifacts/[redacted].zip"), "runtime.junit.xml summary omitted attachment cue evidence");
+  assert(!junitSummary.includes("secret-junit-token") && !junitSummary.includes("secret-token-trace"), "runtime.junit.xml summary leaked JUnit secret detail values");
   assert(junitSummary.includes("no test runner, build command"), "runtime.junit.xml summary omitted no-runner safety copy");
+
+  const jmeterXmlSummary = summaryFor(testReportResult, "runtime.jmeter.xml");
+  assert(jmeterXmlSummary.includes("Test report preview (JMeter XML"), "runtime.jmeter.xml did not use JMeter XML test report preview");
+  assert(jmeterXmlSummary.includes("Samples: 3; passed: 2; non-passing: 1"), "runtime.jmeter.xml summary omitted JMeter XML sample counts");
+  assert(jmeterXmlSummary.includes("Runtime JMeter Thread Group"), "runtime.jmeter.xml summary omitted thread group evidence");
+  assert(jmeterXmlSummary.includes("POST /provider [500]"), "runtime.jmeter.xml summary omitted failing sample evidence");
+  assert(jmeterXmlSummary.includes("JMeter assertion cues: Runtime provider SLA: JMeter assertion token=[redacted]"), "runtime.jmeter.xml summary omitted assertion detail evidence");
+  assert(jmeterXmlSummary.includes("JMeter response-data cues: Runtime response body token=[redacted]"), "runtime.jmeter.xml summary omitted response data detail evidence");
+  assert(!jmeterXmlSummary.includes("secret-jmeter-token") && !jmeterXmlSummary.includes("secret-jmeter-assertion") && !jmeterXmlSummary.includes("secret-jmeter-response"), "runtime.jmeter.xml summary leaked JMeter diagnostic secret");
+  assert(jmeterXmlSummary.includes("no test runner, build command"), "runtime.jmeter.xml summary omitted no-runner safety copy");
+
+  const jmeterCsvSummary = summaryFor(testReportResult, "runtime.jmeter.csv");
+  assert(jmeterCsvSummary.includes("Test report preview (JMeter JTL/CSV"), "runtime.jmeter.csv did not use JMeter CSV test report preview");
+  assert(jmeterCsvSummary.includes("Samples: 3; passed: 2; non-passing: 1"), "runtime.jmeter.csv summary omitted JMeter CSV sample counts");
+  assert(jmeterCsvSummary.includes("Columns: timeStamp, elapsed, label"), "runtime.jmeter.csv summary omitted column evidence");
+  assert(jmeterCsvSummary.includes("CSV POST /provider [503]"), "runtime.jmeter.csv summary omitted failing CSV sample evidence");
+  assert(jmeterCsvSummary.includes("JMeter thread cues: Runtime JMeter CSV Thread Group"), "runtime.jmeter.csv summary omitted thread detail evidence");
+  assert(jmeterCsvSummary.includes("JMeter CSV failure details: CSV assertion token=[redacted]"), "runtime.jmeter.csv summary omitted CSV failure detail evidence");
+  assert(!jmeterCsvSummary.includes("secret-jmeter-csv-token") && !jmeterCsvSummary.includes("secret-jmeter-csv-assertion"), "runtime.jmeter.csv summary leaked JMeter CSV diagnostic secret");
+  assert(jmeterCsvSummary.includes("no test runner, build command"), "runtime.jmeter.csv summary omitted no-runner safety copy");
+
+  const nunitSummary = summaryFor(testReportResult, "runtime.nunit.xml");
+  assert(nunitSummary.includes("Test report preview (NUnit XML"), "runtime.nunit.xml did not use NUnit XML test report preview");
+  assert(nunitSummary.includes("Cases: 3; passed: 1; non-passing: 1; skipped: 1"), "runtime.nunit.xml summary omitted NUnit outcome counts");
+  assert(nunitSummary.includes("Runtime.NUnit"), "runtime.nunit.xml summary omitted suite evidence");
+  assert(nunitSummary.includes("RuntimeNUnitFail"), "runtime.nunit.xml summary omitted failing case evidence");
+  assert(nunitSummary.includes("NUnit properties: target.framework=net8.0, api.token=[redacted]"), "runtime.nunit.xml summary omitted NUnit property detail evidence");
+  assert(nunitSummary.includes("NUnit attachment cues: artifacts/[redacted].log"), "runtime.nunit.xml summary omitted NUnit attachment detail evidence");
+  assert(!nunitSummary.includes("secret-nunit-token") && !nunitSummary.includes("secret-nunit-property"), "runtime.nunit.xml summary leaked NUnit diagnostic secret");
+  assert(nunitSummary.includes("no test runner, build command"), "runtime.nunit.xml summary omitted no-runner safety copy");
+
+  const xunitSummary = summaryFor(testReportResult, "runtime.xunit.xml");
+  assert(xunitSummary.includes("Test report preview (xUnit XML"), "runtime.xunit.xml did not use xUnit XML test report preview");
+  assert(xunitSummary.includes("Cases: 3; passed: 1; non-passing: 1; skipped: 1"), "runtime.xunit.xml summary omitted xUnit outcome counts");
+  assert(xunitSummary.includes("Runtime xUnit Collection"), "runtime.xunit.xml summary omitted collection evidence");
+  assert(xunitSummary.includes("RuntimeXunitFail"), "runtime.xunit.xml summary omitted failing case evidence");
+  assert(xunitSummary.includes("xUnit properties: runtime=win11, api.token=[redacted]"), "runtime.xunit.xml summary omitted xUnit property detail evidence");
+  assert(xunitSummary.includes("xUnit attachment cues: artifacts/[redacted].zip"), "runtime.xunit.xml summary omitted xUnit attachment detail evidence");
+  assert(!xunitSummary.includes("secret-xunit-token") && !xunitSummary.includes("secret-xunit-property"), "runtime.xunit.xml summary leaked xUnit diagnostic secret");
+  assert(xunitSummary.includes("no test runner, build command"), "runtime.xunit.xml summary omitted no-runner safety copy");
 
   const trxSummary = summaryFor(testReportResult, "runtime.trx");
   assert(trxSummary.includes("Test report preview (Visual Studio TRX"), "runtime.trx did not use TRX test report preview");
@@ -3110,6 +4887,65 @@ try {
   assert(playwrightJsonSummary.includes("handles failed stream [failed]"), "runtime.playwright.json summary omitted failing JSON test evidence");
   assert(!playwrightJsonSummary.includes("secret-json-token"), "runtime.playwright.json summary leaked JSON diagnostic secret");
   assert(playwrightJsonSummary.includes("no test runner, build command"), "runtime.playwright.json summary omitted no-runner safety copy");
+
+  const cypressJsonSummary = summaryFor(testReportResult, "runtime.cypress-results.json");
+  assert(cypressJsonSummary.includes("Test report preview (Cypress JSON"), "runtime.cypress-results.json did not use Cypress JSON test report preview");
+  assert(cypressJsonSummary.includes("Cases: 4; passed: 2; non-passing: 1; skipped: 1"), "runtime.cypress-results.json summary omitted Cypress outcome counts");
+  assert(cypressJsonSummary.includes("cypress/e2e/runtime.cy.ts"), "runtime.cypress-results.json summary omitted spec evidence");
+  assert(cypressJsonSummary.includes("Runtime Cypress Suite > blocks failed provider send [failed]"), "runtime.cypress-results.json summary omitted failing Cypress test evidence");
+  assert(!cypressJsonSummary.includes("secret-cypress-token"), "runtime.cypress-results.json summary leaked Cypress diagnostic secret");
+  assert(cypressJsonSummary.includes("no test runner, build command"), "runtime.cypress-results.json summary omitted no-runner safety copy");
+
+  const mochaJsonSummary = summaryFor(testReportResult, "runtime.mocha.json");
+  assert(mochaJsonSummary.includes("Test report preview (Mocha JSON"), "runtime.mocha.json did not use Mocha JSON test report preview");
+  assert(mochaJsonSummary.includes("Cases: 4; passed: 2; non-passing: 1; skipped: 1"), "runtime.mocha.json summary omitted Mocha outcome counts");
+  assert(mochaJsonSummary.includes("Runtime Mocha Suite"), "runtime.mocha.json summary omitted suite evidence");
+  assert(mochaJsonSummary.includes("Runtime Mocha Suite blocks failed provider send [failed]"), "runtime.mocha.json summary omitted failing Mocha test evidence");
+  assert(!mochaJsonSummary.includes("secret-mocha-token"), "runtime.mocha.json summary leaked Mocha diagnostic secret");
+  assert(mochaJsonSummary.includes("no test runner, build command"), "runtime.mocha.json summary omitted no-runner safety copy");
+
+  const allureJsonSummary = summaryFor(testReportResult, "runtime.allure-result.json");
+  assert(allureJsonSummary.includes("Test report preview (Allure JSON"), "runtime.allure-result.json did not use Allure JSON test report preview");
+  assert(allureJsonSummary.includes("Cases: 1; passed: 0; non-passing: 1; skipped: 0"), "runtime.allure-result.json summary omitted Allure outcome counts");
+  assert(allureJsonSummary.includes("Runtime Allure Suite"), "runtime.allure-result.json summary omitted suite evidence");
+  assert(allureJsonSummary.includes("Runtime Allure Suite blocks failed provider send [failed]"), "runtime.allure-result.json summary omitted failing Allure test evidence");
+  assert(allureJsonSummary.includes("Allure labels: parentSuite=Runtime Allure Parent") && allureJsonSummary.includes("api.token=[redacted]"), "runtime.allure-result.json summary omitted Allure label detail evidence");
+  assert(allureJsonSummary.includes("Allure links: runtime issue=https://tracker.example.test/DRSAI-42?token=[redacted]"), "runtime.allure-result.json summary omitted Allure link detail evidence");
+  assert(allureJsonSummary.includes("Allure attachment cues: local screenshot -> artifacts/[redacted].png (image/png)"), "runtime.allure-result.json summary omitted Allure attachment cue evidence");
+  assert(allureJsonSummary.includes("Allure steps: Attach local context [passed], Avoid provider send [failed]"), "runtime.allure-result.json summary omitted Allure step detail evidence");
+  assert(allureJsonSummary.includes("Allure status trace cue: stack trace token=[redacted]"), "runtime.allure-result.json summary omitted Allure status trace cue evidence");
+  assert(!allureJsonSummary.includes("secret-allure-token") && !allureJsonSummary.includes("secret-allure-trace") && !allureJsonSummary.includes("secret-allure-label-token") && !allureJsonSummary.includes("secret-allure-link-token") && !allureJsonSummary.includes("secret-allure-attachment"), "runtime.allure-result.json summary leaked Allure diagnostic secret");
+  assert(allureJsonSummary.includes("no test runner, build command"), "runtime.allure-result.json summary omitted no-runner safety copy");
+
+  const slackExportSummary = summaryFor(chatExportResult, "slack-export.json");
+  assert(slackExportSummary.includes("Chat export JSON preview (Slack export JSON"), "slack-export.json did not use Slack chat export preview");
+  assert(slackExportSummary.includes("Messages in bounded preview: 2"), "slack-export.json summary omitted message count evidence");
+  assert(slackExportSummary.includes("runtime-slack-channel") && slackExportSummary.includes("U12345"), "slack-export.json summary omitted channel or sender evidence");
+  assert(slackExportSummary.includes("Slack runtime export message"), "slack-export.json summary omitted message sample evidence");
+  assert(!slackExportSummary.includes("secret-slack-export-token"), "slack-export.json summary leaked Slack export secret");
+  assert(slackExportSummary.includes("no Slack/Teams/ChatGPT/OpenAI connector login"), "slack-export.json summary omitted no-provider safety copy");
+
+  const teamsExportSummary = summaryFor(chatExportResult, "teams-export.json");
+  assert(teamsExportSummary.includes("Chat export JSON preview (Microsoft Teams export JSON"), "teams-export.json did not use Teams chat export preview");
+  assert(teamsExportSummary.includes("Runtime Teams Channel") && teamsExportSummary.includes("Ada Reviewer"), "teams-export.json summary omitted Teams channel or sender evidence");
+  assert(teamsExportSummary.includes("Teams runtime export message"), "teams-export.json summary omitted Teams message evidence");
+  assert(!teamsExportSummary.includes("secret-teams-export-token"), "teams-export.json summary leaked Teams export secret");
+  assert(teamsExportSummary.includes("no Slack/Teams/ChatGPT/OpenAI connector login"), "teams-export.json summary omitted no-provider safety copy");
+
+  const discordExportSummary = summaryFor(chatExportResult, "discord-export.json");
+  assert(discordExportSummary.includes("Chat export JSON preview (Discord export JSON"), "discord-export.json did not use Discord chat export preview");
+  assert(discordExportSummary.includes("Runtime Discord Guild") || discordExportSummary.includes("runtime-discord-channel"), "discord-export.json summary omitted Discord guild or channel evidence");
+  assert(discordExportSummary.includes("Discord Reviewer"), "discord-export.json summary omitted Discord author evidence");
+  assert(discordExportSummary.includes("Discord runtime export message"), "discord-export.json summary omitted Discord message evidence");
+  assert(!discordExportSummary.includes("secret-discord-export-token"), "discord-export.json summary leaked Discord export secret");
+  assert(discordExportSummary.includes("no Discord connector login"), "discord-export.json summary omitted no-Discord-provider safety copy");
+
+  const chatgptExportSummary = summaryFor(chatExportResult, "chatgpt-conversations.json");
+  assert(chatgptExportSummary.includes("Chat export JSON preview (ChatGPT conversations JSON"), "chatgpt-conversations.json did not use ChatGPT conversations preview");
+  assert(chatgptExportSummary.includes("Runtime ChatGPT Conversation") && chatgptExportSummary.includes("assistant"), "chatgpt-conversations.json summary omitted conversation or role evidence");
+  assert(chatgptExportSummary.includes("ChatGPT export prompt"), "chatgpt-conversations.json summary omitted ChatGPT message evidence");
+  assert(!chatgptExportSummary.includes("secret-chatgpt-export-token"), "chatgpt-conversations.json summary leaked ChatGPT export secret");
+  assert(chatgptExportSummary.includes("no Slack/Teams/ChatGPT/OpenAI connector login"), "chatgpt-conversations.json summary omitted no-provider safety copy");
 
   const checkstyleSummary = summaryFor(testReportResult, "runtime.checkstyle.xml");
   assert(checkstyleSummary.includes("Static analysis XML report preview (Checkstyle XML"), "runtime.checkstyle.xml did not use static analysis XML preview");
@@ -3166,6 +5002,30 @@ try {
   assert(!batchSummary.includes("secret-batch-token"), "runtime.cmd summary leaked secret-shaped value");
   assert(batchSummary.includes("no cmd.exe process, batch script execution"), "runtime.cmd summary omitted no-cmd runtime safety copy");
 
+  const texSummary = summaryFor(latexRuntimeResult, "paper.tex");
+  assert(texSummary.includes("LaTeX context preview (TeX/LaTeX document"), "paper.tex did not use LaTeX context preview");
+  assert(texSummary.includes("documentclass=article") && texSummary.includes("package=amsmath") && texSummary.includes("package=graphicx"), "paper.tex summary omitted document metadata evidence");
+  assert(texSummary.includes("section=Runtime Method") && texSummary.includes("input=sections/results") && texSummary.includes("includegraphics=figures/runtime-plot.png"), "paper.tex summary omitted structure/include evidence");
+  assert(texSummary.includes("label=sec:runtime") && texSummary.includes("cite=runtime2026") && texSummary.includes("ref=eq:runtime"), "paper.tex summary omitted reference evidence");
+  assert(texSummary.includes("environment=equation"), "paper.tex summary omitted formula environment evidence");
+  assert(texSummary.includes("addbibresource=references.bib"), "paper.tex summary omitted bibliography resource evidence");
+  assert(!texSummary.includes("secret-latex-comment-token"), "paper.tex summary leaked LaTeX comment secret");
+  assert(texSummary.includes("no latexmk/pdflatex/xelatex/lualatex/bibtex/biber command"), "paper.tex summary omitted no-TeX-runtime safety copy");
+
+  const bibSummary = summaryFor(latexRuntimeResult, "references.bib");
+  assert(bibSummary.includes("LaTeX context preview (BibTeX bibliography"), "references.bib did not use BibTeX context preview");
+  assert(bibSummary.includes("article:runtime2026") && bibSummary.includes("title=Runtime Fixture for Local LaTeX Context") && bibSummary.includes("year=2026"), "references.bib summary omitted entry/title/year evidence");
+  assert(bibSummary.includes("author=Ada Reviewer and Grace Builder"), "references.bib summary omitted author evidence");
+  assert(!bibSummary.includes("secret-bib-token"), "references.bib summary leaked BibTeX secret");
+  assert(bibSummary.includes("no latexmk/pdflatex/xelatex/lualatex/bibtex/biber command"), "references.bib summary omitted no-BibTeX-runtime safety copy");
+
+  const latexmkSummary = summaryFor(latexRuntimeResult, "latexmkrc");
+  assert(latexmkSummary.includes("LaTeX context preview (latexmk configuration"), "latexmkrc did not use LaTeX context preview");
+  assert(latexmkSummary.includes("setting=pdf_mode") && latexmkSummary.includes("setting=pdflatex") && latexmkSummary.includes("setting=bibtex"), "latexmkrc summary omitted setting evidence");
+  assert(latexmkSummary.includes("latexmk command/runtime setting"), "latexmkrc summary omitted runtime risk cue");
+  assert(!latexmkSummary.includes("secret-latexmk-token"), "latexmkrc summary leaked latexmk secret");
+  assert(latexmkSummary.includes("no latexmk/pdflatex/xelatex/lualatex/bibtex/biber command"), "latexmkrc summary omitted no-TeX-runtime safety copy");
+
   const codeownersSummary = summaryFor(repositoryGovernanceResult, "CODEOWNERS");
   assert(codeownersSummary.includes("Repository governance file preview"), "CODEOWNERS did not use repository governance preview");
   assert(codeownersSummary.includes("CODEOWNERS ownership rules"), "CODEOWNERS summary omitted governance format evidence");
@@ -3188,6 +5048,20 @@ try {
   assert(gitignoreSummary.includes("node_modules/") && gitignoreSummary.includes("release/"), ".gitignore summary omitted ignore pattern evidence");
   assert(gitignoreSummary.includes("filesystem mutation"), ".gitignore summary omitted no-mutation safety copy");
 
+  const gitmodulesSummary = summaryFor(repositoryGovernanceResult, ".gitmodules");
+  assert(gitmodulesSummary.includes("Git submodule mapping"), ".gitmodules summary omitted submodule format evidence");
+  assert(gitmodulesSummary.includes("runtime-tools: path=vendor/runtime-tools"), ".gitmodules summary omitted submodule path evidence");
+  assert(gitmodulesSummary.includes("branch=main") && gitmodulesSummary.includes("update=checkout") && gitmodulesSummary.includes("shallow=true"), ".gitmodules summary omitted submodule option evidence");
+  assert(gitmodulesSummary.includes("token=[redacted]") && !gitmodulesSummary.includes("secret-gitmodules-token"), ".gitmodules summary leaked token-like URL value");
+  assert(gitmodulesSummary.includes("no git command"), ".gitmodules summary omitted no-git safety copy");
+
+  const mailmapSummary = summaryFor(repositoryGovernanceResult, ".mailmap");
+  assert(mailmapSummary.includes("Git mailmap identity mapping"), ".mailmap summary omitted mailmap format evidence");
+  assert(mailmapSummary.includes("Runtime Canonical") && mailmapSummary.includes("Runtime Alias"), ".mailmap summary omitted identity mapping evidence");
+  assert(mailmapSummary.includes("<[redacted]@example.test>"), ".mailmap summary omitted email redaction evidence");
+  assert(!mailmapSummary.includes("canonical@example.test") && !mailmapSummary.includes("alias@example.test"), ".mailmap summary leaked raw email values");
+  assert(mailmapSummary.includes("no git command"), ".mailmap summary omitted no-git safety copy");
+
   const licenseSummary = summaryFor(repositoryGovernanceResult, "LICENSE");
   assert(licenseSummary.includes("license text"), "LICENSE summary omitted license format evidence");
   assert(licenseSummary.includes("License cues: MIT"), "LICENSE summary omitted MIT cue evidence");
@@ -3206,6 +5080,19 @@ try {
   assert(!dotenvSummary.includes("secret-env-token"), ".env.runtime summary leaked sensitive token value");
   assert(!dotenvSummary.includes("secret-env-query"), ".env.runtime summary leaked token-like URL value");
   assert(dotenvSummary.includes("no command execution, environment loading, secret lookup, network call, or provider send"), ".env.runtime summary omitted no-environment-loading safety copy");
+
+  const envrcSummary = summaryFor(configRuntimeResult, ".envrc");
+  assert(envrcSummary.includes("direnv .envrc preview"), ".envrc did not use direnv preview");
+  assert(envrcSummary.includes("RUNTIME_ENV") && envrcSummary.includes("API_TOKEN"), ".envrc summary omitted exported key evidence");
+  assert(envrcSummary.includes("dotenv targets: .env.runtime, .env.local"), ".envrc summary omitted dotenv target evidence");
+  assert(envrcSummary.includes("use directives: node 22"), ".envrc summary omitted use directive evidence");
+  assert(envrcSummary.includes("layout directives: python .venv"), ".envrc summary omitted layout directive evidence");
+  assert(envrcSummary.includes("watch targets: pyproject.toml"), ".envrc summary omitted watch target evidence");
+  assert(envrcSummary.includes("source targets: .env.shared"), ".envrc summary omitted source target evidence");
+  assert(envrcSummary.includes("network download/request") && envrcSummary.includes("dynamic sourcing/execution"), ".envrc summary omitted static risk cue evidence");
+  assert(!envrcSummary.includes("secret-envrc-token"), ".envrc summary leaked sensitive token value");
+  assert(!envrcSummary.includes("secret-envrc-query"), ".envrc summary leaked token-like URL value");
+  assert(envrcSummary.includes("direnv was not executed") && envrcSummary.includes("dotenv/source targets were not opened"), ".envrc summary omitted no-direnv/no-source safety copy");
 
   const hdf5Summary = summaryFor(result, "sample.h5");
   assert(hdf5Summary.includes("Scientific data container preview"), "sample.h5 did not use scientific container preview");
@@ -3305,6 +5192,15 @@ try {
   assert(requirementsSummary.includes("pytest"), "requirements-dev.txt summary omitted package evidence");
   assert(requirementsSummary.includes("no Python interpreter"), "requirements-dev.txt summary omitted no-Python safety copy");
 
+  const constraintsSummary = summaryFor(constraintsRuntimeResult, "constraints-runtime.txt");
+  assert(constraintsSummary.includes("Python dependency manifest preview"), "constraints-runtime.txt did not use Python dependency manifest preview");
+  assert(constraintsSummary.includes("constraints.txt"), "constraints-runtime.txt summary omitted constraints format evidence");
+  assert(constraintsSummary.includes("requests") && constraintsSummary.includes("httpx"), "constraints-runtime.txt summary omitted package evidence");
+  assert(constraintsSummary.includes("Dependency groups: constraints"), "constraints-runtime.txt summary omitted constraints group evidence");
+  assert(constraintsSummary.includes("-c base-constraints.txt"), "constraints-runtime.txt summary omitted nested constraint hint evidence");
+  assert(!constraintsSummary.includes("secret-constraints-token"), "constraints-runtime.txt summary leaked token-like index URL value");
+  assert(constraintsSummary.includes("no Python interpreter"), "constraints-runtime.txt summary omitted no-Python safety copy");
+
   const packageLockSummary = summaryFor(lockfileResult, "package-lock.json");
   assert(packageLockSummary.includes("Dependency lockfile preview"), "package-lock.json did not use dependency lockfile preview");
   assert(packageLockSummary.includes("Ecosystem: npm"), "package-lock.json summary omitted npm ecosystem evidence");
@@ -3362,6 +5258,28 @@ try {
   assert(!azurePipelinesSummary.includes("secret-ci-token"), "azure-pipelines.yml summary leaked CI token-like value");
   assert(azurePipelinesSummary.includes("no CI runner"), "azure-pipelines.yml summary omitted no-runner safety copy");
 
+  const bitbucketPipelinesSummary = summaryFor(ciWorkflowResult, "bitbucket-pipelines.yml");
+  assert(bitbucketPipelinesSummary.includes("CI/CD workflow preview (Bitbucket Pipelines)"), "bitbucket-pipelines.yml did not use Bitbucket workflow preview");
+  assert(bitbucketPipelinesSummary.includes("default") && bitbucketPipelinesSummary.includes("branches"), "bitbucket-pipelines.yml summary omitted pipeline trigger evidence");
+  assert(bitbucketPipelinesSummary.includes("node:22"), "bitbucket-pipelines.yml summary omitted image evidence");
+  assert(!bitbucketPipelinesSummary.includes("secret-ci-token"), "bitbucket-pipelines.yml summary leaked CI token-like value");
+  assert(bitbucketPipelinesSummary.includes("no CI runner"), "bitbucket-pipelines.yml summary omitted no-runner safety copy");
+
+  const circleCiSummary = summaryFor(ciWorkflowResult, "config.yml");
+  assert(circleCiSummary.includes("CI/CD workflow preview (CircleCI)"), ".circleci/config.yml did not use CircleCI workflow preview");
+  assert(circleCiSummary.includes("runtime"), ".circleci/config.yml summary omitted workflow trigger evidence");
+  assert(circleCiSummary.includes("runtime-circle"), ".circleci/config.yml summary omitted job evidence");
+  assert(circleCiSummary.includes("cimg/node:22.0"), ".circleci/config.yml summary omitted docker image evidence");
+  assert(!circleCiSummary.includes("secret-ci-token"), ".circleci/config.yml summary leaked CI token-like value");
+  assert(circleCiSummary.includes("no CI runner"), ".circleci/config.yml summary omitted no-runner safety copy");
+
+  const buildkitePipelineSummary = summaryFor(ciWorkflowResult, "pipeline.yml");
+  assert(buildkitePipelineSummary.includes("CI/CD workflow preview (Buildkite)"), ".buildkite/pipeline.yml did not use Buildkite workflow preview");
+  assert(buildkitePipelineSummary.includes("runtime-buildkite"), ".buildkite/pipeline.yml summary omitted label evidence");
+  assert(buildkitePipelineSummary.includes("docker#v5.11.0"), ".buildkite/pipeline.yml summary omitted plugin evidence");
+  assert(!buildkitePipelineSummary.includes("secret-ci-token"), ".buildkite/pipeline.yml summary leaked CI token-like value");
+  assert(buildkitePipelineSummary.includes("no CI runner"), ".buildkite/pipeline.yml summary omitted no-runner safety copy");
+
   const pdfSummary = summaryFor(documentArchiveResult, "fixture.pdf");
   assert(pdfSummary.includes("PDF metadata preview"), "fixture.pdf did not use PDF preview");
   assert(pdfSummary.includes("Runtime Fixture PDF"), "fixture.pdf summary omitted PDF metadata evidence");
@@ -3373,6 +5291,16 @@ try {
   assert(zipSummary.includes("reports/summary.txt"), "fixture.zip summary omitted ZIP entry evidence");
   assert(zipSummary.includes("Nested archive metadata cues"), "fixture.zip summary omitted nested archive cue evidence");
   assert(zipSummary.includes("no archive extraction"), "fixture.zip summary omitted no-extraction safety copy");
+
+  const playwrightTraceSummary = summaryFor(documentArchiveResult, "trace.zip");
+  assert(playwrightTraceSummary.includes("Playwright trace ZIP preview"), "trace.zip did not use Playwright trace ZIP preview");
+  assert(playwrightTraceSummary.includes("Trace event entries: trace.trace"), "trace.zip summary omitted trace event entry evidence");
+  assert(playwrightTraceSummary.includes("Network trace entries: trace.network"), "trace.zip summary omitted network entry evidence");
+  assert(playwrightTraceSummary.includes("resources=2; screenshots=1; videos=1"), "trace.zip summary omitted resource/media evidence");
+  assert(playwrightTraceSummary.includes("test.json"), "trace.zip summary omitted metadata entry evidence");
+  assert(!playwrightTraceSummary.includes("secret-trace-token"), "trace.zip summary leaked trace diagnostic secret");
+  assert(playwrightTraceSummary.includes("trace resources were not extracted"), "trace.zip summary omitted no-extraction safety copy");
+  assert(documentArchiveResult.items.find((item) => item.title === "trace.zip")?.mime === "application/vnd.playwright.trace+zip", "trace.zip MIME provenance is missing");
 
   const stlSummary = summaryFor(documentArchiveResult, "fixture.stl");
   assert(stlSummary.includes("3D model metadata preview"), "fixture.stl did not use 3D model preview");
@@ -3445,6 +5373,36 @@ try {
   assert(swiftSummary.includes("RuntimeFixture"), "Package.swift summary omitted package metadata evidence");
   assert(swiftSummary.includes("no swift, xcodebuild, pod"), "Package.swift summary omitted no-Apple-toolchain safety copy");
 
+  const podfileSummary = summaryFor(appleManifestVariantResult, "Podfile");
+  assert(podfileSummary.includes("Apple package manifest preview"), "Podfile did not use Apple package manifest preview");
+  assert(podfileSummary.includes("CocoaPods Podfile"), "Podfile summary omitted CocoaPods format evidence");
+  assert(podfileSummary.includes("RuntimeFixtureApp"), "Podfile summary omitted target evidence");
+  assert(podfileSummary.includes("Alamofire"), "Podfile summary omitted pod dependency evidence");
+  assert(podfileSummary.includes("no swift, xcodebuild, pod"), "Podfile summary omitted no-Apple-toolchain safety copy");
+
+  const podfileLockSummary = summaryFor(appleManifestVariantResult, "Podfile.lock");
+  assert(podfileLockSummary.includes("Apple package manifest preview"), "Podfile.lock did not use Apple package manifest preview");
+  assert(podfileLockSummary.includes("CocoaPods Podfile.lock"), "Podfile.lock summary omitted CocoaPods lockfile format evidence");
+  assert(podfileLockSummary.includes("Alamofire") && podfileLockSummary.includes("RuntimeFixtureKit"), "Podfile.lock summary omitted locked dependency evidence");
+  assert(podfileLockSummary.includes("spec checksums"), "Podfile.lock summary omitted checksum section evidence");
+  assert(podfileLockSummary.includes("no swift, xcodebuild, pod"), "Podfile.lock summary omitted no-Apple-toolchain safety copy");
+
+  const pbxprojSummary = summaryFor(appleManifestVariantResult, "project.pbxproj");
+  assert(pbxprojSummary.includes("Xcode project.pbxproj preview"), "project.pbxproj did not use Xcode project preview");
+  assert(pbxprojSummary.includes("RuntimeFixtureApp"), "project.pbxproj summary omitted target evidence");
+  assert(pbxprojSummary.includes("PRODUCT_BUNDLE_IDENTIFIER=org.opendrsai.runtime.ios"), "project.pbxproj summary omitted bundle identifier evidence");
+  assert(pbxprojSummary.includes("IPHONEOS_DEPLOYMENT_TARGET=17.0"), "project.pbxproj summary omitted deployment target evidence");
+  assert(pbxprojSummary.includes("AppDelegate.swift"), "project.pbxproj summary omitted source file evidence");
+  assert(!pbxprojSummary.includes("SECRETTEAM"), "project.pbxproj summary leaked signing team token");
+  assert(pbxprojSummary.includes("no Xcode project load, xcodebuild command"), "project.pbxproj summary omitted no-Xcode-runtime safety copy");
+
+  const podspecSummary = summaryFor(appleManifestVariantResult, "RuntimeFixture.podspec");
+  assert(podspecSummary.includes("Apple package manifest preview"), "podspec did not use Apple package manifest preview");
+  assert(podspecSummary.includes("CocoaPods podspec"), "podspec summary omitted CocoaPods podspec format evidence");
+  assert(podspecSummary.includes("RuntimeFixtureKit"), "podspec summary omitted podspec package evidence");
+  assert(podspecSummary.includes("source_files"), "podspec summary omitted source_files product evidence");
+  assert(podspecSummary.includes("no swift, xcodebuild, pod"), "podspec summary omitted no-Apple-toolchain safety copy");
+
   const composerSummary = summaryFor(packageManifestResult, "composer.json");
   assert(composerSummary.includes("PHP/Ruby package manifest preview"), "composer.json did not use PHP/Ruby manifest preview");
   assert(composerSummary.includes("example/runtime-fixture"), "composer.json summary omitted package metadata evidence");
@@ -3485,6 +5443,13 @@ try {
   assert(emlSummary.includes("Email message preview"), "message.eml did not use email message preview");
   assert(emlSummary.includes("Runtime fixture message"), "message.eml summary omitted subject evidence");
   assert(emlSummary.includes("no IMAP/SMTP login"), "message.eml summary omitted no-mailbox safety copy");
+
+  const emlxSummary = summaryFor(personalInfoResult, "message.emlx");
+  assert(emlxSummary.includes("Email message preview"), "message.emlx did not use email message preview");
+  assert(emlxSummary.includes("Runtime Apple Mail fixture"), "message.emlx summary omitted subject evidence");
+  assert(emlxSummary.includes("Apple Mail EMLX envelope metadata was stripped"), "message.emlx summary omitted EMLX envelope stripping evidence");
+  assert(!emlxSummary.includes("<?xml"), "message.emlx summary leaked Apple Mail plist metadata");
+  assert(emlxSummary.includes("no IMAP/SMTP login"), "message.emlx summary omitted no-mailbox safety copy");
 
   const mboxSummary = summaryFor(personalInfoResult, "mailbox.mbox");
   assert(mboxSummary.includes("Mailbox archive preview"), "mailbox.mbox did not use mailbox archive preview");
@@ -3573,6 +5538,15 @@ try {
   assert(!openApiSummary.includes("secret-token"), "openapi.yaml summary leaked sensitive URL token");
   assert(openApiSummary.includes("no request execution"), "openapi.yaml summary omitted no-request safety copy");
 
+  const asyncApiSummary = summaryFor(asyncApiResult, "asyncapi.yaml");
+  assert(asyncApiSummary.includes("API spec/collection preview"), "asyncapi.yaml did not use API spec preview");
+  assert(asyncApiSummary.includes("AsyncAPI YAML 2.6.0"), "asyncapi.yaml summary omitted AsyncAPI format evidence");
+  assert(asyncApiSummary.includes("Runtime Fixture Events"), "asyncapi.yaml summary omitted AsyncAPI title evidence");
+  assert(asyncApiSummary.includes("runtime/runs/started"), "asyncapi.yaml summary omitted subscribe channel evidence");
+  assert(asyncApiSummary.includes("runtime/runs/commands"), "asyncapi.yaml summary omitted publish channel evidence");
+  assert(!asyncApiSummary.includes("secret-asyncapi-token"), "asyncapi.yaml summary leaked sensitive broker token");
+  assert(asyncApiSummary.includes("no request execution, broker connection"), "asyncapi.yaml summary omitted no-request/no-broker safety copy");
+
   const insomniaSummary = summaryFor(apiSchemaContainerResult, "insomnia.json");
   assert(insomniaSummary.includes("API spec/collection preview"), "insomnia.json did not use API client collection preview");
   assert(insomniaSummary.includes("Insomnia export"), "insomnia.json summary omitted Insomnia format evidence");
@@ -3654,11 +5628,50 @@ try {
   assert(kustomizationSummary.includes("runtime-system"), "kustomization.yaml summary omitted namespace evidence");
   assert(kustomizationSummary.includes("no helm/kubectl/kustomize command"), "kustomization.yaml summary omitted no-runtime safety copy");
 
+  const kubernetesManifestSummary = summaryFor(kubernetesManifestResult, "runtime-kubernetes.yaml");
+  assert(kubernetesManifestSummary.includes("Kubernetes manifest preview"), "runtime-kubernetes.yaml did not use Kubernetes manifest preview");
+  assert(kubernetesManifestSummary.includes("Deployment/runtime-api namespace=runtime-system"), "runtime-kubernetes.yaml summary omitted Deployment resource evidence");
+  assert(kubernetesManifestSummary.includes("Service/runtime-api namespace=runtime-system"), "runtime-kubernetes.yaml summary omitted Service resource evidence");
+  assert(kubernetesManifestSummary.includes("Ingress/runtime-api"), "runtime-kubernetes.yaml summary omitted Ingress resource evidence");
+  assert(kubernetesManifestSummary.includes("Container names: api"), "runtime-kubernetes.yaml summary omitted container evidence");
+  assert(kubernetesManifestSummary.includes("ghcr.io/example/runtime-api:v1.2.3"), "runtime-kubernetes.yaml summary omitted image evidence");
+  assert(kubernetesManifestSummary.includes("configMapRef:runtime-config") && kubernetesManifestSummary.includes("serviceAccountName:runtime-runner"), "runtime-kubernetes.yaml summary omitted config/service account references");
+  assert(kubernetesManifestSummary.includes("Local resource details"), "runtime-kubernetes.yaml summary omitted local resource detail line");
+  assert(kubernetesManifestSummary.includes("Selector app=runtime-api"), "runtime-kubernetes.yaml summary omitted selector evidence");
+  assert(kubernetesManifestSummary.includes("Service port http:80->8080/TCP"), "runtime-kubernetes.yaml summary omitted service port evidence");
+  assert(kubernetesManifestSummary.includes("Ingress host runtime.example.test") && kubernetesManifestSummary.includes("Ingress path /api"), "runtime-kubernetes.yaml summary omitted ingress host/path evidence");
+  assert(kubernetesManifestSummary.includes("ConfigMap key APP_MODE") && kubernetesManifestSummary.includes("Secret key api-token"), "runtime-kubernetes.yaml summary omitted ConfigMap/Secret key evidence");
+  assert(!kubernetesManifestSummary.includes("secret-kubernetes-token"), "runtime-kubernetes.yaml summary leaked Kubernetes secret value");
+  assert(kubernetesManifestSummary.includes("no kubectl command, cluster connection, manifest apply"), "runtime-kubernetes.yaml summary omitted no-kubectl/no-cluster safety copy");
+
+  const iisWebConfigSummary = summaryFor(iisWebConfigResult, "web.config");
+  assert(iisWebConfigSummary.includes("IIS web.config preview"), "web.config did not use IIS web.config preview");
+  assert(iisWebConfigSummary.includes("FeatureFlag=enabled"), "web.config summary omitted appSettings evidence");
+  assert(iisWebConfigSummary.includes("ApiSecret=[redacted]"), "web.config summary omitted appSettings secret redaction");
+  assert(iisWebConfigSummary.includes("RuntimeDb provider=System.Data.SqlClient"), "web.config summary omitted connection string name/provider evidence");
+  assert(!iisWebConfigSummary.includes("secret-iis-db-password"), "web.config summary leaked connection string secret");
+  assert(iisWebConfigSummary.includes("RuntimeHandler") && iisWebConfigSummary.includes("ManagedPipelineHandler"), "web.config summary omitted handler evidence");
+  assert(iisWebConfigSummary.includes("RuntimeModule"), "web.config summary omitted module evidence");
+  assert(iisWebConfigSummary.includes("authentication mode=Windows") && iisWebConfigSummary.includes("windowsAuthentication enabled=true"), "web.config summary omitted authentication evidence");
+  assert(iisWebConfigSummary.includes("Runtime rewrite") && iisWebConfigSummary.includes("token=REDACTED"), "web.config summary omitted rewrite/token redaction evidence");
+  assert(!iisWebConfigSummary.includes("secret-iis-token") && !iisWebConfigSummary.includes("secret-iis-url-token"), "web.config summary leaked secret tokens");
+  assert(iisWebConfigSummary.includes("compilation targetFramework=4.8") && iisWebConfigSummary.includes("httpRuntime maxRequestLength=4096"), "web.config summary omitted ASP.NET hints");
+  assert(iisWebConfigSummary.includes("admin/[redacted]"), "web.config summary omitted location path redaction evidence");
+  assert(iisWebConfigSummary.includes("no IIS service, appcmd, PowerShell, ASP.NET runtime"), "web.config summary omitted no-IIS-runtime safety copy");
+
   const sarifSummary = summaryFor(securityArtifactResult, "results.sarif");
   assert(sarifSummary.includes("SARIF static analysis result preview"), "results.sarif did not use SARIF preview");
   assert(sarifSummary.includes("Runtime Analyzer"), "results.sarif summary omitted tool evidence");
   assert(sarifSummary.includes("runtime-secret"), "results.sarif summary omitted rule evidence");
   assert(sarifSummary.includes("no scanner/test runner/code execution"), "results.sarif summary omitted no-scanner safety copy");
+
+  const sarifJsonSummary = summaryFor(securityArtifactResult, "results.sarif.json");
+  assert(sarifJsonSummary.includes("SARIF static analysis result preview"), "results.sarif.json did not use SARIF preview");
+  assert(sarifJsonSummary.includes("CodeQL"), "results.sarif.json summary omitted tool evidence");
+  assert(sarifJsonSummary.includes("js/path-injection"), "results.sarif.json summary omitted rule evidence");
+  assert(sarifJsonSummary.includes("src/routes.ts:44"), "results.sarif.json summary omitted location evidence");
+  assert(sarifJsonSummary.includes("SARIF extension provenance was preserved"), "results.sarif.json summary omitted extension provenance evidence");
+  assert(sarifJsonSummary.includes("no scanner/test runner/code execution"), "results.sarif.json summary omitted no-scanner safety copy");
 
   const securityAuditSummary = summaryFor(securityArtifactResult, "npm-audit.json");
   assert(securityAuditSummary.includes("Security scan report preview"), "npm-audit.json did not use security scan report preview");
@@ -3791,6 +5804,17 @@ try {
   assert(graphvizSummary.includes("Runtime") && graphvizSummary.includes("Review"), "runtime.dot summary omitted DOT node evidence");
   assert(graphvizSummary.includes("no diagram renderer"), "runtime.dot summary omitted no-diagram-runtime safety copy");
 
+  const graphmlSummary = summaryFor(opsDesignResult, "runtime.graphml");
+  assert(graphmlSummary.includes("Diagram source preview"), "runtime.graphml did not use diagram source preview");
+  assert(graphmlSummary.includes("GraphML XML diagram source"), "runtime.graphml summary omitted GraphML format evidence");
+  assert(graphmlSummary.includes("RuntimeGraph") && graphmlSummary.includes("edgedefault=directed"), "runtime.graphml summary omitted graph evidence");
+  assert(graphmlSummary.includes("Runtime") && graphmlSummary.includes("Review"), "runtime.graphml summary omitted node evidence");
+  assert(graphmlSummary.includes("runtime-edge Runtime->Review"), "runtime.graphml summary omitted edge evidence");
+  assert(graphmlSummary.includes("runtimeLabel") && graphmlSummary.includes("edgeToken"), "runtime.graphml summary omitted key evidence");
+  assert(graphmlSummary.includes("secret=[redacted]"), "runtime.graphml summary omitted redacted data evidence");
+  assert(!graphmlSummary.includes("secret-graphml-token"), "runtime.graphml summary leaked sensitive data value");
+  assert(graphmlSummary.includes("no diagram renderer"), "runtime.graphml summary omitted no-diagram-runtime safety copy");
+
   const scssSummary = summaryFor(opsDesignResult, "runtime.scss");
   assert(scssSummary.includes("Stylesheet preview (SCSS"), "runtime.scss did not use SCSS stylesheet preview");
   assert(scssSummary.includes("--runtime-accent"), "runtime.scss summary omitted custom property evidence");
@@ -3881,6 +5905,67 @@ try {
   assert(sqlSummary.includes("runtime_users"), "schema.sql summary omitted DDL table evidence");
   assert(sqlSummary.includes("no database connection"), "schema.sql summary omitted no-SQL-execution safety copy");
 
+  const prismaSummary = summaryFor(databaseSchemaDslResult, "schema.prisma");
+  assert(prismaSummary.includes("Prisma schema preview"), "schema.prisma did not use database schema DSL preview");
+  assert(prismaSummary.includes("datasource db provider=postgresql url env=DATABASE_URL"), "schema.prisma summary omitted datasource/env evidence");
+  assert(prismaSummary.includes("RuntimeUser.org: RuntimeOrg @relation"), "schema.prisma summary omitted relation field evidence");
+  assert(prismaSummary.includes("RuntimeRole=ADMIN/VIEWER"), "schema.prisma summary omitted enum evidence");
+  assert(!prismaSummary.includes("secret-prisma-token"), "schema.prisma summary leaked sensitive default token");
+  assert(prismaSummary.includes("no Prisma/dbml-cli/migration command"), "schema.prisma summary omitted no-Prisma-runtime safety copy");
+
+  const dbmlSummary = summaryFor(databaseSchemaDslResult, "runtime.dbml");
+  assert(dbmlSummary.includes("DBML schema preview"), "runtime.dbml did not use database schema DSL preview");
+  assert(dbmlSummary.includes("runtime_users.org_id: int"), "runtime.dbml summary omitted DBML field evidence");
+  assert(dbmlSummary.includes("runtime_users.org_id > runtime_orgs.id"), "runtime.dbml summary omitted DBML relationship evidence");
+  assert(dbmlSummary.includes("runtime_role=admin/viewer"), "runtime.dbml summary omitted DBML enum evidence");
+  assert(!dbmlSummary.includes("secret-dbml-token"), "runtime.dbml summary leaked sensitive note token");
+  assert(dbmlSummary.includes("database connection, credential lookup"), "runtime.dbml summary omitted no-database/no-credential safety copy");
+
+  const redisRdbSummary = summaryFor(redisPersistenceResult, "dump.rdb");
+  assert(redisRdbSummary.includes("Redis RDB snapshot metadata preview"), "dump.rdb did not use Redis RDB preview");
+  assert(redisRdbSummary.includes("REDIS RDB version 0009"), "dump.rdb summary omitted RDB version evidence");
+  assert(redisRdbSummary.includes("runtime:user:1"), "dump.rdb summary omitted bounded Redis string hint evidence");
+  assert(!redisRdbSummary.includes("secret-rdb-token"), "dump.rdb summary leaked Redis RDB secret string");
+  assert(redisRdbSummary.includes("no Redis server/client process"), "dump.rdb summary omitted no-Redis-runtime safety copy");
+
+  const redisAofSummary = summaryFor(redisPersistenceResult, "appendonly.aof");
+  assert(redisAofSummary.includes("Redis AOF command preview"), "appendonly.aof did not use Redis AOF preview");
+  assert(redisAofSummary.includes("SET (1)") && redisAofSummary.includes("HSET (1)"), "appendonly.aof summary omitted command count evidence");
+  assert(redisAofSummary.includes("SET runtime:user:1 [values not expanded]"), "appendonly.aof summary omitted key-only SET evidence");
+  assert(redisAofSummary.includes("AUTH [arguments redacted]"), "appendonly.aof summary omitted AUTH redaction evidence");
+  assert(!redisAofSummary.includes("secret-redis-aof-token"), "appendonly.aof summary leaked Redis AOF value");
+  assert(!redisAofSummary.includes("secret-auth-credential"), "appendonly.aof summary leaked Redis AUTH argument");
+  assert(redisAofSummary.includes("command replay, key scan"), "appendonly.aof summary omitted no-replay/no-key-scan safety copy");
+
+  const systemdSummary = summaryFor(opsScheduleResult, "runtime.service");
+  assert(systemdSummary.includes("systemd unit file preview"), "runtime.service did not use systemd unit preview");
+  assert(systemdSummary.includes("Sections (3): Unit, Service, Install"), "runtime.service summary omitted systemd section evidence");
+  assert(systemdSummary.includes("Description=Runtime scheduler service"), "runtime.service summary omitted Description evidence");
+  assert(systemdSummary.includes("ExecStart=/usr/bin/node /srv/runtime/worker.js --api-key [redacted]"), "runtime.service summary omitted redacted ExecStart evidence");
+  assert(!systemdSummary.includes("secret-systemd-token"), "runtime.service summary leaked systemd command secret");
+  assert(!systemdSummary.includes("secret-systemd-url-token"), "runtime.service summary leaked systemd URL token");
+  assert(systemdSummary.includes("no systemctl command"), "runtime.service summary omitted no-systemctl safety copy");
+
+  const cronSummary = summaryFor(opsScheduleResult, "runtime.crontab");
+  assert(cronSummary.includes("Cron schedule file preview"), "runtime.crontab did not use cron schedule preview");
+  assert(cronSummary.includes("Environment keys (2): SHELL, MAILTO"), "runtime.crontab summary omitted environment key evidence");
+  assert(cronSummary.includes("*/15 * * * * -> /usr/local/bin/runtime-sync --token [redacted]"), "runtime.crontab summary omitted redacted cron schedule evidence");
+  assert(cronSummary.includes("@daily -> /usr/local/bin/runtime-cleanup --mode safe"), "runtime.crontab summary omitted special cron schedule evidence");
+  assert(!cronSummary.includes("secret-cron-token"), "runtime.crontab summary leaked cron command secret");
+  assert(cronSummary.includes("no crontab install, scheduler mutation, shell execution"), "runtime.crontab summary omitted no-crontab/no-shell safety copy");
+
+  const supervisorSummary = summaryFor(opsScheduleResult, "runtime.supervisord.conf");
+  assert(supervisorSummary.includes("Supervisor config preview"), "runtime.supervisord.conf did not use Supervisor config preview");
+  assert(supervisorSummary.includes("Sections (4): supervisord, program:runtime-worker, group:runtime, include"), "runtime.supervisord.conf summary omitted section evidence");
+  assert(supervisorSummary.includes("Program/group hints (2): program:runtime-worker, group:runtime"), "runtime.supervisord.conf summary omitted program/group evidence");
+  assert(supervisorSummary.includes("command=/usr/local/bin/runtime-worker --token [redacted] --url https://ops.example.test/run?token=[redacted]"), "runtime.supervisord.conf summary omitted redacted command evidence");
+  assert(supervisorSummary.includes("Environment keys (2): RUNTIME_TOKEN, RUNTIME_MODE"), "runtime.supervisord.conf summary omitted environment key evidence");
+  assert(supervisorSummary.includes("include.files=/etc/supervisor/conf.d/*.conf"), "runtime.supervisord.conf summary omitted include hint evidence");
+  assert(!supervisorSummary.includes("secret-supervisor-token"), "runtime.supervisord.conf summary leaked command secret");
+  assert(!supervisorSummary.includes("secret-supervisor-url-token"), "runtime.supervisord.conf summary leaked URL token");
+  assert(!supervisorSummary.includes("secret-supervisor-env-token"), "runtime.supervisord.conf summary leaked environment secret");
+  assert(supervisorSummary.includes("no supervisord or supervisorctl command"), "runtime.supervisord.conf summary omitted no-supervisor-runtime safety copy");
+
   const csvSummary = summaryFor(delimitedDataResult, "runtime.csv");
   assert(csvSummary.includes("Structured CSV preview"), "runtime.csv did not use CSV structured preview");
   assert(csvSummary.includes("Columns (4): user_id, event_name, status, api_token"), "runtime.csv summary omitted column evidence");
@@ -3900,11 +5985,40 @@ try {
   assert(!jsonlSummary.includes("secret-jsonl-token"), "events.jsonl summary leaked sensitive token value");
   assert(jsonlSummary.includes("no database connection, query execution"), "events.jsonl summary omitted no-query safety copy");
 
+  const terminalRecordingSummary = summaryFor(terminalRecordingResult, "runtime.cast");
+  assert(terminalRecordingSummary.includes("Terminal recording preview (Asciinema cast"), "runtime.cast did not use terminal recording preview");
+  assert(terminalRecordingSummary.includes("version=2") && terminalRecordingSummary.includes("terminal=100x30"), "runtime.cast summary omitted header evidence");
+  assert(terminalRecordingSummary.includes("output=3") && terminalRecordingSummary.includes("input=1") && terminalRecordingSummary.includes("resize=1"), "runtime.cast summary omitted event count evidence");
+  assert(terminalRecordingSummary.includes("npm run verify") && terminalRecordingSummary.includes("git status"), "runtime.cast summary omitted command/prompt evidence");
+  assert(terminalRecordingSummary.includes("warning") && terminalRecordingSummary.includes("fatal") && terminalRecordingSummary.includes("access denied"), "runtime.cast summary omitted risk cues");
+  assert(terminalRecordingSummary.includes("token=[redacted]"), "runtime.cast summary omitted token redaction evidence");
+  assert(!terminalRecordingSummary.includes("secret-cast-token") && !terminalRecordingSummary.includes("secret-cast-output"), "runtime.cast summary leaked terminal recording secret");
+  assert(terminalRecordingSummary.includes("no terminal replay, shell command execution, process spawn"), "runtime.cast summary omitted no-replay/no-execution safety copy");
+
   const harSummary = summaryFor(dataNetworkResult, "runtime.har");
   assert(harSummary.includes("HAR network trace preview"), "runtime.har did not use HAR preview");
   assert(harSummary.includes("api.example.test"), "runtime.har summary omitted host evidence");
   assert(!harSummary.includes("secret-har-token"), "runtime.har summary leaked sensitive HAR token value");
   assert(harSummary.includes("no browser profile access, request replay, network call"), "runtime.har summary omitted no-replay safety copy");
+
+  const netlogSummary = summaryFor(netlogResult, "netlog.json");
+  assert(netlogSummary.includes("Chrome NetLog network trace preview"), "netlog.json did not use NetLog preview");
+  assert(netlogSummary.includes("URL_REQUEST_START_JOB") && netlogSummary.includes("HTTP_TRANSACTION_SEND_REQUEST_HEADERS"), "netlog.json summary omitted event type evidence");
+  assert(netlogSummary.includes("URL_REQUEST #7") && netlogSummary.includes("SOCKET #8"), "netlog.json summary omitted source evidence");
+  assert(netlogSummary.includes("api.example.test"), "netlog.json summary omitted host evidence");
+  assert(!netlogSummary.includes("secret-netlog-token"), "netlog.json summary leaked sensitive NetLog token value");
+  assert(netlogSummary.includes("no browser profile access, request replay, network call"), "netlog.json summary omitted no-replay safety copy");
+
+  const otelSummary = summaryFor(otelResult, "runtime.otlp.json");
+  assert(otelSummary.includes("OpenTelemetry/OTLP JSON preview"), "runtime.otlp.json did not use OpenTelemetry preview");
+  assert(otelSummary.includes("spans=1") && otelSummary.includes("logs=1") && otelSummary.includes("metrics=1"), "runtime.otlp.json summary omitted signal counts");
+  assert(otelSummary.includes("service.name=checkout-api"), "runtime.otlp.json summary omitted service resource evidence");
+  assert(otelSummary.includes("POST /checkout") && otelSummary.includes("STATUS_CODE_ERROR"), "runtime.otlp.json summary omitted span evidence");
+  assert(otelSummary.includes("ERROR") && otelSummary.includes("payment provider failed token=[redacted]"), "runtime.otlp.json summary omitted redacted log evidence");
+  assert(otelSummary.includes("checkout.latency") && otelSummary.includes("type=histogram"), "runtime.otlp.json summary omitted metric evidence");
+  assert(otelSummary.includes("http.route") && otelSummary.includes("authorization"), "runtime.otlp.json summary omitted attribute-key evidence");
+  assert(!otelSummary.includes("secret-otel-token"), "runtime.otlp.json summary leaked sensitive OTLP token value");
+  assert(otelSummary.includes("no collector connection, span/log/metric export, trace replay"), "runtime.otlp.json summary omitted no-collector/no-export safety copy");
 
   const devtoolsTraceSummary = summaryFor(dataNetworkResult, "runtime.trace.json");
   assert(devtoolsTraceSummary.includes("DevTools performance trace preview"), "runtime.trace.json did not use DevTools trace preview");
@@ -3915,6 +6029,20 @@ try {
   assert(devtoolsTraceSummary.includes("data") && devtoolsTraceSummary.includes("frame"), "runtime.trace.json summary omitted argument-key evidence");
   assert(!devtoolsTraceSummary.includes("secret-trace-token"), "runtime.trace.json summary leaked trace argument token");
   assert(devtoolsTraceSummary.includes("no Chrome/Edge/DevTools/Lighthouse launch, trace replay"), "runtime.trace.json summary omitted no-browser/no-replay safety copy");
+
+  const cpuProfileSummary = summaryFor(devtoolsProfileResult, "runtime.cpuprofile");
+  assert(cpuProfileSummary.includes("DevTools/V8 CPU profile preview"), "runtime.cpuprofile did not use DevTools/V8 CPU profile preview");
+  assert(cpuProfileSummary.includes("nodes=3") && cpuProfileSummary.includes("samples=3") && cpuProfileSummary.includes("sampledTime=6ms"), "runtime.cpuprofile summary omitted profile count evidence");
+  assert(cpuProfileSummary.includes("RuntimeMain") && cpuProfileSummary.includes("renderWidget"), "runtime.cpuprofile summary omitted function hint evidence");
+  assert(!cpuProfileSummary.includes("secret-profile-token"), "runtime.cpuprofile summary leaked profile URL token");
+  assert(cpuProfileSummary.includes("no Chrome/Edge/DevTools launch, profile replay"), "runtime.cpuprofile summary omitted no-profile-runtime safety copy");
+
+  const heapSnapshotSummary = summaryFor(devtoolsProfileResult, "runtime.heapsnapshot");
+  assert(heapSnapshotSummary.includes("DevTools/V8 Heap snapshot preview"), "runtime.heapsnapshot did not use DevTools/V8 heap snapshot preview");
+  assert(heapSnapshotSummary.includes("nodes=3") && heapSnapshotSummary.includes("edges=2") && heapSnapshotSummary.includes("traceFunctions=1"), "runtime.heapsnapshot summary omitted heap count evidence");
+  assert(heapSnapshotSummary.includes("RuntimeHeapRoot") && heapSnapshotSummary.includes("RuntimeLeakCandidate"), "runtime.heapsnapshot summary omitted heap string hint evidence");
+  assert(!heapSnapshotSummary.includes("secret-heap-token"), "runtime.heapsnapshot summary leaked heap string token");
+  assert(heapSnapshotSummary.includes("heap objects were not expanded"), "runtime.heapsnapshot summary omitted no-heap-expansion safety copy");
 
   const lighthouseSummary = summaryFor(dataNetworkResult, "runtime.lighthouse.json");
   assert(lighthouseSummary.includes("Lighthouse report preview"), "runtime.lighthouse.json did not use Lighthouse report preview");
@@ -4015,6 +6143,14 @@ try {
   assert(atomSummary.includes("Runtime Atom Entry"), "feed.atom summary omitted feed entry evidence");
   assert(atomSummary.includes("remote feed URLs were not fetched"), "feed.atom summary omitted no-feed-fetch safety copy");
 
+  const opmlSummary = summaryFor(opmlSubscriptionResult, "subscriptions.opml");
+  assert(opmlSummary.includes("OPML subscription export preview"), "subscriptions.opml did not use OPML subscription preview");
+  assert(opmlSummary.includes("Runtime Feed Subscriptions"), "subscriptions.opml summary omitted OPML title evidence");
+  assert(opmlSummary.includes("Runtime OPML Feed"), "subscriptions.opml summary omitted outline evidence");
+  assert(opmlSummary.includes("token=REDACTED"), "subscriptions.opml summary omitted feed URL redaction evidence");
+  assert(!opmlSummary.includes("secret-opml-token"), "subscriptions.opml summary leaked secret OPML token");
+  assert(opmlSummary.includes("feed URLs were not fetched"), "subscriptions.opml summary omitted no-feed-fetch safety copy");
+
   const robotsSummary = summaryFor(contentMediaResult, "robots.txt");
   assert(robotsSummary.includes("Web crawl metadata preview (robots.txt"), "robots.txt did not use web crawl metadata preview");
   assert(robotsSummary.includes("User agents: *"), "robots.txt summary omitted user-agent evidence");
@@ -4056,6 +6192,15 @@ try {
   assert(!androidManifestSummary.includes("secret-android-token"), "AndroidManifest.xml summary leaked manifest meta-data value");
   assert(androidManifestSummary.includes("no Gradle/Android Studio/ADB/emulator/aapt/apksigner command"), "AndroidManifest.xml summary omitted no-mobile-runtime safety copy");
 
+  const androidLogcatSummary = summaryFor(mobileManifestResult, "runtime.logcat");
+  assert(androidLogcatSummary.includes("Android logcat export preview"), "runtime.logcat did not use Android logcat preview");
+  assert(androidLogcatSummary.includes("I: 1") && androidLogcatSummary.includes("W: 1") && androidLogcatSummary.includes("E: 1") && androidLogcatSummary.includes("D: 1"), "runtime.logcat summary omitted priority counts");
+  assert(androidLogcatSummary.includes("ActivityTaskManager") && androidLogcatSummary.includes("AndroidRuntime") && androidLogcatSummary.includes("DrSaiMobile"), "runtime.logcat summary omitted tag evidence");
+  assert(androidLogcatSummary.includes("1234") && androidLogcatSummary.includes("3333"), "runtime.logcat summary omitted process id evidence");
+  assert(androidLogcatSummary.includes("token=[redacted]"), "runtime.logcat summary omitted redacted token evidence");
+  assert(!androidLogcatSummary.includes("secret-logcat-token") && !androidLogcatSummary.includes("secret-crash-token") && !androidLogcatSummary.includes("secret-brief-token"), "runtime.logcat summary leaked sensitive token values");
+  assert(androidLogcatSummary.includes("no adb/logcat command, device/emulator access, live log streaming"), "runtime.logcat summary omitted no-ADB/no-device safety copy");
+
   const infoPlistSummary = summaryFor(mobileManifestResult, "Info.plist");
   assert(infoPlistSummary.includes("Apple Info.plist app manifest preview"), "Info.plist did not use Apple Info.plist preview");
   assert(infoPlistSummary.includes("org.opendrsai.runtime.ios"), "Info.plist summary omitted bundle identifier evidence");
@@ -4089,6 +6234,22 @@ try {
   assert(ipaSummary.includes("plugin=RuntimeShare.appex"), "runtime.ipa summary omitted plugin cue");
   assert(ipaSummary.includes("did not extract package contents"), "runtime.ipa summary omitted no-extract safety copy");
 
+  const wavSummary = summaryFor(audioResult, "runtime.wav");
+  assert(wavSummary.includes("Audio metadata preview"), "runtime.wav did not use audio metadata preview");
+  assert(wavSummary.includes("Format: WAV"), "runtime.wav summary omitted WAV format evidence");
+  assert(wavSummary.includes("44100 Hz"), "runtime.wav summary omitted sample-rate evidence");
+  assert(wavSummary.includes("stereo"), "runtime.wav summary omitted channel evidence");
+  assert(wavSummary.includes("16-bit"), "runtime.wav summary omitted bit-depth evidence");
+  assert(wavSummary.includes("no microphone capture"), "runtime.wav summary omitted no-capture safety copy");
+
+  const mp3Summary = summaryFor(audioResult, "runtime.mp3");
+  assert(mp3Summary.includes("Audio metadata preview"), "runtime.mp3 did not use audio metadata preview");
+  assert(mp3Summary.includes("Format: MP3"), "runtime.mp3 summary omitted MP3 format evidence");
+  assert(mp3Summary.includes("44100 Hz"), "runtime.mp3 summary omitted sample-rate evidence");
+  assert(mp3Summary.includes("128 kbps"), "runtime.mp3 summary omitted bit-rate evidence");
+  assert(mp3Summary.includes("ID3: ID3v2.3"), "runtime.mp3 summary omitted ID3 evidence");
+  assert(mp3Summary.includes("no microphone capture"), "runtime.mp3 summary omitted no-capture safety copy");
+
   const flacSummary = summaryFor(audioResult, "runtime.flac");
   assert(flacSummary.includes("Audio metadata preview"), "runtime.flac did not use audio metadata preview");
   assert(flacSummary.includes("Format: FLAC"), "runtime.flac summary omitted FLAC format evidence");
@@ -4109,6 +6270,37 @@ try {
   assert(oggSummary.includes("44100 Hz"), "runtime.ogg summary omitted sample-rate evidence");
   assert(oggSummary.includes("192 kbps nominal"), "runtime.ogg summary omitted bit-rate evidence");
   assert(oggSummary.includes("no microphone capture"), "runtime.ogg summary omitted no-capture safety copy");
+
+  const pngColorSummary = summaryFor(imageColorResult, "runtime-color.png");
+  assert(pngColorSummary.includes("Image metadata preview"), "runtime-color.png did not use image metadata preview");
+  assert(pngColorSummary.includes("Dimensions: 64 x 32 px"), "runtime-color.png summary omitted dimensions");
+  assert(pngColorSummary.includes("Color profile hints"), "runtime-color.png summary omitted color profile hints");
+  assert(pngColorSummary.includes("sRGB perceptual") && pngColorSummary.includes("iCCP Runtime RGB compressed"), "runtime-color.png summary omitted PNG color chunk evidence");
+  assert(pngColorSummary.includes("no OCR, vision model, network call") && pngColorSummary.includes("No image renderer startup, pixel decode, animation playback, ICC/profile validation"), "runtime-color.png summary omitted no-vision/no-color-validation safety copy");
+
+  const jpegColorSummary = summaryFor(imageColorResult, "runtime-color.jpg");
+  assert(jpegColorSummary.includes("Image metadata preview"), "runtime-color.jpg did not use image metadata preview");
+  assert(jpegColorSummary.includes("Dimensions: 48 x 32 px"), "runtime-color.jpg summary omitted dimensions");
+  assert(jpegColorSummary.includes("ICC_PROFILE APP2 segment 1/1"), "runtime-color.jpg summary omitted ICC APP2 evidence");
+  assert(jpegColorSummary.includes("Adobe APP14 transform 1"), "runtime-color.jpg summary omitted Adobe APP14 evidence");
+  assert(jpegColorSummary.includes("pixel color conversion was performed"), "runtime-color.jpg summary omitted no-color-conversion safety copy");
+
+  const gifAnimationSummary = summaryFor(imageColorResult, "runtime-animated.gif");
+  assert(gifAnimationSummary.includes("Image metadata preview"), "runtime-animated.gif did not use image metadata preview");
+  assert(gifAnimationSummary.includes("Format: GIF89a"), "runtime-animated.gif summary omitted GIF89a format evidence");
+  assert(gifAnimationSummary.includes("Dimensions: 32 x 16 px"), "runtime-animated.gif summary omitted dimensions");
+  assert(gifAnimationSummary.includes("Animation hints: animation frames 2"), "runtime-animated.gif summary omitted animation frame evidence");
+  assert(gifAnimationSummary.includes("loop count forever"), "runtime-animated.gif summary omitted animation loop evidence");
+  assert(gifAnimationSummary.includes("animation playback") && gifAnimationSummary.includes("pixel decode"), "runtime-animated.gif summary omitted no-animation/no-pixel-decode safety copy");
+
+  const webpAnimationSummary = summaryFor(imageColorResult, "runtime-animated.webp");
+  assert(webpAnimationSummary.includes("Image metadata preview"), "runtime-animated.webp did not use image metadata preview");
+  assert(webpAnimationSummary.includes("Format: WebP VP8X"), "runtime-animated.webp summary omitted WebP VP8X format evidence");
+  assert(webpAnimationSummary.includes("Dimensions: 40 x 24 px"), "runtime-animated.webp summary omitted dimensions");
+  assert(webpAnimationSummary.includes("animation") && webpAnimationSummary.includes("alpha"), "runtime-animated.webp summary omitted VP8X feature flags");
+  assert(webpAnimationSummary.includes("Animation hints: animation frames 2"), "runtime-animated.webp summary omitted animation frame evidence");
+  assert(webpAnimationSummary.includes("loop count forever"), "runtime-animated.webp summary omitted animation loop evidence");
+  assert(webpAnimationSummary.includes("animation playback") && webpAnimationSummary.includes("pixel decode"), "runtime-animated.webp summary omitted no-animation/no-pixel-decode safety copy");
 } finally {
   rmSync(tempRoot, { recursive: true, force: true });
 }

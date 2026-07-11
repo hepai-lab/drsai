@@ -47,7 +47,6 @@ export function LoginScreen(): React.JSX.Element {
   useEffect(() => {
     const unsubscribe = window.openDrSai?.onOidcLoginDebug?.((event) => {
       setLoginEvents((events) => [...events.slice(-79), event]);
-      setDebugOpen(true);
     });
     return () => unsubscribe?.();
   }, []);
@@ -63,7 +62,6 @@ export function LoginScreen(): React.JSX.Element {
           at: new Date().toISOString(),
         },
       ]);
-      setDebugOpen(true);
       await auth.startOidcLogin({ rememberMe });
     } else if (mode === "api_key") {
       await auth.login({ apiKey, defaultModel, rememberMe });

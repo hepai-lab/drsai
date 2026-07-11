@@ -70,6 +70,8 @@ assert(
 );
 assert(
   chatWorkspace.includes("desktopApi.summarizeWorkspaceFolder") &&
+    chatWorkspace.includes("summarizeQueuedContextAttachments") &&
+    chatWorkspace.indexOf("summarizeQueuedContextAttachments") < chatWorkspace.indexOf("await onSubmit") &&
     chatWorkspace.includes("visibleText: summary.summary") &&
     chatWorkspace.includes("summary.estimatedTokens"),
   "composer does not convert @folder attachments into reviewed summary context",

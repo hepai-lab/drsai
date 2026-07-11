@@ -31,6 +31,25 @@ interface ForkMergeConflictFixture {
   sourceContent: string;
 }
 
+interface ChannelImportFixture {
+  workspacePath: string;
+  markdownPath: string;
+  cypressJsonPath: string;
+  pngPath: string;
+  sarifJsonPath: string;
+  chatExportJsonPath: string;
+  emlxPath: string;
+  filePaths: string[];
+}
+
+interface IdeContextFixture {
+  source: "vscode" | "jetbrains" | "visual_studio";
+  workspacePath: string;
+  sourcePath: string;
+  relativePath: string;
+  selectionText: string;
+}
+
 const timeoutMs = Number(process.env.OPENDRSAI_E2E_TIMEOUT_MS || "30000");
 
 export function maybeRunE2eSmoke(window: BrowserWindow): void {
@@ -1538,6 +1557,8 @@ function readOidcSessionStorageForSmoke(): {
 }
 
 async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  const channelImportFixture = prepareChannelImportFixture();
+  const ideContextFixtures = prepareIdeContextFixtures();
   const result = (await window.webContents.executeJavaScript(`
     (async () => {
       const checks = {};
@@ -1609,12 +1630,302 @@ async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
         String(outsidePathResult).includes("outside DrSai home") ||
         String(outsidePathResult).includes("not registered as a DrSai or workspace path");
 
+      const channelImportFixture = ${JSON.stringify(channelImportFixture)};
+      const channelImport = await api.importChannelContext({
+        adapterId: "file-input",
+        workspacePath: channelImportFixture.workspacePath,
+        paths: channelImportFixture.filePaths,
+        limit: 6,
+      });
+      const channelImportItems = channelImport && channelImport.items ? channelImport.items : [];
+      const channelImportItemByTitle = (title) => channelImportItems.find((item) => item && (item.title === title || item.relativePath === title));
+      const markdownImportItem = channelImportItemByTitle("packaged-channel-import.md");
+      const cypressImportItem = channelImportItemByTitle("packaged.cypress-results.json");
+      const pngImportItem = channelImportItemByTitle("packaged-channel-import.png");
+      const sarifImportItem = channelImportItemByTitle("packaged-results.sarif.json");
+      const chatExportImportItem = channelImportItemByTitle("packaged-slack-export.json");
+      const emlxImportItem = channelImportItemByTitle("packaged-message.emlx");
+      details.channelImport = channelImport;
+      checks.channelImportViaPreloadIpc = Boolean(channelImport && channelImport.adapterId === "file-input" && channelImportItems.length === 6);
+      checks.channelImportWorkspaceBounded = Boolean(channelImport && channelImport.workspacePath === channelImportFixture.workspacePath);
+      checks.channelImportMarkdownSummary = Boolean(
+        markdownImportItem &&
+          String(markdownImportItem.summary || "").includes("packaged channel import fixture") &&
+          String(markdownImportItem.summary || "").includes("Markdown preview read local text only")
+      );
+      checks.channelImportCypressSummary = Boolean(
+        cypressImportItem &&
+          String(cypressImportItem.summary || "").includes("Test report preview (Cypress JSON") &&
+          String(cypressImportItem.summary || "").includes("Cases: 2; passed: 1; non-passing: 1; skipped: 0") &&
+          String(cypressImportItem.summary || "").includes("Packaged smoke > fails visibly [failed]") &&
+          String(cypressImportItem.summary || "").includes("token=[redacted]") &&
+          !String(cypressImportItem.summary || "").includes("secret-packaged-cypress-token")
+      );
+      checks.channelImportImageSummary = Boolean(
+        pngImportItem &&
+          String(pngImportItem.summary || "").includes("Image metadata preview") &&
+          String(pngImportItem.summary || "").includes("Format: PNG") &&
+          String(pngImportItem.summary || "").includes("1 x 1 px") &&
+          String(pngImportItem.summary || "").includes("no OCR, vision model, network call, or provider send")
+      );
+      checks.channelImportSarifSummary = Boolean(
+        sarifImportItem &&
+          String(sarifImportItem.summary || "").includes("SARIF static analysis result preview") &&
+          String(sarifImportItem.summary || "").includes("CodeQL") &&
+          String(sarifImportItem.summary || "").includes("js/path-injection") &&
+          String(sarifImportItem.summary || "").includes("src/routes.ts:44") &&
+          String(sarifImportItem.summary || "").includes("SARIF extension provenance was preserved") &&
+          String(sarifImportItem.summary || "").includes("no scanner/test runner/code execution") &&
+          String(sarifImportItem.mime || "").includes("application/sarif+json")
+      );
+      checks.channelImportChatExportSummary = Boolean(
+        chatExportImportItem &&
+          String(chatExportImportItem.summary || "").includes("Chat export JSON preview (Slack export JSON") &&
+          String(chatExportImportItem.summary || "").includes("packaged-smoke-channel") &&
+          String(chatExportImportItem.summary || "").includes("Packaged Slack export message") &&
+          String(chatExportImportItem.summary || "").includes("token=[redacted]") &&
+          !String(chatExportImportItem.summary || "").includes("secret-packaged-slack-token") &&
+          String(chatExportImportItem.summary || "").includes("no Slack/Teams/ChatGPT/OpenAI connector login") &&
+          String(chatExportImportItem.mime || "").includes("application/vnd.drsai.chat-export+json")
+      );
+      checks.channelImportEmlxSummary = Boolean(
+        emlxImportItem &&
+          String(emlxImportItem.summary || "").includes("Email message preview") &&
+          String(emlxImportItem.summary || "").includes("Packaged Apple Mail smoke") &&
+          String(emlxImportItem.summary || "").includes("Apple Mail EMLX envelope metadata was stripped") &&
+          String(emlxImportItem.summary || "").includes("Packaged EMLX body token=[redacted]") &&
+          !String(emlxImportItem.summary || "").includes("secret-packaged-emlx-token") &&
+          !String(emlxImportItem.summary || "").includes("<?xml") &&
+          String(emlxImportItem.summary || "").includes("no IMAP/SMTP login") &&
+          String(emlxImportItem.mime || "").includes("message/rfc822")
+      );
+      checks.channelImportNoProviderSend = Boolean(
+        channelImport &&
+          String(channelImport.verification || "").includes("Read-only channel import is limited to workspace-local file summaries")
+      );
+
+      const ideContextFixtures = ${JSON.stringify(ideContextFixtures)};
+      const ideContexts = [];
+      for (const fixture of ideContextFixtures) {
+        ideContexts.push(await api.getIdeContext(fixture.workspacePath));
+      }
+      details.ideContexts = ideContexts;
+      checks.ideContextViaPreloadIpc = ideContexts.length === 3 && ideContexts.every((context) => context && context.available === true);
+      checks.ideContextSources = ideContexts.every((context, index) => context && context.source === ideContextFixtures[index].source);
+      checks.ideContextCurrentFiles = ideContexts.every((context, index) =>
+        context &&
+          context.currentFile &&
+          context.currentFile.relativePath === ideContextFixtures[index].relativePath &&
+          String(context.currentFile.path || "").endsWith(ideContextFixtures[index].relativePath.replace(/\\//g, "\\\\"))
+      );
+      checks.ideContextSelections = ideContexts.every((context, index) =>
+        context &&
+          context.currentSelection &&
+          context.currentSelection.relativePath === ideContextFixtures[index].relativePath &&
+          context.currentSelection.text === ideContextFixtures[index].selectionText &&
+          context.currentSelection.truncated === false
+      );
+      checks.ideContextWorkspaceBounded = ideContexts.every((context, index) =>
+        context && context.workspacePath === ideContextFixtures[index].workspacePath
+      );
+
       return { checks, details };
     })()
   `)) as { checks: Record<string, boolean>; details: Record<string, unknown> };
 
   const ok = Object.values(result.checks).every(Boolean);
   return { ok, checks: result.checks, details: result.details };
+}
+
+function prepareChannelImportFixture(): ChannelImportFixture {
+  if (!process.env.DRSAI_HOME) {
+    throw new Error("DRSAI_HOME is required for the packaged channel import fixture.");
+  }
+  const workspacePath = join(process.env.DRSAI_HOME, "desktop", "channel-import-e2e", "workspace");
+  rmSync(workspacePath, { recursive: true, force: true });
+  mkdirSync(workspacePath, { recursive: true });
+  const filePath = join(workspacePath, "packaged-channel-import.md");
+  writeFileSync(
+    filePath,
+    [
+      "# Packaged channel import fixture",
+      "",
+      "This packaged channel import fixture verifies real preload IPC to the main-process file-input adapter.",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  const cypressJsonPath = join(workspacePath, "packaged.cypress-results.json");
+  writeFileSync(
+    cypressJsonPath,
+    JSON.stringify({
+      totalTests: 2,
+      totalPassed: 1,
+      totalFailed: 1,
+      totalPending: 0,
+      totalSkipped: 0,
+      totalDuration: 1250,
+      runs: [
+        {
+          spec: { relative: "cypress/e2e/packaged-smoke.cy.ts", name: "packaged-smoke.cy.ts" },
+          stats: { tests: 2, passes: 1, failures: 1, pending: 0, skipped: 0, wallClockDuration: 1250 },
+          tests: [
+            { title: ["Packaged smoke", "imports markdown"], state: "passed", attempts: [{ state: "passed" }] },
+            {
+              title: ["Packaged smoke", "fails visibly"],
+              state: "failed",
+              displayError: "Packaged Cypress failure token=secret-packaged-cypress-token",
+              attempts: [{ state: "failed" }],
+            },
+          ],
+        },
+      ],
+    }, null, 2),
+    "utf8",
+  );
+  const pngPath = join(workspacePath, "packaged-channel-import.png");
+  writeFileSync(
+    pngPath,
+    Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lUzf4QAAAABJRU5ErkJggg==",
+      "base64",
+    ),
+  );
+  const sarifJsonPath = join(workspacePath, "packaged-results.sarif.json");
+  writeFileSync(
+    sarifJsonPath,
+    JSON.stringify({
+      version: "2.1.0",
+      runs: [
+        {
+          tool: { driver: { name: "CodeQL", rules: [{ id: "js/path-injection" }] } },
+          results: [
+            {
+              ruleId: "js/path-injection",
+              level: "warning",
+              message: { text: "Packaged smoke detected untrusted path construction." },
+              locations: [
+                {
+                  physicalLocation: {
+                    artifactLocation: { uri: "src/routes.ts" },
+                    region: { startLine: 44 },
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    }, null, 2),
+    "utf8",
+  );
+  const chatExportJsonPath = join(workspacePath, "packaged-slack-export.json");
+  writeFileSync(
+    chatExportJsonPath,
+    JSON.stringify([
+      {
+        type: "message",
+        channel: "packaged-smoke-channel",
+        user: "U-packaged-smoke",
+        ts: "1783702800.000100",
+        text: "Packaged Slack export message token=secret-packaged-slack-token",
+      },
+    ], null, 2),
+    "utf8",
+  );
+  const emlxPath = join(workspacePath, "packaged-message.emlx");
+  const emlxMessage = [
+    "From: packaged-sender@example.test",
+    "To: packaged-reviewer@example.test",
+    "Subject: Packaged Apple Mail smoke",
+    "Date: Sat, 11 Jul 2026 09:15:00 +0800",
+    "Content-Type: text/plain; charset=utf-8",
+    "",
+    "Packaged EMLX body token=secret-packaged-emlx-token",
+  ].join("\r\n");
+  writeFileSync(
+    emlxPath,
+    [
+      String(Buffer.byteLength(emlxMessage, "utf8")),
+      emlxMessage,
+      "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+      "<plist version=\"1.0\"><dict><key>flags</key><integer>0</integer></dict></plist>",
+    ].join("\n"),
+    "utf8",
+  );
+  return {
+    workspacePath,
+    markdownPath: filePath,
+    cypressJsonPath,
+    pngPath,
+    sarifJsonPath,
+    chatExportJsonPath,
+    emlxPath,
+    filePaths: [filePath, cypressJsonPath, pngPath, sarifJsonPath, chatExportJsonPath, emlxPath],
+  };
+}
+
+function prepareIdeContextFixtures(): IdeContextFixture[] {
+  if (!process.env.DRSAI_HOME) {
+    throw new Error("DRSAI_HOME is required for the packaged IDE context fixture.");
+  }
+  const sources: IdeContextFixture["source"][] = ["vscode", "jetbrains", "visual_studio"];
+  const selectionTexts: Record<IdeContextFixture["source"], string> = {
+    vscode: "packaged vscode IDE selection",
+    jetbrains: "packaged jetbrains IDE selection",
+    visual_studio: "packaged visual_studio IDE selection",
+  };
+  return sources.map((source) => {
+    const workspacePath = join(process.env.DRSAI_HOME || "", "desktop", "ide-context-e2e", source, "workspace");
+    rmSync(workspacePath, { recursive: true, force: true });
+    const sourceDir = join(workspacePath, "src");
+    const drsaiDir = join(workspacePath, ".drsai");
+    mkdirSync(sourceDir, { recursive: true });
+    mkdirSync(drsaiDir, { recursive: true });
+    const relativePath = "src/packaged-ide-context.ts";
+    const sourcePath = join(workspacePath, "src", "packaged-ide-context.ts");
+    const selectionText = selectionTexts[source];
+    writeFileSync(
+      sourcePath,
+      [
+        "export function packagedIdeContextFixture() {",
+        `  return ${JSON.stringify(selectionText)};`,
+        "}",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    writeFileSync(
+      join(drsaiDir, "ide-context.json"),
+      JSON.stringify({
+        source,
+        capturedAt: "2026-07-11T09:30:00.000Z",
+        currentFile: {
+          path: sourcePath,
+          relativePath,
+          language: "typescript",
+          line: 2,
+          column: 10,
+        },
+        currentSelection: {
+          path: sourcePath,
+          relativePath,
+          language: "typescript",
+          startLine: 2,
+          endLine: 2,
+          text: selectionText,
+        },
+      }, null, 2),
+      "utf8",
+    );
+    return {
+      source,
+      workspacePath,
+      sourcePath,
+      relativePath,
+      selectionText,
+    };
+  });
 }
 
 function writeResult(path: string, result: SmokeResult): void {

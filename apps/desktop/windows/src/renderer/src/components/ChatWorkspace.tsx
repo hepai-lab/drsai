@@ -48,6 +48,7 @@ import type {
 } from "@shared/desktopApi";
 import type { ChatAttachment } from "@shared/desktopApi";
 import type { AppLanguage } from "../navigation";
+import { desktopApi, hasDesktopApi } from "../desktopApi";
 import {
   CHAT_COMMAND_NAMES,
   parseForkQueueEntries,
@@ -439,16 +440,13 @@ export function ChatWorkspace({
   }
 
   async function submitWithAttachments(): Promise<void> {
-    const resolvedInlineMentionAttachments = await Promise.all(
-      inlineMentionAttachments.map((attachment) =>
-        summarizeInlineFolderAttachment(attachment, onSummarizeWorkspaceFolder),
-      ),
-    );
-    const submittedAttachments = mergeUniqueAttachments([
+    const folderSummaryProvider =
+      onSummarizeWorkspaceFolder ?? (hasDesktopApi() ? desktopApi.summarizeWorkspaceFolder : undefined);
+    const submittedAttachments = await summarizeQueuedContextAttachments([
       ...attachments.map(({ id: _id, ...attachment }) => attachment),
       ...externalAttachments,
-      ...resolvedInlineMentionAttachments,
-    ]);
+      ...inlineMentionAttachments,
+    ], folderSummaryProvider);
     const submitted = await onSubmit(
       submittedAttachments,
       {
@@ -1700,6 +1698,20 @@ async function summarizeInlineFolderAttachment(
         : "Inline @folder summary unavailable.",
     };
   }
+}
+
+async function summarizeQueuedContextAttachments(
+  attachments: ChatAttachment[],
+  onSummarizeWorkspaceFolder?: (
+    request: WorkspaceFolderSummaryRequest,
+  ) => Promise<WorkspaceFolderSummaryResult>,
+): Promise<ChatAttachment[]> {
+  const summarized = await Promise.all(
+    mergeUniqueAttachments(attachments).map((attachment) =>
+      summarizeInlineFolderAttachment(attachment, onSummarizeWorkspaceFolder),
+    ),
+  );
+  return mergeUniqueAttachments(summarized);
 }
 
 function resolveInlineMentionPath(rawPath: string, workspacePath: string): string {

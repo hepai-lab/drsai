@@ -858,9 +858,9 @@ export function installMockDesktopApi(): void {
       emitOidcLoginDebug("started", "Starting mock HepAI OIDC login.");
       emitOidcLoginDebug(
         "discovery",
-        "Loaded mock discovery from http://localhost:8081/api.",
+        "Loaded mock discovery from https://aitest.ihep.ac.cn/api.",
         "success",
-        "http://localhost:8081/api/.well-known/openid-configuration",
+        "https://aitest.ihep.ac.cn/api/.well-known/openid-configuration",
       );
       emitOidcLoginDebug(
         "browser-opened",
