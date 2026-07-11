@@ -31,26 +31,10 @@ extraResources:
 win:
   executableName: OpenDrSai
   icon: build/icon.ico
-  target:
-    - target: nsis
-      arch:
-        - x64
 protocols:
   - name: OpenDrSai
     schemes:
       - opendrsai
-nsis:
-  artifactName: OpenDrSai-${version}-setup.${ext}
-  installerIcon: build/icon.ico
-  uninstallerIcon: build/icon.ico
-  shortcutName: OpenDrSai
-  uninstallDisplayName: OpenDrSai
-  createDesktopShortcut: always
-  oneClick: true
-  perMachine: false
-  allowToChangeInstallationDirectory: false
-  runAfterFinish: true
-  deleteAppDataOnUninstall: false
 publish:
   provider: github
   owner: hepai-lab

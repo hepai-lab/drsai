@@ -11,6 +11,7 @@ const DEV_MANAGED_EXTERNAL_GATEWAY = process.env.DRSAI_GATEWAY_DEV_MANAGED === "
 const HOT_RELOAD_GATEWAY = process.env.DRSAI_GATEWAY_HOT_RELOAD === "1";
 let gatewayProcess: ChildProcess | null = null;
 let lastGatewayLog = "";
+let gatewayStopPromise: Promise<boolean> | null = null;
 
 export function checkGatewayReady(): Promise<boolean> {
   if (!isManagedGatewayRunning() && !DEV_MANAGED_EXTERNAL_GATEWAY) {
@@ -93,6 +94,8 @@ export async function startGateway(): Promise<boolean> {
     if (await checkGatewayReady()) return true;
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
+  lastGatewayLog = `${lastGatewayLog}\nGateway did not become ready within 12 seconds; stopping the spawned process tree.`.slice(-12000);
+  await stopGateway();
   return false;
 }
 
@@ -106,9 +109,10 @@ function appendGatewayLog(chunk: Buffer): void {
 
 function requestJson(
   url: string,
+  headers: Record<string, string> = {},
 ): Promise<{ ok: boolean; body: Record<string, unknown> | null }> {
   return new Promise((resolve) => {
-    const req = get(url, (res) => {
+    const req = get(url, { headers }, (res) => {
       let body = "";
       res.setEncoding("utf8");
       res.on("data", (chunk: string) => {
@@ -139,33 +143,97 @@ function requestJson(
 }
 
 export async function stopGateway(): Promise<boolean> {
-  if (gatewayProcess && !gatewayProcess.killed) {
-    killGatewayProcessTree(gatewayProcess);
-    gatewayProcess = null;
-    return true;
-  }
-  return false;
+  if (gatewayStopPromise) return gatewayStopPromise;
+  const proc = gatewayProcess;
+  if (!isProcessRunning(proc)) return false;
+
+  gatewayStopPromise = terminateGatewayProcessTree(proc).finally(() => {
+    if (gatewayProcess === proc && !isProcessRunning(proc)) gatewayProcess = null;
+    gatewayStopPromise = null;
+  });
+  return gatewayStopPromise;
 }
 
-export function shutdownGateway(): void {
-  if (!gatewayProcess || gatewayProcess.killed) return;
-  killGatewayProcessTree(gatewayProcess);
-  gatewayProcess = null;
+export async function getGatewayModels(
+  accessToken: string,
+): Promise<Array<{ id: string; name: string }>> {
+  const response = await requestJson(`${GATEWAY_BASE_URL}/v1/models`, {
+    Authorization: `Bearer ${accessToken}`,
+    "X-OpenDrSai-Auth-Mode": "oidc",
+  });
+  if (!response.ok || !Array.isArray(response.body?.data)) return [];
+  return response.body.data.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const row = item as Record<string, unknown>;
+    if (typeof row.id !== "string" || !row.id.trim()) return [];
+    const id = row.id.trim();
+    const name = typeof row.name === "string" && row.name.trim() ? row.name.trim() : id;
+    return [{ id, name }];
+  });
 }
 
-function killGatewayProcessTree(proc: ChildProcess): void {
+export async function shutdownGateway(): Promise<boolean> {
+  return stopGateway();
+}
+
+function isProcessRunning(proc: ChildProcess | null): proc is ChildProcess {
+  return Boolean(proc?.pid && proc.exitCode === null && proc.signalCode === null);
+}
+
+async function terminateGatewayProcessTree(proc: ChildProcess): Promise<boolean> {
+  if (!isProcessRunning(proc)) return true;
+
   if (process.platform === "win32" && proc.pid) {
-    spawn("taskkill.exe", ["/PID", String(proc.pid), "/T", "/F"], {
-      windowsHide: true,
-      stdio: "ignore",
+    const result = await new Promise<{ code: number | null; error?: Error }>((resolve) => {
+      const killer = spawn("taskkill.exe", ["/PID", String(proc.pid), "/T", "/F"], {
+        windowsHide: true,
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      let stderr = "";
+      killer.stderr?.on("data", (chunk: Buffer) => {
+        stderr = `${stderr}${chunk.toString()}`.slice(-4000);
+      });
+      killer.once("error", (error) => resolve({ code: null, error }));
+      killer.once("close", (code) => {
+        if (code !== 0 && stderr.trim()) appendGatewayLog(Buffer.from(`\ntaskkill failed: ${stderr.trim()}`));
+        resolve({ code });
+      });
     });
-    return;
+    if (result.error) appendGatewayLog(Buffer.from(`\nFailed to launch taskkill: ${result.error.message}`));
+    const exited = await waitForProcessExit(proc, 5000);
+    if (exited) return result.code === 0 || proc.exitCode !== null;
+    appendGatewayLog(Buffer.from(`\nGateway PID ${proc.pid} did not exit after taskkill; trying direct termination.`));
+    proc.kill();
+    if (await waitForProcessExit(proc, 2000)) return true;
+    appendGatewayLog(Buffer.from(`\nGateway PID ${proc.pid} is still running after all termination attempts.`));
+    return false;
   }
-  proc.kill();
+
+  proc.kill("SIGTERM");
+  if (await waitForProcessExit(proc, 5000)) return true;
+  proc.kill("SIGKILL");
+  return waitForProcessExit(proc, 2000);
+}
+
+function waitForProcessExit(proc: ChildProcess, timeoutMs: number): Promise<boolean> {
+  if (!isProcessRunning(proc)) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (exited: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      proc.off("exit", onExit);
+      resolve(exited);
+    };
+    const onExit = () => finish(true);
+    const timer = setTimeout(() => finish(!isProcessRunning(proc)), timeoutMs);
+    proc.once("exit", onExit);
+  });
 }
 
 function getGatewayPort(): string {
-  const rawPort = process.env.OPENDRSAI_GATEWAY_PORT || process.env.DRSAI_API_PORT || "8642";
+  const rawPort = process.env.OPENDRSAI_GATEWAY_PORT || process.env.DRSAI_API_PORT || "18642";
   const parsed = Number(rawPort);
-  return Number.isInteger(parsed) && parsed > 0 && parsed < 65536 ? String(parsed) : "8642";
+  return Number.isInteger(parsed) && parsed > 0 && parsed < 65536 ? String(parsed) : "18642";
 }

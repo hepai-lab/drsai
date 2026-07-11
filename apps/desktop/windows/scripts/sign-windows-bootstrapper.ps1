@@ -8,14 +8,14 @@ $ErrorActionPreference = "Stop"
 
 $RequireSigned = $env:REQUIRE_SIGNED_WINDOWS_ARTIFACTS -eq "1"
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
-$Bootstrapper = Join-Path $Root "release\bootstrapper\OpenDrSai Installer.exe"
+$Bootstrapper = Join-Path $Root "release\bootstrapper\OpenDrSaiSetup.msi"
 
 if (-not (Test-Path $Bootstrapper)) {
-    throw "Bootstrapper not found: $Bootstrapper"
+    throw "Bootstrapper MSI not found: $Bootstrapper"
 }
 
 if (-not $CertificateBase64 -or -not $CertificatePassword) {
-    $message = "WINDOWS_CERTIFICATE and WINDOWS_CERTIFICATE_PASSWORD are required to sign the bootstrapper."
+    $message = "WINDOWS_CERTIFICATE and WINDOWS_CERTIFICATE_PASSWORD are required to sign the bootstrapper MSI."
     if ($RequireSigned) {
         throw $message
     }
@@ -54,7 +54,7 @@ try {
         throw "signtool verify failed with exit code $LASTEXITCODE"
     }
 
-    Write-Host "Signed bootstrapper: $Bootstrapper" -ForegroundColor Green
+    Write-Host "Signed bootstrapper MSI: $Bootstrapper" -ForegroundColor Green
 } finally {
     Remove-Item -LiteralPath $pfx -Force -ErrorAction SilentlyContinue
 }

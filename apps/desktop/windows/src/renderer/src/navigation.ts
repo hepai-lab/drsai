@@ -94,35 +94,15 @@ const navDefinitions: Array<{
 }> = [
   {
     id: "chat",
-    items: [
-      { id: MENU_IDS.currentSession, enabled: true },
-      { id: MENU_IDS.savedPlan, enabled: false },
-    ],
-  },
-  {
-    id: "agents",
-    items: [
-      { id: MENU_IDS.myAgents, enabled: false },
-      { id: MENU_IDS.agentSquare, enabled: true },
-      { id: MENU_IDS.skillsSquare, enabled: true },
-      { id: MENU_IDS.plugins, enabled: false },
-    ],
+    items: [{ id: MENU_IDS.currentSession, enabled: true }],
   },
   {
     id: "workspace",
     items: [
       { id: MENU_IDS.library, enabled: false },
       { id: MENU_IDS.approvalCenter, enabled: true },
-      { id: MENU_IDS.logs, enabled: false },
-    ],
-  },
-  {
-    id: "admin",
-    items: [
-      { id: MENU_IDS.usageAnalytics, enabled: false },
       { id: MENU_IDS.channels, enabled: true },
-      { id: MENU_IDS.agentManagement, enabled: false },
-      { id: MENU_IDS.userManagement, enabled: false },
+      { id: MENU_IDS.logs, enabled: false },
     ],
   },
   {
@@ -167,7 +147,7 @@ export function getRightTabs(
   language: AppLanguage,
 ): Array<{ id: RightTab; label: string }> {
   return (
-    ["files", "templates", "browser", "terminal"] as RightTab[]
+    ["files", "terminal"] as RightTab[]
   ).map((id) => ({
     id,
     label: rightTabLabels[language][id],

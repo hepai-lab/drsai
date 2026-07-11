@@ -39,6 +39,7 @@ interface ChannelImportFixture {
   sarifJsonPath: string;
   chatExportJsonPath: string;
   emlxPath: string;
+  icsPath: string;
   filePaths: string[];
 }
 
@@ -48,6 +49,18 @@ interface IdeContextFixture {
   sourcePath: string;
   relativePath: string;
   selectionText: string;
+}
+
+interface WorkspaceReviewFixture {
+  workspacePath: string;
+  stagePath: string;
+  revertPath: string;
+  stalePath: string;
+  stageChangedContent: string;
+  revertBaseContent: string;
+  nonGitWorkspacePath: string;
+  nonGitFilePath: string;
+  nonGitBaseContent: string;
 }
 
 const timeoutMs = Number(process.env.OPENDRSAI_E2E_TIMEOUT_MS || "30000");
@@ -1355,6 +1368,7 @@ async function runOidcSmoke(window: BrowserWindow): Promise<SmokeResult> {
     (async () => {
       const checks = {};
       const details = {};
+      const expectsFakeIdentity = ${JSON.stringify(!process.env.OPENDRSAI_E2E_OIDC_EXTERNAL_ISSUER)};
       async function waitForDomReady() {
         const deadline = Date.now() + 5000;
         while (Date.now() < deadline) {
@@ -1370,12 +1384,18 @@ async function runOidcSmoke(window: BrowserWindow): Promise<SmokeResult> {
           session.authMode === "oidc" &&
           session.authProvider === "hai" &&
           session.user &&
-          session.user.id === "e2e-hai-user" &&
-          session.user.email === "e2e-hai-user@ihep.ac.cn" &&
+          typeof session.user.id === "string" && session.user.id.length > 0 &&
+          typeof session.user.email === "string" && session.user.email.includes("@") &&
           Array.isArray(session.user.roles) &&
-          session.user.roles.includes("user") &&
+          session.user.roles.length > 0 &&
           Array.isArray(session.user.groups) &&
-          session.user.groups.includes("desktop-e2e") &&
+          session.user.groups.length > 0 &&
+          (!expectsFakeIdentity || (
+            session.user.id === "e2e-hai-user" &&
+            session.user.email === "e2e-hai-user@ihep.ac.cn" &&
+            session.user.roles.includes("user") &&
+            session.user.groups.includes("desktop-e2e")
+          )) &&
           session.refreshable === true &&
           !("accessToken" in session) &&
           !("refreshToken" in session) &&
@@ -1397,6 +1417,18 @@ async function runOidcSmoke(window: BrowserWindow): Promise<SmokeResult> {
       };
       checks.oidcLoginOk = Boolean(login && login.ok);
       checks.oidcPublicSession = publicSessionLooksOidc(login && login.session);
+
+      const bootstrap = await api.bootstrapDesktop();
+      details.bootstrap = bootstrap;
+      checks.oidcBootstrapReady = Boolean(
+        bootstrap && bootstrap.ready &&
+        bootstrap.defaults && bootstrap.defaults.modelAlias === "drsai" &&
+        Array.isArray(bootstrap.models) && bootstrap.models.some((model) => model.id === "drsai") &&
+        bootstrap.capabilities && bootstrap.capabilities.chat === true &&
+        bootstrap.capabilities.tools.includes("files") &&
+        bootstrap.capabilities.tools.includes("shell") &&
+        bootstrap.capabilities.tools.includes("git")
+      );
 
       const restored = await api.getAuthSession();
       details.restored = restored;
@@ -1521,7 +1553,7 @@ function readOidcSessionStorageForSmoke(): {
   checks: { exists: boolean; usesEncryptedTokens: boolean; omitsPlainTokens: boolean };
   details: Record<string, unknown>;
 } {
-  const sessionPath = join(process.env.DRSAI_HOME || "", "auth", "session.json");
+  const sessionPath = join(process.env.DRSAI_HOME || "", "auth", "auth.json");
   if (!process.env.DRSAI_HOME || !existsSync(sessionPath)) {
     return {
       checks: { exists: false, usesEncryptedTokens: false, omitsPlainTokens: false },
@@ -1559,6 +1591,7 @@ function readOidcSessionStorageForSmoke(): {
 async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
   const channelImportFixture = prepareChannelImportFixture();
   const ideContextFixtures = prepareIdeContextFixtures();
+  const workspaceReviewFixture = prepareWorkspaceReviewFixture();
   const result = (await window.webContents.executeJavaScript(`
     (async () => {
       const checks = {};
@@ -1601,14 +1634,16 @@ async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
 
       const save = await api.saveApiKey("opendrsai-packaged-smoke-key");
       details.saveApiKey = save;
-      checks.saveApiKey = Boolean(save && save.ok);
+      checks.productionApiKeyRejected = Boolean(
+        save && save.ok === false && String(save.message || "").includes("OIDC")
+      );
 
       const afterSave = await api.getHealth();
       details.afterSave = {
         apiKeyConfigured: afterSave.install && afterSave.install.apiKeyConfigured,
       };
-      checks.apiKeyStatusRefresh = Boolean(
-        afterSave.install && afterSave.install.apiKeyConfigured,
+      checks.apiKeyStatusUnchanged = Boolean(
+        afterSave.install && afterSave.install.apiKeyConfigured === false,
       );
 
       const badKey = await api.saveApiKey("bad\\nkey");
@@ -1630,12 +1665,71 @@ async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
         String(outsidePathResult).includes("outside DrSai home") ||
         String(outsidePathResult).includes("not registered as a DrSai or workspace path");
 
+      const reviewFixture = ${JSON.stringify(workspaceReviewFixture)};
+      const reviewWorkspace = await api.createWorkspace({ source: "existing", path: reviewFixture.workspacePath, name: "packaged-review-workspace", trusted: true });
+      checks.reviewWorkspaceRegistered = Boolean(reviewWorkspace && reviewWorkspace.path === reviewFixture.workspacePath);
+      const stageDiff = await api.getWorkspaceGitDiff({ workspacePath: reviewFixture.workspacePath, path: reviewFixture.stagePath });
+      const stageProposal = await api.stageWorkspaceFile({ workspacePath: reviewFixture.workspacePath, path: reviewFixture.stagePath, expectedDiffHash: stageDiff.diffHash });
+      const stageApproved = await api.decideApproval({ id: stageProposal.approvalId, approved: true });
+      const stagedDiff = await api.getWorkspaceGitDiff({ workspacePath: reviewFixture.workspacePath, path: reviewFixture.stagePath, staged: true });
+      details.stageReview = { stageDiff, stageProposal, stageApproved, stagedDiff };
+      checks.fileAcceptRequiresApproval = Boolean(stageProposal.approvalQueued && stageProposal.approvalId && stageApproved);
+      checks.fileAcceptStagesReviewedDiff = Boolean(stagedDiff.diff && stagedDiff.diff.includes("accepted packaged change"));
+
+      const revertDiff = await api.getWorkspaceGitDiff({ workspacePath: reviewFixture.workspacePath, path: reviewFixture.revertPath });
+      const revertProposal = await api.revertWorkspaceFile({ workspacePath: reviewFixture.workspacePath, path: reviewFixture.revertPath, expectedDiffHash: revertDiff.diffHash });
+      const revertApproved = await api.decideApproval({ id: revertProposal.approvalId, approved: true });
+      const revertedDiff = await api.getWorkspaceGitDiff({ workspacePath: reviewFixture.workspacePath, path: reviewFixture.revertPath });
+      details.revertReview = { revertDiff, revertProposal, revertApproved, revertedDiff };
+      checks.fileRejectRequiresApproval = Boolean(revertProposal.approvalQueued && revertProposal.approvalId && revertApproved);
+      checks.fileRejectClearsReviewedDiff = Boolean(!revertedDiff.diff);
+
+      const staleDiff = await api.getWorkspaceGitDiff({ workspacePath: reviewFixture.workspacePath, path: reviewFixture.stalePath });
+      const staleProposal = await api.revertWorkspaceFile({ workspacePath: reviewFixture.workspacePath, path: reviewFixture.stalePath, expectedDiffHash: staleDiff.diffHash });
+      const staleTerminal = await api.createTerminal({ cwd: reviewFixture.workspacePath, workspaceKey: "packaged-review", shellProfile: "cmd", title: "stale-review-writer" });
+      await api.writeTerminal(staleTerminal.id, "echo external edit after review>>stale.txt\\r");
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      await api.killTerminal(staleTerminal.id);
+      let staleApprovalRejected = false;
+      try {
+        await api.decideApproval({ id: staleProposal.approvalId, approved: true });
+      } catch (error) {
+        details.staleReviewError = String(error && error.message ? error.message : error);
+        staleApprovalRejected = String(details.staleReviewError).includes("diff changed since review");
+      }
+      checks.staleReviewedDiffRejected = staleApprovalRejected;
+
+      let traversalRejected = false;
+      try {
+        await api.getWorkspaceGitDiff({ workspacePath: reviewFixture.workspacePath, path: "../outside.txt" });
+      } catch (error) {
+        details.reviewTraversalError = String(error && error.message ? error.message : error);
+        traversalRejected = true;
+      }
+      checks.reviewPathTraversalRejected = traversalRejected;
+
+      const nonGitWorkspace = await api.createWorkspace({ source: "existing", path: reviewFixture.nonGitWorkspacePath, name: "packaged-non-git-review", trusted: true });
+      const nonGitCheckpoint = await api.createWorkspaceCheckpoint({ workspacePath: reviewFixture.nonGitWorkspacePath, label: "Before non-Git packaged edit", maxFiles: 20 });
+      const nonGitTerminal = await api.createTerminal({ cwd: reviewFixture.nonGitWorkspacePath, workspaceKey: "packaged-non-git", shellProfile: "cmd", title: "non-git-writer" });
+      await api.writeTerminal(nonGitTerminal.id, "echo changed without git>>notes.txt\\r");
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      await api.killTerminal(nonGitTerminal.id);
+      const nonGitPreview = await api.previewWorkspaceCheckpoint({ workspacePath: reviewFixture.nonGitWorkspacePath, checkpointId: nonGitCheckpoint.id });
+      const nonGitRestore = await api.restoreWorkspaceCheckpoint({ workspacePath: reviewFixture.nonGitWorkspacePath, checkpointId: nonGitCheckpoint.id });
+      const nonGitRestoreApproved = await api.decideApproval({ id: nonGitRestore.approvalId, approved: true });
+      const nonGitPreviewAfter = await api.previewWorkspaceCheckpoint({ workspacePath: reviewFixture.nonGitWorkspacePath, checkpointId: nonGitCheckpoint.id });
+      details.nonGitReview = { nonGitWorkspace, nonGitCheckpoint, nonGitPreview, nonGitRestore, nonGitRestoreApproved, nonGitPreviewAfter };
+      checks.nonGitBaselineCaptured = Boolean(nonGitCheckpoint.entries && nonGitCheckpoint.entries.some((entry) => entry.relativePath === reviewFixture.nonGitFilePath && entry.stored));
+      checks.nonGitChangeDetected = Boolean(nonGitPreview.changedEntryCount === 1 && nonGitPreview.entries.some((entry) => entry.change === "modified"));
+      checks.nonGitRestoreRequiresApproval = Boolean(nonGitRestore.approvalQueued && nonGitRestore.approvalId && nonGitRestoreApproved);
+      checks.nonGitRestoreClearsChanges = Boolean(nonGitPreviewAfter.changedEntryCount === 0);
+
       const channelImportFixture = ${JSON.stringify(channelImportFixture)};
       const channelImport = await api.importChannelContext({
         adapterId: "file-input",
         workspacePath: channelImportFixture.workspacePath,
         paths: channelImportFixture.filePaths,
-        limit: 6,
+        limit: 7,
       });
       const channelImportItems = channelImport && channelImport.items ? channelImport.items : [];
       const channelImportItemByTitle = (title) => channelImportItems.find((item) => item && (item.title === title || item.relativePath === title));
@@ -1645,8 +1739,9 @@ async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
       const sarifImportItem = channelImportItemByTitle("packaged-results.sarif.json");
       const chatExportImportItem = channelImportItemByTitle("packaged-slack-export.json");
       const emlxImportItem = channelImportItemByTitle("packaged-message.emlx");
+      const icsImportItem = channelImportItemByTitle("packaged-calendar.ics");
       details.channelImport = channelImport;
-      checks.channelImportViaPreloadIpc = Boolean(channelImport && channelImport.adapterId === "file-input" && channelImportItems.length === 6);
+      checks.channelImportViaPreloadIpc = Boolean(channelImport && channelImport.adapterId === "file-input" && channelImportItems.length === 7);
       checks.channelImportWorkspaceBounded = Boolean(channelImport && channelImport.workspacePath === channelImportFixture.workspacePath);
       checks.channelImportMarkdownSummary = Boolean(
         markdownImportItem &&
@@ -1699,6 +1794,15 @@ async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
           String(emlxImportItem.summary || "").includes("no IMAP/SMTP login") &&
           String(emlxImportItem.mime || "").includes("message/rfc822")
       );
+      checks.channelImportIcsSummary = Boolean(
+        icsImportItem &&
+          String(icsImportItem.summary || "").includes("Calendar ICS file preview") &&
+          String(icsImportItem.summary || "").includes("Packaged calendar review") &&
+          String(icsImportItem.summary || "").includes("Project sync token=[redacted]") &&
+          !String(icsImportItem.summary || "").includes("secret-packaged-ics-token") &&
+          String(icsImportItem.summary || "").includes("no calendar app access") &&
+          String(icsImportItem.mime || "").includes("text/calendar")
+      );
       checks.channelImportNoProviderSend = Boolean(
         channelImport &&
           String(channelImport.verification || "").includes("Read-only channel import is limited to workspace-local file summaries")
@@ -1733,8 +1837,42 @@ async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
     })()
   `)) as { checks: Record<string, boolean>; details: Record<string, unknown> };
 
+  result.checks.nonGitRestoreRestoresDisk =
+    normalizeSmokeText(readFileSync(join(workspaceReviewFixture.nonGitWorkspacePath, workspaceReviewFixture.nonGitFilePath), "utf8")).trimEnd() ===
+    normalizeSmokeText(workspaceReviewFixture.nonGitBaseContent).trimEnd();
+
   const ok = Object.values(result.checks).every(Boolean);
   return { ok, checks: result.checks, details: result.details };
+}
+
+function prepareWorkspaceReviewFixture(): WorkspaceReviewFixture {
+  if (!process.env.DRSAI_HOME) throw new Error("DRSAI_HOME is required for workspace review smoke.");
+  const workspacePath = join(process.env.DRSAI_HOME, "desktop", "workspace-review-e2e");
+  removeSmokeFixture(workspacePath);
+  mkdirSync(workspacePath, { recursive: true });
+  runSmokeGit(workspacePath, ["init"]);
+  runSmokeGit(workspacePath, ["config", "user.email", "packaged-review@opendrsai.local"]);
+  runSmokeGit(workspacePath, ["config", "user.name", "OpenDrSai Packaged Review"]);
+  const stagePath = "accept.txt";
+  const revertPath = "reject.txt";
+  const stalePath = "stale.txt";
+  const revertBaseContent = "base reject content\n";
+  writeFileSync(join(workspacePath, stagePath), "base accept content\n", "utf8");
+  writeFileSync(join(workspacePath, revertPath), revertBaseContent, "utf8");
+  writeFileSync(join(workspacePath, stalePath), "base stale content\n", "utf8");
+  runSmokeGit(workspacePath, ["add", "."]);
+  runSmokeGit(workspacePath, ["commit", "-m", "workspace review base"]);
+  const stageChangedContent = "base accept content\naccepted packaged change\n";
+  writeFileSync(join(workspacePath, stagePath), stageChangedContent, "utf8");
+  writeFileSync(join(workspacePath, revertPath), "base reject content\nrejected packaged change\n", "utf8");
+  writeFileSync(join(workspacePath, stalePath), "base stale content\nreviewed change\n", "utf8");
+  const nonGitWorkspacePath = join(process.env.DRSAI_HOME, "desktop", "non-git-review-e2e");
+  removeSmokeFixture(nonGitWorkspacePath);
+  mkdirSync(nonGitWorkspacePath, { recursive: true });
+  const nonGitFilePath = "notes.txt";
+  const nonGitBaseContent = "non-git baseline content\n";
+  writeFileSync(join(nonGitWorkspacePath, nonGitFilePath), nonGitBaseContent, "utf8");
+  return { workspacePath, stagePath, revertPath, stalePath, stageChangedContent, revertBaseContent, nonGitWorkspacePath, nonGitFilePath, nonGitBaseContent };
 }
 
 function prepareChannelImportFixture(): ChannelImportFixture {
@@ -1742,7 +1880,7 @@ function prepareChannelImportFixture(): ChannelImportFixture {
     throw new Error("DRSAI_HOME is required for the packaged channel import fixture.");
   }
   const workspacePath = join(process.env.DRSAI_HOME, "desktop", "channel-import-e2e", "workspace");
-  rmSync(workspacePath, { recursive: true, force: true });
+  removeSmokeFixture(workspacePath);
   mkdirSync(workspacePath, { recursive: true });
   const filePath = join(workspacePath, "packaged-channel-import.md");
   writeFileSync(
@@ -1853,6 +1991,26 @@ function prepareChannelImportFixture(): ChannelImportFixture {
     ].join("\n"),
     "utf8",
   );
+  const icsPath = join(workspacePath, "packaged-calendar.ics");
+  writeFileSync(
+    icsPath,
+    [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//OpenDrSai//Packaged Smoke//EN",
+      "BEGIN:VEVENT",
+      "UID:packaged-calendar-smoke@example.test",
+      "DTSTAMP:20260711T020000Z",
+      "DTSTART:20260711T033000Z",
+      "DTEND:20260711T040000Z",
+      "SUMMARY:Packaged calendar review",
+      "LOCATION:Project sync token=secret-packaged-ics-token",
+      "DESCRIPTION:Review packaged calendar IPC fixture.",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n"),
+    "utf8",
+  );
   return {
     workspacePath,
     markdownPath: filePath,
@@ -1861,7 +2019,8 @@ function prepareChannelImportFixture(): ChannelImportFixture {
     sarifJsonPath,
     chatExportJsonPath,
     emlxPath,
-    filePaths: [filePath, cypressJsonPath, pngPath, sarifJsonPath, chatExportJsonPath, emlxPath],
+    icsPath,
+    filePaths: [filePath, cypressJsonPath, pngPath, sarifJsonPath, chatExportJsonPath, emlxPath, icsPath],
   };
 }
 
@@ -1877,7 +2036,7 @@ function prepareIdeContextFixtures(): IdeContextFixture[] {
   };
   return sources.map((source) => {
     const workspacePath = join(process.env.DRSAI_HOME || "", "desktop", "ide-context-e2e", source, "workspace");
-    rmSync(workspacePath, { recursive: true, force: true });
+    removeSmokeFixture(workspacePath);
     const sourceDir = join(workspacePath, "src");
     const drsaiDir = join(workspacePath, ".drsai");
     mkdirSync(sourceDir, { recursive: true });
@@ -1931,4 +2090,15 @@ function prepareIdeContextFixtures(): IdeContextFixture[] {
 function writeResult(path: string, result: SmokeResult): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(result, null, 2)}\n`, "utf8");
+}
+
+function removeSmokeFixture(path: string): void {
+  rmSync(path, {
+    recursive: true,
+    force: true,
+    // Antivirus/indexing services can briefly retain handles after the
+    // terminal and Git subprocesses exit on Windows.
+    maxRetries: 10,
+    retryDelay: 250,
+  });
 }

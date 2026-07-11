@@ -38,8 +38,8 @@ import type {
   DesktopAgent,
   DesktopHealth,
   DesktopIdeContextSnapshot,
-  DesktopVoiceTranscriptionRequest,
   DesktopVoiceTranscriptionResult,
+  ChatToolTimelineEvent,
   MyDrSaiModelConfig,
   PickDialogResult,
   WorkspaceFolderSummaryRequest,
@@ -61,6 +61,7 @@ export type UiMessage = ChatMessage & {
   streaming?: boolean;
   error?: boolean;
   statusContent?: string;
+  toolTimeline?: ChatToolTimelineEvent[];
   startedAt?: number;
   lastEventAt?: number;
 };
@@ -74,6 +75,9 @@ const THINKING_EFFORTS: ThinkingEffort[] = ["low", "medium", "high", "xhigh"];
 const MAX_CLIPBOARD_IMAGE_BYTES = 1_250_000;
 const MAX_CLIPBOARD_IMAGE_COUNT = 4;
 const MAX_CLIPBOARD_PATH_MENTIONS = 6;
+const VOICE_LEVEL_COUNT = 72;
+const VOICE_LEVEL_SAMPLE_INTERVAL_MS = 32;
+const VOICE_NOISE_FLOOR = 0.018;
 type VoiceRecordingState =
   | "idle"
   | "requesting_permission"
@@ -127,9 +131,6 @@ interface ChatWorkspaceProps {
   onSummarizeWorkspaceFolder?: (
     request: WorkspaceFolderSummaryRequest,
   ) => Promise<WorkspaceFolderSummaryResult>;
-  onTranscribeVoiceRecording?: (
-    request: DesktopVoiceTranscriptionRequest,
-  ) => Promise<DesktopVoiceTranscriptionResult>;
   onRemoveExternalAttachment?: (index: number) => void;
   onAttachIdeCurrentFile?: () => void;
   onAttachIdeCurrentSelection?: () => void;
@@ -169,7 +170,6 @@ export function ChatWorkspace({
   onPickFiles,
   onPickFolder,
   onSummarizeWorkspaceFolder,
-  onTranscribeVoiceRecording,
   onRemoveExternalAttachment,
   onAttachIdeCurrentFile,
   onAttachIdeCurrentSelection,
@@ -187,6 +187,14 @@ export function ChatWorkspace({
   const [voiceState, setVoiceState] = useState<VoiceRecordingState>("idle");
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [voiceElapsedSeconds, setVoiceElapsedSeconds] = useState(0);
+  const [voiceLevels, setVoiceLevels] = useState<number[]>(() => createSilentVoiceLevels());
+  const [voiceReviewText, setVoiceReviewText] = useState<string | null>(null);
+  const [voiceRuntimeDisclosure, setVoiceRuntimeDisclosure] = useState<string | null>(null);
+  const [voiceLanguage, setVoiceLanguage] = useState<"auto" | "zh-CN" | "en-US">("auto");
+  const [voiceDeviceId, setVoiceDeviceId] = useState("");
+  const [voiceDevices, setVoiceDevices] = useState<MediaDeviceInfo[]>([]);
+  const [voiceProgressMessage, setVoiceProgressMessage] = useState("");
+  const [voiceRuntimeLabel, setVoiceRuntimeLabel] = useState("Voice STT");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -194,7 +202,16 @@ export function ChatWorkspace({
   const voiceChunksRef = useRef<Blob[]>([]);
   const voiceStartedAtRef = useRef<number>(0);
   const voiceTimerRef = useRef<number | null>(null);
+  const voiceAudioContextRef = useRef<AudioContext | null>(null);
+  const voiceAnalyserRef = useRef<AnalyserNode | null>(null);
+  const voiceSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const voiceAnimationFrameRef = useRef<number | null>(null);
+  const voiceLastSampleAtRef = useRef(0);
+  const voiceSmoothedLevelRef = useRef(0);
   const voiceStopModeRef = useRef<"transcribe" | "discard">("transcribe");
+  const voiceRequestIdRef = useRef<string | null>(null);
+  const voiceRetryBlobRef = useRef<Blob | null>(null);
+  const voiceSelectionRef = useRef<{ start: number; end: number } | null>(null);
   const zh = language === "zh";
   const [now, setNow] = useState(Date.now());
   const hasStreamingMessage = messages.some((message) => message.streaming);
@@ -274,7 +291,7 @@ export function ChatWorkspace({
     Boolean(navigator.mediaDevices?.getUserMedia) &&
     typeof window !== "undefined" &&
     "MediaRecorder" in window;
-  const voiceBusy =
+  const showVoiceCaptureBar =
     voiceState === "requesting_permission" ||
     voiceState === "recording" ||
     voiceState === "processing";
@@ -403,8 +420,18 @@ export function ChatWorkspace({
   }, [openSearch]);
 
   useEffect(() => {
+    if (!hasDesktopApi() || typeof desktopApi.getVoiceRuntimeStatus !== "function") return;
+    void desktopApi.getVoiceRuntimeStatus().then((runtime) => {
+      setVoiceRuntimeDisclosure(runtime.providerDisclosure);
+      setVoiceRuntimeLabel(runtime.runtimeId === "gateway-provider" ? "Online STT" : "Fixture STT");
+    }).catch(() => setVoiceRuntimeLabel("STT unavailable"));
+  }, []);
+
+  useEffect(() => {
     return () => {
       stopVoiceTimer();
+      stopVoiceAnalyzer();
+      if (voiceRequestIdRef.current) void desktopApi.cancelVoiceTranscription(voiceRequestIdRef.current);
       stopVoiceStream();
       const recorder = mediaRecorderRef.current;
       if (recorder && recorder.state !== "inactive") {
@@ -487,16 +514,28 @@ export function ChatWorkspace({
       return;
     }
     setVoiceError(null);
+    voiceSelectionRef.current = textareaRef.current
+      ? { start: textareaRef.current.selectionStart, end: textareaRef.current.selectionEnd }
+      : { start: input.length, end: input.length };
     setVoiceElapsedSeconds(0);
+    setVoiceLevels(createSilentVoiceLevels());
     setVoiceState("requesting_permission");
     try {
+      if (hasDesktopApi() && typeof desktopApi.getVoiceRuntimeStatus === "function") {
+        const runtime = await desktopApi.getVoiceRuntimeStatus();
+        setVoiceRuntimeDisclosure(runtime.providerDisclosure);
+        if (runtime.state !== "ready") throw new Error(runtime.message);
+      }
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
+          deviceId: voiceDeviceId ? { exact: voiceDeviceId } : undefined,
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
         },
       });
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      setVoiceDevices(devices.filter((device) => device.kind === "audioinput"));
       const mimeType = getPreferredVoiceMimeType();
       const recorder = mimeType
         ? new MediaRecorder(stream, { mimeType })
@@ -506,6 +545,7 @@ export function ChatWorkspace({
       voiceChunksRef.current = [];
       voiceStopModeRef.current = "transcribe";
       voiceStartedAtRef.current = Date.now();
+      startVoiceAnalyzer(stream);
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) voiceChunksRef.current.push(event.data);
       };
@@ -513,6 +553,7 @@ export function ChatWorkspace({
         setVoiceState("failed");
         setVoiceError("Voice recording failed. Please try again.");
         stopVoiceTimer();
+        stopVoiceAnalyzer();
         stopVoiceStream();
       };
       recorder.onstop = () => {
@@ -525,6 +566,7 @@ export function ChatWorkspace({
       setVoiceState("failed");
       setVoiceError(getVoicePermissionError(error));
       stopVoiceTimer();
+      stopVoiceAnalyzer();
       stopVoiceStream();
     }
   }
@@ -533,11 +575,13 @@ export function ChatWorkspace({
     const recorder = mediaRecorderRef.current;
     voiceStopModeRef.current = mode;
     stopVoiceTimer();
+    stopVoiceAnalyzer();
     if (recorder && recorder.state !== "inactive") {
       recorder.stop();
       return;
     }
     stopVoiceStream();
+    setVoiceLevels(createSilentVoiceLevels());
     setVoiceState("idle");
   }
 
@@ -547,6 +591,7 @@ export function ChatWorkspace({
       ? Math.max(0, Math.round((Date.now() - voiceStartedAtRef.current) / 1000))
       : voiceElapsedSeconds;
     stopVoiceStream();
+    stopVoiceAnalyzer();
     mediaRecorderRef.current = null;
     voiceChunksRef.current = [];
     if (voiceStopModeRef.current === "discard") {
@@ -562,29 +607,27 @@ export function ChatWorkspace({
       return;
     }
     setVoiceState("processing");
+    setVoiceProgressMessage("Preparing audio...");
+    voiceRetryBlobRef.current = blob;
     try {
-      const transcript = await transcribeVoiceRecording(
+      const result = await transcribeVoiceRecordingAsync(
         blob,
         durationSeconds,
-        workspacePath,
-        onTranscribeVoiceRecording,
       );
-      insertVoiceText(transcript);
+      setVoiceReviewText(result.transcript);
+      setVoiceRuntimeDisclosure(result.providerDisclosure);
       setVoiceState("idle");
       setVoiceError(null);
       setVoiceElapsedSeconds(0);
     } catch (error) {
-      setVoiceState("failed");
-      setVoiceError(error instanceof Error ? error.message : "Voice transcription failed.");
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setVoiceState("idle");
+        setVoiceError(null);
+      } else {
+        setVoiceState("failed");
+        setVoiceError(error instanceof Error ? error.message : "Voice transcription failed.");
+      }
     }
-  }
-
-  function insertVoiceText(text: string): void {
-    const trimmed = text.trim();
-    if (!trimmed) return;
-    const current = input.trimEnd();
-    onInputChange(current ? `${current}\n${trimmed}` : trimmed);
-    window.setTimeout(() => textareaRef.current?.focus(), 0);
   }
 
   function insertTextAtCursor(text: string): void {
@@ -616,9 +659,9 @@ export function ChatWorkspace({
   function startVoiceTimer(): void {
     stopVoiceTimer();
     voiceTimerRef.current = window.setInterval(() => {
-      setVoiceElapsedSeconds(
-        Math.max(0, Math.floor((Date.now() - voiceStartedAtRef.current) / 1000)),
-      );
+      const elapsed = Math.max(0, Math.floor((Date.now() - voiceStartedAtRef.current) / 1000));
+      setVoiceElapsedSeconds(elapsed);
+      if (elapsed >= 120) stopVoiceRecording("transcribe");
     }, 250);
   }
 
@@ -632,6 +675,142 @@ export function ChatWorkspace({
   function stopVoiceStream(): void {
     voiceStreamRef.current?.getTracks().forEach((track) => track.stop());
     voiceStreamRef.current = null;
+  }
+
+  async function transcribeVoiceRecordingAsync(
+    blob: Blob,
+    durationSeconds: number,
+  ): Promise<DesktopVoiceTranscriptionResult> {
+    if (!hasDesktopApi()) {
+      throw new Error("Voice transcription requires the desktop runtime.");
+    }
+    const audioData = new Uint8Array(await blob.arrayBuffer());
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const unsubscribe = desktopApi.onVoiceTranscriptionEvent((event) => {
+        if (event.requestId !== voiceRequestIdRef.current || settled) return;
+        if (event.type === "progress") {
+          setVoiceProgressMessage(event.message);
+        } else if (event.type === "completed") {
+          settled = true;
+          voiceRequestIdRef.current = null;
+          unsubscribe();
+          resolve(event.result);
+        } else if (event.type === "failed") {
+          settled = true;
+          voiceRequestIdRef.current = null;
+          unsubscribe();
+          reject(new Error(event.error.message));
+        } else if (event.type === "cancelled") {
+          settled = true;
+          voiceRequestIdRef.current = null;
+          unsubscribe();
+          reject(new DOMException("Voice transcription was cancelled.", "AbortError"));
+        }
+      });
+      void desktopApi.startVoiceTranscription({
+        workspacePath: workspacePath || undefined,
+        audioData,
+        mimeType: blob.type || "audio/webm",
+        durationSeconds,
+        languageHint: voiceLanguage === "auto" ? undefined : voiceLanguage,
+        sourceLabel: "Desktop composer microphone",
+      }).then(({ requestId }) => {
+        voiceRequestIdRef.current = requestId;
+      }).catch((error) => {
+        settled = true;
+        unsubscribe();
+        reject(error);
+      });
+    });
+  }
+
+  function cancelVoiceTranscription(): void {
+    const requestId = voiceRequestIdRef.current;
+    if (requestId) void desktopApi.cancelVoiceTranscription(requestId);
+  }
+
+  async function retryVoiceTranscription(): Promise<void> {
+    const blob = voiceRetryBlobRef.current;
+    if (!blob) return;
+    setVoiceError(null);
+    setVoiceProgressMessage("Preparing audio...");
+    setVoiceReviewText(null);
+    setVoiceState("processing");
+    try {
+      const result = await transcribeVoiceRecordingAsync(blob, voiceElapsedSeconds);
+      setVoiceReviewText(result.transcript);
+      setVoiceRuntimeDisclosure(result.providerDisclosure);
+      setVoiceState("idle");
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setVoiceState("idle");
+        setVoiceError(null);
+      } else {
+        setVoiceState("failed");
+        setVoiceError(error instanceof Error ? error.message : "Voice transcription failed.");
+      }
+    }
+  }
+
+  function acceptVoiceReview(): void {
+    const text = voiceReviewText?.trim();
+    if (text) {
+      const selection = voiceSelectionRef.current ?? { start: input.length, end: input.length };
+      onInputChange(`${input.slice(0, selection.start)}${text}${input.slice(selection.end)}`);
+    }
+    discardVoiceReview();
+  }
+
+  function discardVoiceReview(): void {
+    setVoiceReviewText(null);
+    setVoiceRuntimeDisclosure(null);
+    setVoiceError(null);
+    voiceRetryBlobRef.current = null;
+    setVoiceState("idle");
+  }
+
+  function startVoiceAnalyzer(stream: MediaStream): void {
+    stopVoiceAnalyzer();
+    const audioContext = new AudioContext();
+    const source = audioContext.createMediaStreamSource(stream);
+    const analyser = audioContext.createAnalyser();
+    analyser.fftSize = 64;
+    analyser.smoothingTimeConstant = 0.55;
+    source.connect(analyser);
+    voiceAudioContextRef.current = audioContext;
+    voiceSourceRef.current = source;
+    voiceAnalyserRef.current = analyser;
+    voiceLastSampleAtRef.current = 0;
+    voiceSmoothedLevelRef.current = 0;
+
+    const samples = new Float32Array(analyser.fftSize);
+    const sampleLevel = (timestamp: number): void => {
+      if (voiceAnalyserRef.current !== analyser) return;
+      if (timestamp - voiceLastSampleAtRef.current >= VOICE_LEVEL_SAMPLE_INTERVAL_MS) {
+        analyser.getFloatTimeDomainData(samples);
+        const level = calculateVoiceLevel(samples, voiceSmoothedLevelRef.current);
+        voiceSmoothedLevelRef.current = level;
+        voiceLastSampleAtRef.current = timestamp;
+        setVoiceLevels((current) => [...current.slice(1), level]);
+      }
+      voiceAnimationFrameRef.current = window.requestAnimationFrame(sampleLevel);
+    };
+    voiceAnimationFrameRef.current = window.requestAnimationFrame(sampleLevel);
+  }
+
+  function stopVoiceAnalyzer(): void {
+    if (voiceAnimationFrameRef.current !== null) {
+      window.cancelAnimationFrame(voiceAnimationFrameRef.current);
+      voiceAnimationFrameRef.current = null;
+    }
+    voiceSourceRef.current?.disconnect();
+    voiceSourceRef.current = null;
+    voiceAnalyserRef.current = null;
+    const audioContext = voiceAudioContextRef.current;
+    voiceAudioContextRef.current = null;
+    if (audioContext && audioContext.state !== "closed") void audioContext.close();
+    voiceSmoothedLevelRef.current = 0;
   }
 
   function selectSamplePrompt(prompt: string): void {
@@ -900,6 +1079,9 @@ export function ChatWorkspace({
                   </ReactMarkdown>
                 </div>
               )}
+              {message.toolTimeline?.length ? (
+                <ToolTimeline events={message.toolTimeline} />
+              ) : null}
             </div>
           </article>
         ))}
@@ -1134,6 +1316,23 @@ export function ChatWorkspace({
                 )}
               </div>
 
+              {voiceReviewText !== null ? (
+                <VoiceReviewBar
+                  value={voiceReviewText}
+                  disclosure={voiceRuntimeDisclosure}
+                  onChange={setVoiceReviewText}
+                  onAccept={acceptVoiceReview}
+                  onRetry={() => void retryVoiceTranscription()}
+                  onDiscard={discardVoiceReview}
+                />
+              ) : showVoiceCaptureBar ? (
+                <VoiceCaptureBar
+                  elapsedSeconds={voiceElapsedSeconds}
+                  levels={voiceLevels}
+                  state={voiceState}
+                  onStop={voiceState === "processing" ? cancelVoiceTranscription : () => stopVoiceRecording("transcribe")}
+                />
+              ) : (
               <textarea
                 ref={textareaRef}
                 value={input}
@@ -1147,26 +1346,27 @@ export function ChatWorkspace({
                 }
                 rows={1}
               />
+              )}
 
             </div>
 
-            {voiceBusy || voiceError ? (
+            {voiceError || voiceState === "processing" ? (
               <div
                 className={`composer-voice-status ${voiceState === "failed" ? "error" : ""}`}
                 aria-live="polite"
               >
                 <span>
-                  {getVoiceStatusLabel(voiceState, voiceElapsedSeconds)}
+                  {voiceState === "processing" && voiceProgressMessage
+                    ? voiceProgressMessage
+                    : getVoiceStatusLabel(voiceState, voiceElapsedSeconds)}
                 </span>
-                {voiceState === "recording" ? (
-                  <button
-                    type="button"
-                    onClick={() => stopVoiceRecording("discard")}
-                  >
-                    Cancel
-                  </button>
-                ) : null}
                 {voiceError ? <small>{voiceError}</small> : null}
+                {voiceError && voiceRetryBlobRef.current ? (
+                  <span className="composer-voice-error-actions">
+                    <button type="button" onClick={() => void retryVoiceTranscription()}>Retry</button>
+                    <button type="button" onClick={discardVoiceReview}>Discard</button>
+                  </span>
+                ) : null}
               </div>
             ) : null}
 
@@ -1275,6 +1475,38 @@ export function ChatWorkspace({
               )}
               </div>
               <div className="composer-actions composer-actions-meta">
+                <span className="composer-voice-runtime-label" title={voiceRuntimeDisclosure || voiceRuntimeLabel}>
+                  {voiceRuntimeLabel}
+                </span>
+                {voiceDevices.length > 1 ? (
+                  <select
+                    className="composer-voice-device"
+                    value={voiceDeviceId}
+                    onChange={(event) => setVoiceDeviceId(event.target.value)}
+                    disabled={showVoiceCaptureBar}
+                    aria-label="Microphone device"
+                    title="Microphone device"
+                  >
+                    <option value="">Default mic</option>
+                    {voiceDevices.map((device, index) => (
+                      <option key={device.deviceId} value={device.deviceId}>
+                        {device.label || `Microphone ${index + 1}`}
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
+                <select
+                  className="composer-voice-language"
+                  value={voiceLanguage}
+                  onChange={(event) => setVoiceLanguage(event.target.value as "auto" | "zh-CN" | "en-US")}
+                  disabled={showVoiceCaptureBar}
+                  aria-label="Voice transcription language"
+                  title="Voice transcription language"
+                >
+                  <option value="auto">Auto</option>
+                  <option value="zh-CN">中文</option>
+                  <option value="en-US">EN</option>
+                </select>
                 {input.trim() && !showStop ? (
                   <button
                     type="button"
@@ -1419,6 +1651,101 @@ function StreamingStatus({
   );
 }
 
+function ToolTimeline({ events }: { events: ChatToolTimelineEvent[] }): React.JSX.Element {
+  return (
+    <div className="message-tool-timeline" aria-label="Tool timeline">
+      {events.slice(-8).map((event) => (
+        <article className={`message-tool-event ${event.status ?? event.kind}`} key={event.id}>
+          <div>
+            <span>{event.status ?? event.kind}</span>
+            {event.toolName ? <code>{event.toolName}</code> : null}
+            {event.path ? <small>{event.path}</small> : null}
+          </div>
+          <strong>{event.title}</strong>
+          {event.content ? <p>{event.content}</p> : null}
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function VoiceCaptureBar({
+  elapsedSeconds,
+  levels,
+  state,
+  onStop,
+}: {
+  elapsedSeconds: number;
+  levels: number[];
+  state: VoiceRecordingState;
+  onStop: () => void;
+}): React.JSX.Element {
+  const processing = state === "processing" || state === "requesting_permission";
+  const bars = levels.map((level, index) => {
+    const height = Math.max(2, Math.round(level * 30));
+    return (
+      <span
+        className="composer-voice-wave-bar"
+        key={index}
+        style={{
+          height: `${height}px`,
+          opacity: level > 0.01 ? 1 : 0,
+        }}
+      />
+    );
+  });
+
+  return (
+    <div
+      className={`composer-voice-capture ${processing ? "processing" : "recording"}`}
+      aria-label={processing ? "Preparing voice input" : "Recording voice input"}
+    >
+      <div className="composer-voice-wave" aria-hidden>
+        {bars}
+      </div>
+      <span className="composer-voice-time">{formatVoiceDuration(elapsedSeconds)}</span>
+      <button
+        className="composer-voice-stop"
+        type="button"
+        disabled={state === "requesting_permission"}
+        onClick={onStop}
+        aria-label="Stop voice recording"
+        title="Stop voice recording"
+      >
+        <Square size={11} fill="currentColor" />
+      </button>
+    </div>
+  );
+}
+
+function VoiceReviewBar({
+  value,
+  disclosure,
+  onChange,
+  onAccept,
+  onRetry,
+  onDiscard,
+}: {
+  value: string;
+  disclosure: string | null;
+  onChange: (value: string) => void;
+  onAccept: () => void;
+  onRetry: () => void;
+  onDiscard: () => void;
+}): React.JSX.Element {
+  return (
+    <div className="composer-voice-review">
+      <textarea value={value} onChange={(event) => onChange(event.target.value)} aria-label="Review voice transcript" rows={2} />
+      <div className="composer-voice-review-actions">
+        <button type="button" onClick={onRetry}>Retry</button>
+        <button type="button" onClick={onDiscard}>Discard</button>
+        <button className="primary" type="button" onClick={onAccept} disabled={!value.trim()}>Insert</button>
+      </div>
+      {disclosure ? <small>{disclosure}</small> : null}
+    </div>
+  );
+}
+
 function highlightPlainText(text: string, query: string): React.ReactNode {
   const needle = query.trim();
   if (!needle) return text;
@@ -1459,6 +1786,28 @@ function getPreferredVoiceMimeType(): string | undefined {
   return candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate));
 }
 
+function createSilentVoiceLevels(): number[] {
+  return Array.from({ length: VOICE_LEVEL_COUNT }, () => 0);
+}
+
+function calculateVoiceLevel(samples: Float32Array, previousLevel: number): number {
+  if (!samples.length) return 0;
+  let sumOfSquares = 0;
+  let peak = 0;
+  for (const sample of samples) {
+    sumOfSquares += sample * sample;
+    peak = Math.max(peak, Math.abs(sample));
+  }
+  const rms = Math.sqrt(sumOfSquares / samples.length);
+  const signal = Math.max(rms * 2.8, peak * 0.75);
+  const normalized = signal <= VOICE_NOISE_FLOOR
+    ? 0
+    : Math.min(1, (signal - VOICE_NOISE_FLOOR) / (0.5 - VOICE_NOISE_FLOOR));
+  const attack = normalized > previousLevel ? 0.62 : 0.28;
+  const smoothed = previousLevel + (normalized - previousLevel) * attack;
+  return smoothed < 0.012 ? 0 : smoothed;
+}
+
 function getVoicePermissionError(error: unknown): string {
   if (error instanceof DOMException) {
     if (error.name === "NotAllowedError" || error.name === "SecurityError") {
@@ -1486,50 +1835,6 @@ function formatVoiceDuration(seconds: number): string {
   const minutes = Math.floor(seconds / 60);
   const remainder = seconds % 60;
   return `${minutes}:${remainder.toString().padStart(2, "0")}`;
-}
-
-async function transcribeVoiceRecording(
-  blob: Blob,
-  durationSeconds: number,
-  workspacePath: string,
-  onTranscribeVoiceRecording?: (
-    request: DesktopVoiceTranscriptionRequest,
-  ) => Promise<DesktopVoiceTranscriptionResult>,
-): Promise<string> {
-  if (workspacePath && onTranscribeVoiceRecording) {
-    const audioBase64 = await blobToBase64(blob);
-    const result = await onTranscribeVoiceRecording({
-      workspacePath,
-      audioBase64,
-      mimeType: blob.type || "audio/webm",
-      durationSeconds,
-      sourceLabel: "Composer microphone recording",
-    });
-    if (!result.ok) {
-      throw new Error(result.error || result.message || "Voice transcription failed.");
-    }
-    return result.transcript;
-  }
-  await new Promise((resolve) => window.setTimeout(resolve, 250));
-  const sizeKb = Math.max(1, Math.round(blob.size / 1024));
-  return [
-    "[Voice recording captured]",
-    `Duration: ${formatVoiceDuration(durationSeconds)}.`,
-    `Size: ${sizeKb} KB.`,
-    "Transcription runtime is not connected yet. Stage 2 should replace this placeholder with the main-process voice transcription API.",
-  ].join("\n");
-}
-
-function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const value = typeof reader.result === "string" ? reader.result : "";
-      resolve(value.includes(",") ? value.split(",").pop() || "" : value);
-    };
-    reader.onerror = () => reject(reader.error ?? new Error("Unable to read voice recording."));
-    reader.readAsDataURL(blob);
-  });
 }
 
 async function createClipboardImageAttachment(

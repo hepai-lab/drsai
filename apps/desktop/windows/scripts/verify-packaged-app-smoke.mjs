@@ -45,7 +45,7 @@ try {
   if (!result.ok) {
     throw new Error(`Packaged app smoke failed:\n${JSON.stringify(result, null, 2)}`);
   }
-  verifyEnvFile(result);
+  verifyNoEnvFile(result);
   console.log("Packaged app smoke passed with real main/preload/IPC.");
 } finally {
   if (globalThis.__opendrsaiFakeGateway) {
@@ -86,17 +86,11 @@ function startFakeGateway() {
   });
 }
 
-function verifyEnvFile(result) {
-  if (!existsSync(envPath)) {
-    throw new Error(`Packaged app smoke did not write ${envPath}.`);
-  }
-  const envContent = readFileSync(envPath, "utf8");
-  const expectedLine = "HEPAI_API_KEY=opendrsai-packaged-smoke-key";
-  if (!envContent.split(/\r?\n/).includes(expectedLine)) {
-    writeFileSync(join(tempDir, "failed-env.txt"), envContent, "utf8");
-    throw new Error(
-      `Packaged app smoke wrote an unexpected .env file.\n${JSON.stringify(result, null, 2)}\n.env:\n${envContent}`,
-    );
+function verifyNoEnvFile(result) {
+  if (existsSync(envPath)) {
+    const envContent = readFileSync(envPath, "utf8");
+    writeFileSync(join(tempDir, "unexpected-env.txt"), envContent, "utf8");
+    throw new Error(`Packaged app unexpectedly exposed API-key configuration.\n${JSON.stringify(result, null, 2)}`);
   }
 }
 

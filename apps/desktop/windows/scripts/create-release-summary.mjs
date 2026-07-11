@@ -7,13 +7,9 @@ import { fileURLToPath } from "node:url";
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const releaseDir = join(root, "release");
 const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
-const setupName = `OpenDrSai-${packageJson.version}-setup.exe`;
 const artifacts = [
-  setupName,
-  `${setupName}.blockmap`,
-  "latest.yml",
-  "latest-windows.json",
-  join("bootstrapper", "OpenDrSai Installer.exe"),
+  join("bootstrapper", "OpenDrSaiSetup.msi"),
+  join("bootstrapper", "OpenDrSaiRuntime-win-x64.zip"),
 ];
 
 const describedArtifacts = artifacts.map((relativePath) => describeArtifact(relativePath));
@@ -25,7 +21,6 @@ const summary = {
   generatedAt: new Date().toISOString(),
   releaseDir,
   distribution,
-  manifest: readJsonIfExists(join(releaseDir, "latest-windows.json")),
   artifacts: describedArtifacts,
 };
 
@@ -44,13 +39,8 @@ function describeArtifact(relativePath) {
     exists: true,
     sizeBytes: statSync(fullPath).size,
     sha256: createHash("sha256").update(bytes).digest("hex"),
-    signatureStatus: relativePath.endsWith(".exe") ? getSignatureStatus(fullPath) : null,
+    signatureStatus: relativePath.endsWith(".msi") ? getSignatureStatus(fullPath) : null,
   };
-}
-
-function readJsonIfExists(path) {
-  if (!existsSync(path)) return null;
-  return JSON.parse(readFileSync(path, "utf8"));
 }
 
 function getSignatureStatus(path) {
@@ -67,23 +57,23 @@ function getSignatureStatus(path) {
 }
 
 function describeDistribution(describedArtifacts) {
-  const executableArtifacts = describedArtifacts.filter(
-    (artifact) => artifact.exists && artifact.path.endsWith(".exe"),
+  const signedArtifacts = describedArtifacts.filter(
+    (artifact) => artifact.exists && artifact.path.endsWith(".msi"),
   );
-  const unsigned = executableArtifacts.filter(
+  const unsigned = signedArtifacts.filter(
     (artifact) => artifact.signatureStatus !== "Valid",
   );
   return {
     publicDistributionReady: unsigned.length === 0,
-    requiresSignedExecutables: true,
+    requiresSignedInstallers: true,
     unsignedArtifacts: unsigned.map((artifact) => ({
       path: artifact.path,
       signatureStatus: artifact.signatureStatus,
     })),
     note:
       unsigned.length === 0
-        ? "All executable release artifacts are Authenticode signed."
-        : "Do not distribute this build publicly until all executable artifacts are Authenticode signed.",
+        ? "All installer artifacts are Authenticode signed."
+        : "Do not distribute this build publicly until installer artifacts are Authenticode signed.",
   };
 }
 

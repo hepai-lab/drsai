@@ -66,17 +66,51 @@ try {
 } finally {
   if (gatewayProcess) {
     killProcessTree(gatewayProcess.pid);
+    await waitForProcessExit(gatewayProcess, 3_000);
   }
-  cleanupTempDir(tempHome);
+  await cleanupTempDir(tempHome);
+}
+
+function waitForProcessExit(child, timeoutMs) {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return new Promise((resolvePromise) => {
+    const timer = setTimeout(resolvePromise, timeoutMs);
+    child.once("close", () => {
+      clearTimeout(timer);
+      resolvePromise();
+    });
+  });
 }
 process.exit(process.exitCode ?? 0);
 
-function cleanupTempDir(path) {
-  try {
-    rmSync(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
-  } catch (error) {
-    console.warn(`Could not remove temporary directory ${path}: ${error instanceof Error ? error.message : String(error)}`);
+async function cleanupTempDir(path) {
+  let lastError;
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    try {
+      rmSync(path, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
+    }
   }
+  if (process.platform === "win32") {
+    const escapedPath = path.replace(/'/g, "''");
+    const helper = spawn(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-WindowStyle",
+        "Hidden",
+        "-Command",
+        `$p='${escapedPath}'; for($i=0;$i -lt 30;$i++){ try { Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction Stop; exit 0 } catch { Start-Sleep -Milliseconds 500 } }; exit 1`,
+      ],
+      { detached: true, stdio: "ignore", windowsHide: true },
+    );
+    helper.unref();
+    return;
+  }
+  console.warn(`Could not remove temporary directory ${path}: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
 }
 
 function resolvePython() {

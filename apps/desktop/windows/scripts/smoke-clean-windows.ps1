@@ -1,10 +1,12 @@
 param(
     [string]$ReleaseBaseUrl,
     [string]$BootstrapperPath,
+    [string]$RuntimeUrlOverride,
     [switch]$RunBootstrapper,
     [switch]$LaunchApp,
     [switch]$WaitForGateway,
     [switch]$RequireBackend,
+    [switch]$RequireSigned,
     [string]$ExpectedVersion,
     [int]$GatewayTimeoutSeconds = 120
 )
@@ -53,10 +55,13 @@ function Invoke-CapturedCommand {
         [string]$FilePath,
         [string[]]$Arguments
     )
+    $previousErrorAction = $ErrorActionPreference
     try {
+        $ErrorActionPreference = "Continue"
         $output = & $FilePath @Arguments 2>&1
+        $exitCode = $LASTEXITCODE
         return [pscustomobject]@{
-            ExitCode = $LASTEXITCODE
+            ExitCode = $exitCode
             Output = (($output | Out-String).Trim())
         }
     } catch {
@@ -64,14 +69,18 @@ function Invoke-CapturedCommand {
             ExitCode = 1
             Output = $_.Exception.Message
         }
+    } finally {
+        $ErrorActionPreference = $previousErrorAction
     }
 }
 
 function Find-OpenDrSaiExe {
     $candidates = @(
+        (Join-Path $env:LOCALAPPDATA "Programs\OpenDrSai\app\OpenDrSai.exe"),
         (Join-Path $env:LOCALAPPDATA "Programs\OpenDrSai\OpenDrSai.exe"),
         (Join-Path $env:LOCALAPPDATA "Programs\opendrsai\OpenDrSai.exe"),
-        (Join-Path $env:LOCALAPPDATA "OpenDrSai\OpenDrSai.exe")
+        (Join-Path $env:LOCALAPPDATA "OpenDrSai\OpenDrSai.exe"),
+        (Join-Path $env:LOCALAPPDATA "OpenDrSai\app\OpenDrSai.exe")
     )
     foreach ($candidate in $candidates) {
         if (Test-Path $candidate) { return $candidate }
@@ -94,22 +103,18 @@ Write-Host ""
 
 if ($ReleaseBaseUrl) {
     $base = $ReleaseBaseUrl.TrimEnd("/")
-    $manifestUrl = "$base/latest-windows.json"
     try {
-        $manifest = Invoke-RestMethod -Uri $manifestUrl -TimeoutSec 30
-        Add-Result "Public latest-windows.json" "PASS" $manifestUrl
+        $summary = Invoke-RestMethod -Uri "$base/release-summary.json" -TimeoutSec 30
+        Add-Result "Public release-summary.json" "PASS" "$base/release-summary.json"
         if ($ExpectedVersion) {
-            $actualManifestVersion = Get-SemanticVersion ([string]$manifest.version)
-            $targetManifestVersion = Get-SemanticVersion $ExpectedVersion
-            Add-Result "Public manifest version" ($(if ($actualManifestVersion -eq $targetManifestVersion) { "PASS" } else { "FAIL" })) "Expected $targetManifestVersion, got $actualManifestVersion"
+            $actualSummaryVersion = Get-SemanticVersion ([string]$summary.version)
+            $targetSummaryVersion = Get-SemanticVersion $ExpectedVersion
+            Add-Result "Public summary version" ($(if ($actualSummaryVersion -eq $targetSummaryVersion) { "PASS" } else { "FAIL" })) "Expected $targetSummaryVersion, got $actualSummaryVersion"
         }
 
         $assetUrls = @(
-            $manifest.installer,
-            "$base/latest.yml",
-            "$base/release-summary.json",
-            "$base/OpenDrSai Installer.exe",
-            "$($manifest.installer).blockmap"
+            "$base/bootstrapper/OpenDrSaiSetup.msi",
+            "$base/bootstrapper/OpenDrSaiRuntime-win-x64.zip"
         )
         foreach ($url in $assetUrls) {
             if (Test-Url $url) {
@@ -118,18 +123,13 @@ if ($ReleaseBaseUrl) {
                 Add-Result "Public asset reachable" "FAIL" $url
             }
         }
-    } catch {
-        Add-Result "Public release manifest" "FAIL" $_.Exception.Message
-    }
-    try {
-        $summary = Invoke-RestMethod -Uri "$base/release-summary.json" -TimeoutSec 30
         $ready = $summary.distribution.publicDistributionReady -eq $true
         Add-Result "Public distribution summary" ($(if ($ready) { "PASS" } else { "FAIL" })) "publicDistributionReady=$($summary.distribution.publicDistributionReady)"
     } catch {
-        Add-Result "Public distribution summary" "FAIL" $_.Exception.Message
+        Add-Result "Public release summary" "FAIL" $_.Exception.Message
     }
 } else {
-    Add-Result "Public release manifest" "SKIP" "Pass -ReleaseBaseUrl to validate published assets."
+    Add-Result "Public release summary" "SKIP" "Pass -ReleaseBaseUrl to validate published assets."
     Add-Result "Public distribution summary" "SKIP" "Pass -ReleaseBaseUrl to validate release-summary.json."
 }
 
@@ -137,10 +137,14 @@ if ($BootstrapperPath) {
     if (Test-Path $BootstrapperPath) {
         Add-Result "Bootstrapper exists" "PASS" $BootstrapperPath
         $signature = Get-AuthenticodeSignature -LiteralPath $BootstrapperPath
-        Add-Result "Bootstrapper signature" ($(if ($signature.Status -eq "Valid") { "PASS" } else { "FAIL" })) $signature.Status
+        Add-Result "Bootstrapper signature" ($(if ($signature.Status -eq "Valid") { "PASS" } elseif ($RequireSigned) { "FAIL" } else { "WARN" })) $signature.Status
         if ($RunBootstrapper) {
             Write-Host "Running bootstrapper. Complete the installer UI if it appears..." -ForegroundColor Yellow
-            $process = Start-Process -FilePath $BootstrapperPath -Wait -PassThru
+            $msiArgs = @("/i", $BootstrapperPath, "/passive", "/norestart")
+            if ($RuntimeUrlOverride) {
+                $msiArgs += "RUNTIMEURL=$RuntimeUrlOverride"
+            }
+            $process = Start-Process -FilePath "msiexec.exe" -ArgumentList $msiArgs -Wait -PassThru
             Add-Result "Bootstrapper process" ($(if ($process.ExitCode -eq 0) { "PASS" } else { "FAIL" })) "Exit code $($process.ExitCode)"
         }
     } else {
@@ -196,15 +200,19 @@ if (Test-Path $venvPython) {
 }
 
 if (Test-Path $logDir) {
-    $latestLog = Get-ChildItem -Path $logDir -Filter "desktop-install-*.log" -ErrorAction SilentlyContinue |
+    $candidateLogs = @(
+        Get-ChildItem -Path $logDir -Filter "desktop-install-*.log" -ErrorAction SilentlyContinue
+        Get-ChildItem -Path (Join-Path $logDir "bootstrapper") -Filter "install-*.log" -ErrorAction SilentlyContinue
+    )
+    $latestLog = $candidateLogs |
         Sort-Object LastWriteTime -Descending |
         Select-Object -First 1
     if ($latestLog) {
         $logText = Get-Content -LiteralPath $latestLog.FullName -Raw -ErrorAction SilentlyContinue
-        $hasSuccess = $logText -match "DrSai installation complete|Installation complete|OpenDrSai install exited with code 0"
+        $hasSuccess = $logText -match "DrSai installation complete|Installation complete|OpenDrSai install exited with code 0|OpenDrSai Runtime installation complete"
         Add-Result "Latest installer log success" ($(if ($hasSuccess) { "PASS" } else { "FAIL" })) $latestLog.FullName
     } else {
-        Add-Result "Latest installer log success" $backendStatusWhenMissing "No desktop-install-*.log found."
+        Add-Result "Latest installer log success" $backendStatusWhenMissing "No current installer log found."
     }
 }
 
@@ -214,22 +222,22 @@ if ($WaitForGateway) {
     $modelsReady = $false
     while ((Get-Date) -lt $deadline) {
         try {
-            Invoke-RestMethod -Uri "http://127.0.0.1:8642/health" -TimeoutSec 3 | Out-Null
+            Invoke-RestMethod -Uri "http://127.0.0.1:18642/health" -TimeoutSec 3 | Out-Null
             $healthReady = $true
         } catch {
             Start-Sleep -Seconds 3
             continue
         }
         try {
-            Invoke-RestMethod -Uri "http://127.0.0.1:8642/v1/models" -TimeoutSec 3 | Out-Null
+            Invoke-RestMethod -Uri "http://127.0.0.1:18642/v1/models" -TimeoutSec 3 | Out-Null
             $modelsReady = $true
             break
         } catch {
             Start-Sleep -Seconds 3
         }
     }
-    Add-Result "Gateway health" ($(if ($healthReady) { "PASS" } else { "FAIL" })) "http://127.0.0.1:8642/health"
-    Add-Result "Gateway models" ($(if ($modelsReady) { "PASS" } else { "FAIL" })) "http://127.0.0.1:8642/v1/models"
+    Add-Result "Gateway health" ($(if ($healthReady) { "PASS" } else { "FAIL" })) "http://127.0.0.1:18642/health"
+    Add-Result "Gateway models" ($(if ($modelsReady) { "PASS" } else { "FAIL" })) "http://127.0.0.1:18642/v1/models"
 } else {
     Add-Result "Gateway health" "SKIP" "Pass -WaitForGateway after starting the gateway in the app."
     Add-Result "Gateway models" "SKIP" "Pass -WaitForGateway after starting the gateway in the app."

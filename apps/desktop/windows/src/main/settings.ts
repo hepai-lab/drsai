@@ -119,6 +119,6 @@ function putGatewayConfig(path: string, body: Record<string, unknown>): Promise<
 }
 
 function getGatewayPort(): string {
-  const rawPort = process.env.OPENDRSAI_GATEWAY_PORT || process.env.DRSAI_API_PORT || "8642";
-  return /^\d+$/.test(rawPort) ? rawPort : "8642";
+  const rawPort = process.env.OPENDRSAI_GATEWAY_PORT || process.env.DRSAI_API_PORT || "18642";
+  return /^\d+$/.test(rawPort) ? rawPort : "18642";
 }

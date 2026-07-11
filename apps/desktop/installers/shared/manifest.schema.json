@@ -1,11 +1,14 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://opendrsai.local/schemas/desktop-installer-manifest.schema.json",
-  "title": "OpenDrSai Desktop Installer Manifest",
+  "$id": "https://opendrsai.local/schemas/opendrsai-runtime-manifest.schema.json",
+  "title": "OpenDrSai Runtime Manifest",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "channel", "minimumBootstrapperVersion", "platforms"],
+  "required": ["name", "version", "platform", "layoutVersion", "entrypoints"],
   "properties": {
+    "name": {
+      "const": "OpenDrSai Runtime"
+    },
     "version": {
       "type": "string",
       "pattern": "^\\d+\\.\\d+\\.\\d+(?:[-+][0-9A-Za-z.-]+)?$"
@@ -14,107 +17,33 @@
       "type": "string",
       "enum": ["stable", "beta", "dev"]
     },
-    "protocolVersion": {
+    "platform": {
+      "type": "string",
+      "enum": ["windows-x64"]
+    },
+    "layoutVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "createdAt": {
       "type": "string"
     },
-    "minimumBootstrapperVersion": {
-      "type": "string",
-      "pattern": "^\\d+\\.\\d+\\.\\d+$"
-    },
-    "platforms": {
+    "entrypoints": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["windows-x64"],
-      "properties": {
-        "windows-x64": {
-          "$ref": "#/$defs/platformPayload"
-        },
-        "macos-arm64": {
-          "$ref": "#/$defs/platformPayload"
-        },
-        "macos-x64": {
-          "$ref": "#/$defs/platformPayload"
-        }
-      }
-    }
-  },
-  "$defs": {
-    "artifact": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["url", "sha256", "sizeBytes"],
-      "properties": {
-        "url": {
-          "type": "string",
-          "minLength": 1
-        },
-        "sha256": {
-          "type": "string",
-          "pattern": "^[A-Fa-f0-9]{64}$"
-        },
-        "sizeBytes": {
-          "type": "integer",
-          "minimum": 1
-        }
-      }
-    },
-    "desktopArtifact": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["url", "sha256", "sizeBytes"],
-      "properties": {
-        "url": {
-          "type": "string",
-          "minLength": 1
-        },
-        "sha256": {
-          "type": "string",
-          "pattern": "^[A-Fa-f0-9]{64}$"
-        },
-        "sizeBytes": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "executableRelativePath": {
-          "type": "string",
-          "default": "OpenDrSai.exe"
-        }
-      }
-    },
-    "backendArtifact": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["url", "sha256", "sizeBytes"],
-      "properties": {
-        "url": {
-          "type": "string",
-          "minLength": 1
-        },
-        "sha256": {
-          "type": "string",
-          "pattern": "^[A-Fa-f0-9]{64}$"
-        },
-        "sizeBytes": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "installMode": {
-          "type": "string",
-          "enum": ["source-archive"],
-          "default": "source-archive"
-        }
-      }
-    },
-    "platformPayload": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["desktop", "backend"],
+      "required": ["desktop", "python", "drsai", "gateway"],
       "properties": {
         "desktop": {
-          "$ref": "#/$defs/desktopArtifact"
+          "const": "app/OpenDrSai.exe"
         },
-        "backend": {
-          "$ref": "#/$defs/backendArtifact"
+        "python": {
+          "const": "drsai-agent/venv/Scripts/python.exe"
+        },
+        "drsai": {
+          "const": "drsai-agent/venv/Scripts/drsai.cmd"
+        },
+        "gateway": {
+          "const": "drsai-agent/venv/Scripts/drsai-gateway.cmd"
         }
       }
     }

@@ -2305,6 +2305,55 @@ button {
   margin-bottom: 0;
 }
 
+.message-tool-timeline {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.message-tool-event {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--app-panel-border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.message-tool-event div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-bottom: 5px;
+}
+
+.message-tool-event span {
+  flex: 0 0 auto;
+  color: var(--app-text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.message-tool-event strong,
+.message-tool-event p,
+.message-tool-event code,
+.message-tool-event small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.message-tool-event strong {
+  display: block;
+  color: var(--app-text-primary);
+}
+
+.message-tool-event p {
+  margin: 5px 0 0;
+  color: var(--app-text-secondary);
+  white-space: pre-wrap;
+}
+
 .message.search-match {
   outline: 1px solid rgba(139, 92, 246, 0.35);
   outline-offset: 2px;
@@ -2798,6 +2847,122 @@ button {
   overflow: auto;
 }
 
+.composer-voice-capture {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 46px;
+  padding: 0 2px 0 4px;
+  color: var(--app-text-primary);
+}
+
+.composer-voice-wave {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1px;
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  overflow: hidden;
+}
+
+.composer-voice-wave::before {
+  content: "";
+  position: absolute;
+  inset: 50% 0 auto;
+  border-top: 1px dotted rgba(20, 26, 38, 0.28);
+}
+
+.composer-voice-wave-bar {
+  position: relative;
+  width: 3px;
+  min-width: 1px;
+  max-width: 3px;
+  flex: 1 1 3px;
+  border-radius: 999px;
+  background: #20242c;
+  transform-origin: center;
+  transition: height 70ms linear, opacity 100ms ease;
+}
+
+.composer-voice-capture.processing .composer-voice-wave-bar {
+  opacity: 0;
+}
+
+.composer-voice-time {
+  min-width: 34px;
+  color: var(--app-text-secondary);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.composer-voice-stop {
+  display: inline-grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  color: #111827;
+  background: #f1f3f7;
+}
+
+.composer-voice-stop:hover {
+  background: #e7eaf0;
+}
+
+.composer-voice-stop:disabled {
+  cursor: wait;
+}
+
+.composer-voice-review {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 10px;
+  width: 100%;
+  padding: 4px 2px;
+}
+
+.composer-voice-review textarea {
+  min-height: 46px;
+  max-height: 120px;
+  padding: 8px;
+  border: 1px solid var(--app-border-subtle);
+  border-radius: 6px;
+  resize: vertical;
+}
+
+.composer-voice-review-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.composer-voice-review-actions button {
+  min-height: 32px;
+  padding: 0 9px;
+}
+
+.composer-voice-review-actions .primary {
+  color: white;
+  background: #20242c;
+}
+
+.composer-voice-review small {
+  grid-column: 1 / -1;
+  color: var(--app-text-secondary);
+  font-size: 11px;
+}
+
+.composer-voice-error-actions {
+  display: inline-flex;
+  gap: 6px;
+}
+
 .composer-tools {
   position: relative;
   align-self: center;
@@ -2840,6 +3005,38 @@ button {
 
 .composer-actions-meta {
   margin-left: auto;
+}
+
+.composer-voice-language {
+  width: 58px;
+  height: 28px;
+  padding: 0 4px;
+  border: 1px solid var(--app-border-subtle);
+  border-radius: 5px;
+  color: var(--app-text-secondary);
+  background: transparent;
+  font-size: 11px;
+}
+
+.composer-voice-device {
+  width: 86px;
+  height: 28px;
+  padding: 0 4px;
+  border: 1px solid var(--app-border-subtle);
+  border-radius: 5px;
+  color: var(--app-text-secondary);
+  background: transparent;
+  font-size: 11px;
+  text-overflow: ellipsis;
+}
+
+.composer-voice-runtime-label {
+  max-width: 74px;
+  overflow: hidden;
+  color: var(--app-text-secondary);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .composer-actions-meta .composer-icon-button,
@@ -10622,6 +10819,26 @@ button {
 .approval-mcp-reusable-row.idle {
   border-color: #d7c5a6;
   background: #fffbf2;
+}
+
+.approval-mcp-reusable-row.restart_reconnect_required {
+  border-color: #c7d2fe;
+  background: #f8f7ff;
+}
+
+.approval-mcp-reconnect-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid #c7d2fe;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #4338ca;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .approval-mcp-audit-row.cancelled,

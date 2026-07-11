@@ -18,7 +18,7 @@ Also exposes session management, skills, memory, and agent control
 
 Usage:
 
-    python drsai_api_server.py                # default port 8642
+    python drsai_api_server.py                # default port 18642
 
     DRSAI_API_PORT=18642 python ...           # custom port
 
@@ -91,7 +91,8 @@ from typing import Any, Optional
 
 
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+import httpx
 
 from fastapi.responses import StreamingResponse
 
@@ -201,7 +202,7 @@ except ImportError:
 
 
 
-DEFAULT_PORT = int(os.environ.get("DRSAI_API_PORT", "8642"))
+DEFAULT_PORT = int(os.environ.get("DRSAI_API_PORT", "18642"))
 
 DEFAULT_HOST = os.environ.get("DRSAI_API_HOST", "127.0.0.1")
 
@@ -1123,6 +1124,54 @@ async def list_models():
     models = await manager.list_models()
 
     return {"object": "list", "data": models}
+
+
+@app.post("/v1/audio/transcriptions")
+async def audio_transcriptions(
+    file: UploadFile = File(...),
+    model: str = Form("whisper-1"),
+    language: Optional[str] = Form(None),
+):
+    """Proxy bounded speech transcription requests to the configured provider."""
+    api_key = os.environ.get("HEPAI_API_KEY", "").strip() or os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(status_code=401, detail="A transcription provider API key is required.")
+    audio = await file.read(10 * 1024 * 1024 + 1)
+    if not audio:
+        raise HTTPException(status_code=400, detail="The uploaded audio file is empty.")
+    if len(audio) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="The uploaded audio exceeds the 10 MB limit.")
+    base_url = os.environ.get("OPENAI_BASE_URL", "https://aiapi.ihep.ac.cn/apiv2").rstrip("/")
+    data = {"model": model}
+    if language:
+        data["language"] = language
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                f"{base_url}/audio/transcriptions",
+                headers={"Authorization": f"Bearer {api_key}"},
+                data=data,
+                files={"file": (file.filename or "recording.webm", audio, file.content_type or "application/octet-stream")},
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail="The transcription provider timed out.") from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="The transcription provider is unreachable.") from exc
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail="The transcription provider returned invalid JSON.") from exc
+    if response.status_code >= 400:
+        detail = payload.get("error", {}).get("message") if isinstance(payload.get("error"), dict) else payload.get("detail")
+        raise HTTPException(status_code=response.status_code, detail=detail or "The transcription provider rejected the request.")
+    text = payload.get("text") if isinstance(payload, dict) else None
+    if not isinstance(text, str):
+        raise HTTPException(status_code=502, detail="The transcription provider response omitted text.")
+    return {
+        "text": text,
+        "language": payload.get("language") or language,
+        "confidence": payload.get("confidence"),
+    }
 
 
 @app.get("/v1/config/model-catalog")

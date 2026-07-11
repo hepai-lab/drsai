@@ -14,7 +14,7 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = (Resolve-Path (Join-Path $ScriptDir "..\..\..")).Path
 $DesktopDir = Join-Path $RepoRoot "apps\desktop\windows"
 $Installer = Join-Path $RepoRoot "scripts\install.ps1"
-$GatewayPort = 8642
+$GatewayPort = 18642
 
 function Add-PathIfExists {
     param([string]$Path)

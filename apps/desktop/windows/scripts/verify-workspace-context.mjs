@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const root = process.cwd();
+const e2eSmoke = readFileSync(join(root, "src/main/e2eSmoke.ts"), "utf8");
 
 const checks = [
   {
@@ -458,6 +459,25 @@ const checks = [
     ],
   },
 ];
+
+for (const marker of [
+  "prepareWorkspaceReviewFixture",
+  "fileAcceptRequiresApproval",
+  "fileAcceptStagesReviewedDiff",
+  "fileRejectRequiresApproval",
+  "fileRejectClearsReviewedDiff",
+  "reviewPathTraversalRejected",
+  "staleReviewedDiffRejected",
+  "nonGitBaselineCaptured",
+  "nonGitChangeDetected",
+  "nonGitRestoreRequiresApproval",
+  "nonGitRestoreRestoresDisk",
+]) {
+  if (!e2eSmoke.includes(marker)) {
+    console.error(`Workspace context verification failed: packaged runtime coverage omits ${marker}`);
+    process.exit(1);
+  }
+}
 
 const failures = [];
 

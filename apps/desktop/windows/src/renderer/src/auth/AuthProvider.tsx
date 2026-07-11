@@ -6,6 +6,8 @@ interface AuthContextValue {
   loading: boolean;
   loginBusy: boolean;
   logoutBusy: boolean;
+  serviceBusy: boolean;
+  serviceReady: boolean;
   message: string | null;
   session: AuthSession;
   login: (request: LoginRequest) => Promise<boolean>;
@@ -17,6 +19,7 @@ interface AuthContextValue {
   cancelDesktopSsoLogin: (deviceCode: string) => Promise<void>;
   logout: (clearLocalData?: boolean) => Promise<void>;
   refresh: () => Promise<void>;
+  retryBootstrap: () => Promise<boolean>;
   clearMessage: () => void;
 }
 
@@ -34,11 +37,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
   const [loading, setLoading] = useState(true);
   const [loginBusy, setLoginBusy] = useState(false);
   const [logoutBusy, setLogoutBusy] = useState(false);
+  const [serviceBusy, setServiceBusy] = useState(false);
+  const [serviceReady, setServiceReady] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   async function refresh(): Promise<void> {
     const next = await desktopApi.getAuthSession();
     setSession(next);
+    if (next.authenticated) await retryBootstrap();
+  }
+
+  async function retryBootstrap(): Promise<boolean> {
+    setServiceBusy(true);
+    try {
+      const bootstrap = await desktopApi.bootstrapDesktop();
+      setServiceReady(bootstrap.ready);
+      setMessage(bootstrap.message);
+      return bootstrap.ready;
+    } catch (error) {
+      setServiceReady(false);
+      setMessage(error instanceof Error ? error.message : "OpenDrSai service preparation failed.");
+      return false;
+    } finally {
+      setServiceBusy(false);
+    }
   }
 
   useEffect(() => {
@@ -74,11 +96,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     setMessage("Opening browser for HepAI sign-in...");
     try {
       const result = await desktopApi.startOidcLogin(request);
-      setMessage(result.message);
       if (result.ok && result.session) {
         setSession(result.session);
-        return true;
+        return retryBootstrap();
       }
+      setMessage(result.message);
       return false;
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "OIDC sign-in failed.");
@@ -160,6 +182,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       const result = await desktopApi.logout({ clearLocalData });
       setMessage(result.message);
       setSession(anonymousSession);
+      setServiceReady(false);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Sign-out failed.");
     } finally {
@@ -172,6 +195,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       loading,
       loginBusy,
       logoutBusy,
+      serviceBusy,
+      serviceReady,
       message,
       session,
       login,
@@ -183,9 +208,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       cancelDesktopSsoLogin,
       logout,
       refresh,
+      retryBootstrap,
       clearMessage: () => setMessage(null),
     }),
-    [loading, loginBusy, logoutBusy, message, session],
+    [loading, loginBusy, logoutBusy, serviceBusy, serviceReady, message, session],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

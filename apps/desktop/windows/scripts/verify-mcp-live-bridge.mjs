@@ -66,6 +66,9 @@ for (const text of [
   "sessionReuseKey?: string",
   "reusable?: boolean",
   '"reusable_pool"',
+  '"restart_reconnect_required"',
+  "restartDetectedAt?: string",
+  "diagnosticMessage?: string",
   '"closed"',
 ]) {
   assert(api.includes(text), `shared API missing ${text}`);
@@ -110,6 +113,9 @@ assert(
     liveBridge.includes("sendPooledMcpRequest") &&
     liveBridge.includes("scheduleReusableMcpIdleShutdown") &&
     liveBridge.includes("recordMcpReusablePoolAudit") &&
+    liveBridge.includes("getReusableSessionRestartDiagnostic") &&
+    liveBridge.includes("restart_reconnect_required") &&
+    liveBridge.includes("Reusable MCP stdio sessions are process-local") &&
     liveBridge.includes("createReusableMcpSessionKey") &&
     liveBridge.includes("listMcpSessionAudits") &&
     liveBridge.includes("desktop-mcp-session-audit") &&
@@ -197,6 +203,9 @@ assert(
     mock.includes("mockMcpExecutionAudits") &&
     mock.includes("mockMcpSessionAudits") &&
     mock.includes("mcp-reuse:mock") &&
+    mock.includes("mcp-reuse:mock-restart") &&
+    mock.includes("restart_reconnect_required") &&
+    mock.includes("Restart diagnostics are read-only lifecycle evidence") &&
     mock.includes("reusedSession") &&
     mock.includes("sessionReuseKey") &&
     mock.includes('status: "approval_queued"') &&
@@ -221,9 +230,13 @@ assert(
     approvalCenter.includes("Cancel MCP") &&
     approvalCenter.includes("Close idle") &&
     approvalCenter.includes("Close session") &&
+    approvalCenter.includes("Reconnect required") &&
+    approvalCenter.includes("session.diagnosticMessage") &&
     styles.includes(".approval-mcp-active-panel") &&
     styles.includes(".approval-mcp-reusable-panel") &&
     styles.includes(".approval-mcp-reusable-row") &&
+    styles.includes(".approval-mcp-reusable-row.restart_reconnect_required") &&
+    styles.includes(".approval-mcp-reconnect-pill") &&
     styles.includes(".approval-mcp-audit-actions") &&
     styles.includes(".approval-mcp-active-row"),
   "approval center does not expose running MCP session cancellation and result attachment controls",
@@ -409,6 +422,20 @@ try {
         typeof session.idleExpiresInMs === "number",
     ),
     "runtime fixture did not expose idle reusable MCP pool health after enumeration",
+  );
+  const restartedBridge = await import(`${pathToFileURL(fixtureBridge).href}?restart=${Date.now()}`);
+  const restartDiagnostic = restartedBridge.listMcpReusableSessions({ workspacePath: fixtureWorkspace });
+  assert(
+    restartDiagnostic.some(
+      (session) =>
+        session.sessionReuseKey === enumeration.sessionReuseKey &&
+        session.server === "fixture" &&
+        session.status === "restart_reconnect_required" &&
+        typeof session.restartDetectedAt === "string" &&
+        String(session.diagnosticMessage).includes("process-local") &&
+        String(session.diagnosticMessage).includes("/mcp sync --reuse"),
+    ),
+    "runtime fixture did not expose reusable MCP restart reconnect diagnostics from lifecycle audit",
   );
 
   const toolPromise = bridge.executeMcpToolAfterApproval(

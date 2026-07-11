@@ -241,7 +241,7 @@ export function createFallbackHealth(): DesktopHealth {
     managed: false,
     externalReady: false,
     externalConflict: false,
-    baseUrl: "http://127.0.0.1:8642",
+    baseUrl: "http://127.0.0.1:18642",
     pid: null,
     lastLog: "",
   };

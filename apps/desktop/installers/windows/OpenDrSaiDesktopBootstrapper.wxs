@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product
+    Id="*"
+    Name="OpenDrSai Setup"
+    Language="1033"
+    Version="$(var.ProductVersion)"
+    Manufacturer="HepAI Team, IHEP"
+    UpgradeCode="9E45A2A6-A7D3-45EF-8B14-079E8D7E38E1">
+    <Package
+      InstallerVersion="500"
+      Compressed="yes"
+      InstallScope="perUser"
+      Description="OpenDrSai desktop bootstrapper" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of OpenDrSai Setup is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    <Property Id="RUNTIMEURL" Value="$(var.RuntimeUrl)" />
+    <Property Id="RUNTIMESHA256" Value="$(var.RuntimeSha256)" />
+    <Property Id="RUNTIMESIZEBYTES" Value="$(var.RuntimeSizeBytes)" />
+    <Property Id="BOOTSTRAPPERVERSION" Value="$(var.BootstrapperVersion)" />
+    <Property Id="EXTRAINSTALLARGS" Value="$(var.ExtraInstallArgs)" />
+    <UIRef Id="WixUI_InstallDir" />
+    <UIRef Id="WixUI_ErrorProgressText" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="LocalAppDataFolder">
+        <Directory Id="ProgramsDataFolder" Name="Programs">
+          <Directory Id="INSTALLFOLDER" Name="OpenDrSaiSetup">
+            <Component Id="InstallerScripts" Guid="A638D62D-1141-47E5-9316-80D4E54A43AC">
+              <File Id="InstallOpenDrSaiScript" Source="$(var.SourceDir)\install-opendrsai.ps1" KeyPath="yes" />
+              <File Id="UninstallOpenDrSaiScript" Source="$(var.SourceDir)\uninstall-opendrsai.ps1" />
+              <File Id="RunOpenDrSaiInstallScript" Source="$(var.SourceDir)\run-opendrsai-install.vbs" />
+            </Component>
+          </Directory>
+        </Directory>
+      </Directory>
+    </Directory>
+
+    <Feature Id="MainFeature" Title="OpenDrSai Setup" Level="1">
+      <ComponentRef Id="InstallerScripts" />
+    </Feature>
+
+    <CustomAction
+      Id="RunOpenDrSaiBootstrapper"
+      Directory="INSTALLFOLDER"
+      ExeCommand='wscript.exe //B //Nologo "[INSTALLFOLDER]run-opendrsai-install.vbs" /RuntimeUrl:"[RUNTIMEURL]" /RuntimeSha256:"[RUNTIMESHA256]" /RuntimeSizeBytes:"[RUNTIMESIZEBYTES]" /BootstrapperVersion:"[BOOTSTRAPPERVERSION]" [EXTRAINSTALLARGS]'
+      Return="check" />
+
+    <CustomAction
+      Id="RunOpenDrSaiUninstaller"
+      Directory="INSTALLFOLDER"
+      ExeCommand='powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "[INSTALLFOLDER]uninstall-opendrsai.ps1"'
+      Return="check" />
+
+    <InstallExecuteSequence>
+      <Custom Action="RunOpenDrSaiBootstrapper" After="InstallFinalize">NOT Installed</Custom>
+      <Custom Action="RunOpenDrSaiUninstaller" Before="RemoveFiles">REMOVE~="ALL"</Custom>
+    </InstallExecuteSequence>
+  </Product>
+</Wix>

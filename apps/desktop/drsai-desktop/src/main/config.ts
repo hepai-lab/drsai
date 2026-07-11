@@ -13,7 +13,7 @@ import { profilePaths, escapeRegex, safeWriteFile } from "./utils";
 // no profile concept yet (user_id is the equivalent).
 
 const DRSAI_API_PORT_FOR_CONFIG = parseInt(
-  process.env.DRSAI_API_PORT || "8642",
+  process.env.DRSAI_API_PORT || "18642",
   10,
 );
 const DRSAI_API_URL_FOR_CONFIG = `http://127.0.0.1:${DRSAI_API_PORT_FOR_CONFIG}`;
@@ -179,7 +179,7 @@ async function _syncUserNameToApi(name: string): Promise<void> {
     const body = JSON.stringify({ user_name: name });
     await new Promise<void>((resolve, reject) => {
       const req = http.request(
-        "http://127.0.0.1:8642/v1/config/user-name",
+        "http://127.0.0.1:18642/v1/config/user-name",
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },

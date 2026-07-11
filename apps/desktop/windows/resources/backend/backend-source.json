@@ -1,8 +1,0 @@
-{
-    "version":  "1.4.0",
-    "archive":  "opendrsai-backend-source.zip",
-    "sha256":  "ca442f9c6fafc83a0a3b2ded0410be1a053c6c0fcaf1330907d861f440ac9c31",
-    "sizeBytes":  677794,
-    "sourceRoot":  "cores/python/packages/drsai",
-    "generatedAt":  "1970-01-01T00:00:00.0000000Z"
-}

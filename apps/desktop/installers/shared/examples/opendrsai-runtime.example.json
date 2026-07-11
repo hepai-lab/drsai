@@ -1,0 +1,14 @@
+{
+  "name": "OpenDrSai Runtime",
+  "version": "1.4.0",
+  "channel": "stable",
+  "platform": "windows-x64",
+  "layoutVersion": 1,
+  "createdAt": "2026-07-11T00:00:00Z",
+  "entrypoints": {
+    "desktop": "app/OpenDrSai.exe",
+    "python": "drsai-agent/venv/Scripts/python.exe",
+    "drsai": "drsai-agent/venv/Scripts/drsai.cmd",
+    "gateway": "drsai-agent/venv/Scripts/drsai-gateway.cmd"
+  }
+}

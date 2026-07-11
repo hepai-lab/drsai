@@ -2,6 +2,7 @@ import type { WebContents } from "electron";
 import { execFile } from "child_process";
 import { createHash } from "crypto";
 import { readFile, stat } from "fs/promises";
+import { existsSync } from "fs";
 import { randomUUID } from "crypto";
 import { join } from "path";
 import type { AgentRunEvent, AgentRunFileEvent, AgentRunRequest } from "../shared/desktopApi";
@@ -14,6 +15,7 @@ import {
   parseAgentRunSseFrame,
 } from "./sseParser";
 import { listThreads, updateThread, upsertThreadFromRun } from "./threads";
+import { createWorkspaceCheckpoint } from "./workspaceCheckpoints";
 
 const GATEWAY_BASE_URL = `http://127.0.0.1:${getGatewayPort()}`;
 const MAX_ACTIVE_RUNS = 3;
@@ -152,6 +154,13 @@ async function runAgent(
   });
 
   const timeout = setTimeout(() => controller.abort("timeout"), AGENT_RUN_TIMEOUT_MS);
+  if (request.workspacePath && existsSync(request.workspacePath)) {
+    await createWorkspaceCheckpoint({
+      workspacePath: request.workspacePath,
+      label: `Before Agent run ${runId}`,
+      maxFiles: 200,
+    });
+  }
   const beforeFiles = await readWorkspaceFileSnapshot(request.workspacePath);
   try {
     const ready = await startGateway();
@@ -499,7 +508,7 @@ function getPositiveIntEnv(name: string, fallback: number): number {
 }
 
 function getGatewayPort(): string {
-  const rawPort = process.env.OPENDRSAI_GATEWAY_PORT || process.env.DRSAI_API_PORT || "8642";
+  const rawPort = process.env.OPENDRSAI_GATEWAY_PORT || process.env.DRSAI_API_PORT || "18642";
   const parsed = Number(rawPort);
-  return Number.isInteger(parsed) && parsed > 0 && parsed < 65536 ? String(parsed) : "8642";
+  return Number.isInteger(parsed) && parsed > 0 && parsed < 65536 ? String(parsed) : "18642";
 }

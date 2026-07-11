@@ -4,6 +4,7 @@ import { existsSync } from "fs";
 import {
   copyFile,
   mkdir,
+  readdir,
   readFile,
   realpath,
   stat,
@@ -59,7 +60,7 @@ export async function createWorkspaceCheckpoint(
     2_000_000,
     DEFAULT_MAX_BYTES_PER_FILE,
   );
-  const changedFiles = (await getGitChangedFiles(workspacePath)).slice(0, maxFiles);
+  const changedFiles = (await getCheckpointCandidates(workspacePath, maxFiles)).slice(0, maxFiles);
   const id = `wcp-${Date.now().toString(36)}-${hashString(workspacePath).slice(0, 8)}`;
   const checkpointDir = join(CHECKPOINT_ROOT, id);
   await mkdir(checkpointDir, { recursive: true });
@@ -421,6 +422,45 @@ async function getGitChangedFiles(
         status: toGitStatus(code),
       };
     });
+}
+
+async function getCheckpointCandidates(
+  workspacePath: string,
+  maxFiles: number,
+): Promise<Array<{ path: string; status: WorkspaceFileGitStatus }>> {
+  try {
+    await runGit(workspacePath, ["rev-parse", "--is-inside-work-tree"], 4000);
+    return getGitChangedFiles(workspacePath);
+  } catch {
+    return listNonGitWorkspaceFiles(workspacePath, maxFiles);
+  }
+}
+
+const NON_GIT_IGNORED_DIRECTORIES = new Set([
+  ".git", ".hg", ".svn", "node_modules", ".venv", "venv", "dist", "build", "out", "target",
+]);
+
+async function listNonGitWorkspaceFiles(
+  workspacePath: string,
+  maxFiles: number,
+): Promise<Array<{ path: string; status: WorkspaceFileGitStatus }>> {
+  const files: Array<{ path: string; status: WorkspaceFileGitStatus }> = [];
+  const pending = [workspacePath];
+  while (pending.length > 0 && files.length < maxFiles) {
+    const directory = pending.shift()!;
+    const entries = await readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+      if (files.length >= maxFiles) break;
+      if (entry.isSymbolicLink()) continue;
+      const absolute = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        if (!NON_GIT_IGNORED_DIRECTORIES.has(entry.name)) pending.push(absolute);
+      } else if (entry.isFile()) {
+        files.push({ path: normalizeRel(relative(workspacePath, absolute)), status: "modified" });
+      }
+    }
+  }
+  return files;
 }
 
 function toGitStatus(code: string): WorkspaceFileGitStatus {

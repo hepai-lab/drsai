@@ -9,7 +9,7 @@ The installers are intentionally platform-native:
 - `macos/` can be added later with a macOS-native package or first-run flow.
 - `shared/` defines the manifest schema and release artifact contract.
 
-The Windows bootstrapper installs OpenDrSai from release artifacts instead of
-embedding the full desktop app. It downloads a desktop archive and a backend
-archive, verifies SHA256 and size, installs them under the user profile, writes
-install state, creates shortcuts, and can launch OpenDrSai.
+The Windows bootstrapper installs OpenDrSai from a single OpenDrSai Runtime
+archive instead of embedding the full desktop app in the MSI. It downloads
+`OpenDrSaiRuntime-win-x64.zip`, verifies SHA256 and size, installs it under the
+current user, writes install state, creates shortcuts, and can launch OpenDrSai.

@@ -12,7 +12,7 @@
 #   - Node.js 18+
 
 param(
-    [int]$Port = 8642
+    [int]$Port = 18642
 )
 
 $ErrorActionPreference = "Stop"

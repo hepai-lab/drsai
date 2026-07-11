@@ -544,18 +544,26 @@ export function ApprovalCenterView({
                     {typeof session.idleExpiresInMs === "number"
                       ? ` / idle closes in ${Math.ceil(session.idleExpiresInMs / 1000)}s`
                       : ""}
+                    {session.restartDetectedAt
+                      ? ` / restart detected ${session.restartDetectedAt}`
+                      : ""}
                   </small>
                   <code>{session.command}</code>
                 </div>
-                <button
-                  type="button"
-                  className={session.status === "busy" ? "reject" : "cancel"}
-                  onClick={() => void closeMcpReusableSession(session)}
-                >
-                  <XCircle size={14} />
-                  {session.status === "busy" ? "Close session" : "Close idle"}
-                </button>
+                {session.status === "restart_reconnect_required" ? (
+                  <span className="approval-mcp-reconnect-pill">Reconnect required</span>
+                ) : (
+                  <button
+                    type="button"
+                    className={session.status === "busy" ? "reject" : "cancel"}
+                    onClick={() => void closeMcpReusableSession(session)}
+                  >
+                    <XCircle size={14} />
+                    {session.status === "busy" ? "Close session" : "Close idle"}
+                  </button>
+                )}
                 {session.stderrPreview ? <p>{session.stderrPreview}</p> : null}
+                {session.diagnosticMessage ? <p>{session.diagnosticMessage}</p> : null}
               </article>
             ))}
           </div>

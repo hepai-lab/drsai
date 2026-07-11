@@ -17,6 +17,7 @@ const gatewayPort = Number(process.env.OPENDRSAI_E2E_OIDC_GATEWAY_PORT || "18650
 const externalIssuer = process.env.OPENDRSAI_E2E_OIDC_EXTERNAL_ISSUER?.replace(/\/+$/, "");
 const issuer = externalIssuer || `http://127.0.0.1:${port}/backend`;
 const useExternalIssuer = Boolean(externalIssuer);
+const interactiveExternalLogin = useExternalIssuer && process.env.OPENDRSAI_E2E_OIDC_INTERACTIVE === "1";
 const signingKid = "e2e-oidc-rs256-1";
 const signingKey = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const publicJwk = {
@@ -43,7 +44,7 @@ const tempDir = mkdtempSync(join(tmpdir(), "opendrsai-e2e-oidc-"));
 const drsaiHome = join(tempDir, "drsai-home");
 const userDataDir = join(tempDir, "electron-user-data");
 const resultPath = join(tempDir, "result.json");
-const sessionPath = join(drsaiHome, "auth", "session.json");
+const sessionPath = join(drsaiHome, "auth", "auth.json");
 mkdirSync(drsaiHome, { recursive: true });
 mkdirSync(userDataDir, { recursive: true });
 
@@ -86,7 +87,7 @@ try {
 function startFakeGateway() {
   const hits = {
     health: 0,
-    models: 0,
+    models: [],
     chat: [],
     agent: [],
   };
@@ -99,7 +100,10 @@ function startFakeGateway() {
       return;
     }
     if (url.pathname === "/v1/models") {
-      hits.models += 1;
+      hits.models.push({
+        authorization: req.headers.authorization || "",
+        authMode: req.headers["x-opendrsai-auth-mode"] || "",
+      });
       writeJson(res, 200, { object: "list", data: [{ id: "drsai", object: "model" }] });
       return;
     }
@@ -322,14 +326,18 @@ function runPackagedApp() {
         OPENDRSAI_GATEWAY_PORT: String(gatewayPort),
         OPENDRSAI_OIDC_ISSUER: issuer,
         OPENDRSAI_E2E_OIDC: "1",
-        OPENDRSAI_E2E_OIDC_AUTO_CALLBACK: "1",
+        ...(!interactiveExternalLogin
+          ? { OPENDRSAI_E2E_OIDC_AUTO_CALLBACK: "1" }
+          : {}),
         ...(useExternalIssuer
           ? { OPENDRSAI_E2E_OIDC_EXTERNAL_ISSUER: issuer }
           : {}),
-        OPENDRSAI_E2E_OIDC_HEADLESS: "1",
+        ...(!interactiveExternalLogin
+          ? { OPENDRSAI_E2E_OIDC_HEADLESS: "1" }
+          : {}),
         OPENDRSAI_E2E_DISABLE_GPU: "1",
         OPENDRSAI_E2E_RESULT: resultPath,
-        OPENDRSAI_E2E_TIMEOUT_MS: "45000",
+        OPENDRSAI_E2E_TIMEOUT_MS: interactiveExternalLogin ? "600000" : "45000",
       },
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
@@ -341,7 +349,7 @@ function runPackagedApp() {
       settled = true;
       killProcessTree(child.pid);
       reject(new Error(`E2E OIDC login timed out.\n${stdout}\n${stderr}`));
-    }, 60_000);
+    }, interactiveExternalLogin ? 620_000 : 60_000);
     child.stdout.on("data", (chunk) => {
       stdout += chunk.toString();
     });
@@ -371,10 +379,12 @@ function runPackagedApp() {
 }
 
 function resolveElectronRuntime() {
-  const usePackaged =
+  const forcePackaged = process.env.OPENDRSAI_E2E_OIDC_USE_PACKAGED === "1";
+  const usePackaged = existsSync(exePath) && (forcePackaged || (
     process.env.OPENDRSAI_E2E_OIDC_USE_SOURCE !== "1" &&
     existsSync(exePath) &&
-    (!existsSync(builtMain) || statSync(exePath).mtimeMs >= statSync(builtMain).mtimeMs);
+    (!existsSync(builtMain) || statSync(exePath).mtimeMs >= statSync(builtMain).mtimeMs)
+  ));
   if (usePackaged) {
     return { command: exePath, args: electronArgs([]) };
   }
@@ -385,6 +395,12 @@ function resolveElectronRuntime() {
 }
 
 function electronArgs(appArgs) {
+  if (interactiveExternalLogin) {
+    return [
+      `--user-data-dir=${userDataDir}`,
+      ...appArgs,
+    ];
+  }
   return [
     `--user-data-dir=${userDataDir}`,
     "--disable-gpu",
@@ -410,6 +426,9 @@ function assertOidcDiagnostics(result) {
   }
   if (!result?.checks?.oidcChatDone || !result?.checks?.oidcAgentDone) {
     throw new Error(`OIDC smoke did not prove authenticated chat and agent gateway requests:\n${JSON.stringify(result?.checks, null, 2)}`);
+  }
+  if (!result?.checks?.oidcBootstrapReady) {
+    throw new Error(`OIDC smoke did not prove zero-configuration bootstrap:\n${JSON.stringify(result, null, 2)}`);
   }
 }
 
@@ -437,16 +456,19 @@ function assertSessionClearedByLogout() {
 
 function assertGatewayHits() {
   const hits = globalThis.__opendrsaiOidcGatewayHits;
+  const modelAuth = hits?.models?.find((hit) => String(hit.authorization || "").startsWith("Bearer "));
   const chatAuth = hits?.chat?.[0]?.authorization || "";
   const agentAuth = hits?.agent?.[0]?.authorization || "";
   if (
     !hits ||
     hits.health < 1 ||
-    hits.models < 1 ||
+    hits.models.length < 1 ||
     hits.chat.length !== 1 ||
     hits.agent.length !== 1 ||
     !chatAuth.startsWith("Bearer ") ||
     !agentAuth.startsWith("Bearer ") ||
+    !modelAuth ||
+    modelAuth.authMode !== "oidc" ||
     hits.chat[0].authMode !== "oidc" ||
     hits.agent[0].authMode !== "oidc"
   ) {

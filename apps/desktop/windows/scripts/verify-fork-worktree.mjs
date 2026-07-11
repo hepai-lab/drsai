@@ -396,6 +396,9 @@ assert(forkConflictAnalysis.includes("collectForkConflictLiveDraftDiagnosticHint
 assert(forkConflictAnalysis.includes("getForkConflictLiveDraftCompilerDiagnosticTestGraphSuggestions"), "fork conflict analysis module does not expose live draft compiler diagnostic suggestions");
 assert(forkConflictAnalysis.includes("Live draft compiler diagnostic preflight"), "fork conflict analysis module does not label live draft diagnostic suggestions");
 assert(forkConflictAnalysis.includes("UnterminatedString") && forkConflictAnalysis.includes("UnclosedDelimiter"), "live draft diagnostics do not cover compiler-blocking syntax hints");
+assert(forkConflictAnalysis.includes("collectForkConflictLiveDraftSemanticHints"), "live draft diagnostics do not include semantic-risk preflight");
+assert(forkConflictAnalysis.includes("DuplicateDeclaration") && forkConflictAnalysis.includes("DanglingImportSpecifier"), "live draft semantic diagnostics do not cover duplicate declarations and empty imports");
+assert(forkConflictAnalysis.includes("EmptyReturnValue") && forkConflictAnalysis.includes("UnresolvedPlaceholder"), "live draft semantic diagnostics do not cover dropped return values and unresolved placeholders");
 assert(forkConflictAnalysis.indexOf("getForkConflictCompilerAstExportTestGraphSuggestions(path, contents)") < forkConflictAnalysis.indexOf("getForkConflictLiveDraftCompilerDiagnosticTestGraphSuggestions(path, contents)"), "live draft diagnostics should run after compiler AST export suggestions");
 assert(forkConflictAnalysis.indexOf("getForkConflictLiveDraftCompilerDiagnosticTestGraphSuggestions(path, contents)") < forkConflictAnalysis.indexOf("getForkConflictCompilerDiagnosticTestGraphSuggestions(path, contents)"), "static compiler diagnostics should run after live draft diagnostic preflight");
 assert(forkConflictAnalysis.includes("__all__"), "fork conflict export graph does not inspect Python explicit export lists");

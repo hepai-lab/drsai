@@ -5,7 +5,7 @@ import type { ChatAttachment, ChatEvent, ChatMessage, ChatRequest } from "../sha
 import { requireAuthContext } from "./auth";
 import { startGateway } from "./gateway";
 import { getDefaultModelAlias } from "./modelDefaults";
-import { isCompletionDoneFrame, parseAgentLogSseFrame, parseChatSseFrame } from "./sseParser";
+import { isCompletionDoneFrame, parseAgentLogSseFrame, parseChatSseFrame, parseChatToolTimelineSseFrame } from "./sseParser";
 import { upsertThreadFromRun } from "./threads";
 
 const GATEWAY_BASE_URL = `http://127.0.0.1:${getGatewayPort()}`;
@@ -523,6 +523,15 @@ async function readSse(
         });
         continue;
       }
+      for (const toolTimeline of parseChatToolTimelineSseFrame(frame)) {
+        emit(webContents, {
+          requestId,
+          sessionId,
+          runId,
+          type: "tool_timeline",
+          toolTimeline,
+        });
+      }
       parseChatSseFrame(frame).forEach((content) => {
         emit(webContents, { requestId, sessionId, runId, type: "chunk", content });
       });
@@ -544,6 +553,15 @@ async function readSse(
         level: agentLog.level,
       });
       return sawDone;
+    }
+    for (const toolTimeline of parseChatToolTimelineSseFrame(buffer)) {
+      emit(webContents, {
+        requestId,
+        sessionId,
+        runId,
+        type: "tool_timeline",
+        toolTimeline,
+      });
     }
     parseChatSseFrame(buffer).forEach((content) => {
       emit(webContents, { requestId, sessionId, runId, type: "chunk", content });
@@ -617,7 +635,7 @@ function getPositiveIntEnv(name: string, fallback: number): number {
 }
 
 function getGatewayPort(): string {
-  const rawPort = process.env.OPENDRSAI_GATEWAY_PORT || process.env.DRSAI_API_PORT || "8642";
+  const rawPort = process.env.OPENDRSAI_GATEWAY_PORT || process.env.DRSAI_API_PORT || "18642";
   const parsed = Number(rawPort);
-  return Number.isInteger(parsed) && parsed > 0 && parsed < 65536 ? String(parsed) : "8642";
+  return Number.isInteger(parsed) && parsed > 0 && parsed < 65536 ? String(parsed) : "18642";
 }

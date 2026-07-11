@@ -32,7 +32,7 @@ import type {
   DesktopThread,
   DesktopThreadSnapshot,
   DesktopVoiceTranscriptHandoffResult,
-  DesktopVoiceTranscriptionResult,
+  DesktopVoiceTranscriptionEvent,
   DesktopWorkflowRun,
   DesktopWorkflowMarketplaceListResult,
   DesktopWorkflowRunStepCompleteResult,
@@ -103,7 +103,7 @@ const initialHealth: DesktopHealth = {
     managed: true,
     externalReady: true,
     externalConflict: false,
-    baseUrl: "http://127.0.0.1:8642",
+    baseUrl: "http://127.0.0.1:18642",
     pid: 4242,
     lastLog: "",
   },
@@ -421,6 +421,8 @@ export function installMockDesktopApi(): void {
   };
   let terminalCounter = 0;
   const chatListeners = new Set<Listener<ChatEvent>>();
+  const voiceTranscriptionListeners = new Set<Listener<DesktopVoiceTranscriptionEvent>>();
+  const voiceFixtureTimers = new Map<string, number>();
   const agentRunListeners = new Set<Listener<AgentRunEvent>>();
   const installListeners = new Set<Listener<InstallProgress>>();
   const oidcLoginDebugListeners = new Set<Listener<OidcLoginDebugEvent>>();
@@ -458,6 +460,19 @@ export function installMockDesktopApi(): void {
       idleExpiresAt: new Date(Date.now() + 120_000).toISOString(),
       idleExpiresInMs: 120_000,
       stderrPreview: "Mock MCP reusable session is healthy.",
+    },
+    {
+      sessionReuseKey: "mcp-reuse:mock-restart",
+      workspacePath: "C:\\Users\\Demo\\Projects\\workspace",
+      server: "mock-restarted-mcp",
+      command: "process-local stdio session from previous app process",
+      startedAt: new Date(Date.now() - 600_000).toISOString(),
+      lastUsedAt: new Date(Date.now() - 600_000).toISOString(),
+      status: "restart_reconnect_required",
+      pendingRequestCount: 0,
+      restartDetectedAt: new Date().toISOString(),
+      diagnosticMessage:
+        "Mock reusable MCP pool was seen in the lifecycle audit before restart; reconnect with /mcp sync --reuse or /mcp exec --reuse after approval.",
     },
   ];
   let pendingChannelOutboundDraftApprovals: Record<
@@ -1257,31 +1272,53 @@ export function installMockDesktopApi(): void {
       emit(chatListeners, { requestId, type: "aborted" });
       return true;
     },
-    transcribeVoiceRecording: async (request): Promise<DesktopVoiceTranscriptionResult> => {
-      const durationSeconds = Math.max(0, Math.round(request.durationSeconds || 0));
-      const transcript =
-        request.mockTranscriptText ||
-        [
-          "[Voice recording captured]",
-          `Source: ${request.sourceLabel || "Mock desktop microphone"}.`,
-          `Duration: ${formatMockVoiceDuration(durationSeconds)}.`,
-          "Mock-local transcription is active; no audio left this machine.",
-        ].join("\n");
-      return {
-        ok: true,
-        transcript,
-        language: request.languageHint,
-        durationSeconds,
-        runtimeId: "mock-local",
-        sourceId: `mock-voice-${Date.now()}`,
-        createdAt: new Date().toISOString(),
-        truncated: false,
-        providerDisclosure:
-          "Voice transcription used the mock desktop runtime; no network request, provider upload, or raw-audio persistence occurred.",
-        message:
-          "Mock voice recording was normalized into reviewed text for composer insertion.",
-      };
+    startVoiceTranscription: async (request) => {
+      const requestId = `fixture-voice-${Date.now()}`;
+      const timer = window.setTimeout(() => {
+        voiceFixtureTimers.delete(requestId);
+        emit(voiceTranscriptionListeners, { requestId, type: "completed", result: {
+          ok: true,
+          transcript: "Fixture voice transcript.",
+          language: request.languageHint,
+          durationSeconds: request.durationSeconds,
+          runtimeId: "mock-local",
+          sourceId: requestId,
+          createdAt: new Date().toISOString(),
+          truncated: false,
+          providerDisclosure: "Fixture transcription is active in the development renderer.",
+          message: "Fixture transcription completed.",
+        } });
+      }, 200);
+      voiceFixtureTimers.set(requestId, timer);
+      return { requestId, acceptedAt: new Date().toISOString() };
     },
+    bootstrapDesktop: async () => ({
+      ready: true,
+      message: "OpenDrSai is ready.",
+      user: authSession.user!,
+      capabilities: { chat: true, agent: true, tools: ["files", "shell", "git"] },
+      defaults: { agentId: "drsai", modelAlias: "mock-model" },
+      models: [{ id: "mock-model", name: "Mock model" }],
+      limits: { maxConcurrentRuns: 1 },
+    }),
+    cancelVoiceTranscription: async (requestId) => {
+      const timer = voiceFixtureTimers.get(requestId);
+      if (timer === undefined) return false;
+      window.clearTimeout(timer);
+      voiceFixtureTimers.delete(requestId);
+      emit(voiceTranscriptionListeners, { requestId, type: "cancelled" });
+      return true;
+    },
+    getVoiceRuntimeStatus: async () => ({
+      runtimeId: "mock-local",
+      state: "ready",
+      supportedMimeTypes: ["audio/webm", "audio/wav"],
+      maxBytes: 10 * 1024 * 1024,
+      maxDurationSeconds: 120,
+      supportsPartial: false,
+      providerDisclosure: "Fixture transcription is active in the development renderer.",
+      message: "Fixture voice runtime is ready.",
+    }),
     writeVoiceTranscriptHandoff: async (request): Promise<DesktopVoiceTranscriptHandoffResult> => ({
       ok: true,
       transcriptPath: `${request.workspacePath}\\.drsai\\voice-context.json`,
@@ -3613,6 +3650,17 @@ export function installMockDesktopApi(): void {
             "Mock reusable MCP close only targets sessions started by this desktop process.",
         };
       }
+      if (session.status === "restart_reconnect_required") {
+        return {
+          workspacePath: request.workspacePath,
+          sessionReuseKey: request.sessionReuseKey,
+          closed: false,
+          message:
+            "Mock reusable MCP restart diagnostic has no live process to close; reconnect explicitly after approval.",
+          verification:
+            "Restart diagnostics are read-only lifecycle evidence and do not start, close, or recover MCP processes.",
+        };
+      }
       mockMcpReusableSessions = mockMcpReusableSessions.filter(
         (entry) => entry.sessionReuseKey !== request.sessionReuseKey,
       );
@@ -4019,6 +4067,7 @@ export function installMockDesktopApi(): void {
     onOidcLoginDebug: (callback) =>
       subscribe(oidcLoginDebugListeners, callback),
     onChatEvent: (callback) => subscribe(chatListeners, callback),
+    onVoiceTranscriptionEvent: (callback) => subscribe(voiceTranscriptionListeners, callback),
     onAgentRunEvent: (callback) => subscribe(agentRunListeners, callback),
     onUpdateStatus: (callback) => subscribe(updateListeners, callback),
     onTerminalData: () => () => undefined,
@@ -4475,12 +4524,6 @@ function mockAudioMimeForTitle(name: string): string {
   if (name.endsWith(".ogg")) return "audio/ogg";
   if (name.endsWith(".wav")) return "audio/wav";
   return "audio/mpeg";
-}
-
-function formatMockVoiceDuration(seconds: number): string {
-  const minutes = Math.floor(seconds / 60);
-  const remainder = seconds % 60;
-  return `${minutes}:${remainder.toString().padStart(2, "0")}`;
 }
 
 function createMockWorkspaceDiff(

@@ -4,26 +4,11 @@ import drsaiLogo from "../assets/drsai-transparent.png";
 import type { AppLanguage } from "../navigation";
 import { useAuth } from "./AuthProvider";
 
-type LoginMode = "oidc" | "api_key" | "password";
-
-const DEFAULT_MODEL_OPTIONS = [
-  { value: "hepai/deepseek-v4-pro", label: "HEPAI DeepSeek V4 Pro" },
-  { value: "hepai/deepseek-v4-flash", label: "HEPAI DeepSeek V4 Flash" },
-  { value: "glm-5.2", label: "GLM-5.2" },
-  { value: "glm-5.1", label: "GLM-5.1" },
-  { value: "hepai/minimax-m2.7-highspeed", label: "HEPAI MiniMax M2.7" },
-];
-
 export function LoginScreen(): React.JSX.Element {
   const auth = useAuth();
   const [language, setLanguage] = useState<AppLanguage>("zh");
-  const [mode, setMode] = useState<LoginMode>("oidc");
   const [debugOpen, setDebugOpen] = useState(false);
   const [loginEvents, setLoginEvents] = useState<OidcLoginDebugEvent[]>([]);
-  const [apiKey, setApiKey] = useState("");
-  const [defaultModel, setDefaultModel] = useState(DEFAULT_MODEL_OPTIONS[0].value);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(true);
   const zh = language === "zh";
   const latestLoginEvent = loginEvents[loginEvents.length - 1] ?? null;
@@ -34,6 +19,7 @@ export function LoginScreen(): React.JSX.Element {
   }, [latestLoginEvent, zh]);
 
   useEffect(() => {
+    if (!import.meta.env.DEV) return;
     function handleKeyDown(event: KeyboardEvent): void {
       if (event.key !== "F12") return;
       event.preventDefault();
@@ -53,55 +39,13 @@ export function LoginScreen(): React.JSX.Element {
 
   async function handleSubmit(event: FormEvent): Promise<void> {
     event.preventDefault();
-    if (mode === "oidc") {
-      setLoginEvents([
-        {
-          stage: "started",
-          status: "info",
-          message: "Clicked HepAI sign-in button.",
-          at: new Date().toISOString(),
-        },
-      ]);
-      await auth.startOidcLogin({ rememberMe });
-    } else if (mode === "api_key") {
-      await auth.login({ apiKey, defaultModel, rememberMe });
-    } else {
-      await auth.login({ email, password, rememberMe });
-    }
+    setLoginEvents([{ stage: "started", status: "info", message: "Clicked HepAI sign-in button.", at: new Date().toISOString() }]);
+    await auth.startOidcLogin({ rememberMe });
   }
-
-  const canSubmit =
-    mode === "oidc"
-      ? true
-      : mode === "api_key"
-        ? Boolean(apiKey.trim())
-        : Boolean(email.trim() && password);
 
   function getSubmitLabel(): string {
-    if (auth.loginBusy) {
-      if (mode === "oidc") return zh ? "正在等待浏览器登录..." : "Waiting for browser sign-in...";
-      return zh ? "正在继续..." : "Continuing...";
-    }
-    if (mode === "oidc") return zh ? "使用 HepAI 继续" : "Continue with HepAI";
-    if (mode === "api_key") return zh ? "使用 API key 登录" : "Continue with API key";
-    return zh ? "继续" : "Continue";
-  }
-
-  function getModeLinkLabel(): string {
-    if (mode === "oidc") return zh ? "改用 API key" : "Use API key instead";
-    if (mode === "api_key") return zh ? "使用账号登录" : "Continue with account";
-    return zh ? "使用 HepAI 继续" : "Continue with HepAI";
-  }
-
-  function nextMode(): LoginMode {
-    if (mode === "oidc") return "api_key";
-    if (mode === "api_key") return "password";
-    return "oidc";
-  }
-
-  function switchMode(next: LoginMode): void {
-    auth.clearMessage();
-    setMode(next);
+    if (auth.loginBusy) return zh ? "正在等待浏览器登录..." : "Waiting for browser sign-in...";
+    return zh ? "使用 HepAI 登录" : "Sign in with HepAI";
   }
 
   return (
@@ -144,71 +88,15 @@ export function LoginScreen(): React.JSX.Element {
         </div>
 
         <form className="login-form" onSubmit={handleSubmit}>
-          {mode === "oidc" ? null : mode === "api_key" ? (
-            <>
-              <label className="login-field">
-                <input
-                  type="password"
-                  value={apiKey}
-                  onChange={(event) => setApiKey(event.target.value)}
-                  placeholder={zh ? "输入你的 API key" : "Enter your API key"}
-                  autoComplete="off"
-                />
-              </label>
-              <label className="login-field">
-                <select
-                  value={defaultModel}
-                  onChange={(event) => setDefaultModel(event.target.value)}
-                  aria-label={zh ? "默认模型" : "Default model"}
-                >
-                  {DEFAULT_MODEL_OPTIONS.map((model) => (
-                    <option key={model.value} value={model.value}>
-                      {model.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </>
-          ) : (
-            <>
-              <label className="login-field">
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  placeholder={zh ? "输入你的邮箱" : "Enter your email"}
-                  autoComplete="email"
-                />
-              </label>
-              <label className="login-field">
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  placeholder={zh ? "输入你的密码" : "Enter your password"}
-                  autoComplete="current-password"
-                />
-              </label>
-            </>
-          )}
-
-          <button className="login-submit" type="submit" disabled={auth.loginBusy || !canSubmit}>
+          <button className="login-submit" type="submit" disabled={auth.loginBusy}>
             {getSubmitLabel()}
           </button>
 
-          {mode === "oidc" && auth.loginBusy && (
+          {auth.loginBusy && (
             <button className="login-mode-link" type="button" onClick={() => auth.cancelOidcLogin()}>
               {zh ? "取消登录" : "Cancel sign-in"}
             </button>
           )}
-
-          <div className="login-divider">
-            <span>{zh ? "或" : "OR"}</span>
-          </div>
-
-          <button className="login-mode-link" type="button" onClick={() => switchMode(nextMode())}>
-            {getModeLinkLabel()}
-          </button>
 
           <label className="login-checkbox">
             <input
@@ -240,7 +128,7 @@ export function LoginScreen(): React.JSX.Element {
         </div>
       </section>
 
-      {debugOpen && (
+      {import.meta.env.DEV && debugOpen && (
         <aside className="login-debug-panel" aria-label={loginDebugTitle}>
           <div className="login-debug-header">
             <div>
@@ -320,6 +208,32 @@ export function AuthSplash(): React.JSX.Element {
           </strong>
         </div>
         <div className="login-footnote">正在恢复会话...</div>
+      </section>
+    </main>
+  );
+}
+
+export function ServiceUnavailableScreen(): React.JSX.Element {
+  const auth = useAuth();
+  return (
+    <main className="login-screen">
+      <section className="login-panel login-minimal compact" aria-label="OpenDrSai 服务准备">
+        <div className="login-brand">
+          <span className="login-brand-logo" aria-hidden><img src={drsaiLogo} alt="" /></span>
+          <strong>Open<span className="brand-accent">Dr</span>Sai</strong>
+        </div>
+        <div className="login-heading">
+          <h1><strong>{auth.serviceBusy ? "正在准备服务" : "服务尚未就绪"}</strong></h1>
+        </div>
+        <p className="login-footnote">
+          {auth.message || "本地服务无法启动，或当前账号没有可用的 DrSai 服务。"}
+        </p>
+        <button className="login-submit" type="button" disabled={auth.serviceBusy} onClick={() => void auth.retryBootstrap()}>
+          {auth.serviceBusy ? "正在重试..." : "重试"}
+        </button>
+        <button className="login-mode-link" type="button" disabled={auth.logoutBusy} onClick={() => void auth.logout()}>
+          重新登录
+        </button>
       </section>
     </main>
   );

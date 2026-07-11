@@ -633,24 +633,30 @@ class HepAIWorkerAgent(DrSaiAgent):
                 async for chunk in self.async_stream_generator(stream, timeout=self._stream_timeout):
                     if self.is_paused:
                         logger.info(f"[trace={trace_id}] {self.name} was paused, handling gracefully")
-                    raise
-                except Exception as e:
-                    if self.is_paused and "peer closed connection" in str(e).lower():
-                        logger.info(
-                            f"[trace={trace_id}] Connection closed due to pause for {self.name}, handling as cancellation"
-                        )
-                        raise asyncio.CancelledError("Agent paused")
-                    logger.error(
-                        f"[trace={trace_id}] Error during streaming: {e} "
-                        f"(chunks={chunk_count} got_stop_reason={got_stop_reason} last_type={last_message_type})"
-                    )
-                    raise
-                finally:
+                        raise asyncio.CancelledError("Agent paused during streaming")
+                    message_type = chunk.get("type", None)
+                    if message_type in self._message_factory._message_types:
+                        msg: BaseChatMessage | BaseAgentEvent = self._message_factory._message_types[
+                            message_type
+                        ].model_validate(chunk)
+                        final_message = msg
+                        yield msg
+                    if "stop_reason" in chunk:
+                        break
+            except asyncio.CancelledError:
+                if self.is_paused:
                     logger.info(
-                        f"[trace={trace_id}] worker_stream end attempt={continuation_attempt} "
-                        f"chunks={chunk_count} got_stop_reason={got_stop_reason} last_type={last_message_type} "
-                        f"age_since_last_chunk_s={time.monotonic() - last_chunk_at:.3f}"
+                        f"[trace={trace_id}] {self.name} was paused, handling gracefully"
                     )
+                raise
+            except Exception as e:
+                if self.is_paused and "peer closed connection" in str(e).lower():
+                    logger.info(
+                        f"[trace={trace_id}] Connection closed due to pause for {self.name}, handling as cancellation"
+                    )
+                    raise asyncio.CancelledError("Agent paused")
+                logger.error(f"[trace={trace_id}] Error during streaming: {e}")
+                raise
 
             # full_response_str = ""
             # if len(full_response)>1:

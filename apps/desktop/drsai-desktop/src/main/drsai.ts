@@ -5,7 +5,7 @@
  * interface via HTTP SSE.
  *
  * Architecture:
- *   Electron main  ──HTTP SSE──▶  DrSai API Server (FastAPI, port 8642)
+ *   Electron main  ──HTTP SSE──▶  DrSai API Server (FastAPI, port 18642)
  *                                  └── DrSai Assistant (autogen_agentchat)
  *
  * SSE format (DrSai API):
@@ -32,7 +32,7 @@ import { DRSAI_PYTHON } from "./installer";
 //  Constants
 // ────────────────────────────────────────────────────
 
-const DRSAI_API_PORT = parseInt(process.env.DRSAI_API_PORT || "8642", 10);
+const DRSAI_API_PORT = parseInt(process.env.DRSAI_API_PORT || "18642", 10);
 const DRSAI_API_URL = `http://127.0.0.1:${DRSAI_API_PORT}`;
 
 /**

@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 const checklist = readFileSync(join(root, "docs", "chatbar-capability-checklist.md"), "utf8");
+const roadmap = readFileSync(join(root, "docs", "smart-chat-bar-roadmap.md"), "utf8");
 const packageJson = readFileSync(join(root, "package.json"), "utf8");
 
 function assert(condition, message) {
@@ -110,6 +111,9 @@ assert(checklist.includes("`packaged-slack-export.json`"), "checklist omits pack
 assert(checklist.includes("packaged-emlx-ipc-agent"), "checklist omits packaged EMLX IPC agent record");
 assert(checklist.includes("Packaged Apple Mail EMLX IPC Smoke"), "checklist omits packaged EMLX IPC addendum");
 assert(checklist.includes("`packaged-message.emlx`"), "checklist omits packaged EMLX fixture file evidence");
+assert(checklist.includes("packaged-ics-ipc-agent"), "checklist omits packaged ICS IPC agent record");
+assert(checklist.includes("Packaged Calendar ICS IPC Smoke"), "checklist omits packaged ICS IPC addendum");
+assert(checklist.includes("`packaged-calendar.ics`"), "checklist omits packaged ICS fixture file evidence");
 assert(checklist.includes("packaged-ide-context-ipc-agent"), "checklist omits packaged IDE context IPC agent record");
 assert(checklist.includes("Packaged IDE Context IPC Smoke"), "checklist omits packaged IDE context IPC addendum");
 assert(checklist.includes("window.openDrSai.getIdeContext"), "checklist omits packaged IDE preload evidence");
@@ -125,8 +129,11 @@ assert(checklist.includes("SARIF CodeQL/rule/location/MIME provenance evidence")
 assert(checklist.includes("Slack chat export JSON parser/redaction/MIME evidence"), "checklist omits packaged chat export parser evidence");
 assert(checklist.includes("Apple Mail EMLX parser/redaction/MIME evidence"), "checklist omits packaged EMLX parser evidence");
 assert(checklist.includes("Packaged EMLX body token=[redacted]"), "checklist omits packaged EMLX redaction evidence");
+assert(checklist.includes("Project sync token=[redacted]"), "checklist omits packaged ICS redaction evidence");
 assert(checklist.includes("application/vnd.drsai.chat-export+json"), "checklist omits packaged chat export MIME evidence");
 assert(checklist.includes("message/rfc822"), "checklist omits packaged EMLX MIME evidence");
+assert(checklist.includes("text/calendar"), "checklist omits packaged ICS MIME evidence");
+assert(checklist.includes("Live calendar provider sync"), "checklist omits packaged ICS remaining gap evidence");
 assert(checklist.includes("otel-json-input-agent"), "checklist omits OpenTelemetry OTLP JSON agent record");
 assert(checklist.includes("OpenTelemetry OTLP JSON Input"), "checklist omits OpenTelemetry OTLP JSON addendum");
 assert(checklist.includes("workspace-local OpenTelemetry/OTLP JSON"), "checklist omits OpenTelemetry OTLP JSON selected file evidence");
@@ -139,6 +146,14 @@ assert(checklist.includes("MAX_NETLOG_PREVIEW_BYTES"), "checklist omits Chrome N
 assert(checklist.includes("application/vnd.chromium.netlog+json"), "checklist omits Chrome NetLog MIME evidence");
 assert(checklist.includes("runtime NetLog golden fixture"), "checklist omits runtime NetLog fixture evidence");
 assert(checklist.includes("no browser profile access, request replay, network call"), "checklist omits Chrome NetLog no-replay/no-network boundary evidence");
+assert(checklist.includes("browser-cookie-input-agent"), "checklist omits browser cookie export agent record");
+assert(checklist.includes("Browser Cookie Export Input"), "checklist omits browser cookie export addendum");
+assert(checklist.includes("workspace-local `cookies.txt` / `*.cookies.txt`"), "checklist omits browser cookie selected file coverage");
+assert(checklist.includes("MAX_BROWSER_COOKIE_PREVIEW_BYTES"), "checklist omits browser cookie byte bound evidence");
+assert(checklist.includes("text/x-netscape-cookies"), "checklist omits browser cookie MIME evidence");
+assert(checklist.includes("cookie values were always redacted"), "checklist omits browser cookie redaction evidence");
+assert(checklist.includes("runtime `cookies.txt` golden fixture"), "checklist omits browser cookie runtime fixture evidence");
+assert(checklist.includes("live cookie jar inspection, browser profile import"), "checklist omits browser cookie remaining gap evidence");
 assert(checklist.includes("asyncapi-contract-input-agent"), "checklist omits AsyncAPI contract input agent record");
 assert(checklist.includes("AsyncAPI Contract Input"), "checklist omits AsyncAPI contract input addendum");
 assert(checklist.includes("reviewed workspace-local AsyncAPI JSON/YAML contracts"), "checklist omits AsyncAPI selected file support evidence");
@@ -164,6 +179,15 @@ assert(checklist.includes("runtime `web.config` golden fixture"), "checklist omi
 assert(checklist.includes("connection string values were not expanded"), "checklist omits IIS web.config connection-string boundary evidence");
 assert(checklist.includes("no IIS service, appcmd, PowerShell, ASP.NET runtime"), "checklist omits IIS web.config no-runtime boundary evidence");
 assert(checklist.includes("live IIS metabase sync, app pool/site state correlation"), "checklist omits IIS web.config remaining gap evidence");
+assert(checklist.includes("web-server-config-agent"), "checklist omits Nginx/Apache web server config agent record");
+assert(checklist.includes("Nginx/Apache Web Server Config Input"), "checklist omits Nginx/Apache web server config addendum");
+assert(checklist.includes("`nginx.conf`") && checklist.includes("`*.nginx.conf`") && checklist.includes("`httpd.conf`") && checklist.includes("`.htaccess`"), "checklist omits web server config selected file evidence");
+assert(checklist.includes("MAX_WEB_SERVER_CONFIG_PREVIEW_BYTES"), "checklist omits web server config byte bound evidence");
+assert(checklist.includes("text/x-web-server-config"), "checklist omits web server config MIME evidence");
+assert(checklist.includes("runtime `nginx.conf` golden fixture"), "checklist omits web server config runtime fixture evidence");
+assert(checklist.includes("include/certificate/key boundary copy"), "checklist omits web server config include/certificate boundary evidence");
+assert(checklist.includes("no nginx/apache/httpd command, service reload, config test"), "checklist omits web server config no-runtime boundary evidence");
+assert(checklist.includes("live `nginx -t` / `apachectl configtest`"), "checklist omits web server config remaining gap evidence");
 assert(checklist.includes("vscode-workspace-config-agent"), "checklist omits VS Code workspace config agent record");
 assert(checklist.includes("VS Code Workspace Config Input"), "checklist omits VS Code workspace config addendum");
 assert(checklist.includes("workspace-local `.vscode/settings.json`, `.vscode/tasks.json`, `.vscode/launch.json`, and `.vscode/extensions.json`"), "checklist omits VS Code workspace config selected file evidence");
@@ -188,6 +212,13 @@ assert(checklist.includes("application/vnd.asciinema.cast"), "checklist omits te
 assert(checklist.includes("ANSI controls and likely secrets were redacted"), "checklist omits terminal recording redaction evidence");
 assert(checklist.includes("no terminal replay, shell command execution, process spawn"), "checklist omits terminal recording no-runtime boundary evidence");
 assert(checklist.includes("live terminal replay, keystroke timing analysis"), "checklist omits terminal recording remaining gap evidence");
+assert(checklist.includes("powershell-transcript-log-agent"), "checklist omits PowerShell transcript input agent record");
+assert(checklist.includes("PowerShell Transcript Log Input"), "checklist omits PowerShell transcript input addendum");
+assert(checklist.includes("PowerShell_transcript.*.txt"), "checklist omits PowerShell transcript selected file support evidence");
+assert(checklist.includes("MAX_POWERSHELL_TRANSCRIPT_PREVIEW_BYTES") && checklist.includes("MAX_POWERSHELL_TRANSCRIPT_ITEM_PREVIEW"), "checklist omits PowerShell transcript preview bound evidence");
+assert(checklist.includes("text/x-powershell-transcript"), "checklist omits PowerShell transcript MIME evidence");
+assert(checklist.includes("no-runtime/no-replay safety copy"), "checklist omits PowerShell transcript no-runtime evidence");
+assert(checklist.includes("live transcript replay, command exit-code correlation"), "checklist omits PowerShell transcript remaining gap evidence");
 assert(checklist.includes("SARIF baseline diffing, autofix generation"), "checklist omits packaged SARIF remaining gap evidence");
 assert(checklist.includes("npm run verify:packaged"), "checklist omits packaged channel import verification command");
 assert(checklist.includes("Broader packaged imports across the full channel-adapter fixture corpus"), "checklist omits packaged channel import remaining gap evidence");
@@ -271,6 +302,10 @@ assert(checklist.includes("runtime-rest-extension-golden-agent"), "checklist omi
 assert(checklist.includes("Runtime golden fixtures now cover both `runtime.http` and `runtime.rest`"), "checklist omits runtime REST Client .rest selected-file evidence");
 assert(checklist.includes("named DELETE/GET request summaries"), "checklist omits runtime REST Client .rest request evidence");
 assert(checklist.includes("route-order guard proving `.rest` routes before final raw text fallback"), "checklist omits runtime REST Client .rest route-order evidence");
+assert(checklist.includes("insomnia-yaml-runtime-agent"), "checklist omits Insomnia YAML runtime fixture agent record");
+assert(checklist.includes("runtime `insomnia.yaml` golden fixture"), "checklist omits Insomnia YAML runtime fixture evidence");
+assert(checklist.includes("Insomnia YAML export parser evidence"), "checklist omits Insomnia YAML parser evidence");
+assert(checklist.includes("Runtime Insomnia YAML List"), "checklist omits Insomnia YAML request evidence");
 assert(checklist.includes("mobile-manifest-input-agent"), "checklist omits Android mobile manifest input agent record");
 assert(checklist.includes("Android Manifest File Input"), "checklist omits Android manifest input addendum");
 assert(checklist.includes("workspace-local `AndroidManifest.xml`"), "checklist omits Android manifest selected file support evidence");
@@ -957,5 +992,21 @@ assert(checklist.includes("composer.json") && checklist.includes("Gemfile") && c
 assert(checklist.includes("MAX_PHP_RUBY_PACKAGE_MANIFEST_PREVIEW_BYTES") && checklist.includes("MAX_PHP_RUBY_PACKAGE_MANIFEST_ITEM_PREVIEW"), "checklist omits PHP/Ruby package manifest bound evidence");
 assert(checklist.includes("no PHP/Composer/Ruby/Bundler/Gem command"), "checklist omits PHP/Ruby package manifest no-runtime evidence");
 assert(checklist.includes("Composer resolver parity, Bundler resolver parity"), "checklist omits PHP/Ruby package manifest remaining gap evidence");
+assert(checklist.includes("structured-tool-timeline-agent"), "checklist omits structured tool timeline agent record");
+assert(checklist.includes("Structured Tool Timeline SSE"), "checklist omits structured tool timeline addendum");
+assert(checklist.includes("ChatToolTimelineEvent") && checklist.includes('type: "tool_timeline"'), "checklist omits structured tool timeline shared event evidence");
+assert(checklist.includes("event: tool.progress") && checklist.includes("metadata.*"), "checklist omits structured tool timeline SSE parser evidence");
+assert(checklist.includes("ToolTimeline") && checklist.includes("npm run verify:chat-sse"), "checklist omits structured tool timeline UI/test evidence");
+assert(checklist.includes("provider-specific tool result schemas"), "checklist omits structured tool timeline remaining gap evidence");
+assert(checklist.includes("provider-tool-schema-agent"), "checklist omits provider tool schema agent record");
+assert(checklist.includes("Provider Tool Schema Timeline Normalization"), "checklist omits provider tool schema addendum");
+assert(checklist.includes("choices[].delta.tool_calls") && checklist.includes("choices[].message.tool_calls"), "checklist omits provider-native tool call location evidence");
+assert(checklist.includes('role: "tool"') && checklist.includes('type: "tool_use"'), "checklist omits provider-native tool result/type evidence");
+assert(checklist.includes("Anthropic-style `content_block` `tool_use` records"), "checklist omits Anthropic-style content block evidence");
+assert(checklist.includes("OpenAI-style tool calls, tool-role results"), "checklist omits provider tool schema test evidence");
+assert(checklist.includes("streamed partial argument accumulation"), "checklist omits provider tool schema remaining gap evidence");
+assert(roadmap.includes("chat SSE `tool_timeline` rendering"), "roadmap feature table omits tool timeline rendering evidence");
+assert(roadmap.includes("OpenAI-style `tool_calls`, tool-role results"), "roadmap feature table omits provider-native tool-call normalization evidence");
+assert(roadmap.includes("streamed partial argument accumulation"), "roadmap feature table omits remaining streamed argument gap");
 
 console.log("Chatbar checklist verification passed.");

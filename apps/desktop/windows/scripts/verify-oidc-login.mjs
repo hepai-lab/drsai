@@ -16,6 +16,8 @@ function readHai(relativePath) {
 const auth = read("src/main/auth.ts");
 const chat = read("src/main/chat.ts");
 const agentRuns = read("src/main/agentRuns.ts");
+const bootstrap = read("src/main/bootstrap.ts");
+const gateway = read("src/main/gateway.ts");
 const mainProcess = read("src/main/index.ts");
 const api = read("src/shared/desktopApi.ts");
 const preload = read("src/preload/index.ts");
@@ -70,8 +72,11 @@ const checks = [
       auth.includes("shell.openExternal(url)") &&
       auth.includes("OPENDRSAI_E2E_OIDC_AUTO_CALLBACK") &&
       auth.includes("opendrsai://auth-complete") &&
-      auth.includes("window.location.href") &&
+      auth.includes('removeAttribute("href")') &&
+      auth.includes("setTimeout(closePage, 250)") &&
       main.includes("setAsDefaultProtocolClient") &&
+      main.includes('"ApplicationName"') &&
+      main.includes('"OpenDrSai"') &&
       main.includes("requestSingleInstanceLock") &&
       main.includes("handleDeepLinkArgv") &&
       auth.includes('stage: "browser-opened"') &&
@@ -80,6 +85,7 @@ const checks = [
       auth.includes("waitForCode.catch") &&
       auth.includes("isOidcLoginCancelled") &&
       main.includes('"desktop:oidc-login-debug"') &&
+      main.includes("if (result.ok) focusMainWindow()") &&
       preload.includes('"desktop:oidc-login-debug"') &&
       auth.includes('response_type", "code"') &&
       auth.includes("exchangeOidcAuthorizationCode"),
@@ -127,9 +133,10 @@ const checks = [
     "main process requests refresh only for remember-me and refreshes before expiry",
     auth.includes("rememberMe ? `${OIDC_BASE_SCOPE} offline_access` : OIDC_BASE_SCOPE") &&
       auth.includes("refreshOidcSessionIfNeeded") &&
+      auth.includes("if (oidcRefreshPromise) return oidcRefreshPromise") &&
       auth.includes("ACCESS_TOKEN_REFRESH_WINDOW_MS") &&
       auth.includes('grant_type: "refresh_token"') &&
-      auth.includes("refresh_token: token.refresh_token || stored.refreshToken"),
+      auth.includes("refresh_token: token.refresh_token || refreshToken"),
   ],
   [
     "logout revokes OIDC refresh tokens before local cleanup",
@@ -141,7 +148,11 @@ const checks = [
   ],
   [
     "tokens stay in main process storage and public session omits raw tokens",
-    auth.includes("safeStorage.encryptString") &&
+    auth.includes('join(DRSAI_HOME, "auth", "auth.json")') &&
+      auth.includes('join(DRSAI_HOME, "auth", "session.json")') &&
+      auth.includes("renameSync(temporaryFile, AUTH_SESSION_FILE)") &&
+      auth.includes("mode: 0o600") &&
+      auth.includes("safeStorage.encryptString") &&
       auth.includes("encryptedAccessToken") &&
       auth.includes("encryptedRefreshToken") &&
       auth.includes("encryptedIdToken") &&
@@ -165,16 +176,33 @@ const checks = [
       agentRuns.includes("auth_mode: auth.authMode"),
   ],
   [
-    "renderer presents OIDC as primary login with cancel and fallbacks",
-    login.includes('type LoginMode = "oidc" | "api_key" | "password"') &&
-      login.includes('useState<LoginMode>("oidc")') &&
+    "OIDC login performs zero-configuration desktop bootstrap",
+    bootstrap.includes("requireAuthContext") &&
+      bootstrap.includes('auth.authMode !== "oidc"') &&
+      bootstrap.includes("startGateway()") &&
+      bootstrap.includes("getGatewayModels(auth.accessToken)") &&
+      bootstrap.includes('tools: ["files", "shell", "git"]') &&
+      gateway.includes('Authorization: `Bearer ${accessToken}`') &&
+      gateway.includes('"X-OpenDrSai-Auth-Mode": "oidc"') &&
+      provider.includes("desktopApi.bootstrapDesktop()") &&
+      provider.includes("serviceReady") &&
+      login.includes("ServiceUnavailableScreen") &&
+      login.includes("auth.retryBootstrap()"),
+  ],
+  [
+    "renderer presents OIDC as the only production login",
       login.includes("login-debug-panel") &&
+      login.includes("if (!import.meta.env.DEV) return") &&
+      login.includes("import.meta.env.DEV && debugOpen") &&
       login.includes('event.key !== "F12"') &&
       login.includes("onOidcLoginDebug") &&
       login.includes("auth.startOidcLogin({ rememberMe })") &&
       login.includes("auth.cancelOidcLogin()") &&
-      login.includes("Continue with HepAI") &&
-      login.includes("Use API key instead") &&
+      login.includes("Sign in with HepAI") &&
+      !login.includes("Use API key instead") &&
+      !login.includes("DEFAULT_MODEL_OPTIONS") &&
+      !login.includes('type="email"') &&
+      auth.includes("This build only supports HepAI OIDC sign-in.") &&
       provider.includes("startOidcLogin") &&
       provider.includes("Opening browser for HepAI sign-in") &&
       provider.includes("Cancelling browser sign-in") &&
@@ -184,6 +212,14 @@ const checks = [
       mock.includes('authProvider: "hai"') &&
       mock.includes("oidcLoginDebugListeners") &&
       mock.includes('"cancelled"'),
+  ],
+  [
+    "production IPC rejects API key configuration",
+    mainProcess.includes('secureHandle("desktop:save-api-key"') &&
+      mainProcess.includes("if (!is.dev)") &&
+      mainProcess.includes("receives service authorization through HepAI OIDC") &&
+      e2eSmoke.includes("productionApiKeyRejected") &&
+      e2eSmoke.includes("apiKeyStatusUnchanged"),
   ],
   [
     "plan documents implemented OIDC constraints",
@@ -210,6 +246,8 @@ const checks = [
     e2eSmoke.includes("OPENDRSAI_E2E_OIDC") &&
       e2eSmoke.includes("runOidcSmoke") &&
       e2eSmoke.includes("api.startOidcLogin({ rememberMe: true })") &&
+      e2eSmoke.includes("api.bootstrapDesktop()") &&
+      e2eSmoke.includes("oidcBootstrapReady") &&
       e2eSmoke.includes("publicSessionLooksOidc") &&
       mainProcess.includes("authContextHasBearerToken") &&
       mainProcess.includes("requireAuthContext()") &&
@@ -226,6 +264,7 @@ const checks = [
       e2eOidc.includes("startFakeOidcIssuer") &&
       e2eOidc.includes("startFakeGateway") &&
       e2eOidc.includes("assertGatewayHits") &&
+      e2eOidc.includes("modelAuth.authMode !== \"oidc\"") &&
       e2eOidc.includes("DRSAI_GATEWAY_DEV_MANAGED") &&
       e2eOidc.includes("generateKeyPairSync") &&
       e2eOidc.includes("RS256") &&

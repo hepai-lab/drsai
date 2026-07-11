@@ -6,7 +6,7 @@
 
 import * as http from "http";
 
-const DRSAI_API_PORT = parseInt(process.env.DRSAI_API_PORT || "8642", 10);
+const DRSAI_API_PORT = parseInt(process.env.DRSAI_API_PORT || "18642", 10);
 const DRSAI_API_URL = `http://127.0.0.1:${DRSAI_API_PORT}`;
 
 function apiGet<T>(path: string): Promise<T> {

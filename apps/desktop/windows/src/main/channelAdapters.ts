@@ -127,6 +127,8 @@ const MAX_MOBILE_APP_PACKAGE_PREVIEW_BYTES = 512 * 1024;
 const MAX_MOBILE_APP_PACKAGE_ITEM_PREVIEW = 16;
 const MAX_BOOKMARK_PREVIEW_BYTES = 128 * 1024;
 const MAX_BOOKMARK_ITEM_PREVIEW = 16;
+const MAX_BROWSER_COOKIE_PREVIEW_BYTES = 96 * 1024;
+const MAX_BROWSER_COOKIE_ITEM_PREVIEW = 16;
 const MAX_LINK_SHORTCUT_PREVIEW_BYTES = 32 * 1024;
 const MAX_WINDOWS_SHORTCUT_PREVIEW_BYTES = 64 * 1024;
 const MAX_WINDOWS_SHORTCUT_STRING_PREVIEW = 10;
@@ -165,6 +167,8 @@ const MAX_CONFIG_SCHEMA_HINTS = 8;
 const MAX_CI_WORKFLOW_PREVIEW_ITEMS = 12;
 const MAX_TERMINAL_RECORDING_PREVIEW_BYTES = 128 * 1024;
 const MAX_TERMINAL_RECORDING_EVENT_PREVIEW = 12;
+const MAX_POWERSHELL_TRANSCRIPT_PREVIEW_BYTES = 128 * 1024;
+const MAX_POWERSHELL_TRANSCRIPT_ITEM_PREVIEW = 16;
 const MAX_DIRENV_CONFIG_PREVIEW_BYTES = 64 * 1024;
 const MAX_DIRENV_CONFIG_ITEM_PREVIEW = 16;
 const MAX_METRICS_SNAPSHOT_PREVIEW_BYTES = 128 * 1024;
@@ -274,6 +278,8 @@ const MAX_OPS_SCHEDULE_PREVIEW_BYTES = 96 * 1024;
 const MAX_OPS_SCHEDULE_ITEM_PREVIEW = 16;
 const MAX_IIS_WEB_CONFIG_PREVIEW_BYTES = 96 * 1024;
 const MAX_IIS_WEB_CONFIG_ITEM_PREVIEW = 16;
+const MAX_WEB_SERVER_CONFIG_PREVIEW_BYTES = 96 * 1024;
+const MAX_WEB_SERVER_CONFIG_ITEM_PREVIEW = 16;
 const MAX_SUPERVISOR_CONFIG_PREVIEW_BYTES = 96 * 1024;
 const MAX_SUPERVISOR_CONFIG_ITEM_PREVIEW = 16;
 const MAX_MBOX_PREVIEW_MESSAGES = 4;
@@ -376,6 +382,7 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".bicep",
   ".bicepparam",
   ".blg",
+  ".browser-cookies.txt",
   ".bru",
   ".c",
   ".cabal",
@@ -475,6 +482,7 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".hpp",
   ".http",
   ".iis-web.config",
+  ".web-server.conf",
       ".ini",
   ".istanbul-coverage.json",
   ".inf",
@@ -592,6 +600,7 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".pptm",
   ".png",
   ".pptx",
+  ".powershell-transcript.txt",
   ".prisma",
   ".prom",
   ".proto",
@@ -2858,16 +2867,17 @@ function summarizeCalendarIcsFile(filePath: string, size: number): string {
 }
 
 function summarizeCalendarIcsEvent(record: Record<string, unknown>, index: number): string {
+  const safeField = (value: string) => maskPotentialSecretValues(value);
   const fields = [
-    getSnapshotString(record, "title") ? `Title: ${getSnapshotString(record, "title")}` : "",
-    getSnapshotString(record, "startsAt") ? `Starts: ${getSnapshotString(record, "startsAt")}` : "",
-    getSnapshotString(record, "endsAt") ? `Ends: ${getSnapshotString(record, "endsAt")}` : "",
-    getSnapshotString(record, "location") ? `Location: ${getSnapshotString(record, "location")}` : "",
+    getSnapshotString(record, "title") ? `Title: ${safeField(getSnapshotString(record, "title"))}` : "",
+    getSnapshotString(record, "startsAt") ? `Starts: ${safeField(getSnapshotString(record, "startsAt"))}` : "",
+    getSnapshotString(record, "endsAt") ? `Ends: ${safeField(getSnapshotString(record, "endsAt"))}` : "",
+    getSnapshotString(record, "location") ? `Location: ${safeField(getSnapshotString(record, "location"))}` : "",
     getSnapshotLabels(record.attendees).length > 0
-      ? `Attendees: ${getSnapshotLabels(record.attendees).join(", ")}`
+      ? `Attendees: ${getSnapshotLabels(record.attendees).map(safeField).join(", ")}`
       : "",
-    getSnapshotString(record, "url") ? `URL: ${getSnapshotString(record, "url")}` : "",
-    getSnapshotString(record, "notes") ? `Notes: ${getSnapshotString(record, "notes")}` : "",
+    getSnapshotString(record, "url") ? `URL: ${safeField(getSnapshotString(record, "url"))}` : "",
+    getSnapshotString(record, "notes") ? `Notes: ${safeField(getSnapshotString(record, "notes"))}` : "",
   ].filter(Boolean);
   if (fields.length === 0) return `Event ${index + 1}: VEVENT had no recognized preview fields.`;
   return [`Event ${index + 1}`, ...fields]
@@ -4087,6 +4097,13 @@ function getImportExtension(filePath: string): string {
   if (name === "robots.txt" || name.endsWith(".robots.txt")) {
     return ".robots.txt";
   }
+  if (
+    name === "cookies.txt" ||
+    name.endsWith(".cookies.txt") ||
+    name === ".netscape-cookies.txt"
+  ) {
+    return ".browser-cookies.txt";
+  }
   if (name === "sitemap.xml") {
     return ".sitemap.xml";
   }
@@ -4317,6 +4334,16 @@ function getImportExtension(filePath: string): string {
   ) {
     return ".iis-web.config";
   }
+  if (
+    name === "nginx.conf" ||
+    name.endsWith(".nginx.conf") ||
+    name === "httpd.conf" ||
+    name === "apache.conf" ||
+    name.endsWith(".apache.conf") ||
+    name === ".htaccess"
+  ) {
+    return ".web-server.conf";
+  }
   if (name.endsWith(".cdx.json")) {
     return ".cdx.json";
   }
@@ -4429,6 +4456,14 @@ function getImportExtension(filePath: string): string {
   ) {
     return ".logcat";
   }
+  if (
+    name === "powershell-transcript.txt" ||
+    name.endsWith(".powershell-transcript.txt") ||
+    name.startsWith("powershell_transcript.") ||
+    name.startsWith("powershell-transcript.")
+  ) {
+    return ".powershell-transcript.txt";
+  }
   if (name === "info.plist") {
     return ".info.plist";
   }
@@ -4459,6 +4494,7 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
       ".appxmanifest",
       ".appxbundle",
       ".blg",
+      ".browser-cookies.txt",
       ".cabal",
       ".cat",
       ".cfg",
@@ -4491,6 +4527,7 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
       ".html",
       ".geojson",
       ".iis-web.config",
+      ".web-server.conf",
       ".glb",
       ".gltf",
       ".gitattributes",
@@ -4574,6 +4611,7 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
       ".kustomization.yaml",
       ".lighthouse.json",
       ".playwright-trace.zip",
+      ".powershell-transcript.txt",
       ".test-results.json",
       ".xunit.xml",
       ".trace.json",
@@ -4699,6 +4737,9 @@ function summarizeFile(
   }
   if (isWebCrawlMetadataFile(extension)) {
     return summarizeWebCrawlMetadataFile(filePath, extension, size);
+  }
+  if (extension === ".browser-cookies.txt") {
+    return summarizeBrowserCookieExportFile(filePath, size);
   }
   if (isAndroidManifestFile(filePath, extension)) {
     return summarizeAndroidManifestFile(filePath, size);
@@ -4844,6 +4885,9 @@ function summarizeFile(
   if (isIisWebConfigFile(filePath, extension)) {
     return summarizeIisWebConfigFile(filePath, size);
   }
+  if (isWebServerConfigFile(filePath, extension)) {
+    return summarizeWebServerConfigFile(filePath, size);
+  }
   if (isVsCodeWorkspaceConfigFile(filePath, extension)) {
     return summarizeVsCodeWorkspaceConfigFile(filePath, extension, size);
   }
@@ -4973,6 +5017,9 @@ function summarizeFile(
   }
   if (extension === ".cast") {
     return summarizeTerminalRecordingFile(filePath, size);
+  }
+  if (extension === ".powershell-transcript.txt") {
+    return summarizePowerShellTranscriptFile(filePath, size);
   }
   if (extension === ".yaml" || extension === ".yml") {
     if (isContainerComposeFile(filePath, extension)) {
@@ -14997,6 +15044,17 @@ interface TerminalRecordingPreview {
   truncated: boolean;
 }
 
+interface PowerShellTranscriptPreview {
+  metadata: string[];
+  commandHints: string[];
+  riskHints: string[];
+  outputSamples: string[];
+  startMarkers: number;
+  endMarkers: number;
+  lineCount: number;
+  truncated: boolean;
+}
+
 function summarizeTerminalRecordingFile(filePath: string, size: number): string {
   try {
     const raw = readFileHeader(filePath, MAX_TERMINAL_RECORDING_PREVIEW_BYTES).toString("utf8");
@@ -15027,6 +15085,96 @@ function summarizeTerminalRecordingFile(filePath: string, size: number): string 
       "Asciinema cast preview read bounded local bytes only; no terminal replay, shell command execution, process spawn, filesystem mutation, credential lookup, network call, or provider send was performed.",
     ].join("\n").slice(0, MAX_TEXT_BYTES);
   }
+}
+
+function summarizePowerShellTranscriptFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_POWERSHELL_TRANSCRIPT_PREVIEW_BYTES).toString("utf8");
+    const preview = parsePowerShellTranscriptPreview(raw);
+    return [
+      `PowerShell transcript preview (${formatBytes(size)}).`,
+      `Transcript markers: start=${preview.startMarkers}; end=${preview.endMarkers}; lines in bounded preview=${preview.lineCount}${preview.truncated ? "; preview byte limit reached" : ""}.`,
+      preview.metadata.length > 0
+        ? `Session metadata (${preview.metadata.length}${preview.metadata.length >= MAX_POWERSHELL_TRANSCRIPT_ITEM_PREVIEW ? "+" : ""}): ${preview.metadata.join("; ")}.`
+        : "Session metadata: none detected in the bounded preview.",
+      preview.commandHints.length > 0
+        ? `Command/prompt hints (${preview.commandHints.length}${preview.commandHints.length >= MAX_POWERSHELL_TRANSCRIPT_ITEM_PREVIEW ? "+" : ""}): ${preview.commandHints.join(" | ")}.`
+        : "Command/prompt hints: none detected in the bounded preview.",
+      preview.riskHints.length > 0
+        ? `Risk cues (${preview.riskHints.length}${preview.riskHints.length >= MAX_POWERSHELL_TRANSCRIPT_ITEM_PREVIEW ? "+" : ""}): ${preview.riskHints.join(" | ")}.`
+        : "Risk cues: none detected in the bounded preview.",
+      preview.outputSamples.length > 0
+        ? `Output samples:\n${preview.outputSamples.map((line) => `- ${line}`).join("\n")}`
+        : "Output samples: none detected in the bounded preview.",
+      "Ready for explicit attachment after visible review; PowerShell transcript text was parsed from bounded workspace-local bytes only, ANSI controls and likely secrets were redacted, and no PowerShell/pwsh process, transcript replay, shell command execution, filesystem mutation, credential lookup, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `PowerShell transcript ready for explicit attachment (${formatBytes(size)}).`,
+      "PowerShell transcript preview read bounded local bytes only; no PowerShell/pwsh process, transcript replay, shell command execution, filesystem mutation, credential lookup, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parsePowerShellTranscriptPreview(raw: string): PowerShellTranscriptPreview {
+  const lines = normalizeTextPreview(raw)
+    .split("\n")
+    .map((line) => stripAnsiControls(line).trim())
+    .filter(Boolean);
+  const metadata = new Set<string>();
+  const commandHints = new Set<string>();
+  const riskHints = new Set<string>();
+  const outputSamples: string[] = [];
+  let startMarkers = 0;
+  let endMarkers = 0;
+
+  for (const rawLine of lines) {
+    const line = maskPotentialSecretValues(clampSingleLine(rawLine, 260));
+    if (/windows powershell transcript start/i.test(line)) {
+      startMarkers += 1;
+      continue;
+    }
+    if (/windows powershell transcript end/i.test(line)) {
+      endMarkers += 1;
+      continue;
+    }
+    if (/^\*{6,}$/.test(line)) continue;
+
+    const metadataMatch = line.match(/^(Start time|End time|Username|RunAs User|Configuration Name|Machine|Host Application|Process ID|PSVersion):\s*(.+)$/i);
+    if (metadataMatch?.[1] && metadataMatch[2] && metadata.size < MAX_POWERSHELL_TRANSCRIPT_ITEM_PREVIEW) {
+      metadata.add(`${metadataMatch[1]}=${clampSingleLine(metadataMatch[2], 140)}`);
+      continue;
+    }
+
+    const promptMatch = line.match(/^(?:PS\s+)?[A-Z]:\\[^>]*>\s*(.+)$/i);
+    if (promptMatch?.[1] && commandHints.size < MAX_POWERSHELL_TRANSCRIPT_ITEM_PREVIEW) {
+      commandHints.add(clampSingleLine(promptMatch[1], 180));
+    } else if (/\b(npm|pnpm|yarn|python|node|git|cargo|pytest|powershell|pwsh|dotnet)\b/i.test(line) && commandHints.size < MAX_POWERSHELL_TRANSCRIPT_ITEM_PREVIEW) {
+      commandHints.add(clampSingleLine(line, 180));
+    }
+
+    const riskMatches = line.match(/\b(error|failed|exception|traceback|permission denied|access denied|fatal|warning|unauthorized)\b/gi);
+    if (riskMatches) {
+      for (const match of riskMatches) {
+        if (riskHints.size < MAX_POWERSHELL_TRANSCRIPT_ITEM_PREVIEW) riskHints.add(match.toLowerCase());
+      }
+    }
+
+    if (outputSamples.length < MAX_POWERSHELL_TRANSCRIPT_ITEM_PREVIEW && !/^PS\s+[A-Z]:\\/i.test(line)) {
+      outputSamples.push(clampSingleLine(line, 220));
+    }
+  }
+
+  return {
+    metadata: [...metadata],
+    commandHints: [...commandHints],
+    riskHints: [...riskHints],
+    outputSamples,
+    startMarkers,
+    endMarkers,
+    lineCount: lines.length,
+    truncated: raw.length >= MAX_POWERSHELL_TRANSCRIPT_PREVIEW_BYTES,
+  };
 }
 
 function parseAsciinemaCastPreview(raw: string): TerminalRecordingPreview {
@@ -21363,6 +21511,145 @@ function readIisXmlAttributes(rawAttributes: string): Map<string, string> {
   return attrs;
 }
 
+interface WebServerConfigPreview {
+  format: string;
+  servers: string[];
+  listens: string[];
+  routes: string[];
+  upstreams: string[];
+  proxyTargets: string[];
+  headerHints: string[];
+  authHints: string[];
+  rewriteHints: string[];
+  sampleLines: string[];
+  truncated: boolean;
+}
+
+function isWebServerConfigFile(filePath: string, extension: string): boolean {
+  if (extension === ".web-server.conf") return true;
+  const name = basename(filePath).toLowerCase();
+  return (
+    name === "nginx.conf" ||
+    name.endsWith(".nginx.conf") ||
+    name === "httpd.conf" ||
+    name === "apache.conf" ||
+    name.endsWith(".apache.conf") ||
+    name === ".htaccess"
+  );
+}
+
+function summarizeWebServerConfigFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_WEB_SERVER_CONFIG_PREVIEW_BYTES)).toString("utf8");
+    const preview = parseWebServerConfigPreview(filePath, raw);
+    return [
+      `Web server config preview (${preview.format}, ${formatBytes(size)}).`,
+      preview.servers.length > 0
+        ? `Server names (${preview.servers.length}${preview.servers.length >= MAX_WEB_SERVER_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.servers.join(", ")}.`
+        : "Server names: none detected in the bounded preview.",
+      preview.listens.length > 0
+        ? `Listen directives (${preview.listens.length}${preview.listens.length >= MAX_WEB_SERVER_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.listens.join(", ")}.`
+        : "Listen directives: none detected in the bounded preview.",
+      preview.routes.length > 0
+        ? `Route/location hints (${preview.routes.length}${preview.routes.length >= MAX_WEB_SERVER_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.routes.join(" | ")}.`
+        : "Route/location hints: none detected in the bounded preview.",
+      preview.upstreams.length > 0
+        ? `Upstream/backend blocks (${preview.upstreams.length}${preview.upstreams.length >= MAX_WEB_SERVER_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.upstreams.join(", ")}.`
+        : "Upstream/backend blocks: none detected in the bounded preview.",
+      preview.proxyTargets.length > 0
+        ? `Proxy/backend targets (${preview.proxyTargets.length}${preview.proxyTargets.length >= MAX_WEB_SERVER_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.proxyTargets.join(" | ")}.`
+        : "Proxy/backend targets: none detected in the bounded preview.",
+      preview.headerHints.length > 0
+        ? `Header/env hints (${preview.headerHints.length}${preview.headerHints.length >= MAX_WEB_SERVER_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.headerHints.join(" | ")}.`
+        : "Header/env hints: none detected in the bounded preview.",
+      preview.authHints.length > 0
+        ? `Auth/access hints: ${preview.authHints.join(" | ")}.`
+        : "Auth/access hints: none detected in the bounded preview.",
+      preview.rewriteHints.length > 0
+        ? `Rewrite/redirect hints (${preview.rewriteHints.length}${preview.rewriteHints.length >= MAX_WEB_SERVER_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.rewriteHints.join(" | ")}.`
+        : "Rewrite/redirect hints: none detected in the bounded preview.",
+      preview.sampleLines.length > 0 ? `Sample directives:\n${preview.sampleLines.join("\n")}` : "",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_WEB_SERVER_CONFIG_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; Nginx/Apache web server configuration was parsed from bounded workspace-local text only, secret-shaped values and URL query values were redacted, include targets and certificate/key files were not opened, and no nginx/apache/httpd command, service reload, config test, module load, filesystem mutation, network call, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Web server config ready for explicit attachment (${formatBytes(size)}).`,
+      "Nginx/Apache preview could not read bounded local text; no nginx/apache/httpd command, service reload, config test, filesystem mutation, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseWebServerConfigPreview(filePath: string, raw: string): WebServerConfigPreview {
+  const name = basename(filePath).toLowerCase();
+  const format = name === ".htaccess"
+    ? "Apache .htaccess"
+    : name.includes("httpd") || name.includes("apache")
+      ? "Apache/httpd config"
+      : "Nginx config";
+  const servers = new Set<string>();
+  const listens = new Set<string>();
+  const routes = new Set<string>();
+  const upstreams = new Set<string>();
+  const proxyTargets = new Set<string>();
+  const headerHints = new Set<string>();
+  const authHints = new Set<string>();
+  const rewriteHints = new Set<string>();
+  const sampleLines: string[] = [];
+  const lines = normalizeTextPreview(raw).split("\n");
+
+  for (const rawLine of lines) {
+    const trimmed = rawLine.trim();
+    if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("//")) continue;
+    const line = trimmed.replace(/\s+/g, " ");
+    const safeLine = clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(line)), 220);
+    if (sampleLines.length < 10) sampleLines.push(safeLine);
+
+    collectWebServerValue(line, /^server_name\s+(.+?);?$/i, servers, "server_name");
+    collectWebServerValue(line, /^ServerName\s+(.+)$/i, servers, "ServerName");
+    collectWebServerValue(line, /^ServerAlias\s+(.+)$/i, servers, "ServerAlias");
+    collectWebServerValue(line, /^listen\s+(.+?);?$/i, listens, "listen");
+    collectWebServerValue(line, /^Listen\s+(.+)$/i, listens, "Listen");
+    collectWebServerValue(line, /^<VirtualHost\s+([^>]+)>/i, listens, "VirtualHost");
+    collectWebServerValue(line, /^location\s+(?:=|~\*?|@)?\s*([^{]+)\s*\{/i, routes, "location");
+    collectWebServerValue(line, /^Location(?:Match)?\s+(.+)$/i, routes, "Location");
+    collectWebServerValue(line, /^upstream\s+([^{\s]+)\s*\{/i, upstreams, "upstream");
+    collectWebServerValue(line, /^server\s+([^;]+);?$/i, upstreams, "upstream server");
+    collectWebServerValue(line, /^proxy_pass\s+(.+?);?$/i, proxyTargets, "proxy_pass");
+    collectWebServerValue(line, /^ProxyPass(?:Reverse)?\s+(.+)$/i, proxyTargets, "ProxyPass");
+    collectWebServerValue(line, /^fastcgi_pass\s+(.+?);?$/i, proxyTargets, "fastcgi_pass");
+    collectWebServerValue(line, /^(?:add_header|proxy_set_header|Header\s+(?:set|add|always\s+set)|RequestHeader\s+(?:set|add))\s+(.+)$/i, headerHints, "header");
+    collectWebServerValue(line, /^(?:SetEnv|SetEnvIf|PassEnv)\s+(.+)$/i, headerHints, "env");
+    collectWebServerValue(line, /^(?:auth_basic|auth_request|AuthType|Require|Satisfy|Allow|Deny)\s+(.+?);?$/i, authHints, "auth");
+    collectWebServerValue(line, /^(?:rewrite|return|RewriteRule|Redirect(?:Match)?)\s+(.+?);?$/i, rewriteHints, "rewrite");
+  }
+
+  return {
+    format,
+    servers: [...servers].slice(0, MAX_WEB_SERVER_CONFIG_ITEM_PREVIEW),
+    listens: [...listens].slice(0, MAX_WEB_SERVER_CONFIG_ITEM_PREVIEW),
+    routes: [...routes].slice(0, MAX_WEB_SERVER_CONFIG_ITEM_PREVIEW),
+    upstreams: [...upstreams].slice(0, MAX_WEB_SERVER_CONFIG_ITEM_PREVIEW),
+    proxyTargets: [...proxyTargets].slice(0, MAX_WEB_SERVER_CONFIG_ITEM_PREVIEW),
+    headerHints: [...headerHints].slice(0, MAX_WEB_SERVER_CONFIG_ITEM_PREVIEW),
+    authHints: [...authHints].slice(0, MAX_WEB_SERVER_CONFIG_ITEM_PREVIEW),
+    rewriteHints: [...rewriteHints].slice(0, MAX_WEB_SERVER_CONFIG_ITEM_PREVIEW),
+    sampleLines,
+    truncated: raw.length >= MAX_WEB_SERVER_CONFIG_PREVIEW_BYTES,
+  };
+}
+
+function collectWebServerValue(line: string, pattern: RegExp, output: Set<string>, label: string): void {
+  if (output.size >= MAX_WEB_SERVER_CONFIG_ITEM_PREVIEW) return;
+  const match = line.match(pattern);
+  if (!match?.[1]) return;
+  const value = match[1]
+    .replace(/[;{]\s*$/, "")
+    .trim();
+  if (!value) return;
+  output.add(`${label}=${clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(value)), 140)}`);
+}
+
 function isVsCodeWorkspaceConfigFile(filePath: string, extension: string): boolean {
   if (
     [
@@ -24767,6 +25054,20 @@ interface BrowserBookmarkExportPreview {
   }>;
 }
 
+interface BrowserCookieExportPreview {
+  domains: string[];
+  paths: string[];
+  cookieNames: string[];
+  secureCount: number;
+  httpOnlyCount: number;
+  sessionCount: number;
+  expiredCount: number;
+  samples: string[];
+  parsedCount: number;
+  skippedLines: number;
+  truncated: boolean;
+}
+
 function looksLikeBrowserBookmarkExport(filePath: string): boolean {
   try {
     const raw = readFileHeader(filePath, Math.min(MAX_BOOKMARK_PREVIEW_BYTES, 16 * 1024)).toString("utf8");
@@ -24779,6 +25080,109 @@ function looksLikeBrowserBookmarkExport(filePath: string): boolean {
   } catch {
     return false;
   }
+}
+
+function summarizeBrowserCookieExportFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_BROWSER_COOKIE_PREVIEW_BYTES).toString("utf8");
+    const preview = parseBrowserCookieExportPreview(raw);
+    return [
+      `Browser cookie export preview (${formatBytes(size)}).`,
+      preview.domains.length > 0
+        ? `Domains (${preview.domains.length}${preview.domains.length >= MAX_BROWSER_COOKIE_ITEM_PREVIEW ? "+" : ""}): ${preview.domains.join(", ")}.`
+        : "Domains: none detected in the bounded local preview.",
+      preview.paths.length > 0
+        ? `Paths (${preview.paths.length}${preview.paths.length >= MAX_BROWSER_COOKIE_ITEM_PREVIEW ? "+" : ""}): ${preview.paths.join(", ")}.`
+        : "Paths: none detected in the bounded local preview.",
+      preview.cookieNames.length > 0
+        ? `Cookie names (${preview.cookieNames.length}${preview.cookieNames.length >= MAX_BROWSER_COOKIE_ITEM_PREVIEW ? "+" : ""}): ${preview.cookieNames.join(", ")}.`
+        : "Cookie names: none detected in the bounded local preview.",
+      `Flags: secure=${preview.secureCount}; httpOnly=${preview.httpOnlyCount}; session=${preview.sessionCount}; expired=${preview.expiredCount}.`,
+      `Parsed cookie rows: ${preview.parsedCount}; skipped lines: ${preview.skippedLines}${preview.truncated ? "; preview byte limit reached" : ""}.`,
+      preview.samples.length > 0
+        ? `Cookie samples:\n${preview.samples.map((line) => `- ${line}`).join("\n")}`
+        : "Cookie samples: none detected in the bounded local preview.",
+      "Ready for explicit attachment after visible review; Netscape cookies.txt data was parsed from bounded workspace-local text only, cookie values were always redacted, browser profiles were not opened, cookies were not imported, URLs were not fetched, and no network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Browser cookie export ready for explicit attachment (${formatBytes(size)}).`,
+      "Cookie preview could not parse bounded local text; browser profiles were not opened, cookies were not imported, URLs were not fetched, and no network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseBrowserCookieExportPreview(raw: string): BrowserCookieExportPreview {
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const domains = new Set<string>();
+  const paths = new Set<string>();
+  const cookieNames = new Set<string>();
+  const samples: string[] = [];
+  let secureCount = 0;
+  let httpOnlyCount = 0;
+  let sessionCount = 0;
+  let expiredCount = 0;
+  let parsedCount = 0;
+  let skippedLines = 0;
+
+  for (const rawLine of normalizeTextPreview(raw).split("\n")) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    if (line.startsWith("# Netscape HTTP Cookie File") || line.startsWith("# This file")) {
+      continue;
+    }
+
+    const httpOnly = line.startsWith("#HttpOnly_");
+    if (line.startsWith("#") && !httpOnly) {
+      continue;
+    }
+
+    const row = httpOnly ? line.replace(/^#HttpOnly_/i, "") : line;
+    const fields = row.split("\t");
+    if (fields.length < 7) {
+      skippedLines += 1;
+      continue;
+    }
+
+    const [domainRaw, includeSubdomainsRaw, pathRaw, secureRaw, expiresRaw, nameRaw] = fields;
+    const domain = clampSingleLine(maskPotentialSecretValues(domainRaw || ""), 120);
+    const path = clampSingleLine(pathRaw || "/", 120);
+    const name = clampSingleLine(maskPotentialSecretValues(nameRaw || "unnamed"), 120);
+    const expires = Number.parseInt(expiresRaw || "0", 10);
+    const includeSubdomains = /^true$/i.test(includeSubdomainsRaw || "");
+    const secure = /^true$/i.test(secureRaw || "");
+    const session = !Number.isFinite(expires) || expires <= 0;
+    const expired = Number.isFinite(expires) && expires > 0 && expires < nowSeconds;
+
+    parsedCount += 1;
+    if (domain && domains.size < MAX_BROWSER_COOKIE_ITEM_PREVIEW) domains.add(domain);
+    if (path && paths.size < MAX_BROWSER_COOKIE_ITEM_PREVIEW) paths.add(path);
+    if (name && cookieNames.size < MAX_BROWSER_COOKIE_ITEM_PREVIEW) cookieNames.add(name);
+    if (secure) secureCount += 1;
+    if (httpOnly) httpOnlyCount += 1;
+    if (session) sessionCount += 1;
+    if (expired) expiredCount += 1;
+    if (samples.length < MAX_BROWSER_COOKIE_ITEM_PREVIEW) {
+      const expiryLabel = session ? "session" : expired ? "expired" : `expires=${expires}`;
+      samples.push(
+        `${domain || "unknown-domain"} ${path} ${name}=<redacted>; secure=${secure}; httpOnly=${httpOnly}; includeSubdomains=${includeSubdomains}; ${expiryLabel}`,
+      );
+    }
+  }
+
+  return {
+    domains: [...domains],
+    paths: [...paths],
+    cookieNames: [...cookieNames],
+    secureCount,
+    httpOnlyCount,
+    sessionCount,
+    expiredCount,
+    samples,
+    parsedCount,
+    skippedLines,
+    truncated: raw.length >= MAX_BROWSER_COOKIE_PREVIEW_BYTES,
+  };
 }
 
 function summarizeBrowserBookmarkExportFile(filePath: string, size: number): string {
@@ -26590,6 +26994,7 @@ function getMime(extension: string): string {
       ".bicepparam": "text/x-bicep-params",
       ".blg": "application/vnd.ms-perfmon",
       ".bmp": "image/bmp",
+      ".browser-cookies.txt": "text/x-netscape-cookies",
       ".bru": "text/x-bruno",
       ".c": "text/x-c",
       ".cabal": "text/x-cabal",
@@ -26685,6 +27090,7 @@ function getMime(extension: string): string {
       ".hpp": "text/x-c++",
       ".http": "message/http",
       ".iis-web.config": "application/vnd.microsoft.iis.config+xml",
+      ".web-server.conf": "text/x-web-server-config",
       ".ini": "text/plain",
       ".istanbul-coverage.json": "application/vnd.istanbul.coverage+json",
       ".inf": "text/x-setup-inf",
@@ -26709,6 +27115,7 @@ function getMime(extension: string): string {
       ".otlp.json": "application/vnd.opentelemetry.otlp+json",
       ".lighthouse.json": "application/vnd.lighthouse.report+json",
       ".playwright-trace.zip": "application/vnd.playwright.trace+zip",
+      ".powershell-transcript.txt": "text/x-powershell-transcript",
       ".test-results.json": "application/vnd.drsai.test-results+json",
       ".tokenizer-calibration.json": "application/vnd.drsai.tokenizer-calibration+json",
       ".trace.json": "application/x-chrome-trace+json",

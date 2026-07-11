@@ -28,6 +28,7 @@ import {
   stopGateway,
 } from "./gateway";
 import { getDesktopHealth, getInstallStatus } from "./status";
+import { bootstrapDesktop } from "./bootstrap";
 import { DRSAI_HOME } from "./paths";
 import { checkForUpdates, subscribeUpdateStatus } from "./updates";
 import { abortChat, startChat } from "./chat";
@@ -150,8 +151,11 @@ import {
   restoreWorkspaceCheckpoint,
 } from "./workspaceCheckpoints";
 import {
-  transcribeVoiceRecording,
   writeVoiceTranscriptHandoff,
+  startVoiceTranscription,
+  cancelVoiceTranscription,
+  getVoiceRuntimeStatus,
+  cleanupExpiredVoiceTempFiles,
 } from "./voice";
 import { saveApiKeyAndDefaultModel } from "./settings";
 import {
@@ -2090,15 +2094,37 @@ function registerDeepLinkProtocol(): void {
       app.setAsDefaultProtocolClient(DEEP_LINK_PROTOCOL, process.execPath, [
         resolve(process.argv[1]),
       ]);
+      registerDeepLinkDisplayName();
       return;
     }
     app.setAsDefaultProtocolClient(DEEP_LINK_PROTOCOL);
+    registerDeepLinkDisplayName();
   } catch (error) {
     console.warn(
       "[desktop] Failed to register deep link protocol:",
       error instanceof Error ? error.message : String(error),
     );
   }
+}
+
+function registerDeepLinkDisplayName(): void {
+  if (process.platform !== "win32") return;
+  const protocolKey = `HKCU\\Software\\Classes\\${DEEP_LINK_PROTOCOL}`;
+  execFile("reg.exe", [
+    "add",
+    `${protocolKey}\\Application`,
+    "/v",
+    "ApplicationName",
+    "/t",
+    "REG_SZ",
+    "/d",
+    "OpenDrSai",
+    "/f",
+  ], (error) => {
+    if (error) {
+      console.warn("[desktop] Failed to register deep link display name:", error.message);
+    }
+  });
 }
 
 function registerRendererProtocol(): void {
@@ -2311,13 +2337,15 @@ function registerIpc(): void {
   registerBrowserController(new BrowserUseController(browserUseWorkerClient));
   secureHandle("desktop:get-auth-session", () => getAuthSession());
   secureHandle("desktop:login", (_event, request) => login(request));
-  secureHandle("desktop:start-oidc-login", (event, request) =>
-    startOidcLogin(request, (debugEvent) => {
+  secureHandle("desktop:start-oidc-login", async (event, request) => {
+    const result = await startOidcLogin(request, (debugEvent) => {
       if (!event.sender.isDestroyed()) {
         event.sender.send("desktop:oidc-login-debug", debugEvent);
       }
-    }),
-  );
+    });
+    if (result.ok) focusMainWindow();
+    return result;
+  });
   secureHandle("desktop:cancel-oidc-login", () => cancelOidcLogin());
   secureHandle("desktop:start-desktop-sso-login", () => startDesktopSsoLogin());
   secureHandle("desktop:start-wechat-desktop-login", () =>
@@ -2335,6 +2363,7 @@ function registerIpc(): void {
     return logout(options);
   });
   secureHandle("desktop:refresh-auth-session", () => refreshAuthSession());
+  secureHandle("desktop:bootstrap", () => bootstrapDesktop());
   secureHandle("desktop:get-health", () => getDesktopHealth());
   secureHandle("desktop:get-install-status", () => getInstallStatus());
   secureHandle("desktop:get-gateway-status", () => getGatewayStatus());
@@ -2674,14 +2703,17 @@ function registerIpc(): void {
     abortChat(requestId),
   );
   secureHandle(
-    "desktop:voice-transcribe",
-    async (_event, request: DesktopVoiceTranscriptionRequest) => {
-      const workspacePath = getStringProperty(request, "workspacePath");
-      if (!(await isAllowedOpenPath(workspacePath))) {
-        throw new Error("Voice transcription workspace is not registered or allowed.");
-      }
-      return transcribeVoiceRecording(request);
-    },
+    "desktop:voice-transcription-start",
+    (event, request: DesktopVoiceTranscriptionRequest) =>
+      startVoiceTranscription(event.sender, request),
+  );
+  secureHandle(
+    "desktop:voice-transcription-cancel",
+    (_event, requestId: string) => cancelVoiceTranscription(requestId),
+  );
+  secureHandle(
+    "desktop:voice-runtime-status",
+    () => getVoiceRuntimeStatus(),
   );
   secureHandle(
     "desktop:voice-handoff-write",
@@ -2699,9 +2731,12 @@ function registerIpc(): void {
   secureHandle("desktop:abort-agent-run", (_event, requestId: string) =>
     abortAgentRun(requestId),
   );
-  secureHandle("desktop:save-api-key", (_event, apiKey: string, defaultModel?: string) =>
-    saveApiKeyAndDefaultModel(apiKey, defaultModel),
-  );
+  secureHandle("desktop:save-api-key", (_event, apiKey: string, defaultModel?: string) => {
+    if (!is.dev) {
+      return { ok: false, message: "This build receives service authorization through HepAI OIDC." };
+    }
+    return saveApiKeyAndDefaultModel(apiKey, defaultModel);
+  });
   secureHandle("desktop:pick-files", async () => {
     if (!mainWindow) return { canceled: true, paths: [] };
     const result = await dialog.showOpenDialog(mainWindow, {
@@ -3004,6 +3039,7 @@ async function autoStartGatewayWhenInstalled(): Promise<void> {
 }
 
 app.whenReady().then(() => {
+  cleanupExpiredVoiceTempFiles();
   if (!singleInstanceLock) return;
   if (process.env.OPENDRSAI_E2E_OIDC_HEADLESS === "1") {
     void runHeadlessOidcSmoke();
@@ -3049,6 +3085,18 @@ async function runHeadlessOidcSmoke(): Promise<void> {
     result.checks.oidcLoginOk = Boolean(loginResult.ok);
     result.checks.oidcPublicSession = publicSessionLooksHeadlessOidc(
       loginResult.session,
+    );
+
+    const bootstrap = await bootstrapDesktop();
+    result.details.bootstrap = bootstrap;
+    result.checks.oidcBootstrapReady = Boolean(
+      bootstrap.ready &&
+      bootstrap.defaults.modelAlias === "drsai" &&
+      bootstrap.models.some((model) => model.id === "drsai") &&
+      bootstrap.capabilities.chat &&
+      bootstrap.capabilities.tools.includes("files") &&
+      bootstrap.capabilities.tools.includes("shell") &&
+      bootstrap.capabilities.tools.includes("git"),
     );
 
     const restored = await getAuthSession();
@@ -3134,7 +3182,7 @@ async function runHeadlessOidcSmoke(): Promise<void> {
       afterLogout.authenticated === false,
     );
     result.checks.logoutClearsSessionFile = !existsSync(
-      join(DRSAI_HOME, "auth", "session.json"),
+      join(DRSAI_HOME, "auth", "auth.json"),
     );
 
     result.ok = Object.values(result.checks).every(Boolean);
@@ -3212,7 +3260,7 @@ function readHeadlessOidcStorage(): {
   };
   details: Record<string, unknown>;
 } {
-  const sessionPath = join(DRSAI_HOME, "auth", "session.json");
+  const sessionPath = join(DRSAI_HOME, "auth", "auth.json");
   if (!existsSync(sessionPath)) {
     return {
       checks: {
@@ -3260,8 +3308,22 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-app.on("before-quit", () => {
+let gatewayShutdownComplete = false;
+let gatewayShutdownStarted = false;
+
+app.on("before-quit", (event) => {
   stopScheduledTaskWorker();
   killAllTerminalSessions();
-  shutdownGateway();
+  if (gatewayShutdownComplete) return;
+  event.preventDefault();
+  if (gatewayShutdownStarted) return;
+  gatewayShutdownStarted = true;
+  void shutdownGateway()
+    .catch((error) => {
+      console.error("[desktop] Failed to stop gateway during shutdown:", error);
+    })
+    .finally(() => {
+      gatewayShutdownComplete = true;
+      app.quit();
+    });
 });

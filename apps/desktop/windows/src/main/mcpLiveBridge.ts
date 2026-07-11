@@ -445,10 +445,13 @@ export function listMcpReusableSessions(
   request: DesktopMcpReusableSessionListRequest,
 ): DesktopMcpReusableSession[] {
   const workspace = resolveWorkspacePath(request.workspacePath);
-  return [...reusableMcpSessions.values()]
+  const sessions = [...reusableMcpSessions.values()]
     .filter((session) => sameWorkspacePath(session.workspacePath, workspace))
     .sort((left, right) => right.lastUsedAt.localeCompare(left.lastUsedAt))
     .map(toReusableSessionSummary);
+  if (sessions.length > 0) return sessions;
+  const recoveryDiagnostic = getReusableSessionRestartDiagnostic(workspace);
+  return recoveryDiagnostic ? [recoveryDiagnostic] : [];
 }
 
 export function closeMcpReusableSession(
@@ -1371,6 +1374,42 @@ function toReusableSessionSummary(
     ...(session.idleExpiresAt ? { idleExpiresAt: session.idleExpiresAt } : {}),
     ...(typeof idleExpiresInMs === "number" ? { idleExpiresInMs } : {}),
     ...(session.stderrPreview ? { stderrPreview: session.stderrPreview.slice(-1000) } : {}),
+  };
+}
+
+function getReusableSessionRestartDiagnostic(
+  workspacePath: string,
+): DesktopMcpReusableSession | null {
+  const audits = readMcpSessionAuditFile(workspacePath)
+    .filter(
+      (entry) =>
+        entry.phase === "reusable_pool" &&
+        entry.reusedSession === true &&
+        Boolean(entry.sessionReuseKey),
+    )
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  const latestStarted = audits.find((entry) => entry.status === "started");
+  if (!latestStarted?.sessionReuseKey) return null;
+  const laterClosed = audits.some(
+    (entry) =>
+      entry.sessionReuseKey === latestStarted.sessionReuseKey &&
+      entry.status === "closed" &&
+      entry.createdAt >= latestStarted.createdAt,
+  );
+  if (laterClosed) return null;
+  const now = new Date().toISOString();
+  return {
+    sessionReuseKey: latestStarted.sessionReuseKey,
+    workspacePath,
+    server: latestStarted.server,
+    command: "process-local stdio session from previous app process",
+    startedAt: latestStarted.createdAt,
+    lastUsedAt: latestStarted.createdAt,
+    status: "restart_reconnect_required",
+    pendingRequestCount: 0,
+    restartDetectedAt: now,
+    diagnosticMessage:
+      "Reusable MCP stdio sessions are process-local; this workspace has prior pool-start evidence but no live pool in the current desktop process. Re-run /mcp sync --reuse or /mcp exec --reuse after approval to reconnect explicitly.",
   };
 }
 

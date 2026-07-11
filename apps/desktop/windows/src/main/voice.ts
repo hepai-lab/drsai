@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import {
   existsSync,
   lstatSync,
@@ -7,19 +7,331 @@ import {
   realpathSync,
   statSync,
   writeFileSync,
+  unlinkSync,
+  readdirSync,
 } from "node:fs";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { tmpdir } from "node:os";
+import type { WebContents } from "electron";
 import type {
   DesktopVoiceTranscriptHandoffRequest,
   DesktopVoiceTranscriptHandoffResult,
   DesktopVoiceTranscriptionRequest,
   DesktopVoiceTranscriptionResult,
+  DesktopVoiceTranscriptionEvent,
+  DesktopVoiceTranscriptionStartResult,
+  DesktopVoiceRuntimeStatus,
+  DesktopVoiceError,
 } from "../shared/desktopApi";
+import { getGatewayStatus, startGateway } from "./gateway";
 
 const MAX_VOICE_RECORDING_BYTES = 10 * 1024 * 1024;
 const MAX_VOICE_RECORDING_SECONDS = 120;
 const MAX_VOICE_TRANSCRIPT_CHARS = 12_000;
 const DEFAULT_VOICE_TRANSCRIPT_RELATIVE_PATH = ".drsai/voice-context.json";
+const VOICE_TIMEOUT_MS = 60_000;
+const SUPPORTED_VOICE_MIME_TYPES = ["audio/webm", "audio/ogg", "audio/wav", "audio/mp4", "audio/mpeg"];
+
+interface ActiveVoiceTask {
+  controller: AbortController;
+  sender: WebContents;
+  tempPath?: string;
+  terminal: boolean;
+}
+
+interface VoiceRuntimeInput {
+  requestId: string;
+  request: DesktopVoiceTranscriptionRequest;
+  audio: Uint8Array;
+  mimeType: string;
+  durationSeconds: number;
+  gatewayBaseUrl: string;
+}
+
+interface VoiceRuntime {
+  readonly id: "gateway-provider" | "mock-local";
+  getStatus(): Promise<DesktopVoiceRuntimeStatus>;
+  transcribe(input: VoiceRuntimeInput, signal: AbortSignal): Promise<DesktopVoiceTranscriptionResult>;
+}
+
+const activeVoiceTasks = new Map<string, ActiveVoiceTask>();
+
+async function getGatewayVoiceRuntimeStatus(): Promise<DesktopVoiceRuntimeStatus> {
+  const status = await getGatewayStatus();
+  const hasCredential = Boolean(process.env.HEPAI_API_KEY?.trim() || process.env.OPENAI_API_KEY?.trim());
+  const state = !status.ready ? "unavailable" : hasCredential ? "ready" : "auth_required";
+  return {
+    runtimeId: "gateway-provider",
+    state,
+    supportedMimeTypes: SUPPORTED_VOICE_MIME_TYPES,
+    maxBytes: MAX_VOICE_RECORDING_BYTES,
+    maxDurationSeconds: MAX_VOICE_RECORDING_SECONDS,
+    supportsPartial: false,
+    providerDisclosure: "Recorded audio is sent through the local OpenDrSai gateway to the configured speech transcription provider.",
+    message: state === "ready"
+      ? "Voice transcription runtime is ready."
+      : state === "auth_required"
+        ? "Configure a transcription provider API key."
+        : "Start the local gateway and configure a transcription provider.",
+  };
+}
+
+const gatewayProviderRuntime: VoiceRuntime = {
+  id: "gateway-provider",
+  getStatus: getGatewayVoiceRuntimeStatus,
+  transcribe: transcribeGatewayWithRetry,
+};
+
+async function transcribeGatewayWithRetry(
+  input: VoiceRuntimeInput,
+  signal: AbortSignal,
+): Promise<DesktopVoiceTranscriptionResult> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return await transcribeThroughGateway(
+        input.requestId, input.request, input.audio, input.mimeType,
+        input.durationSeconds, input.gatewayBaseUrl, signal,
+      );
+    } catch (error) {
+      const voiceError = error as Partial<DesktopVoiceError>;
+      if (attempt > 0 || voiceError.code !== "network_error" || signal.aborted) throw error;
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 300));
+    }
+  }
+  throw voiceFailure("internal_error", "Voice transcription retry failed.", true);
+}
+
+const fixtureVoiceRuntime: VoiceRuntime = {
+  id: "mock-local",
+  getStatus: async () => ({
+    runtimeId: "mock-local",
+    state: "ready",
+    supportedMimeTypes: SUPPORTED_VOICE_MIME_TYPES,
+    maxBytes: MAX_VOICE_RECORDING_BYTES,
+    maxDurationSeconds: MAX_VOICE_RECORDING_SECONDS,
+    supportsPartial: false,
+    providerDisclosure: "Deterministic fixture transcription is active for tests.",
+    message: "Fixture voice runtime is ready.",
+  }),
+  transcribe: async (input, signal) => {
+    await new Promise<void>((resolvePromise, reject) => {
+      const timer = setTimeout(resolvePromise, 25);
+      signal.addEventListener("abort", () => { clearTimeout(timer); reject(new DOMException("Cancelled", "AbortError")); }, { once: true });
+    });
+    return {
+      ok: true,
+      transcript: "Fixture voice transcript.",
+      language: input.request.languageHint,
+      durationSeconds: input.durationSeconds,
+      runtimeId: "mock-local",
+      sourceId: `voice-${input.requestId}`,
+      createdAt: new Date().toISOString(),
+      truncated: false,
+      providerDisclosure: "Deterministic fixture transcription is active for tests.",
+      message: "Fixture transcription completed.",
+    };
+  },
+};
+
+function getVoiceRuntime(): VoiceRuntime {
+  return process.env.OPENDRSAI_VOICE_RUNTIME === "fixture" ? fixtureVoiceRuntime : gatewayProviderRuntime;
+}
+
+export function getVoiceRuntimeStatus(): Promise<DesktopVoiceRuntimeStatus> {
+  return getVoiceRuntime().getStatus();
+}
+
+export function startVoiceTranscription(
+  sender: WebContents,
+  request: DesktopVoiceTranscriptionRequest,
+): DesktopVoiceTranscriptionStartResult {
+  if (activeVoiceTasks.size >= 3) throw new Error("Too many active voice transcription tasks.");
+  if ([...activeVoiceTasks.values()].some((task) => task.sender === sender && !task.terminal)) {
+    throw new Error("A voice transcription task is already active for this window.");
+  }
+  const requestId = randomUUID();
+  const task: ActiveVoiceTask = { controller: new AbortController(), sender, terminal: false };
+  activeVoiceTasks.set(requestId, task);
+  sender.once("destroyed", () => task.controller.abort());
+  emitVoiceEvent(task, { requestId, type: "accepted", runtimeId: getVoiceRuntime().id });
+  void runVoiceTranscription(requestId, request, task);
+  return { requestId, acceptedAt: new Date().toISOString() };
+}
+
+export function cleanupExpiredVoiceTempFiles(now = Date.now()): number {
+  let removed = 0;
+  for (const name of readdirSync(tmpdir())) {
+    if (!/^opendrsai-voice-[0-9a-f-]+\.(webm|ogg|wav|m4a|mp3|audio)$/i.test(name)) continue;
+    const path = join(tmpdir(), name);
+    try {
+      const age = now - statSync(path).mtimeMs;
+      if (age > 15 * 60_000) { unlinkSync(path); removed += 1; }
+    } catch { /* best effort */ }
+  }
+  return removed;
+}
+
+export function cancelVoiceTranscription(requestId: string): boolean {
+  const task = activeVoiceTasks.get(requestId);
+  if (!task || task.terminal) return false;
+  task.controller.abort();
+  return true;
+}
+
+export function cancelVoiceTranscriptionsForSender(sender: WebContents): void {
+  for (const task of activeVoiceTasks.values()) {
+    if (task.sender === sender && !task.terminal) task.controller.abort();
+  }
+}
+
+async function runVoiceTranscription(
+  requestId: string,
+  request: DesktopVoiceTranscriptionRequest,
+  task: ActiveVoiceTask,
+): Promise<void> {
+  try {
+    emitVoiceEvent(task, { requestId, type: "progress", stage: "preparing", message: "Preparing audio..." });
+    const audio = decodeAudioData(request);
+    const durationSeconds = clampDuration(request.durationSeconds);
+    const mimeType = normalizeVoiceMimeType(request.mimeType);
+    validateVoiceSignature(audio, mimeType);
+    task.tempPath = writeTemporaryVoiceAudio(requestId, audio, mimeType);
+    const storedAudio = new Uint8Array(readFileSync(task.tempPath));
+    const runtime = getVoiceRuntime();
+    if (runtime.id === "gateway-provider") await startGateway();
+    const gateway = await getGatewayStatus();
+    if (runtime.id === "gateway-provider" && !gateway.ready) throw voiceFailure("runtime_unavailable", "The local voice gateway is unavailable.", true);
+    emitVoiceEvent(task, { requestId, type: "progress", stage: "uploading", message: "Sending audio to the configured transcription service..." });
+    const result = await runtime.transcribe({ requestId, request, audio: storedAudio, mimeType, durationSeconds, gatewayBaseUrl: gateway.baseUrl }, task.controller.signal);
+    finishVoiceTask(requestId, task, { requestId, type: "completed", result });
+  } catch (error) {
+    if (task.controller.signal.aborted) {
+      finishVoiceTask(requestId, task, { requestId, type: "cancelled" });
+    } else {
+      const normalized = normalizeVoiceError(error, requestId);
+      finishVoiceTask(requestId, task, { requestId, type: "failed", error: normalized });
+    }
+  }
+}
+
+async function transcribeThroughGateway(
+  requestId: string,
+  request: DesktopVoiceTranscriptionRequest,
+  audio: Uint8Array,
+  mimeType: string,
+  durationSeconds: number,
+  baseUrl: string,
+  parentSignal: AbortSignal,
+): Promise<DesktopVoiceTranscriptionResult> {
+  const timeout = AbortSignal.timeout(VOICE_TIMEOUT_MS);
+  const signal = AbortSignal.any([parentSignal, timeout]);
+  const form = new FormData();
+  const audioBuffer = audio.buffer.slice(audio.byteOffset, audio.byteOffset + audio.byteLength) as ArrayBuffer;
+  form.append("file", new Blob([audioBuffer], { type: mimeType }), `recording${extensionForMimeType(mimeType)}`);
+  form.append("model", process.env.OPENDRSAI_VOICE_MODEL?.trim() || "whisper-1");
+  if (request.languageHint) form.append("language", request.languageHint);
+  const startedAt = Date.now();
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}/v1/audio/transcriptions`, { method: "POST", body: form, signal });
+  } catch (error) {
+    if (timeout.aborted && !parentSignal.aborted) throw voiceFailure("timeout", "Voice transcription timed out.", true);
+    throw error;
+  }
+  const body = await readBoundedJson(response);
+  if (!response.ok) throw providerHttpError(response.status, body);
+  const transcript = typeof body.text === "string" ? body.text.trim() : "";
+  if (!transcript) throw voiceFailure("empty_audio", "No speech was detected in the recording.", false);
+  return {
+    ok: true,
+    transcript: transcript.slice(0, MAX_VOICE_TRANSCRIPT_CHARS),
+    language: typeof body.language === "string" ? body.language : request.languageHint,
+    durationSeconds,
+    confidence: typeof body.confidence === "number" ? body.confidence : undefined,
+    runtimeId: "gateway-provider",
+    sourceId: `voice-${requestId}`,
+    createdAt: new Date().toISOString(),
+    truncated: transcript.length > MAX_VOICE_TRANSCRIPT_CHARS,
+    providerDisclosure: "Recorded audio was sent through the local OpenDrSai gateway to the configured transcription provider.",
+    message: `Voice transcription completed in ${Date.now() - startedAt} ms.`,
+  };
+}
+
+function decodeAudioData(request: DesktopVoiceTranscriptionRequest): Uint8Array {
+  const bytes = request.audioData instanceof Uint8Array ? request.audioData : new Uint8Array();
+  if (!bytes.length) throw voiceFailure("empty_audio", "Voice recording was empty.", false);
+  if (bytes.length > MAX_VOICE_RECORDING_BYTES) throw voiceFailure("audio_too_large", "Voice recording exceeds the 10 MB limit.", false);
+  return bytes;
+}
+
+function normalizeVoiceMimeType(value: string): string {
+  const mimeType = clampSingleLine(value, 120, "Voice MIME type is required.").split(";", 1)[0].toLowerCase();
+  if (!SUPPORTED_VOICE_MIME_TYPES.includes(mimeType)) throw voiceFailure("unsupported_format", `Unsupported voice format: ${mimeType}.`, false);
+  return mimeType;
+}
+
+function validateVoiceSignature(audio: Uint8Array, mimeType: string): void {
+  const ascii = (start: number, length: number): string =>
+    String.fromCharCode(...audio.slice(start, start + length));
+  const valid = mimeType === "audio/webm"
+    ? audio.length >= 4 && audio[0] === 0x1a && audio[1] === 0x45 && audio[2] === 0xdf && audio[3] === 0xa3
+    : mimeType === "audio/ogg"
+      ? ascii(0, 4) === "OggS"
+      : mimeType === "audio/wav"
+        ? ascii(0, 4) === "RIFF" && ascii(8, 4) === "WAVE"
+        : mimeType === "audio/mp4"
+          ? ascii(4, 4) === "ftyp"
+          : mimeType === "audio/mpeg"
+            ? ascii(0, 3) === "ID3" || (audio[0] === 0xff && (audio[1] & 0xe0) === 0xe0)
+            : false;
+  if (!valid) throw voiceFailure("unsupported_format", "The recording content does not match its declared audio format.", false);
+}
+
+function writeTemporaryVoiceAudio(requestId: string, audio: Uint8Array, mimeType: string): string {
+  const path = join(tmpdir(), `opendrsai-voice-${requestId}${extensionForMimeType(mimeType)}`);
+  writeFileSync(path, audio, { flag: "wx" });
+  return path;
+}
+
+function extensionForMimeType(mimeType: string): string {
+  return ({ "audio/webm": ".webm", "audio/ogg": ".ogg", "audio/wav": ".wav", "audio/mp4": ".m4a", "audio/mpeg": ".mp3" } as Record<string, string>)[mimeType] || ".audio";
+}
+
+function emitVoiceEvent(task: ActiveVoiceTask, event: DesktopVoiceTranscriptionEvent): void {
+  if (!task.sender.isDestroyed()) task.sender.send("desktop:voice-transcription-event", event);
+}
+
+function finishVoiceTask(requestId: string, task: ActiveVoiceTask, event: DesktopVoiceTranscriptionEvent): void {
+  if (task.terminal) return;
+  task.terminal = true;
+  emitVoiceEvent(task, event);
+  if (task.tempPath) { try { unlinkSync(task.tempPath); } catch { /* best effort */ } }
+  activeVoiceTasks.delete(requestId);
+}
+
+function voiceFailure(code: DesktopVoiceError["code"], message: string, retryable: boolean): DesktopVoiceError {
+  return { code, message, retryable };
+}
+
+function normalizeVoiceError(error: unknown, requestId: string): DesktopVoiceError {
+  if (error && typeof error === "object" && "code" in error && "retryable" in error) return { ...(error as DesktopVoiceError), requestId };
+  const message = error instanceof Error ? error.message : "Voice transcription failed.";
+  return { code: message.toLowerCase().includes("fetch") ? "network_error" : "internal_error", message, retryable: true, requestId };
+}
+
+async function readBoundedJson(response: Response): Promise<Record<string, unknown>> {
+  const text = await response.text();
+  if (text.length > 256_000) throw voiceFailure("provider_error", "Voice provider response was too large.", false);
+  try { return JSON.parse(text) as Record<string, unknown>; } catch { throw voiceFailure("provider_error", "Voice provider returned an invalid response.", true); }
+}
+
+function providerHttpError(status: number, body: Record<string, unknown>): DesktopVoiceError {
+  const detail = typeof body.detail === "string" ? body.detail : `Voice provider failed with HTTP ${status}.`;
+  if (status === 401 || status === 403) return voiceFailure("auth_required", detail, false);
+  if (status === 413) return voiceFailure("audio_too_large", detail, false);
+  if (status === 429) return voiceFailure("rate_limited", detail, true);
+  return voiceFailure(status >= 500 ? "network_error" : "provider_error", detail, status >= 500);
+}
 
 interface VoiceTranscriptRecord {
   id: string;
@@ -37,52 +349,6 @@ interface VoiceTranscriptRecord {
 interface VoiceTranscriptStore {
   version: 1;
   transcripts: VoiceTranscriptRecord[];
-}
-
-export function transcribeVoiceRecording(
-  request: DesktopVoiceTranscriptionRequest,
-): DesktopVoiceTranscriptionResult {
-  const workspacePath = resolveWorkspacePath(request.workspacePath);
-  const durationSeconds = clampDuration(request.durationSeconds);
-  const mimeType = clampSingleLine(request.mimeType, 120, "Voice MIME type is required.");
-  const audioBytes = decodeAudioLength(request.audioBase64);
-  const language = clampOptionalSingleLine(request.languageHint, 32);
-  const sourceLabel =
-    clampOptionalSingleLine(request.sourceLabel, 160) || "Desktop voice recording";
-  const createdAt = new Date().toISOString();
-  const sourceId = `voice-${createHash("sha256")
-    .update(`${workspacePath}:${createdAt}:${audioBytes}:${durationSeconds}:${mimeType}`)
-    .digest("hex")
-    .slice(0, 16)}`;
-  const mockTranscript = clampMultiline(
-    request.mockTranscriptText ||
-      [
-        "[Voice recording captured]",
-        `Source: ${sourceLabel}.`,
-        `Duration: ${formatDuration(durationSeconds)}.`,
-        `Audio bytes: ${audioBytes}.`,
-        "Mock-local transcription is active; no audio left this machine.",
-      ].join("\n"),
-    MAX_VOICE_TRANSCRIPT_CHARS,
-  );
-
-  return {
-    ok: true,
-    transcript: mockTranscript,
-    language,
-    durationSeconds,
-    confidence: request.mockTranscriptText ? 1 : undefined,
-    runtimeId: "mock-local",
-    sourceId,
-    createdAt,
-    truncated:
-      (request.mockTranscriptText?.length ?? 0) > MAX_VOICE_TRANSCRIPT_CHARS ||
-      audioBytes >= MAX_VOICE_RECORDING_BYTES,
-    providerDisclosure:
-      "Voice transcription used the local mock runtime; no network request, provider upload, or raw-audio persistence occurred.",
-    message:
-      "Voice recording was normalized into reviewed text. Configure a gateway or local Whisper runtime to replace mock-local transcription.",
-  };
 }
 
 export function writeVoiceTranscriptHandoff(
@@ -136,18 +402,6 @@ export function writeVoiceTranscriptHandoff(
     message:
       "Voice transcript handoff was written inside the workspace for explicit Channels review.",
   };
-}
-
-function decodeAudioLength(audioBase64?: string): number {
-  if (!audioBase64) return 0;
-  if (audioBase64.length > Math.ceil((MAX_VOICE_RECORDING_BYTES * 4) / 3) + 64) {
-    throw new Error("Voice recording exceeds the 10 MB desktop limit.");
-  }
-  const normalized = audioBase64.replace(/^data:[^,]+,/, "").replace(/\s+/g, "");
-  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(normalized)) {
-    throw new Error("Voice recording must be base64 encoded.");
-  }
-  return Buffer.byteLength(Buffer.from(normalized, "base64"));
 }
 
 function clampDuration(value: number): number {
@@ -234,10 +488,4 @@ function clampMultiline(value: unknown, maxLength: number, fallback?: string): s
     return "";
   }
   return normalized.slice(0, maxLength);
-}
-
-function formatDuration(seconds: number): string {
-  const minutes = Math.floor(seconds / 60);
-  const remainder = seconds % 60;
-  return `${minutes}:${remainder.toString().padStart(2, "0")}`;
 }

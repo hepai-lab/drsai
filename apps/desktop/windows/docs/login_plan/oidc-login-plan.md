@@ -335,8 +335,10 @@ The renderer-facing public session must omit raw tokens.
 
 ## Local Token Storage
 
-The session metadata is stored in the existing JSON session file under
-`DRSAI_HOME`, but token fields are encrypted before they are written.
+The session metadata is stored at `~/.drsai/auth/auth.json` (or
+`%DRSAI_HOME%/auth/auth.json` when overridden), but token fields are encrypted
+before they are written. Writes use a same-directory temporary file and atomic
+rename. The old `auth/session.json` file is read once and migrated automatically.
 
 Current implementation uses Electron `safeStorage` in the main process, which
 uses OS-backed encryption where available. Existing plaintext sessions remain

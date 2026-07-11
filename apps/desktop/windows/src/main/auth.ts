@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import {
   createHash,
   createPublicKey,
@@ -24,7 +24,8 @@ import { DRSAI_HOME } from "./paths";
 import { normalizeModelAlias } from "./modelDefaults";
 import { saveApiKeyAndDefaultModel } from "./settings";
 
-const AUTH_SESSION_FILE = join(DRSAI_HOME, "auth", "session.json");
+const AUTH_SESSION_FILE = join(DRSAI_HOME, "auth", "auth.json");
+const LEGACY_AUTH_SESSION_FILE = join(DRSAI_HOME, "auth", "session.json");
 const SESSION_DAYS = 30;
 const MAX_EMAIL_CHARS = 254;
 const MAX_PASSWORD_CHARS = 1024;
@@ -66,6 +67,7 @@ let pendingOidcLogin: Awaited<ReturnType<typeof createLoopbackCallback>> | null 
 let pendingOidcLoginDebug: OidcLoginDebugSink | null = null;
 let oidcJwksCache: { keys: JsonWebKey[]; fetchedAt: number } | null = null;
 let oidcMetadataCache: { metadata: OidcProviderMetadata; fetchedAt: number } | null = null;
+let oidcRefreshPromise: Promise<StoredAuthSession | null> | null = null;
 
 type OidcLoginDebugSink = (event: OidcLoginDebugEvent) => void;
 
@@ -141,6 +143,14 @@ export async function login(rawRequest: unknown): Promise<LoginResult> {
       ok: true,
       session: toPublicSession(session),
       message: "Developer workspace unlocked.",
+    };
+  }
+
+  if (!is.dev) {
+    return {
+      ok: false,
+      session: null,
+      message: "This build only supports HepAI OIDC sign-in.",
     };
   }
 
@@ -637,16 +647,25 @@ function getExpiryDate(days: number): string {
 }
 
 function readStoredSession(): StoredAuthSession | null {
-  if (!existsSync(AUTH_SESSION_FILE)) return null;
+  const sourceFile = existsSync(AUTH_SESSION_FILE)
+    ? AUTH_SESSION_FILE
+    : existsSync(LEGACY_AUTH_SESSION_FILE)
+      ? LEGACY_AUTH_SESSION_FILE
+      : null;
+  if (!sourceFile) return null;
   try {
     const parsed = deserializeStoredSession(
-      JSON.parse(readFileSync(AUTH_SESSION_FILE, "utf8")) as SerializedStoredAuthSession,
+      JSON.parse(readFileSync(sourceFile, "utf8")) as SerializedStoredAuthSession,
     );
     if (!parsed.authenticated || !parsed.user || !parsed.expiresAt || !parsed.sessionId) {
       return null;
     }
     if ((parsed.authMode === "oidc" || parsed.authMode === "sso") && !parsed.accessToken) {
       return null;
+    }
+    if (sourceFile === LEGACY_AUTH_SESSION_FILE) {
+      writeStoredSession(parsed);
+      rmSync(LEGACY_AUTH_SESSION_FILE, { force: true });
     }
     return parsed;
   } catch {
@@ -657,7 +676,22 @@ function readStoredSession(): StoredAuthSession | null {
 
 function writeStoredSession(session: StoredAuthSession): void {
   mkdirSync(dirname(AUTH_SESSION_FILE), { recursive: true });
-  writeFileSync(AUTH_SESSION_FILE, JSON.stringify(serializeStoredSession(session), null, 2), "utf8");
+  const temporaryFile = `${AUTH_SESSION_FILE}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(
+      temporaryFile,
+      `${JSON.stringify(serializeStoredSession(session), null, 2)}\n`,
+      { encoding: "utf8", mode: 0o600 },
+    );
+    renameSync(temporaryFile, AUTH_SESSION_FILE);
+    try {
+      chmodSync(AUTH_SESSION_FILE, 0o600);
+    } catch {
+      // Windows ACLs are enforced by the user's profile; chmod is best effort.
+    }
+  } finally {
+    rmSync(temporaryFile, { force: true });
+  }
 }
 
 function serializeStoredSession(session: StoredAuthSession): SerializedStoredAuthSession {
@@ -716,11 +750,9 @@ function decryptSecret(encrypted: string | undefined): string | undefined {
 
 function clearStoredSession(clearLocalData: boolean): void {
   try {
-    if (clearLocalData) {
-      rmSync(dirname(AUTH_SESSION_FILE), { recursive: true, force: true });
-    } else if (existsSync(AUTH_SESSION_FILE)) {
-      rmSync(AUTH_SESSION_FILE, { force: true });
-    }
+    rmSync(AUTH_SESSION_FILE, { force: true });
+    rmSync(LEGACY_AUTH_SESSION_FILE, { force: true });
+    if (clearLocalData) oidcMetadataCache = null;
   } catch {
     // Best-effort cleanup; logout should still clear renderer state.
   }
@@ -909,12 +941,26 @@ async function refreshOidcSessionIfNeeded(
     force || !accessExpiryMs || accessExpiryMs <= Date.now() + ACCESS_TOKEN_REFRESH_WINDOW_MS;
   if (!shouldRefresh) return stored;
 
+  if (oidcRefreshPromise) return oidcRefreshPromise;
+  oidcRefreshPromise = refreshOidcSession(stored, stored.refreshToken, accessExpiryMs);
   try {
-    const token = await exchangeOidcRefreshToken(stored.refreshToken);
+    return await oidcRefreshPromise;
+  } finally {
+    oidcRefreshPromise = null;
+  }
+}
+
+async function refreshOidcSession(
+  stored: StoredAuthSession,
+  refreshToken: string,
+  accessExpiryMs: number,
+): Promise<StoredAuthSession | null> {
+  try {
+    const token = await exchangeOidcRefreshToken(refreshToken);
     const refreshed = await createOidcSession(
       {
         ...token,
-        refresh_token: token.refresh_token || stored.refreshToken,
+        refresh_token: token.refresh_token || refreshToken,
       },
       true,
     );
@@ -1333,20 +1379,21 @@ function successHtml(): string {
     <script>
       document.getElementById("message").textContent =
         "Opening OpenDrSai. This page will close automatically.";
-      document.querySelector("a").textContent = "Open OpenDrSai";
+      document.querySelector("a").textContent = "Close this page";
+      document.querySelector("a").removeAttribute("href");
+      document.querySelector("a").addEventListener("click", function (event) {
+        event.preventDefault();
+        closePage();
+      });
       function closePage() {
         window.open("", "_self");
         window.close();
       }
-      window.addEventListener("blur", function () {
-        setTimeout(closePage, 300);
-      }, { once: true });
+      window.addEventListener("blur", closePage, { once: true });
       document.addEventListener("visibilitychange", function () {
-        if (document.hidden) setTimeout(closePage, 300);
+        if (document.hidden) closePage();
       });
-      setTimeout(function () {
-        window.location.href = "${OIDC_AUTH_COMPLETE_DEEP_LINK}";
-      }, 150);
+      setTimeout(closePage, 250);
       setTimeout(function () {
         closePage();
         document.getElementById("message").textContent =

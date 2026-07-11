@@ -353,6 +353,19 @@ export function useDesktopChatAdapter({
       );
       return;
     }
+    if (event.type === "tool_timeline" && event.toolTimeline) {
+      const toolTimeline = event.toolTimeline;
+      setMessages((current) =>
+        publishAndReturn(
+          appendAssistantToolTimeline(
+            current,
+            streamingAssistantByRequest.current[event.requestId],
+            toolTimeline,
+          ),
+        ),
+      );
+      return;
+    }
     if (event.type === "done" || event.type === "aborted") {
       const assistantId = streamingAssistantByRequest.current[event.requestId];
       setMessages((current) =>
@@ -1387,6 +1400,23 @@ function appendAssistantChunk(
   if (index === -1) return next;
   next[index] = { ...next[index], content: `${next[index].content}${content}` };
   next[index].lastEventAt = Date.now();
+  return next;
+}
+
+function appendAssistantToolTimeline(
+  messages: UiMessage[],
+  assistantId: string | undefined,
+  event: NonNullable<ChatEvent["toolTimeline"]>,
+): UiMessage[] {
+  const next = [...messages];
+  const index = findAssistantIndex(next, assistantId);
+  if (index === -1) return next;
+  const previous = next[index].toolTimeline ?? [];
+  next[index] = {
+    ...next[index],
+    toolTimeline: [...previous, event].slice(-20),
+    lastEventAt: Date.now(),
+  };
   return next;
 }
 

@@ -455,8 +455,6 @@ async function runCurrentVisual() {
     if (!audit.text.includes("OpenDrSai")) fail(audit.label + " is missing brand text");
     if (!includesAny(audit.text, [text.newChatZh, "New chat"])) fail(audit.label + " is missing new chat action");
     if (!includesAny(audit.text, [text.searchZh, "Search"])) fail(audit.label + " is missing search action");
-    if (!includesAny(audit.text, [text.agentsZh, "Agents"])) fail(audit.label + " is missing agents navigation");
-    if (!includesAny(audit.text, [text.skillsZh, "Skills"])) fail(audit.label + " is missing skills navigation");
     if (!includesAny(audit.text, [text.workspaceZh, "Workspace"])) fail(audit.label + " is missing workspace section");
     if (!audit.hasTextarea) fail(audit.label + " is missing chat textarea");
     const accessibleNav = audit.buttons.filter((button) =>
@@ -657,6 +655,25 @@ contextBridge.exposeInMainWorld("openDrSai", {
     workflows: [],
     updatedAt: new Date().toISOString(),
   }),
+  bootstrapDesktop: async () => ({
+    ready: true,
+    message: "OpenDrSai visual runtime is ready.",
+    user: { id: "visual-user", name: "Visual User", email: "visual@example.com" },
+    capabilities: { chat: true, agent: true, tools: ["files", "shell", "git"] },
+    defaults: { agentId: "drsai", modelAlias: "visual-model" },
+    models: [{ id: "visual-model", name: "Visual model" }],
+    limits: { maxConcurrentRuns: 1 },
+  }),
+  getVoiceRuntimeStatus: async () => ({
+    runtimeId: "mock-local",
+    state: "ready",
+    supportedMimeTypes: ["audio/webm", "audio/wav"],
+    maxBytes: 10485760,
+    maxDurationSeconds: 120,
+    supportsPartial: false,
+    providerDisclosure: "Visual fixture transcription is active.",
+    message: "Visual fixture voice runtime is ready.",
+  }),
   listWorkspaces: async () => [],
   createWorkspace: async (request) => ({
     id: "workspace-" + crypto.randomUUID(),
@@ -709,6 +726,7 @@ contextBridge.exposeInMainWorld("openDrSai", {
     threads = [thread, ...threads.filter((item) => item.id !== request.id)];
     return thread;
   },
+  updateThreadSnapshot: async (snapshot) => snapshot,
   getIdeContext: async () => ({ providers: [], contexts: [], generatedAt: new Date().toISOString() }),
   listProjectMemory: async () => [],
   addProjectMemory: async (request) => ({

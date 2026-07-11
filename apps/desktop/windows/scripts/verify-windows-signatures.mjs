@@ -9,8 +9,7 @@ const requireSigned = process.env.REQUIRE_SIGNED_WINDOWS_ARTIFACTS === "1";
 const expectedThumbprint = normalizeThumbprint(process.env.EXPECTED_WINDOWS_SIGNER_THUMBPRINT || "");
 const expectedSubject = (process.env.EXPECTED_WINDOWS_SIGNER_SUBJECT || "").trim();
 const artifacts = [
-  join(releaseDir, `OpenDrSai-${readPackageVersion()}-setup.exe`),
-  join(releaseDir, "bootstrapper", "OpenDrSai Installer.exe"),
+  join(releaseDir, "bootstrapper", "OpenDrSaiSetup.msi"),
 ];
 
 const failures = [];

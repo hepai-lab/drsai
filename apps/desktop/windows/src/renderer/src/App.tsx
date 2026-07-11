@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Bot,
   FileText,
@@ -31,7 +31,7 @@ import type {
   WorkspaceProject,
 } from "@shared/desktopApi";
 import { desktopApi } from "./desktopApi";
-import { AuthSplash, LoginScreen } from "./auth/LoginScreen";
+import { AuthSplash, LoginScreen, ServiceUnavailableScreen } from "./auth/LoginScreen";
 import { useAuth } from "./auth/AuthProvider";
 import { AgentSquareView } from "./components/AgentSquareView";
 import { AgentRunWorkspace } from "./components/AgentRunWorkspace";
@@ -113,6 +113,7 @@ function App(): React.JSX.Element {
 
   if (auth.loading) return <AuthSplash />;
   if (!auth.session.authenticated) return <LoginScreen />;
+  if (!auth.serviceReady) return <ServiceUnavailableScreen />;
 
   return (
     <AuthenticatedApp
@@ -130,7 +131,7 @@ function AuthenticatedApp({
   onLogout: () => Promise<void>;
 }): React.JSX.Element {
   const [language, setLanguage] = useState<AppLanguage>("zh");
-  const [developerMode, setDeveloperMode] = useState(() => loadDeveloperMode());
+  const developerMode = import.meta.env.DEV && loadDeveloperMode();
   const [activeNav, setActiveNav] = useState<NavId>(MENU_IDS.currentSession);
   const [skillSquareCommandTarget, setSkillSquareCommandTarget] =
     useState<Extract<ChatCommandAction, { type: "open-view" }>["target"] | null>(null);
@@ -154,7 +155,7 @@ function AuthenticatedApp({
     () => loadWorkspaceSortMode(),
   );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
+  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(true);
   const [sessionScope, setSessionScope] = useState<"workspace" | "all">("workspace");
   const [availableChatAgents, setAvailableChatAgents] = useState<DesktopAgent[]>([]);
   const [availableChatModels, setAvailableChatModels] = useState<MyDrSaiModelConfig[]>([]);
@@ -189,7 +190,7 @@ function AuthenticatedApp({
   const currentWorkspace: WorkspaceProject = {
     id: "current",
     name: getWorkspaceName(workspacePath) || "drsai",
-    path: workspacePath || "Local workspace",
+    path: workspacePath,
     type: "local",
     description: language === "zh" ? "当前项目" : "Current project",
     createdAt: currentWorkspaceTime,
@@ -331,7 +332,7 @@ function AuthenticatedApp({
     workspaceContextAttachmentsByThread[activeThreadId] ?? [];
   const workspaceFileTraceEvents =
     workspaceFileTraceByThread[activeThreadId] ?? [];
-  const filesWorkspacePath = effectiveWorkspacePath || "Local workspace";
+  const filesWorkspacePath = effectiveWorkspacePath;
 
   useEffect(() => {
     void refreshWorkspaces();
@@ -347,10 +348,6 @@ function AuthenticatedApp({
   useEffect(() => {
     window.localStorage.setItem(WORKSPACE_SORT_STORAGE_KEY, workspaceSortMode);
   }, [workspaceSortMode]);
-
-  useEffect(() => {
-    window.localStorage.setItem(DEVELOPER_MODE_STORAGE_KEY, developerMode ? "true" : "false");
-  }, [developerMode]);
 
   useEffect(() => {
     void refreshThreads();
@@ -372,7 +369,9 @@ function AuthenticatedApp({
       try {
         const [agents, myDrSaiConfig] = await Promise.all([
           desktopApi.listAgents(),
-          desktopApi.getMyDrSaiConfig(effectiveWorkspacePath).catch(() => null),
+          effectiveWorkspacePath
+            ? desktopApi.getMyDrSaiConfig(effectiveWorkspacePath).catch(() => null)
+            : Promise.resolve(null),
         ]);
         if (cancelled) return;
         setAvailableChatAgents(agents);
@@ -404,11 +403,6 @@ function AuthenticatedApp({
     setWorkspaceContextAttachmentsByThread({});
     setWorkspaceFileTraceByThread({});
   }, [effectiveWorkspacePath]);
-
-  async function handleSaveApiKey(event: FormEvent): Promise<void> {
-    event.preventDefault();
-    await desktop.saveApiKey();
-  }
 
   const navigateTo = useCallback(
     (id: NavId): void => {
@@ -717,6 +711,10 @@ function AuthenticatedApp({
   }, []);
 
   const refreshIdeContext = useCallback(async (): Promise<void> => {
+    if (!effectiveWorkspacePath) {
+      setIdeContext(null);
+      return;
+    }
     try {
       setIdeContext(await desktopApi.getIdeContext(effectiveWorkspacePath));
     } catch {
@@ -939,9 +937,6 @@ function AuthenticatedApp({
           onSummarizeWorkspaceFolder={(request) =>
             desktopApi.summarizeWorkspaceFolder(request)
           }
-          onTranscribeVoiceRecording={(request) =>
-            desktopApi.transcribeVoiceRecording(request)
-          }
           onAttachIdeCurrentFile={attachIdeCurrentFile}
           onAttachIdeCurrentSelection={attachIdeCurrentSelection}
           onRefreshIdeContext={() => {
@@ -1040,16 +1035,11 @@ function AuthenticatedApp({
       />
     ) : activeNav === MENU_IDS.profile ? (
       <SettingsPanel
-        apiKeyInput={desktop.apiKeyInput}
-        busy={desktop.busy}
         health={health}
-        developerMode={developerMode}
         language={language}
-        message={desktop.settingsMessage}
-        onApiKeyChange={desktop.setApiKeyInput}
-        onDeveloperModeChange={setDeveloperMode}
         onLanguageChange={setLanguage}
-        onSubmit={handleSaveApiKey}
+        onLogout={onLogout}
+        user={user}
       />
     ) : (
       <div className="placeholder-view">
@@ -1468,14 +1458,6 @@ function DesktopStatusPanel({
         ? "本地"
         : "local"
       : (health?.mode ?? (zh ? "本地" : "local"));
-  const apiKeyStatus = health?.install.apiKeyConfigured
-    ? zh
-      ? "已配置"
-      : "configured"
-    : zh
-      ? "缺失"
-      : "missing";
-
   return (
     <div className="desktop-status-panel">
       <div className="about-hero">
@@ -1512,8 +1494,8 @@ function DesktopStatusPanel({
           <dd>{modeLabel}</dd>
         </div>
         <div>
-          <dt>API Key</dt>
-          <dd>{apiKeyStatus}</dd>
+          <dt>{zh ? "认证" : "Authentication"}</dt>
+          <dd>OIDC</dd>
         </div>
       </dl>
 
@@ -1697,31 +1679,29 @@ function formatUpdateStatus(
 }
 
 function SettingsPanel({
-  apiKeyInput,
-  busy,
-  developerMode,
   health,
   language,
-  message,
-  onApiKeyChange,
-  onDeveloperModeChange,
   onLanguageChange,
-  onSubmit,
+  onLogout,
+  user,
 }: {
-  apiKeyInput: string;
-  busy: boolean;
-  developerMode: boolean;
   health: DesktopHealth | null;
   language: AppLanguage;
-  message: string | null;
-  onApiKeyChange: (value: string) => void;
-  onDeveloperModeChange: (enabled: boolean) => void;
   onLanguageChange: (language: AppLanguage) => void;
-  onSubmit: (event: FormEvent) => void;
+  onLogout: () => Promise<void>;
+  user: AuthUser | null;
 }): React.JSX.Element {
   const zh = language === "zh";
   return (
     <div className="settings-view">
+      <section className="settings-section">
+        <div>
+          <h2>{zh ? "HepAI 账号" : "HepAI account"}</h2>
+          <p>{user?.name || user?.email || (zh ? "已通过 OIDC 登录" : "Signed in with OIDC")}</p>
+          {user?.email && user.email !== user.name && <small>{user.email}</small>}
+        </div>
+        <button type="button" onClick={() => void onLogout()}>{zh ? "退出登录" : "Sign out"}</button>
+      </section>
       <section className="settings-section">
         <div>
           <h2>{zh ? "显示语言" : "Language"}</h2>
@@ -1754,59 +1734,6 @@ function SettingsPanel({
             </button>
           </div>
         </div>
-      </section>
-      <section className="settings-section">
-        <div>
-          <h2>{zh ? "开发者模式" : "Developer Mode"}</h2>
-          <p>
-            {zh
-              ? "关闭时，聊天中的模型错误只显示简要摘要，并且只保留最新一条重试提示。开启后显示完整错误详情，便于排查。"
-              : "When off, chat model errors show a short summary and only the latest retry notice. Turn it on to keep full diagnostic details."}
-          </p>
-        </div>
-        <label className="settings-toggle">
-          <span>
-            <strong>{zh ? "显示完整错误信息" : "Show full error details"}</strong>
-            <small>{developerMode ? (zh ? "已启用" : "Enabled") : (zh ? "默认关闭" : "Off by default")}</small>
-          </span>
-          <input
-            type="checkbox"
-            checked={developerMode}
-            onChange={(event) => onDeveloperModeChange(event.target.checked)}
-          />
-        </label>
-      </section>
-      <section className="settings-section">
-        <div>
-          <h2>API Key</h2>
-          <p>
-            {zh
-              ? "配置本地网关使用的 HepAI key。该值会保存到 DrSai `.env` 文件，保存后不会在此处再次显示。"
-              : "Configure the HepAI key used by the local gateway. The value is saved to the DrSai `.env` file and is never shown again here."}
-          </p>
-        </div>
-        <form className="settings-form" onSubmit={onSubmit}>
-          <label htmlFor="api-key-input">HEPAI_API_KEY</label>
-          <input
-            id="api-key-input"
-            type="password"
-            value={apiKeyInput}
-            onChange={(event) => onApiKeyChange(event.target.value)}
-            placeholder={
-              health?.install.apiKeyConfigured
-                ? zh
-                  ? "已配置 key；输入新值可替换"
-                  : "Key is configured; enter a new value to replace it"
-                : zh
-                  ? "粘贴你的 API key"
-                  : "Paste your API key"
-            }
-          />
-          <button disabled={busy || !apiKeyInput.trim()} type="submit">
-            {zh ? "保存 API Key" : "Save API Key"}
-          </button>
-        </form>
-        {message && <div className="settings-message">{message}</div>}
       </section>
       <section className="settings-section">
         <h2>{zh ? "路径" : "Paths"}</h2>

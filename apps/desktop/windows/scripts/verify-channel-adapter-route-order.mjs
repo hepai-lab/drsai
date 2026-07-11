@@ -139,6 +139,12 @@ const routeFixtures = [
     reason: "IIS web.config files must route before generic XML document/config fallbacks",
   },
   {
+    file: "nginx.conf",
+    route: "summarizeWebServerConfigFile(filePath, size)",
+    before: "isSourceCodeExtension(extension)",
+    reason: "Nginx/Apache web server configs must route before generic source/config fallbacks",
+  },
+  {
     file: "sarif.json",
     route: "summarizeSarifResultFile(filePath, extension, size)",
     before: "summarizeJsonDataFile(filePath, size)",
@@ -245,6 +251,13 @@ const routeFixtures = [
     route: "summarizePostmanEnvironmentFile(filePath, size)",
     before: "summarizeJsonDataFile(filePath, size)",
     reason: "Postman environment JSON must route before generic JSON summaries",
+  },
+  {
+    file: "openapi.json",
+    route: "const apiSpecPreview = summarizeApiSpecFile(filePath, extension, size)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "OpenAPI/Swagger JSON specs must route through API spec preview before generic JSON summaries",
+    scope: "if (extension === \".json\")",
   },
   {
     file: ".drsai/tokenizer-calibration.json",
@@ -375,6 +388,12 @@ const routeFixtures = [
     reason: "Asciinema terminal recording snapshots must route before final raw text fallback",
   },
   {
+    file: "runtime.powershell-transcript.txt",
+    route: "summarizePowerShellTranscriptFile(filePath, size)",
+    before: "readFileSync(filePath, { encoding: \"utf8\", flag: \"r\" })",
+    reason: "PowerShell transcript logs must route before final raw text fallback",
+  },
+  {
     file: "runtime.bru",
     route: "extension === \".bru\"",
     before: "readFileSync(filePath, { encoding: \"utf8\", flag: \"r\" })",
@@ -397,6 +416,12 @@ const routeFixtures = [
     route: "isWebCrawlMetadataFile(extension)",
     before: "readFileSync(filePath, { encoding: \"utf8\", flag: \"r\" })",
     reason: "robots.txt crawl metadata must route before final raw text fallback",
+  },
+  {
+    file: "cookies.txt",
+    route: "extension === \".browser-cookies.txt\"",
+    before: "readFileSync(filePath, { encoding: \"utf8\", flag: \"r\" })",
+    reason: "Netscape cookies.txt exports must route before final raw text fallback",
   },
   {
     file: "AndroidManifest.xml",
@@ -830,6 +855,7 @@ assert(adapters.includes('".chat-export.json"'), "normalized fixture coverage om
 assert(adapters.includes('".otel.json"') && adapters.includes('".otlp.json"'), "normalized fixture coverage omits OpenTelemetry/OTLP JSON files");
 assert(adapters.includes('".mcp-servers.json"'), "normalized fixture coverage omits MCP server config JSON files");
 assert(adapters.includes('".iis-web.config"'), "normalized fixture coverage omits IIS web.config files");
+assert(adapters.includes('".web-server.conf"'), "normalized fixture coverage omits Nginx/Apache web server config files");
 assert(adapters.includes('".vscode-settings.json"') && adapters.includes('".vscode-tasks.json"') && adapters.includes('".vscode-launch.json"') && adapters.includes('".vscode-extensions.json"'), "normalized fixture coverage omits VS Code workspace config JSON files");
 assert(adapters.includes('".js-tooling-config"'), "normalized fixture coverage omits JS/TS tooling config files");
 assert(adapters.includes('".test-results.json"'), "normalized fixture coverage omits JSON test report manifests");
@@ -847,6 +873,7 @@ assert(adapters.includes('".prisma"') && adapters.includes('".dbml"'), "normaliz
 assert(adapters.includes('".service"') && adapters.includes('".timer"') && adapters.includes('".crontab"'), "normalized fixture coverage omits systemd/cron schedule files");
 assert(adapters.includes('".supervisord.conf"'), "normalized fixture coverage omits Supervisor config files");
 assert(adapters.includes('".robots.txt"') && adapters.includes('".sitemap.xml"') && adapters.includes('".sitemap.xml.gz"'), "normalized fixture coverage omits web crawl metadata files");
+assert(adapters.includes('".browser-cookies.txt"'), "normalized fixture coverage omits browser cookies.txt files");
 assert(adapters.includes('".helm-chart.yaml"') && adapters.includes('".kustomization.yaml"'), "normalized fixture coverage omits Helm/Kustomize package configs");
 assert(adapters.includes('".androidmanifest.xml"'), "normalized fixture coverage omits AndroidManifest.xml");
 assert(adapters.includes('".info.plist"'), "normalized fixture coverage omits Info.plist");
@@ -856,6 +883,7 @@ assert(adapters.includes('".tfplan.json"'), "normalized fixture coverage omits T
 assert(adapters.includes('".cloudformation.yaml"') && adapters.includes('".cloudformation.json"') && adapters.includes('".arm-template.json"') && adapters.includes('".bicep"'), "normalized fixture coverage omits CloudFormation/ARM/Bicep template files");
 assert(adapters.includes('".ical"'), "normalized fixture coverage omits iCalendar .ical files");
 assert(adapters.includes('".tex"') && adapters.includes('".bib"') && adapters.includes('".latexmkrc"'), "normalized fixture coverage omits LaTeX/BibTeX files");
+assert(adapters.includes('".powershell-transcript.txt"'), "normalized fixture coverage omits PowerShell transcript logs");
 
 assert(checklist.includes("route-order-verification-agent"), "checklist omits route-order verification agent record");
 assert(checklist.includes("Channel Adapter Route-Order Verification"), "checklist omits route-order verification addendum");

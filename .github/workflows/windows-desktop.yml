@@ -132,24 +132,16 @@ jobs:
             -Tag "$env:OPENDRSAI_RELEASE_TAG" `
             -ExpectedVersion "$($package.version)"
 
-      - name: Install NSIS for bootstrapper
-        run: choco install nsis -y --no-progress
+      - name: Build Windows runtime archive
+        run: npm run build:runtime
 
-      - name: Generate bootstrapper manifest
-        run: npm run manifest:win
+      - name: Install WiX Toolset
+        run: choco install wixtoolset -y --no-progress
 
-      - name: Build tiny bootstrapper
-        shell: pwsh
-        env:
-          EXPECTED_WINDOWS_SIGNER_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
-          EXPECTED_WINDOWS_SIGNER_SUBJECT: ${{ vars.WINDOWS_CERTIFICATE_SUBJECT }}
-          REQUIRE_SIGNER_PIN: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.publish_release) && '1' || '0' }}
-        run: >
-          powershell -ExecutionPolicy Bypass -File bootstrapper\build.ps1
-          -ManifestUrl "$env:OPENDRSAI_RELEASE_BASE_URL/latest-windows.json"
-          ${{ (startsWith(github.ref, 'refs/tags/') || inputs.publish_release) && '-RequireSignerPin' || '' }}
+      - name: Build bootstrapper MSI
+        run: npm run build:bootstrapper
 
-      - name: Sign tiny bootstrapper
+      - name: Sign bootstrapper MSI
         env:
           WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
@@ -161,13 +153,8 @@ jobs:
       - name: Generate release summary
         run: npm run summary:win
 
-      - name: Generate winget manifests
-        run: npm run winget:manifest
-
-      - name: Verify release manifest
-        run: |
-          npm run verify:manifest
-          npm run verify:artifacts
+      - name: Verify release artifacts
+        run: npm run verify:artifacts
 
       - name: Verify Windows signatures
         env:
@@ -187,13 +174,9 @@ jobs:
         with:
           name: opendrsai-windows-desktop
           path: |
-            apps/desktop/windows/release/OpenDrSai-*-setup.exe
-            apps/desktop/windows/release/OpenDrSai-*-setup.exe.blockmap
-            apps/desktop/windows/release/latest.yml
-            apps/desktop/windows/release/latest-windows.json
+            apps/desktop/windows/release/bootstrapper/OpenDrSaiSetup.msi
+            apps/desktop/windows/release/bootstrapper/OpenDrSaiRuntime-win-x64.zip
             apps/desktop/windows/release/release-summary.json
-            apps/desktop/windows/release/bootstrapper/OpenDrSai Installer.exe
-            apps/desktop/windows/release/winget/**/*.yaml
             apps/desktop/windows/release/visual-checks/*.png
 
       - name: Publish GitHub Release assets
@@ -204,9 +187,6 @@ jobs:
           draft: true
           prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') || contains(github.ref_name, 'rc') }}
           files: |
-            apps/desktop/windows/release/OpenDrSai-*-setup.exe
-            apps/desktop/windows/release/OpenDrSai-*-setup.exe.blockmap
-            apps/desktop/windows/release/latest.yml
-            apps/desktop/windows/release/latest-windows.json
+            apps/desktop/windows/release/bootstrapper/OpenDrSaiSetup.msi
+            apps/desktop/windows/release/bootstrapper/OpenDrSaiRuntime-win-x64.zip
             apps/desktop/windows/release/release-summary.json
-            apps/desktop/windows/release/bootstrapper/OpenDrSai Installer.exe

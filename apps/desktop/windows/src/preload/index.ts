@@ -40,6 +40,7 @@ import type {
   DesktopApprovalProposalRequest,
   DesktopApprovalProposalResult,
   DesktopHealth,
+  DesktopBootstrapResult,
   DesktopForkWorktreeRequest,
   DesktopForkWorktreeResult,
   DesktopForkLifecycleApprovalRequest,
@@ -82,7 +83,9 @@ import type {
   DesktopVoiceTranscriptHandoffRequest,
   DesktopVoiceTranscriptHandoffResult,
   DesktopVoiceTranscriptionRequest,
-  DesktopVoiceTranscriptionResult,
+  DesktopVoiceTranscriptionStartResult,
+  DesktopVoiceRuntimeStatus,
+  DesktopVoiceTranscriptionEvent,
   DesktopScheduledTask,
   DesktopScheduledTaskCreateRequest,
   DesktopScheduledTaskListRequest,
@@ -179,6 +182,8 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:logout", options),
   refreshAuthSession: (): Promise<AuthSession> =>
     ipcRenderer.invoke("desktop:refresh-auth-session"),
+  bootstrapDesktop: (): Promise<DesktopBootstrapResult> =>
+    ipcRenderer.invoke("desktop:bootstrap"),
   getHealth: (): Promise<DesktopHealth> =>
     ipcRenderer.invoke("desktop:get-health"),
   getInstallStatus: (): Promise<InstallStatus> =>
@@ -226,10 +231,14 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:start-chat", request),
   abortChat: (requestId: string): Promise<boolean> =>
     ipcRenderer.invoke("desktop:abort-chat", requestId),
-  transcribeVoiceRecording: (
+  startVoiceTranscription: (
     request: DesktopVoiceTranscriptionRequest,
-  ): Promise<DesktopVoiceTranscriptionResult> =>
-    ipcRenderer.invoke("desktop:voice-transcribe", request),
+  ): Promise<DesktopVoiceTranscriptionStartResult> =>
+    ipcRenderer.invoke("desktop:voice-transcription-start", request),
+  cancelVoiceTranscription: (requestId: string): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:voice-transcription-cancel", requestId),
+  getVoiceRuntimeStatus: (): Promise<DesktopVoiceRuntimeStatus> =>
+    ipcRenderer.invoke("desktop:voice-runtime-status"),
   writeVoiceTranscriptHandoff: (
     request: DesktopVoiceTranscriptHandoffRequest,
   ): Promise<DesktopVoiceTranscriptHandoffResult> =>
@@ -570,6 +579,13 @@ const api: DesktopApi = {
     };
     ipcRenderer.on("desktop:chat-event", listener);
     return () => ipcRenderer.removeListener("desktop:chat-event", listener);
+  },
+  onVoiceTranscriptionEvent: (
+    callback: (event: DesktopVoiceTranscriptionEvent) => void,
+  ): (() => void) => {
+    const listener = (_event: IpcRendererEvent, event: DesktopVoiceTranscriptionEvent): void => callback(event);
+    ipcRenderer.on("desktop:voice-transcription-event", listener);
+    return () => ipcRenderer.removeListener("desktop:voice-transcription-event", listener);
   },
   onAgentRunEvent: (callback: (event: AgentRunEvent) => void): (() => void) => {
     const listener = (_event: IpcRendererEvent, event: AgentRunEvent) => {

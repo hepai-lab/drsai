@@ -111,6 +111,25 @@ export interface AuthSession {
   refreshable?: boolean;
 }
 
+export interface DesktopBootstrapResult {
+  ready: boolean;
+  message: string;
+  user: AuthUser;
+  capabilities: {
+    chat: boolean;
+    agent: boolean;
+    tools: Array<"files" | "shell" | "git">;
+  };
+  defaults: {
+    agentId: string;
+    modelAlias: string | null;
+  };
+  models: Array<{ id: string; name: string }>;
+  limits: {
+    maxConcurrentRuns: number;
+  };
+}
+
 export type OidcLoginDebugStage =
   | "started"
   | "callback-listening"
@@ -155,14 +174,48 @@ export type DesktopVoiceRuntimeId =
   | "local-whisper";
 
 export interface DesktopVoiceTranscriptionRequest {
-  workspacePath: string;
-  audioBase64?: string;
+  workspacePath?: string;
+  audioData?: Uint8Array;
   mimeType: string;
   durationSeconds: number;
   languageHint?: string;
   sourceLabel?: string;
-  mockTranscriptText?: string;
 }
+
+export type DesktopVoiceErrorCode =
+  | "empty_audio" | "audio_too_large" | "duration_exceeded" | "unsupported_format"
+  | "runtime_unavailable" | "auth_required" | "network_error" | "rate_limited"
+  | "timeout" | "provider_error" | "cancelled" | "internal_error";
+
+export interface DesktopVoiceError {
+  code: DesktopVoiceErrorCode;
+  message: string;
+  retryable: boolean;
+  requestId?: string;
+}
+
+export interface DesktopVoiceTranscriptionStartResult {
+  requestId: string;
+  acceptedAt: string;
+}
+
+export interface DesktopVoiceRuntimeStatus {
+  runtimeId: DesktopVoiceRuntimeId;
+  state: "ready" | "unavailable" | "auth_required" | "degraded";
+  supportedMimeTypes: string[];
+  maxBytes: number;
+  maxDurationSeconds: number;
+  supportsPartial: boolean;
+  providerDisclosure: string;
+  message: string;
+}
+
+export type DesktopVoiceTranscriptionEvent =
+  | { requestId: string; type: "accepted"; runtimeId: DesktopVoiceRuntimeId }
+  | { requestId: string; type: "progress"; stage: "preparing" | "uploading" | "transcribing"; message: string }
+  | { requestId: string; type: "completed"; result: DesktopVoiceTranscriptionResult }
+  | { requestId: string; type: "failed"; error: DesktopVoiceError }
+  | { requestId: string; type: "cancelled" };
 
 export interface DesktopVoiceTranscriptionResult {
   ok: boolean;
@@ -262,12 +315,25 @@ export interface ChatRequest {
   messages: ChatMessage[];
 }
 
+export interface ChatToolTimelineEvent {
+  id: string;
+  kind: "tool_call" | "tool_result" | "log" | "diff" | "artifact";
+  title: string;
+  status?: "started" | "running" | "completed" | "failed";
+  content?: string;
+  toolName?: string;
+  path?: string;
+  timestamp?: string;
+  level?: "INFO" | "WARNING" | "ERROR" | "DEBUG" | "TRACE" | "FATAL" | string;
+}
+
 export interface ChatEvent {
   requestId: string;
-  type: "start" | "chunk" | "status" | "done" | "error" | "aborted";
+  type: "start" | "chunk" | "status" | "tool_timeline" | "done" | "error" | "aborted";
   content?: string;
   error?: string;
   level?: "INFO" | "WARNING" | "ERROR" | "DEBUG" | "TRACE" | "FATAL" | string;
+  toolTimeline?: ChatToolTimelineEvent;
   sessionId?: string;
   runId?: string;
 }
@@ -1398,7 +1464,11 @@ export interface DesktopMcpActiveSessionListRequest {
   workspacePath: string;
 }
 
-export type DesktopMcpReusableSessionStatus = "ready" | "busy" | "idle";
+export type DesktopMcpReusableSessionStatus =
+  | "ready"
+  | "busy"
+  | "idle"
+  | "restart_reconnect_required";
 
 export interface DesktopMcpReusableSession {
   sessionReuseKey: string;
@@ -1412,6 +1482,8 @@ export interface DesktopMcpReusableSession {
   idleExpiresAt?: string;
   idleExpiresInMs?: number;
   stderrPreview?: string;
+  restartDetectedAt?: string;
+  diagnosticMessage?: string;
 }
 
 export interface DesktopMcpReusableSessionListRequest {
@@ -2104,6 +2176,7 @@ export interface DesktopApi {
   cancelDesktopSsoLogin(deviceCode: string): Promise<boolean>;
   logout(options?: LogoutOptions): Promise<{ ok: boolean; message: string }>;
   refreshAuthSession(): Promise<AuthSession>;
+  bootstrapDesktop(): Promise<DesktopBootstrapResult>;
   getHealth(): Promise<DesktopHealth>;
   getInstallStatus(): Promise<InstallStatus>;
   getGatewayStatus(): Promise<GatewayStatus>;
@@ -2157,9 +2230,14 @@ export interface DesktopApi {
     request: AgentRunRequest,
   ): Promise<{ requestId: string; sessionId: string; runId: string }>;
   abortAgentRun(requestId: string): Promise<boolean>;
-  transcribeVoiceRecording(
+  startVoiceTranscription(
     request: DesktopVoiceTranscriptionRequest,
-  ): Promise<DesktopVoiceTranscriptionResult>;
+  ): Promise<DesktopVoiceTranscriptionStartResult>;
+  cancelVoiceTranscription(requestId: string): Promise<boolean>;
+  getVoiceRuntimeStatus(): Promise<DesktopVoiceRuntimeStatus>;
+  onVoiceTranscriptionEvent(
+    callback: (event: DesktopVoiceTranscriptionEvent) => void,
+  ): () => void;
   writeVoiceTranscriptHandoff(
     request: DesktopVoiceTranscriptHandoffRequest,
   ): Promise<DesktopVoiceTranscriptHandoffResult>;

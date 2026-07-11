@@ -831,6 +831,10 @@ assert(roadmap.includes("runtime test report golden fixtures"), "roadmap omits r
 assert(checklist.includes("runtime-content-media-golden-agent"), "checklist omits runtime content/media golden fixture agent record");
 assert(checklist.includes("runtime content/media golden fixtures"), "checklist omits runtime content/media fixture evidence");
 assert(roadmap.includes("runtime content/media golden fixtures"), "roadmap omits runtime content/media fixture evidence");
+assert(checklist.includes("browser-cookie-input-agent"), "checklist omits browser cookie export agent record");
+assert(checklist.includes("runtime `cookies.txt` golden fixture"), "checklist omits browser cookie runtime fixture evidence");
+assert(roadmap.includes("Browser cookie export input"), "roadmap omits browser cookie export evidence");
+assert(roadmap.includes("runtime `cookies.txt` golden fixture"), "roadmap omits browser cookie runtime fixture evidence");
 assert(checklist.includes("latex-context-agent"), "checklist omits LaTeX context agent record");
 assert(checklist.includes("LaTeX/BibTeX Context Input"), "checklist omits LaTeX context input addendum");
 assert(checklist.includes("runtime `paper.tex`, `references.bib`, and `latexmkrc` fixtures"), "checklist omits LaTeX runtime fixture evidence");
@@ -889,6 +893,9 @@ assert(roadmap.includes("runtime .metrics golden fixture"), "roadmap omits runti
 assert(checklist.includes("runtime-package-config-variant-golden-agent"), "checklist omits runtime package/config variant golden fixture agent record");
 assert(checklist.includes("runtime package/config variant golden fixtures"), "checklist omits runtime package/config variant fixture evidence");
 assert(roadmap.includes("runtime package/config variant golden fixtures"), "roadmap omits runtime package/config variant fixture evidence");
+assert(checklist.includes("runtime Node package-manager config variant fixtures"), "checklist omits runtime Node package-manager config variant fixture evidence");
+assert(checklist.includes("`.yarnrc`, `.pnpmfile.cjs`, and `.npmignore`"), "checklist omits Node package-manager variant fixture file evidence");
+assert(roadmap.includes("runtime Node package-manager config variant fixtures"), "roadmap omits Node package-manager variant fixture evidence");
 assert(checklist.includes("runtime-lcov-coverage-golden-agent"), "checklist omits runtime LCOV coverage golden fixture agent record");
 assert(checklist.includes("runtime LCOV coverage golden fixture"), "checklist omits runtime LCOV coverage fixture evidence");
 assert(roadmap.includes("runtime LCOV coverage golden fixture"), "roadmap omits runtime LCOV coverage fixture evidence");
@@ -928,6 +935,9 @@ assert(checklist.includes("`.eslintrc.json`, `.prettierrc.yaml`, `biome.jsonc`, 
 assert(roadmap.includes("JS/TS tooling config input"), "roadmap omits JS/TS tooling config evidence");
 assert(roadmap.includes("ESLint/Prettier/Biome/Stylelint/Jest/Vitest/Playwright"), "roadmap omits JS/TS tooling config tool coverage");
 assert(checklist.includes("iis-web-config-agent"), "checklist omits IIS web.config agent record");
+assert(checklist.includes("web-server-config-agent"), "checklist omits Nginx/Apache web server config agent record");
+assert(checklist.includes("runtime `nginx.conf` golden fixture"), "checklist omits Nginx web server config runtime fixture evidence");
+assert(roadmap.includes("runtime `nginx.conf` golden fixture"), "roadmap omits Nginx web server config runtime fixture evidence");
 assert(checklist.includes("runtime `web.config` golden fixture"), "checklist omits IIS web.config runtime fixture evidence");
 assert(roadmap.includes("IIS web.config file input"), "roadmap omits IIS web.config input evidence");
 assert(roadmap.includes("runtime `web.config` golden fixture"), "roadmap omits IIS web.config runtime fixture evidence");
@@ -970,6 +980,9 @@ try {
   const envrcPath = join(workspace, ".envrc");
   const packagePath = join(workspace, "package.json");
   const yarnrcPath = join(workspace, ".yarnrc.yml");
+  const yarnClassicPath = join(workspace, ".yarnrc");
+  const pnpmfilePath = join(workspace, ".pnpmfile.cjs");
+  const npmignorePath = join(workspace, ".npmignore");
   const mcpServersPath = join(drsaiDir, "mcp-servers.json");
   const packageLockPath = join(workspace, "package-lock.json");
   const pnpmLockPath = join(workspace, "pnpm-lock.yaml");
@@ -1074,8 +1087,10 @@ try {
   const infPath = join(workspace, "runtime.inf");
   const catPath = join(workspace, "runtime.cat");
   const openApiPath = join(workspace, "openapi.yaml");
+  const openApiJsonPath = join(workspace, "openapi.json");
   const asyncApiPath = join(workspace, "asyncapi.yaml");
   const insomniaPath = join(workspace, "insomnia.json");
+  const insomniaYamlPath = join(workspace, "insomnia.yaml");
   const postmanEnvironmentPath = join(workspace, "runtime.postman_environment.json");
   const brunoPath = join(workspace, "runtime.bru");
   const graphqlPath = join(workspace, "schema.graphql");
@@ -1087,6 +1102,7 @@ try {
   const kustomizationPath = join(workspace, "kustomization.yaml");
   const kubernetesManifestPath = join(workspace, "runtime-kubernetes.yaml");
   const iisWebConfigPath = join(workspace, "web.config");
+  const nginxConfigPath = join(workspace, "nginx.conf");
   const sarifPath = join(workspace, "results.sarif");
   const sarifJsonPath = join(workspace, "results.sarif.json");
   const securityAuditPath = join(workspace, "npm-audit.json");
@@ -1136,6 +1152,7 @@ try {
   const tsvPath = join(workspace, "runtime.tsv");
   const jsonlPath = join(workspace, "events.jsonl");
   const terminalRecordingPath = join(workspace, "runtime.cast");
+  const powershellTranscriptPath = join(workspace, "runtime.powershell-transcript.txt");
   const harPath = join(workspace, "runtime.har");
   const netlogPath = join(workspace, "netlog.json");
   const otelPath = join(workspace, "runtime.otlp.json");
@@ -1160,6 +1177,7 @@ try {
   const atomPath = join(workspace, "feed.atom");
   const opmlPath = join(workspace, "subscriptions.opml");
   const robotsPath = join(workspace, "robots.txt");
+  const browserCookiesPath = join(workspace, "cookies.txt");
   const sitemapPath = join(workspace, "sitemap.xml");
   const sitemapGzipPath = join(workspace, "sitemap.xml.gz");
   const srtPath = join(workspace, "captions.srt");
@@ -2061,6 +2079,27 @@ try {
     '  <location path="admin/secret-iis-area" />',
     "</configuration>",
   ].join("\n"));
+  writeText(nginxConfigPath, [
+    "worker_processes auto;",
+    "events { worker_connections 1024; }",
+    "http {",
+    "  upstream runtime_backend {",
+    "    server 127.0.0.1:8080;",
+    "  }",
+    "  server {",
+    "    listen 443 ssl;",
+    "    server_name runtime.example.test;",
+    "    ssl_certificate /etc/nginx/certs/runtime.crt;",
+    "    ssl_certificate_key /etc/nginx/certs/secret-nginx-key.pem;",
+    "    location /api/ {",
+    "      proxy_pass https://runtime_backend?token=secret-nginx-token;",
+    "      proxy_set_header Authorization Bearer secret-nginx-token;",
+    "      auth_request /auth;",
+    "    }",
+    "    rewrite ^/old/(.*)$ /new/$1?token=secret-nginx-token permanent;",
+    "  }",
+    "}",
+  ].join("\n"));
   writeText(kubernetesManifestPath, [
     "apiVersion: apps/v1",
     "kind: Deployment",
@@ -2464,6 +2503,33 @@ try {
     "cache=./.npm-cache",
     "//registry.npmjs.org/:_authToken=secret-token",
   ].join("\n"));
+  writeText(yarnClassicPath, [
+    'registry "https://registry.yarnpkg.com"',
+    'cache-folder "./.yarn-cache"',
+    '--install.check-files true',
+    "_authToken=secret-yarn-classic-token",
+  ].join("\n"));
+  writeText(pnpmfilePath, [
+    "module.exports = {",
+    "  hooks: {",
+    "    readPackage(pkg) {",
+    "      pkg.dependencies = pkg.dependencies || {};",
+    "      pkg.dependencies['runtime-helper'] = 'workspace:*';",
+    "      pkg.publishToken = 'secret-pnpmfile-token';",
+    "      return pkg;",
+    "    },",
+    "    afterAllResolved(lockfile) {",
+    "      return lockfile;",
+    "    },",
+    "  },",
+    "};",
+  ].join("\n"));
+  writeText(npmignorePath, [
+    "release/",
+    "*.local",
+    "!dist/runtime-entry.js",
+    ".env",
+  ].join("\n"));
   writeText(mixPath, [
     "defmodule RuntimeFixture.MixProject do",
     "  use Mix.Project",
@@ -2538,7 +2604,7 @@ try {
     "SUMMARY:Runtime Fixture Review",
     "DTSTART:20260709T093000Z",
     "DTEND:20260709T100000Z",
-    "LOCATION:Review Room",
+    "LOCATION:Review Room token=secret-runtime-ics-token",
     "ATTENDEE:mailto:reviewer@example.test",
     "DESCRIPTION:Review runtime fixture coverage",
     "END:VEVENT",
@@ -2661,6 +2727,33 @@ try {
     "      type: http",
     "      scheme: bearer",
   ].join("\n"));
+  writeText(openApiJsonPath, JSON.stringify({
+    openapi: "3.1.0",
+    info: {
+      title: "Runtime Fixture JSON API",
+      version: "1.1.0",
+    },
+    servers: [
+      { url: "https://json-api.example.test/runtime?token=secret-json-openapi-token" },
+    ],
+    paths: {
+      "/json-runs": {
+        post: {
+          summary: "Create runtime JSON run",
+          security: [{ apiKeyAuth: [] }],
+        },
+      },
+    },
+    components: {
+      securitySchemes: {
+        apiKeyAuth: {
+          type: "apiKey",
+          in: "header",
+          name: "X-API-Key",
+        },
+      },
+    },
+  }, null, 2));
   writeText(asyncApiPath, [
     "asyncapi: 2.6.0",
     "info:",
@@ -2709,6 +2802,27 @@ try {
       },
     ],
   }, null, 2));
+  writeText(insomniaYamlPath, [
+    "_type: export",
+    "__export_format: 4",
+    "resources:",
+    "  - _type: workspace",
+    "    name: Runtime Insomnia YAML Workspace",
+    "  - _type: environment",
+    "    name: Runtime YAML Env",
+    "    data:",
+    "      token: secret-insomnia-yaml-token",
+    "  - _type: request",
+    "    name: Runtime Insomnia YAML List",
+    "    method: GET",
+    "    url: https://api.example.test/insomnia-yaml/runs?token=secret-insomnia-yaml-token",
+    "    authentication:",
+    "      type: bearer",
+    "  - _type: request",
+    "    name: Runtime Insomnia YAML Create",
+    "    method: POST",
+    "    url: \"{{ base_url }}/insomnia-yaml/runs\"",
+  ].join("\n"));
   writeText(postmanEnvironmentPath, JSON.stringify({
     id: "runtime-postman-env",
     name: "Runtime Postman Environment",
@@ -3284,6 +3398,29 @@ try {
     JSON.stringify([2.0, "o", "fatal: Runtime terminal failed with access denied\r\n"]),
     "not-json",
   ].join("\n"));
+  writeText(powershellTranscriptPath, [
+    "**********************",
+    "Windows PowerShell transcript start",
+    "Start time: 20260711103001",
+    "Username: DESKTOP-RUNTIME\\runner",
+    "RunAs User: DESKTOP-RUNTIME\\runner",
+    "Host Application: powershell.exe -NoProfile -ExecutionPolicy Bypass",
+    "Process ID: 4242",
+    "PSVersion: 5.1.22621.1",
+    "**********************",
+    "PS C:\\repo> npm run verify:channel-adapters -- --token=secret-transcript-token",
+    "Channel adapter verification warning: retrying runtime fixture",
+    "PS C:\\repo> git status --short",
+    "fatal: access denied token=secret-transcript-output",
+    "At line:1 char:1",
+    "+ Invoke-RestMethod https://api.example.test/run?token=secret-transcript-url",
+    "+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+    "CategoryInfo          : SecurityError: (:) [], UnauthorizedAccessException",
+    "**********************",
+    "Windows PowerShell transcript end",
+    "End time: 20260711103009",
+    "**********************",
+  ].join("\n"));
   writeText(harPath, JSON.stringify({
     log: {
       entries: [
@@ -3577,6 +3714,12 @@ try {
     "Allow: /public",
     "Crawl-delay: 5",
     "Sitemap: https://example.test/sitemap.xml?token=secret-robots-token",
+  ].join("\n"));
+  writeText(browserCookiesPath, [
+    "# Netscape HTTP Cookie File",
+    ".example.test\tTRUE\t/\tTRUE\t2147483647\tsessionid\tsecret-cookie-session",
+    "#HttpOnly_api.example.test\tFALSE\t/api\tTRUE\t0\tauth_token\tsecret-cookie-token",
+    "static.example.test\tFALSE\t/assets\tFALSE\t1\tlegacy_pref\tsecret-cookie-legacy",
   ].join("\n"));
   const sitemapXml = [
     '<?xml version="1.0" encoding="UTF-8"?>',
@@ -4143,13 +4286,16 @@ try {
     workspacePath: workspace,
     paths: [
       yarnrcPath,
+      yarnClassicPath,
+      pnpmfilePath,
+      npmignorePath,
       jvmConfigPath,
       pubspecLockPath,
     ],
     limit: 8,
   });
 
-  assert(packageConfigVariantResult.items.length === 3, `expected 3 imported package/config variant runtime fixture items, got ${packageConfigVariantResult.items.length}`);
+  assert(packageConfigVariantResult.items.length === 6, `expected 6 imported package/config variant runtime fixture items, got ${packageConfigVariantResult.items.length}`);
   assert(packageConfigVariantResult.truncated === false, "package/config variant runtime fixture import should not be truncated");
   assert(
     packageConfigVariantResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
@@ -4268,6 +4414,20 @@ try {
     "API/schema/container runtime fixture import lost read-only verification copy",
   );
 
+  const insomniaYamlResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [insomniaYamlPath],
+    limit: 1,
+  });
+
+  assert(insomniaYamlResult.items.length === 1, `expected 1 imported Insomnia YAML runtime fixture item, got ${insomniaYamlResult.items.length}`);
+  assert(insomniaYamlResult.truncated === false, "Insomnia YAML runtime fixture import should not be truncated");
+  assert(
+    insomniaYamlResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "Insomnia YAML runtime fixture import lost read-only verification copy",
+  );
+
   const asyncApiResult = adapters.importChannelContext({
     adapterId: "file-input",
     workspacePath: workspace,
@@ -4279,6 +4439,22 @@ try {
 
   assert(asyncApiResult.items.length === 1, `expected 1 imported AsyncAPI runtime fixture item, got ${asyncApiResult.items.length}`);
   assert(asyncApiResult.truncated === false, "AsyncAPI runtime fixture import should not be truncated");
+
+  const openApiJsonResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [
+      openApiJsonPath,
+    ],
+    limit: 2,
+  });
+
+  assert(openApiJsonResult.items.length === 1, `expected 1 imported OpenAPI JSON runtime fixture item, got ${openApiJsonResult.items.length}`);
+  assert(openApiJsonResult.truncated === false, "OpenAPI JSON runtime fixture import should not be truncated");
+  assert(
+    openApiJsonResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "OpenAPI JSON runtime fixture import lost read-only verification copy",
+  );
 
   const kubernetesManifestResult = adapters.importChannelContext({
     adapterId: "file-input",
@@ -4310,6 +4486,22 @@ try {
   assert(
     iisWebConfigResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
     "IIS web.config runtime fixture import lost read-only verification copy",
+  );
+
+  const webServerConfigResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [
+      nginxConfigPath,
+    ],
+    limit: 2,
+  });
+
+  assert(webServerConfigResult.items.length === 1, `expected 1 imported Nginx web server config runtime fixture item, got ${webServerConfigResult.items.length}`);
+  assert(webServerConfigResult.truncated === false, "Nginx web server config runtime fixture import should not be truncated");
+  assert(
+    webServerConfigResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "Nginx web server config runtime fixture import lost read-only verification copy",
   );
 
   const securityArtifactResult = adapters.importChannelContext({
@@ -4438,15 +4630,15 @@ try {
   const terminalRecordingResult = adapters.importChannelContext({
     adapterId: "file-input",
     workspacePath: workspace,
-    paths: [terminalRecordingPath],
-    limit: 1,
+    paths: [terminalRecordingPath, powershellTranscriptPath],
+    limit: 2,
   });
 
-  assert(terminalRecordingResult.items.length === 1, `expected 1 imported terminal recording runtime fixture item, got ${terminalRecordingResult.items.length}`);
-  assert(terminalRecordingResult.truncated === false, "terminal recording runtime fixture import should not be truncated");
+  assert(terminalRecordingResult.items.length === 2, `expected 2 imported terminal execution-log runtime fixture items, got ${terminalRecordingResult.items.length}`);
+  assert(terminalRecordingResult.truncated === false, "terminal execution-log runtime fixture import should not be truncated");
   assert(
     terminalRecordingResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
-    "terminal recording runtime fixture import lost read-only verification copy",
+    "terminal execution-log runtime fixture import lost read-only verification copy",
   );
 
   const databaseSchemaDslResult = adapters.importChannelContext({
@@ -4590,6 +4782,20 @@ try {
     "content/media runtime fixture import lost read-only verification copy",
   );
 
+  const browserCookiesResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [browserCookiesPath],
+    limit: 1,
+  });
+
+  assert(browserCookiesResult.items.length === 1, `expected 1 imported browser cookie runtime fixture item, got ${browserCookiesResult.items.length}`);
+  assert(browserCookiesResult.truncated === false, "browser cookie runtime fixture import should not be truncated");
+  assert(
+    browserCookiesResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "browser cookie runtime fixture import lost read-only verification copy",
+  );
+
   const opmlSubscriptionResult = adapters.importChannelContext({
     adapterId: "file-input",
     workspacePath: workspace,
@@ -4710,6 +4916,26 @@ try {
   assert(yarnrcSummary.includes("nodeLinker"), ".yarnrc.yml summary omitted package-manager setting evidence");
   assert(yarnrcSummary.includes("[redacted]") && !yarnrcSummary.includes("secret-yarn-token"), ".yarnrc.yml summary omitted token redaction evidence");
   assert(yarnrcSummary.includes("no npm, pnpm, Yarn, Bun, node command"), ".yarnrc.yml summary omitted no-package-manager safety copy");
+
+  const yarnClassicSummary = summaryFor(packageConfigVariantResult, ".yarnrc");
+  assert(yarnClassicSummary.includes("Node package-manager config preview"), ".yarnrc did not use Node package-manager config preview");
+  assert(yarnClassicSummary.includes("Yarn classic config"), ".yarnrc summary omitted Yarn classic format evidence");
+  assert(yarnClassicSummary.includes("cache-folder"), ".yarnrc summary omitted cache setting evidence");
+  assert(yarnClassicSummary.includes("[redacted]") && !yarnClassicSummary.includes("secret-yarn-classic-token"), ".yarnrc summary omitted token redaction evidence");
+  assert(yarnClassicSummary.includes("no npm, pnpm, Yarn, Bun, node command"), ".yarnrc summary omitted no-package-manager safety copy");
+
+  const pnpmfileSummary = summaryFor(packageConfigVariantResult, ".pnpmfile.cjs");
+  assert(pnpmfileSummary.includes("Node package-manager config preview"), ".pnpmfile.cjs did not use Node package-manager config preview");
+  assert(pnpmfileSummary.includes("pnpm hook config"), ".pnpmfile.cjs summary omitted pnpm hook format evidence");
+  assert(pnpmfileSummary.includes("readPackage") && pnpmfileSummary.includes("afterAllResolved"), ".pnpmfile.cjs summary omitted pnpm hook evidence");
+  assert(!pnpmfileSummary.includes("secret-pnpmfile-token"), ".pnpmfile.cjs summary leaked hook token value");
+  assert(pnpmfileSummary.includes("no npm, pnpm, Yarn, Bun, node command"), ".pnpmfile.cjs summary omitted no-package-manager safety copy");
+
+  const npmignoreSummary = summaryFor(packageConfigVariantResult, ".npmignore");
+  assert(npmignoreSummary.includes("Node package-manager config preview"), ".npmignore did not use Node package-manager config preview");
+  assert(npmignoreSummary.includes("npm publish ignore file"), ".npmignore summary omitted publish-ignore format evidence");
+  assert(npmignoreSummary.includes("publish ignore pattern") && npmignoreSummary.includes("publish include override"), ".npmignore summary omitted ignore/include pattern evidence");
+  assert(npmignoreSummary.includes("no npm, pnpm, Yarn, Bun, node command"), ".npmignore summary omitted no-package-manager safety copy");
 
   const mcpConfigSummary = summaryFor(mcpConfigResult, "mcp-servers.json");
   assert(mcpConfigSummary.includes("MCP server configuration preview"), "mcp-servers.json did not use MCP server config preview");
@@ -5464,6 +5690,8 @@ try {
   const icsSummary = summaryFor(personalInfoResult, "calendar.ics");
   assert(icsSummary.includes("Calendar ICS file preview"), "calendar.ics did not use calendar ICS preview");
   assert(icsSummary.includes("Runtime Fixture Review"), "calendar.ics summary omitted event title evidence");
+  assert(icsSummary.includes("token=[redacted]"), "calendar.ics summary omitted token redaction evidence");
+  assert(!icsSummary.includes("secret-runtime-ics-token"), "calendar.ics summary leaked token-like location value");
   assert(icsSummary.includes("no calendar app access"), "calendar.ics summary omitted no-calendar safety copy");
 
   const icalSummary = summaryFor(personalInfoResult, "calendar.ical");
@@ -5538,6 +5766,16 @@ try {
   assert(!openApiSummary.includes("secret-token"), "openapi.yaml summary leaked sensitive URL token");
   assert(openApiSummary.includes("no request execution"), "openapi.yaml summary omitted no-request safety copy");
 
+  const openApiJsonSummary = summaryFor(openApiJsonResult, "openapi.json");
+  assert(openApiJsonSummary.includes("API spec/collection preview"), "openapi.json did not use API spec preview");
+  assert(openApiJsonSummary.includes("OpenAPI 3.1.0"), "openapi.json summary omitted OpenAPI JSON format evidence");
+  assert(openApiJsonSummary.includes("Runtime Fixture JSON API"), "openapi.json summary omitted JSON API title evidence");
+  assert(openApiJsonSummary.includes("/json-runs"), "openapi.json summary omitted JSON endpoint evidence");
+  assert(openApiJsonSummary.includes("json-api.example.test"), "openapi.json summary omitted JSON server host evidence");
+  assert(openApiJsonSummary.includes("apiKeyAuth"), "openapi.json summary omitted JSON security scheme evidence");
+  assert(!openApiJsonSummary.includes("secret-json-openapi-token"), "openapi.json summary leaked sensitive URL token");
+  assert(openApiJsonSummary.includes("no request execution"), "openapi.json summary omitted no-request safety copy");
+
   const asyncApiSummary = summaryFor(asyncApiResult, "asyncapi.yaml");
   assert(asyncApiSummary.includes("API spec/collection preview"), "asyncapi.yaml did not use API spec preview");
   assert(asyncApiSummary.includes("AsyncAPI YAML 2.6.0"), "asyncapi.yaml summary omitted AsyncAPI format evidence");
@@ -5555,6 +5793,16 @@ try {
   assert(insomniaSummary.includes("https://api.example.test/insomnia/runs?token=REDACTED"), "insomnia.json summary omitted sanitized request evidence");
   assert(!insomniaSummary.includes("secret-insomnia-token"), "insomnia.json summary leaked sensitive token");
   assert(insomniaSummary.includes("no request execution"), "insomnia.json summary omitted no-request safety copy");
+
+  const insomniaYamlSummary = summaryFor(insomniaYamlResult, "insomnia.yaml");
+  assert(insomniaYamlSummary.includes("API spec/collection preview"), "insomnia.yaml did not use API client collection preview");
+  assert(insomniaYamlSummary.includes("Insomnia YAML export"), "insomnia.yaml summary omitted Insomnia YAML format evidence");
+  assert(insomniaYamlSummary.includes("Runtime Insomnia YAML Workspace"), "insomnia.yaml summary omitted workspace title evidence");
+  assert(insomniaYamlSummary.includes("Runtime Insomnia YAML List"), "insomnia.yaml summary omitted request name evidence");
+  assert(insomniaYamlSummary.includes("https://api.example.test/insomnia-yaml/runs?token=REDACTED"), "insomnia.yaml summary omitted sanitized request evidence");
+  assert(insomniaYamlSummary.includes("bearer"), "insomnia.yaml summary omitted authentication mode evidence");
+  assert(!insomniaYamlSummary.includes("secret-insomnia-yaml-token"), "insomnia.yaml summary leaked sensitive token");
+  assert(insomniaYamlSummary.includes("no request execution"), "insomnia.yaml summary omitted no-request safety copy");
 
   const postmanEnvironmentSummary = summaryFor(apiSchemaContainerResult, "runtime.postman_environment.json");
   assert(postmanEnvironmentSummary.includes("Postman environment/globals preview"), "runtime.postman_environment.json did not use Postman environment preview");
@@ -5658,6 +5906,20 @@ try {
   assert(iisWebConfigSummary.includes("compilation targetFramework=4.8") && iisWebConfigSummary.includes("httpRuntime maxRequestLength=4096"), "web.config summary omitted ASP.NET hints");
   assert(iisWebConfigSummary.includes("admin/[redacted]"), "web.config summary omitted location path redaction evidence");
   assert(iisWebConfigSummary.includes("no IIS service, appcmd, PowerShell, ASP.NET runtime"), "web.config summary omitted no-IIS-runtime safety copy");
+
+  const webServerConfigSummary = summaryFor(webServerConfigResult, "nginx.conf");
+  assert(webServerConfigSummary.includes("Web server config preview"), "nginx.conf did not use web server config preview");
+  assert(webServerConfigSummary.includes("server_name=runtime.example.test"), "nginx.conf summary omitted server_name evidence");
+  assert(webServerConfigSummary.includes("listen=443 ssl"), "nginx.conf summary omitted listen evidence");
+  assert(webServerConfigSummary.includes("location=/api/"), "nginx.conf summary omitted location evidence");
+  assert(webServerConfigSummary.includes("upstream=runtime_backend") && webServerConfigSummary.includes("upstream server=127.0.0.1:8080"), "nginx.conf summary omitted upstream evidence");
+  assert(webServerConfigSummary.includes("proxy_pass=https://runtime_backend?token=[redacted]"), "nginx.conf summary omitted proxy token redaction evidence");
+  assert(webServerConfigSummary.includes("header=Authorization Bearer [redacted]"), "nginx.conf summary omitted header secret redaction evidence");
+  assert(webServerConfigSummary.includes("auth=/auth"), "nginx.conf summary omitted auth_request evidence");
+  assert(webServerConfigSummary.includes("rewrite=^/old/(.*)$ /new/$1?token=[redacted]"), "nginx.conf summary omitted rewrite redaction evidence");
+  assert(!webServerConfigSummary.includes("secret-nginx-token") && !webServerConfigSummary.includes("secret-nginx-key"), "nginx.conf summary leaked secret-shaped values");
+  assert(webServerConfigSummary.includes("include targets and certificate/key files were not opened"), "nginx.conf summary omitted include/certificate boundary copy");
+  assert(webServerConfigSummary.includes("no nginx/apache/httpd command, service reload, config test"), "nginx.conf summary omitted no-runtime safety copy");
 
   const sarifSummary = summaryFor(securityArtifactResult, "results.sarif");
   assert(sarifSummary.includes("SARIF static analysis result preview"), "results.sarif did not use SARIF preview");
@@ -5995,6 +6257,16 @@ try {
   assert(!terminalRecordingSummary.includes("secret-cast-token") && !terminalRecordingSummary.includes("secret-cast-output"), "runtime.cast summary leaked terminal recording secret");
   assert(terminalRecordingSummary.includes("no terminal replay, shell command execution, process spawn"), "runtime.cast summary omitted no-replay/no-execution safety copy");
 
+  const powershellTranscriptSummary = summaryFor(terminalRecordingResult, "runtime.powershell-transcript.txt");
+  assert(powershellTranscriptSummary.includes("PowerShell transcript preview"), "PowerShell transcript fixture did not use transcript preview");
+  assert(powershellTranscriptSummary.includes("start=1") && powershellTranscriptSummary.includes("end=1"), "PowerShell transcript summary omitted transcript marker evidence");
+  assert(powershellTranscriptSummary.includes("Host Application=powershell.exe -NoProfile -ExecutionPolicy Bypass"), "PowerShell transcript summary omitted host application evidence");
+  assert(powershellTranscriptSummary.includes("npm run verify:channel-adapters") && powershellTranscriptSummary.includes("git status --short"), "PowerShell transcript summary omitted command evidence");
+  assert(powershellTranscriptSummary.includes("warning") && powershellTranscriptSummary.includes("fatal") && powershellTranscriptSummary.includes("access denied"), "PowerShell transcript summary omitted risk cues");
+  assert(powershellTranscriptSummary.includes("token=[redacted]"), "PowerShell transcript summary omitted token redaction evidence");
+  assert(!powershellTranscriptSummary.includes("secret-transcript-token") && !powershellTranscriptSummary.includes("secret-transcript-output") && !powershellTranscriptSummary.includes("secret-transcript-url"), "PowerShell transcript summary leaked sensitive transcript value");
+  assert(powershellTranscriptSummary.includes("no PowerShell/pwsh process, transcript replay, shell command execution"), "PowerShell transcript summary omitted no-runtime/no-replay safety copy");
+
   const harSummary = summaryFor(dataNetworkResult, "runtime.har");
   assert(harSummary.includes("HAR network trace preview"), "runtime.har did not use HAR preview");
   assert(harSummary.includes("api.example.test"), "runtime.har summary omitted host evidence");
@@ -6158,6 +6430,17 @@ try {
   assert(robotsSummary.includes("https://example.test/sitemap.xml?token=REDACTED"), "robots.txt summary omitted redacted sitemap URL evidence");
   assert(!robotsSummary.includes("secret-robots-token"), "robots.txt summary leaked sitemap token");
   assert(robotsSummary.includes("remote URLs were not fetched, pages were not crawled, JavaScript was not executed"), "robots.txt summary omitted no-fetch/no-crawl safety copy");
+
+  const browserCookiesSummary = summaryFor(browserCookiesResult, "cookies.txt");
+  assert(browserCookiesSummary.includes("Browser cookie export preview"), "cookies.txt did not use browser cookie export preview");
+  assert(browserCookiesSummary.includes(".example.test") && browserCookiesSummary.includes("api.example.test"), "cookies.txt summary omitted domain evidence");
+  assert(browserCookiesSummary.includes("sessionid") && browserCookiesSummary.includes("auth_token"), "cookies.txt summary omitted cookie name evidence");
+  assert(browserCookiesSummary.includes("secure=2") && browserCookiesSummary.includes("httpOnly=1"), "cookies.txt summary omitted cookie flag evidence");
+  assert(browserCookiesSummary.includes("session=1") && browserCookiesSummary.includes("expired=1"), "cookies.txt summary omitted cookie expiry evidence");
+  assert(browserCookiesSummary.includes("cookie values were always redacted"), "cookies.txt summary omitted cookie value redaction evidence");
+  assert(!browserCookiesSummary.includes("secret-cookie-session") && !browserCookiesSummary.includes("secret-cookie-token") && !browserCookiesSummary.includes("secret-cookie-legacy"), "cookies.txt summary leaked cookie values");
+  assert(browserCookiesSummary.includes("browser profiles were not opened, cookies were not imported"), "cookies.txt summary omitted no-profile/no-import safety copy");
+  assert(browserCookiesResult.items.find((item) => item.title === "cookies.txt")?.mime === "text/x-netscape-cookies", "cookies.txt MIME provenance is missing");
 
   const sitemapSummary = summaryFor(contentMediaResult, "sitemap.xml");
   assert(sitemapSummary.includes("Web crawl metadata preview (sitemap urlset"), "sitemap.xml did not use sitemap preview");

@@ -1239,6 +1239,102 @@ function getForkConflictExportDelta(path: string, contents?: ForkConflictContent
   };
 }
 
+function addForkConflictLiveDraftHint(
+  hints: ForkConflictLiveDraftDiagnosticHint[],
+  seen: Set<string>,
+  kind: string,
+  line: number,
+  column: number,
+  detail: string,
+): void {
+  const key = `${kind}:${line}:${column}:${detail}`;
+  if (seen.has(key)) return;
+  seen.add(key);
+  hints.push({ kind, line, column, detail });
+}
+
+function collectForkConflictLiveDraftSemanticHints(draft: string): ForkConflictLiveDraftDiagnosticHint[] {
+  const hints: ForkConflictLiveDraftDiagnosticHint[] = [];
+  const seen = new Set<string>();
+  const declarations = new Map<string, { line: number; column: number }>();
+  const lines = draft.split(/\r\n|\n|\r/);
+
+  lines.forEach((rawLine, index) => {
+    const lineNumber = index + 1;
+    const trimmed = rawLine.trim();
+    if (!trimmed || trimmed.startsWith("//") || trimmed.startsWith("*")) return;
+
+    const declarationMatch = rawLine.match(/^\s*(?:export\s+)?(?:declare\s+)?(?:const|let|var|function|class|interface|type|enum)\s+([A-Za-z_$][\w$]*)/);
+    if (declarationMatch) {
+      const name = declarationMatch[1];
+      const column = rawLine.indexOf(name) + 1;
+      const previous = declarations.get(name);
+      if (previous) {
+        addForkConflictLiveDraftHint(
+          hints,
+          seen,
+          "DuplicateDeclaration",
+          lineNumber,
+          column,
+          `${name} was also declared at ${previous.line}:${previous.column}`,
+        );
+      } else {
+        declarations.set(name, { line: lineNumber, column });
+      }
+    }
+
+    const emptyImportMatch = rawLine.match(/\bimport\s*\{\s*\}\s*from\s*["'][^"']+["']/);
+    if (emptyImportMatch) {
+      addForkConflictLiveDraftHint(
+        hints,
+        seen,
+        "EmptyNamedImport",
+        lineNumber,
+        rawLine.indexOf("import") + 1,
+        "named import clause is empty after conflict resolution",
+      );
+    }
+
+    const danglingImportMatch = rawLine.match(/\bfrom\s*["']\s*["']/);
+    if (danglingImportMatch) {
+      addForkConflictLiveDraftHint(
+        hints,
+        seen,
+        "DanglingImportSpecifier",
+        lineNumber,
+        rawLine.indexOf("from") + 1,
+        "import/export specifier is empty after conflict resolution",
+      );
+    }
+
+    const emptyReturnMatch = rawLine.match(/\breturn\s*(?:;|$)/);
+    if (emptyReturnMatch) {
+      addForkConflictLiveDraftHint(
+        hints,
+        seen,
+        "EmptyReturnValue",
+        lineNumber,
+        rawLine.indexOf("return") + 1,
+        "return statement has no value; verify resolved branch did not drop an expression",
+      );
+    }
+
+    const unresolvedPlaceholderMatch = rawLine.match(/\b(?:TODO_IMPORT|UNRESOLVED_IMPORT|MERGE_ME|FIXME_CONFLICT)\b/);
+    if (unresolvedPlaceholderMatch) {
+      addForkConflictLiveDraftHint(
+        hints,
+        seen,
+        "UnresolvedPlaceholder",
+        lineNumber,
+        rawLine.indexOf(unresolvedPlaceholderMatch[0]) + 1,
+        `${unresolvedPlaceholderMatch[0]} placeholder remains in resolved draft`,
+      );
+    }
+  });
+
+  return hints.slice(0, 6);
+}
+
 function collectForkConflictLiveDraftDiagnosticHints(
   path: string,
   contents?: ForkConflictContentSet,
@@ -1373,7 +1469,8 @@ function collectForkConflictLiveDraftDiagnosticHints(
       detail: `unclosed ${open.char}`,
     });
   }
-  return hints.slice(0, 6);
+  hints.push(...collectForkConflictLiveDraftSemanticHints(draft));
+  return hints.slice(0, 8);
 }
 
 export function getForkConflictLiveDraftCompilerDiagnosticTestGraphSuggestions(
