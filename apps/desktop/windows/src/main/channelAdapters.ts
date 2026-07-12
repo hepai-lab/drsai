@@ -40,7 +40,7 @@ import type {
 } from "../shared/desktopApi";
 import { DRSAI_HOME } from "./paths";
 
-const MAX_IMPORT_ITEMS = 12;
+const MAX_IMPORT_ITEMS = 30;
 const MAX_SCAN_ENTRIES = 240;
 const MAX_SCAN_DEPTH = 3;
 const MAX_TEXT_BYTES = 4096;
@@ -57,6 +57,10 @@ const MAX_JSONL_PREVIEW_RECORDS = 12;
 const MAX_JSONL_FIELD_PREVIEW = 16;
 const MAX_COLUMNAR_DATA_PREVIEW_BYTES = 192 * 1024;
 const MAX_COLUMNAR_STRING_PREVIEW = 12;
+const MAX_AVRO_CONTAINER_PREVIEW_BYTES = 192 * 1024;
+const MAX_AVRO_METADATA_ITEM_PREVIEW = 12;
+const MAX_AVRO_SCHEMA_PREVIEW_BYTES = 96 * 1024;
+const MAX_AVRO_SCHEMA_ITEM_PREVIEW = 16;
 const MAX_SCIENTIFIC_CONTAINER_PREVIEW_BYTES = 256 * 1024;
 const MAX_SCIENTIFIC_CONTAINER_ITEM_PREVIEW = 12;
 const MAX_HAR_PREVIEW_BYTES = 192 * 1024;
@@ -117,19 +121,59 @@ const MAX_FEED_ITEM_PREVIEW = 12;
 const MAX_OPML_OUTLINE_PREVIEW = 16;
 const MAX_WEB_CRAWL_METADATA_PREVIEW_BYTES = 128 * 1024;
 const MAX_WEB_CRAWL_METADATA_ITEM_PREVIEW = 16;
+const MAX_SECURITY_TXT_PREVIEW_BYTES = 64 * 1024;
+const MAX_SECURITY_TXT_ITEM_PREVIEW = 16;
+const MAX_LLMS_METADATA_PREVIEW_BYTES = 128 * 1024;
+const MAX_LLMS_METADATA_ITEM_PREVIEW = 16;
+const MAX_WARC_ARCHIVE_PREVIEW_BYTES = 192 * 1024;
+const MAX_WARC_ARCHIVE_RECORD_PREVIEW = 12;
+const MAX_PWA_WEB_MANIFEST_PREVIEW_BYTES = 96 * 1024;
+const MAX_PWA_WEB_MANIFEST_ITEM_PREVIEW = 16;
+const MAX_BROWSER_EXTENSION_MANIFEST_PREVIEW_BYTES = 96 * 1024;
+const MAX_BROWSER_EXTENSION_MANIFEST_ITEM_PREVIEW = 16;
+const MAX_BROWSER_EXTENSION_INVENTORY_PREVIEW_BYTES = 128 * 1024;
+const MAX_BROWSER_EXTENSION_INVENTORY_ITEM_PREVIEW = 16;
+const MAX_PWA_SERVICE_WORKER_PREVIEW_BYTES = 96 * 1024;
+const MAX_PWA_SERVICE_WORKER_ITEM_PREVIEW = 16;
+const MAX_SOURCE_MAP_PREVIEW_BYTES = 128 * 1024;
+const MAX_SOURCE_MAP_ITEM_PREVIEW = 16;
+const MAX_LOTTIE_ANIMATION_PREVIEW_BYTES = 128 * 1024;
+const MAX_LOTTIE_ANIMATION_ITEM_PREVIEW = 16;
+const MAX_DOTLOTTIE_ARCHIVE_PREVIEW_BYTES = 512 * 1024;
+const MAX_DOTLOTTIE_ARCHIVE_ITEM_PREVIEW = 12;
 const MAX_ANDROID_MANIFEST_PREVIEW_BYTES = 128 * 1024;
 const MAX_ANDROID_MANIFEST_ITEM_PREVIEW = 16;
 const MAX_ANDROID_LOGCAT_PREVIEW_BYTES = 128 * 1024;
 const MAX_ANDROID_LOGCAT_LINE_PREVIEW = 16;
+const MAX_APPLE_UNIFIED_LOG_PREVIEW_BYTES = 128 * 1024;
+const MAX_APPLE_UNIFIED_LOG_LINE_PREVIEW = 16;
 const MAX_APPLE_INFO_PLIST_PREVIEW_BYTES = 128 * 1024;
 const MAX_APPLE_INFO_PLIST_ITEM_PREVIEW = 16;
+const MAX_APPLE_CRASH_REPORT_PREVIEW_BYTES = 128 * 1024;
+const MAX_APPLE_CRASH_REPORT_ITEM_PREVIEW = 12;
 const MAX_MOBILE_APP_PACKAGE_PREVIEW_BYTES = 512 * 1024;
 const MAX_MOBILE_APP_PACKAGE_ITEM_PREVIEW = 16;
 const MAX_BOOKMARK_PREVIEW_BYTES = 128 * 1024;
 const MAX_BOOKMARK_ITEM_PREVIEW = 16;
 const MAX_BROWSER_COOKIE_PREVIEW_BYTES = 96 * 1024;
 const MAX_BROWSER_COOKIE_ITEM_PREVIEW = 16;
+const MAX_BROWSER_AUTOFILL_PREVIEW_BYTES = 128 * 1024;
+const MAX_BROWSER_AUTOFILL_ITEM_PREVIEW = 16;
+const MAX_BROWSER_PASSWORD_EXPORT_PREVIEW_BYTES = 96 * 1024;
+const MAX_BROWSER_PASSWORD_EXPORT_ITEM_PREVIEW = 12;
+const MAX_BROWSER_HISTORY_PREVIEW_BYTES = 128 * 1024;
+const MAX_BROWSER_HISTORY_ITEM_PREVIEW = 16;
+const MAX_BROWSER_STORAGE_PREVIEW_BYTES = 128 * 1024;
+const MAX_BROWSER_STORAGE_ITEM_PREVIEW = 16;
+const MAX_BROWSER_DOWNLOAD_PREVIEW_BYTES = 128 * 1024;
+const MAX_BROWSER_DOWNLOAD_ITEM_PREVIEW = 16;
+const MAX_BROWSER_PREFERENCES_PREVIEW_BYTES = 128 * 1024;
+const MAX_BROWSER_PREFERENCES_ITEM_PREVIEW = 16;
+const MAX_BROWSER_SESSION_PREVIEW_BYTES = 128 * 1024;
+const MAX_BROWSER_SESSION_ITEM_PREVIEW = 16;
 const MAX_LINK_SHORTCUT_PREVIEW_BYTES = 32 * 1024;
+const MAX_DESKTOP_ENTRY_PREVIEW_BYTES = 64 * 1024;
+const MAX_DESKTOP_ENTRY_ITEM_PREVIEW = 16;
 const MAX_WINDOWS_SHORTCUT_PREVIEW_BYTES = 64 * 1024;
 const MAX_WINDOWS_SHORTCUT_STRING_PREVIEW = 10;
 const MAX_REGISTRY_EXPORT_PREVIEW_BYTES = 96 * 1024;
@@ -164,6 +208,8 @@ const MAX_NOTEBOOK_OUTPUT_PREVIEW = 6;
 const MAX_CONFIG_LOG_PREVIEW_BYTES = 64 * 1024;
 const MAX_CONFIG_KEYS_PREVIEW = 24;
 const MAX_CONFIG_SCHEMA_HINTS = 8;
+const MAX_DOTENV_PREVIEW_BYTES = 64 * 1024;
+const MAX_DOTENV_ITEM_PREVIEW = 16;
 const MAX_CI_WORKFLOW_PREVIEW_ITEMS = 12;
 const MAX_TERMINAL_RECORDING_PREVIEW_BYTES = 128 * 1024;
 const MAX_TERMINAL_RECORDING_EVENT_PREVIEW = 12;
@@ -219,6 +265,8 @@ const MAX_TEST_REPORT_FAILURE_PREVIEW = 8;
 const MAX_TEST_REPORT_DETAIL_PREVIEW = 8;
 const MAX_PYTHON_DEPENDENCY_PREVIEW_BYTES = 128 * 1024;
 const MAX_PYTHON_DEPENDENCY_ITEM_PREVIEW = 16;
+const MAX_PYTHON_PACKAGE_INDEX_CONFIG_PREVIEW_BYTES = 64 * 1024;
+const MAX_PYTHON_PACKAGE_INDEX_CONFIG_ITEM_PREVIEW = 12;
 const MAX_CARGO_MANIFEST_PREVIEW_BYTES = 96 * 1024;
 const MAX_CARGO_MANIFEST_ITEM_PREVIEW = 16;
 const MAX_DART_PUBSPEC_PREVIEW_BYTES = 96 * 1024;
@@ -239,6 +287,8 @@ const MAX_NODE_PACKAGE_MANAGER_CONFIG_PREVIEW_BYTES = 64 * 1024;
 const MAX_NODE_PACKAGE_MANAGER_CONFIG_ITEM_PREVIEW = 16;
 const MAX_JS_TOOLING_CONFIG_PREVIEW_BYTES = 96 * 1024;
 const MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW = 16;
+const MAX_JS_WORKSPACE_CONFIG_PREVIEW_BYTES = 96 * 1024;
+const MAX_JS_WORKSPACE_CONFIG_ITEM_PREVIEW = 16;
 const MAX_JVM_BUILD_CONFIG_PREVIEW_BYTES = 64 * 1024;
 const MAX_JVM_BUILD_CONFIG_ITEM_PREVIEW = 16;
 const MAX_JAVA_BUILD_ARTIFACT_PREVIEW_BYTES = 256 * 1024;
@@ -247,6 +297,8 @@ const MAX_REPOSITORY_GOVERNANCE_PREVIEW_BYTES = 96 * 1024;
 const MAX_REPOSITORY_GOVERNANCE_ITEM_PREVIEW = 16;
 const MAX_SECURITY_ARTIFACT_PREVIEW_BYTES = 128 * 1024;
 const MAX_SECURITY_ARTIFACT_ITEMS = 10;
+const MAX_KEEPASS_DATABASE_PREVIEW_BYTES = 64 * 1024;
+const MAX_KEEPASS_DATABASE_HEADER_FIELDS = 12;
 const MAX_WINDOWS_DRIVER_PACKAGE_PREVIEW_BYTES = 128 * 1024;
 const MAX_WINDOWS_DRIVER_PACKAGE_ITEMS = 16;
 const MAX_BINARY_ARTIFACT_PREVIEW_BYTES = 256 * 1024;
@@ -260,6 +312,8 @@ const MAX_PATCH_CONFLICT_TARGET_BYTES = 256 * 1024;
 const MAX_PATCH_CONTEXT_LINES = 24;
 const MAX_LATEX_PREVIEW_BYTES = 128 * 1024;
 const MAX_LATEX_ITEM_PREVIEW = 16;
+const MAX_REGEX_PATTERN_PREVIEW_BYTES = 64 * 1024;
+const MAX_REGEX_PATTERN_ITEM_PREVIEW = 16;
 const MAX_POWERSHELL_SCRIPT_PREVIEW_BYTES = 96 * 1024;
 const MAX_POWERSHELL_SCRIPT_ITEM_PREVIEW = 16;
 const MAX_BATCH_SCRIPT_PREVIEW_BYTES = 96 * 1024;
@@ -282,12 +336,24 @@ const MAX_WEB_SERVER_CONFIG_PREVIEW_BYTES = 96 * 1024;
 const MAX_WEB_SERVER_CONFIG_ITEM_PREVIEW = 16;
 const MAX_SUPERVISOR_CONFIG_PREVIEW_BYTES = 96 * 1024;
 const MAX_SUPERVISOR_CONFIG_ITEM_PREVIEW = 16;
+const MAX_HOSTS_FILE_PREVIEW_BYTES = 64 * 1024;
+const MAX_HOSTS_FILE_ITEM_PREVIEW = 16;
+const MAX_SSH_CONFIG_PREVIEW_BYTES = 96 * 1024;
+const MAX_SSH_CONFIG_ITEM_PREVIEW = 16;
+const MAX_VPN_CONFIG_PREVIEW_BYTES = 96 * 1024;
+const MAX_VPN_CONFIG_ITEM_PREVIEW = 16;
 const MAX_MBOX_PREVIEW_MESSAGES = 4;
 const MAX_OUTLOOK_MSG_PREVIEW_BYTES = 256 * 1024;
 const MAX_OUTLOOK_MSG_STRING_PREVIEW = 12;
 const MAX_VCARD_CONTACTS = 6;
 const MAX_VCARD_FIELD_PREVIEW = 18;
 const MAX_ICS_EVENT_PREVIEW = 8;
+const MAX_MEETING_TRANSCRIPT_PREVIEW_BYTES = 128 * 1024;
+const MAX_MEETING_TRANSCRIPT_ITEM_PREVIEW = 16;
+const MAX_CALENDAR_CSV_PREVIEW_BYTES = 128 * 1024;
+const MAX_CALENDAR_CSV_EVENT_PREVIEW = 8;
+const MAX_CONTACT_CSV_PREVIEW_BYTES = 128 * 1024;
+const MAX_CONTACT_CSV_CONTACT_PREVIEW = 8;
 const MAX_FONT_PREVIEW_BYTES = 256 * 1024;
 const MAX_FONT_NAME_RECORDS = 8;
 const MAX_ARCHIVE_PREVIEW_BYTES = 1024 * 1024;
@@ -343,6 +409,10 @@ const MAX_LOG_MONITOR_DELTA_BYTES = 64 * 1024;
 const MAX_LOG_MONITOR_LINES = 24;
 const MAX_CHAT_EXPORT_PREVIEW_BYTES = 128 * 1024;
 const MAX_CHAT_EXPORT_MESSAGE_PREVIEW = 8;
+const MAX_CHAT_CSV_EXPORT_PREVIEW_BYTES = 128 * 1024;
+const MAX_CHAT_CSV_EXPORT_MESSAGE_PREVIEW = 8;
+const MAX_CHAT_TEXT_EXPORT_PREVIEW_BYTES = 128 * 1024;
+const MAX_CHAT_TEXT_EXPORT_MESSAGE_PREVIEW = 8;
 const MAX_OUTBOUND_TARGET_LENGTH = 240;
 const MAX_OUTBOUND_SUBJECT_LENGTH = 160;
 const MAX_OUTBOUND_BODY_LENGTH = 4000;
@@ -371,6 +441,7 @@ const SKIPPED_DIRECTORIES = new Set([
 
 const IMPORTABLE_EXTENSIONS = new Set([
   ".7z",
+  ".aac",
   ".aof",
   ".ansible-inventory",
   ".aab",
@@ -382,13 +453,29 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".bicep",
   ".bicepparam",
   ".blg",
+  ".browser-autofill.csv",
+  ".browser-autofill.json",
+  ".browser-passwords.csv",
   ".browser-cookies.txt",
+  ".browser-bookmarks.json",
+  ".browser-downloads.csv",
+  ".browser-downloads.json",
+  ".browser-downloads.sqlite",
+  ".browser-extension-inventory.json",
+  ".browser-extension-manifest.json",
+  ".browser-history.csv",
+  ".browser-history.json",
+  ".browser-history.sqlite",
+  ".browser-preferences.json",
+  ".browser-session.json",
+  ".browser-storage.json",
   ".bru",
   ".c",
   ".cabal",
   ".cat",
   ".cast",
   ".cc",
+  ".calendar.csv",
   ".checkstyle.xml",
   ".cjs",
   ".cmd",
@@ -397,11 +484,15 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".codeowners",
   ".cpuprofile",
   ".chat-export.json",
+  ".chat-export.csv",
+  ".chat-export.txt",
   ".cloudformation.json",
   ".cloudformation.yaml",
   ".compile_commands.json",
   ".composer.json",
+  ".contacts.csv",
   ".cpp",
+  ".crash",
   ".cfg",
   ".cs",
   ".csproj",
@@ -420,6 +511,7 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".doc",
   ".docm",
   ".docx",
+  ".dotlottie",
   ".dot",
   ".drawio",
   ".dll",
@@ -434,6 +526,8 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".asc",
   ".androidmanifest.xml",
   ".logcat",
+  ".oslog",
+  ".syslog",
   ".appx",
   ".appxmanifest",
   ".appxbundle",
@@ -441,11 +535,14 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".atom",
   ".attestation",
   ".attestation.json",
+  ".avro",
+  ".avsc",
   ".cer",
   ".cdx.json",
   ".checksum",
   ".crt",
   ".der",
+  ".desktop",
   ".fsproj",
   ".feather",
   ".flac",
@@ -478,11 +575,13 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".exe",
   ".htm",
   ".html",
+  ".hosts",
   ".h",
   ".hpp",
   ".http",
   ".iis-web.config",
   ".web-server.conf",
+  ".vpn-config",
       ".ini",
   ".istanbul-coverage.json",
   ".inf",
@@ -490,8 +589,10 @@ const IMPORTABLE_EXTENSIONS = new Set([
       ".intoto.jsonl",
   ".ipynb",
   ".ipa",
+  ".ips",
   ".ical",
   ".ics",
+      ".vcs",
       ".ico",
       ".jar",
       ".war",
@@ -512,8 +613,10 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".trace.json",
   ".js",
   ".js-tooling-config",
+  ".js-workspace-config",
   ".jsx",
   ".key",
+  ".kdbx",
   ".kml",
   ".jpeg",
   ".jvm.config",
@@ -526,6 +629,10 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".log",
   ".lock",
   ".lnk",
+  ".llms-full.txt",
+  ".llms.txt",
+  ".lottie.json",
+  ".dotlottie",
   ".lua",
   ".gz",
   ".makefile",
@@ -549,6 +656,7 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".m4v",
   ".mermaid",
   ".json",
+  ".jsonfeed",
   ".jsonl",
   ".kt",
   ".kustomization.yaml",
@@ -562,6 +670,7 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".mdmp",
   ".mcp-servers.json",
   ".mhtml",
+  ".meeting-transcript.txt",
   ".mbox",
   ".metrics",
   ".netlog.json",
@@ -590,6 +699,7 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".package.yaml",
   ".packages.config",
   ".pipfile",
+  ".pypirc",
   ".pdf",
   ".php",
   ".podfile",
@@ -618,6 +728,8 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".rar",
   ".rdb",
   ".rest",
+  ".regex",
+  ".regexp",
   ".reg",
   ".diff",
   ".rss",
@@ -631,6 +743,7 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".scss",
   ".security-audit.json",
   ".service",
+  ".source-map.json",
   ".supervisord.conf",
   ".sh",
   ".sha1",
@@ -641,6 +754,7 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".sitemap.xml",
   ".sitemap.xml.gz",
   ".socket",
+  ".ssh-config",
   ".sql",
   ".stack.yaml",
   ".scala",
@@ -694,7 +808,10 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".wav",
   ".webm",
   ".webp",
+  ".warc",
+  ".warc.gz",
   ".webloc",
+  ".webmanifest",
   ".wer",
   ".woff",
   ".woff2",
@@ -936,6 +1053,7 @@ interface ChannelLogCursorStore {
 interface LogMonitorTarget {
   path: string;
   label?: string;
+  retentionPolicy?: string;
 }
 
 export function listChannelAdapters(workspacePath?: string): DesktopChannelAdapterListResult {
@@ -2004,6 +2122,10 @@ function resolveLogMonitorTargets(
 }
 
 function parseLogMonitorConfig(workspacePath: string, parsed: unknown): LogMonitorTarget[] {
+  const defaultRetentionPolicy =
+    parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parseLogMonitorRetentionPolicy(parsed as Record<string, unknown>)
+      : undefined;
   const records = Array.isArray(parsed)
     ? parsed
     : parsed && typeof parsed === "object"
@@ -2024,9 +2146,40 @@ function parseLogMonitorConfig(workspacePath: string, parsed: unknown): LogMonit
       const target = normalizeLogMonitorTarget(workspacePath, resolve(workspacePath, rawPath));
       if (!target) return null;
       const label = getSnapshotString(item, "label") || getSnapshotString(item, "name");
-      return label ? { ...target, label: clampSingleLine(label, 160) } : target;
+      const retentionPolicy = parseLogMonitorRetentionPolicy(item) || defaultRetentionPolicy;
+      return {
+        ...target,
+        ...(label ? { label: clampSingleLine(label, 160) } : {}),
+        ...(retentionPolicy ? { retentionPolicy } : {}),
+      };
     })
     .filter((target): target is LogMonitorTarget => Boolean(target));
+}
+
+function parseLogMonitorRetentionPolicy(record: Record<string, unknown>): string | undefined {
+  const retentionRecord =
+    record.retention && typeof record.retention === "object" && !Array.isArray(record.retention)
+      ? (record.retention as Record<string, unknown>)
+      : record.retentionPolicy && typeof record.retentionPolicy === "object" && !Array.isArray(record.retentionPolicy)
+        ? (record.retentionPolicy as Record<string, unknown>)
+        : record;
+  const fields: string[] = [];
+  const days =
+    getSnapshotNumber(retentionRecord, "retentionDays") ??
+    getSnapshotNumber(retentionRecord, "keepDays") ??
+    getSnapshotNumber(retentionRecord, "deleteAfterDays");
+  if (typeof days === "number" && days >= 0) fields.push(`days=${Math.min(days, 3650)}`);
+  const maxBytes =
+    getSnapshotNumber(retentionRecord, "maxBytes") ??
+    getSnapshotNumber(retentionRecord, "maxSizeBytes");
+  if (typeof maxBytes === "number" && maxBytes >= 0) fields.push(`maxBytes=${Math.min(maxBytes, 1024 * 1024 * 1024 * 1024)}`);
+  const maxFiles =
+    getSnapshotNumber(retentionRecord, "maxFiles") ??
+    getSnapshotNumber(retentionRecord, "keepFiles");
+  if (typeof maxFiles === "number" && maxFiles >= 0) fields.push(`maxFiles=${Math.min(maxFiles, 100000)}`);
+  const action = getSnapshotString(retentionRecord, "action") || getSnapshotString(retentionRecord, "mode");
+  if (action) fields.push(`action=${clampSingleLine(action, 32)}`);
+  return fields.length > 0 ? fields.join(", ") : undefined;
 }
 
 function normalizeLogMonitorTarget(
@@ -2075,6 +2228,7 @@ function createLogMonitorDeltaItem(
     previous ? previousOffset : null,
     readStart,
     target.label || basename(target.path),
+    target.retentionPolicy,
   );
   const cursor: ChannelLogCursorEntry = {
     path: target.path,
@@ -2120,6 +2274,7 @@ function summarizeLogMonitorDelta(
   previousOffset: number | null,
   readStart: number,
   label: string,
+  retentionPolicy?: string,
 ): string {
   const normalized = normalizeTextPreview(raw);
   const lines = normalized.split("\n").filter((line) => line.trim().length > 0);
@@ -2134,6 +2289,9 @@ function summarizeLogMonitorDelta(
   return [
     `Log monitor delta (${formatBytes(size)}).`,
     cursorLine,
+    retentionPolicy
+      ? `Retention policy reviewed: ${retentionPolicy}; no log deletion, rotation, truncation, or retention enforcement was performed.`
+      : "Retention policy reviewed: none declared in local handoff; no log deletion, rotation, truncation, or retention enforcement was performed.",
     `Delta lines in bounded window: ${lines.length}; notable warning/error/failure lines: ${interesting.length}.`,
     previewLines.length > 0 ? previewLines.join("\n") : "No new readable log lines were found in this bounded cursor window.",
     "Ready for explicit attachment after visible review; no tailing process, command execution, credential lookup, network call, external log service, or provider send was performed.",
@@ -2884,6 +3042,231 @@ function summarizeCalendarIcsEvent(record: Record<string, unknown>, index: numbe
     .join(" | ")
     .replace(/\s+/g, " ")
     .slice(0, 960);
+}
+
+interface CalendarCsvEventPreview {
+  title: string;
+  startsAt: string;
+  endsAt: string;
+  location: string;
+  attendees: string;
+  organizer: string;
+  status: string;
+}
+
+function summarizeCalendarCsvFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_CALENDAR_CSV_PREVIEW_BYTES)).toString("utf8");
+    const preview = parseCalendarCsvPreview(raw);
+    return [
+      `Calendar CSV agenda preview (${formatBytes(size)}).`,
+      `Events in bounded preview: ${preview.eventCount}${preview.truncated ? "+" : ""}.`,
+      `Detected columns: ${preview.columns.length > 0 ? preview.columns.join(", ") : "none detected"}.`,
+      preview.events.length > 0
+        ? preview.events.map((event, index) => summarizeCalendarCsvEvent(event, index)).join("\n")
+        : "No readable calendar event rows were found in the bounded preview.",
+      "Ready for explicit attachment after visible review; calendar CSV data was parsed from bounded workspace-local bytes only, likely secrets were redacted, event descriptions were not expanded, and no calendar app access, provider API call, schedule mutation, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Calendar CSV agenda ready for explicit attachment (${formatBytes(size)}).`,
+      "No calendar app access, provider API call, schedule mutation, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseCalendarCsvPreview(raw: string): {
+  columns: string[];
+  events: CalendarCsvEventPreview[];
+  eventCount: number;
+  truncated: boolean;
+} {
+  const rows = parseDelimitedPreviewRows(raw, ",");
+  const header = rows[0] ?? [];
+  const dataRows = rows.slice(1);
+  const columns = header
+    .map((column) => clampSingleLine(column, 80))
+    .filter(Boolean)
+    .slice(0, 16);
+  const events = dataRows
+    .map((row) => toCalendarCsvEventPreview(header, row))
+    .filter((event) => event.title || event.startsAt || event.endsAt || event.location)
+    .slice(0, MAX_CALENDAR_CSV_EVENT_PREVIEW);
+  return {
+    columns,
+    events,
+    eventCount: dataRows.filter((row) => row.some(Boolean)).length,
+    truncated: raw.length >= MAX_CALENDAR_CSV_PREVIEW_BYTES || dataRows.length > events.length,
+  };
+}
+
+function toCalendarCsvEventPreview(header: string[], row: string[]): CalendarCsvEventPreview {
+  const read = (...names: string[]): string => readCalendarCsvField(header, row, names);
+  return {
+    title: read("subject", "summary", "title", "event", "event title", "name"),
+    startsAt: combineCalendarCsvDateTime(read("start date"), read("start time")) || read("start", "starts at", "begin", "dtstart"),
+    endsAt: combineCalendarCsvDateTime(read("end date"), read("end time")) || read("end", "ends at", "finish", "dtend"),
+    location: read("location", "where", "place", "room"),
+    attendees: read("attendees", "required attendees", "optional attendees", "guests", "participants"),
+    organizer: read("organizer", "creator", "owner", "from"),
+    status: read("show as", "status", "busy status", "availability"),
+  };
+}
+
+function readCalendarCsvField(header: string[], row: string[], names: string[]): string {
+  const normalizedNames = new Set(names.map(normalizeCalendarCsvColumnName));
+  for (let index = 0; index < header.length; index += 1) {
+    if (!normalizedNames.has(normalizeCalendarCsvColumnName(header[index] || ""))) continue;
+    const value = row[index] ?? "";
+    if (value.trim()) return clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(value)), 160);
+  }
+  return "";
+}
+
+function combineCalendarCsvDateTime(date: string, time: string): string {
+  return [date, time].filter(Boolean).join(" ").trim();
+}
+
+function normalizeCalendarCsvColumnName(value: string): string {
+  return value.toLowerCase().replace(/^\uFEFF/, "").replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function summarizeCalendarCsvEvent(event: CalendarCsvEventPreview, index: number): string {
+  const fields = [
+    event.title ? `Title: ${event.title}` : "",
+    event.startsAt ? `Starts: ${event.startsAt}` : "",
+    event.endsAt ? `Ends: ${event.endsAt}` : "",
+    event.location ? `Location: ${event.location}` : "",
+    event.attendees ? `Attendees: ${event.attendees}` : "",
+    event.organizer ? `Organizer: ${event.organizer}` : "",
+    event.status ? `Status: ${event.status}` : "",
+  ].filter(Boolean);
+  return [`Event ${index + 1}`, ...fields].join(" | ").slice(0, 720);
+}
+
+interface ContactCsvPreview {
+  contacts: ContactCsvContactPreview[];
+  contactCount: number;
+  columns: string[];
+  emailDomains: string[];
+  phoneFields: string[];
+  truncated: boolean;
+}
+
+interface ContactCsvContactPreview {
+  name: string;
+  organization: string;
+  title: string;
+  emailDomain: string;
+  phoneEvidence: string;
+  location: string;
+}
+
+function summarizeContactCsvFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_CONTACT_CSV_PREVIEW_BYTES)).toString("utf8");
+    const preview = parseContactCsvPreview(raw);
+    const contacts =
+      preview.contacts.length > 0
+        ? preview.contacts.map((contact, index) => summarizeContactCsvContact(contact, index)).join("\n")
+        : "No readable contact rows were found in the bounded preview.";
+    return [
+      `Contact CSV export preview (${formatBytes(size)}).`,
+      `Contacts in bounded preview: ${preview.contactCount}${preview.truncated ? "+" : ""}.`,
+      `Detected columns: ${preview.columns.length > 0 ? preview.columns.join(", ") : "none detected"}.`,
+      `Email domains: ${preview.emailDomains.length > 0 ? preview.emailDomains.join(", ") : "none detected"}.`,
+      `Phone fields: ${preview.phoneFields.length > 0 ? preview.phoneFields.join(", ") : "none detected"}.`,
+      contacts,
+      "Ready for explicit attachment after visible review; contact CSV data was parsed from bounded workspace-local bytes only, email local-parts, phone numbers, street addresses, notes, and likely secrets were redacted, and no contacts app access, address book sync, account lookup, contact write, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Contact CSV export ready for explicit attachment (${formatBytes(size)}).`,
+      "No contacts app access, address book sync, account lookup, contact write, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseContactCsvPreview(raw: string): ContactCsvPreview {
+  const rows = parseDelimitedPreviewRows(raw, ",");
+  const header = rows[0] ?? [];
+  const dataRows = rows.slice(1);
+  const contacts = dataRows
+    .map((row) => toContactCsvContactPreview(header, row))
+    .filter((contact) => contact.name || contact.organization || contact.emailDomain || contact.phoneEvidence)
+    .slice(0, MAX_CONTACT_CSV_CONTACT_PREVIEW);
+  const emailDomains = uniquePreviewValues(contacts.map((contact) => contact.emailDomain).filter(Boolean), MAX_CONTACT_CSV_CONTACT_PREVIEW);
+  const phoneFields = uniquePreviewValues(contacts.map((contact) => contact.phoneEvidence.split(":")[0]?.trim() ?? "").filter(Boolean), MAX_CONTACT_CSV_CONTACT_PREVIEW);
+  return {
+    columns: header.map((column) => clampSingleLine(column, 80)).filter(Boolean).slice(0, 16),
+    contacts,
+    contactCount: dataRows.filter((row) => row.some(Boolean)).length,
+    emailDomains,
+    phoneFields,
+    truncated: raw.length >= MAX_CONTACT_CSV_PREVIEW_BYTES || dataRows.length > contacts.length,
+  };
+}
+
+function toContactCsvContactPreview(header: string[], row: string[]): ContactCsvContactPreview {
+  const name =
+    readContactCsvField(header, row, ["display name", "full name", "name", "file as"]) ||
+    [readContactCsvField(header, row, ["first name", "given name"]), readContactCsvField(header, row, ["last name", "surname", "family name"])].filter(Boolean).join(" ");
+  const email = readContactCsvField(header, row, ["email", "e-mail", "email address", "e-mail address", "primary email", "e-mail 1 address"]);
+  const city = readContactCsvField(header, row, ["city", "business city", "home city"]);
+  const country = readContactCsvField(header, row, ["country", "business country", "home country"]);
+  return {
+    name,
+    organization: readContactCsvField(header, row, ["company", "organization", "org", "business", "department"]),
+    title: readContactCsvField(header, row, ["job title", "title", "role", "position"]),
+    emailDomain: summarizeContactEmailDomain(email),
+    phoneEvidence: summarizeContactCsvPhone(header, row),
+    location: [city, country].filter(Boolean).join(", "),
+  };
+}
+
+function readContactCsvField(header: string[], row: string[], names: string[]): string {
+  const normalizedNames = new Set(names.map(normalizeContactCsvColumnName));
+  for (let index = 0; index < header.length; index += 1) {
+    if (!normalizedNames.has(normalizeContactCsvColumnName(header[index] || ""))) continue;
+    const value = row[index] ?? "";
+    if (value.trim()) return clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(value)), 160);
+  }
+  return "";
+}
+
+function summarizeContactEmailDomain(value: string): string {
+  const match = value.match(/@([a-z0-9.-]+\.[a-z]{2,})/i);
+  if (!match) return "";
+  return `*@${match[1].toLowerCase()}`;
+}
+
+function summarizeContactCsvPhone(header: string[], row: string[]): string {
+  for (let index = 0; index < header.length; index += 1) {
+    const normalized = normalizeContactCsvColumnName(header[index] || "");
+    if (!/\b(phone|mobile|telephone|tel|fax)\b/.test(normalized)) continue;
+    const value = row[index] ?? "";
+    const digits = value.replace(/\D/g, "");
+    if (!digits) continue;
+    const label = clampSingleLine(header[index] || "phone", 40);
+    return `${label}: <redacted ${digits.length} digits>`;
+  }
+  return "";
+}
+
+function normalizeContactCsvColumnName(value: string): string {
+  return value.toLowerCase().replace(/^\uFEFF/, "").replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function summarizeContactCsvContact(contact: ContactCsvContactPreview, index: number): string {
+  const fields = [
+    contact.name ? `Name: ${contact.name}` : "",
+    contact.organization ? `Organization: ${contact.organization}` : "",
+    contact.title ? `Title: ${contact.title}` : "",
+    contact.emailDomain ? `Email domain: ${contact.emailDomain}` : "",
+    contact.phoneEvidence ? `Phone: ${contact.phoneEvidence}` : "",
+    contact.location ? `Location: ${contact.location}` : "",
+  ].filter(Boolean);
+  return [`Contact ${index + 1}`, ...fields].join(" | ").slice(0, 720);
 }
 
 function getWorkspaceConnectorSnapshotRecords(
@@ -3953,6 +4336,15 @@ function getImportMime(filePath: string, extension: string): string {
   if (isChatExportJsonFile(filePath, extension)) {
     return "application/vnd.drsai.chat-export+json";
   }
+  if (isSourceMapFile(filePath, extension)) {
+    return "application/vnd.drsai.source-map+json";
+  }
+  if (isLottieAnimationJsonFile(filePath, extension)) {
+    return "application/vnd.lottie+json";
+  }
+  if (extension === ".dotlottie") {
+    return "application/vnd.lottie+zip";
+  }
   return getMime(extension);
 }
 
@@ -3999,6 +4391,18 @@ function getImportExtension(filePath: string): string {
     return ".mailmap";
   }
   if (
+    normalizedPath.endsWith("/.ssh/config") ||
+    name === "ssh_config" ||
+    name === "ssh-config" ||
+    name.endsWith(".ssh-config") ||
+    name === "known_hosts" ||
+    name.endsWith(".known_hosts") ||
+    name === "authorized_keys" ||
+    name.endsWith(".authorized_keys")
+  ) {
+    return ".ssh-config";
+  }
+  if (
     name === "license" ||
     name === "license.txt" ||
     name === "license.md" ||
@@ -4025,6 +4429,9 @@ function getImportExtension(filePath: string): string {
   }
   if (name === ".npmignore") {
     return ".npmignore";
+  }
+  if (name === ".pypirc" || name.endsWith(".pypirc")) {
+    return ".pypirc";
   }
   if (name === "composer.json") {
     return ".composer.json";
@@ -4077,8 +4484,40 @@ function getImportExtension(filePath: string): string {
   if (name === "supervisord.conf" || name.endsWith(".supervisord.conf")) {
     return ".supervisord.conf";
   }
+  if (
+    name === ".htaccess" ||
+    name === "nginx.conf" ||
+    name.endsWith(".nginx.conf") ||
+    name === "httpd.conf" ||
+    name === "apache.conf" ||
+    name.endsWith(".apache.conf") ||
+    name.endsWith(".vhost.conf")
+  ) {
+    return ".web-server.conf";
+  }
+  if (name === "hosts" || name === "hosts.txt" || name.endsWith(".hosts") || name.endsWith(".hosts.txt")) {
+    return ".hosts";
+  }
+  if (
+    name === "wireguard.conf" ||
+    name.endsWith(".wireguard.conf") ||
+    name.endsWith(".wg.conf") ||
+    /^wg[a-z0-9_.-]*\.conf$/i.test(name) ||
+    name === "client.ovpn" ||
+    name.endsWith(".ovpn") ||
+    name.endsWith(".openvpn.conf")
+  ) {
+    return ".vpn-config";
+  }
   if (name === "latexmkrc" || name === ".latexmkrc") {
     return ".latexmkrc";
+  }
+  if (
+    name.endsWith(".regex.txt") ||
+    name.endsWith(".regexp.txt") ||
+    name.endsWith(".patterns.txt")
+  ) {
+    return ".regex";
   }
   if (
     name === "dockerfile" ||
@@ -4097,18 +4536,271 @@ function getImportExtension(filePath: string): string {
   if (name === "robots.txt" || name.endsWith(".robots.txt")) {
     return ".robots.txt";
   }
+  if (name === "security.txt" || name.endsWith(".security.txt")) {
+    return ".security.txt";
+  }
+  if (name === "llms-full.txt" || name.endsWith(".llms-full.txt")) {
+    return ".llms-full.txt";
+  }
+  if (name === "llms.txt" || name.endsWith(".llms.txt")) {
+    return ".llms.txt";
+  }
+  if (
+    name === "bookmarks" ||
+    name === "bookmarks.json" ||
+    name === "browser-bookmarks.json" ||
+    name.endsWith(".bookmarks.json") ||
+    name.endsWith("-bookmarks.json")
+  ) {
+    return ".browser-bookmarks.json";
+  }
   if (
     name === "cookies.txt" ||
     name.endsWith(".cookies.txt") ||
+    name.endsWith("-cookies.txt") ||
     name === ".netscape-cookies.txt"
   ) {
     return ".browser-cookies.txt";
+  }
+  if (
+    name === "autofill.csv" ||
+    name === "browser-autofill.csv" ||
+    name === "form-autofill.csv" ||
+    name === "form-data.csv" ||
+    name.endsWith(".autofill.csv") ||
+    name.endsWith("-autofill.csv")
+  ) {
+    return ".browser-autofill.csv";
+  }
+  if (
+    name === "autofill.json" ||
+    name === "browser-autofill.json" ||
+    name === "form-autofill.json" ||
+    name === "form-data.json" ||
+    name.endsWith(".autofill.json") ||
+    name.endsWith("-autofill.json")
+  ) {
+    return ".browser-autofill.json";
+  }
+  if (
+    name === "calendar.csv" ||
+    name === "calendar-export.csv" ||
+    name === "calendar-agenda.csv" ||
+    name === "agenda.csv" ||
+    name === "events.csv" ||
+    name === "outlook-calendar.csv" ||
+    name === "google-calendar.csv" ||
+    name.endsWith(".calendar.csv") ||
+    name.endsWith("-calendar.csv") ||
+    name.endsWith(".agenda.csv") ||
+    name.endsWith("-agenda.csv")
+  ) {
+    return ".calendar.csv";
+  }
+  if (
+    name === "contacts.csv" ||
+    name === "contact-list.csv" ||
+    name === "address-book.csv" ||
+    name === "people.csv" ||
+    name === "outlook-contacts.csv" ||
+    name === "google-contacts.csv" ||
+    name.endsWith(".contacts.csv") ||
+    name.endsWith("-contacts.csv") ||
+    name.endsWith(".address-book.csv") ||
+    name.endsWith("-address-book.csv")
+  ) {
+    return ".contacts.csv";
+  }
+  if (
+    name === "history.csv" ||
+    name === "browser-history.csv" ||
+    name.endsWith(".history.csv") ||
+    name.endsWith("-history.csv")
+  ) {
+    return ".browser-history.csv";
+  }
+  if (
+    name === "history.json" ||
+    name === "browser-history.json" ||
+    name.endsWith(".history.json") ||
+    name.endsWith("-history.json")
+  ) {
+    return ".browser-history.json";
+  }
+  if (
+    name === "history" ||
+    name === "browser-history" ||
+    name === "chrome-history" ||
+    name === "edge-history" ||
+    name === "history.sqlite" ||
+    name === "history.sqlite3" ||
+    name === "history.db" ||
+    name === "browser-history.sqlite" ||
+    name === "browser-history.sqlite3" ||
+    name === "browser-history.db" ||
+    name === "chrome-history.sqlite" ||
+    name === "chrome-history.sqlite3" ||
+    name === "chrome-history.db" ||
+    name === "edge-history.sqlite" ||
+    name === "edge-history.sqlite3" ||
+    name === "edge-history.db" ||
+    name.endsWith(".history.sqlite") ||
+    name.endsWith(".history.sqlite3") ||
+    name.endsWith(".history.db") ||
+    name.endsWith("-history.sqlite") ||
+    name.endsWith("-history.sqlite3") ||
+    name.endsWith("-history.db")
+  ) {
+    return ".browser-history.sqlite";
+  }
+  if (
+    name === "downloads.csv" ||
+    name === "browser-downloads.csv" ||
+    name.endsWith(".downloads.csv") ||
+    name.endsWith("-downloads.csv")
+  ) {
+    return ".browser-downloads.csv";
+  }
+  if (
+    name === "downloads.json" ||
+    name === "browser-downloads.json" ||
+    name.endsWith(".downloads.json") ||
+    name.endsWith("-downloads.json")
+  ) {
+    return ".browser-downloads.json";
+  }
+  if (
+    name === "downloads" ||
+    name === "browser-downloads" ||
+    name === "chrome-downloads" ||
+    name === "edge-downloads" ||
+    name === "downloads.sqlite" ||
+    name === "downloads.sqlite3" ||
+    name === "downloads.db" ||
+    name === "browser-downloads.sqlite" ||
+    name === "browser-downloads.sqlite3" ||
+    name === "browser-downloads.db" ||
+    name === "chrome-downloads.sqlite" ||
+    name === "chrome-downloads.sqlite3" ||
+    name === "chrome-downloads.db" ||
+    name === "edge-downloads.sqlite" ||
+    name === "edge-downloads.sqlite3" ||
+    name === "edge-downloads.db" ||
+    name.endsWith(".downloads.sqlite") ||
+    name.endsWith(".downloads.sqlite3") ||
+    name.endsWith(".downloads.db") ||
+    name.endsWith("-downloads.sqlite") ||
+    name.endsWith("-downloads.sqlite3") ||
+    name.endsWith("-downloads.db")
+  ) {
+    return ".browser-downloads.sqlite";
+  }
+  if (
+    name === "preferences" ||
+    name === "preferences.json" ||
+    name === "browser-preferences.json" ||
+    name === "chrome-preferences.json" ||
+    name === "edge-preferences.json" ||
+    name.endsWith(".preferences.json") ||
+    name.endsWith("-preferences.json")
+  ) {
+    return ".browser-preferences.json";
+  }
+  if (
+    name === "local-storage.json" ||
+    name === "session-storage.json" ||
+    name === "browser-storage.json" ||
+    name === "chrome-storage.json" ||
+    name === "edge-storage.json" ||
+    name.endsWith(".local-storage.json") ||
+    name.endsWith("-local-storage.json") ||
+    name.endsWith(".session-storage.json") ||
+    name.endsWith("-session-storage.json") ||
+    name.endsWith(".browser-storage.json") ||
+    name.endsWith("-browser-storage.json")
+  ) {
+    return ".browser-storage.json";
+  }
+  if (
+    name === "extensions.json" ||
+    name === "browser-extensions.json" ||
+    name === "chrome-extensions.json" ||
+    name === "edge-extensions.json" ||
+    name === "extension-inventory.json" ||
+    name === "browser-extension-inventory.json" ||
+    name.endsWith(".extensions.json") ||
+    name.endsWith("-extensions.json") ||
+    name.endsWith(".extension-inventory.json") ||
+    name.endsWith("-extension-inventory.json")
+  ) {
+    return ".browser-extension-inventory.json";
+  }
+  if (
+    name === "extension-manifest.json" ||
+    name === "browser-extension-manifest.json" ||
+    name === "chrome-extension-manifest.json" ||
+    name === "edge-extension-manifest.json" ||
+    name.endsWith(".extension-manifest.json") ||
+    name.endsWith("-extension-manifest.json")
+  ) {
+    return ".browser-extension-manifest.json";
+  }
+  if (
+    name === "tabs.json" ||
+    name === "browser-tabs.json" ||
+    name === "session-tabs.json" ||
+    name === "browser-session.json" ||
+    name === "chrome-tabs.json" ||
+    name === "edge-tabs.json" ||
+    name.endsWith(".tabs.json") ||
+    name.endsWith("-tabs.json") ||
+    name.endsWith(".session-tabs.json") ||
+    name.endsWith("-session-tabs.json") ||
+    name.endsWith(".browser-session.json") ||
+    name.endsWith("-browser-session.json")
+  ) {
+    return ".browser-session.json";
   }
   if (name === "sitemap.xml") {
     return ".sitemap.xml";
   }
   if (name === "sitemap.xml.gz") {
     return ".sitemap.xml.gz";
+  }
+  if (name.endsWith(".warc.gz")) {
+    return ".warc.gz";
+  }
+  if (
+    name === "feed.json" ||
+    name === "jsonfeed.json" ||
+    name.endsWith(".jsonfeed.json")
+  ) {
+    return ".jsonfeed";
+  }
+  if (
+    name === "source-map.json" ||
+    name === "sourcemap.json" ||
+    name.endsWith(".source-map.json") ||
+    name.endsWith(".sourcemap.json") ||
+    name.endsWith(".js.map") ||
+    name.endsWith(".mjs.map") ||
+    name.endsWith(".cjs.map") ||
+    name.endsWith(".css.map") ||
+    name.endsWith(".map")
+  ) {
+    return ".source-map.json";
+  }
+  if (
+    name === "lottie.json" ||
+    name === "bodymovin.json" ||
+    name === "animation.json" ||
+    name.endsWith(".lottie.json") ||
+    name.endsWith(".bodymovin.json")
+  ) {
+    return ".lottie.json";
+  }
+  if (name.endsWith(".dotlottie") || name.endsWith(".lottie")) {
+    return ".dotlottie";
   }
   if (name.endsWith(".tar.gz")) {
     return ".tar.gz";
@@ -4134,13 +4826,67 @@ function getImportExtension(filePath: string): string {
     name === "teams-messages.json" ||
     name === "discord-export.json" ||
     name === "discord-messages.json" ||
+    name === "telegram-export.json" ||
+    name === "telegram-messages.json" ||
     name === "chatgpt-conversations.json" ||
+    name === "claude-conversations.json" ||
+    name === "claude-export.json" ||
+    name === "anthropic-conversations.json" ||
     name.endsWith(".slack-export.json") ||
     name.endsWith(".teams-export.json") ||
     name.endsWith(".discord-export.json") ||
+    name.endsWith(".telegram-export.json") ||
+    name.endsWith(".claude-export.json") ||
+    name.endsWith(".anthropic-conversations.json") ||
     name.endsWith(".chat-export.json")
   ) {
     return ".chat-export.json";
+  }
+  if (
+    name === "slack-export.csv" ||
+    name === "slack-messages.csv" ||
+    name === "teams-export.csv" ||
+    name === "teams-messages.csv" ||
+    name === "discord-export.csv" ||
+    name === "discord-messages.csv" ||
+    name === "telegram-export.csv" ||
+    name === "telegram-messages.csv" ||
+    name === "chat-export.csv" ||
+    name.endsWith(".slack-export.csv") ||
+    name.endsWith(".teams-export.csv") ||
+    name.endsWith(".discord-export.csv") ||
+    name.endsWith(".telegram-export.csv") ||
+    name.endsWith(".chat-export.csv")
+  ) {
+    return ".chat-export.csv";
+  }
+  if (
+    name === "whatsapp-chat.txt" ||
+    name === "whatsapp-export.txt" ||
+    name === "whatsapp-messages.txt" ||
+    name.endsWith(".whatsapp-chat.txt") ||
+    name.endsWith(".whatsapp-export.txt") ||
+    name.endsWith(".whatsapp-messages.txt") ||
+    name.endsWith(".chat-export.txt")
+  ) {
+    return ".chat-export.txt";
+  }
+  if (
+    name === "meeting-transcript.txt" ||
+    name === "meeting-notes-transcript.txt" ||
+    name === "zoom-transcript.txt" ||
+    name === "zoom-meeting-transcript.txt" ||
+    name === "teams-transcript.txt" ||
+    name === "teams-meeting-transcript.txt" ||
+    name === "google-meet-transcript.txt" ||
+    name === "meet-transcript.txt" ||
+    name.endsWith(".meeting-transcript.txt") ||
+    name.endsWith("-meeting-transcript.txt") ||
+    name.endsWith(".zoom-transcript.txt") ||
+    name.endsWith(".teams-transcript.txt") ||
+    name.endsWith(".google-meet-transcript.txt")
+  ) {
+    return ".meeting-transcript.txt";
   }
   if (
     name === "snyk.json" ||
@@ -4280,6 +5026,15 @@ function getImportExtension(filePath: string): string {
     name === "playwright.config.ts"
   ) {
     return ".js-tooling-config";
+  }
+  if (
+    name === "pnpm-workspace.yaml" ||
+    name === "pnpm-workspace.yml" ||
+    name === "turbo.json" ||
+    name === "turbo.jsonc" ||
+    name === "nx.json"
+  ) {
+    return ".js-workspace-config";
   }
   if (
     name === "lhr.json" ||
@@ -4448,6 +5203,16 @@ function getImportExtension(filePath: string): string {
     return ".androidmanifest.xml";
   }
   if (
+    name === "chrome-passwords.csv" ||
+    name === "edge-passwords.csv" ||
+    name === "browser-passwords.csv" ||
+    name === "passwords.csv" ||
+    name.endsWith("-passwords.csv") ||
+    name.endsWith(".passwords.csv")
+  ) {
+    return ".browser-passwords.csv";
+  }
+  if (
     name === "logcat.txt" ||
     name === "logcat.log" ||
     name === "adb-logcat.log" ||
@@ -4455,6 +5220,17 @@ function getImportExtension(filePath: string): string {
     name.endsWith(".logcat.log")
   ) {
     return ".logcat";
+  }
+  if (
+    name === "system.log" ||
+    name === "oslog.log" ||
+    name === "apple-system.log" ||
+    name === "apple-unified.log" ||
+    name.endsWith(".oslog") ||
+    name.endsWith(".oslog.log") ||
+    name.endsWith(".syslog")
+  ) {
+    return ".oslog";
   }
   if (
     name === "powershell-transcript.txt" ||
@@ -4467,6 +5243,12 @@ function getImportExtension(filePath: string): string {
   if (name === "info.plist") {
     return ".info.plist";
   }
+  if (name.endsWith(".crash")) {
+    return ".crash";
+  }
+  if (name.endsWith(".ips")) {
+    return ".ips";
+  }
   if (name === "sha256sums" || name === "sha512sums" || name === "checksums" || name === "checksums.txt") {
     return ".checksum";
   }
@@ -4475,10 +5257,10 @@ function getImportExtension(filePath: string): string {
 
 function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
   if ([".bmp", ".gif", ".ico", ".jpg", ".jpeg", ".png", ".svg", ".tif", ".tiff", ".webp"].includes(extension)) return "image";
-  if ([".flac", ".m4a", ".mp3", ".ogg", ".wav"].includes(extension)) return "audio";
+  if ([".aac", ".flac", ".m4a", ".mp3", ".ogg", ".wav"].includes(extension)) return "audio";
   if ([".avi", ".m4v", ".mkv", ".mov", ".mp4", ".webm"].includes(extension)) return "video";
-  if ([".srt", ".vtt"].includes(extension)) return "voice_transcript";
-  if (extension === ".ics" || extension === ".ical") return "meeting";
+  if ([".srt", ".vtt", ".meeting-transcript.txt"].includes(extension)) return "voice_transcript";
+  if (extension === ".ics" || extension === ".ical" || extension === ".vcs" || extension === ".calendar.csv") return "meeting";
   if ([".aof", ".db", ".dbml", ".prisma", ".rdb", ".sqlite", ".sqlite3", ".sql"].includes(extension)) return "database_table";
   if (
     [
@@ -4487,6 +5269,7 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
       ".apk",
       ".androidmanifest.xml",
       ".logcat",
+      ".oslog",
       ".info.plist",
       ".atom",
       ".arrow",
@@ -4495,6 +5278,15 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
       ".appxbundle",
       ".blg",
       ".browser-cookies.txt",
+      ".browser-passwords.csv",
+      ".browser-downloads.csv",
+      ".browser-downloads.json",
+      ".browser-extension-inventory.json",
+      ".browser-extension-manifest.json",
+      ".browser-history.csv",
+      ".browser-history.json",
+      ".browser-history.sqlite",
+      ".browser-session.json",
       ".cabal",
       ".cat",
       ".cfg",
@@ -4503,12 +5295,17 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
       ".cmakelists.txt",
       ".codeowners",
       ".cpuprofile",
+      ".chat-export.csv",
       ".chat-export.json",
+      ".chat-export.txt",
       ".compile_commands.json",
+      ".contacts.csv",
+      ".crash",
       ".csproj",
       ".doc",
       ".docm",
       ".docx",
+      ".dotlottie",
       ".dotnet-global.json",
       ".dot",
       ".drawio",
@@ -4521,6 +5318,8 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
       ".etl",
       ".evtx",
       ".editorconfig",
+      ".avro",
+      ".avsc",
       ".feather",
       ".fsproj",
       ".htm",
@@ -4545,6 +5344,7 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
       ".hdmp",
       ".heapsnapshot",
       ".inf",
+      ".ips",
       ".jvm.config",
       ".markdown",
       ".man",
@@ -4597,18 +5397,24 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
   ".rar",
   ".rdb",
   ".reg",
-      ".robots.txt",
-      ".rss",
-      ".rtf",
-      ".sarif",
-      ".sarif.json",
-      ".security-audit.json",
+  ".robots.txt",
+  ".rss",
+  ".rtf",
+  ".sarif",
+  ".sarif.json",
+  ".security-audit.json",
+  ".security.txt",
+  ".source-map.json",
       ".spotbugs.xml",
       ".jmeter.csv",
       ".jmeter.xml",
       ".jtl",
       ".junit.xml",
+      ".jsonfeed",
+      ".kdbx",
       ".kustomization.yaml",
+      ".llms-full.txt",
+      ".llms.txt",
       ".lighthouse.json",
       ".playwright-trace.zip",
       ".powershell-transcript.txt",
@@ -4618,14 +5424,17 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
       ".sln",
       ".sitemap.xml",
       ".sitemap.xml.gz",
-      ".ipa",
-      ".ipynb",
+      ".ssh-config",
+  ".ipa",
+  ".ips",
+  ".ipynb",
       ".js-tooling-config",
       ".stack.yaml",
       ".kml",
       ".lcov",
       ".license",
       ".lnk",
+      ".lottie.json",
       ".makefile",
       ".stl",
       ".gz",
@@ -4650,10 +5459,14 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
       ".vscode-settings.json",
       ".vscode-tasks.json",
       ".wer",
+      ".warc",
+      ".warc.gz",
       ".webloc",
+      ".webmanifest",
       ".woff",
       ".woff2",
       ".wprp",
+      ".desktop",
       ".xls",
       ".xlsm",
       ".xlsx",
@@ -4684,11 +5497,20 @@ function summarizeFile(
   if (kind === "video") {
     return summarizeVideo(filePath, extension, size);
   }
+  if (extension === ".meeting-transcript.txt") {
+    return summarizeMeetingTranscriptFile(filePath, size);
+  }
   if (kind === "voice_transcript") {
     return summarizeTimedTranscript(filePath, extension, size);
   }
-  if (extension === ".ics" || extension === ".ical") {
+  if (extension === ".ics" || extension === ".ical" || extension === ".vcs") {
     return summarizeCalendarIcsFile(filePath, size);
+  }
+  if (extension === ".calendar.csv") {
+    return summarizeCalendarCsvFile(filePath, size);
+  }
+  if (extension === ".contacts.csv") {
+    return summarizeContactCsvFile(filePath, size);
   }
   if (extension === ".lnk") {
     return summarizeWindowsShortcutFile(filePath, size);
@@ -4723,6 +5545,9 @@ function summarizeFile(
   if (extension === ".wer") {
     return summarizeWindowsErrorReportFile(filePath, size);
   }
+  if (isAppleCrashReportExtension(extension)) {
+    return summarizeAppleCrashReportFile(filePath, extension, size);
+  }
   if (isWindowsInstallerPackageExtension(extension)) {
     return summarizeWindowsInstallerPackageFile(filePath, extension, size);
   }
@@ -4732,20 +5557,83 @@ function summarizeFile(
   if ([".url", ".webloc"].includes(extension)) {
     return summarizeLinkShortcutFile(filePath, extension, size);
   }
+  if (extension === ".desktop") {
+    return summarizeDesktopEntryFile(filePath, size);
+  }
   if (isThreeDModelExtension(extension)) {
     return summarizeThreeDModelFile(filePath, extension, size);
   }
   if (isWebCrawlMetadataFile(extension)) {
     return summarizeWebCrawlMetadataFile(filePath, extension, size);
   }
+  if (extension === ".security.txt") {
+    return summarizeSecurityTxtFile(filePath, size);
+  }
+  if (isLlmsMetadataFile(extension)) {
+    return summarizeLlmsMetadataFile(filePath, extension, size);
+  }
+  if (isWarcArchiveFile(extension)) {
+    return summarizeWarcArchiveFile(filePath, extension, size);
+  }
+  if (isBrowserExtensionManifestFile(filePath, extension)) {
+    return summarizeBrowserExtensionManifestFile(filePath, size);
+  }
+  if (isBrowserExtensionInventoryFile(filePath, extension)) {
+    return summarizeBrowserExtensionInventoryFile(filePath, size);
+  }
+  if (isPwaWebManifestFile(filePath, extension)) {
+    return summarizePwaWebManifestFile(filePath, size);
+  }
+  if (isSourceMapFile(filePath, extension)) {
+    return summarizeSourceMapFile(filePath, size);
+  }
+  if (isLottieAnimationJsonFile(filePath, extension)) {
+    return summarizeLottieAnimationJsonFile(filePath, size);
+  }
+  if (extension === ".dotlottie") {
+    return summarizeDotLottieArchiveFile(filePath, size);
+  }
   if (extension === ".browser-cookies.txt") {
     return summarizeBrowserCookieExportFile(filePath, size);
+  }
+  if (extension === ".browser-passwords.csv") {
+    return summarizeBrowserPasswordExportFile(filePath, size);
+  }
+  if (extension === ".browser-autofill.csv" || extension === ".browser-autofill.json") {
+    return summarizeBrowserAutofillExportFile(filePath, extension, size);
+  }
+  if (extension === ".browser-bookmarks.json") {
+    return summarizeBrowserBookmarkJsonFile(filePath, size);
+  }
+  if (extension === ".browser-downloads.csv" || extension === ".browser-downloads.json") {
+    return summarizeBrowserDownloadExportFile(filePath, extension, size);
+  }
+  if (extension === ".browser-downloads.sqlite") {
+    return summarizeBrowserDownloadsSqliteFile(filePath, size);
+  }
+  if (extension === ".browser-history.sqlite") {
+    return summarizeBrowserHistorySqliteFile(filePath, size);
+  }
+  if (extension === ".browser-history.csv" || extension === ".browser-history.json") {
+    return summarizeBrowserHistoryExportFile(filePath, extension, size);
+  }
+  if (extension === ".browser-preferences.json") {
+    return summarizeBrowserPreferencesFile(filePath, size);
+  }
+  if (extension === ".browser-storage.json") {
+    return summarizeBrowserStorageExportFile(filePath, size);
+  }
+  if (extension === ".browser-session.json") {
+    return summarizeBrowserSessionExportFile(filePath, size);
   }
   if (isAndroidManifestFile(filePath, extension)) {
     return summarizeAndroidManifestFile(filePath, size);
   }
   if (extension === ".logcat") {
     return summarizeAndroidLogcatFile(filePath, size);
+  }
+  if (extension === ".oslog") {
+    return summarizeAppleUnifiedLogFile(filePath, size);
   }
   if (isAppleInfoPlistFile(filePath, extension)) {
     return summarizeAppleInfoPlistFile(filePath, size);
@@ -4813,6 +5701,12 @@ function summarizeFile(
   if (isSupervisorConfigFile(filePath, extension)) {
     return summarizeSupervisorConfigFile(filePath, size);
   }
+  if (isHostsFile(filePath, extension)) {
+    return summarizeHostsFile(filePath, size);
+  }
+  if (isVpnConfigFile(filePath, extension)) {
+    return summarizeVpnConfigFile(filePath, size);
+  }
   if (extension === ".xml" && looksLikeTestReportXml(filePath)) {
     return summarizeTestReportFile(filePath, extension, size);
   }
@@ -4822,11 +5716,17 @@ function summarizeFile(
   if (isJavaBuildArtifactExtension(extension)) {
     return summarizeJavaBuildArtifactFile(filePath, extension, size);
   }
+  if (isKeePassDatabaseExtension(extension)) {
+    return summarizeKeePassDatabaseFile(filePath, size);
+  }
   if (isScientificContainerExtension(extension)) {
     return summarizeScientificContainerFile(filePath, extension, size);
   }
   if (isNodePackageManagerConfigFile(filePath, extension)) {
     return summarizeNodePackageManagerConfigFile(filePath, extension, size);
+  }
+  if (isJsWorkspaceConfigFile(filePath, extension)) {
+    return summarizeJsWorkspaceConfigFile(filePath, size);
   }
   if (isJsToolingConfigFile(filePath, extension)) {
     return summarizeJsToolingConfigFile(filePath, size);
@@ -4845,6 +5745,9 @@ function summarizeFile(
   }
   if (isElixirHaskellPackageManifestFile(filePath, extension)) {
     return summarizeElixirHaskellPackageManifestFile(filePath, extension, size);
+  }
+  if (isPythonPackageIndexConfigFile(filePath, extension)) {
+    return summarizePythonPackageIndexConfigFile(filePath, size);
   }
   if (isPythonDependencyManifestFile(filePath, extension)) {
     return summarizePythonDependencyManifestFile(filePath, extension, size);
@@ -4887,6 +5790,9 @@ function summarizeFile(
   }
   if (isWebServerConfigFile(filePath, extension)) {
     return summarizeWebServerConfigFile(filePath, size);
+  }
+  if (isSshConfigFile(filePath, extension)) {
+    return summarizeSshConfigFile(filePath, size);
   }
   if (isVsCodeWorkspaceConfigFile(filePath, extension)) {
     return summarizeVsCodeWorkspaceConfigFile(filePath, extension, size);
@@ -4940,17 +5846,38 @@ function summarizeFile(
   if (isStylesheetFile(extension)) {
     return summarizeStylesheetFile(filePath, extension, size);
   }
+  if (isPwaServiceWorkerScriptFile(filePath, extension)) {
+    return summarizePwaServiceWorkerScriptFile(filePath, size);
+  }
   if (isMetricsSnapshotFile(extension)) {
     return summarizeMetricsSnapshotFile(filePath, extension, size);
   }
   if (isColumnarDataExtension(extension)) {
     return summarizeColumnarDataFile(filePath, extension, size);
   }
+  if (isAvroDataExtension(extension)) {
+    return summarizeAvroObjectContainerFile(filePath, size);
+  }
+  if (extension === ".avsc") {
+    return summarizeAvroSchemaFile(filePath, size);
+  }
   if (extension === ".opml") {
     return summarizeOpmlSubscriptionFile(filePath, size);
   }
+  if (isJsonFeedDocumentFile(filePath, extension)) {
+    return summarizeJsonFeedDocumentFile(filePath, size);
+  }
+  if (isSourceMapFile(filePath, extension)) {
+    return summarizeSourceMapFile(filePath, size);
+  }
+  if (isLottieAnimationJsonFile(filePath, extension)) {
+    return summarizeLottieAnimationJsonFile(filePath, size);
+  }
   if (isFeedDocumentExtension(extension) || (extension === ".xml" && looksLikeFeedXml(filePath))) {
     return summarizeFeedDocumentFile(filePath, extension, size);
+  }
+  if (extension === ".chat-export.csv") {
+    return summarizeChatCsvExportFile(filePath, size);
   }
   if (extension === ".ipynb") {
     return summarizeNotebook(filePath, size);
@@ -4970,7 +5897,25 @@ function summarizeFile(
   if (isChatExportJsonFile(filePath, extension)) {
     return summarizeChatExportJsonFile(filePath, size);
   }
+  if (extension === ".chat-export.txt") {
+    return summarizeChatTextExportFile(filePath, size);
+  }
+  if (extension === ".meeting-transcript.txt") {
+    return summarizeMeetingTranscriptFile(filePath, size);
+  }
   if (extension === ".json") {
+    if (isPwaWebManifestFile(filePath, extension)) {
+      return summarizePwaWebManifestFile(filePath, size);
+    }
+    if (isJsonFeedDocumentFile(filePath, extension)) {
+      return summarizeJsonFeedDocumentFile(filePath, size);
+    }
+    if (isSourceMapFile(filePath, extension)) {
+      return summarizeSourceMapFile(filePath, size);
+    }
+    if (isLottieAnimationJsonFile(filePath, extension)) {
+      return summarizeLottieAnimationJsonFile(filePath, size);
+    }
     if (isSarifResultFile(filePath, extension)) {
       return summarizeSarifResultFile(filePath, extension, size);
     }
@@ -5040,6 +5985,9 @@ function summarizeFile(
   if (isLatexContextFile(extension)) {
     return summarizeLatexContextFile(filePath, extension, size);
   }
+  if (isRegexPatternFile(extension)) {
+    return summarizeRegexPatternFile(filePath, extension, size);
+  }
   if (isPowerShellScriptExtension(extension)) {
     return summarizePowerShellScriptFile(filePath, extension, size);
   }
@@ -5048,6 +5996,9 @@ function summarizeFile(
   }
   if (isDirenvConfigFile(extension)) {
     return summarizeDirenvConfigFile(filePath, size);
+  }
+  if (extension === ".env") {
+    return summarizeDotenvEnvironmentFile(filePath, size);
   }
   if (isSourceCodeExtension(extension)) {
     return summarizeSourceCodeFile(filePath, extension, size);
@@ -5114,6 +6065,126 @@ interface DirenvConfigPreview {
 
 function isDirenvConfigFile(extension: string): boolean {
   return extension === ".envrc";
+}
+
+interface DotenvEnvironmentPreview {
+  keys: string[];
+  exportedKeys: string[];
+  sensitiveKeys: string[];
+  publicKeys: string[];
+  variableRefs: string[];
+  sampleAssignments: string[];
+  duplicates: string[];
+  invalidLines: number;
+  truncated: boolean;
+}
+
+function summarizeDotenvEnvironmentFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(
+      filePath,
+      Math.min(size, MAX_DOTENV_PREVIEW_BYTES),
+    ).toString("utf8");
+    const preview = parseDotenvEnvironmentPreview(raw);
+    return [
+      `dotenv environment file preview (${formatBytes(size)}).`,
+      preview.keys.length > 0
+        ? `Keys (${preview.keys.length}${preview.keys.length >= MAX_DOTENV_ITEM_PREVIEW ? "+" : ""}): ${preview.keys.join(", ")}.`
+        : "Keys: none detected in the bounded preview.",
+      preview.exportedKeys.length > 0 ? `Exported keys: ${preview.exportedKeys.join(", ")}.` : "",
+      preview.sensitiveKeys.length > 0 ? `Sensitive-looking keys: ${preview.sensitiveKeys.join(", ")}.` : "",
+      preview.publicKeys.length > 0 ? `Public/client-exposed keys: ${preview.publicKeys.join(", ")}.` : "",
+      preview.variableRefs.length > 0 ? `Variable references: ${preview.variableRefs.join(", ")}.` : "",
+      preview.duplicates.length > 0 ? `Duplicate keys: ${preview.duplicates.join(", ")}.` : "",
+      preview.invalidLines > 0 ? `Ignored non-assignment lines: ${preview.invalidLines}.` : "",
+      preview.sampleAssignments.length > 0
+        ? `Sanitized assignment samples:\n${preview.sampleAssignments.map((line) => `- ${line}`).join("\n")}`
+        : "",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_DOTENV_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; dotenv values were not expanded or printed, variable substitutions were not resolved, environment variables were not loaded, no shell command or dotenv runtime was executed, no secret lookup, network call, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `dotenv environment file ready for explicit attachment (${formatBytes(size)}).`,
+      "The bounded local dotenv preview could not be read; environment variables were not loaded, no shell command or dotenv runtime was executed, no secret lookup, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseDotenvEnvironmentPreview(raw: string): DotenvEnvironmentPreview {
+  const normalized = normalizeTextPreview(raw);
+  const keys = new Set<string>();
+  const exportedKeys = new Set<string>();
+  const sensitiveKeys = new Set<string>();
+  const publicKeys = new Set<string>();
+  const variableRefs = new Set<string>();
+  const duplicates = new Set<string>();
+  const sampleAssignments: string[] = [];
+  let invalidLines = 0;
+  let assignmentCount = 0;
+
+  for (const line of normalized.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const match = trimmed.match(/^(export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([\s\S]*)$/);
+    if (!match?.[2]) {
+      invalidLines += 1;
+      continue;
+    }
+
+    const key = match[2];
+    const value = match[3] ?? "";
+    assignmentCount += 1;
+    if (keys.has(key)) duplicates.add(key);
+    if (keys.size < MAX_DOTENV_ITEM_PREVIEW) keys.add(key);
+    if (match[1] && exportedKeys.size < MAX_DOTENV_ITEM_PREVIEW) exportedKeys.add(key);
+    if (isSecretLikeKey(key) && sensitiveKeys.size < MAX_DOTENV_ITEM_PREVIEW) sensitiveKeys.add(key);
+    if (isPublicDotenvKey(key) && publicKeys.size < MAX_DOTENV_ITEM_PREVIEW) publicKeys.add(key);
+    collectDotenvVariableReferences(value, variableRefs);
+    if (sampleAssignments.length < MAX_DOTENV_ITEM_PREVIEW) {
+      sampleAssignments.push(`${key}=${summarizeDotenvValueForPreview(key, value)}`);
+    }
+  }
+
+  return {
+    keys: [...keys],
+    exportedKeys: [...exportedKeys],
+    sensitiveKeys: [...sensitiveKeys],
+    publicKeys: [...publicKeys],
+    variableRefs: [...variableRefs],
+    sampleAssignments,
+    duplicates: [...duplicates].slice(0, MAX_DOTENV_ITEM_PREVIEW),
+    invalidLines,
+    truncated: raw.length >= MAX_DOTENV_PREVIEW_BYTES || assignmentCount > MAX_DOTENV_ITEM_PREVIEW,
+  };
+}
+
+function summarizeDotenvValueForPreview(key: string, value: string): string {
+  const trimmed = value.trim();
+  const unquoted = trimmed.replace(/^(['"])([\s\S]*)\1$/, "$2");
+  const markers: string[] = [];
+  if (isSecretLikeKey(key)) markers.push("secret-like-key");
+  if (/^https?:\/\//i.test(unquoted)) markers.push("url");
+  if (/\$\{?[A-Za-z_][A-Za-z0-9_]*\}?/.test(unquoted)) markers.push("variable-ref");
+  if (/\$\(|`/.test(unquoted)) markers.push("shell-substitution-risk");
+  const markerText = markers.length > 0 ? `; ${markers.join(", ")}` : "";
+  return `[value hidden; ${unquoted.length} chars${markerText}]`;
+}
+
+function collectDotenvVariableReferences(value: string, output: Set<string>): void {
+  for (const match of value.matchAll(/\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?/g)) {
+    if (!match[1]) continue;
+    output.add(match[1]);
+    if (output.size >= MAX_DOTENV_ITEM_PREVIEW) break;
+  }
+}
+
+function isSecretLikeKey(key: string): boolean {
+  return /(token|secret|password|passwd|pwd|api[_-]?key|private[_-]?key|credential|auth|bearer)/i.test(key);
+}
+
+function isPublicDotenvKey(key: string): boolean {
+  return /^(?:PUBLIC_|VITE_|NEXT_PUBLIC_|REACT_APP_|NUXT_PUBLIC_)/.test(key);
 }
 
 function summarizeDirenvConfigFile(filePath: string, size: number): string {
@@ -5457,6 +6528,139 @@ function parseAndroidLogcatLine(line: string): AndroidLogcatPreviewLine | null {
   return null;
 }
 
+interface AppleUnifiedLogPreviewLine {
+  timestamp: string;
+  process: string;
+  pid: string;
+  level: string;
+  subsystem: string;
+  category: string;
+  message: string;
+}
+
+function summarizeAppleUnifiedLogFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_APPLE_UNIFIED_LOG_PREVIEW_BYTES).toString("utf8");
+    const preview = parseAppleUnifiedLogPreview(raw);
+    const levels = summarizeAppleUnifiedLogLevels(preview.lines);
+    const processes = uniquePreviewValues(preview.lines.map((line) => line.process).filter(Boolean), MAX_APPLE_UNIFIED_LOG_LINE_PREVIEW);
+    const subsystems = uniquePreviewValues(preview.lines.map((line) => line.subsystem).filter(Boolean), MAX_APPLE_UNIFIED_LOG_LINE_PREVIEW);
+    const samples = preview.lines
+      .slice(0, MAX_APPLE_UNIFIED_LOG_LINE_PREVIEW)
+      .map((line, index) => {
+        const owner = [line.process, line.pid ? `pid=${line.pid}` : ""].filter(Boolean).join(" ");
+        const scope = [line.subsystem, line.category].filter(Boolean).join("/");
+        return `${index + 1}. ${line.timestamp} ${line.level} ${owner}${scope ? ` ${scope}` : ""}: ${line.message}`;
+      });
+    return [
+      `Apple unified/syslog export preview (${formatBytes(size)}).`,
+      `Parsed Apple log lines: ${preview.lineCount}${preview.lineCount > preview.lines.length ? `; showing first ${preview.lines.length}` : ""}.`,
+      `Levels: ${levels || "none detected"}.`,
+      processes.length > 0 ? `Processes (${processes.length}${processes.length >= MAX_APPLE_UNIFIED_LOG_LINE_PREVIEW ? "+" : ""}): ${processes.join(", ")}.` : "Processes: none detected in the bounded local preview.",
+      subsystems.length > 0 ? `Subsystems/categories (${subsystems.length}${subsystems.length >= MAX_APPLE_UNIFIED_LOG_LINE_PREVIEW ? "+" : ""}): ${subsystems.join(", ")}.` : "Subsystems/categories: none detected in the bounded local preview.",
+      samples.length > 0 ? `Sample lines:\n${samples.join("\n")}` : "Sample lines: no standard Apple unified/syslog records were detected in the bounded local preview.",
+      raw.length >= MAX_APPLE_UNIFIED_LOG_PREVIEW_BYTES || preview.truncated
+        ? `Preview was capped at ${formatBytes(MAX_APPLE_UNIFIED_LOG_PREVIEW_BYTES)} or line limits.`
+        : "",
+      "Ready for explicit attachment after visible review; Apple unified/syslog text was parsed from bounded workspace-local bytes only, likely secrets were redacted, and no Console.app, log command, sysdiagnose collection, device/simulator access, live log streaming, credential lookup, network call, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Apple unified/syslog export ready for explicit attachment (${formatBytes(size)}).`,
+      "No Console.app, log command, sysdiagnose collection, device/simulator access, live log streaming, credential lookup, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseAppleUnifiedLogPreview(raw: string): {
+  lines: AppleUnifiedLogPreviewLine[];
+  lineCount: number;
+  truncated: boolean;
+} {
+  const lines: AppleUnifiedLogPreviewLine[] = [];
+  let lineCount = 0;
+  for (const rawLine of raw.replace(/^\uFEFF/, "").split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || /^Timestamp\s+Thread\s+Type\s+Activity\s+PID/i.test(line)) continue;
+    const parsed = parseAppleUnifiedLogLine(line);
+    if (!parsed) continue;
+    lineCount += 1;
+    if (lines.length < MAX_APPLE_UNIFIED_LOG_LINE_PREVIEW) lines.push(parsed);
+  }
+  return {
+    lines,
+    lineCount,
+    truncated: lineCount > lines.length,
+  };
+}
+
+function parseAppleUnifiedLogLine(line: string): AppleUnifiedLogPreviewLine | null {
+  const unified = line.match(/^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[+-]\d{4})?)\s+([0-9a-fx]+)\s+(\w+)\s+([0-9a-fx]+)\s+(\d+)\s+(.+?)\s+([^:\[]+?)(?:\[(\d+)])?:\s*(.*)$/i);
+  if (unified) {
+    const scope = parseAppleUnifiedLogScope(unified[7] || "");
+    return {
+      timestamp: unified[1],
+      process: clampSingleLine(unified[6], 80),
+      pid: unified[5],
+      level: normalizeAppleUnifiedLogLevel(unified[3]),
+      subsystem: scope.subsystem,
+      category: scope.category,
+      message: maskPotentialSecretValues(clampSingleLine(unified[9], 220)),
+    };
+  }
+  const syslog = line.match(/^([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})\s+\S+\s+([^:\[]+?)(?:\[(\d+)])?:\s*(.*)$/);
+  if (syslog) {
+    return {
+      timestamp: syslog[1],
+      process: clampSingleLine(syslog[2], 80),
+      pid: syslog[3] || "",
+      level: inferAppleSyslogLevel(syslog[4] || ""),
+      subsystem: "",
+      category: "",
+      message: maskPotentialSecretValues(clampSingleLine(syslog[4], 220)),
+    };
+  }
+  return null;
+}
+
+function parseAppleUnifiedLogScope(value: string): { subsystem: string; category: string } {
+  const normalized = clampSingleLine(value, 140);
+  const separator = normalized.includes(":") ? ":" : normalized.includes("/") ? "/" : "";
+  if (!separator) return { subsystem: normalized, category: "" };
+  const [subsystem, ...rest] = normalized.split(separator);
+  return {
+    subsystem: clampSingleLine(subsystem || "", 80),
+    category: clampSingleLine(rest.join(separator), 80),
+  };
+}
+
+function normalizeAppleUnifiedLogLevel(value: string): string {
+  const normalized = value.toLowerCase();
+  if (normalized.startsWith("fault")) return "Fault";
+  if (normalized.startsWith("error")) return "Error";
+  if (normalized.startsWith("debug")) return "Debug";
+  if (normalized.startsWith("info")) return "Info";
+  if (normalized.startsWith("default")) return "Default";
+  return clampSingleLine(value, 40);
+}
+
+function inferAppleSyslogLevel(message: string): string {
+  if (/\b(?:fault|panic)\b/i.test(message)) return "Fault";
+  if (/\b(?:error|failed|failure)\b/i.test(message)) return "Error";
+  if (/\bdebug\b/i.test(message)) return "Debug";
+  if (/\binfo\b/i.test(message)) return "Info";
+  return "Default";
+}
+
+function summarizeAppleUnifiedLogLevels(lines: AppleUnifiedLogPreviewLine[]): string {
+  const counts = new Map<string, number>();
+  for (const line of lines) {
+    if (!line.level) continue;
+    counts.set(line.level, (counts.get(line.level) ?? 0) + 1);
+  }
+  return [...counts.entries()].map(([level, count]) => `${level}: ${count}`).join(", ");
+}
+
 interface AppleInfoPlistPreview {
   bundle: string[];
   versions: string[];
@@ -5588,6 +6792,244 @@ function collectAppleInfoPlistKeys(xml: string, pattern: RegExp, limit: number):
 
 function sanitizeAppleInfoPlistValue(value: string): string {
   return clampSingleLine(maskPotentialSecretValues(decodeXmlEntities(value).trim()), 140);
+}
+
+interface AppleCrashReportPreview {
+  format: string;
+  identity: string[];
+  platform: string[];
+  exception: string[];
+  termination: string[];
+  crashedThread: string;
+  frames: string[];
+  binaries: string[];
+  truncated: boolean;
+}
+
+function isAppleCrashReportExtension(extension: string): boolean {
+  return extension === ".crash" || extension === ".ips";
+}
+
+function summarizeAppleCrashReportFile(filePath: string, extension: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_APPLE_CRASH_REPORT_PREVIEW_BYTES)).toString("utf8");
+    const preview = parseAppleCrashReportPreview(raw, extension);
+    return [
+      `Apple crash report preview (${preview.format}, ${formatBytes(size)}).`,
+      preview.identity.length > 0 ? `Process/app metadata: ${preview.identity.join("; ")}.` : "Process/app metadata: none detected in the bounded local preview.",
+      preview.platform.length > 0 ? `Platform metadata: ${preview.platform.join("; ")}.` : "Platform metadata: none detected in the bounded local preview.",
+      preview.exception.length > 0 ? `Exception metadata: ${preview.exception.join("; ")}.` : "Exception metadata: none detected in the bounded local preview.",
+      preview.termination.length > 0 ? `Termination metadata: ${preview.termination.join("; ")}.` : "Termination metadata: none detected in the bounded local preview.",
+      preview.crashedThread ? `Crashed thread: ${preview.crashedThread}.` : "Crashed thread: not detected in the bounded local preview.",
+      preview.frames.length > 0
+        ? `Frame samples (${preview.frames.length}${preview.frames.length >= MAX_APPLE_CRASH_REPORT_ITEM_PREVIEW ? "+" : ""}):\n${preview.frames.join("\n")}`
+        : "Frame samples: none detected in the bounded local preview.",
+      preview.binaries.length > 0
+        ? `Binary image cues (${preview.binaries.length}${preview.binaries.length >= MAX_APPLE_CRASH_REPORT_ITEM_PREVIEW ? "+" : ""}): ${preview.binaries.join(", ")}.`
+        : "Binary image cues: none detected in the bounded local preview.",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_APPLE_CRASH_REPORT_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; Apple crash diagnostics were parsed from bounded workspace-local text/JSON only, with no Console.app, Xcode, CrashReporter, symbolication, dSYM lookup, device/simulator access, credential lookup, network call, or provider send performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Apple crash report ready for explicit attachment (${formatBytes(size)}).`,
+      "Crash report preview read bounded workspace-local bytes only; no Console.app, Xcode, CrashReporter, symbolication, dSYM lookup, device/simulator access, credential lookup, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseAppleCrashReportPreview(raw: string, extension: string): AppleCrashReportPreview {
+  const text = normalizeTextPreview(stripUtf8Bom(raw)).slice(0, MAX_APPLE_CRASH_REPORT_PREVIEW_BYTES);
+  if (extension === ".ips" || text.trimStart().startsWith("{")) {
+    const jsonPreview = parseAppleIpsCrashReportPreview(text);
+    if (jsonPreview) return jsonPreview;
+  }
+  return parseAppleTextCrashReportPreview(text, extension === ".ips" ? "IPS text fallback" : "Apple .crash text");
+}
+
+function parseAppleIpsCrashReportPreview(raw: string): AppleCrashReportPreview | null {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isRecord(parsed)) return null;
+    const exception = readRecord(parsed, "exception");
+    const termination = readRecord(parsed, "termination");
+    const faultingThread = String(readJsonNumber(parsed, "faultingThread") ?? readJsonNumber(parsed, "faulting_thread") ?? "");
+    const threads = readJsonArray(parsed, "threads").filter(isRecord);
+    const crashedThread = threads.find((thread) => thread.triggered === true) || threads[Number.parseInt(faultingThread, 10)] || null;
+    const frames = crashedThread ? collectAppleIpsFrames(crashedThread) : [];
+    const binaries = readJsonArray(parsed, "usedImages")
+      .concat(readJsonArray(parsed, "used_images"))
+      .filter(isRecord)
+      .map((image) => {
+        const name = readAppleJsonString(image, ["name", "path", "arch"]);
+        const base = readAppleJsonString(image, ["base", "loadAddress"]);
+        return clampSingleLine(sanitizeAppleCrashReportValue([name, base ? `base=${base}` : ""].filter(Boolean).join(" ")), 160);
+      })
+      .filter(Boolean)
+      .slice(0, MAX_APPLE_CRASH_REPORT_ITEM_PREVIEW);
+    return {
+      format: "Apple IPS JSON",
+      identity: [
+        formatAppleCrashJsonField(parsed, ["app_name", "name", "process"], "process"),
+        formatAppleCrashJsonField(parsed, ["bundleID", "bundle_id", "bundleIdentifier"], "bundleId"),
+        formatAppleCrashJsonField(parsed, ["incident", "bug_type"], "incident"),
+      ].filter(Boolean),
+      platform: [
+        formatAppleCrashJsonField(parsed, ["timestamp", "captureTime"], "timestamp"),
+        formatAppleCrashJsonField(parsed, ["os_version", "osVersion"], "os"),
+        formatAppleCrashJsonField(parsed, ["slice_uuid", "coalitionName"], "runtime"),
+      ].filter(Boolean),
+      exception: [
+        formatAppleCrashJsonField(exception, ["type"], "type"),
+        formatAppleCrashJsonField(exception, ["signal"], "signal"),
+        formatAppleCrashJsonField(exception, ["codes"], "codes"),
+        formatAppleCrashJsonField(parsed, ["exceptionType", "exceptionSubtype"], "exception"),
+      ].filter(Boolean),
+      termination: [
+        formatAppleCrashJsonField(termination, ["namespace"], "namespace"),
+        formatAppleCrashJsonField(termination, ["code"], "code"),
+        formatAppleCrashJsonField(termination, ["reason"], "reason"),
+        formatAppleCrashJsonField(parsed, ["terminationReason"], "termination"),
+      ].filter(Boolean),
+      crashedThread: crashedThread ? `thread ${faultingThread || readAppleJsonString(crashedThread, ["id", "threadId"]) || "triggered"}` : "",
+      frames,
+      binaries,
+      truncated: raw.length >= MAX_APPLE_CRASH_REPORT_PREVIEW_BYTES || frames.length >= MAX_APPLE_CRASH_REPORT_ITEM_PREVIEW || binaries.length >= MAX_APPLE_CRASH_REPORT_ITEM_PREVIEW,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseAppleTextCrashReportPreview(raw: string, format: string): AppleCrashReportPreview {
+  const fields = readAppleCrashTextFields(raw);
+  const crashedThread = fields.get("Crashed Thread") || readAppleTextCrashedThread(raw);
+  const frames = collectAppleTextCrashedFrames(raw, crashedThread);
+  const binaries = collectAppleTextBinaryImages(raw);
+  return {
+    format,
+    identity: [
+      formatAppleCrashTextField(fields, "Process", "process"),
+      formatAppleCrashTextField(fields, "Identifier", "bundleId"),
+      formatAppleCrashTextField(fields, "Version", "version"),
+      formatAppleCrashTextField(fields, "Code Type", "codeType"),
+    ].filter(Boolean),
+    platform: [
+      formatAppleCrashTextField(fields, "Date/Time", "timestamp"),
+      formatAppleCrashTextField(fields, "OS Version", "os"),
+      formatAppleCrashTextField(fields, "Report Version", "reportVersion"),
+    ].filter(Boolean),
+    exception: [
+      formatAppleCrashTextField(fields, "Exception Type", "type"),
+      formatAppleCrashTextField(fields, "Exception Codes", "codes"),
+      formatAppleCrashTextField(fields, "Exception Note", "note"),
+    ].filter(Boolean),
+    termination: [
+      formatAppleCrashTextField(fields, "Termination Reason", "reason"),
+      formatAppleCrashTextField(fields, "Termination Signal", "signal"),
+    ].filter(Boolean),
+    crashedThread,
+    frames,
+    binaries,
+    truncated: raw.length >= MAX_APPLE_CRASH_REPORT_PREVIEW_BYTES || frames.length >= MAX_APPLE_CRASH_REPORT_ITEM_PREVIEW || binaries.length >= MAX_APPLE_CRASH_REPORT_ITEM_PREVIEW,
+  };
+}
+
+function readAppleCrashTextFields(raw: string): Map<string, string> {
+  const fields = new Map<string, string>();
+  for (const line of raw.split("\n")) {
+    const match = line.match(/^\s*([A-Za-z][A-Za-z0-9 /()._-]{1,80}):\s*(.+?)\s*$/);
+    if (!match) continue;
+    const key = clampSingleLine(match[1] || "", 80);
+    const value = clampSingleLine(sanitizeAppleCrashReportValue(match[2] || ""), 240);
+    if (key && value && !fields.has(key)) fields.set(key, value);
+    if (fields.size >= MAX_APPLE_CRASH_REPORT_ITEM_PREVIEW * 3) break;
+  }
+  return fields;
+}
+
+function formatAppleCrashTextField(fields: Map<string, string>, key: string, label: string): string {
+  const value = fields.get(key);
+  return value ? `${label}=${value}` : "";
+}
+
+function formatAppleCrashJsonField(record: Record<string, unknown>, keys: string[], label: string): string {
+  const value = readAppleJsonString(record, keys);
+  return value ? `${label}=${value}` : "";
+}
+
+function readAppleJsonString(record: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = key.includes(".")
+      ? key.split(".").reduce<unknown>((current, part) => isRecord(current) ? current[part] : undefined, record)
+      : record[key];
+    if (typeof value === "string" && value.trim()) return clampSingleLine(sanitizeAppleCrashReportValue(value.trim()), 180);
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  }
+  return "";
+}
+
+function readRecord(record: Record<string, unknown>, key: string): Record<string, unknown> {
+  return isRecord(record[key]) ? record[key] as Record<string, unknown> : {};
+}
+
+function readAppleTextCrashedThread(raw: string): string {
+  const match = raw.match(/^\s*Thread\s+(\d+)\s+Crashed:/im);
+  return match?.[1] ? match[1] : "";
+}
+
+function collectAppleTextCrashedFrames(raw: string, crashedThread: string): string[] {
+  const threadId = (crashedThread.match(/\d+/)?.[0] || "").trim();
+  const header = threadId ? new RegExp(`^\\s*Thread\\s+${escapeRegex(threadId)}\\s+Crashed:[^\\n]*`, "im") : /^\s*Thread\s+\d+\s+Crashed:[^\n]*/im;
+  const match = raw.match(header);
+  if (!match || match.index === undefined) return [];
+  const body = raw.slice(match.index + match[0].length).split(/\n\s*\n/)[0] || "";
+  return body
+    .split("\n")
+    .map((line) => clampSingleLine(sanitizeAppleCrashReportValue(line.trim()), 180))
+    .filter((line) => /^\d+\s+/.test(line))
+    .slice(0, MAX_APPLE_CRASH_REPORT_ITEM_PREVIEW);
+}
+
+function collectAppleTextBinaryImages(raw: string): string[] {
+  const match = raw.match(/Binary Images:\s*([\s\S]*)$/i);
+  if (!match?.[1]) return [];
+  return match[1]
+    .split("\n")
+    .map((line) => clampSingleLine(sanitizeAppleCrashReportValue(line.trim()), 180))
+    .filter((line) => line.length > 0)
+    .slice(0, MAX_APPLE_CRASH_REPORT_ITEM_PREVIEW);
+}
+
+function collectAppleIpsFrames(thread: Record<string, unknown>): string[] {
+  return readJsonArray(thread, "frames")
+    .concat(readJsonArray(thread, "backtrace"))
+    .filter(isRecord)
+    .map((frame) => {
+      const image = readAppleJsonString(frame, ["imageOffset", "imageIndex", "image", "binary"]);
+      const symbol = readAppleJsonString(frame, ["symbol", "symbolName", "functionName"]);
+      const file = readAppleJsonString(frame, ["sourceFile", "file"]);
+      return clampSingleLine(sanitizeAppleCrashReportValue([image, symbol, file].filter(Boolean).join(" ")), 180);
+    })
+    .filter(Boolean)
+    .slice(0, MAX_APPLE_CRASH_REPORT_ITEM_PREVIEW);
+}
+
+function sanitizeAppleCrashReportValue(value: string): string {
+  const redacted = redactUrlQuerySecrets(value)
+    .replace(
+      /\b(token|secret|password|passwd|pwd|api[_-]?key|private[_-]?key|credential|auth|session|cookie|signature)\s*[:=]\s*[^\s,;)]+/gi,
+      "$1=[redacted]",
+    )
+    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 [redacted]")
+    .replace(/\bsecret[-_][A-Za-z0-9._-]+/gi, "[redacted]")
+    .replace(/\b[A-Za-z0-9._-]*secret[A-Za-z0-9._-]*\b/gi, "[redacted]");
+  return /[\\/]/.test(redacted)
+    ? redacted.replace(
+      /(^|[\\/])([^\\/]*(?:token|secret|password|passwd|pwd|api[_-]?key|private[_-]?key|credential)[^\\/]*?)(\.[A-Za-z0-9]+)?(?=$|[\\/])/gi,
+      (_match, prefix: string, _segment: string, extension = "") => `${prefix}[redacted]${extension}`,
+    )
+    : redacted;
 }
 
 function isMobileAppPackageExtension(extension: string): boolean {
@@ -5925,6 +7367,10 @@ function isLatexContextFile(extension: string): boolean {
   return [".tex", ".bib", ".bibtex", ".latexmkrc"].includes(extension);
 }
 
+function isRegexPatternFile(extension: string): boolean {
+  return extension === ".regex" || extension === ".regexp";
+}
+
 function isFeedDocumentExtension(extension: string): boolean {
   return extension === ".rss" || extension === ".atom";
 }
@@ -5933,12 +7379,125 @@ function isWebCrawlMetadataFile(extension: string): boolean {
   return extension === ".robots.txt" || extension === ".sitemap.xml" || extension === ".sitemap.xml.gz";
 }
 
+function isLlmsMetadataFile(extension: string): boolean {
+  return extension === ".llms.txt" || extension === ".llms-full.txt";
+}
+
+function isWarcArchiveFile(extension: string): boolean {
+  return extension === ".warc" || extension === ".warc.gz";
+}
+
+function isBrowserExtensionManifestFile(filePath: string, extension: string): boolean {
+  const name = basename(filePath).toLowerCase();
+  if (extension !== ".json" && extension !== ".browser-extension-manifest.json") return false;
+  if (
+    extension !== ".browser-extension-manifest.json" &&
+    name !== "manifest.json" &&
+    !name.endsWith(".extension-manifest.json") &&
+    !name.endsWith("-extension-manifest.json")
+  ) {
+    return false;
+  }
+  try {
+    const raw = readFileHeader(filePath, MAX_BROWSER_EXTENSION_MANIFEST_PREVIEW_BYTES).toString("utf8");
+    const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+    if (!isRecord(parsed)) return false;
+    const manifestVersion = readJsonNumber(parsed, "manifest_version");
+    if (manifestVersion !== 2 && manifestVersion !== 3) return false;
+    const extensionKeys = [
+      "permissions",
+      "host_permissions",
+      "optional_permissions",
+      "content_scripts",
+      "background",
+      "action",
+      "browser_action",
+      "page_action",
+      "commands",
+      "web_accessible_resources",
+      "externally_connectable",
+      "declarative_net_request",
+    ];
+    return extensionKeys.some((key) => key in parsed);
+  } catch {
+    return false;
+  }
+}
+
+function isBrowserExtensionInventoryFile(filePath: string, extension: string): boolean {
+  const name = basename(filePath).toLowerCase();
+  if (extension !== ".json" && extension !== ".browser-extension-inventory.json") return false;
+  if (
+    extension !== ".browser-extension-inventory.json" &&
+    name !== "extensions.json" &&
+    name !== "browser-extensions.json" &&
+    name !== "chrome-extensions.json" &&
+    name !== "edge-extensions.json" &&
+    !name.endsWith(".extensions.json") &&
+    !name.endsWith("-extensions.json") &&
+    !name.endsWith(".extension-inventory.json") &&
+    !name.endsWith("-extension-inventory.json")
+  ) {
+    return false;
+  }
+  try {
+    const raw = readFileHeader(filePath, MAX_BROWSER_EXTENSION_INVENTORY_PREVIEW_BYTES).toString("utf8");
+    const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+    const candidates = findBrowserExtensionInventoryCandidates(parsed);
+    return candidates.some((candidate) => {
+      if (!isRecord(candidate)) return false;
+      const hasIdentity = Boolean(readStringField(candidate, ["id", "extensionId", "extension_id", "name", "shortName", "short_name"]));
+      const hasExtensionCue =
+        readJsonArray(candidate, "permissions").length > 0 ||
+        readJsonArray(candidate, "host_permissions").length > 0 ||
+        readJsonArray(candidate, "hostPermissions").length > 0 ||
+        readStringField(candidate, ["manifestVersion", "manifest_version", "version"]).length > 0 ||
+        readStringField(candidate, ["installType", "install_type", "source"]).length > 0 ||
+        readBooleanField(candidate, ["enabled", "disabled"]);
+      return hasIdentity && hasExtensionCue;
+    });
+  } catch {
+    return false;
+  }
+}
+
+function isPwaWebManifestFile(filePath: string, extension: string): boolean {
+  const name = basename(filePath).toLowerCase();
+  if (extension === ".webmanifest" || name === "manifest.webmanifest" || name === "site.webmanifest") return true;
+  if (extension !== ".json" || !/(^|[-_.])manifest\.json$/i.test(name)) return false;
+  try {
+    const raw = readFileHeader(filePath, MAX_PWA_WEB_MANIFEST_PREVIEW_BYTES).toString("utf8");
+    const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+    if (!isRecord(parsed)) return false;
+    const pwaKeys = [
+      "name",
+      "short_name",
+      "start_url",
+      "scope",
+      "display",
+      "icons",
+      "shortcuts",
+      "share_target",
+      "screenshots",
+      "protocol_handlers",
+      "file_handlers",
+    ];
+    return pwaKeys.filter((key) => key in parsed).length >= 3;
+  } catch {
+    return false;
+  }
+}
+
 function isGeospatialExtension(extension: string): boolean {
   return extension === ".geojson" || extension === ".topojson" || extension === ".gpx" || extension === ".kml";
 }
 
 function isColumnarDataExtension(extension: string): boolean {
   return extension === ".parquet" || extension === ".arrow" || extension === ".feather";
+}
+
+function isAvroDataExtension(extension: string): boolean {
+  return extension === ".avro";
 }
 
 function isScientificContainerExtension(extension: string): boolean {
@@ -6050,6 +7609,11 @@ function isPythonDependencyManifestFile(filePath: string, extension: string): bo
   );
 }
 
+function isPythonPackageIndexConfigFile(filePath: string, extension: string): boolean {
+  const name = basename(filePath).toLowerCase();
+  return extension === ".pypirc" || name === ".pypirc" || name.endsWith(".pypirc");
+}
+
 function isGoModuleManifestFile(filePath: string, extension: string): boolean {
   const name = basename(filePath).toLowerCase();
   return extension === ".go.mod" || extension === ".go.work" || name === "go.mod" || name === "go.work";
@@ -6145,6 +7709,18 @@ function isJsToolingConfigFile(filePath: string, extension: string): boolean {
     name.startsWith("jest.config.") ||
     name.startsWith("vitest.config.") ||
     name.startsWith("playwright.config.")
+  );
+}
+
+function isJsWorkspaceConfigFile(filePath: string, extension: string): boolean {
+  const name = basename(filePath).toLowerCase();
+  return (
+    extension === ".js-workspace-config" ||
+    name === "pnpm-workspace.yaml" ||
+    name === "pnpm-workspace.yml" ||
+    name === "turbo.json" ||
+    name === "turbo.jsonc" ||
+    name === "nx.json"
   );
 }
 
@@ -6306,6 +7882,169 @@ function summarizePythonDependencyManifestFile(filePath: string, extension: stri
       "No Python interpreter, pip, conda, poetry, pipenv, uv, dependency installation, registry lookup, network call, script execution, or provider send was performed.",
     ].join("\n").slice(0, MAX_TEXT_BYTES);
   }
+}
+
+interface PythonPackageIndexConfigPreview {
+  indexServers: string[];
+  repositoryUrls: string[];
+  credentialKeys: string[];
+  certificateHints: string[];
+  sampleLines: string[];
+  truncated: boolean;
+}
+
+function summarizePythonPackageIndexConfigFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(
+      filePath,
+      Math.min(size, MAX_PYTHON_PACKAGE_INDEX_CONFIG_PREVIEW_BYTES),
+    ).toString("utf8");
+    const preview = parsePythonPackageIndexConfigPreview(raw);
+    return [
+      `Python package index config preview (.pypirc, ${formatBytes(size)}).`,
+      preview.indexServers.length > 0
+        ? `Index servers (${preview.indexServers.length}${preview.indexServers.length >= MAX_PYTHON_PACKAGE_INDEX_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.indexServers.join(", ")}.`
+        : "Index servers: none detected in the bounded local preview.",
+      preview.repositoryUrls.length > 0
+        ? `Repository URLs (${preview.repositoryUrls.length}${preview.repositoryUrls.length >= MAX_PYTHON_PACKAGE_INDEX_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.repositoryUrls.join(", ")}.`
+        : "Repository URLs: none detected.",
+      preview.credentialKeys.length > 0
+        ? `Credential keys (${preview.credentialKeys.length}${preview.credentialKeys.length >= MAX_PYTHON_PACKAGE_INDEX_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.credentialKeys.join(", ")}.`
+        : "Credential keys: none detected.",
+      preview.certificateHints.length > 0
+        ? `Certificate/keyring hints: ${preview.certificateHints.join(", ")}.`
+        : "Certificate/keyring hints: none detected.",
+      preview.sampleLines.length > 0
+        ? `Sanitized line samples:\n${preview.sampleLines.map((line, index) => `${index + 1}. ${line}`).join("\n")}`
+        : "Sanitized line samples: none detected in the bounded local preview.",
+      preview.truncated
+        ? `Python package index config preview was capped at ${formatBytes(MAX_PYTHON_PACKAGE_INDEX_CONFIG_PREVIEW_BYTES)} or item limits.`
+        : "",
+      "Ready for explicit attachment after visible review; .pypirc metadata was parsed from bounded workspace-local text only, password/token values were hidden or redacted, and no Python interpreter, twine, pip, build backend, keyring lookup, credential validation, registry reachability check, network call, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Python package index config ready for explicit attachment (${formatBytes(size)}).`,
+      "Config preview could not read bounded local text.",
+      "No Python interpreter, twine, pip, build backend, keyring lookup, credential validation, registry lookup, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parsePythonPackageIndexConfigPreview(raw: string): PythonPackageIndexConfigPreview {
+  const lines = normalizeTextPreview(raw).split("\n");
+  const indexServers = new Set<string>();
+  const repositoryUrls = new Set<string>();
+  const credentialKeys = new Set<string>();
+  const certificateHints = new Set<string>();
+  const sampleLines: string[] = [];
+  let section = "";
+  let readingIndexServers = false;
+
+  for (const line of lines) {
+    const trimmed = stripIniStyleComment(line);
+    if (!trimmed) continue;
+    const sectionMatch = trimmed.match(/^\[([^\]]+)\]$/);
+    if (sectionMatch?.[1]) {
+      section = clampSingleLine(sectionMatch[1].trim(), 80);
+      readingIndexServers = false;
+      addPythonPackageIndexSample(sampleLines, `[${section}]`);
+      continue;
+    }
+
+    const entry = readIniKeyValuePreview(trimmed);
+    if (entry) {
+      readingIndexServers = section.toLowerCase() === "distutils" && entry.key.toLowerCase() === "index-servers";
+      collectPythonPackageIndexEntry(
+        section,
+        entry.key,
+        entry.value,
+        indexServers,
+        repositoryUrls,
+        credentialKeys,
+        certificateHints,
+      );
+      addPythonPackageIndexSample(sampleLines, `${entry.key}=${sanitizePythonPackageIndexValue(entry.key, entry.value)}`);
+      continue;
+    }
+
+    if (readingIndexServers) {
+      const server = trimmed.replace(/^-+\s*/, "").trim();
+      if (server && indexServers.size < MAX_PYTHON_PACKAGE_INDEX_CONFIG_ITEM_PREVIEW) {
+        indexServers.add(clampSingleLine(server, 80));
+      }
+      addPythonPackageIndexSample(sampleLines, clampSingleLine(maskPotentialSecretValues(trimmed), 220));
+    }
+  }
+
+  return {
+    indexServers: [...indexServers].slice(0, MAX_PYTHON_PACKAGE_INDEX_CONFIG_ITEM_PREVIEW),
+    repositoryUrls: [...repositoryUrls].slice(0, MAX_PYTHON_PACKAGE_INDEX_CONFIG_ITEM_PREVIEW),
+    credentialKeys: [...credentialKeys].slice(0, MAX_PYTHON_PACKAGE_INDEX_CONFIG_ITEM_PREVIEW),
+    certificateHints: [...certificateHints].slice(0, MAX_PYTHON_PACKAGE_INDEX_CONFIG_ITEM_PREVIEW),
+    sampleLines,
+    truncated:
+      raw.length >= MAX_PYTHON_PACKAGE_INDEX_CONFIG_PREVIEW_BYTES ||
+      indexServers.size >= MAX_PYTHON_PACKAGE_INDEX_CONFIG_ITEM_PREVIEW ||
+      repositoryUrls.size >= MAX_PYTHON_PACKAGE_INDEX_CONFIG_ITEM_PREVIEW ||
+      credentialKeys.size >= MAX_PYTHON_PACKAGE_INDEX_CONFIG_ITEM_PREVIEW,
+  };
+}
+
+function stripIniStyleComment(line: string): string {
+  const trimmed = line.trim();
+  if (trimmed.startsWith("#") || trimmed.startsWith(";")) return "";
+  return trimmed;
+}
+
+function readIniKeyValuePreview(line: string): { key: string; value: string } | null {
+  const match = line.match(/^([A-Za-z0-9_.:-]+)\s*[:=]\s*(.*)$/);
+  if (!match?.[1]) return null;
+  return {
+    key: clampSingleLine(match[1].trim(), 80),
+    value: (match[2] || "").trim(),
+  };
+}
+
+function collectPythonPackageIndexEntry(
+  section: string,
+  key: string,
+  value: string,
+  indexServers: Set<string>,
+  repositoryUrls: Set<string>,
+  credentialKeys: Set<string>,
+  certificateHints: Set<string>,
+): void {
+  const keyLower = key.toLowerCase();
+  const sectionLabel = section || "(root)";
+  if (sectionLabel.toLowerCase() === "distutils" && keyLower === "index-servers") {
+    for (const server of value.split(/[,\s]+/)) {
+      if (server && indexServers.size < MAX_PYTHON_PACKAGE_INDEX_CONFIG_ITEM_PREVIEW) {
+        indexServers.add(clampSingleLine(server, 80));
+      }
+    }
+  }
+  if (keyLower === "repository" || keyLower === "repository_url") {
+    repositoryUrls.add(`${sectionLabel}=${clampSingleLine(maskPotentialSecretValues(value), 180)}`);
+  }
+  if (/(?:username|password|token|auth|credential|client_cert|cert|keyring)/i.test(key)) {
+    const hidden = /password|token|auth|credential/i.test(key) ? " [value hidden]" : "";
+    credentialKeys.add(`${sectionLabel}.${key}${hidden}`);
+  }
+  if (/(?:cert|client_cert|ca_cert|keyring)/i.test(key)) {
+    certificateHints.add(`${sectionLabel}.${key}`);
+  }
+}
+
+function sanitizePythonPackageIndexValue(key: string, value: string): string {
+  if (/(?:password|token|auth|credential)/i.test(key)) return "[value hidden]";
+  return clampSingleLine(maskPotentialSecretValues(value), 180);
+}
+
+function addPythonPackageIndexSample(samples: string[], line: string): void {
+  if (samples.length >= MAX_PYTHON_PACKAGE_INDEX_CONFIG_ITEM_PREVIEW) return;
+  const sample = clampSingleLine(line, 220);
+  if (sample) samples.push(sample);
 }
 
 function parsePythonDependencyManifestPreview(
@@ -11939,6 +13678,183 @@ function isBinaryArtifactExtension(extension: string): boolean {
   return [".dll", ".exe", ".wasm"].includes(extension);
 }
 
+function isKeePassDatabaseExtension(extension: string): boolean {
+  return extension === ".kdbx";
+}
+
+type KeePassHeaderField = {
+  id: number;
+  name: string;
+  length: number;
+};
+
+type KeePassDatabasePreview = {
+  valid: boolean;
+  majorVersion?: number;
+  minorVersion?: number;
+  headerFormat?: "KDBX3" | "KDBX4";
+  fields: KeePassHeaderField[];
+  compression?: string;
+  kdf?: string;
+  truncated: boolean;
+};
+
+function summarizeKeePassDatabaseFile(filePath: string, size: number): string {
+  try {
+    const buffer = readFileHeader(filePath, Math.min(size, MAX_KEEPASS_DATABASE_PREVIEW_BYTES));
+    const preview = readKeePassDatabasePreview(buffer, size);
+    return [
+      `KeePass KDBX database preview (${formatBytes(size)}).`,
+      preview.valid
+        ? `KDBX header: signature valid, version ${preview.majorVersion ?? "unknown"}.${preview.minorVersion ?? "unknown"}${preview.headerFormat ? ` (${preview.headerFormat})` : ""}.`
+        : "KDBX header: KeePass database signature was not recognized in the bounded local preview.",
+      preview.fields.length > 0
+        ? `Outer header fields (${preview.fields.length}${preview.fields.length >= MAX_KEEPASS_DATABASE_HEADER_FIELDS ? "+" : ""}): ${preview.fields.map((field) => `${field.name}=${formatBytes(field.length)}`).join(" | ")}.`
+        : "Outer header fields: none decoded from the bounded local preview.",
+      preview.compression
+        ? `Compression flags: ${preview.compression}.`
+        : "Compression flags: not available in decoded header fields.",
+      preview.kdf
+        ? `KDF/header cues: ${preview.kdf}.`
+        : "KDF/header cues: none decoded in bounded header fields.",
+      preview.truncated ? `KDBX header preview was capped at ${formatBytes(MAX_KEEPASS_DATABASE_PREVIEW_BYTES)} or field limits.` : "",
+      "Ready for explicit attachment after visible review; KeePass metadata was parsed from bounded workspace-local header bytes only, encrypted entries were not decrypted or enumerated, no master password/key file/YubiKey challenge was requested, no key derivation or credential validation was attempted, no KeePass/libkeepass process was launched, and no network call or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `KeePass KDBX database ready for explicit attachment (${formatBytes(size)}).`,
+      "KDBX preview could not read bounded local header bytes; no decryption, master password prompt, key derivation, credential validation, KeePass runtime launch, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function readKeePassDatabasePreview(buffer: Buffer, fileSize: number): KeePassDatabasePreview {
+  const valid =
+    buffer.length >= 12 &&
+    buffer.readUInt32LE(0) === 0x9aa2d903 &&
+    buffer.readUInt32LE(4) === 0xb54bfb67;
+  if (!valid) {
+    return { valid: false, fields: [], truncated: buffer.length >= MAX_KEEPASS_DATABASE_PREVIEW_BYTES };
+  }
+  const versionRaw = buffer.readUInt32LE(8);
+  const majorVersion = versionRaw >>> 16;
+  const minorVersion = versionRaw & 0xffff;
+  const headerFormat = majorVersion >= 4 ? "KDBX4" : "KDBX3";
+  const fields = readKeePassHeaderFields(buffer, headerFormat);
+  const compression = summarizeKeePassCompression(fields, buffer, headerFormat);
+  const kdf = summarizeKeePassKdf(fields, buffer, headerFormat);
+  return {
+    valid,
+    majorVersion,
+    minorVersion,
+    headerFormat,
+    fields,
+    compression,
+    kdf,
+    truncated:
+      fileSize > buffer.length ||
+      buffer.length >= MAX_KEEPASS_DATABASE_PREVIEW_BYTES ||
+      fields.length >= MAX_KEEPASS_DATABASE_HEADER_FIELDS,
+  };
+}
+
+function readKeePassHeaderFields(buffer: Buffer, headerFormat: "KDBX3" | "KDBX4"): KeePassHeaderField[] {
+  const fields: KeePassHeaderField[] = [];
+  let offset = 12;
+  const lengthBytes = headerFormat === "KDBX4" ? 4 : 2;
+  while (offset + 1 + lengthBytes <= buffer.length && fields.length < MAX_KEEPASS_DATABASE_HEADER_FIELDS) {
+    const id = buffer[offset];
+    offset += 1;
+    const length = lengthBytes === 4 ? buffer.readUInt32LE(offset) : buffer.readUInt16LE(offset);
+    offset += lengthBytes;
+    if (id === 0) break;
+    if (length < 0 || offset + length > buffer.length) break;
+    fields.push({ id, name: describeKeePassHeaderField(id), length });
+    offset += length;
+  }
+  return fields;
+}
+
+function describeKeePassHeaderField(id: number): string {
+  return (
+    {
+      1: "Comment",
+      2: "CipherID",
+      3: "CompressionFlags",
+      4: "MasterSeed",
+      5: "TransformSeed",
+      6: "TransformRounds",
+      7: "EncryptionIV",
+      8: "ProtectedStreamKey",
+      9: "StreamStartBytes",
+      10: "InnerRandomStreamID",
+      11: "KdfParameters",
+      12: "PublicCustomData",
+    }[id] ?? `Field${id}`
+  );
+}
+
+function summarizeKeePassCompression(
+  fields: KeePassHeaderField[],
+  buffer: Buffer,
+  headerFormat: "KDBX3" | "KDBX4",
+): string | undefined {
+  const field = fields.find((entry) => entry.id === 3);
+  const data = field ? readKeePassHeaderFieldData(buffer, field.id, headerFormat) : undefined;
+  if (!data || data.length < 4) return undefined;
+  const value = data.readUInt32LE(0);
+  if (value === 0) return "none";
+  if (value === 1) return "gzip";
+  return `unknown flag ${value}`;
+}
+
+function summarizeKeePassKdf(
+  fields: KeePassHeaderField[],
+  buffer: Buffer,
+  headerFormat: "KDBX3" | "KDBX4",
+): string | undefined {
+  const kdfField = fields.find((entry) => entry.id === 11);
+  if (kdfField) {
+    const data = readKeePassHeaderFieldData(buffer, kdfField.id, headerFormat);
+    const names = data ? extractKeePassKdfParameterNames(data) : [];
+    return names.length > 0 ? `KDBX4 KDF parameters: ${names.join(", ")}` : "KDBX4 KDF parameter block present";
+  }
+  const transformSeed = fields.find((entry) => entry.id === 5);
+  const transformRounds = fields.find((entry) => entry.id === 6);
+  if (transformSeed || transformRounds) {
+    return `KDBX3 transform fields present${transformSeed ? `, TransformSeed=${formatBytes(transformSeed.length)}` : ""}${transformRounds ? `, TransformRounds=${formatBytes(transformRounds.length)}` : ""}`;
+  }
+  return undefined;
+}
+
+function readKeePassHeaderFieldData(
+  buffer: Buffer,
+  targetId: number,
+  headerFormat: "KDBX3" | "KDBX4",
+): Buffer | undefined {
+  let offset = 12;
+  const lengthBytes = headerFormat === "KDBX4" ? 4 : 2;
+  while (offset + 1 + lengthBytes <= buffer.length) {
+    const id = buffer[offset];
+    offset += 1;
+    const length = lengthBytes === 4 ? buffer.readUInt32LE(offset) : buffer.readUInt16LE(offset);
+    offset += lengthBytes;
+    if (id === 0 || offset + length > buffer.length) break;
+    if (id === targetId) return buffer.subarray(offset, offset + length);
+    offset += length;
+  }
+  return undefined;
+}
+
+function extractKeePassKdfParameterNames(data: Buffer): string[] {
+  return [...new Set(extractPrintableByteRuns(data)
+    .flatMap((value) => value.split(/[\s,;:=]+/))
+    .map((value) => value.trim())
+    .filter((value) => /^[A-Za-z$][A-Za-z0-9_$.-]{1,40}$/.test(value))
+    .filter((value) => !/secret|password|token|key$/i.test(value))
+    .slice(0, MAX_KEEPASS_DATABASE_HEADER_FIELDS))];
+}
+
 function isJavaBuildArtifactExtension(extension: string): boolean {
   return [".jar", ".war", ".ear", ".class"].includes(extension);
 }
@@ -14284,6 +16200,166 @@ function collectNodePackageManagerHints(lines: string[], extension: string): str
   return [...hints].slice(0, MAX_NODE_PACKAGE_MANAGER_CONFIG_ITEM_PREVIEW);
 }
 
+function summarizeJsWorkspaceConfigFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(
+      filePath,
+      Math.min(MAX_JS_WORKSPACE_CONFIG_PREVIEW_BYTES, MAX_TEXT_BYTES * 24),
+    ).toString("utf8");
+    const normalized = normalizeTextPreview(raw);
+    const tool = describeJsWorkspaceConfig(filePath);
+    const parsed = parseJsWorkspaceConfigObject(filePath, normalized);
+    const workspaceHints = collectJsWorkspaceConfigHints(tool, parsed, normalized);
+    const taskHints = collectJsWorkspaceTaskHints(tool, parsed, normalized);
+    const riskHints = collectJsWorkspaceRiskHints(normalized);
+    const sampleLines = normalized
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith("#") && !line.startsWith("//"))
+      .slice(0, MAX_JS_WORKSPACE_CONFIG_ITEM_PREVIEW)
+      .map((line) => clampSingleLine(maskPotentialSecretValues(line), 220));
+    return [
+      `JS/TS workspace config preview (${tool}, ${formatBytes(size)}).`,
+      workspaceHints.length > 0
+        ? `Workspace metadata (${workspaceHints.length}${workspaceHints.length >= MAX_JS_WORKSPACE_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${workspaceHints.join(", ")}.`
+        : "Workspace metadata: none detected in the bounded local preview.",
+      taskHints.length > 0
+        ? `Task/target hints (${taskHints.length}${taskHints.length >= MAX_JS_WORKSPACE_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${taskHints.join(", ")}.`
+        : "Task/target hints: none detected in the bounded local preview.",
+      riskHints.length > 0
+        ? `Static risk cues: ${riskHints.join(", ")}.`
+        : "Static risk cues: no remote cache, command, plugin, or environment-token cues detected in the bounded local preview.",
+      sampleLines.length > 0
+        ? `Sanitized line samples:\n${sampleLines.map((line, index) => `${index + 1}. ${line}`).join("\n")}`
+        : "Sanitized line samples: none detected in the bounded local preview.",
+      normalized.length >= MAX_JS_WORKSPACE_CONFIG_PREVIEW_BYTES
+        ? `JS/TS workspace config preview was capped at ${formatBytes(MAX_JS_WORKSPACE_CONFIG_PREVIEW_BYTES)}.`
+        : "",
+      "Ready for explicit attachment after visible review; monorepo workspace metadata was parsed from bounded workspace-local text/JSON only, with likely secrets redacted and no pnpm/npm/Yarn/Bun command, Turbo/Nx runner, package install, dependency graph build, cache lookup, plugin execution, environment loading, network call, credential lookup, or provider send performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `JS/TS workspace config ready for explicit attachment (${formatBytes(size)}).`,
+      "Config preview could not read bounded local text.",
+      "No pnpm/npm/Yarn/Bun command, Turbo/Nx runner, package install, dependency graph build, cache lookup, plugin execution, environment loading, network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function describeJsWorkspaceConfig(filePath: string): string {
+  const name = basename(filePath).toLowerCase();
+  if (name.startsWith("pnpm-workspace.")) return "pnpm workspace";
+  if (name === "turbo.json" || name === "turbo.jsonc") return "Turborepo";
+  if (name === "nx.json") return "Nx workspace";
+  return "JS/TS workspace";
+}
+
+function parseJsWorkspaceConfigObject(filePath: string, raw: string): unknown {
+  const name = basename(filePath).toLowerCase();
+  if (name === "turbo.json" || name === "turbo.jsonc" || name === "nx.json") {
+    try {
+      return parseJsoncLike(raw);
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+function collectJsWorkspaceConfigHints(tool: string, parsed: unknown, raw: string): string[] {
+  const hints = new Set<string>();
+  if (isRecord(parsed)) {
+    for (const key of readObjectKeys(parsed, MAX_JS_WORKSPACE_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`${key} key`);
+      if (hints.size >= MAX_JS_WORKSPACE_CONFIG_ITEM_PREVIEW) return [...hints];
+    }
+    for (const key of ["globalDependencies", "globalEnv", "namedInputs", "plugins", "workspaceLayout", "npmScope"]) {
+      const value = parsed[key];
+      if (Array.isArray(value)) {
+        const samples = value.filter((item): item is string => typeof item === "string").slice(0, 4);
+        if (samples.length > 0) hints.add(`${key}: ${samples.map((item) => clampSingleLine(maskPotentialSecretValues(item), 120)).join(", ")}`);
+      } else if (isRecord(value)) {
+        const keys = readObjectKeys(value, 4);
+        if (keys.length > 0) hints.add(`${key}: ${keys.join(", ")}`);
+      } else if (typeof value === "string") {
+        hints.add(`${key}: ${clampSingleLine(maskPotentialSecretValues(value), 120)}`);
+      }
+      if (hints.size >= MAX_JS_WORKSPACE_CONFIG_ITEM_PREVIEW) return [...hints];
+    }
+  }
+  if (tool === "pnpm workspace") {
+    for (const pattern of collectYamlListValues(raw, "packages", MAX_JS_WORKSPACE_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`package pattern ${pattern}`);
+    }
+    for (const key of collectYamlTopLevelKeys(raw, MAX_JS_WORKSPACE_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`${key} key`);
+      if (hints.size >= MAX_JS_WORKSPACE_CONFIG_ITEM_PREVIEW) break;
+    }
+  }
+  return [...hints].slice(0, MAX_JS_WORKSPACE_CONFIG_ITEM_PREVIEW);
+}
+
+function collectJsWorkspaceTaskHints(tool: string, parsed: unknown, raw: string): string[] {
+  const hints = new Set<string>();
+  if (isRecord(parsed)) {
+    const tasks = isRecord(parsed.tasks) ? parsed.tasks : isRecord(parsed.pipeline) ? parsed.pipeline : undefined;
+    for (const key of readObjectKeys(tasks, MAX_JS_WORKSPACE_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`${tool === "Turborepo" ? "task" : "target"} ${key}`);
+      if (hints.size >= MAX_JS_WORKSPACE_CONFIG_ITEM_PREVIEW) return [...hints];
+    }
+    const targetDefaults = isRecord(parsed.targetDefaults) ? parsed.targetDefaults : undefined;
+    for (const key of readObjectKeys(targetDefaults, MAX_JS_WORKSPACE_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`target default ${key}`);
+      if (hints.size >= MAX_JS_WORKSPACE_CONFIG_ITEM_PREVIEW) return [...hints];
+    }
+  }
+  for (const match of raw.matchAll(/["']?([A-Za-z0-9:_-]+)["']?\s*:\s*\{\s*(?:\r?\n|\s)*(?=.*(?:dependsOn|outputs|inputs|cache|executor))/g)) {
+    if (match[1]) hints.add(clampSingleLine(match[1], 120));
+    if (hints.size >= MAX_JS_WORKSPACE_CONFIG_ITEM_PREVIEW) break;
+  }
+  return [...hints].slice(0, MAX_JS_WORKSPACE_CONFIG_ITEM_PREVIEW);
+}
+
+function collectJsWorkspaceRiskHints(raw: string): string[] {
+  const hints = new Set<string>();
+  const lower = raw.toLowerCase();
+  if (lower.includes("remotecache") || lower.includes("remote cache") || lower.includes("teamid")) hints.add("remote-cache declaration");
+  if (/\b(command|executor|generator|plugin|plugins)\b/i.test(raw)) hints.add("plugin/executor declaration");
+  if (/\bprocess\.env\b|\benv\b/i.test(raw)) hints.add("environment-variable reference");
+  if (/\btoken\b|\bsecret\b|\bpassword\b|_authToken/i.test(raw)) hints.add("credential-shaped key redacted");
+  if (/\bdependsOn\b|\boutputs\b|\binputs\b|\bcache\b/.test(raw)) hints.add("task graph/cache metadata");
+  return [...hints].slice(0, MAX_JS_WORKSPACE_CONFIG_ITEM_PREVIEW);
+}
+
+function collectYamlTopLevelKeys(raw: string, limit: number): string[] {
+  const keys: string[] = [];
+  for (const line of raw.split("\n")) {
+    const match = line.match(/^([A-Za-z0-9_.-]+)\s*:/);
+    if (!match?.[1]) continue;
+    keys.push(clampSingleLine(match[1], 100));
+    if (keys.length >= limit) break;
+  }
+  return keys;
+}
+
+function collectYamlListValues(raw: string, section: string, limit: number): string[] {
+  const values: string[] = [];
+  const lines = raw.split("\n");
+  let inSection = false;
+  for (const line of lines) {
+    if (!inSection) {
+      if (line.trim() === `${section}:`) inSection = true;
+      continue;
+    }
+    if (/^\S/.test(line) && !line.trim().startsWith("-")) break;
+    const match = line.match(/^\s*-\s*['"]?([^'"\r\n#]+)['"]?/);
+    if (!match?.[1]) continue;
+    values.push(clampSingleLine(maskPotentialSecretValues(match[1].trim()), 120));
+    if (values.length >= limit) break;
+  }
+  return values;
+}
+
 function summarizeJsToolingConfigFile(filePath: string, size: number): string {
   try {
     const raw = readFileHeader(
@@ -14545,6 +16621,8 @@ function detectDependencyLockfileEcosystem(name: string, extension: string): str
   if (name === "package-lock.json" || name === "npm-shrinkwrap.json") return "npm";
   if (name === "pnpm-lock.yaml" || name === "pnpm-lock.yml") return "pnpm";
   if (name === "yarn.lock") return "Yarn";
+  if (name === "deno.lock") return "Deno";
+  if (name === "bun.lock") return "Bun";
   if (name === "cargo.lock") return "Cargo";
   if (name === "poetry.lock") return "Poetry";
   if (name === "pipfile.lock") return "Pipenv";
@@ -14562,6 +16640,10 @@ function extractDependencyLockfilePackages(name: string, extension: string, raw:
     collectPnpmLockfilePackages(raw, packages);
   } else if (name === "yarn.lock") {
     collectYarnLockfilePackages(raw, packages);
+  } else if (name === "deno.lock") {
+    collectDenoLockfilePackages(raw, packages);
+  } else if (name === "bun.lock") {
+    collectBunLockfilePackages(raw, packages);
   } else if (name === "cargo.lock" || name === "poetry.lock") {
     collectTomlLockfilePackages(raw, packages);
   } else if (name === "gemfile.lock") {
@@ -14587,6 +16669,10 @@ function extractDependencyLockfileEdges(name: string, extension: string, raw: st
     collectTomlLockDependencyEdges(raw, edges, seen);
   } else if (name === "yarn.lock") {
     collectYarnLockDependencyEdges(raw, edges, seen);
+  } else if (name === "deno.lock") {
+    collectDenoLockDependencyEdges(raw, edges, seen);
+  } else if (name === "bun.lock") {
+    collectBunLockDependencyEdges(raw, edges, seen);
   } else if (name === "pnpm-lock.yaml" || name === "pnpm-lock.yml") {
     collectPnpmLockDependencyEdges(raw, edges, seen);
   } else if (name === "go.sum" || extension === ".sum") {
@@ -14756,6 +16842,59 @@ function collectGoSumDependencyEdges(
   }
 }
 
+function collectDenoLockDependencyEdges(
+  raw: string,
+  edges: Array<{ from: string; to: string; kind: string }>,
+  seen: Set<string>,
+): void {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!isPlainRecord(parsed) || !isPlainRecord(parsed.npm)) return;
+    const specifiers = isPlainRecord(parsed.npm.specifiers) ? parsed.npm.specifiers : {};
+    for (const [specifier, resolved] of Object.entries(specifiers)) {
+      addDependencyEdge(edges, seen, "(npm specifier)", stripDenoNpmSpecifier(typeof resolved === "string" ? resolved : specifier), "specifier");
+      if (edges.length >= MAX_LOCKFILE_EDGE_PREVIEW) return;
+    }
+    const packages = isPlainRecord(parsed.npm.packages) ? parsed.npm.packages : {};
+    for (const [packageKey, entry] of Object.entries(packages)) {
+      if (!isPlainRecord(entry)) continue;
+      collectDependencyRecordEdges(edges, seen, readDenoPackageName(packageKey), entry.dependencies, "dependency");
+      if (edges.length >= MAX_LOCKFILE_EDGE_PREVIEW) return;
+    }
+  } catch {
+    return;
+  }
+}
+
+function collectBunLockDependencyEdges(
+  raw: string,
+  edges: Array<{ from: string; to: string; kind: string }>,
+  seen: Set<string>,
+): void {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!isPlainRecord(parsed)) return;
+    const workspaces = isPlainRecord(parsed.workspaces) ? parsed.workspaces : {};
+    for (const [workspaceName, workspace] of Object.entries(workspaces)) {
+      if (!isPlainRecord(workspace)) continue;
+      const from = workspaceName || "(workspace)";
+      collectDependencyRecordEdges(edges, seen, from, workspace.dependencies, "workspace dependency");
+      collectDependencyRecordEdges(edges, seen, from, workspace.devDependencies, "workspace dev dependency");
+      if (edges.length >= MAX_LOCKFILE_EDGE_PREVIEW) return;
+    }
+    const packages = isPlainRecord(parsed.packages) ? parsed.packages : {};
+    for (const [packageName, entry] of Object.entries(packages)) {
+      const metadata = Array.isArray(entry) && isPlainRecord(entry[2]) ? entry[2] : isPlainRecord(entry) ? entry : null;
+      if (!metadata) continue;
+      collectDependencyRecordEdges(edges, seen, packageName, metadata.dependencies, "dependency");
+      collectDependencyRecordEdges(edges, seen, packageName, metadata.peerDependencies, "peer");
+      if (edges.length >= MAX_LOCKFILE_EDGE_PREVIEW) return;
+    }
+  } catch {
+    return;
+  }
+}
+
 function collectDependencyRecordEdges(
   edges: Array<{ from: string; to: string; kind: string }>,
   seen: Set<string>,
@@ -14812,6 +16951,19 @@ function normalizeLockfileDependencyName(value: string): string {
   );
 }
 
+function stripDenoNpmSpecifier(value: string): string {
+  return normalizeLockfileDependencyName(
+    value
+      .replace(/^npm:/, "")
+      .replace(/@npm:/g, "@")
+      .replace(/@(?:\^|~)?\d[\w.+:-]*$/, ""),
+  );
+}
+
+function readDenoPackageName(value: string): string {
+  return stripDenoNpmSpecifier(value.replace(/@\d[\w.+:-]*$/, ""));
+}
+
 function estimateDependencyLockfilePackageCount(
   name: string,
   extension: string,
@@ -14844,6 +16996,32 @@ function estimateDependencyLockfilePackageCount(
       const defaultDeps = isPlainRecord(record.default) ? Object.keys(record.default).length : 0;
       const developDeps = isPlainRecord(record.develop) ? Object.keys(record.develop).length : 0;
       return `${defaultDeps + developDeps} Pipenv dependency entr${defaultDeps + developDeps === 1 ? "y" : "ies"} in bounded JSON`;
+    } catch {
+      return "JSON parse failed in bounded preview";
+    }
+  }
+  if (name === "deno.lock") {
+    try {
+      const parsed = JSON.parse(raw);
+      const record = isPlainRecord(parsed) ? parsed : {};
+      const npm = isPlainRecord(record.npm) ? record.npm : {};
+      const npmPackages = isPlainRecord(npm.packages) ? Object.keys(npm.packages).length : 0;
+      const npmSpecifiers = isPlainRecord(npm.specifiers) ? Object.keys(npm.specifiers).length : 0;
+      const remote = isPlainRecord(record.remote) ? Object.keys(record.remote).length : 0;
+      const total = npmPackages + npmSpecifiers + remote;
+      return `${total} Deno lock entr${total === 1 ? "y" : "ies"} in bounded JSON`;
+    } catch {
+      return "JSON parse failed in bounded preview";
+    }
+  }
+  if (name === "bun.lock") {
+    try {
+      const parsed = JSON.parse(raw);
+      const record = isPlainRecord(parsed) ? parsed : {};
+      const packages = isPlainRecord(record.packages) ? Object.keys(record.packages).length : 0;
+      const workspaces = isPlainRecord(record.workspaces) ? Object.keys(record.workspaces).length : 0;
+      const total = packages + workspaces;
+      return `${total} Bun lock entr${total === 1 ? "y" : "ies"} in bounded JSON`;
     } catch {
       return "JSON parse failed in bounded preview";
     }
@@ -14943,6 +17121,61 @@ function collectGoSumPackages(raw: string, packages: Set<string>): void {
   }
 }
 
+function collectDenoLockfilePackages(raw: string, packages: Set<string>): void {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!isPlainRecord(parsed)) return collectGenericLockfilePackages(raw, packages);
+    if (isPlainRecord(parsed.npm)) {
+      const specifiers = isPlainRecord(parsed.npm.specifiers) ? parsed.npm.specifiers : {};
+      for (const [specifier, resolved] of Object.entries(specifiers)) {
+        packages.add(stripDenoNpmSpecifier(typeof resolved === "string" ? resolved : specifier));
+        if (packages.size >= MAX_LOCKFILE_PACKAGE_PREVIEW) return;
+      }
+      const npmPackages = isPlainRecord(parsed.npm.packages) ? Object.keys(parsed.npm.packages) : [];
+      for (const packageKey of npmPackages) {
+        packages.add(readDenoPackageName(packageKey));
+        if (packages.size >= MAX_LOCKFILE_PACKAGE_PREVIEW) return;
+      }
+    }
+    if (isPlainRecord(parsed.remote)) {
+      for (const remoteUrl of Object.keys(parsed.remote)) {
+        const urlPackage = remoteUrl.match(/\/([^/@]+)@v?\d[^/]*\//)?.[1] || remoteUrl.match(/\/([^/]+)\.[cm]?[jt]s(?:\?|$)/)?.[1];
+        if (urlPackage) packages.add(urlPackage);
+        if (packages.size >= MAX_LOCKFILE_PACKAGE_PREVIEW) return;
+      }
+    }
+  } catch {
+    collectGenericLockfilePackages(raw, packages);
+  }
+}
+
+function collectBunLockfilePackages(raw: string, packages: Set<string>): void {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!isPlainRecord(parsed)) return collectGenericLockfilePackages(raw, packages);
+    if (isPlainRecord(parsed.workspaces)) {
+      for (const workspace of Object.values(parsed.workspaces)) {
+        if (!isPlainRecord(workspace)) continue;
+        for (const mapName of ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"]) {
+          const dependencies = isPlainRecord(workspace[mapName]) ? workspace[mapName] : {};
+          for (const name of Object.keys(dependencies)) {
+            packages.add(name);
+            if (packages.size >= MAX_LOCKFILE_PACKAGE_PREVIEW) return;
+          }
+        }
+      }
+    }
+    if (isPlainRecord(parsed.packages)) {
+      for (const packageKey of Object.keys(parsed.packages)) {
+        packages.add(normalizeLockfileDependencyName(packageKey));
+        if (packages.size >= MAX_LOCKFILE_PACKAGE_PREVIEW) return;
+      }
+    }
+  } catch {
+    collectGenericLockfilePackages(raw, packages);
+  }
+}
+
 function collectGenericLockfilePackages(raw: string, packages: Set<string>): void {
   for (const line of raw.split(/\r?\n/)) {
     const match = line.match(/^\s*(?:name\s*[:=]\s*|["']?name["']?\s*:\s*["'])([A-Za-z0-9_@/.-]+)/);
@@ -15029,6 +17262,171 @@ function summarizeLogText(raw: string, size: number): string {
     preview || "No readable log lines were found.",
     "Ready for explicit attachment after visible review; no log command execution, tailing process, network call, secret lookup, or provider send was performed.",
   ].join("\n").slice(0, MAX_TEXT_BYTES);
+}
+
+interface RegexPatternPreview {
+  patternCount: number;
+  patterns: string[];
+  flags: string[];
+  namedGroups: string[];
+  features: string[];
+  replacementSamples: string[];
+  targetSamples: string[];
+  riskCues: string[];
+  invalidLines: number;
+  truncated: boolean;
+}
+
+function summarizeRegexPatternFile(filePath: string, extension: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_REGEX_PATTERN_PREVIEW_BYTES)).toString("utf8");
+    const preview = parseRegexPatternPreview(raw);
+    return [
+      `Regular expression pattern preview (${extension === ".regexp" ? "regexp" : "regex"}, ${formatBytes(size)}).`,
+      `Patterns in bounded preview: ${preview.patternCount}; invalid/unclassified lines: ${preview.invalidLines}${preview.truncated ? "; preview byte or item limit reached" : ""}.`,
+      preview.flags.length > 0 ? `Flags (${preview.flags.length}${preview.flags.length >= MAX_REGEX_PATTERN_ITEM_PREVIEW ? "+" : ""}): ${preview.flags.join(", ")}.` : "Flags: none detected.",
+      preview.namedGroups.length > 0
+        ? `Named capture groups (${preview.namedGroups.length}${preview.namedGroups.length >= MAX_REGEX_PATTERN_ITEM_PREVIEW ? "+" : ""}): ${preview.namedGroups.join(", ")}.`
+        : "Named capture groups: none detected.",
+      preview.features.length > 0
+        ? `Static regex features: ${preview.features.join(", ")}.`
+        : "Static regex features: none detected in the bounded preview.",
+      preview.replacementSamples.length > 0
+        ? `Replacement templates (${preview.replacementSamples.length}${preview.replacementSamples.length >= MAX_REGEX_PATTERN_ITEM_PREVIEW ? "+" : ""}): ${preview.replacementSamples.join(" | ")}.`
+        : "Replacement templates: none detected.",
+      preview.targetSamples.length > 0
+        ? `Declared sample targets (${preview.targetSamples.length}${preview.targetSamples.length >= MAX_REGEX_PATTERN_ITEM_PREVIEW ? "+" : ""}): ${preview.targetSamples.join(" | ")}.`
+        : "Declared sample targets: none detected.",
+      preview.riskCues.length > 0
+        ? `Static risk cues: ${preview.riskCues.join(", ")}.`
+        : "Static risk cues: none detected by local heuristics.",
+      preview.patterns.length > 0 ? `Pattern samples:\n${preview.patterns.map((pattern, index) => `${index + 1}. ${pattern}`).join("\n")}` : "Pattern samples: none detected.",
+      "Ready for explicit attachment after visible review; regex text was parsed from bounded workspace-local lines only, patterns were not compiled or executed, no files were searched, no replacement was applied, no ReDoS benchmark, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Regular expression pattern file ready for explicit attachment (${formatBytes(size)}).`,
+      "Regex preview could not read bounded local text; patterns were not compiled or executed, no files were searched, no replacement was applied, no network call, or provider send was performed.",
+    ].join("\n");
+  }
+}
+
+function parseRegexPatternPreview(raw: string): RegexPatternPreview {
+  const patterns: string[] = [];
+  const flags = new Set<string>();
+  const namedGroups = new Set<string>();
+  const features = new Set<string>();
+  const replacementSamples: string[] = [];
+  const targetSamples: string[] = [];
+  const riskCues = new Set<string>();
+  let patternCount = 0;
+  let invalidLines = 0;
+
+  for (const originalLine of normalizeTextPreview(raw).split("\n")) {
+    const trimmed = originalLine.trim();
+    if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("//")) continue;
+
+    const replacement = trimmed.match(/^(?:replace(?:ment)?|substitution)\s*[:=]\s*(.+)$/i);
+    if (replacement?.[1]) {
+      if (replacementSamples.length < MAX_REGEX_PATTERN_ITEM_PREVIEW) {
+        replacementSamples.push(maskPotentialSecretValues(clampSingleLine(replacement[1], 160)));
+      }
+      collectRegexReplacementRiskCues(replacement[1], riskCues);
+      continue;
+    }
+
+    const target = trimmed.match(/^(?:target|file|sample|scope)\s*[:=]\s*(.+)$/i);
+    if (target?.[1]) {
+      if (targetSamples.length < MAX_REGEX_PATTERN_ITEM_PREVIEW) {
+        targetSamples.push(maskPotentialSecretValues(clampSingleLine(target[1], 160)));
+      }
+      continue;
+    }
+
+    const labeledPattern = trimmed.match(/^(?:pattern|regex|regexp|find|match)\s*[:=]\s*(.+)$/i)?.[1] ?? trimmed;
+    const parsed = parseRegexPatternLine(labeledPattern);
+    if (!parsed.pattern) {
+      invalidLines += 1;
+      continue;
+    }
+
+    patternCount += 1;
+    if (patterns.length < MAX_REGEX_PATTERN_ITEM_PREVIEW) {
+      patterns.push(maskPotentialSecretValues(clampSingleLine(parsed.pattern, 180)));
+    }
+    for (const flag of parsed.flags) flags.add(flag);
+    collectRegexPatternStaticFeatures(parsed.pattern, namedGroups, features, riskCues);
+  }
+
+  return {
+    patternCount,
+    patterns,
+    flags: [...flags].slice(0, MAX_REGEX_PATTERN_ITEM_PREVIEW),
+    namedGroups: [...namedGroups].slice(0, MAX_REGEX_PATTERN_ITEM_PREVIEW),
+    features: [...features].slice(0, MAX_REGEX_PATTERN_ITEM_PREVIEW),
+    replacementSamples,
+    targetSamples,
+    riskCues: [...riskCues].slice(0, MAX_REGEX_PATTERN_ITEM_PREVIEW),
+    invalidLines,
+    truncated: raw.length >= MAX_REGEX_PATTERN_PREVIEW_BYTES || patternCount > MAX_REGEX_PATTERN_ITEM_PREVIEW,
+  };
+}
+
+function parseRegexPatternLine(value: string): { pattern: string; flags: string[] } {
+  const withoutComment = value.replace(/\s+#.*$/, "").trim();
+  if (!withoutComment) return { pattern: "", flags: [] };
+  if (withoutComment.startsWith("/")) {
+    let escaped = false;
+    for (let index = withoutComment.length - 1; index > 0; index -= 1) {
+      const char = withoutComment[index];
+      if (char !== "/") {
+        escaped = char === "\\" && !escaped;
+        continue;
+      }
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      const pattern = withoutComment.slice(1, index);
+      const flags = withoutComment.slice(index + 1).match(/^[a-z]+/i)?.[0] ?? "";
+      return { pattern, flags: flags.split("").filter(Boolean) };
+    }
+  }
+  const inlineFlags = [...withoutComment.matchAll(/\(\?([imsuxadgy]+)[):]/gi)].flatMap((match) => (match[1] || "").split(""));
+  return { pattern: withoutComment, flags: inlineFlags };
+}
+
+function collectRegexPatternStaticFeatures(
+  pattern: string,
+  namedGroups: Set<string>,
+  features: Set<string>,
+  riskCues: Set<string>,
+): void {
+  for (const match of pattern.matchAll(/\(\?<([A-Za-z_][A-Za-z0-9_]*)>/g)) {
+    if (match[1] && namedGroups.size < MAX_REGEX_PATTERN_ITEM_PREVIEW) namedGroups.add(match[1]);
+  }
+  if (/\(\?[:=!<]/.test(pattern)) features.add("lookaround/noncapturing group syntax");
+  if (/\\(?:\d+|k<[^>]+>)/.test(pattern)) features.add("backreference");
+  if (/\[[^\]]+\]/.test(pattern)) features.add("character class");
+  if (/\|/.test(pattern)) features.add("alternation");
+  if (/(^|[^\\])[\^$]/.test(pattern)) features.add("anchors");
+  if (/\(\?<[=!]/.test(pattern)) features.add("lookbehind");
+  if (/\(\?[=!]/.test(pattern)) features.add("lookahead");
+  if (/(?:\([^)]*[+*][^)]*\)|\[[^\]]+[+*]\)[+*])[*+{]/.test(pattern) || /\([^)]*\.\*[^)]*\)[*+{]/.test(pattern)) {
+    riskCues.add("nested quantifier / possible catastrophic backtracking");
+  }
+  if (/(^|[^\\])\.\*/.test(pattern)) riskCues.add("broad dot-star match");
+  if (/\b(?:password|secret|token|api[_-]?key|credential|authorization)\b/i.test(pattern)) {
+    riskCues.add("sensitive-field matching");
+  }
+  if (pattern.length > 240) riskCues.add("large pattern");
+}
+
+function collectRegexReplacementRiskCues(value: string, riskCues: Set<string>): void {
+  if (/\$(?:\d+|<[^>]+>)/.test(value)) riskCues.add("replacement backreference");
+  if (/\b(?:password|secret|token|api[_-]?key|credential|authorization)\b/i.test(value)) {
+    riskCues.add("sensitive-field replacement");
+  }
 }
 
 interface TerminalRecordingPreview {
@@ -19975,7 +22373,7 @@ function formatGeospatialBounds(bounds: GeospatialBounds): string | undefined {
 }
 
 interface FeedDocumentPreview {
-  format: "RSS" | "Atom" | "XML feed";
+  format: "RSS" | "Atom" | "XML feed" | "JSON Feed";
   title: string | null;
   siteUrl: string | null;
   updated: string | null;
@@ -20005,6 +22403,26 @@ interface SitemapPreview {
   lastModified: string[];
   changeFrequencies: string[];
   priorities: string[];
+}
+
+interface LlmsMetadataPreview {
+  title: string;
+  headings: string[];
+  links: string[];
+  optionalCues: string[];
+  fullContextCues: string[];
+  truncated: boolean;
+}
+
+interface WarcArchivePreview {
+  recordCount: number;
+  recordTypes: string[];
+  targetUris: string[];
+  dates: string[];
+  contentTypes: string[];
+  recordIds: string[];
+  truncated: boolean;
+  decompressed: boolean;
 }
 
 function summarizeWebCrawlMetadataFile(filePath: string, extension: string, size: number): string {
@@ -20048,6 +22466,177 @@ function summarizeWebCrawlMetadataFile(filePath: string, extension: string, size
       "Preview could not parse bounded local robots/sitemap content; no URL fetch, crawl, JavaScript execution, browser profile access, SEO scoring, network call, credential lookup, or provider send was performed.",
     ].join("\n");
   }
+}
+
+function summarizeLlmsMetadataFile(filePath: string, extension: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_LLMS_METADATA_PREVIEW_BYTES).toString("utf8");
+    const preview = parseLlmsMetadataPreview(raw, extension);
+    const label = extension === ".llms-full.txt" ? "llms-full.txt" : "llms.txt";
+    return [
+      `LLM website metadata preview (${label}, ${formatBytes(size)}).`,
+      `Title: ${preview.title || "none detected in the bounded local preview"}.`,
+      preview.headings.length > 0
+        ? `Sections (${preview.headings.length}${preview.headings.length >= MAX_LLMS_METADATA_ITEM_PREVIEW ? "+" : ""}): ${preview.headings.join(" | ")}.`
+        : "Sections: none detected in the bounded local preview.",
+      preview.links.length > 0
+        ? `Resource links (${preview.links.length}${preview.links.length >= MAX_LLMS_METADATA_ITEM_PREVIEW ? "+" : ""}): ${preview.links.join(" | ")}.`
+        : "Resource links: none detected in the bounded local preview.",
+      preview.optionalCues.length > 0
+        ? `Optional context cues: ${preview.optionalCues.join(" | ")}.`
+        : "Optional context cues: none detected in the bounded local preview.",
+      preview.fullContextCues.length > 0
+        ? `Full-context cues: ${preview.fullContextCues.join(" | ")}.`
+        : "Full-context cues: none detected in the bounded local preview.",
+      preview.truncated ? `LLM metadata preview was capped at ${formatBytes(MAX_LLMS_METADATA_PREVIEW_BYTES)}.` : "",
+      "Ready for explicit attachment after visible review; llms.txt metadata was parsed from bounded workspace-local Markdown/text only, linked resources were not fetched, websites were not crawled, JavaScript was not executed, model-provider context was not assembled, and no browser profile access, network call, credential lookup, workspace mutation, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `LLM website metadata ready for explicit attachment (${formatBytes(size)}).`,
+      "Preview could not parse bounded local llms.txt content; linked resources were not fetched, websites were not crawled, JavaScript was not executed, no model-provider context was assembled, and no network call, credential lookup, workspace mutation, or provider send was performed.",
+    ].join("\n");
+  }
+}
+
+function summarizeWarcArchiveFile(filePath: string, extension: string, size: number): string {
+  try {
+    const input = readFileHeader(filePath, MAX_WARC_ARCHIVE_PREVIEW_BYTES);
+    const raw =
+      extension === ".warc.gz"
+        ? gunzipSync(input, { maxOutputLength: MAX_WARC_ARCHIVE_PREVIEW_BYTES }).toString("utf8")
+        : input.toString("utf8");
+    const preview = parseWarcArchivePreview(raw, extension === ".warc.gz");
+    return [
+      `WARC web archive preview (${extension === ".warc.gz" ? "gzip-compressed WARC" : "WARC"}, ${formatBytes(size)}).`,
+      `Records parsed: ${preview.recordCount}${preview.truncated ? "+" : ""}; compressed input decompressed locally: ${preview.decompressed ? "yes" : "no"}.`,
+      preview.recordTypes.length > 0
+        ? `Record types: ${preview.recordTypes.join(", ")}.`
+        : "Record types: none detected in the bounded local preview.",
+      preview.targetUris.length > 0
+        ? `Target URIs (${preview.targetUris.length}${preview.targetUris.length >= MAX_WARC_ARCHIVE_RECORD_PREVIEW ? "+" : ""}): ${preview.targetUris.join(" | ")}.`
+        : "Target URIs: none detected in the bounded local preview.",
+      preview.dates.length > 0 ? `WARC dates: ${preview.dates.join(", ")}.` : "WARC dates: none detected in the bounded local preview.",
+      preview.contentTypes.length > 0 ? `Content types: ${preview.contentTypes.join(", ")}.` : "Content types: none detected in the bounded local preview.",
+      preview.recordIds.length > 0 ? `Record IDs: ${preview.recordIds.join(", ")}.` : "Record IDs: none detected in the bounded local preview.",
+      raw.length >= MAX_WARC_ARCHIVE_PREVIEW_BYTES ? `Preview was capped at ${formatBytes(MAX_WARC_ARCHIVE_PREVIEW_BYTES)}.` : "",
+      "Ready for explicit attachment after visible review; WARC record headers were parsed from bounded workspace-local bytes only, compressed WARC input was decompressed only in memory, archived payload bodies were not expanded, pages were not rendered, remote URLs were not fetched, crawler replay was not started, JavaScript was not executed, and no browser profile access, network call, credential lookup, workspace mutation, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `WARC web archive ready for explicit attachment (${formatBytes(size)}).`,
+      "Preview could not parse bounded local WARC headers; no payload extraction, page rendering, URL fetch, crawler replay, JavaScript execution, network call, credential lookup, workspace mutation, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseWarcArchivePreview(raw: string, decompressed: boolean): WarcArchivePreview {
+  const recordTypes = new Set<string>();
+  const targetUris = new Set<string>();
+  const dates = new Set<string>();
+  const contentTypes = new Set<string>();
+  const recordIds = new Set<string>();
+  let recordCount = 0;
+
+  for (const match of raw.matchAll(/^WARC\/[^\r\n]*[\r\n]+([\s\S]*?)(?:\r?\n){2}/gm)) {
+    const headerBlock = match[1] || "";
+    if (!headerBlock.trim()) continue;
+    recordCount += 1;
+    const headers = parseWarcHeaderBlock(headerBlock);
+    const type = headers.get("warc-type");
+    const targetUri = headers.get("warc-target-uri");
+    const date = headers.get("warc-date");
+    const contentType = headers.get("content-type");
+    const recordId = headers.get("warc-record-id");
+
+    if (type && recordTypes.size < MAX_WARC_ARCHIVE_RECORD_PREVIEW) recordTypes.add(clampSingleLine(maskPotentialSecretValues(type), 80));
+    if (targetUri && targetUris.size < MAX_WARC_ARCHIVE_RECORD_PREVIEW) targetUris.add(clampSingleLine(redactUrlQuerySecrets(targetUri), 180));
+    if (date && dates.size < MAX_WARC_ARCHIVE_RECORD_PREVIEW) dates.add(clampSingleLine(maskPotentialSecretValues(date), 80));
+    if (contentType && contentTypes.size < MAX_WARC_ARCHIVE_RECORD_PREVIEW) contentTypes.add(clampSingleLine(maskPotentialSecretValues(contentType), 120));
+    if (recordId && recordIds.size < MAX_WARC_ARCHIVE_RECORD_PREVIEW) recordIds.add(clampSingleLine(maskPotentialSecretValues(recordId), 160));
+    if (recordCount >= MAX_WARC_ARCHIVE_RECORD_PREVIEW) break;
+  }
+
+  return {
+    recordCount,
+    recordTypes: [...recordTypes],
+    targetUris: [...targetUris],
+    dates: [...dates],
+    contentTypes: [...contentTypes],
+    recordIds: [...recordIds],
+    truncated: recordCount >= MAX_WARC_ARCHIVE_RECORD_PREVIEW,
+    decompressed,
+  };
+}
+
+function parseWarcHeaderBlock(headerBlock: string): Map<string, string> {
+  const headers = new Map<string, string>();
+  for (const line of headerBlock.split(/\r?\n/)) {
+    const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
+    if (!match?.[1]) continue;
+    headers.set(match[1].toLowerCase(), (match[2] || "").trim());
+  }
+  return headers;
+}
+
+function parseLlmsMetadataPreview(raw: string, extension: string): LlmsMetadataPreview {
+  const normalized = raw.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n");
+  const lines = normalized.split("\n");
+  const title = sanitizeLlmsMetadataText((lines.find((line) => /^#\s+/.test(line)) || "").replace(/^#\s+/, ""));
+  const headings = new Set<string>();
+  const optionalCues = new Set<string>();
+  const fullContextCues = new Set<string>();
+
+  for (const line of lines) {
+    const heading = line.match(/^(#{2,6})\s+(.+)$/);
+    if (heading?.[2]) {
+      const value = sanitizeLlmsMetadataText(heading[2]);
+      if (value) headings.add(value);
+      if (/optional/i.test(value)) optionalCues.add(value);
+      if (/full|complete|expanded/i.test(value)) fullContextCues.add(value);
+    }
+
+    if (/^\s*optional\s*:/i.test(line)) optionalCues.add(sanitizeLlmsMetadataText(line));
+    if (/^\s*(?:full|complete|expanded)(?:\s+context)?\s*:/i.test(line)) {
+      fullContextCues.add(sanitizeLlmsMetadataText(line));
+    }
+    if (headings.size >= MAX_LLMS_METADATA_ITEM_PREVIEW && optionalCues.size >= MAX_LLMS_METADATA_ITEM_PREVIEW) break;
+  }
+
+  if (extension === ".llms-full.txt") fullContextCues.add("llms-full.txt filename");
+
+  return {
+    title,
+    headings: [...headings].slice(0, MAX_LLMS_METADATA_ITEM_PREVIEW),
+    links: collectLlmsMetadataLinks(normalized),
+    optionalCues: [...optionalCues].filter(Boolean).slice(0, MAX_LLMS_METADATA_ITEM_PREVIEW),
+    fullContextCues: [...fullContextCues].filter(Boolean).slice(0, MAX_LLMS_METADATA_ITEM_PREVIEW),
+    truncated: raw.length >= MAX_LLMS_METADATA_PREVIEW_BYTES,
+  };
+}
+
+function collectLlmsMetadataLinks(raw: string): string[] {
+  const links = new Set<string>();
+  for (const match of raw.matchAll(/\[([^\]\n]{1,180})\]\(([^)\s]{1,400})\)/g)) {
+    const label = sanitizeLlmsMetadataText(match[1] || "link");
+    const url = sanitizeLlmsMetadataUrl(match[2] || "");
+    if (label && url) links.add(`${label} -> ${url}`);
+    if (links.size >= MAX_LLMS_METADATA_ITEM_PREVIEW) break;
+  }
+  for (const match of raw.matchAll(/\bhttps?:\/\/[^\s<>)"']+/gi)) {
+    const url = sanitizeLlmsMetadataUrl(match[0] || "");
+    if (url) links.add(url);
+    if (links.size >= MAX_LLMS_METADATA_ITEM_PREVIEW) break;
+  }
+  return [...links].slice(0, MAX_LLMS_METADATA_ITEM_PREVIEW);
+}
+
+function sanitizeLlmsMetadataText(value: string): string {
+  return clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(value)), 180);
+}
+
+function sanitizeLlmsMetadataUrl(value: string): string {
+  return clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(value)), 220);
 }
 
 function parseRobotsTxtPreview(raw: string): RobotsTxtPreview {
@@ -20116,6 +22705,531 @@ function redactUrlQuerySecrets(value: string): string {
   return value.replace(/([?&](?:token|access_token|api[_-]?key|key|secret|password|signature|sig)=)[^&#\s]+/gi, "$1REDACTED");
 }
 
+function summarizeBrowserExtensionManifestFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_BROWSER_EXTENSION_MANIFEST_PREVIEW_BYTES).toString("utf8");
+    const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+    if (!isRecord(parsed)) throw new Error("Browser extension manifest root must be an object");
+    const identity = [
+      readJsonString(parsed, "name") ? `name=${sanitizeBrowserExtensionManifestValue(readJsonString(parsed, "name"))}` : "",
+      readJsonString(parsed, "short_name") ? `short_name=${sanitizeBrowserExtensionManifestValue(readJsonString(parsed, "short_name"))}` : "",
+      readJsonString(parsed, "version") ? `version=${sanitizeBrowserExtensionManifestValue(readJsonString(parsed, "version"))}` : "",
+      readJsonString(parsed, "description") ? `description=${sanitizeBrowserExtensionManifestValue(readJsonString(parsed, "description"))}` : "",
+      readJsonNumber(parsed, "manifest_version") ? `manifest_version=${readJsonNumber(parsed, "manifest_version")}` : "",
+    ].filter(Boolean);
+    const permissions = readBrowserExtensionManifestStringList(parsed, "permissions");
+    const hostPermissions = readBrowserExtensionManifestStringList(parsed, "host_permissions");
+    const optionalPermissions = readBrowserExtensionManifestStringList(parsed, "optional_permissions");
+    const contentScripts = readJsonArray(parsed, "content_scripts")
+      .filter(isRecord)
+      .slice(0, MAX_BROWSER_EXTENSION_MANIFEST_ITEM_PREVIEW)
+      .map((script) => {
+        const matches = readBrowserExtensionManifestStringList(script, "matches").slice(0, 3).join(", ");
+        const js = readBrowserExtensionManifestStringList(script, "js").slice(0, 3).join(", ");
+        const css = readBrowserExtensionManifestStringList(script, "css").slice(0, 3).join(", ");
+        return [
+          matches ? `matches=${matches}` : "",
+          js ? `js=${js}` : "",
+          css ? `css=${css}` : "",
+        ].filter(Boolean).join("; ");
+      })
+      .filter(Boolean);
+    const background = isRecord(parsed.background)
+      ? [
+          readJsonString(parsed.background, "service_worker") ? `service_worker=${sanitizeBrowserExtensionManifestValue(readJsonString(parsed.background, "service_worker"))}` : "",
+          readBrowserExtensionManifestStringList(parsed.background, "scripts").length > 0
+            ? `scripts=${readBrowserExtensionManifestStringList(parsed.background, "scripts").join(", ")}`
+            : "",
+          typeof parsed.background.persistent === "boolean" ? `persistent=${String(parsed.background.persistent)}` : "",
+        ].filter(Boolean).join("; ")
+      : "";
+    const action = isRecord(parsed.action) || isRecord(parsed.browser_action) || isRecord(parsed.page_action)
+      ? summarizeBrowserExtensionAction(parsed.action || parsed.browser_action || parsed.page_action)
+      : "";
+    const commands = isRecord(parsed.commands)
+      ? Object.keys(parsed.commands).map(sanitizeBrowserExtensionManifestValue).slice(0, MAX_BROWSER_EXTENSION_MANIFEST_ITEM_PREVIEW)
+      : [];
+    const resources = readJsonArray(parsed, "web_accessible_resources")
+      .filter(isRecord)
+      .slice(0, MAX_BROWSER_EXTENSION_MANIFEST_ITEM_PREVIEW)
+      .map((resource) => {
+        const files = readBrowserExtensionManifestStringList(resource, "resources").slice(0, 3).join(", ");
+        const matches = readBrowserExtensionManifestStringList(resource, "matches").slice(0, 3).join(", ");
+        return [files ? `resources=${files}` : "", matches ? `matches=${matches}` : ""].filter(Boolean).join("; ");
+      })
+      .filter(Boolean);
+    const riskCues = collectBrowserExtensionManifestRiskCues(parsed);
+
+    return [
+      `Browser extension manifest preview (${formatBytes(size)}).`,
+      identity.length > 0 ? `Identity: ${identity.join("; ")}.` : "Identity: no extension identity fields detected in bounded local JSON.",
+      permissions.length > 0 ? `Permissions (${permissions.length}${permissions.length >= MAX_BROWSER_EXTENSION_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${permissions.join(", ")}.` : "",
+      hostPermissions.length > 0 ? `Host permissions (${hostPermissions.length}${hostPermissions.length >= MAX_BROWSER_EXTENSION_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${hostPermissions.join(", ")}.` : "",
+      optionalPermissions.length > 0 ? `Optional permissions (${optionalPermissions.length}${optionalPermissions.length >= MAX_BROWSER_EXTENSION_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${optionalPermissions.join(", ")}.` : "",
+      background ? `Background: ${background}.` : "",
+      action ? `Action UI: ${action}.` : "",
+      contentScripts.length > 0 ? `Content scripts (${contentScripts.length}${contentScripts.length >= MAX_BROWSER_EXTENSION_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${contentScripts.join(" | ")}.` : "",
+      commands.length > 0 ? `Commands (${commands.length}${commands.length >= MAX_BROWSER_EXTENSION_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${commands.join(", ")}.` : "",
+      resources.length > 0 ? `Web-accessible resources (${resources.length}${resources.length >= MAX_BROWSER_EXTENSION_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${resources.join(" | ")}.` : "",
+      riskCues.length > 0 ? `Static review cues: ${riskCues.join(", ")}.` : "",
+      raw.length >= MAX_BROWSER_EXTENSION_MANIFEST_PREVIEW_BYTES ? `Preview was capped at ${formatBytes(MAX_BROWSER_EXTENSION_MANIFEST_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; browser extension manifest JSON was parsed from bounded workspace-local text only, extension code was not loaded or executed, browsers/profiles were not opened, permissions were not granted, URLs were not fetched, and no network call, credential lookup, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Browser extension manifest ready for explicit attachment (${formatBytes(size)}).`,
+      "Structured browser extension manifest preview was unavailable from the bounded local byte sample; no browser launch, extension load, URL fetch, network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function readBrowserExtensionManifestStringList(record: Record<string, unknown>, key: string): string[] {
+  return readJsonArray(record, key)
+    .filter((value): value is string => typeof value === "string")
+    .map(sanitizeBrowserExtensionManifestValue)
+    .slice(0, MAX_BROWSER_EXTENSION_MANIFEST_ITEM_PREVIEW);
+}
+
+function summarizeBrowserExtensionAction(value: unknown): string {
+  if (!isRecord(value)) return "";
+  return [
+    readJsonString(value, "default_title") ? `title=${sanitizeBrowserExtensionManifestValue(readJsonString(value, "default_title"))}` : "",
+    readJsonString(value, "default_popup") ? `popup=${sanitizeBrowserExtensionManifestValue(readJsonString(value, "default_popup"))}` : "",
+  ].filter(Boolean).join("; ") || "action declared";
+}
+
+function collectBrowserExtensionManifestRiskCues(record: Record<string, unknown>): string[] {
+  const cues = new Set<string>();
+  const permissions = [
+    ...readBrowserExtensionManifestStringList(record, "permissions"),
+    ...readBrowserExtensionManifestStringList(record, "host_permissions"),
+    ...readBrowserExtensionManifestStringList(record, "optional_permissions"),
+  ];
+  if (permissions.some((permission) => permission === "<all_urls>" || permission.includes("*://"))) cues.add("broad host access");
+  if (permissions.some((permission) => /cookies|webRequest|declarativeNetRequest|nativeMessaging|tabs|scripting/i.test(permission))) cues.add("sensitive browser API permission");
+  if (readJsonArray(record, "content_scripts").length > 0) cues.add("content script injection");
+  if (isRecord(record.externally_connectable)) cues.add("externally connectable boundary");
+  if (isRecord(record.declarative_net_request)) cues.add("declarative network request rules");
+  return [...cues].slice(0, MAX_BROWSER_EXTENSION_MANIFEST_ITEM_PREVIEW);
+}
+
+function sanitizeBrowserExtensionManifestValue(value: string): string {
+  const redactedUrl = redactUrlQuerySecrets(value);
+  if (redactedUrl !== value) return clampSingleLine(redactedUrl, 160);
+  return clampSingleLine(maskPotentialSecretValues(value), 160);
+}
+
+function summarizeBrowserExtensionInventoryFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_BROWSER_EXTENSION_INVENTORY_PREVIEW_BYTES).toString("utf8");
+    const preview = parseBrowserExtensionInventoryPreview(raw);
+    const names = preview.names.length > 0 ? preview.names.join(", ") : "none detected in the bounded local preview";
+    const sources = preview.sources.length > 0 ? preview.sources.join(", ") : "source not declared";
+    const samples =
+      preview.items.length > 0
+        ? preview.items
+            .slice(0, MAX_BROWSER_EXTENSION_INVENTORY_ITEM_PREVIEW)
+            .map((item, index) => {
+              const enabled = item.enabled === null ? "enabled=unknown" : `enabled=${String(item.enabled)}`;
+              const permissions = item.permissions.length > 0 ? `; permissions=${item.permissions.join(", ")}` : "";
+              const hosts = item.hostPermissions.length > 0 ? `; hosts=${item.hostPermissions.join(", ")}` : "";
+              const risks = item.riskCues.length > 0 ? `; cues=${item.riskCues.join(", ")}` : "";
+              return `- ${index + 1}. ${item.name} (${item.id}; version=${item.version}; ${enabled}; install=${item.installType}; source=${item.source}${permissions}${hosts}${risks})`;
+            })
+            .join("\n")
+        : "Extension samples: none detected in the bounded local preview.";
+    return [
+      `Browser extension inventory JSON preview (${formatBytes(size)}).`,
+      `Extensions parsed: ${preview.parsedCount}; skipped: ${preview.skippedCount}${preview.truncated ? "; preview byte/item limit reached" : ""}.`,
+      `Names (${preview.names.length}${preview.names.length >= MAX_BROWSER_EXTENSION_INVENTORY_ITEM_PREVIEW ? "+" : ""}): ${names}.`,
+      `Sources: ${sources}; enabled=${preview.enabledCount}; disabled=${preview.disabledCount}; host-permission entries=${preview.hostPermissionCount}; sensitive-permission entries=${preview.sensitivePermissionCount}.`,
+      `Extension samples:\n${samples}`,
+      "Ready for explicit attachment after visible review; browser extension inventory JSON was parsed from bounded workspace-local data only, extension code was not loaded or executed, browsers/profiles were not opened, permissions were not granted, extension stores were not queried, URLs were not fetched, and no network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Browser extension inventory JSON ready for explicit attachment (${formatBytes(size)}).`,
+      "Extension inventory preview could not parse bounded local JSON; no browser launch, profile access, extension load, store query, URL fetch, network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseBrowserExtensionInventoryPreview(raw: string): BrowserExtensionInventoryPreview {
+  const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+  const candidates = findBrowserExtensionInventoryCandidates(parsed);
+  const items: BrowserExtensionInventoryItemPreview[] = [];
+  let skippedCount = 0;
+
+  for (const candidate of candidates.slice(0, MAX_BROWSER_EXTENSION_INVENTORY_ITEM_PREVIEW)) {
+    const item = normalizeBrowserExtensionInventoryItem(candidate);
+    if (!item) {
+      skippedCount += 1;
+      continue;
+    }
+    items.push(item);
+  }
+
+  const skippedTotal = skippedCount + Math.max(0, candidates.length - MAX_BROWSER_EXTENSION_INVENTORY_ITEM_PREVIEW);
+  return finalizeBrowserExtensionInventoryPreview(items, skippedTotal, raw.length >= MAX_BROWSER_EXTENSION_INVENTORY_PREVIEW_BYTES || candidates.length > MAX_BROWSER_EXTENSION_INVENTORY_ITEM_PREVIEW);
+}
+
+function findBrowserExtensionInventoryCandidates(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== "object") return [];
+  const record = value as Record<string, unknown>;
+  for (const key of ["extensions", "browserExtensions", "installedExtensions", "items", "entries"]) {
+    const child = record[key];
+    if (Array.isArray(child)) return child;
+  }
+  if (isRecord(record.settings)) {
+    return Object.entries(record.settings).map(([id, entry]) => (isRecord(entry) ? { id, ...entry } : entry));
+  }
+  return [];
+}
+
+function normalizeBrowserExtensionInventoryItem(value: unknown): BrowserExtensionInventoryItemPreview | null {
+  if (!isRecord(value)) return null;
+  const manifest: Record<string, unknown> = isRecord(value.manifest) ? value.manifest : {};
+  const id = sanitizeBrowserExtensionManifestValue(readStringField(value, ["id", "extensionId", "extension_id", "key"]) || readStringField(manifest, ["key"]) || "extension id not declared");
+  const name = sanitizeBrowserExtensionManifestValue(readStringField(value, ["name", "shortName", "short_name"]) || readStringField(manifest, ["name", "short_name"]) || id);
+  const version = sanitizeBrowserExtensionManifestValue(readStringField(value, ["version"]) || readStringField(manifest, ["version"]) || "version not declared");
+  const enabled = readNullableBrowserExtensionEnabled(value);
+  const installType = sanitizeBrowserExtensionManifestValue(readStringField(value, ["installType", "install_type", "location"]) || "install type not declared");
+  const source = sanitizeBrowserExtensionManifestValue(readStringField(value, ["source", "updateUrl", "update_url", "homepageUrl", "homepage_url"]) || readStringField(manifest, ["update_url", "homepage_url"]) || "source not declared");
+  const permissions = [
+    ...readBrowserExtensionInventoryStringList(value, "permissions"),
+    ...readBrowserExtensionInventoryStringList(manifest, "permissions"),
+  ];
+  const hostPermissions = uniquePreviewValues([
+    ...readBrowserExtensionInventoryStringList(value, "host_permissions"),
+    ...readBrowserExtensionInventoryStringList(value, "hostPermissions"),
+    ...readBrowserExtensionInventoryStringList(manifest, "host_permissions"),
+    ...readBrowserExtensionInventoryStringList(manifest, "hostPermissions"),
+  ], MAX_BROWSER_EXTENSION_INVENTORY_ITEM_PREVIEW);
+  const riskCues = collectBrowserExtensionInventoryRiskCues(permissions, hostPermissions, value, manifest);
+  if (!id && !name) return null;
+  return {
+    id,
+    name,
+    version,
+    enabled,
+    installType,
+    source,
+    permissions: uniquePreviewValues(permissions, MAX_BROWSER_EXTENSION_INVENTORY_ITEM_PREVIEW),
+    hostPermissions,
+    riskCues,
+  };
+}
+
+function readBrowserExtensionInventoryStringList(record: Record<string, unknown>, key: string): string[] {
+  const value = record[key];
+  const rawValues = Array.isArray(value) ? value : typeof value === "string" ? value.split(/[,\n]/) : [];
+  return rawValues
+    .filter((item): item is string => typeof item === "string")
+    .map(sanitizeBrowserExtensionManifestValue)
+    .filter(Boolean)
+    .slice(0, MAX_BROWSER_EXTENSION_INVENTORY_ITEM_PREVIEW);
+}
+
+function readNullableBrowserExtensionEnabled(record: Record<string, unknown>): boolean | null {
+  if (typeof record.enabled === "boolean") return record.enabled;
+  if (typeof record.disabled === "boolean") return !record.disabled;
+  if (typeof record.state === "string") {
+    if (/enabled|active|installed/i.test(record.state)) return true;
+    if (/disabled|inactive|blocked/i.test(record.state)) return false;
+  }
+  return null;
+}
+
+function collectBrowserExtensionInventoryRiskCues(
+  permissions: string[],
+  hostPermissions: string[],
+  record: Record<string, unknown>,
+  manifest: Record<string, unknown>,
+): string[] {
+  const cues = new Set<string>();
+  const allPermissions = [...permissions, ...hostPermissions];
+  if (hostPermissions.length > 0 || allPermissions.some((permission) => permission === "<all_urls>" || permission.includes("*://"))) cues.add("host access");
+  if (allPermissions.some((permission) => /cookies|webRequest|declarativeNetRequest|nativeMessaging|tabs|scripting/i.test(permission))) cues.add("sensitive browser API");
+  if (readJsonArray(record, "content_scripts").length > 0 || readJsonArray(manifest, "content_scripts").length > 0) cues.add("content scripts");
+  if (isRecord(record.background) || isRecord(manifest.background)) cues.add("background runtime");
+  return [...cues].slice(0, MAX_BROWSER_EXTENSION_INVENTORY_ITEM_PREVIEW);
+}
+
+function finalizeBrowserExtensionInventoryPreview(
+  items: BrowserExtensionInventoryItemPreview[],
+  skippedCount: number,
+  truncated: boolean,
+): BrowserExtensionInventoryPreview {
+  return {
+    items,
+    names: uniquePreviewValues(items.map((item) => item.name), MAX_BROWSER_EXTENSION_INVENTORY_ITEM_PREVIEW),
+    sources: uniquePreviewValues(items.map((item) => item.source), MAX_BROWSER_EXTENSION_INVENTORY_ITEM_PREVIEW),
+    enabledCount: items.filter((item) => item.enabled === true).length,
+    disabledCount: items.filter((item) => item.enabled === false).length,
+    hostPermissionCount: items.filter((item) => item.hostPermissions.length > 0).length,
+    sensitivePermissionCount: items.filter((item) => item.riskCues.includes("sensitive browser API")).length,
+    parsedCount: items.length,
+    skippedCount,
+    truncated,
+  };
+}
+
+function summarizePwaWebManifestFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_PWA_WEB_MANIFEST_PREVIEW_BYTES).toString("utf8");
+    const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+    if (!isRecord(parsed)) throw new Error("PWA manifest root must be an object");
+    const identity = [
+      readJsonString(parsed, "name") ? `name=${sanitizePwaWebManifestValue(readJsonString(parsed, "name"))}` : "",
+      readJsonString(parsed, "short_name") ? `short_name=${sanitizePwaWebManifestValue(readJsonString(parsed, "short_name"))}` : "",
+      readJsonString(parsed, "id") ? `id=${sanitizePwaWebManifestValue(readJsonString(parsed, "id"))}` : "",
+      readJsonString(parsed, "start_url") ? `start_url=${sanitizePwaWebManifestValue(readJsonString(parsed, "start_url"))}` : "",
+      readJsonString(parsed, "scope") ? `scope=${sanitizePwaWebManifestValue(readJsonString(parsed, "scope"))}` : "",
+    ].filter(Boolean);
+    const presentation = [
+      readJsonString(parsed, "display") ? `display=${sanitizePwaWebManifestValue(readJsonString(parsed, "display"))}` : "",
+      readJsonString(parsed, "orientation") ? `orientation=${sanitizePwaWebManifestValue(readJsonString(parsed, "orientation"))}` : "",
+      readJsonString(parsed, "theme_color") ? `theme=${sanitizePwaWebManifestValue(readJsonString(parsed, "theme_color"))}` : "",
+      readJsonString(parsed, "background_color") ? `background=${sanitizePwaWebManifestValue(readJsonString(parsed, "background_color"))}` : "",
+    ].filter(Boolean);
+    const categories = readPwaManifestStringList(parsed, "categories");
+    const icons = readJsonArray(parsed, "icons")
+      .filter(isRecord)
+      .slice(0, MAX_PWA_WEB_MANIFEST_ITEM_PREVIEW)
+      .map((icon) => {
+        const src = sanitizePwaWebManifestValue(readJsonString(icon, "src") || "(no src)");
+        const sizes = sanitizePwaWebManifestValue(readJsonString(icon, "sizes"));
+        const type = sanitizePwaWebManifestValue(readJsonString(icon, "type"));
+        const purpose = sanitizePwaWebManifestValue(readJsonString(icon, "purpose"));
+        return [src, sizes ? `sizes=${sizes}` : "", type ? `type=${type}` : "", purpose ? `purpose=${purpose}` : ""].filter(Boolean).join(" ");
+      });
+    const shortcuts = readJsonArray(parsed, "shortcuts")
+      .filter(isRecord)
+      .slice(0, MAX_PWA_WEB_MANIFEST_ITEM_PREVIEW)
+      .map((shortcut) => {
+        const name = sanitizePwaWebManifestValue(readJsonString(shortcut, "name") || readJsonString(shortcut, "short_name") || "(unnamed)");
+        const url = sanitizePwaWebManifestValue(readJsonString(shortcut, "url"));
+        return url ? `${name} -> ${url}` : name;
+      });
+    const screenshots = readJsonArray(parsed, "screenshots")
+      .filter(isRecord)
+      .slice(0, MAX_PWA_WEB_MANIFEST_ITEM_PREVIEW)
+      .map((screenshot) => {
+        const src = sanitizePwaWebManifestValue(readJsonString(screenshot, "src") || "(no src)");
+        const sizes = sanitizePwaWebManifestValue(readJsonString(screenshot, "sizes"));
+        const formFactor = sanitizePwaWebManifestValue(readJsonString(screenshot, "form_factor"));
+        return [src, sizes ? `sizes=${sizes}` : "", formFactor ? `form_factor=${formFactor}` : ""].filter(Boolean).join(" ");
+      });
+    const shareTarget = readPwaManifestShareTarget(parsed);
+    const protocolHandlers = readJsonArray(parsed, "protocol_handlers")
+      .filter(isRecord)
+      .slice(0, MAX_PWA_WEB_MANIFEST_ITEM_PREVIEW)
+      .map((handler) => {
+        const protocol = sanitizePwaWebManifestValue(readJsonString(handler, "protocol") || "(no protocol)");
+        const url = sanitizePwaWebManifestValue(readJsonString(handler, "url"));
+        return url ? `${protocol} -> ${url}` : protocol;
+      });
+    const fileHandlers = readJsonArray(parsed, "file_handlers")
+      .filter(isRecord)
+      .slice(0, MAX_PWA_WEB_MANIFEST_ITEM_PREVIEW)
+      .map((handler) => {
+        const action = sanitizePwaWebManifestValue(readJsonString(handler, "action") || "(no action)");
+        const acceptKeys = isRecord(handler.accept) ? Object.keys(handler.accept).map(sanitizePwaWebManifestValue).slice(0, 4).join(", ") : "";
+        return acceptKeys ? `${action} accepts ${acceptKeys}` : action;
+      });
+
+    return [
+      `PWA web app manifest preview (${formatBytes(size)}).`,
+      identity.length > 0 ? `Identity: ${identity.join("; ")}.` : "Identity: no name/start_url/scope fields detected in bounded local JSON.",
+      presentation.length > 0 ? `Presentation: ${presentation.join("; ")}.` : "",
+      categories.length > 0 ? `Categories (${categories.length}${categories.length >= MAX_PWA_WEB_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${categories.join(", ")}.` : "",
+      icons.length > 0 ? `Icons (${icons.length}${icons.length >= MAX_PWA_WEB_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${icons.join(" | ")}.` : "",
+      shortcuts.length > 0 ? `Shortcuts (${shortcuts.length}${shortcuts.length >= MAX_PWA_WEB_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${shortcuts.join(" | ")}.` : "",
+      screenshots.length > 0 ? `Screenshots (${screenshots.length}${screenshots.length >= MAX_PWA_WEB_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${screenshots.join(" | ")}.` : "",
+      shareTarget,
+      protocolHandlers.length > 0 ? `Protocol handlers (${protocolHandlers.length}${protocolHandlers.length >= MAX_PWA_WEB_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${protocolHandlers.join(" | ")}.` : "",
+      fileHandlers.length > 0 ? `File handlers (${fileHandlers.length}${fileHandlers.length >= MAX_PWA_WEB_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${fileHandlers.join(" | ")}.` : "",
+      raw.length >= MAX_PWA_WEB_MANIFEST_PREVIEW_BYTES ? `Preview was capped at ${formatBytes(MAX_PWA_WEB_MANIFEST_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; no browser was launched, manifest URLs/icons/screenshots were not fetched, no service worker was inspected, no installability audit ran, no network call or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `PWA web app manifest ready for explicit attachment (${formatBytes(size)}).`,
+      "Structured PWA manifest preview was unavailable from the bounded local byte sample; no browser launch, resource fetch, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function isPwaServiceWorkerScriptFile(filePath: string, extension: string): boolean {
+  if (extension !== ".js" && extension !== ".mjs") return false;
+  const name = basename(filePath).toLowerCase();
+  return [
+    "sw.js",
+    "sw.mjs",
+    "service-worker.js",
+    "service-worker.mjs",
+    "serviceworker.js",
+    "firebase-messaging-sw.js",
+    "ngsw-worker.js",
+  ].includes(name) || name.endsWith(".service-worker.js") || name.endsWith(".service-worker.mjs");
+}
+
+function summarizePwaServiceWorkerScriptFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_PWA_SERVICE_WORKER_PREVIEW_BYTES).toString("utf8");
+    const normalized = normalizeTextPreview(raw);
+    const lines = normalized.split("\n").map((line) => line.trim()).filter(Boolean);
+    const eventHandlers = collectPwaServiceWorkerEventHandlers(normalized);
+    const cacheHints = collectPwaServiceWorkerCacheHints(normalized);
+    const routeHints = collectPwaServiceWorkerRouteHints(normalized);
+    const importHints = collectPwaServiceWorkerImportHints(normalized);
+    const capabilityHints = collectPwaServiceWorkerCapabilityHints(normalized);
+    const riskHints = collectPwaServiceWorkerRiskHints(lines);
+    const sample = lines
+      .filter((line) => !line.startsWith("//") && !line.startsWith("/*") && !line.startsWith("*"))
+      .slice(0, 10)
+      .map(sanitizePwaServiceWorkerValue)
+      .join("\n");
+
+    return [
+      `PWA service worker script preview (${formatBytes(size)}).`,
+      eventHandlers.length > 0
+        ? `Lifecycle/event handlers (${eventHandlers.length}${eventHandlers.length >= MAX_PWA_SERVICE_WORKER_ITEM_PREVIEW ? "+" : ""}): ${eventHandlers.join(", ")}.`
+        : "Lifecycle/event handlers: none detected in the bounded local preview.",
+      cacheHints.length > 0
+        ? `Cache/storage hints (${cacheHints.length}${cacheHints.length >= MAX_PWA_SERVICE_WORKER_ITEM_PREVIEW ? "+" : ""}): ${cacheHints.join(" | ")}.`
+        : "Cache/storage hints: none detected in the bounded local preview.",
+      routeHints.length > 0
+        ? `Network/routing hints (${routeHints.length}${routeHints.length >= MAX_PWA_SERVICE_WORKER_ITEM_PREVIEW ? "+" : ""}): ${routeHints.join(" | ")}.`
+        : "Network/routing hints: none detected in the bounded local preview.",
+      importHints.length > 0
+        ? `Script imports (${importHints.length}${importHints.length >= MAX_PWA_SERVICE_WORKER_ITEM_PREVIEW ? "+" : ""}): ${importHints.join(", ")}.`
+        : "",
+      capabilityHints.length > 0 ? `PWA capabilities: ${capabilityHints.join(", ")}.` : "",
+      riskHints.length > 0 ? `Static review cues: ${riskHints.join(", ")}.` : "",
+      raw.length >= MAX_PWA_SERVICE_WORKER_PREVIEW_BYTES ? `Preview was capped at ${formatBytes(MAX_PWA_SERVICE_WORKER_PREVIEW_BYTES)} or item limits.` : "",
+      sample ? `Bounded code sample:\n${sample}` : "Bounded code sample: no readable service worker lines were found.",
+      "Ready for explicit attachment after visible review; service worker metadata was parsed from bounded workspace-local text only, and no browser was launched, no service worker was registered, no cache was opened, no fetch/importScripts target was requested, no installability audit ran, no network call or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `PWA service worker script ready for explicit attachment (${formatBytes(size)}).`,
+      "Service worker preview could not read bounded local text; no browser launch, service worker registration, cache access, fetch, importScripts request, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function collectPwaServiceWorkerEventHandlers(raw: string): string[] {
+  const handlers = new Set<string>();
+  for (const match of raw.matchAll(/addEventListener\s*\(\s*["']([A-Za-z-]+)["']/gi)) {
+    if (match[1]) handlers.add(sanitizePwaServiceWorkerValue(match[1]));
+    if (handlers.size >= MAX_PWA_SERVICE_WORKER_ITEM_PREVIEW) break;
+  }
+  for (const match of raw.matchAll(/\bself\.on([A-Za-z-]+)\s*=/gi)) {
+    if (match[1]) handlers.add(sanitizePwaServiceWorkerValue(match[1]));
+    if (handlers.size >= MAX_PWA_SERVICE_WORKER_ITEM_PREVIEW) break;
+  }
+  return [...handlers].slice(0, MAX_PWA_SERVICE_WORKER_ITEM_PREVIEW);
+}
+
+function collectPwaServiceWorkerCacheHints(raw: string): string[] {
+  const hints = new Set<string>();
+  for (const match of raw.matchAll(/\bcaches\.open\s*\(\s*["'`]([^"'`]+)["'`]/gi)) {
+    if (match[1]) hints.add(`caches.open ${sanitizePwaServiceWorkerValue(match[1])}`);
+    if (hints.size >= MAX_PWA_SERVICE_WORKER_ITEM_PREVIEW) break;
+  }
+  for (const match of raw.matchAll(/\bcache(?:s)?\.(?:addAll|add|put|match|delete)\s*\(/gi)) {
+    hints.add(sanitizePwaServiceWorkerValue(match[0].replace(/\s+/g, "")));
+    if (hints.size >= MAX_PWA_SERVICE_WORKER_ITEM_PREVIEW) break;
+  }
+  if (/\bprecacheAndRoute\s*\(/i.test(raw)) hints.add("Workbox precacheAndRoute");
+  if (/\bcleanupOutdatedCaches\s*\(/i.test(raw)) hints.add("Workbox cleanupOutdatedCaches");
+  return [...hints].slice(0, MAX_PWA_SERVICE_WORKER_ITEM_PREVIEW);
+}
+
+function collectPwaServiceWorkerRouteHints(raw: string): string[] {
+  const hints = new Set<string>();
+  if (/\bfetch\s*\(/i.test(raw)) hints.add("fetch() call");
+  if (/\bevent\.respondWith\s*\(/i.test(raw)) hints.add("event.respondWith");
+  if (/\bregisterRoute\s*\(/i.test(raw)) hints.add("Workbox registerRoute");
+  for (const strategy of ["NetworkFirst", "CacheFirst", "StaleWhileRevalidate", "NetworkOnly", "CacheOnly"]) {
+    if (new RegExp(`\\b${strategy}\\b`).test(raw)) hints.add(`Workbox ${strategy}`);
+  }
+  for (const match of raw.matchAll(/\b(?:fetch|importScripts)\s*\(\s*["'`]([^"'`]+)["'`]/gi)) {
+    if (match[1]) hints.add(sanitizePwaServiceWorkerValue(match[1]));
+    if (hints.size >= MAX_PWA_SERVICE_WORKER_ITEM_PREVIEW) break;
+  }
+  return [...hints].slice(0, MAX_PWA_SERVICE_WORKER_ITEM_PREVIEW);
+}
+
+function collectPwaServiceWorkerImportHints(raw: string): string[] {
+  const imports = new Set<string>();
+  for (const match of raw.matchAll(/\bimportScripts\s*\(([^)]*)\)/gi)) {
+    const args = (match[1] || "").match(/["'`]([^"'`]+)["'`]/g) || [];
+    for (const arg of args) {
+      imports.add(sanitizePwaServiceWorkerValue(arg.slice(1, -1)));
+      if (imports.size >= MAX_PWA_SERVICE_WORKER_ITEM_PREVIEW) break;
+    }
+    if (imports.size >= MAX_PWA_SERVICE_WORKER_ITEM_PREVIEW) break;
+  }
+  return [...imports].slice(0, MAX_PWA_SERVICE_WORKER_ITEM_PREVIEW);
+}
+
+function collectPwaServiceWorkerCapabilityHints(raw: string): string[] {
+  const hints = new Set<string>();
+  if (/\bshowNotification\s*\(/i.test(raw)) hints.add("notifications");
+  if (/\bPushManager\b|\bpushsubscriptionchange\b/i.test(raw)) hints.add("push subscription");
+  if (/\bsync\b|\bperiodicsync\b/i.test(raw)) hints.add("background sync");
+  if (/\bnavigationPreload\b/i.test(raw)) hints.add("navigation preload");
+  if (/\bclients\.(?:openWindow|matchAll|claim)\s*\(/i.test(raw)) hints.add("client window/control");
+  if (/\bskipWaiting\s*\(/i.test(raw)) hints.add("skipWaiting");
+  return [...hints].slice(0, MAX_PWA_SERVICE_WORKER_ITEM_PREVIEW);
+}
+
+function collectPwaServiceWorkerRiskHints(lines: string[]): string[] {
+  const hints = new Set<string>();
+  for (const line of lines) {
+    if (/\b(token|secret|password|api[_-]?key|credential)\b/i.test(line)) hints.add("credential-shaped value redacted");
+    if (/\bhttps?:\/\//i.test(line)) hints.add("absolute URL reference");
+    if (/\bIndexedDB|indexedDB|localStorage|sessionStorage\b/.test(line)) hints.add("browser storage reference");
+    if (/\bpostMessage\s*\(/.test(line)) hints.add("message-passing boundary");
+    if (hints.size >= MAX_PWA_SERVICE_WORKER_ITEM_PREVIEW) break;
+  }
+  return [...hints].slice(0, MAX_PWA_SERVICE_WORKER_ITEM_PREVIEW);
+}
+
+function sanitizePwaServiceWorkerValue(value: string): string {
+  const redactedUrl = redactUrlQuerySecrets(value);
+  if (redactedUrl !== value) return clampSingleLine(redactedUrl, 180);
+  return clampSingleLine(maskPotentialSecretValues(value), 180);
+}
+
+function readPwaManifestStringList(record: Record<string, unknown>, key: string): string[] {
+  return readJsonArray(record, key)
+    .filter((value): value is string => typeof value === "string")
+    .map(sanitizePwaWebManifestValue)
+    .slice(0, MAX_PWA_WEB_MANIFEST_ITEM_PREVIEW);
+}
+
+function readPwaManifestShareTarget(record: Record<string, unknown>): string {
+  const shareTarget = record.share_target;
+  if (!isRecord(shareTarget)) return "";
+  const action = sanitizePwaWebManifestValue(readJsonString(shareTarget, "action") || "(no action)");
+  const method = sanitizePwaWebManifestValue(readJsonString(shareTarget, "method"));
+  const enctype = sanitizePwaWebManifestValue(readJsonString(shareTarget, "enctype"));
+  const params = isRecord(shareTarget.params)
+    ? Object.keys(shareTarget.params).map(sanitizePwaWebManifestValue).slice(0, MAX_PWA_WEB_MANIFEST_ITEM_PREVIEW)
+    : [];
+  return `Share target: ${[action, method ? `method=${method}` : "", enctype ? `enctype=${enctype}` : "", params.length > 0 ? `params=${params.join(", ")}` : ""].filter(Boolean).join("; ")}.`;
+}
+
+function sanitizePwaWebManifestValue(value: string): string {
+  const redactedUrl = redactUrlQuerySecrets(value);
+  if (redactedUrl !== value) return clampSingleLine(redactedUrl, 160);
+  return clampSingleLine(maskPotentialSecretValues(value), 160);
+}
+
 function summarizeFeedDocumentFile(filePath: string, extension: string, size: number): string {
   try {
     const raw = readFileHeader(filePath, MAX_FEED_PREVIEW_BYTES).toString("utf8");
@@ -20143,6 +23257,339 @@ function summarizeFeedDocumentFile(filePath: string, extension: string, size: nu
       "Feed preview could not parse bounded local XML; no remote feed fetch, script execution, browser profile access, network call, credential lookup, or provider send was performed.",
     ].join("\n");
   }
+}
+
+function isJsonFeedDocumentFile(filePath: string, extension: string): boolean {
+  if (extension === ".jsonfeed") return true;
+  if (extension !== ".json") return false;
+  const name = basename(filePath).toLowerCase();
+  return name === "feed.json" || name === "jsonfeed.json" || name.endsWith(".jsonfeed.json");
+}
+
+function summarizeJsonFeedDocumentFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_FEED_PREVIEW_BYTES).toString("utf8");
+    const preview = parseJsonFeedDocumentPreview(raw);
+    const authors =
+      preview.authors.length > 0
+        ? preview.authors.slice(0, MAX_FEED_ITEM_PREVIEW).join(", ")
+        : "none detected in the bounded local preview";
+    const items =
+      preview.items.length > 0
+        ? preview.items.slice(0, MAX_FEED_ITEM_PREVIEW).join(" | ")
+        : "none detected in the bounded local preview";
+    return [
+      `Feed document preview (${preview.format}, ${formatBytes(size)}).`,
+      `Feed title: ${preview.title || "none detected in the bounded local preview"}.`,
+      `Site/feed link: ${preview.siteUrl || "none detected in the bounded local preview"}.`,
+      `Updated/published: ${preview.updated || "none detected in the bounded local preview"}.`,
+      `Authors: ${authors}.`,
+      `Entries (${preview.items.length}${preview.items.length >= MAX_FEED_ITEM_PREVIEW ? "+" : ""}): ${items}.`,
+      "Ready for explicit attachment after visible review; JSON Feed metadata was parsed from bounded workspace-local JSON only, feed item bodies were not expanded, remote JSON feed URLs were not fetched, scripts were not executed, and no browser profile access, network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `JSON Feed document ready for explicit attachment (${formatBytes(size)}).`,
+      "JSON Feed preview could not parse bounded local JSON; no remote feed fetch, script execution, browser profile access, network call, credential lookup, or provider send was performed.",
+    ].join("\n");
+  }
+}
+
+type LottieAnimationPreview = {
+  version: string;
+  width: number | null;
+  height: number | null;
+  frameRate: number | null;
+  inPoint: number | null;
+  outPoint: number | null;
+  layers: string[];
+  assets: string[];
+  markers: string[];
+};
+
+function isLottieAnimationJsonFile(filePath: string, extension: string): boolean {
+  if (extension === ".lottie.json") return true;
+  if (extension !== ".json") return false;
+  try {
+    const raw = readFileHeader(filePath, MAX_LOTTIE_ANIMATION_PREVIEW_BYTES).toString("utf8");
+    const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+    if (!isRecord(parsed)) return false;
+    return (
+      Array.isArray(parsed.layers) &&
+      (typeof parsed.v === "string" || typeof parsed.fr === "number") &&
+      (typeof parsed.w === "number" || typeof parsed.h === "number" || typeof parsed.op === "number")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function summarizeLottieAnimationJsonFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_LOTTIE_ANIMATION_PREVIEW_BYTES).toString("utf8");
+    const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+    const preview = parseLottieAnimationPreview(parsed);
+    const durationFrames =
+      preview.inPoint !== null && preview.outPoint !== null
+        ? Math.max(0, preview.outPoint - preview.inPoint)
+        : null;
+    const durationSeconds =
+      durationFrames !== null && preview.frameRate && preview.frameRate > 0
+        ? `${(durationFrames / preview.frameRate).toFixed(2)}s`
+        : "unknown";
+    return [
+      `Lottie/Bodymovin animation JSON preview (${formatBytes(size)}).`,
+      `Version: ${preview.version || "none detected"}; canvas: ${preview.width ?? "?"}x${preview.height ?? "?"}; frame rate: ${preview.frameRate ?? "unknown"} fps.`,
+      `Frame range: ${preview.inPoint ?? "?"}-${preview.outPoint ?? "?"}; duration: ${durationFrames ?? "unknown"} frames / ${durationSeconds}.`,
+      preview.layers.length > 0
+        ? `Layer samples (${preview.layers.length}${preview.layers.length >= MAX_LOTTIE_ANIMATION_ITEM_PREVIEW ? "+" : ""}): ${preview.layers.join(" | ")}.`
+        : "Layer samples: none detected in the bounded local preview.",
+      preview.assets.length > 0
+        ? `Asset samples (${preview.assets.length}${preview.assets.length >= MAX_LOTTIE_ANIMATION_ITEM_PREVIEW ? "+" : ""}): ${preview.assets.join(" | ")}.`
+        : "Asset samples: none detected in the bounded local preview.",
+      preview.markers.length > 0
+        ? `Markers (${preview.markers.length}${preview.markers.length >= MAX_LOTTIE_ANIMATION_ITEM_PREVIEW ? "+" : ""}): ${preview.markers.join(" | ")}.`
+        : "Markers: none detected in the bounded local preview.",
+      raw.length >= MAX_LOTTIE_ANIMATION_PREVIEW_BYTES
+        ? `Lottie JSON preview was capped at ${formatBytes(MAX_LOTTIE_ANIMATION_PREVIEW_BYTES)}.`
+        : "",
+      "Ready for explicit attachment after visible review; Lottie/Bodymovin JSON was parsed from bounded workspace-local JSON only, layer shapes/keyframes were not expanded, no renderer, After Effects/Bodymovin tool, script execution, frame extraction, animation playback, network call, credential lookup, workspace mutation, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Lottie/Bodymovin animation JSON ready for explicit attachment (${formatBytes(size)}).`,
+      "Lottie preview could not parse bounded local JSON; no renderer, After Effects/Bodymovin tool, script execution, frame extraction, animation playback, network call, credential lookup, workspace mutation, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+type DotLottieArchivePreview = {
+  manifestVersion: string;
+  generator: string;
+  author: string;
+  activeAnimationId: string;
+  manifestAnimations: string[];
+  animationFiles: string[];
+  animationSamples: string[];
+  themeFiles: string[];
+  imageFiles: string[];
+  stateMachineFiles: string[];
+};
+
+function summarizeDotLottieArchiveFile(filePath: string, size: number): string {
+  try {
+    const buffer = readFileHeader(filePath, Math.min(size, MAX_DOTLOTTIE_ARCHIVE_PREVIEW_BYTES));
+    const { entries, truncated } = readZipArchiveMetadata(buffer);
+    const inflatedEntries = extractZipEntries(buffer);
+    const preview = parseDotLottieArchivePreview(entries, inflatedEntries);
+    return [
+      `dotLottie archive preview (${formatBytes(size)}).`,
+      `Manifest: version ${preview.manifestVersion || "none detected"}; generator: ${preview.generator || "none detected"}; author: ${preview.author || "none detected"}; active animation: ${preview.activeAnimationId || "none detected"}.`,
+      preview.manifestAnimations.length > 0
+        ? `Manifest animations (${preview.manifestAnimations.length}${preview.manifestAnimations.length >= MAX_DOTLOTTIE_ARCHIVE_ITEM_PREVIEW ? "+" : ""}): ${preview.manifestAnimations.join(" | ")}.`
+        : "Manifest animations: none detected in the bounded local preview.",
+      preview.animationFiles.length > 0
+        ? `Animation files (${preview.animationFiles.length}${preview.animationFiles.length >= MAX_DOTLOTTIE_ARCHIVE_ITEM_PREVIEW ? "+" : ""}): ${preview.animationFiles.join(", ")}.`
+        : "Animation files: none detected in the bounded local ZIP header scan.",
+      preview.animationSamples.length > 0
+        ? `Animation metadata samples: ${preview.animationSamples.join(" | ")}.`
+        : "Animation metadata samples: none decoded from bounded local JSON entries.",
+      preview.themeFiles.length > 0
+        ? `Theme files: ${preview.themeFiles.join(", ")}.`
+        : "Theme files: none detected in the bounded local ZIP header scan.",
+      preview.imageFiles.length > 0
+        ? `Image assets: ${preview.imageFiles.join(", ")}.`
+        : "Image assets: none detected in the bounded local ZIP header scan.",
+      preview.stateMachineFiles.length > 0
+        ? `State machine files: ${preview.stateMachineFiles.join(", ")}.`
+        : "State machine files: none detected in the bounded local ZIP header scan.",
+      truncated ? `dotLottie archive preview was capped at ${formatBytes(MAX_DOTLOTTIE_ARCHIVE_PREVIEW_BYTES)} or entry limits.` : "",
+      "Ready for explicit attachment after visible review; dotLottie metadata was parsed from bounded workspace-local ZIP headers and manifest/animation JSON entries only, layer shapes/keyframes were not expanded, archive entries were not extracted to disk, no renderer, animation playback, frame extraction, After Effects/Bodymovin tool, network call, credential lookup, workspace mutation, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `dotLottie archive ready for explicit attachment (${formatBytes(size)}).`,
+      "dotLottie preview could not parse readable local ZIP headers; no archive extraction, renderer, animation playback, frame extraction, network call, credential lookup, workspace mutation, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseDotLottieArchivePreview(
+  entries: ChannelZipEntryMetadata[],
+  inflatedEntries: ChannelZipEntry[],
+): DotLottieArchivePreview {
+  const files = entries.filter((entry) => !entry.directory).map((entry) => entry.name.replace(/\\/g, "/"));
+  const manifestEntry = inflatedEntries.find((entry) => entry.name.replace(/\\/g, "/").toLowerCase() === "manifest.json");
+  const manifest = parseJsonRecordFromBuffer(manifestEntry?.data);
+  const animations = readJsonArray(manifest, "animations").filter(isRecord);
+  const manifestAnimations = animations
+    .slice(0, MAX_DOTLOTTIE_ARCHIVE_ITEM_PREVIEW)
+    .map(formatDotLottieManifestAnimation)
+    .filter(Boolean);
+  const animationFiles = files
+    .filter((name) => /^animations\/.+\.json$/i.test(name))
+    .map(sanitizeDotLottieText)
+    .slice(0, MAX_DOTLOTTIE_ARCHIVE_ITEM_PREVIEW);
+  const animationSamples = inflatedEntries
+    .filter((entry) => /^animations\/.+\.json$/i.test(entry.name.replace(/\\/g, "/")))
+    .slice(0, MAX_DOTLOTTIE_ARCHIVE_ITEM_PREVIEW)
+    .map(formatDotLottieAnimationSample)
+    .filter(Boolean);
+  return {
+    manifestVersion: sanitizeDotLottieText(readJsonString(manifest, "version")),
+    generator: sanitizeDotLottieText(readJsonString(manifest, "generator")),
+    author: sanitizeDotLottieText(readJsonString(manifest, "author")),
+    activeAnimationId: sanitizeDotLottieText(readJsonString(manifest, "activeAnimationId")),
+    manifestAnimations,
+    animationFiles,
+    animationSamples,
+    themeFiles: files
+      .filter((name) => /^themes\/.+\.json$/i.test(name))
+      .map(sanitizeDotLottieText)
+      .slice(0, MAX_DOTLOTTIE_ARCHIVE_ITEM_PREVIEW),
+    imageFiles: files
+      .filter((name) => /^images\/.+\.(?:png|jpe?g|webp|gif|svg)$/i.test(name))
+      .map(sanitizeDotLottieText)
+      .slice(0, MAX_DOTLOTTIE_ARCHIVE_ITEM_PREVIEW),
+    stateMachineFiles: files
+      .filter((name) => /^state_machines\/.+\.json$/i.test(name) || /^state-machines\/.+\.json$/i.test(name))
+      .map(sanitizeDotLottieText)
+      .slice(0, MAX_DOTLOTTIE_ARCHIVE_ITEM_PREVIEW),
+  };
+}
+
+function parseJsonRecordFromBuffer(buffer?: Buffer): Record<string, unknown> {
+  if (!buffer) return {};
+  try {
+    const parsed = JSON.parse(buffer.toString("utf8").replace(/^\uFEFF/, ""));
+    return isRecord(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function formatDotLottieManifestAnimation(record: Record<string, unknown>): string {
+  const id = sanitizeDotLottieText(readJsonString(record, "id") || "unnamed");
+  const initialTheme = sanitizeDotLottieText(readJsonString(record, "initialTheme"));
+  const loop = typeof record.loop === "boolean" ? `loop=${record.loop}` : "";
+  const autoplay = typeof record.autoplay === "boolean" ? `autoplay=${record.autoplay}` : "";
+  const speed = readFiniteNumber(record.speed);
+  return [id, initialTheme ? `theme=${initialTheme}` : "", loop, autoplay, speed !== null ? `speed=${speed}` : ""]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function formatDotLottieAnimationSample(entry: ChannelZipEntry): string {
+  const name = sanitizeDotLottieText(entry.name.replace(/\\/g, "/"));
+  const preview = parseLottieAnimationPreview(parseJsonRecordFromBuffer(entry.data));
+  return [
+    name,
+    preview.version ? `v=${preview.version}` : "",
+    preview.width !== null || preview.height !== null ? `${preview.width ?? "?"}x${preview.height ?? "?"}` : "",
+    preview.frameRate !== null ? `${preview.frameRate}fps` : "",
+    preview.layers.length > 0 ? `layers=${preview.layers.length}${preview.layers.length >= MAX_LOTTIE_ANIMATION_ITEM_PREVIEW ? "+" : ""}` : "",
+  ].filter(Boolean).join(" ");
+}
+
+function sanitizeDotLottieText(value: string): string {
+  return clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(value)), 140);
+}
+
+function parseLottieAnimationPreview(value: unknown): LottieAnimationPreview {
+  const record = isRecord(value) ? value : {};
+  const layers = Array.isArray(record.layers)
+    ? record.layers
+        .filter(isRecord)
+        .slice(0, MAX_LOTTIE_ANIMATION_ITEM_PREVIEW)
+        .map(formatLottieLayerPreview)
+        .filter(Boolean)
+    : [];
+  const assets = Array.isArray(record.assets)
+    ? record.assets
+        .filter(isRecord)
+        .slice(0, MAX_LOTTIE_ANIMATION_ITEM_PREVIEW)
+        .map(formatLottieAssetPreview)
+        .filter(Boolean)
+    : [];
+  const markers = Array.isArray(record.markers)
+    ? record.markers
+        .filter(isRecord)
+        .slice(0, MAX_LOTTIE_ANIMATION_ITEM_PREVIEW)
+        .map(formatLottieMarkerPreview)
+        .filter(Boolean)
+    : [];
+  return {
+    version: sanitizeLottieAnimationText(readJsonString(record, "v")),
+    width: readFiniteNumber(record.w),
+    height: readFiniteNumber(record.h),
+    frameRate: readFiniteNumber(record.fr),
+    inPoint: readFiniteNumber(record.ip),
+    outPoint: readFiniteNumber(record.op),
+    layers,
+    assets,
+    markers,
+  };
+}
+
+function formatLottieLayerPreview(layer: Record<string, unknown>): string {
+  const name = sanitizeLottieAnimationText(readJsonString(layer, "nm") || "unnamed layer");
+  const type = readFiniteNumber(layer.ty);
+  const refId = sanitizeLottieAnimationText(readJsonString(layer, "refId"));
+  const index = readFiniteNumber(layer.ind);
+  return [
+    index !== null ? `#${index}` : "",
+    name,
+    type !== null ? `type=${formatLottieLayerType(type)}` : "",
+    refId ? `asset=${refId}` : "",
+  ].filter(Boolean).join(" ");
+}
+
+function formatLottieAssetPreview(asset: Record<string, unknown>): string {
+  const id = sanitizeLottieAnimationText(readJsonString(asset, "id"));
+  const name = sanitizeLottieAnimationText(readJsonString(asset, "nm"));
+  const path = sanitizeLottieAnimationText(readJsonString(asset, "p"));
+  const width = readFiniteNumber(asset.w);
+  const height = readFiniteNumber(asset.h);
+  return [
+    id || name || path || "unnamed asset",
+    width !== null || height !== null ? `${width ?? "?"}x${height ?? "?"}` : "",
+    path ? `path=${path}` : "",
+  ].filter(Boolean).join(" ");
+}
+
+function formatLottieMarkerPreview(marker: Record<string, unknown>): string {
+  const comment = sanitizeLottieAnimationText(readJsonString(marker, "cm") || "unnamed marker");
+  const time = readFiniteNumber(marker.tm);
+  const duration = readFiniteNumber(marker.dr);
+  return [
+    comment,
+    time !== null ? `at=${time}` : "",
+    duration !== null ? `duration=${duration}` : "",
+  ].filter(Boolean).join(" ");
+}
+
+function formatLottieLayerType(type: number): string {
+  return (
+    {
+      0: "precomp",
+      1: "solid",
+      2: "image",
+      3: "null",
+      4: "shape",
+      5: "text",
+      13: "camera",
+      15: "light",
+    }[type] ?? `${type}`
+  );
+}
+
+function readFiniteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function sanitizeLottieAnimationText(value: string): string {
+  const redactedUrl = redactUrlQuerySecrets(value);
+  return clampSingleLine(maskPotentialSecretValues(redactedUrl), 140);
 }
 
 function summarizeOpmlSubscriptionFile(filePath: string, size: number): string {
@@ -20240,6 +23687,165 @@ function parseFeedDocumentPreview(raw: string, extension: string): FeedDocumentP
           authors: extractFeedAuthors(xml),
           items: extractFeedItems(xml, "item"),
         };
+}
+
+function parseJsonFeedDocumentPreview(raw: string): FeedDocumentPreview {
+  const record = JSON.parse(raw.replace(/^\uFEFF/, "")) as unknown;
+  if (!isRecord(record)) {
+    throw new Error("JSON Feed root must be an object.");
+  }
+  const title = sanitizeJsonFeedValue(readJsonString(record, "title"));
+  const feedUrl = sanitizeJsonFeedUrl(readJsonString(record, "feed_url"));
+  const homePageUrl = sanitizeJsonFeedUrl(readJsonString(record, "home_page_url"));
+  const authors = extractJsonFeedAuthors(record);
+  const items = readJsonArray(record, "items")
+    .filter(isRecord)
+    .map(formatJsonFeedItemPreview)
+    .filter(Boolean)
+    .slice(0, MAX_FEED_ITEM_PREVIEW);
+  return {
+    format: "JSON Feed",
+    title: title || null,
+    siteUrl: homePageUrl || feedUrl || null,
+    updated: firstJsonFeedItemDate(record),
+    authors,
+    items,
+  };
+}
+
+function extractJsonFeedAuthors(record: Record<string, unknown>): string[] {
+  const authors = new Set<string>();
+  const addAuthor = (value: unknown): void => {
+    if (typeof value === "string") {
+      const text = sanitizeJsonFeedValue(value);
+      if (text) authors.add(text);
+      return;
+    }
+    if (!isRecord(value)) return;
+    const name = sanitizeJsonFeedValue(readJsonString(value, "name"));
+    const url = sanitizeJsonFeedUrl(readJsonString(value, "url"));
+    const avatar = sanitizeJsonFeedUrl(readJsonString(value, "avatar"));
+    const label = [name, url || avatar].filter(Boolean).join(" - ");
+    if (label) authors.add(label);
+  };
+  addAuthor(record.author);
+  for (const author of readJsonArray(record, "authors")) {
+    addAuthor(author);
+    if (authors.size >= MAX_FEED_ITEM_PREVIEW) break;
+  }
+  return [...authors].slice(0, MAX_FEED_ITEM_PREVIEW);
+}
+
+function formatJsonFeedItemPreview(item: Record<string, unknown>): string {
+  const title =
+    sanitizeJsonFeedValue(readJsonString(item, "title")) ||
+    sanitizeJsonFeedValue(readJsonString(item, "id")) ||
+    "Untitled";
+  const url =
+    sanitizeJsonFeedUrl(readJsonString(item, "url")) ||
+    sanitizeJsonFeedUrl(readJsonString(item, "external_url"));
+  const date = sanitizeJsonFeedValue(readJsonString(item, "date_published") || readJsonString(item, "date_modified"));
+  return clampSingleLine([title, url, date].filter(Boolean).join(" - "), 220);
+}
+
+function firstJsonFeedItemDate(record: Record<string, unknown>): string | null {
+  for (const item of readJsonArray(record, "items")) {
+    if (!isRecord(item)) continue;
+    const date = sanitizeJsonFeedValue(readJsonString(item, "date_modified") || readJsonString(item, "date_published"));
+    if (date) return date;
+  }
+  return null;
+}
+
+function sanitizeJsonFeedValue(value: string): string {
+  return clampSingleLine(maskPotentialSecretValues(value), 220);
+}
+
+function sanitizeJsonFeedUrl(value: string): string {
+  if (!value) return "";
+  return clampSingleLine(redactUrlQuerySecrets(maskPotentialSecretValues(value)), 220);
+}
+
+type SourceMapPreview = {
+  version: number | null;
+  file: string;
+  sourceRoot: string;
+  sources: string[];
+  names: string[];
+  mappingsLength: number | null;
+  sourcesContentCount: number;
+};
+
+function isSourceMapFile(filePath: string, extension: string): boolean {
+  if (extension === ".source-map.json") return true;
+  if (extension !== ".json") return false;
+  try {
+    const raw = readFileHeader(filePath, MAX_SOURCE_MAP_PREVIEW_BYTES).toString("utf8");
+    const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+    if (!isRecord(parsed)) return false;
+    return (
+      readJsonNumber(parsed, "version") !== null &&
+      Array.isArray(parsed.sources) &&
+      typeof parsed.mappings === "string"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function summarizeSourceMapFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_SOURCE_MAP_PREVIEW_BYTES).toString("utf8");
+    const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+    const preview = parseSourceMapPreview(parsed);
+    return [
+      `Source map JSON preview (${formatBytes(size)}).`,
+      `Version: ${preview.version ?? "unknown"}; target file: ${preview.file || "none detected"}; sourceRoot: ${preview.sourceRoot || "none detected"}.`,
+      preview.sources.length > 0
+        ? `Source entries (${preview.sources.length}${preview.sources.length >= MAX_SOURCE_MAP_ITEM_PREVIEW ? "+" : ""}): ${preview.sources.join(" | ")}.`
+        : "Source entries: none detected in the bounded local preview.",
+      preview.names.length > 0
+        ? `Name samples (${preview.names.length}${preview.names.length >= MAX_SOURCE_MAP_ITEM_PREVIEW ? "+" : ""}): ${preview.names.join(", ")}.`
+        : "Name samples: none detected in the bounded local preview.",
+      `Mappings: ${preview.mappingsLength ?? "unknown"} characters in bounded JSON; sourcesContent entries: ${preview.sourcesContentCount} (contents not expanded).`,
+      raw.length >= MAX_SOURCE_MAP_PREVIEW_BYTES
+        ? `Source map preview was capped at ${formatBytes(MAX_SOURCE_MAP_PREVIEW_BYTES)}.`
+        : "",
+      "Ready for explicit attachment after visible review; source map metadata was parsed from bounded workspace-local JSON only, mappings were not decoded, sourcesContent bodies were not expanded, source files were not opened, and no bundler/devtool/browser, network call, credential lookup, workspace mutation, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Source map JSON ready for explicit attachment (${formatBytes(size)}).`,
+      "Source map preview could not parse bounded local JSON; no mapping decode, sourcesContent expansion, source-file open, bundler/devtool/browser startup, network call, credential lookup, workspace mutation, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseSourceMapPreview(value: unknown): SourceMapPreview {
+  const record = isRecord(value) ? value : {};
+  const sources = readJsonArray(record, "sources")
+    .filter((item): item is string => typeof item === "string")
+    .map(sanitizeSourceMapValue)
+    .slice(0, MAX_SOURCE_MAP_ITEM_PREVIEW);
+  const names = readJsonArray(record, "names")
+    .filter((item): item is string => typeof item === "string")
+    .map(sanitizeSourceMapValue)
+    .slice(0, MAX_SOURCE_MAP_ITEM_PREVIEW);
+  const mappings = readJsonString(record, "mappings");
+  const sourcesContent = readJsonArray(record, "sourcesContent");
+  return {
+    version: readJsonNumber(record, "version"),
+    file: sanitizeSourceMapValue(readJsonString(record, "file")),
+    sourceRoot: sanitizeSourceMapValue(readJsonString(record, "sourceRoot")),
+    sources,
+    names,
+    mappingsLength: mappings ? mappings.length : null,
+    sourcesContentCount: sourcesContent.length,
+  };
+}
+
+function sanitizeSourceMapValue(value: string): string {
+  return clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(value)), 140);
 }
 
 function parseRssFeedPreview(xml: string): FeedDocumentPreview {
@@ -21534,6 +25140,7 @@ function isWebServerConfigFile(filePath: string, extension: string): boolean {
     name === "httpd.conf" ||
     name === "apache.conf" ||
     name.endsWith(".apache.conf") ||
+    name.endsWith(".vhost.conf") ||
     name === ".htaccess"
   );
 }
@@ -21584,7 +25191,7 @@ function parseWebServerConfigPreview(filePath: string, raw: string): WebServerCo
   const name = basename(filePath).toLowerCase();
   const format = name === ".htaccess"
     ? "Apache .htaccess"
-    : name.includes("httpd") || name.includes("apache")
+    : name.includes("httpd") || name.includes("apache") || name.endsWith(".vhost.conf")
       ? "Apache/httpd config"
       : "Nginx config";
   const servers = new Set<string>();
@@ -21602,7 +25209,7 @@ function parseWebServerConfigPreview(filePath: string, raw: string): WebServerCo
     const trimmed = rawLine.trim();
     if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("//")) continue;
     const line = trimmed.replace(/\s+/g, " ");
-    const safeLine = clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(line)), 220);
+    const safeLine = clampSingleLine(sanitizeWebServerConfigValue(line), 220);
     if (sampleLines.length < 10) sampleLines.push(safeLine);
 
     collectWebServerValue(line, /^server_name\s+(.+?);?$/i, servers, "server_name");
@@ -21647,7 +25254,531 @@ function collectWebServerValue(line: string, pattern: RegExp, output: Set<string
     .replace(/[;{]\s*$/, "")
     .trim();
   if (!value) return;
-  output.add(`${label}=${clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(value)), 140)}`);
+  output.add(`${label}=${clampSingleLine(sanitizeWebServerConfigValue(value), 140)}`);
+}
+
+function sanitizeWebServerConfigValue(value: string): string {
+  return maskPotentialSecretValues(redactUrlQuerySecrets(value))
+    .replace(/\bsecret[-_][A-Za-z0-9._-]+/gi, "[redacted]");
+}
+
+interface HostsFilePreview {
+  mappings: string[];
+  loopbackMappings: string[];
+  commentLabels: string[];
+  riskHints: string[];
+  lineCount: number;
+  truncated: boolean;
+}
+
+function isHostsFile(filePath: string, extension: string): boolean {
+  if (extension === ".hosts") return true;
+  const name = basename(filePath).toLowerCase();
+  return name === "hosts" || name === "hosts.txt" || name.endsWith(".hosts") || name.endsWith(".hosts.txt");
+}
+
+function summarizeHostsFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_HOSTS_FILE_PREVIEW_BYTES)).toString("utf8");
+    const preview = parseHostsFilePreview(raw);
+    return [
+      `Hosts file preview (${formatBytes(size)}).`,
+      preview.mappings.length > 0
+        ? `Host mappings (${preview.mappings.length}${preview.mappings.length >= MAX_HOSTS_FILE_ITEM_PREVIEW ? "+" : ""}): ${preview.mappings.join(" | ")}.`
+        : "Host mappings: none detected in the bounded preview.",
+      preview.loopbackMappings.length > 0
+        ? `Loopback/local mappings (${preview.loopbackMappings.length}${preview.loopbackMappings.length >= MAX_HOSTS_FILE_ITEM_PREVIEW ? "+" : ""}): ${preview.loopbackMappings.join(" | ")}.`
+        : "Loopback/local mappings: none detected.",
+      preview.commentLabels.length > 0
+        ? `Comment labels (${preview.commentLabels.length}${preview.commentLabels.length >= MAX_HOSTS_FILE_ITEM_PREVIEW ? "+" : ""}): ${preview.commentLabels.join(" | ")}.`
+        : "Comment labels: none detected.",
+      preview.riskHints.length > 0
+        ? `Static risk cues: ${preview.riskHints.join(" | ")}.`
+        : "Static risk cues: none detected in the bounded preview.",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_HOSTS_FILE_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; hosts metadata was parsed from bounded workspace-local text only, the system hosts file was not opened or modified, no DNS cache flush, resolver probe, ping, browser launch, network call, credential lookup, filesystem mutation, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Hosts file ready for explicit attachment (${formatBytes(size)}).`,
+      "Hosts preview could not read bounded local text; no system hosts file access, DNS command, network probe, filesystem mutation, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseHostsFilePreview(raw: string): HostsFilePreview {
+  const mappings = new Set<string>();
+  const loopbackMappings = new Set<string>();
+  const commentLabels = new Set<string>();
+  const riskHints = new Set<string>();
+  const lines = normalizeTextPreview(raw).split("\n");
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (trimmed.startsWith("#")) {
+      collectHostsCommentLabel(trimmed, commentLabels);
+      continue;
+    }
+    const [body, comment] = splitHostsLineComment(trimmed);
+    if (comment) collectHostsCommentLabel(`# ${comment}`, commentLabels);
+    const parts = body.split(/\s+/).filter(Boolean);
+    if (parts.length < 2) continue;
+    const address = parts[0] ?? "";
+    if (!isHostsAddress(address)) continue;
+    const hostnames = parts.slice(1);
+    for (const host of hostnames) {
+      const safeHost = sanitizeHostsFileToken(host);
+      if (!safeHost) continue;
+      const mapping = `${sanitizeHostsFileToken(address)} -> ${safeHost}`;
+      if (mappings.size < MAX_HOSTS_FILE_ITEM_PREVIEW) mappings.add(mapping);
+      if (isLoopbackHostsAddress(address) && loopbackMappings.size < MAX_HOSTS_FILE_ITEM_PREVIEW) {
+        loopbackMappings.add(mapping);
+      }
+      collectHostsRiskHints(address, host, riskHints);
+    }
+  }
+
+  return {
+    mappings: uniquePreviewValues([...mappings], MAX_HOSTS_FILE_ITEM_PREVIEW),
+    loopbackMappings: uniquePreviewValues([...loopbackMappings], MAX_HOSTS_FILE_ITEM_PREVIEW),
+    commentLabels: uniquePreviewValues([...commentLabels], MAX_HOSTS_FILE_ITEM_PREVIEW),
+    riskHints: uniquePreviewValues([...riskHints], MAX_HOSTS_FILE_ITEM_PREVIEW),
+    lineCount: lines.length,
+    truncated: raw.length >= MAX_HOSTS_FILE_PREVIEW_BYTES || mappings.size >= MAX_HOSTS_FILE_ITEM_PREVIEW,
+  };
+}
+
+function splitHostsLineComment(line: string): [string, string] {
+  const index = line.indexOf("#");
+  if (index < 0) return [line, ""];
+  return [line.slice(0, index).trim(), line.slice(index + 1).trim()];
+}
+
+function collectHostsCommentLabel(comment: string, output: Set<string>): void {
+  if (output.size >= MAX_HOSTS_FILE_ITEM_PREVIEW) return;
+  const label = sanitizeHostsFileToken(comment.replace(/^#+\s*/, ""));
+  if (label) output.add(clampSingleLine(label, 120));
+}
+
+function collectHostsRiskHints(address: string, host: string, output: Set<string>): void {
+  if (output.size >= MAX_HOSTS_FILE_ITEM_PREVIEW) return;
+  const normalizedHost = host.toLowerCase();
+  if (normalizedHost === "*" || normalizedHost.startsWith("*.")) {
+    output.add("wildcard host mapping requires review");
+  }
+  if (address === "0.0.0.0" || address === "::") {
+    output.add("null-route/ad-block style mapping");
+  }
+  if (isLoopbackHostsAddress(address) && !/^(localhost|.*\.local|.*\.test)$/i.test(host)) {
+    output.add("non-local hostname mapped to loopback");
+  }
+  if (/token|secret|password|apikey|api-key/i.test(host)) {
+    output.add("sensitive-looking hostname label was redacted");
+  }
+}
+
+function isHostsAddress(value: string): boolean {
+  return /^(?:\d{1,3}\.){3}\d{1,3}$/.test(value) || /^[0-9a-f:]+$/i.test(value);
+}
+
+function isLoopbackHostsAddress(value: string): boolean {
+  return value === "127.0.0.1" || value === "::1" || value.toLowerCase() === "0:0:0:0:0:0:0:1";
+}
+
+function sanitizeHostsFileToken(value: string): string {
+  return clampSingleLine(
+    maskPotentialSecretValues(redactUrlQuerySecrets(value))
+      .replace(/\b[A-Za-z0-9-]*(?:token|secret|password|passwd|pwd|api[_-]?key|credential)[A-Za-z0-9-]*(?=\.|$)/gi, "[redacted]"),
+    140,
+  );
+}
+
+interface VpnConfigPreview {
+  format: string;
+  sections: string[];
+  interfaceHints: string[];
+  peerHints: string[];
+  remoteHints: string[];
+  routeHints: string[];
+  cryptoHints: string[];
+  riskHints: string[];
+  sampleLines: string[];
+  truncated: boolean;
+}
+
+function isVpnConfigFile(filePath: string, extension: string): boolean {
+  if (extension === ".vpn-config") return true;
+  const name = basename(filePath).toLowerCase();
+  return (
+    name === "wireguard.conf" ||
+    name.endsWith(".wireguard.conf") ||
+    name.endsWith(".wg.conf") ||
+    /^wg[a-z0-9_.-]*\.conf$/i.test(name) ||
+    name === "client.ovpn" ||
+    name.endsWith(".ovpn") ||
+    name.endsWith(".openvpn.conf")
+  );
+}
+
+function summarizeVpnConfigFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_VPN_CONFIG_PREVIEW_BYTES)).toString("utf8");
+    const preview = parseVpnConfigPreview(filePath, raw);
+    return [
+      `VPN client configuration preview (${preview.format}, ${formatBytes(size)}).`,
+      preview.sections.length > 0
+        ? `Sections/directives (${preview.sections.length}${preview.sections.length >= MAX_VPN_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.sections.join(", ")}.`
+        : "Sections/directives: none detected in the bounded preview.",
+      preview.interfaceHints.length > 0
+        ? `Interface hints (${preview.interfaceHints.length}${preview.interfaceHints.length >= MAX_VPN_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.interfaceHints.join(" | ")}.`
+        : "Interface hints: none detected.",
+      preview.peerHints.length > 0
+        ? `Peer hints (${preview.peerHints.length}${preview.peerHints.length >= MAX_VPN_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.peerHints.join(" | ")}.`
+        : "Peer hints: none detected.",
+      preview.remoteHints.length > 0
+        ? `Remote endpoints (${preview.remoteHints.length}${preview.remoteHints.length >= MAX_VPN_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.remoteHints.join(" | ")}.`
+        : "Remote endpoints: none detected.",
+      preview.routeHints.length > 0
+        ? `Route/DNS hints (${preview.routeHints.length}${preview.routeHints.length >= MAX_VPN_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.routeHints.join(" | ")}.`
+        : "Route/DNS hints: none detected.",
+      preview.cryptoHints.length > 0
+        ? `Credential/certificate fields (${preview.cryptoHints.length}${preview.cryptoHints.length >= MAX_VPN_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.cryptoHints.join(" | ")}.`
+        : "Credential/certificate fields: none detected.",
+      preview.riskHints.length > 0
+        ? `Static risk cues: ${preview.riskHints.join(" | ")}.`
+        : "Static risk cues: none detected in the bounded preview.",
+      preview.sampleLines.length > 0 ? `Sample directives:\n${preview.sampleLines.join("\n")}` : "",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_VPN_CONFIG_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; VPN metadata was parsed from bounded workspace-local text only, private keys, pre-shared keys, auth-user-pass values, inline certificates, and token-like URLs were redacted or not expanded, and no WireGuard/OpenVPN client, tunnel activation, route/DNS mutation, certificate validation, credential lookup, network call, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `VPN client configuration ready for explicit attachment (${formatBytes(size)}).`,
+      "VPN preview could not read bounded local text; no VPN client, tunnel activation, route/DNS mutation, credential lookup, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseVpnConfigPreview(filePath: string, raw: string): VpnConfigPreview {
+  const lines = normalizeTextPreview(raw).split("\n");
+  const name = basename(filePath).toLowerCase();
+  const text = lines.join("\n");
+  const format = name.endsWith(".ovpn") || /\b(?:client|dev|remote|proto|auth-user-pass)\b/im.test(text)
+    ? "OpenVPN client profile"
+    : "WireGuard client profile";
+  const sections = new Set<string>();
+  const interfaceHints = new Set<string>();
+  const peerHints = new Set<string>();
+  const remoteHints = new Set<string>();
+  const routeHints = new Set<string>();
+  const cryptoHints = new Set<string>();
+  const riskHints = new Set<string>();
+  const sampleLines: string[] = [];
+
+  for (const rawLine of lines) {
+    const trimmed = rawLine.trim();
+    if (!trimmed || /^[#;]/.test(trimmed)) continue;
+    const section = trimmed.match(/^\[([^\]]+)\]$/);
+    if (section?.[1]) {
+      sections.add(clampSingleLine(section[1], 80));
+      continue;
+    }
+    const safeLine = sanitizeVpnConfigValue(trimmed);
+    if (sampleLines.length < 10) sampleLines.push(clampSingleLine(safeLine, 220));
+
+    collectVpnKeyValue(trimmed, /^(Address|ListenPort|MTU|Table|FwMark)\s*=\s*(.+)$/i, interfaceHints);
+    collectVpnKeyValue(trimmed, /^(PublicKey|PersistentKeepalive|AllowedIPs)\s*=\s*(.+)$/i, peerHints);
+    collectVpnKeyValue(trimmed, /^(Endpoint)\s*=\s*(.+)$/i, remoteHints);
+    collectVpnKeyValue(trimmed, /^(DNS|AllowedIPs|PostUp|PostDown|PreUp|PreDown)\s*=\s*(.+)$/i, routeHints);
+    collectVpnKeyValue(trimmed, /^(PrivateKey|PresharedKey)\s*=\s*(.+)$/i, cryptoHints, true);
+    collectOpenVpnDirective(trimmed, /^(remote)\s+(.+)$/i, remoteHints);
+    collectOpenVpnDirective(trimmed, /^(dev|proto|port|nobind|persist-key|persist-tun)\b(.*)$/i, interfaceHints);
+    collectOpenVpnDirective(trimmed, /^(route|redirect-gateway|dhcp-option)\b(.*)$/i, routeHints);
+    collectOpenVpnDirective(trimmed, /^(auth-user-pass|ca|cert|key|tls-auth|tls-crypt|pkcs12|askpass)\b(.*)$/i, cryptoHints, true);
+    collectVpnRiskHints(trimmed, riskHints);
+  }
+
+  return {
+    format,
+    sections: uniquePreviewValues([...sections], MAX_VPN_CONFIG_ITEM_PREVIEW),
+    interfaceHints: uniquePreviewValues([...interfaceHints], MAX_VPN_CONFIG_ITEM_PREVIEW),
+    peerHints: uniquePreviewValues([...peerHints], MAX_VPN_CONFIG_ITEM_PREVIEW),
+    remoteHints: uniquePreviewValues([...remoteHints], MAX_VPN_CONFIG_ITEM_PREVIEW),
+    routeHints: uniquePreviewValues([...routeHints], MAX_VPN_CONFIG_ITEM_PREVIEW),
+    cryptoHints: uniquePreviewValues([...cryptoHints], MAX_VPN_CONFIG_ITEM_PREVIEW),
+    riskHints: uniquePreviewValues([...riskHints], MAX_VPN_CONFIG_ITEM_PREVIEW),
+    sampleLines,
+    truncated: raw.length >= MAX_VPN_CONFIG_PREVIEW_BYTES,
+  };
+}
+
+function collectVpnKeyValue(line: string, pattern: RegExp, output: Set<string>, redactValue = false): void {
+  if (output.size >= MAX_VPN_CONFIG_ITEM_PREVIEW) return;
+  const match = line.match(pattern);
+  if (!match?.[1]) return;
+  const key = clampSingleLine(match[1], 80);
+  const value = redactValue ? "[redacted]" : sanitizeVpnConfigValue(match[2] || "");
+  output.add(`${key}=${clampSingleLine(value, 140)}`);
+}
+
+function collectOpenVpnDirective(line: string, pattern: RegExp, output: Set<string>, redactValue = false): void {
+  if (output.size >= MAX_VPN_CONFIG_ITEM_PREVIEW) return;
+  const match = line.match(pattern);
+  if (!match?.[1]) return;
+  const key = clampSingleLine(match[1], 80);
+  const value = redactValue ? "[redacted]" : sanitizeVpnConfigValue((match[2] || "").trim() || "enabled");
+  output.add(`${key}=${clampSingleLine(value, 140)}`);
+}
+
+function collectVpnRiskHints(line: string, output: Set<string>): void {
+  if (output.size >= MAX_VPN_CONFIG_ITEM_PREVIEW) return;
+  if (/^(?:PostUp|PostDown|PreUp|PreDown)\s*=/i.test(line)) output.add("hook command declared");
+  if (/\b(?:redirect-gateway|AllowedIPs\s*=\s*0\.0\.0\.0\/0|AllowedIPs\s*=.*::\/0)\b/i.test(line)) output.add("full-tunnel route declared");
+  if (/\b(?:auth-user-pass|askpass|PrivateKey|PresharedKey|tls-auth|tls-crypt)\b/i.test(line)) output.add("credential material redacted");
+  if (/\b(?:script-security|up|down|route-up|client-connect)\b/i.test(line)) output.add("OpenVPN script hook requires review");
+}
+
+function sanitizeVpnConfigValue(value: string): string {
+  return clampSingleLine(
+    maskPotentialSecretValues(redactUrlQuerySecrets(value))
+      .replace(/(PrivateKey|PresharedKey|auth-user-pass|askpass|tls-auth|tls-crypt|key)\s*([=:]|\s+).+/gi, "$1$2[redacted]")
+      .replace(/\bsecret[-_][A-Za-z0-9._/-]+/gi, "[redacted]")
+      .replace(/\b[A-Za-z0-9+/=]{32,}\b/g, "[redacted]"),
+    220,
+  );
+}
+
+interface SshConfigPreview {
+  format: string;
+  hostPatterns: string[];
+  destinations: string[];
+  users: string[];
+  ports: string[];
+  identityLabels: string[];
+  proxyJumps: string[];
+  includeTargets: string[];
+  knownHosts: string[];
+  keyTypes: string[];
+  keyComments: string[];
+  riskHints: string[];
+  lineCount: number;
+  truncated: boolean;
+}
+
+function isSshConfigFile(filePath: string, extension: string): boolean {
+  if (extension === ".ssh-config") return true;
+  const name = basename(filePath).toLowerCase();
+  const normalizedPath = filePath.replace(/\\/g, "/").toLowerCase();
+  return (
+    normalizedPath.endsWith("/.ssh/config") ||
+    name === "ssh_config" ||
+    name === "ssh-config" ||
+    name.endsWith(".ssh-config") ||
+    name === "known_hosts" ||
+    name.endsWith(".known_hosts") ||
+    name === "authorized_keys" ||
+    name.endsWith(".authorized_keys")
+  );
+}
+
+function summarizeSshConfigFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_SSH_CONFIG_PREVIEW_BYTES)).toString("utf8");
+    const preview = parseSshConfigPreview(filePath, raw);
+    return [
+      `SSH configuration preview (${preview.format}, ${formatBytes(size)}).`,
+      preview.hostPatterns.length > 0
+        ? `Host patterns (${preview.hostPatterns.length}${preview.hostPatterns.length >= MAX_SSH_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.hostPatterns.join(", ")}.`
+        : "Host patterns: none detected in the bounded preview.",
+      preview.destinations.length > 0
+        ? `Destination hints (${preview.destinations.length}${preview.destinations.length >= MAX_SSH_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.destinations.join(", ")}.`
+        : "Destination hints: none detected in the bounded preview.",
+      preview.users.length > 0
+        ? `User hints: ${preview.users.join(", ")}.`
+        : "User hints: none detected.",
+      preview.ports.length > 0
+        ? `Port hints: ${preview.ports.join(", ")}.`
+        : "Port hints: none detected.",
+      preview.identityLabels.length > 0
+        ? `Identity file labels (${preview.identityLabels.length}${preview.identityLabels.length >= MAX_SSH_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.identityLabels.join(", ")}.`
+        : "Identity file labels: none detected; key file contents were not opened.",
+      preview.proxyJumps.length > 0
+        ? `ProxyJump/ProxyCommand hints (${preview.proxyJumps.length}${preview.proxyJumps.length >= MAX_SSH_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.proxyJumps.join(" | ")}.`
+        : "ProxyJump/ProxyCommand hints: none detected.",
+      preview.includeTargets.length > 0
+        ? `Include targets (${preview.includeTargets.length}${preview.includeTargets.length >= MAX_SSH_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.includeTargets.join(", ")}.`
+        : "Include targets: none detected.",
+      preview.knownHosts.length > 0
+        ? `Known host labels (${preview.knownHosts.length}${preview.knownHosts.length >= MAX_SSH_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.knownHosts.join(", ")}.`
+        : "Known host labels: none detected.",
+      preview.keyTypes.length > 0
+        ? `Public key types: ${preview.keyTypes.join(", ")}.`
+        : "Public key types: none detected.",
+      preview.keyComments.length > 0
+        ? `Public key comments (${preview.keyComments.length}${preview.keyComments.length >= MAX_SSH_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.keyComments.join(", ")}.`
+        : "Public key comments: none detected; key material was not expanded.",
+      preview.riskHints.length > 0
+        ? `Static risk cues: ${preview.riskHints.join(" | ")}.`
+        : "Static risk cues: none detected in the bounded preview.",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_SSH_CONFIG_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; SSH metadata was parsed from bounded workspace-local text only, private key files and Include targets were not opened, known_hosts fingerprints and authorized_keys key material were not expanded, no ssh/scp/sftp/ssh-keygen command, agent/socket lookup, host-key verification, network connection, credential lookup, filesystem mutation, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `SSH configuration ready for explicit attachment (${formatBytes(size)}).`,
+      "SSH preview could not read bounded local text; no SSH command, key file read, agent lookup, network connection, credential lookup, filesystem mutation, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseSshConfigPreview(filePath: string, raw: string): SshConfigPreview {
+  const name = basename(filePath).toLowerCase();
+  const format = name === "known_hosts" || name.endsWith(".known_hosts")
+    ? "known_hosts"
+    : name === "authorized_keys" || name.endsWith(".authorized_keys")
+      ? "authorized_keys"
+      : "OpenSSH client config";
+  const hostPatterns = new Set<string>();
+  const destinations = new Set<string>();
+  const users = new Set<string>();
+  const ports = new Set<string>();
+  const identityLabels = new Set<string>();
+  const proxyJumps = new Set<string>();
+  const includeTargets = new Set<string>();
+  const knownHosts = new Set<string>();
+  const keyTypes = new Set<string>();
+  const keyComments = new Set<string>();
+  const riskHints = new Set<string>();
+  const lines = normalizeTextPreview(raw)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  for (const rawLine of lines) {
+    if (rawLine.startsWith("#")) continue;
+    if (format === "known_hosts") {
+      collectKnownHostsSshPreview(rawLine, knownHosts, keyTypes, riskHints);
+    } else if (format === "authorized_keys") {
+      collectAuthorizedKeysSshPreview(rawLine, keyTypes, keyComments, riskHints);
+    } else {
+      collectOpenSshClientConfigPreview(rawLine, hostPatterns, destinations, users, ports, identityLabels, proxyJumps, includeTargets, riskHints);
+    }
+  }
+
+  return {
+    format,
+    hostPatterns: uniquePreviewValues([...hostPatterns], MAX_SSH_CONFIG_ITEM_PREVIEW),
+    destinations: uniquePreviewValues([...destinations], MAX_SSH_CONFIG_ITEM_PREVIEW),
+    users: uniquePreviewValues([...users], MAX_SSH_CONFIG_ITEM_PREVIEW),
+    ports: uniquePreviewValues([...ports], MAX_SSH_CONFIG_ITEM_PREVIEW),
+    identityLabels: uniquePreviewValues([...identityLabels], MAX_SSH_CONFIG_ITEM_PREVIEW),
+    proxyJumps: uniquePreviewValues([...proxyJumps], MAX_SSH_CONFIG_ITEM_PREVIEW),
+    includeTargets: uniquePreviewValues([...includeTargets], MAX_SSH_CONFIG_ITEM_PREVIEW),
+    knownHosts: uniquePreviewValues([...knownHosts], MAX_SSH_CONFIG_ITEM_PREVIEW),
+    keyTypes: uniquePreviewValues([...keyTypes], MAX_SSH_CONFIG_ITEM_PREVIEW),
+    keyComments: uniquePreviewValues([...keyComments], MAX_SSH_CONFIG_ITEM_PREVIEW),
+    riskHints: uniquePreviewValues([...riskHints], MAX_SSH_CONFIG_ITEM_PREVIEW),
+    lineCount: lines.length,
+    truncated: raw.length >= MAX_SSH_CONFIG_PREVIEW_BYTES,
+  };
+}
+
+function collectOpenSshClientConfigPreview(
+  line: string,
+  hostPatterns: Set<string>,
+  destinations: Set<string>,
+  users: Set<string>,
+  ports: Set<string>,
+  identityLabels: Set<string>,
+  proxyJumps: Set<string>,
+  includeTargets: Set<string>,
+  riskHints: Set<string>,
+): void {
+  const match = line.match(/^([A-Za-z][A-Za-z0-9]+)\s+(.+)$/);
+  if (!match?.[1] || !match[2]) return;
+  const key = match[1].toLowerCase();
+  const value = clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(match[2].trim())), 180);
+  if (!value) return;
+  if (key === "host") {
+    for (const pattern of value.split(/\s+/).filter(Boolean)) {
+      if (hostPatterns.size < MAX_SSH_CONFIG_ITEM_PREVIEW) hostPatterns.add(pattern);
+    }
+  } else if (key === "hostname") {
+    if (destinations.size < MAX_SSH_CONFIG_ITEM_PREVIEW) destinations.add(value);
+  } else if (key === "user") {
+    if (users.size < MAX_SSH_CONFIG_ITEM_PREVIEW) users.add(value);
+  } else if (key === "port") {
+    if (ports.size < MAX_SSH_CONFIG_ITEM_PREVIEW) ports.add(value);
+  } else if (key === "identityfile") {
+    if (identityLabels.size < MAX_SSH_CONFIG_ITEM_PREVIEW) identityLabels.add(formatSshPathLabel(value));
+  } else if (key === "proxyjump" || key === "proxycommand") {
+    if (proxyJumps.size < MAX_SSH_CONFIG_ITEM_PREVIEW) proxyJumps.add(`${match[1]}=${value}`);
+    riskHints.add(key === "proxycommand" ? "ProxyCommand may execute a local command" : "ProxyJump requires reviewed network routing");
+  } else if (key === "include") {
+    if (includeTargets.size < MAX_SSH_CONFIG_ITEM_PREVIEW) includeTargets.add(value);
+    riskHints.add("Include target listed but not opened");
+  } else if (["localforward", "remoteforward", "dynamicforward", "permitlocalcommand", "identityagent", "certificatefile"].includes(key)) {
+    riskHints.add(`${match[1]} directive present`);
+  }
+}
+
+function collectKnownHostsSshPreview(
+  line: string,
+  knownHosts: Set<string>,
+  keyTypes: Set<string>,
+  riskHints: Set<string>,
+): void {
+  const fields = line.split(/\s+/).filter(Boolean);
+  if (fields.length < 2) return;
+  let hostField = fields[0] ?? "";
+  let keyType = fields[1] ?? "";
+  if (hostField.startsWith("@") && fields.length >= 3) {
+    riskHints.add(`marker ${hostField}`);
+    hostField = fields[1] ?? "";
+    keyType = fields[2] ?? "";
+  }
+  if (hostField.startsWith("|1|")) {
+    knownHosts.add("hashed-host");
+  } else {
+    for (const host of hostField.split(",").slice(0, MAX_SSH_CONFIG_ITEM_PREVIEW)) {
+      if (knownHosts.size >= MAX_SSH_CONFIG_ITEM_PREVIEW) break;
+      knownHosts.add(clampSingleLine(maskPotentialSecretValues(host.replace(/\]:\d+$/, "]")), 120));
+    }
+  }
+  if (/^(?:ssh-|ecdsa-|sk-)/i.test(keyType) && keyTypes.size < MAX_SSH_CONFIG_ITEM_PREVIEW) {
+    keyTypes.add(keyType);
+  }
+}
+
+function collectAuthorizedKeysSshPreview(
+  line: string,
+  keyTypes: Set<string>,
+  keyComments: Set<string>,
+  riskHints: Set<string>,
+): void {
+  const fields = line.split(/\s+/).filter(Boolean);
+  const keyIndex = fields.findIndex((field) => /^(?:ssh-|ecdsa-|sk-)/i.test(field));
+  if (keyIndex < 0) return;
+  const keyType = fields[keyIndex] ?? "";
+  if (keyType && keyTypes.size < MAX_SSH_CONFIG_ITEM_PREVIEW) keyTypes.add(keyType);
+  const options = fields.slice(0, keyIndex).join(" ");
+  if (options) {
+    for (const cue of ["from=", "command=", "environment=", "permitopen=", "restrict", "no-pty"]) {
+      if (options.includes(cue)) riskHints.add(`authorized_keys option ${cue.replace("=", "")}`);
+    }
+  }
+  const comment = fields.slice(keyIndex + 2).join(" ");
+  if (comment && keyComments.size < MAX_SSH_CONFIG_ITEM_PREVIEW) {
+    keyComments.add(clampSingleLine(maskPotentialSecretValues(comment), 140));
+  }
+}
+
+function formatSshPathLabel(value: string): string {
+  const cleaned = value.replace(/^["']|["']$/g, "");
+  const normalized = cleaned.replace(/\\/g, "/");
+  const fileName = normalized.split("/").filter(Boolean).pop() || cleaned;
+  return clampSingleLine(fileName || cleaned, 120);
 }
 
 function isVsCodeWorkspaceConfigFile(filePath: string, extension: string): boolean {
@@ -21899,21 +26030,169 @@ function summarizeChatExportJsonFile(filePath: string, size: number): string {
       preview.messages.length > 0
         ? preview.messages.map((message, index) => formatChatExportMessagePreview(message, index)).join("\n")
         : "No readable message samples were found in the bounded preview.",
-      "Ready for explicit attachment after visible review; chat export JSON was parsed from bounded workspace-local bytes only, with likely-secret redaction and no Slack/Teams/ChatGPT/OpenAI connector login, no Discord connector login, provider API call, attachment download, network call, or provider send performed.",
+      "Ready for explicit attachment after visible review; chat export JSON was parsed from bounded workspace-local bytes only, with likely-secret redaction and no Slack/Teams/Telegram/ChatGPT/OpenAI connector login, no Discord connector login, no provider API call, attachment download, network call, or provider send performed.",
     ].join("\n").slice(0, MAX_TEXT_BYTES);
   } catch {
     return [
       `Chat export JSON ready for explicit attachment (${formatBytes(size)}).`,
-      "No Slack/Teams/ChatGPT/OpenAI connector login, no Discord connector login, provider API call, attachment download, network call, or provider send was performed.",
+      "No Slack/Teams/Telegram/ChatGPT/OpenAI connector login, no Discord connector login, no provider API call, attachment download, network call, or provider send was performed.",
     ].join("\n").slice(0, MAX_TEXT_BYTES);
   }
 }
 
+function summarizeChatCsvExportFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_CHAT_CSV_EXPORT_PREVIEW_BYTES)).toString("utf8");
+    const preview = parseChatCsvExportPreview(raw, basename(filePath).toLowerCase(), raw.length >= MAX_CHAT_CSV_EXPORT_PREVIEW_BYTES);
+    return [
+      `Chat CSV export preview (${preview.format}, ${formatBytes(size)}).`,
+      `Messages in bounded preview: ${preview.messageCount}${preview.truncated ? "+" : ""}.`,
+      `Channels/conversations: ${preview.channels.length > 0 ? preview.channels.join(", ") : "none detected"}.`,
+      `Participants: ${preview.participants.length > 0 ? preview.participants.join(", ") : "none detected"}.`,
+      "Message samples:",
+      preview.messages.length > 0
+        ? preview.messages.map((message, index) => formatChatExportMessagePreview(message, index)).join("\n")
+        : "No readable message samples were found in the bounded preview.",
+      "Ready for explicit attachment after visible review; chat CSV export data was parsed from bounded workspace-local bytes only, with likely-secret redaction and no Slack/Teams/Discord/Telegram connector login, provider API call, attachment download, network call, or provider send performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Chat CSV export ready for explicit attachment (${formatBytes(size)}).`,
+      "No Slack/Teams/Discord/Telegram connector login, provider API call, attachment download, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function summarizeChatTextExportFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_CHAT_TEXT_EXPORT_PREVIEW_BYTES)).toString("utf8");
+    const preview = parseChatTextExportPreview(raw, basename(filePath).toLowerCase(), raw.length >= MAX_CHAT_TEXT_EXPORT_PREVIEW_BYTES);
+    return [
+      `Chat text export preview (${preview.format}, ${formatBytes(size)}).`,
+      `Messages in bounded preview: ${preview.messageCount}${preview.truncated ? "+" : ""}.`,
+      `Channels/conversations: ${preview.channels.length > 0 ? preview.channels.join(", ") : "none detected"}.`,
+      `Participants: ${preview.participants.length > 0 ? preview.participants.join(", ") : "none detected"}.`,
+      "Message samples:",
+      preview.messages.length > 0
+        ? preview.messages.map((message, index) => formatChatExportMessagePreview(message, index)).join("\n")
+        : "No readable message samples were found in the bounded preview.",
+      "Ready for explicit attachment after visible review; chat text export data was parsed from bounded workspace-local bytes only, with likely-secret redaction and no WhatsApp/mobile connector login, contact sync, attachment download, network call, or provider send performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Chat text export ready for explicit attachment (${formatBytes(size)}).`,
+      "No WhatsApp/mobile connector login, contact sync, attachment download, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseChatCsvExportPreview(raw: string, fileName: string, byteTruncated: boolean): ChatExportPreview {
+  const rows = parseDelimitedPreviewRows(raw, ",");
+  const header = (rows[0] ?? []).map((value) => value.trim().toLowerCase());
+  const channelIndex = findHeaderIndex(header, [
+    "channel",
+    "channel name",
+    "channel_name",
+    "conversation",
+    "conversation name",
+    "conversation_name",
+    "guild",
+    "guild name",
+    "server",
+    "server name",
+    "chat",
+    "chat name",
+    "room",
+    "thread",
+    "thread name",
+  ]);
+  const senderIndex = findHeaderIndex(header, [
+    "sender",
+    "user",
+    "user name",
+    "user_name",
+    "username",
+    "author",
+    "from",
+    "display name",
+    "display_name",
+    "name",
+  ]);
+  const timestampIndex = findHeaderIndex(header, [
+    "timestamp",
+    "ts",
+    "time",
+    "date",
+    "created",
+    "created_at",
+    "createdat",
+    "createddatetime",
+    "created date time",
+    "sent_at",
+    "sentat",
+    "sent",
+  ]);
+  const textIndex = findHeaderIndex(header, [
+    "text",
+    "message",
+    "content",
+    "body",
+    "body content",
+    "body_content",
+    "summary",
+  ]);
+  const messages: ChatExportMessagePreview[] = [];
+  let messageCount = 0;
+  const fallbackChannel = inferChatCsvExportChannel(fileName);
+
+  for (const row of rows.slice(1)) {
+    const text = textIndex >= 0 ? row[textIndex] ?? "" : "";
+    if (!text.trim()) continue;
+    messageCount += 1;
+    if (messages.length >= MAX_CHAT_CSV_EXPORT_MESSAGE_PREVIEW) continue;
+    messages.push({
+      channel: clampSingleLine(maskPotentialSecretValues((channelIndex >= 0 ? row[channelIndex] : "") || fallbackChannel), 100),
+      sender: clampSingleLine(maskPotentialSecretValues((senderIndex >= 0 ? row[senderIndex] : "") || "unknown-sender"), 100),
+      timestamp: clampSingleLine(maskPotentialSecretValues(timestampIndex >= 0 ? row[timestampIndex] ?? "" : ""), 80),
+      text: clampSingleLine(maskPotentialSecretValues(stripHtmlTags(text)), 260),
+    });
+  }
+
+  return {
+    format: inferChatCsvExportFormat(fileName),
+    messages,
+    messageCount,
+    channels: uniqueLimited(messages.map((message) => message.channel).filter(Boolean), MAX_CHAT_CSV_EXPORT_MESSAGE_PREVIEW),
+    participants: uniqueLimited(messages.map((message) => message.sender).filter(Boolean), MAX_CHAT_CSV_EXPORT_MESSAGE_PREVIEW),
+    truncated: byteTruncated || messageCount > messages.length,
+  };
+}
+
+function inferChatCsvExportFormat(fileName: string): string {
+  if (/slack/i.test(fileName)) return "Slack export CSV";
+  if (/teams/i.test(fileName)) return "Microsoft Teams export CSV";
+  if (/discord/i.test(fileName)) return "Discord export CSV";
+  if (/telegram/i.test(fileName)) return "Telegram export CSV";
+  return "Chat export CSV";
+}
+
+function inferChatCsvExportChannel(fileName: string): string {
+  return clampSingleLine(
+    fileName
+      .replace(/\.csv$/i, "")
+      .replace(/[._-]*(slack|teams|discord|telegram|chat|export|messages)[._-]*/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim() || "chat export",
+    100,
+  );
+}
+
 function looksLikeChatExportJsonValue(value: unknown, fileName: string): boolean {
   if (looksLikeChatGptConversationsExport(value)) return true;
+  if (looksLikeClaudeConversationsExport(value)) return true;
   const records = getChatExportRecords(value);
   if (records.length === 0) return false;
-  if (/(slack|teams|discord|chat-export|messages)/i.test(fileName)) {
+  if (/(slack|teams|discord|telegram|chatgpt|claude|anthropic|chat-export|messages)/i.test(fileName)) {
     return records.some((record) => hasChatExportMessageShape(record));
   }
   return records.some((record) => hasSpecificChatExportMessageShape(record));
@@ -21922,6 +26201,9 @@ function looksLikeChatExportJsonValue(value: unknown, fileName: string): boolean
 function parseChatExportJsonPreview(value: unknown, fileName: string, byteTruncated: boolean): ChatExportPreview {
   if (looksLikeChatGptConversationsExport(value)) {
     return parseChatGptConversationsExport(value, byteTruncated);
+  }
+  if (looksLikeClaudeConversationsExport(value)) {
+    return parseClaudeConversationsExport(value, byteTruncated);
   }
   const records = getChatExportRecords(value).filter(hasChatExportMessageShape);
   const format = inferChatExportJsonFormat(records, fileName);
@@ -21983,6 +26265,61 @@ function readChatGptMessageText(message: Record<string, unknown>): string {
   return clampSingleLine(maskPotentialSecretValues(stripHtmlTags(text)), 260);
 }
 
+function looksLikeClaudeConversationsExport(value: unknown): value is Record<string, unknown>[] {
+  return Array.isArray(value) && value.some((item) => {
+    if (!isRecord(item)) return false;
+    const messages = readSnapshotArray(readRecordValue(item, "chat_messages"));
+    return messages.some((message) => isRecord(message) && readClaudeMessageText(message));
+  });
+}
+
+function parseClaudeConversationsExport(value: Record<string, unknown>[], byteTruncated: boolean): ChatExportPreview {
+  const messages: ChatExportMessagePreview[] = [];
+  let messageCount = 0;
+  for (const conversation of value) {
+    const title = clampSingleLine(
+      readRecordString(conversation, "name") ||
+        readRecordString(conversation, "title") ||
+        "Claude conversation",
+      120,
+    );
+    for (const message of readSnapshotArray(readRecordValue(conversation, "chat_messages"))) {
+      if (!isRecord(message)) continue;
+      const text = readClaudeMessageText(message);
+      if (!text) continue;
+      messageCount += 1;
+      if (messages.length >= MAX_CHAT_EXPORT_MESSAGE_PREVIEW) continue;
+      messages.push({
+        channel: title,
+        sender: clampSingleLine(readRecordString(message, "sender") || readRecordString(message, "role") || "unknown-role", 80),
+        timestamp: formatChatExportTimestamp(readRecordValue(message, "created_at") || readRecordValue(message, "updated_at")),
+        text,
+      });
+    }
+  }
+  return {
+    format: "Claude conversations JSON",
+    messages,
+    messageCount,
+    channels: uniqueLimited(value.map((conversation) => readRecordString(conversation, "name") || readRecordString(conversation, "title")).filter(Boolean), MAX_CHAT_EXPORT_MESSAGE_PREVIEW),
+    participants: uniqueLimited(messages.map((message) => message.sender).filter(Boolean), MAX_CHAT_EXPORT_MESSAGE_PREVIEW),
+    truncated: byteTruncated || messageCount > messages.length,
+  };
+}
+
+function readClaudeMessageText(message: Record<string, unknown>): string {
+  const text = readRecordString(message, "text") || readRecordString(message, "content");
+  if (text) return clampSingleLine(maskPotentialSecretValues(stripHtmlTags(text)), 260);
+  const content = readRecordValue(message, "content");
+  if (Array.isArray(content)) {
+    return clampSingleLine(maskPotentialSecretValues(stripHtmlTags(content
+      .map((part) => isRecord(part) ? readRecordString(part, "text") : typeof part === "string" ? part : "")
+      .filter(Boolean)
+      .join("\n"))), 260);
+  }
+  return "";
+}
+
 function getChatExportRecords(value: unknown): Record<string, unknown>[] {
   const records: Record<string, unknown>[] = [];
   const pushRecords = (items: unknown[], inheritedChannel = ""): void => {
@@ -21996,7 +26333,13 @@ function getChatExportRecords(value: unknown): Record<string, unknown>[] {
     return records;
   }
   if (!isRecord(value)) return records;
-  pushRecords(readSnapshotArray(value.messages));
+  const rootChannel = readRecordString(value, "name") ||
+    readRecordString(value, "title") ||
+    readRecordString(value, "conversation") ||
+    readRecordString(value, "conversationName") ||
+    readRecordString(value, "chat") ||
+    readRecordString(value, "chatName");
+  pushRecords(readSnapshotArray(value.messages), rootChannel);
   pushRecords(readSnapshotArray(value.items));
   for (const collectionKey of ["channels", "conversations", "threads"]) {
     for (const collection of readSnapshotArray(value[collectionKey])) {
@@ -22019,6 +26362,7 @@ function hasChatExportMessageShape(record: Record<string, unknown>): boolean {
 function hasSpecificChatExportMessageShape(record: Record<string, unknown>): boolean {
   return Boolean(
       (readRecordString(record, "type").toLowerCase() === "message" && readRecordString(record, "ts") && readRecordString(record, "text")) ||
+      (readRecordString(record, "type").toLowerCase() === "message" && readRecordString(record, "date") && readChatExportText(record)) ||
       (isRecord(record.body) && (isRecord(record.from) || readRecordString(record, "createdDateTime"))) ||
       (isRecord(record.author) && readRecordString(record, "content") && (readRecordString(record, "channel_id") || readRecordString(record, "guild_id"))) ||
       (readRecordString(record, "user") && readRecordString(record, "text") && readRecordString(record, "ts")),
@@ -22034,6 +26378,12 @@ function inferChatExportJsonFormat(records: Record<string, unknown>[], fileName:
   }
   if (/discord/i.test(fileName) || records.some((record) => isRecord(record.author) && readRecordString(record, "content"))) {
     return "Discord export JSON";
+  }
+  if (/telegram/i.test(fileName) || records.some((record) => readRecordString(record, "from") && readRecordString(record, "date") && readRecordValue(record, "text"))) {
+    return "Telegram export JSON";
+  }
+  if (/claude|anthropic/i.test(fileName) || records.some((record) => readRecordString(record, "sender") && readRecordString(record, "text"))) {
+    return "Claude conversations JSON";
   }
   return "Chat export JSON";
 }
@@ -22056,6 +26406,8 @@ function readChatExportChannel(record: Record<string, unknown>): string {
     readRecordString(record, "guildName") ||
     readRecordString(record, "server") ||
     readRecordString(record, "serverName") ||
+    readRecordString(record, "chat") ||
+    readRecordString(record, "chatName") ||
     readRecordString(record, "thread") ||
     readRecordString(record, "threadName") ||
     readRecordString(record, "channel_id") ||
@@ -22074,6 +26426,8 @@ function readChatExportSender(record: Record<string, unknown>): string {
         readRecordString(author, "name") ||
         readRecordString(author, "id")
       : readRecordString(record, "author")) ||
+    readRecordString(record, "from") ||
+    readRecordString(record, "actor") ||
     readRecordString(record, "user_name") ||
     readRecordString(record, "username") ||
     readRecordString(record, "user") ||
@@ -22085,17 +26439,250 @@ function readChatExportTimestamp(record: Record<string, unknown>): string {
   return readRecordString(record, "timestamp") ||
     readRecordString(record, "createdAt") ||
     readRecordString(record, "createdDateTime") ||
+    readRecordString(record, "date") ||
+    readRecordString(record, "date_unixtime") ||
     readRecordString(record, "sentAt") ||
     readRecordString(record, "ts");
 }
 
 function readChatExportText(record: Record<string, unknown>): string {
   const body = isRecord(record.body) ? record.body : null;
-  return readRecordString(record, "text") ||
+  return readChatExportRichText(readRecordValue(record, "text")) ||
     readRecordString(record, "message") ||
     readRecordString(record, "summary") ||
     readRecordString(record, "content") ||
     (body ? readRecordString(body, "content") : "");
+}
+
+function readChatExportRichText(value: unknown): string {
+  if (typeof value === "string") return value.replace(/\s+/g, " ").trim();
+  if (!Array.isArray(value)) return "";
+  return value
+    .map((part) => {
+      if (typeof part === "string") return part;
+      if (isRecord(part)) return readRecordString(part, "text");
+      return "";
+    })
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function parseChatTextExportPreview(raw: string, fileName: string, byteTruncated: boolean): ChatExportPreview {
+  const normalized = raw.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const messages: ChatExportMessagePreview[] = [];
+  let messageCount = 0;
+  let current: ChatExportMessagePreview | null = null;
+  for (const line of normalized.split("\n")) {
+    const parsed = parseWhatsAppExportLine(line, fileName);
+    if (parsed) {
+      if (current) {
+        messageCount += 1;
+        if (messages.length < MAX_CHAT_TEXT_EXPORT_MESSAGE_PREVIEW) messages.push(current);
+      }
+      current = parsed;
+      continue;
+    }
+    if (current && line.trim()) {
+      current = {
+        ...current,
+        text: clampSingleLine(`${current.text} ${maskPotentialSecretValues(stripHtmlTags(line.trim()))}`, 260),
+      };
+    }
+  }
+  if (current) {
+    messageCount += 1;
+    if (messages.length < MAX_CHAT_TEXT_EXPORT_MESSAGE_PREVIEW) messages.push(current);
+  }
+  return {
+    format: /whatsapp/i.test(fileName) ? "WhatsApp chat text export" : "Chat text export",
+    messages,
+    messageCount,
+    channels: uniqueLimited(messages.map((message) => message.channel).filter(Boolean), MAX_CHAT_TEXT_EXPORT_MESSAGE_PREVIEW),
+    participants: uniqueLimited(messages.map((message) => message.sender).filter(Boolean), MAX_CHAT_TEXT_EXPORT_MESSAGE_PREVIEW),
+    truncated: byteTruncated || messageCount > messages.length,
+  };
+}
+
+function parseWhatsAppExportLine(line: string, fileName: string): ChatExportMessagePreview | null {
+  const trimmed = line.trim();
+  const bracketed = trimmed.match(/^\[([^\]]+)\]\s+([^:]+):\s+(.+)$/);
+  const dashed = trimmed.match(/^(.+?\d{1,2}:\d{2}(?:\s?[AP]M)?)\s+-\s+([^:]+):\s+(.+)$/i);
+  const match = bracketed || dashed;
+  if (!match) return null;
+  const sender = clampSingleLine(maskPotentialSecretValues(match[2] || "unknown-sender"), 100);
+  const text = clampSingleLine(maskPotentialSecretValues(stripHtmlTags(match[3] || "")), 260);
+  if (!sender || !text) return null;
+  return {
+    channel: inferChatTextExportChannel(fileName),
+    sender,
+    timestamp: clampSingleLine(maskPotentialSecretValues(match[1] || ""), 80),
+    text,
+  };
+}
+
+function inferChatTextExportChannel(fileName: string): string {
+  return clampSingleLine(
+    fileName
+      .replace(/\.txt$/i, "")
+      .replace(/[._-]*(whatsapp|chat|export|messages)[._-]*/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim() || "WhatsApp chat",
+    100,
+  );
+}
+
+interface MeetingTranscriptPreview {
+  format: string;
+  title: string;
+  messages: ChatExportMessagePreview[];
+  messageCount: number;
+  participants: string[];
+  actionCues: string[];
+  truncated: boolean;
+}
+
+function summarizeMeetingTranscriptFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_MEETING_TRANSCRIPT_PREVIEW_BYTES)).toString("utf8");
+    const preview = parseMeetingTranscriptPreview(raw, basename(filePath), size > MAX_MEETING_TRANSCRIPT_PREVIEW_BYTES);
+    const messages =
+      preview.messages.length > 0
+        ? preview.messages.map(formatChatExportMessagePreview).join("\n")
+        : "No readable speaker turns were found in the bounded preview.";
+    return [
+      `Meeting transcript preview (${preview.format}, ${formatBytes(size)}).`,
+      preview.title ? `Meeting title: ${preview.title}.` : "",
+      `Speaker turns in bounded preview: ${preview.messageCount}${preview.truncated ? "+" : ""}.`,
+      `Participants: ${preview.participants.length > 0 ? preview.participants.join(", ") : "none detected"}.`,
+      `Action/decision cues: ${preview.actionCues.length > 0 ? preview.actionCues.join("; ") : "none detected"}.`,
+      messages,
+      "Ready for explicit attachment after visible review; meeting transcript text was parsed from bounded workspace-local bytes only, likely secrets were redacted, and no Zoom/Teams/Google Meet app, calendar app, recording capture, transcription service, network call, workspace mutation, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Meeting transcript file ready for explicit attachment (${formatBytes(size)}).`,
+      "No Zoom/Teams/Google Meet app, calendar app, recording capture, transcription service, network call, workspace mutation, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseMeetingTranscriptPreview(raw: string, fileName: string, byteTruncated: boolean): MeetingTranscriptPreview {
+  const normalized = raw.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const lines = normalized.split("\n");
+  const messages: ChatExportMessagePreview[] = [];
+  const participants = new Set<string>();
+  const actionCues = new Set<string>();
+  let messageCount = 0;
+  let title = "";
+  let pendingTimestamp = "";
+  let current: ChatExportMessagePreview | null = null;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const titleMatch = line.match(/^(?:meeting|topic|title|subject)\s*[:=-]\s*(.+)$/i);
+    if (titleMatch && !title) {
+      title = clampSingleLine(maskPotentialSecretValues(titleMatch[1] || ""), 160);
+      continue;
+    }
+    const rangeMatch = line.match(/^(\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?)\s+-->\s+\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?$/);
+    if (rangeMatch) {
+      pendingTimestamp = rangeMatch[1] || "";
+      continue;
+    }
+
+    const parsed = parseMeetingTranscriptLine(line, fileName, pendingTimestamp);
+    if (parsed) {
+      if (current) {
+        messageCount += 1;
+        if (messages.length < MAX_MEETING_TRANSCRIPT_ITEM_PREVIEW) messages.push(current);
+      }
+      current = parsed;
+      pendingTimestamp = "";
+      participants.add(parsed.sender);
+      collectMeetingTranscriptActionCues(parsed.text, actionCues);
+      continue;
+    }
+
+    if (current) {
+      current = {
+        ...current,
+        text: clampSingleLine(`${current.text} ${maskPotentialSecretValues(stripHtmlTags(line))}`, 260),
+      };
+      collectMeetingTranscriptActionCues(line, actionCues);
+    }
+  }
+
+  if (current) {
+    messageCount += 1;
+    if (messages.length < MAX_MEETING_TRANSCRIPT_ITEM_PREVIEW) messages.push(current);
+  }
+
+  return {
+    format: inferMeetingTranscriptFormat(fileName),
+    title,
+    messages,
+    messageCount,
+    participants: uniqueLimited([...participants], MAX_MEETING_TRANSCRIPT_ITEM_PREVIEW),
+    actionCues: uniqueLimited([...actionCues], MAX_MEETING_TRANSCRIPT_ITEM_PREVIEW),
+    truncated: byteTruncated || messageCount > messages.length,
+  };
+}
+
+function parseMeetingTranscriptLine(line: string, fileName: string, pendingTimestamp: string): ChatExportMessagePreview | null {
+  const patterns = [
+    /^\[?(\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?)\]?\s+([^:]{1,100}):\s+(.+)$/,
+    /^([^:]{1,100})\s+\(?(\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?)\)?\s*[:=-]\s+(.+)$/,
+    /^([^:]{1,100}):\s+(.+)$/,
+  ];
+  for (const pattern of patterns) {
+    const match = line.match(pattern);
+    if (!match) continue;
+    const hasLeadingTimestamp = pattern === patterns[0];
+    const timestamp = hasLeadingTimestamp ? match[1] || pendingTimestamp : pattern === patterns[1] ? match[2] || pendingTimestamp : pendingTimestamp;
+    const sender = hasLeadingTimestamp ? match[2] : match[1];
+    const text = hasLeadingTimestamp ? match[3] : pattern === patterns[1] ? match[3] : match[2];
+    const cleanSender = clampSingleLine(maskPotentialSecretValues(sender || "unknown-speaker"), 100);
+    const cleanText = clampSingleLine(maskPotentialSecretValues(stripHtmlTags(text || "")), 260);
+    if (!cleanSender || !cleanText || /^(topic|meeting|title|subject)$/i.test(cleanSender)) return null;
+    return {
+      channel: inferMeetingTranscriptChannel(fileName),
+      sender: cleanSender,
+      timestamp: clampSingleLine(maskPotentialSecretValues(timestamp || ""), 80),
+      text: cleanText,
+    };
+  }
+  return null;
+}
+
+function collectMeetingTranscriptActionCues(text: string, actionCues: Set<string>): void {
+  const clean = clampSingleLine(maskPotentialSecretValues(stripHtmlTags(text)), 180);
+  if (!clean) return;
+  if (/\b(action item|todo|to-do|follow up|next step|owner|assigned to|due by)\b/i.test(clean)) {
+    actionCues.add(`Action: ${clean}`);
+  } else if (/\b(decision|decided|approved|blocked|risk)\b/i.test(clean)) {
+    actionCues.add(`Decision/risk: ${clean}`);
+  }
+}
+
+function inferMeetingTranscriptFormat(fileName: string): string {
+  if (/zoom/i.test(fileName)) return "Zoom meeting transcript";
+  if (/teams/i.test(fileName)) return "Microsoft Teams meeting transcript";
+  if (/google-meet|meet/i.test(fileName)) return "Google Meet meeting transcript";
+  return "Meeting transcript text";
+}
+
+function inferMeetingTranscriptChannel(fileName: string): string {
+  return clampSingleLine(
+    fileName
+      .replace(/\.txt$/i, "")
+      .replace(/[._-]*(zoom|teams|google-meet|meet|meeting|notes|transcript)[._-]*/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim() || "Meeting transcript",
+    100,
+  );
 }
 
 function formatChatExportTimestamp(value: unknown): string {
@@ -22255,6 +26842,300 @@ function summarizeColumnarDataFile(filePath: string, extension: string, size: nu
       "Columnar data preview read bounded local bytes only; no DuckDB/PyArrow/Spark query, schema inference service, decompression scan, network call, code execution, or provider send was performed.",
     ].join("\n").slice(0, MAX_TEXT_BYTES);
   }
+}
+
+function summarizeAvroObjectContainerFile(filePath: string, size: number): string {
+  try {
+    const head = readFileHeader(filePath, Math.min(size, MAX_AVRO_CONTAINER_PREVIEW_BYTES));
+    const preview = readAvroObjectContainerPreview(head);
+    const metadataLines = preview.metadata.map(([key, value]) => {
+      if (key === "avro.schema") {
+        return `avro.schema: ${summarizeAvroSchemaMetadata(value)}`
+      }
+      return `${key}: ${summarizeAvroMetadataBytes(value)}`;
+    });
+    return [
+      `Avro object container preview (${formatBytes(size)}).`,
+      `Avro magic: ${preview.magicDetected ? "Obj1 detected" : "not recognized in bounded header bytes"}.`,
+      metadataLines.length > 0
+        ? `Metadata entries (${metadataLines.length}${preview.truncated ? "+" : ""}): ${metadataLines.join(" | ")}.`
+        : "Metadata entries: none parsed from bounded local header bytes.",
+      preview.syncMarkerAvailable
+        ? "Sync marker: 16-byte marker present after metadata map."
+        : "Sync marker: unavailable from bounded local header bytes.",
+      preview.error ? `Parser note: ${preview.error}.` : "",
+      head.length >= MAX_AVRO_CONTAINER_PREVIEW_BYTES
+        ? `Preview was capped at ${formatBytes(MAX_AVRO_CONTAINER_PREVIEW_BYTES)}.`
+        : "",
+      "Ready for explicit attachment after visible review; Avro object container preview parsed bounded workspace-local header metadata only, did not decode records or blocks, and performed no Avro runtime, Spark/Flink/Hadoop job, schema registry lookup, decompression, network call, code execution, or provider send.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Avro object container ready for explicit attachment (${formatBytes(size)}).`,
+      "Avro preview attempted bounded local header reads only; no Avro runtime, Spark/Flink/Hadoop job, schema registry lookup, record decoding, network call, code execution, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+interface AvroSchemaPreview {
+  rootType: string;
+  name: string;
+  namespace: string;
+  fields: string[];
+  nestedTypes: string[];
+  aliases: string[];
+  docs: string[];
+  defaultsHidden: number;
+  logicalTypes: string[];
+  truncated: boolean;
+}
+
+function summarizeAvroSchemaFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_AVRO_SCHEMA_PREVIEW_BYTES)).toString("utf8");
+    const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+    const preview = collectAvroSchemaPreview(parsed);
+    return [
+      `Avro schema file preview (${formatBytes(size)}).`,
+      `Root schema: ${preview.rootType}${preview.name ? ` ${preview.name}` : ""}${preview.namespace ? ` namespace=${preview.namespace}` : ""}.`,
+      preview.fields.length > 0
+        ? `Fields (${preview.fields.length}${preview.truncated ? "+" : ""}): ${preview.fields.join(", ")}.`
+        : "Fields: none declared in the bounded schema preview.",
+      preview.nestedTypes.length > 0 ? `Nested type hints: ${preview.nestedTypes.join(", ")}.` : "Nested type hints: none detected.",
+      preview.logicalTypes.length > 0 ? `Logical types: ${preview.logicalTypes.join(", ")}.` : "Logical types: none detected.",
+      preview.aliases.length > 0 ? `Aliases: ${preview.aliases.join(", ")}.` : "",
+      preview.docs.length > 0 ? `Doc strings (${preview.docs.length}): ${preview.docs.join(" | ")}.` : "",
+      preview.defaultsHidden > 0 ? `Default values hidden: ${preview.defaultsHidden}.` : "Default values hidden: none declared.",
+      raw.length >= MAX_AVRO_SCHEMA_PREVIEW_BYTES ? `Preview was capped at ${formatBytes(MAX_AVRO_SCHEMA_PREVIEW_BYTES)}.` : "",
+      "Ready for explicit attachment after visible review; Avro schema preview parsed bounded workspace-local JSON only, hid default values, masked likely secrets, and performed no Avro runtime, schema registry lookup, compatibility check, code generation, Spark/Flink/Hadoop job, network call, workspace mutation, or provider send.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Avro schema file ready for explicit attachment (${formatBytes(size)}).`,
+      "Avro schema preview attempted bounded local JSON reads only; no Avro runtime, schema registry lookup, compatibility check, code generation, network call, workspace mutation, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function collectAvroSchemaPreview(schema: unknown): AvroSchemaPreview {
+  const preview: AvroSchemaPreview = {
+    rootType: describeAvroSchemaType(schema),
+    name: "",
+    namespace: "",
+    fields: [],
+    nestedTypes: [],
+    aliases: [],
+    docs: [],
+    defaultsHidden: 0,
+    logicalTypes: [],
+    truncated: false,
+  };
+  visitAvroSchemaNode(schema, preview, 0);
+  return preview;
+}
+
+function visitAvroSchemaNode(value: unknown, preview: AvroSchemaPreview, depth: number): void {
+  if (depth > 6) {
+    preview.truncated = true;
+    return;
+  }
+  if (typeof value === "string") {
+    addUniquePreviewItem(preview.nestedTypes, maskPotentialSecretValues(value), MAX_AVRO_SCHEMA_ITEM_PREVIEW, preview);
+    return;
+  }
+  if (Array.isArray(value)) {
+    addUniquePreviewItem(preview.nestedTypes, `union(${value.length})`, MAX_AVRO_SCHEMA_ITEM_PREVIEW, preview);
+    for (const child of value) visitAvroSchemaNode(child, preview, depth + 1);
+    return;
+  }
+  if (!isPlainRecord(value)) return;
+
+  const type = value.type;
+  const typeLabel = describeAvroSchemaType(value);
+  if (!preview.name && typeof value.name === "string") preview.name = maskPotentialSecretValues(value.name);
+  if (!preview.namespace && typeof value.namespace === "string") preview.namespace = maskPotentialSecretValues(value.namespace);
+  if (typeof value.name === "string") {
+    addUniquePreviewItem(preview.nestedTypes, `${typeLabel}:${maskPotentialSecretValues(value.name)}`, MAX_AVRO_SCHEMA_ITEM_PREVIEW, preview);
+  } else {
+    addUniquePreviewItem(preview.nestedTypes, typeLabel, MAX_AVRO_SCHEMA_ITEM_PREVIEW, preview);
+  }
+  if (typeof value.logicalType === "string") {
+    addUniquePreviewItem(preview.logicalTypes, maskPotentialSecretValues(value.logicalType), MAX_AVRO_SCHEMA_ITEM_PREVIEW, preview);
+  }
+  if (typeof value.doc === "string") {
+    addUniquePreviewItem(preview.docs, maskPotentialSecretValues(clampSingleLine(value.doc, 120)), 4, preview);
+  }
+  const aliases = value.aliases;
+  if (Array.isArray(aliases)) {
+    for (const alias of aliases) {
+      if (typeof alias === "string") addUniquePreviewItem(preview.aliases, maskPotentialSecretValues(alias), MAX_AVRO_SCHEMA_ITEM_PREVIEW, preview);
+    }
+  }
+  if (Array.isArray(value.fields)) {
+    for (const field of value.fields) {
+      if (!isPlainRecord(field)) continue;
+      const fieldName = typeof field.name === "string" ? maskPotentialSecretValues(field.name) : "unnamed";
+      const fieldType = describeAvroSchemaType(field.type);
+      const hasDefault = Object.prototype.hasOwnProperty.call(field, "default");
+      if (hasDefault) preview.defaultsHidden += 1;
+      addUniquePreviewItem(
+        preview.fields,
+        `${fieldName}:${fieldType}${hasDefault ? " default=hidden" : ""}`,
+        MAX_AVRO_SCHEMA_ITEM_PREVIEW,
+        preview,
+      );
+      visitAvroSchemaNode(field.type, preview, depth + 1);
+    }
+  }
+  if (type && typeof type !== "string") visitAvroSchemaNode(type, preview, depth + 1);
+  for (const key of ["items", "values"] as const) {
+    if (key in value) visitAvroSchemaNode(value[key], preview, depth + 1);
+  }
+}
+
+function describeAvroSchemaType(value: unknown): string {
+  if (typeof value === "string") return maskPotentialSecretValues(value);
+  if (Array.isArray(value)) return `union(${value.length})`;
+  if (isPlainRecord(value)) {
+    const rawType = value.type;
+    if (typeof rawType === "string") return maskPotentialSecretValues(rawType);
+    if (Array.isArray(rawType)) return `union(${rawType.length})`;
+    if (isPlainRecord(rawType)) return describeAvroSchemaType(rawType);
+    return "record";
+  }
+  return describeJsonValue(value);
+}
+
+function addUniquePreviewItem(target: string[], value: string, limit: number, preview: { truncated: boolean }): void {
+  const normalized = clampSingleLine(value, 160);
+  if (!normalized || target.includes(normalized)) return;
+  if (target.length >= limit) {
+    preview.truncated = true;
+    return;
+  }
+  target.push(normalized);
+}
+
+interface AvroObjectContainerPreview {
+  magicDetected: boolean;
+  metadata: Array<[string, Buffer]>;
+  syncMarkerAvailable: boolean;
+  truncated: boolean;
+  error?: string;
+}
+
+interface AvroReadResult {
+  value: number;
+  offset: number;
+}
+
+function readAvroObjectContainerPreview(buffer: Buffer): AvroObjectContainerPreview {
+  if (buffer.length < 4 || buffer.subarray(0, 4).toString("latin1") !== "Obj\u0001") {
+    return { magicDetected: false, metadata: [], syncMarkerAvailable: false, truncated: false };
+  }
+
+  const metadata: Array<[string, Buffer]> = [];
+  let offset = 4;
+  let truncated = false;
+  try {
+    let blockCount = readAvroLong(buffer, offset);
+    offset = blockCount.offset;
+    while (blockCount.value !== 0) {
+      let entriesInBlock = blockCount.value;
+      if (entriesInBlock < 0) {
+        entriesInBlock = Math.abs(entriesInBlock);
+        const blockSize = readAvroLong(buffer, offset);
+        offset = blockSize.offset;
+      }
+      for (let index = 0; index < entriesInBlock; index += 1) {
+        const key = readAvroString(buffer, offset);
+        offset = key.offset;
+        const value = readAvroBytes(buffer, offset);
+        offset = value.offset;
+        if (metadata.length < MAX_AVRO_METADATA_ITEM_PREVIEW) {
+          metadata.push([key.value, value.value]);
+        } else {
+          truncated = true;
+        }
+      }
+      blockCount = readAvroLong(buffer, offset);
+      offset = blockCount.offset;
+    }
+    return {
+      magicDetected: true,
+      metadata,
+      syncMarkerAvailable: offset + 16 <= buffer.length,
+      truncated,
+    };
+  } catch (error) {
+    return {
+      magicDetected: true,
+      metadata,
+      syncMarkerAvailable: false,
+      truncated: true,
+      error: error instanceof Error ? clampSingleLine(error.message, 120) : "metadata parsing stopped before sync marker",
+    };
+  }
+}
+
+function readAvroLong(buffer: Buffer, offset: number): AvroReadResult {
+  let raw = 0;
+  let shift = 0;
+  let index = offset;
+  while (index < buffer.length && shift <= 56) {
+    const byte = buffer[index] ?? 0;
+    raw += (byte & 0x7f) * 2 ** shift;
+    index += 1;
+    if ((byte & 0x80) === 0) {
+      const value = raw % 2 === 0 ? raw / 2 : -(raw + 1) / 2;
+      return { value, offset: index };
+    }
+    shift += 7;
+  }
+  throw new Error("Avro varint exceeded bounded header bytes");
+}
+
+function readAvroBytes(buffer: Buffer, offset: number): { value: Buffer; offset: number } {
+  const length = readAvroLong(buffer, offset);
+  if (length.value < 0) throw new Error("Avro byte field had a negative length");
+  const start = length.offset;
+  const end = start + length.value;
+  if (end > buffer.length) throw new Error("Avro byte field exceeded bounded header bytes");
+  return { value: buffer.subarray(start, end), offset: end };
+}
+
+function readAvroString(buffer: Buffer, offset: number): { value: string; offset: number } {
+  const bytes = readAvroBytes(buffer, offset);
+  return { value: bytes.value.toString("utf8"), offset: bytes.offset };
+}
+
+function summarizeAvroMetadataBytes(value: Buffer): string {
+  const text = value.toString("utf8").replace(/\0/g, "").trim();
+  if (!text) return `${value.length} bytes`;
+  return maskPotentialSecretValues(clampSingleLine(text, 180));
+}
+
+function summarizeAvroSchemaMetadata(value: Buffer): string {
+  const text = value.toString("utf8").trim();
+  try {
+    const schema = JSON.parse(text);
+    if (isPlainRecord(schema)) {
+      const type = typeof schema.type === "string" ? schema.type : "record";
+      const name = typeof schema.name === "string" ? maskPotentialSecretValues(schema.name) : "unnamed";
+      const namespace = typeof schema.namespace === "string" ? ` namespace=${maskPotentialSecretValues(schema.namespace)}` : "";
+      const fields = Array.isArray(schema.fields)
+        ? schema.fields
+            .filter(isPlainRecord)
+            .map((field) => typeof field.name === "string" ? maskPotentialSecretValues(field.name) : "")
+            .filter(Boolean)
+            .slice(0, MAX_AVRO_METADATA_ITEM_PREVIEW)
+        : [];
+      return `${type} ${name}${namespace}${fields.length > 0 ? ` fields=${fields.join(", ")}` : ""}`;
+    }
+  } catch {
+    // Fall through to a bounded raw schema preview.
+  }
+  return summarizeAvroMetadataBytes(value);
 }
 
 function summarizeScientificContainerFile(filePath: string, extension: string, size: number): string {
@@ -22978,7 +27859,7 @@ function isSensitiveHeaderName(name: string): boolean {
 }
 
 function isSensitiveFieldName(name: string): boolean {
-  return /\b(token|secret|password|passwd|pwd|key|apikey|api_key|auth|session|cookie|signature|credential)\b/i.test(name);
+  return /(?:^|[^a-z0-9])(token|secret|password|passwd|pwd|key|apikey|api_key|auth|session|cookie|signature|credential)(?:$|[^a-z0-9])/i.test(name);
 }
 
 function summarizeXlsxDataFile(filePath: string, extension: string, size: number): string {
@@ -23834,17 +28715,19 @@ function summarizeAudio(filePath: string, extension: string, size: number): stri
   const metadata =
     extension === ".wav"
       ? readWavAudioMetadata(header)
-      : extension === ".flac"
-        ? readFlacAudioMetadata(header)
-        : extension === ".m4a"
-          ? readM4aAudioMetadata(header)
-          : extension === ".ogg"
-            ? readOggAudioMetadata(header)
-            : readMp3AudioMetadata(header, size);
+      : extension === ".aac"
+        ? readAacAudioMetadata(header)
+        : extension === ".flac"
+          ? readFlacAudioMetadata(header)
+          : extension === ".m4a"
+            ? readM4aAudioMetadata(header)
+            : extension === ".ogg"
+              ? readOggAudioMetadata(header)
+              : readMp3AudioMetadata(header, size);
   if (!metadata) {
     return [
       `Audio file ready for explicit attachment (${formatBytes(size)}).`,
-      "Audio metadata preview did not find a supported WAV/MP3/FLAC/M4A/OGG header in this read-only importer.",
+      "Audio metadata preview did not find a supported WAV/MP3/AAC/FLAC/M4A/OGG header in this read-only importer.",
       "No microphone capture, transcription service, network call, or provider send was performed.",
     ].join("\n").slice(0, MAX_TEXT_BYTES);
   }
@@ -23862,6 +28745,28 @@ function summarizeAudio(filePath: string, extension: string, size: number): stri
     ...details,
     "Ready for explicit attachment after visible review; no microphone capture, transcription service, network call, or provider send was performed.",
   ].join("\n").slice(0, MAX_TEXT_BYTES);
+}
+
+function readAacAudioMetadata(buffer: Buffer): ChannelAudioMetadata | null {
+  if (buffer.length < 7 || buffer[0] !== 0xff || (buffer[1] & 0xf0) !== 0xf0) {
+    return null;
+  }
+  const profileIndex = (buffer[2] >> 6) & 0x03;
+  const sampleRateIndex = (buffer[2] >> 2) & 0x0f;
+  const channelConfig = ((buffer[2] & 0x01) << 2) | ((buffer[3] >> 6) & 0x03);
+  const frameLength = ((buffer[3] & 0x03) << 11) | (buffer[4] << 3) | ((buffer[5] >> 5) & 0x07);
+  const sampleRate = getAacSampleRate(sampleRateIndex);
+  if (!sampleRate) {
+    return { format: "AAC ADTS", id3: "ADTS sync word found; sample-rate index is reserved or unavailable" };
+  }
+  const profiles = ["Main", "LC", "SSR", "LTP"];
+  const profile = profiles[profileIndex] || `profile-${profileIndex}`;
+  return {
+    format: "AAC ADTS",
+    sampleRate: `${sampleRate} Hz`,
+    ...(channelConfig > 0 ? { channels: formatChannelCount(channelConfig) } : {}),
+    ...(frameLength > 0 ? { id3: `profile ${profile}; first frame ${frameLength} bytes` } : { id3: `profile ${profile}` }),
+  };
 }
 
 function readWavAudioMetadata(buffer: Buffer): ChannelAudioMetadata | null {
@@ -25068,6 +29973,177 @@ interface BrowserCookieExportPreview {
   truncated: boolean;
 }
 
+interface BrowserPasswordExportEntryPreview {
+  origin: string;
+  usernameLabel: string;
+  passwordLength: number | null;
+  note: string;
+}
+
+interface BrowserPasswordExportPreview {
+  entries: BrowserPasswordExportEntryPreview[];
+  origins: string[];
+  usernameLabels: string[];
+  parsedCount: number;
+  skippedCount: number;
+  passwordValueCount: number;
+  truncated: boolean;
+}
+
+interface BrowserAutofillEntryPreview {
+  origin: string;
+  formLabel: string;
+  fieldName: string;
+  fieldType: string;
+  valueKind: string;
+  valueLength: number | null;
+  sensitive: boolean;
+}
+
+interface BrowserAutofillExportPreview {
+  entries: BrowserAutofillEntryPreview[];
+  origins: string[];
+  forms: string[];
+  fieldNames: string[];
+  fieldTypes: string[];
+  sensitiveFieldCount: number;
+  parsedCount: number;
+  skippedCount: number;
+  truncated: boolean;
+}
+
+interface BrowserHistoryEntryPreview {
+  title: string;
+  url: string;
+  host: string;
+  visitCount: number | null;
+  typedCount: number | null;
+  lastVisitedAt: string | null;
+}
+
+interface BrowserHistoryExportPreview {
+  entries: BrowserHistoryEntryPreview[];
+  hosts: string[];
+  totalVisitCount: number;
+  totalTypedCount: number;
+  parsedCount: number;
+  skippedCount: number;
+  truncated: boolean;
+}
+
+interface BrowserDownloadEntryPreview {
+  fileName: string;
+  url: string;
+  host: string;
+  referrerHost: string;
+  state: string;
+  danger: string;
+  receivedBytes: number | null;
+  totalBytes: number | null;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+interface BrowserDownloadExportPreview {
+  entries: BrowserDownloadEntryPreview[];
+  hosts: string[];
+  states: string[];
+  dangers: string[];
+  totalReceivedBytes: number;
+  totalBytes: number;
+  parsedCount: number;
+  skippedCount: number;
+  truncated: boolean;
+}
+
+interface BrowserStorageEntryPreview {
+  origin: string;
+  area: string;
+  key: string;
+  valueKind: string;
+  valueLength: number | null;
+}
+
+interface BrowserStorageExportPreview {
+  entries: BrowserStorageEntryPreview[];
+  origins: string[];
+  areas: string[];
+  sensitiveKeyCount: number;
+  parsedCount: number;
+  skippedCount: number;
+  truncated: boolean;
+}
+
+interface BrowserPreferencesPreview {
+  profileLabels: string[];
+  searchProviders: string[];
+  urls: string[];
+  downloadLabels: string[];
+  extensionSettingKeys: string[];
+  contentSettingKeys: string[];
+  valueSamples: string[];
+  sensitiveKeyCount: number;
+  parsedCount: number;
+  skippedCount: number;
+  truncated: boolean;
+}
+
+interface BrowserSessionTabPreview {
+  title: string;
+  url: string;
+  host: string;
+  windowLabel: string;
+  groupLabel: string;
+  openerHost: string;
+  referrerHost: string;
+  active: boolean;
+  pinned: boolean;
+  audible: boolean;
+  discarded: boolean;
+  incognito: boolean;
+  lastAccessedAt: string | null;
+}
+
+interface BrowserSessionExportPreview {
+  tabs: BrowserSessionTabPreview[];
+  hosts: string[];
+  windows: string[];
+  groups: string[];
+  activeCount: number;
+  pinnedCount: number;
+  audibleCount: number;
+  discardedCount: number;
+  incognitoCount: number;
+  parsedCount: number;
+  skippedCount: number;
+  truncated: boolean;
+}
+
+interface BrowserExtensionInventoryItemPreview {
+  id: string;
+  name: string;
+  version: string;
+  enabled: boolean | null;
+  installType: string;
+  source: string;
+  permissions: string[];
+  hostPermissions: string[];
+  riskCues: string[];
+}
+
+interface BrowserExtensionInventoryPreview {
+  items: BrowserExtensionInventoryItemPreview[];
+  names: string[];
+  sources: string[];
+  enabledCount: number;
+  disabledCount: number;
+  hostPermissionCount: number;
+  sensitivePermissionCount: number;
+  parsedCount: number;
+  skippedCount: number;
+  truncated: boolean;
+}
+
 function looksLikeBrowserBookmarkExport(filePath: string): boolean {
   try {
     const raw = readFileHeader(filePath, Math.min(MAX_BOOKMARK_PREVIEW_BYTES, 16 * 1024)).toString("utf8");
@@ -25080,6 +30156,925 @@ function looksLikeBrowserBookmarkExport(filePath: string): boolean {
   } catch {
     return false;
   }
+}
+
+function summarizeBrowserHistoryExportFile(filePath: string, extension: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_BROWSER_HISTORY_PREVIEW_BYTES).toString("utf8");
+    const preview =
+      extension === ".browser-history.json"
+        ? parseBrowserHistoryJsonPreview(raw)
+        : parseBrowserHistoryCsvPreview(raw);
+    const hosts = preview.hosts.length > 0 ? preview.hosts.join(", ") : "none detected in the bounded local preview";
+    const samples =
+      preview.entries.length > 0
+        ? preview.entries
+            .slice(0, MAX_BROWSER_HISTORY_ITEM_PREVIEW)
+            .map((entry, index) => {
+              const visit = entry.visitCount === null ? "visits=unknown" : `visits=${entry.visitCount}`;
+              const typed = entry.typedCount === null ? "typed=unknown" : `typed=${entry.typedCount}`;
+              const lastVisited = entry.lastVisitedAt ? `; last ${entry.lastVisitedAt}` : "";
+              return `- ${index + 1}. ${entry.title} - ${entry.url} (${visit}; ${typed}${lastVisited})`;
+            })
+            .join("\n")
+        : "History samples: none detected in the bounded local preview.";
+    return [
+      `Browser history export preview (${formatBytes(size)}).`,
+      `Entries parsed: ${preview.parsedCount}; skipped: ${preview.skippedCount}${preview.truncated ? "; preview byte limit reached" : ""}.`,
+      `Hosts (${preview.hosts.length}${preview.hosts.length >= MAX_BROWSER_HISTORY_ITEM_PREVIEW ? "+" : ""}): ${hosts}.`,
+      `Visit totals from bounded sample: visits=${preview.totalVisitCount}; typed=${preview.totalTypedCount}.`,
+      `History samples:\n${samples}`,
+      "Ready for explicit attachment after visible review; browser history export data was parsed from bounded workspace-local CSV/JSON only, URL token-like query values were redacted, browser profiles were not opened, history databases were not imported, URLs were not fetched, and no network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Browser history export ready for explicit attachment (${formatBytes(size)}).`,
+      "History preview could not parse bounded local CSV/JSON; browser profiles were not opened, history databases were not imported, URLs were not fetched, and no network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function summarizeBrowserHistorySqliteFile(filePath: string, size: number): string {
+  try {
+    const buffer = readFileHeader(filePath, MAX_SQLITE_SCHEMA_SCAN_BYTES);
+    const metadata = readSqliteDatabaseMetadata(buffer, size);
+    const snippets = extractSqliteSchemaSnippets(buffer);
+    const tableNames = extractSqliteObjectNames(snippets, "TABLE");
+    const indexNames = extractSqliteObjectNames(snippets, "INDEX");
+    const historyTables = tableNames.filter((name) =>
+      ["urls", "visits", "visit_source", "keyword_search_terms", "segments", "downloads", "downloads_url_chains"].includes(
+        name.toLowerCase(),
+      ),
+    );
+    return [
+      `Browser history SQLite database preview (${formatBytes(size)}).`,
+      metadata
+        ? `Header: SQLite format 3; page size ${metadata.pageSize} B; page count ${metadata.pageCount || "unknown"}; encoding ${metadata.encoding}.`
+        : "SQLite header was not recognized in the bounded local preview.",
+      tableNames.length > 0
+        ? `Local schema tables (${tableNames.length}${tableNames.length >= MAX_BROWSER_HISTORY_ITEM_PREVIEW ? "+" : ""}): ${tableNames.join(", ")}.`
+        : "Local schema tables: none detected in the bounded file scan.",
+      historyTables.length > 0
+        ? `Browser history table cues: ${historyTables.join(", ")}.`
+        : "Browser history table cues: none detected in the bounded file scan.",
+      indexNames.length > 0 ? `Local index cues: ${indexNames.join(", ")}.` : "",
+      snippets.length > 0
+        ? `Local schema snippets from bounded file scan:\n${snippets.slice(0, MAX_BROWSER_HISTORY_ITEM_PREVIEW).map((snippet) => `- ${maskPotentialSecretValues(snippet)}`).join("\n")}`
+        : "Local schema snippets: none detected in the bounded file scan.",
+      "Ready for explicit attachment after visible review; browser history SQLite bytes were scanned from a bounded workspace-local header/string window only, row data was not queried, browser profiles were not opened, URLs were not fetched, SQLite was not connected, and no network call, credential lookup, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Browser history SQLite database ready for explicit attachment (${formatBytes(size)}).`,
+      "History database preview could not parse bounded local SQLite metadata; browser profiles were not opened, URLs were not fetched, SQLite was not connected, and no network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function extractSqliteObjectNames(snippets: string[], objectKind: "TABLE" | "INDEX"): string[] {
+  const names: string[] = [];
+  const seen = new Set<string>();
+  const pattern = new RegExp(
+    `\\bCREATE\\s+(?:TEMP(?:ORARY)?\\s+)?(?:UNIQUE\\s+)?${objectKind}\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(?:["'\\[])?([^"'\\[\\]\\s(]+)`,
+    "i",
+  );
+  for (const snippet of snippets) {
+    const match = pattern.exec(snippet);
+    const rawName = match?.[1]?.replace(/^[.\s]+|[;,\s]+$/g, "") ?? "";
+    const name = clampSingleLine(rawName, 80);
+    const key = name.toLowerCase();
+    if (name && !seen.has(key)) {
+      seen.add(key);
+      names.push(name);
+    }
+    if (names.length >= MAX_BROWSER_HISTORY_ITEM_PREVIEW) break;
+  }
+  return names;
+}
+
+function parseBrowserHistoryCsvPreview(raw: string): BrowserHistoryExportPreview {
+  const rows = parseDelimitedPreviewRows(raw, ",");
+  const header = (rows[0] ?? []).map((value) => value.trim().toLowerCase());
+  const urlIndex = findHeaderIndex(header, ["url", "target url", "page url", "address"]);
+  const titleIndex = findHeaderIndex(header, ["title", "page title", "name"]);
+  const visitCountIndex = findHeaderIndex(header, ["visit count", "visit_count", "visits", "count"]);
+  const typedCountIndex = findHeaderIndex(header, ["typed count", "typed_count", "typed"]);
+  const lastVisitIndex = findHeaderIndex(header, ["last visit time", "last_visit_time", "last visited", "last visit", "time", "date"]);
+  const entries: BrowserHistoryEntryPreview[] = [];
+  let skippedCount = 0;
+
+  for (const row of rows.slice(1)) {
+    const urlRaw = urlIndex >= 0 ? row[urlIndex] ?? "" : "";
+    if (!urlRaw) {
+      skippedCount += 1;
+      continue;
+    }
+    entries.push(normalizeBrowserHistoryEntry({
+      url: urlRaw,
+      title: titleIndex >= 0 ? row[titleIndex] : "",
+      visitCount: visitCountIndex >= 0 ? row[visitCountIndex] : "",
+      typedCount: typedCountIndex >= 0 ? row[typedCountIndex] : "",
+      lastVisitedAt: lastVisitIndex >= 0 ? row[lastVisitIndex] : "",
+    }));
+  }
+
+  return finalizeBrowserHistoryPreview(entries, skippedCount, raw.length >= MAX_BROWSER_HISTORY_PREVIEW_BYTES);
+}
+
+function parseBrowserHistoryJsonPreview(raw: string): BrowserHistoryExportPreview {
+  const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+  const candidates = findBrowserHistoryJsonEntries(parsed);
+  const entries: BrowserHistoryEntryPreview[] = [];
+  let skippedCount = 0;
+
+  for (const candidate of candidates.slice(0, MAX_BROWSER_HISTORY_ITEM_PREVIEW)) {
+    if (!candidate || typeof candidate !== "object") {
+      skippedCount += 1;
+      continue;
+    }
+    const record = candidate as Record<string, unknown>;
+    const url = readStringField(record, ["url", "href", "targetUrl", "pageUrl"]);
+    if (!url) {
+      skippedCount += 1;
+      continue;
+    }
+    entries.push(normalizeBrowserHistoryEntry({
+      url,
+      title: readStringField(record, ["title", "name", "pageTitle"]),
+      visitCount: readStringField(record, ["visitCount", "visit_count", "visits", "count"]),
+      typedCount: readStringField(record, ["typedCount", "typed_count", "typed"]),
+      lastVisitedAt: readStringField(record, ["lastVisitTime", "last_visit_time", "lastVisited", "lastVisit", "time", "date"]),
+    }));
+  }
+
+  const totalCandidateCount = candidates.length;
+  const skippedTotal = skippedCount + Math.max(0, totalCandidateCount - MAX_BROWSER_HISTORY_ITEM_PREVIEW);
+  return finalizeBrowserHistoryPreview(entries, skippedTotal, raw.length >= MAX_BROWSER_HISTORY_PREVIEW_BYTES);
+}
+
+function findBrowserHistoryJsonEntries(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== "object") return [];
+  const record = value as Record<string, unknown>;
+  for (const key of ["Browser History", "browserHistory", "history", "urls", "items", "entries"]) {
+    const child = record[key];
+    if (Array.isArray(child)) return child;
+  }
+  return [];
+}
+
+function normalizeBrowserHistoryEntry(input: {
+  url: string;
+  title?: string;
+  visitCount?: string;
+  typedCount?: string;
+  lastVisitedAt?: string;
+}): BrowserHistoryEntryPreview {
+  const rawUrl = input.url || "";
+  const safeUrl = clampSingleLine(redactBookmarkUrl(rawUrl), 220);
+  const title = clampSingleLine(maskPotentialSecretValues(input.title || readBookmarkHost(rawUrl) || "Untitled history entry"), 140);
+  return {
+    title,
+    url: safeUrl,
+    host: readBookmarkHost(rawUrl),
+    visitCount: parseOptionalInteger(input.visitCount),
+    typedCount: parseOptionalInteger(input.typedCount),
+    lastVisitedAt: formatBrowserHistoryTimestamp(input.lastVisitedAt || ""),
+  };
+}
+
+function getAacSampleRate(index: number): number {
+  return [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350][index] || 0;
+}
+
+function finalizeBrowserHistoryPreview(
+  entries: BrowserHistoryEntryPreview[],
+  skippedCount: number,
+  truncated: boolean,
+): BrowserHistoryExportPreview {
+  const hosts = [...new Set(entries.map((entry) => entry.host).filter(Boolean))].slice(0, MAX_BROWSER_HISTORY_ITEM_PREVIEW);
+  return {
+    entries,
+    hosts,
+    totalVisitCount: entries.reduce((total, entry) => total + (entry.visitCount ?? 0), 0),
+    totalTypedCount: entries.reduce((total, entry) => total + (entry.typedCount ?? 0), 0),
+    parsedCount: entries.length,
+    skippedCount,
+    truncated,
+  };
+}
+
+function summarizeBrowserDownloadExportFile(filePath: string, extension: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_BROWSER_DOWNLOAD_PREVIEW_BYTES).toString("utf8");
+    const preview =
+      extension === ".browser-downloads.json"
+        ? parseBrowserDownloadJsonPreview(raw)
+        : parseBrowserDownloadCsvPreview(raw);
+    const hosts = preview.hosts.length > 0 ? preview.hosts.join(", ") : "none detected in the bounded local preview";
+    const states = preview.states.length > 0 ? preview.states.join(", ") : "none declared";
+    const dangers = preview.dangers.length > 0 ? preview.dangers.join(", ") : "none declared";
+    const samples =
+      preview.entries.length > 0
+        ? preview.entries
+            .slice(0, MAX_BROWSER_DOWNLOAD_ITEM_PREVIEW)
+            .map((entry, index) => {
+              const referrer = entry.referrerHost ? `; referrer=${entry.referrerHost}` : "";
+              const received = entry.receivedBytes === null ? "received=unknown" : `received=${formatBytes(entry.receivedBytes)}`;
+              const total = entry.totalBytes === null ? "total=unknown" : `total=${formatBytes(entry.totalBytes)}`;
+              const completed = entry.completedAt ? `; completed ${entry.completedAt}` : "";
+              return `- ${index + 1}. ${entry.fileName} - ${entry.url} (${entry.state}; danger=${entry.danger}; ${received}; ${total}${referrer}${completed})`;
+            })
+            .join("\n")
+        : "Download samples: none detected in the bounded local preview.";
+    return [
+      `Browser downloads export preview (${formatBytes(size)}).`,
+      `Entries parsed: ${preview.parsedCount}; skipped: ${preview.skippedCount}${preview.truncated ? "; preview byte limit reached" : ""}.`,
+      `Hosts (${preview.hosts.length}${preview.hosts.length >= MAX_BROWSER_DOWNLOAD_ITEM_PREVIEW ? "+" : ""}): ${hosts}.`,
+      `States: ${states}; danger labels: ${dangers}.`,
+      `Byte totals from bounded sample: received=${formatBytes(preview.totalReceivedBytes)}; total=${formatBytes(preview.totalBytes)}.`,
+      `Download samples:\n${samples}`,
+      "Ready for explicit attachment after visible review; browser downloads export data was parsed from bounded workspace-local CSV/JSON only, URL token-like query values were redacted, target paths were reduced to filenames, downloaded files were not opened or executed, browser profiles and downloads databases were not imported, URLs were not fetched, and no network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Browser downloads export ready for explicit attachment (${formatBytes(size)}).`,
+      "Downloads preview could not parse bounded local CSV/JSON; downloaded files were not opened or executed, browser profiles and downloads databases were not imported, URLs were not fetched, and no network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function summarizeBrowserDownloadsSqliteFile(filePath: string, size: number): string {
+  try {
+    const buffer = readFileHeader(filePath, MAX_SQLITE_SCHEMA_SCAN_BYTES);
+    const metadata = readSqliteDatabaseMetadata(buffer, size);
+    const snippets = extractSqliteSchemaSnippets(buffer);
+    const tableNames = extractSqliteObjectNames(snippets, "TABLE");
+    const indexNames = extractSqliteObjectNames(snippets, "INDEX");
+    const downloadTables = tableNames.filter((name) =>
+      ["downloads", "downloads_url_chains", "downloads_slices"].includes(name.toLowerCase()),
+    );
+    return [
+      `Browser downloads SQLite database preview (${formatBytes(size)}).`,
+      metadata
+        ? `Header: SQLite format 3; page size ${metadata.pageSize} B; page count ${metadata.pageCount || "unknown"}; encoding ${metadata.encoding}.`
+        : "SQLite header was not recognized in the bounded local preview.",
+      tableNames.length > 0
+        ? `Local schema tables (${tableNames.length}${tableNames.length >= MAX_BROWSER_DOWNLOAD_ITEM_PREVIEW ? "+" : ""}): ${tableNames.join(", ")}.`
+        : "Local schema tables: none detected in the bounded file scan.",
+      downloadTables.length > 0
+        ? `Browser downloads table cues: ${downloadTables.join(", ")}.`
+        : "Browser downloads table cues: none detected in the bounded file scan.",
+      indexNames.length > 0 ? `Local index cues: ${indexNames.join(", ")}.` : "",
+      snippets.length > 0
+        ? `Local schema snippets from bounded file scan:\n${snippets.slice(0, MAX_BROWSER_DOWNLOAD_ITEM_PREVIEW).map((snippet) => `- ${maskPotentialSecretValues(snippet)}`).join("\n")}`
+        : "Local schema snippets: none detected in the bounded file scan.",
+      "Ready for explicit attachment after visible review; browser downloads SQLite bytes were scanned from a bounded workspace-local header/string window only, row data was not queried, downloaded files were not opened or executed, browser profiles and downloads databases were not imported, URLs were not fetched, SQLite was not connected, and no network call, credential lookup, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Browser downloads SQLite database ready for explicit attachment (${formatBytes(size)}).`,
+      "Downloads database preview could not parse bounded local SQLite metadata; downloaded files were not opened or executed, browser profiles and downloads databases were not imported, URLs were not fetched, SQLite was not connected, and no network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseBrowserDownloadCsvPreview(raw: string): BrowserDownloadExportPreview {
+  const rows = parseDelimitedPreviewRows(raw, ",");
+  const header = (rows[0] ?? []).map((value) => value.trim().toLowerCase());
+  const urlIndex = findHeaderIndex(header, ["url", "source url", "download url", "target url"]);
+  const fileIndex = findHeaderIndex(header, ["file", "filename", "file name", "target path", "target_path", "path", "full path"]);
+  const referrerIndex = findHeaderIndex(header, ["referrer", "referrer url", "referrer_url", "site url", "tab url"]);
+  const stateIndex = findHeaderIndex(header, ["state", "status"]);
+  const dangerIndex = findHeaderIndex(header, ["danger", "danger type", "danger_type", "interrupt reason", "interrupt_reason"]);
+  const receivedIndex = findHeaderIndex(header, ["received bytes", "received_bytes", "bytes received", "bytes_received", "received"]);
+  const totalIndex = findHeaderIndex(header, ["total bytes", "total_bytes", "bytes total", "bytes_total", "total"]);
+  const startedIndex = findHeaderIndex(header, ["start time", "start_time", "started", "started at", "started_at", "date"]);
+  const completedIndex = findHeaderIndex(header, ["end time", "end_time", "completed", "completed at", "completed_at", "finish time"]);
+  const entries: BrowserDownloadEntryPreview[] = [];
+  let skippedCount = 0;
+
+  for (const row of rows.slice(1)) {
+    const urlRaw = urlIndex >= 0 ? row[urlIndex] ?? "" : "";
+    const fileRaw = fileIndex >= 0 ? row[fileIndex] ?? "" : "";
+    if (!urlRaw && !fileRaw) {
+      skippedCount += 1;
+      continue;
+    }
+    entries.push(normalizeBrowserDownloadEntry({
+      url: urlRaw,
+      fileName: fileRaw,
+      referrer: referrerIndex >= 0 ? row[referrerIndex] : "",
+      state: stateIndex >= 0 ? row[stateIndex] : "",
+      danger: dangerIndex >= 0 ? row[dangerIndex] : "",
+      receivedBytes: receivedIndex >= 0 ? row[receivedIndex] : "",
+      totalBytes: totalIndex >= 0 ? row[totalIndex] : "",
+      startedAt: startedIndex >= 0 ? row[startedIndex] : "",
+      completedAt: completedIndex >= 0 ? row[completedIndex] : "",
+    }));
+  }
+
+  return finalizeBrowserDownloadPreview(entries, skippedCount, raw.length >= MAX_BROWSER_DOWNLOAD_PREVIEW_BYTES);
+}
+
+function parseBrowserDownloadJsonPreview(raw: string): BrowserDownloadExportPreview {
+  const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+  const candidates = findBrowserDownloadJsonEntries(parsed);
+  const entries: BrowserDownloadEntryPreview[] = [];
+  let skippedCount = 0;
+
+  for (const candidate of candidates.slice(0, MAX_BROWSER_DOWNLOAD_ITEM_PREVIEW)) {
+    if (!candidate || typeof candidate !== "object") {
+      skippedCount += 1;
+      continue;
+    }
+    const record = candidate as Record<string, unknown>;
+    const url = readStringField(record, ["url", "sourceUrl", "source_url", "downloadUrl", "download_url", "targetUrl"]);
+    const fileName = readStringField(record, ["fileName", "filename", "file", "targetPath", "target_path", "path", "fullPath"]);
+    if (!url && !fileName) {
+      skippedCount += 1;
+      continue;
+    }
+    entries.push(normalizeBrowserDownloadEntry({
+      url,
+      fileName,
+      referrer: readStringField(record, ["referrer", "referrerUrl", "referrer_url", "siteUrl", "tabUrl"]),
+      state: readStringField(record, ["state", "status"]),
+      danger: readStringField(record, ["danger", "dangerType", "danger_type", "interruptReason", "interrupt_reason"]),
+      receivedBytes: readStringField(record, ["receivedBytes", "received_bytes", "bytesReceived", "bytes_received", "received"]),
+      totalBytes: readStringField(record, ["totalBytes", "total_bytes", "bytesTotal", "bytes_total", "total"]),
+      startedAt: readStringField(record, ["startTime", "start_time", "startedAt", "started_at", "date"]),
+      completedAt: readStringField(record, ["endTime", "end_time", "completedAt", "completed_at", "finishTime"]),
+    }));
+  }
+
+  const skippedTotal = skippedCount + Math.max(0, candidates.length - MAX_BROWSER_DOWNLOAD_ITEM_PREVIEW);
+  return finalizeBrowserDownloadPreview(entries, skippedTotal, raw.length >= MAX_BROWSER_DOWNLOAD_PREVIEW_BYTES);
+}
+
+function findBrowserDownloadJsonEntries(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== "object") return [];
+  const record = value as Record<string, unknown>;
+  for (const key of ["Browser Downloads", "browserDownloads", "downloads", "items", "entries"]) {
+    const child = record[key];
+    if (Array.isArray(child)) return child;
+  }
+  return [];
+}
+
+function normalizeBrowserDownloadEntry(input: {
+  url: string;
+  fileName?: string;
+  referrer?: string;
+  state?: string;
+  danger?: string;
+  receivedBytes?: string;
+  totalBytes?: string;
+  startedAt?: string;
+  completedAt?: string;
+}): BrowserDownloadEntryPreview {
+  const rawUrl = input.url || "";
+  const safeUrl = rawUrl ? clampSingleLine(redactBookmarkUrl(rawUrl), 220) : "url not declared";
+  return {
+    fileName: normalizeBrowserDownloadFileName(input.fileName || rawUrl),
+    url: safeUrl,
+    host: readBookmarkHost(rawUrl),
+    referrerHost: input.referrer ? readBookmarkHost(input.referrer) : "",
+    state: normalizeBrowserDownloadLabel(input.state, "state not declared"),
+    danger: normalizeBrowserDownloadLabel(input.danger, "danger not declared"),
+    receivedBytes: parseOptionalByteCount(input.receivedBytes),
+    totalBytes: parseOptionalByteCount(input.totalBytes),
+    startedAt: formatBrowserHistoryTimestamp(input.startedAt || ""),
+    completedAt: formatBrowserHistoryTimestamp(input.completedAt || ""),
+  };
+}
+
+function normalizeBrowserDownloadFileName(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "download filename not declared";
+  const normalized = trimmed.replace(/\\/g, "/");
+  const filename = normalized.split("/").filter(Boolean).pop() || normalized;
+  return clampSingleLine(maskPotentialSecretValues(filename), 160);
+}
+
+function normalizeBrowserDownloadLabel(value: string | undefined, fallback: string): string {
+  const label = clampSingleLine(maskPotentialSecretValues(value || ""), 80);
+  return label || fallback;
+}
+
+function parseOptionalByteCount(value?: string): number | null {
+  if (!value) return null;
+  const parsed = Number.parseInt(String(value).replace(/[^0-9-]/g, ""), 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function finalizeBrowserDownloadPreview(
+  entries: BrowserDownloadEntryPreview[],
+  skippedCount: number,
+  truncated: boolean,
+): BrowserDownloadExportPreview {
+  const limitedEntries = entries.slice(0, MAX_BROWSER_DOWNLOAD_ITEM_PREVIEW);
+  return {
+    entries: limitedEntries,
+    hosts: uniquePreviewValues(limitedEntries.map((entry) => entry.host).filter(Boolean), MAX_BROWSER_DOWNLOAD_ITEM_PREVIEW),
+    states: uniquePreviewValues(limitedEntries.map((entry) => entry.state), MAX_BROWSER_DOWNLOAD_ITEM_PREVIEW),
+    dangers: uniquePreviewValues(limitedEntries.map((entry) => entry.danger), MAX_BROWSER_DOWNLOAD_ITEM_PREVIEW),
+    totalReceivedBytes: limitedEntries.reduce((total, entry) => total + (entry.receivedBytes ?? 0), 0),
+    totalBytes: limitedEntries.reduce((total, entry) => total + (entry.totalBytes ?? 0), 0),
+    parsedCount: limitedEntries.length,
+    skippedCount: skippedCount + Math.max(0, entries.length - MAX_BROWSER_DOWNLOAD_ITEM_PREVIEW),
+    truncated: truncated || entries.length > MAX_BROWSER_DOWNLOAD_ITEM_PREVIEW,
+  };
+}
+
+function findHeaderIndex(header: string[], aliases: string[]): number {
+  return header.findIndex((column) => aliases.includes(column.replace(/\s+/g, " ").trim()));
+}
+
+function readStringField(record: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string") return value;
+    if (typeof value === "number" || typeof value === "boolean") return String(value);
+  }
+  return "";
+}
+
+function parseOptionalInteger(value?: string): number | null {
+  if (!value) return null;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatBrowserHistoryTimestamp(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const numeric = Number(trimmed);
+  if (Number.isFinite(numeric) && numeric > 0) {
+    const milliseconds =
+      numeric > 100000000000000
+        ? (numeric - 11644473600000000) / 1000
+        : numeric > 1000000000000
+          ? numeric
+          : numeric * 1000;
+    const date = new Date(milliseconds);
+    if (Number.isFinite(date.getTime())) return date.toISOString();
+  }
+  const parsed = Date.parse(trimmed);
+  if (Number.isFinite(parsed)) return new Date(parsed).toISOString();
+  return clampSingleLine(maskPotentialSecretValues(trimmed), 80);
+}
+
+function summarizeBrowserStorageExportFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_BROWSER_STORAGE_PREVIEW_BYTES).toString("utf8");
+    const preview = parseBrowserStorageJsonPreview(raw);
+    const origins = preview.origins.length > 0 ? preview.origins.join(", ") : "none detected in the bounded local preview";
+    const areas = preview.areas.length > 0 ? preview.areas.join(", ") : "storage area not declared";
+    const samples =
+      preview.entries.length > 0
+        ? preview.entries
+            .slice(0, MAX_BROWSER_STORAGE_ITEM_PREVIEW)
+            .map((entry, index) => {
+              const length = entry.valueLength === null ? "length=unknown" : `length=${entry.valueLength}`;
+              return `- ${index + 1}. ${entry.area} ${entry.origin} ${entry.key} (${entry.valueKind}; ${length})`;
+            })
+            .join("\n")
+        : "Storage samples: none detected in the bounded local preview.";
+    return [
+      `Browser storage export preview (${formatBytes(size)}).`,
+      `Entries parsed: ${preview.parsedCount}; skipped: ${preview.skippedCount}${preview.truncated ? "; preview byte limit reached" : ""}.`,
+      `Origins (${preview.origins.length}${preview.origins.length >= MAX_BROWSER_STORAGE_ITEM_PREVIEW ? "+" : ""}): ${origins}.`,
+      `Storage areas: ${areas}; sensitive-looking keys detected: ${preview.sensitiveKeyCount}.`,
+      `Storage samples:\n${samples}`,
+      "Ready for explicit attachment after visible review; browser storage JSON was parsed from bounded workspace-local data only, storage values were classified but not printed, browser profiles and LevelDB/IndexedDB stores were not opened, storage was not imported, origins were not fetched, and no network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Browser storage export ready for explicit attachment (${formatBytes(size)}).`,
+      "Storage preview could not parse bounded local JSON; browser profiles and LevelDB/IndexedDB stores were not opened, values were not printed, origins were not fetched, and no network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseBrowserStorageJsonPreview(raw: string): BrowserStorageExportPreview {
+  const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+  const entries = collectBrowserStorageEntries(parsed, "", "storage", 0);
+  const limitedEntries = entries.slice(0, MAX_BROWSER_STORAGE_ITEM_PREVIEW);
+  const skippedCount = Math.max(0, entries.length - MAX_BROWSER_STORAGE_ITEM_PREVIEW);
+  const origins = uniquePreviewValues(limitedEntries.map((entry) => entry.origin), MAX_BROWSER_STORAGE_ITEM_PREVIEW);
+  const areas = uniquePreviewValues(limitedEntries.map((entry) => entry.area), MAX_BROWSER_STORAGE_ITEM_PREVIEW);
+  return {
+    entries: limitedEntries,
+    origins,
+    areas,
+    sensitiveKeyCount: limitedEntries.filter((entry) => isSensitiveFieldName(entry.key)).length,
+    parsedCount: limitedEntries.length,
+    skippedCount,
+    truncated: raw.length >= MAX_BROWSER_STORAGE_PREVIEW_BYTES || entries.length > MAX_BROWSER_STORAGE_ITEM_PREVIEW,
+  };
+}
+
+function collectBrowserStorageEntries(
+  value: unknown,
+  inheritedOrigin: string,
+  inheritedArea: string,
+  depth: number,
+): BrowserStorageEntryPreview[] {
+  if (depth > 5) return [];
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectBrowserStorageEntries(item, inheritedOrigin, inheritedArea, depth + 1));
+  }
+  if (!value || typeof value !== "object") return [];
+  const record = value as Record<string, unknown>;
+  const origin = normalizeBrowserStorageOrigin(readStringField(record, ["origin", "url", "host", "domain", "site"]) || inheritedOrigin);
+  const area = normalizeBrowserStorageArea(readStringField(record, ["storageArea", "storage_area", "area", "type"]) || inheritedArea);
+  const explicitKey = readStringField(record, ["key", "name"]);
+  if (explicitKey && Object.prototype.hasOwnProperty.call(record, "value")) {
+    return [normalizeBrowserStorageEntry(origin, area, explicitKey, record.value)];
+  }
+
+  const entries: BrowserStorageEntryPreview[] = [];
+  for (const [key, child] of Object.entries(record)) {
+    if (["origin", "url", "host", "domain", "site", "storageArea", "storage_area", "area", "type"].includes(key)) continue;
+    const childArea = key === "localStorage" || key === "sessionStorage" ? key : area;
+    if (key === "localStorage" || key === "sessionStorage" || key === "storage" || key === "items" || key === "entries" || key === "origins") {
+      entries.push(...collectBrowserStorageEntries(child, origin, childArea, depth + 1));
+      continue;
+    }
+    if (looksLikeBrowserStorageOriginKey(key) && child && typeof child === "object") {
+      entries.push(...collectBrowserStorageEntries(child, normalizeBrowserStorageOrigin(key), area, depth + 1));
+      continue;
+    }
+    if (origin) {
+      entries.push(normalizeBrowserStorageEntry(origin, area, key, child));
+    }
+  }
+  return entries;
+}
+
+function normalizeBrowserStorageEntry(
+  origin: string,
+  area: string,
+  key: string,
+  value: unknown,
+): BrowserStorageEntryPreview {
+  return {
+    origin: origin || "origin not declared",
+    area,
+    key: clampSingleLine(maskPotentialSecretValues(key), 120),
+    valueKind: describeBrowserStorageValueKind(value),
+    valueLength: typeof value === "string" ? value.length : null,
+  };
+}
+
+function normalizeBrowserStorageOrigin(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.host || clampSingleLine(maskPotentialSecretValues(trimmed), 140);
+  } catch {
+    return clampSingleLine(maskPotentialSecretValues(trimmed), 140);
+  }
+}
+
+function normalizeBrowserStorageArea(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (normalized.includes("session")) return "sessionStorage";
+  if (normalized.includes("local")) return "localStorage";
+  if (normalized.includes("sync")) return "syncStorage";
+  return "storage";
+}
+
+function looksLikeBrowserStorageOriginKey(key: string): boolean {
+  return /^https?:\/\//i.test(key) || /^[a-z0-9.-]+\.[a-z]{2,}(?::\d+)?$/i.test(key);
+}
+
+function describeBrowserStorageValueKind(value: unknown): string {
+  if (value === null) return "null value";
+  if (Array.isArray(value)) return `array value (${value.length} items)`;
+  if (typeof value === "object") return "object value";
+  if (typeof value === "string") return "string value";
+  return `${typeof value} value`;
+}
+
+function summarizeBrowserPreferencesFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_BROWSER_PREFERENCES_PREVIEW_BYTES).toString("utf8");
+    const preview = parseBrowserPreferencesPreview(raw);
+    const profiles = preview.profileLabels.length > 0 ? preview.profileLabels.join(", ") : "profile labels not declared";
+    const providers = preview.searchProviders.length > 0 ? preview.searchProviders.join(", ") : "search providers not declared";
+    const urls = preview.urls.length > 0 ? preview.urls.join(", ") : "no URL-like preference values detected";
+    const downloads = preview.downloadLabels.length > 0 ? preview.downloadLabels.join(", ") : "download paths not declared";
+    const extensions = preview.extensionSettingKeys.length > 0 ? preview.extensionSettingKeys.join(", ") : "extension settings not declared";
+    const contentSettings = preview.contentSettingKeys.length > 0 ? preview.contentSettingKeys.join(", ") : "content setting exceptions not declared";
+    const samples =
+      preview.valueSamples.length > 0
+        ? preview.valueSamples.map((sample, index) => `- ${index + 1}. ${sample}`).join("\n")
+        : "Preference samples: none detected in the bounded local preview.";
+    return [
+      `Browser preferences JSON preview (${formatBytes(size)}).`,
+      `Preference cues parsed: ${preview.parsedCount}; skipped: ${preview.skippedCount}${preview.truncated ? "; preview byte limit reached" : ""}.`,
+      `Profiles: ${profiles}.`,
+      `Search providers: ${providers}.`,
+      `URLs: ${urls}.`,
+      `Download labels: ${downloads}.`,
+      `Extension settings: ${extensions}; content settings: ${contentSettings}.`,
+      `Sensitive-looking preference keys detected: ${preview.sensitiveKeyCount}.`,
+      `Preference samples:\n${samples}`,
+      "Ready for explicit attachment after visible review; browser preferences JSON was parsed from bounded workspace-local data only, preference values were classified or redacted rather than printed, browser profiles were not opened, preference stores were not imported, settings were not changed, URLs were not fetched, and no network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Browser preferences JSON ready for explicit attachment (${formatBytes(size)}).`,
+      "Preferences preview could not parse bounded local JSON; browser profiles were not opened, preference stores were not imported, settings were not changed, values were not printed, URLs were not fetched, and no network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseBrowserPreferencesPreview(raw: string): BrowserPreferencesPreview {
+  const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+  const cues: string[] = [];
+  const profileLabels: string[] = [];
+  const searchProviders: string[] = [];
+  const urls: string[] = [];
+  const downloadLabels: string[] = [];
+  const extensionSettingKeys: string[] = [];
+  const contentSettingKeys: string[] = [];
+  let sensitiveKeyCount = 0;
+
+  if (isRecord(parsed)) {
+    const profile = isRecord(parsed.profile) ? parsed.profile : {};
+    for (const key of ["name", "avatar_name", "user_name"]) {
+      const value = readStringField(profile, [key]);
+      if (value) profileLabels.push(clampSingleLine(maskPotentialSecretValues(value), 80));
+    }
+
+    const search = isRecord(parsed.default_search_provider) ? parsed.default_search_provider : {};
+    for (const key of ["name", "keyword", "short_name"]) {
+      const value = readStringField(search, [key]);
+      if (value) searchProviders.push(clampSingleLine(maskPotentialSecretValues(value), 80));
+    }
+    for (const key of ["search_url", "suggest_url", "icon_url", "homepage", "homepage_url"]) {
+      const value = readStringField(search, [key]) || readStringField(parsed, [key]);
+      if (value) urls.push(clampSingleLine(redactBookmarkUrl(value), 180));
+    }
+
+    const session = isRecord(parsed.session) ? parsed.session : {};
+    const startupUrls = Array.isArray(session.restore_on_startup_urls) ? session.restore_on_startup_urls : [];
+    for (const value of startupUrls) {
+      if (typeof value === "string") urls.push(clampSingleLine(redactBookmarkUrl(value), 180));
+    }
+
+    const download = isRecord(parsed.download) ? parsed.download : {};
+    for (const key of ["default_directory", "last_directory", "prompt_for_download"]) {
+      const value = download[key];
+      if (typeof value === "string") downloadLabels.push(normalizeBrowserDownloadFileName(value));
+      else if (typeof value === "boolean") cues.push(`download.${key}: ${value ? "enabled" : "disabled"}`);
+    }
+
+    const extensions = isRecord(parsed.extensions) ? parsed.extensions : {};
+    const settings = isRecord(extensions.settings) ? extensions.settings : {};
+    for (const [extensionId, value] of Object.entries(settings).slice(0, MAX_BROWSER_PREFERENCES_ITEM_PREVIEW)) {
+      const manifest = isRecord(value) && isRecord(value.manifest) ? value.manifest : {};
+      const name = readStringField(manifest, ["name", "short_name"]) || extensionId;
+      extensionSettingKeys.push(clampSingleLine(maskPotentialSecretValues(name), 100));
+      cues.push(`extension ${clampSingleLine(maskPotentialSecretValues(extensionId), 80)}: ${describeBrowserStorageValueKind(value)}`);
+    }
+
+    const contentSettings = isRecord(profile.content_settings) ? profile.content_settings : {};
+    const exceptions = isRecord(contentSettings.exceptions) ? contentSettings.exceptions : {};
+    for (const [category, value] of Object.entries(exceptions).slice(0, MAX_BROWSER_PREFERENCES_ITEM_PREVIEW)) {
+      contentSettingKeys.push(clampSingleLine(maskPotentialSecretValues(category), 80));
+      if (isRecord(value)) {
+        for (const pattern of Object.keys(value).slice(0, 2)) {
+          urls.push(clampSingleLine(redactBookmarkUrl(pattern), 180));
+        }
+      }
+    }
+
+    sensitiveKeyCount = countSensitiveBrowserPreferenceKeys(parsed, 0);
+    cues.push(...collectBrowserPreferenceValueSamples(parsed, "", 0));
+  }
+
+  const valueSamples = uniquePreviewValues(cues, MAX_BROWSER_PREFERENCES_ITEM_PREVIEW);
+  const parsedCount =
+    profileLabels.length +
+    searchProviders.length +
+    urls.length +
+    downloadLabels.length +
+    extensionSettingKeys.length +
+    contentSettingKeys.length +
+    valueSamples.length;
+
+  return {
+    profileLabels: uniquePreviewValues(profileLabels, MAX_BROWSER_PREFERENCES_ITEM_PREVIEW),
+    searchProviders: uniquePreviewValues(searchProviders, MAX_BROWSER_PREFERENCES_ITEM_PREVIEW),
+    urls: uniquePreviewValues(urls, MAX_BROWSER_PREFERENCES_ITEM_PREVIEW),
+    downloadLabels: uniquePreviewValues(downloadLabels, MAX_BROWSER_PREFERENCES_ITEM_PREVIEW),
+    extensionSettingKeys: uniquePreviewValues(extensionSettingKeys, MAX_BROWSER_PREFERENCES_ITEM_PREVIEW),
+    contentSettingKeys: uniquePreviewValues(contentSettingKeys, MAX_BROWSER_PREFERENCES_ITEM_PREVIEW),
+    valueSamples,
+    sensitiveKeyCount,
+    parsedCount,
+    skippedCount: Math.max(0, cues.length - MAX_BROWSER_PREFERENCES_ITEM_PREVIEW),
+    truncated: raw.length >= MAX_BROWSER_PREFERENCES_PREVIEW_BYTES || cues.length > MAX_BROWSER_PREFERENCES_ITEM_PREVIEW,
+  };
+}
+
+function collectBrowserPreferenceValueSamples(value: unknown, path: string, depth: number): string[] {
+  if (depth > 4) return [];
+  if (Array.isArray(value)) {
+    return value.flatMap((item, index) => collectBrowserPreferenceValueSamples(item, `${path}[${index}]`, depth + 1));
+  }
+  if (!isRecord(value)) return [];
+  const samples: string[] = [];
+  for (const [key, child] of Object.entries(value)) {
+    const nextPath = path ? `${path}.${key}` : key;
+    if (typeof child === "string" || typeof child === "number" || typeof child === "boolean") {
+      samples.push(`${clampSingleLine(maskPotentialSecretValues(nextPath), 120)}: ${describeBrowserPreferenceValue(key, child)}`);
+      continue;
+    }
+    if (isBrowserPreferenceInterestingBranch(key)) {
+      samples.push(...collectBrowserPreferenceValueSamples(child, nextPath, depth + 1));
+    }
+  }
+  return samples;
+}
+
+function describeBrowserPreferenceValue(key: string, value: string | number | boolean): string {
+  if (typeof value === "boolean") return value ? "enabled" : "disabled";
+  if (typeof value === "number") return `number value (${value})`;
+  if (/url|homepage|pattern/i.test(key)) return `URL ${clampSingleLine(redactBookmarkUrl(value), 180)}`;
+  if (/directory|path|file/i.test(key)) return `path label ${normalizeBrowserDownloadFileName(value)}`;
+  return `string value (length=${value.length})`;
+}
+
+function isBrowserPreferenceInterestingBranch(key: string): boolean {
+  return /profile|search|session|download|extension|content|privacy|safe|password|permission|homepage|startup|sync|browser/i.test(key);
+}
+
+function countSensitiveBrowserPreferenceKeys(value: unknown, depth: number): number {
+  if (depth > 5) return 0;
+  if (Array.isArray(value)) return value.reduce((total, item) => total + countSensitiveBrowserPreferenceKeys(item, depth + 1), 0);
+  if (!isRecord(value)) return 0;
+  let count = 0;
+  for (const [key, child] of Object.entries(value)) {
+    if (isSensitiveFieldName(key) || /token|secret|password|credential|auth/i.test(key)) count += 1;
+    count += countSensitiveBrowserPreferenceKeys(child, depth + 1);
+  }
+  return count;
+}
+
+function summarizeBrowserSessionExportFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_BROWSER_SESSION_PREVIEW_BYTES).toString("utf8");
+    const preview = parseBrowserSessionJsonPreview(raw);
+    const hosts = preview.hosts.length > 0 ? preview.hosts.join(", ") : "none detected in the bounded local preview";
+    const windows = preview.windows.length > 0 ? preview.windows.join(", ") : "window not declared";
+    const groups = preview.groups.length > 0 ? preview.groups.join(", ") : "group not declared";
+    const samples =
+      preview.tabs.length > 0
+        ? preview.tabs
+            .slice(0, MAX_BROWSER_SESSION_ITEM_PREVIEW)
+            .map((tab, index) => {
+              const flags = [
+                tab.active ? "active" : "",
+                tab.pinned ? "pinned" : "",
+                tab.audible ? "audible" : "",
+                tab.discarded ? "discarded" : "",
+              ].filter(Boolean).join(", ") || "no flags";
+              const opener = tab.openerHost ? `; opener=${tab.openerHost}` : "";
+              const referrer = tab.referrerHost ? `; referrer=${tab.referrerHost}` : "";
+              const accessed = tab.lastAccessedAt ? `; last ${tab.lastAccessedAt}` : "";
+              return `- ${index + 1}. ${tab.title} - ${tab.url} (${tab.windowLabel}; ${tab.groupLabel}; ${flags}${opener}${referrer}${accessed})`;
+            })
+            .join("\n")
+        : "Tab samples: none detected in the bounded local preview.";
+    return [
+      `Browser session tabs JSON preview (${formatBytes(size)}).`,
+      `Tabs parsed: ${preview.parsedCount}; skipped: ${preview.skippedCount}${preview.truncated ? "; preview byte limit reached" : ""}.`,
+      `Hosts (${preview.hosts.length}${preview.hosts.length >= MAX_BROWSER_SESSION_ITEM_PREVIEW ? "+" : ""}): ${hosts}.`,
+      `Windows: ${windows}; groups: ${groups}.`,
+      `Flags: active=${preview.activeCount}; pinned=${preview.pinnedCount}; audible=${preview.audibleCount}; discarded=${preview.discardedCount}; incognito=${preview.incognitoCount}.`,
+      `Tab samples:\n${samples}`,
+      "Ready for explicit attachment after visible review; browser session tab JSON was parsed from bounded workspace-local data only, URL token-like query values were redacted, browser profiles were not opened, tabs were not restored, pages were not fetched, scripts were not executed, and no network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Browser session tabs JSON ready for explicit attachment (${formatBytes(size)}).`,
+      "Session tab preview could not parse bounded local JSON; browser profiles were not opened, tabs were not restored, pages were not fetched, scripts were not executed, and no network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseBrowserSessionJsonPreview(raw: string): BrowserSessionExportPreview {
+  const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+  const candidates = collectBrowserSessionTabCandidates(parsed, "", "", 0);
+  const tabs: BrowserSessionTabPreview[] = [];
+  let skippedCount = 0;
+
+  for (const candidate of candidates.slice(0, MAX_BROWSER_SESSION_ITEM_PREVIEW)) {
+    const tab = normalizeBrowserSessionTab(candidate);
+    if (!tab) {
+      skippedCount += 1;
+      continue;
+    }
+    tabs.push(tab);
+  }
+
+  const skippedTotal = skippedCount + Math.max(0, candidates.length - MAX_BROWSER_SESSION_ITEM_PREVIEW);
+  return finalizeBrowserSessionPreview(tabs, skippedTotal, raw.length >= MAX_BROWSER_SESSION_PREVIEW_BYTES || candidates.length > MAX_BROWSER_SESSION_ITEM_PREVIEW);
+}
+
+function collectBrowserSessionTabCandidates(
+  value: unknown,
+  inheritedWindow: string,
+  inheritedGroup: string,
+  depth: number,
+): Array<Record<string, unknown>> {
+  if (depth > 6) return [];
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectBrowserSessionTabCandidates(item, inheritedWindow, inheritedGroup, depth + 1));
+  }
+  if (!value || typeof value !== "object") return [];
+  const record = value as Record<string, unknown>;
+  const windowLabel = normalizeBrowserSessionLabel(
+    readStringField(record, ["windowId", "window_id", "window", "windowName", "windowTitle", "sessionWindowId", "index"]),
+    inheritedWindow,
+    "window not declared",
+  );
+  const groupLabel = normalizeBrowserSessionLabel(
+    readStringField(record, ["groupId", "group_id", "group", "groupName", "groupTitle", "tabGroup"]),
+    inheritedGroup,
+    "group not declared",
+  );
+  const url = readStringField(record, ["url", "href", "pendingUrl", "pending_url", "currentUrl", "activeUrl"]);
+  const title = readStringField(record, ["title", "name", "pageTitle"]);
+  const childKeys = ["tabs", "windows", "sessions", "items", "entries", "children"];
+  const nested = childKeys.flatMap((key) => collectBrowserSessionTabCandidates(record[key], windowLabel, groupLabel, depth + 1));
+  if (url) return [{ ...record, __windowLabel: windowLabel, __groupLabel: groupLabel }, ...nested];
+  if (title && readBookmarkHost(title)) return [{ ...record, url: title, __windowLabel: windowLabel, __groupLabel: groupLabel }, ...nested];
+  return nested;
+}
+
+function normalizeBrowserSessionTab(record: Record<string, unknown>): BrowserSessionTabPreview | null {
+  const rawUrl = readStringField(record, ["url", "href", "pendingUrl", "pending_url", "currentUrl", "activeUrl"]);
+  if (!rawUrl) return null;
+  const title = clampSingleLine(maskPotentialSecretValues(readStringField(record, ["title", "name", "pageTitle"]) || readBookmarkHost(rawUrl) || "Untitled browser tab"), 140);
+  return {
+    title,
+    url: clampSingleLine(redactBookmarkUrl(rawUrl), 220),
+    host: readBookmarkHost(rawUrl),
+    windowLabel: normalizeBrowserSessionLabel(readStringField(record, ["__windowLabel", "windowId", "window_id", "window"]), "", "window not declared"),
+    groupLabel: normalizeBrowserSessionLabel(readStringField(record, ["__groupLabel", "groupId", "group_id", "group"]), "", "group not declared"),
+    openerHost: readBookmarkHost(readStringField(record, ["openerUrl", "opener_url", "openerTabUrl"])),
+    referrerHost: readBookmarkHost(readStringField(record, ["referrer", "referrerUrl", "referrer_url"])),
+    active: readBooleanField(record, ["active", "selected", "highlighted"]),
+    pinned: readBooleanField(record, ["pinned", "isPinned"]),
+    audible: readBooleanField(record, ["audible", "isAudible", "muted"]) && !readBooleanField(record, ["muted"]),
+    discarded: readBooleanField(record, ["discarded", "isDiscarded", "suspended"]),
+    incognito: readBooleanField(record, ["incognito", "private", "isPrivate"]),
+    lastAccessedAt: formatBrowserHistoryTimestamp(readStringField(record, ["lastAccessed", "lastAccessedAt", "last_accessed", "lastVisitTime", "timestamp", "time"])),
+  };
+}
+
+function normalizeBrowserSessionLabel(value: string, inherited: string, fallback: string): string {
+  const label = clampSingleLine(maskPotentialSecretValues(value || inherited || ""), 100);
+  return label || fallback;
+}
+
+function readBooleanField(record: Record<string, unknown>, keys: string[]): boolean {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "boolean") return value;
+    if (typeof value === "number") return value !== 0;
+    if (typeof value === "string") return /^(true|yes|1|selected|active|pinned|audible|discarded)$/i.test(value.trim());
+  }
+  return false;
+}
+
+function finalizeBrowserSessionPreview(
+  tabs: BrowserSessionTabPreview[],
+  skippedCount: number,
+  truncated: boolean,
+): BrowserSessionExportPreview {
+  return {
+    tabs,
+    hosts: uniquePreviewValues(tabs.map((tab) => tab.host).filter(Boolean), MAX_BROWSER_SESSION_ITEM_PREVIEW),
+    windows: uniquePreviewValues(tabs.map((tab) => tab.windowLabel), MAX_BROWSER_SESSION_ITEM_PREVIEW),
+    groups: uniquePreviewValues(tabs.map((tab) => tab.groupLabel), MAX_BROWSER_SESSION_ITEM_PREVIEW),
+    activeCount: tabs.filter((tab) => tab.active).length,
+    pinnedCount: tabs.filter((tab) => tab.pinned).length,
+    audibleCount: tabs.filter((tab) => tab.audible).length,
+    discardedCount: tabs.filter((tab) => tab.discarded).length,
+    incognitoCount: tabs.filter((tab) => tab.incognito).length,
+    parsedCount: tabs.length,
+    skippedCount,
+    truncated,
+  };
 }
 
 function summarizeBrowserCookieExportFile(filePath: string, size: number): string {
@@ -25185,6 +31180,315 @@ function parseBrowserCookieExportPreview(raw: string): BrowserCookieExportPrevie
   };
 }
 
+function summarizeBrowserPasswordExportFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_BROWSER_PASSWORD_EXPORT_PREVIEW_BYTES).toString("utf8");
+    const preview = parseBrowserPasswordCsvPreview(raw);
+    const origins = preview.origins.length > 0 ? preview.origins.join(", ") : "none detected in the bounded local preview";
+    const usernames =
+      preview.usernameLabels.length > 0
+        ? preview.usernameLabels.join(", ")
+        : "none detected in the bounded local preview";
+    const samples =
+      preview.entries.length > 0
+        ? preview.entries
+            .slice(0, MAX_BROWSER_PASSWORD_EXPORT_ITEM_PREVIEW)
+            .map((entry, index) => {
+              const length = entry.passwordLength === null ? "password length unknown" : `password length ${entry.passwordLength}`;
+              return `- ${index + 1}. ${entry.origin}; username=${entry.usernameLabel}; ${length}; ${entry.note}; password=<redacted>`;
+            })
+            .join("\n")
+        : "Password rows: none detected in the bounded local preview.";
+    return [
+      `Browser password CSV export preview (${formatBytes(size)}).`,
+      `Rows parsed: ${preview.parsedCount}; skipped: ${preview.skippedCount}${preview.truncated ? "; preview byte limit reached" : ""}.`,
+      `Origins (${preview.origins.length}${preview.origins.length >= MAX_BROWSER_PASSWORD_EXPORT_ITEM_PREVIEW ? "+" : ""}): ${origins}.`,
+      `Username labels (${preview.usernameLabels.length}${preview.usernameLabels.length >= MAX_BROWSER_PASSWORD_EXPORT_ITEM_PREVIEW ? "+" : ""}): ${usernames}.`,
+      `Rows with password values: ${preview.passwordValueCount}; password values were never printed.`,
+      `Password row samples:\n${samples}`,
+      "Ready for explicit attachment after visible review; browser password CSV was parsed from a bounded workspace-local export only, password values were always redacted and summarized by length, browser profiles and Login Data stores were not opened, passwords were not imported or decrypted, URLs were not fetched, and no network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Browser password CSV export ready for explicit attachment (${formatBytes(size)}).`,
+      "Password preview could not parse bounded local CSV; browser profiles and Login Data stores were not opened, password values were not printed, passwords were not imported or decrypted, URLs were not fetched, and no network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseBrowserPasswordCsvPreview(raw: string): BrowserPasswordExportPreview {
+  const rows = parseBrowserPasswordCsvRows(raw);
+  const header = (rows[0] ?? []).map((value) => value.trim().toLowerCase());
+  const originIndex = findHeaderIndex(header, ["url", "origin", "site", "website", "host", "domain", "login url"]);
+  const usernameIndex = findHeaderIndex(header, ["username", "user name", "login", "email", "account", "user"]);
+  const passwordIndex = findHeaderIndex(header, ["password", "pass", "secret"]);
+  const noteIndex = findHeaderIndex(header, ["note", "notes", "name", "title"]);
+  const entries: BrowserPasswordExportEntryPreview[] = [];
+  let skippedCount = 0;
+  let passwordValueCount = 0;
+
+  for (const row of rows.slice(1)) {
+    const originValue = originIndex >= 0 ? row[originIndex] ?? "" : "";
+    const usernameValue = usernameIndex >= 0 ? row[usernameIndex] ?? "" : "";
+    const passwordValue = passwordIndex >= 0 ? row[passwordIndex] ?? "" : "";
+    if (!originValue && !usernameValue && !passwordValue) {
+      skippedCount += 1;
+      continue;
+    }
+    if (passwordValue) passwordValueCount += 1;
+    entries.push({
+      origin: normalizeBrowserStorageOrigin(originValue) || "origin not declared",
+      usernameLabel: summarizeBrowserPasswordUsername(usernameValue),
+      passwordLength: typeof passwordValue === "string" ? passwordValue.length : null,
+      note: clampSingleLine(maskPotentialSecretValues(noteIndex >= 0 ? row[noteIndex] ?? "" : "note not declared"), 120),
+    });
+  }
+
+  const limitedEntries = entries.slice(0, MAX_BROWSER_PASSWORD_EXPORT_ITEM_PREVIEW);
+  return {
+    entries: limitedEntries,
+    origins: uniquePreviewValues(limitedEntries.map((entry) => entry.origin).filter(Boolean), MAX_BROWSER_PASSWORD_EXPORT_ITEM_PREVIEW),
+    usernameLabels: uniquePreviewValues(limitedEntries.map((entry) => entry.usernameLabel).filter(Boolean), MAX_BROWSER_PASSWORD_EXPORT_ITEM_PREVIEW),
+    parsedCount: limitedEntries.length,
+    skippedCount: skippedCount + Math.max(0, entries.length - MAX_BROWSER_PASSWORD_EXPORT_ITEM_PREVIEW),
+    passwordValueCount,
+    truncated: raw.length >= MAX_BROWSER_PASSWORD_EXPORT_PREVIEW_BYTES || entries.length > MAX_BROWSER_PASSWORD_EXPORT_ITEM_PREVIEW,
+  };
+}
+
+function parseBrowserPasswordCsvRows(raw: string): string[][] {
+  const normalized = raw.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let quoted = false;
+  for (let index = 0; index < normalized.length && rows.length <= MAX_CSV_PREVIEW_ROWS; index += 1) {
+    const char = normalized[index];
+    const next = normalized[index + 1];
+    if (quoted) {
+      if (char === '"' && next === '"') {
+        cell += '"';
+        index += 1;
+      } else if (char === '"') {
+        quoted = false;
+      } else {
+        cell += char;
+      }
+      continue;
+    }
+    if (char === '"') {
+      quoted = true;
+      continue;
+    }
+    if (char === ",") {
+      row.push(cell.replace(/\s+/g, " ").trim());
+      cell = "";
+      continue;
+    }
+    if (char === "\n") {
+      row.push(cell.replace(/\s+/g, " ").trim());
+      if (row.some(Boolean)) rows.push(row);
+      row = [];
+      cell = "";
+      continue;
+    }
+    cell += char;
+  }
+  if (cell || row.length > 0) {
+    row.push(cell.replace(/\s+/g, " ").trim());
+    if (row.some(Boolean)) rows.push(row);
+  }
+  return rows;
+}
+
+function summarizeBrowserPasswordUsername(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "username not declared";
+  const emailMatch = trimmed.match(/^([^@\s]+)@([^@\s]+)$/);
+  if (emailMatch) {
+    return `email user [redacted]@${clampSingleLine(maskPotentialSecretValues(emailMatch[2] ?? ""), 80)}`;
+  }
+  return `username length ${trimmed.length}`;
+}
+
+function summarizeBrowserAutofillExportFile(filePath: string, extension: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_BROWSER_AUTOFILL_PREVIEW_BYTES).toString("utf8");
+    const preview =
+      extension === ".browser-autofill.json"
+        ? parseBrowserAutofillJsonPreview(raw)
+        : parseBrowserAutofillCsvPreview(raw);
+    const origins = preview.origins.length > 0 ? preview.origins.join(", ") : "none detected in the bounded local preview";
+    const forms = preview.forms.length > 0 ? preview.forms.join(", ") : "none declared";
+    const fieldTypes = preview.fieldTypes.length > 0 ? preview.fieldTypes.join(", ") : "none declared";
+    const samples =
+      preview.entries.length > 0
+        ? preview.entries
+            .slice(0, MAX_BROWSER_AUTOFILL_ITEM_PREVIEW)
+            .map((entry, index) => {
+              const length = entry.valueLength === null ? "length=unknown" : `length=${entry.valueLength}`;
+              return `- ${index + 1}. ${entry.origin} ${entry.formLabel} ${entry.fieldName} (type=${entry.fieldType}; ${entry.valueKind}; ${length}; sensitive=${entry.sensitive}; value=<redacted>)`;
+            })
+            .join("\n")
+        : "Autofill samples: none detected in the bounded local preview.";
+    return [
+      `Browser autofill export preview (${formatBytes(size)}).`,
+      `Entries parsed: ${preview.parsedCount}; skipped: ${preview.skippedCount}${preview.truncated ? "; preview byte limit reached" : ""}.`,
+      `Origins (${preview.origins.length}${preview.origins.length >= MAX_BROWSER_AUTOFILL_ITEM_PREVIEW ? "+" : ""}): ${origins}.`,
+      `Forms: ${forms}.`,
+      `Field names (${preview.fieldNames.length}${preview.fieldNames.length >= MAX_BROWSER_AUTOFILL_ITEM_PREVIEW ? "+" : ""}): ${preview.fieldNames.length > 0 ? preview.fieldNames.join(", ") : "none detected"}.`,
+      `Field types: ${fieldTypes}; sensitive-looking fields detected: ${preview.sensitiveFieldCount}.`,
+      `Autofill samples:\n${samples}`,
+      "Ready for explicit attachment after visible review; browser autofill/form data was parsed from bounded workspace-local CSV/JSON only, field values were always redacted and summarized by kind/length, browser profiles and autofill stores were not opened, forms were not submitted, pages were not fetched, and no network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Browser autofill export ready for explicit attachment (${formatBytes(size)}).`,
+      "Autofill preview could not parse bounded local CSV/JSON; browser profiles and autofill stores were not opened, field values were not printed, forms were not submitted, pages were not fetched, and no network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseBrowserAutofillCsvPreview(raw: string): BrowserAutofillExportPreview {
+  const rows = parseDelimitedPreviewRows(raw, ",");
+  const header = (rows[0] ?? []).map((value) => value.trim().toLowerCase());
+  const originIndex = findHeaderIndex(header, ["origin", "url", "host", "domain", "site", "source"]);
+  const formIndex = findHeaderIndex(header, ["form", "form name", "form_name", "form id", "form_id", "section"]);
+  const fieldIndex = findHeaderIndex(header, ["field", "field name", "field_name", "name", "label", "input name", "input_name"]);
+  const typeIndex = findHeaderIndex(header, ["type", "field type", "field_type", "input type", "input_type", "control type"]);
+  const valueIndex = findHeaderIndex(header, ["value", "field value", "field_value", "text", "content"]);
+  const entries: BrowserAutofillEntryPreview[] = [];
+  let skippedCount = 0;
+
+  for (const row of rows.slice(1)) {
+    const fieldName = fieldIndex >= 0 ? row[fieldIndex] ?? "" : "";
+    if (!fieldName) {
+      skippedCount += 1;
+      continue;
+    }
+    entries.push(normalizeBrowserAutofillEntry({
+      origin: originIndex >= 0 ? row[originIndex] : "",
+      formLabel: formIndex >= 0 ? row[formIndex] : "",
+      fieldName,
+      fieldType: typeIndex >= 0 ? row[typeIndex] : "",
+      value: valueIndex >= 0 ? row[valueIndex] : "",
+    }));
+  }
+
+  return finalizeBrowserAutofillPreview(entries, skippedCount, raw.length >= MAX_BROWSER_AUTOFILL_PREVIEW_BYTES);
+}
+
+function parseBrowserAutofillJsonPreview(raw: string): BrowserAutofillExportPreview {
+  const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+  const candidates = collectBrowserAutofillCandidates(parsed, "", "", 0);
+  const entries: BrowserAutofillEntryPreview[] = [];
+  let skippedCount = 0;
+
+  for (const candidate of candidates.slice(0, MAX_BROWSER_AUTOFILL_ITEM_PREVIEW)) {
+    const fieldName = readStringField(candidate, ["fieldName", "field_name", "field", "name", "label", "inputName", "input_name"]);
+    if (!fieldName) {
+      skippedCount += 1;
+      continue;
+    }
+    entries.push(normalizeBrowserAutofillEntry({
+      origin: readStringField(candidate, ["__origin", "origin", "url", "host", "domain", "site", "source"]),
+      formLabel: readStringField(candidate, ["__formLabel", "form", "formName", "form_name", "formId", "form_id", "section"]),
+      fieldName,
+      fieldType: readStringField(candidate, ["type", "fieldType", "field_type", "inputType", "input_type", "controlType"]),
+      value: candidate.value,
+    }));
+  }
+
+  const skippedTotal = skippedCount + Math.max(0, candidates.length - MAX_BROWSER_AUTOFILL_ITEM_PREVIEW);
+  return finalizeBrowserAutofillPreview(entries, skippedTotal, raw.length >= MAX_BROWSER_AUTOFILL_PREVIEW_BYTES || candidates.length > MAX_BROWSER_AUTOFILL_ITEM_PREVIEW);
+}
+
+function collectBrowserAutofillCandidates(
+  value: unknown,
+  inheritedOrigin: string,
+  inheritedForm: string,
+  depth: number,
+): Array<Record<string, unknown>> {
+  if (depth > 6) return [];
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectBrowserAutofillCandidates(item, inheritedOrigin, inheritedForm, depth + 1));
+  }
+  if (!isRecord(value)) return [];
+  const origin = readStringField(value, ["origin", "url", "host", "domain", "site", "source"]) || inheritedOrigin;
+  const formLabel = readStringField(value, ["form", "formName", "form_name", "formId", "form_id", "section"]) || inheritedForm;
+  const fieldName = readStringField(value, ["fieldName", "field_name", "field", "name", "label", "inputName", "input_name"]);
+  if (fieldName && Object.prototype.hasOwnProperty.call(value, "value")) {
+    return [{ ...value, __origin: origin, __formLabel: formLabel }];
+  }
+
+  const entries: Array<Record<string, unknown>> = [];
+  for (const key of ["autofill", "browserAutofill", "formData", "forms", "fields", "items", "entries", "children"]) {
+    entries.push(...collectBrowserAutofillCandidates(value[key], origin, formLabel, depth + 1));
+  }
+  return entries;
+}
+
+function normalizeBrowserAutofillEntry(input: {
+  origin: string;
+  formLabel: string;
+  fieldName: string;
+  fieldType: string;
+  value: unknown;
+}): BrowserAutofillEntryPreview {
+  const fieldName = clampSingleLine(maskPotentialSecretValues(input.fieldName || "unnamed field"), 120);
+  const fieldType = clampSingleLine(maskPotentialSecretValues(input.fieldType || inferAutofillFieldType(fieldName)), 80);
+  const valueKind = describeBrowserAutofillValueKind(input.value);
+  return {
+    origin: normalizeBrowserStorageOrigin(input.origin || "") || "origin not declared",
+    formLabel: clampSingleLine(maskPotentialSecretValues(input.formLabel || "form not declared"), 120),
+    fieldName,
+    fieldType,
+    valueKind,
+    valueLength: typeof input.value === "string" ? input.value.length : null,
+    sensitive: isSensitiveFieldName(fieldName) || isSensitiveFieldName(fieldType) || isSensitiveAutofillField(fieldName, fieldType),
+  };
+}
+
+function isSensitiveAutofillField(fieldName: string, fieldType: string): boolean {
+  return /email|phone|tel|address|card|cc-|credit|payment|postal/i.test(`${fieldName} ${fieldType}`);
+}
+
+function inferAutofillFieldType(fieldName: string): string {
+  if (/email/i.test(fieldName)) return "email";
+  if (/phone|tel/i.test(fieldName)) return "tel";
+  if (/address/i.test(fieldName)) return "address";
+  if (/card|cc-|credit/i.test(fieldName)) return "payment";
+  if (/name/i.test(fieldName)) return "name";
+  return "type not declared";
+}
+
+function describeBrowserAutofillValueKind(value: unknown): string {
+  if (value === null || value === undefined) return "empty value";
+  if (Array.isArray(value)) return `array value (${value.length} items)`;
+  if (typeof value === "object") return "object value";
+  if (typeof value === "string") return "string value";
+  return `${typeof value} value`;
+}
+
+function finalizeBrowserAutofillPreview(
+  entries: BrowserAutofillEntryPreview[],
+  skippedCount: number,
+  truncated: boolean,
+): BrowserAutofillExportPreview {
+  const limitedEntries = entries.slice(0, MAX_BROWSER_AUTOFILL_ITEM_PREVIEW);
+  return {
+    entries: limitedEntries,
+    origins: uniquePreviewValues(limitedEntries.map((entry) => entry.origin).filter(Boolean), MAX_BROWSER_AUTOFILL_ITEM_PREVIEW),
+    forms: uniquePreviewValues(limitedEntries.map((entry) => entry.formLabel).filter(Boolean), MAX_BROWSER_AUTOFILL_ITEM_PREVIEW),
+    fieldNames: uniquePreviewValues(limitedEntries.map((entry) => entry.fieldName).filter(Boolean), MAX_BROWSER_AUTOFILL_ITEM_PREVIEW),
+    fieldTypes: uniquePreviewValues(limitedEntries.map((entry) => entry.fieldType).filter(Boolean), MAX_BROWSER_AUTOFILL_ITEM_PREVIEW),
+    sensitiveFieldCount: limitedEntries.filter((entry) => entry.sensitive).length,
+    parsedCount: limitedEntries.length,
+    skippedCount: skippedCount + Math.max(0, entries.length - MAX_BROWSER_AUTOFILL_ITEM_PREVIEW),
+    truncated: truncated || entries.length > MAX_BROWSER_AUTOFILL_ITEM_PREVIEW,
+  };
+}
+
 function summarizeBrowserBookmarkExportFile(filePath: string, size: number): string {
   try {
     const raw = readFileHeader(filePath, MAX_BOOKMARK_PREVIEW_BYTES).toString("utf8");
@@ -25220,6 +31524,41 @@ function summarizeBrowserBookmarkExportFile(filePath: string, size: number): str
   }
 }
 
+function summarizeBrowserBookmarkJsonFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_BOOKMARK_PREVIEW_BYTES).toString("utf8");
+    const preview = parseBrowserBookmarkJsonPreview(raw);
+    const folders =
+      preview.folders.length > 0
+        ? preview.folders.slice(0, MAX_BOOKMARK_ITEM_PREVIEW).join(", ")
+        : "none detected in the bounded local preview";
+    const hosts = summarizeCounts(preview.links.map((link) => link.host).filter(Boolean));
+    const links =
+      preview.links.length > 0
+        ? preview.links
+            .slice(0, MAX_BOOKMARK_ITEM_PREVIEW)
+            .map((link, index) => {
+              const added = link.addedAt ? `; added ${link.addedAt}` : "";
+              return `- ${index + 1}. ${link.title} - ${link.url}${added}`;
+            })
+            .join("\n")
+        : "Bookmark samples: none detected in the bounded local preview.";
+    return [
+      `Browser bookmark JSON preview (${formatBytes(size)}).`,
+      `Export title: ${preview.title || "none detected in the bounded local preview"}.`,
+      `Folders: ${folders}.`,
+      `Links: ${preview.links.length}${preview.links.length >= MAX_BOOKMARK_ITEM_PREVIEW ? "+" : ""}; hosts: ${hosts || "none detected"}.`,
+      `Bookmark samples:\n${links}`,
+      "Ready for explicit attachment after visible review; Chrome/Edge bookmark JSON was parsed from a bounded workspace-local file only, browser profiles were not opened, URLs were not fetched, scripts were not executed, bookmark stores were not imported, and no network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Browser bookmark JSON ready for explicit attachment (${formatBytes(size)}).`,
+      "Bookmark JSON preview could not parse bounded local data; browser profiles were not opened, URLs were not fetched, scripts were not executed, bookmark stores were not imported, and no network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
 function parseBrowserBookmarkExportPreview(raw: string): BrowserBookmarkExportPreview {
   const title = decodeHtmlEntities(raw.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "") || null;
   const folders = [...raw.matchAll(/<DT><H3\b[^>]*>([\s\S]*?)<\/H3>/gi)]
@@ -25243,6 +31582,65 @@ function parseBrowserBookmarkExportPreview(raw: string): BrowserBookmarkExportPr
     })
     .filter((link) => link.url)
     .slice(0, MAX_BOOKMARK_ITEM_PREVIEW);
+  return { title, folders, links };
+}
+
+function parseBrowserBookmarkJsonPreview(raw: string): BrowserBookmarkExportPreview {
+  const parsed = JSON.parse(raw) as unknown;
+  const folders: string[] = [];
+  const links: BrowserBookmarkExportPreview["links"] = [];
+  const seenFolders = new Set<string>();
+
+  const addFolder = (value: string) => {
+    const folder = clampSingleLine(maskPotentialSecretValues(value), 120);
+    if (folder && !seenFolders.has(folder) && folders.length < MAX_BOOKMARK_ITEM_PREVIEW) {
+      folders.push(folder);
+      seenFolders.add(folder);
+    }
+  };
+
+  const visit = (value: unknown, inheritedFolder: string, depth: number) => {
+    if (depth > 12 || links.length >= MAX_BOOKMARK_ITEM_PREVIEW) return;
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item, inheritedFolder, depth + 1);
+      return;
+    }
+    if (!isRecord(value)) return;
+
+    const name = readStringField(value, ["name", "title"]);
+    const type = readStringField(value, ["type"]);
+    const rawUrl = readStringField(value, ["url", "uri", "href"]);
+    const children = value.children ?? value.items ?? value.bookmarks;
+
+    if (rawUrl) {
+      links.push({
+        title: clampSingleLine(maskPotentialSecretValues(name || readBookmarkHost(rawUrl) || "Untitled bookmark"), 140),
+        url: clampSingleLine(redactBookmarkUrl(rawUrl), 220),
+        host: readBookmarkHost(rawUrl),
+        addedAt: formatBookmarkTimestamp(readStringField(value, ["date_added", "dateAdded", "addDate", "created"])),
+      });
+      return;
+    }
+
+    if (name && (type === "folder" || children)) {
+      addFolder(name);
+    } else if (!name && inheritedFolder) {
+      addFolder(inheritedFolder);
+    }
+
+    if (children) visit(children, name || inheritedFolder, depth + 1);
+    if (isRecord(value.roots)) visit(value.roots, inheritedFolder, depth + 1);
+    if (!children && !isRecord(value.roots)) {
+      for (const child of Object.values(value)) {
+        if (isRecord(child) || Array.isArray(child)) visit(child, name || inheritedFolder, depth + 1);
+      }
+    }
+  };
+
+  visit(parsed, "", 0);
+  const title = isRecord(parsed)
+    ? readStringField(parsed, ["title", "name"]) || (isRecord(parsed.roots) ? "Chrome/Edge bookmarks" : null)
+    : null;
   return { title, folders, links };
 }
 
@@ -25314,6 +31712,128 @@ function buildLinkShortcutPreview(rawUrl: string, title: string | null): LinkSho
     title,
     host: readBookmarkHost(url),
   };
+}
+
+interface DesktopEntryPreview {
+  type: string;
+  names: string[];
+  execs: string[];
+  urls: string[];
+  icons: string[];
+  categories: string[];
+  mimeTypes: string[];
+  actions: string[];
+  terminals: string[];
+  comments: string[];
+  riskCues: string[];
+}
+
+function summarizeDesktopEntryFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_DESKTOP_ENTRY_PREVIEW_BYTES).toString("utf8");
+    const preview = parseDesktopEntryPreview(raw);
+    return [
+      `Desktop entry launcher preview (${formatBytes(size)}).`,
+      `Type: ${preview.type || "not declared"}.`,
+      preview.names.length > 0 ? `Names: ${preview.names.join(" | ")}.` : "Names: none detected in bounded local preview.",
+      preview.execs.length > 0 ? `Exec commands (${preview.execs.length}${preview.execs.length >= MAX_DESKTOP_ENTRY_ITEM_PREVIEW ? "+" : ""}): ${preview.execs.join(" | ")}.` : "Exec commands: none detected.",
+      preview.urls.length > 0 ? `URLs (${preview.urls.length}${preview.urls.length >= MAX_DESKTOP_ENTRY_ITEM_PREVIEW ? "+" : ""}): ${preview.urls.join(" | ")}.` : "",
+      preview.icons.length > 0 ? `Icons: ${preview.icons.join(", ")}.` : "",
+      preview.categories.length > 0 ? `Categories: ${preview.categories.join(", ")}.` : "",
+      preview.mimeTypes.length > 0 ? `MIME types: ${preview.mimeTypes.join(", ")}.` : "",
+      preview.actions.length > 0 ? `Actions: ${preview.actions.join(", ")}.` : "",
+      preview.terminals.length > 0 ? `Terminal flags: ${preview.terminals.join(", ")}.` : "",
+      preview.comments.length > 0 ? `Comments: ${preview.comments.join(" | ")}.` : "",
+      preview.riskCues.length > 0 ? `Static risk cues: ${preview.riskCues.join(", ")}.` : "Static risk cues: none detected in bounded local metadata.",
+      "Ready for explicit attachment after visible review; FreeDesktop launcher metadata was parsed from bounded workspace-local text only, Exec/URL targets were not launched, desktop actions were not invoked, icon/theme files were not opened, linked files were not read, and no shell process, network call, credential lookup, workspace mutation, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Desktop entry launcher ready for explicit attachment (${formatBytes(size)}).`,
+      "Desktop entry preview could not parse bounded local text; Exec/URL targets were not launched, desktop actions were not invoked, icon/theme files were not opened, linked files were not read, and no shell process, network call, credential lookup, workspace mutation, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseDesktopEntryPreview(raw: string): DesktopEntryPreview {
+  const names = new Set<string>();
+  const execs = new Set<string>();
+  const urls = new Set<string>();
+  const icons = new Set<string>();
+  const categories = new Set<string>();
+  const mimeTypes = new Set<string>();
+  const actions = new Set<string>();
+  const terminals = new Set<string>();
+  const comments = new Set<string>();
+  const riskCues = new Set<string>();
+  let type = "";
+
+  for (const rawLine of normalizeTextPreview(raw).split("\n")) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#") || line.startsWith(";") || line.startsWith("[")) continue;
+    const match = line.match(/^([A-Za-z][A-Za-z0-9-]*(?:\[[^\]]+\])?)\s*=\s*(.*)$/);
+    if (!match?.[1]) continue;
+    const key = match[1].replace(/\[[^\]]+\]$/, "");
+    const value = maskPotentialSecretValues(clampSingleLine(match[2] || "", 220));
+    if (!value) continue;
+    if (key === "Type") type = clampSingleLine(value, 80);
+    if (key === "Name" || key === "GenericName") names.add(value);
+    if (key === "Comment") comments.add(value);
+    if (key === "Exec" || key === "TryExec") {
+      execs.add(redactDesktopEntryCommand(value));
+      collectDesktopEntryRiskCues(value, riskCues);
+    }
+    if (key === "URL") {
+      const safeUrl = redactBookmarkUrl(value);
+      urls.add(clampSingleLine(safeUrl, 220));
+      collectDesktopEntryRiskCues(value, riskCues);
+    }
+    if (key === "Icon") icons.add(value);
+    if (key === "Terminal") terminals.add(value.toLowerCase());
+    if (key === "Categories") splitDesktopEntryList(value, categories);
+    if (key === "MimeType") splitDesktopEntryList(value, mimeTypes);
+    if (key === "Actions") splitDesktopEntryList(value, actions);
+  }
+
+  return {
+    type,
+    names: [...names].slice(0, MAX_DESKTOP_ENTRY_ITEM_PREVIEW),
+    execs: [...execs].slice(0, MAX_DESKTOP_ENTRY_ITEM_PREVIEW),
+    urls: [...urls].slice(0, MAX_DESKTOP_ENTRY_ITEM_PREVIEW),
+    icons: [...icons].slice(0, MAX_DESKTOP_ENTRY_ITEM_PREVIEW),
+    categories: [...categories].slice(0, MAX_DESKTOP_ENTRY_ITEM_PREVIEW),
+    mimeTypes: [...mimeTypes].slice(0, MAX_DESKTOP_ENTRY_ITEM_PREVIEW),
+    actions: [...actions].slice(0, MAX_DESKTOP_ENTRY_ITEM_PREVIEW),
+    terminals: [...terminals].slice(0, MAX_DESKTOP_ENTRY_ITEM_PREVIEW),
+    comments: [...comments].slice(0, MAX_DESKTOP_ENTRY_ITEM_PREVIEW),
+    riskCues: [...riskCues].slice(0, MAX_DESKTOP_ENTRY_ITEM_PREVIEW),
+  };
+}
+
+function splitDesktopEntryList(value: string, target: Set<string>): void {
+  for (const part of value.split(/[;,]/)) {
+    const item = clampSingleLine(part, 80);
+    if (item) target.add(item);
+  }
+}
+
+function redactDesktopEntryCommand(value: string): string {
+  return maskPotentialSecretValues(value)
+    .replace(/\bhttps?:\/\/[^\s"']+/gi, (url) => redactBookmarkUrl(url))
+    .replace(/(--?(?:token|secret|password|apikey|api-key|key)=)([^\s]+)/gi, "$1[redacted]");
+}
+
+function collectDesktopEntryRiskCues(value: string, target: Set<string>): void {
+  const checks: Array<[RegExp, string]> = [
+    [/\b(?:sh|bash|zsh|fish|cmd|powershell|pwsh)\b/i, "shell invocation"],
+    [/\b(?:curl|wget|Invoke-WebRequest|iwr|irm)\b/i, "network download/request"],
+    [/\b(?:sudo|pkexec|runas)\b/i, "privilege elevation"],
+    [/[;&|`$()]/, "shell metacharacters"],
+    [/\bhttps?:\/\//i, "remote URL"],
+  ];
+  for (const [pattern, label] of checks) {
+    if (pattern.test(value)) target.add(label);
+  }
 }
 
 interface WindowsShortcutHeaderPreview {
@@ -26973,6 +33493,7 @@ function getMime(extension: string): string {
   return (
     {
       ".7z": "application/x-7z-compressed",
+      ".aac": "audio/aac",
       ".aab": "application/vnd.android.aab",
       ".aof": "application/vnd.redis.aof",
       ".ansible-inventory": "text/x-ansible-inventory",
@@ -26986,6 +33507,8 @@ function getMime(extension: string): string {
       ".atom": "application/atom+xml",
       ".attestation": "application/vnd.in-toto+json",
       ".attestation.json": "application/vnd.in-toto+json",
+      ".avro": "application/avro",
+      ".avsc": "application/vnd.apache.avro.schema+json",
       ".bat": "text/x-msdos-batch",
       ".bash": "text/x-shellscript",
       ".bib": "text/x-bibtex",
@@ -26994,26 +33517,46 @@ function getMime(extension: string): string {
       ".bicepparam": "text/x-bicep-params",
       ".blg": "application/vnd.ms-perfmon",
       ".bmp": "image/bmp",
+      ".browser-autofill.csv": "text/csv+browser-autofill",
+      ".browser-autofill.json": "application/vnd.drsai.browser-autofill+json",
+      ".browser-bookmarks.json": "application/vnd.drsai.browser-bookmarks+json",
       ".browser-cookies.txt": "text/x-netscape-cookies",
+      ".browser-passwords.csv": "text/csv+browser-passwords",
+      ".browser-downloads.csv": "text/csv+browser-downloads",
+      ".browser-downloads.json": "application/vnd.drsai.browser-downloads+json",
+      ".browser-downloads.sqlite": "application/vnd.drsai.browser-downloads+sqlite",
+      ".browser-extension-inventory.json": "application/vnd.drsai.browser-extension-inventory+json",
+      ".browser-extension-manifest.json": "application/vnd.drsai.browser-extension-manifest+json",
+      ".browser-history.csv": "text/csv+browser-history",
+      ".browser-history.json": "application/vnd.drsai.browser-history+json",
+      ".browser-history.sqlite": "application/vnd.drsai.browser-history+sqlite",
+      ".browser-preferences.json": "application/vnd.drsai.browser-preferences+json",
+      ".browser-session.json": "application/vnd.drsai.browser-session+json",
+      ".browser-storage.json": "application/vnd.drsai.browser-storage+json",
       ".bru": "text/x-bruno",
       ".c": "text/x-c",
       ".cabal": "text/x-cabal",
       ".cat": "application/vnd.ms-pki.seccat",
       ".cast": "application/vnd.asciinema.cast",
       ".cc": "text/x-c++",
+      ".calendar.csv": "text/csv+calendar",
       ".checkstyle.xml": "application/vnd.checkstyle+xml",
       ".cjs": "text/javascript",
       ".cmd": "text/x-msdos-batch",
       ".cfg": "text/plain",
       ".codeowners": "text/x-codeowners",
       ".cpuprofile": "application/vnd.v8.cpuprofile+json",
+      ".chat-export.csv": "text/csv+chat-export",
       ".chat-export.json": "application/vnd.drsai.chat-export+json",
+      ".chat-export.txt": "text/plain+chat-export",
       ".cloudformation.json": "application/vnd.aws.cloudformation.template+json",
       ".cloudformation.yaml": "application/vnd.aws.cloudformation.template+yaml",
       ".composer.json": "application/vnd.composer+json",
+      ".contacts.csv": "text/csv+contacts",
       ".cpp": "text/x-c++",
       ".cron": "text/x-crontab",
       ".crontab": "text/x-crontab",
+      ".crash": "text/x-apple-crash-report",
       ".cs": "text/x-csharp",
       ".csproj": "application/msbuild+xml",
       ".css": "text/css",
@@ -27028,6 +33571,7 @@ function getMime(extension: string): string {
       ".dll": "application/vnd.microsoft.portable-executable",
       ".docm": "application/vnd.ms-word.document.macroEnabled.12",
       ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      ".dotlottie": "application/vnd.lottie+zip",
       ".dotnet-global.json": "application/vnd.microsoft.dotnet.global-json+json",
       ".dot": "text/vnd.graphviz",
       ".drawio": "application/vnd.jgraph.mxfile",
@@ -27048,8 +33592,9 @@ function getMime(extension: string): string {
       ".compile_commands.json": "application/json+compile-commands",
       ".crt": "application/x-x509-ca-cert",
       ".der": "application/pkix-cert",
+      ".desktop": "application/x-desktop",
       ".diff": "text/x-diff",
-      ".env": "text/plain",
+      ".env": "text/x-dotenv",
       ".envrc": "text/x-direnv",
       ".exe": "application/vnd.microsoft.portable-executable",
       ".evtx": "application/vnd.ms-windows-eventlog",
@@ -27063,6 +33608,7 @@ function getMime(extension: string): string {
       ".go.work": "text/x-go-work",
       ".htm": "text/html",
       ".html": "text/html",
+      ".hosts": "text/x-hosts",
       ".gz": "application/gzip",
       ".geojson": "application/geo+json",
       ".glb": "model/gltf-binary",
@@ -27091,6 +33637,7 @@ function getMime(extension: string): string {
       ".http": "message/http",
       ".iis-web.config": "application/vnd.microsoft.iis.config+xml",
       ".web-server.conf": "text/x-web-server-config",
+      ".webmanifest": "application/manifest+json",
       ".ini": "text/plain",
       ".istanbul-coverage.json": "application/vnd.istanbul.coverage+json",
       ".inf": "text/x-setup-inf",
@@ -27098,8 +33645,10 @@ function getMime(extension: string): string {
       ".intoto.jsonl": "application/vnd.in-toto+jsonl",
       ".ipa": "application/octet-stream+ios-app",
       ".ipynb": "application/x-ipynb+json",
+      ".ips": "application/vnd.apple.ips+json",
       ".ical": "text/calendar",
       ".ics": "text/calendar",
+      ".vcs": "text/x-vcalendar",
       ".ico": "image/x-icon",
       ".jar": "application/java-archive",
       ".war": "application/java-archive",
@@ -27121,8 +33670,10 @@ function getMime(extension: string): string {
       ".trace.json": "application/x-chrome-trace+json",
       ".js": "text/javascript",
       ".js-tooling-config": "application/vnd.drsai.js-tooling-config",
+      ".js-workspace-config": "application/vnd.drsai.js-workspace-config",
       ".jsx": "text/jsx",
       ".key": "application/pem-certificate-chain",
+      ".kdbx": "application/x-keepass2",
       ".kml": "application/vnd.google-earth.kml+xml",
       ".kt": "text/x-kotlin",
       ".kustomization.yaml": "application/vnd.kubernetes.kustomization+yaml",
@@ -27134,8 +33685,12 @@ function getMime(extension: string): string {
       ".less": "text/less",
       ".license": "text/plain",
       ".lcov": "text/x-lcov",
+      ".llms-full.txt": "text/markdown+llms",
+      ".llms.txt": "text/markdown+llms",
       ".lnk": "application/x-ms-shortcut",
       ".logcat": "text/x-android-logcat",
+      ".lottie.json": "application/vnd.lottie+json",
+      ".oslog": "text/x-apple-unified-log",
       ".log": "text/plain",
       ".lock": "text/plain",
       ".lua": "text/x-lua",
@@ -27161,10 +33716,12 @@ function getMime(extension: string): string {
       ".mp3": "audio/mpeg",
       ".mmd": "text/vnd.mermaid",
       ".json": "application/json",
+      ".jsonfeed": "application/feed+json",
       ".jsonl": "application/x-ndjson",
       ".md": "text/markdown",
       ".mdmp": "application/vnd.microsoft.minidump",
       ".mhtml": "multipart/related",
+      ".meeting-transcript.txt": "text/plain+meeting-transcript",
       ".mbox": "application/mbox",
       ".mix.exs": "text/x-elixir",
       ".mix.lock": "application/vnd.elixir.mix-lock",
@@ -27194,6 +33751,7 @@ function getMime(extension: string): string {
       ".packages.config": "application/vnd.nuget.packages-config+xml",
       ".php": "application/x-httpd-php",
       ".pipfile": "application/toml",
+      ".pypirc": "text/x-pypirc",
       ".pdf": "application/pdf",
       ".podfile": "text/x-cocoapods-podfile",
       ".podfile.lock": "text/x-cocoapods-lockfile",
@@ -27220,6 +33778,8 @@ function getMime(extension: string): string {
       ".rb": "text/x-ruby",
       ".rar": "application/vnd.rar",
       ".rdb": "application/vnd.redis.rdb",
+      ".regex": "text/x-regex",
+      ".regexp": "text/x-regex",
       ".reg": "text/x-windows-registry",
       ".rest": "message/http",
       ".r": "text/x-r-source",
@@ -27232,6 +33792,7 @@ function getMime(extension: string): string {
       ".sarif.json": "application/sarif+json",
       ".scss": "text/x-scss",
       ".security-audit.json": "application/vnd.drsai.security-scan+json",
+      ".source-map.json": "application/vnd.drsai.source-map+json",
       ".service": "text/x-systemd-unit",
       ".supervisord.conf": "text/x-supervisord-conf",
       ".sh": "text/x-shellscript",
@@ -27245,6 +33806,7 @@ function getMime(extension: string): string {
       ".stack.yaml": "application/vnd.haskell.stack-yaml",
       ".scala": "text/x-scala",
       ".socket": "text/x-systemd-unit",
+      ".ssh-config": "text/x-ssh-config",
       ".sql": "text/sql",
       ".spdx": "text/spdx",
       ".spdx.json": "application/spdx+json",
@@ -27292,6 +33854,9 @@ function getMime(extension: string): string {
       ".vscode-settings.json": "application/vnd.code.settings+json",
       ".vscode-tasks.json": "application/vnd.code.tasks+json",
       ".vtt": "text/vtt",
+      ".vpn-config": "application/vnd.drsai.vpn-config",
+      ".warc": "application/warc",
+      ".warc.gz": "application/warc+gzip",
       ".wasm": "application/wasm",
       ".wav": "audio/wav",
       ".webm": "video/webm",

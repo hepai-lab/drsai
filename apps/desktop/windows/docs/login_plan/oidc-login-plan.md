@@ -93,7 +93,8 @@ bearer token.
 Set a public issuer:
 
 ```text
-HAI_OIDC_ISSUER=https://aitest.ihep.ac.cn/api
+HAI_OIDC_ISSUER=https://ai-dev.ihep.ac.cn/api
+OPENDRSAI_OIDC_DISCOVERY_URL=https://ai-dev.ihep.ac.cn/api/.well-known/openid-configuration
 ```
 
 The issuer must match the public route used by the desktop app and by token
@@ -105,14 +106,21 @@ The Windows app reads the issuer from:
 OPENDRSAI_OIDC_ISSUER
 ```
 
-If unset, it falls back to `HAI_OIDC_ISSUER`, then to
-`https://aitest.ihep.ac.cn/api`. Local development can still override this with
-`http://localhost:8081/api`.
+The built-in environment defaults are:
+
+| Runtime | Discovery URL | Expected issuer |
+| --- | --- | --- |
+| Development | `https://ai-dev.ihep.ac.cn/api/.well-known/openid-configuration` | `https://ai-dev.ihep.ac.cn/api` |
+| Packaged production | `https://ai.ihep.ac.cn/api/.well-known/openid-configuration` | `https://ai.ihep.ac.cn/api` |
+
+Environment variables override both defaults when an explicit deployment is
+needed. Local development can use `http://localhost:8081/api` for Discovery
+and the corresponding local issuer.
 
 At runtime, the app loads:
 
 ```text
-{OPENDRSAI_OIDC_ISSUER}/.well-known/openid-configuration
+{OPENDRSAI_OIDC_DISCOVERY_URL}
 ```
 
 and uses the discovered `authorization_endpoint`, `token_endpoint`, and
@@ -121,7 +129,7 @@ and uses the discovered `authorization_endpoint`, `token_endpoint`, and
 Register only this fixed callback in the IHEP SSO app:
 
 ```text
-https://aitest.ihep.ac.cn/api/oauth2/upstream/ihep/callback
+https://ai-dev.ihep.ac.cn/api/oauth2/upstream/ihep/callback
 ```
 
 Desktop redirect URIs do not need to be registered in IHEP SSO. HAI validates

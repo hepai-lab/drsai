@@ -14,6 +14,7 @@ import type {
   DesktopChannelOutboundDelivery,
   DesktopChannelOutboundDraftResult,
   DesktopChannelSnapshotSyncResult,
+  DesktopExternalConnectionReadinessResult,
   DesktopApi,
   DesktopCustomCommand,
   DesktopForkQueueDispatchStartedRun,
@@ -297,6 +298,170 @@ const mockChannelAdapters: DesktopChannelAdapterListResult = {
     },
   ],
 };
+
+const mockExternalConnectionReadiness: DesktopExternalConnectionReadinessResult = {
+  workspacePath: "C:\\Users\\Demo\\Project",
+  generatedAt: new Date().toISOString(),
+  readyCount: 1,
+  partialCount: 9,
+  plannedCount: 0,
+  message: "External connection readiness was assembled from local desktop contracts.",
+  verification:
+    "No OAuth flow, browser process, LaTeX command, provider API call, network request, or workspace mutation was performed.",
+  connections: [
+    {
+      id: "mobile",
+      name: "Mobile chat",
+      status: "partial",
+      configured: true,
+      readOnly: true,
+      capabilitySources: ["mobile-chat", ".drsai/mobile-context.json", "approval-aware outbound drafts"],
+      evidence: ["Mobile chat entry adapter is cataloged", "Local phone-originated handoffs are reviewed before attach"],
+      gaps: ["Live mobile device pairing", "Push notification routing"],
+      approvalBoundary: "Mobile readiness starts no device session, push service, or remote send.",
+      verification: "Mock readiness performs no mobile device or push-provider access.",
+    },
+    {
+      id: "github",
+      name: "GitHub",
+      status: "partial",
+      configured: false,
+      readOnly: true,
+      capabilitySources: ["github-connector", "local Git remote scope", ".drsai/github-context.json"],
+      evidence: ["Local Git remote setup path exists", "Issue and pull request snapshot import is bounded"],
+      gaps: ["Live GitHub OAuth/API sync", "Remote PR/comment mutation"],
+      approvalBoundary:
+        "Read-only context import is allowed after visible review; outbound drafts require Approval Center.",
+      verification: "Mock readiness uses local fixture data only.",
+    },
+    {
+      id: "chrome",
+      name: "Chrome",
+      status: "partial",
+      configured: false,
+      readOnly: true,
+      capabilitySources: ["browser controller approvals", "HAR/NetLog/trace snapshots"],
+      evidence: ["Browser actions are approval-gated", "Local browser snapshots are redacted"],
+      gaps: ["Live Chrome profile connection", "Interactive DOM capture"],
+      approvalBoundary: "Live browser automation remains behind browser task approvals.",
+      verification: "Mock readiness starts no browser process.",
+    },
+    {
+      id: "slack",
+      name: "Slack",
+      status: "partial",
+      configured: false,
+      readOnly: true,
+      capabilitySources: ["slack-chat", ".drsai/slack-context.json", "approval-gated reply drafts"],
+      evidence: ["Slack channel adapter contract is cataloged", "Local Slack snapshots are reviewed before attach"],
+      gaps: ["Live Slack OAuth/session sync", "Remote message mutation"],
+      approvalBoundary: "Slack replies remain drafts until approval and live delivery are available.",
+      verification: "Mock readiness performs no Slack API call.",
+    },
+    {
+      id: "docs",
+      name: "Docs",
+      status: "partial",
+      configured: false,
+      readOnly: true,
+      capabilitySources: ["docs-connector", ".drsai/docs-context.json", "approval-gated edit drafts"],
+      evidence: ["Docs connector snapshot contract is cataloged", "Document context uses bounded local handoff files"],
+      gaps: ["Live Docs provider authorization", "Remote comment/edit sync"],
+      approvalBoundary: "Docs readiness does not read, write, share, or comment on provider files.",
+      verification: "Mock readiness performs no Docs provider API call.",
+    },
+    {
+      id: "calendar",
+      name: "Calendar",
+      status: "partial",
+      configured: false,
+      readOnly: true,
+      capabilitySources: ["calendar-connector", ".drsai/calendar-context.json", ".drsai/calendar-context.ics"],
+      evidence: ["Calendar connector snapshot contract is cataloged", "Agenda handoff files stay local"],
+      gaps: ["Live Calendar OAuth/API sync", "Remote event mutation"],
+      approvalBoundary: "Calendar readiness does not read or change remote events.",
+      verification: "Mock readiness performs no Calendar API call.",
+    },
+    {
+      id: "latex",
+      name: "LaTeX",
+      status: "partial",
+      configured: true,
+      readOnly: true,
+      capabilitySources: ["file-input", ".tex/.bib/.bibtex/latexmkrc previews"],
+      evidence: ["LaTeX/BibTeX files are summarized from bounded local text"],
+      gaps: ["PDF compilation", "SyncTeX/source mapping"],
+      approvalBoundary: "LaTeX context import never runs TeX tools.",
+      verification: "Mock readiness runs no TeX command.",
+    },
+    {
+      id: "database",
+      name: "Database snapshots",
+      status: "partial",
+      configured: true,
+      readOnly: true,
+      capabilitySources: ["database-connector", ".drsai/database-context.json", "table/query snapshot imports"],
+      evidence: ["Database snapshot adapter is cataloged", "Local table/query snapshots remain reviewed context"],
+      gaps: ["Live database connections", "Query execution and schema introspection"],
+      approvalBoundary: "Database readiness opens no database socket and performs no query.",
+      verification: "Mock readiness performs no live database access.",
+    },
+    {
+      id: "log-monitor",
+      name: "Log monitor",
+      status: "partial",
+      configured: true,
+      readOnly: true,
+      capabilitySources: ["logs-monitor", ".drsai/log-monitor.json", "incremental log snapshot imports"],
+      evidence: ["Workspace log monitor adapter is cataloged", "Local log deltas can be reviewed before attach"],
+      gaps: ["Live log streaming", "Remote incident correlation"],
+      approvalBoundary: "Log monitor readiness starts no tail process, watcher, or remote provider session.",
+      verification: "Mock readiness performs no live log streaming.",
+    },
+    {
+      id: "unified",
+      name: "Unified connection model",
+      status: "available",
+      configured: true,
+      readOnly: true,
+      capabilitySources: ["channel adapter catalog", "Approval Center", "MCP live bridge audit"],
+      evidence: ["Connector adapters are cataloged", "Channel actions are approval-gated"],
+      gaps: ["Provider-owned process supervision", "Credential vault integration"],
+      approvalBoundary: "External services share explicit approval and reviewed context import.",
+      verification: "Mock readiness uses local bridge contracts only.",
+    },
+  ],
+};
+
+function buildMockExternalReconnectPolicy(
+  id: DesktopExternalConnectionReadinessResult["connections"][number]["id"],
+): NonNullable<DesktopExternalConnectionReadinessResult["connections"][number]["reconnectPolicy"]> {
+  return {
+    mode: "manual_review",
+    automatic: false,
+    triggers: ["Mock app startup refresh", "Mock Channels refresh", "Mock snapshot sync request"],
+    safeguards: [
+      "Manual review before any provider runtime starts",
+      "No credential lookup, OAuth exchange, network request, or remote mutation",
+    ],
+    nextStep: `Prepare an approval-gated ${id} reconnect plan when live runtime credentials are available.`,
+    verification:
+      "Mock reconnect policy is local metadata only; no autonomous reconnect or provider runtime was started.",
+  };
+}
+
+function buildMockReconnectReadinessChecks(
+  connection: DesktopExternalConnectionReadinessResult["connections"][number],
+): string[] {
+  return [
+    connection.configured
+      ? "Mock local snapshot or session stub is configured"
+      : "Mock setup is still local-only and requires user review",
+    "Mock adapter contract is cataloged",
+    "Mock remaining live-runtime gaps are visible before reconnect",
+    "Mock verification confirms no credential, network, or runtime action ran",
+  ];
+}
 
 const mockWorkflowMarketplace: DesktopWorkflowMarketplaceListResult = {
   generatedAt: new Date().toISOString(),
@@ -873,9 +1038,9 @@ export function installMockDesktopApi(): void {
       emitOidcLoginDebug("started", "Starting mock HepAI OIDC login.");
       emitOidcLoginDebug(
         "discovery",
-        "Loaded mock discovery from https://aitest.ihep.ac.cn/api.",
+        "Loaded mock discovery from https://ai-dev.ihep.ac.cn/api.",
         "success",
-        "https://aitest.ihep.ac.cn/api/.well-known/openid-configuration",
+        "https://ai-dev.ihep.ac.cn/api/.well-known/openid-configuration",
       );
       emitOidcLoginDebug(
         "browser-opened",
@@ -989,6 +1154,35 @@ export function installMockDesktopApi(): void {
     getHealth: async () => health,
     getInstallStatus: async () => health.install,
     getGatewayStatus: async () => health.gateway,
+    listProviderUsageAnalytics: async () => [
+      {
+        id: "provider-usage:mock",
+        recordedAt: new Date(Date.now() - 60_000).toISOString(),
+        requestId: "mock-request-usage",
+        sessionId: "mock-session",
+        runId: "mock-run",
+        provider: "openai_responses",
+        eventName: "response.completed",
+        status: "completed",
+        summary: "Mock OpenAI Responses stream completed. input_tokens=120 output_tokens=32 total_tokens=152",
+        usage: { inputTokens: 120, outputTokens: 32, totalTokens: 152 },
+      },
+    ],
+    listProviderErrorAnalytics: async () => [
+      {
+        id: "provider-error:mock",
+        recordedAt: new Date(Date.now() - 30_000).toISOString(),
+        requestId: "mock-request-error",
+        sessionId: "mock-session",
+        runId: "mock-run",
+        provider: "anthropic",
+        eventName: "error",
+        code: "overloaded_error",
+        message: "Mock provider overloaded",
+        retryable: true,
+        summary: "Mock Anthropic stream error. code=overloaded_error message=Mock provider overloaded retryable=true",
+      },
+    ],
     checkForUpdates: async () => {
       health = {
         ...health,
@@ -1232,6 +1426,33 @@ export function installMockDesktopApi(): void {
       return thread;
     },
     getThreadSnapshot: async (threadId) => threadSnapshots[threadId] ?? null,
+    searchThreadMessages: async (request) => {
+      const query = request.query.trim().toLowerCase();
+      if (!query) return [];
+      const allowedThreadIds = request.threadIds ? new Set(request.threadIds) : null;
+      const limit = Math.max(1, Math.min(request.limit ?? 24, 50));
+      return Object.values(threadSnapshots)
+        .filter((snapshot) => !allowedThreadIds || allowedThreadIds.has(snapshot.threadId))
+        .sort((left, right) => right.updatedAt - left.updatedAt)
+        .flatMap((snapshot) => {
+          const message = [...snapshot.messages]
+            .reverse()
+            .find((candidate) => candidate.role !== "system" && candidate.content.toLowerCase().includes(query));
+          if (!message) return [];
+          const content = message.content.replace(/\s+/g, " ").trim();
+          const matchIndex = content.toLowerCase().indexOf(query);
+          const start = Math.max(0, matchIndex - 72);
+          const end = Math.min(content.length, matchIndex + query.length + 72);
+          return [{
+            threadId: snapshot.threadId,
+            messageId: message.id,
+            role: message.role,
+            snippet: `${start > 0 ? "..." : ""}${content.slice(start, end)}${end < content.length ? "..." : ""}`,
+            updatedAt: snapshot.updatedAt,
+          }];
+        })
+        .slice(0, limit);
+    },
     updateThreadSnapshot: async (snapshot) => {
       threadSnapshots = {
         ...threadSnapshots,
@@ -2801,6 +3022,21 @@ export function installMockDesktopApi(): void {
       generatedAt: new Date().toISOString(),
       adapters: mockChannelAdapters.adapters.map((adapter) => ({ ...adapter })),
     }),
+    listExternalConnectionReadiness: async (workspacePath?: string) => ({
+      ...mockExternalConnectionReadiness,
+      workspacePath,
+      generatedAt: new Date().toISOString(),
+      connections: mockExternalConnectionReadiness.connections.map((connection) => ({
+        ...connection,
+        capabilitySources: [...connection.capabilitySources],
+        evidence: [...connection.evidence],
+        gaps: [...connection.gaps],
+        reconnectReadinessChecks: connection.reconnectReadinessChecks
+          ? [...connection.reconnectReadinessChecks]
+          : buildMockReconnectReadinessChecks(connection),
+        reconnectPolicy: connection.reconnectPolicy ?? buildMockExternalReconnectPolicy(connection.id),
+      })),
+    }),
     configureChannelAdapter: async (request): Promise<DesktopChannelAdapterConfigureResult> => {
       const adapter = mockChannelAdapters.adapters.find(
         (item) => item.id === request.adapterId,
@@ -3186,7 +3422,7 @@ export function installMockDesktopApi(): void {
             const isNotebook = title.toLowerCase().endsWith(".ipynb");
             const isDocument = isNotebook || title.toLowerCase().endsWith(".pdf") || title.toLowerCase().endsWith(".docx");
             const lowerTitle = title.toLowerCase();
-            const isAudio = [".flac", ".m4a", ".mp3", ".ogg", ".wav"].some((extension) => lowerTitle.endsWith(extension));
+            const isAudio = [".aac", ".flac", ".m4a", ".mp3", ".ogg", ".wav"].some((extension) => lowerTitle.endsWith(extension));
             const isVideo = title.toLowerCase().endsWith(".mp4") || title.toLowerCase().endsWith(".mov") || title.toLowerCase().endsWith(".webm");
             return {
               id: `file-input:selected-${index + 1}`,
@@ -3197,7 +3433,7 @@ export function installMockDesktopApi(): void {
               path: normalizedPath,
               relativePath,
               summary: isAudio
-                ? "Audio metadata preview (mock). Format: WAV/MP3/FLAC/M4A/OGG. Ready for explicit attachment after visible review; no microphone capture, transcription service, network call, or provider send was performed."
+                ? "Audio metadata preview (mock). Format: WAV/MP3/AAC/FLAC/M4A/OGG. Ready for explicit attachment after visible review; no microphone capture, transcription service, network call, or provider send was performed."
                 : isVideo
                 ? "Video metadata preview (mock). Format: MP4/MOV/WebM. Ready for explicit attachment after visible review; no video player startup, media decoding, frame extraction, network call, or provider send was performed."
                 : isNotebook
@@ -4064,6 +4300,7 @@ export function installMockDesktopApi(): void {
       return true;
     },
     onInstallProgress: (callback) => subscribe(installListeners, callback),
+    onAuthSessionInvalidated: () => () => undefined,
     onOidcLoginDebug: (callback) =>
       subscribe(oidcLoginDebugListeners, callback),
     onChatEvent: (callback) => subscribe(chatListeners, callback),
@@ -4491,7 +4728,7 @@ function createMockWorkspacePreview(
       message: "Extracted a basic text preview from the PDF.",
     };
   }
-  if (name.endsWith(".mp4") || [".flac", ".m4a", ".mp3", ".ogg", ".wav"].some((extension) => name.endsWith(extension))) {
+  if (name.endsWith(".mp4") || [".aac", ".flac", ".m4a", ".mp3", ".ogg", ".wav"].some((extension) => name.endsWith(extension))) {
     return {
       ...base,
       kind: "media",
@@ -4519,6 +4756,7 @@ function createMockWorkspacePreview(
 }
 
 function mockAudioMimeForTitle(name: string): string {
+  if (name.endsWith(".aac")) return "audio/aac";
   if (name.endsWith(".flac")) return "audio/flac";
   if (name.endsWith(".m4a")) return "audio/mp4";
   if (name.endsWith(".ogg")) return "audio/ogg";

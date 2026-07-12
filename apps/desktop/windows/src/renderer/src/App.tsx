@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   Bot,
+  Bug,
   FileText,
   Globe2,
   History,
@@ -39,8 +40,11 @@ import { ApprovalCenterView } from "./components/ApprovalCenterView";
 import { ChannelsView } from "./components/ChannelsView";
 import { ChatWorkspace } from "./components/ChatWorkspace";
 import { PreviewBrowserPanel } from "./components/PreviewBrowserPanel";
+import { ProviderAnalyticsView } from "./components/ProviderAnalyticsView";
 import { SkillSquareView } from "./components/SkillSquareView";
 import { TerminalPanel } from "./components/TerminalPanel";
+import { DebugPanel } from "./components/DebugPanel";
+import { installDebugLogCapture } from "./debugLogStore";
 import { FilesContextPanel } from "./components/files/FilesContextPanel";
 import {
   createAgentRunContextTraceEvents,
@@ -99,7 +103,10 @@ const rightTabIcons: Record<RightTab, LucideIcon> = {
   templates: Sparkles,
   browser: Globe2,
   terminal: TerminalIcon,
+  debug: Bug,
 };
+
+installDebugLogCapture();
 
 const WORKSPACE_STORAGE_KEY = "opendrsai.workspaces";
 const WORKSPACE_MIGRATION_KEY = "opendrsai.workspaces.migrated";
@@ -251,6 +258,18 @@ function AuthenticatedApp({
       archived: thread.archived,
       unread: thread.unread,
     }));
+  const searchableThreads: WorkspaceThread[] = visibleThreads.map((thread) => ({
+    id: thread.id,
+    title: thread.title,
+    timeLabel: formatThreadTime(thread.updatedAt, language),
+    workspaceId: getWorkspaceId(thread.workspacePath || activeWorkspace.path),
+    workspacePath: thread.workspacePath,
+    fork: thread.fork,
+    active: thread.id === activeThreadId,
+    pinned: thread.pinned,
+    archived: thread.archived,
+    unread: thread.unread,
+  }));
   const chat = useDesktopChatAdapter({
     availableAgents: availableChatAgents,
     availableModels: availableChatModels,
@@ -1033,6 +1052,8 @@ function AuthenticatedApp({
         onAttachImportedContext={attachImportedChannelContext}
         workspacePath={effectiveWorkspacePath}
       />
+    ) : activeNav === MENU_IDS.usageAnalytics ? (
+      <ProviderAnalyticsView language={language} />
     ) : activeNav === MENU_IDS.profile ? (
       <SettingsPanel
         health={health}
@@ -1068,7 +1089,9 @@ function AuthenticatedApp({
   );
 
   const rightPanelContent =
-    activeRightTab === "terminal" ? (
+    activeRightTab === "debug" ? (
+      <DebugPanel language={language} />
+    ) : activeRightTab === "terminal" ? (
       <TerminalPanel
         cwd={effectiveWorkspacePath}
         language={language}
@@ -1248,6 +1271,7 @@ function AuthenticatedApp({
       navIcons={navIcons}
       navSections={navSections}
       recentThreads={recentThreads}
+      searchableThreads={searchableThreads}
       rightPanel={rightPanelContent}
       rightPanelCollapsed={rightPanelCollapsed}
       rightTabIcons={rightTabIcons}
@@ -1280,6 +1304,9 @@ function AuthenticatedApp({
       onStageForkConflictFile={stageForkConflictFile}
       onWriteForkConflictDraft={writeForkConflictDraft}
       onThreadSelect={handleThreadSelect}
+      onSearchThreadMessages={(query, threadIds) =>
+        desktopApi.searchThreadMessages({ query, threadIds, limit: 24 })
+      }
       onThreadUpdate={handleThreadUpdate}
       onToggleSessionScope={() =>
         setSessionScope((scope) => (scope === "workspace" ? "all" : "workspace"))

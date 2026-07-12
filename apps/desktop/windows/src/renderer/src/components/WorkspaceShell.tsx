@@ -28,6 +28,7 @@ import type {
   AuthUser,
   CreateWorkspaceRequest,
   DesktopForkLifecycleAction,
+  DesktopThreadContentSearchResult,
   DesktopThreadForkMetadata,
   WorkspaceProject,
 } from "@shared/desktopApi";
@@ -104,6 +105,7 @@ interface WorkspaceShellProps {
   navIcons: Record<NavId, LucideIcon>;
   navSections: NavSection[];
   recentThreads: WorkspaceThread[];
+  searchableThreads: WorkspaceThread[];
   rightPanel: React.ReactNode;
   rightPanelCollapsed: boolean;
   rightTabIcons: Record<RightTab, LucideIcon>;
@@ -142,6 +144,10 @@ interface WorkspaceShellProps {
     expectedDiffHash?: string,
   ) => Promise<ForkConflictDraftWriteResult>;
   onThreadSelect: (threadId: string) => void;
+  onSearchThreadMessages: (
+    query: string,
+    threadIds: string[],
+  ) => Promise<DesktopThreadContentSearchResult[]>;
   onThreadUpdate: (threadId: string, updates: { title?: string; pinned?: boolean; archived?: boolean; unread?: boolean; fork?: DesktopThreadForkMetadata }) => void | Promise<void>;
   onToggleSessionScope: () => void;
   onToggleRightPanel: () => void;
@@ -164,6 +170,7 @@ export function WorkspaceShell({
   navIcons,
   navSections,
   recentThreads,
+  searchableThreads,
   rightPanel,
   rightPanelCollapsed,
   rightTabIcons,
@@ -191,6 +198,7 @@ export function WorkspaceShell({
   onStageForkConflictFile,
   onWriteForkConflictDraft,
   onThreadSelect,
+  onSearchThreadMessages,
   onThreadUpdate,
   onToggleSessionScope,
   onToggleRightPanel,
@@ -218,6 +226,8 @@ export function WorkspaceShell({
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [commandPaletteQuery, setCommandPaletteQuery] = useState("");
   const [commandPaletteSelectedIndex, setCommandPaletteSelectedIndex] = useState(0);
+  const [contentSearchResults, setContentSearchResults] = useState<DesktopThreadContentSearchResult[]>([]);
+  const [contentSearchLoading, setContentSearchLoading] = useState(false);
   const [threadMenu, setThreadMenu] = useState<{
     thread: WorkspaceThread;
     x: number;
@@ -247,7 +257,10 @@ export function WorkspaceShell({
   const [rightPanelExpanded, setRightPanelExpanded] = useState(false);
   const helpMenuRef = useRef<HTMLDivElement | null>(null);
   const userMenuRef = useRef<HTMLDivElement | null>(null);
+  const commandPaletteRef = useRef<HTMLDivElement | null>(null);
   const commandPaletteInputRef = useRef<HTMLInputElement | null>(null);
+  const commandPaletteResultsRef = useRef<HTMLElement | null>(null);
+  const contentSearchRequestRef = useRef(0);
   const zh = language === "zh";
   const userInitials = getUserInitials(user, zh);
   const workbenchMenus = zh ? ["文件", "编辑", "视图"] : ["File", "Edit", "View"];
@@ -264,6 +277,10 @@ export function WorkspaceShell({
   const rightPanelClassName = `right-panel context-right-panel ${
     activeRightTab === "browser" ? "browser-right-panel" : ""
   }`;
+  const searchableThreadIds = useMemo(
+    () => searchableThreads.map((thread) => thread.id),
+    [searchableThreads],
+  );
 
   useEffect(() => {
     function handlePointerDown(event: PointerEvent): void {
@@ -272,6 +289,9 @@ export function WorkspaceShell({
       }
       if (!helpMenuRef.current?.contains(event.target as Node)) {
         setHelpMenuOpen(false);
+      }
+      if (!commandPaletteRef.current?.contains(event.target as Node)) {
+        closeCommandPalette();
       }
     }
 
@@ -319,6 +339,45 @@ export function WorkspaceShell({
   useEffect(() => {
     setCommandPaletteSelectedIndex(0);
   }, [commandPaletteQuery, commandPaletteOpen]);
+
+  useEffect(() => {
+    const query = commandPaletteQuery.trim();
+    const requestId = ++contentSearchRequestRef.current;
+    if (!commandPaletteOpen || !query) {
+      setContentSearchResults([]);
+      setContentSearchLoading(false);
+      return;
+    }
+
+    setContentSearchLoading(true);
+    const timer = window.setTimeout(() => {
+      void onSearchThreadMessages(query, searchableThreadIds)
+        .then((results) => {
+          if (contentSearchRequestRef.current === requestId) {
+            setContentSearchResults(results);
+          }
+        })
+        .catch(() => {
+          if (contentSearchRequestRef.current === requestId) {
+            setContentSearchResults([]);
+          }
+        })
+        .finally(() => {
+          if (contentSearchRequestRef.current === requestId) {
+            setContentSearchLoading(false);
+          }
+        });
+    }, 180);
+
+    return () => window.clearTimeout(timer);
+  }, [commandPaletteOpen, commandPaletteQuery, onSearchThreadMessages, searchableThreadIds]);
+
+  useEffect(() => {
+    if (!commandPaletteOpen) return;
+    commandPaletteResultsRef.current
+      ?.querySelector<HTMLElement>("[aria-selected='true']")
+      ?.scrollIntoView({ block: "nearest" });
+  }, [commandPaletteOpen, commandPaletteSelectedIndex]);
 
   function startSidebarResize(event: React.PointerEvent<HTMLDivElement>): void {
     event.preventDefault();
@@ -435,6 +494,7 @@ export function WorkspaceShell({
     label: string;
     meta?: string;
     shortcut?: string;
+    description?: string;
     icon: LucideIcon;
     run: () => void | Promise<void>;
   };
@@ -482,20 +542,63 @@ export function WorkspaceShell({
     return [...chatItems, ...recommendationItems];
   }, [activeWorkspace?.path, activeWorkspaceName, onNavChange, onNewChat, onOpenWorkspacePath, onThreadSelect, recentThreads, zh]);
 
+  const searchableChatItems = useMemo<CommandPaletteItem[]>(() => {
+    const shortcutByThread = new Map(
+      recentThreads.slice(0, 9).map((thread, index) => [thread.id, `Ctrl+${index + 1}`]),
+    );
+    return searchableThreads.map((thread) => ({
+      id: `thread:${thread.id}`,
+      group: "chats" as const,
+      label: thread.title,
+      meta: thread.timeLabel,
+      shortcut: shortcutByThread.get(thread.id),
+      icon: Search,
+      run: () => onThreadSelect(thread.id),
+    }));
+  }, [onThreadSelect, recentThreads, searchableThreads]);
+
   const visibleCommandPaletteItems = useMemo(() => {
     const query = commandPaletteQuery.trim().toLowerCase();
     if (!query) return commandPaletteItems;
-    return commandPaletteItems.filter((item) =>
+    const recommendationMatches = commandPaletteItems.filter((item) =>
+      item.group === "recommendations" &&
       [item.label, item.meta, item.shortcut]
         .filter(Boolean)
         .some((text) => text!.toLowerCase().includes(query)),
     );
-  }, [commandPaletteItems, commandPaletteQuery]);
+    const contentMatchByThread = new Map(
+      contentSearchResults.map((result) => [`thread:${result.threadId}`, result]),
+    );
+    const titleMatches = searchableChatItems
+      .filter((item) => item.label.toLowerCase().includes(query))
+      .map((item) => ({
+        ...item,
+        description: contentMatchByThread.get(item.id)?.snippet,
+      }));
+    const titleMatchIds = new Set(titleMatches.map((item) => item.id));
+    const contentMatches = searchableChatItems
+      .filter((item) => contentMatchByThread.has(item.id) && !titleMatchIds.has(item.id))
+      .map((item) => ({
+        ...item,
+        description: contentMatchByThread.get(item.id)?.snippet,
+      }));
+    return [...titleMatches, ...contentMatches, ...recommendationMatches];
+  }, [commandPaletteItems, commandPaletteQuery, contentSearchResults, searchableChatItems]);
+
+  useEffect(() => {
+    setCommandPaletteSelectedIndex((index) =>
+      Math.min(index, Math.max(0, visibleCommandPaletteItems.length - 1)),
+    );
+  }, [visibleCommandPaletteItems.length]);
 
   function closeCommandPalette(): void {
     setCommandPaletteOpen(false);
     setCommandPaletteQuery("");
     setCommandPaletteSelectedIndex(0);
+  }
+
+  function openCommandPalette(): void {
+    setCommandPaletteOpen(true);
   }
 
   function runCommandPaletteItem(item: CommandPaletteItem): void {
@@ -1025,6 +1128,62 @@ export function WorkspaceShell({
     }
   }
 
+  function renderCommandPaletteResults(): React.JSX.Element {
+    if (contentSearchLoading && visibleCommandPaletteItems.length === 0) {
+      return <div className="command-palette-empty">{zh ? "正在搜索会话内容..." : "Searching conversation content..."}</div>;
+    }
+    if (visibleCommandPaletteItems.length === 0) {
+      return <div className="command-palette-empty">{zh ? "没有匹配结果" : "No matching results"}</div>;
+    }
+
+    return (
+      <div className="command-palette-results">
+        {(["chats", "recommendations"] as const).map((group) => {
+          const groupItems = visibleCommandPaletteItems.filter((item) => item.group === group);
+          if (groupItems.length === 0) return null;
+          return (
+            <div className="command-palette-group" key={group}>
+              <div className="command-palette-group-label">
+                {group === "chats" ? (zh ? "聊天" : "Chats") : (zh ? "推荐" : "Recommended")}
+              </div>
+              {groupItems.map((item) => {
+                const itemIndex = visibleCommandPaletteItems.findIndex((candidate) => candidate.id === item.id);
+                const selected = itemIndex === commandPaletteSelectedIndex;
+                const Icon = item.icon;
+                return (
+                  <button
+                    key={item.id}
+                    id={`titlebar-search-option-${itemIndex}`}
+                    type="button"
+                    role="option"
+                    aria-selected={selected}
+                    className={`command-palette-item ${selected ? "selected" : ""}`}
+                    onClick={() => runCommandPaletteItem(item)}
+                    onMouseEnter={() => setCommandPaletteSelectedIndex(itemIndex)}
+                  >
+                    <span className="command-palette-icon"><Icon size={16} /></span>
+                    <span className="command-palette-copy">
+                      <span className="command-palette-title">
+                        {highlightSearchText(item.label, commandPaletteQuery)}
+                      </span>
+                      {item.description && (
+                        <span className="command-palette-description">
+                          {highlightSearchText(item.description, commandPaletteQuery)}
+                        </span>
+                      )}
+                    </span>
+                    {item.meta && <span className="command-palette-meta">{item.meta}</span>}
+                    {item.shortcut && <kbd>{item.shortcut}</kbd>}
+                  </button>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
   return (
     <div
       className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}
@@ -1077,7 +1236,8 @@ export function WorkspaceShell({
             )}
           </div>
         </div>
-        <div className="titlebar-navigation" aria-label={zh ? "导航" : "Navigation"}>
+        <div className="titlebar-center">
+          <div className="titlebar-navigation" aria-label={zh ? "导航" : "Navigation"}>
           <button
             type="button"
             disabled={!canGoBack}
@@ -1096,6 +1256,54 @@ export function WorkspaceShell({
           >
             <ArrowRight size={15} />
           </button>
+          </div>
+          <div className="titlebar-search-shell" ref={commandPaletteRef}>
+            <div className={`titlebar-search ${commandPaletteOpen ? "open" : ""}`}>
+              <Search size={14} aria-hidden />
+              <input
+                ref={commandPaletteInputRef}
+                value={commandPaletteQuery}
+                onFocus={openCommandPalette}
+                onChange={(event) => setCommandPaletteQuery(event.target.value)}
+                onKeyDown={handleCommandPaletteKeyDown}
+                placeholder={zh ? "搜索聊天或运行命令" : "Search chats or run commands"}
+                aria-label={zh ? "搜索聊天或运行命令" : "Search chats or run commands"}
+                aria-expanded={commandPaletteOpen}
+                aria-controls="titlebar-search-results"
+                aria-autocomplete="list"
+                aria-activedescendant={
+                  visibleCommandPaletteItems[commandPaletteSelectedIndex]
+                    ? `titlebar-search-option-${commandPaletteSelectedIndex}`
+                    : undefined
+                }
+              />
+              {commandPaletteQuery && (
+                <button
+                  className="titlebar-search-clear"
+                  type="button"
+                  onClick={() => {
+                    setCommandPaletteQuery("");
+                    commandPaletteInputRef.current?.focus();
+                  }}
+                  title={zh ? "清除搜索" : "Clear search"}
+                  aria-label={zh ? "清除搜索" : "Clear search"}
+                >
+                  <X size={13} />
+                </button>
+              )}
+            </div>
+            {commandPaletteOpen && (
+              <section
+                id="titlebar-search-results"
+                ref={commandPaletteResultsRef}
+                className="titlebar-search-results"
+                role="listbox"
+                aria-label={zh ? "搜索结果" : "Search results"}
+              >
+                {renderCommandPaletteResults()}
+              </section>
+            )}
+          </div>
         </div>
         <div className="workbench-menu-spacer" />
         <div className="titlebar-account" ref={userMenuRef}>
@@ -1197,7 +1405,7 @@ export function WorkspaceShell({
         <nav className="sidebar-scroll" aria-label={zh ? "OpenDrSai 侧边栏" : "OpenDrSai sidebar"}>
           <div className="sidebar-action-list">
             <SidebarButton active={activeNav === MENU_IDS.currentSession} icon={MessageSquarePlus} label={zh ? "开始聊天" : "New chat"} onClick={onNewChat} />
-            <SidebarButton icon={Search} label={zh ? "搜索" : "Search"} onClick={() => setCommandPaletteOpen(true)} />
+            <SidebarButton icon={Search} label={zh ? "搜索" : "Search"} onClick={openCommandPalette} />
             <SidebarButton active={activeNav === MENU_IDS.savedPlan} icon={CalendarClock} label={zh ? "已安排" : "Scheduled"} onClick={() => onNavChange(MENU_IDS.savedPlan)} />
           </div>
 
@@ -1508,7 +1716,7 @@ export function WorkspaceShell({
                   aria-label={rightPanelExpandLabel}
                   aria-pressed={isRightPanelExpanded}
                 >
-                  {isRightPanelExpanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+                  {isRightPanelExpanded ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
                 </button>
               </div>
               {rightPanel}
@@ -2039,75 +2247,6 @@ export function WorkspaceShell({
           </div>
         </div>
       )}
-      {commandPaletteOpen && (
-        <div className="command-palette-overlay" role="presentation" onMouseDown={closeCommandPalette}>
-          <section
-            className="command-palette"
-            role="dialog"
-            aria-modal="true"
-            aria-label={zh ? "搜索聊天或运行命令" : "Search chats or run commands"}
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <div className="command-palette-input-row">
-              <input
-                ref={commandPaletteInputRef}
-                value={commandPaletteQuery}
-                onChange={(event) => setCommandPaletteQuery(event.target.value)}
-                onKeyDown={handleCommandPaletteKeyDown}
-                placeholder={zh ? "搜索聊天或运行命令" : "Search chats or run commands"}
-                aria-label={zh ? "搜索聊天或运行命令" : "Search chats or run commands"}
-              />
-            </div>
-            <div className="command-palette-results">
-              {visibleCommandPaletteItems.length === 0 ? (
-                <div className="command-palette-empty">
-                  {zh ? "没有匹配结果" : "No matching results"}
-                </div>
-              ) : (
-                <>
-                  {(["chats", "recommendations"] as const).map((group) => {
-                    const groupItems = visibleCommandPaletteItems.filter((item) => item.group === group);
-                    if (groupItems.length === 0) return null;
-                    return (
-                      <div className="command-palette-group" key={group}>
-                        <div className="command-palette-group-label">
-                          {group === "chats"
-                            ? zh ? "聊天" : "Chats"
-                            : zh ? "推荐" : "Recommended"}
-                        </div>
-                        {groupItems.map((item) => {
-                          const selected = visibleCommandPaletteItems[commandPaletteSelectedIndex]?.id === item.id;
-                          const Icon = item.icon;
-                          return (
-                            <button
-                              key={item.id}
-                              type="button"
-                              className={`command-palette-item ${selected ? "selected" : ""}`}
-                              onClick={() => runCommandPaletteItem(item)}
-                              onMouseEnter={() =>
-                                setCommandPaletteSelectedIndex(
-                                  visibleCommandPaletteItems.findIndex((candidate) => candidate.id === item.id),
-                                )
-                              }
-                            >
-                              <span className="command-palette-icon">
-                                <Icon size={16} />
-                              </span>
-                              <span className="command-palette-title">{item.label}</span>
-                              {item.meta && <span className="command-palette-meta">{item.meta}</span>}
-                              {item.shortcut && <kbd>{item.shortcut}</kbd>}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    );
-                  })}
-                </>
-              )}
-            </div>
-          </section>
-        </div>
-      )}
       {desktopStatusOpen && (
         <div className="desktop-status-overlay" role="presentation" onMouseDown={() => setDesktopStatusOpen(false)}>
           <section
@@ -2382,6 +2521,20 @@ function getWorkspaceSortButtonLabel(
 
 function getEnabledNavItems(navSections: NavSection[], sectionId: NavSection["id"]): NavSection["items"] {
   return navSections.filter((section) => section.id === sectionId)[0]?.items.filter((item) => item.enabled) ?? [];
+}
+
+function highlightSearchText(text: string, rawQuery: string): React.ReactNode {
+  const query = rawQuery.trim();
+  if (!query) return text;
+  const matchIndex = text.toLocaleLowerCase().indexOf(query.toLocaleLowerCase());
+  if (matchIndex < 0) return text;
+  return (
+    <>
+      {text.slice(0, matchIndex)}
+      <mark>{text.slice(matchIndex, matchIndex + query.length)}</mark>
+      {text.slice(matchIndex + query.length)}
+    </>
+  );
 }
 
 function UserAvatar({ user, fallback }: { user: AuthUser | null; fallback: string }) {

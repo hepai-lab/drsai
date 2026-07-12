@@ -237,7 +237,8 @@ OpenDrSai Windows 和 HAI backend 必须协同测试。
 
 - 从 `OPENDRSAI_OIDC_ISSUER` 读取 issuer。
 - fallback 到 `HAI_OIDC_ISSUER`。
-- fallback 到测试环境 `https://aitest.ihep.ac.cn/api`。
+- 开发环境 fallback issuer 为 `https://ai-dev.ihep.ac.cn/api`，Discovery 从 `https://ai-dev.ihep.ac.cn/api/.well-known/openid-configuration` 获取。
+- 产品发布环境 fallback issuer 为 `https://ai.ihep.ac.cn/api`，Discovery 从 `https://ai.ihep.ac.cn/api/.well-known/openid-configuration` 获取。
 - 请求 `.well-known/openid-configuration`。
 - 校验 discovery issuer。
 - 缓存 metadata。
@@ -620,16 +621,16 @@ OpenDrSai Windows 和 HAI backend 必须协同测试。
 - OIDC 平台前端：
   `http://localhost:3000`
 - OIDC 平台后端 / issuer：
-  `https://aitest.ihep.ac.cn/api`
-- `HAI_OIDC_ISSUER=https://aitest.ihep.ac.cn/api`。
+  `https://ai-dev.ihep.ac.cn/api`
+- `HAI_OIDC_ISSUER=https://ai-dev.ihep.ac.cn/api`。
 - IHEP SSO callback 注册：
-  `https://aitest.ihep.ac.cn/api/oauth2/upstream/ihep/callback`
+  `https://ai-dev.ihep.ac.cn/api/oauth2/upstream/ihep/callback`
 - 测试用回调前端：
   `http://localhost:3000/`
 - 默认 desktop client 存在：
   `opendrsai-desktop`
 - Windows 端设置：
-  `OPENDRSAI_OIDC_ISSUER=https://aitest.ihep.ac.cn/api`
+  `OPENDRSAI_OIDC_ISSUER=https://ai-dev.ihep.ac.cn/api`
 
 测试步骤：
 
@@ -639,9 +640,9 @@ OpenDrSai Windows 和 HAI backend 必须协同测试。
 3. 运行开发环境前置检查：
    `npm run verify:oidc-dev-env`
 4. 验证 discovery：
-   `GET https://aitest.ihep.ac.cn/api/.well-known/openid-configuration`
+   `GET https://ai-dev.ihep.ac.cn/api/.well-known/openid-configuration`
 5. 验证 JWKS：
-   `GET https://aitest.ihep.ac.cn/api/.well-known/jwks.json`
+   `GET https://ai-dev.ihep.ac.cn/api/.well-known/jwks.json`
 6. 启动 OpenDrSai Windows app。
 7. 点击 IHEP SSO/AI 平台登录。
 8. 浏览器跳到本地 AI 平台/IHEP 登录前端 `http://localhost:3000`。

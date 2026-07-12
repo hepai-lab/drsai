@@ -18,7 +18,7 @@ import {
   DRSAI_SCRIPT,
   getEnhancedPath,
 } from "./paths";
-import { getGatewayStatus } from "./gateway";
+import { getGatewaySnapshot, getGatewayStatus } from "./gateway";
 import { getUpdateStatus } from "./updates";
 
 export async function getInstallStatus(): Promise<InstallStatus> {
@@ -37,7 +37,6 @@ export async function getInstallStatus(): Promise<InstallStatus> {
     hasScript ? null : "drsai-cli",
     version ? null : "drsai-version",
     backendNeedsRepair ? "backend-version" : null,
-    prerequisites.apiKeyConfigured ? null : "api-key",
   ].filter((item): item is string => Boolean(item));
 
   return {
@@ -59,6 +58,19 @@ export async function getInstallStatus(): Promise<InstallStatus> {
 }
 
 export async function getDesktopHealth(): Promise<DesktopHealth> {
+  const install = getStartupInstallStatus();
+  return {
+    installed: install.installed,
+    gatewayReady: false,
+    mode: "local",
+    version: install.version,
+    install,
+    gateway: getGatewaySnapshot(),
+    update: getUpdateStatus(),
+  };
+}
+
+export async function getDeepDesktopHealth(): Promise<DesktopHealth> {
   const [install, gateway, update] = await Promise.all([
     getInstallStatus(),
     getGatewayStatus(),
@@ -73,6 +85,40 @@ export async function getDesktopHealth(): Promise<DesktopHealth> {
     install,
     gateway,
     update,
+  };
+}
+
+function getStartupInstallStatus(): InstallStatus {
+  const hasPython = existsSync(DRSAI_PYTHON);
+  const hasScript = existsSync(DRSAI_SCRIPT) || existsSync(DRSAI_CMD_SCRIPT);
+  const hasRepo = existsSync(DRSAI_REPO);
+  const apiKeyConfigured = isApiKeyConfigured();
+  const installed = hasRepo && hasPython && hasScript;
+  return {
+    installed,
+    home: DRSAI_HOME,
+    repoPath: hasRepo ? DRSAI_REPO : "",
+    pythonPath: hasPython ? DRSAI_PYTHON : "",
+    scriptPath: existsSync(DRSAI_SCRIPT) ? DRSAI_SCRIPT : existsSync(DRSAI_CMD_SCRIPT) ? DRSAI_CMD_SCRIPT : "",
+    version: null,
+    expectedVersion: getExpectedBackendVersion(),
+    backendNeedsRepair: false,
+    bundledBackendAvailable: hasBundledBackendSource(),
+    configExists: existsSync(DRSAI_CONFIG_FILE),
+    envExists: existsSync(DRSAI_ENV_FILE),
+    apiKeyConfigured,
+    prerequisites: {
+      pythonOnPath: hasPython,
+      pythonVersion: null,
+      pythonCommand: hasPython ? DRSAI_PYTHON : null,
+      gitOnPath: false,
+      gitVersion: null,
+      gitCommand: null,
+      apiKeyConfigured,
+      problems: [],
+    },
+    missing: [hasRepo ? null : "repository", hasPython ? null : "python", hasScript ? null : "drsai-cli"]
+      .filter((item): item is string => Boolean(item)),
   };
 }
 
@@ -128,7 +174,6 @@ async function getPrerequisiteStatus(): Promise<PrerequisiteStatus> {
       ? null
       : `Python 3.11+ is required${pythonVersion ? `, found ${pythonVersion}` : ""}.`,
     gitVersion ? null : "Git was not found on PATH.",
-    apiKeyConfigured ? null : "HEPAI_API_KEY is not configured.",
   ].filter((item): item is string => Boolean(item));
 
   return {

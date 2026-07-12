@@ -7,10 +7,11 @@ import { fileURLToPath } from "node:url";
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const repoRoot = resolve(root, "..", "..", "..");
 const pythonSrc = join(repoRoot, "cores", "python", "packages", "drsai", "src");
-const port = Number(process.env.OPENDRSAI_GATEWAY_SMOKE_PORT || "18642");
+const port = Number(process.env.OPENDRSAI_GATEWAY_SMOKE_PORT || String(20_000 + (process.pid % 20_000)));
 const baseUrl = `http://127.0.0.1:${port}`;
 const tempHome = mkdtempSync(join(tmpdir(), "opendrsai-gateway-smoke-"));
 const tempUserProfile = join(tempHome, "user-profile");
+const gatewayInstanceToken = "gateway-smoke-instance-token";
 
 let gatewayProcess = null;
 
@@ -23,6 +24,7 @@ try {
       DRSAI_API_HOST: "127.0.0.1",
       DRSAI_API_PORT: String(port),
       DRSAI_GATEWAY_FAKE_AGENT: "1",
+      OPENDRSAI_GATEWAY_INSTANCE_TOKEN: gatewayInstanceToken,
       DRSAI_HOME: tempHome,
       USERNAME: "opendrsai-smoke",
       USERPROFILE: tempUserProfile,
@@ -58,6 +60,41 @@ try {
   assert(chat.headers.get("x-drsai-session-id"), "chat response did not include X-Drsai-Session-Id");
   assert(chat.text.includes("fake-agent: hello gateway smoke"), "chat SSE did not include fake agent content chunk");
   assert(chat.text.includes("data: [DONE]"), "chat SSE did not include data: [DONE]");
+
+  const oidcUser = "gateway-smoke-oidc";
+  const oidcChat = await requestText("/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${fakeOidcToken(oidcUser)}`,
+      "X-OpenDrSai-Auth-Mode": "oidc",
+    },
+    body: JSON.stringify({
+      model: "drsai",
+      stream: true,
+      user_id: oidcUser,
+      thread_id: "gateway-smoke-oidc-thread",
+      messages: [{ role: "user", content: "hello oidc gateway smoke" }],
+    }),
+  });
+  assert(oidcChat.statusCode === 200, `OIDC chat returned ${oidcChat.statusCode}: ${oidcChat.text.slice(0, 300)}`);
+  assert(oidcChat.text.includes("fake-agent: hello oidc gateway smoke"), "OIDC chat did not reach the request-scoped agent context");
+
+  const wrongSubject = await requestText("/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${fakeOidcToken("another-user")}`,
+      "X-OpenDrSai-Auth-Mode": "oidc",
+    },
+    body: JSON.stringify({
+      model: "drsai",
+      stream: true,
+      user_id: oidcUser,
+      messages: [{ role: "user", content: "must be rejected" }],
+    }),
+  });
+  assert(wrongSubject.statusCode === 403, `OIDC subject mismatch returned ${wrongSubject.statusCode}`);
 
   console.log("Gateway smoke passed: /health, /v1/models, and chat SSE returned chunk + [DONE].");
 } catch (error) {
@@ -160,7 +197,9 @@ async function waitForJson(path, timeoutMs, logs) {
 }
 
 async function requestJson(path) {
-  const response = await fetch(`${baseUrl}${path}`);
+  const response = await fetch(`${baseUrl}${path}`, {
+    headers: { "X-OpenDrSai-Gateway-Token": gatewayInstanceToken },
+  });
   let body = null;
   try {
     body = await response.json();
@@ -171,8 +210,24 @@ async function requestJson(path) {
 }
 
 async function requestText(path, init) {
-  const response = await fetch(`${baseUrl}${path}`, init);
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    headers: {
+      "X-OpenDrSai-Gateway-Token": gatewayInstanceToken,
+      ...(init?.headers || {}),
+    },
+  });
   return { statusCode: response.status, headers: response.headers, text: await response.text() };
+}
+
+function fakeOidcToken(subject) {
+  const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  return `${encode({ alg: "RS256", typ: "JWT" })}.${encode({
+    iss: "https://ai-dev.ihep.ac.cn/api",
+    sub: subject,
+    aud: "hai-api",
+    exp: Math.floor(Date.now() / 1000) + 600,
+  })}.test-signature`;
 }
 
 function assert(condition, message) {

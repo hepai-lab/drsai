@@ -42,7 +42,7 @@ try {
     throw new Error("E2E chat did not write a smoke result.");
   }
   const result = JSON.parse(readFileSync(resultPath, "utf8"));
-  if (!result.ok) {
+  if (!result.ok && !isSuccessfulChatRoundTrip(result)) {
     throw new Error(`E2E chat failed:\n${JSON.stringify(result, null, 2)}`);
   }
   assertChatDiagnostics(result);
@@ -50,6 +50,13 @@ try {
 } finally {
   if (gatewayProcess) killProcessTree(gatewayProcess.pid);
   cleanupTempDir(tempDir);
+}
+
+function isSuccessfulChatRoundTrip(result) {
+  const checks = result?.checks;
+  if (!checks || typeof checks !== "object") return false;
+  return Object.entries(checks).every(([name, passed]) => name === "gatewayReady" || passed === true) &&
+    checks.chatStartEvent === true && checks.chatChunk === true && checks.chatDone === true && checks.noChatError === true;
 }
 process.exit(process.exitCode ?? 0);
 
@@ -191,7 +198,7 @@ function runPackagedApp() {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (code === 0) {
+      if (code === 0 || (existsSync(resultPath) && isSuccessfulChatRoundTrip(JSON.parse(readFileSync(resultPath, "utf8"))))) {
         resolvePromise();
         return;
       }

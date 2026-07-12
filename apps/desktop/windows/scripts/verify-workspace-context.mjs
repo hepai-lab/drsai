@@ -62,6 +62,14 @@ const checks = [
     ],
   },
   {
+    file: "src/renderer/src/navigation.ts",
+    markers: [
+      "getRightTabs",
+      "[\"files\", \"browser\", \"terminal\", \"debug\"]",
+      "browser: \"Browser\"",
+    ],
+  },
+  {
     file: "src/main/workspaceContext.ts",
     markers: [
       "readInstructionChain",

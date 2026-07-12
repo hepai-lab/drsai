@@ -23,7 +23,7 @@ import type {
   DesktopVoiceRuntimeStatus,
   DesktopVoiceError,
 } from "../shared/desktopApi";
-import { getGatewayStatus, startGateway } from "./gateway";
+import { getGatewayRequestHeaders, getGatewayStatus, startGateway } from "./gateway";
 
 const MAX_VOICE_RECORDING_BYTES = 10 * 1024 * 1024;
 const MAX_VOICE_RECORDING_SECONDS = 120;
@@ -233,7 +233,12 @@ async function transcribeThroughGateway(
   const startedAt = Date.now();
   let response: Response;
   try {
-    response = await fetch(`${baseUrl}/v1/audio/transcriptions`, { method: "POST", body: form, signal });
+    response = await fetch(`${baseUrl}/v1/audio/transcriptions`, {
+      method: "POST",
+      headers: getGatewayRequestHeaders(),
+      body: form,
+      signal,
+    });
   } catch (error) {
     if (timeout.aborted && !parentSignal.aborted) throw voiceFailure("timeout", "Voice transcription timed out.", true);
     throw error;

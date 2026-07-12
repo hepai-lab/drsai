@@ -23,6 +23,7 @@ import { is } from "@electron-toolkit/utils";
 import { cancelInstall, startInstall } from "./install";
 import {
   getGatewayStatus,
+  getGatewayStartupMode,
   shutdownGateway,
   startGateway,
   stopGateway,
@@ -32,6 +33,8 @@ import { bootstrapDesktop } from "./bootstrap";
 import { DRSAI_HOME } from "./paths";
 import { checkForUpdates, subscribeUpdateStatus } from "./updates";
 import { abortChat, startChat } from "./chat";
+import { listProviderErrorAnalytics } from "./providerErrorAnalytics";
+import { listProviderUsageAnalytics } from "./providerUsageAnalytics";
 import { abortAgentRun, startAgentRun } from "./agentRuns";
 import { listAgents } from "./agents";
 import {
@@ -47,6 +50,7 @@ import {
   createThread,
   getThreadSnapshot,
   listThreads,
+  searchThreadMessages,
   updateThread,
   updateThreadSnapshot,
 } from "./threads";
@@ -108,6 +112,7 @@ import {
   syncChannelSnapshots,
 } from "./channelAdapters";
 import { importMcpContext } from "./mcpContext";
+import { listExternalConnectionReadiness } from "./externalConnectionReadiness";
 import {
   createMcpEnumerationBlockedResult,
   createMcpEnumerationQueuedResult,
@@ -315,6 +320,14 @@ if (isE2eSmokeProcess) {
   app.commandLine.appendSwitch("in-process-gpu");
 }
 const singleInstanceLock = isE2eSmokeProcess || app.requestSingleInstanceLock();
+const desktopProcessStartedAt = Date.now();
+function recordStartupMilestone(event: string): void {
+  const launcherStartedAt = Number(process.env.OPENDRSAI_DEV_START_EPOCH_MS);
+  const launcherElapsed = Number.isFinite(launcherStartedAt) ? Date.now() - launcherStartedAt : null;
+  console.info(
+    `[startup] ${event}: process=${Date.now() - desktopProcessStartedAt}ms${launcherElapsed === null ? "" : ` launcher=${launcherElapsed}ms`}`,
+  );
+}
 function recordE2eStartupTrace(event: string, details: Record<string, unknown> = {}): void {
   if (!isE2eSmokeProcess) return;
   const target = globalThis as { __OPENDRSAI_E2E_TRACE?: Array<Record<string, unknown>> };
@@ -1989,9 +2002,11 @@ function createWindow(): void {
     });
   });
   mainWindow.webContents.on("did-finish-load", () => {
+    recordStartupMilestone("renderer-loaded");
     recordE2eStartupTrace("createWindow:did-finish-load", {
       url: mainWindow?.webContents.getURL(),
     });
+    void startDeferredStartupTasks();
   });
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
     recordE2eStartupTrace("createWindow:render-process-gone", { ...details });
@@ -2367,6 +2382,12 @@ function registerIpc(): void {
   secureHandle("desktop:get-health", () => getDesktopHealth());
   secureHandle("desktop:get-install-status", () => getInstallStatus());
   secureHandle("desktop:get-gateway-status", () => getGatewayStatus());
+  secureHandle("desktop:provider-usage-analytics-list", () =>
+    listProviderUsageAnalytics(),
+  );
+  secureHandle("desktop:provider-error-analytics-list", () =>
+    listProviderErrorAnalytics(),
+  );
   secureHandle("desktop:check-for-updates", (event) => {
     subscribeUpdateStatus(event.sender);
     return checkForUpdates();
@@ -2509,7 +2530,7 @@ function registerIpc(): void {
   secureHandle("desktop:list-agents", () => listAgents());
   secureHandle("desktop:get-my-drsai-config", async (_event, workspacePath?: string) => {
     if (workspacePath && !(await isAllowedOpenPath(workspacePath))) {
-      throw new Error("Tokenizer calibration workspace is not registered or allowed.");
+      return getMyDrSaiConfig();
     }
     return getMyDrSaiConfig(workspacePath);
   });
@@ -2524,6 +2545,9 @@ function registerIpc(): void {
   );
   secureHandle("desktop:get-thread-snapshot", (_event, threadId) =>
     getThreadSnapshot(threadId),
+  );
+  secureHandle("desktop:search-thread-messages", (_event, request) =>
+    searchThreadMessages(request),
   );
   secureHandle("desktop:update-thread-snapshot", (_event, snapshot) =>
     updateThreadSnapshot(snapshot),
@@ -2655,6 +2679,9 @@ function registerIpc(): void {
   );
   secureHandle("desktop:channel-outbound-deliveries", (_event, request?: DesktopChannelOutboundDeliveryListRequest) =>
     listChannelOutboundDeliveries(request),
+  );
+  secureHandle("desktop:external-connection-readiness", (_event, workspacePath?: string) =>
+    listExternalConnectionReadiness(workspacePath),
   );
   secureHandle(
     "desktop:mcp-context-import",
@@ -3026,6 +3053,7 @@ function toBrowserTaskApprovalRequest(
 }
 
 async function autoStartGatewayWhenInstalled(): Promise<void> {
+  if (getGatewayStartupMode() !== "eager") return;
   try {
     const install = await getInstallStatus();
     if (!install.installed) return;
@@ -3038,7 +3066,21 @@ async function autoStartGatewayWhenInstalled(): Promise<void> {
   }
 }
 
+let deferredStartupStarted = false;
+async function startDeferredStartupTasks(): Promise<void> {
+  if (deferredStartupStarted) return;
+  deferredStartupStarted = true;
+  recordStartupMilestone("deferred-tasks-start");
+  recordE2eStartupTrace("startup:deferred-tasks-start");
+  await recoverWorkflowRunStateAfterRestart();
+  startScheduledTaskWorkerIfEnabled();
+  await autoStartGatewayWhenInstalled();
+  recordStartupMilestone("deferred-tasks-complete");
+  recordE2eStartupTrace("startup:deferred-tasks-complete");
+}
+
 app.whenReady().then(() => {
+  recordStartupMilestone("electron-ready");
   cleanupExpiredVoiceTempFiles();
   if (!singleInstanceLock) return;
   if (process.env.OPENDRSAI_E2E_OIDC_HEADLESS === "1") {
@@ -3050,15 +3092,9 @@ app.whenReady().then(() => {
   registerIpc();
   createWindow();
   handleDeepLinkArgv(process.argv);
-  void recoverWorkflowRunStateAfterRestart().finally(() => {
-    startScheduledTaskWorkerIfEnabled();
-  });
-  void autoStartGatewayWhenInstalled();
-
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
-      void autoStartGatewayWhenInstalled();
     }
   });
 });
@@ -3130,7 +3166,7 @@ async function runHeadlessOidcSmoke(): Promise<void> {
     const chatRequestId = "e2e-oidc-chat-0001";
     result.details.oidcChatReturnedRequestId = startChat(gatewayWebContents, {
       requestId: chatRequestId,
-      model: "drsai",
+      model: "deepseek-v4-pro",
       messages: [{ role: "user", content: "oidc chat bearer check" }],
     });
     await waitForHeadlessGatewayTerminal(gatewayEvents, chatRequestId);

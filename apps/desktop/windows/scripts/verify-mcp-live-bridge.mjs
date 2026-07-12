@@ -111,6 +111,11 @@ assert(
     liveBridge.includes("callMcpEnumerationWithReusableSession") &&
     liveBridge.includes("callMcpToolWithReusableSession") &&
     liveBridge.includes("sendPooledMcpRequest") &&
+    liveBridge.includes("inspectMcpSmokeReadiness") &&
+    liveBridge.includes("toSmokeReadinessServer") &&
+    liveBridge.includes("classifyMcpRunner") &&
+    liveBridge.includes("Third-party MCP server smoke is readiness-only") &&
+    liveBridge.includes("did not install packages, start containers, spawn stdio, or call networks") &&
     liveBridge.includes("scheduleReusableMcpIdleShutdown") &&
     liveBridge.includes("recordMcpReusablePoolAudit") &&
     liveBridge.includes("getReusableSessionRestartDiagnostic") &&
@@ -378,6 +383,24 @@ writeFileSync(
           },
           description: "Runtime fake stdio MCP fixture",
         },
+        thirdPartyNpx: {
+          command: "npx",
+          args: ["-y", "@modelcontextprotocol/server-filesystem", "."],
+          env: {
+            GITHUB_TOKEN: "secret-runtime-token",
+          },
+          description: "Third-party package runner fixture",
+        },
+        thirdPartyUvx: {
+          command: "uvx",
+          args: ["mcp-server-fetch", "https://example.test/catalog"],
+          description: "Third-party Python package runner fixture",
+        },
+        containerDocker: {
+          command: "docker",
+          args: ["run", "--rm", "-v", ".:/workspace", "example/mcp-server:latest"],
+          description: "Containerized third-party fixture",
+        },
       },
     },
     null,
@@ -401,6 +424,50 @@ writeFileSync(fixtureBridge, transpiledBridge, "utf8");
 
 try {
   const bridge = await import(`${pathToFileURL(fixtureBridge).href}?run=${Date.now()}`);
+  const smokeReadiness = bridge.inspectMcpSmokeReadiness(fixtureWorkspace);
+  assert(smokeReadiness.serverCount === 4, "runtime fixture smoke readiness did not parse all configured servers");
+  assert(smokeReadiness.thirdPartyCount === 3, "runtime fixture smoke readiness did not classify third-party servers");
+  assert(smokeReadiness.readyCount === 1, "runtime fixture smoke readiness did not mark the local fixture ready");
+  assert(
+    smokeReadiness.reviewRequiredCount === 3 && smokeReadiness.blockedCount === 0,
+    "runtime fixture smoke readiness did not require review for third-party runners",
+  );
+  assert(
+    smokeReadiness.verification.includes("does not spawn servers") &&
+      smokeReadiness.verification.includes("call networks") &&
+      smokeReadiness.verification.includes("read secrets"),
+    "runtime fixture smoke readiness omitted no-runtime verification copy",
+  );
+  const localFixtureReadiness = smokeReadiness.servers.find((server) => server.name === "fixture");
+  const npxReadiness = smokeReadiness.servers.find((server) => server.name === "thirdPartyNpx");
+  const uvxReadiness = smokeReadiness.servers.find((server) => server.name === "thirdPartyUvx");
+  const dockerReadiness = smokeReadiness.servers.find((server) => server.name === "containerDocker");
+  assert(
+    localFixtureReadiness?.runner === "node" &&
+      localFixtureReadiness.status === "ready" &&
+      localFixtureReadiness.reusableSessionEligible === true,
+    "runtime fixture smoke readiness did not accept the local MCP fixture",
+  );
+  assert(
+    npxReadiness?.runner === "package_runner" &&
+      npxReadiness.status === "review_required" &&
+      npxReadiness.thirdParty === true &&
+      npxReadiness.envKeys.includes("GITHUB_TOKEN") &&
+      npxReadiness.risks.some((risk) => risk.includes("Package runner")) &&
+      npxReadiness.risks.some((risk) => risk.includes("credential-shaped")),
+    "runtime fixture smoke readiness did not flag npx package-runner risks without secret values",
+  );
+  assert(
+    uvxReadiness?.runner === "package_runner" &&
+      uvxReadiness.risks.some((risk) => risk.includes("remote URLs")),
+    "runtime fixture smoke readiness did not flag uvx remote URL risks",
+  );
+  assert(
+    dockerReadiness?.runner === "container" &&
+      dockerReadiness.risks.some((risk) => risk.includes("Container runner")) &&
+      dockerReadiness.risks.some((risk) => risk.includes("mount")),
+    "runtime fixture smoke readiness did not flag docker container and mount risks",
+  );
   const enumeration = await bridge.enumerateMcpLiveServer({
     workspacePath: fixtureWorkspace,
     server: "fixture",

@@ -15,6 +15,7 @@ import {
   Bot,
   Brain,
   ChevronDown,
+  ChevronRight,
   ClipboardList,
   FileCode2,
   FolderPlus,
@@ -40,6 +41,7 @@ import type {
   DesktopIdeContextSnapshot,
   DesktopVoiceTranscriptionResult,
   ChatToolTimelineEvent,
+  ChatMessagePart,
   MyDrSaiModelConfig,
   PickDialogResult,
   WorkspaceFolderSummaryRequest,
@@ -55,13 +57,17 @@ import {
   type ChatCommandName,
   type ChatRuntimeMode,
 } from "../chatCommands";
+import { ChatMessageContent } from "./ChatMessageContent";
+import { getVisibleChatText } from "../chatOutputModel";
 
 export type UiMessage = ChatMessage & {
   id: string;
   streaming?: boolean;
   error?: boolean;
   statusContent?: string;
+  reasoningContent?: string;
   toolTimeline?: ChatToolTimelineEvent[];
+  parts?: ChatMessagePart[];
   startedAt?: number;
   lastEventAt?: number;
 };
@@ -196,6 +202,8 @@ export function ChatWorkspace({
   const [voiceProgressMessage, setVoiceProgressMessage] = useState("");
   const [voiceRuntimeLabel, setVoiceRuntimeLabel] = useState("Voice STT");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const messageListRef = useRef<HTMLDivElement | null>(null);
+  const shouldFollowOutputRef = useRef(true);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const voiceStreamRef = useRef<MediaStream | null>(null);
@@ -297,7 +305,7 @@ export function ChatWorkspace({
     voiceState === "processing";
 
   const searchableMessages = useMemo(
-    () => messages.filter((message) => message.content.trim()),
+    () => messages.filter((message) => getVisibleChatText(message.content)),
     [messages],
   );
 
@@ -305,7 +313,7 @@ export function ChatWorkspace({
     const query = searchQuery.trim().toLowerCase();
     if (!query) return [];
     return searchableMessages
-      .filter((message) => message.content.toLowerCase().includes(query))
+      .filter((message) => getVisibleChatText(message.content).toLowerCase().includes(query))
       .map((message) => message.id);
   }, [searchQuery, searchableMessages]);
 
@@ -407,6 +415,18 @@ export function ChatWorkspace({
   }, [messages]);
 
   useEffect(() => {
+    const list = messageListRef.current;
+    if (!list || !shouldFollowOutputRef.current) return;
+    list.scrollTo({ top: list.scrollHeight, behavior: messages.some((message) => message.streaming) ? "auto" : "smooth" });
+  }, [messages]);
+
+  function handleMessageListScroll(): void {
+    const list = messageListRef.current;
+    if (!list) return;
+    shouldFollowOutputRef.current = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+  }
+
+  useEffect(() => {
     function handleWindowKeyDown(event: KeyboardEvent): void {
       if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
       if (event.key.toLowerCase() === "f") {
@@ -475,7 +495,7 @@ export function ChatWorkspace({
       ...inlineMentionAttachments,
     ], folderSummaryProvider);
     const submitted = await onSubmit(
-      submittedAttachments,
+      submittedAttachments.filter((attachment) => !attachment.blockedReason),
       {
         agentName: activeAgentName,
         forkQueueAgentAssignments: buildForkQueueAgentAssignments(
@@ -946,6 +966,13 @@ export function ChatWorkspace({
 
   function handleMarkdownLink(href: string | undefined): void {
     if (!href) return;
+    let protocol: string;
+    try {
+      protocol = new URL(href).protocol;
+    } catch {
+      return;
+    }
+    if (!['http:', 'https:', 'mailto:'].includes(protocol)) return;
     if (isPreviewBrowserUrl(href)) {
       openPreviewBrowser(href);
       return;
@@ -1041,34 +1068,24 @@ export function ChatWorkspace({
         </div>
       )}
       {!emptyChat && (
-      <div className="message-list">
+      <div className="message-list" ref={messageListRef} onScroll={handleMessageListScroll}>
         {messages.map((message) => (
           <article
             key={message.id}
             className={`message ${message.role} ${message.error ? "error" : ""} ${searchMatches.includes(message.id) ? "search-match" : ""} ${activeMatchId === message.id ? "search-active" : ""}`}
             data-message-id={message.id}
           >
-            <strong>{message.role === "user" ? "You" : "OpenDrSai"}</strong>
+            <strong className="message-author">{message.role === "user" ? "You" : "OpenDrSai"}</strong>
             <div className="message-body">
               {message.content && message.role === "user" ? (
                 <p>{highlightPlainText(message.content, searchQuery)}</p>
               ) : message.content ? (
-                <ReactMarkdown
-                  remarkPlugins={[remarkGfm]}
-                  components={{
-                    a: ({ href, children }) => (
-                      <button
-                        className="markdown-link"
-                        type="button"
-                        onClick={() => handleMarkdownLink(href)}
-                      >
-                        {children}
-                      </button>
-                    ),
-                  }}
-                >
-                  {message.content}
-                </ReactMarkdown>
+                <ChatMessageContent
+                  content={message.content}
+                  streaming={message.streaming}
+                  language={language}
+                  onOpenLink={handleMarkdownLink}
+                />
               ) : (
                 <StreamingStatus message={message} now={now} zh={zh} />
               )}
@@ -1079,8 +1096,27 @@ export function ChatWorkspace({
                   </ReactMarkdown>
                 </div>
               )}
+              {message.reasoningContent && (
+                <details className="chat-reasoning chat-event-reasoning">
+                  <summary>
+                    <ChevronRight size={14} />
+                    <span>{message.streaming ? (zh ? "正在思考…" : "Thinking…") : (zh ? "思考过程" : "Reasoning")}</span>
+                  </summary>
+                  <div className="chat-reasoning-content">
+                    <ChatMessageContent
+                      content={message.reasoningContent}
+                      streaming={message.streaming}
+                      language={language}
+                      onOpenLink={handleMarkdownLink}
+                    />
+                  </div>
+                </details>
+              )}
               {message.toolTimeline?.length ? (
                 <ToolTimeline events={message.toolTimeline} />
+              ) : null}
+              {message.role === "assistant" && !message.streaming && getVisibleChatText(message.content) ? (
+                <MessageActions content={getVisibleChatText(message.content)} zh={zh} />
               ) : null}
             </div>
           </article>
@@ -1654,19 +1690,78 @@ function StreamingStatus({
 function ToolTimeline({ events }: { events: ChatToolTimelineEvent[] }): React.JSX.Element {
   return (
     <div className="message-tool-timeline" aria-label="Tool timeline">
-      {events.slice(-8).map((event) => (
-        <article className={`message-tool-event ${event.status ?? event.kind}`} key={event.id}>
-          <div>
-            <span>{event.status ?? event.kind}</span>
-            {event.toolName ? <code>{event.toolName}</code> : null}
-            {event.path ? <small>{event.path}</small> : null}
-          </div>
-          <strong>{event.title}</strong>
-          {event.content ? <p>{event.content}</p> : null}
-        </article>
-      ))}
+      {events.slice(-8).map((event) => <ToolTimelineItem event={event} key={event.id} />)}
     </div>
   );
+}
+
+function MessageActions({ content, zh }: { content: string; zh: boolean }): React.JSX.Element {
+  const [copied, setCopied] = useState(false);
+  async function handleCopy(): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(content);
+    } catch {
+      return;
+    }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  }
+  return (
+    <div className="message-actions">
+      <button type="button" onClick={() => void handleCopy()} title={zh ? "复制回答" : "Copy response"}>
+        {copied ? "✓" : <ClipboardList size={13} />}
+        <span>{copied ? (zh ? "已复制" : "Copied") : (zh ? "复制" : "Copy")}</span>
+      </button>
+    </div>
+  );
+}
+
+function ToolTimelineItem({ event }: { event: ChatToolTimelineEvent }): React.JSX.Element {
+  const [open, setOpen] = useState(event.status === "failed" || event.status === "running");
+  const content = event.content?.trim() ?? "";
+  const preview = content.split(/\r?\n/, 1)[0].slice(0, 140);
+  return (
+    <details
+      className={`message-tool-event ${event.status ?? event.kind}`}
+      open={open}
+      onToggle={(toggle) => setOpen(toggle.currentTarget.open)}
+    >
+      <summary>
+        {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        <span>{event.status ?? event.kind}</span>
+        <strong>{event.title}</strong>
+        {event.toolName ? <code>{event.toolName}</code> : null}
+      </summary>
+      <div className="message-tool-detail">
+        {event.path ? <small>{event.path}</small> : null}
+        {event.kind === "diff" && content ? <ToolDiffContent value={content} /> : content ? <pre>{content}</pre> : preview ? <p>{preview}</p> : null}
+        {content ? <CopyTimelineContent value={content} /> : null}
+      </div>
+    </details>
+  );
+}
+
+function ToolDiffContent({ value }: { value: string }): React.JSX.Element {
+  return (
+    <pre className="chat-diff">
+      {value.split("\n").map((line, index) => {
+        const kind = line.startsWith("+") && !line.startsWith("+++") ? "add"
+          : line.startsWith("-") && !line.startsWith("---") ? "remove"
+            : line.startsWith("@@") ? "hunk" : "context";
+        return <span className={`chat-diff-line ${kind}`} key={`${index}-${line}`}>{line || " "}</span>;
+      })}
+    </pre>
+  );
+}
+
+function CopyTimelineContent({ value }: { value: string }): React.JSX.Element {
+  const [copied, setCopied] = useState(false);
+  async function handleCopy(): Promise<void> {
+    await navigator.clipboard.writeText(value);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  }
+  return <button type="button" className="tool-copy-button" onClick={() => void handleCopy()}>{copied ? "Copied" : "Copy output"}</button>;
 }
 
 function VoiceCaptureBar({
@@ -1903,15 +1998,19 @@ function parseInlineContextMentions(input: string, workspacePath: string): ChatA
     const rawPath = (match[2] || match[3] || match[4] || match[5] || "").trim();
     if (!rawPath) continue;
     const path = resolveInlineMentionPath(rawPath, workspacePath);
+    const blockedReason = getInlineMentionBlockedReason(rawPath, path, workspacePath);
     mentions.push({
       kind,
       path,
       name: getPathName(path),
       title: kind === "folder" ? `Inline @folder: ${getPathName(path)}` : `Inline @file: ${getPathName(path)}`,
       note:
-        kind === "folder"
+        blockedReason
+          ? blockedReason
+          : kind === "folder"
           ? "Inline @folder mention from composer. Folder summary is prepared before send."
           : "Inline @file mention from composer.",
+      blockedReason,
     });
   }
   return mergeUniqueAttachments(mentions);
@@ -1972,6 +2071,7 @@ async function summarizeInlineFolderAttachment(
     request: WorkspaceFolderSummaryRequest,
   ) => Promise<WorkspaceFolderSummaryResult>,
 ): Promise<ChatAttachment> {
+  if (attachment.blockedReason) return attachment;
   if (attachment.kind !== "folder") return attachment;
   if (!onSummarizeWorkspaceFolder) return attachment;
   try {
@@ -2026,6 +2126,42 @@ function resolveInlineMentionPath(rawPath: string, workspacePath: string): strin
   const base = workspacePath.replace(/[\\/]+$/, "");
   const relative = trimmed.replace(/^[.][\\/]/, "").replace(/[\\/]+/g, separator);
   return `${base}${separator}${relative}`;
+}
+
+function getInlineMentionBlockedReason(
+  rawPath: string,
+  resolvedPath: string,
+  workspacePath: string,
+): string | undefined {
+  if (!workspacePath.trim()) return undefined;
+  if (hasParentPathSegment(rawPath)) {
+    return "Inline mention blocked: path escapes the selected workspace.";
+  }
+  if (isAbsoluteLocalPath(resolvedPath) && !isPathInsideWorkspace(resolvedPath, workspacePath)) {
+    return "Inline mention blocked: path is outside the selected workspace.";
+  }
+  return undefined;
+}
+
+function hasParentPathSegment(path: string): boolean {
+  return path
+    .replace(/^[.][\\/]/, "")
+    .split(/[\\/]+/)
+    .some((segment) => segment === "..");
+}
+
+function isPathInsideWorkspace(path: string, workspacePath: string): boolean {
+  const target = normalizePathForWorkspaceCompare(path);
+  const workspace = normalizePathForWorkspaceCompare(workspacePath);
+  return Boolean(workspace) && (target === workspace || target.startsWith(`${workspace}/`));
+}
+
+function normalizePathForWorkspaceCompare(path: string): string {
+  return path
+    .replace(/\\/g, "/")
+    .replace(/\/+/g, "/")
+    .replace(/\/$/, "")
+    .toLowerCase();
 }
 
 function isAbsoluteLocalPath(path: string): boolean {
@@ -2101,7 +2237,8 @@ function estimateContextBudget(
 ): ContextBudgetEstimate {
   const rawEstimatedTokens = items.reduce((total, item) => total + item.estimatedTokens, 0);
   const calibration = getTokenizerCalibration(modelConfig);
-  const estimatedTokens = calibration
+  const calibrationTrusted = calibration ? calibration.trustLevel !== "untrusted" : false;
+  const estimatedTokens = calibration && calibrationTrusted
     ? Math.max(1, Math.ceil(rawEstimatedTokens * calibration.factor))
     : rawEstimatedTokens;
   const modelTokenLimit = getModelTokenLimit(modelConfig);
@@ -2119,7 +2256,9 @@ function estimateContextBudget(
     ? `Model limit ${formatApproxTokens(modelTokenLimit)}`
     : `Fallback budget ${formatApproxTokens(CONTEXT_TOKEN_BUDGET)}`;
   const calibrationSource = calibration
-    ? `Tokenizer-calibrated x${calibration.factor.toFixed(2)} from ${calibration.sampleCount} sample${calibration.sampleCount === 1 ? "" : "s"}`
+    ? calibrationTrusted
+      ? `Tokenizer-calibrated x${calibration.factor.toFixed(2)} from ${calibration.sampleCount} trusted sample${calibration.sampleCount === 1 ? "" : "s"}`
+      : `Tokenizer calibration not applied: ${calibration.trustReason}`
     : undefined;
   const calibrationDrift = calibration ? formatCalibrationDrift(calibration) : undefined;
   const calibratedSource = calibrationSource ? `${source}; ${calibrationSource}` : source;
@@ -2143,6 +2282,7 @@ function estimateContextBudget(
 }
 
 function estimateAttachmentTokens(attachment: ChatAttachment): number {
+  if (attachment.blockedReason) return 1;
   const serializedContext = serializeAttachmentForBackendEstimate(attachment);
   const serializedTokens = estimateBackendSerializedContextTokens(serializedContext);
   const screenshotTokens = attachment.screenshotDataUrl ? 900 : 0;
@@ -2224,6 +2364,8 @@ function getTokenizerCalibration(
   maxFactor: number;
   driftPercent: number;
   driftLevel: "low" | "medium" | "high";
+  trustLevel: "trusted" | "provisional" | "untrusted";
+  trustReason: string;
 } | undefined {
   const ratios = (model?.tokenizer_calibration ?? [])
     .map((sample) => {
@@ -2251,6 +2393,16 @@ function getTokenizerCalibration(
     : driftPercent >= 25
       ? "medium"
       : "low";
+  const trustLevel = ratios.length === 1
+    ? "provisional"
+    : driftLevel === "high"
+      ? "untrusted"
+      : "trusted";
+  const trustReason = trustLevel === "untrusted"
+    ? `high calibration drift (${driftPercent}% spread) exceeds the trusted threshold`
+    : trustLevel === "provisional"
+      ? "single calibration sample is provisional"
+      : `${driftLevel} calibration drift is within the trusted threshold`;
   return {
     factor: boundedMedian,
     sampleCount: ratios.length,
@@ -2258,6 +2410,8 @@ function getTokenizerCalibration(
     maxFactor,
     driftPercent,
     driftLevel,
+    trustLevel,
+    trustReason,
   };
 }
 
@@ -2267,7 +2421,7 @@ function formatCalibrationDrift(
   if (calibration.sampleCount === 1) {
     return "single calibration sample";
   }
-  return `${calibration.driftLevel} calibration drift (${calibration.driftPercent}% spread)`;
+  return `${calibration.driftLevel} calibration drift (${calibration.driftPercent}% spread; ${calibration.trustLevel})`;
 }
 
 function formatApproxTokens(tokens: number): string {
@@ -2368,6 +2522,8 @@ function getSlashCommandDescription(command: ChatCommandName): string {
     fix: "Prepare a focused bug-fix request.",
     test: "Prepare a targeted verification request.",
     commit: "Prepare a policy-gated commit workflow.",
+    checkpoint: "Create a bounded rollback checkpoint.",
+    rollback: "List, preview, or queue an approval-gated checkpoint restore.",
     mcp: "Inspect connector and MCP context expectations.",
     mention: "Explain visible context mentions.",
     compact: "Prepare visible context compaction.",

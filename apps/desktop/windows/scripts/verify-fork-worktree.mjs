@@ -335,7 +335,10 @@ assert(importIndexGenerator.includes("collectImportEdges"), "fork import-index g
 assert(importIndexGenerator.includes('from "typescript"'), "fork import-index generator does not load the TypeScript compiler API");
 assert(importIndexGenerator.includes("collectAstExportSymbols"), "fork import-index generator does not collect compiler AST export symbols");
 assert(importIndexGenerator.includes("collectCompilerDiagnosticHints"), "fork import-index generator does not collect compiler diagnostic hints");
+assert(importIndexGenerator.includes("collectTypeScriptSemanticDiagnosticMap"), "fork import-index generator does not collect TypeScript program semantic diagnostics");
 assert(importIndexGenerator.includes("ts.createSourceFile"), "fork import-index generator does not parse TypeScript/JavaScript with the compiler API");
+assert(importIndexGenerator.includes("ts.createProgram"), "fork import-index generator does not create TypeScript programs for semantic diagnostics");
+assert(importIndexGenerator.includes("program.getSemanticDiagnostics"), "fork import-index generator does not read TypeScript semantic diagnostics");
 assert(importIndexGenerator.includes("FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX"), "fork import-index generator does not emit the compiler AST export index");
 assert(importIndexGenerator.includes("FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX"), "fork import-index generator does not emit the compiler diagnostic index");
 assert(importIndexGenerator.includes('"re-export"') && importIndexGenerator.includes('"dynamic-import"'), "fork import-index generator does not classify import edge kinds");
@@ -399,6 +402,7 @@ assert(forkConflictAnalysis.includes("UnterminatedString") && forkConflictAnalys
 assert(forkConflictAnalysis.includes("collectForkConflictLiveDraftSemanticHints"), "live draft diagnostics do not include semantic-risk preflight");
 assert(forkConflictAnalysis.includes("DuplicateDeclaration") && forkConflictAnalysis.includes("DanglingImportSpecifier"), "live draft semantic diagnostics do not cover duplicate declarations and empty imports");
 assert(forkConflictAnalysis.includes("EmptyReturnValue") && forkConflictAnalysis.includes("UnresolvedPlaceholder"), "live draft semantic diagnostics do not cover dropped return values and unresolved placeholders");
+assert(forkConflictAnalysis.includes("entry.semanticDiagnostics") && forkConflictAnalysis.includes("generated ${entry.scriptKind} compiler semantic coverage"), "fork conflict analysis does not surface generated TypeScript semantic diagnostic coverage");
 assert(forkConflictAnalysis.indexOf("getForkConflictCompilerAstExportTestGraphSuggestions(path, contents)") < forkConflictAnalysis.indexOf("getForkConflictLiveDraftCompilerDiagnosticTestGraphSuggestions(path, contents)"), "live draft diagnostics should run after compiler AST export suggestions");
 assert(forkConflictAnalysis.indexOf("getForkConflictLiveDraftCompilerDiagnosticTestGraphSuggestions(path, contents)") < forkConflictAnalysis.indexOf("getForkConflictCompilerDiagnosticTestGraphSuggestions(path, contents)"), "static compiler diagnostics should run after live draft diagnostic preflight");
 assert(forkConflictAnalysis.includes("__all__"), "fork conflict export graph does not inspect Python explicit export lists");

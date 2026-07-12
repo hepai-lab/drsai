@@ -81,7 +81,7 @@ import traceback
 
 import uuid
 
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 
 from datetime import datetime
 
@@ -94,7 +94,7 @@ from typing import Any, Optional
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 import httpx
 
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from loguru import logger
 
@@ -147,6 +147,12 @@ from drsai.modules.managers.messages import AgentLogEvent
 from drsai.utils.utils import compress_state, decompress_state
 
 from drsai.backend.cli.history import CLISessionStore
+from drsai.platform_auth import (
+    classify_model_error,
+    context_from_bearer,
+    platform_auth_scope,
+    verify_gateway_instance,
+)
 
 
 
@@ -248,7 +254,8 @@ def _get_default_model_alias() -> str:
 
         alias = load_config().get("defult_config_name")
         if isinstance(alias, str) and alias.strip():
-            return alias.strip()
+            normalized = alias.strip()
+            return "deepseek-v4-pro" if normalized == "hepai/deepseek-v4-pro" else normalized
     except Exception as e:
         logger.debug(f"Failed to read default model alias from cli config: {e}")
     return DEFAULT_CONFIG_NAME
@@ -1092,6 +1099,16 @@ app = FastAPI(
 )
 
 
+@app.middleware("http")
+async def authenticate_desktop_gateway(request: Request, call_next):
+    if not verify_gateway_instance(request.headers.get("x-opendrsai-gateway-token")):
+        return JSONResponse(
+            status_code=401,
+            content={"error": {"code": "gateway_unauthorized", "message": "Gateway caller is not authorized.", "retryable": False}},
+        )
+    return await call_next(request)
+
+
 
 
 
@@ -1456,6 +1473,25 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
 
     """
 
+    auth_context = None
+    if raw_request.headers.get("x-opendrsai-auth-mode") == "oidc":
+        try:
+            auth_context = context_from_bearer(
+                raw_request.headers.get("authorization"),
+                request.user_id or "",
+            )
+        except ValueError as exc:
+            code = str(exc)
+            status_code = 403 if code == "subject_mismatch" else 401
+            raise HTTPException(
+                status_code=status_code,
+                detail={
+                    "code": code,
+                    "message": "The HepAI authentication context is not valid.",
+                    "retryable": code == "token_expired",
+                },
+            ) from exc
+
     # Extract the last user message as the task
 
     user_msgs = [m for m in request.messages if m.role == "user"]
@@ -1491,34 +1527,29 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
 
         try:
 
-            async for event in manager.run_stream(
+            with platform_auth_scope(auth_context) if auth_context else nullcontext():
+                event_stream = manager.run_stream(
+                    task=task,
+                    thread_id=thread_id,
+                    user_id=user_id,
+                    model_alias=request.model if request.model != "drsai" else None,
+                    work_dir=work_dir,
+                    cancellation_token=cancel_token,
+                )
+                async for event in event_stream:
 
-                task=task,
+                    sse = _event_to_sse(event)
 
-                thread_id=thread_id,
+                    if sse:
 
-                user_id=user_id,
+                        if "[DONE]" in sse:
+                            sent_done = True
 
-                model_alias=request.model if request.model != "drsai" else None,
+                        if sse.startswith("data:") and "[DONE]" not in sse:
 
-                work_dir=work_dir,
+                            has_content = True
 
-                cancellation_token=cancel_token,
-
-            ):
-
-                sse = _event_to_sse(event)
-
-                if sse:
-
-                    if "[DONE]" in sse:
-                        sent_done = True
-
-                    if sse.startswith("data:") and "[DONE]" not in sse:
-
-                        has_content = True
-
-                    yield sse
+                        yield sse
 
             if not sent_done:
                 yield "data: [DONE]\n\n"
@@ -1542,12 +1573,10 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
 
 
         except Exception as e:
-
-            logger.error(f"Agent error for session {thread_id}: {e}")
-
-            logger.error(traceback.format_exc())
-
-            yield f"data: {json.dumps({'error': {'message': str(e)}})}\n\n"
+            error = classify_model_error(e)
+            logger.error(f"Agent error for session {thread_id}: code={error['code']}")
+            logger.debug(traceback.format_exc())
+            yield f"data: {json.dumps({'error': error})}\n\n"
 
             yield "data: [DONE]\n\n"
 

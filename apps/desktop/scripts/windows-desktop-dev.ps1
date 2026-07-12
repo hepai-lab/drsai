@@ -5,10 +5,13 @@ param(
     [switch]$ForceInstall,
     [switch]$SkipNpmInstall,
     [switch]$NoDevServer,
-    [switch]$NoGateway
+    [switch]$NoGateway,
+    [switch]$WithGateway
 )
 
 $ErrorActionPreference = "Stop"
+$StartupStopwatch = [Diagnostics.Stopwatch]::StartNew()
+$env:OPENDRSAI_DEV_START_EPOCH_MS = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds().ToString()
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = (Resolve-Path (Join-Path $ScriptDir "..\..\..")).Path
@@ -507,6 +510,21 @@ if (-not $DrsaiHome) {
 }
 
 $DevLogDir = Join-Path $DrsaiHome "logs\desktop-dev"
+$DevCacheDir = Join-Path $DrsaiHome "cache\desktop-dev"
+$BackendValidationStamp = Join-Path $DevCacheDir "backend-validation.txt"
+$FrontendValidationStamp = Join-Path $DevCacheDir "frontend-validation.txt"
+
+function Get-ValidationFingerprint {
+    param([string[]]$Paths)
+    return (($Paths | ForEach-Object {
+        if (Test-Path $_) {
+            $item = Get-Item -LiteralPath $_
+            "$($item.FullName)|$($item.Length)|$($item.LastWriteTimeUtc.Ticks)"
+        } else {
+            "$_|missing"
+        }
+    }) -join "`n")
+}
 
 if (-not (Test-Path $Installer)) {
     throw "Cannot find installer script: $Installer"
@@ -550,7 +568,21 @@ if ($InstallPrerequisites) {
     $installArgs += "-InstallPrerequisites"
 }
 
-$backendReady = if ($ForceInstall) { $false } else { Test-DeveloperBackendReady -InstallPath $InstallDir -ExpectedRepo $RepoRoot }
+$backendFingerprint = Get-ValidationFingerprint -Paths @(
+    (Join-Path $RepoRoot "pyproject.toml"),
+    (Join-Path $RepoRoot "uv.lock"),
+    (Join-Path $RepoRoot "cores\python\packages\drsai\pyproject.toml")
+)
+$cachedBackendReady = (-not $ForceInstall) -and (Test-Path $BackendValidationStamp) -and
+    ((Get-Content -LiteralPath $BackendValidationStamp -Raw -ErrorAction SilentlyContinue) -eq $backendFingerprint) -and
+    (Test-Path (Join-Path $InstallDir "venv\Scripts\python.exe"))
+$backendReady = if ($cachedBackendReady) { $true } elseif ($ForceInstall) { $false } else {
+    Test-DeveloperBackendReady -InstallPath $InstallDir -ExpectedRepo $RepoRoot
+}
+if ($backendReady -and -not $cachedBackendReady) {
+    New-Item -ItemType Directory -Force -Path $DevCacheDir | Out-Null
+    Set-Content -LiteralPath $BackendValidationStamp -Value $backendFingerprint -NoNewline
+}
 if ($backendReady -and -not $ForceInstall) {
     Write-Host "[1/3] Backend install" -ForegroundColor Yellow
     Write-Host "    OK Developer backend already ready." -ForegroundColor Green
@@ -564,6 +596,8 @@ if ($backendReady -and -not $ForceInstall) {
         -LogName "backend-install" `
         -LogDir $DevLogDir `
         -ShowNestedSteps
+    New-Item -ItemType Directory -Force -Path $DevCacheDir | Out-Null
+    Set-Content -LiteralPath $BackendValidationStamp -Value $backendFingerprint -NoNewline
 }
 
 if ($InstallOnly) {
@@ -576,7 +610,8 @@ if ($InstallOnly) {
 }
 
 $GatewayProcess = $null
-if ($NoDevServer -or $NoGateway) {
+$StartGateway = $WithGateway -and -not $NoGateway -and -not $NoDevServer
+if (-not $StartGateway) {
     Write-Host "[2/3] Gateway hot reload" -ForegroundColor Yellow
     Write-Host "    SKIP Gateway hot reload." -ForegroundColor Yellow
 } else {
@@ -606,8 +641,22 @@ try {
                 -LogName "npm-install" `
                 -LogDir $DevLogDir
         }
-        Repair-TailwindNativeBinding -NpmCommand $npm
-        Repair-ElectronBinary -NpmCommand $npm
+        $frontendFingerprint = Get-ValidationFingerprint -Paths @(
+            (Join-Path $DesktopDir "package.json"),
+            (Join-Path $DesktopDir "package-lock.json")
+        )
+        $frontendCacheReady = (Test-Path $FrontendValidationStamp) -and
+            ((Get-Content -LiteralPath $FrontendValidationStamp -Raw -ErrorAction SilentlyContinue) -eq $frontendFingerprint) -and
+            (Test-Path "node_modules\electron\dist\electron.exe") -and
+            (Test-Path "node_modules\@tailwindcss\oxide-win32-x64-msvc\tailwindcss-oxide.win32-x64-msvc.node")
+        if ($frontendCacheReady) {
+            Write-Host "    OK frontend dependency validation cached." -ForegroundColor Green
+        } else {
+            Repair-TailwindNativeBinding -NpmCommand $npm
+            Repair-ElectronBinary -NpmCommand $npm
+            New-Item -ItemType Directory -Force -Path $DevCacheDir | Out-Null
+            Set-Content -LiteralPath $FrontendValidationStamp -Value $frontendFingerprint -NoNewline
+        }
     } else {
         Write-Host "    SKIP npm install." -ForegroundColor Yellow
     }
@@ -619,9 +668,16 @@ try {
     }
 
     Write-Host "    Starting Electron dev server..." -ForegroundColor Green
+    Write-Host "    Startup preparation: $($StartupStopwatch.ElapsedMilliseconds) ms" -ForegroundColor DarkGray
     $env:DRSAI_HOME = $DrsaiHome
-    $env:DRSAI_GATEWAY_DEV_MANAGED = "1"
-    $env:DRSAI_GATEWAY_HOT_RELOAD = "1"
+    $env:OPENDRSAI_GATEWAY_STARTUP = if ($StartGateway) { "eager" } else { "on-demand" }
+    if ($StartGateway) {
+        $env:DRSAI_GATEWAY_DEV_MANAGED = "1"
+        $env:DRSAI_GATEWAY_HOT_RELOAD = "1"
+    } else {
+        Remove-Item Env:DRSAI_GATEWAY_DEV_MANAGED -ErrorAction SilentlyContinue
+        Remove-Item Env:DRSAI_GATEWAY_HOT_RELOAD -ErrorAction SilentlyContinue
+    }
     if (-not $npm) {
         $npm = Resolve-NpmCommand
     }

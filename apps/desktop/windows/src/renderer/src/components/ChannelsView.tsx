@@ -26,6 +26,8 @@ import type {
   DesktopChannelOutboundDelivery,
   DesktopChannelOutboundDraftResult,
   DesktopChannelSnapshotSyncResult,
+  DesktopExternalConnectionReadiness,
+  DesktopExternalConnectionReadinessResult,
 } from "@shared/desktopApi";
 import type { AppLanguage } from "../navigation";
 import { desktopApi } from "../desktopApi";
@@ -61,6 +63,8 @@ export function ChannelsView({
     useState<DesktopChannelOutboundDraftResult | null>(null);
   const [snapshotSyncResult, setSnapshotSyncResult] =
     useState<DesktopChannelSnapshotSyncResult | null>(null);
+  const [externalReadiness, setExternalReadiness] =
+    useState<DesktopExternalConnectionReadinessResult | null>(null);
   const [outboundDeliveries, setOutboundDeliveries] = useState<
     DesktopChannelOutboundDelivery[]
   >([]);
@@ -81,14 +85,16 @@ export function ChannelsView({
     setLoading(true);
     setError(null);
     try {
-      const [adapters, deliveries, inbound] = await Promise.all([
+      const [adapters, deliveries, inbound, readiness] = await Promise.all([
         desktopApi.listChannelAdapters(workspacePath),
         desktopApi.listChannelOutboundDeliveries({ workspacePath, limit: 6 }),
         desktopApi.listChannelInboundEvents({ workspacePath, limit: 6 }),
+        desktopApi.listExternalConnectionReadiness(workspacePath),
       ]);
       setResult(adapters);
       setOutboundDeliveries(deliveries);
       setInboundEvents(inbound);
+      setExternalReadiness(readiness);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Unable to load channel adapters.");
     } finally {
@@ -367,6 +373,40 @@ export function ChannelsView({
         </dl>
       )}
 
+      {externalReadiness && (
+        <section
+          className="external-readiness-panel"
+          aria-label="External connection readiness"
+        >
+          <div className="external-readiness-header">
+            <div>
+              <span>External readiness</span>
+              <h3>Connection matrix</h3>
+            </div>
+            <dl>
+              <div>
+                <dt>Ready</dt>
+                <dd>{externalReadiness.readyCount}</dd>
+              </div>
+              <div>
+                <dt>Partial</dt>
+                <dd>{externalReadiness.partialCount}</dd>
+              </div>
+              <div>
+                <dt>Planned</dt>
+                <dd>{externalReadiness.plannedCount}</dd>
+              </div>
+            </dl>
+          </div>
+          <div className="external-readiness-grid">
+            {externalReadiness.connections.map((connection) => (
+              <ExternalReadinessCard key={connection.id} connection={connection} />
+            ))}
+          </div>
+          <small>{externalReadiness.verification}</small>
+        </section>
+      )}
+
       {error && <div className="channels-error">{error}</div>}
       {importError && <div className="channels-error">{importError}</div>}
       {snapshotSyncResult && (
@@ -574,6 +614,87 @@ export function ChannelsView({
       </section>
     </div>
   );
+}
+
+function ExternalReadinessCard({
+  connection,
+}: {
+  connection: DesktopExternalConnectionReadiness;
+}): React.JSX.Element {
+  return (
+    <article className={`external-readiness-card ${connection.status}`}>
+      <div>
+        <span>{connection.id}</span>
+        <b>{connection.name}</b>
+        <em>{formatExternalStatus(connection.status)}</em>
+      </div>
+      <dl>
+        <div>
+          <dt>Mode</dt>
+          <dd>{connection.readOnly ? "Read-only" : "Writable"}</dd>
+        </div>
+        <div>
+          <dt>Config</dt>
+          <dd>{connection.configured ? "Configured" : "Needs setup"}</dd>
+        </div>
+      </dl>
+      <ul>
+        {connection.capabilitySources.slice(0, 4).map((source) => (
+          <li key={source}>{source}</li>
+        ))}
+      </ul>
+      <p>{connection.evidence[0]}</p>
+      <div className="external-readiness-gaps" aria-label={`${connection.name} remaining gaps`}>
+        <span>Remaining gaps</span>
+        <ul>
+          {connection.gaps.slice(0, 3).map((gap) => (
+            <li key={gap}>{gap}</li>
+          ))}
+        </ul>
+      </div>
+      {connection.reconnectReadinessChecks && (
+        <div
+          className="external-readiness-checks"
+          aria-label={`${connection.name} reconnect readiness checks`}
+        >
+          <span>Reconnect readiness</span>
+          <ul>
+            {connection.reconnectReadinessChecks.slice(0, 4).map((check) => (
+              <li key={check}>{check}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {connection.reconnectPolicy && (
+        <div
+          className="external-readiness-reconnect"
+          aria-label={`${connection.name} reconnect review policy`}
+        >
+          <span>Reconnect review</span>
+          <b>{connection.reconnectPolicy.automatic ? "Automatic" : "Manual approval"}</b>
+          <ul>
+            {connection.reconnectPolicy.triggers.slice(0, 2).map((trigger) => (
+              <li key={trigger}>{trigger}</li>
+            ))}
+          </ul>
+          <small>{connection.reconnectPolicy.safeguards[0]}</small>
+          <small>{connection.reconnectPolicy.verification}</small>
+        </div>
+      )}
+      <small>{connection.approvalBoundary}</small>
+      <small className="external-readiness-verification">{connection.verification}</small>
+    </article>
+  );
+}
+
+function formatExternalStatus(
+  status: DesktopExternalConnectionReadiness["status"],
+): string {
+  return {
+    available: "Ready",
+    partial: "Partial",
+    planned: "Planned",
+  }[status];
 }
 
 function ChannelAdapterCard({

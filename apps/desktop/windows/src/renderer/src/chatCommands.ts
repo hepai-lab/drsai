@@ -23,6 +23,8 @@ export const CHAT_COMMAND_NAMES = [
   "fix",
   "test",
   "commit",
+  "checkpoint",
+  "rollback",
   "mcp",
   "mention",
   "compact",
@@ -63,6 +65,7 @@ export type ChatRuntimeModeName =
   | "fix"
   | "test"
   | "commit"
+  | "compact"
   | "fork";
 
 export interface ChatRuntimeMode {
@@ -164,12 +167,16 @@ export function runChatCommand(
       return describeModeCommand("test", "Test mode", "Ask for relevant automated tests or a targeted verification run before broader execution.", command.args);
     case "commit":
       return describeCommitCommand(command.args);
+    case "checkpoint":
+      return describeCheckpointCommand(command.args, context);
+    case "rollback":
+      return describeRollbackCommand(command.args, context);
     case "mcp":
       return describeMcpCommand(command.args, context);
     case "mention":
       return describeMentionCommand(command.args, context);
     case "compact":
-      return describeContextCommand("Compact context", "Review the queued context before asking the model to summarize or compact it.", context);
+      return describeModeCommand("compact", "Compact mode", "Ask the model to summarize visible context and preserve reusable decisions before continuing.", command.args);
     case "memory":
       return describeMemoryCommand(command.args, context);
     case "skills":
@@ -522,8 +529,49 @@ function describeCommitCommand(args: string): ChatCommandResult {
   };
 }
 
+function describeCheckpointCommand(args: string, context: ChatCommandContext): ChatCommandResult {
+  const label = args.trim();
+  return {
+    title: "Workspace checkpoint",
+    content: [
+      context.workspacePath
+        ? `Workspace: ${context.workspacePath}.`
+        : "Select a workspace before creating a rollback checkpoint.",
+      label ? `Suggested checkpoint label: ${label}.` : "No checkpoint label was provided.",
+      "Submitting this command creates a bounded local workspace checkpoint when a workspace is selected.",
+      "Open the Files panel to create a bounded workspace checkpoint before risky edits.",
+      "Checkpoint create and preview are local workspace operations; restore still requires Approval Center confirmation.",
+    ].join("\n"),
+  };
+}
+
+function describeRollbackCommand(args: string, context: ChatCommandContext): ChatCommandResult {
+  const selector = args.trim();
+  return {
+    title: "Rollback checkpoint",
+    content: [
+      context.workspacePath
+        ? `Workspace: ${context.workspacePath}.`
+        : "Select a workspace before previewing or restoring a checkpoint.",
+      selector ? `Checkpoint selector: ${selector}.` : "No checkpoint id or label was provided.",
+      "Use `/rollback list` to show recent checkpoint ids before choosing one.",
+      "Use `/rollback preview <checkpoint>` to inspect checkpoint differences.",
+      "Use `/rollback restore <checkpoint>` to queue restore approval.",
+      "Use the Files panel to preview checkpoint differences before restore.",
+      "Restore is approval-gated and may overwrite or remove files captured by the checkpoint manifest.",
+    ].join("\n"),
+  };
+}
+
 function describeStatusCommand(context: ChatCommandContext): ChatCommandResult {
   const instructionCount = context.workspaceInstructions?.length ?? 0;
+  const projectMemoryCount = context.projectMemory?.length ?? 0;
+  const customCommandCount = context.customCommands?.length ?? 0;
+  const availableAgentCount = context.availableAgents?.length ?? 0;
+  const availableModelCount = context.availableModels?.length ?? 0;
+  const commandCreatedAttachmentCount = context.attachments.filter((attachment) =>
+    attachment.path.startsWith("selection:") || attachment.path.startsWith("mcp-prompt:"),
+  ).length;
   const attachmentLabels = context.attachments.length
     ? context.attachments.map((attachment) => `${attachment.kind}:${attachment.name}`).join(", ")
     : "none";
@@ -534,8 +582,13 @@ function describeStatusCommand(context: ChatCommandContext): ChatCommandResult {
       `Workspace: ${context.workspacePath || "not selected"}.`,
       `Workspace instructions: ${instructionCount}.`,
       `Context attachments: ${attachmentLabels}.`,
+      `Command-created context attachments: ${commandCreatedAttachmentCount}.`,
+      `Project memory entries: ${projectMemoryCount}.`,
+      `Custom commands: ${customCommandCount}.`,
       `Agent: ${context.options?.agentName || "OpenDrSai"}.`,
+      `Available agents: ${availableAgentCount}.`,
       `Model: ${context.options?.model || "default"}.`,
+      `Available models: ${availableModelCount}.`,
       `Thinking effort: ${context.options?.thinkingEffort || "medium"}.`,
       `Runtime mode: ${context.currentRuntimeMode ? `${context.currentRuntimeMode.label}${context.currentRuntimeMode.intent ? ` (${context.currentRuntimeMode.intent})` : ""}` : "default chat"}.`,
     ].join("\n"),

@@ -145,6 +145,12 @@ const routeFixtures = [
     reason: "Nginx/Apache web server configs must route before generic source/config fallbacks",
   },
   {
+    file: "runtime.kdbx",
+    route: "summarizeKeePassDatabaseFile(filePath, size)",
+    before: "isScientificContainerExtension(extension)",
+    reason: "KeePass KDBX databases must route through safe header-only previews before generic binary/document fallbacks",
+  },
+  {
     file: "sarif.json",
     route: "summarizeSarifResultFile(filePath, extension, size)",
     before: "summarizeJsonDataFile(filePath, size)",
@@ -211,6 +217,24 @@ const routeFixtures = [
     reason: "VS Code extension recommendations must route before generic JSON summaries",
   },
   {
+    file: "pnpm-workspace.yaml",
+    route: "isJsWorkspaceConfigFile(filePath, extension)",
+    before: "summarizeConfigOrLogFile(filePath, extension, size)",
+    reason: "pnpm workspace config must route before generic YAML/config summaries",
+  },
+  {
+    file: "turbo.json",
+    route: "isJsWorkspaceConfigFile(filePath, extension)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "Turborepo config must route before generic JSON summaries",
+  },
+  {
+    file: "nx.json",
+    route: "isJsWorkspaceConfigFile(filePath, extension)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "Nx workspace config must route before generic JSON summaries",
+  },
+  {
     file: "slack-export.json",
     route: "isChatExportJsonFile(filePath, extension)",
     before: "summarizeJsonDataFile(filePath, size)",
@@ -235,6 +259,42 @@ const routeFixtures = [
     reason: "ChatGPT conversations export JSON must route before generic JSON summaries",
   },
   {
+    file: "claude-conversations.json",
+    route: "isChatExportJsonFile(filePath, extension)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "Claude conversations export JSON must route before generic JSON summaries",
+  },
+  {
+    file: "telegram-export.json",
+    route: "isChatExportJsonFile(filePath, extension)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "Telegram chat export JSON must route before generic JSON summaries",
+  },
+  {
+    file: "slack-export.csv",
+    route: "extension === \".chat-export.csv\"",
+    before: "summarizeCsvDataFile(filePath, size, extension)",
+    reason: "Slack/Teams/Discord chat export CSV must route before generic structured CSV summaries",
+  },
+  {
+    file: "chrome-passwords.csv",
+    route: "extension === \".browser-passwords.csv\"",
+    before: "summarizeCsvDataFile(filePath, size, extension)",
+    reason: "browser password CSV exports must route before generic structured CSV summaries",
+  },
+  {
+    file: "whatsapp-chat.txt",
+    route: "extension === \".chat-export.txt\"",
+    before: "readFileSync(filePath, { encoding: \"utf8\", flag: \"r\" })",
+    reason: "WhatsApp chat text exports must route before final raw text fallback",
+  },
+  {
+    file: "zoom-transcript.txt",
+    route: "extension === \".meeting-transcript.txt\"",
+    before: "readFileSync(filePath, { encoding: \"utf8\", flag: \"r\" })",
+    reason: "meeting transcript text exports must route before final raw text fallback",
+  },
+  {
     file: "package.json",
     route: "summarizeNodePackageManifestFile(filePath, size)",
     before: "summarizeJsonDataFile(filePath, size)",
@@ -251,6 +311,19 @@ const routeFixtures = [
     route: "summarizePostmanEnvironmentFile(filePath, size)",
     before: "summarizeJsonDataFile(filePath, size)",
     reason: "Postman environment JSON must route before generic JSON summaries",
+  },
+  {
+    file: "animation.json",
+    route: "isLottieAnimationJsonFile(filePath, extension)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "Lottie/Bodymovin animation JSON must route before generic JSON summaries",
+  },
+  {
+    file: "manifest.json",
+    route: "isPwaWebManifestFile(filePath, extension)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "PWA-shaped manifest.json files must route before generic JSON summaries",
+    scope: "if (extension === \".json\")",
   },
   {
     file: "openapi.json",
@@ -304,6 +377,13 @@ const routeFixtures = [
     reason: "direnv .envrc files must route through the specialized safe preview before generic source/raw fallbacks",
   },
   {
+    file: ".env.runtime",
+    route: "summarizeDotenvEnvironmentFile(filePath, size)",
+    before: "summarizeConfigOrLogFile(filePath, extension, size)",
+    reason: "dotenv environment files must route through specialized value-hidden previews before generic config summaries",
+    scope: "if (isDirenvConfigFile(extension))",
+  },
+  {
     file: "runtime.prom",
     route: "summarizeMetricsSnapshotFile(filePath, extension, size)",
     before: "readFileSync(filePath, { encoding: \"utf8\", flag: \"r\" })",
@@ -314,6 +394,24 @@ const routeFixtures = [
     route: "summarizeCalendarIcsFile(filePath, size)",
     before: "readFileSync(filePath, { encoding: \"utf8\", flag: \"r\" })",
     reason: "iCalendar .ical snapshots must route before final raw text fallback",
+  },
+  {
+    file: "calendar.vcs",
+    route: "summarizeCalendarIcsFile(filePath, size)",
+    before: "readFileSync(filePath, { encoding: \"utf8\", flag: \"r\" })",
+    reason: "vCalendar .vcs snapshots must route before final raw text fallback",
+  },
+  {
+    file: "calendar-agenda.csv",
+    route: "summarizeCalendarCsvFile(filePath, size)",
+    before: "summarizeCsvDataFile(filePath, size, extension)",
+    reason: "Calendar CSV agenda exports must route before generic structured CSV summaries",
+  },
+  {
+    file: "contacts.csv",
+    route: "summarizeContactCsvFile(filePath, size)",
+    before: "summarizeCsvDataFile(filePath, size, extension)",
+    reason: "Contact CSV exports must route before generic structured CSV summaries",
   },
   {
     file: "runtime.logcat",
@@ -364,10 +462,52 @@ const routeFixtures = [
     reason: "crontab files must route before final raw text fallback",
   },
   {
+    file: "runtime.desktop",
+    route: "extension === \".desktop\"",
+    before: "kind === \"document\" && extension !== \".ipynb\"",
+    reason: "FreeDesktop .desktop launchers must route before generic document text extraction",
+  },
+  {
     file: "runtime.supervisord.conf",
     route: "isSupervisorConfigFile(filePath, extension)",
     before: "isConfigOrLogExtension(extension)",
     reason: "Supervisor config files must route before generic config/log summaries",
+  },
+  {
+    file: ".htaccess",
+    route: "isWebServerConfigFile(filePath, extension)",
+    before: "isConfigOrLogExtension(extension)",
+    reason: ".htaccess must route before generic config/log summaries",
+  },
+  {
+    file: "runtime.vhost.conf",
+    route: "isWebServerConfigFile(filePath, extension)",
+    before: "isConfigOrLogExtension(extension)",
+    reason: "Apache vhost config files must route before generic config/log summaries",
+  },
+  {
+    file: "runtime.hosts",
+    route: "isHostsFile(filePath, extension)",
+    before: "isConfigOrLogExtension(extension)",
+    reason: "hosts files must route before generic config/log summaries",
+  },
+  {
+    file: "wg0.conf",
+    route: "isVpnConfigFile(filePath, extension)",
+    before: "isConfigOrLogExtension(extension)",
+    reason: "WireGuard client configs must route before generic config/log summaries",
+  },
+  {
+    file: "client.ovpn",
+    route: "isVpnConfigFile(filePath, extension)",
+    before: "readFileSync(filePath, { encoding: \"utf8\", flag: \"r\" })",
+    reason: "OpenVPN client profiles must route before final raw text fallback",
+  },
+  {
+    file: "hosts.txt",
+    route: "isHostsFile(filePath, extension)",
+    before: "readFileSync(filePath, { encoding: \"utf8\", flag: \"r\" })",
+    reason: "hosts.txt snapshots must route before final raw text fallback",
   },
   {
     file: "runtime.tap",
@@ -412,16 +552,142 @@ const routeFixtures = [
     reason: "pip constraints text files must route before final raw text fallback",
   },
   {
+    file: ".pypirc",
+    route: "isPythonPackageIndexConfigFile(filePath, extension)",
+    before: "isConfigOrLogExtension(extension)",
+    reason: ".pypirc package index configs must route before generic config/log summaries",
+  },
+  {
     file: "robots.txt",
     route: "isWebCrawlMetadataFile(extension)",
     before: "readFileSync(filePath, { encoding: \"utf8\", flag: \"r\" })",
     reason: "robots.txt crawl metadata must route before final raw text fallback",
   },
   {
+    file: "llms.txt",
+    route: "isLlmsMetadataFile(extension)",
+    before: "readFileSync(filePath, { encoding: \"utf8\", flag: \"r\" })",
+    reason: "llms.txt website metadata must route before final raw text fallback",
+  },
+  {
+    file: "site.webmanifest",
+    route: "isPwaWebManifestFile(filePath, extension)",
+    before: "readFileSync(filePath, { encoding: \"utf8\", flag: \"r\" })",
+    reason: "PWA web manifests must route before final raw text fallback",
+  },
+  {
+    file: "extension-manifest.json",
+    route: "isBrowserExtensionManifestFile(filePath, extension)",
+    before: "isPwaWebManifestFile(filePath, extension)",
+    reason: "Browser extension manifests must route before PWA/generic JSON manifest fallbacks",
+  },
+  {
+    file: "browser-extensions.json",
+    route: "isBrowserExtensionInventoryFile(filePath, extension)",
+    before: "isPwaWebManifestFile(filePath, extension)",
+    reason: "Browser extension inventory JSON exports must route before PWA/generic JSON fallbacks",
+  },
+  {
+    file: "service-worker.js",
+    route: "isPwaServiceWorkerScriptFile(filePath, extension)",
+    before: "summarizeSourceCodeFile(filePath, extension, size)",
+    reason: "PWA service worker scripts must route through specialized safe preview before generic JavaScript source summaries",
+  },
+  {
     file: "cookies.txt",
     route: "extension === \".browser-cookies.txt\"",
     before: "readFileSync(filePath, { encoding: \"utf8\", flag: \"r\" })",
     reason: "Netscape cookies.txt exports must route before final raw text fallback",
+  },
+  {
+    file: "autofill.csv",
+    route: "extension === \".browser-autofill.csv\" || extension === \".browser-autofill.json\"",
+    before: "summarizeCsvDataFile(filePath, size, extension)",
+    reason: "Browser autofill CSV exports must route before generic CSV summaries",
+  },
+  {
+    file: "autofill.json",
+    route: "extension === \".browser-autofill.csv\" || extension === \".browser-autofill.json\"",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "Browser autofill JSON exports must route before generic JSON summaries",
+  },
+  {
+    file: "bookmarks.json",
+    route: "extension === \".browser-bookmarks.json\"",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "Browser bookmark JSON exports must route before generic JSON summaries",
+  },
+  {
+    file: "history.csv",
+    route: "extension === \".browser-history.csv\" || extension === \".browser-history.json\"",
+    before: "summarizeCsvDataFile(filePath, size, extension)",
+    reason: "Browser history CSV exports must route before generic CSV summaries",
+  },
+  {
+    file: "history.json",
+    route: "extension === \".browser-history.csv\" || extension === \".browser-history.json\"",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "Browser history JSON exports must route before generic JSON summaries",
+  },
+  {
+    file: "History",
+    route: "extension === \".browser-history.sqlite\"",
+    before: "summarizeSqliteDatabaseFile(filePath, size)",
+    reason: "Browser History SQLite snapshots must route before generic SQLite summaries",
+  },
+  {
+    file: "downloads.csv",
+    route: "extension === \".browser-downloads.csv\" || extension === \".browser-downloads.json\"",
+    before: "summarizeCsvDataFile(filePath, size, extension)",
+    reason: "Browser downloads CSV exports must route before generic CSV summaries",
+  },
+  {
+    file: "downloads.json",
+    route: "extension === \".browser-downloads.csv\" || extension === \".browser-downloads.json\"",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "Browser downloads JSON exports must route before generic JSON summaries",
+  },
+  {
+    file: "Downloads",
+    route: "extension === \".browser-downloads.sqlite\"",
+    before: "summarizeSqliteDatabaseFile(filePath, size)",
+    reason: "Browser Downloads SQLite snapshots must route before generic SQLite summaries",
+  },
+  {
+    file: "preferences.json",
+    route: "extension === \".browser-preferences.json\"",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "Browser preferences JSON exports must route before generic JSON summaries",
+  },
+  {
+    file: "feed.json",
+    route: "isJsonFeedDocumentFile(filePath, extension)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "JSON Feed snapshots must route before generic JSON summaries",
+  },
+  {
+    file: "runtime.js.map",
+    route: "isSourceMapFile(filePath, extension)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "source map JSON files must route before generic JSON summaries",
+  },
+  {
+    file: "local-storage.json",
+    route: "extension === \".browser-storage.json\"",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "Browser local storage JSON exports must route before generic JSON summaries",
+  },
+  {
+    file: "tabs.json",
+    route: "extension === \".browser-session.json\"",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "Browser session tab JSON exports must route before generic JSON summaries",
+  },
+  {
+    file: "session-storage.json",
+    route: "extension === \".browser-storage.json\"",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "Browser session storage JSON exports must route before generic JSON summaries",
   },
   {
     file: "AndroidManifest.xml",
@@ -434,6 +700,18 @@ const routeFixtures = [
     route: "isAppleInfoPlistFile(filePath, extension)",
     before: "kind === \"document\" && extension !== \".ipynb\"",
     reason: "Apple Info.plist manifests must route before generic XML document/config fallbacks",
+  },
+  {
+    file: "runtime.crash",
+    route: "isAppleCrashReportExtension(extension)",
+    before: "kind === \"document\" && extension !== \".ipynb\"",
+    reason: "Apple .crash reports must route before generic document text extraction",
+  },
+  {
+    file: "runtime.ips",
+    route: "isAppleCrashReportExtension(extension)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "Apple IPS crash JSON reports must route before generic JSON summaries",
   },
   {
     file: "project.pbxproj",
@@ -452,6 +730,12 @@ const routeFixtures = [
     route: "isWebCrawlMetadataFile(extension)",
     before: "summarizeGzipArchiveFile(filePath, extension, size)",
     reason: "gzipped sitemap metadata must route before generic gzip archive summaries",
+  },
+  {
+    file: "runtime.warc.gz",
+    route: "isWarcArchiveFile(extension)",
+    before: "summarizeGzipArchiveFile(filePath, extension, size)",
+    reason: "gzipped WARC snapshots must route before generic gzip archive summaries",
   },
   {
     file: "runtime.playwright.json",
@@ -585,6 +869,18 @@ const routeFixtures = [
     before: "readFileSync(filePath, { encoding: \"utf8\", flag: \"r\" })",
     reason: "known config/log files must route before final raw text fallback",
   },
+  {
+    file: ".ssh/config",
+    route: "isSshConfigFile(filePath, extension)",
+    before: "summarizeConfigOrLogFile(filePath, extension, size)",
+    reason: "SSH config files must route through specialized safe preview before generic config summaries",
+  },
+  {
+    file: "system.log",
+    route: "summarizeAppleUnifiedLogFile(filePath, size)",
+    before: "summarizeConfigOrLogFile(filePath, extension, size)",
+    reason: "Apple unified/syslog exports must route before generic config/log summaries",
+  },
 ];
 
 for (const fixture of routeFixtures) {
@@ -667,6 +963,12 @@ assertBefore(
   "isPythonDependencyManifestFile(filePath, extension)",
   "isConfigOrLogExtension(extension)",
   "Python dependency manifests must route before generic config/log summaries",
+);
+assertBefore(
+  summarizeFileBody,
+  "isPythonPackageIndexConfigFile(filePath, extension)",
+  "isConfigOrLogExtension(extension)",
+  ".pypirc package index configs must route before generic config/log summaries",
 );
 assertBefore(
   summarizeFileBody,
@@ -814,6 +1116,12 @@ assertBefore(
 );
 assertBefore(
   summarizeFileBody,
+  "isJsonFeedDocumentFile(filePath, extension)",
+  "summarizeJsonDataFile(filePath, size)",
+  "JSON Feed snapshots must route before generic JSON summaries",
+);
+assertBefore(
+  summarizeFileBody,
   "isFeedDocumentExtension(extension) || (extension === \".xml\" && looksLikeFeedXml(filePath))",
   "kind === \"document\" && extension !== \".ipynb\"",
   "RSS/Atom feed documents must route before generic document text extraction",
@@ -852,6 +1160,9 @@ assert(adapters.includes('".composer.json"') && adapters.includes('".gemfile"'),
 assert(adapters.includes('".syft.json"'), "normalized fixture coverage omits Syft SBOM files");
 assert(adapters.includes('".istanbul-coverage.json"'), "normalized fixture coverage omits Istanbul JSON coverage files");
 assert(adapters.includes('".chat-export.json"'), "normalized fixture coverage omits chat export JSON files");
+assert(adapters.includes('".chat-export.csv"'), "normalized fixture coverage omits chat export CSV files");
+assert(adapters.includes('".chat-export.txt"'), "normalized fixture coverage omits chat text export files");
+assert(adapters.includes('".browser-passwords.csv"'), "normalized fixture coverage omits browser password CSV files");
 assert(adapters.includes('".otel.json"') && adapters.includes('".otlp.json"'), "normalized fixture coverage omits OpenTelemetry/OTLP JSON files");
 assert(adapters.includes('".mcp-servers.json"'), "normalized fixture coverage omits MCP server config JSON files");
 assert(adapters.includes('".iis-web.config"'), "normalized fixture coverage omits IIS web.config files");
@@ -872,25 +1183,87 @@ assert(adapters.includes('".rdb"') && adapters.includes('".aof"'), "normalized f
 assert(adapters.includes('".prisma"') && adapters.includes('".dbml"'), "normalized fixture coverage omits database schema DSL files");
 assert(adapters.includes('".service"') && adapters.includes('".timer"') && adapters.includes('".crontab"'), "normalized fixture coverage omits systemd/cron schedule files");
 assert(adapters.includes('".supervisord.conf"'), "normalized fixture coverage omits Supervisor config files");
+assert(adapters.includes('".web-server.conf"') && adapters.includes('name === ".htaccess"') && adapters.includes('name.endsWith(".vhost.conf")'), "normalized fixture coverage omits Apache .htaccess/vhost web server config files");
+assert(adapters.includes('".graphml"') && adapters.includes("summarizeGraphmlDiagramPreview"), "normalized fixture coverage omits GraphML diagram source files");
+assert(adapters.includes('".hosts"'), "normalized fixture coverage omits hosts files");
+assert(adapters.includes('".vpn-config"') && adapters.includes("summarizeVpnConfigFile"), "normalized fixture coverage omits VPN config files");
 assert(adapters.includes('".robots.txt"') && adapters.includes('".sitemap.xml"') && adapters.includes('".sitemap.xml.gz"'), "normalized fixture coverage omits web crawl metadata files");
+assert(adapters.includes('".llms.txt"') && adapters.includes('".llms-full.txt"') && adapters.includes("summarizeLlmsMetadataFile"), "normalized fixture coverage omits llms.txt metadata files");
+assert(adapters.includes('".warc"') && adapters.includes('".warc.gz"'), "normalized fixture coverage omits WARC archive files");
+assert(adapters.includes('".webmanifest"'), "normalized fixture coverage omits PWA web manifest files");
+assert(adapters.includes('".browser-extension-manifest.json"'), "normalized fixture coverage omits browser extension manifest files");
+assert(adapters.includes('".browser-extension-inventory.json"'), "normalized fixture coverage omits browser extension inventory files");
+assert(adapters.includes("isPwaServiceWorkerScriptFile"), "route-order coverage omits PWA service worker detection");
 assert(adapters.includes('".browser-cookies.txt"'), "normalized fixture coverage omits browser cookies.txt files");
+assert(adapters.includes('".browser-autofill.csv"') && adapters.includes('".browser-autofill.json"'), "normalized fixture coverage omits browser autofill export files");
+assert(adapters.includes('".browser-bookmarks.json"'), "normalized fixture coverage omits browser bookmark JSON files");
+assert(adapters.includes('".browser-history.csv"') && adapters.includes('".browser-history.json"') && adapters.includes('".browser-history.sqlite"'), "normalized fixture coverage omits browser history export files");
+assert(adapters.includes('".browser-downloads.csv"') && adapters.includes('".browser-downloads.json"') && adapters.includes('".browser-downloads.sqlite"'), "normalized fixture coverage omits browser downloads export files");
+assert(adapters.includes('".browser-preferences.json"'), "normalized fixture coverage omits browser preferences export files");
+assert(adapters.includes('".browser-storage.json"'), "normalized fixture coverage omits browser storage export files");
+assert(adapters.includes('".browser-session.json"'), "normalized fixture coverage omits browser session tab export files");
 assert(adapters.includes('".helm-chart.yaml"') && adapters.includes('".kustomization.yaml"'), "normalized fixture coverage omits Helm/Kustomize package configs");
 assert(adapters.includes('".androidmanifest.xml"'), "normalized fixture coverage omits AndroidManifest.xml");
 assert(adapters.includes('".info.plist"'), "normalized fixture coverage omits Info.plist");
+assert(adapters.includes('".oslog"') && adapters.includes("system.log") && adapters.includes('".syslog"'), "normalized fixture coverage omits Apple unified/syslog files");
+assert(adapters.includes('".crash"') && adapters.includes('".ips"'), "normalized fixture coverage omits Apple crash report files");
+assert(adapters.includes('".kdbx"') && adapters.includes('"application/x-keepass2"'), "normalized fixture coverage omits KeePass KDBX database files");
 assert(adapters.includes('".apk"') && adapters.includes('".aab"') && adapters.includes('".ipa"'), "normalized fixture coverage omits mobile app package files");
 assert(adapters.includes('".checkstyle.xml"') && adapters.includes('".pmd.xml"') && adapters.includes('".spotbugs.xml"'), "normalized fixture coverage omits static analysis XML reports");
 assert(adapters.includes('".tfplan.json"'), "normalized fixture coverage omits Terraform plan JSON snapshots");
 assert(adapters.includes('".cloudformation.yaml"') && adapters.includes('".cloudformation.json"') && adapters.includes('".arm-template.json"') && adapters.includes('".bicep"'), "normalized fixture coverage omits CloudFormation/ARM/Bicep template files");
 assert(adapters.includes('".ical"'), "normalized fixture coverage omits iCalendar .ical files");
+assert(adapters.includes('".vcs"'), "normalized fixture coverage omits vCalendar .vcs files");
+assert(adapters.includes('".calendar.csv"'), "normalized fixture coverage omits calendar CSV agenda files");
+assert(adapters.includes('".contacts.csv"'), "normalized fixture coverage omits contact CSV export files");
+assert(adapters.includes('".meeting-transcript.txt"'), "normalized fixture coverage omits meeting transcript text files");
 assert(adapters.includes('".tex"') && adapters.includes('".bib"') && adapters.includes('".latexmkrc"'), "normalized fixture coverage omits LaTeX/BibTeX files");
 assert(adapters.includes('".powershell-transcript.txt"'), "normalized fixture coverage omits PowerShell transcript logs");
+assert(adapters.includes('".desktop"') && adapters.includes("summarizeDesktopEntryFile"), "normalized fixture coverage omits FreeDesktop .desktop files");
+assert(adapters.includes('".avsc"') && adapters.includes("summarizeAvroSchemaFile"), "normalized fixture coverage omits Avro schema files");
 
 assert(checklist.includes("route-order-verification-agent"), "checklist omits route-order verification agent record");
 assert(checklist.includes("Channel Adapter Route-Order Verification"), "checklist omits route-order verification addendum");
 assert(checklist.includes("npm run verify:channel-adapter-route-order"), "checklist omits route-order verification command");
 assert(checklist.includes("LaTeX/BibTeX Context Input"), "checklist omits LaTeX context route-order evidence");
+assert(checklist.includes("PWA Web App Manifest Input"), "checklist omits PWA web manifest route-order evidence");
+assert(checklist.includes("PWA Service Worker Script Input"), "checklist omits PWA service worker route-order evidence");
+assert(checklist.includes("Browser Extension Inventory Input"), "checklist omits browser extension inventory route-order evidence");
+assert(checklist.includes("Chat Export CSV Input"), "checklist omits chat export CSV route-order evidence");
+assert(checklist.includes("Browser Autofill Export Input"), "checklist omits browser autofill route-order evidence");
+assert(checklist.includes("Browser History Export Input"), "checklist omits browser history route-order evidence");
+assert(checklist.includes("Browser Bookmark JSON Input"), "checklist omits browser bookmark JSON route-order evidence");
+assert(checklist.includes("Browser Preferences JSON Input"), "checklist omits browser preferences route-order evidence");
+assert(checklist.includes("Browser Storage Export Input"), "checklist omits browser storage route-order evidence");
+assert(checklist.includes("Browser Session Tabs JSON Input"), "checklist omits browser session tabs route-order evidence");
+assert(checklist.includes("Browser Password CSV Export Input"), "checklist omits browser password CSV route-order evidence");
+assert(checklist.includes("Meeting Transcript Text Input"), "checklist omits meeting transcript route-order evidence");
+assert(checklist.includes("KeePass KDBX Database Input"), "checklist omits KeePass KDBX route-order evidence");
+assert(checklist.includes("Avro Schema File Input"), "checklist omits Avro schema route-order evidence");
+assert(checklist.includes("LLM Website Metadata Input"), "checklist omits llms.txt route-order evidence");
+assert(checklist.includes("Browser Downloads SQLite Snapshot Input"), "checklist omits browser downloads SQLite route-order evidence");
+assert(checklist.includes("Runtime GraphML Diagram Source Fixture"), "checklist omits GraphML diagram route-order evidence");
 assert(roadmap.includes("channel adapter route-order verification"), "roadmap omits route-order verification evidence");
 assert(roadmap.includes("npm run verify:channel-adapter-route-order"), "roadmap omits route-order verification command");
 assert(roadmap.includes("LaTeX/BibTeX context input"), "roadmap omits LaTeX context route-order evidence");
+assert(roadmap.includes("PWA web app manifest input"), "roadmap omits PWA web manifest route-order evidence");
+assert(roadmap.includes("PWA service worker script input"), "roadmap omits PWA service worker route-order evidence");
+assert(roadmap.includes("Browser extension inventory input"), "roadmap omits browser extension inventory route-order evidence");
+assert(roadmap.includes("chat export CSV input"), "roadmap omits chat export CSV route-order evidence");
+assert(roadmap.includes("Apple crash report input"), "roadmap omits Apple crash report route-order evidence");
+assert(roadmap.includes("KeePass KDBX database input"), "roadmap omits KeePass KDBX route-order evidence");
+assert(roadmap.includes("Browser autofill export input"), "roadmap omits browser autofill route-order evidence");
+assert(roadmap.includes("Browser session tabs JSON input"), "roadmap omits browser session tabs route-order evidence");
+assert(roadmap.includes("Browser history export input"), "roadmap omits browser history route-order evidence");
+assert(roadmap.includes("Browser bookmark JSON input"), "roadmap omits browser bookmark JSON route-order evidence");
+assert(roadmap.includes("Browser preferences JSON input"), "roadmap omits browser preferences route-order evidence");
+assert(roadmap.includes("Browser storage export input"), "roadmap omits browser storage route-order evidence");
+assert(roadmap.includes("runtime GraphML diagram source fixture"), "roadmap omits GraphML diagram route-order evidence");
+
+assert(roadmap.includes("browser password CSV export input"), "roadmap omits browser password CSV route-order evidence");
+assert(roadmap.includes("meeting transcript text input"), "roadmap omits meeting transcript route-order evidence");
+assert(roadmap.includes("Avro schema file input"), "roadmap omits Avro schema route-order evidence");
+assert(roadmap.includes("LLM website metadata input"), "roadmap omits llms.txt route-order evidence");
+assert(roadmap.includes("Browser downloads SQLite snapshot input"), "roadmap omits browser downloads SQLite route-order evidence");
 
 console.log("Channel adapter route-order verification passed.");

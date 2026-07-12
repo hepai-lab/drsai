@@ -37,6 +37,7 @@ import type {
   DesktopChannelOutboundDraftResult,
   DesktopChannelSnapshotSyncRequest,
   DesktopChannelSnapshotSyncResult,
+  DesktopExternalConnectionReadinessResult,
   DesktopApprovalProposalRequest,
   DesktopApprovalProposalResult,
   DesktopHealth,
@@ -72,6 +73,8 @@ import type {
   DesktopMcpToolExecutionApprovalResult,
   DesktopApprovalDecisionRequest,
   DesktopPendingApproval,
+  DesktopProviderErrorAnalyticsRecord,
+  DesktopProviderUsageAnalyticsRecord,
   DesktopGitCommitApprovalRequest,
   DesktopShellCommandApprovalRequest,
   DesktopCustomCommand,
@@ -80,6 +83,8 @@ import type {
   DesktopCustomCommandListRequest,
   DesktopCustomCommandUpsertRequest,
   DesktopThreadSnapshot,
+  DesktopThreadContentSearchRequest,
+  DesktopThreadContentSearchResult,
   DesktopVoiceTranscriptHandoffRequest,
   DesktopVoiceTranscriptHandoffResult,
   DesktopVoiceTranscriptionRequest,
@@ -162,6 +167,11 @@ import type {
 const api: DesktopApi = {
   getAuthSession: (): Promise<AuthSession> =>
     ipcRenderer.invoke("desktop:get-auth-session"),
+  onAuthSessionInvalidated: (callback: () => void): (() => void) => {
+    const listener = (): void => callback();
+    ipcRenderer.on("desktop:auth-session-invalidated", listener);
+    return () => ipcRenderer.removeListener("desktop:auth-session-invalidated", listener);
+  },
   login: (request: LoginRequest): Promise<LoginResult> =>
     ipcRenderer.invoke("desktop:login", request),
   startOidcLogin: (request?: { rememberMe?: boolean }): Promise<LoginResult> =>
@@ -190,6 +200,10 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:get-install-status"),
   getGatewayStatus: (): Promise<GatewayStatus> =>
     ipcRenderer.invoke("desktop:get-gateway-status"),
+  listProviderUsageAnalytics: (): Promise<DesktopProviderUsageAnalyticsRecord[]> =>
+    ipcRenderer.invoke("desktop:provider-usage-analytics-list"),
+  listProviderErrorAnalytics: (): Promise<DesktopProviderErrorAnalyticsRecord[]> =>
+    ipcRenderer.invoke("desktop:provider-error-analytics-list"),
   checkForUpdates: (): Promise<UpdateStatus> =>
     ipcRenderer.invoke("desktop:check-for-updates"),
   startInstall: (options?: StartInstallOptions): Promise<void> =>
@@ -221,6 +235,10 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:update-thread", request),
   getThreadSnapshot: (threadId: string): Promise<DesktopThreadSnapshot | null> =>
     ipcRenderer.invoke("desktop:get-thread-snapshot", threadId),
+  searchThreadMessages: (
+    request: DesktopThreadContentSearchRequest,
+  ): Promise<DesktopThreadContentSearchResult[]> =>
+    ipcRenderer.invoke("desktop:search-thread-messages", request),
   updateThreadSnapshot: (snapshot: DesktopThreadSnapshot): Promise<DesktopThreadSnapshot> =>
     ipcRenderer.invoke("desktop:update-thread-snapshot", snapshot),
   prepareForkWorktree: (
@@ -483,6 +501,10 @@ const api: DesktopApi = {
     request?: DesktopChannelOutboundDeliveryListRequest,
   ): Promise<DesktopChannelOutboundDelivery[]> =>
     ipcRenderer.invoke("desktop:channel-outbound-deliveries", request),
+  listExternalConnectionReadiness: (
+    workspacePath?: string,
+  ): Promise<DesktopExternalConnectionReadinessResult> =>
+    ipcRenderer.invoke("desktop:external-connection-readiness", workspacePath),
   importMcpContext: (
     request: DesktopMcpContextRequest,
   ): Promise<DesktopMcpContextResult> =>

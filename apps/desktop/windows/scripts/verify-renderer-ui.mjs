@@ -20,6 +20,10 @@ const healthAdapter = read("src/renderer/src/adapters/useDesktopHealthAdapter.ts
 const chatAdapter = read("src/renderer/src/adapters/useDesktopChatAdapter.ts");
 const packageJson = read("package.json");
 const mojibakeVerifier = read("scripts/verify-no-mojibake.mjs");
+const desktopApi = read("src/shared/desktopApi.ts");
+const preload = read("src/preload/index.ts");
+const desktopMain = read("src/main/index.ts");
+const threadsMain = read("src/main/threads.ts");
 
 function navItemEnabled(source, menuId) {
   const pattern = new RegExp(`id: MENU_IDS\\.${menuId}, enabled: (true|false)`);
@@ -56,8 +60,16 @@ const checks = [
   ["renderer has separated workspace shell", app.includes("WorkspaceShell") && shell.includes("WorkspaceShellProps") && shell.includes("mainContent: React.ReactNode") && shell.includes("rightPanel: React.ReactNode") && !shell.includes('../desktopApi') && !shell.includes('./desktopApi')],
   ["chat composer orders agent model and thinking controls", chatWorkspace.includes("Agent: {activeAgentName}") && chatWorkspace.includes("模型：") && chatWorkspace.includes("推理：") && chatWorkspace.includes('useState<ThinkingEffort>("medium")') && chatAdapter.includes("thinking_effort")],
   ["renderer can collapse right panel", app.includes("rightPanelCollapsed") && shell.includes("titlebar-right-panel-toggle") && css.includes(".content-grid.right-collapsed")],
+  ["titlebar owns centered chat and command search", shell.includes('className="titlebar-center"') && shell.includes('className="titlebar-search-shell"') && shell.includes('id="titlebar-search-results"') && css.includes(".titlebar-search-results")],
+  ["sidebar search focuses shared titlebar search", shell.includes('onClick={openCommandPalette}') && shell.includes("commandPaletteInputRef.current?.focus()")],
+  ["titlebar search preserves keyboard navigation and commands", shell.includes('event.key === "ArrowDown"') && shell.includes('event.key === "ArrowUp"') && shell.includes('event.key === "Enter"') && shell.includes('event.key.toLowerCase() === "k"') && shell.includes('shortcut: "Ctrl+N"')],
+  ["legacy centered search overlay is removed", !shell.includes("command-palette-overlay") && !shell.includes("command-palette-input-row")],
+  ["thread content search is exposed end to end", desktopApi.includes("searchThreadMessages") && preload.includes("desktop:search-thread-messages") && desktopMain.includes("desktop:search-thread-messages") && threadsMain.includes("searchThreadMessages")],
+  ["thread content search excludes internal system messages", threadsMain.includes('message.role === "system"')],
+  ["titlebar search queries all scoped thread content", app.includes("searchableThreads={searchableThreads}") && app.includes("desktopApi.searchThreadMessages") && shell.includes("onSearchThreadMessages(query, searchableThreadIds)")],
+  ["content search renders snippets and highlights", shell.includes("command-palette-description") && shell.includes("highlightSearchText") && css.includes(".command-palette-description") && css.includes("mark")],
   ["renderer has responsive layout CSS", css.includes("@media (max-width: 1180px)") && css.includes("@media (max-width: 860px)")],
-  ["renderer auto-starts backend install when prerequisites are ready", healthAdapter.includes("autoInstallStarted") && healthAdapter.includes("prerequisitesReady") && healthAdapter.includes("startInstall(false)")],
+  ["renderer startup health is side-effect free", !healthAdapter.includes("autoInstallStarted") && !healthAdapter.includes("autoGatewayStarted") && healthAdapter.includes("window.setTimeout")],
   ["renderer has accessible icon navigation", shell.includes("aria-label={label}") && shell.includes("title={label}")],
   ["chat composer uses multiline textarea", chatWorkspace.includes("textarea") && chatWorkspace.includes("handleKeyDown") && chatWorkspace.includes("event.shiftKey")],
   ["mojibake verifier is wired into package scripts", packageJson.includes('"verify:mojibake": "node scripts/verify-no-mojibake.mjs"') && mojibakeVerifier.includes("mojibakePatterns")],

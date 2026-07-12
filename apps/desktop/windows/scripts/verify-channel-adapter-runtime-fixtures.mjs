@@ -68,6 +68,39 @@ function writeGlbFixture(filePath) {
   writeFileSync(filePath, Buffer.concat([header, jsonBuffer]));
 }
 
+function writeKeePassFixture(filePath) {
+  function headerField(id, data) {
+    const header = Buffer.alloc(5);
+    header.writeUInt8(id, 0);
+    header.writeUInt32LE(data.length, 1);
+    return Buffer.concat([header, data]);
+  }
+
+  const signature = Buffer.alloc(12);
+  signature.writeUInt32LE(0x9aa2d903, 0);
+  signature.writeUInt32LE(0xb54bfb67, 4);
+  signature.writeUInt32LE(0x00040001, 8);
+  const compression = Buffer.alloc(4);
+  compression.writeUInt32LE(1, 0);
+  const cipherId = Buffer.from("31c1f2e6bf714350be5805216afc5aff", "hex");
+  const masterSeed = Buffer.alloc(32, 0x42);
+  const encryptionIv = Buffer.alloc(16, 0x24);
+  const kdfParameters = Buffer.from("$UUID AES-KDF Rounds Salt", "utf8");
+  const end = Buffer.alloc(5);
+  end.writeUInt8(0, 0);
+  end.writeUInt32LE(0, 1);
+  writeFileSync(filePath, Buffer.concat([
+    signature,
+    headerField(2, cipherId),
+    headerField(3, compression),
+    headerField(4, masterSeed),
+    headerField(7, encryptionIv),
+    headerField(11, kdfParameters),
+    end,
+    Buffer.from("encrypted-entry-secret-kdbx-token", "utf8"),
+  ]));
+}
+
 function writePdfFixture(filePath) {
   writeText(filePath, [
     "%PDF-1.7",
@@ -118,6 +151,43 @@ function writePlaywrightTraceZipFixture(filePath) {
     zipLocalEntry("resources/runtime-screenshot.png", "PNG screenshot placeholder"),
     zipLocalEntry("runtime-video.webm", "WEBM video placeholder"),
     zipLocalEntry("test.json", JSON.stringify({ title: "Runtime Playwright trace" })),
+  ]));
+}
+
+function writeDotLottieFixture(filePath) {
+  writeFileSync(filePath, Buffer.concat([
+    zipLocalEntry("manifest.json", JSON.stringify({
+      version: "1.0",
+      generator: "OpenDrSai runtime fixture",
+      author: "Runtime Animator",
+      activeAnimationId: "runtime-main",
+      animations: [
+        {
+          id: "runtime-main",
+          initialTheme: "runtime-theme",
+          loop: true,
+          autoplay: false,
+          speed: 1,
+        },
+      ],
+    })),
+    zipLocalEntry("animations/runtime-main.json", JSON.stringify({
+      v: "5.12.2",
+      fr: 24,
+      ip: 0,
+      op: 48,
+      w: 320,
+      h: 180,
+      layers: [
+        { ind: 1, ty: 4, nm: "Runtime dotLottie Shape", ks: { token: "secret-dotlottie-keyframe" } },
+      ],
+      assets: [
+        { id: "runtime-image", p: "images/runtime.png?token=secret-dotlottie-asset" },
+      ],
+    })),
+    zipLocalEntry("themes/runtime-theme.json", JSON.stringify({ id: "runtime-theme", colors: ["#112233"] })),
+    zipLocalEntry("images/runtime.png", "PNG placeholder"),
+    zipLocalEntry("state_machines/runtime-machine.json", JSON.stringify({ id: "runtime-machine" })),
   ]));
 }
 
@@ -447,6 +517,48 @@ function writeSqliteFixture(filePath) {
   writeFileSync(filePath, buffer);
 }
 
+function writeBrowserHistorySqliteFixture(filePath) {
+  const buffer = Buffer.alloc(4096);
+  Buffer.from("SQLite format 3\0", "binary").copy(buffer, 0);
+  buffer.writeUInt16BE(4096, 16);
+  buffer[18] = 1;
+  buffer[19] = 1;
+  buffer.writeUInt32BE(1, 28);
+  buffer.writeUInt32BE(1, 56);
+  Buffer.from(
+    [
+      "CREATE TABLE urls (id INTEGER PRIMARY KEY, url LONGVARCHAR, title LONGVARCHAR, visit_count INTEGER, typed_count INTEGER, last_visit_time INTEGER);",
+      "CREATE TABLE visits (id INTEGER PRIMARY KEY, url INTEGER, visit_time INTEGER, from_visit INTEGER, transition INTEGER);",
+      "CREATE TABLE keyword_search_terms (keyword_id INTEGER, url_id INTEGER, term LONGVARCHAR);",
+      "CREATE INDEX urls_url_index ON urls(url);",
+      "secret-history-sqlite-token",
+    ].join(" "),
+    "utf8",
+  ).copy(buffer, 256);
+  writeFileSync(filePath, buffer);
+}
+
+function writeBrowserDownloadsSqliteFixture(filePath) {
+  const buffer = Buffer.alloc(4096);
+  Buffer.from("SQLite format 3\0", "binary").copy(buffer, 0);
+  buffer.writeUInt16BE(4096, 16);
+  buffer[18] = 1;
+  buffer[19] = 1;
+  buffer.writeUInt32BE(1, 28);
+  buffer.writeUInt32BE(1, 56);
+  Buffer.from(
+    [
+      "CREATE TABLE downloads (id INTEGER PRIMARY KEY, guid VARCHAR, target_path LONGVARCHAR, tab_url LONGVARCHAR, referrer LONGVARCHAR, received_bytes INTEGER, total_bytes INTEGER, state INTEGER, danger_type INTEGER);",
+      "CREATE TABLE downloads_url_chains (id INTEGER, chain_index INTEGER, url LONGVARCHAR);",
+      "CREATE TABLE downloads_slices (download_id INTEGER, offset INTEGER, received_bytes INTEGER);",
+      "CREATE INDEX downloads_url_index ON downloads_url_chains(url);",
+      "secret-download-sqlite-token",
+    ].join(" "),
+    "utf8",
+  ).copy(buffer, 256);
+  writeFileSync(filePath, buffer);
+}
+
 function writeParquetFixture(filePath) {
   const metadata = Buffer.from("schema: runtime_events user_id event_name", "utf8");
   const footerLength = Buffer.alloc(4);
@@ -464,6 +576,51 @@ function writeArrowFixture(filePath) {
 function writeFeatherFixture(filePath) {
   const body = Buffer.from("runtime_feather_schema runtime_column", "utf8");
   writeFileSync(filePath, Buffer.concat([Buffer.from("FEA1"), body]));
+}
+
+function encodeAvroLong(value) {
+  let raw = value < 0 ? (-value * 2) - 1 : value * 2;
+  const bytes = [];
+  do {
+    let byte = raw & 0x7f;
+    raw = Math.floor(raw / 128);
+    if (raw > 0) byte |= 0x80;
+    bytes.push(byte);
+  } while (raw > 0);
+  return Buffer.from(bytes);
+}
+
+function encodeAvroBytes(value) {
+  const buffer = Buffer.isBuffer(value) ? value : Buffer.from(value, "utf8");
+  return Buffer.concat([encodeAvroLong(buffer.length), buffer]);
+}
+
+function encodeAvroString(value) {
+  return encodeAvroBytes(value);
+}
+
+function writeAvroFixture(filePath) {
+  const schema = JSON.stringify({
+    type: "record",
+    name: "RuntimeEvent",
+    namespace: "org.opendrsai.fixture",
+    fields: [
+      { name: "runtime_id", type: "string" },
+      { name: "metric_value", type: "double" },
+    ],
+  });
+  const metadata = [
+    ["avro.schema", schema],
+    ["avro.codec", "null"],
+    ["runtime.note", "runtime_avro_schema token=secret-avro-token"],
+  ];
+  const metadataBuffers = [
+    encodeAvroLong(metadata.length),
+    ...metadata.flatMap(([key, value]) => [encodeAvroString(key), encodeAvroBytes(value)]),
+    encodeAvroLong(0),
+  ];
+  const sync = Buffer.from("0123456789abcdef", "ascii");
+  writeFileSync(filePath, Buffer.concat([Buffer.from("Obj\u0001", "latin1"), ...metadataBuffers, sync]));
 }
 
 function writePcapFixture(filePath) {
@@ -572,6 +729,20 @@ function writeMp3Fixture(filePath) {
   id3Header[9] = id3Body.length & 0x7f;
   const frameHeader = Buffer.from([0xff, 0xfb, 0x90, 0x64]);
   writeFileSync(filePath, Buffer.concat([id3Header, id3Body, frameHeader, Buffer.alloc(4096)]));
+}
+
+function writeAacFixture(filePath) {
+  const frameLength = 1031;
+  const header = Buffer.from([
+    0xff,
+    0xf1,
+    0x50,
+    0x80 | ((frameLength >> 11) & 0x03),
+    (frameLength >> 3) & 0xff,
+    ((frameLength & 0x07) << 5) | 0x1f,
+    0xfc,
+  ]);
+  writeFileSync(filePath, Buffer.concat([header, Buffer.alloc(frameLength - header.length)]));
 }
 
 function mp4Box(type, contents) {
@@ -800,6 +971,10 @@ assert(roadmap.includes("runtime Windows telemetry golden fixtures"), "roadmap o
 assert(checklist.includes("runtime-security-artifact-golden-agent"), "checklist omits runtime security artifact golden fixture agent record");
 assert(checklist.includes("runtime security/SBOM/binary artifact golden fixtures"), "checklist omits runtime security/SBOM/binary artifact fixture evidence");
 assert(roadmap.includes("runtime security/SBOM/binary artifact golden fixtures"), "roadmap omits runtime security/SBOM/binary artifact fixture evidence");
+assert(checklist.includes("keepass-kdbx-input-agent"), "checklist omits KeePass KDBX input agent record");
+assert(checklist.includes("runtime `runtime.kdbx` golden fixture"), "checklist omits KeePass KDBX runtime fixture evidence");
+assert(roadmap.includes("KeePass KDBX database input"), "roadmap omits KeePass KDBX input evidence");
+assert(roadmap.includes("runtime `runtime.kdbx` golden fixture"), "roadmap omits KeePass KDBX runtime fixture evidence");
 assert(checklist.includes("sarif-json-runtime-variant-agent"), "checklist omits SARIF JSON runtime variant agent record");
 assert(checklist.includes("SARIF JSON Extension Runtime Fixture"), "checklist omits SARIF JSON runtime fixture evidence");
 assert(checklist.includes("`results.sarif.json`") && checklist.includes("CodeQL tool evidence"), "checklist omits SARIF JSON fixture detail evidence");
@@ -833,8 +1008,47 @@ assert(checklist.includes("runtime content/media golden fixtures"), "checklist o
 assert(roadmap.includes("runtime content/media golden fixtures"), "roadmap omits runtime content/media fixture evidence");
 assert(checklist.includes("browser-cookie-input-agent"), "checklist omits browser cookie export agent record");
 assert(checklist.includes("runtime `cookies.txt` golden fixture"), "checklist omits browser cookie runtime fixture evidence");
+assert(checklist.includes("hyphenated-browser-cookie-runtime-agent"), "checklist omits hyphenated browser cookie runtime agent record");
+assert(checklist.includes("runtime `runtime-cookies.txt` golden fixture"), "checklist omits hyphenated browser cookie runtime fixture evidence");
+assert(checklist.includes("browser-autofill-input-agent"), "checklist omits browser autofill export agent record");
+assert(checklist.includes("runtime `autofill.csv` / `runtime-autofill.json` golden fixtures"), "checklist omits browser autofill runtime fixture evidence");
+assert(checklist.includes("browser-bookmark-json-agent"), "checklist omits browser bookmark JSON agent record");
+assert(checklist.includes("runtime `bookmarks.json` golden fixture"), "checklist omits browser bookmark JSON runtime fixture evidence");
+assert(checklist.includes("browser-extension-manifest-agent"), "checklist omits browser extension manifest agent record");
+assert(checklist.includes("runtime `extension-manifest.json` golden fixture"), "checklist omits browser extension manifest runtime fixture evidence");
+assert(checklist.includes("browser-extension-inventory-agent"), "checklist omits browser extension inventory agent record");
+assert(checklist.includes("runtime `browser-extensions.json` golden fixture"), "checklist omits browser extension inventory runtime fixture evidence");
 assert(roadmap.includes("Browser cookie export input"), "roadmap omits browser cookie export evidence");
 assert(roadmap.includes("runtime `cookies.txt` golden fixture"), "roadmap omits browser cookie runtime fixture evidence");
+assert(roadmap.includes("hyphenated browser cookie runtime fixture"), "roadmap omits hyphenated browser cookie runtime fixture evidence");
+assert(roadmap.includes("Browser autofill export input"), "roadmap omits browser autofill export evidence");
+assert(roadmap.includes("runtime `autofill.csv` / `runtime-autofill.json` golden fixtures"), "roadmap omits browser autofill runtime fixture evidence");
+assert(roadmap.includes("Browser bookmark JSON input"), "roadmap omits browser bookmark JSON evidence");
+assert(roadmap.includes("runtime `bookmarks.json` golden fixture"), "roadmap omits browser bookmark JSON runtime fixture evidence");
+assert(roadmap.includes("Browser extension manifest input"), "roadmap omits browser extension manifest evidence");
+assert(roadmap.includes("runtime `extension-manifest.json` golden fixture"), "roadmap omits browser extension manifest runtime fixture evidence");
+assert(roadmap.includes("Browser extension inventory input"), "roadmap omits browser extension inventory evidence");
+assert(roadmap.includes("runtime `browser-extensions.json` golden fixture"), "roadmap omits browser extension inventory runtime fixture evidence");
+assert(checklist.includes("browser-history-input-agent"), "checklist omits browser history export agent record");
+assert(checklist.includes("runtime `history.csv` / `runtime-history.json` / `History` golden fixtures"), "checklist omits browser history runtime fixture evidence");
+assert(roadmap.includes("Browser history export input"), "roadmap omits browser history export evidence");
+assert(roadmap.includes("runtime `history.csv` / `runtime-history.json` / `History` golden fixtures"), "roadmap omits browser history runtime fixture evidence");
+assert(checklist.includes("browser-downloads-input-agent"), "checklist omits browser downloads export agent record");
+assert(checklist.includes("runtime `downloads.csv` / `runtime-downloads.json` / `Downloads` golden fixtures"), "checklist omits browser downloads runtime fixture evidence");
+assert(roadmap.includes("Browser downloads export input"), "roadmap omits browser downloads export evidence");
+assert(roadmap.includes("runtime `downloads.csv` / `runtime-downloads.json` / `Downloads` golden fixtures"), "roadmap omits browser downloads runtime fixture evidence");
+assert(checklist.includes("browser-storage-input-agent"), "checklist omits browser storage export agent record");
+assert(checklist.includes("runtime `local-storage.json` / `runtime-session-storage.json` golden fixtures"), "checklist omits browser storage runtime fixture evidence");
+assert(roadmap.includes("Browser storage export input"), "roadmap omits browser storage export evidence");
+assert(roadmap.includes("runtime `local-storage.json` / `runtime-session-storage.json` golden fixtures"), "roadmap omits browser storage runtime fixture evidence");
+assert(checklist.includes("browser-session-tabs-agent"), "checklist omits browser session tabs agent record");
+assert(checklist.includes("runtime `tabs.json` golden fixture"), "checklist omits browser session tabs runtime fixture evidence");
+assert(roadmap.includes("Browser session tabs JSON input"), "roadmap omits browser session tabs input evidence");
+assert(roadmap.includes("runtime `tabs.json` golden fixture"), "roadmap omits browser session tabs runtime fixture evidence");
+assert(checklist.includes("apple-crash-report-input-agent"), "checklist omits Apple crash report input agent record");
+assert(checklist.includes("runtime `runtime.crash` / `runtime.ips` golden fixtures"), "checklist omits Apple crash report runtime fixture evidence");
+assert(roadmap.includes("Apple crash report input"), "roadmap omits Apple crash report input evidence");
+assert(roadmap.includes("runtime `runtime.crash` / `runtime.ips` golden fixtures"), "roadmap omits Apple crash report runtime fixture evidence");
 assert(checklist.includes("latex-context-agent"), "checklist omits LaTeX context agent record");
 assert(checklist.includes("LaTeX/BibTeX Context Input"), "checklist omits LaTeX context input addendum");
 assert(checklist.includes("runtime `paper.tex`, `references.bib`, and `latexmkrc` fixtures"), "checklist omits LaTeX runtime fixture evidence");
@@ -855,6 +1069,25 @@ assert(roadmap.includes("runtime mobile app package golden fixtures"), "roadmap 
 assert(checklist.includes("web-crawl-metadata-input-agent"), "checklist omits web crawl metadata input agent record");
 assert(checklist.includes("Web crawl metadata input"), "checklist omits web crawl metadata input evidence");
 assert(roadmap.includes("Web crawl metadata input"), "roadmap omits web crawl metadata input evidence");
+assert(checklist.includes("llms-metadata-input-agent"), "checklist omits llms.txt metadata input agent record");
+assert(checklist.includes("LLM Website Metadata Input"), "checklist omits llms.txt metadata input evidence");
+assert(roadmap.includes("LLM website metadata input"), "roadmap omits llms.txt metadata input evidence");
+assert(checklist.includes("pwa-web-manifest-agent"), "checklist omits PWA web manifest input agent record");
+assert(checklist.includes("runtime `site.webmanifest` golden fixture"), "checklist omits PWA web manifest runtime fixture evidence");
+assert(roadmap.includes("PWA web app manifest input"), "roadmap omits PWA web manifest input evidence");
+assert(roadmap.includes("runtime `site.webmanifest` golden fixture"), "roadmap omits PWA web manifest runtime fixture evidence");
+assert(checklist.includes("pwa-service-worker-agent"), "checklist omits PWA service worker input agent record");
+assert(checklist.includes("runtime `service-worker.js` golden fixture"), "checklist omits PWA service worker runtime fixture evidence");
+assert(roadmap.includes("PWA service worker script input"), "roadmap omits PWA service worker input evidence");
+assert(roadmap.includes("runtime `service-worker.js` golden fixture"), "roadmap omits PWA service worker runtime fixture evidence");
+assert(checklist.includes("animation-json-input-agent"), "checklist omits Lottie animation JSON input agent record");
+assert(checklist.includes("runtime `animation.json` golden fixture"), "checklist omits Lottie animation JSON runtime fixture evidence");
+assert(roadmap.includes("Lottie/Bodymovin animation JSON input"), "roadmap omits Lottie animation JSON input evidence");
+assert(roadmap.includes("runtime `animation.json` golden fixture"), "roadmap omits Lottie animation JSON runtime fixture evidence");
+assert(checklist.includes("dotlottie-archive-input-agent"), "checklist omits dotLottie archive input agent record");
+assert(checklist.includes("runtime `runtime.lottie` golden fixture"), "checklist omits dotLottie archive runtime fixture evidence");
+assert(roadmap.includes("dotLottie archive input"), "roadmap omits dotLottie archive input evidence");
+assert(roadmap.includes("runtime `runtime.lottie` golden fixture"), "roadmap omits dotLottie archive runtime fixture evidence");
 assert(checklist.includes("runtime-3d-model-golden-agent"), "checklist omits runtime 3D model golden fixture agent record");
 assert(checklist.includes("runtime 3D model golden fixtures"), "checklist omits runtime 3D model fixture evidence");
 assert(roadmap.includes("runtime 3D model golden fixtures"), "roadmap omits runtime 3D model fixture evidence");
@@ -934,6 +1167,11 @@ assert(checklist.includes("JS/TS Tooling Config Input"), "checklist omits JS/TS 
 assert(checklist.includes("`.eslintrc.json`, `.prettierrc.yaml`, `biome.jsonc`, `vitest.config.ts`, and `playwright.config.ts`"), "checklist omits JS/TS tooling config fixture detail evidence");
 assert(roadmap.includes("JS/TS tooling config input"), "roadmap omits JS/TS tooling config evidence");
 assert(roadmap.includes("ESLint/Prettier/Biome/Stylelint/Jest/Vitest/Playwright"), "roadmap omits JS/TS tooling config tool coverage");
+assert(checklist.includes("js-workspace-config-input-agent"), "checklist omits JS/TS workspace config agent record");
+assert(checklist.includes("JS/TS Monorepo Workspace Config Input"), "checklist omits JS/TS workspace config evidence");
+assert(checklist.includes("`pnpm-workspace.yaml` / `pnpm-workspace.yml` / `turbo.json` / `turbo.jsonc` / `nx.json`"), "checklist omits JS/TS workspace config fixture detail evidence");
+assert(roadmap.includes("JS/TS monorepo workspace config input"), "roadmap omits JS/TS workspace config evidence");
+assert(roadmap.includes("`pnpm-workspace.yaml`") && roadmap.includes("`turbo.json`") && roadmap.includes("`nx.json`"), "roadmap omits JS/TS workspace config coverage");
 assert(checklist.includes("iis-web-config-agent"), "checklist omits IIS web.config agent record");
 assert(checklist.includes("web-server-config-agent"), "checklist omits Nginx/Apache web server config agent record");
 assert(checklist.includes("runtime `nginx.conf` golden fixture"), "checklist omits Nginx web server config runtime fixture evidence");
@@ -952,6 +1190,12 @@ assert(roadmap.includes("`jacoco.xml`") && roadmap.includes("JaCoCo XML `<report
 assert(checklist.includes("runtime-scientific-columnar-variant-agent"), "checklist omits runtime scientific/container and Feather variant fixture agent record");
 assert(checklist.includes("runtime scientific/container and Feather variant golden fixtures"), "checklist omits runtime scientific/container and Feather variant fixture evidence");
 assert(roadmap.includes("runtime scientific/container and Feather variant golden fixtures"), "roadmap omits runtime scientific/container and Feather variant fixture evidence");
+assert(checklist.includes("avro-object-container-input-agent"), "checklist omits Avro object container input agent record");
+assert(checklist.includes("runtime `runtime.avro` golden fixture"), "checklist omits Avro runtime fixture evidence");
+assert(roadmap.includes("Avro object container input"), "roadmap omits Avro object container evidence");
+assert(checklist.includes("avro-schema-input-agent"), "checklist omits Avro schema input agent record");
+assert(checklist.includes("runtime `runtime.avsc` golden fixture"), "checklist omits Avro schema runtime fixture evidence");
+assert(roadmap.includes("Avro schema file input"), "roadmap omits Avro schema evidence");
 assert(checklist.includes("runtime-env-config-golden-agent"), "checklist omits runtime .env config golden fixture agent record");
 assert(checklist.includes("runtime .env configuration golden fixture"), "checklist omits runtime .env config fixture evidence");
 assert(roadmap.includes("runtime .env configuration golden fixture"), "roadmap omits runtime .env config fixture evidence");
@@ -965,9 +1209,10 @@ assert(roadmap.includes("runtime CSV/TSV structured data golden fixtures"), "roa
 const tempRoot = mkdtempSync(join(tmpdir(), "drsai-channel-fixtures-"));
 try {
   const workspace = join(tempRoot, "workspace");
-  mkdirSync(workspace, { recursive: true });
-  const githubWorkflowDir = join(workspace, ".github", "workflows");
   const drsaiDir = join(workspace, ".drsai");
+  mkdirSync(workspace, { recursive: true });
+  mkdirSync(drsaiDir, { recursive: true });
+  const githubWorkflowDir = join(workspace, ".github", "workflows");
   const codeownersPath = join(workspace, "CODEOWNERS");
   const editorconfigPath = join(workspace, ".editorconfig");
   const gitattributesPath = join(workspace, ".gitattributes");
@@ -978,6 +1223,11 @@ try {
   const noticePath = join(workspace, "NOTICE");
   const dotenvPath = join(workspace, ".env.runtime");
   const envrcPath = join(workspace, ".envrc");
+  const regexPatternPath = join(workspace, "runtime.regex");
+  const sshDir = join(workspace, ".ssh");
+  const sshConfigPath = join(sshDir, "config");
+  const knownHostsPath = join(sshDir, "known_hosts");
+  const authorizedKeysPath = join(sshDir, "authorized_keys");
   const packagePath = join(workspace, "package.json");
   const yarnrcPath = join(workspace, ".yarnrc.yml");
   const yarnClassicPath = join(workspace, ".yarnrc");
@@ -987,6 +1237,8 @@ try {
   const packageLockPath = join(workspace, "package-lock.json");
   const pnpmLockPath = join(workspace, "pnpm-lock.yaml");
   const yarnLockPath = join(workspace, "yarn.lock");
+  const denoLockPath = join(workspace, "deno.lock");
+  const bunLockPath = join(workspace, "bun.lock");
   const cargoLockPath = join(workspace, "Cargo.lock");
   const goSumPath = join(workspace, "go.sum");
   const coveragePath = join(workspace, "coverage.xml");
@@ -1008,9 +1260,11 @@ try {
   const mochaJsonPath = join(workspace, "runtime.mocha.json");
   const allureJsonPath = join(workspace, "runtime.allure-result.json");
   const slackExportPath = join(workspace, "slack-export.json");
+  const slackCsvExportPath = join(workspace, "slack-export.csv");
   const teamsExportPath = join(workspace, "teams-export.json");
   const discordExportPath = join(workspace, "discord-export.json");
   const chatgptConversationsPath = join(workspace, "chatgpt-conversations.json");
+  const claudeConversationsPath = join(workspace, "claude-conversations.json");
   const stylePath = join(workspace, "style.css");
   const metricsPath = join(workspace, "runtime.prom");
   const metricsExtensionPath = join(workspace, "runtime.metrics");
@@ -1056,6 +1310,7 @@ try {
   const pipfilePath = join(workspace, "Pipfile");
   const pythonEnvironmentPath = join(workspace, "environment.yml");
   const uvLockPath = join(workspace, "uv.lock");
+  const pypircPath = join(workspace, ".pypirc");
   const pubspecPath = join(workspace, "pubspec.yaml");
   const pubspecLockPath = join(workspace, "pubspec.lock");
   const packageSwiftPath = join(workspace, "Package.swift");
@@ -1073,9 +1328,15 @@ try {
   const emlPath = join(workspace, "message.eml");
   const emlxPath = join(workspace, "message.emlx");
   const mboxPath = join(workspace, "mailbox.mbox");
+  const telegramExportPath = join(workspace, "telegram-export.json");
+  const whatsappExportPath = join(workspace, "whatsapp-chat.txt");
+  const meetingTranscriptPath = join(workspace, "zoom-transcript.txt");
   const vcardPath = join(workspace, "contact.vcf");
+  const contactsCsvPath = join(workspace, "contacts.csv");
   const icsPath = join(workspace, "calendar.ics");
   const icalPath = join(workspace, "calendar.ical");
+  const vcsPath = join(workspace, "calendar.vcs");
+  const calendarCsvPath = join(workspace, "calendar-agenda.csv");
   const evtxPath = join(workspace, "runtime.evtx");
   const etlPath = join(workspace, "runtime.etl");
   const etwManifestPath = join(workspace, "runtime.man");
@@ -1103,6 +1364,8 @@ try {
   const kubernetesManifestPath = join(workspace, "runtime-kubernetes.yaml");
   const iisWebConfigPath = join(workspace, "web.config");
   const nginxConfigPath = join(workspace, "nginx.conf");
+  const apacheVhostConfigPath = join(workspace, "runtime.vhost.conf");
+  const htaccessConfigPath = join(workspace, ".htaccess");
   const sarifPath = join(workspace, "results.sarif");
   const sarifJsonPath = join(workspace, "results.sarif.json");
   const securityAuditPath = join(workspace, "npm-audit.json");
@@ -1110,6 +1373,7 @@ try {
   const spdxPath = join(workspace, "runtime.spdx");
   const syftPath = join(workspace, "syft.json");
   const pemPath = join(workspace, "runtime.crt");
+  const keepassPath = join(workspace, "runtime.kdbx");
   const checksumPath = join(workspace, "checksums.sha256");
   const wasmPath = join(workspace, "runtime.wasm");
   const exePath = join(workspace, "runtime.exe");
@@ -1148,11 +1412,16 @@ try {
   const systemdServicePath = join(workspace, "runtime.service");
   const cronSchedulePath = join(workspace, "runtime.crontab");
   const supervisorConfigPath = join(workspace, "runtime.supervisord.conf");
+  const hostsPath = join(workspace, "runtime.hosts");
+  const wireguardConfigPath = join(workspace, "wg0.conf");
+  const openVpnConfigPath = join(workspace, "client.ovpn");
   const csvPath = join(workspace, "runtime.csv");
   const tsvPath = join(workspace, "runtime.tsv");
   const jsonlPath = join(workspace, "events.jsonl");
   const terminalRecordingPath = join(workspace, "runtime.cast");
   const powershellTranscriptPath = join(workspace, "runtime.powershell-transcript.txt");
+  const logMonitorConfigPath = join(drsaiDir, "log-monitor.json");
+  const logMonitorRuntimePath = join(workspace, "runtime-monitor.log");
   const harPath = join(workspace, "runtime.har");
   const netlogPath = join(workspace, "netlog.json");
   const otelPath = join(workspace, "runtime.otlp.json");
@@ -1166,30 +1435,63 @@ try {
   const parquetPath = join(workspace, "runtime.parquet");
   const arrowPath = join(workspace, "runtime.arrow");
   const featherPath = join(workspace, "runtime.feather");
+  const avroPath = join(workspace, "runtime.avro");
+  const avroSchemaPath = join(workspace, "runtime.avsc");
   const epubPath = join(workspace, "runtime.epub");
   const ttfPath = join(workspace, "runtime.ttf");
   const woffPath = join(workspace, "runtime.woff");
   const woff2Path = join(workspace, "runtime.woff2");
   const bookmarksPath = join(workspace, "bookmarks.html");
+  const bookmarksJsonPath = join(workspace, "bookmarks.json");
   const urlShortcutPath = join(workspace, "runtime.url");
   const weblocPath = join(workspace, "runtime.webloc");
+  const desktopEntryPath = join(workspace, "runtime.desktop");
   const rssPath = join(workspace, "feed.rss");
   const atomPath = join(workspace, "feed.atom");
+  const jsonFeedPath = join(workspace, "feed.json");
+  const sourceMapPath = join(workspace, "runtime.js.map");
+  const lottieAnimationPath = join(workspace, "animation.json");
+  const dotLottiePath = join(workspace, "runtime.lottie");
   const opmlPath = join(workspace, "subscriptions.opml");
   const robotsPath = join(workspace, "robots.txt");
+  const llmsPath = join(workspace, "llms.txt");
+  const warcPath = join(workspace, "runtime.warc");
+  const warcGzipPath = join(workspace, "runtime.warc.gz");
   const browserCookiesPath = join(workspace, "cookies.txt");
+  const hyphenatedBrowserCookiesPath = join(workspace, "runtime-cookies.txt");
+  const browserPasswordsPath = join(workspace, "chrome-passwords.csv");
+  const browserAutofillCsvPath = join(workspace, "autofill.csv");
+  const browserAutofillJsonPath = join(workspace, "runtime-autofill.json");
+  const browserHistoryCsvPath = join(workspace, "history.csv");
+  const browserHistoryJsonPath = join(workspace, "runtime-history.json");
+  const browserHistorySqlitePath = join(workspace, "History");
+  const browserDownloadsCsvPath = join(workspace, "downloads.csv");
+  const browserDownloadsJsonPath = join(workspace, "runtime-downloads.json");
+  const browserDownloadsSqlitePath = join(workspace, "Downloads");
+  const browserPreferencesPath = join(workspace, "Preferences");
+  const browserLocalStoragePath = join(workspace, "local-storage.json");
+  const browserSessionStoragePath = join(workspace, "runtime-session-storage.json");
+  const browserSessionTabsPath = join(workspace, "tabs.json");
   const sitemapPath = join(workspace, "sitemap.xml");
   const sitemapGzipPath = join(workspace, "sitemap.xml.gz");
+  const pwaManifestPath = join(workspace, "site.webmanifest");
+  const browserExtensionManifestPath = join(workspace, "extension-manifest.json");
+  const browserExtensionInventoryPath = join(workspace, "browser-extensions.json");
+  const pwaServiceWorkerPath = join(workspace, "service-worker.js");
   const srtPath = join(workspace, "captions.srt");
   const vttPath = join(workspace, "captions.vtt");
   const androidManifestPath = join(workspace, "AndroidManifest.xml");
   const androidLogcatPath = join(workspace, "runtime.logcat");
+  const appleUnifiedLogPath = join(workspace, "system.log");
   const infoPlistPath = join(workspace, "Info.plist");
+  const appleCrashPath = join(workspace, "runtime.crash");
+  const appleIpsPath = join(workspace, "runtime.ips");
   const apkPath = join(workspace, "runtime.apk");
   const aabPath = join(workspace, "runtime.aab");
   const ipaPath = join(workspace, "runtime.ipa");
   const wavPath = join(workspace, "runtime.wav");
   const mp3Path = join(workspace, "runtime.mp3");
+  const aacPath = join(workspace, "runtime.aac");
   const flacPath = join(workspace, "runtime.flac");
   const m4aPath = join(workspace, "runtime.m4a");
   const oggPath = join(workspace, "runtime.ogg");
@@ -1210,6 +1512,9 @@ try {
   const biomeConfigPath = join(workspace, "biome.jsonc");
   const vitestConfigPath = join(workspace, "vitest.config.ts");
   const playwrightConfigPath = join(workspace, "playwright.config.ts");
+  const pnpmWorkspacePath = join(workspace, "pnpm-workspace.yaml");
+  const turboConfigPath = join(workspace, "turbo.json");
+  const nxConfigPath = join(workspace, "nx.json");
 
   writeText(codeownersPath, [
     "# Runtime ownership fixture",
@@ -1265,6 +1570,7 @@ try {
     "RUNTIME_MODE=review",
     "API_TOKEN=secret-env-token",
     "PUBLIC_URL=https://example.test/runtime?token=secret-env-query",
+    "export DERIVED_URL=${PUBLIC_URL}/v1",
     "DUPLICATE_KEY=first",
     "DUPLICATE_KEY=second",
   ].join("\n"));
@@ -1278,6 +1584,43 @@ try {
     "watch_file pyproject.toml",
     "source_env .env.shared",
     "curl https://example.test/bootstrap.sh?token=secret-envrc-query",
+  ].join("\n"));
+  writeText(regexPatternPath, [
+    "# Runtime regex handoff fixture",
+    "pattern: /(?<level>ERROR|WARN)\\s+\\[(?<component>[A-Za-z0-9_.-]+)\\].*(token=secret-regex-token)/gi",
+    "replace: level=$<level> component=$<component> token=[redacted]",
+    "target: runtime.log",
+    "(?<=user=)[A-Za-z0-9_.-]+",
+    "^(?:.+)+$",
+  ].join("\n"));
+  mkdirSync(sshDir, { recursive: true });
+  writeText(sshConfigPath, [
+    "Host runtime-prod runtime-alias",
+    "  HostName runtime.example.test",
+    "  User runtime-user",
+    "  Port 2222",
+    "  IdentityFile ~/.ssh/id_runtime_secret",
+    "  ProxyJump bastion.example.test",
+    "  Include ./secret-ssh-include.conf",
+    "Host risky",
+    "  HostName risky.example.test?token=secret-ssh-token",
+    "  ProxyCommand ssh jump.example.test nc %h %p",
+  ].join("\n"));
+  writeText(knownHostsPath, [
+    "runtime.example.test,192.0.2.10 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIsecretKnownHostMaterial Runtime host",
+    "|1|hashedSalt|hashedHost ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQSecretKnownHostHash",
+  ].join("\n"));
+  writeText(authorizedKeysPath, [
+    'from="10.0.0.0/8",command="/usr/local/bin/runtime --token=secret-authorized-command" ssh-ed25519 AAAAC3NzaAuthorizedSecretMaterial runtime deploy key',
+    "restrict,no-pty ssh-rsa AAAAB3NzaAuthorizedSecretMaterial2 runtime readonly key",
+  ].join("\n"));
+  writeText(hostsPath, [
+    "# Runtime development overrides token=secret-hosts-comment-token",
+    "127.0.0.1 localhost runtime.local",
+    "127.0.0.1 api.runtime.example.test # local API override",
+    "0.0.0.0 ads.runtime.example.test tracker.runtime.example.test",
+    "::1 ipv6-runtime.local",
+    "192.0.2.10 docs.runtime.example.test runtime-token-secret.example.test",
   ].join("\n"));
   writeText(packagePath, JSON.stringify({
     name: "runtime-fixture-app",
@@ -1426,6 +1769,39 @@ try {
     "  ],",
     "});",
   ].join("\n"));
+  writeText(pnpmWorkspacePath, [
+    "packages:",
+    "  - apps/*",
+    "  - packages/*",
+    "catalog:",
+    "  react: 19.2.1",
+    "onlyBuiltDependencies:",
+    "  - esbuild",
+    "runtimeToken: secret-pnpm-workspace-token",
+  ].join("\n"));
+  writeText(turboConfigPath, JSON.stringify({
+    "$schema": "https://turbo.build/schema.json",
+    globalDependencies: ["**/.env.local"],
+    remoteCache: { teamId: "team_runtime", token: "secret-turbo-token" },
+    tasks: {
+      build: { dependsOn: ["^build"], outputs: ["dist/**"] },
+      test: { dependsOn: ["build"], outputs: ["coverage/**"], cache: true },
+    },
+  }, null, 2));
+  writeText(nxConfigPath, JSON.stringify({
+    npmScope: "runtime",
+    affected: { defaultBase: "main" },
+    namedInputs: {
+      default: ["{projectRoot}/**/*"],
+      production: ["default", "!{projectRoot}/**/*.spec.ts"],
+    },
+    targetDefaults: {
+      build: { dependsOn: ["^build"], outputs: ["{projectRoot}/dist"] },
+      test: { inputs: ["default", "^production"] },
+    },
+    plugins: ["@nx/vite/plugin"],
+    accessToken: "secret-nx-token",
+  }, null, 2));
   writeText(packageLockPath, JSON.stringify({
     name: "runtime-fixture-app",
     lockfileVersion: 3,
@@ -1478,6 +1854,46 @@ try {
     'scheduler@^0.27.0:',
     '  version "0.27.0"',
   ].join("\n"));
+  writeText(denoLockPath, JSON.stringify({
+    version: "3",
+    remote: {
+      "https://deno.land/std@0.224.0/assert/mod.ts": "sha256-runtime-deno-assert",
+    },
+    npm: {
+      specifiers: {
+        "npm:chalk@^5.3.0": "chalk@5.3.0",
+      },
+      packages: {
+        "chalk@5.3.0": {
+          integrity: "sha512-runtime-chalk",
+          dependencies: {
+            "ansi-styles": "ansi-styles@6.2.1",
+          },
+        },
+        "ansi-styles@6.2.1": {
+          integrity: "sha512-runtime-ansi",
+        },
+      },
+    },
+  }, null, 2));
+  writeText(bunLockPath, JSON.stringify({
+    lockfileVersion: 1,
+    workspaces: {
+      "": {
+        dependencies: {
+          react: "^19.2.1",
+        },
+        devDependencies: {
+          "runtime-bun-tool": "1.0.0",
+        },
+      },
+    },
+    packages: {
+      react: ["react@19.2.1", "", { dependencies: { scheduler: "^0.27.0" } }, "sha512-runtime-react"],
+      scheduler: ["scheduler@0.27.0", "", {}, "sha512-runtime-scheduler"],
+      "runtime-bun-tool": ["runtime-bun-tool@1.0.0", "", {}, "sha512-runtime-tool"],
+    },
+  }, null, 2));
   writeText(cargoLockPath, [
     "# This file is automatically @generated by Cargo.",
     "[[package]]",
@@ -1794,6 +2210,11 @@ try {
       text: "Second Slack export message for reviewed handoff.",
     },
   ], null, 2));
+  writeText(slackCsvExportPath, [
+    "channel,user,ts,text",
+    "runtime-slack-csv-channel,U34567,1783677720.000300,Slack CSV runtime export message token=secret-slack-csv-export-token",
+    "runtime-slack-csv-channel,U45678,1783677780.000400,Second Slack CSV message for reviewed handoff.",
+  ].join("\n"));
   writeText(teamsExportPath, JSON.stringify({
     messages: [
       {
@@ -1853,6 +2274,23 @@ try {
           },
         },
       },
+    },
+  ], null, 2));
+  writeText(claudeConversationsPath, JSON.stringify([
+    {
+      name: "Runtime Claude Conversation",
+      chat_messages: [
+        {
+          sender: "human",
+          created_at: "2026-07-10T08:04:00Z",
+          text: "Claude export prompt token=secret-claude-export-token",
+        },
+        {
+          sender: "assistant",
+          created_at: "2026-07-10T08:05:00Z",
+          content: [{ type: "text", text: "Claude export answer for reviewed local context." }],
+        },
+      ],
     },
   ], null, 2));
   writeText(stylePath, [
@@ -2099,6 +2537,28 @@ try {
     "    rewrite ^/old/(.*)$ /new/$1?token=secret-nginx-token permanent;",
     "  }",
     "}",
+  ].join("\n"));
+  writeText(apacheVhostConfigPath, [
+    "<VirtualHost *:443>",
+    "  ServerName apache-runtime.example.test",
+    "  ServerAlias api.apache-runtime.example.test",
+    "  SSLCertificateFile /etc/httpd/certs/runtime.crt",
+    "  SSLCertificateKeyFile /etc/httpd/certs/secret-apache-key.pem",
+    "  ProxyPass /api https://127.0.0.1:8443/api?token=secret-apache-token",
+    "  ProxyPassReverse /api https://127.0.0.1:8443/api",
+    "  Header set Authorization \"Bearer secret-apache-token\"",
+    "  AuthType Basic",
+    "  Require valid-user",
+    "  RedirectMatch 302 ^/old/(.*)$ /new/$1?token=secret-apache-token",
+    "</VirtualHost>",
+  ].join("\n"));
+  writeText(htaccessConfigPath, [
+    "RewriteEngine On",
+    "RewriteRule ^private/(.*)$ /login?token=secret-htaccess-token [R=302,L]",
+    "AuthType Basic",
+    "Require all granted",
+    "SetEnv RUNTIME_TOKEN secret-htaccess-token",
+    "Header set X-Runtime-Trace secret-htaccess-token",
   ].join("\n"));
   writeText(kubernetesManifestPath, [
     "apiVersion: apps/v1",
@@ -2368,6 +2828,24 @@ try {
     'name = "pytest"',
     'version = "8.3.4"',
   ].join("\n"));
+  writeText(pypircPath, [
+    "[distutils]",
+    "index-servers =",
+    "    pypi",
+    "    internal",
+    "",
+    "[pypi]",
+    "repository = https://upload.pypi.org/legacy/?token=secret-pypirc-url-token",
+    "username = __token__",
+    "password = secret-pypirc-token",
+    "",
+    "[internal]",
+    "repository = https://packages.example.test/runtime/",
+    "username = runtime-publisher",
+    "password = secret-pypirc-internal-token",
+    "ca_cert = certs/internal-ca.pem",
+    "client_cert = certs/client.pem",
+  ].join("\n"));
   writeText(pubspecPath, [
     "name: runtime_fixture",
     "version: 1.0.0",
@@ -2587,6 +3065,41 @@ try {
     "",
     "Mailbox runtime fixture body.",
   ].join("\n"));
+  writeText(telegramExportPath, JSON.stringify({
+    name: "Runtime Telegram Fixture",
+    type: "personal_chat",
+    messages: [
+      {
+        id: 1,
+        type: "message",
+        date: "2026-07-09T10:00:00",
+        from: "Runtime Telegram Sender",
+        text: [
+          "Telegram runtime fixture ",
+          { type: "plain", text: "token=secret-telegram-token" },
+        ],
+      },
+      {
+        id: 2,
+        type: "message",
+        date: "2026-07-09T10:02:00",
+        from: "Runtime Telegram Reviewer",
+        text: "Telegram runtime reply",
+      },
+    ],
+  }, null, 2));
+  writeText(whatsappExportPath, [
+    "[7/9/26, 10:05 AM] Runtime WhatsApp Sender: WhatsApp runtime fixture token=secret-whatsapp-token",
+    "continued detail line",
+    "[7/9/26, 10:06 AM] Runtime WhatsApp Reviewer: WhatsApp runtime reply",
+  ].join("\n"));
+  writeText(meetingTranscriptPath, [
+    "Meeting: Runtime Transcript Review",
+    "00:00:05 Runtime Facilitator: Review the meeting transcript token=secret-meeting-transcript-token",
+    "00:00:18 Runtime Reviewer: Decision: keep local preview only",
+    "00:00:30 Runtime Owner: Action item: add fixture coverage due by Friday",
+    "continued transcript detail line",
+  ].join("\n"));
   writeText(vcardPath, [
     "BEGIN:VCARD",
     "VERSION:3.0",
@@ -2596,6 +3109,11 @@ try {
     "EMAIL:runtime-contact@example.test",
     "TEL:+1-555-0100",
     "END:VCARD",
+  ].join("\n"));
+  writeText(contactsCsvPath, [
+    "Full Name,Company,Job Title,E-mail Address,Mobile Phone,Business City,Business Country,Notes",
+    "Runtime CSV Contact,OpenDrSai CSV,Runtime Reviewer,runtime-csv-secret@example.test,+1-555-019-9000,Shanghai,CN,notes token=secret-contact-csv-token",
+    "Runtime CSV Planner,OpenDrSai CSV,Planning Lead,planner-secret@example.test,+86 010 5555 0123,Beijing,CN,hidden notes should not expand",
   ].join("\n"));
   writeText(icsPath, [
     "BEGIN:VCALENDAR",
@@ -2622,6 +3140,24 @@ try {
     "DESCRIPTION:Plan runtime ical fixture coverage",
     "END:VEVENT",
     "END:VCALENDAR",
+  ].join("\n"));
+  writeText(vcsPath, [
+    "BEGIN:VCALENDAR",
+    "VERSION:1.0",
+    "BEGIN:VEVENT",
+    "SUMMARY:Runtime VCS Handoff",
+    "DTSTART:20260711T093000Z",
+    "DTEND:20260711T100000Z",
+    "LOCATION:Legacy Room token=secret-runtime-vcs-token",
+    "ATTENDEE:mailto:vcs-planner@example.test",
+    "DESCRIPTION:Review legacy vCalendar export",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\n"));
+  writeText(calendarCsvPath, [
+    "Subject,Start Date,Start Time,End Date,End Time,Location,Required Attendees,Description,Show As",
+    "Runtime CSV Planning,2026-07-10,09:30,2026-07-10,10:00,CSV Room token=secret-calendar-csv-token,planner@example.test,Hidden agenda token=secret-calendar-description-token,Busy",
+    "Runtime CSV Review,2026-07-10,11:00,2026-07-10,11:30,Review Room,reviewer@example.test,Do not expand this field,Free",
   ].join("\n"));
   writeEvtxFixture(evtxPath);
   writeEtlFixture(etlPath);
@@ -3033,6 +3569,7 @@ try {
     "KxQ4xg9M2QK5aVq8LQ==",
     "-----END CERTIFICATE-----",
   ].join("\n"));
+  writeKeePassFixture(keepassPath);
   writeText(checksumPath, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  runtime.exe\n");
   writeWasmFixture(wasmPath);
   writePeFixture(exePath);
@@ -3373,6 +3910,34 @@ try {
     "*/15 * * * * /usr/local/bin/runtime-sync --token secret-cron-token",
     "@daily /usr/local/bin/runtime-cleanup --mode safe",
   ].join("\n"));
+  writeText(wireguardConfigPath, [
+    "[Interface]",
+    "Address = 10.44.0.2/32, fd00:44::2/128",
+    "PrivateKey = secret-wireguard-private-key-material",
+    "DNS = 1.1.1.1, 2606:4700:4700::1111",
+    "PostUp = powershell.exe -NoProfile -Command Invoke-WebRequest https://vpn.example.test/hook?token=secret-wg-hook",
+    "",
+    "[Peer]",
+    "PublicKey = RuntimePeerPublicKeyBase64Value000000000000000=",
+    "PresharedKey = secret-wireguard-psk-material",
+    "AllowedIPs = 0.0.0.0/0, ::/0",
+    "Endpoint = vpn.example.test:51820",
+    "PersistentKeepalive = 25",
+  ].join("\n"));
+  writeText(openVpnConfigPath, [
+    "client",
+    "dev tun",
+    "proto udp",
+    "remote vpn-runtime.example.test 1194",
+    "redirect-gateway def1",
+    "auth-user-pass secret-openvpn-auth.txt",
+    "ca runtime-ca.crt",
+    "cert runtime-client.crt",
+    "key secret-openvpn-client.key",
+    "tls-auth secret-openvpn-ta.key 1",
+    "script-security 2",
+    "up https://vpn-runtime.example.test/up?token=secret-openvpn-url-token",
+  ].join("\n"));
   writeText(csvPath, [
     "user_id,event_name,status,api_token",
     "1,runtime-open,active,secret-csv-token",
@@ -3421,6 +3986,25 @@ try {
     "End time: 20260711103009",
     "**********************",
   ].join("\n"));
+  writeText(logMonitorRuntimePath, [
+    "INFO runtime monitor started",
+    "WARN retrying connector snapshot import token=secret-log-monitor-token",
+    "ERROR provider returned retryable status",
+  ].join("\n"));
+  writeText(logMonitorConfigPath, JSON.stringify({
+    retention: {
+      retentionDays: 14,
+      maxBytes: 1048576,
+      maxFiles: 8,
+      action: "review-only",
+    },
+    logs: [
+      {
+        path: "runtime-monitor.log",
+        label: "Runtime retention log",
+      },
+    ],
+  }, null, 2));
   writeText(harPath, JSON.stringify({
     log: {
       entries: [
@@ -3642,6 +4226,29 @@ try {
   writeParquetFixture(parquetPath);
   writeArrowFixture(arrowPath);
   writeFeatherFixture(featherPath);
+  writeAvroFixture(avroPath);
+  writeText(avroSchemaPath, JSON.stringify({
+    type: "record",
+    name: "RuntimeSchemaEvent",
+    namespace: "org.opendrsai.runtime",
+    aliases: ["RuntimeEventAlias"],
+    doc: "Runtime schema fixture token=secret-avsc-doc",
+    fields: [
+      { name: "runtime_id", type: "string", doc: "Stable runtime identifier" },
+      { name: "metric_value", type: ["null", "double"], default: null },
+      { name: "created_at", type: { type: "long", logicalType: "timestamp-millis" } },
+      {
+        name: "labels",
+        type: {
+          type: "map",
+          values: "string",
+        },
+        default: {
+          secret_label: "secret-avsc-default",
+        },
+      },
+    ],
+  }, null, 2));
   writeOfficeZipFixture(epubPath, [
     ["mimetype", "application/epub+zip"],
     ["META-INF/container.xml", '<container><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>'],
@@ -3660,6 +4267,34 @@ try {
     "<DL><p><DT><A HREF=\"https://docs.example.test/runtime?token=secret-bookmark-token\" ADD_DATE=\"1783598400\">Runtime Docs</A></DL><p>",
     "</DL><p>",
   ].join("\n"));
+  writeText(bookmarksJsonPath, JSON.stringify({
+    checksum: "runtime-bookmarks-checksum",
+    roots: {
+      bookmark_bar: {
+        type: "folder",
+        name: "Runtime JSON Bar",
+        children: [
+          {
+            type: "url",
+            name: "Runtime JSON Docs",
+            url: "https://json-bookmarks.example.test/docs?token=secret-json-bookmark-token",
+            date_added: "13323456789000000",
+          },
+        ],
+      },
+      other: {
+        type: "folder",
+        name: "Runtime JSON Other",
+        children: [
+          {
+            type: "url",
+            name: "Runtime JSON API",
+            url: "https://api.json-bookmarks.example.test/reference?api_key=secret-json-bookmark-key",
+          },
+        ],
+      },
+    },
+  }, null, 2));
   writeText(urlShortcutPath, [
     "[InternetShortcut]",
     "URL=https://links.example.test/runtime?token=secret-url-token",
@@ -3674,6 +4309,22 @@ try {
     "<key>URL</key>",
     "<string>https://links.example.test/webloc?token=secret-webloc-token</string>",
     "</dict></plist>",
+  ].join("\n"));
+  writeText(desktopEntryPath, [
+    "[Desktop Entry]",
+    "Type=Application",
+    "Name=Runtime Desktop Launcher",
+    "GenericName=Runtime Tool",
+    "Comment=Launches runtime fixture with secret-comment-token",
+    "Exec=sh -c \"curl https://desktop.example.test/install?token=secret-desktop-token && /opt/runtime/bin/fixture --api-key=secret-desktop-key\"",
+    "Icon=runtime-fixture",
+    "Terminal=false",
+    "Categories=Development;Utility;",
+    "MimeType=text/plain;application/json;",
+    "Actions=OpenRuntime;Diagnostics;",
+    "[Desktop Action Diagnostics]",
+    "Name=Diagnostics",
+    "Exec=/opt/runtime/bin/diagnostics --token=secret-diagnostics-token",
   ].join("\n"));
   writeText(rssPath, [
     '<?xml version="1.0"?>',
@@ -3694,6 +4345,65 @@ try {
     "<entry><title>Runtime Atom Entry</title><link href=\"https://feeds.example.test/atom/1\" /><updated>2026-07-10T09:00:00Z</updated></entry>",
     "</feed>",
   ].join("\n"));
+  writeText(jsonFeedPath, JSON.stringify({
+    version: "https://jsonfeed.org/version/1.1",
+    title: "Runtime JSON Feed",
+    home_page_url: "https://feeds.example.test/json",
+    feed_url: "https://feeds.example.test/feed.json?token=secret-jsonfeed-token",
+    authors: [{ name: "Runtime JSON Author", url: "https://authors.example.test/runtime" }],
+    items: [
+      {
+        id: "runtime-json-1",
+        title: "Runtime JSON Feed Item",
+        url: "https://feeds.example.test/json/1?token=secret-jsonfeed-token",
+        date_published: "2026-07-10T09:00:00Z",
+        content_html: "<p>body token=secret-jsonfeed-body-token</p>",
+      },
+    ],
+  }, null, 2));
+  writeText(lottieAnimationPath, JSON.stringify({
+    v: "5.12.2",
+    fr: 30,
+    ip: 0,
+    op: 90,
+    w: 640,
+    h: 360,
+    nm: "Runtime Lottie Animation",
+    assets: [
+      {
+        id: "image_0",
+        w: 128,
+        h: 128,
+        u: "images/",
+        p: "runtime-logo.png?token=secret-lottie-token",
+      },
+    ],
+    layers: [
+      { ind: 1, ty: 4, nm: "Runtime Shape Layer", ip: 0, op: 90 },
+      { ind: 2, ty: 2, nm: "Runtime Image Layer", refId: "image_0", ip: 10, op: 80 },
+      { ind: 3, ty: 5, nm: "Runtime Text Layer", ip: 20, op: 70 },
+    ],
+    markers: [
+      { cm: "Runtime intro", tm: 0, dr: 30 },
+      { cm: "Runtime outro token=secret-lottie-marker", tm: 60, dr: 30 },
+    ],
+  }, null, 2));
+  writeDotLottieFixture(dotLottiePath);
+  writeText(sourceMapPath, JSON.stringify({
+    version: 3,
+    file: "runtime.bundle.js",
+    sourceRoot: "webpack://runtime-app/?token=secret-sourcemap-root",
+    sources: [
+      "webpack://runtime-app/src/runtime.ts?token=secret-sourcemap-source",
+      "../shared/runtime-helper.ts",
+    ],
+    names: ["RuntimeView", "secretSourceMapName", "renderRuntime"],
+    mappings: "AAAA,SAASA,WAAW,CAACC,IAAI;AACzBC,MAAM,CAACC,GAAG",
+    sourcesContent: [
+      "const secretSourceMapContent = 'secret-sourcemap-content';",
+      "export const runtimeHelper = true;",
+    ],
+  }, null, 2));
   writeText(opmlPath, [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<opml version="2.0">',
@@ -3715,12 +4425,260 @@ try {
     "Crawl-delay: 5",
     "Sitemap: https://example.test/sitemap.xml?token=secret-robots-token",
   ].join("\n"));
+  writeText(llmsPath, [
+    "# Runtime LLM Site Guide",
+    "",
+    "## Docs",
+    "- [Runtime API](https://llms.example.test/api?token=secret-llms-token)",
+    "- [Runtime Guide](https://llms.example.test/guide)",
+    "",
+    "## Optional",
+    "Optional: include changelog links only after review",
+    "",
+    "## Full context",
+    "Full context: see llms-full.txt after explicit review",
+  ].join("\n"));
+  writeText(browserExtensionManifestPath, JSON.stringify({
+    manifest_version: 3,
+    name: "Runtime Browser Extension",
+    short_name: "RuntimeExt",
+    version: "1.2.3",
+    description: "Runtime extension fixture",
+    permissions: ["tabs", "storage", "scripting", "declarativeNetRequest"],
+    host_permissions: ["https://extension.example.test/*", "https://api.extension.example.test/path?token=secret-extension-token"],
+    optional_permissions: ["cookies"],
+    background: {
+      service_worker: "background.js",
+    },
+    action: {
+      default_title: "Runtime Extension Action",
+      default_popup: "popup.html",
+    },
+    content_scripts: [
+      {
+        matches: ["https://content.extension.example.test/*"],
+        js: ["content.js"],
+        css: ["content.css"],
+      },
+    ],
+    commands: {
+      "runtime-command": {
+        suggested_key: { default: "Ctrl+Shift+Y" },
+        description: "Run runtime command",
+      },
+    },
+    web_accessible_resources: [
+      {
+        resources: ["assets/runtime.js"],
+        matches: ["https://extension.example.test/*"],
+      },
+    ],
+  }, null, 2));
+  writeText(browserExtensionInventoryPath, JSON.stringify({
+    browser: "Chrome",
+    profile: "Runtime profile export",
+    extensions: [
+      {
+        id: "abcdefghijklmnopabcdefghijklmnop",
+        name: "Runtime Extension Inventory",
+        version: "1.2.3",
+        enabled: true,
+        installType: "normal",
+        source: "https://clients2.google.com/service/update2/crx?token=secret-extension-inventory-token",
+        permissions: ["tabs", "storage", "cookies"],
+        host_permissions: ["https://inventory.example.test/*?api_key=secret-extension-inventory-key"],
+        manifest: {
+          background: { service_worker: "background.js" },
+          content_scripts: [{ matches: ["https://inventory.example.test/*"], js: ["content.js"] }],
+        },
+      },
+      {
+        id: "disabledruntimeextension0000000001",
+        name: "Disabled Runtime Extension",
+        version: "0.9.0",
+        enabled: false,
+        install_type: "policy",
+        source: "policy",
+        permissions: ["declarativeNetRequest"],
+      },
+    ],
+  }, null, 2));
   writeText(browserCookiesPath, [
     "# Netscape HTTP Cookie File",
     ".example.test\tTRUE\t/\tTRUE\t2147483647\tsessionid\tsecret-cookie-session",
     "#HttpOnly_api.example.test\tFALSE\t/api\tTRUE\t0\tauth_token\tsecret-cookie-token",
     "static.example.test\tFALSE\t/assets\tFALSE\t1\tlegacy_pref\tsecret-cookie-legacy",
   ].join("\n"));
+  writeText(hyphenatedBrowserCookiesPath, [
+    "# Netscape HTTP Cookie File",
+    ".hyphen.example.test\tTRUE\t/\tTRUE\t2147483647\thyphen_session\tsecret-hyphen-cookie-session",
+    "#HttpOnly_api.hyphen.example.test\tFALSE\t/api\tTRUE\t0\thyphen_auth\tsecret-hyphen-cookie-auth",
+  ].join("\n"));
+  writeText(browserPasswordsPath, [
+    "name,url,username,password,note",
+    "Runtime Login,https://login.passwords.example.test/sign-in?token=secret-password-url-token,runtime-user@example.test,secret-password-value,primary login",
+    "Admin Login,https://admin.passwords.example.test/,admin-user,secret-admin-password,admin password token=secret-password-note-token",
+  ].join("\n"));
+  writeText(browserAutofillCsvPath, [
+    "origin,form,field name,type,value",
+    "https://checkout.autofill.example.test,checkout,email,email,secret-autofill-email@example.test",
+    "https://checkout.autofill.example.test,checkout,cc-number,payment,4111111111111111",
+  ].join("\n"));
+  writeText(browserAutofillJsonPath, JSON.stringify({
+    forms: [
+      {
+        origin: "https://profile.autofill.example.test",
+        formName: "profile",
+        fields: [
+          { name: "given-name", type: "text", value: "secret-autofill-name" },
+          { name: "phone", type: "tel", value: "secret-autofill-phone" },
+        ],
+      },
+    ],
+  }, null, 2));
+  writeText(browserHistoryCsvPath, [
+    "url,title,visit count,typed count,last visit time",
+    "https://history.example.test/runtime?token=secret-history-token,Runtime History,4,1,2026-07-10T09:00:00Z",
+    "https://docs.history.example.test/page?session=secret-history-session,Docs History,2,0,17835984000000000",
+  ].join("\n"));
+  writeText(browserHistoryJsonPath, JSON.stringify({
+    history: [
+      {
+        url: "https://json-history.example.test/runtime?api_key=secret-json-history-key",
+        title: "JSON Runtime History",
+        visitCount: 3,
+        typedCount: 1,
+        lastVisitTime: "2026-07-10T10:00:00Z",
+      },
+    ],
+  }, null, 2));
+  writeBrowserHistorySqliteFixture(browserHistorySqlitePath);
+  writeText(browserDownloadsCsvPath, [
+    "url,file name,state,danger,referrer,received bytes,total bytes,start time,end time",
+    "https://downloads.example.test/artifact.zip?token=secret-download-token,C:\\Users\\tester\\Downloads\\artifact.zip,complete,not dangerous,https://downloads.example.test/start?session=secret-download-session,1024,4096,2026-07-10T11:00:00Z,2026-07-10T11:01:00Z",
+    "https://cdn.downloads.example.test/report.pdf?api_key=secret-download-key,C:\\Users\\tester\\Downloads\\report.pdf,interrupted,file blocked,,2048,8192,17835984600000000,17835985200000000",
+  ].join("\n"));
+  writeText(browserDownloadsJsonPath, JSON.stringify({
+    downloads: [
+      {
+        url: "https://json-downloads.example.test/runtime.exe?token=secret-json-download-token",
+        targetPath: "C:\\Users\\tester\\Downloads\\runtime.exe",
+        state: "complete",
+        danger: "accepted",
+        referrer: "https://json-downloads.example.test/list?auth=secret-json-download-auth",
+        receivedBytes: 512,
+        totalBytes: 512,
+        startTime: "2026-07-10T12:00:00Z",
+        endTime: "2026-07-10T12:00:05Z",
+      },
+    ],
+  }, null, 2));
+  writeBrowserDownloadsSqliteFixture(browserDownloadsSqlitePath);
+  writeText(browserPreferencesPath, JSON.stringify({
+    profile: {
+      name: "Runtime Profile",
+      avatar_name: "Runtime Avatar",
+      content_settings: {
+        exceptions: {
+          cookies: {
+            "https://prefs.example.test,*": { setting: 1 },
+          },
+          geolocation: {
+            "https://maps.prefs.example.test,*": { setting: 2 },
+          },
+        },
+      },
+    },
+    default_search_provider: {
+      name: "Runtime Search",
+      keyword: "runtime",
+      search_url: "https://search.prefs.example.test/?q={searchTerms}&token=secret-preferences-token",
+      suggest_url: "https://suggest.prefs.example.test/?q={searchTerms}&api_key=secret-preferences-key",
+    },
+    homepage: "https://home.prefs.example.test/start?session=secret-preferences-session",
+    session: {
+      restore_on_startup_urls: [
+        "https://startup.prefs.example.test/dashboard?token=secret-preferences-startup",
+      ],
+    },
+    download: {
+      default_directory: "C:\\Users\\tester\\Downloads\\runtime-preferences",
+      prompt_for_download: true,
+    },
+    extensions: {
+      settings: {
+        "runtime-extension-id": {
+          state: 1,
+          manifest: {
+            name: "Runtime Preferences Extension",
+          },
+        },
+      },
+    },
+    password_manager: {
+      enabled: false,
+      apiToken: "secret-preferences-password-token",
+    },
+    safebrowsing: {
+      enabled: true,
+    },
+  }, null, 2));
+  writeText(browserLocalStoragePath, JSON.stringify({
+    "https://storage.example.test": {
+      localStorage: {
+        theme: "dark",
+        apiToken: "secret-local-storage-token",
+        runtimeState: JSON.stringify({ selected: "inbox", token: "secret-nested-storage-token" }),
+      },
+    },
+  }, null, 2));
+  writeText(browserSessionStoragePath, JSON.stringify({
+    entries: [
+      {
+        origin: "https://session-storage.example.test/app",
+        storageArea: "sessionStorage",
+        key: "csrfToken",
+        value: "secret-session-storage-token",
+      },
+      {
+        origin: "https://session-storage.example.test/app",
+        storageArea: "sessionStorage",
+        key: "wizardStep",
+        value: "confirm",
+      },
+    ],
+  }, null, 2));
+  writeText(browserSessionTabsPath, JSON.stringify({
+    windows: [
+      {
+        windowId: "window-1",
+        tabs: [
+          {
+            title: "Runtime Inbox",
+            url: "https://tabs.example.test/inbox?token=secret-tab-token",
+            active: true,
+            pinned: true,
+            audible: false,
+            discarded: false,
+            groupTitle: "Runtime Work",
+            openerUrl: "https://opener.tabs.example.test/start?session=secret-tab-opener",
+            referrerUrl: "https://referrer.tabs.example.test/path?auth=secret-tab-referrer",
+            lastAccessedAt: "2026-07-10T13:00:00Z",
+          },
+          {
+            title: "Runtime Docs",
+            url: "https://docs.tabs.example.test/page?api_key=secret-tab-key",
+            active: false,
+            pinned: false,
+            audible: true,
+            discarded: true,
+            groupTitle: "Runtime Research",
+            incognito: true,
+          },
+        ],
+      },
+    ],
+  }, null, 2));
   const sitemapXml = [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
@@ -3738,6 +4696,106 @@ try {
   ].join("\n");
   writeText(sitemapPath, sitemapXml);
   writeFileSync(sitemapGzipPath, gzipSync(Buffer.from(sitemapXml, "utf8")));
+  const warcText = [
+    "WARC/1.1",
+    "WARC-Type: warcinfo",
+    "WARC-Date: 2026-07-12T09:00:00Z",
+    "WARC-Record-ID: <urn:uuid:runtime-warc-info>",
+    "Content-Type: application/warc-fields",
+    "Content-Length: 24",
+    "",
+    "software: OpenDrSai",
+    "",
+    "WARC/1.1",
+    "WARC-Type: response",
+    "WARC-Target-URI: https://archive.example.test/page?token=secret-warc-token",
+    "WARC-Date: 2026-07-12T09:01:00Z",
+    "WARC-Record-ID: <urn:uuid:runtime-warc-response>",
+    "Content-Type: application/http; msgtype=response",
+    "Content-Length: 92",
+    "",
+    "HTTP/1.1 200 OK",
+    "Content-Type: text/html",
+    "",
+    "<html><body>secret-warc-body-token</body></html>",
+  ].join("\r\n");
+  writeText(warcPath, warcText);
+  writeFileSync(warcGzipPath, gzipSync(Buffer.from(warcText, "utf8")));
+  writeText(pwaManifestPath, JSON.stringify({
+    name: "Runtime PWA Fixture",
+    short_name: "RuntimePWA",
+    id: "/app/?token=secret-pwa-id-token",
+    start_url: "/app/?token=secret-pwa-start-token",
+    scope: "/app/",
+    display: "standalone",
+    orientation: "portrait",
+    theme_color: "#1f6feb",
+    background_color: "#ffffff",
+    categories: ["productivity", "developer"],
+    icons: [
+      {
+        src: "/icons/runtime-192.png?token=secret-pwa-icon-token",
+        sizes: "192x192",
+        type: "image/png",
+        purpose: "any maskable",
+      },
+    ],
+    shortcuts: [
+      {
+        name: "Open Runtime Inbox",
+        url: "/app/inbox?token=secret-pwa-shortcut-token",
+      },
+    ],
+    screenshots: [
+      {
+        src: "/screens/runtime-wide.png?token=secret-pwa-screenshot-token",
+        sizes: "1280x720",
+        form_factor: "wide",
+      },
+    ],
+    share_target: {
+      action: "/share?token=secret-pwa-share-token",
+      method: "POST",
+      enctype: "multipart/form-data",
+      params: {
+        title: "title",
+        text: "text",
+        url: "url",
+      },
+    },
+    protocol_handlers: [
+      {
+        protocol: "web+runtime",
+        url: "/protocol?url=%s&token=secret-pwa-protocol-token",
+      },
+    ],
+    file_handlers: [
+      {
+        action: "/open-file?token=secret-pwa-file-token",
+        accept: {
+          "text/plain": [".txt"],
+        },
+      },
+    ],
+  }, null, 2));
+  writeText(pwaServiceWorkerPath, [
+    "importScripts('/workbox-v7.js?token=secret-sw-import-token');",
+    "const CACHE_NAME = 'runtime-cache-v1';",
+    "self.addEventListener('install', (event) => {",
+    "  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(['/index.html', '/offline.html?token=secret-sw-cache-token'])));",
+    "  self.skipWaiting();",
+    "});",
+    "self.addEventListener('activate', (event) => {",
+    "  event.waitUntil(self.registration.navigationPreload.enable());",
+    "});",
+    "self.addEventListener('fetch', (event) => {",
+    "  event.respondWith(fetch(event.request));",
+    "});",
+    "self.addEventListener('push', (event) => {",
+    "  event.waitUntil(self.registration.showNotification('Runtime alert token=secret-sw-notification-token'));",
+    "});",
+    "registerRoute(({ request }) => request.destination === 'image', new StaleWhileRevalidate());",
+  ].join("\n"));
   writeText(srtPath, [
     "1",
     "00:00:01,000 --> 00:00:03,000",
@@ -3775,6 +4833,13 @@ try {
     "07-11 10:05:05.333  2222  2225 E AndroidRuntime: Runtime crash diagnostic token=secret-crash-token",
     "D/DrSaiMobile( 3333): brief format message token=secret-brief-token",
   ].join("\n"));
+  writeText(appleUnifiedLogPath, [
+    "Timestamp                       Thread     Type        Activity             PID    Process             Subsystem:Category",
+    "2026-07-12 10:15:03.123456+0800 0x12345    Default     0x0                  4242   DrSaiMobile         org.opendrsai.mobile:Sync token=secret-oslog-token sync started",
+    "2026-07-12 10:15:04.654321+0800 0x12346    Error       0x0                  4242   DrSaiMobile         org.opendrsai.mobile:Network request failed token=secret-network-token",
+    "2026-07-12 10:15:05.000000+0800 0x12347    Fault       0x0                  999    diagnosticd         com.apple.diagnostic:Crash Runtime fault token=secret-fault-token",
+    "Jul 12 10:15:06 Runtime-iPhone SpringBoard[101]: activation info token=secret-syslog-token",
+  ].join("\n"));
   writeText(infoPlistPath, [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
@@ -3799,6 +4864,59 @@ try {
     "</dict>",
     "</plist>",
   ].join("\n"));
+  writeText(appleCrashPath, [
+    "Process:               RuntimeFixture [4242]",
+    "Identifier:            org.opendrsai.runtime.ios",
+    "Version:               2.3.4 (234)",
+    "Code Type:             ARM-64 (Native)",
+    "Date/Time:             2026-07-12 10:25:00.000 +0800",
+    "OS Version:            iPhone OS 17.5 (21F79)",
+    "Report Version:        104",
+    "Exception Type:        EXC_BAD_ACCESS (SIGSEGV)",
+    "Exception Codes:       KERN_INVALID_ADDRESS at 0x0000000100000000 token=secret-crash-token",
+    "Termination Reason:    Namespace SIGNAL, Code 11 Segmentation fault",
+    "Crashed Thread:        0  Dispatch queue: com.apple.main-thread",
+    "",
+    "Thread 0 Crashed:",
+    "0   RuntimeFixture              0x0000000100012340 RuntimeCrashEntry + 64",
+    "1   RuntimeKit                  0x0000000100056780 RuntimeWorker.run(token=secret-frame-token) + 128",
+    "2   UIKitCore                   0x0000000190000000 UIApplicationMain + 340",
+    "",
+    "Binary Images:",
+    "0x100000000 - 0x1000fffff RuntimeFixture arm64  <ABCDEF01-2345-6789-ABCD-EF0123456789> /private/var/containers/Bundle/Application/secret-path-token/RuntimeFixture.app/RuntimeFixture",
+    "0x100500000 - 0x1005fffff RuntimeKit arm64  <ABCDEF01-2345-6789-ABCD-EF0123456790> /private/var/containers/Bundle/Application/runtime/RuntimeKit.framework/RuntimeKit",
+  ].join("\n"));
+  writeText(appleIpsPath, JSON.stringify({
+    app_name: "RuntimeFixture",
+    bundleID: "org.opendrsai.runtime.ips",
+    incident: "runtime-incident-001",
+    timestamp: "2026-07-12 10:30:00.000 +0800",
+    os_version: "macOS 15.5 (24F74)",
+    exception: {
+      type: "EXC_CRASH",
+      signal: "SIGABRT",
+      codes: "0x0000000000000000 token=secret-ips-token",
+    },
+    termination: {
+      namespace: "SIGNAL",
+      code: 6,
+      reason: "Abort trap secret-ips-reason-token",
+    },
+    faultingThread: 0,
+    threads: [
+      {
+        triggered: true,
+        frames: [
+          { image: "RuntimeFixture", symbol: "RuntimeAbortEntry", sourceFile: "/Users/tester/project/secret-source-token/main.swift" },
+          { image: "RuntimeKit", symbol: "RuntimeWorker.run", sourceFile: "/Users/tester/project/RuntimeWorker.swift" },
+        ],
+      },
+    ],
+    usedImages: [
+      { name: "RuntimeFixture", base: "0x100000000", path: "/Applications/RuntimeFixture.app/Contents/MacOS/RuntimeFixture" },
+      { name: "RuntimeKit", base: "0x100500000", path: "/Applications/RuntimeFixture.app/Contents/Frameworks/RuntimeKit.framework/RuntimeKit" },
+    ],
+  }));
   writeMobileAppPackageFixture(apkPath, "apk");
   writeMobileAppPackageFixture(aabPath, "aab");
   writeMobileAppPackageFixture(ipaPath, "ipa");
@@ -3854,6 +4972,7 @@ try {
   ].join("\n"));
   writeWavFixture(wavPath);
   writeMp3Fixture(mp3Path);
+  writeAacFixture(aacPath);
   writeFlacFixture(flacPath);
   writeM4aFixture(m4aPath);
   writeOggFixture(oggPath);
@@ -3968,13 +5087,15 @@ try {
       packageLockPath,
       pnpmLockPath,
       yarnLockPath,
+      denoLockPath,
+      bunLockPath,
       cargoLockPath,
       goSumPath,
     ],
     limit: 8,
   });
 
-  assert(lockfileResult.items.length === 5, `expected 5 imported dependency lockfile runtime fixture items, got ${lockfileResult.items.length}`);
+  assert(lockfileResult.items.length === 7, `expected 7 imported dependency lockfile runtime fixture items, got ${lockfileResult.items.length}`);
   assert(lockfileResult.truncated === false, "dependency lockfile runtime fixture import should not be truncated");
   assert(
     lockfileResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
@@ -4064,15 +5185,34 @@ try {
     paths: [
       dotenvPath,
       envrcPath,
+      regexPatternPath,
     ],
-    limit: 2,
+    limit: 3,
   });
 
-  assert(configRuntimeResult.items.length === 2, `expected 2 imported config runtime fixture items, got ${configRuntimeResult.items.length}`);
+  assert(configRuntimeResult.items.length === 3, `expected 3 imported config runtime fixture items, got ${configRuntimeResult.items.length}`);
   assert(configRuntimeResult.truncated === false, ".env config runtime fixture import should not be truncated");
   assert(
     configRuntimeResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
     ".env config runtime fixture import lost read-only verification copy",
+  );
+
+  const sshConfigResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [
+      sshConfigPath,
+      knownHostsPath,
+      authorizedKeysPath,
+    ],
+    limit: 3,
+  });
+
+  assert(sshConfigResult.items.length === 3, `expected 3 imported SSH config runtime fixture items, got ${sshConfigResult.items.length}`);
+  assert(sshConfigResult.truncated === false, "SSH config runtime fixture import should not be truncated");
+  assert(
+    sshConfigResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "SSH config runtime fixture import lost read-only verification copy",
   );
 
   const mcpConfigResult = adapters.importChannelContext({
@@ -4128,6 +5268,24 @@ try {
   assert(
     jsToolingConfigResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
     "JS/TS tooling config runtime fixture import lost read-only verification copy",
+  );
+
+  const jsWorkspaceConfigResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [
+      pnpmWorkspacePath,
+      turboConfigPath,
+      nxConfigPath,
+    ],
+    limit: 3,
+  });
+
+  assert(jsWorkspaceConfigResult.items.length === 3, `expected 3 imported JS/TS workspace config runtime fixture items, got ${jsWorkspaceConfigResult.items.length}`);
+  assert(jsWorkspaceConfigResult.truncated === false, "JS/TS workspace config runtime fixture import should not be truncated");
+  assert(
+    jsWorkspaceConfigResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "JS/TS workspace config runtime fixture import lost read-only verification copy",
   );
 
   const ciWorkflowResult = adapters.importChannelContext({
@@ -4204,14 +5362,16 @@ try {
     workspacePath: workspace,
     paths: [
       slackExportPath,
+      slackCsvExportPath,
       teamsExportPath,
       discordExportPath,
       chatgptConversationsPath,
+      claudeConversationsPath,
     ],
     limit: 6,
   });
 
-  assert(chatExportResult.items.length === 4, `expected 4 imported chat export runtime fixture items, got ${chatExportResult.items.length}`);
+  assert(chatExportResult.items.length === 6, `expected 6 imported chat export runtime fixture items, got ${chatExportResult.items.length}`);
   assert(chatExportResult.truncated === false, "chat export runtime fixture import should not be truncated");
   assert(
     chatExportResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
@@ -4310,11 +5470,12 @@ try {
       pipfilePath,
       pythonEnvironmentPath,
       uvLockPath,
+      pypircPath,
     ],
     limit: 8,
   });
 
-  assert(pythonManifestResult.items.length === 4, `expected 4 imported Python dependency runtime fixture items, got ${pythonManifestResult.items.length}`);
+  assert(pythonManifestResult.items.length === 5, `expected 5 imported Python dependency/runtime config fixture items, got ${pythonManifestResult.items.length}`);
   assert(pythonManifestResult.truncated === false, "Python dependency runtime fixture import should not be truncated");
   assert(
     pythonManifestResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
@@ -4348,14 +5509,20 @@ try {
       emlPath,
       emlxPath,
       mboxPath,
+      telegramExportPath,
+      whatsappExportPath,
+      meetingTranscriptPath,
       vcardPath,
+      contactsCsvPath,
       icsPath,
       icalPath,
+      vcsPath,
+      calendarCsvPath,
     ],
-    limit: 8,
+    limit: 12,
   });
 
-  assert(personalInfoResult.items.length === 6, `expected 6 imported personal-info runtime fixture items, got ${personalInfoResult.items.length}`);
+  assert(personalInfoResult.items.length === 12, `expected 12 imported personal-info runtime fixture items, got ${personalInfoResult.items.length}`);
   assert(personalInfoResult.truncated === false, "personal-info runtime fixture import should not be truncated");
   assert(
     personalInfoResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
@@ -4493,11 +5660,13 @@ try {
     workspacePath: workspace,
     paths: [
       nginxConfigPath,
+      apacheVhostConfigPath,
+      htaccessConfigPath,
     ],
-    limit: 2,
+    limit: 3,
   });
 
-  assert(webServerConfigResult.items.length === 1, `expected 1 imported Nginx web server config runtime fixture item, got ${webServerConfigResult.items.length}`);
+  assert(webServerConfigResult.items.length === 3, `expected 3 imported web server config runtime fixture items, got ${webServerConfigResult.items.length}`);
   assert(webServerConfigResult.truncated === false, "Nginx web server config runtime fixture import should not be truncated");
   assert(
     webServerConfigResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
@@ -4515,16 +5684,17 @@ try {
       spdxPath,
       syftPath,
       pemPath,
+      keepassPath,
       checksumPath,
       wasmPath,
       exePath,
       jarPath,
       classPath,
     ],
-    limit: 12,
+    limit: 13,
   });
 
-  assert(securityArtifactResult.items.length === 12, `expected 12 imported security/SBOM/binary runtime fixture items, got ${securityArtifactResult.items.length}`);
+  assert(securityArtifactResult.items.length === 13, `expected 13 imported security/SBOM/binary runtime fixture items, got ${securityArtifactResult.items.length}`);
   assert(securityArtifactResult.truncated === false, "security/SBOM/binary runtime fixture import should not be truncated");
   assert(
     securityArtifactResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
@@ -4616,11 +5786,13 @@ try {
       parquetPath,
       arrowPath,
       featherPath,
+      avroPath,
+      avroSchemaPath,
     ],
-    limit: 12,
+    limit: 14,
   });
 
-  assert(dataNetworkResult.items.length === 12, `expected 12 imported data/network runtime fixture items, got ${dataNetworkResult.items.length}`);
+  assert(dataNetworkResult.items.length === 14, `expected 14 imported data/network runtime fixture items, got ${dataNetworkResult.items.length}`);
   assert(dataNetworkResult.truncated === false, "data/network runtime fixture import should not be truncated");
   assert(
     dataNetworkResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
@@ -4639,6 +5811,19 @@ try {
   assert(
     terminalRecordingResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
     "terminal execution-log runtime fixture import lost read-only verification copy",
+  );
+
+  const logMonitorResult = adapters.importChannelContext({
+    adapterId: "logs-monitor",
+    workspacePath: workspace,
+    limit: 2,
+  });
+
+  assert(logMonitorResult.items.length === 1, `expected 1 imported log monitor runtime fixture item, got ${logMonitorResult.items.length}`);
+  assert(logMonitorResult.truncated === false, "log monitor runtime fixture import should not be truncated");
+  assert(
+    logMonitorResult.verification.includes("durable cursor"),
+    "log monitor runtime fixture import lost durable cursor verification copy",
   );
 
   const databaseSchemaDslResult = adapters.importChannelContext({
@@ -4699,15 +5884,33 @@ try {
       systemdServicePath,
       cronSchedulePath,
       supervisorConfigPath,
+      hostsPath,
     ],
-    limit: 3,
+    limit: 4,
   });
 
-  assert(opsScheduleResult.items.length === 3, `expected 3 imported ops schedule runtime fixture items, got ${opsScheduleResult.items.length}`);
+  assert(opsScheduleResult.items.length === 4, `expected 4 imported ops schedule/runtime config fixture items, got ${opsScheduleResult.items.length}`);
   assert(opsScheduleResult.truncated === false, "ops schedule runtime fixture import should not be truncated");
   assert(
     opsScheduleResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
     "ops schedule runtime fixture import lost read-only verification copy",
+  );
+
+  const vpnConfigResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [
+      wireguardConfigPath,
+      openVpnConfigPath,
+    ],
+    limit: 2,
+  });
+
+  assert(vpnConfigResult.items.length === 2, `expected 2 imported VPN config runtime fixture items, got ${vpnConfigResult.items.length}`);
+  assert(vpnConfigResult.truncated === false, "VPN config runtime fixture import should not be truncated");
+  assert(
+    vpnConfigResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "VPN config runtime fixture import lost read-only verification copy",
   );
 
   const netlogResult = adapters.importChannelContext({
@@ -4762,38 +5965,241 @@ try {
       epubPath,
       ttfPath,
       bookmarksPath,
+      bookmarksJsonPath,
       urlShortcutPath,
       weblocPath,
+      desktopEntryPath,
       rssPath,
       atomPath,
+      jsonFeedPath,
       robotsPath,
+      llmsPath,
       sitemapPath,
       sitemapGzipPath,
+      warcPath,
+      warcGzipPath,
+      pwaManifestPath,
+      pwaServiceWorkerPath,
       srtPath,
       vttPath,
     ],
-    limit: 12,
+    limit: 20,
   });
 
-  assert(contentMediaResult.items.length === 12, `expected 12 imported content/media runtime fixture items, got ${contentMediaResult.items.length}`);
+  assert(contentMediaResult.items.length === 20, `expected 20 imported content/media runtime fixture items, got ${contentMediaResult.items.length}`);
   assert(contentMediaResult.truncated === false, "content/media runtime fixture import should not be truncated");
   assert(
     contentMediaResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
     "content/media runtime fixture import lost read-only verification copy",
   );
 
-  const browserCookiesResult = adapters.importChannelContext({
+  const lottieAnimationResult = adapters.importChannelContext({
     adapterId: "file-input",
     workspacePath: workspace,
-    paths: [browserCookiesPath],
+    paths: [lottieAnimationPath],
     limit: 1,
   });
 
-  assert(browserCookiesResult.items.length === 1, `expected 1 imported browser cookie runtime fixture item, got ${browserCookiesResult.items.length}`);
+  assert(lottieAnimationResult.items.length === 1, `expected 1 imported Lottie animation runtime fixture item, got ${lottieAnimationResult.items.length}`);
+  assert(lottieAnimationResult.truncated === false, "Lottie animation runtime fixture import should not be truncated");
+  assert(
+    lottieAnimationResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "Lottie animation runtime fixture import lost read-only verification copy",
+  );
+  const lottieSummary = summaryFor(lottieAnimationResult, "animation.json");
+  assert(lottieSummary.includes("Lottie/Bodymovin animation JSON preview"), "animation.json did not use Lottie animation JSON preview");
+  assert(lottieSummary.includes("5.12.2") && lottieSummary.includes("640x360") && lottieSummary.includes("30 fps"), "animation.json summary omitted version/canvas/frame-rate evidence");
+  assert(lottieSummary.includes("90 frames") && lottieSummary.includes("3.00s"), "animation.json summary omitted duration evidence");
+  assert(lottieSummary.includes("Runtime Shape Layer") && lottieSummary.includes("Runtime Image Layer") && lottieSummary.includes("type=shape"), "animation.json summary omitted layer evidence");
+  assert(lottieSummary.includes("image_0") && lottieSummary.includes("[redacted]") && !lottieSummary.includes("secret-lottie-token"), "animation.json summary omitted asset redaction evidence");
+  assert(lottieSummary.includes("Runtime intro") && !lottieSummary.includes("secret-lottie-marker"), "animation.json summary omitted marker redaction evidence");
+  assert(lottieSummary.includes("no renderer, After Effects/Bodymovin tool, script execution, frame extraction"), "animation.json summary omitted no-runtime safety copy");
+  assert(lottieAnimationResult.items[0].mime === "application/vnd.lottie+json", "animation.json did not preserve Lottie MIME provenance");
+
+  const dotLottieResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [dotLottiePath],
+    limit: 1,
+  });
+
+  assert(dotLottieResult.items.length === 1, `expected 1 imported dotLottie runtime fixture item, got ${dotLottieResult.items.length}`);
+  assert(dotLottieResult.truncated === false, "dotLottie runtime fixture import should not be truncated");
+  assert(
+    dotLottieResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "dotLottie runtime fixture import lost read-only verification copy",
+  );
+  const dotLottieSummary = summaryFor(dotLottieResult, "runtime.lottie");
+  assert(dotLottieSummary.includes("dotLottie archive preview"), "runtime.lottie did not use dotLottie archive preview");
+  assert(dotLottieSummary.includes("OpenDrSai runtime fixture") && dotLottieSummary.includes("Runtime Animator"), "runtime.lottie summary omitted manifest metadata");
+  assert(dotLottieSummary.includes("runtime-main") && dotLottieSummary.includes("loop=true") && dotLottieSummary.includes("autoplay=false"), "runtime.lottie summary omitted manifest animation evidence");
+  assert(dotLottieSummary.includes("animations/runtime-main.json") && dotLottieSummary.includes("320x180") && dotLottieSummary.includes("24fps"), "runtime.lottie summary omitted animation JSON evidence");
+  assert(dotLottieSummary.includes("themes/runtime-theme.json") && dotLottieSummary.includes("images/runtime.png") && dotLottieSummary.includes("state_machines/runtime-machine.json"), "runtime.lottie summary omitted theme/image/state-machine evidence");
+  assert(!dotLottieSummary.includes("secret-dotlottie-keyframe") && !dotLottieSummary.includes("secret-dotlottie-asset"), "runtime.lottie summary leaked animation entry secrets");
+  assert(dotLottieSummary.includes("archive entries were not extracted to disk") && dotLottieSummary.includes("no renderer, animation playback, frame extraction"), "runtime.lottie summary omitted no-extraction/no-runtime safety copy");
+  assert(dotLottieResult.items[0].mime === "application/vnd.lottie+zip", "runtime.lottie did not preserve dotLottie MIME provenance");
+
+  const sourceMapResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [sourceMapPath],
+    limit: 1,
+  });
+
+  assert(sourceMapResult.items.length === 1, `expected 1 imported source map runtime fixture item, got ${sourceMapResult.items.length}`);
+  assert(sourceMapResult.truncated === false, "source map runtime fixture import should not be truncated");
+  assert(
+    sourceMapResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "source map runtime fixture import lost read-only verification copy",
+  );
+  const sourceMapSummary = summaryFor(sourceMapResult, "runtime.js.map");
+  assert(sourceMapSummary.includes("Source map JSON preview"), "runtime.js.map did not use source map JSON preview");
+  assert(sourceMapSummary.includes("Version: 3") && sourceMapSummary.includes("runtime.bundle.js"), "runtime.js.map summary omitted version or target evidence");
+  assert(sourceMapSummary.includes("webpack://runtime-app/?token="), "runtime.js.map summary omitted sourceRoot redaction evidence");
+  assert(sourceMapSummary.includes("runtime-helper.ts") && sourceMapSummary.includes("RuntimeView"), "runtime.js.map summary omitted source/name samples");
+  assert(sourceMapSummary.includes("sourcesContent entries: 2 (contents not expanded)"), "runtime.js.map summary omitted sourcesContent non-expansion evidence");
+  assert(!sourceMapSummary.includes("secret-sourcemap-root") && !sourceMapSummary.includes("secret-sourcemap-source") && !sourceMapSummary.includes("secret-sourcemap-content"), "runtime.js.map summary leaked source map secrets or source content");
+  assert(sourceMapSummary.includes("mappings were not decoded") && sourceMapSummary.includes("no bundler/devtool/browser"), "runtime.js.map summary omitted no-decode/no-runtime safety copy");
+  assert(sourceMapResult.items[0].mime === "application/vnd.drsai.source-map+json", "runtime.js.map did not preserve source map MIME provenance");
+
+  const browserCookiesResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [browserCookiesPath, hyphenatedBrowserCookiesPath],
+    limit: 2,
+  });
+
+  assert(browserCookiesResult.items.length === 2, `expected 2 imported browser cookie runtime fixture items, got ${browserCookiesResult.items.length}`);
   assert(browserCookiesResult.truncated === false, "browser cookie runtime fixture import should not be truncated");
   assert(
     browserCookiesResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
     "browser cookie runtime fixture import lost read-only verification copy",
+  );
+
+  const browserPasswordsResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [browserPasswordsPath],
+    limit: 1,
+  });
+
+  assert(browserPasswordsResult.items.length === 1, `expected 1 imported browser password runtime fixture item, got ${browserPasswordsResult.items.length}`);
+  assert(browserPasswordsResult.truncated === false, "browser password runtime fixture import should not be truncated");
+  assert(
+    browserPasswordsResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "browser password runtime fixture import lost read-only verification copy",
+  );
+
+  const browserAutofillResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [browserAutofillCsvPath, browserAutofillJsonPath],
+    limit: 2,
+  });
+
+  assert(browserAutofillResult.items.length === 2, `expected 2 imported browser autofill runtime fixture items, got ${browserAutofillResult.items.length}`);
+  assert(browserAutofillResult.truncated === false, "browser autofill runtime fixture import should not be truncated");
+  assert(
+    browserAutofillResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "browser autofill runtime fixture import lost read-only verification copy",
+  );
+
+  const browserExtensionManifestResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [browserExtensionManifestPath],
+    limit: 1,
+  });
+
+  assert(browserExtensionManifestResult.items.length === 1, `expected 1 imported browser extension manifest runtime fixture item, got ${browserExtensionManifestResult.items.length}`);
+  assert(browserExtensionManifestResult.truncated === false, "browser extension manifest runtime fixture import should not be truncated");
+  assert(
+    browserExtensionManifestResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "browser extension manifest runtime fixture import lost read-only verification copy",
+  );
+
+  const browserExtensionInventoryResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [browserExtensionInventoryPath],
+    limit: 1,
+  });
+
+  assert(browserExtensionInventoryResult.items.length === 1, `expected 1 imported browser extension inventory runtime fixture item, got ${browserExtensionInventoryResult.items.length}`);
+  assert(browserExtensionInventoryResult.truncated === false, "browser extension inventory runtime fixture import should not be truncated");
+  assert(
+    browserExtensionInventoryResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "browser extension inventory runtime fixture import lost read-only verification copy",
+  );
+
+  const browserHistoryResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [browserHistoryCsvPath, browserHistoryJsonPath, browserHistorySqlitePath],
+    limit: 3,
+  });
+
+  assert(browserHistoryResult.items.length === 3, `expected 3 imported browser history runtime fixture items, got ${browserHistoryResult.items.length}`);
+  assert(browserHistoryResult.truncated === false, "browser history runtime fixture import should not be truncated");
+  assert(
+    browserHistoryResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "browser history runtime fixture import lost read-only verification copy",
+  );
+
+  const browserDownloadsResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [browserDownloadsCsvPath, browserDownloadsJsonPath, browserDownloadsSqlitePath],
+    limit: 3,
+  });
+
+  assert(browserDownloadsResult.items.length === 3, `expected 3 imported browser downloads runtime fixture items, got ${browserDownloadsResult.items.length}`);
+  assert(browserDownloadsResult.truncated === false, "browser downloads runtime fixture import should not be truncated");
+  assert(
+    browserDownloadsResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "browser downloads runtime fixture import lost read-only verification copy",
+  );
+
+  const browserPreferencesResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [browserPreferencesPath],
+    limit: 1,
+  });
+
+  assert(browserPreferencesResult.items.length === 1, `expected 1 imported browser preferences runtime fixture item, got ${browserPreferencesResult.items.length}`);
+  assert(browserPreferencesResult.truncated === false, "browser preferences runtime fixture import should not be truncated");
+  assert(
+    browserPreferencesResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "browser preferences runtime fixture import lost read-only verification copy",
+  );
+
+  const browserStorageResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [browserLocalStoragePath, browserSessionStoragePath],
+    limit: 2,
+  });
+
+  assert(browserStorageResult.items.length === 2, `expected 2 imported browser storage runtime fixture items, got ${browserStorageResult.items.length}`);
+  assert(browserStorageResult.truncated === false, "browser storage runtime fixture import should not be truncated");
+  assert(
+    browserStorageResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "browser storage runtime fixture import lost read-only verification copy",
+  );
+
+  const browserSessionTabsResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [browserSessionTabsPath],
+    limit: 1,
+  });
+
+  assert(browserSessionTabsResult.items.length === 1, `expected 1 imported browser session tabs runtime fixture item, got ${browserSessionTabsResult.items.length}`);
+  assert(browserSessionTabsResult.truncated === false, "browser session tabs runtime fixture import should not be truncated");
+  assert(
+    browserSessionTabsResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "browser session tabs runtime fixture import lost read-only verification copy",
   );
 
   const opmlSubscriptionResult = adapters.importChannelContext({
@@ -4833,12 +6239,15 @@ try {
     paths: [
       androidManifestPath,
       androidLogcatPath,
+      appleUnifiedLogPath,
       infoPlistPath,
+      appleCrashPath,
+      appleIpsPath,
     ],
-    limit: 5,
+    limit: 7,
   });
 
-  assert(mobileManifestResult.items.length === 3, `expected 3 imported mobile manifest runtime fixture items, got ${mobileManifestResult.items.length}`);
+  assert(mobileManifestResult.items.length === 6, `expected 6 imported mobile manifest runtime fixture items, got ${mobileManifestResult.items.length}`);
   assert(mobileManifestResult.truncated === false, "mobile manifest runtime fixture import should not be truncated");
   assert(
     mobileManifestResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
@@ -4869,6 +6278,7 @@ try {
     paths: [
       wavPath,
       mp3Path,
+      aacPath,
       flacPath,
       m4aPath,
       oggPath,
@@ -4876,7 +6286,7 @@ try {
     limit: 8,
   });
 
-  assert(audioResult.items.length === 5, `expected 5 imported audio runtime fixture items, got ${audioResult.items.length}`);
+  assert(audioResult.items.length === 6, `expected 6 imported audio runtime fixture items, got ${audioResult.items.length}`);
   assert(audioResult.truncated === false, "audio runtime fixture import should not be truncated");
   assert(
     audioResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
@@ -5002,6 +6412,26 @@ try {
   assert(playwrightSummary.includes("project=chromium") && playwrightSummary.includes("project=webkit"), "playwright.config.ts summary omitted project evidence");
   assert(playwrightSummary.includes("webServer declaration") && playwrightSummary.includes("Playwright browser launch"), "playwright.config.ts summary omitted webServer/no-browser evidence");
   assert(playwrightSummary.includes("token=[redacted]") && !playwrightSummary.includes("secret-playwright-token"), "playwright.config.ts summary omitted token redaction evidence");
+
+  const pnpmWorkspaceSummary = summaryFor(jsWorkspaceConfigResult, "pnpm-workspace.yaml");
+  assert(pnpmWorkspaceSummary.includes("JS/TS workspace config preview (pnpm workspace"), "pnpm-workspace.yaml did not use JS/TS workspace config preview");
+  assert(pnpmWorkspaceSummary.includes("package pattern apps/*") && pnpmWorkspaceSummary.includes("package pattern packages/*"), "pnpm-workspace.yaml summary omitted package pattern evidence");
+  assert(pnpmWorkspaceSummary.includes("catalog key") && pnpmWorkspaceSummary.includes("onlyBuiltDependencies key"), "pnpm-workspace.yaml summary omitted workspace key evidence");
+  assert(!pnpmWorkspaceSummary.includes("secret-pnpm-workspace-token"), "pnpm-workspace.yaml summary leaked token value");
+  assert(pnpmWorkspaceSummary.includes("no pnpm/npm/Yarn/Bun command, Turbo/Nx runner"), "pnpm-workspace.yaml summary omitted no-runner safety copy");
+  assert(jsWorkspaceConfigResult.items.every((item) => item.mime === "application/vnd.drsai.js-workspace-config"), "JS/TS workspace config MIME provenance is missing");
+
+  const turboSummary = summaryFor(jsWorkspaceConfigResult, "turbo.json");
+  assert(turboSummary.includes("JS/TS workspace config preview (Turborepo"), "turbo.json did not use JS/TS workspace config preview");
+  assert(turboSummary.includes("task build") && turboSummary.includes("task test"), "turbo.json summary omitted task evidence");
+  assert(turboSummary.includes("remote-cache declaration") && turboSummary.includes("task graph/cache metadata"), "turbo.json summary omitted remote cache/task graph risk cues");
+  assert(!turboSummary.includes("secret-turbo-token"), "turbo.json summary leaked remote cache token");
+
+  const nxSummary = summaryFor(jsWorkspaceConfigResult, "nx.json");
+  assert(nxSummary.includes("JS/TS workspace config preview (Nx workspace"), "nx.json did not use JS/TS workspace config preview");
+  assert(nxSummary.includes("target default build") && nxSummary.includes("target default test"), "nx.json summary omitted target default evidence");
+  assert(nxSummary.includes("plugins:") && nxSummary.includes("@nx/vite/plugin"), "nx.json summary omitted plugin evidence");
+  assert(!nxSummary.includes("secret-nx-token"), "nx.json summary leaked access token value");
 
   const coverageSummary = summaryFor(result, "coverage.xml");
   assert(coverageSummary.includes("Coverage report preview"), "coverage.xml did not use coverage report preview");
@@ -5149,14 +6579,23 @@ try {
   assert(slackExportSummary.includes("runtime-slack-channel") && slackExportSummary.includes("U12345"), "slack-export.json summary omitted channel or sender evidence");
   assert(slackExportSummary.includes("Slack runtime export message"), "slack-export.json summary omitted message sample evidence");
   assert(!slackExportSummary.includes("secret-slack-export-token"), "slack-export.json summary leaked Slack export secret");
-  assert(slackExportSummary.includes("no Slack/Teams/ChatGPT/OpenAI connector login"), "slack-export.json summary omitted no-provider safety copy");
+  assert(slackExportSummary.includes("no Slack/Teams/Telegram/ChatGPT/OpenAI connector login"), "slack-export.json summary omitted no-provider safety copy");
+
+  const slackCsvExportSummary = summaryFor(chatExportResult, "slack-export.csv");
+  assert(slackCsvExportSummary.includes("Chat CSV export preview (Slack export CSV"), "slack-export.csv did not use Slack chat CSV export preview");
+  assert(slackCsvExportSummary.includes("Messages in bounded preview: 2"), "slack-export.csv summary omitted message count evidence");
+  assert(slackCsvExportSummary.includes("runtime-slack-csv-channel") && slackCsvExportSummary.includes("U34567"), "slack-export.csv summary omitted channel or sender evidence");
+  assert(slackCsvExportSummary.includes("Slack CSV runtime export message"), "slack-export.csv summary omitted message sample evidence");
+  assert(!slackCsvExportSummary.includes("secret-slack-csv-export-token"), "slack-export.csv summary leaked Slack CSV export secret");
+  assert(slackCsvExportSummary.includes("no Slack/Teams/Discord/Telegram connector login"), "slack-export.csv summary omitted no-provider safety copy");
+  assert(chatExportResult.items.find((item) => item.title === "slack-export.csv")?.mime === "text/csv+chat-export", "slack-export.csv MIME provenance is missing");
 
   const teamsExportSummary = summaryFor(chatExportResult, "teams-export.json");
   assert(teamsExportSummary.includes("Chat export JSON preview (Microsoft Teams export JSON"), "teams-export.json did not use Teams chat export preview");
   assert(teamsExportSummary.includes("Runtime Teams Channel") && teamsExportSummary.includes("Ada Reviewer"), "teams-export.json summary omitted Teams channel or sender evidence");
   assert(teamsExportSummary.includes("Teams runtime export message"), "teams-export.json summary omitted Teams message evidence");
   assert(!teamsExportSummary.includes("secret-teams-export-token"), "teams-export.json summary leaked Teams export secret");
-  assert(teamsExportSummary.includes("no Slack/Teams/ChatGPT/OpenAI connector login"), "teams-export.json summary omitted no-provider safety copy");
+  assert(teamsExportSummary.includes("no Slack/Teams/Telegram/ChatGPT/OpenAI connector login"), "teams-export.json summary omitted no-provider safety copy");
 
   const discordExportSummary = summaryFor(chatExportResult, "discord-export.json");
   assert(discordExportSummary.includes("Chat export JSON preview (Discord export JSON"), "discord-export.json did not use Discord chat export preview");
@@ -5171,7 +6610,14 @@ try {
   assert(chatgptExportSummary.includes("Runtime ChatGPT Conversation") && chatgptExportSummary.includes("assistant"), "chatgpt-conversations.json summary omitted conversation or role evidence");
   assert(chatgptExportSummary.includes("ChatGPT export prompt"), "chatgpt-conversations.json summary omitted ChatGPT message evidence");
   assert(!chatgptExportSummary.includes("secret-chatgpt-export-token"), "chatgpt-conversations.json summary leaked ChatGPT export secret");
-  assert(chatgptExportSummary.includes("no Slack/Teams/ChatGPT/OpenAI connector login"), "chatgpt-conversations.json summary omitted no-provider safety copy");
+  assert(chatgptExportSummary.includes("no Slack/Teams/Telegram/ChatGPT/OpenAI connector login"), "chatgpt-conversations.json summary omitted no-provider safety copy");
+
+  const claudeExportSummary = summaryFor(chatExportResult, "claude-conversations.json");
+  assert(claudeExportSummary.includes("Chat export JSON preview (Claude conversations JSON"), "claude-conversations.json did not use Claude conversations preview");
+  assert(claudeExportSummary.includes("Runtime Claude Conversation") && claudeExportSummary.includes("assistant"), "claude-conversations.json summary omitted conversation or role evidence");
+  assert(claudeExportSummary.includes("Claude export prompt"), "claude-conversations.json summary omitted Claude message evidence");
+  assert(!claudeExportSummary.includes("secret-claude-export-token"), "claude-conversations.json summary leaked Claude export secret");
+  assert(claudeExportSummary.includes("no Slack/Teams/Telegram/ChatGPT/OpenAI connector login"), "claude-conversations.json summary omitted no-provider safety copy");
 
   const checkstyleSummary = summaryFor(testReportResult, "runtime.checkstyle.xml");
   assert(checkstyleSummary.includes("Static analysis XML report preview (Checkstyle XML"), "runtime.checkstyle.xml did not use static analysis XML preview");
@@ -5299,13 +6745,19 @@ try {
   assert(noticeSummary.includes("provider send"), "NOTICE summary omitted no-provider safety copy");
 
   const dotenvSummary = summaryFor(configRuntimeResult, ".env.runtime");
-  assert(dotenvSummary.includes("Configuration file preview"), ".env.runtime did not use configuration preview");
-  assert(dotenvSummary.includes("RUNTIME_MODE") && dotenvSummary.includes("API_TOKEN") && dotenvSummary.includes("PUBLIC_URL"), ".env.runtime summary omitted key evidence");
-  assert(dotenvSummary.includes(".env file exposes"), ".env.runtime summary omitted .env schema hint evidence");
-  assert(dotenvSummary.includes("duplicate keys detected: DUPLICATE_KEY"), ".env.runtime summary omitted duplicate key evidence");
+  assert(dotenvSummary.includes("dotenv environment file preview"), ".env.runtime did not use dotenv environment preview");
+  assert(dotenvSummary.includes("RUNTIME_MODE") && dotenvSummary.includes("API_TOKEN") && dotenvSummary.includes("PUBLIC_URL") && dotenvSummary.includes("DERIVED_URL"), ".env.runtime summary omitted key evidence");
+  assert(dotenvSummary.includes("Exported keys: DERIVED_URL"), ".env.runtime summary omitted exported key evidence");
+  assert(dotenvSummary.includes("Sensitive-looking keys: API_TOKEN"), ".env.runtime summary omitted sensitive-key evidence");
+  assert(dotenvSummary.includes("Public/client-exposed keys: PUBLIC_URL"), ".env.runtime summary omitted public-key evidence");
+  assert(dotenvSummary.includes("Variable references: PUBLIC_URL"), ".env.runtime summary omitted variable-reference evidence");
+  assert(dotenvSummary.includes("Duplicate keys: DUPLICATE_KEY"), ".env.runtime summary omitted duplicate key evidence");
+  assert(dotenvSummary.includes("[value hidden;"), ".env.runtime summary omitted value-hidden samples");
   assert(!dotenvSummary.includes("secret-env-token"), ".env.runtime summary leaked sensitive token value");
   assert(!dotenvSummary.includes("secret-env-query"), ".env.runtime summary leaked token-like URL value");
-  assert(dotenvSummary.includes("no command execution, environment loading, secret lookup, network call, or provider send"), ".env.runtime summary omitted no-environment-loading safety copy");
+  assert(dotenvSummary.includes("dotenv values were not expanded or printed"), ".env.runtime summary omitted value non-disclosure safety copy");
+  assert(dotenvSummary.includes("no shell command or dotenv runtime was executed"), ".env.runtime summary omitted no-dotenv-runtime safety copy");
+  assert(configRuntimeResult.items.find((item) => item.title === ".env.runtime")?.mime === "text/x-dotenv", ".env.runtime MIME provenance is missing");
 
   const envrcSummary = summaryFor(configRuntimeResult, ".envrc");
   assert(envrcSummary.includes("direnv .envrc preview"), ".envrc did not use direnv preview");
@@ -5319,6 +6771,43 @@ try {
   assert(!envrcSummary.includes("secret-envrc-token"), ".envrc summary leaked sensitive token value");
   assert(!envrcSummary.includes("secret-envrc-query"), ".envrc summary leaked token-like URL value");
   assert(envrcSummary.includes("direnv was not executed") && envrcSummary.includes("dotenv/source targets were not opened"), ".envrc summary omitted no-direnv/no-source safety copy");
+
+  const regexPatternSummary = summaryFor(configRuntimeResult, "runtime.regex");
+  assert(regexPatternSummary.includes("Regular expression pattern preview"), "runtime.regex did not use regex pattern preview");
+  assert(regexPatternSummary.includes("Patterns in bounded preview: 3"), "runtime.regex summary omitted pattern count evidence");
+  assert(regexPatternSummary.includes("Flags") && regexPatternSummary.includes("g") && regexPatternSummary.includes("i"), "runtime.regex summary omitted regex flags evidence");
+  assert(regexPatternSummary.includes("Named capture groups") && regexPatternSummary.includes("level") && regexPatternSummary.includes("component"), "runtime.regex summary omitted named capture group evidence");
+  assert(regexPatternSummary.includes("lookbehind") && regexPatternSummary.includes("broad dot-star match") && regexPatternSummary.includes("nested quantifier"), "runtime.regex summary omitted static feature/risk evidence");
+  assert(regexPatternSummary.includes("Replacement templates") && regexPatternSummary.includes("$<level>"), "runtime.regex summary omitted replacement template evidence");
+  assert(regexPatternSummary.includes("Declared sample targets") && regexPatternSummary.includes("runtime.log"), "runtime.regex summary omitted target sample evidence");
+  assert(!regexPatternSummary.includes("secret-regex-token"), "runtime.regex summary leaked regex fixture secret");
+  assert(regexPatternSummary.includes("patterns were not compiled or executed") && regexPatternSummary.includes("no files were searched"), "runtime.regex summary omitted no-compile/no-search safety copy");
+  assert(configRuntimeResult.items.find((item) => item.title === "runtime.regex")?.mime === "text/x-regex", "runtime.regex MIME provenance is missing");
+
+  const sshConfigSummary = summaryFor(sshConfigResult, "config");
+  assert(sshConfigSummary.includes("SSH configuration preview"), ".ssh/config did not use SSH configuration preview");
+  assert(sshConfigSummary.includes("runtime-prod") && sshConfigSummary.includes("runtime-alias"), ".ssh/config summary omitted Host pattern evidence");
+  assert(sshConfigSummary.includes("runtime.example.test") && sshConfigSummary.includes("runtime-user") && sshConfigSummary.includes("2222"), ".ssh/config summary omitted destination/user/port evidence");
+  assert(sshConfigSummary.includes("id_runtime_secret"), ".ssh/config summary omitted identity filename label evidence");
+  assert(sshConfigSummary.includes("ProxyJump") && sshConfigSummary.includes("ProxyCommand may execute a local command"), ".ssh/config summary omitted proxy/static risk evidence");
+  assert(sshConfigSummary.includes("Include targets") && sshConfigSummary.includes("secret-ssh-include.conf"), ".ssh/config summary omitted Include target evidence");
+  assert(!sshConfigSummary.includes("secret-ssh-token"), ".ssh/config summary leaked token-like host value");
+  assert(sshConfigSummary.includes("private key files and Include targets were not opened"), ".ssh/config summary omitted no-key-read/no-include safety copy");
+  assert(sshConfigResult.items.find((item) => item.title === "config")?.mime === "text/x-ssh-config", ".ssh/config MIME provenance is missing");
+
+  const knownHostsSummary = summaryFor(sshConfigResult, "known_hosts");
+  assert(knownHostsSummary.includes("known_hosts"), "known_hosts summary omitted format evidence");
+  assert(knownHostsSummary.includes("runtime.example.test") && knownHostsSummary.includes("hashed-host"), "known_hosts summary omitted host evidence");
+  assert(knownHostsSummary.includes("ssh-ed25519") && knownHostsSummary.includes("ssh-rsa"), "known_hosts summary omitted key type evidence");
+  assert(!knownHostsSummary.includes("secretKnownHostMaterial") && !knownHostsSummary.includes("SecretKnownHostHash"), "known_hosts summary leaked key material");
+
+  const authorizedKeysSummary = summaryFor(sshConfigResult, "authorized_keys");
+  assert(authorizedKeysSummary.includes("authorized_keys"), "authorized_keys summary omitted format evidence");
+  assert(authorizedKeysSummary.includes("ssh-ed25519") && authorizedKeysSummary.includes("ssh-rsa"), "authorized_keys summary omitted key type evidence");
+  assert(authorizedKeysSummary.includes("runtime deploy key") && authorizedKeysSummary.includes("runtime readonly key"), "authorized_keys summary omitted bounded key comment evidence");
+  assert(authorizedKeysSummary.includes("authorized_keys option command") && authorizedKeysSummary.includes("authorized_keys option restrict"), "authorized_keys summary omitted option risk cues");
+  assert(!authorizedKeysSummary.includes("AuthorizedSecretMaterial") && !authorizedKeysSummary.includes("secret-authorized-command"), "authorized_keys summary leaked key material or forced-command token");
+  assert(authorizedKeysSummary.includes("authorized_keys key material were not expanded"), "authorized_keys summary omitted no-key-material safety copy");
 
   const hdf5Summary = summaryFor(result, "sample.h5");
   assert(hdf5Summary.includes("Scientific data container preview"), "sample.h5 did not use scientific container preview");
@@ -5445,6 +6934,20 @@ try {
   assert(yarnLockSummary.includes("Ecosystem: Yarn"), "yarn.lock summary omitted Yarn ecosystem evidence");
   assert(yarnLockSummary.includes("react") && yarnLockSummary.includes("scheduler"), "yarn.lock summary omitted package/edge evidence");
   assert(yarnLockSummary.includes("registry lookup"), "yarn.lock summary omitted no-registry safety copy");
+
+  const denoLockSummary = summaryFor(lockfileResult, "deno.lock");
+  assert(denoLockSummary.includes("Dependency lockfile preview"), "deno.lock did not use dependency lockfile preview");
+  assert(denoLockSummary.includes("Ecosystem: Deno"), "deno.lock summary omitted Deno ecosystem evidence");
+  assert(denoLockSummary.includes("chalk") && denoLockSummary.includes("ansi-styles"), "deno.lock summary omitted npm package evidence");
+  assert(denoLockSummary.includes("(npm specifier) -> chalk") && denoLockSummary.includes("chalk -> ansi-styles"), "deno.lock summary omitted local Deno edge evidence");
+  assert(denoLockSummary.includes("without package manager execution"), "deno.lock summary omitted no-package-manager safety copy");
+
+  const bunLockSummary = summaryFor(lockfileResult, "bun.lock");
+  assert(bunLockSummary.includes("Dependency lockfile preview"), "bun.lock did not use dependency lockfile preview");
+  assert(bunLockSummary.includes("Ecosystem: Bun"), "bun.lock summary omitted Bun ecosystem evidence");
+  assert(bunLockSummary.includes("react") && bunLockSummary.includes("runtime-bun-tool"), "bun.lock summary omitted workspace package evidence");
+  assert(bunLockSummary.includes("(workspace) -> react") && bunLockSummary.includes("react -> scheduler"), "bun.lock summary omitted local Bun edge evidence");
+  assert(bunLockSummary.includes("without package manager execution"), "bun.lock summary omitted no-package-manager safety copy");
 
   const cargoLockSummary = summaryFor(lockfileResult, "Cargo.lock");
   assert(cargoLockSummary.includes("Dependency lockfile preview"), "Cargo.lock did not use dependency lockfile preview");
@@ -5583,6 +7086,16 @@ try {
   assert(uvLockSummary.includes("pytest"), "uv.lock summary omitted dependency evidence");
   assert(uvLockSummary.includes("no Python interpreter"), "uv.lock summary omitted no-Python safety copy");
 
+  const pypircSummary = summaryFor(pythonManifestResult, ".pypirc");
+  assert(pypircSummary.includes("Python package index config preview"), ".pypirc did not use Python package index config preview");
+  assert(pypircSummary.includes("Index servers (2): pypi, internal"), ".pypirc summary omitted index server evidence");
+  assert(pypircSummary.includes("pypi=https://upload.pypi.org/legacy/?token=[redacted]"), ".pypirc summary omitted redacted repository URL evidence");
+  assert(pypircSummary.includes("Credential keys") && pypircSummary.includes("pypi.password [value hidden]"), ".pypirc summary omitted credential key hiding evidence");
+  assert(pypircSummary.includes("Certificate/keyring hints") && pypircSummary.includes("internal.ca_cert") && pypircSummary.includes("internal.client_cert"), ".pypirc summary omitted certificate hint evidence");
+  assert(!pypircSummary.includes("secret-pypirc-token") && !pypircSummary.includes("secret-pypirc-internal-token") && !pypircSummary.includes("secret-pypirc-url-token"), ".pypirc summary leaked secret values");
+  assert(pypircSummary.includes("no Python interpreter, twine, pip"), ".pypirc summary omitted no-Python/twine safety copy");
+  assert(pythonManifestResult.items.find((item) => item.title === ".pypirc")?.mime === "text/x-pypirc", ".pypirc MIME provenance is missing");
+
   const pubspecSummary = summaryFor(packageManifestResult, "pubspec.yaml");
   assert(pubspecSummary.includes("Dart pubspec manifest preview"), "pubspec.yaml did not use Dart pubspec preview");
   assert(pubspecSummary.includes("runtime_fixture"), "pubspec.yaml summary omitted package metadata evidence");
@@ -5682,10 +7195,50 @@ try {
   assert(mboxSummary.includes("Runtime mailbox fixture"), "mailbox.mbox summary omitted subject evidence");
   assert(mboxSummary.includes("no IMAP/SMTP login"), "mailbox.mbox summary omitted no-mailbox safety copy");
 
+  const telegramSummary = summaryFor(personalInfoResult, "telegram-export.json");
+  assert(telegramSummary.includes("Chat export JSON preview (Telegram export JSON"), "telegram-export.json did not use Telegram chat export preview");
+  assert(telegramSummary.includes("Runtime Telegram Fixture"), "telegram-export.json summary omitted Telegram conversation evidence");
+  assert(telegramSummary.includes("Runtime Telegram Sender") && telegramSummary.includes("Runtime Telegram Reviewer"), "telegram-export.json summary omitted Telegram participant evidence");
+  assert(telegramSummary.includes("token=[redacted]"), "telegram-export.json summary omitted token redaction evidence");
+  assert(!telegramSummary.includes("secret-telegram-token"), "telegram-export.json summary leaked Telegram token value");
+  assert(telegramSummary.includes("no Slack/Teams/Telegram/ChatGPT/OpenAI connector login"), "telegram-export.json summary omitted no-provider safety copy");
+  assert(personalInfoResult.items.find((item) => item.title === "telegram-export.json")?.mime === "application/vnd.drsai.chat-export+json", "telegram-export.json MIME provenance is missing");
+
+  const whatsappSummary = summaryFor(personalInfoResult, "whatsapp-chat.txt");
+  assert(whatsappSummary.includes("Chat text export preview (WhatsApp chat text export"), "whatsapp-chat.txt did not use WhatsApp chat text preview");
+  assert(whatsappSummary.includes("Runtime WhatsApp Sender") && whatsappSummary.includes("Runtime WhatsApp Reviewer"), "whatsapp-chat.txt summary omitted WhatsApp participant evidence");
+  assert(whatsappSummary.includes("continued detail line"), "whatsapp-chat.txt summary omitted continued message evidence");
+  assert(whatsappSummary.includes("token=[redacted]"), "whatsapp-chat.txt summary omitted token redaction evidence");
+  assert(!whatsappSummary.includes("secret-whatsapp-token"), "whatsapp-chat.txt summary leaked WhatsApp token value");
+  assert(whatsappSummary.includes("no WhatsApp/mobile connector login"), "whatsapp-chat.txt summary omitted no-mobile safety copy");
+  assert(personalInfoResult.items.find((item) => item.title === "whatsapp-chat.txt")?.mime === "text/plain+chat-export", "whatsapp-chat.txt MIME provenance is missing");
+
+  const meetingTranscriptSummary = summaryFor(personalInfoResult, "zoom-transcript.txt");
+  assert(meetingTranscriptSummary.includes("Meeting transcript preview (Zoom meeting transcript"), "zoom-transcript.txt did not use Zoom meeting transcript preview");
+  assert(meetingTranscriptSummary.includes("Runtime Transcript Review"), "zoom-transcript.txt summary omitted meeting title evidence");
+  assert(meetingTranscriptSummary.includes("Runtime Facilitator") && meetingTranscriptSummary.includes("Runtime Reviewer") && meetingTranscriptSummary.includes("Runtime Owner"), "zoom-transcript.txt summary omitted participant evidence");
+  assert(meetingTranscriptSummary.includes("Decision/risk: Decision: keep local preview only"), "zoom-transcript.txt summary omitted decision cue evidence");
+  assert(meetingTranscriptSummary.includes("Action: Action item: add fixture coverage due by Friday"), "zoom-transcript.txt summary omitted action cue evidence");
+  assert(meetingTranscriptSummary.includes("token=[redacted]"), "zoom-transcript.txt summary omitted token redaction evidence");
+  assert(!meetingTranscriptSummary.includes("secret-meeting-transcript-token"), "zoom-transcript.txt summary leaked meeting transcript token value");
+  assert(meetingTranscriptSummary.includes("no Zoom/Teams/Google Meet app") && meetingTranscriptSummary.includes("transcription service"), "zoom-transcript.txt summary omitted no-meeting-runtime safety copy");
+  assert(personalInfoResult.items.find((item) => item.title === "zoom-transcript.txt")?.mime === "text/plain+meeting-transcript", "zoom-transcript.txt MIME provenance is missing");
+
   const vcardSummary = summaryFor(personalInfoResult, "contact.vcf");
   assert(vcardSummary.includes("vCard contact preview"), "contact.vcf did not use vCard preview");
   assert(vcardSummary.includes("Runtime Contact"), "contact.vcf summary omitted contact name evidence");
   assert(vcardSummary.includes("no contacts app access"), "contact.vcf summary omitted no-contacts safety copy");
+
+  const contactsCsvSummary = summaryFor(personalInfoResult, "contacts.csv");
+  assert(contactsCsvSummary.includes("Contact CSV export preview"), "contacts.csv did not use contact CSV preview");
+  assert(contactsCsvSummary.includes("Runtime CSV Contact"), "contacts.csv summary omitted contact name evidence");
+  assert(contactsCsvSummary.includes("OpenDrSai CSV") && contactsCsvSummary.includes("Runtime Reviewer"), "contacts.csv summary omitted organization/title evidence");
+  assert(contactsCsvSummary.includes("*@example.test"), "contacts.csv summary omitted email-domain evidence");
+  assert(contactsCsvSummary.includes("Mobile Phone: <redacted 11 digits>"), "contacts.csv summary omitted phone redaction evidence");
+  assert(contactsCsvSummary.includes("Shanghai, CN"), "contacts.csv summary omitted bounded location evidence");
+  assert(!contactsCsvSummary.includes("runtime-csv-secret") && !contactsCsvSummary.includes("555-0199") && !contactsCsvSummary.includes("secret-contact-csv-token"), "contacts.csv summary leaked contact sensitive values");
+  assert(contactsCsvSummary.includes("no contacts app access") && contactsCsvSummary.includes("contact write"), "contacts.csv summary omitted no-contacts/no-write safety copy");
+  assert(personalInfoResult.items.find((item) => item.title === "contacts.csv")?.mime === "text/csv+contacts", "contacts.csv MIME provenance is missing");
 
   const icsSummary = summaryFor(personalInfoResult, "calendar.ics");
   assert(icsSummary.includes("Calendar ICS file preview"), "calendar.ics did not use calendar ICS preview");
@@ -5698,6 +7251,24 @@ try {
   assert(icalSummary.includes("Calendar ICS file preview"), "calendar.ical did not use calendar ICS preview");
   assert(icalSummary.includes("Runtime ICAL Planning"), "calendar.ical summary omitted event title evidence");
   assert(icalSummary.includes("no calendar app access"), "calendar.ical summary omitted no-calendar safety copy");
+
+  const vcsSummary = summaryFor(personalInfoResult, "calendar.vcs");
+  assert(vcsSummary.includes("Calendar ICS file preview"), "calendar.vcs did not use calendar ICS preview");
+  assert(vcsSummary.includes("Runtime VCS Handoff"), "calendar.vcs summary omitted event title evidence");
+  assert(vcsSummary.includes("token=[redacted]"), "calendar.vcs summary omitted token redaction evidence");
+  assert(!vcsSummary.includes("secret-runtime-vcs-token"), "calendar.vcs summary leaked token-like location value");
+  assert(vcsSummary.includes("no calendar app access"), "calendar.vcs summary omitted no-calendar safety copy");
+  assert(personalInfoResult.items.find((item) => item.title === "calendar.vcs")?.mime === "text/x-vcalendar", "calendar.vcs MIME provenance is missing");
+
+  const calendarCsvSummary = summaryFor(personalInfoResult, "calendar-agenda.csv");
+  assert(calendarCsvSummary.includes("Calendar CSV agenda preview"), "calendar-agenda.csv did not use calendar CSV agenda preview");
+  assert(calendarCsvSummary.includes("Runtime CSV Planning"), "calendar-agenda.csv summary omitted event title evidence");
+  assert(calendarCsvSummary.includes("CSV Room token=[redacted]"), "calendar-agenda.csv summary omitted token redaction evidence");
+  assert(!calendarCsvSummary.includes("secret-calendar-csv-token"), "calendar-agenda.csv summary leaked token-like location value");
+  assert(!calendarCsvSummary.includes("secret-calendar-description-token"), "calendar-agenda.csv summary leaked description value");
+  assert(calendarCsvSummary.includes("event descriptions were not expanded"), "calendar-agenda.csv summary omitted no-description-expansion safety copy");
+  assert(calendarCsvSummary.includes("no calendar app access"), "calendar-agenda.csv summary omitted no-calendar safety copy");
+  assert(personalInfoResult.items.find((item) => item.title === "calendar-agenda.csv")?.mime === "text/csv+calendar", "calendar-agenda.csv MIME provenance is missing");
 
   const evtxSummary = summaryFor(windowsDiagnosticsResult, "runtime.evtx");
   assert(evtxSummary.includes("Windows Event Log metadata preview"), "runtime.evtx did not use Windows Event Log preview");
@@ -5921,6 +7492,29 @@ try {
   assert(webServerConfigSummary.includes("include targets and certificate/key files were not opened"), "nginx.conf summary omitted include/certificate boundary copy");
   assert(webServerConfigSummary.includes("no nginx/apache/httpd command, service reload, config test"), "nginx.conf summary omitted no-runtime safety copy");
 
+  const apacheVhostSummary = summaryFor(webServerConfigResult, "runtime.vhost.conf");
+  assert(apacheVhostSummary.includes("Web server config preview (Apache/httpd config"), "runtime.vhost.conf did not use Apache/httpd web server preview");
+  assert(apacheVhostSummary.includes("ServerName=apache-runtime.example.test"), "runtime.vhost.conf summary omitted Apache ServerName evidence");
+  assert(apacheVhostSummary.includes("ServerAlias=api.apache-runtime.example.test"), "runtime.vhost.conf summary omitted Apache ServerAlias evidence");
+  assert(apacheVhostSummary.includes("VirtualHost=*:"), "runtime.vhost.conf summary omitted VirtualHost listen evidence");
+  assert(apacheVhostSummary.includes("ProxyPass=/api https://127.0.0.1:8443/api?token=[redacted]"), "runtime.vhost.conf summary omitted ProxyPass redaction evidence");
+  assert(apacheVhostSummary.includes("header=Authorization \"Bearer [redacted]\""), "runtime.vhost.conf summary omitted Apache header redaction evidence");
+  assert(apacheVhostSummary.includes("auth=Basic") && apacheVhostSummary.includes("auth=valid-user"), "runtime.vhost.conf summary omitted Apache auth evidence");
+  assert(apacheVhostSummary.includes("rewrite=302 ^/old/(.*)$ /new/$1?token=[redacted]"), "runtime.vhost.conf summary omitted Apache redirect redaction evidence");
+  assert(!apacheVhostSummary.includes("secret-apache-token") && !apacheVhostSummary.includes("secret-apache-key"), "runtime.vhost.conf summary leaked Apache secret-shaped values");
+  assert(apacheVhostSummary.includes("no nginx/apache/httpd command, service reload, config test"), "runtime.vhost.conf summary omitted no-runtime safety copy");
+  assert(webServerConfigResult.items.find((item) => item.title === "runtime.vhost.conf")?.mime === "text/x-web-server-config", "runtime.vhost.conf MIME provenance is missing");
+
+  const htaccessSummary = summaryFor(webServerConfigResult, ".htaccess");
+  assert(htaccessSummary.includes("Web server config preview (Apache .htaccess"), ".htaccess did not use Apache .htaccess preview");
+  assert(htaccessSummary.includes("rewrite=^private/(.*)$ /login?token=[redacted]"), ".htaccess summary omitted RewriteRule redaction evidence");
+  assert(htaccessSummary.includes("auth=Basic") && htaccessSummary.includes("auth=all granted"), ".htaccess summary omitted auth/access evidence");
+  assert(htaccessSummary.includes("env=RUNTIME_TOKEN [redacted]"), ".htaccess summary omitted SetEnv redaction evidence");
+  assert(htaccessSummary.includes("header=X-Runtime-Trace [redacted]"), ".htaccess summary omitted Header redaction evidence");
+  assert(!htaccessSummary.includes("secret-htaccess-token"), ".htaccess summary leaked secret-shaped value");
+  assert(htaccessSummary.includes("include targets and certificate/key files were not opened"), ".htaccess summary omitted include/certificate boundary copy");
+  assert(webServerConfigResult.items.find((item) => item.title === ".htaccess")?.mime === "text/x-web-server-config", ".htaccess MIME provenance is missing");
+
   const sarifSummary = summaryFor(securityArtifactResult, "results.sarif");
   assert(sarifSummary.includes("SARIF static analysis result preview"), "results.sarif did not use SARIF preview");
   assert(sarifSummary.includes("Runtime Analyzer"), "results.sarif summary omitted tool evidence");
@@ -5968,6 +7562,16 @@ try {
   assert(certSummary.includes("Security artifact preview"), "runtime.crt did not use security artifact preview");
   assert(certSummary.includes("Certificate blocks"), "runtime.crt summary omitted certificate block evidence");
   assert(certSummary.includes("no key import"), "runtime.crt summary omitted no-key-import safety copy");
+
+  const keepassSummary = summaryFor(securityArtifactResult, "runtime.kdbx");
+  assert(keepassSummary.includes("KeePass KDBX database preview"), "runtime.kdbx did not use KeePass KDBX preview");
+  assert(keepassSummary.includes("signature valid") && keepassSummary.includes("version 4.1"), "runtime.kdbx summary omitted KDBX signature/version evidence");
+  assert(keepassSummary.includes("CipherID=16 B") && keepassSummary.includes("CompressionFlags=4 B"), "runtime.kdbx summary omitted header field evidence");
+  assert(keepassSummary.includes("Compression flags: gzip"), "runtime.kdbx summary omitted compression evidence");
+  assert(keepassSummary.includes("KDBX4 KDF parameters"), "runtime.kdbx summary omitted KDF evidence");
+  assert(!keepassSummary.includes("encrypted-entry-secret-kdbx-token"), "runtime.kdbx summary leaked encrypted payload fixture secret");
+  assert(keepassSummary.includes("encrypted entries were not decrypted or enumerated"), "runtime.kdbx summary omitted no-decryption safety copy");
+  assert(securityArtifactResult.items.find((item) => item.title === "runtime.kdbx")?.mime === "application/x-keepass2", "runtime.kdbx MIME provenance is missing");
 
   const checksumSummary = summaryFor(securityArtifactResult, "checksums.sha256");
   assert(checksumSummary.includes("Checksum preview"), "checksums.sha256 did not use checksum preview");
@@ -6227,6 +7831,37 @@ try {
   assert(!supervisorSummary.includes("secret-supervisor-url-token"), "runtime.supervisord.conf summary leaked URL token");
   assert(!supervisorSummary.includes("secret-supervisor-env-token"), "runtime.supervisord.conf summary leaked environment secret");
   assert(supervisorSummary.includes("no supervisord or supervisorctl command"), "runtime.supervisord.conf summary omitted no-supervisor-runtime safety copy");
+  const hostsSummary = summaryFor(opsScheduleResult, "runtime.hosts");
+  assert(hostsSummary.includes("Hosts file preview"), "runtime.hosts did not use hosts file preview");
+  assert(hostsSummary.includes("127.0.0.1 -> localhost") && hostsSummary.includes("127.0.0.1 -> runtime.local"), "runtime.hosts summary omitted loopback mapping evidence");
+  assert(hostsSummary.includes("0.0.0.0 -> ads.runtime.example.test"), "runtime.hosts summary omitted null-route mapping evidence");
+  assert(hostsSummary.includes("null-route/ad-block style mapping") && hostsSummary.includes("sensitive-looking hostname label was redacted"), "runtime.hosts summary omitted static risk cues");
+  assert(hostsSummary.includes("[redacted]") && !hostsSummary.includes("runtime-token-secret.example.test"), "runtime.hosts summary omitted sensitive hostname redaction");
+  assert(!hostsSummary.includes("secret-hosts-comment-token"), "runtime.hosts summary leaked comment token");
+  assert(hostsSummary.includes("system hosts file was not opened or modified") && hostsSummary.includes("no DNS cache flush"), "runtime.hosts summary omitted no-system/no-DNS safety copy");
+  assert(opsScheduleResult.items.find((item) => item.title === "runtime.hosts")?.mime === "text/x-hosts", "runtime.hosts MIME provenance is missing");
+
+  const wireguardSummary = summaryFor(vpnConfigResult, "wg0.conf");
+  assert(wireguardSummary.includes("VPN client configuration preview (WireGuard client profile"), "wg0.conf did not use WireGuard VPN config preview");
+  assert(wireguardSummary.includes("Sections/directives (2): Interface, Peer"), "wg0.conf summary omitted WireGuard section evidence");
+  assert(wireguardSummary.includes("Address=10.44.0.2/32") && wireguardSummary.includes("PersistentKeepalive=25"), "wg0.conf summary omitted interface or peer evidence");
+  assert(wireguardSummary.includes("Endpoint=vpn.example.test:51820"), "wg0.conf summary omitted endpoint evidence");
+  assert(wireguardSummary.includes("AllowedIPs=0.0.0.0/0, ::/0") && wireguardSummary.includes("DNS=1.1.1.1"), "wg0.conf summary omitted route/DNS evidence");
+  assert(wireguardSummary.includes("PrivateKey=[redacted]") && wireguardSummary.includes("PresharedKey=[redacted]"), "wg0.conf summary omitted key redaction evidence");
+  assert(wireguardSummary.includes("hook command declared") && wireguardSummary.includes("full-tunnel route declared"), "wg0.conf summary omitted static risk cues");
+  assert(!wireguardSummary.includes("secret-wireguard-private-key-material") && !wireguardSummary.includes("secret-wireguard-psk-material") && !wireguardSummary.includes("secret-wg-hook"), "wg0.conf summary leaked WireGuard secrets");
+  assert(wireguardSummary.includes("no WireGuard/OpenVPN client, tunnel activation, route/DNS mutation"), "wg0.conf summary omitted no-VPN-runtime safety copy");
+  assert(vpnConfigResult.items.find((item) => item.title === "wg0.conf")?.mime === "application/vnd.drsai.vpn-config", "wg0.conf MIME provenance is missing");
+
+  const openVpnSummary = summaryFor(vpnConfigResult, "client.ovpn");
+  assert(openVpnSummary.includes("VPN client configuration preview (OpenVPN client profile"), "client.ovpn did not use OpenVPN profile preview");
+  assert(openVpnSummary.includes("remote=vpn-runtime.example.test 1194") && openVpnSummary.includes("dev=tun") && openVpnSummary.includes("proto=udp"), "client.ovpn summary omitted remote/interface evidence");
+  assert(openVpnSummary.includes("redirect-gateway=def1"), "client.ovpn summary omitted redirect-gateway route evidence");
+  assert(openVpnSummary.includes("auth-user-pass=[redacted]") && openVpnSummary.includes("tls-auth=[redacted]") && openVpnSummary.includes("key=[redacted]"), "client.ovpn summary omitted credential redaction evidence");
+  assert(openVpnSummary.includes("OpenVPN script hook requires review") && openVpnSummary.includes("credential material redacted"), "client.ovpn summary omitted OpenVPN risk cues");
+  assert(!openVpnSummary.includes("secret-openvpn-auth") && !openVpnSummary.includes("secret-openvpn-client") && !openVpnSummary.includes("secret-openvpn-ta") && !openVpnSummary.includes("secret-openvpn-url-token"), "client.ovpn summary leaked OpenVPN secrets");
+  assert(openVpnSummary.includes("no WireGuard/OpenVPN client, tunnel activation, route/DNS mutation"), "client.ovpn summary omitted no-VPN-runtime safety copy");
+  assert(vpnConfigResult.items.find((item) => item.title === "client.ovpn")?.mime === "application/vnd.drsai.vpn-config", "client.ovpn MIME provenance is missing");
 
   const csvSummary = summaryFor(delimitedDataResult, "runtime.csv");
   assert(csvSummary.includes("Structured CSV preview"), "runtime.csv did not use CSV structured preview");
@@ -6266,6 +7901,13 @@ try {
   assert(powershellTranscriptSummary.includes("token=[redacted]"), "PowerShell transcript summary omitted token redaction evidence");
   assert(!powershellTranscriptSummary.includes("secret-transcript-token") && !powershellTranscriptSummary.includes("secret-transcript-output") && !powershellTranscriptSummary.includes("secret-transcript-url"), "PowerShell transcript summary leaked sensitive transcript value");
   assert(powershellTranscriptSummary.includes("no PowerShell/pwsh process, transcript replay, shell command execution"), "PowerShell transcript summary omitted no-runtime/no-replay safety copy");
+
+  const logMonitorSummary = summaryFor(logMonitorResult, "Runtime retention log");
+  assert(logMonitorSummary.includes("Log monitor delta"), "log monitor runtime fixture did not use log monitor delta preview");
+  assert(logMonitorSummary.includes("Retention policy reviewed: days=14, maxBytes=1048576, maxFiles=8, action=review-only"), "log monitor summary omitted retention policy evidence");
+  assert(logMonitorSummary.includes("no log deletion, rotation, truncation, or retention enforcement was performed"), "log monitor summary omitted no-retention-mutation safety copy");
+  assert(logMonitorSummary.includes("token=[redacted]"), "log monitor summary omitted secret redaction evidence");
+  assert(!logMonitorSummary.includes("secret-log-monitor-token"), "log monitor summary leaked sensitive token value");
 
   const harSummary = summaryFor(dataNetworkResult, "runtime.har");
   assert(harSummary.includes("HAR network trace preview"), "runtime.har did not use HAR preview");
@@ -6358,6 +8000,23 @@ try {
   assert(featherSummary.includes("runtime_feather_schema"), "runtime.feather summary omitted readable metadata evidence");
   assert(featherSummary.includes("no DuckDB/PyArrow/Spark query"), "runtime.feather summary omitted no-query-engine safety copy");
 
+  const avroSummary = summaryFor(dataNetworkResult, "runtime.avro");
+  assert(avroSummary.includes("Avro object container preview"), "runtime.avro did not use Avro object container preview");
+  assert(avroSummary.includes("Avro magic: Obj1 detected"), "runtime.avro summary omitted Avro magic evidence");
+  assert(avroSummary.includes("RuntimeEvent") && avroSummary.includes("runtime_id") && avroSummary.includes("metric_value"), "runtime.avro summary omitted schema metadata evidence");
+  assert(avroSummary.includes("runtime_avro_schema") && avroSummary.includes("[redacted]"), "runtime.avro summary omitted metadata redaction evidence");
+  assert(!avroSummary.includes("secret-avro-token"), "runtime.avro summary leaked secret-like metadata value");
+  assert(avroSummary.includes("no Avro runtime") && avroSummary.includes("schema registry lookup"), "runtime.avro summary omitted no-runtime/no-registry safety copy");
+
+  const avroSchemaSummary = summaryFor(dataNetworkResult, "runtime.avsc");
+  assert(avroSchemaSummary.includes("Avro schema file preview"), "runtime.avsc did not use Avro schema preview");
+  assert(avroSchemaSummary.includes("RuntimeSchemaEvent") && avroSchemaSummary.includes("runtime_id:string") && avroSchemaSummary.includes("metric_value:union(2)"), "runtime.avsc summary omitted schema field evidence");
+  assert(avroSchemaSummary.includes("timestamp-millis"), "runtime.avsc summary omitted logical type evidence");
+  assert(avroSchemaSummary.includes("Default values hidden: 2"), "runtime.avsc summary omitted default hiding evidence");
+  assert(!avroSchemaSummary.includes("secret-avsc-default") && !avroSchemaSummary.includes("secret-avsc-doc"), "runtime.avsc summary leaked secret-like schema values");
+  assert(avroSchemaSummary.includes("no Avro runtime") && avroSchemaSummary.includes("compatibility check") && avroSchemaSummary.includes("code generation"), "runtime.avsc summary omitted no-runtime/no-codegen safety copy");
+  assert(dataNetworkResult.items.find((item) => item.title === "runtime.avsc")?.mime === "application/vnd.apache.avro.schema+json", "runtime.avsc MIME provenance is missing");
+
   const epubSummary = summaryFor(contentMediaResult, "runtime.epub");
   assert(epubSummary.includes("EPUB ebook preview"), "runtime.epub did not use EPUB preview");
   assert(epubSummary.includes("Runtime EPUB Fixture"), "runtime.epub summary omitted EPUB metadata evidence");
@@ -6389,6 +8048,15 @@ try {
   assert(!bookmarksSummary.includes("secret-bookmark-token"), "bookmarks.html summary leaked bookmark URL token");
   assert(bookmarksSummary.includes("URLs were not fetched"), "bookmarks.html summary omitted no-fetch safety copy");
 
+  const bookmarksJsonSummary = summaryFor(contentMediaResult, "bookmarks.json");
+  assert(bookmarksJsonSummary.includes("Browser bookmark JSON preview"), "bookmarks.json did not use browser bookmark JSON preview");
+  assert(bookmarksJsonSummary.includes("Runtime JSON Bar") && bookmarksJsonSummary.includes("Runtime JSON Other"), "bookmarks.json summary omitted folder evidence");
+  assert(bookmarksJsonSummary.includes("Runtime JSON Docs") && bookmarksJsonSummary.includes("Runtime JSON API"), "bookmarks.json summary omitted bookmark link evidence");
+  assert(bookmarksJsonSummary.includes("token=%5BREDACTED%5D") && bookmarksJsonSummary.includes("api_key=%5BREDACTED%5D"), "bookmarks.json summary omitted URL query redaction evidence");
+  assert(!bookmarksJsonSummary.includes("secret-json-bookmark-token") && !bookmarksJsonSummary.includes("secret-json-bookmark-key"), "bookmarks.json summary leaked bookmark URL token");
+  assert(bookmarksJsonSummary.includes("bookmark stores were not imported"), "bookmarks.json summary omitted no-store-import safety copy");
+  assert(contentMediaResult.items.find((item) => item.title === "bookmarks.json")?.mime === "application/vnd.drsai.browser-bookmarks+json", "bookmarks.json MIME provenance is missing");
+
   const urlShortcutSummary = summaryFor(contentMediaResult, "runtime.url");
   assert(urlShortcutSummary.includes("Link shortcut preview"), "runtime.url did not use link shortcut preview");
   assert(urlShortcutSummary.includes("https://links.example.test/runtime?token=%5BREDACTED%5D"), "runtime.url summary omitted redacted URL evidence");
@@ -6403,6 +8071,15 @@ try {
   assert(!weblocSummary.includes("secret-webloc-token"), "runtime.webloc summary leaked URL token");
   assert(weblocSummary.includes("no network call, credential lookup, or provider send"), "runtime.webloc summary omitted no-network safety copy");
 
+  const desktopEntrySummary = summaryFor(contentMediaResult, "runtime.desktop");
+  assert(desktopEntrySummary.includes("Desktop entry launcher preview"), "runtime.desktop did not use desktop entry preview");
+  assert(desktopEntrySummary.includes("Runtime Desktop Launcher") && desktopEntrySummary.includes("Runtime Tool"), "runtime.desktop summary omitted launcher name evidence");
+  assert(desktopEntrySummary.includes("shell invocation") && desktopEntrySummary.includes("network download/request"), "runtime.desktop summary omitted static risk cues");
+  assert(desktopEntrySummary.includes("Exec commands") && desktopEntrySummary.includes("[redacted]"), "runtime.desktop summary omitted command redaction evidence");
+  assert(!desktopEntrySummary.includes("secret-desktop-token") && !desktopEntrySummary.includes("secret-desktop-key"), "runtime.desktop summary leaked launcher secrets");
+  assert(desktopEntrySummary.includes("Exec/URL targets were not launched, desktop actions were not invoked"), "runtime.desktop summary omitted no-launch safety copy");
+  assert(contentMediaResult.items.find((item) => item.title === "runtime.desktop")?.mime === "application/x-desktop", "runtime.desktop MIME provenance is missing");
+
   const rssSummary = summaryFor(contentMediaResult, "feed.rss");
   assert(rssSummary.includes("Feed document preview (RSS"), "feed.rss did not use RSS feed preview");
   assert(rssSummary.includes("Runtime RSS Feed"), "feed.rss summary omitted feed title evidence");
@@ -6414,6 +8091,16 @@ try {
   assert(atomSummary.includes("Runtime Atom Feed"), "feed.atom summary omitted feed title evidence");
   assert(atomSummary.includes("Runtime Atom Entry"), "feed.atom summary omitted feed entry evidence");
   assert(atomSummary.includes("remote feed URLs were not fetched"), "feed.atom summary omitted no-feed-fetch safety copy");
+
+  const jsonFeedSummary = summaryFor(contentMediaResult, "feed.json");
+  assert(jsonFeedSummary.includes("Feed document preview (JSON Feed"), "feed.json did not use JSON Feed preview");
+  assert(jsonFeedSummary.includes("Runtime JSON Feed"), "feed.json summary omitted JSON Feed title evidence");
+  assert(jsonFeedSummary.includes("Runtime JSON Author"), "feed.json summary omitted JSON Feed author evidence");
+  assert(jsonFeedSummary.includes("Runtime JSON Feed Item"), "feed.json summary omitted JSON Feed item evidence");
+  assert(jsonFeedSummary.includes("token=REDACTED"), "feed.json summary omitted JSON Feed URL redaction evidence");
+  assert(!jsonFeedSummary.includes("secret-jsonfeed-token") && !jsonFeedSummary.includes("secret-jsonfeed-body-token"), "feed.json summary leaked JSON Feed secret content");
+  assert(jsonFeedSummary.includes("feed item bodies were not expanded"), "feed.json summary omitted no-body-expansion safety copy");
+  assert(jsonFeedSummary.includes("remote JSON feed URLs were not fetched"), "feed.json summary omitted no-feed-fetch safety copy");
 
   const opmlSummary = summaryFor(opmlSubscriptionResult, "subscriptions.opml");
   assert(opmlSummary.includes("OPML subscription export preview"), "subscriptions.opml did not use OPML subscription preview");
@@ -6431,6 +8118,16 @@ try {
   assert(!robotsSummary.includes("secret-robots-token"), "robots.txt summary leaked sitemap token");
   assert(robotsSummary.includes("remote URLs were not fetched, pages were not crawled, JavaScript was not executed"), "robots.txt summary omitted no-fetch/no-crawl safety copy");
 
+  const llmsSummary = summaryFor(contentMediaResult, "llms.txt");
+  assert(llmsSummary.includes("LLM website metadata preview (llms.txt"), "llms.txt did not use LLM metadata preview");
+  assert(llmsSummary.includes("Runtime LLM Site Guide"), "llms.txt summary omitted title evidence");
+  assert(llmsSummary.includes("Docs") && llmsSummary.includes("Optional") && llmsSummary.includes("Full context"), "llms.txt summary omitted section evidence");
+  assert(llmsSummary.includes("Runtime API -> https://llms.example.test/api?token=[redacted]"), "llms.txt summary omitted redacted link evidence");
+  assert(!llmsSummary.includes("secret-llms-token"), "llms.txt summary leaked resource URL token");
+  assert(llmsSummary.includes("Optional context cues") && llmsSummary.includes("Full-context cues"), "llms.txt summary omitted optional/full-context cues");
+  assert(llmsSummary.includes("linked resources were not fetched, websites were not crawled, JavaScript was not executed"), "llms.txt summary omitted no-fetch/no-crawl safety copy");
+  assert(contentMediaResult.items.find((item) => item.title === "llms.txt")?.mime === "text/markdown+llms", "llms.txt MIME provenance is missing");
+
   const browserCookiesSummary = summaryFor(browserCookiesResult, "cookies.txt");
   assert(browserCookiesSummary.includes("Browser cookie export preview"), "cookies.txt did not use browser cookie export preview");
   assert(browserCookiesSummary.includes(".example.test") && browserCookiesSummary.includes("api.example.test"), "cookies.txt summary omitted domain evidence");
@@ -6441,6 +8138,163 @@ try {
   assert(!browserCookiesSummary.includes("secret-cookie-session") && !browserCookiesSummary.includes("secret-cookie-token") && !browserCookiesSummary.includes("secret-cookie-legacy"), "cookies.txt summary leaked cookie values");
   assert(browserCookiesSummary.includes("browser profiles were not opened, cookies were not imported"), "cookies.txt summary omitted no-profile/no-import safety copy");
   assert(browserCookiesResult.items.find((item) => item.title === "cookies.txt")?.mime === "text/x-netscape-cookies", "cookies.txt MIME provenance is missing");
+  const hyphenatedBrowserCookiesSummary = summaryFor(browserCookiesResult, "runtime-cookies.txt");
+  assert(hyphenatedBrowserCookiesSummary.includes("Browser cookie export preview"), "runtime-cookies.txt did not use browser cookie export preview");
+  assert(hyphenatedBrowserCookiesSummary.includes(".hyphen.example.test") && hyphenatedBrowserCookiesSummary.includes("api.hyphen.example.test"), "runtime-cookies.txt summary omitted hyphenated cookie domain evidence");
+  assert(hyphenatedBrowserCookiesSummary.includes("hyphen_session") && hyphenatedBrowserCookiesSummary.includes("hyphen_auth"), "runtime-cookies.txt summary omitted hyphenated cookie name evidence");
+  assert(hyphenatedBrowserCookiesSummary.includes("secure=2") && hyphenatedBrowserCookiesSummary.includes("httpOnly=1"), "runtime-cookies.txt summary omitted hyphenated cookie flag evidence");
+  assert(hyphenatedBrowserCookiesSummary.includes("cookie values were always redacted"), "runtime-cookies.txt summary omitted cookie value redaction evidence");
+  assert(!hyphenatedBrowserCookiesSummary.includes("secret-hyphen-cookie-session") && !hyphenatedBrowserCookiesSummary.includes("secret-hyphen-cookie-auth"), "runtime-cookies.txt summary leaked hyphenated cookie values");
+  assert(browserCookiesResult.items.find((item) => item.title === "runtime-cookies.txt")?.mime === "text/x-netscape-cookies", "runtime-cookies.txt MIME provenance is missing");
+  const browserPasswordsSummary = summaryFor(browserPasswordsResult, "chrome-passwords.csv");
+  assert(browserPasswordsSummary.includes("Browser password CSV export preview"), "chrome-passwords.csv did not use browser password CSV preview");
+  assert(browserPasswordsSummary.includes("login.passwords.example.test") && browserPasswordsSummary.includes("admin.passwords.example.test"), "chrome-passwords.csv summary omitted origin evidence");
+  assert(browserPasswordsSummary.includes("email user [redacted]@example.test") && browserPasswordsSummary.includes("username length 10"), "chrome-passwords.csv summary omitted username minimization evidence");
+  assert(browserPasswordsSummary.includes("password length 21"), "chrome-passwords.csv summary omitted password length evidence");
+  assert(browserPasswordsSummary.includes("password=<redacted>") && browserPasswordsSummary.includes("password values were never printed"), "chrome-passwords.csv summary omitted password redaction evidence");
+  assert(browserPasswordsSummary.includes("browser profiles and Login Data stores were not opened"), "chrome-passwords.csv summary omitted no-profile/no-login-store safety copy");
+  assert(!browserPasswordsSummary.includes("secret-password-value") && !browserPasswordsSummary.includes("secret-admin-password") && !browserPasswordsSummary.includes("secret-password-url-token") && !browserPasswordsSummary.includes("secret-password-note-token"), "chrome-passwords.csv summary leaked password export secrets");
+  assert(browserPasswordsResult.items.find((item) => item.title === "chrome-passwords.csv")?.mime === "text/csv+browser-passwords", "chrome-passwords.csv MIME provenance is missing");
+  const browserAutofillCsvSummary = summaryFor(browserAutofillResult, "autofill.csv");
+  assert(browserAutofillCsvSummary.includes("Browser autofill export preview"), "autofill.csv did not use browser autofill preview");
+  assert(browserAutofillCsvSummary.includes("checkout.autofill.example.test"), "autofill.csv summary omitted origin evidence");
+  assert(browserAutofillCsvSummary.includes("email") && browserAutofillCsvSummary.includes("cc-number"), "autofill.csv summary omitted field name evidence");
+  assert(browserAutofillCsvSummary.includes("payment") && browserAutofillCsvSummary.includes("sensitive-looking fields detected: 2"), "autofill.csv summary omitted field type or sensitivity evidence");
+  assert(browserAutofillCsvSummary.includes("value=<redacted>") && browserAutofillCsvSummary.includes("string value"), "autofill.csv summary omitted value redaction/kind evidence");
+  assert(!browserAutofillCsvSummary.includes("secret-autofill-email") && !browserAutofillCsvSummary.includes("4111111111111111"), "autofill.csv summary leaked field values");
+  assert(browserAutofillCsvSummary.includes("browser profiles and autofill stores were not opened"), "autofill.csv summary omitted no-profile/no-store safety copy");
+  assert(browserAutofillResult.items.find((item) => item.title === "autofill.csv")?.mime === "text/csv+browser-autofill", "autofill.csv MIME provenance is missing");
+  const browserAutofillJsonSummary = summaryFor(browserAutofillResult, "runtime-autofill.json");
+  assert(browserAutofillJsonSummary.includes("Browser autofill export preview"), "runtime-autofill.json did not use browser autofill preview");
+  assert(browserAutofillJsonSummary.includes("profile.autofill.example.test") && browserAutofillJsonSummary.includes("profile"), "runtime-autofill.json summary omitted origin/form evidence");
+  assert(browserAutofillJsonSummary.includes("given-name") && browserAutofillJsonSummary.includes("phone"), "runtime-autofill.json summary omitted field names");
+  assert(browserAutofillJsonSummary.includes("tel") && browserAutofillJsonSummary.includes("length=21"), "runtime-autofill.json summary omitted type/length evidence");
+  assert(!browserAutofillJsonSummary.includes("secret-autofill-name") && !browserAutofillJsonSummary.includes("secret-autofill-phone"), "runtime-autofill.json summary leaked field values");
+  assert(browserAutofillResult.items.find((item) => item.title === "runtime-autofill.json")?.mime === "application/vnd.drsai.browser-autofill+json", "runtime-autofill.json MIME provenance is missing");
+
+  const browserExtensionManifestSummary = summaryFor(browserExtensionManifestResult, "extension-manifest.json");
+  assert(browserExtensionManifestSummary.includes("Browser extension manifest preview"), "extension-manifest.json did not use browser extension manifest preview");
+  assert(browserExtensionManifestSummary.includes("Runtime Browser Extension"), "extension-manifest.json summary omitted extension identity evidence");
+  assert(browserExtensionManifestSummary.includes("manifest_version=3"), "extension-manifest.json summary omitted manifest version evidence");
+  assert(browserExtensionManifestSummary.includes("tabs") && browserExtensionManifestSummary.includes("declarativeNetRequest"), "extension-manifest.json summary omitted permission evidence");
+  assert(browserExtensionManifestSummary.includes("https://api.extension.example.test/path?token=REDACTED"), "extension-manifest.json summary omitted host permission URL redaction evidence");
+  assert(!browserExtensionManifestSummary.includes("secret-extension-token"), "extension-manifest.json summary leaked host permission token");
+  assert(browserExtensionManifestSummary.includes("service_worker=background.js"), "extension-manifest.json summary omitted background service worker evidence");
+  assert(browserExtensionManifestSummary.includes("content.js") && browserExtensionManifestSummary.includes("content script injection"), "extension-manifest.json summary omitted content script evidence");
+  assert(browserExtensionManifestSummary.includes("extension code was not loaded or executed"), "extension-manifest.json summary omitted no-extension-load safety copy");
+  assert(browserExtensionManifestResult.items.find((item) => item.title === "extension-manifest.json")?.mime === "application/vnd.drsai.browser-extension-manifest+json", "extension-manifest.json MIME provenance is missing");
+
+  const browserExtensionInventorySummary = summaryFor(browserExtensionInventoryResult, "browser-extensions.json");
+  assert(browserExtensionInventorySummary.includes("Browser extension inventory JSON preview"), "browser-extensions.json did not use browser extension inventory preview");
+  assert(browserExtensionInventorySummary.includes("Runtime Extension Inventory") && browserExtensionInventorySummary.includes("Disabled Runtime Extension"), "browser-extensions.json summary omitted extension name evidence");
+  assert(browserExtensionInventorySummary.includes("enabled=1") && browserExtensionInventorySummary.includes("disabled=1"), "browser-extensions.json summary omitted enabled/disabled counts");
+  assert(browserExtensionInventorySummary.includes("tabs") && browserExtensionInventorySummary.includes("cookies") && browserExtensionInventorySummary.includes("declarativeNetRequest"), "browser-extensions.json summary omitted permission evidence");
+  assert(browserExtensionInventorySummary.includes("https://inventory.example.test/*?api_key=REDACTED"), "browser-extensions.json summary omitted host permission URL redaction evidence");
+  assert(browserExtensionInventorySummary.includes("host access") && browserExtensionInventorySummary.includes("sensitive browser API"), "browser-extensions.json summary omitted review cue evidence");
+  assert(!browserExtensionInventorySummary.includes("secret-extension-inventory-token") && !browserExtensionInventorySummary.includes("secret-extension-inventory-key"), "browser-extensions.json summary leaked extension inventory secrets");
+  assert(browserExtensionInventorySummary.includes("extension code was not loaded or executed"), "browser-extensions.json summary omitted no-extension-load safety copy");
+  assert(browserExtensionInventoryResult.items.find((item) => item.title === "browser-extensions.json")?.mime === "application/vnd.drsai.browser-extension-inventory+json", "browser-extensions.json MIME provenance is missing");
+
+  const browserHistoryCsvSummary = summaryFor(browserHistoryResult, "history.csv");
+  assert(browserHistoryCsvSummary.includes("Browser history export preview"), "history.csv did not use browser history export preview");
+  assert(browserHistoryCsvSummary.includes("history.example.test") && browserHistoryCsvSummary.includes("docs.history.example.test"), "history.csv summary omitted history host evidence");
+  assert(browserHistoryCsvSummary.includes("Runtime History") && browserHistoryCsvSummary.includes("Docs History"), "history.csv summary omitted history title evidence");
+  assert(browserHistoryCsvSummary.includes("visits=6") && browserHistoryCsvSummary.includes("typed=1"), "history.csv summary omitted visit totals");
+  assert(browserHistoryCsvSummary.includes("token=%5BREDACTED%5D") && browserHistoryCsvSummary.includes("session=%5BREDACTED%5D"), "history.csv summary omitted URL query redaction evidence");
+  assert(!browserHistoryCsvSummary.includes("secret-history-token") && !browserHistoryCsvSummary.includes("secret-history-session"), "history.csv summary leaked URL tokens");
+  assert(browserHistoryCsvSummary.includes("browser profiles were not opened, history databases were not imported"), "history.csv summary omitted no-profile/no-import safety copy");
+  assert(browserHistoryResult.items.find((item) => item.title === "history.csv")?.mime === "text/csv+browser-history", "history.csv MIME provenance is missing");
+
+  const browserHistoryJsonSummary = summaryFor(browserHistoryResult, "runtime-history.json");
+  assert(browserHistoryJsonSummary.includes("Browser history export preview"), "runtime-history.json did not use browser history export preview");
+  assert(browserHistoryJsonSummary.includes("json-history.example.test"), "runtime-history.json summary omitted JSON history host evidence");
+  assert(browserHistoryJsonSummary.includes("JSON Runtime History"), "runtime-history.json summary omitted JSON history title evidence");
+  assert(browserHistoryJsonSummary.includes("api_key=%5BREDACTED%5D"), "runtime-history.json summary omitted JSON URL query redaction evidence");
+  assert(!browserHistoryJsonSummary.includes("secret-json-history-key"), "runtime-history.json summary leaked URL token");
+  assert(browserHistoryResult.items.find((item) => item.title === "runtime-history.json")?.mime === "application/vnd.drsai.browser-history+json", "runtime-history.json MIME provenance is missing");
+
+  const browserHistorySqliteSummary = summaryFor(browserHistoryResult, "History");
+  assert(browserHistorySqliteSummary.includes("Browser history SQLite database preview"), "History did not use browser history SQLite preview");
+  assert(browserHistorySqliteSummary.includes("SQLite format 3"), "History summary omitted SQLite header evidence");
+  assert(browserHistorySqliteSummary.includes("Local schema tables") && browserHistorySqliteSummary.includes("urls") && browserHistorySqliteSummary.includes("visits"), "History summary omitted browser history table evidence");
+  assert(browserHistorySqliteSummary.includes("Browser history table cues: urls, visits, keyword_search_terms"), "History summary omitted browser history table cues");
+  assert(browserHistorySqliteSummary.includes("Local index cues: urls_url_index"), "History summary omitted index evidence");
+  assert(!browserHistorySqliteSummary.includes("secret-history-sqlite-token"), "History summary leaked SQLite string token");
+  assert(browserHistorySqliteSummary.includes("row data was not queried") && browserHistorySqliteSummary.includes("SQLite was not connected"), "History summary omitted no-query/no-SQLite-connection safety copy");
+  assert(browserHistoryResult.items.find((item) => item.title === "History")?.mime === "application/vnd.drsai.browser-history+sqlite", "History MIME provenance is missing");
+
+  const browserDownloadsCsvSummary = summaryFor(browserDownloadsResult, "downloads.csv");
+  assert(browserDownloadsCsvSummary.includes("Browser downloads export preview"), "downloads.csv did not use browser downloads export preview");
+  assert(browserDownloadsCsvSummary.includes("downloads.example.test") && browserDownloadsCsvSummary.includes("cdn.downloads.example.test"), "downloads.csv summary omitted downloads host evidence");
+  assert(browserDownloadsCsvSummary.includes("artifact.zip") && browserDownloadsCsvSummary.includes("report.pdf"), "downloads.csv summary omitted filename-only evidence");
+  assert(!browserDownloadsCsvSummary.includes("C:\\Users\\tester\\Downloads"), "downloads.csv summary leaked target path");
+  assert(browserDownloadsCsvSummary.includes("token=%5BREDACTED%5D") && browserDownloadsCsvSummary.includes("api_key=%5BREDACTED%5D"), "downloads.csv summary omitted URL query redaction evidence");
+  assert(!browserDownloadsCsvSummary.includes("secret-download-token") && !browserDownloadsCsvSummary.includes("secret-download-key") && !browserDownloadsCsvSummary.includes("secret-download-session"), "downloads.csv summary leaked download URL tokens");
+  assert(browserDownloadsCsvSummary.includes("downloaded files were not opened or executed"), "downloads.csv summary omitted no-open/no-execute safety copy");
+  assert(browserDownloadsCsvSummary.includes("browser profiles and downloads databases were not imported"), "downloads.csv summary omitted no-profile/no-database safety copy");
+  assert(browserDownloadsResult.items.find((item) => item.title === "downloads.csv")?.mime === "text/csv+browser-downloads", "downloads.csv MIME provenance is missing");
+
+  const browserDownloadsJsonSummary = summaryFor(browserDownloadsResult, "runtime-downloads.json");
+  assert(browserDownloadsJsonSummary.includes("Browser downloads export preview"), "runtime-downloads.json did not use browser downloads export preview");
+  assert(browserDownloadsJsonSummary.includes("json-downloads.example.test"), "runtime-downloads.json summary omitted JSON downloads host evidence");
+  assert(browserDownloadsJsonSummary.includes("runtime.exe"), "runtime-downloads.json summary omitted JSON filename evidence");
+  assert(browserDownloadsJsonSummary.includes("token=%5BREDACTED%5D"), "runtime-downloads.json summary omitted JSON URL query redaction evidence");
+  assert(!browserDownloadsJsonSummary.includes("secret-json-download-token") && !browserDownloadsJsonSummary.includes("secret-json-download-auth"), "runtime-downloads.json summary leaked JSON download URL tokens");
+  assert(browserDownloadsResult.items.find((item) => item.title === "runtime-downloads.json")?.mime === "application/vnd.drsai.browser-downloads+json", "runtime-downloads.json MIME provenance is missing");
+  const browserDownloadsSqliteSummary = summaryFor(browserDownloadsResult, "Downloads");
+  assert(browserDownloadsSqliteSummary.includes("Browser downloads SQLite database preview"), "Downloads did not use browser downloads SQLite preview");
+  assert(browserDownloadsSqliteSummary.includes("SQLite format 3"), "Downloads summary omitted SQLite header evidence");
+  assert(browserDownloadsSqliteSummary.includes("Local schema tables") && browserDownloadsSqliteSummary.includes("downloads") && browserDownloadsSqliteSummary.includes("downloads_url_chains"), "Downloads summary omitted downloads table evidence");
+  assert(browserDownloadsSqliteSummary.includes("Browser downloads table cues: downloads, downloads_url_chains, downloads_slices"), "Downloads summary omitted browser downloads table cues");
+  assert(browserDownloadsSqliteSummary.includes("Local index cues: downloads_url_index"), "Downloads summary omitted downloads index evidence");
+  assert(!browserDownloadsSqliteSummary.includes("secret-download-sqlite-token"), "Downloads summary leaked SQLite string token");
+  assert(browserDownloadsSqliteSummary.includes("row data was not queried") && browserDownloadsSqliteSummary.includes("SQLite was not connected"), "Downloads summary omitted no-query/no-SQLite-connection safety copy");
+  assert(browserDownloadsSqliteSummary.includes("downloaded files were not opened or executed"), "Downloads summary omitted no-open/no-execute safety copy");
+  assert(browserDownloadsResult.items.find((item) => item.title === "Downloads")?.mime === "application/vnd.drsai.browser-downloads+sqlite", "Downloads MIME provenance is missing");
+
+  const browserPreferencesSummary = summaryFor(browserPreferencesResult, "Preferences");
+  assert(browserPreferencesSummary.includes("Browser preferences JSON preview"), "Preferences did not use browser preferences preview");
+  assert(browserPreferencesSummary.includes("Runtime Profile") && browserPreferencesSummary.includes("Runtime Avatar"), "Preferences summary omitted profile evidence");
+  assert(browserPreferencesSummary.includes("Runtime Search") && browserPreferencesSummary.includes("runtime"), "Preferences summary omitted search provider evidence");
+  assert(browserPreferencesSummary.includes("token=%5BREDACTED%5D") && browserPreferencesSummary.includes("api_key=%5BREDACTED%5D") && browserPreferencesSummary.includes("session=%5BREDACTED%5D"), "Preferences summary omitted URL query redaction evidence");
+  assert(browserPreferencesSummary.includes("runtime-preferences"), "Preferences summary omitted minimized download directory label");
+  assert(browserPreferencesSummary.includes("Runtime Preferences Extension") && browserPreferencesSummary.includes("runtime-extension-id"), "Preferences summary omitted extension settings evidence");
+  assert(browserPreferencesSummary.includes("cookies") && browserPreferencesSummary.includes("geolocation"), "Preferences summary omitted content setting evidence");
+  assert(browserPreferencesSummary.includes("preference values were classified or redacted rather than printed"), "Preferences summary omitted no-value-printing safety copy");
+  assert(browserPreferencesSummary.includes("browser profiles were not opened, preference stores were not imported"), "Preferences summary omitted no-profile/no-import safety copy");
+  assert(!browserPreferencesSummary.includes("secret-preferences-token") && !browserPreferencesSummary.includes("secret-preferences-key") && !browserPreferencesSummary.includes("secret-preferences-session") && !browserPreferencesSummary.includes("secret-preferences-password-token"), "Preferences summary leaked preference secrets");
+  assert(browserPreferencesResult.items.find((item) => item.title === "Preferences")?.mime === "application/vnd.drsai.browser-preferences+json", "Preferences MIME provenance is missing");
+
+  const browserLocalStorageSummary = summaryFor(browserStorageResult, "local-storage.json");
+  assert(browserLocalStorageSummary.includes("Browser storage export preview"), "local-storage.json did not use browser storage export preview");
+  assert(browserLocalStorageSummary.includes("storage.example.test"), "local-storage.json summary omitted origin evidence");
+  assert(browserLocalStorageSummary.includes("localStorage"), "local-storage.json summary omitted localStorage area evidence");
+  assert(browserLocalStorageSummary.includes("theme") && browserLocalStorageSummary.includes("apiToken"), "local-storage.json summary omitted storage key evidence");
+  assert(browserLocalStorageSummary.includes("string value") && browserLocalStorageSummary.includes("sensitive-looking keys detected"), "local-storage.json summary omitted value classification evidence");
+  assert(!browserLocalStorageSummary.includes("secret-local-storage-token") && !browserLocalStorageSummary.includes("secret-nested-storage-token"), "local-storage.json summary leaked storage values");
+  assert(browserLocalStorageSummary.includes("storage values were classified but not printed"), "local-storage.json summary omitted no-value-printing safety copy");
+  assert(browserLocalStorageSummary.includes("browser profiles and LevelDB/IndexedDB stores were not opened"), "local-storage.json summary omitted no-profile/no-LevelDB safety copy");
+  assert(browserStorageResult.items.find((item) => item.title === "local-storage.json")?.mime === "application/vnd.drsai.browser-storage+json", "local-storage.json MIME provenance is missing");
+
+  const browserSessionStorageSummary = summaryFor(browserStorageResult, "runtime-session-storage.json");
+  assert(browserSessionStorageSummary.includes("Browser storage export preview"), "runtime-session-storage.json did not use browser storage export preview");
+  assert(browserSessionStorageSummary.includes("session-storage.example.test"), "runtime-session-storage.json summary omitted session origin evidence");
+  assert(browserSessionStorageSummary.includes("sessionStorage"), "runtime-session-storage.json summary omitted sessionStorage area evidence");
+  assert(browserSessionStorageSummary.includes("csrfToken") && browserSessionStorageSummary.includes("wizardStep"), "runtime-session-storage.json summary omitted session storage key evidence");
+  assert(!browserSessionStorageSummary.includes("secret-session-storage-token"), "runtime-session-storage.json summary leaked storage value");
+  assert(browserStorageResult.items.find((item) => item.title === "runtime-session-storage.json")?.mime === "application/vnd.drsai.browser-storage+json", "runtime-session-storage.json MIME provenance is missing");
+
+  const browserSessionTabsSummary = summaryFor(browserSessionTabsResult, "tabs.json");
+  assert(browserSessionTabsSummary.includes("Browser session tabs JSON preview"), "tabs.json did not use browser session tabs preview");
+  assert(browserSessionTabsSummary.includes("tabs.example.test") && browserSessionTabsSummary.includes("docs.tabs.example.test"), "tabs.json summary omitted tab host evidence");
+  assert(browserSessionTabsSummary.includes("Runtime Inbox") && browserSessionTabsSummary.includes("Runtime Docs"), "tabs.json summary omitted tab title evidence");
+  assert(browserSessionTabsSummary.includes("Runtime Work") && browserSessionTabsSummary.includes("Runtime Research"), "tabs.json summary omitted tab group evidence");
+  assert(browserSessionTabsSummary.includes("active=1") && browserSessionTabsSummary.includes("pinned=1") && browserSessionTabsSummary.includes("audible=1") && browserSessionTabsSummary.includes("discarded=1") && browserSessionTabsSummary.includes("incognito=1"), "tabs.json summary omitted tab flag totals");
+  assert(browserSessionTabsSummary.includes("token=%5BREDACTED%5D") && browserSessionTabsSummary.includes("api_key=%5BREDACTED%5D"), "tabs.json summary omitted URL query redaction evidence");
+  assert(browserSessionTabsSummary.includes("opener=opener.tabs.example.test") && browserSessionTabsSummary.includes("referrer=referrer.tabs.example.test"), "tabs.json summary omitted opener/referrer host evidence");
+  assert(!browserSessionTabsSummary.includes("secret-tab-token") && !browserSessionTabsSummary.includes("secret-tab-key") && !browserSessionTabsSummary.includes("secret-tab-opener") && !browserSessionTabsSummary.includes("secret-tab-referrer"), "tabs.json summary leaked tab URL tokens");
+  assert(browserSessionTabsSummary.includes("browser profiles were not opened, tabs were not restored"), "tabs.json summary omitted no-profile/no-restore safety copy");
+  assert(browserSessionTabsResult.items.find((item) => item.title === "tabs.json")?.mime === "application/vnd.drsai.browser-session+json", "tabs.json MIME provenance is missing");
 
   const sitemapSummary = summaryFor(contentMediaResult, "sitemap.xml");
   assert(sitemapSummary.includes("Web crawl metadata preview (sitemap urlset"), "sitemap.xml did not use sitemap preview");
@@ -6453,6 +8307,44 @@ try {
   const sitemapGzipSummary = summaryFor(contentMediaResult, "sitemap.xml.gz");
   assert(sitemapGzipSummary.includes("Web crawl metadata preview (sitemap urlset"), "sitemap.xml.gz did not use gzipped sitemap preview");
   assert(sitemapGzipSummary.includes("compressed sitemap input was decompressed only from local bytes"), "sitemap.xml.gz summary omitted local gzip safety copy");
+
+  const warcSummary = summaryFor(contentMediaResult, "runtime.warc");
+  assert(warcSummary.includes("WARC web archive preview (WARC"), "runtime.warc did not use WARC web archive preview");
+  assert(warcSummary.includes("warcinfo") && warcSummary.includes("response"), "runtime.warc summary omitted WARC record type evidence");
+  assert(warcSummary.includes("https://archive.example.test/page?token=REDACTED"), "runtime.warc summary omitted redacted target URI evidence");
+  assert(!warcSummary.includes("secret-warc-token") && !warcSummary.includes("secret-warc-body-token"), "runtime.warc summary leaked WARC secrets");
+  assert(warcSummary.includes("archived payload bodies were not expanded"), "runtime.warc summary omitted no-payload-expansion safety copy");
+  assert(contentMediaResult.items.find((item) => item.title === "runtime.warc")?.mime === "application/warc", "runtime.warc MIME provenance is missing");
+
+  const warcGzipSummary = summaryFor(contentMediaResult, "runtime.warc.gz");
+  assert(warcGzipSummary.includes("WARC web archive preview (gzip-compressed WARC"), "runtime.warc.gz did not use gzipped WARC preview");
+  assert(warcGzipSummary.includes("compressed input decompressed locally: yes"), "runtime.warc.gz summary omitted local decompression evidence");
+  assert(warcGzipSummary.includes("crawler replay was not started"), "runtime.warc.gz summary omitted no-replay safety copy");
+  assert(contentMediaResult.items.find((item) => item.title === "runtime.warc.gz")?.mime === "application/warc+gzip", "runtime.warc.gz MIME provenance is missing");
+
+  const pwaManifestSummary = summaryFor(contentMediaResult, "site.webmanifest");
+  assert(pwaManifestSummary.includes("PWA web app manifest preview"), "site.webmanifest did not use PWA manifest preview");
+  assert(pwaManifestSummary.includes("Runtime PWA Fixture"), "site.webmanifest summary omitted app name evidence");
+  assert(pwaManifestSummary.includes("display=standalone"), "site.webmanifest summary omitted display evidence");
+  assert(pwaManifestSummary.includes("Icons (1): /icons/runtime-192.png?token=REDACTED"), "site.webmanifest summary omitted icon redaction evidence");
+  assert(pwaManifestSummary.includes("Shortcuts (1): Open Runtime Inbox -> /app/inbox?token=REDACTED"), "site.webmanifest summary omitted shortcut redaction evidence");
+  assert(pwaManifestSummary.includes("Share target: /share?token=REDACTED"), "site.webmanifest summary omitted share target redaction evidence");
+  assert(pwaManifestSummary.includes("Protocol handlers (1): web+runtime -> /protocol?url=%s&token=REDACTED"), "site.webmanifest summary omitted protocol handler evidence");
+  assert(pwaManifestSummary.includes("File handlers (1): /open-file?token=REDACTED accepts text/plain"), "site.webmanifest summary omitted file handler evidence");
+  assert(!pwaManifestSummary.includes("secret-pwa"), "site.webmanifest summary leaked secret PWA token");
+  assert(pwaManifestSummary.includes("no browser was launched, manifest URLs/icons/screenshots were not fetched"), "site.webmanifest summary omitted no-browser/no-fetch safety copy");
+  assert(contentMediaResult.items.find((item) => item.title === "site.webmanifest")?.mime === "application/manifest+json", "site.webmanifest MIME provenance is missing");
+
+  const pwaServiceWorkerSummary = summaryFor(contentMediaResult, "service-worker.js");
+  assert(pwaServiceWorkerSummary.includes("PWA service worker script preview"), "service-worker.js did not use PWA service worker preview");
+  assert(pwaServiceWorkerSummary.includes("install") && pwaServiceWorkerSummary.includes("activate") && pwaServiceWorkerSummary.includes("fetch") && pwaServiceWorkerSummary.includes("push"), "service-worker.js summary omitted lifecycle event evidence");
+  assert(pwaServiceWorkerSummary.includes("caches.open") && pwaServiceWorkerSummary.includes("cache.addAll"), "service-worker.js summary omitted cache evidence");
+  assert(pwaServiceWorkerSummary.includes("event.respondWith") && pwaServiceWorkerSummary.includes("Workbox StaleWhileRevalidate"), "service-worker.js summary omitted routing evidence");
+  assert(pwaServiceWorkerSummary.includes("/workbox-v7.js?token=REDACTED"), "service-worker.js summary omitted importScripts URL redaction evidence");
+  assert(pwaServiceWorkerSummary.includes("notifications") && pwaServiceWorkerSummary.includes("navigation preload") && pwaServiceWorkerSummary.includes("skipWaiting"), "service-worker.js summary omitted PWA capability evidence");
+  assert(!pwaServiceWorkerSummary.includes("secret-sw"), "service-worker.js summary leaked service worker secret values");
+  assert(pwaServiceWorkerSummary.includes("no browser was launched, no service worker was registered, no cache was opened"), "service-worker.js summary omitted no-registration/no-cache safety copy");
+  assert(contentMediaResult.items.find((item) => item.title === "service-worker.js")?.mime === "text/javascript", "service-worker.js MIME provenance is missing");
 
   const srtSummary = summaryFor(contentMediaResult, "captions.srt");
   assert(srtSummary.includes("Timed transcript preview"), "captions.srt did not use timed transcript preview");
@@ -6484,6 +8376,16 @@ try {
   assert(!androidLogcatSummary.includes("secret-logcat-token") && !androidLogcatSummary.includes("secret-crash-token") && !androidLogcatSummary.includes("secret-brief-token"), "runtime.logcat summary leaked sensitive token values");
   assert(androidLogcatSummary.includes("no adb/logcat command, device/emulator access, live log streaming"), "runtime.logcat summary omitted no-ADB/no-device safety copy");
 
+  const appleUnifiedLogSummary = summaryFor(mobileManifestResult, "system.log");
+  assert(appleUnifiedLogSummary.includes("Apple unified/syslog export preview"), "system.log did not use Apple unified/syslog preview");
+  assert(appleUnifiedLogSummary.includes("Default: 1") && appleUnifiedLogSummary.includes("Error: 1") && appleUnifiedLogSummary.includes("Fault: 1") && appleUnifiedLogSummary.includes("Info: 1"), "system.log summary omitted Apple log level counts");
+  assert(appleUnifiedLogSummary.includes("DrSaiMobile") && appleUnifiedLogSummary.includes("diagnosticd") && appleUnifiedLogSummary.includes("SpringBoard"), "system.log summary omitted process evidence");
+  assert(appleUnifiedLogSummary.includes("org.opendrsai.mobile") && appleUnifiedLogSummary.includes("com.apple.diagnostic"), "system.log summary omitted subsystem evidence");
+  assert(appleUnifiedLogSummary.includes("token=[redacted]"), "system.log summary omitted redacted token evidence");
+  assert(!appleUnifiedLogSummary.includes("secret-oslog-token") && !appleUnifiedLogSummary.includes("secret-network-token") && !appleUnifiedLogSummary.includes("secret-fault-token") && !appleUnifiedLogSummary.includes("secret-syslog-token"), "system.log summary leaked sensitive token values");
+  assert(appleUnifiedLogSummary.includes("no Console.app, log command, sysdiagnose collection"), "system.log summary omitted no-Console/no-log-command safety copy");
+  assert(mobileManifestResult.items.find((item) => item.title === "system.log")?.mime === "text/x-apple-unified-log", "system.log MIME provenance is missing");
+
   const infoPlistSummary = summaryFor(mobileManifestResult, "Info.plist");
   assert(infoPlistSummary.includes("Apple Info.plist app manifest preview"), "Info.plist did not use Apple Info.plist preview");
   assert(infoPlistSummary.includes("org.opendrsai.runtime.ios"), "Info.plist summary omitted bundle identifier evidence");
@@ -6493,6 +8395,25 @@ try {
   assert(infoPlistSummary.includes("NSCameraUsageDescription"), "Info.plist summary omitted privacy usage key evidence");
   assert(!infoPlistSummary.includes("secret-camera-token"), "Info.plist summary leaked privacy usage-description value");
   assert(infoPlistSummary.includes("no plutil/xcodebuild/simulator command"), "Info.plist summary omitted no-Apple-runtime safety copy");
+
+  const appleCrashSummary = summaryFor(mobileManifestResult, "runtime.crash");
+  assert(appleCrashSummary.includes("Apple crash report preview"), "runtime.crash did not use Apple crash report preview");
+  assert(appleCrashSummary.includes("RuntimeFixture") && appleCrashSummary.includes("org.opendrsai.runtime.ios"), "runtime.crash summary omitted process/bundle evidence");
+  assert(appleCrashSummary.includes("EXC_BAD_ACCESS") && appleCrashSummary.includes("KERN_INVALID_ADDRESS"), "runtime.crash summary omitted exception evidence");
+  assert(appleCrashSummary.includes("Thread 0") || appleCrashSummary.includes("Crashed thread: 0"), "runtime.crash summary omitted crashed thread evidence");
+  assert(appleCrashSummary.includes("RuntimeCrashEntry") && appleCrashSummary.includes("RuntimeKit"), "runtime.crash summary omitted frame/binary evidence");
+  assert(!appleCrashSummary.includes("secret-crash-token") && !appleCrashSummary.includes("secret-frame-token") && !appleCrashSummary.includes("secret-path-token"), "runtime.crash summary leaked crash report secrets");
+  assert(appleCrashSummary.includes("no Console.app, Xcode, CrashReporter, symbolication, dSYM lookup"), "runtime.crash summary omitted no-symbolication safety copy");
+  assert(mobileManifestResult.items.find((item) => item.title === "runtime.crash")?.mime === "text/x-apple-crash-report", "runtime.crash MIME provenance is missing");
+
+  const appleIpsSummary = summaryFor(mobileManifestResult, "runtime.ips");
+  assert(appleIpsSummary.includes("Apple crash report preview (Apple IPS JSON"), "runtime.ips did not use Apple IPS preview");
+  assert(appleIpsSummary.includes("org.opendrsai.runtime.ips") && appleIpsSummary.includes("macOS 15.5"), "runtime.ips summary omitted bundle/OS evidence");
+  assert(appleIpsSummary.includes("EXC_CRASH") && appleIpsSummary.includes("SIGABRT"), "runtime.ips summary omitted exception evidence");
+  assert(appleIpsSummary.includes("RuntimeAbortEntry") && appleIpsSummary.includes("RuntimeWorker.run"), "runtime.ips summary omitted frame evidence");
+  assert(!appleIpsSummary.includes("secret-ips-token") && !appleIpsSummary.includes("secret-ips-reason-token") && !appleIpsSummary.includes("secret-source-token"), "runtime.ips summary leaked IPS secrets");
+  assert(appleIpsSummary.includes("no Console.app, Xcode, CrashReporter, symbolication, dSYM lookup"), "runtime.ips summary omitted no-symbolication safety copy");
+  assert(mobileManifestResult.items.find((item) => item.title === "runtime.ips")?.mime === "application/vnd.apple.ips+json", "runtime.ips MIME provenance is missing");
 
   const apkSummary = summaryFor(mobilePackageResult, "runtime.apk");
   assert(apkSummary.includes("Mobile app package preview (Android APK"), "runtime.apk did not use mobile app package preview");
@@ -6532,6 +8453,14 @@ try {
   assert(mp3Summary.includes("128 kbps"), "runtime.mp3 summary omitted bit-rate evidence");
   assert(mp3Summary.includes("ID3: ID3v2.3"), "runtime.mp3 summary omitted ID3 evidence");
   assert(mp3Summary.includes("no microphone capture"), "runtime.mp3 summary omitted no-capture safety copy");
+
+  const aacSummary = summaryFor(audioResult, "runtime.aac");
+  assert(aacSummary.includes("Audio metadata preview"), "runtime.aac did not use audio metadata preview");
+  assert(aacSummary.includes("Format: AAC ADTS"), "runtime.aac summary omitted AAC ADTS format evidence");
+  assert(aacSummary.includes("44100 Hz"), "runtime.aac summary omitted sample-rate evidence");
+  assert(aacSummary.includes("stereo"), "runtime.aac summary omitted channel evidence");
+  assert(aacSummary.includes("profile LC"), "runtime.aac summary omitted AAC profile evidence");
+  assert(aacSummary.includes("no microphone capture"), "runtime.aac summary omitted no-capture safety copy");
 
   const flacSummary = summaryFor(audioResult, "runtime.flac");
   assert(flacSummary.includes("Audio metadata preview"), "runtime.flac did not use audio metadata preview");

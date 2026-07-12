@@ -3,9 +3,10 @@ import type {
   ChatAttachment,
   ChatEvent,
   ChatMessage,
-  DesktopCommitApprovalChecklist,
+  ChatMessagePart,
   DesktopApprovalProposalResult,
   DesktopAgent,
+  DesktopCommitApprovalChecklist,
   DesktopCustomCommand,
   DesktopForkQueueDispatchResult,
   DesktopForkQueueStartApprovalResult,
@@ -13,6 +14,9 @@ import type {
   DesktopThread,
   DesktopThreadSnapshot,
   MyDrSaiModelConfig,
+  WorkspaceCheckpoint,
+  WorkspaceCheckpointPreviewResult,
+  WorkspaceCheckpointRestoreResult,
   WorkspaceContextOverview,
   WorkspaceInstructionSummary,
 } from "@shared/desktopApi";
@@ -31,6 +35,7 @@ import {
   formatRecentTerminalTestResult,
   readRecentTerminalTestResult,
 } from "../terminalTestResults";
+import { acceptChatEventSequence, getVisibleChatText } from "../chatOutputModel";
 
 export interface DesktopChatAdapter {
   activeRequestId: string | null;
@@ -50,6 +55,11 @@ export interface DesktopChatAdapter {
 }
 
 export type ChatThreadSnapshot = DesktopThreadSnapshot;
+
+const LOCAL_COMPACT_MAX_MESSAGES = 10;
+const LOCAL_COMPACT_MAX_REUSABLE_ITEMS = 6;
+const LOCAL_COMPACT_MAX_MESSAGE_CHARS = 360;
+const LOCAL_COMPACT_MAX_ITEM_CHARS = 220;
 
 export function useDesktopChatAdapter({
   availableAgents,
@@ -92,6 +102,9 @@ export function useDesktopChatAdapter({
   const [customCommands, setCustomCommands] = useState<DesktopCustomCommand[]>([]);
   const [projectMemory, setProjectMemory] = useState<DesktopProjectMemoryEntry[]>([]);
   const streamingAssistantByRequest = useRef<Record<string, string>>({});
+  const lastSequenceByRequest = useRef<Record<string, number>>({});
+  const pendingDeltasByRequest = useRef<Record<string, { text: string; reasoning: string }>>({});
+  const deltaFlushTimerRef = useRef<number | null>(null);
   const threadIdRef = useRef(threadId);
   const languageRef = useRef(language);
   const developerModeRef = useRef(developerMode);
@@ -103,6 +116,12 @@ export function useDesktopChatAdapter({
     threadIdRef.current = threadId;
     languageRef.current = language;
     streamingAssistantByRequest.current = {};
+    lastSequenceByRequest.current = {};
+    pendingDeltasByRequest.current = {};
+    if (deltaFlushTimerRef.current !== null) {
+      window.clearTimeout(deltaFlushTimerRef.current);
+      deltaFlushTimerRef.current = null;
+    }
     setActiveRequestId(null);
     setCurrentRuntimeMode(null);
     currentRuntimeModeRef.current = null;
@@ -164,6 +183,10 @@ export function useDesktopChatAdapter({
     });
   }, []);
 
+  useEffect(() => () => {
+    if (deltaFlushTimerRef.current !== null) window.clearTimeout(deltaFlushTimerRef.current);
+  }, []);
+
   async function submit(
     attachments: ChatAttachment[] = [],
     options?: ChatSubmitOptions,
@@ -191,6 +214,8 @@ export function useDesktopChatAdapter({
       const memoryText = await maybeApplyMemoryCommand(command, workspacePath);
       const mcpLiveText = await maybeRequestMcpLiveBridge(command, workspacePath);
       const mcpContextText = await maybeImportMcpContext(command, workspacePath);
+      const compactText = maybeApplyCompactCommand(command, messages);
+      const checkpointText = await maybeApplyWorkspaceCheckpointCommand(command, workspacePath);
       const forkHandoffResult = await maybeHandoffForkQueueThread(command);
       const forkScheduleResult = await maybeScheduleForkQueue(command, workspacePath, options);
       const forkDispatchResult = await maybeDispatchForkQueue(command, workspacePath, options);
@@ -206,6 +231,8 @@ export function useDesktopChatAdapter({
           memoryText,
           mcpLiveText,
           mcpContextText,
+          compactText,
+          checkpointText,
           forkHandoffResult?.text,
           forkScheduleResult?.text,
           forkDispatchResult?.text,
@@ -270,7 +297,7 @@ export function useDesktopChatAdapter({
         },
         messages: buildRequestMessages(
           [...messages, userMessage]
-            .filter((message) => !message.error)
+            .filter((message) => !message.error && message.content.trim().length > 0)
             .map(({ role, content }) => ({ role, content })),
           workspaceInstructions,
           projectMemoryRef.current,
@@ -322,21 +349,14 @@ export function useDesktopChatAdapter({
 
   function applyChatEvent(event: ChatEvent): void {
     if (event.sessionId && event.sessionId !== threadIdRef.current) return;
+    if (!acceptChatEventSequence(lastSequenceByRequest.current, event.requestId, event.seq)) return;
     if (event.type === "start") {
       touchStreamingAssistant(event.requestId);
       setActiveRequestId(event.requestId);
       return;
     }
     if (event.type === "chunk") {
-      setMessages((current) =>
-        publishAndReturn(
-          appendAssistantChunk(
-            current,
-            streamingAssistantByRequest.current[event.requestId],
-            event.content ?? "",
-          ),
-        ),
-      );
+      queueAssistantDelta(event.requestId, "text", event.content ?? "");
       return;
     }
     if (event.type === "status") {
@@ -353,6 +373,10 @@ export function useDesktopChatAdapter({
       );
       return;
     }
+    if (event.type === "reasoning") {
+      queueAssistantDelta(event.requestId, "reasoning", event.content ?? "");
+      return;
+    }
     if (event.type === "tool_timeline" && event.toolTimeline) {
       const toolTimeline = event.toolTimeline;
       setMessages((current) =>
@@ -367,21 +391,26 @@ export function useDesktopChatAdapter({
       return;
     }
     if (event.type === "done" || event.type === "aborted") {
+      flushPendingDeltas();
       const assistantId = streamingAssistantByRequest.current[event.requestId];
       setMessages((current) =>
         publishAndReturn(
           updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
             ...message,
             streaming: false,
+            parts: completeMessageParts(message.parts),
           })),
         ),
       );
       delete streamingAssistantByRequest.current[event.requestId];
+      delete lastSequenceByRequest.current[event.requestId];
+      delete pendingDeltasByRequest.current[event.requestId];
       setActiveRequestId((current) => (current === event.requestId ? null : current));
       onChatComplete();
       return;
     }
     if (event.type === "error") {
+      flushPendingDeltas();
       const assistantId = streamingAssistantByRequest.current[event.requestId];
       setMessages((current) =>
         publishAndReturn(
@@ -394,12 +423,49 @@ export function useDesktopChatAdapter({
               developerModeRef.current,
               languageRef.current,
             ),
+            parts: upsertMessagePart(completeMessageParts(message.parts), {
+              id: `${message.id}:error`,
+              type: "error",
+              message: event.error || "Chat failed.",
+              retryable: false,
+              status: "error",
+            }),
           })),
         ),
       );
       delete streamingAssistantByRequest.current[event.requestId];
+      delete lastSequenceByRequest.current[event.requestId];
+      delete pendingDeltasByRequest.current[event.requestId];
       setActiveRequestId((current) => (current === event.requestId ? null : current));
     }
+  }
+
+  function queueAssistantDelta(requestId: string, kind: "text" | "reasoning", content: string): void {
+    if (!content) return;
+    const pending = pendingDeltasByRequest.current[requestId] ?? { text: "", reasoning: "" };
+    pending[kind] += content;
+    pendingDeltasByRequest.current[requestId] = pending;
+    if (deltaFlushTimerRef.current !== null) return;
+    deltaFlushTimerRef.current = window.setTimeout(flushPendingDeltas, 40);
+  }
+
+  function flushPendingDeltas(): void {
+    if (deltaFlushTimerRef.current !== null) {
+      window.clearTimeout(deltaFlushTimerRef.current);
+      deltaFlushTimerRef.current = null;
+    }
+    const queued = pendingDeltasByRequest.current;
+    pendingDeltasByRequest.current = {};
+    if (!Object.keys(queued).length) return;
+    setMessages((current) => {
+      let next = current;
+      for (const [requestId, delta] of Object.entries(queued)) {
+        const assistantId = streamingAssistantByRequest.current[requestId];
+        if (delta.reasoning) next = appendAssistantReasoning(next, assistantId, delta.reasoning);
+        if (delta.text) next = appendAssistantChunk(next, assistantId, delta.text);
+      }
+      return publishAndReturn(next);
+    });
   }
 
   function touchStreamingAssistant(requestId: string): void {
@@ -745,6 +811,63 @@ export function useDesktopChatAdapter({
     return undefined;
   }
 
+  async function maybeApplyWorkspaceCheckpointCommand(
+    command: ReturnType<typeof parseChatCommand>,
+    selectedWorkspacePath?: string,
+  ): Promise<string | undefined> {
+    if (!command || (command.name !== "checkpoint" && command.name !== "rollback")) return undefined;
+    if (!selectedWorkspacePath) {
+      return "Workspace checkpoint command skipped because no workspace is selected.";
+    }
+
+    if (command.name === "checkpoint") {
+      try {
+        const label = command.args.replace(/^create\s+/i, "").trim() || "Slash command checkpoint";
+        const checkpoint = await desktopApi.createWorkspaceCheckpoint({
+          workspacePath: selectedWorkspacePath,
+          label,
+        });
+        return formatCheckpointCreateResult(checkpoint);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Workspace checkpoint creation failed.";
+        return `Workspace checkpoint creation failed: ${message}`;
+      }
+    }
+
+    const rollback = parseRollbackCommandArgs(command.args);
+    try {
+      const checkpoints = await desktopApi.listWorkspaceCheckpoints(selectedWorkspacePath);
+      if (rollback.action === "list" || !rollback.selector) {
+        return formatCheckpointListForRollback(checkpoints, rollback.action === "list");
+      }
+      const checkpoint = resolveWorkspaceCheckpointSelector(rollback.selector, checkpoints);
+      if (!checkpoint) {
+        return [
+          `Rollback checkpoint not found: ${rollback.selector}.`,
+          formatCheckpointListForRollback(checkpoints),
+        ].filter(Boolean).join("\n\n");
+      }
+      const preview = await desktopApi.previewWorkspaceCheckpoint({
+        workspacePath: selectedWorkspacePath,
+        checkpointId: checkpoint.id,
+        maxFiles: 12,
+        maxCharsPerFile: 1200,
+      });
+      if (rollback.action === "preview") {
+        return formatRollbackPreviewResult(preview);
+      }
+      const restore = await desktopApi.restoreWorkspaceCheckpoint({
+        workspacePath: selectedWorkspacePath,
+        checkpointId: checkpoint.id,
+      });
+      return [formatRollbackPreviewResult(preview), formatRollbackRestoreResult(restore)]
+        .join("\n\n");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Rollback checkpoint command failed.";
+      return `Rollback checkpoint command failed: ${message}`;
+    }
+  }
+
   async function maybeCreateForkThread(
     command: ReturnType<typeof parseChatCommand>,
     selectedWorkspacePath?: string,
@@ -1059,6 +1182,98 @@ function resolveProjectMemoryEntry(
   return entries.find((entry) => entry.id === normalized);
 }
 
+function parseRollbackCommandArgs(args: string): {
+  action: "list" | "preview" | "restore";
+  selector: string;
+} {
+  const trimmed = args.trim();
+  if (/^(?:list|ls)$/i.test(trimmed)) {
+    return {
+      action: "list",
+      selector: "",
+    };
+  }
+  const match = trimmed.match(/^(preview|restore)\s+([\s\S]+)$/i);
+  if (match?.[1]) {
+    return {
+      action: match[1].toLowerCase() === "restore" ? "restore" : "preview",
+      selector: match[2]?.trim() ?? "",
+    };
+  }
+  return {
+    action: "preview",
+    selector: trimmed,
+  };
+}
+
+function resolveWorkspaceCheckpointSelector(
+  selector: string,
+  checkpoints: WorkspaceCheckpoint[],
+): WorkspaceCheckpoint | undefined {
+  const normalized = selector.trim().toLowerCase();
+  if (!normalized) return undefined;
+  if (normalized === "latest") return checkpoints[0];
+  return checkpoints.find((checkpoint) =>
+    checkpoint.id.toLowerCase() === normalized ||
+    checkpoint.id.toLowerCase().startsWith(normalized) ||
+    checkpoint.label.trim().toLowerCase() === normalized,
+  );
+}
+
+function formatCheckpointCreateResult(checkpoint: WorkspaceCheckpoint): string {
+  return [
+    `Checkpoint created from slash command: ${checkpoint.label}.`,
+    `Checkpoint id: ${checkpoint.id}.`,
+    `Stored files: ${checkpoint.storedFileCount}/${checkpoint.changedFileCount}.`,
+    checkpoint.skippedFileCount ? `Skipped files: ${checkpoint.skippedFileCount}.` : "",
+    "Restore remains Approval Center gated; use `/rollback preview latest` or `/rollback restore latest` after visible review.",
+  ].filter(Boolean).join("\n");
+}
+
+function formatCheckpointListForRollback(checkpoints: WorkspaceCheckpoint[], explicitList = false): string {
+  if (!checkpoints.length) {
+    return "No rollback checkpoints exist for this workspace. Run `/checkpoint <label>` before risky edits.";
+  }
+  const lines = checkpoints.slice(0, 6).map((checkpoint, index) =>
+    `${index + 1}. ${checkpoint.id} - ${checkpoint.label} (${checkpoint.storedFileCount}/${checkpoint.changedFileCount} stored)`,
+  );
+  return [
+    explicitList ? "Rollback checkpoints listed from slash command (most recent first)." : "",
+    "Rollback checkpoint selector required. Use `/rollback preview <id|label|latest>` or `/rollback restore <id|label|latest>`.",
+    ...lines,
+  ].filter(Boolean).join("\n");
+}
+
+function formatRollbackPreviewResult(preview: WorkspaceCheckpointPreviewResult): string {
+  const entries = preview.entries.slice(0, 6).map((entry, index) =>
+    `${index + 1}. ${entry.relativePath}: ${entry.change} (${entry.message})`,
+  );
+  return [
+    `Rollback preview prepared for checkpoint ${preview.checkpointId} (${preview.label}).`,
+    preview.message,
+    `Changed entries: ${preview.changedEntryCount}; skipped: ${preview.skippedEntryCount}; total: ${preview.totalEntries}.`,
+    preview.truncated ? "Preview was truncated before chat display." : "",
+    ...entries,
+  ].filter(Boolean).join("\n");
+}
+
+function formatRollbackRestoreResult(result: WorkspaceCheckpointRestoreResult): string {
+  if (result.approvalQueued) {
+    return [
+      `Checkpoint restore is waiting in Approval Center: ${result.approvalId}.`,
+      result.message,
+      "No workspace files are restored until the approval item is accepted.",
+    ].join("\n");
+  }
+  if (result.restored) {
+    return [
+      result.message,
+      `Restored files: ${result.restoredFileCount}; removed files: ${result.removedFileCount}; skipped files: ${result.skippedFileCount}.`,
+    ].join("\n");
+  }
+  return result.message;
+}
+
 function formatCommitApprovalResult(result: DesktopApprovalProposalResult): string {
   if (result.blocked || !result.allowed) {
     return `Commit approval blocked: ${result.reason}`;
@@ -1328,6 +1543,98 @@ function countUnstagedFiles(
   return changedFiles.filter((item) => !staged.has(item.path.replace(/\\/g, "/"))).length;
 }
 
+function maybeApplyCompactCommand(
+  command: ReturnType<typeof parseChatCommand>,
+  currentMessages: UiMessage[],
+): string | undefined {
+  if (!command || command.name !== "compact") return undefined;
+  return buildLocalCompactSummary(currentMessages, command.args);
+}
+
+function buildLocalCompactSummary(messages: UiMessage[], compactIntent: string): string {
+  const visibleMessages = messages
+    .filter((message) => message.id !== "welcome" && !message.error)
+    .map((message) => ({
+      role: message.role,
+      text: sanitizeCompactText(getVisibleChatText(message.content || "")),
+    }))
+    .filter((message) => message.text.length > 0);
+
+  const focus = sanitizeCompactText(compactIntent.trim()) || "current thread";
+  if (!visibleMessages.length) {
+    return [
+      "Local context compaction prepared from visible chat only.",
+      `Focus: ${focus}`,
+      "No prior visible messages were available to summarize.",
+      "Verification: no gateway, model provider, external connector, filesystem mutation, or network call was performed.",
+    ].join("\n");
+  }
+
+  const recentMessages = visibleMessages.slice(-LOCAL_COMPACT_MAX_MESSAGES);
+  const recentLines = recentMessages.map((message) =>
+    `- ${message.role}: ${clampCompactText(message.text, LOCAL_COMPACT_MAX_MESSAGE_CHARS)}`,
+  );
+  const reusableItems = collectCompactReusableItems(visibleMessages);
+  const userCount = visibleMessages.filter((message) => message.role === "user").length;
+  const assistantCount = visibleMessages.filter((message) => message.role === "assistant").length;
+
+  return [
+    "Local context compaction prepared from visible chat only.",
+    `Messages summarized: ${visibleMessages.length} visible (${recentMessages.length} most recent shown); user: ${userCount}; assistant: ${assistantCount}.`,
+    `Focus: ${focus}`,
+    "Recent context:",
+    ...recentLines,
+    "Reusable decisions / follow-ups:",
+    ...(reusableItems.length ? reusableItems.map((item) => `- ${item}`) : ["- No explicit decision or follow-up cue found in visible chat."]),
+    "Verification: no gateway, model provider, external connector, filesystem mutation, or network call was performed.",
+  ].join("\n");
+}
+
+function collectCompactReusableItems(
+  messages: Array<{ role: ChatMessage["role"]; text: string }>,
+): string[] {
+  const items: string[] = [];
+  const seen = new Set<string>();
+  for (const message of messages) {
+    for (const sentence of splitCompactSentences(message.text)) {
+      if (!/\b(?:decid(?:e|ed|ing)|choose|chosen|approved|blocked|todo|follow[- ]?up|next|risk|assumption|verify|test)\b/i.test(sentence)) {
+        continue;
+      }
+      const item = clampCompactText(`${message.role}: ${sentence}`, LOCAL_COMPACT_MAX_ITEM_CHARS);
+      const key = item.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      items.push(item);
+      if (items.length >= LOCAL_COMPACT_MAX_REUSABLE_ITEMS) return items;
+    }
+  }
+  return items;
+}
+
+function splitCompactSentences(text: string): string[] {
+  return text
+    .split(/(?:\r?\n|(?<=[.!?])\s+)/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+function sanitizeCompactText(text: string): string {
+  return text
+    .replace(/\s+/g, " ")
+    .replace(/([?&](?:token|key|secret|password|code)=)[^&\s]+/gi, "$1[redacted]")
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, "Bearer [redacted]")
+    .replace(
+      /\b(password|passwd|pwd|token|api[_-]?key|secret|authorization)(\s*[:=]\s*)(["']?)[^\s,;]+/gi,
+      (_match, label: string, separator: string, quote: string) => `${label}${separator}${quote}[redacted]`,
+    )
+    .trim();
+}
+
+function clampCompactText(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+}
+
 function buildRequestMessages(
   messages: ChatMessage[],
   workspaceInstructions: WorkspaceInstructionSummary[] | undefined,
@@ -1399,7 +1706,38 @@ function appendAssistantChunk(
   const index = findAssistantIndex(next, assistantId);
   if (index === -1) return next;
   next[index] = { ...next[index], content: `${next[index].content}${content}` };
+  next[index].parts = upsertMessagePart(next[index].parts, {
+    id: `${next[index].id}:text`,
+    type: "text",
+    text: next[index].content,
+    format: "markdown",
+    status: next[index].streaming ? "running" : "completed",
+  });
   next[index].lastEventAt = Date.now();
+  return next;
+}
+
+function appendAssistantReasoning(
+  messages: UiMessage[],
+  assistantId: string | undefined,
+  content: string,
+): UiMessage[] {
+  if (!content) return messages;
+  const next = [...messages];
+  const index = findAssistantIndex(next, assistantId);
+  if (index === -1) return next;
+  next[index] = {
+    ...next[index],
+    reasoningContent: `${next[index].reasoningContent ?? ""}${content}`,
+    lastEventAt: Date.now(),
+  };
+  next[index].parts = upsertMessagePart(next[index].parts, {
+    id: `${next[index].id}:reasoning`,
+    type: "reasoning",
+    text: next[index].reasoningContent ?? "",
+    visibility: "raw",
+    status: next[index].streaming ? "running" : "completed",
+  });
   return next;
 }
 
@@ -1411,12 +1749,25 @@ function appendAssistantToolTimeline(
   const next = [...messages];
   const index = findAssistantIndex(next, assistantId);
   if (index === -1) return next;
+  const boundedEvent = event.content && event.content.length > 80_000
+    ? { ...event, content: `${event.content.slice(0, 80_000)}\n\n[output truncated in chat]` }
+    : event;
   const previous = next[index].toolTimeline ?? [];
+  const existingIndex = previous.findIndex((item) => item.id === boundedEvent.id);
+  const timeline = existingIndex === -1
+    ? [...previous, boundedEvent]
+    : previous.map((item, itemIndex) => itemIndex === existingIndex ? { ...item, ...boundedEvent } : item);
   next[index] = {
     ...next[index],
-    toolTimeline: [...previous, event].slice(-20),
+    toolTimeline: timeline.slice(-20),
     lastEventAt: Date.now(),
   };
+  next[index].parts = upsertMessagePart(next[index].parts, {
+    id: `${next[index].id}:tool:${boundedEvent.id}`,
+    type: "tool",
+    event: boundedEvent,
+    status: boundedEvent.status === "failed" ? "error" : boundedEvent.status === "completed" ? "completed" : "running",
+  });
   return next;
 }
 
@@ -1438,8 +1789,30 @@ function appendAssistantStatus(
     ...next[index],
     statusContent: developerMode ? `${previousStatus}${prefix}${status}` : status,
   };
+  next[index].parts = upsertMessagePart(next[index].parts, {
+    id: `${next[index].id}:status`,
+    type: "status",
+    text: next[index].statusContent ?? status,
+    status: "running",
+  });
   next[index].lastEventAt = Date.now();
   return next;
+}
+
+function upsertMessagePart(parts: ChatMessagePart[] | undefined, part: ChatMessagePart): ChatMessagePart[] {
+  const current = parts ?? [];
+  const index = current.findIndex((item) => item.id === part.id);
+  return index === -1
+    ? [...current, part]
+    : current.map((item, itemIndex) => itemIndex === index ? part : item);
+}
+
+function completeMessageParts(parts: ChatMessagePart[] | undefined): ChatMessagePart[] | undefined {
+  return parts?.map((part) =>
+    part.status === "running" || part.status === "pending"
+      ? { ...part, status: "completed" }
+      : part,
+  );
 }
 
 function formatAssistantStatus(content: string, developerMode: boolean, language: "en" | "zh"): string {
@@ -1447,6 +1820,9 @@ function formatAssistantStatus(content: string, developerMode: boolean, language
   if (!raw || developerMode) return raw;
 
   const title = raw.match(/\*\*([^*]+)\*\*/)?.[1]?.trim() || "LLM Retry";
+  if (/model reasoning|reasoning|thinking/i.test(title)) {
+    return raw;
+  }
   if (/LLM Retry/i.test(title) || /retry|重试/i.test(raw)) {
     const attempt =
       raw.match(/(?:正在重试|retrying)\s*\((\d+\s*\/\s*\d+)\)/i)?.[1]?.replace(/\s+/g, "") ||
@@ -1465,6 +1841,30 @@ function formatAssistantError(error: string, developerMode: boolean, language: "
   const raw = error.trim();
   if (!raw || developerMode) return raw;
 
+  if (/HepAI session expired|token_expired|session expired/i.test(raw)) {
+    return language === "zh" ? "HepAI 登录已过期，请重新登录。" : "Your HepAI session expired. Sign in again.";
+  }
+  if (/invalid_token|authentication context is not valid/i.test(raw)) {
+    return language === "zh" ? "HepAI 登录凭据无效，请退出后重新登录。" : "Your HepAI credentials are invalid. Sign out and sign in again.";
+  }
+  if (/subject_mismatch/i.test(raw)) {
+    return language === "zh" ? "HepAI 登录身份不一致，请退出后重新登录。" : "Your HepAI identity does not match this session. Sign out and sign in again.";
+  }
+  if (/unsupported_issuer|invalid_model_base_url/i.test(raw)) {
+    return language === "zh" ? "当前 HepAI 登录环境尚未配置对应的模型服务。" : "No model service is configured for this HepAI environment.";
+  }
+  if (/account cannot use this model|model_forbidden/i.test(raw)) {
+    return language === "zh" ? "当前账号没有使用该模型的权限。" : "Your account cannot use this model.";
+  }
+  if (/quota or concurrency limit|quota_exceeded|rate limit/i.test(raw)) {
+    return language === "zh" ? "模型额度或并发上限已达到，请稍后重试。" : "The model quota or concurrency limit was reached.";
+  }
+  if (/selected model is unavailable|model_not_found/i.test(raw)) {
+    return language === "zh" ? "所选模型当前不可用，请更换模型。" : "The selected model is unavailable. Choose another model.";
+  }
+  if (/model service is temporarily unavailable|upstream_unavailable/i.test(raw)) {
+    return language === "zh" ? "模型服务暂时不可用，请稍后重试。" : "The model service is temporarily unavailable.";
+  }
   if (/No candidate worker|candidate worker/i.test(raw)) {
     return language === "zh"
       ? "模型服务当前不可用：没有找到可用的模型 worker。请稍后重试或切换模型。"

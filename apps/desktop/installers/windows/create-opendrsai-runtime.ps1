@@ -21,6 +21,69 @@ function Copy-DirectoryContents([string]$Source, [string]$Destination) {
     Copy-Item -Path (Join-Path $Source "*") -Destination $Destination -Recurse -Force
 }
 
+function Remove-PythonCaches([string]$Root) {
+    Get-ChildItem -LiteralPath $Root -Recurse -Directory -Filter "__pycache__" -Force -ErrorAction SilentlyContinue |
+        Sort-Object { $_.FullName.Length } -Descending |
+        Remove-Item -Recurse -Force
+    Get-ChildItem -LiteralPath $Root -Recurse -File -Force -ErrorAction SilentlyContinue |
+        Where-Object { $_.Extension -in @(".pyc", ".pyo") } |
+        Remove-Item -Force
+}
+
+function Remove-NodePtyBuildSources([string]$AppRoot) {
+    $nodePty = Join-Path $AppRoot "resources\app.asar.unpacked\node_modules\node-pty"
+    if (-not (Test-Path -LiteralPath $nodePty)) { return }
+    foreach ($name in @("build", "deps", "node-addon-api", "scripts", "src")) {
+        $candidate = Join-Path $nodePty $name
+        if (Test-Path -LiteralPath $candidate) {
+            Remove-Item -LiteralPath $candidate -Recurse -Force
+        }
+    }
+}
+
+function Add-PortablePythonBase([string]$SourceAgent, [string]$TargetAgent) {
+    $sourceVenv = Join-Path $SourceAgent "venv"
+    $targetVenv = Join-Path $TargetAgent "venv"
+    $configPath = Join-Path $sourceVenv "pyvenv.cfg"
+    $homeLine = Get-Content -LiteralPath $configPath | Where-Object { $_ -match '^home\s*=' } | Select-Object -First 1
+    if (-not $homeLine) { throw "pyvenv.cfg does not declare a Python home: $configPath" }
+    $pythonHome = ($homeLine -split '=', 2)[1].Trim()
+    if (-not (Test-Path (Join-Path $pythonHome "python.exe"))) {
+        throw "Python base runtime was not found: $pythonHome"
+    }
+
+    foreach ($directory in @("DLLs", "libs", "tcl")) {
+        $source = Join-Path $pythonHome $directory
+        if (Test-Path $source) { Copy-DirectoryContents $source (Join-Path $targetVenv $directory) }
+    }
+    $sourceLib = Join-Path $pythonHome "Lib"
+    Get-ChildItem -LiteralPath $sourceLib -Force |
+        Where-Object { $_.Name -ne "site-packages" } |
+        ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $targetVenv "Lib") -Recurse -Force }
+    foreach ($pattern in @("python*.exe", "python*.dll", "vcruntime*.dll", "LICENSE.txt")) {
+        Get-ChildItem -LiteralPath $pythonHome -Filter $pattern -File -ErrorAction SilentlyContinue |
+            Copy-Item -Destination $targetVenv -Force
+    }
+}
+
+function Materialize-EditablePythonPackages([string]$AgentRoot) {
+    $sitePackages = Join-Path $AgentRoot "venv\Lib\site-packages"
+    Get-ChildItem -LiteralPath $sitePackages -Filter "*.pth" -File -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            $pth = $_
+            $materialized = $false
+            foreach ($line in Get-Content -LiteralPath $pth.FullName) {
+                $source = $line.Trim()
+                if (-not $source -or $source.StartsWith("#") -or $source.StartsWith("import ")) { continue }
+                if ([IO.Path]::IsPathRooted($source) -and (Test-Path -LiteralPath $source)) {
+                    Copy-DirectoryContents $source $sitePackages
+                    $materialized = $true
+                }
+            }
+            if ($materialized) { Remove-Item -LiteralPath $pth.FullName -Force }
+        }
+}
+
 $windowsAppDir = Resolve-FullPath (Join-Path $PSScriptRoot "..\..\windows")
 if (-not $Version) {
     $Version = (Get-Content (Join-Path $windowsAppDir "package.json") -Raw | ConvertFrom-Json).version
@@ -67,7 +130,11 @@ Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $workRoot
 New-Item -ItemType Directory -Force -Path $payloadRoot | Out-Null
 
 Copy-DirectoryContents $desktopAppDir (Join-Path $payloadRoot "app")
+Remove-NodePtyBuildSources (Join-Path $payloadRoot "app")
 Copy-DirectoryContents $drsaiAgentDir (Join-Path $payloadRoot "drsai-agent")
+Materialize-EditablePythonPackages (Join-Path $payloadRoot "drsai-agent")
+Remove-PythonCaches (Join-Path $payloadRoot "drsai-agent")
+Add-PortablePythonBase $drsaiAgentDir (Join-Path $payloadRoot "drsai-agent")
 
 $homeDefaultsTarget = Join-Path $payloadRoot "drsai-home"
 New-Item -ItemType Directory -Force -Path $homeDefaultsTarget | Out-Null

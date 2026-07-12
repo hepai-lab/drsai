@@ -21,7 +21,8 @@ export type RightTab =
   | "files"
   | "templates"
   | "browser"
-  | "terminal";
+  | "terminal"
+  | "debug";
 export type AppLanguage = "en" | "zh";
 
 export const MENU_LABELS: Record<AppLanguage, Record<NavId, string>> = {
@@ -101,6 +102,7 @@ const navDefinitions: Array<{
     items: [
       { id: MENU_IDS.library, enabled: false },
       { id: MENU_IDS.approvalCenter, enabled: true },
+      { id: MENU_IDS.usageAnalytics, enabled: true },
       { id: MENU_IDS.channels, enabled: true },
       { id: MENU_IDS.logs, enabled: false },
     ],
@@ -130,6 +132,7 @@ export function getNavItems(language: AppLanguage): NavItem[] {
 
 const rightTabLabels: Record<AppLanguage, Record<RightTab, string>> = {
   zh: {
+    debug: "调试",
     files: "文件",
     templates: "模板",
     browser: "浏览器",
@@ -140,6 +143,7 @@ const rightTabLabels: Record<AppLanguage, Record<RightTab, string>> = {
     templates: "Templates",
     browser: "Browser",
     terminal: "Terminal",
+    debug: "Debug",
   },
 };
 
@@ -147,7 +151,7 @@ export function getRightTabs(
   language: AppLanguage,
 ): Array<{ id: RightTab; label: string }> {
   return (
-    ["files", "terminal"] as RightTab[]
+    ["files", "browser", "terminal", "debug"] as RightTab[]
   ).map((id) => ({
     id,
     label: rightTabLabels[language][id],

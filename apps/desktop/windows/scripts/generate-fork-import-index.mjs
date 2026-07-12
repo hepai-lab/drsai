@@ -382,7 +382,49 @@ function getTypeScriptScriptKind(importerRepoPath) {
   return ts.ScriptKind.TS;
 }
 
-function collectCompilerDiagnosticHints(content, importerRepoPath) {
+function collectTypeScriptSemanticDiagnosticMap() {
+  const diagnosticsByModule = new Map();
+  for (const configName of ["tsconfig.node.json", "tsconfig.web.json"]) {
+    const configPath = join(root, configName);
+    if (!existsSync(configPath)) continue;
+    const configFile = ts.readConfigFile(configPath, ts.sys.readFile);
+    if (configFile.error) continue;
+    const parsed = ts.parseJsonConfigFileContent(configFile.config, ts.sys, root);
+    const program = ts.createProgram({
+      rootNames: parsed.fileNames,
+      options: {
+        ...parsed.options,
+        noEmit: true,
+      },
+    });
+    for (const sourceFile of program.getSourceFiles()) {
+      if (sourceFile.isDeclarationFile) continue;
+      const repoPath = toRepoPath(sourceFile.fileName);
+      if (!/\.(ts|tsx|js|jsx|mjs|cjs)$/i.test(repoPath)) continue;
+      const moduleKey = getModuleKey(repoPath);
+      if (!moduleKey) continue;
+      const semanticDiagnostics = program.getSemanticDiagnostics(sourceFile).slice(0, 4).map((diagnostic) => {
+        const start = typeof diagnostic.start === "number" ? diagnostic.start : 0;
+        const position = sourceFile.getLineAndCharacterOfPosition(start);
+        return {
+          code: diagnostic.code,
+          line: position.line + 1,
+          message: ts.flattenDiagnosticMessageText(diagnostic.messageText, " "),
+        };
+      });
+      if (!diagnosticsByModule.has(moduleKey)) diagnosticsByModule.set(moduleKey, []);
+      const existing = diagnosticsByModule.get(moduleKey);
+      for (const diagnostic of semanticDiagnostics) {
+        const key = `${diagnostic.code}\0${diagnostic.line}\0${diagnostic.message}`;
+        if (existing.some((item) => `${item.code}\0${item.line}\0${item.message}` === key)) continue;
+        existing.push(diagnostic);
+      }
+    }
+  }
+  return diagnosticsByModule;
+}
+
+function collectCompilerDiagnosticHints(content, importerRepoPath, semanticDiagnosticsByModule) {
   if (!/\.(ts|tsx|js|jsx|mjs|cjs)$/i.test(importerRepoPath)) return null;
   const scriptKind = getTypeScriptScriptKind(importerRepoPath);
   const sourceFile = ts.createSourceFile(importerRepoPath, content, ts.ScriptTarget.Latest, true, scriptKind);
@@ -400,6 +442,7 @@ function collectCompilerDiagnosticHints(content, importerRepoPath) {
     path: importerRepoPath,
     scriptKind: ts.ScriptKind[scriptKind],
     syntaxDiagnostics,
+    semanticDiagnostics: (semanticDiagnosticsByModule.get(getModuleKey(importerRepoPath)) ?? []).slice(0, 4),
     commands: commandsForImporter(importerRepoPath),
   };
 }
@@ -484,6 +527,7 @@ function commandsForImporter(importerPath) {
 const index = new Map();
 const astExportIndex = [];
 const compilerDiagnosticIndex = [];
+const semanticDiagnosticsByModule = collectTypeScriptSemanticDiagnosticMap();
 
 for (const file of collectSourceFiles()) {
   const importerPath = toRepoPath(file);
@@ -498,7 +542,7 @@ for (const file of collectSourceFiles()) {
       commands: commandsForImporter(importerPath),
     });
   }
-  const compilerDiagnostics = collectCompilerDiagnosticHints(content, importerPath);
+  const compilerDiagnostics = collectCompilerDiagnosticHints(content, importerPath, semanticDiagnosticsByModule);
   if (compilerDiagnostics?.module) {
     compilerDiagnosticIndex.push(compilerDiagnostics);
   }
@@ -563,6 +607,7 @@ export interface ForkConflictGeneratedCompilerDiagnosticEntry {
   readonly path: string;
   readonly scriptKind: string;
   readonly syntaxDiagnostics: readonly ForkConflictGeneratedCompilerDiagnostic[];
+  readonly semanticDiagnostics: readonly ForkConflictGeneratedCompilerDiagnostic[];
   readonly commands: readonly string[];
 }
 

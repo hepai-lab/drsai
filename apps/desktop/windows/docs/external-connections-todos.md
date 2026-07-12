@@ -1,30 +1,100 @@
 # Windows App External Connections TODOs
 
-未来希望把 OpenDrSai Windows App 连接到更多外部能力。这里的“连接”
-不是简单打开网页，而是把外部系统变成 Agent 可读取、可操作、可审计的
-上下文环境或工具。
+These items track external systems that should become readable, operable, and
+auditable context/tool surfaces for the Windows app. Status uses the smart chat
+bar checklist convention: `[x]` complete and verified, `[~]` partial with known
+gaps, `[ ]` not implemented.
 
 ## TODOs
 
-- [ ] GitHub 连接：GitHub 是代码仓库、Issue、Pull Request、Actions/CI
-  和 Release 的协作平台。接入后，OpenDrSai 可以读取仓库状态、总结 PR
-  和 Issue、检查 CI 失败原因、辅助生成分支/提交/PR、跟踪 review comment，
-  并把代码变更过程记录回当前任务。
-- [ ] Chrome 连接：Chrome 是用户常用浏览器，也可以通过调试协议或自动化
-  引擎暴露页面上下文。接入后，OpenDrSai 可以读取当前网页、抓取 DOM/文本/
-  截图、辅助网页测试、执行受控点击和输入、复用浏览器登录态，并让 Agent
-  在用户授权下完成多步骤网页任务。
-- [ ] LaTeX 连接：LaTeX 是论文、报告、公式和排版密集文档的写作与编译
-  系统。接入后，OpenDrSai 可以创建和修改 `.tex` 项目、管理参考文献
-  `.bib`、编译 PDF、定位编译错误、检查公式/引用/章节结构，并辅助科研
-  写作、模板适配和版本对比。
-- [ ] 统一连接模型：为 GitHub、Chrome、LaTeX 等能力定义一致的权限、
-  凭据管理、上下文快照、操作日志和用户确认流程，避免工具各自实现一套
-  不兼容的安全边界。
+- [~] Mobile: local readiness is visible in Channels through
+  `listExternalConnectionReadiness()`, and the existing `mobile-chat` adapter
+  supports reviewed `.drsai/mobile-context.json` phone-originated message
+  handoff plus approval-aware outbound drafts. Remaining gaps: live mobile
+  device pairing, push notification routing, remote mobile send/read receipt
+  reconciliation, and mobile-side task state sync.
 
-## Notes
+- [~] GitHub: local readiness is visible in Channels through
+  `listExternalConnectionReadiness()`, and the existing `github-connector`
+  supports local Git remote scope plus reviewed `.drsai/github-context.json`
+  issue/PR snapshot import. Remaining gaps: live GitHub OAuth/API sync, Actions
+  log download, PR/comment mutation, and provider-backed review workflows.
 
-- GitHub 连接偏向代码协作和工程流程自动化。
-- Chrome 连接偏向网页上下文、浏览器自动化和可视化验证。
-- LaTeX 连接偏向科研写作、公式排版、PDF 编译和文献管理。
-- 所有连接都应先定义只读上下文能力，再逐步开放需要用户确认的写入或操作能力。
+- [~] Chrome: local readiness is visible in Channels and ties together browser
+  task approvals plus reviewed HAR, NetLog, trace, bookmark, cookie, and URL
+  shortcut imports. Remaining gaps: live Chrome profile connection, signed-in
+  session reuse, interactive DOM/screenshot capture, and controlled browser
+  automation beyond approval-gated tasks.
+
+- [~] Slack: local readiness is visible in Channels through
+  `listExternalConnectionReadiness()`, and the existing `slack-chat` adapter
+  supports reviewed `.drsai/slack-context.json` message snapshot import plus
+  approval-gated reply drafts. Remaining gaps: live Slack OAuth/session sync,
+  channel history and thread readback, remote send/update/delete mutation, and
+  delivery-status reconciliation.
+
+- [~] Docs: local readiness is visible in Channels through
+  `listExternalConnectionReadiness()`, and the existing `docs-connector`
+  supports reviewed `.drsai/docs-context.json` document snapshot import plus
+  approval-gated edit drafts. Remaining gaps: live Docs provider authorization,
+  document comment/edit sync, remote file permissions, version history, and
+  mutation rollback.
+
+- [~] Calendar: local readiness is visible in Channels through
+  `listExternalConnectionReadiness()`, and the existing `calendar-connector`
+  supports reviewed `.drsai/calendar-context.json` / `.drsai/calendar-context.ics`
+  agenda snapshot import, reviewed selected calendar CSV agenda previews, plus
+  scheduled follow-up task context. Remaining gaps: live Calendar OAuth/API
+  sync, attendee/free-busy readback, remote event create/update/delete mutation,
+  and calendar-specific conflict handling.
+
+- [~] LaTeX: local readiness is visible in Channels and uses `file-input`
+  previews for `.tex`, `.bib`, `.bibtex`, and `latexmkrc` snapshots without
+  running TeX tools. Remaining gaps: TeX/BibTeX execution, PDF compilation,
+  SyncTeX/source mapping, bibliography resolution, and template workflow
+  management.
+
+- [~] Database: local readiness is visible in Channels through
+  `listExternalConnectionReadiness()`, and the existing `database-connector`
+  supports reviewed `.drsai/database-context.json` table/query snapshots plus
+  schema-context handoff. Remaining gaps: live database connection management,
+  credential validation, query execution, schema introspection, and rollback for
+  approved mutations.
+
+- [~] Log monitor: local readiness is visible in Channels through
+  `listExternalConnectionReadiness()`, and the existing `logs-monitor` adapter
+  supports reviewed `.drsai/log-monitor.json` incremental log deltas with local
+  cursor metadata plus reviewed retention policy hints that are surfaced without
+  deleting, rotating, truncating, or enforcing retention. Remaining gaps: live
+  log streaming, watcher lifecycle, retention enforcement, provider-backed alert
+  correlation, and remote incident sync.
+
+- [~] Unified connection model: local readiness is visible in Channels and
+  consolidates channel adapters, Approval Center, MCP live bridge audit, workflow
+  `external_runtime` resume semantics, and Docs/Calendar snapshot contracts.
+  Each connection now exposes local reconnect policy review metadata in Channels:
+  startup/refresh/snapshot-sync triggers, manual-review safeguards, and
+  verification that no autonomous reconnect or provider runtime was started.
+  Each connection also exposes reconnect readiness checks before that policy:
+  configured/setup state, local adapter catalog evidence, visible live-runtime
+  gaps, approval-boundary readiness, no credential/network/runtime verification,
+  and the next live gap.
+  Remaining gaps: provider-owned process supervision, cross-provider credential
+  vault integration, remote connector marketplace sync, approval-gated live
+  reconnect execution, autonomous safe reconnect, and remote mutation rollback.
+
+## Verification
+
+- `npm run verify:external-connections` checks the readiness API contract, IPC
+  handler, preload bridge, mock fixture, Channels UI, visible gap and
+  verification details, reconnect readiness checks, local reconnect policy review, styles,
+  checklist/roadmap evidence, and this TODO status.
+- `npm run verify:channel-adapters`, `npm run verify:approval-center`,
+  `npm run verify:workflow-marketplace`, and `npm run verify:mcp-live-bridge`
+  cover the underlying local channel, approval, workflow, and MCP boundaries.
+
+## Safety Boundary
+
+The readiness matrix is intentionally local and read-only. It does not start
+OAuth, open browser processes, execute LaTeX, call provider APIs, make network
+requests, or mutate workspace files.

@@ -301,6 +301,7 @@ export interface ChatAttachment {
   screenshotDataUrl?: string;
   note?: string;
   fileHash?: string;
+  blockedReason?: string;
 }
 
 export interface ChatRequest {
@@ -327,15 +328,63 @@ export interface ChatToolTimelineEvent {
   level?: "INFO" | "WARNING" | "ERROR" | "DEBUG" | "TRACE" | "FATAL" | string;
 }
 
+export type ChatPartStatus = "pending" | "running" | "completed" | "error" | "cancelled";
+
+export type ChatMessagePart =
+  | { id: string; type: "text"; text: string; format: "markdown" | "plain"; status: ChatPartStatus }
+  | { id: string; type: "reasoning"; text: string; visibility: "summary" | "raw"; status: ChatPartStatus }
+  | { id: string; type: "tool"; event: ChatToolTimelineEvent; status: ChatPartStatus }
+  | { id: string; type: "status"; text: string; level?: string; status: ChatPartStatus }
+  | { id: string; type: "error"; message: string; code?: string; retryable: boolean; status: "error" }
+  | { id: string; type: "file"; name: string; path: string; mime?: string; status: ChatPartStatus }
+  | { id: string; type: "patch"; path?: string; diff: string; status: ChatPartStatus }
+  | { id: string; type: "approval"; requestId: string; prompt: string; status: ChatPartStatus };
+
 export interface ChatEvent {
   requestId: string;
-  type: "start" | "chunk" | "status" | "tool_timeline" | "done" | "error" | "aborted";
+  /** Monotonic per-request sequence assigned by the main process. */
+  seq?: number;
+  type: "start" | "chunk" | "reasoning" | "status" | "tool_timeline" | "done" | "error" | "aborted";
   content?: string;
   error?: string;
   level?: "INFO" | "WARNING" | "ERROR" | "DEBUG" | "TRACE" | "FATAL" | string;
   toolTimeline?: ChatToolTimelineEvent;
   sessionId?: string;
   runId?: string;
+}
+
+export type DesktopProviderAnalyticsProvider = "openai_responses" | "anthropic";
+
+export interface DesktopProviderUsageAnalyticsRecord {
+  id: string;
+  recordedAt: string;
+  requestId: string;
+  sessionId: string;
+  runId: string;
+  provider: DesktopProviderAnalyticsProvider;
+  eventName: string;
+  status?: string;
+  stopReason?: string;
+  summary: string;
+  usage: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+  };
+}
+
+export interface DesktopProviderErrorAnalyticsRecord {
+  id: string;
+  recordedAt: string;
+  requestId: string;
+  sessionId: string;
+  runId: string;
+  provider: DesktopProviderAnalyticsProvider;
+  eventName: string;
+  code?: string;
+  message: string;
+  retryable: boolean;
+  summary: string;
 }
 
 export type BrowserTaskPendingApproval = Extract<
@@ -1283,6 +1332,58 @@ export interface DesktopChannelOutboundDeliveryListRequest {
   limit?: number;
 }
 
+export type DesktopExternalConnectionId =
+  | "github"
+  | "chrome"
+  | "latex"
+  | "mobile"
+  | "slack"
+  | "docs"
+  | "calendar"
+  | "database"
+  | "log-monitor"
+  | "unified";
+
+export type DesktopExternalConnectionReadinessStatus =
+  | "available"
+  | "partial"
+  | "planned";
+
+export interface DesktopExternalReconnectPolicy {
+  mode: "manual_review";
+  automatic: boolean;
+  triggers: string[];
+  safeguards: string[];
+  nextStep: string;
+  verification: string;
+}
+
+export interface DesktopExternalConnectionReadiness {
+  id: DesktopExternalConnectionId;
+  name: string;
+  status: DesktopExternalConnectionReadinessStatus;
+  configured: boolean;
+  readOnly: boolean;
+  capabilitySources: string[];
+  evidence: string[];
+  gaps: string[];
+  reconnectReadinessChecks?: string[];
+  reconnectPolicy?: DesktopExternalReconnectPolicy;
+  approvalBoundary: string;
+  verification: string;
+}
+
+export interface DesktopExternalConnectionReadinessResult {
+  workspacePath?: string;
+  generatedAt: string;
+  readyCount: number;
+  partialCount: number;
+  plannedCount: number;
+  connections: DesktopExternalConnectionReadiness[];
+  message: string;
+  verification: string;
+}
+
 export type DesktopMcpContextKind = "resource" | "tool";
 
 export interface DesktopMcpContextRequest {
@@ -1627,6 +1728,10 @@ export interface DesktopThreadMessageSnapshot extends ChatMessage {
   streaming?: boolean;
   error?: boolean;
   statusContent?: string;
+  reasoningContent?: string;
+  toolTimeline?: ChatToolTimelineEvent[];
+  /** Canonical structured display representation; legacy fields remain during migration. */
+  parts?: ChatMessagePart[];
   startedAt?: number;
   lastEventAt?: number;
 }
@@ -1637,6 +1742,20 @@ export interface DesktopThreadSnapshot {
   messages: DesktopThreadMessageSnapshot[];
   updatedAt: number;
   messageCount: number;
+}
+
+export interface DesktopThreadContentSearchRequest {
+  query: string;
+  threadIds?: string[];
+  limit?: number;
+}
+
+export interface DesktopThreadContentSearchResult {
+  threadId: string;
+  messageId: string;
+  role: ChatMessage["role"];
+  snippet: string;
+  updatedAt: number;
 }
 
 export interface DesktopThreadForkMetadata {
@@ -2167,6 +2286,7 @@ export interface TerminalExitEvent {
 
 export interface DesktopApi {
   getAuthSession(): Promise<AuthSession>;
+  onAuthSessionInvalidated(callback: () => void): () => void;
   login(request: LoginRequest): Promise<LoginResult>;
   startOidcLogin(request?: { rememberMe?: boolean }): Promise<LoginResult>;
   cancelOidcLogin(): Promise<boolean>;
@@ -2180,6 +2300,8 @@ export interface DesktopApi {
   getHealth(): Promise<DesktopHealth>;
   getInstallStatus(): Promise<InstallStatus>;
   getGatewayStatus(): Promise<GatewayStatus>;
+  listProviderUsageAnalytics(): Promise<DesktopProviderUsageAnalyticsRecord[]>;
+  listProviderErrorAnalytics(): Promise<DesktopProviderErrorAnalyticsRecord[]>;
   checkForUpdates(): Promise<UpdateStatus>;
   startInstall(options?: StartInstallOptions): Promise<void>;
   cancelInstall(): Promise<boolean>;
@@ -2220,6 +2342,9 @@ export interface DesktopApi {
   createThread(request: CreateThreadRequest): Promise<DesktopThread>;
   updateThread(request: UpdateThreadRequest): Promise<DesktopThread>;
   getThreadSnapshot(threadId: string): Promise<DesktopThreadSnapshot | null>;
+  searchThreadMessages(
+    request: DesktopThreadContentSearchRequest,
+  ): Promise<DesktopThreadContentSearchResult[]>;
   updateThreadSnapshot(snapshot: DesktopThreadSnapshot): Promise<DesktopThreadSnapshot>;
   prepareForkWorktree(
     request: DesktopForkWorktreeRequest,
@@ -2370,6 +2495,9 @@ export interface DesktopApi {
   listChannelOutboundDeliveries(
     request?: DesktopChannelOutboundDeliveryListRequest,
   ): Promise<DesktopChannelOutboundDelivery[]>;
+  listExternalConnectionReadiness(
+    workspacePath?: string,
+  ): Promise<DesktopExternalConnectionReadinessResult>;
   importMcpContext(
     request: DesktopMcpContextRequest,
   ): Promise<DesktopMcpContextResult>;

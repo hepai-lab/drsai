@@ -34,6 +34,7 @@ export interface ForkConflictGeneratedCompilerDiagnosticEntry {
   readonly path: string;
   readonly scriptKind: string;
   readonly syntaxDiagnostics: readonly ForkConflictGeneratedCompilerDiagnostic[];
+  readonly semanticDiagnostics: readonly ForkConflictGeneratedCompilerDiagnostic[];
   readonly commands: readonly string[];
 }
 
@@ -5280,6 +5281,35 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "cores/python/packages/drsai/src/drsai/platform_auth",
+    "importers": [
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+        "specifier": "drsai/platform_auth",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/modules/components/model_client/anthropic/_anthropic_client.py",
+        "specifier": "drsai/platform_auth",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/modules/components/model_client/LLMClient.py",
+        "specifier": "drsai/platform_auth",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "cores/python/packages/drsai/src/drsai/utils",
     "importers": [
       {
@@ -5468,6 +5498,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "docs/voice/phase-b-development-plan",
+    "importers": [
+      {
+        "path": "docs/voice/voice-feature-plan.md",
+        "specifier": "./phase-b-development-plan.md",
+        "kind": "markdown-link",
+        "commands": [
+          "Preview the referencing Markdown document."
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "out/main",
     "importers": [
       {
@@ -5493,7 +5536,7 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     "importers": [
       {
         "path": "package.json",
-        "specifier": "scripts/create-backend-source-archive.ps1",
+        "specifier": "scripts/create-backend-source-archive.mjs",
         "kind": "config-reference",
         "commands": [
           "npm run verify"
@@ -5520,19 +5563,6 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "package.json",
         "specifier": "scripts/create-windows-icon.ps1",
-        "kind": "config-reference",
-        "commands": [
-          "npm run verify"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "scripts/create-windows-manifest",
-    "importers": [
-      {
-        "path": "package.json",
-        "specifier": "scripts/create-windows-manifest.mjs",
         "kind": "config-reference",
         "commands": [
           "npm run verify"
@@ -5658,6 +5688,32 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "scripts/verify-channel-adapter-route-order",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-channel-adapter-route-order.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/verify-channel-adapter-runtime-fixtures",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-channel-adapter-runtime-fixtures.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "scripts/verify-channel-adapters",
     "importers": [
       {
@@ -5684,6 +5740,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "scripts/verify-chat-output-model",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-chat-output-model.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "scripts/verify-chat-sse-parser",
     "importers": [
       {
@@ -5702,6 +5771,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "package.json",
         "specifier": "scripts/verify-chatbar-checklist.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/verify-clipboard-context",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-clipboard-context.mjs",
         "kind": "config-reference",
         "commands": [
           "npm run verify"
@@ -5801,6 +5883,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "scripts/verify-e2e-oidc-hai",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-e2e-oidc-hai.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "scripts/verify-e2e-oidc-login",
     "importers": [
       {
@@ -5832,6 +5927,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "package.json",
         "specifier": "scripts/verify-execution-policy.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/verify-external-connections",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-external-connections.mjs",
         "kind": "config-reference",
         "commands": [
           "npm run verify"
@@ -5918,11 +6026,11 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
-    "changedModule": "scripts/verify-install-source-archive",
+    "changedModule": "scripts/verify-live-platform-oidc",
     "importers": [
       {
         "path": "package.json",
-        "specifier": "scripts/verify-install-source-archive.mjs",
+        "specifier": "scripts/verify-live-platform-oidc.cjs",
         "kind": "config-reference",
         "commands": [
           "npm run verify"
@@ -5957,6 +6065,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "scripts/verify-oidc-dev-env",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-oidc-dev-env.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "scripts/verify-oidc-login",
     "importers": [
       {
@@ -5975,6 +6096,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "package.json",
         "specifier": "scripts/verify-packaged-app-smoke.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/verify-platform-auth",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-platform-auth.mjs",
         "kind": "config-reference",
         "commands": [
           "npm run verify"
@@ -6009,11 +6143,50 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
-    "changedModule": "scripts/verify-public-windows-release",
+    "changedModule": "scripts/verify-provider-analytics-api",
     "importers": [
       {
         "path": "package.json",
-        "specifier": "scripts/verify-public-windows-release.mjs",
+        "specifier": "scripts/verify-provider-analytics-api.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/verify-provider-analytics-dashboard",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-provider-analytics-dashboard.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/verify-provider-error-analytics",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-provider-error-analytics.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/verify-provider-usage-analytics",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-provider-usage-analytics.mjs",
         "kind": "config-reference",
         "commands": [
           "npm run verify"
@@ -6087,11 +6260,89 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "scripts/verify-startup-performance",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-startup-performance.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/verify-store-listing-template",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-store-listing-template.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "scripts/verify-thread-context-menu",
     "importers": [
       {
         "path": "package.json",
         "specifier": "scripts/verify-thread-context-menu.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/verify-voice-feature",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-voice-feature.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/verify-voice-ipc",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-voice-ipc.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/verify-voice-provider",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-voice-provider.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/verify-voice-unit",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-voice-unit.mjs",
         "kind": "config-reference",
         "commands": [
           "npm run verify"
@@ -6113,37 +6364,11 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
-    "changedModule": "scripts/verify-windows-app",
-    "importers": [
-      {
-        "path": "package.json",
-        "specifier": "scripts/verify-windows-app.mjs",
-        "kind": "config-reference",
-        "commands": [
-          "npm run verify"
-        ]
-      }
-    ]
-  },
-  {
     "changedModule": "scripts/verify-windows-artifacts",
     "importers": [
       {
         "path": "package.json",
         "specifier": "scripts/verify-windows-artifacts.mjs",
-        "kind": "config-reference",
-        "commands": [
-          "npm run verify"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "scripts/verify-windows-manifest",
-    "importers": [
-      {
-        "path": "package.json",
-        "specifier": "scripts/verify-windows-manifest.mjs",
         "kind": "config-reference",
         "commands": [
           "npm run verify"
@@ -6241,6 +6466,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         ]
       },
       {
+        "path": "src/main/bootstrap.ts",
+        "specifier": "./auth",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:node"
+        ]
+      },
+      {
         "path": "src/main/chat.ts",
         "specifier": "./auth",
         "kind": "import",
@@ -6264,6 +6497,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "src/main/index.ts",
         "specifier": "./backgroundTasks",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:node"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "src/main/bootstrap",
+    "importers": [
+      {
+        "path": "src/main/index.ts",
+        "specifier": "./bootstrap",
         "kind": "import",
         "commands": [
           "npm run typecheck:node"
@@ -6469,6 +6715,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     "changedModule": "src/main/channeladapters",
     "importers": [
       {
+        "path": "src/main/externalConnectionReadiness.ts",
+        "specifier": "./channelAdapters",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:node"
+        ]
+      },
+      {
         "path": "src/main/index.ts",
         "specifier": "./channelAdapters",
         "kind": "import",
@@ -6531,6 +6785,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "src/main/externalconnectionreadiness",
+    "importers": [
+      {
+        "path": "src/main/index.ts",
+        "specifier": "./externalConnectionReadiness",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:node"
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "src/main/forkworktrees",
     "importers": [
       {
@@ -6563,6 +6830,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         ]
       },
       {
+        "path": "src/main/bootstrap.ts",
+        "specifier": "./gateway",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:node"
+        ]
+      },
+      {
         "path": "src/main/chat.ts",
         "specifier": "./gateway",
         "kind": "import",
@@ -6588,6 +6863,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       },
       {
         "path": "src/main/status.ts",
+        "specifier": "./gateway",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:node"
+        ]
+      },
+      {
+        "path": "src/main/voice.ts",
         "specifier": "./gateway",
         "kind": "import",
         "commands": [
@@ -6641,6 +6924,43 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "src/main/index.ts",
         "specifier": "./mcpLiveBridge",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:node"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "src/main/modeldefaults",
+    "importers": [
+      {
+        "path": "src/main/agentRuns.ts",
+        "specifier": "./modelDefaults",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:node"
+        ]
+      },
+      {
+        "path": "src/main/auth.ts",
+        "specifier": "./modelDefaults",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:node"
+        ]
+      },
+      {
+        "path": "src/main/chat.ts",
+        "specifier": "./modelDefaults",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:node"
+        ]
+      },
+      {
+        "path": "src/main/settings.ts",
+        "specifier": "./modelDefaults",
         "kind": "import",
         "commands": [
           "npm run typecheck:node"
@@ -6750,6 +7070,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         ]
       },
       {
+        "path": "src/main/modelDefaults.ts",
+        "specifier": "./paths",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:node"
+        ]
+      },
+      {
         "path": "src/main/projectMemory.ts",
         "specifier": "./paths",
         "kind": "import",
@@ -6759,6 +7087,22 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       },
       {
         "path": "src/main/projectSkills.ts",
+        "specifier": "./paths",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:node"
+        ]
+      },
+      {
+        "path": "src/main/providerErrorAnalytics.ts",
+        "specifier": "./paths",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:node"
+        ]
+      },
+      {
+        "path": "src/main/providerUsageAnalytics.ts",
         "specifier": "./paths",
         "kind": "import",
         "commands": [
@@ -6861,6 +7205,48 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "src/main/providererroranalytics",
+    "importers": [
+      {
+        "path": "src/main/chat.ts",
+        "specifier": "./providerErrorAnalytics",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:node"
+        ]
+      },
+      {
+        "path": "src/main/index.ts",
+        "specifier": "./providerErrorAnalytics",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:node"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "src/main/providerusageanalytics",
+    "importers": [
+      {
+        "path": "src/main/chat.ts",
+        "specifier": "./providerUsageAnalytics",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:node"
+        ]
+      },
+      {
+        "path": "src/main/index.ts",
+        "specifier": "./providerUsageAnalytics",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:node"
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "src/main/scheduledtasks",
     "importers": [
       {
@@ -6907,6 +7293,22 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       },
       {
         "path": "src/main/chat.ts",
+        "specifier": "./sseParser",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:node"
+        ]
+      },
+      {
+        "path": "src/main/providerErrorAnalytics.ts",
+        "specifier": "./sseParser",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:node"
+        ]
+      },
+      {
+        "path": "src/main/providerUsageAnalytics.ts",
         "specifier": "./sseParser",
         "kind": "import",
         "commands": [
@@ -6992,6 +7394,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "src/main/voice",
+    "importers": [
+      {
+        "path": "src/main/index.ts",
+        "specifier": "./voice",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:node"
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "src/main/workflowmarketplace",
     "importers": [
       {
@@ -7020,6 +7435,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
   {
     "changedModule": "src/main/workspacecheckpoints",
     "importers": [
+      {
+        "path": "src/main/agentRuns.ts",
+        "specifier": "./workspaceCheckpoints",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:node"
+        ]
+      },
       {
         "path": "src/main/index.ts",
         "specifier": "./workspaceCheckpoints",
@@ -7199,6 +7622,37 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "src/renderer/src/chatoutputmodel",
+    "importers": [
+      {
+        "path": "src/renderer/src/adapters/useDesktopChatAdapter.ts",
+        "specifier": "../chatOutputModel",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:web",
+          "npm run verify:chat-commands"
+        ]
+      },
+      {
+        "path": "src/renderer/src/components/ChatMessageContent.tsx",
+        "specifier": "../chatOutputModel",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:web"
+        ]
+      },
+      {
+        "path": "src/renderer/src/components/ChatWorkspace.tsx",
+        "specifier": "../chatOutputModel",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:web",
+          "npm run verify:chat-commands"
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "src/renderer/src/components/agentrunworkspace",
     "importers": [
       {
@@ -7246,6 +7700,20 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         "kind": "import",
         "commands": [
           "npm run typecheck:web"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "src/renderer/src/components/chatmessagecontent",
+    "importers": [
+      {
+        "path": "src/renderer/src/components/ChatWorkspace.tsx",
+        "specifier": "./ChatMessageContent",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:web",
+          "npm run verify:chat-commands"
         ]
       }
     ]
@@ -7896,6 +8364,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "src/renderer/src/components/provideranalyticsview",
+    "importers": [
+      {
+        "path": "src/renderer/src/App.tsx",
+        "specifier": "./components/ProviderAnalyticsView",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:web"
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "src/renderer/src/components/skillsquareview",
     "importers": [
       {
@@ -8032,6 +8513,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       },
       {
         "path": "src/renderer/src/components/PreviewBrowserPanel.tsx",
+        "specifier": "../desktopApi",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:web"
+        ]
+      },
+      {
+        "path": "src/renderer/src/components/ProviderAnalyticsView.tsx",
         "specifier": "../desktopApi",
         "kind": "import",
         "commands": [
@@ -8311,6 +8800,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         ]
       },
       {
+        "path": "src/renderer/src/components/ProviderAnalyticsView.tsx",
+        "specifier": "../navigation",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:web"
+        ]
+      },
+      {
         "path": "src/renderer/src/components/SkillSquareView.tsx",
         "specifier": "../navigation",
         "kind": "import",
@@ -8536,6 +9033,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         ]
       },
       {
+        "path": "src/main/bootstrap.ts",
+        "specifier": "../shared/desktopApi",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:node"
+        ]
+      },
+      {
         "path": "src/main/channelAdapters.ts",
         "specifier": "../shared/desktopApi",
         "kind": "import",
@@ -8554,6 +9059,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       },
       {
         "path": "src/main/customCommands.ts",
+        "specifier": "../shared/desktopApi",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:node"
+        ]
+      },
+      {
+        "path": "src/main/externalConnectionReadiness.ts",
         "specifier": "../shared/desktopApi",
         "kind": "import",
         "commands": [
@@ -8685,6 +9198,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         ]
       },
       {
+        "path": "src/main/voice.ts",
+        "specifier": "../shared/desktopApi",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:node"
+        ]
+      },
+      {
         "path": "src/main/workflowMarketplace.ts",
         "specifier": "../shared/desktopApi",
         "kind": "import",
@@ -8761,6 +9282,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       },
       {
         "path": "src/renderer/src/auth/AuthProvider.tsx",
+        "specifier": "@shared/desktopApi",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:web"
+        ]
+      },
+      {
+        "path": "src/renderer/src/auth/LoginScreen.tsx",
         "specifier": "@shared/desktopApi",
         "kind": "import",
         "commands": [
@@ -8942,6 +9471,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       },
       {
         "path": "src/renderer/src/components/PreviewBrowserPanel.tsx",
+        "specifier": "@shared/desktopApi",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:web"
+        ]
+      },
+      {
+        "path": "src/renderer/src/components/ProviderAnalyticsView.tsx",
         "specifier": "@shared/desktopApi",
         "kind": "import",
         "commands": [
@@ -9154,6 +9691,10 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
         "kind": "FunctionDeclaration"
       },
       {
+        "name": "invalidateAuthSession",
+        "kind": "FunctionDeclaration"
+      },
+      {
         "name": "login",
         "kind": "FunctionDeclaration"
       },
@@ -9214,6 +9755,19 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
     "commands": [
       "npm run typecheck:node",
       "npm run verify:workflow-marketplace"
+    ]
+  },
+  {
+    "module": "src/main/bootstrap",
+    "path": "src/main/bootstrap.ts",
+    "symbols": [
+      {
+        "name": "bootstrapDesktop",
+        "kind": "FunctionDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck:node"
     ]
   },
   {
@@ -9507,6 +10061,19 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
     ]
   },
   {
+    "module": "src/main/externalconnectionreadiness",
+    "path": "src/main/externalConnectionReadiness.ts",
+    "symbols": [
+      {
+        "name": "listExternalConnectionReadiness",
+        "kind": "FunctionDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck:node"
+    ]
+  },
+  {
     "module": "src/main/forkworktrees",
     "path": "src/main/forkWorktrees.ts",
     "symbols": [
@@ -9542,6 +10109,26 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
     "symbols": [
       {
         "name": "checkGatewayReady",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "GatewayStartupMode",
+        "kind": "TypeAliasDeclaration"
+      },
+      {
+        "name": "getGatewayModels",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "getGatewayRequestHeaders",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "getGatewaySnapshot",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "getGatewayStartupMode",
         "kind": "FunctionDeclaration"
       },
       {
@@ -9680,6 +10267,27 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
     ]
   },
   {
+    "module": "src/main/modeldefaults",
+    "path": "src/main/modelDefaults.ts",
+    "symbols": [
+      {
+        "name": "getDefaultModelAlias",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "normalizeModelAlias",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "saveDefaultModelAlias",
+        "kind": "FunctionDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck:node"
+    ]
+  },
+  {
     "module": "src/main/mydrsaiconfig",
     "path": "src/main/myDrSaiConfig.ts",
     "symbols": [
@@ -9792,6 +10400,48 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
     ]
   },
   {
+    "module": "src/main/providererroranalytics",
+    "path": "src/main/providerErrorAnalytics.ts",
+    "symbols": [
+      {
+        "name": "listProviderErrorAnalytics",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "persistProviderErrorAnalytics",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "ProviderErrorAnalyticsRecord",
+        "kind": "InterfaceDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck:node"
+    ]
+  },
+  {
+    "module": "src/main/providerusageanalytics",
+    "path": "src/main/providerUsageAnalytics.ts",
+    "symbols": [
+      {
+        "name": "listProviderUsageAnalytics",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "persistProviderUsageAnalytics",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "ProviderUsageAnalyticsRecord",
+        "kind": "InterfaceDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck:node"
+    ]
+  },
+  {
     "module": "src/main/scheduledtasks",
     "path": "src/main/scheduledTasks.ts",
     "symbols": [
@@ -9832,6 +10482,10 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
       {
         "name": "saveApiKey",
         "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "saveApiKeyAndDefaultModel",
+        "kind": "FunctionDeclaration"
       }
     ],
     "commands": [
@@ -9855,8 +10509,24 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
         "kind": "InterfaceDeclaration"
       },
       {
+        "name": "ChatSseError",
+        "kind": "ClassDeclaration"
+      },
+      {
         "name": "ChatSsePayload",
         "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "ChatToolTimelineAccumulator",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "ChatToolTimelineEvent",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "createChatToolTimelineAccumulator",
+        "kind": "FunctionDeclaration"
       },
       {
         "name": "isCompletionDoneFrame",
@@ -9875,12 +10545,40 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
         "kind": "VariableDeclaration"
       },
       {
+        "name": "parseChatReasoningSseFrame",
+        "kind": "FunctionDeclaration"
+      },
+      {
         "name": "parseChatSseFrame",
         "kind": "VariableDeclaration"
       },
       {
+        "name": "parseChatToolTimelineSseFrame",
+        "kind": "FunctionDeclaration"
+      },
+      {
         "name": "parseCompletionSseFrame",
         "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "parseProviderErrorAnalyticsSseFrame",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "parseProviderStatusSseFrame",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "parseProviderUsageAnalyticsSseFrame",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "ProviderErrorAnalyticsEvent",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "ProviderUsageAnalyticsEvent",
+        "kind": "InterfaceDeclaration"
       }
     ],
     "commands": [
@@ -9893,6 +10591,10 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
     "symbols": [
       {
         "name": "fallbackUpdateStatus",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "getDeepDesktopHealth",
         "kind": "FunctionDeclaration"
       },
       {
@@ -9974,11 +10676,23 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
         "kind": "FunctionDeclaration"
       },
       {
+        "name": "getThreadSnapshot",
+        "kind": "FunctionDeclaration"
+      },
+      {
         "name": "listThreads",
         "kind": "FunctionDeclaration"
       },
       {
+        "name": "searchThreadMessages",
+        "kind": "FunctionDeclaration"
+      },
+      {
         "name": "updateThread",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "updateThreadSnapshot",
         "kind": "FunctionDeclaration"
       },
       {
@@ -10004,6 +10718,39 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
       },
       {
         "name": "subscribeUpdateStatus",
+        "kind": "FunctionDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck:node"
+    ]
+  },
+  {
+    "module": "src/main/voice",
+    "path": "src/main/voice.ts",
+    "symbols": [
+      {
+        "name": "cancelVoiceTranscription",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "cancelVoiceTranscriptionsForSender",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "cleanupExpiredVoiceTempFiles",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "getVoiceRuntimeStatus",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "startVoiceTranscription",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "writeVoiceTranscriptHandoff",
         "kind": "FunctionDeclaration"
       }
     ],
@@ -10176,7 +10923,7 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
     "symbols": [
       {
         "name": "ChatThreadSnapshot",
-        "kind": "InterfaceDeclaration"
+        "kind": "TypeAliasDeclaration"
       },
       {
         "name": "DesktopChatAdapter",
@@ -10254,6 +11001,10 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
       {
         "name": "LoginScreen",
         "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "ServiceUnavailableScreen",
+        "kind": "FunctionDeclaration"
       }
     ],
     "commands": [
@@ -10323,6 +11074,31 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
     ]
   },
   {
+    "module": "src/renderer/src/chatoutputmodel",
+    "path": "src/renderer/src/chatOutputModel.ts",
+    "symbols": [
+      {
+        "name": "acceptChatEventSequence",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "ChatOutputPart",
+        "kind": "TypeAliasDeclaration"
+      },
+      {
+        "name": "getVisibleChatText",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "parseChatOutput",
+        "kind": "FunctionDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck:web"
+    ]
+  },
+  {
     "module": "src/renderer/src/components/agentrunworkspace",
     "path": "src/renderer/src/components/AgentRunWorkspace.tsx",
     "symbols": [
@@ -10375,6 +11151,19 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
     "commands": [
       "npm run typecheck:web",
       "npm run verify:channel-adapters"
+    ]
+  },
+  {
+    "module": "src/renderer/src/components/chatmessagecontent",
+    "path": "src/renderer/src/components/ChatMessageContent.tsx",
+    "symbols": [
+      {
+        "name": "ChatMessageContent",
+        "kind": "VariableDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck:web"
     ]
   },
   {
@@ -11052,6 +11841,19 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
     ]
   },
   {
+    "module": "src/renderer/src/components/provideranalyticsview",
+    "path": "src/renderer/src/components/ProviderAnalyticsView.tsx",
+    "symbols": [
+      {
+        "name": "ProviderAnalyticsView",
+        "kind": "FunctionDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck:web"
+    ]
+  },
+  {
     "module": "src/renderer/src/components/skillsquareview",
     "path": "src/renderer/src/components/SkillSquareView.tsx",
     "symbols": [
@@ -11451,7 +12253,19 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
         "kind": "InterfaceDeclaration"
       },
       {
+        "name": "ChatMessagePart",
+        "kind": "TypeAliasDeclaration"
+      },
+      {
+        "name": "ChatPartStatus",
+        "kind": "TypeAliasDeclaration"
+      },
+      {
         "name": "ChatRequest",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "ChatToolTimelineEvent",
         "kind": "InterfaceDeclaration"
       },
       {
@@ -11520,6 +12334,10 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
       },
       {
         "name": "DesktopBackgroundTaskUpdateRequest",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "DesktopBootstrapResult",
         "kind": "InterfaceDeclaration"
       },
       {
@@ -11649,6 +12467,22 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
       {
         "name": "DesktopCustomCommandUpsertRequest",
         "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "DesktopExternalConnectionId",
+        "kind": "TypeAliasDeclaration"
+      },
+      {
+        "name": "DesktopExternalConnectionReadiness",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "DesktopExternalConnectionReadinessResult",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "DesktopExternalConnectionReadinessStatus",
+        "kind": "TypeAliasDeclaration"
       },
       {
         "name": "DesktopFileIconResult",
@@ -11903,6 +12737,18 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
         "kind": "InterfaceDeclaration"
       },
       {
+        "name": "DesktopProviderAnalyticsProvider",
+        "kind": "TypeAliasDeclaration"
+      },
+      {
+        "name": "DesktopProviderErrorAnalyticsRecord",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "DesktopProviderUsageAnalyticsRecord",
+        "kind": "InterfaceDeclaration"
+      },
+      {
         "name": "DesktopScheduledTask",
         "kind": "InterfaceDeclaration"
       },
@@ -11967,7 +12813,63 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
         "kind": "InterfaceDeclaration"
       },
       {
+        "name": "DesktopThreadContentSearchRequest",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "DesktopThreadContentSearchResult",
+        "kind": "InterfaceDeclaration"
+      },
+      {
         "name": "DesktopThreadForkMetadata",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "DesktopThreadMessageSnapshot",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "DesktopThreadSnapshot",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "DesktopVoiceError",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "DesktopVoiceErrorCode",
+        "kind": "TypeAliasDeclaration"
+      },
+      {
+        "name": "DesktopVoiceRuntimeId",
+        "kind": "TypeAliasDeclaration"
+      },
+      {
+        "name": "DesktopVoiceRuntimeStatus",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "DesktopVoiceTranscriptHandoffRequest",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "DesktopVoiceTranscriptHandoffResult",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "DesktopVoiceTranscriptionEvent",
+        "kind": "TypeAliasDeclaration"
+      },
+      {
+        "name": "DesktopVoiceTranscriptionRequest",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "DesktopVoiceTranscriptionResult",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "DesktopVoiceTranscriptionStartResult",
         "kind": "InterfaceDeclaration"
       },
       {
@@ -12125,6 +13027,14 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
       {
         "name": "MyDrSaiTokenizerCalibrationSample",
         "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "OidcLoginDebugEvent",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "OidcLoginDebugStage",
+        "kind": "TypeAliasDeclaration"
       },
       {
         "name": "PickDialogResult",
@@ -12368,6 +13278,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "electron.vite.config.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run verify"
     ]
@@ -12377,6 +13288,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/index.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node"
     ]
@@ -12386,6 +13298,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/agentRuns.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node"
     ]
@@ -12395,6 +13308,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/agents.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node"
     ]
@@ -12404,6 +13318,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/auth.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node"
     ]
@@ -12413,9 +13328,20 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/backgroundTasks.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node",
       "npm run verify:workflow-marketplace"
+    ]
+  },
+  {
+    "module": "src/main/bootstrap",
+    "path": "src/main/bootstrap.ts",
+    "scriptKind": "TS",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck:node"
     ]
   },
   {
@@ -12423,6 +13349,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/browser/actionApproval.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node"
     ]
@@ -12432,6 +13359,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/browser/adapters/browserUseController.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node"
     ]
@@ -12441,6 +13369,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/browser/adapters/electronWebviewController.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node"
     ]
@@ -12450,6 +13379,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/browser/browserController.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node"
     ]
@@ -12459,6 +13389,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/browser/browserControllerRegistry.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node"
     ]
@@ -12468,6 +13399,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/browser/browserTaskTrace.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node"
     ]
@@ -12477,6 +13409,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/browser/browserUse/processManager.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node"
     ]
@@ -12486,6 +13419,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/browser/browserUse/protocol.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node"
     ]
@@ -12495,6 +13429,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/browser/browserUse/workerClient.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node"
     ]
@@ -12504,6 +13439,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/browser/urlPolicy.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node"
     ]
@@ -12513,6 +13449,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/channelAdapters.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node",
       "npm run verify:channel-adapters"
@@ -12523,6 +13460,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/chat.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node"
     ]
@@ -12532,6 +13470,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/customCommands.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node"
     ]
@@ -12541,6 +13480,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/e2eSmoke.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node"
     ]
@@ -12550,6 +13490,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/executionPolicyGate.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node",
       "npm run verify:approval-center",
@@ -12557,10 +13498,21 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     ]
   },
   {
+    "module": "src/main/externalconnectionreadiness",
+    "path": "src/main/externalConnectionReadiness.ts",
+    "scriptKind": "TS",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck:node"
+    ]
+  },
+  {
     "module": "src/main/forkworktrees",
     "path": "src/main/forkWorktrees.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node",
       "npm run verify:fork-worktree"
@@ -12571,6 +13523,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/gateway.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node"
     ]
@@ -12580,6 +13533,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/ideContext.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node"
     ]
@@ -12589,6 +13543,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/install.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node"
     ]
@@ -12598,6 +13553,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/mcpContext.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node",
       "npm run verify:mcp-live-bridge"
@@ -12608,9 +13564,20 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/mcpLiveBridge.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node",
       "npm run verify:mcp-live-bridge"
+    ]
+  },
+  {
+    "module": "src/main/modeldefaults",
+    "path": "src/main/modelDefaults.ts",
+    "scriptKind": "TS",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck:node"
     ]
   },
   {
@@ -12618,6 +13585,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/myDrSaiConfig.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node"
     ]
@@ -12627,6 +13595,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/paths.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node"
     ]
@@ -12636,6 +13605,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/projectMemory.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node"
     ]
@@ -12645,6 +13615,27 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/projectSkills.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck:node"
+    ]
+  },
+  {
+    "module": "src/main/providererroranalytics",
+    "path": "src/main/providerErrorAnalytics.ts",
+    "scriptKind": "TS",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck:node"
+    ]
+  },
+  {
+    "module": "src/main/providerusageanalytics",
+    "path": "src/main/providerUsageAnalytics.ts",
+    "scriptKind": "TS",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node"
     ]
@@ -12654,6 +13645,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/scheduledTasks.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node",
       "npm run verify:workflow-marketplace"
@@ -12664,6 +13656,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/settings.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node"
     ]
@@ -12673,6 +13666,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/sseParser.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node"
     ]
@@ -12682,6 +13676,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/status.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node"
     ]
@@ -12691,6 +13686,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/terminal.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node"
     ]
@@ -12700,6 +13696,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/threads.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node"
     ]
@@ -12709,6 +13706,17 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/updates.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck:node"
+    ]
+  },
+  {
+    "module": "src/main/voice",
+    "path": "src/main/voice.ts",
+    "scriptKind": "TS",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node"
     ]
@@ -12718,6 +13726,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/workflowMarketplace.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node",
       "npm run verify:workflow-marketplace"
@@ -12728,6 +13737,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/workflowRuns.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node",
       "npm run verify:workflow-marketplace"
@@ -12738,6 +13748,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/workspaceCheckpoints.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node"
     ]
@@ -12747,6 +13758,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/workspaceContext.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node"
     ]
@@ -12756,6 +13768,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/main/workspaces.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node"
     ]
@@ -12765,6 +13778,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/preload/index.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node"
     ]
@@ -12774,6 +13788,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/adapters/useDesktopChatAdapter.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web",
       "npm run verify:chat-commands"
@@ -12784,6 +13799,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/adapters/useDesktopHealthAdapter.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -12793,6 +13809,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/App.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -12802,6 +13819,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/auth/AuthProvider.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -12811,6 +13829,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/auth/LoginScreen.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -12820,9 +13839,20 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/chatCommands.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web",
       "npm run verify:chat-commands"
+    ]
+  },
+  {
+    "module": "src/renderer/src/chatoutputmodel",
+    "path": "src/renderer/src/chatOutputModel.ts",
+    "scriptKind": "TS",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck:web"
     ]
   },
   {
@@ -12830,6 +13860,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/AgentRunWorkspace.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -12839,6 +13870,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/AgentSquareView.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -12848,6 +13880,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/ApprovalCenterView.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web",
       "npm run verify:approval-center",
@@ -12859,9 +13892,20 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/ChannelsView.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web",
       "npm run verify:channel-adapters"
+    ]
+  },
+  {
+    "module": "src/renderer/src/components/chatmessagecontent",
+    "path": "src/renderer/src/components/ChatMessageContent.tsx",
+    "scriptKind": "TSX",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck:web"
     ]
   },
   {
@@ -12869,6 +13913,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/ChatWorkspace.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web",
       "npm run verify:chat-commands"
@@ -12879,6 +13924,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/files/AgentFileActivityPanel.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -12888,6 +13934,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/files/ArtifactsPanel.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -12897,6 +13944,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/files/ContextBasket.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -12906,6 +13954,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/files/ContextSnapshotPanel.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -12915,6 +13964,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/files/DirectoryContextPreview.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -12924,6 +13974,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/files/file_previewer/EmptyPreviewer.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -12933,6 +13984,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/files/file_previewer/FilePreviewer.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -12942,6 +13994,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/files/file_previewer/HtmlPreviewer.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -12951,6 +14004,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/files/file_previewer/ImagePreviewer.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -12960,6 +14014,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/files/file_previewer/MarkdownPreviewer.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -12969,6 +14024,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/files/file_previewer/MediaPreviewer.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -12978,6 +14034,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/files/file_previewer/MetadataList.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -12987,6 +14044,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/files/file_previewer/MetadataPreviewer.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -12996,6 +14054,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/files/file_previewer/NotebookPreviewer.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -13005,6 +14064,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/files/file_previewer/OfficePreviewer.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -13014,6 +14074,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/files/file_previewer/OutlinePreviewer.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -13023,6 +14084,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/files/file_previewer/PdfPreviewer.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -13032,6 +14094,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/files/file_previewer/StructuredPreviewer.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -13041,6 +14104,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/files/file_previewer/TablePreviewer.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -13050,6 +14114,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/files/file_previewer/TextPreviewer.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -13059,6 +14124,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/files/file_previewer/types.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -13068,6 +14134,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/files/FileConflictPanel.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -13077,6 +14144,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/files/FilePreview.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -13086,6 +14154,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/files/FilesContextPanel.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -13095,6 +14164,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/files/FilesTree.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -13104,6 +14174,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/files/GitDiffPreview.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -13113,6 +14184,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/files/InstructionChainPreview.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -13122,6 +14194,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/files/PatchReviewPanel.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -13131,6 +14204,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/files/RepoMapPanel.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -13140,6 +14214,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/forkConflictAnalysis.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web",
       "npm run verify:fork-worktree"
@@ -13150,6 +14225,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/previewBrowser/BrowserPanelErrorBoundary.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -13159,6 +14235,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/previewBrowser/scripts.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -13168,6 +14245,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/previewBrowser/state.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -13177,6 +14255,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/previewBrowser/types.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -13186,6 +14265,17 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/PreviewBrowserPanel.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck:web"
+    ]
+  },
+  {
+    "module": "src/renderer/src/components/provideranalyticsview",
+    "path": "src/renderer/src/components/ProviderAnalyticsView.tsx",
+    "scriptKind": "TSX",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -13195,6 +14285,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/SkillSquareView.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web",
       "npm run verify:workflow-marketplace"
@@ -13205,6 +14296,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/TerminalPanel.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -13214,6 +14306,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/components/WorkspaceShell.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web",
       "npm run verify:fork-worktree"
@@ -13224,6 +14317,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/desktopApi.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -13233,6 +14327,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/main.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -13242,6 +14337,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/mockDesktopApi.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -13251,6 +14347,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/navigation.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -13260,6 +14357,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/renderer/src/terminalTestResults.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:web"
     ]
@@ -13269,6 +14367,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/shared/browser/actionPolicy.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node",
       "npm run typecheck:web"
@@ -13279,6 +14378,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/shared/browser/snapshotSchema.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node",
       "npm run typecheck:web"
@@ -13289,6 +14389,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/shared/browser/types.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node",
       "npm run typecheck:web"
@@ -13299,6 +14400,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/shared/desktopApi.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node",
       "npm run typecheck:web"
@@ -13309,6 +14411,7 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "path": "src/shared/executionPolicy.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
     "commands": [
       "npm run typecheck:node",
       "npm run typecheck:web",

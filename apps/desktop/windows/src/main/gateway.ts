@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "child_process";
+import { randomBytes } from "crypto";
 import { get } from "http";
 import { existsSync } from "fs";
 import type { GatewayStatus } from "../shared/desktopApi";
@@ -9,9 +10,22 @@ const GATEWAY_PORT = getGatewayPort();
 const GATEWAY_BASE_URL = `http://${GATEWAY_HOST}:${GATEWAY_PORT}`;
 const DEV_MANAGED_EXTERNAL_GATEWAY = process.env.DRSAI_GATEWAY_DEV_MANAGED === "1";
 const HOT_RELOAD_GATEWAY = process.env.DRSAI_GATEWAY_HOT_RELOAD === "1";
+const GATEWAY_INSTANCE_TOKEN =
+  process.env.OPENDRSAI_GATEWAY_INSTANCE_TOKEN?.trim() || randomBytes(32).toString("base64url");
+export type GatewayStartupMode = "on-demand" | "eager" | "external";
 let gatewayProcess: ChildProcess | null = null;
 let lastGatewayLog = "";
 let gatewayStopPromise: Promise<boolean> | null = null;
+let gatewayStartPromise: Promise<boolean> | null = null;
+
+export function getGatewayStartupMode(): GatewayStartupMode {
+  const configured = process.env.OPENDRSAI_GATEWAY_STARTUP?.trim().toLowerCase();
+  return configured === "eager" || configured === "external" ? configured : "on-demand";
+}
+
+export function getGatewayRequestHeaders(): Record<string, string> {
+  return { "X-OpenDrSai-Gateway-Token": GATEWAY_INSTANCE_TOKEN };
+}
 
 export function checkGatewayReady(): Promise<boolean> {
   if (!isManagedGatewayRunning() && !DEV_MANAGED_EXTERNAL_GATEWAY) {
@@ -22,8 +36,8 @@ export function checkGatewayReady(): Promise<boolean> {
 
 function checkGatewayEndpoints(): Promise<boolean> {
   return Promise.all([
-    requestJson(`${GATEWAY_BASE_URL}/health`),
-    requestJson(`${GATEWAY_BASE_URL}/v1/models`),
+    requestJson(`${GATEWAY_BASE_URL}/health`, getGatewayRequestHeaders()),
+    requestJson(`${GATEWAY_BASE_URL}/v1/models`, getGatewayRequestHeaders()),
   ]).then(([health, models]) =>
     Boolean(
       health.ok &&
@@ -38,12 +52,13 @@ function checkGatewayEndpoints(): Promise<boolean> {
 export async function getGatewayStatus(): Promise<GatewayStatus> {
   const externalReady = await checkGatewayEndpoints();
   const processManaged = isManagedGatewayRunning();
-  const managed = processManaged || (DEV_MANAGED_EXTERNAL_GATEWAY && externalReady);
+  const externalMode = getGatewayStartupMode() === "external";
+  const managed = processManaged || ((DEV_MANAGED_EXTERNAL_GATEWAY || externalMode) && externalReady);
   return {
     ready: managed && externalReady,
     managed,
     externalReady,
-    externalConflict: externalReady && !managed,
+    externalConflict: externalReady && !managed && !externalMode,
     baseUrl: GATEWAY_BASE_URL,
     pid: gatewayProcess?.pid ?? null,
     lastLog: lastGatewayLog,
@@ -51,8 +66,33 @@ export async function getGatewayStatus(): Promise<GatewayStatus> {
 }
 
 export async function startGateway(): Promise<boolean> {
+  if (gatewayStartPromise) return gatewayStartPromise;
+  gatewayStartPromise = startGatewayOnce().finally(() => {
+    gatewayStartPromise = null;
+  });
+  return gatewayStartPromise;
+}
+
+export function getGatewaySnapshot(): GatewayStatus {
+  const processManaged = isManagedGatewayRunning();
+  return {
+    ready: false,
+    managed: processManaged,
+    externalReady: false,
+    externalConflict: false,
+    baseUrl: GATEWAY_BASE_URL,
+    pid: gatewayProcess?.pid ?? null,
+    lastLog: lastGatewayLog,
+  };
+}
+
+async function startGatewayOnce(): Promise<boolean> {
   if (await checkGatewayReady()) return true;
-  if (await checkGatewayEndpoints()) {
+  const externalReady = await checkGatewayEndpoints();
+  if (getGatewayStartupMode() === "external") {
+    return externalReady;
+  }
+  if (externalReady) {
     lastGatewayLog = `${lastGatewayLog}\nRefusing to use an unmanaged service already listening on ${GATEWAY_BASE_URL}. Stop that process and start the OpenDrSai gateway from the desktop app.`.slice(-12000);
     return false;
   }
@@ -78,6 +118,7 @@ export async function startGateway(): Promise<boolean> {
       ...process.env,
       DRSAI_HOME,
       DRSAI_API_PORT: GATEWAY_PORT,
+      OPENDRSAI_GATEWAY_INSTANCE_TOKEN: GATEWAY_INSTANCE_TOKEN,
       PATH: getEnhancedPath(),
     },
     windowsHide: true,
@@ -143,6 +184,7 @@ function requestJson(
 }
 
 export async function stopGateway(): Promise<boolean> {
+  if (gatewayStartPromise) await gatewayStartPromise.catch(() => false);
   if (gatewayStopPromise) return gatewayStopPromise;
   const proc = gatewayProcess;
   if (!isProcessRunning(proc)) return false;
@@ -158,6 +200,7 @@ export async function getGatewayModels(
   accessToken: string,
 ): Promise<Array<{ id: string; name: string }>> {
   const response = await requestJson(`${GATEWAY_BASE_URL}/v1/models`, {
+    ...getGatewayRequestHeaders(),
     Authorization: `Bearer ${accessToken}`,
     "X-OpenDrSai-Auth-Mode": "oidc",
   });

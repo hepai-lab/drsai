@@ -63,6 +63,32 @@ interface NormalizedMcpServer {
   description?: string;
 }
 
+export interface DesktopMcpSmokeReadinessServer {
+  name: string;
+  command: string;
+  status: "ready" | "review_required" | "blocked";
+  runner: "local" | "node" | "python" | "package_runner" | "container" | "unknown";
+  thirdParty: boolean;
+  reusableSessionEligible: boolean;
+  cwdScope: "workspace" | "default";
+  envKeys: string[];
+  checks: string[];
+  risks: string[];
+  verification: string;
+}
+
+export interface DesktopMcpSmokeReadinessResult {
+  workspacePath: string;
+  configPath: string;
+  serverCount: number;
+  thirdPartyCount: number;
+  readyCount: number;
+  reviewRequiredCount: number;
+  blockedCount: number;
+  servers: DesktopMcpSmokeReadinessServer[];
+  verification: string;
+}
+
 interface JsonRpcMessage {
   jsonrpc?: string;
   id?: number | string | null;
@@ -142,6 +168,36 @@ export function inspectMcpLiveServers(
     workspacePath: workspace,
     configPath,
     servers: servers.map(toServerSummary),
+  };
+}
+
+export function inspectMcpSmokeReadiness(
+  workspacePath: string,
+): DesktopMcpSmokeReadinessResult {
+  const workspace = resolveWorkspacePath(workspacePath);
+  const configPath = resolveWorkspaceFile(workspace, MCP_SERVERS_RELATIVE_PATH, {
+    mustExist: true,
+    maxBytes: MAX_MCP_SERVERS_BYTES,
+    label: "MCP live server config",
+  });
+  const servers = readMcpServers(configPath, workspace).map(toSmokeReadinessServer);
+  const thirdPartyCount = servers.filter((server) => server.thirdParty).length;
+  const readyCount = servers.filter((server) => server.status === "ready").length;
+  const reviewRequiredCount = servers.filter(
+    (server) => server.status === "review_required",
+  ).length;
+  const blockedCount = servers.filter((server) => server.status === "blocked").length;
+  return {
+    workspacePath: workspace,
+    configPath,
+    serverCount: servers.length,
+    thirdPartyCount,
+    readyCount,
+    reviewRequiredCount,
+    blockedCount,
+    servers,
+    verification:
+      "MCP smoke readiness is local-only: it parses bounded .drsai/mcp-servers.json metadata, classifies runner risk, and does not spawn servers, resolve packages, open containers, call networks, read secrets, or write MCP context.",
   };
 }
 
@@ -826,7 +882,7 @@ function callMcpEnumeration(
       params: {
         protocolVersion: "2025-06-18",
         capabilities: {},
-        clientInfo: { name: "drsai-windows-desktop", version: "1.4.0" },
+        clientInfo: { name: "drsai-windows-desktop", version: "1.4.1" },
       },
     };
     const initializedNotification: JsonRpcMessage = {
@@ -952,7 +1008,7 @@ function callMcpTool(
       params: {
         protocolVersion: "2025-06-18",
         capabilities: {},
-        clientInfo: { name: "drsai-windows-desktop", version: "1.4.0" },
+        clientInfo: { name: "drsai-windows-desktop", version: "1.4.1" },
       },
     };
     const initializedNotification: JsonRpcMessage = {
@@ -1179,7 +1235,7 @@ async function initializePooledMcpSession(session: PooledMcpSession): Promise<vo
     {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "drsai-windows-desktop", version: "1.4.0" },
+      clientInfo: { name: "drsai-windows-desktop", version: "1.4.1" },
     },
     MAX_MCP_ENUMERATION_MS,
   );
@@ -1937,6 +1993,106 @@ function toServerSummary(server: NormalizedMcpServer): DesktopMcpLiveServerSumma
     toolCount: 0,
     description: server.description,
   };
+}
+
+function toSmokeReadinessServer(server: NormalizedMcpServer): DesktopMcpSmokeReadinessServer {
+  const runner = classifyMcpRunner(server);
+  const commandLine = [server.command, ...server.args].join(" ");
+  const envKeys = Object.keys(server.env).sort().slice(0, 24);
+  const checks = [
+    "Config parsed from bounded workspace-local .drsai/mcp-servers.json.",
+    "Command will use shell:false when an approved live MCP run starts.",
+    server.cwd
+      ? "Configured cwd resolves inside the current workspace."
+      : "No workspace cwd override is configured.",
+    envKeys.length
+      ? `Environment variables are referenced by key only: ${envKeys.join(", ")}.`
+      : "No MCP-specific environment variables are configured.",
+  ];
+  const risks = collectMcpSmokeRisks(server, runner);
+  const thirdParty = runner === "package_runner" || runner === "container";
+  const blocked = commandLine.length > 1200 || /[\r\n]/.test(commandLine);
+  const status = blocked
+    ? "blocked"
+    : risks.length || thirdParty
+      ? "review_required"
+      : "ready";
+  return {
+    name: server.name,
+    command: commandLine,
+    status,
+    runner,
+    thirdParty,
+    reusableSessionEligible: status !== "blocked",
+    cwdScope: server.cwd ? "workspace" : "default",
+    envKeys,
+    checks,
+    risks,
+    verification:
+      thirdParty
+        ? "Third-party MCP server smoke is readiness-only until the user approves a live enumeration or tool execution; this check did not install packages, start containers, spawn stdio, or call networks."
+        : "Local MCP server smoke readiness checked configuration shape only; this check did not spawn stdio, enumerate resources, execute tools, call networks, or write reviewed context.",
+  };
+}
+
+function classifyMcpRunner(
+  server: NormalizedMcpServer,
+): DesktopMcpSmokeReadinessServer["runner"] {
+  const commandName = server.command
+    .replace(/\\/g, "/")
+    .split("/")
+    .pop()
+    ?.toLowerCase()
+    .replace(/\.(exe|cmd|bat|ps1)$/i, "") ?? "";
+  if (commandName === "docker" || commandName === "podman") return "container";
+  if (
+    commandName === "npx" ||
+    commandName === "pnpm" ||
+    commandName === "yarn" ||
+    commandName === "bun" ||
+    commandName === "uvx" ||
+    commandName === "pipx"
+  ) {
+    return "package_runner";
+  }
+  if (commandName === "node" || commandName === "nodejs" || commandName === "tsx") return "node";
+  if (
+    commandName === "python" ||
+    commandName === "python3" ||
+    commandName === "py" ||
+    commandName === "uv"
+  ) {
+    return "python";
+  }
+  if (commandName) return "local";
+  return "unknown";
+}
+
+function collectMcpSmokeRisks(
+  server: NormalizedMcpServer,
+  runner: DesktopMcpSmokeReadinessServer["runner"],
+): string[] {
+  const risks: string[] = [];
+  const argsText = server.args.join(" ");
+  if (runner === "package_runner") {
+    risks.push("Package runner may download or resolve third-party MCP server code during an approved live run.");
+  }
+  if (runner === "container") {
+    risks.push("Container runner may pull images or access mounted resources during an approved live run.");
+  }
+  if (runner === "unknown") {
+    risks.push("Command runner could not be classified.");
+  }
+  if (/\b(--mount|-v|--volume)\b/i.test(argsText)) {
+    risks.push("Container or runtime mount arguments need human review.");
+  }
+  if (/\b(http|https):\/\//i.test(argsText)) {
+    risks.push("Command arguments include remote URLs.");
+  }
+  if (Object.keys(server.env).some((key) => /TOKEN|KEY|SECRET|PASSWORD|AUTH/i.test(key))) {
+    risks.push("Environment references include credential-shaped keys; values remain hidden.");
+  }
+  return risks.slice(0, 12);
 }
 
 function parseMcpToolInput(input?: string): Record<string, unknown> {

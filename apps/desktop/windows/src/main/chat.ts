@@ -1,12 +1,27 @@
 import type { WebContents } from "electron";
 import { randomUUID } from "crypto";
+import { appendFileSync, mkdirSync } from "fs";
 import { readFile, stat } from "fs/promises";
+import { dirname } from "path";
 import type { ChatAttachment, ChatEvent, ChatMessage, ChatRequest } from "../shared/desktopApi";
-import { requireAuthContext } from "./auth";
-import { startGateway } from "./gateway";
+import { invalidateAuthSession, requireAuthContext, type AuthContext } from "./auth";
+import { getGatewayRequestHeaders, startGateway } from "./gateway";
 import { getDefaultModelAlias } from "./modelDefaults";
-import { isCompletionDoneFrame, parseAgentLogSseFrame, parseChatSseFrame, parseChatToolTimelineSseFrame } from "./sseParser";
+import {
+  createChatToolTimelineAccumulator,
+  ChatSseError,
+  isCompletionDoneFrame,
+  parseAgentLogSseFrame,
+  parseChatReasoningSseFrame,
+  parseChatSseFrame,
+  parseProviderErrorAnalyticsSseFrame,
+  parseProviderStatusSseFrame,
+  parseProviderUsageAnalyticsSseFrame,
+  parseAgentRunSseFileEvents,
+} from "./sseParser";
 import { upsertThreadFromRun } from "./threads";
+import { persistProviderErrorAnalytics } from "./providerErrorAnalytics";
+import { persistProviderUsageAnalytics } from "./providerUsageAnalytics";
 
 const GATEWAY_BASE_URL = `http://127.0.0.1:${getGatewayPort()}`;
 const MAX_ACTIVE_CHATS = 3;
@@ -28,6 +43,7 @@ const CHAT_TIMEOUT_MS = getPositiveIntEnv("OPENDRSAI_CHAT_TIMEOUT_MS", 120_000);
 const REQUEST_ID_PATTERN = /^[a-zA-Z0-9_-]{8,80}$/;
 const SESSION_ID_PATTERN = /^[a-zA-Z0-9_.:-]{1,160}$/;
 const activeChats = new Map<string, AbortController>();
+const chatEventSequences = new Map<string, number>();
 
 export function startChat(webContents: WebContents, request: unknown): string {
   if (activeChats.size >= MAX_ACTIVE_CHATS) {
@@ -40,16 +56,19 @@ export function startChat(webContents: WebContents, request: unknown): string {
   }
   const controller = new AbortController();
   activeChats.set(requestId, controller);
+  chatEventSequences.set(requestId, 0);
 
   runChat(webContents, requestId, validated, controller).catch((error) => {
     activeChats.delete(requestId);
     const timedOut = controller.signal.aborted && controller.signal.reason === "timeout";
+    const errorMessage = timedOut
+      ? `Gateway chat timed out after ${Math.round(CHAT_TIMEOUT_MS / 1000)} seconds.`
+      : error instanceof Error ? error.message : String(error);
+    writeChatDiagnostic(requestId, errorMessage);
     emit(webContents, {
       requestId,
       type: controller.signal.aborted && !timedOut ? "aborted" : "error",
-      error: timedOut
-        ? `Gateway chat timed out after ${Math.round(CHAT_TIMEOUT_MS / 1000)} seconds. Check model/API key configuration.`
-        : error instanceof Error ? error.message : String(error),
+      error: errorMessage,
     });
   });
 
@@ -236,7 +255,7 @@ async function runChat(
   request: ChatRequest,
   controller: AbortController,
 ): Promise<void> {
-  const auth = await requireAuthContext();
+  let auth = await requireAuthContext();
   const sessionId = request.threadId || request.sessionId || requestId;
   const runId = request.runId || requestId;
   emit(webContents, { requestId, sessionId, runId, type: "start" });
@@ -261,40 +280,52 @@ async function runChat(
     const attachmentContext = await buildAttachmentContext(request.attachments);
     const messages = withAttachmentContext(request.messages, attachmentContext);
     const model = request.model || getDefaultModelAlias() || "drsai";
-    const response = await fetch(`${GATEWAY_BASE_URL}/v1/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-OpenDrSai-User": auth.userId,
-        "X-OpenDrSai-Auth-Mode": auth.authMode,
-        ...(request.workspacePath ? { "X-OpenDrSai-Workspace": request.workspacePath } : {}),
-        ...(auth.accessToken ? { Authorization: `Bearer ${auth.accessToken}` } : {}),
-      },
-      body: JSON.stringify({
-        model,
-        messages,
-        stream: true,
-        user_id: auth.userId,
-        thread_id: sessionId,
-        work_dir: request.workspacePath,
-        metadata: {
-          ...(request.metadata || {}),
-          auth_mode: auth.authMode,
-          run_id: runId,
-          desktop_request_id: requestId,
-          attachments: request.attachments || [],
-          files: request.attachments || [],
-          attachment_context: attachmentContext,
+    const send = async (authContext: AuthContext): Promise<boolean> => {
+      const response = await fetch(`${GATEWAY_BASE_URL}/v1/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...getGatewayRequestHeaders(),
+          "X-OpenDrSai-User": authContext.userId,
+          "X-OpenDrSai-Auth-Mode": authContext.authMode,
+          ...(request.workspacePath ? { "X-OpenDrSai-Workspace": request.workspacePath } : {}),
+          ...(authContext.accessToken ? { Authorization: `Bearer ${authContext.accessToken}` } : {}),
         },
-      }),
-      signal: controller.signal,
-    });
+        body: JSON.stringify({
+          model,
+          messages,
+          stream: true,
+          user_id: authContext.userId,
+          thread_id: sessionId,
+          work_dir: request.workspacePath,
+          metadata: {
+            ...(request.metadata || {}),
+            auth_mode: authContext.authMode,
+            run_id: runId,
+            desktop_request_id: requestId,
+            attachments: request.attachments || [],
+            files: request.attachments || [],
+            attachment_context: attachmentContext,
+          },
+        }),
+        signal: controller.signal,
+      });
+      if (!response.ok || !response.body) throw await formatHttpError(response);
+      return readSse(webContents, requestId, sessionId, runId, response.body, controller.signal);
+    };
 
-    if (!response.ok || !response.body) {
-      throw new Error(await formatHttpError(response));
+    let sawDone: boolean;
+    try {
+      sawDone = await send(auth);
+    } catch (error) {
+      if (error instanceof ChatSseError && error.code === "invalid_token") {
+        invalidateAuthSession();
+        webContents.send("desktop:auth-session-invalidated");
+      }
+      if (!(error instanceof ChatSseError) || error.code !== "token_expired" || !error.retryable) throw error;
+      auth = await requireAuthContext();
+      sawDone = await send(auth);
     }
-
-    const sawDone = await readSse(webContents, requestId, sessionId, runId, response.body, controller.signal);
     if (controller.signal.aborted) {
       throw new Error("Chat request was aborted.");
     }
@@ -496,6 +527,8 @@ async function readSse(
   const decoder = new TextDecoder();
   let buffer = "";
   let sawDone = false;
+  let emittedContent = false;
+  const toolTimelineAccumulator = createChatToolTimelineAccumulator();
 
   while (!signal.aborted) {
     const { done, value } = await reader.read();
@@ -523,7 +556,41 @@ async function readSse(
         });
         continue;
       }
-      for (const toolTimeline of parseChatToolTimelineSseFrame(frame)) {
+      const reasoningLog = parseChatReasoningSseFrame(frame);
+      if (reasoningLog) {
+        emit(webContents, {
+          requestId,
+          sessionId,
+          runId,
+          type: "reasoning",
+          content: reasoningLog.content,
+          level: reasoningLog.level,
+        });
+        continue;
+      }
+      const providerStatus = parseProviderStatusSseFrame(frame);
+      if (providerStatus) {
+        recordProviderUsageAnalytics(requestId, sessionId, runId, frame);
+        emit(webContents, {
+          requestId,
+          sessionId,
+          runId,
+          type: "status",
+          content: formatAgentLogStatus(providerStatus),
+          level: providerStatus.level,
+        });
+        continue;
+      }
+      for (const fileEvent of parseAgentRunSseFileEvents(frame)) {
+        emit(webContents, {
+          requestId,
+          sessionId,
+          runId,
+          type: "tool_timeline",
+          toolTimeline: toChatFileTimelineEvent(fileEvent),
+        });
+      }
+      for (const toolTimeline of toolTimelineAccumulator.parseFrame(frame)) {
         emit(webContents, {
           requestId,
           sessionId,
@@ -532,9 +599,18 @@ async function readSse(
           toolTimeline,
         });
       }
-      parseChatSseFrame(frame).forEach((content) => {
-        emit(webContents, { requestId, sessionId, runId, type: "chunk", content });
-      });
+      try {
+        parseChatSseFrame(frame).forEach((content) => {
+          emittedContent = true;
+          emit(webContents, { requestId, sessionId, runId, type: "chunk", content });
+        });
+      } catch (error) {
+        if (error instanceof ChatSseError && emittedContent) error.retryable = false;
+        if (error instanceof ChatSseError) {
+          recordProviderErrorAnalytics(requestId, sessionId, runId, frame);
+        }
+        throw error;
+      }
     }
   }
 
@@ -554,7 +630,41 @@ async function readSse(
       });
       return sawDone;
     }
-    for (const toolTimeline of parseChatToolTimelineSseFrame(buffer)) {
+    const reasoningLog = parseChatReasoningSseFrame(buffer);
+    if (reasoningLog) {
+      emit(webContents, {
+        requestId,
+        sessionId,
+        runId,
+        type: "reasoning",
+        content: reasoningLog.content,
+        level: reasoningLog.level,
+      });
+      return sawDone;
+    }
+    const providerStatus = parseProviderStatusSseFrame(buffer);
+    if (providerStatus) {
+      recordProviderUsageAnalytics(requestId, sessionId, runId, buffer);
+      emit(webContents, {
+        requestId,
+        sessionId,
+        runId,
+        type: "status",
+        content: formatAgentLogStatus(providerStatus),
+        level: providerStatus.level,
+      });
+      return sawDone;
+    }
+    for (const fileEvent of parseAgentRunSseFileEvents(buffer)) {
+      emit(webContents, {
+        requestId,
+        sessionId,
+        runId,
+        type: "tool_timeline",
+        toolTimeline: toChatFileTimelineEvent(fileEvent),
+      });
+    }
+    for (const toolTimeline of toolTimelineAccumulator.parseFrame(buffer)) {
       emit(webContents, {
         requestId,
         sessionId,
@@ -563,9 +673,18 @@ async function readSse(
         toolTimeline,
       });
     }
-    parseChatSseFrame(buffer).forEach((content) => {
-      emit(webContents, { requestId, sessionId, runId, type: "chunk", content });
-    });
+    try {
+      parseChatSseFrame(buffer).forEach((content) => {
+        emittedContent = true;
+        emit(webContents, { requestId, sessionId, runId, type: "chunk", content });
+      });
+    } catch (error) {
+      if (error instanceof ChatSseError && emittedContent) error.retryable = false;
+      if (error instanceof ChatSseError) {
+        recordProviderErrorAnalytics(requestId, sessionId, runId, buffer);
+      }
+      throw error;
+    }
   }
   return sawDone;
 }
@@ -577,22 +696,58 @@ function formatAgentLogStatus(log: { title?: string; content?: string; level?: s
   return `**${title}**\n\n${content}\n\n`;
 }
 
-async function formatHttpError(response: Response): Promise<string> {
+function recordProviderUsageAnalytics(
+  requestId: string,
+  sessionId: string,
+  runId: string,
+  frame: string,
+): void {
+  const event = parseProviderUsageAnalyticsSseFrame(frame);
+  if (!event) return;
+  void persistProviderUsageAnalytics({ requestId, sessionId, runId, event }).catch(() => undefined);
+}
+
+function recordProviderErrorAnalytics(
+  requestId: string,
+  sessionId: string,
+  runId: string,
+  frame: string,
+): void {
+  const event = parseProviderErrorAnalyticsSseFrame(frame);
+  if (!event) return;
+  void persistProviderErrorAnalytics({ requestId, sessionId, runId, event }).catch(() => undefined);
+}
+
+async function formatHttpError(response: Response): Promise<Error> {
   let body = "";
   try {
     body = (await readLimitedText(response, MAX_ERROR_BODY_BYTES)).trim();
   } catch {
     body = "";
   }
-  if (!body) return `Gateway chat failed with HTTP ${response.status}.`;
+  if (!body) return new Error(`Gateway chat failed with HTTP ${response.status}.`);
   try {
     const parsed = JSON.parse(body);
+    const structured = extractStructuredError(parsed);
+    if (structured) return new ChatSseError(structured.message, structured.code, structured.retryable);
     const detail = extractErrorMessage(parsed);
-    if (detail) return `Gateway chat failed: ${String(detail)}`;
+    if (detail) return new Error(`Gateway chat failed: ${String(detail)}`);
   } catch {
     // Keep the raw body below.
   }
-  return `Gateway chat failed with HTTP ${response.status}: ${body.slice(0, 600)}`;
+  return new Error(`Gateway chat failed with HTTP ${response.status}: ${body.slice(0, 600)}`);
+}
+
+function extractStructuredError(value: unknown): { code: string; message: string; retryable: boolean } | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const candidate = (record.error && typeof record.error === "object" ? record.error : record.detail) as Record<string, unknown> | undefined;
+  if (!candidate || typeof candidate.code !== "string") return null;
+  return {
+    code: candidate.code,
+    message: typeof candidate.message === "string" ? candidate.message : "HepAI request failed.",
+    retryable: candidate.retryable === true,
+  };
 }
 
 function extractErrorMessage(value: unknown): string | null {
@@ -626,7 +781,26 @@ async function readLimitedText(response: Response, maxBytes: number): Promise<st
 }
 
 function emit(webContents: WebContents, event: ChatEvent): void {
-  webContents.send("desktop:chat-event", event);
+  const seq = (chatEventSequences.get(event.requestId) ?? 0) + 1;
+  chatEventSequences.set(event.requestId, seq);
+  webContents.send("desktop:chat-event", { ...event, seq });
+  if (event.type === "done" || event.type === "error" || event.type === "aborted") {
+    chatEventSequences.delete(event.requestId);
+  }
+}
+
+function toChatFileTimelineEvent(fileEvent: ReturnType<typeof parseAgentRunSseFileEvents>[number]): NonNullable<ChatEvent["toolTimeline"]> {
+  const kind = fileEvent.diff ? "diff" : "artifact";
+  const target = fileEvent.targetPath ? ` → ${fileEvent.targetPath}` : "";
+  return {
+    id: `file:${fileEvent.action}:${fileEvent.path}:${fileEvent.hash ?? ""}`,
+    kind,
+    title: `${fileEvent.action}: ${fileEvent.name || fileEvent.path}`,
+    status: "completed",
+    content: fileEvent.diff || `${fileEvent.source ?? ""}${target}`.trim() || undefined,
+    path: fileEvent.path,
+    timestamp: fileEvent.timestamp,
+  };
 }
 
 function getPositiveIntEnv(name: string, fallback: number): number {
@@ -638,4 +812,24 @@ function getGatewayPort(): string {
   const rawPort = process.env.OPENDRSAI_GATEWAY_PORT || process.env.DRSAI_API_PORT || "18642";
   const parsed = Number(rawPort);
   return Number.isInteger(parsed) && parsed > 0 && parsed < 65536 ? String(parsed) : "18642";
+}
+
+function writeChatDiagnostic(requestId: string, error: string): void {
+  const diagnosticPath = process.env.OPENDRSAI_DIAGNOSTIC_LOG_PATH?.trim();
+  if (!diagnosticPath) return;
+  const safeError = error
+    .replace(/Bearer\s+[A-Za-z0-9._~+\/-]+/gi, "Bearer [REDACTED]")
+    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[REDACTED_JWT]")
+    .replace(/([?&](?:token|access_token|api_key)=)[^&\s]+/gi, "$1[REDACTED]")
+    .slice(0, 2000);
+  try {
+    mkdirSync(dirname(diagnosticPath), { recursive: true });
+    appendFileSync(
+      diagnosticPath,
+      `${new Date().toISOString()} request=${requestId} error=${safeError.replace(/[\r\n]+/g, " ")}\n`,
+      "utf8",
+    );
+  } catch {
+    // Diagnostics must never alter chat behavior.
+  }
 }

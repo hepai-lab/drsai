@@ -32,7 +32,6 @@
             <Component Id="InstallerScripts" Guid="A638D62D-1141-47E5-9316-80D4E54A43AC">
               <File Id="InstallOpenDrSaiScript" Source="$(var.SourceDir)\install-opendrsai.ps1" KeyPath="yes" />
               <File Id="UninstallOpenDrSaiScript" Source="$(var.SourceDir)\uninstall-opendrsai.ps1" />
-              <File Id="RunOpenDrSaiInstallScript" Source="$(var.SourceDir)\run-opendrsai-install.vbs" />
             </Component>
           </Directory>
         </Directory>
@@ -46,7 +45,7 @@
     <CustomAction
       Id="RunOpenDrSaiBootstrapper"
       Directory="INSTALLFOLDER"
-      ExeCommand='wscript.exe //B //Nologo "[INSTALLFOLDER]run-opendrsai-install.vbs" /RuntimeUrl:"[RUNTIMEURL]" /RuntimeSha256:"[RUNTIMESHA256]" /RuntimeSizeBytes:"[RUNTIMESIZEBYTES]" /BootstrapperVersion:"[BOOTSTRAPPERVERSION]" [EXTRAINSTALLARGS]'
+      ExeCommand='powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "[INSTALLFOLDER]install-opendrsai.ps1" -RuntimeUrl "[RUNTIMEURL]" -RuntimeSha256 "[RUNTIMESHA256]" -RuntimeSizeBytes [RUNTIMESIZEBYTES] -BootstrapperVersion "[BOOTSTRAPPERVERSION]" -Quiet [EXTRAINSTALLARGS]'
       Return="check" />
 
     <CustomAction

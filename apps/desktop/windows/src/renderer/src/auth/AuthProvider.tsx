@@ -64,12 +64,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
   }
 
   useEffect(() => {
+    const unsubscribe = desktopApi.onAuthSessionInvalidated(() => {
+      setSession(anonymousSession);
+      setServiceReady(false);
+      setMessage("Your HepAI session is no longer valid. Sign in again.");
+    });
     refresh()
       .catch((error) => {
         setMessage(error instanceof Error ? error.message : "Could not read sign-in state.");
         setSession(anonymousSession);
       })
       .finally(() => setLoading(false));
+    return unsubscribe;
   }, []);
 
   async function login(request: LoginRequest): Promise<boolean> {

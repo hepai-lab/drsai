@@ -37,6 +37,8 @@ const expectedCommands = [
   "fix",
   "test",
   "commit",
+  "checkpoint",
+  "rollback",
   "mcp",
   "mention",
   "compact",
@@ -58,6 +60,13 @@ assert(commands.includes("runChatCommand"), "command runner is not exported");
 assert(commands.includes("Unknown slash command"), "unknown command feedback is missing");
 assert(commands.includes("Local commands are read-only"), "permission boundary feedback is missing");
 assert(commands.includes("Gateway ready:"), "status feedback omits gateway readiness");
+assert(commands.includes("Command-created context attachments:"), "/status omits command-created context attachment count");
+assert(commands.includes("Project memory entries:"), "/status omits project memory count");
+assert(commands.includes("Custom commands:"), "/status omits custom command count");
+assert(commands.includes("Available agents:"), "/status omits available agent count");
+assert(commands.includes("Available models:"), "/status omits available model count");
+assert(commands.includes('attachment.path.startsWith("selection:")'), "/status does not identify command-created selection context");
+assert(commands.includes('attachment.path.startsWith("mcp-prompt:")'), "/status does not identify command-created MCP prompt context");
 assert(commands.includes("Only visible attachment chips"), "context boundary copy is missing");
 assert(commands.includes("describeMcpCommand"), "/mcp does not route to the MCP command handler");
 assert(commands.includes("Use `/mcp prompt <name> <prompt text>`"), "/mcp prompt usage copy is missing");
@@ -74,6 +83,16 @@ assert(commands.includes("Manual @selection context"), "/mention selection does 
 assert(commands.includes("Fix mode"), "/fix local intent feedback is missing");
 assert(commands.includes("Test mode"), "/test local intent feedback is missing");
 assert(commands.includes("Commit workflow"), "/commit local intent feedback is missing");
+assert(commands.includes("Workspace checkpoint"), "/checkpoint local checkpoint feedback is missing");
+assert(commands.includes("Submitting this command creates a bounded local workspace checkpoint"), "/checkpoint direct create copy is missing");
+assert(commands.includes("Open the Files panel to create a bounded workspace checkpoint"), "/checkpoint Files panel guidance is missing");
+assert(commands.includes("restore still requires Approval Center confirmation"), "/checkpoint approval boundary copy is missing");
+assert(commands.includes("Rollback checkpoint"), "/rollback local rollback feedback is missing");
+assert(commands.includes("Use `/rollback list`"), "/rollback list usage copy is missing");
+assert(commands.includes("Use `/rollback preview <checkpoint>`"), "/rollback preview usage copy is missing");
+assert(commands.includes("Use `/rollback restore <checkpoint>`"), "/rollback restore usage copy is missing");
+assert(commands.includes("preview checkpoint differences before restore"), "/rollback preview guidance is missing");
+assert(commands.includes("Restore is approval-gated"), "/rollback approval boundary copy is missing");
 assert(commands.includes("Fork workflow"), "/fork local intent feedback is missing");
 assert(commands.includes("Fork queue workflow"), "/fork queue local intent feedback is missing");
 assert(commands.includes("Fork queue handoff"), "/fork handoff local intent feedback is missing");
@@ -87,7 +106,10 @@ assert(commands.includes("Each queued subtask will get its own isolated fork thr
 assert(commands.includes("Optional @agent prefixes"), "/fork queue agent assignment copy is missing");
 assert(commands.includes('evaluateExecutionPermission("git.commit"'), "/commit does not expose git commit policy");
 assert(commands.includes("Actual commits must use the policy-gated git workflow"), "/commit boundary copy is missing");
-assert(commands.includes("Compact context"), "/compact local context feedback is missing");
+assert(commands.includes('"compact"'), "/compact runtime mode name is missing");
+assert(commands.includes("Compact mode"), "/compact runtime mode feedback is missing");
+assert(commands.includes("summarize visible context and preserve reusable decisions"), "/compact runtime mode instruction is missing");
+assert(commands.includes('return describeModeCommand("compact"'), "/compact does not activate runtime mode");
 assert(commands.includes("Memory context"), "/memory local context feedback is missing");
 assert(commands.includes("Skills workflow selector"), "/skills workflow selector feedback is missing");
 assert(commands.includes('type: "open-view"'), "/skills does not produce a navigation action");
@@ -128,6 +150,22 @@ assert(chatAdapter.includes("runtime_mode: currentRuntimeModeRef.current"), "ada
 assert(chatAdapter.includes("Current chat runtime mode:"), "adapter does not add runtime mode request instructions");
 assert(chatAdapter.includes("clearRuntimeMode"), "adapter does not expose a runtime mode clear action");
 assert(chatAdapter.includes("maybeRequestCommitApproval"), "/commit does not request approval from the adapter");
+assert(chatAdapter.includes("maybeApplyCompactCommand(command, messages)"), "/compact local summary runtime is not wired to command output");
+assert(chatAdapter.includes("buildLocalCompactSummary"), "/compact local summary builder is missing");
+assert(chatAdapter.includes("Local context compaction prepared from visible chat only"), "/compact local summary feedback is missing");
+assert(chatAdapter.includes("Reusable decisions / follow-ups"), "/compact reusable decision summary is missing");
+assert(chatAdapter.includes("no gateway, model provider, external connector, filesystem mutation, or network call was performed"), "/compact local safety boundary copy is missing");
+assert(chatAdapter.includes("maybeApplyWorkspaceCheckpointCommand"), "/checkpoint and /rollback are not wired to checkpoint APIs");
+assert(chatAdapter.includes("desktopApi.createWorkspaceCheckpoint"), "/checkpoint does not create a bounded workspace checkpoint");
+assert(chatAdapter.includes("desktopApi.listWorkspaceCheckpoints"), "/rollback does not list workspace checkpoints");
+assert(chatAdapter.includes("desktopApi.previewWorkspaceCheckpoint"), "/rollback does not preview checkpoint diffs");
+assert(chatAdapter.includes("desktopApi.restoreWorkspaceCheckpoint"), "/rollback restore does not use approval-gated restore API");
+assert(chatAdapter.includes('action: "list"'), "/rollback list parser branch is missing");
+assert(chatAdapter.includes("Rollback checkpoints listed from slash command"), "/rollback list feedback is missing");
+assert(chatAdapter.includes("Checkpoint created from slash command"), "/checkpoint result feedback is missing");
+assert(chatAdapter.includes("Rollback preview prepared"), "/rollback preview result feedback is missing");
+assert(chatAdapter.includes("Checkpoint restore is waiting in Approval Center"), "/rollback restore approval feedback is missing");
+assert(chatAdapter.includes("No workspace files are restored until the approval item is accepted"), "/rollback restore safety copy is missing");
 assert(chatAdapter.includes("maybeCreateForkThread"), "/fork does not create a local fork thread");
 assert(chatAdapter.includes("maybeHandoffForkQueueThread"), "/fork handoff is not handled");
 assert(chatAdapter.includes("maybeScheduleForkQueue"), "/fork schedule command is not handled");
@@ -174,6 +212,8 @@ assert(chatAdapter.includes("desktopApi.startChat"), "normal chat backend path i
 assert(chatWorkspace.includes("CHAT_COMMAND_NAMES"), "composer does not use command registry");
 assert(chatWorkspace.includes("slash-command-panel"), "composer command panel is missing");
 assert(chatWorkspace.includes("selectSlashCommand"), "composer cannot insert slash commands");
+assert(chatWorkspace.includes('checkpoint: "Create a bounded rollback checkpoint."'), "/checkpoint slash menu description is missing");
+assert(chatWorkspace.includes('rollback: "List, preview, or queue an approval-gated checkpoint restore."'), "/rollback slash menu description is missing");
 assert(chatWorkspace.includes("parseForkQueueEntries"), "composer does not parse /fork queue entries for visual assignment");
 assert(chatWorkspace.includes("composer-fork-queue-agent-panel"), "composer visual fork queue agent panel is missing");
 assert(chatWorkspace.includes("forkQueueAgentSelections"), "composer does not retain visual fork queue agent selections");

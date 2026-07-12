@@ -80,6 +80,12 @@ assert(backendGateway.includes("10 * 1024 * 1024"), "gateway transcription endpo
 
 assert(plan.includes("Phase B Development Plan"), "voice plan omits Phase B implementation link");
 assert(checklist.includes("voice-ipc-handoff-agent"), "checklist omits this run's voice agent record");
-assert(roadmap.includes("typed mock-local voice transcription IPC"), "roadmap omits voice IPC evidence");
+assert(checklist.includes("voice-status-reconciliation-agent"), "checklist omits voice status reconciliation record");
+assert(checklist.includes("gateway-provider transcription runtime"), "checklist omits gateway-provider runtime evidence");
+assert(checklist.includes("device selection, MediaRecorder capture, live waveform sampling"), "checklist omits local voice capture evidence");
+assert(checklist.includes("offline Whisper/local STT packaging"), "checklist omits updated voice remaining gap");
+assert(roadmap.includes("typed voice transcription IPC"), "roadmap omits voice IPC evidence");
+assert(roadmap.includes("gateway-provider transcription runtime"), "roadmap omits gateway-provider runtime evidence");
+assert(roadmap.includes("input device selection, MediaRecorder capture, live waveform sampling"), "roadmap omits local voice capture evidence");
 
 console.log("Voice feature verification passed.");

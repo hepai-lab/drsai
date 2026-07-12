@@ -335,6 +335,9 @@ async function run() {
   await captureVisual(interactive, "interaction-chat");
   if (!interaction.text.includes("visual race check")) fail("chat user message did not render");
   if (!interaction.text.includes("renderer") || !interaction.text.includes("ok")) fail("chat stream markdown did not render");
+  if (!interaction.text.includes("Reasoning")) fail("structured reasoning summary did not render");
+  if (!interaction.text.includes("Read workspace file")) fail("structured tool timeline did not render");
+  if (interaction.text.includes("DUPLICATE MUST NOT RENDER")) fail("duplicate chat event was rendered");
   if (interaction.buttons.some((button) => button.text === "停止")) fail("chat request stayed in Stop state after stream completion");
 
   if (!(await clickByAnyText(interactive, ["智能体广场", "Agent Square"]))) fail("could not open Agent Square");
@@ -792,10 +795,13 @@ contextBridge.exposeInMainWorld("openDrSai", {
   closeMcpReusableSession: async () => ({ ok: true }),
   startChat: async (request) => {
     const requestId = request.requestId || crypto.randomUUID();
-    emit(chatListeners, { requestId, type: "start" });
-    setTimeout(() => emit(chatListeners, { requestId, type: "chunk", content: "Mock **desktop** chat stream.\n\n" }), 1200);
-    setTimeout(() => emit(chatListeners, { requestId, type: "chunk", content: "| item | status |\n| --- | --- |\n| renderer | ok |\n\n" }), 1600);
-    setTimeout(() => emit(chatListeners, { requestId, type: "done" }), 1900);
+    emit(chatListeners, { requestId, seq: 1, type: "start" });
+    setTimeout(() => emit(chatListeners, { requestId, seq: 2, type: "reasoning", content: "Checking renderer constraints." }), 700);
+    setTimeout(() => emit(chatListeners, { requestId, seq: 3, type: "tool_timeline", toolTimeline: { id: "visual-read", kind: "tool_call", title: "Read workspace file", toolName: "read_file", status: "completed", content: "src/main.ts" } }), 900);
+    setTimeout(() => emit(chatListeners, { requestId, seq: 4, type: "chunk", content: "Mock **desktop** chat stream.\n\n" }), 1200);
+    setTimeout(() => emit(chatListeners, { requestId, seq: 4, type: "chunk", content: "DUPLICATE MUST NOT RENDER" }), 1300);
+    setTimeout(() => emit(chatListeners, { requestId, seq: 5, type: "chunk", content: "| item | status |\n| --- | --- |\n| renderer | ok |\n\n" }), 1600);
+    setTimeout(() => emit(chatListeners, { requestId, seq: 6, type: "done" }), 1900);
     return requestId;
   },
   abortChat: async () => true,
@@ -822,6 +828,7 @@ contextBridge.exposeInMainWorld("openDrSai", {
   openExternal: async () => undefined,
   openPath: async () => "",
   onInstallProgress: (callback) => subscribe(installListeners, callback),
+  onAuthSessionInvalidated: () => () => undefined,
   onChatEvent: (callback) => subscribe(chatListeners, callback),
   onAgentRunEvent: (callback) => subscribe(agentRunListeners, callback),
   onUpdateStatus: (callback) => subscribe(updateListeners, callback),

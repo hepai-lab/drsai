@@ -81,9 +81,18 @@ assert(
     chatWorkspace.includes("@file") &&
     chatWorkspace.includes("@folder") &&
     chatWorkspace.includes("resolveInlineMentionPath") &&
+    chatWorkspace.includes("getInlineMentionBlockedReason") &&
+    chatWorkspace.includes("hasParentPathSegment") &&
+    chatWorkspace.includes("isPathInsideWorkspace") &&
+    chatWorkspace.includes("Inline mention blocked: path escapes the selected workspace") &&
+    chatWorkspace.includes("submittedAttachments.filter((attachment) => !attachment.blockedReason)") &&
     chatWorkspace.includes("summarizeInlineFolderAttachment") &&
     chatWorkspace.indexOf("resolvedInlineMentionAttachments") < chatWorkspace.indexOf("await onSubmit"),
-  "composer does not parse inline @file/@folder mentions before submit",
+  "composer does not parse and workspace-bound inline @file/@folder mentions before submit",
+);
+assert(
+  sharedApi.includes("blockedReason?: string"),
+  "shared chat attachment type does not expose blocked inline mention context",
 );
 assert(
   chatMain.includes('attachment.kind !== "folder"') &&
@@ -128,6 +137,10 @@ assert(
     chatWorkspace.includes("calibrationDrift") &&
     chatWorkspace.includes("formatCalibrationDrift") &&
     chatWorkspace.includes("driftPercent") &&
+    chatWorkspace.includes("calibrationTrusted") &&
+    chatWorkspace.includes('trustLevel: "trusted" | "provisional" | "untrusted"') &&
+    chatWorkspace.includes('Tokenizer calibration not applied:') &&
+    chatWorkspace.includes("exceeds the trusted threshold") &&
     chatWorkspace.includes("calibration drift") &&
     chatWorkspace.includes("single calibration sample") &&
     chatWorkspace.includes("token_limit") &&

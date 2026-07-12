@@ -67,10 +67,32 @@ from autogen_ext.models.anthropic._anthropic_client import (
     normalize_stop_reason,
     _add_usage
     )
+from drsai.platform_auth import get_model_credential_provider
 
 class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
 
     component_provider_override = "drsai.modules.components.model_client.anthropic._anthropic_client.HepAIAnthropicChatCompletionClient"
+
+    def __init__(self, **kwargs: Any):
+        credential = get_model_credential_provider(
+            kwargs.get("api_key"),
+            kwargs.get("base_url"),
+        )
+        if credential:
+            kwargs["api_key"] = credential.access_token
+            kwargs["base_url"] = credential.anthropic_base_url
+        super().__init__(**kwargs)
+
+    def _bind_platform_auth(self) -> None:
+        credential = get_model_credential_provider()
+        if not credential:
+            return
+        self._client.api_key = credential.access_token
+        self._client.base_url = credential.anthropic_base_url
+
+    async def create(self, *args: Any, **kwargs: Any):
+        self._bind_platform_auth()
+        return await super().create(*args, **kwargs)
 
     def _sanitize_anthropic_message(self, message: MessageParam) -> MessageParam:
         """Remove/repair empty Anthropic text blocks before sending.
@@ -123,6 +145,7 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
         cancellation_token: Optional[CancellationToken] = None,
         max_consecutive_empty_chunk_tolerance: int = 0,
     ) -> AsyncGenerator[Union[str, CreateResult], None]:
+        self._bind_platform_auth()
         async for chunk in self.create_stream_tmp(
             messages,
             tools=tools,

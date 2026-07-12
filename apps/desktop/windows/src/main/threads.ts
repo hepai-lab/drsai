@@ -5,8 +5,12 @@ import type {
   CreateThreadRequest,
   DesktopThread,
   DesktopThreadForkMetadata,
+  DesktopThreadContentSearchRequest,
+  DesktopThreadContentSearchResult,
   DesktopThreadMessageSnapshot,
   DesktopThreadSnapshot,
+  ChatToolTimelineEvent,
+  ChatMessagePart,
   UpdateThreadRequest,
 } from "../shared/desktopApi";
 import { DRSAI_HOME } from "./paths";
@@ -15,7 +19,7 @@ const THREADS_FILE = join(DRSAI_HOME, "desktop", "threads.json");
 const THREAD_SNAPSHOTS_FILE = join(DRSAI_HOME, "desktop", "thread-snapshots.json");
 const MAX_THREADS = 200;
 const MAX_THREAD_SNAPSHOTS = 200;
-const MAX_SNAPSHOT_MESSAGES = 200;
+const MAX_SNAPSHOT_MESSAGES = 500;
 const MAX_MESSAGE_CHARS = 200_000;
 const MAX_STATUS_CHARS = 80_000;
 const MAX_TITLE_CHARS = 120;
@@ -79,6 +83,53 @@ export async function getThreadSnapshot(rawThreadId: unknown): Promise<DesktopTh
   const threadId = sanitizeThreadId(rawThreadId);
   const snapshots = await readThreadSnapshots();
   return snapshots[threadId] ?? null;
+}
+
+export async function searchThreadMessages(
+  rawRequest: unknown,
+): Promise<DesktopThreadContentSearchResult[]> {
+  if (!rawRequest || typeof rawRequest !== "object") return [];
+  const request = rawRequest as Partial<DesktopThreadContentSearchRequest>;
+  const query = typeof request.query === "string" ? request.query.trim().slice(0, 200) : "";
+  if (!query) return [];
+
+  const allowedThreadIds = Array.isArray(request.threadIds)
+    ? new Set(request.threadIds.slice(0, MAX_THREADS).map(sanitizeThreadId))
+    : null;
+  const limit = Math.max(1, Math.min(50, Math.trunc(request.limit ?? 24)));
+  const normalizedQuery = query.toLocaleLowerCase();
+  const snapshots = Object.values(await readThreadSnapshots())
+    .filter((snapshot) => !allowedThreadIds || allowedThreadIds.has(snapshot.threadId))
+    .sort((left, right) => right.updatedAt - left.updatedAt);
+  const results: DesktopThreadContentSearchResult[] = [];
+
+  for (const snapshot of snapshots) {
+    const messages = [...snapshot.messages].reverse();
+    for (const message of messages) {
+      if (message.role === "system") continue;
+      const normalizedContent = message.content.replace(/\s+/g, " ").trim();
+      const matchIndex = normalizedContent.toLocaleLowerCase().indexOf(normalizedQuery);
+      if (matchIndex < 0) continue;
+      results.push({
+        threadId: snapshot.threadId,
+        messageId: message.id,
+        role: message.role,
+        snippet: createSearchSnippet(normalizedContent, matchIndex, query.length),
+        updatedAt: snapshot.updatedAt,
+      });
+      break;
+    }
+    if (results.length >= limit) break;
+  }
+
+  return results;
+}
+
+function createSearchSnippet(content: string, matchIndex: number, matchLength: number): string {
+  const contextLength = 72;
+  const start = Math.max(0, matchIndex - contextLength);
+  const end = Math.min(content.length, matchIndex + matchLength + contextLength);
+  return `${start > 0 ? "..." : ""}${content.slice(start, end)}${end < content.length ? "..." : ""}`;
 }
 
 export async function updateThreadSnapshot(rawRequest: unknown): Promise<DesktopThreadSnapshot> {
@@ -249,6 +300,15 @@ function sanitizeSnapshotMessage(rawMessage: unknown, index: number): DesktopThr
     ...(typeof message.statusContent === "string"
       ? { statusContent: message.statusContent.slice(0, MAX_STATUS_CHARS) }
       : {}),
+    ...(typeof message.reasoningContent === "string"
+      ? { reasoningContent: message.reasoningContent.slice(0, MAX_STATUS_CHARS) }
+      : {}),
+    ...(Array.isArray(message.toolTimeline)
+      ? { toolTimeline: message.toolTimeline.slice(-20).flatMap(sanitizeToolTimelineEvent) }
+      : {}),
+    ...(Array.isArray(message.parts)
+      ? { parts: message.parts.slice(0, 64).flatMap(sanitizeMessagePart) }
+      : {}),
     ...(typeof message.startedAt === "number" && Number.isFinite(message.startedAt)
       ? { startedAt: message.startedAt }
       : {}),
@@ -256,6 +316,66 @@ function sanitizeSnapshotMessage(rawMessage: unknown, index: number): DesktopThr
       ? { lastEventAt: message.lastEventAt }
       : {}),
   };
+}
+
+function sanitizeMessagePart(raw: unknown): ChatMessagePart[] {
+  if (!raw || typeof raw !== "object") return [];
+  const part = raw as Record<string, unknown>;
+  const id = typeof part.id === "string" ? part.id.trim().slice(0, 200) : "";
+  const type = typeof part.type === "string" ? part.type : "";
+  const allowedStatuses = ["pending", "running", "completed", "error", "cancelled"] as const;
+  const status = typeof part.status === "string" && (allowedStatuses as readonly string[]).includes(part.status)
+    ? part.status as (typeof allowedStatuses)[number]
+    : "completed";
+  if (!id) return [];
+  if (type === "text" && typeof part.text === "string") {
+    return [{ id, type, text: part.text.slice(0, MAX_MESSAGE_CHARS), format: part.format === "plain" ? "plain" : "markdown", status }];
+  }
+  if (type === "reasoning" && typeof part.text === "string") {
+    return [{ id, type, text: part.text.slice(0, MAX_STATUS_CHARS), visibility: part.visibility === "summary" ? "summary" : "raw", status }];
+  }
+  if (type === "status" && typeof part.text === "string") {
+    return [{ id, type, text: part.text.slice(0, MAX_STATUS_CHARS), ...(typeof part.level === "string" ? { level: part.level.slice(0, 40) } : {}), status }];
+  }
+  if (type === "error" && typeof part.message === "string") {
+    return [{ id, type, message: part.message.slice(0, MAX_STATUS_CHARS), ...(typeof part.code === "string" ? { code: part.code.slice(0, 120) } : {}), retryable: part.retryable === true, status: "error" }];
+  }
+  if (type === "file" && typeof part.name === "string" && typeof part.path === "string") {
+    return [{ id, type, name: part.name.slice(0, 260), path: part.path.slice(0, 2048), ...(typeof part.mime === "string" ? { mime: part.mime.slice(0, 120) } : {}), status }];
+  }
+  if (type === "patch" && typeof part.diff === "string") {
+    return [{ id, type, diff: part.diff.slice(0, MAX_STATUS_CHARS), ...(typeof part.path === "string" ? { path: part.path.slice(0, 2048) } : {}), status }];
+  }
+  if (type === "approval" && typeof part.requestId === "string" && typeof part.prompt === "string") {
+    return [{ id, type, requestId: part.requestId.slice(0, 160), prompt: part.prompt.slice(0, MAX_STATUS_CHARS), status }];
+  }
+  if (type === "tool") {
+    const events = sanitizeToolTimelineEvent(part.event);
+    return events.length ? [{ id, type, event: events[0], status }] : [];
+  }
+  return [];
+}
+
+function sanitizeToolTimelineEvent(raw: unknown): ChatToolTimelineEvent[] {
+  if (!raw || typeof raw !== "object") return [];
+  const event = raw as Record<string, unknown>;
+  const kind = event.kind;
+  if (!(["tool_call", "tool_result", "log", "diff", "artifact"] as unknown[]).includes(kind)) return [];
+  const id = typeof event.id === "string" ? event.id.slice(0, 160) : "";
+  const title = typeof event.title === "string" ? event.title.slice(0, 500) : "";
+  if (!id || !title) return [];
+  const statuses = ["started", "running", "completed", "failed"];
+  return [{
+    id,
+    kind: kind as "tool_call" | "tool_result" | "log" | "diff" | "artifact",
+    title,
+    ...(typeof event.status === "string" && statuses.includes(event.status) ? { status: event.status as "started" | "running" | "completed" | "failed" } : {}),
+    ...(typeof event.content === "string" ? { content: event.content.slice(0, MAX_STATUS_CHARS) } : {}),
+    ...(typeof event.toolName === "string" ? { toolName: event.toolName.slice(0, 160) } : {}),
+    ...(typeof event.path === "string" ? { path: event.path.slice(0, 2048) } : {}),
+    ...(typeof event.timestamp === "string" ? { timestamp: event.timestamp.slice(0, 80) } : {}),
+    ...(typeof event.level === "string" ? { level: event.level.slice(0, 40) } : {}),
+  }];
 }
 
 function sanitizeThreadId(value: unknown): string {

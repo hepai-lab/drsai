@@ -6,6 +6,7 @@ param(
     [string]$DrsaiHome = (Join-Path $env:USERPROFILE ".drsai"),
     [string]$Platform = "windows-x64",
     [string]$BootstrapperVersion = "0.1.0",
+    [string]$LogFileOverride = "",
     [switch]$NoLaunch,
     [switch]$Quiet
 )
@@ -16,10 +17,11 @@ $ProgressPreference = "SilentlyContinue"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $CacheDir = Join-Path $InstallRoot "cache"
-$StagingRoot = Join-Path $InstallRoot "staging"
+$tempRoot = if ($env:TEMP) { $env:TEMP } else { [System.IO.Path]::GetTempPath() }
+$StagingRoot = Join-Path $tempRoot "OpenDrSaiStaging"
 $LogDir = Join-Path $DrsaiHome "logs\bootstrapper"
 $Stamp = Get-Date -Format "yyyyMMdd-HHmmss"
-$LogFile = Join-Path $LogDir "install-$Stamp.log"
+$LogFile = if ($LogFileOverride) { $LogFileOverride } else { Join-Path $LogDir "install-$Stamp.log" }
 
 function New-Directory([string]$Path) {
     New-Item -ItemType Directory -Force -Path $Path | Out-Null
@@ -113,7 +115,8 @@ function Get-RuntimeArchive {
 function Expand-ZipClean([string]$Archive, [string]$Destination) {
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $Destination
     New-Directory $Destination
-    Expand-Archive -LiteralPath $Archive -DestinationPath $Destination -Force
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::ExtractToDirectory($Archive, $Destination)
 }
 
 function Resolve-RuntimeRoot([string]$ExpandedRoot) {
@@ -178,6 +181,17 @@ function Write-CmdWrapper([string]$Path, [string]$PythonExe, [string]$Module) {
 }
 
 function Repair-InstalledWrappers([string]$AgentDir) {
+    $venvRoot = Join-Path $AgentDir "venv"
+    $pyvenvConfig = Join-Path $venvRoot "pyvenv.cfg"
+    if (Test-Path (Join-Path $venvRoot "python.exe")) {
+        $config = @(
+            "home = $venvRoot",
+            "include-system-site-packages = false",
+            "version = 3.11.0",
+            "executable = $(Join-Path $venvRoot 'python.exe')"
+        ) -join [Environment]::NewLine
+        [IO.File]::WriteAllText($pyvenvConfig, ($config + [Environment]::NewLine), (New-Object Text.UTF8Encoding($false)))
+    }
     $scriptsDir = Join-Path $AgentDir "venv\Scripts"
     $pythonExe = Join-Path $scriptsDir "python.exe"
     Write-CmdWrapper (Join-Path $scriptsDir "drsai.cmd") $pythonExe "drsai.backend.run_cli"

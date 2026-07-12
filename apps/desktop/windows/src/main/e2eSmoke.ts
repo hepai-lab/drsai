@@ -38,8 +38,31 @@ interface ChannelImportFixture {
   pngPath: string;
   sarifJsonPath: string;
   chatExportJsonPath: string;
+  chatGptExportJsonPath: string;
   emlxPath: string;
   icsPath: string;
+  openApiJsonPath: string;
+  logcatPath: string;
+  browserCookiesPath: string;
+  playwrightTraceZipPath: string;
+  csvPath: string;
+  tsvPath: string;
+  powershellTranscriptPath: string;
+  opmlPath: string;
+  bookmarksPath: string;
+  metricsPath: string;
+  codeownersPath: string;
+  robotsPath: string;
+  harPath: string;
+  junitXmlPath: string;
+  vscodeSettingsPath: string;
+  vscodeTasksPath: string;
+  vscodeLaunchPath: string;
+  vscodeExtensionsPath: string;
+  browserHistoryPath: string;
+  browserDownloadsPath: string;
+  browserStoragePath: string;
+  browserExtensionManifestPath: string;
   filePaths: string[];
 }
 
@@ -216,7 +239,7 @@ async function runChatFailureSmoke(window: BrowserWindow): Promise<SmokeResult> 
           gatewayExternalReady: health.gateway && health.gateway.externalReady,
           gatewayExternalConflict: health.gateway && health.gateway.externalConflict,
         };
-        checks.gatewayReady = Boolean(health.gatewayReady && health.gateway && health.gateway.managed);
+        checks.gatewayReady = Boolean(health.gatewayReady && health.gateway && (health.gateway.managed || health.gateway.externalReady) && !health.gateway.externalConflict);
       }
 
       if (scenario === "abort") {
@@ -383,14 +406,18 @@ async function runChatSmoke(window: BrowserWindow): Promise<SmokeResult> {
       details.login = { ok: login && login.ok, message: login && login.message };
       checks.login = Boolean(login && login.ok);
 
-      const health = await api.getHealth();
+      let health = await api.getHealth();
+      for (let attempt = 0; attempt < 30 && !health.gatewayReady; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        health = await api.getHealth();
+      }
       details.health = {
         gatewayReady: health.gatewayReady,
         gatewayManaged: health.gateway && health.gateway.managed,
         gatewayExternalReady: health.gateway && health.gateway.externalReady,
         gatewayExternalConflict: health.gateway && health.gateway.externalConflict,
       };
-      checks.gatewayReady = Boolean(health.gatewayReady && health.gateway && health.gateway.managed);
+      checks.gatewayReady = Boolean(health.gatewayReady && health.gateway && (health.gateway.managed || health.gateway.externalReady) && !health.gateway.externalConflict);
 
       const thread = await api.createThread({
         kind: "chat",
@@ -411,7 +438,7 @@ async function runChatSmoke(window: BrowserWindow): Promise<SmokeResult> {
           requestId,
           threadId: thread.id,
           runId,
-          model: "drsai",
+          model: "deepseek-v4-pro",
           workspacePath: "C:\\\\OpenDrSai\\\\workspace",
           messages: [{ role: "user", content: "hello e2e chat" }],
         });
@@ -451,6 +478,12 @@ async function runChatSmoke(window: BrowserWindow): Promise<SmokeResult> {
       checks.chatTerminalDone = terminalEvent && terminalEvent.type === "done";
       checks.chatDurationRecorded = details.chatSummary.durationMs >= 0;
       checks.noChatError = !events.some((event) => event.type === "error" || event.type === "aborted");
+      // A pre-start health snapshot may be stale while deferred gateway probing
+      // is still warming up. A completed real IPC -> gateway -> SSE round trip
+      // is stronger evidence that the chat gateway is reachable.
+      checks.gatewayReady = checks.gatewayReady || Boolean(
+        checks.chatStartEvent && checks.chatDone && checks.noChatError,
+      );
       const threads = await api.listThreads();
       details.threads = threads;
       checks.chatThreadIdle = threads.some((item) =>
@@ -500,7 +533,7 @@ async function runAgentRunSmoke(window: BrowserWindow): Promise<SmokeResult> {
         gatewayExternalReady: health.gateway && health.gateway.externalReady,
         gatewayExternalConflict: health.gateway && health.gateway.externalConflict,
       };
-      checks.gatewayReady = Boolean(health.gatewayReady && health.gateway && health.gateway.managed);
+      checks.gatewayReady = Boolean(health.gatewayReady && health.gateway && (health.gateway.managed || health.gateway.externalReady) && !health.gateway.externalConflict);
 
       const thread = await api.createThread({
         kind: "agent_run",
@@ -673,7 +706,7 @@ async function runAgentRunFailureSmoke(window: BrowserWindow): Promise<SmokeResu
         gatewayReady: health.gatewayReady,
         gatewayManaged: health.gateway && health.gateway.managed,
       };
-      checks.gatewayReady = Boolean(health.gatewayReady && health.gateway && health.gateway.managed);
+        checks.gatewayReady = Boolean(health.gatewayReady && health.gateway && (health.gateway.managed || health.gateway.externalReady) && !health.gateway.externalConflict);
 
       if (scenario === "abort") {
         const outcome = await collectAgentRun("e2e-agent-failure-abort", "abort agent run", { abortAfterStart: true, waitMs: 10000 });
@@ -1453,7 +1486,7 @@ async function runOidcSmoke(window: BrowserWindow): Promise<SmokeResult> {
       try {
         const returnedChatRequestId = await api.startChat({
           requestId: chatRequestId,
-          model: "drsai",
+          model: "deepseek-v4-pro",
           messages: [{ role: "user", content: "oidc chat bearer check" }],
         });
         details.oidcChatReturnedRequestId = returnedChatRequestId;
@@ -1625,11 +1658,12 @@ async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
       checks.bundledBackendAvailable = Boolean(
         health.install && health.install.bundledBackendAvailable,
       );
+      const gatewayStatus = await api.getGatewayStatus();
+      details.gatewayStatus = gatewayStatus;
       checks.unmanagedGatewayRejected = Boolean(
-        health.gateway &&
-          health.gateway.externalReady === true &&
-          health.gateway.externalConflict === true &&
-          health.gatewayReady === false,
+        gatewayStatus.externalReady === true &&
+          gatewayStatus.externalConflict === true &&
+          gatewayStatus.ready === false,
       );
 
       const save = await api.saveApiKey("opendrsai-packaged-smoke-key");
@@ -1711,8 +1745,8 @@ async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
       const nonGitWorkspace = await api.createWorkspace({ source: "existing", path: reviewFixture.nonGitWorkspacePath, name: "packaged-non-git-review", trusted: true });
       const nonGitCheckpoint = await api.createWorkspaceCheckpoint({ workspacePath: reviewFixture.nonGitWorkspacePath, label: "Before non-Git packaged edit", maxFiles: 20 });
       const nonGitTerminal = await api.createTerminal({ cwd: reviewFixture.nonGitWorkspacePath, workspaceKey: "packaged-non-git", shellProfile: "cmd", title: "non-git-writer" });
-      await api.writeTerminal(nonGitTerminal.id, "echo changed without git>>notes.txt\\r");
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      await api.writeTerminal(nonGitTerminal.id, "echo changed without git>>notes.txt\\r\\n");
+      await new Promise((resolve) => setTimeout(resolve, 1500));
       await api.killTerminal(nonGitTerminal.id);
       const nonGitPreview = await api.previewWorkspaceCheckpoint({ workspacePath: reviewFixture.nonGitWorkspacePath, checkpointId: nonGitCheckpoint.id });
       const nonGitRestore = await api.restoreWorkspaceCheckpoint({ workspacePath: reviewFixture.nonGitWorkspacePath, checkpointId: nonGitCheckpoint.id });
@@ -1729,7 +1763,7 @@ async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
         adapterId: "file-input",
         workspacePath: channelImportFixture.workspacePath,
         paths: channelImportFixture.filePaths,
-        limit: 7,
+        limit: 30,
       });
       const channelImportItems = channelImport && channelImport.items ? channelImport.items : [];
       const channelImportItemByTitle = (title) => channelImportItems.find((item) => item && (item.title === title || item.relativePath === title));
@@ -1738,10 +1772,33 @@ async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
       const pngImportItem = channelImportItemByTitle("packaged-channel-import.png");
       const sarifImportItem = channelImportItemByTitle("packaged-results.sarif.json");
       const chatExportImportItem = channelImportItemByTitle("packaged-slack-export.json");
+      const chatGptExportImportItem = channelImportItemByTitle("packaged-chatgpt-conversations.json");
       const emlxImportItem = channelImportItemByTitle("packaged-message.emlx");
       const icsImportItem = channelImportItemByTitle("packaged-calendar.ics");
+      const openApiImportItem = channelImportItemByTitle("packaged-openapi.json");
+      const logcatImportItem = channelImportItemByTitle("packaged-logcat.logcat");
+      const browserCookiesImportItem = channelImportItemByTitle("packaged.cookies.txt");
+      const playwrightTraceImportItem = channelImportItemByTitle("packaged.trace.zip");
+      const csvImportItem = channelImportItemByTitle("packaged-data.csv");
+      const tsvImportItem = channelImportItemByTitle("packaged-data.tsv");
+      const powershellTranscriptImportItem = channelImportItemByTitle("packaged.powershell-transcript.txt");
+      const opmlImportItem = channelImportItemByTitle("packaged-subscriptions.opml");
+      const bookmarksImportItem = channelImportItemByTitle("packaged-bookmarks.html");
+      const metricsImportItem = channelImportItemByTitle("packaged.prom");
+      const codeownersImportItem = channelImportItemByTitle("CODEOWNERS");
+      const robotsImportItem = channelImportItemByTitle("packaged.robots.txt");
+      const harImportItem = channelImportItemByTitle("packaged.har");
+      const junitImportItem = channelImportItemByTitle("packaged.junit.xml");
+      const vscodeSettingsImportItem = channelImportItemByTitle("settings.json");
+      const vscodeTasksImportItem = channelImportItemByTitle("tasks.json");
+      const vscodeLaunchImportItem = channelImportItemByTitle("launch.json");
+      const vscodeExtensionsImportItem = channelImportItemByTitle("extensions.json");
+      const browserHistoryImportItem = channelImportItemByTitle("packaged-history.csv");
+      const browserDownloadsImportItem = channelImportItemByTitle("packaged-downloads.json");
+      const browserStorageImportItem = channelImportItemByTitle("packaged-local-storage.json");
+      const browserExtensionManifestImportItem = channelImportItemByTitle("packaged-extension-manifest.json");
       details.channelImport = channelImport;
-      checks.channelImportViaPreloadIpc = Boolean(channelImport && channelImport.adapterId === "file-input" && channelImportItems.length === 7);
+      checks.channelImportViaPreloadIpc = Boolean(channelImport && channelImport.adapterId === "file-input" && channelImportItems.length === 30);
       checks.channelImportWorkspaceBounded = Boolean(channelImport && channelImport.workspacePath === channelImportFixture.workspacePath);
       checks.channelImportMarkdownSummary = Boolean(
         markdownImportItem &&
@@ -1780,8 +1837,18 @@ async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
           String(chatExportImportItem.summary || "").includes("Packaged Slack export message") &&
           String(chatExportImportItem.summary || "").includes("token=[redacted]") &&
           !String(chatExportImportItem.summary || "").includes("secret-packaged-slack-token") &&
-          String(chatExportImportItem.summary || "").includes("no Slack/Teams/ChatGPT/OpenAI connector login") &&
+          String(chatExportImportItem.summary || "").includes("no Slack/Teams/Telegram/ChatGPT/OpenAI connector login") &&
           String(chatExportImportItem.mime || "").includes("application/vnd.drsai.chat-export+json")
+      );
+      checks.channelImportChatGptExportSummary = Boolean(
+        chatGptExportImportItem &&
+          String(chatGptExportImportItem.summary || "").includes("Chat export JSON preview (ChatGPT conversations JSON") &&
+          String(chatGptExportImportItem.summary || "").includes("Packaged ChatGPT Conversation") &&
+          String(chatGptExportImportItem.summary || "").includes("assistant") &&
+          String(chatGptExportImportItem.summary || "").includes("Packaged ChatGPT export prompt") &&
+          !String(chatGptExportImportItem.summary || "").includes("secret-packaged-chatgpt-token") &&
+          String(chatGptExportImportItem.summary || "").includes("no Slack/Teams/Telegram/ChatGPT/OpenAI connector login") &&
+          String(chatGptExportImportItem.mime || "").includes("application/vnd.drsai.chat-export+json")
       );
       checks.channelImportEmlxSummary = Boolean(
         emlxImportItem &&
@@ -1802,6 +1869,251 @@ async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
           !String(icsImportItem.summary || "").includes("secret-packaged-ics-token") &&
           String(icsImportItem.summary || "").includes("no calendar app access") &&
           String(icsImportItem.mime || "").includes("text/calendar")
+      );
+      checks.channelImportOpenApiJsonSummary = Boolean(
+        openApiImportItem &&
+          String(openApiImportItem.summary || "").includes("API spec/collection preview") &&
+          String(openApiImportItem.summary || "").includes("Format: OpenAPI 3.1.0") &&
+          String(openApiImportItem.summary || "").includes("Packaged Fixture JSON API") &&
+          String(openApiImportItem.summary || "").includes("GET /packaged-runs") &&
+          String(openApiImportItem.summary || "").includes("json-packaged.example.test") &&
+          String(openApiImportItem.summary || "").includes("apiKeyAuth") &&
+          !String(openApiImportItem.summary || "").includes("secret-packaged-openapi-token") &&
+          String(openApiImportItem.summary || "").includes("no request execution") &&
+          String(openApiImportItem.mime || "").includes("application/json")
+      );
+      checks.channelImportLogcatSummary = Boolean(
+        logcatImportItem &&
+          String(logcatImportItem.summary || "").includes("Android logcat export preview") &&
+          String(logcatImportItem.summary || "").includes("ActivityTaskManager") &&
+          String(logcatImportItem.summary || "").includes("AndroidRuntime") &&
+          String(logcatImportItem.summary || "").includes("PackagedDrSai") &&
+          String(logcatImportItem.summary || "").includes("token=[redacted]") &&
+          !String(logcatImportItem.summary || "").includes("secret-packaged-logcat-token") &&
+          String(logcatImportItem.summary || "").includes("no adb/logcat command, device/emulator access, live log streaming") &&
+          String(logcatImportItem.mime || "").includes("text/x-android-logcat")
+      );
+      checks.channelImportBrowserCookiesSummary = Boolean(
+        browserCookiesImportItem &&
+          String(browserCookiesImportItem.summary || "").includes("Browser cookie export preview") &&
+          String(browserCookiesImportItem.summary || "").includes("packaged.example.test") &&
+          String(browserCookiesImportItem.summary || "").includes("api.packaged.example.test") &&
+          String(browserCookiesImportItem.summary || "").includes("packaged_session") &&
+          String(browserCookiesImportItem.summary || "").includes("packaged_auth") &&
+          String(browserCookiesImportItem.summary || "").includes("secure=2") &&
+          String(browserCookiesImportItem.summary || "").includes("httpOnly=1") &&
+          String(browserCookiesImportItem.summary || "").includes("cookie values were always redacted") &&
+          !String(browserCookiesImportItem.summary || "").includes("secret-packaged-cookie") &&
+          String(browserCookiesImportItem.summary || "").includes("browser profiles were not opened, cookies were not imported") &&
+          String(browserCookiesImportItem.mime || "").includes("text/x-netscape-cookies")
+      );
+      checks.channelImportPlaywrightTraceSummary = Boolean(
+        playwrightTraceImportItem &&
+          String(playwrightTraceImportItem.summary || "").includes("Playwright trace ZIP preview") &&
+          String(playwrightTraceImportItem.summary || "").includes("trace.trace") &&
+          String(playwrightTraceImportItem.summary || "").includes("trace.network") &&
+          String(playwrightTraceImportItem.summary || "").includes("resources/packaged-request.txt") &&
+          String(playwrightTraceImportItem.summary || "").includes("screenshots/packaged-step.png") &&
+          String(playwrightTraceImportItem.summary || "").includes("packaged-video.webm") &&
+          String(playwrightTraceImportItem.summary || "").includes("test.json") &&
+          String(playwrightTraceImportItem.summary || "").includes("trace resources were not extracted") &&
+          String(playwrightTraceImportItem.summary || "").includes("tests were not rerun") &&
+          String(playwrightTraceImportItem.mime || "").includes("application/vnd.playwright.trace+zip")
+      );
+      checks.channelImportCsvSummary = Boolean(
+        csvImportItem &&
+          String(csvImportItem.summary || "").includes("Structured CSV preview") &&
+          String(csvImportItem.summary || "").includes("Columns (4): user_id, event_name, status, api_token") &&
+          String(csvImportItem.summary || "").includes("identifier/relationship key candidate") &&
+          !String(csvImportItem.summary || "").includes("secret-packaged-csv-token") &&
+          String(csvImportItem.summary || "").includes("no database connection, network call, spreadsheet macro execution") &&
+          String(csvImportItem.mime || "").includes("text/csv")
+      );
+      checks.channelImportTsvSummary = Boolean(
+        tsvImportItem &&
+          String(tsvImportItem.summary || "").includes("Structured TSV preview") &&
+          String(tsvImportItem.summary || "").includes("Columns (4): run_id, owner, result, created_at") &&
+          String(tsvImportItem.summary || "").includes("enum-like values passed, failed") &&
+          String(tsvImportItem.summary || "").includes("tab-separated data was parsed from a bounded local byte sample") &&
+          String(tsvImportItem.summary || "").includes("no database connection, network call, spreadsheet macro execution") &&
+          String(tsvImportItem.mime || "").includes("text/tab-separated-values")
+      );
+      checks.channelImportPowerShellTranscriptSummary = Boolean(
+        powershellTranscriptImportItem &&
+          String(powershellTranscriptImportItem.summary || "").includes("PowerShell transcript preview") &&
+          String(powershellTranscriptImportItem.summary || "").includes("start=1") &&
+          String(powershellTranscriptImportItem.summary || "").includes("end=1") &&
+          String(powershellTranscriptImportItem.summary || "").includes("Host Application=powershell.exe -NoProfile -ExecutionPolicy Bypass") &&
+          String(powershellTranscriptImportItem.summary || "").includes("PSVersion=5.1.22621.1") &&
+          String(powershellTranscriptImportItem.summary || "").includes("npm run verify:packaged") &&
+          String(powershellTranscriptImportItem.summary || "").includes("git status --short") &&
+          String(powershellTranscriptImportItem.summary || "").includes("warning") &&
+          String(powershellTranscriptImportItem.summary || "").includes("fatal") &&
+          String(powershellTranscriptImportItem.summary || "").includes("access denied") &&
+          String(powershellTranscriptImportItem.summary || "").includes("token=[redacted]") &&
+          !String(powershellTranscriptImportItem.summary || "").includes("secret-packaged-transcript") &&
+          String(powershellTranscriptImportItem.summary || "").includes("no PowerShell/pwsh process, transcript replay, shell command execution") &&
+          String(powershellTranscriptImportItem.mime || "").includes("text/x-powershell-transcript")
+      );
+      checks.channelImportOpmlSummary = Boolean(
+        opmlImportItem &&
+          String(opmlImportItem.summary || "").includes("OPML subscription export preview") &&
+          String(opmlImportItem.summary || "").includes("Packaged Feed Subscriptions") &&
+          String(opmlImportItem.summary || "").includes("Packaged OPML Feed") &&
+          String(opmlImportItem.summary || "").includes("https://feeds.example.test/packaged.xml?token=REDACTED") &&
+          !String(opmlImportItem.summary || "").includes("secret-packaged-opml-token") &&
+          String(opmlImportItem.summary || "").includes("feed URLs were not fetched") &&
+          String(opmlImportItem.mime || "").includes("text/x-opml+xml")
+      );
+      checks.channelImportBookmarksSummary = Boolean(
+        bookmarksImportItem &&
+          String(bookmarksImportItem.summary || "").includes("Browser bookmark export preview") &&
+          String(bookmarksImportItem.summary || "").includes("Packaged Browser Bookmarks") &&
+          String(bookmarksImportItem.summary || "").includes("Packaged Bookmark Folder") &&
+          String(bookmarksImportItem.summary || "").includes("Packaged Docs") &&
+          (String(bookmarksImportItem.summary || "").includes("https://docs.example.test/packaged?token=REDACTED") ||
+            String(bookmarksImportItem.summary || "").includes("https://docs.example.test/packaged?token=%5BREDACTED%5D")) &&
+          !String(bookmarksImportItem.summary || "").includes("secret-packaged-bookmark-token") &&
+          String(bookmarksImportItem.summary || "").includes("URLs were not fetched") &&
+          String(bookmarksImportItem.mime || "").includes("text/html")
+      );
+      checks.channelImportMetricsSummary = Boolean(
+        metricsImportItem &&
+          String(metricsImportItem.summary || "").includes("Metrics snapshot preview") &&
+          String(metricsImportItem.summary || "").includes("packaged_requests_total") &&
+          String(metricsImportItem.summary || "").includes("packaged_request_latency_seconds:histogram") &&
+          String(metricsImportItem.summary || "").includes("job") &&
+          String(metricsImportItem.summary || "").includes("route") &&
+          !String(metricsImportItem.summary || "").includes("secret-packaged-metrics-token") &&
+          String(metricsImportItem.summary || "").includes("no Prometheus/OpenMetrics server query, scrape, remote write") &&
+          String(metricsImportItem.mime || "").includes("text/plain; version=0.0.4")
+      );
+      checks.channelImportCodeownersSummary = Boolean(
+        codeownersImportItem &&
+          String(codeownersImportItem.summary || "").includes("Repository governance file preview") &&
+          String(codeownersImportItem.summary || "").includes("CODEOWNERS ownership rules") &&
+          String(codeownersImportItem.summary || "").includes("/apps/desktop/windows/ -> @opendrsai/windows, @opendrsai/release") &&
+          String(codeownersImportItem.summary || "").includes("/docs/ -> @opendrsai/docs") &&
+          String(codeownersImportItem.summary || "").includes("no git command, CODEOWNERS resolver") &&
+          String(codeownersImportItem.mime || "").includes("text/x-codeowners")
+      );
+      checks.channelImportRobotsSummary = Boolean(
+        robotsImportItem &&
+          String(robotsImportItem.summary || "").includes("Web crawl metadata preview (robots.txt") &&
+          String(robotsImportItem.summary || "").includes("User agents: PackagedBot") &&
+          String(robotsImportItem.summary || "").includes("Disallow rules (1): /private") &&
+          String(robotsImportItem.summary || "").includes("Allow rules: /public") &&
+          String(robotsImportItem.summary || "").includes("Crawl delays: 5") &&
+          String(robotsImportItem.summary || "").includes("https://crawl.example.test/sitemap.xml?token=REDACTED") &&
+          !String(robotsImportItem.summary || "").includes("secret-packaged-crawl-token") &&
+          String(robotsImportItem.summary || "").includes("remote URLs were not fetched, pages were not crawled, JavaScript was not executed") &&
+          String(robotsImportItem.mime || "").includes("text/plain")
+      );
+      checks.channelImportHarSummary = Boolean(
+        harImportItem &&
+          String(harImportItem.summary || "").includes("HAR network trace preview") &&
+          String(harImportItem.summary || "").includes("Entries: 2") &&
+          String(harImportItem.summary || "").includes("Methods: GET 1, POST 1") &&
+          String(harImportItem.summary || "").includes("Statuses: 200 OK 1, 502 Bad Gateway 1") &&
+          String(harImportItem.summary || "").includes("api-packaged.example.test") &&
+          String(harImportItem.summary || "").includes("https://api-packaged.example.test/v1/runs?token=REDACTED") &&
+          String(harImportItem.summary || "").includes("Authorization: [REDACTED]") &&
+          String(harImportItem.summary || "").includes("Cookie: [REDACTED]") &&
+          !String(harImportItem.summary || "").includes("secret-packaged-har") &&
+          String(harImportItem.summary || "").includes("no browser profile access, request replay, network call") &&
+          String(harImportItem.mime || "").includes("application/har+json")
+      );
+      checks.channelImportJunitSummary = Boolean(
+        junitImportItem &&
+          String(junitImportItem.summary || "").includes("Test report preview (JUnit XML") &&
+          String(junitImportItem.summary || "").includes("Cases: 2; failures: 1; errors: 0; skipped: 0") &&
+          String(junitImportItem.summary || "").includes("PackagedJUnitSuite") &&
+          String(junitImportItem.summary || "").includes("PackagedJunitTest.failsWithToken") &&
+          String(junitImportItem.summary || "").includes("api_token=[redacted]") &&
+          String(junitImportItem.summary || "").includes("artifacts/[redacted].txt") &&
+          !String(junitImportItem.summary || "").includes("secret-packaged-junit-token") &&
+          String(junitImportItem.summary || "").includes("no test runner, build command, CI provider API call") &&
+          String(junitImportItem.mime || "").includes("application/junit+xml")
+      );
+      checks.channelImportVsCodeSettingsSummary = Boolean(
+        vscodeSettingsImportItem &&
+          String(vscodeSettingsImportItem.summary || "").includes("VS Code workspace config preview (VS Code settings.json") &&
+          String(vscodeSettingsImportItem.summary || "").includes("editor.formatOnSave") &&
+          String(vscodeSettingsImportItem.summary || "").includes("python.defaultInterpreterPath") &&
+          !String(vscodeSettingsImportItem.summary || "").includes("secret-packaged-vscode-settings-token") &&
+          String(vscodeSettingsImportItem.summary || "").includes("no VS Code process, task/debug launch, extension install") &&
+          String(vscodeSettingsImportItem.mime || "").includes("application/vnd.code.settings+json")
+      );
+      checks.channelImportVsCodeTasksSummary = Boolean(
+        vscodeTasksImportItem &&
+          String(vscodeTasksImportItem.summary || "").includes("VS Code workspace config preview (VS Code tasks.json") &&
+          String(vscodeTasksImportItem.summary || "").includes("Packaged VS Code build") &&
+          String(vscodeTasksImportItem.summary || "").includes("problemMatcher=$tsc") &&
+          String(vscodeTasksImportItem.summary || "").includes("packagedTarget type=pickString") &&
+          String(vscodeTasksImportItem.summary || "").includes("token=[redacted]") &&
+          !String(vscodeTasksImportItem.summary || "").includes("secret-packaged-vscode-task-token") &&
+          String(vscodeTasksImportItem.summary || "").includes("no VS Code process, task/debug launch, extension install") &&
+          String(vscodeTasksImportItem.mime || "").includes("application/vnd.code.tasks+json")
+      );
+      checks.channelImportVsCodeLaunchSummary = Boolean(
+        vscodeLaunchImportItem &&
+          String(vscodeLaunchImportItem.summary || "").includes("VS Code workspace config preview (VS Code launch.json") &&
+          String(vscodeLaunchImportItem.summary || "").includes("Packaged renderer debug") &&
+          String(vscodeLaunchImportItem.summary || "").includes("type=node") &&
+          String(vscodeLaunchImportItem.summary || "").includes("request=launch") &&
+          String(vscodeLaunchImportItem.mime || "").includes("application/vnd.code.launch+json")
+      );
+      checks.channelImportVsCodeExtensionsSummary = Boolean(
+        vscodeExtensionsImportItem &&
+          String(vscodeExtensionsImportItem.summary || "").includes("VS Code workspace config preview (VS Code extensions.json") &&
+          String(vscodeExtensionsImportItem.summary || "").includes("ms-vscode.vscode-typescript-next") &&
+          String(vscodeExtensionsImportItem.summary || "").includes("unwanted:[redacted]") &&
+          !String(vscodeExtensionsImportItem.summary || "").includes("secret-packaged-vscode-extension") &&
+          String(vscodeExtensionsImportItem.summary || "").includes("no VS Code process, task/debug launch, extension install") &&
+          String(vscodeExtensionsImportItem.mime || "").includes("application/vnd.code.extensions+json")
+      );
+      checks.channelImportBrowserHistorySummary = Boolean(
+        browserHistoryImportItem &&
+          String(browserHistoryImportItem.summary || "").includes("Browser history export preview") &&
+          String(browserHistoryImportItem.summary || "").includes("packaged-history.example.test") &&
+          String(browserHistoryImportItem.summary || "").includes("Packaged History") &&
+          String(browserHistoryImportItem.summary || "").includes("visits=4") &&
+          String(browserHistoryImportItem.summary || "").includes("token=%5BREDACTED%5D") &&
+          !String(browserHistoryImportItem.summary || "").includes("secret-packaged-history-token") &&
+          String(browserHistoryImportItem.summary || "").includes("browser profiles were not opened, history databases were not imported") &&
+          String(browserHistoryImportItem.mime || "").includes("text/csv+browser-history")
+      );
+      checks.channelImportBrowserDownloadsSummary = Boolean(
+        browserDownloadsImportItem &&
+          String(browserDownloadsImportItem.summary || "").includes("Browser downloads export preview") &&
+          String(browserDownloadsImportItem.summary || "").includes("packaged-downloads.example.test") &&
+          String(browserDownloadsImportItem.summary || "").includes("packaged-installer.exe") &&
+          String(browserDownloadsImportItem.summary || "").includes("token=%5BREDACTED%5D") &&
+          !String(browserDownloadsImportItem.summary || "").includes("secret-packaged-download-token") &&
+          String(browserDownloadsImportItem.summary || "").includes("target paths were reduced to filenames") &&
+          String(browserDownloadsImportItem.summary || "").includes("downloaded files were not opened or executed") &&
+          String(browserDownloadsImportItem.mime || "").includes("application/vnd.drsai.browser-downloads+json")
+      );
+      checks.channelImportBrowserStorageSummary = Boolean(
+        browserStorageImportItem &&
+          String(browserStorageImportItem.summary || "").includes("Browser storage export preview") &&
+          String(browserStorageImportItem.summary || "").includes("packaged-storage.example.test") &&
+          String(browserStorageImportItem.summary || "").includes("localStorage") &&
+          String(browserStorageImportItem.summary || "").includes("packagedApiToken") &&
+          String(browserStorageImportItem.summary || "").includes("storage values were classified but not printed") &&
+          !String(browserStorageImportItem.summary || "").includes("secret-packaged-storage-token") &&
+          String(browserStorageImportItem.summary || "").includes("browser profiles and LevelDB/IndexedDB stores were not opened") &&
+          String(browserStorageImportItem.mime || "").includes("application/vnd.drsai.browser-storage+json")
+      );
+      checks.channelImportBrowserExtensionManifestSummary = Boolean(
+        browserExtensionManifestImportItem &&
+          String(browserExtensionManifestImportItem.summary || "").includes("Browser extension manifest preview") &&
+          String(browserExtensionManifestImportItem.summary || "").includes("Packaged Extension Smoke") &&
+          String(browserExtensionManifestImportItem.summary || "").includes("tabs") &&
+          String(browserExtensionManifestImportItem.summary || "").includes("https://extension-packaged.example.test/*") &&
+          !String(browserExtensionManifestImportItem.summary || "").includes("secret-packaged-extension-token") &&
+          String(browserExtensionManifestImportItem.summary || "").includes("extension code was not loaded or executed") &&
+          String(browserExtensionManifestImportItem.mime || "").includes("application/vnd.drsai.browser-extension-manifest+json")
       );
       checks.channelImportNoProviderSend = Boolean(
         channelImport &&
@@ -1991,6 +2303,30 @@ function prepareChannelImportFixture(): ChannelImportFixture {
     ].join("\n"),
     "utf8",
   );
+  const chatGptExportJsonPath = join(workspacePath, "packaged-chatgpt-conversations.json");
+  writeFileSync(
+    chatGptExportJsonPath,
+    JSON.stringify([
+      {
+        title: "Packaged ChatGPT Conversation",
+        mapping: {
+          prompt: {
+            message: {
+              author: { role: "user" },
+              content: { parts: ["Packaged ChatGPT export prompt token=secret-packaged-chatgpt-token"] },
+            },
+          },
+          answer: {
+            message: {
+              author: { role: "assistant" },
+              content: { parts: ["Packaged ChatGPT export answer for reviewed local context."] },
+            },
+          },
+        },
+      },
+    ], null, 2),
+    "utf8",
+  );
   const icsPath = join(workspacePath, "packaged-calendar.ics");
   writeFileSync(
     icsPath,
@@ -2011,6 +2347,370 @@ function prepareChannelImportFixture(): ChannelImportFixture {
     ].join("\r\n"),
     "utf8",
   );
+  const openApiJsonPath = join(workspacePath, "packaged-openapi.json");
+  writeFileSync(
+    openApiJsonPath,
+    JSON.stringify({
+      openapi: "3.1.0",
+      info: {
+        title: "Packaged Fixture JSON API",
+        version: "1.0.0",
+      },
+      servers: [{ url: "https://json-packaged.example.test/v1?token=secret-packaged-openapi-token" }],
+      paths: {
+        "/packaged-runs": {
+          get: {
+            operationId: "listPackagedRuns",
+            security: [{ apiKeyAuth: [] }],
+            responses: { "200": { description: "OK" } },
+          },
+        },
+      },
+      components: {
+        securitySchemes: {
+          apiKeyAuth: { type: "apiKey", in: "header", name: "X-API-Key" },
+        },
+      },
+    }, null, 2),
+    "utf8",
+  );
+  const logcatPath = join(workspacePath, "packaged-logcat.logcat");
+  writeFileSync(
+    logcatPath,
+    [
+      "07-11 11:01:02.123  2211  2211 I ActivityTaskManager: Displayed ai.opendrsai/.MainActivity",
+      "07-11 11:01:03.456  2211  2299 W PackagedDrSai: sync retry token=secret-packaged-logcat-token",
+      "07-11 11:01:04.789  3333  3333 E AndroidRuntime: FATAL EXCEPTION: main",
+    ].join("\n"),
+    "utf8",
+  );
+  const browserCookiesPath = join(workspacePath, "packaged.cookies.txt");
+  writeFileSync(
+    browserCookiesPath,
+    [
+      "# Netscape HTTP Cookie File",
+      ".packaged.example.test\tTRUE\t/\tTRUE\t2147483647\tpackaged_session\tsecret-packaged-cookie-session",
+      "#HttpOnly_api.packaged.example.test\tFALSE\t/api\tTRUE\t0\tpackaged_auth\tsecret-packaged-cookie-auth",
+      "static.packaged.example.test\tFALSE\t/assets\tFALSE\t1\tpackaged_pref\tsecret-packaged-cookie-pref",
+    ].join("\n"),
+    "utf8",
+  );
+  const playwrightTraceZipPath = join(workspacePath, "packaged.trace.zip");
+  writeFileSync(
+    playwrightTraceZipPath,
+    Buffer.concat([
+      createSmokeZipLocalEntry("trace.trace", JSON.stringify({ type: "context-options", browserName: "chromium" })),
+      createSmokeZipLocalEntry("trace.network", JSON.stringify({ method: "GET", url: "https://trace-packaged.example.test?token=secret-packaged-trace-token" })),
+      createSmokeZipLocalEntry("resources/packaged-request.txt", "Packaged trace resource placeholder"),
+      createSmokeZipLocalEntry("screenshots/packaged-step.png", "PNG packaged screenshot placeholder"),
+      createSmokeZipLocalEntry("packaged-video.webm", "WEBM packaged video placeholder"),
+      createSmokeZipLocalEntry("test.json", JSON.stringify({ title: "Packaged Playwright trace fixture" })),
+    ]),
+  );
+  const csvPath = join(workspacePath, "packaged-data.csv");
+  writeFileSync(
+    csvPath,
+    [
+      "user_id,event_name,status,api_token",
+      "1,packaged-open,active,secret-packaged-csv-token",
+      "2,packaged-close,inactive,public-row",
+      "3,packaged-review,active,public-row-2",
+    ].join("\n"),
+    "utf8",
+  );
+  const tsvPath = join(workspacePath, "packaged-data.tsv");
+  writeFileSync(
+    tsvPath,
+    [
+      "run_id\towner\tresult\tcreated_at",
+      "run-1\talice\tpassed\t2026-07-11",
+      "run-2\tbob\tfailed\t2026-07-11",
+      "run-3\tcarol\tpassed\t2026-07-11",
+    ].join("\n"),
+    "utf8",
+  );
+  const powershellTranscriptPath = join(workspacePath, "packaged.powershell-transcript.txt");
+  writeFileSync(
+    powershellTranscriptPath,
+    [
+      "**********************",
+      "Windows PowerShell transcript start",
+      "Start time: 20260711111501",
+      "Username: DESKTOP-PACKAGED\\runner",
+      "RunAs User: DESKTOP-PACKAGED\\runner",
+      "Host Application: powershell.exe -NoProfile -ExecutionPolicy Bypass",
+      "Process ID: 5151",
+      "PSVersion: 5.1.22621.1",
+      "**********************",
+      "PS C:\\repo> npm run verify:packaged -- --token=secret-packaged-transcript-token",
+      "Packaged transcript warning: retrying IPC smoke",
+      "PS C:\\repo> git status --short",
+      "fatal: access denied token=secret-packaged-transcript-output",
+      "At line:1 char:1",
+      "+ Invoke-RestMethod https://api.example.test/packaged?token=secret-packaged-transcript-url",
+      "+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+      "CategoryInfo          : SecurityError: (:) [], UnauthorizedAccessException",
+      "**********************",
+      "Windows PowerShell transcript end",
+      "End time: 20260711111509",
+      "**********************",
+    ].join("\n"),
+    "utf8",
+  );
+  const opmlPath = join(workspacePath, "packaged-subscriptions.opml");
+  writeFileSync(
+    opmlPath,
+    [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<opml version="2.0">',
+      "  <head>",
+      "    <title>Packaged Feed Subscriptions</title>",
+      "    <ownerName>OpenDrSai Packaged Smoke</ownerName>",
+      "  </head>",
+      "  <body>",
+      '    <outline text="Packaged OPML Group" title="Packaged OPML Group">',
+      '      <outline text="Packaged OPML Feed" title="Packaged OPML Feed" type="rss" xmlUrl="https://feeds.example.test/packaged.xml?token=secret-packaged-opml-token" htmlUrl="https://example.test/packaged"/>',
+      "    </outline>",
+      "  </body>",
+      "</opml>",
+    ].join("\n"),
+    "utf8",
+  );
+  const bookmarksPath = join(workspacePath, "packaged-bookmarks.html");
+  writeFileSync(
+    bookmarksPath,
+    [
+      "<!DOCTYPE NETSCAPE-Bookmark-file-1>",
+      "<META HTTP-EQUIV=\"Content-Type\" CONTENT=\"text/html; charset=UTF-8\">",
+      "<TITLE>Packaged Browser Bookmarks</TITLE>",
+      "<H1>Packaged Browser Bookmarks</H1>",
+      "<DL><p>",
+      "  <DT><H3 ADD_DATE=\"1783598400\">Packaged Bookmark Folder</H3>",
+      "  <DL><p>",
+      "    <DT><A HREF=\"https://docs.example.test/packaged?token=secret-packaged-bookmark-token\" ADD_DATE=\"1783598401\">Packaged Docs</A>",
+      "  </DL><p>",
+      "</DL><p>",
+    ].join("\n"),
+    "utf8",
+  );
+  const metricsPath = join(workspacePath, "packaged.prom");
+  writeFileSync(
+    metricsPath,
+    [
+      "# HELP packaged_requests_total Packaged request count",
+      "# TYPE packaged_requests_total counter",
+      'packaged_requests_total{job="desktop",route="/packaged",token="secret-packaged-metrics-token"} 7',
+      "# HELP packaged_request_latency_seconds Packaged request latency",
+      "# TYPE packaged_request_latency_seconds histogram",
+      'packaged_request_latency_seconds_bucket{job="desktop",route="/packaged",le="0.5"} 4',
+      'packaged_request_latency_seconds_bucket{job="desktop",route="/packaged",le="+Inf"} 7',
+    ].join("\n"),
+    "utf8",
+  );
+  const codeownersPath = join(workspacePath, "CODEOWNERS");
+  writeFileSync(
+    codeownersPath,
+    [
+      "# Packaged ownership fixture",
+      "/apps/desktop/windows/ @opendrsai/windows @opendrsai/release",
+      "/docs/ @opendrsai/docs",
+    ].join("\n"),
+    "utf8",
+  );
+  const robotsPath = join(workspacePath, "packaged.robots.txt");
+  writeFileSync(
+    robotsPath,
+    [
+      "User-agent: PackagedBot",
+      "Disallow: /private",
+      "Allow: /public",
+      "Crawl-delay: 5",
+      "Sitemap: https://crawl.example.test/sitemap.xml?token=secret-packaged-crawl-token",
+    ].join("\n"),
+    "utf8",
+  );
+  const harPath = join(workspacePath, "packaged.har");
+  writeFileSync(
+    harPath,
+    JSON.stringify({
+      log: {
+        version: "1.2",
+        creator: { name: "OpenDrSai packaged smoke", version: "1.0" },
+        entries: [
+          {
+            startedDateTime: "2026-07-11T03:30:00.000Z",
+            time: 42,
+            request: {
+              method: "GET",
+              url: "https://api-packaged.example.test/v1/runs?token=secret-packaged-har-token&view=summary",
+              headers: [
+                { name: "Authorization", value: "Bearer secret-packaged-har-auth" },
+                { name: "Accept", value: "application/json" },
+              ],
+            },
+            response: {
+              status: 200,
+              statusText: "OK",
+              headers: [{ name: "Content-Type", value: "application/json" }],
+              content: { mimeType: "application/json" },
+            },
+          },
+          {
+            startedDateTime: "2026-07-11T03:30:01.000Z",
+            time: 117,
+            request: {
+              method: "POST",
+              url: "https://api-packaged.example.test/v1/runs",
+              headers: [
+                { name: "Cookie", value: "session=secret-packaged-har-cookie" },
+                { name: "Content-Type", value: "application/json" },
+              ],
+            },
+            response: {
+              status: 502,
+              statusText: "Bad Gateway",
+              headers: [{ name: "Content-Type", value: "text/plain" }],
+              content: { mimeType: "text/plain" },
+            },
+          },
+        ],
+      },
+    }, null, 2),
+    "utf8",
+  );
+  const junitXmlPath = join(workspacePath, "packaged.junit.xml");
+  writeFileSync(
+    junitXmlPath,
+    [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<testsuites name="PackagedJUnit" tests="2" failures="1" errors="0" skipped="0" time="0.210">',
+      '  <testsuite name="PackagedJUnitSuite" tests="2" failures="1" errors="0" skipped="0" time="0.210">',
+      '    <properties>',
+      '      <property name="api_token" value="secret-packaged-junit-token"/>',
+      '    </properties>',
+      '    <testcase classname="PackagedJunitTest" name="passes" time="0.050"/>',
+      '    <testcase classname="PackagedJunitTest" name="failsWithToken" time="0.160">',
+      '      <failure message="token=secret-packaged-junit-token">Expected packaged failure evidence.</failure>',
+      '      <system-out>[[ATTACHMENT|artifacts/secret-packaged-junit-token.txt]]</system-out>',
+      "    </testcase>",
+      "  </testsuite>",
+      "</testsuites>",
+    ].join("\n"),
+    "utf8",
+  );
+  const vscodeDir = join(workspacePath, ".vscode");
+  mkdirSync(vscodeDir, { recursive: true });
+  const vscodeSettingsPath = join(vscodeDir, "settings.json");
+  writeFileSync(
+    vscodeSettingsPath,
+    [
+      "{",
+      "  // Packaged IPC fixture; values are not resolved.",
+      '  "editor.formatOnSave": true,',
+      '  "python.defaultInterpreterPath": ".venv\\\\Scripts\\\\python.exe",',
+      '  "terminal.integrated.env.windows": {',
+      '    "API_TOKEN": "secret-packaged-vscode-settings-token"',
+      "  }",
+      "}",
+    ].join("\n"),
+    "utf8",
+  );
+  const vscodeTasksPath = join(vscodeDir, "tasks.json");
+  writeFileSync(
+    vscodeTasksPath,
+    JSON.stringify({
+      version: "2.0.0",
+      tasks: [
+        {
+          label: "Packaged VS Code build",
+          type: "shell",
+          command: "npm run build -- --token=secret-packaged-vscode-task-token",
+          problemMatcher: "$tsc",
+        },
+      ],
+      inputs: [{ id: "packagedTarget", type: "pickString", options: ["desktop", "installer"] }],
+    }, null, 2),
+    "utf8",
+  );
+  const vscodeLaunchPath = join(vscodeDir, "launch.json");
+  writeFileSync(
+    vscodeLaunchPath,
+    JSON.stringify({
+      version: "0.2.0",
+      configurations: [
+        {
+          name: "Packaged renderer debug",
+          type: "node",
+          request: "launch",
+          program: "${workspaceFolder}/src/renderer/index.tsx",
+        },
+      ],
+    }, null, 2),
+    "utf8",
+  );
+  const vscodeExtensionsPath = join(vscodeDir, "extensions.json");
+  writeFileSync(
+    vscodeExtensionsPath,
+    JSON.stringify({
+      recommendations: ["ms-vscode.vscode-typescript-next", "dbaeumer.vscode-eslint"],
+      unwantedRecommendations: ["secret-packaged-vscode-extension"],
+    }, null, 2),
+    "utf8",
+  );
+  const browserHistoryPath = join(workspacePath, "packaged-history.csv");
+  writeFileSync(
+    browserHistoryPath,
+    [
+      "url,title,visit count,typed count,last visit time",
+      "https://packaged-history.example.test/docs?token=secret-packaged-history-token,Packaged History,4,1,2026-07-12T01:00:00Z",
+    ].join("\n"),
+    "utf8",
+  );
+  const browserDownloadsPath = join(workspacePath, "packaged-downloads.json");
+  writeFileSync(
+    browserDownloadsPath,
+    JSON.stringify({
+      downloads: [
+        {
+          url: "https://packaged-downloads.example.test/releases/packaged-installer.exe?token=secret-packaged-download-token",
+          targetPath: "C:\\Users\\win11\\Downloads\\packaged-installer.exe",
+          referrer: "https://packaged-downloads.example.test/releases",
+          state: "complete",
+          danger: "safe",
+          receivedBytes: 4096,
+          totalBytes: 4096,
+          endTime: "2026-07-12T01:10:00Z",
+        },
+      ],
+    }, null, 2),
+    "utf8",
+  );
+  const browserStoragePath = join(workspacePath, "packaged-local-storage.json");
+  writeFileSync(
+    browserStoragePath,
+    JSON.stringify({
+      origin: "https://packaged-storage.example.test",
+      localStorage: {
+        theme: "dark",
+        packagedApiToken: "secret-packaged-storage-token",
+      },
+    }, null, 2),
+    "utf8",
+  );
+  const browserExtensionManifestPath = join(workspacePath, "packaged-extension-manifest.json");
+  writeFileSync(
+    browserExtensionManifestPath,
+    JSON.stringify({
+      manifest_version: 3,
+      name: "Packaged Extension Smoke",
+      version: "1.0.0",
+      permissions: ["tabs", "storage"],
+      host_permissions: ["https://extension-packaged.example.test/*?token=secret-packaged-extension-token"],
+      background: { service_worker: "background.js" },
+      content_scripts: [{ matches: ["https://extension-packaged.example.test/*"], js: ["content.js"] }],
+    }, null, 2),
+    "utf8",
+  );
   return {
     workspacePath,
     markdownPath: filePath,
@@ -2018,10 +2718,82 @@ function prepareChannelImportFixture(): ChannelImportFixture {
     pngPath,
     sarifJsonPath,
     chatExportJsonPath,
+    chatGptExportJsonPath,
     emlxPath,
     icsPath,
-    filePaths: [filePath, cypressJsonPath, pngPath, sarifJsonPath, chatExportJsonPath, emlxPath, icsPath],
+    openApiJsonPath,
+    logcatPath,
+    browserCookiesPath,
+    playwrightTraceZipPath,
+    csvPath,
+    tsvPath,
+    powershellTranscriptPath,
+    opmlPath,
+    bookmarksPath,
+    metricsPath,
+    codeownersPath,
+    robotsPath,
+    harPath,
+    junitXmlPath,
+    vscodeSettingsPath,
+    vscodeTasksPath,
+    vscodeLaunchPath,
+    vscodeExtensionsPath,
+    browserHistoryPath,
+    browserDownloadsPath,
+    browserStoragePath,
+    browserExtensionManifestPath,
+    filePaths: [
+      filePath,
+      cypressJsonPath,
+      pngPath,
+      sarifJsonPath,
+      chatExportJsonPath,
+      chatGptExportJsonPath,
+      emlxPath,
+      icsPath,
+      openApiJsonPath,
+      logcatPath,
+      browserCookiesPath,
+      playwrightTraceZipPath,
+      csvPath,
+      tsvPath,
+      powershellTranscriptPath,
+      opmlPath,
+      bookmarksPath,
+      metricsPath,
+      codeownersPath,
+      robotsPath,
+      harPath,
+      junitXmlPath,
+      vscodeSettingsPath,
+      vscodeTasksPath,
+      vscodeLaunchPath,
+      vscodeExtensionsPath,
+      browserHistoryPath,
+      browserDownloadsPath,
+      browserStoragePath,
+      browserExtensionManifestPath,
+    ],
   };
+}
+
+function createSmokeZipLocalEntry(name: string, contents: string): Buffer {
+  const nameBuffer = Buffer.from(name, "utf8");
+  const data = Buffer.from(contents, "utf8");
+  const header = Buffer.alloc(30);
+  header.writeUInt32LE(0x04034b50, 0);
+  header.writeUInt16LE(20, 4);
+  header.writeUInt16LE(0, 6);
+  header.writeUInt16LE(0, 8);
+  header.writeUInt16LE(0, 10);
+  header.writeUInt16LE(0, 12);
+  header.writeUInt32LE(0, 14);
+  header.writeUInt32LE(data.length, 18);
+  header.writeUInt32LE(data.length, 22);
+  header.writeUInt16LE(nameBuffer.length, 26);
+  header.writeUInt16LE(0, 28);
+  return Buffer.concat([header, nameBuffer, data]);
 }
 
 function prepareIdeContextFixtures(): IdeContextFixture[] {

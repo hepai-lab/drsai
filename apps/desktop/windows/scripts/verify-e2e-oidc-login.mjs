@@ -14,6 +14,7 @@ const electronCmd = process.platform === "win32"
 const builtMain = join(root, "out", "main", "index.js");
 const port = Number(process.env.OPENDRSAI_E2E_OIDC_PORT || "18649");
 const gatewayPort = Number(process.env.OPENDRSAI_E2E_OIDC_GATEWAY_PORT || "18650");
+const modelPort = Number(process.env.OPENDRSAI_E2E_OIDC_MODEL_PORT || "18651");
 const externalIssuer = process.env.OPENDRSAI_E2E_OIDC_EXTERNAL_ISSUER?.replace(/\/+$/, "");
 const issuer = externalIssuer || `http://127.0.0.1:${port}/backend`;
 const useExternalIssuer = Boolean(externalIssuer);
@@ -49,6 +50,7 @@ mkdirSync(drsaiHome, { recursive: true });
 mkdirSync(userDataDir, { recursive: true });
 
 try {
+  const fakeModel = await startFakeModelService();
   const fakeGateway = await startFakeGateway();
   const fakeIssuer = useExternalIssuer ? null : await startFakeOidcIssuer();
   await runPackagedApp();
@@ -74,12 +76,16 @@ try {
     await new Promise((resolve) => fakeIssuer.close(resolve));
   }
   await new Promise((resolve) => fakeGateway.close(resolve));
+  await new Promise((resolve) => fakeModel.close(resolve));
 } finally {
   if (globalThis.__opendrsaiFakeOidcIssuer) {
     await new Promise((resolve) => globalThis.__opendrsaiFakeOidcIssuer.close(resolve));
   }
   if (globalThis.__opendrsaiOidcFakeGateway) {
     await new Promise((resolve) => globalThis.__opendrsaiOidcFakeGateway.close(resolve));
+  }
+  if (globalThis.__opendrsaiOidcFakeModel) {
+    await new Promise((resolve) => globalThis.__opendrsaiOidcFakeModel.close(resolve));
   }
   rmSync(tempDir, { recursive: true, force: true });
 }
@@ -101,7 +107,7 @@ function startFakeGateway() {
     }
     if (url.pathname === "/v1/models") {
       hits.models.push({
-        authorization: req.headers.authorization || "",
+        hasBearer: String(req.headers.authorization || "").startsWith("Bearer "),
         authMode: req.headers["x-opendrsai-auth-mode"] || "",
       });
       writeJson(res, 200, { object: "list", data: [{ id: "drsai", object: "model" }] });
@@ -112,7 +118,8 @@ function startFakeGateway() {
       const requestId = body?.metadata?.desktop_request_id || "";
       const hit = {
         requestId,
-        authorization: req.headers.authorization || "",
+        model: body?.model || "",
+        hasBearer: String(req.headers.authorization || "").startsWith("Bearer "),
         authMode: req.headers["x-opendrsai-auth-mode"] || "",
         user: req.headers["x-opendrsai-user"] || "",
       };
@@ -120,6 +127,18 @@ function startFakeGateway() {
         hits.agent.push(hit);
       } else {
         hits.chat.push(hit);
+      }
+      const upstream = await fetch(`http://127.0.0.1:${modelPort}/apiv2/v1/chat/completions`, {
+        method: "POST",
+        headers: {
+          Authorization: req.headers.authorization || "",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+      if (!upstream.ok) {
+        writeJson(res, 502, { error: "fake_model_rejected_gateway" });
+        return;
       }
       writeSse(res, String(requestId).includes("agent") ? "oidc agent bearer ok" : "oidc chat bearer ok");
       return;
@@ -132,6 +151,27 @@ function startFakeGateway() {
       reject(new Error(`Could not start fake gateway on ${gatewayPort}: ${error.message}`));
     });
     server.listen(gatewayPort, "127.0.0.1", () => resolve(server));
+  });
+}
+
+function startFakeModelService() {
+  const hits = [];
+  globalThis.__opendrsaiOidcModelHits = hits;
+  const server = createServer(async (req, res) => {
+    const url = new URL(req.url || "/", `http://127.0.0.1:${modelPort}`);
+    if (url.pathname === "/apiv2/v1/chat/completions" && req.method === "POST") {
+      await readBody(req);
+      const hasBearer = String(req.headers.authorization || "").startsWith("Bearer ");
+      hits.push({ hasBearer });
+      writeJson(res, hasBearer ? 200 : 401, hasBearer ? { ok: true } : { error: "invalid_token" });
+      return;
+    }
+    writeJson(res, 404, { error: "fake_model_not_found" });
+  });
+  globalThis.__opendrsaiOidcFakeModel = server;
+  return new Promise((resolve, reject) => {
+    server.once("error", (error) => reject(new Error(`Could not start fake model service on ${modelPort}: ${error.message}`)));
+    server.listen(modelPort, "127.0.0.1", () => resolve(server));
   });
 }
 
@@ -456,21 +496,24 @@ function assertSessionClearedByLogout() {
 
 function assertGatewayHits() {
   const hits = globalThis.__opendrsaiOidcGatewayHits;
-  const modelAuth = hits?.models?.find((hit) => String(hit.authorization || "").startsWith("Bearer "));
-  const chatAuth = hits?.chat?.[0]?.authorization || "";
-  const agentAuth = hits?.agent?.[0]?.authorization || "";
+  const modelAuth = hits?.models?.find((hit) => hit.hasBearer);
+  const modelHits = globalThis.__opendrsaiOidcModelHits;
   if (
     !hits ||
     hits.health < 1 ||
     hits.models.length < 1 ||
     hits.chat.length !== 1 ||
     hits.agent.length !== 1 ||
-    !chatAuth.startsWith("Bearer ") ||
-    !agentAuth.startsWith("Bearer ") ||
+    !hits.chat[0].hasBearer ||
+    !hits.agent[0].hasBearer ||
     !modelAuth ||
     modelAuth.authMode !== "oidc" ||
     hits.chat[0].authMode !== "oidc" ||
-    hits.agent[0].authMode !== "oidc"
+    hits.chat[0].model !== "deepseek-v4-pro" ||
+    hits.agent[0].authMode !== "oidc" ||
+    !Array.isArray(modelHits) ||
+    modelHits.length !== 2 ||
+    !modelHits.every((hit) => hit.hasBearer)
   ) {
     throw new Error(`OIDC gateway did not receive authenticated chat and agent traffic:\n${JSON.stringify(hits, null, 2)}`);
   }

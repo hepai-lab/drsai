@@ -1603,13 +1603,18 @@ export function getForkConflictCompilerDiagnosticTestGraphSuggestions(
   const suggestions: string[] = [];
   for (const entry of FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX) {
     if (!lookupKeys.has(entry.module)) continue;
-    const diagnostics = (entry.syntaxDiagnostics as readonly ForkConflictGeneratedCompilerDiagnosticView[])
+    const syntaxDiagnostics = (entry.syntaxDiagnostics as readonly ForkConflictGeneratedCompilerDiagnosticView[])
+      .map((diagnostic) => `TS${diagnostic.code}@${diagnostic.line}`)
+      .slice(0, 3);
+    const semanticDiagnostics = (entry.semanticDiagnostics as readonly ForkConflictGeneratedCompilerDiagnosticView[])
       .map((diagnostic) => `TS${diagnostic.code}@${diagnostic.line}`)
       .slice(0, 3);
     const diagnosticSummary =
-      diagnostics.length > 0
-        ? `syntax diagnostics ${diagnostics.join(", ")}`
-        : `generated ${entry.scriptKind} compiler coverage`;
+      semanticDiagnostics.length > 0
+        ? `semantic diagnostics ${semanticDiagnostics.join(", ")}`
+        : syntaxDiagnostics.length > 0
+          ? `syntax diagnostics ${syntaxDiagnostics.join(", ")}`
+          : `generated ${entry.scriptKind} compiler semantic coverage`;
     for (const command of entry.commands) {
       suggestions.push(`Compiler diagnostics graph (${entry.path}; ${diagnosticSummary}): ${command}`);
     }

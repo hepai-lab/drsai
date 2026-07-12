@@ -34,10 +34,16 @@ const ACCESS_TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
 const DESKTOP_AUTH_BASE_URL =
   process.env.OPENDRSAI_AUTH_BASE_URL?.replace(/\/+$/, "") ||
   "https://opendrsai.ihep.ac.cn";
-const OIDC_ISSUER =
+const CONFIGURED_OIDC_ISSUER =
   process.env.OPENDRSAI_OIDC_ISSUER?.replace(/\/+$/, "") ||
-  process.env.HAI_OIDC_ISSUER?.replace(/\/+$/, "") ||
-  "https://aitest.ihep.ac.cn/api";
+  process.env.HAI_OIDC_ISSUER?.replace(/\/+$/, "");
+const DEFAULT_OIDC_ORIGIN = is.dev
+  ? "https://ai-dev.ihep.ac.cn"
+  : "https://ai.ihep.ac.cn";
+const OIDC_ISSUER = CONFIGURED_OIDC_ISSUER || `${DEFAULT_OIDC_ORIGIN}/api`;
+const OIDC_DISCOVERY_URL =
+  process.env.OPENDRSAI_OIDC_DISCOVERY_URL?.trim() ||
+  `${OIDC_ISSUER}/.well-known/openid-configuration`;
 const OIDC_CLIENT_ID = process.env.OPENDRSAI_OIDC_CLIENT_ID || "opendrsai-desktop";
 const OIDC_BASE_SCOPE = "openid email profile roles groups hai_api";
 const OIDC_AUTH_TIMEOUT_MS = 5 * 60 * 1000;
@@ -224,15 +230,15 @@ export async function startOidcLogin(
     emitDebug({
       stage: "discovery",
       status: "info",
-      message: `Loading OIDC discovery from ${OIDC_ISSUER}.`,
-      url: `${OIDC_ISSUER}/.well-known/openid-configuration`,
+      message: `Loading OIDC discovery from ${OIDC_DISCOVERY_URL}.`,
+      url: OIDC_DISCOVERY_URL,
     });
     const metadata = await getOidcMetadata();
     emitDebug({
       stage: "discovery",
       status: "success",
-      message: `Loaded OIDC discovery from ${OIDC_ISSUER}.`,
-      url: `${OIDC_ISSUER}/.well-known/openid-configuration`,
+      message: `Loaded OIDC discovery from ${OIDC_DISCOVERY_URL}.`,
+      url: OIDC_DISCOVERY_URL,
     });
     const url = new URL(metadata.authorization_endpoint);
     url.searchParams.set("client_id", OIDC_CLIENT_ID);
@@ -950,6 +956,10 @@ async function refreshOidcSessionIfNeeded(
   }
 }
 
+export function invalidateAuthSession(): void {
+  clearStoredSession(false);
+}
+
 async function refreshOidcSession(
   stored: StoredAuthSession,
   refreshToken: string,
@@ -1097,7 +1107,7 @@ async function getOidcMetadata(): Promise<OidcProviderMetadata> {
   if (oidcMetadataCache && Date.now() - oidcMetadataCache.fetchedAt <= cacheMaxAgeMs) {
     return oidcMetadataCache.metadata;
   }
-  const discoveryUrl = `${OIDC_ISSUER}/.well-known/openid-configuration`;
+  const discoveryUrl = OIDC_DISCOVERY_URL;
   const response = await fetchOidcEndpoint(discoveryUrl, "OIDC discovery", {
     headers: { Accept: "application/json" },
   });
@@ -1375,33 +1385,24 @@ function successHtml(): string {
   <body>
     <h1>&#30331;&#24405;&#25104;&#21151;</h1>
     <p id="message">正在打开 OpenDrSai...</p>
-    <p><a href="${OIDC_AUTH_COMPLETE_DEEP_LINK}">打开 OpenDrSai</a></p>
+    <p><a id="open-app" href="${OIDC_AUTH_COMPLETE_DEEP_LINK}">打开 OpenDrSai</a></p>
     <script>
-      document.getElementById("message").textContent =
-        "Opening OpenDrSai. This page will close automatically.";
-      document.querySelector("a").textContent = "Close this page";
-      document.querySelector("a").removeAttribute("href");
-      document.querySelector("a").addEventListener("click", function (event) {
-        event.preventDefault();
-        closePage();
-      });
+      var message = document.getElementById("message");
+      var openAppLink = document.getElementById("open-app");
+      message.textContent = "正在打开 OpenDrSai，此页面随后会自动关闭。";
       function closePage() {
-        window.open("", "_self");
         window.close();
       }
       window.addEventListener("blur", closePage, { once: true });
       document.addEventListener("visibilitychange", function () {
         if (document.hidden) closePage();
       });
-      setTimeout(closePage, 250);
       setTimeout(function () {
-        closePage();
-        document.getElementById("message").textContent =
+        window.location.href = openAppLink.href;
+      }, 50);
+      setTimeout(function () {
+        message.textContent =
           "如果没有自动回到 OpenDrSai，可以点击“打开 OpenDrSai”，或手动关闭此标签页。";
-      }, 1200);
-      setTimeout(function () {
-        document.getElementById("message").textContent =
-          "OpenDrSai has been opened. You can close this page if it is still visible.";
       }, 1500);
     </script>
   </body>

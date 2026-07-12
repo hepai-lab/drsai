@@ -57,8 +57,12 @@ const checks = [
   [
     "main process implements Authorization Code + PKCE over loopback",
     auth.includes("getOidcMetadata") &&
-      auth.includes('"https://aitest.ihep.ac.cn/api"') &&
-      auth.includes("/.well-known/openid-configuration") &&
+      auth.includes('is.dev') &&
+      auth.includes('"https://ai-dev.ihep.ac.cn"') &&
+      auth.includes('"https://ai.ihep.ac.cn"') &&
+      auth.includes('`${DEFAULT_OIDC_ORIGIN}/api`') &&
+      auth.includes('`${OIDC_ISSUER}/.well-known/openid-configuration`') &&
+      auth.includes("OPENDRSAI_OIDC_DISCOVERY_URL") &&
       auth.includes("Loading OIDC discovery") &&
       auth.includes("metadata.authorization_endpoint") &&
       auth.includes("metadata.token_endpoint") &&
@@ -72,8 +76,11 @@ const checks = [
       auth.includes("shell.openExternal(url)") &&
       auth.includes("OPENDRSAI_E2E_OIDC_AUTO_CALLBACK") &&
       auth.includes("opendrsai://auth-complete") &&
-      auth.includes('removeAttribute("href")') &&
-      auth.includes("setTimeout(closePage, 250)") &&
+      auth.includes('id="open-app"') &&
+      auth.includes("window.location.href = openAppLink.href") &&
+      auth.includes('window.addEventListener("blur", closePage') &&
+      auth.includes("if (document.hidden) closePage()") &&
+      !auth.includes('removeAttribute("href")') &&
       main.includes("setAsDefaultProtocolClient") &&
       main.includes('"ApplicationName"') &&
       main.includes('"OpenDrSai"') &&
@@ -167,13 +174,15 @@ const checks = [
     auth.includes("export async function requireAuthContext") &&
       auth.includes("accessToken: refreshed.accessToken") &&
       chat.includes("requireAuthContext") &&
-      chat.includes("Authorization: `Bearer ${auth.accessToken}`") &&
-      chat.includes('"X-OpenDrSai-Auth-Mode": auth.authMode') &&
-      chat.includes("auth_mode: auth.authMode") &&
+      chat.includes("Authorization: `Bearer ${authContext.accessToken}`") &&
+      chat.includes('"X-OpenDrSai-Auth-Mode": authContext.authMode') &&
+      chat.includes("auth_mode: authContext.authMode") &&
       agentRuns.includes("requireAuthContext") &&
-      agentRuns.includes("Authorization: `Bearer ${auth.accessToken}`") &&
-      agentRuns.includes('"X-OpenDrSai-Auth-Mode": auth.authMode') &&
-      agentRuns.includes("auth_mode: auth.authMode"),
+      agentRuns.includes("Authorization: `Bearer ${authContext.accessToken}`") &&
+      agentRuns.includes('"X-OpenDrSai-Auth-Mode": authContext.authMode') &&
+      agentRuns.includes("auth_mode: authContext.authMode") &&
+      gateway.includes("getGatewayRequestHeaders") &&
+      gateway.includes("OPENDRSAI_GATEWAY_INSTANCE_TOKEN"),
   ],
   [
     "OIDC login performs zero-configuration desktop bootstrap",
@@ -276,12 +285,13 @@ const checks = [
       e2eOidc.includes("OPENDRSAI_E2E_OIDC_AUTO_CALLBACK") &&
       e2eOidc.includes("OPENDRSAI_E2E_OIDC_EXTERNAL_ISSUER") &&
       e2eOidc.includes("OPENDRSAI_E2E_OIDC_USE_SOURCE") &&
-      e2eHaiOidc.includes('OPENDRSAI_E2E_OIDC_EXTERNAL_ISSUER ||= "https://aitest.ihep.ac.cn/api"') &&
+      e2eHaiOidc.includes('OPENDRSAI_E2E_OIDC_EXTERNAL_ISSUER ||= "https://ai-dev.ihep.ac.cn/api"') &&
+      e2eHaiOidc.includes('OPENDRSAI_OIDC_DISCOVERY_URL ||= "https://ai-dev.ihep.ac.cn/api/.well-known/openid-configuration"') &&
       e2eHaiOidc.includes('OPENDRSAI_E2E_OIDC_USE_SOURCE ||= "1"') &&
       e2eHaiOidc.includes('await import("./verify-e2e-oidc-login.mjs")') &&
       packageJson.includes('"verify:oidc-dev-env": "node scripts/verify-oidc-dev-env.mjs"') &&
       devEnvVerifier.includes('"http://localhost:3000"') &&
-      devEnvVerifier.includes('"https://aitest.ihep.ac.cn/api"') &&
+      devEnvVerifier.includes('"https://ai-dev.ihep.ac.cn/api"') &&
       devEnvVerifier.includes("/.well-known/openid-configuration") &&
       devEnvVerifier.includes("/.well-known/jwks.json") &&
       devEnvVerifier.includes("code_challenge_method") &&

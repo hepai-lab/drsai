@@ -6,10 +6,11 @@ import { existsSync } from "fs";
 import { randomUUID } from "crypto";
 import { join } from "path";
 import type { AgentRunEvent, AgentRunFileEvent, AgentRunRequest } from "../shared/desktopApi";
-import { requireAuthContext, type AuthContext } from "./auth";
-import { startGateway } from "./gateway";
+import { invalidateAuthSession, requireAuthContext, type AuthContext } from "./auth";
+import { getGatewayRequestHeaders, startGateway } from "./gateway";
 import { getDefaultModelAlias } from "./modelDefaults";
 import {
+  ChatSseError,
   isCompletionDoneFrame,
   parseAgentRunSseFileEvents,
   parseAgentRunSseFrame,
@@ -173,40 +174,52 @@ async function runAgent(
       resolveModelFromSettings(request.settingsConfig) ||
       getDefaultModelAlias() ||
       "drsai";
-    const response = await fetch(`${GATEWAY_BASE_URL}/v1/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-OpenDrSai-User": auth.userId,
-        "X-OpenDrSai-Auth-Mode": auth.authMode,
-        ...(request.workspacePath ? { "X-OpenDrSai-Workspace": request.workspacePath } : {}),
-        ...(auth.accessToken ? { Authorization: `Bearer ${auth.accessToken}` } : {}),
-      },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: "user", content: request.task }],
-        stream: true,
-        user_id: auth.userId,
-        thread_id: sessionId,
-        work_dir: request.workspacePath,
-        metadata: {
-          ...(request.metadata || {}),
-          files: request.files || [],
-          team_config: request.teamConfig,
-          settings_config: request.settingsConfig,
-          auth_mode: auth.authMode,
-          run_id: runId,
-          desktop_request_id: requestId,
+    const send = async (authContext: AuthContext): Promise<boolean> => {
+      const response = await fetch(`${GATEWAY_BASE_URL}/v1/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...getGatewayRequestHeaders(),
+          "X-OpenDrSai-User": authContext.userId,
+          "X-OpenDrSai-Auth-Mode": authContext.authMode,
+          ...(request.workspacePath ? { "X-OpenDrSai-Workspace": request.workspacePath } : {}),
+          ...(authContext.accessToken ? { Authorization: `Bearer ${authContext.accessToken}` } : {}),
         },
-      }),
-      signal: controller.signal,
-    });
+        body: JSON.stringify({
+          model,
+          messages: [{ role: "user", content: request.task }],
+          stream: true,
+          user_id: authContext.userId,
+          thread_id: sessionId,
+          work_dir: request.workspacePath,
+          metadata: {
+            ...(request.metadata || {}),
+            files: request.files || [],
+            team_config: request.teamConfig,
+            settings_config: request.settingsConfig,
+            auth_mode: authContext.authMode,
+            run_id: runId,
+            desktop_request_id: requestId,
+          },
+        }),
+        signal: controller.signal,
+      });
+      if (!response.ok || !response.body) throw await formatHttpError(response);
+      return readSse(webContents, requestId, sessionId, runId, response.body, controller.signal);
+    };
 
-    if (!response.ok || !response.body) {
-      throw new Error(await formatHttpError(response));
+    let sawDone: boolean;
+    try {
+      sawDone = await send(auth);
+    } catch (error) {
+      if (error instanceof ChatSseError && error.code === "invalid_token") {
+        invalidateAuthSession();
+        webContents.send("desktop:auth-session-invalidated");
+      }
+      if (!(error instanceof ChatSseError) || error.code !== "token_expired" || !error.retryable) throw error;
+      auth = await requireAuthContext();
+      sawDone = await send(auth);
     }
-
-    const sawDone = await readSse(webContents, requestId, sessionId, runId, response.body, controller.signal);
     if (controller.signal.aborted) {
       throw new Error("Agent run was aborted.");
     }
@@ -261,6 +274,7 @@ async function readSse(
   const decoder = new TextDecoder();
   let buffer = "";
   let sawDone = false;
+  let emittedContent = false;
 
   while (!signal.aborted) {
     const { done, value } = await reader.read();
@@ -276,9 +290,15 @@ async function readSse(
       if (isCompletionDoneFrame(frame)) {
         sawDone = true;
       }
-      parseAgentRunSseFrame(frame).forEach((content) => {
-        emit(webContents, { requestId, sessionId, runId, type: "chunk", content });
-      });
+      try {
+        parseAgentRunSseFrame(frame).forEach((content) => {
+          emittedContent = true;
+          emit(webContents, { requestId, sessionId, runId, type: "chunk", content });
+        });
+      } catch (error) {
+        if (error instanceof ChatSseError && emittedContent) error.retryable = false;
+        throw error;
+      }
       parseAgentRunSseFileEvents(frame).forEach((fileEvent) => {
         emit(webContents, { requestId, sessionId, runId, type: "file_event", fileEvent });
       });
@@ -289,9 +309,15 @@ async function readSse(
     if (isCompletionDoneFrame(buffer)) {
       sawDone = true;
     }
-    parseAgentRunSseFrame(buffer).forEach((content) => {
-      emit(webContents, { requestId, sessionId, runId, type: "chunk", content });
-    });
+    try {
+      parseAgentRunSseFrame(buffer).forEach((content) => {
+        emittedContent = true;
+        emit(webContents, { requestId, sessionId, runId, type: "chunk", content });
+      });
+    } catch (error) {
+      if (error instanceof ChatSseError && emittedContent) error.retryable = false;
+      throw error;
+    }
     parseAgentRunSseFileEvents(buffer).forEach((fileEvent) => {
       emit(webContents, { requestId, sessionId, runId, type: "file_event", fileEvent });
     });
@@ -429,22 +455,36 @@ async function hashWorkspaceFile(
   }
 }
 
-async function formatHttpError(response: Response): Promise<string> {
+async function formatHttpError(response: Response): Promise<Error> {
   let body = "";
   try {
     body = (await readLimitedText(response, MAX_ERROR_BODY_BYTES)).trim();
   } catch {
     body = "";
   }
-  if (!body) return `Gateway agent run failed with HTTP ${response.status}.`;
+  if (!body) return new Error(`Gateway agent run failed with HTTP ${response.status}.`);
   try {
     const parsed = JSON.parse(body);
+    const structured = extractStructuredError(parsed);
+    if (structured) return new ChatSseError(structured.message, structured.code, structured.retryable);
     const detail = extractErrorMessage(parsed);
-    if (detail) return `Gateway agent run failed: ${String(detail)}`;
+    if (detail) return new Error(`Gateway agent run failed: ${String(detail)}`);
   } catch {
     // Keep the raw body below.
   }
-  return `Gateway agent run failed with HTTP ${response.status}: ${body.slice(0, 600)}`;
+  return new Error(`Gateway agent run failed with HTTP ${response.status}: ${body.slice(0, 600)}`);
+}
+
+function extractStructuredError(value: unknown): { code: string; message: string; retryable: boolean } | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const candidate = (record.error && typeof record.error === "object" ? record.error : record.detail) as Record<string, unknown> | undefined;
+  if (!candidate || typeof candidate.code !== "string") return null;
+  return {
+    code: candidate.code,
+    message: typeof candidate.message === "string" ? candidate.message : "HepAI request failed.",
+    retryable: candidate.retryable === true,
+  };
 }
 
 function extractErrorMessage(value: unknown): string | null {

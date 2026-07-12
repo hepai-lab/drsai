@@ -17,6 +17,7 @@ from typing import (
 )
 from typing_extensions import Required
 from pydantic import BaseModel
+from drsai.platform_auth import get_model_credential_provider
 
 from openai.types.chat import ChatCompletionChunk
 from tiktoken.model import MODEL_TO_ENCODING
@@ -85,10 +86,30 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
 
     def __init__(self, **kwargs: Unpack[HepAIClientConfiguration]):
 
-        if "api_key" not in kwargs:
-            kwargs["api_key"] = os.environ.get("HEPAI_API_KEY")
-        if "base_url" not in kwargs:
-            kwargs["base_url"] = "https://aiapi.ihep.ac.cn/apiv2"
+        self._oidc_credential_pending = False
+        credential = get_model_credential_provider(
+            kwargs.get("api_key"),
+            kwargs.get("base_url"),
+        )
+        if credential:
+            kwargs["api_key"] = credential.access_token
+            kwargs["base_url"] = credential.openai_base_url
+        else:
+            if not kwargs.get("api_key"):
+                kwargs["api_key"] = os.environ.get("HEPAI_API_KEY")
+            if "base_url" not in kwargs:
+                kwargs["base_url"] = os.environ.get(
+                    "OPENDRSAI_MODEL_BASE_URL",
+                    "https://ai.ihep.ac.cn/apiv2/v1",
+                )
+            if not kwargs.get("api_key"):
+                # The desktop gateway supplies a request-scoped OIDC token.
+                # OpenAI validates credentials during construction, before the
+                # request scope may reach an agent created in a worker thread.
+                # Use a non-secret sentinel only to defer SDK validation; it is
+                # replaced by _bind_platform_auth before any provider call.
+                kwargs["api_key"] = "opendrsai-oidc-pending"
+                self._oidc_credential_pending = True
 
         if "model_info" not in kwargs:
             model_info: Optional[HepAIModelInfo] ={
@@ -214,6 +235,20 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
                 break
 
         super().__init__(**kwargs)
+
+    def _bind_platform_auth(self) -> None:
+        credential = get_model_credential_provider()
+        if not credential:
+            if getattr(self, "_oidc_credential_pending", False):
+                raise RuntimeError("OIDC credential context is unavailable for this model request.")
+            return
+        self._client.api_key = credential.access_token
+        self._client.base_url = credential.openai_base_url
+        self._oidc_credential_pending = False
+
+    async def create(self, *args: Any, **kwargs: Any):
+        self._bind_platform_auth()
+        return await super().create(*args, **kwargs)
     
     async def create_stream(
         self,
@@ -246,6 +281,8 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
             - `frequency_penalty` (float): A value between -2.0 and 2.0 that penalizes new tokens based on their existing frequency in the text so far, decreasing the likelihood of repeated phrases.
             - `presence_penalty` (float): A value between -2.0 and 2.0 that penalizes new tokens based on whether they appear in the text so far, encouraging the model to talk about new topics.
         """
+
+        self._bind_platform_auth()
 
         create_params = self._process_create_args(
             messages,

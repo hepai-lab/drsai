@@ -11,6 +11,9 @@
 .tmp/
 **/.tmp/
 %SystemDrive%/
+/windows-edition-diagnostics.txt
+/windows-sandbox-diagnostics.txt
+/windows-sandbox-status.txt
 apps/desktop/installers/windows/.tools/
 examples/requests/zulip_python/.zuliprc
 examples/docker/browser/docker_test_dir*
@@ -19,6 +22,7 @@ drsai/backend/owebui_pipeline/pipelines/pipelines/failed/
 drsai/backend/owebui_pipeline/pipelines/pipelines/__init__/
 .mcp/*
 *zulipchat.duckdb
+OpenDrSai-Windows11-Acceptance.wsb
 
 
 # DrSai 相关

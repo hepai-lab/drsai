@@ -1,7 +1,7 @@
 import { randomBytes, createHash } from "node:crypto";
 
 const frontendUrl = (process.env.HAI_OIDC_FRONTEND || "http://localhost:3000").replace(/\/+$/, "");
-const issuer = (process.env.HAI_OIDC_ISSUER || "https://aitest.ihep.ac.cn/api").replace(/\/+$/, "");
+const issuer = (process.env.HAI_OIDC_ISSUER || "https://ai-dev.ihep.ac.cn/api").replace(/\/+$/, "");
 const clientId = process.env.OPENDRSAI_OIDC_CLIENT_ID || "opendrsai-desktop";
 const redirectPort = Number(process.env.OPENDRSAI_OIDC_DEV_CALLBACK_PORT || "18777");
 const redirectUri = `http://127.0.0.1:${redirectPort}/callback`;

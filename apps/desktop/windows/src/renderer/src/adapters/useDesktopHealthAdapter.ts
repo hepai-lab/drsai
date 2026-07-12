@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { DesktopHealth, InstallProgress } from "@shared/desktopApi";
 import { desktopApi } from "../desktopApi";
 
@@ -26,19 +26,38 @@ export function useDesktopHealthAdapter(language: "en" | "zh" = "zh"): DesktopHe
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
-  const autoInstallStarted = useRef(false);
-  const autoGatewayStarted = useRef(false);
   const zh = language === "zh";
 
   const refreshHealth = useCallback(async (): Promise<void> => {
-    const next = await desktopApi.getHealth();
-    setHealth(next);
+    const [snapshot, install, gateway] = await Promise.all([
+      desktopApi.getHealth(),
+      desktopApi.getInstallStatus(),
+      desktopApi.getGatewayStatus(),
+    ]);
+    setHealth({
+      ...snapshot,
+      installed: install.installed,
+      gatewayReady: gateway.ready,
+      version: install.version,
+      install,
+      gateway,
+    });
   }, []);
 
   useEffect(() => {
-    refreshHealth().catch(() => {
-      setHealth(createFallbackHealth());
+    let cancelled = false;
+    desktopApi.getHealth().then((snapshot) => {
+      if (!cancelled) setHealth(snapshot);
+    }).catch(() => {
+      if (!cancelled) setHealth(createFallbackHealth());
     });
+    const timer = window.setTimeout(() => {
+      void refreshHealth().catch(() => undefined);
+    }, 750);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [refreshHealth]);
 
   useEffect(() => {
@@ -58,34 +77,6 @@ export function useDesktopHealthAdapter(language: "en" | "zh" = "zh"): DesktopHe
       );
     });
   }, []);
-
-  useEffect(() => {
-    if (!health || busy || installProgress || autoInstallStarted.current) return;
-    const prerequisitesReady =
-      health.install.prerequisites.pythonOnPath &&
-      (health.install.prerequisites.gitOnPath || health.install.bundledBackendAvailable);
-    if (health.install.installed || !prerequisitesReady) return;
-    autoInstallStarted.current = true;
-    startInstall(false);
-  }, [health, busy, installProgress]);
-
-  useEffect(() => {
-    if (!health || busy || installProgress || autoGatewayStarted.current) return;
-    if (!health.install.installed || health.gateway.ready || health.gateway.externalConflict) {
-      return;
-    }
-    autoGatewayStarted.current = true;
-    desktopApi
-      .startGateway()
-      .then(() => refreshHealth())
-      .catch((error) => {
-        setActionMessage(
-          error instanceof Error
-            ? error.message
-            : zh ? "网关自动启动失败。" : "Gateway failed to start automatically.",
-        );
-      });
-  }, [health, busy, installProgress, refreshHealth, zh]);
 
   async function startInstall(installPrerequisites = false): Promise<void> {
     setBusy(true);

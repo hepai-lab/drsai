@@ -29,7 +29,7 @@ OIDC 凭证证明“用户是谁、是否可以使用 HepAI 平台”；模型�
       "id": "hepai-platform",
       "provider": "hepai",
       "auth_type": "platform_managed",
-      "base_url": "https://aitest.ihep.ac.cn/api",
+      "base_url": "https://ai-dev.ihep.ac.cn/api",
       "secret_ref": null,
       "created_at": "2026-07-11T00:00:00.000Z",
       "updated_at": "2026-07-11T00:00:00.000Z"
