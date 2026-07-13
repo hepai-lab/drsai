@@ -106,6 +106,10 @@ const MAX_GRAPHQL_PREVIEW_BYTES = 128 * 1024;
 const MAX_GRAPHQL_OPERATION_PREVIEW = 12;
 const MAX_GRAPHQL_TYPE_PREVIEW = 16;
 const MAX_GRAPHQL_DIRECTIVE_PREVIEW = 8;
+const MAX_GRAPHQL_INTROSPECTION_PREVIEW_BYTES = 128 * 1024;
+const MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW = 16;
+const MAX_PACT_CONTRACT_PREVIEW_BYTES = 128 * 1024;
+const MAX_PACT_INTERACTION_PREVIEW = 16;
 const MAX_PROTOBUF_PREVIEW_BYTES = 128 * 1024;
 const MAX_PROTOBUF_ITEM_PREVIEW = 16;
 const MAX_KUBERNETES_PREVIEW_BYTES = 128 * 1024;
@@ -604,6 +608,7 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".go.work",
   ".gv",
   ".gql",
+  ".graphql-introspection.json",
   ".graphml",
   ".gha-job-summary.md",
   ".gpx",
@@ -750,6 +755,7 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".otf",
   ".obj",
   ".openmetrics",
+  ".pact.json",
   ".patch",
   ".parquet",
   ".path",
@@ -4595,6 +4601,18 @@ function getImportExtension(filePath: string): string {
   if (name === "go.work") {
     return ".go.work";
   }
+  if (
+    name === "schema-introspection.json" ||
+    name === "graphql-introspection.json" ||
+    name === "introspection.json" ||
+    name.endsWith(".introspection.json") ||
+    name.endsWith(".graphql-introspection.json")
+  ) {
+    return ".graphql-introspection.json";
+  }
+  if (name === "pact.json" || name.endsWith(".pact.json")) {
+    return ".pact.json";
+  }
   if (name === "cmakelists.txt") {
     return ".cmakelists.txt";
   }
@@ -5694,6 +5712,7 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
       ".otf",
       ".obj",
       ".openmetrics",
+      ".pact.json",
       ".package.yaml",
       ".packages.config",
       ".pipfile",
@@ -6143,6 +6162,12 @@ function summarizeFile(
   }
   if (extension === ".graphql" || extension === ".gql") {
     return summarizeGraphqlFile(filePath, size);
+  }
+  if (extension === ".graphql-introspection.json") {
+    return summarizeGraphqlIntrospectionFile(filePath, size);
+  }
+  if (extension === ".pact.json") {
+    return summarizePactContractFile(filePath, size);
   }
   if (extension === ".http" || extension === ".rest") {
     return summarizeRestClientRequestFile(filePath, size);
@@ -25145,6 +25170,305 @@ function collectGraphqlRootFields(text: string): string[] {
   return [...fields];
 }
 
+interface GraphqlIntrospectionPreview {
+  rootTypes: string[];
+  objectTypes: string[];
+  inputTypes: string[];
+  interfaces: string[];
+  enums: string[];
+  directives: string[];
+  fieldSamples: string[];
+  possibleTypeSamples: string[];
+  truncated: boolean;
+}
+
+function summarizeGraphqlIntrospectionFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_GRAPHQL_INTROSPECTION_PREVIEW_BYTES)).toString("utf8");
+    const preview = parseGraphqlIntrospectionPreview(raw);
+    if (!preview) {
+      return [
+        `GraphQL introspection JSON ready for explicit attachment (${formatBytes(size)}).`,
+        "GraphQL introspection preview did not detect a __schema payload in the bounded local JSON; no GraphQL request execution, schema introspection request, validation, code generation, mock server startup, credential lookup, network call, or provider send was performed.",
+      ].join("\n").slice(0, MAX_TEXT_BYTES);
+    }
+    return [
+      `GraphQL introspection JSON preview (${formatBytes(size)}).`,
+      `Root types: ${preview.rootTypes.join(", ") || "none detected"}.`,
+      `Object types (${preview.objectTypes.length}${preview.objectTypes.length >= MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW ? "+" : ""}): ${preview.objectTypes.join(", ") || "none detected"}.`,
+      `Input types (${preview.inputTypes.length}${preview.inputTypes.length >= MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW ? "+" : ""}): ${preview.inputTypes.join(", ") || "none detected"}.`,
+      `Interfaces (${preview.interfaces.length}${preview.interfaces.length >= MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW ? "+" : ""}): ${preview.interfaces.join(", ") || "none detected"}.`,
+      `Enums (${preview.enums.length}${preview.enums.length >= MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW ? "+" : ""}): ${preview.enums.join(", ") || "none detected"}.`,
+      `Directives (${preview.directives.length}${preview.directives.length >= MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW ? "+" : ""}): ${preview.directives.join(", ") || "none detected"}.`,
+      `Field samples: ${preview.fieldSamples.join(" | ") || "none detected"}.`,
+      `Possible type samples: ${preview.possibleTypeSamples.join(" | ") || "none detected"}.`,
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_GRAPHQL_INTROSPECTION_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; GraphQL introspection metadata was parsed from bounded workspace-local JSON only, descriptions/default values were not expanded, and no GraphQL request execution, schema introspection request, validation, code generation, mock server startup, credential lookup, network call, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `GraphQL introspection JSON ready for explicit attachment (${formatBytes(size)}).`,
+      "GraphQL introspection preview could not read bounded local JSON; no GraphQL request execution, schema introspection request, validation, code generation, mock server startup, credential lookup, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseGraphqlIntrospectionPreview(raw: string): GraphqlIntrospectionPreview | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+  } catch {
+    return null;
+  }
+  const schema = readGraphqlIntrospectionSchema(parsed);
+  if (!schema) return null;
+
+  const rootTypes = ["queryType", "mutationType", "subscriptionType"]
+    .map((key) => {
+      const value = schema[key];
+      if (!isPlainRecord(value)) return "";
+      const name = readRecordString(value, "name");
+      return name ? `${key.replace(/Type$/, "")}:${sanitizeGraphqlIntrospectionName(name)}` : "";
+    })
+    .filter(Boolean)
+    .slice(0, 3);
+  const objectTypes: string[] = [];
+  const inputTypes: string[] = [];
+  const interfaces: string[] = [];
+  const enums: string[] = [];
+  const fieldSamples: string[] = [];
+  const possibleTypeSamples: string[] = [];
+
+  for (const typeValue of readJsonArray(schema, "types")) {
+    if (!isPlainRecord(typeValue)) continue;
+    const kind = readRecordString(typeValue, "kind").toUpperCase();
+    const name = sanitizeGraphqlIntrospectionName(readRecordString(typeValue, "name"));
+    if (!name || name.startsWith("__")) continue;
+    if (kind === "OBJECT" && objectTypes.length < MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW) objectTypes.push(name);
+    if (kind === "INPUT_OBJECT" && inputTypes.length < MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW) inputTypes.push(name);
+    if (kind === "INTERFACE" && interfaces.length < MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW) interfaces.push(name);
+    if (kind === "ENUM" && enums.length < MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW) {
+      const enumValues = readJsonArray(typeValue, "enumValues")
+        .filter(isPlainRecord)
+        .map((entry) => sanitizeGraphqlIntrospectionName(readRecordString(entry, "name")))
+        .filter(Boolean)
+        .slice(0, 4);
+      enums.push(enumValues.length > 0 ? `${name} (${enumValues.join(", ")})` : name);
+    }
+    if ((kind === "OBJECT" || kind === "INTERFACE") && fieldSamples.length < MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW) {
+      for (const field of readJsonArray(typeValue, "fields")) {
+        if (!isPlainRecord(field)) continue;
+        const fieldName = sanitizeGraphqlIntrospectionName(readRecordString(field, "name"));
+        if (fieldName) fieldSamples.push(`${name}.${fieldName}`);
+        if (fieldSamples.length >= MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW) break;
+      }
+    }
+    if ((kind === "INTERFACE" || kind === "UNION") && possibleTypeSamples.length < MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW) {
+      const possible = readJsonArray(typeValue, "possibleTypes")
+        .filter(isPlainRecord)
+        .map((entry) => sanitizeGraphqlIntrospectionName(readRecordString(entry, "name")))
+        .filter(Boolean)
+        .slice(0, 6);
+      if (possible.length > 0) possibleTypeSamples.push(`${name}: ${possible.join(", ")}`);
+    }
+  }
+
+  const directives = readJsonArray(schema, "directives")
+    .filter(isPlainRecord)
+    .map((directive) => sanitizeGraphqlIntrospectionName(readRecordString(directive, "name")))
+    .filter(Boolean)
+    .slice(0, MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW)
+    .map((name) => `@${name}`);
+  return {
+    rootTypes,
+    objectTypes,
+    inputTypes,
+    interfaces,
+    enums,
+    directives,
+    fieldSamples: fieldSamples.slice(0, MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW),
+    possibleTypeSamples: possibleTypeSamples.slice(0, MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW),
+    truncated:
+      raw.length >= MAX_GRAPHQL_INTROSPECTION_PREVIEW_BYTES ||
+      readJsonArray(schema, "types").length > MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW ||
+      readJsonArray(schema, "directives").length > MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW,
+  };
+}
+
+function readGraphqlIntrospectionSchema(value: unknown): Record<string, unknown> | null {
+  if (!isPlainRecord(value)) return null;
+  if (isPlainRecord(value.__schema)) return value.__schema;
+  if (isPlainRecord(value.data) && isPlainRecord(value.data.__schema)) return value.data.__schema;
+  return null;
+}
+
+function sanitizeGraphqlIntrospectionName(value: string): string {
+  return clampSingleLine(value.replace(/[^\w.:-]/g, ""), 80);
+}
+
+interface PactContractPreview {
+  consumer: string;
+  provider: string;
+  specVersion: string;
+  interactionCount: number;
+  interactionSamples: string[];
+  providerStates: string[];
+  matchingRuleSamples: string[];
+  truncated: boolean;
+}
+
+function summarizePactContractFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_PACT_CONTRACT_PREVIEW_BYTES)).toString("utf8");
+    const preview = parsePactContractPreview(raw);
+    if (!preview) {
+      return [
+        `Pact contract JSON ready for explicit attachment (${formatBytes(size)}).`,
+        "Pact preview did not detect a consumer/provider interactions payload in the bounded local JSON; no Pact CLI command, Pact Broker connection, provider verification, mock server startup, credential lookup, network call, workspace mutation, or provider send was performed.",
+      ].join("\n").slice(0, MAX_TEXT_BYTES);
+    }
+    return [
+      `Pact contract JSON preview (${formatBytes(size)}).`,
+      `Consumer: ${preview.consumer || "none detected"}.`,
+      `Provider: ${preview.provider || "none detected"}.`,
+      `Pact specification: ${preview.specVersion || "none detected"}.`,
+      `Interactions: ${preview.interactionCount}${preview.interactionSamples.length < preview.interactionCount ? `; showing first ${preview.interactionSamples.length}` : ""}.`,
+      preview.interactionSamples.length > 0
+        ? `Interaction samples:\n${preview.interactionSamples.map((sample, index) => `- ${index + 1}. ${sample}`).join("\n")}`
+        : "Interaction samples: none detected in the bounded local preview.",
+      preview.providerStates.length > 0
+        ? `Provider states (${preview.providerStates.length}${preview.providerStates.length >= MAX_PACT_INTERACTION_PREVIEW ? "+" : ""}): ${preview.providerStates.join(", ")}.`
+        : "Provider states: none detected in the bounded local preview.",
+      preview.matchingRuleSamples.length > 0
+        ? `Matching rule samples: ${preview.matchingRuleSamples.join(", ")}.`
+        : "Matching rule samples: none detected in the bounded local preview.",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_PACT_CONTRACT_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; Pact contract metadata was parsed from bounded workspace-local JSON only, request/response bodies and header values were not expanded, and no Pact CLI command, Pact Broker connection, provider verification, mock server startup, credential lookup, network call, workspace mutation, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Pact contract JSON ready for explicit attachment (${formatBytes(size)}).`,
+      "Pact preview could not read bounded local JSON; no Pact CLI command, Pact Broker connection, provider verification, mock server startup, credential lookup, network call, workspace mutation, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parsePactContractPreview(raw: string): PactContractPreview | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+  } catch {
+    return null;
+  }
+  if (!isPlainRecord(parsed)) return null;
+  const interactions = readJsonArray(parsed, "interactions").filter(isPlainRecord);
+  const consumer = readPactPartyName(parsed.consumer);
+  const provider = readPactPartyName(parsed.provider);
+  if (!consumer && !provider && interactions.length === 0) return null;
+
+  const states = new Set<string>();
+  const matchingRules = new Set<string>();
+  const interactionSamples = interactions.slice(0, MAX_PACT_INTERACTION_PREVIEW).map((interaction) => {
+    collectPactProviderStates(interaction, states);
+    collectPactMatchingRuleSamples(interaction, matchingRules);
+    return formatPactInteractionSample(interaction);
+  });
+  for (const interaction of interactions.slice(MAX_PACT_INTERACTION_PREVIEW)) {
+    collectPactProviderStates(interaction, states);
+    collectPactMatchingRuleSamples(interaction, matchingRules);
+    if (states.size >= MAX_PACT_INTERACTION_PREVIEW && matchingRules.size >= MAX_PACT_INTERACTION_PREVIEW) break;
+  }
+
+  return {
+    consumer,
+    provider,
+    specVersion: readPactSpecificationVersion(parsed),
+    interactionCount: interactions.length,
+    interactionSamples,
+    providerStates: [...states].slice(0, MAX_PACT_INTERACTION_PREVIEW),
+    matchingRuleSamples: [...matchingRules].slice(0, MAX_PACT_INTERACTION_PREVIEW),
+    truncated:
+      raw.length >= MAX_PACT_CONTRACT_PREVIEW_BYTES ||
+      interactions.length > MAX_PACT_INTERACTION_PREVIEW ||
+      states.size > MAX_PACT_INTERACTION_PREVIEW ||
+      matchingRules.size > MAX_PACT_INTERACTION_PREVIEW,
+  };
+}
+
+function readPactPartyName(value: unknown): string {
+  if (!isPlainRecord(value)) return "";
+  return sanitizePactText(readRecordString(value, "name"));
+}
+
+function readPactSpecificationVersion(record: Record<string, unknown>): string {
+  const metadata = isPlainRecord(record.metadata) ? record.metadata : {};
+  const pactSpec = isPlainRecord(metadata.pactSpecification) ? metadata.pactSpecification : {};
+  return sanitizePactText(
+    readRecordString(pactSpec, "version") ||
+      readRecordString(metadata, "pactSpecificationVersion") ||
+      readRecordString(metadata, "pactSpecification"),
+  );
+}
+
+function formatPactInteractionSample(interaction: Record<string, unknown>): string {
+  const description = sanitizePactText(readRecordString(interaction, "description") || readRecordString(interaction, "descriptionText"));
+  const request = isPlainRecord(interaction.request) ? interaction.request : {};
+  const response = isPlainRecord(interaction.response) ? interaction.response : {};
+  const method = sanitizePactText(readRecordString(request, "method") || (isPlainRecord(interaction.contents) ? "MESSAGE" : "interaction"));
+  const path = readPactRequestTarget(request);
+  const status = readJsonNumber(response, "status");
+  const statusText = status === null ? "no status" : String(status);
+  return clampSingleLine(`${method.toUpperCase()} ${path || "(no path)"} -> ${statusText}${description ? ` (${description})` : ""}`, 220);
+}
+
+function readPactRequestTarget(request: Record<string, unknown>): string {
+  const path = sanitizePactPath(readRecordString(request, "path") || readRecordString(request, "url"));
+  const query = request.query;
+  if (typeof query === "string" && query.trim()) {
+    return sanitizePactPath(`${path || ""}${query.startsWith("?") ? query : `?${query}`}`);
+  }
+  if (isPlainRecord(query)) {
+    const keys = Object.keys(query).filter(Boolean).slice(0, 8).map(sanitizePactText);
+    if (keys.length > 0) return `${path || ""}?${keys.join(",")}`;
+  }
+  return path;
+}
+
+function collectPactProviderStates(interaction: Record<string, unknown>, target: Set<string>): void {
+  const providerState = sanitizePactText(readRecordString(interaction, "providerState"));
+  if (providerState) target.add(providerState);
+  for (const state of readJsonArray(interaction, "providerStates")) {
+    if (!isPlainRecord(state)) continue;
+    const name = sanitizePactText(readRecordString(state, "name"));
+    if (name) target.add(name);
+    if (target.size >= MAX_PACT_INTERACTION_PREVIEW) return;
+  }
+}
+
+function collectPactMatchingRuleSamples(interaction: Record<string, unknown>, target: Set<string>): void {
+  const containers = [
+    interaction.matchingRules,
+    isPlainRecord(interaction.request) ? interaction.request.matchingRules : undefined,
+    isPlainRecord(interaction.response) ? interaction.response.matchingRules : undefined,
+  ];
+  for (const container of containers) {
+    if (!isPlainRecord(container)) continue;
+    for (const key of Object.keys(container)) {
+      const sanitized = sanitizePactText(key);
+      if (sanitized) target.add(sanitized);
+      if (target.size >= MAX_PACT_INTERACTION_PREVIEW) return;
+    }
+  }
+}
+
+function sanitizePactPath(value: string): string {
+  return sanitizePactText(redactHarUrl(value));
+}
+
+function sanitizePactText(value: string): string {
+  return maskPotentialSecretValues(redactUrlQuerySecrets(clampSingleLine(value.replace(/\s+/g, " ").trim(), 160)));
+}
+
 interface ProtobufSchemaPreview {
   syntaxVersions: string[];
   packages: string[];
@@ -37866,6 +38190,7 @@ function getMime(extension: string): string {
       ".helm-values.yaml": "application/vnd.cncf.helm.values+yaml",
       ".go": "text/x-go",
       ".gql": "application/graphql",
+      ".graphql-introspection.json": "application/vnd.graphql.introspection+json",
       ".gradle": "text/x-gradle",
       ".gradle.kts": "text/x-kotlin",
       ".gradle.properties": "text/x-gradle-properties",
@@ -37991,6 +38316,7 @@ function getMime(extension: string): string {
       ".otf": "font/otf",
       ".obj": "model/obj",
       ".openmetrics": "application/openmetrics-text",
+      ".pact.json": "application/vnd.pact.consumer+json",
       ".patch": "text/x-diff",
       ".parquet": "application/vnd.apache.parquet",
       ".path": "text/x-systemd-unit",

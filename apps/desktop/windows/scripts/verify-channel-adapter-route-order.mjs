@@ -375,6 +375,25 @@ const routeFixtures = [
     scope: "if (extension === \".json\")",
   },
   {
+    file: "asyncapi.json",
+    route: "const apiSpecPreview = summarizeApiSpecFile(filePath, extension, size)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "AsyncAPI JSON specs must route through API spec preview before generic JSON summaries",
+    scope: "if (extension === \".json\")",
+  },
+  {
+    file: "schema-introspection.json",
+    route: "summarizeGraphqlIntrospectionFile(filePath, size)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "GraphQL introspection JSON must route through schema metadata preview before generic JSON summaries",
+  },
+  {
+    file: "runtime.pact.json",
+    route: "summarizePactContractFile(filePath, size)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "Pact contract JSON must route through consumer contract preview before generic JSON summaries",
+  },
+  {
     file: ".drsai/tokenizer-calibration.json",
     route: "summarizeTokenizerCalibrationFile(filePath, size)",
     before: "summarizeJsonDataFile(filePath, size)",

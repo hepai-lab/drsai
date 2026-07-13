@@ -1422,11 +1422,14 @@ try {
   const openApiPath = join(workspace, "openapi.yaml");
   const openApiJsonPath = join(workspace, "openapi.json");
   const asyncApiPath = join(workspace, "asyncapi.yaml");
+  const asyncApiJsonPath = join(workspace, "asyncapi.json");
   const insomniaPath = join(workspace, "insomnia.json");
   const insomniaYamlPath = join(workspace, "insomnia.yaml");
   const postmanEnvironmentPath = join(workspace, "runtime.postman_environment.json");
   const brunoPath = join(workspace, "runtime.bru");
   const graphqlPath = join(workspace, "schema.graphql");
+  const graphqlIntrospectionPath = join(workspace, "schema-introspection.json");
+  const pactContractPath = join(workspace, "runtime.pact.json");
   const restClientPath = join(workspace, "runtime.http");
   const restClientRestPath = join(workspace, "runtime.rest");
   const protoPath = join(workspace, "runtime.proto");
@@ -3952,6 +3955,50 @@ try {
     "    brokerToken:",
     "      type: httpApiKey",
   ].join("\n"));
+  writeText(asyncApiJsonPath, JSON.stringify({
+    asyncapi: "3.0.0",
+    info: {
+      title: "Runtime Fixture JSON Events",
+      version: "1.2.0",
+    },
+    servers: {
+      production: {
+        host: "broker-json.example.test/runtime?token=secret-asyncapi-json-token",
+        protocol: "amqp",
+      },
+    },
+    channels: {
+      runtimeJsonStarted: {
+        address: "runtime/json/runs/started",
+      },
+      runtimeJsonCommands: {
+        address: "runtime/json/runs/commands",
+      },
+    },
+    operations: {
+      onRuntimeJsonStarted: {
+        action: "receive",
+        channel: {
+          $ref: "#/channels/runtimeJsonStarted",
+        },
+        summary: "Receive runtime JSON start events",
+      },
+      sendRuntimeJsonCommand: {
+        action: "send",
+        channel: {
+          $ref: "#/channels/runtimeJsonCommands",
+        },
+        operationId: "sendRuntimeJsonCommand",
+      },
+    },
+    components: {
+      securitySchemes: {
+        brokerJsonToken: {
+          type: "httpApiKey",
+        },
+      },
+    },
+  }, null, 2));
   writeText(insomniaPath, JSON.stringify({
     _type: "export",
     __export_format: 4,
@@ -4031,6 +4078,131 @@ try {
     "type RuntimeRun { id: ID! status: String! }",
     "query RuntimeFixture($id: ID!) { runtimeRun(id: $id) { id status } }",
   ].join("\n"));
+  writeText(graphqlIntrospectionPath, JSON.stringify({
+    data: {
+      __schema: {
+        queryType: { name: "Query" },
+        mutationType: { name: "Mutation" },
+        subscriptionType: null,
+        types: [
+          {
+            kind: "OBJECT",
+            name: "Query",
+            description: "token=secret-graphql-introspection-token",
+            fields: [
+              { name: "runtimeRun" },
+              { name: "runtimeRuns" },
+            ],
+          },
+          {
+            kind: "OBJECT",
+            name: "Mutation",
+            fields: [
+              { name: "startRuntimeRun" },
+            ],
+          },
+          {
+            kind: "OBJECT",
+            name: "RuntimeRun",
+            interfaces: [{ name: "Node" }],
+            fields: [
+              { name: "id" },
+              { name: "status" },
+            ],
+          },
+          {
+            kind: "INPUT_OBJECT",
+            name: "StartRunInput",
+            inputFields: [
+              { name: "prompt", defaultValue: "secret-default-value" },
+            ],
+          },
+          {
+            kind: "INTERFACE",
+            name: "Node",
+            possibleTypes: [
+              { name: "RuntimeRun" },
+            ],
+          },
+          {
+            kind: "ENUM",
+            name: "RunStatus",
+            enumValues: [
+              { name: "QUEUED" },
+              { name: "RUNNING" },
+              { name: "DONE" },
+            ],
+          },
+        ],
+        directives: [
+          { name: "include" },
+          { name: "runtimeAuth" },
+        ],
+      },
+    },
+  }, null, 2));
+  writeText(pactContractPath, JSON.stringify({
+    consumer: {
+      name: "Runtime Desktop Client",
+    },
+    provider: {
+      name: "Runtime API",
+    },
+    interactions: [
+      {
+        description: "list runtime runs",
+        providerStates: [
+          { name: "runtime runs exist" },
+        ],
+        request: {
+          method: "GET",
+          path: "/runs",
+          query: "token=secret-pact-query-token&limit=2",
+          headers: {
+            Authorization: "Bearer secret-pact-auth-token",
+          },
+        },
+        response: {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: {
+            token: "secret-pact-response-token",
+          },
+          matchingRules: {
+            "$.body.runs[*].id": {
+              matchers: [{ match: "type" }],
+            },
+          },
+        },
+      },
+      {
+        description: "create runtime run",
+        providerState: "runtime creation is allowed",
+        request: {
+          method: "POST",
+          path: "/runs",
+          body: {
+            prompt: "secret-pact-request-body-token",
+          },
+          matchingRules: {
+            "$.body.prompt": {
+              matchers: [{ match: "type" }],
+            },
+          },
+        },
+        response: {
+          status: 201,
+        },
+      },
+    ],
+    metadata: {
+      pactSpecification: {
+        version: "3.0.0",
+      },
+    },
+  }, null, 2));
   writeText(restClientPath, [
     "### @name RuntimeList",
     "GET https://api.example.test/runtime/runs?token=secret-token HTTP/1.1",
@@ -6446,6 +6618,8 @@ try {
       postmanEnvironmentPath,
       brunoPath,
       graphqlPath,
+      graphqlIntrospectionPath,
+      pactContractPath,
       restClientPath,
       restClientRestPath,
       protoPath,
@@ -6457,10 +6631,10 @@ try {
       kustomizationPath,
       kubeconfigPath,
     ],
-    limit: 15,
+    limit: 17,
   });
 
-  assert(apiSchemaContainerResult.items.length === 15, `expected 15 imported API/schema/container runtime fixture items, got ${apiSchemaContainerResult.items.length}`);
+  assert(apiSchemaContainerResult.items.length === 17, `expected 17 imported API/schema/container runtime fixture items, got ${apiSchemaContainerResult.items.length}`);
   assert(apiSchemaContainerResult.truncated === false, "API/schema/container runtime fixture import should not be truncated");
   assert(
     apiSchemaContainerResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
@@ -6492,6 +6666,22 @@ try {
 
   assert(asyncApiResult.items.length === 1, `expected 1 imported AsyncAPI runtime fixture item, got ${asyncApiResult.items.length}`);
   assert(asyncApiResult.truncated === false, "AsyncAPI runtime fixture import should not be truncated");
+
+  const asyncApiJsonResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [
+      asyncApiJsonPath,
+    ],
+    limit: 2,
+  });
+
+  assert(asyncApiJsonResult.items.length === 1, `expected 1 imported AsyncAPI JSON runtime fixture item, got ${asyncApiJsonResult.items.length}`);
+  assert(asyncApiJsonResult.truncated === false, "AsyncAPI JSON runtime fixture import should not be truncated");
+  assert(
+    asyncApiJsonResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "AsyncAPI JSON runtime fixture import lost read-only verification copy",
+  );
 
   const openApiJsonResult = adapters.importChannelContext({
     adapterId: "file-input",
@@ -8495,6 +8685,16 @@ try {
   assert(!asyncApiSummary.includes("secret-asyncapi-token"), "asyncapi.yaml summary leaked sensitive broker token");
   assert(asyncApiSummary.includes("no request execution, broker connection"), "asyncapi.yaml summary omitted no-request/no-broker safety copy");
 
+  const asyncApiJsonSummary = summaryFor(asyncApiJsonResult, "asyncapi.json");
+  assert(asyncApiJsonSummary.includes("API spec/collection preview"), "asyncapi.json did not use API spec preview");
+  assert(asyncApiJsonSummary.includes("AsyncAPI 3.0.0"), "asyncapi.json summary omitted AsyncAPI JSON format evidence");
+  assert(asyncApiJsonSummary.includes("Runtime Fixture JSON Events"), "asyncapi.json summary omitted AsyncAPI JSON title evidence");
+  assert(asyncApiJsonSummary.includes("runtime/json/runs/started"), "asyncapi.json summary omitted receive channel evidence");
+  assert(asyncApiJsonSummary.includes("runtime/json/runs/commands"), "asyncapi.json summary omitted send channel evidence");
+  assert(asyncApiJsonSummary.includes("brokerJsonToken"), "asyncapi.json summary omitted security scheme evidence");
+  assert(!asyncApiJsonSummary.includes("secret-asyncapi-json-token"), "asyncapi.json summary leaked sensitive broker token");
+  assert(asyncApiJsonSummary.includes("no request execution, broker connection"), "asyncapi.json summary omitted no-request/no-broker safety copy");
+
   const insomniaSummary = summaryFor(apiSchemaContainerResult, "insomnia.json");
   assert(insomniaSummary.includes("API spec/collection preview"), "insomnia.json did not use API client collection preview");
   assert(insomniaSummary.includes("Insomnia export"), "insomnia.json summary omitted Insomnia format evidence");
@@ -8534,6 +8734,31 @@ try {
   assert(graphqlSummary.includes("RuntimeFixture"), "schema.graphql summary omitted operation evidence");
   assert(graphqlSummary.includes("RuntimeRun"), "schema.graphql summary omitted type evidence");
   assert(graphqlSummary.includes("no request execution"), "schema.graphql summary omitted no-request safety copy");
+
+  const graphqlIntrospectionSummary = summaryFor(apiSchemaContainerResult, "schema-introspection.json");
+  assert(graphqlIntrospectionSummary.includes("GraphQL introspection JSON preview"), "schema-introspection.json did not use GraphQL introspection preview");
+  assert(graphqlIntrospectionSummary.includes("query:Query") && graphqlIntrospectionSummary.includes("mutation:Mutation"), "schema-introspection.json summary omitted root type evidence");
+  assert(graphqlIntrospectionSummary.includes("RuntimeRun") && graphqlIntrospectionSummary.includes("StartRunInput"), "schema-introspection.json summary omitted object/input type evidence");
+  assert(graphqlIntrospectionSummary.includes("@runtimeAuth"), "schema-introspection.json summary omitted directive evidence");
+  assert(graphqlIntrospectionSummary.includes("Node: RuntimeRun"), "schema-introspection.json summary omitted possible type evidence");
+  assert(!graphqlIntrospectionSummary.includes("secret-graphql-introspection-token"), "schema-introspection.json summary leaked description secret");
+  assert(!graphqlIntrospectionSummary.includes("secret-default-value"), "schema-introspection.json summary leaked default value");
+  assert(graphqlIntrospectionSummary.includes("no GraphQL request execution, schema introspection request"), "schema-introspection.json summary omitted no-request/no-introspection safety copy");
+
+  const pactContractSummary = summaryFor(apiSchemaContainerResult, "runtime.pact.json");
+  assert(pactContractSummary.includes("Pact contract JSON preview"), "runtime.pact.json did not use Pact contract preview");
+  assert(pactContractSummary.includes("Runtime Desktop Client"), "runtime.pact.json summary omitted consumer evidence");
+  assert(pactContractSummary.includes("Runtime API"), "runtime.pact.json summary omitted provider evidence");
+  assert(pactContractSummary.includes("Pact specification: 3.0.0"), "runtime.pact.json summary omitted Pact spec version evidence");
+  assert(pactContractSummary.includes("GET /runs?token=[redacted] -> 200"), "runtime.pact.json summary omitted sanitized GET interaction evidence");
+  assert(pactContractSummary.includes("POST /runs -> 201"), "runtime.pact.json summary omitted POST interaction evidence");
+  assert(pactContractSummary.includes("runtime runs exist") && pactContractSummary.includes("runtime creation is allowed"), "runtime.pact.json summary omitted provider state evidence");
+  assert(pactContractSummary.includes("$.body.runs[*].id") && pactContractSummary.includes("$.body.prompt"), "runtime.pact.json summary omitted matching rule evidence");
+  assert(!pactContractSummary.includes("secret-pact-query-token"), "runtime.pact.json summary leaked query token");
+  assert(!pactContractSummary.includes("secret-pact-auth-token"), "runtime.pact.json summary leaked auth token");
+  assert(!pactContractSummary.includes("secret-pact-request-body-token"), "runtime.pact.json summary leaked request body token");
+  assert(!pactContractSummary.includes("secret-pact-response-token"), "runtime.pact.json summary leaked response body token");
+  assert(pactContractSummary.includes("no Pact CLI command, Pact Broker connection, provider verification"), "runtime.pact.json summary omitted no-Pact-runtime safety copy");
 
   const restClientSummary = summaryFor(apiSchemaContainerResult, "runtime.http");
   assert(restClientSummary.includes("REST Client request file preview"), "runtime.http did not use REST Client preview");
