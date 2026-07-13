@@ -45,6 +45,10 @@ const SESSION_ID_PATTERN = /^[a-zA-Z0-9_.:-]{1,160}$/;
 const activeChats = new Map<string, AbortController>();
 const chatEventSequences = new Map<string, number>();
 
+export function hasActiveChats(): boolean {
+  return activeChats.size > 0;
+}
+
 export function startChat(webContents: WebContents, request: unknown): string {
   if (activeChats.size >= MAX_ACTIVE_CHATS) {
     throw new Error("Too many active chat requests. Stop one before starting another.");

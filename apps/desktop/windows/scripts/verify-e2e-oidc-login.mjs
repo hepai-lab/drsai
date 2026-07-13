@@ -446,9 +446,7 @@ function electronArgs(appArgs) {
     "--disable-gpu",
     "--disable-gpu-compositing",
     "--disable-gpu-sandbox",
-    "--disable-software-rasterizer",
     "--disable-features=VizDisplayCompositor",
-    "--single-process",
     ...appArgs,
   ];
 }

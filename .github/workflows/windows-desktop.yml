@@ -73,17 +73,6 @@ jobs:
       - name: Typecheck and build
         run: npm run build
 
-      - name: Build full Windows installer
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
-          CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE }}
-          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run build:win -- --publish=never
-
-      - name: Verify packaged app smoke
-        run: npm run verify:packaged
-
       - name: Resolve release coordinates
         shell: pwsh
         run: |
@@ -109,12 +98,18 @@ jobs:
 
           if ($tag -eq "latest") {
             $baseUrl = "https://github.com/$env:OPENDRSAI_RELEASE_REPOSITORY/releases/latest/download"
+            $channel = "dev"
+            $requireSignedRelease = "0"
           } else {
             $baseUrl = "https://github.com/$env:OPENDRSAI_RELEASE_REPOSITORY/releases/download/$tag"
+            $channel = if ($package.version -match "-") { "beta" } else { "stable" }
+            $requireSignedRelease = if ($channel -eq "stable") { "1" } else { "0" }
           }
 
           "OPENDRSAI_RELEASE_TAG=$tag" >> $env:GITHUB_ENV
           "OPENDRSAI_RELEASE_BASE_URL=$baseUrl" >> $env:GITHUB_ENV
+          "OPENDRSAI_UPDATE_CHANNEL=$channel" >> $env:GITHUB_ENV
+          "OPENDRSAI_REQUIRE_SIGNED_RELEASE=$requireSignedRelease" >> $env:GITHUB_ENV
 
       - name: Verify backend release tag
         if: env.OPENDRSAI_RELEASE_TAG != 'latest'
@@ -133,13 +128,32 @@ jobs:
             -ExpectedVersion "$($package.version)"
 
       - name: Build Windows runtime archive
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         run: npm run build:runtime
+
+      - name: Verify packaged app and updater
+        run: |
+          npm run verify:packaged
+          npm run verify:update-helper
+          npm run verify:e2e-update
+
+      - name: Generate and verify runtime update manifest
+        run: |
+          npm run manifest:win
+          npm run verify:update-manifest
 
       - name: Install WiX Toolset
         run: choco install wixtoolset -y --no-progress
 
       - name: Build bootstrapper MSI
-        run: npm run build:bootstrapper
+        shell: pwsh
+        run: |
+          powershell -ExecutionPolicy Bypass -File ..\installers\windows\build-msi.ps1 `
+            -RuntimePath release\bootstrapper\OpenDrSaiRuntime-win-x64.zip `
+            -RuntimeUrl "$env:OPENDRSAI_RELEASE_BASE_URL/OpenDrSaiRuntime-win-x64.zip"
 
       - name: Sign bootstrapper MSI
         env:
@@ -147,7 +161,7 @@ jobs:
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
           EXPECTED_WINDOWS_SIGNER_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
           EXPECTED_WINDOWS_SIGNER_SUBJECT: ${{ vars.WINDOWS_CERTIFICATE_SUBJECT }}
-          REQUIRE_SIGNED_WINDOWS_ARTIFACTS: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.publish_release) && '1' || '0' }}
+          REQUIRE_SIGNED_WINDOWS_ARTIFACTS: ${{ env.OPENDRSAI_REQUIRE_SIGNED_RELEASE }}
         run: npm run sign:bootstrapper
 
       - name: Generate release summary
@@ -160,12 +174,13 @@ jobs:
         env:
           EXPECTED_WINDOWS_SIGNER_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
           EXPECTED_WINDOWS_SIGNER_SUBJECT: ${{ vars.WINDOWS_CERTIFICATE_SUBJECT }}
-          REQUIRE_SIGNED_WINDOWS_ARTIFACTS: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.publish_release) && '1' || '0' }}
+          REQUIRE_SIGNED_WINDOWS_ARTIFACTS: ${{ env.OPENDRSAI_REQUIRE_SIGNED_RELEASE }}
         run: npm run verify:signatures
 
       - name: Verify local release readiness
         env:
           REQUIRE_RELEASE_READY: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.publish_release) && '1' || '0' }}
+          REQUIRE_SIGNED_WINDOWS_ARTIFACTS: ${{ env.OPENDRSAI_REQUIRE_SIGNED_RELEASE }}
           SKIP_PUBLIC_RELEASE_CHECK: "1"
         run: npm run verify:release-ready
 
@@ -176,6 +191,7 @@ jobs:
           path: |
             apps/desktop/windows/release/bootstrapper/OpenDrSaiSetup.msi
             apps/desktop/windows/release/bootstrapper/OpenDrSaiRuntime-win-x64.zip
+            apps/desktop/windows/release/latest-windows.json
             apps/desktop/windows/release/release-summary.json
             apps/desktop/windows/release/visual-checks/*.png
 
@@ -189,4 +205,5 @@ jobs:
           files: |
             apps/desktop/windows/release/bootstrapper/OpenDrSaiSetup.msi
             apps/desktop/windows/release/bootstrapper/OpenDrSaiRuntime-win-x64.zip
+            apps/desktop/windows/release/latest-windows.json
             apps/desktop/windows/release/release-summary.json

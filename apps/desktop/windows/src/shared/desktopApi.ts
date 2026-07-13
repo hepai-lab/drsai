@@ -82,12 +82,31 @@ export interface GatewayStatus {
 }
 
 export interface UpdateStatus {
+  phase:
+    | "idle"
+    | "checking"
+    | "available"
+    | "downloading"
+    | "verifying"
+    | "staging"
+    | "ready"
+    | "installing"
+    | "complete"
+    | "rollback"
+    | "failed";
   checking: boolean;
   available: boolean;
   downloading: boolean;
   downloaded: boolean;
   progress: number | null;
   version: string | null;
+  currentVersion: string;
+  mandatory: boolean;
+  releaseNotesUrl: string | null;
+  canDownload: boolean;
+  canInstall: boolean;
+  canCancel: boolean;
+  errorCode: string | null;
   error: string | null;
 }
 
@@ -2315,6 +2334,9 @@ export interface DesktopApi {
   listProviderUsageAnalytics(): Promise<DesktopProviderUsageAnalyticsRecord[]>;
   listProviderErrorAnalytics(): Promise<DesktopProviderErrorAnalyticsRecord[]>;
   checkForUpdates(): Promise<UpdateStatus>;
+  downloadUpdate(): Promise<UpdateStatus>;
+  cancelUpdate(): Promise<UpdateStatus>;
+  installUpdate(): Promise<UpdateStatus>;
   startInstall(options?: StartInstallOptions): Promise<void>;
   cancelInstall(): Promise<boolean>;
   startGateway(): Promise<boolean>;

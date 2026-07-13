@@ -24,6 +24,7 @@ const desktopApi = read("src/shared/desktopApi.ts");
 const preload = read("src/preload/index.ts");
 const desktopMain = read("src/main/index.ts");
 const threadsMain = read("src/main/threads.ts");
+const statusMain = read("src/main/status.ts");
 const filesContextPanel = read("src/renderer/src/components/files/FilesContextPanel.tsx");
 
 function navItemEnabled(source, menuId) {
@@ -48,14 +49,15 @@ const checks = [
   ["chat workspace renders markdown safely through props", chatWorkspace.includes("ReactMarkdown") && chatWorkspace.includes("remarkGfm") && chatWorkspace.includes("onOpenExternal")],
   ["chat workspace renders structured tool timeline events", chatWorkspace.includes("ChatToolTimelineEvent") && chatWorkspace.includes("ToolTimeline") && chatWorkspace.includes("message-tool-timeline") && chatAdapter.includes('event.type === "tool_timeline"') && chatAdapter.includes("appendAssistantToolTimeline") && css.includes(".message-tool-event")],
   ["chat workspace uses readable Chinese labels", chatWorkspace.includes("发送") && chatWorkspace.includes("停止") && chatWorkspace.includes("正在连接本地网关")],
-  ["mock covers update check state", mock.includes("checkForUpdates") && !mock.includes("downloadUpdate") && !mock.includes("installUpdate")],
+  ["mock covers complete runtime update state", mock.includes("checkForUpdates") && mock.includes("downloadUpdate") && mock.includes("installUpdate") && mock.includes("cancelUpdate")],
+  ["main fallback update status keeps complete runtime update shape", statusMain.includes("fallbackUpdateStatus") && ["phase", "currentVersion", "mandatory", "releaseNotesUrl", "canDownload", "canInstall", "canCancel", "errorCode"].every((field) => statusMain.includes(`${field}:`))],
   ["mock covers settings save state", mock.includes("saveApiKey") && mock.includes("Mock API key saved")],
   ["renderer settings omit API key and model configuration", app.includes("SettingsPanel") && !app.includes("保存 API Key") && !app.includes("Save API Key") && !app.includes('id="api-key-input"')],
   ["renderer surfaces action feedback", app.includes("actionMessage") && healthAdapter.includes("网关启动失败") && healthAdapter.includes("Gateway failed to start") && healthAdapter.includes("更新检查失败") && healthAdapter.includes("Update check failed")],
   ["renderer owns chat request id before starting IPC", chatAdapter.includes("const requestId = crypto.randomUUID()") && chatAdapter.includes("setActiveRequestId(requestId)") && chatAdapter.includes("requestId,")],
   ["renderer shows prerequisite command paths", app.includes("Python 路径") && app.includes("Python path") && app.includes("Git 路径") && app.includes("Git path")],
   ["renderer shows backend repair state", app.includes("后端目标版本") && app.includes("Backend target") && app.includes("需要修复") && app.includes("Repair required")],
-  ["about dialog only exposes update check maintenance action", app.includes("检查更新") && app.includes("Check Updates") && !app.includes("Download Update") && !app.includes("Install Update") && !app.includes("Install / Repair") && !app.includes("Recover Gateway")],
+  ["about dialog exposes runtime update actions", app.includes("检查更新") && app.includes("Check Updates") && app.includes("Restart and Update") && app.includes("Cancel Download") && !app.includes("Install / Repair") && !app.includes("Recover Gateway")],
   ["renderer wraps long chat content", css.includes("overflow-wrap: anywhere")],
   ["renderer styles markdown tables and code blocks", css.includes(".message-body table") && css.includes(".message-body pre")],
   ["about dialog disables update check while busy", app.includes("<button disabled={busy} onClick={onCheckUpdates}>")],

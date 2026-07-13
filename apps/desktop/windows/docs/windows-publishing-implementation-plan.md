@@ -15,19 +15,30 @@ OpenDrSai should ship through three coordinated channels:
 3. Windows Package Manager (`winget`) as a developer and IT-friendly discovery
    channel that points at the same versioned GitHub Release installer.
 
-The repository already builds the direct download channel with NSIS,
-`latest.yml`, `latest-windows.json`, release summaries, bootstrapper signing,
-and public release verification. The work below keeps that channel as the
-source of truth, then derives Store and winget submissions from it.
+The repository builds the direct download channel with a WiX MSI,
+`OpenDrSaiRuntime-win-x64.zip`, `latest-windows.json`, release summaries,
+signing gates and public release verification. That channel is the source of
+truth for later Store and winget submissions.
 
 ## Current Implementation State
 
+The active Windows distribution contract is the per-user MSI bootstrapper plus
+`OpenDrSaiRuntime-win-x64.zip`. The MSI downloads and verifies the runtime, then
+installs the Electron application and Python agent into stable per-user paths.
+
+The repository also contains an older NSIS/electron-updater design. That design
+is not the active release path: the current build does not publish an NSIS setup
+executable, blockmap, or usable `latest.yml`, and the application previously
+exposed update checking without download or installation. Release and update
+work must therefore use the runtime archive contract below rather than mixing
+the two installer layouts.
+
 Implemented in this workspace:
 
-- `electron-builder.yml` builds a signed NSIS installer named
-  `OpenDrSai-${version}-setup.exe`.
-- `npm run manifest:win` creates `release/latest-windows.json` from the
-  versioned installer.
+- `electron-builder.yml` builds the unpacked Electron application consumed by
+  the runtime archive.
+- The WiX MSI bootstrapper downloads a pinned runtime URL and verifies its size
+  and SHA-256 before installation.
 - `npm run summary:win`, `npm run verify:artifacts`,
   `npm run verify:signatures`, and `npm run verify:public-release` validate
   hashes, sizes, updater metadata, bootstrapper metadata, and Authenticode
@@ -42,6 +53,94 @@ Implemented in this workspace:
 - `store/store-listing.template.json` records the Store listing, privacy,
   support, screenshot, certification, and data-safety fields required before
   Partner Center submission.
+
+## Runtime Auto-Update MVP
+
+### Product contract
+
+Users install `OpenDrSaiSetup.msi` once. From the second release onward, the
+desktop application checks `latest-windows.json`, downloads the versioned
+`OpenDrSaiRuntime-win-x64.zip`, verifies and stages it, exits, and delegates the
+directory swap to an updater outside the running application directory. The
+runtime archive updates the Electron application and Python agent together.
+
+User-owned data is outside the replacement set. OIDC state, Electron user data,
+projects, conversations, workspace files, and `.drsai` configuration remain in
+place. Only these managed runtime paths are replaced:
+
+- `%LOCALAPPDATA%\Programs\OpenDrSai\app`
+- `%USERPROFILE%\.drsai\drsai-agent`
+
+### Update manifest
+
+The stable pointer is `latest-windows.json`. Runtime URLs inside it must be
+immutable, versioned HTTPS Release URLs rather than `latest/download` aliases.
+The schema is versioned and contains:
+
+- schema version, application version, channel, publication time;
+- minimum updater version and optional mandatory-update flag;
+- runtime URL, exact byte size, and SHA-256;
+- optional release-notes URL;
+- stable-channel signature requirement.
+
+The client accepts only supported schema versions, newer semantic versions,
+allowed release hosts, matching runtime manifests, and non-downgrade updates.
+Plain HTTP is available only under an explicit test-only environment switch.
+
+### Client lifecycle
+
+The updater state machine is `idle -> checking -> available -> downloading ->
+verifying -> staging -> ready -> installing -> complete`. Cancellation returns
+to `available`; errors enter `failed` without changing the installed runtime.
+
+Packaged builds check after a short startup delay and then periodically. The UI
+also offers manual check, download/cancel, and restart-to-update actions. Update
+installation is blocked while agent/chat/file-review work is active. The main
+process stops its managed gateway before exiting for installation.
+
+### Atomic swap and rollback
+
+The updater helper is copied to a stable directory outside `app`, waits for the
+old process to exit, and swaps both managed runtime directories. It retains one
+`.previous` copy of each directory and writes `update-state.json` before every
+destructive transition. The new app must write a startup health marker within a
+bounded timeout. Missing health confirmation, backend import/version mismatch,
+or launch failure restores both previous directories and relaunches the old
+application.
+
+ZIP extraction rejects entries escaping the staging directory. Downloaded
+bytes must match the manifest size and SHA-256. Stable public updates also
+require a valid Authenticode signature whose signer matches the installed
+publisher; unsigned updates are limited to explicit development/test mode.
+
+### Release ordering
+
+For each `v<version>` Release:
+
+1. Build and sign the MSI, Electron executable, updater helper, and runtime.
+2. Generate `latest-windows.json` from the final immutable runtime bytes.
+3. Upload the MSI, runtime ZIP, manifest, summary, and release notes to a draft.
+4. Download and verify the draft assets, including signatures and hashes.
+5. Publish the versioned Release.
+6. Publish or replace the stable pointer only after every versioned asset is
+   reachable. A failed release leaves the previous stable pointer unchanged.
+
+### MVP acceptance gates
+
+- A clean Windows user installs version N once with the MSI.
+- Version N discovers N+1, downloads it, and restarts into N+1 without running
+  the MSI again.
+- Electron, Python agent, and backend all report N+1.
+- OIDC login, projects, conversations, workspaces, and shortcuts survive.
+- Corrupt size/hash, invalid manifest, unsupported host, and downgrade inputs
+  are rejected before the installed runtime changes.
+- A broken N+1 launch or backend rolls back to a working N automatically.
+- Two consecutive upgrades (N -> N+1 -> N+2) pass on clean Windows 11; the
+  release matrix also covers Windows 10 22H2 before public stable promotion.
+
+Differential packages, silent forced installation, rollout percentages,
+multiple retained rollback versions, and Store-managed updating are follow-up
+work rather than MVP blockers.
 
 ## Direct Download Release Path
 
@@ -98,7 +197,7 @@ Store package preparation:
 - Build an AppX package with the Store config after the normal app build.
 - Run Microsoft Store certification checks before submission.
 - If AppX submission is blocked by Electron or Store policy constraints, use
-  the existing signed NSIS installer as a non-game Win32 direct-link submission
+  the signed WiX MSI as a non-game Win32 direct-link submission
   through Partner Center. The installer URL must be versioned, HTTPS, immutable,
   signed, standalone, and silent-install capable.
 
@@ -136,7 +235,7 @@ Before submitting to `microsoft/winget-pkgs`:
 
 - Confirm the GitHub Release asset URL is public and versioned.
 - Confirm the installer sha256 matches the released binary.
-- Confirm `/S` performs a silent install for the NSIS installer.
+- Confirm `msiexec /i OpenDrSaiSetup.msi /qn` performs a silent per-user install.
 - Run `winget validate` locally when Windows Package Manager tooling is
   available.
 - Submit the generated version folder as a PR to the community repository.

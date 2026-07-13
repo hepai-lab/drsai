@@ -31,11 +31,20 @@ import {
 import { getDesktopHealth, getInstallStatus } from "./status";
 import { bootstrapDesktop } from "./bootstrap";
 import { DRSAI_HOME } from "./paths";
-import { checkForUpdates, subscribeUpdateStatus } from "./updates";
-import { abortChat, startChat } from "./chat";
+import {
+  cancelUpdate,
+  checkForUpdates,
+  confirmPendingUpdateLaunch,
+  restorePreparedUpdate,
+  downloadUpdate,
+  installUpdate,
+  startUpdateScheduler,
+  subscribeUpdateStatus,
+} from "./updates";
+import { abortChat, hasActiveChats, startChat } from "./chat";
 import { listProviderErrorAnalytics } from "./providerErrorAnalytics";
 import { listProviderUsageAnalytics } from "./providerUsageAnalytics";
-import { abortAgentRun, startAgentRun } from "./agentRuns";
+import { abortAgentRun, hasActiveAgentRuns, startAgentRun } from "./agentRuns";
 import { listAgents } from "./agents";
 import {
   executeForkLifecycleAction,
@@ -318,7 +327,6 @@ if (isE2eSmokeProcess) {
   app.commandLine.appendSwitch("disable-gpu");
   app.commandLine.appendSwitch("disable-gpu-compositing");
   app.commandLine.appendSwitch("disable-gpu-sandbox");
-  app.commandLine.appendSwitch("in-process-gpu");
 }
 const singleInstanceLock = isE2eSmokeProcess || app.requestSingleInstanceLock();
 const desktopProcessStartedAt = Date.now();
@@ -1958,7 +1966,6 @@ if (process.env.OPENDRSAI_E2E_DISABLE_GPU === "1") {
   app.commandLine.appendSwitch("disable-gpu");
   app.commandLine.appendSwitch("disable-gpu-compositing");
   app.commandLine.appendSwitch("disable-gpu-sandbox");
-  app.commandLine.appendSwitch("disable-software-rasterizer");
   app.commandLine.appendSwitch("disable-features", "VizDisplayCompositor");
 }
 
@@ -2392,6 +2399,21 @@ function registerIpc(): void {
   secureHandle("desktop:check-for-updates", (event) => {
     subscribeUpdateStatus(event.sender);
     return checkForUpdates();
+  });
+  secureHandle("desktop:download-update", (event) => {
+    subscribeUpdateStatus(event.sender);
+    return downloadUpdate();
+  });
+  secureHandle("desktop:cancel-update", () => cancelUpdate());
+  secureHandle("desktop:install-update", async () => {
+    if (hasActiveChats() || hasActiveAgentRuns()) {
+      throw new Error("Finish or stop active chat and agent tasks before installing an update.");
+    }
+    if (pendingWorkspaceMutationApprovals.size > 0 || pendingWorkspaceCheckpointRestores.size > 0) {
+      throw new Error("Resolve pending workspace change reviews before installing an update.");
+    }
+    await shutdownGateway();
+    return installUpdate();
   });
 
   secureHandle("desktop:open-external", async (_event, rawUrl: string) => {
@@ -3089,8 +3111,14 @@ async function startDeferredStartupTasks(): Promise<void> {
 
 app.whenReady().then(() => {
   recordStartupMilestone("electron-ready");
+  confirmPendingUpdateLaunch();
+  restorePreparedUpdate();
   cleanupExpiredVoiceTempFiles();
   if (!singleInstanceLock) return;
+  if (process.env.OPENDRSAI_E2E_UPDATE_PROTOCOL === "1") {
+    void runHeadlessUpdateProtocolSmoke();
+    return;
+  }
   if (process.env.OPENDRSAI_E2E_OIDC_HEADLESS === "1") {
     void runHeadlessOidcSmoke();
     return;
@@ -3099,6 +3127,7 @@ app.whenReady().then(() => {
   registerRendererProtocol();
   registerIpc();
   createWindow();
+  startUpdateScheduler();
   handleDeepLinkArgv(process.argv);
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -3371,3 +3400,35 @@ app.on("before-quit", (event) => {
       app.quit();
     });
 });
+
+async function runHeadlessUpdateProtocolSmoke(): Promise<void> {
+  const resultPath = process.env.OPENDRSAI_E2E_RESULT;
+  if (!resultPath) {
+    app.exit(1);
+    return;
+  }
+  const result: {
+    ok: boolean;
+    checks: Record<string, boolean>;
+    details: Record<string, unknown>;
+    error?: string;
+  } = { ok: false, checks: {}, details: {} };
+  try {
+    const checked = await checkForUpdates();
+    result.details.checked = checked;
+    result.checks.updateAvailable =
+      (checked.phase === "available" && checked.canDownload) ||
+      (checked.phase === "ready" && checked.canInstall);
+    const downloaded = await downloadUpdate();
+    result.details.downloaded = downloaded;
+    result.checks.updateReady = downloaded.phase === "ready" && downloaded.canInstall;
+    result.checks.downloadComplete = downloaded.downloaded && downloaded.progress === 100;
+    result.checks.noUpdateError = downloaded.error === null;
+    result.ok = Object.values(result.checks).every(Boolean);
+  } catch (error) {
+    result.error = error instanceof Error ? error.message : String(error);
+  }
+  mkdirSync(dirname(resultPath), { recursive: true });
+  writeFileSync(resultPath, `${JSON.stringify(result, null, 2)}\n`, "utf8");
+  app.exit(result.ok ? 0 : 1);
+}

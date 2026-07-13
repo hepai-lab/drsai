@@ -567,12 +567,20 @@ let health = {
     lastLog: "",
   },
   update: {
+    phase: "idle",
     checking: false,
     available: false,
     downloading: false,
     downloaded: false,
     progress: null,
     version: null,
+    currentVersion: "1.4.2",
+    mandatory: false,
+    releaseNotesUrl: null,
+    canDownload: false,
+    canInstall: false,
+    canCancel: false,
+    errorCode: null,
     error: null,
   },
 };
@@ -632,15 +640,34 @@ contextBridge.exposeInMainWorld("openDrSai", {
     health = {
       ...health,
       update: {
+        phase: "available",
         checking: false,
         available: true,
         downloading: false,
         downloaded: false,
         progress: null,
         version: "0.1.1",
+        currentVersion: "0.1.0",
+        mandatory: false,
+        releaseNotesUrl: null,
+        canDownload: true,
+        canInstall: false,
+        canCancel: false,
+        errorCode: null,
         error: null,
       },
     };
+    emit(updateListeners, health.update);
+    return health.update;
+  },
+  downloadUpdate: async () => {
+    health = { ...health, update: { ...health.update, phase: "ready", downloaded: true, progress: 100, canDownload: false, canInstall: true } };
+    emit(updateListeners, health.update);
+    return health.update;
+  },
+  cancelUpdate: async () => health.update,
+  installUpdate: async () => {
+    health = { ...health, update: { ...health.update, phase: "installing", canInstall: false } };
     emit(updateListeners, health.update);
     return health.update;
   },

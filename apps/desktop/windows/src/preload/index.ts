@@ -207,6 +207,12 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:provider-error-analytics-list"),
   checkForUpdates: (): Promise<UpdateStatus> =>
     ipcRenderer.invoke("desktop:check-for-updates"),
+  downloadUpdate: (): Promise<UpdateStatus> =>
+    ipcRenderer.invoke("desktop:download-update"),
+  cancelUpdate: (): Promise<UpdateStatus> =>
+    ipcRenderer.invoke("desktop:cancel-update"),
+  installUpdate: (): Promise<UpdateStatus> =>
+    ipcRenderer.invoke("desktop:install-update"),
   startInstall: (options?: StartInstallOptions): Promise<void> =>
     ipcRenderer.invoke("desktop:start-install", options),
   cancelInstall: (): Promise<boolean> =>

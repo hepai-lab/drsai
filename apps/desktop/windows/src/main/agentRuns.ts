@@ -30,6 +30,10 @@ const REQUEST_ID_PATTERN = /^[a-zA-Z0-9_-]{8,80}$/;
 const RUN_ID_PATTERN = /^[a-zA-Z0-9_.:-]{1,160}$/;
 const activeRuns = new Map<string, AbortController>();
 
+export function hasActiveAgentRuns(): boolean {
+  return activeRuns.size > 0;
+}
+
 export async function startAgentRun(
   webContents: WebContents,
   rawRequest: unknown,

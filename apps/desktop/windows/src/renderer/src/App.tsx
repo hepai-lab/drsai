@@ -1137,7 +1137,10 @@ function AuthenticatedApp({
       installProgress={desktop.installProgress}
       language={language}
       onCancelInstall={desktop.cancelInstall}
+      onCancelUpdate={desktop.cancelUpdate}
       onCheckUpdates={desktop.checkUpdates}
+      onDownloadUpdate={desktop.downloadUpdate}
+      onInstallUpdate={desktop.installUpdate}
       onOpenPath={(path) => desktopApi.openPath(path)}
       onRefresh={desktop.refreshHealth}
     />
@@ -1499,7 +1502,10 @@ function DesktopStatusPanel({
   installProgress,
   language,
   onCancelInstall,
+  onCancelUpdate,
   onCheckUpdates,
+  onDownloadUpdate,
+  onInstallUpdate,
   onOpenPath,
   onRefresh,
 }: {
@@ -1509,7 +1515,10 @@ function DesktopStatusPanel({
   installProgress: InstallProgress | null;
   language: AppLanguage;
   onCancelInstall: () => void;
+  onCancelUpdate: () => void;
   onCheckUpdates: () => void;
+  onDownloadUpdate: () => void;
+  onInstallUpdate: () => void;
   onOpenPath: (path: string) => void;
   onRefresh: () => void;
 }): React.JSX.Element {
@@ -1587,12 +1596,27 @@ function DesktopStatusPanel({
       <section className="about-section">
         <div className="about-section-title">
           <strong>{zh ? "维护" : "Maintenance"}</strong>
-          <span>{zh ? "仅保留更新检查" : "Update check only"}</span>
+          <span>{zh ? "检查、下载并安全重启更新" : "Check, download, and safely restart to update"}</span>
         </div>
         <div className="about-action-grid">
           <button disabled={busy} onClick={onCheckUpdates}>
             {zh ? "检查更新" : "Check Updates"}
           </button>
+          {health?.update.canDownload && (
+            <button disabled={busy} onClick={onDownloadUpdate}>
+              {zh ? `下载 ${health.update.version ?? "更新"}` : `Download ${health.update.version ?? "update"}`}
+            </button>
+          )}
+          {health?.update.canCancel && (
+            <button onClick={onCancelUpdate}>
+              {zh ? "取消下载" : "Cancel Download"}
+            </button>
+          )}
+          {health?.update.canInstall && (
+            <button disabled={busy} onClick={onInstallUpdate}>
+              {zh ? "重启并更新" : "Restart and Update"}
+            </button>
+          )}
         </div>
       </section>
 
