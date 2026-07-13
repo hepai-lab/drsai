@@ -8,6 +8,17 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+function Get-Sha256Hex([string]$Path) {
+    $stream = [System.IO.File]::OpenRead($Path)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([System.BitConverter]::ToString($sha256.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha256.Dispose()
+        $stream.Dispose()
+    }
+}
 $ProgressPreference = "SilentlyContinue"
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -140,7 +151,7 @@ if ($actualSize -ne $expectedSize) {
 }
 
 Write-Step "Verifying SHA256..."
-$actualHash = (Get-FileHash -Algorithm SHA256 -Path $installerPath).Hash.ToLowerInvariant()
+$actualHash = Get-Sha256Hex $installerPath
 $expectedHash = ([string]$manifest.sha256).ToLowerInvariant()
 if ($actualHash -ne $expectedHash) {
     Remove-Item $installerPath -Force -ErrorAction SilentlyContinue

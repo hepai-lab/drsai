@@ -16,14 +16,14 @@ execFileSync("powershell.exe", [
   "-NoProfile", "-ExecutionPolicy", "Bypass",
   "-File", join(root, "scripts", "create-update-runtime-fixture.ps1"),
   "-OutPath", runtimePath,
-    "-Version", "1.4.3-beta.6",
+    "-Version", "1.4.3-beta.7",
 ], { stdio: "inherit", windowsHide: true });
 const runtime = readFileSync(runtimePath);
 const runtimeHash = createHash("sha256").update(runtime).digest("hex");
 let rangeRequests = 0;
 let manifestRequests = 0;
 let manifestHash = runtimeHash;
-let manifestVersion = "1.4.3-beta.6";
+let manifestVersion = "1.4.3-beta.7";
 let runtimeRoute = "/OpenDrSaiRuntime-win-x64.zip";
 
 const server = createServer((request, response) => {
@@ -79,7 +79,7 @@ const server = createServer((request, response) => {
 await new Promise((resolvePromise) => server.listen(0, "127.0.0.1", resolvePromise));
 try {
   const installRoot = join(testRoot, "install");
-    const partial = join(installRoot, "update-cache", "1.4.3-beta.6", "OpenDrSaiRuntime-win-x64.zip.partial");
+    const partial = join(installRoot, "update-cache", "1.4.3-beta.7", "OpenDrSaiRuntime-win-x64.zip.partial");
   mkdirSync(resolve(partial, ".."), { recursive: true });
   writeFileSync(partial, runtime.subarray(0, 127));
   const success = await runApp("success", installRoot);
@@ -97,7 +97,7 @@ try {
   const badHash = await runApp("bad-hash", badHashRoot);
   assert(badHash.exitCode !== 0, "Hash mismatch scenario unexpectedly succeeded.");
   assert(badHash.result?.details?.downloaded?.errorCode === "hash-mismatch", `Hash mismatch error was not preserved: ${JSON.stringify(badHash.result)}`);
-    assert(!existsSync(join(badHashRoot, "update-cache", "1.4.3-beta.6", "OpenDrSaiRuntime-win-x64.zip")), "Hash mismatch left a trusted runtime archive behind.");
+    assert(!existsSync(join(badHashRoot, "update-cache", "1.4.3-beta.7", "OpenDrSaiRuntime-win-x64.zip")), "Hash mismatch left a trusted runtime archive behind.");
 
   manifestHash = runtimeHash;
   runtimeRoute = "/redirect-runtime";

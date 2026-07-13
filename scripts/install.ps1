@@ -52,6 +52,17 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Get-Sha256Hex([string]$Path) {
+    $stream = [System.IO.File]::OpenRead($Path)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([System.BitConverter]::ToString($sha256.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha256.Dispose()
+        $stream.Dispose()
+    }
+}
+
 #  Resolve paths
 
 if (-not $DrsaiHome) {
@@ -264,7 +275,7 @@ function Expand-SourceArchive {
 
     if ($SourceArchiveSha256) {
 
-        $actualArchiveHash = (Get-FileHash -Algorithm SHA256 -Path $SourceArchive).Hash.ToLowerInvariant()
+        $actualArchiveHash = Get-Sha256Hex $SourceArchive
 
         $expectedArchiveHash = $SourceArchiveSha256.ToLowerInvariant()
 
