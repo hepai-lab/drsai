@@ -6,6 +6,17 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+function Get-Sha256Hex([string]$Path) {
+    $stream = [System.IO.File]::OpenRead($Path)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([System.BitConverter]::ToString($sha256.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha256.Dispose()
+        $stream.Dispose()
+    }
+}
 $startedAt = (Get-Date).ToUniversalTime()
 $results = New-Object System.Collections.Generic.List[object]
 
@@ -64,7 +75,7 @@ try {
 
     $signature = Get-AuthenticodeSignature -LiteralPath $msi
     Add-Check "MSI signature" ($(if ($signature.Status -eq "Valid") { "PASS" } else { "WARN" })) ([string]$signature.Status)
-    $runtimeHash = (Get-FileHash -LiteralPath $runtime -Algorithm SHA256).Hash.ToLowerInvariant()
+    $runtimeHash = Get-Sha256Hex $runtime
     Add-Check "Runtime SHA256" "PASS" $runtimeHash
 
     Copy-Item -LiteralPath $runtime -Destination $localRuntime -Force

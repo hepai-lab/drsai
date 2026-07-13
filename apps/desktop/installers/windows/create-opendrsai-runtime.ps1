@@ -10,6 +10,17 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Get-Sha256Hex([string]$Path) {
+    $stream = [System.IO.File]::OpenRead($Path)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([System.BitConverter]::ToString($sha256.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha256.Dispose()
+        $stream.Dispose()
+    }
+}
+
 function Resolve-FullPath([string]$Path) {
     if (Test-Path $Path) {
         return (Resolve-Path $Path).Path
@@ -195,7 +206,7 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 )
 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $workRoot
 
-$hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $runtimeZip).Hash.ToLowerInvariant()
+$hash = Get-Sha256Hex $runtimeZip
 $size = (Get-Item -LiteralPath $runtimeZip).Length
 Write-Host "Built $runtimeZip" -ForegroundColor Green
 Write-Host "  sha256: $hash"

@@ -13,6 +13,17 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Get-Sha256Hex([string]$Path) {
+    $stream = [System.IO.File]::OpenRead($Path)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([System.BitConverter]::ToString($sha256.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha256.Dispose()
+        $stream.Dispose()
+    }
+}
+
 function Resolve-FullPath([string]$Path) {
     if (Test-Path $Path) {
         return (Resolve-Path $Path).Path
@@ -54,7 +65,7 @@ if (-not $RuntimePath) {
 if ($RuntimePath) {
     $runtimeItem = Get-Item -LiteralPath (Resolve-FullPath $RuntimePath)
     if (-not $RuntimeSha256) {
-        $RuntimeSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $runtimeItem.FullName).Hash.ToLowerInvariant()
+        $RuntimeSha256 = Get-Sha256Hex $runtimeItem.FullName
     }
     if ($RuntimeSizeBytes -le 0) {
         $RuntimeSizeBytes = [Int64]$runtimeItem.Length

@@ -1,6 +1,17 @@
 param()
 
 $ErrorActionPreference = "Stop"
+
+function Get-Sha256Hex([string]$Path) {
+    $stream = [System.IO.File]::OpenRead($Path)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([System.BitConverter]::ToString($sha256.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha256.Dispose()
+        $stream.Dispose()
+    }
+}
 $root = Split-Path -Parent $PSScriptRoot
 $helper = Join-Path $root "resources\update\update-opendrsai.ps1"
 $testRoot = Join-Path $root ".tmp\runtime-updater-test"
@@ -76,7 +87,7 @@ function Install-OldRuntime([string]$InstallRoot, [string]$AgentDir, [string]$Su
 }
 
 function Invoke-Prepare([string]$Archive, [string]$Staging, [string]$InstallRoot, [string]$AgentDir, [string]$State) {
-    $hash = (Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash.ToLowerInvariant()
+    $hash = Get-Sha256Hex $Archive
     $size = (Get-Item -LiteralPath $Archive).Length
     & $helper -Mode Prepare -ArchivePath $Archive -StagingRoot $Staging -InstallRoot $InstallRoot -AgentDir $AgentDir `
         -ExpectedVersion $version -ExpectedSha256 $hash -ExpectedSizeBytes $size `
@@ -137,7 +148,7 @@ try {
         $writer = New-Object IO.StreamWriter($entry.Open())
         try { $writer.Write("escape") } finally { $writer.Dispose() }
     } finally { $zip.Dispose() }
-    $badHash = (Get-FileHash -LiteralPath $badZip -Algorithm SHA256).Hash.ToLowerInvariant()
+    $badHash = Get-Sha256Hex $badZip
     & $helper -Mode Prepare -ArchivePath $badZip -StagingRoot (Join-Path $testRoot "bad-staging") `
         -InstallRoot $successRoot -AgentDir $successAgent -ExpectedVersion $version -ExpectedSha256 $badHash `
         -ExpectedSizeBytes (Get-Item $badZip).Length -CurrentExecutable (Join-Path $successRoot "app\OpenDrSai.exe") `
