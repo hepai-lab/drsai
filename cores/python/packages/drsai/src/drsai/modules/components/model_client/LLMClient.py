@@ -17,7 +17,7 @@ from typing import (
 )
 from typing_extensions import Required
 from pydantic import BaseModel
-from drsai.platform_auth import get_model_credential_provider
+from drsai.platform_auth import get_model_credential_provider, static_model_credentials_allowed
 
 from openai.types.chat import ChatCompletionChunk
 from tiktoken.model import MODEL_TO_ENCODING
@@ -95,7 +95,9 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
             kwargs["api_key"] = credential.access_token
             kwargs["base_url"] = credential.openai_base_url
         else:
-            if not kwargs.get("api_key"):
+            if not static_model_credentials_allowed():
+                kwargs["api_key"] = None
+            elif not kwargs.get("api_key"):
                 kwargs["api_key"] = os.environ.get("HEPAI_API_KEY")
             if "base_url" not in kwargs:
                 kwargs["base_url"] = os.environ.get(

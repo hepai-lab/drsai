@@ -21,6 +21,9 @@ const providerErrorAnalytics = readFileSync(join(root, "src", "main", "providerE
 const providerUsageAnalytics = readFileSync(join(root, "src", "main", "providerUsageAnalytics.ts"), "utf8");
 const providerAnalyticsView = readFileSync(join(root, "src", "renderer", "src", "components", "ProviderAnalyticsView.tsx"), "utf8");
 const channelAdapters = readFileSync(join(root, "src", "main", "channelAdapters.ts"), "utf8");
+const rendererApp = readFileSync(join(root, "src", "renderer", "src", "App.tsx"), "utf8");
+const rendererUiVerifier = readFileSync(join(root, "scripts", "verify-renderer-ui.mjs"), "utf8");
+const chatbarStatusSummaryVerifier = readFileSync(join(root, "scripts", "verify-chatbar-status-summary.mjs"), "utf8");
 
 function assert(condition, message) {
   if (!condition) {
@@ -28,6 +31,87 @@ function assert(condition, message) {
     process.exit(1);
   }
 }
+
+assert(checklist.includes("gemini-tool-timeline-agent"), "checklist omits Gemini tool timeline agent record");
+assert(checklist.includes("gemini-error-taxonomy-agent"), "checklist omits Gemini error taxonomy agent record");
+assert(checklist.includes("Gemini Error Taxonomy"), "checklist omits Gemini error taxonomy addendum");
+assert(checklist.includes("`RESOURCE_EXHAUSTED`") && checklist.includes("`error.details[].@type`"), "checklist omits Gemini error status/detail evidence");
+assert(checklist.includes("Closed this run: Gemini-style provider error taxonomy normalization") || checklist.includes("Gemini stream error."), "checklist omits Gemini error taxonomy closure evidence");
+assert(roadmap.includes("Gemini error taxonomy"), "roadmap omits Gemini error taxonomy addendum");
+assert(roadmap.includes("`error.status` and `error.details[].@type`"), "roadmap omits Gemini error evidence");
+assert(
+  sseParser.includes("isGeminiErrorRecord") &&
+    sseParser.includes("isRetryableGoogleErrorStatus") &&
+    sseParser.includes("Gemini stream error."),
+  "SSE parser omits Gemini error taxonomy normalization",
+);
+assert(checklist.includes("gemini-status-usage-agent"), "checklist omits Gemini status usage agent record");
+assert(checklist.includes("Gemini Status Usage Analytics"), "checklist omits Gemini status usage addendum");
+assert(checklist.includes("`usageMetadata.promptTokenCount` / `candidatesTokenCount` / `totalTokenCount`"), "checklist omits Gemini usageMetadata field evidence");
+assert(checklist.includes("provider `google_gemini`"), "checklist omits Gemini provider identity evidence");
+assert(roadmap.includes("Gemini status usage analytics"), "roadmap omits Gemini status usage addendum");
+assert(roadmap.includes("`candidates[].finishReason` plus `usageMetadata.promptTokenCount`"), "roadmap omits Gemini finish/usage evidence");
+assert(sseParser.includes("readGeminiFinishReason") && sseParser.includes("usageMetadata") && sseParser.includes("google_gemini"), "SSE parser omits Gemini status/usage normalization");
+assert(providerUsageAnalytics.includes('record.provider === "google_gemini"'), "provider usage analytics store omits Gemini provider guard");
+assert(desktopApi.includes('"google_gemini"'), "DesktopApi omits Gemini provider analytics type");
+assert(providerAnalyticsView.includes('value="google_gemini"') && providerAnalyticsView.includes('return "Gemini"'), "provider analytics dashboard omits Gemini filter/label");
+assert(mockDesktopApi.includes("provider-usage:mock-gemini"), "mock Desktop API omits Gemini usage analytics fixture");
+assert(checklist.includes("Gemini Tool Timeline Normalization"), "checklist omits Gemini tool timeline addendum");
+assert(checklist.includes("Gemini-style `functionCall` / `functionResponse` parts"), "checklist omits Gemini tool timeline matrix evidence");
+assert(checklist.includes("Closed this run: Gemini-style provider tool timeline normalization"), "checklist omits Gemini tool timeline closure record");
+assert(roadmap.includes("Gemini tool timeline normalization"), "roadmap omits Gemini tool timeline addendum");
+assert(roadmap.includes("`functionCall` as tool-call events and `functionResponse` as completed tool-result events"), "roadmap omits Gemini functionCall/functionResponse evidence");
+assert(sseParser.includes("functionCall") && sseParser.includes("functionResponse") && sseParser.includes("candidates"), "SSE parser omits Gemini function tool part normalization");
+assert(checklist.includes("live Gemini provider transport validation"), "checklist omits Gemini remaining gap evidence");
+assert(checklist.includes("gemini-text-part-agent"), "checklist omits Gemini text part agent record");
+assert(checklist.includes("Gemini Text Part Normalization"), "checklist omits Gemini text part addendum");
+assert(checklist.includes("`thought: true` text parts are routed to `parseChatReasoningSseFrame`"), "checklist omits Gemini thought routing evidence");
+assert(roadmap.includes("Gemini text part normalization"), "roadmap omits Gemini text part addendum");
+assert(roadmap.includes("`candidates[].content.parts[].text` entries as assistant text deltas"), "roadmap omits Gemini visible text evidence");
+assert(sseParser.includes("readGeminiCandidateTextParts") && sseParser.includes("partRecord.thought === true"), "SSE parser omits Gemini visible/thought text part normalization");
+
+assert(checklist.includes("markdownlint-config-input-agent"), "checklist omits Markdownlint config input agent record");
+assert(checklist.includes("Markdownlint Config Input"), "checklist omits Markdownlint config input addendum");
+assert(
+  checklist.includes("`.markdownlint.json`") &&
+    checklist.includes("`.markdownlint.yaml`") &&
+    checklist.includes("`markdownlint-cli2.jsonc`"),
+  "checklist omits Markdownlint selected-file coverage evidence",
+);
+assert(checklist.includes("runtime `.markdownlint.json` golden fixture"), "checklist omits Markdownlint runtime fixture evidence");
+assert(checklist.includes("no Markdownlint/Node/npm/pnpm/Yarn/Bun command"), "checklist omits Markdownlint no-runtime safety evidence");
+assert(roadmap.includes("Markdownlint config input"), "roadmap omits Markdownlint config input addendum");
+assert(roadmap.includes("runtime `.markdownlint.json` golden fixture"), "roadmap omits Markdownlint runtime fixture evidence");
+assert(channelAdapters.includes('"markdownlint.json"') && channelAdapters.includes("Markdownlint"), "channel adapters omit Markdownlint config detection/label");
+assert(channelAdapters.includes("MD013") && channelAdapters.includes("MD033"), "channel adapters omit Markdownlint rule evidence extraction");
+assert(checklist.includes("typedoc-config-input-agent"), "checklist omits TypeDoc config input agent record");
+assert(checklist.includes("TypeDoc Config Input"), "checklist omits TypeDoc config input addendum");
+assert(checklist.includes("workspace-local `typedoc.json` / `typedoc.jsonc` / `typedoc.config.*`"), "checklist omits TypeDoc selected-file coverage evidence");
+assert(checklist.includes("runtime `typedoc.json` golden fixture"), "checklist omits TypeDoc runtime fixture evidence");
+assert(checklist.includes("no node/npm/pnpm/Yarn/Bun command, TypeDoc run"), "checklist omits TypeDoc no-runtime safety evidence");
+assert(roadmap.includes("TypeDoc config input"), "roadmap omits TypeDoc config input addendum");
+assert(roadmap.includes("runtime `typedoc.json` golden fixture"), "roadmap omits TypeDoc runtime fixture evidence");
+assert(channelAdapters.includes('"typedoc.json"') && channelAdapters.includes("TypeDoc"), "channel adapters omit TypeDoc config detection/label");
+assert(channelAdapters.includes("entryPoints") && channelAdapters.includes("typedoc.config."), "channel adapters omit TypeDoc entry point/config evidence extraction");
+
+assert(checklist.includes("ruff-config-input-agent"), "checklist omits Ruff config input agent record");
+assert(checklist.includes("Ruff Config Input"), "checklist omits Ruff config input addendum");
+assert(checklist.includes("workspace-local `ruff.toml` / `.ruff.toml`"), "checklist omits Ruff selected-file coverage evidence");
+assert(checklist.includes("runtime `.ruff.toml` golden fixture"), "checklist omits Ruff runtime fixture evidence");
+assert(checklist.includes("no Python interpreter, Ruff command, formatter/linter execution"), "checklist omits Ruff no-runtime safety evidence");
+assert(roadmap.includes("Ruff config input"), "roadmap omits Ruff config input addendum");
+assert(roadmap.includes("runtime `.ruff.toml` golden fixture"), "roadmap omits Ruff runtime fixture evidence");
+assert(channelAdapters.includes('"ruff.toml"') && channelAdapters.includes("Ruff config preview"), "channel adapters omit Ruff config detection/summary");
+assert(channelAdapters.includes("Rule selectors") && channelAdapters.includes("Path globs"), "channel adapters omit Ruff rule/path evidence extraction");
+
+assert(checklist.includes("agent-task-render-guard-agent"), "checklist omits Agent task render guard agent record");
+assert(checklist.includes("Agent Task Render Guard"), "checklist omits Agent task render guard addendum");
+assert(checklist.includes('`activeThread?.kind === "agent_run"`'), "checklist omits Agent task active thread branch evidence");
+assert(checklist.includes("remote agent handoff, autonomous queue prioritization, packaged visual smoke"), "checklist omits Agent task remaining gap evidence");
+assert(roadmap.includes("agent task render guard"), "roadmap omits Agent task render guard addendum");
+assert(roadmap.includes('createThread({ kind: "agent_run" })'), "roadmap omits Agent task creation route evidence");
+assert(rendererApp.includes('activeThread?.kind === "agent_run"') && rendererApp.includes("AgentRunWorkspace"), "renderer omits direct Agent task workspace branch");
+assert(rendererUiVerifier.includes("renderer exposes a direct agent task path"), "renderer UI verifier omits direct Agent task guard");
 
 const requiredCapabilities = [
   "Capability 1: Natural Language Task Entry",
@@ -76,6 +160,7 @@ const requiredVerificationCommands = [
   "npm run verify:provider-analytics-api",
   "npm run verify:provider-analytics-dashboard",
   "npm run verify:chat-commands",
+  "npm run verify:chatbar-status-summary",
   "npm run verify:context-assembler",
   "npm run verify:execution-policy",
   "npm run verify:runtime-mode",
@@ -93,6 +178,10 @@ assert(
   packageJson.includes('"verify:chatbar-checklist": "node scripts/verify-chatbar-checklist.mjs"'),
   "package script is not registered",
 );
+assert(
+  packageJson.includes('"verify:chatbar-status-summary": "node scripts/verify-chatbar-status-summary.mjs"'),
+  "chatbar status summary script is not registered",
+);
 
 for (const heading of requiredCapabilities) {
   assert(checklist.includes(heading), `missing capability heading: ${heading}`);
@@ -106,19 +195,116 @@ for (const command of requiredVerificationCommands) {
   assert(checklist.includes(command), `missing verification command: ${command}`);
 }
 
+assert(checklist.includes("chatbar-status-summary-agent"), "checklist omits chatbar status summary agent record");
+assert(checklist.includes("Chatbar Status Summary Verification"), "checklist omits chatbar status summary addendum");
+assert(checklist.includes("at least 30 atomic feature rows"), "checklist omits chatbar status summary row-count evidence");
+assert(checklist.includes("no `[ ]` rows remain in the main capability matrix"), "checklist omits main matrix not-started guard evidence");
+assert(checklist.includes("partial feature rows"), "checklist omits chatbar partial-feature summary evidence");
+assert(checklist.includes("Partial detail summary"), "checklist omits chatbar partial-detail summary evidence");
+assert(checklist.includes("chatbar-partial-agent-assignment-agent"), "checklist omits chatbar partial agent assignment record");
+assert(checklist.includes("Chatbar Partial Agent Assignment Summary"), "checklist omits chatbar partial agent assignment addendum");
+assert(checklist.includes("Agent assignment summary"), "checklist omits chatbar partial agent assignment output evidence");
+assert(checklist.includes("live-connector-agent") && checklist.includes("provider-runtime-parity-agent"), "checklist omits recommended partial follow-up agent names");
+assert(roadmap.includes("chatbar status summary verification"), "roadmap omits chatbar status summary addendum");
+assert(roadmap.includes("verify-chatbar-status-summary.mjs"), "roadmap omits chatbar status summary script evidence");
+assert(roadmap.includes("partial feature row names"), "roadmap omits chatbar partial-feature summary addendum");
+assert(roadmap.includes("partial feature gaps and test commitments"), "roadmap omits chatbar partial-detail summary addendum");
+assert(roadmap.includes("chatbar partial agent assignment summary"), "roadmap omits chatbar partial agent assignment addendum");
+assert(roadmap.includes("Agent assignment summary") && roadmap.includes("live-connector-agent"), "roadmap omits chatbar partial agent assignment output evidence");
+assert(
+  chatbarStatusSummaryVerifier.includes("partialFeatureNames") &&
+    chatbarStatusSummaryVerifier.includes("partialDetails") &&
+    chatbarStatusSummaryVerifier.includes("agentAssignmentRules") &&
+    chatbarStatusSummaryVerifier.includes("Partial feature rows:") &&
+    chatbarStatusSummaryVerifier.includes("Partial detail summary:") &&
+    chatbarStatusSummaryVerifier.includes("Agent assignment summary:"),
+  "chatbar status summary verifier omits partial feature detail and agent assignment output",
+);
+
 assert(checklist.includes("vpn-config-input-agent"), "checklist omits VPN config input agent record");
 assert(checklist.includes("VPN Client Config Input"), "checklist omits VPN config input addendum");
 assert(checklist.includes("Runtime fixtures now import `wg0.conf` and `client.ovpn`"), "checklist omits VPN config runtime fixture evidence");
 assert(checklist.includes("application/vnd.drsai.vpn-config"), "checklist omits VPN config MIME evidence");
 assert(checklist.includes("no VPN client / no tunnel / no route-DNS mutation safety copy"), "checklist omits VPN config safety evidence");
 assert(checklist.includes("live VPN client validation, tunnel status correlation, route/DNS diffing"), "checklist omits VPN config remaining gap evidence");
+assert(checklist.includes("packaged-vpn-ipc-agent"), "checklist omits packaged VPN IPC agent record");
+assert(checklist.includes("Packaged VPN Config IPC Smoke"), "checklist omits packaged VPN IPC addendum");
+assert(checklist.includes("channelImportVpnWireGuardSummary") && checklist.includes("channelImportVpnOpenVpnSummary"), "checklist omits packaged VPN IPC smoke checks");
 assert(roadmap.includes("VPN client config input"), "roadmap omits VPN config input addendum");
 assert(roadmap.includes("runtime `wg0.conf` and `client.ovpn` golden fixtures"), "roadmap omits VPN config runtime fixture evidence");
 assert(roadmap.includes("no WireGuard/OpenVPN client launch, tunnel activation, route/DNS mutation"), "roadmap omits VPN config no-runtime evidence");
+assert(roadmap.includes("packaged VPN config IPC smoke"), "roadmap omits packaged VPN IPC addendum");
 assert(channelAdapters.includes('".vpn-config"'), "channel adapters omit VPN config normalized extension");
 assert(channelAdapters.includes("summarizeVpnConfigFile"), "channel adapters omit VPN config summarizer");
 assert(channelAdapters.includes("parseVpnConfigPreview"), "channel adapters omit VPN config parser");
 assert(channelAdapters.includes("application/vnd.drsai.vpn-config"), "channel adapters omit VPN config MIME provenance");
+assert(e2eSmoke.includes("wg-packaged.conf") && e2eSmoke.includes("packaged-client.ovpn"), "packaged smoke omits VPN fixtures");
+assert(e2eSmoke.includes("channelImportVpnWireGuardSummary") && e2eSmoke.includes("channelImportVpnOpenVpnSummary"), "packaged smoke omits VPN summary checks");
+assert(e2eSmoke.includes("channelImportItems.length === 52"), "packaged smoke import matrix did not include direnv .envrc fixture count");
+assert(checklist.includes("packaged-direnv-envrc-ipc-agent"), "checklist omits packaged direnv .envrc IPC agent record");
+assert(checklist.includes("Packaged Direnv Envrc IPC Smoke"), "checklist omits packaged direnv .envrc IPC addendum");
+assert(checklist.includes("channelImportDirenvEnvrcSummary"), "checklist omits packaged direnv .envrc IPC smoke check");
+assert(roadmap.includes("packaged direnv .envrc IPC smoke"), "roadmap omits packaged direnv .envrc IPC addendum");
+assert(checklist.includes("winget-manifest-input-agent"), "checklist omits winget manifest input agent record");
+assert(checklist.includes("Windows Package Manager Manifest Input"), "checklist omits winget manifest input addendum");
+assert(checklist.includes("runtime `HepAI.OpenDrSai.installer.yaml` golden fixture"), "checklist omits winget runtime fixture evidence");
+assert(checklist.includes("application/vnd.microsoft.winget.manifest+yaml"), "checklist omits winget MIME evidence");
+assert(checklist.includes("no winget command, installer download, installer execution"), "checklist omits winget safety evidence");
+assert(roadmap.includes("Windows Package Manager manifest input"), "roadmap omits winget manifest input addendum");
+assert(roadmap.includes("runtime `HepAI.OpenDrSai.installer.yaml` golden fixture"), "roadmap omits winget runtime fixture evidence");
+assert(channelAdapters.includes('".winget-manifest.yaml"'), "channel adapters omit winget manifest normalized extension");
+assert(channelAdapters.includes("summarizeWingetManifestFile"), "channel adapters omit winget manifest summarizer");
+assert(channelAdapters.includes("parseWingetManifestPreview"), "channel adapters omit winget manifest parser");
+assert(channelAdapters.includes("application/vnd.microsoft.winget.manifest+yaml"), "channel adapters omit winget manifest MIME provenance");
+assert(checklist.includes("gha-job-summary-input-agent"), "checklist omits GitHub Actions job summary input agent record");
+assert(checklist.includes("GitHub Actions Job Summary Markdown Input"), "checklist omits GitHub Actions job summary input addendum");
+assert(checklist.includes("runtime `GITHUB_STEP_SUMMARY.md` golden fixture"), "checklist omits GitHub Actions job summary runtime fixture evidence");
+assert(checklist.includes("text/markdown+github-actions-summary"), "checklist omits GitHub Actions job summary MIME evidence");
+assert(checklist.includes("no GitHub API / no CI runner / no log fetch / no artifact download"), "checklist omits GitHub Actions job summary safety evidence");
+assert(roadmap.includes("GitHub Actions job summary Markdown input"), "roadmap omits GitHub Actions job summary input addendum");
+assert(roadmap.includes("runtime `GITHUB_STEP_SUMMARY.md` golden fixture"), "roadmap omits GitHub Actions job summary runtime evidence");
+assert(channelAdapters.includes('".gha-job-summary.md"'), "channel adapters omit GitHub Actions job summary normalized extension");
+assert(channelAdapters.includes("summarizeGithubActionsJobSummaryFile"), "channel adapters omit GitHub Actions job summary summarizer");
+assert(channelAdapters.includes("parseGithubActionsJobSummaryPreview"), "channel adapters omit GitHub Actions job summary parser");
+assert(channelAdapters.includes("text/markdown+github-actions-summary"), "channel adapters omit GitHub Actions job summary MIME provenance");
+assert(checklist.includes("dependabot-config-input-agent"), "checklist omits Dependabot config input agent record");
+assert(checklist.includes("Dependabot Config Input"), "checklist omits Dependabot config input addendum");
+assert(checklist.includes("runtime `.github/dependabot.yml` golden fixture"), "checklist omits Dependabot config runtime fixture evidence");
+assert(checklist.includes("application/vnd.github.dependabot.config+yaml"), "checklist omits Dependabot config MIME evidence");
+assert(checklist.includes("no GitHub API / no package manager / no PR creation"), "checklist omits Dependabot config safety evidence");
+assert(roadmap.includes("Dependabot config input"), "roadmap omits Dependabot config input addendum");
+assert(roadmap.includes("runtime `.github/dependabot.yml` golden fixture"), "roadmap omits Dependabot config runtime evidence");
+assert(channelAdapters.includes('".dependabot.yaml"'), "channel adapters omit Dependabot config normalized extension");
+assert(channelAdapters.includes("summarizeDependabotConfigFile"), "channel adapters omit Dependabot config summarizer");
+assert(channelAdapters.includes("parseDependabotConfigPreview"), "channel adapters omit Dependabot config parser");
+assert(channelAdapters.includes("application/vnd.github.dependabot.config+yaml"), "channel adapters omit Dependabot config MIME provenance");
+assert(checklist.includes("renovate-config-input-agent"), "checklist omits Renovate config input agent record");
+assert(checklist.includes("Renovate Config Input"), "checklist omits Renovate config input addendum");
+assert(checklist.includes("runtime `renovate.json` golden fixture"), "checklist omits Renovate config runtime fixture evidence");
+assert(checklist.includes("application/vnd.renovate.config+json"), "checklist omits Renovate config MIME evidence");
+assert(checklist.includes("no Renovate CLI / no package manager / no PR creation"), "checklist omits Renovate config safety evidence");
+assert(roadmap.includes("Renovate config input"), "roadmap omits Renovate config input addendum");
+assert(roadmap.includes("runtime `renovate.json` golden fixture"), "roadmap omits Renovate config runtime evidence");
+assert(channelAdapters.includes('".renovate.json"'), "channel adapters omit Renovate config normalized extension");
+assert(channelAdapters.includes("summarizeRenovateConfigFile"), "channel adapters omit Renovate config summarizer");
+assert(channelAdapters.includes("parseRenovateConfigPreview"), "channel adapters omit Renovate config parser");
+assert(channelAdapters.includes("application/vnd.renovate.config+json"), "channel adapters omit Renovate config MIME provenance");
+assert(checklist.includes("github-template-input-agent"), "checklist omits GitHub template input agent record");
+assert(checklist.includes("GitHub Issue/PR Template Input"), "checklist omits GitHub template input addendum");
+assert(checklist.includes("runtime `.github/ISSUE_TEMPLATE/bug_report.yml` and `.github/pull_request_template.md` golden fixtures"), "checklist omits GitHub template runtime fixture evidence");
+assert(checklist.includes("application/vnd.github.template"), "checklist omits GitHub template MIME evidence");
+assert(checklist.includes("no GitHub API / no issue or PR creation"), "checklist omits GitHub template safety evidence");
+assert(roadmap.includes("GitHub issue/PR template input"), "roadmap omits GitHub template input addendum");
+assert(roadmap.includes("runtime `.github/ISSUE_TEMPLATE/bug_report.yml` and `.github/pull_request_template.md` golden fixtures"), "roadmap omits GitHub template runtime evidence");
+assert(channelAdapters.includes('".github-template"'), "channel adapters omit GitHub template normalized extension");
+assert(channelAdapters.includes("summarizeGithubTemplateFile"), "channel adapters omit GitHub template summarizer");
+assert(channelAdapters.includes("parseGithubTemplatePreview"), "channel adapters omit GitHub template parser");
+assert(channelAdapters.includes("application/vnd.github.template"), "channel adapters omit GitHub template MIME provenance");
+assert(checklist.includes("packaged-gha-job-summary-ipc-agent"), "checklist omits packaged GitHub Actions job summary IPC agent record");
+assert(checklist.includes("Packaged GitHub Actions Job Summary IPC Smoke"), "checklist omits packaged GitHub Actions job summary IPC addendum");
+assert(checklist.includes("channelImportGhaJobSummary"), "checklist omits packaged GitHub Actions job summary smoke check");
+assert(roadmap.includes("packaged GitHub Actions job summary IPC smoke"), "roadmap omits packaged GitHub Actions job summary IPC addendum");
+assert(e2eSmoke.includes("GITHUB_STEP_SUMMARY.md") && e2eSmoke.includes("channelImportGhaJobSummary"), "e2e smoke omits packaged GitHub Actions job summary fixture/assertion");
 assert(checklist.includes("avro-schema-input-agent"), "checklist omits Avro schema input agent record");
 assert(checklist.includes("Avro Schema File Input"), "checklist omits Avro schema input addendum");
 assert(checklist.includes("runtime `runtime.avsc` golden fixture"), "checklist omits Avro schema runtime fixture evidence");
@@ -317,6 +503,12 @@ assert(!checklist.includes("Direct command-driven checkpoint create/preview, pic
 assert(checklist.includes("checkpoint-slash-execution-agent"), "checklist omits checkpoint slash execution agent record");
 assert(checklist.includes("Checkpoint Slash Command Execution"), "checklist omits checkpoint slash execution addendum");
 assert(checklist.includes("direct slash command checkpoint creation and rollback preview"), "checklist omits checkpoint slash execution result");
+assert(checklist.includes("agent-run-change-set-acceptance-agent"), "checklist omits agent run change set acceptance agent record");
+assert(checklist.includes("Agent Run Change Set Acceptance"), "checklist omits agent run change set acceptance addendum");
+assert(checklist.includes("WorkspaceCheckpointAcceptRequest"), "checklist omits checkpoint accept request evidence");
+assert(checklist.includes("acceptAgentChangeSet"), "checklist omits Files panel accept evidence");
+assert(roadmap.includes("agent run change set acceptance"), "roadmap omits agent run change set acceptance addendum");
+assert(roadmap.includes("desktop:workspace-checkpoint-accept"), "roadmap omits checkpoint accept IPC evidence");
 assert(roadmap.includes("checkpoint slash command execution"), "roadmap omits checkpoint slash execution addendum");
 assert(roadmap.includes("checkpoint and rollback slash commands"), "roadmap omits checkpoint slash command addendum");
 assert(roadmap.includes("superseded by the later checkpoint slash command execution slice"), "roadmap does not mark the old checkpoint slash command slice as superseded");
@@ -493,6 +685,35 @@ assert(checklist.includes("no-replay/no-network safety copy"), "checklist omits 
 assert(roadmap.includes("packaged HAR IPC smoke"), "roadmap omits packaged HAR addendum");
 assert(roadmap.includes("packaged.har"), "roadmap omits packaged HAR fixture evidence");
 assert(roadmap.includes("no browser profile access / no request replay / no network call"), "roadmap omits packaged HAR no-runtime boundary evidence");
+assert(checklist.includes("packaged-netlog-ipc-agent"), "checklist omits packaged NetLog IPC agent record");
+assert(checklist.includes("Packaged NetLog IPC Smoke"), "checklist omits packaged NetLog IPC addendum");
+assert(checklist.includes("`packaged-netlog.json`"), "checklist omits packaged NetLog fixture file evidence");
+assert(checklist.includes("channelImportNetlogSummary"), "checklist omits packaged NetLog smoke check evidence");
+assert(checklist.includes("NetLog event/source/header-redaction/MIME evidence"), "checklist omits packaged NetLog parser evidence");
+assert(checklist.includes("secret-packaged-netlog"), "checklist omits packaged NetLog redaction target evidence");
+assert(checklist.includes("application/vnd.chromium.netlog+json"), "checklist omits packaged NetLog MIME evidence");
+assert(roadmap.includes("packaged NetLog IPC smoke"), "roadmap omits packaged NetLog addendum");
+assert(roadmap.includes("packaged-netlog.json"), "roadmap omits packaged NetLog fixture evidence");
+assert(roadmap.includes("URL/token/cookie/header-like values were redacted"), "roadmap omits packaged NetLog redaction evidence");
+assert(checklist.includes("rdp-config-input-agent"), "checklist omits RDP config input agent record");
+assert(checklist.includes("RDP Config File Input"), "checklist omits RDP config input addendum");
+assert(checklist.includes("runtime `runtime.rdp` golden fixture"), "checklist omits RDP runtime fixture evidence");
+assert(checklist.includes("application/x-rdp"), "checklist omits RDP MIME evidence");
+assert(checklist.includes("no-mstsc/no-RDP/no-gateway-probe/no-credential-lookup safety copy"), "checklist omits RDP no-runtime evidence");
+assert(roadmap.includes("RDP config input"), "roadmap omits RDP config input addendum");
+assert(roadmap.includes("runtime `runtime.rdp` golden fixture"), "roadmap omits RDP runtime fixture evidence");
+assert(roadmap.includes("no mstsc.exe launch, no RDP connection, no gateway probe"), "roadmap omits RDP no-runtime evidence");
+assert(channelAdapters.includes('".rdp"'), "channel adapters omit RDP extension support");
+assert(channelAdapters.includes("summarizeRdpConfigFile") && channelAdapters.includes("parseRdpConfigPreview"), "channel adapters omit RDP summarizer/parser");
+assert(checklist.includes("packaged-rdp-ipc-agent"), "checklist omits packaged RDP IPC agent record");
+assert(checklist.includes("Packaged RDP Config IPC Smoke"), "checklist omits packaged RDP IPC addendum");
+assert(checklist.includes("`packaged.rdp`"), "checklist omits packaged RDP fixture file evidence");
+assert(checklist.includes("channelImportRdpSummary"), "checklist omits packaged RDP smoke check evidence");
+assert(checklist.includes("RDP host/gateway/redirection/redaction/MIME evidence"), "checklist omits packaged RDP parser evidence");
+assert(checklist.includes("secret-packaged-rdp"), "checklist omits packaged RDP redaction target evidence");
+assert(roadmap.includes("packaged RDP config IPC smoke"), "roadmap omits packaged RDP addendum");
+assert(roadmap.includes("packaged.rdp"), "roadmap omits packaged RDP fixture evidence");
+assert(roadmap.includes("RDP host/gateway/redirection/redaction evidence"), "roadmap omits packaged RDP parser evidence");
 assert(checklist.includes("packaged-junit-ipc-agent"), "checklist omits packaged JUnit IPC agent record");
 assert(checklist.includes("Packaged JUnit XML IPC Smoke"), "checklist omits packaged JUnit IPC addendum");
 assert(checklist.includes("`packaged.junit.xml`"), "checklist omits packaged JUnit fixture file evidence");
@@ -504,6 +725,36 @@ assert(checklist.includes("raised 26-item import bound"), "checklist omits packa
 assert(roadmap.includes("packaged JUnit XML IPC smoke"), "roadmap omits packaged JUnit addendum");
 assert(roadmap.includes("packaged.junit.xml"), "roadmap omits packaged JUnit fixture evidence");
 assert(roadmap.includes("no test runner / no build command / no CI provider API call"), "roadmap omits packaged JUnit no-runtime boundary evidence");
+assert(checklist.includes("packaged-xunit-ipc-agent"), "checklist omits packaged xUnit IPC agent record");
+assert(checklist.includes("Packaged xUnit XML IPC Smoke"), "checklist omits packaged xUnit IPC addendum");
+assert(checklist.includes("`packaged.xunit.xml`"), "checklist omits packaged xUnit fixture file evidence");
+assert(checklist.includes("channelImportXunitSummary"), "checklist omits packaged xUnit smoke check evidence");
+assert(checklist.includes("xUnit XML collection/test/failure/property/attachment redaction/MIME evidence"), "checklist omits packaged xUnit parser evidence");
+assert(checklist.includes("secret-packaged-xunit-token"), "checklist omits packaged xUnit redaction target evidence");
+assert(checklist.includes("application/vnd.xunit+xml"), "checklist omits packaged xUnit MIME evidence");
+assert(roadmap.includes("packaged xUnit XML IPC smoke"), "roadmap omits packaged xUnit addendum");
+assert(roadmap.includes("packaged.xunit.xml"), "roadmap omits packaged xUnit fixture evidence");
+assert(e2eSmoke.includes("packaged.xunit.xml") && e2eSmoke.includes("channelImportXunitSummary"), "e2e smoke omits packaged xUnit fixture/assertion");
+assert(checklist.includes("packaged-trx-ipc-agent"), "checklist omits packaged TRX IPC agent record");
+assert(checklist.includes("Packaged Visual Studio TRX IPC Smoke"), "checklist omits packaged TRX IPC addendum");
+assert(checklist.includes("`packaged.trx`"), "checklist omits packaged TRX fixture file evidence");
+assert(checklist.includes("channelImportTrxSummary"), "checklist omits packaged TRX smoke check evidence");
+assert(checklist.includes("Visual Studio TRX result/counter/failure/redaction/MIME evidence"), "checklist omits packaged TRX parser evidence");
+assert(checklist.includes("secret-packaged-trx-token"), "checklist omits packaged TRX redaction target evidence");
+assert(checklist.includes("application/vnd.ms-trx+xml"), "checklist omits packaged TRX MIME evidence");
+assert(roadmap.includes("packaged Visual Studio TRX IPC smoke"), "roadmap omits packaged TRX addendum");
+assert(roadmap.includes("packaged.trx"), "roadmap omits packaged TRX fixture evidence");
+assert(e2eSmoke.includes("packaged.trx") && e2eSmoke.includes("channelImportTrxSummary"), "e2e smoke omits packaged TRX fixture/assertion");
+assert(checklist.includes("packaged-jmeter-ipc-agent"), "checklist omits packaged JMeter IPC agent record");
+assert(checklist.includes("Packaged JMeter Test Plan IPC Smoke"), "checklist omits packaged JMeter IPC addendum");
+assert(checklist.includes("`packaged.jmx`"), "checklist omits packaged JMeter fixture file evidence");
+assert(checklist.includes("channelImportJmeterPlanSummary"), "checklist omits packaged JMeter smoke check evidence");
+assert(checklist.includes("JMeter plan/thread/sampler/assertion/config/variable-key redaction/MIME evidence"), "checklist omits packaged JMeter parser evidence");
+assert(checklist.includes("secret-packaged-jmx"), "checklist omits packaged JMeter redaction target evidence");
+assert(checklist.includes("application/vnd.jmeter+xml"), "checklist omits packaged JMeter MIME evidence");
+assert(roadmap.includes("packaged JMeter test plan IPC smoke"), "roadmap omits packaged JMeter addendum");
+assert(roadmap.includes("packaged.jmx"), "roadmap omits packaged JMeter fixture evidence");
+assert(e2eSmoke.includes("packaged.jmx") && e2eSmoke.includes("channelImportJmeterPlanSummary"), "e2e smoke omits packaged JMeter fixture/assertion");
 assert(checklist.includes("packaged-vscode-workspace-config-ipc-agent"), "checklist omits packaged VS Code workspace config IPC agent record");
 assert(checklist.includes("Packaged VS Code Workspace Config IPC Smoke"), "checklist omits packaged VS Code workspace config IPC addendum");
 assert(checklist.includes("`.vscode/settings.json`, `.vscode/tasks.json`, `.vscode/launch.json`, and `.vscode/extensions.json`"), "checklist omits packaged VS Code fixture file evidence");
@@ -540,21 +791,71 @@ assert(checklist.includes("secret-packaged-history-token"), "checklist omits pac
 assert(checklist.includes("secret-packaged-download-token"), "checklist omits packaged browser downloads redaction target evidence");
 assert(checklist.includes("secret-packaged-storage-token"), "checklist omits packaged browser storage redaction target evidence");
 assert(checklist.includes("secret-packaged-extension-token"), "checklist omits packaged browser extension redaction target evidence");
-assert(checklist.includes("raised 30-item import bound"), "checklist omits packaged browser context import bound evidence");
+assert(checklist.includes("48-item import bound"), "checklist omits current packaged context import bound evidence");
 assert(checklist.includes("live browser profile sync, History/Downloads SQLite import"), "checklist omits packaged browser context remaining gap evidence");
 assert(roadmap.includes("packaged browser context IPC smoke"), "roadmap omits packaged browser context addendum");
 assert(roadmap.includes("packaged-history.csv") && roadmap.includes("packaged-downloads.json"), "roadmap omits packaged browser history/download fixture evidence");
 assert(roadmap.includes("packaged-local-storage.json") && roadmap.includes("packaged-extension-manifest.json"), "roadmap omits packaged browser storage/extension fixture evidence");
-assert(roadmap.includes("MAX_IMPORT_ITEMS") && roadmap.includes("30"), "roadmap omits packaged browser context import bound evidence");
+assert(roadmap.includes("MAX_IMPORT_ITEMS") && roadmap.includes("52"), "roadmap omits current packaged context import bound evidence");
 assert(roadmap.includes("no browser profile access, SQLite History/Downloads import"), "roadmap omits packaged browser no-profile/no-store boundary evidence");
-assert(channelAdapters.includes("MAX_IMPORT_ITEMS = 30"), "channel adapter import bound was not raised to 30");
+assert(channelAdapters.includes("MAX_IMPORT_ITEMS = 52"), "channel adapter import bound was not raised to 52");
 assert(e2eSmoke.includes("packaged-history.csv") && e2eSmoke.includes("packaged-downloads.json"), "e2e smoke omits packaged browser history/download fixtures");
 assert(e2eSmoke.includes("packaged-local-storage.json") && e2eSmoke.includes("packaged-extension-manifest.json"), "e2e smoke omits packaged browser storage/extension fixtures");
-assert(e2eSmoke.includes("channelImportItems.length === 30"), "e2e smoke omits 30-item packaged import matrix assertion");
+assert(e2eSmoke.includes("channelImportItems.length === 52"), "e2e smoke omits 52-item packaged import matrix assertion");
 assert(e2eSmoke.includes("channelImportBrowserHistorySummary"), "e2e smoke omits packaged browser history assertion");
 assert(e2eSmoke.includes("channelImportBrowserDownloadsSummary"), "e2e smoke omits packaged browser downloads assertion");
 assert(e2eSmoke.includes("channelImportBrowserStorageSummary"), "e2e smoke omits packaged browser storage assertion");
 assert(e2eSmoke.includes("channelImportBrowserExtensionManifestSummary"), "e2e smoke omits packaged browser extension manifest assertion");
+assert(checklist.includes("packaged-browser-sensitive-export-ipc-agent"), "checklist omits packaged sensitive browser export IPC agent record");
+assert(checklist.includes("Packaged Browser Sensitive Export IPC Smoke"), "checklist omits packaged sensitive browser export IPC addendum");
+assert(checklist.includes("channelImportBrowserPasswordsSummary"), "checklist omits packaged browser password export smoke check evidence");
+assert(checklist.includes("channelImportBrowserAutofillCsvSummary"), "checklist omits packaged browser autofill CSV smoke check evidence");
+assert(checklist.includes("channelImportBrowserAutofillJsonSummary"), "checklist omits packaged browser autofill JSON smoke check evidence");
+assert(roadmap.includes("packaged browser sensitive export IPC smoke"), "roadmap omits packaged sensitive browser export IPC addendum");
+assert(e2eSmoke.includes("packaged-passwords.csv") && e2eSmoke.includes("channelImportBrowserPasswordsSummary"), "e2e smoke omits packaged browser password export fixture/assertion");
+assert(e2eSmoke.includes("packaged-autofill.csv") && e2eSmoke.includes("channelImportBrowserAutofillCsvSummary"), "e2e smoke omits packaged browser autofill CSV fixture/assertion");
+assert(e2eSmoke.includes("packaged-autofill.json") && e2eSmoke.includes("channelImportBrowserAutofillJsonSummary"), "e2e smoke omits packaged browser autofill JSON fixture/assertion");
+assert(e2eSmoke.includes("packaged-netlog.json") && e2eSmoke.includes("channelImportNetlogSummary"), "e2e smoke omits packaged NetLog fixture/assertion");
+assert(e2eSmoke.includes("packaged.rdp") && e2eSmoke.includes("channelImportRdpSummary"), "e2e smoke omits packaged RDP fixture/assertion");
+assert(checklist.includes("packaged-web-app-association-ipc-agent"), "checklist omits packaged web app association IPC agent record");
+assert(checklist.includes("Packaged Web App Association IPC Smoke"), "checklist omits packaged web app association IPC addendum");
+assert(checklist.includes("`assetlinks.json`") && checklist.includes("`apple-app-site-association`"), "checklist omits packaged web app association fixture file evidence");
+assert(checklist.includes("channelImportAssetLinksSummary") && checklist.includes("channelImportAppleAssociationSummary"), "checklist omits packaged web app association smoke check evidence");
+assert(checklist.includes("Digital Asset Links package/relation/fingerprint-redaction/MIME evidence"), "checklist omits packaged assetlinks parser evidence");
+assert(checklist.includes("Apple AASA appID/service/path/redaction/MIME evidence"), "checklist omits packaged AASA parser evidence");
+assert(checklist.includes("secret-packaged-aasa-token"), "checklist omits packaged AASA redaction target evidence");
+assert(e2eSmoke.includes("ai.drsai.packaged") && e2eSmoke.includes("channelImportAssetLinksSummary"), "e2e smoke omits packaged assetlinks fixture/assertion");
+assert(e2eSmoke.includes("PACKAGED123.ai.drsai.packaged") && e2eSmoke.includes("channelImportAppleAssociationSummary"), "e2e smoke omits packaged AASA fixture/assertion");
+assert(roadmap.includes("packaged web app association IPC smoke"), "roadmap omits packaged web app association addendum");
+assert(roadmap.includes("assetlinks.json") && roadmap.includes("apple-app-site-association"), "roadmap omits packaged web app association fixture evidence");
+assert(checklist.includes("packaged-contact-calendar-ipc-agent"), "checklist omits packaged contact/calendar IPC agent record");
+assert(checklist.includes("Packaged Contact and Calendar CSV IPC Smoke"), "checklist omits packaged contact/calendar IPC addendum");
+assert(checklist.includes("channelImportVcardSummary") && checklist.includes("channelImportContactsCsvSummary") && checklist.includes("channelImportCalendarCsvSummary"), "checklist omits packaged contact/calendar smoke check evidence");
+assert(roadmap.includes("packaged contact/calendar IPC smoke"), "roadmap omits packaged contact/calendar addendum");
+assert(e2eSmoke.includes("packaged-contact.vcf") && e2eSmoke.includes("packaged-contacts.csv") && e2eSmoke.includes("packaged-calendar-agenda.csv"), "e2e smoke omits packaged contact/calendar fixture files");
+assert(checklist.includes("packaged-security-svg-ipc-agent"), "checklist omits packaged security/SVG IPC agent record");
+assert(checklist.includes("Packaged Security.txt and SVG IPC Smoke"), "checklist omits packaged security/SVG IPC addendum");
+assert(checklist.includes("`packaged.security.txt`") && checklist.includes("`packaged.svg`"), "checklist omits packaged security/SVG fixture file evidence");
+assert(checklist.includes("channelImportSecurityTxtSummary") && checklist.includes("channelImportSvgSummary"), "checklist omits packaged security/SVG smoke check evidence");
+assert(checklist.includes("security.txt contact/expiry/language/redaction/MIME evidence"), "checklist omits packaged security.txt parser evidence");
+assert(checklist.includes("SVG structure/risk/redaction/MIME evidence"), "checklist omits packaged SVG parser evidence");
+assert(checklist.includes("secret-packaged-security-token") && checklist.includes("secret-packaged-svg-token"), "checklist omits packaged security/SVG redaction target evidence");
+assert(e2eSmoke.includes("packaged.security.txt") && e2eSmoke.includes("packaged.svg"), "e2e smoke omits packaged security/SVG fixtures");
+assert(e2eSmoke.includes("channelImportSecurityTxtSummary") && e2eSmoke.includes("channelImportSvgSummary"), "e2e smoke omits packaged security/SVG assertions");
+assert(roadmap.includes("packaged security.txt and SVG IPC smoke"), "roadmap omits packaged security/SVG addendum");
+assert(roadmap.includes("packaged.security.txt") && roadmap.includes("packaged.svg"), "roadmap omits packaged security/SVG fixture evidence");
+assert(checklist.includes("packaged-ssh-ipc-agent"), "checklist omits packaged SSH IPC agent record");
+assert(checklist.includes("Packaged SSH Config IPC Smoke"), "checklist omits packaged SSH IPC addendum");
+assert(checklist.includes("`.ssh/config`") && checklist.includes("`known_hosts`") && checklist.includes("`authorized_keys`"), "checklist omits packaged SSH fixture file evidence");
+assert(checklist.includes("channelImportSshConfigSummary") && checklist.includes("channelImportSshKnownHostsSummary") && checklist.includes("channelImportSshAuthorizedKeysSummary"), "checklist omits packaged SSH smoke check evidence");
+assert(checklist.includes("SSH Host/proxy/known_hosts/authorized_keys/redaction/MIME evidence"), "checklist omits packaged SSH parser evidence");
+assert(checklist.includes("secret-packaged-ssh-token") && checklist.includes("secret-packaged-authorized-command"), "checklist omits packaged SSH redaction target evidence");
+assert(e2eSmoke.includes("packaged-prod") && e2eSmoke.includes("channelImportSshConfigSummary"), "e2e smoke omits packaged SSH config fixture/assertion");
+assert(e2eSmoke.includes("secretPackagedKnownHostMaterial") && e2eSmoke.includes("channelImportSshKnownHostsSummary"), "e2e smoke omits packaged known_hosts fixture/assertion");
+assert(e2eSmoke.includes("PackagedAuthorizedSecretMaterial") && e2eSmoke.includes("channelImportSshAuthorizedKeysSummary"), "e2e smoke omits packaged authorized_keys fixture/assertion");
+assert(roadmap.includes("packaged SSH config IPC smoke"), "roadmap omits packaged SSH addendum");
+assert(roadmap.includes("packaged-prod") && roadmap.includes("known_hosts") && roadmap.includes("authorized_keys"), "roadmap omits packaged SSH fixture evidence");
+assert(roadmap.includes("no ssh/scp/sftp/ssh-keygen command"), "roadmap omits packaged SSH no-runtime evidence");
 assert(checklist.includes("packaged-chatgpt-export-ipc-agent"), "checklist omits packaged ChatGPT export IPC agent record");
 assert(checklist.includes("Packaged ChatGPT Export IPC Smoke"), "checklist omits packaged ChatGPT export IPC addendum");
 assert(checklist.includes("`packaged-chatgpt-conversations.json`"), "checklist omits packaged ChatGPT export fixture file evidence");
@@ -746,6 +1047,17 @@ assert(checklist.includes("Syft SBOM Runtime Fixture"), "checklist omits Syft SB
 assert(checklist.includes("workspace-local `syft.json` and `*.syft.json`"), "checklist omits Syft SBOM selected file support evidence");
 assert(checklist.includes("application/vnd.syft+json"), "checklist omits Syft SBOM MIME provenance evidence");
 assert(checklist.includes("no Syft command, package-manager command, scanner"), "checklist omits Syft SBOM no-runtime evidence");
+assert(checklist.includes("web-app-association-agent"), "checklist omits web app association input agent record");
+assert(checklist.includes("Web App Association File Input"), "checklist omits web app association addendum");
+assert(checklist.includes("workspace-local `assetlinks.json` / `apple-app-site-association` / `aasa.json`"), "checklist omits web app association file coverage");
+assert(checklist.includes("application/vnd.drsai.web-app-association+json"), "checklist omits web app association MIME evidence");
+assert(checklist.includes("no-fetch/no-app-runtime/no-domain-verification/no-provider safety copy"), "checklist omits web app association safety evidence");
+assert(roadmap.includes("web app association file input"), "roadmap omits web app association addendum");
+assert(roadmap.includes("Digital Asset Links and Apple AASA"), "roadmap omits web app association format evidence");
+assert(channelAdapters.includes('".web-app-association.json"'), "channel adapters omit web app association normalized extension");
+assert(channelAdapters.includes("summarizeWebAppAssociationFile"), "channel adapters omit web app association summarizer");
+assert(channelAdapters.includes("parseWebAppAssociationPreview"), "channel adapters omit web app association parser");
+assert(channelAdapters.includes("application/vnd.drsai.web-app-association+json"), "channel adapters omit web app association MIME provenance");
 assert(checklist.includes("runtime-ops-design-golden-agent"), "checklist omits runtime ops/design golden fixture agent record");
 assert(checklist.includes("runtime ops/design golden fixtures"), "checklist omits runtime ops/design golden fixture evidence");
 assert(checklist.includes("geospatial, IaC, Ansible, CAD, diagram source, and stylesheet selected-file runtime golden fixtures"), "checklist omits runtime ops/design fixture scope");
@@ -899,11 +1211,27 @@ assert(checklist.includes("Animated Image Header Hints"), "checklist omits anima
 assert(checklist.includes("local GIF/WebP animation header hints"), "checklist omits GIF/WebP animation header capability evidence");
 assert(checklist.includes("`runtime-animated.gif` / `runtime-animated.webp`"), "checklist omits animated image runtime fixture evidence");
 assert(checklist.includes("frame extraction, animation rendering, timing normalization"), "checklist omits animated image remaining gap evidence");
+assert(checklist.includes("svg-structure-preview-agent"), "checklist omits SVG structure preview agent record");
+assert(checklist.includes("SVG Structure Metadata Input"), "checklist omits SVG structure metadata addendum");
+assert(checklist.includes("summarizeSvgStructureHints") && checklist.includes("summarizeSvgRiskCues"), "checklist omits SVG structure/risk implementation evidence");
+assert(checklist.includes("runtime `runtime.svg` golden fixture"), "checklist omits SVG runtime fixture evidence");
+assert(checklist.includes("live browser rendering, external asset fetching, script/security analysis"), "checklist omits SVG remaining gap evidence");
+assert(roadmap.includes("SVG structure metadata input"), "roadmap omits SVG structure metadata addendum");
+assert(roadmap.includes("runtime `runtime.svg` golden fixture"), "roadmap omits SVG runtime fixture evidence");
+assert(channelAdapters.includes("summarizeSvgStructureHints") && channelAdapters.includes("summarizeSvgRiskCues"), "channel adapters omit SVG structure/risk preview implementation");
 assert(checklist.includes("source-map-input-agent"), "checklist omits source map input agent record");
 assert(checklist.includes("Source Map JSON Input"), "checklist omits source map input addendum");
 assert(checklist.includes("workspace-local `.map` / `.js.map` / `.css.map` / `source-map.json`"), "checklist omits source map selected file support evidence");
 assert(checklist.includes("runtime `runtime.js.map` golden fixture"), "checklist omits source map runtime fixture evidence");
 assert(checklist.includes("live devtool symbolication, generated/source file correlation"), "checklist omits source map remaining gap evidence");
+assert(checklist.includes("source-map-correlation-agent"), "checklist omits source map correlation agent record");
+assert(checklist.includes("Static Source Map Correlation Hints"), "checklist omits static source map correlation addendum");
+assert(checklist.includes("target extension, sourceRoot kind, source extension counts, and sourcesContent coverage"), "checklist omits static source map correlation evidence");
+assert(checklist.includes("true line/column remapping, original-source opening, coverage remapping"), "checklist omits narrowed source map remapping remaining work");
+assert(roadmap.includes("static source map correlation hints"), "roadmap omits static source map correlation addendum");
+assert(roadmap.includes("target extension, sourceRoot kind, source extension counts, and sourcesContent coverage"), "roadmap omits source map correlation evidence");
+assert(channelAdapters.includes("describeSourceMapCorrelationHints") && channelAdapters.includes("summarizeSourceMapSourceExtensions"), "channel adapters omit source map correlation implementation");
+assert(channelAdapters.includes("sourcesContent coverage"), "channel adapters omit source map sourcesContent coverage copy");
 assert(checklist.includes("animation-json-input-agent"), "checklist omits Lottie animation JSON agent record");
 assert(checklist.includes("Lottie/Bodymovin Animation JSON Input"), "checklist omits Lottie animation JSON addendum");
 assert(checklist.includes("workspace-local `lottie.json` / `bodymovin.json` / `animation.json` / `*.lottie.json`"), "checklist omits Lottie animation JSON selected file support evidence");
@@ -1061,6 +1389,46 @@ assert(checklist.includes("MAX_JVM_BUILD_CONFIG_PREVIEW_BYTES"), "checklist omit
 assert(checklist.includes("MAX_JVM_BUILD_CONFIG_ITEM_PREVIEW"), "checklist omits JVM build config item limit evidence");
 assert(checklist.includes("no Gradle/Maven/JVM command"), "checklist omits JVM build config no-runtime safety evidence");
 assert(checklist.includes("Gradle property precedence, Maven extension loading, settings.xml merge"), "checklist omits JVM build config remaining gap evidence");
+assert(checklist.includes("gradle-version-catalog-input-agent"), "checklist omits Gradle version catalog input agent record");
+assert(checklist.includes("Gradle Version Catalog Input"), "checklist omits Gradle version catalog addendum");
+assert(checklist.includes("workspace-local `libs.versions.toml` / `*.versions.toml`"), "checklist omits Gradle version catalog selected file support evidence");
+assert(checklist.includes("Version aliases, library aliases, plugin aliases, and bundle aliases"), "checklist omits Gradle version catalog metadata evidence");
+assert(checklist.includes("MAX_GRADLE_VERSION_CATALOG_PREVIEW_BYTES"), "checklist omits Gradle version catalog byte limit evidence");
+assert(checklist.includes("MAX_GRADLE_VERSION_CATALOG_ITEM_PREVIEW"), "checklist omits Gradle version catalog item limit evidence");
+assert(checklist.includes("no Gradle command, wrapper launch, dependency resolution"), "checklist omits Gradle version catalog no-runtime safety evidence");
+assert(checklist.includes("version-catalog merge, dependency graph resolution, repository-backed version provenance"), "checklist omits Gradle version catalog remaining gap evidence");
+assert(roadmap.includes("Gradle version catalog input"), "roadmap omits Gradle version catalog addendum");
+assert(roadmap.includes("runtime `libs.versions.toml` golden fixture"), "roadmap omits Gradle version catalog runtime fixture evidence");
+assert(channelAdapters.includes('".gradle-version-catalog.toml"'), "channel adapters omit Gradle version catalog normalized extension");
+assert(channelAdapters.includes("summarizeGradleVersionCatalogFile"), "channel adapters omit Gradle version catalog summarizer");
+assert(channelAdapters.includes("parseGradleVersionCatalogPreview"), "channel adapters omit Gradle version catalog parser");
+assert(channelAdapters.includes("application/vnd.gradle.version-catalog+toml"), "channel adapters omit Gradle version catalog MIME provenance");
+assert(checklist.includes("maven-settings-input-agent"), "checklist omits Maven settings input agent record");
+assert(checklist.includes("Maven Settings File Input"), "checklist omits Maven settings input addendum");
+assert(checklist.includes("workspace-local `.m2/settings.xml` / `.mvn/settings.xml` / `maven-settings.xml`"), "checklist omits Maven settings selected file support evidence");
+assert(checklist.includes("MAX_MAVEN_SETTINGS_PREVIEW_BYTES"), "checklist omits Maven settings byte limit evidence");
+assert(checklist.includes("MAX_MAVEN_SETTINGS_ITEM_PREVIEW"), "checklist omits Maven settings item limit evidence");
+assert(checklist.includes("settings.xml merge was not performed"), "checklist omits Maven settings no-merge evidence");
+assert(checklist.includes("runtime `.m2/settings.xml` golden fixture"), "checklist omits Maven settings runtime fixture evidence");
+assert(roadmap.includes("Maven settings file input"), "roadmap omits Maven settings input addendum");
+assert(roadmap.includes("workspace-local `.m2/settings.xml` / `.mvn/settings.xml` / `maven-settings.xml`"), "roadmap omits Maven settings file support evidence");
+assert(roadmap.includes("MAX_MAVEN_SETTINGS_PREVIEW_BYTES"), "roadmap omits Maven settings byte limit evidence");
+assert(roadmap.includes("MAX_MAVEN_SETTINGS_ITEM_PREVIEW"), "roadmap omits Maven settings item limit evidence");
+assert(roadmap.includes("settings.xml merge was not performed"), "roadmap omits Maven settings no-merge evidence");
+assert(channelAdapters.includes('".maven-settings.xml"'), "channel adapters omit Maven settings normalized extension");
+assert(channelAdapters.includes("summarizeMavenSettingsFile"), "channel adapters omit Maven settings summarizer");
+assert(channelAdapters.includes("application/vnd.apache.maven.settings+xml"), "channel adapters omit Maven settings MIME provenance");
+assert(checklist.includes("jmeter-test-plan-agent"), "checklist omits JMeter test plan agent record");
+assert(checklist.includes("JMeter Test Plan Input"), "checklist omits JMeter test plan input addendum");
+assert(checklist.includes("workspace-local `.jmx`"), "checklist omits JMeter .jmx selected file support evidence");
+assert(checklist.includes("MAX_JMETER_TEST_PLAN_PREVIEW_BYTES"), "checklist omits JMeter test plan byte limit evidence");
+assert(checklist.includes("MAX_JMETER_TEST_PLAN_ITEM_PREVIEW"), "checklist omits JMeter test plan item limit evidence");
+assert(checklist.includes("runtime `runtime.jmx` golden fixture"), "checklist omits JMeter test plan runtime fixture evidence");
+assert(checklist.includes("no JMeter command / no load test / no HTTP replay"), "checklist omits JMeter test plan no-runtime evidence");
+assert(roadmap.includes("JMeter test plan input"), "roadmap omits JMeter test plan input addendum");
+assert(roadmap.includes("MAX_JMETER_TEST_PLAN_PREVIEW_BYTES"), "roadmap omits JMeter test plan byte limit evidence");
+assert(channelAdapters.includes('".jmx"'), "channel adapters omit JMeter .jmx extension");
+assert(channelAdapters.includes("summarizeJmeterTestPlanFile"), "channel adapters omit JMeter test plan summarizer");
 assert(checklist.includes("dotnet-nuget-config-agent"), "checklist omits .NET/NuGet config agent record");
 assert(checklist.includes(".NET/NuGet Config Input"), "checklist omits .NET/NuGet config addendum");
 assert(checklist.includes("workspace-local `global.json` / `nuget.config` / `packages.config` / `.nuspec`"), "checklist omits .NET/NuGet selected file support evidence");
@@ -1217,6 +1585,14 @@ assert(checklist.includes("Calendar ICAL File Input"), "checklist omits ICAL cal
 assert(checklist.includes("workspace-local `.ics` / `.ical`"), "checklist omits ICS/ICAL selected file support evidence");
 assert(checklist.includes("`.ical` parity slice"), "checklist omits ICAL runtime verification evidence");
 assert(checklist.includes("bounded VEVENT previews"), "checklist omits ICS bounded event preview evidence");
+assert(checklist.includes("calendar-ics-detail-agent"), "checklist omits ICS detail agent record");
+assert(checklist.includes("Calendar ICS Local Detail Hints"), "checklist omits ICS detail addendum");
+assert(checklist.includes("RRULE / EXDATE / TZID / STATUS / ORGANIZER / VALARM"), "checklist omits ICS detail field evidence");
+assert(checklist.includes("recurrence rules were not expanded, alarms were not triggered"), "checklist omits ICS recurrence/alarm safety evidence");
+assert(roadmap.includes("Calendar ICS local detail hints"), "roadmap omits ICS detail addendum");
+assert(roadmap.includes("RRULE / EXDATE / TZID / STATUS / ORGANIZER / VALARM"), "roadmap omits ICS detail field evidence");
+assert(roadmap.includes("recurrence rules were not expanded, alarms were not triggered"), "roadmap omits ICS recurrence/alarm safety evidence");
+assert(channelAdapters.includes("readIcsParameter") && channelAdapters.includes("Recurrence:") && channelAdapters.includes("Alarms:"), "channel adapter omits ICS recurrence/alarm detail support");
 assert(checklist.includes("no calendar app access, provider API call, schedule mutation"), "checklist omits ICS no-calendar-provider/no-mutation safety evidence");
 assert(checklist.includes("live calendar provider sync and schedule writes"), "checklist omits ICS remaining gap evidence");
 assert(checklist.includes("calendar-csv-agenda-agent"), "checklist omits calendar CSV agenda agent record");
@@ -1310,6 +1686,15 @@ assert(checklist.includes("Kubernetes Manifest Local Resource Details"), "checkl
 assert(checklist.includes("runtime-kubernetes.yaml"), "checklist omits Kubernetes manifest runtime fixture evidence");
 assert(checklist.includes("Local resource details"), "checklist omits Kubernetes local detail summary evidence");
 assert(checklist.includes("Secret key names"), "checklist omits Kubernetes Secret key-only evidence");
+assert(checklist.includes("helm-values-input-agent"), "checklist omits Helm values input agent record");
+assert(checklist.includes("Helm Values File Input"), "checklist omits Helm values input addendum");
+assert(checklist.includes("workspace-local `values.yaml` / `values.yml`"), "checklist omits Helm values selected file support evidence");
+assert(checklist.includes("MAX_HELM_VALUES_PREVIEW_BYTES"), "checklist omits Helm values byte limit evidence");
+assert(checklist.includes("secret-shaped values were redacted or reported as key names only"), "checklist omits Helm values secret key-only evidence");
+assert(checklist.includes("runtime `values.yaml` golden fixture"), "checklist omits Helm values runtime fixture evidence");
+assert(checklist.includes("no Helm/Kubectl/template-render/values-merge/runtime boundary"), "checklist omits Helm values no-runtime boundary evidence");
+assert(roadmap.includes("Helm values file input"), "roadmap omits Helm values input addendum");
+assert(roadmap.includes("application/vnd.cncf.helm.values+yaml"), "roadmap omits Helm values MIME evidence");
 assert(checklist.includes("container-build-file-agent"), "checklist omits container build file agent record");
 assert(checklist.includes("Container Build File Input"), "checklist omits container build file addendum");
 assert(checklist.includes("selected `Dockerfile` / `Containerfile` / `.dockerignore`"), "checklist omits container build selected file support evidence");
@@ -1323,6 +1708,14 @@ assert(checklist.includes("workspace-local `docker-compose*.yml` / `docker-compo
 assert(checklist.includes("MAX_CONTAINER_COMPOSE_SERVICE_PREVIEW"), "checklist omits Docker Compose service preview limit evidence");
 assert(checklist.includes("no docker compose command, container build, image pull, registry lookup"), "checklist omits Docker Compose no-runtime safety evidence");
 assert(checklist.includes("live Docker Compose validation, image provenance, secret/env resolution"), "checklist omits Docker Compose remaining gap evidence");
+assert(checklist.includes("docker-compose-mime-runtime-agent"), "checklist omits Docker Compose MIME runtime fixture agent record");
+assert(checklist.includes("Docker Compose MIME Runtime Fixture"), "checklist omits Docker Compose MIME runtime fixture addendum");
+assert(checklist.includes("runtime `docker-compose.yaml` golden fixture"), "checklist omits Docker Compose runtime golden fixture evidence");
+assert(checklist.includes("application/vnd.docker.compose+yaml"), "checklist omits Docker Compose MIME provenance evidence");
+assert(roadmap.includes("Docker Compose MIME/runtime fixture"), "roadmap omits Docker Compose MIME/runtime addendum");
+assert(roadmap.includes("application/vnd.docker.compose+yaml"), "roadmap omits Docker Compose MIME evidence");
+assert(channelAdapters.includes('".docker-compose.yaml"'), "channel adapters omit Docker Compose normalized extension");
+assert(channelAdapters.includes("application/vnd.docker.compose+yaml"), "channel adapters omit Docker Compose MIME provenance");
 assert(checklist.includes("build-manifest-file-agent"), "checklist omits build manifest file agent record");
 assert(checklist.includes("Build Manifest File Input"), "checklist omits build manifest file input addendum");
 assert(checklist.includes("Maven POM, Gradle, Visual Studio solution, and MSBuild project"), "checklist omits build manifest ecosystem evidence");

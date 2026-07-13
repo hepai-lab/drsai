@@ -82,6 +82,22 @@ class PlatformAuthTests(unittest.TestCase):
         self.assertEqual(provider.access_token, "static-key")
         self.assertEqual(provider.openai_base_url, "https://provider.example/v1")
 
+    def test_oidc_only_mode_rejects_static_credential_fallback(self) -> None:
+        with patch.dict(os.environ, {"OPENDRSAI_OIDC_ONLY": "1"}):
+            provider = get_model_credential_provider(
+                "legacy-static-key",
+                "https://provider.example/v1",
+            )
+            self.assertIsNone(provider)
+            client = HepAIChatCompletionClient(
+                model="deepseek-ai/deepseek-v4-pro",
+                api_key="legacy-static-key",
+                base_url="https://provider.example/v1",
+            )
+            self.assertTrue(client._oidc_credential_pending)
+            with self.assertRaisesRegex(RuntimeError, "OIDC credential context is unavailable"):
+                client._bind_platform_auth()
+
     def test_cached_model_client_rebinds_to_current_request(self) -> None:
         client = object.__new__(HepAIChatCompletionClient)
         client._client = SimpleNamespace(api_key="old-token", base_url="https://old.invalid/v1")

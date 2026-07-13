@@ -24,6 +24,7 @@ const desktopApi = read("src/shared/desktopApi.ts");
 const preload = read("src/preload/index.ts");
 const desktopMain = read("src/main/index.ts");
 const threadsMain = read("src/main/threads.ts");
+const filesContextPanel = read("src/renderer/src/components/files/FilesContextPanel.tsx");
 
 function navItemEnabled(source, menuId) {
   const pattern = new RegExp(`id: MENU_IDS\\.${menuId}, enabled: (true|false)`);
@@ -40,6 +41,10 @@ const checks = [
   ["renderer can open install log through desktop API", mock.includes("openPath") && app.includes("打开日志") && app.includes("Open Log")],
   ["mock covers chat stream state", mock.includes("startChat") && mock.includes('type: "chunk"') && mock.includes('type: "done"')],
   ["renderer exposes agent run workspace", app.includes("AgentRunWorkspace") && app.includes("MENU_IDS.agentSquare") && agentRunWorkspace.includes("desktopApi.startAgentRun") && agentRunWorkspace.includes("desktopApi.onAgentRunEvent") && agentRunWorkspace.includes("desktopApi.abortAgentRun") && css.includes(".agent-run-workspace")],
+  ["renderer exposes a direct agent task path", shell.includes("onNewAgentTask") && shell.includes("Agent task") && app.includes('kind: "agent_run"') && app.includes('activeThread?.kind === "agent_run"')],
+  ["agent file events reveal change review", app.includes('setActiveRightTab("files")') && app.includes("setRightPanelCollapsed(false)") && app.includes("onAgentFileEvent")],
+  ["agent change sets expose explicit accept and reject actions", filesContextPanel.includes("acceptWorkspaceCheckpoint") && filesContextPanel.includes("接受本次变更") && filesContextPanel.includes("拒绝并恢复运行前") && preload.includes("desktop:workspace-checkpoint-accept")],
+  ["agent tasks fail closed on incomplete rollback baselines", agentRunWorkspace.includes("checkpoint.truncated") && agentRunWorkspace.includes("checkpoint.skippedFileCount") && agentRunWorkspace.includes("Agent 任务未启动")],
   ["chat workspace renders markdown safely through props", chatWorkspace.includes("ReactMarkdown") && chatWorkspace.includes("remarkGfm") && chatWorkspace.includes("onOpenExternal")],
   ["chat workspace renders structured tool timeline events", chatWorkspace.includes("ChatToolTimelineEvent") && chatWorkspace.includes("ToolTimeline") && chatWorkspace.includes("message-tool-timeline") && chatAdapter.includes('event.type === "tool_timeline"') && chatAdapter.includes("appendAssistantToolTimeline") && css.includes(".message-tool-event")],
   ["chat workspace uses readable Chinese labels", chatWorkspace.includes("发送") && chatWorkspace.includes("停止") && chatWorkspace.includes("正在连接本地网关")],
@@ -56,7 +61,7 @@ const checks = [
   ["about dialog disables update check while busy", app.includes("<button disabled={busy} onClick={onCheckUpdates}>")],
   ["renderer has shared navigation model", navigation.includes("current_session") && navigation.includes("agent_square") && navigation.includes("skills_square") && navigation.includes("getNavSections") && navigation.includes("getRightTabs") && app.includes('from "./navigation"') && shell.includes("navSections.filter")],
   ["renderer enables current desktop views", navItemEnabled(navigation, "currentSession") && navItemEnabled(navigation, "approvalCenter") && navItemEnabled(navigation, "channels") && navItemEnabled(navigation, "profile") && !navItemEnabled(navigation, "agentSquare") && !navItemEnabled(navigation, "skillsSquare") && !navItemEnabled(navigation, "plugins") && !navItemEnabled(navigation, "library")],
-  ["renderer exposes only MVP right-panel tabs", navigation.includes('["files", "terminal"] as RightTab[]')],
+  ["renderer exposes current right-panel tabs", navigation.includes('["files", "browser", "terminal", "debug"] as RightTab[]')],
   ["renderer has separated workspace shell", app.includes("WorkspaceShell") && shell.includes("WorkspaceShellProps") && shell.includes("mainContent: React.ReactNode") && shell.includes("rightPanel: React.ReactNode") && !shell.includes('../desktopApi') && !shell.includes('./desktopApi')],
   ["chat composer orders agent model and thinking controls", chatWorkspace.includes("Agent: {activeAgentName}") && chatWorkspace.includes("模型：") && chatWorkspace.includes("推理：") && chatWorkspace.includes('useState<ThinkingEffort>("medium")') && chatAdapter.includes("thinking_effort")],
   ["renderer can collapse right panel", app.includes("rightPanelCollapsed") && shell.includes("titlebar-right-panel-toggle") && css.includes(".content-grid.right-collapsed")],

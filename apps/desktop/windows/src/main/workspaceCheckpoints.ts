@@ -60,7 +60,9 @@ export async function createWorkspaceCheckpoint(
     2_000_000,
     DEFAULT_MAX_BYTES_PER_FILE,
   );
-  const changedFiles = (await getCheckpointCandidates(workspacePath, maxFiles)).slice(0, maxFiles);
+  const checkpointCandidates = await getCheckpointCandidates(workspacePath, maxFiles + 1);
+  const truncated = checkpointCandidates.length > maxFiles;
+  const changedFiles = checkpointCandidates.slice(0, maxFiles);
   const id = `wcp-${Date.now().toString(36)}-${hashString(workspacePath).slice(0, 8)}`;
   const checkpointDir = join(CHECKPOINT_ROOT, id);
   await mkdir(checkpointDir, { recursive: true });
@@ -129,7 +131,11 @@ export async function createWorkspaceCheckpoint(
     changedFileCount: changedFiles.length,
     storedFileCount: entries.filter((entry) => entry.stored).length,
     skippedFileCount: entries.filter((entry) => !entry.stored && entry.existed).length,
+    truncated,
     entries,
+    kind: request.kind ?? "manual",
+    ...(request.runId ? { runId: request.runId.trim() } : {}),
+    ...(request.kind === "agent_run_baseline" ? { reviewStatus: "pending" as const } : {}),
   };
   await upsertCheckpoint(checkpoint);
   return checkpoint;
@@ -146,7 +152,6 @@ export async function previewWorkspaceCheckpoint(
   if (!checkpoint) {
     throw new Error("Workspace checkpoint was not found for this workspace.");
   }
-
   const maxFiles = clampInt(request.maxFiles, 1, 80, DEFAULT_PREVIEW_MAX_FILES);
   const maxCharsPerFile = clampInt(
     request.maxCharsPerFile,
@@ -195,6 +200,9 @@ export async function restoreWorkspaceCheckpoint(
   if (!checkpoint) {
     throw new Error("Workspace checkpoint was not found for this workspace.");
   }
+  if (checkpoint.kind === "agent_run_baseline" && checkpoint.reviewStatus !== "pending") {
+    throw new Error("Agent run change set has already been reviewed.");
+  }
 
   let restoredFileCount = 0;
   let removedFileCount = 0;
@@ -223,6 +231,36 @@ export async function restoreWorkspaceCheckpoint(
     skippedFileCount += 1;
   }
 
+  if (checkpoint.kind === "agent_run_baseline") {
+    const baselinePaths = new Set(checkpoint.entries.map((entry) => normalizeRel(entry.relativePath)));
+    const currentChanges = await getCheckpointCandidates(workspacePath, 200);
+    for (const change of currentChanges) {
+      const relativePath = normalizeRel(change.path);
+      if (baselinePaths.has(relativePath)) continue;
+      const target = await resolvePossiblyMissingInsideWorkspace(workspacePath, relativePath);
+      const baselineContent = checkpoint.baseRef
+        ? await readGitFileAtRef(workspacePath, checkpoint.baseRef, relativePath)
+        : null;
+      if (baselineContent) {
+        await mkdir(dirname(target), { recursive: true });
+        await writeFile(target, baselineContent);
+        restoredFileCount += 1;
+      } else if (existsSync(target)) {
+        const targetStat = await stat(target);
+        if (targetStat.isFile()) {
+          await unlink(target);
+          removedFileCount += 1;
+        } else {
+          skippedFileCount += 1;
+        }
+      }
+    }
+  }
+
+  if (checkpoint.kind === "agent_run_baseline") {
+    await markCheckpointReviewed(checkpoint, "rejected");
+  }
+
   return {
     workspacePath,
     checkpointId: checkpoint.id,
@@ -242,7 +280,38 @@ function validateCreateRequest(rawRequest: unknown): WorkspaceCheckpointCreateRe
   if (typeof request.workspacePath !== "string") {
     throw new Error("Workspace path is required.");
   }
+  if (request.kind !== undefined && request.kind !== "manual" && request.kind !== "agent_run_baseline") {
+    throw new Error("Workspace checkpoint kind is invalid.");
+  }
+  if (request.runId !== undefined && (typeof request.runId !== "string" || !request.runId.trim() || /[\r\n]/.test(request.runId))) {
+    throw new Error("Workspace checkpoint run id is invalid.");
+  }
   return request;
+}
+
+export async function acceptWorkspaceCheckpoint(rawRequest: unknown): Promise<WorkspaceCheckpoint> {
+  const request = validateRestoreRequest(rawRequest);
+  const workspacePath = await resolveWorkspaceRoot(request.workspacePath);
+  const checkpoint = (await listWorkspaceCheckpoints(workspacePath)).find(
+    (item) => item.id === request.checkpointId,
+  );
+  if (!checkpoint || checkpoint.kind !== "agent_run_baseline" || checkpoint.reviewStatus !== "pending") {
+    throw new Error("Agent run change set was not found for this workspace.");
+  }
+  return markCheckpointReviewed(checkpoint, "accepted");
+}
+
+async function markCheckpointReviewed(
+  checkpoint: WorkspaceCheckpoint,
+  reviewStatus: "accepted" | "rejected",
+): Promise<WorkspaceCheckpoint> {
+  const reviewed = {
+    ...checkpoint,
+    reviewStatus,
+    reviewedAt: new Date().toISOString(),
+  };
+  await upsertCheckpoint(reviewed);
+  return reviewed;
 }
 
 function validateRestoreRequest(rawRequest: unknown): WorkspaceCheckpointRestoreRequest {
@@ -409,7 +478,7 @@ async function writeIndex(index: WorkspaceCheckpointIndex): Promise<void> {
 async function getGitChangedFiles(
   workspacePath: string,
 ): Promise<Array<{ path: string; status: WorkspaceFileGitStatus }>> {
-  const output = await runGit(workspacePath, ["status", "--porcelain=v1"], 8000);
+  const output = await runGit(workspacePath, ["status", "--porcelain=v1", "--untracked-files=all", "--no-renames"], 8000);
   return output
     .split(/\r?\n/)
     .map((line) => line.trimEnd())
@@ -493,6 +562,21 @@ async function runGit(
       }
       resolvePromise(stdout);
     });
+  });
+}
+
+async function readGitFileAtRef(
+  cwd: string,
+  ref: string,
+  relativePath: string,
+): Promise<Buffer | null> {
+  return new Promise((resolvePromise) => {
+    execFile(
+      "git",
+      ["show", `${ref}:${relativePath.replace(/\\/g, "/")}`],
+      { cwd, timeout: 8000, windowsHide: true, encoding: "buffer", maxBuffer: 4 * 1024 * 1024 },
+      (error, stdout) => resolvePromise(error ? null : Buffer.from(stdout)),
+    );
   });
 }
 

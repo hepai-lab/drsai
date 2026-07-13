@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
@@ -25,17 +25,21 @@ if (!existsSync(exePath)) {
 
 const tempDir = mkdtempSync(join(tmpdir(), "opendrsai-e2e-agent-run-"));
 const appHome = join(tempDir, "drsai-home");
+const workspacePath = join(tempDir, "workspace");
 const resultPath = join(tempDir, "result.json");
 mkdirSync(appHome, { recursive: true });
+mkdirSync(workspacePath, { recursive: true });
+writeFileSync(join(workspacePath, "user-work.txt"), "user work before agent\n", "utf8");
 
 let server = null;
 let requestBody = null;
 let requestCount = 0;
+const gatewayRequests = [];
 
 try {
   await assertPortFree();
-  server = await startGateway();
-  await runPackagedApp({ appHome, resultPath });
+  server = await startGateway(workspacePath);
+  await runPackagedApp({ appHome, resultPath, workspacePath });
   if (!existsSync(resultPath)) {
     throw new Error("E2E agent run did not write a smoke result.");
   }
@@ -44,6 +48,12 @@ try {
     throw new Error(`E2E agent run failed:\n${JSON.stringify(result, null, 2)}`);
   }
   assertAgentRunDiagnostics(result);
+  if (readFileSync(join(workspacePath, "user-work.txt"), "utf8") !== "user work before agent\n") {
+    throw new Error("Agent change rejection did not restore the user's pre-run file content.");
+  }
+  if (existsSync(join(workspacePath, "agent-created.txt"))) {
+    throw new Error("Agent change rejection did not remove a file created during the run.");
+  }
   console.log("E2E agent run passed with packaged Electron + fake gateway.");
 } finally {
   if (server) await new Promise((resolveClose) => server.close(resolveClose));
@@ -68,8 +78,9 @@ async function assertPortFree() {
   }
 }
 
-function startGateway() {
+function startGateway(workspacePath) {
   const serverInstance = createServer(async (req, res) => {
+    gatewayRequests.push(`${req.method || "GET"} ${req.url || "/"}`);
     if (req.url === "/health") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ status: "ok" }));
@@ -86,6 +97,8 @@ function startGateway() {
         body = await readJsonBody(req);
         requestBody = body;
         requestCount += 1;
+        writeFileSync(join(workspacePath, "user-work.txt"), "user work before agent\nagent change\n", "utf8");
+        writeFileSync(join(workspacePath, "agent-created.txt"), "created by agent\n", "utf8");
       } catch (error) {
         res.writeHead(200, {
           "Content-Type": "text/event-stream",
@@ -119,7 +132,7 @@ function startGateway() {
 function assertAgentRunBody(body, threadId) {
   if (typeof body?.model !== "string" || !body.model.trim()) throw new Error("agent run model missing");
   if (body?.thread_id !== threadId) throw new Error("agent run thread id mismatch");
-  if (body?.work_dir !== "C:\\OpenDrSai\\workspace") throw new Error("agent run workspace mismatch");
+  if (body?.work_dir !== workspacePath) throw new Error("agent run workspace mismatch");
   if (body?.messages?.[0]?.role !== "user") throw new Error("agent run message role mismatch");
   if (body?.messages?.[0]?.content !== "write a short plan") throw new Error("agent run task mismatch");
   if (body?.metadata?.source !== "e2e-agent-run") throw new Error("agent run metadata source mismatch");
@@ -176,7 +189,7 @@ function assertAgentRunDiagnostics(result) {
   }
 }
 
-function runPackagedApp({ appHome, resultPath }) {
+function runPackagedApp({ appHome, resultPath, workspacePath }) {
   return new Promise((resolveRun, reject) => {
     let settled = false;
     const child = spawn(exePath, [], {
@@ -196,6 +209,7 @@ function runPackagedApp({ appHome, resultPath }) {
         OPENDRSAI_DEV_AUTH_BYPASS: "1",
         OPENDRSAI_E2E_AGENT_RUN: "1",
         OPENDRSAI_E2E_RESULT: resultPath,
+        OPENDRSAI_E2E_WORKSPACE_PATH: workspacePath,
         OPENDRSAI_E2E_TIMEOUT_MS: "45000",
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -230,7 +244,7 @@ function runPackagedApp({ appHome, resultPath }) {
         return;
       }
       const result = existsSync(resultPath) ? `\n${readFileSync(resultPath, "utf8")}` : "";
-      reject(new Error(`Packaged app exited with code ${code}.${result}\n${stdout}\n${stderr}`));
+      reject(new Error(`Packaged app exited with code ${code}. Gateway requests: ${gatewayRequests.join(", ") || "none"}.${result}\n${stdout}\n${stderr}`));
     });
   });
 }

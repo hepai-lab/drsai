@@ -1,27 +1,25 @@
-# DrSai Remote for Android
+# OpenDrSai for Android
 
-Android 端是 DrSai 桌面网关的局域网遥控台。MVP 支持连接、会话列表、历史记录、流式回复、工具/子 Agent 进展和发送指令。
+OpenDrSai 的原生 Android 客户端。第一版支持 HAI 登录、Agent 选择、新建及恢复对话、流式回答、停止/重试、历史记录、深色模式和退出登录。
 
-## 桌面端
+产品与技术规划见 [`docs/android_app/README.md`](../../docs/android_app/README.md)。
 
-在桌面电脑启动网关前开启 WebSocket，并明确允许监听局域网地址：
+## 本地运行
+
+1. 启动 OpenDrSai WebUI 后端（默认监听 `8081`）。
+2. 用 Android Studio 打开 `apps/android`，等待 Gradle 同步完成。
+3. 启动 Android 模拟器，运行 `app`。模拟器通过 `http://10.0.2.2:8081/api` 访问电脑上的后端。
+4. 正式登录使用现有桌面端的 HAI 设备授权流程；浏览器授权完成后会自动进入 App。
+
+仅在本地联调时，可给后端设置 `OPENDRSAI_MOBILE_DEV_AUTH=1`，Debug 构建的登录页会显示“本地开发登录”。请勿在共享或生产环境开启此变量。
+
+## 构建与测试
+
+要求 JDK 17 和 Android SDK 35：
 
 ```powershell
-$env:PYTHONPATH="cores/python/packages/drsai/src"
-$env:DRSAI_TUI_WS="1"
-$env:DRSAI_TUI_WS_HOST="0.0.0.0"
-$env:DRSAI_TUI_WS_PORT="8765"
-python -m drsai.backend.tui_gateway
+$env:JAVA_HOME="C:\Program Files\Android\Android Studio\jbr"
+.\gradlew.bat testDebugUnitTest assembleDebug
 ```
 
-确保 Windows 防火墙只允许可信的专用网络访问 8765 端口。手机与电脑连接同一个 Wi-Fi，然后输入：
-
-```text
-ws://电脑的局域网IP:8765/attach
-```
-
-## 构建
-
-使用 Android Studio 打开 `apps/android`，等待 Gradle 同步后运行 `app`。要求 JDK 17、Android SDK 35。
-
-> 当前网关没有鉴权。不要将端口暴露到公网；正式版本应增加一次性配对码与 TLS。
+生成的 Debug APK 位于 `app/build/outputs/apk/debug/app-debug.apk`。

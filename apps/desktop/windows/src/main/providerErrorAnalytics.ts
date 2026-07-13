@@ -97,7 +97,7 @@ function isProviderErrorAnalyticsRecord(value: unknown): value is ProviderErrorA
       typeof record.requestId === "string" &&
       typeof record.sessionId === "string" &&
       typeof record.runId === "string" &&
-      (record.provider === "openai_responses" || record.provider === "anthropic") &&
+      (record.provider === "openai_responses" || record.provider === "anthropic" || record.provider === "google_gemini") &&
       typeof record.eventName === "string" &&
       typeof record.message === "string" &&
       typeof record.retryable === "boolean" &&

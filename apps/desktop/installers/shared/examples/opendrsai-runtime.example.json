@@ -1,6 +1,6 @@
 {
   "name": "OpenDrSai Runtime",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "channel": "stable",
   "platform": "windows-x64",
   "layoutVersion": 1,

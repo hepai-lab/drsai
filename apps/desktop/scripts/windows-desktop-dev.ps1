@@ -509,6 +509,12 @@ if (-not $DrsaiHome) {
     $DrsaiHome = if ($env:DRSAI_HOME) { $env:DRSAI_HOME } else { Join-Path $env:USERPROFILE ".drsai" }
 }
 
+# Desktop development must exercise the same OIDC-only credential boundary as
+# a clean packaged install. Static keys in the host environment or ~/.drsai/.env
+# must not mask missing request-scoped OIDC propagation.
+$env:OPENDRSAI_OIDC_ONLY = "1"
+Remove-Item Env:HEPAI_API_KEY, Env:OPENAI_API_KEY, Env:OPENAI_ADMIN_KEY -ErrorAction SilentlyContinue
+
 $DevLogDir = Join-Path $DrsaiHome "logs\desktop-dev"
 $DevCacheDir = Join-Path $DrsaiHome "cache\desktop-dev"
 $BackendValidationStamp = Join-Path $DevCacheDir "backend-validation.txt"

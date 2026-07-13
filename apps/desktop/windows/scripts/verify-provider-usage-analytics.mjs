@@ -47,6 +47,21 @@ try {
   });
   if (!stored) throw new Error("Provider usage analytics record was not persisted.");
 
+  const storedGemini = await persistProviderUsageAnalytics({
+    requestId: "request-gemini-usage-fixture",
+    sessionId: "thread-gemini-usage-fixture",
+    runId: "run-gemini-usage-fixture",
+    event: {
+      provider: "google_gemini",
+      eventName: "generateContent.stream",
+      status: "STOP",
+      summary: "Gemini stream finished. finish_reason=STOP input_tokens=7 output_tokens=11 total_tokens=18",
+      usage: { inputTokens: 7, outputTokens: 11, totalTokens: 18 },
+      rawPayload: { metadata: { secret: "do-not-store" } },
+    },
+  });
+  if (!storedGemini) throw new Error("Gemini provider usage analytics record was not persisted.");
+
   const skipped = await persistProviderUsageAnalytics({
     requestId: "request-without-usage",
     sessionId: "thread-without-usage",
@@ -61,13 +76,20 @@ try {
   if (skipped !== null) throw new Error("Provider usage analytics persisted a status event without token usage.");
 
   const records = await listProviderUsageAnalytics();
-  if (records.length !== 1) throw new Error(`Expected one analytics record, found ${records.length}.`);
-  const [record] = records;
+  if (records.length !== 2) throw new Error(`Expected two analytics records, found ${records.length}.`);
+  const record = records.find((item) => item.provider === "openai_responses");
+  const geminiRecord = records.find((item) => item.provider === "google_gemini");
+  if (!record || !geminiRecord) {
+    throw new Error(`Expected OpenAI Responses and Gemini analytics records, found ${JSON.stringify(records)}`);
+  }
   if (record.requestId !== "request-usage-fixture" || record.usage.inputTokens !== 42 || record.usage.outputTokens !== 17) {
     throw new Error(`Persisted provider usage record is malformed: ${JSON.stringify(record)}`);
   }
   if (!record.id.startsWith("provider-usage:") || record.provider !== "openai_responses") {
     throw new Error(`Persisted provider usage record identity is malformed: ${JSON.stringify(record)}`);
+  }
+  if (geminiRecord.requestId !== "request-gemini-usage-fixture" || geminiRecord.status !== "STOP" || geminiRecord.usage.totalTokens !== 18) {
+    throw new Error(`Persisted Gemini provider usage record is malformed: ${JSON.stringify(geminiRecord)}`);
   }
 
   const rawStore = await readFile(join(tempHome, "desktop", "provider-usage-analytics.json"), "utf8");

@@ -67,7 +67,7 @@ export interface AgentLogSsePayload {
 }
 
 export interface ProviderUsageAnalyticsEvent {
-  provider: "openai_responses" | "anthropic";
+  provider: "openai_responses" | "anthropic" | "google_gemini";
   eventName: string;
   status?: string;
   stopReason?: string;
@@ -80,7 +80,7 @@ export interface ProviderUsageAnalyticsEvent {
 }
 
 export interface ProviderErrorAnalyticsEvent {
-  provider: "openai_responses" | "anthropic";
+  provider: "openai_responses" | "anthropic" | "google_gemini";
   eventName: string;
   code?: string;
   message: string;
@@ -224,20 +224,23 @@ export function parseProviderUsageAnalyticsSseFrame(frame: string): ProviderUsag
 
   const record = readObject(parsed);
   if (!record) return null;
-  const eventName = getSseEventName(frame) || readString(record.type);
+  const rawEventName = getSseEventName(frame) || readString(record.type);
   const type = readString(record.type).toLowerCase();
   const response = readObject(record.response);
   const message = readObject(record.message);
   const delta = readObject(record.delta);
-  const usage = readObject(record.usage) || readObject(response?.usage) || readObject(message?.usage);
-  const provider = inferProviderUsageProvider(type, eventName);
+  const usage = readObject(record.usage) || readObject(response?.usage) || readObject(message?.usage) || readObject(record.usageMetadata);
+  const provider = inferProviderUsageProvider(type, rawEventName, record);
   if (!provider) return null;
+  const eventName = rawEventName || (provider === "google_gemini" ? "generateContent.stream" : "");
 
   const status =
-    readString(response?.status) ||
-    readString(record.status) ||
-    (provider === "openai_responses" ? type.replace(/^response\./, "") : "") ||
-    (provider === "anthropic" ? type || eventName : "");
+    provider === "google_gemini"
+      ? readGeminiFinishReason(record) || readString(record.status) || type || eventName
+      : readString(response?.status) ||
+        readString(record.status) ||
+        (provider === "openai_responses" ? type.replace(/^response\./, "") : "") ||
+        (provider === "anthropic" ? type || eventName : "");
   const stopReason = provider === "anthropic"
     ? readString(delta?.stop_reason) || readString(record.stop_reason) || readString(message?.stop_reason)
     : "";
@@ -266,7 +269,7 @@ export function parseProviderErrorAnalyticsSseFrame(frame: string): ProviderErro
   if (!record) return null;
   const eventName = getSseEventName(frame) || readString(record.type);
   const type = readString(record.type).toLowerCase();
-  const provider = inferProviderErrorProvider(type, eventName);
+  const provider = inferProviderErrorProvider(type, eventName, record);
   if (!provider) return null;
 
   const structuredError = readChatSseError(parsed);
@@ -275,7 +278,7 @@ export function parseProviderErrorAnalyticsSseFrame(frame: string): ProviderErro
   if (!message) return null;
   const code = structuredError.code?.trim();
   const summary = compactStatusParts([
-    provider === "openai_responses" ? "OpenAI Responses stream error." : "Anthropic stream error.",
+    readProviderErrorSummaryLabel(provider),
     code ? `code=${code}` : "",
     `message=${message}`,
     structuredError.retryable ? "retryable=true" : "retryable=false",
@@ -457,6 +460,13 @@ function extractProviderToolCandidates(value: unknown): unknown[] {
   for (const contentItem of normalizeUnknownItems(record.content)) {
     if (isToolLikeRecord(contentItem)) items.push(contentItem);
   }
+  for (const candidate of normalizeUnknownItems(record.candidates)) {
+    const candidateRecord = readObject(candidate);
+    const candidateContent = readObject(candidateRecord?.content);
+    for (const part of normalizeUnknownItems(candidateContent?.parts)) {
+      if (isToolLikeRecord(part)) items.push(part);
+    }
+  }
   return items;
 }
 
@@ -492,6 +502,8 @@ function isToolLikeRecord(value: unknown): value is Record<string, unknown> {
     readString(record.tool) ||
     readString(record.function_name) ||
     readString(readObject(record.function)?.name) ||
+    Boolean(readObject(record.functionCall)) ||
+    Boolean(readObject(record.functionResponse)) ||
     type === "tool_use" ||
     type === "tool_result" ||
     type === "function_call" ||
@@ -644,9 +656,13 @@ function normalizeToolTimelineEvent(
   if (!value || typeof value !== "object" || Array.isArray(value)) return [];
   const record = value as Record<string, unknown>;
   const functionRecord = readObject(record.function);
+  const geminiFunctionCall = readObject(record.functionCall);
+  const geminiFunctionResponse = readObject(record.functionResponse);
   const structuredInput =
     record.arguments ??
     functionRecord?.arguments ??
+    geminiFunctionCall?.args ??
+    geminiFunctionResponse?.response ??
     record.input ??
     record.parameters ??
     record.params;
@@ -655,6 +671,8 @@ function normalizeToolTimelineEvent(
     readString(record.tool_name) ||
     readString(record.tool) ||
     readString(functionRecord?.name) ||
+    readString(geminiFunctionCall?.name) ||
+    readString(geminiFunctionResponse?.name) ||
     readString(record.function_name) ||
     readString(record.name) ||
     readProviderBuiltinToolName(readString(record.type));
@@ -710,6 +728,7 @@ function normalizeToolEventKind(
   const type = readString(record.type).toLowerCase();
   const role = readString(record.role).toLowerCase();
   if (kind === "tool_result" || kind === "result") return "tool_result";
+  if (readObject(record.functionResponse)) return "tool_result";
   if (
     type === "tool_result" ||
     type === "function_result" ||
@@ -718,6 +737,7 @@ function normalizeToolEventKind(
     type === "computer_call_output" ||
     role === "tool"
   ) return "tool_result";
+  if (readObject(record.functionCall)) return "tool_call";
   if (type === "tool_use" || type === "function_call" || type === "server_tool_call" || isProviderBuiltinToolType(type)) return "tool_call";
   if ((readString(record.tool_call_id) || readString(record.call_id) || readString(record.tool_use_id)) &&
     (readString(record.content) || readProviderContentText(record.content) || readString(record.output))) return "tool_result";
@@ -801,11 +821,12 @@ function normalizeChatSseErrorPayload(
   const record = readObject(value);
   if (!record) return null;
   const message = readString(record.message) || "Model request failed.";
-  const code = readString(record.code) || readString(record.type) || undefined;
+  const status = readString(record.status);
+  const code = status || readString(record.code) || readString(record.type) || undefined;
   return {
     message,
     code,
-    retryable: record.retryable === true,
+    retryable: record.retryable === true || isRetryableGoogleErrorStatus(status),
   };
 }
 
@@ -876,6 +897,8 @@ function readProviderTextDeltas(value: unknown, eventName: string): string[] {
     const text = readRawString(delta?.text) || readRawString(record.text);
     return text ? [text] : [];
   }
+  const geminiText = readGeminiCandidateTextParts(record, false);
+  if (geminiText) return [geminiText];
   return [];
 }
 
@@ -906,7 +929,24 @@ function readProviderReasoningDelta(value: unknown, eventName: string): string {
   ) {
     return (readRawString(delta?.thinking) || readRawString(delta?.text) || readRawString(record.thinking)).trim();
   }
-  return "";
+  return readGeminiCandidateTextParts(record, true).trim();
+}
+
+function readGeminiCandidateTextParts(record: Record<string, unknown>, thoughtOnly: boolean): string {
+  const textParts: string[] = [];
+  for (const candidate of normalizeUnknownItems(record.candidates)) {
+    const candidateRecord = readObject(candidate);
+    const candidateContent = readObject(candidateRecord?.content);
+    for (const part of normalizeUnknownItems(candidateContent?.parts)) {
+      const partRecord = readObject(part);
+      if (!partRecord || readObject(partRecord.functionCall) || readObject(partRecord.functionResponse)) continue;
+      const isThought = partRecord.thought === true;
+      if (thoughtOnly !== isThought) continue;
+      const text = readRawString(partRecord.text);
+      if (text) textParts.push(text);
+    }
+  }
+  return textParts.join("").trim();
 }
 
 function readProviderStatusSummary(value: unknown, eventName: string): string {
@@ -954,14 +994,24 @@ function readProviderStatusSummary(value: unknown, eventName: string): string {
     return "Anthropic message stopped.";
   }
 
+  const geminiFinishReason = readGeminiFinishReason(record);
+  const geminiUsage = readObject(record.usageMetadata);
+  if (geminiFinishReason || geminiUsage) {
+    return compactStatusParts([
+      "Gemini stream finished.",
+      geminiFinishReason ? `finish_reason=${geminiFinishReason}` : "",
+      readTokenUsageSummary(geminiUsage),
+    ]);
+  }
+
   return "";
 }
 
 function readTokenUsageSummary(usage: Record<string, unknown> | null): string {
   if (!usage) return "";
-  const input = readString(usage.input_tokens) || readString(usage.prompt_tokens);
-  const output = readString(usage.output_tokens) || readString(usage.completion_tokens);
-  const total = readString(usage.total_tokens);
+  const input = readString(usage.input_tokens) || readString(usage.prompt_tokens) || readString(usage.promptTokenCount);
+  const output = readString(usage.output_tokens) || readString(usage.completion_tokens) || readString(usage.candidatesTokenCount);
+  const total = readString(usage.total_tokens) || readString(usage.totalTokenCount);
   return compactStatusParts([
     input ? `input_tokens=${input}` : "",
     output ? `output_tokens=${output}` : "",
@@ -972,9 +1022,9 @@ function readTokenUsageSummary(usage: Record<string, unknown> | null): string {
 function readTokenUsageNumbers(usage: Record<string, unknown> | null): ProviderUsageAnalyticsEvent["usage"] {
   if (!usage) return {};
   return {
-    ...readTokenUsageNumberField(usage.input_tokens, usage.prompt_tokens, "inputTokens"),
-    ...readTokenUsageNumberField(usage.output_tokens, usage.completion_tokens, "outputTokens"),
-    ...readTokenUsageNumberField(usage.total_tokens, undefined, "totalTokens"),
+    ...readTokenUsageNumberField(usage.input_tokens, usage.prompt_tokens ?? usage.promptTokenCount, "inputTokens"),
+    ...readTokenUsageNumberField(usage.output_tokens, usage.completion_tokens ?? usage.candidatesTokenCount, "outputTokens"),
+    ...readTokenUsageNumberField(usage.total_tokens, usage.totalTokenCount, "totalTokens"),
   };
 }
 
@@ -992,6 +1042,7 @@ function readTokenUsageNumberField(
 function inferProviderUsageProvider(
   type: string,
   eventName: string,
+  record: Record<string, unknown>,
 ): ProviderUsageAnalyticsEvent["provider"] | null {
   const normalizedEventName = eventName.toLowerCase();
   if (type.startsWith("response.") || normalizedEventName.startsWith("response.")) {
@@ -1007,14 +1058,30 @@ function inferProviderUsageProvider(
   ) {
     return "anthropic";
   }
+  if (readObject(record.usageMetadata) || readGeminiFinishReason(record)) {
+    return "google_gemini";
+  }
   return null;
+}
+
+function readGeminiFinishReason(record: Record<string, unknown>): string {
+  for (const candidate of normalizeUnknownItems(record.candidates)) {
+    const candidateRecord = readObject(candidate);
+    const finishReason = readString(candidateRecord?.finishReason);
+    if (finishReason) return finishReason;
+  }
+  return readString(record.finishReason);
 }
 
 function inferProviderErrorProvider(
   type: string,
   eventName: string,
+  record: Record<string, unknown>,
 ): ProviderErrorAnalyticsEvent["provider"] | null {
   const normalizedEventName = eventName.toLowerCase();
+  if (isGeminiErrorRecord(record, type, normalizedEventName)) {
+    return "google_gemini";
+  }
   if (
     type === "response.failed" ||
     type === "response.incomplete" ||
@@ -1031,6 +1098,37 @@ function inferProviderErrorProvider(
     return "anthropic";
   }
   return null;
+}
+
+function isGeminiErrorRecord(
+  record: Record<string, unknown>,
+  type: string,
+  normalizedEventName: string,
+): boolean {
+  const error = readObject(record.error);
+  if (!error) return false;
+  const status = readString(error.status);
+  if (status) return true;
+  if (normalizedEventName.includes("generatecontent") || type.includes("generatecontent")) return true;
+  return normalizeUnknownItems(error.details).some((detail) => {
+    const detailRecord = readObject(detail);
+    const detailType = readString(detailRecord?.["@type"]).toLowerCase();
+    return detailType.includes("google.rpc") || detailType.includes("googleapis.com");
+  });
+}
+
+function isRetryableGoogleErrorStatus(status: string): boolean {
+  const normalized = status.toUpperCase();
+  return normalized === "RESOURCE_EXHAUSTED" ||
+    normalized === "UNAVAILABLE" ||
+    normalized === "DEADLINE_EXCEEDED" ||
+    normalized === "ABORTED";
+}
+
+function readProviderErrorSummaryLabel(provider: ProviderErrorAnalyticsEvent["provider"]): string {
+  if (provider === "openai_responses") return "OpenAI Responses stream error.";
+  if (provider === "google_gemini") return "Gemini stream error.";
+  return "Anthropic stream error.";
 }
 
 function compactStatusParts(parts: string[], separator = " "): string {

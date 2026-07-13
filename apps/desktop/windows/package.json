@@ -1,6 +1,6 @@
 {
   "name": "opendrsai-windows-desktop",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "private": true,
   "description": "OpenDrSai Windows desktop shell and installer host",
   "main": "./out/main/index.js",
@@ -46,6 +46,7 @@
     "verify:workspace-context": "node scripts/verify-workspace-context.mjs",
     "verify:workspace-checkpoints": "node scripts/verify-workspace-checkpoints.mjs",
     "verify:chatbar-checklist": "node scripts/verify-chatbar-checklist.mjs",
+    "verify:chatbar-status-summary": "node scripts/verify-chatbar-status-summary.mjs",
     "verify:chat-commands": "node scripts/verify-chat-commands.mjs",
     "verify:fork-worktree": "node scripts/verify-fork-worktree.mjs",
     "verify:runtime-mode": "node scripts/verify-runtime-mode.mjs",

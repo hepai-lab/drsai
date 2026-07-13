@@ -277,6 +277,14 @@ api.include_router(
     responses={401: {"description": "Unauthorized"}},
 )
 
+from .routes import mobile
+api.include_router(
+    mobile.router,
+    prefix="/mobile/v1",
+    tags=["mobile"],
+    responses={401: {"description": "Unauthorized"}},
+)
+
 api.include_router(
     desktop_auth.router,
     prefix="/desktop-auth",

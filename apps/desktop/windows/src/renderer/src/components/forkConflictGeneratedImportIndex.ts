@@ -2,7 +2,7 @@
 export interface ForkConflictGeneratedRepositoryImporter {
   readonly path: string;
   readonly specifier: string;
-  readonly kind: "import" | "re-export" | "require" | "dynamic-import" | "stylesheet-import" | "markdown-link" | "config-reference" | "package-entry" | "python-import";
+  readonly kind: "import" | "re-export" | "require" | "dynamic-import" | "stylesheet-import" | "markdown-link" | "config-reference" | "package-entry" | "python-import" | "jvm-import";
   readonly commands: readonly string[];
 }
 
@@ -39,6 +39,32 @@ export interface ForkConflictGeneratedCompilerDiagnosticEntry {
 }
 
 export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
+  {
+    "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/databinding/activitymainbinding",
+    "importers": [
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/MainActivity.kt",
+        "specifier": "ai.drsai.remote.databinding.ActivityMainBinding",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/databinding/itemrowbinding",
+    "importers": [
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/RowAdapter.kt",
+        "specifier": "ai.drsai.remote.databinding.ItemRowBinding",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      }
+    ]
+  },
   {
     "changedModule": "apps/webui/backend/src/drsai_ui/agent_factory/agent_mode_cofigs",
     "importers": [
@@ -5779,6 +5805,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "scripts/verify-chatbar-status-summary",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-chatbar-status-summary.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "scripts/verify-clipboard-context",
     "importers": [
       {
@@ -7750,6 +7789,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "src/renderer/src/components/debugpanel",
+    "importers": [
+      {
+        "path": "src/renderer/src/App.tsx",
+        "specifier": "./components/DebugPanel",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:web"
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "src/renderer/src/components/files/agentfileactivitypanel",
     "importers": [
       {
@@ -8416,6 +8468,27 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "src/renderer/src/debuglogstore",
+    "importers": [
+      {
+        "path": "src/renderer/src/App.tsx",
+        "specifier": "./debugLogStore",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:web"
+        ]
+      },
+      {
+        "path": "src/renderer/src/components/DebugPanel.tsx",
+        "specifier": "../debugLogStore",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:web"
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "src/renderer/src/desktopapi",
     "importers": [
       {
@@ -8669,6 +8742,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         "commands": [
           "npm run typecheck:web",
           "npm run verify:chat-commands"
+        ]
+      },
+      {
+        "path": "src/renderer/src/components/DebugPanel.tsx",
+        "specifier": "../navigation",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:web"
         ]
       },
       {
@@ -10221,6 +10302,14 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
         "kind": "FunctionDeclaration"
       },
       {
+        "name": "DesktopMcpSmokeReadinessResult",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "DesktopMcpSmokeReadinessServer",
+        "kind": "InterfaceDeclaration"
+      },
+      {
         "name": "enumerateMcpLiveServer",
         "kind": "FunctionDeclaration"
       },
@@ -10230,6 +10319,10 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
       },
       {
         "name": "inspectMcpLiveServers",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "inspectMcpSmokeReadiness",
         "kind": "FunctionDeclaration"
       },
       {
@@ -10823,6 +10916,10 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
     "path": "src/main/workspaceCheckpoints.ts",
     "symbols": [
       {
+        "name": "acceptWorkspaceCheckpoint",
+        "kind": "FunctionDeclaration"
+      },
+      {
         "name": "createWorkspaceCheckpoint",
         "kind": "FunctionDeclaration"
       },
@@ -11194,6 +11291,19 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
     "commands": [
       "npm run typecheck:web",
       "npm run verify:chat-commands"
+    ]
+  },
+  {
+    "module": "src/renderer/src/components/debugpanel",
+    "path": "src/renderer/src/components/DebugPanel.tsx",
+    "symbols": [
+      {
+        "name": "DebugPanel",
+        "kind": "FunctionDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck:web"
     ]
   },
   {
@@ -11915,6 +12025,39 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
     ]
   },
   {
+    "module": "src/renderer/src/debuglogstore",
+    "path": "src/renderer/src/debugLogStore.ts",
+    "symbols": [
+      {
+        "name": "clearDebugLogs",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "DebugLogEntry",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "DebugLogLevel",
+        "kind": "TypeAliasDeclaration"
+      },
+      {
+        "name": "getDebugLogs",
+        "kind": "VariableDeclaration"
+      },
+      {
+        "name": "installDebugLogCapture",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "subscribeDebugLogs",
+        "kind": "FunctionDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck:web"
+    ]
+  },
+  {
     "module": "src/renderer/src/desktopapi",
     "path": "src/renderer/src/desktopApi.ts",
     "symbols": [
@@ -12483,6 +12626,10 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
       {
         "name": "DesktopExternalConnectionReadinessStatus",
         "kind": "TypeAliasDeclaration"
+      },
+      {
+        "name": "DesktopExternalReconnectPolicy",
+        "kind": "InterfaceDeclaration"
       },
       {
         "name": "DesktopFileIconResult",
@@ -13090,6 +13237,10 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
       },
       {
         "name": "WorkspaceCheckpoint",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "WorkspaceCheckpointAcceptRequest",
         "kind": "InterfaceDeclaration"
       },
       {
@@ -13920,6 +14071,16 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     ]
   },
   {
+    "module": "src/renderer/src/components/debugpanel",
+    "path": "src/renderer/src/components/DebugPanel.tsx",
+    "scriptKind": "TSX",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck:web"
+    ]
+  },
+  {
     "module": "src/renderer/src/components/files/agentfileactivitypanel",
     "path": "src/renderer/src/components/files/AgentFileActivityPanel.tsx",
     "scriptKind": "TSX",
@@ -14310,6 +14471,16 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     "commands": [
       "npm run typecheck:web",
       "npm run verify:fork-worktree"
+    ]
+  },
+  {
+    "module": "src/renderer/src/debuglogstore",
+    "path": "src/renderer/src/debugLogStore.ts",
+    "scriptKind": "TS",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck:web"
     ]
   },
   {

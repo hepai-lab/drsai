@@ -58,7 +58,7 @@ Implemented in this workspace:
 2. Generate release metadata:
 
    ```powershell
-   $env:OPENDRSAI_RELEASE_BASE_URL = "https://github.com/hepai-lab/drsai/releases/download/v1.4.1"
+   $env:OPENDRSAI_RELEASE_BASE_URL = "https://github.com/hepai-lab/drsai/releases/download/v1.4.2"
    npm run manifest:win
    npm run summary:win
    ```

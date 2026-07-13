@@ -141,6 +141,7 @@ import type {
   UpdateWorkspaceRequest,
   WorkspaceContextOverview,
   WorkspaceCheckpoint,
+  WorkspaceCheckpointAcceptRequest,
   WorkspaceCheckpointCreateRequest,
   WorkspaceCheckpointPreviewRequest,
   WorkspaceCheckpointPreviewResult,
@@ -319,6 +320,10 @@ const api: DesktopApi = {
     request: WorkspaceCheckpointCreateRequest,
   ): Promise<WorkspaceCheckpoint> =>
     ipcRenderer.invoke("desktop:workspace-checkpoint-create", request),
+  acceptWorkspaceCheckpoint: (
+    request: WorkspaceCheckpointAcceptRequest,
+  ): Promise<WorkspaceCheckpoint> =>
+    ipcRenderer.invoke("desktop:workspace-checkpoint-accept", request),
   previewWorkspaceCheckpoint: (
     request: WorkspaceCheckpointPreviewRequest,
   ): Promise<WorkspaceCheckpointPreviewResult> =>

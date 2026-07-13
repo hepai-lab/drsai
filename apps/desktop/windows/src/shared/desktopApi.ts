@@ -353,7 +353,7 @@ export interface ChatEvent {
   runId?: string;
 }
 
-export type DesktopProviderAnalyticsProvider = "openai_responses" | "anthropic";
+export type DesktopProviderAnalyticsProvider = "openai_responses" | "anthropic" | "google_gemini";
 
 export interface DesktopProviderUsageAnalyticsRecord {
   id: string;
@@ -2058,7 +2058,12 @@ export interface WorkspaceCheckpoint {
   changedFileCount: number;
   storedFileCount: number;
   skippedFileCount: number;
+  truncated?: boolean;
   entries: WorkspaceCheckpointEntry[];
+  kind?: "manual" | "agent_run_baseline";
+  runId?: string;
+  reviewStatus?: "pending" | "accepted" | "rejected";
+  reviewedAt?: string;
 }
 
 export interface WorkspaceCheckpointCreateRequest {
@@ -2066,9 +2071,16 @@ export interface WorkspaceCheckpointCreateRequest {
   label?: string;
   maxFiles?: number;
   maxBytesPerFile?: number;
+  kind?: "manual" | "agent_run_baseline";
+  runId?: string;
 }
 
 export interface WorkspaceCheckpointRestoreRequest {
+  workspacePath: string;
+  checkpointId: string;
+}
+
+export interface WorkspaceCheckpointAcceptRequest {
   workspacePath: string;
   checkpointId: string;
 }
@@ -2328,6 +2340,9 @@ export interface DesktopApi {
   listWorkspaceCheckpoints(workspacePath: string): Promise<WorkspaceCheckpoint[]>;
   createWorkspaceCheckpoint(
     request: WorkspaceCheckpointCreateRequest,
+  ): Promise<WorkspaceCheckpoint>;
+  acceptWorkspaceCheckpoint(
+    request: WorkspaceCheckpointAcceptRequest,
   ): Promise<WorkspaceCheckpoint>;
   previewWorkspaceCheckpoint(
     request: WorkspaceCheckpointPreviewRequest,

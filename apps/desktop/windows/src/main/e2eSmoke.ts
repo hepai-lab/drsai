@@ -41,9 +41,15 @@ interface ChannelImportFixture {
   chatGptExportJsonPath: string;
   emlxPath: string;
   icsPath: string;
+  vcardPath: string;
+  contactsCsvPath: string;
+  calendarCsvPath: string;
   openApiJsonPath: string;
   logcatPath: string;
   browserCookiesPath: string;
+  browserPasswordsPath: string;
+  browserAutofillCsvPath: string;
+  browserAutofillJsonPath: string;
   playwrightTraceZipPath: string;
   csvPath: string;
   tsvPath: string;
@@ -54,7 +60,12 @@ interface ChannelImportFixture {
   codeownersPath: string;
   robotsPath: string;
   harPath: string;
+  netlogPath: string;
   junitXmlPath: string;
+  xunitXmlPath: string;
+  trxPath: string;
+  jmeterPlanPath: string;
+  ghaJobSummaryPath: string;
   vscodeSettingsPath: string;
   vscodeTasksPath: string;
   vscodeLaunchPath: string;
@@ -63,6 +74,17 @@ interface ChannelImportFixture {
   browserDownloadsPath: string;
   browserStoragePath: string;
   browserExtensionManifestPath: string;
+  assetLinksPath: string;
+  appleAssociationPath: string;
+  securityTxtPath: string;
+  svgPath: string;
+  sshConfigPath: string;
+  sshKnownHostsPath: string;
+  sshAuthorizedKeysPath: string;
+  vpnWireGuardPath: string;
+  vpnOpenVpnPath: string;
+  rdpPath: string;
+  envrcPath: string;
   filePaths: string[];
 }
 
@@ -406,11 +428,13 @@ async function runChatSmoke(window: BrowserWindow): Promise<SmokeResult> {
       details.login = { ok: login && login.ok, message: login && login.message };
       checks.login = Boolean(login && login.ok);
 
-      let health = await api.getHealth();
-      for (let attempt = 0; attempt < 30 && !health.gatewayReady; attempt += 1) {
+      const healthSnapshot = await api.getHealth();
+      let gateway = await api.getGatewayStatus();
+      for (let attempt = 0; attempt < 30 && !gateway.ready; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 100));
-        health = await api.getHealth();
+        gateway = await api.getGatewayStatus();
       }
+      const health = { ...healthSnapshot, gatewayReady: gateway.ready, gateway };
       details.health = {
         gatewayReady: health.gatewayReady,
         gatewayManaged: health.gateway && health.gateway.managed,
@@ -526,7 +550,13 @@ async function runAgentRunSmoke(window: BrowserWindow): Promise<SmokeResult> {
       details.login = { ok: login && login.ok, message: login && login.message };
       checks.login = Boolean(login && login.ok);
 
-      const health = await api.getHealth();
+      const healthSnapshot = await api.getHealth();
+      let gateway = await api.getGatewayStatus();
+      for (let attempt = 0; attempt < 30 && !gateway.ready; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        gateway = await api.getGatewayStatus();
+      }
+      const health = { ...healthSnapshot, gatewayReady: gateway.ready, gateway };
       details.health = {
         gatewayReady: health.gatewayReady,
         gatewayManaged: health.gateway && health.gateway.managed,
@@ -535,15 +565,34 @@ async function runAgentRunSmoke(window: BrowserWindow): Promise<SmokeResult> {
       };
       checks.gatewayReady = Boolean(health.gatewayReady && health.gateway && (health.gateway.managed || health.gateway.externalReady) && !health.gateway.externalConflict);
 
+      const workspacePath = ${JSON.stringify(process.env.OPENDRSAI_E2E_WORKSPACE_PATH || "C:\\OpenDrSai\\workspace")};
       const thread = await api.createThread({
         kind: "agent_run",
         title: "E2E agent run thread",
-        workspacePath: "C:\\\\OpenDrSai\\\\workspace",
+        workspacePath,
       });
       details.thread = thread;
       checks.threadCreated = Boolean(thread && thread.id && thread.kind === "agent_run");
       const requestId = "e2e-agent-run-request-0001";
       const runId = "e2e-agent-run-run-0001";
+      const workspace = await api.createWorkspace({
+        source: "existing",
+        path: workspacePath,
+        name: "E2E agent change set",
+        trusted: true,
+      });
+      details.workspace = workspace;
+      checks.agentRunWorkspaceRegistered = Boolean(workspace && workspace.path === workspacePath && workspace.trusted);
+      const checkpoint = await api.createWorkspaceCheckpoint({
+        workspacePath,
+        label: "E2E agent run baseline",
+        kind: "agent_run_baseline",
+        runId,
+        maxFiles: 200,
+        maxBytesPerFile: 2000000,
+      });
+      details.checkpoint = checkpoint;
+      checks.agentRunCheckpointCreated = Boolean(checkpoint && checkpoint.kind === "agent_run_baseline" && checkpoint.runId === runId);
       const events = [];
       const startedAt = Date.now();
       const unsubscribe = api.onAgentRunEvent((event) => {
@@ -555,7 +604,7 @@ async function runAgentRunSmoke(window: BrowserWindow): Promise<SmokeResult> {
           threadId: thread.id,
           runId,
           task: "write a short plan",
-          workspacePath: "C:\\\\OpenDrSai\\\\workspace",
+          workspacePath,
           files: [{ kind: "file", path: "C:\\\\OpenDrSai\\\\fixtures\\\\notes.md", name: "notes.md" }],
           teamConfig: { preset: "general-collaboration" },
           metadata: { source: "e2e-agent-run" },
@@ -595,6 +644,61 @@ async function runAgentRunSmoke(window: BrowserWindow): Promise<SmokeResult> {
       checks.agentRunTerminalDone = terminalEvent && terminalEvent.type === "done";
       checks.agentRunDurationRecorded = details.agentRunSummary.durationMs >= 0;
       checks.noAgentRunError = !events.some((event) => event.type === "error" || event.type === "aborted");
+      const restoreRequest = await api.restoreWorkspaceCheckpoint({
+        workspacePath,
+        checkpointId: checkpoint.id,
+      });
+      details.restoreRequest = restoreRequest;
+      const approvalId = restoreRequest && restoreRequest.approvalId;
+      checks.agentRunRestoreApprovalQueued = Boolean(restoreRequest && restoreRequest.approvalQueued && approvalId);
+      const restoreApproved = approvalId
+        ? await api.decidePendingApproval({ id: approvalId, approved: true })
+        : false;
+      checks.agentRunRestoreApproved = restoreApproved === true;
+      const restoredPreview = await api.previewWorkspaceCheckpoint({
+        workspacePath,
+        checkpointId: checkpoint.id,
+      });
+      details.restoredPreview = restoredPreview;
+      checks.agentRunBaselineRestored = Boolean(restoredPreview && restoredPreview.changedEntryCount === 0);
+      const acceptCheckpoint = await api.createWorkspaceCheckpoint({
+        workspacePath,
+        label: "E2E accepted agent change set",
+        kind: "agent_run_baseline",
+        runId: runId + "-accept",
+      });
+      const acceptedCheckpoint = await api.acceptWorkspaceCheckpoint({
+        workspacePath,
+        checkpointId: acceptCheckpoint.id,
+      });
+      details.acceptedCheckpoint = acceptedCheckpoint;
+      checks.agentRunChangeSetAccepted = Boolean(
+        acceptedCheckpoint && acceptedCheckpoint.reviewStatus === "accepted" && acceptedCheckpoint.reviewedAt,
+      );
+      try {
+        await api.acceptWorkspaceCheckpoint({
+          workspacePath,
+          checkpointId: acceptCheckpoint.id,
+        });
+        checks.agentRunChangeSetRejectsReviewedAccept = false;
+      } catch (caught) {
+        details.reviewedAcceptError = caught instanceof Error ? caught.message : String(caught);
+        checks.agentRunChangeSetRejectsReviewedAccept = String(details.reviewedAcceptError || "").includes("not found");
+      }
+      const manualCheckpoint = await api.createWorkspaceCheckpoint({
+        workspacePath,
+        label: "E2E manual checkpoint cannot be accepted as an agent change set",
+      });
+      try {
+        await api.acceptWorkspaceCheckpoint({
+          workspacePath,
+          checkpointId: manualCheckpoint.id,
+        });
+        checks.agentRunChangeSetRejectsManualCheckpointAccept = false;
+      } catch (caught) {
+        details.manualAcceptError = caught instanceof Error ? caught.message : String(caught);
+        checks.agentRunChangeSetRejectsManualCheckpointAccept = String(details.manualAcceptError || "").includes("not found");
+      }
 
       return { checks, details };
     })()
@@ -701,7 +805,13 @@ async function runAgentRunFailureSmoke(window: BrowserWindow): Promise<SmokeResu
       details.login = { ok: login && login.ok, message: login && login.message };
       checks.login = Boolean(login && login.ok);
 
-      const health = await api.getHealth();
+      const healthSnapshot = await api.getHealth();
+      let gateway = await api.getGatewayStatus();
+      for (let attempt = 0; attempt < 30 && !gateway.ready; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        gateway = await api.getGatewayStatus();
+      }
+      const health = { ...healthSnapshot, gatewayReady: gateway.ready, gateway };
       details.health = {
         gatewayReady: health.gatewayReady,
         gatewayManaged: health.gateway && health.gateway.managed,
@@ -1763,7 +1873,7 @@ async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
         adapterId: "file-input",
         workspacePath: channelImportFixture.workspacePath,
         paths: channelImportFixture.filePaths,
-        limit: 30,
+        limit: 52,
       });
       const channelImportItems = channelImport && channelImport.items ? channelImport.items : [];
       const channelImportItemByTitle = (title) => channelImportItems.find((item) => item && (item.title === title || item.relativePath === title));
@@ -1775,9 +1885,15 @@ async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
       const chatGptExportImportItem = channelImportItemByTitle("packaged-chatgpt-conversations.json");
       const emlxImportItem = channelImportItemByTitle("packaged-message.emlx");
       const icsImportItem = channelImportItemByTitle("packaged-calendar.ics");
+      const vcardImportItem = channelImportItemByTitle("packaged-contact.vcf");
+      const contactsCsvImportItem = channelImportItemByTitle("packaged-contacts.csv");
+      const calendarCsvImportItem = channelImportItemByTitle("packaged-calendar-agenda.csv");
       const openApiImportItem = channelImportItemByTitle("packaged-openapi.json");
       const logcatImportItem = channelImportItemByTitle("packaged-logcat.logcat");
       const browserCookiesImportItem = channelImportItemByTitle("packaged.cookies.txt");
+      const browserPasswordsImportItem = channelImportItemByTitle("packaged-passwords.csv");
+      const browserAutofillCsvImportItem = channelImportItemByTitle("packaged-autofill.csv");
+      const browserAutofillJsonImportItem = channelImportItemByTitle("packaged-autofill.json");
       const playwrightTraceImportItem = channelImportItemByTitle("packaged.trace.zip");
       const csvImportItem = channelImportItemByTitle("packaged-data.csv");
       const tsvImportItem = channelImportItemByTitle("packaged-data.tsv");
@@ -1788,7 +1904,12 @@ async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
       const codeownersImportItem = channelImportItemByTitle("CODEOWNERS");
       const robotsImportItem = channelImportItemByTitle("packaged.robots.txt");
       const harImportItem = channelImportItemByTitle("packaged.har");
+      const netlogImportItem = channelImportItemByTitle("packaged-netlog.json");
       const junitImportItem = channelImportItemByTitle("packaged.junit.xml");
+      const xunitImportItem = channelImportItemByTitle("packaged.xunit.xml");
+      const trxImportItem = channelImportItemByTitle("packaged.trx");
+      const jmeterPlanImportItem = channelImportItemByTitle("packaged.jmx");
+      const ghaSummaryImportItem = channelImportItemByTitle("GITHUB_STEP_SUMMARY.md");
       const vscodeSettingsImportItem = channelImportItemByTitle("settings.json");
       const vscodeTasksImportItem = channelImportItemByTitle("tasks.json");
       const vscodeLaunchImportItem = channelImportItemByTitle("launch.json");
@@ -1797,8 +1918,19 @@ async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
       const browserDownloadsImportItem = channelImportItemByTitle("packaged-downloads.json");
       const browserStorageImportItem = channelImportItemByTitle("packaged-local-storage.json");
       const browserExtensionManifestImportItem = channelImportItemByTitle("packaged-extension-manifest.json");
+      const assetLinksImportItem = channelImportItemByTitle("assetlinks.json");
+      const appleAssociationImportItem = channelImportItemByTitle("apple-app-site-association");
+      const securityTxtImportItem = channelImportItemByTitle("packaged.security.txt");
+      const svgImportItem = channelImportItemByTitle("packaged.svg");
+      const sshConfigImportItem = channelImportItemByTitle("config");
+      const sshKnownHostsImportItem = channelImportItemByTitle("known_hosts");
+      const sshAuthorizedKeysImportItem = channelImportItemByTitle("authorized_keys");
+      const vpnWireGuardImportItem = channelImportItemByTitle("wg-packaged.conf");
+      const vpnOpenVpnImportItem = channelImportItemByTitle("packaged-client.ovpn");
+      const rdpImportItem = channelImportItemByTitle("packaged.rdp");
+      const envrcImportItem = channelImportItemByTitle(".envrc");
       details.channelImport = channelImport;
-      checks.channelImportViaPreloadIpc = Boolean(channelImport && channelImport.adapterId === "file-input" && channelImportItems.length === 30);
+      checks.channelImportViaPreloadIpc = Boolean(channelImport && channelImport.adapterId === "file-input" && channelImportItems.length === 52);
       checks.channelImportWorkspaceBounded = Boolean(channelImport && channelImport.workspacePath === channelImportFixture.workspacePath);
       checks.channelImportMarkdownSummary = Boolean(
         markdownImportItem &&
@@ -1870,6 +2002,35 @@ async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
           String(icsImportItem.summary || "").includes("no calendar app access") &&
           String(icsImportItem.mime || "").includes("text/calendar")
       );
+      checks.channelImportVcardSummary = Boolean(
+        vcardImportItem &&
+          String(vcardImportItem.summary || "").includes("vCard contact preview") &&
+          String(vcardImportItem.summary || "").includes("Packaged Contact") &&
+          String(vcardImportItem.summary || "").includes("Packaged QA") &&
+          String(vcardImportItem.summary || "").includes("packaged.example.test") &&
+          String(vcardImportItem.summary || "").includes("no contacts app access") &&
+          String(vcardImportItem.mime || "").includes("text/vcard")
+      );
+      checks.channelImportContactsCsvSummary = Boolean(
+        contactsCsvImportItem &&
+          String(contactsCsvImportItem.summary || "").includes("Contact CSV export preview") &&
+          String(contactsCsvImportItem.summary || "").includes("Packaged CSV Contact") &&
+          String(contactsCsvImportItem.summary || "").includes("packaged.example.test") &&
+          String(contactsCsvImportItem.summary || "").includes("<redacted 8 digits>") &&
+          !String(contactsCsvImportItem.summary || "").includes("secret-packaged-contact-token") &&
+          String(contactsCsvImportItem.summary || "").includes("no contacts app access") &&
+          String(contactsCsvImportItem.mime || "").includes("text/csv+contacts")
+      );
+      checks.channelImportCalendarCsvSummary = Boolean(
+        calendarCsvImportItem &&
+          String(calendarCsvImportItem.summary || "").includes("Calendar CSV agenda preview") &&
+          String(calendarCsvImportItem.summary || "").includes("Packaged CSV Calendar Review") &&
+          String(calendarCsvImportItem.summary || "").includes("Room token=[redacted]") &&
+          String(calendarCsvImportItem.summary || "").includes("Description") &&
+          !String(calendarCsvImportItem.summary || "").includes("secret-packaged-calendar-csv-token") &&
+          String(calendarCsvImportItem.summary || "").includes("no calendar app access") &&
+          String(calendarCsvImportItem.mime || "").includes("text/csv+calendar")
+      );
       checks.channelImportOpenApiJsonSummary = Boolean(
         openApiImportItem &&
           String(openApiImportItem.summary || "").includes("API spec/collection preview") &&
@@ -1906,6 +2067,46 @@ async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
           !String(browserCookiesImportItem.summary || "").includes("secret-packaged-cookie") &&
           String(browserCookiesImportItem.summary || "").includes("browser profiles were not opened, cookies were not imported") &&
           String(browserCookiesImportItem.mime || "").includes("text/x-netscape-cookies")
+      );
+      checks.channelImportBrowserPasswordsSummary = Boolean(
+        browserPasswordsImportItem &&
+          String(browserPasswordsImportItem.summary || "").includes("Browser password CSV export preview") &&
+          String(browserPasswordsImportItem.summary || "").includes("login.packaged-passwords.example.test") &&
+          String(browserPasswordsImportItem.summary || "").includes("admin.packaged-passwords.example.test") &&
+          String(browserPasswordsImportItem.summary || "").includes("email user [redacted]@packaged.example.test") &&
+          String(browserPasswordsImportItem.summary || "").includes("username length 19") &&
+          String(browserPasswordsImportItem.summary || "").includes("password length 32") &&
+          String(browserPasswordsImportItem.summary || "").includes("password=<redacted>") &&
+          String(browserPasswordsImportItem.summary || "").includes("password values were never printed") &&
+          String(browserPasswordsImportItem.summary || "").includes("browser profiles and Login Data stores were not opened") &&
+          !String(browserPasswordsImportItem.summary || "").includes("secret-packaged-password") &&
+          String(browserPasswordsImportItem.mime || "").includes("text/csv+browser-passwords")
+      );
+      checks.channelImportBrowserAutofillCsvSummary = Boolean(
+        browserAutofillCsvImportItem &&
+          String(browserAutofillCsvImportItem.summary || "").includes("Browser autofill export preview") &&
+          String(browserAutofillCsvImportItem.summary || "").includes("checkout.packaged-autofill.example.test") &&
+          String(browserAutofillCsvImportItem.summary || "").includes("email") &&
+          String(browserAutofillCsvImportItem.summary || "").includes("cc-number") &&
+          String(browserAutofillCsvImportItem.summary || "").includes("payment") &&
+          String(browserAutofillCsvImportItem.summary || "").includes("sensitive-looking fields detected: 2") &&
+          String(browserAutofillCsvImportItem.summary || "").includes("value=<redacted>") &&
+          !String(browserAutofillCsvImportItem.summary || "").includes("secret-packaged-autofill") &&
+          !String(browserAutofillCsvImportItem.summary || "").includes("4111111111111111") &&
+          String(browserAutofillCsvImportItem.summary || "").includes("browser profiles and autofill stores were not opened") &&
+          String(browserAutofillCsvImportItem.mime || "").includes("text/csv+browser-autofill")
+      );
+      checks.channelImportBrowserAutofillJsonSummary = Boolean(
+        browserAutofillJsonImportItem &&
+          String(browserAutofillJsonImportItem.summary || "").includes("Browser autofill export preview") &&
+          String(browserAutofillJsonImportItem.summary || "").includes("profile.packaged-autofill.example.test") &&
+          String(browserAutofillJsonImportItem.summary || "").includes("packaged-profile") &&
+          String(browserAutofillJsonImportItem.summary || "").includes("given-name") &&
+          String(browserAutofillJsonImportItem.summary || "").includes("phone") &&
+          String(browserAutofillJsonImportItem.summary || "").includes("tel") &&
+          String(browserAutofillJsonImportItem.summary || "").includes("length=29") &&
+          !String(browserAutofillJsonImportItem.summary || "").includes("secret-packaged-autofill") &&
+          String(browserAutofillJsonImportItem.mime || "").includes("application/vnd.drsai.browser-autofill+json")
       );
       checks.channelImportPlaywrightTraceSummary = Boolean(
         playwrightTraceImportItem &&
@@ -2023,6 +2224,17 @@ async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
           String(harImportItem.summary || "").includes("no browser profile access, request replay, network call") &&
           String(harImportItem.mime || "").includes("application/har+json")
       );
+      checks.channelImportNetlogSummary = Boolean(
+        netlogImportItem &&
+          String(netlogImportItem.summary || "").includes("Chrome NetLog network trace preview") &&
+          String(netlogImportItem.summary || "").includes("HTTP_TRANSACTION_SEND_REQUEST_HEADERS") &&
+          String(netlogImportItem.summary || "").includes("URL_REQUEST") &&
+          String(netlogImportItem.summary || "").includes("netlog-packaged.example.test") &&
+          String(netlogImportItem.summary || "").includes("[redacted]") &&
+          !String(netlogImportItem.summary || "").includes("secret-packaged-netlog") &&
+          String(netlogImportItem.summary || "").includes("no browser profile access, request replay, network call") &&
+          String(netlogImportItem.mime || "").includes("application/vnd.chromium.netlog+json")
+      );
       checks.channelImportJunitSummary = Boolean(
         junitImportItem &&
           String(junitImportItem.summary || "").includes("Test report preview (JUnit XML") &&
@@ -2034,6 +2246,61 @@ async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
           !String(junitImportItem.summary || "").includes("secret-packaged-junit-token") &&
           String(junitImportItem.summary || "").includes("no test runner, build command, CI provider API call") &&
           String(junitImportItem.mime || "").includes("application/junit+xml")
+      );
+      checks.channelImportXunitSummary = Boolean(
+        xunitImportItem &&
+          String(xunitImportItem.summary || "").includes("Test report preview (xUnit XML") &&
+          String(xunitImportItem.summary || "").includes("Cases: 2; passed: 1; non-passing: 1; skipped: 0") &&
+          String(xunitImportItem.summary || "").includes("Packaged xUnit Collection") &&
+          String(xunitImportItem.summary || "").includes("PackagedXunitFail") &&
+          String(xunitImportItem.summary || "").includes("api.token=[redacted]") &&
+          String(xunitImportItem.summary || "").includes("artifacts/[redacted].zip") &&
+          !String(xunitImportItem.summary || "").includes("secret-packaged-xunit-token") &&
+          !String(xunitImportItem.summary || "").includes("secret-packaged-xunit-property") &&
+          String(xunitImportItem.summary || "").includes("no test runner, build command, CI provider API call") &&
+          String(xunitImportItem.mime || "").includes("application/vnd.xunit+xml")
+      );
+      checks.channelImportTrxSummary = Boolean(
+        trxImportItem &&
+          String(trxImportItem.summary || "").includes("Test report preview (Visual Studio TRX") &&
+          String(trxImportItem.summary || "").includes("Cases: 3; passed: 2; non-passing: 1") &&
+          String(trxImportItem.summary || "").includes("ResultSummary outcome: Failed") &&
+          String(trxImportItem.summary || "").includes("PackagedTrxFail [Failed]") &&
+          String(trxImportItem.summary || "").includes("token=[redacted]") &&
+          !String(trxImportItem.summary || "").includes("secret-packaged-trx-token") &&
+          String(trxImportItem.summary || "").includes("no test runner, build command, CI provider API call") &&
+          String(trxImportItem.mime || "").includes("application/vnd.ms-trx+xml")
+      );
+      checks.channelImportJmeterPlanSummary = Boolean(
+        jmeterPlanImportItem &&
+          String(jmeterPlanImportItem.summary || "").includes("JMeter test plan preview") &&
+          String(jmeterPlanImportItem.summary || "").includes("Packaged JMeter Plan") &&
+          String(jmeterPlanImportItem.summary || "").includes("Packaged Thread Group") &&
+          String(jmeterPlanImportItem.summary || "").includes("Packaged GET /chat") &&
+          String(jmeterPlanImportItem.summary || "").includes("Packaged status assertion") &&
+          String(jmeterPlanImportItem.summary || "").includes("Packaged Headers") &&
+          String(jmeterPlanImportItem.summary || "").includes("Variable keys") &&
+          String(jmeterPlanImportItem.summary || "").includes("baseUrl") &&
+          String(jmeterPlanImportItem.summary || "").includes("authToken") &&
+          String(jmeterPlanImportItem.summary || "").includes("variable values were not expanded") &&
+          String(jmeterPlanImportItem.summary || "").includes("no JMeter command, load test, HTTP replay") &&
+          !String(jmeterPlanImportItem.summary || "").includes("secret-packaged-jmx") &&
+          String(jmeterPlanImportItem.mime || "").includes("application/vnd.jmeter+xml")
+      );
+      checks.channelImportGhaJobSummary = Boolean(
+        ghaSummaryImportItem &&
+          String(ghaSummaryImportItem.summary || "").includes("GitHub Actions job summary preview") &&
+          String(ghaSummaryImportItem.summary || "").includes("Packaged GitHub Actions Summary") &&
+          String(ghaSummaryImportItem.summary || "").includes("Windows packaged smoke -> failed") &&
+          String(ghaSummaryImportItem.summary || "").includes("warning") &&
+          String(ghaSummaryImportItem.summary || "").includes("coverage") &&
+          String(ghaSummaryImportItem.summary || "").includes("packaged report=https://artifact.example.test/packaged.zip?token=[redacted]") &&
+          String(ghaSummaryImportItem.summary || "").includes("npm run verify:packaged -- --token [redacted]") &&
+          !String(ghaSummaryImportItem.summary || "").includes("secret-packaged-gha-summary") &&
+          !String(ghaSummaryImportItem.summary || "").includes("secret-packaged-gha-artifact") &&
+          String(ghaSummaryImportItem.summary || "").includes("no GitHub API call") &&
+          String(ghaSummaryImportItem.summary || "").includes("linked artifacts were not downloaded") &&
+          String(ghaSummaryImportItem.mime || "").includes("text/markdown+github-actions-summary")
       );
       checks.channelImportVsCodeSettingsSummary = Boolean(
         vscodeSettingsImportItem &&
@@ -2114,6 +2381,156 @@ async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
           !String(browserExtensionManifestImportItem.summary || "").includes("secret-packaged-extension-token") &&
           String(browserExtensionManifestImportItem.summary || "").includes("extension code was not loaded or executed") &&
           String(browserExtensionManifestImportItem.mime || "").includes("application/vnd.drsai.browser-extension-manifest+json")
+      );
+      checks.channelImportAssetLinksSummary = Boolean(
+        assetLinksImportItem &&
+          String(assetLinksImportItem.summary || "").includes("Web app association preview (Android Digital Asset Links") &&
+          String(assetLinksImportItem.summary || "").includes("android_app package=ai.drsai.packaged") &&
+          String(assetLinksImportItem.summary || "").includes("delegate_permission/common.handle_all_urls") &&
+          String(assetLinksImportItem.summary || "").includes("SHA-256 certificate fingerprints hidden (1)") &&
+          !String(assetLinksImportItem.summary || "").includes("AA:BB:CC") &&
+          String(assetLinksImportItem.summary || "").includes("association URLs were not fetched") &&
+          String(assetLinksImportItem.summary || "").includes("apps were not installed or launched") &&
+          String(assetLinksImportItem.mime || "").includes("application/vnd.drsai.web-app-association+json")
+      );
+      checks.channelImportAppleAssociationSummary = Boolean(
+        appleAssociationImportItem &&
+          String(appleAssociationImportItem.summary || "").includes("Web app association preview (Apple App Site Association") &&
+          String(appleAssociationImportItem.summary || "").includes("applinks PACKAGED123.ai.drsai.packaged") &&
+          String(appleAssociationImportItem.summary || "").includes("webcredentials") &&
+          String(appleAssociationImportItem.summary || "").includes("activitycontinuation") &&
+          String(appleAssociationImportItem.summary || "").includes("/packaged/*") &&
+          String(appleAssociationImportItem.summary || "").includes("[redacted]") &&
+          !String(appleAssociationImportItem.summary || "").includes("secret-packaged-aasa-token") &&
+          String(appleAssociationImportItem.summary || "").includes("no domain verification ran") &&
+          String(appleAssociationImportItem.summary || "").includes("no network call or provider send") &&
+          String(appleAssociationImportItem.mime || "").includes("application/vnd.drsai.web-app-association+json")
+      );
+      checks.channelImportSecurityTxtSummary = Boolean(
+        securityTxtImportItem &&
+          String(securityTxtImportItem.summary || "").includes("security.txt vulnerability disclosure policy preview") &&
+          String(securityTxtImportItem.summary || "").includes("security-packaged@example.test") &&
+          String(securityTxtImportItem.summary || "").includes("https://security-packaged.example.test/report?token=[redacted]") &&
+          String(securityTxtImportItem.summary || "").includes("Expires values: 2026-12-31T23:59:59Z") &&
+          String(securityTxtImportItem.summary || "").includes("Preferred languages: en, zh") &&
+          !String(securityTxtImportItem.summary || "").includes("secret-packaged-security-token") &&
+          String(securityTxtImportItem.summary || "").includes("contact/policy URLs were not fetched") &&
+          String(securityTxtImportItem.summary || "").includes("PGP signatures were not verified") &&
+          String(securityTxtImportItem.mime || "").includes("text/vnd.security")
+      );
+      checks.channelImportSvgSummary = Boolean(
+        svgImportItem &&
+          String(svgImportItem.summary || "").includes("Image metadata preview") &&
+          String(svgImportItem.summary || "").includes("Format: SVG") &&
+          String(svgImportItem.summary || "").includes("Dimensions: 96 x 64 px") &&
+          String(svgImportItem.summary || "").includes("viewBox=0 0 96 64") &&
+          String(svgImportItem.summary || "").includes("symbol=1") &&
+          String(svgImportItem.summary || "").includes("script=1") &&
+          String(svgImportItem.summary || "").includes("foreignObject=1") &&
+          String(svgImportItem.summary || "").includes("packaged-icon") &&
+          String(svgImportItem.summary || "").includes("Packaged SVG Map") &&
+          !String(svgImportItem.summary || "").includes("secret-packaged-svg-token") &&
+          !String(svgImportItem.summary || "").includes("secret-packaged-svg-script") &&
+          String(svgImportItem.summary || "").includes("no OCR, vision model, network call") &&
+          String(svgImportItem.mime || "").includes("image/svg+xml")
+      );
+      checks.channelImportSshConfigSummary = Boolean(
+        sshConfigImportItem &&
+          String(sshConfigImportItem.summary || "").includes("SSH configuration preview") &&
+          String(sshConfigImportItem.summary || "").includes("packaged-prod") &&
+          String(sshConfigImportItem.summary || "").includes("packaged.example.test") &&
+          String(sshConfigImportItem.summary || "").includes("packaged-user") &&
+          String(sshConfigImportItem.summary || "").includes("2200") &&
+          String(sshConfigImportItem.summary || "").includes("id_packaged_secret") &&
+          String(sshConfigImportItem.summary || "").includes("ProxyJump") &&
+          String(sshConfigImportItem.summary || "").includes("ProxyCommand may execute a local command") &&
+          String(sshConfigImportItem.summary || "").includes("private key files and Include targets were not opened") &&
+          !String(sshConfigImportItem.summary || "").includes("secret-packaged-ssh-token") &&
+          String(sshConfigImportItem.mime || "").includes("text/x-ssh-config")
+      );
+      checks.channelImportSshKnownHostsSummary = Boolean(
+        sshKnownHostsImportItem &&
+          String(sshKnownHostsImportItem.summary || "").includes("known_hosts") &&
+          String(sshKnownHostsImportItem.summary || "").includes("packaged.example.test") &&
+          String(sshKnownHostsImportItem.summary || "").includes("hashed-host") &&
+          String(sshKnownHostsImportItem.summary || "").includes("ssh-ed25519") &&
+          String(sshKnownHostsImportItem.summary || "").includes("ssh-rsa") &&
+          !String(sshKnownHostsImportItem.summary || "").includes("secretPackagedKnownHostMaterial") &&
+          String(sshKnownHostsImportItem.summary || "").includes("no ssh/scp/sftp/ssh-keygen command")
+      );
+      checks.channelImportSshAuthorizedKeysSummary = Boolean(
+        sshAuthorizedKeysImportItem &&
+          String(sshAuthorizedKeysImportItem.summary || "").includes("authorized_keys") &&
+          String(sshAuthorizedKeysImportItem.summary || "").includes("ssh-ed25519") &&
+          String(sshAuthorizedKeysImportItem.summary || "").includes("ssh-rsa") &&
+          String(sshAuthorizedKeysImportItem.summary || "").includes("packaged deploy key") &&
+          String(sshAuthorizedKeysImportItem.summary || "").includes("packaged readonly key") &&
+          String(sshAuthorizedKeysImportItem.summary || "").includes("authorized_keys option command") &&
+          String(sshAuthorizedKeysImportItem.summary || "").includes("authorized_keys key material were not expanded") &&
+          !String(sshAuthorizedKeysImportItem.summary || "").includes("PackagedAuthorizedSecretMaterial") &&
+          !String(sshAuthorizedKeysImportItem.summary || "").includes("secret-packaged-authorized-command")
+      );
+      checks.channelImportVpnWireGuardSummary = Boolean(
+        vpnWireGuardImportItem &&
+          String(vpnWireGuardImportItem.summary || "").includes("VPN client configuration preview (WireGuard client profile") &&
+          String(vpnWireGuardImportItem.summary || "").includes("Sections/directives (2): Interface, Peer") &&
+          String(vpnWireGuardImportItem.summary || "").includes("Address=10.77.0.2/32") &&
+          String(vpnWireGuardImportItem.summary || "").includes("Endpoint=vpn-packaged.example.test:51820") &&
+          String(vpnWireGuardImportItem.summary || "").includes("AllowedIPs=0.0.0.0/0, ::/0") &&
+          String(vpnWireGuardImportItem.summary || "").includes("DNS=9.9.9.9") &&
+          String(vpnWireGuardImportItem.summary || "").includes("PrivateKey=[redacted]") &&
+          String(vpnWireGuardImportItem.summary || "").includes("PresharedKey=[redacted]") &&
+          String(vpnWireGuardImportItem.summary || "").includes("hook command declared") &&
+          String(vpnWireGuardImportItem.summary || "").includes("full-tunnel route declared") &&
+          !String(vpnWireGuardImportItem.summary || "").includes("secret-packaged-wireguard") &&
+          String(vpnWireGuardImportItem.summary || "").includes("no WireGuard/OpenVPN client, tunnel activation, route/DNS mutation") &&
+          String(vpnWireGuardImportItem.mime || "").includes("application/vnd.drsai.vpn-config")
+      );
+      checks.channelImportVpnOpenVpnSummary = Boolean(
+        vpnOpenVpnImportItem &&
+          String(vpnOpenVpnImportItem.summary || "").includes("VPN client configuration preview (OpenVPN client profile") &&
+          String(vpnOpenVpnImportItem.summary || "").includes("remote=vpn-openvpn-packaged.example.test 1194") &&
+          String(vpnOpenVpnImportItem.summary || "").includes("dev=tun") &&
+          String(vpnOpenVpnImportItem.summary || "").includes("proto=udp") &&
+          String(vpnOpenVpnImportItem.summary || "").includes("redirect-gateway=def1") &&
+          String(vpnOpenVpnImportItem.summary || "").includes("auth-user-pass=[redacted]") &&
+          String(vpnOpenVpnImportItem.summary || "").includes("tls-auth=[redacted]") &&
+          String(vpnOpenVpnImportItem.summary || "").includes("key=[redacted]") &&
+          String(vpnOpenVpnImportItem.summary || "").includes("OpenVPN script hook requires review") &&
+          String(vpnOpenVpnImportItem.summary || "").includes("credential material redacted") &&
+          !String(vpnOpenVpnImportItem.summary || "").includes("secret-packaged-openvpn") &&
+          String(vpnOpenVpnImportItem.summary || "").includes("no WireGuard/OpenVPN client, tunnel activation, route/DNS mutation") &&
+          String(vpnOpenVpnImportItem.mime || "").includes("application/vnd.drsai.vpn-config")
+      );
+      checks.channelImportRdpSummary = Boolean(
+        rdpImportItem &&
+          String(rdpImportItem.summary || "").includes("Remote Desktop RDP configuration preview") &&
+          String(rdpImportItem.summary || "").includes("rdp.packaged.example.test") &&
+          String(rdpImportItem.summary || "").includes("gateway.packaged.example.test?token=[redacted]") &&
+          String(rdpImportItem.summary || "").includes("username length 17") &&
+          String(rdpImportItem.summary || "").includes("redirectdrives=1") &&
+          String(rdpImportItem.summary || "").includes("local resource redirection requires review") &&
+          String(rdpImportItem.summary || "").includes("password 51 value redacted") &&
+          !String(rdpImportItem.summary || "").includes("secret-packaged-rdp") &&
+          String(rdpImportItem.summary || "").includes("no mstsc.exe launch, RDP connection, gateway probe") &&
+          String(rdpImportItem.mime || "").includes("application/x-rdp")
+      );
+      checks.channelImportDirenvEnvrcSummary = Boolean(
+        envrcImportItem &&
+          String(envrcImportItem.summary || "").includes("direnv .envrc preview") &&
+          String(envrcImportItem.summary || "").includes("PACKAGED_DIRENV_TOKEN") &&
+          String(envrcImportItem.summary || "").includes("PACKAGED_PUBLIC_URL") &&
+          String(envrcImportItem.summary || "").includes("dotenv targets: .env.packaged") &&
+          String(envrcImportItem.summary || "").includes("use directives: node") &&
+          String(envrcImportItem.summary || "").includes("layout directives: python") &&
+          String(envrcImportItem.summary || "").includes("watch targets: package.json") &&
+          String(envrcImportItem.summary || "").includes("source targets: .env.shared") &&
+          String(envrcImportItem.summary || "").includes("network download/request") &&
+          String(envrcImportItem.summary || "").includes("toolchain command") &&
+          String(envrcImportItem.summary || "").includes("direnv was not executed") &&
+          String(envrcImportItem.summary || "").includes("dotenv/source targets were not opened") &&
+          !String(envrcImportItem.summary || "").includes("secret-packaged-direnv") &&
+          String(envrcImportItem.mime || "").includes("text/x-direnv")
       );
       checks.channelImportNoProviderSend = Boolean(
         channelImport &&
@@ -2347,6 +2764,41 @@ function prepareChannelImportFixture(): ChannelImportFixture {
     ].join("\r\n"),
     "utf8",
   );
+  const vcardPath = join(workspacePath, "packaged-contact.vcf");
+  writeFileSync(
+    vcardPath,
+    [
+      "BEGIN:VCARD",
+      "VERSION:3.0",
+      "FN:Packaged Contact",
+      "ORG:Packaged QA",
+      "TITLE:IPC Reviewer",
+      "EMAIL:reviewer@packaged.example.test",
+      "TEL:+1-555-0100",
+      "URL:https://contacts-packaged.example.test/profile",
+      "NOTE:Packaged contact fixture for reviewed local IPC.",
+      "END:VCARD",
+    ].join("\r\n"),
+    "utf8",
+  );
+  const contactsCsvPath = join(workspacePath, "packaged-contacts.csv");
+  writeFileSync(
+    contactsCsvPath,
+    [
+      "Display Name,Company,Job Title,E-mail Address,Mobile Phone,Business City,Notes",
+      "Packaged CSV Contact,Packaged QA,Reviewer,packaged-contact@packaged.example.test,+1-555-0199,Shanghai,token=secret-packaged-contact-token",
+    ].join("\n"),
+    "utf8",
+  );
+  const calendarCsvPath = join(workspacePath, "packaged-calendar-agenda.csv");
+  writeFileSync(
+    calendarCsvPath,
+    [
+      "Subject,Start Date,Start Time,End Date,End Time,Location,Required Attendees,Description",
+      "Packaged CSV Calendar Review,2026-07-12,10:00,2026-07-12,10:30,Room token=secret-packaged-calendar-csv-token,reviewer@packaged.example.test,Hidden description token=secret-packaged-calendar-csv-token",
+    ].join("\n"),
+    "utf8",
+  );
   const openApiJsonPath = join(workspacePath, "packaged-openapi.json");
   writeFileSync(
     openApiJsonPath,
@@ -2393,6 +2845,43 @@ function prepareChannelImportFixture(): ChannelImportFixture {
       "#HttpOnly_api.packaged.example.test\tFALSE\t/api\tTRUE\t0\tpackaged_auth\tsecret-packaged-cookie-auth",
       "static.packaged.example.test\tFALSE\t/assets\tFALSE\t1\tpackaged_pref\tsecret-packaged-cookie-pref",
     ].join("\n"),
+    "utf8",
+  );
+  const browserPasswordsPath = join(workspacePath, "packaged-passwords.csv");
+  writeFileSync(
+    browserPasswordsPath,
+    [
+      "name,url,username,password,note",
+      "Packaged User Login,https://login.packaged-passwords.example.test/sign-in?token=secret-packaged-password-url-token,packaged-user@packaged.example.test,secret-packaged-password-value-1,primary login",
+      "Packaged Admin Login,https://admin.packaged-passwords.example.test/,packaged-admin-user,secret-packaged-admin-password,admin password token=secret-packaged-password-note-token",
+    ].join("\n"),
+    "utf8",
+  );
+  const browserAutofillCsvPath = join(workspacePath, "packaged-autofill.csv");
+  writeFileSync(
+    browserAutofillCsvPath,
+    [
+      "origin,form,name,type,value",
+      "https://checkout.packaged-autofill.example.test,packaged-checkout,email,email,secret-packaged-autofill-email@example.test",
+      "https://checkout.packaged-autofill.example.test,packaged-checkout,cc-number,payment,4111111111111111",
+    ].join("\n"),
+    "utf8",
+  );
+  const browserAutofillJsonPath = join(workspacePath, "packaged-autofill.json");
+  writeFileSync(
+    browserAutofillJsonPath,
+    JSON.stringify({
+      forms: [
+        {
+          origin: "https://profile.packaged-autofill.example.test",
+          form: "packaged-profile",
+          fields: [
+            { name: "given-name", type: "text", value: "secret-packaged-autofill-name" },
+            { name: "phone", type: "tel", value: "secret-packaged-autofill-phone" },
+          ],
+        },
+      ],
+    }, null, 2),
     "utf8",
   );
   const playwrightTraceZipPath = join(workspacePath, "packaged.trace.zip");
@@ -2578,6 +3067,61 @@ function prepareChannelImportFixture(): ChannelImportFixture {
     }, null, 2),
     "utf8",
   );
+  const netlogPath = join(workspacePath, "packaged-netlog.json");
+  writeFileSync(
+    netlogPath,
+    JSON.stringify({
+      constants: {
+        logEventTypes: {
+          1: "URL_REQUEST",
+          2: "HTTP_TRANSACTION_SEND_REQUEST_HEADERS",
+          3: "HTTP_TRANSACTION_READ_RESPONSE_HEADERS",
+        },
+        logEventPhase: {
+          1: "PHASE_BEGIN",
+          2: "PHASE_END",
+        },
+        logSourceType: {
+          1: "URL_REQUEST",
+          2: "HTTP_STREAM_JOB",
+        },
+      },
+      events: [
+        {
+          type: 1,
+          source: { type: 1, id: 501 },
+          phase: 1,
+          params: {
+            url: "https://netlog-packaged.example.test/api?token=secret-packaged-netlog-token",
+            method: "GET",
+          },
+        },
+        {
+          type: 2,
+          source: { type: 1, id: 501 },
+          phase: 1,
+          params: {
+            headers: [
+              "authorization: Bearer secret-packaged-netlog-auth",
+              "accept: application/json",
+            ],
+          },
+        },
+        {
+          type: 3,
+          source: { type: 2, id: 777 },
+          phase: 2,
+          params: {
+            headers: [
+              "HTTP/1.1 200 OK",
+              "set-cookie: packaged=secret-packaged-netlog-cookie",
+            ],
+          },
+        },
+      ],
+    }, null, 2),
+    "utf8",
+  );
   const junitXmlPath = join(workspacePath, "packaged.junit.xml");
   writeFileSync(
     junitXmlPath,
@@ -2595,6 +3139,100 @@ function prepareChannelImportFixture(): ChannelImportFixture {
       "    </testcase>",
       "  </testsuite>",
       "</testsuites>",
+    ].join("\n"),
+    "utf8",
+  );
+  const xunitXmlPath = join(workspacePath, "packaged.xunit.xml");
+  writeFileSync(
+    xunitXmlPath,
+    [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      "<assemblies>",
+      '  <assembly name="Packaged.Xunit.dll" total="2" passed="1" failed="1" skipped="0" time="0.330">',
+      '    <collection name="Packaged xUnit Collection" total="2" passed="1" failed="1" skipped="0" time="0.330">',
+      '      <test name="PackagedXunitPass" type="Packaged.Xunit" method="PackagedXunitPass" result="Pass" time="0.100" />',
+      '      <test name="PackagedXunitFail" type="Packaged.Xunit" method="PackagedXunitFail" result="Fail" time="0.230">',
+      '        <property name="api.token" value="secret-packaged-xunit-property" />',
+      '        <failure><message>xUnit packaged failure token=secret-packaged-xunit-token</message></failure>',
+      '        <output>[[ATTACHMENT|artifacts/secret-packaged-xunit-token.zip]]</output>',
+      "      </test>",
+      "    </collection>",
+      "  </assembly>",
+      "</assemblies>",
+    ].join("\n"),
+    "utf8",
+  );
+  const trxPath = join(workspacePath, "packaged.trx");
+  writeFileSync(
+    trxPath,
+    [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<TestRun name="PackagedTrxRun">',
+      '  <ResultSummary outcome="Failed">',
+      '    <Counters total="3" executed="3" passed="2" failed="1" error="0" timeout="0" aborted="0" notExecuted="0" notRunnable="0" />',
+      "  </ResultSummary>",
+      "  <Results>",
+      '    <UnitTestResult testName="PackagedTrxPassOne" outcome="Passed" />',
+      '    <UnitTestResult testName="PackagedTrxPassTwo" outcome="Passed" />',
+      '    <UnitTestResult testName="PackagedTrxFail" outcome="Failed"><Output><ErrorInfo><Message>TRX packaged failure token=secret-packaged-trx-token</Message></ErrorInfo></Output></UnitTestResult>',
+      "  </Results>",
+      "</TestRun>",
+    ].join("\n"),
+    "utf8",
+  );
+  const jmeterPlanPath = join(workspacePath, "packaged.jmx");
+  writeFileSync(
+    jmeterPlanPath,
+    [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">',
+      "  <hashTree>",
+      '    <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="Packaged JMeter Plan" enabled="true">',
+      '      <stringProp name="TestPlan.comments">token=secret-packaged-jmx-comment-token</stringProp>',
+      '      <elementProp name="TestPlan.user_defined_variables" elementType="Arguments">',
+      '        <collectionProp name="Arguments.arguments">',
+      '          <elementProp name="baseUrl" elementType="Argument"><stringProp name="Argument.name">baseUrl</stringProp><stringProp name="Argument.value">https://packaged.example.test?token=secret-packaged-jmx-base-token</stringProp></elementProp>',
+      '          <elementProp name="authToken" elementType="Argument"><stringProp name="Argument.name">authToken</stringProp><stringProp name="Argument.value">secret-packaged-jmx-auth-token</stringProp></elementProp>',
+      "        </collectionProp>",
+      "      </elementProp>",
+      "    </TestPlan>",
+      "    <hashTree>",
+      '      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="Packaged Thread Group" enabled="true">',
+      '        <stringProp name="ThreadGroup.num_threads">2</stringProp>',
+      "      </ThreadGroup>",
+      "      <hashTree>",
+      '        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Packaged GET /chat" enabled="true">',
+      '          <stringProp name="HTTPSampler.domain">${baseUrl}</stringProp>',
+      '          <stringProp name="HTTPSampler.path">/chat</stringProp>',
+      "        </HTTPSamplerProxy>",
+      "        <hashTree />",
+      '        <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Packaged status assertion" enabled="true" />',
+      "        <hashTree />",
+      '        <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="Packaged Headers" enabled="true">',
+      '          <collectionProp name="HeaderManager.headers"><elementProp name="Authorization" elementType="Header"><stringProp name="Header.name">Authorization</stringProp><stringProp name="Header.value">Bearer secret-packaged-jmx-header-token</stringProp></elementProp></collectionProp>',
+      "        </HeaderManager>",
+      "        <hashTree />",
+      "      </hashTree>",
+      "    </hashTree>",
+      "  </hashTree>",
+      "</jmeterTestPlan>",
+    ].join("\n"),
+    "utf8",
+  );
+  const ghaJobSummaryPath = join(workspacePath, "GITHUB_STEP_SUMMARY.md");
+  writeFileSync(
+    ghaJobSummaryPath,
+    [
+      "# Packaged GitHub Actions Summary",
+      "",
+      "| Check | Result | Notes |",
+      "| --- | --- | --- |",
+      "| Windows packaged smoke | failed | packaged report=https://artifact.example.test/packaged.zip?token=secret-packaged-gha-artifact-token |",
+      "| Coverage | warning | renderer branch coverage below target |",
+      "",
+      "Failure: packaged smoke saw token=secret-packaged-gha-summary-token in diagnostic text.",
+      "",
+      "`npm run verify:packaged -- --token secret-packaged-gha-summary-command-token`",
     ].join("\n"),
     "utf8",
   );
@@ -2711,6 +3349,186 @@ function prepareChannelImportFixture(): ChannelImportFixture {
     }, null, 2),
     "utf8",
   );
+  const assetLinksPath = join(workspacePath, "assetlinks.json");
+  writeFileSync(
+    assetLinksPath,
+    JSON.stringify([
+      {
+        relation: ["delegate_permission/common.handle_all_urls"],
+        target: {
+          namespace: "android_app",
+          package_name: "ai.drsai.packaged",
+          sha256_cert_fingerprints: ["AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99"],
+        },
+      },
+    ], null, 2),
+    "utf8",
+  );
+  const appleAssociationPath = join(workspacePath, "apple-app-site-association");
+  writeFileSync(
+    appleAssociationPath,
+    JSON.stringify({
+      applinks: {
+        details: [
+          {
+            appIDs: ["PACKAGED123.ai.drsai.packaged"],
+            components: [
+              { "/": "/packaged/*" },
+              { "/": "/handoff/packaged", "?": { token: "secret-packaged-aasa-token" } },
+            ],
+          },
+        ],
+      },
+      webcredentials: { apps: ["PACKAGED123.ai.drsai.packaged"] },
+      activitycontinuation: { apps: ["PACKAGED123.ai.drsai.packaged"] },
+    }, null, 2),
+    "utf8",
+  );
+  const securityTxtPath = join(workspacePath, "packaged.security.txt");
+  writeFileSync(
+    securityTxtPath,
+    [
+      "Contact: mailto:security-packaged@example.test",
+      "Contact: https://security-packaged.example.test/report?token=secret-packaged-security-token",
+      "Expires: 2026-12-31T23:59:59Z",
+      "Encryption: https://security-packaged.example.test/pgp-key.txt",
+      "Preferred-Languages: en, zh",
+      "Canonical: https://packaged.example.test/.well-known/security.txt",
+      "Policy: https://packaged.example.test/security-policy",
+    ].join("\n"),
+    "utf8",
+  );
+  const svgPath = join(workspacePath, "packaged.svg");
+  writeFileSync(
+    svgPath,
+    [
+      '<svg width="96" height="64" viewBox="0 0 96 64" xmlns="http://www.w3.org/2000/svg">',
+      "  <title>Packaged SVG Map</title>",
+      "  <desc>Packaged IPC SVG structure preview</desc>",
+      '  <symbol id="packaged-icon"><path id="packaged-path" d="M1 1 L20 20" /></symbol>',
+      '  <use href="#packaged-icon" />',
+      '  <image id="packaged-remote-image" href="https://svg-packaged.example.test/pixel.png?token=secret-packaged-svg-token" width="10" height="10" />',
+      '  <foreignObject id="packaged-foreign"><div xmlns="http://www.w3.org/1999/xhtml">Packaged HTML Island</div></foreignObject>',
+      '  <script>console.log("secret-packaged-svg-script")</script>',
+      '  <text id="packaged-label">Packaged SVG Label</text>',
+      "</svg>",
+    ].join("\n"),
+    "utf8",
+  );
+  const sshDir = join(workspacePath, ".ssh");
+  mkdirSync(sshDir, { recursive: true });
+  const sshConfigPath = join(sshDir, "config");
+  writeFileSync(
+    sshConfigPath,
+    [
+      "Host packaged-prod packaged-alias",
+      "  HostName packaged.example.test",
+      "  User packaged-user",
+      "  Port 2200",
+      "  IdentityFile ~/.ssh/id_packaged_secret",
+      "  ProxyJump jump.packaged.example.test",
+      "  Include secret-packaged-include.conf",
+      "Host packaged-risky",
+      "  HostName risky-packaged.example.test?token=secret-packaged-ssh-token",
+      "  ProxyCommand ssh jump.packaged.example.test nc %h %p",
+    ].join("\n"),
+    "utf8",
+  );
+  const sshKnownHostsPath = join(sshDir, "known_hosts");
+  writeFileSync(
+    sshKnownHostsPath,
+    [
+      "packaged.example.test,192.0.2.42 ssh-ed25519 AAAAC3NzaPackagedsecretPackagedKnownHostMaterial Packaged host",
+      "|1|packagedSalt|packagedHash ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQsecretPackagedKnownHostHash",
+    ].join("\n"),
+    "utf8",
+  );
+  const sshAuthorizedKeysPath = join(sshDir, "authorized_keys");
+  writeFileSync(
+    sshAuthorizedKeysPath,
+    [
+      'from="10.20.0.0/16",command="/usr/local/bin/packaged --token=secret-packaged-authorized-command" ssh-ed25519 AAAAC3NzaPackagedAuthorizedSecretMaterial packaged deploy key',
+      "restrict,no-pty ssh-rsa AAAAB3NzaPackagedAuthorizedSecretMaterial2 packaged readonly key",
+    ].join("\n"),
+    "utf8",
+  );
+  const rdpPath = join(workspacePath, "packaged.rdp");
+  writeFileSync(
+    rdpPath,
+    [
+      "screen mode id:i:2",
+      "use multimon:i:1",
+      "desktopwidth:i:1920",
+      "desktopheight:i:1080",
+      "session bpp:i:32",
+      "full address:s:rdp.packaged.example.test",
+      "alternate full address:s:rdp-alt.packaged.example.test",
+      "gatewayhostname:s:gateway.packaged.example.test?token=secret-packaged-rdp-gateway-token",
+      "username:s:packaged-rdp-user",
+      "authentication level:i:2",
+      "prompt for credentials:i:1",
+      "redirectclipboard:i:1",
+      "redirectdrives:i:1",
+      "remoteapplicationmode:i:1",
+      "remoteapplicationprogram:s:||packagedapp",
+      "password 51:b:secret-packaged-rdp-password-blob",
+    ].join("\r\n"),
+    "utf8",
+  );
+  const vpnWireGuardPath = join(workspacePath, "wg-packaged.conf");
+  writeFileSync(
+    vpnWireGuardPath,
+    [
+      "[Interface]",
+      "Address = 10.77.0.2/32",
+      "DNS = 9.9.9.9",
+      "PrivateKey = secret-packaged-wireguard-private-key-material",
+      "PostUp = powershell.exe -File packaged-up.ps1 --token secret-packaged-wireguard-hook",
+      "[Peer]",
+      "PublicKey = packagedWireGuardPeerPublicKeyValue",
+      "PresharedKey = secret-packaged-wireguard-psk-material",
+      "AllowedIPs = 0.0.0.0/0, ::/0",
+      "Endpoint = vpn-packaged.example.test:51820",
+      "PersistentKeepalive = 25",
+    ].join("\n"),
+    "utf8",
+  );
+  const vpnOpenVpnPath = join(workspacePath, "packaged-client.ovpn");
+  writeFileSync(
+    vpnOpenVpnPath,
+    [
+      "client",
+      "dev tun",
+      "proto udp",
+      "remote vpn-openvpn-packaged.example.test 1194",
+      "redirect-gateway def1",
+      "auth-user-pass secret-packaged-openvpn-auth.txt",
+      "ca packaged-ca.crt",
+      "cert packaged-client.crt",
+      "key secret-packaged-openvpn-client.key",
+      "tls-auth secret-packaged-openvpn-ta.key 1",
+      "script-security 2",
+      "up packaged-up.bat --token secret-packaged-openvpn-hook",
+      "setenv DRS_TOKEN secret-packaged-openvpn-url-token",
+    ].join("\n"),
+    "utf8",
+  );
+  const envrcPath = join(workspacePath, ".envrc");
+  writeFileSync(
+    envrcPath,
+    [
+      "export PACKAGED_DIRENV_TOKEN=secret-packaged-direnv-token",
+      "PACKAGED_PUBLIC_URL=https://direnv-packaged.example.test?token=secret-packaged-direnv-url-token",
+      "dotenv .env.packaged",
+      "use node",
+      "layout python",
+      "watch_file package.json",
+      "source_env .env.shared",
+      "curl https://direnv-packaged.example.test/bootstrap.sh?token=secret-packaged-direnv-curl-token",
+      "npm install --token=secret-packaged-direnv-npm-token",
+    ].join("\n"),
+    "utf8",
+  );
   return {
     workspacePath,
     markdownPath: filePath,
@@ -2721,9 +3539,15 @@ function prepareChannelImportFixture(): ChannelImportFixture {
     chatGptExportJsonPath,
     emlxPath,
     icsPath,
+    vcardPath,
+    contactsCsvPath,
+    calendarCsvPath,
     openApiJsonPath,
     logcatPath,
     browserCookiesPath,
+    browserPasswordsPath,
+    browserAutofillCsvPath,
+    browserAutofillJsonPath,
     playwrightTraceZipPath,
     csvPath,
     tsvPath,
@@ -2734,7 +3558,12 @@ function prepareChannelImportFixture(): ChannelImportFixture {
     codeownersPath,
     robotsPath,
     harPath,
+    netlogPath,
     junitXmlPath,
+    xunitXmlPath,
+    trxPath,
+    jmeterPlanPath,
+    ghaJobSummaryPath,
     vscodeSettingsPath,
     vscodeTasksPath,
     vscodeLaunchPath,
@@ -2743,6 +3572,17 @@ function prepareChannelImportFixture(): ChannelImportFixture {
     browserDownloadsPath,
     browserStoragePath,
     browserExtensionManifestPath,
+    assetLinksPath,
+    appleAssociationPath,
+    securityTxtPath,
+    svgPath,
+    sshConfigPath,
+    sshKnownHostsPath,
+    sshAuthorizedKeysPath,
+    vpnWireGuardPath,
+    vpnOpenVpnPath,
+    rdpPath,
+    envrcPath,
     filePaths: [
       filePath,
       cypressJsonPath,
@@ -2752,9 +3592,15 @@ function prepareChannelImportFixture(): ChannelImportFixture {
       chatGptExportJsonPath,
       emlxPath,
       icsPath,
+      vcardPath,
+      contactsCsvPath,
+      calendarCsvPath,
       openApiJsonPath,
       logcatPath,
       browserCookiesPath,
+      browserPasswordsPath,
+      browserAutofillCsvPath,
+      browserAutofillJsonPath,
       playwrightTraceZipPath,
       csvPath,
       tsvPath,
@@ -2765,7 +3611,12 @@ function prepareChannelImportFixture(): ChannelImportFixture {
       codeownersPath,
       robotsPath,
       harPath,
+      netlogPath,
       junitXmlPath,
+      xunitXmlPath,
+      trxPath,
+      jmeterPlanPath,
+      ghaJobSummaryPath,
       vscodeSettingsPath,
       vscodeTasksPath,
       vscodeLaunchPath,
@@ -2774,6 +3625,17 @@ function prepareChannelImportFixture(): ChannelImportFixture {
       browserDownloadsPath,
       browserStoragePath,
       browserExtensionManifestPath,
+      assetLinksPath,
+      appleAssociationPath,
+      securityTxtPath,
+      svgPath,
+      sshConfigPath,
+      sshKnownHostsPath,
+      sshAuthorizedKeysPath,
+      vpnWireGuardPath,
+      vpnOpenVpnPath,
+      rdpPath,
+      envrcPath,
     ],
   };
 }

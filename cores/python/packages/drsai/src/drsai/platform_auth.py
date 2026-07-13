@@ -68,9 +68,13 @@ def get_model_credential_provider(
     context = get_platform_auth()
     if context:
         return OidcModelCredentialProvider(context)
-    if fallback_token and fallback_base_url:
+    if static_model_credentials_allowed() and fallback_token and fallback_base_url:
         return StaticModelCredentialProvider(fallback_token, fallback_base_url)
     return None
+
+
+def static_model_credentials_allowed() -> bool:
+    return os.environ.get("OPENDRSAI_OIDC_ONLY", "").strip() != "1"
 
 
 _platform_auth: ContextVar[PlatformAuthContext | None] = ContextVar(

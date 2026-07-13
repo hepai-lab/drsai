@@ -621,6 +621,23 @@ function AuthenticatedApp({
     navigateTo(MENU_IDS.currentSession);
   }
 
+  async function handleNewAgentTask(): Promise<void> {
+    setRightPanelCollapsed(true);
+    const thread = await desktopApi.createThread({
+      kind: "agent_run",
+      title: language === "zh" ? "新 Agent 任务" : "New agent task",
+      workspacePath: effectiveWorkspacePath,
+    });
+    setActiveThreadId(thread.id);
+    setThreads((current) =>
+      sortThreadsForSidebar([
+        thread,
+        ...current.filter((item) => item.id !== thread.id),
+      ]),
+    );
+    navigateTo(MENU_IDS.currentSession);
+  }
+
   async function hydrateThreadSnapshot(threadId: string): Promise<void> {
     try {
       const snapshot = await desktopApi.getThreadSnapshot(threadId);
@@ -919,7 +936,44 @@ function AuthenticatedApp({
 
   const mainContent =
     activeNav === MENU_IDS.currentSession ? (
-      <section className="conversation-panel">
+      activeThread?.kind === "agent_run" ? (
+        <AgentRunWorkspace
+          fileContextAttachments={workspaceContextAttachments}
+          health={health}
+          initialTask={terminalAgentTask}
+          language={language}
+          onAgentFileEvent={({ fileEvent, requestId, runId }) => {
+            setActiveThreadFileTraceEvents([
+              createTraceEventFromAgentFileEvent({
+                event: fileEvent,
+                requestId,
+                runId,
+                scopeId: activeThreadId,
+              }),
+              ...workspaceFileTraceEvents,
+            ]);
+            setActiveRightTab("files");
+            setRightPanelCollapsed(false);
+          }}
+          onFileContextSent={({ attachments, requestId, runId }) => {
+            setActiveThreadFileTraceEvents([
+              ...createAgentRunContextTraceEvents({
+                attachments,
+                requestId,
+                runId,
+                scopeId: activeThreadId,
+              }),
+              ...workspaceFileTraceEvents,
+            ]);
+          }}
+          onProposeTerminalCommand={proposeTerminalCommand}
+          threadId={activeThreadId}
+          workspaceInstructions={effectiveWorkspaceInstructions}
+          workspacePath={effectiveWorkspacePath}
+          workspaceTrusted={workspaceTrusted}
+        />
+      ) : (
+        <section className="conversation-panel">
         <ChatWorkspace
           activeRequestId={chat.activeRequestId}
           canChat={canChat}
@@ -975,6 +1029,7 @@ function AuthenticatedApp({
           onSubmit={chat.submit}
         />
       </section>
+      )
     ) : activeNav === MENU_IDS.agentSquare ? (
       <section className="agent-square-panel">
         <AgentSquareView
@@ -1294,6 +1349,9 @@ function AuthenticatedApp({
       onNavChange={navigateTo}
       onNewChat={() => {
         void handleNewChat();
+      }}
+      onNewAgentTask={() => {
+        void handleNewAgentTask();
       }}
       onOpenWorkspacePath={handleOpenWorkspacePath}
       onPickWorkspaceFolder={handlePickWorkspaceFolder}
@@ -1728,7 +1786,8 @@ function SettingsPanel({
           {user?.email && user.email !== user.name && <small>{user.email}</small>}
         </div>
         <button type="button" onClick={() => void onLogout()}>{zh ? "退出登录" : "Sign out"}</button>
-      </section>
+        </section>
+      )
       <section className="settings-section">
         <div>
           <h2>{zh ? "显示语言" : "Language"}</h2>

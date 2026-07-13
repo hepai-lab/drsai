@@ -3,6 +3,7 @@ import {
   ArrowDownAZ,
   ArrowLeft,
   ArrowRight,
+  Bot,
   CalendarClock,
   ChevronDown,
   Cloud,
@@ -128,6 +129,7 @@ interface WorkspaceShellProps {
   ) => Promise<ForkConflictContentPreviewResult>;
   onNavChange: (id: NavId) => void;
   onNewChat: () => void;
+  onNewAgentTask: () => void;
   onOpenWorkspacePath: (path: string) => void | Promise<void>;
   onRefreshWorkspaces: () => void | Promise<void>;
   onRemoveWorkspace: (id: string) => void | Promise<void>;
@@ -190,6 +192,7 @@ export function WorkspaceShell({
   onLoadForkConflictContent,
   onNavChange,
   onNewChat,
+  onNewAgentTask,
   onOpenWorkspacePath,
   onRefreshWorkspaces,
   onRemoveWorkspace,
@@ -1405,6 +1408,11 @@ export function WorkspaceShell({
         <nav className="sidebar-scroll" aria-label={zh ? "OpenDrSai 侧边栏" : "OpenDrSai sidebar"}>
           <div className="sidebar-action-list">
             <SidebarButton active={activeNav === MENU_IDS.currentSession} icon={MessageSquarePlus} label={zh ? "开始聊天" : "New chat"} onClick={onNewChat} />
+            <SidebarButton
+              icon={Bot}
+              label={zh ? "Agent 任务" : "Agent task"}
+              onClick={onNewAgentTask}
+            />
             <SidebarButton icon={Search} label={zh ? "搜索" : "Search"} onClick={openCommandPalette} />
             <SidebarButton active={activeNav === MENU_IDS.savedPlan} icon={CalendarClock} label={zh ? "已安排" : "Scheduled"} onClick={() => onNavChange(MENU_IDS.savedPlan)} />
           </div>

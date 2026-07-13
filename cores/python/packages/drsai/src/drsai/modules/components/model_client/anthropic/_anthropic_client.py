@@ -67,13 +67,16 @@ from autogen_ext.models.anthropic._anthropic_client import (
     normalize_stop_reason,
     _add_usage
     )
-from drsai.platform_auth import get_model_credential_provider
+from drsai.platform_auth import get_model_credential_provider, static_model_credentials_allowed
 
 class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
 
     component_provider_override = "drsai.modules.components.model_client.anthropic._anthropic_client.HepAIAnthropicChatCompletionClient"
 
     def __init__(self, **kwargs: Any):
+        self._oidc_credential_pending = False
+        if not static_model_credentials_allowed():
+            kwargs["api_key"] = None
         credential = get_model_credential_provider(
             kwargs.get("api_key"),
             kwargs.get("base_url"),
@@ -81,14 +84,20 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
         if credential:
             kwargs["api_key"] = credential.access_token
             kwargs["base_url"] = credential.anthropic_base_url
+        elif not kwargs.get("api_key"):
+            kwargs["api_key"] = "opendrsai-oidc-pending"
+            self._oidc_credential_pending = True
         super().__init__(**kwargs)
 
     def _bind_platform_auth(self) -> None:
         credential = get_model_credential_provider()
         if not credential:
+            if getattr(self, "_oidc_credential_pending", False):
+                raise RuntimeError("OIDC credential context is unavailable for this model request.")
             return
         self._client.api_key = credential.access_token
         self._client.base_url = credential.anthropic_base_url
+        self._oidc_credential_pending = False
 
     async def create(self, *args: Any, **kwargs: Any):
         self._bind_platform_auth()

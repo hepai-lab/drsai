@@ -155,13 +155,7 @@ async function runAgent(
   });
 
   const timeout = setTimeout(() => controller.abort("timeout"), AGENT_RUN_TIMEOUT_MS);
-  if (request.workspacePath && existsSync(request.workspacePath)) {
-    await createWorkspaceCheckpoint({
-      workspacePath: request.workspacePath,
-      label: `Before Agent run ${runId}`,
-      maxFiles: 200,
-    });
-  }
+  const changeSetCheckpointId = await prepareAgentChangeSetCheckpoint(request, runId);
   const beforeFiles = await readWorkspaceFileSnapshot(request.workspacePath);
   try {
     const ready = await startGateway();
@@ -200,6 +194,7 @@ async function runAgent(
             auth_mode: authContext.authMode,
             run_id: runId,
             desktop_request_id: requestId,
+            ...(changeSetCheckpointId ? { change_set_checkpoint_id: changeSetCheckpointId } : {}),
           },
         }),
         signal: controller.signal,
@@ -260,6 +255,33 @@ async function runAgent(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function prepareAgentChangeSetCheckpoint(
+  request: AgentRunRequest,
+  runId: string,
+): Promise<string | undefined> {
+  const existingCheckpointId =
+    typeof request.metadata?.change_set_checkpoint_id === "string"
+      ? request.metadata.change_set_checkpoint_id.trim()
+      : "";
+  if (existingCheckpointId) return existingCheckpointId;
+  if (!request.workspacePath || !existsSync(request.workspacePath)) return undefined;
+
+  const checkpoint = await createWorkspaceCheckpoint({
+    workspacePath: request.workspacePath,
+    label: `Before agent run ${runId}`,
+    kind: "agent_run_baseline",
+    runId,
+    maxFiles: 200,
+    maxBytesPerFile: 2_000_000,
+  });
+  if (checkpoint.truncated || checkpoint.skippedFileCount > 0) {
+    throw new Error(
+      "The pre-run state could not be captured completely because existing changes exceed checkpoint limits or include files larger than 2 MB. The agent was not started to protect user work.",
+    );
+  }
+  return checkpoint.id;
 }
 
 async function readSse(

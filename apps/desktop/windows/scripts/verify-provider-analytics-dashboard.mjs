@@ -43,6 +43,8 @@ assert(
 assert(
     component.includes("AnalyticsKind") &&
     component.includes("ProviderFilter") &&
+    component.includes("google_gemini") &&
+    component.includes("Gemini") &&
     component.includes("AnalyticsChartItem") &&
     component.includes("setQuery") &&
     component.includes("copyFilteredJson") &&

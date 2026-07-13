@@ -98,6 +98,9 @@ export function FilesContextPanel({
     .filter(Boolean) as WorkspaceFileNode[];
   const changedCount = overview?.stats.changedFileCount ?? 0;
   const instructionCount = overview?.stats.instructionCount ?? 0;
+  const pendingAgentCheckpoint = workspaceCheckpoints.find(
+    (checkpoint) => checkpoint.kind === "agent_run_baseline" && checkpoint.reviewStatus === "pending",
+  );
   const systemOpenLabel = selectedNode?.type === "directory"
     ? "Open folder"
     : "Open with system app";
@@ -417,6 +420,21 @@ export function FilesContextPanel({
     }
   }
 
+  async function acceptAgentChangeSet(checkpoint: WorkspaceCheckpoint): Promise<void> {
+    try {
+      const accepted = await desktopApi.acceptWorkspaceCheckpoint({
+        workspacePath,
+        checkpointId: checkpoint.id,
+      });
+      setWorkspaceCheckpoints((current) =>
+        current.map((item) => item.id === accepted.id ? accepted : item),
+      );
+      setCheckpointMessage(zh ? "已接受本次 Agent 变更。" : "Agent changes accepted.");
+    } catch (caught) {
+      setCheckpointMessage(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
   async function previewRollbackCheckpoint(checkpoint: WorkspaceCheckpoint): Promise<void> {
     setCheckpointMessage("");
     try {
@@ -632,6 +650,25 @@ export function FilesContextPanel({
           summary={`${changedCount} changed · ${diffPreview ? "diff loaded" : "no diff"}`}
           title={zh ? "变更审阅" : "Change Review"}
         >
+          {pendingAgentCheckpoint ? (
+            <section className="files-checkpoint-panel" aria-label={zh ? "Agent 变更集审阅" : "Agent change set review"}>
+              <div className="files-checkpoint-header">
+                <div>
+                  <strong>{zh ? "Agent 变更待审阅" : "Agent changes awaiting review"}</strong>
+                  <small>{pendingAgentCheckpoint.label}</small>
+                </div>
+                <div className="files-checkpoint-actions">
+                  <button type="button" onClick={() => void acceptAgentChangeSet(pendingAgentCheckpoint)}>
+                    {zh ? "接受本次变更" : "Accept changes"}
+                  </button>
+                  <button type="button" onClick={() => void restoreRollbackCheckpoint(pendingAgentCheckpoint)}>
+                    {zh ? "拒绝并恢复运行前" : "Reject and restore"}
+                  </button>
+                </div>
+              </div>
+            </section>
+          ) : null}
+
           <PatchReviewPanel
             diff={diffPreview}
             language={language}

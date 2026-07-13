@@ -92,6 +92,23 @@ export function AgentRunWorkspace({
     setTask("");
 
     try {
+      const checkpoint = workspacePath
+        ? await desktopApi.createWorkspaceCheckpoint({
+            workspacePath,
+            label: `${zh ? "Agent 运行前" : "Before agent run"} ${runId.slice(0, 8)}`,
+            kind: "agent_run_baseline",
+            runId,
+            maxFiles: 200,
+            maxBytesPerFile: 2_000_000,
+          })
+        : null;
+      if (checkpoint && (checkpoint.truncated || checkpoint.skippedFileCount > 0)) {
+        throw new Error(
+          zh
+            ? "无法完整保存运行前状态：现有变更文件过多，或包含超过 2 MB / 不可保存的文件。为避免丢失用户修改，Agent 任务未启动。"
+            : "The pre-run state could not be captured completely because existing changes exceed checkpoint limits or include files larger than 2 MB. The agent was not started to protect user work.",
+        );
+      }
       const workspaceInstructionText = buildWorkspaceInstructionText(workspaceInstructions);
       await desktopApi.startAgentRun({
         requestId,
@@ -106,6 +123,7 @@ export function AgentRunWorkspace({
         teamConfig: { preset: "general-collaboration" },
         metadata: {
           source: "windows-agent-run-workspace",
+          ...(checkpoint ? { change_set_checkpoint_id: checkpoint.id } : {}),
           file_context_count: fileContextAttachments.length,
           file_context_paths: fileContextAttachments.map((attachment) => attachment.path),
           workspace_instructions: workspaceInstructions || [],
@@ -235,7 +253,7 @@ export function AgentRunWorkspace({
           <span>
             {activeRunId
               ? `Running: ${activeRunId.slice(0, 8)}`
-              : `${workspacePath || "Local workspace"} · ${fileContextAttachments.length} file context`}
+              : `${workspacePath || "Local workspace"} - ${fileContextAttachments.length} file context`}
           </span>
           {activeRequestId ? (
             <button type="button" className="composer-submit stop" onClick={abort}>

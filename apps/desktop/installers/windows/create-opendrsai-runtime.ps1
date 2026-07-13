@@ -2,6 +2,7 @@ param(
     [string]$OutDir = "$PSScriptRoot\..\..\windows\release\bootstrapper",
     [string]$DesktopAppDir = "$PSScriptRoot\..\..\windows\release\win-unpacked",
     [string]$DrsaiAgentDir = "",
+    [string]$BackendSourceDir = "$PSScriptRoot\..\..\..\..\cores\python\packages\drsai\src\drsai",
     [string]$DrsaiHomeDefaultsDir = "",
     [string]$Version = "",
     [string]$Channel = "dev"
@@ -66,22 +67,15 @@ function Add-PortablePythonBase([string]$SourceAgent, [string]$TargetAgent) {
     }
 }
 
-function Materialize-EditablePythonPackages([string]$AgentRoot) {
+function Materialize-CurrentDrsaiPackage([string]$AgentRoot, [string]$SourceDir) {
     $sitePackages = Join-Path $AgentRoot "venv\Lib\site-packages"
-    Get-ChildItem -LiteralPath $sitePackages -Filter "*.pth" -File -ErrorAction SilentlyContinue |
-        ForEach-Object {
-            $pth = $_
-            $materialized = $false
-            foreach ($line in Get-Content -LiteralPath $pth.FullName) {
-                $source = $line.Trim()
-                if (-not $source -or $source.StartsWith("#") -or $source.StartsWith("import ")) { continue }
-                if ([IO.Path]::IsPathRooted($source) -and (Test-Path -LiteralPath $source)) {
-                    Copy-DirectoryContents $source $sitePackages
-                    $materialized = $true
-                }
-            }
-            if ($materialized) { Remove-Item -LiteralPath $pth.FullName -Force }
-        }
+    Get-ChildItem -LiteralPath $sitePackages -Filter "*drsai*.pth" -File -ErrorAction SilentlyContinue |
+        Remove-Item -Force
+    Get-ChildItem -LiteralPath $sitePackages -Filter "drsai-*.dist-info" -Directory -ErrorAction SilentlyContinue |
+        Remove-Item -Recurse -Force
+    $target = Join-Path $sitePackages "drsai"
+    Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue
+    Copy-DirectoryContents $SourceDir $target
 }
 
 $windowsAppDir = Resolve-FullPath (Join-Path $PSScriptRoot "..\..\windows")
@@ -114,6 +108,12 @@ if (-not $DrsaiAgentDir) {
     throw "DrsaiAgentDir is required. Provide a prepared drsai-agent directory with venv."
 }
 $drsaiAgentDir = Resolve-FullPath $DrsaiAgentDir
+$backendSourceDir = Resolve-FullPath $BackendSourceDir
+if (-not (Test-Path (Join-Path $backendSourceDir "version.py"))) {
+    throw "Current DrSai backend source was not found: $backendSourceDir"
+}
+Write-Host "Using prepared DrSai agent: $drsaiAgentDir" -ForegroundColor DarkGray
+Write-Host "Using current DrSai source: $backendSourceDir" -ForegroundColor DarkGray
 if (-not (Test-Path (Join-Path $drsaiAgentDir "venv\Scripts\python.exe"))) {
     throw "DrsaiAgentDir is missing venv\Scripts\python.exe: $drsaiAgentDir"
 }
@@ -132,9 +132,22 @@ New-Item -ItemType Directory -Force -Path $payloadRoot | Out-Null
 Copy-DirectoryContents $desktopAppDir (Join-Path $payloadRoot "app")
 Remove-NodePtyBuildSources (Join-Path $payloadRoot "app")
 Copy-DirectoryContents $drsaiAgentDir (Join-Path $payloadRoot "drsai-agent")
-Materialize-EditablePythonPackages (Join-Path $payloadRoot "drsai-agent")
+Materialize-CurrentDrsaiPackage (Join-Path $payloadRoot "drsai-agent") $backendSourceDir
 Remove-PythonCaches (Join-Path $payloadRoot "drsai-agent")
 Add-PortablePythonBase $drsaiAgentDir (Join-Path $payloadRoot "drsai-agent")
+
+$payloadPython = Join-Path $payloadRoot "drsai-agent\venv\Scripts\python.exe"
+$versionOutput = (& $payloadPython -W ignore -m drsai.backend.run_cli version 2>&1 | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or $versionOutput -notmatch [regex]::Escape($Version)) {
+    throw "Materialized backend version does not match runtime $Version. Output: $versionOutput"
+}
+Write-Host "Verified materialized backend version: $versionOutput" -ForegroundColor DarkGray
+Remove-PythonCaches (Join-Path $payloadRoot "drsai-agent")
+$pythonCacheFiles = @(Get-ChildItem -LiteralPath (Join-Path $payloadRoot "drsai-agent") -Recurse -Force -ErrorAction SilentlyContinue |
+    Where-Object { $_.PSIsContainer -and $_.Name -eq "__pycache__" -or -not $_.PSIsContainer -and $_.Extension -in @(".pyc", ".pyo") })
+if ($pythonCacheFiles.Count -gt 0) {
+    throw "Python cache cleanup was incomplete; found $($pythonCacheFiles.Count) cache path(s)."
+}
 
 $homeDefaultsTarget = Join-Path $payloadRoot "drsai-home"
 New-Item -ItemType Directory -Force -Path $homeDefaultsTarget | Out-Null

@@ -19,6 +19,7 @@ const modelDefaults = read("apps/desktop/windows/src/main/modelDefaults.ts");
 const modelFactory = read("cores/python/packages/drsai/src/drsai/backend/run_drsai_agent_factory.py");
 const mainProcess = read("apps/desktop/windows/src/main/index.ts");
 const status = read("apps/desktop/windows/src/main/status.ts");
+const devLauncher = read("apps/desktop/scripts/windows-desktop-dev.ps1");
 
 for (const [name, passed] of [
   ["request-scoped platform auth", gateway.includes("platform_auth_scope(auth_context)")],
@@ -34,6 +35,7 @@ for (const [name, passed] of [
   ["gateway instance secret", desktopGateway.includes("randomBytes(32)") && desktopGateway.includes("X-OpenDrSai-Gateway-Token")],
   ["renderer structured auth errors", ["token_expired", "model_forbidden", "quota_exceeded", "model_not_found", "upstream_unavailable"].every((code) => chatAdapter.includes(code))],
   ["OIDC install status does not require API key", !status.includes('prerequisites.apiKeyConfigured ? null : "api-key"') && !status.includes('apiKeyConfigured ? null : "HEPAI_API_KEY is not configured."')],
+  ["desktop development disables static credential fallback", devLauncher.includes('$env:OPENDRSAI_OIDC_ONLY = "1"') && devLauncher.includes("Env:HEPAI_API_KEY")],
   ["desktop default model alias", modelDefaults.includes('const DEFAULT_MODEL_ALIAS = "deepseek-v4-pro"') && modelDefaults.includes('"hepai/deepseek-v4-pro": DEFAULT_MODEL_ALIAS')],
   ["default model resolves to DDF canonical id", modelFactory.includes('DEFAULT_CONFIG_NAME = "deepseek-v4-pro"') && modelFactory.includes('model="deepseek-ai/deepseek-v4-pro"')],
   ["chat selection reaches gateway", chatAdapter.includes("model: options?.model?.trim() || undefined") && chat.includes("const model = request.model || getDefaultModelAlias()")],

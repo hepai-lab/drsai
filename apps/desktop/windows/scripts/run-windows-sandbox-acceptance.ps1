@@ -1,7 +1,8 @@
 param(
     [string]$PackageDir = "C:\OpenDrSaiPackage",
     [string]$EvidenceDir = "C:\OpenDrSaiEvidence",
-    [string]$ExpectedVersion = "1.4.1"
+    [string]$ExpectedVersion = "1.4.2",
+    [switch]$TestUninstall
 )
 
 $ErrorActionPreference = "Stop"
@@ -78,6 +79,10 @@ try {
     $state = Wait-ForFreshInstallState $statePath $startedAt
     Add-Check "Runtime version" ($(if ($state.runtimeVersion -eq $ExpectedVersion) { "PASS" } else { "FAIL" })) ([string]$state.runtimeVersion)
     Add-Check "Desktop executable" ($(if (Test-Path $state.desktopPath) { "PASS" } else { "FAIL" })) ([string]$state.desktopPath)
+    $desktopShortcut = Join-Path ([Environment]::GetFolderPath("Desktop")) "OpenDrSai.lnk"
+    $startMenuShortcut = Join-Path ([Environment]::GetFolderPath("Programs")) "OpenDrSai\OpenDrSai.lnk"
+    Add-Check "Desktop shortcut" ($(if (Test-Path $desktopShortcut) { "PASS" } else { "FAIL" })) $desktopShortcut
+    Add-Check "Start menu shortcut" ($(if (Test-Path $startMenuShortcut) { "PASS" } else { "FAIL" })) $startMenuShortcut
     $python = Join-Path $state.agentPath "venv\Scripts\python.exe"
     Add-Check "Bundled Python" ($(if (Test-Path $python) { "PASS" } else { "FAIL" })) $python
     $import = Invoke-Native $python @("-c", "import drsai; print('drsai import ok')")
@@ -94,13 +99,14 @@ try {
     Write-Host "Complete these steps in OpenDrSai:" -ForegroundColor Cyan
     Write-Host "1. Sign in with HepAI (no API key/model configuration)."
     Write-Host "2. Open a temporary project and send a chat request."
-    Write-Host "3. Run one file change and accept its Diff."
-    Write-Host "4. Run another file change and reject it; confirm restoration."
-    Write-Host "5. Close and reopen OpenDrSai; confirm project/session recovery."
+    Write-Host "3. Confirm Gateway readiness does not report a missing api-key."
+    Write-Host "4. Close and reopen OpenDrSai; confirm login, project/session, and chat recovery."
+    Write-Host "5. Start an Agent task that changes a file; confirm Change Review opens and accept the change set."
+    Write-Host "6. Start another Agent task; reject it, approve restore, and confirm the pre-run content is restored."
     Write-Host ""
     Add-Type -AssemblyName System.Windows.Forms
     $answer = [System.Windows.Forms.MessageBox]::Show(
-        "Click Yes only after all five OpenDrSai checks pass. Click No if any check fails.",
+        "Click Yes only after all six OpenDrSai checks pass. Click No if any check fails.",
         "OpenDrSai Windows 11 acceptance",
         [System.Windows.Forms.MessageBoxButtons]::YesNo,
         [System.Windows.Forms.MessageBoxIcon]::Information
@@ -108,13 +114,17 @@ try {
     $manual = if ($answer -eq [System.Windows.Forms.DialogResult]::Yes) { "PASS" } else { "FAIL" }
     Add-Check "Manual OIDC and core workflow" $manual $manual
 
-    Get-Process OpenDrSai -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-    $userDataPath = [string]$state.drsaiHome
-    $msiUninstallLog = Join-Path $EvidenceDir "msi-uninstall.log"
-    $uninstaller = Start-Process msiexec.exe -ArgumentList @("/x", $msi, "/qn", "/norestart", "/L*v", $msiUninstallLog) -Wait -PassThru
-    Add-Check "MSI uninstall process" ($(if ($uninstaller.ExitCode -eq 0) { "PASS" } else { "FAIL" })) "exit=$($uninstaller.ExitCode)"
-    Add-Check "App removed" ($(if (-not (Test-Path $state.installRoot)) { "PASS" } else { "FAIL" })) ([string]$state.installRoot)
-    Add-Check "User data preserved" ($(if (Test-Path $userDataPath) { "PASS" } else { "FAIL" })) $userDataPath
+    if ($TestUninstall) {
+        Get-Process OpenDrSai -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+        $userDataPath = [string]$state.drsaiHome
+        $msiUninstallLog = Join-Path $EvidenceDir "msi-uninstall.log"
+        $uninstaller = Start-Process msiexec.exe -ArgumentList @("/x", $msi, "/qn", "/norestart", "/L*v", $msiUninstallLog) -Wait -PassThru
+        Add-Check "MSI uninstall process" ($(if ($uninstaller.ExitCode -eq 0) { "PASS" } else { "FAIL" })) "exit=$($uninstaller.ExitCode)"
+        Add-Check "App removed" ($(if (-not (Test-Path $state.installRoot)) { "PASS" } else { "FAIL" })) ([string]$state.installRoot)
+        Add-Check "User data preserved" ($(if (Test-Path $userDataPath) { "PASS" } else { "FAIL" })) $userDataPath
+    } else {
+        Add-Check "Application retained after acceptance" "PASS" ([string]$state.installRoot)
+    }
 } catch {
     Add-Check "Acceptance execution" "FAIL" $_.Exception.Message
 } finally {

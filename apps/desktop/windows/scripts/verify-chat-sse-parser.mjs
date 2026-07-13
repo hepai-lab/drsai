@@ -87,6 +87,11 @@ assertDeepEqual(
   ["anthropic text"],
 );
 assertDeepEqual(
+  "Gemini text part content",
+  parseChatSseFrame('data: {"candidates":[{"content":{"parts":[{"text":"gemini "},{"text":"text"}]}}]}'),
+  ["gemini text"],
+);
+assertDeepEqual(
   "OpenAI Responses reasoning summary delta is status only",
   parseChatSseFrame('event: response.reasoning_summary_text.delta\ndata: {"type":"response.reasoning_summary_text.delta","delta":"checked constraints"}'),
   [],
@@ -105,6 +110,16 @@ assertDeepEqual(
   "Anthropic thinking delta status",
   parseChatReasoningSseFrame('event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"compare options"}}'),
   { title: "Model reasoning", content: "compare options", level: "DEBUG", content_type: "reasoning" },
+);
+assertDeepEqual(
+  "Gemini thought text part is status only",
+  parseChatSseFrame('data: {"candidates":[{"content":{"parts":[{"text":"hidden reasoning","thought":true},{"text":"visible answer"}]}}]}'),
+  ["visible answer"],
+);
+assertDeepEqual(
+  "Gemini thought text part status",
+  parseChatReasoningSseFrame('data: {"candidates":[{"content":{"parts":[{"text":"hidden reasoning","thought":true},{"text":"visible answer"}]}}]}'),
+  { title: "Model reasoning", content: "hidden reasoning", level: "DEBUG", content_type: "reasoning" },
 );
 assertDeepEqual(
   "OpenAI Responses completed lifecycle is status only",
@@ -147,6 +162,27 @@ assertDeepEqual(
     stopReason: "end_turn",
     summary: "Anthropic message delta stop_reason=end_turn. output_tokens=17",
     usage: { outputTokens: 17 },
+  },
+);
+assertDeepEqual(
+  "Gemini finish metadata lifecycle is status only",
+  parseChatSseFrame('data: {"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":11,"totalTokenCount":18}}'),
+  [],
+);
+assertDeepEqual(
+  "Gemini finish metadata lifecycle status",
+  parseProviderStatusSseFrame('data: {"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":11,"totalTokenCount":18}}'),
+  { title: "Provider stream", content: "Gemini stream finished. finish_reason=STOP input_tokens=7 output_tokens=11 total_tokens=18", level: "DEBUG", content_type: "provider_status" },
+);
+assertDeepEqual(
+  "Gemini finish metadata lifecycle usage analytics",
+  parseProviderUsageAnalyticsSseFrame('data: {"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":11,"totalTokenCount":18},"metadata":{"secret":"do-not-store"}}'),
+  {
+    provider: "google_gemini",
+    eventName: "generateContent.stream",
+    status: "STOP",
+    summary: "Gemini stream finished. finish_reason=STOP input_tokens=7 output_tokens=11 total_tokens=18",
+    usage: { inputTokens: 7, outputTokens: 11, totalTokens: 18 },
   },
 );
 assertDeepEqual("done sentinel", parseChatSseFrame("data: [DONE]"), []);
@@ -219,6 +255,26 @@ assertDeepEqual(
     summary: "Anthropic stream error. code=overloaded_error message=Provider overloaded retryable=true",
   },
 );
+try {
+  parseChatSseFrame('event: error\ndata: {"error":{"code":429,"message":"Quota exhausted","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"30s"}]},"metadata":{"secret":"do-not-store"}}');
+  throw new Error("Gemini provider error did not throw");
+} catch (error) {
+  if (error.name !== "ChatSseError" || error.code !== "RESOURCE_EXHAUSTED" || error.message !== "Quota exhausted" || error.retryable !== true) {
+    throw error;
+  }
+}
+assertDeepEqual(
+  "Gemini provider error analytics",
+  parseProviderErrorAnalyticsSseFrame('event: error\ndata: {"error":{"code":429,"message":"Quota exhausted","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"30s"}]},"metadata":{"secret":"do-not-store"}}'),
+  {
+    provider: "google_gemini",
+    eventName: "error",
+    code: "RESOURCE_EXHAUSTED",
+    message: "Quota exhausted",
+    retryable: true,
+    summary: "Gemini stream error. code=RESOURCE_EXHAUSTED message=Quota exhausted retryable=true",
+  },
+);
 assertDeepEqual(
   "tool timeline direct event",
   parseChatToolTimelineSseFrame(
@@ -286,6 +342,32 @@ assertDeepEqual(
     status: "failed",
     content: "stderr: failed",
     toolName: undefined,
+  }],
+);
+assertDeepEqual(
+  "tool timeline Gemini functionCall part",
+  parseChatToolTimelineSseFrame(
+    'data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"read_file","args":{"path":"src/main.ts"}}}]}}]}',
+  ).map(({ kind, title, content, path, toolName }) => ({ kind, title, content, path, toolName })),
+  [{
+    kind: "tool_call",
+    title: "Tool: read_file",
+    content: '{"path":"src/main.ts"}',
+    path: "src/main.ts",
+    toolName: "read_file",
+  }],
+);
+assertDeepEqual(
+  "tool timeline Gemini functionResponse part",
+  parseChatToolTimelineSseFrame(
+    'data: {"candidates":[{"content":{"parts":[{"functionResponse":{"name":"read_file","response":{"content":"file text"}}}]}}]}',
+  ).map(({ kind, title, status, content, toolName }) => ({ kind, title, status, content, toolName })),
+  [{
+    kind: "tool_result",
+    title: "Tool: read_file",
+    status: "completed",
+    content: '{"content":"file text"}',
+    toolName: "read_file",
   }],
 );
 assertDeepEqual(

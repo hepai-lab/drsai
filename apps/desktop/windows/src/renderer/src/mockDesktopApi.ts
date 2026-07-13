@@ -1167,6 +1167,18 @@ export function installMockDesktopApi(): void {
         summary: "Mock OpenAI Responses stream completed. input_tokens=120 output_tokens=32 total_tokens=152",
         usage: { inputTokens: 120, outputTokens: 32, totalTokens: 152 },
       },
+      {
+        id: "provider-usage:mock-gemini",
+        recordedAt: new Date(Date.now() - 45_000).toISOString(),
+        requestId: "mock-request-gemini-usage",
+        sessionId: "mock-session",
+        runId: "mock-run",
+        provider: "google_gemini",
+        eventName: "generateContent.stream",
+        status: "STOP",
+        summary: "Mock Gemini stream finished. finish_reason=STOP input_tokens=18 output_tokens=44 total_tokens=62",
+        usage: { inputTokens: 18, outputTokens: 44, totalTokens: 62 },
+      },
     ],
     listProviderErrorAnalytics: async () => [
       {
@@ -1692,6 +1704,7 @@ export function installMockDesktopApi(): void {
         changedFileCount: 2,
         storedFileCount: 2,
         skippedFileCount: 0,
+        truncated: false,
         entries: [
           {
             path: `${workspacePath}\\src\\App.tsx`,
@@ -1712,12 +1725,30 @@ export function installMockDesktopApi(): void {
             existed: true,
           },
         ],
+        kind: request.kind ?? "manual",
+        ...(request.runId ? { runId: request.runId } : {}),
+        ...(request.kind === "agent_run_baseline" ? { reviewStatus: "pending" as const } : {}),
       };
       workspaceCheckpoints = [
         checkpoint,
         ...workspaceCheckpoints.filter((item) => item.id !== checkpoint.id),
       ];
       return checkpoint;
+    },
+    acceptWorkspaceCheckpoint: async (request) => {
+      const checkpoint = workspaceCheckpoints.find(
+        (item) => item.workspacePath === request.workspacePath && item.id === request.checkpointId,
+      );
+      if (!checkpoint) throw new Error("Mock checkpoint was not found.");
+      const accepted: WorkspaceCheckpoint = {
+        ...checkpoint,
+        reviewStatus: "accepted",
+        reviewedAt: new Date().toISOString(),
+      };
+      workspaceCheckpoints = workspaceCheckpoints.map((item) =>
+        item.id === accepted.id ? accepted : item,
+      );
+      return accepted;
     },
     previewWorkspaceCheckpoint: async (request) => {
       const checkpoint = workspaceCheckpoints.find(

@@ -8,7 +8,7 @@ import { desktopApi } from "../desktopApi";
 import type { AppLanguage } from "../navigation";
 
 type AnalyticsKind = "all" | "usage" | "error";
-type ProviderFilter = "all" | "openai_responses" | "anthropic";
+type ProviderFilter = "all" | "openai_responses" | "anthropic" | "google_gemini";
 
 interface AnalyticsRow {
   id: string;
@@ -393,6 +393,7 @@ export function ProviderAnalyticsView({
           <option value="all">{zh ? "All providers" : "All providers"}</option>
           <option value="openai_responses">OpenAI Responses</option>
           <option value="anthropic">Anthropic</option>
+          <option value="google_gemini">Gemini</option>
         </select>
       </section>
 
@@ -559,6 +560,7 @@ function chartBarHeight(value: number, max: number): number {
 function formatProvider(provider: ProviderFilter): string {
   if (provider === "openai_responses") return "OpenAI Responses";
   if (provider === "anthropic") return "Anthropic";
+  if (provider === "google_gemini") return "Gemini";
   return "All";
 }
 

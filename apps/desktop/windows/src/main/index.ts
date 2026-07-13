@@ -150,6 +150,7 @@ import {
   summarizeWorkspaceFolder,
 } from "./workspaceContext";
 import {
+  acceptWorkspaceCheckpoint,
   createWorkspaceCheckpoint,
   listWorkspaceCheckpoints,
   previewWorkspaceCheckpoint,
@@ -2512,6 +2513,13 @@ function registerIpc(): void {
     }
     await assertExecutionAllowed("workspace.checkpoint");
     return createWorkspaceCheckpoint(request);
+  });
+  secureHandle("desktop:workspace-checkpoint-accept", async (_event, request) => {
+    const workspacePath = getStringProperty(request, "workspacePath");
+    if (!(await isAllowedOpenPath(workspacePath))) {
+      throw new Error("Checkpoint workspace is not registered or allowed.");
+    }
+    return acceptWorkspaceCheckpoint(request);
   });
   secureHandle("desktop:workspace-checkpoint-preview", async (_event, request) => {
     const workspacePath = getStringProperty(request, "workspacePath");
