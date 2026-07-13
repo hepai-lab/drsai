@@ -2,8 +2,6 @@ name: Windows Desktop
 
 env:
   OPENDRSAI_RELEASE_REPOSITORY: hepai-lab/drsai
-  TEMP: ${{ runner.temp }}
-  TMP: ${{ runner.temp }}
 
 on:
   push:
@@ -47,6 +45,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Normalize runner temp paths
+        shell: pwsh
+        run: |
+          "TEMP=${{ runner.temp }}" >> $env:GITHUB_ENV
+          "TMP=${{ runner.temp }}" >> $env:GITHUB_ENV
 
       - name: Setup Node
         uses: actions/setup-node@v4
