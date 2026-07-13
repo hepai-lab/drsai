@@ -1,0 +1,43 @@
+{
+  "productName": "OpenDrSai",
+  "primaryLocale": "en-US",
+  "additionalLocales": ["zh-CN"],
+  "category": "DeveloperTools",
+  "shortDescription": "OpenDrSai desktop shell for the DrSai AI assistant.",
+  "description": "OpenDrSai is a Windows desktop shell for the DrSai AI assistant. It provides local backend install and repair workflows, chat, workspace context, files, terminal, and AI agent tools.",
+  "privacyPolicyUrl": "__STORE_PRIVACY_POLICY_URL__",
+  "supportUrl": "__STORE_SUPPORT_URL__",
+  "websiteUrl": "https://github.com/hepai-lab/drsai",
+  "publisherDisplayName": "__PARTNER_CENTER_PUBLISHER_DISPLAY_NAME__",
+  "storePackageIdentityName": "__PARTNER_CENTER_PACKAGE_IDENTITY_NAME__",
+  "storePublisherSubject": "__PARTNER_CENTER_PUBLISHER_SUBJECT__",
+  "certificationNotes": [
+    "This app can read user-selected workspace files and send prompts or selected context to configured AI services.",
+    "The release build must be Authenticode signed and uploaded from the immutable versioned GitHub Release URL.",
+    "If reviewers need a test account or API key, provide it in the private Partner Center notes before submission.",
+    "Do not claim medical diagnosis, emergency support, or clinical decision making in Store metadata."
+  ],
+  "screenshotRequirements": [
+    {
+      "name": "chat-workspace",
+      "minimumSize": "1366x768",
+      "description": "Main chat workspace with composer, sidebar, and files panel."
+    },
+    {
+      "name": "agent-square",
+      "minimumSize": "1366x768",
+      "description": "Agent discovery or marketplace view."
+    },
+    {
+      "name": "settings",
+      "minimumSize": "1366x768",
+      "description": "Settings page showing account/backend configuration without secrets."
+    }
+  ],
+  "dataSafetySummary": {
+    "localFiles": "Reads only user-selected workspace files and app logs.",
+    "promptsAndConversations": "May send user prompts and selected context to configured AI services.",
+    "credentials": "Stores local configuration such as API keys using app-controlled settings; do not expose secrets in screenshots.",
+    "network": "Uses HTTPS for update checks, release downloads, authentication, and AI service requests."
+  }
+}

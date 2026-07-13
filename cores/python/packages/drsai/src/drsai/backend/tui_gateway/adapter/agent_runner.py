@@ -20,12 +20,48 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import threading
 import time
 from concurrent.futures import Future
 from typing import Any, Callable, Mapping, Optional
 
 logger = logging.getLogger(__name__)
+
+
+class _FakeAgent:
+    """Deterministic agent for gateway smoke tests.
+
+    It is enabled only with ``DRSAI_TUI_FAKE_AGENT=1`` so tests can exercise
+    the terminal-to-gateway streaming contract without API keys or network.
+    """
+
+    _drsai_tui_fake_agent = True
+    _defult_config_name = "fake"
+    _only_in_workspace = True
+    _allow_dangerous_commands = False
+    _thread_state: dict[str, Any] = {}
+
+    async def lazy_init(self) -> None:
+        return None
+
+    async def load_state(self, _state: dict) -> None:
+        return None
+
+    async def save_state(self) -> dict:
+        return {"fake": True}
+
+    async def resume(self) -> None:
+        return None
+
+    def run_stream(self, *, task: Any):
+        async def _stream():
+            text = getattr(task, "content", task)
+            if isinstance(text, list):
+                text = " ".join(str(item) for item in text if isinstance(item, str))
+            yield {"type": "delta", "text": f"fake-agent: {text}"}
+
+        return _stream()
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -126,6 +162,11 @@ class AgentSession:
                 pass
 
     async def _async_init(self, *, defult_config_name: Optional[str]) -> None:
+        if os.environ.get("DRSAI_TUI_FAKE_AGENT") == "1":
+            self.agent = _FakeAgent()
+            self._workdir = await self._load_thread_meta_workdir_async() or ""
+            return
+
         from drsai.backend.run_drsai_agent_factory import create_agent
 
         agent = create_agent(
@@ -341,7 +382,10 @@ class AgentSession:
                 task = text
             stream = self.agent.run_stream(task=task)
             async for message in stream:
-                events = translate(message, state)
+                if isinstance(message, dict) and message.get("type") == "delta":
+                    events = [("message.delta", {"text": str(message.get("text") or "")})]
+                else:
+                    events = translate(message, state)
                 for ev_type, payload in events:
                     try:
                         on_event(ev_type, payload)

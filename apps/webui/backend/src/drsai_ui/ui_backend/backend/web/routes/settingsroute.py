@@ -25,7 +25,15 @@ async def get_settings(user_id: str, db=Depends(get_db)) -> Dict:
             response = db.get(Settings, filters={"user_id": user_id})
         elif not response.status or not response.data:
             # create a default settings
-            config = fetcher.get_default_config(username=user_id, user_source=user_source)
+            try:
+                config = fetcher.get_default_config(username=user_id)
+            except ValueError as e:
+                # Non-SSO / unrecognized users may not have a default personal-key config.
+                # This is an expected business case, so return a 4xx (not a 500).
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"settings not available for user_id={user_id} (user not found or not SSO user)",
+                ) from e
             # config = {}
             default_settings = Settings(user_id=user_id, config=config)
             db.upsert(default_settings)
@@ -34,6 +42,8 @@ async def get_settings(user_id: str, db=Depends(get_db)) -> Dict:
         return {"status": True, "data": settings}
     
     except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 

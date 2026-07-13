@@ -97,6 +97,18 @@
     }
   },
 
+  "glm-5.2": {
+    "model": "zhipu/glm-5.2",
+    "token_limit": 200000,
+    "max_tokens": 64000,
+    "client_type": "openai",
+    "reasoning": {
+      "supported": true,
+      "effort_levels": ["low", "medium", "high"],
+      "param_type": "zhipu_format"
+    }
+  },
+
   "minimax-m2.7": {
     "model": "minimax/minimax-m2.7",
     "token_limit": 196608,

@@ -61,6 +61,8 @@ export interface SessionInfo {
   session_id: string
   name: string
   updated_at: string
+  created_at?: string | number
+  last_interaction_ts?: string | number
   message_count: number
   preview: string
   workdir: string

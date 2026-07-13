@@ -1,7 +1,8 @@
 # DrSai Desktop
-跳过调试：```bash scripts/install.sh   --skip-setup   --dev-source /home/xiongdb/drsai```
 
-> DrSai 桌面应用：Electron + React 前端，本地 Python FastAPI Gateway 后端  
+跳过调试：``bash scripts/install.sh   --skip-setup   --dev-source /home/xiongdb/drsai``
+
+> DrSai 桌面应用：Electron + React 前端，本地 Python FastAPI Gateway 后端
 > 渲染进程通过 `window.drsaiAPI` 调用 Electron 主进程，主进程通过 HTTP JSON / SSE 与 DrSai Gateway 通信
 
 ## 项目结构
@@ -76,15 +77,15 @@ DrSai Desktop 当前采用 **Electron + React 桌面壳 + 本地 Python FastAPI 
 
 ### 技术选型概览
 
-| 层级 | 选型 | 说明 |
-|:--|:--|:--|
-| 桌面容器 | Electron 39 | 跨平台窗口、菜单、系统集成 |
-| 构建 | electron-vite 5 / Vite 7 / electron-builder | 开发热更新、分包构建、安装包产物 |
-| 前端 | React 19 / TypeScript 5 | 组件化 UI 与 IPC 类型约束 |
-| 样式与渲染 | Tailwind CSS 4、react-markdown、remark-gfm、react-syntax-highlighter、lucide-react | 聊天 Markdown、代码高亮、图标和页面样式 |
-| 国际化 | i18next / react-i18next | 多语言资源位于 `src/shared/i18n` |
-| 后端 Gateway | FastAPI + uvicorn | 本地 HTTP API 和 SSE 流式输出 |
-| Agent Runtime | DrSai + autogen_agentchat | Agent、工具调用、技能、记忆和线程状态 |
+| 层级          | 选型                                                                               | 说明                                    |
+| :------------ | :--------------------------------------------------------------------------------- | :-------------------------------------- |
+| 桌面容器      | Electron 39                                                                        | 跨平台窗口、菜单、系统集成              |
+| 构建          | electron-vite 5 / Vite 7 / electron-builder                                        | 开发热更新、分包构建、安装包产物        |
+| 前端          | React 19 / TypeScript 5                                                            | 组件化 UI 与 IPC 类型约束               |
+| 样式与渲染    | Tailwind CSS 4、react-markdown、remark-gfm、react-syntax-highlighter、lucide-react | 聊天 Markdown、代码高亮、图标和页面样式 |
+| 国际化        | i18next / react-i18next                                                            | 多语言资源位于`src/shared/i18n`       |
+| 后端 Gateway  | FastAPI + uvicorn                                                                  | 本地 HTTP API 和 SSE 流式输出           |
+| Agent Runtime | DrSai + autogen_agentchat                                                          | Agent、工具调用、技能、记忆和线程状态   |
 
 ### 后端通信方案
 
@@ -158,6 +159,7 @@ python drsai_api_server.py
 </details>
 
 启动成功标志：
+
 ```
 INFO:     Started server process
 INFO:     Uvicorn running on http://127.0.0.1:8642
@@ -230,6 +232,7 @@ npm run dev
 </details>
 
 启动成功标志：
+
 ```
 [electron-vite] dev server running at http://localhost:5173/
 ```
@@ -240,24 +243,24 @@ npm run dev
 
 ## 端口约定
 
-| 服务 | 端口 | 说明 |
-|:--|:--|:--|
-| DrSai API Server | `8642` | FastAPI + uvicorn，可设 `DRSAI_API_PORT` 覆盖 |
-| Electron Dev Server | `5173` | Vite 热更新开发服务器 |
+| 服务                | 端口     | 说明                                           |
+| :------------------ | :------- | :--------------------------------------------- |
+| DrSai API Server    | `8642` | FastAPI + uvicorn，可设`DRSAI_API_PORT` 覆盖 |
+| Electron Dev Server | `5173` | Vite 热更新开发服务器                          |
 
 ---
 
 ## 当前模块状态
 
-| 模块 | 状态 | 说明 |
-|:--|:--|:--|
-| Chat | ✅ 主链路 | `src/main/drsai.ts` 通过 Gateway `/v1/chat/completions` 做 SSE 流式聊天 |
-| Models / Providers / Config | ✅ 主链路 | 经 `/v1/models/config*`、`/v1/config/*` 读写后端配置 |
-| Sessions / Memory / Skills / Tools | ✅ 主链路 | 经 Gateway API 访问线程、长期记忆、技能和工具配置 |
-| Schedules / Kanban | ✅ 已接入 | 经 `/v1/cronjobs*`、`/v1/kanban/*` 访问后端能力 |
-| Gateway 页面 | ⚠️ Stub | 生命周期管理在主进程中，页面本身当前返回 `null` |
-| Remote / SSH | ⚠️ 保留接口 | 配置和 IPC 入口存在，但 `drsai.ts` 当前以本地 Gateway 为稳定主路线 |
-| Claw3D / Office / Agents | 🧪 扩展模块 | 代码入口存在，需按产品路线决定是否保留或隐藏 |
+| 模块                               | 状态          | 说明                                                                        |
+| :--------------------------------- | :------------ | :-------------------------------------------------------------------------- |
+| Chat                               | ✅ 主链路     | `src/main/drsai.ts` 通过 Gateway `/v1/chat/completions` 做 SSE 流式聊天 |
+| Models / Providers / Config        | ✅ 主链路     | 经`/v1/models/config*`、`/v1/config/*` 读写后端配置                     |
+| Sessions / Memory / Skills / Tools | ✅ 主链路     | 经 Gateway API 访问线程、长期记忆、技能和工具配置                           |
+| Schedules / Kanban                 | ✅ 已接入     | 经`/v1/cronjobs*`、`/v1/kanban/*` 访问后端能力                          |
+| Gateway 页面                       | ⚠️ Stub     | 生命周期管理在主进程中，页面本身当前返回`null`                            |
+| Remote / SSH                       | ⚠️ 保留接口 | 配置和 IPC 入口存在，但`drsai.ts` 当前以本地 Gateway 为稳定主路线         |
+| Claw3D / Office / Agents           | 🧪 扩展模块   | 代码入口存在，需按产品路线决定是否保留或隐藏                                |
 
 ---
 
@@ -290,6 +293,7 @@ npm install electron                  # 单独装 electron (需要下载 ~100MB,
 > **说明**：`--ignore-scripts` 会同时跳过 better-sqlite3 的 C++ 编译 和 electron 的二进制下载。前者我们想跳过，后者必须执行。所以分两步。
 
 **升级 g++（Linux 彻底解决）**：
+
 ```bash
 sudo apt install g++-11
 sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 100
@@ -297,3 +301,4 @@ cd drsai-desktop && npm rebuild better-sqlite3
 ```
 
 > **Windows 说明**：Windows 上 better-sqlite3 需要 Visual Studio Build Tools（含 C++ 工作负载）才能编译。如不想安装 VS Build Tools，使用上述 `--ignore-scripts` 方案即可。Electron 本身不依赖 better-sqlite3。
+

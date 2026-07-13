@@ -1,0 +1,189 @@
+param(
+    [string]$OutDir = "$PSScriptRoot\..\..\windows\release\bootstrapper",
+    [string]$DesktopAppDir = "$PSScriptRoot\..\..\windows\release\win-unpacked",
+    [string]$DrsaiAgentDir = "",
+    [string]$DrsaiHomeDefaultsDir = "",
+    [string]$Version = "",
+    [string]$Channel = "dev"
+)
+
+$ErrorActionPreference = "Stop"
+
+function Resolve-FullPath([string]$Path) {
+    if (Test-Path $Path) {
+        return (Resolve-Path $Path).Path
+    }
+    return [System.IO.Path]::GetFullPath($Path)
+}
+
+function Copy-DirectoryContents([string]$Source, [string]$Destination) {
+    New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+    Copy-Item -Path (Join-Path $Source "*") -Destination $Destination -Recurse -Force
+}
+
+function Remove-PythonCaches([string]$Root) {
+    Get-ChildItem -LiteralPath $Root -Recurse -Directory -Filter "__pycache__" -Force -ErrorAction SilentlyContinue |
+        Sort-Object { $_.FullName.Length } -Descending |
+        Remove-Item -Recurse -Force
+    Get-ChildItem -LiteralPath $Root -Recurse -File -Force -ErrorAction SilentlyContinue |
+        Where-Object { $_.Extension -in @(".pyc", ".pyo") } |
+        Remove-Item -Force
+}
+
+function Remove-NodePtyBuildSources([string]$AppRoot) {
+    $nodePty = Join-Path $AppRoot "resources\app.asar.unpacked\node_modules\node-pty"
+    if (-not (Test-Path -LiteralPath $nodePty)) { return }
+    foreach ($name in @("build", "deps", "node-addon-api", "scripts", "src")) {
+        $candidate = Join-Path $nodePty $name
+        if (Test-Path -LiteralPath $candidate) {
+            Remove-Item -LiteralPath $candidate -Recurse -Force
+        }
+    }
+}
+
+function Add-PortablePythonBase([string]$SourceAgent, [string]$TargetAgent) {
+    $sourceVenv = Join-Path $SourceAgent "venv"
+    $targetVenv = Join-Path $TargetAgent "venv"
+    $configPath = Join-Path $sourceVenv "pyvenv.cfg"
+    $homeLine = Get-Content -LiteralPath $configPath | Where-Object { $_ -match '^home\s*=' } | Select-Object -First 1
+    if (-not $homeLine) { throw "pyvenv.cfg does not declare a Python home: $configPath" }
+    $pythonHome = ($homeLine -split '=', 2)[1].Trim()
+    if (-not (Test-Path (Join-Path $pythonHome "python.exe"))) {
+        throw "Python base runtime was not found: $pythonHome"
+    }
+
+    foreach ($directory in @("DLLs", "libs", "tcl")) {
+        $source = Join-Path $pythonHome $directory
+        if (Test-Path $source) { Copy-DirectoryContents $source (Join-Path $targetVenv $directory) }
+    }
+    $sourceLib = Join-Path $pythonHome "Lib"
+    Get-ChildItem -LiteralPath $sourceLib -Force |
+        Where-Object { $_.Name -ne "site-packages" } |
+        ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $targetVenv "Lib") -Recurse -Force }
+    foreach ($pattern in @("python*.exe", "python*.dll", "vcruntime*.dll", "LICENSE.txt")) {
+        Get-ChildItem -LiteralPath $pythonHome -Filter $pattern -File -ErrorAction SilentlyContinue |
+            Copy-Item -Destination $targetVenv -Force
+    }
+}
+
+function Materialize-EditablePythonPackages([string]$AgentRoot) {
+    $sitePackages = Join-Path $AgentRoot "venv\Lib\site-packages"
+    Get-ChildItem -LiteralPath $sitePackages -Filter "*.pth" -File -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            $pth = $_
+            $materialized = $false
+            foreach ($line in Get-Content -LiteralPath $pth.FullName) {
+                $source = $line.Trim()
+                if (-not $source -or $source.StartsWith("#") -or $source.StartsWith("import ")) { continue }
+                if ([IO.Path]::IsPathRooted($source) -and (Test-Path -LiteralPath $source)) {
+                    Copy-DirectoryContents $source $sitePackages
+                    $materialized = $true
+                }
+            }
+            if ($materialized) { Remove-Item -LiteralPath $pth.FullName -Force }
+        }
+}
+
+$windowsAppDir = Resolve-FullPath (Join-Path $PSScriptRoot "..\..\windows")
+if (-not $Version) {
+    $Version = (Get-Content (Join-Path $windowsAppDir "package.json") -Raw | ConvertFrom-Json).version
+}
+if ($Channel -notin @("stable", "beta", "dev")) {
+    throw "Unsupported channel: $Channel"
+}
+
+$desktopAppDir = Resolve-FullPath $DesktopAppDir
+if (-not (Test-Path (Join-Path $desktopAppDir "OpenDrSai.exe"))) {
+    throw "Desktop app was not found: $(Join-Path $desktopAppDir "OpenDrSai.exe")."
+}
+
+if (-not $DrsaiAgentDir) {
+    $candidates = @(
+        (Join-Path $windowsAppDir ".tmp\bootstrapper-msi3\.drsai\drsai-agent"),
+        (Join-Path $windowsAppDir ".tmp\bootstrapper-exe\.drsai\drsai-agent"),
+        (Join-Path $env:USERPROFILE ".drsai\drsai-agent")
+    )
+    foreach ($candidate in $candidates) {
+        if (Test-Path (Join-Path $candidate "venv\Scripts\python.exe")) {
+            $DrsaiAgentDir = $candidate
+            break
+        }
+    }
+}
+if (-not $DrsaiAgentDir) {
+    throw "DrsaiAgentDir is required. Provide a prepared drsai-agent directory with venv."
+}
+$drsaiAgentDir = Resolve-FullPath $DrsaiAgentDir
+if (-not (Test-Path (Join-Path $drsaiAgentDir "venv\Scripts\python.exe"))) {
+    throw "DrsaiAgentDir is missing venv\Scripts\python.exe: $drsaiAgentDir"
+}
+if (-not (Test-Path (Join-Path $drsaiAgentDir "venv\Scripts\drsai.cmd"))) {
+    throw "DrsaiAgentDir is missing venv\Scripts\drsai.cmd: $drsaiAgentDir"
+}
+
+$outDir = Resolve-FullPath $OutDir
+New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+
+$workRoot = Join-Path $outDir "opendrsai-runtime-work"
+$payloadRoot = Join-Path $workRoot "OpenDrSaiRuntime-win-x64"
+Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $workRoot
+New-Item -ItemType Directory -Force -Path $payloadRoot | Out-Null
+
+Copy-DirectoryContents $desktopAppDir (Join-Path $payloadRoot "app")
+Remove-NodePtyBuildSources (Join-Path $payloadRoot "app")
+Copy-DirectoryContents $drsaiAgentDir (Join-Path $payloadRoot "drsai-agent")
+Materialize-EditablePythonPackages (Join-Path $payloadRoot "drsai-agent")
+Remove-PythonCaches (Join-Path $payloadRoot "drsai-agent")
+Add-PortablePythonBase $drsaiAgentDir (Join-Path $payloadRoot "drsai-agent")
+
+$homeDefaultsTarget = Join-Path $payloadRoot "drsai-home"
+New-Item -ItemType Directory -Force -Path $homeDefaultsTarget | Out-Null
+if ($DrsaiHomeDefaultsDir -and (Test-Path $DrsaiHomeDefaultsDir)) {
+    Copy-DirectoryContents (Resolve-FullPath $DrsaiHomeDefaultsDir) $homeDefaultsTarget
+} else {
+    $agentParent = Split-Path -Parent $drsaiAgentDir
+    foreach ($name in @(".env", "config.yaml")) {
+        $candidate = Join-Path $agentParent $name
+        if (Test-Path $candidate) {
+            Copy-Item -LiteralPath $candidate -Destination (Join-Path $homeDefaultsTarget $name) -Force
+        }
+    }
+}
+
+$manifest = [ordered]@{
+    name = "OpenDrSai Runtime"
+    version = $Version
+    channel = $Channel
+    platform = "windows-x64"
+    layoutVersion = 1
+    createdAt = (Get-Date).ToUniversalTime().ToString("o")
+    entrypoints = [ordered]@{
+        desktop = "app/OpenDrSai.exe"
+        python = "drsai-agent/venv/Scripts/python.exe"
+        drsai = "drsai-agent/venv/Scripts/drsai.cmd"
+        gateway = "drsai-agent/venv/Scripts/drsai-gateway.cmd"
+    }
+}
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText(
+    (Join-Path $payloadRoot "opendrsai-runtime.json"),
+    (($manifest | ConvertTo-Json -Depth 8) + [Environment]::NewLine),
+    $utf8NoBom
+)
+
+$runtimeZip = Join-Path $outDir "OpenDrSaiRuntime-win-x64.zip"
+Remove-Item -LiteralPath $runtimeZip -Force -ErrorAction SilentlyContinue
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+[System.IO.Compression.ZipFile]::CreateFromDirectory(
+    $payloadRoot,
+    $runtimeZip,
+    [System.IO.Compression.CompressionLevel]::Optimal,
+    $false
+)
+Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $workRoot
+
+$hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $runtimeZip).Hash.ToLowerInvariant()
+$size = (Get-Item -LiteralPath $runtimeZip).Length
+Write-Host "Built $runtimeZip" -ForegroundColor Green
+Write-Host "  sha256: $hash"
+Write-Host "  size:   $size"

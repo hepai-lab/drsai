@@ -420,7 +420,7 @@ def _launch_tui(*, attach_url: Optional[str] = None) -> None:
 
 @app.command("gateway")
 def gateway(
-    port: int = typer.Option(8642, help="API server port"),
+    port: int = typer.Option(18642, help="API server port"),
     host: str = typer.Option("127.0.0.1", help="API server host"),
 ) -> None:
     """Start the legacy DrSai SSE gateway (for the Electron desktop app)."""

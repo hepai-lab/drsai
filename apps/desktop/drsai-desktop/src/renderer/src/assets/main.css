@@ -124,9 +124,9 @@
   --transition: 150ms ease;
   --font-sans:
     "Google Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-    "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC",
-    "WenQuanYi Micro Hei", "Hiragino Sans GB",
-    "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
+    "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", "WenQuanYi Micro Hei",
+    "Hiragino Sans GB", "Noto Color Emoji", "Apple Color Emoji",
+    "Segoe UI Emoji", sans-serif;
   --font-mono:
     "SF Mono", "Fira Code", "JetBrains Mono", Menlo, Consolas,
     "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", monospace;
@@ -999,9 +999,137 @@ body {
 
 .content {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+
+.workspace-shell {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  overflow: hidden;
+  position: relative;
+}
+
+.terminal-rail-button {
+  width: 42px;
+  flex: 0 0 42px;
+  border: none;
+  border-left: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 14px;
+  cursor: pointer;
+  transition:
+    background var(--transition),
+    color var(--transition);
+}
+
+.terminal-rail-button:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.terminal-panel {
+  width: min(420px, 38vw);
+  min-width: 320px;
+  max-width: 520px;
+  flex: 0 0 auto;
+  border-left: 1px solid var(--border);
+  background: #0f1115;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.terminal-panel-header {
+  height: 44px;
+  flex: 0 0 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 10px 0 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: #151922;
+  color: #eef2f7;
+}
+
+.terminal-panel-title {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.terminal-panel-title span {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.terminal-panel-title small {
+  color: #9ca3af;
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.terminal-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.terminal-panel-actions button {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #aab2c0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition:
+    background var(--transition),
+    color var(--transition);
+}
+
+.terminal-panel-actions button:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+}
+
+.terminal-panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 8px 0 8px 8px;
+}
+
+.terminal-panel-body .xterm {
+  height: 100%;
+}
+
+.terminal-panel-body .xterm-viewport {
+  background: #0f1115 !important;
+}
+
+@media (max-width: 960px) {
+  .terminal-panel {
+    width: min(360px, 46vw);
+    min-width: 300px;
+  }
 }
 
 /* ========================================================================
@@ -1032,6 +1160,58 @@ body {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+.chat-searchbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+}
+
+.chat-searchbar-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.chat-searchbar-input {
+  flex: 1;
+  min-width: 120px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: var(--font-sans);
+}
+
+.chat-searchbar-input::placeholder {
+  color: var(--text-muted);
+}
+
+.chat-searchbar-count {
+  min-width: 72px;
+  text-align: right;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-searchbar-step,
+.chat-searchbar-close {
+  padding: 4px 6px;
+}
+
+.chat-searchbar-step:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.chat-searchbar-up {
+  transform: rotate(180deg);
 }
 
 .chat-clear-btn {
@@ -1408,6 +1588,23 @@ body {
   max-width: 100%;
   overflow-x: auto;
   user-select: text;
+}
+
+.chat-message-search-match .chat-bubble {
+  outline: 1px solid rgba(245, 158, 11, 0.45);
+  outline-offset: 2px;
+}
+
+.chat-message-search-active .chat-bubble {
+  outline: 2px solid var(--warning);
+  outline-offset: 3px;
+}
+
+.chat-search-mark {
+  background: rgba(245, 158, 11, 0.38);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 2px;
 }
 
 .chat-bubble-user {
@@ -2888,6 +3085,7 @@ body {
 }
 
 /* Search bar — integrated into header */
+.sessions-search-trigger,
 .sessions-searchbar {
   display: flex;
   align-items: center;
@@ -2899,6 +3097,21 @@ body {
   transition:
     border-color var(--transition),
     box-shadow var(--transition);
+}
+
+.sessions-search-trigger {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 12px;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.sessions-search-trigger:hover {
+  border-color: var(--border-bright);
+  background: var(--bg-tertiary);
 }
 
 .sessions-searchbar:focus-within {
@@ -2929,6 +3142,76 @@ body {
 .sessions-searchbar-clear {
   padding: 2px;
   color: var(--text-muted);
+}
+
+.sessions-search-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: min(18vh, 140px);
+}
+
+.sessions-search-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgba(0, 0, 0, 0.28);
+  cursor: default;
+}
+
+.sessions-search-panel {
+  position: relative;
+  width: min(680px, calc(100vw - 48px));
+  max-height: min(70vh, 620px);
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  padding: 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-bright);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+
+.sessions-search-panel .sessions-searchbar {
+  min-width: 0;
+}
+
+.sessions-search-modal-close {
+  width: 34px;
+  height: 34px;
+  align-self: center;
+  justify-content: center;
+  color: var(--text-muted);
+}
+
+.sessions-search-results {
+  grid-column: 1 / -1;
+  min-height: 180px;
+  max-height: calc(min(70vh, 620px) - 68px);
+  overflow: hidden;
+}
+
+.sessions-search-result-list {
+  height: 100%;
+  padding: 0;
+}
+
+.sessions-search-empty,
+.sessions-search-loading,
+.sessions-search-empty-state {
+  min-height: 180px;
+}
+
+.sessions-search-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 13px;
 }
 
 /* Loading & empty states */
@@ -5272,7 +5555,9 @@ body {
   flex-direction: column;
   gap: 6px;
   cursor: grab;
-  transition: border-color var(--transition), opacity var(--transition);
+  transition:
+    border-color var(--transition),
+    opacity var(--transition);
 }
 
 .kanban-card:hover {
@@ -5476,4 +5761,3 @@ body {
   font-size: 11px;
   color: var(--text-muted);
 }
-

@@ -211,7 +211,7 @@ export async function updateSessionTitleAsync(
   updateSessionTitle(sessionId, title);
   try {
     const http = require("http") as typeof import("http");
-    const DRSAI_API_PORT = parseInt(process.env.DRSAI_API_PORT || "8642", 10);
+    const DRSAI_API_PORT = parseInt(process.env.DRSAI_API_PORT || "18642", 10);
     await new Promise<void>((resolve) => {
       const req = http.request(
         `http://127.0.0.1:${DRSAI_API_PORT}/v1/threads/${encodeURIComponent(sessionId)}/rename?name=${encodeURIComponent(title)}`,

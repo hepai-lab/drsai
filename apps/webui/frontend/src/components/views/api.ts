@@ -502,6 +502,10 @@ export class SettingsAPI {
                 headers: this.getHeaders(),
             }
         );
+        // For non-SSO / missing users, backend should return 4xx. Treat as "no settings".
+        if (response.status === 401 || response.status === 403 || response.status === 404 || response.status === 422) {
+            return {};
+        }
         const data = await response.json();
         if (!data.status)
             throw new Error(data.message || "Failed to fetch settings");
@@ -702,7 +706,31 @@ export class AgentWorkerAPI {
                 })
             }
         );
-        const data = await response.json();
+        let data: any = {};
+        try {
+            data = await response.json();
+        } catch {
+            throw new Error("Failed to save remote agent");
+        }
+        if (!response.ok) {
+            const d = data?.detail;
+            let msg: string;
+            if (typeof d === "string") {
+                msg = d;
+            } else if (Array.isArray(d)) {
+                msg = d
+                    .map((x: unknown) => {
+                        if (x && typeof x === "object" && "msg" in x) {
+                            return String((x as { msg: unknown }).msg);
+                        }
+                        return typeof x === "string" ? x : JSON.stringify(x);
+                    })
+                    .join(", ");
+            } else {
+                msg = data?.message || `Request failed (${response.status})`;
+            }
+            throw new Error(msg);
+        }
         if (!data.status)
             throw new Error(data.message || "Failed to save remote agent");
         return data;

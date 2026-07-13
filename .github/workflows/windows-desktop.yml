@@ -1,0 +1,192 @@
+name: Windows Desktop
+
+env:
+  OPENDRSAI_RELEASE_REPOSITORY: hepai-lab/drsai
+
+on:
+  push:
+    branches:
+      - main
+      - merge_latest
+      - feature/windows_app_with_webui
+    tags:
+      - "v*"
+    paths:
+      - "apps/desktop/windows/**"
+      - "scripts/install.ps1"
+      - ".github/workflows/windows-desktop.yml"
+  pull_request:
+    paths:
+      - "apps/desktop/windows/**"
+      - "scripts/install.ps1"
+      - ".github/workflows/windows-desktop.yml"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag used when publishing manually"
+        required: false
+        default: ""
+      publish_release:
+        description: "Publish assets to the GitHub Release"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows-desktop:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: apps/desktop/windows
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/desktop/windows/package-lock.json
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Windows icon
+        run: npm run icon:win
+
+      - name: Verify project invariants
+        run: npm run verify
+
+      - name: Verify backend installer prerequisite check
+        run: npm run verify:install-check
+
+      - name: Typecheck and build
+        run: npm run build
+
+      - name: Build full Windows installer
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run build:win -- --publish=never
+
+      - name: Verify packaged app smoke
+        run: npm run verify:packaged
+
+      - name: Resolve release coordinates
+        shell: pwsh
+        run: |
+          $package = Get-Content package.json | ConvertFrom-Json
+          $expectedTag = "v$($package.version)"
+
+          if ("${{ startsWith(github.ref, 'refs/tags/') }}" -eq "true") {
+            $tag = "${{ github.ref_name }}"
+          } elseif ("${{ inputs.release_tag }}" -ne "") {
+            $tag = "${{ inputs.release_tag }}"
+          } elseif ("${{ inputs.publish_release }}" -eq "true") {
+            $tag = $expectedTag
+          } else {
+            $tag = "latest"
+          }
+
+          if ($tag -ne "latest" -and $tag -ne $expectedTag) {
+            throw "Release tag $tag must match package version tag $expectedTag so backend repair installs the matching tag."
+          }
+          if ("${{ inputs.publish_release }}" -eq "true" -and "${{ github.ref_name }}" -ne "main") {
+            throw "Manual publish_release must run from main."
+          }
+
+          if ($tag -eq "latest") {
+            $baseUrl = "https://github.com/$env:OPENDRSAI_RELEASE_REPOSITORY/releases/latest/download"
+          } else {
+            $baseUrl = "https://github.com/$env:OPENDRSAI_RELEASE_REPOSITORY/releases/download/$tag"
+          }
+
+          "OPENDRSAI_RELEASE_TAG=$tag" >> $env:GITHUB_ENV
+          "OPENDRSAI_RELEASE_BASE_URL=$baseUrl" >> $env:GITHUB_ENV
+
+      - name: Verify backend release tag
+        if: env.OPENDRSAI_RELEASE_TAG != 'latest'
+        shell: pwsh
+        run: |
+          git ls-remote --exit-code --tags "https://github.com/$env:OPENDRSAI_RELEASE_REPOSITORY.git" "refs/tags/$env:OPENDRSAI_RELEASE_TAG"
+
+      - name: Verify backend release version
+        if: env.OPENDRSAI_RELEASE_TAG != 'latest'
+        shell: pwsh
+        run: |
+          $package = Get-Content package.json | ConvertFrom-Json
+          powershell -ExecutionPolicy Bypass -File scripts\verify-backend-release-version.ps1 `
+            -Repository "$env:OPENDRSAI_RELEASE_REPOSITORY" `
+            -Tag "$env:OPENDRSAI_RELEASE_TAG" `
+            -ExpectedVersion "$($package.version)"
+
+      - name: Build Windows runtime archive
+        run: npm run build:runtime
+
+      - name: Install WiX Toolset
+        run: choco install wixtoolset -y --no-progress
+
+      - name: Build bootstrapper MSI
+        run: npm run build:bootstrapper
+
+      - name: Sign bootstrapper MSI
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          EXPECTED_WINDOWS_SIGNER_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
+          EXPECTED_WINDOWS_SIGNER_SUBJECT: ${{ vars.WINDOWS_CERTIFICATE_SUBJECT }}
+          REQUIRE_SIGNED_WINDOWS_ARTIFACTS: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.publish_release) && '1' || '0' }}
+        run: npm run sign:bootstrapper
+
+      - name: Generate release summary
+        run: npm run summary:win
+
+      - name: Verify release artifacts
+        run: npm run verify:artifacts
+
+      - name: Verify Windows signatures
+        env:
+          EXPECTED_WINDOWS_SIGNER_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
+          EXPECTED_WINDOWS_SIGNER_SUBJECT: ${{ vars.WINDOWS_CERTIFICATE_SUBJECT }}
+          REQUIRE_SIGNED_WINDOWS_ARTIFACTS: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.publish_release) && '1' || '0' }}
+        run: npm run verify:signatures
+
+      - name: Verify local release readiness
+        env:
+          REQUIRE_RELEASE_READY: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.publish_release) && '1' || '0' }}
+          SKIP_PUBLIC_RELEASE_CHECK: "1"
+        run: npm run verify:release-ready
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: opendrsai-windows-desktop
+          path: |
+            apps/desktop/windows/release/bootstrapper/OpenDrSaiSetup.msi
+            apps/desktop/windows/release/bootstrapper/OpenDrSaiRuntime-win-x64.zip
+            apps/desktop/windows/release/release-summary.json
+            apps/desktop/windows/release/visual-checks/*.png
+
+      - name: Publish GitHub Release assets
+        if: github.repository == 'hepai-lab/drsai' && (startsWith(github.ref, 'refs/tags/') || inputs.publish_release)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.OPENDRSAI_RELEASE_TAG }}
+          draft: true
+          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') || contains(github.ref_name, 'rc') }}
+          files: |
+            apps/desktop/windows/release/bootstrapper/OpenDrSaiSetup.msi
+            apps/desktop/windows/release/bootstrapper/OpenDrSaiRuntime-win-x64.zip
+            apps/desktop/windows/release/release-summary.json

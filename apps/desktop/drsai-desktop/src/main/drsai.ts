@@ -5,7 +5,7 @@
  * interface via HTTP SSE.
  *
  * Architecture:
- *   Electron main  ──HTTP SSE──▶  DrSai API Server (FastAPI, port 8642)
+ *   Electron main  ──HTTP SSE──▶  DrSai API Server (FastAPI, port 18642)
  *                                  └── DrSai Assistant (autogen_agentchat)
  *
  * SSE format (DrSai API):
@@ -32,7 +32,7 @@ import { DRSAI_PYTHON } from "./installer";
 //  Constants
 // ────────────────────────────────────────────────────
 
-const DRSAI_API_PORT = parseInt(process.env.DRSAI_API_PORT || "8642", 10);
+const DRSAI_API_PORT = parseInt(process.env.DRSAI_API_PORT || "18642", 10);
 const DRSAI_API_URL = `http://127.0.0.1:${DRSAI_API_PORT}`;
 
 /**
@@ -174,7 +174,6 @@ function sendMessageViaApi(
   };
 
   let sessionId = resumeSessionId || "";
-  let hasContent = false;
   let finished = false;
 
   function finish(error?: string): void {
@@ -189,11 +188,7 @@ function sendMessageViaApi(
 
   function processSseData(data: string): boolean {
     if (data === "[DONE]") {
-      if (!hasContent) {
-        finish("No response received. Check your API configuration.");
-      } else {
-        finish();
-      }
+      finish();
       return true;
     }
     try {
@@ -218,7 +213,6 @@ function sendMessageViaApi(
       }
 
       if (delta?.content) {
-        hasContent = true;
         cb.onChunk(delta.content);
       }
     } catch {
@@ -237,6 +231,15 @@ function sendMessageViaApi(
       } catch {
         /* malformed — skip */
       }
+    }
+  }
+
+  function finishFromErrorPayload(data: string): void {
+    try {
+      const payload = JSON.parse(data);
+      finish(payload.error?.message || payload.message || data);
+    } catch {
+      finish(data);
     }
   }
 
@@ -273,20 +276,35 @@ function sendMessageViaApi(
 
       function processSseBlock(block: string): boolean {
         let eventType = "";
-        let dataLine = "";
-        for (const line of block.split("\n")) {
-          if (line.startsWith("event: ")) {
-            eventType = line.slice(7).trim();
-          } else if (line.startsWith("data: ")) {
-            dataLine = line.slice(6);
+        const dataLines: string[] = [];
+        for (const rawLine of block.split(/\r?\n/)) {
+          const line = rawLine.trimEnd();
+          if (line.startsWith("event:")) {
+            eventType = line.slice(6).trim();
+          } else if (line.startsWith("data:")) {
+            dataLines.push(line.slice(5).trimStart());
           }
         }
-        if (!dataLine) return false;
+
+        const data = dataLines.join("\n");
+        if (!data) return false;
+
+        const normalizedEvent = eventType.toLowerCase();
+        if (data === "[DONE]" || normalizedEvent === "done" || normalizedEvent === "message.done" || normalizedEvent === "chat.done") {
+          return processSseData("[DONE]");
+        }
+        if (normalizedEvent === "error" || normalizedEvent === "message.error" || normalizedEvent === "chat.error") {
+          finishFromErrorPayload(data);
+          return true;
+        }
+        if (!normalizedEvent || normalizedEvent === "message" || normalizedEvent === "message.delta" || normalizedEvent === "chat.completion") {
+          return processSseData(data);
+        }
         if (eventType) {
-          processCustomEvent(eventType, dataLine);
+          processCustomEvent(eventType, data);
           return false;
         }
-        return processSseData(dataLine);
+        return processSseData(data);
       }
 
       res.on("data", (chunk: Buffer) => {
