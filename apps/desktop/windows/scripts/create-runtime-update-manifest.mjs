@@ -10,6 +10,7 @@ const runtimePath = resolve(process.env.OPENDRSAI_RUNTIME_PATH || join(root, "re
 const outputPath = resolve(process.env.OPENDRSAI_UPDATE_MANIFEST_PATH || join(root, "release", "latest-windows.json"));
 const version = String(packageJson.version);
 const channel = String(process.env.OPENDRSAI_UPDATE_CHANNEL || "stable").toLowerCase();
+const isPrereleaseVersion = version.includes("-");
 const baseUrl = String(
   process.env.OPENDRSAI_RELEASE_BASE_URL ||
   `https://github.com/hepai-lab/drsai/releases/download/v${version}`,
@@ -38,7 +39,10 @@ const manifest = {
   publishedAt: process.env.OPENDRSAI_RELEASE_PUBLISHED_AT || new Date().toISOString(),
   minimumUpdaterVersion: process.env.OPENDRSAI_MINIMUM_UPDATER_VERSION || "1.4.2",
   mandatory: process.env.OPENDRSAI_MANDATORY_UPDATE === "1",
-  requireSignature: channel === "stable" || process.env.OPENDRSAI_REQUIRE_UPDATE_SIGNATURE === "1",
+  // Legacy beta builds request the stable channel from releases/latest. Keep
+  // prerelease compatibility manifests unsigned until a Windows certificate is
+  // available, while continuing to require signatures for every stable version.
+  requireSignature: channel === "stable" && !isPrereleaseVersion || process.env.OPENDRSAI_REQUIRE_UPDATE_SIGNATURE === "1",
   runtime: {
     url: `${baseUrl}/OpenDrSaiRuntime-win-x64.zip`,
     sizeBytes: statSync(runtimePath).size,

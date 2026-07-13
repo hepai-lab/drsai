@@ -87,6 +87,26 @@ The client accepts only supported schema versions, newer semantic versions,
 allowed release hosts, matching runtime manifests, and non-downgrade updates.
 Plain HTTP is available only under an explicit test-only environment switch.
 
+### Legacy beta compatibility window
+
+`1.4.3-beta.1` shipped with two immutable client assumptions: it reads
+`releases/latest/download/latest-windows.json`, and it requests the `stable`
+manifest channel. GitHub excludes Releases marked as prereleases from that
+pointer. Until the first Authenticode-signed stable version replaces this
+window, compatibility beta Releases therefore use all of the following:
+
+- a prerelease semantic version such as `1.4.3-beta.7`;
+- a public, non-draft Release marked non-prerelease and explicitly made latest;
+- a `stable` protocol channel so the installed beta.1 client accepts it;
+- `requireSignature: false`, permitted only because the payload version itself
+  is a prerelease; every stable semantic version still requires signatures;
+- an immutable runtime URL under `/releases/download/v<version>/`.
+
+`npm run verify:update-legacy-beta` guards the complete beta.1 discovery
+contract. After publication, public acceptance must additionally fetch the
+unversioned `releases/latest/download/latest-windows.json`, assert it resolves
+to the new version, and perform a full runtime hash download.
+
 ### Client lifecycle
 
 The updater state machine is `idle -> checking -> available -> downloading ->
@@ -112,6 +132,9 @@ ZIP extraction rejects entries escaping the staging directory. Downloaded
 bytes must match the manifest size and SHA-256. Stable public updates also
 require a valid Authenticode signature whose signer matches the installed
 publisher; unsigned updates are limited to explicit development/test mode.
+The runtime packager copies only the managed Python `venv`; projects, caches,
+downloaded apps, and user files beside a long-lived development agent are never
+included in the distributable archive.
 
 ### Release ordering
 

@@ -9,6 +9,8 @@ import { fileURLToPath } from "node:url";
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const executable = join(root, "release", "win-unpacked", "OpenDrSai.exe");
 if (!existsSync(executable)) throw new Error("Build release/win-unpacked before running the runtime update E2E test.");
+const currentVersion = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
+const targetVersion = nextPrereleaseVersion(currentVersion);
 
 const testRoot = mkdtempSync(join(tmpdir(), "opendrsai-update-e2e-"));
 const runtimePath = join(testRoot, "OpenDrSaiRuntime-win-x64.zip");
@@ -16,14 +18,14 @@ execFileSync("powershell.exe", [
   "-NoProfile", "-ExecutionPolicy", "Bypass",
   "-File", join(root, "scripts", "create-update-runtime-fixture.ps1"),
   "-OutPath", runtimePath,
-    "-Version", "1.4.3-beta.7",
+    "-Version", targetVersion,
 ], { stdio: "inherit", windowsHide: true });
 const runtime = readFileSync(runtimePath);
 const runtimeHash = createHash("sha256").update(runtime).digest("hex");
 let rangeRequests = 0;
 let manifestRequests = 0;
 let manifestHash = runtimeHash;
-let manifestVersion = "1.4.3-beta.7";
+let manifestVersion = targetVersion;
 let runtimeRoute = "/OpenDrSaiRuntime-win-x64.zip";
 
 const server = createServer((request, response) => {
@@ -79,7 +81,7 @@ const server = createServer((request, response) => {
 await new Promise((resolvePromise) => server.listen(0, "127.0.0.1", resolvePromise));
 try {
   const installRoot = join(testRoot, "install");
-    const partial = join(installRoot, "update-cache", "1.4.3-beta.7", "OpenDrSaiRuntime-win-x64.zip.partial");
+  const partial = join(installRoot, "update-cache", targetVersion, "OpenDrSaiRuntime-win-x64.zip.partial");
   mkdirSync(resolve(partial, ".."), { recursive: true });
   writeFileSync(partial, runtime.subarray(0, 127));
   const success = await runApp("success", installRoot);
@@ -97,7 +99,7 @@ try {
   const badHash = await runApp("bad-hash", badHashRoot);
   assert(badHash.exitCode !== 0, "Hash mismatch scenario unexpectedly succeeded.");
   assert(badHash.result?.details?.downloaded?.errorCode === "hash-mismatch", `Hash mismatch error was not preserved: ${JSON.stringify(badHash.result)}`);
-    assert(!existsSync(join(badHashRoot, "update-cache", "1.4.3-beta.7", "OpenDrSaiRuntime-win-x64.zip")), "Hash mismatch left a trusted runtime archive behind.");
+  assert(!existsSync(join(badHashRoot, "update-cache", targetVersion, "OpenDrSaiRuntime-win-x64.zip")), "Hash mismatch left a trusted runtime archive behind.");
 
   manifestHash = runtimeHash;
   runtimeRoute = "/redirect-runtime";
@@ -155,4 +157,10 @@ function runApp(name, installRoot) {
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+function nextPrereleaseVersion(version) {
+  const match = /^(\d+\.\d+\.\d+)-([0-9A-Za-z.-]*?)(\d+)$/.exec(version);
+  if (!match) throw new Error(`Update E2E requires a numeric prerelease version, got ${version}.`);
+  return `${match[1]}-${match[2]}${Number(match[3]) + 1}`;
 }

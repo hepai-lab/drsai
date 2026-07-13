@@ -142,7 +142,10 @@ New-Item -ItemType Directory -Force -Path $payloadRoot | Out-Null
 
 Copy-DirectoryContents $desktopAppDir (Join-Path $payloadRoot "app")
 Remove-NodePtyBuildSources (Join-Path $payloadRoot "app")
-Copy-DirectoryContents $drsaiAgentDir (Join-Path $payloadRoot "drsai-agent")
+# The development agent may contain projects, caches, downloaded apps, or user
+# files alongside its venv. Only the managed Python runtime belongs in a
+# redistributable archive.
+Copy-DirectoryContents (Join-Path $drsaiAgentDir "venv") (Join-Path $payloadRoot "drsai-agent\venv")
 Materialize-CurrentDrsaiPackage (Join-Path $payloadRoot "drsai-agent") $backendSourceDir
 Remove-PythonCaches (Join-Path $payloadRoot "drsai-agent")
 Add-PortablePythonBase $drsaiAgentDir (Join-Path $payloadRoot "drsai-agent")

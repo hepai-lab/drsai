@@ -1,6 +1,6 @@
 {
   "name": "opendrsai-windows-desktop",
-  "version": "1.4.3-beta.6",
+  "version": "1.4.3-beta.7",
   "private": true,
   "description": "OpenDrSai Windows desktop shell and installer host",
   "main": "./out/main/index.js",
@@ -26,6 +26,7 @@
     "summary:win": "node scripts/create-release-summary.mjs",
     "manifest:win": "node scripts/create-runtime-update-manifest.mjs",
     "verify:update-manifest": "node scripts/verify-runtime-update-manifest.mjs",
+    "verify:update-legacy-beta": "node scripts/verify-legacy-beta-update-contract.mjs",
     "verify:public-release": "node scripts/verify-public-runtime-release.mjs",
     "verify:update-helper": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-runtime-updater.ps1",
     "verify:e2e-update": "node scripts/verify-e2e-runtime-update.mjs",
@@ -98,7 +99,7 @@
     "verify:thread-menu": "node scripts/verify-thread-context-menu.mjs",
     "smoke:clean-win": "powershell -ExecutionPolicy Bypass -File scripts/smoke-clean-windows.ps1",
     "icon:win": "powershell -ExecutionPolicy Bypass -File scripts/create-windows-icon.ps1",
-    "verify": "npm run typecheck && npm run verify:chat-output && npm run verify:chat-sse && npm run verify:oidc-login && npm run verify:platform-auth && npm run verify:workspace-context && npm run verify:workspace-checkpoints && npm run verify:gateway-smoke && npm run verify:startup-performance && npm run verify:ui"
+    "verify": "npm run typecheck && npm run verify:update-legacy-beta && npm run verify:chat-output && npm run verify:chat-sse && npm run verify:oidc-login && npm run verify:platform-auth && npm run verify:workspace-context && npm run verify:workspace-checkpoints && npm run verify:gateway-smoke && npm run verify:startup-performance && npm run verify:ui"
   },
   "dependencies": {
     "@electron-toolkit/preload": "3.0.2",

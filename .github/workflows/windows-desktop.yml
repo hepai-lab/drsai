@@ -114,8 +114,11 @@ jobs:
             $requireSignedRelease = "0"
           } else {
             $baseUrl = "https://github.com/$env:OPENDRSAI_RELEASE_REPOSITORY/releases/download/$tag"
-            $channel = if ($package.version -match "-") { "beta" } else { "stable" }
-            $requireSignedRelease = if ($channel -eq "stable") { "1" } else { "0" }
+            # beta.1 shipped with releases/latest and the stable channel baked in.
+            # Publish prerelease-version compatibility builds through that channel
+            # until the signed stable release replaces them.
+            $channel = "stable"
+            $requireSignedRelease = if ($package.version -match "-") { "0" } else { "1" }
           }
 
           "OPENDRSAI_RELEASE_TAG=$tag" >> $env:GITHUB_ENV
@@ -212,8 +215,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.OPENDRSAI_RELEASE_TAG }}
-          draft: true
-          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') || contains(github.ref_name, 'rc') }}
+          draft: false
+          prerelease: false
+          make_latest: true
           files: |
             apps/desktop/windows/release/bootstrapper/OpenDrSaiSetup.msi
             apps/desktop/windows/release/bootstrapper/OpenDrSaiRuntime-win-x64.zip

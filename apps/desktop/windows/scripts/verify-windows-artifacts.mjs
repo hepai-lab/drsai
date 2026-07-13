@@ -34,8 +34,15 @@ const summary = JSON.parse(readFileSync(join(releaseDir, "release-summary.json")
 if (summary.version !== packageJson.version) {
   throw new Error(`release-summary.json version ${summary.version} does not match package ${packageJson.version}.`);
 }
-if (!summary.distribution || summary.distribution.requiresSignedInstallers !== true) {
+const preview = packageJson.version.includes("-");
+if (!summary.distribution || summary.distribution.releaseTier !== (preview ? "preview" : "stable")) {
   throw new Error("release-summary.json is missing installer signing distribution policy.");
+}
+if (summary.distribution.requiresSignedInstallers !== !preview) {
+  throw new Error("release-summary.json signing requirement does not match its release tier.");
+}
+if (summary.distribution.publicDistributionReady !== true) {
+  throw new Error("release-summary.json does not permit this artifact set to be published.");
 }
 
 const summaryArtifacts = new Map(

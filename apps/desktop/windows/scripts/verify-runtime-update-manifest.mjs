@@ -24,7 +24,11 @@ assert(Number.isFinite(Date.parse(manifest.publishedAt)), "Update manifest publi
 assert(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(manifest.minimumUpdaterVersion), "minimumUpdaterVersion is invalid.");
 assert(typeof manifest.mandatory === "boolean", "mandatory must be boolean.");
 assert(typeof manifest.requireSignature === "boolean", "requireSignature must be boolean.");
-assert(manifest.channel !== "stable" || manifest.requireSignature === true, "Stable updates must require signatures.");
+const isPrereleaseVersion = packageJson.version.includes("-");
+assert(
+  manifest.channel !== "stable" || isPrereleaseVersion || manifest.requireSignature === true,
+  "Stable-version updates must require signatures.",
+);
 assert(/^https:\/\//.test(manifest.runtime?.url || ""), "Runtime URL must use HTTPS.");
 if (manifest.channel === "stable") {
   assert(
