@@ -121,4 +121,7 @@ private class FakeDao : ChatDao {
         .filter { it.userId == userId && it.content.contains(query) }
         .sortedByDescending { it.createdAt }
         .take(limit)
+    override suspend fun agentCatalogSnapshot(userId: String) = emptyList<AgentCatalogEntity>()
+    override suspend fun saveAgentCatalog(items: List<AgentCatalogEntity>) = Unit
+    override suspend fun clearAgentCatalog(userId: String) = Unit
 }

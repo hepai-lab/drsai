@@ -7,6 +7,16 @@ data class Agent(
     val name: String,
     val description: String = "",
     val systemPrompt: String = "",
+    val platformId: String? = null,
+    val source: String = "local",
+    val mode: String = "local",
+    val available: Boolean = true,
+    val chatSupported: Boolean = true,
+    val isDefault: Boolean = false,
+    val owner: String? = null,
+    val capabilities: Set<String> = emptySet(),
+    val logoUrl: String? = null,
+    val examples: List<String> = emptyList(),
 )
 
 data class ModelInfo(val id: String, val name: String = id)
@@ -16,6 +26,8 @@ data class Conversation(
     val title: String,
     val updatedAt: Long = System.currentTimeMillis(),
     val agentId: String = DEFAULT_AGENT.id,
+    val agentName: String = DEFAULT_AGENT.name,
+    val agentSource: String = DEFAULT_AGENT.source,
     val modelId: String = "",
 )
 
@@ -64,7 +76,7 @@ sealed interface RuntimeEvent {
 }
 
 val DEFAULT_AGENT = Agent(
-    id = "opendrsai-android",
+    id = "local:opendrsai",
     name = "OpenDrSai",
     description = "运行在 Android 本机的轻量智能 Agent",
     systemPrompt = """
@@ -73,6 +85,15 @@ val DEFAULT_AGENT = Agent(
         Never claim to have shell, arbitrary file, browser, location, contacts, or device-control access.
         Ask before storing sensitive personal information. Do not expose tool JSON to the user.
     """.trimIndent(),
+    capabilities = setOf("chat", "local-tools", "memory"),
+)
+
+data class AgentCatalogStatus(
+    val state: String = "loading",
+    val message: String = "正在加载平台智能体",
+    val apiVersion: String? = null,
+    val capabilities: Set<String> = emptySet(),
+    val cached: Boolean = false,
 )
 
 sealed interface AppDestination {
@@ -100,6 +121,7 @@ data class AppState(
     val error: String? = null,
     val runtimeStatus: String? = null,
     val toolDowngraded: Boolean = false,
+    val agentCatalogStatus: AgentCatalogStatus = AgentCatalogStatus(),
     val darkTheme: Boolean? = null,
 )
 

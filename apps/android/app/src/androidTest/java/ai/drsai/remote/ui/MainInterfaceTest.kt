@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import androidx.test.platform.app.InstrumentationRegistry
 import ai.drsai.remote.data.AppDestination
 import ai.drsai.remote.data.AppState
+import ai.drsai.remote.data.DEFAULT_AGENT
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -74,7 +75,7 @@ class MainInterfaceTest {
         composeRule.setContent {
             MaterialTheme {
                 Box(Modifier.fillMaxSize()) {
-                    Welcome(Modifier.fillMaxSize().padding(top = 82.dp, bottom = 92.dp))
+                    Welcome(DEFAULT_AGENT, Modifier.fillMaxSize().padding(top = 82.dp, bottom = 92.dp))
                     FloatingHeader({}, {}, true, Modifier.align(Alignment.TopCenter).padding(12.dp))
                     Composer(
                         state = AppState(destination = AppDestination.Chat),

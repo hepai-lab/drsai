@@ -47,6 +47,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -97,6 +98,7 @@ import ai.drsai.remote.AppViewModel
 import ai.drsai.remote.R
 import ai.drsai.remote.data.AppDestination
 import ai.drsai.remote.data.AppState
+import ai.drsai.remote.data.Agent
 import ai.drsai.remote.data.ChatMessage
 import kotlinx.coroutines.launch
 
@@ -209,6 +211,11 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
                     viewModel.openConversation(it)
                     closeDrawer()
                 },
+                onSelectAgent = {
+                    viewModel.selectAgent(it)
+                    closeDrawer()
+                },
+                onRefreshAgents = viewModel::refreshAgents,
                 onOpenProfile = {
                     closeDrawer()
                     viewModel.toggleProfile(true)
@@ -219,9 +226,9 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
         Scaffold { systemPadding ->
             Box(Modifier.fillMaxSize().padding(systemPadding)) {
                 if (state.messages.isEmpty()) {
-                    Welcome(Modifier.fillMaxSize().padding(top = 82.dp, bottom = 92.dp))
+                    Welcome(state.selectedAgent, Modifier.fillMaxSize().padding(top = 82.dp, bottom = 92.dp))
                 } else {
-                    Messages(state.messages, Modifier.fillMaxSize())
+                    Messages(state.messages, state.selectedAgent?.name ?: "OpenDrSai", Modifier.fillMaxSize())
                 }
 
                 Column(
@@ -308,6 +315,8 @@ private fun NavigationDrawer(
     state: AppState,
     onNewConversation: () -> Unit,
     onOpenConversation: (String) -> Unit,
+    onSelectAgent: (String) -> Unit,
+    onRefreshAgents: () -> Unit,
     onOpenProfile: () -> Unit,
 ) {
     ModalDrawerSheet(Modifier.fillMaxHeight().widthIn(max = 320.dp)) {
@@ -324,13 +333,61 @@ private fun NavigationDrawer(
                 Text("新对话")
             }
             Spacer(Modifier.height(18.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.History, null, Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("本机会话", style = MaterialTheme.typography.labelLarge)
-            }
-            Spacer(Modifier.height(8.dp))
             LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                item {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("智能体", Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
+                        IconButton(
+                            onClick = onRefreshAgents,
+                            enabled = state.agentCatalogStatus.state != "loading" && !state.streaming,
+                            modifier = Modifier.size(36.dp),
+                        ) {
+                            if (state.agentCatalogStatus.state == "loading") {
+                                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            } else {
+                                Icon(Icons.Default.Refresh, "刷新智能体", Modifier.size(19.dp))
+                            }
+                        }
+                    }
+                }
+                items(state.agents, key = { "agent:${it.id}" }) { agent ->
+                    NavigationDrawerItem(
+                        label = {
+                            Column {
+                                Text(agent.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    agentStatus(agent),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        },
+                        badge = { if (agent.isDefault) Text("默认", style = MaterialTheme.typography.labelSmall) },
+                        selected = state.selectedAgent?.id == agent.id,
+                        onClick = { if (!state.streaming) onSelectAgent(agent.id) },
+                    )
+                }
+                item {
+                    state.agentCatalogStatus.message?.let { message ->
+                        Text(
+                            message,
+                            Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (state.agentCatalogStatus.state == "error") {
+                                MaterialTheme.colorScheme.error
+                            } else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    HorizontalDivider(Modifier.padding(vertical = 10.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.History, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("本机会话", style = MaterialTheme.typography.labelLarge)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
                 if (state.conversations.isEmpty()) {
                     item { Text("还没有本地对话", Modifier.padding(12.dp), style = MaterialTheme.typography.bodyMedium) }
                 } else {
@@ -345,9 +402,10 @@ private fun NavigationDrawer(
             }
             HorizontalDivider()
             Spacer(Modifier.height(12.dp))
-            Text("当前模型", style = MaterialTheme.typography.labelMedium)
+            Text(if (state.selectedAgent?.source == "platform") "当前智能体" else "当前模型", style = MaterialTheme.typography.labelMedium)
             Text(
-                state.selectedModel?.name ?: "正在加载 HAI 模型",
+                if (state.selectedAgent?.source == "platform") state.selectedAgent.name
+                else state.selectedModel?.name ?: "正在加载 HAI 模型",
                 style = MaterialTheme.typography.bodyMedium,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
@@ -363,6 +421,14 @@ private fun NavigationDrawer(
     }
 }
 
+private fun agentStatus(agent: Agent): String = when {
+    !agent.available -> "当前不可用"
+    !agent.chatSupported -> "暂不支持对话"
+    agent.source == "local" -> "Android 本机运行"
+    agent.mode == "ddf" -> "HAI 平台运行"
+    else -> "远程智能体"
+}
+
 @Composable
 private fun RuntimeBar(message: String) {
     Surface(color = MaterialTheme.colorScheme.secondaryContainer) {
@@ -371,20 +437,20 @@ private fun RuntimeBar(message: String) {
 }
 
 @Composable
-internal fun Welcome(modifier: Modifier) {
+internal fun Welcome(agent: Agent?, modifier: Modifier) {
     Box(modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             BrandLogo(132.dp)
             Spacer(Modifier.height(20.dp))
-            Text("你好，我是 OpenDrSai", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            Text("你好，我是 ${agent?.name ?: "OpenDrSai"}", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(6.dp))
-            Text("在下方输入你想完成的事情")
+            Text(agent?.description?.takeIf(String::isNotBlank) ?: "在下方输入你想完成的事情")
         }
     }
 }
 
 @Composable
-private fun Messages(messages: List<ChatMessage>, modifier: Modifier) {
+private fun Messages(messages: List<ChatMessage>, assistantName: String, modifier: Modifier) {
     val listState = rememberLazyListState()
     LaunchedEffect(messages.size, messages.lastOrNull()?.text) {
         if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
@@ -395,16 +461,16 @@ private fun Messages(messages: List<ChatMessage>, modifier: Modifier) {
         contentPadding = PaddingValues(start = 16.dp, top = 94.dp, end = 16.dp, bottom = 104.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        items(messages, key = { it.id }) { MessageBubble(it) }
+        items(messages, key = { it.id }) { MessageBubble(it, assistantName) }
     }
 }
 
 @Composable
-private fun MessageBubble(message: ChatMessage) {
+private fun MessageBubble(message: ChatMessage, assistantName: String) {
     val isUser = message.role == "user"
     val context = LocalContext.current
     Column(Modifier.fillMaxWidth(), horizontalAlignment = if (isUser) Alignment.End else Alignment.Start) {
-        Text(if (isUser) "你" else "OpenDrSai", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+        Text(if (isUser) "你" else assistantName, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
         val content: @Composable () -> Unit = {
             Column(Modifier.padding(if (isUser) 14.dp else 4.dp)) {
                 if (message.text.contains("```")) CodeAwareText(message.text)
@@ -474,7 +540,7 @@ internal fun Composer(
     var text by remember { mutableStateOf("") }
     val context = LocalContext.current
     val send = {
-        if (text.isNotBlank() && state.selectedAgent != null && !state.streaming) {
+        if (text.isNotBlank() && state.selectedAgent?.chatSupported == true && !state.streaming) {
             onSend(text)
             text = ""
         }
@@ -520,14 +586,14 @@ internal fun Composer(
                 value = text,
                 onValueChange = { text = it },
                 modifier = Modifier.weight(1f).padding(vertical = 5.dp),
-                enabled = !state.streaming && state.selectedAgent != null,
+                enabled = !state.streaming && state.selectedAgent?.chatSupported == true,
                 maxLines = 5,
                 textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                 keyboardActions = KeyboardActions(onSend = { send() }),
                 decorationBox = { innerTextField ->
                     Box(Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.CenterStart) {
-                        if (text.isEmpty()) Text("给 OpenDrSai 发消息", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (text.isEmpty()) Text("给 ${state.selectedAgent?.name ?: "OpenDrSai"} 发消息", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         innerTextField()
                     }
                 },
@@ -536,10 +602,10 @@ internal fun Composer(
                 state.streaming -> FilledIconButton(onClick = onStop) {
                     Icon(Icons.Default.Stop, "停止")
                 }
-                text.isNotBlank() -> FilledIconButton(onClick = send, enabled = state.selectedAgent != null) {
+                text.isNotBlank() -> FilledIconButton(onClick = send, enabled = state.selectedAgent?.chatSupported == true) {
                     Icon(Icons.Default.ArrowUpward, "发送")
                 }
-                else -> IconButton(onClick = startSpeechRecognition, enabled = state.selectedAgent != null) {
+                else -> IconButton(onClick = startSpeechRecognition, enabled = state.selectedAgent?.chatSupported == true) {
                     Icon(Icons.Default.Mic, "语音输入")
                 }
             }
@@ -566,8 +632,12 @@ private fun ProfileSheet(state: AppState, viewModel: AppViewModel) {
             Spacer(Modifier.height(16.dp))
             Text(state.user?.name.orEmpty(), fontWeight = FontWeight.Bold)
             Text(state.user?.id.orEmpty())
-            state.selectedModel?.let { Text("模型：${it.name}", style = MaterialTheme.typography.bodySmall) }
-            Text("Runtime：Android 本机", style = MaterialTheme.typography.bodySmall)
+            state.selectedModel?.takeIf { state.selectedAgent?.source == "local" }
+                ?.let { Text("模型：${it.name}", style = MaterialTheme.typography.bodySmall) }
+            Text(
+                "Runtime：${if (state.selectedAgent?.source == "platform") "HAI 平台" else "Android 本机"}",
+                style = MaterialTheme.typography.bodySmall,
+            )
             Spacer(Modifier.height(18.dp))
             TextButton(
                 onClick = { viewModel.logout(); viewModel.toggleProfile(false) },

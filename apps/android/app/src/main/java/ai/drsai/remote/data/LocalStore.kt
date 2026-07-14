@@ -24,9 +24,29 @@ data class ConversationEntity(
     val userId: String,
     val title: String,
     val agentId: String,
+    @ColumnInfo(defaultValue = "'OpenDrSai'") val agentName: String = "OpenDrSai",
+    @ColumnInfo(defaultValue = "'local'") val agentSource: String = "local",
     val modelId: String,
     val createdAt: Long,
     val updatedAt: Long,
+)
+
+@Entity(tableName = "agent_catalog", primaryKeys = ["id", "userId"], indices = [Index("userId")])
+data class AgentCatalogEntity(
+    val id: String,
+    val userId: String,
+    val platformId: String,
+    val name: String,
+    val description: String,
+    val mode: String,
+    val available: Boolean,
+    val chatSupported: Boolean,
+    val isDefault: Boolean,
+    val owner: String?,
+    val capabilitiesJson: String,
+    val logoUrl: String?,
+    val examplesJson: String,
+    val savedAt: Long,
 )
 
 @Entity(
@@ -94,11 +114,20 @@ interface ChatDao {
 
     @Query("SELECT * FROM memories WHERE userId=:userId AND content LIKE '%' || :query || '%' ORDER BY createdAt DESC LIMIT :limit")
     suspend fun searchMemories(userId: String, query: String, limit: Int): List<MemoryEntity>
+
+    @Query("SELECT * FROM agent_catalog WHERE userId=:userId ORDER BY isDefault DESC, name COLLATE NOCASE")
+    suspend fun agentCatalogSnapshot(userId: String): List<AgentCatalogEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun saveAgentCatalog(items: List<AgentCatalogEntity>)
+
+    @Query("DELETE FROM agent_catalog WHERE userId=:userId")
+    suspend fun clearAgentCatalog(userId: String)
 }
 
 @Database(
-    entities = [ConversationEntity::class, MessageEntity::class, MemoryEntity::class],
-    version = 2,
+    entities = [ConversationEntity::class, MessageEntity::class, MemoryEntity::class, AgentCatalogEntity::class],
+    version = 3,
     exportSchema = false,
 )
 abstract class ChatDatabase : RoomDatabase() {
@@ -147,6 +176,9 @@ class SecureTokenStore(context: Context) : AuthTokenStore {
     var selectedModelId: String?
         get() = prefs.getString("model", null)
         set(value) = prefs.edit().putString("model", value).apply()
+    var selectedAgentId: String?
+        get() = prefs.getString("agent", null)
+        set(value) = prefs.edit().putString("agent", value).apply()
     var oidcClientId: String?
         get() = prefs.getString("oidc_client_id", null)
         set(value) = prefs.edit().putString("oidc_client_id", value).apply()
@@ -161,6 +193,16 @@ class SecureTokenStore(context: Context) : AuthTokenStore {
 
     fun user(): User? = userId?.let { User(it, userName ?: it, avatarUrl) }
     fun clear() = prefs.edit().clear().apply()
+}
+
+val MIGRATION_2_3 = object : Migration(2, 3) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE conversations ADD COLUMN agentName TEXT NOT NULL DEFAULT 'OpenDrSai'")
+        db.execSQL("ALTER TABLE conversations ADD COLUMN agentSource TEXT NOT NULL DEFAULT 'local'")
+        db.execSQL("UPDATE conversations SET agentId='local:opendrsai' WHERE agentId='opendrsai-android'")
+        db.execSQL("CREATE TABLE IF NOT EXISTS agent_catalog (id TEXT NOT NULL, userId TEXT NOT NULL, platformId TEXT NOT NULL, name TEXT NOT NULL, description TEXT NOT NULL, mode TEXT NOT NULL, available INTEGER NOT NULL, chatSupported INTEGER NOT NULL, isDefault INTEGER NOT NULL, owner TEXT, capabilitiesJson TEXT NOT NULL, logoUrl TEXT, examplesJson TEXT NOT NULL, savedAt INTEGER NOT NULL, PRIMARY KEY(id, userId))")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_agent_catalog_userId ON agent_catalog(userId)")
+    }
 }
 
 class OidcTransactionStore(context: Context) {

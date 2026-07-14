@@ -7,6 +7,9 @@ import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import ai.drsai.remote.data.AppDestination
 import ai.drsai.remote.data.AppState
+import ai.drsai.remote.data.AccessTokenCoordinator
+import ai.drsai.remote.data.Agent
+import ai.drsai.remote.data.AgentRepository
 import ai.drsai.remote.data.ChatDatabase
 import ai.drsai.remote.data.ChatMessage
 import ai.drsai.remote.data.Conversation
@@ -15,12 +18,15 @@ import ai.drsai.remote.data.DEFAULT_AGENT
 import ai.drsai.remote.data.HaiModelClient
 import ai.drsai.remote.data.LocalAgentRuntime
 import ai.drsai.remote.data.MIGRATION_1_2
+import ai.drsai.remote.data.MIGRATION_2_3
 import ai.drsai.remote.data.MessageEntity
 import ai.drsai.remote.data.OidcClient
 import ai.drsai.remote.data.OidcLoginSession
 import ai.drsai.remote.data.OidcTransactionStore
 import ai.drsai.remote.data.OIDC_LEGACY_CLIENT_ID
 import ai.drsai.remote.data.RuntimeEvent
+import ai.drsai.remote.data.PlatformAgentClient
+import ai.drsai.remote.data.PlatformAgentRuntime
 import ai.drsai.remote.data.SecureTokenStore
 import ai.drsai.remote.data.sanitizeLegacyAssistantText
 import kotlinx.coroutines.Dispatchers
@@ -37,12 +43,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val oidcTransactions by lazy { OidcTransactionStore(app) }
     private val database by lazy {
         Room.databaseBuilder(app, ChatDatabase::class.java, "opendrsai.db")
-            .addMigrations(MIGRATION_1_2)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
             .build()
     }
     private val oidcClient by lazy { OidcClient(refreshClientId = { tokenStore.oidcClientId }) }
     private val modelClient by lazy { HaiModelClient(tokenStore, oidcClient) }
     private val runtime by lazy { LocalAgentRuntime(modelClient, database.dao()) }
+    private val tokenCoordinator by lazy { AccessTokenCoordinator(tokenStore, oidcClient) }
+    private val platformClient by lazy { PlatformAgentClient(tokenCoordinator) }
+    private val agentRepository by lazy { AgentRepository(platformClient, database.dao()) }
+    private val platformRuntime by lazy { PlatformAgentRuntime(tokenCoordinator, database.dao()) }
     private val mutableState = MutableStateFlow(AppState())
     val state: StateFlow<AppState> = mutableState.asStateFlow()
 
@@ -50,6 +60,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private var oidcSession: OidcLoginSession? = null
     private var runJob: Job? = null
     private var activeRunId: String? = null
+    private var activeRunSource: String = "local"
     private var streamText = ""
 
     init { bootstrap() }
@@ -139,33 +150,46 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun loadWorkspace(user: ai.drsai.remote.data.User) = viewModelScope.launch(Dispatchers.IO) {
         update { it.copy(destination = AppDestination.Chat, user = user, loading = true, waitingForLogin = false, error = null) }
         val modelResult = runCatching { modelClient.listModels() }
-        if (modelResult.isFailure) {
-            val error = modelResult.exceptionOrNull()
-            update { it.copy(loading = false, error = error?.message ?: "无法加载 HAI 模型") }
-            return@launch
-        }
-        val models = modelResult.getOrThrow()
+        val catalog = agentRepository.load(user.id)
+        val models = modelResult.getOrDefault(emptyList())
         val selected = tokenStore.selectedModelId?.let { saved -> models.firstOrNull { it.id == saved } }
             ?: runCatching { modelClient.selectModel(models) }.getOrNull()
-        if (selected == null) {
-            update { it.copy(loading = false, error = "当前 HAI 账号没有可用模型") }
-            return@launch
-        }
-        tokenStore.selectedModelId = selected.id
+        selected?.let { tokenStore.selectedModelId = it.id }
+        val agents = listOf(DEFAULT_AGENT) + catalog.agents
         val entities = database.dao().conversationSnapshot(user.id)
         val conversations = entities.map(::toConversation)
         val current = conversations.firstOrNull()
         val messages = current?.let { loadMessages(it.id) }.orEmpty()
+        val selectedAgent = current?.let { conversation ->
+            agents.firstOrNull { it.id == conversation.agentId } ?: Agent(
+                id = conversation.agentId,
+                name = conversation.agentName,
+                source = conversation.agentSource,
+                mode = conversation.agentSource,
+                available = false,
+                chatSupported = false,
+                description = "该会话使用的智能体当前不在目录中",
+            )
+        }
+            ?: tokenStore.selectedAgentId?.let { saved -> agents.firstOrNull { it.id == saved } }
+            ?: agents.firstOrNull { it.isDefault && it.chatSupported }
+            ?: DEFAULT_AGENT
+        tokenStore.selectedAgentId = selectedAgent.id
+        val modelError = if (selected == null && selectedAgent.source == "local") {
+            modelResult.exceptionOrNull()?.message ?: "当前 HAI 账号没有可用模型，本地 OpenDrSai 暂不可用"
+        } else null
         update {
             it.copy(
-                agents = listOf(DEFAULT_AGENT),
-                selectedAgent = DEFAULT_AGENT,
+                agents = agents,
+                selectedAgent = selectedAgent,
                 models = models,
                 selectedModel = selected,
                 conversations = conversations,
                 currentConversation = current,
                 messages = messages,
+                agentCatalogStatus = catalog.status,
                 loading = false,
+                error = modelError,
             )
         }
     }
@@ -176,8 +200,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val clean = text.trim()
         val snapshot = mutableState.value
         val user = snapshot.user ?: return
-        val model = snapshot.selectedModel ?: return
+        val agent = snapshot.selectedAgent ?: return
+        val model = snapshot.selectedModel
         if (clean.isEmpty() || snapshot.streaming) return
+        if (!agent.available || !agent.chatSupported) {
+            update { it.copy(error = "${agent.name} 暂不支持 Android 对话") }
+            return
+        }
+        if (agent.source == "local" && model == null) {
+            update { it.copy(error = "当前 HAI 账号没有可用模型，本地 OpenDrSai 暂不可用") }
+            return
+        }
         if (clean.length > 16_000) {
             update { it.copy(error = "单条消息不能超过 16,000 字符") }
             return
@@ -189,7 +222,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 conversation = Conversation(
                     id = UUID.randomUUID().toString(),
                     title = clean.replace('\n', ' ').take(32),
-                    modelId = model.id,
+                    agentId = agent.id,
+                    agentName = agent.name,
+                    agentSource = agent.source,
+                    modelId = if (agent.source == "local") model?.id.orEmpty() else "",
                     updatedAt = now,
                 )
                 database.dao().saveConversation(toEntity(conversation, user.id, now))
@@ -209,7 +245,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     error = null,
                 )
             }
-            runtime.run(user.id, activeConversation, clean).collect { event ->
+            activeRunSource = activeConversation.agentSource
+            val events = if (activeConversation.agentSource == "platform") {
+                platformRuntime.run(activeConversation, clean)
+            } else {
+                runtime.run(user.id, activeConversation, clean)
+            }
+            events.collect { event ->
                 when (event) {
                     is RuntimeEvent.Started -> activeRunId = event.runId
                     is RuntimeEvent.TextDelta -> {
@@ -232,6 +274,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             activeRunId = null
+            activeRunSource = "local"
         }
     }
 
@@ -253,13 +296,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun stop() {
-        activeRunId?.let(runtime::stop)
+        activeRunId?.let { runId ->
+            if (activeRunSource == "platform") platformRuntime.stop(runId) else runtime.stop(runId)
+        }
         update { it.copy(runtimeStatus = "正在停止…") }
     }
 
     fun pauseForBackground() {
         if (!mutableState.value.streaming) return
-        activeRunId?.let(runtime::pause)
+        activeRunId?.let { runId ->
+            if (activeRunSource == "platform") platformRuntime.pause(runId) else runtime.pause(runId)
+        }
     }
 
     fun retry() {
@@ -272,11 +319,68 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (it.streaming) it else it.copy(currentConversation = null, messages = emptyList(), historyOpen = false, error = null)
     }
 
+    fun selectAgent(id: String) {
+        val snapshot = mutableState.value
+        if (snapshot.streaming) return
+        val agent = snapshot.agents.firstOrNull { it.id == id } ?: return
+        if (!agent.available || !agent.chatSupported) {
+            update { it.copy(error = "${agent.name} 暂不支持 Android 对话") }
+            return
+        }
+        tokenStore.selectedAgentId = agent.id
+        update {
+            if (it.selectedAgent?.id == agent.id) it.copy(error = null)
+            else it.copy(
+                selectedAgent = agent,
+                currentConversation = null,
+                messages = emptyList(),
+                historyOpen = false,
+                error = null,
+                toolDowngraded = false,
+            )
+        }
+    }
+
+    fun refreshAgents() {
+        val user = mutableState.value.user ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            update { it.copy(agentCatalogStatus = it.agentCatalogStatus.copy(state = "loading", message = "正在刷新平台智能体")) }
+            val catalog = agentRepository.load(user.id, refresh = true)
+            val agents = listOf(DEFAULT_AGENT) + catalog.agents
+            val current = mutableState.value.currentConversation
+            val selected = current?.let { conversation ->
+                agents.firstOrNull { it.id == conversation.agentId } ?: Agent(
+                    id = conversation.agentId,
+                    name = conversation.agentName,
+                    source = conversation.agentSource,
+                    mode = conversation.agentSource,
+                    available = false,
+                    chatSupported = false,
+                    description = "该会话使用的智能体当前不在目录中",
+                )
+            } ?: agents.firstOrNull { it.id == mutableState.value.selectedAgent?.id }
+                ?: agents.firstOrNull { it.isDefault && it.chatSupported }
+                ?: DEFAULT_AGENT
+            tokenStore.selectedAgentId = selected.id
+            update { it.copy(agents = agents, selectedAgent = selected, agentCatalogStatus = catalog.status) }
+        }
+    }
+
     fun openConversation(id: String) = viewModelScope.launch(Dispatchers.IO) {
         if (mutableState.value.streaming) return@launch
         val conversation = mutableState.value.conversations.firstOrNull { it.id == id } ?: return@launch
         val messages = loadMessages(id)
-        update { it.copy(currentConversation = conversation, messages = messages, historyOpen = false, error = null) }
+        val agent = mutableState.value.agents.firstOrNull { it.id == conversation.agentId }
+            ?: Agent(
+                id = conversation.agentId,
+                name = conversation.agentName,
+                source = conversation.agentSource,
+                mode = conversation.agentSource,
+                available = false,
+                chatSupported = false,
+                description = "该会话使用的智能体当前不在目录中",
+            )
+        update { it.copy(currentConversation = conversation, selectedAgent = agent, messages = messages, historyOpen = false, error = null) }
     }
 
     fun toggleHistory(open: Boolean) = update { it.copy(historyOpen = open) }
@@ -284,7 +388,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun setTheme(value: Boolean?) = update { it.copy(darkTheme = value) }
 
     fun logout() {
-        activeRunId?.let(runtime::stop)
+        activeRunId?.let { runId ->
+            if (activeRunSource == "platform") platformRuntime.stop(runId) else runtime.stop(runId)
+        }
         runJob?.cancel()
         runJob = null
         activeRunId = null
@@ -310,11 +416,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun toConversation(entity: ConversationEntity) = Conversation(
-        entity.id, entity.title, entity.updatedAt, entity.agentId, entity.modelId,
+        id = entity.id,
+        title = entity.title,
+        updatedAt = entity.updatedAt,
+        agentId = entity.agentId,
+        agentName = entity.agentName,
+        agentSource = entity.agentSource,
+        modelId = entity.modelId,
     )
 
     private fun toEntity(conversation: Conversation, userId: String, createdAt: Long) = ConversationEntity(
-        conversation.id, userId, conversation.title, conversation.agentId, conversation.modelId, createdAt, conversation.updatedAt,
+        id = conversation.id,
+        userId = userId,
+        title = conversation.title,
+        agentId = conversation.agentId,
+        agentName = conversation.agentName,
+        agentSource = conversation.agentSource,
+        modelId = conversation.modelId,
+        createdAt = createdAt,
+        updatedAt = conversation.updatedAt,
     )
 
     private fun toolLabel(name: String) = when (name) {
