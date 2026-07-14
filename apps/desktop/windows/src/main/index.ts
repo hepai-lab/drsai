@@ -386,7 +386,6 @@ if (isE2eSmokeProcess) {
   app.commandLine.appendSwitch("disable-gpu");
   app.commandLine.appendSwitch("disable-gpu-compositing");
   app.commandLine.appendSwitch("disable-gpu-sandbox");
-  app.commandLine.appendSwitch("in-process-gpu");
 }
 const singleInstanceLock = isE2eSmokeProcess || app.requestSingleInstanceLock();
 const desktopProcessStartedAt = Date.now();
@@ -2050,7 +2049,6 @@ if (process.env.OPENDRSAI_E2E_DISABLE_GPU === "1") {
   app.commandLine.appendSwitch("disable-gpu");
   app.commandLine.appendSwitch("disable-gpu-compositing");
   app.commandLine.appendSwitch("disable-gpu-sandbox");
-  app.commandLine.appendSwitch("disable-software-rasterizer");
   app.commandLine.appendSwitch("disable-features", "VizDisplayCompositor");
 }
 

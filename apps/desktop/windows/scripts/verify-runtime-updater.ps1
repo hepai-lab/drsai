@@ -1,6 +1,17 @@
 param()
 
 $ErrorActionPreference = "Stop"
+
+function Get-Sha256Hex([string]$Path) {
+    $stream = [System.IO.File]::OpenRead($Path)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([System.BitConverter]::ToString($sha256.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha256.Dispose()
+        $stream.Dispose()
+    }
+}
 $root = Split-Path -Parent $PSScriptRoot
 $helper = Join-Path $root "resources\update\update-opendrsai.ps1"
 $testRoot = Join-Path $root ".tmp\runtime-updater-test"
@@ -52,6 +63,7 @@ function Build-Runtime([string]$OutputZip, [string]$TargetVersion, [bool]$Health
     Build-AppExe (Join-Path $work "app\OpenDrSai.exe") "new-$Suffix" $Healthy "FixtureApp$Suffix" $TargetVersion
     Build-ConsoleExe (Join-Path $work "drsai-agent\venv\Scripts\python.exe") "Console.WriteLine(`"drsai version: $TargetVersion`"); return 0;" "FixturePython$Suffix"
     [IO.File]::WriteAllText((Join-Path $work "drsai-agent\venv\Scripts\drsai.cmd"), "@echo off`r`n", (New-Object Text.UTF8Encoding($false)))
+    [IO.File]::WriteAllText((Join-Path $work "drsai-agent\venv\pyvenv.cfg"), "home = C:\hostedtoolcache\windows\Python\3.11.9\x64`r`n", (New-Object Text.UTF8Encoding($false)))
     [IO.File]::WriteAllText((Join-Path $work "drsai-agent\new-$Suffix.txt"), $Suffix, (New-Object Text.UTF8Encoding($false)))
     $manifest = [ordered]@{
         name = "OpenDrSai Runtime"
@@ -76,7 +88,7 @@ function Install-OldRuntime([string]$InstallRoot, [string]$AgentDir, [string]$Su
 }
 
 function Invoke-Prepare([string]$Archive, [string]$Staging, [string]$InstallRoot, [string]$AgentDir, [string]$State) {
-    $hash = (Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash.ToLowerInvariant()
+    $hash = Get-Sha256Hex $Archive
     $size = (Get-Item -LiteralPath $Archive).Length
     & $helper -Mode Prepare -ArchivePath $Archive -StagingRoot $Staging -InstallRoot $InstallRoot -AgentDir $AgentDir `
         -ExpectedVersion $version -ExpectedSha256 $hash -ExpectedSizeBytes $size `
@@ -97,6 +109,9 @@ try {
     Install-OldRuntime $successRoot $successAgent "success"
     Build-Runtime $successZip $version $true "Success"
     Invoke-Prepare $successZip $successStaging $successRoot $successAgent $successState
+    $preparedConfig = Get-Content -LiteralPath (Join-Path $successStaging "runtime\drsai-agent\venv\pyvenv.cfg") -Raw
+    Assert-True ($preparedConfig -notmatch "hostedtoolcache") "Prepare retained the build runner Python home."
+    Assert-True ($preparedConfig -match [regex]::Escape((Join-Path $successStaging "runtime\drsai-agent\venv"))) "Prepare did not bind pyvenv.cfg to the staged portable Python."
     & $helper -Mode Apply -StagingRoot $successStaging -InstallRoot $successRoot -AgentDir $successAgent `
         -ExpectedVersion $version -WaitPid 0 -HealthToken "11111111-1111-1111-1111-111111111111" `
         -HealthTimeoutSeconds 8 -CurrentExecutable (Join-Path $successRoot "app\OpenDrSai.exe") `
@@ -137,7 +152,7 @@ try {
         $writer = New-Object IO.StreamWriter($entry.Open())
         try { $writer.Write("escape") } finally { $writer.Dispose() }
     } finally { $zip.Dispose() }
-    $badHash = (Get-FileHash -LiteralPath $badZip -Algorithm SHA256).Hash.ToLowerInvariant()
+    $badHash = Get-Sha256Hex $badZip
     & $helper -Mode Prepare -ArchivePath $badZip -StagingRoot (Join-Path $testRoot "bad-staging") `
         -InstallRoot $successRoot -AgentDir $successAgent -ExpectedVersion $version -ExpectedSha256 $badHash `
         -ExpectedSizeBytes (Get-Item $badZip).Length -CurrentExecutable (Join-Path $successRoot "app\OpenDrSai.exe") `

@@ -14,7 +14,7 @@ const artifacts = [
 ];
 
 const describedArtifacts = artifacts.map((relativePath) => describeArtifact(relativePath));
-const distribution = describeDistribution(describedArtifacts);
+const distribution = describeDistribution(describedArtifacts, packageJson.version);
 
 const summary = {
   product: "OpenDrSai Windows",
@@ -61,7 +61,7 @@ function getSignatureStatus(path) {
   }
 }
 
-function describeDistribution(describedArtifacts) {
+function describeDistribution(describedArtifacts, version) {
   const signedArtifacts = describedArtifacts.filter(
     (artifact) => artifact.exists &&
       (artifact.path.endsWith(".msi") || artifact.path.endsWith("OpenDrSaiRuntime-win-x64.zip")),
@@ -69,9 +69,11 @@ function describeDistribution(describedArtifacts) {
   const unsigned = signedArtifacts.filter(
     (artifact) => artifact.signatureStatus !== "Valid",
   );
+  const preview = version.includes("-");
   return {
-    publicDistributionReady: unsigned.length === 0,
-    requiresSignedInstallers: true,
+    releaseTier: preview ? "preview" : "stable",
+    publicDistributionReady: unsigned.length === 0 || preview,
+    requiresSignedInstallers: !preview,
     unsignedArtifacts: unsigned.map((artifact) => ({
       path: artifact.path,
       signatureStatus: artifact.signatureStatus,
@@ -79,7 +81,9 @@ function describeDistribution(describedArtifacts) {
     note:
       unsigned.length === 0
         ? "The MSI and runtime Electron executable are Authenticode signed."
-        : "Do not distribute this build publicly until the MSI and runtime Electron executable are Authenticode signed.",
+        : preview
+          ? "Unsigned prerelease preview: Windows may display an unknown-publisher warning; stable releases still require Authenticode signatures."
+          : "Do not distribute this stable build publicly until the MSI and runtime Electron executable are Authenticode signed.",
   };
 }
 

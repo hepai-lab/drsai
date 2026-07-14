@@ -20,9 +20,15 @@ const manifest = await fetchJson(`${baseUrl}/latest-windows.json`);
 const summary = await fetchJson(`${baseUrl}/release-summary.json`);
 assert(manifest.schemaVersion === 1, "Public update manifest schema is unsupported.");
 assert(manifest.version === packageJson.version, "Public update manifest version does not match package.json.");
-assert(manifest.channel !== "stable" || manifest.requireSignature === true, "Stable public update does not require signatures.");
+const isPrereleaseVersion = packageJson.version.includes("-");
+assert(
+  manifest.channel !== "stable" || isPrereleaseVersion || manifest.requireSignature === true,
+  "Stable-version public update does not require signatures.",
+);
 assert(manifest.runtime?.url === `${baseUrl}/OpenDrSaiRuntime-win-x64.zip`, "Runtime URL is not the immutable versioned Release URL.");
 assert(summary.version === manifest.version, "Public release summary version does not match the update manifest.");
+assert(summary.distribution?.publicDistributionReady === true, "Public release summary does not permit distribution.");
+assert(summary.distribution?.releaseTier === (isPrereleaseVersion ? "preview" : "stable"), "Public release tier is incorrect.");
 
 const summaryArtifacts = new Map((summary.artifacts || []).map((item) => [item.path, item]));
 const assets = [

@@ -46,12 +46,14 @@ for (const [name, passed] of [
 }
 const candidates = [
   process.env.OPENDRSAI_GATEWAY_SMOKE_PYTHON,
+  process.env.pythonLocation ? join(process.env.pythonLocation, "python.exe") : null,
   join(repoRoot, "venv", "Scripts", "python.exe"),
   join(repoRoot, ".venv", "Scripts", "python.exe"),
   join(repoRoot, "venv", "bin", "python"),
   join(repoRoot, ".venv", "bin", "python"),
+  process.platform === "win32" ? "python.exe" : "python",
 ].filter(Boolean);
-const python = candidates.find((candidate) => existsSync(candidate));
+const python = candidates.find((candidate) => candidate.includes("\\") || candidate.includes("/") ? existsSync(candidate) : true);
 if (!python) throw new Error("A project Python environment is required for platform auth tests.");
 
 const result = spawnSync(

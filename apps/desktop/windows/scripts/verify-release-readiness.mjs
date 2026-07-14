@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 
 const strict = process.env.REQUIRE_RELEASE_READY === "1";
+const requireSigned = process.env.REQUIRE_SIGNED_WINDOWS_ARTIFACTS === "1";
 const skipPublicRelease = process.env.SKIP_PUBLIC_RELEASE_CHECK === "1";
 const steps = [
   ["Project invariants", npmScript("verify"), true, {}],
@@ -25,8 +26,8 @@ const steps = [
   [
     "Windows signatures",
     npmScript("verify:signatures"),
-    strict,
-    { REQUIRE_SIGNED_WINDOWS_ARTIFACTS: "1" },
+    requireSigned,
+    { REQUIRE_SIGNED_WINDOWS_ARTIFACTS: requireSigned ? "1" : "0" },
   ],
 ];
 

@@ -20,6 +20,17 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+function Get-Sha256Hex([string]$Path) {
+    $stream = [System.IO.File]::OpenRead($Path)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([System.BitConverter]::ToString($sha256.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha256.Dispose()
+        $stream.Dispose()
+    }
+}
 $ProgressPreference = "SilentlyContinue"
 
 function Write-UpdateState([string]$Phase, [string]$Message = "") {
@@ -221,16 +232,20 @@ function Restore-Previous([string]$Current, [string]$Previous) {
 function Invoke-Prepare {
     if (-not (Test-Path -LiteralPath $ArchivePath -PathType Leaf)) { throw "Runtime archive does not exist." }
     if ((Get-Item -LiteralPath $ArchivePath).Length -ne $ExpectedSizeBytes) { throw "Runtime archive size mismatch." }
-    $actualHash = (Get-FileHash -LiteralPath $ArchivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $actualHash = Get-Sha256Hex $ArchivePath
     if ($actualHash -ne $ExpectedSha256.ToLowerInvariant()) { throw "Runtime archive SHA-256 mismatch." }
     Write-UpdateState "staging" "Extracting and validating runtime."
     $expanded = Join-Path $StagingRoot "expanded"
     Expand-RuntimeArchive $ArchivePath $expanded
     $runtimeRoot = Resolve-RuntimeRoot $expanded
-    $manifest = Assert-Runtime $runtimeRoot
     $prepared = Join-Path $StagingRoot "runtime"
     Remove-Item -LiteralPath $prepared -Recurse -Force -ErrorAction SilentlyContinue
     Move-Item -LiteralPath $runtimeRoot -Destination $prepared
+    # A venv created on a build runner keeps that machine's absolute Python
+    # home in pyvenv.cfg and command wrappers. Rebind it to the extracted
+    # portable Python before executing any staged backend code.
+    Repair-AgentWrappers (Join-Path $prepared "drsai-agent")
+    $manifest = Assert-Runtime $prepared
     Write-UpdateState "ready" "Runtime staged and verified."
     [pscustomobject]@{ ok = $true; version = $manifest.version; runtimeRoot = $prepared } | ConvertTo-Json -Compress
 }
