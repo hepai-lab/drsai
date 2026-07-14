@@ -187,6 +187,7 @@ async function auditWindow(win, label) {
       clientWidth: html.clientWidth,
       overflow: html.scrollWidth > html.clientWidth + 1,
       text,
+      inputPlaceholders: Array.from(document.querySelectorAll("input")).map((input) => input.placeholder || ""),
       buttons,
       offscreen,
       hasTextarea: Boolean(document.querySelector("textarea")),
@@ -457,7 +458,9 @@ async function runCurrentVisual() {
     }
     if (!audit.text.includes("OpenDrSai")) fail(audit.label + " is missing brand text");
     if (!includesAny(audit.text, [text.newChatZh, "New chat"])) fail(audit.label + " is missing new chat action");
-    if (!includesAny(audit.text, [text.searchZh, "Search"])) fail(audit.label + " is missing search action");
+    if (!includesAny([audit.text, ...audit.inputPlaceholders].join(" "), [text.searchZh, "Search"])) {
+      fail(audit.label + " is missing search action");
+    }
     if (!includesAny(audit.text, [text.workspaceZh, "Workspace"])) fail(audit.label + " is missing workspace section");
     if (!audit.hasTextarea) fail(audit.label + " is missing chat textarea");
     const accessibleNav = audit.buttons.filter((button) =>
@@ -605,6 +608,7 @@ contextBridge.exposeInMainWorld("openDrSai", {
     expiresAt: null,
     authMode: "offline",
   }),
+  getA5ServiceGuidanceScenario: async () => null,
   login: async () => ({
     ok: true,
     message: "Mock sign-in complete.",
@@ -677,6 +681,9 @@ contextBridge.exposeInMainWorld("openDrSai", {
   cancelInstall: async () => true,
   startGateway: async () => true,
   stopGateway: async () => true,
+  onRemoteGatewayOperation: () => () => undefined,
+  onRemoteWorkspaceStatus: () => () => undefined,
+  onWorkspaceFileChanges: () => () => undefined,
   listAgents: async () => [],
   getMyDrSaiConfig: async () => ({
     configPath: "C:\\Users\\Demo\\.drsai\\mydrsai.json",

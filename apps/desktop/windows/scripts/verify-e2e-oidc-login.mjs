@@ -3,10 +3,15 @@ import { createSign, generateKeyPairSync } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { delimiter, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const preparedAgentPython = process.env.OPENDRSAI_GATEWAY_SMOKE_PYTHON ||
+  join(root, ".tmp", "bootstrapper-msi3", ".drsai", "drsai-agent", "venv", "Scripts", "python.exe");
+const preparedAgentDir = existsSync(preparedAgentPython)
+  ? dirname(dirname(dirname(preparedAgentPython)))
+  : "";
 const exePath = join(root, "release", "win-unpacked", "OpenDrSai.exe");
 const electronCmd = process.platform === "win32"
   ? join(root, "node_modules", "electron", "dist", "electron.exe")
@@ -362,6 +367,7 @@ function runPackagedApp() {
         APPDATA: process.env.APPDATA,
         PATH: systemPath,
         DRSAI_HOME: drsaiHome,
+        ...(preparedAgentDir ? { DRSAI_REPO: preparedAgentDir } : {}),
         DRSAI_GATEWAY_DEV_MANAGED: "1",
         OPENDRSAI_GATEWAY_PORT: String(gatewayPort),
         OPENDRSAI_OIDC_ISSUER: issuer,
