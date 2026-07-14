@@ -11,6 +11,8 @@ const css = read("src/renderer/src/styles.css");
 const sharedApi = read("src/shared/desktopApi.ts");
 const preload = read("src/preload/index.ts");
 const main = read("src/main/index.ts");
+const generator = read("src/main/managerPresentation.ts");
+const parser = read("src/main/presentationPdf.ts");
 
 const checks = [
   ["presentation PDFs require the structured backend marker", action.includes('content.includes("PDF type: presentation_pdf")')],
@@ -32,6 +34,11 @@ const checks = [
   ["main validates PDF paths and page numbers before opening", main.includes("openPdfSourcePage") && main.includes('extname(rawPath).toLowerCase() !== ".pdf"') && main.includes("Number.isInteger(page)")],
   ["validated source page opens through the system PDF handler", main.includes("shell.openExternal(viewerUrl.href)") && main.includes("!isE2eSmokeProcess")],
   ["source review has visible keyboard focus styling", css.includes(".presentation-source-page-links button:focus-visible")],
+  ["manager generation exposes a typed cancel API", sharedApi.includes("cancelManagerPresentation(") && preload.includes('desktop:manager-presentation-cancel')],
+  ["cancel is scoped to the originating renderer task", main.includes("managerPresentationRuns") && main.includes("run.webContentsId !== event.sender.id")],
+  ["PDF parsing accepts AbortSignal instead of blocking the main process", parser.includes("export async function extractPresentationPdf(") && parser.includes("signal,") && generator.includes("await extractPresentationPdf(sourcePath, options.signal)")],
+  ["cancelled generation removes incomplete PPTX and provenance files", generator.includes("ManagerPresentationCancelledError") && generator.includes("unlinkSync(path)")],
+  ["cancelled and failed tasks expose the same retry entry", panel.includes('["failed", "cancelled"]') && panel.includes("重试生成")],
 ];
 
 const failures = checks.filter(([, ok]) => !ok).map(([label]) => label);
