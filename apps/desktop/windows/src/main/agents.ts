@@ -1,6 +1,12 @@
-import { existsSync, readFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
 import { join } from "path";
-import type { DesktopAgent, PlatformAgentStatus } from "../shared/desktopApi";
+import { is } from "@electron-toolkit/utils";
+import type {
+  DesktopAgent,
+  DesktopAgentListOptions,
+  DesktopAgentPreferenceResult,
+  PlatformAgentStatus,
+} from "../shared/desktopApi";
 import {
   invalidateAuthSession,
   refreshAuthContextAfterUnauthorized,
@@ -8,13 +14,32 @@ import {
 } from "./auth";
 import { getGatewayStatus } from "./gateway";
 import { DRSAI_HOME } from "./paths";
-import { fetchPlatformAgents } from "./platformAgentClient";
+import {
+  fetchPlatformAgents,
+  recordPlatformAgentUsage,
+  respondPlatformAgentInput,
+  setPlatformDefaultAgent,
+  stopPlatformAgentThread,
+  type PlatformAgentClientOptions,
+} from "./platformAgentClient";
+import {
+  createPublicAgentCachePayload,
+  mergeAndSortAgents,
+  parsePublicAgentCachePayload,
+  type PlatformAgentExecutionDescriptor,
+} from "./agentCatalog";
+import { recordAgentTelemetry } from "./agentTelemetry";
 
 const LOCAL_AGENT_ID = "my-drsai";
 const PLATFORM_BASE_URL =
   process.env.OPENDRSAI_PLATFORM_BASE_URL?.trim().replace(/\/+$/, "") ||
-  "https://ai-dev.ihep.ac.cn";
-const REQUEST_TIMEOUT_MS = 6000;
+  (is.dev ? "https://ai-dev.ihep.ac.cn" : "https://ai.ihep.ac.cn");
+const PLATFORM_AGENTS_ENABLED = !["0", "false", "off", "no"].includes((process.env.OPENDRSAI_PLATFORM_AGENTS_ENABLED || "true").toLowerCase());
+const PLATFORM_CHAT_ENABLED = !["0", "false", "off", "no"].includes((process.env.OPENDRSAI_PLATFORM_AGENT_CHAT_ENABLED || "true").toLowerCase());
+const PLATFORM_CACHE_PATH = join(DRSAI_HOME, "cache", "platform-agents.v1.json");
+const PLATFORM_CACHE_TTL_MS = positiveIntegerEnv("OPENDRSAI_AGENT_CACHE_TTL_MS", 2 * 60 * 60 * 1000);
+
+let platformExecutionDescriptors = new Map<string, PlatformAgentExecutionDescriptor>();
 
 let platformStatus: PlatformAgentStatus = {
   state: "requires_login",
@@ -24,28 +49,84 @@ let platformStatus: PlatformAgentStatus = {
   lastCheckedAt: null,
 };
 
-interface RemoteAgentConfig {
-  id?: unknown;
-  name?: unknown;
-  description?: unknown;
-  owner?: unknown;
-  url?: unknown;
-  api_key?: unknown;
-  apiKey?: unknown;
-  examples?: unknown;
-}
-
-export async function listAgents(): Promise<DesktopAgent[]> {
-  const [localAgents, platformAgents, remoteAgents] = await Promise.all([
+export async function listAgents(options: DesktopAgentListOptions = {}): Promise<DesktopAgent[]> {
+  if (!PLATFORM_AGENTS_ENABLED) {
+    platformStatus = {
+      state: "native_api_unavailable",
+      apiVersion: null,
+      capabilities: [],
+      message: "Platform agents are disabled by the Windows rollout flag.",
+      lastCheckedAt: new Date().toISOString(),
+    };
+  }
+  const [localAgents, platformAgents] = await Promise.all([
     listLocalAgents(),
-    listPlatformAgents(),
-    listRemoteAgents(),
+    PLATFORM_AGENTS_ENABLED ? listPlatformAgents(options) : Promise.resolve([]),
   ]);
-  return [...localAgents, ...platformAgents, ...remoteAgents];
+  // The Agent Square has exactly two authorities: this device owns My DrSai,
+  // and HAI owns every other catalog entry. Do not merge legacy device-side
+  // remote-agent records here; those records have no platform identity
+  // or authorization context and previously made HAI agents look local.
+  const agents = mergeAndSortAgents(localAgents, platformAgents);
+  recordAgentTelemetry({ event: "catalog_refresh", source: "platform", status: platformStatus.state, count: agents.length });
+  return agents;
 }
 
 export function getPlatformAgentStatus(): PlatformAgentStatus {
   return { ...platformStatus, capabilities: [...platformStatus.capabilities] };
+}
+
+export function getPlatformAgentExecutionDescriptor(
+  agentId: string,
+): PlatformAgentExecutionDescriptor | null {
+  const descriptor = platformExecutionDescriptors.get(agentId);
+  return descriptor ? { ...descriptor } : null;
+}
+
+export function getPlatformAgentChatUrl(platformId: string): string {
+  return `${PLATFORM_BASE_URL}/api/native/v1/agents/${encodeURIComponent(platformId)}/chat`;
+}
+
+export function isPlatformAgentExecutionAvailable(): boolean {
+  return PLATFORM_AGENTS_ENABLED && PLATFORM_CHAT_ENABLED && platformStatus.state === "ready" && platformStatus.capabilities.includes("agent-chat");
+}
+
+export async function setDefaultAgent(agentId: string): Promise<DesktopAgentPreferenceResult> {
+  if (agentId === LOCAL_AGENT_ID) {
+    recordAgentTelemetry({ event: "agent_selected", agentId, source: "local", status: "default" });
+    return { agentId, saved: true, message: "Local agent selected as the Windows default." };
+  }
+  const descriptor = getPlatformAgentExecutionDescriptor(agentId);
+  if (!descriptor) return { agentId, saved: false, message: "Agent not found in the platform catalog." };
+  const result = await setPlatformDefaultAgent(platformClientOptions(), descriptor.platformId);
+  if (result.ok) recordAgentTelemetry({ event: "agent_selected", agentId, mode: descriptor.mode, source: "platform", status: "default" });
+  return { agentId, saved: result.ok, message: result.message };
+}
+
+export async function recordAgentUsage(agentId: string): Promise<DesktopAgentPreferenceResult> {
+  if (agentId === LOCAL_AGENT_ID) {
+    return { agentId, saved: true, message: "Local agent usage recorded on this device." };
+  }
+  const descriptor = getPlatformAgentExecutionDescriptor(agentId);
+  if (!descriptor) return { agentId, saved: false, message: "Agent not found in the platform catalog." };
+  const result = await recordPlatformAgentUsage(platformClientOptions(), descriptor.platformId);
+  return { agentId, saved: result.ok, message: result.message };
+}
+
+export async function stopPlatformChat(agentId: string, threadId: string): Promise<boolean> {
+  const descriptor = getPlatformAgentExecutionDescriptor(agentId);
+  if (!descriptor) return false;
+  return (await stopPlatformAgentThread(platformClientOptions(), descriptor.platformId, threadId)).ok;
+}
+
+export async function respondToPlatformChatInput(
+  agentId: string,
+  threadId: string,
+  response: string | Record<string, unknown>,
+): Promise<boolean> {
+  const descriptor = getPlatformAgentExecutionDescriptor(agentId);
+  if (!descriptor) return false;
+  return (await respondPlatformAgentInput(platformClientOptions(), descriptor.platformId, threadId, response)).ok;
 }
 
 async function listLocalAgents(): Promise<DesktopAgent[]> {
@@ -57,6 +138,10 @@ async function listLocalAgents(): Promise<DesktopAgent[]> {
     owner: "Local",
     source: "local",
     status: gateway.ready ? "running" : "stopped",
+    mode: "local",
+    available: gateway.ready,
+    capabilities: ["chat", "workspace", "tools"],
+    catalogGroup: "local",
     url: gateway.baseUrl,
     error: gateway.ready
       ? undefined
@@ -66,133 +151,131 @@ async function listLocalAgents(): Promise<DesktopAgent[]> {
   }];
 }
 
-async function listPlatformAgents(): Promise<DesktopAgent[]> {
+async function listPlatformAgents(options: DesktopAgentListOptions): Promise<DesktopAgent[]> {
   try {
-    const result = await fetchPlatformAgents({
-      baseUrl: PLATFORM_BASE_URL,
-      auth: {
-        getAccessToken: async () => {
-          const auth = await requireAuthContext();
-          if (auth.authMode !== "oidc" || !auth.accessToken) {
-            throw new Error("HepAI OIDC sign-in is required.");
-          }
-          return auth.accessToken;
-        },
-        refreshAfterUnauthorized: async () => {
-          const auth = await refreshAuthContextAfterUnauthorized();
-          if (!auth.accessToken) throw new Error("The refreshed session has no access token.");
-          return auth.accessToken;
-        },
-        invalidate: invalidateAuthSession,
-      },
-    });
-    platformStatus = result.status;
-    return result.agents;
+    const result = await fetchPlatformAgents(platformClientOptions(options.refresh === true));
+    if (result.status.state === "ready") {
+      platformExecutionDescriptors = new Map(
+        result.executionDescriptors.map((descriptor) => [descriptor.publicId, descriptor]),
+      );
+      const syncedAt = result.status.lastCheckedAt ?? new Date().toISOString();
+      writePlatformCache(result.agents, syncedAt);
+      platformStatus = {
+        ...result.status,
+        lastSuccessfulSyncAt: syncedAt,
+        cacheState: "fresh",
+      };
+      return result.agents;
+    }
+    const cached = readPlatformCache();
+    if (cached) {
+      platformExecutionDescriptors = new Map(
+        cached.agents.map((agent) => [agent.id, cacheExecutionDescriptor(agent)]),
+      );
+      platformStatus = {
+        ...result.status,
+        message: `${result.status.message} Showing the last cached platform catalog.`,
+        lastSuccessfulSyncAt: cached.savedAt,
+        cacheState: cached.fresh ? "fresh" : "stale",
+      };
+      return cached.agents;
+    }
+    platformExecutionDescriptors.clear();
+    platformStatus = { ...result.status, lastSuccessfulSyncAt: null, cacheState: "none" };
+    return [];
   } catch (error) {
+    const cached = readPlatformCache();
+    platformExecutionDescriptors = new Map(
+      (cached?.agents ?? []).map((agent) => [agent.id, cacheExecutionDescriptor(agent)]),
+    );
     platformStatus = {
       state: "error",
       apiVersion: null,
       capabilities: [],
       message: error instanceof Error && error.name === "AbortError"
-        ? "Platform capability detection timed out. Local agents remain available."
-        : "Platform capability detection failed. Local agents remain available.",
+        ? "Platform capability detection timed out."
+        : "Platform capability detection failed.",
       lastCheckedAt: new Date().toISOString(),
+      lastSuccessfulSyncAt: cached?.savedAt ?? null,
+      cacheState: cached ? (cached.fresh ? "fresh" : "stale") : "none",
     };
+    if (cached) {
+      platformStatus.message += " Showing the last cached platform catalog.";
+      return cached.agents;
+    }
+    platformStatus.message += " Local agents remain available.";
     return [];
   }
 }
 
-async function listRemoteAgents(): Promise<DesktopAgent[]> {
-  return Promise.all(readRemoteAgentConfigs().map(checkRemoteAgent));
-}
-
-function readRemoteAgentConfigs(): RemoteAgentConfig[] {
-  const filePath =
-    process.env.OPENDRSAI_REMOTE_AGENTS_FILE ||
-    process.env.DRSAI_REMOTE_AGENTS_FILE ||
-    join(DRSAI_HOME, "remote_agents.json");
-  if (!existsSync(filePath)) return [];
-  try {
-    const parsed = JSON.parse(readFileSync(filePath, "utf8"));
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-async function checkRemoteAgent(config: RemoteAgentConfig): Promise<DesktopAgent> {
-  const url = stringOr(config.url, "");
-  const name = stringOr(config.name, "Remote Agent");
-  const id = stringOr(config.id, `remote:${url || name}`);
-  if (!url) {
-    return {
-      id,
-      name,
-      description: stringOr(config.description, "A remotely connected agent."),
-      owner: stringOr(config.owner, "Remote"),
-      source: "remote",
-      status: "unreachable",
-      error: "The remote agent has no URL.",
-    };
-  }
-  const status = await checkRemoteBaseUrl(url, createRemoteHeaders(config));
+function platformClientOptions(refresh = false): PlatformAgentClientOptions {
   return {
-    id,
-    name,
-    description: stringOr(config.description, "A remotely connected agent."),
-    owner: stringOr(config.owner, "Remote"),
-    source: "remote",
-    status: status.ok ? "running" : "unreachable",
-    url,
-    examples: normalizeExamples(config.examples),
-    error: status.ok ? undefined : status.error,
+    baseUrl: PLATFORM_BASE_URL,
+    refresh,
+    auth: {
+      getAccessToken: async () => {
+        const auth = await requireAuthContext();
+        if (auth.authMode !== "oidc" || !auth.accessToken) {
+          throw new Error("HepAI OIDC sign-in is required.");
+        }
+        return auth.accessToken;
+      },
+      refreshAfterUnauthorized: async () => {
+        const auth = await refreshAuthContextAfterUnauthorized();
+        if (!auth.accessToken) throw new Error("The refreshed session has no access token.");
+        return auth.accessToken;
+      },
+      invalidate: invalidateAuthSession,
+    },
   };
 }
 
-async function checkRemoteBaseUrl(
-  baseUrl: string,
-  headers: Record<string, string>,
-): Promise<{ ok: boolean; error?: string }> {
-  const health = await requestJson(joinUrl(baseUrl, "/health"), headers);
-  if (health.ok) return { ok: true };
-  const agents = await requestJson(joinUrl(baseUrl, "/agents/list_agents"), headers);
-  return agents.ok ? { ok: true } : { ok: false, error: health.error || agents.error };
-}
-
-async function requestJson(
-  url: string,
-  headers: Record<string, string> = {},
-): Promise<{ ok: boolean; error?: string }> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+function writePlatformCache(agents: DesktopAgent[], savedAt: string): void {
+  const directory = join(DRSAI_HOME, "cache");
+  const temporaryPath = `${PLATFORM_CACHE_PATH}.tmp`;
   try {
-    const response = await fetch(url, { headers, signal: controller.signal });
-    return response.ok ? { ok: true } : { ok: false, error: `HTTP ${response.status}` };
-  } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) };
-  } finally {
-    clearTimeout(timeout);
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(
+      temporaryPath,
+      `${JSON.stringify(createPublicAgentCachePayload(agents, savedAt), null, 2)}\n`,
+      { encoding: "utf8", mode: 0o600 },
+    );
+    renameSync(temporaryPath, PLATFORM_CACHE_PATH);
+  } catch {
+    // Catalog caching is best-effort; a read-only profile must not hide live agents.
   }
 }
 
-function createRemoteHeaders(config: RemoteAgentConfig): Record<string, string> {
-  const apiKey = stringOr(config.api_key, stringOr(config.apiKey, ""));
-  return apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
+function readPlatformCache(): { agents: DesktopAgent[]; savedAt: string; fresh: boolean } | null {
+  if (!existsSync(PLATFORM_CACHE_PATH)) return null;
+  try {
+    const payload = parsePublicAgentCachePayload(
+      JSON.parse(readFileSync(PLATFORM_CACHE_PATH, "utf8")),
+    );
+    if (!payload) return null;
+    const age = Date.now() - Date.parse(payload.savedAt);
+    return {
+      agents: payload.agents,
+      savedAt: payload.savedAt,
+      fresh: Number.isFinite(age) && age >= 0 && age <= PLATFORM_CACHE_TTL_MS,
+    };
+  } catch {
+    return null;
+  }
 }
 
-function joinUrl(baseUrl: string, path: string): string {
-  return `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+function cacheExecutionDescriptor(agent: DesktopAgent): PlatformAgentExecutionDescriptor {
+  return {
+    publicId: agent.id,
+    platformId: agent.id.replace(/^platform:/, ""),
+    mode: agent.mode || "remote",
+    name: agent.name,
+    model: agent.model,
+    available: agent.available !== false,
+  };
 }
 
-function stringOr(value: unknown, fallback: string): string {
-  return typeof value === "string" && value.trim() ? value.trim() : fallback;
-}
-
-function normalizeExamples(value: unknown): DesktopAgent["examples"] | undefined {
-  if (typeof value === "string" && value.trim()) return value.trim();
-  if (!Array.isArray(value)) return undefined;
-  const examples = value
-    .map((item) => typeof item === "string" ? item.trim() : "")
-    .filter(Boolean);
-  return examples.length > 0 ? examples : undefined;
+function positiveIntegerEnv(name: string, fallback: number): number {
+  const parsed = Number(process.env[name]);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }

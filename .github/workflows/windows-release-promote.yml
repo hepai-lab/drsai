@@ -63,7 +63,7 @@ jobs:
             --pattern "latest-windows.json" `
             --pattern "release-summary.json"
           gh release download $tag --repo $env:OPENDRSAI_RELEASE_REPOSITORY --dir release\bootstrapper --clobber `
-            --pattern "OpenDrSaiSetup.msi" `
+            --pattern "OpenDrSaiSetup-win-x64.msi" `
             --pattern "OpenDrSaiRuntime-win-x64.zip"
 
       - name: Verify draft release artifacts

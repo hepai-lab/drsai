@@ -288,12 +288,14 @@ export function useDesktopChatAdapter({
     try {
       await desktopApi.startChat({
         requestId,
+        agentId: options?.agentId?.trim() || undefined,
         sessionId: threadIdRef.current,
         runId: requestId,
         workspacePath,
         attachments,
         model: options?.model?.trim() || undefined,
         metadata: {
+          selected_agent_id: options?.agentId?.trim() || undefined,
           workspace_instructions: workspaceInstructions || [],
           selected_agent: options?.agentName?.trim() || undefined,
           thinking_effort: options?.thinkingEffort,
@@ -393,6 +395,22 @@ export function useDesktopChatAdapter({
             streamingAssistantByRequest.current[event.requestId],
             toolTimeline,
           ),
+        ),
+      );
+      return;
+    }
+    if (event.type === "input_request" && event.prompt) {
+      const assistantId = streamingAssistantByRequest.current[event.requestId];
+      setMessages((current) =>
+        publishAndReturn(
+          updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
+            ...message,
+            inputRequest: {
+              requestId: event.requestId,
+              prompt: event.prompt || "Input required",
+              inputType: event.inputType || "text_input",
+            },
+          })),
         ),
       );
       return;

@@ -13,11 +13,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent { OpenDrSaiApp(appViewModel) }
+        appViewModel.handleOidcRedirect(intent?.data)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        appViewModel.handleOidcRedirect(intent.data)
     }
 
     override fun onStop() {

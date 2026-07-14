@@ -2,6 +2,7 @@ package ai.drsai.remote.data
 
 import android.net.Uri
 import android.util.Base64
+import ai.drsai.remote.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
@@ -26,23 +27,85 @@ import java.security.Signature
 import java.security.spec.RSAPublicKeySpec
 import java.util.concurrent.TimeUnit
 
-internal const val OIDC_ISSUER = "https://ai.ihep.ac.cn/api"
-internal const val OIDC_DISCOVERY = "$OIDC_ISSUER/.well-known/openid-configuration"
-internal const val OIDC_CLIENT_ID = "opendrsai-desktop"
+internal val OIDC_ISSUER: String get() = BuildConfig.OIDC_ISSUER
+internal val OIDC_DISCOVERY: String get() = "$OIDC_ISSUER/.well-known/openid-configuration"
+internal const val OIDC_LEGACY_CLIENT_ID = "opendrsai-desktop"
+internal val OIDC_CLIENT_ID: String get() = BuildConfig.OIDC_CLIENT_ID
 internal const val OIDC_SCOPE = "openid email profile roles groups hai_api offline_access"
 internal const val OIDC_APP_RETURN_URI = "opendrsai://oauth2redirect"
-private const val OIDC_AUTH_TIMEOUT_MS = 5 * 60 * 1000L
+internal const val OIDC_NATIVE_REDIRECT_URI = "ai.drsai.remote:/oauth2redirect"
+internal const val OIDC_AUTH_TIMEOUT_MS = 5 * 60 * 1000L
+
+data class OidcConfiguration(
+    val clientId: String,
+    val nativeRedirectUri: String = "",
+) {
+    val usesNativeRedirect: Boolean get() = nativeRedirectUri.isNotBlank()
+
+    init {
+        require(clientId.isNotBlank()) { "OIDC client_id 不能为空" }
+        require(!usesNativeRedirect || nativeRedirectUri == OIDC_NATIVE_REDIRECT_URI) {
+            "Android 原生回调必须为 $OIDC_NATIVE_REDIRECT_URI"
+        }
+    }
+
+    companion object {
+        fun fromBuildConfig() = OidcConfiguration(
+            clientId = BuildConfig.OIDC_CLIENT_ID,
+            nativeRedirectUri = BuildConfig.OIDC_REDIRECT_URI,
+        )
+    }
+}
+
+data class OidcLoginTransaction(
+    val clientId: String,
+    val redirectUri: String,
+    val verifier: String,
+    val state: String,
+    val nonce: String,
+    val createdAt: Long,
+)
 
 class OidcLoginSession internal constructor(
     val authorizationUrl: String,
-    internal val redirectUri: String,
-    internal val verifier: String,
-    internal val state: String,
-    internal val nonce: String,
-    internal val server: ServerSocket,
-)
+    internal val transaction: OidcLoginTransaction,
+    internal val server: ServerSocket?,
+) {
+    val usesNativeRedirect: Boolean get() = server == null
+}
+
+internal fun validateAuthorizationCallback(
+    callback: Uri,
+    transaction: OidcLoginTransaction,
+    now: Long = System.currentTimeMillis(),
+): String {
+    if (transaction.createdAt > now + 60_000 || now - transaction.createdAt > OIDC_AUTH_TIMEOUT_MS) {
+        throw ApiException(401, "登录请求已过期，请重新登录", retryable = false)
+    }
+    val expected = Uri.parse(transaction.redirectUri)
+    val sameDestination = callback.scheme.equals(expected.scheme, ignoreCase = true) &&
+        callback.authority.equals(expected.authority, ignoreCase = true) &&
+        callback.path == expected.path
+    if (!sameDestination) throw ApiException(401, "登录回调地址不匹配", retryable = false)
+    val error = callback.getQueryParameter("error")
+    if (!error.isNullOrBlank()) {
+        throw ApiException(
+            401,
+            callback.getQueryParameter("error_description") ?: error,
+            retryable = false,
+        )
+    }
+    if (callback.getQueryParameter("state") != transaction.state) {
+        throw ApiException(401, "登录状态校验失败", retryable = false)
+    }
+    return callback.getQueryParameter("code")
+        ?.takeIf(String::isNotBlank)
+        ?: throw ApiException(401, "登录回调缺少授权码", retryable = false)
+}
 
 class OidcClient(
+    private val configuration: OidcConfiguration = OidcConfiguration.fromBuildConfig(),
+    private val refreshClientId: () -> String? = { null },
     private val http: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
@@ -59,12 +122,22 @@ class OidcClient(
         val challenge = base64Url(
             MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray(StandardCharsets.US_ASCII)),
         )
-        val server = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).apply {
-            soTimeout = 1_000
+        val server = if (configuration.usesNativeRedirect) null else {
+            ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).apply { soTimeout = 1_000 }
         }
-        val redirectUri = "http://127.0.0.1:${server.localPort}/callback"
+        val redirectUri = configuration.nativeRedirectUri.ifBlank {
+            "http://127.0.0.1:${requireNotNull(server).localPort}/callback"
+        }
+        val transaction = OidcLoginTransaction(
+            clientId = configuration.clientId,
+            redirectUri = redirectUri,
+            verifier = verifier,
+            state = state,
+            nonce = nonce,
+            createdAt = System.currentTimeMillis(),
+        )
         val authorizationUrl = Uri.parse(config.getString("authorization_endpoint")).buildUpon()
-            .appendQueryParameter("client_id", OIDC_CLIENT_ID)
+            .appendQueryParameter("client_id", transaction.clientId)
             .appendQueryParameter("redirect_uri", redirectUri)
             .appendQueryParameter("response_type", "code")
             .appendQueryParameter("scope", OIDC_SCOPE)
@@ -74,49 +147,50 @@ class OidcClient(
             .appendQueryParameter("nonce", nonce)
             .build()
             .toString()
-        OidcLoginSession(authorizationUrl, redirectUri, verifier, state, nonce, server)
+        OidcLoginSession(authorizationUrl, transaction, server)
     }
 
-    suspend fun finishLogin(session: OidcLoginSession): AuthTokens = withContext(Dispatchers.IO) {
+    suspend fun finishLogin(session: OidcLoginSession, redirect: Uri? = null): AuthTokens = withContext(Dispatchers.IO) {
         try {
-            val callback = withTimeout(OIDC_AUTH_TIMEOUT_MS) { waitForCallback(session) }
-            val error = callback.getQueryParameter("error")
-            if (!error.isNullOrBlank()) {
-                throw ApiException(401, callback.getQueryParameter("error_description") ?: error)
-            }
-            if (callback.getQueryParameter("state") != session.state) {
-                throw ApiException(401, "登录状态校验失败")
-            }
-            val code = callback.getQueryParameter("code")
-                ?: throw ApiException(401, "登录回调缺少授权码")
+            val callback = redirect ?: withTimeout(OIDC_AUTH_TIMEOUT_MS) { waitForCallback(session) }
+            val code = validateAuthorizationCallback(callback, session.transaction)
             val token = tokenRequest(
                 FormBody.Builder()
                     .add("grant_type", "authorization_code")
-                    .add("client_id", OIDC_CLIENT_ID)
-                    .add("redirect_uri", session.redirectUri)
+                    .add("client_id", session.transaction.clientId)
+                    .add("redirect_uri", session.transaction.redirectUri)
                     .add("code", code)
-                    .add("code_verifier", session.verifier)
+                    .add("code_verifier", session.transaction.verifier)
                     .build(),
             )
-            validateAndMap(token, expectedNonce = session.nonce, previousRefreshToken = null)
+            validateAndMap(
+                token,
+                expectedNonce = session.transaction.nonce,
+                previousRefreshToken = null,
+                clientId = session.transaction.clientId,
+            )
         } finally {
-            runCatching { session.server.close() }
+            runCatching { session.server?.close() }
         }
     }
+
+    fun restoreSession(transaction: OidcLoginTransaction): OidcLoginSession =
+        OidcLoginSession(authorizationUrl = "", transaction = transaction, server = null)
 
     fun cancel(session: OidcLoginSession?) {
         runCatching { session?.server?.close() }
     }
 
     override suspend fun refresh(refreshToken: String): AuthTokens = withContext(Dispatchers.IO) {
+        val clientId = refreshClientId()?.takeIf(String::isNotBlank) ?: configuration.clientId
         val token = tokenRequest(
             FormBody.Builder()
                 .add("grant_type", "refresh_token")
-                .add("client_id", OIDC_CLIENT_ID)
+                .add("client_id", clientId)
                 .add("refresh_token", refreshToken)
                 .build(),
         )
-        validateAndMap(token, expectedNonce = null, previousRefreshToken = refreshToken)
+        validateAndMap(token, expectedNonce = null, previousRefreshToken = refreshToken, clientId = clientId)
     }
 
     override suspend fun revoke(refreshToken: String) = withContext(Dispatchers.IO) {
@@ -135,12 +209,13 @@ class OidcClient(
     }
 
     private suspend fun waitForCallback(session: OidcLoginSession): Uri {
+        val server = session.server ?: throw ApiException(401, "原生登录回调尚未返回")
         while (currentCoroutineContext().isActive) {
             try {
-                session.server.accept().use { socket ->
+                server.accept().use { socket ->
                     val requestLine = BufferedReader(InputStreamReader(socket.getInputStream())).readLine().orEmpty()
                     val target = requestLine.split(' ').getOrNull(1) ?: "/callback?error=invalid_request"
-                    val callback = Uri.parse("http://127.0.0.1$target")
+                    val callback = Uri.parse("http://127.0.0.1:${server.localPort}$target")
                     val validPath = callback.path == "/callback"
                     if (validPath) writeAppReturnResponse(socket)
                     else writeHttpResponse(
@@ -221,11 +296,16 @@ class OidcClient(
         return json
     }
 
-    private fun validateAndMap(token: JSONObject, expectedNonce: String?, previousRefreshToken: String?): AuthTokens {
+    private fun validateAndMap(
+        token: JSONObject,
+        expectedNonce: String?,
+        previousRefreshToken: String?,
+        clientId: String,
+    ): AuthTokens {
         val idClaims = verifyJwt(token.getString("id_token"))
         val accessToken = token.getString("access_token")
         val accessClaims = verifyJwt(accessToken)
-        validateClaims(idClaims, OIDC_CLIENT_ID)
+        validateClaims(idClaims, clientId)
         validateClaims(accessClaims, "hai-api")
         if (expectedNonce != null && idClaims.optString("nonce") != expectedNonce) {
             throw ApiException(401, "OIDC nonce 校验失败")

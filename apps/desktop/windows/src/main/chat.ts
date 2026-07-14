@@ -4,13 +4,15 @@ import { appendFileSync, mkdirSync } from "fs";
 import { readFile, stat } from "fs/promises";
 import { dirname } from "path";
 import type { ChatAttachment, ChatEvent, ChatMessage, ChatRequest } from "../shared/desktopApi";
-import { invalidateAuthSession, requireAuthContext, type AuthContext } from "./auth";
+import { invalidateAuthSession, refreshAuthContextAfterUnauthorized, requireAuthContext, type AuthContext } from "./auth";
+import { getPlatformAgentChatUrl, getPlatformAgentExecutionDescriptor, isPlatformAgentExecutionAvailable, respondToPlatformChatInput, stopPlatformChat } from "./agents";
 import { getGatewayRequestHeaders, startGateway } from "./gateway";
 import { getDefaultModelAlias } from "./modelDefaults";
 import {
   createChatToolTimelineAccumulator,
   ChatSseError,
   isCompletionDoneFrame,
+  parseAgentInputRequestSseFrame,
   parseAgentLogSseFrame,
   parseChatReasoningSseFrame,
   parseChatSseFrame,
@@ -23,6 +25,8 @@ import { upsertThreadFromRun } from "./threads";
 import { persistProviderErrorAnalytics } from "./providerErrorAnalytics";
 import { persistProviderUsageAnalytics } from "./providerUsageAnalytics";
 import { bindRemoteThread, getRemoteGatewayAccess } from "./remoteWorkspace";
+import { recordAgentTelemetry } from "./agentTelemetry";
+import { assertAgentCircuitAvailable, recordAgentCircuitFailure, recordAgentCircuitSuccess } from "./agentCircuitBreaker";
 
 const GATEWAY_BASE_URL = `http://127.0.0.1:${getGatewayPort()}`;
 const MAX_ACTIVE_CHATS = 3;
@@ -30,6 +34,7 @@ const MAX_MESSAGES = 40;
 const MAX_MESSAGE_CHARS = 16_000;
 const MAX_TOTAL_CHARS = 80_000;
 const MAX_MODEL_CHARS = 120;
+const MAX_AGENT_ID_CHARS = 160;
 const MAX_WORKSPACE_PATH_CHARS = 2048;
 const MAX_ATTACHMENTS = 20;
 const MAX_ATTACHMENT_PATH_CHARS = 2048;
@@ -44,6 +49,7 @@ const CHAT_TIMEOUT_MS = getPositiveIntEnv("OPENDRSAI_CHAT_TIMEOUT_MS", 120_000);
 const REQUEST_ID_PATTERN = /^[a-zA-Z0-9_-]{8,80}$/;
 const SESSION_ID_PATTERN = /^[a-zA-Z0-9_.:-]{1,160}$/;
 const activeChats = new Map<string, AbortController>();
+const platformChatTargets = new Map<string, { agentId: string; threadId: string }>();
 const chatEventSequences = new Map<string, number>();
 
 export function hasActiveChats(): boolean {
@@ -65,6 +71,7 @@ export function startChat(webContents: WebContents, request: unknown): string {
 
   runChat(webContents, requestId, validated, controller).catch((error) => {
     activeChats.delete(requestId);
+    platformChatTargets.delete(requestId);
     const timedOut = controller.signal.aborted && controller.signal.reason === "timeout";
     const errorMessage = timedOut
       ? `Gateway chat timed out after ${Math.round(CHAT_TIMEOUT_MS / 1000)} seconds.`
@@ -86,9 +93,22 @@ export function abortChat(requestId: string): boolean {
   }
   const controller = activeChats.get(requestId);
   if (!controller) return false;
+  const platformTarget = platformChatTargets.get(requestId);
+  if (platformTarget) void stopPlatformChat(platformTarget.agentId, platformTarget.threadId).catch(() => undefined);
   controller.abort("user");
   activeChats.delete(requestId);
+  platformChatTargets.delete(requestId);
   return true;
+}
+
+export async function respondChatInput(
+  requestId: string,
+  response: string | Record<string, unknown>,
+): Promise<boolean> {
+  if (typeof requestId !== "string" || !REQUEST_ID_PATTERN.test(requestId)) return false;
+  const target = platformChatTargets.get(requestId);
+  if (!target) return false;
+  return respondToPlatformChatInput(target.agentId, target.threadId, response);
 }
 
 function validateChatRequest(rawRequest: unknown): ChatRequest {
@@ -101,6 +121,12 @@ function validateChatRequest(rawRequest: unknown): ChatRequest {
     (typeof request.requestId !== "string" || !REQUEST_ID_PATTERN.test(request.requestId))
   ) {
     throw new Error("Chat request id is invalid.");
+  }
+  if (
+    request.agentId !== undefined &&
+    (typeof request.agentId !== "string" || request.agentId.length > MAX_AGENT_ID_CHARS || /[\r\n]/.test(request.agentId))
+  ) {
+    throw new Error("Chat agent id is invalid.");
   }
   if (
     request.model !== undefined &&
@@ -167,6 +193,7 @@ function validateChatRequest(rawRequest: unknown): ChatRequest {
   });
   return {
     requestId: request.requestId,
+    agentId: request.agentId?.trim() || undefined,
     model: request.model?.trim() || undefined,
     workspacePath: request.workspacePath?.trim() || undefined,
     threadId: request.threadId?.trim() || undefined,
@@ -263,12 +290,31 @@ async function runChat(
   let auth = await requireAuthContext();
   const sessionId = request.threadId || request.sessionId || requestId;
   const runId = request.runId || requestId;
+  const platformDescriptor = request.agentId && request.agentId !== "my-drsai"
+    ? getPlatformAgentExecutionDescriptor(request.agentId)
+    : null;
+  if (request.agentId && request.agentId !== "my-drsai" && !platformDescriptor) {
+    throw new Error("The selected platform agent is unavailable. Refresh the agent square and try again.");
+  }
+  if (platformDescriptor && !isPlatformAgentExecutionAvailable()) {
+    throw new Error("Platform agent chat is not enabled in this environment yet. My DrSai remains available.");
+  }
+  if (platformDescriptor && request.agentId) assertAgentCircuitAvailable(request.agentId);
+  const boundAgentId = request.agentId || "my-drsai";
+  const boundAgentName = platformDescriptor?.name || "My DrSai";
+  const executionStartedAt = Date.now();
+  recordAgentTelemetry({ event: "execution_started", agentId: boundAgentId, mode: platformDescriptor?.mode || "local", source: platformDescriptor ? "platform" : "local" });
+  if (platformDescriptor && request.agentId) {
+    platformChatTargets.set(requestId, { agentId: request.agentId, threadId: sessionId });
+  }
   emit(webContents, { requestId, sessionId, runId, type: "start" });
   await upsertThreadFromRun({
     id: sessionId,
     kind: "chat",
     title: deriveThreadTitle(request.messages),
     workspacePath: request.workspacePath,
+    boundAgentId,
+    boundAgentName,
     lastRunId: runId,
     lastRequestId: requestId,
     status: "running",
@@ -288,6 +334,34 @@ async function runChat(
     const messages = withAttachmentContext(request.messages, attachmentContext);
     const model = request.model || getDefaultModelAlias() || "drsai";
     const send = async (authContext: AuthContext): Promise<boolean> => {
+      if (platformDescriptor) {
+        if (!authContext.accessToken) {
+          throw new Error("Sign in with HepAI before using a platform agent.");
+        }
+        const response = await fetch(getPlatformAgentChatUrl(platformDescriptor.platformId), {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "text/event-stream",
+            Authorization: `Bearer ${authContext.accessToken}`,
+          },
+          body: JSON.stringify({
+            messages,
+            stream: true,
+            thread_id: sessionId,
+            run_id: runId,
+            model: request.model || platformDescriptor.model,
+            attachments: request.attachments || [],
+            metadata: request.metadata || {},
+          }),
+          signal: controller.signal,
+        });
+        if (response.status === 401) {
+          throw new ChatSseError("The HepAI session expired.", "token_expired", true);
+        }
+        if (!response.ok || !response.body) throw await formatHttpError(response);
+        return readSse(webContents, requestId, sessionId, runId, response.body, controller.signal);
+      }
       const gatewayBaseUrl = remoteGateway?.baseUrl || GATEWAY_BASE_URL;
       const gatewayHeaders = remoteGateway
         ? { "X-OpenDrSai-Gateway-Token": remoteGateway.token }
@@ -335,7 +409,9 @@ async function runChat(
         webContents.send("desktop:auth-session-invalidated");
       }
       if (!(error instanceof ChatSseError) || error.code !== "token_expired" || !error.retryable) throw error;
-      auth = await requireAuthContext();
+      auth = platformDescriptor
+        ? await refreshAuthContextAfterUnauthorized()
+        : await requireAuthContext();
       sawDone = await send(auth);
     }
     if (controller.signal.aborted) {
@@ -345,11 +421,15 @@ async function runChat(
       throw new Error("Gateway chat stream ended before data: [DONE].");
     }
     activeChats.delete(requestId);
+    if (platformDescriptor && request.agentId) recordAgentCircuitSuccess(request.agentId);
+    recordAgentTelemetry({ event: "execution_completed", agentId: boundAgentId, mode: platformDescriptor?.mode || "local", source: platformDescriptor ? "platform" : "local", durationMs: Date.now() - executionStartedAt });
     await upsertThreadFromRun({
       id: sessionId,
       kind: "chat",
       title: deriveThreadTitle(request.messages),
       workspacePath: request.workspacePath,
+      boundAgentId,
+      boundAgentName,
       lastRunId: runId,
       lastRequestId: requestId,
       status: "idle",
@@ -357,11 +437,24 @@ async function runChat(
     });
     emit(webContents, { requestId, sessionId, runId, type: "done" });
   } catch (error) {
+    if (platformDescriptor && request.agentId && !controller.signal.aborted) {
+      recordAgentCircuitFailure(request.agentId);
+    }
+    recordAgentTelemetry({
+      event: controller.signal.aborted ? "execution_cancelled" : "execution_failed",
+      agentId: boundAgentId,
+      mode: platformDescriptor?.mode || "local",
+      source: platformDescriptor ? "platform" : "local",
+      durationMs: Date.now() - executionStartedAt,
+      errorCode: error instanceof ChatSseError ? error.code || "sse_error" : controller.signal.reason === "timeout" ? "timeout" : "execution_error",
+    });
     await upsertThreadFromRun({
       id: sessionId,
       kind: "chat",
       title: deriveThreadTitle(request.messages),
       workspacePath: request.workspacePath,
+      boundAgentId,
+      boundAgentName,
       lastRunId: runId,
       lastRequestId: requestId,
       status: "error",
@@ -370,6 +463,7 @@ async function runChat(
     throw error;
   } finally {
     clearTimeout(timeout);
+    platformChatTargets.delete(requestId);
   }
 }
 
@@ -568,6 +662,18 @@ async function readSse(
         });
         continue;
       }
+      const inputRequest = parseAgentInputRequestSseFrame(frame);
+      if (inputRequest) {
+        emit(webContents, {
+          requestId,
+          sessionId,
+          runId,
+          type: "input_request",
+          prompt: inputRequest.prompt,
+          inputType: inputRequest.inputType,
+        });
+        continue;
+      }
       const reasoningLog = parseChatReasoningSseFrame(frame);
       if (reasoningLog) {
         emit(webContents, {
@@ -639,6 +745,18 @@ async function readSse(
         type: "status",
         content: formatAgentLogStatus(agentLog),
         level: agentLog.level,
+      });
+      return sawDone;
+    }
+    const inputRequest = parseAgentInputRequestSseFrame(buffer);
+    if (inputRequest) {
+      emit(webContents, {
+        requestId,
+        sessionId,
+        runId,
+        type: "input_request",
+        prompt: inputRequest.prompt,
+        inputType: inputRequest.inputType,
       });
       return sawDone;
     }

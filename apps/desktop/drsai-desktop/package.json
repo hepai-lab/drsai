@@ -1,6 +1,6 @@
 {
   "name": "drsai-desktop",
-  "version": "1.4.2",
+  "version": "1.4.4",
   "description": "DrSai Desktop — AI-powered scientific agent assistant framework desktop client",
   "main": "./out/main/index.js",
   "author": "HepAI Team, IHEP <ai@ihep.ac.cn>",

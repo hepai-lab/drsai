@@ -882,7 +882,7 @@ function callMcpEnumeration(
       params: {
         protocolVersion: "2025-06-18",
         capabilities: {},
-        clientInfo: { name: "drsai-windows-desktop", version: "1.4.2" },
+        clientInfo: { name: "drsai-windows-desktop", version: "1.4.4" },
       },
     };
     const initializedNotification: JsonRpcMessage = {
@@ -1008,7 +1008,7 @@ function callMcpTool(
       params: {
         protocolVersion: "2025-06-18",
         capabilities: {},
-        clientInfo: { name: "drsai-windows-desktop", version: "1.4.2" },
+        clientInfo: { name: "drsai-windows-desktop", version: "1.4.4" },
       },
     };
     const initializedNotification: JsonRpcMessage = {
@@ -1235,7 +1235,7 @@ async function initializePooledMcpSession(session: PooledMcpSession): Promise<vo
     {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "drsai-windows-desktop", version: "1.4.2" },
+      clientInfo: { name: "drsai-windows-desktop", version: "1.4.4" },
     },
     MAX_MCP_ENUMERATION_MS,
   );

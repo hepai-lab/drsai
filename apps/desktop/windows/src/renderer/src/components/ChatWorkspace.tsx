@@ -70,6 +70,11 @@ export type UiMessage = ChatMessage & {
   parts?: ChatMessagePart[];
   startedAt?: number;
   lastEventAt?: number;
+  inputRequest?: {
+    requestId: string;
+    prompt: string;
+    inputType: "text_input" | "approval";
+  };
 };
 
 type ComposerAttachment = ChatAttachment & {
@@ -98,6 +103,7 @@ export interface ChatForkQueueAgentAssignment {
 }
 
 export interface ChatSubmitOptions {
+  agentId?: string;
   agentName?: string;
   forkQueueAgentAssignments?: ChatForkQueueAgentAssignment[];
   model?: string;
@@ -125,6 +131,7 @@ interface ChatWorkspaceProps {
   ideContext?: DesktopIdeContextSnapshot | null;
   workspaceInstructions?: WorkspaceInstructionSummary[];
   workspacePath?: string;
+  workspaceType?: "local" | "remote-ssh";
   onAbort: () => void;
   onClearExternalAttachments?: () => void;
   onClearRuntimeMode?: () => void;
@@ -167,6 +174,7 @@ export function ChatWorkspace({
   ideContext,
   workspaceInstructions = [],
   workspacePath = "",
+  workspaceType = "local",
   onAbort,
   onClearExternalAttachments,
   onClearRuntimeMode,
@@ -203,12 +211,27 @@ export function ChatWorkspace({
   const [voiceDevices, setVoiceDevices] = useState<MediaDeviceInfo[]>([]);
   const [voiceProgressMessage, setVoiceProgressMessage] = useState("");
   const [voiceRuntimeLabel, setVoiceRuntimeLabel] = useState("Voice STT");
+  const [respondedInputRequests, setRespondedInputRequests] = useState<Set<string>>(() => new Set());
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const messageListRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     setThinkingEffort(defaultThinkingEffort);
   }, [defaultThinkingEffort]);
+
+  async function respondToAgentInput(
+    request: NonNullable<UiMessage["inputRequest"]>,
+    response: string | Record<string, unknown>,
+  ): Promise<void> {
+    const accepted = await desktopApi.respondChatInput(request.requestId, response);
+    if (!accepted) return;
+    setRespondedInputRequests((current) => new Set(current).add(request.requestId));
+  }
+
+  function requestTextAgentInput(request: NonNullable<UiMessage["inputRequest"]>): void {
+    const response = window.prompt(request.prompt);
+    if (response?.trim()) void respondToAgentInput(request, response.trim());
+  }
   const shouldFollowOutputRef = useRef(true);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -232,6 +255,14 @@ export function ChatWorkspace({
   const showStop = Boolean(activeRequestId || hasStreamingMessage);
   const emptyChat = messages.every((message) => message.id === "welcome");
   const activeAgentName = selectedAgentName?.trim() || "OpenDrSai";
+  const workspaceLocationLabel =
+    workspaceType === "remote-ssh"
+      ? zh
+        ? "远程工作区"
+        : "Remote workspace"
+      : zh
+        ? "本机工作区"
+        : "Local workspace";
   const runtimeModeLabel = currentRuntimeMode
     ? currentRuntimeMode.intent
       ? `${currentRuntimeMode.label}: ${currentRuntimeMode.intent}`
@@ -503,6 +534,7 @@ export function ChatWorkspace({
     const submitted = await onSubmit(
       submittedAttachments.filter((attachment) => !attachment.blockedReason),
       {
+        agentId: selectedAgentId,
         agentName: activeAgentName,
         forkQueueAgentAssignments: buildForkQueueAgentAssignments(
           forkQueueEntries,
@@ -1121,6 +1153,23 @@ export function ChatWorkspace({
               {message.toolTimeline?.length ? (
                 <ToolTimeline events={message.toolTimeline} />
               ) : null}
+              {message.inputRequest ? (
+                <section className="chat-agent-input-request" aria-label={zh ? "智能体请求输入" : "Agent input request"}>
+                  <strong>{zh ? "智能体需要你的输入" : "Agent needs your input"}</strong>
+                  <p>{message.inputRequest.prompt}</p>
+                  <div>
+                    {message.inputRequest.inputType === "approval" ? (
+                      <>
+                        <button type="button" disabled={respondedInputRequests.has(message.inputRequest.requestId)} onClick={() => void respondToAgentInput(message.inputRequest!, { approved: false })}>{zh ? "拒绝" : "Reject"}</button>
+                        <button type="button" disabled={respondedInputRequests.has(message.inputRequest.requestId)} onClick={() => void respondToAgentInput(message.inputRequest!, { approved: true })}>{zh ? "批准" : "Approve"}</button>
+                      </>
+                    ) : (
+                      <button type="button" disabled={respondedInputRequests.has(message.inputRequest.requestId)} onClick={() => requestTextAgentInput(message.inputRequest!)}>{zh ? "回复" : "Respond"}</button>
+                    )}
+                    {respondedInputRequests.has(message.inputRequest.requestId) && <span>{zh ? "已发送" : "Sent"}</span>}
+                  </div>
+                </section>
+              ) : null}
               {message.role === "assistant" && !message.streaming && getVisibleChatText(message.content) ? (
                 <MessageActions content={getVisibleChatText(message.content)} zh={zh} />
               ) : null}
@@ -1128,6 +1177,12 @@ export function ChatWorkspace({
           </article>
         ))}
       </div>
+      )}
+      {emptyChat && (
+        <div className="empty-chat-agent-title" aria-label={zh ? "当前智能体" : "Current Agent"}>
+          <strong>{activeAgentName}</strong>
+          <span>{workspaceLocationLabel}</span>
+        </div>
       )}
       <form className="composer" onSubmit={handleSubmit}>
         <div className="composer-shell">

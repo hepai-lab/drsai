@@ -1,5 +1,21 @@
 # OpenDrSai Android 本地 Kotlin Agent Runtime
 
+## HAI 开发环境联调状态（2026-07-14）
+
+- 开发环境基础地址：`https://ai-dev.ihep.ac.cn`。
+- Android OIDC issuer：`https://ai-dev.ihep.ac.cn/api`。
+- HAI 已注册 `opendrsai-android` Public Client，原生回调精确为
+  `ai.drsai.remote:/oauth2redirect`，要求 PKCE S256 并允许 Refresh Token。
+- Android 构建通过 `OPENDRSAI_ANDROID_HAI_BASE_URL` 同时切换 OIDC 和模型 API；未设置时仍默认生产环境。
+- HAI 下游客户端回调与 IHEP 上游回调是两层地址：Android 回调是
+  `ai.drsai.remote:/oauth2redirect`；IHEP `client_id=13388` 实际登记并必须继续使用
+  `https://ai-dev.ihep.ac.cn/umt/callback`。
+- 开发环境实测链路为 HAI authorize `307` → HAI upstream login `307` →
+  `newlogin.ihep.ac.cn` 接受 `/umt/callback` 并显示统一认证登录页；无
+  `invalid_client`、`redirect_uri_mismatch` 或 Android redirect URI 宽松匹配。
+- HAI OIDC 聚焦测试 `16 passed`；Android 单元测试、Lint、R8/MVP 构建及模拟器 7 项设备测试通过。
+- 尚需测试人员在系统浏览器输入真实 IHEP 凭据，完成授权、App 回跳、Token exchange、模型列表和首轮对话的人工闭环；自动化不得读取或代填用户凭据。
+
 ## 产品定位
 
 Android 最小 MVP 在手机本机运行精简 Agent 编排，模型推理由 HAI 云端完成。它不依赖 Windows、OpenDrSai WebUI 后端或 `opendrsai.ihep.ac.cn`。
@@ -53,27 +69,66 @@ https://ai.ihep.ac.cn/apiv2/v1/chat/completions
 
 Release 禁止明文流量，不包含 `/api/mobile/v1`、WebSocket 或可编辑服务器地址。
 
-## OIDC 浏览器回调（已完成）
+## OIDC 浏览器回调与多设备方案
 
-状态：**已完成并在 Android 测试机验证（2026-07-13）**。
+### 正式方案：Android 原生回调
 
-HAI 当前为 `opendrsai-desktop` 客户端接受桌面兼容的 loopback redirect URI。Android 继续使用随机端口的
-`http://127.0.0.1:{port}/callback` 接收授权码，避免改变服务端客户端注册；本地回调收到请求后立即重定向到：
+所有 Android 安装实例共用一个 Public Client 和一个回调 URI，不为每台手机分配地址：
 
 ```text
-opendrsai://oauth2redirect
+client_id: opendrsai-android
+redirect_uri: ai.drsai.remote:/oauth2redirect
+grant: authorization_code + PKCE(S256)
 ```
 
-Android Manifest 将该 URI 注册给 `MainActivity`，并使用 `singleTask` 保证浏览器回跳时复用现有 App 实例。
-授权码不进入 App 深链，只由 loopback 回调接收；App 仍校验 PKCE verifier、state、nonce、issuer、audience、
-签名和有效期。回调页同时提供“返回 OpenDrSai”链接，作为浏览器禁止自动唤起时的手动兜底。
+HAI 的授权响应返回发起登录的浏览器；Android 再把 URI 分发给同一台手机上的 OpenDrSai。因此 N 台手机可以
+使用相同回调。每次登录由各设备独立生成 `state`、`nonce` 和 PKCE verifier；授权码只能由持有对应 verifier
+的设备兑换，不在回调 URI 中携带设备 ID、IMEI 或序列号。
 
-已验证：
+为允许授权期间发生进程回收，原生登录事务必须加密持久化：`client_id`、`redirect_uri`、`state`、`nonce`、
+PKCE verifier 和创建时间。深链唤醒新进程后加载事务，先严格匹配 scheme/path、state 和五分钟有效期，再兑换
+Token；成功、失败或取消后立即删除事务。Access Token、Refresh Token 继续按设备保存在 Android Keystore。
 
-- [x] HepAI 同意授权后自动从浏览器返回 OpenDrSai；
-- [x] 回跳前后 Android 进程 PID 相同，没有创建重复 Activity 实例；
-- [x] `opendrsai://oauth2redirect` 仅负责唤醒 App，不携带授权码或 Token；
-- [x] Debug/MVP 单元测试、Android 设备测试、Lint 和 APK 构建通过。
+同一账号在多设备并发登录时：
+
+- 手机 A 的 `state/verifier` 只匹配 A 的回调；
+- 手机 B 的 `state/verifier` 只匹配 B 的回调；
+- 回调不需要服务端选择设备；
+- 单设备注销只撤销该设备 Refresh Token，全局注销需由 HAI 另行提供。
+
+长期优先将回调升级为经过域名归属验证的 Android App Link；自定义 Scheme 仍必须使用 PKCE，降低同设备其他
+App 抢占 Scheme 后截获授权码的风险。
+
+### HAI 配置契约与当前状态
+
+2026-07-14 实时探测结果：`opendrsai-android` 返回 `invalid_client: Unknown client_id`；现有
+`opendrsai-desktop` 接受随机 loopback 端口。因此 HAI 管理员仍需注册上述 Android Public Client，并允许
+完整 redirect URI；不得为 Public Client 配置或在 APK 内放置 client secret。
+
+客户端在 HAI 配置生效前保留兼容模式：
+
+```text
+client_id: opendrsai-desktop
+redirect_uri: http://127.0.0.1:{random_port}/callback
+```
+
+兼容模式只用于避免现有版本立即失去登录能力。它依赖 App 进程中的临时本地端口，在真机后台回收、VPN、代理
+或五分钟超时下可能失败，不作为 Android 正式回调方案。HAI 注册完成后，通过构建参数启用原生模式：
+
+```powershell
+$env:OPENDRSAI_ANDROID_OIDC_CLIENT_ID="opendrsai-android"
+$env:OPENDRSAI_ANDROID_OIDC_REDIRECT_URI="ai.drsai.remote:/oauth2redirect"
+$env:OPENDRSAI_ANDROID_HAI_BASE_URL="https://ai-dev.ihep.ac.cn"
+```
+
+验收项：
+
+- [x] 客户端支持原生深链与 loopback 兼容模式；
+- [x] 原生事务加密持久化，可在进程重建后继续；
+- [x] 回调严格校验 redirect URI、state、nonce、PKCE、issuer、audience、签名和有效期；
+- [ ] HAI 注册 `opendrsai-android` Public Client；
+- [ ] 在至少两台不同品牌真机上并发登录验证；
+- [ ] 正式构建切换到原生回调并移除 loopback 兼容模式。
 
 ## 完成标准
 

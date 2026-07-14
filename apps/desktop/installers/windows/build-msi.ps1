@@ -8,7 +8,7 @@ param(
     [string]$ExtraInstallArgs = "",
     [string]$WixDir = "",
     [ValidatePattern('^[A-Za-z0-9._-]+\.msi$')]
-    [string]$OutputName = "OpenDrSaiSetup.msi"
+    [string]$OutputName = "OpenDrSaiSetup-win-x64.msi"
 )
 
 $ErrorActionPreference = "Stop"

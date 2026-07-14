@@ -22,9 +22,9 @@ truth for later Store and winget submissions.
 
 ## Current Implementation State
 
-The active Windows distribution contract is the per-user MSI bootstrapper plus
+The active Windows distribution contract is the per-machine MSI bootstrapper plus
 `OpenDrSaiRuntime-win-x64.zip`. The MSI downloads and verifies the runtime, then
-installs the Electron application and Python agent into stable per-user paths.
+installs the Electron application and Python agent under Program Files.
 
 The repository also contains an older NSIS/electron-updater design. That design
 is not the active release path: the current build does not publish an NSIS setup
@@ -58,7 +58,7 @@ Implemented in this workspace:
 
 ### Product contract
 
-Users install `OpenDrSaiSetup.msi` once. From the second release onward, the
+Users install `OpenDrSaiSetup-win-x64.msi` once. From the second release onward, the
 desktop application checks `latest-windows.json`, downloads the versioned
 `OpenDrSaiRuntime-win-x64.zip`, verifies and stages it, exits, and delegates the
 directory swap to an updater outside the running application directory. The
@@ -68,8 +68,8 @@ User-owned data is outside the replacement set. OIDC state, Electron user data,
 projects, conversations, workspace files, and `.drsai` configuration remain in
 place. Only these managed runtime paths are replaced:
 
-- `%LOCALAPPDATA%\Programs\OpenDrSai\app`
-- `%USERPROFILE%\.drsai\drsai-agent`
+- `%PROGRAMFILES%\OpenDrSai\app`
+- `%PROGRAMFILES%\OpenDrSai\drsai-agent`
 
 ### Update manifest
 
@@ -157,7 +157,7 @@ work rather than MVP blockers.
 2. Generate release metadata:
 
    ```powershell
-   $env:OPENDRSAI_RELEASE_BASE_URL = "https://github.com/hepai-lab/drsai/releases/download/v1.4.2"
+   $env:OPENDRSAI_RELEASE_BASE_URL = "https://github.com/hepai-lab/drsai/releases/download/v1.4.4"
    npm run manifest:win
    npm run summary:win
    ```
@@ -235,7 +235,7 @@ Before submitting to `microsoft/winget-pkgs`:
 
 - Confirm the GitHub Release asset URL is public and versioned.
 - Confirm the installer sha256 matches the released binary.
-- Confirm `msiexec /i OpenDrSaiSetup.msi /qn` performs a silent per-user install.
+- Confirm an elevated `msiexec /i OpenDrSaiSetup-win-x64.msi /qn` performs a silent per-machine install.
 - Run `winget validate` locally when Windows Package Manager tooling is
   available.
 - Submit the generated version folder as a PR to the community repository.

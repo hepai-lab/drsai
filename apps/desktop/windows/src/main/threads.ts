@@ -24,6 +24,8 @@ const MAX_MESSAGE_CHARS = 200_000;
 const MAX_STATUS_CHARS = 80_000;
 const MAX_TITLE_CHARS = 120;
 const MAX_WORKSPACE_PATH_CHARS = 2048;
+const MAX_AGENT_ID_CHARS = 160;
+const MAX_AGENT_NAME_CHARS = 160;
 const MAX_FORK_SUMMARY_CHARS = 500;
 const MAX_FORK_LIFECYCLE_MESSAGE_CHARS = 1200;
 const MAX_FORK_QUEUE_MESSAGE_CHARS = 800;
@@ -42,6 +44,8 @@ export async function createThread(rawRequest: unknown): Promise<DesktopThread> 
     kind: request.kind,
     title: request.title || defaultTitle(request.kind),
     workspacePath: request.workspacePath,
+    boundAgentId: request.boundAgentId,
+    boundAgentName: request.boundAgentName,
     fork: request.fork,
     createdAt: now,
     updatedAt: now,
@@ -63,6 +67,8 @@ export async function updateThread(rawRequest: unknown): Promise<DesktopThread> 
     kind: request.kind || existing?.kind || "chat",
     title: request.title || existing?.title || defaultTitle(request.kind || existing?.kind || "chat"),
     workspacePath: request.workspacePath ?? existing?.workspacePath,
+    boundAgentId: request.boundAgentId ?? existing?.boundAgentId,
+    boundAgentName: request.boundAgentName ?? existing?.boundAgentName,
     fork: request.fork ?? existing?.fork,
     createdAt: existing?.createdAt || now,
     updatedAt: now,
@@ -148,6 +154,8 @@ export async function upsertThreadFromRun(input: {
   kind: DesktopThread["kind"];
   title?: string;
   workspacePath?: string;
+  boundAgentId?: string;
+  boundAgentName?: string;
   lastRunId?: string;
   lastRequestId?: string;
   status?: DesktopThread["status"];
@@ -215,6 +223,8 @@ function validateCreateThreadRequest(rawRequest: unknown): CreateThreadRequest {
     kind: request.kind,
     title: sanitizeTitle(request.title),
     workspacePath: sanitizeWorkspacePath(request.workspacePath),
+    boundAgentId: sanitizeOptionalAgentText(request.boundAgentId, MAX_AGENT_ID_CHARS, "Thread agent id is invalid."),
+    boundAgentName: sanitizeOptionalAgentText(request.boundAgentName, MAX_AGENT_NAME_CHARS, "Thread agent name is invalid."),
     fork: sanitizeForkMetadata(request.fork),
   };
 }
@@ -241,6 +251,8 @@ function validateUpdateThreadRequest(rawRequest: unknown): UpdateThreadRequest {
     kind: request.kind,
     title: sanitizeTitle(request.title),
     workspacePath: sanitizeWorkspacePath(request.workspacePath),
+    boundAgentId: sanitizeOptionalAgentText(request.boundAgentId, MAX_AGENT_ID_CHARS, "Thread agent id is invalid."),
+    boundAgentName: sanitizeOptionalAgentText(request.boundAgentName, MAX_AGENT_NAME_CHARS, "Thread agent name is invalid."),
     fork: sanitizeForkMetadata(request.fork),
     lastRunId: sanitizeOptionalId(request.lastRunId, "Thread run id is invalid."),
     lastRequestId: sanitizeOptionalId(request.lastRequestId, "Thread request id is invalid."),
@@ -399,6 +411,14 @@ function sanitizeWorkspacePath(path: unknown): string | undefined {
     throw new Error("Thread workspace path is invalid.");
   }
   return path.trim() || undefined;
+}
+
+function sanitizeOptionalAgentText(value: unknown, maxChars: number, message: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value.length > maxChars || /[\r\n]/.test(value)) {
+    throw new Error(message);
+  }
+  return value.trim() || undefined;
 }
 
 function sanitizeForkMetadata(value: unknown): DesktopThreadForkMetadata | undefined {

@@ -279,7 +279,9 @@ const api: DesktopApi = {
   deleteWorkspace: (id: string) =>
     ipcRenderer.invoke("desktop:delete-workspace", id),
   listThreads: () => ipcRenderer.invoke("desktop:list-threads"),
-  listAgents: () => ipcRenderer.invoke("desktop:list-agents"),
+  listAgents: (options) => ipcRenderer.invoke("desktop:list-agents", options),
+  setDefaultAgent: (agentId) => ipcRenderer.invoke("desktop:set-default-agent", agentId),
+  recordAgentUsage: (agentId) => ipcRenderer.invoke("desktop:record-agent-usage", agentId),
   getPlatformAgentStatus: () => ipcRenderer.invoke("desktop:get-platform-agent-status"),
   getMyDrSaiConfig: (workspacePath?: string): Promise<MyDrSaiConfig> =>
     ipcRenderer.invoke("desktop:get-my-drsai-config", workspacePath),
@@ -307,6 +309,8 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:start-chat", request),
   abortChat: (requestId: string): Promise<boolean> =>
     ipcRenderer.invoke("desktop:abort-chat", requestId),
+  respondChatInput: (requestId, response) =>
+    ipcRenderer.invoke("desktop:respond-chat-input", requestId, response),
   startVoiceTranscription: (
     request: DesktopVoiceTranscriptionRequest,
   ): Promise<DesktopVoiceTranscriptionStartResult> =>

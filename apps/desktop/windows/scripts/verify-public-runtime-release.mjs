@@ -26,7 +26,7 @@ assert(summary.version === manifest.version, "Public release summary version doe
 
 const summaryArtifacts = new Map((summary.artifacts || []).map((item) => [item.path, item]));
 const assets = [
-  { name: "OpenDrSaiSetup.msi", summaryPath: "bootstrapper/OpenDrSaiSetup.msi" },
+  { name: "OpenDrSaiSetup-win-x64.msi", summaryPath: "bootstrapper/OpenDrSaiSetup-win-x64.msi" },
   { name: "OpenDrSaiRuntime-win-x64.zip", summaryPath: "bootstrapper/OpenDrSaiRuntime-win-x64.zip" },
 ];
 for (const asset of assets) {
@@ -91,7 +91,7 @@ function verifyDownloadedSignatures(work, thumbprint) {
     "Add-Type -AssemblyName System.IO.Compression.FileSystem",
     `$z=[IO.Compression.ZipFile]::OpenRead(${quote(runtime)})`,
     `try{$e=@($z.Entries|Where-Object{($_.FullName -replace '\\\\','/') -eq 'app/OpenDrSai.exe'})[0];if(-not $e){throw 'Runtime app executable missing.'};[IO.Compression.ZipFileExtensions]::ExtractToFile($e,${quote(appExe)},$true)}finally{$z.Dispose()}`,
-    `$paths=@(${quote(join(work, "OpenDrSaiSetup.msi"))},${quote(appExe)})`,
+    `$paths=@(${quote(join(work, "OpenDrSaiSetup-win-x64.msi"))},${quote(appExe)})`,
     `foreach($p in $paths){$s=Get-AuthenticodeSignature -LiteralPath $p;if($s.Status -ne 'Valid' -or -not $s.SignerCertificate){throw \"Invalid signature: $p ($($s.Status))\"};if(($s.SignerCertificate.Thumbprint -replace '[^0-9A-Fa-f]','').ToUpperInvariant() -ne '${thumbprint}'){throw \"Unexpected signer: $p\"}}`,
   ].join("; ");
   execFileSync("powershell.exe", ["-NoProfile", "-Command", command], { windowsHide: true, stdio: "inherit" });

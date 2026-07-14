@@ -4,7 +4,7 @@ import re
 import yaml
 from dotenv import load_dotenv
 
-from .routes import access_compat, admin_analytics, agent_mode, agent_worker, auth, desktop_auth, docmaster, files, local_login, models, plans, runs, sessions, settingsroute, skills, teams, users, validation
+from .routes import access_compat, admin_analytics, agent_mode, agent_worker, auth, desktop_auth, docmaster, files, local_login, models, native, plans, runs, sessions, settingsroute, skills, teams, users, validation
 load_dotenv()
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -282,6 +282,13 @@ api.include_router(
     mobile.router,
     prefix="/mobile/v1",
     tags=["mobile"],
+    responses={401: {"description": "Unauthorized"}},
+)
+
+api.include_router(
+    native.router,
+    prefix="/native/v1",
+    tags=["native"],
     responses={401: {"description": "Unauthorized"}},
 )
 

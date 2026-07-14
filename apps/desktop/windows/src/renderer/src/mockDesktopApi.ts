@@ -116,7 +116,7 @@ const initialHealth: DesktopHealth = {
     downloaded: false,
     progress: null,
     version: null,
-    currentVersion: "1.4.2",
+    currentVersion: "1.4.4",
     mandatory: false,
     releaseNotesUrl: null,
     canDownload: false,
@@ -1334,9 +1334,9 @@ export function installMockDesktopApi(): void {
     listRemoteHepaiWorkers: async () => [],
     setRemoteHepaiWorkerEnabled: async () => true,
     onRemoteWorkspaceStatus: () => () => undefined,
-    preflightRemoteGateway: async (hostAlias) => ({ hostAlias, pythonVersion: "3.11.0", gatewayInstalled: true, gatewayVersion: "1.4.2" }),
+    preflightRemoteGateway: async (hostAlias) => ({ hostAlias, pythonVersion: "3.11.0", gatewayInstalled: true, gatewayVersion: "1.4.4" }),
     getRemoteSshDiagnosticReport: async () => ({ generatedAt: new Date().toISOString(), hosts: [] }),
-    installRemoteGateway: async (request) => ({ hostAlias: request.hostAlias, pythonVersion: "3.11.0", gatewayInstalled: true, gatewayVersion: request.version || "1.4.2", changed: true, action: request.action }),
+    installRemoteGateway: async (request) => ({ hostAlias: request.hostAlias, pythonVersion: "3.11.0", gatewayInstalled: true, gatewayVersion: request.version || "1.4.4", changed: true, action: request.action }),
     requestRemoteGatewayInstallApproval: async () => ({ queued: true, allowed: true, requiresApproval: true, blocked: false, reason: "Mock remote Gateway operation queued for approval." }),
     cancelRemoteGatewayOperation: async () => true,
     onRemoteGatewayOperation: () => () => undefined,
@@ -1441,6 +1441,16 @@ export function installMockDesktopApi(): void {
         ],
       },
     ],
+    setDefaultAgent: async (agentId) => ({
+      agentId,
+      saved: true,
+      message: "Mock default agent saved.",
+    }),
+    recordAgentUsage: async (agentId) => ({
+      agentId,
+      saved: true,
+      message: "Mock agent usage recorded.",
+    }),
     getPlatformAgentStatus: async () => ({
       state: "ready",
       apiVersion: "fixture-v1",
@@ -1606,6 +1616,7 @@ export function installMockDesktopApi(): void {
       emit(chatListeners, { requestId, type: "aborted" });
       return true;
     },
+    respondChatInput: async () => true,
     startVoiceTranscription: async (request) => {
       const requestId = `fixture-voice-${Date.now()}`;
       const timer = window.setTimeout(() => {

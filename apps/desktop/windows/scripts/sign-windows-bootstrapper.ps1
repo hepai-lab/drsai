@@ -8,7 +8,7 @@ $ErrorActionPreference = "Stop"
 
 $RequireSigned = $env:REQUIRE_SIGNED_WINDOWS_ARTIFACTS -eq "1"
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
-$Bootstrapper = Join-Path $Root "release\bootstrapper\OpenDrSaiSetup.msi"
+$Bootstrapper = Join-Path $Root "release\bootstrapper\OpenDrSaiSetup-win-x64.msi"
 
 if (-not (Test-Path $Bootstrapper)) {
     throw "Bootstrapper MSI not found: $Bootstrapper"

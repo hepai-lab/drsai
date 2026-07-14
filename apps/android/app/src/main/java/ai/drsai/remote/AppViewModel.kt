@@ -1,6 +1,7 @@
 package ai.drsai.remote
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.room.Room
@@ -17,6 +18,8 @@ import ai.drsai.remote.data.MIGRATION_1_2
 import ai.drsai.remote.data.MessageEntity
 import ai.drsai.remote.data.OidcClient
 import ai.drsai.remote.data.OidcLoginSession
+import ai.drsai.remote.data.OidcTransactionStore
+import ai.drsai.remote.data.OIDC_LEGACY_CLIENT_ID
 import ai.drsai.remote.data.RuntimeEvent
 import ai.drsai.remote.data.SecureTokenStore
 import ai.drsai.remote.data.sanitizeLegacyAssistantText
@@ -31,12 +34,13 @@ import java.util.UUID
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val tokenStore by lazy { SecureTokenStore(app) }
+    private val oidcTransactions by lazy { OidcTransactionStore(app) }
     private val database by lazy {
         Room.databaseBuilder(app, ChatDatabase::class.java, "opendrsai.db")
             .addMigrations(MIGRATION_1_2)
             .build()
     }
-    private val oidcClient by lazy { OidcClient() }
+    private val oidcClient by lazy { OidcClient(refreshClientId = { tokenStore.oidcClientId }) }
     private val modelClient by lazy { HaiModelClient(tokenStore, oidcClient) }
     private val runtime by lazy { LocalAgentRuntime(modelClient, database.dao()) }
     private val mutableState = MutableStateFlow(AppState())
@@ -61,6 +65,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             update { it.copy(destination = AppDestination.Login) }
             return@launch
         }
+        // Tokens created by versions before native redirect support always used the desktop client.
+        if (tokenStore.oidcClientId.isNullOrBlank()) tokenStore.oidcClientId = OIDC_LEGACY_CLIENT_ID
         loadWorkspace(user)
     }
 
@@ -71,17 +77,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             runCatching { oidcClient.startLogin() }
                 .onSuccess { session ->
                     oidcSession = session
+                    if (session.usesNativeRedirect) oidcTransactions.save(session.transaction)
                     update { it.copy(loading = false, waitingForLogin = true, loginUrl = session.authorizationUrl) }
-                    runCatching { oidcClient.finishLogin(session) }
-                        .onSuccess { auth ->
-                            oidcSession = null
-                            tokenStore.save(auth)
-                            loadWorkspace(auth.user)
-                        }
-                        .onFailure { error ->
-                            oidcSession = null
-                            update { it.copy(loading = false, waitingForLogin = false, loginUrl = null, error = error.message) }
-                        }
+                    if (!session.usesNativeRedirect) completeOidcLogin(session)
                 }
                 .onFailure { error -> update { it.copy(loading = false, waitingForLogin = false, error = error.message) } }
         }
@@ -89,8 +87,49 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun loginUrlOpened() = update { it.copy(loginUrl = null) }
 
+    fun handleOidcRedirect(uri: Uri?) {
+        if (uri == null || !uri.scheme.equals("ai.drsai.remote", ignoreCase = true) || uri.path != "/oauth2redirect") return
+        val transaction = oidcTransactions.load()
+        if (transaction == null) {
+            if (mutableState.value.user != null) return
+            update {
+                it.copy(
+                    destination = AppDestination.Login,
+                    loading = false,
+                    waitingForLogin = false,
+                    error = "登录状态已丢失或已使用，请重新登录",
+                )
+            }
+            return
+        }
+        loginJob?.cancel()
+        loginJob = viewModelScope.launch {
+            update { it.copy(destination = AppDestination.Login, loading = true, waitingForLogin = true, error = null) }
+            val session = oidcSession?.takeIf { it.transaction == transaction }
+                ?: oidcClient.restoreSession(transaction)
+            completeOidcLogin(session, uri)
+        }
+    }
+
+    private suspend fun completeOidcLogin(session: OidcLoginSession, redirect: Uri? = null) {
+        runCatching { oidcClient.finishLogin(session, redirect) }
+            .onSuccess { auth ->
+                oidcTransactions.clear()
+                oidcSession = null
+                tokenStore.save(auth)
+                tokenStore.oidcClientId = session.transaction.clientId
+                loadWorkspace(auth.user)
+            }
+            .onFailure { error ->
+                oidcTransactions.clear()
+                oidcSession = null
+                update { it.copy(loading = false, waitingForLogin = false, loginUrl = null, error = error.message) }
+            }
+    }
+
     fun cancelLogin() {
         oidcClient.cancel(oidcSession)
+        oidcTransactions.clear()
         loginJob?.cancel()
         loginJob = null
         oidcSession = null
@@ -250,6 +289,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         runJob = null
         activeRunId = null
         oidcClient.cancel(oidcSession)
+        oidcTransactions.clear()
         loginJob?.cancel()
         viewModelScope.launch {
             runCatching { modelClient.logout() }

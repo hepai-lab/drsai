@@ -185,7 +185,7 @@ jobs:
         with:
           name: opendrsai-windows-desktop
           path: |
-            apps/desktop/windows/release/bootstrapper/OpenDrSaiSetup.msi
+            apps/desktop/windows/release/bootstrapper/OpenDrSaiSetup-win-x64.msi
             apps/desktop/windows/release/bootstrapper/OpenDrSaiRuntime-win-x64.zip
             apps/desktop/windows/release/latest-windows.json
             apps/desktop/windows/release/release-summary.json
@@ -199,7 +199,7 @@ jobs:
           draft: true
           prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') || contains(github.ref_name, 'rc') }}
           files: |
-            apps/desktop/windows/release/bootstrapper/OpenDrSaiSetup.msi
+            apps/desktop/windows/release/bootstrapper/OpenDrSaiSetup-win-x64.msi
             apps/desktop/windows/release/bootstrapper/OpenDrSaiRuntime-win-x64.zip
             apps/desktop/windows/release/latest-windows.json
             apps/desktop/windows/release/release-summary.json

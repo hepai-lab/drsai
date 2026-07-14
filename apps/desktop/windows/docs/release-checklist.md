@@ -7,7 +7,7 @@ This checklist describes the active MSI + unified runtime release path.
 The release tag must equal `v<package.json version>`. Attach these files to the
 same versioned GitHub Release:
 
-- `OpenDrSaiSetup.msi` — first installation only;
+- `OpenDrSaiSetup-win-x64.msi` — first installation only;
 - `OpenDrSaiRuntime-win-x64.zip` — Electron app and Python agent updated as one unit;
 - `latest-windows.json` — schema-versioned update pointer with URL, size and SHA-256;
 - `release-summary.json` — auditable size, hash and signing summary.
@@ -62,7 +62,7 @@ and signatures, and publishes only when explicitly requested.
 After publication:
 
 ```powershell
-$env:OPENDRSAI_RELEASE_BASE_URL = "https://github.com/hepai-lab/drsai/releases/download/v1.4.2"
+$env:OPENDRSAI_RELEASE_BASE_URL = "https://github.com/hepai-lab/drsai/releases/download/v1.4.4"
 $env:EXPECTED_WINDOWS_SIGNER_THUMBPRINT = "<certificate-thumbprint>"
 $env:VERIFY_PUBLIC_RELEASE_DOWNLOAD = "1"
 npm run verify:public-release
@@ -77,7 +77,7 @@ gate.
 
 On Windows Sandbox or a clean Windows 11 VM:
 
-1. Install version N using `OpenDrSaiSetup.msi` and confirm Start menu launch.
+1. Install version N using `OpenDrSaiSetup-win-x64.msi` and confirm Start menu launch.
 2. Complete OIDC login, send a chat request, close and reopen the app, and
    confirm the session persists.
 3. Publish N+1 to the test channel. In the app, check, download, then choose

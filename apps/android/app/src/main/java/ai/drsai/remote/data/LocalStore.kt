@@ -147,6 +147,9 @@ class SecureTokenStore(context: Context) : AuthTokenStore {
     var selectedModelId: String?
         get() = prefs.getString("model", null)
         set(value) = prefs.edit().putString("model", value).apply()
+    var oidcClientId: String?
+        get() = prefs.getString("oidc_client_id", null)
+        set(value) = prefs.edit().putString("oidc_client_id", value).apply()
 
     override fun save(auth: AuthTokens) {
         accessToken = auth.accessToken
@@ -158,4 +161,44 @@ class SecureTokenStore(context: Context) : AuthTokenStore {
 
     fun user(): User? = userId?.let { User(it, userName ?: it, avatarUrl) }
     fun clear() = prefs.edit().clear().apply()
+}
+
+class OidcTransactionStore(context: Context) {
+    private val prefs = EncryptedSharedPreferences.create(
+        context,
+        "opendrsai_oidc_transaction",
+        MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
+        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+    )
+
+    fun save(transaction: OidcLoginTransaction) {
+        prefs.edit()
+            .putString("client_id", transaction.clientId)
+            .putString("redirect_uri", transaction.redirectUri)
+            .putString("verifier", transaction.verifier)
+            .putString("state", transaction.state)
+            .putString("nonce", transaction.nonce)
+            .putLong("created_at", transaction.createdAt)
+            .commit()
+    }
+
+    fun load(): OidcLoginTransaction? {
+        val transaction = OidcLoginTransaction(
+            clientId = prefs.getString("client_id", null).orEmpty(),
+            redirectUri = prefs.getString("redirect_uri", null).orEmpty(),
+            verifier = prefs.getString("verifier", null).orEmpty(),
+            state = prefs.getString("state", null).orEmpty(),
+            nonce = prefs.getString("nonce", null).orEmpty(),
+            createdAt = prefs.getLong("created_at", 0L),
+        )
+        return transaction.takeIf {
+            it.clientId.isNotBlank() && it.redirectUri.isNotBlank() && it.verifier.isNotBlank() &&
+                it.state.isNotBlank() && it.nonce.isNotBlank() && it.createdAt > 0
+        } ?: run { clear(); null }
+    }
+
+    fun clear() {
+        prefs.edit().clear().commit()
+    }
 }

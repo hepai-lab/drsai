@@ -8,7 +8,7 @@ const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const releaseDir = join(root, "release");
 const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const artifacts = [
-  join("bootstrapper", "OpenDrSaiSetup.msi"),
+  join("bootstrapper", "OpenDrSaiSetup-win-x64.msi"),
   join("bootstrapper", "OpenDrSaiRuntime-win-x64.zip"),
   "latest-windows.json",
 ];

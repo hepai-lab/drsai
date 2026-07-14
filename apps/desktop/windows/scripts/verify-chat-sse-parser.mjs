@@ -24,6 +24,7 @@ const {
   createChatToolTimelineAccumulator,
   isCompletionDoneFrame,
   parseAgentLogSseFrame,
+  parseAgentInputRequestSseFrame,
   parseAgentRunSseFrame,
   parseAgentRunSseFileEvents,
   parseChatReasoningSseFrame,
@@ -65,6 +66,11 @@ assertDeepEqual(
   "agent log payload",
   parseAgentLogSseFrame('event: agent.log\ndata: {"title":"LLM Retry","content":"retrying","level":"WARNING"}'),
   { title: "LLM Retry", content: "retrying", level: "WARNING", content_type: undefined },
+);
+assertDeepEqual(
+  "native agent input request",
+  parseAgentInputRequestSseFrame('event: agent.input_request\ndata: {"type":"input_request","input_type":"approval","prompt":"Continue?"}'),
+  { prompt: "Continue?", inputType: "approval" },
 );
 assertDeepEqual(
   "message content with CRLF",

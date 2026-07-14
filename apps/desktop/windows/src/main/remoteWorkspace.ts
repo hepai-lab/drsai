@@ -444,7 +444,7 @@ async function waitForGateway(host: HostConnection): Promise<void> {
       const handshake = await fetch(`${baseUrl}/v1/remote/handshake`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-OpenDrSai-Gateway-Token": host.token },
-        body: JSON.stringify({ protocol_version: REMOTE_SSH_PROTOCOL_VERSION, client_version: "1.4.2", workspace_path: host.bootstrapPath }),
+        body: JSON.stringify({ protocol_version: REMOTE_SSH_PROTOCOL_VERSION, client_version: "1.4.4", workspace_path: host.bootstrapPath }),
         signal: AbortSignal.timeout(1200),
       });
       if (handshake.ok) {

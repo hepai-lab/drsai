@@ -106,6 +106,74 @@ Content-Type: application/json
 | G | 测试、发布与灰度 | 3 |
 | **合计** | **7 类开发项** | **35** |
 
+### 实施进度（2026-07-14，第 7 轮）
+
+前两轮已完成平台目录的 Windows 基础链路、Native 目录接口，以及广场的发现与选择交互。进度按“已实现且有对应自动化证据”统计；仍需真实 HAI Token 或完整执行链验证的项目保留为部分完成。
+
+| 状态 | 功能点 | 数量 |
+| --- | --- | ---: |
+| 已完成 | A1～A4、B1～B6、C1～C7、D1～D6、E1～E3、E5、F1～F4、G1～G3 | 34 |
+| 部分完成 | E4 | 1 |
+| 尚未完成 | 无 | 0 |
+| **合计** |  | **35** |
+
+本轮新增或确认的证据：
+
+- Windows 平台目录使用 OIDC Token，支持一次 401 刷新重试和能力降级；
+- 平台智能体公开 DTO、Main 私有执行描述符、稳定排序/去重、强制刷新和公开缓存已经实现；
+- 缓存采用字段白名单，不写入平台 URL、`api_key` 或原始 `config`；
+- Native `/api/native/v1/agents`、详情、默认智能体和使用记录接口已完成本地代码；
+- Native 鉴权从 RS256 OIDC Token subject 推导用户，并通过 issuer allowlist、audience 和 JWKS 验签；
+- `ai-dev.ihep.ac.cn/api/native/v1/agents` 在未携带 Token 时返回 401，证明联调环境已有受保护的 Native 路由入口；
+- 广场支持本地/官方/我的智能体分组，按来源和可用性筛选，并按推荐、最近使用和名称排序；
+- 卡片支持平台 Logo 与失败回退、模式/能力标签、详情弹窗、设为默认和使用记录上报；
+- 服务端默认智能体可同步到聊天选择，Windows 偏好写入支持一次 401 刷新重试；
+- `ChatRequest` 已显式携带 `agentId`；My DrSai 保持本机 gateway 路由，平台分支复用同一 SSE/停止/超时处理，并受 `agent-chat` 能力开关保护；
+- 会话持久化绑定 agentId/name；历史会话恢复绑定，带上下文切换智能体时确认并新建会话；
+- Native SSE 接口复用现有 WebSocket 运行管理器，支持线程复用、断开和显式停止、工具/文件事件、人机输入与回复；
+- DDF、remote、custom 三种私有配置均由服务端按 agentId 注入运行管理器，公开 SSE 白名单测试确认不返回 API Key 和内部配置；
+- 新增 HTTPS/主机/IP/凭据/allowlist 执行目标策略、隐私安全的本地运行遥测，以及桌面端和服务端双重灰度开关；
+- 执行目标策略增加 DNS 解析结果复检；直接 remote HTTP 禁止跟随重定向，DDF 目标限制为 IHEP allowlist，自定义目标支持运维 allowlist；
+- 平台执行增加连续失败熔断、30 秒半开与成功复位，和既有超时、取消、一次 401 重试共同形成 F3 可靠性边界；
+- Native 鉴权默认 audience 修正为实际 Access Token 使用的 `hai-api`，RS256/JWKS/issuer/audience/subject 正向验签测试通过；
+- Windows TypeScript 全量类型检查、51 项 Renderer UI 回归、平台契约/目录/UI 验证和后端 Native/Mobile 测试通过。
+
+第四轮验证结果更新为：Windows 类型检查通过、Renderer 51 项检查通过、平台目录/路由/偏好/灰度契约通过、Chat SSE 解析通过；当前后端 Native/Mobile 已扩展为 22 项测试（其中 Native 19 项），覆盖三种模式适配、连续线程、取消、错误脱敏、输入限制和执行目标策略。
+
+第五轮新增真实打包与端到端证据：当前代码重新执行 `build:unpack` 成功；打包 Electron + 真实 Python fake gateway 聊天通过；取消、SSE 错误、不可达、超时、空完成、断流和附件失败矩阵通过；线程重启持久化与稳定 threadId 通过；实际 Main `chat.ts` 对假平台 HTTP/SSE 的云端路由 E2E 通过，覆盖一次 401 刷新、文本/工具/文件/输入事件、回复、连续线程、停止和私有配置隔离。F2、F3、G2 因此转为完成。
+
+独立 OIDC 联调脚本仍因 Windows DPAPI 进程上下文隔离而在 `safeStorage.decryptString` 返回 `0x8009000B`，但第七轮已由正常运行的 Windows App 使用其现有 OIDC 会话完成真实刷新；因此不再用独立脚本的 DPAPI 限制阻塞 A1。
+
+第六轮外部状态为：2026-07-14 14:26（Asia/Shanghai），`GET https://ai-dev.ihep.ac.cn/api/native/v1/agents?refresh=false` 返回 `401 Unauthorized` 和 `WWW-Authenticate: Bearer`；同一环境的 `POST /api/native/v1/agents/nonexistent/chat` 返回 `404 Not Found`。这证明受保护目录入口在线，但 Native 执行路由尚未部署到 ai-dev。
+
+第七轮通过 SSH 指挥塔恢复 HAI 协作会话 `019f5208-0f19-7883-b3e2-4dcc8ffa4b61`，在 `/home/zzd/VSProjects/hepai/hai-ai-platform-backend` 修复平台目录：删除 `hai.native.default/ddf/remote/custom` 四个模式模板，改为按 OIDC subject 映射 HAI 用户并读取真实 DDF、remote、custom 目录，使用公开字段白名单和按 subject 隔离的回退缓存；平台侧 26 项 Native/OIDC 测试、Black、`py_compile` 和 `git diff --check` 通过，并于 17:12:09 热加载 ai-dev。17:13:57，正常运行的 Windows App 使用现有 OIDC 会话成功刷新出 5 个真实 HAI DDF 智能体（稳定平台 UUID，`source=remote`），A1 据此完成。Windows 同时移除本地 `remote_agents.json` 聚合，强制仅 `my-drsai` 可标记为本地，并过滤旧缓存中的 `hai.native.*` 模板。
+
+第七轮后续补充远程描述本地化兼容：HAI `description` 为普通字符串时直接展示；为 `{ "en": "...", "zh": "..." }` JSON 字符串或对象时，在 Main 进程解析为公开 `localizedDescription`，Renderer 按当前中英文界面选择对应文本，缺少目标语言时回退另一语言。两种语言均纳入搜索，详情弹窗和卡片使用同一选择函数，公开缓存支持安全往返；平台契约、目录缓存、UI 回归和 Windows 全量 TypeScript 检查通过。
+
+第七轮交互语义补充：平台智能体已经由 HAI 远端运行，广场卡片不再显示“一键启动”，统一改为“开始使用 / Use agent”。该操作只选择并绑定智能体、预填任务提示并进入当前会话，不启动或重启远端服务；不可用智能体保持禁用。本机智能体同样只在运行可用时提供“开始使用”。
+
+第七轮卡片信息收敛：广场卡片不展示 `ddf`、`remote`、`custom` 等后端运行模式，避免向普通用户暴露实现细节；模式仍保留在 Main 私有执行描述符和详情弹窗中，用于正确路由与诊断，能力标签继续展示。
+
+第七轮默认操作布局补充：删除卡片底部“设为默认”文字按钮，将其移动为卡片右上角的星标按钮；未默认时为空心星，当前默认时为实心星并禁用重复提交，保存中显示旋转状态，同时提供中英文 `aria-label` 和悬浮提示。底部操作区只保留“详情”和“开始使用”。
+
+解除最后阻塞所需的最小外部动作：
+
+1. 将本工作树中的 `native.py`、`native_auth.py`、`native_agent_stream.py`、`native_agent_security.py` 和路由注册部署到 ai-dev，并确认目录 capability 包含 `agent-chat`；
+2. 在 HAI 协作会话中提供一个可见的 DDF、remote、custom 测试智能体 ID；
+3. 从打包 Windows App 对三种模式各执行一次流式任务并保存脱敏结果。
+
+下一轮只剩最后 1 项：在 ai-dev 部署 Native Chat 路由后，对 DDF、remote、custom 各跑一个真实流式任务（E4）。
+
+当前需要 HAI 协作会话 `019f5208-0f19-7883-b3e2-4dcc8ffa4b61` 联调的最小事项：
+
+- 在 `ai-dev.ihep.ac.cn` 部署 `POST /api/native/v1/agents/{agent_id}/chat`，成功响应为 OpenAI 风格 `text/event-stream`；
+- 目录响应的 `capabilities` 在接口可用后加入 `agent-chat`，Windows 端以此作为灰度兼容开关；
+- 明确 `[DONE]`、文本增量、reasoning、工具/文件、人机输入和结构化错误帧，并明确停止接口或断开连接即取消的语义；
+- 准备一个稳定 DDF 测试智能体和普通 OIDC 测试账号，验证 401 刷新、403、下线、断流和连续对话；
+- 服务端按 Token subject 和 agentId 查找私有执行配置，禁止在目录或 SSE 中返回 API Key、内部 URL 与原始 config。
+
+Windows 端请求体已经按 `messages`、`stream`、`thread_id`、`run_id`、`model`、`attachments`、`metadata` 预接入；若平台确认字段不同，应以联调后的稳定 Native v1 契约为准并同步更新契约夹具。
+
 ### A. 平台契约与身份认证（4 个）
 
 - **A1**：使用 Windows OIDC Access Token 访问平台智能体目录。

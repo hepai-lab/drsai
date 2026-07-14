@@ -39,10 +39,13 @@ class ModelsTest {
         assertEquals(fallback, selectPreferredModel(listOf(fallback)))
     }
 
-    @Test fun oidc_configuration_matches_the_windows_client() {
-        assertEquals("https://ai.ihep.ac.cn/api", OIDC_ISSUER)
-        assertEquals("opendrsai-desktop", OIDC_CLIENT_ID)
+    @Test fun oidc_configuration_supports_native_and_legacy_redirects() {
+        assertEquals("${BuildConfig.HAI_BASE_URL}/api", OIDC_ISSUER)
+        assertEquals("${BuildConfig.HAI_BASE_URL}/apiv2/v1", BuildConfig.MODEL_BASE_URL)
         assertEquals("opendrsai://oauth2redirect", OIDC_APP_RETURN_URI)
+        assertEquals("ai.drsai.remote:/oauth2redirect", OIDC_NATIVE_REDIRECT_URI)
+        assertFalse(OidcConfiguration("opendrsai-desktop").usesNativeRedirect)
+        assertTrue(OidcConfiguration("opendrsai-android", OIDC_NATIVE_REDIRECT_URI).usesNativeRedirect)
         assertTrue(OIDC_SCOPE.contains("hai_api"))
         assertTrue(OIDC_SCOPE.contains("offline_access"))
     }

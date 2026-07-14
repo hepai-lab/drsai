@@ -14,6 +14,18 @@ val versionParts = systemVersion.split(".").map { part ->
 val systemVersionCode = (versionParts.getOrElse(0) { 0 } * 10_000) +
     (versionParts.getOrElse(1) { 0 } * 100) +
     versionParts.getOrElse(2) { 0 }
+val androidOidcClientId = providers.gradleProperty("opendrsai.oidc.clientId")
+    .orElse(providers.environmentVariable("OPENDRSAI_ANDROID_OIDC_CLIENT_ID"))
+    .getOrElse("opendrsai-desktop")
+val androidOidcRedirectUri = providers.gradleProperty("opendrsai.oidc.redirectUri")
+    .orElse(providers.environmentVariable("OPENDRSAI_ANDROID_OIDC_REDIRECT_URI"))
+    .getOrElse("")
+val haiBaseUrl = providers.gradleProperty("opendrsai.hai.baseUrl")
+    .orElse(providers.environmentVariable("OPENDRSAI_ANDROID_HAI_BASE_URL"))
+    .getOrElse("https://ai.ihep.ac.cn")
+    .trimEnd('/')
+fun String.asBuildConfigString(): String =
+    "\"${replace("\\", "\\\\").replace("\"", "\\\"")}\""
 
 plugins {
     id("com.android.application")
@@ -33,7 +45,11 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         versionCode = systemVersionCode
         versionName = systemVersion
-        buildConfigField("String", "MODEL_BASE_URL", "\"https://ai.ihep.ac.cn/apiv2/v1\"")
+        buildConfigField("String", "HAI_BASE_URL", haiBaseUrl.asBuildConfigString())
+        buildConfigField("String", "OIDC_ISSUER", "$haiBaseUrl/api".asBuildConfigString())
+        buildConfigField("String", "MODEL_BASE_URL", "$haiBaseUrl/apiv2/v1".asBuildConfigString())
+        buildConfigField("String", "OIDC_CLIENT_ID", androidOidcClientId.asBuildConfigString())
+        buildConfigField("String", "OIDC_REDIRECT_URI", androidOidcRedirectUri.asBuildConfigString())
         manifestPlaceholders["usesCleartextTraffic"] = "false"
     }
 

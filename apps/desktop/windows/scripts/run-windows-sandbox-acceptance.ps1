@@ -1,7 +1,7 @@
 param(
     [string]$PackageDir = "C:\OpenDrSaiPackage",
     [string]$EvidenceDir = "C:\OpenDrSaiEvidence",
-    [string]$ExpectedVersion = "1.4.2",
+    [string]$ExpectedVersion = "1.4.4",
     [switch]$TestUninstall
 )
 
@@ -48,7 +48,7 @@ Start-Transcript -Path $transcriptPath -Force | Out-Null
 $msi = Join-Path $PackageDir "OpenDrSaiSetup.sandbox.msi"
 $runtime = Join-Path $PackageDir "OpenDrSaiRuntime-win-x64.zip"
 $localRuntime = "C:\OpenDrSaiRuntime-win-x64.zip"
-$statePath = Join-Path $env:LOCALAPPDATA "Programs\OpenDrSai\install-state.json"
+$statePath = Join-Path $env:ProgramFiles "OpenDrSai\install-state.json"
 $evidencePath = Join-Path $EvidenceDir ("windows-11-sandbox-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".json")
 
 try {
@@ -79,7 +79,7 @@ try {
     $state = Wait-ForFreshInstallState $statePath $startedAt
     Add-Check "Runtime version" ($(if ($state.runtimeVersion -eq $ExpectedVersion) { "PASS" } else { "FAIL" })) ([string]$state.runtimeVersion)
     Add-Check "Desktop executable" ($(if (Test-Path $state.desktopPath) { "PASS" } else { "FAIL" })) ([string]$state.desktopPath)
-    $desktopShortcut = Join-Path ([Environment]::GetFolderPath("Desktop")) "OpenDrSai.lnk"
+    $desktopShortcut = Join-Path ([Environment]::GetFolderPath("CommonDesktopDirectory")) "OpenDrSai.lnk"
     $startMenuShortcut = Join-Path ([Environment]::GetFolderPath("Programs")) "OpenDrSai\OpenDrSai.lnk"
     Add-Check "Desktop shortcut" ($(if (Test-Path $desktopShortcut) { "PASS" } else { "FAIL" })) $desktopShortcut
     Add-Check "Start menu shortcut" ($(if (Test-Path $startMenuShortcut) { "PASS" } else { "FAIL" })) $startMenuShortcut
@@ -116,7 +116,7 @@ try {
 
     if ($TestUninstall) {
         Get-Process OpenDrSai -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-        $userDataPath = [string]$state.drsaiHome
+        $userDataPath = Join-Path $env:USERPROFILE ".drsai"
         $msiUninstallLog = Join-Path $EvidenceDir "msi-uninstall.log"
         $uninstaller = Start-Process msiexec.exe -ArgumentList @("/x", $msi, "/qn", "/norestart", "/L*v", $msiUninstallLog) -Wait -PassThru
         Add-Check "MSI uninstall process" ($(if ($uninstaller.ExitCode -eq 0) { "PASS" } else { "FAIL" })) "exit=$($uninstaller.ExitCode)"

@@ -349,6 +349,7 @@ export interface ChatAttachment {
 
 export interface ChatRequest {
   requestId?: string;
+  agentId?: string;
   model?: string;
   workspacePath?: string;
   threadId?: string;
@@ -387,11 +388,13 @@ export interface ChatEvent {
   requestId: string;
   /** Monotonic per-request sequence assigned by the main process. */
   seq?: number;
-  type: "start" | "chunk" | "reasoning" | "status" | "tool_timeline" | "done" | "error" | "aborted";
+  type: "start" | "chunk" | "reasoning" | "status" | "tool_timeline" | "input_request" | "done" | "error" | "aborted";
   content?: string;
   error?: string;
   level?: "INFO" | "WARNING" | "ERROR" | "DEBUG" | "TRACE" | "FATAL" | string;
   toolTimeline?: ChatToolTimelineEvent;
+  prompt?: string;
+  inputType?: "text_input" | "approval";
   sessionId?: string;
   runId?: string;
 }
@@ -1687,18 +1690,41 @@ export type DesktopAgentExample =
       zh?: string;
     };
 
+export interface DesktopAgentLocalizedText {
+  en?: string;
+  zh?: string;
+}
+
 export interface DesktopAgent {
   id: string;
   name: string;
   description: string;
+  localizedDescription?: DesktopAgentLocalizedText;
   owner: string;
   source: DesktopAgentSource;
   status: DesktopAgentStatus;
+  mode?: string;
+  available?: boolean;
+  featured?: boolean;
+  isDefault?: boolean;
+  capabilities?: string[];
+  lastUsedAt?: string;
+  catalogGroup?: "local" | "official" | "mine";
   url?: string;
   model?: string;
   logo?: string;
   examples?: DesktopAgentExample[] | string;
   error?: string;
+}
+
+export interface DesktopAgentListOptions {
+  refresh?: boolean;
+}
+
+export interface DesktopAgentPreferenceResult {
+  agentId: string;
+  saved: boolean;
+  message: string;
 }
 
 export interface MyDrSaiReasoningConfig {
@@ -1758,6 +1784,8 @@ export interface DesktopThread {
   kind: "chat" | "agent_run";
   title: string;
   workspacePath?: string;
+  boundAgentId?: string;
+  boundAgentName?: string;
   fork?: DesktopThreadForkMetadata;
   createdAt: string;
   updatedAt: string;
@@ -2162,6 +2190,8 @@ export interface PlatformAgentStatus {
   capabilities: string[];
   message: string;
   lastCheckedAt: string | null;
+  lastSuccessfulSyncAt?: string | null;
+  cacheState?: "none" | "fresh" | "stale";
 }
 
 export interface RemoteDirectoryEntry {
@@ -2332,6 +2362,8 @@ export interface CreateThreadRequest {
   kind: DesktopThread["kind"];
   title?: string;
   workspacePath?: string;
+  boundAgentId?: string;
+  boundAgentName?: string;
   fork?: DesktopThreadForkMetadata;
 }
 
@@ -2340,6 +2372,8 @@ export interface UpdateThreadRequest {
   kind?: DesktopThread["kind"];
   title?: string;
   workspacePath?: string;
+  boundAgentId?: string;
+  boundAgentName?: string;
   fork?: DesktopThreadForkMetadata;
   lastRunId?: string;
   lastRequestId?: string;
@@ -2542,7 +2576,9 @@ export interface DesktopApi {
     request: WorkspaceCheckpointRestoreRequest,
   ): Promise<WorkspaceCheckpointRestoreResult>;
   listThreads(): Promise<DesktopThread[]>;
-  listAgents(): Promise<DesktopAgent[]>;
+  listAgents(options?: DesktopAgentListOptions): Promise<DesktopAgent[]>;
+  setDefaultAgent(agentId: string): Promise<DesktopAgentPreferenceResult>;
+  recordAgentUsage(agentId: string): Promise<DesktopAgentPreferenceResult>;
   getPlatformAgentStatus(): Promise<PlatformAgentStatus>;
   getMyDrSaiConfig(workspacePath?: string): Promise<MyDrSaiConfig>;
   updateMyDrSaiConfig(request: UpdateMyDrSaiConfigRequest): Promise<MyDrSaiConfig>;
@@ -2558,6 +2594,7 @@ export interface DesktopApi {
   ): Promise<DesktopForkWorktreeResult>;
   startChat(request: ChatRequest): Promise<string>;
   abortChat(requestId: string): Promise<boolean>;
+  respondChatInput(requestId: string, response: string | Record<string, unknown>): Promise<boolean>;
   startAgentRun(
     request: AgentRunRequest,
   ): Promise<{ requestId: string; sessionId: string; runId: string }>;

@@ -66,6 +66,11 @@ export interface AgentLogSsePayload {
   content_type?: string;
 }
 
+export interface AgentInputRequestSsePayload {
+  prompt: string;
+  inputType: "text_input" | "approval";
+}
+
 export interface ProviderUsageAnalyticsEvent {
   provider: "openai_responses" | "anthropic" | "google_gemini";
   eventName: string;
@@ -164,6 +169,20 @@ export function parseAgentLogSseFrame(frame: string): AgentLogSsePayload | null 
     level: typeof value.level === "string" ? value.level : undefined,
     content_type: typeof value.content_type === "string" ? value.content_type : undefined,
   };
+}
+
+export function parseAgentInputRequestSseFrame(frame: string): AgentInputRequestSsePayload | null {
+  if (getSseEventName(frame) !== "agent.input_request") return null;
+  const payload = getSseData(frame);
+  if (!payload || payload === "[DONE]") return null;
+  try {
+    const parsed = JSON.parse(payload) as Record<string, unknown>;
+    const prompt = typeof parsed.prompt === "string" ? parsed.prompt.trim() : "";
+    if (!prompt) return null;
+    return { prompt, inputType: parsed.input_type === "approval" ? "approval" : "text_input" };
+  } catch {
+    return null;
+  }
 }
 
 export function parseChatReasoningSseFrame(frame: string): AgentLogSsePayload | null {

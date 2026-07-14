@@ -76,6 +76,7 @@ function Invoke-CapturedCommand {
 
 function Find-OpenDrSaiExe {
     $candidates = @(
+        (Join-Path $env:ProgramFiles "OpenDrSai\app\OpenDrSai.exe"),
         (Join-Path $env:LOCALAPPDATA "Programs\OpenDrSai\app\OpenDrSai.exe"),
         (Join-Path $env:LOCALAPPDATA "Programs\OpenDrSai\OpenDrSai.exe"),
         (Join-Path $env:LOCALAPPDATA "Programs\opendrsai\OpenDrSai.exe"),
@@ -113,7 +114,7 @@ if ($ReleaseBaseUrl) {
         }
 
         $assetUrls = @(
-            "$base/bootstrapper/OpenDrSaiSetup.msi",
+            "$base/bootstrapper/OpenDrSaiSetup-win-x64.msi",
             "$base/bootstrapper/OpenDrSaiRuntime-win-x64.zip"
         )
         foreach ($url in $assetUrls) {
@@ -164,11 +165,11 @@ if ($appExe) {
         Add-Result "Launch OpenDrSai" "PASS" "Started $appExe"
     }
 } else {
-    Add-Result "Installed OpenDrSai.exe" "FAIL" "OpenDrSai.exe was not found under %LOCALAPPDATA%."
+    Add-Result "Installed OpenDrSai.exe" "FAIL" "OpenDrSai.exe was not found under %PROGRAMFILES%."
 }
 
 $drsaiHome = Join-Path $env:USERPROFILE ".drsai"
-$repo = Join-Path $drsaiHome "drsai-agent"
+$repo = Join-Path $env:ProgramFiles "OpenDrSai\drsai-agent"
 $venvPython = Join-Path $repo "venv\Scripts\python.exe"
 $cli = Join-Path $repo "venv\Scripts\drsai.cmd"
 $logDir = Join-Path $drsaiHome "logs"

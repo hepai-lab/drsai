@@ -1,6 +1,7 @@
 import type { DesktopAgent, PlatformAgentStatus } from "../shared/desktopApi";
+import type { PlatformAgentExecutionDescriptor } from "./agentCatalog";
 
-const AGENTS_PATH = "/api/native/v1/agents?refresh=false";
+const AGENTS_PATH = "/api/native/v1/agents";
 
 export interface PlatformAgentAuthProvider {
   getAccessToken(): Promise<string>;
@@ -14,11 +15,64 @@ export interface PlatformAgentClientOptions {
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
   now?: () => Date;
+  refresh?: boolean;
 }
 
 export interface PlatformAgentResult {
   agents: DesktopAgent[];
+  executionDescriptors: PlatformAgentExecutionDescriptor[];
   status: PlatformAgentStatus;
+}
+
+export interface PlatformAgentMutationResult {
+  ok: boolean;
+  message: string;
+}
+
+export async function setPlatformDefaultAgent(
+  options: PlatformAgentClientOptions,
+  platformId: string,
+): Promise<PlatformAgentMutationResult> {
+  return mutatePlatformAgent(options, "/api/native/v1/agents/default", {
+    method: "PUT",
+    body: JSON.stringify({ agent_id: platformId }),
+  });
+}
+
+export async function recordPlatformAgentUsage(
+  options: PlatformAgentClientOptions,
+  platformId: string,
+): Promise<PlatformAgentMutationResult> {
+  return mutatePlatformAgent(
+    options,
+    `/api/native/v1/agents/${encodeURIComponent(platformId)}/usage`,
+    { method: "POST" },
+  );
+}
+
+export async function stopPlatformAgentThread(
+  options: PlatformAgentClientOptions,
+  platformId: string,
+  threadId: string,
+): Promise<PlatformAgentMutationResult> {
+  return mutatePlatformAgent(
+    options,
+    `/api/native/v1/agents/${encodeURIComponent(platformId)}/threads/${encodeURIComponent(threadId)}/stop`,
+    { method: "POST" },
+  );
+}
+
+export async function respondPlatformAgentInput(
+  options: PlatformAgentClientOptions,
+  platformId: string,
+  threadId: string,
+  response: string | Record<string, unknown>,
+): Promise<PlatformAgentMutationResult> {
+  return mutatePlatformAgent(
+    options,
+    `/api/native/v1/agents/${encodeURIComponent(platformId)}/threads/${encodeURIComponent(threadId)}/input`,
+    { method: "POST", body: JSON.stringify({ response }) },
+  );
 }
 
 export async function fetchPlatformAgents(
@@ -78,10 +132,12 @@ export async function fetchPlatformAgents(
     dataRecord.version,
   );
   const capabilities = normalizeCapabilities(record.capabilities ?? dataRecord.capabilities);
+  const normalized = extractAgentArray(body)
+    .map(normalizePlatformAgent)
+    .filter((item): item is NonNullable<ReturnType<typeof normalizePlatformAgent>> => item !== null);
   return {
-    agents: extractAgentArray(body)
-      .map(normalizePlatformAgent)
-      .filter((agent): agent is DesktopAgent => agent !== null),
+    agents: normalized.map((item) => item.agent),
+    executionDescriptors: normalized.map((item) => item.executionDescriptor),
     status: {
       state: "ready",
       apiVersion: apiVersion || null,
@@ -102,7 +158,9 @@ async function requestAgents(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 6000);
   try {
-    return await fetchImpl(joinUrl(options.baseUrl, AGENTS_PATH), {
+    const url = new URL(joinUrl(options.baseUrl, AGENTS_PATH));
+    url.searchParams.set("refresh", options.refresh ? "true" : "false");
+    return await fetchImpl(url.toString(), {
       method: "GET",
       headers: {
         Accept: "application/json",
@@ -123,6 +181,7 @@ function emptyResult(
 ): PlatformAgentResult {
   return {
     agents: [],
+    executionDescriptors: [],
     status: { state, apiVersion: null, capabilities: [], message, lastCheckedAt },
   };
 }
@@ -137,27 +196,110 @@ function extractAgentArray(body: unknown): unknown[] {
   return [];
 }
 
-function normalizePlatformAgent(value: unknown): DesktopAgent | null {
+function normalizePlatformAgent(value: unknown): {
+  agent: DesktopAgent;
+  executionDescriptor: PlatformAgentExecutionDescriptor;
+} | null {
   const agent = readRecord(value);
   const config = readRecord(agent.config);
   const rawId = firstString(agent.id, agent.agent_id, config.id);
   const name = firstString(agent.name, config.name, agent.worker_name, rawId);
-  if (!rawId || !name || isModelLikeEntry(name, agent)) return null;
+  if (!rawId || !name || rawId.startsWith("hai.native.") || isModelLikeEntry(name, agent)) return null;
   const mode = firstString(agent.mode, agent.type, config.mode).toLowerCase();
-  const available = agent.available !== false && agent.status !== "offline" && agent.status !== "disabled";
+  const available = normalizeAvailability(agent);
+  const publicId = `platform:${rawId}`;
+  const model = firstString(agent.model, config.model) || undefined;
+  const description = normalizeLocalizedDescription(
+    agent.description ?? config.description,
+    "Platform agent.",
+  );
   return {
-    id: `platform:${rawId}`,
-    name,
-    description: firstString(agent.description, config.description, "Platform agent."),
-    owner: firstString(agent.owner, agent.author, "OpenDrSai"),
-    source: "remote",
-    status: available ? "running" : "unreachable",
-    model: firstString(agent.model, config.model) || undefined,
-    logo: firstString(agent.logo, agent.avatar) || undefined,
-    examples: normalizeExamples(agent.examples ?? config.examples),
-    error: available ? undefined : "This platform agent is currently unavailable.",
-    ...(mode ? { mode } : {}),
+    agent: {
+      id: publicId,
+      name,
+      description: description.fallback,
+      localizedDescription: description.localized,
+      owner: firstString(agent.owner, agent.author, "OpenDrSai"),
+      source: "remote",
+      status: available ? "running" : "unreachable",
+      available,
+      featured: agent.featured === true,
+      isDefault: agent.is_default === true || agent.isDefault === true,
+      capabilities: normalizeAgentCapabilities(agent.capabilities ?? config.capabilities),
+      lastUsedAt: firstString(agent.last_used_at, agent.lastUsedAt) || undefined,
+      catalogGroup: normalizeCatalogGroup(agent.catalog_group, agent.catalogGroup),
+      model,
+      logo: firstString(agent.logo, agent.avatar) || undefined,
+      examples: normalizeExamples(agent.examples ?? config.examples),
+      error: available ? undefined : "This platform agent is currently unavailable.",
+      ...(mode ? { mode } : {}),
+    },
+    executionDescriptor: {
+      publicId,
+      platformId: rawId,
+      mode: mode || "remote",
+      name,
+      model,
+      available,
+    },
   };
+}
+
+async function mutatePlatformAgent(
+  options: PlatformAgentClientOptions,
+  path: string,
+  init: { method: "POST" | "PUT"; body?: string },
+): Promise<PlatformAgentMutationResult> {
+  let accessToken: string;
+  try {
+    accessToken = await options.auth.getAccessToken();
+  } catch {
+    return { ok: false, message: "Sign in with HepAI to update agent preferences." };
+  }
+  let response = await requestMutation(options, path, init, accessToken);
+  if (response.status === 401) {
+    try {
+      accessToken = await options.auth.refreshAfterUnauthorized();
+    } catch {
+      options.auth.invalidate();
+      return { ok: false, message: "Your HepAI session expired. Sign in again." };
+    }
+    response = await requestMutation(options, path, init, accessToken);
+    if (response.status === 401) options.auth.invalidate();
+  }
+  if (response.ok) return { ok: true, message: "Agent preference saved." };
+  if (response.status === 403) {
+    return { ok: false, message: "This account cannot update that agent preference." };
+  }
+  if (response.status === 404) {
+    return { ok: false, message: "The selected agent is no longer available." };
+  }
+  return { ok: false, message: `Agent preference request failed (HTTP ${response.status}).` };
+}
+
+async function requestMutation(
+  options: PlatformAgentClientOptions,
+  path: string,
+  init: { method: "POST" | "PUT"; body?: string },
+  accessToken: string,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 6000);
+  try {
+    return await (options.fetchImpl ?? fetch)(joinUrl(options.baseUrl, path), {
+      method: init.method,
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${accessToken}`,
+        ...(init.body ? { "Content-Type": "application/json" } : {}),
+      },
+      body: init.body,
+      redirect: "error",
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function isModelLikeEntry(name: string, agent: Record<string, unknown>): boolean {
@@ -188,9 +330,59 @@ function normalizeCapabilities(value: unknown): string[] {
     return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
   }
   const record = readRecord(value);
+  if (Array.isArray(record.features)) {
+    return record.features.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+  }
   return Object.entries(record)
     .filter(([, enabled]) => enabled === true || (typeof enabled === "number" && enabled > 0))
     .map(([name]) => name);
+}
+
+function normalizeLocalizedDescription(
+  value: unknown,
+  fallback: string,
+): { fallback: string; localized?: { en?: string; zh?: string } } {
+  let candidate = value;
+  if (typeof candidate === "string") {
+    const text = candidate.trim();
+    if (!text) return { fallback };
+    if (text.startsWith("{") && text.endsWith("}")) {
+      try {
+        candidate = JSON.parse(text);
+      } catch {
+        return { fallback: text };
+      }
+    } else {
+      return { fallback: text };
+    }
+  }
+  const record = readRecord(candidate);
+  const en = firstString(record.en);
+  const zh = firstString(record.zh);
+  if (!en && !zh) return { fallback };
+  return {
+    fallback: en || zh || fallback,
+    localized: {
+      ...(en ? { en } : {}),
+      ...(zh ? { zh } : {}),
+    },
+  };
+}
+
+function normalizeAvailability(agent: Record<string, unknown>): boolean {
+  if (typeof agent.available === "boolean") return agent.available;
+  const value = firstString(agent.availability, agent.status).toLowerCase();
+  return !["disabled", "inactive", "offline", "stopped", "unavailable"].includes(value);
+}
+
+function normalizeAgentCapabilities(value: unknown): string[] | undefined {
+  const capabilities = normalizeCapabilities(value);
+  return capabilities.length ? capabilities : undefined;
+}
+
+function normalizeCatalogGroup(...values: unknown[]): "official" | "mine" {
+  const value = firstString(...values).toLowerCase();
+  return value === "mine" || value === "user" || value === "owned" ? "mine" : "official";
 }
 
 function readRecord(value: unknown): Record<string, unknown> {

@@ -236,7 +236,8 @@ class RemoteAgent(AssistantAgent):
             async with self._session.post(
                 self.url,
                 headers=self.new_headers,
-                json=body
+                json=body,
+                allow_redirects=False,
             ) as response:
                  
                 self._current_streaming_response = response

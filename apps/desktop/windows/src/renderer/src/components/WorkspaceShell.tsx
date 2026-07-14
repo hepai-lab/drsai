@@ -112,6 +112,11 @@ interface WorkspaceShellProps {
   rightTabs: Array<{ id: RightTab; label: string }>;
   sessionScope: "workspace" | "all";
   sidebarCollapsed: boolean;
+  sidebarComponents: {
+    square: boolean;
+    agents: boolean;
+    skills: boolean;
+  };
   user: AuthUser | null;
   workspaceSortMode: "recent" | "name" | "created";
   workspaces: WorkspaceProject[];
@@ -177,6 +182,7 @@ export function WorkspaceShell({
   rightTabs,
   sessionScope,
   sidebarCollapsed,
+  sidebarComponents,
   user,
   workspaceSortMode,
   workspaces,
@@ -264,7 +270,15 @@ export function WorkspaceShell({
   const zh = language === "zh";
   const userInitials = getUserInitials(user, zh);
   const workbenchMenus = zh ? ["文件", "编辑", "视图"] : ["File", "Edit", "View"];
-  const agentItems = getEnabledNavItems(navSections, "agents");
+  const agentItems = sidebarComponents.square
+    ? getEnabledNavItems(navSections, "agents").filter((item) =>
+        item.id === MENU_IDS.agentSquare
+          ? sidebarComponents.agents
+          : item.id === MENU_IDS.skillsSquare
+            ? sidebarComponents.skills
+            : true,
+      )
+    : [];
   const agentSectionLabel = navSections.find((section) => section.id === "agents")?.label ?? (zh ? "广场" : "Square");
   const workspaceItems = getEnabledNavItems(navSections, "workspace");
   const workspaceDetails = workspaces.find((workspace) => workspace.id === workspaceDetailsId) ?? null;

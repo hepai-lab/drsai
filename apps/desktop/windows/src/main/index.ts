@@ -42,11 +42,16 @@ import {
   startUpdateScheduler,
   subscribeUpdateStatus,
 } from "./updates";
-import { abortChat, hasActiveChats, startChat } from "./chat";
+import { abortChat, hasActiveChats, respondChatInput, startChat } from "./chat";
 import { listProviderErrorAnalytics } from "./providerErrorAnalytics";
 import { listProviderUsageAnalytics } from "./providerUsageAnalytics";
 import { abortAgentRun, hasActiveAgentRuns, startAgentRun } from "./agentRuns";
-import { getPlatformAgentStatus, listAgents } from "./agents";
+import {
+  getPlatformAgentStatus,
+  listAgents,
+  recordAgentUsage,
+  setDefaultAgent,
+} from "./agents";
 import {
   executeForkLifecycleAction,
   prepareForkWorktree,
@@ -2782,8 +2787,16 @@ function registerIpc(): void {
     requestForkConflictDraftWrite(request),
   );
   secureHandle("desktop:list-threads", () => listThreads());
-  secureHandle("desktop:list-agents", () => listAgents());
+  secureHandle("desktop:list-agents", (_event, options) => listAgents(
+    options && typeof options === "object" && (options as { refresh?: unknown }).refresh === true
+      ? { refresh: true }
+      : {},
+  ));
   secureHandle("desktop:get-platform-agent-status", () => getPlatformAgentStatus());
+  secureHandle("desktop:set-default-agent", (_event, agentId) =>
+    setDefaultAgent(typeof agentId === "string" ? agentId : ""));
+  secureHandle("desktop:record-agent-usage", (_event, agentId) =>
+    recordAgentUsage(typeof agentId === "string" ? agentId : ""));
   secureHandle("desktop:get-my-drsai-config", async (_event, workspacePath?: string) => {
     if (workspacePath && !(await isAllowedOpenPath(workspacePath))) {
       return getMyDrSaiConfig();
@@ -2989,6 +3002,14 @@ function registerIpc(): void {
   });
   secureHandle("desktop:abort-chat", (_event, requestId: string) =>
     abortChat(requestId),
+  );
+  secureHandle("desktop:respond-chat-input", (_event, requestId, response) =>
+    respondChatInput(
+      typeof requestId === "string" ? requestId : "",
+      typeof response === "string" || (response && typeof response === "object" && !Array.isArray(response))
+        ? response as string | Record<string, unknown>
+        : "",
+    ),
   );
   secureHandle(
     "desktop:voice-transcription-start",

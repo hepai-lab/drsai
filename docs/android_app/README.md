@@ -28,8 +28,9 @@ OpenDrSai Android 第一版是面向普通用户的本地轻量 Agent 应用，�
 
 ## 已完成事项
 
-- [x] OIDC loopback 回调完成后跳转 `opendrsai://oauth2redirect`；
-- [x] 系统浏览器自动返回现有 OpenDrSai 实例；
-- [x] 测试机验证无重复 Activity，授权码和 Token 不进入深链。
+- [x] 客户端实现 Android 原生 OIDC 深链与桌面 loopback 兼容模式；
+- [x] 每台设备使用独立 state、nonce、PKCE 和加密持久化登录事务；
+- [ ] HAI 注册 `opendrsai-android` Public Client 后切换正式构建；
+- [ ] 两台以上不同品牌真机完成并发登录验收。
 
 第一版不依赖 Windows、`opendrsai.ihep.ac.cn` 或 `/api/mobile/v1`，也不包含 Python、Shell、文件、浏览器自动化、本地大模型、多 Agent 和跨设备同步。

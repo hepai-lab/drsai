@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Bot,
   Bug,
@@ -129,8 +129,23 @@ const RESTORE_WORKSPACE_STORAGE_KEY = "opendrsai.restoreLastWorkspace";
 const LAST_THREAD_STORAGE_KEY = "opendrsai.lastThread";
 const LAST_WORKSPACE_STORAGE_KEY = "opendrsai.lastWorkspace";
 const COMPLETION_NOTIFICATION_STORAGE_KEY = "opendrsai.completionNotifications";
+const APPEARANCE_STORAGE_KEY = "opendrsai.appearance";
+const SIDEBAR_COMPONENTS_STORAGE_KEY = "opendrsai.sidebarComponents";
+const RIGHT_SIDEBAR_COMPONENTS_STORAGE_KEY = "opendrsai.rightSidebarComponents";
 const REMOTE_RECENT_PATHS_STORAGE_KEY = "opendrsai.remoteSsh.recentPaths";
 type WorkspaceSortMode = "recent" | "name" | "created";
+type AppearanceMode = "light" | "dark" | "system";
+interface SidebarComponentVisibility {
+  square: boolean;
+  agents: boolean;
+  skills: boolean;
+}
+interface RightSidebarComponentVisibility {
+  files: boolean;
+  browser: boolean;
+  terminal: boolean;
+  debug: boolean;
+}
 
 function App(): React.JSX.Element {
   const auth = useAuth();
@@ -203,6 +218,9 @@ function AuthenticatedApp({
   const [restoreLastSession, setRestoreLastSession] = useState(() => loadBooleanSetting(RESTORE_SESSION_STORAGE_KEY, true));
   const [restoreLastWorkspace, setRestoreLastWorkspace] = useState(() => loadBooleanSetting(RESTORE_WORKSPACE_STORAGE_KEY, true));
   const [completionNotifications, setCompletionNotifications] = useState(() => loadBooleanSetting(COMPLETION_NOTIFICATION_STORAGE_KEY, false));
+  const [appearance, setAppearance] = useState<AppearanceMode>(() => loadAppearance());
+  const [sidebarComponents, setSidebarComponents] = useState<SidebarComponentVisibility>(() => loadSidebarComponents());
+  const [rightSidebarComponents, setRightSidebarComponents] = useState<RightSidebarComponentVisibility>(() => loadRightSidebarComponents());
   const [myDrSaiConfig, setMyDrSaiConfig] = useState<MyDrSaiConfig | null>(null);
   const [selectedChatExamples, setSelectedChatExamples] = useState<
     DesktopAgent["examples"]
@@ -222,7 +240,13 @@ function AuthenticatedApp({
   const desktop = useDesktopHealthAdapter(language);
   const navSections = getNavSections(language);
   const navItems = getNavItems(language);
-  const rightTabs = getRightTabs(language);
+  const rightTabs = useMemo(
+    () => getRightTabs(language).filter(({ id }) =>
+      id === "templates" ? false : rightSidebarComponents[id],
+    ),
+    [language, rightSidebarComponents],
+  );
+  const firstVisibleRightTab = rightTabs[0]?.id;
   const title =
     navItems.find((item) => item.id === activeNav)?.label ??
     (language === "zh" ? "当前会话" : "Chat");
@@ -443,6 +467,39 @@ function AuthenticatedApp({
   }, [completionNotifications]);
 
   useEffect(() => {
+    window.localStorage.setItem(APPEARANCE_STORAGE_KEY, appearance);
+    const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
+    const applyTheme = (): void => {
+      const resolvedTheme = appearance === "system"
+        ? systemTheme.matches ? "dark" : "light"
+        : appearance;
+      document.documentElement.dataset.theme = resolvedTheme;
+      document.documentElement.style.colorScheme = resolvedTheme;
+    };
+    applyTheme();
+    if (appearance !== "system") return;
+    systemTheme.addEventListener("change", applyTheme);
+    return () => systemTheme.removeEventListener("change", applyTheme);
+  }, [appearance]);
+
+  useEffect(() => {
+    window.localStorage.setItem(SIDEBAR_COMPONENTS_STORAGE_KEY, JSON.stringify(sidebarComponents));
+  }, [sidebarComponents]);
+
+  useEffect(() => {
+    window.localStorage.setItem(RIGHT_SIDEBAR_COMPONENTS_STORAGE_KEY, JSON.stringify(rightSidebarComponents));
+  }, [rightSidebarComponents]);
+
+  useEffect(() => {
+    if (rightTabs.some(({ id }) => id === activeRightTab)) return;
+    if (firstVisibleRightTab) {
+      setActiveRightTab(firstVisibleRightTab);
+    } else {
+      setRightPanelCollapsed(true);
+    }
+  }, [activeRightTab, firstVisibleRightTab, rightTabs]);
+
+  useEffect(() => {
     if (restoreLastSession) window.localStorage.setItem(LAST_THREAD_STORAGE_KEY, activeThreadId);
   }, [activeThreadId, restoreLastSession]);
 
@@ -480,6 +537,7 @@ function AuthenticatedApp({
         setMyDrSaiConfig(myDrSaiConfig);
         if (cancelled || agents.length === 0) return;
         const defaultAgent =
+          agents.find((agent) => agent.isDefault) ??
           agents.find((agent) => agent.id === "my-drsai") ??
           agents.find((agent) => agent.status === "running") ??
           agents[0];
@@ -765,6 +823,8 @@ function AuthenticatedApp({
       kind: "chat",
       title: language === "zh" ? "新会话" : "New chat",
       workspacePath: effectiveWorkspacePath,
+      boundAgentId: selectedChatAgentId || undefined,
+      boundAgentName: selectedChatAgentName || undefined,
     });
     setActiveThreadId(thread.id);
     setThreads((current) =>
@@ -790,6 +850,15 @@ function AuthenticatedApp({
 
   function handleThreadSelect(threadId: string): void {
     const thread = threads.find((item) => item.id === threadId);
+    if (thread?.boundAgentId) {
+      const boundAgent = availableChatAgents.find((agent) => agent.id === thread.boundAgentId);
+      if (boundAgent) {
+        setSelectedChatAgentId(boundAgent.id);
+        setSelectedChatAgentName(boundAgent.name);
+        setSelectedChatModel(boundAgent.model || null);
+        setSelectedChatExamples(boundAgent.examples);
+      }
+    }
     if (thread?.workspacePath) {
       const nextWorkspace = workspaces.find(
         (workspace) =>
@@ -842,13 +911,49 @@ function AuthenticatedApp({
     }
   }
 
-  function handleChatAgentSelect(agentId: string): void {
-    const agent = availableChatAgents.find((item) => item.id === agentId);
-    if (!agent) return;
+  function applyChatAgent(agent: DesktopAgent): void {
     setSelectedChatAgentId(agent.id);
     setSelectedChatAgentName(agent.name);
     setSelectedChatModel(agent.model || selectedChatModel);
     setSelectedChatExamples(agent.examples);
+  }
+
+  async function selectChatAgent(agentId: string): Promise<boolean> {
+    const agent = availableChatAgents.find((item) => item.id === agentId);
+    if (!agent) return false;
+    const activeThread = threads.find((thread) => thread.id === activeThreadId);
+    const snapshotCount = threadSnapshots[activeThreadId]?.messageCount ?? 0;
+    const hasConversation = (activeThread?.messageCount ?? 0) > 0 || snapshotCount > 0;
+    const changesBoundAgent = Boolean(activeThread?.boundAgentId && activeThread.boundAgentId !== agent.id);
+    if (hasConversation && changesBoundAgent) {
+      const createNew = window.confirm(
+        language === "zh"
+          ? `当前会话已绑定 ${activeThread?.boundAgentName || "其他智能体"}。切换到 ${agent.name} 将新建会话，是否继续？`
+          : `This conversation is bound to ${activeThread?.boundAgentName || "another agent"}. Start a new conversation with ${agent.name}?`,
+      );
+      if (!createNew) return false;
+      applyChatAgent(agent);
+      const thread = await desktopApi.createThread({
+        kind: "chat",
+        title: language === "zh" ? `与 ${agent.name} 的新会话` : `New chat with ${agent.name}`,
+        workspacePath: effectiveWorkspacePath,
+        boundAgentId: agent.id,
+        boundAgentName: agent.name,
+      });
+      setActiveThreadId(thread.id);
+      setThreads((current) => sortThreadsForSidebar([thread, ...current.filter((item) => item.id !== thread.id)]));
+      return true;
+    }
+    applyChatAgent(agent);
+    if (activeThread && !hasConversation) {
+      const updated = await desktopApi.updateThread({ id: activeThread.id, boundAgentId: agent.id, boundAgentName: agent.name });
+      setThreads((current) => current.map((item) => item.id === updated.id ? updated : item));
+    }
+    return true;
+  }
+
+  function handleChatAgentSelect(agentId: string): void {
+    void selectChatAgent(agentId);
   }
 
   function handleChatModelSelect(model: string): void {
@@ -1183,6 +1288,7 @@ function AuthenticatedApp({
           ideContext={ideContext}
           workspaceInstructions={effectiveWorkspaceInstructions}
           workspacePath={effectiveWorkspacePath}
+          workspaceType={effectiveWorkspace.type}
           onAbort={chat.abort}
           onClearRuntimeMode={chat.clearRuntimeMode}
           onClearExternalAttachments={() => {
@@ -1226,18 +1332,19 @@ function AuthenticatedApp({
         <AgentSquareView
           language={language}
           userEmail={user?.email}
+          selectedAgentId={selectedChatAgentId}
+          onSetDefault={(agent) => void selectChatAgent(agent.id)}
           onStartChat={(agent) => {
-            setSelectedChatAgentId(agent.id);
-            setSelectedChatAgentName(agent.name);
-            setSelectedChatModel(agent.model || null);
-            setSelectedChatExamples(agent.examples);
-            setRightPanelCollapsed(true);
-            chat.setInput(
-              language === "zh"
-                ? `我想使用 ${agent.name} 处理一个任务：`
-                : `I want to use ${agent.name} for a task:`,
-            );
-            navigateTo(MENU_IDS.currentSession);
+            void selectChatAgent(agent.id).then((selected) => {
+              if (!selected) return;
+              setRightPanelCollapsed(true);
+              chat.setInput(
+                language === "zh"
+                  ? `我想使用 ${agent.name} 处理一个任务：`
+                  : `I want to use ${agent.name} for a task:`,
+              );
+              navigateTo(MENU_IDS.currentSession);
+            });
           }}
         />
       </section>
@@ -1306,6 +1413,7 @@ function AuthenticatedApp({
     ) : activeNav === MENU_IDS.profile ? (
       <SettingsPanel
         agents={availableChatAgents}
+        appearance={appearance}
         approvalCenterPanel={(
           <ApprovalCenterView
             language={language}
@@ -1329,6 +1437,7 @@ function AuthenticatedApp({
         models={availableChatModels}
         myDrSaiConfig={myDrSaiConfig}
         onCheckUpdates={() => void desktop.checkUpdates()}
+        onAppearanceChange={setAppearance}
         onCompletionNotificationsChange={(enabled) => {
           if (enabled && typeof Notification !== "undefined" && Notification.permission === "default") {
             void Notification.requestPermission().then((permission) => setCompletionNotifications(permission === "granted"));
@@ -1353,9 +1462,11 @@ function AuthenticatedApp({
         onResetPreferences={() => resetDesktopPreferences()}
         onRestoreLastSessionChange={setRestoreLastSession}
         onRestoreLastWorkspaceChange={setRestoreLastWorkspace}
+        onRightSidebarComponentsChange={setRightSidebarComponents}
         onSelectAgent={handleChatAgentSelect}
         onSelectModel={handleChatModelSelect}
         onSessionScopeChange={setSessionScope}
+        onSidebarComponentsChange={setSidebarComponents}
         onThinkingEffortChange={setDefaultThinkingEffort}
         onWorkspaceSortModeChange={setWorkspaceSortMode}
         onUpdateAgentConfig={async (updates) => {
@@ -1366,9 +1477,11 @@ function AuthenticatedApp({
         developerModeAvailable={import.meta.env.DEV}
         restoreLastSession={restoreLastSession}
         restoreLastWorkspace={restoreLastWorkspace}
+        rightSidebarComponents={rightSidebarComponents}
         selectedAgentId={selectedChatAgentId}
         selectedModel={selectedChatModel}
         sessionScope={sessionScope}
+        sidebarComponents={sidebarComponents}
         updateBusy={desktop.busy}
         updateMessage={desktop.actionMessage}
         user={user}
@@ -1605,6 +1718,7 @@ function AuthenticatedApp({
       rightTabs={rightTabs}
       sessionScope={sessionScope}
       sidebarCollapsed={sidebarCollapsed}
+      sidebarComponents={sidebarComponents}
       user={user}
       workspaceSortMode={workspaceSortMode}
       workspaces={sortedWorkspaces}
@@ -1772,6 +1886,53 @@ function showCompletionNotification(
 
 function loadLanguage(): AppLanguage {
   return window.localStorage.getItem(LANGUAGE_STORAGE_KEY) === "en" ? "en" : "zh";
+}
+
+function loadAppearance(): AppearanceMode {
+  const value = window.localStorage.getItem(APPEARANCE_STORAGE_KEY);
+  return value === "light" || value === "dark" || value === "system"
+    ? value
+    : "system";
+}
+
+function loadSidebarComponents(): SidebarComponentVisibility {
+  const defaults: SidebarComponentVisibility = {
+    square: true,
+    agents: true,
+    skills: false,
+  };
+  try {
+    const value = JSON.parse(window.localStorage.getItem(SIDEBAR_COMPONENTS_STORAGE_KEY) ?? "null") as Partial<SidebarComponentVisibility> | null;
+    if (!value || typeof value !== "object") return defaults;
+    return {
+      square: typeof value.square === "boolean" ? value.square : defaults.square,
+      agents: typeof value.agents === "boolean" ? value.agents : defaults.agents,
+      skills: typeof value.skills === "boolean" ? value.skills : defaults.skills,
+    };
+  } catch {
+    return defaults;
+  }
+}
+
+function loadRightSidebarComponents(): RightSidebarComponentVisibility {
+  const defaults: RightSidebarComponentVisibility = {
+    files: true,
+    browser: true,
+    terminal: true,
+    debug: false,
+  };
+  try {
+    const value = JSON.parse(window.localStorage.getItem(RIGHT_SIDEBAR_COMPONENTS_STORAGE_KEY) ?? "null") as Partial<RightSidebarComponentVisibility> | null;
+    if (!value || typeof value !== "object") return defaults;
+    return {
+      files: typeof value.files === "boolean" ? value.files : defaults.files,
+      browser: typeof value.browser === "boolean" ? value.browser : defaults.browser,
+      terminal: typeof value.terminal === "boolean" ? value.terminal : defaults.terminal,
+      debug: typeof value.debug === "boolean" ? value.debug : defaults.debug,
+    };
+  } catch {
+    return defaults;
+  }
 }
 
 function loadSessionScope(): "workspace" | "all" {
@@ -2203,6 +2364,7 @@ type SettingsPane = "general" | "agent-defaults" | "agent-task" | "approvals" | 
 
 function SettingsPanel({
   agents,
+  appearance,
   approvalCenterPanel,
   channelsPanel,
   completionNotifications,
@@ -2215,6 +2377,7 @@ function SettingsPanel({
   models,
   myDrSaiConfig,
   onCheckUpdates,
+  onAppearanceChange,
   onCompletionNotificationsChange,
   onCopyDiagnostics,
   onDeveloperModeChange,
@@ -2227,17 +2390,21 @@ function SettingsPanel({
   onResetPreferences,
   onRestoreLastSessionChange,
   onRestoreLastWorkspaceChange,
+  onRightSidebarComponentsChange,
   onSelectAgent,
   onSelectModel,
   onSessionScopeChange,
+  onSidebarComponentsChange,
   onThinkingEffortChange,
   onWorkspaceSortModeChange,
   onUpdateAgentConfig,
   restoreLastSession,
   restoreLastWorkspace,
+  rightSidebarComponents,
   selectedAgentId,
   selectedModel,
   sessionScope,
+  sidebarComponents,
   updateBusy,
   updateMessage,
   usageAnalyticsPanel,
@@ -2245,6 +2412,7 @@ function SettingsPanel({
   workspaceSortMode,
 }: {
   agents: DesktopAgent[];
+  appearance: AppearanceMode;
   approvalCenterPanel: React.ReactNode;
   channelsPanel: React.ReactNode;
   completionNotifications: boolean;
@@ -2257,6 +2425,7 @@ function SettingsPanel({
   models: MyDrSaiModelConfig[];
   myDrSaiConfig: MyDrSaiConfig | null;
   onCheckUpdates: () => void;
+  onAppearanceChange: (appearance: AppearanceMode) => void;
   onCompletionNotificationsChange: (enabled: boolean) => void;
   onCopyDiagnostics: () => void;
   onDeveloperModeChange: (enabled: boolean) => void;
@@ -2269,17 +2438,21 @@ function SettingsPanel({
   onResetPreferences: () => void;
   onRestoreLastSessionChange: (enabled: boolean) => void;
   onRestoreLastWorkspaceChange: (enabled: boolean) => void;
+  onRightSidebarComponentsChange: React.Dispatch<React.SetStateAction<RightSidebarComponentVisibility>>;
   onSelectAgent: (agentId: string) => void;
   onSelectModel: (model: string) => void;
   onSessionScopeChange: (scope: "workspace" | "all") => void;
+  onSidebarComponentsChange: React.Dispatch<React.SetStateAction<SidebarComponentVisibility>>;
   onThinkingEffortChange: (effort: ThinkingEffort) => void;
   onWorkspaceSortModeChange: (mode: WorkspaceSortMode) => void;
   onUpdateAgentConfig: (updates: { plan_mode?: boolean; workspace_enabled?: boolean }) => Promise<void>;
   restoreLastSession: boolean;
   restoreLastWorkspace: boolean;
+  rightSidebarComponents: RightSidebarComponentVisibility;
   selectedAgentId: string | null;
   selectedModel: string | null;
   sessionScope: "workspace" | "all";
+  sidebarComponents: SidebarComponentVisibility;
   updateBusy: boolean;
   updateMessage: string | null;
   usageAnalyticsPanel: React.ReactNode;
@@ -2406,6 +2579,46 @@ function SettingsPanel({
                     {zh ? "中文" : "Chinese"}
                   </button>
                 </div>
+              </div>
+            </section>
+            <section className="settings-section">
+              <div>
+                <h2>{zh ? "外观" : "Appearance"}</h2>
+                <p>{zh ? "选择界面主题，并决定左侧栏显示哪些广场组件。" : "Choose the interface theme and which Square components appear in the sidebar."}</p>
+              </div>
+              <div className="settings-row">
+                <span><strong>{zh ? "主题" : "Theme"}</strong><small>{zh ? "跟随系统会实时响应 Windows 的颜色模式。" : "System mode follows Windows color changes in real time."}</small></span>
+                <div className="appearance-segment" role="group" aria-label={zh ? "外观主题" : "Appearance theme"}>
+                  {(["light", "dark", "system"] as AppearanceMode[]).map((mode) => (
+                    <button key={mode} type="button" className={appearance === mode ? "active" : ""} onClick={() => onAppearanceChange(mode)}>
+                      {mode === "light" ? (zh ? "白天" : "Light") : mode === "dark" ? (zh ? "黑夜" : "Dark") : (zh ? "跟随系统" : "System")}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="settings-component-list">
+                <strong>{zh ? "左侧栏组件" : "Sidebar components"}</strong>
+                <label className="settings-toggle"><span><strong>{zh ? "广场" : "Square"}</strong><small>{zh ? "显示或隐藏整个广场分组。" : "Show or hide the entire Square group."}</small></span><input type="checkbox" checked={sidebarComponents.square} onChange={(event) => onSidebarComponentsChange((current) => ({ ...current, square: event.target.checked }))} /></label>
+                <label className="settings-toggle"><span><strong>{zh ? "智能体" : "Agents"}</strong><small>{zh ? "在广场分组中显示智能体入口。" : "Show Agents inside the Square group."}</small></span><input type="checkbox" checked={sidebarComponents.agents} onChange={(event) => onSidebarComponentsChange((current) => ({ ...current, agents: event.target.checked }))} /></label>
+                <label className="settings-toggle"><span><strong>{zh ? "技能" : "Skills"}</strong><small>{zh ? "在广场分组中显示技能入口。" : "Show Skills inside the Square group."}</small></span><input type="checkbox" checked={sidebarComponents.skills} onChange={(event) => onSidebarComponentsChange((current) => ({ ...current, skills: event.target.checked }))} /></label>
+              </div>
+              <div className="settings-component-list">
+                <strong>{zh ? "右侧栏组件" : "Right sidebar components"}</strong>
+                {(["files", "browser", "terminal", "debug"] as Array<keyof RightSidebarComponentVisibility>).map((component) => {
+                  const label = component === "files"
+                    ? (zh ? "文件" : "Files")
+                    : component === "browser"
+                      ? (zh ? "浏览器" : "Browser")
+                      : component === "terminal"
+                        ? (zh ? "终端" : "Terminal")
+                        : (zh ? "调试" : "Debug");
+                  return (
+                    <label className="settings-toggle" key={component}>
+                      <span><strong>{label}</strong><small>{zh ? `在右侧栏中显示${label}标签。` : `Show the ${label} tab in the right sidebar.`}</small></span>
+                      <input type="checkbox" checked={rightSidebarComponents[component]} onChange={(event) => onRightSidebarComponentsChange((current) => ({ ...current, [component]: event.target.checked }))} />
+                    </label>
+                  );
+                })}
               </div>
             </section>
             <section className="settings-section">

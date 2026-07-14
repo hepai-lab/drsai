@@ -12,7 +12,7 @@ const expectedSubject = (process.env.EXPECTED_WINDOWS_SIGNER_SUBJECT || "").trim
 const runtimePath = join(releaseDir, "bootstrapper", "OpenDrSaiRuntime-win-x64.zip");
 const temporaryRoot = mkdtempSync(join(tmpdir(), "opendrsai-signatures-"));
 const runtimeExecutable = join(temporaryRoot, "OpenDrSai.exe");
-const artifacts = [join(releaseDir, "bootstrapper", "OpenDrSaiSetup.msi")];
+const artifacts = [join(releaseDir, "bootstrapper", "OpenDrSaiSetup-win-x64.msi")];
 const failures = [];
 if (existsSync(runtimePath)) {
   extractRuntimeExecutable(runtimePath, runtimeExecutable);

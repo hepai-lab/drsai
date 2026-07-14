@@ -1,0 +1,93 @@
+{
+  "id": "presentation-report-wlcg-ihep-visit-20260715",
+  "description": "PPT-derived PDF fixture for presentation understanding and PPTX regeneration",
+  "source": {
+    "provider": "CERN Indico",
+    "eventUrl": "https://indico.cern.ch/event/1678348/",
+    "downloadUrl": "https://indico.cern.ch/event/1678348/contributions/7063019/attachments/3313017/5929652/WLCG-20260715-WLCG-talk-IHEP-visit.pdf",
+    "filename": "WLCG-20260715-WLCG-talk-IHEP-visit.pdf",
+    "sizeBytes": 7664262,
+    "sha256": "F6581E1A255B354667188B41B874B996A300F88BB48912721BC1C854183E913E"
+  },
+  "document": {
+    "type": "presentation_pdf",
+    "creator": "Impress",
+    "pages": 48,
+    "title": "Distributed computing for High Energy Physics",
+    "context": "IHEP visit",
+    "date": "14-15 July 2026",
+    "authorContact": "edoardo.martelli@cern.ch"
+  },
+  "goldenPageRoles": [
+    { "page": 1, "role": "cover" },
+    { "page": 2, "role": "agenda" },
+    { "page": 3, "role": "section" },
+    { "page": 11, "role": "section" },
+    { "page": 25, "role": "section" },
+    { "page": 41, "role": "section" },
+    { "page": 46, "role": "section" },
+    { "page": 47, "role": "summary" },
+    { "page": 48, "role": "questions" }
+  ],
+  "goldenFacts": [
+    {
+      "id": "hl_lhc_data_factor",
+      "page": 8,
+      "expected": "HL-LHC will increase the volume of data produced by a factor of 10",
+      "numericValue": 10
+    },
+    {
+      "id": "minimal_bandwidth_tbps",
+      "page": 42,
+      "expected": "Minimal Model expected HL-LHC bandwidth is 4.8 Tbps",
+      "numericValue": 4.8,
+      "unit": "Tbps"
+    },
+    {
+      "id": "flexible_bandwidth_tbps",
+      "page": 42,
+      "expected": "Flexible Model expected HL-LHC bandwidth is 9.6 Tbps",
+      "numericValue": 9.6,
+      "unit": "Tbps"
+    },
+    {
+      "id": "dc_2027_target",
+      "page": 43,
+      "expected": "The 2027 Data Challenge targets 50% of HL-LHC requirements",
+      "numericValue": 50,
+      "unit": "percent"
+    },
+    {
+      "id": "dc_2029_target",
+      "page": 43,
+      "expected": "The 2029 Data Challenge targets 100% of HL-LHC requirements, with date and percentage to be confirmed",
+      "numericValue": 100,
+      "unit": "percent",
+      "uncertaintyRequired": true
+    }
+  ],
+  "requiredStorySections": [
+    "HEP at CERN",
+    "WLCG distributed computing",
+    "Asian networks for HEP",
+    "WLCG Data Challenges",
+    "Conclusions"
+  ],
+  "regeneratedPptx": {
+    "minimumSlides": 8,
+    "maximumSlides": 12,
+    "requiredSections": [
+      "cover",
+      "background",
+      "WLCG",
+      "Asian networks",
+      "HL-LHC requirements",
+      "Data Challenges",
+      "conclusions",
+      "sources"
+    ],
+    "minimumSpeakerNotesCoverage": 0.8,
+    "wholePageScreenshotReuseAllowed": false,
+    "sourceMappingRequired": true
+  }
+}
