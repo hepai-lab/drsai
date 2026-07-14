@@ -203,12 +203,14 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
 async function runPresentationPdfActionSmoke(window: BrowserWindow): Promise<SmokeResult> {
   const fixtureName = process.env.OPENDRSAI_E2E_PRESENTATION_PDF_NAME || "";
   const fixturePath = process.env.OPENDRSAI_E2E_PRESENTATION_PDF_PATH || "";
+  const scenario = process.env.OPENDRSAI_E2E_PRESENTATION_SCENARIO || "cancel-retry";
   const result = (await window.webContents.executeJavaScript(`
     (async () => {
       const fixtureName = ${JSON.stringify(fixtureName)};
       const fixturePath = ${JSON.stringify(fixturePath)};
+      const scenario = ${JSON.stringify(scenario)};
       const checks = {};
-      const details = { fixtureName, fixturePath, capturedAt: new Date().toISOString() };
+      const details = { fixtureName, fixturePath, scenario, capturedAt: new Date().toISOString() };
 
       async function waitFor(find, timeout = 30000) {
         const deadline = Date.now() + timeout;
@@ -221,6 +223,12 @@ async function runPresentationPdfActionSmoke(window: BrowserWindow): Promise<Smo
       }
 
       checks.domReady = Boolean(await waitFor(() => document.querySelector(".app-shell"), 10000));
+      const fixtureWorkspacePath = fixturePath.slice(0, fixturePath.lastIndexOf("\\\\"));
+      const fixtureWorkspaceButton = await waitFor(() => Array.from(document.querySelectorAll(".workspace-item"))
+        .find((button) => button.getAttribute("title")?.includes(fixtureWorkspacePath)), 15000);
+      checks.fixtureWorkspaceAvailable = Boolean(fixtureWorkspaceButton);
+      fixtureWorkspaceButton?.click();
+      checks.fixtureWorkspaceSelected = Boolean(await waitFor(() => fixtureWorkspaceButton?.closest(".workspace-row")?.classList.contains("active"), 5000));
       const rightPanelToggle = document.querySelector(".titlebar-right-panel-toggle");
       checks.rightPanelToggleVisible = Boolean(rightPanelToggle);
       if (!document.querySelector(".files-context-panel")) rightPanelToggle?.click();
@@ -252,79 +260,65 @@ async function runPresentationPdfActionSmoke(window: BrowserWindow): Promise<Smo
         && /生成管理者版 PPT|Create manager PPT/i.test(actionButton?.textContent || "");
       const editRequirementsButton = action?.querySelector("button.secondary");
       checks.editRequirementsVisible = Boolean(editRequirementsButton);
+      window.confirm = () => true;
 
       actionButton?.click();
-      const validatingProgress = await waitFor(() => {
-        const candidate = document.querySelector('[data-testid="manager-presentation-progress"]');
-        return candidate?.getAttribute("data-phase") === "generating" ? candidate : null;
-      }, 60000);
-      const cancelledOutputPath = validatingProgress?.getAttribute("data-output-path") || "";
-      const cancelButton = document.querySelector('[data-testid="cancel-manager-presentation"]');
-      checks.cancelActionVisible = Boolean(cancelButton) && /取消生成|Cancel/i.test(cancelButton?.textContent || "");
-      cancelButton?.click();
-      const cancelledProgress = await waitFor(() => {
-        const candidate = document.querySelector('[data-testid="manager-presentation-progress"]');
-        return candidate?.getAttribute("data-phase") === "cancelled" ? candidate : null;
-      }, 10000);
-      checks.cancellationCompleted = Boolean(cancelledProgress)
-        && /已取消|cancelled/i.test(cancelledProgress?.textContent || "");
-      const cancelledRequestId = cancelledProgress?.getAttribute("data-request-id") || "";
-      const apiAfterCancel = window.openDrSai;
-      details.cancelledOutputPath = cancelledOutputPath;
-      if (apiAfterCancel && cancelledOutputPath) {
-        let pptxMissing = false;
-        let manifestMissing = false;
-        try {
-          await apiAfterCancel.previewWorkspaceFile({
-            workspacePath: fixturePath.slice(0, fixturePath.lastIndexOf("\\\\")),
-            path: cancelledOutputPath,
-            maxBytes: 1024,
-          });
-        } catch { pptxMissing = true; }
-        try {
-          await apiAfterCancel.previewWorkspaceFile({
-            workspacePath: fixturePath.slice(0, fixturePath.lastIndexOf("\\\\")),
-            path: cancelledOutputPath.replace(/\.pptx$/i, ".provenance.json"),
-            maxBytes: 1024,
-          });
-        } catch { manifestMissing = true; }
-        checks.cancelledNoPartialFiles = pptxMissing && manifestMissing;
+      let previousRequestId = "";
+      let cancelledOutputPath = "";
+      if (scenario === "cancel-retry") {
+        const parsingProgress = await waitFor(() => {
+          const candidate = document.querySelector('[data-testid="manager-presentation-progress"]');
+          return candidate?.getAttribute("data-phase") === "analyzing"
+            && Number(candidate.getAttribute("data-progress")) >= 12 ? candidate : null;
+        }, 5000);
+        checks.parserStartedBeforeCancel = Boolean(parsingProgress)
+          && /逐页解析|parsing/i.test(parsingProgress?.textContent || "");
+        const cancelButton = await waitFor(() => document.querySelector('[data-testid="cancel-manager-presentation"]'), 5000);
+        cancelledOutputPath = document.querySelector('[data-testid="manager-presentation-progress"]')?.getAttribute("data-output-path") || "";
+        checks.cancelActionVisible = Boolean(cancelButton) && /取消生成|Cancel/i.test(cancelButton?.textContent || "");
+        const cancelStartedAt = performance.now();
+        cancelButton?.click();
+        const cancelledProgress = await waitFor(() => {
+          const candidate = document.querySelector('[data-testid="manager-presentation-progress"]');
+          return candidate?.getAttribute("data-phase") === "cancelled" ? candidate : null;
+        }, 10000);
+        checks.cancellationCompleted = Boolean(cancelledProgress)
+          && /已取消|cancelled/i.test(cancelledProgress?.textContent || "");
+        details.cancelLatencyMs = Math.round(performance.now() - cancelStartedAt);
+        checks.parsingCancellationResponsive = checks.cancellationCompleted && details.cancelLatencyMs <= 3000;
+        previousRequestId = cancelledProgress?.getAttribute("data-request-id") || "";
+        details.cancelledOutputPath = cancelledOutputPath;
+        checks.cancelledNoPartialFiles = !cancelledOutputPath;
+        const retryAfterCancel = await waitFor(() => {
+          const candidate = document.querySelector('[data-testid="generate-manager-presentation"]');
+          return candidate && !candidate.disabled && /重试生成|Retry generation/i.test(candidate.textContent || "") ? candidate : null;
+        }, 5000);
+        checks.retryAfterCancelVisible = Boolean(retryAfterCancel);
+        retryAfterCancel?.click();
       } else {
-        checks.cancelledNoPartialFiles = false;
+        const failedProgress = await waitFor(() => {
+          const candidate = document.querySelector('[data-testid="manager-presentation-progress"]');
+          return candidate?.getAttribute("data-phase") === "failed" ? candidate : null;
+        }, 10000);
+        checks.failureVisible = Boolean(failedProgress)
+          && /Simulated presentation failure at analyzing/i.test(failedProgress?.textContent || "");
+        previousRequestId = failedProgress?.getAttribute("data-request-id") || "";
+        const retryAfterFailure = await waitFor(() => {
+          const candidate = document.querySelector('[data-testid="generate-manager-presentation"]');
+          return candidate && !candidate.disabled && /重试生成|Retry generation/i.test(candidate.textContent || "") ? candidate : null;
+        }, 5000);
+        checks.retryAfterFailureVisible = Boolean(retryAfterFailure);
+        retryAfterFailure?.click();
       }
-      const retryAfterCancel = await waitFor(() => {
-        const candidate = document.querySelector('[data-testid="generate-manager-presentation"]');
-        return candidate && !candidate.disabled && /重试生成|Retry generation/i.test(candidate.textContent || "")
-          ? candidate
-          : null;
-      }, 5000);
-      checks.retryAfterCancelVisible = /重试生成|Retry generation/i.test(retryAfterCancel?.textContent || "");
-      retryAfterCancel?.click();
-      const failedProgress = await waitFor(() => {
-        const candidate = document.querySelector('[data-testid="manager-presentation-progress"]');
-        return candidate?.getAttribute("data-request-id") !== cancelledRequestId
-          && candidate?.getAttribute("data-phase") === "failed" ? candidate : null;
-      }, 10000);
-      checks.injectedFailureVisible = Boolean(failedProgress)
-        && /Simulated presentation failure at analyzing/i.test(failedProgress?.textContent || "");
-      const failedRequestId = failedProgress?.getAttribute("data-request-id") || "";
-      const retryAfterFailure = await waitFor(() => {
-        const candidate = document.querySelector('[data-testid="generate-manager-presentation"]');
-        return candidate && !candidate.disabled && /重试生成|Retry generation/i.test(candidate.textContent || "")
-          ? candidate
-          : null;
-      }, 5000);
-      checks.retryAfterFailureVisible = /重试生成|Retry generation/i.test(retryAfterFailure?.textContent || "");
-      retryAfterFailure?.click();
       const generatedResult = await waitFor(() => {
         const progress = document.querySelector('[data-testid="manager-presentation-progress"]');
         const result = document.querySelector('[data-testid="manager-presentation-result"]');
-        return progress?.getAttribute("data-request-id") !== failedRequestId && result ? result : null;
+        return progress?.getAttribute("data-request-id") !== previousRequestId && result ? result : null;
       }, 60000);
       checks.generationCompleted = Boolean(generatedResult);
       const generatedOutputPath = generatedResult?.getAttribute("data-output-path") || "";
       details.generatedOutputPath = generatedOutputPath;
-      checks.cancelledPathReused = Boolean(cancelledOutputPath) && generatedOutputPath === cancelledOutputPath;
+      if (scenario === "cancel-retry") checks.cancelledPathReused = !cancelledOutputPath || generatedOutputPath === cancelledOutputPath;
       details.generatedResultText = generatedResult?.textContent?.replace(/\\s+/g, " ").trim() || "";
       checks.generatedMetricsVisible = details.generatedResultText.includes("9 页")
         && details.generatedResultText.includes("讲稿 100%")

@@ -104,6 +104,43 @@ export function extractPresentationPdfSync(filePath: string): PresentationPdfRes
   }
 }
 
+export async function extractPresentationPdf(
+  filePath: string,
+  signal?: AbortSignal,
+): Promise<PresentationPdfResult | null> {
+  if (!canExtractPresentationPdf()) return null;
+  if (signal?.aborted) throw new DOMException("Presentation PDF parsing was cancelled.", "AbortError");
+  return new Promise((resolve, reject) => {
+    execFile(
+      pythonExecutable(),
+      commandArgs(filePath, "json"),
+      {
+        encoding: "utf8",
+        env: commandEnvironment(),
+        timeout: PDF_PARSE_TIMEOUT_MS,
+        windowsHide: true,
+        maxBuffer: PDF_PARSE_MAX_BUFFER,
+        signal,
+      },
+      (error, stdout) => {
+        if (signal?.aborted || error?.name === "AbortError" || (error as NodeJS.ErrnoException | null)?.code === "ABORT_ERR") {
+          reject(error || new DOMException("Presentation PDF parsing was cancelled.", "AbortError"));
+          return;
+        }
+        if (error) {
+          resolve(null);
+          return;
+        }
+        try {
+          resolve(JSON.parse(stdout) as PresentationPdfResult);
+        } catch {
+          resolve(null);
+        }
+      },
+    );
+  });
+}
+
 export async function extractPresentationPdfContext(
   filePath: string,
   maxChars: number,

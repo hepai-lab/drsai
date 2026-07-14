@@ -776,6 +776,7 @@ export function FilesContextPanel({
                 <div
                   className={`presentation-pdf-progress ${managerPresentationProgress.phase}`}
                   data-phase={managerPresentationProgress.phase}
+                  data-progress={managerPresentationProgress.progress}
                   data-request-id={managerPresentationProgress.requestId}
                   data-output-path={managerPresentationProgress.outputPath}
                   data-testid="manager-presentation-progress"

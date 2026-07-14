@@ -14,10 +14,14 @@ const sourcePdf = resolve(process.env.OPENDRSAI_CERN_PDF || "C:/tmp/WLCG-2026071
 const python = resolve(process.env.OPENDRSAI_PDF_PYTHON || "C:/Users/win11/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe");
 const parser = join(repo, "cores/python/packages/drsai/src/drsai/backend/presentation_pdf.py");
 const evidenceDir = join(root, "release", "product-evidence", "cern-manager-deck");
-const evidenceResult = join(evidenceDir, "packaged-presentation-action-result.json");
-const evidenceScreenshot = join(evidenceDir, "packaged-presentation-action.png");
-const evidenceGeneratedPptx = join(evidenceDir, "packaged-generated-manager-zh.pptx");
-const evidenceGeneratedManifest = join(evidenceDir, "packaged-generated-manager-zh.provenance.json");
+const scenarioIndex = process.argv.indexOf("--scenario");
+const scenario = scenarioIndex >= 0 ? process.argv[scenarioIndex + 1] : "cancel-retry";
+assert(["cancel-retry", "failure-retry"].includes(scenario), `Unknown presentation scenario: ${scenario}`);
+const evidenceSuffix = scenario === "cancel-retry" ? "" : "-failure-retry";
+const evidenceResult = join(evidenceDir, `packaged-presentation-action${evidenceSuffix}-result.json`);
+const evidenceScreenshot = join(evidenceDir, `packaged-presentation-action${evidenceSuffix}.png`);
+const evidenceGeneratedPptx = join(evidenceDir, `packaged-generated-manager-zh${evidenceSuffix}.pptx`);
+const evidenceGeneratedManifest = join(evidenceDir, `packaged-generated-manager-zh${evidenceSuffix}.provenance.json`);
 const port = Number(process.env.OPENDRSAI_PACKAGED_PRESENTATION_PORT || "18655");
 const timeoutMs = Number(process.env.OPENDRSAI_E2E_TIMEOUT_MS || "120000");
 
@@ -40,6 +44,7 @@ mkdirSync(userData, { recursive: true });
 mkdirSync(evidenceDir, { recursive: true });
 copyFileSync(sourcePdf, fixturePath);
 writeE2eAuthSession();
+writeE2eWorkspace();
 
 let gateway;
 try {
@@ -52,6 +57,7 @@ try {
   copyGeneratedEvidence(result);
   console.log(JSON.stringify({
     ok: true,
+    scenario,
     fixture: { path: sourcePdf, bytes: bytes.length, sha256: manifest.source.sha256 },
     executable: exePath,
     checks: result.checks,
@@ -115,6 +121,24 @@ function writeE2eAuthSession() {
   }, null, 2)}\n`, "utf8");
 }
 
+function writeE2eWorkspace() {
+  const desktopDir = join(drsaiHome, "desktop");
+  const now = new Date().toISOString();
+  mkdirSync(desktopDir, { recursive: true });
+  writeFileSync(join(desktopDir, "workspaces.json"), `${JSON.stringify([{
+    id: "workspace-presentation-e2e",
+    name: "CERN presentation test",
+    path: drsaiHome,
+    type: "local",
+    description: "Isolated packaged CERN PDF acceptance workspace",
+    createdAt: now,
+    updatedAt: now,
+    lastOpenedAt: now,
+    trusted: true,
+    pinned: true,
+  }], null, 2)}\n`, "utf8");
+}
+
 function copyGeneratedEvidence(result) {
   const outputPath = result?.details?.generatedOutputPath;
   const manifestPath = result?.details?.manifestPath;
@@ -139,12 +163,14 @@ function runApp() {
         ...process.env,
         PATH: [dirname(exePath), process.env.PATH || ""].join(delimiter),
         DRSAI_HOME: drsaiHome,
+        DRSAI_REPO: drsaiHome,
         OPENDRSAI_GATEWAY_PORT: String(port),
         OPENDRSAI_E2E_PRESENTATION_PDF_ACTION: "1",
         OPENDRSAI_E2E_PRESENTATION_PDF_NAME: manifest.source.filename,
         OPENDRSAI_E2E_PRESENTATION_PDF_PATH: fixturePath,
+        OPENDRSAI_E2E_PRESENTATION_SCENARIO: scenario,
         OPENDRSAI_E2E_PRESENTATION_PHASE_DELAY_MS: "350",
-        OPENDRSAI_E2E_PRESENTATION_FAIL_ATTEMPT: "2",
+        OPENDRSAI_E2E_PRESENTATION_FAIL_ATTEMPT: scenario === "failure-retry" ? "1" : "0",
         OPENDRSAI_E2E_PRESENTATION_FAIL_PHASE: "analyzing",
         OPENDRSAI_E2E_RESULT: resultPath,
         OPENDRSAI_E2E_SCREENSHOT: evidenceScreenshot,

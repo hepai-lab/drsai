@@ -16,7 +16,7 @@ import type {
   ManagerPresentationProgressEvent,
 } from "../shared/desktopApi";
 import {
-  extractPresentationPdfSync,
+  extractPresentationPdf,
   type PresentationPdfResult,
 } from "./presentationPdf";
 
@@ -103,7 +103,16 @@ export async function generateManagerPresentation(
 
   send("analyzing", 8, "正在安全读取演示型 PDF 的页面结构与文本。 ");
   await checkpoint("analyzing");
-  const analysis = extractPresentationPdfSync(sourcePath);
+  send("analyzing", 12, "正在逐页解析 PDF；此阶段可以安全取消。");
+  let analysis: PresentationPdfResult | null;
+  try {
+    analysis = await extractPresentationPdf(sourcePath, options.signal);
+  } catch (error) {
+    if (options.signal?.aborted || (error instanceof Error && error.name === "AbortError")) {
+      throw new ManagerPresentationCancelledError();
+    }
+    throw error;
+  }
   if (options.signal?.aborted) throw new ManagerPresentationCancelledError();
   if (!analysis || analysis.type !== "presentation_pdf") {
     throw new Error("The selected PDF was not recognized as a presentation-style document.");

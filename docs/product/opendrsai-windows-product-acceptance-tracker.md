@@ -1,5 +1,35 @@
 # OpenDrSai Windows App 产品验收追踪记录
 
+## 2026-07-14 CERN PPT 生成取消与重试（部分闭环，未升分）
+
+| 字段 | 内容 |
+| --- | --- |
+| 本轮目标 | 推进 E4：让普通用户在管理者版 PPT 生成过程中看到“取消生成”，取消后不出现假完成或半成品，并能从同一位置重新生成。 |
+| 已实现 | shared/preload/main/renderer 增加 typed cancel API；main 按 requestId 和发起窗口持有 `AbortController`；状态机增加 `cancelling/cancelled`；界面立即显示“正在安全取消”，终态显示“已取消生成”，主按钮变为“重试生成”；旧任务的迟到 Promise 不再覆盖新任务状态。生成器在各阶段检查取消，若取消时已存在 PPTX 或 provenance 文件会删除两者。 |
+| 安全与一致性 | 取消只允许原发起 WebContents 操作自己的 requestId；重复 requestId 被拒绝；取消错误不会再被误报为普通失败；普通失败和取消都不会留下“仍在运行”的 UI。未信任 workspace 的原有确认仍保留。 |
+| 自动验收现状 | PASS：node/web TypeScript；PASS：正式 `build:unpack`；PASS：19 项 PPT 来源/入口合同、53 项 Renderer UI。真实 packaged 组合用例已经实际触发取消并由 main 抛出 `ManagerPresentationCancelledError`，但“取消→重试→完整 CERN 生成”的新组合脚本仍未稳定产出最终 result，因此保持红灯，不作为完成证据。 |
+| 发现的产品缺口 | CERN PDF 解析仍调用同步 `extractPresentationPdfSync`。进入该阶段后 main 事件循环不能及时处理取消 IPC；当前只能保证解析前或阶段边界安全取消，不能满足 E4 对读取/计算过程随时暂停、继续、取消的完整要求。失败后按钮已可重试，但尚缺独立 packaged 全绿证据。 |
+| 当前评分 | **不新增严格 3 分项**；C9/G9/G10 维持既有完成状态。E4 仍为未完成：暂停/继续尚未实现，解析中取消也未达到要求。 |
+| 下一闭环 | 将 PDF 解析迁移到 Worker/child process，支持 abort/kill 与阶段性缓存；把取消、失败、重试拆成互不干扰的 packaged 场景，分别保存结构化结果；随后补暂停/继续与副作用不重复验证。 |
+
+### 全部功能类别进展
+
+| 类别 | 本轮状态 |
+| --- | --- |
+| A | 无变化。 |
+| B | 无变化；默认 PPT 合同与“编辑生成要求”保留。 |
+| C | CERN 48 页识别链无产品逻辑变化。 |
+| D | 无变化。 |
+| E | 新增取消 API、取消中/已取消终态、半成品清理与重试入口；同步解析不可中断、暂停/继续、重启恢复仍缺，E4 不升分。 |
+| F | 取消操作绑定发起窗口和 requestId；没有形成新的 F 类满分项。 |
+| G | 既有 PPT 生成、来源映射和来源打开逻辑不变；新组合 packaged 用例红灯，既有评分不提升。 |
+| H | 无变化。 |
+| I | 取消不会把半成品登记为 Artifact；成果版本/撤销无变化。 |
+| J | 无变化。 |
+| K | 无变化。 |
+| L | 无变化。 |
+| M | TypeScript 与正式构建通过；新增 packaged 组合稳定性未通过，明确保留红灯。 |
+
 ## 2026-07-14 CERN PPT 来源页码可点击复核闭环
 
 | 字段 | 内容 |
