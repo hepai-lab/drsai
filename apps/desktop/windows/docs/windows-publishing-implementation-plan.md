@@ -134,7 +134,14 @@ require a valid Authenticode signature whose signer matches the installed
 publisher; unsigned updates are limited to explicit development/test mode.
 The runtime packager copies only the managed Python `venv`; projects, caches,
 downloaded apps, and user files beside a long-lived development agent are never
-included in the distributable archive.
+included in the distributable archive. It replaces the build-machine-bound
+virtual-environment launcher with the bundled Python base launcher and a
+relative isolated search-path file. This is required because beta.1 validates
+the staged backend before its updater repairs `pyvenv.cfg`; a runtime that
+retains a GitHub runner path cannot be accepted by an existing installation.
+The packager executes the materialized backend from an unrelated working
+directory, and release acceptance also runs the original beta.1 updater against
+the final archive.
 
 ### Release ordering
 

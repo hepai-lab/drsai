@@ -78,6 +78,51 @@ function Add-PortablePythonBase([string]$SourceAgent, [string]$TargetAgent) {
     }
 }
 
+function Set-RelocatablePythonLauncher([string]$TargetAgent) {
+    $venvRoot = Join-Path $TargetAgent "venv"
+    $scriptsDir = Join-Path $venvRoot "Scripts"
+    New-Item -ItemType Directory -Force -Path $scriptsDir | Out-Null
+
+    # A venv launcher records the absolute Python home from the build machine in
+    # pyvenv.cfg. Older OpenDrSai updaters execute that launcher before they can
+    # repair the configuration, so a CI-produced runtime would fail validation
+    # on every customer machine. Replace it with the bundled base launcher and
+    # an isolated, relative search path that remains valid after extraction.
+    foreach ($name in @("python.exe", "pythonw.exe", "python3.exe", "python3.dll", "python311.dll", "vcruntime140.dll", "vcruntime140_1.dll")) {
+        $source = Join-Path $venvRoot $name
+        if (Test-Path -LiteralPath $source -PathType Leaf) {
+            Copy-Item -LiteralPath $source -Destination (Join-Path $scriptsDir $name) -Force
+        }
+    }
+
+    Remove-Item -LiteralPath (Join-Path $venvRoot "pyvenv.cfg") -Force -ErrorAction SilentlyContinue
+
+    $relativePaths = [Collections.Generic.List[string]]::new()
+    foreach ($path in @("..\Lib", "..\DLLs", "..\Lib\site-packages")) {
+        $relativePaths.Add($path)
+    }
+    $sitePackages = Join-Path $venvRoot "Lib\site-packages"
+    Get-ChildItem -LiteralPath $sitePackages -Filter "*.pth" -File -ErrorAction SilentlyContinue | ForEach-Object {
+        foreach ($line in Get-Content -LiteralPath $_.FullName) {
+            $entry = $line.Trim()
+            if (-not $entry -or $entry.StartsWith("#") -or $entry -match '^import\s') { continue }
+            if ([IO.Path]::IsPathRooted($entry)) {
+                throw "Runtime dependency path must be relative: $($_.FullName): $entry"
+            }
+            $candidate = Join-Path $sitePackages $entry
+            if (Test-Path -LiteralPath $candidate) {
+                $normalized = "..\Lib\site-packages\" + $entry.Replace("/", "\")
+                if (-not $relativePaths.Contains($normalized)) { $relativePaths.Add($normalized) }
+            }
+        }
+    }
+    [IO.File]::WriteAllLines(
+        (Join-Path $scriptsDir "python311._pth"),
+        $relativePaths,
+        (New-Object Text.UTF8Encoding($false))
+    )
+}
+
 function Materialize-CurrentDrsaiPackage([string]$AgentRoot, [string]$SourceDir) {
     $sitePackages = Join-Path $AgentRoot "venv\Lib\site-packages"
     Get-ChildItem -LiteralPath $sitePackages -Filter "*drsai*.pth" -File -ErrorAction SilentlyContinue |
@@ -149,9 +194,16 @@ Copy-DirectoryContents (Join-Path $drsaiAgentDir "venv") (Join-Path $payloadRoot
 Materialize-CurrentDrsaiPackage (Join-Path $payloadRoot "drsai-agent") $backendSourceDir
 Remove-PythonCaches (Join-Path $payloadRoot "drsai-agent")
 Add-PortablePythonBase $drsaiAgentDir (Join-Path $payloadRoot "drsai-agent")
+Set-RelocatablePythonLauncher (Join-Path $payloadRoot "drsai-agent")
 
 $payloadPython = Join-Path $payloadRoot "drsai-agent\venv\Scripts\python.exe"
-$versionOutput = (& $payloadPython -W ignore -m drsai.backend.run_cli version 2>&1 | Out-String).Trim()
+$originalLocation = Get-Location
+try {
+    Set-Location ([IO.Path]::GetTempPath())
+    $versionOutput = (& $payloadPython -W ignore -m drsai.backend.run_cli version 2>&1 | Out-String).Trim()
+} finally {
+    Set-Location $originalLocation
+}
 if ($LASTEXITCODE -ne 0 -or $versionOutput -notmatch [regex]::Escape($Version)) {
     throw "Materialized backend version does not match runtime $Version. Output: $versionOutput"
 }
