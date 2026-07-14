@@ -107,6 +107,7 @@ import kotlinx.coroutines.launch
 
 private val OpenDrSaiGreen = Color(0xFF25634A)
 private val OpenDrSaiLime = Color(0xFFD8F58A)
+private val OpenDrSaiInk = Color(0xFF18211D)
 
 @Composable
 private fun BrandLogo(size: Dp) {
@@ -272,7 +273,7 @@ internal fun FloatingHeader(
     newConversationEnabled: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val controlColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.60f)
+    val controlColor = Color.White.copy(alpha = 0.60f)
     Row(
         modifier = modifier.fillMaxWidth().height(52.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -281,6 +282,7 @@ internal fun FloatingHeader(
             modifier = Modifier.size(52.dp),
             shape = RoundedCornerShape(20.dp),
             color = controlColor,
+            contentColor = OpenDrSaiInk,
             tonalElevation = 2.dp,
             shadowElevation = 5.dp,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
@@ -291,6 +293,7 @@ internal fun FloatingHeader(
         Surface(
             shape = RoundedCornerShape(20.dp),
             color = controlColor,
+            contentColor = OpenDrSaiInk,
             tonalElevation = 2.dp,
             shadowElevation = 5.dp,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
@@ -307,6 +310,7 @@ internal fun FloatingHeader(
             modifier = Modifier.size(52.dp),
             shape = RoundedCornerShape(20.dp),
             color = controlColor,
+            contentColor = OpenDrSaiInk,
             tonalElevation = 2.dp,
             shadowElevation = 5.dp,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
@@ -581,7 +585,8 @@ internal fun Composer(
             .fillMaxWidth()
             .heightIn(min = 60.dp),
         shape = RoundedCornerShape(28.dp),
-        color = MaterialTheme.colorScheme.surface,
+        color = Color.White,
+        contentColor = OpenDrSaiInk,
         tonalElevation = 2.dp,
         shadowElevation = 6.dp,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
@@ -600,12 +605,15 @@ internal fun Composer(
                 modifier = Modifier.weight(1f).padding(vertical = 5.dp),
                 enabled = !state.streaming && state.selectedAgent?.chatSupported == true,
                 maxLines = 5,
-                textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
+                textStyle = MaterialTheme.typography.bodyLarge.copy(color = OpenDrSaiInk),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                 keyboardActions = KeyboardActions(onSend = { send() }),
                 decorationBox = { innerTextField ->
                     Box(Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.CenterStart) {
-                        if (text.isEmpty()) Text("给 ${state.selectedAgent?.name ?: "OpenDrSai"} 发消息", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (text.isEmpty()) Text(
+                            "给 ${state.selectedAgent?.name ?: "OpenDrSai"} 发消息",
+                            color = OpenDrSaiInk.copy(alpha = 0.60f),
+                        )
                         innerTextField()
                     }
                 },
