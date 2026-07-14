@@ -59,6 +59,9 @@ export interface ManagerPresentationGenerationOptions {
   signal?: AbortSignal;
   phaseDelayMs?: number;
   failAtPhase?: "analyzing" | "planning" | "generating" | "validating";
+  isPaused?: () => boolean;
+  waitUntilResumed?: () => Promise<void>;
+  setActiveOperationController?: (controller: AbortController | null) => void;
 }
 
 export class ManagerPresentationCancelledError extends Error {
@@ -81,18 +84,35 @@ export async function generateManagerPresentation(
   const sourceStat = statSync(sourcePath);
   if (!sourceStat.isFile()) throw new Error("The presentation PDF source is not a file.");
 
+  let currentProgress = 0;
+  let currentOutputPath: string | undefined;
   const send = (
     phase: ManagerPresentationProgressEvent["phase"],
     progress: number,
     message: string,
     outputPath?: string,
-  ): void => emit({ requestId, phase, progress, message, outputPath });
+  ): void => {
+    currentProgress = progress;
+    currentOutputPath = outputPath ?? currentOutputPath;
+    emit({ requestId, phase, progress, message, outputPath: currentOutputPath });
+  };
+
+  const honorPause = async (): Promise<void> => {
+    if (!options.isPaused?.()) return;
+    send("paused", currentProgress, "任务已安全暂停；点击继续后将从当前阶段恢复。", currentOutputPath);
+    await options.waitUntilResumed?.();
+    if (options.signal?.aborted) throw new ManagerPresentationCancelledError();
+    send("resuming", currentProgress, "正在从安全检查点继续生成…", currentOutputPath);
+    await new Promise<void>((done) => setTimeout(done, 0));
+  };
 
   const checkpoint = async (
     phase: NonNullable<ManagerPresentationGenerationOptions["failAtPhase"]>,
   ): Promise<void> => {
+    await honorPause();
     await new Promise<void>((done) => setTimeout(done, Math.max(0, options.phaseDelayMs ?? 0)));
     if (options.signal?.aborted) throw new ManagerPresentationCancelledError();
+    await honorPause();
     if (options.failAtPhase === phase) throw new Error(`Simulated presentation failure at ${phase}.`);
   };
 
@@ -104,14 +124,28 @@ export async function generateManagerPresentation(
   send("analyzing", 8, "正在安全读取演示型 PDF 的页面结构与文本。 ");
   await checkpoint("analyzing");
   send("analyzing", 12, "正在逐页解析 PDF；此阶段可以安全取消。");
-  let analysis: PresentationPdfResult | null;
-  try {
-    analysis = await extractPresentationPdf(sourcePath, options.signal);
-  } catch (error) {
-    if (options.signal?.aborted || (error instanceof Error && error.name === "AbortError")) {
-      throw new ManagerPresentationCancelledError();
+  let analysis: PresentationPdfResult | null = null;
+  while (!analysis) {
+    await honorPause();
+    const operationController = new AbortController();
+    const cancelOperation = (): void => operationController.abort();
+    options.signal?.addEventListener("abort", cancelOperation, { once: true });
+    options.setActiveOperationController?.(operationController);
+    try {
+      analysis = await extractPresentationPdf(sourcePath, operationController.signal);
+    } catch (error) {
+      if (options.signal?.aborted) throw new ManagerPresentationCancelledError();
+      if (options.isPaused?.() && error instanceof Error && error.name === "AbortError") {
+        await honorPause();
+        send("analyzing", 12, "正在从解析检查点重新开始逐页解析 PDF。");
+        continue;
+      }
+      if (error instanceof Error && error.name === "AbortError") throw new ManagerPresentationCancelledError();
+      throw error;
+    } finally {
+      options.signal?.removeEventListener("abort", cancelOperation);
+      options.setActiveOperationController?.(null);
     }
-    throw error;
   }
   if (options.signal?.aborted) throw new ManagerPresentationCancelledError();
   if (!analysis || analysis.type !== "presentation_pdf") {

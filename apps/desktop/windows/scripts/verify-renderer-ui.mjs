@@ -10,6 +10,7 @@ function read(relativePath) {
 
 const main = read("src/renderer/src/main.tsx");
 const app = read("src/renderer/src/App.tsx");
+const loginScreen = read("src/renderer/src/auth/LoginScreen.tsx");
 const mock = read("src/renderer/src/mockDesktopApi.ts");
 const css = read("src/renderer/src/styles.css");
 const agentRunWorkspace = read("src/renderer/src/components/AgentRunWorkspace.tsx");
@@ -33,6 +34,7 @@ function navItemEnabled(source, menuId) {
 }
 
 const checks = [
+  ["session restoration mounts the main workspace before loading threads", app.includes("if (auth.loading)") && app.includes("<AuthenticatedApp") && app.includes("sessionRestoring") && app.includes("void refreshThreads()") && app.includes("!sessionRestoring &&") && !app.includes("<AuthSplash") && !loginScreen.includes("正在恢复会话") && !loginScreen.includes("Restoring session")],
   ["renderer installs mock desktop API before React render", main.includes("installMockDesktopApi();")],
   ["renderer only installs mock desktop API in dev", main.includes("import.meta.env.DEV") && main.includes("BridgeUnavailable") && main.includes("hasDesktopApi()")],
   ["mock never overrides Electron preload API", mock.includes("if (window.openDrSai) return;")],

@@ -160,7 +160,9 @@ Content-Type: application/json
 
 第八轮修复云端消息发送：Windows 的平台执行分支此前仍会先启动本机 Gateway，导致消息在到达 HAI 前失败；现已将平台智能体与本机/远程工作区 Gateway 完全解耦，平台消息不启动 Gateway，也不构建仅供本机执行的附件上下文。云端路由 E2E 将 `startGateway()` 改为主动抛错并仍通过，证明 DDF 请求只进入 Native SSE 通道；Windows 类型检查和智能体广场 UI 契约检查同时通过，运行中的 Electron 已重启加载新 Main 代码。
 
-同轮 HAI 指挥塔在 `/home/zzd/VSProjects/hepai/hai-ai-platform-backend` 新增并热加载认证路由 `POST /api/native/v1/agents/{agent_id}/chat`。服务端仅以 OIDC subject 查询用户可见目录，将稳定 agent UUID 映射为服务端私有 DDF runtime name，再代理固定上游 `https://aiapi.ihep.ac.cn/apiv2/chat/completions`；禁止重定向，校验 SSE Content-Type，处理断开取消并保证一个 `[DONE]`，错误响应不回显 Token、私有配置或上游正文。目录仅对 DDF 宣告 chat/streaming，remote/custom 在找到安全的服务端执行入口前保持不可用。平台 Native/OIDC 聚焦测试扩展为 50 项，Black、`py_compile` 和 diff 检查通过；ai-dev 的未认证路由探测返回结构化 401 而非 404/405，Windows 随后刷新出的 5 个真实 DDF 智能体均带 chat/streaming 能力。
+同轮 HAI 指挥塔在 `/home/zzd/VSProjects/hepai/hai-ai-platform-backend` 新增并热加载认证路由 `POST /api/native/v1/agents/{agent_id}/chat`。服务端仅以 OIDC subject 查询用户可见目录，将稳定 agent UUID 映射为服务端私有 DDF runtime name，再代理固定上游 `https://aiapi.ihep.ac.cn/apiv2/chat/completions`；禁止重定向，校验 SSE Content-Type，处理断开取消并保证一个 `[DONE]`，错误响应不回显 Token、私有配置或上游正文。目录仅对 DDF 宣告 chat/streaming，remote/custom 在找到安全的服务端执行入口前保持不可用。平台 Native/OIDC 聚焦测试扩展为 52 项，Black、`py_compile` 和 diff 检查通过；ai-dev 的未认证路由探测返回结构化 401 而非 404/405，Windows 随后刷新出的 5 个真实 DDF 智能体均带 chat/streaming 能力。
+
+第八轮真实发送发现并修复第二个认证边界问题：目录请求使用 OIDC Access Token 正常，但 Native Chat 最初误将该 Token 转发给 `aiapi`，而现有 HAI WebUI 实际使用服务端托管的用户 AI API Key，因此上游返回 401 并被 Windows 错误提示为“登录已过期”。HAI 现按已验证的 OIDC subject 调用既有 `Users.get_user_api_key_by_id`，只在服务端把该 Key 用作 `aiapi` Bearer，绝不回退或下发 OIDC Token；缺少 Key 返回非 401 的 `agent_credentials_unavailable`，上游拒绝 Key 返回非 401 的 `agent_credentials_invalid`。Windows 同时改为先解析 401 结构化错误，只有明确的 `token_expired` 才刷新一次，并为两类模型凭证错误提供独立中英文提示。Windows 全量类型检查、云端路由 E2E、SSE 解析和平台认证验证通过，应用重启后目录继续成功刷新。
 
 最后 1 个部分完成项仍为 E4。DDF 代码链已打通，待用当前 Windows 登录态完成一次真实文本流与 `[DONE]` 冒烟；remote/custom 仍缺 HAI 内部的安全认证执行端点，不采用客户端 URL 或私有配置下发的临时方案。完成 E4 还需：
 

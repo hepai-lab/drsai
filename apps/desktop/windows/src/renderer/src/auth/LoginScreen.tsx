@@ -243,24 +243,6 @@ function formatDebugTime(raw: string): string {
   });
 }
 
-export function AuthSplash(): React.JSX.Element {
-  return (
-    <main className="login-screen">
-      <section className="login-panel login-minimal compact">
-        <div className="login-brand">
-          <span className="login-brand-logo" aria-hidden>
-            <img src={drsaiLogo} alt="" />
-          </span>
-          <strong>
-            Open<span className="brand-accent">Dr</span>Sai
-          </strong>
-        </div>
-        <div className="login-footnote">正在恢复会话...</div>
-      </section>
-    </main>
-  );
-}
-
 export function ServiceUnavailableScreen(): React.JSX.Element {
   const auth = useAuth();
   const [health, setHealth] = useState<DesktopHealth | null>(null);

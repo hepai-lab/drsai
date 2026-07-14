@@ -283,6 +283,8 @@ import type {
   DesktopForkQueueStartApprovalResult,
   DesktopGitCommitApprovalRequest,
   ManagerPresentationCancelRequest,
+  ManagerPresentationPauseRequest,
+  ManagerPresentationProgressEvent,
   ManagerPresentationGenerateRequest,
   PdfPageOpenRequest,
   PdfPageOpenResult,
@@ -332,8 +334,28 @@ let scheduledTaskWorker: ScheduledTaskWorkerHandle | null = null;
 let browserWebContentsPolicyRegistered = false;
 const configuredBrowserSessions = new WeakSet<Session>();
 const browserTaskSubscribers = new Set<WebContents>();
-const managerPresentationRuns = new Map<string, { controller: AbortController; webContentsId: number }>();
+interface ManagerPresentationRun {
+  controller: AbortController;
+  webContentsId: number;
+  paused: boolean;
+  activeOperationController: AbortController | null;
+  resumeWaiters: Set<() => void>;
+  lastProgress: ManagerPresentationProgressEvent | null;
+}
+
+const managerPresentationRuns = new Map<string, ManagerPresentationRun>();
 let managerPresentationAttempt = 0;
+
+function waitUntilManagerPresentationResumed(run: ManagerPresentationRun): Promise<void> {
+  if (!run.paused) return Promise.resolve();
+  return new Promise((resolveWait) => run.resumeWaiters.add(resolveWait));
+}
+
+function resumeManagerPresentationRun(run: ManagerPresentationRun): void {
+  run.paused = false;
+  for (const resolveWait of run.resumeWaiters) resolveWait();
+  run.resumeWaiters.clear();
+}
 
 function getRendererHtmlPath(): string {
   return app.isPackaged
@@ -2782,7 +2804,15 @@ function registerIpc(): void {
     if (!requestId || requestId.length > 128) throw new Error("A valid presentation request id is required.");
     if (managerPresentationRuns.has(requestId)) throw new Error("This presentation task is already running.");
     const controller = new AbortController();
-    managerPresentationRuns.set(requestId, { controller, webContentsId: event.sender.id });
+    const run: ManagerPresentationRun = {
+      controller,
+      webContentsId: event.sender.id,
+      paused: false,
+      activeOperationController: null,
+      resumeWaiters: new Set(),
+      lastProgress: null,
+    };
+    managerPresentationRuns.set(requestId, run);
     const attempt = ++managerPresentationAttempt;
     const phaseDelayMs = isE2eSmokeProcess
       ? Math.max(0, Number(process.env.OPENDRSAI_E2E_PRESENTATION_PHASE_DELAY_MS || 0))
@@ -2793,8 +2823,18 @@ function registerIpc(): void {
       : undefined;
     try {
       return await generateManagerPresentation(request, (progress) => {
+        run.lastProgress = progress;
         event.sender.send("desktop:manager-presentation-progress", progress);
-      }, { signal: controller.signal, phaseDelayMs, failAtPhase });
+      }, {
+        signal: controller.signal,
+        phaseDelayMs,
+        failAtPhase,
+        isPaused: () => run.paused,
+        waitUntilResumed: () => waitUntilManagerPresentationResumed(run),
+        setActiveOperationController: (operationController) => {
+          run.activeOperationController = operationController;
+        },
+      });
     } catch (error) {
       if (!(error instanceof ManagerPresentationCancelledError)) {
         event.sender.send("desktop:manager-presentation-progress", {
@@ -2814,6 +2854,30 @@ function registerIpc(): void {
     const run = managerPresentationRuns.get(requestId);
     if (!run || run.webContentsId !== event.sender.id) return { requestId, accepted: false };
     run.controller.abort();
+    resumeManagerPresentationRun(run);
+    return { requestId, accepted: true };
+  });
+  secureHandle("desktop:manager-presentation-pause", (event, request: ManagerPresentationPauseRequest) => {
+    const requestId = typeof request?.requestId === "string" ? request.requestId.trim() : "";
+    const run = managerPresentationRuns.get(requestId);
+    if (!run || run.webContentsId !== event.sender.id || run.paused) return { requestId, accepted: false };
+    run.paused = true;
+    const progress = run.lastProgress;
+    event.sender.send("desktop:manager-presentation-progress", {
+      requestId,
+      phase: "pausing",
+      progress: progress?.progress ?? 0,
+      message: "正在到达安全暂停点…",
+      outputPath: progress?.outputPath,
+    } satisfies ManagerPresentationProgressEvent);
+    run.activeOperationController?.abort();
+    return { requestId, accepted: true };
+  });
+  secureHandle("desktop:manager-presentation-resume", (event, request: ManagerPresentationPauseRequest) => {
+    const requestId = typeof request?.requestId === "string" ? request.requestId.trim() : "";
+    const run = managerPresentationRuns.get(requestId);
+    if (!run || run.webContentsId !== event.sender.id || !run.paused) return { requestId, accepted: false };
+    resumeManagerPresentationRun(run);
     return { requestId, accepted: true };
   });
   secureHandle("desktop:workspace-git-diff", (_event, request: WorkspaceGitDiffRequest) =>

@@ -515,9 +515,6 @@ function AgentCard({
         </div>
       </div>
       <p>{getAgentDescription(agent, zh)}</p>
-      <div className="agent-card-tags">
-        {(agent.capabilities ?? []).slice(0, 3).map((capability) => <span key={capability}>{capability}</span>)}
-      </div>
       {agent.url && <code className="agent-url">{agent.url}</code>}
       {agent.error && <small className="agent-card-error">{agent.error}</small>}
       <div className="agent-card-actions">

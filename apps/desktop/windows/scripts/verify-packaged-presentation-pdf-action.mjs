@@ -16,8 +16,8 @@ const parser = join(repo, "cores/python/packages/drsai/src/drsai/backend/present
 const evidenceDir = join(root, "release", "product-evidence", "cern-manager-deck");
 const scenarioIndex = process.argv.indexOf("--scenario");
 const scenario = scenarioIndex >= 0 ? process.argv[scenarioIndex + 1] : "cancel-retry";
-assert(["cancel-retry", "failure-retry"].includes(scenario), `Unknown presentation scenario: ${scenario}`);
-const evidenceSuffix = scenario === "cancel-retry" ? "" : "-failure-retry";
+assert(["cancel-retry", "failure-retry", "pause-resume"].includes(scenario), `Unknown presentation scenario: ${scenario}`);
+const evidenceSuffix = scenario === "cancel-retry" ? "" : `-${scenario}`;
 const evidenceResult = join(evidenceDir, `packaged-presentation-action${evidenceSuffix}-result.json`);
 const evidenceScreenshot = join(evidenceDir, `packaged-presentation-action${evidenceSuffix}.png`);
 const evidenceGeneratedPptx = join(evidenceDir, `packaged-generated-manager-zh${evidenceSuffix}.pptx`);

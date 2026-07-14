@@ -471,6 +471,34 @@ export function FilesContextPanel({
     }
   }
 
+  async function pauseManagerPresentation(): Promise<void> {
+    const requestId = managerPresentationRequestRef.current;
+    if (!requestId || !managerPresentationActive) return;
+    setManagerPresentationProgress((current) => current?.requestId === requestId
+      ? { ...current, phase: "pausing", message: zh ? "正在到达安全暂停点…" : "Pausing at a safe checkpoint…" }
+      : current);
+    try {
+      const result = await desktopApi.pauseManagerPresentation({ requestId });
+      if (!result.accepted) setError(zh ? "任务当前无法暂停。" : "The task cannot be paused right now.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
+  async function resumeManagerPresentation(): Promise<void> {
+    const requestId = managerPresentationRequestRef.current;
+    if (!requestId || managerPresentationProgress?.phase !== "paused") return;
+    setManagerPresentationProgress((current) => current?.requestId === requestId
+      ? { ...current, phase: "resuming", message: zh ? "正在从安全检查点继续生成…" : "Resuming from the safe checkpoint…" }
+      : current);
+    try {
+      const result = await desktopApi.resumeManagerPresentation({ requestId });
+      if (!result.accepted) setError(zh ? "任务当前无法继续。" : "The task cannot be resumed right now.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
   async function openSourcePage(page: number): Promise<void> {
     if (!managerPresentationResult) return;
     setSourcePageReview({
@@ -755,6 +783,25 @@ export function FilesContextPanel({
                       ? zh ? "重试生成" : "Retry generation"
                       : zh ? "生成管理者版 PPT" : "Create manager PPT"}
                 </button>
+                {managerPresentationActive ? (
+                  <button
+                    type="button"
+                    className="secondary"
+                    data-testid={managerPresentationProgress?.phase === "paused"
+                      ? "resume-manager-presentation"
+                      : "pause-manager-presentation"}
+                    disabled={["pausing", "resuming", "cancelling"].includes(managerPresentationProgress?.phase || "")}
+                    onClick={() => managerPresentationProgress?.phase === "paused"
+                      ? void resumeManagerPresentation()
+                      : void pauseManagerPresentation()}
+                  >
+                    {managerPresentationProgress?.phase === "paused"
+                      ? zh ? "继续生成" : "Resume"
+                      : managerPresentationProgress?.phase === "pausing"
+                        ? zh ? "正在暂停…" : "Pausing…"
+                        : zh ? "暂停生成" : "Pause"}
+                  </button>
+                ) : null}
                 {managerPresentationActive ? (
                   <button
                     type="button"

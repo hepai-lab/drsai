@@ -1367,6 +1367,8 @@ export function installMockDesktopApi(): void {
       };
     },
     cancelManagerPresentation: async (request) => ({ requestId: request.requestId, accepted: true }),
+    pauseManagerPresentation: async (request) => ({ requestId: request.requestId, accepted: true }),
+    resumeManagerPresentation: async (request) => ({ requestId: request.requestId, accepted: true }),
     onManagerPresentationProgress: () => () => undefined,
     listWorkspaces: async () => workspaces,
     createWorkspace: async (request) => {

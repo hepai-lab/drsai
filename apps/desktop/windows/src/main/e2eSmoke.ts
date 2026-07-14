@@ -289,13 +289,15 @@ async function runPresentationPdfActionSmoke(window: BrowserWindow): Promise<Smo
         previousRequestId = cancelledProgress?.getAttribute("data-request-id") || "";
         details.cancelledOutputPath = cancelledOutputPath;
         checks.cancelledNoPartialFiles = !cancelledOutputPath;
+        await new Promise((resolve) => setTimeout(resolve, 700));
+        checks.cancelledRecordPreserved = document.querySelector('[data-testid="manager-presentation-progress"]')?.getAttribute("data-phase") === "cancelled";
         const retryAfterCancel = await waitFor(() => {
           const candidate = document.querySelector('[data-testid="generate-manager-presentation"]');
           return candidate && !candidate.disabled && /重试生成|Retry generation/i.test(candidate.textContent || "") ? candidate : null;
         }, 5000);
         checks.retryAfterCancelVisible = Boolean(retryAfterCancel);
         retryAfterCancel?.click();
-      } else {
+      } else if (scenario === "failure-retry") {
         const failedProgress = await waitFor(() => {
           const candidate = document.querySelector('[data-testid="manager-presentation-progress"]');
           return candidate?.getAttribute("data-phase") === "failed" ? candidate : null;
@@ -309,16 +311,61 @@ async function runPresentationPdfActionSmoke(window: BrowserWindow): Promise<Smo
         }, 5000);
         checks.retryAfterFailureVisible = Boolean(retryAfterFailure);
         retryAfterFailure?.click();
+      } else {
+        const parsingProgress = await waitFor(() => {
+          const candidate = document.querySelector('[data-testid="manager-presentation-progress"]');
+          return candidate?.getAttribute("data-phase") === "analyzing"
+            && Number(candidate.getAttribute("data-progress")) >= 12 ? candidate : null;
+        }, 5000);
+        checks.parserStartedBeforePause = Boolean(parsingProgress);
+        const pauseParsingButton = await waitFor(() => document.querySelector('[data-testid="pause-manager-presentation"]'), 5000);
+        const parsingPauseStartedAt = performance.now();
+        pauseParsingButton?.click();
+        const parsingPaused = await waitFor(() => {
+          const candidate = document.querySelector('[data-testid="manager-presentation-progress"]');
+          return candidate?.getAttribute("data-phase") === "paused" ? candidate : null;
+        }, 5000);
+        details.parsingPauseLatencyMs = Math.round(performance.now() - parsingPauseStartedAt);
+        checks.parsingPaused = Boolean(parsingPaused) && details.parsingPauseLatencyMs <= 3000;
+        await new Promise((resolve) => setTimeout(resolve, 700));
+        checks.parsingStayedPaused = document.querySelector('[data-testid="manager-presentation-progress"]')?.getAttribute("data-phase") === "paused";
+        const resumeParsingButton = document.querySelector('[data-testid="resume-manager-presentation"]');
+        checks.resumeParsingVisible = Boolean(resumeParsingButton) && /继续生成|Resume/i.test(resumeParsingButton?.textContent || "");
+        resumeParsingButton?.click();
+        checks.parsingResumed = Boolean(await waitFor(() => {
+          const candidate = document.querySelector('[data-testid="manager-presentation-progress"]');
+          return candidate?.getAttribute("data-phase") === "analyzing"
+            && Number(candidate.getAttribute("data-progress")) >= 12 ? candidate : null;
+        }, 5000));
+
+        const generatingProgress = await waitFor(() => {
+          const candidate = document.querySelector('[data-testid="manager-presentation-progress"]');
+          return candidate?.getAttribute("data-phase") === "generating" ? candidate : null;
+        }, 30000);
+        checks.generatingReached = Boolean(generatingProgress);
+        const pauseGeneratingButton = document.querySelector('[data-testid="pause-manager-presentation"]');
+        pauseGeneratingButton?.click();
+        const generatingPaused = await waitFor(() => {
+          const candidate = document.querySelector('[data-testid="manager-presentation-progress"]');
+          return candidate?.getAttribute("data-phase") === "paused" ? candidate : null;
+        }, 5000);
+        checks.generatingPaused = Boolean(generatingPaused);
+        await new Promise((resolve) => setTimeout(resolve, 700));
+        checks.generatingStayedPaused = document.querySelector('[data-testid="manager-presentation-progress"]')?.getAttribute("data-phase") === "paused";
+        const resumeGeneratingButton = document.querySelector('[data-testid="resume-manager-presentation"]');
+        checks.resumeGeneratingVisible = Boolean(resumeGeneratingButton);
+        resumeGeneratingButton?.click();
       }
       const generatedResult = await waitFor(() => {
         const progress = document.querySelector('[data-testid="manager-presentation-progress"]');
         const result = document.querySelector('[data-testid="manager-presentation-result"]');
-        return progress?.getAttribute("data-request-id") !== previousRequestId && result ? result : null;
+        return (scenario === "pause-resume" || progress?.getAttribute("data-request-id") !== previousRequestId) && result ? result : null;
       }, 60000);
       checks.generationCompleted = Boolean(generatedResult);
       const generatedOutputPath = generatedResult?.getAttribute("data-output-path") || "";
       details.generatedOutputPath = generatedOutputPath;
       if (scenario === "cancel-retry") checks.cancelledPathReused = !cancelledOutputPath || generatedOutputPath === cancelledOutputPath;
+      if (scenario === "pause-resume") checks.pauseResumeDidNotCreateDuplicate = Boolean(generatedOutputPath) && !/\(\d+\)\.pptx$/i.test(generatedOutputPath);
       details.generatedResultText = generatedResult?.textContent?.replace(/\\s+/g, " ").trim() || "";
       checks.generatedMetricsVisible = details.generatedResultText.includes("9 页")
         && details.generatedResultText.includes("讲稿 100%")
@@ -351,6 +398,21 @@ async function runPresentationPdfActionSmoke(window: BrowserWindow): Promise<Smo
       const api = window.openDrSai;
       checks.bridgeAvailable = Boolean(api);
       if (api && generatedOutputPath) {
+        const generatedTree = await api.listWorkspaceFiles({
+          workspacePath: fixturePath.slice(0, fixturePath.lastIndexOf("\\\\")),
+          maxDepth: 8,
+          maxEntries: 900,
+        });
+        const pendingNodes = [...(generatedTree.nodes || [])];
+        const generatedPaths = [];
+        while (pendingNodes.length > 0) {
+          const node = pendingNodes.pop();
+          if (!node) continue;
+          if (typeof node.path === "string") generatedPaths.push(node.path);
+          if (Array.isArray(node.children)) pendingNodes.push(...node.children);
+        }
+        checks.singleManagerPptxFile = generatedPaths.filter((path) => /manager-zh\.pptx$/i.test(path)).length === 1;
+        checks.singleManagerManifestFile = generatedPaths.filter((path) => /manager-zh\.provenance\.json$/i.test(path)).length === 1;
         const generatedPreview = await api.previewWorkspaceFile({
           workspacePath: fixturePath.slice(0, fixturePath.lastIndexOf("\\\\")),
           path: generatedOutputPath,

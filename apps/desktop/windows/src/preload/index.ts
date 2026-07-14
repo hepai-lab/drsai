@@ -138,6 +138,8 @@ import type {
   LogoutOptions,
   ManagerPresentationCancelRequest,
   ManagerPresentationCancelResult,
+  ManagerPresentationPauseRequest,
+  ManagerPresentationPauseResult,
   ManagerPresentationGenerateRequest,
   ManagerPresentationGenerateResult,
   ManagerPresentationProgressEvent,
@@ -286,6 +288,14 @@ const api: DesktopApi = {
     request: ManagerPresentationCancelRequest,
   ): Promise<ManagerPresentationCancelResult> =>
     ipcRenderer.invoke("desktop:manager-presentation-cancel", request),
+  pauseManagerPresentation: (
+    request: ManagerPresentationPauseRequest,
+  ): Promise<ManagerPresentationPauseResult> =>
+    ipcRenderer.invoke("desktop:manager-presentation-pause", request),
+  resumeManagerPresentation: (
+    request: ManagerPresentationPauseRequest,
+  ): Promise<ManagerPresentationPauseResult> =>
+    ipcRenderer.invoke("desktop:manager-presentation-resume", request),
   onManagerPresentationProgress: (
     callback: (event: ManagerPresentationProgressEvent) => void,
   ) => {

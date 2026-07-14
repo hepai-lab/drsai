@@ -34,7 +34,9 @@ const server = createServer(async (request, response) => {
   state.chatRequests += 1;
   if (request.headers.authorization === "Bearer token-1") {
     response.writeHead(401, { "content-type": "application/json" });
-    response.end('{"detail":{"code":"token_expired","message":"expired","retryable":true}}');
+    // The real Native auth response does not need to opt into retryability;
+    // the desktop treats an explicit token_expired 401 as one safe refresh.
+    response.end('{"detail":{"code":"token_expired","message":"expired"}}');
     return;
   }
   assert.equal(request.headers.authorization, "Bearer token-2");

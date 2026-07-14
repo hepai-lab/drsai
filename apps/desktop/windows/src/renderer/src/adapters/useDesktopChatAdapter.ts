@@ -1996,6 +1996,16 @@ function formatAssistantError(error: string, developerMode: boolean, language: "
   if (/subject_mismatch/i.test(raw)) {
     return language === "zh" ? "HepAI 登录身份不一致，请退出后重新登录。" : "Your HepAI identity does not match this session. Sign out and sign in again.";
   }
+  if (/agent_credentials_unavailable/i.test(raw)) {
+    return language === "zh"
+      ? "当前 HepAI 账号尚未配置可用的模型访问凭据，请联系平台管理员。"
+      : "No model access credential is configured for this HepAI account. Contact the platform administrator.";
+  }
+  if (/agent_credentials_invalid/i.test(raw)) {
+    return language === "zh"
+      ? "当前 HepAI 账号的模型访问凭据已失效，请在 HepAI 平台更新或联系管理员。"
+      : "The model access credential for this HepAI account is invalid. Update it in HepAI or contact the administrator.";
+  }
   if (/unsupported_issuer|invalid_model_base_url/i.test(raw)) {
     return language === "zh" ? "当前 HepAI 登录环境尚未配置对应的模型服务。" : "No model service is configured for this HepAI environment.";
   }

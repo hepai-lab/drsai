@@ -100,6 +100,7 @@
     "verify:packaged": "npm run prepare:backend-source -- --sync-unpacked && node scripts/verify-packaged-app-smoke.mjs",
     "verify:packaged-presentation-pdf": "node scripts/verify-packaged-presentation-pdf-action.mjs",
     "verify:packaged-presentation-pdf-failure-retry": "node scripts/verify-packaged-presentation-pdf-action.mjs --scenario failure-retry",
+    "verify:packaged-presentation-pdf-pause-resume": "node scripts/verify-packaged-presentation-pdf-action.mjs --scenario pause-resume",
     "verify:e2e-chat": "node scripts/verify-e2e-chat.mjs",
     "verify:e2e-chat-failures": "node scripts/verify-e2e-chat-failures.mjs",
     "verify:e2e-agent-cloud-route": "node scripts/verify-agent-cloud-route-e2e.mjs",

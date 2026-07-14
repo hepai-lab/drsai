@@ -360,7 +360,14 @@ async function runChat(
           signal: controller.signal,
         });
         if (response.status === 401) {
-          throw new ChatSseError("The HepAI session expired.", "token_expired", true);
+          const authError = await formatHttpError(response);
+          if (authError instanceof ChatSseError && authError.code === "token_expired") {
+            // The Native API owns OIDC validation. Refresh once only when it
+            // explicitly reports an expired desktop access token; an upstream
+            // agent credential failure must retain its own error code.
+            throw new ChatSseError(authError.message, authError.code, true);
+          }
+          throw authError;
         }
         if (!response.ok || !response.body) throw await formatHttpError(response);
         return readSse(webContents, requestId, sessionId, runId, response.body, controller.signal);

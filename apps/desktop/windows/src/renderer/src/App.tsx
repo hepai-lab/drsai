@@ -38,7 +38,7 @@ import type {
   WorkspaceProject,
 } from "@shared/desktopApi";
 import { desktopApi } from "./desktopApi";
-import { AuthSplash, LoginScreen, ServiceUnavailableScreen } from "./auth/LoginScreen";
+import { LoginScreen, ServiceUnavailableScreen } from "./auth/LoginScreen";
 import { useAuth } from "./auth/AuthProvider";
 import { AgentSquareView } from "./components/AgentSquareView";
 import { AgentRunWorkspace } from "./components/AgentRunWorkspace";
@@ -150,7 +150,15 @@ interface RightSidebarComponentVisibility {
 function App(): React.JSX.Element {
   const auth = useAuth();
 
-  if (auth.loading) return <AuthSplash />;
+  if (auth.loading) {
+    return (
+      <AuthenticatedApp
+        user={auth.session.user}
+        onLogout={() => auth.logout(false)}
+        sessionRestoring
+      />
+    );
+  }
   if (!auth.session.authenticated) return <LoginScreen />;
   if (!auth.serviceReady) return <ServiceUnavailableScreen />;
 
@@ -158,6 +166,7 @@ function App(): React.JSX.Element {
     <AuthenticatedApp
       user={auth.session.user}
       onLogout={() => auth.logout(false)}
+      sessionRestoring={false}
     />
   );
 }
@@ -165,9 +174,11 @@ function App(): React.JSX.Element {
 function AuthenticatedApp({
   user,
   onLogout,
+  sessionRestoring,
 }: {
   user: AuthUser | null;
   onLogout: () => Promise<void>;
+  sessionRestoring: boolean;
 }): React.JSX.Element {
   const [language, setLanguage] = useState<AppLanguage>(() => loadLanguage());
   const developerMode = import.meta.env.DEV && loadDeveloperMode();
@@ -333,7 +344,7 @@ function AuthenticatedApp({
     availableAgents: availableChatAgents,
     availableModels: availableChatModels,
     canChat: Boolean(
-      health?.installed && health?.gatewayReady && workspaceTrusted,
+      !sessionRestoring && health?.installed && health?.gatewayReady && workspaceTrusted,
     ),
     developerMode,
     onChatComplete: () => {
@@ -399,6 +410,7 @@ function AuthenticatedApp({
     };
   }, [proposeTerminalCommand]);
   const canChat = Boolean(
+    !sessionRestoring &&
     health?.installed &&
     health?.gatewayReady &&
     workspaceTrusted &&
@@ -1231,7 +1243,7 @@ function AuthenticatedApp({
       activeThread?.kind === "agent_run" ? (
         <AgentRunWorkspace
           fileContextAttachments={workspaceContextAttachments}
-          health={health}
+          health={sessionRestoring ? null : health}
           initialTask={terminalAgentTask}
           language={language}
           onAgentFileEvent={({ fileEvent, requestId, runId }) => {
@@ -1359,7 +1371,7 @@ function AuthenticatedApp({
     ) : activeNav === MENU_IDS.myAgents ? (
       <AgentRunWorkspace
         fileContextAttachments={workspaceContextAttachments}
-        health={health}
+        health={sessionRestoring ? null : health}
         initialTask={terminalAgentTask}
         language={language}
         onAgentFileEvent={({ fileEvent, requestId, runId }) => {

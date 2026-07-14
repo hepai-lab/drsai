@@ -36,9 +36,12 @@ const checks = [
   ["source review has visible keyboard focus styling", css.includes(".presentation-source-page-links button:focus-visible")],
   ["manager generation exposes a typed cancel API", sharedApi.includes("cancelManagerPresentation(") && preload.includes('desktop:manager-presentation-cancel')],
   ["cancel is scoped to the originating renderer task", main.includes("managerPresentationRuns") && main.includes("run.webContentsId !== event.sender.id")],
-  ["PDF parsing accepts AbortSignal instead of blocking the main process", parser.includes("export async function extractPresentationPdf(") && parser.includes("signal,") && generator.includes("await extractPresentationPdf(sourcePath, options.signal)")],
+  ["PDF parsing accepts AbortSignal instead of blocking the main process", parser.includes("export async function extractPresentationPdf(") && parser.includes("signal,") && generator.includes("await extractPresentationPdf(sourcePath, operationController.signal)")],
   ["cancelled generation removes incomplete PPTX and provenance files", generator.includes("ManagerPresentationCancelledError") && generator.includes("unlinkSync(path)")],
   ["cancelled and failed tasks expose the same retry entry", panel.includes('["failed", "cancelled"]') && panel.includes("重试生成")],
+  ["manager generation exposes typed pause and resume APIs", sharedApi.includes("pauseManagerPresentation(") && sharedApi.includes("resumeManagerPresentation(") && preload.includes("desktop:manager-presentation-pause") && preload.includes("desktop:manager-presentation-resume")],
+  ["pausing interrupts active parsing and waits for explicit resume", main.includes("activeOperationController?.abort()") && main.includes("waitUntilManagerPresentationResumed") && generator.includes("await honorPause()")],
+  ["paused tasks expose resume and remain cancellable", panel.includes("resume-manager-presentation") && panel.includes("继续生成") && panel.includes("cancel-manager-presentation")],
 ];
 
 const failures = checks.filter(([, ok]) => !ok).map(([label]) => label);

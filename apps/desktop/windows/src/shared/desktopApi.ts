@@ -2199,6 +2199,9 @@ export type ManagerPresentationProgressPhase =
   | "planning"
   | "generating"
   | "validating"
+  | "pausing"
+  | "paused"
+  | "resuming"
   | "cancelling"
   | "cancelled"
   | "completed"
@@ -2215,6 +2218,15 @@ export interface ManagerPresentationCancelRequest {
 }
 
 export interface ManagerPresentationCancelResult {
+  requestId: string;
+  accepted: boolean;
+}
+
+export interface ManagerPresentationPauseRequest {
+  requestId: string;
+}
+
+export interface ManagerPresentationPauseResult {
   requestId: string;
   accepted: boolean;
 }
@@ -2628,6 +2640,12 @@ export interface DesktopApi {
   cancelManagerPresentation(
     request: ManagerPresentationCancelRequest,
   ): Promise<ManagerPresentationCancelResult>;
+  pauseManagerPresentation(
+    request: ManagerPresentationPauseRequest,
+  ): Promise<ManagerPresentationPauseResult>;
+  resumeManagerPresentation(
+    request: ManagerPresentationPauseRequest,
+  ): Promise<ManagerPresentationPauseResult>;
   onManagerPresentationProgress(
     callback: (event: ManagerPresentationProgressEvent) => void,
   ): () => void;
