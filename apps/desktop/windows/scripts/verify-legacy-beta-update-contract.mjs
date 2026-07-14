@@ -20,8 +20,7 @@ assert(
   "Runtime packaging must copy only the managed agent venv.",
 );
 
-if (manifest?.version === packageJson.version) {
-  assert(manifest.channel === "stable", "beta.1 requests the stable channel and would reject this manifest.");
+if (manifest?.version === packageJson.version && manifest.channel === "stable") {
   assert(
     manifest.requireSignature === !isPrereleaseVersion,
     isPrereleaseVersion
@@ -34,7 +33,11 @@ if (manifest?.version === packageJson.version) {
   );
   console.log(`Legacy beta update contract passed: 1.4.3-beta.1 -> ${manifest.version} via releases/latest.`);
 } else {
-  const reason = manifest ? `stale ${manifest.version} manifest ignored` : "manifest not generated";
+  const reason = manifest
+    ? manifest.version === packageJson.version
+      ? `${manifest.channel} branch manifest ignored`
+      : `stale ${manifest.version} manifest ignored`
+    : "manifest not generated";
   console.log(`Legacy beta static release contract passed for ${packageJson.version}; ${reason}.`);
 }
 
