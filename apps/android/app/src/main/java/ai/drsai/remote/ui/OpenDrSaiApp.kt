@@ -23,12 +23,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -87,6 +89,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -224,7 +227,12 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
         },
     ) {
         Scaffold { systemPadding ->
-            Box(Modifier.fillMaxSize().padding(systemPadding)) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .padding(systemPadding)
+                    .imePadding(),
+            ) {
                 if (state.messages.isEmpty()) {
                     Welcome(state.selectedAgent, Modifier.fillMaxSize().padding(top = 82.dp, bottom = 92.dp))
                 } else {
@@ -452,8 +460,13 @@ internal fun Welcome(agent: Agent?, modifier: Modifier) {
 @Composable
 private fun Messages(messages: List<ChatMessage>, assistantName: String, modifier: Modifier) {
     val listState = rememberLazyListState()
-    LaunchedEffect(messages.size, messages.lastOrNull()?.text) {
-        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
+    val density = LocalDensity.current
+    val imeBottom = WindowInsets.ime.getBottom(density)
+    LaunchedEffect(messages.size, messages.lastOrNull()?.text, imeBottom) {
+        if (messages.isNotEmpty()) {
+            if (imeBottom > 0) listState.scrollToItem(messages.lastIndex)
+            else listState.animateScrollToItem(messages.lastIndex)
+        }
     }
     LazyColumn(
         modifier = modifier.fillMaxWidth(),
@@ -563,7 +576,6 @@ internal fun Composer(
 
     Surface(
         modifier = modifier
-            .imePadding()
             .padding(start = 12.dp, top = 10.dp, end = 12.dp)
             .widthIn(max = 720.dp)
             .fillMaxWidth()
