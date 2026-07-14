@@ -159,6 +159,7 @@ jobs:
         run: |
           npm run manifest:win
           npm run verify:update-manifest
+          npm run verify:update-legacy-beta
 
       - name: Install WiX Toolset
         run: choco install wixtoolset -y --no-progress

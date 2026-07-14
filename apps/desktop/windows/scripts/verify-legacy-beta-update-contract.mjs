@@ -1,23 +1,17 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const repoRoot = resolve(root, "..", "..", "..");
 const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
-const manifest = JSON.parse(readFileSync(join(root, "release", "latest-windows.json"), "utf8"));
+const manifestPath = resolve(process.env.OPENDRSAI_UPDATE_MANIFEST_PATH || join(root, "release", "latest-windows.json"));
+const manifest = existsSync(manifestPath) ? JSON.parse(readFileSync(manifestPath, "utf8")) : null;
 const workflow = readFileSync(join(repoRoot, ".github", "workflows", "windows-desktop.yml"), "utf8");
 const runtimeBuilder = readFileSync(join(root, "..", "installers", "windows", "create-opendrsai-runtime.ps1"), "utf8");
 
 assert(packageJson.version.includes("-"), "Legacy beta compatibility check requires a prerelease package.");
-assert(manifest.version === packageJson.version, "Compatibility manifest version must match the package.");
-assert(manifest.channel === "stable", "beta.1 requests the stable channel and would reject this manifest.");
-assert(manifest.requireSignature === false, "Unsigned beta compatibility manifest must not request Authenticode verification.");
-assert(compareSemver(manifest.version, "1.4.3-beta.1") > 0, "beta.1 would not recognize this version as newer.");
-assert(
-  manifest.runtime.url === `https://github.com/hepai-lab/drsai/releases/download/v${packageJson.version}/OpenDrSaiRuntime-win-x64.zip`,
-  "Compatibility manifest must retain an immutable versioned runtime URL.",
-);
+assert(compareSemver(packageJson.version, "1.4.3-beta.1") > 0, "beta.1 would not recognize this package as newer.");
 assert(/draft:\s*false/.test(workflow), "The tag workflow must publish rather than leave a draft invisible to beta.1.");
 assert(/prerelease:\s*false/.test(workflow), "The compatibility Release must participate in GitHub releases/latest.");
 assert(/make_latest:\s*true/.test(workflow), "The compatibility Release must advance GitHub releases/latest.");
@@ -26,7 +20,18 @@ assert(
   "Runtime packaging must copy only the managed agent venv.",
 );
 
-console.log(`Legacy beta update contract passed: 1.4.3-beta.1 -> ${manifest.version} via releases/latest.`);
+if (manifest) {
+  assert(manifest.version === packageJson.version, "Compatibility manifest version must match the package.");
+  assert(manifest.channel === "stable", "beta.1 requests the stable channel and would reject this manifest.");
+  assert(manifest.requireSignature === false, "Unsigned beta compatibility manifest must not request Authenticode verification.");
+  assert(
+    manifest.runtime.url === `https://github.com/hepai-lab/drsai/releases/download/v${packageJson.version}/OpenDrSaiRuntime-win-x64.zip`,
+    "Compatibility manifest must retain an immutable versioned runtime URL.",
+  );
+  console.log(`Legacy beta update contract passed: 1.4.3-beta.1 -> ${manifest.version} via releases/latest.`);
+} else {
+  console.log(`Legacy beta static release contract passed for ${packageJson.version}; generated manifest check deferred.`);
+}
 
 function compareSemver(left, right) {
   const a = parseSemver(left);
