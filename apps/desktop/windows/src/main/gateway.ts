@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "child_process";
+import { execFile, spawn, type ChildProcess } from "child_process";
 import { randomBytes } from "crypto";
 import { get } from "http";
 import { existsSync } from "fs";
@@ -86,6 +86,76 @@ export function getGatewaySnapshot(): GatewayStatus {
   };
 }
 
+async function killPortOccupant(port: string): Promise<boolean> {
+  if (process.platform !== "win32") {
+    try {
+      const result = await new Promise<string>((resolve, reject) => {
+        execFile("lsof", ["-ti", `:${port}`], { timeout: 5000 }, (error, stdout) => {
+          if (error) reject(error);
+          else resolve(stdout.trim());
+        });
+      });
+      const pids = result.split(/\s+/).filter((pid) => pid && /^\d+$/.test(pid));
+      if (!pids.length) return false;
+      await new Promise<void>((resolve, reject) => {
+        execFile("kill", ["-9", ...pids], { timeout: 5000 }, (error) => {
+          if (error) reject(error);
+          else resolve();
+        });
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  try {
+    const result = await new Promise<string>((resolve, reject) => {
+      execFile(
+        "netstat.exe",
+        ["-ano", "-p", "TCP"],
+        { timeout: 10000, windowsHide: true },
+        (error, stdout) => {
+          if (error) reject(error);
+          else resolve(stdout);
+        },
+      );
+    });
+    const lines = result.split(/\r?\n/);
+    const portPattern = new RegExp(`:${port}\\s`);
+    const killedPids = new Set<string>();
+    for (const line of lines) {
+      if (!portPattern.test(line)) continue;
+      const parts = line.trim().split(/\s+/);
+      const pid = parts[parts.length - 1];
+      if (!pid || !/^\d+$/.test(pid) || pid === "0" || killedPids.has(pid)) continue;
+      killedPids.add(pid);
+      try {
+        await new Promise<void>((resolve, reject) => {
+          execFile(
+            "taskkill.exe",
+            ["/PID", pid, "/F"],
+            { timeout: 10000, windowsHide: true },
+            (error) => {
+              if (error) reject(error);
+              else resolve();
+            },
+          );
+        });
+      } catch (killError) {
+        appendGatewayLog(
+          Buffer.from(
+            `\nFailed to kill PID ${pid} on port ${port}: ${killError instanceof Error ? killError.message : String(killError)}`,
+          ),
+        );
+      }
+    }
+    return killedPids.size > 0;
+  } catch {
+    return false;
+  }
+}
+
 async function startGatewayOnce(): Promise<boolean> {
   if (await checkGatewayReady()) return true;
   const externalReady = await checkGatewayEndpoints();
@@ -93,8 +163,19 @@ async function startGatewayOnce(): Promise<boolean> {
     return externalReady;
   }
   if (externalReady) {
-    lastGatewayLog = `${lastGatewayLog}\nRefusing to use an unmanaged service already listening on ${GATEWAY_BASE_URL}. Stop that process and start the OpenDrSai gateway from the desktop app.`.slice(-12000);
-    return false;
+    if (gatewayProcess && !gatewayProcess.killed) {
+      lastGatewayLog = `${lastGatewayLog}\nA managed gateway process is already running but the ready check failed.`.slice(-12000);
+      return false;
+    }
+    lastGatewayLog = `${lastGatewayLog}\nAn unmanaged service is already listening on ${GATEWAY_BASE_URL}. Attempting to reclaim the port.`.slice(-12000);
+    const killed = await killPortOccupant(GATEWAY_PORT);
+    if (killed) {
+      lastGatewayLog = `${lastGatewayLog}\nReclaimed port ${GATEWAY_PORT} from the previous occupant.`.slice(-12000);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    } else {
+      lastGatewayLog = `${lastGatewayLog}\nCould not reclaim port ${GATEWAY_PORT}. Stop the process listening on ${GATEWAY_BASE_URL} and try again.`.slice(-12000);
+      return false;
+    }
   }
   if (gatewayProcess && !gatewayProcess.killed) return false;
   if (!existsSync(DRSAI_PYTHON)) return false;
