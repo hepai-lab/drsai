@@ -98,12 +98,20 @@ const navDefinitions: Array<{
     items: [{ id: MENU_IDS.currentSession, enabled: true }],
   },
   {
+    id: "agents",
+    items: [
+      { id: MENU_IDS.agentSquare, enabled: true },
+      { id: MENU_IDS.skillsSquare, enabled: true },
+      { id: MENU_IDS.plugins, enabled: false },
+    ],
+  },
+  {
     id: "workspace",
     items: [
       { id: MENU_IDS.library, enabled: false },
-      { id: MENU_IDS.approvalCenter, enabled: true },
-      { id: MENU_IDS.usageAnalytics, enabled: true },
-      { id: MENU_IDS.channels, enabled: true },
+      { id: MENU_IDS.approvalCenter, enabled: false },
+      { id: MENU_IDS.usageAnalytics, enabled: false },
+      { id: MENU_IDS.channels, enabled: false },
       { id: MENU_IDS.logs, enabled: false },
     ],
   },

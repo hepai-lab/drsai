@@ -1,0 +1,23 @@
+{
+  "api_version": "native-v1",
+  "capabilities": ["agents", "agent-details"],
+  "data": {
+    "agents": [
+      {
+        "id": "fixture-ddf-1",
+        "name": "Fixture DDF Agent",
+        "description": "Safe public description",
+        "owner": "Fixture Team",
+        "mode": "ddf",
+        "status": "online",
+        "model": "fixture-model",
+        "api_key": "MUST_NOT_REACH_RENDERER",
+        "config": {
+          "remote_secret": "MUST_NOT_REACH_RENDERER_EITHER",
+          "base_url": "https://private.invalid"
+        },
+        "examples": ["Summarize this fixture"]
+      }
+    ]
+  }
+}

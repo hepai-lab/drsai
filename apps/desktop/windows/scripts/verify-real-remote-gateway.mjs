@@ -1,0 +1,54 @@
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+
+const desktop = resolve(new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
+const repo = resolve(desktop, "../../..");
+const fixture = join(desktop, "tests", "remote-ssh", "fixture.ps1");
+run("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", fixture, "-Action", "Up"], desktop);
+const wheelDir=join(desktop,".cache","real-wheel");mkdirSync(wheelDir,{recursive:true});
+run(process.env.OPENDRSAI_TEST_PYTHON||"C:\\Python311\\python.exe",["-m","pip","wheel","--no-deps","-w",wheelDir,"cores/python/packages/drsai"],repo);
+const wheel=join(wheelDir,readdirSync(wheelDir).filter(name=>name.endsWith(".whl")).sort().at(-1));
+run("docker", ["build", "-f", "apps/desktop/windows/tests/remote-ssh/Dockerfile.real", "-t", "opendrsai-real-remote-gateway:local", "."], repo);
+run("docker", ["rm", "-f", "opendrsai-real-remote-gateway"], repo, true);
+run("docker", ["run", "-d", "--name", "opendrsai-real-remote-gateway", "-p", "127.0.0.1:22223:22", "opendrsai-real-remote-gateway:local"], repo);
+const baseConfig = readFileSync(join(desktop, "tests", "remote-ssh", "ssh_config"), "utf8");
+const config = join(desktop, ".cache", "real-ssh-config");
+writeFileSync(config, baseConfig.replace(/Port 22222/g, "Port 22223").replace(/Host opendrsai-fixture/g, "Host opendrsai-real"));
+for (let i=0;i<30;i+=1) { const probe=spawnSync("ssh.exe",["-F",config,"-o","BatchMode=yes","opendrsai-real","true"]); if(probe.status===0) break; await new Promise(r=>setTimeout(r,1000)); if(i===29) throw new Error("real SSH fixture not ready"); }
+run(process.execPath,["node_modules/esbuild/bin/esbuild","src/main/remoteWorkspace.ts","--bundle","--platform=node","--format=esm","--outfile=.cache/remoteWorkspace-real.mjs"],desktop);
+process.env.OPENDRSAI_SSH_CONFIG=config;
+const remote=await import(new URL("../.cache/remoteWorkspace-real.mjs",import.meta.url).href+"?t="+Date.now());
+const digest=createHash("sha256").update(readFileSync(wheel)).digest("hex");
+await remote.installRemoteGateway({hostAlias:"opendrsai-real",action:"install",version:"real-e2e-one",artifactPath:wheel,artifactSha256:digest});
+await remote.installRemoteGateway({hostAlias:"opendrsai-real",action:"upgrade",version:"real-e2e-two",artifactPath:wheel,artifactSha256:digest});
+let release=await remote.preflightRemoteGateway("opendrsai-real");if(release.currentRelease!=="real-e2e-two"||release.previousRelease!=="real-e2e-one")throw new Error("managed upgrade state is invalid: "+JSON.stringify(release));
+await remote.installRemoteGateway({hostAlias:"opendrsai-real",action:"rollback"});
+release=await remote.preflightRemoteGateway("opendrsai-real");if(release.currentRelease!=="real-e2e-one"||release.previousRelease!=="real-e2e-two")throw new Error("managed rollback state is invalid: "+JSON.stringify(release));
+const workspace=await remote.connectRemoteWorkspace({hostAlias:"opendrsai-real",path:"/home/vscode/workspace",trusted:true});
+const workspaceTwo=await remote.connectRemoteWorkspace({hostAlias:"opendrsai-real",path:"/home/vscode/workspace-two",trusted:true});
+const status=await remote.getRemoteWorkspaceStatus(workspace.id);
+if(!status.connected||status.gatewayVersion==="fixture"||!status.capabilities?.pty) throw new Error("real Gateway handshake/capabilities failed: "+JSON.stringify(status));
+const access=remote.getRemoteGatewayAccess(workspace.path);
+if(!access) throw new Error("real Gateway access missing");
+await verifyFiles(access);
+await verifyStructuredErrors(access);
+await verifyGit(remote,workspace.path,config);
+await verifyPty(access,workspace.path);
+const accessTwo=remote.getRemoteGatewayAccess(workspaceTwo.path);if(!accessTwo||accessTwo.baseUrl!==access.baseUrl||accessTwo.token!==access.token||accessTwo.workspaceId===access.workspaceId)throw new Error("host-shared multi-workspace isolation failed");
+const secondFiles=await remote.listRemoteWorkspaceFiles({workspacePath:workspaceTwo.path,maxDepth:2});if(!secondFiles.nodes.some(node=>node.name==="second.txt"))throw new Error("second workspace was not registered independently");
+run("docker",["exec","opendrsai-real-remote-gateway","sh","-lc","kill $(cat /home/vscode/.local/share/opendrsai/remote/gateway.pid)"],repo);
+await waitConnected(remote,workspace.id,30000);
+run("docker",["pause","opendrsai-real-remote-gateway"],repo);await new Promise(r=>setTimeout(r,12000));run("docker",["unpause","opendrsai-real-remote-gateway"],repo);await waitConnected(remote,workspaceTwo.id,45000);
+await remote.disconnectRemoteWorkspace(workspaceTwo.id);
+await remote.disconnectRemoteWorkspace(workspace.id);
+console.log("Real OpenDrSai Gateway Docker E2E passed.");
+
+function run(command,args,cwd,allowFailure=false){const result=spawnSync(command,args,{cwd,stdio:"inherit",windowsHide:true});if(result.error)throw result.error;if(result.status!==0&&!allowFailure)throw new Error(`${command} failed (${result.status})`);}
+async function waitConnected(remote,id,timeout){const started=Date.now();let sawDisconnected=false;while(Date.now()-started<timeout){const status=await remote.getRemoteWorkspaceStatus(id);if(!status.connected)sawDisconnected=true;if(status.connected&&sawDisconnected)return;await new Promise(r=>setTimeout(r,1000));}throw new Error("workspace did not disconnect and recover within the deadline");}
+async function verifyStructuredErrors(access){const correlation="real-e2e-correlation";const response=await fetch(`${access.baseUrl}/v1/workspaces/missing/files`,{headers:{"X-OpenDrSai-Gateway-Token":access.token,"X-Correlation-ID":correlation}});const body=await response.json();if(response.status!==404||body.error?.code!=="http_404"||body.error?.correlation_id!==correlation||response.headers.get("x-correlation-id")!==correlation)throw new Error("structured Remote Gateway errors/correlation IDs failed");}
+async function verifyGit(remote,workspacePath,config){run("ssh.exe",["-F",config,"opendrsai-real",`printf changed\\n > ${workspacePath}/tracked.txt`],desktop);const tree=await remote.listRemoteWorkspaceFiles({workspacePath,maxDepth:2});const file=tree.nodes.find(node=>node.name==="tracked.txt");if(file?.gitStatus!=="modified")throw new Error("file-level Git status was not returned");const diff=await remote.getRemoteWorkspaceGitDiff({workspacePath,path:`${workspacePath}/tracked.txt`});if(!diff.diff.includes("changed"))throw new Error("remote Git diff failed");await remote.executeRemoteWorkspaceMutation("stage-file",{workspacePath,path:`${workspacePath}/tracked.txt`,expectedDiffHash:diff.diffHash});const staged=await remote.getRemoteWorkspaceGitDiff({workspacePath,path:`${workspacePath}/tracked.txt`,staged:true});if(!staged.diff.includes("changed"))throw new Error("remote Git stage failed");}
+async function verifyFiles(access){const headers={"X-OpenDrSai-Gateway-Token":access.token,"Content-Type":"application/json"};const base=`${access.baseUrl}/v1/workspaces/${encodeURIComponent(access.workspaceId)}`;const emptyHash="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";const write=await fetch(`${base}/file`,{method:"PUT",headers,body:JSON.stringify({path:"e2e-large.txt",content_base64:Buffer.from("REMOTE_FILE_STREAM_OK").toString("base64"),expected_sha256:emptyHash})});if(!write.ok)throw new Error(`remote atomic file write failed (${write.status})`);const written=await write.json();const conflict=await fetch(`${base}/file`,{method:"PUT",headers,body:JSON.stringify({path:"e2e-large.txt",content_base64:Buffer.from("bad overwrite").toString("base64"),expected_sha256:emptyHash})});if(conflict.status!==409)throw new Error(`remote file conflict was not rejected (${conflict.status})`);const stream=await fetch(`${base}/file/stream?path=e2e-large.txt&offset=0&length=6`,{headers});if(!stream.ok||await stream.text()!=="REMOTE"||stream.headers.get("x-file-sha256")!==written.sha256)throw new Error("remote file streaming failed");const search=await fetch(`${base}/files?depth=3&query=e2e-large&max_entries=1`,{headers});const result=await search.json();if(!search.ok||result.total!==1||result.data[0]?.path!=="e2e-large.txt")throw new Error("remote paginated file search failed");await verifyFileWatch(base,headers,access.token);}
+function verifyFileWatch(base,headers,token){return new Promise((resolve,reject)=>{const socket=new WebSocket(`${base.replace(/^http/,"ws")}/watch`);const timer=setTimeout(()=>{socket.close();reject(new Error("remote file watch timeout"));},10000);socket.onopen=async()=>{socket.send(JSON.stringify({type:"auth",token}));await new Promise(r=>setTimeout(r,1200));await fetch(`${base}/file`,{method:"PUT",headers,body:JSON.stringify({path:"e2e-watch.txt",content_base64:Buffer.from("watch").toString("base64")})});};socket.onmessage=(event)=>{const message=JSON.parse(String(event.data));if(message.type==="changes"&&message.changes.some(change=>change.path==="e2e-watch.txt")){clearTimeout(timer);socket.close();resolve();}};socket.onerror=()=>{clearTimeout(timer);reject(new Error("remote file watch socket failed"));};});}
+function verifyPty(access,cwd){return new Promise((resolve,reject)=>{const url=`${access.baseUrl.replace(/^http/,"ws")}/v1/pty`;let id;let reconnected=false;let socket=new WebSocket(url);const timer=setTimeout(()=>{socket.close();reject(new Error("real Gateway PTY reconnect timeout"));},20000);const attach=(next)=>{socket=next;socket.onopen=()=>{socket.send(JSON.stringify({type:"auth",token:access.token}));socket.send(JSON.stringify({type:"attach",id}));};socket.onmessage=(event)=>{const message=JSON.parse(String(event.data));if(message.type==="attached"){if(!String(message.buffer).includes("REAL_PTY_OK"))return reject(new Error("PTY reconnect did not replay its buffer"));socket.send(JSON.stringify({type:"write",id,data:"printf REAL_PTY_REATTACHED\\n"}));}if(message.type==="data"&&String(message.data).includes("REAL_PTY_REATTACHED")){socket.send(JSON.stringify({type:"kill",id}));clearTimeout(timer);socket.close();resolve();}};socket.onerror=()=>{clearTimeout(timer);reject(new Error("real Gateway PTY reconnect socket failed"));};};socket.onopen=()=>{socket.send(JSON.stringify({type:"auth",token:access.token}));socket.send(JSON.stringify({type:"create",workspaceId:access.workspaceId,cwd,cols:80,rows:24}));};socket.onmessage=(event)=>{const message=JSON.parse(String(event.data));if(message.type==="created"){id=message.id;socket.send(JSON.stringify({type:"write",id,data:"printf REAL_PTY_OK\\n"}));}if(!reconnected&&message.type==="data"&&String(message.data).includes("REAL_PTY_OK")){reconnected=true;socket.onclose=()=>attach(new WebSocket(url));socket.close();}};socket.onerror=()=>{clearTimeout(timer);reject(new Error("real Gateway PTY socket failed"));};});}

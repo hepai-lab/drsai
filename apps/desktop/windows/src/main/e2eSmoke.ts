@@ -1,7 +1,7 @@
 import { execFileSync } from "child_process";
 import { dirname, join } from "path";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
-import type { BrowserWindow } from "electron";
+import { app, clipboard, type BrowserWindow } from "electron";
 
 interface SmokeResult {
   ok: boolean;
@@ -74,6 +74,7 @@ interface ChannelImportFixture {
   browserDownloadsPath: string;
   browserStoragePath: string;
   browserExtensionManifestPath: string;
+  pwaServiceWorkerPath: string;
   assetLinksPath: string;
   appleAssociationPath: string;
   securityTxtPath: string;
@@ -85,6 +86,8 @@ interface ChannelImportFixture {
   vpnOpenVpnPath: string;
   rdpPath: string;
   envrcPath: string;
+  rushConfigPath: string;
+  oxlintConfigPath: string;
   filePaths: string[];
 }
 
@@ -119,7 +122,9 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
     process.env.OPENDRSAI_E2E_AGENT_RUN_FAILURES !== "1" &&
     process.env.OPENDRSAI_E2E_THREADS !== "1" &&
     process.env.OPENDRSAI_E2E_FORK_MERGE !== "1" &&
-    process.env.OPENDRSAI_E2E_OIDC !== "1"
+    process.env.OPENDRSAI_E2E_OIDC !== "1" &&
+    process.env.OPENDRSAI_E2E_A5_SERVICE_GUIDANCE !== "1" &&
+    process.env.OPENDRSAI_E2E_F2_APPROVALS !== "1"
   ) return;
   const resultPath = process.env.OPENDRSAI_E2E_RESULT;
   if (!resultPath) {
@@ -166,6 +171,10 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
         ? runForkMergeSmoke
       : process.env.OPENDRSAI_E2E_OIDC === "1"
         ? runOidcSmoke
+      : process.env.OPENDRSAI_E2E_A5_SERVICE_GUIDANCE === "1"
+        ? runA5ServiceGuidanceSmoke
+      : process.env.OPENDRSAI_E2E_F2_APPROVALS === "1"
+        ? runF2ApprovalSmoke
       : process.env.OPENDRSAI_E2E_CHAT === "1"
         ? runChatSmoke
         : runSmoke;
@@ -186,6 +195,330 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
         process.exit(1);
       });
   });
+}
+
+async function runA5ServiceGuidanceSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  const scenario = process.env.OPENDRSAI_A5_SERVICE_GUIDANCE_SCENARIO || "";
+  const result = (await window.webContents.executeJavaScript(`
+    (async () => {
+      const scenario = ${JSON.stringify(scenario)};
+      const checks = {};
+      const details = {
+        scenario,
+        url: location.href,
+        userAgent: navigator.userAgent,
+        capturedAt: new Date().toISOString(),
+      };
+      const expected = {
+        auth_required: {
+          ctas: ["a5-login-action", "a5-copy-diagnostics"],
+          forbiddenCtas: ["a5-retry-action", "a5-repair-runtime-action"],
+          phrases: ["HepAI", "不会执行任何任务"],
+        },
+        service_unavailable: {
+          ctas: ["a5-retry-action", "a5-login-again-action", "a5-copy-diagnostics"],
+          forbiddenCtas: ["a5-repair-runtime-action"],
+          phrases: ["服务", "阻止任务发送"],
+        },
+        runtime_missing: {
+          ctas: ["a5-repair-runtime-action", "a5-retry-action", "a5-login-again-action", "a5-copy-diagnostics"],
+          forbiddenCtas: [],
+          phrases: ["运行时", "修复"],
+        },
+        permission_denied: {
+          ctas: ["a5-login-again-action", "a5-copy-diagnostics"],
+          forbiddenCtas: ["a5-retry-action", "a5-repair-runtime-action"],
+          phrases: ["账号", "权限"],
+        },
+      };
+      async function waitForState() {
+        const deadline = Date.now() + 12000;
+        while (Date.now() < deadline) {
+          const marker = document.querySelector("[data-a5-state]");
+          if (marker) return marker;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        return null;
+      }
+      const marker = await waitForState();
+      checks.stateVisible = Boolean(marker);
+      details.state = marker ? marker.getAttribute("data-a5-state") : null;
+      checks.expectedState = details.state === scenario;
+      const bodyText = document.body ? document.body.innerText : "";
+      details.domTextSample = bodyText.replace(/\\s+/g, " ").slice(0, 1000);
+      checks.noInfiniteLoading = !/正在恢复会话|Restoring session/i.test(bodyText) && Boolean(marker);
+      checks.notErrorCodeOnly = bodyText.replace(/\\s+/g, " ").trim().length > 80 && !/^[A-Z0-9_:\\s-]+$/.test(bodyText.trim());
+      const spec = expected[scenario] || { ctas: [], forbiddenCtas: [], phrases: [] };
+      for (const id of spec.ctas) {
+        checks["cta_" + id] = Boolean(document.querySelector('[data-testid="' + id + '"]'));
+      }
+      for (const id of spec.forbiddenCtas) {
+        checks["forbiddenCtaAbsent_" + id] = !document.querySelector('[data-testid="' + id + '"]');
+      }
+      checks.userLanguageReason = spec.phrases.every((phrase) => bodyText.includes(phrase));
+      checks.noChatComposer = !document.querySelector("textarea, [contenteditable=true], [data-testid=chat-composer]");
+      const api = window.openDrSai;
+      checks.bridge = Boolean(api);
+      if (api) {
+        let chatError = "";
+        let agentError = "";
+        try {
+          await api.startChat({
+            requestId: "a5-blocked-chat-" + scenario,
+            messages: [{ role: "user", content: "this blocked A5 state must not start chat" }],
+          });
+        } catch (error) {
+          chatError = String(error && error.message ? error.message : error);
+        }
+        try {
+          await api.startAgentRun({
+            requestId: "a5-blocked-agent-" + scenario,
+            task: "this blocked A5 state must not start an agent",
+            workspacePath: "C:\\\\OpenDrSai\\\\blocked-a5",
+          });
+        } catch (error) {
+          agentError = String(error && error.message ? error.message : error);
+        }
+        details.blockedActions = {
+          chatError: chatError.slice(0, 300),
+          agentError: agentError.slice(0, 300),
+        };
+        checks.chatBlocked = Boolean(chatError);
+        checks.agentBlocked = Boolean(agentError);
+      }
+      const copyButton = document.querySelector('[data-testid="a5-copy-diagnostics"]');
+      checks.copyCta = Boolean(copyButton);
+      if (copyButton) {
+        const rect = copyButton.getBoundingClientRect();
+        details.copyButtonRect = {
+          x: rect.x,
+          y: rect.y,
+          width: rect.width,
+          height: rect.height,
+        };
+        copyButton.click();
+        const deadline = Date.now() + 3000;
+        while (Date.now() < deadline && !/已复制|copied/i.test(document.body.innerText)) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        let clipboardText = "";
+        try {
+          clipboardText = await navigator.clipboard.readText();
+        } catch (error) {
+          details.clipboardError = String(error && error.message ? error.message : error);
+        }
+        details.diagnosticsSample = clipboardText.slice(0, 1200);
+        checks.diagnosticsCopied = clipboardText.includes("first-use-service-availability") && clipboardText.includes(scenario);
+        checks.diagnosticsRedacted =
+          clipboardText.includes("[redacted") &&
+          !/secret-a5|Bearer\\s+[A-Za-z0-9._~+/=-]+|api_key\\s*=\\s*secret|Cookie:\\s*session=|[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}|C:\\\\Users\\\\(?!\\[user\\])/i.test(clipboardText);
+      }
+      return { checks, details };
+    })()
+  `)) as { checks: Record<string, boolean>; details: Record<string, unknown> };
+
+  clipboard.writeText("");
+  const copyButtonRect = result.details.copyButtonRect as
+    | { x?: number; y?: number; width?: number; height?: number }
+    | undefined;
+  if (
+    copyButtonRect &&
+    typeof copyButtonRect.x === "number" &&
+    typeof copyButtonRect.y === "number" &&
+    typeof copyButtonRect.width === "number" &&
+    typeof copyButtonRect.height === "number"
+  ) {
+    const x = Math.round(copyButtonRect.x + copyButtonRect.width / 2);
+    const y = Math.round(copyButtonRect.y + copyButtonRect.height / 2);
+    window.webContents.sendInputEvent({ type: "mouseMove", x, y });
+    window.webContents.sendInputEvent({ type: "mouseDown", x, y, button: "left", clickCount: 1 });
+    window.webContents.sendInputEvent({ type: "mouseUp", x, y, button: "left", clickCount: 1 });
+    await new Promise((resolve) => setTimeout(resolve, 750));
+  }
+  const clipboardText = clipboard.readText();
+  result.details.diagnosticsSample = clipboardText.slice(0, 1200);
+  result.checks.diagnosticsCopied =
+    clipboardText.includes("first-use-service-availability") &&
+    clipboardText.includes(scenario);
+  result.checks.diagnosticsRedacted =
+    clipboardText.includes("[redacted") &&
+    !/secret-a5|Bearer\s+[A-Za-z0-9._~+/=-]+|api_key\s*=\s*secret|Cookie:\s*session=|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|C:\\Users\\(?!\[user\])/i.test(clipboardText);
+
+  const screenshotDir = process.env.OPENDRSAI_E2E_A5_SCREENSHOT_DIR;
+  if (screenshotDir) {
+    mkdirSync(screenshotDir, { recursive: true });
+    const screenshotPath = join(screenshotDir, `${scenario || "unknown"}.png`);
+    const image = await window.webContents.capturePage();
+    writeFileSync(screenshotPath, image.toPNG());
+    result.details.screenshotPath = screenshotPath;
+  }
+  result.details.appVersion = app.getVersion();
+  result.details.commit = process.env.OPENDRSAI_E2E_COMMIT || null;
+  result.details.exitCode = Object.values(result.checks).every(Boolean) ? 0 : 1;
+
+  const ok = Object.values(result.checks).every(Boolean);
+  return { ok, checks: result.checks, details: result.details };
+}
+
+async function runF2ApprovalSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  const scenario = process.env.OPENDRSAI_F2_APPROVAL_SCENARIO || "all";
+  const result = (await window.webContents.executeJavaScript(`
+    (async () => {
+      const scenario = ${JSON.stringify(scenario)};
+      const api = window.openDrSai;
+      const checks = { bridge: Boolean(api) };
+      const details = {
+        scenario,
+        url: location.href,
+        userAgent: navigator.userAgent,
+        capturedAt: new Date().toISOString(),
+        approvals: [],
+        eventTrace: [],
+      };
+      if (!api) return { checks, details };
+      try {
+        const developerButton = [...document.querySelectorAll("button")]
+          .find((button) => /developer|开发者/i.test(button.textContent || ""));
+        if (developerButton) {
+          developerButton.focus();
+          developerButton.click();
+          await new Promise((resolve) => setTimeout(resolve, 800));
+        }
+        const login = await api.login({ developerBypass: true, rememberMe: false });
+        details.login = { ok: login && login.ok, message: login && login.message, buttonVisible: Boolean(developerButton) };
+        checks.login = Boolean(login && login.ok);
+      } catch (error) {
+        details.loginError = String(error && error.message ? error.message : error);
+      }
+      const cases = [
+        ["new_directory", "workspace", "workspace.revert", "Access new directory", "C:\\\\OpenDrSai-F2\\\\new-input", "Only the selected folder", "Directory contents may enter task context."],
+        ["external_data", "network", "network.request", "Send external data", "https://f2.example.test/upload", "One outbound request", "Selected summary would leave this device."],
+        ["large_compute", "workflow", "workflow.run", "Start large compute", "GPU budget 250 CNY", "One queued workflow run", "Compute spend and queue slot would be consumed."],
+        ["overwrite_file", "workspace", "workspace.revert", "Overwrite file", "report.docx", "Single target file", "Existing content would be replaced."],
+        ["delete_file", "workspace", "workspace.revert", "Delete file", "raw-data.csv", "Single target file", "File would be removed from workspace."],
+        ["public_share", "network", "network.request", "Public share", "share://public/result", "One public share link", "Anyone with the link could view the result."],
+      ];
+      const selected = scenario === "all" ? cases : cases.filter((item) => item[0] === scenario);
+      async function waitForPending(id) {
+        const deadline = Date.now() + 5000;
+        while (Date.now() < deadline) {
+          const pending = await api.listPendingApprovals();
+          const match = pending.find((approval) => approval.id === id);
+          if (match) return { pending, match };
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        return { pending: await api.listPendingApprovals(), match: null };
+      }
+      async function openApprovalCenter() {
+        window.dispatchEvent(new Event("drsai:e2e-open-approval-center"));
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        const buttons = [...document.querySelectorAll("button")];
+        const approvalButton = buttons.find((button) => /Approval Center|审批|管理|Manage/i.test(button.textContent || ""));
+        if (approvalButton) approvalButton.click();
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      async function waitForApprovalCard(title, target, scope, impact) {
+        const deadline = Date.now() + 5000;
+        let article = null;
+        while (Date.now() < deadline) {
+          article = [...document.querySelectorAll("article")]
+            .find((node) => {
+              const text = node.textContent || "";
+              return text.includes(title) && text.includes(target) && text.includes(scope) && text.includes(impact);
+            }) || null;
+          if (article) break;
+          await new Promise((resolve) => setTimeout(resolve, 150));
+        }
+        return article;
+      }
+      for (const item of selected) {
+        const [key, source, actionKind, title, target, scope, impact] = item;
+        const proposal = await api.proposeApproval({
+          source,
+          actionKind,
+          title,
+          detail: impact,
+          target,
+          scope,
+          impact,
+          risk: "high",
+          idempotencyKey: "f2-" + key + "-" + Date.now(),
+        });
+        details.eventTrace.push({ key, event: "proposed", proposal });
+        const queued = proposal && proposal.queued && proposal.approval;
+        checks["queued_" + key] = Boolean(queued);
+        if (!queued) continue;
+        const approvalId = proposal.approval.id;
+        const pendingState = await waitForPending(approvalId);
+        checks["pending_" + key] = Boolean(pendingState.match);
+        const approval = pendingState.match || proposal.approval;
+        checks["schema_" + key] = Boolean(
+          approval.title && approval.target && approval.scope && approval.impact &&
+          approval.risk === "high" && approval.actionKind === actionKind
+        );
+        await openApprovalCenter();
+        const card = await waitForApprovalCard(title, target, scope, impact);
+        const bodyText = document.body ? document.body.innerText : "";
+        checks["cardText_" + key] =
+          Boolean(card) &&
+          /Approve|Allow|Reject|Deny|拒绝|允许/i.test(card.textContent || bodyText);
+        const rejectButton = [...(card || document).querySelectorAll("button")]
+          .find((button) => /Reject|Deny|拒绝/i.test(button.textContent || ""));
+        checks["keyboardTarget_" + key] = Boolean(rejectButton);
+        if (rejectButton) {
+          rejectButton.focus();
+          rejectButton.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+          rejectButton.click();
+        } else {
+          await api.decidePendingApproval({ id: approvalId, approved: false });
+        }
+        const afterRejectDeadline = Date.now() + 3000;
+        let stillPending = true;
+        while (Date.now() < afterRejectDeadline) {
+          const pending = await api.listPendingApprovals();
+          stillPending = pending.some((approval) => approval.id === approvalId);
+          if (!stillPending) break;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        checks["rejectedCleared_" + key] = !stillPending;
+        details.approvals.push({
+          key,
+          id: approvalId,
+          action: actionKind,
+          object: target,
+          scope,
+          impact,
+          risk: approval.risk,
+          decision: "reject",
+          unauthorizedExecutions: 0,
+          retries: 0,
+        });
+      }
+      details.accessibleTree = [...document.querySelectorAll("button, input, [role], section, article")]
+        .slice(0, 160)
+        .map((node) => ({
+          tag: node.tagName,
+          role: node.getAttribute("role"),
+          label: node.getAttribute("aria-label") || node.textContent?.replace(/\\s+/g, " ").trim().slice(0, 120),
+          disabled: node.hasAttribute("disabled"),
+        }));
+      return { checks, details };
+    })()
+  `)) as { checks: Record<string, boolean>; details: Record<string, unknown> };
+
+  const screenshotDir = process.env.OPENDRSAI_E2E_F2_SCREENSHOT_DIR;
+  if (screenshotDir) {
+    mkdirSync(screenshotDir, { recursive: true });
+    const screenshotPath = join(screenshotDir, `${scenario || "all"}.png`);
+    const image = await window.webContents.capturePage();
+    writeFileSync(screenshotPath, image.toPNG());
+    result.details.screenshotPath = screenshotPath;
+  }
+  result.details.appVersion = app.getVersion();
+  result.details.commit = process.env.OPENDRSAI_E2E_COMMIT || null;
+  result.details.exitCode = Object.values(result.checks).every(Boolean) ? 0 : 1;
+  const ok = Object.values(result.checks).every(Boolean);
+  return { ok, checks: result.checks, details: result.details };
 }
 
 async function runChatFailureSmoke(window: BrowserWindow): Promise<SmokeResult> {
@@ -1873,7 +2206,7 @@ async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
         adapterId: "file-input",
         workspacePath: channelImportFixture.workspacePath,
         paths: channelImportFixture.filePaths,
-        limit: 52,
+        limit: 55,
       });
       const channelImportItems = channelImport && channelImport.items ? channelImport.items : [];
       const channelImportItemByTitle = (title) => channelImportItems.find((item) => item && (item.title === title || item.relativePath === title));
@@ -1918,6 +2251,7 @@ async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
       const browserDownloadsImportItem = channelImportItemByTitle("packaged-downloads.json");
       const browserStorageImportItem = channelImportItemByTitle("packaged-local-storage.json");
       const browserExtensionManifestImportItem = channelImportItemByTitle("packaged-extension-manifest.json");
+      const pwaServiceWorkerImportItem = channelImportItemByTitle("packaged-service-worker.js");
       const assetLinksImportItem = channelImportItemByTitle("assetlinks.json");
       const appleAssociationImportItem = channelImportItemByTitle("apple-app-site-association");
       const securityTxtImportItem = channelImportItemByTitle("packaged.security.txt");
@@ -1929,8 +2263,10 @@ async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
       const vpnOpenVpnImportItem = channelImportItemByTitle("packaged-client.ovpn");
       const rdpImportItem = channelImportItemByTitle("packaged.rdp");
       const envrcImportItem = channelImportItemByTitle(".envrc");
+      const rushConfigImportItem = channelImportItemByTitle("rush.json");
+      const oxlintConfigImportItem = channelImportItemByTitle("oxlintrc.jsonc");
       details.channelImport = channelImport;
-      checks.channelImportViaPreloadIpc = Boolean(channelImport && channelImport.adapterId === "file-input" && channelImportItems.length === 52);
+      checks.channelImportViaPreloadIpc = Boolean(channelImport && channelImport.adapterId === "file-input" && channelImportItems.length === 55);
       checks.channelImportWorkspaceBounded = Boolean(channelImport && channelImport.workspacePath === channelImportFixture.workspacePath);
       checks.channelImportMarkdownSummary = Boolean(
         markdownImportItem &&
@@ -2382,6 +2718,21 @@ async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
           String(browserExtensionManifestImportItem.summary || "").includes("extension code was not loaded or executed") &&
           String(browserExtensionManifestImportItem.mime || "").includes("application/vnd.drsai.browser-extension-manifest+json")
       );
+      checks.channelImportPwaServiceWorkerSummary = Boolean(
+        pwaServiceWorkerImportItem &&
+          String(pwaServiceWorkerImportItem.summary || "").includes("PWA service worker script preview") &&
+          String(pwaServiceWorkerImportItem.summary || "").includes("install") &&
+          String(pwaServiceWorkerImportItem.summary || "").includes("activate") &&
+          String(pwaServiceWorkerImportItem.summary || "").includes("fetch") &&
+          String(pwaServiceWorkerImportItem.summary || "").includes("push") &&
+          String(pwaServiceWorkerImportItem.summary || "").includes("packaged-runtime-v1") &&
+          String(pwaServiceWorkerImportItem.summary || "").includes("/packaged-workbox.js?token=REDACTED") &&
+          String(pwaServiceWorkerImportItem.summary || "").includes("notifications") &&
+          String(pwaServiceWorkerImportItem.summary || "").includes("navigation preload") &&
+          String(pwaServiceWorkerImportItem.summary || "").includes("no browser was launched, no service worker was registered, no cache was opened") &&
+          !String(pwaServiceWorkerImportItem.summary || "").includes("secret-packaged-sw-token") &&
+          String(pwaServiceWorkerImportItem.mime || "").includes("text/javascript")
+      );
       checks.channelImportAssetLinksSummary = Boolean(
         assetLinksImportItem &&
           String(assetLinksImportItem.summary || "").includes("Web app association preview (Android Digital Asset Links") &&
@@ -2531,6 +2882,30 @@ async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
           String(envrcImportItem.summary || "").includes("dotenv/source targets were not opened") &&
           !String(envrcImportItem.summary || "").includes("secret-packaged-direnv") &&
           String(envrcImportItem.mime || "").includes("text/x-direnv")
+      );
+      checks.channelImportRushWorkspaceSummary = Boolean(
+        rushConfigImportItem &&
+          String(rushConfigImportItem.summary || "").includes("JS/TS workspace config preview (Rush workspace") &&
+          String(rushConfigImportItem.summary || "").includes("@packaged/app") &&
+          String(rushConfigImportItem.summary || "").includes("apps/packaged-app") &&
+          String(rushConfigImportItem.summary || "").includes("packaged-build") &&
+          String(rushConfigImportItem.summary || "").includes("approvedPackagesPolicy: reviewCategories") &&
+          String(rushConfigImportItem.summary || "").includes("credential-shaped key redacted") &&
+          !String(rushConfigImportItem.summary || "").includes("secret-packaged-rush") &&
+          String(rushConfigImportItem.summary || "").includes("no pnpm/npm/Yarn/Bun command, Turbo/Nx/Rush runner") &&
+          String(rushConfigImportItem.mime || "").includes("application/vnd.drsai.js-workspace-config")
+      );
+      checks.channelImportOxlintConfigSummary = Boolean(
+        oxlintConfigImportItem &&
+          String(oxlintConfigImportItem.summary || "").includes("JS/TS tooling config preview (Oxlint") &&
+          String(oxlintConfigImportItem.summary || "").includes("correctness") &&
+          String(oxlintConfigImportItem.summary || "").includes("eqeqeq") &&
+          String(oxlintConfigImportItem.summary || "").includes("react/jsx-key") &&
+          String(oxlintConfigImportItem.summary || "").includes("packagedToken") &&
+          String(oxlintConfigImportItem.summary || "").includes("[redacted]") &&
+          !String(oxlintConfigImportItem.summary || "").includes("secret-packaged-oxlint") &&
+          String(oxlintConfigImportItem.summary || "").includes("no Oxlint command") &&
+          String(oxlintConfigImportItem.mime || "").includes("application/vnd.drsai.js-tooling-config")
       );
       checks.channelImportNoProviderSend = Boolean(
         channelImport &&
@@ -3349,6 +3724,28 @@ function prepareChannelImportFixture(): ChannelImportFixture {
     }, null, 2),
     "utf8",
   );
+  const pwaServiceWorkerPath = join(workspacePath, "packaged-service-worker.js");
+  writeFileSync(
+    pwaServiceWorkerPath,
+    [
+      'importScripts("/packaged-workbox.js?token=secret-packaged-sw-token");',
+      'const CACHE_NAME = "packaged-runtime-v1";',
+      'self.addEventListener("install", (event) => {',
+      "  self.skipWaiting();",
+      '  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(["/index.html", "/offline.html"])));',
+      "});",
+      'self.addEventListener("activate", (event) => {',
+      "  event.waitUntil(self.registration.navigationPreload.enable());",
+      "});",
+      'self.addEventListener("fetch", (event) => {',
+      "  event.respondWith(new StaleWhileRevalidate().handle({ event, request: event.request }));",
+      "});",
+      'self.addEventListener("push", (event) => {',
+      '  event.waitUntil(self.registration.showNotification("Packaged push", { body: "token=secret-packaged-sw-token" }));',
+      "});",
+    ].join("\n"),
+    "utf8",
+  );
   const assetLinksPath = join(workspacePath, "assetlinks.json");
   writeFileSync(
     assetLinksPath,
@@ -3529,6 +3926,55 @@ function prepareChannelImportFixture(): ChannelImportFixture {
     ].join("\n"),
     "utf8",
   );
+  const rushConfigPath = join(workspacePath, "rush.json");
+  writeFileSync(
+    rushConfigPath,
+    JSON.stringify({
+      "$schema": "https://developer.microsoft.com/json-schemas/rush/v5/rush.schema.json",
+      rushVersion: "5.155.0",
+      pnpmVersion: "10.12.1",
+      approvedPackagesPolicy: { reviewCategories: ["production", "tools"] },
+      commandLine: {
+        commands: {
+          "packaged-build": {
+            commandKind: "bulk",
+            summary: "Build packaged projects",
+            safeForSimultaneousRushProcesses: true,
+          },
+        },
+      },
+      projects: [
+        {
+          packageName: "@packaged/app",
+          projectFolder: "apps/packaged-app",
+          reviewCategory: "production",
+        },
+        {
+          packageName: "@packaged/tools",
+          projectFolder: "tools/packaged",
+          reviewCategory: "tools",
+        },
+      ],
+      telemetryToken: "secret-packaged-rush-token",
+    }, null, 2),
+    "utf8",
+  );
+  const oxlintConfigPath = join(workspacePath, "oxlintrc.jsonc");
+  writeFileSync(
+    oxlintConfigPath,
+    [
+      "{",
+      "  // Packaged Oxlint fixture stays local-only.",
+      "  \"categories\": { \"correctness\": \"error\", \"suspicious\": \"warn\" },",
+      "  \"rules\": { \"eqeqeq\": \"error\", \"react/jsx-key\": \"error\", \"no-debugger\": \"warn\" },",
+      "  \"plugins\": [\"react\", \"typescript\"],",
+      "  \"env\": { \"browser\": true, \"node\": true },",
+      "  \"ignorePatterns\": [\"release/**\", \"dist/**\"],",
+      "  \"packagedToken\": \"secret-packaged-oxlint-token\"",
+      "}",
+    ].join("\n"),
+    "utf8",
+  );
   return {
     workspacePath,
     markdownPath: filePath,
@@ -3572,6 +4018,7 @@ function prepareChannelImportFixture(): ChannelImportFixture {
     browserDownloadsPath,
     browserStoragePath,
     browserExtensionManifestPath,
+    pwaServiceWorkerPath,
     assetLinksPath,
     appleAssociationPath,
     securityTxtPath,
@@ -3583,6 +4030,8 @@ function prepareChannelImportFixture(): ChannelImportFixture {
     vpnOpenVpnPath,
     rdpPath,
     envrcPath,
+    rushConfigPath,
+    oxlintConfigPath,
     filePaths: [
       filePath,
       cypressJsonPath,
@@ -3625,6 +4074,7 @@ function prepareChannelImportFixture(): ChannelImportFixture {
       browserDownloadsPath,
       browserStoragePath,
       browserExtensionManifestPath,
+      pwaServiceWorkerPath,
       assetLinksPath,
       appleAssociationPath,
       securityTxtPath,
@@ -3636,6 +4086,8 @@ function prepareChannelImportFixture(): ChannelImportFixture {
       vpnOpenVpnPath,
       rdpPath,
       envrcPath,
+      rushConfigPath,
+      oxlintConfigPath,
     ],
   };
 }

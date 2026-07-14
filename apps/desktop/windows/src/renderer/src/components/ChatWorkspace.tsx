@@ -113,6 +113,7 @@ interface ChatWorkspaceProps {
   language: AppLanguage;
   messages: UiMessage[];
   currentRuntimeMode?: ChatRuntimeMode | null;
+  defaultThinkingEffort?: ThinkingEffort;
   searchRequestNonce?: number;
   selectedAgentId?: string;
   selectedAgentName?: string;
@@ -154,6 +155,7 @@ export function ChatWorkspace({
   language,
   messages,
   currentRuntimeMode,
+  defaultThinkingEffort = "medium",
   searchRequestNonce = 0,
   selectedAgentId,
   selectedAgentName,
@@ -184,7 +186,7 @@ export function ChatWorkspace({
 }: ChatWorkspaceProps): React.JSX.Element {
   const [toolsOpen, setToolsOpen] = useState(false);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
-  const [thinkingEffort, setThinkingEffort] = useState<ThinkingEffort>("medium");
+  const [thinkingEffort, setThinkingEffort] = useState<ThinkingEffort>(defaultThinkingEffort);
   const [searchOpen, setSearchOpen] = useState(false);
   const [metaMenuOpen, setMetaMenuOpen] = useState<"agent" | "model" | "thinking" | null>(null);
   const [forkQueueAgentSelections, setForkQueueAgentSelections] = useState<Record<number, string>>({});
@@ -203,6 +205,10 @@ export function ChatWorkspace({
   const [voiceRuntimeLabel, setVoiceRuntimeLabel] = useState("Voice STT");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const messageListRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    setThinkingEffort(defaultThinkingEffort);
+  }, [defaultThinkingEffort]);
   const shouldFollowOutputRef = useRef(true);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);

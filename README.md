@@ -2,7 +2,12 @@
 
 ## [English](README_en.md) | 简体中文
 
+面向科研用户的、可监督、可复现、可持续运行的智能任务工作台。
+
 由中国科学院高能物理研究所[HepAI](https://ai.ihep.ac.cn/)团队开发的智能体、多智能体协同系统快速开发和部署一体化框架，可快速地开发和部署自己的智能体、多智能体协同系统前后端服务。
+
+> [!IMPORTANT]
+> `apps/desktop/drsai-desktop` 已弃用，不再维护。Windows 桌面客户端的开发、构建和发布已统一迁移至 `apps/desktop/windows`，后续请使用新目录。
 
 <div align="center">
   <p>

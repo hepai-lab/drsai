@@ -10,6 +10,7 @@ const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"))
 const required = [
   join("bootstrapper", "OpenDrSaiSetup.msi"),
   join("bootstrapper", "OpenDrSaiRuntime-win-x64.zip"),
+  "latest-windows.json",
   "release-summary.json",
 ];
 
@@ -40,7 +41,7 @@ if (!summary.distribution || summary.distribution.requiresSignedInstallers !== t
 const summaryArtifacts = new Map(
   (summary.artifacts || []).map((artifact) => [artifact.path, artifact]),
 );
-for (const relativePath of required.slice(0, 2)) {
+for (const relativePath of required.slice(0, 3)) {
   const normalized = relativePath.replace(/\\/g, "/");
   const artifact = summaryArtifacts.get(normalized);
   if (!artifact) {
@@ -58,4 +59,4 @@ for (const relativePath of required.slice(0, 2)) {
   }
 }
 
-console.log("Windows release artifacts verified for OpenDrSaiSetup.msi and OpenDrSaiRuntime-win-x64.zip.");
+console.log("Windows release artifacts verified for MSI, runtime ZIP, and update manifest.");

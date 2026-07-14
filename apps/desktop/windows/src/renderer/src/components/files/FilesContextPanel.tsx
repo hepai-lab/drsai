@@ -74,6 +74,7 @@ export function FilesContextPanel({
   const zh = language === "zh";
   const [overview, setOverview] = useState<WorkspaceContextOverview | null>(null);
   const [nodes, setNodes] = useState<WorkspaceFileNode[]>([]);
+  const [nextOffset, setNextOffset] = useState<number | null>(null);
   const [query, setQuery] = useState("");
   const [selectedNode, setSelectedNode] = useState<WorkspaceFileNode | null>(null);
   const [selectedForContext, setSelectedForContext] = useState<Set<string>>(new Set());
@@ -130,6 +131,7 @@ export function FilesContextPanel({
       ]);
       setOverview(nextOverview);
       setNodes(fileTree.nodes);
+      setNextOffset(fileTree.nextOffset ?? null);
       void loadWorkspaceCheckpoints();
       setLoadState("idle");
     } catch (caught) {
@@ -138,9 +140,26 @@ export function FilesContextPanel({
     }
   }, [loadWorkspaceCheckpoints, query, workspacePath]);
 
+  const loadMore = useCallback(async () => {
+    if (!workspacePath || nextOffset === null) return;
+    const page = await desktopApi.listWorkspaceFiles({ workspacePath, query, maxDepth: query.trim() ? 8 : 5, maxEntries: 900, offset: nextOffset });
+    setNodes((current) => [...current, ...page.nodes]);
+    setNextOffset(page.nextOffset ?? null);
+  }, [nextOffset, query, workspacePath]);
+
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    let timer: number | undefined;
+    const unsubscribe = desktopApi.onWorkspaceFileChanges((event) => {
+      if (event.workspacePath !== workspacePath) return;
+      if (timer !== undefined) window.clearTimeout(timer);
+      timer = window.setTimeout(() => void refresh(), 250);
+    });
+    return () => { unsubscribe(); if (timer !== undefined) window.clearTimeout(timer); };
+  }, [refresh, workspacePath]);
 
   useEffect(() => {
     setSelectedNode(null);
@@ -620,6 +639,7 @@ export function FilesContextPanel({
               onToggleContext={toggleContextSelection}
             />
           )}
+          {nextOffset !== null ? <button type="button" className="files-context-load-more" onClick={() => void loadMore()}>{zh ? "加载更多" : "Load more"}</button> : null}
         </aside>
       </div>
 

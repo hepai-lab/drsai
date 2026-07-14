@@ -9,6 +9,7 @@ import type {
   WorkspaceGitStatus,
   WorkspaceInstructionSummary,
   WorkspaceProject,
+  RemoteSshWorkspaceDescriptor,
 } from "../shared/desktopApi";
 import { DRSAI_HOME } from "./paths";
 
@@ -83,6 +84,34 @@ export async function deleteWorkspace(rawId: unknown): Promise<boolean> {
   return next.length !== workspaces.length;
 }
 
+export async function findWorkspaceById(id: string): Promise<WorkspaceProject | undefined> {
+  return (await readWorkspaces()).find((workspace) => workspace.id === id);
+}
+
+export async function createRemoteWorkspace(request: {
+  id: string;
+  name?: string;
+  path: string;
+  trusted?: boolean;
+  remote: RemoteSshWorkspaceDescriptor;
+}): Promise<WorkspaceProject> {
+  const now = new Date().toISOString();
+  const workspaces = await readWorkspaces();
+  const workspace: WorkspaceProject = {
+    id: request.id,
+    name: request.name?.trim().slice(0, MAX_NAME_CHARS) || getWorkspaceName(request.path),
+    path: request.path,
+    type: "remote-ssh",
+    remote: request.remote,
+    createdAt: workspaces.find((item) => item.id === request.id)?.createdAt || now,
+    updatedAt: now,
+    lastOpenedAt: now,
+    trusted: request.trusted ?? false,
+  };
+  await writeWorkspaces([workspace, ...workspaces.filter((item) => item.id !== request.id)].slice(0, MAX_WORKSPACES));
+  return workspace;
+}
+
 async function readWorkspaces(): Promise<WorkspaceProject[]> {
   try {
     const parsed = JSON.parse(await readFile(WORKSPACES_FILE, "utf8"));
@@ -95,7 +124,17 @@ async function readWorkspaces(): Promise<WorkspaceProject[]> {
 
 async function writeWorkspaces(workspaces: WorkspaceProject[]): Promise<void> {
   await mkdir(dirname(WORKSPACES_FILE), { recursive: true });
-  await writeFile(WORKSPACES_FILE, `${JSON.stringify(sortWorkspaces(workspaces), null, 2)}\n`, "utf8");
+  const persisted = sortWorkspaces(workspaces).map((workspace) => workspace.remote ? {
+    ...workspace,
+    remote: {
+      hostAlias: workspace.remote.hostAlias,
+      canonicalPath: workspace.remote.canonicalPath,
+      workspaceId: workspace.remote.workspaceId,
+      connectionState: "disconnected" as const,
+      gatewayVersion: workspace.remote.gatewayVersion,
+    },
+  } : workspace);
+  await writeFile(WORKSPACES_FILE, `${JSON.stringify(persisted, null, 2)}\n`, "utf8");
 }
 
 async function validateCreateWorkspaceRequest(rawRequest: unknown): Promise<CreateWorkspaceRequest> {
@@ -243,6 +282,7 @@ function sanitizeMetadata(value: unknown): Record<string, unknown> | undefined {
 }
 
 async function refreshWorkspaceStatus(workspace: WorkspaceProject): Promise<WorkspaceProject> {
+  if (workspace.type === "remote-ssh") return workspace;
   const git = await getGitStatus(workspace.path);
   const instructions = await readWorkspaceInstructions(workspace.path);
   return {
@@ -316,13 +356,14 @@ function isWorkspace(value: unknown): value is WorkspaceProject {
     workspace &&
       typeof workspace.id === "string" &&
       WORKSPACE_ID_PATTERN.test(workspace.id) &&
-      workspace.type === "local" &&
+      (workspace.type === "local" || workspace.type === "remote-ssh") &&
       typeof workspace.name === "string" &&
       typeof workspace.path === "string" &&
       typeof workspace.createdAt === "string" &&
       typeof workspace.updatedAt === "string" &&
       typeof workspace.lastOpenedAt === "string" &&
-      typeof workspace.trusted === "boolean",
+      typeof workspace.trusted === "boolean" &&
+      (workspace.type !== "remote-ssh" || Boolean(workspace.remote?.hostAlias && workspace.remote?.canonicalPath)),
   );
 }
 

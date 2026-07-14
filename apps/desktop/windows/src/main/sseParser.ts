@@ -504,15 +504,22 @@ function isToolLikeRecord(value: unknown): value is Record<string, unknown> {
     readString(readObject(record.function)?.name) ||
     Boolean(readObject(record.functionCall)) ||
     Boolean(readObject(record.functionResponse)) ||
+    Boolean(readObject(record.executableCode)) ||
+    Boolean(readObject(record.codeExecutionResult)) ||
     type === "tool_use" ||
     type === "tool_result" ||
     type === "function_call" ||
+    type === "custom_tool_call" ||
+    type === "custom_tool_call_output" ||
     type === "function_result" ||
     type === "function_call_output" ||
     isProviderBuiltinToolType(type) ||
     type === "server_tool_call" ||
+    type === "server_tool_use" ||
     type === "server_tool_result" ||
+    type === "web_search_tool_result" ||
     type === "computer_call_output" ||
+    type === "local_shell_call_output" ||
     role === "tool",
   );
 }
@@ -564,7 +571,7 @@ function rememberProviderToolUse(
   streams: Map<string, ToolArgumentStreamState>,
 ): void {
   const type = readString(record.type).toLowerCase();
-  if (type !== "tool_use" && type !== "server_tool_call" && type !== "function_call") return;
+  if (type !== "tool_use" && type !== "server_tool_call" && type !== "server_tool_use" && type !== "function_call") return;
   const streamKeys = [
     record.index !== undefined ? `index:${readString(record.index)}` : "",
     record.output_index !== undefined ? `output_index:${readString(record.output_index)}` : "",
@@ -658,11 +665,16 @@ function normalizeToolTimelineEvent(
   const functionRecord = readObject(record.function);
   const geminiFunctionCall = readObject(record.functionCall);
   const geminiFunctionResponse = readObject(record.functionResponse);
+  const geminiExecutableCode = readObject(record.executableCode);
+  const geminiCodeExecutionResult = readObject(record.codeExecutionResult);
+  const providerBuiltinToolName = readProviderBuiltinToolName(readString(record.type));
   const structuredInput =
     record.arguments ??
     functionRecord?.arguments ??
     geminiFunctionCall?.args ??
     geminiFunctionResponse?.response ??
+    geminiExecutableCode ??
+    geminiCodeExecutionResult ??
     record.input ??
     record.parameters ??
     record.params;
@@ -674,8 +686,10 @@ function normalizeToolTimelineEvent(
     readString(geminiFunctionCall?.name) ||
     readString(geminiFunctionResponse?.name) ||
     readString(record.function_name) ||
+    (geminiExecutableCode || geminiCodeExecutionResult ? "code_execution" : "") ||
+    (providerBuiltinToolName === "mcp_approval" ? providerBuiltinToolName : "") ||
     readString(record.name) ||
-    readProviderBuiltinToolName(readString(record.type));
+    providerBuiltinToolName;
   const providerResultId =
     readString(record.tool_call_id) ||
     readString(record.call_id) ||
@@ -690,6 +704,7 @@ function normalizeToolTimelineEvent(
     readString(record.title) ||
     (toolName ? `Tool: ${toolName}` : "") ||
     (kind === "tool_result" && providerResultId ? `Tool result: ${providerResultId}` : "") ||
+    readProviderReasoningItemTitle(record) ||
     (path ? `File: ${path}` : "") ||
     eventName ||
     "Tool event";
@@ -699,7 +714,13 @@ function normalizeToolTimelineEvent(
     readString(record.output) ||
     readString(record.diff) ||
     readString(record.summary) ||
+    readProviderServerToolContent(record) ||
+    readProviderComputerOutputContent(record) ||
+    readProviderCustomToolContent(record) ||
     readProviderContentText(record.content) ||
+    readProviderStructuredContent(record.content) ||
+    readProviderBuiltinToolContent(record) ||
+    readProviderReasoningItemContent(record) ||
     readStructuredText(structuredInput) ||
     readStructuredText(record.action) ||
     readStructuredText(record.result) ||
@@ -728,17 +749,24 @@ function normalizeToolEventKind(
   const type = readString(record.type).toLowerCase();
   const role = readString(record.role).toLowerCase();
   if (kind === "tool_result" || kind === "result") return "tool_result";
+  if (isProviderReasoningItemType(type)) return "log";
   if (readObject(record.functionResponse)) return "tool_result";
+  if (readObject(record.codeExecutionResult)) return "tool_result";
   if (
     type === "tool_result" ||
     type === "function_result" ||
+    type === "custom_tool_call_output" ||
     type === "function_call_output" ||
     type === "server_tool_result" ||
+    type === "web_search_tool_result" ||
     type === "computer_call_output" ||
+    type === "local_shell_call_output" ||
+    type === "mcp_approval_response" ||
     role === "tool"
   ) return "tool_result";
   if (readObject(record.functionCall)) return "tool_call";
-  if (type === "tool_use" || type === "function_call" || type === "server_tool_call" || isProviderBuiltinToolType(type)) return "tool_call";
+  if (readObject(record.executableCode)) return "tool_call";
+  if (type === "tool_use" || type === "function_call" || type === "custom_tool_call" || type === "server_tool_call" || type === "server_tool_use" || isProviderBuiltinToolType(type)) return "tool_call";
   if ((readString(record.tool_call_id) || readString(record.call_id) || readString(record.tool_use_id)) &&
     (readString(record.content) || readProviderContentText(record.content) || readString(record.output))) return "tool_result";
   if (kind === "diff" || readString(record.diff)) return "diff";
@@ -756,6 +784,10 @@ function inferToolEventStatus(
 ): ChatToolTimelineEvent["status"] | undefined {
   const normalizedEventName = eventName.toLowerCase();
   if (record.is_error === true || record.error !== undefined) return "failed";
+  if (isProviderReasoningItemType(readString(record.type).toLowerCase())) {
+    if (normalizedEventName === "response.output_item.done") return "completed";
+    if (normalizedEventName === "response.output_item.added") return "started";
+  }
   if (kind === "tool_result") return "completed";
   if (
     kind === "tool_call" &&
@@ -851,20 +883,205 @@ function readProviderContentText(value: unknown): string {
   return textParts.join("\n").trim();
 }
 
+function readProviderStructuredContent(value: unknown): string {
+  const contentItems = normalizeUnknownItems(value).flatMap((item) => {
+    const record = readObject(item);
+    if (!record) return [];
+    const payload: Record<string, unknown> = {};
+    for (const key of [
+      "type",
+      "name",
+      "id",
+      "title",
+      "url",
+      "page_age",
+      "error_code",
+      "json",
+      "data",
+      "input",
+      "output",
+      "result",
+    ]) {
+      if (record[key] !== undefined) {
+        payload[key] = stripEncryptedContent(record[key]);
+      }
+    }
+    return Object.keys(payload).length ? [payload] : [];
+  });
+  return contentItems.length ? readStructuredText(contentItems.length === 1 ? contentItems[0] : contentItems) : "";
+}
+
+function readProviderServerToolContent(record: Record<string, unknown>): string {
+  const type = readString(record.type).toLowerCase();
+  if (type !== "web_search_tool_result") return "";
+  const results = normalizeUnknownItems(record.content).flatMap((item) => {
+    const itemRecord = readObject(item);
+    if (!itemRecord) return [];
+    const result: Record<string, unknown> = {};
+    for (const key of ["type", "title", "url", "page_age", "error_code"]) {
+      if (itemRecord[key] !== undefined) {
+        result[key] = stripEncryptedContent(itemRecord[key]);
+      }
+    }
+    return Object.keys(result).length ? [result] : [];
+  });
+  return results.length ? readStructuredText(results) : "";
+}
+
+function readProviderComputerOutputContent(record: Record<string, unknown>): string {
+  const type = readString(record.type).toLowerCase();
+  if (type !== "computer_call_output") return "";
+  const payload: Record<string, unknown> = {};
+  for (const key of [
+    "output",
+    "acknowledged_safety_checks",
+    "pending_safety_checks",
+  ]) {
+    if (record[key] !== undefined) {
+      payload[key] = stripEncryptedContent(record[key]);
+    }
+  }
+  return Object.keys(payload).length ? readStructuredText(payload) : "";
+}
+
+function readProviderCustomToolContent(record: Record<string, unknown>): string {
+  const type = readString(record.type).toLowerCase();
+  if (type !== "custom_tool_call_output") return "";
+  const payload: Record<string, unknown> = {};
+  for (const key of [
+    "input",
+    "output",
+    "call_id",
+    "name",
+  ]) {
+    if (record[key] !== undefined) {
+      payload[key] = stripEncryptedContent(record[key]);
+    }
+  }
+  return Object.keys(payload).length ? readStructuredText(payload) : "";
+}
+
+function stripEncryptedContent(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => stripEncryptedContent(item));
+  }
+  const record = readObject(value);
+  if (!record) return value;
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(record)) {
+    if (key === "encrypted_content") continue;
+    sanitized[key] = stripEncryptedContent(item);
+  }
+  return sanitized;
+}
+
+function isProviderReasoningItemType(type: string): boolean {
+  return type === "reasoning" || type === "reasoning_summary";
+}
+
+function readProviderReasoningItemTitle(record: Record<string, unknown>): string {
+  return isProviderReasoningItemType(readString(record.type).toLowerCase()) ? "Model reasoning" : "";
+}
+
+function readProviderReasoningItemContent(record: Record<string, unknown>): string {
+  if (!isProviderReasoningItemType(readString(record.type).toLowerCase())) return "";
+  const payload: Record<string, unknown> = {};
+  const summary = readProviderReasoningSummary(record.summary);
+  const content = readProviderReasoningSummary(record.content);
+  const text = readString(record.text);
+  if (summary.length) payload.summary = summary;
+  if (content.length) payload.content = content;
+  if (text) payload.text = text;
+  return Object.keys(payload).length ? readStructuredText(payload) : "";
+}
+
+function readProviderReasoningSummary(value: unknown): Array<Record<string, unknown>> {
+  return normalizeUnknownItems(value).flatMap((item) => {
+    const record = readObject(item);
+    if (!record) return [];
+    const summary: Record<string, unknown> = {};
+    const type = readString(record.type);
+    const text = readString(record.text);
+    if (type) summary.type = type;
+    if (text) summary.text = text;
+    return Object.keys(summary).length ? [summary] : [];
+  });
+}
+
 function isProviderBuiltinToolType(type: string): boolean {
   return type === "web_search_call" ||
     type === "file_search_call" ||
     type === "code_interpreter_call" ||
     type === "computer_call" ||
+    type === "local_shell_call" ||
+    type === "local_shell_call_output" ||
     type === "mcp_call" ||
     type === "mcp_list_tools" ||
     type === "mcp_approval_request" ||
+    type === "mcp_approval_response" ||
     type === "image_generation_call";
 }
 
 function readProviderBuiltinToolName(type: string): string {
   if (!isProviderBuiltinToolType(type)) return "";
-  return type.replace(/_call$/, "").replace(/_request$/, "");
+  return type.replace(/_call_output$/, "").replace(/_call$/, "").replace(/_request$/, "");
+}
+
+function readProviderBuiltinToolContent(record: Record<string, unknown>): string {
+  const type = readString(record.type).toLowerCase();
+  if (!isProviderBuiltinToolType(type)) return "";
+  const payload: Record<string, unknown> = {};
+  if ((type === "computer_call" || type === "local_shell_call") && record.action !== undefined) {
+    payload.action = stripEncryptedContent(record.action);
+  }
+  for (const key of [
+    "command",
+    "query",
+    "queries",
+    "results",
+    "web_search_results",
+    "search_context",
+    "user_location",
+    "domains",
+    "allowed_domains",
+    "blocked_domains",
+    "vector_store_ids",
+    "filters",
+    "ranking_options",
+    "max_num_results",
+    "server_label",
+    "serverLabel",
+    "name",
+    "tool",
+    "tool_name",
+    "tools",
+    "arguments",
+    "output",
+    "exit_code",
+    "stdout",
+    "stderr",
+    "approval_request_id",
+    "approve",
+    "approved",
+    "decision",
+    "reason",
+    "input",
+    "outputs",
+    "acknowledged_safety_checks",
+    "pending_safety_checks",
+    "container_id",
+    "prompt",
+    "result",
+    "size",
+    "quality",
+    "output_format",
+    "background",
+  ]) {
+    if (record[key] !== undefined) {
+      payload[key] = stripEncryptedContent(record[key]);
+    }
+  }
+  return Object.keys(payload).length ? readStructuredText(payload) : "";
 }
 
 function readProviderTextDeltas(value: unknown, eventName: string): string[] {

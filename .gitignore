@@ -269,3 +269,9 @@ notebooks/test.db
 **/captures/
 *.jks
 *.keystore
+
+# Android source and tests share names with generic generated-data rules above.
+!apps/android/app/src/main/java/ai/drsai/remote/data/
+!apps/android/app/src/main/java/ai/drsai/remote/data/**
+!apps/android/app/src/test/
+!apps/android/app/src/test/**

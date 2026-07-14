@@ -3,6 +3,7 @@ import { randomUUID } from "crypto";
 import { existsSync } from "fs";
 import { homedir } from "os";
 import { delimiter, join } from "path";
+import { getRemoteGatewayAccess } from "./remoteWorkspace";
 
 type IPty = import("node-pty").IPty;
 type IPtyForkOptions = import("node-pty").IPtyForkOptions;
@@ -15,6 +16,7 @@ export interface TerminalCreateOptions {
   workspaceKey?: string;
   title?: string;
   shellProfile?: TerminalShellProfile;
+  remoteHostAlias?: string;
 }
 
 export type TerminalShellProfile =
@@ -36,7 +38,8 @@ export interface TerminalSessionInfo {
 }
 
 interface TerminalSession extends TerminalSessionInfo {
-  pty: IPty;
+  pty?: IPty;
+  remoteSocket?: WebSocket;
   ownerId: number;
   buffer: string;
 }
@@ -204,14 +207,16 @@ function toSessionInfo(session: TerminalSession): TerminalSessionInfo {
   };
 }
 
-export function createTerminalSession(
+export async function createTerminalSession(
   event: IpcMainInvokeEvent,
   options: TerminalCreateOptions = {},
-): TerminalSessionInfo {
-  const nodePty = loadNodePty();
+): Promise<TerminalSessionInfo> {
   const shellProfile = normalizeShellProfile(options.shellProfile);
-  const shell = resolveShell(shellProfile);
-  const cwd =
+  let shell = resolveShell(shellProfile);
+  const remoteAlias = typeof options.remoteHostAlias === "string" && /^[A-Za-z0-9_.@-]{1,128}$/.test(options.remoteHostAlias) ? options.remoteHostAlias : undefined;
+  const cwd = remoteAlias && typeof options.cwd === "string" && options.cwd.trim()
+    ? options.cwd.trim()
+    :
     typeof options.cwd === "string" &&
     options.cwd.trim() &&
     existsSync(options.cwd)
@@ -219,6 +224,8 @@ export function createTerminalSession(
       : homedir();
   const cols = clampDimension(options.cols, 100, 20, 500);
   const rows = clampDimension(options.rows, 30, 5, 200);
+  if (remoteAlias) return createRemoteTerminalSession(event, options, cwd, cols, rows, shellProfile);
+  const nodePty = loadNodePty();
   const id = randomUUID();
   const workspaceKey =
     typeof options.workspaceKey === "string" && options.workspaceKey.trim()
@@ -279,6 +286,64 @@ export function createTerminalSession(
   return toSessionInfo(session);
 }
 
+async function createRemoteTerminalSession(event: IpcMainInvokeEvent, options: TerminalCreateOptions, cwd: string, cols: number, rows: number, shellProfile: TerminalShellProfile): Promise<TerminalSessionInfo> {
+  const access = getRemoteGatewayAccess(cwd);
+  if (!access) throw new Error("Remote workspace Gateway is not connected.");
+  const url = `${access.baseUrl.replace(/^http/, "ws")}/v1/pty`;
+  const socket = new WebSocket(url);
+  const workspaceKey = typeof options.workspaceKey === "string" && options.workspaceKey.trim() ? options.workspaceKey : cwd;
+  const title = typeof options.title === "string" && options.title.trim() ? options.title.trim().slice(0, 40) : `Terminal ${sessions.size + 1}`;
+  return new Promise<TerminalSessionInfo>((resolve, reject) => {
+    let session: TerminalSession | undefined;
+    const timer = setTimeout(() => { socket.close(); reject(new Error("Remote PTY creation timed out.")); }, 10_000);
+    socket.addEventListener("open", () => { socket.send(JSON.stringify({ type: "auth", token: access.token })); socket.send(JSON.stringify({ type: "create", workspaceId: access.workspaceId, cwd, cols, rows })); });
+    socket.addEventListener("message", (raw) => {
+      let message: Record<string, unknown>;
+      try { message = JSON.parse(String(raw.data)) as Record<string, unknown>; } catch { return; }
+      if (message.type === "created") {
+        clearTimeout(timer);
+        const id = String(message.id || randomUUID());
+        session = { id, pid: Number(message.pid || 0), shell: String(message.shell || "/bin/bash"), shellProfile, cwd: String(message.cwd || cwd), title, workspaceKey, createdAt: new Date().toISOString(), remoteSocket: socket, ownerId: event.sender.id, buffer: String(message.buffer || "") };
+        sessions.set(id, session); resolve(toSessionInfo(session));
+      } else if (message.type === "data" && session) {
+        const data = String(message.data || ""); appendSessionBuffer(session, data);
+        if (!event.sender.isDestroyed()) event.sender.send("desktop:terminal-data", { id: session.id, data });
+      } else if (message.type === "exit" && session) {
+        sessions.delete(session.id);
+        if (!event.sender.isDestroyed()) event.sender.send("desktop:terminal-exit", { id: session.id, exitCode: Number(message.exitCode || 0) });
+      } else if (message.type === "error") reject(new Error(String(message.message || "Remote PTY failed.")));
+    });
+    socket.addEventListener("error", () => { if (!session) { clearTimeout(timer); reject(new Error("Remote PTY connection failed.")); } });
+    socket.addEventListener("close", () => { if (session && sessions.has(session.id)) scheduleRemoteTerminalReattach(session, event, 0); });
+    event.sender.once("destroyed", () => killTerminalsForOwner(event.sender.id));
+  });
+}
+
+function scheduleRemoteTerminalReattach(session: TerminalSession, event: IpcMainInvokeEvent, attempt: number): void {
+  if (!sessions.has(session.id)) return;
+  if (attempt >= 8) {
+    sessions.delete(session.id);
+    if (!event.sender.isDestroyed()) event.sender.send("desktop:terminal-exit", { id: session.id, exitCode: 255 });
+    return;
+  }
+  setTimeout(() => {
+    if (!sessions.has(session.id)) return;
+    const access = getRemoteGatewayAccess(session.cwd);
+    if (!access) return scheduleRemoteTerminalReattach(session, event, attempt + 1);
+    const socket = new WebSocket(`${access.baseUrl.replace(/^http/, "ws")}/v1/pty`);
+    let attached = false;
+    socket.addEventListener("open", () => { socket.send(JSON.stringify({ type: "auth", token: access.token })); socket.send(JSON.stringify({ type: "attach", id: session.id })); });
+    socket.addEventListener("message", (raw) => {
+      let message: Record<string, unknown>; try { message = JSON.parse(String(raw.data)) as Record<string, unknown>; } catch { return; }
+      if (message.type === "attached") { attached = true; session.remoteSocket = socket; const data = String(message.buffer || ""); session.buffer = data; if (!event.sender.isDestroyed()) event.sender.send("desktop:terminal-data", { id: session.id, data }); }
+      else if (message.type === "data") { const data = String(message.data || ""); appendSessionBuffer(session, data); if (!event.sender.isDestroyed()) event.sender.send("desktop:terminal-data", { id: session.id, data }); }
+      else if (message.type === "exit") { sessions.delete(session.id); if (!event.sender.isDestroyed()) event.sender.send("desktop:terminal-exit", { id: session.id, exitCode: Number(message.exitCode || 0) }); }
+    });
+    socket.addEventListener("close", () => { if (sessions.has(session.id)) scheduleRemoteTerminalReattach(session, event, attached ? 0 : attempt + 1); });
+    socket.addEventListener("error", () => socket.close());
+  }, Math.min(1000 * 2 ** attempt, 15_000));
+}
+
 export function listTerminalSessions(
   event: IpcMainInvokeEvent,
   workspaceKey?: string,
@@ -315,7 +380,8 @@ export function writeTerminalSession(
 ): boolean {
   const session = sessionForOwner(id, event.sender.id);
   if (!session || typeof data !== "string") return false;
-  session.pty.write(data);
+  if (session.remoteSocket) session.remoteSocket.send(JSON.stringify({ type: "write", id, data }));
+  else session.pty?.write(data);
   return true;
 }
 
@@ -327,10 +393,9 @@ export function resizeTerminalSession(
 ): boolean {
   const session = sessionForOwner(id, event.sender.id);
   if (!session) return false;
-  session.pty.resize(
-    clampDimension(cols, 100, 20, 500),
-    clampDimension(rows, 30, 5, 200),
-  );
+  const nextCols = clampDimension(cols, 100, 20, 500); const nextRows = clampDimension(rows, 30, 5, 200);
+  if (session.remoteSocket) session.remoteSocket.send(JSON.stringify({ type: "resize", id, cols: nextCols, rows: nextRows }));
+  else session.pty?.resize(nextCols, nextRows);
   return true;
 }
 
@@ -341,7 +406,8 @@ export function killTerminalSession(
   const session = sessionForOwner(id, event.sender.id);
   if (!session) return false;
   sessions.delete(id);
-  session.pty.kill();
+  if (session.remoteSocket) { session.remoteSocket.send(JSON.stringify({ type: "kill", id })); session.remoteSocket.close(); }
+  else session.pty?.kill();
   return true;
 }
 
@@ -349,7 +415,7 @@ export function killTerminalsForOwner(ownerId: number): void {
   for (const [id, session] of sessions) {
     if (session.ownerId === ownerId) {
       sessions.delete(id);
-      session.pty.kill();
+      if (session.remoteSocket) session.remoteSocket.close(); else session.pty?.kill();
     }
   }
 }
@@ -357,6 +423,6 @@ export function killTerminalsForOwner(ownerId: number): void {
 export function killAllTerminalSessions(): void {
   for (const [id, session] of sessions) {
     sessions.delete(id);
-    session.pty.kill();
+    if (session.remoteSocket) session.remoteSocket.close(); else session.pty?.kill();
   }
 }

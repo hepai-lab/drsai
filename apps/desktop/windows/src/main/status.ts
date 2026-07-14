@@ -124,12 +124,20 @@ function getStartupInstallStatus(): InstallStatus {
 
 export function fallbackUpdateStatus(error: unknown): UpdateStatus {
   return {
+    phase: "failed",
     checking: false,
     available: false,
     downloading: false,
     downloaded: false,
     progress: null,
     version: null,
+    currentVersion: app.getVersion(),
+    mandatory: false,
+    releaseNotesUrl: null,
+    canDownload: false,
+    canInstall: false,
+    canCancel: false,
+    errorCode: "desktop-health",
     error: error instanceof Error ? error.message : String(error),
   };
 }

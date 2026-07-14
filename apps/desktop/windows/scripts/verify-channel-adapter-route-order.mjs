@@ -253,6 +253,12 @@ const routeFixtures = [
     reason: "Nx workspace config must route before generic JSON summaries",
   },
   {
+    file: "rush.json",
+    route: "isJsWorkspaceConfigFile(filePath, extension)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "Rush workspace config must route before generic JSON summaries",
+  },
+  {
     file: "slack-export.json",
     route: "isChatExportJsonFile(filePath, extension)",
     before: "summarizeJsonDataFile(filePath, size)",
@@ -497,6 +503,12 @@ const routeFixtures = [
     before: "summarizeConfigOrLogFile(filePath, extension, size)",
     reason: "dotenv environment files must route through specialized value-hidden previews before generic config summaries",
     scope: "if (isDirenvConfigFile(extension))",
+  },
+  {
+    file: ".idea/workspace.xml",
+    route: "isJetBrainsIdeConfigFile(filePath, extension)",
+    before: "kind === \"document\" && extension !== \".ipynb\"",
+    reason: "JetBrains .idea XML files must route through IDE config previews before generic XML document/config fallbacks",
   },
   {
     file: "runtime.prom",
@@ -1340,9 +1352,11 @@ assert(adapters.includes('".gha-job-summary.md"') && adapters.includes("summariz
 assert(adapters.includes('".github-template"') && adapters.includes("summarizeGithubTemplateFile"), "normalized fixture coverage omits GitHub issue/PR templates");
 assert(adapters.includes('".pre-commit-config.yaml"') && adapters.includes("summarizePreCommitConfigFile"), "normalized fixture coverage omits pre-commit config files");
 assert(adapters.includes('".ruff.toml"') && adapters.includes("summarizeRuffConfigFile"), "normalized fixture coverage omits Ruff config files");
+assert(adapters.includes('".python-tooling-config"') && adapters.includes('"pyrightconfig.json"'), "normalized fixture coverage omits Python tooling config files");
 assert(adapters.includes('".dependabot.yaml"') && adapters.includes("summarizeDependabotConfigFile"), "normalized fixture coverage omits Dependabot config files");
 assert(adapters.includes('".renovate.json"') && adapters.includes("summarizeRenovateConfigFile"), "normalized fixture coverage omits Renovate config files");
 assert(adapters.includes('".dotnet-global.json"') && adapters.includes('".nuget.config"') && adapters.includes('".packages.config"') && adapters.includes('".nuspec"'), "normalized fixture coverage omits .NET/NuGet config files");
+assert(adapters.includes('".citation.cff"') && adapters.includes("summarizeCitationCffFile"), "normalized fixture coverage omits Citation CFF files");
 assert(adapters.includes('".swift-package"'), "normalized fixture coverage omits Package.swift");
 assert(adapters.includes('".pbxproj"'), "normalized fixture coverage omits project.pbxproj");
 assert(adapters.includes('".composer.json"') && adapters.includes('".gemfile"'), "normalized fixture coverage omits PHP/Ruby package manifests");
@@ -1357,10 +1371,28 @@ assert(adapters.includes('".mcp-servers.json"'), "normalized fixture coverage om
 assert(adapters.includes('".iis-web.config"'), "normalized fixture coverage omits IIS web.config files");
 assert(adapters.includes('".web-server.conf"'), "normalized fixture coverage omits Nginx/Apache web server config files");
 assert(adapters.includes('".vscode-settings.json"') && adapters.includes('".vscode-tasks.json"') && adapters.includes('".vscode-launch.json"') && adapters.includes('".vscode-extensions.json"'), "normalized fixture coverage omits VS Code workspace config JSON files");
+assert(adapters.includes('".jetbrains-ide.xml"') && adapters.includes("summarizeJetBrainsIdeConfigFile"), "normalized fixture coverage omits JetBrains IDE config files");
 assert(adapters.includes('".docker-compose.yaml"') && adapters.includes("summarizeContainerComposeFile"), "normalized fixture coverage omits Docker Compose config files");
+assert(adapters.includes('"rush.json"') && adapters.includes("Rush workspace"), "normalized fixture coverage omits Rush workspace config files");
 assert(adapters.includes('".js-tooling-config"'), "normalized fixture coverage omits JS/TS tooling config files");
+assert(adapters.includes('"oxlintrc.json"') && adapters.includes("Oxlint"), "normalized fixture coverage omits Oxlint tooling config files");
 assert(adapters.includes('"commitlint.config.js"') && adapters.includes('".lintstagedrc"'), "normalized fixture coverage omits Commitlint/lint-staged tooling config files");
 assert(adapters.includes('"knip.json"') && adapters.includes('"knip.config.ts"'), "normalized fixture coverage omits Knip tooling config files");
+assert(adapters.includes('"cypress.config.ts"') && adapters.includes("Cypress"), "normalized fixture coverage omits Cypress tooling config files");
+assert(adapters.includes('"/.storybook/main.ts"') && adapters.includes("Storybook"), "normalized fixture coverage omits Storybook tooling config files");
+assert(adapters.includes('"postcss.config.cjs"') && adapters.includes("PostCSS"), "normalized fixture coverage omits PostCSS tooling config files");
+assert(adapters.includes('"tailwind.config.ts"') && adapters.includes("Tailwind"), "normalized fixture coverage omits Tailwind tooling config files");
+assert(adapters.includes('"deno.json"') && adapters.includes("Deno"), "normalized fixture coverage omits Deno tooling config files");
+assert(adapters.includes('"vercel.json"') && adapters.includes("Vercel"), "normalized fixture coverage omits Vercel hosting config files");
+assert(adapters.includes('"netlify.toml"') && adapters.includes("Netlify"), "normalized fixture coverage omits Netlify hosting config files");
+assert(adapters.includes('"wrangler.toml"') && adapters.includes("Cloudflare Workers"), "normalized fixture coverage omits Wrangler hosting config files");
+assert(adapters.includes('"babel.config.json"') && adapters.includes("Babel"), "normalized fixture coverage omits Babel tooling config files");
+assert(adapters.includes('".browserslistrc"') && adapters.includes("Browserslist"), "normalized fixture coverage omits Browserslist tooling config files");
+assert(adapters.includes('"tsconfig.json"') && adapters.includes("TypeScript project") && adapters.includes('"jsconfig.json"'), "normalized fixture coverage omits TS/JS project config files");
+assert(adapters.includes('"next.config.mjs"') && adapters.includes("Next.js"), "normalized fixture coverage omits Next.js tooling config files");
+assert(adapters.includes('"astro.config.mjs"') && adapters.includes("Astro"), "normalized fixture coverage omits Astro tooling config files");
+assert(adapters.includes('"svelte.config.js"') && adapters.includes("SvelteKit"), "normalized fixture coverage omits SvelteKit tooling config files");
+assert(adapters.includes('"nuxt.config.ts"') && adapters.includes("Nuxt"), "normalized fixture coverage omits Nuxt tooling config files");
 assert(adapters.includes('"vite.config.ts"') && adapters.includes('"rollup.config.mjs"') && adapters.includes('"tsup.config.ts"'), "normalized fixture coverage omits Vite/Rollup/Tsup tooling config files");
 assert(adapters.includes('".test-results.json"'), "normalized fixture coverage omits JSON test report manifests");
 assert(adapters.includes('".playwright-trace.zip"'), "normalized fixture coverage omits Playwright trace ZIP files");

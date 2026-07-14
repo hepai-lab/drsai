@@ -25,9 +25,11 @@ const roadmap = read("docs/smart-chat-bar-roadmap.md");
 assert(
   navigation.includes("approvalCenter") &&
     navigation.includes('"approval_center"') &&
-    navigation.includes("MENU_IDS.approvalCenter, enabled: true") &&
+    navigation.includes("MENU_IDS.approvalCenter, enabled: false") &&
+    app.includes('id: "approvals"') &&
+    app.includes("approvalCenterPanel") &&
     navigation.includes("Approval Center"),
-  "navigation does not expose an enabled approval center item",
+  "settings does not expose approval center outside the primary sidebar",
 );
 assert(
   app.includes("ApprovalCenterView") &&

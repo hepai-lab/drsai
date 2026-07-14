@@ -387,6 +387,28 @@ export function ApprovalCenterView({
                     <span>{approval.source} / {approval.actionKind} / {approval.risk}</span>
                     <strong>{approval.title}</strong>
                     <small>{approval.target || approval.detail}</small>
+                    <dl className="approval-pending-facts" aria-label="Approval facts">
+                      <div>
+                        <dt>Action</dt>
+                        <dd>{approval.actionKind}</dd>
+                      </div>
+                      <div>
+                        <dt>Object</dt>
+                        <dd>{approval.target || approval.detail}</dd>
+                      </div>
+                      <div>
+                        <dt>Scope</dt>
+                        <dd>{approval.scope || "Current workspace request only"}</dd>
+                      </div>
+                      <div>
+                        <dt>Impact</dt>
+                        <dd>{approval.impact || approval.detail}</dd>
+                      </div>
+                      <div>
+                        <dt>Risk</dt>
+                        <dd>{approval.risk}</dd>
+                      </div>
+                    </dl>
                     {approval.checklist?.type === "git_commit" ? (
                       <CommitApprovalChecklist
                         approvalId={approval.id}

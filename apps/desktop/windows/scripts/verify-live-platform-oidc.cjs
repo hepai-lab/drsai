@@ -13,6 +13,33 @@ function decodeClaims(token) {
   return JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
 }
 
+function record(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function agentItems(payload) {
+  const root = record(payload);
+  if (Array.isArray(root.data)) return root.data;
+  const data = record(root.data);
+  if (Array.isArray(data.agents)) return data.agents;
+  if (Array.isArray(data.data)) return data.data;
+  if (Array.isArray(root.agents)) return root.agents;
+  return [];
+}
+
+function secretLikeFieldNames(value, result = new Set()) {
+  if (!value || typeof value !== "object") return result;
+  if (Array.isArray(value)) {
+    for (const item of value) secretLikeFieldNames(item, result);
+    return result;
+  }
+  for (const [key, nested] of Object.entries(value)) {
+    if (/(api[_-]?key|token|secret|password|credential|authorization)/i.test(key)) result.add(key);
+    secretLikeFieldNames(nested, result);
+  }
+  return result;
+}
+
 async function main() {
   await app.whenReady();
   const authPath = join(process.env.DRSAI_HOME || join(homedir(), ".drsai"), "auth", "auth.json");
@@ -70,6 +97,14 @@ async function main() {
     hasUmtId: (typeof claims.umt_id === "string" && claims.umt_id.length > 0) ||
       (typeof claims.umt_id === "number" && Number.isInteger(claims.umt_id)),
     tokenActive: Number(claims.exp) * 1000 > Date.now(),
+    catalogStatus: null,
+    catalogAuthorized: false,
+    catalogApiVersion: null,
+    catalogCapabilities: [],
+    catalogAgentCount: 0,
+    catalogTopLevelKeys: [],
+    catalogAgentFieldKeys: [],
+    catalogSecretLikeFieldNames: [],
     modelsStatus: null,
     modelsAuthorized: false,
     availableModelIds: [],
@@ -84,6 +119,29 @@ async function main() {
     chatSawDone: false,
   };
   if (report.issuerMatches && report.audienceMatches && report.hasUmtId && report.tokenActive) {
+    const catalog = await fetch("https://ai-dev.ihep.ac.cn/api/native/v1/agents?refresh=false", {
+      headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+      redirect: "error",
+      signal: AbortSignal.timeout(20_000),
+    });
+    report.catalogStatus = catalog.status;
+    report.catalogAuthorized = catalog.ok;
+    report.catalogApiVersion = catalog.headers.get("x-opendrsai-api-version");
+    const catalogBody = await catalog.json().catch(() => null);
+    const catalogRoot = record(catalogBody);
+    const catalogData = record(catalogRoot.data);
+    const agents = agentItems(catalogBody);
+    report.catalogApiVersion = report.catalogApiVersion || catalogRoot.api_version ||
+      catalogRoot.version || catalogData.api_version || catalogData.version || null;
+    const capabilities = catalogRoot.capabilities || catalogData.capabilities;
+    report.catalogCapabilities = Array.isArray(capabilities)
+      ? capabilities.filter((item) => typeof item === "string").slice(0, 32)
+      : Object.keys(record(capabilities)).slice(0, 32);
+    report.catalogAgentCount = agents.length;
+    report.catalogTopLevelKeys = Object.keys(catalogRoot).sort();
+    report.catalogAgentFieldKeys = agents.length > 0 ? Object.keys(record(agents[0])).sort() : [];
+    report.catalogSecretLikeFieldNames = [...secretLikeFieldNames(catalogBody)].sort();
+
     const response = await fetch("https://ai-dev.ihep.ac.cn/apiv2/v1/models", {
       headers: { Authorization: `Bearer ${accessToken}` },
       signal: AbortSignal.timeout(20_000),
@@ -172,7 +230,8 @@ async function main() {
   const chatPassed = process.env.OPENDRSAI_LIVE_CHAT !== "1" ||
     (report.chatStatus === 200 && report.chatSawContent && report.chatSawDone);
   return report.issuerMatches && report.audienceMatches && report.hasUmtId &&
-    report.tokenActive && report.modelsAuthorized && chatPassed;
+    report.tokenActive && report.catalogAuthorized &&
+    report.catalogSecretLikeFieldNames.length === 0 && report.modelsAuthorized && chatPassed;
 }
 
 let exitCode = 1;

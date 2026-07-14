@@ -65,13 +65,19 @@ from __future__ import annotations
 
 
 import asyncio
+import base64
 import inspect
+
+import hashlib
+import mimetypes
 
 import json
 
 import os
 
 import re
+
+import subprocess
 
 import sys
 
@@ -91,7 +97,8 @@ from typing import Any, Optional
 
 
 
-from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.exceptions import RequestValidationError
 import httpx
 
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -99,6 +106,9 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from loguru import logger
 
 from pydantic import BaseModel, Field
+
+from drsai.backend.remote_workspace import PROTOCOL_VERSION, canonical_workspace, ensure_protocol, workspace_child
+from drsai.backend.remote_checkpoints import accept_checkpoint, create_checkpoint, list_checkpoints, preview_checkpoint, restore_checkpoint
 
 
 
@@ -338,6 +348,11 @@ class ChatRequest(BaseModel):
 
     )
 
+    workspace_id: Optional[str] = Field(
+        default=None,
+        description="Registered remote workspace used to constrain tool execution.",
+    )
+
     metadata: dict[str, Any] = Field(
 
         default_factory=dict,
@@ -443,6 +458,37 @@ def _get_store(user_id: str | None = None) -> CLISessionStore:
 
 # âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
+
+
+
+_remote_hepai_cache: tuple[float, list[Any], list[dict[str, Any]]] = (0.0, [], [])
+
+
+def _remote_hepai_model_row(item: Any) -> dict[str, Any]:
+    if isinstance(item, dict): return dict(item)
+    if hasattr(item, "model_dump"): return dict(item.model_dump())
+    if hasattr(item, "dict"): return dict(item.dict())
+    return {key: value for key, value in vars(item).items() if not key.startswith("_")}
+
+
+async def _load_remote_hepai_tools(force: bool = False) -> tuple[list[Any], list[dict[str, Any]]]:
+    global _remote_hepai_cache
+    cached_at, tools, rows = _remote_hepai_cache
+    if not force and time.time() - cached_at < 60:
+        return list(tools), [dict(row) for row in rows]
+    from hepai import HepAI
+    from hepai.tools.get_woker_functions import get_worker_sync_functions
+    from drsai.backend.remote_hepai import discover_enabled_worker_tools
+    api_key = os.environ.get("HEPAI_API_KEY")
+    base_url = os.environ.get("HEPAI_BASE_URL")
+    client = HepAI(api_key=api_key)
+    models = await asyncio.wait_for(asyncio.to_thread(client.models.list), timeout=5)
+    model_rows = [_remote_hepai_model_row(item) for item in getattr(models, "data", [])]
+    def load(worker_id: str):
+        return get_worker_sync_functions(name=worker_id, api_key=api_key, base_url=base_url)
+    tools, rows = await discover_enabled_worker_tools(model_rows, load, Path.home()/".local"/"share"/"opendrsai"/"remote"/"hepai-workers.json", timeout=5)
+    _remote_hepai_cache = (time.time(), list(tools), [dict(row) for row in rows])
+    return tools, rows
 
 
 class AgentManager:
@@ -582,7 +628,7 @@ class AgentManager:
 
 
 
-    async def _get_or_create_thread(self, thread_id: str, user_id: str) -> Thread:
+    async def _get_or_create_thread(self, thread_id: str, user_id: str, work_dir: str | None = None) -> Thread:
 
         """Get or create a Thread record."""
 
@@ -599,8 +645,14 @@ class AgentManager:
         )
 
         if resp.status and resp.data:
-
-            return resp.data[0]
+            thread = resp.data[0]
+            if work_dir:
+                meta = dict(getattr(thread, "meta", None) or {})
+                if meta.get("workdir") != work_dir:
+                    meta["workdir"] = work_dir
+                    thread.meta = meta
+                    db.upsert(thread)
+            return thread
 
         thread = Thread(
 
@@ -611,6 +663,8 @@ class AgentManager:
             status=RunStatus.CREATED,
 
             messages=[],
+
+            meta={"workdir": work_dir} if work_dir else {},
 
         )
 
@@ -723,6 +777,11 @@ class AgentManager:
                     defult_config_name=model_alias or _get_default_model_alias(),
                     work_dir=work_dir or os.getcwd(),
                 )
+                try:
+                    remote_tools, _ = await _load_remote_hepai_tools()
+                    if remote_tools: create_agent_kwargs["extra_tools"] = remote_tools
+                except Exception as exc:
+                    logger.warning(f"HepAI remote tools unavailable; creating core agent without them: {type(exc).__name__}")
                 if inspect.iscoroutinefunction(create_agent):
                     agent = await create_agent(**create_agent_kwargs)
                 else:
@@ -755,7 +814,7 @@ class AgentManager:
 
                 # 4. Get-or-create Thread record
 
-                await self._get_or_create_thread(tid, uid)
+                await self._get_or_create_thread(tid, uid, work_dir)
 
 
 
@@ -1098,15 +1157,124 @@ app = FastAPI(
 
 )
 
+_REMOTE_PROTOCOL_VERSION = PROTOCOL_VERSION
+_remote_workspaces: dict[str, Path] = {}
+
+
+def _remote_audit(event: str, **fields: Any) -> None:
+    """Best-effort local audit trail; command contents, tokens and credentials are never recorded."""
+    try:
+        path = Path.home()/".local"/"share"/"opendrsai"/"remote"/"audit.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists() and path.stat().st_size > 5_000_000:
+            os.replace(path, path.with_suffix(".jsonl.1"))
+        safe = {key: value for key, value in fields.items() if key not in {"token", "content", "data", "api_key"}}
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"at": datetime.now().astimezone().isoformat(), "event": event, **safe}, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
+class RemoteHandshakeRequest(BaseModel):
+    protocol_version: int = 1
+    workspace_path: str
+    client_version: str = ""
+
+
+class RemoteWorkspaceOpenRequest(BaseModel):
+    workspace_id: str
+    path: str
+
+
+class RemoteGitFileRequest(BaseModel):
+    path: str
+    expected_diff_hash: str
+    patch: str | None = None
+
+
+class RemoteGitCommitRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=240)
+    body: str | None = Field(default=None, max_length=10000)
+
+
+class RemoteFileWriteRequest(BaseModel):
+    path: str = Field(min_length=1, max_length=4096)
+    content_base64: str = Field(max_length=16_000_000)
+    expected_sha256: str | None = Field(default=None, pattern=r"^[a-fA-F0-9]{64}$")
+
+
+class RemoteCheckpointRequest(BaseModel):
+    label: str | None = None
+    maxFiles: int | None = None
+    maxBytesPerFile: int | None = None
+    kind: str | None = None
+    runId: str | None = None
+
+
+class RemoteCheckpointActionRequest(BaseModel):
+    checkpointId: str
+    maxFiles: int | None = None
+    maxCharsPerFile: int | None = None
+
+
+def _canonical_workspace(path: str) -> Path:
+    try:
+        return canonical_workspace(path)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _workspace_root(workspace_id: str) -> Path:
+    root = _remote_workspaces.get(workspace_id)
+    if root is None:
+        raise HTTPException(status_code=404, detail="Workspace is not open")
+    return root
+
+
+def _workspace_child(workspace_id: str, path: str) -> Path:
+    root = _workspace_root(workspace_id)
+    try:
+        return workspace_child(root, path)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail="Path escapes the workspace") from exc
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return candidate
+
 
 @app.middleware("http")
 async def authenticate_desktop_gateway(request: Request, call_next):
+    supplied_correlation = request.headers.get("x-correlation-id", "")
+    correlation_id = supplied_correlation if re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", supplied_correlation) else uuid.uuid4().hex
+    request.state.correlation_id = correlation_id
     if not verify_gateway_instance(request.headers.get("x-opendrsai-gateway-token")):
         return JSONResponse(
             status_code=401,
-            content={"error": {"code": "gateway_unauthorized", "message": "Gateway caller is not authorized.", "retryable": False}},
+            content={"error": {"code": "gateway_unauthorized", "message": "Gateway caller is not authorized.", "retryable": False, "correlation_id": correlation_id}},
+            headers={"X-Correlation-ID": correlation_id},
         )
-    return await call_next(request)
+    response = await call_next(request)
+    response.headers["X-Correlation-ID"] = correlation_id
+    return response
+
+
+def _protocol_error(request: Request, status: int, code: str, message: str, retryable: bool = False) -> JSONResponse:
+    correlation_id = getattr(request.state, "correlation_id", uuid.uuid4().hex)
+    return JSONResponse(
+        status_code=status,
+        content={"error": {"code": code, "message": message, "retryable": retryable, "correlation_id": correlation_id}},
+        headers={"X-Correlation-ID": correlation_id},
+    )
+
+
+@app.exception_handler(HTTPException)
+async def remote_http_error(request: Request, exc: HTTPException):
+    return _protocol_error(request, exc.status_code, f"http_{exc.status_code}", str(exc.detail), exc.status_code in {408, 429, 502, 503, 504})
+
+
+@app.exception_handler(RequestValidationError)
+async def remote_validation_error(request: Request, exc: RequestValidationError):
+    return _protocol_error(request, 422, "request_validation_failed", "Remote Gateway request validation failed.")
 
 
 
@@ -1123,6 +1291,439 @@ async def health():
     """Health check endpoint. Desktop polls this to detect API readiness."""
 
     return await manager.health()
+
+
+@app.websocket("/v1/pty")
+async def remote_pty_socket(websocket: WebSocket):
+    await websocket.accept()
+    try: authentication = await asyncio.wait_for(websocket.receive_json(), timeout=5)
+    except (asyncio.TimeoutError, WebSocketDisconnect): await websocket.close(code=4401); return
+    if authentication.get("type") != "auth" or not verify_gateway_instance(authentication.get("token")):
+        await websocket.close(code=4401); return
+    if sys.platform == "win32":
+        await websocket.close(code=4400, reason="Remote PTY requires Linux"); return
+    from drsai.backend.remote_pty import manager as pty_manager
+    attached = None
+
+    async def send(message: dict):
+        await websocket.send_json(message)
+
+    try:
+        while True:
+            message = await websocket.receive_json(); operation = message.get("type")
+            if operation == "create":
+                workspace_id = str(message.get("workspaceId") or ""); root = _workspace_root(workspace_id)
+                raw_cwd = str(message.get("cwd") or str(root)); cwd = _workspace_child(workspace_id, raw_cwd)
+                if not cwd.is_dir(): raise ValueError("PTY cwd must be a directory")
+                session = pty_manager.create(workspace_id, root, cwd, int(message.get("cols") or 100), int(message.get("rows") or 30), message.get("shell"))
+                session.listeners.add(send); attached = session.id
+                _remote_audit("pty.create", workspace_id=workspace_id, session_id=session.id, cwd=session.cwd)
+                await send({"type": "created", "id": session.id, "pid": session.pid, "cwd": session.cwd, "shell": session.shell, "buffer": ""})
+            elif operation == "attach":
+                session = pty_manager.sessions[str(message.get("id"))]
+                session.listeners.add(send); attached = session.id
+                _remote_audit("pty.attach", workspace_id=session.workspace_id, session_id=session.id)
+                await send({"type": "attached", "id": session.id, "pid": session.pid, "cwd": session.cwd, "shell": session.shell, "buffer": bytes(session.buffer).decode("utf-8", "replace")})
+            elif operation == "write":
+                data = str(message.get("data") or ""); pty_manager.write(str(message.get("id")), data); _remote_audit("pty.write", session_id=str(message.get("id")), byte_count=len(data.encode("utf-8")))
+            elif operation == "resize":
+                cols=int(message.get("cols") or 100); rows=int(message.get("rows") or 30); pty_manager.resize(str(message.get("id")), cols, rows); _remote_audit("pty.resize", session_id=str(message.get("id")), cols=cols, rows=rows)
+            elif operation == "kill":
+                pty_manager.kill(str(message.get("id"))); _remote_audit("pty.kill", session_id=str(message.get("id")))
+            else: await send({"type": "error", "message": "Unknown PTY operation"})
+    except (WebSocketDisconnect, KeyError):
+        pass
+    finally:
+        if attached and attached in pty_manager.sessions: pty_manager.sessions[attached].listeners.discard(send)
+
+
+@app.post("/v1/remote/handshake")
+async def remote_handshake(req: RemoteHandshakeRequest):
+    try:
+        ensure_protocol(req.protocol_version)
+    except ValueError:
+        raise HTTPException(status_code=409, detail="Remote protocol version is incompatible")
+    root = _canonical_workspace(req.workspace_path)
+    try:
+        from drsai.version import __version__ as gateway_version
+    except Exception:
+        gateway_version = "unknown"
+    return {
+        "protocol_version": _REMOTE_PROTOCOL_VERSION,
+        "gateway_version": gateway_version,
+        "platform": sys.platform,
+        "workspace_path": str(root),
+        "capabilities": ["threads", "chat", "files", "file-watch", "git", "approvals", "hepai-worker", "pty"],
+        "capability_versions": {
+            "threads": 1,
+            "chat": 1,
+            "files": 2,
+            "file-watch": 2,
+            "git": 1,
+            "approvals": 1,
+            "hepai-worker": 1,
+            "pty": 2,
+        },
+    }
+
+
+@app.post("/v1/workspaces/open")
+async def remote_workspace_open(req: RemoteWorkspaceOpenRequest):
+    if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,160}", req.workspace_id):
+        raise HTTPException(status_code=400, detail="Invalid workspace id")
+    root = _canonical_workspace(req.path)
+    _remote_workspaces[req.workspace_id] = root
+    return {"workspace_id": req.workspace_id, "path": str(root)}
+
+
+@app.get("/v1/workspaces/{workspace_id}")
+async def remote_workspace_info(workspace_id: str):
+    root = _workspace_root(workspace_id)
+    return {"workspace_id": workspace_id, "path": str(root), "exists": root.is_dir()}
+
+
+@app.get("/v1/workspaces/{workspace_id}/context")
+async def remote_workspace_context(workspace_id: str):
+    root = _workspace_root(workspace_id); instructions = []
+    for name in ("AGENTS.md", "DRSAI.md", "CLAUDE.md", "project.md"):
+        path = root/name
+        if path.is_file():
+            raw = path.read_text("utf-8", errors="replace"); instructions.append({"name": name, "path": str(path), "content": raw[:8000], "truncated": len(raw) > 8000})
+    completed = subprocess.run(["git", "-C", str(root), "status", "--porcelain=v1", "--branch"], capture_output=True, text=True, timeout=10, check=False)
+    changed = []
+    if completed.returncode == 0:
+        for line in completed.stdout.splitlines()[1:]:
+            if len(line) >= 4: changed.append({"path": line[3:], "status": "untracked" if line[:2] == "??" else "deleted" if "D" in line[:2] else "added" if "A" in line[:2] else "modified"})
+    return {"workspacePath": str(root), "trusted": True, "git": {"hasChanges": bool(changed), "changedFiles": changed}, "instructions": instructions, "stats": {"instructionCount": len(instructions), "changedFileCount": len(changed)}}
+
+
+@app.get("/v1/workspaces/{workspace_id}/directories")
+async def remote_workspace_directories(workspace_id: str, path: str = "."):
+    directory = _workspace_child(workspace_id, path)
+    if not directory.is_dir():
+        raise HTTPException(status_code=400, detail="Path must be a directory")
+    rows = []
+    for entry in directory.iterdir():
+        try:
+            resolved = entry.resolve(strict=True)
+            resolved.relative_to(_workspace_root(workspace_id))
+        except (OSError, ValueError):
+            continue
+        if resolved.is_dir():
+            rows.append({"name": entry.name, "path": str(resolved), "directory": True})
+    return {"data": sorted(rows, key=lambda item: item["name"].lower())}
+
+
+@app.get("/v1/workspaces/{workspace_id}/files")
+async def remote_workspace_files(workspace_id: str, path: str = ".", depth: int = Query(default=2, ge=0, le=5), query: str = "", offset: int = Query(default=0, ge=0), max_entries: int = Query(default=500, ge=1, le=5000)):
+    root = _workspace_root(workspace_id)
+    start = _workspace_child(workspace_id, path)
+    if not start.is_dir():
+        raise HTTPException(status_code=400, detail="Path must be a directory")
+
+    matched: list[dict[str, Any]] = []
+    git_statuses: dict[str, str] = {}
+    completed = subprocess.run(["git", "-C", str(root), "status", "--porcelain=v1", "--untracked-files=all"], capture_output=True, text=True, timeout=10, check=False)
+    if completed.returncode == 0:
+        for line in completed.stdout.splitlines():
+            if len(line) < 4: continue
+            code, changed_path = line[:2], line[3:]
+            if " -> " in changed_path: changed_path = changed_path.split(" -> ", 1)[1]
+            changed_path = changed_path.strip('"').replace("\\", "/")
+            git_statuses[changed_path] = "untracked" if code == "??" else "renamed" if "R" in code else "deleted" if "D" in code else "added" if "A" in code else "modified"
+
+    def visit(directory: Path, remaining: int) -> list[dict[str, Any]]:
+        result = []
+        for entry in sorted(directory.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower())):
+            try:
+                resolved = entry.resolve(strict=True)
+                resolved.relative_to(root)
+            except (OSError, ValueError):
+                continue
+            relative_path = str(resolved.relative_to(root))
+            stat = resolved.stat()
+            item = {"name": entry.name, "path": relative_path, "directory": resolved.is_dir(), "size": stat.st_size, "modified_at": stat.st_mtime}
+            if resolved.is_dir() and remaining > 0:
+                item["children"] = visit(resolved, remaining - 1)
+                descendant = next((status for changed, status in git_statuses.items() if changed == relative_path or changed.startswith(relative_path + "/")), None)
+                if descendant: item["git_status"] = descendant
+            elif relative_path in git_statuses:
+                item["git_status"] = git_statuses[relative_path]
+            result.append(item)
+        return result
+
+    tree = visit(start, depth)
+    needle = query.casefold().strip()
+    def collect(rows: list[dict[str, Any]]) -> None:
+        for row in rows:
+            if not needle or needle in row["path"].casefold():
+                matched.append({key: value for key, value in row.items() if key != "children"})
+            collect(row.get("children", []))
+    collect(tree)
+    page = matched[offset:offset + max_entries]
+    return {"workspace_id": workspace_id, "data": page if needle or offset or len(matched) > max_entries else tree, "total": len(matched), "offset": offset, "next_offset": offset + len(page) if offset + len(page) < len(matched) else None, "truncated": offset + len(page) < len(matched)}
+
+
+@app.get("/v1/workspaces/{workspace_id}/file")
+async def remote_workspace_file(workspace_id: str, path: str, max_bytes: int = Query(default=262144, ge=1, le=1048576)):
+    target = _workspace_child(workspace_id, path)
+    if not target.is_file():
+        raise HTTPException(status_code=400, detail="Path must be a file")
+    raw = target.read_bytes()
+    if b"\x00" in raw[:8192]:
+        mime = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+        encoded = base64.b64encode(raw[:max_bytes]).decode("ascii")
+        return {"path": str(target.relative_to(_workspace_root(workspace_id))), "data_url": f"data:{mime};base64,{encoded}", "mime": mime, "truncated": len(raw) > max_bytes, "size": len(raw), "modified_at": target.stat().st_mtime}
+    content = raw[:max_bytes].decode("utf-8", errors="replace")
+    return {"path": str(target.relative_to(_workspace_root(workspace_id))), "content": content, "mime": mimetypes.guess_type(target.name)[0] or "text/plain", "truncated": len(raw) > max_bytes, "size": len(raw), "modified_at": target.stat().st_mtime}
+
+
+@app.get("/v1/workspaces/{workspace_id}/file/stream")
+async def remote_workspace_file_stream(workspace_id: str, path: str, offset: int = Query(default=0, ge=0), length: int = Query(default=1048576, ge=1, le=8388608)):
+    target = _workspace_child(workspace_id, path)
+    if not target.is_file():
+        raise HTTPException(status_code=400, detail="Path must be a file")
+    size = target.stat().st_size
+    if offset > size:
+        raise HTTPException(status_code=416, detail="Offset exceeds file size")
+    async def chunks():
+        remaining = min(length, size - offset)
+        with target.open("rb") as handle:
+            handle.seek(offset)
+            while remaining:
+                block = handle.read(min(65536, remaining))
+                if not block: break
+                remaining -= len(block)
+                yield block
+    headers = {"X-File-Size": str(size), "X-File-SHA256": hashlib.sha256(target.read_bytes()).hexdigest(), "X-Next-Offset": str(min(size, offset + length))}
+    return StreamingResponse(chunks(), media_type=mimetypes.guess_type(target.name)[0] or "application/octet-stream", headers=headers)
+
+
+@app.put("/v1/workspaces/{workspace_id}/file")
+async def remote_workspace_file_write(workspace_id: str, request: RemoteFileWriteRequest):
+    root = _workspace_root(workspace_id)
+    try:
+        target = (root / request.path).resolve(strict=False)
+        target.relative_to(root)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Path escapes the workspace") from exc
+    if not target.parent.is_dir():
+        raise HTTPException(status_code=400, detail="Parent directory does not exist")
+    current = target.read_bytes() if target.is_file() else b""
+    current_hash = hashlib.sha256(current).hexdigest()
+    if request.expected_sha256 is not None and current_hash.lower() != request.expected_sha256.lower():
+        raise HTTPException(status_code=409, detail={"code": "file_conflict", "message": "File changed since it was read", "current_sha256": current_hash})
+    try:
+        content = base64.b64decode(request.content_base64, validate=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="content_base64 is invalid") from exc
+    temporary = target.parent / f".{target.name}.opendrsai-{uuid.uuid4().hex}.tmp"
+    try:
+        temporary.write_bytes(content)
+        if target.exists(): os.chmod(temporary, target.stat().st_mode & 0o777)
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return {"path": str(target.relative_to(_workspace_root(workspace_id))), "size": len(content), "sha256": hashlib.sha256(content).hexdigest(), "modified_at": target.stat().st_mtime}
+
+
+@app.websocket("/v1/workspaces/{workspace_id}/watch")
+async def remote_workspace_watch(websocket: WebSocket, workspace_id: str):
+    await websocket.accept()
+    try: authentication = await asyncio.wait_for(websocket.receive_json(), timeout=5)
+    except (asyncio.TimeoutError, WebSocketDisconnect): await websocket.close(code=4401); return
+    if authentication.get("type") != "auth" or not verify_gateway_instance(authentication.get("token")):
+        await websocket.close(code=4401); return
+    root = _workspace_root(workspace_id)
+    def snapshot() -> dict[str, tuple[int, int]]:
+        rows: dict[str, tuple[int, int]] = {}
+        for index, candidate in enumerate(root.rglob("*")):
+            if index >= 5000: break
+            try:
+                resolved = candidate.resolve(strict=True); resolved.relative_to(root)
+                if resolved.is_file():
+                    stat = resolved.stat(); rows[str(resolved.relative_to(root))] = (stat.st_mtime_ns, stat.st_size)
+            except (OSError, ValueError): continue
+        return rows
+    previous = snapshot()
+    try:
+        while True:
+            await asyncio.sleep(1); current = snapshot()
+            changes = [{"path": path, "type": "deleted" if path not in current else "created" if path not in previous else "modified"} for path in sorted(set(previous) | set(current)) if previous.get(path) != current.get(path)]
+            if changes: await websocket.send_json({"type": "changes", "workspace_id": workspace_id, "changes": changes})
+            previous = current
+    except WebSocketDisconnect:
+        pass
+
+
+@app.get("/v1/workspaces/{workspace_id}/folder-summary")
+async def remote_workspace_folder_summary(workspace_id: str, path: str = ".", max_entries: int = Query(default=500, ge=1, le=5000), max_sample_files: int = Query(default=20, ge=0, le=100), max_chars: int = Query(default=20000, ge=1000, le=200000)):
+    root = _workspace_root(workspace_id); directory = _workspace_child(workspace_id, path)
+    if not directory.is_dir(): raise HTTPException(status_code=400, detail="Path must be a directory")
+    files = []; directory_count = 0; total = 0; truncated = False
+    for candidate in directory.rglob("*"):
+        if any(part in {".git", "node_modules", ".venv", "__pycache__"} for part in candidate.relative_to(directory).parts): continue
+        total += 1
+        if total > max_entries: truncated = True; break
+        if candidate.is_dir(): directory_count += 1
+        elif candidate.is_file() and len(files) < max_sample_files:
+            size = candidate.stat().st_size; relative = str(candidate.relative_to(root)).replace("\\", "/")
+            files.append({"path": str(candidate), "relativePath": relative, "kind": "text", "size": size})
+    summary = "\n".join(f"- {item['relativePath']} ({item['size']} bytes)" for item in files)[:max_chars]
+    return {"path": str(directory), "name": directory.name, "totalEntries": min(total, max_entries), "fileCount": len(files), "directoryCount": directory_count, "skippedDirectoryCount": 0, "truncated": truncated, "estimatedTokens": len(summary) // 4, "sampledFiles": files, "summary": summary}
+
+
+@app.get("/v1/workspaces/{workspace_id}/git/file-at-ref")
+async def remote_workspace_git_file_at_ref(workspace_id: str, ref: str, path: str, max_bytes: int = Query(default=262144, ge=1, le=1048576)):
+    root = _workspace_root(workspace_id); target = (root / path).resolve(strict=False)
+    try: relative = str(target.relative_to(root)).replace("\\", "/")
+    except ValueError as exc: raise HTTPException(status_code=403, detail="Path escapes the workspace") from exc
+    if not re.fullmatch(r"[A-Za-z0-9_./@{}^~:+-]{1,200}", ref): raise HTTPException(status_code=400, detail="Invalid Git ref")
+    completed = subprocess.run(["git", "-C", str(root), "show", f"{ref}:{relative}"], capture_output=True, timeout=15, check=False)
+    if completed.returncode != 0: return {"workspacePath": str(root), "ref": ref, "path": str(target), "content": "", "truncated": False, "missing": True, "message": "File does not exist at ref."}
+    raw = completed.stdout; content = raw[:max_bytes].decode("utf-8", errors="replace")
+    return {"workspacePath": str(root), "ref": ref, "path": str(target), "content": content, "contentHash": hashlib.sha256(raw).hexdigest(), "truncated": len(raw) > max_bytes, "missing": False, "message": "Remote Git file loaded."}
+
+
+@app.get("/v1/workspaces/{workspace_id}/git/diff")
+async def remote_workspace_git_diff(workspace_id: str, staged: bool = False, path: str | None = None):
+    root = _workspace_root(workspace_id)
+    args = ["git", "-C", str(root), "diff"] + (["--cached"] if staged else [])
+    if path:
+        target = _workspace_child(workspace_id, path)
+        args += ["--", str(target.relative_to(root))]
+    completed = subprocess.run(args, capture_output=True, text=True, timeout=15, check=False)
+    if completed.returncode != 0:
+        raise HTTPException(status_code=400, detail=completed.stderr.strip() or "Git diff failed")
+    return {"workspace_id": workspace_id, "diff": completed.stdout, "diff_hash": hashlib.sha256(completed.stdout.encode()).hexdigest(), "staged": staged}
+
+
+@app.get("/v1/workspaces/{workspace_id}/checkpoints")
+async def remote_workspace_checkpoints(workspace_id: str):
+    _workspace_root(workspace_id)
+    return {"data": list_checkpoints(workspace_id)}
+
+
+@app.post("/v1/workspaces/{workspace_id}/checkpoints")
+async def remote_workspace_checkpoint_create(workspace_id: str, request: RemoteCheckpointRequest):
+    return create_checkpoint(workspace_id, _workspace_root(workspace_id), request.model_dump(exclude_none=True))
+
+
+@app.post("/v1/workspaces/{workspace_id}/checkpoints/preview")
+async def remote_workspace_checkpoint_preview(workspace_id: str, request: RemoteCheckpointActionRequest):
+    try:
+        return preview_checkpoint(workspace_id, _workspace_root(workspace_id), request.checkpointId, request.maxFiles or 20, request.maxCharsPerFile or 4000)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Checkpoint not found") from exc
+
+
+@app.post("/v1/workspaces/{workspace_id}/checkpoints/restore")
+async def remote_workspace_checkpoint_restore(workspace_id: str, request: RemoteCheckpointActionRequest):
+    try:
+        return restore_checkpoint(workspace_id, _workspace_root(workspace_id), request.checkpointId)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Checkpoint not found") from exc
+
+
+@app.post("/v1/workspaces/{workspace_id}/checkpoints/accept")
+async def remote_workspace_checkpoint_accept(workspace_id: str, request: RemoteCheckpointActionRequest):
+    _workspace_root(workspace_id)
+    try:
+        return accept_checkpoint(workspace_id, request.checkpointId)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Checkpoint not found") from exc
+
+
+def _verified_git_diff(workspace_id: str, request: RemoteGitFileRequest) -> tuple[Path, str]:
+    root = _workspace_root(workspace_id)
+    target = _workspace_child(workspace_id, request.path)
+    relative = str(target.relative_to(root))
+    completed = subprocess.run(["git", "-C", str(root), "diff", "--", relative], capture_output=True, text=True, timeout=15, check=False)
+    if completed.returncode != 0:
+        raise HTTPException(status_code=400, detail=completed.stderr.strip() or "Git diff failed")
+    actual = hashlib.sha256(completed.stdout.encode()).hexdigest()
+    if actual != request.expected_diff_hash:
+        raise HTTPException(status_code=409, detail="Git diff changed; refresh before applying the operation")
+    return root, relative
+
+
+@app.post("/v1/workspaces/{workspace_id}/git/stage")
+async def remote_workspace_git_stage(workspace_id: str, request: RemoteGitFileRequest):
+    root, relative = _verified_git_diff(workspace_id, request)
+    completed = subprocess.run(["git", "-C", str(root), "add", "--", relative], capture_output=True, text=True, timeout=15, check=False)
+    if completed.returncode != 0:
+        raise HTTPException(status_code=400, detail=completed.stderr.strip() or "Git stage failed")
+    return {"workspace_id": workspace_id, "path": relative, "staged": True}
+
+
+@app.post("/v1/workspaces/{workspace_id}/git/commit")
+async def remote_workspace_git_commit(workspace_id: str, request: RemoteGitCommitRequest):
+    root = _workspace_root(workspace_id); args = ["git", "-C", str(root), "commit", "-m", request.message]
+    if request.body and request.body.strip(): args += ["-m", request.body.strip()]
+    completed = subprocess.run(args, capture_output=True, text=True, timeout=60, check=False)
+    if completed.returncode != 0: raise HTTPException(status_code=400, detail=completed.stderr.strip() or completed.stdout.strip() or "Git commit failed")
+    return {"workspace_id": workspace_id, "committed": True, "output": completed.stdout[-4000:]}
+
+
+@app.post("/v1/workspaces/{workspace_id}/git/revert")
+async def remote_workspace_git_revert(workspace_id: str, request: RemoteGitFileRequest):
+    root, relative = _verified_git_diff(workspace_id, request)
+    tracked = subprocess.run(["git", "-C", str(root), "ls-files", "--error-unmatch", "--", relative], capture_output=True, timeout=10, check=False).returncode == 0
+    if tracked:
+        completed = subprocess.run(["git", "-C", str(root), "restore", "--worktree", "--", relative], capture_output=True, text=True, timeout=15, check=False)
+    else:
+        target = _workspace_child(workspace_id, relative)
+        target.unlink()
+        completed = subprocess.CompletedProcess([], 0, "", "")
+    if completed.returncode != 0:
+        raise HTTPException(status_code=400, detail=completed.stderr.strip() or "Git revert failed")
+    return {"workspace_id": workspace_id, "path": relative, "reverted": True}
+
+
+@app.post("/v1/workspaces/{workspace_id}/git/{operation}-hunk")
+async def remote_workspace_git_hunk(workspace_id: str, operation: str, request: RemoteGitFileRequest):
+    root, relative = _verified_git_diff(workspace_id, request)
+    if operation not in {"stage", "revert"} or not request.patch or len(request.patch) > 1_000_000:
+        raise HTTPException(status_code=400, detail="Invalid Git hunk operation")
+    args = ["git", "-C", str(root), "apply", "--whitespace=nowarn"]
+    if operation == "stage":
+        args.append("--cached")
+    else:
+        args.append("--reverse")
+    completed = subprocess.run(args, input=request.patch, capture_output=True, text=True, timeout=15, check=False)
+    if completed.returncode != 0:
+        raise HTTPException(status_code=409, detail=completed.stderr.strip() or "Git hunk no longer applies")
+    return {"workspace_id": workspace_id, "path": relative, "applied": True, "operation": operation}
+
+
+@app.get("/v1/hepai/workers")
+async def list_hepai_workers():
+    """Return configured HepAI worker tools without making workspace access depend on HepAI."""
+    try:
+        tools, rows = await _load_remote_hepai_tools(force=True)
+        _remote_audit("hepai.workers.discovered", worker_count=len(rows), callable_count=sum(len(row.get("callables", [])) for row in rows))
+        return {"object": "list", "data": rows, "available": True, "registered_tool_count": len(tools)}
+    except Exception as exc:
+        _remote_audit("hepai.workers.degraded", error=type(exc).__name__)
+        return {"object": "list", "data": [], "available": False, "error": type(exc).__name__}
+
+
+class HepaiWorkerStateRequest(BaseModel):
+    enabled: bool
+
+
+@app.put("/v1/hepai/workers/{worker_id}/state")
+async def set_hepai_worker_state(worker_id: str, request: HepaiWorkerStateRequest):
+    global _remote_hepai_cache
+    if not re.fullmatch(r"[A-Za-z0-9_.:/-]{1,200}", worker_id): raise HTTPException(status_code=400, detail="Invalid Worker id")
+    path = Path.home()/".local"/"share"/"opendrsai"/"remote"/"hepai-workers.json"; path.parent.mkdir(parents=True, exist_ok=True)
+    try: config = json.loads(path.read_text("utf-8"))
+    except (OSError, ValueError): config = {}
+    config[worker_id] = request.enabled; path.write_text(json.dumps(config, indent=2), "utf-8")
+    _remote_hepai_cache = (0.0, [], [])
+    _remote_audit("hepai.worker.state", worker_id=worker_id, enabled=request.enabled)
+    await manager.evict_user(_get_user_id())
+    return {"id": worker_id, "enabled": request.enabled}
 
 
 
@@ -1453,6 +2054,35 @@ def _task_with_runtime_mode(task: str, metadata: dict[str, Any] | None) -> str:
     return "\n".join(lines)
 
 
+def _task_with_remote_attachments(task: str, metadata: dict[str, Any] | None, workspace_id: str | None) -> str:
+    if not workspace_id or not isinstance(metadata, dict): return task
+    attachments = metadata.get("attachments")
+    if not isinstance(attachments, list): return task
+    blocks: list[str] = []
+    total = 0
+    for item in attachments[:20]:
+        if not isinstance(item, dict): continue
+        kind = str(item.get("kind") or ""); name = str(item.get("name") or "attachment")[:200]
+        if kind in {"browser", "terminal", "selection"}:
+            content = str(item.get("visibleText") or item.get("note") or "")[:12000]
+        elif kind == "file":
+            try:
+                target = _workspace_child(workspace_id, str(item.get("path") or ""))
+                raw = target.read_bytes()[:262144]
+                content = raw.decode("utf-8", errors="replace") if b"\x00" not in raw[:8192] else "[binary file omitted]"
+            except (HTTPException, OSError): content = "[file unavailable]"
+        elif kind == "folder":
+            try:
+                directory = _workspace_child(workspace_id, str(item.get("path") or ""))
+                content = "\n".join(str(path.relative_to(directory)) for path in directory.rglob("*") if path.is_file())[:24000]
+            except (HTTPException, OSError): content = "[folder unavailable]"
+        else: continue
+        remaining = 50000 - total
+        if remaining <= 0: break
+        content = content[:remaining]; total += len(content); blocks.append(f"Attachment: {name} ({kind})\n{content}")
+    return task if not blocks else f"{task}\n\nRemote workspace attachment context:\n" + "\n\n".join(blocks)
+
+
 @app.post("/v1/chat/completions")
 
 async def chat_completions(request: ChatRequest, raw_request: Request):
@@ -1508,7 +2138,18 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
 
     user_id = request.user_id or _get_user_id()
 
-    work_dir = request.work_dir or os.getcwd()
+    if request.workspace_id:
+        workspace_root = _workspace_root(request.workspace_id)
+        if request.work_dir:
+            work_dir = str(_workspace_child(request.workspace_id, request.work_dir))
+            if not Path(work_dir).is_dir():
+                raise HTTPException(status_code=400, detail="work_dir must be a directory")
+        else:
+            work_dir = str(workspace_root)
+    else:
+        work_dir = request.work_dir or os.getcwd()
+
+    task = _task_with_remote_attachments(task, request.metadata, request.workspace_id)
 
 
 
@@ -1648,13 +2289,18 @@ async def list_threads(
 
     offset: int = Query(default=0, ge=0),
 
+    workspace_id: str | None = Query(default=None),
+
 ):
 
     """List sessions for the given user, newest first."""
 
     store = _get_store(user_id)
 
-    infos = store.list(limit=limit)
+    infos = store.list(limit=max(limit + offset, 100) if workspace_id else limit)
+    if workspace_id:
+        root = str(_workspace_root(workspace_id))
+        infos = [info for info in infos if getattr(info, "workdir", None) == root]
 
     # Paginate in Python (CLISessionStore.list doesn't support offset natively)
 

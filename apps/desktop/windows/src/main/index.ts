@@ -9,6 +9,7 @@ import {
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   protocol,
@@ -31,12 +32,21 @@ import {
 import { getDesktopHealth, getInstallStatus } from "./status";
 import { bootstrapDesktop } from "./bootstrap";
 import { DRSAI_HOME } from "./paths";
-import { checkForUpdates, subscribeUpdateStatus } from "./updates";
-import { abortChat, startChat } from "./chat";
+import {
+  cancelUpdate,
+  checkForUpdates,
+  confirmPendingUpdateLaunch,
+  restorePreparedUpdate,
+  downloadUpdate,
+  installUpdate,
+  startUpdateScheduler,
+  subscribeUpdateStatus,
+} from "./updates";
+import { abortChat, hasActiveChats, startChat } from "./chat";
 import { listProviderErrorAnalytics } from "./providerErrorAnalytics";
 import { listProviderUsageAnalytics } from "./providerUsageAnalytics";
-import { abortAgentRun, startAgentRun } from "./agentRuns";
-import { listAgents } from "./agents";
+import { abortAgentRun, hasActiveAgentRuns, startAgentRun } from "./agentRuns";
+import { getPlatformAgentStatus, listAgents } from "./agents";
 import {
   executeForkLifecycleAction,
   prepareForkWorktree,
@@ -136,6 +146,44 @@ import {
   listWorkspaces,
   updateWorkspace,
 } from "./workspaces";
+import {
+  connectRemoteWorkspace,
+  disconnectRemoteWorkspace,
+  getRemoteWorkspaceStatus,
+  getRemoteGatewayAccess,
+  getRemoteWorkspaceGitDiff,
+  executeRemoteWorkspaceMutation,
+  listRemoteWorkspaceCheckpoints,
+  createRemoteWorkspaceCheckpoint,
+  previewRemoteWorkspaceCheckpoint,
+  restoreRemoteWorkspaceCheckpoint,
+  acceptRemoteWorkspaceCheckpoint,
+  summarizeRemoteWorkspaceFolder,
+  getRemoteWorkspaceGitFileAtRef,
+  getRemoteWorkspaceRootForPath,
+  getRemoteThreadSnapshot,
+  searchRemoteThreadMessages,
+  commitRemoteWorkspace,
+  getRemoteWorkspaceContextOverview,
+  getRemoteSshDiagnosticReport,
+  listRemoteWorkspaceFiles,
+  previewRemoteWorkspaceFile,
+  listRemoteDirectories,
+  listRemoteThreads,
+  listRemoteHepaiWorkers,
+  setRemoteHepaiWorkerEnabled,
+  listSshHosts,
+  preflightRemoteGateway,
+  installRemoteGateway,
+  cancelRemoteGatewayOperation,
+  restorePersistedRemoteWorkspaces,
+  setRemoteWorkspaceStatusPublisher,
+  setRemoteGatewayOperationPublisher,
+  setRemoteFileChangePublisher,
+  stopAllRemoteWorkspaces,
+  testSshHost,
+  approveSshHostKey,
+} from "./remoteWorkspace";
 import { getIdeContext } from "./ideContext";
 import {
   getWorkspaceContextOverview,
@@ -208,6 +256,7 @@ import type {
 import type {
   DesktopApprovalProposalRequest,
   DesktopApprovalProposalResult,
+  DesktopA5ServiceGuidanceScenario,
   DesktopChannelAdapterConfigureRequest,
   DesktopChannelAdapterAuthStartRequest,
   DesktopChannelContextImportRequest,
@@ -228,6 +277,7 @@ import type {
   DesktopForkQueueStartApprovalRequest,
   DesktopForkQueueStartApprovalResult,
   DesktopGitCommitApprovalRequest,
+  RemoteGatewayInstallRequest,
   DesktopMcpContextRequest,
   DesktopMcpActiveSessionListRequest,
   DesktopMcpReusableSessionCloseRequest,
@@ -241,11 +291,21 @@ import type {
   DesktopScheduledTaskWorkerStatus,
   DesktopShellCommandApprovalRequest,
   DesktopThread,
+  DesktopThreadContentSearchRequest,
   DesktopThreadForkMetadata,
   DesktopVoiceTranscriptHandoffRequest,
   DesktopVoiceTranscriptionRequest,
+  DesktopBootstrapBlockerKind,
   WorkspaceCheckpointRestoreRequest,
   WorkspaceCheckpointRestoreResult,
+  WorkspaceCheckpointCreateRequest,
+  WorkspaceCheckpointAcceptRequest,
+  WorkspaceCheckpointPreviewRequest,
+  WorkspaceFilePreviewRequest,
+  WorkspaceFileTreeRequest,
+  WorkspaceGitDiffRequest,
+  WorkspaceFolderSummaryRequest,
+  WorkspaceGitFileAtRefRequest,
   DesktopWorkflowRunPrepareRequest,
   UpdateMyDrSaiConfigRequest,
 } from "../shared/desktopApi";
@@ -290,6 +350,7 @@ const pendingBrowserTaskApprovals = new Map<
   Extract<BrowserTaskEvent, { type: "action.proposed" }>
 >();
 const pendingDesktopApprovals = new Map<string, DesktopPendingApproval>();
+const executedDesktopApprovalIds = new Set<string>();
 const pendingShellCommandApprovals = new Map<
   string,
   {
@@ -311,6 +372,8 @@ const isE2eSmokeProcess =
   process.env.OPENDRSAI_E2E_THREADS === "1" ||
   process.env.OPENDRSAI_E2E_FORK_MERGE === "1" ||
   process.env.OPENDRSAI_E2E_OIDC === "1" ||
+  process.env.OPENDRSAI_E2E_A5_SERVICE_GUIDANCE === "1" ||
+  process.env.OPENDRSAI_E2E_F2_APPROVALS === "1" ||
   process.env.OPENDRSAI_E2E_OIDC_HEADLESS === "1";
 if (isE2eSmokeProcess) {
   app.disableHardwareAcceleration();
@@ -362,6 +425,10 @@ const pendingWorkspaceCheckpointRestores = new Map<
 const pendingGitCommitApprovals = new Map<
   string,
   DesktopGitCommitApprovalRequest
+>();
+const pendingRemoteGatewayInstallApprovals = new Map<
+  string,
+  RemoteGatewayInstallRequest
 >();
 const pendingForkLifecycleApprovals = new Map<
   string,
@@ -858,10 +925,22 @@ async function proposeDesktopApproval(
     title: typed.title.trim(),
     detail: typed.detail.trim(),
     target: typeof typed.target === "string" ? typed.target : undefined,
+    scope: sanitizeOptionalDispatchText(getStringProperty(typed, "scope"), 240),
+    impact: sanitizeOptionalDispatchText(getStringProperty(typed, "impact"), 320),
     createdAt: new Date().toISOString(),
     risk: normalizeApprovalRisk(typed),
     ...(typed.checklist ? { checklist: typed.checklist } : {}),
   };
+  if (executedDesktopApprovalIds.has(approval.id)) {
+    return {
+      queued: false,
+      approval,
+      allowed: true,
+      requiresApproval: false,
+      blocked: false,
+      reason: "Approval idempotency key already executed once.",
+    };
+  }
   pendingDesktopApprovals.set(approval.id, approval);
   return {
     queued: true,
@@ -944,7 +1023,7 @@ async function requestGitCommitApproval(
   if (!typed) {
     return blockedApprovalProposal("Git commit approval request is incomplete.");
   }
-  if (!(await isAllowedOpenPath(typed.workspacePath))) {
+  if (!getRemoteGatewayAccess(typed.workspacePath) && !(await isAllowedOpenPath(typed.workspacePath))) {
     return blockedApprovalProposal("Git commit workspace is not registered or allowed.");
   }
 
@@ -1535,6 +1614,10 @@ function getGitCommitIdempotencyKey(
 async function executeGitCommit(
   request: DesktopGitCommitApprovalRequest,
 ): Promise<void> {
+  if (getRemoteGatewayAccess(request.workspacePath)) {
+    await commitRemoteWorkspace(request.workspacePath, request.message, request.body);
+    return;
+  }
   if (!(await isAllowedOpenPath(request.workspacePath))) {
     throw new Error("Git commit workspace is not registered or allowed.");
   }
@@ -1604,7 +1687,7 @@ async function requestWorkspaceCheckpointRestore(
   if (!workspacePath || !checkpointId) {
     throw new Error("Workspace checkpoint restore request is incomplete.");
   }
-  if (!(await isAllowedOpenPath(workspacePath))) {
+  if (!getRemoteGatewayAccess(workspacePath) && !(await isAllowedOpenPath(workspacePath))) {
     throw new Error("Checkpoint workspace is not registered or allowed.");
   }
 
@@ -1640,7 +1723,9 @@ async function requestWorkspaceCheckpointRestore(
   }
 
   await assertExecutionAllowed("workspace.revert", { approved: true });
-  return restoreWorkspaceCheckpoint({ workspacePath, checkpointId });
+  return getRemoteGatewayAccess(workspacePath)
+    ? restoreRemoteWorkspaceCheckpoint({ workspacePath, checkpointId })
+    : restoreWorkspaceCheckpoint({ workspacePath, checkpointId });
 }
 
 async function requestForkConflictDraftWrite(
@@ -1943,6 +2028,8 @@ async function executeWorkspaceMutation(
   action: WorkspaceMutationAction,
   request: unknown,
 ): Promise<unknown> {
+  const workspacePath = getStringProperty(request, "workspacePath");
+  if (getRemoteGatewayAccess(workspacePath)) return executeRemoteWorkspaceMutation(action, request);
   if (action === "stage-file") return stageWorkspaceFile(request);
   if (action === "revert-file") return revertWorkspaceFile(request);
   if (action === "stage-hunk") return stageWorkspaceHunk(request);
@@ -2078,6 +2165,33 @@ function createWindow(): void {
       writeE2eStartupFailure("Renderer loadFile failed.", error);
     });
   }
+}
+
+async function requestRemoteGatewayInstallApproval(
+  request: RemoteGatewayInstallRequest,
+): Promise<DesktopApprovalProposalResult> {
+  if (!request?.hostAlias || !["install", "upgrade", "rollback"].includes(request.action)) {
+    return blockedApprovalProposal("Remote Gateway operation is incomplete.");
+  }
+  const proposal = await proposeDesktopApproval({
+    source: "workspace",
+    actionKind: "external.service",
+    title: `${request.action[0].toUpperCase()}${request.action.slice(1)} remote Gateway`,
+    detail: request.action === "rollback"
+      ? `Swap the managed current and previous Gateway releases on ${request.hostAlias}.`
+      : `Upload and verify ${request.artifactPath || "the selected artifact"}, create an isolated release, run health checks, then atomically switch current on ${request.hostAlias}.`,
+    target: request.hostAlias,
+    risk: "high",
+    idempotencyKey: ["remote-gateway", request.hostAlias, request.action, request.version || "", request.artifactSha256 || request.artifactPath || ""].join(":"),
+  });
+  if (proposal.blocked || !proposal.allowed) return proposal;
+  if (proposal.queued && proposal.approval) {
+    pendingRemoteGatewayInstallApprovals.set(proposal.approval.id, request);
+    return proposal;
+  }
+  await assertExecutionAllowed("external.service", { approved: true });
+  await installRemoteGateway(request);
+  return proposal;
 }
 
 function writeE2eStartupFailure(message: string, error: unknown): void {
@@ -2319,6 +2433,73 @@ function secureHandle<T extends unknown[]>(
   });
 }
 
+const a5ScenarioKinds: DesktopBootstrapBlockerKind[] = [
+  "auth_required",
+  "service_unavailable",
+  "runtime_missing",
+  "permission_denied",
+];
+
+function getA5ServiceGuidanceScenario(): DesktopA5ServiceGuidanceScenario | null {
+  if (process.env.OPENDRSAI_E2E_A5_SERVICE_GUIDANCE !== "1") return null;
+  const kind = process.env.OPENDRSAI_A5_SERVICE_GUIDANCE_SCENARIO as DesktopBootstrapBlockerKind | undefined;
+  if (!kind || !a5ScenarioKinds.includes(kind)) return null;
+
+  const authenticated = kind !== "auth_required";
+  const titleByKind: Record<DesktopBootstrapBlockerKind, string> = {
+    auth_required: "Sign in required",
+    service_unavailable: "Service unavailable",
+    runtime_missing: "Local runtime needs repair",
+    permission_denied: "Account has no available service",
+  };
+  const diagnosticFixture = [
+    `A5 E2E ${kind}`,
+    "Bearer secret-a5-bearer-token",
+    "api_key=secret-a5-api-key",
+    "Cookie: session=secret-a5-cookie",
+    "operator@example.test",
+    "C:\\Users\\win11\\OpenDrSai\\private",
+  ].join(" | ");
+
+  return {
+    kind,
+    message: diagnosticFixture,
+    session: authenticated
+      ? {
+          authenticated: true,
+          user: {
+            id: "a5-e2e-user",
+            email: "a5-e2e-user@example.test",
+            name: "A5 E2E User",
+            role: "user",
+          },
+          expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+          authMode: "oidc",
+          authProvider: "ihep",
+          accessTokenExpiresAt: new Date(Date.now() + 1_800_000).toISOString(),
+          refreshable: false,
+        }
+      : {
+          authenticated: false,
+          user: null,
+          expiresAt: null,
+          authMode: null,
+          authProvider: null,
+          accessTokenExpiresAt: null,
+          refreshable: false,
+        },
+    blocker: {
+      kind,
+      title: titleByKind[kind],
+      message: diagnosticFixture,
+      retryable: kind !== "auth_required",
+      canRepairRuntime: kind === "runtime_missing",
+      canSignInAgain: kind === "auth_required" || kind === "permission_denied",
+      diagnosticCode: `a5-e2e-${kind}`,
+    },
+  };
+}
+
 function isAllowedLocalPath(rawPath: unknown): boolean {
   if (typeof rawPath !== "string" || !rawPath) return false;
   if (!existsSync(rawPath)) return false;
@@ -2352,6 +2533,9 @@ function registerIpc(): void {
   registerBrowserController(new ElectronWebviewController());
   registerBrowserController(new BrowserUseController(browserUseWorkerClient));
   secureHandle("desktop:get-auth-session", () => getAuthSession());
+  secureHandle("desktop:e2e-a5-service-guidance-scenario", () =>
+    getA5ServiceGuidanceScenario(),
+  );
   secureHandle("desktop:login", (_event, request) => login(request));
   secureHandle("desktop:start-oidc-login", async (event, request) => {
     const result = await startOidcLogin(request, (debugEvent) => {
@@ -2393,6 +2577,21 @@ function registerIpc(): void {
     subscribeUpdateStatus(event.sender);
     return checkForUpdates();
   });
+  secureHandle("desktop:download-update", (event) => {
+    subscribeUpdateStatus(event.sender);
+    return downloadUpdate();
+  });
+  secureHandle("desktop:cancel-update", () => cancelUpdate());
+  secureHandle("desktop:install-update", async () => {
+    if (hasActiveChats() || hasActiveAgentRuns()) {
+      throw new Error("Finish or stop active chat and agent tasks before installing an update.");
+    }
+    if (pendingWorkspaceMutationApprovals.size > 0 || pendingWorkspaceCheckpointRestores.size > 0) {
+      throw new Error("Resolve pending workspace change reviews before installing an update.");
+    }
+    await shutdownGateway();
+    return installUpdate();
+  });
 
   secureHandle("desktop:open-external", async (_event, rawUrl: string) => {
     if (!isAllowedExternalUrl(rawUrl)) return;
@@ -2429,6 +2628,11 @@ function registerIpc(): void {
     await startInstall(event.sender, options ?? {});
   });
   secureHandle("desktop:cancel-install", () => cancelInstall());
+  secureHandle("desktop:clipboard-copy-text", (_event, text: string) => {
+    if (typeof text !== "string" || text.length > 50_000) return false;
+    clipboard.writeText(text);
+    return true;
+  });
 
   secureHandle("desktop:start-gateway", () => startGateway());
   secureHandle("desktop:stop-gateway", () => stopGateway());
@@ -2461,6 +2665,41 @@ function registerIpc(): void {
     killTerminalSession(event, id),
   );
   secureHandle("desktop:list-workspaces", () => listWorkspaces());
+  secureHandle("desktop:ssh-hosts", () => listSshHosts());
+  secureHandle("desktop:ssh-test", (_event, hostAlias: string) => testSshHost(hostAlias));
+  secureHandle("desktop:ssh-approve-host-key", (_event, hostAlias: string) => approveSshHostKey(hostAlias));
+  secureHandle("desktop:ssh-directories", (_event, hostAlias: string, path?: string) =>
+    listRemoteDirectories(hostAlias, path),
+  );
+  secureHandle("desktop:remote-workspace-connect", (_event, request: Parameters<typeof connectRemoteWorkspace>[0]) =>
+    connectRemoteWorkspace(request),
+  );
+  secureHandle("desktop:remote-workspace-disconnect", (_event, workspaceId: string) =>
+    disconnectRemoteWorkspace(workspaceId),
+  );
+  secureHandle("desktop:remote-workspace-status", (_event, workspaceId: string) =>
+    getRemoteWorkspaceStatus(workspaceId),
+  );
+  secureHandle("desktop:remote-workspace-threads", (_event, workspaceId: string) =>
+    listRemoteThreads(workspaceId),
+  );
+  secureHandle("desktop:remote-hepai-workers", (_event, workspaceId: string) =>
+    listRemoteHepaiWorkers(workspaceId),
+  );
+  secureHandle("desktop:remote-hepai-worker-state", (_event, workspaceId: string, workerId: string, enabled: boolean) =>
+    setRemoteHepaiWorkerEnabled(workspaceId, workerId, enabled),
+  );
+  secureHandle("desktop:remote-gateway-preflight", (_event, hostAlias: string) =>
+    preflightRemoteGateway(hostAlias),
+  );
+  secureHandle("desktop:remote-ssh-diagnostics", () => getRemoteSshDiagnosticReport());
+  secureHandle("desktop:remote-gateway-install", (_event, request: Parameters<typeof installRemoteGateway>[0]) =>
+    installRemoteGateway(request),
+  );
+  secureHandle("desktop:remote-gateway-install-approval", (_event, request: RemoteGatewayInstallRequest) =>
+    requestRemoteGatewayInstallApproval(request),
+  );
+  secureHandle("desktop:remote-gateway-cancel", (_event, hostAlias: string) => cancelRemoteGatewayOperation(hostAlias));
   secureHandle("desktop:create-workspace", (_event, request) =>
     createWorkspace(request),
   );
@@ -2471,22 +2710,23 @@ function registerIpc(): void {
     deleteWorkspace(id),
   );
   secureHandle("desktop:workspace-context-overview", (_event, workspacePath: string) =>
-    getWorkspaceContextOverview(workspacePath),
+    getRemoteGatewayAccess(workspacePath) ? getRemoteWorkspaceContextOverview(workspacePath) : getWorkspaceContextOverview(workspacePath),
   );
-  secureHandle("desktop:workspace-files", (_event, request) =>
-    listWorkspaceFiles(request),
+  secureHandle("desktop:workspace-files", (_event, request: WorkspaceFileTreeRequest) =>
+    getRemoteGatewayAccess(request?.workspacePath) ? listRemoteWorkspaceFiles(request) : listWorkspaceFiles(request),
   );
-  secureHandle("desktop:workspace-folder-summary", (_event, request) =>
-    summarizeWorkspaceFolder(request),
+  secureHandle("desktop:workspace-folder-summary", (_event, request) => {
+    const remoteRoot = getRemoteWorkspaceRootForPath(getStringProperty(request, "path"));
+    return remoteRoot ? summarizeRemoteWorkspaceFolder(request as WorkspaceFolderSummaryRequest, remoteRoot) : summarizeWorkspaceFolder(request);
+  });
+  secureHandle("desktop:workspace-file-preview", (_event, request: WorkspaceFilePreviewRequest) =>
+    getRemoteGatewayAccess(request?.workspacePath) ? previewRemoteWorkspaceFile(request) : previewWorkspaceFile(request),
   );
-  secureHandle("desktop:workspace-file-preview", (_event, request) =>
-    previewWorkspaceFile(request),
-  );
-  secureHandle("desktop:workspace-git-diff", (_event, request) =>
-    getWorkspaceGitDiff(request),
+  secureHandle("desktop:workspace-git-diff", (_event, request: WorkspaceGitDiffRequest) =>
+    getRemoteGatewayAccess(request?.workspacePath) ? getRemoteWorkspaceGitDiff(request) : getWorkspaceGitDiff(request),
   );
   secureHandle("desktop:workspace-git-file-at-ref", (_event, request) =>
-    getWorkspaceGitFileAtRef(request),
+    getRemoteGatewayAccess(getStringProperty(request, "workspacePath")) ? getRemoteWorkspaceGitFileAtRef(request as WorkspaceGitFileAtRefRequest) : getWorkspaceGitFileAtRef(request),
   );
   secureHandle("desktop:workspace-revert-file", async (_event, request) =>
     requestWorkspaceMutationApproval("revert-file", request),
@@ -2501,6 +2741,7 @@ function registerIpc(): void {
     requestWorkspaceMutationApproval("revert-hunk", request),
   );
   secureHandle("desktop:workspace-checkpoints-list", async (_event, workspacePath: string) => {
+    if (getRemoteGatewayAccess(workspacePath)) return listRemoteWorkspaceCheckpoints(workspacePath);
     if (!(await isAllowedOpenPath(workspacePath))) {
       throw new Error("Checkpoint workspace is not registered or allowed.");
     }
@@ -2508,6 +2749,10 @@ function registerIpc(): void {
   });
   secureHandle("desktop:workspace-checkpoint-create", async (_event, request) => {
     const workspacePath = getStringProperty(request, "workspacePath");
+    if (getRemoteGatewayAccess(workspacePath)) {
+      await assertExecutionAllowed("workspace.checkpoint");
+      return createRemoteWorkspaceCheckpoint(request as WorkspaceCheckpointCreateRequest);
+    }
     if (!(await isAllowedOpenPath(workspacePath))) {
       throw new Error("Checkpoint workspace is not registered or allowed.");
     }
@@ -2516,6 +2761,7 @@ function registerIpc(): void {
   });
   secureHandle("desktop:workspace-checkpoint-accept", async (_event, request) => {
     const workspacePath = getStringProperty(request, "workspacePath");
+    if (getRemoteGatewayAccess(workspacePath)) return acceptRemoteWorkspaceCheckpoint(request as WorkspaceCheckpointAcceptRequest);
     if (!(await isAllowedOpenPath(workspacePath))) {
       throw new Error("Checkpoint workspace is not registered or allowed.");
     }
@@ -2523,6 +2769,7 @@ function registerIpc(): void {
   });
   secureHandle("desktop:workspace-checkpoint-preview", async (_event, request) => {
     const workspacePath = getStringProperty(request, "workspacePath");
+    if (getRemoteGatewayAccess(workspacePath)) return previewRemoteWorkspaceCheckpoint(request as WorkspaceCheckpointPreviewRequest);
     if (!(await isAllowedOpenPath(workspacePath))) {
       throw new Error("Checkpoint workspace is not registered or allowed.");
     }
@@ -2536,6 +2783,7 @@ function registerIpc(): void {
   );
   secureHandle("desktop:list-threads", () => listThreads());
   secureHandle("desktop:list-agents", () => listAgents());
+  secureHandle("desktop:get-platform-agent-status", () => getPlatformAgentStatus());
   secureHandle("desktop:get-my-drsai-config", async (_event, workspacePath?: string) => {
     if (workspacePath && !(await isAllowedOpenPath(workspacePath))) {
       return getMyDrSaiConfig();
@@ -2551,18 +2799,20 @@ function registerIpc(): void {
   secureHandle("desktop:update-thread", (_event, request) =>
     updateThread(request),
   );
-  secureHandle("desktop:get-thread-snapshot", (_event, threadId) =>
-    getThreadSnapshot(threadId),
+  secureHandle("desktop:get-thread-snapshot", async (_event, threadId: string) =>
+    (await getRemoteThreadSnapshot(threadId)) || getThreadSnapshot(threadId),
   );
-  secureHandle("desktop:search-thread-messages", (_event, request) =>
-    searchThreadMessages(request),
+  secureHandle("desktop:search-thread-messages", async (_event, request: DesktopThreadContentSearchRequest) =>
+    (await searchRemoteThreadMessages(request)) || searchThreadMessages(request),
   );
   secureHandle("desktop:update-thread-snapshot", (_event, snapshot) =>
     updateThreadSnapshot(snapshot),
   );
-  secureHandle("desktop:prepare-fork-worktree", (_event, request) =>
-    prepareForkWorktree(request),
-  );
+  secureHandle("desktop:prepare-fork-worktree", (_event, request) => {
+    const workspacePath = getStringProperty(request, "workspacePath");
+    if (getRemoteGatewayAccess(workspacePath)) throw new Error("Fork worktrees are disabled because the connected Remote Gateway did not advertise the fork capability.");
+    return prepareForkWorktree(request);
+  });
   secureHandle("desktop:project-memory-list", (_event, request) =>
     listProjectMemory(request),
   );
@@ -2731,9 +2981,12 @@ function registerIpc(): void {
     (_event, request: DesktopMcpSessionCancelRequest) =>
       cancelMcpActiveSession(request),
   );
-  secureHandle("desktop:start-chat", (event, request) =>
-    startChat(event.sender, request),
-  );
+  secureHandle("desktop:start-chat", (event, request) => {
+    if (getA5ServiceGuidanceScenario()) {
+      throw new Error("A5 service guidance blocks chat until the service is available.");
+    }
+    return startChat(event.sender, request);
+  });
   secureHandle("desktop:abort-chat", (_event, requestId: string) =>
     abortChat(requestId),
   );
@@ -2760,9 +3013,12 @@ function registerIpc(): void {
       return writeVoiceTranscriptHandoff(request);
     },
   );
-  secureHandle("desktop:start-agent-run", (event, request) =>
-    startAgentRun(event.sender, request),
-  );
+  secureHandle("desktop:start-agent-run", (event, request) => {
+    if (getA5ServiceGuidanceScenario()) {
+      throw new Error("A5 service guidance blocks Agent runs until the service is available.");
+    }
+    return startAgentRun(event.sender, request);
+  });
   secureHandle("desktop:abort-agent-run", (_event, requestId: string) =>
     abortAgentRun(requestId),
   );
@@ -2882,6 +3138,9 @@ async function decidePendingDesktopApproval(
   const approval = pendingDesktopApprovals.get(typed.id);
   if (!approval) return false;
   pendingDesktopApprovals.delete(typed.id);
+  if (typed.approved && executedDesktopApprovalIds.has(typed.id)) {
+    return true;
+  }
   const pendingShellCommand = pendingShellCommandApprovals.get(typed.id);
   pendingShellCommandApprovals.delete(typed.id);
   const pendingWorkspaceMutation = pendingWorkspaceMutationApprovals.get(typed.id);
@@ -2890,6 +3149,8 @@ async function decidePendingDesktopApproval(
   pendingWorkspaceCheckpointRestores.delete(typed.id);
   const pendingGitCommit = pendingGitCommitApprovals.get(typed.id);
   pendingGitCommitApprovals.delete(typed.id);
+  const pendingRemoteGatewayInstall = pendingRemoteGatewayInstallApprovals.get(typed.id);
+  pendingRemoteGatewayInstallApprovals.delete(typed.id);
   const pendingForkLifecycle = pendingForkLifecycleApprovals.get(typed.id);
   pendingForkLifecycleApprovals.delete(typed.id);
   const pendingForkQueueStart = pendingForkQueueStartApprovals.get(typed.id);
@@ -2917,6 +3178,7 @@ async function decidePendingDesktopApproval(
   }
   if (pendingShellCommand) {
     if (!typed.approved) return true;
+    executedDesktopApprovalIds.add(typed.id);
     await assertExecutionAllowed("shell.command", { approved: true });
     const wrote = writeTerminalSession(
       event,
@@ -2930,6 +3192,7 @@ async function decidePendingDesktopApproval(
   }
   if (pendingWorkspaceMutation) {
     if (!typed.approved) return true;
+    executedDesktopApprovalIds.add(typed.id);
     await assertExecutionAllowed(
       getWorkspaceMutationActionKind(pendingWorkspaceMutation.action),
       { approved: true },
@@ -2942,33 +3205,46 @@ async function decidePendingDesktopApproval(
   }
   if (pendingWorkspaceCheckpointRestore) {
     if (!typed.approved) return true;
+    executedDesktopApprovalIds.add(typed.id);
     await assertExecutionAllowed("workspace.revert", { approved: true });
     await restoreWorkspaceCheckpoint(pendingWorkspaceCheckpointRestore);
     return true;
   }
   if (pendingGitCommit) {
     if (!typed.approved) return true;
+    executedDesktopApprovalIds.add(typed.id);
     await assertExecutionAllowed("git.commit", { approved: true });
     await executeGitCommit(pendingGitCommit);
     return true;
   }
+  if (pendingRemoteGatewayInstall) {
+    if (!typed.approved) return true;
+    executedDesktopApprovalIds.add(typed.id);
+    await assertExecutionAllowed("external.service", { approved: true });
+    await installRemoteGateway(pendingRemoteGatewayInstall);
+    return true;
+  }
   if (pendingForkLifecycle) {
     if (!typed.approved) return true;
+    executedDesktopApprovalIds.add(typed.id);
     await executeForkLifecycleApproval(pendingForkLifecycle);
     return true;
   }
   if (pendingForkQueueStart) {
+    if (typed.approved) executedDesktopApprovalIds.add(typed.id);
     await executeForkQueueStartApproval(pendingForkQueueStart, typed.approved);
     return true;
   }
   if (pendingForkConflictDraftWrite) {
     if (!typed.approved) return true;
+    executedDesktopApprovalIds.add(typed.id);
     await assertExecutionAllowed("workspace.revert", { approved: true });
     await executeForkConflictDraftWrite(pendingForkConflictDraftWrite);
     return true;
   }
   if (pendingChannelOutboundDraft) {
     if (typed.approved) {
+      executedDesktopApprovalIds.add(typed.id);
       await assertExecutionAllowed("external.service", { approved: true });
     }
     executeChannelOutboundDelivery(
@@ -2985,6 +3261,7 @@ async function decidePendingDesktopApproval(
       }
       return true;
     }
+    if (typed.approved) executedDesktopApprovalIds.add(typed.id);
     await assertExecutionAllowed("network.request", { approved: true });
     await enumerateMcpLiveServer(pendingMcpLiveEnumeration);
     return true;
@@ -2998,6 +3275,7 @@ async function decidePendingDesktopApproval(
       }
       return true;
     }
+    executedDesktopApprovalIds.add(typed.id);
     await assertExecutionAllowed("external.service", { approved: true });
     await executeMcpToolAfterApproval(pendingMcpToolExecution, typed.id);
     return true;
@@ -3083,14 +3361,21 @@ async function startDeferredStartupTasks(): Promise<void> {
   await recoverWorkflowRunStateAfterRestart();
   startScheduledTaskWorkerIfEnabled();
   await autoStartGatewayWhenInstalled();
+  await restorePersistedRemoteWorkspaces();
   recordStartupMilestone("deferred-tasks-complete");
   recordE2eStartupTrace("startup:deferred-tasks-complete");
 }
 
 app.whenReady().then(() => {
   recordStartupMilestone("electron-ready");
+  confirmPendingUpdateLaunch();
+  restorePreparedUpdate();
   cleanupExpiredVoiceTempFiles();
   if (!singleInstanceLock) return;
+  if (process.env.OPENDRSAI_E2E_UPDATE_PROTOCOL === "1") {
+    void runHeadlessUpdateProtocolSmoke();
+    return;
+  }
   if (process.env.OPENDRSAI_E2E_OIDC_HEADLESS === "1") {
     void runHeadlessOidcSmoke();
     return;
@@ -3098,7 +3383,17 @@ app.whenReady().then(() => {
   registerDeepLinkProtocol();
   registerRendererProtocol();
   registerIpc();
+  setRemoteWorkspaceStatusPublisher((status) => {
+    for (const window of BrowserWindow.getAllWindows()) window.webContents.send("desktop:remote-workspace-status-event", status);
+  });
+  setRemoteGatewayOperationPublisher((operation) => {
+    for (const window of BrowserWindow.getAllWindows()) window.webContents.send("desktop:remote-gateway-operation-event", operation);
+  });
+  setRemoteFileChangePublisher((change) => {
+    for (const window of BrowserWindow.getAllWindows()) window.webContents.send("desktop:workspace-file-change-event", change);
+  });
   createWindow();
+  startUpdateScheduler();
   handleDeepLinkArgv(process.argv);
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -3358,6 +3653,7 @@ let gatewayShutdownStarted = false;
 app.on("before-quit", (event) => {
   stopScheduledTaskWorker();
   killAllTerminalSessions();
+  stopAllRemoteWorkspaces();
   if (gatewayShutdownComplete) return;
   event.preventDefault();
   if (gatewayShutdownStarted) return;
@@ -3371,3 +3667,35 @@ app.on("before-quit", (event) => {
       app.quit();
     });
 });
+
+async function runHeadlessUpdateProtocolSmoke(): Promise<void> {
+  const resultPath = process.env.OPENDRSAI_E2E_RESULT;
+  if (!resultPath) {
+    app.exit(1);
+    return;
+  }
+  const result: {
+    ok: boolean;
+    checks: Record<string, boolean>;
+    details: Record<string, unknown>;
+    error?: string;
+  } = { ok: false, checks: {}, details: {} };
+  try {
+    const checked = await checkForUpdates();
+    result.details.checked = checked;
+    result.checks.updateAvailable =
+      (checked.phase === "available" && checked.canDownload) ||
+      (checked.phase === "ready" && checked.canInstall);
+    const downloaded = await downloadUpdate();
+    result.details.downloaded = downloaded;
+    result.checks.updateReady = downloaded.phase === "ready" && downloaded.canInstall;
+    result.checks.downloadComplete = downloaded.downloaded && downloaded.progress === 100;
+    result.checks.noUpdateError = downloaded.error === null;
+    result.ok = Object.values(result.checks).every(Boolean);
+  } catch (error) {
+    result.error = error instanceof Error ? error.message : String(error);
+  }
+  mkdirSync(dirname(resultPath), { recursive: true });
+  writeFileSync(resultPath, `${JSON.stringify(result, null, 2)}\n`, "utf8");
+  app.exit(result.ok ? 0 : 1);
+}

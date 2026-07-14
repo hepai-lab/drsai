@@ -25,6 +25,7 @@ interface AgentRunWorkspaceProps {
     requestId: string;
     runId: string;
   }) => void;
+  onRunComplete?: () => void;
   onProposeTerminalCommand?: (command: string) => void;
   threadId?: string;
   workspaceInstructions?: WorkspaceInstructionSummary[];
@@ -45,6 +46,7 @@ export function AgentRunWorkspace({
   language,
   onAgentFileEvent,
   onFileContextSent,
+  onRunComplete,
   onProposeTerminalCommand,
   threadId,
   workspaceInstructions,
@@ -181,6 +183,8 @@ export function AgentRunWorkspace({
       setActiveRunId((current) => (current === event.runId ? null : current));
       if (event.type === "aborted") {
         replaceAgentLine(event.requestId, "Agent run stopped.");
+      } else {
+        onRunComplete?.();
       }
       return;
     }

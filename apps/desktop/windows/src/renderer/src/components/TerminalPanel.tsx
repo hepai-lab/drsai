@@ -32,6 +32,7 @@ interface WorkflowTerminalCommandProposal {
 
 interface TerminalPanelProps {
   cwd?: string;
+  remoteHostAlias?: string;
   language: AppLanguage;
   onCommandResult?: (attachment: ChatAttachment) => void;
   onSendOutputToAgent?: (text: string) => void;
@@ -65,6 +66,7 @@ interface CommandRun {
 
 export function TerminalPanel({
   cwd,
+  remoteHostAlias,
   language: _language,
   onCommandResult,
   onSendOutputToAgent,
@@ -257,6 +259,7 @@ export function TerminalPanel({
       const index = sessions.length + 1;
       const session = await desktopApi.createTerminal({
         cwd,
+        remoteHostAlias,
         workspaceKey,
         title: title || `Terminal ${index}`,
         shellProfile,
@@ -267,7 +270,7 @@ export function TerminalPanel({
       setActiveSessionId(session.id);
       return session;
     },
-    [cwd, selectedShellProfile, sessions.length, workspaceKey],
+    [cwd, remoteHostAlias, selectedShellProfile, sessions.length, workspaceKey],
   );
 
   const showCopied = useCallback(() => {

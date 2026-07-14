@@ -22,6 +22,7 @@ import {
 import { upsertThreadFromRun } from "./threads";
 import { persistProviderErrorAnalytics } from "./providerErrorAnalytics";
 import { persistProviderUsageAnalytics } from "./providerUsageAnalytics";
+import { bindRemoteThread, getRemoteGatewayAccess } from "./remoteWorkspace";
 
 const GATEWAY_BASE_URL = `http://127.0.0.1:${getGatewayPort()}`;
 const MAX_ACTIVE_CHATS = 3;
@@ -44,6 +45,10 @@ const REQUEST_ID_PATTERN = /^[a-zA-Z0-9_-]{8,80}$/;
 const SESSION_ID_PATTERN = /^[a-zA-Z0-9_.:-]{1,160}$/;
 const activeChats = new Map<string, AbortController>();
 const chatEventSequences = new Map<string, number>();
+
+export function hasActiveChats(): boolean {
+  return activeChats.size > 0;
+}
 
 export function startChat(webContents: WebContents, request: unknown): string {
   if (activeChats.size >= MAX_ACTIVE_CHATS) {
@@ -272,20 +277,26 @@ async function runChat(
 
   const timeout = setTimeout(() => controller.abort("timeout"), CHAT_TIMEOUT_MS);
   try {
-    const ready = await startGateway();
+    const remoteGateway = getRemoteGatewayAccess(request.workspacePath);
+    if (remoteGateway) bindRemoteThread(sessionId, remoteGateway.workspaceId);
+    const ready = remoteGateway ? true : await startGateway();
     if (!ready) {
       throw new Error("Gateway is not ready. Install or start OpenDrSai first.");
     }
 
-    const attachmentContext = await buildAttachmentContext(request.attachments);
+    const attachmentContext = remoteGateway ? [] : await buildAttachmentContext(request.attachments);
     const messages = withAttachmentContext(request.messages, attachmentContext);
     const model = request.model || getDefaultModelAlias() || "drsai";
     const send = async (authContext: AuthContext): Promise<boolean> => {
-      const response = await fetch(`${GATEWAY_BASE_URL}/v1/chat/completions`, {
+      const gatewayBaseUrl = remoteGateway?.baseUrl || GATEWAY_BASE_URL;
+      const gatewayHeaders = remoteGateway
+        ? { "X-OpenDrSai-Gateway-Token": remoteGateway.token }
+        : getGatewayRequestHeaders();
+      const response = await fetch(`${gatewayBaseUrl}/v1/chat/completions`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...getGatewayRequestHeaders(),
+          ...gatewayHeaders,
           "X-OpenDrSai-User": authContext.userId,
           "X-OpenDrSai-Auth-Mode": authContext.authMode,
           ...(request.workspacePath ? { "X-OpenDrSai-Workspace": request.workspacePath } : {}),
@@ -298,6 +309,7 @@ async function runChat(
           user_id: authContext.userId,
           thread_id: sessionId,
           work_dir: request.workspacePath,
+          workspace_id: remoteGateway?.workspaceId,
           metadata: {
             ...(request.metadata || {}),
             auth_mode: authContext.authMode,

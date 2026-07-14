@@ -82,12 +82,31 @@ export interface GatewayStatus {
 }
 
 export interface UpdateStatus {
+  phase:
+    | "idle"
+    | "checking"
+    | "available"
+    | "downloading"
+    | "verifying"
+    | "staging"
+    | "ready"
+    | "installing"
+    | "complete"
+    | "rollback"
+    | "failed";
   checking: boolean;
   available: boolean;
   downloading: boolean;
   downloaded: boolean;
   progress: number | null;
   version: string | null;
+  currentVersion: string;
+  mandatory: boolean;
+  releaseNotesUrl: string | null;
+  canDownload: boolean;
+  canInstall: boolean;
+  canCancel: boolean;
+  errorCode: string | null;
   error: string | null;
 }
 
@@ -115,6 +134,7 @@ export interface DesktopBootstrapResult {
   ready: boolean;
   message: string;
   user: AuthUser;
+  blocker?: DesktopBootstrapBlocker | null;
   capabilities: {
     chat: boolean;
     agent: boolean;
@@ -128,6 +148,29 @@ export interface DesktopBootstrapResult {
   limits: {
     maxConcurrentRuns: number;
   };
+}
+
+export type DesktopBootstrapBlockerKind =
+  | "auth_required"
+  | "service_unavailable"
+  | "runtime_missing"
+  | "permission_denied";
+
+export interface DesktopBootstrapBlocker {
+  kind: DesktopBootstrapBlockerKind;
+  title: string;
+  message: string;
+  retryable: boolean;
+  canRepairRuntime: boolean;
+  canSignInAgain: boolean;
+  diagnosticCode: string;
+}
+
+export interface DesktopA5ServiceGuidanceScenario {
+  kind: DesktopBootstrapBlockerKind;
+  message: string;
+  session: AuthSession;
+  blocker: DesktopBootstrapBlocker;
 }
 
 export type OidcLoginDebugStage =
@@ -409,6 +452,8 @@ export interface DesktopPendingApproval {
   title: string;
   detail: string;
   target?: string;
+  scope?: string;
+  impact?: string;
   createdAt: string;
   risk: "low" | "medium" | "high";
   checklist?: DesktopCommitApprovalChecklist;
@@ -434,6 +479,8 @@ export interface DesktopApprovalProposalRequest {
   title: string;
   detail: string;
   target?: string;
+  scope?: string;
+  impact?: string;
   risk?: DesktopPendingApproval["risk"];
   checklist?: DesktopCommitApprovalChecklist;
   idempotencyKey?: string;
@@ -1818,7 +1865,8 @@ export interface WorkspaceProject {
   id: string;
   name: string;
   path: string;
-  type: "local";
+  type: "local" | "remote-ssh";
+  remote?: RemoteSshWorkspaceDescriptor;
   description?: string;
   createdAt: string;
   updatedAt: string;
@@ -1892,6 +1940,7 @@ export interface WorkspaceFileTreeRequest {
   query?: string;
   maxDepth?: number;
   maxEntries?: number;
+  offset?: number;
 }
 
 export interface WorkspaceFileTreeResult {
@@ -1899,6 +1948,7 @@ export interface WorkspaceFileTreeResult {
   nodes: WorkspaceFileNode[];
   totalEntries: number;
   truncated: boolean;
+  nextOffset?: number;
 }
 
 export interface WorkspaceFolderSummaryRequest {
@@ -2064,6 +2114,121 @@ export interface WorkspaceCheckpoint {
   runId?: string;
   reviewStatus?: "pending" | "accepted" | "rejected";
   reviewedAt?: string;
+}
+
+export interface WorkspaceFileChangeEvent {
+  workspacePath: string;
+  changes: Array<{ path: string; type: "created" | "modified" | "deleted" }>;
+}
+
+export interface RemoteSshHost {
+  alias: string;
+  hostname: string;
+  user?: string;
+  port: number;
+  proxyJump?: string;
+}
+
+export type RemoteWorkspaceConnectionState =
+  | "disconnected"
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "failed";
+
+export interface RemoteSshWorkspaceDescriptor {
+  hostAlias: string;
+  canonicalPath: string;
+  workspaceId: string;
+  connectionState: RemoteWorkspaceConnectionState;
+  localPort?: number;
+  gatewayVersion?: string;
+  protocolVersion?: number;
+  capabilities?: Record<string, number>;
+  error?: string;
+  mode?: string;
+}
+
+export type PlatformAgentState =
+  | "ready"
+  | "native_api_unavailable"
+  | "requires_login"
+  | "forbidden"
+  | "error";
+
+export interface PlatformAgentStatus {
+  state: PlatformAgentState;
+  apiVersion: string | null;
+  capabilities: string[];
+  message: string;
+  lastCheckedAt: string | null;
+}
+
+export interface RemoteDirectoryEntry {
+  name: string;
+  path: string;
+  directory: boolean;
+  readable?: boolean;
+  writable?: boolean;
+  mode?: string;
+}
+
+export interface ConnectRemoteWorkspaceRequest {
+  hostAlias: string;
+  path: string;
+  trusted?: boolean;
+  name?: string;
+}
+
+export interface RemoteWorkspaceStatus extends RemoteSshWorkspaceDescriptor {
+  connected: boolean;
+  gatewayReady: boolean;
+}
+
+export interface RemoteSshDiagnosticReport {
+  generatedAt: string;
+  hosts: Array<{ hostAlias: string; state: RemoteWorkspaceConnectionState; workspaceCount: number; gatewayVersion?: string; protocolVersion?: number; reconnectAttempts: number; reconnectCount: number; ageMs: number; lastConnectedAt?: string; error?: string; events: Array<{ at: string; phase: string; elapsedMs?: number; message?: string }> }>;
+}
+
+export interface RemoteGatewayPreflight {
+  hostAlias: string;
+  pythonVersion: string;
+  gatewayInstalled: boolean;
+  gatewayVersion?: string;
+  currentRelease?: string;
+  previousRelease?: string;
+}
+
+export interface RemoteGatewayInstallRequest {
+  hostAlias: string;
+  action: "install" | "upgrade" | "rollback";
+  version?: string;
+  artifactPath?: string;
+  artifactSha256?: string;
+}
+
+export interface RemoteGatewayInstallResult extends RemoteGatewayPreflight {
+  changed: boolean;
+  action: RemoteGatewayInstallRequest["action"];
+}
+
+export interface RemoteGatewayOperationEvent {
+  operationId: string;
+  hostAlias: string;
+  action: RemoteGatewayInstallRequest["action"];
+  state: "running" | "completed" | "failed" | "cancelled";
+  phase: "validating" | "uploading" | "verifying" | "installing" | "health-check" | "switching" | "completed";
+  progress: number;
+  message: string;
+}
+
+export interface RemoteHepaiWorker {
+  id: string;
+  name: string;
+  description?: string;
+  enabled: boolean;
+  callables?: string[];
+  status?: "available" | "unavailable" | "disabled";
 }
 
 export interface WorkspaceCheckpointCreateRequest {
@@ -2265,6 +2430,7 @@ export interface TerminalCreateOptions {
   workspaceKey?: string;
   title?: string;
   shellProfile?: TerminalShellProfile;
+  remoteHostAlias?: string;
 }
 
 export type TerminalShellProfile =
@@ -2299,6 +2465,7 @@ export interface TerminalExitEvent {
 export interface DesktopApi {
   getAuthSession(): Promise<AuthSession>;
   onAuthSessionInvalidated(callback: () => void): () => void;
+  getA5ServiceGuidanceScenario(): Promise<DesktopA5ServiceGuidanceScenario | null>;
   login(request: LoginRequest): Promise<LoginResult>;
   startOidcLogin(request?: { rememberMe?: boolean }): Promise<LoginResult>;
   cancelOidcLogin(): Promise<boolean>;
@@ -2315,16 +2482,40 @@ export interface DesktopApi {
   listProviderUsageAnalytics(): Promise<DesktopProviderUsageAnalyticsRecord[]>;
   listProviderErrorAnalytics(): Promise<DesktopProviderErrorAnalyticsRecord[]>;
   checkForUpdates(): Promise<UpdateStatus>;
+  downloadUpdate(): Promise<UpdateStatus>;
+  cancelUpdate(): Promise<UpdateStatus>;
+  installUpdate(): Promise<UpdateStatus>;
   startInstall(options?: StartInstallOptions): Promise<void>;
   cancelInstall(): Promise<boolean>;
+  copyTextToClipboard(text: string): Promise<boolean>;
   startGateway(): Promise<boolean>;
   stopGateway(): Promise<boolean>;
+  listSshHosts(): Promise<RemoteSshHost[]>;
+  testSshHost(hostAlias: string): Promise<boolean>;
+  approveSshHostKey(hostAlias: string): Promise<boolean>;
+  listRemoteDirectories(hostAlias: string, path?: string): Promise<RemoteDirectoryEntry[]>;
+  connectRemoteWorkspace(request: ConnectRemoteWorkspaceRequest): Promise<WorkspaceProject>;
+  disconnectRemoteWorkspace(workspaceId: string): Promise<boolean>;
+  getRemoteWorkspaceStatus(workspaceId: string): Promise<RemoteWorkspaceStatus>;
+  listRemoteThreads(workspaceId: string): Promise<DesktopThread[]>;
+  preflightRemoteGateway(hostAlias: string): Promise<RemoteGatewayPreflight>;
+  getRemoteSshDiagnosticReport(): Promise<RemoteSshDiagnosticReport>;
+  installRemoteGateway(request: RemoteGatewayInstallRequest): Promise<RemoteGatewayInstallResult>;
+  requestRemoteGatewayInstallApproval(
+    request: RemoteGatewayInstallRequest,
+  ): Promise<DesktopApprovalProposalResult>;
+  cancelRemoteGatewayOperation(hostAlias: string): Promise<boolean>;
+  onRemoteGatewayOperation(callback: (event: RemoteGatewayOperationEvent) => void): () => void;
+  listRemoteHepaiWorkers(workspaceId: string): Promise<RemoteHepaiWorker[]>;
+  setRemoteHepaiWorkerEnabled(workspaceId: string, workerId: string, enabled: boolean): Promise<boolean>;
+  onRemoteWorkspaceStatus(callback: (status: RemoteWorkspaceStatus) => void): () => void;
   listWorkspaces(): Promise<WorkspaceProject[]>;
   createWorkspace(request: CreateWorkspaceRequest): Promise<WorkspaceProject>;
   updateWorkspace(request: UpdateWorkspaceRequest): Promise<WorkspaceProject>;
   deleteWorkspace(id: string): Promise<boolean>;
   getWorkspaceContextOverview(workspacePath: string): Promise<WorkspaceContextOverview>;
   listWorkspaceFiles(request: WorkspaceFileTreeRequest): Promise<WorkspaceFileTreeResult>;
+  onWorkspaceFileChanges(callback: (event: WorkspaceFileChangeEvent) => void): () => void;
   summarizeWorkspaceFolder(
     request: WorkspaceFolderSummaryRequest,
   ): Promise<WorkspaceFolderSummaryResult>;
@@ -2352,6 +2543,7 @@ export interface DesktopApi {
   ): Promise<WorkspaceCheckpointRestoreResult>;
   listThreads(): Promise<DesktopThread[]>;
   listAgents(): Promise<DesktopAgent[]>;
+  getPlatformAgentStatus(): Promise<PlatformAgentStatus>;
   getMyDrSaiConfig(workspacePath?: string): Promise<MyDrSaiConfig>;
   updateMyDrSaiConfig(request: UpdateMyDrSaiConfigRequest): Promise<MyDrSaiConfig>;
   createThread(request: CreateThreadRequest): Promise<DesktopThread>;

@@ -211,10 +211,16 @@ export function useDesktopChatAdapter({
       applyChatCommandAction(result.action);
       const customCommandText = await maybeApplyCustomCommand(command, workspacePath);
       const approvalText = await maybeRequestCommitApproval(command, workspacePath);
+      const goalText = await maybeApplyGoalCommand(command, workspacePath);
       const memoryText = await maybeApplyMemoryCommand(command, workspacePath);
       const mcpLiveText = await maybeRequestMcpLiveBridge(command, workspacePath);
       const mcpContextText = await maybeImportMcpContext(command, workspacePath);
-      const compactText = maybeApplyCompactCommand(command, messages);
+      const compactText = await maybeApplyCompactCommand(
+        command,
+        messages,
+        workspacePath,
+        refreshProjectMemory,
+      );
       const checkpointText = await maybeApplyWorkspaceCheckpointCommand(command, workspacePath);
       const forkHandoffResult = await maybeHandoffForkQueueThread(command);
       const forkScheduleResult = await maybeScheduleForkQueue(command, workspacePath, options);
@@ -228,6 +234,7 @@ export function useDesktopChatAdapter({
           result.content,
           customCommandText,
           approvalText,
+          goalText,
           memoryText,
           mcpLiveText,
           mcpContextText,
@@ -811,6 +818,68 @@ export function useDesktopChatAdapter({
     return undefined;
   }
 
+  async function maybeApplyGoalCommand(
+    command: ReturnType<typeof parseChatCommand>,
+    selectedWorkspacePath?: string,
+  ): Promise<string | undefined> {
+    if (!command || command.name !== "goal") return undefined;
+    if (!selectedWorkspacePath) return undefined;
+    const args = command.args.trim();
+    const setMatch = args.match(/^(?:set|start|track)\s+([\s\S]+)$/i);
+    if (setMatch?.[1]?.trim()) {
+      const entry = await desktopApi.addProjectMemory({
+        workspacePath: selectedWorkspacePath,
+        content: `goal: ${setMatch[1].trim()}`,
+        source: "chat_command",
+      });
+      await refreshProjectMemory(selectedWorkspacePath);
+      return [
+        `Saved durable goal: ${formatGoalContent(entry.content)}`,
+        "Active durable goals are included as explicit project memory context in later natural-language chat.",
+      ].join("\n");
+    }
+    const doneMatch = args.match(/^(?:done|complete)\s+(\S+)$/i);
+    if (doneMatch?.[1]) {
+      const entries = await refreshProjectMemory(selectedWorkspacePath);
+      const goal = resolveGoalMemoryEntry(doneMatch[1], entries);
+      if (!goal) {
+        return `Durable goal not found: ${doneMatch[1]}. Run /goal list to review current goals.`;
+      }
+      const entry = await desktopApi.updateProjectMemory({
+        workspacePath: selectedWorkspacePath,
+        entryId: goal.entry.id,
+        content: `goal-done: ${goal.label}`,
+        source: "chat_command",
+      });
+      await refreshProjectMemory(selectedWorkspacePath);
+      return `Marked durable goal #${goal.index + 1} complete: ${formatGoalContent(entry.content)}`;
+    }
+    const clearMatch = args.match(/^(?:clear|delete|remove)\s+(\S+)$/i);
+    if (clearMatch?.[1]) {
+      const entries = await refreshProjectMemory(selectedWorkspacePath);
+      const goal = resolveGoalMemoryEntry(clearMatch[1], entries);
+      if (!goal) {
+        return `Durable goal not found: ${clearMatch[1]}. Run /goal list to review current goals.`;
+      }
+      const result = await desktopApi.clearProjectMemory({
+        workspacePath: selectedWorkspacePath,
+        entryId: goal.entry.id,
+      });
+      await refreshProjectMemory(selectedWorkspacePath);
+      return `Cleared ${result.removedCount} durable goal: ${goal.label}`;
+    }
+    if (!args || /^list$/i.test(args)) {
+      const entries = await refreshProjectMemory(selectedWorkspacePath);
+      const goals = listGoalMemoryEntries(entries);
+      if (!goals.length) return "No durable goals have been saved for this workspace.";
+      return [
+        "Durable goals:",
+        ...goals.map((goal, index) => `${index + 1}. ${formatGoalContent(goal.content)}`),
+      ].join("\n");
+    }
+    return undefined;
+  }
+
   async function maybeApplyWorkspaceCheckpointCommand(
     command: ReturnType<typeof parseChatCommand>,
     selectedWorkspacePath?: string,
@@ -1182,6 +1251,32 @@ function resolveProjectMemoryEntry(
   return entries.find((entry) => entry.id === normalized);
 }
 
+function listGoalMemoryEntries(entries: DesktopProjectMemoryEntry[]): DesktopProjectMemoryEntry[] {
+  return entries.filter((entry) => /^goal(?::|-done:)/i.test(entry.content.trim()));
+}
+
+function resolveGoalMemoryEntry(
+  selector: string,
+  entries: DesktopProjectMemoryEntry[],
+): { entry: DesktopProjectMemoryEntry; index: number; label: string } | undefined {
+  const normalized = selector.trim();
+  const goals = listGoalMemoryEntries(entries);
+  const index = Number(normalized);
+  const entry = Number.isInteger(index) && index >= 1
+    ? goals[index - 1]
+    : goals.find((item) => item.id === normalized);
+  if (!entry) return undefined;
+  return {
+    entry,
+    index: goals.indexOf(entry),
+    label: formatGoalContent(entry.content),
+  };
+}
+
+function formatGoalContent(content: string): string {
+  return content.replace(/^goal-done:\s*/i, "[done] ").replace(/^goal:\s*/i, "").trim();
+}
+
 function parseRollbackCommandArgs(args: string): {
   action: "list" | "preview" | "restore";
   selector: string;
@@ -1543,12 +1638,34 @@ function countUnstagedFiles(
   return changedFiles.filter((item) => !staged.has(item.path.replace(/\\/g, "/"))).length;
 }
 
-function maybeApplyCompactCommand(
+async function maybeApplyCompactCommand(
   command: ReturnType<typeof parseChatCommand>,
   currentMessages: UiMessage[],
-): string | undefined {
+  selectedWorkspacePath?: string,
+  refreshMemory?: (selectedWorkspacePath: string) => Promise<DesktopProjectMemoryEntry[]>,
+): Promise<string | undefined> {
   if (!command || command.name !== "compact") return undefined;
-  return buildLocalCompactSummary(currentMessages, command.args);
+  const saveMatch = command.args.match(/^(?:save|persist|memory)(?:\s+([\s\S]+))?$/i);
+  const compactIntent = saveMatch ? saveMatch[1]?.trim() ?? "" : command.args;
+  const summary = buildLocalCompactSummary(currentMessages, compactIntent);
+  if (!saveMatch) return summary;
+  if (!selectedWorkspacePath) {
+    return [
+      summary,
+      "Compact summary was not saved because no workspace is selected.",
+    ].join("\n\n");
+  }
+  const entry = await desktopApi.addProjectMemory({
+    workspacePath: selectedWorkspacePath,
+    content: `compact-summary: ${clampCompactText(summary, 3800)}`,
+    source: "retrospective",
+  });
+  await refreshMemory?.(selectedWorkspacePath);
+  return [
+    summary,
+    `Saved compact summary to project memory: ${clampCompactText(entry.content, LOCAL_COMPACT_MAX_ITEM_CHARS)}`,
+    "Future natural-language chat includes this reviewed compact summary through the existing project memory context path.",
+  ].join("\n\n");
 }
 
 function buildLocalCompactSummary(messages: UiMessage[], compactIntent: string): string {
@@ -1663,6 +1780,17 @@ function buildRequestMessages(
     );
   }
   if (projectMemory.length) {
+    const activeGoals = projectMemory.filter((entry) => /^goal:\s*/i.test(entry.content.trim()));
+    if (activeGoals.length) {
+      systemSections.push(
+        [
+          "Active durable goals for this workspace:",
+          ...activeGoals
+            .slice(0, 5)
+            .map((entry, index) => `${index + 1}. ${formatGoalContent(entry.content)}`),
+        ].join("\n"),
+      );
+    }
     systemSections.push(
       [
         "Project memory for this workspace:",

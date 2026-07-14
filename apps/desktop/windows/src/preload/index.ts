@@ -15,6 +15,11 @@ import type {
   BrowserTaskStopRequest,
   BrowserUrlCheck,
   CreateWorkspaceRequest,
+  ConnectRemoteWorkspaceRequest,
+  RemoteGatewayInstallRequest,
+  RemoteGatewayOperationEvent,
+  RemoteWorkspaceStatus,
+  WorkspaceFileChangeEvent,
   CreateThreadRequest,
   DesktopBackgroundTask,
   DesktopBackgroundTaskEnqueueRequest,
@@ -173,6 +178,8 @@ const api: DesktopApi = {
     ipcRenderer.on("desktop:auth-session-invalidated", listener);
     return () => ipcRenderer.removeListener("desktop:auth-session-invalidated", listener);
   },
+  getA5ServiceGuidanceScenario: () =>
+    ipcRenderer.invoke("desktop:e2e-a5-service-guidance-scenario"),
   login: (request: LoginRequest): Promise<LoginResult> =>
     ipcRenderer.invoke("desktop:login", request),
   startOidcLogin: (request?: { rememberMe?: boolean }): Promise<LoginResult> =>
@@ -207,14 +214,63 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:provider-error-analytics-list"),
   checkForUpdates: (): Promise<UpdateStatus> =>
     ipcRenderer.invoke("desktop:check-for-updates"),
+  downloadUpdate: (): Promise<UpdateStatus> =>
+    ipcRenderer.invoke("desktop:download-update"),
+  cancelUpdate: (): Promise<UpdateStatus> =>
+    ipcRenderer.invoke("desktop:cancel-update"),
+  installUpdate: (): Promise<UpdateStatus> =>
+    ipcRenderer.invoke("desktop:install-update"),
   startInstall: (options?: StartInstallOptions): Promise<void> =>
     ipcRenderer.invoke("desktop:start-install", options),
   cancelInstall: (): Promise<boolean> =>
     ipcRenderer.invoke("desktop:cancel-install"),
+  copyTextToClipboard: (text: string): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:clipboard-copy-text", text),
   startGateway: (): Promise<boolean> =>
     ipcRenderer.invoke("desktop:start-gateway"),
   stopGateway: (): Promise<boolean> =>
     ipcRenderer.invoke("desktop:stop-gateway"),
+  listSshHosts: () => ipcRenderer.invoke("desktop:ssh-hosts"),
+  testSshHost: (hostAlias: string) => ipcRenderer.invoke("desktop:ssh-test", hostAlias),
+  approveSshHostKey: (hostAlias: string) => ipcRenderer.invoke("desktop:ssh-approve-host-key", hostAlias),
+  listRemoteDirectories: (hostAlias: string, path?: string) =>
+    ipcRenderer.invoke("desktop:ssh-directories", hostAlias, path),
+  connectRemoteWorkspace: (request: ConnectRemoteWorkspaceRequest) =>
+    ipcRenderer.invoke("desktop:remote-workspace-connect", request),
+  disconnectRemoteWorkspace: (workspaceId: string) =>
+    ipcRenderer.invoke("desktop:remote-workspace-disconnect", workspaceId),
+  getRemoteWorkspaceStatus: (workspaceId: string) =>
+    ipcRenderer.invoke("desktop:remote-workspace-status", workspaceId),
+  listRemoteThreads: (workspaceId: string) =>
+    ipcRenderer.invoke("desktop:remote-workspace-threads", workspaceId),
+  listRemoteHepaiWorkers: (workspaceId: string) =>
+    ipcRenderer.invoke("desktop:remote-hepai-workers", workspaceId),
+  setRemoteHepaiWorkerEnabled: (workspaceId: string, workerId: string, enabled: boolean) =>
+    ipcRenderer.invoke("desktop:remote-hepai-worker-state", workspaceId, workerId, enabled),
+  onRemoteWorkspaceStatus: (callback) => {
+    const listener = (_event: IpcRendererEvent, status: RemoteWorkspaceStatus): void => callback(status);
+    ipcRenderer.on("desktop:remote-workspace-status-event", listener);
+    return () => ipcRenderer.removeListener("desktop:remote-workspace-status-event", listener);
+  },
+  preflightRemoteGateway: (hostAlias: string) =>
+    ipcRenderer.invoke("desktop:remote-gateway-preflight", hostAlias),
+  getRemoteSshDiagnosticReport: () => ipcRenderer.invoke("desktop:remote-ssh-diagnostics"),
+  installRemoteGateway: (request: RemoteGatewayInstallRequest) =>
+    ipcRenderer.invoke("desktop:remote-gateway-install", request),
+  requestRemoteGatewayInstallApproval: (request: RemoteGatewayInstallRequest) =>
+    ipcRenderer.invoke("desktop:remote-gateway-install-approval", request),
+  cancelRemoteGatewayOperation: (hostAlias: string) =>
+    ipcRenderer.invoke("desktop:remote-gateway-cancel", hostAlias),
+  onRemoteGatewayOperation: (callback: (event: RemoteGatewayOperationEvent) => void) => {
+    const listener = (_event: IpcRendererEvent, operation: RemoteGatewayOperationEvent): void => callback(operation);
+    ipcRenderer.on("desktop:remote-gateway-operation-event", listener);
+    return () => ipcRenderer.removeListener("desktop:remote-gateway-operation-event", listener);
+  },
+  onWorkspaceFileChanges: (callback: (event: WorkspaceFileChangeEvent) => void) => {
+    const listener = (_event: IpcRendererEvent, change: WorkspaceFileChangeEvent): void => callback(change);
+    ipcRenderer.on("desktop:workspace-file-change-event", listener);
+    return () => ipcRenderer.removeListener("desktop:workspace-file-change-event", listener);
+  },
   listWorkspaces: () => ipcRenderer.invoke("desktop:list-workspaces"),
   createWorkspace: (request: CreateWorkspaceRequest) =>
     ipcRenderer.invoke("desktop:create-workspace", request),
@@ -224,6 +280,7 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:delete-workspace", id),
   listThreads: () => ipcRenderer.invoke("desktop:list-threads"),
   listAgents: () => ipcRenderer.invoke("desktop:list-agents"),
+  getPlatformAgentStatus: () => ipcRenderer.invoke("desktop:get-platform-agent-status"),
   getMyDrSaiConfig: (workspacePath?: string): Promise<MyDrSaiConfig> =>
     ipcRenderer.invoke("desktop:get-my-drsai-config", workspacePath),
   updateMyDrSaiConfig: (

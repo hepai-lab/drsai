@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">OpenDrSai for Android</string>
+    <string name="logo_content_description">OpenDrSai Logo</string>
 </resources>

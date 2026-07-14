@@ -12,10 +12,12 @@ const mainIndex = readFileSync(join(root, "src", "main", "index.ts"), "utf8");
 const e2eSmoke = readFileSync(join(root, "src", "main", "e2eSmoke.ts"), "utf8");
 const desktopApi = readFileSync(join(root, "src", "shared", "desktopApi.ts"), "utf8");
 const preload = readFileSync(join(root, "src", "preload", "index.ts"), "utf8");
+const chatCommands = readFileSync(join(root, "src", "renderer", "src", "chatCommands.ts"), "utf8");
 const chatAdapter = readFileSync(join(root, "src", "renderer", "src", "adapters", "useDesktopChatAdapter.ts"), "utf8");
 const chatWorkspace = readFileSync(join(root, "src", "renderer", "src", "components", "ChatWorkspace.tsx"), "utf8");
 const chatMessageContent = readFileSync(join(root, "src", "renderer", "src", "components", "ChatMessageContent.tsx"), "utf8");
 const chatOutputVerifier = readFileSync(join(root, "scripts", "verify-chat-output-model.mjs"), "utf8");
+const chatSseVerifier = readFileSync(join(root, "scripts", "verify-chat-sse-parser.mjs"), "utf8");
 const mockDesktopApi = readFileSync(join(root, "src", "renderer", "src", "mockDesktopApi.ts"), "utf8");
 const providerErrorAnalytics = readFileSync(join(root, "src", "main", "providerErrorAnalytics.ts"), "utf8");
 const providerUsageAnalytics = readFileSync(join(root, "src", "main", "providerUsageAnalytics.ts"), "utf8");
@@ -63,6 +65,37 @@ assert(roadmap.includes("Gemini tool timeline normalization"), "roadmap omits Ge
 assert(roadmap.includes("`functionCall` as tool-call events and `functionResponse` as completed tool-result events"), "roadmap omits Gemini functionCall/functionResponse evidence");
 assert(sseParser.includes("functionCall") && sseParser.includes("functionResponse") && sseParser.includes("candidates"), "SSE parser omits Gemini function tool part normalization");
 assert(checklist.includes("live Gemini provider transport validation"), "checklist omits Gemini remaining gap evidence");
+assert(checklist.includes("gemini-code-execution-tool-timeline-agent"), "checklist omits Gemini code execution timeline agent record");
+assert(checklist.includes("Gemini Code Execution Tool Timeline"), "checklist omits Gemini code execution timeline addendum");
+assert(checklist.includes("`executableCode` / `codeExecutionResult`"), "checklist omits Gemini code execution field evidence");
+assert(roadmap.includes("Gemini code execution tool timeline"), "roadmap omits Gemini code execution timeline addendum");
+assert(roadmap.includes("`executableCode` and `codeExecutionResult`"), "roadmap omits Gemini code execution field evidence");
+assert(sseParser.includes("executableCode") && sseParser.includes("codeExecutionResult") && sseParser.includes('"code_execution"'), "SSE parser omits Gemini code execution tool normalization");
+assert(chatSseVerifier.includes("Gemini executableCode part") && chatSseVerifier.includes("Gemini codeExecutionResult part"), "chat SSE verifier omits Gemini code execution fixtures");
+assert(checklist.includes("openai-responses-reasoning-timeline-agent"), "checklist omits OpenAI Responses reasoning timeline agent record");
+assert(checklist.includes("OpenAI Responses Reasoning Timeline"), "checklist omits OpenAI Responses reasoning timeline addendum");
+assert(checklist.includes("`reasoning` / `reasoning_summary` output items"), "checklist omits OpenAI Responses reasoning type evidence");
+assert(checklist.includes("encrypted payload non-retention"), "checklist omits OpenAI Responses reasoning encrypted payload non-retention evidence");
+assert(roadmap.includes("OpenAI Responses reasoning timeline"), "roadmap omits OpenAI Responses reasoning timeline addendum");
+assert(roadmap.includes("`reasoning` / `reasoning_summary` output items"), "roadmap omits OpenAI Responses reasoning type evidence");
+assert(sseParser.includes("isProviderReasoningItemType") && sseParser.includes('"reasoning_summary"') && sseParser.includes("readProviderReasoningItemContent"), "SSE parser omits OpenAI Responses reasoning timeline normalization");
+assert(chatSseVerifier.includes("OpenAI Responses reasoning output item") && chatSseVerifier.includes("encrypted_content"), "chat SSE verifier omits OpenAI Responses reasoning fixture");
+assert(checklist.includes("provider-custom-tool-timeline-agent"), "checklist omits provider custom tool timeline agent record");
+assert(checklist.includes("OpenAI Responses Custom Tool Timeline"), "checklist omits provider custom tool timeline addendum");
+assert(checklist.includes("`custom_tool_call` / `custom_tool_call_output`"), "checklist omits custom tool type evidence");
+assert(checklist.includes("encrypted payload non-retention"), "checklist omits custom tool encrypted payload non-retention evidence");
+assert(roadmap.includes("OpenAI Responses custom tool timeline"), "roadmap omits custom tool timeline addendum");
+assert(roadmap.includes("`custom_tool_call` and `custom_tool_call_output`"), "roadmap omits custom tool type evidence");
+assert(sseParser.includes('"custom_tool_call"') && sseParser.includes('"custom_tool_call_output"') && sseParser.includes("readProviderCustomToolContent"), "SSE parser omits custom tool timeline normalization");
+assert(sseParser.includes("stripEncryptedContent"), "SSE parser omits custom tool encrypted payload stripping");
+assert(chatSseVerifier.includes("OpenAI Responses custom tool call payload") && chatSseVerifier.includes("OpenAI Responses custom tool output payload"), "chat SSE verifier omits custom tool fixtures");
+assert(checklist.includes("provider-structured-content-result-agent"), "checklist omits provider structured content result agent record");
+assert(checklist.includes("Provider Structured Content Result Timeline"), "checklist omits provider structured content result addendum");
+assert(checklist.includes("`content[]` result fields") && checklist.includes("`encrypted_content`"), "checklist omits provider structured content field evidence");
+assert(roadmap.includes("provider structured content result timeline"), "roadmap omits provider structured content result addendum");
+assert(roadmap.includes("structured `tool_result` fixture"), "roadmap omits provider structured content fixture evidence");
+assert(sseParser.includes("readProviderStructuredContent") && sseParser.includes('"json"') && sseParser.includes('"result"'), "SSE parser omits provider structured content normalization");
+assert(chatSseVerifier.includes("anthropic structured tool_result content") && chatSseVerifier.includes("encrypted_content"), "chat SSE verifier omits provider structured content fixture");
 assert(checklist.includes("gemini-text-part-agent"), "checklist omits Gemini text part agent record");
 assert(checklist.includes("Gemini Text Part Normalization"), "checklist omits Gemini text part addendum");
 assert(checklist.includes("`thought: true` text parts are routed to `parseChatReasoningSseFrame`"), "checklist omits Gemini thought routing evidence");
@@ -93,6 +126,34 @@ assert(roadmap.includes("TypeDoc config input"), "roadmap omits TypeDoc config i
 assert(roadmap.includes("runtime `typedoc.json` golden fixture"), "roadmap omits TypeDoc runtime fixture evidence");
 assert(channelAdapters.includes('"typedoc.json"') && channelAdapters.includes("TypeDoc"), "channel adapters omit TypeDoc config detection/label");
 assert(channelAdapters.includes("entryPoints") && channelAdapters.includes("typedoc.config."), "channel adapters omit TypeDoc entry point/config evidence extraction");
+assert(checklist.includes("deno-config-input-agent"), "checklist omits Deno config input agent record");
+assert(checklist.includes("Deno Config Input"), "checklist omits Deno config input addendum");
+assert(checklist.includes("workspace-local `deno.json` / `deno.jsonc`"), "checklist omits Deno selected-file coverage evidence");
+assert(checklist.includes("runtime `deno.jsonc` golden fixture"), "checklist omits Deno runtime fixture evidence");
+assert(checklist.includes("no Deno command"), "checklist omits Deno no-runtime safety evidence");
+assert(roadmap.includes("Deno config input"), "roadmap omits Deno config input addendum");
+assert(roadmap.includes("runtime `deno.jsonc` golden fixture"), "roadmap omits Deno runtime fixture evidence");
+assert(channelAdapters.includes('"deno.json"') && channelAdapters.includes("Deno"), "channel adapters omit Deno config detection/label");
+assert(channelAdapters.includes("nodeModulesDir") && channelAdapters.includes("no Deno command"), "channel adapters omit Deno metadata/no-runtime evidence");
+assert(checklist.includes("babel-browserslist-config-input-agent"), "checklist omits Babel/Browserslist config input agent record");
+assert(checklist.includes("Babel/Browserslist Config Input"), "checklist omits Babel/Browserslist config input addendum");
+assert(checklist.includes("runtime `babel.config.json` and `.browserslistrc` golden fixtures"), "checklist omits Babel/Browserslist runtime fixture evidence");
+assert(checklist.includes("no Babel transform / Browserslist resolution"), "checklist omits Babel/Browserslist no-runtime safety evidence");
+assert(roadmap.includes("Babel/Browserslist config input"), "roadmap omits Babel/Browserslist config input addendum");
+assert(roadmap.includes("runtime `babel.config.json` and `.browserslistrc` golden fixtures"), "roadmap omits Babel/Browserslist runtime fixture evidence");
+assert(channelAdapters.includes('"babel.config.json"') && channelAdapters.includes("Babel"), "channel adapters omit Babel config detection/label");
+assert(channelAdapters.includes('".browserslistrc"') && channelAdapters.includes("Browserslist"), "channel adapters omit Browserslist config detection/label");
+assert(channelAdapters.includes("Babel transform") && channelAdapters.includes("Browserslist resolution"), "channel adapters omit Babel/Browserslist no-runtime safety copy");
+assert(checklist.includes("frontend-hosting-config-input-agent"), "checklist omits frontend hosting config input agent record");
+assert(checklist.includes("Frontend Hosting Config Input"), "checklist omits frontend hosting config input addendum");
+assert(checklist.includes("runtime `vercel.json`, `netlify.toml`, and `wrangler.toml` golden fixtures"), "checklist omits frontend hosting runtime fixture evidence");
+assert(checklist.includes("no Vercel/Netlify/Wrangler deploy/dev/build"), "checklist omits frontend hosting no-runtime safety evidence");
+assert(roadmap.includes("frontend hosting config input"), "roadmap omits frontend hosting config input addendum");
+assert(roadmap.includes("runtime `vercel.json`, `netlify.toml`, and `wrangler.toml` golden fixtures"), "roadmap omits frontend hosting runtime fixture evidence");
+assert(channelAdapters.includes('"vercel.json"') && channelAdapters.includes("Vercel"), "channel adapters omit Vercel config detection/label");
+assert(channelAdapters.includes('"netlify.toml"') && channelAdapters.includes("Netlify"), "channel adapters omit Netlify config detection/label");
+assert(channelAdapters.includes('"wrangler.toml"') && channelAdapters.includes("Cloudflare Workers"), "channel adapters omit Wrangler config detection/label");
+assert(channelAdapters.includes("Vercel/Netlify/Wrangler deploy/dev/build"), "channel adapters omit frontend hosting no-runtime safety copy");
 
 assert(checklist.includes("ruff-config-input-agent"), "checklist omits Ruff config input agent record");
 assert(checklist.includes("Ruff Config Input"), "checklist omits Ruff config input addendum");
@@ -103,6 +164,15 @@ assert(roadmap.includes("Ruff config input"), "roadmap omits Ruff config input a
 assert(roadmap.includes("runtime `.ruff.toml` golden fixture"), "roadmap omits Ruff runtime fixture evidence");
 assert(channelAdapters.includes('"ruff.toml"') && channelAdapters.includes("Ruff config preview"), "channel adapters omit Ruff config detection/summary");
 assert(channelAdapters.includes("Rule selectors") && channelAdapters.includes("Path globs"), "channel adapters omit Ruff rule/path evidence extraction");
+assert(checklist.includes("python-tooling-config-input-agent"), "checklist omits Python tooling config input agent record");
+assert(checklist.includes("Python Tooling Config Input"), "checklist omits Python tooling config input addendum");
+assert(checklist.includes("workspace-local `pyrightconfig.json`, `mypy.ini`, `.mypy.ini`, `pytest.ini`, and `tox.ini`"), "checklist omits Python tooling selected-file coverage evidence");
+assert(checklist.includes("runtime `pyrightconfig.json`, `mypy.ini`, `pytest.ini`, and `tox.ini` golden fixtures"), "checklist omits Python tooling runtime fixture evidence");
+assert(checklist.includes("no Python interpreter, Pyright, Mypy, Pytest, Tox"), "checklist omits Python tooling no-runtime safety evidence");
+assert(roadmap.includes("Python tooling config input"), "roadmap omits Python tooling config input addendum");
+assert(roadmap.includes("runtime `pyrightconfig.json`, `mypy.ini`, `pytest.ini`, and `tox.ini` golden fixtures"), "roadmap omits Python tooling runtime fixture evidence");
+assert(channelAdapters.includes('"pyrightconfig.json"') && channelAdapters.includes("Python tooling config preview"), "channel adapters omit Python tooling config detection/summary");
+assert(channelAdapters.includes("typeCheckingMode") && channelAdapters.includes("collectPythonToolingIniEntry") && channelAdapters.includes('"commands"'), "channel adapters omit Python tooling type-check/test evidence extraction");
 
 assert(checklist.includes("agent-task-render-guard-agent"), "checklist omits Agent task render guard agent record");
 assert(checklist.includes("Agent Task Render Guard"), "checklist omits Agent task render guard addendum");
@@ -111,7 +181,34 @@ assert(checklist.includes("remote agent handoff, autonomous queue prioritization
 assert(roadmap.includes("agent task render guard"), "roadmap omits Agent task render guard addendum");
 assert(roadmap.includes('createThread({ kind: "agent_run" })'), "roadmap omits Agent task creation route evidence");
 assert(rendererApp.includes('activeThread?.kind === "agent_run"') && rendererApp.includes("AgentRunWorkspace"), "renderer omits direct Agent task workspace branch");
-assert(rendererUiVerifier.includes("renderer exposes a direct agent task path"), "renderer UI verifier omits direct Agent task guard");
+assert(
+  rendererUiVerifier.includes("renderer exposes a direct agent task path") ||
+    rendererUiVerifier.includes("renderer exposes Agent tasks from settings"),
+  "renderer UI verifier omits direct Agent task guard",
+);
+assert(checklist.includes("remote-ssh-contract-agent"), "checklist omits Remote SSH contract agent record");
+assert(checklist.includes("Remote SSH Workspace Contract Verification"), "checklist omits Remote SSH contract addendum");
+assert(checklist.includes("verify:remote-ssh-contract"), "checklist omits Remote SSH contract verification command");
+assert(checklist.includes("no SSH process, tunnel, remote gateway, package install, network call, credential lookup, provider send, or workspace mutation"), "checklist omits Remote SSH static no-runtime boundary evidence");
+assert(roadmap.includes("Remote SSH workspace contract verification"), "roadmap omits Remote SSH contract addendum");
+assert(roadmap.includes("verify:remote-ssh-contract"), "roadmap omits Remote SSH contract verification evidence");
+assert(packageJson.includes('"verify:remote-ssh-contract": "node scripts/verify-remote-ssh-contract.mjs"'), "package script omits Remote SSH contract verifier");
+assert(checklist.includes("goal-state-agent"), "checklist omits durable goal state agent record");
+assert(checklist.includes("Durable Goal State"), "checklist omits durable goal state addendum");
+assert(checklist.includes("`/goal set <objective>` now saves a `goal:` project-memory entry"), "checklist omits durable goal persistence evidence");
+assert(checklist.includes("active durable goal count"), "checklist omits durable goal status evidence");
+assert(roadmap.includes("durable goal state"), "roadmap omits durable goal state addendum");
+assert(roadmap.includes("`/goal done <index|id>` marks it as `goal-done:`"), "roadmap omits durable goal completion evidence");
+assert(chatCommands.includes("Goal state set") && chatCommands.includes("`goal:` marker"), "chat commands omit durable goal command copy");
+assert(chatAdapter.includes("maybeApplyGoalCommand") && chatAdapter.includes("Active durable goals for this workspace:"), "chat adapter omits durable goal persistence/context injection");
+assert(checklist.includes("compact-memory-handoff-agent"), "checklist omits compact memory handoff agent record");
+assert(checklist.includes("Compact Summary Memory Handoff"), "checklist omits compact memory handoff addendum");
+assert(checklist.includes("`/compact save <focus>` now prepares the existing bounded local summary"), "checklist omits compact save evidence");
+assert(checklist.includes("`compact-summary:` project-memory entry"), "checklist omits compact summary marker evidence");
+assert(roadmap.includes("compact summary memory handoff"), "roadmap omits compact memory handoff addendum");
+assert(roadmap.includes("`/compact save <focus>` now prepares the existing bounded local visible-chat summary"), "roadmap omits compact save evidence");
+assert(chatCommands.includes("Compact memory handoff") && chatCommands.includes("`compact-summary:` marker"), "chat commands omit compact save command copy");
+assert(chatAdapter.includes("compact-summary:") && chatAdapter.includes("Saved compact summary to project memory"), "chat adapter omits compact save project-memory persistence");
 
 const requiredCapabilities = [
   "Capability 1: Natural Language Task Entry",
@@ -162,6 +259,7 @@ const requiredVerificationCommands = [
   "npm run verify:chat-commands",
   "npm run verify:chatbar-status-summary",
   "npm run verify:context-assembler",
+  "npm run verify:remote-ssh-contract",
   "npm run verify:execution-policy",
   "npm run verify:runtime-mode",
   "npm run verify:fork-worktree",
@@ -203,7 +301,10 @@ assert(checklist.includes("partial feature rows"), "checklist omits chatbar part
 assert(checklist.includes("Partial detail summary"), "checklist omits chatbar partial-detail summary evidence");
 assert(checklist.includes("chatbar-partial-agent-assignment-agent"), "checklist omits chatbar partial agent assignment record");
 assert(checklist.includes("Chatbar Partial Agent Assignment Summary"), "checklist omits chatbar partial agent assignment addendum");
+assert(checklist.includes("chatbar-partial-next-task-agent"), "checklist omits chatbar partial next-task agent record");
 assert(checklist.includes("Agent assignment summary"), "checklist omits chatbar partial agent assignment output evidence");
+assert(checklist.includes("Next task summary"), "checklist omits chatbar partial next-task output evidence");
+assert(checklist.includes("provider SSE/tool-timeline parser fixtures"), "checklist omits chatbar partial next-task implementation cue");
 assert(checklist.includes("live-connector-agent") && checklist.includes("provider-runtime-parity-agent"), "checklist omits recommended partial follow-up agent names");
 assert(roadmap.includes("chatbar status summary verification"), "roadmap omits chatbar status summary addendum");
 assert(roadmap.includes("verify-chatbar-status-summary.mjs"), "roadmap omits chatbar status summary script evidence");
@@ -211,13 +312,17 @@ assert(roadmap.includes("partial feature row names"), "roadmap omits chatbar par
 assert(roadmap.includes("partial feature gaps and test commitments"), "roadmap omits chatbar partial-detail summary addendum");
 assert(roadmap.includes("chatbar partial agent assignment summary"), "roadmap omits chatbar partial agent assignment addendum");
 assert(roadmap.includes("Agent assignment summary") && roadmap.includes("live-connector-agent"), "roadmap omits chatbar partial agent assignment output evidence");
+assert(roadmap.includes("chatbar partial next-task summary"), "roadmap omits chatbar partial next-task addendum");
+assert(roadmap.includes("Next task summary") && roadmap.includes("fork-worktree coverage"), "roadmap omits chatbar partial next-task output evidence");
 assert(
   chatbarStatusSummaryVerifier.includes("partialFeatureNames") &&
     chatbarStatusSummaryVerifier.includes("partialDetails") &&
     chatbarStatusSummaryVerifier.includes("agentAssignmentRules") &&
+    chatbarStatusSummaryVerifier.includes("nextTask") &&
     chatbarStatusSummaryVerifier.includes("Partial feature rows:") &&
     chatbarStatusSummaryVerifier.includes("Partial detail summary:") &&
-    chatbarStatusSummaryVerifier.includes("Agent assignment summary:"),
+    chatbarStatusSummaryVerifier.includes("Agent assignment summary:") &&
+    chatbarStatusSummaryVerifier.includes("Next task summary:"),
   "chatbar status summary verifier omits partial feature detail and agent assignment output",
 );
 
@@ -240,11 +345,23 @@ assert(channelAdapters.includes("parseVpnConfigPreview"), "channel adapters omit
 assert(channelAdapters.includes("application/vnd.drsai.vpn-config"), "channel adapters omit VPN config MIME provenance");
 assert(e2eSmoke.includes("wg-packaged.conf") && e2eSmoke.includes("packaged-client.ovpn"), "packaged smoke omits VPN fixtures");
 assert(e2eSmoke.includes("channelImportVpnWireGuardSummary") && e2eSmoke.includes("channelImportVpnOpenVpnSummary"), "packaged smoke omits VPN summary checks");
-assert(e2eSmoke.includes("channelImportItems.length === 52"), "packaged smoke import matrix did not include direnv .envrc fixture count");
+assert(e2eSmoke.includes("channelImportItems.length === 55"), "packaged smoke import matrix did not include latest context fixture count");
 assert(checklist.includes("packaged-direnv-envrc-ipc-agent"), "checklist omits packaged direnv .envrc IPC agent record");
 assert(checklist.includes("Packaged Direnv Envrc IPC Smoke"), "checklist omits packaged direnv .envrc IPC addendum");
 assert(checklist.includes("channelImportDirenvEnvrcSummary"), "checklist omits packaged direnv .envrc IPC smoke check");
 assert(roadmap.includes("packaged direnv .envrc IPC smoke"), "roadmap omits packaged direnv .envrc IPC addendum");
+assert(checklist.includes("packaged-rush-workspace-ipc-agent"), "checklist omits packaged Rush workspace IPC agent record");
+assert(checklist.includes("Packaged Rush Workspace Config IPC Smoke"), "checklist omits packaged Rush workspace IPC addendum");
+assert(checklist.includes("channelImportRushWorkspaceSummary"), "checklist omits packaged Rush workspace IPC smoke check");
+assert(roadmap.includes("packaged Rush workspace config IPC smoke"), "roadmap omits packaged Rush workspace IPC addendum");
+assert(checklist.includes("packaged-oxlint-config-ipc-agent"), "checklist omits packaged Oxlint config IPC agent record");
+assert(checklist.includes("Packaged Oxlint Config IPC Smoke"), "checklist omits packaged Oxlint config IPC addendum");
+assert(checklist.includes("channelImportOxlintConfigSummary"), "checklist omits packaged Oxlint config IPC smoke check");
+assert(roadmap.includes("packaged Oxlint config IPC smoke"), "roadmap omits packaged Oxlint config IPC addendum");
+assert(checklist.includes("packaged-pwa-service-worker-ipc-agent"), "checklist omits packaged PWA service worker IPC agent record");
+assert(checklist.includes("Packaged PWA Service Worker IPC Smoke"), "checklist omits packaged PWA service worker IPC addendum");
+assert(checklist.includes("channelImportPwaServiceWorkerSummary"), "checklist omits packaged PWA service worker IPC smoke check");
+assert(roadmap.includes("packaged PWA service worker IPC smoke"), "roadmap omits packaged PWA service worker IPC addendum");
 assert(checklist.includes("winget-manifest-input-agent"), "checklist omits winget manifest input agent record");
 assert(checklist.includes("Windows Package Manager Manifest Input"), "checklist omits winget manifest input addendum");
 assert(checklist.includes("runtime `HepAI.OpenDrSai.installer.yaml` golden fixture"), "checklist omits winget runtime fixture evidence");
@@ -796,12 +913,14 @@ assert(checklist.includes("live browser profile sync, History/Downloads SQLite i
 assert(roadmap.includes("packaged browser context IPC smoke"), "roadmap omits packaged browser context addendum");
 assert(roadmap.includes("packaged-history.csv") && roadmap.includes("packaged-downloads.json"), "roadmap omits packaged browser history/download fixture evidence");
 assert(roadmap.includes("packaged-local-storage.json") && roadmap.includes("packaged-extension-manifest.json"), "roadmap omits packaged browser storage/extension fixture evidence");
-assert(roadmap.includes("MAX_IMPORT_ITEMS") && roadmap.includes("52"), "roadmap omits current packaged context import bound evidence");
+assert(roadmap.includes("MAX_IMPORT_ITEMS") && roadmap.includes("55"), "roadmap omits current packaged context import bound evidence");
 assert(roadmap.includes("no browser profile access, SQLite History/Downloads import"), "roadmap omits packaged browser no-profile/no-store boundary evidence");
-assert(channelAdapters.includes("MAX_IMPORT_ITEMS = 52"), "channel adapter import bound was not raised to 52");
+assert(channelAdapters.includes("MAX_IMPORT_ITEMS = 55"), "channel adapter import bound was not raised to 55");
 assert(e2eSmoke.includes("packaged-history.csv") && e2eSmoke.includes("packaged-downloads.json"), "e2e smoke omits packaged browser history/download fixtures");
 assert(e2eSmoke.includes("packaged-local-storage.json") && e2eSmoke.includes("packaged-extension-manifest.json"), "e2e smoke omits packaged browser storage/extension fixtures");
-assert(e2eSmoke.includes("channelImportItems.length === 52"), "e2e smoke omits 52-item packaged import matrix assertion");
+assert(e2eSmoke.includes("packaged-service-worker.js"), "e2e smoke omits packaged PWA service worker fixture");
+assert(e2eSmoke.includes("channelImportPwaServiceWorkerSummary"), "e2e smoke omits packaged PWA service worker assertion");
+assert(e2eSmoke.includes("channelImportItems.length === 55"), "e2e smoke omits 55-item packaged import matrix assertion");
 assert(e2eSmoke.includes("channelImportBrowserHistorySummary"), "e2e smoke omits packaged browser history assertion");
 assert(e2eSmoke.includes("channelImportBrowserDownloadsSummary"), "e2e smoke omits packaged browser downloads assertion");
 assert(e2eSmoke.includes("channelImportBrowserStorageSummary"), "e2e smoke omits packaged browser storage assertion");
@@ -978,8 +1097,37 @@ assert(checklist.includes("ESLint/Prettier/Biome/Stylelint/Jest/Vitest/Playwrigh
 assert(checklist.includes("MAX_JS_TOOLING_CONFIG_PREVIEW_BYTES"), "checklist omits JS/TS tooling config byte bound evidence");
 assert(checklist.includes("application/vnd.drsai.js-tooling-config"), "checklist omits JS/TS tooling config MIME evidence");
 assert(checklist.includes("Rule/project hints"), "checklist omits JS/TS tooling config parser evidence");
-assert(checklist.includes("no node/npm/pnpm/Yarn/Bun command, lint/test/format runner, Playwright browser launch"), "checklist omits JS/TS tooling config no-runtime boundary evidence");
-assert(checklist.includes("live lint/test/format execution, Playwright browser launch validation"), "checklist omits JS/TS tooling config remaining gap evidence");
+assert(checklist.includes("no node/npm/pnpm/Yarn/Bun command, lint/test/format runner, Playwright/Cypress browser launch"), "checklist omits JS/TS tooling config no-runtime boundary evidence");
+assert(checklist.includes("Storybook dev server/build"), "checklist omits JS/TS tooling config Storybook no-runtime boundary evidence");
+assert(checklist.includes("live lint/test/format execution, Playwright/Cypress browser launch validation"), "checklist omits JS/TS tooling config remaining gap evidence");
+assert(checklist.includes("cypress-config-input-agent"), "checklist omits Cypress config input agent record");
+assert(checklist.includes("Cypress Config Input"), "checklist omits Cypress config input addendum");
+assert(checklist.includes("runtime `cypress.config.ts` golden fixture"), "checklist omits Cypress config runtime fixture evidence");
+assert(roadmap.includes("Cypress config input"), "roadmap omits Cypress config input addendum");
+assert(roadmap.includes("runtime `cypress.config.ts` golden fixture"), "roadmap omits Cypress config runtime fixture evidence");
+assert(checklist.includes("storybook-config-input-agent"), "checklist omits Storybook config input agent record");
+assert(checklist.includes("Storybook Config Input"), "checklist omits Storybook config input addendum");
+assert(checklist.includes("runtime `.storybook/main.ts` golden fixture"), "checklist omits Storybook config runtime fixture evidence");
+assert(roadmap.includes("Storybook config input"), "roadmap omits Storybook config input addendum");
+assert(roadmap.includes("runtime `.storybook/main.ts` golden fixture"), "roadmap omits Storybook config runtime fixture evidence");
+assert(checklist.includes("postcss-tailwind-config-input-agent"), "checklist omits PostCSS/Tailwind config input agent record");
+assert(checklist.includes("PostCSS/Tailwind Config Input"), "checklist omits PostCSS/Tailwind config input addendum");
+assert(checklist.includes("runtime `postcss.config.cjs` and `tailwind.config.ts` golden fixtures"), "checklist omits PostCSS/Tailwind runtime fixture evidence");
+assert(checklist.includes("PostCSS/Tailwind compile"), "checklist omits PostCSS/Tailwind no-runtime boundary evidence");
+assert(roadmap.includes("PostCSS/Tailwind config input"), "roadmap omits PostCSS/Tailwind config input addendum");
+assert(roadmap.includes("runtime `postcss.config.cjs` and `tailwind.config.ts` golden fixtures"), "roadmap omits PostCSS/Tailwind runtime fixture evidence");
+assert(checklist.includes("ts-js-project-config-input-agent"), "checklist omits TS/JS project config input agent record");
+assert(checklist.includes("TS/JS Project Config Input"), "checklist omits TS/JS project config input addendum");
+assert(checklist.includes("runtime `tsconfig.json` and `jsconfig.json` golden fixtures"), "checklist omits TS/JS project config runtime fixture evidence");
+assert(checklist.includes("TypeScript compiler") && checklist.includes("path alias evidence"), "checklist omits TS/JS project config safety/parser evidence");
+assert(roadmap.includes("TS/JS project config input"), "roadmap omits TS/JS project config input addendum");
+assert(roadmap.includes("runtime `tsconfig.json` and `jsconfig.json` golden fixtures"), "roadmap omits TS/JS project config runtime fixture evidence");
+assert(checklist.includes("framework-config-input-agent"), "checklist omits framework config input agent record");
+assert(checklist.includes("Framework Config Input"), "checklist omits framework config input addendum");
+assert(checklist.includes("runtime `next.config.mjs`, `astro.config.mjs`, `svelte.config.js`, and `nuxt.config.ts` golden fixtures"), "checklist omits framework config runtime fixture evidence");
+assert(checklist.includes("framework build/render"), "checklist omits framework config no-runtime boundary evidence");
+assert(roadmap.includes("framework config input"), "roadmap omits framework config input addendum");
+assert(roadmap.includes("runtime `next.config.mjs`, `astro.config.mjs`, `svelte.config.js`, and `nuxt.config.ts` golden fixtures"), "roadmap omits framework config runtime fixture evidence");
 assert(checklist.includes("terminal-recording-input-agent"), "checklist omits terminal recording input agent record");
 assert(checklist.includes("Asciinema Terminal Recording Input"), "checklist omits terminal recording input addendum");
 assert(checklist.includes("workspace-local `.cast` terminal recordings"), "checklist omits terminal recording selected file support evidence");
@@ -2001,6 +2149,85 @@ assert(checklist.includes("web_search_call") && checklist.includes("code_interpr
 assert(checklist.includes("OpenAI Responses built-in web search/code interpreter fixtures"), "checklist omits provider built-in tool test evidence");
 assert(sseParser.includes("isProviderBuiltinToolType") && sseParser.includes('"web_search_call"') && sseParser.includes('"code_interpreter_call"'), "SSE parser omits provider built-in tool normalization");
 assert(roadmap.includes("provider built-in tool timeline") && roadmap.includes("web_search_call") && roadmap.includes("code_interpreter_call"), "roadmap omits provider built-in tool timeline addendum");
+assert(checklist.includes("provider-built-in-tool-payload-agent"), "checklist omits provider built-in tool payload agent record");
+assert(checklist.includes("Built-In Tool Payload Fixtures"), "checklist omits provider built-in tool payload addendum");
+assert(checklist.includes("file_search_call") && checklist.includes("mcp_approval_request"), "checklist omits built-in file search/MCP approval evidence");
+assert(checklist.includes("OpenAI Responses built-in file search and MCP approval fixtures"), "checklist omits built-in payload fixture evidence");
+assert(sseParser.includes("readProviderBuiltinToolContent") && sseParser.includes('"queries"') && sseParser.includes('"server_label"'), "SSE parser omits provider built-in payload content normalization");
+assert(roadmap.includes("provider built-in tool payload fixtures") && roadmap.includes("file_search_call") && roadmap.includes("mcp_approval_request"), "roadmap omits provider built-in payload addendum");
+assert(checklist.includes("provider-web-search-detail-payload-agent"), "checklist omits provider web search detail payload agent record");
+assert(checklist.includes("Web Search Detail Payload Fixture"), "checklist omits web search detail payload addendum");
+assert(checklist.includes("`query`, `web_search_results`, `search_context`, `user_location`, `domains`, `allowed_domains`, and `blocked_domains`"), "checklist omits web search detail field evidence");
+assert(chatSseVerifier.includes("built-in web search detail payload") && chatSseVerifier.includes('"allowed_domains":["docs.example.test"]'), "chat SSE verifier omits web search detail payload fixture");
+assert(sseParser.includes('"web_search_results"') && sseParser.includes('"search_context"') && sseParser.includes('"allowed_domains"'), "SSE parser omits web search detail payload fields");
+assert(roadmap.includes("web search detail payload fixture") && roadmap.includes("`web_search_call` detail metadata"), "roadmap omits web search detail payload addendum");
+assert(checklist.includes("provider-file-search-detail-payload-agent"), "checklist omits provider file search detail payload agent record");
+assert(checklist.includes("File Search Detail Payload Fixture"), "checklist omits file search detail payload addendum");
+assert(checklist.includes("`vector_store_ids`, `filters`, `ranking_options`, and `max_num_results`"), "checklist omits file search detail field evidence");
+assert(chatSseVerifier.includes("built-in file search detail payload") && chatSseVerifier.includes('"score_threshold":0.42'), "chat SSE verifier omits file search detail payload fixture");
+assert(sseParser.includes('"vector_store_ids"') && sseParser.includes('"ranking_options"') && sseParser.includes('"max_num_results"'), "SSE parser omits file search detail payload fields");
+assert(roadmap.includes("file search detail payload fixture") && roadmap.includes("`file_search_call` detail metadata"), "roadmap omits file search detail payload addendum");
+assert(checklist.includes("provider-mcp-approval-response-agent"), "checklist omits provider MCP approval response agent record");
+assert(checklist.includes("MCP Approval Response Timeline"), "checklist omits provider MCP approval response addendum");
+assert(checklist.includes("`mcp_approval_response`") && checklist.includes("`approve` / `approved`"), "checklist omits MCP approval response field evidence");
+assert(chatSseVerifier.includes("built-in MCP approval response payload") && chatSseVerifier.includes('"mcp_approval_response"'), "chat SSE verifier omits MCP approval response payload fixture");
+assert(sseParser.includes('"mcp_approval_response"') && sseParser.includes('"approve"') && sseParser.includes('"reason"'), "SSE parser omits MCP approval response normalization");
+assert(roadmap.includes("MCP approval response timeline") && roadmap.includes("`mcp_approval_response` decision records"), "roadmap omits MCP approval response addendum");
+assert(checklist.includes("provider-local-shell-tool-timeline-agent"), "checklist omits provider local shell tool timeline agent record");
+assert(checklist.includes("Local Shell Tool Timeline"), "checklist omits provider local shell tool timeline addendum");
+assert(checklist.includes("`local_shell_call` and `local_shell_call_output`"), "checklist omits local shell tool type evidence");
+assert(checklist.includes("shell execution approvals"), "checklist omits local shell remaining approval gap evidence");
+assert(chatSseVerifier.includes("local shell call payload") && chatSseVerifier.includes("local shell output payload"), "chat SSE verifier omits local shell fixtures");
+assert(sseParser.includes('"local_shell_call"') && sseParser.includes('"local_shell_call_output"') && sseParser.includes('"command"'), "SSE parser omits local shell tool timeline normalization");
+assert(roadmap.includes("local shell tool timeline") && roadmap.includes("`local_shell_call` and `local_shell_call_output`"), "roadmap omits local shell tool timeline addendum");
+assert(checklist.includes("provider-mcp-call-output-payload-agent"), "checklist omits provider MCP call output payload agent record");
+assert(checklist.includes("MCP Call Output Payload Fixture"), "checklist omits provider MCP call output addendum");
+assert(checklist.includes("`mcp_call` output") && checklist.includes("`approval_request_id`"), "checklist omits MCP call output field evidence");
+assert(chatSseVerifier.includes("built-in MCP call output payload") && chatSseVerifier.includes('"approval_request_id":"mcp_approval_1"'), "chat SSE verifier omits MCP call output payload fixture");
+assert(sseParser.includes('"output"') && sseParser.includes('"approval_request_id"'), "SSE parser omits MCP call output payload fields");
+assert(roadmap.includes("MCP call output payload fixture") && roadmap.includes("`mcp_call` output"), "roadmap omits MCP call output payload addendum");
+assert(checklist.includes("provider-built-in-encrypted-payload-agent"), "checklist omits provider built-in encrypted payload agent record");
+assert(checklist.includes("Built-In Encrypted Payload Guard"), "checklist omits provider built-in encrypted payload addendum");
+assert(checklist.includes("recursive `encrypted_content` stripping") && checklist.includes("structured provider payload paths"), "checklist omits encrypted payload stripping evidence");
+assert(chatSseVerifier.includes("built-in encrypted payload stripping") && chatSseVerifier.includes('"mcp_call_secure"'), "chat SSE verifier omits built-in encrypted payload stripping fixture");
+assert(sseParser.includes("payload[key] = stripEncryptedContent(record[key])") && sseParser.includes("payload.action = stripEncryptedContent(record.action)"), "SSE parser omits built-in encrypted payload stripping");
+assert(roadmap.includes("built-in encrypted payload guard") && roadmap.includes("recursive `encrypted_content` stripping"), "roadmap omits built-in encrypted payload guard addendum");
+assert(checklist.includes("provider-mcp-list-tools-payload-agent"), "checklist omits provider MCP list tools payload agent record");
+assert(checklist.includes("MCP List Tools Payload Fixture"), "checklist omits provider MCP list tools payload addendum");
+assert(checklist.includes("`mcp_list_tools`") && checklist.includes("`tools` list metadata"), "checklist omits MCP list tools field evidence");
+assert(chatSseVerifier.includes("built-in MCP list tools payload") && chatSseVerifier.includes('"tools":[{"name":"search_issues"'), "chat SSE verifier omits MCP list tools payload fixture");
+assert(sseParser.includes('"tools"') && sseParser.includes('"mcp_list_tools"'), "SSE parser omits MCP list tools payload fields");
+assert(roadmap.includes("MCP list tools payload fixture") && roadmap.includes("`mcp_list_tools` tool metadata"), "roadmap omits MCP list tools payload addendum");
+assert(checklist.includes("provider-code-interpreter-output-agent"), "checklist omits provider code interpreter output agent record");
+assert(checklist.includes("Code Interpreter Output Payload Fixture"), "checklist omits provider code interpreter output addendum");
+assert(checklist.includes("`input` plus `outputs`") && checklist.includes("code interpreter log output"), "checklist omits code interpreter output payload evidence");
+assert(sseParser.includes('"input"') && sseParser.includes('"outputs"') && chatSseVerifier.includes('"outputs":[{"type":"logs","logs":"42"}]'), "SSE parser/verifier omit code interpreter output payload normalization");
+assert(roadmap.includes("code interpreter output payload fixture") && roadmap.includes("`input` plus `outputs`"), "roadmap omits code interpreter output payload addendum");
+assert(checklist.includes("provider-image-generation-payload-agent"), "checklist omits provider image generation payload agent record");
+assert(checklist.includes("Image Generation Tool Payload Fixture"), "checklist omits provider image generation payload addendum");
+assert(checklist.includes("`prompt`, `result`, `size`, `quality`, `output_format`, and `background`"), "checklist omits image generation payload field evidence");
+assert(chatSseVerifier.includes("built-in image generation payload") && chatSseVerifier.includes('"result":"https://example.test/generated.png"'), "chat SSE verifier omits image generation payload fixture");
+assert(sseParser.includes('"image_generation_call"') && sseParser.includes('"output_format"') && sseParser.includes('"background"'), "SSE parser omits image generation payload normalization");
+assert(roadmap.includes("image generation tool payload fixture") && roadmap.includes("`image_generation_call` metadata"), "roadmap omits image generation payload addendum");
+assert(checklist.includes("provider-computer-output-payload-agent"), "checklist omits provider computer output payload agent record");
+assert(checklist.includes("Computer Call Output Payload Fixture"), "checklist omits provider computer output payload addendum");
+assert(checklist.includes("`output`, `acknowledged_safety_checks`, and `pending_safety_checks`"), "checklist omits computer output payload field evidence");
+assert(chatSseVerifier.includes("computer call output payload") && chatSseVerifier.includes('"computer_screenshot"'), "chat SSE verifier omits computer output payload fixture");
+assert(sseParser.includes("readProviderComputerOutputContent") && sseParser.includes('"computer_call_output"') && sseParser.includes('"acknowledged_safety_checks"'), "SSE parser omits computer output payload normalization");
+assert(roadmap.includes("computer call output payload fixture") && roadmap.includes("`computer_call_output` result metadata"), "roadmap omits computer output payload addendum");
+assert(checklist.includes("provider-computer-action-safety-agent"), "checklist omits provider computer action safety agent record");
+assert(checklist.includes("Computer Call Action Safety Payload Fixture"), "checklist omits provider computer action safety addendum");
+assert(checklist.includes("`computer_call` action metadata") && checklist.includes("`pending_safety_checks`"), "checklist omits computer call action safety evidence");
+assert(chatSseVerifier.includes("computer call action safety payload") && chatSseVerifier.includes('"pending_safety_checks"'), "chat SSE verifier omits computer call action safety fixture");
+assert(sseParser.includes('type === "computer_call"') && sseParser.includes("payload.action = stripEncryptedContent(record.action)") && sseParser.includes('"pending_safety_checks"'), "SSE parser omits computer call action safety normalization");
+assert(roadmap.includes("computer call action safety payload fixture") && roadmap.includes("`computer_call` action metadata"), "roadmap omits computer call action safety addendum");
+assert(checklist.includes("anthropic-server-tool-timeline-agent"), "checklist omits Anthropic server tool timeline agent record");
+assert(checklist.includes("Anthropic Server Tool Timeline"), "checklist omits Anthropic server tool timeline addendum");
+assert(checklist.includes("`server_tool_use`") && checklist.includes("`web_search_tool_result`"), "checklist omits Anthropic server tool type evidence");
+assert(checklist.includes("encrypted payload non-retention") || checklist.includes("dropping `encrypted_content`"), "checklist omits Anthropic encrypted payload non-retention evidence");
+assert(roadmap.includes("Anthropic server tool timeline") && roadmap.includes("`encrypted_content` is not retained"), "roadmap omits Anthropic server tool timeline evidence");
+assert(sseParser.includes('"server_tool_use"') && sseParser.includes('"web_search_tool_result"') && sseParser.includes("readProviderServerToolContent"), "SSE parser omits Anthropic server tool normalization");
+assert(chatSseVerifier.includes("anthropic server web search tool use") && chatSseVerifier.includes("anthropic web search tool result"), "chat SSE verifier omits Anthropic server web search fixtures");
 assert(roadmap.includes("Anthropic tool input delta accumulation"), "roadmap omits Anthropic tool input delta addendum");
 assert(roadmap.includes("content_block_start") && roadmap.includes("input_json_delta.partial_json"), "roadmap omits Anthropic tool input delta evidence");
 assert(checklist.includes("provider-structured-error-agent"), "checklist omits provider structured error agent record");

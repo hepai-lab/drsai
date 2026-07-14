@@ -109,12 +109,20 @@ const initialHealth: DesktopHealth = {
     lastLog: "",
   },
   update: {
+    phase: "idle",
     checking: false,
     available: false,
     downloading: false,
     downloaded: false,
     progress: null,
     version: null,
+    currentVersion: "1.4.2",
+    mandatory: false,
+    releaseNotesUrl: null,
+    canDownload: false,
+    canInstall: false,
+    canCancel: false,
+    errorCode: null,
     error: null,
   },
 };
@@ -972,6 +980,7 @@ export function installMockDesktopApi(): void {
 
   const api: DesktopApi = {
     getAuthSession: async () => authSession,
+    getA5ServiceGuidanceScenario: async () => null,
     login: async (request) => {
       if (request.developerBypass) {
         authSession = {
@@ -1199,15 +1208,46 @@ export function installMockDesktopApi(): void {
       health = {
         ...health,
         update: {
+          phase: "available",
           checking: false,
           available: true,
           downloading: false,
           downloaded: false,
           progress: null,
           version: "0.1.1",
+          currentVersion: "0.1.0",
+          mandatory: false,
+          releaseNotesUrl: "https://github.com/hepai-lab/drsai/releases/tag/v0.1.1",
+          canDownload: true,
+          canInstall: false,
+          canCancel: false,
+          errorCode: null,
           error: null,
         },
       };
+      emit(updateListeners, health.update);
+      return health.update;
+    },
+    downloadUpdate: async () => {
+      health = {
+        ...health,
+        update: {
+          ...health.update,
+          phase: "ready",
+          downloading: false,
+          downloaded: true,
+          progress: 100,
+          canDownload: false,
+          canInstall: true,
+          canCancel: false,
+        },
+      };
+      emit(updateListeners, health.update);
+      return health.update;
+    },
+    cancelUpdate: async () => health.update,
+    installUpdate: async () => {
+      health = { ...health, update: { ...health.update, phase: "installing", canInstall: false } };
       emit(updateListeners, health.update);
       return health.update;
     },
@@ -1231,6 +1271,14 @@ export function installMockDesktopApi(): void {
       });
       return true;
     },
+    copyTextToClipboard: async (text) => {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch {
+        return false;
+      }
+    },
     startGateway: async () => {
       health = {
         ...health,
@@ -1247,6 +1295,52 @@ export function installMockDesktopApi(): void {
       };
       return true;
     },
+    listSshHosts: async () => [],
+    testSshHost: async () => true,
+    approveSshHostKey: async () => true,
+    listRemoteDirectories: async (_hostAlias, path = "/home") => [
+      { name: "vscode", path: `${path.replace(/\/$/, "")}/vscode`, directory: true },
+    ],
+    connectRemoteWorkspace: async (request) => {
+      const now = new Date().toISOString();
+      const id = `ssh-mock-${crypto.randomUUID()}`;
+      const workspace: WorkspaceProject = {
+        id,
+        name: request.name || request.path.split("/").filter(Boolean).at(-1) || "Remote workspace",
+        path: request.path,
+        type: "remote-ssh",
+        remote: {
+          hostAlias: request.hostAlias,
+          canonicalPath: request.path,
+          workspaceId: id,
+          connectionState: "connected",
+          localPort: 18643,
+        },
+        createdAt: now,
+        updatedAt: now,
+        lastOpenedAt: now,
+        trusted: request.trusted ?? false,
+      };
+      workspaces = [workspace, ...workspaces];
+      return workspace;
+    },
+    disconnectRemoteWorkspace: async () => true,
+    getRemoteWorkspaceStatus: async (workspaceId) => {
+      const workspace = workspaces.find((item) => item.id === workspaceId);
+      if (!workspace?.remote) throw new Error("Remote workspace not found.");
+      return { ...workspace.remote, connected: true, gatewayReady: true };
+    },
+    listRemoteThreads: async () => [],
+    listRemoteHepaiWorkers: async () => [],
+    setRemoteHepaiWorkerEnabled: async () => true,
+    onRemoteWorkspaceStatus: () => () => undefined,
+    preflightRemoteGateway: async (hostAlias) => ({ hostAlias, pythonVersion: "3.11.0", gatewayInstalled: true, gatewayVersion: "1.4.2" }),
+    getRemoteSshDiagnosticReport: async () => ({ generatedAt: new Date().toISOString(), hosts: [] }),
+    installRemoteGateway: async (request) => ({ hostAlias: request.hostAlias, pythonVersion: "3.11.0", gatewayInstalled: true, gatewayVersion: request.version || "1.4.2", changed: true, action: request.action }),
+    requestRemoteGatewayInstallApproval: async () => ({ queued: true, allowed: true, requiresApproval: true, blocked: false, reason: "Mock remote Gateway operation queued for approval." }),
+    cancelRemoteGatewayOperation: async () => true,
+    onRemoteGatewayOperation: () => () => undefined,
+    onWorkspaceFileChanges: () => () => undefined,
     listWorkspaces: async () => workspaces,
     createWorkspace: async (request) => {
       const now = new Date().toISOString();
@@ -1347,6 +1441,13 @@ export function installMockDesktopApi(): void {
         ],
       },
     ],
+    getPlatformAgentStatus: async () => ({
+      state: "ready",
+      apiVersion: "fixture-v1",
+      capabilities: ["agents"],
+      message: "Platform Native API fixture is available.",
+      lastCheckedAt: new Date().toISOString(),
+    }),
     getMyDrSaiConfig: async (workspacePath?: string): Promise<MyDrSaiConfig> => ({
       ready: health.gatewayReady,
       baseUrl: health.gateway.baseUrl,

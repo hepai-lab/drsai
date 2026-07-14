@@ -40,7 +40,7 @@ import type {
 } from "../shared/desktopApi";
 import { DRSAI_HOME } from "./paths";
 
-const MAX_IMPORT_ITEMS = 52;
+const MAX_IMPORT_ITEMS = 55;
 const MAX_SCAN_ENTRIES = 240;
 const MAX_SCAN_DEPTH = 3;
 const MAX_TEXT_BYTES = 4096;
@@ -96,6 +96,8 @@ const MAX_MCP_SERVER_CONFIG_PREVIEW_BYTES = 96 * 1024;
 const MAX_MCP_SERVER_CONFIG_ITEM_PREVIEW = 16;
 const MAX_VSCODE_WORKSPACE_CONFIG_PREVIEW_BYTES = 96 * 1024;
 const MAX_VSCODE_WORKSPACE_CONFIG_ITEM_PREVIEW = 16;
+const MAX_JETBRAINS_IDE_CONFIG_PREVIEW_BYTES = 96 * 1024;
+const MAX_JETBRAINS_IDE_CONFIG_ITEM_PREVIEW = 16;
 const MAX_REST_CLIENT_PREVIEW_BYTES = 96 * 1024;
 const MAX_REST_CLIENT_REQUEST_PREVIEW = 16;
 const MAX_REST_CLIENT_HEADER_PREVIEW = 12;
@@ -305,6 +307,8 @@ const MAX_PYTHON_PACKAGE_INDEX_CONFIG_PREVIEW_BYTES = 64 * 1024;
 const MAX_PYTHON_PACKAGE_INDEX_CONFIG_ITEM_PREVIEW = 12;
 const MAX_RUFF_CONFIG_PREVIEW_BYTES = 96 * 1024;
 const MAX_RUFF_CONFIG_ITEM_PREVIEW = 16;
+const MAX_PYTHON_TOOLING_CONFIG_PREVIEW_BYTES = 96 * 1024;
+const MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW = 16;
 const MAX_CARGO_MANIFEST_PREVIEW_BYTES = 96 * 1024;
 const MAX_CARGO_MANIFEST_ITEM_PREVIEW = 16;
 const MAX_DART_PUBSPEC_PREVIEW_BYTES = 96 * 1024;
@@ -333,6 +337,8 @@ const MAX_GRADLE_VERSION_CATALOG_PREVIEW_BYTES = 96 * 1024;
 const MAX_GRADLE_VERSION_CATALOG_ITEM_PREVIEW = 16;
 const MAX_MAVEN_SETTINGS_PREVIEW_BYTES = 96 * 1024;
 const MAX_MAVEN_SETTINGS_ITEM_PREVIEW = 16;
+const MAX_CITATION_CFF_PREVIEW_BYTES = 96 * 1024;
+const MAX_CITATION_CFF_ITEM_PREVIEW = 16;
 const MAX_JAVA_BUILD_ARTIFACT_PREVIEW_BYTES = 256 * 1024;
 const MAX_JAVA_BUILD_ARTIFACT_ITEM_PREVIEW = 16;
 const MAX_JAVA_FLIGHT_RECORDER_PREVIEW_BYTES = 192 * 1024;
@@ -518,6 +524,7 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".c",
   ".cabal",
   ".cat",
+  ".citation.cff",
   ".cast",
   ".cc",
   ".calendar.csv",
@@ -640,6 +647,7 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".vpn-config",
   ".web-app-association.json",
       ".ini",
+  ".jetbrains-ide.xml",
   ".istanbul-coverage.json",
   ".inf",
   ".info.plist",
@@ -791,6 +799,7 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".pnpmfile.cjs",
   ".pmd.xml",
   ".py",
+  ".python-tooling-config",
   ".rb",
   ".rar",
   ".rdb",
@@ -4475,6 +4484,12 @@ function getImportMime(filePath: string, extension: string): string {
   if (isRuffConfigFile(filePath, extension)) {
     return "application/vnd.astral-sh.ruff+toml";
   }
+  if (isPythonToolingConfigFile(filePath, extension)) {
+    return "application/vnd.drsai.python-tooling-config";
+  }
+  if (isCitationCffFile(filePath, extension)) {
+    return "application/vnd.citationstyles.cff+yaml";
+  }
   return getMime(extension);
 }
 
@@ -4501,6 +4516,9 @@ function getImportExtension(filePath: string): string {
   }
   if (normalizedPath.endsWith("/.vscode/extensions.json")) {
     return ".vscode-extensions.json";
+  }
+  if ((normalizedPath.includes("/.idea/") && name.endsWith(".xml")) || name.endsWith(".iml")) {
+    return ".jetbrains-ide.xml";
   }
   if (name === "codeowners") {
     return ".codeowners";
@@ -4573,6 +4591,9 @@ function getImportExtension(filePath: string): string {
   }
   if (name === ".pypirc" || name.endsWith(".pypirc")) {
     return ".pypirc";
+  }
+  if (name === "citation.cff" || name.endsWith(".citation.cff") || name.endsWith(".cff")) {
+    return ".citation.cff";
   }
   if (name === "ruff.toml" || name === ".ruff.toml") {
     return ".ruff.toml";
@@ -5118,6 +5139,15 @@ function getImportExtension(filePath: string): string {
   ) {
     return ".security-audit.json";
   }
+  if (
+    name === "pyrightconfig.json" ||
+    name === "mypy.ini" ||
+    name === ".mypy.ini" ||
+    name === "pytest.ini" ||
+    name === "tox.ini"
+  ) {
+    return ".python-tooling-config";
+  }
   if (name === "lcov.info" || name.endsWith(".lcov.info")) {
     return ".lcov";
   }
@@ -5236,6 +5266,17 @@ function getImportExtension(filePath: string): string {
     name === "prettier.config.mjs" ||
     name === "biome.json" ||
     name === "biome.jsonc" ||
+    name === "oxlintrc.json" ||
+    name === "oxlintrc.jsonc" ||
+    name === ".oxlintrc" ||
+    name === ".oxlintrc.json" ||
+    name === ".oxlintrc.jsonc" ||
+    name === "oxlint.config.js" ||
+    name === "oxlint.config.cjs" ||
+    name === "oxlint.config.mjs" ||
+    name === "oxlint.config.ts" ||
+    name === "deno.json" ||
+    name === "deno.jsonc" ||
     name === "cspell.json" ||
     name === "cspell.jsonc" ||
     name === ".cspell.json" ||
@@ -5292,6 +5333,36 @@ function getImportExtension(filePath: string): string {
     name === "stylelint.config.js" ||
     name === "stylelint.config.cjs" ||
     name === "stylelint.config.mjs" ||
+    name === ".babelrc" ||
+    name === ".babelrc.json" ||
+    name === ".babelrc.jsonc" ||
+    name === ".babelrc.js" ||
+    name === ".babelrc.cjs" ||
+    name === "babel.config.js" ||
+    name === "babel.config.cjs" ||
+    name === "babel.config.mjs" ||
+    name === "babel.config.json" ||
+    name === "babel.config.jsonc" ||
+    name === ".browserslistrc" ||
+    name === "browserslist" ||
+    name === "browserslist.rc" ||
+    name === "postcss.config.js" ||
+    name === "postcss.config.cjs" ||
+    name === "postcss.config.mjs" ||
+    name === "postcss.config.ts" ||
+    name === "tailwind.config.js" ||
+    name === "tailwind.config.cjs" ||
+    name === "tailwind.config.mjs" ||
+    name === "tailwind.config.ts" ||
+    name === "vercel.json" ||
+    name === "vercel.jsonc" ||
+    name === "netlify.toml" ||
+    name === "wrangler.toml" ||
+    name === "wrangler.json" ||
+    name === "wrangler.jsonc" ||
+    name === "tsconfig.json" ||
+    /^tsconfig\..+\.jsonc?$/.test(name) ||
+    name === "jsconfig.json" ||
     name === "jest.config.js" ||
     name === "jest.config.cjs" ||
     name === "jest.config.mjs" ||
@@ -5302,6 +5373,35 @@ function getImportExtension(filePath: string): string {
     name === "playwright.config.js" ||
     name === "playwright.config.mjs" ||
     name === "playwright.config.ts" ||
+    name === "cypress.config.js" ||
+    name === "cypress.config.cjs" ||
+    name === "cypress.config.mjs" ||
+    name === "cypress.config.ts" ||
+    name === "storybook.config.js" ||
+    name === "storybook.config.cjs" ||
+    name === "storybook.config.mjs" ||
+    name === "storybook.config.ts" ||
+    normalizedPath.endsWith("/.storybook/main.js") ||
+    normalizedPath.endsWith("/.storybook/main.cjs") ||
+    normalizedPath.endsWith("/.storybook/main.mjs") ||
+    normalizedPath.endsWith("/.storybook/main.ts") ||
+    normalizedPath.endsWith("/.storybook/preview.js") ||
+    normalizedPath.endsWith("/.storybook/preview.cjs") ||
+    normalizedPath.endsWith("/.storybook/preview.mjs") ||
+    normalizedPath.endsWith("/.storybook/preview.ts") ||
+    name === "next.config.js" ||
+    name === "next.config.cjs" ||
+    name === "next.config.mjs" ||
+    name === "next.config.ts" ||
+    name === "astro.config.js" ||
+    name === "astro.config.mjs" ||
+    name === "astro.config.ts" ||
+    name === "svelte.config.js" ||
+    name === "svelte.config.mjs" ||
+    name === "svelte.config.ts" ||
+    name === "nuxt.config.js" ||
+    name === "nuxt.config.mjs" ||
+    name === "nuxt.config.ts" ||
     name === "vite.config.js" ||
     name === "vite.config.mjs" ||
     name === "vite.config.ts" ||
@@ -5319,7 +5419,8 @@ function getImportExtension(filePath: string): string {
     name === "pnpm-workspace.yml" ||
     name === "turbo.json" ||
     name === "turbo.jsonc" ||
-    name === "nx.json"
+    name === "nx.json" ||
+    name === "rush.json"
   ) {
     return ".js-workspace-config";
   }
@@ -5618,6 +5719,7 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
       ".browser-session.json",
       ".cabal",
       ".cat",
+      ".citation.cff",
       ".cfg",
       ".checkstyle.xml",
       ".cmake",
@@ -5631,6 +5733,7 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
       ".contacts.csv",
       ".crash",
       ".csproj",
+      ".cff",
       ".dependabot.yaml",
       ".doc",
       ".docm",
@@ -6142,6 +6245,12 @@ function summarizeFile(
   if (isRuffConfigFile(filePath, extension)) {
     return summarizeRuffConfigFile(filePath, size);
   }
+  if (isPythonToolingConfigFile(filePath, extension)) {
+    return summarizePythonToolingConfigFile(filePath, size);
+  }
+  if (isCitationCffFile(filePath, extension)) {
+    return summarizeCitationCffFile(filePath, size);
+  }
   if (isPythonDependencyManifestFile(filePath, extension)) {
     return summarizePythonDependencyManifestFile(filePath, extension, size);
   }
@@ -6201,6 +6310,9 @@ function summarizeFile(
   }
   if (isVsCodeWorkspaceConfigFile(filePath, extension)) {
     return summarizeVsCodeWorkspaceConfigFile(filePath, extension, size);
+  }
+  if (isJetBrainsIdeConfigFile(filePath, extension)) {
+    return summarizeJetBrainsIdeConfigFile(filePath, size);
   }
   if (extension === ".bru") {
     return summarizeBrunoCollectionFile(filePath, size);
@@ -6359,6 +6471,9 @@ function summarizeFile(
     }
     if (isVsCodeWorkspaceConfigFile(filePath, extension)) {
       return summarizeVsCodeWorkspaceConfigFile(filePath, extension, size);
+    }
+    if (isJetBrainsIdeConfigFile(filePath, extension)) {
+      return summarizeJetBrainsIdeConfigFile(filePath, size);
     }
     if (isCloudIacTemplateFile(filePath, extension)) {
       return summarizeCloudIacTemplateFile(filePath, extension, size);
@@ -8196,6 +8311,18 @@ function isRuffConfigFile(filePath: string, extension: string): boolean {
   return pyprojectHasRuffConfig(filePath);
 }
 
+function isPythonToolingConfigFile(filePath: string, extension: string): boolean {
+  const name = basename(filePath).toLowerCase();
+  return (
+    extension === ".python-tooling-config" ||
+    name === "pyrightconfig.json" ||
+    name === "mypy.ini" ||
+    name === ".mypy.ini" ||
+    name === "pytest.ini" ||
+    name === "tox.ini"
+  );
+}
+
 function pyprojectHasRuffConfig(filePath: string): boolean {
   try {
     const raw = readFileHeader(filePath, MAX_RUFF_CONFIG_PREVIEW_BYTES).toString("utf8");
@@ -8282,6 +8409,7 @@ function isNodePackageManagerConfigFile(filePath: string, extension: string): bo
 
 function isJsToolingConfigFile(filePath: string, extension: string): boolean {
   const name = basename(filePath).toLowerCase();
+  const normalizedPath = filePath.replace(/\\/g, "/").toLowerCase();
   return (
     extension === ".js-tooling-config" ||
     name === "eslint.config.js" ||
@@ -8294,6 +8422,13 @@ function isJsToolingConfigFile(filePath: string, extension: string): boolean {
     name.startsWith("prettier.config.") ||
     name === "biome.json" ||
     name === "biome.jsonc" ||
+    name === "oxlintrc.json" ||
+    name === "oxlintrc.jsonc" ||
+    name === ".oxlintrc" ||
+    name.startsWith(".oxlintrc.") ||
+    name.startsWith("oxlint.config.") ||
+    name === "deno.json" ||
+    name === "deno.jsonc" ||
     name === "cspell.json" ||
     name === "cspell.jsonc" ||
     name === ".cspell.json" ||
@@ -8318,9 +8453,40 @@ function isJsToolingConfigFile(filePath: string, extension: string): boolean {
     name === ".stylelintrc" ||
     name.startsWith(".stylelintrc.") ||
     name.startsWith("stylelint.config.") ||
+    name === ".babelrc" ||
+    name.startsWith(".babelrc.") ||
+    name.startsWith("babel.config.") ||
+    name === ".browserslistrc" ||
+    name === "browserslist" ||
+    name === "browserslist.rc" ||
+    name.startsWith("postcss.config.") ||
+    name.startsWith("tailwind.config.") ||
+    name === "vercel.json" ||
+    name === "vercel.jsonc" ||
+    name === "netlify.toml" ||
+    name === "wrangler.toml" ||
+    name === "wrangler.json" ||
+    name === "wrangler.jsonc" ||
+    name === "tsconfig.json" ||
+    /^tsconfig\..+\.jsonc?$/.test(name) ||
+    name === "jsconfig.json" ||
     name.startsWith("jest.config.") ||
     name.startsWith("vitest.config.") ||
     name.startsWith("playwright.config.") ||
+    name.startsWith("cypress.config.") ||
+    name.startsWith("storybook.config.") ||
+    normalizedPath.endsWith("/.storybook/main.js") ||
+    normalizedPath.endsWith("/.storybook/main.cjs") ||
+    normalizedPath.endsWith("/.storybook/main.mjs") ||
+    normalizedPath.endsWith("/.storybook/main.ts") ||
+    normalizedPath.endsWith("/.storybook/preview.js") ||
+    normalizedPath.endsWith("/.storybook/preview.cjs") ||
+    normalizedPath.endsWith("/.storybook/preview.mjs") ||
+    normalizedPath.endsWith("/.storybook/preview.ts") ||
+    name.startsWith("next.config.") ||
+    name.startsWith("astro.config.") ||
+    name.startsWith("svelte.config.") ||
+    name.startsWith("nuxt.config.") ||
     name.startsWith("vite.config.") ||
     name.startsWith("rollup.config.") ||
     name.startsWith("tsup.config.")
@@ -8335,7 +8501,8 @@ function isJsWorkspaceConfigFile(filePath: string, extension: string): boolean {
     name === "pnpm-workspace.yml" ||
     name === "turbo.json" ||
     name === "turbo.jsonc" ||
-    name === "nx.json"
+    name === "nx.json" ||
+    name === "rush.json"
   );
 }
 
@@ -8363,6 +8530,11 @@ function isMavenSettingsFile(filePath: string, extension: string): boolean {
     name.endsWith(".maven-settings.xml") ||
     (name === "settings.xml" && (normalizedPath.includes("/.m2/") || normalizedPath.includes("/.mvn/")))
   );
+}
+
+function isCitationCffFile(filePath: string, extension: string): boolean {
+  const name = basename(filePath).toLowerCase();
+  return extension === ".citation.cff" || extension === ".cff" || name === "citation.cff" || name.endsWith(".citation.cff");
 }
 
 function isMetricsSnapshotFile(extension: string): boolean {
@@ -8688,6 +8860,17 @@ interface RuffConfigPreview {
   truncated: boolean;
 }
 
+interface PythonToolingConfigPreview {
+  tool: string;
+  sections: string[];
+  settings: string[];
+  ruleOrCheckHints: string[];
+  pathGlobs: string[];
+  riskCues: string[];
+  sampleLines: string[];
+  truncated: boolean;
+}
+
 function summarizeRuffConfigFile(filePath: string, size: number): string {
   try {
     const raw = readFileHeader(filePath, Math.min(size, MAX_RUFF_CONFIG_PREVIEW_BYTES)).toString("utf8");
@@ -8841,6 +9024,208 @@ function addRuffConfigSample(samples: string[], line: string): void {
   if (samples.length >= MAX_RUFF_CONFIG_ITEM_PREVIEW) return;
   const sample = clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(line)), 220);
   if (sample) samples.push(sample);
+}
+
+function summarizePythonToolingConfigFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_PYTHON_TOOLING_CONFIG_PREVIEW_BYTES)).toString("utf8");
+    const preview = parsePythonToolingConfigPreview(filePath, raw);
+    return [
+      `Python tooling config preview (${preview.tool}, ${basename(filePath)}, ${formatBytes(size)}).`,
+      preview.sections.length > 0
+        ? `Sections (${preview.sections.length}${preview.sections.length >= MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.sections.join(", ")}.`
+        : "Sections: none detected in the bounded local preview.",
+      preview.settings.length > 0
+        ? `Settings (${preview.settings.length}${preview.settings.length >= MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.settings.join(", ")}.`
+        : "Settings: none detected in the bounded local preview.",
+      preview.ruleOrCheckHints.length > 0
+        ? `Check/test/env hints (${preview.ruleOrCheckHints.length}${preview.ruleOrCheckHints.length >= MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.ruleOrCheckHints.join(", ")}.`
+        : "Check/test/env hints: none detected in the bounded local preview.",
+      preview.pathGlobs.length > 0
+        ? `Path globs (${preview.pathGlobs.length}${preview.pathGlobs.length >= MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.pathGlobs.join(", ")}.`
+        : "Path globs: none detected in the bounded local preview.",
+      preview.riskCues.length > 0
+        ? `Static risk cues (${preview.riskCues.length}${preview.riskCues.length >= MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.riskCues.join(", ")}.`
+        : "Static risk cues: no command, plugin, or environment-like cues detected in the bounded local preview.",
+      preview.sampleLines.length > 0
+        ? `Sanitized line samples:\n${preview.sampleLines.map((line, index) => `${index + 1}. ${line}`).join("\n")}`
+        : "Sanitized line samples: none detected in the bounded local preview.",
+      preview.truncated ? `Python tooling config preview was capped at ${formatBytes(MAX_PYTHON_TOOLING_CONFIG_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; Python tooling metadata was parsed from bounded workspace-local JSON/INI text only, token-like values were redacted, and no Python interpreter, Pyright, Mypy, Pytest, Tox, Nox, type checker, test runner, virtualenv creation, package install, plugin import, environment loading, network call, credential lookup, workspace mutation, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Python tooling config ready for explicit attachment (${formatBytes(size)}).`,
+      "Config preview could not read bounded local JSON/INI text.",
+      "No Python interpreter, Pyright, Mypy, Pytest, Tox, Nox, type checker, test runner, virtualenv creation, package install, plugin import, environment loading, network call, credential lookup, workspace mutation, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parsePythonToolingConfigPreview(filePath: string, raw: string): PythonToolingConfigPreview {
+  const tool = describePythonToolingConfig(filePath);
+  const normalized = normalizeTextPreview(raw);
+  if (basename(filePath).toLowerCase() === "pyrightconfig.json") {
+    return parsePyrightConfigPreview(normalized, tool);
+  }
+  return parsePythonIniToolingConfigPreview(normalized, tool);
+}
+
+function describePythonToolingConfig(filePath: string): string {
+  const name = basename(filePath).toLowerCase();
+  if (name === "pyrightconfig.json") return "Pyright";
+  if (name === "mypy.ini" || name === ".mypy.ini") return "Mypy";
+  if (name === "pytest.ini") return "Pytest";
+  if (name === "tox.ini") return "Tox";
+  return "Python tooling";
+}
+
+function parsePyrightConfigPreview(raw: string, tool: string): PythonToolingConfigPreview {
+  const settings = new Set<string>();
+  const ruleOrCheckHints = new Set<string>();
+  const pathGlobs = new Set<string>();
+  const riskCues = collectPythonToolingRiskCues(raw);
+  const sampleLines = collectPythonToolingSampleLines(raw);
+  let parsed: unknown;
+
+  try {
+    parsed = parseJsoncLike(raw);
+  } catch {
+    parsed = undefined;
+  }
+
+  if (isRecord(parsed)) {
+    for (const key of readObjectKeys(parsed, MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      settings.add(`${key} key`);
+      if (settings.size >= MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW) break;
+    }
+    for (const key of ["pythonVersion", "pythonPlatform", "typeCheckingMode", "venvPath", "venv"]) {
+      const value = parsed[key];
+      if (typeof value === "string") settings.add(`${key}=${sanitizePythonToolingValue(key, value)}`);
+      if (settings.size >= MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW) break;
+    }
+    for (const key of ["include", "exclude", "ignore", "strict", "stubPath", "typeshedPath", "extraPaths"]) {
+      const value = parsed[key];
+      const values = Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+      for (const item of values.slice(0, 4)) pathGlobs.add(`${key}:${sanitizePythonToolingValue(key, item)}`);
+      if (typeof value === "string") pathGlobs.add(`${key}:${sanitizePythonToolingValue(key, value)}`);
+      if (pathGlobs.size >= MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW) break;
+    }
+    for (const key of readObjectKeys(parsed, MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      if (/^(?:report|enable|disable|strict|typeCheckingMode)/i.test(key)) {
+        const value = parsed[key];
+        ruleOrCheckHints.add(`${key}${typeof value === "string" ? `=${sanitizePythonToolingValue(key, value)}` : ""}`);
+      }
+      if (ruleOrCheckHints.size >= MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW) break;
+    }
+  }
+  if (/\bvenv(?:Path)?\b/i.test(raw)) riskCues.add("virtualenv reference");
+
+  return {
+    tool,
+    sections: [],
+    settings: [...settings].slice(0, MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW),
+    ruleOrCheckHints: [...ruleOrCheckHints].slice(0, MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW),
+    pathGlobs: [...pathGlobs].slice(0, MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW),
+    riskCues: [...riskCues].slice(0, MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW),
+    sampleLines,
+    truncated: raw.length >= MAX_PYTHON_TOOLING_CONFIG_PREVIEW_BYTES,
+  };
+}
+
+function parsePythonIniToolingConfigPreview(raw: string, tool: string): PythonToolingConfigPreview {
+  const lines = raw.split("\n");
+  const sections = new Set<string>();
+  const settings = new Set<string>();
+  const ruleOrCheckHints = new Set<string>();
+  const pathGlobs = new Set<string>();
+  const riskCues = collectPythonToolingRiskCues(raw);
+  const sampleLines = collectPythonToolingSampleLines(raw);
+  let section = "";
+
+  for (const line of lines) {
+    const trimmed = stripIniComment(line);
+    if (!trimmed) continue;
+    const sectionMatch = trimmed.match(/^\[([^\]]+)\]$/);
+    if (sectionMatch?.[1]) {
+      section = sanitizePythonToolingValue("section", sectionMatch[1]);
+      sections.add(section);
+      continue;
+    }
+    const entry = readIniKeyValuePreview(trimmed);
+    if (!entry) continue;
+    collectPythonToolingIniEntry(tool, section, entry.key, entry.value, settings, ruleOrCheckHints, pathGlobs, riskCues);
+  }
+
+  return {
+    tool,
+    sections: [...sections].slice(0, MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW),
+    settings: [...settings].slice(0, MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW),
+    ruleOrCheckHints: [...ruleOrCheckHints].slice(0, MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW),
+    pathGlobs: [...pathGlobs].slice(0, MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW),
+    riskCues: [...riskCues].slice(0, MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW),
+    sampleLines,
+    truncated:
+      raw.length >= MAX_PYTHON_TOOLING_CONFIG_PREVIEW_BYTES ||
+      sections.size >= MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW ||
+      settings.size >= MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW ||
+      ruleOrCheckHints.size >= MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW ||
+      pathGlobs.size >= MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW,
+  };
+}
+
+function collectPythonToolingIniEntry(
+  tool: string,
+  section: string,
+  key: string,
+  value: string,
+  settings: Set<string>,
+  ruleOrCheckHints: Set<string>,
+  pathGlobs: Set<string>,
+  riskCues: Set<string>,
+): void {
+  const keyLower = key.toLowerCase();
+  const sectionLower = section.toLowerCase();
+  const valuePreview = sanitizePythonToolingValue(key, value);
+
+  if (["python_version", "warn_return_any", "strict", "addopts", "testpaths", "python_files", "envlist", "isolated_build", "skipsdist", "minversion"].includes(keyLower)) {
+    settings.add(`${keyLower}=${valuePreview}`);
+  }
+  if (["ignore_missing_imports", "disallow_untyped_defs", "warn_unused_ignores", "markers", "filterwarnings", "deps", "commands"].includes(keyLower) || sectionLower.startsWith("testenv")) {
+    ruleOrCheckHints.add(`${section ? `${section}.` : ""}${keyLower}=${valuePreview}`);
+  }
+  if (["files", "exclude", "mypy_path", "testpaths", "python_files", "python_classes", "python_functions", "changedir"].includes(keyLower)) {
+    pathGlobs.add(`${keyLower}=${valuePreview}`);
+  }
+  if (keyLower === "commands") riskCues.add(`${tool} command declaration`);
+  if (keyLower === "deps") riskCues.add(`${tool} dependency declaration`);
+}
+
+function collectPythonToolingRiskCues(raw: string): Set<string> {
+  const cues = new Set<string>();
+  if (/\b(addopts|commands|deps|envlist|passenv|setenv|plugins?)\b/i.test(raw)) cues.add("runner/plugin/environment declaration");
+  if (/\bprocess\.env\b|\$\{?env\b|%\(env/i.test(raw)) cues.add("environment-variable reference");
+  if (/\b(pytest|tox|mypy|pyright|nox|python|pip|uv)\b/i.test(raw)) cues.add("tool command token");
+  if (/\b(token|secret|password|api[_-]?key|credential)\b/i.test(raw)) cues.add("credential-shaped value redacted");
+  return cues;
+}
+
+function collectPythonToolingSampleLines(raw: string): string[] {
+  return raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#") && !line.startsWith(";") && !line.startsWith("//"))
+    .slice(0, MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW)
+    .map((line) => clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(line)), 220));
+}
+
+function stripIniComment(line: string): string {
+  return line.replace(/\s[;#].*$/, "").trim();
+}
+
+function sanitizePythonToolingValue(key: string, value: string | undefined): string {
+  if (/\b(token|secret|password|api[_-]?key|credential)\b/i.test(key)) return "[redacted]";
+  return clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(value || "")), 160);
 }
 
 function parsePythonDependencyManifestPreview(
@@ -9793,6 +10178,7 @@ function parseTrxTestReport(raw: string): TestReportPreview {
   const skipped = readXmlNumber(counterAttrs, "notExecuted") + readXmlNumber(counterAttrs, "notRunnable");
   const total = readXmlNumber(counterAttrs, "total") || resultMatches.length;
   const summaryOutcome = readXmlAttributes(raw.match(/<ResultSummary\b([^>]*)>/i)?.[1] ?? "").get("outcome") || "";
+  const attachmentSamples = collectTrxAttachmentSamples(raw);
   return {
     format: "Visual Studio TRX",
     suites: summaryOutcome ? [`ResultSummary outcome: ${clampSingleLine(summaryOutcome, 80)}`] : [],
@@ -9802,9 +10188,33 @@ function parseTrxTestReport(raw: string): TestReportPreview {
     skipped,
     durationSeconds: null,
     failedCases,
+    detailLines: attachmentSamples.length > 0 ? [`TRX attachment cues: ${attachmentSamples.join(", ")}`] : [],
     resultSummary: `Cases: ${total}; passed: ${readXmlNumber(counterAttrs, "passed") || (outcomeCounts.get("Passed") ?? 0)}; non-passing: ${failed || countNonPassingOutcomes(outcomeCounts)}; skipped/not executed: ${skipped}.`,
-    truncated: raw.length >= MAX_TEST_REPORT_PREVIEW_BYTES || resultMatches.length > MAX_TEST_REPORT_CASE_PREVIEW,
+    truncated: raw.length >= MAX_TEST_REPORT_PREVIEW_BYTES || resultMatches.length > MAX_TEST_REPORT_CASE_PREVIEW || attachmentSamples.length >= MAX_TEST_REPORT_DETAIL_PREVIEW,
   };
+}
+
+function collectTrxAttachmentSamples(raw: string): string[] {
+  const attachments: string[] = [];
+  for (const match of raw.matchAll(/<ResultFile\b([^>]*?)(?:\/>|>([\s\S]*?)<\/ResultFile>)/gi)) {
+    if (attachments.length >= MAX_TEST_REPORT_DETAIL_PREVIEW) break;
+    const attrs = readXmlAttributes(match[1] ?? "");
+    const value =
+      attrs.get("path") ||
+      attrs.get("fileName") ||
+      attrs.get("href") ||
+      decodeXmlEntities((match[2] ?? "").replace(/<[^>]+>/g, " ")).trim();
+    if (value) attachments.push(maskPotentialSecretPathSegments(clampSingleLine(value, 140)));
+  }
+  const outputText = [...raw.matchAll(/<Output\b[^>]*>([\s\S]*?)<\/Output>/gi)]
+    .map((match) => decodeXmlEntities((match[1] ?? "").replace(/<[^>]+>/g, " ")))
+    .join("\n");
+  for (const match of outputText.matchAll(/\[\[ATTACHMENT\|([^\]\r\n]+)\]\]|(?:^|\n)\s*(?:attachment|artifact|result file)\s*:\s*([^\r\n]+)/gi)) {
+    if (attachments.length >= MAX_TEST_REPORT_DETAIL_PREVIEW) break;
+    const value = match[1] || match[2] || "";
+    if (value) attachments.push(maskPotentialSecretPathSegments(clampSingleLine(value, 140)));
+  }
+  return uniquePreviewValues(attachments, MAX_TEST_REPORT_DETAIL_PREVIEW);
 }
 
 function parseNunitXmlTestReport(raw: string): TestReportPreview {
@@ -17062,6 +17472,125 @@ function sanitizeMavenSettingsUrl(value: string): string {
   return clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(value)), 220);
 }
 
+function summarizeCitationCffFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(
+      filePath,
+      Math.min(MAX_CITATION_CFF_PREVIEW_BYTES, MAX_TEXT_BYTES * 24),
+    ).toString("utf8");
+    const normalized = normalizeTextPreview(raw);
+    const preview = parseCitationCffPreview(normalized);
+    return [
+      `Citation CFF metadata preview (${formatBytes(size)}).`,
+      preview.title ? `Title: ${preview.title}.` : "Title: none detected in the bounded local preview.",
+      preview.version ? `Version: ${preview.version}.` : "",
+      preview.dateReleased ? `Date released: ${preview.dateReleased}.` : "",
+      preview.doi ? `DOI: ${preview.doi}.` : "DOI: none detected in the bounded local preview.",
+      preview.repository ? `Repository/code URL: ${preview.repository}.` : "",
+      preview.license ? `License field: ${preview.license}.` : "",
+      preview.authors.length > 0
+        ? `Authors (${preview.authors.length}${preview.authors.length >= MAX_CITATION_CFF_ITEM_PREVIEW ? "+" : ""}): ${preview.authors.join(" | ")}.`
+        : "Authors: none detected in the bounded local preview.",
+      preview.keywords.length > 0
+        ? `Keywords: ${preview.keywords.join(", ")}.`
+        : "Keywords: none detected in the bounded local preview.",
+      preview.identifiers.length > 0
+        ? `Identifiers (${preview.identifiers.length}${preview.identifiers.length >= MAX_CITATION_CFF_ITEM_PREVIEW ? "+" : ""}): ${preview.identifiers.join(" | ")}.`
+        : "Identifiers: none detected in the bounded local preview.",
+      preview.riskCues.length > 0
+        ? `Static risk cues: ${preview.riskCues.join(", ")}.`
+        : "Static risk cues: no credential-shaped values detected in the bounded local preview.",
+      raw.length >= MAX_CITATION_CFF_PREVIEW_BYTES
+        ? `Citation CFF preview was capped at ${formatBytes(MAX_CITATION_CFF_PREVIEW_BYTES)}.`
+        : "",
+      "Ready for explicit attachment after visible review; CITATION.cff metadata was parsed from bounded workspace-local YAML text only, token-like values were redacted, and no DOI resolver, Crossref/DataCite/GitHub API call, license compliance decision, citation formatter, network call, credential lookup, workspace mutation, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Citation CFF file ready for explicit attachment (${formatBytes(size)}).`,
+      "CITATION.cff could not be parsed from the bounded local YAML preview.",
+      "No DOI resolver, Crossref/DataCite/GitHub API call, license compliance decision, citation formatter, network call, credential lookup, workspace mutation, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseCitationCffPreview(raw: string): {
+  title: string;
+  version: string;
+  dateReleased: string;
+  doi: string;
+  repository: string;
+  license: string;
+  authors: string[];
+  keywords: string[];
+  identifiers: string[];
+  riskCues: string[];
+} {
+  const lines = raw.split("\n");
+  const authors = collectYamlObjectList(
+    lines,
+    "authors",
+    ["name", "family-names", "given-names", "orcid", "affiliation"],
+    MAX_CITATION_CFF_ITEM_PREVIEW,
+  ).map(formatCitationAuthor);
+  const identifiers = collectYamlObjectList(
+    lines,
+    "identifiers",
+    ["type", "value", "description"],
+    MAX_CITATION_CFF_ITEM_PREVIEW,
+  ).map(formatCitationIdentifier);
+  const riskCues = new Set<string>();
+  for (const line of lines) {
+    if (/\b(token|secret|password|api[_-]?key|credential|private[_-]?key)\b/i.test(line)) {
+      riskCues.add("credential-shaped value redacted");
+    }
+  }
+  return {
+    title: readCitationYamlScalar(lines, "title"),
+    version: readCitationYamlScalar(lines, "version"),
+    dateReleased: readCitationYamlScalar(lines, "date-released"),
+    doi: readCitationYamlScalar(lines, "doi"),
+    repository: readCitationYamlScalar(lines, "repository-code") || readCitationYamlScalar(lines, "url"),
+    license: readCitationYamlScalar(lines, "license"),
+    authors: uniquePreviewValues(authors.filter(Boolean), MAX_CITATION_CFF_ITEM_PREVIEW),
+    keywords: collectYamlStringList(lines, ["keywords"], MAX_CITATION_CFF_ITEM_PREVIEW).map(sanitizeCitationCffValue),
+    identifiers: uniquePreviewValues(identifiers.filter(Boolean), MAX_CITATION_CFF_ITEM_PREVIEW),
+    riskCues: uniquePreviewValues([...riskCues], MAX_CITATION_CFF_ITEM_PREVIEW),
+  };
+}
+
+function readCitationYamlScalar(lines: string[], key: string): string {
+  const pattern = new RegExp(`^${escapeRegExp(key)}\\s*:\\s*(.+)$`, "i");
+  for (const line of lines) {
+    if (/^\s/.test(line) || line.trim().startsWith("#")) continue;
+    const match = line.match(pattern);
+    if (match?.[1]) return sanitizeCitationCffValue(match[1]);
+  }
+  return "";
+}
+
+function formatCitationAuthor(author: Record<string, string>): string {
+  const name = author.name || [author["given-names"], author["family-names"]].filter(Boolean).join(" ");
+  const details = [
+    name || "(unnamed)",
+    author.orcid ? `orcid=${author.orcid}` : "",
+    author.affiliation ? `affiliation=${author.affiliation}` : "",
+  ].filter(Boolean);
+  return clampSingleLine(details.join(" "), 220);
+}
+
+function formatCitationIdentifier(identifier: Record<string, string>): string {
+  return [
+    identifier.type || "identifier",
+    identifier.value ? `value=${identifier.value}` : "",
+    identifier.description ? `description=${identifier.description}` : "",
+  ].filter(Boolean).join(" ");
+}
+
+function sanitizeCitationCffValue(value: string): string {
+  return clampSingleLine(maskPotentialSecretValues(redactHarUrl(cleanYamlScalar(value))), 180);
+}
+
 function stripJvmBuildConfigComment(line: string): string {
   const trimmed = line.trim();
   if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("!")) return "";
@@ -18207,13 +18736,13 @@ function summarizeJsWorkspaceConfigFile(filePath: string, size: number): string 
       normalized.length >= MAX_JS_WORKSPACE_CONFIG_PREVIEW_BYTES
         ? `JS/TS workspace config preview was capped at ${formatBytes(MAX_JS_WORKSPACE_CONFIG_PREVIEW_BYTES)}.`
         : "",
-      "Ready for explicit attachment after visible review; monorepo workspace metadata was parsed from bounded workspace-local text/JSON only, with likely secrets redacted and no pnpm/npm/Yarn/Bun command, Turbo/Nx runner, package install, dependency graph build, cache lookup, plugin execution, environment loading, network call, credential lookup, or provider send performed.",
+      "Ready for explicit attachment after visible review; monorepo workspace metadata was parsed from bounded workspace-local text/JSON only, with likely secrets redacted and no pnpm/npm/Yarn/Bun command, Turbo/Nx/Rush runner, package install, dependency graph build, cache lookup, plugin execution, environment loading, network call, credential lookup, or provider send performed.",
     ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
   } catch {
     return [
       `JS/TS workspace config ready for explicit attachment (${formatBytes(size)}).`,
       "Config preview could not read bounded local text.",
-      "No pnpm/npm/Yarn/Bun command, Turbo/Nx runner, package install, dependency graph build, cache lookup, plugin execution, environment loading, network call, credential lookup, or provider send was performed.",
+      "No pnpm/npm/Yarn/Bun command, Turbo/Nx/Rush runner, package install, dependency graph build, cache lookup, plugin execution, environment loading, network call, credential lookup, or provider send was performed.",
     ].join("\n").slice(0, MAX_TEXT_BYTES);
   }
 }
@@ -18223,12 +18752,13 @@ function describeJsWorkspaceConfig(filePath: string): string {
   if (name.startsWith("pnpm-workspace.")) return "pnpm workspace";
   if (name === "turbo.json" || name === "turbo.jsonc") return "Turborepo";
   if (name === "nx.json") return "Nx workspace";
+  if (name === "rush.json") return "Rush workspace";
   return "JS/TS workspace";
 }
 
 function parseJsWorkspaceConfigObject(filePath: string, raw: string): unknown {
   const name = basename(filePath).toLowerCase();
-  if (name === "turbo.json" || name === "turbo.jsonc" || name === "nx.json") {
+  if (name === "turbo.json" || name === "turbo.jsonc" || name === "nx.json" || name === "rush.json") {
     try {
       return parseJsoncLike(raw);
     } catch {
@@ -18245,7 +18775,19 @@ function collectJsWorkspaceConfigHints(tool: string, parsed: unknown, raw: strin
       hints.add(`${key} key`);
       if (hints.size >= MAX_JS_WORKSPACE_CONFIG_ITEM_PREVIEW) return [...hints];
     }
-    for (const key of ["globalDependencies", "globalEnv", "namedInputs", "plugins", "workspaceLayout", "npmScope"]) {
+    if (tool === "Rush workspace") {
+      const projects = Array.isArray(parsed.projects) ? parsed.projects : [];
+      for (const project of projects) {
+        if (!isRecord(project)) continue;
+        const packageName = typeof project.packageName === "string" ? project.packageName : undefined;
+        const projectFolder = typeof project.projectFolder === "string" ? project.projectFolder : undefined;
+        if (packageName || projectFolder) {
+          hints.add(`project ${clampSingleLine(maskPotentialSecretValues([packageName, projectFolder].filter(Boolean).join(" at ")), 140)}`);
+        }
+        if (hints.size >= MAX_JS_WORKSPACE_CONFIG_ITEM_PREVIEW) return [...hints];
+      }
+    }
+    for (const key of ["globalDependencies", "globalEnv", "namedInputs", "plugins", "workspaceLayout", "npmScope", "approvedPackagesPolicy"]) {
       const value = parsed[key];
       if (Array.isArray(value)) {
         const samples = value.filter((item): item is string => typeof item === "string").slice(0, 4);
@@ -18282,6 +18824,12 @@ function collectJsWorkspaceTaskHints(tool: string, parsed: unknown, raw: string)
     const targetDefaults = isRecord(parsed.targetDefaults) ? parsed.targetDefaults : undefined;
     for (const key of readObjectKeys(targetDefaults, MAX_JS_WORKSPACE_CONFIG_ITEM_PREVIEW)) {
       hints.add(`target default ${key}`);
+      if (hints.size >= MAX_JS_WORKSPACE_CONFIG_ITEM_PREVIEW) return [...hints];
+    }
+    const commandLine = isRecord(parsed.commandLine) ? parsed.commandLine : undefined;
+    const commands = isRecord(commandLine?.commands) ? commandLine.commands : undefined;
+    for (const key of readObjectKeys(commands, MAX_JS_WORKSPACE_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`rush command ${key}`);
       if (hints.size >= MAX_JS_WORKSPACE_CONFIG_ITEM_PREVIEW) return [...hints];
     }
   }
@@ -18367,22 +18915,26 @@ function summarizeJsToolingConfigFile(filePath: string, size: number): string {
       normalized.length >= MAX_JS_TOOLING_CONFIG_PREVIEW_BYTES
         ? `JS/TS tooling config preview was capped at ${formatBytes(MAX_JS_TOOLING_CONFIG_PREVIEW_BYTES)}.`
         : "",
-      "Ready for explicit attachment after visible review; JS/TS tooling metadata was parsed from bounded workspace-local text/JSON only, with likely secrets redacted and no node/npm/pnpm/Yarn/Bun command, lint/test/format runner, Vite dev server, Rollup/Tsup build, Playwright browser launch, config module import, environment loading, plugin resolution, network call, credential lookup, or provider send performed.",
+      "Ready for explicit attachment after visible review; JS/TS tooling metadata was parsed from bounded workspace-local text/JSON only, with likely secrets redacted and no node/npm/pnpm/Yarn/Bun command, no Deno command, no Oxlint command, TypeScript compiler, Babel transform, Browserslist resolution, lint/test/format runner, Vite/Next/Astro/Svelte/Nuxt dev server, Rollup/Tsup build, Playwright/Cypress browser launch, Storybook dev server/build, PostCSS/Tailwind compile, Vercel/Netlify/Wrangler deploy/dev/build, framework build/render, config module import, environment loading, plugin resolution, network call, credential lookup, or provider send performed.",
     ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
   } catch {
     return [
       `JS/TS tooling config ready for explicit attachment (${formatBytes(size)}).`,
       "Config preview could not read bounded local text.",
-      "No node/npm/pnpm/Yarn/Bun command, lint/test/format runner, Vite dev server, Rollup/Tsup build, Playwright browser launch, config module import, environment loading, plugin resolution, network call, credential lookup, or provider send was performed.",
+      "No node/npm/pnpm/Yarn/Bun command, no Deno command, no Oxlint command, TypeScript compiler, Babel transform, Browserslist resolution, lint/test/format runner, Vite/Next/Astro/Svelte/Nuxt dev server, Rollup/Tsup build, Playwright/Cypress browser launch, Storybook dev server/build, PostCSS/Tailwind compile, Vercel/Netlify/Wrangler deploy/dev/build, framework build/render, config module import, environment loading, plugin resolution, network call, credential lookup, or provider send was performed.",
     ].join("\n").slice(0, MAX_TEXT_BYTES);
   }
 }
 
 function describeJsToolingConfig(filePath: string): string {
   const name = basename(filePath).toLowerCase();
+  const normalizedPath = filePath.replace(/\\/g, "/").toLowerCase();
+  if (normalizedPath.includes("/.storybook/") || name.includes("storybook")) return "Storybook";
   if (name.includes("eslint")) return "ESLint";
   if (name.includes("prettier")) return "Prettier";
   if (name.includes("biome")) return "Biome";
+  if (name.includes("oxlint")) return "Oxlint";
+  if (name.includes("deno")) return "Deno";
   if (name.includes("cspell")) return "CSpell";
   if (name.includes("markdownlint")) return "Markdownlint";
   if (name.includes("typedoc")) return "TypeDoc";
@@ -18390,9 +18942,23 @@ function describeJsToolingConfig(filePath: string): string {
   if (name.includes("commitlint")) return "Commitlint";
   if (name.includes("lintstaged") || name.includes("lint-staged")) return "lint-staged";
   if (name.includes("stylelint")) return "Stylelint";
+  if (name.includes("babel")) return "Babel";
+  if (name.includes("browserslist")) return "Browserslist";
+  if (name.includes("postcss")) return "PostCSS";
+  if (name.includes("tailwind")) return "Tailwind";
+  if (name.includes("vercel")) return "Vercel";
+  if (name.includes("netlify")) return "Netlify";
+  if (name.includes("wrangler")) return "Cloudflare Workers";
+  if (name.startsWith("tsconfig")) return "TypeScript project";
+  if (name === "jsconfig.json") return "JavaScript project";
   if (name.includes("jest")) return "Jest";
   if (name.includes("vitest")) return "Vitest";
   if (name.includes("playwright")) return "Playwright";
+  if (name.includes("cypress")) return "Cypress";
+  if (name.includes("next")) return "Next.js";
+  if (name.includes("astro")) return "Astro";
+  if (name.includes("svelte")) return "SvelteKit";
+  if (name.includes("nuxt")) return "Nuxt";
   if (name.includes("vite")) return "Vite";
   if (name.includes("rollup")) return "Rollup";
   if (name.includes("tsup")) return "Tsup";
@@ -18407,6 +18973,22 @@ function parseJsToolingConfigObject(filePath: string, raw: string): unknown {
     name === ".eslintrc" ||
     name === ".prettierrc" ||
     name === ".stylelintrc" ||
+    name === ".babelrc" ||
+    name === ".oxlintrc" ||
+    name === ".oxlintrc.json" ||
+    name === ".oxlintrc.jsonc" ||
+    name === "oxlintrc.json" ||
+    name === "oxlintrc.jsonc" ||
+    name === ".babelrc.json" ||
+    name === ".babelrc.jsonc" ||
+    name === "babel.config.json" ||
+    name === "babel.config.jsonc" ||
+    name === "vercel.json" ||
+    name === "vercel.jsonc" ||
+    name === "wrangler.json" ||
+    name === "wrangler.jsonc" ||
+    name === "deno.json" ||
+    name === "deno.jsonc" ||
     name === ".markdownlint.json" ||
     name === ".markdownlint.jsonc" ||
     name === "markdownlint.json" ||
@@ -18439,6 +19021,12 @@ function collectJsToolingSchemaHints(tool: string, parsed: unknown, raw: string)
       if (hints.size >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW) return [...hints];
     }
   }
+  if (tool === "TypeScript project" || tool === "JavaScript project") {
+    for (const cue of collectRegexGroup(raw, /"(compilerOptions|baseUrl|paths|references|files|include|exclude|extends|target|module|moduleResolution|jsx|strict|noEmit|rootDir|outDir|types|lib|allowJs|checkJs)"\s*:/g, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`${cue} cue`);
+      if (hints.size >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW) return [...hints];
+    }
+  }
   const lower = raw.toLowerCase();
   for (const token of [
     "extends",
@@ -18452,6 +19040,20 @@ function collectJsToolingSchemaHints(tool: string, parsed: unknown, raw: string)
     "semi",
     "formatter",
     "linter",
+    "categories",
+    "correctness",
+    "suspicious",
+    "perf",
+    "nursery",
+    "tasks",
+    "imports",
+    "importMap",
+    "lint",
+    "fmt",
+    "test",
+    "bench",
+    "lock",
+    "nodeModulesDir",
     "words",
     "ignoreWords",
     "dictionaries",
@@ -18488,12 +19090,125 @@ function collectJsToolingSchemaHints(tool: string, parsed: unknown, raw: string)
     "concurrent",
     "relative",
     "shell",
+    "presets",
+    "plugins",
+    "env",
+    "targets",
+    "assumptions",
+    "sourceMaps",
+    "babelrcRoots",
+    "overrides",
+    "browsers",
+    "extends",
+    "defaults",
+    "production",
+    "development",
+    "content",
+    "darkMode",
+    "theme",
+    "extend",
+    "safelist",
+    "prefix",
+    "important",
+    "presets",
+    "corePlugins",
+    "future",
+    "map",
+    "parser",
+    "syntax",
+    "stringifier",
+    "from",
+    "to",
+    "buildCommand",
+    "outputDirectory",
+    "installCommand",
+    "devCommand",
+    "cleanUrls",
+    "crons",
+    "regions",
+    "publish",
+    "command",
+    "edge_functions",
+    "context",
+    "environment",
+    "main",
+    "compatibility_date",
+    "compatibility_flags",
+    "routes",
+    "vars",
+    "durable_objects",
+    "kv_namespaces",
+    "d1_databases",
+    "r2_buckets",
+    "assets",
+    "observability",
+    "triggers",
+    "placement",
+    "compilerOptions",
+    "baseUrl",
+    "paths",
+    "references",
+    "files",
+    "include",
+    "exclude",
+    "extends",
+    "target",
+    "module",
+    "moduleResolution",
+    "jsx",
+    "strict",
+    "noEmit",
+    "rootDir",
+    "outDir",
+    "types",
+    "lib",
+    "allowJs",
+    "checkJs",
     "testEnvironment",
     "setupFiles",
     "coverage",
     "projects",
     "webServer",
     "use",
+    "e2e",
+    "component",
+    "baseUrl",
+    "specPattern",
+    "supportFile",
+    "fixturesFolder",
+    "screenshotsFolder",
+    "videosFolder",
+    "downloadsFolder",
+    "env",
+    "stories",
+    "addons",
+    "framework",
+    "staticDirs",
+    "docs",
+    "features",
+    "core",
+    "refs",
+    "typescript",
+    "viteFinal",
+    "webpackFinal",
+    "images",
+    "redirects",
+    "rewrites",
+    "headers",
+    "experimental",
+    "transpilePackages",
+    "integrations",
+    "adapter",
+    "output",
+    "site",
+    "kit",
+    "preprocess",
+    "vitePlugin",
+    "modules",
+    "runtimeConfig",
+    "routeRules",
+    "app",
+    "css",
     "build",
     "plugins",
     "server",
@@ -18518,6 +19233,74 @@ function collectJsToolingSchemaHints(tool: string, parsed: unknown, raw: string)
       hints.add(`project=${project}`);
     }
   }
+  if (tool === "Cypress") {
+    for (const cue of collectRegexGroup(raw, /\b(e2e|component|baseUrl|specPattern|supportFile|fixturesFolder|screenshotsFolder|videosFolder|downloadsFolder|env)\s*:/g, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`${cue} cue`);
+    }
+  }
+  if (tool === "Storybook") {
+    for (const cue of collectRegexGroup(raw, /\b(stories|addons|framework|staticDirs|docs|features|core|refs|typescript|viteFinal|webpackFinal)\s*:/g, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`${cue} cue`);
+    }
+  }
+  if (tool === "Babel") {
+    for (const cue of collectRegexGroup(raw, /\b(presets|plugins|env|targets|assumptions|sourceMaps|babelrcRoots|overrides)\s*:/g, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`${cue} cue`);
+    }
+  }
+  if (tool === "Browserslist") {
+    for (const cue of collectRegexGroup(raw, /\b(browsers|extends|defaults|production|development|modern|legacy)\s*[:=]/g, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`${cue} cue`);
+    }
+    for (const query of collectRegexGroup(raw, /(?:^|\n)\s*((?:last\s+\d+\s+versions?|defaults|not\s+dead|chrome\s+>=\s+\d+|firefox\s+>=\s+\d+|ios_saf\s+>=\s+\d+|node\s+\d+))/gi, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`query ${query}`);
+    }
+  }
+  if (tool === "PostCSS") {
+    for (const cue of collectRegexGroup(raw, /\b(plugins|map|parser|syntax|stringifier|from|to)\s*:/g, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`${cue} cue`);
+    }
+  }
+  if (tool === "Tailwind") {
+    for (const cue of collectRegexGroup(raw, /\b(content|darkMode|theme|extend|safelist|prefix|important|presets|plugins|corePlugins|future)\s*:/g, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`${cue} cue`);
+    }
+  }
+  if (tool === "Vercel") {
+    for (const cue of collectRegexGroup(raw, /\b(framework|buildCommand|outputDirectory|installCommand|devCommand|rewrites|redirects|headers|functions|crons|env|regions|cleanUrls)\s*:/g, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`${cue} cue`);
+    }
+  }
+  if (tool === "Netlify") {
+    for (const cue of collectRegexGroup(raw, /\b(build|command|publish|functions|edge_functions|redirects|headers|plugins|context|dev|environment)\s*[:=]/g, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`${cue} cue`);
+    }
+  }
+  if (tool === "Cloudflare Workers") {
+    for (const cue of collectRegexGroup(raw, /\b(name|main|compatibility_date|compatibility_flags|routes|vars|durable_objects|kv_namespaces|d1_databases|r2_buckets|assets|observability|triggers|placement)\s*[:=]/g, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`${cue} cue`);
+    }
+  }
+  if (tool === "Next.js") {
+    for (const cue of collectRegexGroup(raw, /\b(images|redirects|rewrites|headers|experimental|transpilePackages|output|distDir|basePath)\s*:/g, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`${cue} cue`);
+    }
+  }
+  if (tool === "Astro") {
+    for (const cue of collectRegexGroup(raw, /\b(integrations|adapter|output|site|base|build|vite|markdown)\s*:/g, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`${cue} cue`);
+    }
+  }
+  if (tool === "SvelteKit") {
+    for (const cue of collectRegexGroup(raw, /\b(kit|adapter|alias|files|paths|prerender|preprocess|vitePlugin)\s*:/g, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`${cue} cue`);
+    }
+  }
+  if (tool === "Nuxt") {
+    for (const cue of collectRegexGroup(raw, /\b(modules|runtimeConfig|routeRules|app|css|devtools|nitro|vite)\s*:/g, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`${cue} cue`);
+    }
+  }
   if (tool === "Vite") {
     for (const cue of collectRegexGroup(raw, /\b(plugins|server|preview|build|rollupOptions|resolve)\s*:/g, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
       hints.add(`${cue} cue`);
@@ -18535,6 +19318,18 @@ function collectJsToolingSchemaHints(tool: string, parsed: unknown, raw: string)
   }
   if (tool === "CSpell") {
     for (const key of ["words", "ignoreWords", "dictionaries", "languageSettings", "ignorePaths"]) {
+      if (raw.toLowerCase().includes(key.toLowerCase())) hints.add(`${key} cue`);
+      if (hints.size >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW) return [...hints];
+    }
+  }
+  if (tool === "Deno") {
+    for (const key of ["tasks", "imports", "importMap", "lint", "fmt", "test", "bench", "lock", "compilerOptions", "nodeModulesDir"]) {
+      if (raw.toLowerCase().includes(key.toLowerCase())) hints.add(`${key} cue`);
+      if (hints.size >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW) return [...hints];
+    }
+  }
+  if (tool === "Oxlint") {
+    for (const key of ["categories", "rules", "plugins", "env", "globals", "settings", "ignorePatterns", "overrides"]) {
       if (raw.toLowerCase().includes(key.toLowerCase())) hints.add(`${key} cue`);
       if (hints.size >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW) return [...hints];
     }
@@ -18613,6 +19408,88 @@ function collectJsToolingRuleHints(tool: string, parsed: unknown, raw: string): 
       hints.add(clampSingleLine(cue, 120));
     }
   }
+  if (tool === "Cypress") {
+    for (const cue of collectRegexGroup(raw, /\b(baseUrl|specPattern|supportFile|fixturesFolder|screenshotsFolder|videosFolder|downloadsFolder|video|retries|viewportWidth|viewportHeight)\s*:\s*([^,\n}]+)/g, 10)) {
+      hints.add(clampSingleLine(cue, 120));
+    }
+  }
+  if (tool === "Storybook") {
+    for (const cue of collectRegexGroup(raw, /\b(stories|addons|framework|staticDirs|docs|features|core|refs|typescript|viteFinal|webpackFinal)\s*:\s*([^,\n}]+)/g, 10)) {
+      hints.add(clampSingleLine(cue, 120));
+    }
+  }
+  if (tool === "Babel") {
+    for (const cue of collectRegexGroup(raw, /\b(presets|plugins|env|targets|assumptions|sourceMaps|babelrcRoots|overrides)\s*:\s*([^,\n}]+)/g, 10)) {
+      hints.add(clampSingleLine(cue, 120));
+    }
+  }
+  if (tool === "Babel" && isRecord(parsed)) {
+    for (const key of ["presets", "plugins", "babelrcRoots"]) {
+      const value = parsed[key];
+      const items = collectNestedStringValues(value, 6)
+        .map((item) => clampSingleLine(maskPotentialSecretValues(item), 100));
+      if (items.length > 0) hints.add(`${key}: ${items.join(", ")}`);
+      if (hints.size >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW) return [...hints];
+    }
+  }
+  if (tool === "Browserslist") {
+    for (const query of collectRegexGroup(raw, /(?:^|\n)\s*((?:last\s+\d+\s+versions?|defaults|not\s+dead|chrome\s+>=\s+\d+|firefox\s+>=\s+\d+|ios_saf\s+>=\s+\d+|node\s+\d+))/gi, 10)) {
+      hints.add(`query ${clampSingleLine(query, 120)}`);
+    }
+  }
+  if (tool === "PostCSS") {
+    for (const cue of collectRegexGroup(raw, /\b(plugins|map|parser|syntax|stringifier|from|to)\s*:\s*([^,\n}]+)/g, 10)) {
+      hints.add(clampSingleLine(cue, 120));
+    }
+  }
+  if (tool === "Tailwind") {
+    for (const cue of collectRegexGroup(raw, /\b(content|darkMode|theme|extend|safelist|prefix|important|presets|plugins|corePlugins|future)\s*:\s*([^,\n}]+)/g, 10)) {
+      hints.add(clampSingleLine(cue, 120));
+    }
+  }
+  if (tool === "Vercel") {
+    for (const cue of collectRegexGroup(raw, /\b(framework|buildCommand|outputDirectory|installCommand|devCommand|regions|cleanUrls)\s*:\s*([^,\n}]+)/g, 10)) {
+      hints.add(clampSingleLine(cue, 120));
+    }
+  }
+  if (tool === "Netlify") {
+    for (const cue of collectRegexGroup(raw, /\b(command|publish|functions|edge_functions|plugins|context|environment)\s*[=:]\s*([^,\n}]+)/g, 10)) {
+      hints.add(clampSingleLine(cue, 120));
+    }
+  }
+  if (tool === "Cloudflare Workers") {
+    for (const cue of collectRegexGroup(raw, /\b(name|main|compatibility_date|compatibility_flags|routes|vars|durable_objects|kv_namespaces|d1_databases|r2_buckets|assets|observability|triggers|placement)\s*[=:]\s*([^,\n}]+)/g, 10)) {
+      hints.add(clampSingleLine(cue, 120));
+    }
+  }
+  if (tool === "TypeScript project" || tool === "JavaScript project") {
+    for (const cue of collectRegexGroup(raw, /"(baseUrl|target|module|moduleResolution|jsx|strict|noEmit|rootDir|outDir|allowJs|checkJs)"\s*:\s*([^,\n}]+)/g, 10)) {
+      hints.add(clampSingleLine(cue, 120));
+    }
+    for (const cue of collectRegexGroup(raw, /"(@[^"]+|\$[^"]+|~[^"]+|\w[^"]*\/\*)"\s*:\s*\[/g, 6)) {
+      hints.add(`path alias ${clampSingleLine(cue, 80)}`);
+    }
+  }
+  if (tool === "Next.js") {
+    for (const cue of collectRegexGroup(raw, /\b(images|redirects|rewrites|headers|experimental|transpilePackages|output|distDir|basePath)\s*:\s*([^,\n}]+)/g, 10)) {
+      hints.add(clampSingleLine(cue, 120));
+    }
+  }
+  if (tool === "Astro") {
+    for (const cue of collectRegexGroup(raw, /\b(integrations|adapter|output|site|base|build|vite|markdown)\s*:\s*([^,\n}]+)/g, 10)) {
+      hints.add(clampSingleLine(cue, 120));
+    }
+  }
+  if (tool === "SvelteKit") {
+    for (const cue of collectRegexGroup(raw, /\b(kit|adapter|alias|files|paths|prerender|preprocess|vitePlugin)\s*:\s*([^,\n}]+)/g, 10)) {
+      hints.add(clampSingleLine(cue, 120));
+    }
+  }
+  if (tool === "Nuxt") {
+    for (const cue of collectRegexGroup(raw, /\b(modules|runtimeConfig|routeRules|app|css|devtools|nitro|vite)\s*:\s*([^,\n}]+)/g, 10)) {
+      hints.add(clampSingleLine(cue, 120));
+    }
+  }
   if (tool === "Vite") {
     for (const cue of collectRegexGroup(raw, /\b(outDir|sourcemap|minify|port|host|base|target)\s*:\s*([^,\n}]+)/g, 8)) {
       hints.add(clampSingleLine(cue, 120));
@@ -18639,6 +19516,57 @@ function collectJsToolingRuleHints(tool: string, parsed: unknown, raw: string): 
         if (items.length > 0) hints.add(`${key}: ${items.join(", ")}`);
       }
       if (hints.size >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW) return [...hints];
+    }
+  }
+  if (tool === "Deno" && isRecord(parsed)) {
+    for (const key of ["imports", "exclude", "include"]) {
+      const value = parsed[key];
+      if (Array.isArray(value)) {
+        const items = value
+          .filter((item): item is string => typeof item === "string")
+          .map((item) => clampSingleLine(maskPotentialSecretValues(item), 100))
+          .slice(0, 4);
+        if (items.length > 0) hints.add(`${key}: ${items.join(", ")}`);
+      }
+      if (isRecord(value)) {
+        const keys = readObjectKeys(value, 4);
+        if (keys.length > 0) hints.add(`${key}: ${keys.join(", ")}`);
+      }
+      if (hints.size >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW) return [...hints];
+    }
+    for (const key of ["tasks", "lint", "fmt", "test", "compilerOptions"]) {
+      const value = parsed[key];
+      if (isRecord(value)) {
+        const keys = readObjectKeys(value, 4);
+        if (keys.length > 0) hints.add(`${key}: ${keys.join(", ")}`);
+      }
+      if (typeof value === "string") hints.add(`${key}: ${clampSingleLine(maskPotentialSecretValues(value), 120)}`);
+      if (hints.size >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW) return [...hints];
+    }
+  }
+  if (tool === "Oxlint" && isRecord(parsed)) {
+    for (const key of ["plugins", "env", "globals", "ignorePatterns"]) {
+      const value = parsed[key];
+      if (Array.isArray(value)) {
+        const items = value
+          .filter((item): item is string => typeof item === "string")
+          .map((item) => clampSingleLine(maskPotentialSecretValues(item), 80))
+          .slice(0, 4);
+        if (items.length > 0) hints.add(`${key}: ${items.join(", ")}`);
+      }
+      if (isRecord(value)) {
+        const keys = readObjectKeys(value, 4);
+        if (keys.length > 0) hints.add(`${key}: ${keys.join(", ")}`);
+      }
+      if (hints.size >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW) return [...hints];
+    }
+    const categories = parsed.categories;
+    if (isRecord(categories)) {
+      for (const category of readObjectKeys(categories, 6)) hints.add(`category ${category}`);
+    }
+    const rules = parsed.rules;
+    if (isRecord(rules)) {
+      for (const rule of readObjectKeys(rules, 8)) hints.add(rule);
     }
   }
   if (tool === "Markdownlint" && isRecord(parsed)) {
@@ -18721,6 +19649,24 @@ function collectRegexGroup(raw: string, pattern: RegExp, limit: number): string[
     values.push(clampSingleLine(maskPotentialSecretValues(value), 160));
     if (values.length >= limit) break;
   }
+  return values;
+}
+
+function collectNestedStringValues(value: unknown, limit: number): string[] {
+  const values: string[] = [];
+  const visit = (candidate: unknown): void => {
+    if (values.length >= limit) return;
+    if (typeof candidate === "string") {
+      values.push(candidate);
+      return;
+    }
+    if (!Array.isArray(candidate)) return;
+    for (const item of candidate) {
+      visit(item);
+      if (values.length >= limit) return;
+    }
+  };
+  visit(value);
   return values;
 }
 
@@ -26773,11 +27719,13 @@ function summarizePwaWebManifestFile(filePath: string, size: number): string {
         const acceptKeys = isRecord(handler.accept) ? Object.keys(handler.accept).map(sanitizePwaWebManifestValue).slice(0, 4).join(", ") : "";
         return acceptKeys ? `${action} accepts ${acceptKeys}` : action;
       });
+    const installabilityHints = describePwaManifestInstallabilityHints(parsed);
 
     return [
       `PWA web app manifest preview (${formatBytes(size)}).`,
       identity.length > 0 ? `Identity: ${identity.join("; ")}.` : "Identity: no name/start_url/scope fields detected in bounded local JSON.",
       presentation.length > 0 ? `Presentation: ${presentation.join("; ")}.` : "",
+      installabilityHints.length > 0 ? `Static installability hints: ${installabilityHints.join("; ")}.` : "",
       categories.length > 0 ? `Categories (${categories.length}${categories.length >= MAX_PWA_WEB_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${categories.join(", ")}.` : "",
       icons.length > 0 ? `Icons (${icons.length}${icons.length >= MAX_PWA_WEB_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${icons.join(" | ")}.` : "",
       shortcuts.length > 0 ? `Shortcuts (${shortcuts.length}${shortcuts.length >= MAX_PWA_WEB_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${shortcuts.join(" | ")}.` : "",
@@ -26794,6 +27742,41 @@ function summarizePwaWebManifestFile(filePath: string, size: number): string {
       "Structured PWA manifest preview was unavailable from the bounded local byte sample; no browser launch, resource fetch, network call, or provider send was performed.",
     ].join("\n").slice(0, MAX_TEXT_BYTES);
   }
+}
+
+function describePwaManifestInstallabilityHints(record: Record<string, unknown>): string[] {
+  const hints: string[] = [];
+  const name = readJsonString(record, "name") || readJsonString(record, "short_name");
+  hints.push(name ? "identity present" : "missing name/short_name");
+
+  const startUrl = readJsonString(record, "start_url");
+  hints.push(startUrl ? "start_url present" : "missing start_url");
+
+  const display = readJsonString(record, "display").toLowerCase();
+  if (["standalone", "fullscreen", "minimal-ui", "window-controls-overlay"].includes(display)) {
+    hints.push(`install display=${sanitizePwaWebManifestValue(display)}`);
+  } else if (display) {
+    hints.push(`non-install display=${sanitizePwaWebManifestValue(display)}`);
+  } else {
+    hints.push("missing display");
+  }
+
+  const icons = readJsonArray(record, "icons").filter(isRecord);
+  const iconSizes = icons
+    .map((icon) => readJsonString(icon, "sizes"))
+    .filter(Boolean)
+    .join(" ");
+  const hasAnyIcon = icons.length > 0;
+  const hasLargeIcon = /(?:^|\s)(?:192x192|512x512)(?:\s|$)/i.test(iconSizes);
+  hints.push(hasLargeIcon ? "192/512 icon declared" : hasAnyIcon ? "icons declared without 192/512 evidence" : "missing icons");
+
+  const hasMaskable = icons.some((icon) => /\bmaskable\b/i.test(readJsonString(icon, "purpose")));
+  if (hasMaskable) hints.push("maskable icon declared");
+
+  const scope = readJsonString(record, "scope");
+  if (scope) hints.push("scope declared");
+
+  return hints.slice(0, MAX_PWA_WEB_MANIFEST_ITEM_PREVIEW).map(sanitizePwaWebManifestValue);
 }
 
 function isWebAppAssociationFile(filePath: string, extension: string): boolean {
@@ -26965,7 +27948,7 @@ function isPwaServiceWorkerScriptFile(filePath: string, extension: string): bool
     "serviceworker.js",
     "firebase-messaging-sw.js",
     "ngsw-worker.js",
-  ].includes(name) || name.endsWith(".service-worker.js") || name.endsWith(".service-worker.mjs");
+  ].includes(name) || name.endsWith(".service-worker.js") || name.endsWith(".service-worker.mjs") || name.endsWith("-service-worker.js") || name.endsWith("-service-worker.mjs");
 }
 
 function summarizePwaServiceWorkerScriptFile(filePath: string, size: number): string {
@@ -30205,6 +31188,155 @@ function summarizeVsCodeWorkspaceConfigFile(filePath: string, extension: string,
       "VS Code config preview could not parse bounded local JSON/JSONC; no VS Code process, task/debug launch, extension install, terminal command, network call, or provider send was performed.",
     ].join("\n").slice(0, MAX_TEXT_BYTES);
   }
+}
+
+function isJetBrainsIdeConfigFile(filePath: string, extension: string): boolean {
+  if (extension === ".jetbrains-ide.xml") return true;
+  const normalizedPath = filePath.replace(/\\/g, "/").toLowerCase();
+  return (normalizedPath.includes("/.idea/") && normalizedPath.endsWith(".xml")) || normalizedPath.endsWith(".iml");
+}
+
+function summarizeJetBrainsIdeConfigFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_JETBRAINS_IDE_CONFIG_PREVIEW_BYTES)).toString("utf8");
+    const preview = readJetBrainsIdeConfigPreview(filePath, raw);
+    return [
+      `JetBrains IDE config preview (${preview.format}, ${formatBytes(size)}).`,
+      preview.components.length > 0
+        ? `Components (${preview.components.length}${preview.components.length >= MAX_JETBRAINS_IDE_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.components.join(", ")}.`
+        : "Components: none detected in the bounded XML preview.",
+      preview.modules.length > 0
+        ? `Modules (${preview.modules.length}${preview.modules.length >= MAX_JETBRAINS_IDE_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.modules.join(", ")}.`
+        : "Modules: none detected in the bounded XML preview.",
+      preview.dependencies.length > 0
+        ? `SDK/dependency entries (${preview.dependencies.length}${preview.dependencies.length >= MAX_JETBRAINS_IDE_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.dependencies.join(" | ")}.`
+        : "SDK/dependency entries: none detected in the bounded XML preview.",
+      preview.runConfigurations.length > 0
+        ? `Run configurations (${preview.runConfigurations.length}${preview.runConfigurations.length >= MAX_JETBRAINS_IDE_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.runConfigurations.join(" | ")}.`
+        : "Run configurations: none detected in the bounded XML preview.",
+      preview.sourceRoots.length > 0
+        ? `Source/content roots (${preview.sourceRoots.length}${preview.sourceRoots.length >= MAX_JETBRAINS_IDE_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.sourceRoots.join(", ")}.`
+        : "Source/content roots: none detected in the bounded XML preview.",
+      preview.riskHints.length > 0
+        ? `Static risk cues: ${preview.riskHints.join(" | ")}.`
+        : "Static risk cues: none detected in the bounded preview.",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_JETBRAINS_IDE_CONFIG_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; JetBrains IDE metadata was parsed from bounded workspace-local XML only, run configurations were not launched, path macros were not resolved, project indexing/import was not started, no JetBrains IDE process, Gradle/Maven/npm command, plugin install, filesystem mutation, network call, credential lookup, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `JetBrains IDE config ready for explicit attachment (${formatBytes(size)}).`,
+      "JetBrains IDE config preview could not parse bounded local XML; no JetBrains IDE process, run configuration launch, project import, build command, network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function readJetBrainsIdeConfigPreview(filePath: string, raw: string): {
+  format: string;
+  components: string[];
+  modules: string[];
+  dependencies: string[];
+  runConfigurations: string[];
+  sourceRoots: string[];
+  riskHints: string[];
+  truncated: boolean;
+} {
+  const components = [...raw.matchAll(/<component\b([^>]*)>/gi)]
+    .map((match) => sanitizeJetBrainsIdeValue(readXmlAttribute(match[1] ?? "", "name")))
+    .filter(Boolean);
+  const modules = [
+    ...[...raw.matchAll(/<module\b([^>]*)>/gi)]
+      .map((match) => formatJetBrainsPathLabel(readXmlAttribute(match[1] ?? "", "fileurl") || readXmlAttribute(match[1] ?? "", "filepath"))),
+    ...[...raw.matchAll(/<content\b([^>]*)>/gi)]
+      .map((match) => formatJetBrainsPathLabel(readXmlAttribute(match[1] ?? "", "url"))),
+  ].filter(Boolean);
+  const dependencies = [...raw.matchAll(/<orderEntry\b([^>]*)>/gi)]
+    .map((match) => formatJetBrainsOrderEntry(match[1] ?? ""))
+    .filter(Boolean);
+  const runConfigurations = [...raw.matchAll(/<configuration\b([^>]*)>/gi)]
+    .map((match) => formatJetBrainsRunConfiguration(match[1] ?? "", raw))
+    .filter(Boolean);
+  const sourceRoots = [...raw.matchAll(/<sourceFolder\b([^>]*)>/gi)]
+    .map((match) => {
+      const attrs = match[1] ?? "";
+      const root = formatJetBrainsPathLabel(readXmlAttribute(attrs, "url"));
+      const type = sanitizeJetBrainsIdeValue(readXmlAttribute(attrs, "type"));
+      return [root, type ? `type=${type}` : ""].filter(Boolean).join(" ");
+    })
+    .filter(Boolean);
+  const riskHints = collectJetBrainsIdeRiskHints(raw);
+  return {
+    format: readJetBrainsIdeConfigFormat(filePath),
+    components: uniquePreviewValues(components, MAX_JETBRAINS_IDE_CONFIG_ITEM_PREVIEW),
+    modules: uniquePreviewValues(modules, MAX_JETBRAINS_IDE_CONFIG_ITEM_PREVIEW),
+    dependencies: uniquePreviewValues(dependencies, MAX_JETBRAINS_IDE_CONFIG_ITEM_PREVIEW),
+    runConfigurations: uniquePreviewValues(runConfigurations, MAX_JETBRAINS_IDE_CONFIG_ITEM_PREVIEW),
+    sourceRoots: uniquePreviewValues(sourceRoots, MAX_JETBRAINS_IDE_CONFIG_ITEM_PREVIEW),
+    riskHints: uniquePreviewValues(riskHints, MAX_JETBRAINS_IDE_CONFIG_ITEM_PREVIEW),
+    truncated:
+      raw.length >= MAX_JETBRAINS_IDE_CONFIG_PREVIEW_BYTES ||
+      components.length > MAX_JETBRAINS_IDE_CONFIG_ITEM_PREVIEW ||
+      modules.length > MAX_JETBRAINS_IDE_CONFIG_ITEM_PREVIEW ||
+      dependencies.length > MAX_JETBRAINS_IDE_CONFIG_ITEM_PREVIEW ||
+      runConfigurations.length > MAX_JETBRAINS_IDE_CONFIG_ITEM_PREVIEW,
+  };
+}
+
+function readJetBrainsIdeConfigFormat(filePath: string): string {
+  const normalizedPath = filePath.replace(/\\/g, "/").toLowerCase();
+  const name = basename(filePath);
+  if (normalizedPath.includes("/.idea/runconfigurations/")) return `JetBrains run configuration ${name}`;
+  if (name.toLowerCase().endsWith(".iml")) return `JetBrains module ${name}`;
+  return `JetBrains .idea ${name}`;
+}
+
+function formatJetBrainsOrderEntry(attrs: string): string {
+  const type = sanitizeJetBrainsIdeValue(readXmlAttribute(attrs, "type"));
+  const name = sanitizeJetBrainsIdeValue(readXmlAttribute(attrs, "name") || readXmlAttribute(attrs, "module-name"));
+  const jdkName = sanitizeJetBrainsIdeValue(readXmlAttribute(attrs, "jdkName"));
+  const jdkType = sanitizeJetBrainsIdeValue(readXmlAttribute(attrs, "jdkType"));
+  return [type || "orderEntry", name, jdkName ? `jdk=${jdkName}` : "", jdkType ? `type=${jdkType}` : ""]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function formatJetBrainsRunConfiguration(attrs: string, raw: string): string {
+  const name = sanitizeJetBrainsIdeValue(readXmlAttribute(attrs, "name") || "(unnamed)");
+  const type = sanitizeJetBrainsIdeValue(readXmlAttribute(attrs, "type"));
+  const factory = sanitizeJetBrainsIdeValue(readXmlAttribute(attrs, "factoryName"));
+  const mainClass = sanitizeJetBrainsIdeValue(readJetBrainsOptionValue(raw, "MAIN_CLASS_NAME"));
+  const workingDirectory = formatJetBrainsPathLabel(readJetBrainsOptionValue(raw, "WORKING_DIRECTORY"));
+  return [name, type ? `type=${type}` : "", factory ? `factory=${factory}` : "", mainClass ? `main=${mainClass}` : "", workingDirectory ? `cwd=${workingDirectory}` : ""]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function readJetBrainsOptionValue(raw: string, optionName: string): string {
+  const escapedName = optionName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = raw.match(new RegExp(`<option\\b[^>]*\\bname=["']${escapedName}["'][^>]*\\bvalue=["']([^"']*)["']`, "i"));
+  return match?.[1] ? decodeXmlEntities(match[1]).trim() : "";
+}
+
+function collectJetBrainsIdeRiskHints(raw: string): string[] {
+  const hints = new Set<string>();
+  if (/\bPROGRAM_PARAMETERS\b|\bVM_PARAMETERS\b|\benvs\b|<env\b/i.test(raw)) hints.add("run parameters or environment keys present");
+  if (/\bGradleRunConfiguration\b|\bExternalSystemTaskExecutionSettings\b/i.test(raw)) hints.add("external build/task configuration present");
+  if (/\bMavenRunConfiguration\b|\bmaven\b/i.test(raw)) hints.add("Maven configuration present");
+  if (/\bhttp:\/\/|\bhttps:\/\//i.test(raw)) hints.add("URL reference present");
+  if (/\btoken\b|\bsecret\b|\bpassword\b|\bapi[_-]?key\b/i.test(raw)) hints.add("credential-shaped value redacted");
+  return [...hints];
+}
+
+function formatJetBrainsPathLabel(value: string): string {
+  const sanitized = sanitizeJetBrainsIdeValue(value);
+  if (!sanitized) return "";
+  const withoutMacro = sanitized.replace(/\$PROJECT_DIR\$/g, "$PROJECT_DIR");
+  const parts = withoutMacro.replace(/\\/g, "/").split("/").filter(Boolean);
+  return clampSingleLine(parts.slice(-3).join("/") || withoutMacro, 140);
+}
+
+function sanitizeJetBrainsIdeValue(value: string): string {
+  return clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(decodeXmlEntities(value))), 180);
 }
 
 function parseJsoncLike(raw: string): unknown {
@@ -38094,10 +39226,12 @@ function getMime(extension: string): string {
       ".c": "text/x-c",
       ".cabal": "text/x-cabal",
       ".cat": "application/vnd.ms-pki.seccat",
+      ".citation.cff": "application/vnd.citationstyles.cff+yaml",
       ".cast": "application/vnd.asciinema.cast",
       ".cc": "text/x-c++",
       ".calendar.csv": "text/csv+calendar",
       ".checkstyle.xml": "application/vnd.checkstyle+xml",
+      ".cff": "application/vnd.citationstyles.cff+yaml",
       ".cjs": "text/javascript",
       ".cmd": "text/x-msdos-batch",
       ".cfg": "text/plain",
@@ -38224,6 +39358,7 @@ function getMime(extension: string): string {
       ".ear": "application/java-archive",
       ".class": "application/java-vm",
       ".java": "text/x-java-source",
+      ".jetbrains-ide.xml": "application/vnd.jetbrains.ide.config+xml",
       ".jfr": "application/jfr",
       ".jmx": "application/vnd.jmeter+xml",
       ".jmeter.csv": "text/csv+jmeter",
@@ -38237,6 +39372,7 @@ function getMime(extension: string): string {
       ".lighthouse.json": "application/vnd.lighthouse.report+json",
       ".playwright-trace.zip": "application/vnd.playwright.trace+zip",
       ".powershell-transcript.txt": "text/x-powershell-transcript",
+      ".python-tooling-config": "application/vnd.drsai.python-tooling-config",
       ".test-results.json": "application/vnd.drsai.test-results+json",
       ".tokenizer-calibration.json": "application/vnd.drsai.tokenizer-calibration+json",
       ".trace.json": "application/x-chrome-trace+json",

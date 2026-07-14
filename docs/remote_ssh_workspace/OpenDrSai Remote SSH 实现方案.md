@@ -1,227 +1,115 @@
 # OpenDrSai Remote SSH 实现方案
 
-## 1. 目标
+## 目标与边界
 
-在 OpenDrSai Desktop 中增加 Codex 风格的 Remote SSH 工作区：
+Windows Desktop 只负责连接与展示；代码、Git、Shell、Agent 和会话状态均在远程 Linux 主机执行和保存。HepAI Worker 是 Gateway 可选调用的模型/工具能力层，不承担 SSH、工作区或会话管理。
 
-- 从 OpenSSH 配置发现远程主机。
-- 选择远程主机上的目录作为工作区。
-- Agent、文件操作、Shell、Git、会话和凭据均位于远程主机。
-- Desktop 作为薄客户端，展示事件、终端输出、审批和会话历史。
-- HepAI Worker 负责可注册、可共享的远程模型和科学工具，不承担工作区管理。
+## 分层
 
-## 2. 分层架构
+1. Desktop Remote Workspace UI：选择 OpenSSH 主机和远程目录，展示连接状态、会话与审批。
+2. SSH Workspace Manager：复用 Windows `ssh.exe` 与 `~/.ssh/config`，负责发现、认证、目录浏览、Gateway 运维、端口转发和重连。
+3. Remote OpenDrSai Gateway：工作区唯一执行入口和权威状态源，负责会话、Agent、文件、Git、PTY、审批与路径隔离。
+4. HepAI Worker：由 Gateway 发现并注册为可选工具；不可用时不影响 Remote SSH 基础能力。
 
-```text
-OpenDrSai Desktop
-├── Remote Workspace UI
-└── SSH Workspace Manager
-    ├── SSH Config Discovery
-    ├── Remote Directory Browser
-    ├── Gateway Bootstrap
-    └── SSH Port Forwarding
-                 │
-                 ▼
-Remote OpenDrSai Gateway
-├── Workspace Context
-├── Session Lifecycle
-├── Agent Runtime
-├── File / Shell / Git Tools
-├── Event and Approval Protocol
-└── SQLite Session Store
-                 │
-                 ▼
-HepAI Worker（可选）
-├── GPU 模型
-├── 科学工具
-├── DDF 注册与发现
-└── 统一鉴权和权限控制
-```
+## 连接流程
 
-### 2.1 SSH Workspace Manager
+1. 用 `ssh -G` 解析主机配置，以系统 OpenSSH 完成认证和主机密钥校验。
+2. 在远端规范化并验证 Linux 工作区路径。
+3. 检查 Python 与 Gateway 版本；安装/升级/回滚必须由显式操作触发。
+4. Gateway 仅监听远端 `127.0.0.1`，Desktop 通过 `ssh -N -L` 建立本地隧道。
+5. Desktop 携带随机实例令牌完成协议握手并注册稳定 `workspace_id`。
+6. 会话、聊天、文件、Git 与终端请求按工作区路由至远端 Gateway；断线后指数退避重连并重新握手、注册和同步会话。
 
-运行在 Desktop 主进程，负责建立和维护远程工作区连接，不执行 Agent 任务：
+## 安全约束
 
-- 解析 `~/.ssh/config`，支持别名、端口、用户、密钥和 `ProxyJump`。
-- 通过 SFTP 或受控远程命令浏览目录。
-- 检查远程 Python、OpenDrSai 版本和 Gateway 状态。
-- 按需安装或升级兼容版本的远程 Gateway。
-- 在远程回环地址启动 Gateway。
-- 建立本地端口到远程 Gateway 的 SSH 隧道。
-- 监测 SSH、隧道和 Gateway 健康状态并负责重连。
+- 不读取、复制或上传私钥，不默认开启 Agent Forwarding，不将 Gateway 暴露到公网。
+- 主机别名、版本和路径均严格校验；Gateway 对工作区路径执行 `resolve/realpath` 和符号链接越界检查。
+- Desktop 只持久化主机别名、规范路径和工作区 ID；令牌、本地端口与在线状态只保存在内存。
+- 安装、升级、回滚、文件恢复、Git 写操作和工作区外写入必须经过显式操作或审批中心。
+- 日志不得包含实例令牌、私钥或完整敏感环境变量。
 
-### 2.2 OpenDrSai Gateway
+## 远程 Gateway 运维
 
-Gateway 是远程环境的唯一执行入口和状态权威来源。复用现有 `drsai.backend.tui_gateway`，保留 JSON-RPC 2.0、WebSocket、事件流和交互式审批机制：
+- 版本安装到 `~/.local/share/opendrsai/remote/releases/<version>` 的独立 venv。
+- `current` 与 `previous` 使用原子符号链接切换，失败不覆盖现有可用版本；回滚交换二者。
+- Gateway PID 与日志位于 `~/.local/share/opendrsai/remote/`；启动新实例前终止旧 PID。
 
-- 创建、列出、恢复、中断和关闭会话。
-- 维护每个会话的工作目录和 Agent 生命周期。
-- 在远程主机执行文件、Shell、Git、构建和测试操作。
-- 持久化会话、消息、任务状态和工作区元数据。
-- 推送流式输出、工具事件、错误和审批请求。
-- 校验所有文件路径不越过授权的工作区根目录。
+## 验收
 
-### 2.3 HepAI Worker
+- 从 OpenSSH 配置发现主机，认证并浏览远程目录。
+- 选择远程工作区后加载该工作区真实会话；聊天、文件、Git 和终端操作发生在远端。
+- Gateway 只监听回环地址，令牌错误和路径越界请求被拒绝。
+- SSH 中断时显示重连状态，恢复后重新以 Gateway 数据同步。
+- Gateway 支持显式安装、升级和回滚；HepAI Worker 故障不影响核心功能。
+- 单元、集成以及 Docker Linux OpenSSH 真实链路 E2E 全部通过。
 
-HepAI Worker 作为 Gateway 可调用的能力层，而不是 Remote SSH 的连接层。
+## 后续开发路线
 
-适合承载：
+当前实现定位为已经打通核心链路的 MVP。继续开发应先处理正确性和连接模型，再扩展产品体验。
 
-- GPU 推理服务和专业模型。
-- 可独立部署、注册和共享的科学工具。
-- 需要 DDF 服务发现、API Key 或用户组权限的能力。
+### P0：正确性与生产可用性
 
-不负责 SSH 主机发现、目录浏览、工作区文件系统、Shell 和 Desktop 会话恢复。
+#### 主机级 Gateway 与多工作区
 
-## 3. 核心连接流程
+- 每台远程主机只运行一个 Gateway，并通过一条 SSH 隧道复用连接。
+- Gateway 同时注册多个 `workspace_id`，所有请求必须显式携带工作区身份。
+- Desktop 维护主机连接、工作区引用和窗口引用；关闭一个工作区不得影响同主机其他工作区。
+- 最后一个引用释放后才允许关闭隧道；Gateway 可以按策略继续驻留或退出。
+- 验收：同一主机同时打开两个目录，两者会话、文件、Git 和终端相互隔离且均可使用。
 
-1. Desktop 读取 OpenSSH 配置并展示可用主机。
-2. 用户选择主机，Desktop 使用现有 SSH 凭据建立连接。
-3. Desktop 浏览远程目录，用户选择工作区根目录。
-4. Workspace Manager 检查远程 Gateway 版本和运行状态。
-5. 未运行时，在远程主机启动：
+#### 完整断线恢复
 
-   ```text
-   python -m drsai.backend.tui_gateway --workspace /home/vscode --ws-host 127.0.0.1
-   ```
+- Desktop 启动时恢复持久化的远程工作区，并按需重新建立主机连接。
+- SSH 或 Gateway 中断后指数退避重连，重新握手、注册全部工作区并同步会话。
+- 连接状态通过事件推送给 Renderer，明确展示连接中、在线、重连中、失败和恢复。
+- 连接失败必须清理残留隧道、计时器和内存记录。
+- 验收：暂停网络、重启 SSH 服务和重启 Gateway 后均可自动恢复，不产生重复进程。
 
-6. Desktop 建立 SSH 本地端口转发，Gateway 不直接暴露公网端口。
-7. Desktop 通过隧道连接 Gateway WebSocket，完成版本、能力和工作区握手。
-8. Desktop 调用 `workspace.open` 和 `session.list` 加载远程会话。
-9. 用户提交指令后，Gateway 在远程工作区内运行 Agent 并实时返回事件。
+#### 补齐远程路由
 
-## 4. 协议设计
+- checkpoint 创建、列表、预览、接受和恢复全部在远端执行。
+- folder summary、Git `file-at-ref`、附件内容、会话详情与搜索通过 Gateway 获取。
+- Fork/Worktree 操作必须明确支持远端，或在能力协商中禁用，不得回落到本地路径。
+- 验收：远程工作区的任何文件系统操作都不会访问 Windows 上的同名路径。
 
-沿用现有 JSON-RPC 2.0，补充工作区能力。
+#### 安装、升级和回滚安全链路
 
-### 4.1 握手
+- 检测 managed venv 的真实版本及协议兼容性。
+- 支持固定制品或 Desktop 上传安装包，并校验 SHA-256/签名。
+- 安装和升级先写入新版本目录，健康检查通过后原子切换；失败自动保留或回滚当前版本。
+- 操作接入审批中心，展示可脱敏的进度和日志，不默认依赖远端公共 PyPI。
+- 验收：安装中断、版本不兼容、制品损坏和启动失败均不会破坏当前可用版本。
 
-```json
-{
-  "method": "gateway.handshake",
-  "params": {
-    "client_version": "...",
-    "protocol_version": 1,
-    "workspace_path": "/home/vscode"
-  }
-}
-```
+### P1：完整产品体验
 
-返回 Gateway 版本、协议版本、平台、能力列表和规范化后的工作区路径。不兼容时拒绝连接。
+- 远程目录浏览器：目录树、面包屑、Home/父目录、最近路径、隐藏文件和权限提示。
+- Gateway PTY：统一 create/write/resize/kill/reconnect 协议，支持审计、审批和断线恢复。
+- 文件能力：元数据、Git 状态、分页搜索、文件监听、大文件流、二进制与富媒体预览、写入冲突检测。
+- HepAI Worker：识别 `remote_callable`，注册 Agent 工具，支持启用/禁用、独立鉴权、超时、审计和降级。
 
-### 4.2 工作区接口
+### P2：工程、安全与可观测性
 
-- `workspace.open`：打开并验证工作区。
-- `workspace.info`：返回路径、Git 根目录和能力信息。
-- `workspace.list_directory`：浏览允许范围内的目录。
-- `workspace.close`：释放当前客户端的工作区引用。
+- 完整支持 OpenSSH `Include`、`Match`、ProxyJump、ssh-agent、硬件密钥和主机密钥交互。
+- 独立协议类型包、能力协商、结构化错误码、关联 ID 和 OpenAPI 生成客户端。
+- 主机级连接日志、阶段耗时、重连指标和一键脱敏诊断报告。
+- 使用真实 OpenDrSai Gateway 的 Docker E2E，覆盖多工作区、断线、升级回滚、Git 变更和 PTY。
+- 在真实 Linux 主机及打包后的 Windows 应用上进行最终人工验收。
 
-### 4.3 会话接口
-
-复用并完善：
-
-- `session.list`
-- `session.create`
-- `session.resume`
-- `session.interrupt`
-- `session.close`
-- `prompt.submit`
-- `approval.respond`
-
-每个会话至少持久化 `session_id`、`workspace_id`、`workspace_path`、`user_id`、时间、状态、模型配置和消息。会话列表必须由远程 Gateway 按工作区过滤，不能以 Desktop 缓存为准。
-
-## 5. 数据归属
-
-- 源码、Git 仓库、Shell 进程和项目凭据位于远程主机。
-- 会话数据库和运行状态由远程 Gateway 持有。
-- Desktop 只保存主机配置、工作区书签和可重建的展示缓存。
-- 重连后以 Gateway 数据重新同步，Desktop 缓存不是权威来源。
-- HepAI Worker 保存自身服务配置和执行状态，不保存 Remote SSH 工作区会话。
-
-## 6. 安全设计
-
-- Gateway 默认仅监听 `127.0.0.1`，远程访问必须经过 SSH 隧道。
-- 不复制或上传用户私钥，认证完全交给本机 OpenSSH。
-- 不默认启用 SSH Agent Forwarding。
-- 远程安装、升级、sudo 和工作区外写入必须单独审批。
-- 对路径执行 `realpath` 校验，防止 `..` 和符号链接越界。
-- Gateway 以普通 SSH 用户运行，禁止默认使用 `root`。
-- 握手时校验 Gateway 身份令牌。
-- 日志不得返回私钥、令牌或环境变量完整值。
-- HepAI Worker 调用继续使用其 API Key、用户和用户组权限体系。
-
-## 7. 代码改造
-
-### 可复用
-
-- `cores/python/packages/drsai/src/drsai/backend/tui_gateway/`
-  - JSON-RPC 分发、WebSocket Transport、会话、事件和审批机制。
-- Desktop 已有 Gateway API、会话 UI 和事件展示逻辑。
-- HepAI `HWorkerAPP`、`HRModel.remote_callable` 和 DDF 接入机制。
-
-### 需要重写
-
-- `apps/desktop/drsai-desktop/src/main/ssh-remote.ts`
-- `apps/desktop/drsai-desktop/src/main/ssh-tunnel.ts`
-- `apps/desktop/drsai-desktop/src/main/ssh-options.ts`
-
-这些文件当前是 stub。应重新实现独立的 SSH Workspace Manager，让 Desktop 通过统一 Gateway Client 访问本地和远程环境。
-
-### 建议新增
+### 推荐执行顺序
 
 ```text
-src/main/remote-workspace/
-├── ssh-config.ts
-├── ssh-client.ts
-├── directory-browser.ts
-├── gateway-bootstrap.ts
-├── port-forwarder.ts
-├── connection-manager.ts
-└── types.ts
-
-tui_gateway/handlers/workspace.py
-tui_gateway/workspace_context.py
-tui_gateway/security/path_policy.py
+主机级多工作区 Gateway
+→ 完整断线恢复
+→ checkpoint/附件/Git 等远程路由
+→ 安装升级安全链路
+→ Gateway PTY
+→ HepAI Worker 工具注册
+→ 完整生产 Gateway E2E
 ```
 
-## 8. 分阶段实施
+## 实施状态（2026-07-14）
 
-### 阶段一：最小闭环
-
-- 手工填写 SSH 主机参数。
-- 连接远程主机并检查 OpenDrSai。
-- 启动远程 Gateway 和本地端口转发。
-- 从远程 Gateway 加载会话并发送指令。
-- 验证文件和 Shell 操作确实发生在远程主机。
-
-### 阶段二：远程工作区
-
-- 解析 OpenSSH 配置。
-- 增加远程目录浏览器。
-- 会话按工作区过滤和持久化。
-- 增加版本协商、断线重连和健康检查。
-
-### 阶段三：安全与维护
-
-- 工作区路径隔离和审批策略。
-- Gateway 安装、升级和版本回滚。
-- 主机密钥变化提示及连接审计。
-- 多窗口、多工作区和并发会话测试。
-
-### 阶段四：HepAI 集成
-
-- 在远程 Gateway 中发现允许使用的 HepAI Worker。
-- 将 Worker 的 `remote_callable` 注册为 Agent 工具。
-- 保持工作区权限与 Worker 权限相互独立。
-- UI 明确区分远程主机操作和 HepAI 服务调用。
-
-## 9. 验收标准
-
-- 选择 `remote_3090:/home/vscode` 后，可以列出该远程工作区的真实会话。
-- 新建会话、修改文件、运行命令和测试均发生在 `remote_3090`。
-- 关闭 Desktop 后重新连接，远程会话可以恢复。
-- Gateway 端口不对远程主机公网网卡开放。
-- 工作区路径逃逸请求被拒绝并记录。
-- SSH 断开时 UI 明确显示离线，重连后从 Gateway 重新同步状态。
-- HepAI Worker 不可用时，Remote SSH 基础功能仍能正常工作。
-
+- P0、P1、P2 的代码功能均已完成；真实 Gateway Docker E2E 已覆盖双工作区、断线恢复、升级回滚、Git、文件监听与 PTY。
+- Remote SSH Node 类型检查、HepAI 降级单测、OpenAPI 生成漂移校验、契约/集成测试、checkpoint 测试、真实 Gateway E2E 及 Windows 打包烟测均已通过。
+- WebSocket 令牌使用首帧认证，不进入 URL/访问日志；HTTP 错误统一携带结构化错误码和关联 ID。
+- 尚待环境验收：当前 OpenSSH 配置中没有可连接的 `remote_3090` 别名，因此该指定物理主机上的人工验收需在主机配置恢复后执行。

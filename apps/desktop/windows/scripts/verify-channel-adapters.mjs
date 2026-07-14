@@ -536,6 +536,19 @@ assert(adapters.includes("dotenv values were not expanded or printed"), "dotenv 
 assert(adapters.includes("no shell command or dotenv runtime was executed"), "dotenv environment import omits no-runtime safety copy");
 assert(adapters.includes("summarizeDirenvConfigFile"), "channel importer omits direnv .envrc summaries");
 assert(adapters.includes("parseDirenvConfigPreview"), "direnv .envrc importer omits local parser");
+assert(adapters.includes('".jetbrains-ide.xml"'), "channel importer omits JetBrains IDE config normalized extension");
+assert(adapters.includes("MAX_JETBRAINS_IDE_CONFIG_PREVIEW_BYTES") && adapters.includes("MAX_JETBRAINS_IDE_CONFIG_ITEM_PREVIEW"), "JetBrains IDE config previews are not byte/item bounded");
+assert(adapters.includes("isJetBrainsIdeConfigFile"), "channel importer omits JetBrains IDE config detection");
+assert(adapters.includes("summarizeJetBrainsIdeConfigFile"), "channel importer omits JetBrains IDE config summaries");
+assert(adapters.includes("readJetBrainsIdeConfigPreview"), "JetBrains IDE config importer omits local parser");
+assert(adapters.includes("JetBrains IDE config preview"), "JetBrains IDE config import omits visible preview copy");
+assert(adapters.includes("run configurations were not launched") && adapters.includes("no JetBrains IDE process"), "JetBrains IDE config import omits no-IDE/no-run boundary");
+assert(adapters.includes("application/vnd.jetbrains.ide.config+xml"), "JetBrains IDE config MIME provenance is missing");
+assert(checklist.includes("jetbrains-ide-config-input-agent"), "checklist omits JetBrains IDE config input agent record");
+assert(checklist.includes("JetBrains IDE Config Input"), "checklist omits JetBrains IDE config input addendum");
+assert(checklist.includes("workspace-local `.idea/*.xml` / `.idea/runConfigurations/*.xml` / `*.iml`"), "checklist omits JetBrains filename coverage evidence");
+assert(roadmap.includes("JetBrains IDE config input"), "roadmap omits JetBrains IDE config input");
+assert(roadmap.includes("workspace-local `.idea/*.xml` / `.idea/runConfigurations/*.xml` / `*.iml`"), "roadmap omits JetBrains filename coverage");
 assert(adapters.includes('".ssh-config"'), "channel importer omits SSH config normalized extension");
 assert(adapters.includes("MAX_SSH_CONFIG_PREVIEW_BYTES") && adapters.includes("MAX_SSH_CONFIG_ITEM_PREVIEW"), "SSH config previews are not byte/item bounded");
 assert(adapters.includes("isSshConfigFile"), "channel importer omits SSH config detection");
@@ -804,6 +817,20 @@ assert(adapters.includes("pyproject.toml Ruff sections were detected"), "Ruff co
 assert(adapters.includes("Rule selectors") && adapters.includes("Path globs"), "Ruff config import omits rule/path evidence");
 assert(adapters.includes("no Python interpreter, Ruff command, formatter/linter execution"), "Ruff config import omits no-runtime safety copy");
 assert(adapters.includes("application/vnd.astral-sh.ruff+toml"), "Ruff config MIME provenance is missing");
+assert(adapters.includes('".python-tooling-config"'), "channel importer omits Python tooling config normalized extension");
+assert(adapters.includes("MAX_PYTHON_TOOLING_CONFIG_PREVIEW_BYTES") && adapters.includes("MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW"), "Python tooling config previews are not byte/item bounded");
+assert(adapters.includes("isPythonToolingConfigFile"), "channel importer omits Python tooling config detection");
+assert(adapters.includes("summarizePythonToolingConfigFile"), "channel importer omits Python tooling config summaries");
+assert(adapters.includes("parsePythonToolingConfigPreview"), "Python tooling config parser is missing");
+assert(adapters.includes("Python tooling config preview"), "Python tooling config import omits visible preview copy");
+assert(adapters.includes('"pyrightconfig.json"') && adapters.includes('"mypy.ini"') && adapters.includes('"pytest.ini"') && adapters.includes('"tox.ini"'), "Python tooling config import omits common filename support");
+assert(adapters.includes("Pyright, Mypy, Pytest, Tox"), "Python tooling config import omits no-runtime tool boundary");
+assert(adapters.includes("application/vnd.drsai.python-tooling-config"), "Python tooling config MIME provenance is missing");
+assert(checklist.includes("python-tooling-config-input-agent"), "checklist omits Python tooling config input agent record");
+assert(checklist.includes("Python Tooling Config Input"), "checklist omits Python tooling config input addendum");
+assert(checklist.includes("runtime `pyrightconfig.json`, `mypy.ini`, `pytest.ini`, and `tox.ini` golden fixtures"), "checklist omits Python tooling runtime fixture evidence");
+assert(roadmap.includes("Python tooling config input"), "roadmap does not record Python tooling config input");
+assert(roadmap.includes("runtime `pyrightconfig.json`, `mypy.ini`, `pytest.ini`, and `tox.ini` golden fixtures"), "roadmap omits Python tooling runtime fixture evidence");
 assert(adapters.includes('".pre-commit-config.yaml"'), "channel importer omits pre-commit config support");
 assert(adapters.includes("MAX_PRECOMMIT_CONFIG_PREVIEW_BYTES") && adapters.includes("MAX_PRECOMMIT_CONFIG_ITEM_PREVIEW"), "pre-commit config previews are not byte/item bounded");
 assert(adapters.includes("isPreCommitConfigFile"), "channel importer omits pre-commit config detection");
@@ -966,6 +993,8 @@ assert(adapters.includes("collectJunitAttachmentSamples"), "JUnit test report im
 assert(adapters.includes("${label} attachment cues"), "JUnit test report import omits visible attachment cue copy");
 assert(adapters.includes("isSensitiveFieldName(key)"), "JUnit test report details do not redact sensitive property values");
 assert(adapters.includes("parseTrxTestReport"), "test report importer omits TRX parsing");
+assert(adapters.includes("collectTrxAttachmentSamples"), "TRX test report importer omits result file attachment cue extraction");
+assert(adapters.includes("TRX attachment cues"), "TRX test report import omits visible attachment cue copy");
 assert(adapters.includes("parseNunitXmlTestReport"), "test report importer omits NUnit XML parsing");
 assert(adapters.includes("parseXunitXmlTestReport"), "test report importer omits xUnit XML parsing");
 assert(adapters.includes("collectXmlTestReportDetails"), "test report importer omits shared XML local detail extraction");
@@ -1413,11 +1442,15 @@ assert(adapters.includes("MAX_PWA_WEB_MANIFEST_ITEM_PREVIEW"), "PWA web manifest
 assert(adapters.includes("isPwaWebManifestFile"), "channel importer omits PWA web manifest detection");
 assert(adapters.includes("summarizePwaWebManifestFile"), "channel importer omits PWA web manifest summaries");
 assert(adapters.includes("PWA web app manifest preview"), "PWA web manifest import omits visible preview copy");
+assert(adapters.includes("describePwaManifestInstallabilityHints"), "PWA web manifest import omits static installability hint extraction");
+assert(adapters.includes("Static installability hints"), "PWA web manifest import omits visible installability hints");
+assert(adapters.includes("192/512 icon declared"), "PWA web manifest import omits installability icon evidence");
 assert(adapters.includes("no browser was launched, manifest URLs/icons/screenshots were not fetched"), "PWA web manifest import omits no-browser/no-fetch safety copy");
 assert(adapters.includes("application/manifest+json"), "PWA web manifest MIME provenance is missing");
 assert(adapters.includes("MAX_PWA_SERVICE_WORKER_PREVIEW_BYTES"), "PWA service worker previews are not byte bounded");
 assert(adapters.includes("MAX_PWA_SERVICE_WORKER_ITEM_PREVIEW"), "PWA service worker previews are not item bounded");
 assert(adapters.includes("isPwaServiceWorkerScriptFile"), "channel importer omits PWA service worker detection");
+assert(adapters.includes('name.endsWith("-service-worker.js")'), "channel importer omits hyphenated PWA service worker detection");
 assert(adapters.includes("summarizePwaServiceWorkerScriptFile"), "channel importer omits PWA service worker summaries");
 assert(adapters.includes("PWA service worker script preview"), "PWA service worker import omits visible preview copy");
 assert(adapters.includes("no browser was launched, no service worker was registered, no cache was opened"), "PWA service worker import omits no-browser/no-registration safety copy");
@@ -1940,10 +1973,12 @@ assert(adapters.includes('"text/calendar"'), "Calendar ICS import does not prese
 assert(adapters.includes("no microphone capture, transcription service, network call, or provider send was performed"), "Voice import omits no-capture/no-network safety copy");
 assert(adapters.includes("isInsideWorkspace"), "channel import does not enforce workspace-bounded paths");
 assert(adapters.includes("MAX_IMPORT_ITEMS"), "channel import does not bound imported items");
-assert(adapters.includes("const MAX_IMPORT_ITEMS = 52"), "channel import item bound must cover the packaged 52-file fixture matrix");
+assert(adapters.includes("const MAX_IMPORT_ITEMS = 55"), "channel import item bound must cover the packaged 55-file fixture matrix");
 assert(e2eSmoke.includes("channelImportDirenvEnvrcSummary"), "packaged channel import smoke omits direnv .envrc summary check");
-assert(e2eSmoke.includes('limit: 52') && e2eSmoke.includes("channelImportItems.length === 52"), "packaged channel import smoke does not request/assert the 52-file matrix");
+assert(e2eSmoke.includes('limit: 55') && e2eSmoke.includes("channelImportItems.length === 55"), "packaged channel import smoke does not request/assert the 55-file matrix");
 assert(e2eSmoke.includes("secret-packaged-direnv-token") && e2eSmoke.includes("dotenv/source targets were not opened"), "packaged direnv .envrc IPC fixture omits redaction or no-source-open evidence");
+assert(e2eSmoke.includes("rush.json") && e2eSmoke.includes("channelImportRushWorkspaceSummary"), "packaged smoke omits Rush workspace config IPC check");
+assert(e2eSmoke.includes("oxlintrc.jsonc") && e2eSmoke.includes("channelImportOxlintConfigSummary"), "packaged smoke omits Oxlint config IPC check");
 assert(e2eSmoke.includes("channelImportBrowserPasswordsSummary"), "packaged smoke omits browser password export IPC check");
 assert(e2eSmoke.includes("channelImportBrowserAutofillCsvSummary"), "packaged smoke omits browser autofill CSV IPC check");
 assert(e2eSmoke.includes("channelImportBrowserAutofillJsonSummary"), "packaged smoke omits browser autofill JSON IPC check");
@@ -2005,7 +2040,12 @@ assert(preload.includes("desktop:channel-outbound-draft"), "preload omits channe
 assert(preload.includes("DesktopChannelOutboundDeliveryListRequest"), "preload omits outbound delivery list request type");
 assert(preload.includes("desktop:channel-outbound-deliveries"), "preload omits outbound delivery IPC");
 
-assert(navigation.includes("MENU_IDS.channels, enabled: true"), "Channels navigation item is not enabled");
+assert(
+  navigation.includes("MENU_IDS.channels, enabled: false") &&
+    app.includes('id: "channels"') &&
+    app.includes("channelsPanel"),
+  "Channels is not available from integration settings",
+);
 assert(app.includes("ChannelsView") && app.includes("MENU_IDS.channels"), "App does not route Channels navigation");
 assert(app.includes("attachImportedChannelContext"), "App does not convert imported channel context into chat attachments");
 assert(app.includes("channel-import:"), "App does not mark channel-import attachments explicitly");
@@ -2372,9 +2412,12 @@ assert(roadmap.includes("`robots.txt`") && roadmap.includes("`sitemap.xml`") && 
 assert(roadmap.includes("MAX_WEB_CRAWL_METADATA_PREVIEW_BYTES") && roadmap.includes("MAX_WEB_CRAWL_METADATA_ITEM_PREVIEW"), "roadmap does not record web crawl metadata preview bounds");
 assert(roadmap.includes("remote URLs were not fetched, pages were not crawled, JavaScript was not executed"), "roadmap does not record web crawl metadata no-fetch boundary");
 assert(checklist.includes("pwa-web-manifest-agent"), "checklist omits PWA web manifest agent record");
+assert(checklist.includes("pwa-installability-hints-agent"), "checklist omits PWA installability hint agent record");
 assert(checklist.includes("PWA Web App Manifest Input"), "checklist omits PWA web manifest input addendum");
+assert(checklist.includes("PWA Manifest Static Installability Hints"), "checklist omits PWA installability hint addendum");
 assert(checklist.includes("workspace-local `manifest.webmanifest` / `site.webmanifest` / `*.webmanifest` / PWA-shaped `manifest.json`"), "checklist omits PWA web manifest file coverage");
 assert(checklist.includes("MAX_PWA_WEB_MANIFEST_PREVIEW_BYTES") && checklist.includes("MAX_PWA_WEB_MANIFEST_ITEM_PREVIEW"), "checklist omits PWA web manifest preview bounds");
+assert(checklist.includes("identity/start_url/display/icon/scope installability cues"), "checklist omits PWA static installability cue coverage");
 assert(checklist.includes("no browser launch, manifest URL/icon/screenshot fetch"), "checklist omits PWA web manifest no-runtime boundary");
 assert(checklist.includes("pwa-service-worker-agent"), "checklist omits PWA service worker agent record");
 assert(checklist.includes("PWA Service Worker Script Input"), "checklist omits PWA service worker input addendum");
@@ -2382,8 +2425,10 @@ assert(checklist.includes("workspace-local `sw.js` / `service-worker.js` / `fire
 assert(checklist.includes("MAX_PWA_SERVICE_WORKER_PREVIEW_BYTES") && checklist.includes("MAX_PWA_SERVICE_WORKER_ITEM_PREVIEW"), "checklist omits PWA service worker preview bounds");
 assert(checklist.includes("no browser launch, service-worker registration, cache open, importScripts/fetch request"), "checklist omits PWA service worker no-runtime boundary");
 assert(roadmap.includes("PWA web app manifest input"), "roadmap does not record PWA web manifest input");
+assert(roadmap.includes("PWA manifest static installability hints"), "roadmap does not record PWA installability hint input");
 assert(roadmap.includes("workspace-local `manifest.webmanifest` / `site.webmanifest` / `*.webmanifest` / PWA-shaped `manifest.json`"), "roadmap does not record PWA web manifest file coverage");
 assert(roadmap.includes("MAX_PWA_WEB_MANIFEST_PREVIEW_BYTES") && roadmap.includes("MAX_PWA_WEB_MANIFEST_ITEM_PREVIEW"), "roadmap does not record PWA web manifest preview bounds");
+assert(roadmap.includes("identity/start_url/display/icon/scope installability cues"), "roadmap does not record PWA static installability cue coverage");
 assert(roadmap.includes("no browser launch, manifest URL/icon/screenshot fetch"), "roadmap does not record PWA web manifest no-runtime boundary");
 assert(roadmap.includes("PWA service worker script input"), "roadmap does not record PWA service worker input");
 assert(roadmap.includes("workspace-local `sw.js` / `service-worker.js` / `firebase-messaging-sw.js` / `ngsw-worker.js`"), "roadmap does not record PWA service worker file coverage");
@@ -2799,8 +2844,14 @@ assert(adapters.includes("JS/TS tooling config preview"), "JS/TS tooling config 
 assert(adapters.includes("application/vnd.drsai.js-tooling-config"), "JS/TS tooling config MIME provenance is missing");
 assert(adapters.includes("Tooling metadata") && adapters.includes("Rule/project hints"), "JS/TS tooling config import omits metadata/rule evidence");
 assert(
-  adapters.includes("no node/npm/pnpm/Yarn/Bun command, lint/test/format runner") &&
-    adapters.includes("Playwright browser launch"),
+  adapters.includes("no node/npm/pnpm/Yarn/Bun command") &&
+    adapters.includes("TypeScript compiler") &&
+    adapters.includes("lint/test/format runner") &&
+    adapters.includes("Playwright/Cypress browser launch") &&
+    adapters.includes("Storybook dev server/build") &&
+    adapters.includes("PostCSS/Tailwind compile") &&
+    adapters.includes("Vercel/Netlify/Wrangler deploy/dev/build") &&
+    adapters.includes("framework build/render"),
   "JS/TS tooling config import omits no-runtime/no-browser safety copy",
 );
 assert(adapters.includes("config module import, environment loading, plugin resolution, network call"), "JS/TS tooling config import omits no-import/no-env/no-plugin/no-network boundary");
@@ -2816,8 +2867,35 @@ assert(adapters.includes("concurrent") && adapters.includes("relative") && adapt
 assert(adapters.includes('"vite.config.ts"') && adapters.includes("Vite"), "JS/TS tooling config import omits Vite config coverage");
 assert(adapters.includes('"rollup.config.mjs"') && adapters.includes("Rollup"), "JS/TS tooling config import omits Rollup config coverage");
 assert(adapters.includes('"tsup.config.ts"') && adapters.includes("Tsup"), "JS/TS tooling config import omits Tsup config coverage");
+assert(adapters.includes('"cypress.config.ts"') && adapters.includes("Cypress"), "JS/TS tooling config import omits Cypress config coverage");
+assert(adapters.includes("specPattern") && adapters.includes("fixturesFolder") && adapters.includes("downloadsFolder"), "JS/TS tooling config import omits Cypress metadata evidence");
+assert(adapters.includes('"/.storybook/main.ts"') && adapters.includes("Storybook"), "JS/TS tooling config import omits Storybook config coverage");
+assert(adapters.includes("stories") && adapters.includes("addons") && adapters.includes("staticDirs"), "JS/TS tooling config import omits Storybook metadata evidence");
+assert(adapters.includes('"postcss.config.cjs"') && adapters.includes("PostCSS"), "JS/TS tooling config import omits PostCSS config coverage");
+assert(adapters.includes('"tailwind.config.ts"') && adapters.includes("Tailwind"), "JS/TS tooling config import omits Tailwind config coverage");
+assert(adapters.includes("map") && adapters.includes("parser") && adapters.includes("stringifier"), "JS/TS tooling config import omits PostCSS metadata evidence");
+assert(adapters.includes("darkMode") && adapters.includes("safelist") && adapters.includes("corePlugins"), "JS/TS tooling config import omits Tailwind metadata evidence");
+assert(adapters.includes('"vercel.json"') && adapters.includes("Vercel"), "JS/TS tooling config import omits Vercel hosting config coverage");
+assert(adapters.includes('"netlify.toml"') && adapters.includes("Netlify"), "JS/TS tooling config import omits Netlify hosting config coverage");
+assert(adapters.includes('"wrangler.toml"') && adapters.includes("Cloudflare Workers"), "JS/TS tooling config import omits Wrangler hosting config coverage");
+assert(adapters.includes("buildCommand") && adapters.includes("outputDirectory") && adapters.includes("compatibility_date"), "JS/TS tooling config import omits frontend hosting metadata evidence");
+assert(adapters.includes('"babel.config.json"') && adapters.includes("Babel"), "JS/TS tooling config import omits Babel config coverage");
+assert(adapters.includes('".browserslistrc"') && adapters.includes("Browserslist"), "JS/TS tooling config import omits Browserslist config coverage");
+assert(adapters.includes("Babel transform") && adapters.includes("Browserslist resolution"), "JS/TS tooling config import omits Babel/Browserslist no-runtime safety copy");
+assert(adapters.includes("babelrcRoots") && adapters.includes("assumptions"), "JS/TS tooling config import omits Babel metadata evidence");
+assert(adapters.includes('"tsconfig.json"') && adapters.includes("TypeScript project") && adapters.includes('"jsconfig.json"') && adapters.includes("JavaScript project"), "JS/TS tooling config import omits TS/JS project config coverage");
+assert(adapters.includes("compilerOptions") && adapters.includes("moduleResolution") && adapters.includes("path alias"), "JS/TS tooling config import omits TS/JS project config metadata evidence");
+assert(adapters.includes('"next.config.mjs"') && adapters.includes("Next.js"), "JS/TS tooling config import omits Next.js config coverage");
+assert(adapters.includes('"astro.config.mjs"') && adapters.includes("Astro"), "JS/TS tooling config import omits Astro config coverage");
+assert(adapters.includes('"svelte.config.js"') && adapters.includes("SvelteKit"), "JS/TS tooling config import omits SvelteKit config coverage");
+assert(adapters.includes('"nuxt.config.ts"') && adapters.includes("Nuxt"), "JS/TS tooling config import omits Nuxt config coverage");
+assert(adapters.includes("transpilePackages") && adapters.includes("runtimeConfig") && adapters.includes("routeRules"), "JS/TS tooling config import omits framework metadata evidence");
 assert(adapters.includes("rollupOptions") && adapters.includes("outDir") && adapters.includes("dts"), "JS/TS tooling config import omits bundler metadata evidence");
-assert(adapters.includes("Vite dev server, Rollup/Tsup build"), "JS/TS tooling config import omits no-dev-server/no-build safety copy");
+assert(adapters.includes("Vite/Next/Astro/Svelte/Nuxt dev server, Rollup/Tsup build"), "JS/TS tooling config import omits no-dev-server/no-build safety copy");
+assert(adapters.includes("Playwright/Cypress browser launch"), "JS/TS tooling config import omits Cypress no-browser safety copy");
+assert(adapters.includes("Storybook dev server/build"), "JS/TS tooling config import omits Storybook no-runtime safety copy");
+assert(adapters.includes("PostCSS/Tailwind compile"), "JS/TS tooling config import omits PostCSS/Tailwind no-runtime safety copy");
+assert(adapters.includes("TypeScript compiler"), "JS/TS tooling config import omits TypeScript compiler no-runtime safety copy");
 assert(checklist.includes("js-tooling-config-agent"), "checklist omits JS/TS tooling config agent record");
 assert(checklist.includes("JS/TS Tooling Config Input"), "checklist omits JS/TS tooling config input addendum");
 assert(checklist.includes("js-bundler-config-input-agent"), "checklist omits JS bundler config input agent record");
@@ -2825,17 +2903,35 @@ assert(checklist.includes("typedoc-config-input-agent"), "checklist omits TypeDo
 assert(checklist.includes("knip-config-input-agent"), "checklist omits Knip config input agent record");
 assert(checklist.includes("markdownlint-config-input-agent"), "checklist omits Markdownlint config input agent record");
 assert(checklist.includes("commitlint-lint-staged-config-agent"), "checklist omits Commitlint/lint-staged config agent record");
+assert(checklist.includes("cypress-config-input-agent"), "checklist omits Cypress config input agent record");
+assert(checklist.includes("storybook-config-input-agent"), "checklist omits Storybook config input agent record");
+assert(checklist.includes("postcss-tailwind-config-input-agent"), "checklist omits PostCSS/Tailwind config input agent record");
+assert(checklist.includes("frontend-hosting-config-input-agent"), "checklist omits frontend hosting config input agent record");
+assert(checklist.includes("babel-browserslist-config-input-agent"), "checklist omits Babel/Browserslist config input agent record");
+assert(checklist.includes("framework-config-input-agent"), "checklist omits framework config input agent record");
+assert(checklist.includes("ts-js-project-config-input-agent"), "checklist omits TS/JS project config input agent record");
+assert(checklist.includes("deno-config-input-agent"), "checklist omits Deno config input agent record");
 assert(roadmap.includes("JS/TS tooling config input"), "roadmap does not record JS/TS tooling config input");
 assert(roadmap.includes("JS bundler config input"), "roadmap does not record JS bundler config input");
 assert(roadmap.includes("TypeDoc config input"), "roadmap does not record TypeDoc config input");
 assert(roadmap.includes("Knip config input"), "roadmap does not record Knip config input");
 assert(roadmap.includes("Markdownlint config input"), "roadmap does not record Markdownlint config input");
 assert(roadmap.includes("Commitlint/lint-staged config input"), "roadmap does not record Commitlint/lint-staged config input");
+assert(roadmap.includes("Cypress config input"), "roadmap does not record Cypress config input");
+assert(roadmap.includes("Storybook config input"), "roadmap does not record Storybook config input");
+assert(roadmap.includes("PostCSS/Tailwind config input"), "roadmap does not record PostCSS/Tailwind config input");
+assert(roadmap.includes("frontend hosting config input"), "roadmap does not record frontend hosting config input");
+assert(roadmap.includes("Babel/Browserslist config input"), "roadmap does not record Babel/Browserslist config input");
+assert(roadmap.includes("framework config input"), "roadmap does not record framework config input");
+assert(roadmap.includes("TS/JS project config input"), "roadmap does not record TS/JS project config input");
+assert(roadmap.includes("Deno config input"), "roadmap does not record Deno config input");
 assert(roadmap.includes("ESLint/Prettier/Biome/Stylelint/Jest/Vitest/Playwright"), "roadmap does not record JS/TS tooling config file coverage");
 assert(roadmap.includes("Vite/Rollup/Tsup"), "roadmap does not record JS bundler config file coverage");
 assert(roadmap.includes("`.commitlintrc` / `commitlint.config.*` / `.lintstagedrc` / `lint-staged.config.*`"), "roadmap does not record Commitlint/lint-staged file coverage");
 assert(roadmap.includes("MAX_JS_TOOLING_CONFIG_PREVIEW_BYTES"), "roadmap does not record JS/TS tooling config byte bounds");
 assert(roadmap.includes("no node/npm/pnpm/Yarn/Bun command"), "roadmap does not record JS/TS tooling config no-runtime boundary");
+assert(adapters.includes('"deno.json"') && adapters.includes('"deno.jsonc"') && adapters.includes("Deno"), "channel importer omits Deno config coverage");
+assert(adapters.includes("no Deno command"), "Deno config import omits no-runtime safety copy");
 assert(adapters.includes('".gradle.properties"') && adapters.includes('".maven.config"') && adapters.includes('".jvm.config"'), "channel importer omits JVM build config normalized extensions");
 assert(adapters.includes("MAX_JVM_BUILD_CONFIG_PREVIEW_BYTES"), "JVM build config previews are not byte bounded");
 assert(adapters.includes("MAX_JVM_BUILD_CONFIG_ITEM_PREVIEW"), "JVM build config previews are not item bounded");
@@ -2853,12 +2949,18 @@ assert(adapters.includes("Maven settings.xml preview"), "Maven settings import o
 assert(adapters.includes("credential values were not expanded"), "Maven settings import omits credential non-expansion evidence");
 assert(adapters.includes("settings.xml merge was not performed"), "Maven settings import omits no-merge safety copy");
 assert(adapters.includes("application/vnd.apache.maven.settings+xml"), "Maven settings MIME provenance is missing");
+assert(adapters.includes('".citation.cff"') && adapters.includes("isCitationCffFile"), "channel importer omits Citation CFF file support");
+assert(adapters.includes("MAX_CITATION_CFF_PREVIEW_BYTES") && adapters.includes("MAX_CITATION_CFF_ITEM_PREVIEW"), "Citation CFF previews are not bounded");
+assert(adapters.includes("summarizeCitationCffFile") && adapters.includes("Citation CFF metadata preview"), "Citation CFF importer omits visible summary");
+assert(adapters.includes("no DOI resolver, Crossref/DataCite/GitHub API call"), "Citation CFF import omits no-network/no-resolver safety copy");
+assert(adapters.includes("application/vnd.citationstyles.cff+yaml"), "Citation CFF MIME provenance is missing");
 assert(adapters.includes('".js-workspace-config"'), "channel importer omits JS/TS workspace config normalized extension");
 assert(adapters.includes("MAX_JS_WORKSPACE_CONFIG_PREVIEW_BYTES"), "JS/TS workspace config previews are not byte bounded");
 assert(adapters.includes("MAX_JS_WORKSPACE_CONFIG_ITEM_PREVIEW"), "JS/TS workspace config previews are not item bounded");
 assert(adapters.includes("summarizeJsWorkspaceConfigFile"), "channel importer omits JS/TS workspace config summaries");
+assert(adapters.includes('"rush.json"') && adapters.includes("Rush workspace"), "channel importer omits Rush workspace config support");
 assert(adapters.includes("JS/TS workspace config preview"), "JS/TS workspace config import omits visible preview copy");
-assert(adapters.includes("no pnpm/npm/Yarn/Bun command, Turbo/Nx runner"), "JS/TS workspace config import omits no-runner safety copy");
+assert(adapters.includes("no pnpm/npm/Yarn/Bun command, Turbo/Nx/Rush runner"), "JS/TS workspace config import omits no-runner safety copy");
 assert(adapters.includes('".dependabot.yaml"'), "channel importer omits Dependabot config normalized extension");
 assert(adapters.includes("MAX_DEPENDABOT_CONFIG_PREVIEW_BYTES"), "Dependabot config previews are not byte bounded");
 assert(adapters.includes("MAX_DEPENDABOT_CONFIG_ITEM_PREVIEW"), "Dependabot config previews are not item bounded");
@@ -2908,10 +3010,11 @@ assert(roadmap.includes("MAX_RENOVATE_CONFIG_PREVIEW_BYTES") && roadmap.includes
 assert(roadmap.includes("no Renovate CLI command / no package manager command"), "roadmap does not record Renovate no-runtime boundary");
 assert(checklist.includes("JS/TS Monorepo Workspace Config Input"), "checklist omits JS/TS monorepo workspace config addendum");
 assert(checklist.includes("js-workspace-config-input-agent"), "checklist omits JS/TS workspace config agent record");
+assert(checklist.includes("Rush Workspace Config Input"), "checklist omits Rush workspace config addendum");
 assert(roadmap.includes("JS/TS monorepo workspace config input"), "roadmap does not record JS/TS workspace config input");
-assert(roadmap.includes("`pnpm-workspace.yaml`") && roadmap.includes("`turbo.json`") && roadmap.includes("`nx.json`"), "roadmap does not record JS/TS workspace config file coverage");
+assert(roadmap.includes("`pnpm-workspace.yaml`") && roadmap.includes("`turbo.json`") && roadmap.includes("`nx.json`") && roadmap.includes("`rush.json`"), "roadmap does not record JS/TS workspace config file coverage");
 assert(roadmap.includes("MAX_JS_WORKSPACE_CONFIG_PREVIEW_BYTES") && roadmap.includes("MAX_JS_WORKSPACE_CONFIG_ITEM_PREVIEW"), "roadmap does not record JS/TS workspace config bounds");
-assert(roadmap.includes("no pnpm/npm/Yarn/Bun command, Turbo/Nx runner"), "roadmap does not record JS/TS workspace config no-runner boundary");
+assert(roadmap.includes("no pnpm/npm/Yarn/Bun command, Turbo/Nx/Rush runner"), "roadmap does not record JS/TS workspace config no-runner boundary");
 assert(roadmap.includes("JVM build config input"), "roadmap does not record JVM build config input");
 assert(roadmap.includes("workspace-local `gradle.properties` / `.mvn/maven.config` / `.mvn/jvm.config`"), "roadmap does not record JVM build config file coverage");
 assert(roadmap.includes("MAX_JVM_BUILD_CONFIG_PREVIEW_BYTES") && roadmap.includes("MAX_JVM_BUILD_CONFIG_ITEM_PREVIEW"), "roadmap does not record JVM build config preview bounds");
@@ -2924,6 +3027,12 @@ assert(roadmap.includes("Maven settings file input"), "roadmap does not record M
 assert(roadmap.includes("workspace-local `.m2/settings.xml` / `.mvn/settings.xml` / `maven-settings.xml`"), "roadmap does not record Maven settings file coverage");
 assert(roadmap.includes("MAX_MAVEN_SETTINGS_PREVIEW_BYTES") && roadmap.includes("MAX_MAVEN_SETTINGS_ITEM_PREVIEW"), "roadmap does not record Maven settings bounds");
 assert(roadmap.includes("settings.xml merge was not performed"), "roadmap does not record Maven settings no-merge boundary");
+assert(checklist.includes("Citation CFF File Input"), "checklist does not record Citation CFF input");
+assert(checklist.includes("workspace-local `CITATION.cff` / `*.cff`"), "checklist does not record Citation CFF file coverage");
+assert(checklist.includes("no DOI resolver, Crossref/DataCite/GitHub API call"), "checklist does not record Citation CFF no-network boundary");
+assert(roadmap.includes("Citation CFF file input"), "roadmap does not record Citation CFF input");
+assert(roadmap.includes("workspace-local `CITATION.cff` / `*.cff`"), "roadmap does not record Citation CFF file coverage");
+assert(roadmap.includes("no DOI resolver, Crossref/DataCite/GitHub API call"), "roadmap does not record Citation CFF no-network boundary");
 assert(checklist.includes(".NET/NuGet Config Input"), "checklist does not record .NET/NuGet config input");
 assert(checklist.includes("workspace-local `global.json` / `nuget.config` / `packages.config` / `.nuspec`"), "checklist does not record .NET/NuGet config file coverage");
 assert(checklist.includes("MAX_DOTNET_NUGET_CONFIG_PREVIEW_BYTES") && checklist.includes("MAX_DOTNET_NUGET_CONFIG_ITEM_PREVIEW"), "checklist does not record .NET/NuGet config bounds");

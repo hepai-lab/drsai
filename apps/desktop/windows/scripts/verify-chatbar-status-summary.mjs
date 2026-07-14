@@ -58,6 +58,8 @@ const agentAssignmentRules = [
   {
     agent: "provider-runtime-parity-agent",
     category: "Provider/runtime observability",
+    nextTask:
+      "Pick one provider SSE/tool-timeline parity gap, add a local parser fixture, and verify it with chat-sse plus checklist tests.",
     features: [
       "Diff/log/tool-call visibility",
       "Browser, terminal, MCP, and connector context",
@@ -66,6 +68,8 @@ const agentAssignmentRules = [
   {
     agent: "file-channel-runtime-agent",
     category: "Voice/image/file runtime depth",
+    nextTask:
+      "Pick one high-value local file/runtime depth gap, add bounded import evidence, and verify route order plus runtime fixtures.",
     features: [
       "Voice, image, and file input",
       "Voice, image, and file channel inputs",
@@ -74,6 +78,8 @@ const agentAssignmentRules = [
   {
     agent: "automation-workflow-agent",
     category: "Background automation and workflows",
+    nextTask:
+      "Pick one restart/reconnect workflow gap, add an approval-visible local contract, and verify workflow/background/scheduled scripts.",
     features: [
       "Background and scheduled modes",
       "Workflow marketplace",
@@ -82,6 +88,8 @@ const agentAssignmentRules = [
   {
     agent: "merge-review-agent",
     category: "Multi-agent merge review",
+    nextTask:
+      "Pick one merge-back semantic gap, extend the generated dependency or diagnostic index, and verify fork-worktree coverage.",
     features: [
       "Merge-back review",
     ],
@@ -89,6 +97,8 @@ const agentAssignmentRules = [
   {
     agent: "live-connector-agent",
     category: "Live external connector sync",
+    nextTask:
+      "Pick one connector, implement the next local approval/readiness contract before live OAuth, and verify channel/external readiness.",
     features: [
       "Mobile chat entry",
       "Slack connector",
@@ -156,6 +166,10 @@ assert(
   assignmentSummaries.some((rule) => rule.agent === "live-connector-agent" && rule.assignedFeatures.includes("Slack connector")),
   "live connector partial rows must be assigned to the live connector agent",
 );
+assert(
+  assignmentSummaries.every((rule) => typeof rule.nextTask === "string" && rule.nextTask.length > 40),
+  "partial agent assignment summary must include a concrete next task for every assigned agent",
+);
 
 const remainingLines = checklist
   .slice(remainingWorkStart)
@@ -175,5 +189,10 @@ console.log(
 console.log(
   `Agent assignment summary: ${assignmentSummaries
     .map((rule) => `${rule.agent} (${rule.category}) -> ${rule.assignedFeatures.join("; ")}`)
+    .join(" || ")}`,
+);
+console.log(
+  `Next task summary: ${assignmentSummaries
+    .map((rule) => `${rule.agent} -> ${rule.nextTask}`)
     .join(" || ")}`,
 );

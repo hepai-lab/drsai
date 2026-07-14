@@ -10,6 +10,8 @@ const steps = [
   ["Gateway fake protocol smoke", npmScript("verify:gateway-smoke"), true, {}],
   ["Renderer visual interactions", npmScript("verify:visual"), true, {}],
   ["Packaged app IPC smoke", npmScript("verify:packaged"), true, {}],
+  ["Runtime updater helper", npmScript("verify:update-helper"), true, {}],
+  ["Packaged runtime update protocol", npmScript("verify:e2e-update"), true, {}],
   ["Packaged app E2E chat", npmScript("verify:e2e-chat"), true, {}],
   ["Packaged app E2E chat failures", npmScript("verify:e2e-chat-failures"), true, {}],
   ["Packaged app E2E agent run", npmScript("verify:e2e-agent-run"), true, {}],
@@ -17,6 +19,7 @@ const steps = [
   ["Packaged app E2E threads", npmScript("verify:e2e-threads"), true, {}],
   ["Packaged app E2E OIDC login", npmScript("verify:e2e-oidc-login"), true, {}],
   ["Backend installer check-only", npmScript("verify:install-check"), true, {}],
+  ["Runtime update manifest", npmScript("verify:update-manifest"), true, {}],
   ["Release summary", npmScript("summary:win"), true, {}],
   ["Release artifacts", npmScript("verify:artifacts"), true, {}],
   [

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import type {
   DesktopAgent,
   MyDrSaiConfig,
+  PlatformAgentStatus,
   UpdateMyDrSaiConfigRequest,
 } from "@shared/desktopApi";
 import { desktopApi } from "../desktopApi";
@@ -23,6 +24,7 @@ export function AgentSquareView({
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [platformStatus, setPlatformStatus] = useState<PlatformAgentStatus | null>(null);
   const [configOpen, setConfigOpen] = useState(false);
 
   useEffect(() => {
@@ -46,6 +48,7 @@ export function AgentSquareView({
     setError(null);
     try {
       setAgents(await loadAgents());
+      setPlatformStatus(await desktopApi.getPlatformAgentStatus());
     } catch (agentError) {
       setError(agentError instanceof Error ? agentError.message : String(agentError));
     } finally {
@@ -86,6 +89,11 @@ export function AgentSquareView({
 
       <div className="agent-square-content agent-square-empty-content">
         {error && <div className="agent-square-error">{error}</div>}
+        {platformStatus && platformStatus.state !== "ready" && (
+          <div className="agent-square-error" role="status">
+            {platformStatus.message}
+          </div>
+        )}
         {myDrSai && (
           <section className="agent-square-section">
             <h3>

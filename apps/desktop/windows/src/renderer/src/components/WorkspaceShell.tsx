@@ -3,7 +3,6 @@ import {
   ArrowDownAZ,
   ArrowLeft,
   ArrowRight,
-  Bot,
   CalendarClock,
   ChevronDown,
   Cloud,
@@ -129,7 +128,6 @@ interface WorkspaceShellProps {
   ) => Promise<ForkConflictContentPreviewResult>;
   onNavChange: (id: NavId) => void;
   onNewChat: () => void;
-  onNewAgentTask: () => void;
   onOpenWorkspacePath: (path: string) => void | Promise<void>;
   onRefreshWorkspaces: () => void | Promise<void>;
   onRemoveWorkspace: (id: string) => void | Promise<void>;
@@ -192,7 +190,6 @@ export function WorkspaceShell({
   onLoadForkConflictContent,
   onNavChange,
   onNewChat,
-  onNewAgentTask,
   onOpenWorkspacePath,
   onRefreshWorkspaces,
   onRemoveWorkspace,
@@ -270,7 +267,6 @@ export function WorkspaceShell({
   const agentItems = getEnabledNavItems(navSections, "agents");
   const agentSectionLabel = navSections.find((section) => section.id === "agents")?.label ?? (zh ? "广场" : "Square");
   const workspaceItems = getEnabledNavItems(navSections, "workspace");
-  const settingsItems = getEnabledNavItems(navSections, "settings");
   const workspaceDetails = workspaces.find((workspace) => workspace.id === workspaceDetailsId) ?? null;
   const activeWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? workspaces[0] ?? null;
   const isRightPanelExpanded = rightPanelExpanded && !rightPanelCollapsed;
@@ -531,14 +527,6 @@ export function WorkspaceShell({
         run: () => {
           if (activeWorkspace?.path) void onOpenWorkspacePath(activeWorkspace.path);
         },
-      },
-      {
-        id: "command:settings",
-        group: "recommendations",
-        label: zh ? "设置" : "Settings",
-        shortcut: "Ctrl+,",
-        icon: Settings,
-        run: () => onNavChange(MENU_IDS.profile),
       },
     ];
 
@@ -1110,9 +1098,7 @@ export function WorkspaceShell({
           ? "Ctrl+N"
           : key === "o"
             ? "Ctrl+O"
-            : event.key === ","
-              ? "Ctrl+,"
-              : null;
+            : null;
       const item = shortcut
         ? visibleCommandPaletteItems.find((candidate) => candidate.shortcut === shortcut)
         : null;
@@ -1408,12 +1394,6 @@ export function WorkspaceShell({
         <nav className="sidebar-scroll" aria-label={zh ? "OpenDrSai 侧边栏" : "OpenDrSai sidebar"}>
           <div className="sidebar-action-list">
             <SidebarButton active={activeNav === MENU_IDS.currentSession} icon={MessageSquarePlus} label={zh ? "开始聊天" : "New chat"} onClick={onNewChat} />
-            <SidebarButton
-              icon={Bot}
-              label={zh ? "Agent 任务" : "Agent task"}
-              onClick={onNewAgentTask}
-            />
-            <SidebarButton icon={Search} label={zh ? "搜索" : "Search"} onClick={openCommandPalette} />
             <SidebarButton active={activeNav === MENU_IDS.savedPlan} icon={CalendarClock} label={zh ? "已安排" : "Scheduled"} onClick={() => onNavChange(MENU_IDS.savedPlan)} />
           </div>
 
@@ -1656,20 +1636,6 @@ export function WorkspaceShell({
           </div>
         </nav>
 
-        <nav className="nav-list nav-list-bottom" aria-label={zh ? "OpenDrSai 设置导航" : "OpenDrSai settings navigation"}>
-          {settingsItems.map(({ id, label }) => {
-            const Icon = navIcons[id];
-            return (
-              <SidebarButton
-                key={id}
-                active={id === activeNav}
-                icon={Icon}
-                label={label}
-                onClick={() => onNavChange(id)}
-              />
-            );
-          })}
-        </nav>
       </aside>
       {!sidebarCollapsed && (
         <div

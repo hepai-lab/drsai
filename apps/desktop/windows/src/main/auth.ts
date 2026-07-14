@@ -643,7 +643,11 @@ function createDeveloperSession(rememberMe = true): StoredAuthSession {
 }
 
 function isDeveloperBypassAllowed(): boolean {
-  return is.dev || process.env.OPENDRSAI_DEV_AUTH_BYPASS === "1";
+  return (
+    is.dev ||
+    process.env.OPENDRSAI_DEV_AUTH_BYPASS === "1" ||
+    process.env.OPENDRSAI_E2E_F2_APPROVALS === "1"
+  );
 }
 
 function getExpiryDate(days: number): string {
@@ -953,6 +957,34 @@ async function refreshOidcSessionIfNeeded(
     return await oidcRefreshPromise;
   } finally {
     oidcRefreshPromise = null;
+  }
+}
+
+export async function refreshAuthContextAfterUnauthorized(): Promise<AuthContext> {
+  const stored = readStoredSession();
+  if (!stored || stored.authMode !== "oidc" || !stored.refreshToken) {
+    clearStoredSession(false);
+    throw new Error("The HepAI session cannot be refreshed. Sign in again.");
+  }
+  try {
+    const token = await exchangeOidcRefreshToken(stored.refreshToken);
+    const refreshed = await createOidcSession(
+      { ...token, refresh_token: token.refresh_token || stored.refreshToken },
+      true,
+    );
+    writeStoredSession(refreshed);
+    if (!refreshed.accessToken || !refreshed.user || !refreshed.authMode) {
+      throw new Error("The refreshed HepAI session is incomplete.");
+    }
+    return {
+      session: toPublicSession(refreshed),
+      userId: refreshed.user.id || refreshed.user.email,
+      accessToken: refreshed.accessToken,
+      authMode: refreshed.authMode,
+    };
+  } catch {
+    clearStoredSession(false);
+    throw new Error("The HepAI session refresh failed. Sign in again.");
   }
 }
 
