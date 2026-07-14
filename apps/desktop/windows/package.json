@@ -1,6 +1,6 @@
 {
   "name": "opendrsai-windows-desktop",
-  "version": "1.4.4",
+  "version": "1.4.5",
   "private": true,
   "description": "OpenDrSai Windows desktop shell and installer host",
   "main": "./out/main/index.js",
@@ -98,6 +98,7 @@
     "verify:ui": "node scripts/verify-renderer-ui.mjs",
     "verify:visual": "node scripts/verify-renderer-visual.mjs",
     "verify:packaged": "npm run prepare:backend-source -- --sync-unpacked && node scripts/verify-packaged-app-smoke.mjs",
+    "verify:packaged-presentation-pdf": "node scripts/verify-packaged-presentation-pdf-action.mjs",
     "verify:e2e-chat": "node scripts/verify-e2e-chat.mjs",
     "verify:e2e-chat-failures": "node scripts/verify-e2e-chat-failures.mjs",
     "verify:e2e-agent-cloud-route": "node scripts/verify-agent-cloud-route-e2e.mjs",

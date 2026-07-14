@@ -2194,6 +2194,78 @@ export interface PlatformAgentStatus {
   cacheState?: "none" | "fresh" | "stale";
 }
 
+export type ManagerPresentationProgressPhase =
+  | "analyzing"
+  | "planning"
+  | "generating"
+  | "validating"
+  | "cancelling"
+  | "cancelled"
+  | "completed"
+  | "failed";
+
+export interface ManagerPresentationGenerateRequest {
+  requestId: string;
+  workspacePath: string;
+  sourcePath: string;
+}
+
+export interface ManagerPresentationCancelRequest {
+  requestId: string;
+}
+
+export interface ManagerPresentationCancelResult {
+  requestId: string;
+  accepted: boolean;
+}
+
+export interface ManagerPresentationProgressEvent {
+  requestId: string;
+  phase: ManagerPresentationProgressPhase;
+  progress: number;
+  message: string;
+  outputPath?: string;
+}
+
+export interface ManagerPresentationQualityResult {
+  ok: boolean;
+  checks: Record<string, boolean>;
+  failures: string[];
+  mediaCount: number;
+  sourcePageCoverage: number;
+}
+
+export interface ManagerPresentationSourceLink {
+  slide: number;
+  role: string;
+  title: string;
+  sourcePages: number[];
+}
+
+export interface ManagerPresentationGenerateResult {
+  requestId: string;
+  sourcePath: string;
+  outputPath: string;
+  manifestPath: string;
+  slideCount: number;
+  speakerNotesCoverage: number;
+  sourcePageCoverage: number;
+  sourceLinks: ManagerPresentationSourceLink[];
+  quality: ManagerPresentationQualityResult;
+}
+
+export interface PdfPageOpenRequest {
+  path: string;
+  page: number;
+}
+
+export interface PdfPageOpenResult {
+  ok: boolean;
+  path: string;
+  page: number;
+  viewerUrl: string;
+}
+
 export interface RemoteDirectoryEntry {
   name: string;
   path: string;
@@ -2550,6 +2622,15 @@ export interface DesktopApi {
   getWorkspaceContextOverview(workspacePath: string): Promise<WorkspaceContextOverview>;
   listWorkspaceFiles(request: WorkspaceFileTreeRequest): Promise<WorkspaceFileTreeResult>;
   onWorkspaceFileChanges(callback: (event: WorkspaceFileChangeEvent) => void): () => void;
+  generateManagerPresentation(
+    request: ManagerPresentationGenerateRequest,
+  ): Promise<ManagerPresentationGenerateResult>;
+  cancelManagerPresentation(
+    request: ManagerPresentationCancelRequest,
+  ): Promise<ManagerPresentationCancelResult>;
+  onManagerPresentationProgress(
+    callback: (event: ManagerPresentationProgressEvent) => void,
+  ): () => void;
   summarizeWorkspaceFolder(
     request: WorkspaceFolderSummaryRequest,
   ): Promise<WorkspaceFolderSummaryResult>;
@@ -2776,6 +2857,7 @@ export interface DesktopApi {
   approveBrowserTaskAction(request: BrowserTaskApprovalRequest): Promise<boolean>;
   openExternal(url: string): Promise<void>;
   openPath(path: string): Promise<string>;
+  openPdfPage(request: PdfPageOpenRequest): Promise<PdfPageOpenResult>;
   getIdeContext(workspacePath: string): Promise<DesktopIdeContextSnapshot>;
   getFileIcon(path: string): Promise<DesktopFileIconResult>;
   createTerminal(options?: TerminalCreateOptions): Promise<TerminalSessionInfo>;

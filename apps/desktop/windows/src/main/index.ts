@@ -18,7 +18,7 @@ import {
   type Session,
   type WebContents,
 } from "electron";
-import { dirname, isAbsolute, join, relative, resolve } from "path";
+import { dirname, extname, isAbsolute, join, relative, resolve } from "path";
 import { pathToFileURL } from "url";
 import { is } from "@electron-toolkit/utils";
 import { cancelInstall, startInstall } from "./install";
@@ -282,6 +282,10 @@ import type {
   DesktopForkQueueStartApprovalRequest,
   DesktopForkQueueStartApprovalResult,
   DesktopGitCommitApprovalRequest,
+  ManagerPresentationCancelRequest,
+  ManagerPresentationGenerateRequest,
+  PdfPageOpenRequest,
+  PdfPageOpenResult,
   RemoteGatewayInstallRequest,
   DesktopMcpContextRequest,
   DesktopMcpActiveSessionListRequest,
@@ -318,12 +322,18 @@ import {
   evaluateExecutionPermission,
   type ExecutionActionKind,
 } from "../shared/executionPolicy";
+import {
+  generateManagerPresentation,
+  ManagerPresentationCancelledError,
+} from "./managerPresentation";
 
 let mainWindow: BrowserWindow | null = null;
 let scheduledTaskWorker: ScheduledTaskWorkerHandle | null = null;
 let browserWebContentsPolicyRegistered = false;
 const configuredBrowserSessions = new WeakSet<Session>();
 const browserTaskSubscribers = new Set<WebContents>();
+const managerPresentationRuns = new Map<string, { controller: AbortController; webContentsId: number }>();
+let managerPresentationAttempt = 0;
 
 function getRendererHtmlPath(): string {
   return app.isPackaged
@@ -379,6 +389,7 @@ const isE2eSmokeProcess =
   process.env.OPENDRSAI_E2E_OIDC === "1" ||
   process.env.OPENDRSAI_E2E_A5_SERVICE_GUIDANCE === "1" ||
   process.env.OPENDRSAI_E2E_F2_APPROVALS === "1" ||
+  process.env.OPENDRSAI_E2E_PRESENTATION_PDF_ACTION === "1" ||
   process.env.OPENDRSAI_E2E_OIDC_HEADLESS === "1";
 if (isE2eSmokeProcess) {
   app.disableHardwareAcceleration();
@@ -2532,6 +2543,38 @@ async function isAllowedOpenPath(rawPath: unknown): Promise<boolean> {
   });
 }
 
+async function openPdfSourcePage(request: PdfPageOpenRequest): Promise<PdfPageOpenResult> {
+  const rawPath = typeof request?.path === "string" ? request.path : "";
+  const page = Number(request?.page);
+  if (!(await isAllowedOpenPath(rawPath))) {
+    throw new Error("PDF source path is not registered as a DrSai or workspace path.");
+  }
+  if (extname(rawPath).toLowerCase() !== ".pdf") {
+    throw new Error("Source page review requires a PDF file.");
+  }
+  if (!Number.isInteger(page) || page < 1 || page > 10000) {
+    throw new Error("Source page must be a positive PDF page number.");
+  }
+
+  const resolvedPath = realpathSync.native(resolve(rawPath));
+  const viewerUrl = pathToFileURL(resolvedPath);
+  viewerUrl.hash = `page=${page}&zoom=page-width`;
+
+  if (!isE2eSmokeProcess) {
+    setImmediate(() => {
+      void shell.openExternal(viewerUrl.href).catch((error) => {
+        console.error(`Unable to open PDF source page ${page}:`, error);
+      });
+    });
+  }
+  return {
+    ok: true,
+    path: resolvedPath,
+    page,
+    viewerUrl: viewerUrl.href,
+  };
+}
+
 function registerIpc(): void {
   registerBrowserController(new ElectronWebviewController());
   registerBrowserController(new BrowserUseController(browserUseWorkerClient));
@@ -2607,6 +2650,9 @@ function registerIpc(): void {
     }
     return shell.openPath(rawPath);
   });
+  secureHandle("desktop:open-pdf-page", (_event, request: PdfPageOpenRequest) =>
+    openPdfSourcePage(request),
+  );
 
   secureHandle("desktop:ide-context", (_event, workspacePath: string) =>
     getIdeContext(workspacePath),
@@ -2725,6 +2771,51 @@ function registerIpc(): void {
   secureHandle("desktop:workspace-file-preview", (_event, request: WorkspaceFilePreviewRequest) =>
     getRemoteGatewayAccess(request?.workspacePath) ? previewRemoteWorkspaceFile(request) : previewWorkspaceFile(request),
   );
+  secureHandle("desktop:manager-presentation-generate", async (event, request: ManagerPresentationGenerateRequest) => {
+    if (!(await isAllowedOpenPath(request?.workspacePath))) {
+      throw new Error("Presentation workspace is not registered or allowed.");
+    }
+    if (getRemoteGatewayAccess(request?.workspacePath)) {
+      throw new Error("Manager presentation generation is currently available for local workspaces only.");
+    }
+    const requestId = typeof request?.requestId === "string" ? request.requestId.trim() : "";
+    if (!requestId || requestId.length > 128) throw new Error("A valid presentation request id is required.");
+    if (managerPresentationRuns.has(requestId)) throw new Error("This presentation task is already running.");
+    const controller = new AbortController();
+    managerPresentationRuns.set(requestId, { controller, webContentsId: event.sender.id });
+    const attempt = ++managerPresentationAttempt;
+    const phaseDelayMs = isE2eSmokeProcess
+      ? Math.max(0, Number(process.env.OPENDRSAI_E2E_PRESENTATION_PHASE_DELAY_MS || 0))
+      : 0;
+    const failAtPhase = isE2eSmokeProcess
+      && attempt === Number(process.env.OPENDRSAI_E2E_PRESENTATION_FAIL_ATTEMPT || 0)
+      ? process.env.OPENDRSAI_E2E_PRESENTATION_FAIL_PHASE as "analyzing" | "planning" | "generating" | "validating"
+      : undefined;
+    try {
+      return await generateManagerPresentation(request, (progress) => {
+        event.sender.send("desktop:manager-presentation-progress", progress);
+      }, { signal: controller.signal, phaseDelayMs, failAtPhase });
+    } catch (error) {
+      if (!(error instanceof ManagerPresentationCancelledError)) {
+        event.sender.send("desktop:manager-presentation-progress", {
+          requestId,
+          phase: "failed",
+          progress: 100,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+      throw error;
+    } finally {
+      managerPresentationRuns.delete(requestId);
+    }
+  });
+  secureHandle("desktop:manager-presentation-cancel", (event, request: ManagerPresentationCancelRequest) => {
+    const requestId = typeof request?.requestId === "string" ? request.requestId.trim() : "";
+    const run = managerPresentationRuns.get(requestId);
+    if (!run || run.webContentsId !== event.sender.id) return { requestId, accepted: false };
+    run.controller.abort();
+    return { requestId, accepted: true };
+  });
   secureHandle("desktop:workspace-git-diff", (_event, request: WorkspaceGitDiffRequest) =>
     getRemoteGatewayAccess(request?.workspacePath) ? getRemoteWorkspaceGitDiff(request) : getWorkspaceGitDiff(request),
   );

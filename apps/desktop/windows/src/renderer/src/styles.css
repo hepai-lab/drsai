@@ -6481,6 +6481,190 @@ button {
   padding: 12px;
 }
 
+.presentation-pdf-action {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--app-accent) 42%, var(--app-panel-border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--app-accent) 9%, var(--app-card-bg));
+}
+
+.presentation-pdf-action > div:first-child,
+.presentation-pdf-action > div:first-child span {
+  display: flex;
+  min-width: 0;
+}
+
+.presentation-pdf-action > div:first-child {
+  align-items: flex-start;
+  gap: 9px;
+}
+
+.presentation-pdf-action > div:first-child span {
+  flex-direction: column;
+  gap: 3px;
+}
+
+.presentation-pdf-action strong {
+  color: var(--app-text-primary);
+  font-size: 13px;
+}
+
+.presentation-pdf-action small {
+  color: var(--app-text-muted);
+  line-height: 1.4;
+}
+
+.presentation-pdf-action button {
+  flex: 0 0 auto;
+  padding: 7px 11px;
+  border: 0;
+  border-radius: 8px;
+  color: white;
+  background: var(--app-accent);
+  cursor: pointer;
+  font-weight: 650;
+}
+
+.presentation-pdf-action-controls {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.presentation-pdf-action button.secondary {
+  border: 1px solid var(--app-panel-border);
+  color: var(--app-text-primary);
+  background: var(--app-card-bg);
+  font-weight: 550;
+}
+
+.presentation-pdf-action button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.presentation-pdf-progress {
+  display: grid;
+  flex: 1 0 100%;
+  grid-template-columns: minmax(0, 1fr) 140px;
+  align-items: center;
+  gap: 8px 14px;
+  color: var(--app-text-muted);
+  font-size: 12px;
+}
+
+.presentation-pdf-progress progress {
+  width: 100%;
+  accent-color: var(--app-accent);
+}
+
+.presentation-pdf-progress.failed {
+  color: var(--app-danger, #b42318);
+}
+
+.presentation-pdf-result {
+  display: flex;
+  grid-column: 1 / -1;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--app-text-primary);
+}
+
+.presentation-pdf-result button {
+  padding: 5px 9px;
+}
+
+.presentation-source-review {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--app-accent) 24%, var(--app-panel-border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--app-card-bg) 92%, var(--app-accent));
+}
+
+.presentation-source-review-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.presentation-source-review-heading small {
+  text-align: right;
+}
+
+.presentation-source-review-list {
+  display: grid;
+  max-height: 196px;
+  gap: 2px;
+  overflow: auto;
+}
+
+.presentation-source-review-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(120px, auto);
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+  border-top: 1px solid color-mix(in srgb, var(--app-panel-border) 70%, transparent);
+}
+
+.presentation-source-review-row > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--app-text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.presentation-source-page-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.presentation-pdf-action .presentation-source-page-links button {
+  min-width: 36px;
+  padding: 3px 7px;
+  border: 1px solid color-mix(in srgb, var(--app-accent) 40%, var(--app-panel-border));
+  border-radius: 999px;
+  color: var(--app-accent);
+  background: var(--app-card-bg);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.presentation-pdf-action .presentation-source-page-links button:hover,
+.presentation-pdf-action .presentation-source-page-links button:focus-visible {
+  color: white;
+  background: var(--app-accent);
+}
+
+.presentation-source-review-status {
+  margin: 0;
+  color: var(--app-text-muted);
+}
+
+.presentation-source-review-status.opened {
+  color: var(--app-success, #067647);
+}
+
+.presentation-source-review-status.error {
+  color: var(--app-danger, #b42318);
+}
+
 .files-context-tree-pane {
   padding: 8px 0;
 }

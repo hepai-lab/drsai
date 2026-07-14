@@ -39,6 +39,7 @@ import type {
   DesktopApprovalProposalRequest,
 } from "../shared/desktopApi";
 import { DRSAI_HOME } from "./paths";
+import { extractPresentationPdfSync, formatPresentationPdfSummary } from "./presentationPdf";
 
 const MAX_IMPORT_ITEMS = 55;
 const MAX_SCAN_ENTRIES = 240;
@@ -35113,6 +35114,10 @@ function decodeQuotedPrintable(value: string): string {
 
 function extractPdfTextSummary(filePath: string): string {
   try {
+    const structured = extractPresentationPdfSync(filePath);
+    if (structured) {
+      return formatPresentationPdfSummary(structured, MAX_TEXT_BYTES);
+    }
     const raw = readFileHeader(filePath, MAX_PDF_METADATA_PREVIEW_BYTES).toString("latin1");
     const metadata = readPdfMetadataSummary(raw);
     const structureSecurity = readPdfStructureSecurityHints(raw);

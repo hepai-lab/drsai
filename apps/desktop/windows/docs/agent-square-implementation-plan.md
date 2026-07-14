@@ -106,7 +106,7 @@ Content-Type: application/json
 | G | 测试、发布与灰度 | 3 |
 | **合计** | **7 类开发项** | **35** |
 
-### 实施进度（2026-07-14，第 7 轮）
+### 实施进度（2026-07-14，第 8 轮）
 
 前两轮已完成平台目录的 Windows 基础链路、Native 目录接口，以及广场的发现与选择交互。进度按“已实现且有对应自动化证据”统计；仍需真实 HAI Token 或完整执行链验证的项目保留为部分完成。
 
@@ -156,23 +156,19 @@ Content-Type: application/json
 
 第七轮默认操作布局补充：删除卡片底部“设为默认”文字按钮，将其移动为卡片右上角的星标按钮；未默认时为空心星，当前默认时为实心星并禁用重复提交，保存中显示旋转状态，同时提供中英文 `aria-label` 和悬浮提示。底部操作区只保留“详情”和“开始使用”。
 
-解除最后阻塞所需的最小外部动作：
+第七轮默认操作联调修复：星标失效的根因不是 Agent 目录域名，而是 ai-dev 当时只有 `GET /api/native/v1/agents`，缺少 Windows 已调用的 `PUT /api/native/v1/agents/default`。HAI 指挥塔已补齐该受保护路由：从 OIDC subject 映射平台用户，先校验 agentId 属于其真实可见目录，再代理 OpenDrSai `PUT /api/agentworker/user_default_agent`，成功后更新按 subject 隔离的目录缓存并仅标记一个默认项；同时宣告 `agent-default` 能力，不宣告尚未部署的 `agent-chat`。远端 Native/OIDC 聚焦测试 35 项通过并已热加载。`https://aiapi.ihep.ac.cn/apiv2/agents/list_agents` 经探测为有效但受保护的 DDF 上游；它不保存默认偏好，也不聚合 remote/custom，因此保留为 HAI/OpenDrSai 内部 DDF 数据源，不把 Windows Native base URL 直接替换为 aiapi。
 
-1. 将本工作树中的 `native.py`、`native_auth.py`、`native_agent_stream.py`、`native_agent_security.py` 和路由注册部署到 ai-dev，并确认目录 capability 包含 `agent-chat`；
-2. 在 HAI 协作会话中提供一个可见的 DDF、remote、custom 测试智能体 ID；
-3. 从打包 Windows App 对三种模式各执行一次流式任务并保存脱敏结果。
+第八轮修复云端消息发送：Windows 的平台执行分支此前仍会先启动本机 Gateway，导致消息在到达 HAI 前失败；现已将平台智能体与本机/远程工作区 Gateway 完全解耦，平台消息不启动 Gateway，也不构建仅供本机执行的附件上下文。云端路由 E2E 将 `startGateway()` 改为主动抛错并仍通过，证明 DDF 请求只进入 Native SSE 通道；Windows 类型检查和智能体广场 UI 契约检查同时通过，运行中的 Electron 已重启加载新 Main 代码。
 
-下一轮只剩最后 1 项：在 ai-dev 部署 Native Chat 路由后，对 DDF、remote、custom 各跑一个真实流式任务（E4）。
+同轮 HAI 指挥塔在 `/home/zzd/VSProjects/hepai/hai-ai-platform-backend` 新增并热加载认证路由 `POST /api/native/v1/agents/{agent_id}/chat`。服务端仅以 OIDC subject 查询用户可见目录，将稳定 agent UUID 映射为服务端私有 DDF runtime name，再代理固定上游 `https://aiapi.ihep.ac.cn/apiv2/chat/completions`；禁止重定向，校验 SSE Content-Type，处理断开取消并保证一个 `[DONE]`，错误响应不回显 Token、私有配置或上游正文。目录仅对 DDF 宣告 chat/streaming，remote/custom 在找到安全的服务端执行入口前保持不可用。平台 Native/OIDC 聚焦测试扩展为 50 项，Black、`py_compile` 和 diff 检查通过；ai-dev 的未认证路由探测返回结构化 401 而非 404/405，Windows 随后刷新出的 5 个真实 DDF 智能体均带 chat/streaming 能力。
 
-当前需要 HAI 协作会话 `019f5208-0f19-7883-b3e2-4dcc8ffa4b61` 联调的最小事项：
+最后 1 个部分完成项仍为 E4。DDF 代码链已打通，待用当前 Windows 登录态完成一次真实文本流与 `[DONE]` 冒烟；remote/custom 仍缺 HAI 内部的安全认证执行端点，不采用客户端 URL 或私有配置下发的临时方案。完成 E4 还需：
 
-- 在 `ai-dev.ihep.ac.cn` 部署 `POST /api/native/v1/agents/{agent_id}/chat`，成功响应为 OpenAI 风格 `text/event-stream`；
-- 目录响应的 `capabilities` 在接口可用后加入 `agent-chat`，Windows 端以此作为灰度兼容开关；
-- 明确 `[DONE]`、文本增量、reasoning、工具/文件、人机输入和结构化错误帧，并明确停止接口或断开连接即取消的语义；
-- 准备一个稳定 DDF 测试智能体和普通 OIDC 测试账号，验证 401 刷新、403、下线、断流和连续对话；
-- 服务端按 Token subject 和 agentId 查找私有执行配置，禁止在目录或 SSE 中返回 API Key、内部 URL 与原始 config。
+1. 从已登录的 Windows App 对一个 DDF 智能体发送消息，确认出现文本增量、正常结束并记录脱敏遥测；
+2. HAI/OpenDrSai 提供 remote 与 custom 的受认证服务端执行入口，或将现有运行管理器接入 Native 路由；
+3. 对 DDF、remote、custom 各保留一个稳定测试智能体，完成连续对话、停止、401/403、下线和断流冒烟。
 
-Windows 端请求体已经按 `messages`、`stream`、`thread_id`、`run_id`、`model`、`attachments`、`metadata` 预接入；若平台确认字段不同，应以联调后的稳定 Native v1 契约为准并同步更新契约夹具。
+Windows 端请求体继续按 `messages`、`stream`、`thread_id`、`run_id`、`model`、`attachments`、`metadata` 发送；HAI 不信任客户端 `model` 选择执行目标，而是以经过可见性校验的 agentId 解析真实 runtime name。
 
 ### A. 平台契约与身份认证（4 个）
 

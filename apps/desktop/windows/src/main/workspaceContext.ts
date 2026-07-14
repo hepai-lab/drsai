@@ -29,6 +29,7 @@ import type {
   WorkspaceStageFileRequest,
   WorkspaceStageFileResult,
 } from "../shared/desktopApi";
+import { extractPresentationPdfContext } from "./presentationPdf";
 
 const DEFAULT_MAX_DEPTH = 4;
 const DEFAULT_MAX_ENTRIES = 500;
@@ -443,7 +444,7 @@ export async function previewWorkspaceFile(
       ...base,
       content: pdfText || undefined,
       message: pdfText
-        ? "Extracted a basic text preview from the PDF."
+        ? "Extracted structured PDF text with page roles for analysis."
         : getMetadataOnlyMessage(kind),
     };
   }
@@ -931,11 +932,11 @@ function ensureInside(workspacePath: string, target: string): void {
 }
 
 function classifyPreviewKind(filePath: string, size: number): WorkspacePreviewKind {
-  if (size > 2_000_000) return "large";
   const extension = extname(filePath).toLowerCase();
   if (extension in IMAGE_MIME) return "image";
   if (extension in MEDIA_MIME) return "media";
   if (extension === ".pdf") return "pdf";
+  if (size > 2_000_000) return "large";
   if (OFFICE_EXTENSIONS.has(extension)) return "office";
   if (extension === ".ipynb") return "notebook";
   if (extension === ".md" || extension === ".mdx") return "markdown";
@@ -1173,6 +1174,8 @@ function readSvgDimensions(svg: string): { width: number; height: number } | nul
 }
 
 async function extractPdfText(filePath: string, bytes: number): Promise<string> {
+  const structured = await extractPresentationPdfContext(filePath, Math.max(bytes, 120_000));
+  if (structured) return structured;
   const buffer = await readFileSlice(filePath, bytes);
   const raw = buffer.toString("latin1");
   const matches = [...raw.matchAll(/\(([^()]*)\)\s*T[jJ]/g)]

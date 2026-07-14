@@ -323,14 +323,17 @@ async function runChat(
 
   const timeout = setTimeout(() => controller.abort("timeout"), CHAT_TIMEOUT_MS);
   try {
-    const remoteGateway = getRemoteGatewayAccess(request.workspacePath);
+    // Platform agents execute in HAI and must never depend on a local or
+    // workspace gateway being installed/running. Gateway startup is reserved
+    // for My DrSai and remote-workspace local execution.
+    const remoteGateway = platformDescriptor ? null : getRemoteGatewayAccess(request.workspacePath);
     if (remoteGateway) bindRemoteThread(sessionId, remoteGateway.workspaceId);
-    const ready = remoteGateway ? true : await startGateway();
+    const ready = platformDescriptor || remoteGateway ? true : await startGateway();
     if (!ready) {
       throw new Error("Gateway is not ready. Install or start OpenDrSai first.");
     }
 
-    const attachmentContext = remoteGateway ? [] : await buildAttachmentContext(request.attachments);
+    const attachmentContext = platformDescriptor || remoteGateway ? [] : await buildAttachmentContext(request.attachments);
     const messages = withAttachmentContext(request.messages, attachmentContext);
     const model = request.model || getDefaultModelAlias() || "drsai";
     const send = async (authContext: AuthContext): Promise<boolean> => {

@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "title": "TOKEN_DECK_TITLE",
+  "subtitle": "TOKEN_DECK_SUBTITLE",
+  "audience": "non_expert_managers",
+  "language": "zh-CN",
+  "slides": [
+    {
+      "role": "cover",
+      "title": "TOKEN_S1_TITLE",
+      "body": ["TOKEN_S1_SUBTITLE", "TOKEN_S1_CONTEXT"],
+      "sourcePages": [9901]
+    },
+    {
+      "role": "executive_summary",
+      "title": "TOKEN_S2_TITLE",
+      "body": ["TOKEN_S2_BODY_1", "TOKEN_S2_BODY_2", "TOKEN_S2_BODY_3"],
+      "metrics": ["TOKEN_S2_METRIC_1", "TOKEN_S2_METRIC_2", "TOKEN_S2_METRIC_3"],
+      "metricLabels": ["TOKEN_S2_LABEL_1", "TOKEN_S2_LABEL_2", "TOKEN_S2_LABEL_3"],
+      "speakerNotes": "TOKEN_S2_NOTES",
+      "sourcePages": [9902]
+    },
+    {
+      "role": "background",
+      "title": "TOKEN_S3_TITLE",
+      "body": ["TOKEN_S3_BODY_1", "TOKEN_S3_BODY_2", "TOKEN_S3_BODY_3"],
+      "metrics": ["TOKEN_S3_METRIC_1"],
+      "metricLabels": ["TOKEN_S3_LABEL_1"],
+      "speakerNotes": "TOKEN_S3_NOTES",
+      "sourcePages": [9903]
+    },
+    {
+      "role": "wlcg",
+      "title": "TOKEN_S4_TITLE",
+      "body": ["TOKEN_S4_BODY_1", "TOKEN_S4_BODY_2", "TOKEN_S4_BODY_3"],
+      "speakerNotes": "TOKEN_S4_NOTES",
+      "sourcePages": [9904]
+    },
+    {
+      "role": "asian_networks",
+      "title": "TOKEN_S5_TITLE",
+      "body": ["TOKEN_S5_BODY_1", "TOKEN_S5_BODY_2", "TOKEN_S5_BODY_3"],
+      "speakerNotes": "TOKEN_S5_NOTES",
+      "sourcePages": [9905]
+    },
+    {
+      "role": "data_challenges",
+      "title": "TOKEN_S6_TITLE",
+      "timeline": [
+        {"year": "TOKEN_S6_YEAR_1", "value": "TOKEN_S6_VALUE_1"},
+        {"year": "TOKEN_S6_YEAR_2", "value": "TOKEN_S6_VALUE_2"},
+        {"year": "TOKEN_S6_YEAR_3", "value": "TOKEN_S6_VALUE_3"},
+        {"year": "TOKEN_S6_YEAR_4", "value": "TOKEN_S6_VALUE_4"},
+        {"year": "TOKEN_S6_YEAR_5", "value": "TOKEN_S6_VALUE_5"}
+      ],
+      "body": ["TOKEN_S6_BODY_1"],
+      "speakerNotes": "TOKEN_S6_NOTES",
+      "sourcePages": [9906]
+    },
+    {
+      "role": "hl_lhc_requirements",
+      "title": "TOKEN_S7_TITLE",
+      "body": ["TOKEN_S7_BODY_1", "TOKEN_S7_BODY_2", "TOKEN_S7_BODY_3"],
+      "metrics": ["TOKEN_S7_METRIC_1", "TOKEN_S7_METRIC_2", "TOKEN_S7_METRIC_3"],
+      "metricLabels": ["TOKEN_S7_LABEL_1", "TOKEN_S7_LABEL_2", "TOKEN_S7_LABEL_3"],
+      "speakerNotes": "TOKEN_S7_NOTES",
+      "sourcePages": [9907]
+    },
+    {
+      "role": "conclusions",
+      "title": "TOKEN_S8_TITLE",
+      "body": ["TOKEN_S8_BODY_1", "TOKEN_S8_BODY_2", "TOKEN_S8_BODY_3"],
+      "speakerNotes": "TOKEN_S8_NOTES",
+      "sourcePages": [9908]
+    },
+    {
+      "role": "sources",
+      "title": "TOKEN_S9_TITLE",
+      "body": [
+        "TOKEN_S9_TOPIC_1：TOKEN_S9_PAGES_1",
+        "TOKEN_S9_TOPIC_2：TOKEN_S9_PAGES_2",
+        "TOKEN_S9_TOPIC_3：TOKEN_S9_PAGES_3",
+        "TOKEN_S9_TOPIC_4：TOKEN_S9_PAGES_4",
+        "TOKEN_S9_TOPIC_5：TOKEN_S9_PAGES_5",
+        "TOKEN_S9_TOPIC_6：TOKEN_S9_PAGES_6"
+      ],
+      "sourcePages": [9909]
+    }
+  ]
+}

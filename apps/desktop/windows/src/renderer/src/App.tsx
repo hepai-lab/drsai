@@ -1557,6 +1557,9 @@ function AuthenticatedApp({
           const current = chat.input.trimEnd();
           chat.setInput(current ? `${current}\n\n${path}` : path);
         }}
+        onPrepareTask={(task) => {
+          chat.setInput(task);
+        }}
       />
     ) : (
       <SidePlaceholder language={language} tab={activeRightTab} />

@@ -124,7 +124,8 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
     process.env.OPENDRSAI_E2E_FORK_MERGE !== "1" &&
     process.env.OPENDRSAI_E2E_OIDC !== "1" &&
     process.env.OPENDRSAI_E2E_A5_SERVICE_GUIDANCE !== "1" &&
-    process.env.OPENDRSAI_E2E_F2_APPROVALS !== "1"
+    process.env.OPENDRSAI_E2E_F2_APPROVALS !== "1" &&
+    process.env.OPENDRSAI_E2E_PRESENTATION_PDF_ACTION !== "1"
   ) return;
   const resultPath = process.env.OPENDRSAI_E2E_RESULT;
   if (!resultPath) {
@@ -175,6 +176,8 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
         ? runA5ServiceGuidanceSmoke
       : process.env.OPENDRSAI_E2E_F2_APPROVALS === "1"
         ? runF2ApprovalSmoke
+      : process.env.OPENDRSAI_E2E_PRESENTATION_PDF_ACTION === "1"
+        ? runPresentationPdfActionSmoke
       : process.env.OPENDRSAI_E2E_CHAT === "1"
         ? runChatSmoke
         : runSmoke;
@@ -195,6 +198,262 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
         process.exit(1);
       });
   });
+}
+
+async function runPresentationPdfActionSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  const fixtureName = process.env.OPENDRSAI_E2E_PRESENTATION_PDF_NAME || "";
+  const fixturePath = process.env.OPENDRSAI_E2E_PRESENTATION_PDF_PATH || "";
+  const result = (await window.webContents.executeJavaScript(`
+    (async () => {
+      const fixtureName = ${JSON.stringify(fixtureName)};
+      const fixturePath = ${JSON.stringify(fixturePath)};
+      const checks = {};
+      const details = { fixtureName, fixturePath, capturedAt: new Date().toISOString() };
+
+      async function waitFor(find, timeout = 30000) {
+        const deadline = Date.now() + timeout;
+        while (Date.now() < deadline) {
+          const value = find();
+          if (value) return value;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        return null;
+      }
+
+      checks.domReady = Boolean(await waitFor(() => document.querySelector(".app-shell"), 10000));
+      const rightPanelToggle = document.querySelector(".titlebar-right-panel-toggle");
+      checks.rightPanelToggleVisible = Boolean(rightPanelToggle);
+      if (!document.querySelector(".files-context-panel")) rightPanelToggle?.click();
+      checks.filesPanelVisible = Boolean(await waitFor(() => document.querySelector(".files-context-panel"), 10000));
+
+      const fileRow = await waitFor(() => Array.from(document.querySelectorAll(".files-tree-row"))
+        .find((row) => row.getAttribute("title") === fixtureName || row.textContent?.includes(fixtureName)));
+      checks.fixtureVisible = Boolean(fileRow);
+      fileRow?.click();
+
+      const action = await waitFor(() => document.querySelector(".presentation-pdf-action"));
+      const previewText = document.querySelector(".files-preview-pdf .files-preview-code")?.textContent || "";
+      details.previewTextSample = previewText.slice(0, 1200);
+      checks.presentationTypeInPreview = previewText.includes("PDF type: presentation_pdf");
+      checks.pageCountInPreview = previewText.includes("Pages: 48");
+      checks.coverRoleInPreview = previewText.includes("[Page 1 | cover]");
+      checks.agendaRoleInPreview = previewText.includes("[Page 2 | agenda]");
+      checks.summaryRoleInPreview = previewText.includes("[Page 47 | summary]");
+      checks.questionsRoleInPreview = previewText.includes("[Page 48 | questions]");
+      const actionText = action?.textContent || "";
+      details.actionText = actionText.replace(/\\s+/g, " ").trim();
+      checks.presentationDetected = Boolean(action);
+      checks.explanationVisible = /演示型 PDF|presentation-style PDF/i.test(actionText)
+        && /可编辑|editable/i.test(actionText)
+        && /讲稿|speaker notes/i.test(actionText)
+        && /来源页码|source pages/i.test(actionText);
+      const actionButton = action?.querySelector('[data-testid="generate-manager-presentation"]');
+      checks.actionVisible = Boolean(actionButton)
+        && /生成管理者版 PPT|Create manager PPT/i.test(actionButton?.textContent || "");
+      const editRequirementsButton = action?.querySelector("button.secondary");
+      checks.editRequirementsVisible = Boolean(editRequirementsButton);
+
+      actionButton?.click();
+      const validatingProgress = await waitFor(() => {
+        const candidate = document.querySelector('[data-testid="manager-presentation-progress"]');
+        return candidate?.getAttribute("data-phase") === "generating" ? candidate : null;
+      }, 60000);
+      const cancelledOutputPath = validatingProgress?.getAttribute("data-output-path") || "";
+      const cancelButton = document.querySelector('[data-testid="cancel-manager-presentation"]');
+      checks.cancelActionVisible = Boolean(cancelButton) && /取消生成|Cancel/i.test(cancelButton?.textContent || "");
+      cancelButton?.click();
+      const cancelledProgress = await waitFor(() => {
+        const candidate = document.querySelector('[data-testid="manager-presentation-progress"]');
+        return candidate?.getAttribute("data-phase") === "cancelled" ? candidate : null;
+      }, 10000);
+      checks.cancellationCompleted = Boolean(cancelledProgress)
+        && /已取消|cancelled/i.test(cancelledProgress?.textContent || "");
+      const cancelledRequestId = cancelledProgress?.getAttribute("data-request-id") || "";
+      const apiAfterCancel = window.openDrSai;
+      details.cancelledOutputPath = cancelledOutputPath;
+      if (apiAfterCancel && cancelledOutputPath) {
+        let pptxMissing = false;
+        let manifestMissing = false;
+        try {
+          await apiAfterCancel.previewWorkspaceFile({
+            workspacePath: fixturePath.slice(0, fixturePath.lastIndexOf("\\\\")),
+            path: cancelledOutputPath,
+            maxBytes: 1024,
+          });
+        } catch { pptxMissing = true; }
+        try {
+          await apiAfterCancel.previewWorkspaceFile({
+            workspacePath: fixturePath.slice(0, fixturePath.lastIndexOf("\\\\")),
+            path: cancelledOutputPath.replace(/\.pptx$/i, ".provenance.json"),
+            maxBytes: 1024,
+          });
+        } catch { manifestMissing = true; }
+        checks.cancelledNoPartialFiles = pptxMissing && manifestMissing;
+      } else {
+        checks.cancelledNoPartialFiles = false;
+      }
+      const retryAfterCancel = await waitFor(() => {
+        const candidate = document.querySelector('[data-testid="generate-manager-presentation"]');
+        return candidate && !candidate.disabled && /重试生成|Retry generation/i.test(candidate.textContent || "")
+          ? candidate
+          : null;
+      }, 5000);
+      checks.retryAfterCancelVisible = /重试生成|Retry generation/i.test(retryAfterCancel?.textContent || "");
+      retryAfterCancel?.click();
+      const failedProgress = await waitFor(() => {
+        const candidate = document.querySelector('[data-testid="manager-presentation-progress"]');
+        return candidate?.getAttribute("data-request-id") !== cancelledRequestId
+          && candidate?.getAttribute("data-phase") === "failed" ? candidate : null;
+      }, 10000);
+      checks.injectedFailureVisible = Boolean(failedProgress)
+        && /Simulated presentation failure at analyzing/i.test(failedProgress?.textContent || "");
+      const failedRequestId = failedProgress?.getAttribute("data-request-id") || "";
+      const retryAfterFailure = await waitFor(() => {
+        const candidate = document.querySelector('[data-testid="generate-manager-presentation"]');
+        return candidate && !candidate.disabled && /重试生成|Retry generation/i.test(candidate.textContent || "")
+          ? candidate
+          : null;
+      }, 5000);
+      checks.retryAfterFailureVisible = /重试生成|Retry generation/i.test(retryAfterFailure?.textContent || "");
+      retryAfterFailure?.click();
+      const generatedResult = await waitFor(() => {
+        const progress = document.querySelector('[data-testid="manager-presentation-progress"]');
+        const result = document.querySelector('[data-testid="manager-presentation-result"]');
+        return progress?.getAttribute("data-request-id") !== failedRequestId && result ? result : null;
+      }, 60000);
+      checks.generationCompleted = Boolean(generatedResult);
+      const generatedOutputPath = generatedResult?.getAttribute("data-output-path") || "";
+      details.generatedOutputPath = generatedOutputPath;
+      checks.cancelledPathReused = Boolean(cancelledOutputPath) && generatedOutputPath === cancelledOutputPath;
+      details.generatedResultText = generatedResult?.textContent?.replace(/\\s+/g, " ").trim() || "";
+      checks.generatedMetricsVisible = details.generatedResultText.includes("9 页")
+        && details.generatedResultText.includes("讲稿 100%")
+        && details.generatedResultText.includes("来源 100%");
+      checks.openPptActionVisible = Boolean(generatedResult?.querySelector("button"));
+      document.querySelector(".presentation-pdf-action button.secondary")?.click();
+      const basketChip = await waitFor(() => Array.from(document.querySelectorAll(".files-basket-chip"))
+        .find((chip) => chip.getAttribute("title") === fixturePath || chip.textContent?.includes(fixtureName)), 10000);
+      checks.pdfAttached = Boolean(basketChip);
+      details.basketText = basketChip?.textContent?.replace(/\\s+/g, " ").trim() || "";
+      const composer = await waitFor(() => document.querySelector(".composer textarea"), 10000);
+      const task = composer && "value" in composer ? String(composer.value) : "";
+      details.task = task;
+      checks.taskPrepared = task.includes("给非专业管理者看的中文 PPTX");
+      checks.slideRangeRequired = task.includes("8–12 页");
+      checks.editableContentRequired = task.includes("可编辑的原生文本");
+      checks.sourcePagesRequired = task.includes("原 PDF 页码");
+      checks.speakerNotesRequired = task.includes("为每一页写可直接演讲的讲稿");
+      checks.uncertaintyRequired = task.includes("尚未确认");
+      checks.screenshotReuseForbidden = task.includes("不得把原 PDF 整页截图");
+      checks.acceptanceReportRequired = task.includes("自动验收结果");
+      checks.taskNotAutoSubmitted = !Array.from(document.querySelectorAll(".message.user .message-body"))
+        .some((message) => message.textContent?.includes("给非专业管理者看的中文 PPTX"));
+      const registeredArtifact = await waitFor(() => {
+        const panel = document.querySelector(".files-artifacts");
+        return /manager-zh\.pptx/i.test(panel?.textContent || "") ? panel : null;
+      }, 10000);
+      details.artifactsText = registeredArtifact?.textContent?.replace(/\\s+/g, " ").trim() || "";
+      checks.artifactRegistered = Boolean(registeredArtifact);
+      const api = window.openDrSai;
+      checks.bridgeAvailable = Boolean(api);
+      if (api && generatedOutputPath) {
+        const generatedPreview = await api.previewWorkspaceFile({
+          workspacePath: fixturePath.slice(0, fixturePath.lastIndexOf("\\\\")),
+          path: generatedOutputPath,
+          maxBytes: 220000,
+        });
+        details.generatedPreview = {
+          kind: generatedPreview.kind,
+          size: generatedPreview.size,
+          relativePath: generatedPreview.relativePath,
+        };
+        checks.generatedPptxReadable = generatedPreview.kind === "office" && generatedPreview.size > 10000;
+        const manifestPath = generatedOutputPath.replace(/\\.pptx$/i, ".provenance.json");
+        const manifestPreview = await api.previewWorkspaceFile({
+          workspacePath: fixturePath.slice(0, fixturePath.lastIndexOf("\\\\")),
+          path: manifestPath,
+          maxBytes: 220000,
+        });
+        const manifestText = manifestPreview.content || "";
+        details.manifestPath = manifestPath;
+        checks.manifestReadable = manifestText.includes('"slideCount": 9')
+          && manifestText.includes('"speakerNotesCoverage": 1')
+          && manifestText.includes('"wholePageScreenshotReuse": false');
+        const manifest = JSON.parse(manifestText);
+        const manifestSlides = Array.isArray(manifest.slides) ? manifest.slides : [];
+        const rolePages = (role) => manifestSlides.find((slide) => slide.role === role)?.sourcePages || [];
+        checks.goldenSourceMapping = rolePages("hl_lhc_requirements").includes(42)
+          && rolePages("data_challenges").includes(43)
+          && rolePages("conclusions").includes(47)
+          && manifestSlides.filter((slide) => !["cover", "sources"].includes(slide.role))
+            .every((slide) => Array.isArray(slide.sourcePages) && slide.sourcePages.length > 0);
+        const sourceReview = document.querySelector('[data-testid="manager-presentation-sources"]');
+        const sourceButtons = Array.from(sourceReview?.querySelectorAll("button[data-source-page]") || []);
+        const expectedSourceButtonCount = manifestSlides
+          .filter((slide) => !["cover", "sources"].includes(slide.role))
+          .reduce((count, slide) => count + (Array.isArray(slide.sourcePages) ? slide.sourcePages.length : 0), 0);
+        checks.sourceReviewVisible = Boolean(sourceReview)
+          && /核对原始依据|Review original evidence/i.test(sourceReview?.textContent || "");
+        checks.everySourceEntryClickable = sourceButtons.length === expectedSourceButtonCount
+          && sourceButtons.every((button) => !button.disabled);
+
+        details.sourcePageOpens = {};
+        const uiSourceButton = Array.from(document.querySelectorAll("button[data-source-page]"))
+          .find((candidate) => candidate.getAttribute("data-source-page") === "42");
+        checks.sourcePageUiEntryAvailable = Boolean(uiSourceButton);
+        uiSourceButton?.click();
+        const uiSourceStatus = await waitFor(() => {
+          const candidate = document.querySelector('[data-testid="source-page-review-status"]');
+          return candidate?.getAttribute("data-source-page") === "42" ? candidate : null;
+        }, 3000);
+        details.sourcePageUiStatus = uiSourceStatus?.textContent || "";
+        for (const page of [42, 43, 47]) {
+          const opened = await api.openPdfPage({ path: fixturePath, page });
+          details.sourcePageOpens[String(page)] = { ...opened, via: "typed-api" };
+          checks["sourcePage" + page + "Opened"] = opened.ok
+            && opened.page === page
+            && opened.viewerUrl.includes(".pdf#page=" + page);
+        }
+        try {
+          await api.openPdfPage({ path: fixturePath, page: 0 });
+          checks.invalidSourcePageRejected = false;
+        } catch {
+          checks.invalidSourcePageRejected = true;
+        }
+        try {
+          await api.openPdfPage({ path: generatedOutputPath, page: 1 });
+          checks.nonPdfSourceRejected = false;
+        } catch {
+          checks.nonPdfSourceRejected = true;
+        }
+      } else {
+        checks.generatedPptxReadable = false;
+        checks.manifestReadable = false;
+        checks.goldenSourceMapping = false;
+        checks.sourceReviewVisible = false;
+        checks.everySourceEntryClickable = false;
+        checks.sourcePageUiEntryAvailable = false;
+        checks.sourcePage42Opened = false;
+        checks.sourcePage43Opened = false;
+        checks.sourcePage47Opened = false;
+        checks.invalidSourcePageRejected = false;
+        checks.nonPdfSourceRejected = false;
+      }
+      return { checks, details };
+    })()
+  `, true)) as { checks: Record<string, boolean>; details: Record<string, unknown> };
+  const screenshotPath = process.env.OPENDRSAI_E2E_SCREENSHOT;
+  if (screenshotPath) {
+    mkdirSync(dirname(screenshotPath), { recursive: true });
+    const image = await window.webContents.capturePage();
+    writeFileSync(screenshotPath, image.toPNG());
+    result.details.screenshotPath = screenshotPath;
+  }
+  return {
+    ok: Object.values(result.checks).every(Boolean),
+    checks: result.checks,
+    details: result.details,
+  };
 }
 
 async function runA5ServiceGuidanceSmoke(window: BrowserWindow): Promise<SmokeResult> {

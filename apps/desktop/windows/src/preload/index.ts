@@ -136,6 +136,13 @@ import type {
   LoginRequest,
   LoginResult,
   LogoutOptions,
+  ManagerPresentationCancelRequest,
+  ManagerPresentationCancelResult,
+  ManagerPresentationGenerateRequest,
+  ManagerPresentationGenerateResult,
+  ManagerPresentationProgressEvent,
+  PdfPageOpenRequest,
+  PdfPageOpenResult,
   MyDrSaiConfig,
   OidcLoginDebugEvent,
   SaveApiKeyResult,
@@ -270,6 +277,21 @@ const api: DesktopApi = {
     const listener = (_event: IpcRendererEvent, change: WorkspaceFileChangeEvent): void => callback(change);
     ipcRenderer.on("desktop:workspace-file-change-event", listener);
     return () => ipcRenderer.removeListener("desktop:workspace-file-change-event", listener);
+  },
+  generateManagerPresentation: (
+    request: ManagerPresentationGenerateRequest,
+  ): Promise<ManagerPresentationGenerateResult> =>
+    ipcRenderer.invoke("desktop:manager-presentation-generate", request),
+  cancelManagerPresentation: (
+    request: ManagerPresentationCancelRequest,
+  ): Promise<ManagerPresentationCancelResult> =>
+    ipcRenderer.invoke("desktop:manager-presentation-cancel", request),
+  onManagerPresentationProgress: (
+    callback: (event: ManagerPresentationProgressEvent) => void,
+  ) => {
+    const listener = (_event: IpcRendererEvent, progress: ManagerPresentationProgressEvent): void => callback(progress);
+    ipcRenderer.on("desktop:manager-presentation-progress", listener);
+    return () => ipcRenderer.removeListener("desktop:manager-presentation-progress", listener);
   },
   listWorkspaces: () => ipcRenderer.invoke("desktop:list-workspaces"),
   createWorkspace: (request: CreateWorkspaceRequest) =>
@@ -625,6 +647,8 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:open-external", url),
   openPath: (path: string): Promise<string> =>
     ipcRenderer.invoke("desktop:open-path", path),
+  openPdfPage: (request: PdfPageOpenRequest): Promise<PdfPageOpenResult> =>
+    ipcRenderer.invoke("desktop:open-pdf-page", request),
   getIdeContext: (workspacePath: string): Promise<DesktopIdeContextSnapshot> =>
     ipcRenderer.invoke("desktop:ide-context", workspacePath),
   getFileIcon: (path: string) =>

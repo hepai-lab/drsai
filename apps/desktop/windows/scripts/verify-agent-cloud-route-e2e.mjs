@@ -137,7 +137,7 @@ function stubMainDependencies() {
       export async function respondToPlatformChatInput(_agent,_thread,response){ const result=await fetch(globalThis.__agentCloudBase+"/input",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({response})}); return result.ok; }
       export async function stopPlatformChat(){ const result=await fetch(globalThis.__agentCloudBase+"/stop",{method:"POST"}); return result.ok; }
     `],
-    ["./gateway", `export function getGatewayRequestHeaders(){return {}}; export async function startGateway(){return true;}`],
+    ["./gateway", `export function getGatewayRequestHeaders(){return {}}; export async function startGateway(){throw new Error("platform chat must not start the local gateway")}`],
     ["./modelDefaults", `export function getDefaultModelAlias(){return "drsai";}`],
     ["./threads", `export async function upsertThreadFromRun(){return {};}`],
     ["./providerErrorAnalytics", `export async function persistProviderErrorAnalytics(){}`],

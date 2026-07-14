@@ -7,6 +7,7 @@ import {
   History,
   ListPlus,
   Network,
+  Presentation,
   Rows3,
   Rows4,
   SquareArrowOutUpRight,
@@ -16,6 +17,8 @@ import {
 } from "lucide-react";
 import type {
   ChatAttachment,
+  ManagerPresentationGenerateResult,
+  ManagerPresentationProgressEvent,
   WorkspaceContextOverview,
   WorkspaceCheckpoint,
   WorkspaceCheckpointPreviewResult,
@@ -44,6 +47,10 @@ import { FilesTree } from "./FilesTree";
 import { GitDiffPreview } from "./GitDiffPreview";
 import { InstructionChainPreview } from "./InstructionChainPreview";
 import { PatchReviewPanel } from "./PatchReviewPanel";
+import {
+  buildManagerPresentationTask,
+  isPresentationPdfPreview,
+} from "./presentationPdfAction";
 import { RepoMapPanel } from "./RepoMapPanel";
 
 interface FilesContextPanelProps {
@@ -56,6 +63,7 @@ interface FilesContextPanelProps {
   onBasketChange: (attachments: ChatAttachment[]) => void;
   onFileTraceChange: (events: AgentFileTraceEvent[]) => void;
   onInsertPath: (path: string) => void;
+  onPrepareTask: (task: string) => void;
 }
 
 type LoadState = "idle" | "loading" | "error";
@@ -70,6 +78,7 @@ export function FilesContextPanel({
   onBasketChange,
   onFileTraceChange,
   onInsertPath,
+  onPrepareTask,
 }: FilesContextPanelProps): React.JSX.Element {
   const zh = language === "zh";
   const [overview, setOverview] = useState<WorkspaceContextOverview | null>(null);
@@ -89,7 +98,19 @@ export function FilesContextPanel({
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [previewState, setPreviewState] = useState<LoadState>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [managerPresentationProgress, setManagerPresentationProgress] =
+    useState<ManagerPresentationProgressEvent | null>(null);
+  const [managerPresentationResult, setManagerPresentationResult] =
+    useState<ManagerPresentationGenerateResult | null>(null);
+  const [sourcePageReview, setSourcePageReview] = useState<{
+    page: number;
+    state: "opening" | "opened" | "error";
+    message: string;
+    viewerUrl?: string;
+  } | null>(null);
   const previewRequestPathRef = useRef<string | null>(null);
+  const managerPresentationRequestRef = useRef<string | null>(null);
+  const managerPresentationCancelRequestedRef = useRef<string | null>(null);
 
   const selectedInBasket = selectedNode
     ? basket.some((item) => item.path === selectedNode.path)
@@ -105,6 +126,10 @@ export function FilesContextPanel({
   const systemOpenLabel = selectedNode?.type === "directory"
     ? "Open folder"
     : "Open with system app";
+  const canCreateManagerPresentation = selectedNode?.type === "file"
+    && isPresentationPdfPreview(preview);
+  const managerPresentationActive = managerPresentationProgress !== null
+    && !["completed", "failed", "cancelled"].includes(managerPresentationProgress.phase);
 
   const loadWorkspaceCheckpoints = useCallback(async () => {
     if (!workspacePath) return;
@@ -172,6 +197,11 @@ export function FilesContextPanel({
     setCheckpointMessage("");
   }, [workspacePath]);
 
+  useEffect(() => desktopApi.onManagerPresentationProgress((progress) => {
+    if (progress.requestId !== managerPresentationRequestRef.current) return;
+    setManagerPresentationProgress(progress);
+  }), []);
+
   useEffect(() => {
     let cancelled = false;
     setSystemOpenIconUrl(null);
@@ -197,6 +227,9 @@ export function FilesContextPanel({
   async function selectNode(node: WorkspaceFileNode): Promise<void> {
     previewRequestPathRef.current = node.path;
     setSelectedNode(node);
+    setManagerPresentationResult((current) => current?.sourcePath === node.path ? current : null);
+    setManagerPresentationProgress((current) => managerPresentationResult?.sourcePath === node.path ? current : null);
+    setSourcePageReview(null);
     setDiffPreview(null);
     setError(null);
     if (node.type !== "file") {
@@ -351,12 +384,118 @@ export function FilesContextPanel({
     if (result) setError(result);
   }
 
-  function commitAttachments(attachments: ChatAttachment[]): void {
-    if (!confirmUntrustedContextShare()) return;
+  function commitAttachments(attachments: ChatAttachment[]): boolean {
+    if (!confirmUntrustedContextShare()) return false;
     const nextBasket = [...basket, ...attachments];
     onBasketChange(nextBasket);
     recordTrace(attachments);
     recordSnapshot(nextBasket);
+    return true;
+  }
+
+  function prepareManagerPresentation(): void {
+    if (!selectedNode || !canCreateManagerPresentation) return;
+    if (!selectedInBasket && !commitAttachments([createFileAttachment(selectedNode, preview)])) return;
+    onPrepareTask(buildManagerPresentationTask(language));
+  }
+
+  async function createManagerPresentation(): Promise<void> {
+    if (!selectedNode || !canCreateManagerPresentation) return;
+    if (!selectedInBasket && !commitAttachments([createFileAttachment(selectedNode, preview)])) return;
+    const requestId = crypto.randomUUID();
+    managerPresentationRequestRef.current = requestId;
+    managerPresentationCancelRequestedRef.current = null;
+    setManagerPresentationResult(null);
+    setSourcePageReview(null);
+    setManagerPresentationProgress({
+      requestId,
+      phase: "analyzing",
+      progress: 1,
+      message: zh ? "正在启动管理者版 PPT 生成任务。" : "Starting manager presentation generation.",
+    });
+    try {
+      const result = await desktopApi.generateManagerPresentation({
+        requestId,
+        workspacePath,
+        sourcePath: selectedNode.path,
+      });
+      if (managerPresentationRequestRef.current !== requestId) return;
+      setManagerPresentationResult(result);
+      const artifactEvent: AgentFileTraceEvent = {
+        action: "agent_artifact",
+        at: new Date().toISOString(),
+        hash: `pptx-${result.slideCount}-${Math.round(result.speakerNotesCoverage * 100)}`,
+        name: result.outputPath.split(/[\\/]/).filter(Boolean).at(-1) ?? result.outputPath,
+        path: result.outputPath,
+        scopeId,
+        snapshotId: `presentation-${requestId.slice(0, 8)}`,
+        source: "manager presentation generator",
+      };
+      onFileTraceChange([artifactEvent, ...fileTraceEvents]);
+      await refresh();
+    } catch (caught) {
+      if (managerPresentationRequestRef.current !== requestId) return;
+      const message = caught instanceof Error ? caught.message : String(caught);
+      if (managerPresentationCancelRequestedRef.current === requestId) {
+        setManagerPresentationProgress((current) => current?.requestId === requestId && current.phase === "cancelled"
+          ? current
+          : { requestId, phase: "cancelled", progress: 100, message: zh ? "已取消生成；未保留未完成的 PPT 文件。" : "Generation cancelled; no incomplete PPT was kept." });
+        return;
+      }
+      setError(message);
+      setManagerPresentationProgress({
+        requestId,
+        phase: "failed",
+        progress: 100,
+        message,
+      });
+    }
+  }
+
+  async function cancelManagerPresentation(): Promise<void> {
+    const requestId = managerPresentationRequestRef.current;
+    if (!requestId || !managerPresentationActive) return;
+    managerPresentationCancelRequestedRef.current = requestId;
+    setManagerPresentationProgress((current) => current?.requestId === requestId
+      ? { ...current, phase: "cancelling", message: zh ? "正在安全取消并清理未完成文件…" : "Cancelling safely and cleaning incomplete files…" }
+      : current);
+    try {
+      const result = await desktopApi.cancelManagerPresentation({ requestId });
+      if (!result.accepted) {
+        managerPresentationCancelRequestedRef.current = null;
+        setError(zh ? "任务已经结束，无法再取消。" : "The task has already finished and cannot be cancelled.");
+      }
+    } catch (caught) {
+      managerPresentationCancelRequestedRef.current = null;
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
+  async function openSourcePage(page: number): Promise<void> {
+    if (!managerPresentationResult) return;
+    setSourcePageReview({
+      page,
+      state: "opening",
+      message: zh ? `正在打开原 PDF 第 ${page} 页。` : `Opening source PDF page ${page}.`,
+    });
+    try {
+      const result = await desktopApi.openPdfPage({
+        path: managerPresentationResult.sourcePath,
+        page,
+      });
+      setSourcePageReview({
+        page: result.page,
+        state: "opened",
+        message: zh ? `已在原 PDF 中打开第 ${result.page} 页。` : `Opened source PDF page ${result.page}.`,
+        viewerUrl: result.viewerUrl,
+      });
+    } catch (caught) {
+      setSourcePageReview({
+        page,
+        state: "error",
+        message: caught instanceof Error ? caught.message : String(caught),
+      });
+    }
   }
 
   function recordTrace(attachments: ChatAttachment[]): void {
@@ -594,6 +733,126 @@ export function FilesContextPanel({
 
       <div className="files-context-body">
         <main className="files-context-preview" aria-label="File preview">
+          {canCreateManagerPresentation ? (
+            <section className="presentation-pdf-action" aria-label={zh ? "演示报告操作" : "Presentation report actions"}>
+              <div>
+                <Presentation size={18} />
+                <span>
+                  <strong>{zh ? "这是一份演示型 PDF" : "This is a presentation-style PDF"}</strong>
+                  <small>{zh ? "可转换为面向管理者的可编辑演示文稿，并保留讲稿与来源页码。" : "Turn it into an editable manager deck with speaker notes and source pages."}</small>
+                </span>
+              </div>
+              <div className="presentation-pdf-action-controls">
+                <button
+                  type="button"
+                  data-testid="generate-manager-presentation"
+                  disabled={managerPresentationActive}
+                  onClick={() => void createManagerPresentation()}
+                >
+                  {managerPresentationActive
+                    ? `${managerPresentationProgress.progress}%`
+                    : managerPresentationProgress && ["failed", "cancelled"].includes(managerPresentationProgress.phase)
+                      ? zh ? "重试生成" : "Retry generation"
+                      : zh ? "生成管理者版 PPT" : "Create manager PPT"}
+                </button>
+                {managerPresentationActive ? (
+                  <button
+                    type="button"
+                    className="secondary danger"
+                    data-testid="cancel-manager-presentation"
+                    disabled={managerPresentationProgress?.phase === "cancelling"}
+                    onClick={() => void cancelManagerPresentation()}
+                  >
+                    {managerPresentationProgress?.phase === "cancelling"
+                      ? zh ? "正在取消…" : "Cancelling…"
+                      : zh ? "取消生成" : "Cancel"}
+                  </button>
+                ) : null}
+                <button type="button" className="secondary" onClick={prepareManagerPresentation}>
+                  {zh ? "编辑生成要求" : "Edit requirements"}
+                </button>
+              </div>
+              {managerPresentationProgress ? (
+                <div
+                  className={`presentation-pdf-progress ${managerPresentationProgress.phase}`}
+                  data-phase={managerPresentationProgress.phase}
+                  data-request-id={managerPresentationProgress.requestId}
+                  data-output-path={managerPresentationProgress.outputPath}
+                  data-testid="manager-presentation-progress"
+                  role="status"
+                  aria-live="polite"
+                >
+                  <span>{managerPresentationProgress.message}</span>
+                  <progress max={100} value={managerPresentationProgress.progress} />
+                  {managerPresentationResult ? (
+                    <span
+                      className="presentation-pdf-result"
+                      data-output-path={managerPresentationResult.outputPath}
+                      data-testid="manager-presentation-result"
+                    >
+                      {zh
+                        ? `${managerPresentationResult.slideCount} 页 · 讲稿 ${Math.round(managerPresentationResult.speakerNotesCoverage * 100)}% · 来源 ${Math.round(managerPresentationResult.sourcePageCoverage * 100)}%`
+                        : `${managerPresentationResult.slideCount} slides · notes ${Math.round(managerPresentationResult.speakerNotesCoverage * 100)}% · sources ${Math.round(managerPresentationResult.sourcePageCoverage * 100)}%`}
+                      <button
+                        type="button"
+                        title={managerPresentationResult.outputPath}
+                        onClick={() => void desktopApi.openPath(managerPresentationResult.outputPath)}
+                      >
+                        {zh ? "打开 PPT" : "Open PPT"}
+                      </button>
+                    </span>
+                  ) : null}
+                  {managerPresentationResult ? (
+                    <section
+                      className="presentation-source-review"
+                      data-testid="manager-presentation-sources"
+                      aria-label={zh ? "演示文稿来源复核" : "Presentation source review"}
+                    >
+                      <div className="presentation-source-review-heading">
+                        <strong>{zh ? "核对原始依据" : "Review original evidence"}</strong>
+                        <small>{zh ? "点击页码，在原 PDF 对应页中复核。" : "Open the matching page in the original PDF."}</small>
+                      </div>
+                      <div className="presentation-source-review-list">
+                        {managerPresentationResult.sourceLinks
+                          .filter((link) => link.role !== "cover" && link.role !== "sources")
+                          .map((link) => (
+                            <div className="presentation-source-review-row" key={`${link.slide}:${link.role}`}>
+                              <span title={link.title}>{zh ? `第 ${link.slide} 页` : `Slide ${link.slide}`} · {link.title}</span>
+                              <span className="presentation-source-page-links">
+                                {link.sourcePages.map((page) => (
+                                  <button
+                                    type="button"
+                                    key={`${link.slide}:${page}`}
+                                    data-source-page={page}
+                                    aria-label={zh ? `打开原 PDF 第 ${page} 页` : `Open source PDF page ${page}`}
+                                    onClick={() => void openSourcePage(page)}
+                                  >
+                                    p.{page}
+                                  </button>
+                                ))}
+                              </span>
+                            </div>
+                          ))}
+                      </div>
+                      {sourcePageReview ? (
+                        <p
+                          className={`presentation-source-review-status ${sourcePageReview.state}`}
+                          data-testid="source-page-review-status"
+                          data-source-page={sourcePageReview.page}
+                          data-opened-page={sourcePageReview.state === "opened" ? sourcePageReview.page : undefined}
+                          data-viewer-url={sourcePageReview.viewerUrl}
+                          role="status"
+                          aria-live="polite"
+                        >
+                          {sourcePageReview.message}
+                        </p>
+                      ) : null}
+                    </section>
+                  ) : null}
+                </div>
+              ) : null}
+            </section>
+          ) : null}
           {previewState === "loading" ? (
             <div className="files-preview-empty">
               <FileText size={24} />

@@ -1,7 +1,7 @@
 param(
     [string]$PackageDir = "C:\OpenDrSaiPackage",
     [string]$EvidenceDir = "C:\OpenDrSaiEvidence",
-    [string]$ExpectedVersion = "1.4.4",
+    [string]$ExpectedVersion = "1.4.5",
     [switch]$TestUninstall
 )
 

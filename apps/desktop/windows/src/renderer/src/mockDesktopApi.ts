@@ -1341,6 +1341,33 @@ export function installMockDesktopApi(): void {
     cancelRemoteGatewayOperation: async () => true,
     onRemoteGatewayOperation: () => () => undefined,
     onWorkspaceFileChanges: () => () => undefined,
+    generateManagerPresentation: async (request) => {
+      const outputPath = `${request.workspacePath}\\artifacts\\mock-manager-zh.pptx`;
+      return {
+        requestId: request.requestId,
+        sourcePath: request.sourcePath,
+        outputPath,
+        manifestPath: outputPath.replace(/\.pptx$/i, ".provenance.json"),
+        slideCount: 9,
+        speakerNotesCoverage: 1,
+        sourcePageCoverage: 1,
+        sourceLinks: [
+          { slide: 3, role: "background", title: "背景与规模变化", sourcePages: [3, 8, 10] },
+          { slide: 6, role: "data_challenges", title: "数据挑战", sourcePages: [41, 42, 43] },
+          { slide: 7, role: "hl_lhc_requirements", title: "带宽模型", sourcePages: [42, 43] },
+          { slide: 8, role: "conclusions", title: "总结", sourcePages: [47] },
+        ],
+        quality: {
+          ok: true,
+          checks: { mock: true },
+          failures: [],
+          mediaCount: 0,
+          sourcePageCoverage: 1,
+        },
+      };
+    },
+    cancelManagerPresentation: async (request) => ({ requestId: request.requestId, accepted: true }),
+    onManagerPresentationProgress: () => () => undefined,
     listWorkspaces: async () => workspaces,
     createWorkspace: async (request) => {
       const now = new Date().toISOString();
@@ -4375,6 +4402,12 @@ export function installMockDesktopApi(): void {
     approveBrowserTaskAction: async () => true,
     openExternal: async () => undefined,
     openPath: async () => "",
+    openPdfPage: async (request) => ({
+      ok: true,
+      path: request.path,
+      page: request.page,
+      viewerUrl: `file:///${request.path.replace(/\\/g, "/")}#page=${request.page}&zoom=page-width`,
+    }),
     getIdeContext: async (workspacePath): Promise<DesktopIdeContextSnapshot> => ({
       available: true,
       workspacePath,

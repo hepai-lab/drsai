@@ -34,6 +34,7 @@ assert(preload.includes('ipcRenderer.invoke("desktop:set-default-agent"') && pre
 assert(shared.includes("agentId?: string;") && adapter.includes("agentId: options?.agentId?.trim()"), "D1 explicit agentId is missing from chat requests");
 assert(chat.includes('request.agentId !== "my-drsai"') && chat.includes("GATEWAY_BASE_URL"), "D3 local routing compatibility is missing");
 assert(chat.includes("getPlatformAgentChatUrl(platformDescriptor.platformId)") && chat.includes("readSse(webContents"), "D4 platform routing does not reuse the SSE reader");
+assert(chat.includes("platformDescriptor || remoteGateway ? true : await startGateway()"), "platform chat still depends on the local gateway");
 assert(agents.includes('capabilities.includes("agent-chat")'), "platform chat capability gate is missing");
 assert(threads.includes("boundAgentId") && threads.includes("boundAgentName"), "D2 thread agent binding is missing");
 assert(app.includes("changesBoundAgent") && app.includes("window.confirm") && app.includes("Start a new conversation"), "D5 switch protection is missing");
