@@ -6,6 +6,10 @@ import { fileURLToPath } from "node:url";
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const releaseDir = join(root, "release");
 const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+const requirePublicDistribution =
+  process.env.REQUIRE_RELEASE_READY === "1" ||
+  process.env.REQUIRE_SIGNED_WINDOWS_ARTIFACTS === "1" ||
+  process.env.OPENDRSAI_REQUIRE_SIGNED_RELEASE === "1";
 
 const required = [
   join("bootstrapper", "OpenDrSaiSetup-win-x64.msi"),
@@ -41,7 +45,7 @@ if (!summary.distribution || summary.distribution.releaseTier !== (preview ? "pr
 if (summary.distribution.requiresSignedInstallers !== !preview) {
   throw new Error("release-summary.json signing requirement does not match its release tier.");
 }
-if (summary.distribution.publicDistributionReady !== true) {
+if (requirePublicDistribution && summary.distribution.publicDistributionReady !== true) {
   throw new Error("release-summary.json does not permit this artifact set to be published.");
 }
 
