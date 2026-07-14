@@ -238,10 +238,14 @@ function Invoke-Prepare {
     $expanded = Join-Path $StagingRoot "expanded"
     Expand-RuntimeArchive $ArchivePath $expanded
     $runtimeRoot = Resolve-RuntimeRoot $expanded
-    $manifest = Assert-Runtime $runtimeRoot
     $prepared = Join-Path $StagingRoot "runtime"
     Remove-Item -LiteralPath $prepared -Recurse -Force -ErrorAction SilentlyContinue
     Move-Item -LiteralPath $runtimeRoot -Destination $prepared
+    # A venv created on a build runner keeps that machine's absolute Python
+    # home in pyvenv.cfg and command wrappers. Rebind it to the extracted
+    # portable Python before executing any staged backend code.
+    Repair-AgentWrappers (Join-Path $prepared "drsai-agent")
+    $manifest = Assert-Runtime $prepared
     Write-UpdateState "ready" "Runtime staged and verified."
     [pscustomobject]@{ ok = $true; version = $manifest.version; runtimeRoot = $prepared } | ConvertTo-Json -Compress
 }

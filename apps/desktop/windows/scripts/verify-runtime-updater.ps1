@@ -63,6 +63,7 @@ function Build-Runtime([string]$OutputZip, [string]$TargetVersion, [bool]$Health
     Build-AppExe (Join-Path $work "app\OpenDrSai.exe") "new-$Suffix" $Healthy "FixtureApp$Suffix" $TargetVersion
     Build-ConsoleExe (Join-Path $work "drsai-agent\venv\Scripts\python.exe") "Console.WriteLine(`"drsai version: $TargetVersion`"); return 0;" "FixturePython$Suffix"
     [IO.File]::WriteAllText((Join-Path $work "drsai-agent\venv\Scripts\drsai.cmd"), "@echo off`r`n", (New-Object Text.UTF8Encoding($false)))
+    [IO.File]::WriteAllText((Join-Path $work "drsai-agent\venv\pyvenv.cfg"), "home = C:\hostedtoolcache\windows\Python\3.11.9\x64`r`n", (New-Object Text.UTF8Encoding($false)))
     [IO.File]::WriteAllText((Join-Path $work "drsai-agent\new-$Suffix.txt"), $Suffix, (New-Object Text.UTF8Encoding($false)))
     $manifest = [ordered]@{
         name = "OpenDrSai Runtime"
@@ -108,6 +109,9 @@ try {
     Install-OldRuntime $successRoot $successAgent "success"
     Build-Runtime $successZip $version $true "Success"
     Invoke-Prepare $successZip $successStaging $successRoot $successAgent $successState
+    $preparedConfig = Get-Content -LiteralPath (Join-Path $successStaging "runtime\drsai-agent\venv\pyvenv.cfg") -Raw
+    Assert-True ($preparedConfig -notmatch "hostedtoolcache") "Prepare retained the build runner Python home."
+    Assert-True ($preparedConfig -match [regex]::Escape((Join-Path $successStaging "runtime\drsai-agent\venv"))) "Prepare did not bind pyvenv.cfg to the staged portable Python."
     & $helper -Mode Apply -StagingRoot $successStaging -InstallRoot $successRoot -AgentDir $successAgent `
         -ExpectedVersion $version -WaitPid 0 -HealthToken "11111111-1111-1111-1111-111111111111" `
         -HealthTimeoutSeconds 8 -CurrentExecutable (Join-Path $successRoot "app\OpenDrSai.exe") `
