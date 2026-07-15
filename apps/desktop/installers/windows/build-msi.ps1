@@ -67,6 +67,47 @@ $wixSdkDir = $wixSdkCandidates |
 if (-not $wixSdkDir) {
     throw "WiX SDK directory was not found. Checked: $($wixSdkCandidates -join ', ')"
 }
+
+function Add-DownloadProgressUi([string]$MsiPath) {
+    # Keep WixUI's ActionText control dedicated to the current install stage.
+    # DownloadRuntime reports percentage, byte counts and transfer speed as
+    # ActionData, so add a second visible line for those changing details.
+    $installer = New-Object -ComObject WindowsInstaller.Installer
+    $database = $installer.OpenDatabase($MsiPath, 1)
+    $query = "SELECT ``Control`` FROM ``Control`` WHERE ``Dialog_``='ProgressDlg' AND ``Control``='DownloadDetails'"
+    $view = $database.OpenView($query)
+    try {
+        $null = $view.Execute()
+        $existing = $view.Fetch()
+    } finally {
+        $null = $view.Close()
+    }
+    if (-not $existing) {
+        $insert = $database.OpenView("INSERT INTO ``Control`` (``Dialog_``, ``Control``, ``Type``, ``X``, ``Y``, ``Width``, ``Height``, ``Attributes``, ``Text``) VALUES ('ProgressDlg', 'DownloadDetails', 'Text', 20, 130, 330, 18, 3, ' ')")
+        try {
+            $null = $insert.Execute()
+        } finally {
+            $null = $insert.Close()
+        }
+    }
+    $query = "SELECT ``Control_`` FROM ``EventMapping`` WHERE ``Dialog_``='ProgressDlg' AND ``Control_``='DownloadDetails' AND ``Event``='ActionData'"
+    $view = $database.OpenView($query)
+    try {
+        $null = $view.Execute()
+        $existing = $view.Fetch()
+    } finally {
+        $null = $view.Close()
+    }
+    if (-not $existing) {
+        $insert = $database.OpenView("INSERT INTO ``EventMapping`` (``Dialog_``, ``Control_``, ``Event``, ``Attribute``) VALUES ('ProgressDlg', 'DownloadDetails', 'ActionData', 'Text')")
+        try {
+            $null = $insert.Execute()
+        } finally {
+            $null = $insert.Close()
+        }
+    }
+    $database.Commit()
+}
 $dtfAssembly = Join-Path $wixSdkDir "Microsoft.Deployment.WindowsInstaller.dll"
 $makeSfxCa = Join-Path $wixSdkDir "MakeSfxCA.exe"
 $sfxCa = Join-Path $wixSdkDir "x64\sfxca.dll"
@@ -164,5 +205,7 @@ if ($LASTEXITCODE -ne 0) {
 if (-not (Test-Path $msi)) {
     throw "Expected MSI was not created: $msi"
 }
+
+Add-DownloadProgressUi $msi
 
 Write-Host "Built $msi" -ForegroundColor Green

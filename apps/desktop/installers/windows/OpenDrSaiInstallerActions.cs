@@ -9,7 +9,8 @@ namespace OpenDrSai.Installer
 {
     public static class InstallerActions
     {
-        private const int ProgressTicks = 1000;
+        private const int TotalProgressTicks = 1000;
+        private const int DownloadProgressTicks = 600;
         private const int BufferSize = 1024 * 1024;
 
         [CustomAction]
@@ -39,6 +40,28 @@ namespace OpenDrSai.Installer
                 session.Log("OpenDrSai Runtime download failed: " + ex);
                 ShowError(session, ex.Message);
                 DeleteIfPresent(partialPath);
+                return ActionResult.Failure;
+            }
+        }
+
+        [CustomAction]
+        public static ActionResult AdvanceProgress(Session session)
+        {
+            try
+            {
+                int ticks = int.Parse(
+                    session.CustomActionData["Ticks"],
+                    CultureInfo.InvariantCulture);
+                if (ticks <= 0 || ticks > TotalProgressTicks)
+                {
+                    throw new InvalidDataException("Progress ticks must be between 1 and 1000.");
+                }
+                ReportProgress(session, ticks);
+                return ActionResult.Success;
+            }
+            catch (Exception ex)
+            {
+                session.Log("OpenDrSai installer progress update failed: " + ex);
                 return ActionResult.Failure;
             }
         }
@@ -97,7 +120,7 @@ namespace OpenDrSai.Installer
                     throw new InvalidOperationException("Runtime download size is unknown.");
                 }
 
-                AddProgressTotal(session, ProgressTicks);
+                ResetProgressTotal(session, TotalProgressTicks);
                 SendStatus(session, 0, 0, totalSize, 0);
 
                 byte[] buffer = new byte[BufferSize];
@@ -124,8 +147,8 @@ namespace OpenDrSai.Installer
                         downloaded += read;
 
                         int targetTicks = (int)Math.Min(
-                            ProgressTicks,
-                            downloaded * ProgressTicks / totalSize);
+                            DownloadProgressTicks,
+                            downloaded * DownloadProgressTicks / totalSize);
                         if (targetTicks > reportedTicks)
                         {
                             ReportProgress(session, targetTicks - reportedTicks);
@@ -163,9 +186,9 @@ namespace OpenDrSai.Installer
                         downloaded));
                 }
 
-                if (reportedTicks < ProgressTicks)
+                if (reportedTicks < DownloadProgressTicks)
                 {
-                    ReportProgress(session, ProgressTicks - reportedTicks);
+                    ReportProgress(session, DownloadProgressTicks - reportedTicks);
                 }
                 double averageSpeed = downloaded / Math.Max(0.001, totalWatch.Elapsed.TotalSeconds);
                 SendStatus(session, downloaded, downloaded, totalSize, averageSpeed);
@@ -277,11 +300,11 @@ namespace OpenDrSai.Installer
             }
         }
 
-        private static void AddProgressTotal(Session session, int ticks)
+        private static void ResetProgressTotal(Session session, int ticks)
         {
             using (Record record = new Record(4))
             {
-                record.SetInteger(1, 1);
+                record.SetInteger(1, 0);
                 record.SetInteger(2, ticks);
                 record.SetInteger(3, 0);
                 record.SetInteger(4, 0);

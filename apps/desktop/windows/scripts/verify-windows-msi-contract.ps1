@@ -67,6 +67,23 @@ foreach ($action in @(
     }
 }
 
+$progressMilestones = @{
+    AdvanceVerifyProgress = "Ticks=50"
+    AdvanceExtractProgress = "Ticks=200"
+    AdvanceInstallProgress = "Ticks=120"
+    AdvanceCompleteProgress = "Ticks=30"
+}
+foreach ($action in $progressMilestones.Keys) {
+    $entryPoint = Read-SingleValue $database "SELECT ``Target`` FROM ``CustomAction`` WHERE ``Action``='$action'"
+    Assert-Equal $entryPoint "AdvanceProgress" "$action managed entry point"
+    $type = [int](Read-SingleValue $database "SELECT ``Type`` FROM ``CustomAction`` WHERE ``Action``='$action'")
+    if (($type -band 1024) -eq 0 -or ($type -band 2048) -eq 0) {
+        throw "$action must be deferred and run without impersonation; type=$type."
+    }
+    $data = Read-SingleValue $database "SELECT ``Target`` FROM ``CustomAction`` WHERE ``Action``='Set$action'"
+    Assert-Equal $data $progressMilestones[$action] "$action progress allocation"
+}
+
 foreach ($setter in @(
     "SetVerifyOpenDrSaiRuntime",
     "SetExtractOpenDrSaiRuntime",
@@ -97,6 +114,29 @@ if (($downloadType -band 63) -ne 1) {
 
 $downloadTemplate = Read-SingleValue $database "SELECT ``Template`` FROM ``ActionText`` WHERE ``Action``='DownloadOpenDrSaiRuntime'"
 Assert-Equal $downloadTemplate "[1]" "Download progress text template"
+
+$stageControl = Read-SingleValue $database "SELECT ``Control_`` FROM ``EventMapping`` WHERE ``Dialog_``='ProgressDlg' AND ``Control_``='ActionText' AND ``Event``='ActionText' AND ``Attribute``='Text'"
+Assert-Equal $stageControl "ActionText" "Visible install stage ActionText binding"
+$incorrectSharedBinding = Read-SingleValue $database "SELECT ``Control_`` FROM ``EventMapping`` WHERE ``Dialog_``='ProgressDlg' AND ``Control_``='ActionText' AND ``Event``='ActionData'"
+if ($incorrectSharedBinding) {
+    throw "Download details must not overwrite the visible install stage control."
+}
+$downloadDetailsType = Read-SingleValue $database "SELECT ``Type`` FROM ``Control`` WHERE ``Dialog_``='ProgressDlg' AND ``Control``='DownloadDetails'"
+Assert-Equal $downloadDetailsType "Text" "Download details control type"
+$downloadProgressControl = Read-SingleValue $database "SELECT ``Control_`` FROM ``EventMapping`` WHERE ``Dialog_``='ProgressDlg' AND ``Control_``='DownloadDetails' AND ``Event``='ActionData' AND ``Attribute``='Text'"
+Assert-Equal $downloadProgressControl "DownloadDetails" "Visible download progress ActionData binding"
+
+$stageDescriptions = @{
+    DownloadOpenDrSaiRuntime = "Downloading OpenDrSai Runtime..."
+    VerifyOpenDrSaiRuntime = "Verifying the downloaded package..."
+    ExtractOpenDrSaiRuntime = "Extracting OpenDrSai Runtime..."
+    InstallOpenDrSaiRuntime = "Installing OpenDrSai..."
+    CompleteOpenDrSaiInstall = "Finishing OpenDrSai installation..."
+}
+foreach ($stage in $stageDescriptions.Keys) {
+    $description = Read-SingleValue $database "SELECT ``Description`` FROM ``ActionText`` WHERE ``Action``='$stage'"
+    Assert-Equal $description $stageDescriptions[$stage] "$stage progress text"
+}
 
 $downloadError = Read-SingleValue $database "SELECT ``Message`` FROM ``Error`` WHERE ``Error``=25001"
 Assert-Equal $downloadError "OpenDrSai Runtime download failed: [2]" "Runtime download error message"
