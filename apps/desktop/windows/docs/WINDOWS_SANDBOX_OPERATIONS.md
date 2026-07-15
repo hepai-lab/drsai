@@ -79,6 +79,33 @@ powershell -File scripts/windows-sandbox-session.ps1 `
 5. `WindowsSandboxServer` 可以在列表为空时继续存在，不能因此判定 Sandbox 未关闭。
 6. 仅在 CLI 不可用或正常 stop 超时后，才使用 `-Force` 终止 Client/RemoteSession；不要终止 `vmcompute`、HNS 或所有 SandboxServer 来代替正常会话关闭。
 
+## 退出时出现 WindowsSandboxServer.exe 0xe0434352
+
+2026-07-16 曾在退出时出现：
+
+```text
+WindowsSandboxServer.exe - 应用程序错误
+未知的软件异常 (0xe0434352)
+```
+
+对应的 Application 事件为 `.NET Runtime 1026` 和 `Application Error 1000`。内层异常是 `COMException 0x800706BF`（远程过程调用失败），调用栈位于：
+
+```text
+SandboxVM.Shutdown
+ManagedWindowsVM.Terminate
+```
+
+这次故障发生在 HNS/`vmcompute` 被重启之后：SandboxServer 收到退出事件时，负责 VM 终止的 RPC 服务已被重启，形成关闭竞态。它不是 OpenDrSai 进程崩溃，也不代表已经销毁的 Sandbox 数据可以恢复。
+
+处理方法：
+
+1. 点击错误框“确定”。
+2. 执行 `windows-sandbox-session.ps1 -Action List -AsJson`。
+3. 如果 `sessions` 为空，关闭已经完成，不要再结束 SandboxServer。
+4. 如果仍有 ID，执行 `-Action Stop -Id <id>`。
+5. 不要为了关闭 Sandbox 重启 HNS 或 `vmcompute`；这些仅用于系统级故障维修，并且必须在确认没有任何 Sandbox 会话后进行。
+6. 如果没有重启服务、只使用 `wsb stop` 仍反复出现该异常，再检查 Microsoft Store/Windows Update 中的 Sandbox 更新或重新注册 AppX。
+
 ## 常见误判
 
 | 现象 | 错误判断 | 正确判断 |
@@ -86,6 +113,7 @@ powershell -File scripts/windows-sandbox-session.ps1 `
 | `WindowsSandbox.exe` 很快退出且退出码为 0 | Sandbox 启动失败 | 新版入口可能已完成转交，检查 `wsb list` |
 | 没有 `WindowsSandboxClient` | Sandbox 没启动 | 新版使用 `WindowsSandboxRemoteSession` |
 | 存在 `WindowsSandboxServer` | Sandbox 仍未关闭 | Server 是服务宿主，检查会话 ID |
+| 退出时报 `WindowsSandboxServer 0xe0434352` | OpenDrSai 崩溃 | 检查 `.NET Runtime 1026`；常见原因是关闭期间 VM RPC/服务被重启 |
 | MSI 卡在 Preparing | 一定是 Sandbox 故障 | 检查 MSI 日志、下载连接状态和同目录 Runtime |
 | Sandbox `localhost:1080` 无法代理 | 主机代理失效 | Sandbox 的 localhost 指向客体自身 |
 | 直接反复启动 | 能自动覆盖旧实例 | Sandbox 只允许一个实例，必须先 list/stop/wait |

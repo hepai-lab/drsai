@@ -32,6 +32,17 @@ function Get-CurrentUserSandboxPackage {
     return Get-AppxPackage -Name $packageName -ErrorAction SilentlyContinue | Select-Object -First 1
 }
 
+function Get-RecentSandboxServerCrashes {
+    try {
+        $since = (Get-Date).AddHours(-1)
+        return @(Get-WinEvent -FilterHashtable @{ LogName = "Application"; ProviderName = ".NET Runtime"; Id = 1026; StartTime = $since } -ErrorAction Stop |
+            Where-Object { $_.Message -match "WindowsSandboxServer\.exe" } |
+            Select-Object TimeCreated, Id, @{ Name = "RpcShutdownFailure"; Expression = { $_.Message -match "0x800706BF|ManagedWindowsVM\.Terminate" } })
+    } catch {
+        return @()
+    }
+}
+
 function Quote-CmdArgument([string]$Value) {
     if ($Value -notmatch '[\s&|<>^"]') { return $Value }
     return '"' + ($Value -replace '"', '\"') + '"'
@@ -134,6 +145,7 @@ switch ($Action) {
             $null
         }
         $state = try { Get-WsbState } catch { [pscustomobject]@{ available = $false; sessions = @() } }
+        $recentCrashes = @(Get-RecentSandboxServerCrashes)
         Write-Result ([pscustomobject]@{
             windowsBuild = [Environment]::OSVersion.Version.ToString()
             optionalFeatureState = if ($feature) { [string]$feature.State } else { "requires-elevation-or-unavailable" }
@@ -144,6 +156,9 @@ switch ($Action) {
             modernSessions = @($state.sessions)
             legacyClientCount = @(Get-Process WindowsSandboxClient -ErrorAction SilentlyContinue).Count
             modernRemoteSessionCount = @(Get-Process WindowsSandboxRemoteSession -ErrorAction SilentlyContinue).Count
+            recentServerCrashCount = $recentCrashes.Count
+            recentServerCrashLatest = if ($recentCrashes.Count) { $recentCrashes[0].TimeCreated } else { $null }
+            recentRpcShutdownFailure = [bool]($recentCrashes | Where-Object RpcShutdownFailure | Select-Object -First 1)
             note = "Use wsb session IDs as the source of truth on modern Sandbox; WindowsSandboxServer is a service host, not an active-session signal."
         })
     }
