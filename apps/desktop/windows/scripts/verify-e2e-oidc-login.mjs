@@ -7,6 +7,7 @@ import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const currentBackendSource = resolve(root, "..", "..", "..", "cores", "python", "packages", "drsai", "src");
 const preparedAgentPython = process.env.OPENDRSAI_GATEWAY_SMOKE_PYTHON ||
   join(root, ".tmp", "bootstrapper-msi3", ".drsai", "drsai-agent", "venv", "Scripts", "python.exe");
 const preparedAgentDir = existsSync(preparedAgentPython)
@@ -366,6 +367,7 @@ function runPackagedApp() {
         LOCALAPPDATA: process.env.LOCALAPPDATA,
         APPDATA: process.env.APPDATA,
         PATH: systemPath,
+        PYTHONPATH: [currentBackendSource, process.env.PYTHONPATH].filter(Boolean).join(delimiter),
         DRSAI_HOME: drsaiHome,
         ...(preparedAgentDir ? { DRSAI_REPO: preparedAgentDir } : {}),
         DRSAI_GATEWAY_DEV_MANAGED: "1",

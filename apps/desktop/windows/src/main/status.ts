@@ -139,6 +139,7 @@ export function fallbackUpdateStatus(error: unknown): UpdateStatus {
     canCancel: false,
     errorCode: "desktop-health",
     error: error instanceof Error ? error.message : String(error),
+    recovery: null,
   };
 }
 

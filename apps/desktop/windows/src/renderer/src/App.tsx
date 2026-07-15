@@ -4636,6 +4636,10 @@ function formatUpdateStatus(
 ): string {
   const zh = language === "zh";
   if (!health) return zh ? "未检查" : "not checked";
+  if (health.update.phase === "rolled-back")
+    return zh
+      ? `新版本 ${health.update.version ?? ""} 未能正常启动，已自动恢复到可用版本 ${health.update.currentVersion}。你的账户、任务、工作区和文件未受影响。`
+      : `Version ${health.update.version ?? ""} could not start, so OpenDrSai automatically restored working version ${health.update.currentVersion}. Your account, tasks, workspace, and files were not affected.`;
   if (health.update.error) return health.update.error;
   if (health.update.downloaded)
     return zh

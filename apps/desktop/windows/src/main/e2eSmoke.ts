@@ -131,6 +131,7 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
     process.env.OPENDRSAI_E2E_OIDC !== "1" &&
     process.env.OPENDRSAI_E2E_A5_SERVICE_GUIDANCE !== "1" &&
     process.env.OPENDRSAI_E2E_F2_APPROVALS !== "1" &&
+    process.env.OPENDRSAI_E2E_M3_WINDOW !== "1" &&
     process.env.OPENDRSAI_E2E_PRESENTATION_PDF_ACTION !== "1"
   ) return;
   const resultPath = process.env.OPENDRSAI_E2E_RESULT;
@@ -182,6 +183,8 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
         ? runA5ServiceGuidanceSmoke
       : process.env.OPENDRSAI_E2E_F2_APPROVALS === "1"
         ? runF2ApprovalSmoke
+      : process.env.OPENDRSAI_E2E_M3_WINDOW === "1"
+        ? runM3WindowScalingSmoke
       : process.env.OPENDRSAI_E2E_PRESENTATION_PDF_ACTION === "1"
         ? runPresentationPdfActionSmoke
       : process.env.OPENDRSAI_E2E_CHAT === "1"
@@ -204,6 +207,183 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
         process.exit(1);
       });
   });
+}
+
+async function runM3WindowScalingSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  const fixturePath = process.env.OPENDRSAI_E2E_M3_CERN_PDF;
+  const evidenceDir = process.env.OPENDRSAI_E2E_M3_EVIDENCE_DIR;
+  if (!fixturePath || !existsSync(fixturePath)) throw new Error("M3 requires the fixed CERN PDF fixture.");
+  if (!evidenceDir) throw new Error("M3 requires an evidence directory.");
+  mkdirSync(evidenceDir, { recursive: true });
+
+  const checks: Record<string, boolean> = {};
+  const details: Record<string, unknown> = { fixturePath, profiles: [] };
+  const fixtureBytes = readFileSync(fixturePath);
+  checks.cernFixtureSize = fixtureBytes.length === 7_664_262;
+  checks.cernFixtureSha256 = (await import("crypto")).createHash("sha256").update(fixtureBytes).digest("hex").toUpperCase()
+    === "F6581E1A255B354667188B41B874B996A300F88BB48912721BC1C854183E913E";
+
+  const seeded = await window.webContents.executeJavaScript(`
+    (async () => {
+      const api = window.openDrSai;
+      const login = await api.login({ developerBypass: true, rememberMe: false });
+      if (!login?.ok) throw new Error("M3 developer login failed: " + (login?.message || "unknown error"));
+      const task = await api.enqueueBackgroundTask({
+        kind: "presentation_generation",
+        source: "presentation",
+        title: "CERN WLCG 窗口适配验收成果",
+        workspacePath: ${JSON.stringify(dirname(fixturePath))},
+        targetId: "m3-cern-window-scaling",
+        status: "completed",
+        progress: 100,
+        message: "CERN WLCG PDF 成果已就绪。",
+        verification: "固定 48 页 CERN PDF 的大小和 SHA-256 已验证。",
+        completedSteps: ["读取 CERN PDF", "生成管理者成果", "登记成果"],
+        deliverySummary: {
+          findingSummary: "CERN WLCG 管理者成果已完成。",
+          importance: "high",
+          importanceReason: "用于验证窗口缩放下成果始终可达。",
+          suggestedAction: "在成果中心打开固定 CERN PDF。",
+          workSummary: "验证真实 CERN WLCG PDF 并登记成果。",
+          coreConclusion: "缩放和窗口切换不能遮挡成果入口。",
+          verification: "PDF 大小、哈希和来源均已核对。",
+          remainingRisks: "无。",
+          completionCriteria: { passed: ["CERN PDF 已验证", "成果已登记"], incomplete: [] },
+          artifacts: [{ id: "m3-cern-pdf", label: "WLCG-20260715-WLCG-talk-IHEP-visit.pdf", path: ${JSON.stringify(fixturePath)}, kind: "document" }],
+        },
+      });
+      const proposal = await api.proposeApproval({
+        source: "workflow",
+        actionKind: "workflow.run",
+        title: "确认发布 CERN WLCG 管理者成果",
+        detail: "发布前请核对固定 CERN PDF 的成果范围。",
+        target: "CERN WLCG manager result",
+        scope: "current workspace",
+        impact: "Makes the reviewed CERN result available to the selected audience.",
+        risk: "high",
+        idempotencyKey: "m3-window-scaling-approval",
+      });
+      return { login: login.ok, taskId: task.id, approvalId: proposal.approval?.id || null, approvalQueued: proposal.queued };
+    })()
+  `, true) as { login?: boolean; taskId?: string; approvalId?: string | null; approvalQueued?: boolean };
+  details.seeded = seeded;
+  checks.authenticatedProductUi = seeded.login === true;
+  checks.cernResultSeeded = Boolean(seeded.taskId);
+  checks.approvalSeeded = seeded.approvalQueued === true && Boolean(seeded.approvalId);
+
+  const profiles = [
+    { id: "1366x768-100", width: 1366, height: 768, zoom: 1 },
+    { id: "1920x1080-150-maximized", width: 1920, height: 1080, zoom: 1.5 },
+    { id: "1100x720-125-minimum", width: 1100, height: 720, zoom: 1.25 },
+    { id: "1366x768-100-returned-display", width: 1366, height: 768, zoom: 1 },
+  ];
+
+  for (const profile of profiles) {
+    window.setBounds({ x: profile.id.includes("returned") ? 80 : 0, y: profile.id.includes("returned") ? 40 : 0, width: profile.width, height: profile.height });
+    window.webContents.setZoomFactor(profile.zoom);
+    if (!window.isVisible()) window.showInactive();
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const profileResult: Record<string, unknown> = { profile, pages: {} };
+    const chat = await auditM3Page(window, "chat", ".conversation-panel textarea", [".conversation-panel textarea", ".conversation-panel .composer-submit"]);
+    (profileResult.pages as Record<string, unknown>).chat = chat;
+    recordM3Checks(checks, profile.id, "chat", chat);
+
+    await window.webContents.executeJavaScript(`
+      (() => {
+        const button = [...document.querySelectorAll("button")].find((item) => [item.textContent, item.title, item.getAttribute("aria-label")].some((value) => /成果|Results/i.test(value || "")));
+        if (!button) return false;
+        button.click();
+        return true;
+      })()
+    `, true);
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    const results = await auditM3Page(window, "results", '[data-testid="results-open-artifact"]', ['[data-testid="results-open-artifact"]', '[data-testid="results-share-artifact"]']);
+    (profileResult.pages as Record<string, unknown>).results = results;
+    recordM3Checks(checks, profile.id, "results", results);
+
+    await window.webContents.executeJavaScript('window.dispatchEvent(new Event("drsai:e2e-open-approval-center")); true', true);
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    const approvals = await auditM3Page(window, "approvals", ".approval-pending-actions button.approve", [".approval-pending-actions button.approve", ".approval-pending-actions button.reject"]);
+    (profileResult.pages as Record<string, unknown>).approvals = approvals;
+    recordM3Checks(checks, profile.id, "approvals", approvals);
+
+    const image = await window.webContents.capturePage();
+    const screenshotPath = join(evidenceDir, `${profile.id}.png`);
+    writeFileSync(screenshotPath, image.toPNG());
+    profileResult.screenshotPath = screenshotPath;
+    (details.profiles as Array<Record<string, unknown>>).push(profileResult);
+
+    await window.webContents.executeJavaScript(`
+      (() => {
+        const button = [...document.querySelectorAll("button")].find((item) => [item.textContent, item.title, item.getAttribute("aria-label")].some((value) => /当前会话|Current session|开始聊天|New chat/i.test(value || "")));
+        if (button) button.click();
+      })()
+    `, true);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  checks.displayTransitionPreservedContent = profiles.length === 4 && (details.profiles as Array<unknown>).length === 4;
+  return { ok: Object.values(checks).every(Boolean), checks, details };
+}
+
+interface M3PageAudit {
+  page: string;
+  targetPresent: boolean;
+  targetVisible: boolean;
+  noHorizontalOverflow: boolean;
+  allRequiredControlsReachable: boolean;
+  textReadable: boolean;
+  controlsDoNotOverlap: boolean;
+  viewport: { width: number; height: number };
+  documentSize: { width: number; height: number };
+  requiredControls: Array<Record<string, unknown>>;
+}
+
+async function auditM3Page(window: BrowserWindow, page: string, targetSelector: string, requiredSelectors: string[]): Promise<M3PageAudit> {
+  return window.webContents.executeJavaScript(`
+    (() => {
+      const rectOf = (element) => {
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        return { x: rect.x, y: rect.y, width: rect.width, height: rect.height, right: rect.right, bottom: rect.bottom, fontSize: Number.parseFloat(style.fontSize) || 0, display: style.display, visibility: style.visibility };
+      };
+      const visible = (rect) => rect.width > 0 && rect.height > 0 && rect.right > 0 && rect.bottom > 0 && rect.x < innerWidth && rect.y < innerHeight && rect.display !== "none" && rect.visibility !== "hidden";
+      const selectors = ${JSON.stringify(requiredSelectors)};
+      const target = document.querySelector(${JSON.stringify(targetSelector)});
+      target?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      const required = selectors.flatMap((selector) => [...document.querySelectorAll(selector)].map((element) => ({ selector, ...rectOf(element), text: (element.textContent || element.getAttribute("aria-label") || "").trim().slice(0, 120) })));
+      const targetRect = target ? rectOf(target) : null;
+      const reachable = selectors.every((selector) => document.querySelector(selector)) && required.every((item) => visible(item) && item.x >= -1 && item.right <= innerWidth + 1 && item.y >= -1 && item.bottom <= innerHeight + 1);
+      const readable = required.every((item) => item.fontSize >= 12);
+      let overlap = false;
+      for (let i = 0; i < required.length; i += 1) for (let j = i + 1; j < required.length; j += 1) {
+        const a = required[i], b = required[j];
+        if (a.selector === b.selector && Math.min(a.right, b.right) - Math.max(a.x, b.x) > 2 && Math.min(a.bottom, b.bottom) - Math.max(a.y, b.y) > 2) overlap = true;
+      }
+      return {
+        page: ${JSON.stringify(page)},
+        targetPresent: Boolean(target),
+        targetVisible: Boolean(targetRect && visible(targetRect)),
+        noHorizontalOverflow: document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1 && document.body.scrollWidth <= document.body.clientWidth + 1,
+        allRequiredControlsReachable: reachable,
+        textReadable: readable,
+        controlsDoNotOverlap: !overlap,
+        viewport: { width: innerWidth, height: innerHeight },
+        documentSize: { width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight },
+        requiredControls: required,
+      };
+    })()
+  `, true) as Promise<M3PageAudit>;
+}
+
+function recordM3Checks(checks: Record<string, boolean>, profile: string, page: string, audit: M3PageAudit): void {
+  const prefix = `${profile}_${page}`.replace(/[^a-z0-9]+/gi, "_");
+  checks[`${prefix}_targetPresent`] = audit.targetPresent;
+  checks[`${prefix}_targetVisible`] = audit.targetVisible;
+  checks[`${prefix}_noHorizontalOverflow`] = audit.noHorizontalOverflow;
+  checks[`${prefix}_allRequiredControlsReachable`] = audit.allRequiredControlsReachable;
+  checks[`${prefix}_textReadable`] = audit.textReadable;
+  checks[`${prefix}_controlsDoNotOverlap`] = audit.controlsDoNotOverlap;
 }
 
 async function runBackgroundPresentationSmoke(
@@ -231,7 +411,7 @@ async function runBackgroundPresentationSmoke(
       checks.firstInteractiveScreenWithinThreeSeconds = processStartedAt > 0
         ? details.firstInteractiveScreenMs <= 3000
         : true;
-      checks.authenticatedUserSessionVisible = Boolean(await window.openDrSai.getAuthSession());
+      checks.authenticatedUserSessionVisible = (await window.openDrSai.getAuthSession())?.authenticated === true;
       const fixtureWorkspacePath = fixturePath.slice(0, fixturePath.lastIndexOf("\\\\"));
       const workspaceButton = await waitFor(() => Array.from(document.querySelectorAll(".workspace-item"))
         .find((button) => button.getAttribute("title")?.includes(fixtureWorkspacePath)), 15000);
@@ -422,6 +602,12 @@ async function runPresentationPdfActionSmoke(window: BrowserWindow): Promise<Smo
       }
 
       checks.domReady = Boolean(await waitFor(() => document.querySelector(".app-shell"), 10000));
+      const processStartedAt = Number(${JSON.stringify(process.env.OPENDRSAI_E2E_APP_STARTED_MS || "0")});
+      details.firstInteractiveScreenMs = processStartedAt > 0 ? Date.now() - processStartedAt : null;
+      checks.firstInteractiveScreenWithinThreeSeconds = processStartedAt > 0
+        ? details.firstInteractiveScreenMs <= 3000
+        : true;
+      checks.authenticatedUserSessionVisible = (await window.openDrSai.getAuthSession())?.authenticated === true;
       const fixtureWorkspacePath = fixturePath.slice(0, fixturePath.lastIndexOf("\\\\"));
       const fixtureWorkspaceButton = await waitFor(() => Array.from(document.querySelectorAll(".workspace-item"))
         .find((button) => button.getAttribute("title")?.includes(fixtureWorkspacePath)), 15000);
@@ -2884,7 +3070,10 @@ async function runChatFailureSmoke(window: BrowserWindow): Promise<SmokeResult> 
         details.chunkDisconnect = summarizeOutcome(outcome);
         checks.chunkDisconnectStart = outcome.events.some((event) => event.type === "start");
         checks.chunkDisconnectChunk = outcome.events.some((event) => event.type === "chunk" && String(event.content || "").includes("partial before disconnect"));
-        checks.chunkDisconnectError = outcome.events.some((event) => event.type === "error" && String(event.error || "").includes("ended before data: [DONE]"));
+        checks.chunkDisconnectError = outcome.events.some((event) => event.type === "error" && (
+          String(event.error || "").includes("ended before data: [DONE]") ||
+          (event.failureRecovery?.kind === "network" && event.failureRecovery.exhausted === true)
+        ));
         checks.chunkDisconnectTerminal = details.chunkDisconnect.terminalEventType === "error";
         checks.chunkDisconnectThreadError = details.chunkDisconnect.thread && details.chunkDisconnect.thread.status === "error";
         checks.chunkDisconnectNoDone = !outcome.events.some((event) => event.type === "done");
@@ -7085,7 +7274,10 @@ async function runAgentRunFailureSmoke(window: BrowserWindow): Promise<SmokeResu
         details.chunkDisconnect = summarizeOutcome(outcome);
         checks.chunkDisconnectStart = outcome.events.some((event) => event.type === "start");
         checks.chunkDisconnectChunk = outcome.events.some((event) => event.type === "chunk" && String(event.content || "").includes("agent partial before disconnect"));
-        checks.chunkDisconnectError = outcome.events.some((event) => event.type === "error" && String(event.error || "").includes("ended before data: [DONE]"));
+        checks.chunkDisconnectError = outcome.events.some((event) => event.type === "error" && (
+          String(event.error || "").includes("ended before data: [DONE]") ||
+          (event.failureRecovery?.kind === "network" && event.failureRecovery.exhausted === true)
+        ));
         checks.chunkDisconnectTerminal = details.chunkDisconnect.terminalEventType === "error";
         checks.chunkDisconnectThreadError = details.chunkDisconnect.thread && details.chunkDisconnect.thread.status === "error";
         checks.chunkDisconnectNoDone = !outcome.events.some((event) => event.type === "done");

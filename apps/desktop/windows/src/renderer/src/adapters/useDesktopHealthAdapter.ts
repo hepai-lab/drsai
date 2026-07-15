@@ -292,6 +292,7 @@ export function createFallbackHealth(): DesktopHealth {
     canCancel: false,
     errorCode: "status-unavailable",
     error: "状态不可用。",
+    recovery: null,
   };
   return {
     installed: false,

@@ -585,6 +585,7 @@ let health = {
     canCancel: false,
     errorCode: null,
     error: null,
+    recovery: null,
   },
 };
 
@@ -609,6 +610,20 @@ contextBridge.exposeInMainWorld("openDrSai", {
     authMode: "offline",
   }),
   getA5ServiceGuidanceScenario: async () => null,
+  listUserPreferences: async () => [],
+  upsertUserPreference: async (request) => ({
+    category: request.category,
+    value: request.value,
+    scope: request.scope || "global",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }),
+  deleteUserPreference: async () => ({ removed: true }),
+  setCompletionNotificationPreference: async (preference) => ({
+    enabled: preference.enabled === true,
+    language: preference.language === "en" ? "en" : "zh",
+  }),
+  onCompletionNotificationClick: () => () => undefined,
   login: async () => ({
     ok: true,
     message: "Mock sign-in complete.",
@@ -781,6 +796,15 @@ contextBridge.exposeInMainWorld("openDrSai", {
     updatedAt: new Date().toISOString(),
   }),
   clearProjectMemory: async () => ({ removedCount: 0 }),
+  listTeamMemory: async () => [],
+  addTeamMemory: async (request) => ({
+    id: "team-memory-" + crypto.randomUUID(),
+    content: request && request.content ? request.content : "",
+    scope: request && request.scope ? request.scope : "team",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }),
+  deleteTeamMemory: async () => ({ removed: true }),
   listCustomCommands: async () => [],
   upsertCustomCommand: async (request) => ({
     id: request && request.id ? request.id : "command-" + crypto.randomUUID(),

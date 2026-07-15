@@ -247,7 +247,20 @@ export function restorePreparedUpdate(): void {
     const installRoot = getInstallRoot();
     const statePath = join(installRoot, "update-state.json");
     if (!existsSync(statePath)) return;
-    const state = JSON.parse(readFileSync(statePath, "utf8")) as { phase?: unknown; version?: unknown };
+    const state = JSON.parse(readFileSync(statePath, "utf8")) as {
+      phase?: unknown;
+      version?: unknown;
+      message?: unknown;
+    };
+    if (state.phase === "rolled-back" && typeof state.version === "string") {
+      setStatus(statusFor("rolled-back", {
+        version: state.version,
+        errorCode: "update-rolled-back",
+        error: typeof state.message === "string" ? state.message : null,
+        recovery: "automatic-rollback",
+      }));
+      return;
+    }
     if (state.phase !== "ready" || typeof state.version !== "string") return;
     const paths = resolveUpdatePaths(state.version);
     const metadataPath = join(paths.stagingRoot, "prepared-update.json");
@@ -293,6 +306,7 @@ function statusFor(
     canCancel: false,
     errorCode: null,
     error: null,
+    recovery: null,
     ...overrides,
   };
 }

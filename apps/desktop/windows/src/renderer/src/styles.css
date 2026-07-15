@@ -13724,6 +13724,54 @@ button {
   color: #7a4c12;
 }
 
+@media (max-height: 620px) {
+  .approval-center-view {
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .approval-center-header {
+    padding: 10px 12px;
+  }
+
+  .approval-center-title h2 {
+    margin-bottom: 2px;
+    font-size: 16px;
+  }
+
+  .approval-summary-grid {
+    gap: 8px;
+  }
+
+  .approval-metric {
+    gap: 3px;
+    padding: 7px 10px;
+  }
+
+  .approval-metric strong {
+    font-size: 20px;
+  }
+
+  .approval-pending-panel {
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .approval-pending-row {
+    gap: 8px;
+    padding: 8px;
+  }
+
+  .approval-pending-facts {
+    gap: 5px;
+    margin-top: 4px;
+  }
+
+  .approval-pending-facts div {
+    padding: 5px 7px;
+  }
+}
+
 .approval-review-gate {
   flex-basis: 100%;
   text-align: right;

@@ -1,5 +1,55 @@
 # OpenDrSai Windows App 产品验收追踪记录
 
+## 2026-07-15 M2 更新与回滚：正式完成
+
+| 字段 | 内容 |
+| --- | --- |
+| 本轮目标 | 从旧版执行应用内更新；正常更新后保留用户数据，损坏下载不得安装，新版无法健康启动时自动恢复旧版并向普通用户说明结果。全部完成门槛必须自动判定。 |
+| 用户可感知功能 | 更新失败不再只留下机器日志。应用重启后会识别 `rolled-back` 状态，在设置页明确显示“新版本未能正常启动，已自动恢复到可用版本”，同时说明账户、任务、工作区和文件未受影响；中英文均有稳定文案。 |
+| 正常更新与数据保持 | PASS：helper 完成 Prepare→Apply→新版健康确认→清理旧运行时；更新前后对账户、任务、记忆、工作区和 CERN PDF 文件逐文件计算长度及 SHA-256，全部保持一致。 |
+| 损坏下载拒绝 | PASS：正式打包版使用本地更新服务下载错误 SHA-256 的运行时，返回 `hash-mismatch`，不进入安装，受信任归档不存在；同时覆盖不可信重定向拒绝、降级忽略和 ZIP 路径穿越拒绝。 |
+| 启动失败自动回滚 | PASS：helper 将故意无法健康启动的新版换入后等待失败，自动恢复旧 app、旧 agent 和 `install-state.json` 版本 `1.0.0`，持久化 `rolled-back`；更新前后的全部用户数据哈希仍一致。 |
+| 打包版重启恢复结果 | PASS：正式 `release/win-unpacked/OpenDrSai.exe` 在启动时读取失败版本与回滚状态，自动恢复 `UpdateStatus`，确认当前运行版本仍为可用旧版、恢复方式为 `automatic-rollback`、失败版本可见。 |
+| 用户说明自动验收 | PASS：自动合同确认中文包含“已自动恢复到可用版本”和“账户、任务、工作区和文件未受影响”，英文包含对应恢复与数据安全说明；Renderer UI 56 项、3 个响应式视口、交互/语言切换和乱码检查均通过。无需人工观察。 |
+| CERN 测试数据 | 用户数据保持矩阵包含 `WLCG-20260715-WLCG-talk-IHEP-visit.pdf` 工作区源文件，并与账户、任务、偏好一起进行更新前后哈希比较。 |
+| 正式证据 | `apps/desktop/windows/release/product-evidence/m2-update-rollback/runtime-updater-result.json`；`packaged-update-result.json`；执行入口为 `npm run verify:update-helper` 与 `npm run verify:e2e-update`。 |
+| 评分 | **M2 从 0/3 提升为 3/3**。严格完成度从 `59/93` 提升为 **`60/93`**；M 类从 0/10 提升为 **1/10（M2）**。全部完成门槛为自动化断言。 |
+| 下一闭环 | M1 保持 1/3 部分实现，等待可安全释放 Windows Sandbox 后完成普通账户 1/1 和连续 10/10；同时可继续推进 M3 安装包真实性。 |
+
+### 全部功能类别进展
+
+| 类别 | 严格完成进度 | 已完成项 |
+| --- | ---: | --- |
+| A | 0/5 | — |
+| B | 0/5 | — |
+| C | 1/9 | C9 |
+| D | **6/6** | D1～D6 |
+| E | **8/8** | E1～E8 |
+| F | 0/6 | — |
+| G | **11/11** | G1～G11 |
+| H | **7/7** | H1～H7 |
+| I | **6/6** | I1～I6 |
+| J | **6/6** | J1～J6 |
+| K | **7/7** | K1～K7 |
+| L | **7/7** | L1～L7 |
+| M | **1/10** | M2 |
+
+## 2026-07-15 M1 安装与首次启动：部分实现，未达到完成门槛
+
+| 字段 | 内容 |
+| --- | --- |
+| 本轮目标 | 在干净 Windows 普通账户中，无命令行和管理员手工配置完成安装、首次启动、登录态恢复、真实 CERN PDF 任务和 G1 固定成果中心访问；首个有效任务不超过 3 分钟，连续 10 个一次性环境通过。 |
+| 用户可感知改进 | 正式 MSI 已从按机器安装改为按用户安装，目标目录为 `%LOCALAPPDATA%\Programs\OpenDrSai`，注册写入 HKCU，当前用户开始菜单和桌面快捷方式不再要求 UAC 提权。CERN PDF 生成 PPTX 后可从固定“成果”入口重新找到并打开。 |
+| 自动化安装契约 | PASS：MSI 实际编译成功；数据库契约确认 `ALLUSERS` 缺失、安装根位于 LocalAppData、HKCU 注册、6 个延迟自定义动作均以当前用户身份执行、命令行不含 `MachineInstall`。`npm run verify:m1-clean-install` 共 22/22 项通过，且已移除人工 MessageBox/“点 Yes”验收。 |
+| 正式打包版 CERN 链路 | PASS：正式 `OpenDrSai.exe` 使用固定 SHA-256 `F658...913E` 的真实 48 页 CERN WLCG PDF，完成解析、9 页管理者 PPTX、provenance、统一后台任务、结构化完成通知，并从固定成果中心建立稳定索引和再次打开，全部自动断言通过。 |
+| Runtime 与 MSI | PASS：1.4.6 Runtime 重新物化当前 Python 后端并生成，SHA-256 为 `bc01462f2fbebac0cf55e7fd44bcc005dbce1811d3981664ca29ca3618f36345`，大小 220,193,427 bytes；同版本非提权 MSI 已重新生成并通过数据库契约。 |
+| 干净沙盒首轮证据 | FAIL（保留证据，不计完成）：真实 Windows Sandbox `WDAGUtilityAccount`、无 Node/Python/Git、CERN PDF 哈希和 Runtime 哈希均确认；发现默认账户实际为 elevated，且从只读映射目录直接运行 MSI 出现 1316/1603。该失败推动实现“沙盒管理员只作引导、临时标准用户执行验收”和“MSI 先复制到本地磁盘”。 |
+| 10 环境矩阵 | 未通过：已实现默认 10 次、每次独立 `.wsb`、全自动安装/任务/关机和总表汇总；当前宿主第二个沙盒实例在标准用户引导阶段残留 `vmwp`，强制终止因无法证明不影响其他 Hyper-V 工作负载而被安全策略拒绝。本轮没有伪造 10/10。 |
+| 人工项处理 | 无人工完成项。原来的六步人工检查和 Yes/No 对话框已删除；普通权限、干净依赖、安装根、版本、登录态、首次界面、CERN 任务、成果中心、PPTX、3 分钟预算和 10 次矩阵均已改为机器断言。 |
+| 正式证据 | `release/product-evidence/cern-manager-deck/packaged-presentation-action-structured-summary-result.json` 与 PNG/PPTX/provenance；`release/product-evidence/m1-clean-install/m1-clean-01/windows-11-sandbox-20260715-224933.json`、MSI 日志和 transcript；`verify-m1-clean-install.mjs`、MSI 数据库契约。 |
+| 评分 | **M1 从 0/3 提升为 1/3**：实现、正式包 CERN 链路和安装器契约已经成立，但“普通账户真实安装成功 + 首个任务 <=3 分钟 + 连续 10 环境”尚无通过证据。严格完成度仍为 **`59/93`**，M 类严格完成仍为 **0/10**。 |
+| 下一闭环 | 在可安全释放 Windows Sandbox 实例的宿主上先跑通 1 个临时标准用户实例，再连续跑满 10/10；只有矩阵全绿才将 M1 提升为 3/3 和严格完成。 |
+
 ## 2026-07-15 L7 多人版本一致性：正式完成
 
 | 字段 | 内容 |
@@ -2680,8 +2730,8 @@
 | L5 | 已完成 | 3 | Windows 10.0.26200 x64；正式 OpenDrSai.exe 双账号/三阶段/三进程 | 固定 SHA-256 的真实 CERN 48 页 PDF；38,948-byte 管理者 PPTX；p.42 WLCG 带宽图表评论 | 所有者创建可评论分享→接收者 UI 选择 artifact/图表/位置并评论→接收者越权转换负测→所有者读取评论→预览并修改任务→创建真实后台任务→再次修改→重复创建负测→完成→回链原评论 | 通过 | 24/24 packaged；评论对象和图表锚点精确；预览上下文完整；任务记录与后台队列标题/说明/状态同步；完成进度 100%；回链 comment ID 精确；模型请求 0 | 通过 | L5 result、recipient/owner PNG；52 项 CONTRACT + 8 项 GOLDEN + 8 项 NEGATIVE + packaged UI/IPC/任务/回链断言 | 无；不依赖人工观察项 | L 类 5/7；推进 L6 撤销分享 |
 | L6 | 已完成 | 3 | Windows 10.0.26200 x64；正式 OpenDrSai.exe 双账号/五阶段/五进程 | 固定 SHA-256 的真实 CERN 48 页 PDF；38,948-byte 管理者 PPTX | 所有者创建→接收者撤销前打开/下载/评论/继续→接收者越权撤销负测→所有者 UI 输入 REVOKE 撤销→接收者旧 ID 全入口负测→所有者重启核对历史 | 通过 | 34/34 packaged；收件卡为 0；旧打开、下载、评论、继续处理全部拒绝；状态跨重启；模型请求 0 | 通过 | L6 result、owner/recipient PNG；40 项 CONTRACT + 8 项 GOLDEN + 8 项 NEGATIVE + packaged UI/IPC/审计/持久化断言 | 无；不依赖人工观察项 | L 类 6/7；未授权撤销拒绝且审计，推进 L7 版本一致性 |
 | L7 | 已完成 | 3 | Windows 10.0.26200 x64；正式 OpenDrSai.exe 双账号/七阶段/七进程 | 固定 SHA-256 的真实 CERN 48 页 PDF；38,948-byte v1 与 38,980-byte v2 管理者 PPTX | 所有者创建 v1→接收者查看评论→源修改期间接收者仍读 v1 并评论→所有者 UI 发布 v2→旧窗口冲突负测→接收者 v2/过期评论/新评论→所有者审计历史 | 通过 | 45/45 packaged；v1/v2 不可变快照；2 条 v1 评论 stale、1 条 v2 评论 current；旧发布拒绝且 v2 哈希不变；revision 6；模型请求 0 | 通过 | L7 result、owner/recipient PNG；45 项 CONTRACT + 8 项 GOLDEN + 8 项 NEGATIVE + packaged UI/IPC/存储锁/冲突审计断言 | 无；不依赖人工观察项 | L 类 7/7 全部完成；推进 M1 安装与首次启动 |
-| M1 | 未完成-证据缺失 | 0 | 未覆盖正式矩阵 | 干净 Windows/G1 | 未发现 10 台环境通过记录 | 未判定 | 缺首次有效任务 <=3 分钟 | 未测 | 无 | 缺真实打包版安装验收 | 补干净安装测试 |
-| M2 | 未完成-证据缺失 | 0 | 未覆盖正式矩阵 | 旧版更新/损坏下载 | 未发现更新回滚验收记录 | 未判定 | 缺数据保留和回退说明 | 未测 | 无 | 缺打包版更新 E2E | 补更新回滚测试 |
+| M1 | 部分实现-矩阵未通过 | 1 | Windows 11 正式 OpenDrSai.exe；真实 Windows Sandbox 首轮失败证据 | 固定 SHA-256 CERN 48 页 PDF、1.4.6 Runtime/MSI、G1 固定成果中心 | 正式包 CERN→PPTX→成果中心通过；非提权 MSI 编译与 22 项自动契约通过；沙盒标准用户矩阵未形成通过样本 | 部分通过 | 正式包任务约 8 秒；干净标准用户环境尚未取得有效计时 | 通过/矩阵未测 | CERN result/PNG/PPTX/provenance；Sandbox JSON/MSI log/transcript | 默认 Sandbox elevated、首轮映射 MSI 1316；标准用户重跑遇残留 vmwp，未安全强杀 | 安全释放沙盒后先 1/1，再连续 10/10 |
+| M2 | 已完成 | 3 | Windows 11 正式 OpenDrSai.exe + updater helper | 旧版更新、损坏下载、启动失败、CERN PDF 用户文件 | 正常更新、哈希拒绝、健康失败回滚、重启恢复说明 | 通过 | 账户/任务/记忆/工作区/PDF 哈希不变；旧 app/agent/version 恢复 | 通过 | M2 runtime-updater 与 packaged-update JSON；helper + 打包版 E2E + UI/视觉/乱码回归 | 无；不依赖人工观察项 | 推进 M3 安装包真实性；M1 等待安全释放 Sandbox |
 | M3 | 未完成-证据缺失 | 0 | 未覆盖正式矩阵 | 缩放/窗口/多显示器 | 未发现布局矩阵记录 | 未判定 | 缺不遮挡/不重叠证据 | 未测 | 无 | 缺视觉验收 | 补窗口缩放测试 |
 | M4 | 未完成-证据缺失 | 0 | 未覆盖正式矩阵 | 键盘流程 | 未发现无鼠标完成记录 | 未判定 | 缺焦点顺序和键盘陷阱证据 | 未测 | 无 | 缺无障碍测试 | 补键盘验收 |
 | M5 | 未完成-证据缺失 | 0 | 未覆盖正式矩阵 | Windows Narrator | 未发现读屏记录 | 未判定 | 缺控件名/动态进度/图表说明 | 未测 | 无 | 缺无障碍验收 | 补 Narrator 测试 |

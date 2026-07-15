@@ -321,7 +321,7 @@ function assertAttachmentBody(body, attachmentFixture) {
 function runPackagedApp({ appHome, resultPath, scenario, attachmentFixture }) {
   return new Promise((resolvePromise, reject) => {
     let settled = false;
-    const child = spawn(exePath, [], {
+    const child = spawn(exePath, [`--user-data-dir=${join(appHome, "electron-user-data")}`], {
       cwd: root,
       env: {
         SystemRoot: process.env.SystemRoot,
@@ -344,6 +344,7 @@ function runPackagedApp({ appHome, resultPath, scenario, attachmentFixture }) {
         } : {}),
         OPENDRSAI_E2E_RESULT: resultPath,
         OPENDRSAI_E2E_TIMEOUT_MS: "30000",
+        OPENDRSAI_NETWORK_RECOVERY_WINDOW_MS: scenario === "chunk-disconnect" ? "1400" : "180000",
         ...(scenario === "timeout" ? { OPENDRSAI_CHAT_TIMEOUT_MS: "1500" } : {}),
       },
       stdio: ["ignore", "pipe", "pipe"],

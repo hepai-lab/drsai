@@ -113,13 +113,54 @@ try {
   assert(downgrade.exitCode !== 0, "Downgrade manifest unexpectedly produced an update.");
   assert(downgrade.result?.details?.checked?.phase === "idle", `Downgrade was not ignored: ${JSON.stringify(downgrade.result)}`);
 
-  console.log("Packaged runtime update protocol E2E passed (resume, verify, stage, restart restore, hash rejection, redirect trust, downgrade guard)." );
+  const rollbackRoot = join(testRoot, "rolled-back-install");
+  mkdirSync(rollbackRoot, { recursive: true });
+  writeFileSync(join(rollbackRoot, "update-state.json"), `${JSON.stringify({
+    schemaVersion: 1,
+    phase: "rolled-back",
+    version: targetVersion,
+    message: "Updated app did not confirm a healthy startup.",
+    updatedAt: new Date().toISOString(),
+  })}\n`);
+  const rolledBack = await runApp("rolled-back", rollbackRoot, { outcomeOnly: true });
+  assert(rolledBack.exitCode === 0 && rolledBack.result?.ok === true, `Packaged app did not restore the rollback outcome: ${JSON.stringify(rolledBack.result)}`);
+  assert(rolledBack.result?.checks?.rollbackDetected, "Packaged app did not expose the failed update as rolled back.");
+  assert(rolledBack.result?.checks?.previousRuntimeActive, "Packaged app did not report the working runtime after rollback.");
+  assert(rolledBack.result?.checks?.recoveryIsAutomatic, "Packaged app did not identify the recovery as automatic.");
+  const rendererSource = readFileSync(join(root, "src", "renderer", "src", "App.tsx"), "utf8");
+  assert(rendererSource.includes("已自动恢复到可用版本") && rendererSource.includes("账户、任务、工作区和文件未受影响"), "Chinese user-facing rollback explanation is missing.");
+  assert(rendererSource.includes("automatically restored working version") && rendererSource.includes("account, tasks, workspace, and files were not affected"), "English user-facing rollback explanation is missing.");
+  const evidenceDir = join(root, "release", "product-evidence", "m2-update-rollback");
+  mkdirSync(evidenceDir, { recursive: true });
+  writeFileSync(join(evidenceDir, "packaged-update-result.json"), `${JSON.stringify({
+    generatedAt: new Date().toISOString(),
+    ok: true,
+    currentVersion,
+    targetVersion,
+    checks: {
+      resumedPartialDownload: rangeRequests > 0,
+      verifiedAndStaged: true,
+      preparedUpdateRestoredAfterRestart: true,
+      corruptedDownloadRejected: true,
+      untrustedRedirectRejected: true,
+      downgradeIgnored: true,
+      rollbackDetectedAfterPackagedRestart: rolledBack.result.checks.rollbackDetected,
+      previousRuntimeActive: rolledBack.result.checks.previousRuntimeActive,
+      automaticRecoveryExposed: rolledBack.result.checks.recoveryIsAutomatic,
+      failedVersionVisible: rolledBack.result.checks.failedVersionVisible,
+      chineseUserExplanationPresent: true,
+      englishUserExplanationPresent: true,
+    },
+    rollbackStatus: rolledBack.result.details.restored,
+  }, null, 2)}\n`);
+
+  console.log("Packaged runtime update protocol E2E passed (resume, verify, stage, restart restore, hash rejection, redirect trust, downgrade guard, visible automatic rollback)." );
 } finally {
   await new Promise((resolvePromise) => server.close(resolvePromise));
   rmSync(testRoot, { recursive: true, force: true });
 }
 
-function runApp(name, installRoot) {
+function runApp(name, installRoot, options = {}) {
   const resultPath = join(testRoot, `${name}-result.json`);
   const userData = join(testRoot, `${name}-user-data`);
   const manifestUrl = `http://127.0.0.1:${server.address().port}/latest-windows.json`;
@@ -128,6 +169,7 @@ function runApp(name, installRoot) {
       env: {
         ...process.env,
         OPENDRSAI_E2E_UPDATE_PROTOCOL: "1",
+        OPENDRSAI_E2E_UPDATE_OUTCOME_ONLY: options.outcomeOnly ? "1" : "0",
         OPENDRSAI_E2E_SMOKE: "1",
         OPENDRSAI_E2E_RESULT: resultPath,
         OPENDRSAI_E2E_USER_DATA: userData,

@@ -39,6 +39,7 @@ import {
   cancelUpdate,
   checkForUpdates,
   confirmPendingUpdateLaunch,
+  getUpdateStatus,
   restorePreparedUpdate,
   downloadUpdate,
   installUpdate,
@@ -477,6 +478,7 @@ const isE2eSmokeProcess =
   process.env.OPENDRSAI_E2E_OIDC === "1" ||
   process.env.OPENDRSAI_E2E_A5_SERVICE_GUIDANCE === "1" ||
   process.env.OPENDRSAI_E2E_F2_APPROVALS === "1" ||
+  process.env.OPENDRSAI_E2E_M3_WINDOW === "1" ||
   process.env.OPENDRSAI_E2E_PRESENTATION_PDF_ACTION === "1" ||
   process.env.OPENDRSAI_E2E_OIDC_HEADLESS === "1";
 if (isE2eSmokeProcess) {
@@ -4177,6 +4179,9 @@ async function runHeadlessOidcSmoke(): Promise<void> {
 
     const gatewayEvents: Array<{ channel: string; event: Record<string, unknown> }> = [];
     const gatewayWebContents = {
+      isDestroyed() {
+        return false;
+      },
       send(channel: string, event: Record<string, unknown>) {
         gatewayEvents.push({ channel, event });
       },
@@ -4398,6 +4403,19 @@ async function runHeadlessUpdateProtocolSmoke(): Promise<void> {
     error?: string;
   } = { ok: false, checks: {}, details: {} };
   try {
+    if (process.env.OPENDRSAI_E2E_UPDATE_OUTCOME_ONLY === "1") {
+      const restored = getUpdateStatus();
+      result.details.restored = restored;
+      result.checks.rollbackDetected = restored.phase === "rolled-back";
+      result.checks.previousRuntimeActive = restored.currentVersion === app.getVersion();
+      result.checks.recoveryIsAutomatic = restored.recovery === "automatic-rollback";
+      result.checks.failedVersionVisible = Boolean(restored.version);
+      result.ok = Object.values(result.checks).every(Boolean);
+      mkdirSync(dirname(resultPath), { recursive: true });
+      writeFileSync(resultPath, `${JSON.stringify(result, null, 2)}\n`, "utf8");
+      app.exit(result.ok ? 0 : 1);
+      return;
+    }
     const checked = await checkForUpdates();
     result.details.checked = checked;
     result.checks.updateAvailable =

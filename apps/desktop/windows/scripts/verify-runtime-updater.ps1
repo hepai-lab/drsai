@@ -21,6 +21,29 @@ function Assert-True([bool]$Condition, [string]$Message) {
     if (-not $Condition) { throw $Message }
 }
 
+function Initialize-UserData([string]$Root) {
+    New-Item -ItemType Directory -Force -Path `
+        (Join-Path $Root "auth"), `
+        (Join-Path $Root "tasks"), `
+        (Join-Path $Root "memory"), `
+        (Join-Path $Root "workspace") | Out-Null
+    [IO.File]::WriteAllText((Join-Path $Root "auth\auth.json"), '{"user":"m2-acceptance@ihep.ac.cn"}', (New-Object Text.UTF8Encoding($false)))
+    [IO.File]::WriteAllText((Join-Path $Root "tasks\tasks.json"), '[{"title":"分析 CERN WLCG 报告","status":"complete"}]', (New-Object Text.UTF8Encoding($false)))
+    [IO.File]::WriteAllText((Join-Path $Root "memory\preferences.json"), '{"language":"zh","output":"pptx"}', (New-Object Text.UTF8Encoding($false)))
+    [IO.File]::WriteAllBytes((Join-Path $Root "workspace\WLCG-20260715-WLCG-talk-IHEP-visit.pdf"), [Text.Encoding]::ASCII.GetBytes("%PDF-1.7`nM2 preserved CERN source fixture`n%%EOF`n"))
+}
+
+function Get-UserDataSnapshot([string]$Root) {
+    $items = @(Get-ChildItem -LiteralPath $Root -File -Recurse | Sort-Object FullName | ForEach-Object {
+        [ordered]@{
+            path = $_.FullName.Substring($Root.TrimEnd('\').Length + 1).Replace('\', '/')
+            length = $_.Length
+            sha256 = Get-Sha256Hex $_.FullName
+        }
+    })
+    return ($items | ConvertTo-Json -Depth 4 -Compress)
+}
+
 function Build-ConsoleExe([string]$Path, [string]$Body, [string]$Name) {
     $source = @"
 using System;
@@ -106,7 +129,10 @@ try {
     $successZip = Join-Path $testRoot "success.zip"
     $successStaging = Join-Path $testRoot "success\staging"
     $successState = Join-Path $successRoot "update-state.json"
+    $successUserData = Join-Path $testRoot "success\profile\OpenDrSaiData"
     Install-OldRuntime $successRoot $successAgent "success"
+    Initialize-UserData $successUserData
+    $successUserDataBefore = Get-UserDataSnapshot $successUserData
     Build-Runtime $successZip $version $true "Success"
     Invoke-Prepare $successZip $successStaging $successRoot $successAgent $successState
     $preparedConfig = Get-Content -LiteralPath (Join-Path $successStaging "runtime\drsai-agent\venv\pyvenv.cfg") -Raw
@@ -122,6 +148,7 @@ try {
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $successRoot "app.previous"))) "Successful update did not clean app.previous."
     Assert-True ((Get-Content -LiteralPath $successState -Raw | ConvertFrom-Json).phase -eq "complete") "Successful update state is not complete."
     Assert-True ((Get-Content -LiteralPath (Join-Path $successRoot "install-state.json") -Raw | ConvertFrom-Json).version -eq $version) "Install state version was not updated."
+    Assert-True ((Get-UserDataSnapshot $successUserData) -eq $successUserDataBefore) "Successful update changed account, task, memory, workspace, or CERN source data."
 
     # Broken new app must restore both old directories.
     $rollbackRoot = Join-Path $testRoot "rollback\install"
@@ -129,7 +156,10 @@ try {
     $rollbackZip = Join-Path $testRoot "rollback.zip"
     $rollbackStaging = Join-Path $testRoot "rollback\staging"
     $rollbackState = Join-Path $rollbackRoot "update-state.json"
+    $rollbackUserData = Join-Path $testRoot "rollback\profile\OpenDrSaiData"
     Install-OldRuntime $rollbackRoot $rollbackAgent "rollback"
+    Initialize-UserData $rollbackUserData
+    $rollbackUserDataBefore = Get-UserDataSnapshot $rollbackUserData
     [IO.File]::WriteAllText((Join-Path $rollbackRoot "install-state.json"), '{"version":"1.0.0"}', (New-Object Text.UTF8Encoding($false)))
     Build-Runtime $rollbackZip $version $false "Rollback"
     Invoke-Prepare $rollbackZip $rollbackStaging $rollbackRoot $rollbackAgent $rollbackState
@@ -142,6 +172,7 @@ try {
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $rollbackAgent "new-Rollback.txt"))) "Rollback left the broken agent runtime installed."
     Assert-True ((Get-Content -LiteralPath $rollbackState -Raw | ConvertFrom-Json).phase -eq "rolled-back") "Rollback result was not persisted."
     Assert-True ((Get-Content -LiteralPath (Join-Path $rollbackRoot "install-state.json") -Raw | ConvertFrom-Json).version -eq "1.0.0") "Rollback did not restore the previous install state."
+    Assert-True ((Get-UserDataSnapshot $rollbackUserData) -eq $rollbackUserDataBefore) "Failed update or rollback changed account, task, memory, workspace, or CERN source data."
 
     # ZIP traversal must be rejected before any installed directory changes.
     $badZip = Join-Path $testRoot "traversal.zip"
@@ -160,7 +191,26 @@ try {
     Assert-True ($LASTEXITCODE -ne 0) "ZIP traversal archive was not rejected."
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $testRoot "escape.txt"))) "ZIP traversal wrote outside staging."
 
-    Write-Host "Runtime updater prepare/apply/rollback/traversal verification passed."
+    $evidenceDir = Join-Path $root "release\product-evidence\m2-update-rollback"
+    New-Item -ItemType Directory -Force -Path $evidenceDir | Out-Null
+    $evidence = [ordered]@{
+        generatedAt = (Get-Date).ToUniversalTime().ToString("o")
+        ok = $true
+        targetVersion = $version
+        checks = [ordered]@{
+            successfulApply = $true
+            successfulUpdateUserDataPreserved = $true
+            brokenStartupRejected = $true
+            oldAppAndAgentRestored = $true
+            previousInstallVersionRestored = $true
+            rollbackUserDataPreserved = $true
+            cernSourceFilePreserved = $true
+            zipTraversalRejected = $true
+        }
+        preservedUserData = @("account", "tasks", "memory", "workspace", "WLCG-20260715-WLCG-talk-IHEP-visit.pdf")
+    }
+    [IO.File]::WriteAllText((Join-Path $evidenceDir "runtime-updater-result.json"), (($evidence | ConvertTo-Json -Depth 6) + "`n"), (New-Object Text.UTF8Encoding($false)))
+    Write-Host "Runtime updater prepare/apply/rollback/traversal and user-data preservation verification passed."
 } finally {
     Get-Process | Where-Object { $_.Path -and $_.Path.StartsWith($testRoot, [StringComparison]::OrdinalIgnoreCase) } |
         Stop-Process -Force -ErrorAction SilentlyContinue

@@ -22,9 +22,10 @@ truth for later Store and winget submissions.
 
 ## Current Implementation State
 
-The active Windows distribution contract is the per-machine MSI bootstrapper plus
-`OpenDrSaiRuntime-win-x64.zip`. The MSI downloads and verifies the runtime, then
-installs the Electron application and Python agent under Program Files.
+The active Windows distribution contract is the limited per-user MSI bootstrapper
+plus `OpenDrSaiRuntime-win-x64.zip`. The MSI downloads and verifies the runtime,
+then installs the Electron application and Python agent under
+`%LOCALAPPDATA%\Programs\OpenDrSai` without elevation.
 
 The repository also contains an older NSIS/electron-updater design. That design
 is not the active release path: the current build does not publish an NSIS setup
@@ -235,7 +236,7 @@ Before submitting to `microsoft/winget-pkgs`:
 
 - Confirm the GitHub Release asset URL is public and versioned.
 - Confirm the installer sha256 matches the released binary.
-- Confirm an elevated `msiexec /i OpenDrSaiSetup-win-x64.msi /qn` performs a silent per-machine install.
+- Confirm a non-elevated `msiexec /i OpenDrSaiSetup-win-x64.msi /qn` performs a silent per-user install.
 - Run `winget validate` locally when Windows Package Manager tooling is
   available.
 - Submit the generated version folder as a PR to the community repository.

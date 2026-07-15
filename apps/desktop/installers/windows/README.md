@@ -112,20 +112,20 @@ point to a different asset and make an otherwise valid installer fail.
 Progress and failures are written to:
 
 ```text
-%PROGRAMDATA%\OpenDrSai\Installer\logs
+%USERPROFILE%\.drsai\logs\bootstrapper
 ```
 
 Completion is recorded in:
 
 ```text
-%PROGRAMFILES%\OpenDrSai\install-state.json
+%LOCALAPPDATA%\Programs\OpenDrSai\install-state.json
 ```
 
-The MSI is a per-machine installation and requests elevation. Setup support
-files, the Electron application, the Python agent runtime, cache, defaults, and
-install state all live under `%PROGRAMFILES%\OpenDrSai`. Per-user configuration,
-logs, credentials, and workspaces remain under `%USERPROFILE%\.drsai`.
+The MSI is a limited, per-user installation and does not request elevation.
+Setup support files, the Electron application, the Python agent runtime, cache,
+and install state live under `%LOCALAPPDATA%\Programs\OpenDrSai`. Configuration,
+defaults, logs, credentials, and workspaces remain under `%USERPROFILE%\.drsai`.
 
 Windows Installer registers `OpenDrSai` in Apps & features and Control Panel.
-Uninstalling from either location removes the machine installation and its
-shortcuts while preserving per-user data.
+Uninstalling from either location removes the current user's installation and
+shortcuts while preserving user data.

@@ -141,6 +141,7 @@ const initialHealth: DesktopHealth = {
     canCancel: false,
     errorCode: null,
     error: null,
+    recovery: null,
   },
 };
 
@@ -1252,6 +1253,7 @@ export function installMockDesktopApi(): void {
           canCancel: false,
           errorCode: null,
           error: null,
+          recovery: null,
         },
       };
       emit(updateListeners, health.update);

@@ -93,6 +93,7 @@ export interface UpdateStatus {
     | "installing"
     | "complete"
     | "rollback"
+    | "rolled-back"
     | "failed";
   checking: boolean;
   available: boolean;
@@ -108,6 +109,7 @@ export interface UpdateStatus {
   canCancel: boolean;
   errorCode: string | null;
   error: string | null;
+  recovery: "automatic-rollback" | null;
 }
 
 export interface AuthUser {

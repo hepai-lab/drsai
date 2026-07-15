@@ -3,6 +3,7 @@ param(
     [string]$EvidenceDir = "C:\OpenDrSaiEvidence",
     [string]$ExpectedVersion = "1.4.6",
     [string]$RunId = "m1-sandbox",
+    [switch]$StandardUserRun,
     [switch]$ShutdownOnComplete,
     [switch]$TestUninstall
 )
@@ -53,12 +54,57 @@ function Invoke-Native([string]$FilePath, [string[]]$Arguments) {
     }
 }
 
+$currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+$currentIsElevated = $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $StandardUserRun -and $currentIsElevated -and $env:USERNAME -eq "WDAGUtilityAccount") {
+    $standardUser = "OpenDrSaiM1"
+    $standardPassword = "M1-" + [Guid]::NewGuid().ToString("N") + "!aA1"
+    $localPackage = "C:\OpenDrSaiM1Package"
+    $localEvidence = "C:\OpenDrSaiM1Evidence"
+    $bootstrapLog = Join-Path $EvidenceDir "standard-user-bootstrap.txt"
+    function Write-Bootstrap([string]$Message) {
+        [IO.File]::AppendAllText($bootstrapLog, ((Get-Date).ToUniversalTime().ToString("o") + " " + $Message + [Environment]::NewLine))
+    }
+    Write-Bootstrap "bootstrap-started"
+    New-Item -ItemType Directory -Force -Path $localPackage, $localEvidence | Out-Null
+    Copy-Item -LiteralPath (Join-Path $PackageDir "run-windows-sandbox-acceptance.ps1") -Destination $localPackage -Force
+    Copy-Item -LiteralPath (Join-Path $PackageDir "OpenDrSaiRuntime-win-x64.zip") -Destination "C:\OpenDrSaiRuntime-win-x64.zip" -Force
+    Write-Bootstrap "runtime-copied"
+    $netUser = Invoke-Native net.exe @("user", $standardUser, $standardPassword, "/add", "/expires:never", "/passwordchg:no")
+    if ($netUser.exitCode -ne 0) {
+        $existingUser = Invoke-Native net.exe @("user", $standardUser)
+        if ($existingUser.exitCode -ne 0) { throw "Could not create the M1 standard user: $($netUser.output)" }
+    }
+    $acl = Invoke-Native icacls.exe @($localEvidence, "/grant", "${standardUser}:(OI)(CI)M")
+    if ($acl.exitCode -ne 0) { throw "Could not grant M1 evidence access: $($acl.output)" }
+    Write-Bootstrap "standard-user-ready"
+    $securePassword = ConvertTo-SecureString $standardPassword -AsPlainText -Force
+    $credential = New-Object Management.Automation.PSCredential(".\$standardUser", $securePassword)
+    $childArgs = @(
+        "-NoProfile", "-ExecutionPolicy", "Bypass",
+        "-File", (Join-Path $localPackage "run-windows-sandbox-acceptance.ps1"),
+        "-PackageDir", $PackageDir,
+        "-EvidenceDir", $localEvidence,
+        "-ExpectedVersion", $ExpectedVersion,
+        "-RunId", $RunId,
+        "-StandardUserRun"
+    )
+    if ($TestUninstall) { $childArgs += "-TestUninstall" }
+    Write-Bootstrap "standard-user-process-starting"
+    $child = Start-Process powershell.exe -Credential $credential -LoadUserProfile -WorkingDirectory $localPackage -ArgumentList $childArgs -Wait -PassThru
+    Write-Bootstrap "standard-user-process-finished exit=$($child.ExitCode)"
+    Copy-Item -Path (Join-Path $localEvidence "*") -Destination $EvidenceDir -Recurse -Force -ErrorAction SilentlyContinue
+    if ($ShutdownOnComplete) { Start-Process shutdown.exe -ArgumentList @("/s", "/t", "0") -WindowStyle Hidden }
+    exit $child.ExitCode
+}
+
 New-Item -ItemType Directory -Force -Path $EvidenceDir | Out-Null
 $startupMarker = Join-Path $EvidenceDir "sandbox-started.txt"
 $transcriptPath = Join-Path $EvidenceDir "sandbox-acceptance-transcript.txt"
 [IO.File]::WriteAllText($startupMarker, ((Get-Date).ToUniversalTime().ToString("o") + [Environment]::NewLine))
 Start-Transcript -Path $transcriptPath -Force | Out-Null
-$msi = Join-Path $PackageDir "OpenDrSaiSetup.sandbox.msi"
+$msiSource = Join-Path $PackageDir "OpenDrSaiSetup.sandbox.msi"
+$msi = Join-Path $env:TEMP "OpenDrSaiSetup.sandbox.msi"
 $runtime = Join-Path $PackageDir "OpenDrSaiRuntime-win-x64.zip"
 $localRuntime = "C:\OpenDrSaiRuntime-win-x64.zip"
 $installRoot = Join-Path $env:LOCALAPPDATA "Programs\OpenDrSai"
@@ -69,21 +115,20 @@ $fakeGatewayScript = Join-Path $PackageDir "m1-fake-gateway.py"
 $expectedPdfSha256 = "f6581e1a255b354667188b41b874b996a300f88bb48912721bc1c854183e913e"
 
 try {
-    Add-Check "Windows Sandbox identity" ($(if ($env:USERNAME -eq "WDAGUtilityAccount") { "PASS" } else { "FAIL" })) $env:USERNAME
-    $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
-    $isElevated = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-    Add-Check "Ordinary non-elevated process" ($(if (-not $isElevated) { "PASS" } else { "FAIL" })) "elevated=$isElevated"
-    Add-Check "MSI exists" ($(if (Test-Path $msi) { "PASS" } else { "FAIL" })) $msi
+    Add-Check "Windows Sandbox standard identity" ($(if ($env:USERNAME -eq "OpenDrSaiM1") { "PASS" } else { "FAIL" })) $env:USERNAME
+    Add-Check "Ordinary non-elevated process" ($(if (-not $currentIsElevated) { "PASS" } else { "FAIL" })) "elevated=$currentIsElevated"
+    Add-Check "MSI exists" ($(if (Test-Path $msiSource) { "PASS" } else { "FAIL" })) $msiSource
     Add-Check "Runtime exists" ($(if (Test-Path $runtime) { "PASS" } else { "FAIL" })) $runtime
     Add-Check "CERN PDF exists" ($(if (Test-Path $cernPdf) { "PASS" } else { "FAIL" })) $cernPdf
     Add-Check "M1 gateway fixture exists" ($(if (Test-Path $fakeGatewayScript) { "PASS" } else { "FAIL" })) $fakeGatewayScript
-    if (-not (Test-Path $msi) -or -not (Test-Path $runtime) -or -not (Test-Path $cernPdf) -or -not (Test-Path $fakeGatewayScript)) { throw "Mapped M1 acceptance artifacts are missing." }
+    if (-not (Test-Path $msiSource) -or -not (Test-Path $runtime) -or -not (Test-Path $cernPdf) -or -not (Test-Path $fakeGatewayScript)) { throw "Mapped M1 acceptance artifacts are missing." }
 
     foreach ($command in @("node.exe", "python.exe", "git.exe")) {
         $present = [bool](Get-Command $command -ErrorAction SilentlyContinue)
         Add-Check "Clean prerequisite: $command absent" ($(if (-not $present) { "PASS" } else { "WARN" }))
     }
 
+    Copy-Item -LiteralPath $msiSource -Destination $msi -Force
     $signature = Get-AuthenticodeSignature -LiteralPath $msi
     Add-Check "MSI signature" ($(if ($signature.Status -eq "Valid") { "PASS" } else { "WARN" })) ([string]$signature.Status)
     $runtimeHash = Get-Sha256Hex $runtime
@@ -91,7 +136,9 @@ try {
     $pdfHash = Get-Sha256Hex $cernPdf
     Add-Check "CERN PDF SHA256" ($(if ($pdfHash -eq $expectedPdfSha256) { "PASS" } else { "FAIL" })) $pdfHash
 
-    Copy-Item -LiteralPath $runtime -Destination $localRuntime -Force
+    if (-not (Test-Path $localRuntime) -or (Get-Sha256Hex $localRuntime) -ne $runtimeHash) {
+        Copy-Item -LiteralPath $runtime -Destination $localRuntime -Force
+    }
     Add-Check "Runtime copied to Sandbox disk" ($(if (Test-Path $localRuntime) { "PASS" } else { "FAIL" })) $localRuntime
 
     Write-Host "Installing OpenDrSai in Windows Sandbox..." -ForegroundColor Cyan

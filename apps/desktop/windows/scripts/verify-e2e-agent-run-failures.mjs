@@ -246,7 +246,10 @@ function assertScenarioDiagnostics(scenario, result) {
   }
   if (
     scenario === "chunk-disconnect" &&
-    !events.some((event) => event.type === "error" && String(event.error || "").includes("ended before data: [DONE]"))
+    !events.some((event) => event.type === "error" && (
+      String(event.error || "").includes("ended before data: [DONE]") ||
+      (event.failureRecovery?.kind === "network" && event.failureRecovery.exhausted === true)
+    ))
   ) {
     throw new Error(`${scenario}: missing agent stream disconnect error:\n${JSON.stringify(events, null, 2)}`);
   }
@@ -260,7 +263,7 @@ function assertScenarioDiagnostics(scenario, result) {
 function runPackagedApp({ appHome, resultPath, scenario }) {
   return new Promise((resolveRun, reject) => {
     let settled = false;
-    const child = spawn(exePath, [], {
+    const child = spawn(exePath, [`--user-data-dir=${join(appHome, "electron-user-data")}`], {
       cwd: root,
       env: {
         SystemRoot: process.env.SystemRoot,
@@ -279,8 +282,8 @@ function runPackagedApp({ appHome, resultPath, scenario }) {
         OPENDRSAI_E2E_AGENT_RUN_FAILURE_SCENARIO: scenario,
         OPENDRSAI_E2E_RESULT: resultPath,
         OPENDRSAI_E2E_TIMEOUT_MS: "45000",
-        OPENDRSAI_NETWORK_RECOVERY_WINDOW_MS: ["network-exhausted", "external-service"].includes(scenario) ? "1400" : "180000",
-        OPENDRSAI_AGENT_RUN_TIMEOUT_MS: ["network-exhausted", "external-service"].includes(scenario) ? "12000" : "1000",
+        OPENDRSAI_NETWORK_RECOVERY_WINDOW_MS: ["chunk-disconnect", "network-exhausted", "external-service"].includes(scenario) ? "1400" : "180000",
+        OPENDRSAI_AGENT_RUN_TIMEOUT_MS: ["chunk-disconnect", "network-exhausted", "external-service"].includes(scenario) ? "12000" : "1000",
       },
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
