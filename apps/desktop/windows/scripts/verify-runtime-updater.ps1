@@ -28,7 +28,7 @@ function Initialize-UserData([string]$Root) {
         (Join-Path $Root "memory"), `
         (Join-Path $Root "workspace") | Out-Null
     [IO.File]::WriteAllText((Join-Path $Root "auth\auth.json"), '{"user":"m2-acceptance@ihep.ac.cn"}', (New-Object Text.UTF8Encoding($false)))
-    [IO.File]::WriteAllText((Join-Path $Root "tasks\tasks.json"), '[{"title":"分析 CERN WLCG 报告","status":"complete"}]', (New-Object Text.UTF8Encoding($false)))
+    [IO.File]::WriteAllText((Join-Path $Root "tasks\tasks.json"), '[{"title":"Analyze CERN WLCG report","status":"complete"}]', (New-Object Text.UTF8Encoding($false)))
     [IO.File]::WriteAllText((Join-Path $Root "memory\preferences.json"), '{"language":"zh","output":"pptx"}', (New-Object Text.UTF8Encoding($false)))
     [IO.File]::WriteAllBytes((Join-Path $Root "workspace\WLCG-20260715-WLCG-talk-IHEP-visit.pdf"), [Text.Encoding]::ASCII.GetBytes("%PDF-1.7`nM2 preserved CERN source fixture`n%%EOF`n"))
 }
