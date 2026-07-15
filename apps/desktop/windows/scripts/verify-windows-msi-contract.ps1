@@ -37,12 +37,16 @@ Assert-Equal (Read-SingleValue $database "SELECT ``Root`` FROM ``Registry`` WHER
 
 $productVersion = Read-SingleValue $database "SELECT ``Value`` FROM ``Property`` WHERE ``Property``='ProductVersion'"
 $runtimeUrl = Read-SingleValue $database "SELECT ``Value`` FROM ``Property`` WHERE ``Property``='RUNTIMEURL'"
+$isDevelopmentBuild = $env:OPENDRSAI_RELEASE_TAG -eq "latest" -or $env:OPENDRSAI_UPDATE_CHANNEL -eq "dev"
 if ($runtimeUrl -match '/releases/latest/') {
-    throw "RUNTIMEURL must be immutable and must not use releases/latest: $runtimeUrl"
-}
-$expectedReleaseSegment = "/releases/download/v$productVersion/"
-if (-not $runtimeUrl.Contains($expectedReleaseSegment)) {
-    throw "RUNTIMEURL must match ProductVersion $productVersion and contain '$expectedReleaseSegment': $runtimeUrl"
+    if (-not $isDevelopmentBuild) {
+        throw "Stable RUNTIMEURL must be immutable and must not use releases/latest: $runtimeUrl"
+    }
+} else {
+    $expectedReleaseSegment = "/releases/download/v$productVersion/"
+    if (-not $runtimeUrl.Contains($expectedReleaseSegment)) {
+        throw "RUNTIMEURL must match ProductVersion $productVersion and contain '$expectedReleaseSegment': $runtimeUrl"
+    }
 }
 
 foreach ($action in @(
