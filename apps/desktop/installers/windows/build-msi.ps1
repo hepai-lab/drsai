@@ -57,7 +57,16 @@ $objDir = Join-Path $outDir "obj-msi"
 New-Item -ItemType Directory -Force -Path $outDir, $objDir | Out-Null
 
 $wixHome = if ($WixDir) { $WixDir } else { Split-Path -Parent $candle }
-$wixSdkDir = Join-Path $wixHome "sdk"
+$wixSdkCandidates = @(
+    (Join-Path $wixHome "sdk"),
+    (Join-Path (Split-Path -Parent $wixHome) "sdk")
+)
+$wixSdkDir = $wixSdkCandidates |
+    Where-Object { Test-Path (Join-Path $_ "Microsoft.Deployment.WindowsInstaller.dll") } |
+    Select-Object -First 1
+if (-not $wixSdkDir) {
+    throw "WiX SDK directory was not found. Checked: $($wixSdkCandidates -join ', ')"
+}
 $dtfAssembly = Join-Path $wixSdkDir "Microsoft.Deployment.WindowsInstaller.dll"
 $makeSfxCa = Join-Path $wixSdkDir "MakeSfxCA.exe"
 $sfxCa = Join-Path $wixSdkDir "x64\sfxca.dll"
