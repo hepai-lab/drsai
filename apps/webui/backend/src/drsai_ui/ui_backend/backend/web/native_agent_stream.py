@@ -68,6 +68,10 @@ class NativeSseAdapter:
                     "action": str(item.get("action") or "artifact"),
                     "path": path,
                     "name": str(item.get("name") or path.rsplit("/", 1)[-1]),
+                    **({"id": str(item["id"])} if item.get("id") else {}),
+                    **({"mime_type": str(item["mime_type"])} if item.get("mime_type") else {}),
+                    **({"size": int(item["size"])} if isinstance(item.get("size"), (int, float)) else {}),
+                    **({"sha256": str(item["sha256"])} if item.get("sha256") else {}),
                 })
             return ([_sse({"file_events": public_files})] if public_files else []), False
         if message_type == "input_request":

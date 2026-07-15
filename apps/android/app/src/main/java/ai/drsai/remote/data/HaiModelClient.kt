@@ -243,6 +243,17 @@ class HaiModelClient(
         val json = JSONObject().put("role", message.role)
         if (message.role == "tool") {
             json.put("content", message.content).put("tool_call_id", message.toolCallId)
+        } else if (message.images.isNotEmpty()) {
+            val content = JSONArray().put(JSONObject().put("type", "text").put("text", message.content))
+            message.images.forEach { image ->
+                content.put(
+                    JSONObject().put("type", "image_url").put(
+                        "image_url",
+                        JSONObject().put("url", image.dataUrl),
+                    ),
+                )
+            }
+            json.put("content", content)
         } else {
             json.put("content", message.content)
         }

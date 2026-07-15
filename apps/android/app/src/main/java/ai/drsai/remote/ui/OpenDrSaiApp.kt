@@ -5,14 +5,20 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.speech.RecognizerIntent
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.browser.customtabs.CustomTabsIntent
+import androidx.core.content.FileProvider
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -42,11 +48,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Login
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Refresh
@@ -80,11 +91,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -102,7 +115,12 @@ import ai.drsai.remote.R
 import ai.drsai.remote.data.AppDestination
 import ai.drsai.remote.data.AppState
 import ai.drsai.remote.data.Agent
+import ai.drsai.remote.data.AttachmentDraft
+import ai.drsai.remote.data.AttachmentStatus
 import ai.drsai.remote.data.ChatMessage
+import ai.drsai.remote.data.MAX_ATTACHMENTS
+import java.io.File
+import java.util.UUID
 import kotlinx.coroutines.launch
 
 private val OpenDrSaiGreen = Color(0xFF25634A)
@@ -237,7 +255,13 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
                 if (state.messages.isEmpty()) {
                     Welcome(state.selectedAgent, Modifier.fillMaxSize().padding(top = 82.dp, bottom = 92.dp))
                 } else {
-                    Messages(state.messages, state.selectedAgent?.name ?: "OpenDrSai", Modifier.fillMaxSize())
+                    Messages(
+                        state.messages,
+                        state.selectedAgent?.name ?: "OpenDrSai",
+                        state.attachmentDrafts.isNotEmpty(),
+                        viewModel::retryResultAttachment,
+                        Modifier.fillMaxSize(),
+                    )
                 }
 
                 Column(
@@ -258,6 +282,9 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
                     state = state,
                     onSend = viewModel::send,
                     onStop = viewModel::stop,
+                    onAddAttachment = viewModel::addAttachment,
+                    onRemoveAttachment = viewModel::removeAttachment,
+                    onRetryAttachment = viewModel::retryAttachment,
                     modifier = Modifier.align(Alignment.BottomCenter),
                 )
             }
@@ -462,7 +489,13 @@ internal fun Welcome(agent: Agent?, modifier: Modifier) {
 }
 
 @Composable
-private fun Messages(messages: List<ChatMessage>, assistantName: String, modifier: Modifier) {
+private fun Messages(
+    messages: List<ChatMessage>,
+    assistantName: String,
+    composerExpanded: Boolean,
+    retryAttachment: (String, String) -> Unit,
+    modifier: Modifier,
+) {
     val listState = rememberLazyListState()
     val density = LocalDensity.current
     val imeBottom = WindowInsets.ime.getBottom(density)
@@ -475,23 +508,27 @@ private fun Messages(messages: List<ChatMessage>, assistantName: String, modifie
     LazyColumn(
         modifier = modifier.fillMaxWidth(),
         state = listState,
-        contentPadding = PaddingValues(start = 16.dp, top = 94.dp, end = 16.dp, bottom = 104.dp),
+        contentPadding = PaddingValues(start = 16.dp, top = 94.dp, end = 16.dp, bottom = if (composerExpanded) 190.dp else 104.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        items(messages, key = { it.id }) { MessageBubble(it, assistantName) }
+        items(messages, key = { it.id }) { MessageBubble(it, assistantName, retryAttachment) }
     }
 }
 
 @Composable
-private fun MessageBubble(message: ChatMessage, assistantName: String) {
+private fun MessageBubble(message: ChatMessage, assistantName: String, retryAttachment: (String, String) -> Unit) {
     val isUser = message.role == "user"
     val context = LocalContext.current
     Column(Modifier.fillMaxWidth(), horizontalAlignment = if (isUser) Alignment.End else Alignment.Start) {
         Text(if (isUser) "你" else assistantName, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
         val content: @Composable () -> Unit = {
             Column(Modifier.padding(if (isUser) 14.dp else 4.dp)) {
+                if (message.attachments.isNotEmpty()) {
+                    MessageAttachments(message.attachments) { attachmentId -> retryAttachment(message.id, attachmentId) }
+                    if (message.text.isNotBlank()) Spacer(Modifier.height(8.dp))
+                }
                 if (message.text.contains("```")) CodeAwareText(message.text)
-                else Text(message.text.ifBlank { "正在思考…" })
+                else if (message.text.isNotBlank() || message.attachments.isEmpty()) Text(message.text.ifBlank { "正在思考…" })
                 if (!isUser && message.text.isNotBlank()) {
                     Spacer(Modifier.height(8.dp))
                     IconButton(
@@ -530,6 +567,47 @@ private fun MessageBubble(message: ChatMessage, assistantName: String) {
 }
 
 @Composable
+private fun MessageAttachments(attachments: List<ai.drsai.remote.data.MessageAttachment>, retry: (String) -> Unit) {
+    val context = LocalContext.current
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        attachments.forEach { attachment ->
+            val localFile = attachment.localPath?.let(::File)?.takeIf(File::isFile)
+            Row(
+                modifier = if (localFile != null) Modifier.clickable {
+                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", localFile)
+                    val intent = Intent(Intent.ACTION_VIEW).setDataAndType(uri, attachment.mimeType)
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    runCatching { context.startActivity(intent) }
+                        .onFailure { Toast.makeText(context, "没有可打开此文件的应用", Toast.LENGTH_SHORT).show() }
+                } else Modifier,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                val bitmap = remember(attachment.thumbnailPath) {
+                    attachment.thumbnailPath?.let(BitmapFactory::decodeFile)?.asImageBitmap()
+                }
+                if (bitmap != null) {
+                    Image(bitmap, attachment.name, Modifier.size(52.dp), contentScale = ContentScale.Crop)
+                } else {
+                    Icon(Icons.AutoMirrored.Filled.InsertDriveFile, null, Modifier.size(28.dp))
+                }
+                Spacer(Modifier.width(8.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(attachment.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        if (attachment.status == "download_failed") "下载失败" else formatBytes(attachment.size),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (attachment.status == "download_failed") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (attachment.status == "download_failed") {
+                    TextButton(onClick = { retry(attachment.id) }) { Text("重试") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun CodeAwareText(text: String) {
     val parts = text.split("```")
     Column {
@@ -547,25 +625,51 @@ private fun CodeAwareText(text: String) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun Composer(
     state: AppState,
     onSend: (String) -> Unit,
     onStop: () -> Unit,
+    onAddAttachment: (Uri, String?) -> Unit = { _, _ -> },
+    onRemoveAttachment: (String) -> Unit = {},
+    onRetryAttachment: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    var text by remember { mutableStateOf("") }
+    var text by rememberSaveable { mutableStateOf("") }
+    var awaitingAttachmentAcceptance by rememberSaveable { mutableStateOf(false) }
+    var attachmentSheetOpen by remember { mutableStateOf(false) }
+    var pendingCameraUri by remember { mutableStateOf<Uri?>(null) }
+    var pendingCameraName by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
     val send = {
-        if (text.isNotBlank() && state.selectedAgent?.chatSupported == true && !state.streaming) {
+        if ((text.isNotBlank() || state.attachmentDrafts.isNotEmpty()) && state.selectedAgent?.chatSupported == true && !state.streaming) {
+            val includesAttachments = state.attachmentDrafts.isNotEmpty()
             onSend(text)
+            if (includesAttachments) awaitingAttachmentAcceptance = true else text = ""
+        }
+    }
+    LaunchedEffect(state.attachmentDrafts.isEmpty(), state.messages.size) {
+        if (awaitingAttachmentAcceptance && state.attachmentDrafts.isEmpty()) {
             text = ""
+            awaitingAttachmentAcceptance = false
         }
     }
     val speechLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
             result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.let { text = it }
         }
+    }
+    val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { saved ->
+        if (saved) pendingCameraUri?.let { onAddAttachment(it, pendingCameraName) }
+        pendingCameraUri = null
+        pendingCameraName = null
+    }
+    val photoLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(MAX_ATTACHMENTS)) { uris ->
+        uris.forEach { onAddAttachment(it, null) }
+    }
+    val fileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        uris.forEach { onAddAttachment(it, null) }
     }
     val startSpeechRecognition: () -> Unit = {
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
@@ -576,6 +680,28 @@ internal fun Composer(
         runCatching { speechLauncher.launch(intent) }
             .onFailure { Toast.makeText(context, "当前设备没有可用的语音识别服务", Toast.LENGTH_SHORT).show() }
         Unit
+    }
+
+    if (attachmentSheetOpen) {
+        ModalBottomSheet(onDismissRequest = { attachmentSheetOpen = false }) {
+            AttachmentSourceButton(Icons.Default.CameraAlt, "拍照") {
+                attachmentSheetOpen = false
+                val directory = File(context.cacheDir, "attachments/camera").apply { mkdirs() }
+                val file = File(directory, "camera-${UUID.randomUUID()}.jpg")
+                pendingCameraName = file.name
+                pendingCameraUri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+                cameraLauncher.launch(pendingCameraUri!!)
+            }
+            AttachmentSourceButton(Icons.Default.Image, "从相册选择") {
+                attachmentSheetOpen = false
+                photoLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+            }
+            AttachmentSourceButton(Icons.Default.AttachFile, "选择文件") {
+                attachmentSheetOpen = false
+                fileLauncher.launch(ai.drsai.remote.data.AttachmentPolicy.acceptedDocumentMimeTypes)
+            }
+            Spacer(Modifier.height(22.dp))
+        }
     }
 
     Surface(
@@ -591,15 +717,25 @@ internal fun Composer(
         shadowElevation = 6.dp,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.Bottom,
-        ) {
-            IconButton(
-                onClick = { Toast.makeText(context, "附件功能即将支持", Toast.LENGTH_SHORT).show() },
-                enabled = !state.streaming,
-            ) { Icon(Icons.Default.Add, "添加附件或工具") }
-            BasicTextField(
+        Column(Modifier.fillMaxWidth()) {
+            if (state.attachmentDrafts.isNotEmpty()) {
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(start = 12.dp, top = 10.dp, end = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    state.attachmentDrafts.forEach { draft ->
+                        AttachmentDraftCard(draft, { onRemoveAttachment(draft.id) }, { onRetryAttachment(draft.id) })
+                    }
+                }
+            }
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.Bottom,
+            ) {
+                IconButton(onClick = { attachmentSheetOpen = true }, enabled = !state.streaming) {
+                    Icon(Icons.Default.Add, "添加附件")
+                }
+                BasicTextField(
                 value = text,
                 onValueChange = { text = it },
                 modifier = Modifier.weight(1f).padding(vertical = 5.dp),
@@ -617,20 +753,68 @@ internal fun Composer(
                         innerTextField()
                     }
                 },
-            )
-            when {
-                state.streaming -> FilledIconButton(onClick = onStop) {
-                    Icon(Icons.Default.Stop, "停止")
-                }
-                text.isNotBlank() -> FilledIconButton(onClick = send, enabled = state.selectedAgent?.chatSupported == true) {
-                    Icon(Icons.Default.ArrowUpward, "发送")
-                }
-                else -> IconButton(onClick = startSpeechRecognition, enabled = state.selectedAgent?.chatSupported == true) {
-                    Icon(Icons.Default.Mic, "语音输入")
+                )
+                when {
+                    state.streaming -> FilledIconButton(onClick = onStop) { Icon(Icons.Default.Stop, "停止") }
+                    text.isNotBlank() || state.attachmentDrafts.isNotEmpty() -> FilledIconButton(
+                        onClick = send,
+                        enabled = state.selectedAgent?.chatSupported == true && state.attachmentDrafts.none { it.status == AttachmentStatus.PREPARING },
+                    ) { Icon(Icons.Default.ArrowUpward, "发送") }
+                    else -> IconButton(onClick = startSpeechRecognition, enabled = state.selectedAgent?.chatSupported == true) {
+                        Icon(Icons.Default.Mic, "语音输入")
+                    }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun AttachmentSourceButton(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 24.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null)
+        Spacer(Modifier.width(16.dp))
+        Text(label, style = MaterialTheme.typography.titleMedium)
+    }
+}
+
+@Composable
+private fun AttachmentDraftCard(draft: AttachmentDraft, remove: () -> Unit, retry: () -> Unit) {
+    Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+        Row(Modifier.widthIn(min = 150.dp, max = 230.dp).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            val bitmap = remember(draft.thumbnailPath) { draft.thumbnailPath?.let(BitmapFactory::decodeFile)?.asImageBitmap() }
+            if (bitmap != null) Image(bitmap, draft.name, Modifier.size(42.dp), contentScale = ContentScale.Crop)
+            else Icon(Icons.AutoMirrored.Filled.InsertDriveFile, null, Modifier.size(28.dp))
+            Spacer(Modifier.width(7.dp))
+            Column(Modifier.weight(1f)) {
+                Text(draft.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelLarge)
+                Text(
+                    when (draft.status) {
+                        AttachmentStatus.UPLOADING -> "上传中 ${draft.progress}%"
+                        AttachmentStatus.FAILED -> draft.error ?: "上传失败"
+                        else -> formatBytes(draft.size)
+                    },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (draft.status == AttachmentStatus.FAILED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (draft.status == AttachmentStatus.FAILED) TextButton(onClick = retry) { Text("重试") }
+            else IconButton(onClick = remove, enabled = draft.status != AttachmentStatus.UPLOADING, modifier = Modifier.size(30.dp)) {
+                Icon(Icons.Default.Close, "移除附件", Modifier.size(17.dp))
+            }
+        }
+    }
+}
+
+private fun formatBytes(size: Long): String = when {
+    size >= 1024 * 1024 -> "%.1f MB".format(size / 1024.0 / 1024.0)
+    size >= 1024 -> "%.1f KB".format(size / 1024.0)
+    else -> "$size B"
 }
 
 @Composable

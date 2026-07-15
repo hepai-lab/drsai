@@ -20,6 +20,25 @@ class LocalAgentRuntimeTest {
         assertEquals("complete", dao.messages.last { it.role == "assistant" }.status)
     }
 
+    @Test fun runtime_binds_document_context_to_the_current_user_message() = runTest {
+        val dao = FakeDao()
+        val gateway = FakeGateway(listOf(listOf(ModelDelta("已分析", emptyList(), null))))
+        val attachment = MessageAttachment(
+            id = "a1", messageId = "m1", conversationId = "c1", remoteId = "att_1",
+            name = "report.txt", mimeType = "text/plain", size = 5, kind = "file",
+        )
+        LocalAgentRuntime(
+            gateway,
+            dao,
+            attachmentContexts = object : AttachmentContextGateway {
+                override suspend fun context(remoteId: String) = AttachmentContext(remoteId, "document", "text/plain", "真实附件内容", false)
+            },
+        ).run("u1", conversation(), "分析", listOf(attachment), userMessageId = "m1").toList()
+        assertTrue(gateway.requests.first().any { it.role == "system" && it.content.contains("真实附件内容") })
+        assertTrue(dao.messages.any { !it.visible && it.content.contains("真实附件内容") })
+        assertEquals("att_1", dao.attachments.single().remoteId)
+    }
+
     @Test fun runtime_executes_a_safe_tool_and_returns_the_result() = runTest {
         val dao = FakeDao()
         val gateway = FakeGateway(listOf(
@@ -103,6 +122,7 @@ private class FakeDao : ChatDao {
     val conversations = mutableListOf<ConversationEntity>()
     val messages = mutableListOf<MessageEntity>()
     val memories = mutableListOf<MemoryEntity>()
+    val attachments = mutableListOf<MessageAttachmentEntity>()
     override fun conversations(userId: String): Flow<List<ConversationEntity>> = flowOf(conversations.filter { it.userId == userId })
     override suspend fun conversationSnapshot(userId: String) = conversations.filter { it.userId == userId }
     override suspend fun visibleMessageSnapshot(id: String) = messages.filter { it.conversationId == id && it.visible }
@@ -110,6 +130,9 @@ private class FakeDao : ChatDao {
     override suspend fun saveConversation(item: ConversationEntity) { conversations.removeAll { it.id == item.id }; conversations += item }
     override suspend fun saveMessage(item: MessageEntity) { messages.removeAll { it.id == item.id }; messages += item }
     override suspend fun saveMessages(items: List<MessageEntity>) { items.forEach { saveMessage(it) } }
+    override suspend fun saveAttachments(items: List<MessageAttachmentEntity>) { attachments.removeAll { old -> items.any { it.id == old.id } }; attachments += items }
+    override suspend fun attachmentSnapshot(id: String) = attachments.filter { it.conversationId == id }
+    override suspend fun deleteAttachment(id: String) { attachments.removeAll { it.id == id } }
     override suspend fun updateConversation(id: String, title: String, updatedAt: Long) = Unit
     override suspend fun deleteConversation(id: String) { conversations.removeAll { it.id == id }; messages.removeAll { it.conversationId == id } }
     override suspend fun saveMemory(item: MemoryEntity): Long {

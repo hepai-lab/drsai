@@ -28,7 +28,7 @@ import java.security.spec.RSAPublicKeySpec
 import java.util.concurrent.TimeUnit
 
 internal val OIDC_ISSUER: String get() = BuildConfig.OIDC_ISSUER
-internal val OIDC_DISCOVERY: String get() = "$OIDC_ISSUER/.well-known/openid-configuration"
+internal val OIDC_DISCOVERY: String get() = BuildConfig.OIDC_DISCOVERY_URL
 internal const val OIDC_LEGACY_CLIENT_ID = "opendrsai-desktop"
 internal val OIDC_CLIENT_ID: String get() = BuildConfig.OIDC_CLIENT_ID
 internal const val OIDC_SCOPE = "openid email profile roles groups hai_api offline_access"

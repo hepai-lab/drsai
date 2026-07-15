@@ -10,6 +10,8 @@ import org.json.JSONObject
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.util.UUID
+import java.io.File
+import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
 
 private const val MAX_MODEL_ROUNDS = 8
@@ -50,6 +52,7 @@ class LocalAgentRuntime(
     private val client: ModelGateway,
     private val dao: ChatDao,
     private val tools: LocalToolRegistry = LocalToolRegistry(dao),
+    private val attachmentContexts: AttachmentContextGateway? = null,
 ) {
     private val pausedRuns = ConcurrentHashMap.newKeySet<String>()
     private val stoppedRuns = ConcurrentHashMap.newKeySet<String>()
@@ -65,20 +68,62 @@ class LocalAgentRuntime(
         client.cancelActive()
     }
 
-    fun run(userId: String, conversation: Conversation, input: String): Flow<RuntimeEvent> = channelFlow {
-        val runId = UUID.randomUUID().toString()
+    fun run(
+        userId: String,
+        conversation: Conversation,
+        input: String,
+        attachments: List<MessageAttachment> = emptyList(),
+        requestedRunId: String? = null,
+        userMessageId: String? = null,
+    ): Flow<RuntimeEvent> = channelFlow {
+        val runId = requestedRunId ?: UUID.randomUUID().toString()
         val worker = launch {
             send(RuntimeEvent.Started(runId))
             val userMessage = MessageEntity(
-                id = UUID.randomUUID().toString(),
+                id = userMessageId ?: UUID.randomUUID().toString(),
                 conversationId = conversation.id,
                 role = "user",
                 content = input,
             )
             dao.saveMessage(userMessage)
+            if (attachments.isNotEmpty()) dao.saveAttachments(attachments.map(MessageAttachment::toEntity))
             dao.updateConversation(conversation.id, conversation.title, System.currentTimeMillis())
             try {
                 val context = buildContext(dao.runtimeMessageSnapshot(conversation.id))
+                if (attachments.isNotEmpty()) {
+                    val documentParts = attachments.filter { it.kind != "image" }.mapNotNull { attachment ->
+                        val remoteId = attachment.remoteId ?: return@mapNotNull null
+                        val extracted = attachmentContexts?.context(remoteId) ?: return@mapNotNull null
+                        extracted.text?.let { text ->
+                            buildString {
+                                append("附件：${attachment.name}\n类型：${attachment.mimeType}\n")
+                                append(text)
+                                if (extracted.truncated) append("\n[附件内容已按安全上限截断]")
+                            }
+                        }
+                    }
+                    if (documentParts.isNotEmpty()) {
+                        val hidden = documentParts.joinToString("\n\n").take(80_000)
+                        dao.saveMessage(
+                            MessageEntity(
+                                id = UUID.randomUUID().toString(), conversationId = conversation.id, role = "system",
+                                content = "以下内容来自当前用户消息绑定的附件：\n$hidden", visible = false,
+                            ),
+                        )
+                        context += RuntimeMessage("system", "以下内容来自当前用户消息绑定的附件：\n$hidden")
+                    }
+                    val images = attachments.filter { it.kind == "image" }.mapNotNull { attachment ->
+                        val file = attachment.localPath?.let(::File)?.takeIf(File::isFile) ?: return@mapNotNull null
+                        RuntimeImage(
+                            attachment.mimeType,
+                            "data:${attachment.mimeType};base64,${Base64.getEncoder().encodeToString(file.readBytes())}",
+                        )
+                    }
+                    if (images.isNotEmpty()) {
+                        val userIndex = context.indexOfLast { it.role == "user" }
+                        if (userIndex >= 0) context[userIndex] = context[userIndex].copy(images = images)
+                    }
+                }
                 var modelRound = 0
                 var toolsEnabled = conversation.modelId !in toolsUnsupported
                 while (modelRound < MAX_MODEL_ROUNDS) {

@@ -38,6 +38,53 @@ data class ChatMessage(
     val text: String,
     val createdAt: Long = System.currentTimeMillis(),
     val status: String = "complete",
+    val attachments: List<MessageAttachment> = emptyList(),
+)
+
+enum class AttachmentStatus {
+    SELECTED, PREPARING, READY, UPLOADING, UPLOADED, SENDING, SENT, FAILED, CANCELLED, EXPIRED,
+}
+
+data class AttachmentDraft(
+    val id: String,
+    val name: String,
+    val mimeType: String,
+    val size: Long,
+    val kind: String,
+    val localPath: String,
+    val thumbnailPath: String? = null,
+    val sha256: String = "",
+    val remoteId: String? = null,
+    val status: AttachmentStatus = AttachmentStatus.SELECTED,
+    val progress: Int = 0,
+    val error: String? = null,
+)
+
+data class MessageAttachment(
+    val id: String,
+    val messageId: String,
+    val conversationId: String,
+    val remoteId: String? = null,
+    val name: String,
+    val mimeType: String,
+    val size: Long,
+    val kind: String,
+    val localPath: String? = null,
+    val thumbnailPath: String? = null,
+    val sha256: String = "",
+    val status: String = "sent",
+    val createdAt: Long = System.currentTimeMillis(),
+)
+
+data class RemoteAttachment(
+    val id: String,
+    val name: String,
+    val kind: String,
+    val mimeType: String,
+    val size: Long,
+    val sha256: String,
+    val processingStatus: String,
+    val expiresAt: String? = null,
 )
 
 data class AuthTokens(val accessToken: String, val refreshToken: String, val user: User)
@@ -58,7 +105,10 @@ data class RuntimeMessage(
     val content: String,
     val toolCallId: String? = null,
     val toolCalls: List<CompletedToolCall> = emptyList(),
+    val images: List<RuntimeImage> = emptyList(),
 )
+
+data class RuntimeImage(val mimeType: String, val dataUrl: String)
 
 data class CompletedToolCall(val id: String, val name: String, val arguments: String)
 data class ToolCallDelta(val index: Int, val id: String?, val name: String?, val arguments: String)
@@ -70,6 +120,7 @@ sealed interface RuntimeEvent {
     data class ToolStarted(val name: String) : RuntimeEvent
     data class ToolFinished(val name: String) : RuntimeEvent
     data class ToolDowngraded(val reason: String) : RuntimeEvent
+    data class Artifact(val attachment: RemoteAttachment) : RuntimeEvent
     data object Completed : RuntimeEvent
     data object Paused : RuntimeEvent
     data class Failed(val message: String, val retryable: Boolean = true) : RuntimeEvent
@@ -85,7 +136,7 @@ val DEFAULT_AGENT = Agent(
         Never claim to have shell, arbitrary file, browser, location, contacts, or device-control access.
         Ask before storing sensitive personal information. Do not expose tool JSON to the user.
     """.trimIndent(),
-    capabilities = setOf("chat", "local-tools", "memory"),
+    capabilities = setOf("chat", "local-tools", "memory", "attachment-upload", "image-input", "document-input"),
 )
 
 data class AgentCatalogStatus(
@@ -123,6 +174,7 @@ data class AppState(
     val toolDowngraded: Boolean = false,
     val agentCatalogStatus: AgentCatalogStatus = AgentCatalogStatus(),
     val darkTheme: Boolean? = null,
+    val attachmentDrafts: List<AttachmentDraft> = emptyList(),
 )
 
 internal fun sanitizeLegacyAssistantText(role: String, content: String): String {

@@ -1,14 +1,16 @@
 import asyncio
 import base64
+import io
 import sys
 import types
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, UploadFile
 from jose import jwt
 from pydantic import BaseModel
+from starlette.datastructures import Headers
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
@@ -50,9 +52,14 @@ from drsai_ui.ui_backend.backend.web import native_auth
 from drsai_ui.ui_backend.backend.web.native_agent_models import public_agent
 from drsai_ui.ui_backend.backend.web.native_agent_stream import NativeSseAdapter, NativeStreamSocket
 from drsai_ui.ui_backend.backend.web import native_agent_security
+from drsai_ui.ui_backend.backend.web.native_attachments import NativeAttachmentStore
 from drsai_ui.ui_backend.backend.web.native_agent_security import resolve_and_validate_agent_execution_targets, validate_agent_execution_targets, validate_public_https_url
 from drsai_ui.ui_backend.backend.web.routes.native import NativeAgentChatRequest, NativeAgentInputResponse, chat_with_native_agent, respond_to_native_agent_input, stop_native_agent_thread
 from drsai_ui.ui_backend.backend.web.routes import native as native_routes
+
+
+def _upload(name: str, content: bytes, mime: str) -> UploadFile:
+    return UploadFile(filename=name, file=io.BytesIO(content), headers=Headers({"content-type": mime}))
 
 
 def test_public_agent_removes_secrets_and_private_urls():
@@ -158,8 +165,10 @@ def test_native_sse_adapter_maps_chunks_logs_files_input_and_done_without_secret
     assert logs[0].startswith("event: agent.log")
     assert "secret" not in logs[0]
 
-    files, _ = adapter.encode({"type": "message_files", "data": {"files": [{"path": "result.txt", "name": "result.txt", "url": "https://private.invalid", "api_key": "secret"}]}})
+    files, _ = adapter.encode({"type": "message_files", "data": {"files": [{"id": "att_1", "path": "result.txt", "name": "result.txt", "mime_type": "text/plain", "size": 6, "url": "https://private.invalid", "api_key": "secret"}]}})
     assert '"path":"result.txt"' in files[0]
+    assert '"id":"att_1"' in files[0]
+    assert '"mime_type":"text/plain"' in files[0]
     assert "private.invalid" not in files[0]
     assert "secret" not in files[0]
 
@@ -195,7 +204,7 @@ def test_native_sse_adapter_maps_structured_error_without_private_data():
 
 
 @pytest.mark.parametrize("mode", ["ddf", "remote", "custom"])
-def test_native_chat_endpoint_reuses_run_and_streams_public_sse(mode, monkeypatch):
+def test_native_chat_endpoint_reuses_run_and_streams_public_sse(mode, monkeypatch, tmp_path):
     async def allow_test_target(agent):
         return {"aiapi.ihep.ac.cn" if agent.get("mode") == "ddf" else "agents.example.com"}
     monkeypatch.setattr(native_routes, "resolve_and_validate_agent_execution_targets", allow_test_target)
@@ -265,6 +274,7 @@ def test_native_chat_endpoint_reuses_run_and_streams_public_sse(mode, monkeypatc
             identity=NativeIdentity(user_id="native-user", issuer="https://ai-dev.ihep.ac.cn/api"),
             db=db,
             manager=manager,
+            attachment_store=NativeAttachmentStore(tmp_path / mode),
         )
         chunks = []
         async for chunk in response.body_iterator:
@@ -276,6 +286,7 @@ def test_native_chat_endpoint_reuses_run_and_streams_public_sse(mode, monkeypatc
             identity=NativeIdentity(user_id="native-user", issuer="https://ai-dev.ihep.ac.cn/api"),
             db=db,
             manager=manager,
+            attachment_store=NativeAttachmentStore(tmp_path / mode),
         )
         async for _chunk in second.body_iterator:
             pass
@@ -331,7 +342,7 @@ def test_native_execution_target_dns_rejects_private_resolution(monkeypatch):
     assert asyncio.run(resolve_and_validate_agent_execution_targets({"mode": "remote", "config": {"base_url": "https://agents.example.com/v1"}})) == {"agents.example.com"}
 
 
-def test_native_chat_disconnect_stops_runtime(monkeypatch):
+def test_native_chat_disconnect_stops_runtime(monkeypatch, tmp_path):
     async def allow_test_target(_agent):
         return {"aiapi.ihep.ac.cn"}
     monkeypatch.setattr(native_routes, "resolve_and_validate_agent_execution_targets", allow_test_target)
@@ -385,6 +396,7 @@ def test_native_chat_disconnect_stops_runtime(monkeypatch):
             identity=NativeIdentity(user_id="native-user", issuer="https://ai-dev.ihep.ac.cn/api"),
             db=FakeDb(),
             manager=manager,
+            attachment_store=NativeAttachmentStore(tmp_path),
         )
         first = await response.body_iterator.__anext__()
         await response.body_iterator.aclose()
@@ -411,6 +423,37 @@ def test_native_chat_rollout_flag_returns_404(monkeypatch):
             manager=None,
         ))
     assert error.value.status_code == 404
+
+
+def test_native_chat_attachment_ids_resolve_to_owned_runtime_files(tmp_path):
+    store = NativeAttachmentStore(tmp_path)
+    item = asyncio.run(store.save(_upload("input.txt", b"real attachment content", "text/plain"), "native-user", "thread-1", "run-1"))
+    files = native_routes._resolve_native_attachments(
+        [{"id": item.id}], "native-user", "thread-1", store,
+    )
+    assert files[0]["id"] == item.id
+    assert files[0]["name"] == "input.txt"
+    assert files[0]["type"] == "text/plain"
+    assert Path(files[0]["path"]).read_text(encoding="utf-8") == "real attachment content"
+    with pytest.raises(HTTPException) as wrong_thread:
+        native_routes._resolve_native_attachments(
+            [{"id": item.id}], "native-user", "thread-2", store,
+        )
+    assert wrong_thread.value.status_code == 403
+
+
+def test_native_runtime_materialization_uses_temp_copy_and_cleans_source_contract(tmp_path):
+    source = tmp_path / "source.txt"
+    source.write_text("content", encoding="utf-8")
+    files, root = native_routes._materialize_native_files([{
+        "id": "att_1", "name": "source.txt", "path": str(source), "kind": "file",
+    }])
+    assert root is not None
+    assert Path(files[0]["path"]).parent == Path(root)
+    assert Path(files[0]["path"]).read_text(encoding="utf-8") == "content"
+    assert source.is_file()
+    import shutil
+    shutil.rmtree(root)
 
 
 def test_native_stop_and_input_validate_thread_and_size(monkeypatch):

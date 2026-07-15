@@ -10,6 +10,10 @@ import ai.drsai.remote.data.AppState
 import ai.drsai.remote.data.AccessTokenCoordinator
 import ai.drsai.remote.data.Agent
 import ai.drsai.remote.data.AgentRepository
+import ai.drsai.remote.data.AttachmentDraft
+import ai.drsai.remote.data.AttachmentProcessor
+import ai.drsai.remote.data.AttachmentRepository
+import ai.drsai.remote.data.AttachmentStatus
 import ai.drsai.remote.data.ChatDatabase
 import ai.drsai.remote.data.ChatMessage
 import ai.drsai.remote.data.Conversation
@@ -19,6 +23,10 @@ import ai.drsai.remote.data.HaiModelClient
 import ai.drsai.remote.data.LocalAgentRuntime
 import ai.drsai.remote.data.MIGRATION_1_2
 import ai.drsai.remote.data.MIGRATION_2_3
+import ai.drsai.remote.data.MIGRATION_3_4
+import ai.drsai.remote.data.MessageAttachment
+import ai.drsai.remote.data.MAX_ATTACHMENTS
+import ai.drsai.remote.data.MAX_ATTACHMENT_TOTAL_BYTES
 import ai.drsai.remote.data.MessageEntity
 import ai.drsai.remote.data.OidcClient
 import ai.drsai.remote.data.OidcLoginSession
@@ -31,28 +39,37 @@ import ai.drsai.remote.data.SecureTokenStore
 import ai.drsai.remote.data.sanitizeLegacyAssistantText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import java.util.UUID
+import java.io.File
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val tokenStore by lazy { SecureTokenStore(app) }
     private val oidcTransactions by lazy { OidcTransactionStore(app) }
     private val database by lazy {
         Room.databaseBuilder(app, ChatDatabase::class.java, "opendrsai.db")
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
             .build()
     }
     private val oidcClient by lazy { OidcClient(refreshClientId = { tokenStore.oidcClientId }) }
     private val modelClient by lazy { HaiModelClient(tokenStore, oidcClient) }
-    private val runtime by lazy { LocalAgentRuntime(modelClient, database.dao()) }
     private val tokenCoordinator by lazy { AccessTokenCoordinator(tokenStore, oidcClient) }
     private val platformClient by lazy { PlatformAgentClient(tokenCoordinator) }
     private val agentRepository by lazy { AgentRepository(platformClient, database.dao()) }
     private val platformRuntime by lazy { PlatformAgentRuntime(tokenCoordinator, database.dao()) }
+    private val attachmentProcessor by lazy { AttachmentProcessor(app) }
+    private val attachmentRepository by lazy { AttachmentRepository(tokenCoordinator) }
+    private val runtime by lazy { LocalAgentRuntime(modelClient, database.dao(), attachmentContexts = attachmentRepository) }
     private val mutableState = MutableStateFlow(AppState())
     val state: StateFlow<AppState> = mutableState.asStateFlow()
 
@@ -63,10 +80,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private var activeRunSource: String = "local"
     private var streamText = ""
 
-    init { bootstrap() }
+    init {
+        viewModelScope.launch(Dispatchers.IO) { attachmentProcessor.cleanupOrphans() }
+        bootstrap()
+    }
 
     private fun update(transform: (AppState) -> AppState) {
-        mutableState.value = transform(mutableState.value)
+        mutableState.update(transform)
     }
 
     fun bootstrap() = viewModelScope.launch(Dispatchers.IO) {
@@ -196,13 +216,55 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun send(text: String) = sendMessage(text)
 
+    fun addAttachment(uri: Uri, fallbackName: String? = null) {
+        val snapshot = mutableState.value
+        if (snapshot.streaming) return
+        if (snapshot.attachmentDrafts.size >= MAX_ATTACHMENTS) {
+            update { it.copy(error = "一次最多添加 5 个附件") }
+            return
+        }
+        viewModelScope.launch {
+            runCatching { attachmentProcessor.prepare(uri, fallbackName) }
+                .onSuccess { draft ->
+                    val current = mutableState.value.attachmentDrafts
+                    if (current.sumOf(AttachmentDraft::size) + draft.size > MAX_ATTACHMENT_TOTAL_BYTES) {
+                        attachmentProcessor.delete(draft)
+                        update { it.copy(error = "一次发送的附件总大小不能超过 25 MB") }
+                    } else if (current.any { it.sha256 == draft.sha256 }) {
+                        attachmentProcessor.delete(draft)
+                        update { it.copy(error = "该附件已经添加") }
+                    } else {
+                        update { it.copy(attachmentDrafts = it.attachmentDrafts + draft, error = null) }
+                    }
+                }
+                .onFailure { error -> update { it.copy(error = error.message ?: "无法读取附件") } }
+        }
+    }
+
+    fun removeAttachment(id: String) {
+        val draft = mutableState.value.attachmentDrafts.firstOrNull { it.id == id } ?: return
+        update { it.copy(attachmentDrafts = it.attachmentDrafts.filterNot { item -> item.id == id }) }
+        attachmentProcessor.delete(draft)
+        draft.remoteId?.let { remote -> viewModelScope.launch { runCatching { attachmentRepository.delete(remote) } } }
+    }
+
+    fun retryAttachment(id: String) = update { state ->
+        state.copy(
+            attachmentDrafts = state.attachmentDrafts.map {
+                if (it.id == id) it.copy(status = AttachmentStatus.READY, progress = 0, error = null, remoteId = null) else it
+            },
+            error = null,
+        )
+    }
+
     private fun sendMessage(text: String) {
         val clean = text.trim()
         val snapshot = mutableState.value
         val user = snapshot.user ?: return
         val agent = snapshot.selectedAgent ?: return
         val model = snapshot.selectedModel
-        if (clean.isEmpty() || snapshot.streaming) return
+        val drafts = snapshot.attachmentDrafts
+        if ((clean.isEmpty() && drafts.isEmpty()) || snapshot.streaming) return
         if (!agent.available || !agent.chatSupported) {
             update { it.copy(error = "${agent.name} 暂不支持 Android 对话") }
             return
@@ -215,66 +277,154 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             update { it.copy(error = "单条消息不能超过 16,000 字符") }
             return
         }
+        if (drafts.isNotEmpty() && agent.source == "platform" && "attachment-upload" !in snapshot.agentCatalogStatus.capabilities) {
+            update { it.copy(error = "当前 HAI 平台尚未启用附件上传") }
+            return
+        }
+        if (drafts.any { it.kind == "image" } && "image-input" !in agent.capabilities) {
+            update { it.copy(error = "${agent.name} 暂不支持图片输入") }
+            return
+        }
+        if (drafts.any { it.kind != "image" } && "document-input" !in agent.capabilities) {
+            update { it.copy(error = "${agent.name} 暂不支持文档输入") }
+            return
+        }
         runJob = viewModelScope.launch {
-            var conversation = snapshot.currentConversation
-            if (conversation == null) {
-                val now = System.currentTimeMillis()
-                conversation = Conversation(
-                    id = UUID.randomUUID().toString(),
-                    title = clean.replace('\n', ' ').take(32),
-                    agentId = agent.id,
-                    agentName = agent.name,
-                    agentSource = agent.source,
-                    modelId = if (agent.source == "local") model?.id.orEmpty() else "",
-                    updatedAt = now,
-                )
-                database.dao().saveConversation(toEntity(conversation, user.id, now))
-                update { it.copy(currentConversation = conversation, conversations = listOf(conversation) + it.conversations) }
-            }
-            val activeConversation = conversation ?: return@launch
-            val optimisticUser = ChatMessage(UUID.randomUUID().toString(), activeConversation.id, "user", clean)
-            val optimisticAssistant = ChatMessage(UUID.randomUUID().toString(), activeConversation.id, "assistant", "", status = "streaming")
-            streamText = ""
-            update {
-                it.copy(
-                    messages = it.messages + optimisticUser + optimisticAssistant,
-                    streaming = true,
-                    // The empty streaming assistant message already renders the thinking state.
-                    // Keep the runtime banner for tool execution and lifecycle notices only.
-                    runtimeStatus = null,
-                    error = null,
-                )
-            }
-            activeRunSource = activeConversation.agentSource
-            val events = if (activeConversation.agentSource == "platform") {
-                platformRuntime.run(activeConversation, clean)
-            } else {
-                runtime.run(user.id, activeConversation, clean)
-            }
-            events.collect { event ->
-                when (event) {
-                    is RuntimeEvent.Started -> activeRunId = event.runId
-                    is RuntimeEvent.TextDelta -> {
-                        streamText += event.text
-                        replaceLast(streamText)
-                        update { it.copy(runtimeStatus = null) }
-                    }
-                    is RuntimeEvent.ToolStarted -> update { it.copy(runtimeStatus = toolLabel(event.name)) }
-                    is RuntimeEvent.ToolFinished -> update { it.copy(runtimeStatus = "正在整理工具结果…") }
-                    is RuntimeEvent.ToolDowngraded -> update { it.copy(toolDowngraded = true, runtimeStatus = event.reason) }
-                    RuntimeEvent.Completed -> finishRun(activeConversation.id)
-                    RuntimeEvent.Paused -> {
-                        reloadMessages(activeConversation.id)
-                        update { it.copy(streaming = false, runtimeStatus = null, error = "任务已在后台暂停，可点击重试继续") }
-                    }
-                    is RuntimeEvent.Failed -> {
-                        reloadMessages(activeConversation.id)
-                        update { it.copy(streaming = false, runtimeStatus = null, error = event.message) }
+            try {
+                update { it.copy(streaming = true, runtimeStatus = if (drafts.isNotEmpty()) "正在上传附件…" else null, error = null) }
+                var conversation = snapshot.currentConversation
+                if (conversation == null) {
+                    val now = System.currentTimeMillis()
+                    val title = clean.ifBlank { drafts.first().name }.replace('\n', ' ').take(32)
+                    conversation = Conversation(
+                        id = UUID.randomUUID().toString(), title = title, agentId = agent.id, agentName = agent.name,
+                        agentSource = agent.source, modelId = if (agent.source == "local") model?.id.orEmpty() else "", updatedAt = now,
+                    )
+                    database.dao().saveConversation(toEntity(conversation, user.id, now))
+                    update { it.copy(currentConversation = conversation, conversations = listOf(conversation) + it.conversations) }
+                }
+                val activeConversation = conversation ?: return@launch
+                val runId = UUID.randomUUID().toString()
+                val userMessageId = UUID.randomUUID().toString()
+                val semaphore = Semaphore(2)
+                val uploaded = coroutineScope {
+                    drafts.map { draft ->
+                        async {
+                            semaphore.withPermit {
+                                draft.remoteId?.let { remote ->
+                                    return@withPermit draft.copy(remoteId = remote, status = AttachmentStatus.UPLOADED, progress = 100)
+                                }
+                                updateDraft(draft.id) { it.copy(status = AttachmentStatus.UPLOADING, progress = 0, error = null) }
+                                try {
+                                    val remote = attachmentRepository.upload(draft, activeConversation.id, runId, draft.id) { progress ->
+                                        updateDraft(draft.id) { it.copy(status = AttachmentStatus.UPLOADING, progress = progress) }
+                                    }
+                                    draft.copy(remoteId = remote.id, status = AttachmentStatus.UPLOADED, progress = 100)
+                                        .also { complete -> updateDraft(draft.id) { complete } }
+                                } catch (error: Throwable) {
+                                    updateDraft(draft.id) { it.copy(status = AttachmentStatus.FAILED, error = error.message, progress = 0) }
+                                    throw error
+                                }
+                            }
+                        }
+                    }.awaitAll()
+                }
+                val messageText = clean.ifBlank { "请分析这些附件" }
+                val messageAttachments = uploaded.map { draft ->
+                    MessageAttachment(
+                        id = draft.id, messageId = userMessageId, conversationId = activeConversation.id,
+                        remoteId = draft.remoteId, name = draft.name, mimeType = draft.mimeType, size = draft.size,
+                        kind = draft.kind, localPath = draft.localPath, thumbnailPath = draft.thumbnailPath,
+                        sha256 = draft.sha256, status = "sent",
+                    )
+                }
+                val optimisticUser = ChatMessage(userMessageId, activeConversation.id, "user", clean, attachments = messageAttachments)
+                val assistantMessageId = UUID.randomUUID().toString()
+                val optimisticAssistant = ChatMessage(assistantMessageId, activeConversation.id, "assistant", "", status = "streaming")
+                streamText = ""
+                update { it.copy(messages = it.messages + optimisticUser + optimisticAssistant, attachmentDrafts = emptyList(), runtimeStatus = null) }
+                activeRunSource = activeConversation.agentSource
+                val events = if (activeConversation.agentSource == "platform") {
+                    platformRuntime.run(activeConversation, messageText, messageAttachments, runId, userMessageId, assistantMessageId)
+                } else {
+                    runtime.run(user.id, activeConversation, messageText, messageAttachments, runId, userMessageId)
+                }
+                events.collect { event ->
+                    when (event) {
+                        is RuntimeEvent.Started -> activeRunId = event.runId
+                        is RuntimeEvent.TextDelta -> { streamText += event.text; replaceLast(streamText); update { it.copy(runtimeStatus = null) } }
+                        is RuntimeEvent.ToolStarted -> update { it.copy(runtimeStatus = toolLabel(event.name)) }
+                        is RuntimeEvent.ToolFinished -> update { it.copy(runtimeStatus = "正在整理工具结果…") }
+                        is RuntimeEvent.ToolDowngraded -> update { it.copy(toolDowngraded = true, runtimeStatus = event.reason) }
+                        is RuntimeEvent.Artifact -> receiveArtifact(activeConversation.id, assistantMessageId, event.attachment)
+                        RuntimeEvent.Completed -> finishRun(activeConversation.id)
+                        RuntimeEvent.Paused -> { reloadMessages(activeConversation.id); update { it.copy(streaming = false, runtimeStatus = null, error = "任务已在后台暂停，可点击重试继续") } }
+                        is RuntimeEvent.Failed -> { reloadMessages(activeConversation.id); update { it.copy(streaming = false, runtimeStatus = null, error = event.message) } }
                     }
                 }
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                update { it.copy(streaming = false, runtimeStatus = null) }
+            } catch (error: Throwable) {
+                update { it.copy(streaming = false, runtimeStatus = null, error = error.message ?: "附件发送失败") }
+            } finally {
+                activeRunId = null
+                activeRunSource = "local"
             }
-            activeRunId = null
-            activeRunSource = "local"
+        }
+    }
+
+    private fun updateDraft(id: String, transform: (AttachmentDraft) -> AttachmentDraft) = update { state ->
+        state.copy(attachmentDrafts = state.attachmentDrafts.map { if (it.id == id) transform(it) else it })
+    }
+
+    private suspend fun receiveArtifact(
+        conversationId: String,
+        messageId: String,
+        remote: ai.drsai.remote.data.RemoteAttachment,
+    ) {
+        val safeName = ai.drsai.remote.data.AttachmentPolicy.sanitizeName(remote.name)
+        val target = File(getApplication<Application>().cacheDir, "attachments/results/${remote.id}-$safeName")
+        val attachment = runCatching { attachmentRepository.download(remote.id, target) }.fold(
+            onSuccess = { file ->
+                MessageAttachment(
+                    remote.id, messageId, conversationId, remote.id, remote.name, remote.mimeType,
+                    remote.size, remote.kind, file.absolutePath, null, remote.sha256, "downloaded",
+                )
+            },
+            onFailure = {
+                MessageAttachment(
+                    remote.id, messageId, conversationId, remote.id, remote.name, remote.mimeType,
+                    remote.size, remote.kind, null, null, remote.sha256, "download_failed",
+                )
+            },
+        )
+        database.dao().saveAttachments(listOf(ai.drsai.remote.data.MessageAttachmentEntity(
+            attachment.id, attachment.messageId, attachment.conversationId, attachment.remoteId,
+            attachment.name, attachment.mimeType, attachment.size, attachment.kind, attachment.localPath,
+            attachment.thumbnailPath, attachment.sha256, attachment.status, attachment.createdAt,
+        )))
+        update { state ->
+            state.copy(messages = state.messages.map { message ->
+                if (message.id == messageId) {
+                    message.copy(attachments = message.attachments.filterNot { it.id == attachment.id } + attachment)
+                } else message
+            })
+        }
+    }
+
+    fun retryResultAttachment(messageId: String, attachmentId: String) {
+        val message = mutableState.value.messages.firstOrNull { it.id == messageId } ?: return
+        val attachment = message.attachments.firstOrNull { it.id == attachmentId } ?: return
+        val remoteId = attachment.remoteId ?: return
+        viewModelScope.launch {
+            receiveArtifact(
+                message.conversationId,
+                messageId,
+                ai.drsai.remote.data.RemoteAttachment(
+                    remoteId, attachment.name, attachment.kind, attachment.mimeType, attachment.size,
+                    attachment.sha256, "ready",
+                ),
+            )
         }
     }
 
@@ -299,6 +449,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         activeRunId?.let { runId ->
             if (activeRunSource == "platform") platformRuntime.stop(runId) else runtime.stop(runId)
         }
+        if (activeRunId == null) runJob?.cancel()
         update { it.copy(runtimeStatus = "正在停止…") }
     }
 
@@ -310,13 +461,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun retry() {
-        val text = mutableState.value.messages.lastOrNull { it.role == "user" }?.text ?: return
-        update { it.copy(error = null) }
-        sendMessage(text)
+        val message = mutableState.value.messages.lastOrNull { it.role == "user" } ?: return
+        val drafts = message.attachments.mapNotNull { attachment ->
+            val path = attachment.localPath?.takeIf { File(it).isFile } ?: return@mapNotNull null
+            AttachmentDraft(
+                id = UUID.randomUUID().toString(), name = attachment.name, mimeType = attachment.mimeType,
+                size = attachment.size, kind = attachment.kind, localPath = path,
+                thumbnailPath = attachment.thumbnailPath, sha256 = attachment.sha256,
+                remoteId = attachment.remoteId, status = AttachmentStatus.UPLOADED, progress = 100,
+            )
+        }
+        update { it.copy(error = null, attachmentDrafts = drafts) }
+        sendMessage(message.text)
     }
 
-    fun newConversation() = update {
-        if (it.streaming) it else it.copy(currentConversation = null, messages = emptyList(), historyOpen = false, error = null)
+    fun newConversation() {
+        if (mutableState.value.streaming) return
+        mutableState.value.attachmentDrafts.forEach(attachmentProcessor::delete)
+        update { it.copy(currentConversation = null, messages = emptyList(), attachmentDrafts = emptyList(), historyOpen = false, error = null) }
     }
 
     fun selectAgent(id: String) {
@@ -397,14 +559,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         oidcClient.cancel(oidcSession)
         oidcTransactions.clear()
         loginJob?.cancel()
+        mutableState.value.attachmentDrafts.forEach(attachmentProcessor::delete)
         viewModelScope.launch {
+            mutableState.value.attachmentDrafts.mapNotNull { it.remoteId }.forEach { remote ->
+                runCatching { attachmentRepository.delete(remote) }
+            }
             runCatching { modelClient.logout() }
             tokenStore.clear()
             update { AppState(destination = AppDestination.Login) }
         }
     }
 
-    private suspend fun loadMessages(id: String) = database.dao().visibleMessageSnapshot(id).map {
+    private suspend fun loadMessages(id: String): List<ChatMessage> {
+        val attachments = database.dao().attachmentSnapshot(id).groupBy { it.messageId }
+        return database.dao().visibleMessageSnapshot(id).map {
         ChatMessage(
             it.id,
             it.conversationId,
@@ -412,7 +580,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             sanitizeLegacyAssistantText(it.role, it.content),
             it.createdAt,
             it.status,
+            attachments[it.id].orEmpty().map { item ->
+                MessageAttachment(
+                    id = item.id,
+                    messageId = item.messageId,
+                    conversationId = item.conversationId,
+                    remoteId = item.remoteId,
+                    name = item.name,
+                    mimeType = item.mimeType,
+                    size = item.size,
+                    kind = item.kind,
+                    localPath = item.localPath,
+                    thumbnailPath = item.thumbnailPath,
+                    sha256 = item.sha256,
+                    status = item.status,
+                    createdAt = item.createdAt,
+                )
+            },
         )
+        }
     }
 
     private fun toConversation(entity: ConversationEntity) = Conversation(

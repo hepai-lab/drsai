@@ -11,11 +11,14 @@ import ai.drsai.remote.data.Conversation
 import ai.drsai.remote.data.ConversationEntity
 import ai.drsai.remote.data.MemoryEntity
 import ai.drsai.remote.data.MessageEntity
+import ai.drsai.remote.data.MessageAttachmentEntity
+import ai.drsai.remote.data.MessageAttachment
 import ai.drsai.remote.data.RuntimeEvent
 import ai.drsai.remote.data.TokenLifecycleClient
 import ai.drsai.remote.data.User
 import ai.drsai.remote.data.nativeApiError
 import ai.drsai.remote.data.nativeTextDelta
+import ai.drsai.remote.data.nativeArtifacts
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
@@ -38,11 +41,10 @@ class PlatformAgentClientTest {
     @Test fun catalog_parses_native_v1_shape_and_public_capabilities() = runTest {
         server.enqueue(MockResponse().setBody(
             """{
-              "api_version":"native-v1",
-              "capabilities":["agents","agent-chat"],
-              "data":{"agents":[
+              "status":true,
+              "data":{"api_version":"native-v1","capabilities":{"features":["agents","agent-chat","attachment-upload"]},"agents":[
                 {"id":"ddf-1","name":"DDF 助手","description":"远程分析", "mode":"ddf",
-                 "available":true,"is_default":true,"capabilities":["chat"],
+                 "available":true,"is_default":true,"capabilities":{"chat":true,"document-input":true},
                  "examples":[{"zh":"分析这组数据","en":"Analyze data"}]},
                 {"id":"remote-1","name":"离线助手","mode":"remote","status":"offline","capabilities":[]}
               ]}
@@ -58,8 +60,10 @@ class PlatformAgentClientTest {
 
         assertEquals("native-v1", result.status.apiVersion)
         assertTrue("agent-chat" in result.status.capabilities)
+        assertTrue("attachment-upload" in result.status.capabilities)
         assertEquals("platform:ddf-1", result.agents[0].id)
         assertTrue(result.agents[0].chatSupported)
+        assertTrue("document-input" in result.agents[0].capabilities)
         assertTrue(result.agents[0].isDefault)
         assertEquals(listOf("分析这组数据"), result.agents[0].examples)
         assertFalse(result.agents[1].available)
@@ -92,6 +96,9 @@ class PlatformAgentClientTest {
             409,
             """{"detail":{"code":"agent_chat_unsupported"}}""",
         ).message)
+        val artifact = nativeArtifacts("""{"file_events":[{"id":"att_result","name":"result.txt","mime_type":"text/plain","size":12,"sha256":"hash"}]}""").single()
+        assertEquals("att_result", artifact.id)
+        assertEquals("result.txt", artifact.name)
     }
 
     @Test fun platform_runtime_streams_and_persists_native_agent_reply() = runTest {
@@ -99,7 +106,8 @@ class PlatformAgentClientTest {
             .addHeader("Content-Type", "text/event-stream")
             .setChunkedBody(
                 "data: {\"choices\":[{\"delta\":{\"content\":\"你\"}}]}\n\n" +
-                    "data: {\"choices\":[{\"delta\":{\"content\":\"好\"}}]}\n\n" +
+                "data: {\"choices\":[{\"delta\":{\"content\":\"好\"}}]}\n\n" +
+                    "data: {\"file_events\":[{\"id\":\"att_result\",\"name\":\"result.txt\",\"mime_type\":\"text/plain\",\"size\":12,\"sha256\":\"hash\"}]}\n\n" +
                     "data: [DONE]\n\n",
                 9,
             ))
@@ -117,7 +125,8 @@ class PlatformAgentClientTest {
             agentSource = "platform",
         )
 
-        val events = runtime.run(conversation, "hello").toList()
+        val attachment = MessageAttachment("a1", "m1", "thread-1", "att_server", "x.txt", "text/plain", 1, "file")
+        val events = runtime.run(conversation, "hello", listOf(attachment), requestedRunId = "run-fixed", userMessageId = "m1", assistantMessageId = "assistant-1").toList()
 
         assertEquals("你好", events.filterIsInstance<RuntimeEvent.TextDelta>().joinToString(separator = "") { it.text })
         assertTrue(events.last() == RuntimeEvent.Completed)
@@ -125,7 +134,13 @@ class PlatformAgentClientTest {
         assertEquals("complete", dao.messages.last { it.role == "assistant" }.status)
         val request = server.takeRequest()
         assertEquals("/api/native/v1/agents/ddf-1/chat", request.requestUrl?.encodedPath)
-        assertTrue(request.body.readUtf8().contains("\"thread_id\":\"thread-1\""))
+        val body = request.body.readUtf8()
+        assertTrue(body.contains("\"thread_id\":\"thread-1\""))
+        assertTrue(body.contains("\"id\":\"att_server\""))
+        assertEquals("android-chat-run-fixed", request.getHeader("Idempotency-Key"))
+        assertEquals("att_server", dao.attachments.first().remoteId)
+        assertTrue(events.any { it is RuntimeEvent.Artifact && it.attachment.id == "att_result" })
+        assertEquals("att_result", dao.attachments.last().remoteId)
     }
 }
 
@@ -150,6 +165,7 @@ private class PlatformFakeTokenLifecycle : TokenLifecycleClient {
 
 private class PlatformRuntimeFakeDao : ChatDao {
     val messages = mutableListOf<MessageEntity>()
+    val attachments = mutableListOf<MessageAttachmentEntity>()
     override fun conversations(userId: String): Flow<List<ConversationEntity>> = flowOf(emptyList())
     override suspend fun conversationSnapshot(userId: String) = emptyList<ConversationEntity>()
     override suspend fun visibleMessageSnapshot(id: String) = messages.filter { it.conversationId == id && it.visible }
@@ -160,6 +176,9 @@ private class PlatformRuntimeFakeDao : ChatDao {
         messages += item
     }
     override suspend fun saveMessages(items: List<MessageEntity>) = items.forEach { saveMessage(it) }
+    override suspend fun saveAttachments(items: List<MessageAttachmentEntity>) { attachments += items }
+    override suspend fun attachmentSnapshot(id: String) = attachments.filter { it.conversationId == id }
+    override suspend fun deleteAttachment(id: String) { attachments.removeAll { it.id == id } }
     override suspend fun updateConversation(id: String, title: String, updatedAt: Long) = Unit
     override suspend fun deleteConversation(id: String) = Unit
     override suspend fun saveMemory(item: MemoryEntity) = 1L

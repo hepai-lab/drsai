@@ -40,8 +40,10 @@ class ModelsTest {
     }
 
     @Test fun oidc_configuration_supports_native_and_legacy_redirects() {
-        assertEquals("${BuildConfig.HAI_BASE_URL}/api", OIDC_ISSUER)
+        assertEquals(BuildConfig.OIDC_ISSUER, OIDC_ISSUER)
         assertEquals("${BuildConfig.HAI_BASE_URL}/apiv2/v1", BuildConfig.MODEL_BASE_URL)
+        assertEquals("opendrsai-android", BuildConfig.OIDC_CLIENT_ID)
+        assertEquals(OIDC_NATIVE_REDIRECT_URI, BuildConfig.OIDC_REDIRECT_URI)
         assertEquals("opendrsai://oauth2redirect", OIDC_APP_RETURN_URI)
         assertEquals("ai.drsai.remote:/oauth2redirect", OIDC_NATIVE_REDIRECT_URI)
         assertFalse(OidcConfiguration("opendrsai-desktop").usesNativeRedirect)

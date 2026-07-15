@@ -5,16 +5,20 @@ import asyncio
 import json
 import os
 import re
+from pathlib import Path
+import shutil
+import tempfile
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .....agent_factory.agent_mode_cofigs import get_user_agents
 from ...datamodel.db import Run, RunStatus, Session, UserAgents, UserRemoteAgents
 from ..deps import get_db, get_websocket_manager
 from ..native_agent_models import public_agent
+from ..native_attachments import NativeAttachmentStore, get_native_attachment_store
 from ..native_agent_security import resolve_and_validate_agent_execution_targets
 from ..native_agent_stream import NativeSseAdapter, NativeStreamSocket
 from ..native_auth import NativeIdentity, get_native_identity
@@ -92,6 +96,11 @@ async def list_native_agents(
         for agent in catalog.get("data", [])
         if isinstance(agent, dict) and agent.get("id")
     ]
+    if _native_chat_enabled():
+        for public_item in agents:
+            capabilities = set(public_item.get("capabilities") or [])
+            capabilities.update({"attachment-upload", "image-input", "document-input", "artifact-output"})
+            public_item["capabilities"] = sorted(capabilities)
     return {
         "status": True,
         "api_version": "native-v1",
@@ -100,9 +109,68 @@ async def list_native_agents(
             "agent-details",
             "agent-default",
             "agent-usage",
-        ] + (["agent-chat", "agent-stop", "agent-files", "agent-input-request"] if _native_chat_enabled() else []),
+        ] + ([
+            "agent-chat",
+            "agent-stop",
+            "agent-files",
+            "agent-input-request",
+            "attachment-upload",
+            "image-input",
+            "document-input",
+            "artifact-output",
+        ] if _native_chat_enabled() else []),
         "data": {"agents": agents, "default_agent_id": default_id},
     }
+
+
+@router.post("/attachments")
+async def upload_native_attachment(
+    file: UploadFile = File(...),
+    thread_id: str = Form(...),
+    run_id: str | None = Form(default=None),
+    identity: NativeIdentity = Depends(get_native_identity),
+    store: NativeAttachmentStore = Depends(get_native_attachment_store),
+) -> dict[str, Any]:
+    _require_native_chat_enabled()
+    _validate_native_thread_id(thread_id)
+    if run_id is not None:
+        _validate_native_thread_id(run_id)
+    store.cleanup_expired()
+    item = await store.save(file, identity.user_id, thread_id, run_id)
+    return {"status": True, "data": item.public()}
+
+
+@router.get("/attachments/{attachment_id}/context")
+async def get_native_attachment_context(
+    attachment_id: str,
+    identity: NativeIdentity = Depends(get_native_identity),
+    store: NativeAttachmentStore = Depends(get_native_attachment_store),
+) -> dict[str, Any]:
+    _require_native_chat_enabled()
+    item = store.get(attachment_id, identity.user_id)
+    return {"status": True, "data": store.context(item)}
+
+
+@router.get("/attachments/{attachment_id}/content")
+async def download_native_attachment(
+    attachment_id: str,
+    identity: NativeIdentity = Depends(get_native_identity),
+    store: NativeAttachmentStore = Depends(get_native_attachment_store),
+) -> FileResponse:
+    _require_native_chat_enabled()
+    item = store.get(attachment_id, identity.user_id)
+    return FileResponse(item.path, filename=item.name, media_type=item.mime_type)
+
+
+@router.delete("/attachments/{attachment_id}")
+async def delete_native_attachment(
+    attachment_id: str,
+    identity: NativeIdentity = Depends(get_native_identity),
+    store: NativeAttachmentStore = Depends(get_native_attachment_store),
+) -> dict[str, Any]:
+    _require_native_chat_enabled()
+    store.delete(attachment_id, identity.user_id)
+    return {"status": True, "data": {"id": attachment_id, "status": "deleted"}}
 
 
 @router.get("/agents/default")
@@ -156,8 +224,13 @@ async def chat_with_native_agent(
     identity: NativeIdentity = Depends(get_native_identity),
     db=Depends(get_db),
     manager=Depends(get_websocket_manager),
+    attachment_store: NativeAttachmentStore = Depends(get_native_attachment_store),
 ) -> StreamingResponse:
     _require_native_chat_enabled()
+    if not isinstance(attachment_store, NativeAttachmentStore):
+        # Direct function calls in compatibility tests do not resolve FastAPI
+        # dependency defaults; production requests always receive the store.
+        attachment_store = get_native_attachment_store()
     if not request.stream:
         raise HTTPException(status_code=400, detail="Native agent chat requires stream=true")
     agent = _owned_agent(db, identity.user_id, agent_id)
@@ -168,6 +241,13 @@ async def chat_with_native_agent(
     latest_user = next((item.content for item in reversed(request.messages) if item.role == "user"), "")
     if not latest_user:
         raise HTTPException(status_code=400, detail="A user message is required")
+    runtime_files = _resolve_native_attachments(
+        request.attachments,
+        identity.user_id,
+        request.thread_id,
+        attachment_store,
+    )
+    runtime_files, materialized_root = _materialize_native_files(runtime_files)
     session, run = _get_or_create_native_run(db, identity.user_id, request.thread_id, agent)
     if session.id is None or run.id is None:
         raise HTTPException(status_code=500, detail="Unable to initialize native agent run")
@@ -195,7 +275,7 @@ async def chat_with_native_agent(
                 latest_user,
                 team_config,
                 settings_config,
-                files=_public_attachment_metadata(request.attachments),
+                files=runtime_files,
             )
         except asyncio.CancelledError:
             raise
@@ -204,6 +284,9 @@ async def chat_with_native_agent(
                 "type": "error",
                 "error": "Agent execution failed. Check the selected agent status and try again.",
             })
+        finally:
+            if materialized_root:
+                shutil.rmtree(materialized_root, ignore_errors=True)
 
     execution = asyncio.create_task(execute())
 
@@ -217,6 +300,7 @@ async def chat_with_native_agent(
                 except asyncio.TimeoutError:
                     yield ": keep-alive\n\n"
                     continue
+                _stage_native_artifacts(message, attachment_store, identity.user_id, request.thread_id, str(run.id))
                 frames, terminal = adapter.encode(message)
                 for frame in frames:
                     yield frame
@@ -329,6 +413,77 @@ def _public_attachment_metadata(attachments: list[dict[str, Any]]) -> list[dict[
         if isinstance(name, str) and name and isinstance(kind, str):
             public.append({"name": name[:260], "kind": kind[:40]})
     return public
+
+
+def _resolve_native_attachments(
+    attachments: list[dict[str, Any]],
+    user_id: str,
+    thread_id: str,
+    store: NativeAttachmentStore,
+) -> list[dict[str, Any]]:
+    if not attachments:
+        return []
+    with_ids = [isinstance(item, dict) and isinstance(item.get("id"), str) for item in attachments]
+    if all(with_ids):
+        return [item.runtime_file() for item in store.resolve_many(attachments, user_id, thread_id)]
+    if any(with_ids):
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "attachment_invalid", "message": "Attachment references cannot mix IDs and legacy metadata"},
+        )
+    # Desktop v1.4.5 compatibility: retain public name/kind metadata while
+    # discarding every client path and URL. New clients must upload and use IDs.
+    return _public_attachment_metadata(attachments)
+
+
+def _stage_native_artifacts(
+    message: dict[str, Any],
+    store: NativeAttachmentStore,
+    user_id: str,
+    thread_id: str,
+    run_id: str,
+) -> None:
+    if message.get("type") != "message_files":
+        return
+    data = message.get("data") if isinstance(message.get("data"), dict) else {}
+    files = data.get("files") if isinstance(data.get("files"), list) else []
+    staged: list[dict[str, Any]] = []
+    for raw in files[:20]:
+        if not isinstance(raw, dict):
+            continue
+        path = raw.get("path")
+        if not isinstance(path, str):
+            continue
+        try:
+            item = store.import_runtime_file(Path(path), user_id, thread_id, run_id)
+            staged.append({**raw, **item.public(), "path": item.name, "action": "artifact"})
+        except HTTPException:
+            # Preserve the existing public name/path event for compatibility,
+            # but do not expose a download ID for unavailable or unsafe files.
+            staged.append(raw)
+    data["files"] = staged
+    message["data"] = data
+
+
+def _materialize_native_files(files: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str | None]:
+    if not any(item.get("id") and item.get("path") for item in files):
+        return files, None
+    root = tempfile.mkdtemp(prefix="opendrsai-native-run-")
+    materialized: list[dict[str, Any]] = []
+    try:
+        for item in files:
+            source = Path(str(item.get("path") or ""))
+            if not item.get("id") or not source.is_file():
+                materialized.append(item)
+                continue
+            name = re.sub(r"[^\w.()\-\u4e00-\u9fff ]", "_", str(item.get("name") or source.name))[:200]
+            target = Path(root) / f"{item['id']}-{name}"
+            shutil.copyfile(source, target)
+            materialized.append({**item, "path": str(target)})
+        return materialized, root
+    except Exception:
+        shutil.rmtree(root, ignore_errors=True)
+        raise
 
 
 def _owned_agent(db, user_id: str, agent_id: str) -> dict[str, Any]:

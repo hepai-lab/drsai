@@ -16,13 +16,19 @@ val systemVersionCode = (versionParts.getOrElse(0) { 0 } * 10_000) +
     versionParts.getOrElse(2) { 0 }
 val androidOidcClientId = providers.gradleProperty("opendrsai.oidc.clientId")
     .orElse(providers.environmentVariable("OPENDRSAI_ANDROID_OIDC_CLIENT_ID"))
-    .getOrElse("opendrsai-desktop")
+    .getOrElse("opendrsai-android")
 val androidOidcRedirectUri = providers.gradleProperty("opendrsai.oidc.redirectUri")
     .orElse(providers.environmentVariable("OPENDRSAI_ANDROID_OIDC_REDIRECT_URI"))
-    .getOrElse("")
+    .getOrElse("ai.drsai.remote:/oauth2redirect")
 val haiBaseUrl = providers.gradleProperty("opendrsai.hai.baseUrl")
     .orElse(providers.environmentVariable("OPENDRSAI_ANDROID_HAI_BASE_URL"))
     .getOrElse("https://ai.ihep.ac.cn")
+val oidcIssuer = providers.gradleProperty("opendrsai.oidc.issuer")
+    .orElse(providers.environmentVariable("OPENDRSAI_ANDROID_OIDC_ISSUER"))
+    .getOrElse("$haiBaseUrl/api")
+val oidcDiscoveryUrl = providers.gradleProperty("opendrsai.oidc.discoveryUrl")
+    .orElse(providers.environmentVariable("OPENDRSAI_ANDROID_OIDC_DISCOVERY_URL"))
+    .getOrElse("$oidcIssuer/.well-known/openid-configuration")
     .trimEnd('/')
 fun String.asBuildConfigString(): String =
     "\"${replace("\\", "\\\\").replace("\"", "\\\"")}\""
@@ -46,7 +52,8 @@ android {
         versionCode = systemVersionCode
         versionName = systemVersion
         buildConfigField("String", "HAI_BASE_URL", haiBaseUrl.asBuildConfigString())
-        buildConfigField("String", "OIDC_ISSUER", "$haiBaseUrl/api".asBuildConfigString())
+        buildConfigField("String", "OIDC_ISSUER", oidcIssuer.asBuildConfigString())
+        buildConfigField("String", "OIDC_DISCOVERY_URL", oidcDiscoveryUrl.asBuildConfigString())
         buildConfigField("String", "MODEL_BASE_URL", "$haiBaseUrl/apiv2/v1".asBuildConfigString())
         buildConfigField("String", "OIDC_CLIENT_ID", androidOidcClientId.asBuildConfigString())
         buildConfigField("String", "OIDC_REDIRECT_URI", androidOidcRedirectUri.asBuildConfigString())
@@ -54,7 +61,10 @@ android {
     }
 
     buildTypes {
-        debug { applicationIdSuffix = ".debug" }
+        debug {
+            applicationIdSuffix = ".debug"
+            manifestPlaceholders["usesCleartextTraffic"] = "true"
+        }
         release {
             manifestPlaceholders["usesCleartextTraffic"] = "false"
             isMinifyEnabled = true
@@ -94,6 +104,7 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.10.0")
     implementation(platform("androidx.compose:compose-bom:2025.06.01"))
     implementation("androidx.activity:activity-compose:1.10.1")
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
     implementation("androidx.browser:browser:1.8.0")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")

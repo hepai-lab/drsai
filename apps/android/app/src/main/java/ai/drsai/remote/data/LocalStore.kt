@@ -72,6 +72,32 @@ data class MessageEntity(
     val createdAt: Long = System.currentTimeMillis(),
 )
 
+@Entity(
+    tableName = "message_attachments",
+    foreignKeys = [ForeignKey(
+        entity = MessageEntity::class,
+        parentColumns = ["id"],
+        childColumns = ["messageId"],
+        onDelete = ForeignKey.CASCADE,
+    )],
+    indices = [Index("messageId"), Index("conversationId"), Index(value = ["remoteId"], unique = false)],
+)
+data class MessageAttachmentEntity(
+    @PrimaryKey val id: String,
+    val messageId: String,
+    val conversationId: String,
+    val remoteId: String?,
+    val name: String,
+    val mimeType: String,
+    val size: Long,
+    val kind: String,
+    val localPath: String?,
+    val thumbnailPath: String?,
+    val sha256: String,
+    val status: String = "sent",
+    val createdAt: Long = System.currentTimeMillis(),
+)
+
 @Entity(tableName = "memories", indices = [Index("userId")])
 data class MemoryEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -103,6 +129,15 @@ interface ChatDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun saveMessages(items: List<MessageEntity>)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun saveAttachments(items: List<MessageAttachmentEntity>)
+
+    @Query("SELECT * FROM message_attachments WHERE conversationId=:id ORDER BY createdAt")
+    suspend fun attachmentSnapshot(id: String): List<MessageAttachmentEntity>
+
+    @Query("DELETE FROM message_attachments WHERE id=:id")
+    suspend fun deleteAttachment(id: String)
+
     @Query("UPDATE conversations SET title=:title, updatedAt=:updatedAt WHERE id=:id")
     suspend fun updateConversation(id: String, title: String, updatedAt: Long)
 
@@ -126,8 +161,8 @@ interface ChatDao {
 }
 
 @Database(
-    entities = [ConversationEntity::class, MessageEntity::class, MemoryEntity::class, AgentCatalogEntity::class],
-    version = 3,
+    entities = [ConversationEntity::class, MessageEntity::class, MessageAttachmentEntity::class, MemoryEntity::class, AgentCatalogEntity::class],
+    version = 4,
     exportSchema = false,
 )
 abstract class ChatDatabase : RoomDatabase() {
@@ -193,6 +228,15 @@ class SecureTokenStore(context: Context) : AuthTokenStore {
 
     fun user(): User? = userId?.let { User(it, userName ?: it, avatarUrl) }
     fun clear() = prefs.edit().clear().apply()
+}
+
+val MIGRATION_3_4 = object : Migration(3, 4) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS message_attachments (id TEXT NOT NULL, messageId TEXT NOT NULL, conversationId TEXT NOT NULL, remoteId TEXT, name TEXT NOT NULL, mimeType TEXT NOT NULL, size INTEGER NOT NULL, kind TEXT NOT NULL, localPath TEXT, thumbnailPath TEXT, sha256 TEXT NOT NULL, status TEXT NOT NULL, createdAt INTEGER NOT NULL, PRIMARY KEY(id), FOREIGN KEY(messageId) REFERENCES messages(id) ON UPDATE NO ACTION ON DELETE CASCADE)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_message_attachments_messageId ON message_attachments(messageId)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_message_attachments_conversationId ON message_attachments(conversationId)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_message_attachments_remoteId ON message_attachments(remoteId)")
+    }
 }
 
 val MIGRATION_2_3 = object : Migration(2, 3) {

@@ -9,7 +9,9 @@ import ai.drsai.remote.data.ChatDatabase
 import ai.drsai.remote.data.ConversationEntity
 import ai.drsai.remote.data.MemoryEntity
 import ai.drsai.remote.data.MessageEntity
+import ai.drsai.remote.data.MessageAttachmentEntity
 import ai.drsai.remote.data.MIGRATION_2_3
+import ai.drsai.remote.data.MIGRATION_3_4
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -36,6 +38,8 @@ class LocalStoreTest {
         dao.saveConversation(ConversationEntity(id = "c1", userId = "u1", title = "One", agentId = "agent", modelId = "model", createdAt = 1, updatedAt = 1))
         dao.saveConversation(ConversationEntity(id = "c2", userId = "u2", title = "Two", agentId = "agent", modelId = "model", createdAt = 2, updatedAt = 2))
         dao.saveMessage(MessageEntity("m1", "c1", "user", "hello"))
+        dao.saveAttachments(listOf(MessageAttachmentEntity("a1", "m1", "c1", "att_1", "note.txt", "text/plain", 5, "file", null, null, "hash")))
+        assertEquals(listOf("a1"), dao.attachmentSnapshot("c1").map { it.id })
         dao.saveMemory(MemoryEntity(userId = "u1", content = "green"))
         dao.saveMemory(MemoryEntity(userId = "u2", content = "blue"))
 
@@ -43,6 +47,7 @@ class LocalStoreTest {
         assertEquals(listOf("green"), dao.searchMemories("u1", "", 10).map { it.content })
         dao.deleteConversation("c1")
         assertTrue(dao.runtimeMessageSnapshot("c1").isEmpty())
+        assertTrue(dao.attachmentSnapshot("c1").isEmpty())
     }
 
     @Test fun migration_2_to_3_preserves_conversation_and_binds_local_agent() = runBlocking {
@@ -61,7 +66,7 @@ class LocalStoreTest {
         }
 
         val migrated = Room.databaseBuilder(context, ChatDatabase::class.java, name)
-            .addMigrations(MIGRATION_2_3)
+            .addMigrations(MIGRATION_2_3, MIGRATION_3_4)
             .allowMainThreadQueries()
             .build()
         try {
@@ -69,6 +74,39 @@ class LocalStoreTest {
             assertEquals("local:opendrsai", row.agentId)
             assertEquals("OpenDrSai", row.agentName)
             assertEquals("local", row.agentSource)
+        } finally {
+            migrated.close()
+            context.deleteDatabase(name)
+        }
+    }
+
+    @Test fun migration_3_to_4_preserves_messages_and_adds_attachments() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val name = "migration-v3-v4.db"
+        context.deleteDatabase(name)
+        SQLiteDatabase.openOrCreateDatabase(context.getDatabasePath(name), null).use { legacy ->
+            legacy.execSQL("PRAGMA foreign_keys=ON")
+            legacy.execSQL("CREATE TABLE conversations (id TEXT NOT NULL, userId TEXT NOT NULL, title TEXT NOT NULL, agentId TEXT NOT NULL, agentName TEXT NOT NULL DEFAULT 'OpenDrSai', agentSource TEXT NOT NULL DEFAULT 'local', modelId TEXT NOT NULL, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL, PRIMARY KEY(id))")
+            legacy.execSQL("CREATE INDEX index_conversations_userId ON conversations(userId)")
+            legacy.execSQL("CREATE TABLE messages (id TEXT NOT NULL, conversationId TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, toolCallId TEXT, toolName TEXT, toolPayload TEXT, visible INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL, createdAt INTEGER NOT NULL, PRIMARY KEY(id), FOREIGN KEY(conversationId) REFERENCES conversations(id) ON UPDATE NO ACTION ON DELETE CASCADE)")
+            legacy.execSQL("CREATE INDEX index_messages_conversationId ON messages(conversationId)")
+            legacy.execSQL("CREATE TABLE memories (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, userId TEXT NOT NULL, content TEXT NOT NULL, createdAt INTEGER NOT NULL)")
+            legacy.execSQL("CREATE INDEX index_memories_userId ON memories(userId)")
+            legacy.execSQL("CREATE TABLE agent_catalog (id TEXT NOT NULL, userId TEXT NOT NULL, platformId TEXT NOT NULL, name TEXT NOT NULL, description TEXT NOT NULL, mode TEXT NOT NULL, available INTEGER NOT NULL, chatSupported INTEGER NOT NULL, isDefault INTEGER NOT NULL, owner TEXT, capabilitiesJson TEXT NOT NULL, logoUrl TEXT, examplesJson TEXT NOT NULL, savedAt INTEGER NOT NULL, PRIMARY KEY(id, userId))")
+            legacy.execSQL("CREATE INDEX index_agent_catalog_userId ON agent_catalog(userId)")
+            legacy.execSQL("INSERT INTO conversations VALUES ('c1','u1','会话','local:opendrsai','OpenDrSai','local','model',1,2)")
+            legacy.execSQL("INSERT INTO messages VALUES ('m1','c1','user','hello',NULL,NULL,NULL,1,'complete',3)")
+            legacy.version = 3
+        }
+        val migrated = Room.databaseBuilder(context, ChatDatabase::class.java, name)
+            .addMigrations(MIGRATION_3_4)
+            .allowMainThreadQueries()
+            .build()
+        try {
+            val dao = migrated.dao()
+            assertEquals("hello", dao.visibleMessageSnapshot("c1").single().content)
+            dao.saveAttachments(listOf(MessageAttachmentEntity("a1", "m1", "c1", null, "x.txt", "text/plain", 1, "file", null, null, "h")))
+            assertEquals("x.txt", dao.attachmentSnapshot("c1").single().name)
         } finally {
             migrated.close()
             context.deleteDatabase(name)

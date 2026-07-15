@@ -72,14 +72,18 @@ class PlatformAgentClient(
             if (!it.isSuccessful) throw nativeApiError(it.code, raw)
             val root = runCatching { JSONObject(raw) }
                 .getOrElse { throw ApiException(0, "平台智能体目录返回了无效数据") }
+            val data = root.optJSONObject("data")
             val capabilitiesObject = root.optJSONObject("capabilities")
+                ?: data?.optJSONObject("capabilities")
             val features = root.optJSONArray("capabilities").stringSet() +
+                data?.optJSONArray("capabilities").stringSet() +
                 capabilitiesObject?.optJSONArray("features").stringSet()
             val apiVersion = root.stringOrNull("api_version")
+                ?: data?.stringOrNull("api_version")
                 ?: it.header("X-HAI-Native-API-Version")
                 ?: it.header("X-OpenDrSai-API-Version")
             val rows = root.optJSONArray("agents")
-                ?: root.optJSONObject("data")?.optJSONArray("agents")
+                ?: data?.optJSONArray("agents")
                 ?: JSONArray()
             val agents = (0 until rows.length()).mapNotNull { index ->
                 rows.optJSONObject(index)?.toPlatformAgent()
@@ -173,21 +177,30 @@ class PlatformAgentRuntime(
         activeCall.getAndSet(null)?.cancel()
     }
 
-    fun run(conversation: Conversation, input: String): Flow<RuntimeEvent> = channelFlow {
-        val runId = UUID.randomUUID().toString()
+    fun run(
+        conversation: Conversation,
+        input: String,
+        attachments: List<MessageAttachment> = emptyList(),
+        requestedRunId: String? = null,
+        userMessageId: String? = null,
+        assistantMessageId: String? = null,
+    ): Flow<RuntimeEvent> = channelFlow {
+        val runId = requestedRunId ?: UUID.randomUUID().toString()
         val worker = launch(Dispatchers.IO) {
             send(RuntimeEvent.Started(runId))
             dao.saveMessage(
                 MessageEntity(
-                    id = UUID.randomUUID().toString(),
+                    id = userMessageId ?: UUID.randomUUID().toString(),
                     conversationId = conversation.id,
                     role = "user",
                     content = input,
                 ),
             )
+            if (attachments.isNotEmpty()) dao.saveAttachments(attachments.map(MessageAttachment::toEntity))
             dao.updateConversation(conversation.id, conversation.title, System.currentTimeMillis())
-            val assistantId = UUID.randomUUID().toString()
+            val assistantId = assistantMessageId ?: UUID.randomUUID().toString()
             val text = StringBuilder()
+            val artifacts = mutableListOf<RemoteAttachment>()
             try {
                 val messages = remoteContext(dao.visibleMessageSnapshot(conversation.id))
                 val body = JSONObject()
@@ -195,6 +208,7 @@ class PlatformAgentRuntime(
                     .put("stream", true)
                     .put("thread_id", conversation.id)
                     .put("run_id", runId)
+                    .put("attachments", JSONArray(attachments.map { JSONObject().put("id", it.remoteId) }))
                     .put("metadata", JSONObject().put("client", "android"))
                 val platformId = conversation.agentId.removePrefix("platform:")
                 val url = "${baseUrl.trimEnd('/')}$PLATFORM_AGENTS_PATH/${platformId.encodePathSegment()}/chat"
@@ -203,6 +217,7 @@ class PlatformAgentRuntime(
                         .url(url)
                         .header("Accept", "text/event-stream")
                         .header("Authorization", "Bearer $token")
+                        .header("Idempotency-Key", "android-chat-$runId")
                         .post(body.toString().toRequestBody("application/json".toMediaType()))
                         .build()
                 }
@@ -222,6 +237,21 @@ class PlatformAgentRuntime(
                             if (event == "[DONE]") {
                                 sawDone = true
                             } else {
+                                nativeArtifacts(event).forEach { artifact ->
+                                    if (dao.visibleMessageSnapshot(conversation.id).none { message -> message.id == assistantId }) {
+                                        dao.saveMessage(MessageEntity(assistantId, conversation.id, "assistant", "", status = "streaming"))
+                                    }
+                                    dao.saveAttachments(listOf(
+                                        MessageAttachmentEntity(
+                                            id = artifact.id, messageId = assistantId, conversationId = conversation.id,
+                                            remoteId = artifact.id, name = artifact.name, mimeType = artifact.mimeType,
+                                            size = artifact.size, kind = artifact.kind, localPath = null, thumbnailPath = null,
+                                            sha256 = artifact.sha256, status = "available",
+                                        ),
+                                    ))
+                                    artifacts += artifact
+                                    send(RuntimeEvent.Artifact(artifact))
+                                }
                                 val delta = nativeTextDelta(event)
                                 if (delta.isNotEmpty()) {
                                     text.append(delta)
@@ -241,7 +271,7 @@ class PlatformAgentRuntime(
                     }
                     if (!sawDone) throw ApiException(0, "平台智能体流在完成前中断")
                 }
-                if (text.isBlank()) throw ApiException(0, "平台智能体没有返回可显示内容")
+                if (text.isBlank() && artifacts.isEmpty()) throw ApiException(0, "平台智能体没有返回可显示内容")
                 dao.saveMessage(
                     MessageEntity(
                         id = assistantId,
@@ -310,6 +340,22 @@ class PlatformAgentRuntime(
         }
     }
 }
+
+internal fun MessageAttachment.toEntity() = MessageAttachmentEntity(
+    id = id,
+    messageId = messageId,
+    conversationId = conversationId,
+    remoteId = remoteId,
+    name = name,
+    mimeType = mimeType,
+    size = size,
+    kind = kind,
+    localPath = localPath,
+    thumbnailPath = thumbnailPath,
+    sha256 = sha256,
+    status = status,
+    createdAt = createdAt,
+)
 
 private fun JSONObject.toPlatformAgent(): Agent? {
     val rawId = stringOrNull("id") ?: return null
@@ -406,6 +452,24 @@ internal fun nativeTextDelta(raw: String): String {
         .orEmpty()
 }
 
+internal fun nativeArtifacts(raw: String): List<RemoteAttachment> {
+    val files = runCatching { JSONObject(raw).optJSONArray("file_events") }.getOrNull() ?: return emptyList()
+    return (0 until files.length()).mapNotNull { index ->
+        val item = files.optJSONObject(index) ?: return@mapNotNull null
+        val id = item.optString("id").takeIf { it.startsWith("att_") } ?: return@mapNotNull null
+        val mime = item.optString("mime_type", "application/octet-stream")
+        RemoteAttachment(
+            id = id,
+            name = item.optString("name").takeIf(String::isNotBlank) ?: "result",
+            kind = if (mime.startsWith("image/")) "image" else "file",
+            mimeType = mime,
+            size = item.optLong("size", 0),
+            sha256 = item.optString("sha256"),
+            processingStatus = "ready",
+        )
+    }
+}
+
 internal fun nativeApiError(status: Int, raw: String): ApiException {
     val code = nativeErrorCode(raw)
     val message = when (code) {
@@ -462,7 +526,7 @@ private fun JSONObject.stringOrNull(name: String): String? = optString(name)
 private fun String.encodePathSegment(): String = java.net.URLEncoder.encode(this, Charsets.UTF_8.name())
     .replace("+", "%20")
 
-private fun platformHttpClient(readTimeoutSeconds: Long) = OkHttpClient.Builder()
+internal fun platformHttpClient(readTimeoutSeconds: Long) = OkHttpClient.Builder()
     .connectTimeout(15, TimeUnit.SECONDS)
     .readTimeout(readTimeoutSeconds, TimeUnit.SECONDS)
     .callTimeout(readTimeoutSeconds + 15, TimeUnit.SECONDS)

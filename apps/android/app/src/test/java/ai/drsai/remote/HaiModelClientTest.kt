@@ -52,6 +52,19 @@ class HaiModelClientTest {
         assertEquals("Bearer token", request.getHeader("Authorization"))
         assertTrue(request.body.readUtf8().contains("\"tools\""))
     }
+
+    @Test fun completion_serializes_openai_multimodal_image_content() = runTest {
+        server.enqueue(MockResponse().setBody("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n"))
+        val client = HaiModelClient(FakeTokenStore("token", "refresh"), FakeTokenLifecycle(), server.url("/v1").toString())
+        client.streamCompletion(
+            "vision-model",
+            listOf(RuntimeMessage("user", "看图", images = listOf(RuntimeImage("image/jpeg", "data:image/jpeg;base64,YQ==")))),
+            false,
+        ) {}
+        val body = server.takeRequest().body.readUtf8()
+        assertTrue(body.contains("\"type\":\"image_url\""))
+        assertTrue(body.contains("data:image/jpeg;base64,YQ=="))
+    }
 }
 
 private class FakeTokenStore(
