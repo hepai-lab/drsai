@@ -31,6 +31,8 @@ $cernPdf = (Resolve-Path $CernPdf).Path
 foreach ($required in @($runtime, $sourceMsi, $cernPdf, "$PSScriptRoot\run-windows-sandbox-acceptance.ps1", "$PSScriptRoot\m1-fake-gateway.py")) {
     if (-not (Test-Path -LiteralPath $required)) { throw "Required M1 artifact is missing: $required" }
 }
+$sandboxSessionScript = "$PSScriptRoot\windows-sandbox-session.ps1"
+if (-not (Test-Path -LiteralPath $sandboxSessionScript)) { throw "Sandbox session controller is missing: $sandboxSessionScript" }
 if ((Get-Sha256Hex $cernPdf) -ne "f6581e1a255b354667188b41b874b996a300f88bb48912721bc1c854183e913e") {
     throw "The CERN PDF fixture hash does not match the locked M1 source."
 }
@@ -47,7 +49,7 @@ Copy-Item -LiteralPath "$PSScriptRoot\m1-fake-gateway.py" -Destination $packageD
 $runtimeHash = Get-Sha256Hex $runtime
 $runtimeSize = (Get-Item -LiteralPath $runtime).Length
 $sandboxMsi = Join-Path $packageDir "OpenDrSaiSetup.sandbox.msi"
-$runtimeUrl = "file:///C:/OpenDrSaiRuntime-win-x64.zip"
+$runtimeUrl = "https://github.com/hepai-lab/drsai/releases/download/v$ExpectedVersion/OpenDrSaiRuntime-win-x64.zip"
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PSScriptRoot\..\..\installers\windows\build-msi.ps1" `
     -OutDir $packageDir -RuntimePath $runtime -RuntimeUrl $runtimeUrl -RuntimeSha256 $runtimeHash `
     -RuntimeSizeBytes $runtimeSize -BootstrapperVersion $ExpectedVersion -OutputName "OpenDrSaiSetup.sandbox.msi"
@@ -76,8 +78,8 @@ for ($index = 1; $index -le $Runs; $index += 1) {
     $wsbPath = Join-Path $runDir "$runId.wsb"
     [IO.File]::WriteAllText($wsbPath, $wsb, (New-Object Text.UTF8Encoding($false)))
     $started = Get-Date
-    $existingClientIds = @(Get-Process WindowsSandboxClient -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
-    $sandbox = Start-Process -FilePath $sandboxExe -ArgumentList @($wsbPath) -PassThru
+    $sessionJson = & $sandboxSessionScript -Action Start -ConfigPath $wsbPath -TimeoutSeconds 120 -AsJson
+    $sandboxSession = $sessionJson | ConvertFrom-Json
     $deadline = $started.AddSeconds($TimeoutSeconds)
     $resultFile = $null
     do {
@@ -85,16 +87,19 @@ for ($index = 1; $index -le $Runs; $index += 1) {
         $resultFile = Get-ChildItem -LiteralPath $runDir -Filter "windows-11-sandbox-*.json" -File -ErrorAction SilentlyContinue | Select-Object -First 1
     } while (-not $resultFile -and (Get-Date) -lt $deadline)
     if (-not $resultFile) {
-        if (-not $sandbox.HasExited) { Stop-Process -Id $sandbox.Id -Force -ErrorAction SilentlyContinue }
-        Get-Process WindowsSandboxClient -ErrorAction SilentlyContinue |
-            Where-Object { $_.Id -notin $existingClientIds } |
-            Stop-Process -Force -ErrorAction SilentlyContinue
+        if ($sandboxSession.id) {
+            & $sandboxSessionScript -Action Stop -Id $sandboxSession.id -TimeoutSeconds 60 -Force | Out-Null
+        } else {
+            & $sandboxSessionScript -Action StopAll -TimeoutSeconds 60 -Force | Out-Null
+        }
         $matrix.Add([pscustomobject]@{ runId = $runId; passed = $false; durationSeconds = [math]::Round(((Get-Date) - $started).TotalSeconds, 1); evidence = $null; error = "Timed out or Sandbox exited before evidence was written." }) | Out-Null
         break
     }
     $evidence = Get-Content -LiteralPath $resultFile.FullName -Raw | ConvertFrom-Json
     $matrix.Add([pscustomobject]@{ runId = $runId; passed = [bool]$evidence.passed; durationSeconds = [math]::Round(((Get-Date) - $started).TotalSeconds, 1); evidence = $resultFile.FullName; error = $null }) | Out-Null
-    if (-not $sandbox.HasExited) { $null = $sandbox.WaitForExit(30000) }
+    if ($sandboxSession.id) {
+        & $sandboxSessionScript -Action Stop -Id $sandboxSession.id -TimeoutSeconds 60 -Force | Out-Null
+    }
 }
 
 $summary = [ordered]@{

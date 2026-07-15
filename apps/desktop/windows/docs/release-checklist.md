@@ -75,6 +75,12 @@ gate.
 
 ## Clean Windows acceptance
 
+Before running the matrix, follow
+[`WINDOWS_SANDBOX_OPERATIONS.md`](WINDOWS_SANDBOX_OPERATIONS.md) and use
+`scripts/windows-sandbox-session.ps1` for diagnosis, session-aware startup and
+ID-based shutdown. Do not infer Sandbox state from `WindowsSandbox.exe` or
+`WindowsSandboxServer` process lifetime.
+
 On Windows Sandbox or a clean Windows 11 VM:
 
 1. Install version N using `OpenDrSaiSetup-win-x64.msi` and confirm Start menu launch.
