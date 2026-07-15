@@ -1375,11 +1375,56 @@ export interface DesktopShareComment {
   shareId: string;
   authorAccount: string;
   body: string;
+  target: DesktopShareCommentTarget;
   createdAt: string;
 }
 
 export interface DesktopShareCommentListRequest { shareId: string }
-export interface DesktopShareCommentAddRequest { shareId: string; body: string }
+export type DesktopShareCommentAnchorType = "whole_result" | "paragraph" | "chart";
+export interface DesktopShareCommentTarget {
+  objectType: DesktopShareObjectType;
+  objectId: string;
+  objectLabel: string;
+  anchorType: DesktopShareCommentAnchorType;
+  anchorLabel: string;
+}
+export interface DesktopShareCommentAddRequest {
+  shareId: string;
+  body: string;
+  objectId?: string;
+  anchorType?: DesktopShareCommentAnchorType;
+  anchorLabel?: string;
+}
+
+export interface DesktopShareCommentTaskPreviewRequest { shareId: string; commentId: string }
+export interface DesktopShareCommentTaskPreview {
+  shareId: string;
+  commentId: string;
+  title: string;
+  instructions: string;
+  commentBody: string;
+  commentAuthorAccount: string;
+  target: DesktopShareCommentTarget;
+}
+export interface DesktopShareCommentTaskCreateRequest extends DesktopShareCommentTaskPreviewRequest { title: string; instructions: string }
+export interface DesktopShareCommentTaskUpdateRequest { taskId: string; title: string; instructions: string }
+export interface DesktopShareCommentTaskCompleteRequest { taskId: string }
+export interface DesktopShareCommentTaskListRequest { shareId?: string }
+export interface DesktopShareCommentTask {
+  id: string;
+  shareId: string;
+  commentId: string;
+  backgroundTaskId: string;
+  title: string;
+  instructions: string;
+  commentBody: string;
+  commentAuthorAccount: string;
+  target: DesktopShareCommentTarget;
+  status: "ready" | "completed";
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+}
 
 export interface DesktopShareContinuationRequest { shareId: string }
 export interface DesktopShareContinuationResult {
@@ -1392,7 +1437,7 @@ export interface DesktopShareContinuationResult {
   createdAt: string;
 }
 
-export type DesktopShareAuditAction = "permission_update" | "comment" | "continue";
+export type DesktopShareAuditAction = "permission_update" | "comment" | "continue" | "comment_task";
 export interface DesktopShareAuditEntry {
   id: string;
   shareId: string;
@@ -1526,6 +1571,7 @@ export interface DesktopBackgroundTaskEnqueueRequest {
 export interface DesktopBackgroundTaskUpdateRequest {
   taskId: string;
   status: DesktopBackgroundTaskStatus;
+  title?: string;
   message?: string;
   currentStep?: string;
   progress?: number;
@@ -3695,6 +3741,11 @@ export interface DesktopApi {
   updateSharePermission(request: DesktopSharePermissionUpdateRequest): Promise<DesktopShareManifest>;
   listShareComments(request: DesktopShareCommentListRequest): Promise<DesktopShareComment[]>;
   addShareComment(request: DesktopShareCommentAddRequest): Promise<DesktopShareComment>;
+  previewShareCommentTask(request: DesktopShareCommentTaskPreviewRequest): Promise<DesktopShareCommentTaskPreview>;
+  createShareCommentTask(request: DesktopShareCommentTaskCreateRequest): Promise<DesktopShareCommentTask>;
+  updateShareCommentTask(request: DesktopShareCommentTaskUpdateRequest): Promise<DesktopShareCommentTask>;
+  completeShareCommentTask(request: DesktopShareCommentTaskCompleteRequest): Promise<DesktopShareCommentTask>;
+  listShareCommentTasks(request?: DesktopShareCommentTaskListRequest): Promise<DesktopShareCommentTask[]>;
   continueSharedTask(request: DesktopShareContinuationRequest): Promise<DesktopShareContinuationResult>;
   listShareAudit(request: DesktopShareAuditListRequest): Promise<DesktopShareAuditEntry[]>;
   listIncomingShares(): Promise<DesktopShareManifest[]>;

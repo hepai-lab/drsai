@@ -3542,7 +3542,11 @@ async function runCollaborationPermissionSmoke(window: BrowserWindow): Promise<S
         const workspaceItem = await waitFor(() => [...document.querySelectorAll('.workspace-item')].find((item) => (item.title || '').includes(workspacePath)));
         workspaceItem?.click();
         await waitFor(() => workspaceItem?.closest('.workspace-row')?.classList.contains('active'));
-        document.querySelector('.sidebar-button[data-nav-id="results"]')?.click();
+        await new Promise((resolve) => setTimeout(resolve, 350));
+        const stableNav = await waitFor(() => document.querySelector('.sidebar-button[data-nav-id="results"]'));
+        stableNav?.click();
+        const stableView = await waitFor(() => document.querySelector('[data-testid="results-center-view"]'), 3000);
+        if (stableView) return stableView;
         const nav = await waitFor(() => [...document.querySelectorAll('.sidebar-button')].find((button) => /Results|成果/.test(button.getAttribute('title') || button.textContent || '')));
         nav?.click();
         return waitFor(() => document.querySelector('[data-testid="results-center-view"]'));

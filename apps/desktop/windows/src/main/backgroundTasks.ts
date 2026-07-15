@@ -107,6 +107,7 @@ export async function updateBackgroundTask(
   const current = store.workspaces[key][taskIndex];
   const updated: DesktopBackgroundTask = {
     ...current,
+    ...(typed.title !== undefined ? { title: normalizeRequiredText(typed.title, "Background task title is required.") } : {}),
     status: typed.status,
     updatedAt: now,
     ...(typed.currentStep !== undefined

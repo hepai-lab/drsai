@@ -8,6 +8,13 @@ import type {
   DesktopShareComment,
   DesktopShareCommentAddRequest,
   DesktopShareCommentListRequest,
+  DesktopShareCommentTask,
+  DesktopShareCommentTaskCompleteRequest,
+  DesktopShareCommentTaskCreateRequest,
+  DesktopShareCommentTaskListRequest,
+  DesktopShareCommentTaskPreview,
+  DesktopShareCommentTaskPreviewRequest,
+  DesktopShareCommentTaskUpdateRequest,
   DesktopShareContinuationRequest,
   DesktopShareContinuationResult,
   DesktopShareCreateRequest,
@@ -24,7 +31,7 @@ import type {
   DesktopTaskArtifactLink,
 } from "../shared/desktopApi";
 import { requireAuthContext } from "./auth";
-import { listBackgroundTasks, listOwnedBackgroundTasks } from "./backgroundTasks";
+import { enqueueBackgroundTask, listBackgroundTasks, listOwnedBackgroundTasks, updateBackgroundTask } from "./backgroundTasks";
 import { DRSAI_HOME } from "./paths";
 import {
   publicSensitiveFindings,
@@ -42,6 +49,7 @@ const MAX_SENSITIVE_SCAN_BYTES = 5 * 1024 * 1024;
 const SANITIZED_SHARES_DIR = resolve(DRSAI_HOME, "desktop", "sanitized-shares");
 const MAX_SHARE_COMMENTS = 500;
 const MAX_SHARE_AUDIT_ENTRIES = 2_000;
+const MAX_SHARE_COMMENT_TASKS = 500;
 
 interface ArtifactSensitivityScan {
   artifact: DesktopTaskArtifactLink;
@@ -62,6 +70,7 @@ interface StoredShare extends DesktopShareManifest {
     sharedTaskTitle?: string;
   }>;
   comments: DesktopShareComment[];
+  commentTasks: DesktopShareCommentTask[];
   continuations: DesktopShareContinuationResult[];
   audit: DesktopShareAuditEntry[];
 }
@@ -142,15 +151,16 @@ export async function createShare(request: unknown): Promise<DesktopShareManifes
     createdAt,
     status: "active",
     permission: typed.permission ?? "view",
+    comments: [],
+    commentTasks: [],
+    continuations: [],
+    audit: [],
     sensitiveReview: {
       findingsCount: findings.reduce((sum, item) => sum + item.occurrences, 0),
       redactedCount: findings.filter((item) => resolutions.find((resolution) => resolution.findingId === item.id)?.action === "redact").reduce((sum, item) => sum + item.occurrences, 0),
       removedCount: findings.filter((item) => resolutions.find((resolution) => resolution.findingId === item.id)?.action === "remove").reduce((sum, item) => sum + item.occurrences, 0),
       highRiskSecretsDirectlyShared: 0,
     },
-    comments: [],
-    continuations: [],
-    audit: [],
   };
   const store = await readStore();
   store.shares = [share, ...store.shares].slice(0, MAX_SHARES);
@@ -210,7 +220,7 @@ export async function listShareComments(request: unknown): Promise<DesktopShareC
     }
     throw new Error("The current share permission does not allow comments.");
   }
-  return (share.comments ?? []).map((item) => ({ ...item }));
+  return (share.comments ?? []).map((item) => publicComment(share, item));
 }
 
 export async function addShareComment(request: unknown): Promise<DesktopShareComment> {
@@ -227,16 +237,124 @@ export async function addShareComment(request: unknown): Promise<DesktopShareCom
     }
     throw new Error("The current share permission does not allow comments.");
   }
-  if (publicSensitiveFindings(scanSensitiveText(typed.body, `comment:${share.id}`, "评论内容")).length > 0) {
+  const targetObject = share.objects.find((item) => item.objectId === typed.objectId) ?? share.objects.find((item) => item.objectType === "artifact") ?? share.objects[0];
+  if (!targetObject) throw new Error("The shared comment target is unavailable.");
+  const anchorType = typed.anchorType ?? "whole_result";
+  const anchorLabel = typed.anchorLabel?.trim() || (anchorType === "chart" ? "Chart" : anchorType === "paragraph" ? "Paragraph" : targetObject.label);
+  if (publicSensitiveFindings([
+    ...scanSensitiveText(typed.body, `comment:${share.id}`, "评论内容"),
+    ...scanSensitiveText(anchorLabel, `comment-anchor:${share.id}`, "评论位置"),
+  ]).length > 0) {
     appendAudit(share, actorAccount, "comment", "denied", "Sensitive information was detected in the comment.");
     await writeStore(store);
     throw new Error("Remove sensitive information from the comment before sending it.");
   }
-  const comment: DesktopShareComment = { id: `share-comment:${randomUUID()}`, shareId: share.id, authorAccount: actorAccount, body: typed.body, createdAt: new Date().toISOString() };
+  const comment: DesktopShareComment = {
+    id: `share-comment:${randomUUID()}`, shareId: share.id, authorAccount: actorAccount, body: typed.body,
+    target: { objectType: targetObject.objectType, objectId: targetObject.objectId, objectLabel: targetObject.label, anchorType, anchorLabel },
+    createdAt: new Date().toISOString(),
+  };
   share.comments = [...(share.comments ?? []), comment].slice(-MAX_SHARE_COMMENTS);
   appendAudit(share, actorAccount, "comment", "allowed", "Comment added.");
   await writeStore(store);
-  return { ...comment };
+  return publicComment(share, comment);
+}
+
+export async function previewShareCommentTask(request: unknown): Promise<DesktopShareCommentTaskPreview> {
+  const typed = normalizeCommentTaskReference(request);
+  const auth = await requireAuthContext();
+  const store = await readStore();
+  const share = store.shares.find((item) => item.id === typed.shareId && item.status === "active");
+  if (!share || share.ownerUserId !== auth.userId) throw new Error("Only the share owner can turn comments into tasks.");
+  const comment = (share.comments ?? []).find((item) => item.id === typed.commentId);
+  if (!comment) throw new Error("The shared comment was not found.");
+  return buildCommentTaskPreview(share, comment);
+}
+
+export async function createShareCommentTask(request: unknown): Promise<DesktopShareCommentTask> {
+  const typed = normalizeCommentTaskCreateRequest(request);
+  const auth = await requireAuthContext();
+  const actorAccount = normalizeAccount(auth.session.user?.email || auth.userId);
+  const store = await readStore();
+  const share = store.shares.find((item) => item.id === typed.shareId && item.status === "active");
+  if (!share || share.ownerUserId !== auth.userId) {
+    if (share) { appendAudit(share, actorAccount, "comment_task", "denied", "Only the share owner can create a comment task."); await writeStore(store); }
+    throw new Error("Only the share owner can turn comments into tasks.");
+  }
+  const comment = (share.comments ?? []).find((item) => item.id === typed.commentId);
+  if (!comment) throw new Error("The shared comment was not found.");
+  if ((share.commentTasks ?? []).some((item) => item.commentId === comment.id)) throw new Error("This comment already has a task.");
+  validateSafeCommentTaskText(typed.title, typed.instructions);
+  const now = new Date().toISOString();
+  const taskId = `share-comment-task:${randomUUID()}`;
+  const background = await enqueueBackgroundTask({
+    kind: "agent_run", source: "manual", title: typed.title, workspacePath: share.internalWorkspacePath,
+    targetId: taskId, status: "queued", progress: 0, currentStep: "Review the linked comment and source result.",
+    message: typed.instructions, verification: `Complete the requested change and preserve the backlink to ${comment.id}.`,
+  });
+  const preview = buildCommentTaskPreview(share, comment);
+  const task: DesktopShareCommentTask = {
+    id: taskId, shareId: share.id, commentId: comment.id, backgroundTaskId: background.id,
+    title: typed.title, instructions: typed.instructions, commentBody: comment.body,
+    commentAuthorAccount: comment.authorAccount, target: preview.target, status: "ready", createdAt: now, updatedAt: now,
+  };
+  share.commentTasks = [...(share.commentTasks ?? []), task].slice(-MAX_SHARE_COMMENT_TASKS);
+  appendAudit(share, actorAccount, "comment_task", "allowed", "Comment task created.");
+  await writeStore(store);
+  return cloneCommentTask(task);
+}
+
+export async function updateShareCommentTask(request: unknown): Promise<DesktopShareCommentTask> {
+  const typed = normalizeCommentTaskUpdateRequest(request);
+  const auth = await requireAuthContext();
+  const actorAccount = normalizeAccount(auth.session.user?.email || auth.userId);
+  const store = await readStore();
+  const found = findCommentTask(store, typed.taskId);
+  if (!found || found.share.ownerUserId !== auth.userId) {
+    if (found) { appendAudit(found.share, actorAccount, "comment_task", "denied", "Only the share owner can update a comment task."); await writeStore(store); }
+    throw new Error("Only the share owner can update this comment task.");
+  }
+  if (found.task.status === "completed") throw new Error("A completed comment task cannot be changed.");
+  validateSafeCommentTaskText(typed.title, typed.instructions);
+  found.task.title = typed.title;
+  found.task.instructions = typed.instructions;
+  found.task.updatedAt = new Date().toISOString();
+  await updateBackgroundTask({ taskId: found.task.backgroundTaskId, status: "queued", title: typed.title, message: typed.instructions });
+  appendAudit(found.share, actorAccount, "comment_task", "allowed", "Comment task updated.");
+  await writeStore(store);
+  return cloneCommentTask(found.task);
+}
+
+export async function completeShareCommentTask(request: unknown): Promise<DesktopShareCommentTask> {
+  const typed = normalizeCommentTaskCompleteRequest(request);
+  const auth = await requireAuthContext();
+  const actorAccount = normalizeAccount(auth.session.user?.email || auth.userId);
+  const store = await readStore();
+  const found = findCommentTask(store, typed.taskId);
+  if (!found || found.share.ownerUserId !== auth.userId) {
+    if (found) { appendAudit(found.share, actorAccount, "comment_task", "denied", "Only the share owner can complete a comment task."); await writeStore(store); }
+    throw new Error("Only the share owner can complete this comment task.");
+  }
+  if (found.task.status !== "completed") {
+    const completedAt = new Date().toISOString();
+    found.task.status = "completed";
+    found.task.completedAt = completedAt;
+    found.task.updatedAt = completedAt;
+    await updateBackgroundTask({ taskId: found.task.backgroundTaskId, status: "completed", progress: 100, currentStep: "Completed from shared comment.", message: "Comment-linked task completed.", verification: `Result remains linked to comment ${found.task.commentId}.` });
+    appendAudit(found.share, actorAccount, "comment_task", "allowed", "Comment task completed.");
+    await writeStore(store);
+  }
+  return cloneCommentTask(found.task);
+}
+
+export async function listShareCommentTasks(request: unknown = {}): Promise<DesktopShareCommentTask[]> {
+  const typed = normalizeCommentTaskListRequest(request);
+  const auth = await requireAuthContext();
+  const store = await readStore();
+  return store.shares
+    .filter((share) => share.ownerUserId === auth.userId && (!typed.shareId || share.id === typed.shareId))
+    .flatMap((share) => (share.commentTasks ?? []).map(cloneCommentTask))
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 
 export async function continueSharedTask(request: unknown): Promise<DesktopShareContinuationResult> {
