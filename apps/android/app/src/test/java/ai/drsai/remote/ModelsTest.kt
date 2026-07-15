@@ -39,6 +39,31 @@ class ModelsTest {
         assertEquals(fallback, selectPreferredModel(listOf(fallback)))
     }
 
+    @Test fun vision_capability_is_explicit_and_deepseek_is_not_assumed_multimodal() {
+        val deepseek = ModelInfo("deepseek-ai/deepseek-v4-pro")
+        val vision = ModelInfo("gpt-5.6-sol", vision = true)
+        assertFalse(deepseek.vision)
+        assertEquals(vision, selectVisionModel(listOf(deepseek, vision), deepseek))
+        assertNull(selectVisionModel(listOf(deepseek), deepseek))
+        assertFalse("image-input" in localAgentFor(listOf(deepseek)).capabilities)
+        assertTrue("image-input" in localAgentFor(listOf(deepseek, vision)).capabilities)
+        assertEquals(
+            vision,
+            selectLocalModelForAttachments(listOf(deepseek, vision), deepseek, deepseek.id, requiresVision = true),
+        )
+        assertEquals(
+            deepseek,
+            selectLocalModelForAttachments(listOf(deepseek, vision), vision, deepseek.id, requiresVision = false),
+        )
+    }
+
+    @Test fun model_metadata_and_names_detect_vision_conservatively() {
+        assertTrue(modelSupportsVision(org.json.JSONObject("""{"vision":true}"""), "text-model", "Text"))
+        assertFalse(modelSupportsVision(org.json.JSONObject("""{"vision":false}"""), "gpt-5.6-sol", "GPT"))
+        assertTrue(modelSupportsVision(org.json.JSONObject(), "Qwen/Qwen2.5-VL-72B-Instruct", "Qwen VL"))
+        assertFalse(modelSupportsVision(org.json.JSONObject(), "deepseek-ai/deepseek-v4-pro", "DeepSeek"))
+    }
+
     @Test fun oidc_configuration_supports_native_and_legacy_redirects() {
         assertEquals(BuildConfig.OIDC_ISSUER, OIDC_ISSUER)
         assertEquals("${BuildConfig.HAI_BASE_URL}/apiv2/v1", BuildConfig.MODEL_BASE_URL)

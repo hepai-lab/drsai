@@ -19,7 +19,11 @@ data class Agent(
     val examples: List<String> = emptyList(),
 )
 
-data class ModelInfo(val id: String, val name: String = id)
+data class ModelInfo(
+    val id: String,
+    val name: String = id,
+    val vision: Boolean = false,
+)
 
 data class Conversation(
     val id: String,
@@ -136,8 +140,23 @@ val DEFAULT_AGENT = Agent(
         Never claim to have shell, arbitrary file, browser, location, contacts, or device-control access.
         Ask before storing sensitive personal information. Do not expose tool JSON to the user.
     """.trimIndent(),
-    capabilities = setOf("chat", "local-tools", "memory", "attachment-upload", "image-input", "document-input"),
+    capabilities = setOf("chat", "local-tools", "memory", "attachment-upload", "document-input"),
 )
+
+internal fun localAgentFor(models: List<ModelInfo>): Agent = DEFAULT_AGENT.copy(
+    capabilities = DEFAULT_AGENT.capabilities + if (models.any(ModelInfo::vision)) setOf("image-input") else emptySet(),
+)
+
+internal fun selectLocalModelForAttachments(
+    models: List<ModelInfo>,
+    selected: ModelInfo?,
+    conversationModelId: String?,
+    requiresVision: Boolean,
+): ModelInfo? {
+    val conversationModel = conversationModelId?.let { id -> models.firstOrNull { it.id == id } }
+    val preferred = conversationModel ?: selected
+    return if (requiresVision) selectVisionModel(models, preferred) else preferred
+}
 
 data class AgentCatalogStatus(
     val state: String = "loading",

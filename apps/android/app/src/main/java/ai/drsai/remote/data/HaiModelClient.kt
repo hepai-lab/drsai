@@ -108,7 +108,8 @@ class HaiModelClient(
             (0 until items.length()).mapNotNull { index ->
                 val row = items.optJSONObject(index) ?: return@mapNotNull null
                 row.optString("id").takeIf(String::isNotBlank)?.let { id ->
-                    ModelInfo(id, row.stringOrNull("name").orEmpty().ifBlank { id })
+                    val name = row.stringOrNull("name").orEmpty().ifBlank { id }
+                    ModelInfo(id, name, modelSupportsVision(row, id, name))
                 }
             }
         }
@@ -203,15 +204,21 @@ class HaiModelClient(
         val detail = json?.optJSONObject("error")?.stringOrNull("message")
             ?: json?.stringOrNull("detail")
             ?: json?.stringOrNull("message")
-        val message = when (status) {
-            401 -> "HAI 登录已过期，请重新登录"
-            403 -> "当前账号没有使用该模型的权限"
-            404 -> "请求的 HAI 模型不可用"
-            429 -> "模型请求过于频繁或额度不足，请稍后重试"
-            in 500..599 -> "HAI 模型服务暂时不可用"
+        val imageUnsupported = status == 400 && (
+            raw.contains("unknown variant `image_url`", ignoreCase = true) ||
+                raw.contains("unknown variant 'image_url'", ignoreCase = true) ||
+                (raw.contains("image_url", ignoreCase = true) && raw.contains("expected `text`", ignoreCase = true))
+            )
+        val message = when {
+            imageUnsupported -> "当前 HAI 模型不支持图片输入，请切换到视觉模型"
+            status == 401 -> "HAI 登录已过期，请重新登录"
+            status == 403 -> "当前账号没有使用该模型的权限"
+            status == 404 -> "请求的 HAI 模型不可用"
+            status == 429 -> "模型请求过于频繁或额度不足，请稍后重试"
+            status in 500..599 -> "HAI 模型服务暂时不可用"
             else -> detail?.takeIf(String::isNotBlank) ?: "模型请求失败（HTTP $status）"
         }
-        return ApiException(status, message)
+        return ApiException(status, message, retryable = !imageUnsupported && (status == 408 || status == 429 || status >= 500))
     }
 
     private fun parseDelta(raw: String): ModelDelta {
@@ -297,4 +304,33 @@ internal fun selectPreferredModel(models: List<ModelInfo>): ModelInfo {
     return models.firstOrNull { it.id == "deepseek-ai/deepseek-v4-pro" }
         ?: models.firstOrNull { it.id.contains("deepseek-v4-pro", ignoreCase = true) }
         ?: models.first()
+}
+
+internal fun selectVisionModel(models: List<ModelInfo>, preferred: ModelInfo? = null): ModelInfo? =
+    preferred?.takeIf(ModelInfo::vision) ?: models.firstOrNull(ModelInfo::vision)
+
+internal fun modelSupportsVision(row: JSONObject, id: String, name: String): Boolean {
+    fun explicit(container: JSONObject?): Boolean? {
+        if (container == null) return null
+        if (container.has("vision") && !container.isNull("vision")) return container.optBoolean("vision")
+        if (container.has("multimodal") && !container.isNull("multimodal")) return container.optBoolean("multimodal")
+        return null
+    }
+    explicit(row)?.let { return it }
+    explicit(row.optJSONObject("model_info"))?.let { return it }
+    explicit(row.optJSONObject("capabilities"))?.let { return it }
+    val modalities = sequenceOf(
+        row.optJSONArray("input_modalities"),
+        row.optJSONObject("architecture")?.optJSONArray("input_modalities"),
+        row.optJSONObject("model_info")?.optJSONArray("input_modalities"),
+    ).filterNotNull().flatMap { array -> (0 until array.length()).asSequence().map { array.optString(it) } }
+        .map(String::lowercase).toSet()
+    if (modalities.isNotEmpty()) return modalities.any { it in setOf("image", "images", "vision") }
+
+    val value = "$id $name".lowercase()
+    if (listOf("deepseek", "gpt-3.5", "gpt-35", "o1-mini", "o1-preview", "minimax").any(value::contains)) return false
+    return listOf(
+        "vision", "qwen-vl", "qwen2-vl", "qwen2.5-vl", "qwen3-vl", "internvl", "deepseek-vl",
+        "glm-4v", "glm-5", "gpt-4o", "gpt-4.1", "gpt-5", "claude", "gemini", "pixtral", "llava",
+    ).any(value::contains)
 }

@@ -6,6 +6,7 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -18,11 +19,14 @@ class HaiModelClientTest {
 
     @Test fun models_request_refreshes_once_after_401() = runTest {
         server.enqueue(MockResponse().setResponseCode(401).setBody("{}"))
-        server.enqueue(MockResponse().setBody("{\"data\":[{\"id\":\"deepseek-ai/deepseek-v4-pro\"}]}"))
+        server.enqueue(MockResponse().setBody("""{"data":[{"id":"deepseek-ai/deepseek-v4-pro","vision":false},{"id":"gpt-5.6-sol","model_info":{"vision":true}}]}"""))
         val store = FakeTokenStore("old", "refresh")
         val client = HaiModelClient(store, FakeTokenLifecycle(), server.url("/v1").toString())
 
-        assertEquals("deepseek-ai/deepseek-v4-pro", client.listModels().single().id)
+        val models = client.listModels()
+        assertEquals("deepseek-ai/deepseek-v4-pro", models.first().id)
+        assertFalse(models.first().vision)
+        assertTrue(models.last().vision)
         assertEquals("Bearer old", server.takeRequest().getHeader("Authorization"))
         assertEquals("Bearer new", server.takeRequest().getHeader("Authorization"))
     }
@@ -64,6 +68,26 @@ class HaiModelClientTest {
         val body = server.takeRequest().body.readUtf8()
         assertTrue(body.contains("\"type\":\"image_url\""))
         assertTrue(body.contains("data:image/jpeg;base64,YQ=="))
+    }
+
+    @Test fun image_schema_rejection_becomes_clear_non_retryable_error() = runTest {
+        server.enqueue(
+            MockResponse().setResponseCode(400).setBody(
+                """{"error":{"type":"invalid_request_error","message":"messages[4]: unknown variant `image_url`, expected `text`"}}""",
+            ),
+        )
+        val client = HaiModelClient(FakeTokenStore("token", "refresh"), FakeTokenLifecycle(), server.url("/v1").toString())
+        val error = runCatching {
+            client.streamCompletion(
+                "deepseek-ai/deepseek-v4-pro",
+                listOf(RuntimeMessage("user", "看图", images = listOf(RuntimeImage("image/jpeg", "data:image/jpeg;base64,YQ==")))),
+                false,
+            ) {}
+        }.exceptionOrNull() as ApiException
+
+        assertEquals(400, error.status)
+        assertEquals("当前 HAI 模型不支持图片输入，请切换到视觉模型", error.message)
+        assertFalse(error.retryable)
     }
 }
 
