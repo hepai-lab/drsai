@@ -14,7 +14,7 @@ const port = Number(process.env.OPENDRSAI_E2E_CHAT_PORT || "18643");
 const baseUrl = `http://127.0.0.1:${port}`;
 const scenarioIndex = process.argv.indexOf("--scenario");
 const scenario = scenarioIndex >= 0 ? process.argv[scenarioIndex + 1] : "default";
-if (!["default", "network-recovery", "j1-user-preferences", "j2-memory-safety", "j3-memory-management", "j4-memory-scopes", "j5-reusable-task", "j6-reusable-task-adjustments", "k1-natural-language-schedule", "k2-scheduled-trigger-stability", "k7-scheduled-task-management", "l1-result-sharing", "l2-final-result-isolation", "l3-sensitive-share-review", "l4-collaboration-permissions"].includes(scenario)) throw new Error(`Unknown chat scenario: ${scenario}`);
+if (!["default", "network-recovery", "j1-user-preferences", "j2-memory-safety", "j3-memory-management", "j4-memory-scopes", "j5-reusable-task", "j6-reusable-task-adjustments", "k1-natural-language-schedule", "k2-scheduled-trigger-stability", "k7-scheduled-task-management", "l1-result-sharing", "l2-final-result-isolation", "l3-sensitive-share-review", "l4-collaboration-permissions", "l5-comment-task", "l6-share-revocation", "l7-version-consistency"].includes(scenario)) throw new Error(`Unknown chat scenario: ${scenario}`);
 const outageMs = Number(process.env.OPENDRSAI_E2E_NETWORK_OUTAGE_MS || "60000");
 const completionRequests = [];
 let outageStartedAt = 0;
@@ -64,6 +64,18 @@ const l4EvidenceResult = join(l4EvidenceDir, "packaged-l4-collaboration-permissi
 const l4OwnerScreenshot = join(l4EvidenceDir, "packaged-l4-owner-permissions.png");
 const l4ViewScreenshot = join(l4EvidenceDir, "packaged-l4-view-recipient.png");
 const l4ContinueScreenshot = join(l4EvidenceDir, "packaged-l4-continue-recipient.png");
+const l5EvidenceDir = join(root, "release", "product-evidence", "l5-comment-task");
+const l5EvidenceResult = join(l5EvidenceDir, "packaged-l5-comment-task-result.json");
+const l5RecipientScreenshot = join(l5EvidenceDir, "packaged-l5-recipient-chart-comment.png");
+const l5OwnerScreenshot = join(l5EvidenceDir, "packaged-l5-owner-completed-task.png");
+const l6EvidenceDir = join(root, "release", "product-evidence", "l6-share-revocation");
+const l6EvidenceResult = join(l6EvidenceDir, "packaged-l6-share-revocation-result.json");
+const l6OwnerScreenshot = join(l6EvidenceDir, "packaged-l6-owner-revocation.png");
+const l6RecipientScreenshot = join(l6EvidenceDir, "packaged-l6-recipient-after-revocation.png");
+const l7EvidenceDir = join(root, "release", "product-evidence", "l7-version-consistency");
+const l7EvidenceResult = join(l7EvidenceDir, "packaged-l7-version-consistency-result.json");
+const l7OwnerScreenshot = join(l7EvidenceDir, "packaged-l7-owner-version-history.png");
+const l7RecipientScreenshot = join(l7EvidenceDir, "packaged-l7-recipient-current-and-stale.png");
 const systemPath = [
   process.env.SystemRoot ? join(process.env.SystemRoot, "System32") : "C:\\Windows\\System32",
   process.env.SystemRoot || "C:\\Windows",
@@ -88,7 +100,7 @@ const userData = join(tempDir, "electron-user-data");
 mkdirSync(appHome, { recursive: true });
 mkdirSync(userData, { recursive: true });
 if (["j1-user-preferences", "j2-memory-safety", "j3-memory-management", "j4-memory-scopes"].includes(scenario)) seedPreferenceWorkspace();
-if (["j5-reusable-task", "j6-reusable-task-adjustments", "k1-natural-language-schedule", "k2-scheduled-trigger-stability", "k7-scheduled-task-management", "l1-result-sharing", "l2-final-result-isolation", "l3-sensitive-share-review", "l4-collaboration-permissions"].includes(scenario)) seedReusableTaskWorkspace();
+if (["j5-reusable-task", "j6-reusable-task-adjustments", "k1-natural-language-schedule", "k2-scheduled-trigger-stability", "k7-scheduled-task-management", "l1-result-sharing", "l2-final-result-isolation", "l3-sensitive-share-review", "l4-collaboration-permissions", "l5-comment-task", "l6-share-revocation", "l7-version-consistency"].includes(scenario)) seedReusableTaskWorkspace();
 if (scenario === "k1-natural-language-schedule") mkdirSync(k1EvidenceDir, { recursive: true });
 if (scenario === "k2-scheduled-trigger-stability") mkdirSync(k2EvidenceDir, { recursive: true });
 if (scenario === "k7-scheduled-task-management") mkdirSync(k7EvidenceDir, { recursive: true });
@@ -96,6 +108,9 @@ if (scenario === "l1-result-sharing") mkdirSync(l1EvidenceDir, { recursive: true
 if (scenario === "l2-final-result-isolation") mkdirSync(l2EvidenceDir, { recursive: true });
 if (scenario === "l3-sensitive-share-review") mkdirSync(l3EvidenceDir, { recursive: true });
 if (scenario === "l4-collaboration-permissions") mkdirSync(l4EvidenceDir, { recursive: true });
+if (scenario === "l5-comment-task") mkdirSync(l5EvidenceDir, { recursive: true });
+if (scenario === "l6-share-revocation") mkdirSync(l6EvidenceDir, { recursive: true });
+if (scenario === "l7-version-consistency") mkdirSync(l7EvidenceDir, { recursive: true });
 
 let gatewayProcess = null;
 let shuttingDownGateway = false;
@@ -104,12 +119,88 @@ try {
   await assertPortFree();
   gatewayProcess = scenario === "network-recovery"
     ? await startNetworkRecoveryGateway()
-    : ["j1-user-preferences", "j2-memory-safety", "j3-memory-management", "j4-memory-scopes", "j5-reusable-task", "j6-reusable-task-adjustments", "l2-final-result-isolation", "l3-sensitive-share-review", "l4-collaboration-permissions"].includes(scenario)
+    : ["j1-user-preferences", "j2-memory-safety", "j3-memory-management", "j4-memory-scopes", "j5-reusable-task", "j6-reusable-task-adjustments", "l2-final-result-isolation", "l3-sensitive-share-review", "l4-collaboration-permissions", "l5-comment-task", "l6-share-revocation", "l7-version-consistency"].includes(scenario)
       ? await startUserPreferenceGateway()
       : await startPythonGateway();
   await waitForJson("/health", 25_000);
   let result;
-  if (scenario === "l4-collaboration-permissions") {
+  if (scenario === "l7-version-consistency") {
+    const phaseResults = {};
+    const runL7 = async (phase, authUserId, authEmail, screenshotPath, share) => {
+      const phaseResultPath = join(tempDir, `l7-${phase}-result.json`);
+      await runPackagedApp({ resultPath: phaseResultPath, l7Phase: phase, authUserId, authEmail, screenshotPath, l7ShareId: share?.id, l7ObjectId: share?.objects?.[0]?.objectId, l7V1Sha: share?.objects?.[0]?.sha256 });
+      phaseResults[phase] = JSON.parse(readFileSync(phaseResultPath, "utf8"));
+      return phaseResults[phase];
+    };
+    const owner = await runL7("owner", "l7-owner", "owner@cern.example");
+    const share = owner?.details?.share;
+    if (!share?.id || !share.objects?.[0]?.sha256) throw new Error(`L7 owner phase did not produce a versioned share: ${JSON.stringify(owner)}`);
+    await runL7("recipient-before", "l7-recipient", "version-reviewer@cern.example", undefined, share);
+    const sourcePath = join(workspacePath, "cern-wlcg-manager-versioned.pptx");
+    const originalSource = readFileSync(sourcePath);
+    writeFileSync(sourcePath, Buffer.concat([originalSource, Buffer.from("\nL7-CERN-V2-OWNER-EDIT-20260715\n", "utf8")]));
+    const modifiedSourceSha = createHash("sha256").update(readFileSync(sourcePath)).digest("hex");
+    if (modifiedSourceSha === share.objects[0].sha256) throw new Error("L7 source edit did not change the artifact fingerprint.");
+    await runL7("recipient-during", "l7-recipient", "version-reviewer@cern.example", undefined, share);
+    const published = await runL7("owner-publish", "l7-owner", "owner@cern.example", undefined, share);
+    await runL7("conflict", "l7-owner", "owner@cern.example", undefined, share);
+    await runL7("recipient-after", "l7-recipient", "version-reviewer@cern.example", l7RecipientScreenshot, share);
+    await runL7("owner-audit", "l7-owner", "owner@cern.example", l7OwnerScreenshot, share);
+    const shareRoot = join(appHome, "desktop", "sanitized-shares", share.id.slice("share:".length));
+    const versionDirectories = existsSync(shareRoot) ? readdirSync(shareRoot).filter((name) => /^v\d/.test(name)).sort() : [];
+    const snapshotHash = (directory) => { const files = readdirSync(join(shareRoot, directory)); return files.length === 1 ? createHash("sha256").update(readFileSync(join(shareRoot, directory, files[0]))).digest("hex") : ""; };
+    const v1Directory = versionDirectories.find((name) => name === "v1");
+    const v2Directory = versionDirectories.find((name) => name.startsWith("v2-"));
+    const immutableSnapshotsPreserved = Boolean(v1Directory && v2Directory && snapshotHash(v1Directory) === share.objects[0].sha256 && snapshotHash(v2Directory) === modifiedSourceSha);
+    const stored = JSON.parse(readFileSync(join(appHome, "desktop", "shares.json"), "utf8"));
+    const storedShare = stored.shares?.find((item) => item.id === share.id);
+    const storeRevisioned = Number.isInteger(stored.revision) && stored.revision >= 6 && storedShare?.version === 2 && storedShare.objects?.[0]?.sha256 === modifiedSourceSha;
+    result = {
+      ok: Object.values(phaseResults).every((item) => item.ok === true) && immutableSnapshotsPreserved && storeRevisioned && completionRequests.length === 0,
+      checks: { ...Object.fromEntries(Object.entries(phaseResults).flatMap(([phase, value]) => Object.entries(value.checks || {}).map(([key, passed]) => [`${phase}.${key}`, passed]))), "storage.immutableV1AndV2Snapshots": immutableSnapshotsPreserved, "storage.revisionedNoOverwrite": storeRevisioned, "network.noModelRequests": completionRequests.length === 0 },
+      details: { phases: Object.fromEntries(Object.entries(phaseResults).map(([phase, value]) => [phase, value.details])), source: { v1Sha256: share.objects[0].sha256, v2Sha256: modifiedSourceSha }, versionDirectories, published: published?.details?.share, storeRevision: stored.revision, modelRequestCount: completionRequests.length },
+    };
+  } else if (scenario === "l6-share-revocation") {
+    const ownerResultPath = join(tempDir, "l6-owner-result.json");
+    await runPackagedApp({ resultPath: ownerResultPath, l6Phase: "owner", authUserId: "l6-owner", authEmail: "owner@cern.example" });
+    const owner = JSON.parse(readFileSync(ownerResultPath, "utf8"));
+    const share = owner?.details?.share;
+    if (!share?.id || !share.objects?.[0]?.objectId) throw new Error(`L6 owner phase did not produce a share: ${JSON.stringify(owner)}`);
+    const phases = [
+      ["recipient-before", "l6-recipient", "revoked@cern.example"],
+      ["owner-revoke", "l6-owner", "owner@cern.example", l6OwnerScreenshot],
+      ["recipient-after", "l6-recipient", "revoked@cern.example", l6RecipientScreenshot],
+      ["owner-restart", "l6-owner", "owner@cern.example"],
+    ];
+    const phaseResults = { owner };
+    for (const [phase, authUserId, authEmail, screenshotPath] of phases) {
+      const phaseResultPath = join(tempDir, `l6-${phase}-result.json`);
+      await runPackagedApp({ resultPath: phaseResultPath, l6Phase: phase, authUserId, authEmail, screenshotPath, l6ShareId: share.id, l6ObjectId: share.objects[0].objectId });
+      phaseResults[phase] = JSON.parse(readFileSync(phaseResultPath, "utf8"));
+    }
+    result = {
+      ok: Object.values(phaseResults).every((item) => item.ok === true) && completionRequests.length === 0,
+      checks: { ...Object.fromEntries(Object.entries(phaseResults).flatMap(([phase, value]) => Object.entries(value.checks || {}).map(([key, passed]) => [`${phase}.${key}`, passed]))), "network.noModelRequests": completionRequests.length === 0 },
+      details: { phases: Object.fromEntries(Object.entries(phaseResults).map(([phase, value]) => [phase, value.details])), modelRequestCount: completionRequests.length },
+    };
+  } else if (scenario === "l5-comment-task") {
+    const phases = [
+      ["owner", "l5-owner", "owner@cern.example"],
+      ["recipient", "l5-recipient", "reviewer@cern.example", l5RecipientScreenshot],
+      ["owner-task", "l5-owner", "owner@cern.example", l5OwnerScreenshot],
+    ];
+    const phaseResults = {};
+    for (const [phase, authUserId, authEmail, screenshotPath] of phases) {
+      const phaseResultPath = join(tempDir, `l5-${phase}-result.json`);
+      await runPackagedApp({ resultPath: phaseResultPath, l5Phase: phase, authUserId, authEmail, screenshotPath });
+      phaseResults[phase] = JSON.parse(readFileSync(phaseResultPath, "utf8"));
+    }
+    result = {
+      ok: Object.values(phaseResults).every((item) => item.ok === true) && completionRequests.length === 0,
+      checks: { ...Object.fromEntries(Object.entries(phaseResults).flatMap(([phase, value]) => Object.entries(value.checks || {}).map(([key, passed]) => [`${phase}.${key}`, passed]))), "network.noModelRequests": completionRequests.length === 0 },
+      details: { phases: Object.fromEntries(Object.entries(phaseResults).map(([phase, value]) => [phase, value.details])), modelRequestCount: completionRequests.length },
+    };
+  } else if (scenario === "l4-collaboration-permissions") {
     const phases = [
       ["owner", "l4-owner", "owner@cern.example", l4OwnerScreenshot],
       ["view", "l4-view", "view@cern.example", l4ViewScreenshot],
@@ -258,10 +349,19 @@ try {
   if (scenario === "l4-collaboration-permissions") {
     writeFileSync(l4EvidenceResult, `${JSON.stringify(result, null, 2)}\n`, "utf8");
   }
+  if (scenario === "l5-comment-task") {
+    writeFileSync(l5EvidenceResult, `${JSON.stringify(result, null, 2)}\n`, "utf8");
+  }
+  if (scenario === "l6-share-revocation") {
+    writeFileSync(l6EvidenceResult, `${JSON.stringify(result, null, 2)}\n`, "utf8");
+  }
+  if (scenario === "l7-version-consistency") {
+    writeFileSync(l7EvidenceResult, `${JSON.stringify(result, null, 2)}\n`, "utf8");
+  }
   if (!result.ok && !isSuccessfulChatRoundTrip(result)) {
     throw new Error(`E2E chat failed:\n${JSON.stringify(result, null, 2)}`);
   }
-  if (!["j1-user-preferences", "j2-memory-safety", "j3-memory-management", "j4-memory-scopes", "j5-reusable-task", "j6-reusable-task-adjustments", "k1-natural-language-schedule", "k2-scheduled-trigger-stability", "k7-scheduled-task-management", "l1-result-sharing", "l2-final-result-isolation", "l3-sensitive-share-review", "l4-collaboration-permissions"].includes(scenario)) assertChatDiagnostics(result);
+  if (!["j1-user-preferences", "j2-memory-safety", "j3-memory-management", "j4-memory-scopes", "j5-reusable-task", "j6-reusable-task-adjustments", "k1-natural-language-schedule", "k2-scheduled-trigger-stability", "k7-scheduled-task-management", "l1-result-sharing", "l2-final-result-isolation", "l3-sensitive-share-review", "l4-collaboration-permissions", "l5-comment-task", "l6-share-revocation", "l7-version-consistency"].includes(scenario)) assertChatDiagnostics(result);
   if (scenario === "network-recovery") assertNetworkRecoveryDiagnostics(result);
   if (scenario === "j1-user-preferences") assertJ1UserPreferenceDiagnostics(result);
   if (scenario === "j2-memory-safety") assertJ2MemorySafetyDiagnostics(result);
@@ -687,13 +787,16 @@ function seedReusableTaskWorkspace() {
   if (hash !== "F6581E1A255B354667188B41B874B996A300F88BB48912721BC1C854183E913E") throw new Error("CERN reusable-task fixture SHA-256 changed.");
   mkdirSync(workspacePath, { recursive: true });
   copyFileSync(sourcePdf, join(workspacePath, "WLCG-20260715-WLCG-talk-IHEP-visit.pdf"));
-  if (["l1-result-sharing", "l2-final-result-isolation", "l4-collaboration-permissions"].includes(scenario)) {
+  if (["l1-result-sharing", "l2-final-result-isolation", "l4-collaboration-permissions", "l5-comment-task", "l6-share-revocation", "l7-version-consistency"].includes(scenario)) {
     const sourcePpt = join(root, "release", "product-evidence", "cern-manager-deck", "packaged-generated-manager-zh-cancel-planning-retry.pptx");
     const sourceManifest = join(root, "release", "product-evidence", "cern-manager-deck", "packaged-generated-manager-zh-cancel-planning-retry.provenance.json");
     if (!existsSync(sourcePpt) || !existsSync(sourceManifest)) throw new Error("L1 CERN manager deck evidence is missing. Run the CERN presentation verifier first.");
     copyFileSync(sourcePpt, join(workspacePath, "cern-wlcg-manager-zh.pptx"));
     copyFileSync(sourceManifest, join(workspacePath, "cern-wlcg-manager-zh.provenance.json"));
     if (scenario === "l4-collaboration-permissions") copyFileSync(sourcePpt, join(workspacePath, "cern-wlcg-manager-collaboration.pptx"));
+    if (scenario === "l5-comment-task") copyFileSync(sourcePpt, join(workspacePath, "cern-wlcg-manager-comment-task.pptx"));
+    if (scenario === "l6-share-revocation") copyFileSync(sourcePpt, join(workspacePath, "cern-wlcg-manager-revocation.pptx"));
+    if (scenario === "l7-version-consistency") copyFileSync(sourcePpt, join(workspacePath, "cern-wlcg-manager-versioned.pptx"));
     if (scenario === "l2-final-result-isolation") {
       copyFileSync(sourcePpt, join(workspacePath, "cern-wlcg-manager-final.pptx"));
       writeFileSync(join(workspacePath, "cern-wlcg-private.provenance.json"), JSON.stringify({ sourcePath: join(workspacePath, "WLCG-20260715-WLCG-talk-IHEP-visit.pdf"), conversation: "PRIVATE-CONVERSATION-SECRET", internalWorkspacePath: workspacePath }, null, 2), "utf8");
@@ -851,8 +954,16 @@ function runPackagedApp(options = {}) {
         OPENDRSAI_E2E_L2_PHASE: options.l2Phase,
         OPENDRSAI_E2E_L3_PHASE: options.l3Phase,
         OPENDRSAI_E2E_L4_PHASE: options.l4Phase,
+        OPENDRSAI_E2E_L5_PHASE: options.l5Phase,
+        OPENDRSAI_E2E_L6_PHASE: options.l6Phase,
+        OPENDRSAI_E2E_L6_SHARE_ID: options.l6ShareId,
+        OPENDRSAI_E2E_L6_OBJECT_ID: options.l6ObjectId,
+        OPENDRSAI_E2E_L7_PHASE: options.l7Phase,
+        OPENDRSAI_E2E_L7_SHARE_ID: options.l7ShareId,
+        OPENDRSAI_E2E_L7_OBJECT_ID: options.l7ObjectId,
+        OPENDRSAI_E2E_L7_V1_SHA: options.l7V1Sha,
         OPENDRSAI_E2E_SCREENSHOT: options.screenshotPath || (scenario === "j1-user-preferences" ? j1EvidenceScreenshot : scenario === "j2-memory-safety" ? j2EvidenceScreenshot : scenario === "j3-memory-management" ? j3EvidenceScreenshot : scenario === "j4-memory-scopes" ? j4EvidenceScreenshot : scenario === "j5-reusable-task" ? j5EvidenceScreenshot : scenario === "j6-reusable-task-adjustments" ? j6EvidenceScreenshot : scenario === "k1-natural-language-schedule" ? k1EvidenceScreenshot : scenario === "k7-scheduled-task-management" ? k7EvidenceScreenshot : undefined),
-        OPENDRSAI_E2E_WORKSPACE_PATH: ["j1-user-preferences", "j2-memory-safety", "j3-memory-management", "j4-memory-scopes", "j5-reusable-task", "j6-reusable-task-adjustments", "k1-natural-language-schedule", "k2-scheduled-trigger-stability", "k7-scheduled-task-management", "l1-result-sharing", "l2-final-result-isolation", "l3-sensitive-share-review", "l4-collaboration-permissions"].includes(scenario) ? workspacePath : undefined,
+        OPENDRSAI_E2E_WORKSPACE_PATH: ["j1-user-preferences", "j2-memory-safety", "j3-memory-management", "j4-memory-scopes", "j5-reusable-task", "j6-reusable-task-adjustments", "k1-natural-language-schedule", "k2-scheduled-trigger-stability", "k7-scheduled-task-management", "l1-result-sharing", "l2-final-result-isolation", "l3-sensitive-share-review", "l4-collaboration-permissions", "l5-comment-task", "l6-share-revocation", "l7-version-consistency"].includes(scenario) ? workspacePath : undefined,
         OPENDRSAI_E2E_AUTH_USER_ID: options.authUserId || (scenario === "j4-memory-scopes" ? "authorized-cern-user" : undefined),
         OPENDRSAI_E2E_AUTH_EMAIL: options.authEmail || (scenario === "j4-memory-scopes" ? "authorized@cern.example" : undefined),
         OPENDRSAI_E2E_WORKSPACE_B_PATH: scenario === "j4-memory-scopes" ? workspaceBPath : undefined,

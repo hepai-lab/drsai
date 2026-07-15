@@ -771,6 +771,7 @@ export function installMockDesktopApi(): void {
   let reusableTasks: import("@shared/desktopApi").DesktopReusableTask[] = [];
   let shares: DesktopShareManifest[] = [];
   let shareComments: import("@shared/desktopApi").DesktopShareComment[] = [];
+  let shareCommentTasks: import("@shared/desktopApi").DesktopShareCommentTask[] = [];
   let shareAudit: import("@shared/desktopApi").DesktopShareAuditEntry[] = [];
   let scheduledTasks: DesktopScheduledTask[] = [
     {
@@ -3006,6 +3007,7 @@ export function installMockDesktopApi(): void {
       if (!task) throw new Error("Mock background task was not found.");
       const updated: DesktopBackgroundTask = {
         ...task,
+        ...(request.title !== undefined ? { title: request.title } : {}),
         status: request.status,
         updatedAt: new Date().toISOString(),
         ...(request.currentStep !== undefined
@@ -3036,10 +3038,13 @@ export function installMockDesktopApi(): void {
         sourceTaskId: source.id,
         ...(selected ? { selectedArtifactId: selected.id } : {}),
         objects: [
-          ...(request.scope === "complete_task" ? [{ objectType: "task" as const, objectId: source.id, label: source.title }] : []),
-          ...artifacts.map((artifact) => ({ objectType: "artifact" as const, objectId: artifact.id, label: artifact.label, kind: artifact.kind, bytes: 1, sha256: "mock-sha256" })),
+          ...(request.scope === "complete_task" ? [{ objectType: "task" as const, objectId: source.id, label: source.title, version: 1 }] : []),
+          ...artifacts.map((artifact) => ({ objectType: "artifact" as const, objectId: artifact.id, label: artifact.label, kind: artifact.kind, bytes: 1, sha256: "mock-sha256", version: 1 })),
         ],
         createdAt: new Date().toISOString(),
+        version: 1,
+        versionUpdatedAt: new Date().toISOString(),
+        versionUpdatedByAccount: authSession.user?.email || "developer@opendrsai.local",
         status: "active",
         permission: request.permission ?? "view",
       };
@@ -3055,44 +3060,102 @@ export function installMockDesktopApi(): void {
       requiresResolution: false,
     }),
     updateSharePermission: async (request) => {
-      const share = shares.find((item) => item.id === request.shareId);
+      const share = shares.find((item) => item.id === request.shareId && item.status === "active");
       if (!share) throw new Error("Mock share was not found.");
       const updated = { ...share, permission: request.permission };
       shares = shares.map((item) => item.id === updated.id ? updated : item);
       return updated;
     },
-    listShareComments: async (request) => shareComments.filter((item) => item.shareId === request.shareId).map((item) => ({ ...item })),
+    revokeShare: async (request) => {
+      if (request.confirmation !== "REVOKE") throw new Error("Type REVOKE to confirm permanent access revocation.");
+      const owner = (authSession.user?.email || "").toLowerCase();
+      const share = shares.find((item) => item.id === request.shareId);
+      if (!share || share.ownerAccount.toLowerCase() !== owner || share.status !== "active") throw new Error("Only the share owner can revoke this share.");
+      const revokedAt = new Date().toISOString();
+      const updated = { ...share, status: "revoked" as const, revokedAt, revokedByAccount: owner };
+      shares = shares.map((item) => item.id === updated.id ? updated : item);
+      const audit = { id: `share-audit:${crypto.randomUUID()}`, shareId: share.id, actorAccount: owner, action: "revoke" as const, outcome: "allowed" as const, permission: share.permission, reason: `Access revoked for ${share.objects.length} shared object(s).`, createdAt: revokedAt };
+      shareAudit = [...shareAudit, audit];
+      return { shareId: share.id, status: "revoked" as const, revokedAt, recipientAccount: share.recipientAccount, objectsInvalidated: share.objects.length, auditEntryId: audit.id };
+    },
+    inspectShareVersion: async (request) => {
+      const share = shares.find((item) => item.id === request.shareId && item.status === "active");
+      if (!share) throw new Error("Mock share was not found.");
+      const artifacts = share.objects.filter((item) => item.objectType === "artifact").map((item) => ({ objectId: item.objectId, label: item.label, publishedSha256: item.sha256 || "", sourceSha256: "f".repeat(64), changed: item.sha256 !== "f".repeat(64) }));
+      const currentCommentCount = shareComments.filter((item) => item.shareId === share.id && item.version === share.version).length;
+      return { shareId: share.id, currentVersion: share.version, nextVersion: share.version + 1, hasChanges: artifacts.some((item) => item.changed), currentCommentCount, commentsThatWillBecomeStale: currentCommentCount, sourceFingerprints: artifacts.map((item) => ({ objectId: item.objectId, sha256: item.sourceSha256 })), artifacts };
+    },
+    publishShareVersion: async (request) => {
+      const share = shares.find((item) => item.id === request.shareId && item.status === "active");
+      if (!share || share.version !== request.expectedVersion) throw new Error(`Version conflict: this share is now v${share?.version ?? "?"}.`);
+      const publishedAt = new Date().toISOString(); const currentVersion = share.version + 1;
+      const updated = { ...share, version: currentVersion, versionUpdatedAt: publishedAt, versionUpdatedByAccount: authSession.user?.email || "mock@example.org", objects: share.objects.map((item) => ({ ...item, version: currentVersion, ...(item.objectType === "artifact" ? { sha256: request.sourceFingerprints.find((fingerprint) => fingerprint.objectId === item.objectId)?.sha256 || item.sha256 } : {}) })) };
+      shares = shares.map((item) => item.id === updated.id ? updated : item);
+      const staleCommentCount = shareComments.filter((item) => item.shareId === share.id && item.version < currentVersion).length;
+      return { status: "published" as const, shareId: share.id, previousVersion: share.version, currentVersion, publishedAt, staleCommentCount, manifest: updated };
+    },
+    listShareComments: async (request) => { const share = shares.find((item) => item.id === request.shareId); return shareComments.filter((item) => item.shareId === request.shareId).map((item) => ({ ...item, versionStatus: item.version === share?.version ? "current" as const : "stale" as const })); },
     addShareComment: async (request) => {
-      const share = shares.find((item) => item.id === request.shareId && item.recipientAccount === (authSession.user?.email || "").toLowerCase());
+      const share = shares.find((item) => item.id === request.shareId && item.status === "active" && item.recipientAccount === (authSession.user?.email || "").toLowerCase());
       if (!share || share.permission === "view") throw new Error("The current share permission does not allow comments.");
-      const comment = { id: `share-comment:${crypto.randomUUID()}`, shareId: share.id, authorAccount: authSession.user?.email || "mock@example.org", body: request.body, createdAt: new Date().toISOString() };
+      const object = share.objects.find((item) => item.objectId === request.objectId) ?? share.objects.find((item) => item.objectType === "artifact") ?? share.objects[0];
+      const comment = { id: `share-comment:${crypto.randomUUID()}`, shareId: share.id, authorAccount: authSession.user?.email || "mock@example.org", body: request.body, target: { objectType: object.objectType, objectId: object.objectId, objectLabel: object.label, anchorType: request.anchorType ?? "whole_result" as const, anchorLabel: request.anchorLabel?.trim() || object.label }, createdAt: new Date().toISOString(), version: share.version, versionStatus: "current" as const };
       shareComments = [...shareComments, comment];
       return comment;
     },
+    previewShareCommentTask: async (request) => {
+      const comment = shareComments.find((item) => item.shareId === request.shareId && item.id === request.commentId);
+      if (!comment) throw new Error("Mock shared comment was not found.");
+      return { shareId: request.shareId, commentId: comment.id, title: `处理评论：${comment.target.anchorLabel}`, instructions: `针对成果“${comment.target.objectLabel}”处理评论：\n${comment.body}`, commentBody: comment.body, commentAuthorAccount: comment.authorAccount, target: { ...comment.target } };
+    },
+    createShareCommentTask: async (request) => {
+      const preview = await api.previewShareCommentTask(request);
+      const now = new Date().toISOString();
+      const task = { id: `share-comment-task:${crypto.randomUUID()}`, shareId: request.shareId, commentId: request.commentId, backgroundTaskId: `background-task:agent_run:${crypto.randomUUID()}`, title: request.title, instructions: request.instructions, commentBody: preview.commentBody, commentAuthorAccount: preview.commentAuthorAccount, target: { ...preview.target }, status: "ready" as const, createdAt: now, updatedAt: now };
+      shareCommentTasks = [...shareCommentTasks, task];
+      return task;
+    },
+    updateShareCommentTask: async (request) => {
+      const task = shareCommentTasks.find((item) => item.id === request.taskId);
+      if (!task || task.status === "completed") throw new Error("Mock comment task cannot be updated.");
+      const updated = { ...task, title: request.title, instructions: request.instructions, updatedAt: new Date().toISOString() };
+      shareCommentTasks = shareCommentTasks.map((item) => item.id === updated.id ? updated : item);
+      return updated;
+    },
+    completeShareCommentTask: async (request) => {
+      const task = shareCommentTasks.find((item) => item.id === request.taskId);
+      if (!task) throw new Error("Mock comment task was not found.");
+      const completedAt = new Date().toISOString();
+      const updated = { ...task, status: "completed" as const, completedAt, updatedAt: completedAt };
+      shareCommentTasks = shareCommentTasks.map((item) => item.id === updated.id ? updated : item);
+      return updated;
+    },
+    listShareCommentTasks: async (request = {}) => shareCommentTasks.filter((item) => !request.shareId || item.shareId === request.shareId).map((item) => ({ ...item, target: { ...item.target } })),
     continueSharedTask: async (request) => {
-      const share = shares.find((item) => item.id === request.shareId && item.recipientAccount === (authSession.user?.email || "").toLowerCase());
+      const share = shares.find((item) => item.id === request.shareId && item.status === "active" && item.recipientAccount === (authSession.user?.email || "").toLowerCase());
       if (!share || share.permission !== "continue") throw new Error("The current share permission does not allow continued processing.");
       return { id: `share-continuation:${crypto.randomUUID()}`, shareId: share.id, requesterAccount: authSession.user?.email || "mock@example.org", sourceTaskId: share.sourceTaskId, artifactIds: share.objects.filter((item) => item.objectType === "artifact").map((item) => item.objectId), status: "requested" as const, createdAt: new Date().toISOString() };
     },
     listShareAudit: async (request) => shareAudit.filter((item) => item.shareId === request.shareId).map((item) => ({ ...item })),
-    listIncomingShares: async () => shares.filter((share) => share.recipientAccount === (authSession.user?.email || "").toLowerCase()),
+    listIncomingShares: async () => shares.filter((share) => share.status === "active" && share.recipientAccount === (authSession.user?.email || "").toLowerCase()),
     listOutgoingShares: async () => shares.filter((share) => share.ownerAccount === (authSession.user?.email || "")),
     openSharedObject: async (request) => {
-      const share = shares.find((item) => item.id === request.shareId && item.recipientAccount === (authSession.user?.email || "").toLowerCase());
+      const share = shares.find((item) => item.id === request.shareId && item.status === "active" && item.recipientAccount === (authSession.user?.email || "").toLowerCase());
       const object = share?.objects.find((item) => item.objectType === request.objectType && item.objectId === request.objectId);
       if (!share || !object) throw new Error("This object is not included in the share manifest.");
       return request.objectType === "task"
-        ? { shareId: share.id, objectType: "task" as const, objectId: object.objectId, label: object.label, authorized: true as const, task: { id: object.objectId, title: object.label, status: "completed" as const, updatedAt: share.createdAt, artifactIds: share.objects.filter((item) => item.objectType === "artifact").map((item) => item.objectId) } }
-        : { shareId: share.id, objectType: "artifact" as const, objectId: object.objectId, label: object.label, authorized: true as const, artifact: { id: object.objectId, label: object.label, kind: object.kind || "file", bytes: object.bytes || 1, sha256: object.sha256 || "mock-sha256" } };
+        ? { shareId: share.id, version: share.version, objectType: "task" as const, objectId: object.objectId, label: object.label, authorized: true as const, task: { id: object.objectId, title: object.label, status: "completed" as const, updatedAt: share.createdAt, artifactIds: share.objects.filter((item) => item.objectType === "artifact").map((item) => item.objectId) } }
+        : { shareId: share.id, version: share.version, objectType: "artifact" as const, objectId: object.objectId, label: object.label, authorized: true as const, artifact: { id: object.objectId, label: object.label, kind: object.kind || "file", bytes: object.bytes || 1, sha256: object.sha256 || "mock-sha256" } };
     },
     downloadSharedArtifact: async (request) => {
       const recipient = (authSession.user?.email || "").toLowerCase();
-      const share = shares.find((item) => item.id === request.shareId && item.recipientAccount === recipient);
+      const share = shares.find((item) => item.id === request.shareId && item.status === "active" && item.recipientAccount === recipient);
       const object = share?.objects.find((item) => item.objectType === "artifact" && item.objectId === request.objectId);
       if (!share || !object) throw new Error("This result is not included in the share manifest.");
       const content = `Mock shared result: ${object.label}`;
       return {
         shareId: share.id,
+        version: share.version,
         artifactId: object.objectId,
         fileName: object.label,
         kind: object.kind || "file",

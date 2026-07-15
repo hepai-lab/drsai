@@ -10776,6 +10776,27 @@ button {
 .share-permission-control { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .share-permission-control span { color: var(--app-text-muted); font-size: 12px; }
 .share-permission-control select { min-width: 112px; padding: 6px 8px; border: 1px solid var(--app-panel-border); border-radius: 8px; background: var(--app-card-bg); color: var(--app-text); }
+.share-revoke-button { justify-self: end; border-color: color-mix(in srgb, #b42318 48%, var(--app-panel-border)); color: #b42318; }
+.share-revoked-badge { width: fit-content; border-radius: 999px; padding: 3px 8px; background: color-mix(in srgb, #b42318 12%, transparent); color: #b42318; font-size: 12px; font-weight: 700; }
+.share-revocation-receipt { display: grid; gap: 4px; border: 1px solid color-mix(in srgb, #b42318 30%, var(--app-panel-border)); border-radius: 9px; padding: 10px; background: color-mix(in srgb, #b42318 5%, var(--app-card-bg)); }
+.share-revocation-receipt code { overflow-wrap: anywhere; color: var(--app-text-muted); font-size: 11px; }
+.share-revoke-dialog { display: grid; gap: 12px; border: 1px solid color-mix(in srgb, #b42318 50%, var(--app-panel-border)); border-radius: 12px; padding: 14px; background: var(--app-card-bg); box-shadow: 0 12px 36px rgba(27, 31, 44, 0.12); }
+.share-revoke-dialog > header > div, .share-revoke-dialog > label { display: grid; gap: 6px; }
+.share-revoke-dialog p { margin: 0; color: var(--app-text-muted); }
+.share-revoke-dialog ul { margin: 0; padding-left: 20px; }
+.share-revoke-dialog input { width: 100%; padding: 9px 10px; border: 1px solid var(--app-panel-border); border-radius: 8px; background: var(--app-card-bg); color: var(--app-text); }
+.share-version-badge { width: fit-content; border-radius: 999px; padding: 3px 8px; background: color-mix(in srgb, var(--app-accent-strong) 12%, transparent); color: var(--app-accent-strong); font-size: 12px; font-weight: 700; }
+.share-version-check { justify-self: end; }
+.share-comment-stale { width: fit-content; border-radius: 6px; padding: 3px 6px; background: color-mix(in srgb, #b54708 12%, transparent); color: #b54708; font-size: 11px; font-style: normal; font-weight: 700; }
+.share-version-dialog { display: grid; gap: 12px; border: 1px solid color-mix(in srgb, var(--app-accent-strong) 50%, var(--app-panel-border)); border-radius: 12px; padding: 14px; background: var(--app-card-bg); box-shadow: 0 12px 36px rgba(27, 31, 44, 0.12); }
+.share-version-dialog > header > div { display: grid; gap: 4px; }
+.share-version-dialog p { margin: 0; color: var(--app-text-muted); }
+.share-version-dialog ul { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.share-version-dialog li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; border: 1px solid var(--app-panel-border); border-radius: 8px; padding: 9px; }
+.share-version-dialog li code { grid-column: 1 / -1; color: var(--app-text-muted); font-size: 11px; overflow-wrap: anywhere; }
+.share-version-warning { border-radius: 8px; padding: 9px; background: color-mix(in srgb, #b54708 8%, var(--app-card-bg)); color: #b54708 !important; }
+.share-version-status { display: block; border-radius: 8px; padding: 9px 11px; background: var(--app-card-bg); border: 1px solid var(--app-panel-border); }
+.share-version-status[data-state="conflict"] { border-color: #b42318; color: #b42318; }
 .share-permission-badge { width: fit-content; margin-top: 3px; border-radius: 999px; padding: 3px 8px; background: color-mix(in srgb, var(--app-accent-strong) 12%, transparent); color: var(--app-accent-strong); font-size: 12px; }
 .share-comment-composer { display: grid; gap: 8px; border-top: 1px solid var(--app-panel-border); padding-top: 9px; }
 .share-comment-composer ul { max-height: 150px; overflow: auto; }
@@ -10785,6 +10806,30 @@ button {
 .share-comment-composer label { display: grid; gap: 5px; }
 .share-comment-composer input { width: 100%; padding: 8px 9px; border: 1px solid var(--app-panel-border); border-radius: 8px; background: var(--app-card-bg); color: var(--app-text); }
 .share-comment-composer button { justify-self: end; }
+.share-comment-target { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(110px, .6fr) minmax(180px, 1.2fr); gap: 8px; }
+.share-comment-target label { min-width: 0; }
+.share-comment-target select { width: 100%; padding: 8px 9px; border: 1px solid var(--app-panel-border); border-radius: 8px; background: var(--app-card-bg); color: var(--app-text); }
+.outgoing-share-comments,
+.share-comment-tasks { display: grid; gap: 8px; border-top: 1px solid var(--app-panel-border); padding-top: 10px; }
+.outgoing-share-comments ul { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.outgoing-share-comments li { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-radius: 8px; padding: 9px; background: var(--app-subtle-bg); }
+.outgoing-share-comments li > div { display: grid; gap: 3px; }
+.outgoing-share-comments p,
+.share-comment-tasks p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.outgoing-share-comments li:focus { outline: 2px solid var(--app-accent-strong); outline-offset: 2px; }
+.share-comment-tasks > article { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; background: var(--app-subtle-bg); }
+.share-comment-tasks > article > div:first-child { display: grid; gap: 4px; }
+.share-comment-tasks > article > div:last-child { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+.comment-task-dialog { display: grid; gap: 11px; border: 1px solid color-mix(in srgb, var(--app-accent-strong) 55%, var(--app-panel-border)); border-radius: 12px; padding: 14px; background: var(--app-card-bg); box-shadow: 0 12px 36px rgba(27,31,44,.12); }
+.comment-task-dialog header > div,
+.comment-task-dialog label { display: grid; gap: 5px; }
+.comment-task-dialog blockquote { margin: 0; border-left: 3px solid var(--app-accent-strong); padding: 8px 12px; background: var(--app-subtle-bg); }
+.comment-task-dialog blockquote p { margin: 4px 0 0; }
+.comment-task-dialog input,
+.comment-task-dialog textarea { width: 100%; border: 1px solid var(--app-panel-border); border-radius: 8px; padding: 9px 10px; background: var(--app-card-bg); color: var(--app-text); }
+.comment-task-dialog textarea { min-height: 100px; resize: vertical; }
+.comment-task-dialog > div:last-child { display: flex; justify-content: flex-end; gap: 8px; }
+@media (max-width: 760px) { .share-comment-target { grid-template-columns: 1fr; } .share-comment-tasks > article { display: grid; } }
 
 .results-center-view > header {
   display: flex;

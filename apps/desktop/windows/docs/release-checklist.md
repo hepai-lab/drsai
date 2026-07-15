@@ -62,7 +62,7 @@ and signatures, and publishes only when explicitly requested.
 After publication:
 
 ```powershell
-$env:OPENDRSAI_RELEASE_BASE_URL = "https://github.com/hepai-lab/drsai/releases/download/v1.4.5"
+$env:OPENDRSAI_RELEASE_BASE_URL = "https://github.com/hepai-lab/drsai/releases/download/v1.4.6"
 $env:EXPECTED_WINDOWS_SIGNER_THUMBPRINT = "<certificate-thumbprint>"
 $env:VERIFY_PUBLIC_RELEASE_DOWNLOAD = "1"
 npm run verify:public-release

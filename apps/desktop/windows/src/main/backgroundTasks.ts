@@ -588,6 +588,7 @@ function normalizeUpdateRequest(
   return {
     taskId: normalizeRequiredText(typed.taskId, "Background task id is required."),
     status: typed.status,
+    ...(typeof typed.title === "string" ? { title: normalizeRequiredText(typed.title, "Background task title is required.") } : {}),
     ...(typeof typed.message === "string" ? { message: typed.message } : {}),
     ...(typed.currentStep !== undefined && typeof typed.currentStep === "string"
       ? { currentStep: typed.currentStep }

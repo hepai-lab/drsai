@@ -1347,6 +1347,7 @@ export interface DesktopShareManifestObject {
   kind?: DesktopTaskArtifactLink["kind"];
   bytes?: number;
   sha256?: string;
+  version: number;
 }
 
 export interface DesktopShareManifest {
@@ -1358,7 +1359,12 @@ export interface DesktopShareManifest {
   selectedArtifactId?: string;
   objects: DesktopShareManifestObject[];
   createdAt: string;
-  status: "active";
+  version: number;
+  versionUpdatedAt: string;
+  versionUpdatedByAccount: string;
+  status: "active" | "revoked";
+  revokedAt?: string;
+  revokedByAccount?: string;
   permission: DesktopSharePermission;
   sensitiveReview?: DesktopShareSensitiveReviewSummary;
 }
@@ -1370,6 +1376,20 @@ export interface DesktopSharePermissionUpdateRequest {
   permission: DesktopSharePermission;
 }
 
+export interface DesktopShareRevokeRequest {
+  shareId: string;
+  confirmation: "REVOKE";
+}
+
+export interface DesktopShareRevocationResult {
+  shareId: string;
+  status: "revoked";
+  revokedAt: string;
+  recipientAccount: string;
+  objectsInvalidated: number;
+  auditEntryId: string;
+}
+
 export interface DesktopShareComment {
   id: string;
   shareId: string;
@@ -1377,6 +1397,47 @@ export interface DesktopShareComment {
   body: string;
   target: DesktopShareCommentTarget;
   createdAt: string;
+  version: number;
+  versionStatus: "current" | "stale";
+}
+
+export interface DesktopShareVersionFingerprint {
+  objectId: string;
+  sha256: string;
+}
+
+export interface DesktopShareVersionInspectionRequest { shareId: string }
+export interface DesktopShareVersionInspectionArtifact {
+  objectId: string;
+  label: string;
+  publishedSha256: string;
+  sourceSha256: string;
+  changed: boolean;
+}
+export interface DesktopShareVersionInspection {
+  shareId: string;
+  currentVersion: number;
+  nextVersion: number;
+  hasChanges: boolean;
+  currentCommentCount: number;
+  commentsThatWillBecomeStale: number;
+  sourceFingerprints: DesktopShareVersionFingerprint[];
+  artifacts: DesktopShareVersionInspectionArtifact[];
+}
+export interface DesktopShareVersionPublishRequest {
+  shareId: string;
+  expectedVersion: number;
+  sourceFingerprints: DesktopShareVersionFingerprint[];
+  sensitiveResolutions?: DesktopShareSensitiveResolution[];
+}
+export interface DesktopShareVersionPublishResult {
+  status: "published";
+  shareId: string;
+  previousVersion: number;
+  currentVersion: number;
+  publishedAt: string;
+  staleCommentCount: number;
+  manifest: DesktopShareManifest;
 }
 
 export interface DesktopShareCommentListRequest { shareId: string }
@@ -1437,7 +1498,7 @@ export interface DesktopShareContinuationResult {
   createdAt: string;
 }
 
-export type DesktopShareAuditAction = "permission_update" | "comment" | "continue" | "comment_task";
+export type DesktopShareAuditAction = "permission_update" | "comment" | "continue" | "comment_task" | "revoke" | "version_publish" | "version_conflict";
 export interface DesktopShareAuditEntry {
   id: string;
   shareId: string;
@@ -1508,6 +1569,7 @@ export interface DesktopSharedObjectOpenRequest {
 
 export interface DesktopSharedObjectOpenResult {
   shareId: string;
+  version: number;
   objectType: DesktopShareObjectType;
   objectId: string;
   label: string;
@@ -1536,6 +1598,7 @@ export interface DesktopSharedArtifactDownloadRequest {
 
 export interface DesktopSharedArtifactDownloadResult {
   shareId: string;
+  version: number;
   artifactId: string;
   fileName: string;
   kind: DesktopTaskArtifactLink["kind"];
@@ -3739,6 +3802,9 @@ export interface DesktopApi {
   createShare(request: DesktopShareCreateRequest): Promise<DesktopShareManifest>;
   inspectShare(request: DesktopShareInspectionRequest): Promise<DesktopShareInspectionResult>;
   updateSharePermission(request: DesktopSharePermissionUpdateRequest): Promise<DesktopShareManifest>;
+  revokeShare(request: DesktopShareRevokeRequest): Promise<DesktopShareRevocationResult>;
+  inspectShareVersion(request: DesktopShareVersionInspectionRequest): Promise<DesktopShareVersionInspection>;
+  publishShareVersion(request: DesktopShareVersionPublishRequest): Promise<DesktopShareVersionPublishResult>;
   listShareComments(request: DesktopShareCommentListRequest): Promise<DesktopShareComment[]>;
   addShareComment(request: DesktopShareCommentAddRequest): Promise<DesktopShareComment>;
   previewShareCommentTask(request: DesktopShareCommentTaskPreviewRequest): Promise<DesktopShareCommentTaskPreview>;

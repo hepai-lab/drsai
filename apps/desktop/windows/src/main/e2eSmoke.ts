@@ -226,6 +226,12 @@ async function runBackgroundPresentationSmoke(
         return null;
       }
       checks.domReady = Boolean(await waitFor(() => document.querySelector(".app-shell"), 10000));
+      const processStartedAt = Number(${JSON.stringify(process.env.OPENDRSAI_E2E_APP_STARTED_MS || "0")});
+      details.firstInteractiveScreenMs = processStartedAt > 0 ? Date.now() - processStartedAt : null;
+      checks.firstInteractiveScreenWithinThreeSeconds = processStartedAt > 0
+        ? details.firstInteractiveScreenMs <= 3000
+        : true;
+      checks.authenticatedUserSessionVisible = Boolean(await window.openDrSai.getAuthSession());
       const fixtureWorkspacePath = fixturePath.slice(0, fixturePath.lastIndexOf("\\\\"));
       const workspaceButton = await waitFor(() => Array.from(document.querySelectorAll(".workspace-item"))
         .find((button) => button.getAttribute("title")?.includes(fixtureWorkspacePath)), 15000);
@@ -2341,6 +2347,50 @@ async function runPresentationPdfActionSmoke(window: BrowserWindow): Promise<Smo
     result.checks.completionCardFiveFieldsVisible = [routed.workSummary, routed.coreConclusion, routed.artifactText, routed.verification, routed.risks].every(Boolean);
     result.checks.structuredSummaryTaskRouteVisible = routed.openTaskVisible === true;
     result.details.structuredSummaryPanel = routed;
+    const resultsCenter = await window.webContents.executeJavaScript(`
+      (async () => {
+        const outputPath = ${JSON.stringify(result.details.generatedOutputPath || "")};
+        const navDeadline = Date.now() + 10000;
+        let nav = null;
+        while (Date.now() < navDeadline && !nav) {
+          nav = Array.from(document.querySelectorAll(".sidebar-button"))
+            .find((button) => /Results|成果/.test(button.getAttribute("title") || button.textContent || "")) || null;
+          if (!nav) await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        nav?.click();
+        const rowDeadline = Date.now() + 10000;
+        let center = null;
+        let row = null;
+        while (Date.now() < rowDeadline && !row) {
+          center = document.querySelector('[data-testid="results-center-view"][data-route="results"]');
+          row = Array.from(center?.querySelectorAll("li[data-artifact-id]") || [])
+            .find((candidate) => candidate.getAttribute("data-artifact-path") === outputPath) || null;
+          if (!row) await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        row?.querySelector('[data-testid="results-open-artifact"]')?.click();
+        const openDeadline = Date.now() + 5000;
+        let openState = "";
+        while (Date.now() < openDeadline && openState !== "opened") {
+          openState = row?.querySelector('[data-testid="results-open-status"]')?.getAttribute("data-state") || "";
+          if (openState !== "opened") await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        return {
+          navVisible: Boolean(nav),
+          centerVisible: Boolean(center),
+          artifactIndexed: Boolean(row),
+          artifactId: row?.getAttribute("data-artifact-id") || "",
+          sourceTaskId: row?.getAttribute("data-source-task-id") || "",
+          openState,
+        };
+      })()
+    `, true) as Record<string, unknown>;
+    result.checks.firstResultMainNavigationVisible = resultsCenter.navVisible === true;
+    result.checks.firstResultIndexedInResultsCenter = resultsCenter.centerVisible === true
+      && resultsCenter.artifactIndexed === true
+      && Boolean(resultsCenter.artifactId)
+      && Boolean(resultsCenter.sourceTaskId);
+    result.checks.firstResultOpensFromResultsCenter = resultsCenter.openState === "opened";
+    result.details.firstResultResultsCenter = resultsCenter;
   }
   const screenshotPath = process.env.OPENDRSAI_E2E_SCREENSHOT;
   if (screenshotPath) {
@@ -3626,7 +3676,256 @@ async function runCollaborationPermissionSmoke(window: BrowserWindow): Promise<S
   return { ok: Object.values(result.checks).every(Boolean), checks: result.checks, details: result.details };
 }
 
+async function runCommentTaskSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  window.show();
+  window.focus();
+  const phase = process.env.OPENDRSAI_E2E_L5_PHASE || "owner";
+  const workspacePath = process.env.OPENDRSAI_E2E_WORKSPACE_PATH || "C:\\OpenDrSai\\l5";
+  const result = (await window.webContents.executeJavaScript(`
+    (async () => {
+      const checks = {}; const details = { phase: ${JSON.stringify(phase)} };
+      const api = window.openDrSai; const workspacePath = ${JSON.stringify(workspacePath)}; const phase = ${JSON.stringify(phase)};
+      const waitFor = async (find, timeout = 12000) => { const deadline = Date.now() + timeout; while (Date.now() < deadline) { const value = await find(); if (value) return value; await new Promise((resolve) => setTimeout(resolve, 75)); } return null; };
+      const setInput = (input, value) => { const setter = Object.getOwnPropertyDescriptor((input instanceof HTMLTextAreaElement ? HTMLTextAreaElement : HTMLInputElement).prototype, 'value')?.set; setter?.call(input, value); input.dispatchEvent(new Event('input', { bubbles: true })); input.dispatchEvent(new Event('change', { bubbles: true })); };
+      const setSelect = (select, value) => { const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set; setter?.call(select, value); select.dispatchEvent(new Event('change', { bubbles: true })); };
+      const showResults = async () => { const workspaceItem = await waitFor(() => [...document.querySelectorAll('.workspace-item')].find((item) => (item.title || '').includes(workspacePath))); workspaceItem?.click(); await new Promise((resolve) => setTimeout(resolve, 350)); const nav = await waitFor(() => document.querySelector('.sidebar-button[data-nav-id="results"]')); nav?.click(); return waitFor(() => document.querySelector('[data-testid="results-center-view"]')); };
+      checks.bridge = Boolean(api); if (!api) return { checks, details };
+      checks.login = (await api.login({ developerBypass: true, rememberMe: false }))?.ok === true;
+      if (phase === 'owner') {
+        const pdf = await api.previewWorkspaceFile({ workspacePath, path: workspacePath + '\\\\WLCG-20260715-WLCG-talk-IHEP-visit.pdf', maxBytes: 100000 });
+        checks.realCernPdf = pdf.fileHash === 'sha256:f6581e1a255b354667188b41b874b996a300f88bb48912721bc1c854183e913e';
+        const task = await api.enqueueBackgroundTask({ kind: 'presentation_generation', source: 'presentation', title: 'L5 CERN comment task source', workspacePath, targetId: 'l5-cern-comment-task', status: 'completed', progress: 100, message: 'CERN manager deck ready for review.', verification: 'Pinned CERN source verified.', deliverySummary: { findingSummary: 'Manager deck ready.', importance: 'high', importanceReason: 'L5 comment-to-task acceptance.', suggestedAction: 'Ask the reviewer to comment on the p.42 chart.', workSummary: 'Generated from the verified CERN PDF.', coreConclusion: 'A review comment must preserve its exact chart context.', verification: 'Deck is readable.', remainingRisks: 'Reviewer action pending.', completionCriteria: { passed: ['Deck generated'], incomplete: [] }, artifacts: [{ id: 'l5-cern-manager-ppt', label: 'cern-wlcg-manager-comment-task.pptx', path: workspacePath + '\\\\cern-wlcg-manager-comment-task.pptx', kind: 'presentation' }] } });
+        const share = await api.createShare({ sourceTaskId: task.id, scope: 'result_only', artifactId: 'l5-cern-manager-ppt', recipientAccount: 'reviewer@cern.example', permission: 'comment' });
+        checks.commentShareCreated = share.permission === 'comment' && share.objects.length === 1 && share.objects[0].objectId === 'l5-cern-manager-ppt';
+        checks.noPrematureTask = (await api.listShareCommentTasks()).length === 0;
+        details.share = share;
+      } else if (phase === 'recipient') {
+        const incoming = await api.listIncomingShares(); const share = incoming[0];
+        checks.commentPermissionReceived = incoming.length === 1 && share.permission === 'comment';
+        await showResults(); const card = await waitFor(() => document.querySelector('[data-testid="incoming-share-card"]'));
+        const anchorType = card?.querySelector('[data-testid="share-comment-anchor-type"]'); const anchorLabel = card?.querySelector('[data-testid="share-comment-anchor-label"]'); const input = card?.querySelector('[data-testid="share-comment-input"]');
+        if (anchorType) setSelect(anchorType, 'chart'); if (anchorLabel) setInput(anchorLabel, 'p.42 WLCG bandwidth chart'); if (input) setInput(input, 'Add a clear annotation for the 4.8 Tbps 2024 challenge result.');
+        card?.querySelector('[data-testid="share-comment-send"]')?.click();
+        const comments = await waitFor(async () => { const items = await api.listShareComments({ shareId: share.id }); return items.length === 1 ? items : null; }); const comment = comments?.[0];
+        checks.chartCommentCreatedInUi = Boolean(comment && comment.target.objectId === 'l5-cern-manager-ppt' && comment.target.anchorType === 'chart' && comment.target.anchorLabel === 'p.42 WLCG bandwidth chart');
+        checks.commentContextExact = comment?.body === 'Add a clear annotation for the 4.8 Tbps 2024 challenge result.' && comment.target.objectLabel === 'cern-wlcg-manager-comment-task.pptx';
+        let recipientConvertDenied = false; try { await api.previewShareCommentTask({ shareId: share.id, commentId: comment.id }); } catch { recipientConvertDenied = true; }
+        checks.recipientCannotConvert = recipientConvertDenied;
+        details.comment = comment;
+      } else {
+        await showResults();
+        const row = await waitFor(() => document.querySelector('[data-testid="outgoing-share-comment"]'));
+        checks.ownerSeesExactComment = row?.getAttribute('data-comment-object-id') === 'l5-cern-manager-ppt' && row?.getAttribute('data-comment-anchor-type') === 'chart' && (row.textContent || '').includes('p.42 WLCG bandwidth chart') && (row.textContent || '').includes('4.8 Tbps');
+        row?.querySelector('[data-testid="comment-to-task"]')?.click(); const dialog = await waitFor(() => document.querySelector('[data-testid="comment-task-dialog"]'));
+        const source = dialog?.querySelector('[data-testid="comment-task-source-context"]')?.textContent || ''; const title = dialog?.querySelector('[data-testid="comment-task-title"]'); const instructions = dialog?.querySelector('[data-testid="comment-task-instructions"]');
+        checks.previewCarriesContext = source.includes('4.8 Tbps') && title?.value.includes('p.42 WLCG bandwidth chart') && instructions?.value.includes('cern-wlcg-manager-comment-task.pptx') && instructions?.value.includes('4.8 Tbps');
+        if (title) setInput(title, 'Update CERN bandwidth chart annotation'); if (instructions) setInput(instructions, 'Add a visible 4.8 Tbps annotation to the p.42 WLCG bandwidth chart and retain the source link.'); dialog?.querySelector('[data-testid="comment-task-save"]')?.click();
+        let tasks = await waitFor(async () => { const items = await api.listShareCommentTasks(); return items.length === 1 ? items : null; }); let task = tasks?.[0];
+        checks.realBackgroundTaskCreated = Boolean(task?.backgroundTaskId && task.status === 'ready' && task.title === 'Update CERN bandwidth chart annotation');
+        let background = (await api.listBackgroundTasks({ limit: 100 })).find((item) => item.id === task?.backgroundTaskId);
+        checks.backgroundContextLinked = background?.status === 'queued' && background.targetId === task?.id && background.message.includes('4.8 Tbps') && background.workspacePath === workspacePath;
+        const taskCard = await waitFor(() => document.querySelector('[data-testid="share-comment-task-card"]')); taskCard?.querySelector('[data-testid="comment-task-edit"]')?.click(); const editDialog = await waitFor(() => document.querySelector('[data-testid="comment-task-dialog"]'));
+        const editTitle = editDialog?.querySelector('[data-testid="comment-task-title"]'); const editInstructions = editDialog?.querySelector('[data-testid="comment-task-instructions"]'); if (editTitle) setInput(editTitle, 'Finalize CERN p.42 bandwidth chart'); if (editInstructions) setInput(editInstructions, 'Adjust the chart annotation, verify 4.8 Tbps, and keep the original comment backlink.'); editDialog?.querySelector('[data-testid="comment-task-save"]')?.click();
+        task = await waitFor(async () => (await api.listShareCommentTasks()).find((item) => item.title === 'Finalize CERN p.42 bandwidth chart'));
+        background = (await api.listBackgroundTasks({ limit: 100 })).find((item) => item.id === task?.backgroundTaskId);
+        checks.generatedTaskEditable = task?.instructions.includes('original comment backlink') && background?.title === task.title && background?.message === task.instructions;
+        let duplicateDenied = false; try { await api.createShareCommentTask({ shareId: task.shareId, commentId: task.commentId, title: 'Duplicate', instructions: 'Duplicate task should be rejected.' }); } catch { duplicateDenied = true; }
+        checks.duplicateTaskDenied = duplicateDenied;
+        const updatedCard = await waitFor(() => document.querySelector('[data-testid="share-comment-task-card"] [data-testid="comment-task-complete"]')); updatedCard?.click();
+        task = await waitFor(async () => (await api.listShareCommentTasks()).find((item) => item.status === 'completed'));
+        background = (await api.listBackgroundTasks({ limit: 100 })).find((item) => item.id === task?.backgroundTaskId);
+        checks.completionSynchronized = task?.status === 'completed' && Boolean(task.completedAt) && background?.status === 'completed' && background.progress === 100;
+        const backlink = await waitFor(() => document.querySelector('[data-testid="comment-task-backlink"]')); backlink?.click();
+        checks.completedTaskBacklinks = document.activeElement?.getAttribute('data-comment-id') === task?.commentId;
+        const audit = await api.listShareAudit({ shareId: task.shareId });
+        checks.lifecycleAudited = ['created','updated','completed'].every((word) => audit.some((item) => item.action === 'comment_task' && item.outcome === 'allowed' && item.reason.toLowerCase().includes(word)));
+        checks.auditOmitsCommentBody = !JSON.stringify(audit).includes('4.8 Tbps');
+        details.task = task; details.background = background; details.audit = audit;
+      }
+      return { checks, details };
+    })()
+  `)) as { checks: Record<string, boolean>; details: Record<string, unknown> };
+  const screenshotPath = process.env.OPENDRSAI_E2E_SCREENSHOT;
+  if (screenshotPath) writeFileSync(screenshotPath, (await window.webContents.capturePage()).toPNG());
+  return { ok: Object.values(result.checks).every(Boolean), checks: result.checks, details: result.details };
+}
+
+async function runShareRevocationSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  window.show();
+  window.focus();
+  const phase = process.env.OPENDRSAI_E2E_L6_PHASE || "owner";
+  const workspacePath = process.env.OPENDRSAI_E2E_WORKSPACE_PATH || "C:\\OpenDrSai\\l6";
+  const shareId = process.env.OPENDRSAI_E2E_L6_SHARE_ID || "";
+  const objectId = process.env.OPENDRSAI_E2E_L6_OBJECT_ID || "";
+  const result = (await window.webContents.executeJavaScript(`
+    (async () => {
+      const checks = {}; const details = { phase: ${JSON.stringify(phase)} };
+      const api = window.openDrSai; const workspacePath = ${JSON.stringify(workspacePath)}; const phase = ${JSON.stringify(phase)};
+      const shareId = ${JSON.stringify(shareId)}; const objectId = ${JSON.stringify(objectId)};
+      const waitFor = async (find, timeout = 12000) => { const deadline = Date.now() + timeout; while (Date.now() < deadline) { const value = await find(); if (value) return value; await new Promise((resolve) => setTimeout(resolve, 75)); } return null; };
+      const setInput = (input, value) => { const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set; setter?.call(input, value); input.dispatchEvent(new Event('input', { bubbles: true })); input.dispatchEvent(new Event('change', { bubbles: true })); };
+      const showResults = async () => { const workspaceItem = await waitFor(() => [...document.querySelectorAll('.workspace-item')].find((item) => (item.title || '').includes(workspacePath))); workspaceItem?.click(); await new Promise((resolve) => setTimeout(resolve, 350)); const nav = await waitFor(() => document.querySelector('.sidebar-button[data-nav-id="results"]')); nav?.click(); return waitFor(() => document.querySelector('[data-testid="results-center-view"]')); };
+      const denied = async (operation) => { try { await operation(); return false; } catch { return true; } };
+      checks.bridge = Boolean(api); if (!api) return { checks, details };
+      checks.login = (await api.login({ developerBypass: true, rememberMe: false }))?.ok === true;
+      if (phase === 'owner') {
+        const pdf = await api.previewWorkspaceFile({ workspacePath, path: workspacePath + '\\\\WLCG-20260715-WLCG-talk-IHEP-visit.pdf', maxBytes: 100000 });
+        checks.realCernPdf = pdf.fileHash === 'sha256:f6581e1a255b354667188b41b874b996a300f88bb48912721bc1c854183e913e';
+        const task = await api.enqueueBackgroundTask({ kind: 'presentation_generation', source: 'presentation', title: 'L6 CERN revocation source', workspacePath, targetId: 'l6-cern-revocation', status: 'completed', progress: 100, message: 'CERN manager deck ready to share.', verification: 'Pinned CERN source verified.', deliverySummary: { findingSummary: 'Manager deck ready.', importance: 'high', importanceReason: 'L6 revocation acceptance.', suggestedAction: 'Share, verify access, then revoke.', workSummary: 'Generated from the verified CERN PDF.', coreConclusion: 'Revocation must invalidate every future access path.', verification: 'Deck is readable.', remainingRisks: 'Access remains until explicit revocation.', completionCriteria: { passed: ['Deck generated'], incomplete: [] }, artifacts: [{ id: 'l6-cern-manager-ppt', label: 'cern-wlcg-manager-revocation.pptx', path: workspacePath + '\\\\cern-wlcg-manager-revocation.pptx', kind: 'presentation' }] } });
+        const share = await api.createShare({ sourceTaskId: task.id, scope: 'result_only', artifactId: 'l6-cern-manager-ppt', recipientAccount: 'revoked@cern.example', permission: 'continue' });
+        checks.activeShareCreated = share.status === 'active' && share.permission === 'continue' && share.objects.length === 1;
+        checks.noRevocationFieldsBeforeAction = !share.revokedAt && !share.revokedByAccount;
+        details.share = share;
+      } else if (phase === 'recipient-before') {
+        const incoming = await api.listIncomingShares(); const share = incoming[0]; const object = share?.objects[0];
+        checks.inboxAvailableBeforeRevocation = incoming.length === 1 && share.id === shareId && object?.objectId === objectId;
+        const opened = await api.openSharedObject({ shareId, objectType: 'artifact', objectId });
+        const downloaded = await api.downloadSharedArtifact({ shareId, objectId });
+        checks.openAndDownloadWorkBeforeRevocation = opened.authorized === true && downloaded.bytes === opened.artifact?.bytes && downloaded.sha256 === opened.artifact?.sha256;
+        checks.commentAndContinueWorkBeforeRevocation = Boolean(await api.addShareComment({ shareId, body: 'L6 pre-revocation access check.' })) && Boolean(await api.continueSharedTask({ shareId }));
+        checks.recipientCannotRevoke = await denied(() => api.revokeShare({ shareId, confirmation: 'REVOKE' }));
+        await showResults();
+        checks.inboxCardVisibleBeforeRevocation = Boolean(await waitFor(() => document.querySelector('[data-testid="incoming-share-card"]')));
+        details.download = { bytes: downloaded.bytes, sha256: downloaded.sha256 }; details.share = share;
+      } else if (phase === 'owner-revoke') {
+        await showResults();
+        const card = await waitFor(() => document.querySelector('[data-testid="outgoing-share-card"][data-share-status="active"]'));
+        card?.querySelector('[data-testid="share-revoke"]')?.click();
+        const dialog = await waitFor(() => document.querySelector('[data-testid="share-revoke-dialog"]'));
+        const confirm = dialog?.querySelector('[data-testid="share-revoke-confirm"]');
+        checks.explicitConfirmationRequired = Boolean(dialog && confirm?.disabled && (dialog.textContent || '').includes('REVOKE') && (dialog.textContent || '').includes('revoked@cern.example'));
+        const input = dialog?.querySelector('[data-testid="share-revoke-confirmation"]'); if (input) setInput(input, 'REVOKE');
+        checks.confirmEnabledOnlyAfterExactPhrase = confirm?.disabled === false;
+        confirm?.click();
+        const revoked = await waitFor(async () => (await api.listOutgoingShares()).find((item) => item.id === shareId && item.status === 'revoked'));
+        const receipt = await waitFor(() => document.querySelector('[data-testid="share-revocation-receipt"]'));
+        const audit = await api.listShareAudit({ shareId }); const allowed = audit.find((item) => item.action === 'revoke' && item.outcome === 'allowed');
+        checks.revokedImmediatelyInUiAndStore = Boolean(revoked?.revokedAt && revoked.revokedByAccount === 'owner@cern.example' && receipt && !document.querySelector('[data-testid="share-revoke"]'));
+        checks.revocationReceiptAndAuditRecorded = Boolean(allowed && receipt?.textContent?.includes('1') && document.querySelector('[data-testid="share-revocation-audit-id"]')?.textContent === allowed.id);
+        checks.unauthorizedAttemptAudited = audit.some((item) => item.action === 'revoke' && item.outcome === 'denied' && item.actorAccount === 'revoked@cern.example');
+        checks.auditContainsNoCommentBodyOrPaths = !JSON.stringify(audit).includes('L6 pre-revocation access check') && !/[A-Z]:\\\\|workspacePath|artifactPath/.test(JSON.stringify(audit));
+        details.revoked = revoked; details.audit = audit;
+      } else if (phase === 'recipient-after') {
+        const incoming = await api.listIncomingShares();
+        checks.inboxEmptyAfterRevocation = incoming.length === 0;
+        checks.oldOpenDenied = await denied(() => api.openSharedObject({ shareId, objectType: 'artifact', objectId }));
+        checks.oldDownloadDenied = await denied(() => api.downloadSharedArtifact({ shareId, objectId }));
+        checks.oldCommentsDenied = await denied(() => api.listShareComments({ shareId })) && await denied(() => api.addShareComment({ shareId, body: 'must fail' }));
+        checks.oldContinueDenied = await denied(() => api.continueSharedTask({ shareId }));
+        await showResults(); await new Promise((resolve) => setTimeout(resolve, 900));
+        checks.inboxCardRemoved = !document.querySelector('[data-testid="incoming-share-card"]');
+        details.directAccessAttempts = { shareId, objectId };
+      } else {
+        const outgoing = await api.listOutgoingShares(); const share = outgoing.find((item) => item.id === shareId); const audit = await api.listShareAudit({ shareId });
+        await showResults(); const card = await waitFor(() => document.querySelector('[data-testid="outgoing-share-card"][data-share-status="revoked"]'));
+        checks.revocationPersistsAcrossRestart = Boolean(share?.status === 'revoked' && share.revokedAt && share.revokedByAccount === 'owner@cern.example');
+        checks.ownerHistoryStillVisible = Boolean(card?.querySelector('[data-testid="share-revoked-badge"]') && card?.querySelector('[data-testid="share-revocation-receipt"]'));
+        checks.auditPersistsAcrossRestart = audit.some((item) => item.action === 'revoke' && item.outcome === 'allowed');
+        details.share = share; details.audit = audit;
+      }
+      return { checks, details };
+    })()
+  `)) as { checks: Record<string, boolean>; details: Record<string, unknown> };
+  const screenshotPath = process.env.OPENDRSAI_E2E_SCREENSHOT;
+  if (screenshotPath) writeFileSync(screenshotPath, (await window.webContents.capturePage()).toPNG());
+  return { ok: Object.values(result.checks).every(Boolean), checks: result.checks, details: result.details };
+}
+
+async function runShareVersionConsistencySmoke(window: BrowserWindow): Promise<SmokeResult> {
+  window.show();
+  window.focus();
+  const phase = process.env.OPENDRSAI_E2E_L7_PHASE || "owner";
+  const workspacePath = process.env.OPENDRSAI_E2E_WORKSPACE_PATH || "C:\\OpenDrSai\\l7";
+  const shareId = process.env.OPENDRSAI_E2E_L7_SHARE_ID || "";
+  const objectId = process.env.OPENDRSAI_E2E_L7_OBJECT_ID || "";
+  const versionOneSha = process.env.OPENDRSAI_E2E_L7_V1_SHA || "";
+  const result = (await window.webContents.executeJavaScript(`
+    (async () => {
+      const checks = {}; const details = { phase: ${JSON.stringify(phase)} };
+      const api = window.openDrSai; const workspacePath = ${JSON.stringify(workspacePath)}; const phase = ${JSON.stringify(phase)};
+      const shareId = ${JSON.stringify(shareId)}; const objectId = ${JSON.stringify(objectId)}; const versionOneSha = ${JSON.stringify(versionOneSha)};
+      const waitFor = async (find, timeout = 12000) => { const deadline = Date.now() + timeout; while (Date.now() < deadline) { const value = await find(); if (value) return value; await new Promise((resolve) => setTimeout(resolve, 75)); } return null; };
+      const setInput = (input, value) => { const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set; setter?.call(input, value); input.dispatchEvent(new Event('input', { bubbles: true })); input.dispatchEvent(new Event('change', { bubbles: true })); };
+      const showResults = async () => { const workspaceItem = await waitFor(() => [...document.querySelectorAll('.workspace-item')].find((item) => (item.title || '').includes(workspacePath))); workspaceItem?.click(); await new Promise((resolve) => setTimeout(resolve, 350)); const nav = await waitFor(() => document.querySelector('.sidebar-button[data-nav-id="results"]')); nav?.click(); return waitFor(() => document.querySelector('[data-testid="results-center-view"]')); };
+      checks.bridge = Boolean(api); if (!api) return { checks, details };
+      checks.login = (await api.login({ developerBypass: true, rememberMe: false }))?.ok === true;
+      if (phase === 'owner') {
+        const pdf = await api.previewWorkspaceFile({ workspacePath, path: workspacePath + '\\\\WLCG-20260715-WLCG-talk-IHEP-visit.pdf', maxBytes: 100000 });
+        checks.realCernPdf = pdf.fileHash === 'sha256:f6581e1a255b354667188b41b874b996a300f88bb48912721bc1c854183e913e';
+        const task = await api.enqueueBackgroundTask({ kind: 'presentation_generation', source: 'presentation', title: 'L7 CERN version consistency source', workspacePath, targetId: 'l7-cern-version', status: 'completed', progress: 100, message: 'CERN manager deck v1 ready.', verification: 'Pinned CERN source verified.', deliverySummary: { findingSummary: 'Manager deck v1 ready.', importance: 'high', importanceReason: 'L7 multi-user version acceptance.', suggestedAction: 'Share v1, edit the source, and publish v2.', workSummary: 'Generated from the verified CERN PDF.', coreConclusion: 'Every viewer and comment must identify its version.', verification: 'Deck is readable.', remainingRisks: 'Concurrent publishing must be rejected.', completionCriteria: { passed: ['v1 generated'], incomplete: [] }, artifacts: [{ id: 'l7-cern-manager-ppt', label: 'cern-wlcg-manager-versioned.pptx', path: workspacePath + '\\\\cern-wlcg-manager-versioned.pptx', kind: 'presentation' }] } });
+        const share = await api.createShare({ sourceTaskId: task.id, scope: 'result_only', artifactId: 'l7-cern-manager-ppt', recipientAccount: 'version-reviewer@cern.example', permission: 'comment' });
+        checks.v1ShareCreated = share.version === 1 && share.objects[0].version === 1 && /^[a-f0-9]{64}$/.test(share.objects[0].sha256 || '');
+        checks.v1MetadataComplete = share.versionUpdatedByAccount === 'owner@cern.example' && Boolean(share.versionUpdatedAt);
+        details.share = share;
+      } else if (phase === 'recipient-before' || phase === 'recipient-during') {
+        const incoming = await api.listIncomingShares(); const share = incoming[0]; const object = share?.objects[0];
+        const opened = await api.openSharedObject({ shareId, objectType: 'artifact', objectId }); const downloaded = await api.downloadSharedArtifact({ shareId, objectId });
+        checks.viewerSeesExplicitV1 = incoming.length === 1 && share.version === 1 && opened.version === 1 && downloaded.version === 1;
+        checks.immutableV1Snapshot = object.sha256 === versionOneSha && opened.artifact?.sha256 === versionOneSha && downloaded.sha256 === versionOneSha;
+        const body = phase === 'recipient-before' ? 'L7 review on published v1 before the owner edit.' : 'L7 simultaneous review still pinned to v1 while source changed.';
+        const comment = await api.addShareComment({ shareId, body, objectId, anchorType: 'chart', anchorLabel: 'p.42 WLCG bandwidth chart' });
+        checks.commentBoundToV1 = comment.version === 1 && comment.versionStatus === 'current';
+        await showResults(); const card = await waitFor(() => document.querySelector('[data-testid="incoming-share-card"][data-share-version="1"]'));
+        checks.uiLabelsCurrentV1 = Boolean(card?.querySelector('[data-testid="share-version-badge"]')?.textContent?.includes('v1'));
+        details.comment = comment; details.download = { bytes: downloaded.bytes, sha256: downloaded.sha256 };
+      } else if (phase === 'owner-publish') {
+        await showResults(); const card = await waitFor(() => document.querySelector('[data-testid="outgoing-share-card"]'));
+        checks.ownerStartsFromV1 = card?.querySelector('[data-testid="share-version-badge"]')?.textContent?.includes('v1') === true;
+        card?.querySelector('[data-testid="share-version-check"]')?.click(); const dialog = await waitFor(() => document.querySelector('[data-testid="share-version-dialog"]'));
+        const changed = dialog?.querySelector('[data-testid="share-version-artifact"][data-version-changed="true"]'); const warning = dialog?.querySelector('[data-testid="share-version-stale-warning"]');
+        checks.changedSourcePreviewed = Boolean(changed && (dialog?.textContent || '').includes('v2'));
+        checks.staleImpactExplainedBeforePublish = Boolean(warning && (warning.textContent || '').includes('2'));
+        dialog?.querySelector('[data-testid="share-version-publish"]')?.click();
+        const share = await waitFor(async () => (await api.listOutgoingShares()).find((item) => item.id === shareId && item.version === 2));
+        const badge = await waitFor(() => document.querySelector('[data-testid="outgoing-share-card"] [data-testid="share-version-badge"]'));
+        const comments = await api.listShareComments({ shareId }); const source = await api.previewWorkspaceFile({ workspacePath, path: workspacePath + '\\\\cern-wlcg-manager-versioned.pptx', maxBytes: 100000 });
+        checks.v2PublishedFromCurrentSource = Boolean(share && share.objects[0].version === 2 && share.objects[0].sha256 !== versionOneSha && source.fileHash === 'sha256:' + share.objects[0].sha256);
+        checks.ownerUiMovedToV2 = badge?.textContent?.includes('v2') === true;
+        checks.oldCommentsMarkedStaleNotDeleted = comments.length === 2 && comments.every((comment) => comment.version === 1 && comment.versionStatus === 'stale');
+        details.share = share; details.comments = comments; details.audit = await api.listShareAudit({ shareId });
+      } else if (phase === 'conflict') {
+        let conflictMessage = ''; try { await api.publishShareVersion({ shareId, expectedVersion: 1, sourceFingerprints: [{ objectId, sha256: versionOneSha }] }); } catch (error) { conflictMessage = error instanceof Error ? error.message : String(error); }
+        const share = (await api.listOutgoingShares()).find((item) => item.id === shareId); const audit = await api.listShareAudit({ shareId });
+        checks.stalePublisherRejected = /conflict/i.test(conflictMessage) && conflictMessage.includes('v2') && /no content was overwritten/i.test(conflictMessage);
+        checks.v2NotOverwritten = share?.version === 2 && share.objects[0].sha256 !== versionOneSha;
+        checks.conflictAudited = audit.some((item) => item.action === 'version_conflict' && item.outcome === 'denied' && item.reason.includes('expected v1'));
+        details.conflictMessage = conflictMessage; details.share = share; details.audit = audit;
+      } else if (phase === 'recipient-after') {
+        const incoming = await api.listIncomingShares(); const share = incoming[0]; const opened = await api.openSharedObject({ shareId, objectType: 'artifact', objectId }); const downloaded = await api.downloadSharedArtifact({ shareId, objectId });
+        checks.viewerReceivesExplicitV2 = share.version === 2 && opened.version === 2 && downloaded.version === 2 && downloaded.sha256 === share.objects[0].sha256 && downloaded.sha256 !== versionOneSha;
+        let comments = await api.listShareComments({ shareId }); checks.twoV1CommentsAreStale = comments.length === 2 && comments.every((comment) => comment.version === 1 && comment.versionStatus === 'stale');
+        const current = await api.addShareComment({ shareId, body: 'L7 review on the current published v2.', objectId, anchorType: 'chart', anchorLabel: 'p.42 revised WLCG bandwidth chart' });
+        comments = await api.listShareComments({ shareId }); checks.newCommentBoundToV2 = current.version === 2 && current.versionStatus === 'current' && comments.filter((item) => item.versionStatus === 'current').length === 1;
+        await showResults(); const card = await waitFor(() => document.querySelector('[data-testid="incoming-share-card"][data-share-version="2"]')); const stale = await waitFor(() => document.querySelectorAll('[data-testid="share-comment-stale"]').length === 2 ? [...document.querySelectorAll('[data-testid="share-comment-stale"]')] : null);
+        checks.uiShowsV2AndStaleWarnings = Boolean(card?.querySelector('[data-testid="share-version-badge"]')?.textContent?.includes('v2') && stale?.length === 2);
+        details.comments = comments; details.share = share;
+      } else {
+        await showResults(); const comments = await api.listShareComments({ shareId }); const audit = await api.listShareAudit({ shareId });
+        const stale = await waitFor(() => document.querySelectorAll('[data-testid="outgoing-share-comment"][data-comment-version-status="stale"]').length === 2 ? [...document.querySelectorAll('[data-testid="outgoing-share-comment"][data-comment-version-status="stale"]')] : null);
+        checks.ownerSeesCurrentVersionAndStaleComments = Boolean(document.querySelector('[data-testid="outgoing-share-card"] [data-testid="share-version-badge"]')?.textContent?.includes('v2') && stale?.length === 2);
+        checks.versionLifecycleAudited = audit.some((item) => item.action === 'version_publish' && item.outcome === 'allowed' && item.reason.includes('v2')) && audit.some((item) => item.action === 'version_conflict' && item.outcome === 'denied');
+        checks.commentHistoryPreserved = comments.length === 3 && comments.filter((item) => item.versionStatus === 'stale').length === 2 && comments.filter((item) => item.versionStatus === 'current').length === 1;
+        checks.auditContainsNoCommentBodyOrPaths = !JSON.stringify(audit).includes('L7 review') && !/[A-Z]:\\\\|workspacePath|artifactPath/.test(JSON.stringify(audit));
+        details.comments = comments; details.audit = audit;
+      }
+      return { checks, details };
+    })()
+  `)) as { checks: Record<string, boolean>; details: Record<string, unknown> };
+  const screenshotPath = process.env.OPENDRSAI_E2E_SCREENSHOT;
+  if (screenshotPath) writeFileSync(screenshotPath, (await window.webContents.capturePage()).toPNG());
+  return { ok: Object.values(result.checks).every(Boolean), checks: result.checks, details: result.details };
+}
+
 async function runChatSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  if (process.env.OPENDRSAI_E2E_CHAT_SCENARIO === "l7-version-consistency") {
+    return runShareVersionConsistencySmoke(window);
+  }
+  if (process.env.OPENDRSAI_E2E_CHAT_SCENARIO === "l6-share-revocation") {
+    return runShareRevocationSmoke(window);
+  }
+  if (process.env.OPENDRSAI_E2E_CHAT_SCENARIO === "l5-comment-task") {
+    return runCommentTaskSmoke(window);
+  }
   if (process.env.OPENDRSAI_E2E_CHAT_SCENARIO === "l4-collaboration-permissions") {
     return runCollaborationPermissionSmoke(window);
   }

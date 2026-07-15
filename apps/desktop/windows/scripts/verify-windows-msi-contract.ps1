@@ -28,9 +28,12 @@ $installer = New-Object -ComObject WindowsInstaller.Installer
 $database = $installer.OpenDatabase($msi, 0)
 
 Assert-Equal (Read-SingleValue $database "SELECT ``Value`` FROM ``Property`` WHERE ``Property``='ProductName'") "OpenDrSai" "ProductName"
-Assert-Equal (Read-SingleValue $database "SELECT ``Value`` FROM ``Property`` WHERE ``Property``='ALLUSERS'") "1" "ALLUSERS"
+$allUsers = Read-SingleValue $database "SELECT ``Value`` FROM ``Property`` WHERE ``Property``='ALLUSERS'"
+if ($allUsers) { throw "ALLUSERS must be absent for a non-elevated per-user install, got '$allUsers'." }
 Assert-Equal (Read-SingleValue $database "SELECT ``Value`` FROM ``Property`` WHERE ``Property``='ARPNOREPAIR'") "1" "ARPNOREPAIR"
-Assert-Equal (Read-SingleValue $database "SELECT ``Directory_Parent`` FROM ``Directory`` WHERE ``Directory``='INSTALLFOLDER'") "ProgramFiles64Folder" "INSTALLFOLDER parent"
+Assert-Equal (Read-SingleValue $database "SELECT ``Directory_Parent`` FROM ``Directory`` WHERE ``Directory``='INSTALLFOLDER'") "LocalProgramsFolder" "INSTALLFOLDER parent"
+Assert-Equal (Read-SingleValue $database "SELECT ``Directory_Parent`` FROM ``Directory`` WHERE ``Directory``='LocalProgramsFolder'") "LocalAppDataFolder" "LocalProgramsFolder parent"
+Assert-Equal (Read-SingleValue $database "SELECT ``Root`` FROM ``Registry`` WHERE ``Key``='Software\HepAI\OpenDrSai' AND ``Name``='Installed'") "1" "Installed registry hive"
 
 $productVersion = Read-SingleValue $database "SELECT ``Value`` FROM ``Property`` WHERE ``Property``='ProductVersion'"
 $runtimeUrl = Read-SingleValue $database "SELECT ``Value`` FROM ``Property`` WHERE ``Property``='RUNTIMEURL'"
@@ -53,8 +56,20 @@ foreach ($action in @(
     $typeText = Read-SingleValue $database "SELECT ``Type`` FROM ``CustomAction`` WHERE ``Action``='$action'"
     if (-not $typeText) { throw "MSI is missing custom action $action." }
     $type = [int]$typeText
-    if (($type -band 1024) -eq 0 -or ($type -band 2048) -eq 0) {
-        throw "$action must be deferred and run without impersonation; type=$type."
+    if (($type -band 1024) -eq 0 -or ($type -band 2048) -ne 0) {
+        throw "$action must be deferred and impersonate the ordinary user; type=$type."
+    }
+}
+
+foreach ($setter in @(
+    "SetVerifyOpenDrSaiRuntime",
+    "SetExtractOpenDrSaiRuntime",
+    "SetInstallOpenDrSaiRuntime",
+    "SetCompleteOpenDrSaiInstall"
+)) {
+    $target = Read-SingleValue $database "SELECT ``Target`` FROM ``CustomAction`` WHERE ``Action``='$setter'"
+    if ($target -match '(?i)-MachineInstall') {
+        throw "$setter must not force machine installation: $target"
     }
 }
 
@@ -78,4 +93,4 @@ $desktopTarget = Read-SingleValue $database "SELECT ``Target`` FROM ``Shortcut``
 Assert-Equal $startMenuTarget "[INSTALLFOLDER]app\OpenDrSai.exe" "Start menu shortcut target"
 Assert-Equal $desktopTarget "[INSTALLFOLDER]app\OpenDrSai.exe" "Desktop shortcut target"
 
-Write-Host "Windows MSI contract verified for per-machine Program Files installation and ARP uninstall." -ForegroundColor Green
+Write-Host "Windows MSI contract verified for non-elevated per-user LocalAppData installation and ARP uninstall." -ForegroundColor Green

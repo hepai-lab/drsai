@@ -577,7 +577,7 @@ let health = {
     downloaded: false,
     progress: null,
     version: null,
-    currentVersion: "1.4.5",
+    currentVersion: "1.4.6",
     mandatory: false,
     releaseNotesUrl: null,
     canDownload: false,

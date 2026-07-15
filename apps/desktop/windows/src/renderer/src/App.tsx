@@ -32,6 +32,10 @@ import type {
   DesktopShareSensitiveAction,
   DesktopSharePermission,
   DesktopShareComment,
+  DesktopShareCommentAnchorType,
+  DesktopShareCommentTask,
+  DesktopShareCommentTaskPreview,
+  DesktopShareVersionInspection,
   DesktopSharedObjectOpenResult,
   DesktopTaskArtifactLink,
   DesktopChannelContextImportResult,
@@ -2651,7 +2655,16 @@ function ResultsCenterView({
   const [outgoingShares, setOutgoingShares] = useState<DesktopShareManifest[]>([]);
   const [shareComments, setShareComments] = useState<Record<string, DesktopShareComment[]>>({});
   const [shareCommentDrafts, setShareCommentDrafts] = useState<Record<string, string>>({});
+  const [shareCommentTargets, setShareCommentTargets] = useState<Record<string, { objectId: string; anchorType: DesktopShareCommentAnchorType; anchorLabel: string }>>({});
+  const [shareCommentTasks, setShareCommentTasks] = useState<DesktopShareCommentTask[]>([]);
+  const [commentTaskDraft, setCommentTaskDraft] = useState<(DesktopShareCommentTaskPreview & { taskId?: string }) | null>(null);
+  const [commentTaskState, setCommentTaskState] = useState<{ state: "loading" | "saving" | "completed" | "failed"; message: string } | null>(null);
   const [shareCollaborationState, setShareCollaborationState] = useState<{ state: "working" | "completed" | "failed"; message: string } | null>(null);
+  const [shareRevokeDraft, setShareRevokeDraft] = useState<DesktopShareManifest | null>(null);
+  const [shareRevokeConfirmation, setShareRevokeConfirmation] = useState("");
+  const [shareRevocationReceipts, setShareRevocationReceipts] = useState<Record<string, { revokedAt: string; objectsInvalidated: number; auditEntryId: string }>>({});
+  const [shareVersionDraft, setShareVersionDraft] = useState<{ share: DesktopShareManifest; inspection: DesktopShareVersionInspection } | null>(null);
+  const [shareVersionState, setShareVersionState] = useState<{ state: "scanning" | "publishing" | "published" | "conflict" | "failed"; message: string } | null>(null);
   const [sharedOpenState, setSharedOpenState] = useState<{
     state: "opening" | "opened" | "failed";
     message: string;
@@ -2705,7 +2718,7 @@ function ResultsCenterView({
 
   useEffect(() => {
     let active = true;
-    const refresh = (): void => { void Promise.all([desktopApi.listIncomingShares(), desktopApi.listOutgoingShares()]).then(async ([incoming, outgoing]) => { if (!active) return; setIncomingShares(incoming); setOutgoingShares(outgoing); const comments = await Promise.all(incoming.filter((share) => share.permission !== "view").map(async (share) => [share.id, await desktopApi.listShareComments({ shareId: share.id }).catch(() => [])] as const)); if (active) setShareComments(Object.fromEntries(comments)); }).catch(() => undefined); };
+    const refresh = (): void => { void Promise.all([desktopApi.listIncomingShares(), desktopApi.listOutgoingShares(), desktopApi.listShareCommentTasks()]).then(async ([incoming, outgoing, commentTasks]) => { if (!active) return; setIncomingShares(incoming); setOutgoingShares(outgoing); setShareCommentTasks(commentTasks); const readableShares = [...outgoing, ...incoming.filter((share) => share.permission !== "view")].filter((share, index, items) => items.findIndex((item) => item.id === share.id) === index); const comments = await Promise.all(readableShares.map(async (share) => [share.id, await desktopApi.listShareComments({ shareId: share.id }).catch(() => [])] as const)); if (active) setShareComments(Object.fromEntries(comments)); }).catch(() => undefined); };
     refresh();
     const timer = window.setInterval(refresh, 2000);
     return () => { active = false; window.clearInterval(timer); };
@@ -2807,15 +2820,100 @@ function ResultsCenterView({
     } catch (caught) { setShareCollaborationState({ state: "failed", message: caught instanceof Error ? caught.message : String(caught) }); }
   }
 
+  async function confirmShareRevocation(): Promise<void> {
+    if (!shareRevokeDraft || shareRevokeConfirmation !== "REVOKE") return;
+    const shareId = shareRevokeDraft.id;
+    setShareCollaborationState({ state: "working", message: zh ? "正在撤销分享访问权限…" : "Revoking shared access…" });
+    try {
+      const result = await desktopApi.revokeShare({ shareId, confirmation: "REVOKE" });
+      setOutgoingShares((current) => current.map((item) => item.id === shareId ? { ...item, status: "revoked", revokedAt: result.revokedAt, revokedByAccount: item.ownerAccount } : item));
+      setShareComments((current) => { const next = { ...current }; delete next[shareId]; return next; });
+      setShareRevocationReceipts((current) => ({ ...current, [shareId]: { revokedAt: result.revokedAt, objectsInvalidated: result.objectsInvalidated, auditEntryId: result.auditEntryId } }));
+      setShareCollaborationState({ state: "completed", message: zh ? `分享已撤销；${result.objectsInvalidated} 个对象已失效，并已写入安全审计。` : `Share revoked; ${result.objectsInvalidated} object(s) are inaccessible and the security audit was recorded.` });
+      setShareRevokeDraft(null);
+      setShareRevokeConfirmation("");
+    } catch (caught) {
+      setShareCollaborationState({ state: "failed", message: caught instanceof Error ? caught.message : String(caught) });
+    }
+  }
+
+  async function inspectOutgoingShareVersion(share: DesktopShareManifest): Promise<void> {
+    setShareVersionState({ state: "scanning", message: zh ? "正在比较已分享版本和当前源文件…" : "Comparing the published version with the current source…" });
+    try {
+      const inspection = await desktopApi.inspectShareVersion({ shareId: share.id });
+      setShareVersionDraft({ share, inspection });
+      setShareVersionState(null);
+    } catch (caught) {
+      setShareVersionState({ state: "failed", message: caught instanceof Error ? caught.message : String(caught) });
+    }
+  }
+
+  async function publishOutgoingShareVersion(): Promise<void> {
+    if (!shareVersionDraft?.inspection.hasChanges) return;
+    const { share, inspection } = shareVersionDraft;
+    setShareVersionState({ state: "publishing", message: zh ? `正在发布 v${inspection.nextVersion}…` : `Publishing v${inspection.nextVersion}…` });
+    try {
+      const result = await desktopApi.publishShareVersion({ shareId: share.id, expectedVersion: inspection.currentVersion, sourceFingerprints: inspection.sourceFingerprints });
+      setOutgoingShares((current) => current.map((item) => item.id === result.shareId ? result.manifest : item));
+      const comments = await desktopApi.listShareComments({ shareId: share.id }).catch(() => []);
+      setShareComments((current) => ({ ...current, [share.id]: comments }));
+      setShareVersionDraft(null);
+      setShareVersionState({ state: "published", message: zh ? `v${result.currentVersion} 已发布；${result.staleCommentCount} 条旧评论已标记为过期。` : `v${result.currentVersion} published; ${result.staleCommentCount} earlier comment(s) are marked stale.` });
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      setShareVersionState({ state: /conflict/i.test(message) || message.includes("冲突") ? "conflict" : "failed", message });
+    }
+  }
+
   async function addIncomingComment(share: DesktopShareManifest): Promise<void> {
     const body = shareCommentDrafts[share.id]?.trim(); if (!body) return;
+    const defaultObject = share.objects.find((item) => item.objectType === "artifact") ?? share.objects[0];
+    const target = shareCommentTargets[share.id] ?? { objectId: defaultObject?.objectId ?? "", anchorType: "whole_result" as const, anchorLabel: defaultObject?.label ?? "" };
     setShareCollaborationState({ state: "working", message: zh ? "正在发送评论…" : "Sending comment…" });
     try {
-      const comment = await desktopApi.addShareComment({ shareId: share.id, body });
+      const comment = await desktopApi.addShareComment({ shareId: share.id, body, objectId: target.objectId, anchorType: target.anchorType, anchorLabel: target.anchorLabel });
       setShareComments((current) => ({ ...current, [share.id]: [...(current[share.id] ?? []), comment] }));
       setShareCommentDrafts((current) => ({ ...current, [share.id]: "" }));
       setShareCollaborationState({ state: "completed", message: zh ? "评论已发送。" : "Comment sent." });
     } catch (caught) { setShareCollaborationState({ state: "failed", message: caught instanceof Error ? caught.message : String(caught) }); }
+  }
+
+  async function openCommentTaskDraft(shareId: string, commentId: string, existing?: DesktopShareCommentTask): Promise<void> {
+    setCommentTaskState({ state: "loading", message: zh ? "正在生成任务预览…" : "Preparing task preview…" });
+    try {
+      const preview = await desktopApi.previewShareCommentTask({ shareId, commentId });
+      setCommentTaskDraft(existing ? { ...preview, taskId: existing.id, title: existing.title, instructions: existing.instructions } : preview);
+      setCommentTaskState(null);
+    } catch (caught) { setCommentTaskState({ state: "failed", message: caught instanceof Error ? caught.message : String(caught) }); }
+  }
+
+  async function saveCommentTask(): Promise<void> {
+    if (!commentTaskDraft?.title.trim() || !commentTaskDraft.instructions.trim()) return;
+    setCommentTaskState({ state: "saving", message: zh ? "正在保存评论任务…" : "Saving comment task…" });
+    try {
+      const task = commentTaskDraft.taskId
+        ? await desktopApi.updateShareCommentTask({ taskId: commentTaskDraft.taskId, title: commentTaskDraft.title.trim(), instructions: commentTaskDraft.instructions.trim() })
+        : await desktopApi.createShareCommentTask({ shareId: commentTaskDraft.shareId, commentId: commentTaskDraft.commentId, title: commentTaskDraft.title.trim(), instructions: commentTaskDraft.instructions.trim() });
+      setShareCommentTasks((current) => [task, ...current.filter((item) => item.id !== task.id)]);
+      setCommentTaskDraft(null);
+      setCommentTaskState({ state: "completed", message: zh ? "评论任务已保存并进入后台任务列表。" : "Comment task saved to the background task list." });
+    } catch (caught) { setCommentTaskState({ state: "failed", message: caught instanceof Error ? caught.message : String(caught) }); }
+  }
+
+  async function completeCommentTask(task: DesktopShareCommentTask): Promise<void> {
+    setCommentTaskState({ state: "saving", message: zh ? "正在完成任务…" : "Completing task…" });
+    try {
+      const completed = await desktopApi.completeShareCommentTask({ taskId: task.id });
+      setShareCommentTasks((current) => current.map((item) => item.id === completed.id ? completed : item));
+      setCommentTaskState({ state: "completed", message: zh ? "任务已完成，可返回原评论核对。" : "Task completed; its original comment remains linked." });
+    } catch (caught) { setCommentTaskState({ state: "failed", message: caught instanceof Error ? caught.message : String(caught) }); }
+  }
+
+  function openCommentBacklink(commentId: string): void {
+    const row = document.querySelector<HTMLElement>(`[data-comment-id="${CSS.escape(commentId)}"]`);
+    row?.scrollIntoView({ block: "center" });
+    row?.focus();
+    setCommentTaskState({ state: row ? "completed" : "failed", message: row ? (zh ? "已返回原评论。" : "Returned to the original comment.") : (zh ? "原评论当前不可见。" : "The original comment is not currently visible.") });
   }
 
   async function continueIncomingShare(share: DesktopShareManifest): Promise<void> {
@@ -3413,17 +3511,31 @@ function ResultsCenterView({
       {outgoingShares.length ? (
         <section className="results-shared-inbox" data-testid="outgoing-shares" aria-label={zh ? "我发出的分享" : "Shares I sent"}>
           <header><div><strong>{zh ? "我发出的分享" : "Shares I sent"}</strong><small>{zh ? "权限修改后会立即影响接收账号" : "Permission changes take effect immediately"}</small></div><span>{outgoingShares.length}</span></header>
-          {outgoingShares.map((share) => <article key={share.id} data-testid="outgoing-share-card" data-share-id={share.id}><div><strong>{share.objects.map((item) => item.label).join("、")}</strong><small>{share.recipientAccount}</small></div><label className="share-permission-control"><span>{zh ? "权限" : "Permission"}</span><select data-testid="outgoing-share-permission" value={share.permission} onChange={(event) => void changeSharePermission(share.id, event.target.value as DesktopSharePermission)}><option value="view">{zh ? "只查看" : "View only"}</option><option value="comment">{zh ? "可评论" : "Can comment"}</option><option value="continue">{zh ? "可继续处理" : "Can continue"}</option></select></label></article>)}
+          {outgoingShares.map((share) => {
+            const comments = shareComments[share.id] ?? [];
+            const linkedTasks = shareCommentTasks.filter((task) => task.shareId === share.id);
+            return <article key={share.id} data-testid="outgoing-share-card" data-share-id={share.id} data-share-status={share.status}>
+              <div><strong>{share.objects.map((item) => item.label).join("、")}</strong><small>{share.recipientAccount}</small><span className="share-version-badge" data-testid="share-version-badge">v{share.version} · {zh ? "当前版本" : "Current version"}</span>{share.status === "revoked" ? <span className="share-revoked-badge" data-testid="share-revoked-badge">{zh ? "已撤销" : "Revoked"}</span> : null}</div>
+              {share.status === "active" ? <label className="share-permission-control"><span>{zh ? "权限" : "Permission"}</span><select data-testid="outgoing-share-permission" value={share.permission} onChange={(event) => void changeSharePermission(share.id, event.target.value as DesktopSharePermission)}><option value="view">{zh ? "只查看" : "View only"}</option><option value="comment">{zh ? "可评论" : "Can comment"}</option><option value="continue">{zh ? "可继续处理" : "Can continue"}</option></select></label> : null}
+              {share.status === "active" ? <button type="button" className="share-version-check" data-testid="share-version-check" onClick={() => void inspectOutgoingShareVersion(share)}>{zh ? "检查并发布新版本" : "Check and publish new version"}</button> : null}
+              {share.status === "active" && comments.length ? <section className="outgoing-share-comments" data-testid="outgoing-share-comments"><strong>{zh ? "收到的评论" : "Received comments"}</strong><ul>{comments.map((comment) => {
+                const linked = linkedTasks.find((task) => task.commentId === comment.id);
+                return <li key={comment.id} tabIndex={-1} data-testid="outgoing-share-comment" data-comment-id={comment.id} data-comment-object-id={comment.target.objectId} data-comment-anchor-type={comment.target.anchorType} data-comment-version={comment.version} data-comment-version-status={comment.versionStatus}><div><small>{comment.authorAccount} · {comment.target.objectLabel} · v{comment.version}</small><b>{comment.target.anchorLabel}</b>{comment.versionStatus === "stale" ? <em className="share-comment-stale" data-testid="share-comment-stale">{zh ? `过期评论：当前为 v${share.version}` : `Stale comment: current is v${share.version}`}</em> : null}<p>{comment.body}</p></div>{linked ? <span data-testid="comment-task-linked">{linked.status === "completed" ? (zh ? "任务已完成" : "Task completed") : (zh ? "已转为任务" : "Task created")}</span> : <button type="button" data-testid="comment-to-task" onClick={() => void openCommentTaskDraft(share.id, comment.id)}>{zh ? "转为任务" : "Turn into task"}</button>}</li>;
+              })}</ul></section> : null}
+              {linkedTasks.length ? <section className="share-comment-tasks" data-testid="share-comment-tasks"><strong>{zh ? "评论任务" : "Comment tasks"}</strong>{linkedTasks.map((task) => <article key={task.id} data-testid="share-comment-task-card" data-task-id={task.id} data-task-status={task.status}><div><b>{task.title}</b><small>{task.target.objectLabel} · {task.target.anchorLabel}</small><p>{task.instructions}</p></div><div><button type="button" data-testid="comment-task-backlink" onClick={() => openCommentBacklink(task.commentId)}>{zh ? "查看原评论" : "Original comment"}</button>{task.status === "ready" ? <><button type="button" data-testid="comment-task-edit" onClick={() => void openCommentTaskDraft(task.shareId, task.commentId, task)}>{zh ? "修改任务" : "Edit task"}</button><button type="button" data-testid="comment-task-complete" onClick={() => void completeCommentTask(task)}>{zh ? "标记完成" : "Mark complete"}</button></> : <span>{zh ? "已完成" : "Completed"}</span>}</div></article>)}</section> : null}
+              {share.status === "active" ? <button type="button" className="share-revoke-button" data-testid="share-revoke" onClick={() => { setShareRevokeDraft(share); setShareRevokeConfirmation(""); }}>{zh ? "撤销分享" : "Revoke share"}</button> : <div className="share-revocation-receipt" data-testid="share-revocation-receipt"><strong>{zh ? "访问已失效" : "Access invalidated"}</strong><small>{share.revokedAt ? new Date(share.revokedAt).toLocaleString() : ""}</small><span>{zh ? `${share.objects.length} 个对象不可再打开或下载` : `${share.objects.length} object(s) can no longer be opened or downloaded`}</span>{shareRevocationReceipts[share.id] ? <code data-testid="share-revocation-audit-id">{shareRevocationReceipts[share.id].auditEntryId}</code> : null}</div>}
+            </article>;
+          })}
         </section>
       ) : null}
       {incomingShares.length ? (
         <section className="results-shared-inbox" data-testid="shared-inbox" aria-label={zh ? "收到的分享" : "Shared with me"}>
           <header><div><strong>{zh ? "收到的分享" : "Shared with me"}</strong><small>{zh ? "只显示分享清单中授权给当前账号的内容" : "Only objects authorized to the signed-in account are shown"}</small></div><span>{incomingShares.length}</span></header>
           {incomingShares.map((share) => (
-            <article key={share.id} data-testid="incoming-share-card" data-share-id={share.id} data-share-scope={share.scope} data-share-permission={share.permission}>
-              <div><strong>{share.scope === "result_only" ? (zh ? "成果分享" : "Result share") : (zh ? "完整任务分享" : "Complete task share")}</strong><small>{zh ? `来自 ${share.ownerAccount}` : `From ${share.ownerAccount}`}</small><span className="share-permission-badge" data-testid="share-permission-badge">{share.permission === "view" ? (zh ? "只查看" : "View only") : share.permission === "comment" ? (zh ? "可评论" : "Can comment") : (zh ? "可继续处理" : "Can continue")}</span></div>
+            <article key={share.id} data-testid="incoming-share-card" data-share-id={share.id} data-share-scope={share.scope} data-share-permission={share.permission} data-share-version={share.version}>
+              <div><strong>{share.scope === "result_only" ? (zh ? "成果分享" : "Result share") : (zh ? "完整任务分享" : "Complete task share")}</strong><small>{zh ? `来自 ${share.ownerAccount}` : `From ${share.ownerAccount}`}</small><span className="share-version-badge" data-testid="share-version-badge">v{share.version} · {zh ? "当前版本" : "Current version"}</span><span className="share-permission-badge" data-testid="share-permission-badge">{share.permission === "view" ? (zh ? "只查看" : "View only") : share.permission === "comment" ? (zh ? "可评论" : "Can comment") : (zh ? "可继续处理" : "Can continue")}</span></div>
               <ul>{share.objects.map((object) => <li key={`${object.objectType}:${object.objectId}`} data-shared-object-type={object.objectType} data-shared-object-id={object.objectId}><span>{object.objectType === "task" ? (zh ? "任务" : "Task") : (zh ? "成果" : "Result")} · {object.label}</span><span className="shared-object-actions"><button type="button" data-testid="shared-object-open" onClick={() => void openIncomingObject(share, object)}>{zh ? "打开" : "Open"}</button>{object.objectType === "artifact" ? <button type="button" data-testid="shared-artifact-download" onClick={() => void downloadIncomingArtifact(share, object.objectId)}>{zh ? "下载" : "Download"}</button> : null}</span></li>)}</ul>
-              {share.permission !== "view" ? <div className="share-comment-composer"><ul data-testid="share-comments">{(shareComments[share.id] ?? []).map((comment) => <li key={comment.id}><span>{comment.authorAccount}</span><p>{comment.body}</p></li>)}</ul><label><span>{zh ? "评论" : "Comment"}</span><input data-testid="share-comment-input" value={shareCommentDrafts[share.id] ?? ""} onChange={(event) => setShareCommentDrafts((current) => ({ ...current, [share.id]: event.target.value }))} /></label><button type="button" data-testid="share-comment-send" disabled={!shareCommentDrafts[share.id]?.trim()} onClick={() => void addIncomingComment(share)}>{zh ? "发送评论" : "Send comment"}</button></div> : null}
+              {share.permission !== "view" ? <div className="share-comment-composer"><ul data-testid="share-comments">{(shareComments[share.id] ?? []).map((comment) => <li key={comment.id} data-comment-id={comment.id} data-comment-version={comment.version} data-comment-version-status={comment.versionStatus}><span>{comment.authorAccount} · v{comment.version} · {comment.target.anchorLabel}</span>{comment.versionStatus === "stale" ? <em className="share-comment-stale" data-testid="share-comment-stale">{zh ? `过期评论：当前为 v${share.version}` : `Stale comment: current is v${share.version}`}</em> : null}<p>{comment.body}</p></li>)}</ul><div className="share-comment-target"><label><span>{zh ? "评论对象" : "Comment target"}</span><select data-testid="share-comment-object" value={shareCommentTargets[share.id]?.objectId ?? (share.objects.find((item) => item.objectType === "artifact") ?? share.objects[0])?.objectId ?? ""} onChange={(event) => setShareCommentTargets((current) => ({ ...current, [share.id]: { objectId: event.target.value, anchorType: current[share.id]?.anchorType ?? "whole_result", anchorLabel: current[share.id]?.anchorLabel ?? "" } }))}>{share.objects.map((object) => <option key={object.objectId} value={object.objectId}>{object.label}</option>)}</select></label><label><span>{zh ? "位置类型" : "Location type"}</span><select data-testid="share-comment-anchor-type" value={shareCommentTargets[share.id]?.anchorType ?? "whole_result"} onChange={(event) => setShareCommentTargets((current) => ({ ...current, [share.id]: { objectId: current[share.id]?.objectId ?? (share.objects.find((item) => item.objectType === "artifact") ?? share.objects[0])?.objectId ?? "", anchorType: event.target.value as DesktopShareCommentAnchorType, anchorLabel: current[share.id]?.anchorLabel ?? "" } }))}><option value="whole_result">{zh ? "整个成果" : "Whole result"}</option><option value="paragraph">{zh ? "段落" : "Paragraph"}</option><option value="chart">{zh ? "图表" : "Chart"}</option></select></label><label><span>{zh ? "具体位置" : "Exact location"}</span><input data-testid="share-comment-anchor-label" placeholder={zh ? "例如：第 42 页带宽图" : "e.g. p.42 bandwidth chart"} value={shareCommentTargets[share.id]?.anchorLabel ?? ""} onChange={(event) => setShareCommentTargets((current) => ({ ...current, [share.id]: { objectId: current[share.id]?.objectId ?? (share.objects.find((item) => item.objectType === "artifact") ?? share.objects[0])?.objectId ?? "", anchorType: current[share.id]?.anchorType ?? "whole_result", anchorLabel: event.target.value } }))} /></label></div><label><span>{zh ? "评论" : "Comment"}</span><input data-testid="share-comment-input" value={shareCommentDrafts[share.id] ?? ""} onChange={(event) => setShareCommentDrafts((current) => ({ ...current, [share.id]: event.target.value }))} /></label><button type="button" data-testid="share-comment-send" disabled={!shareCommentDrafts[share.id]?.trim()} onClick={() => void addIncomingComment(share)}>{zh ? "发送评论" : "Send comment"}</button></div> : null}
               {share.permission === "continue" ? <button type="button" data-testid="share-continue" onClick={() => void continueIncomingShare(share)}>{zh ? "继续处理" : "Continue processing"}</button> : null}
             </article>
           ))}
@@ -3432,6 +3544,11 @@ function ResultsCenterView({
           {shareCollaborationState ? <output data-testid="share-collaboration-status" data-state={shareCollaborationState.state}>{shareCollaborationState.message}</output> : null}
         </section>
       ) : null}
+      {commentTaskDraft ? <section className="comment-task-dialog" role="dialog" aria-modal="true" data-testid="comment-task-dialog"><header><div><strong>{commentTaskDraft.taskId ? (zh ? "修改评论任务" : "Edit comment task") : (zh ? "评论转为任务" : "Turn comment into task")}</strong><small>{commentTaskDraft.target.objectLabel} · {commentTaskDraft.target.anchorLabel}</small></div></header><blockquote data-testid="comment-task-source-context"><b>{commentTaskDraft.commentAuthorAccount}</b><p>{commentTaskDraft.commentBody}</p></blockquote><label><span>{zh ? "任务标题" : "Task title"}</span><input data-testid="comment-task-title" value={commentTaskDraft.title} onChange={(event) => setCommentTaskDraft((current) => current ? { ...current, title: event.target.value } : null)} /></label><label><span>{zh ? "任务说明" : "Task instructions"}</span><textarea data-testid="comment-task-instructions" value={commentTaskDraft.instructions} onChange={(event) => setCommentTaskDraft((current) => current ? { ...current, instructions: event.target.value } : null)} /></label><div><button type="button" onClick={() => setCommentTaskDraft(null)}>{zh ? "取消" : "Cancel"}</button><button type="button" data-testid="comment-task-save" disabled={!commentTaskDraft.title.trim() || !commentTaskDraft.instructions.trim()} onClick={() => void saveCommentTask()}>{commentTaskDraft.taskId ? (zh ? "保存修改" : "Save changes") : (zh ? "创建任务" : "Create task")}</button></div></section> : null}
+      {commentTaskState ? <output data-testid="comment-task-status" data-state={commentTaskState.state}>{commentTaskState.message}</output> : null}
+      {shareVersionDraft ? <section className="share-version-dialog" role="dialog" aria-modal="true" aria-labelledby="share-version-title" data-testid="share-version-dialog"><header><div><strong id="share-version-title">{zh ? `发布共享版本 v${shareVersionDraft.inspection.nextVersion}` : `Publish shared version v${shareVersionDraft.inspection.nextVersion}`}</strong><small>{shareVersionDraft.share.recipientAccount} · {zh ? `当前 v${shareVersionDraft.inspection.currentVersion}` : `Current v${shareVersionDraft.inspection.currentVersion}`}</small></div></header><p>{shareVersionDraft.inspection.hasChanges ? (zh ? "检测到源成果变化。发布会创建不可变快照，不会覆盖之前版本。" : "Source changes were detected. Publishing creates an immutable snapshot and does not overwrite the earlier version.") : (zh ? "源成果与当前已发布版本一致。" : "The source matches the currently published version.")}</p><ul>{shareVersionDraft.inspection.artifacts.map((artifact) => <li key={artifact.objectId} data-testid="share-version-artifact" data-version-changed={artifact.changed}><span>{artifact.label}</span><b>{artifact.changed ? (zh ? "已变化" : "Changed") : (zh ? "未变化" : "Unchanged")}</b><code>{artifact.publishedSha256.slice(0, 12)} → {artifact.sourceSha256.slice(0, 12)}</code></li>)}</ul>{shareVersionDraft.inspection.commentsThatWillBecomeStale ? <p className="share-version-warning" data-testid="share-version-stale-warning">{zh ? `发布后 ${shareVersionDraft.inspection.commentsThatWillBecomeStale} 条当前评论会标记为过期，但不会删除。` : `${shareVersionDraft.inspection.commentsThatWillBecomeStale} current comment(s) will be marked stale, not deleted.`}</p> : null}<div className="share-confirmation-actions"><button type="button" data-testid="share-version-cancel" onClick={() => { setShareVersionDraft(null); setShareVersionState(null); }}>{zh ? "取消" : "Cancel"}</button><button type="button" data-testid="share-version-publish" disabled={!shareVersionDraft.inspection.hasChanges || shareVersionState?.state === "publishing"} onClick={() => void publishOutgoingShareVersion()}>{zh ? `发布 v${shareVersionDraft.inspection.nextVersion}` : `Publish v${shareVersionDraft.inspection.nextVersion}`}</button></div></section> : null}
+      {shareVersionState ? <output className="share-version-status" data-testid="share-version-status" data-state={shareVersionState.state}>{shareVersionState.message}</output> : null}
+      {shareRevokeDraft ? <section className="share-revoke-dialog" role="dialog" aria-modal="true" aria-labelledby="share-revoke-title" data-testid="share-revoke-dialog"><header><div><strong id="share-revoke-title">{zh ? "撤销这个分享？" : "Revoke this share?"}</strong><small>{zh ? `接收账号：${shareRevokeDraft.recipientAccount}` : `Recipient: ${shareRevokeDraft.recipientAccount}`}</small></div></header><p>{zh ? "撤销后，原分享入口、已登录账号中的收件卡以及后续打开、下载、评论和继续处理权限都会立即失效。此操作会写入安全审计。" : "The original share entry, signed-in inbox card, and future open, download, comment, and continue access will immediately stop working. A security audit entry will be recorded."}</p><ul>{shareRevokeDraft.objects.map((object) => <li key={object.objectId}>{object.label}</li>)}</ul><label><span>{zh ? "输入 REVOKE 确认" : "Type REVOKE to confirm"}</span><input autoFocus data-testid="share-revoke-confirmation" value={shareRevokeConfirmation} onChange={(event) => setShareRevokeConfirmation(event.target.value)} /></label><div className="share-confirmation-actions"><button type="button" data-testid="share-revoke-cancel" onClick={() => { setShareRevokeDraft(null); setShareRevokeConfirmation(""); }}>{zh ? "取消" : "Cancel"}</button><button type="button" data-testid="share-revoke-confirm" disabled={shareRevokeConfirmation !== "REVOKE"} onClick={() => void confirmShareRevocation()}>{zh ? "确认撤销" : "Confirm revocation"}</button></div></section> : null}
       {shareDraft ? (
         <section className="share-confirmation-dialog" role="dialog" aria-modal="true" aria-labelledby="share-dialog-title" data-testid="share-confirmation-dialog">
           <header><div><strong id="share-dialog-title">{shareDraft.scope === "result_only" ? (zh ? "分享这个成果" : "Share this result") : (zh ? "分享完整任务" : "Share complete task")}</strong><small>{zh ? "确认接收账号和将被授权的内容" : "Confirm the recipient and authorized objects"}</small></div></header>

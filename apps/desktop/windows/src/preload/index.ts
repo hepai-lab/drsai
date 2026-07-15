@@ -115,9 +115,22 @@ import type {
   DesktopShareInspectionRequest,
   DesktopShareInspectionResult,
   DesktopSharePermissionUpdateRequest,
+  DesktopShareRevokeRequest,
+  DesktopShareRevocationResult,
+  DesktopShareVersionInspection,
+  DesktopShareVersionInspectionRequest,
+  DesktopShareVersionPublishRequest,
+  DesktopShareVersionPublishResult,
   DesktopShareComment,
   DesktopShareCommentAddRequest,
   DesktopShareCommentListRequest,
+  DesktopShareCommentTask,
+  DesktopShareCommentTaskCompleteRequest,
+  DesktopShareCommentTaskCreateRequest,
+  DesktopShareCommentTaskListRequest,
+  DesktopShareCommentTaskPreview,
+  DesktopShareCommentTaskPreviewRequest,
+  DesktopShareCommentTaskUpdateRequest,
   DesktopShareContinuationRequest,
   DesktopShareContinuationResult,
   DesktopShareAuditEntry,
@@ -681,10 +694,26 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:share-inspect", request),
   updateSharePermission: (request: DesktopSharePermissionUpdateRequest): Promise<DesktopShareManifest> =>
     ipcRenderer.invoke("desktop:share-permission-update", request),
+  revokeShare: (request: DesktopShareRevokeRequest): Promise<DesktopShareRevocationResult> =>
+    ipcRenderer.invoke("desktop:share-revoke", request),
+  inspectShareVersion: (request: DesktopShareVersionInspectionRequest): Promise<DesktopShareVersionInspection> =>
+    ipcRenderer.invoke("desktop:share-version-inspect", request),
+  publishShareVersion: (request: DesktopShareVersionPublishRequest): Promise<DesktopShareVersionPublishResult> =>
+    ipcRenderer.invoke("desktop:share-version-publish", request),
   listShareComments: (request: DesktopShareCommentListRequest): Promise<DesktopShareComment[]> =>
     ipcRenderer.invoke("desktop:share-comments-list", request),
   addShareComment: (request: DesktopShareCommentAddRequest): Promise<DesktopShareComment> =>
     ipcRenderer.invoke("desktop:share-comment-add", request),
+  previewShareCommentTask: (request: DesktopShareCommentTaskPreviewRequest): Promise<DesktopShareCommentTaskPreview> =>
+    ipcRenderer.invoke("desktop:share-comment-task-preview", request),
+  createShareCommentTask: (request: DesktopShareCommentTaskCreateRequest): Promise<DesktopShareCommentTask> =>
+    ipcRenderer.invoke("desktop:share-comment-task-create", request),
+  updateShareCommentTask: (request: DesktopShareCommentTaskUpdateRequest): Promise<DesktopShareCommentTask> =>
+    ipcRenderer.invoke("desktop:share-comment-task-update", request),
+  completeShareCommentTask: (request: DesktopShareCommentTaskCompleteRequest): Promise<DesktopShareCommentTask> =>
+    ipcRenderer.invoke("desktop:share-comment-task-complete", request),
+  listShareCommentTasks: (request: DesktopShareCommentTaskListRequest = {}): Promise<DesktopShareCommentTask[]> =>
+    ipcRenderer.invoke("desktop:share-comment-tasks-list", request),
   continueSharedTask: (request: DesktopShareContinuationRequest): Promise<DesktopShareContinuationResult> =>
     ipcRenderer.invoke("desktop:share-continue", request),
   listShareAudit: (request: DesktopShareAuditListRequest): Promise<DesktopShareAuditEntry[]> =>

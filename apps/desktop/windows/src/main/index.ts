@@ -128,7 +128,7 @@ import {
   type ScheduledTaskWorkerHandle,
   updateScheduledTask,
 } from "./scheduledTasks";
-import { addShareComment, continueSharedTask, createShare, downloadSharedArtifact, inspectShare, listIncomingShares, listOutgoingShares, listShareAudit, listShareComments, openSharedObject, updateSharePermission } from "./shares";
+import { addShareComment, completeShareCommentTask, continueSharedTask, createShare, createShareCommentTask, downloadSharedArtifact, inspectShare, inspectShareVersion, listIncomingShares, listOutgoingShares, listShareAudit, listShareComments, listShareCommentTasks, openSharedObject, previewShareCommentTask, publishShareVersion, revokeShare, updateShareCommentTask, updateSharePermission } from "./shares";
 import {
   configureChannelAdapter,
   createChannelOutboundDraftApproval,
@@ -3572,8 +3572,16 @@ function registerIpc(): void {
   secureHandle("desktop:share-create", (_event, request) => createShare(request));
   secureHandle("desktop:share-inspect", (_event, request) => inspectShare(request));
   secureHandle("desktop:share-permission-update", (_event, request) => updateSharePermission(request));
+  secureHandle("desktop:share-revoke", (_event, request) => revokeShare(request));
+  secureHandle("desktop:share-version-inspect", (_event, request) => inspectShareVersion(request));
+  secureHandle("desktop:share-version-publish", (_event, request) => publishShareVersion(request));
   secureHandle("desktop:share-comments-list", (_event, request) => listShareComments(request));
   secureHandle("desktop:share-comment-add", (_event, request) => addShareComment(request));
+  secureHandle("desktop:share-comment-task-preview", (_event, request) => previewShareCommentTask(request));
+  secureHandle("desktop:share-comment-task-create", (_event, request) => createShareCommentTask(request));
+  secureHandle("desktop:share-comment-task-update", (_event, request) => updateShareCommentTask(request));
+  secureHandle("desktop:share-comment-task-complete", (_event, request) => completeShareCommentTask(request));
+  secureHandle("desktop:share-comment-tasks-list", (_event, request) => listShareCommentTasks(request));
   secureHandle("desktop:share-continue", (_event, request) => continueSharedTask(request));
   secureHandle("desktop:share-audit-list", (_event, request) => listShareAudit(request));
   secureHandle("desktop:shares-incoming-list", () => listIncomingShares());

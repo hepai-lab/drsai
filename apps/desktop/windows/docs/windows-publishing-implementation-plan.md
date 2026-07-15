@@ -157,7 +157,7 @@ work rather than MVP blockers.
 2. Generate release metadata:
 
    ```powershell
-   $env:OPENDRSAI_RELEASE_BASE_URL = "https://github.com/hepai-lab/drsai/releases/download/v1.4.5"
+   $env:OPENDRSAI_RELEASE_BASE_URL = "https://github.com/hepai-lab/drsai/releases/download/v1.4.6"
    npm run manifest:win
    npm run summary:win
    ```

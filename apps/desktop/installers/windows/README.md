@@ -101,7 +101,7 @@ the MSI embeds the expected hash and size:
 powershell -NoProfile -ExecutionPolicy Bypass `
   -File .\apps\desktop\installers\windows\build-msi.ps1 `
   -RuntimePath .\apps\desktop\windows\release\bootstrapper\OpenDrSaiRuntime-win-x64.zip `
-  -RuntimeUrl https://github.com/hepai-lab/drsai/releases/download/v1.4.5/OpenDrSaiRuntime-win-x64.zip
+  -RuntimeUrl https://github.com/hepai-lab/drsai/releases/download/v1.4.6/OpenDrSaiRuntime-win-x64.zip
 ```
 
 When `-RuntimeUrl` is omitted, `build-msi.ps1` derives the immutable versioned
