@@ -627,6 +627,8 @@ async function createOidcSession(
 
 function createDeveloperSession(rememberMe = true): StoredAuthSession {
   const now = new Date().toISOString();
+  const e2eUserId = process.env.OPENDRSAI_E2E_AUTH_USER_ID?.trim() || "developer-local";
+  const e2eGroups = process.env.OPENDRSAI_E2E_AUTH_GROUPS?.split(",").map((group) => group.trim()).filter(Boolean);
   return {
     authenticated: true,
     sessionId: randomUUID(),
@@ -634,10 +636,11 @@ function createDeveloperSession(rememberMe = true): StoredAuthSession {
     expiresAt: getExpiryDate(rememberMe ? 7 : 1),
     authMode: "offline",
     user: {
-      id: "developer-local",
-      email: "developer@opendrsai.local",
+      id: e2eUserId,
+      email: process.env.OPENDRSAI_E2E_AUTH_EMAIL?.trim() || "developer@opendrsai.local",
       name: "Developer",
       role: "admin",
+      groups: e2eGroups?.length ? e2eGroups : undefined,
     },
   };
 }

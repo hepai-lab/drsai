@@ -1,5 +1,5 @@
 param(
-    [string]$RuntimeUrl = "https://github.com/hepai-lab/drsai/releases/latest/download/OpenDrSaiRuntime-win-x64.zip",
+    [string]$RuntimeUrl = "",
     [string]$RuntimeSha256 = "",
     [Int64]$RuntimeSizeBytes = 0,
     [string]$InstallRoot = (Join-Path $env:ProgramFiles "OpenDrSai"),
@@ -30,6 +30,10 @@ function Get-Sha256Hex([string]$Path) {
 $ProgressPreference = "SilentlyContinue"
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+if (-not $RuntimeUrl) {
+    $RuntimeUrl = "https://github.com/hepai-lab/drsai/releases/download/v$BootstrapperVersion/OpenDrSaiRuntime-win-x64.zip"
+}
 
 $CacheDir = Join-Path $InstallRoot "cache"
 $AgentDir = Join-Path $InstallRoot "drsai-agent"

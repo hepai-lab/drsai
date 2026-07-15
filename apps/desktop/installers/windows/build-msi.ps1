@@ -1,6 +1,6 @@
 param(
     [string]$OutDir = "$PSScriptRoot\..\..\windows\release\bootstrapper",
-    [string]$RuntimeUrl = "https://github.com/hepai-lab/drsai/releases/latest/download/OpenDrSaiRuntime-win-x64.zip",
+    [string]$RuntimeUrl = "",
     [string]$RuntimePath = "",
     [string]$RuntimeSha256 = "",
     [Int64]$RuntimeSizeBytes = 0,
@@ -56,6 +56,44 @@ $outDir = Resolve-FullPath $OutDir
 $objDir = Join-Path $outDir "obj-msi"
 New-Item -ItemType Directory -Force -Path $outDir, $objDir | Out-Null
 
+$wixHome = if ($WixDir) { $WixDir } else { Split-Path -Parent $candle }
+$wixSdkDir = Join-Path $wixHome "sdk"
+$dtfAssembly = Join-Path $wixSdkDir "Microsoft.Deployment.WindowsInstaller.dll"
+$makeSfxCa = Join-Path $wixSdkDir "MakeSfxCA.exe"
+$sfxCa = Join-Path $wixSdkDir "x64\sfxca.dll"
+$csc = Join-Path $env:WINDIR "Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+foreach ($requiredTool in @($dtfAssembly, $makeSfxCa, $sfxCa, $csc)) {
+    if (-not (Test-Path $requiredTool)) {
+        throw "Required MSI custom action build tool was not found: $requiredTool"
+    }
+}
+if (-not $RuntimeUrl) {
+    $RuntimeUrl = "https://github.com/hepai-lab/drsai/releases/download/v$BootstrapperVersion/OpenDrSaiRuntime-win-x64.zip"
+}
+
+$actionsDll = Join-Path $objDir "OpenDrSaiInstallerActions.dll"
+$packedActionsDll = Join-Path $objDir "OpenDrSaiInstallerActions.CA.dll"
+$customActionConfig = Join-Path $objDir "CustomAction.config"
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot "OpenDrSaiInstallerActions.config") -Destination $customActionConfig -Force
+
+& $csc `
+    /nologo `
+    /target:library `
+    /platform:x64 `
+    /optimize+ `
+    "/out:$actionsDll" `
+    "/reference:$dtfAssembly" `
+    (Join-Path $PSScriptRoot "OpenDrSaiInstallerActions.cs")
+if ($LASTEXITCODE -ne 0) {
+    throw "csc.exe failed with exit code $LASTEXITCODE."
+}
+
+Remove-Item -LiteralPath $packedActionsDll -Force -ErrorAction SilentlyContinue
+& $makeSfxCa $packedActionsDll $sfxCa $actionsDll $customActionConfig $dtfAssembly
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path $packedActionsDll)) {
+    throw "MakeSfxCA.exe failed to package the MSI download custom action."
+}
+
 if (-not $RuntimePath) {
     $candidateRuntime = Join-Path $outDir "OpenDrSaiRuntime-win-x64.zip"
     if (Test-Path $candidateRuntime) {
@@ -97,6 +135,7 @@ $msi = Join-Path $outDir $OutputName
     "-dRuntimeSizeBytes=$RuntimeSizeBytes" `
     "-dBootstrapperVersion=$BootstrapperVersion" `
     "-dExtraInstallArgs=$wixExtraInstallArgs" `
+    "-dInstallerActionsPath=$packedActionsDll" `
     -out $wixObj `
     (Join-Path $PSScriptRoot "OpenDrSaiDesktopBootstrapper.wxs")
 if ($LASTEXITCODE -ne 0) {

@@ -36,7 +36,9 @@ assert(api.includes("DesktopBackgroundTask"), "shared API omits background task 
 assert(
   api.includes("DesktopBackgroundTaskKind") &&
     api.includes('"workflow_run"') &&
-    api.includes('"scheduled_monitor"'),
+    api.includes('"scheduled_monitor"') &&
+    api.includes('"agent_run"') &&
+    api.includes('"presentation_generation"'),
   "shared API omits background task kind taxonomy",
 );
 assert(
@@ -76,6 +78,26 @@ assert(
   "workflow runs are not mirrored into background tasks",
 );
 assert(
+  backgroundTasks.includes("upsertBackgroundTaskForManagerPresentation") &&
+    backgroundTasks.includes("completedPresentationSteps") &&
+    backgroundTasks.includes("pendingDecisions") &&
+    backgroundTasks.includes("presentation_generation"),
+  "presentation generation is not supervised through the generic background queue",
+);
+assert(
+  backgroundTasks.includes("upsertBackgroundTaskForAgentRun") &&
+    backgroundTasks.includes("agentCompletedSteps") &&
+    backgroundTasks.includes("mapAgentRunStatus") &&
+    backgroundTasks.includes('kind: "agent_run"') &&
+    backgroundTasks.includes("progress: agentRunProgress(event.type)"),
+  "Agent runs are not supervised through the generic background queue",
+);
+assert(
+  backgroundTasks.includes("rename(temporaryPath, BACKGROUND_TASKS_FILE)") &&
+    backgroundTasks.includes("randomUUID()}.tmp"),
+  "background task persistence is not atomic",
+);
+assert(
   backgroundTasks.includes("normalizeRequiredText") &&
     backgroundTasks.includes("normalizeLimit") &&
     backgroundTasks.includes("assertBackgroundTaskStatus"),
@@ -95,6 +117,12 @@ assert(
     main.includes("await upsertBackgroundTaskForWorkflowRun(run)"),
   "workflow run lifecycle does not update background task status",
 );
+assert(
+  main.includes("subscribeAgentRunLifecycle") &&
+    main.includes("upsertBackgroundTaskForAgentRun(request, event)") &&
+    main.includes("agentBackgroundTaskSync"),
+  "Agent run lifecycle does not update background task status in order",
+);
 
 assert(
   preload.includes("DesktopBackgroundTask") &&
@@ -107,10 +135,16 @@ assert(
 assert(
   skillSquare.includes("BackgroundTaskQueue") &&
     skillSquare.includes("desktopApi.listBackgroundTasks") &&
-    skillSquare.includes('aria-label="Background task queue"') &&
+    skillSquare.includes('data-testid="background-task-queue"') &&
+    skillSquare.includes('aria-label={zh ? "后台任务" : "Background task queue"}') &&
     skillSquare.includes("refreshBackgroundTasks") &&
-    skillSquare.includes("Background tasks"),
-  "Skills view does not render the background task queue",
+    skillSquare.includes("Background tasks") &&
+    skillSquare.includes("background-task-progress") &&
+    skillSquare.includes("Completed:") &&
+    skillSquare.includes("Needs you:") &&
+    skillSquare.includes("background-task-list-status") &&
+    skillSquare.includes("background-task-detail-status"),
+  "Task views do not render the localized background task queue",
 );
 
 assert(

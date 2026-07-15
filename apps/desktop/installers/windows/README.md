@@ -26,6 +26,12 @@ Installing OpenDrSai
 Finishing OpenDrSai installation
 ```
 
+During the download stage, the MSI updates its own progress bar and displays
+the current percentage, downloaded and total megabytes, and transfer speed in
+MB/s (or KB/s on slow links). The download is written to a `.partial` file and promoted to the runtime
+ZIP only after the transfer completes; size and SHA256 verification still run
+as separate installer stages.
+
 PowerShell is launched through a hidden Windows Script Host runner, so neither
 installation nor removal opens a Command Prompt or PowerShell window.
 
@@ -95,8 +101,13 @@ the MSI embeds the expected hash and size:
 powershell -NoProfile -ExecutionPolicy Bypass `
   -File .\apps\desktop\installers\windows\build-msi.ps1 `
   -RuntimePath .\apps\desktop\windows\release\bootstrapper\OpenDrSaiRuntime-win-x64.zip `
-  -RuntimeUrl https://example.com/OpenDrSaiRuntime-win-x64.zip
+  -RuntimeUrl https://github.com/hepai-lab/drsai/releases/download/v1.4.5/OpenDrSaiRuntime-win-x64.zip
 ```
+
+When `-RuntimeUrl` is omitted, `build-msi.ps1` derives the immutable versioned
+GitHub Release URL from `BootstrapperVersion`. Do not use a `releases/latest`
+URL: the MSI embeds a fixed Runtime size and SHA256, while `latest` can later
+point to a different asset and make an otherwise valid installer fail.
 
 Progress and failures are written to:
 

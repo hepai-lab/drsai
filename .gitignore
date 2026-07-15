@@ -223,6 +223,7 @@ cython_debug/
 ########################
 .claude/
 .aider*
+.codex-remote-attachments/
 # .drsai/
 DRSAI.local.md
 .drsai/DRSAI.local.md

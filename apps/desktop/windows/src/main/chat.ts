@@ -27,6 +27,16 @@ import { persistProviderUsageAnalytics } from "./providerUsageAnalytics";
 import { bindRemoteThread, getRemoteGatewayAccess } from "./remoteWorkspace";
 import { recordAgentTelemetry } from "./agentTelemetry";
 import { assertAgentCircuitAvailable, recordAgentCircuitFailure, recordAgentCircuitSuccess } from "./agentCircuitBreaker";
+import { createFailureEscalation, getFailureRecovery } from "./failureRecovery";
+import {
+  RecoverableStreamError,
+  appendResumedContent,
+  createStreamAttemptCursor,
+  isRecoverableNetworkError,
+  networkRetryDelayMs,
+  waitForNetworkRetry,
+  type StreamResumeState,
+} from "./networkRecovery";
 
 const GATEWAY_BASE_URL = `http://127.0.0.1:${getGatewayPort()}`;
 const MAX_ACTIVE_CHATS = 3;
@@ -45,7 +55,8 @@ const MAX_ATTACHMENT_CONTEXT_TOTAL_CHARS = 80_000;
 const MAX_BROWSER_SCREENSHOT_DATA_URL_CHARS = 2_000_000;
 const MAX_SSE_BUFFER_CHARS = 1_000_000;
 const MAX_ERROR_BODY_BYTES = 64_000;
-const CHAT_TIMEOUT_MS = getPositiveIntEnv("OPENDRSAI_CHAT_TIMEOUT_MS", 120_000);
+const CHAT_TIMEOUT_MS = getPositiveIntEnv("OPENDRSAI_CHAT_TIMEOUT_MS", 300_000);
+const NETWORK_RECOVERY_WINDOW_MS = getPositiveIntEnv("OPENDRSAI_NETWORK_RECOVERY_WINDOW_MS", 180_000);
 const REQUEST_ID_PATTERN = /^[a-zA-Z0-9_-]{8,80}$/;
 const SESSION_ID_PATTERN = /^[a-zA-Z0-9_.:-]{1,160}$/;
 const activeChats = new Map<string, AbortController>();
@@ -81,6 +92,7 @@ export function startChat(webContents: WebContents, request: unknown): string {
       requestId,
       type: controller.signal.aborted && !timedOut ? "aborted" : "error",
       error: errorMessage,
+      failureRecovery: getFailureRecovery(error),
     });
   });
 
@@ -336,7 +348,9 @@ async function runChat(
     const attachmentContext = platformDescriptor || remoteGateway ? [] : await buildAttachmentContext(request.attachments);
     const messages = withAttachmentContext(request.messages, attachmentContext);
     const model = request.model || getDefaultModelAlias() || "drsai";
-    const send = async (authContext: AuthContext): Promise<boolean> => {
+    const resumeState: StreamResumeState = { content: "", fileEventKeys: new Set() };
+    const recoveryStartedAt = Date.now();
+    const send = async (authContext: AuthContext, recoveryAttempt: number): Promise<boolean> => {
       if (platformDescriptor) {
         if (!authContext.accessToken) {
           throw new Error("Sign in with HepAI before using a platform agent.");
@@ -347,6 +361,7 @@ async function runChat(
             "Content-Type": "application/json",
             Accept: "text/event-stream",
             Authorization: `Bearer ${authContext.accessToken}`,
+            "Idempotency-Key": `desktop-chat-${requestId}`,
           },
           body: JSON.stringify({
             messages,
@@ -355,7 +370,12 @@ async function runChat(
             run_id: runId,
             model: request.model || platformDescriptor.model,
             attachments: request.attachments || [],
-            metadata: request.metadata || {},
+            metadata: {
+              ...(request.metadata || {}),
+              desktop_request_id: requestId,
+              network_retry_attempt: recoveryAttempt,
+              resume_from_chars: resumeState.content.length,
+            },
           }),
           signal: controller.signal,
         });
@@ -369,8 +389,13 @@ async function runChat(
           }
           throw authError;
         }
-        if (!response.ok || !response.body) throw await formatHttpError(response);
-        return readSse(webContents, requestId, sessionId, runId, response.body, controller.signal);
+        if (!response.ok || !response.body) {
+          if (response.status === 408 || response.status === 429 || response.status >= 500) {
+            throw new RecoverableStreamError(`Service temporarily unavailable (HTTP ${response.status}).`);
+          }
+          throw await formatHttpError(response);
+        }
+        return readSse(webContents, requestId, sessionId, runId, response.body, controller.signal, resumeState);
       }
       const gatewayBaseUrl = remoteGateway?.baseUrl || GATEWAY_BASE_URL;
       const gatewayHeaders = remoteGateway
@@ -385,6 +410,7 @@ async function runChat(
           "X-OpenDrSai-Auth-Mode": authContext.authMode,
           ...(request.workspacePath ? { "X-OpenDrSai-Workspace": request.workspacePath } : {}),
           ...(authContext.accessToken ? { Authorization: `Bearer ${authContext.accessToken}` } : {}),
+          "Idempotency-Key": `desktop-chat-${requestId}`,
         },
         body: JSON.stringify({
           model,
@@ -399,6 +425,8 @@ async function runChat(
             auth_mode: authContext.authMode,
             run_id: runId,
             desktop_request_id: requestId,
+            network_retry_attempt: recoveryAttempt,
+            resume_from_chars: resumeState.content.length,
             attachments: request.attachments || [],
             files: request.attachments || [],
             attachment_context: attachmentContext,
@@ -406,29 +434,55 @@ async function runChat(
         }),
         signal: controller.signal,
       });
-      if (!response.ok || !response.body) throw await formatHttpError(response);
-      return readSse(webContents, requestId, sessionId, runId, response.body, controller.signal);
+      if (!response.ok || !response.body) {
+        if (response.status === 408 || response.status === 429 || response.status >= 500) {
+          throw new RecoverableStreamError(`Gateway temporarily unavailable (HTTP ${response.status}).`);
+        }
+        throw await formatHttpError(response);
+      }
+      return readSse(webContents, requestId, sessionId, runId, response.body, controller.signal, resumeState);
     };
 
-    let sawDone: boolean;
-    try {
-      sawDone = await send(auth);
-    } catch (error) {
-      if (error instanceof ChatSseError && error.code === "invalid_token") {
-        invalidateAuthSession();
-        webContents.send("desktop:auth-session-invalidated");
+    let sawDone = false;
+    let recoveryAttempt = 0;
+    let refreshedToken = false;
+    while (!sawDone) {
+      try {
+        sawDone = await send(auth, recoveryAttempt);
+        if (!sawDone) throw new RecoverableStreamError("Chat stream ended before completion.");
+      } catch (error) {
+        if (error instanceof ChatSseError && error.code === "invalid_token") {
+          invalidateAuthSession();
+          webContents.send("desktop:auth-session-invalidated");
+        }
+        if (error instanceof ChatSseError && error.code === "token_expired" && error.retryable && !refreshedToken) {
+          auth = platformDescriptor
+            ? await refreshAuthContextAfterUnauthorized()
+            : await requireAuthContext();
+          refreshedToken = true;
+          continue;
+        }
+        if (!isRecoverableNetworkError(error) || Date.now() - recoveryStartedAt >= NETWORK_RECOVERY_WINDOW_MS) {
+          if (isRecoverableNetworkError(error)) {
+            throw createFailureEscalation(error, Math.max(1, recoveryAttempt), Math.max(1, recoveryAttempt));
+          }
+          throw error;
+        }
+        recoveryAttempt += 1;
+        emit(webContents, {
+          requestId, sessionId, runId, type: "status", level: "WARNING",
+          content: recoveryAttempt === 1
+            ? "网络连接中断，现有回复已保留；正在等待恢复并安全续传…"
+            : `网络仍未恢复，正在第 ${recoveryAttempt} 次重连…`,
+        });
+        await waitForNetworkRetry(networkRetryDelayMs(recoveryAttempt), controller.signal);
       }
-      if (!(error instanceof ChatSseError) || error.code !== "token_expired" || !error.retryable) throw error;
-      auth = platformDescriptor
-        ? await refreshAuthContextAfterUnauthorized()
-        : await requireAuthContext();
-      sawDone = await send(auth);
+    }
+    if (recoveryAttempt > 0) {
+      emit(webContents, { requestId, sessionId, runId, type: "status", level: "INFO", content: "网络已恢复，回复已从保存位置继续。" });
     }
     if (controller.signal.aborted) {
       throw new Error("Chat request was aborted.");
-    }
-    if (!sawDone) {
-      throw new Error("Gateway chat stream ended before data: [DONE].");
     }
     activeChats.delete(requestId);
     if (platformDescriptor && request.agentId) recordAgentCircuitSuccess(request.agentId);
@@ -638,12 +692,13 @@ async function readSse(
   runId: string,
   body: ReadableStream<Uint8Array>,
   signal: AbortSignal,
+  resumeState: StreamResumeState,
 ): Promise<boolean> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   let sawDone = false;
-  let emittedContent = false;
+  const cursor = createStreamAttemptCursor(resumeState);
   const toolTimelineAccumulator = createChatToolTimelineAccumulator();
 
   while (!signal.aborted) {
@@ -710,30 +765,31 @@ async function readSse(
         continue;
       }
       for (const fileEvent of parseAgentRunSseFileEvents(frame)) {
-        emit(webContents, {
-          requestId,
-          sessionId,
-          runId,
-          type: "tool_timeline",
-          toolTimeline: toChatFileTimelineEvent(fileEvent),
-        });
+        const key = `file:${JSON.stringify(fileEvent)}`;
+        if (!resumeState.fileEventKeys.has(key)) {
+          resumeState.fileEventKeys.add(key);
+          emit(webContents, {
+            requestId,
+            sessionId,
+            runId,
+            type: "tool_timeline",
+            toolTimeline: toChatFileTimelineEvent(fileEvent),
+          });
+        }
       }
       for (const toolTimeline of toolTimelineAccumulator.parseFrame(frame)) {
-        emit(webContents, {
-          requestId,
-          sessionId,
-          runId,
-          type: "tool_timeline",
-          toolTimeline,
-        });
+        const key = `tool:${JSON.stringify(toolTimeline)}`;
+        if (!resumeState.fileEventKeys.has(key)) {
+          resumeState.fileEventKeys.add(key);
+          emit(webContents, { requestId, sessionId, runId, type: "tool_timeline", toolTimeline });
+        }
       }
       try {
         parseChatSseFrame(frame).forEach((content) => {
-          emittedContent = true;
-          emit(webContents, { requestId, sessionId, runId, type: "chunk", content });
+          const novel = appendResumedContent(resumeState, cursor, content);
+          if (novel) emit(webContents, { requestId, sessionId, runId, type: "chunk", content: novel });
         });
       } catch (error) {
-        if (error instanceof ChatSseError && emittedContent) error.retryable = false;
         if (error instanceof ChatSseError) {
           recordProviderErrorAnalytics(requestId, sessionId, runId, frame);
         }
@@ -796,30 +852,31 @@ async function readSse(
       return sawDone;
     }
     for (const fileEvent of parseAgentRunSseFileEvents(buffer)) {
-      emit(webContents, {
-        requestId,
-        sessionId,
-        runId,
-        type: "tool_timeline",
-        toolTimeline: toChatFileTimelineEvent(fileEvent),
-      });
+      const key = `file:${JSON.stringify(fileEvent)}`;
+      if (!resumeState.fileEventKeys.has(key)) {
+        resumeState.fileEventKeys.add(key);
+        emit(webContents, {
+          requestId,
+          sessionId,
+          runId,
+          type: "tool_timeline",
+          toolTimeline: toChatFileTimelineEvent(fileEvent),
+        });
+      }
     }
     for (const toolTimeline of toolTimelineAccumulator.parseFrame(buffer)) {
-      emit(webContents, {
-        requestId,
-        sessionId,
-        runId,
-        type: "tool_timeline",
-        toolTimeline,
-      });
+      const key = `tool:${JSON.stringify(toolTimeline)}`;
+      if (!resumeState.fileEventKeys.has(key)) {
+        resumeState.fileEventKeys.add(key);
+        emit(webContents, { requestId, sessionId, runId, type: "tool_timeline", toolTimeline });
+      }
     }
     try {
       parseChatSseFrame(buffer).forEach((content) => {
-        emittedContent = true;
-        emit(webContents, { requestId, sessionId, runId, type: "chunk", content });
+        const novel = appendResumedContent(resumeState, cursor, content);
+        if (novel) emit(webContents, { requestId, sessionId, runId, type: "chunk", content: novel });
       });
     } catch (error) {
-      if (error instanceof ChatSseError && emittedContent) error.retryable = false;
       if (error instanceof ChatSseError) {
         recordProviderErrorAnalytics(requestId, sessionId, runId, buffer);
       }

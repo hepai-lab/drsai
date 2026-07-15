@@ -1,7 +1,12 @@
-import { ArrowRight, RefreshCw, Save, Search, Server, Settings, Sparkles, Star, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Brain, RefreshCw, Save, Search, Server, Settings, Sparkles, Star, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type {
   DesktopAgent,
+  DesktopProjectMemoryEntry,
+  DesktopTeamMemoryEntry,
+  DesktopUserPreference,
+  DesktopUserPreferenceCategory,
+  DesktopUserPreferenceValue,
   MyDrSaiConfig,
   PlatformAgentStatus,
   UpdateMyDrSaiConfigRequest,
@@ -12,6 +17,8 @@ import type { AppLanguage } from "../navigation";
 interface AgentSquareViewProps {
   language: AppLanguage;
   userEmail?: string;
+  userGroups?: string[];
+  workspacePath?: string;
   selectedAgentId?: string | null;
   onStartChat: (agent: DesktopAgent) => void;
   onSetDefault?: (agent: DesktopAgent) => void;
@@ -19,6 +26,8 @@ interface AgentSquareViewProps {
 
 export function AgentSquareView({
   language,
+  userGroups = [],
+  workspacePath,
   selectedAgentId,
   onStartChat,
   onSetDefault,
@@ -191,7 +200,7 @@ export function AgentSquareView({
               onConfigure={() => setConfigOpen((open) => !open)}
               onStartChat={startChat}
             />
-            {configOpen && <MyDrSaiConfigPanel zh={zh} />}
+            {configOpen && <MyDrSaiConfigPanel zh={zh} userGroups={userGroups} workspacePath={workspacePath} />}
           </section>
         )}
 
@@ -281,7 +290,7 @@ function AgentFeaturedCard({
         {agent.error && <small className="agent-card-error">{agent.error}</small>}
       </div>
       <div className="agent-featured-actions">
-        <button type="button" className="secondary" onClick={onConfigure}>
+        <button type="button" className="secondary" data-testid="my-drsai-configure" onClick={onConfigure}>
           <Settings size={15} />
           <span>{zh ? "配置" : "Config"}</span>
         </button>
@@ -296,7 +305,8 @@ function AgentFeaturedCard({
   );
 }
 
-function MyDrSaiConfigPanel({ zh }: { zh: boolean }): React.JSX.Element {
+function MyDrSaiConfigPanel({ zh, userGroups, workspacePath }: { zh: boolean; userGroups: string[]; workspacePath?: string }): React.JSX.Element {
+  const [view, setView] = useState<"config" | "memory">("config");
   const [config, setConfig] = useState<MyDrSaiConfig | null>(null);
   const [draft, setDraft] = useState<UpdateMyDrSaiConfigRequest>({});
   const [loading, setLoading] = useState(true);
@@ -346,6 +356,10 @@ function MyDrSaiConfigPanel({ zh }: { zh: boolean }): React.JSX.Element {
     (model) => model.alias === draft.defult_config_name,
   );
 
+  if (view === "memory") {
+    return <UserMemoryManager zh={zh} userGroups={userGroups} workspacePath={workspacePath} onBack={() => setView("config")} />;
+  }
+
   return (
     <section className="my-drsai-config-panel" aria-label={zh ? "My DrSai 配置" : "My DrSai config"}>
       <div className="my-drsai-config-header">
@@ -353,10 +367,16 @@ function MyDrSaiConfigPanel({ zh }: { zh: boolean }): React.JSX.Element {
           <strong>{zh ? "My DrSai 配置" : "My DrSai Config"}</strong>
           <span>{config?.cliPath || config?.baseUrl || (zh ? "读取本机配置" : "Local config")}</span>
         </div>
-        <button type="button" onClick={loadConfig} disabled={loading || saving}>
-          <RefreshCw size={14} className={loading ? "spinning" : ""} />
-          {zh ? "刷新" : "Refresh"}
-        </button>
+        <div className="my-drsai-config-header-actions">
+          <button type="button" data-testid="open-user-memory-manager" onClick={() => setView("memory")}>
+            <Brain size={14} />
+            {zh ? "管理记忆" : "Manage memory"}
+          </button>
+          <button type="button" onClick={loadConfig} disabled={loading || saving}>
+            <RefreshCw size={14} className={loading ? "spinning" : ""} />
+            {zh ? "刷新" : "Refresh"}
+          </button>
+        </div>
       </div>
 
       {message && <div className="my-drsai-config-message">{message}</div>}
@@ -445,6 +465,261 @@ function MyDrSaiConfigPanel({ zh }: { zh: boolean }): React.JSX.Element {
       </div>
     </section>
   );
+}
+
+function UserMemoryManager({
+  zh,
+  onBack,
+  userGroups,
+  workspacePath,
+}: {
+  zh: boolean;
+  onBack: () => void;
+  userGroups: string[];
+  workspacePath?: string;
+}): React.JSX.Element {
+  const [preferences, setPreferences] = useState<DesktopUserPreference[]>([]);
+  const [projectEntries, setProjectEntries] = useState<DesktopProjectMemoryEntry[]>([]);
+  const [teamEntries, setTeamEntries] = useState<DesktopTeamMemoryEntry[]>([]);
+  const [projectDraft, setProjectDraft] = useState("");
+  const [teamDraft, setTeamDraft] = useState("");
+  const [teamId, setTeamId] = useState(userGroups[0] ?? "");
+  const [loading, setLoading] = useState(true);
+  const [busyCategory, setBusyCategory] = useState<DesktopUserPreferenceCategory | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  async function refresh(): Promise<void> {
+    setLoading(true);
+    setMessage(null);
+    try {
+      const [nextPreferences, nextProjectEntries, nextTeamEntries] = await Promise.all([
+        desktopApi.listUserPreferences(),
+        workspacePath ? desktopApi.listProjectMemory({ workspacePath, limit: 100 }) : Promise.resolve([]),
+        desktopApi.listTeamMemory({ limit: 100 }),
+      ]);
+      setPreferences(nextPreferences);
+      setProjectEntries(nextProjectEntries);
+      setTeamEntries(nextTeamEntries);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function addProjectEntry(): Promise<void> {
+    if (!workspacePath || !projectDraft.trim()) return;
+    setLoading(true);
+    setMessage(null);
+    try {
+      await desktopApi.addProjectMemory({ workspacePath, content: projectDraft.trim(), source: "manual" });
+      setProjectDraft("");
+      await refresh();
+      setMessage(zh ? "当前项目记忆已保存。" : "Current-project memory saved.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+      setLoading(false);
+    }
+  }
+
+  async function removeProjectEntry(entryId: string): Promise<void> {
+    if (!workspacePath) return;
+    setLoading(true);
+    try {
+      await desktopApi.clearProjectMemory({ workspacePath, entryId });
+      await refresh();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+      setLoading(false);
+    }
+  }
+
+  async function addTeamEntry(): Promise<void> {
+    if (!teamId || !teamDraft.trim()) return;
+    setLoading(true);
+    setMessage(null);
+    try {
+      await desktopApi.addTeamMemory({ teamId, content: teamDraft.trim() });
+      setTeamDraft("");
+      await refresh();
+      setMessage(zh ? "团队记忆已保存，仅对该团队成员生效。" : "Team memory saved for authorized members only.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+      setLoading(false);
+    }
+  }
+
+  async function removeTeamEntry(entry: DesktopTeamMemoryEntry): Promise<void> {
+    setLoading(true);
+    try {
+      await desktopApi.deleteTeamMemory({ teamId: entry.teamId, entryId: entry.id });
+      await refresh();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+      setLoading(false);
+    }
+  }
+
+  async function updatePreference(category: DesktopUserPreferenceCategory, value: DesktopUserPreferenceValue): Promise<void> {
+    setBusyCategory(category);
+    setMessage(null);
+    try {
+      await desktopApi.upsertUserPreference({ category, value, source: "explicit_user_request" });
+      setPreferences(await desktopApi.listUserPreferences());
+      setMessage(zh ? "记忆已修改，将从下一项任务立即生效。" : "Memory updated. It will apply to the next task immediately.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusyCategory(null);
+    }
+  }
+
+  async function removePreference(category: DesktopUserPreferenceCategory): Promise<void> {
+    setBusyCategory(category);
+    setMessage(null);
+    try {
+      await desktopApi.deleteUserPreference({ category });
+      setPreferences(await desktopApi.listUserPreferences());
+      setMessage(zh ? "记忆已删除，不会再用于后续任务。" : "Memory deleted. It will no longer be used for future tasks.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusyCategory(null);
+    }
+  }
+
+  return (
+    <section className="my-drsai-config-panel user-memory-manager" data-testid="user-memory-manager" aria-label={zh ? "记忆管理" : "Memory manager"}>
+      <div className="my-drsai-config-header">
+        <div>
+          <strong>{zh ? "记忆管理" : "Memory manager"}</strong>
+          <span>{zh ? "只保存你明确要求记住的非敏感偏好" : "Only explicit, non-sensitive preferences are saved"}</span>
+        </div>
+        <div className="my-drsai-config-header-actions">
+          <button type="button" data-testid="memory-manager-back" onClick={onBack}>
+            <ArrowLeft size={14} />
+            {zh ? "返回配置" : "Back to config"}
+          </button>
+          <button type="button" onClick={refresh} disabled={loading || busyCategory !== null}>
+            <RefreshCw size={14} className={loading ? "spinning" : ""} />
+            {zh ? "刷新" : "Refresh"}
+          </button>
+        </div>
+      </div>
+
+      <p className="user-memory-explanation">
+        {zh
+          ? "修改会在下一任务立即生效；删除后，该偏好会从存储和新会话上下文中移除。API Key、令牌和临时路径不会出现在这里。"
+          : "Changes apply to the next task immediately. Deleted preferences are removed from storage and new-conversation context. API keys, tokens, and temporary paths never appear here."}
+      </p>
+      {message && <div className="my-drsai-config-message" role="status" data-testid="memory-manager-status">{message}</div>}
+      {loading ? (
+        <div className="user-memory-empty">{zh ? "正在读取记忆…" : "Loading memory…"}</div>
+      ) : preferences.length === 0 ? (
+        <div className="user-memory-empty" data-testid="memory-manager-empty">
+          <Brain size={18} />
+          <strong>{zh ? "目前没有已保存的偏好" : "No saved preferences"}</strong>
+          <span>{zh ? "你可以在聊天中说“以后默认用中文”等明确要求。" : "In chat, make an explicit request such as “Always use Chinese by default.”"}</span>
+        </div>
+      ) : (
+        <div className="user-memory-list">
+          {preferences.map((preference) => (
+            <article className="user-memory-row" data-testid={`memory-row-${preference.category}`} key={preference.category}>
+              <div>
+                <strong>{preferenceCategoryLabel(preference.category, zh)}</strong>
+                <span>{zh ? "由你的明确要求保存" : "Saved from your explicit request"}</span>
+              </div>
+              <select
+                data-testid={`memory-value-${preference.category}`}
+                aria-label={preferenceCategoryLabel(preference.category, zh)}
+                value={preference.value}
+                disabled={busyCategory !== null}
+                onChange={(event) => void updatePreference(preference.category, event.target.value as DesktopUserPreferenceValue)}
+              >
+                {preferenceOptions(preference.category).map((option) => (
+                  <option key={option.value} value={option.value}>{zh ? option.zh : option.en}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="user-memory-delete"
+                data-testid={`memory-delete-${preference.category}`}
+                aria-label={zh ? `删除${preferenceCategoryLabel(preference.category, true)}` : `Delete ${preferenceCategoryLabel(preference.category, false)}`}
+                disabled={busyCategory !== null}
+                onClick={() => void removePreference(preference.category)}
+              >
+                <Trash2 size={14} />
+                {zh ? "删除" : "Delete"}
+              </button>
+            </article>
+          ))}
+        </div>
+      )}
+      <section className="memory-scope-section" data-testid="project-memory-scope">
+        <div className="memory-scope-heading">
+          <span className="memory-scope-badge">{zh ? "当前项目" : "Current project"}</span>
+          <small>{zh ? "只在这个项目中生效" : "Applies only in this project"}</small>
+        </div>
+        {workspacePath ? (
+          <>
+            <div className="memory-scope-compose">
+              <input data-testid="project-memory-input" value={projectDraft} onChange={(event) => setProjectDraft(event.target.value)} placeholder={zh ? "例如：WLCG-CAPACITY 指第 42 页的容量模型" : "Example: WLCG-CAPACITY means the capacity model on page 42"} />
+              <button data-testid="project-memory-add" type="button" disabled={loading || !projectDraft.trim()} onClick={() => void addProjectEntry()}>{zh ? "保存" : "Save"}</button>
+            </div>
+            {projectEntries.map((entry) => (
+              <article className="memory-scope-row" data-testid="project-memory-row" key={entry.id}>
+                <span>{entry.content}</span>
+                <button type="button" aria-label={zh ? "删除项目记忆" : "Delete project memory"} onClick={() => void removeProjectEntry(entry.id)}><Trash2 size={14} /></button>
+              </article>
+            ))}
+          </>
+        ) : <div className="user-memory-empty">{zh ? "请先打开一个项目。" : "Open a project first."}</div>}
+      </section>
+
+      <section className="memory-scope-section" data-testid="team-memory-scope">
+        <div className="memory-scope-heading">
+          <span className="memory-scope-badge team">{zh ? "团队" : "Team"}</span>
+          <small>{zh ? "只对已授权团队成员生效" : "Applies only to authorized team members"}</small>
+        </div>
+        {userGroups.length ? (
+          <>
+            <div className="memory-scope-compose">
+              <select data-testid="team-memory-team" value={teamId} onChange={(event) => setTeamId(event.target.value)}>{userGroups.map((groupId) => <option key={groupId} value={groupId}>{groupId}</option>)}</select>
+              <input data-testid="team-memory-input" value={teamDraft} onChange={(event) => setTeamDraft(event.target.value)} placeholder={zh ? "输入团队共同规则" : "Enter a shared team rule"} />
+              <button data-testid="team-memory-add" type="button" disabled={loading || !teamDraft.trim()} onClick={() => void addTeamEntry()}>{zh ? "保存" : "Save"}</button>
+            </div>
+            {teamEntries.map((entry) => (
+              <article className="memory-scope-row" data-testid="team-memory-row" key={entry.id}>
+                <span><strong>{entry.teamId}</strong> · {entry.content}</span>
+                <button type="button" aria-label={zh ? "删除团队记忆" : "Delete team memory"} onClick={() => void removeTeamEntry(entry)}><Trash2 size={14} /></button>
+              </article>
+            ))}
+          </>
+        ) : <div className="user-memory-empty" data-testid="team-memory-no-membership">{zh ? "当前账号尚未加入任何团队。" : "This account has no team membership."}</div>}
+      </section>
+    </section>
+  );
+}
+
+function preferenceCategoryLabel(category: DesktopUserPreferenceCategory, zh: boolean): string {
+  const labels: Record<DesktopUserPreferenceCategory, { zh: string; en: string }> = {
+    output_language: { zh: "默认输出语言", en: "Default output language" },
+    chart_gridlines: { zh: "图表网格线", en: "Chart gridlines" },
+    report_format: { zh: "默认报告格式", en: "Default report format" },
+    audience: { zh: "默认受众", en: "Default audience" },
+  };
+  return labels[category][zh ? "zh" : "en"];
+}
+
+function preferenceOptions(category: DesktopUserPreferenceCategory): Array<{ value: DesktopUserPreferenceValue; zh: string; en: string }> {
+  if (category === "output_language") return [{ value: "zh", zh: "中文", en: "Chinese" }, { value: "en", zh: "英文", en: "English" }];
+  if (category === "chart_gridlines") return [{ value: "hidden", zh: "不显示", en: "Hidden" }, { value: "visible", zh: "显示", en: "Visible" }];
+  if (category === "report_format") return [{ value: "presentation", zh: "演示文稿", en: "Presentation" }, { value: "report", zh: "完整报告", en: "Full report" }, { value: "summary", zh: "摘要", en: "Summary" }];
+  return [{ value: "manager", zh: "管理者", en: "Managers" }, { value: "expert", zh: "技术专家", en: "Technical experts" }, { value: "general", zh: "普通读者", en: "General readers" }];
 }
 
 function ConfigToggle({

@@ -34,6 +34,7 @@ import {
   Terminal,
   X,
 } from "lucide-react";
+import { canHandleMemoryRequestLocally } from "../userPreferenceIntent";
 import type {
   ChatMessage,
   DesktopAgent,
@@ -254,6 +255,10 @@ export function ChatWorkspace({
   const hasStreamingMessage = messages.some((message) => message.streaming);
   const showStop = Boolean(activeRequestId || hasStreamingMessage);
   const emptyChat = messages.every((message) => message.id === "welcome");
+  const canSaveLocalPreference = canHandleMemoryRequestLocally(input);
+  const emptyChatPreferenceNotice = emptyChat
+    ? messages.find((message) => message.id === "welcome")?.content.split("\n\n").slice(1).join("\n\n").trim() || ""
+    : "";
   const activeAgentName = selectedAgentName?.trim() || "OpenDrSai";
   const workspaceLocationLabel =
     workspaceType === "remote-ssh"
@@ -1182,6 +1187,11 @@ export function ChatWorkspace({
         <div className="empty-chat-agent-title" aria-label={zh ? "当前智能体" : "Current Agent"}>
           <strong>{activeAgentName}</strong>
           <span>{workspaceLocationLabel}</span>
+          {emptyChatPreferenceNotice ? (
+            <div className="remembered-preferences-notice" data-testid="remembered-preferences-notice" role="status">
+              {emptyChatPreferenceNotice}
+            </div>
+          ) : null}
         </div>
       )}
       <form className="composer" onSubmit={handleSubmit}>
@@ -1642,7 +1652,7 @@ export function ChatWorkspace({
                     {zh ? "停止" : "Stop"}
                   </button>
                 ) : (
-                  <button className="composer-submit" type="submit" disabled={!input.trim() || !canChat}>
+                  <button className="composer-submit" type="submit" disabled={!input.trim() || (!canChat && !canSaveLocalPreference)}>
                     <Send size={16} />
                     {zh ? "发送" : "Send"}
                   </button>

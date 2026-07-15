@@ -34,6 +34,8 @@ export interface ChatSsePayload {
   choices?: ChatSseChoice[];
   file_event?: unknown;
   file_events?: unknown;
+  plan_adjustment?: unknown;
+  plan_adjustments?: unknown;
   tool_call?: unknown;
   tool_calls?: unknown;
   tool_event?: unknown;
@@ -41,6 +43,8 @@ export interface ChatSsePayload {
   metadata?: {
     file_event?: unknown;
     file_events?: unknown;
+    plan_adjustment?: unknown;
+    plan_adjustments?: unknown;
     tool_call?: unknown;
     tool_calls?: unknown;
     tool_event?: unknown;
@@ -388,6 +392,70 @@ export interface AgentRunSseFileEvent {
   source?: string;
   targetPath?: string;
   timestamp?: string;
+}
+
+export interface AgentRunSsePlanAdjustment {
+  id: string;
+  failedStepId?: string;
+  failedStepTitle: string;
+  reason: string;
+  replacementStepTitle: string;
+  impact: string;
+  completeness: "partial" | "blocked";
+  timestamp?: string;
+}
+
+export function parseAgentRunSsePlanAdjustments(frame: string): AgentRunSsePlanAdjustment[] {
+  const payload = frame
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trimStart())
+    .join("\n")
+    .trim();
+  if (!payload || payload === "[DONE]") return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(payload);
+  } catch {
+    return [];
+  }
+  const value = parsed as ChatSsePayload;
+  return normalizePlanAdjustments([
+    ...normalizeUnknownItems(value.plan_adjustment),
+    ...normalizeUnknownItems(value.plan_adjustments),
+    ...normalizeUnknownItems(value.metadata?.plan_adjustment),
+    ...normalizeUnknownItems(value.metadata?.plan_adjustments),
+  ]);
+}
+
+function normalizePlanAdjustments(items: unknown[]): AgentRunSsePlanAdjustment[] {
+  const safeText = (value: unknown, max: number): string =>
+    typeof value === "string" && value.trim() && value.trim().length <= max && !/[\r\n]/.test(value)
+      ? value.trim()
+      : "";
+  return items.flatMap((item, index) => {
+    if (!item || typeof item !== "object") return [];
+    const record = item as Record<string, unknown>;
+    const failedStepTitle = safeText(record.failedStepTitle ?? record.failed_step_title, 240);
+    const reason = safeText(record.reason, 500);
+    const replacementStepTitle = safeText(record.replacementStepTitle ?? record.replacement_step_title, 240);
+    const impact = safeText(record.impact, 500);
+    const completeness = record.completeness === "blocked" ? "blocked" : record.completeness === "partial" ? "partial" : null;
+    if (!failedStepTitle || !reason || !replacementStepTitle || !impact || !completeness) return [];
+    const id = safeText(record.id, 80) || `plan-adjustment-${index + 1}`;
+    const failedStepId = safeText(record.failedStepId ?? record.failed_step_id, 80);
+    const timestamp = safeText(record.timestamp, 80);
+    return [{
+      id,
+      ...(failedStepId ? { failedStepId } : {}),
+      failedStepTitle,
+      reason,
+      replacementStepTitle,
+      impact,
+      completeness,
+      ...(timestamp ? { timestamp } : {}),
+    }];
+  });
 }
 
 export function parseAgentRunSseFileEvents(frame: string): AgentRunSseFileEvent[] {

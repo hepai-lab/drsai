@@ -1,11 +1,14 @@
 import { execFile } from "child_process";
 import {
+  createReadStream,
   existsSync,
   mkdirSync,
   readFileSync,
   realpathSync,
   writeFileSync,
 } from "fs";
+import { copyFile, mkdir, stat as statFile, writeFile } from "fs/promises";
+import { createHash } from "crypto";
 import {
   app,
   BrowserWindow,
@@ -18,7 +21,7 @@ import {
   type Session,
   type WebContents,
 } from "electron";
-import { dirname, extname, isAbsolute, join, relative, resolve } from "path";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "path";
 import { pathToFileURL } from "url";
 import { is } from "@electron-toolkit/utils";
 import { cancelInstall, startInstall } from "./install";
@@ -45,7 +48,12 @@ import {
 import { abortChat, hasActiveChats, respondChatInput, startChat } from "./chat";
 import { listProviderErrorAnalytics } from "./providerErrorAnalytics";
 import { listProviderUsageAnalytics } from "./providerUsageAnalytics";
-import { abortAgentRun, hasActiveAgentRuns, startAgentRun } from "./agentRuns";
+import {
+  abortAgentRun,
+  hasActiveAgentRuns,
+  startAgentRun,
+  subscribeAgentRunLifecycle,
+} from "./agentRuns";
 import {
   getPlatformAgentStatus,
   listAgents,
@@ -75,6 +83,9 @@ import {
   listProjectMemory,
   updateProjectMemory,
 } from "./projectMemory";
+import { deleteUserPreference, listUserPreferences, upsertUserPreference } from "./userPreferences";
+import { addTeamMemory, deleteTeamMemory, listTeamMemory } from "./teamMemory";
+import { listReusableTasks, prepareReusableTaskRun, saveReusableTask } from "./reusableTasks";
 import {
   deleteCustomCommand,
   listCustomCommands,
@@ -102,18 +113,22 @@ import {
 } from "./workflowRuns";
 import {
   enqueueBackgroundTask,
-  listBackgroundTasks,
+  listOwnedBackgroundTasks,
   updateBackgroundTask,
+  upsertBackgroundTaskForAgentRun,
+  upsertBackgroundTaskForManagerPresentation,
   upsertBackgroundTaskForWorkflowRun,
 } from "./backgroundTasks";
 import {
   createScheduledTask,
+  deleteScheduledTask,
   listScheduledTasks,
   runDueScheduledTasks,
   startScheduledTaskWorker,
   type ScheduledTaskWorkerHandle,
   updateScheduledTask,
 } from "./scheduledTasks";
+import { addShareComment, continueSharedTask, createShare, downloadSharedArtifact, inspectShare, listIncomingShares, listOutgoingShares, listShareAudit, listShareComments, openSharedObject, updateSharePermission } from "./shares";
 import {
   configureChannelAdapter,
   createChannelOutboundDraftApproval,
@@ -259,6 +274,7 @@ import type {
   BrowserTaskStartRequest,
 } from "../shared/browser/types";
 import type {
+  CompletionNotificationPreference,
   DesktopApprovalProposalRequest,
   DesktopApprovalProposalResult,
   DesktopA5ServiceGuidanceScenario,
@@ -285,7 +301,11 @@ import type {
   ManagerPresentationCancelRequest,
   ManagerPresentationPauseRequest,
   ManagerPresentationProgressEvent,
+  ManagerPresentationRecoveryRequest,
+  ManagerPresentationRecoveryDecisionRequest,
   ManagerPresentationGenerateRequest,
+  ManagerPresentationRequirementUpdateRequest,
+  ManagerPresentationRequirementUpdateResult,
   PdfPageOpenRequest,
   PdfPageOpenResult,
   RemoteGatewayInstallRequest,
@@ -313,6 +333,10 @@ import type {
   WorkspaceCheckpointAcceptRequest,
   WorkspaceCheckpointPreviewRequest,
   WorkspaceFilePreviewRequest,
+  WorkspaceFileSaveAsRequest,
+  WorkspaceFileSaveAsResult,
+  WorkspaceFileWriteRequest,
+  WorkspaceFileWriteResult,
   WorkspaceFileTreeRequest,
   WorkspaceGitDiffRequest,
   WorkspaceFolderSummaryRequest,
@@ -328,6 +352,19 @@ import {
   generateManagerPresentation,
   ManagerPresentationCancelledError,
 } from "./managerPresentation";
+import { buildFailureRecovery } from "./failureRecovery";
+import {
+  configureCompletionNotifications,
+  notifyBackgroundTaskCompleted,
+  restoreCompletionNotificationPreference,
+  setCompletionNotificationPreference,
+} from "./completionNotifications";
+import {
+  getManagerPresentationRecovery,
+  resolveManagerPresentationRecovery,
+  recordManagerPresentationProgress,
+  recordManagerPresentationStart,
+} from "./managerPresentationTasks";
 
 let mainWindow: BrowserWindow | null = null;
 let scheduledTaskWorker: ScheduledTaskWorkerHandle | null = null;
@@ -337,14 +374,43 @@ const browserTaskSubscribers = new Set<WebContents>();
 interface ManagerPresentationRun {
   controller: AbortController;
   webContentsId: number;
+  request: ManagerPresentationGenerateRequest;
   paused: boolean;
   activeOperationController: AbortController | null;
   resumeWaiters: Set<() => void>;
   lastProgress: ManagerPresentationProgressEvent | null;
+  backgroundSync: Promise<unknown>;
+  requirements: string[];
 }
 
 const managerPresentationRuns = new Map<string, ManagerPresentationRun>();
 let managerPresentationAttempt = 0;
+let appQuitRequested = false;
+
+function sanitizeManagerPresentationRequirements(values: string[] | undefined): string[] {
+  if (!Array.isArray(values)) return [];
+  return values
+    .map((value) => typeof value === "string" ? value.trim().replace(/\s+/g, " ").slice(0, 240) : "")
+    .filter((value, index, all) => Boolean(value) && all.indexOf(value) === index)
+    .slice(0, 5);
+}
+
+function hasActiveForegroundIndependentWork(): boolean {
+  return managerPresentationRuns.size > 0 || hasActiveChats() || hasActiveAgentRuns();
+}
+
+function sendManagerPresentationProgress(progress: ManagerPresentationProgressEvent): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+      window.webContents.send("desktop:manager-presentation-progress", progress);
+    }
+  }
+}
+
+function canControlManagerPresentation(event: IpcMainInvokeEvent, run: ManagerPresentationRun): boolean {
+  return event.sender.id === run.webContentsId
+    || Boolean(mainWindow && !mainWindow.isDestroyed() && event.sender.id === mainWindow.webContents.id);
+}
 
 function waitUntilManagerPresentationResumed(run: ManagerPresentationRun): Promise<void> {
   if (!run.paused) return Promise.resolve();
@@ -420,8 +486,33 @@ if (isE2eSmokeProcess) {
   app.commandLine.appendSwitch("disable-gpu-compositing");
   app.commandLine.appendSwitch("disable-gpu-sandbox");
 }
-const singleInstanceLock = isE2eSmokeProcess || app.requestSingleInstanceLock();
+const shouldExerciseSingleInstanceLifecycle =
+  process.env.OPENDRSAI_E2E_PRESENTATION_SCENARIO === "background-close" ||
+  process.env.OPENDRSAI_E2E_AGENT_RUN_SCENARIO === "background-close";
+const singleInstanceLock = isE2eSmokeProcess && !shouldExerciseSingleInstanceLifecycle
+  ? true
+  : app.requestSingleInstanceLock();
 const desktopProcessStartedAt = Date.now();
+let agentBackgroundTaskSync = Promise.resolve();
+subscribeAgentRunLifecycle((event, request) => {
+  agentBackgroundTaskSync = agentBackgroundTaskSync
+    .then(() => upsertBackgroundTaskForAgentRun(request, event))
+    .then((task) => {
+      if (event.type === "done") {
+        notifyBackgroundTaskCompleted(task, {
+          kind: "agent_run",
+          targetId: event.requestId,
+          ...(request.workspacePath ? { workspacePath: request.workspacePath } : {}),
+          ...(request.threadId ? { threadId: request.threadId } : {}),
+        });
+      }
+    })
+    .then(() => undefined)
+    .catch((error) => console.warn(
+      "[desktop] Agent background task sync failed:",
+      error instanceof Error ? error.message : String(error),
+    ));
+});
 function recordStartupMilestone(event: string): void {
   const launcherStartedAt = Number(process.env.OPENDRSAI_DEV_START_EPOCH_MS);
   const launcherElapsed = Number.isFinite(launcherStartedAt) ? Date.now() - launcherStartedAt : null;
@@ -805,7 +896,9 @@ async function runDueScheduledTasksAndMirror(
     startWorkflowRun,
     listWorkflowRuns,
   });
-  await Promise.all(result.runs.map((run) => upsertBackgroundTaskForWorkflowRun(run)));
+  for (const run of result.runs) {
+    await upsertBackgroundTaskForWorkflowRun(run);
+  }
   return result;
 }
 
@@ -1721,6 +1814,8 @@ async function requestWorkspaceCheckpointRestore(
 ): Promise<WorkspaceCheckpointRestoreResult> {
   const workspacePath = getStringProperty(request, "workspacePath");
   const checkpointId = getStringProperty(request, "checkpointId");
+  const operationId = getStringProperty(request, "operationId") || `restore-${Date.now().toString(36)}`;
+  const includePaths = getStringArrayProperty(request, "includePaths");
   if (!workspacePath || !checkpointId) {
     throw new Error("Workspace checkpoint restore request is incomplete.");
   }
@@ -1732,10 +1827,12 @@ async function requestWorkspaceCheckpointRestore(
     source: "workspace",
     actionKind: "workspace.revert",
     title: "Restore workspace checkpoint",
-    detail: `Restore checkpoint ${checkpointId} in ${workspacePath}. This may overwrite or remove workspace files captured by the checkpoint manifest.`,
-    target: workspacePath,
+    detail: includePaths
+      ? `Restore only ${includePaths.join(", ")} from checkpoint ${checkpointId}. Other version items will stay unchanged.`
+      : `Restore checkpoint ${checkpointId} in ${workspacePath}. This may overwrite or remove workspace files captured by the checkpoint manifest.`,
+    target: includePaths?.join(", ") || workspacePath,
     risk: "medium",
-    idempotencyKey: `workspace:checkpoint-restore:${stableApprovalHash(workspacePath)}:${checkpointId}`,
+    idempotencyKey: `workspace:checkpoint-restore:${stableApprovalHash(workspacePath)}:${checkpointId}:${stableApprovalHash(operationId)}:${stableApprovalHash((includePaths || []).join("\n"))}`,
   });
 
   if (proposal.blocked || !proposal.allowed) {
@@ -1745,6 +1842,8 @@ async function requestWorkspaceCheckpointRestore(
     pendingWorkspaceCheckpointRestores.set(proposal.approval.id, {
       workspacePath,
       checkpointId,
+      operationId,
+      ...(includePaths ? { includePaths } : {}),
     });
     return {
       workspacePath,
@@ -1761,8 +1860,8 @@ async function requestWorkspaceCheckpointRestore(
 
   await assertExecutionAllowed("workspace.revert", { approved: true });
   return getRemoteGatewayAccess(workspacePath)
-    ? restoreRemoteWorkspaceCheckpoint({ workspacePath, checkpointId })
-    : restoreWorkspaceCheckpoint({ workspacePath, checkpointId });
+    ? restoreRemoteWorkspaceCheckpoint({ workspacePath, checkpointId, operationId, ...(includePaths ? { includePaths } : {}) })
+    : restoreWorkspaceCheckpoint({ workspacePath, checkpointId, operationId, ...(includePaths ? { includePaths } : {}) });
 }
 
 async function requestForkConflictDraftWrite(
@@ -2114,6 +2213,16 @@ function createWindow(): void {
     },
   });
 
+  mainWindow.on("close", (event) => {
+    console.info(
+      `[desktop] Window close requested (quit=${appQuitRequested}, presentations=${managerPresentationRuns.size}, chats=${hasActiveChats()}, agents=${hasActiveAgentRuns()}).`,
+    );
+    if (appQuitRequested || !hasActiveForegroundIndependentWork()) return;
+    event.preventDefault();
+    mainWindow?.hide();
+    console.info("[desktop] Window hidden while active work continues in the background.");
+  });
+
   mainWindow.once("ready-to-show", () => {
     mainWindow?.show();
   });
@@ -2445,12 +2554,26 @@ function isAllowedRendererNavigationUrl(rawUrl: string): boolean {
 }
 
 function isTrustedSender(event: IpcMainInvokeEvent): boolean {
-  if (!mainWindow || event.sender !== mainWindow.webContents) return false;
-  const frameUrl = event.senderFrame?.url;
-  if (!frameUrl) return false;
-  if (frameUrl === mainWindow.webContents.getURL()) return true;
-  if (is.dev) return isAllowedDevRendererUrl(frameUrl);
-  return false;
+  try {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return false;
+    const frameUrl = event.senderFrame?.url;
+    if (!frameUrl) return false;
+    if (frameUrl === mainWindow.webContents.getURL()) return true;
+    if (is.dev) return isAllowedDevRendererUrl(frameUrl);
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function getStringArrayProperty(request: unknown, key: string): string[] | undefined {
+  if (!request || typeof request !== "object") return undefined;
+  const value = (request as Record<string, unknown>)[key];
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length === 0 || value.some((item) => typeof item !== "string" || !item.trim())) {
+    throw new Error(`${key} must be a non-empty list of paths.`);
+  }
+  return [...new Set(value.map((item) => (item as string).trim()))];
 }
 
 function assertTrustedSender(event: IpcMainInvokeEvent): void {
@@ -2597,6 +2720,173 @@ async function openPdfSourcePage(request: PdfPageOpenRequest): Promise<PdfPageOp
   };
 }
 
+async function hashSavedFile(path: string): Promise<string> {
+  return new Promise((resolveHash, rejectHash) => {
+    const hash = createHash("sha256");
+    const stream = createReadStream(path);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("error", rejectHash);
+    stream.on("end", () => resolveHash(`sha256:${hash.digest("hex")}`));
+  });
+}
+
+let e2eArtifactSaveCount = 0;
+
+function ensureOriginalExtension(path: string, sourceExtension: string): string {
+  if (!sourceExtension) return path;
+  const currentExtension = extname(path);
+  if (currentExtension.toLowerCase() === sourceExtension.toLowerCase()) return path;
+  return currentExtension
+    ? `${path.slice(0, -currentExtension.length)}${sourceExtension}`
+    : `${path}${sourceExtension}`;
+}
+
+async function saveWorkspaceFileAs(request: WorkspaceFileSaveAsRequest): Promise<WorkspaceFileSaveAsResult> {
+  if (!request || typeof request !== "object") throw new Error("A save request is required.");
+  if (typeof request.workspacePath !== "string" || !request.workspacePath.trim()) throw new Error("A workspace is required.");
+  if (typeof request.path !== "string" || !request.path.trim()) throw new Error("A source file is required.");
+  const preview = await previewWorkspaceFile({ workspacePath: request.workspacePath, path: request.path, maxBytes: 8_000 });
+  const sourceExtension = extname(preview.name).toLowerCase();
+  const requestedName = typeof request.suggestedName === "string" && request.suggestedName.trim()
+    ? basename(request.suggestedName.trim())
+    : preview.name;
+  const suggestedName = ensureOriginalExtension(requestedName, sourceExtension);
+  let destinationPath: string | undefined;
+
+  const automatedSaveDirectory = isE2eSmokeProcess && process.env.OPENDRSAI_E2E_AGENT_RUN_SCENARIO === "g4-preview-download"
+    ? process.env.OPENDRSAI_E2E_G4_SAVE_DIR
+    : undefined;
+  if (automatedSaveDirectory) {
+    e2eArtifactSaveCount += 1;
+    destinationPath = join(resolve(automatedSaveDirectory), `${String(e2eArtifactSaveCount).padStart(2, "0")}-${suggestedName}`);
+    await mkdir(dirname(destinationPath), { recursive: true });
+  } else if (request.destinationPath !== undefined) {
+    if (!isE2eSmokeProcess) throw new Error("A direct save destination is only available to packaged acceptance tests.");
+    if (typeof request.destinationPath !== "string" || !isAbsolute(request.destinationPath)) {
+      throw new Error("The acceptance-test save destination must be an absolute path.");
+    }
+    destinationPath = ensureOriginalExtension(resolve(request.destinationPath), sourceExtension);
+    await mkdir(dirname(destinationPath), { recursive: true });
+  } else {
+    const options = {
+      title: "Save result as",
+      defaultPath: join(app.getPath("downloads"), suggestedName),
+      buttonLabel: "Save",
+      ...(sourceExtension ? { filters: [{ name: `${sourceExtension.slice(1).toUpperCase()} file`, extensions: [sourceExtension.slice(1)] }] } : {}),
+    };
+    const selected = mainWindow
+      ? await dialog.showSaveDialog(mainWindow, options)
+      : await dialog.showSaveDialog(options);
+    if (selected.canceled || !selected.filePath) {
+      return {
+        canceled: true,
+        sourcePath: preview.path,
+        name: suggestedName,
+        extension: sourceExtension,
+        size: preview.size,
+        sourceHash: preview.fileHash || await hashSavedFile(preview.path),
+        integrityVerified: false,
+        message: "Save canceled; the source result was not changed.",
+      };
+    }
+    destinationPath = ensureOriginalExtension(resolve(selected.filePath), sourceExtension);
+  }
+
+  await copyFile(preview.path, destinationPath);
+  const [savedStat, sourceHash, destinationHash] = await Promise.all([
+    statFile(destinationPath),
+    preview.fileHash ? Promise.resolve(preview.fileHash) : hashSavedFile(preview.path),
+    hashSavedFile(destinationPath),
+  ]);
+  const integrityVerified = savedStat.isFile() && savedStat.size === preview.size && destinationHash === sourceHash;
+  if (!integrityVerified) throw new Error("The saved copy failed the automatic size or SHA-256 integrity check.");
+  return {
+    canceled: false,
+    sourcePath: preview.path,
+    destinationPath,
+    name: basename(destinationPath),
+    extension: extname(destinationPath).toLowerCase(),
+    size: savedStat.size,
+    sourceHash,
+    destinationHash,
+    integrityVerified: true,
+    message: "Saved copy verified by file size and SHA-256.",
+  };
+}
+
+async function writeWorkspaceFile(request: WorkspaceFileWriteRequest): Promise<WorkspaceFileWriteResult> {
+  if (!request || typeof request !== "object") throw new Error("A protected write request is required.");
+  if (typeof request.workspacePath !== "string" || !request.workspacePath.trim()) throw new Error("A workspace is required.");
+  if (typeof request.path !== "string" || !request.path.trim()) throw new Error("A target file is required.");
+  if (typeof request.content !== "string" || Buffer.byteLength(request.content, "utf8") > 1_000_000) throw new Error("Protected text writes are limited to 1 MB.");
+  if (typeof request.expectedHash !== "string" || !/^sha256:[a-f0-9]{64}$/i.test(request.expectedHash)) throw new Error("The hash from the last read is required.");
+  if (!(await isAllowedOpenPath(request.workspacePath))) throw new Error("The workspace is not registered or allowed.");
+  const preview = await previewWorkspaceFile({ workspacePath: request.workspacePath, path: request.path, maxBytes: 8_000 });
+  const currentHash = preview.fileHash || await hashSavedFile(preview.path);
+  const mode = request.mode === "save_as" || request.mode === "overwrite" ? request.mode : "save";
+
+  if (mode !== "save_as" && currentHash !== request.expectedHash) {
+    return {
+      status: "conflict",
+      path: preview.path,
+      expectedHash: request.expectedHash,
+      currentHash,
+      savedAs: false,
+      overwroteExternal: false,
+      externalModifiedAt: preview.modifiedAt,
+      externalSize: preview.size,
+      message: "The file changed after it was read. Nothing was overwritten.",
+    };
+  }
+
+  let destinationPath = preview.path;
+  if (mode === "save_as") {
+    const sourceExtension = extname(preview.name).toLowerCase();
+    const requestedName = typeof request.suggestedName === "string" && request.suggestedName.trim()
+      ? basename(request.suggestedName.trim())
+      : `${basename(preview.name, sourceExtension)}-my-version${sourceExtension}`;
+    const suggestedName = ensureOriginalExtension(requestedName, sourceExtension);
+    const automatedSaveDirectory = isE2eSmokeProcess && process.env.OPENDRSAI_E2E_AGENT_RUN_SCENARIO === "i6-external-conflict"
+      ? process.env.OPENDRSAI_E2E_I6_SAVE_DIR
+      : undefined;
+    if (automatedSaveDirectory) {
+      destinationPath = join(resolve(automatedSaveDirectory), suggestedName);
+      await mkdir(dirname(destinationPath), { recursive: true });
+    } else if (request.destinationPath !== undefined) {
+      if (!isE2eSmokeProcess || typeof request.destinationPath !== "string" || !isAbsolute(request.destinationPath)) throw new Error("A direct destination is only available to packaged acceptance tests.");
+      destinationPath = ensureOriginalExtension(resolve(request.destinationPath), sourceExtension);
+      await mkdir(dirname(destinationPath), { recursive: true });
+    } else {
+      const selected = mainWindow
+        ? await dialog.showSaveDialog(mainWindow, { title: "Save my version as", defaultPath: join(app.getPath("downloads"), suggestedName), buttonLabel: "Save my version" })
+        : await dialog.showSaveDialog({ title: "Save my version as", defaultPath: join(app.getPath("downloads"), suggestedName), buttonLabel: "Save my version" });
+      if (selected.canceled || !selected.filePath) {
+        return { status: "canceled", path: preview.path, expectedHash: request.expectedHash, currentHash, savedAs: false, overwroteExternal: false, message: "Save as canceled; the external file was not changed." };
+      }
+      destinationPath = ensureOriginalExtension(resolve(selected.filePath), sourceExtension);
+    }
+    if (resolve(destinationPath).toLowerCase() === resolve(preview.path).toLowerCase()) throw new Error("Save as must use a different path so the external version remains intact.");
+  }
+
+  await writeFile(destinationPath, request.content, "utf8");
+  const savedHash = await hashSavedFile(destinationPath);
+  return {
+    status: "saved",
+    path: preview.path,
+    expectedHash: request.expectedHash,
+    currentHash,
+    savedHash,
+    destinationPath,
+    savedAs: mode === "save_as",
+    overwroteExternal: mode === "overwrite",
+    message: mode === "save_as"
+      ? "Saved the draft to a new file; the external version remains unchanged."
+      : mode === "overwrite"
+        ? "Explicit choice applied; the external version was overwritten after a fresh hash check."
+        : "Saved after confirming the file still matched the last read.",
+  };
+}
+
 function registerIpc(): void {
   registerBrowserController(new ElectronWebviewController());
   registerBrowserController(new BrowserUseController(browserUseWorkerClient));
@@ -2670,6 +2960,7 @@ function registerIpc(): void {
     if (!(await isAllowedOpenPath(rawPath))) {
       return "Path is not registered as a DrSai or workspace path.";
     }
+    if (process.env.OPENDRSAI_E2E_SUPPRESS_EXTERNAL_OPEN === "1") return "";
     return shell.openPath(rawPath);
   });
   secureHandle("desktop:open-pdf-page", (_event, request: PdfPageOpenRequest) =>
@@ -2793,6 +3084,12 @@ function registerIpc(): void {
   secureHandle("desktop:workspace-file-preview", (_event, request: WorkspaceFilePreviewRequest) =>
     getRemoteGatewayAccess(request?.workspacePath) ? previewRemoteWorkspaceFile(request) : previewWorkspaceFile(request),
   );
+  secureHandle("desktop:workspace-file-save-as", (_event, request: WorkspaceFileSaveAsRequest) =>
+    saveWorkspaceFileAs(request),
+  );
+  secureHandle("desktop:workspace-file-write", (_event, request: WorkspaceFileWriteRequest) =>
+    writeWorkspaceFile(request),
+  );
   secureHandle("desktop:manager-presentation-generate", async (event, request: ManagerPresentationGenerateRequest) => {
     if (!(await isAllowedOpenPath(request?.workspacePath))) {
       throw new Error("Presentation workspace is not registered or allowed.");
@@ -2804,14 +3101,35 @@ function registerIpc(): void {
     if (!requestId || requestId.length > 128) throw new Error("A valid presentation request id is required.");
     if (managerPresentationRuns.has(requestId)) throw new Error("This presentation task is already running.");
     const controller = new AbortController();
+    request.requirements = sanitizeManagerPresentationRequirements(request.requirements);
     const run: ManagerPresentationRun = {
       controller,
       webContentsId: event.sender.id,
+      request,
       paused: false,
       activeOperationController: null,
       resumeWaiters: new Set(),
       lastProgress: null,
+      backgroundSync: Promise.resolve(),
+      requirements: [...request.requirements],
     };
+    const previousRecovery = getManagerPresentationRecovery({
+      workspacePath: request.workspacePath,
+      sourcePath: request.sourcePath,
+    });
+    const initialStageArtifacts = previousRecovery?.requestId === requestId
+      ? previousRecovery.stageArtifacts ?? []
+      : [];
+    recordManagerPresentationStart(request);
+    const startedProgress: ManagerPresentationProgressEvent = {
+      requestId,
+      phase: "analyzing",
+      activeStage: "analyzing",
+      progress: 1,
+      message: "正在启动管理者版 PPT 生成任务。",
+    };
+    run.lastProgress = startedProgress;
+    run.backgroundSync = upsertBackgroundTaskForManagerPresentation(request, startedProgress);
     managerPresentationRuns.set(requestId, run);
     const attempt = ++managerPresentationAttempt;
     const phaseDelayMs = isE2eSmokeProcess
@@ -2821,38 +3139,130 @@ function registerIpc(): void {
       && attempt === Number(process.env.OPENDRSAI_E2E_PRESENTATION_FAIL_ATTEMPT || 0)
       ? process.env.OPENDRSAI_E2E_PRESENTATION_FAIL_PHASE as "analyzing" | "planning" | "generating" | "validating"
       : undefined;
+    const fileWriteRetryLimit = Math.max(1, Number(process.env.OPENDRSAI_PRESENTATION_FILE_WRITE_RETRY_LIMIT || 3));
+    const simulateFileBusyAttempts = isE2eSmokeProcess
+      && attempt === Number(process.env.OPENDRSAI_E2E_PRESENTATION_FILE_BUSY_ATTEMPT || 0)
+      ? Math.max(0, Number(process.env.OPENDRSAI_E2E_PRESENTATION_FILE_BUSY_ATTEMPTS || 0))
+      : 0;
+    const simulatedElapsedMs = isE2eSmokeProcess
+      ? Math.max(0, Number(process.env.OPENDRSAI_E2E_PRESENTATION_ELAPSED_MS || 0))
+      : 0;
+    const stageArtifactThresholdMs = Math.max(0, Number(
+      process.env.OPENDRSAI_PRESENTATION_STAGE_ARTIFACT_THRESHOLD_MS || 10 * 60 * 1000,
+    ));
     try {
-      return await generateManagerPresentation(request, (progress) => {
+      const versionGroupId = `presentation-${requestId}`;
+      const changeReason = request.audience === "technical_experts"
+        ? "根据演示型 PDF 生成技术专家版 PPT"
+        : "根据演示型 PDF 生成管理者版 PPT";
+      const presentationResult = await generateManagerPresentation(request, (progress) => {
         run.lastProgress = progress;
-        event.sender.send("desktop:manager-presentation-progress", progress);
+        recordManagerPresentationProgress(request, progress);
+        run.backgroundSync = run.backgroundSync
+          .then(() => upsertBackgroundTaskForManagerPresentation(request, progress))
+          .then((task) => {
+            if (progress.phase === "completed") {
+              notifyBackgroundTaskCompleted(task, {
+                kind: "presentation_generation",
+                targetId: request.requestId,
+                workspacePath: request.workspacePath,
+              });
+            }
+          })
+          .catch((error) => console.warn(
+            "[desktop] Presentation background task sync failed:",
+            error instanceof Error ? error.message : String(error),
+          ));
+        sendManagerPresentationProgress(progress);
       }, {
         signal: controller.signal,
         phaseDelayMs,
         failAtPhase,
+        fileWriteRetryLimit,
+        simulateFileBusyAttempts,
+        stageArtifactThresholdMs,
+        startedAtMs: Date.now() - simulatedElapsedMs,
+        initialStageArtifacts,
         isPaused: () => run.paused,
         waitUntilResumed: () => waitUntilManagerPresentationResumed(run),
         setActiveOperationController: (operationController) => {
           run.activeOperationController = operationController;
         },
+        getRequirements: () => [...run.requirements],
+        onOutputPlanned: async (outputPath, manifestPath) => {
+          await createWorkspaceCheckpoint({
+            workspacePath: request.workspacePath,
+            label: `生成前 · ${basename(outputPath)}`,
+            kind: "artifact_version",
+            runId: requestId,
+            automatic: true,
+            versionGroupId,
+            versionPhase: "before",
+            versionNumber: 1,
+            versionScope: "explicit_paths",
+            changeReason,
+            objectLabel: basename(outputPath),
+            includePaths: [
+              relative(request.workspacePath, outputPath),
+              relative(request.workspacePath, manifestPath),
+            ],
+            maxFiles: 20,
+            maxBytesPerFile: 2_000_000,
+          });
+        },
       });
+      await createWorkspaceCheckpoint({
+        workspacePath: request.workspacePath,
+        label: `生成后 · ${basename(presentationResult.outputPath)}`,
+        kind: "artifact_version",
+        runId: requestId,
+        automatic: true,
+        versionGroupId,
+        versionPhase: "after",
+        versionNumber: 2,
+        versionScope: "explicit_paths",
+        changeReason,
+        objectLabel: basename(presentationResult.outputPath),
+        includePaths: [
+          relative(request.workspacePath, presentationResult.outputPath),
+          relative(request.workspacePath, presentationResult.manifestPath),
+        ],
+        maxFiles: 20,
+        maxBytesPerFile: 2_000_000,
+      });
+      return presentationResult;
     } catch (error) {
       if (!(error instanceof ManagerPresentationCancelledError)) {
-        event.sender.send("desktop:manager-presentation-progress", {
+        const failureAttempts = error && typeof error === "object" && "attempts" in error
+          ? Math.max(1, Number(error.attempts) || 1)
+          : 1;
+        const failureRecovery = buildFailureRecovery(error, failureAttempts, fileWriteRetryLimit);
+        const failedProgress: ManagerPresentationProgressEvent = {
           requestId,
           phase: "failed",
+          activeStage: run.lastProgress?.activeStage,
           progress: 100,
-          message: error instanceof Error ? error.message : String(error),
-        });
+          message: failureRecovery.message,
+          failureRecovery,
+        };
+        recordManagerPresentationProgress(request, failedProgress);
+        run.backgroundSync = run.backgroundSync
+          .then(() => upsertBackgroundTaskForManagerPresentation(request, failedProgress));
+        sendManagerPresentationProgress(failedProgress);
       }
       throw error;
     } finally {
+      await run.backgroundSync.catch((error) => console.warn(
+        "[desktop] Final presentation background task sync failed:",
+        error instanceof Error ? error.message : String(error),
+      ));
       managerPresentationRuns.delete(requestId);
     }
   });
   secureHandle("desktop:manager-presentation-cancel", (event, request: ManagerPresentationCancelRequest) => {
     const requestId = typeof request?.requestId === "string" ? request.requestId.trim() : "";
     const run = managerPresentationRuns.get(requestId);
-    if (!run || run.webContentsId !== event.sender.id) return { requestId, accepted: false };
+    if (!run || !canControlManagerPresentation(event, run)) return { requestId, accepted: false };
     run.controller.abort();
     resumeManagerPresentationRun(run);
     return { requestId, accepted: true };
@@ -2860,12 +3270,13 @@ function registerIpc(): void {
   secureHandle("desktop:manager-presentation-pause", (event, request: ManagerPresentationPauseRequest) => {
     const requestId = typeof request?.requestId === "string" ? request.requestId.trim() : "";
     const run = managerPresentationRuns.get(requestId);
-    if (!run || run.webContentsId !== event.sender.id || run.paused) return { requestId, accepted: false };
+    if (!run || !canControlManagerPresentation(event, run) || run.paused) return { requestId, accepted: false };
     run.paused = true;
     const progress = run.lastProgress;
-    event.sender.send("desktop:manager-presentation-progress", {
+    sendManagerPresentationProgress({
       requestId,
       phase: "pausing",
+      activeStage: progress?.activeStage,
       progress: progress?.progress ?? 0,
       message: "正在到达安全暂停点…",
       outputPath: progress?.outputPath,
@@ -2876,9 +3287,85 @@ function registerIpc(): void {
   secureHandle("desktop:manager-presentation-resume", (event, request: ManagerPresentationPauseRequest) => {
     const requestId = typeof request?.requestId === "string" ? request.requestId.trim() : "";
     const run = managerPresentationRuns.get(requestId);
-    if (!run || run.webContentsId !== event.sender.id || !run.paused) return { requestId, accepted: false };
+    if (!run || !canControlManagerPresentation(event, run) || !run.paused) return { requestId, accepted: false };
     resumeManagerPresentationRun(run);
     return { requestId, accepted: true };
+  });
+  secureHandle("desktop:manager-presentation-requirement-update", (
+    event,
+    update: ManagerPresentationRequirementUpdateRequest,
+  ): ManagerPresentationRequirementUpdateResult => {
+    const requestId = typeof update?.requestId === "string" ? update.requestId.trim() : "";
+    const run = managerPresentationRuns.get(requestId);
+    const activeStage = run?.lastProgress?.activeStage;
+    if (!run || !canControlManagerPresentation(event, run)) {
+      return {
+        requestId,
+        accepted: false,
+        activeStage,
+        scope: "regenerate_required",
+        requirements: run ? [...run.requirements] : [],
+        message: "任务已经结束；要应用这项要求，需要重新生成 PPT。",
+      };
+    }
+    const text = typeof update?.text === "string"
+      ? update.text.trim().replace(/\s+/g, " ").slice(0, 240)
+      : "";
+    const canApply = Boolean(text)
+      && Boolean(activeStage)
+      && ["analyzing", "planning", "generating"].includes(activeStage!)
+      && !["cancelling", "cancelled", "completed", "failed", "validating"].includes(run.lastProgress?.phase || "");
+    if (!canApply) {
+      return {
+        requestId,
+        accepted: false,
+        activeStage,
+        scope: "regenerate_required",
+        requirements: [...run.requirements],
+        message: text
+          ? "当前成果已进入验收或已经结束；要应用这项要求，需要重新执行规划和生成阶段。"
+          : "请输入要补充的要求。",
+      };
+    }
+    if (!run.requirements.includes(text)) run.requirements = [...run.requirements, text].slice(-5);
+    run.request.requirements = [...run.requirements];
+    if (run.lastProgress) recordManagerPresentationProgress(run.request, run.lastProgress);
+    return {
+      requestId,
+      accepted: true,
+      activeStage,
+      scope: "current_unfinished_stages",
+      requirements: [...run.requirements],
+      message: "已应用到当前任务尚未完成的规划、生成和验收阶段。",
+    };
+  });
+  secureHandle("desktop:manager-presentation-recovery", async (_event, request: ManagerPresentationRecoveryRequest) => {
+    if (!(await isAllowedOpenPath(request?.workspacePath)) || !(await isAllowedOpenPath(request?.sourcePath))) {
+      throw new Error("Presentation recovery paths are not registered or allowed.");
+    }
+    const workspacePath = resolve(request.workspacePath).toLowerCase();
+    const sourcePath = resolve(request.sourcePath).toLowerCase();
+    const active = [...managerPresentationRuns.values()].find((run) =>
+      resolve(run.request.workspacePath).toLowerCase() === workspacePath
+      && resolve(run.request.sourcePath).toLowerCase() === sourcePath);
+    if (active?.lastProgress) {
+      return {
+        ...active.lastProgress,
+        workspacePath: request.workspacePath,
+        sourcePath: request.sourcePath,
+        updatedAt: new Date().toISOString(),
+      };
+    }
+    return getManagerPresentationRecovery(request);
+  });
+  secureHandle("desktop:manager-presentation-recovery-resolve", async (_event, request: ManagerPresentationRecoveryDecisionRequest) => {
+    if (!(await isAllowedOpenPath(request?.workspacePath)) || !(await isAllowedOpenPath(request?.sourcePath))) {
+      throw new Error("Presentation recovery paths are not registered or allowed.");
+    }
+    if (!request || !["restart", "abandon"].includes(request.decision)) {
+      throw new Error("Presentation recovery decision is invalid.");
+    }
+    return resolveManagerPresentationRecovery(request);
   });
   secureHandle("desktop:workspace-git-diff", (_event, request: WorkspaceGitDiffRequest) =>
     getRemoteGatewayAccess(request?.workspacePath) ? getRemoteWorkspaceGitDiff(request) : getWorkspaceGitDiff(request),
@@ -2991,6 +3478,16 @@ function registerIpc(): void {
   secureHandle("desktop:project-memory-clear", (_event, request) =>
     clearProjectMemory(request),
   );
+  secureHandle("desktop:user-preferences-list", () => listUserPreferences());
+  secureHandle("desktop:user-preference-upsert", (_event, request) =>
+    upsertUserPreference(request),
+  );
+  secureHandle("desktop:user-preference-delete", (_event, request) =>
+    deleteUserPreference(request),
+  );
+  secureHandle("desktop:team-memory-list", (_event, request) => listTeamMemory(request));
+  secureHandle("desktop:team-memory-add", (_event, request) => addTeamMemory(request));
+  secureHandle("desktop:team-memory-delete", (_event, request) => deleteTeamMemory(request));
   secureHandle("desktop:custom-commands-list", (_event, request) =>
     listCustomCommands(request),
   );
@@ -3040,13 +3537,19 @@ function registerIpc(): void {
     return result;
   });
   secureHandle("desktop:background-tasks-list", (_event, request) =>
-    listBackgroundTasks(request),
+    listOwnedBackgroundTasks(request),
   );
   secureHandle("desktop:background-task-enqueue", (_event, request) =>
     enqueueBackgroundTask(request),
   );
   secureHandle("desktop:background-task-update", (_event, request) =>
     updateBackgroundTask(request),
+  );
+  secureHandle("desktop:reusable-tasks-list", () => listReusableTasks());
+  secureHandle("desktop:reusable-task-save", (_event, request) => saveReusableTask(request));
+  secureHandle("desktop:reusable-task-run-prepare", (_event, request) => prepareReusableTaskRun(request));
+  secureHandle("desktop:completion-notification-preference-set", (_event, preference: CompletionNotificationPreference) =>
+    setCompletionNotificationPreference(preference),
   );
   secureHandle("desktop:scheduled-tasks-list", (_event, request) =>
     listScheduledTasks(request),
@@ -3057,12 +3560,26 @@ function registerIpc(): void {
   secureHandle("desktop:scheduled-task-update", (_event, request) =>
     updateScheduledTask(request),
   );
+  secureHandle("desktop:scheduled-task-delete", (_event, request) =>
+    deleteScheduledTask(request),
+  );
   secureHandle("desktop:scheduled-tasks-run-due", (_event, request) =>
     runDueScheduledTasksAndMirror(request),
   );
   secureHandle("desktop:scheduled-task-worker-status", () =>
     getScheduledTaskWorkerStatus(),
   );
+  secureHandle("desktop:share-create", (_event, request) => createShare(request));
+  secureHandle("desktop:share-inspect", (_event, request) => inspectShare(request));
+  secureHandle("desktop:share-permission-update", (_event, request) => updateSharePermission(request));
+  secureHandle("desktop:share-comments-list", (_event, request) => listShareComments(request));
+  secureHandle("desktop:share-comment-add", (_event, request) => addShareComment(request));
+  secureHandle("desktop:share-continue", (_event, request) => continueSharedTask(request));
+  secureHandle("desktop:share-audit-list", (_event, request) => listShareAudit(request));
+  secureHandle("desktop:shares-incoming-list", () => listIncomingShares());
+  secureHandle("desktop:shares-outgoing-list", () => listOutgoingShares());
+  secureHandle("desktop:shared-object-open", (_event, request) => openSharedObject(request));
+  secureHandle("desktop:shared-artifact-download", (_event, request) => downloadSharedArtifact(request));
   secureHandle("desktop:channel-adapters-list", (_event, workspacePath?: string) =>
     listChannelAdapters(workspacePath),
   );
@@ -3540,8 +4057,25 @@ async function startDeferredStartupTasks(): Promise<void> {
   recordE2eStartupTrace("startup:deferred-tasks-complete");
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   recordStartupMilestone("electron-ready");
+  if (process.platform === "win32") app.setAppUserModelId("com.hepai.opendrsai.windows");
+  configureCompletionNotifications({
+    focusApp: focusMainWindow,
+    publishClick: (event) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+          window.webContents.send("desktop:completion-notification-click", event);
+        }
+      }
+    },
+    getWindowVisibility: () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return "hidden";
+      if (mainWindow.isMinimized()) return "minimized";
+      return mainWindow.isVisible() ? "foreground" : "hidden";
+    },
+  });
+  await restoreCompletionNotificationPreference();
   confirmPendingUpdateLaunch();
   restorePreparedUpdate();
   cleanupExpiredVoiceTempFiles();
@@ -3825,6 +4359,7 @@ let gatewayShutdownComplete = false;
 let gatewayShutdownStarted = false;
 
 app.on("before-quit", (event) => {
+  appQuitRequested = true;
   stopScheduledTaskWorker();
   killAllTerminalSessions();
   stopAllRemoteWorkspaces();

@@ -57,15 +57,21 @@ export async function createWorkspaceCheckpoint(
   const maxBytesPerFile = clampInt(
     request.maxBytesPerFile,
     8_000,
-    2_000_000,
+    25_000_000,
     DEFAULT_MAX_BYTES_PER_FILE,
   );
-  const checkpointCandidates = await getCheckpointCandidates(workspacePath, maxFiles + 1);
+  const checkpointCandidates = await mergeCheckpointCandidates(
+    workspacePath,
+    await getCheckpointCandidates(workspacePath, maxFiles + 1),
+    request.includePaths,
+  );
   const truncated = checkpointCandidates.length > maxFiles;
   const changedFiles = checkpointCandidates.slice(0, maxFiles);
   const id = `wcp-${Date.now().toString(36)}-${hashString(workspacePath).slice(0, 8)}`;
   const checkpointDir = join(CHECKPOINT_ROOT, id);
+  const versionDir = join(checkpointDir, "versions");
   await mkdir(checkpointDir, { recursive: true });
+  await mkdir(versionDir, { recursive: true });
 
   const entries: WorkspaceCheckpointEntry[] = [];
   for (const [index, changedFile] of changedFiles.entries()) {
@@ -111,12 +117,15 @@ export async function createWorkspaceCheckpoint(
 
     const fileHash = await hashFile(target);
     await copyFile(target, join(checkpointDir, snapshotFileName(index, relativePath)));
+    const versionPath = join(versionDir, versionFileName(index, relativePath));
+    await copyFile(target, versionPath);
     entries.push({
       path: target,
       relativePath,
       status: changedFile.status,
       size: fileStat.size,
       fileHash,
+      versionPath,
       stored: true,
       existed: true,
     });
@@ -135,6 +144,13 @@ export async function createWorkspaceCheckpoint(
     entries,
     kind: request.kind ?? "manual",
     ...(request.runId ? { runId: request.runId.trim() } : {}),
+    ...(request.automatic ? { automatic: true } : {}),
+    ...(request.versionGroupId ? { versionGroupId: request.versionGroupId.trim() } : {}),
+    ...(request.versionPhase ? { versionPhase: request.versionPhase } : {}),
+    ...(request.versionNumber ? { versionNumber: request.versionNumber } : {}),
+    ...(request.versionScope ? { versionScope: request.versionScope } : {}),
+    ...(request.changeReason ? { changeReason: normalizeMetadata(request.changeReason, 240) } : {}),
+    ...(request.objectLabel ? { objectLabel: normalizeMetadata(request.objectLabel, 120) } : {}),
     ...(request.kind === "agent_run_baseline" ? { reviewStatus: "pending" as const } : {}),
   };
   await upsertCheckpoint(checkpoint);
@@ -166,6 +182,35 @@ export async function previewWorkspaceCheckpoint(
     entries.push(
       await previewCheckpointEntry(workspacePath, checkpointDir, index, entry, maxCharsPerFile),
     );
+  }
+
+  if (checkpoint.versionScope === "workspace" && checkpoint.versionPhase === "before" && entries.length < maxFiles) {
+    const baselinePaths = new Set(checkpoint.entries.map((entry) => normalizeRel(entry.relativePath)));
+    const currentCandidates = await mergeCheckpointCandidates(
+      workspacePath,
+      await getCheckpointCandidates(workspacePath, maxFiles + checkpoint.entries.length),
+      undefined,
+    );
+    for (const candidate of currentCandidates) {
+      const target = await resolvePossiblyMissingInsideWorkspace(workspacePath, candidate.path);
+      const relativePath = normalizeRel(relative(workspacePath, target));
+      if (baselinePaths.has(relativePath) || entries.length >= maxFiles) continue;
+      const current = await readOptionalFile(target, maxCharsPerFile);
+      if (!current.exists) continue;
+      entries.push({
+        path: target,
+        relativePath,
+        checkpointStatus: candidate.status,
+        change: "added",
+        stored: false,
+        existedAtCheckpoint: false,
+        currentExists: true,
+        currentHash: current.hash,
+        currentSize: current.size,
+        currentSnippet: current.snippet,
+        message: "This file was created after the saved version.",
+      });
+    }
   }
 
   const changedEntryCount = entries.filter(
@@ -208,7 +253,12 @@ export async function restoreWorkspaceCheckpoint(
   let removedFileCount = 0;
   let skippedFileCount = 0;
   const checkpointDir = join(CHECKPOINT_ROOT, checkpoint.id);
+  const selectedPaths = normalizeRestorePaths(checkpoint, request.includePaths);
+  const selectedPathSet = selectedPaths ? new Set(selectedPaths) : null;
   for (const [index, entry] of checkpoint.entries.entries()) {
+    if (selectedPathSet && !selectedPathSet.has(normalizeRel(entry.relativePath))) {
+      continue;
+    }
     const target = await resolvePossiblyMissingInsideWorkspace(workspacePath, entry.relativePath);
     if (entry.stored && entry.existed) {
       await mkdir(dirname(target), { recursive: true });
@@ -231,7 +281,7 @@ export async function restoreWorkspaceCheckpoint(
     skippedFileCount += 1;
   }
 
-  if (checkpoint.kind === "agent_run_baseline") {
+  if (!selectedPathSet && (checkpoint.kind === "agent_run_baseline" || (checkpoint.kind === "artifact_version" && checkpoint.versionScope === "workspace" && checkpoint.versionPhase === "before"))) {
     const baselinePaths = new Set(checkpoint.entries.map((entry) => normalizeRel(entry.relativePath)));
     const currentChanges = await getCheckpointCandidates(workspacePath, 200);
     for (const change of currentChanges) {
@@ -260,6 +310,16 @@ export async function restoreWorkspaceCheckpoint(
   if (checkpoint.kind === "agent_run_baseline") {
     await markCheckpointReviewed(checkpoint, "rejected");
   }
+  if (checkpoint.automatic) {
+    await upsertCheckpoint({
+      ...checkpoint,
+      restoreCount: (checkpoint.restoreCount ?? 0) + 1,
+      lastRestoredAt: new Date().toISOString(),
+      ...(request.operationId ? { lastRestoreOperationId: request.operationId } : {}),
+      lastRestoreMode: selectedPaths ? "partial" : "whole",
+      lastRestoredPaths: selectedPaths ?? checkpoint.entries.map((entry) => normalizeRel(entry.relativePath)),
+    });
+  }
 
   return {
     workspacePath,
@@ -268,7 +328,9 @@ export async function restoreWorkspaceCheckpoint(
     restoredFileCount,
     removedFileCount,
     skippedFileCount,
-    message: `Restored ${restoredFileCount} file(s), removed ${removedFileCount}, skipped ${skippedFileCount}.`,
+    message: selectedPaths
+      ? `Restored only ${selectedPaths.join(", ")}; all other version items were kept unchanged.`
+      : `Restored ${restoredFileCount} file(s), removed ${removedFileCount}, skipped ${skippedFileCount}.`,
   };
 }
 
@@ -280,11 +342,26 @@ function validateCreateRequest(rawRequest: unknown): WorkspaceCheckpointCreateRe
   if (typeof request.workspacePath !== "string") {
     throw new Error("Workspace path is required.");
   }
-  if (request.kind !== undefined && request.kind !== "manual" && request.kind !== "agent_run_baseline") {
+  if (request.kind !== undefined && request.kind !== "manual" && request.kind !== "agent_run_baseline" && request.kind !== "artifact_version") {
     throw new Error("Workspace checkpoint kind is invalid.");
   }
   if (request.runId !== undefined && (typeof request.runId !== "string" || !request.runId.trim() || /[\r\n]/.test(request.runId))) {
     throw new Error("Workspace checkpoint run id is invalid.");
+  }
+  if (request.versionGroupId !== undefined && (typeof request.versionGroupId !== "string" || !request.versionGroupId.trim() || /[\r\n]/.test(request.versionGroupId))) {
+    throw new Error("Workspace version group id is invalid.");
+  }
+  if (request.versionPhase !== undefined && request.versionPhase !== "before" && request.versionPhase !== "after") {
+    throw new Error("Workspace version phase is invalid.");
+  }
+  if (request.versionNumber !== undefined && (!Number.isInteger(request.versionNumber) || request.versionNumber < 1)) {
+    throw new Error("Workspace version number is invalid.");
+  }
+  if (request.versionScope !== undefined && request.versionScope !== "workspace" && request.versionScope !== "explicit_paths") {
+    throw new Error("Workspace version scope is invalid.");
+  }
+  if (request.includePaths !== undefined && (!Array.isArray(request.includePaths) || request.includePaths.some((path) => typeof path !== "string" || !path.trim()))) {
+    throw new Error("Workspace version include paths are invalid.");
   }
   return request;
 }
@@ -325,7 +402,23 @@ function validateRestoreRequest(rawRequest: unknown): WorkspaceCheckpointRestore
   if (typeof request.checkpointId !== "string" || !request.checkpointId.trim()) {
     throw new Error("Checkpoint id is required.");
   }
+  if (request.operationId !== undefined && (typeof request.operationId !== "string" || !request.operationId.trim() || request.operationId.length > 160 || /[\r\n]/.test(request.operationId))) {
+    throw new Error("Version restore operation id is invalid.");
+  }
+  if (request.includePaths !== undefined && (!Array.isArray(request.includePaths) || request.includePaths.length === 0 || request.includePaths.length > 200 || request.includePaths.some((path) => typeof path !== "string" || !path.trim() || path.length > 4096 || /[\r\n]/.test(path)))) {
+    throw new Error("Partial version restore paths are invalid.");
+  }
   return request;
+}
+
+function normalizeRestorePaths(checkpoint: WorkspaceCheckpoint, includePaths: string[] | undefined): string[] | null {
+  if (includePaths === undefined) return null;
+  const available = new Set(checkpoint.entries.map((entry) => normalizeRel(entry.relativePath)));
+  const selected = [...new Set(includePaths.map((path) => normalizeRel(path.trim())))];
+  if (selected.some((path) => !path || !available.has(path))) {
+    throw new Error("A partial restore target is not part of this version.");
+  }
+  return selected;
 }
 
 function validatePreviewRequest(rawRequest: unknown): WorkspaceCheckpointPreviewRequest {
@@ -505,6 +598,37 @@ async function getCheckpointCandidates(
   }
 }
 
+async function mergeCheckpointCandidates(
+  workspacePath: string,
+  candidates: Array<{ path: string; status: WorkspaceFileGitStatus }>,
+  includePaths: string[] | undefined,
+): Promise<Array<{ path: string; status: WorkspaceFileGitStatus }>> {
+  const merged = new Map<string, { path: string; status: WorkspaceFileGitStatus }>();
+  if (!includePaths?.length) {
+    for (const candidate of candidates) {
+      const target = await resolvePossiblyMissingInsideWorkspace(workspacePath, candidate.path);
+      if (isCheckpointStorageTarget(target)) continue;
+      merged.set(normalizeRel(relative(workspacePath, target)), candidate);
+    }
+  }
+  for (const rawPath of includePaths ?? []) {
+    const target = await resolvePossiblyMissingInsideWorkspace(workspacePath, rawPath);
+    const relativePath = normalizeRel(relative(workspacePath, target));
+    merged.set(relativePath, {
+      path: relativePath,
+      status: existsSync(target) ? "modified" : "untracked",
+    });
+  }
+  return [...merged.values()].sort((left, right) => left.path.localeCompare(right.path));
+}
+
+function isCheckpointStorageTarget(target: string): boolean {
+  const normalizedTarget = resolve(target).toLowerCase();
+  if (normalizedTarget === resolve(INDEX_PATH).toLowerCase()) return true;
+  const relativeToRoot = relative(resolve(CHECKPOINT_ROOT), resolve(target));
+  return relativeToRoot === "" || (!relativeToRoot.startsWith("..") && !isAbsolute(relativeToRoot));
+}
+
 const NON_GIT_IGNORED_DIRECTORIES = new Set([
   ".git", ".hg", ".svn", "node_modules", ".venv", "venv", "dist", "build", "out", "target",
 ]);
@@ -613,9 +737,17 @@ function snapshotFileName(index: number, relativePath: string): string {
   return `${index.toString().padStart(3, "0")}-${hashString(relativePath)}-${basename(relativePath) || "file"}.bin`;
 }
 
+function versionFileName(index: number, relativePath: string): string {
+  return `${index.toString().padStart(3, "0")}-${basename(relativePath) || "file"}`;
+}
+
 function normalizeLabel(label: unknown): string {
   const normalized = typeof label === "string" ? label.trim().replace(/\s+/g, " ") : "";
   return normalized.slice(0, 80) || "Manual workspace checkpoint";
+}
+
+function normalizeMetadata(value: unknown, maxLength: number): string {
+  return (typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "").slice(0, maxLength);
 }
 
 function normalizeRel(value: string): string {

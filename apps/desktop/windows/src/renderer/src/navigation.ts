@@ -3,6 +3,7 @@ export const MENU_IDS = {
   myAgents: "my_agents",
   agentSquare: "agent_square",
   savedPlan: "saved_plan",
+  results: "results",
   skillsSquare: "skills_square",
   plugins: "plugins",
   library: "library",
@@ -27,6 +28,7 @@ export type AppLanguage = "en" | "zh";
 
 export const MENU_LABELS: Record<AppLanguage, Record<NavId, string>> = {
   zh: {
+    [MENU_IDS.results]: "成果",
     [MENU_IDS.approvalCenter]: "Approval Center",
     [MENU_IDS.currentSession]: "当前会话",
     [MENU_IDS.myAgents]: "我的智能体",
@@ -43,6 +45,7 @@ export const MENU_LABELS: Record<AppLanguage, Record<NavId, string>> = {
     [MENU_IDS.userManagement]: "用户管理",
   },
   en: {
+    [MENU_IDS.results]: "Results",
     [MENU_IDS.currentSession]: "Chat",
     [MENU_IDS.myAgents]: "My Agents",
     [MENU_IDS.agentSquare]: "Agents",
@@ -108,6 +111,7 @@ const navDefinitions: Array<{
   {
     id: "workspace",
     items: [
+      { id: MENU_IDS.results, enabled: true },
       { id: MENU_IDS.library, enabled: false },
       { id: MENU_IDS.approvalCenter, enabled: false },
       { id: MENU_IDS.usageAnalytics, enabled: false },

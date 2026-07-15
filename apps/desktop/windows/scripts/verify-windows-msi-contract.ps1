@@ -32,6 +32,16 @@ Assert-Equal (Read-SingleValue $database "SELECT ``Value`` FROM ``Property`` WHE
 Assert-Equal (Read-SingleValue $database "SELECT ``Value`` FROM ``Property`` WHERE ``Property``='ARPNOREPAIR'") "1" "ARPNOREPAIR"
 Assert-Equal (Read-SingleValue $database "SELECT ``Directory_Parent`` FROM ``Directory`` WHERE ``Directory``='INSTALLFOLDER'") "ProgramFiles64Folder" "INSTALLFOLDER parent"
 
+$productVersion = Read-SingleValue $database "SELECT ``Value`` FROM ``Property`` WHERE ``Property``='ProductVersion'"
+$runtimeUrl = Read-SingleValue $database "SELECT ``Value`` FROM ``Property`` WHERE ``Property``='RUNTIMEURL'"
+if ($runtimeUrl -match '/releases/latest/') {
+    throw "RUNTIMEURL must be immutable and must not use releases/latest: $runtimeUrl"
+}
+$expectedReleaseSegment = "/releases/download/v$productVersion/"
+if (-not $runtimeUrl.Contains($expectedReleaseSegment)) {
+    throw "RUNTIMEURL must match ProductVersion $productVersion and contain '$expectedReleaseSegment': $runtimeUrl"
+}
+
 foreach ($action in @(
     "DownloadOpenDrSaiRuntime",
     "VerifyOpenDrSaiRuntime",
@@ -47,6 +57,21 @@ foreach ($action in @(
         throw "$action must be deferred and run without impersonation; type=$type."
     }
 }
+
+$downloadSource = Read-SingleValue $database "SELECT ``Source`` FROM ``CustomAction`` WHERE ``Action``='DownloadOpenDrSaiRuntime'"
+$downloadTarget = Read-SingleValue $database "SELECT ``Target`` FROM ``CustomAction`` WHERE ``Action``='DownloadOpenDrSaiRuntime'"
+$downloadType = [int](Read-SingleValue $database "SELECT ``Type`` FROM ``CustomAction`` WHERE ``Action``='DownloadOpenDrSaiRuntime'")
+Assert-Equal $downloadSource "OpenDrSaiInstallerActions" "Download custom action binary"
+Assert-Equal $downloadTarget "DownloadRuntime" "Download custom action entry point"
+if (($downloadType -band 63) -ne 1) {
+    throw "DownloadOpenDrSaiRuntime must be a DLL custom action; type=$downloadType."
+}
+
+$downloadTemplate = Read-SingleValue $database "SELECT ``Template`` FROM ``ActionText`` WHERE ``Action``='DownloadOpenDrSaiRuntime'"
+Assert-Equal $downloadTemplate "[1]" "Download progress text template"
+
+$downloadError = Read-SingleValue $database "SELECT ``Message`` FROM ``Error`` WHERE ``Error``=25001"
+Assert-Equal $downloadError "OpenDrSai Runtime download failed: [2]" "Runtime download error message"
 
 $startMenuTarget = Read-SingleValue $database "SELECT ``Target`` FROM ``Shortcut`` WHERE ``Shortcut``='StartMenuShortcut'"
 $desktopTarget = Read-SingleValue $database "SELECT ``Target`` FROM ``Shortcut`` WHERE ``Shortcut``='DesktopShortcut'"

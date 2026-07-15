@@ -128,7 +128,7 @@ for (const marker of [
 
 for (const marker of [
   "WorkspaceCheckpointPanel",
-  "Rollback Checkpoints",
+  "Version history",
   "createRollbackCheckpoint",
   "previewRollbackCheckpoint",
   "restoreRollbackCheckpoint",
@@ -138,8 +138,8 @@ for (const marker of [
   "acceptAgentChangeSet",
   "Agent changes accepted",
   "previewWorkspaceCheckpoint",
-  "Checkpoint diff preview",
-  "Preview diff",
+  "Difference from current version",
+  "Compare with current",
   "restoreWorkspaceCheckpoint",
 ]) {
   assert(filesPanel.includes(marker), `Files panel checkpoint UI missing ${marker}`);

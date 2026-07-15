@@ -384,6 +384,20 @@ export type ChatMessagePart =
   | { id: string; type: "patch"; path?: string; diff: string; status: ChatPartStatus }
   | { id: string; type: "approval"; requestId: string; prompt: string; status: ChatPartStatus };
 
+export type DesktopFailureKind = "network" | "file_busy" | "external_service" | "unexpected";
+
+export interface DesktopFailureRecovery {
+  kind: DesktopFailureKind;
+  attempts: number;
+  retryLimit: number;
+  retryable: boolean;
+  exhausted: boolean;
+  escalationLevel: "automatic" | "user_action" | "administrator";
+  reason: string;
+  suggestedAction: string;
+  message: string;
+}
+
 export interface ChatEvent {
   requestId: string;
   /** Monotonic per-request sequence assigned by the main process. */
@@ -397,6 +411,7 @@ export interface ChatEvent {
   inputType?: "text_input" | "approval";
   sessionId?: string;
   runId?: string;
+  failureRecovery?: DesktopFailureRecovery;
 }
 
 export type DesktopProviderAnalyticsProvider = "openai_responses" | "anthropic" | "google_gemini";
@@ -643,6 +658,76 @@ export interface DesktopProjectMemoryClearRequest {
 export interface DesktopProjectMemoryClearResult {
   workspacePath: string;
   removedCount: number;
+}
+
+export interface DesktopTeamMemoryEntry {
+  id: string;
+  teamId: string;
+  content: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DesktopTeamMemoryListRequest {
+  teamId?: string;
+  limit?: number;
+}
+
+export interface DesktopTeamMemoryAddRequest {
+  teamId: string;
+  content: string;
+}
+
+export interface DesktopTeamMemoryDeleteRequest {
+  teamId: string;
+  entryId: string;
+}
+
+export interface DesktopTeamMemoryDeleteResult {
+  teamId: string;
+  removedCount: number;
+}
+
+export type DesktopUserPreferenceCategory =
+  | "output_language"
+  | "chart_gridlines"
+  | "report_format"
+  | "audience";
+
+export type DesktopUserPreferenceValue =
+  | "zh"
+  | "en"
+  | "hidden"
+  | "visible"
+  | "presentation"
+  | "report"
+  | "summary"
+  | "manager"
+  | "expert"
+  | "general";
+
+export interface DesktopUserPreference {
+  category: DesktopUserPreferenceCategory;
+  value: DesktopUserPreferenceValue;
+  createdAt: string;
+  updatedAt: string;
+  source: "explicit_user_request";
+}
+
+export interface DesktopUserPreferenceUpsertRequest {
+  category: DesktopUserPreferenceCategory;
+  value: DesktopUserPreferenceValue;
+  source: "explicit_user_request";
+}
+
+export interface DesktopUserPreferenceDeleteRequest {
+  category: DesktopUserPreferenceCategory;
+}
+
+export interface DesktopUserPreferenceDeleteResult {
+  category: DesktopUserPreferenceCategory;
+  removed: boolean;
 }
 
 export interface DesktopCustomCommand {
@@ -946,7 +1031,8 @@ export type DesktopBackgroundTaskKind =
   | "workflow_run"
   | "agent_run"
   | "connector_sync"
-  | "scheduled_monitor";
+  | "scheduled_monitor"
+  | "presentation_generation";
 
 export type DesktopBackgroundTaskSource =
   | "chat"
@@ -955,7 +1041,8 @@ export type DesktopBackgroundTaskSource =
   | "connector"
   | "manual"
   | "scheduled"
-  | "monitor";
+  | "monitor"
+  | "presentation";
 
 export type DesktopBackgroundTaskStatus =
   | "queued"
@@ -966,8 +1053,29 @@ export type DesktopBackgroundTaskStatus =
   | "failed"
   | "cancelled";
 
+export type DesktopTaskPlanPhase = "input" | "process" | "check" | "output";
+
+export interface DesktopTaskPlanStep {
+  id: string;
+  phase: DesktopTaskPlanPhase;
+  title: string;
+}
+
+export interface DesktopTaskPlanAdjustment {
+  id: string;
+  failedStepId?: string;
+  failedStepTitle: string;
+  reason: string;
+  replacementStepTitle: string;
+  impact: string;
+  completeness: "partial" | "blocked";
+  timestamp?: string;
+}
+
 export interface DesktopBackgroundTask {
   id: string;
+  /** Account owner used by the main process to isolate locally persisted task results. */
+  ownerUserId?: string;
   kind: DesktopBackgroundTaskKind;
   source: DesktopBackgroundTaskSource;
   title: string;
@@ -978,8 +1086,417 @@ export interface DesktopBackgroundTask {
   targetId?: string;
   approvalId?: string;
   currentStep?: string;
+  progress?: number;
+  planSteps?: DesktopTaskPlanStep[];
+  planAdjustments?: DesktopTaskPlanAdjustment[];
+  completedSteps?: string[];
+  pendingDecisions?: string[];
   message: string;
   verification: string;
+  deliverySummary?: DesktopTaskDeliverySummary;
+}
+
+export type DesktopTaskImportance = "high" | "medium" | "low";
+
+export interface DesktopTaskArtifactLink {
+  id: string;
+  label: string;
+  path: string;
+  kind: "file" | "presentation" | "report" | "folder";
+  quality?: DesktopArtifactQuality;
+  chartQuality?: DesktopChartDataQuality;
+  editLineage?: DesktopArtifactEditLineage;
+  analysisRoute?: DesktopArtifactAnalysisRoute;
+  keyConclusions?: DesktopArtifactConclusionEvidence[];
+  conclusionTraceabilityRate?: number;
+  consistencyCheck?: DesktopConsistencyCheckResult;
+  independentReviews?: DesktopIndependentReviewRecord[];
+}
+
+export interface DesktopArtifactAnalysisRoute {
+  routeGroupId: string;
+  routeId: string;
+  role: "original" | "alternative";
+  method: string;
+  inputSummary: string;
+  keyConclusion: string;
+  risk: string;
+  recommendedUse: string;
+  status: "completed" | "failed";
+  selected: boolean;
+  selectedAt?: string;
+  sourceArtifactId: string;
+  sourcePath: string;
+  inputFingerprint: string;
+  createdAt: string;
+}
+
+export interface DesktopConsistencyCheckItem {
+  id: string;
+  category: "outdated_number" | "chart_mismatch" | "source_mismatch";
+  severity: "high" | "medium" | "low";
+  status: "open" | "accepted" | "ignored";
+  title: string;
+  finding: string;
+  sourcePath: string;
+  locatorType: "pdf_page" | "file_paragraph" | "data_range" | "calculation";
+  locator: string;
+  observedValue: string;
+  expectedValue: string;
+  evidenceText: string;
+  recommendation: string;
+}
+
+export interface DesktopConsistencyCheckResult {
+  checkedAt: string;
+  status: "passed" | "issues_found";
+  expectedIssues: number;
+  detectedIssues: number;
+  summary: string;
+  items: DesktopConsistencyCheckItem[];
+}
+
+export interface DesktopIndependentReviewFinding {
+  id: string;
+  title: string;
+  outcome: "confirmed" | "issue_found" | "not_reproduced";
+  detail: string;
+  sourcePath: string;
+  locatorType: "pdf_page" | "file_paragraph" | "data_range" | "calculation";
+  locator: string;
+  evidenceText: string;
+}
+
+export interface DesktopIndependentReviewRecord {
+  id: string;
+  mode: "repeat" | "alternative";
+  method: "reverse_source_trace" | "constraint_recalculation";
+  methodLabel: string;
+  reviewerLabel: string;
+  requestedAt: string;
+  completedAt: string;
+  status: "passed" | "issues_found" | "inconclusive";
+  checkedClaimCount: number;
+  checkedSourceCount: number;
+  scope: string[];
+  findings: DesktopIndependentReviewFinding[];
+  uncovered: string[];
+  summary: string;
+  baselineCheckId: string;
+  usesOriginalAnswerText: false;
+  methodDifference: string;
+  evidenceFingerprint: string;
+}
+
+export interface DesktopArtifactConclusionEvidence {
+  id: string;
+  conclusion: string;
+  sourcePath: string;
+  locatorType: "pdf_page" | "file_paragraph" | "data_range" | "calculation";
+  locator: string;
+  evidenceText: string;
+  verified: boolean;
+  citations?: DesktopCitationRecord[];
+  numericEvidence?: DesktopNumericEvidence[];
+  uncertainty?: DesktopConclusionUncertainty;
+  trust?: DesktopTrustAssessment;
+}
+
+export type DesktopTrustStatus = "evidence_sufficient" | "needs_confirmation" | "insufficient_data" | "source_conflict" | "inference";
+
+export interface DesktopTrustAssessment {
+  status: DesktopTrustStatus;
+  label: "依据充分" | "需要确认" | "数据不足" | "来源冲突" | "属于推测";
+  definition: string;
+  reason: string;
+  icon: "check" | "question" | "warning" | "compare" | "hypothesis";
+  recommendedAction: string;
+  evidenceRule: "verified_source" | "provisional_source" | "insufficient_observation" | "conflicting_sources" | "inference_only";
+  evidenceIds: string[];
+  ruleSatisfied: boolean;
+}
+
+export interface DesktopCitationRecord {
+  id: string;
+  title: string;
+  authors: string[];
+  sourcePath: string;
+  locatorType: "pdf_page" | "file_paragraph" | "data_range" | "calculation";
+  locator: string;
+  excerpt: string;
+  relation: "supports" | "contradicts" | "insufficient";
+  supportScore: number;
+}
+
+export interface DesktopNumericSourceValue {
+  label: string;
+  value: number;
+  unit: string;
+  sourcePath: string;
+  locator: string;
+  rawText: string;
+}
+
+export interface DesktopNumericEvidence {
+  id: string;
+  label: string;
+  displayValue: string;
+  reportedValue: number;
+  unit: string;
+  kind: "direct" | "calculated";
+  sourcePath: string;
+  locatorType: "pdf_page" | "file_paragraph" | "data_range" | "calculation";
+  locator: string;
+  sourceValues: DesktopNumericSourceValue[];
+  formula: string;
+  recalculatedValue?: number;
+  tolerance: number;
+  status: "verified" | "unverifiable";
+  explanation: string;
+}
+
+export interface DesktopUncertaintyClaim {
+  id: string;
+  position: string;
+  sourcePath: string;
+  locatorType: "pdf_page" | "file_paragraph" | "data_range" | "calculation";
+  locator: string;
+  excerpt: string;
+  stance: "supports" | "contradicts" | "insufficient";
+}
+
+export interface DesktopConclusionUncertainty {
+  status: "source_conflict" | "insufficient_data" | "inference";
+  label: string;
+  explanation: string;
+  recommendedAction: string;
+  requiresQualification: true;
+  qualifyingLanguage: string[];
+  claims: DesktopUncertaintyClaim[];
+}
+
+export interface DesktopChartDataQuality {
+  status: "passed" | "failed";
+  checkedAt: string;
+  sourcePath: string;
+  xAxis: string;
+  yAxis: string;
+  unit: string;
+  legend: string;
+  axisLabelsVisible: boolean;
+  unitVisible: boolean;
+  legendVisible: boolean;
+  pointsExpected: number;
+  pointsMatched: number;
+  coordinateMatches: number;
+  anomaliesExpected: number;
+  anomaliesMatched: number;
+  mismatchCount: number;
+  checks: string[];
+}
+
+export interface DesktopArtifactEditLineage {
+  sourceArtifactId: string;
+  sourcePath: string;
+  scopeType: "text" | "table" | "image";
+  scopeLabel: string;
+  action: "simplify_text" | "sort_table_numeric" | "log_scale_image";
+}
+
+export interface DesktopArtifactQuality {
+  status: "passed" | "failed";
+  checkedAt: string;
+  format: "markdown";
+  formatValid: boolean;
+  requiredSections: string[];
+  presentSections: string[];
+  missingSections: string[];
+  placeholderCount: number;
+  mojibakeCount: number;
+  emptyImageCount: number;
+  brokenLinkCount: number;
+  goldenFactsExpected: number;
+  goldenFactsMatched: number;
+  goldenFactCoverage: number;
+  checks: string[];
+}
+
+export interface DesktopTaskDeliverySummary {
+  findingSummary: string;
+  importance: DesktopTaskImportance;
+  importanceReason: string;
+  artifacts: DesktopTaskArtifactLink[];
+  suggestedAction: string;
+  workSummary: string;
+  coreConclusion: string;
+  verification: string;
+  remainingRisks: string;
+  completionCriteria?: {
+    passed: string[];
+    incomplete: string[];
+  };
+}
+
+export type DesktopShareScope = "result_only" | "complete_task";
+export type DesktopShareObjectType = "artifact" | "task";
+
+export interface DesktopShareManifestObject {
+  objectType: DesktopShareObjectType;
+  objectId: string;
+  label: string;
+  kind?: DesktopTaskArtifactLink["kind"];
+  bytes?: number;
+  sha256?: string;
+}
+
+export interface DesktopShareManifest {
+  id: string;
+  ownerAccount: string;
+  recipientAccount: string;
+  scope: DesktopShareScope;
+  sourceTaskId: string;
+  selectedArtifactId?: string;
+  objects: DesktopShareManifestObject[];
+  createdAt: string;
+  status: "active";
+  permission: DesktopSharePermission;
+  sensitiveReview?: DesktopShareSensitiveReviewSummary;
+}
+
+export type DesktopSharePermission = "view" | "comment" | "continue";
+
+export interface DesktopSharePermissionUpdateRequest {
+  shareId: string;
+  permission: DesktopSharePermission;
+}
+
+export interface DesktopShareComment {
+  id: string;
+  shareId: string;
+  authorAccount: string;
+  body: string;
+  createdAt: string;
+}
+
+export interface DesktopShareCommentListRequest { shareId: string }
+export interface DesktopShareCommentAddRequest { shareId: string; body: string }
+
+export interface DesktopShareContinuationRequest { shareId: string }
+export interface DesktopShareContinuationResult {
+  id: string;
+  shareId: string;
+  requesterAccount: string;
+  sourceTaskId: string;
+  artifactIds: string[];
+  status: "requested";
+  createdAt: string;
+}
+
+export type DesktopShareAuditAction = "permission_update" | "comment" | "continue";
+export interface DesktopShareAuditEntry {
+  id: string;
+  shareId: string;
+  actorAccount: string;
+  action: DesktopShareAuditAction;
+  outcome: "allowed" | "denied";
+  permission: DesktopSharePermission;
+  reason: string;
+  createdAt: string;
+}
+export interface DesktopShareAuditListRequest { shareId: string }
+
+export type DesktopShareSensitiveFindingKind = "api_key" | "bearer_token" | "email" | "phone" | "user_secret";
+export type DesktopShareSensitiveAction = "redact" | "remove";
+
+export interface DesktopShareSensitiveFinding {
+  id: string;
+  artifactId: string;
+  artifactLabel: string;
+  kind: DesktopShareSensitiveFindingKind;
+  severity: "high" | "personal";
+  occurrences: number;
+  maskedPreview: string;
+  supportedActions: DesktopShareSensitiveAction[];
+}
+
+export interface DesktopShareSensitiveResolution {
+  findingId: string;
+  action: DesktopShareSensitiveAction;
+}
+
+export interface DesktopShareSensitiveReviewSummary {
+  findingsCount: number;
+  redactedCount: number;
+  removedCount: number;
+  highRiskSecretsDirectlyShared: 0;
+}
+
+export interface DesktopShareInspectionRequest {
+  sourceTaskId: string;
+  scope: DesktopShareScope;
+  artifactId?: string;
+}
+
+export interface DesktopShareInspectionResult {
+  sourceTaskId: string;
+  scope: DesktopShareScope;
+  artifactId?: string;
+  scannedArtifactCount: number;
+  findings: DesktopShareSensitiveFinding[];
+  requiresResolution: boolean;
+}
+
+export interface DesktopShareCreateRequest {
+  sourceTaskId: string;
+  scope: DesktopShareScope;
+  recipientAccount: string;
+  artifactId?: string;
+  sensitiveResolutions?: DesktopShareSensitiveResolution[];
+  permission?: DesktopSharePermission;
+}
+
+export interface DesktopSharedObjectOpenRequest {
+  shareId: string;
+  objectType: DesktopShareObjectType;
+  objectId: string;
+}
+
+export interface DesktopSharedObjectOpenResult {
+  shareId: string;
+  objectType: DesktopShareObjectType;
+  objectId: string;
+  label: string;
+  authorized: true;
+  task?: {
+    id: string;
+    title: string;
+    status: DesktopBackgroundTaskStatus;
+    updatedAt: string;
+    artifactIds: string[];
+  };
+  artifact?: {
+    id: string;
+    label: string;
+    kind: DesktopTaskArtifactLink["kind"];
+    bytes: number;
+    sha256: string;
+    content?: string;
+  };
+}
+
+export interface DesktopSharedArtifactDownloadRequest {
+  shareId: string;
+  objectId: string;
+}
+
+export interface DesktopSharedArtifactDownloadResult {
+  shareId: string;
+  artifactId: string;
+  fileName: string;
+  kind: DesktopTaskArtifactLink["kind"];
+  bytes: number;
+  sha256: string;
+  base64: string;
 }
 
 export interface DesktopBackgroundTaskListRequest {
@@ -995,9 +1512,15 @@ export interface DesktopBackgroundTaskEnqueueRequest {
   targetId?: string;
   approvalId?: string;
   currentStep?: string;
+  progress?: number;
+  planSteps?: DesktopTaskPlanStep[];
+  planAdjustments?: DesktopTaskPlanAdjustment[];
+  completedSteps?: string[];
+  pendingDecisions?: string[];
   message?: string;
   verification?: string;
   status?: DesktopBackgroundTaskStatus;
+  deliverySummary?: DesktopTaskDeliverySummary;
 }
 
 export interface DesktopBackgroundTaskUpdateRequest {
@@ -1005,7 +1528,98 @@ export interface DesktopBackgroundTaskUpdateRequest {
   status: DesktopBackgroundTaskStatus;
   message?: string;
   currentStep?: string;
+  progress?: number;
+  planSteps?: DesktopTaskPlanStep[];
+  planAdjustments?: DesktopTaskPlanAdjustment[];
+  completedSteps?: string[];
+  pendingDecisions?: string[];
   verification?: string;
+  deliverySummary?: DesktopTaskDeliverySummary;
+}
+
+export interface DesktopReusableTaskInput {
+  id: string;
+  label: string;
+  kind: "file" | "folder";
+  required: boolean;
+  originalValue: string;
+}
+
+export interface DesktopReusableTaskAdjustments {
+  outputLanguage?: "zh" | "en";
+  deadline?: string;
+  checkItems: string[];
+}
+
+export type DesktopReusableTaskAdjustmentScope = "this_run" | "update_template";
+
+export interface DesktopReusableTask {
+  id: string;
+  name: string;
+  sourceTaskId: string;
+  sourceTaskTitle: string;
+  sourceWorkspacePath?: string;
+  taskTemplate: string;
+  inputs: DesktopReusableTaskInput[];
+  fixedRules: string[];
+  savedAdjustments: DesktopReusableTaskAdjustments;
+  createdAt: string;
+  updatedAt: string;
+  runCount: number;
+  lastRunAt?: string;
+  lastInputFingerprint?: string;
+}
+
+export interface DesktopReusableTaskSaveRequest {
+  sourceTaskId: string;
+  name: string;
+}
+
+export interface DesktopReusableTaskRunPrepareRequest {
+  reusableTaskId: string;
+  workspacePath: string;
+  inputs: Record<string, string>;
+  adjustments: DesktopReusableTaskAdjustments;
+  adjustmentScope: DesktopReusableTaskAdjustmentScope;
+}
+
+export interface DesktopReusableTaskResolvedInput {
+  id: string;
+  label: string;
+  path: string;
+  sha256: string;
+  bytes: number;
+}
+
+export interface DesktopReusableTaskRunRecipe {
+  id: string;
+  reusableTaskId: string;
+  reusableTaskName: string;
+  workspacePath: string;
+  resolvedTask: string;
+  inputs: DesktopReusableTaskResolvedInput[];
+  fixedRules: string[];
+  adjustments: DesktopReusableTaskAdjustments;
+  adjustmentScope: DesktopReusableTaskAdjustmentScope;
+  cachePolicy: "force_fresh_input_read";
+  createdAt: string;
+}
+
+export interface CompletionNotificationPreference {
+  enabled: boolean;
+  language: "zh" | "en";
+}
+
+export interface CompletionNotificationTarget {
+  kind: DesktopBackgroundTaskKind;
+  targetId: string;
+  workspacePath?: string;
+  threadId?: string;
+}
+
+export interface CompletionNotificationClickEvent {
+  target: CompletionNotificationTarget;
+  clickedAt: string;
 }
 
 export type DesktopScheduledTaskKind = "scheduled" | "monitor";
@@ -1017,6 +1631,32 @@ export type DesktopScheduledTaskCadence =
   | "hourly"
   | "daily"
   | "weekly";
+
+export interface DesktopScheduledTaskUserDefinition {
+  sourceText: string;
+  timeDescription: string;
+  materialDescription: string;
+  actionDescription: string;
+  notificationDescription: string;
+  timezone: string;
+  weekday?: number;
+  localTime?: string;
+  confirmedAt: string;
+}
+
+export type DesktopScheduledTaskMissedRunPolicy = "run_once_immediately";
+export type DesktopScheduledTaskDaylightSavingPolicy = "follow_timezone_wall_clock";
+
+export interface DesktopScheduledTaskTriggerAudit {
+  triggerKey: string;
+  scheduledFor: string;
+  triggeredAt: string;
+  missed: boolean;
+  missedByMs: number;
+  missedRunPolicy: DesktopScheduledTaskMissedRunPolicy;
+  timezone: string;
+  daylightSavingPolicy: DesktopScheduledTaskDaylightSavingPolicy;
+}
 
 export interface DesktopScheduledTask {
   id: string;
@@ -1037,6 +1677,9 @@ export interface DesktopScheduledTask {
   approvalRequired: boolean;
   message: string;
   verification: string;
+  userDefinition?: DesktopScheduledTaskUserDefinition;
+  missedRunPolicy?: DesktopScheduledTaskMissedRunPolicy;
+  lastTriggerAudit?: DesktopScheduledTaskTriggerAudit;
 }
 
 export interface DesktopScheduledTaskListRequest {
@@ -1056,6 +1699,7 @@ export interface DesktopScheduledTaskCreateRequest {
   verification?: string;
   message?: string;
   status?: DesktopScheduledTaskStatus;
+  userDefinition?: DesktopScheduledTaskUserDefinition;
 }
 
 export interface DesktopScheduledTaskUpdateRequest {
@@ -1064,6 +1708,22 @@ export interface DesktopScheduledTaskUpdateRequest {
   nextRunAt?: string;
   message?: string;
   verification?: string;
+  title?: string;
+  cadence?: DesktopScheduledTaskCadence;
+  target?: string;
+  userDefinition?: DesktopScheduledTaskUserDefinition;
+}
+
+export interface DesktopScheduledTaskDeleteRequest {
+  taskId: string;
+}
+
+export interface DesktopScheduledTaskDeleteResult {
+  taskId: string;
+  removed: boolean;
+  historyPolicy: "retain_results";
+  retainedWorkflowRunId?: string;
+  message: string;
 }
 
 export type DesktopScheduledTaskRunItemStatus =
@@ -1088,6 +1748,7 @@ export interface DesktopScheduledTaskRunItem {
   workflowRunId?: string;
   approvalId?: string;
   reason?: string;
+  triggerAudit?: DesktopScheduledTaskTriggerAudit;
 }
 
 export interface DesktopScheduledTaskRunResult {
@@ -1673,6 +2334,8 @@ export interface AgentRunRequest {
   sessionId?: string;
   runId?: string;
   task: string;
+  executionDepth?: AgentTaskDepth;
+  executionPlan?: DesktopTaskPlanStep[];
   model?: string;
   workspacePath?: string;
   files?: unknown[];
@@ -1694,6 +2357,8 @@ export interface DesktopAgentLocalizedText {
   en?: string;
   zh?: string;
 }
+
+export type AgentTaskDepth = "quick" | "standard" | "deep";
 
 export interface DesktopAgent {
   id: string;
@@ -2034,6 +2699,82 @@ export interface WorkspaceFilePreview {
   metadata?: Record<string, string | number | boolean | null>;
   mode?: "auto" | "head" | "tail" | "outline";
   outline?: string[];
+  presentationStory?: WorkspacePresentationStory;
+}
+
+export interface WorkspacePresentationStoryItem {
+  text: string;
+  page: number;
+}
+
+export interface WorkspacePresentationStoryQuality {
+  status: "passed" | "failed";
+  checkedAt: string;
+  sourcePageCount: number;
+  agendaItems: number;
+  storySections: number;
+  summaryPoints: number;
+  numericHighlights: number;
+  sourceMappedItems: number;
+  sourceMappingExpected: number;
+  numericSourceMatches: number;
+  numericSourceExpected: number;
+  checks: string[];
+}
+
+export interface WorkspacePresentationStory {
+  title: string;
+  agenda: WorkspacePresentationStoryItem[];
+  storySections: WorkspacePresentationStoryItem[];
+  summaryPoints: WorkspacePresentationStoryItem[];
+  numericHighlights: WorkspacePresentationStoryItem[];
+  quality: WorkspacePresentationStoryQuality;
+}
+
+export interface WorkspaceFileSaveAsRequest {
+  workspacePath: string;
+  path: string;
+  suggestedName?: string;
+  /** Deterministic packaged-test destination. Interactive product calls use the native save dialog. */
+  destinationPath?: string;
+}
+
+export interface WorkspaceFileSaveAsResult {
+  canceled: boolean;
+  sourcePath: string;
+  destinationPath?: string;
+  name: string;
+  extension: string;
+  size: number;
+  sourceHash: string;
+  destinationHash?: string;
+  integrityVerified: boolean;
+  message: string;
+}
+
+export interface WorkspaceFileWriteRequest {
+  workspacePath: string;
+  path: string;
+  content: string;
+  expectedHash: string;
+  mode?: "save" | "overwrite" | "save_as";
+  suggestedName?: string;
+  /** Deterministic packaged-test destination. Interactive product calls use the native save dialog. */
+  destinationPath?: string;
+}
+
+export interface WorkspaceFileWriteResult {
+  status: "saved" | "conflict" | "canceled";
+  path: string;
+  expectedHash: string;
+  currentHash: string;
+  savedHash?: string;
+  destinationPath?: string;
+  savedAs: boolean;
+  overwroteExternal: boolean;
+  externalModifiedAt?: string;
+  externalSize?: number;
+  message: string;
 }
 
 export interface WorkspaceGitDiffRequest {
@@ -2122,6 +2863,7 @@ export interface WorkspaceCheckpointEntry {
   status: WorkspaceFileGitStatus;
   size: number;
   fileHash?: string;
+  versionPath?: string;
   stored: boolean;
   existed: boolean;
   skippedReason?: string;
@@ -2138,10 +2880,22 @@ export interface WorkspaceCheckpoint {
   skippedFileCount: number;
   truncated?: boolean;
   entries: WorkspaceCheckpointEntry[];
-  kind?: "manual" | "agent_run_baseline";
+  kind?: "manual" | "agent_run_baseline" | "artifact_version";
   runId?: string;
+  automatic?: boolean;
+  versionGroupId?: string;
+  versionPhase?: "before" | "after";
+  versionNumber?: number;
+  versionScope?: "workspace" | "explicit_paths";
+  changeReason?: string;
+  objectLabel?: string;
   reviewStatus?: "pending" | "accepted" | "rejected";
   reviewedAt?: string;
+  restoreCount?: number;
+  lastRestoredAt?: string;
+  lastRestoreOperationId?: string;
+  lastRestoreMode?: "whole" | "partial";
+  lastRestoredPaths?: string[];
 }
 
 export interface WorkspaceFileChangeEvent {
@@ -2202,15 +2956,62 @@ export type ManagerPresentationProgressPhase =
   | "pausing"
   | "paused"
   | "resuming"
+  | "interrupted"
   | "cancelling"
   | "cancelled"
   | "completed"
   | "failed";
 
+export type ManagerPresentationWorkStage =
+  | "analyzing"
+  | "planning"
+  | "generating"
+  | "validating";
+
+export interface ManagerPresentationStageArtifact {
+  id: string;
+  requestId: string;
+  stage: "analysis" | "outline";
+  label: string;
+  summary: string;
+  path: string;
+  createdAt: string;
+  taskElapsedMs: number;
+  temporary: true;
+  immutable: true;
+}
+
 export interface ManagerPresentationGenerateRequest {
   requestId: string;
   workspacePath: string;
   sourcePath: string;
+  audience?: ManagerPresentationAudience;
+  requirements?: string[];
+}
+
+export type ManagerPresentationAudience = "non_expert_managers" | "technical_experts";
+
+export interface ManagerPresentationAudienceProfile {
+  audience: ManagerPresentationAudience;
+  goldenFactIds: string[];
+  impactDecisionSignals: number;
+  technicalDetailSignals: number;
+  acronymOccurrences: number;
+  contentHash: string;
+}
+
+export interface ManagerPresentationRequirementUpdateRequest {
+  requestId: string;
+  text: string;
+}
+
+export interface ManagerPresentationRequirementUpdateResult {
+  requestId: string;
+  accepted: boolean;
+  activeStage?: ManagerPresentationWorkStage;
+  scope: "current_unfinished_stages" | "regenerate_required";
+  requirements: string[];
+  message: string;
 }
 
 export interface ManagerPresentationCancelRequest {
@@ -2231,12 +3032,47 @@ export interface ManagerPresentationPauseResult {
   accepted: boolean;
 }
 
-export interface ManagerPresentationProgressEvent {
+export interface ManagerPresentationRecoveryRequest {
+  workspacePath: string;
+  sourcePath: string;
+}
+
+export interface ManagerPresentationRecoveryDecisionRequest extends ManagerPresentationRecoveryRequest {
   requestId: string;
+  decision: "restart" | "abandon";
+}
+
+export interface ManagerPresentationRecoveryDecisionResult {
+  requestId: string;
+  decision: ManagerPresentationRecoveryDecisionRequest["decision"];
+  accepted: boolean;
+}
+
+export interface ManagerPresentationRecoveryResult {
+  requestId: string;
+  workspacePath: string;
+  sourcePath: string;
+  audience?: ManagerPresentationAudience;
   phase: ManagerPresentationProgressPhase;
+  activeStage?: ManagerPresentationWorkStage;
   progress: number;
   message: string;
   outputPath?: string;
+  requirements?: string[];
+  stageArtifacts?: ManagerPresentationStageArtifact[];
+  updatedAt: string;
+}
+
+export interface ManagerPresentationProgressEvent {
+  requestId: string;
+  phase: ManagerPresentationProgressPhase;
+  activeStage?: ManagerPresentationWorkStage;
+  progress: number;
+  message: string;
+  outputPath?: string;
+  failureRecovery?: DesktopFailureRecovery;
+  stageArtifacts?: ManagerPresentationStageArtifact[];
+  deliverySummary?: DesktopTaskDeliverySummary;
 }
 
 export interface ManagerPresentationQualityResult {
@@ -2254,8 +3090,23 @@ export interface ManagerPresentationSourceLink {
   sourcePages: number[];
 }
 
+export interface ManagerPresentationKeyConclusionEvidence {
+  id: string;
+  conclusion: string;
+  sourcePath: string;
+  sourceType: "pdf_page";
+  page: number;
+  evidenceText: string;
+  verified: boolean;
+  citations: DesktopCitationRecord[];
+  numericEvidence: DesktopNumericEvidence[];
+  uncertainty?: DesktopConclusionUncertainty;
+  trust: DesktopTrustAssessment;
+}
+
 export interface ManagerPresentationGenerateResult {
   requestId: string;
+  audience: ManagerPresentationAudience;
   sourcePath: string;
   outputPath: string;
   manifestPath: string;
@@ -2263,7 +3114,13 @@ export interface ManagerPresentationGenerateResult {
   speakerNotesCoverage: number;
   sourcePageCoverage: number;
   sourceLinks: ManagerPresentationSourceLink[];
+  keyConclusions: ManagerPresentationKeyConclusionEvidence[];
+  conclusionTraceabilityRate: number;
+  appliedRequirements: string[];
+  stageArtifacts: ManagerPresentationStageArtifact[];
+  deliverySummary: DesktopTaskDeliverySummary;
   quality: ManagerPresentationQualityResult;
+  audienceProfile: ManagerPresentationAudienceProfile;
 }
 
 export interface PdfPageOpenRequest {
@@ -2350,13 +3207,23 @@ export interface WorkspaceCheckpointCreateRequest {
   label?: string;
   maxFiles?: number;
   maxBytesPerFile?: number;
-  kind?: "manual" | "agent_run_baseline";
+  kind?: "manual" | "agent_run_baseline" | "artifact_version";
   runId?: string;
+  automatic?: boolean;
+  versionGroupId?: string;
+  versionPhase?: "before" | "after";
+  versionNumber?: number;
+  versionScope?: "workspace" | "explicit_paths";
+  changeReason?: string;
+  objectLabel?: string;
+  includePaths?: string[];
 }
 
 export interface WorkspaceCheckpointRestoreRequest {
   workspacePath: string;
   checkpointId: string;
+  operationId?: string;
+  includePaths?: string[];
 }
 
 export interface WorkspaceCheckpointAcceptRequest {
@@ -2472,10 +3339,12 @@ export interface AgentRunEvent {
   requestId: string;
   sessionId: string;
   runId: string;
-  type: "start" | "chunk" | "file_event" | "done" | "error" | "aborted";
+  type: "start" | "chunk" | "status" | "plan_adjustment" | "file_event" | "done" | "error" | "aborted";
   content?: string;
   error?: string;
   fileEvent?: AgentRunFileEvent;
+  planAdjustment?: DesktopTaskPlanAdjustment;
+  failureRecovery?: DesktopFailureRecovery;
 }
 
 export interface AgentRunFileEvent {
@@ -2646,6 +3515,15 @@ export interface DesktopApi {
   resumeManagerPresentation(
     request: ManagerPresentationPauseRequest,
   ): Promise<ManagerPresentationPauseResult>;
+  updateManagerPresentationRequirement(
+    request: ManagerPresentationRequirementUpdateRequest,
+  ): Promise<ManagerPresentationRequirementUpdateResult>;
+  getManagerPresentationRecovery(
+    request: ManagerPresentationRecoveryRequest,
+  ): Promise<ManagerPresentationRecoveryResult | null>;
+  resolveManagerPresentationRecovery(
+    request: ManagerPresentationRecoveryDecisionRequest,
+  ): Promise<ManagerPresentationRecoveryDecisionResult>;
   onManagerPresentationProgress(
     callback: (event: ManagerPresentationProgressEvent) => void,
   ): () => void;
@@ -2653,6 +3531,8 @@ export interface DesktopApi {
     request: WorkspaceFolderSummaryRequest,
   ): Promise<WorkspaceFolderSummaryResult>;
   previewWorkspaceFile(request: WorkspaceFilePreviewRequest): Promise<WorkspaceFilePreview>;
+  saveWorkspaceFileAs(request: WorkspaceFileSaveAsRequest): Promise<WorkspaceFileSaveAsResult>;
+  writeWorkspaceFile(request: WorkspaceFileWriteRequest): Promise<WorkspaceFileWriteResult>;
   getWorkspaceGitDiff(request: WorkspaceGitDiffRequest): Promise<WorkspaceGitDiffResult>;
   getWorkspaceGitFileAtRef(
     request: WorkspaceGitFileAtRefRequest,
@@ -2751,6 +3631,22 @@ export interface DesktopApi {
   clearProjectMemory(
     request: DesktopProjectMemoryClearRequest,
   ): Promise<DesktopProjectMemoryClearResult>;
+  listTeamMemory(
+    request?: DesktopTeamMemoryListRequest,
+  ): Promise<DesktopTeamMemoryEntry[]>;
+  addTeamMemory(
+    request: DesktopTeamMemoryAddRequest,
+  ): Promise<DesktopTeamMemoryEntry>;
+  deleteTeamMemory(
+    request: DesktopTeamMemoryDeleteRequest,
+  ): Promise<DesktopTeamMemoryDeleteResult>;
+  listUserPreferences(): Promise<DesktopUserPreference[]>;
+  upsertUserPreference(
+    request: DesktopUserPreferenceUpsertRequest,
+  ): Promise<DesktopUserPreference>;
+  deleteUserPreference(
+    request: DesktopUserPreferenceDeleteRequest,
+  ): Promise<DesktopUserPreferenceDeleteResult>;
   listCustomCommands(
     request: DesktopCustomCommandListRequest,
   ): Promise<DesktopCustomCommand[]>;
@@ -2794,12 +3690,36 @@ export interface DesktopApi {
   listBackgroundTasks(
     request?: DesktopBackgroundTaskListRequest,
   ): Promise<DesktopBackgroundTask[]>;
+  createShare(request: DesktopShareCreateRequest): Promise<DesktopShareManifest>;
+  inspectShare(request: DesktopShareInspectionRequest): Promise<DesktopShareInspectionResult>;
+  updateSharePermission(request: DesktopSharePermissionUpdateRequest): Promise<DesktopShareManifest>;
+  listShareComments(request: DesktopShareCommentListRequest): Promise<DesktopShareComment[]>;
+  addShareComment(request: DesktopShareCommentAddRequest): Promise<DesktopShareComment>;
+  continueSharedTask(request: DesktopShareContinuationRequest): Promise<DesktopShareContinuationResult>;
+  listShareAudit(request: DesktopShareAuditListRequest): Promise<DesktopShareAuditEntry[]>;
+  listIncomingShares(): Promise<DesktopShareManifest[]>;
+  listOutgoingShares(): Promise<DesktopShareManifest[]>;
+  openSharedObject(request: DesktopSharedObjectOpenRequest): Promise<DesktopSharedObjectOpenResult>;
+  downloadSharedArtifact(request: DesktopSharedArtifactDownloadRequest): Promise<DesktopSharedArtifactDownloadResult>;
   enqueueBackgroundTask(
     request: DesktopBackgroundTaskEnqueueRequest,
   ): Promise<DesktopBackgroundTask>;
   updateBackgroundTask(
     request: DesktopBackgroundTaskUpdateRequest,
   ): Promise<DesktopBackgroundTask>;
+  listReusableTasks(): Promise<DesktopReusableTask[]>;
+  saveReusableTask(
+    request: DesktopReusableTaskSaveRequest,
+  ): Promise<DesktopReusableTask>;
+  prepareReusableTaskRun(
+    request: DesktopReusableTaskRunPrepareRequest,
+  ): Promise<DesktopReusableTaskRunRecipe>;
+  setCompletionNotificationPreference(
+    preference: CompletionNotificationPreference,
+  ): Promise<CompletionNotificationPreference>;
+  onCompletionNotificationClick(
+    callback: (event: CompletionNotificationClickEvent) => void,
+  ): () => void;
   listScheduledTasks(
     request?: DesktopScheduledTaskListRequest,
   ): Promise<DesktopScheduledTask[]>;
@@ -2809,6 +3729,9 @@ export interface DesktopApi {
   updateScheduledTask(
     request: DesktopScheduledTaskUpdateRequest,
   ): Promise<DesktopScheduledTask>;
+  deleteScheduledTask(
+    request: DesktopScheduledTaskDeleteRequest,
+  ): Promise<DesktopScheduledTaskDeleteResult>;
   runDueScheduledTasks(
     request?: DesktopScheduledTaskRunRequest,
   ): Promise<DesktopScheduledTaskRunResult>;

@@ -2,6 +2,7 @@ import type {
   AuthSession,
   AgentRunEvent,
   ChatEvent,
+  CompletionNotificationClickEvent,
   DesktopAgent,
   DesktopBackgroundTask,
   DesktopBackgroundTaskStatus,
@@ -28,10 +29,13 @@ import type {
   DesktopMcpToolExecutionAuditEntry,
   DesktopMcpToolExecutionApprovalResult,
   DesktopProjectMemoryEntry,
+  DesktopUserPreference,
   DesktopProjectSkillDraft,
   DesktopWorkflowTemplate,
   DesktopThread,
   DesktopThreadSnapshot,
+  DesktopTrustAssessment,
+  DesktopTrustStatus,
   DesktopVoiceTranscriptHandoffResult,
   DesktopVoiceTranscriptionEvent,
   DesktopWorkflowRun,
@@ -49,6 +53,7 @@ import type {
   DesktopScheduledTask,
   DesktopScheduledTaskRunItem,
   DesktopScheduledTaskWorkerStatus,
+  DesktopShareManifest,
   InstallProgress,
   TerminalSessionInfo,
   UpdateStatus,
@@ -65,6 +70,18 @@ import type {
 } from "@shared/desktopApi";
 
 type Listener<T> = (value: T) => void;
+
+function mockTrustAssessment(status: DesktopTrustStatus): DesktopTrustAssessment {
+  const canonical = {
+    evidence_sufficient: { label: "依据充分", icon: "check", rule: "verified_source", definition: "结论可由可读取的原始来源直接支持。", action: "可以使用该结论，并保留来源位置。" },
+    needs_confirmation: { label: "需要确认", icon: "question", rule: "provisional_source", definition: "来源已有暂定信息，但关键内容尚未最终确定。", action: "保留待确认措辞，获得正式计划后再更新。" },
+    insufficient_data: { label: "数据不足", icon: "warning", rule: "insufficient_observation", definition: "现有观察范围不足以支持当前结论。", action: "补充数据后再判断。" },
+    source_conflict: { label: "来源冲突", icon: "compare", rule: "conflicting_sources", definition: "多个来源给出互相矛盾的结果。", action: "并列报告双方并重新验证。" },
+    inference: { label: "属于推测", icon: "hypothesis", rule: "inference_only", definition: "结论来自间接推断，尚无直接测量。", action: "完成直接实验后再形成确定结论。" },
+  } as const;
+  const item = canonical[status];
+  return { status, label: item.label, definition: item.definition, reason: "Mock evidence rule matched.", icon: item.icon, recommendedAction: item.action, evidenceRule: item.rule, evidenceIds: [`mock-${status}`], ruleSatisfied: true };
+}
 
 const initialHealth: DesktopHealth = {
   installed: true,
@@ -594,6 +611,7 @@ export function installMockDesktopApi(): void {
   };
   let terminalCounter = 0;
   const chatListeners = new Set<Listener<ChatEvent>>();
+  const completionNotificationClickListeners = new Set<Listener<CompletionNotificationClickEvent>>();
   const voiceTranscriptionListeners = new Set<Listener<DesktopVoiceTranscriptionEvent>>();
   const voiceFixtureTimers = new Map<string, number>();
   const agentRunListeners = new Set<Listener<AgentRunEvent>>();
@@ -743,11 +761,17 @@ export function installMockDesktopApi(): void {
     { threadIds: string[] }
   > = {};
   let projectMemory: DesktopProjectMemoryEntry[] = [];
+  let userPreferences: DesktopUserPreference[] = [];
+  let teamMemory: import("@shared/desktopApi").DesktopTeamMemoryEntry[] = [];
   let customCommands: DesktopCustomCommand[] = [];
   let projectSkillDrafts: DesktopProjectSkillDraft[] = [];
   let mockSyncedWorkflowTemplates: DesktopWorkflowTemplate[] = [];
   let workflowRuns: DesktopWorkflowRun[] = [];
   let backgroundTasks: DesktopBackgroundTask[] = [];
+  let reusableTasks: import("@shared/desktopApi").DesktopReusableTask[] = [];
+  let shares: DesktopShareManifest[] = [];
+  let shareComments: import("@shared/desktopApi").DesktopShareComment[] = [];
+  let shareAudit: import("@shared/desktopApi").DesktopShareAuditEntry[] = [];
   let scheduledTasks: DesktopScheduledTask[] = [
     {
       id: "mock-scheduled-task-daily-health",
@@ -952,14 +976,18 @@ export function installMockDesktopApi(): void {
   function getMockNextScheduledRunAt(
     fromIso: string,
     cadence: DesktopScheduledTask["cadence"],
+    afterIso = fromIso,
   ): string | undefined {
     if (cadence === "manual") return undefined;
     const from = new Date(fromIso);
     if (Number.isNaN(from.getTime())) return undefined;
     const next = new Date(from.getTime());
-    if (cadence === "hourly") next.setHours(next.getHours() + 1);
-    if (cadence === "daily") next.setDate(next.getDate() + 1);
-    if (cadence === "weekly") next.setDate(next.getDate() + 7);
+    const after = new Date(afterIso);
+    do {
+      if (cadence === "hourly") next.setHours(next.getHours() + 1);
+      if (cadence === "daily") next.setDate(next.getDate() + 1);
+      if (cadence === "weekly") next.setDate(next.getDate() + 7);
+    } while (!Number.isNaN(after.getTime()) && next.getTime() <= after.getTime());
     return next.toISOString();
   }
 
@@ -1345,6 +1373,7 @@ export function installMockDesktopApi(): void {
       const outputPath = `${request.workspacePath}\\artifacts\\mock-manager-zh.pptx`;
       return {
         requestId: request.requestId,
+        audience: request.audience ?? "non_expert_managers",
         sourcePath: request.sourcePath,
         outputPath,
         manifestPath: outputPath.replace(/\.pptx$/i, ".provenance.json"),
@@ -1357,6 +1386,27 @@ export function installMockDesktopApi(): void {
           { slide: 7, role: "hl_lhc_requirements", title: "带宽模型", sourcePages: [42, 43] },
           { slide: 8, role: "conclusions", title: "总结", sourcePages: [47] },
         ],
+        keyConclusions: [
+          { id: "hl_lhc_data_growth_10x", conclusion: "HL-LHC 将使实验数据产量增长约 10 倍。", sourcePath: request.sourcePath, sourceType: "pdf_page", page: 8, evidenceText: "increasing the volume of data produced by the experiments by a factor of 10", verified: true, citations: [{ id: "c1", title: "Distributed computing for High Energy Physics", authors: ["Edoardo Martelli"], sourcePath: request.sourcePath, locatorType: "pdf_page", locator: "p.8", excerpt: "increasing the volume of data produced by the experiments by a factor of 10", relation: "supports", supportScore: 1 }], numericEvidence: [{ id: "n1", label: "HL-LHC 数据增长倍数", displayValue: "10×", reportedValue: 10, unit: "×", kind: "direct", sourcePath: request.sourcePath, locatorType: "pdf_page", locator: "p.8", sourceValues: [{ label: "原文增长倍数", value: 10, unit: "×", sourcePath: request.sourcePath, locator: "p.8", rawText: "factor of 10" }], formula: "直接读取原文数值 10", recalculatedValue: 10, tolerance: 0, status: "verified", explanation: "报告值与原文一致。" }], trust: mockTrustAssessment("evidence_sufficient") },
+          { id: "minimal_bandwidth_4_8_tbps", conclusion: "HL-LHC 最低网络模型预计需要 4.8 Tbps 带宽。", sourcePath: request.sourcePath, sourceType: "pdf_page", page: 42, evidenceText: "4.8Tbps expected HL-LHC bandwidth", verified: true, citations: [{ id: "c2", title: "Distributed computing for High Energy Physics", authors: ["Edoardo Martelli"], sourcePath: request.sourcePath, locatorType: "pdf_page", locator: "p.42", excerpt: "4.8Tbps expected HL-LHC bandwidth", relation: "supports", supportScore: 1 }], numericEvidence: [{ id: "n2", label: "Minimal Model 带宽", displayValue: "4.8 Tbps", reportedValue: 4.8, unit: "Tbps", kind: "calculated", sourcePath: request.sourcePath, locatorType: "calculation", locator: "p.42 · Minimal Model", sourceValues: [{ label: "基础流量", value: 1.2, unit: "Tbps", sourcePath: request.sourcePath, locator: "p.42", rawText: "sum of experiment rates" }], formula: "1.2 × 2 × 2", recalculatedValue: 4.8, tolerance: 0.000001, status: "verified", explanation: "复算结果与报告值一致。" }], trust: mockTrustAssessment("evidence_sufficient") },
+          { id: "flexible_bandwidth_9_6_tbps", conclusion: "HL-LHC 灵活网络模型预计需要 9.6 Tbps 带宽。", sourcePath: request.sourcePath, sourceType: "pdf_page", page: 42, evidenceText: "9.6Tbps expected HL-LHC bandwidth", verified: true, citations: [{ id: "c3", title: "Distributed computing for High Energy Physics", authors: ["Edoardo Martelli"], sourcePath: request.sourcePath, locatorType: "pdf_page", locator: "p.42", excerpt: "9.6Tbps expected HL-LHC bandwidth", relation: "supports", supportScore: 1 }], numericEvidence: [{ id: "n3", label: "Flexible Model 带宽", displayValue: "9.6 Tbps", reportedValue: 9.6, unit: "Tbps", kind: "calculated", sourcePath: request.sourcePath, locatorType: "calculation", locator: "p.42 · Flexible Model", sourceValues: [{ label: "Minimal Model", value: 4.8, unit: "Tbps", sourcePath: request.sourcePath, locator: "p.42", rawText: "4.8Tbps" }], formula: "4.8 × 2", recalculatedValue: 9.6, tolerance: 0.000001, status: "verified", explanation: "复算结果与报告值一致。" }], trust: mockTrustAssessment("evidence_sufficient") },
+          { id: "data_challenge_2027_50_percent", conclusion: "2027 年 Data Challenge 计划验证 HL-LHC 需求的 50%。", sourcePath: request.sourcePath, sourceType: "pdf_page", page: 43, evidenceText: "2027: 50% of HL-LHC requirements", verified: true, citations: [{ id: "c4", title: "Distributed computing for High Energy Physics", authors: ["Edoardo Martelli"], sourcePath: request.sourcePath, locatorType: "pdf_page", locator: "p.43", excerpt: "2027: 50% of HL-LHC requirements", relation: "supports", supportScore: 1 }], numericEvidence: [{ id: "n4", label: "2027 Data Challenge 目标", displayValue: "50%", reportedValue: 50, unit: "%", kind: "direct", sourcePath: request.sourcePath, locatorType: "pdf_page", locator: "p.43", sourceValues: [{ label: "原文目标比例", value: 50, unit: "%", sourcePath: request.sourcePath, locator: "p.43", rawText: "2027: 50%" }], formula: "直接读取 50", recalculatedValue: 50, tolerance: 0, status: "verified", explanation: "报告值与原文一致。" }], trust: mockTrustAssessment("evidence_sufficient") },
+          { id: "data_challenge_2029_100_percent_uncertain", conclusion: "2029 年 Data Challenge 暂以验证 100% HL-LHC 需求为目标，日期和比例仍待确认。", sourcePath: request.sourcePath, sourceType: "pdf_page", page: 43, evidenceText: "2029: 100% of HL-LHC requirements (date and % to be confirmed)", verified: true, citations: [{ id: "c5", title: "Distributed computing for High Energy Physics", authors: ["Edoardo Martelli"], sourcePath: request.sourcePath, locatorType: "pdf_page", locator: "p.43", excerpt: "2029: 100% of HL-LHC requirements (date and % to be confirmed)", relation: "supports", supportScore: 1 }], numericEvidence: [{ id: "n5", label: "2029 Data Challenge 暂定目标", displayValue: "100%（待确认）", reportedValue: 100, unit: "%", kind: "direct", sourcePath: request.sourcePath, locatorType: "pdf_page", locator: "p.43", sourceValues: [{ label: "原文暂定目标", value: 100, unit: "%", sourcePath: request.sourcePath, locator: "p.43", rawText: "100% (date and % to be confirmed)" }], formula: "原文暂定值 100", tolerance: 0, status: "unverifiable", explanation: "原文明确标注日期和比例待确认。" }], uncertainty: { status: "insufficient_data", label: "计划数据不足 · 日期与比例待确认", explanation: "来源明确说明日期和比例仍待确认，不能表达为确定承诺。", recommendedAction: "等待正式计划更新并保留暂定措辞。", requiresQualification: true, qualifyingLanguage: ["暂以", "仍待确认"], claims: [{ id: "u1", position: "暂定目标", sourcePath: request.sourcePath, locatorType: "pdf_page", locator: "p.43", excerpt: "2029: 100% of HL-LHC requirements (date and % to be confirmed)", stance: "insufficient" }] }, trust: mockTrustAssessment("needs_confirmation") },
+        ],
+        conclusionTraceabilityRate: 1,
+        appliedRequirements: request.requirements ?? [],
+        stageArtifacts: [],
+        deliverySummary: {
+          findingSummary: "已生成管理者版 PPT。",
+          importance: "high",
+          importanceReason: "结果包含需要管理层关注的资源规划。",
+          artifacts: [{ id: "mock-pptx", label: "管理者版 PPT", path: outputPath, kind: "presentation" }],
+          suggestedAction: "打开 PPT 并核对关键数字。",
+          workSummary: "已分析 PDF 并生成演示文稿。",
+          coreConclusion: "需要提前准备计算和网络能力。",
+          verification: "自动结构验收通过。",
+          remainingRisks: "时间目标仍需确认。",
+        },
         quality: {
           ok: true,
           checks: { mock: true },
@@ -1364,11 +1414,29 @@ export function installMockDesktopApi(): void {
           mediaCount: 0,
           sourcePageCoverage: 1,
         },
+        audienceProfile: {
+          audience: request.audience ?? "non_expert_managers",
+          goldenFactIds: ["data_growth_10x", "minimal_4_8_tbps", "flexible_9_6_tbps", "dc_2027_50", "dc_2029_100"],
+          impactDecisionSignals: request.audience === "technical_experts" ? 1 : 8,
+          technicalDetailSignals: request.audience === "technical_experts" ? 12 : 4,
+          acronymOccurrences: request.audience === "technical_experts" ? 14 : 5,
+          contentHash: request.audience === "technical_experts" ? "mock-technical" : "mock-manager",
+        },
       };
     },
     cancelManagerPresentation: async (request) => ({ requestId: request.requestId, accepted: true }),
     pauseManagerPresentation: async (request) => ({ requestId: request.requestId, accepted: true }),
     resumeManagerPresentation: async (request) => ({ requestId: request.requestId, accepted: true }),
+    updateManagerPresentationRequirement: async (request) => ({
+      requestId: request.requestId,
+      accepted: true,
+      activeStage: "planning",
+      scope: "current_unfinished_stages",
+      requirements: [request.text],
+      message: "已应用到当前任务尚未完成的规划、生成和验收阶段。",
+    }),
+    getManagerPresentationRecovery: async () => null,
+    resolveManagerPresentationRecovery: async (request) => ({ requestId: request.requestId, decision: request.decision, accepted: true }),
     onManagerPresentationProgress: () => () => undefined,
     listWorkspaces: async () => workspaces,
     createWorkspace: async (request) => {
@@ -1802,6 +1870,29 @@ export function installMockDesktopApi(): void {
       createMockWorkspaceFolderSummary(request.path),
     previewWorkspaceFile: async (request) =>
       createMockWorkspacePreview(request.workspacePath, request.path, request.mode),
+    saveWorkspaceFileAs: async (request) => ({
+      canceled: false,
+      sourcePath: request.path,
+      destinationPath: request.destinationPath || `C:\\Users\\Demo\\Downloads\\${request.suggestedName || "result.md"}`,
+      name: request.suggestedName || "result.md",
+      extension: ".md",
+      size: 128,
+      sourceHash: "sha256:mock-result",
+      destinationHash: "sha256:mock-result",
+      integrityVerified: true,
+      message: "Mock file copy saved and verified.",
+    }),
+    writeWorkspaceFile: async (request) => ({
+      status: "saved",
+      path: request.path,
+      expectedHash: request.expectedHash,
+      currentHash: request.expectedHash,
+      savedHash: "sha256:mock-safe-write",
+      destinationPath: request.mode === "save_as" ? request.destinationPath || `C:\\Users\\Demo\\Downloads\\${request.suggestedName || "safe-copy.md"}` : request.path,
+      savedAs: request.mode === "save_as",
+      overwroteExternal: request.mode === "overwrite",
+      message: "Saved with external-change protection.",
+    }),
     getWorkspaceGitDiff: async (request) =>
       createMockWorkspaceDiff(request.workspacePath, request.path, request.staged),
     getWorkspaceGitFileAtRef: async (request) =>
@@ -1853,6 +1944,7 @@ export function installMockDesktopApi(): void {
             status: "modified",
             size: 1200,
             fileHash: "sha256:mock-app",
+            versionPath: `${workspacePath}\\.drsai\\versions\\${Date.now()}-App.tsx`,
             stored: true,
             existed: true,
           },
@@ -1862,12 +1954,20 @@ export function installMockDesktopApi(): void {
             status: "untracked",
             size: 800,
             fileHash: "sha256:mock-doc",
+            versionPath: `${workspacePath}\\.drsai\\versions\\${Date.now()}-workspace-context.md`,
             stored: true,
             existed: true,
           },
         ],
         kind: request.kind ?? "manual",
         ...(request.runId ? { runId: request.runId } : {}),
+        ...(request.automatic ? { automatic: true } : {}),
+        ...(request.versionGroupId ? { versionGroupId: request.versionGroupId } : {}),
+        ...(request.versionPhase ? { versionPhase: request.versionPhase } : {}),
+        ...(request.versionNumber ? { versionNumber: request.versionNumber } : {}),
+        ...(request.versionScope ? { versionScope: request.versionScope } : {}),
+        ...(request.changeReason ? { changeReason: request.changeReason } : {}),
+        ...(request.objectLabel ? { objectLabel: request.objectLabel } : {}),
         ...(request.kind === "agent_run_baseline" ? { reviewStatus: "pending" as const } : {}),
       };
       workspaceCheckpoints = [
@@ -2352,6 +2452,37 @@ export function installMockDesktopApi(): void {
         workspacePath: request.workspacePath,
         removedCount: before - projectMemory.length,
       };
+    },
+    listUserPreferences: async () => userPreferences.slice().sort((left, right) => left.category.localeCompare(right.category)),
+    upsertUserPreference: async (request) => {
+      const existing = userPreferences.find((item) => item.category === request.category);
+      const now = new Date().toISOString();
+      const preference: DesktopUserPreference = {
+        category: request.category,
+        value: request.value,
+        source: "explicit_user_request",
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+      };
+      userPreferences = [preference, ...userPreferences.filter((item) => item.category !== preference.category)];
+      return preference;
+    },
+    deleteUserPreference: async (request) => {
+      const before = userPreferences.length;
+      userPreferences = userPreferences.filter((item) => item.category !== request.category);
+      return { category: request.category, removed: userPreferences.length !== before };
+    },
+    listTeamMemory: async (request = {}) => teamMemory.filter((entry) => !request.teamId || entry.teamId === request.teamId).slice(0, request.limit ?? 20),
+    addTeamMemory: async (request) => {
+      const now = new Date().toISOString();
+      const entry = { id: `team-memory-${crypto.randomUUID()}`, teamId: request.teamId, content: request.content, createdBy: "mock-user", createdAt: now, updatedAt: now };
+      teamMemory = [entry, ...teamMemory];
+      return entry;
+    },
+    deleteTeamMemory: async (request) => {
+      const before = teamMemory.length;
+      teamMemory = teamMemory.filter((entry) => !(entry.teamId === request.teamId && entry.id === request.entryId));
+      return { teamId: request.teamId, removedCount: before - teamMemory.length };
     },
     listCustomCommands: async (request) =>
       customCommands
@@ -2861,6 +2992,7 @@ export function installMockDesktopApi(): void {
         ...(request.targetId ? { targetId: request.targetId } : {}),
         ...(request.approvalId ? { approvalId: request.approvalId } : {}),
         ...(request.currentStep ? { currentStep: request.currentStep } : {}),
+        ...(request.planSteps?.length ? { planSteps: request.planSteps.map((step) => ({ ...step })) } : {}),
         message: request.message ?? "Mock background task is queued.",
         verification:
           request.verification ??
@@ -2879,6 +3011,9 @@ export function installMockDesktopApi(): void {
         ...(request.currentStep !== undefined
           ? { currentStep: request.currentStep }
           : {}),
+        ...(request.planSteps !== undefined
+          ? { planSteps: request.planSteps.map((step) => ({ ...step })) }
+          : {}),
         message: request.message ?? task.message,
         verification: request.verification ?? task.verification,
       };
@@ -2887,6 +3022,122 @@ export function installMockDesktopApi(): void {
       );
       return updated;
     },
+    createShare: async (request) => {
+      const source = backgroundTasks.find((item) => item.id === request.sourceTaskId);
+      if (!source?.deliverySummary) throw new Error("Only a completed task with results can be shared.");
+      const selected = request.scope === "result_only" ? source.deliverySummary.artifacts.find((item) => item.id === request.artifactId) : undefined;
+      if (request.scope === "result_only" && !selected) throw new Error("The selected result was not found in the source task.");
+      const artifacts = selected ? [selected] : source.deliverySummary.artifacts;
+      const manifest: DesktopShareManifest = {
+        id: `share:${crypto.randomUUID()}`,
+        ownerAccount: authSession.user?.email || "developer@opendrsai.local",
+        recipientAccount: request.recipientAccount.trim().toLowerCase(),
+        scope: request.scope,
+        sourceTaskId: source.id,
+        ...(selected ? { selectedArtifactId: selected.id } : {}),
+        objects: [
+          ...(request.scope === "complete_task" ? [{ objectType: "task" as const, objectId: source.id, label: source.title }] : []),
+          ...artifacts.map((artifact) => ({ objectType: "artifact" as const, objectId: artifact.id, label: artifact.label, kind: artifact.kind, bytes: 1, sha256: "mock-sha256" })),
+        ],
+        createdAt: new Date().toISOString(),
+        status: "active",
+        permission: request.permission ?? "view",
+      };
+      shares = [manifest, ...shares];
+      return manifest;
+    },
+    inspectShare: async (request) => ({
+      sourceTaskId: request.sourceTaskId,
+      scope: request.scope,
+      ...(request.artifactId ? { artifactId: request.artifactId } : {}),
+      scannedArtifactCount: 0,
+      findings: [],
+      requiresResolution: false,
+    }),
+    updateSharePermission: async (request) => {
+      const share = shares.find((item) => item.id === request.shareId);
+      if (!share) throw new Error("Mock share was not found.");
+      const updated = { ...share, permission: request.permission };
+      shares = shares.map((item) => item.id === updated.id ? updated : item);
+      return updated;
+    },
+    listShareComments: async (request) => shareComments.filter((item) => item.shareId === request.shareId).map((item) => ({ ...item })),
+    addShareComment: async (request) => {
+      const share = shares.find((item) => item.id === request.shareId && item.recipientAccount === (authSession.user?.email || "").toLowerCase());
+      if (!share || share.permission === "view") throw new Error("The current share permission does not allow comments.");
+      const comment = { id: `share-comment:${crypto.randomUUID()}`, shareId: share.id, authorAccount: authSession.user?.email || "mock@example.org", body: request.body, createdAt: new Date().toISOString() };
+      shareComments = [...shareComments, comment];
+      return comment;
+    },
+    continueSharedTask: async (request) => {
+      const share = shares.find((item) => item.id === request.shareId && item.recipientAccount === (authSession.user?.email || "").toLowerCase());
+      if (!share || share.permission !== "continue") throw new Error("The current share permission does not allow continued processing.");
+      return { id: `share-continuation:${crypto.randomUUID()}`, shareId: share.id, requesterAccount: authSession.user?.email || "mock@example.org", sourceTaskId: share.sourceTaskId, artifactIds: share.objects.filter((item) => item.objectType === "artifact").map((item) => item.objectId), status: "requested" as const, createdAt: new Date().toISOString() };
+    },
+    listShareAudit: async (request) => shareAudit.filter((item) => item.shareId === request.shareId).map((item) => ({ ...item })),
+    listIncomingShares: async () => shares.filter((share) => share.recipientAccount === (authSession.user?.email || "").toLowerCase()),
+    listOutgoingShares: async () => shares.filter((share) => share.ownerAccount === (authSession.user?.email || "")),
+    openSharedObject: async (request) => {
+      const share = shares.find((item) => item.id === request.shareId && item.recipientAccount === (authSession.user?.email || "").toLowerCase());
+      const object = share?.objects.find((item) => item.objectType === request.objectType && item.objectId === request.objectId);
+      if (!share || !object) throw new Error("This object is not included in the share manifest.");
+      return request.objectType === "task"
+        ? { shareId: share.id, objectType: "task" as const, objectId: object.objectId, label: object.label, authorized: true as const, task: { id: object.objectId, title: object.label, status: "completed" as const, updatedAt: share.createdAt, artifactIds: share.objects.filter((item) => item.objectType === "artifact").map((item) => item.objectId) } }
+        : { shareId: share.id, objectType: "artifact" as const, objectId: object.objectId, label: object.label, authorized: true as const, artifact: { id: object.objectId, label: object.label, kind: object.kind || "file", bytes: object.bytes || 1, sha256: object.sha256 || "mock-sha256" } };
+    },
+    downloadSharedArtifact: async (request) => {
+      const recipient = (authSession.user?.email || "").toLowerCase();
+      const share = shares.find((item) => item.id === request.shareId && item.recipientAccount === recipient);
+      const object = share?.objects.find((item) => item.objectType === "artifact" && item.objectId === request.objectId);
+      if (!share || !object) throw new Error("This result is not included in the share manifest.");
+      const content = `Mock shared result: ${object.label}`;
+      return {
+        shareId: share.id,
+        artifactId: object.objectId,
+        fileName: object.label,
+        kind: object.kind || "file",
+        bytes: content.length,
+        sha256: object.sha256 || "mock-sha256",
+        base64: btoa(content),
+      };
+    },
+    listReusableTasks: async () => reusableTasks.map((item) => ({ ...item, inputs: item.inputs.map((input) => ({ ...input })), fixedRules: [...item.fixedRules], savedAdjustments: { ...item.savedAdjustments, checkItems: [...item.savedAdjustments.checkItems] } })),
+    saveReusableTask: async (request) => {
+      const source = backgroundTasks.find((item) => item.id === request.sourceTaskId);
+      if (!source || source.status !== "completed" || !source.deliverySummary?.artifacts.length) throw new Error("Only a completed task with a saved result can be made reusable.");
+      const now = new Date().toISOString();
+      const existing = reusableTasks.find((item) => item.name.toLowerCase() === request.name.toLowerCase());
+      const task: import("@shared/desktopApi").DesktopReusableTask = {
+        id: existing?.id ?? `reusable-task-${crypto.randomUUID()}`,
+        name: request.name,
+        sourceTaskId: source.id,
+        sourceTaskTitle: source.title,
+        ...(source.workspacePath ? { sourceWorkspacePath: source.workspacePath } : {}),
+        taskTemplate: source.title,
+        inputs: [{ id: "primary_input", label: "Primary input", kind: "file", required: true, originalValue: "" }],
+        fixedRules: [...(source.planSteps ?? []).map((step) => `${step.phase}: ${step.title}`), source.verification],
+        savedAdjustments: existing?.savedAdjustments ?? { checkItems: [] },
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+        runCount: existing?.runCount ?? 0,
+      };
+      reusableTasks = [task, ...reusableTasks.filter((item) => item.id !== task.id)];
+      return task;
+    },
+    prepareReusableTaskRun: async (request) => {
+      const task = reusableTasks.find((item) => item.id === request.reusableTaskId);
+      if (!task) throw new Error("Reusable task was not found for the signed-in user.");
+      const now = new Date().toISOString();
+      const inputs = task.inputs.map((input) => ({ id: input.id, label: input.label, path: request.inputs[input.id], sha256: "mock-fresh-input", bytes: 1 }));
+      reusableTasks = reusableTasks.map((item) => item.id === task.id ? { ...item, runCount: item.runCount + 1, lastRunAt: now, lastInputFingerprint: "mock-fresh-input", updatedAt: now, ...(request.adjustmentScope === "update_template" ? { savedAdjustments: request.adjustments } : {}) } : item);
+      return { id: `reusable-run-${crypto.randomUUID()}`, reusableTaskId: task.id, reusableTaskName: task.name, workspacePath: request.workspacePath, resolvedTask: `Run reusable task: ${task.name}\nReplacement inputs:\n${inputs.map((input) => input.path).join("\n")}\nRun adjustments: ${JSON.stringify(request.adjustments)}\nScope: ${request.adjustmentScope}\nFreshness requirement: ignore all earlier outputs and caches.`, inputs, fixedRules: [...task.fixedRules], adjustments: request.adjustments, adjustmentScope: request.adjustmentScope, cachePolicy: "force_fresh_input_read", createdAt: now };
+    },
+    setCompletionNotificationPreference: async (preference) => ({
+      enabled: preference.enabled === true,
+      language: preference.language === "en" ? "en" : "zh",
+    }),
+    onCompletionNotificationClick: (callback) =>
+      subscribe(completionNotificationClickListeners, callback),
     listScheduledTasks: async (request) =>
       scheduledTasks
         .filter(
@@ -2912,12 +3163,16 @@ export function installMockDesktopApi(): void {
           : {}),
         ...(request.nextRunAt ? { nextRunAt: request.nextRunAt } : {}),
         approvalRequired: request.approvalRequired ?? true,
+        missedRunPolicy: "run_once_immediately",
         message:
           request.message ??
           "Mock scheduled task is configured for future trigger wiring.",
         verification:
           request.verification ??
           "Mock scheduled task state is verified through the scheduler panel.",
+        ...(request.userDefinition
+          ? { userDefinition: { ...request.userDefinition } }
+          : {}),
       };
       scheduledTasks = [task, ...scheduledTasks].slice(0, 50);
       return task;
@@ -2928,15 +3183,36 @@ export function installMockDesktopApi(): void {
       const updated: DesktopScheduledTask = {
         ...task,
         status: request.status,
+        title: request.title ?? task.title,
+        cadence: request.cadence ?? task.cadence,
+        target: request.target ?? task.target,
         updatedAt: new Date().toISOString(),
         ...(request.nextRunAt !== undefined ? { nextRunAt: request.nextRunAt } : {}),
         message: request.message ?? task.message,
         verification: request.verification ?? task.verification,
+        ...(request.userDefinition
+          ? { userDefinition: { ...request.userDefinition } }
+          : {}),
       };
       scheduledTasks = scheduledTasks.map((item) =>
         item.id === updated.id ? updated : item,
       );
       return updated;
+    },
+    deleteScheduledTask: async (request) => {
+      const task = scheduledTasks.find((item) => item.id === request.taskId);
+      scheduledTasks = scheduledTasks.filter((item) => item.id !== request.taskId);
+      return {
+        taskId: request.taskId,
+        removed: Boolean(task),
+        historyPolicy: "retain_results" as const,
+        ...(task?.activeWorkflowRunId
+          ? { retainedWorkflowRunId: task.activeWorkflowRunId }
+          : {}),
+        message: task
+          ? "Future runs were deleted. Historical results remain available."
+          : "Scheduled task was already absent. Historical results remain available.",
+      };
     },
     runDueScheduledTasks: async (request) => {
       const now = new Date(request?.now ?? new Date().toISOString());
@@ -2955,6 +3231,7 @@ export function installMockDesktopApi(): void {
       const limit = request?.limit ?? 50;
       const items: DesktopScheduledTaskRunItem[] = [];
       const runs: DesktopWorkflowRun[] = [];
+      const triggerAudits = new Map<string, NonNullable<DesktopScheduledTask["lastTriggerAudit"]>>();
       for (const task of scheduledTasks) {
         if (items.length >= limit) break;
         if (request?.workspacePath && task.workspacePath !== request.workspacePath) {
@@ -2968,7 +3245,19 @@ export function installMockDesktopApi(): void {
         ) {
           continue;
         }
-        const nextRunAt = getMockNextScheduledRunAt(generatedAt, task.cadence);
+        const scheduledFor = task.nextRunAt;
+        const nextRunAt = getMockNextScheduledRunAt(scheduledFor, task.cadence, generatedAt);
+        const missedByMs = Math.max(0, Date.parse(generatedAt) - Date.parse(scheduledFor));
+        triggerAudits.set(task.id, {
+          triggerKey: `mock-${task.id}-${scheduledFor}`,
+          scheduledFor,
+          triggeredAt: generatedAt,
+          missed: missedByMs > 1000,
+          missedByMs,
+          missedRunPolicy: "run_once_immediately",
+          timezone: task.userDefinition?.timezone || "UTC",
+          daylightSavingPolicy: "follow_timezone_wall_clock",
+        });
         const activeRun = task.activeWorkflowRunId
           ? workflowRuns
               .map(applyMockRestartResumePlan)
@@ -3158,6 +3447,14 @@ export function installMockDesktopApi(): void {
             : item,
         );
       }
+      for (const item of items) {
+        const triggerAudit = triggerAudits.get(item.taskId);
+        if (triggerAudit) item.triggerAudit = triggerAudit;
+      }
+      scheduledTasks = scheduledTasks.map((task) => {
+        const lastTriggerAudit = triggerAudits.get(task.id);
+        return lastTriggerAudit ? { ...task, lastTriggerAudit } : task;
+      });
       const result = {
         generatedAt,
         checked: items.length,

@@ -7,6 +7,8 @@ import type {
   AuthSession,
   ChatEvent,
   ChatRequest,
+  CompletionNotificationClickEvent,
+  CompletionNotificationPreference,
   BrowserActionRequest,
   BrowserActionResult,
   BrowserTaskApprovalRequest,
@@ -25,6 +27,10 @@ import type {
   DesktopBackgroundTaskEnqueueRequest,
   DesktopBackgroundTaskListRequest,
   DesktopBackgroundTaskUpdateRequest,
+  DesktopReusableTask,
+  DesktopReusableTaskRunPrepareRequest,
+  DesktopReusableTaskRunRecipe,
+  DesktopReusableTaskSaveRequest,
   DesktopChannelAdapterConfigureRequest,
   DesktopChannelAdapterConfigureResult,
   DesktopChannelAdapterAuthStartRequest,
@@ -98,17 +104,44 @@ import type {
   DesktopVoiceTranscriptionEvent,
   DesktopScheduledTask,
   DesktopScheduledTaskCreateRequest,
+  DesktopScheduledTaskDeleteRequest,
+  DesktopScheduledTaskDeleteResult,
   DesktopScheduledTaskListRequest,
   DesktopScheduledTaskRunRequest,
   DesktopScheduledTaskRunResult,
   DesktopScheduledTaskWorkerStatus,
   DesktopScheduledTaskUpdateRequest,
+  DesktopShareCreateRequest,
+  DesktopShareInspectionRequest,
+  DesktopShareInspectionResult,
+  DesktopSharePermissionUpdateRequest,
+  DesktopShareComment,
+  DesktopShareCommentAddRequest,
+  DesktopShareCommentListRequest,
+  DesktopShareContinuationRequest,
+  DesktopShareContinuationResult,
+  DesktopShareAuditEntry,
+  DesktopShareAuditListRequest,
+  DesktopShareManifest,
+  DesktopSharedObjectOpenRequest,
+  DesktopSharedObjectOpenResult,
+  DesktopSharedArtifactDownloadRequest,
+  DesktopSharedArtifactDownloadResult,
   DesktopProjectMemoryAddRequest,
   DesktopProjectMemoryClearRequest,
   DesktopProjectMemoryClearResult,
   DesktopProjectMemoryEntry,
   DesktopProjectMemoryListRequest,
   DesktopProjectMemoryUpdateRequest,
+  DesktopUserPreference,
+  DesktopUserPreferenceDeleteRequest,
+  DesktopUserPreferenceDeleteResult,
+  DesktopUserPreferenceUpsertRequest,
+  DesktopTeamMemoryAddRequest,
+  DesktopTeamMemoryDeleteRequest,
+  DesktopTeamMemoryDeleteResult,
+  DesktopTeamMemoryEntry,
+  DesktopTeamMemoryListRequest,
   DesktopProjectSkillDraft,
   DesktopProjectSkillDraftCreateRequest,
   DesktopProjectSkillDraftListRequest,
@@ -140,8 +173,14 @@ import type {
   ManagerPresentationCancelResult,
   ManagerPresentationPauseRequest,
   ManagerPresentationPauseResult,
+  ManagerPresentationRecoveryRequest,
+  ManagerPresentationRecoveryResult,
+  ManagerPresentationRecoveryDecisionRequest,
+  ManagerPresentationRecoveryDecisionResult,
   ManagerPresentationGenerateRequest,
   ManagerPresentationGenerateResult,
+  ManagerPresentationRequirementUpdateRequest,
+  ManagerPresentationRequirementUpdateResult,
   ManagerPresentationProgressEvent,
   PdfPageOpenRequest,
   PdfPageOpenResult,
@@ -163,6 +202,10 @@ import type {
   WorkspaceCheckpointRestoreResult,
   WorkspaceFilePreview,
   WorkspaceFilePreviewRequest,
+  WorkspaceFileSaveAsRequest,
+  WorkspaceFileSaveAsResult,
+  WorkspaceFileWriteRequest,
+  WorkspaceFileWriteResult,
   WorkspaceFileTreeRequest,
   WorkspaceFileTreeResult,
   WorkspaceFolderSummaryRequest,
@@ -296,6 +339,18 @@ const api: DesktopApi = {
     request: ManagerPresentationPauseRequest,
   ): Promise<ManagerPresentationPauseResult> =>
     ipcRenderer.invoke("desktop:manager-presentation-resume", request),
+  updateManagerPresentationRequirement: (
+    request: ManagerPresentationRequirementUpdateRequest,
+  ): Promise<ManagerPresentationRequirementUpdateResult> =>
+    ipcRenderer.invoke("desktop:manager-presentation-requirement-update", request),
+  getManagerPresentationRecovery: (
+    request: ManagerPresentationRecoveryRequest,
+  ): Promise<ManagerPresentationRecoveryResult | null> =>
+    ipcRenderer.invoke("desktop:manager-presentation-recovery", request),
+  resolveManagerPresentationRecovery: (
+    request: ManagerPresentationRecoveryDecisionRequest,
+  ): Promise<ManagerPresentationRecoveryDecisionResult> =>
+    ipcRenderer.invoke("desktop:manager-presentation-recovery-resolve", request),
   onManagerPresentationProgress: (
     callback: (event: ManagerPresentationProgressEvent) => void,
   ) => {
@@ -381,6 +436,14 @@ const api: DesktopApi = {
     request: WorkspaceFilePreviewRequest,
   ): Promise<WorkspaceFilePreview> =>
     ipcRenderer.invoke("desktop:workspace-file-preview", request),
+  saveWorkspaceFileAs: (
+    request: WorkspaceFileSaveAsRequest,
+  ): Promise<WorkspaceFileSaveAsResult> =>
+    ipcRenderer.invoke("desktop:workspace-file-save-as", request),
+  writeWorkspaceFile: (
+    request: WorkspaceFileWriteRequest,
+  ): Promise<WorkspaceFileWriteResult> =>
+    ipcRenderer.invoke("desktop:workspace-file-write", request),
   getWorkspaceGitDiff: (
     request: WorkspaceGitDiffRequest,
   ): Promise<WorkspaceGitDiffResult> =>
@@ -481,6 +544,28 @@ const api: DesktopApi = {
     request: DesktopProjectMemoryClearRequest,
   ): Promise<DesktopProjectMemoryClearResult> =>
     ipcRenderer.invoke("desktop:project-memory-clear", request),
+  listUserPreferences: (): Promise<DesktopUserPreference[]> =>
+    ipcRenderer.invoke("desktop:user-preferences-list"),
+  upsertUserPreference: (
+    request: DesktopUserPreferenceUpsertRequest,
+  ): Promise<DesktopUserPreference> =>
+    ipcRenderer.invoke("desktop:user-preference-upsert", request),
+  deleteUserPreference: (
+    request: DesktopUserPreferenceDeleteRequest,
+  ): Promise<DesktopUserPreferenceDeleteResult> =>
+    ipcRenderer.invoke("desktop:user-preference-delete", request),
+  listTeamMemory: (
+    request: DesktopTeamMemoryListRequest = {},
+  ): Promise<DesktopTeamMemoryEntry[]> =>
+    ipcRenderer.invoke("desktop:team-memory-list", request),
+  addTeamMemory: (
+    request: DesktopTeamMemoryAddRequest,
+  ): Promise<DesktopTeamMemoryEntry> =>
+    ipcRenderer.invoke("desktop:team-memory-add", request),
+  deleteTeamMemory: (
+    request: DesktopTeamMemoryDeleteRequest,
+  ): Promise<DesktopTeamMemoryDeleteResult> =>
+    ipcRenderer.invoke("desktop:team-memory-delete", request),
   listCustomCommands: (
     request: DesktopCustomCommandListRequest,
   ): Promise<DesktopCustomCommand[]> =>
@@ -547,6 +632,27 @@ const api: DesktopApi = {
     request: DesktopBackgroundTaskUpdateRequest,
   ): Promise<DesktopBackgroundTask> =>
     ipcRenderer.invoke("desktop:background-task-update", request),
+  listReusableTasks: (): Promise<DesktopReusableTask[]> =>
+    ipcRenderer.invoke("desktop:reusable-tasks-list"),
+  saveReusableTask: (
+    request: DesktopReusableTaskSaveRequest,
+  ): Promise<DesktopReusableTask> =>
+    ipcRenderer.invoke("desktop:reusable-task-save", request),
+  prepareReusableTaskRun: (
+    request: DesktopReusableTaskRunPrepareRequest,
+  ): Promise<DesktopReusableTaskRunRecipe> =>
+    ipcRenderer.invoke("desktop:reusable-task-run-prepare", request),
+  setCompletionNotificationPreference: (
+    preference: CompletionNotificationPreference,
+  ): Promise<CompletionNotificationPreference> =>
+    ipcRenderer.invoke("desktop:completion-notification-preference-set", preference),
+  onCompletionNotificationClick: (
+    callback: (event: CompletionNotificationClickEvent) => void,
+  ): (() => void) => {
+    const listener = (_event: IpcRendererEvent, event: CompletionNotificationClickEvent): void => callback(event);
+    ipcRenderer.on("desktop:completion-notification-click", listener);
+    return () => ipcRenderer.removeListener("desktop:completion-notification-click", listener);
+  },
   listScheduledTasks: (
     request?: DesktopScheduledTaskListRequest,
   ): Promise<DesktopScheduledTask[]> =>
@@ -559,12 +665,38 @@ const api: DesktopApi = {
     request: DesktopScheduledTaskUpdateRequest,
   ): Promise<DesktopScheduledTask> =>
     ipcRenderer.invoke("desktop:scheduled-task-update", request),
+  deleteScheduledTask: (
+    request: DesktopScheduledTaskDeleteRequest,
+  ): Promise<DesktopScheduledTaskDeleteResult> =>
+    ipcRenderer.invoke("desktop:scheduled-task-delete", request),
   runDueScheduledTasks: (
     request?: DesktopScheduledTaskRunRequest,
   ): Promise<DesktopScheduledTaskRunResult> =>
     ipcRenderer.invoke("desktop:scheduled-tasks-run-due", request),
   getScheduledTaskWorkerStatus: (): Promise<DesktopScheduledTaskWorkerStatus> =>
     ipcRenderer.invoke("desktop:scheduled-task-worker-status"),
+  createShare: (request: DesktopShareCreateRequest): Promise<DesktopShareManifest> =>
+    ipcRenderer.invoke("desktop:share-create", request),
+  inspectShare: (request: DesktopShareInspectionRequest): Promise<DesktopShareInspectionResult> =>
+    ipcRenderer.invoke("desktop:share-inspect", request),
+  updateSharePermission: (request: DesktopSharePermissionUpdateRequest): Promise<DesktopShareManifest> =>
+    ipcRenderer.invoke("desktop:share-permission-update", request),
+  listShareComments: (request: DesktopShareCommentListRequest): Promise<DesktopShareComment[]> =>
+    ipcRenderer.invoke("desktop:share-comments-list", request),
+  addShareComment: (request: DesktopShareCommentAddRequest): Promise<DesktopShareComment> =>
+    ipcRenderer.invoke("desktop:share-comment-add", request),
+  continueSharedTask: (request: DesktopShareContinuationRequest): Promise<DesktopShareContinuationResult> =>
+    ipcRenderer.invoke("desktop:share-continue", request),
+  listShareAudit: (request: DesktopShareAuditListRequest): Promise<DesktopShareAuditEntry[]> =>
+    ipcRenderer.invoke("desktop:share-audit-list", request),
+  listIncomingShares: (): Promise<DesktopShareManifest[]> =>
+    ipcRenderer.invoke("desktop:shares-incoming-list"),
+  listOutgoingShares: (): Promise<DesktopShareManifest[]> =>
+    ipcRenderer.invoke("desktop:shares-outgoing-list"),
+  openSharedObject: (request: DesktopSharedObjectOpenRequest): Promise<DesktopSharedObjectOpenResult> =>
+    ipcRenderer.invoke("desktop:shared-object-open", request),
+  downloadSharedArtifact: (request: DesktopSharedArtifactDownloadRequest): Promise<DesktopSharedArtifactDownloadResult> =>
+    ipcRenderer.invoke("desktop:shared-artifact-download", request),
   listChannelAdapters: (workspacePath?: string): Promise<DesktopChannelAdapterListResult> =>
     ipcRenderer.invoke("desktop:channel-adapters-list", workspacePath),
   configureChannelAdapter: (

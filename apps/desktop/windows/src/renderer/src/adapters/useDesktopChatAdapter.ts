@@ -11,6 +11,8 @@ import type {
   DesktopForkQueueDispatchResult,
   DesktopForkQueueStartApprovalResult,
   DesktopProjectMemoryEntry,
+  DesktopTeamMemoryEntry,
+  DesktopUserPreference,
   DesktopThread,
   DesktopThreadSnapshot,
   MyDrSaiModelConfig,
@@ -36,6 +38,16 @@ import {
   readRecentTerminalTestResult,
 } from "../terminalTestResults";
 import { acceptChatEventSequence, getVisibleChatText } from "../chatOutputModel";
+import {
+  analyzeMemorySafetyIntent,
+  buildUserPreferenceSystemSection,
+  formatMemorySafetyNotice,
+  formatAppliedPreferenceNotice,
+  formatPreferenceConfirmation,
+  isPreferenceOnlyRequest,
+  parseExplicitUserPreferenceIntent,
+  redactSensitiveMemoryText,
+} from "../userPreferenceIntent";
 
 export interface DesktopChatAdapter {
   activeRequestId: string | null;
@@ -95,12 +107,13 @@ export function useDesktopChatAdapter({
   workspacePath?: string;
 }): DesktopChatAdapter {
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<UiMessage[]>([createWelcomeMessage(language)]);
+  const [messages, setMessages] = useState<UiMessage[]>([createWelcomeMessage(language, [])]);
   const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
   const [currentRuntimeMode, setCurrentRuntimeMode] = useState<ChatRuntimeMode | null>(null);
   const [commandAttachments, setCommandAttachments] = useState<ChatAttachment[]>([]);
   const [customCommands, setCustomCommands] = useState<DesktopCustomCommand[]>([]);
   const [projectMemory, setProjectMemory] = useState<DesktopProjectMemoryEntry[]>([]);
+  const [userPreferences, setUserPreferences] = useState<DesktopUserPreference[]>([]);
   const streamingAssistantByRequest = useRef<Record<string, string>>({});
   const lastSequenceByRequest = useRef<Record<string, number>>({});
   const pendingDeltasByRequest = useRef<Record<string, { text: string; reasoning: string }>>({});
@@ -111,6 +124,8 @@ export function useDesktopChatAdapter({
   const currentRuntimeModeRef = useRef<ChatRuntimeMode | null>(null);
   const customCommandsRef = useRef<DesktopCustomCommand[]>([]);
   const projectMemoryRef = useRef<DesktopProjectMemoryEntry[]>([]);
+  const teamMemoryRef = useRef<DesktopTeamMemoryEntry[]>([]);
+  const userPreferencesRef = useRef<DesktopUserPreference[]>([]);
 
   useEffect(() => {
     threadIdRef.current = threadId;
@@ -127,8 +142,34 @@ export function useDesktopChatAdapter({
     currentRuntimeModeRef.current = null;
     setCommandAttachments([]);
     setInput("");
-    setMessages(threadSnapshot?.messages?.length ? threadSnapshot.messages : [createWelcomeMessage(language)]);
+    setMessages(threadSnapshot?.messages?.length ? threadSnapshot.messages : [createWelcomeMessage(language, userPreferencesRef.current)]);
   }, [language, threadId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    desktopApi.listUserPreferences().then((preferences) => {
+      if (cancelled) return;
+      userPreferencesRef.current = preferences;
+      setUserPreferences(preferences);
+    }).catch(() => {
+      if (cancelled) return;
+      userPreferencesRef.current = [];
+      setUserPreferences([]);
+    });
+    return () => { cancelled = true; };
+  }, [threadId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    desktopApi.listTeamMemory({ limit: 20 }).then((entries) => {
+      if (cancelled) return;
+      teamMemoryRef.current = entries;
+    }).catch(() => {
+      if (cancelled) return;
+      teamMemoryRef.current = [];
+    });
+    return () => { cancelled = true; };
+  }, [threadId, workspacePath]);
 
   useEffect(() => {
     let cancelled = false;
@@ -166,12 +207,19 @@ export function useDesktopChatAdapter({
     return () => {
       cancelled = true;
     };
-  }, [workspacePath]);
+  }, [threadId, workspacePath]);
 
   useEffect(() => {
     if (threadSnapshot?.threadId !== threadId) return;
-    setMessages(threadSnapshot.messages.length ? threadSnapshot.messages : [createWelcomeMessage(language)]);
+    setMessages(threadSnapshot.messages.length ? threadSnapshot.messages : [createWelcomeMessage(language, userPreferencesRef.current)]);
   }, [language, threadId, threadSnapshot]);
+
+  useEffect(() => {
+    if (threadSnapshot?.messages?.length) return;
+    setMessages((current) => current.every((message) => message.id === "welcome")
+      ? [createWelcomeMessage(language, userPreferences)]
+      : current);
+  }, [language, threadId, threadSnapshot, userPreferences]);
 
   useEffect(() => {
     developerModeRef.current = developerMode;
@@ -193,6 +241,27 @@ export function useDesktopChatAdapter({
   ): Promise<boolean> {
     const text = input.trim();
     if (!text || activeRequestId) return false;
+
+    const memorySafety = analyzeMemorySafetyIntent(text);
+    const explicitPreferences = memorySafety.temporary ? [] : parseExplicitUserPreferenceIntent(text);
+    const saved: DesktopUserPreference[] = [];
+    if (explicitPreferences.length) {
+      for (const preference of explicitPreferences) saved.push(await desktopApi.upsertUserPreference(preference));
+      const refreshed = await desktopApi.listUserPreferences();
+      userPreferencesRef.current = refreshed;
+      setUserPreferences(refreshed);
+    }
+    const handleSensitiveLocally = memorySafety.hasSensitiveContent;
+    const handleTemporaryLocally = memorySafety.explicitMemoryRequest && memorySafety.temporary && isPreferenceOnlyRequest(text);
+    if (attachments.length === 0 && (handleSensitiveLocally || handleTemporaryLocally || (saved.length > 0 && isPreferenceOnlyRequest(text)))) {
+      const response = [
+        saved.length ? formatPreferenceConfirmation(saved, languageRef.current) : "",
+        formatMemorySafetyNotice(memorySafety, languageRef.current),
+      ].filter(Boolean).join("\n\n");
+      publishLocalAssistantResult(memorySafety.hasSensitiveContent ? redactSensitiveMemoryText(text) : text, response);
+      setInput("");
+      return true;
+    }
 
     const command = parseChatCommand(text);
     if (command) {
@@ -303,6 +372,9 @@ export function useDesktopChatAdapter({
           runtime_mode: currentRuntimeModeRef.current
             ? serializeRuntimeMode(currentRuntimeModeRef.current)
             : undefined,
+          user_preferences: userPreferencesRef.current.map(({ category, value }) => ({ category, value })),
+          project_memory: projectMemoryRef.current.map(({ id, content }) => ({ id, content })),
+          team_memory: teamMemoryRef.current.map(({ id, teamId, content }) => ({ id, teamId, content })),
         },
         messages: buildRequestMessages(
           [...messages, userMessage]
@@ -310,6 +382,8 @@ export function useDesktopChatAdapter({
             .map(({ role, content }) => ({ role, content })),
           workspaceInstructions,
           projectMemoryRef.current,
+          teamMemoryRef.current,
+          userPreferencesRef.current,
           currentRuntimeModeRef.current,
         ),
       });
@@ -437,6 +511,9 @@ export function useDesktopChatAdapter({
     if (event.type === "error") {
       flushPendingDeltas();
       const assistantId = streamingAssistantByRequest.current[event.requestId];
+      const userFacingError = event.failureRecovery?.message
+        || event.error
+        || (languageRef.current === "zh" ? "聊天失败。" : "Chat failed.");
       setMessages((current) =>
         publishAndReturn(
           updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
@@ -444,15 +521,15 @@ export function useDesktopChatAdapter({
             streaming: false,
             error: true,
             content: formatAssistantError(
-              event.error || (languageRef.current === "zh" ? "聊天失败。" : "Chat failed."),
+              userFacingError,
               developerModeRef.current,
               languageRef.current,
             ),
             parts: upsertMessagePart(completeMessageParts(message.parts), {
               id: `${message.id}:error`,
               type: "error",
-              message: event.error || "Chat failed.",
-              retryable: false,
+              message: userFacingError,
+              retryable: event.failureRecovery?.retryable ?? false,
               status: "error",
             }),
           })),
@@ -1774,9 +1851,13 @@ function buildRequestMessages(
   messages: ChatMessage[],
   workspaceInstructions: WorkspaceInstructionSummary[] | undefined,
   projectMemory: DesktopProjectMemoryEntry[],
+  teamMemory: DesktopTeamMemoryEntry[],
+  userPreferences: DesktopUserPreference[],
   runtimeMode: ChatRuntimeMode | null,
 ): ChatMessage[] {
   const systemSections: string[] = [];
+  const userPreferenceSection = buildUserPreferenceSystemSection(userPreferences);
+  if (userPreferenceSection) systemSections.push(userPreferenceSection);
   if (runtimeMode) {
     systemSections.push(
       [
@@ -1818,6 +1899,16 @@ function buildRequestMessages(
       ].join("\n"),
     );
   }
+  if (teamMemory.length) {
+    systemSections.push(
+      [
+        "Authorized team memory for the signed-in user:",
+        ...teamMemory
+          .slice(0, 12)
+          .map((entry, index) => `${index + 1}. [${entry.teamId}] ${entry.content}`),
+      ].join("\n"),
+    );
+  }
   if (!systemSections.length) return messages;
   return [{ role: "system", content: systemSections.join("\n\n") }, ...messages];
 }
@@ -1832,14 +1923,15 @@ function serializeRuntimeMode(mode: ChatRuntimeMode): Record<string, string> {
   };
 }
 
-function createWelcomeMessage(language: "en" | "zh"): UiMessage {
+function createWelcomeMessage(language: "en" | "zh", preferences: DesktopUserPreference[]): UiMessage {
+  const preferenceNotice = formatAppliedPreferenceNotice(preferences, language);
   return {
     id: "welcome",
     role: "assistant",
     content:
       language === "zh"
-        ? "OpenDrSai 桌面端已就绪。安装或启动本地网关后即可发送消息。"
-        : "OpenDrSai desktop is ready. Install or start the local gateway, then send a message.",
+        ? `OpenDrSai 桌面端已就绪。安装或启动本地网关后即可发送消息。${preferenceNotice ? `\n\n${preferenceNotice}` : ""}`
+        : `OpenDrSai desktop is ready. Install or start the local gateway, then send a message.${preferenceNotice ? `\n\n${preferenceNotice}` : ""}`,
   };
 }
 

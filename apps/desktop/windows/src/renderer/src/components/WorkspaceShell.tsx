@@ -1470,6 +1470,7 @@ export function WorkspaceShell({
                 active={id === activeNav}
                 icon={Icon}
                 label={label}
+                navId={id}
                 onClick={() => onNavChange(id)}
               />
             );
@@ -1544,7 +1545,7 @@ export function WorkspaceShell({
                     >
                       <FolderCode size={15} />
                       <span>
-                        <strong>{workspace.name}</strong>
+                        <span className="workspace-item-name">{workspace.name}</span>
                       </span>
                     </button>
                     <button
@@ -2438,12 +2439,14 @@ function SidebarButton({
   active,
   icon: Icon,
   label,
+  navId,
   nested,
   onClick,
 }: {
   active?: boolean;
   icon: LucideIcon;
   label: string;
+  navId?: NavId;
   nested?: boolean;
   onClick: () => void;
 }): React.JSX.Element {
@@ -2451,6 +2454,7 @@ function SidebarButton({
     <button
       type="button"
       className={`sidebar-button ${nested ? "nested" : ""} ${active ? "active" : ""}`}
+      data-nav-id={navId}
       onClick={onClick}
       title={label}
       aria-label={label}

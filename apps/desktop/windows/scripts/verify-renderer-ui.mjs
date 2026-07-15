@@ -27,6 +27,7 @@ const desktopMain = read("src/main/index.ts");
 const threadsMain = read("src/main/threads.ts");
 const statusMain = read("src/main/status.ts");
 const filesContextPanel = read("src/renderer/src/components/files/FilesContextPanel.tsx");
+const skillSquare = read("src/renderer/src/components/SkillSquareView.tsx");
 
 function navItemEnabled(source, menuId) {
   const pattern = new RegExp(`id: MENU_IDS\\.${menuId}, enabled: (true|false)`);
@@ -66,6 +67,7 @@ const checks = [
   ["renderer has shared navigation model", navigation.includes("current_session") && navigation.includes("agent_square") && navigation.includes("skills_square") && navigation.includes("getNavSections") && navigation.includes("getRightTabs") && app.includes('from "./navigation"') && shell.includes("navSections.filter")],
   ["renderer keeps primary sidebar focused on chat and square", navItemEnabled(navigation, "currentSession") && navItemEnabled(navigation, "agentSquare") && navItemEnabled(navigation, "skillsSquare") && !shell.includes("settingsItems.map") && !shell.includes('id: "command:settings"') && shell.includes("onNavChange(MENU_IDS.profile)") && !navItemEnabled(navigation, "approvalCenter") && !navItemEnabled(navigation, "usageAnalytics") && !navItemEnabled(navigation, "channels") && !navItemEnabled(navigation, "plugins") && !navItemEnabled(navigation, "library")],
   ["primary sidebar restores the collapsible square group", navigation.includes('id: "agents"') && shell.includes('getEnabledNavItems(navSections, "agents")') && shell.includes("agentsOpen")],
+  ["workspace names use regular text weight", shell.includes('className="workspace-item-name"') && !shell.includes("<strong>{workspace.name}</strong>") && css.includes(".workspace-item-name") && css.includes("font-weight: 400")],
   ["settings groups agent and integration tools", app.includes('type SettingsPane = "general"') && app.includes('id: "agent-task"') && app.includes('id: "approvals"') && app.includes('id: "analytics"') && app.includes('id: "channels"') && css.includes(".settings-navigation")],
   ["settings exposes real general and Agent preferences", app.includes("SESSION_SCOPE_STORAGE_KEY") && app.includes("DEFAULT_AGENT_STORAGE_KEY") && app.includes("DEFAULT_MODEL_STORAGE_KEY") && app.includes("THINKING_EFFORT_STORAGE_KEY") && app.includes('id: "agent-defaults"') && app.includes("onSessionScopeChange")],
   ["settings controls appearance and sidebar components", app.includes("APPEARANCE_STORAGE_KEY") && app.includes("SIDEBAR_COMPONENTS_STORAGE_KEY") && app.includes('window.matchMedia("(prefers-color-scheme: dark)")') && app.includes("onAppearanceChange") && app.includes("onSidebarComponentsChange") && app.includes("skills: false") && shell.includes("sidebarComponents.square") && shell.includes("sidebarComponents.agents") && shell.includes("sidebarComponents.skills") && css.includes(':root[data-theme="dark"]') && css.includes(".appearance-segment")],
@@ -88,6 +90,7 @@ const checks = [
   ["renderer has accessible icon navigation", shell.includes("aria-label={label}") && shell.includes("title={label}")],
   ["chat composer uses multiline textarea", chatWorkspace.includes("textarea") && chatWorkspace.includes("handleKeyDown") && chatWorkspace.includes("event.shiftKey")],
   ["mojibake verifier is wired into package scripts", packageJson.includes('"verify:mojibake": "node scripts/verify-no-mojibake.mjs"') && mojibakeVerifier.includes("mojibakePatterns")],
+  ["background queue shows progress completed steps and decisions", skillSquare.includes("background-task-progress") && skillSquare.includes("Completed:") && skillSquare.includes("Needs you:") && css.includes(".background-task-decisions")],
 ];
 
 const failures = checks.filter(([, passed]) => !passed).map(([name]) => name);

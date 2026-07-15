@@ -62,8 +62,10 @@
       <ComponentRef Id="ApplicationShortcuts" />
     </Feature>
 
+    <Binary Id="OpenDrSaiInstallerActions" SourceFile="$(var.InstallerActionsPath)" />
+
     <CustomAction Id="SetDownloadOpenDrSaiRuntime" Property="DownloadOpenDrSaiRuntime"
-      Value='//B //Nologo "[INSTALLFOLDER]run-opendrsai-install.vbs" /Stage:Download /RuntimeUrl:"[RUNTIMEURL]" /RuntimeSha256:"[RUNTIMESHA256]" /RuntimeSizeBytes:"[RUNTIMESIZEBYTES]" /BootstrapperVersion:"[BOOTSTRAPPERVERSION]" -MachineInstall -NoShortcuts -NoLaunch [EXTRAINSTALLARGS]' />
+      Value='RuntimeUrl=[RUNTIMEURL];TargetPath=[INSTALLFOLDER]cache\OpenDrSaiRuntime-win-x64.zip;ExpectedSize=[RUNTIMESIZEBYTES];BootstrapperVersion=[BOOTSTRAPPERVERSION]' />
     <CustomAction Id="SetVerifyOpenDrSaiRuntime" Property="VerifyOpenDrSaiRuntime"
       Value='//B //Nologo "[INSTALLFOLDER]run-opendrsai-install.vbs" /Stage:Verify /RuntimeUrl:"[RUNTIMEURL]" /RuntimeSha256:"[RUNTIMESHA256]" /RuntimeSizeBytes:"[RUNTIMESIZEBYTES]" /BootstrapperVersion:"[BOOTSTRAPPERVERSION]" -MachineInstall -NoShortcuts -NoLaunch [EXTRAINSTALLARGS]' />
     <CustomAction Id="SetExtractOpenDrSaiRuntime" Property="ExtractOpenDrSaiRuntime"
@@ -75,7 +77,7 @@
     <CustomAction Id="SetRunOpenDrSaiUninstaller" Property="RunOpenDrSaiUninstaller"
       Value='//B //Nologo "[INSTALLFOLDER]run-opendrsai-uninstall.vbs"' />
 
-    <CustomAction Id="DownloadOpenDrSaiRuntime" Directory="INSTALLFOLDER" ExeCommand='wscript.exe [DownloadOpenDrSaiRuntime]'
+    <CustomAction Id="DownloadOpenDrSaiRuntime" BinaryKey="OpenDrSaiInstallerActions" DllEntry="DownloadRuntime"
       Execute="deferred" Impersonate="no" Return="check" />
     <CustomAction Id="VerifyOpenDrSaiRuntime" Directory="INSTALLFOLDER" ExeCommand='wscript.exe [VerifyOpenDrSaiRuntime]'
       Execute="deferred" Impersonate="no" Return="check" />
@@ -104,7 +106,8 @@
     </InstallExecuteSequence>
 
     <UI>
-      <ProgressText Action="DownloadOpenDrSaiRuntime">Downloading OpenDrSai Runtime...</ProgressText>
+      <Error Id="25001">OpenDrSai Runtime download failed: [2]</Error>
+      <ProgressText Action="DownloadOpenDrSaiRuntime" Template="[1]">Downloading OpenDrSai Runtime...</ProgressText>
       <ProgressText Action="VerifyOpenDrSaiRuntime">Verifying the downloaded package...</ProgressText>
       <ProgressText Action="ExtractOpenDrSaiRuntime">Extracting OpenDrSai Runtime...</ProgressText>
       <ProgressText Action="InstallOpenDrSaiRuntime">Installing OpenDrSai...</ProgressText>

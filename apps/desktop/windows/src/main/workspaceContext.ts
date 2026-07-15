@@ -29,7 +29,12 @@ import type {
   WorkspaceStageFileRequest,
   WorkspaceStageFileResult,
 } from "../shared/desktopApi";
-import { extractPresentationPdfContext } from "./presentationPdf";
+import {
+  extractPresentationPdf,
+  extractPresentationPdfContext,
+  formatPresentationPdfSummary,
+  type PresentationPdfResult,
+} from "./presentationPdf";
 
 const DEFAULT_MAX_DEPTH = 4;
 const DEFAULT_MAX_ENTRIES = 500;
@@ -439,10 +444,16 @@ export async function previewWorkspaceFile(
   }
 
   if (kind === "pdf") {
-    const pdfText = await extractPdfText(target, Math.min(fileStat.size, maxBytes));
+    const presentation = await extractPresentationPdf(target);
+    const pdfText = presentation
+      ? formatPresentationPdfSummary(presentation, Math.max(maxBytes, 120_000))
+      : await extractPdfText(target, Math.min(fileStat.size, maxBytes));
     return {
       ...base,
       content: pdfText || undefined,
+      ...(presentation?.type === "presentation_pdf" && presentation.analysis
+        ? { presentationStory: buildPresentationStory(presentation) }
+        : {}),
       message: pdfText
         ? "Extracted structured PDF text with page roles for analysis."
         : getMetadataOnlyMessage(kind),
@@ -519,6 +530,62 @@ export async function previewWorkspaceFile(
   return {
     ...base,
     content,
+  };
+}
+
+function buildPresentationStory(result: PresentationPdfResult): NonNullable<WorkspaceFilePreview["presentationStory"]> {
+  const analysis = result.analysis;
+  if (!analysis) throw new Error("Presentation analysis is unavailable.");
+  const agenda = analysis.agenda.map((item) => ({ text: item.text, page: item.page }));
+  const storySections = analysis.storySections.map((item) => ({ text: item.title, page: item.page }));
+  const summaryPoints = analysis.summaryPoints.map((item) => ({ text: item.text, page: item.page }));
+  const numericHighlights = analysis.numericHighlights.map((item) => ({ text: item.text, page: item.page }));
+  const allItems = [...agenda, ...storySections, ...summaryPoints, ...numericHighlights];
+  const pageByNumber = new Map(result.pages.map((page) => [page.page, page.text]));
+  const sourceMappedItems = allItems.filter((item) => item.page >= 1 && item.page <= result.pageCount && pageByNumber.has(item.page)).length;
+  const numericSourceMatches = numericHighlights.filter((item) => {
+    const source = pageByNumber.get(item.page) ?? "";
+    const expectedNumbers = item.text.match(/\d+(?:\.\d+)?/g) ?? [];
+    return expectedNumbers.length > 0 && expectedNumbers.every((value) => source.includes(value));
+  }).length;
+  const structuralChecks = {
+    title: Boolean(analysis.title.trim()),
+    agenda: agenda.length > 0,
+    story: storySections.length >= 3,
+    summary: summaryPoints.length > 0,
+    numeric: numericHighlights.length > 0,
+    mapping: sourceMappedItems === allItems.length,
+    numericMapping: numericSourceMatches === numericHighlights.length,
+  };
+  const checks = [
+    structuralChecks.title ? "标题已提取" : "标题缺失",
+    structuralChecks.agenda ? `议程 ${agenda.length} 项` : "议程缺失",
+    structuralChecks.story ? `故事线 ${storySections.length} 章` : "故事线章节不足",
+    structuralChecks.summary ? `总结 ${summaryPoints.length} 项` : "总结缺失",
+    structuralChecks.numeric ? `关键数据 ${numericHighlights.length} 项` : "关键数据缺失",
+    structuralChecks.mapping ? `来源页码 ${sourceMappedItems}/${allItems.length} 有效` : `来源页码仅 ${sourceMappedItems}/${allItems.length} 有效`,
+    structuralChecks.numericMapping ? `关键数据 ${numericSourceMatches}/${numericHighlights.length} 可回查原页` : `关键数据仅 ${numericSourceMatches}/${numericHighlights.length} 可回查原页`,
+  ];
+  return {
+    title: analysis.title,
+    agenda,
+    storySections,
+    summaryPoints,
+    numericHighlights,
+    quality: {
+      status: Object.values(structuralChecks).every(Boolean) ? "passed" : "failed",
+      checkedAt: new Date().toISOString(),
+      sourcePageCount: result.pageCount,
+      agendaItems: agenda.length,
+      storySections: storySections.length,
+      summaryPoints: summaryPoints.length,
+      numericHighlights: numericHighlights.length,
+      sourceMappedItems,
+      sourceMappingExpected: allItems.length,
+      numericSourceMatches,
+      numericSourceExpected: numericHighlights.length,
+      checks,
+    },
   };
 }
 

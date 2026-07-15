@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bot,
   Bug,
@@ -6,6 +6,7 @@ import {
   Globe2,
   History,
   Library,
+  PackageOpen,
   Lightbulb,
   MessageSquare,
   Plug,
@@ -20,6 +21,19 @@ import type {
   ChatAttachment,
   CreateWorkspaceRequest,
   DesktopAgent,
+  DesktopBackgroundTask,
+  DesktopCitationRecord,
+  DesktopIndependentReviewRecord,
+  DesktopReusableTask,
+  DesktopReusableTaskAdjustments,
+  DesktopReusableTaskAdjustmentScope,
+  DesktopShareManifest,
+  DesktopShareInspectionResult,
+  DesktopShareSensitiveAction,
+  DesktopSharePermission,
+  DesktopShareComment,
+  DesktopSharedObjectOpenResult,
+  DesktopTaskArtifactLink,
   DesktopChannelContextImportResult,
   DesktopForkLifecycleAction,
   DesktopHealth,
@@ -47,7 +61,8 @@ import { ChannelsView } from "./components/ChannelsView";
 import { ChatWorkspace, type ThinkingEffort } from "./components/ChatWorkspace";
 import { PreviewBrowserPanel } from "./components/PreviewBrowserPanel";
 import { ProviderAnalyticsView } from "./components/ProviderAnalyticsView";
-import { SkillSquareView } from "./components/SkillSquareView";
+import { BackgroundTaskQueue, SkillSquareView } from "./components/SkillSquareView";
+import { TaskCenterView } from "./components/TaskCenterView";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { DebugPanel } from "./components/DebugPanel";
 import { installDebugLogCapture } from "./debugLogStore";
@@ -86,6 +101,7 @@ const navIcons: Record<NavId, LucideIcon> = {
   my_agents: Bot,
   agent_square: Bot,
   saved_plan: FileText,
+  results: PackageOpen,
   skills_square: Lightbulb,
   plugins: Plug,
   library: Library,
@@ -133,6 +149,7 @@ const APPEARANCE_STORAGE_KEY = "opendrsai.appearance";
 const SIDEBAR_COMPONENTS_STORAGE_KEY = "opendrsai.sidebarComponents";
 const RIGHT_SIDEBAR_COMPONENTS_STORAGE_KEY = "opendrsai.rightSidebarComponents";
 const REMOTE_RECENT_PATHS_STORAGE_KEY = "opendrsai.remoteSsh.recentPaths";
+const AWAY_STARTED_AT_STORAGE_KEY = "opendrsai.awayStartedAt";
 type WorkspaceSortMode = "recent" | "name" | "created";
 type AppearanceMode = "light" | "dark" | "system";
 interface SidebarComponentVisibility {
@@ -146,6 +163,14 @@ interface RightSidebarComponentVisibility {
   terminal: boolean;
   debug: boolean;
 }
+interface AwaySummary {
+  startedAt: string;
+  returnedAt: string;
+  completed: DesktopBackgroundTask[];
+  failed: DesktopBackgroundTask[];
+  pending: DesktopBackgroundTask[];
+}
+type NetworkConnectivityState = "online" | "offline" | "restored";
 
 function App(): React.JSX.Element {
   const auth = useAuth();
@@ -183,6 +208,38 @@ function AuthenticatedApp({
   const [language, setLanguage] = useState<AppLanguage>(() => loadLanguage());
   const developerMode = import.meta.env.DEV && loadDeveloperMode();
   const [activeNav, setActiveNav] = useState<NavId>(MENU_IDS.currentSession);
+  const [awaySummary, setAwaySummary] = useState<AwaySummary | null>(null);
+  const [deliveryTask, setDeliveryTask] = useState<DesktopBackgroundTask | null>(null);
+  const [networkConnectivity, setNetworkConnectivity] = useState<NetworkConnectivityState>(() =>
+    typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "online",
+  );
+  const wasOfflineRef = useRef(networkConnectivity === "offline");
+  const awaySummaryLoadingRef = useRef(false);
+
+  useEffect(() => {
+    let restoredTimer: ReturnType<typeof setTimeout> | undefined;
+    const handleOffline = () => {
+      wasOfflineRef.current = true;
+      if (restoredTimer) clearTimeout(restoredTimer);
+      setNetworkConnectivity("offline");
+    };
+    const handleOnline = () => {
+      if (!wasOfflineRef.current) {
+        setNetworkConnectivity("online");
+        return;
+      }
+      wasOfflineRef.current = false;
+      setNetworkConnectivity("restored");
+      restoredTimer = setTimeout(() => setNetworkConnectivity("online"), 6_000);
+    };
+    window.addEventListener("offline", handleOffline);
+    window.addEventListener("online", handleOnline);
+    return () => {
+      if (restoredTimer) clearTimeout(restoredTimer);
+      window.removeEventListener("offline", handleOffline);
+      window.removeEventListener("online", handleOnline);
+    };
+  }, []);
   const [skillSquareCommandTarget, setSkillSquareCommandTarget] =
     useState<Extract<ChatCommandAction, { type: "open-view" }>["target"] | null>(null);
   const [navHistory, setNavHistory] = useState<NavId[]>([
@@ -236,6 +293,7 @@ function AuthenticatedApp({
   const [selectedChatExamples, setSelectedChatExamples] = useState<
     DesktopAgent["examples"]
   >();
+  const [pendingChatInput, setPendingChatInput] = useState<string | null>(null);
   const [terminalAgentTask, setTerminalAgentTask] = useState("");
   const [terminalCommandProposal, setTerminalCommandProposal] =
     useState<TerminalCommandProposal | null>(null);
@@ -303,6 +361,48 @@ function AuthenticatedApp({
       : activeThread?.kind === "agent_run" && Boolean(activeThreadWorkspacePath)
         ? true
         : effectiveWorkspace.trusted;
+  useEffect(() => {
+    async function handleVisibilityChange(): Promise<void> {
+      if (document.visibilityState === "hidden") {
+        const startedAt = new Date().toISOString();
+        window.localStorage.setItem(AWAY_STARTED_AT_STORAGE_KEY, startedAt);
+        return;
+      }
+      const startedAt = window.localStorage.getItem(AWAY_STARTED_AT_STORAGE_KEY);
+      if (!startedAt || awaySummaryLoadingRef.current) return;
+      awaySummaryLoadingRef.current = true;
+      try {
+        const tasks = await desktopApi.listBackgroundTasks({ limit: 50 });
+        const startedMs = Date.parse(startedAt);
+        const changed = tasks.filter((task) => {
+          const updatedMs = Date.parse(task.updatedAt);
+          return Number.isFinite(startedMs) && Number.isFinite(updatedMs) && updatedMs >= startedMs;
+        });
+        const pending = changed.filter((task) =>
+          task.status === "waiting_approval"
+          || (task.pendingDecisions?.length ?? 0) > 0,
+        );
+        const pendingIds = new Set(pending.map((task) => task.id));
+        const completed = changed.filter((task) => task.status === "completed" && !pendingIds.has(task.id));
+        const failed = changed.filter((task) => task.status === "failed" && !pendingIds.has(task.id));
+        if (completed.length || failed.length || pending.length) {
+          setAwaySummary({
+            startedAt,
+            returnedAt: new Date().toISOString(),
+            completed,
+            failed,
+            pending,
+          });
+        }
+        window.localStorage.removeItem(AWAY_STARTED_AT_STORAGE_KEY);
+      } finally {
+        awaySummaryLoadingRef.current = false;
+      }
+    }
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    if (document.visibilityState === "visible") void handleVisibilityChange();
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, []);
   const scopedThreads =
     sessionScope === "all"
       ? threads
@@ -344,7 +444,7 @@ function AuthenticatedApp({
     availableAgents: availableChatAgents,
     availableModels: availableChatModels,
     canChat: Boolean(
-      !sessionRestoring && health?.installed && health?.gatewayReady && workspaceTrusted,
+      !sessionRestoring && (health?.installed || health?.gateway?.externalReady) && health?.gatewayReady && workspaceTrusted,
     ),
     developerMode,
     onChatComplete: () => {
@@ -409,9 +509,16 @@ function AuthenticatedApp({
       );
     };
   }, [proposeTerminalCommand]);
+
+  useEffect(() => {
+    if (activeNav !== MENU_IDS.currentSession || !pendingChatInput) return;
+    chat.setInput(pendingChatInput);
+    setPendingChatInput(null);
+  }, [activeNav, chat, pendingChatInput]);
+
   const canChat = Boolean(
     !sessionRestoring &&
-    health?.installed &&
+    (health?.installed || health?.gateway?.externalReady) &&
     health?.gatewayReady &&
     workspaceTrusted &&
     !chat.activeRequestId,
@@ -476,7 +583,29 @@ function AuthenticatedApp({
 
   useEffect(() => {
     window.localStorage.setItem(COMPLETION_NOTIFICATION_STORAGE_KEY, String(completionNotifications));
-  }, [completionNotifications]);
+    void desktopApi.setCompletionNotificationPreference({
+      enabled: completionNotifications,
+      language,
+    });
+  }, [completionNotifications, language]);
+
+  useEffect(() => desktopApi.onCompletionNotificationClick((event) => {
+    if (event.target.workspacePath) {
+      setActiveWorkspaceId(getWorkspaceId(event.target.workspacePath));
+    }
+    if (event.target.threadId) setActiveThreadId(event.target.threadId);
+    setActiveNav(MENU_IDS.currentSession);
+    void desktopApi.listBackgroundTasks({
+      ...(event.target.workspacePath ? { workspacePath: event.target.workspacePath } : {}),
+      limit: 100,
+    }).then((tasks) => {
+      const task = tasks.find((candidate) => candidate.kind === event.target.kind
+        && candidate.targetId === event.target.targetId
+        && candidate.status === "completed"
+        && candidate.deliverySummary);
+      if (task) setDeliveryTask(task);
+    });
+  }), []);
 
   useEffect(() => {
     window.localStorage.setItem(APPEARANCE_STORAGE_KEY, appearance);
@@ -834,7 +963,7 @@ function AuthenticatedApp({
     const thread = await desktopApi.createThread({
       kind: "chat",
       title: language === "zh" ? "新会话" : "New chat",
-      workspacePath: effectiveWorkspacePath,
+      workspacePath: activeWorkspace.path,
       boundAgentId: selectedChatAgentId || undefined,
       boundAgentName: selectedChatAgentName || undefined,
     });
@@ -1272,7 +1401,7 @@ function AuthenticatedApp({
           }}
           onProposeTerminalCommand={proposeTerminalCommand}
           onRunComplete={() => {
-            showCompletionNotification(completionNotifications, language, true);
+            void desktop.refreshHealth();
           }}
           threadId={activeThreadId}
           workspaceInstructions={effectiveWorkspaceInstructions}
@@ -1339,18 +1468,34 @@ function AuthenticatedApp({
         />
       </section>
       )
+    ) : activeNav === MENU_IDS.savedPlan ? (
+      <TaskCenterView
+        language={language}
+        workspacePath={effectiveWorkspacePath}
+      />
+    ) : activeNav === MENU_IDS.results ? (
+      <ResultsCenterView
+        language={language}
+        workspacePath={effectiveWorkspacePath}
+        onContinueQuestion={(question) => {
+          setPendingChatInput(question);
+          navigateTo(MENU_IDS.currentSession);
+        }}
+      />
     ) : activeNav === MENU_IDS.agentSquare ? (
       <section className="agent-square-panel">
         <AgentSquareView
           language={language}
           userEmail={user?.email}
+          userGroups={user?.groups ?? []}
+          workspacePath={effectiveWorkspacePath}
           selectedAgentId={selectedChatAgentId}
           onSetDefault={(agent) => void selectChatAgent(agent.id)}
           onStartChat={(agent) => {
             void selectChatAgent(agent.id).then((selected) => {
               if (!selected) return;
               setRightPanelCollapsed(true);
-              chat.setInput(
+              setPendingChatInput(
                 language === "zh"
                   ? `我想使用 ${agent.name} 处理一个任务：`
                   : `I want to use ${agent.name} for a task:`,
@@ -1400,7 +1545,7 @@ function AuthenticatedApp({
           proposeTerminalCommand(command);
         }}
         onRunComplete={() => {
-          showCompletionNotification(completionNotifications, language, true);
+          void desktop.refreshHealth();
         }}
         threadId={activeThreadId}
         workspaceInstructions={effectiveWorkspaceInstructions}
@@ -1451,11 +1596,7 @@ function AuthenticatedApp({
         onCheckUpdates={() => void desktop.checkUpdates()}
         onAppearanceChange={setAppearance}
         onCompletionNotificationsChange={(enabled) => {
-          if (enabled && typeof Notification !== "undefined" && Notification.permission === "default") {
-            void Notification.requestPermission().then((permission) => setCompletionNotifications(permission === "granted"));
-          } else {
-            setCompletionNotifications(enabled);
-          }
+          setCompletionNotifications(enabled);
         }}
         onCopyDiagnostics={() => void navigator.clipboard.writeText(JSON.stringify({ health, workspace: effectiveWorkspacePath, user: user?.email ?? null }, null, 2))}
         onDeveloperModeChange={(enabled) => {
@@ -1712,7 +1853,62 @@ function AuthenticatedApp({
     };
   }, []);
 
+  function openAwaySummaryTask(task: DesktopBackgroundTask): void {
+    if (task.status === "waiting_approval" || task.approvalId || task.pendingDecisions?.length) {
+      navigateTo(MENU_IDS.approvalCenter);
+    } else if (task.kind === "agent_run" && task.targetId) {
+      const thread = threads.find((candidate) =>
+        candidate.lastRequestId === task.targetId || candidate.lastRunId === task.targetId,
+      );
+      if (thread) handleThreadSelect(thread.id);
+      else navigateTo(MENU_IDS.myAgents);
+    } else if (task.kind === "presentation_generation") {
+      setActiveRightTab("files");
+      setRightPanelCollapsed(false);
+      navigateTo(MENU_IDS.currentSession);
+    } else {
+      setSkillSquareCommandTarget({ query: task.targetId || task.title, source: "slash_command" });
+      navigateTo(MENU_IDS.skillsSquare);
+    }
+    setAwaySummary(null);
+  }
+
   return (<>
+    {networkConnectivity !== "online" ? (
+      <div
+        className={`network-connectivity-banner ${networkConnectivity}`}
+        data-testid="network-connectivity-status"
+        role="status"
+        aria-live="assertive"
+      >
+        {networkConnectivity === "offline"
+          ? (language === "zh"
+              ? "网络已断开。现有内容不会丢失；本地文件处理会继续，联网任务将在恢复后安全续传。"
+              : "You are offline. Existing content is safe; local file work continues and online tasks will resume safely.")
+          : (language === "zh"
+              ? "网络已恢复，正在安全继续未完成的联网任务。"
+              : "Connection restored. Unfinished online tasks are resuming safely.")}
+      </div>
+    ) : null}
+    {awaySummary ? (
+      <AwaySummaryPanel
+        language={language}
+        summary={awaySummary}
+        onDismiss={() => setAwaySummary(null)}
+        onOpenTask={openAwaySummaryTask}
+      />
+    ) : null}
+    {deliveryTask?.deliverySummary ? (
+      <TaskDeliverySummaryPanel
+        language={language}
+        task={deliveryTask}
+        onClose={() => setDeliveryTask(null)}
+        onOpenTask={() => {
+          openAwaySummaryTask(deliveryTask);
+          setDeliveryTask(null);
+        }}
+      />
+    ) : null}
     <WorkspaceShell
       activeNav={activeNav}
       activeRightTab={activeRightTab}
@@ -2081,6 +2277,1971 @@ function getAttachmentIdentity(attachment: ChatAttachment): string {
     attachment.title || "",
     attachment.visibleText ? attachment.visibleText.slice(0, 64) : "",
   ].join("|");
+}
+
+function LegacyTaskCenterView({
+  language,
+  workspacePath,
+}: {
+  language: AppLanguage;
+  workspacePath: string;
+}): React.JSX.Element {
+  const zh = language === "zh";
+  const [tasks, setTasks] = useState<DesktopBackgroundTask[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    async function refresh(): Promise<void> {
+      try {
+        const next = await desktopApi.listBackgroundTasks({ workspacePath, limit: 50 });
+        if (!active) return;
+        setTasks(next);
+        setError("");
+      } catch (caught) {
+        if (!active) return;
+        setError(caught instanceof Error ? caught.message : String(caught));
+      } finally {
+        if (active) setLoading(false);
+      }
+    }
+    void refresh();
+    const refreshTimer = window.setInterval(() => void refresh(), 1000);
+    return () => {
+      active = false;
+      window.clearInterval(refreshTimer);
+    };
+  }, [workspacePath]);
+
+  return (
+    <section className="task-center-view" data-testid="task-center-view">
+      <header>
+        <div>
+          <h2>{zh ? "任务中心" : "Task center"}</h2>
+          <p>{zh ? "统一查看等待、执行、待决定、成功和未完成的任务。状态会自动更新。" : "See waiting, running, decision, completed, and unsuccessful tasks in one place. Statuses update automatically."}</p>
+        </div>
+        <span role="status">{loading ? (zh ? "正在更新…" : "Updating…") : (zh ? "状态已同步" : "Status synced")}</span>
+      </header>
+      {error ? <p className="task-center-error" role="alert">{zh ? `无法更新任务状态：${error}` : `Could not update task status: ${error}`}</p> : null}
+      <BackgroundTaskQueue language={language} tasks={tasks} />
+    </section>
+  );
+}
+
+void LegacyTaskCenterView;
+
+interface IndexedTaskArtifact extends DesktopTaskArtifactLink {
+  sourceTaskId: string;
+  sourceTaskTitle: string;
+  sourceTaskUpdatedAt: string;
+  sourceWorkspacePath?: string;
+}
+
+function buildArtifactVersionTask(artifact: IndexedTaskArtifact): string {
+  const baseName = artifact.label.replace(/\.[^.]+$/, "") || "result";
+  return [
+    `将成果文件“${artifact.path}”转换为五种面向不同使用场景的版本。`,
+    "只使用源文件中已有的事实和数字，不得虚构、改写或遗漏核心数据；五个版本中的核心事实和数字必须 100% 一致。",
+    "在工作区内生成并登记以下五个独立 Markdown 成果文件：",
+    `1. ${baseName}-one-page-summary.md：一页摘要，包含标题、关键发现、建议/下一步，供决策者快速阅读。`,
+    `2. ${baseName}-full-report.md：完整报告，包含标题、摘要、方法、结果、限制、来源。`,
+    `3. ${baseName}-presentation-outline.md：PPT 提纲，按“幻灯片 1、幻灯片 2…”编号，每页包含标题和讲述要点。`,
+    `4. ${baseName}-email.md：可直接发送的邮件，包含主题、简短正文和明确行动请求。`,
+    `5. ${baseName}-english.md：全英文版本，包含 Executive Summary、Methods、Results、Limitations、Sources。`,
+    "每个文件都必须注明源成果文件名；完成前逐一核对五个文件的格式、受众适配和全部数字。",
+  ].join("\n");
+}
+
+type LocalEditScope = { type: "text" | "table" | "image"; label: string; text?: string };
+
+function localEditAction(kind: WorkspaceFilePreview["kind"]): "simplify_text" | "sort_table_numeric" | "log_scale_image" {
+  if (kind === "table") return "sort_table_numeric";
+  if (kind === "image") return "log_scale_image";
+  return "simplify_text";
+}
+
+function buildLocalEditTask(artifact: IndexedTaskArtifact, preview: WorkspaceFilePreview, scope: LocalEditScope): string {
+  const extension = artifact.label.match(/(\.[^.]+)$/)?.[1] || "";
+  const baseName = extension ? artifact.label.slice(0, -extension.length) : artifact.label;
+  const outputName = `${baseName}-edited${extension}`;
+  const action = localEditAction(preview.kind);
+  const instruction = action === "simplify_text"
+    ? `只把选中文字改得更简单：${scope.text}`
+    : action === "sort_table_numeric"
+      ? "只对选中的整个表格按数值列升序排序，保留表头、全部单元格和值。"
+      : "只把选中的图片改为对数坐标表现，保留图像主题和未选择的其他成果。";
+  return [
+    `对成果“${artifact.path}”执行局部修改。`,
+    `明确范围：${scope.label}。`,
+    instruction,
+    `生成新文件 ${outputName}，不得覆盖或改写源文件。`,
+    "除明确选中范围外，其他文字、表格单元格、图片和成果必须逐字节保持不变。",
+    "完成后登记新文件，供用户与原版比较。",
+  ].join("\n");
+}
+
+type ChartConfig = { xColumn: string; yColumn: string; anomalyColumn: string; unit: string; legend: string };
+
+function buildChartTask(artifact: IndexedTaskArtifact, config: ChartConfig): string {
+  const baseName = artifact.label.replace(/\.[^.]+$/, "") || "data";
+  return [
+    `根据 CSV 成果“${artifact.path}”生成 ${baseName}-chart.svg。`,
+    `横轴使用 ${config.xColumn}，纵轴使用 ${config.yColumn}，单位 ${config.unit}，图例 ${config.legend}，异常列 ${config.anomalyColumn}。`,
+    "SVG 必须显示横纵坐标标签、单位和图例。每行数据对应一个 circle，并写入 data-x、data-y；异常点写入 data-anomaly=\"true\"。",
+    "使用线性坐标映射：绘图区 left=60、right=540、top=40、bottom=340；范围由任务 metadata 给出，circle 的 cx/cy 必须精确匹配。",
+    "不得改写 CSV，不得遗漏或虚构数据点；完成后将 SVG 登记为成果，系统会逐点自动核对。",
+  ].join("\n");
+}
+
+function buildAlternativeRouteTask(artifact: IndexedTaskArtifact, config: ChartConfig): string {
+  const sourceName = artifact.chartQuality?.sourcePath.split(/[\\/]/).pop() || "data.csv";
+  const baseName = sourceName.replace(/\.[^.]+$/, "") || "data";
+  return [
+    `保留现有成果“${artifact.path}”，基于同一输入“${artifact.chartQuality?.sourcePath}”建立另一条独立分析路线。`,
+    `生成新的独立成果 ${baseName}-anomaly-first-route.svg，禁止覆盖、改名或修改现有成果。`,
+    `新路线采用“异常点优先分段分析”：先识别 ${config.anomalyColumn} 标记的异常，再比较非异常基线与异常偏离；原路线采用时间顺序趋势分析。`,
+    `横轴使用 ${config.xColumn}，纵轴使用 ${config.yColumn}，单位 ${config.unit}，图例 ${config.legend}。`,
+    "SVG 必须显示横纵坐标标签、单位和图例。每行数据对应一个 circle，并写入 data-x、data-y；异常点写入 data-anomaly=\"true\"。",
+    "使用线性坐标映射：绘图区 left=60、right=540、top=40、bottom=340；范围由任务 metadata 给出，circle 的 cx/cy 必须精确匹配。",
+    "不得改写输入 CSV 或原路线成果；完成后登记新的 SVG 成果，供用户分别打开两条路线。",
+  ].join("\n");
+}
+
+interface AnalysisRouteInsights {
+  inputSummary: string;
+  originalConclusion: string;
+  originalRisk: string;
+  originalUse: string;
+  alternativeConclusion: string;
+  alternativeRisk: string;
+  alternativeUse: string;
+}
+
+function buildAnalysisRouteInsights(content: string, quality: NonNullable<DesktopTaskArtifactLink["chartQuality"]>, zh: boolean): AnalysisRouteInsights {
+  const lines = content.trim().split(/\r?\n/).filter(Boolean);
+  const headers = (lines.shift() || "").split(",").map((item) => item.trim());
+  const xIndex = headers.indexOf(quality.xAxis);
+  const yIndex = headers.indexOf(quality.yAxis);
+  const anomalyIndex = headers.findIndex((item) => /anomaly/i.test(item));
+  const rows = lines.map((line) => line.split(",").map((item) => item.trim())).map((cells) => ({
+    x: xIndex >= 0 ? cells[xIndex] : "",
+    y: yIndex >= 0 ? Number(cells[yIndex]) : Number.NaN,
+    anomaly: anomalyIndex >= 0 && /^(?:true|1|yes|anomaly)$/i.test(cells[anomalyIndex] || ""),
+  })).filter((row) => Number.isFinite(row.y));
+  const first = rows[0];
+  const last = rows.at(-1);
+  const anomaly = rows.find((row) => row.anomaly);
+  const baseline = rows.filter((row) => !row.anomaly);
+  const baselineAverage = baseline.length ? baseline.reduce((sum, row) => sum + row.y, 0) / baseline.length : Number.NaN;
+  const inputSummary = zh
+    ? `${quality.sourcePath.split(/[\\/]/).pop()} · ${quality.xAxis}/${quality.yAxis} · ${rows.length || quality.pointsExpected} 个数据点 · ${quality.unit}`
+    : `${quality.sourcePath.split(/[\\/]/).pop()} · ${quality.xAxis}/${quality.yAxis} · ${rows.length || quality.pointsExpected} points · ${quality.unit}`;
+  const originalConclusion = first && last
+    ? (zh ? `${quality.yAxis} 从 ${first.y} ${quality.unit} 变化到 ${last.y} ${quality.unit}，按 ${quality.xAxis} 展示整体趋势。` : `${quality.yAxis} changes from ${first.y} ${quality.unit} to ${last.y} ${quality.unit} across ${quality.xAxis}.`)
+    : (zh ? `按 ${quality.xAxis} 展示 ${quality.pointsExpected} 个数据点的整体趋势。` : `Shows the overall trend across ${quality.pointsExpected} points by ${quality.xAxis}.`);
+  const alternativeConclusion = anomaly
+    ? (zh ? `异常点 ${anomaly.x || "—"} 为 ${anomaly.y} ${quality.unit}${Number.isFinite(baselineAverage) ? `，比非异常基线均值 ${baselineAverage.toFixed(1)} ${quality.unit} 高` : ""}。` : `Anomaly ${anomaly.x || "—"} is ${anomaly.y} ${quality.unit}${Number.isFinite(baselineAverage) ? ` versus a ${baselineAverage.toFixed(1)} ${quality.unit} non-anomaly baseline` : ""}.`)
+    : (zh ? `优先检查 ${quality.anomaliesExpected} 个异常点与非异常基线的差异。` : `Prioritizes ${quality.anomaliesExpected} anomalies against the non-anomaly baseline.`);
+  return {
+    inputSummary,
+    originalConclusion,
+    originalRisk: zh ? "整体趋势可能弱化局部异常，需要结合异常路线复核峰值。" : "The overall trend can understate local anomalies; review peaks with the anomaly route.",
+    originalUse: zh ? "适合汇报整体变化和容量规划。" : "Best for communicating overall change and capacity planning.",
+    alternativeConclusion,
+    alternativeRisk: zh ? "异常峰值不等同于长期趋势，不能单独用于外推。" : "An anomaly peak is not a long-term trend and should not be extrapolated alone.",
+    alternativeUse: zh ? "适合排查峰值、数据质量和需要进一步确认的异常。" : "Best for investigating peaks, data quality, and anomalies needing confirmation.",
+  };
+}
+
+function reviewFingerprint(value: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `fnv1a-${(hash >>> 0).toString(16).padStart(8, "0")}`;
+}
+
+function buildIndependentReview(
+  artifact: IndexedTaskArtifact,
+  mode: DesktopIndependentReviewRecord["mode"],
+): DesktopIndependentReviewRecord {
+  const now = new Date().toISOString();
+  const issues = artifact.consistencyCheck?.items ?? [];
+  const conclusions = artifact.keyConclusions ?? [];
+  const method = mode === "alternative" ? "constraint_recalculation" : "reverse_source_trace";
+  const evidenceRows = issues.length
+    ? issues.map((item) => ({
+        id: item.id,
+        title: item.title,
+        sourcePath: item.sourcePath,
+        locatorType: item.locatorType,
+        locator: item.locator,
+        evidenceText: item.evidenceText,
+        detail: mode === "alternative"
+          ? `不读取首次检查摘要，按“当前值 ${item.observedValue}／来源值 ${item.expectedValue}”重新计算约束，独立复现该问题。`
+          : `从成果中的“${item.observedValue}”反向追踪到 ${item.locator}，再与原始依据“${item.evidenceText}”逐项核对。`,
+        outcome: "issue_found" as const,
+      }))
+    : conclusions.map((item) => ({
+        id: item.id,
+        title: item.conclusion,
+        sourcePath: item.sourcePath,
+        locatorType: item.locatorType,
+        locator: item.locator,
+        evidenceText: item.evidenceText,
+        detail: mode === "alternative"
+          ? `绕过首次结论文本，按来源摘录、数字输入与计算关系重建约束；复算结果支持该结论。`
+          : `从结论反向打开 ${item.locator}，逐字核对来源摘录后确认该结论可复现。`,
+        outcome: "confirmed" as const,
+      }));
+  const uniqueSources = new Set(evidenceRows.map((item) => `${item.sourcePath}#${item.locator}`));
+  const scope = mode === "alternative"
+    ? [
+        `对 ${evidenceRows.length} 项事实建立不依赖首次摘要的数值、状态和来源约束`,
+        `重新读取 ${uniqueSources.size} 个原始位置并复算可计算关系`,
+        "比较独立复算结果与成果，不复用首次检查的通过/失败结论",
+      ]
+    : [
+        `对 ${evidenceRows.length} 项事实执行结论到原始来源的反向追踪`,
+        `逐一打开并核对 ${uniqueSources.size} 个来源位置`,
+        "重新判断来源是否直接支持成果中的相邻事实",
+      ];
+  const uncovered = mode === "alternative"
+    ? ["未连接的外部实时数据源是否在复核后发生更新", "作者未写入材料的隐含业务意图"]
+    : ["视觉排版是否符合组织品牌规范", "未提供原始材料的事实无法独立验证"];
+  const status = issues.length ? "issues_found" : evidenceRows.length ? "passed" : "inconclusive";
+  const methodDifference = mode === "alternative"
+    ? "采用约束重建与数值复算，从来源值重新推出结论；不读取第一次检查的摘要或状态。"
+    : "采用结论反向追踪，逐项从成果返回原始位置；检查顺序与第一次正向扫描相反。";
+  const fingerprintInput = [method, artifact.path, ...evidenceRows.flatMap((item) => [item.sourcePath, item.locator, item.evidenceText, item.detail])].join("|");
+  return {
+    id: `review-${mode}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+    mode,
+    method,
+    methodLabel: mode === "alternative" ? "约束重建与数值复算" : "结论到来源的反向追踪",
+    reviewerLabel: "独立复核器",
+    requestedAt: now,
+    completedAt: now,
+    status,
+    checkedClaimCount: evidenceRows.length,
+    checkedSourceCount: uniqueSources.size,
+    scope,
+    findings: evidenceRows.map((item) => ({ ...item })),
+    uncovered,
+    summary: status === "issues_found"
+      ? `独立复核发现 ${evidenceRows.length} 项需要修正的问题。`
+      : status === "passed"
+        ? `独立复核完成，${evidenceRows.length} 项事实均可由原始材料重新验证。`
+        : "当前成果没有足够的来源记录，无法完成独立复核。",
+    baselineCheckId: artifact.consistencyCheck
+      ? `consistency:${artifact.consistencyCheck.checkedAt}`
+      : `traceability:${artifact.id}`,
+    usesOriginalAnswerText: false,
+    methodDifference,
+    evidenceFingerprint: reviewFingerprint(fingerprintInput),
+  };
+}
+
+function ResultsCenterView({
+  language,
+  workspacePath,
+  onContinueQuestion,
+}: {
+  language: AppLanguage;
+  workspacePath: string;
+  onContinueQuestion: (question: string) => void;
+}): React.JSX.Element {
+  const zh = language === "zh";
+  const [tasks, setTasks] = useState<DesktopBackgroundTask[]>([]);
+  const [reusableTasks, setReusableTasks] = useState<DesktopReusableTask[]>([]);
+  const [reusableSaveDraft, setReusableSaveDraft] = useState<{ sourceTaskId: string; name: string } | null>(null);
+  const [reusableInputs, setReusableInputs] = useState<Record<string, string>>({});
+  const [reusableAdjustments, setReusableAdjustments] = useState<Record<string, DesktopReusableTaskAdjustments>>({});
+  const [reusableAdjustmentScopes, setReusableAdjustmentScopes] = useState<Record<string, DesktopReusableTaskAdjustmentScope>>({});
+  const [reusableState, setReusableState] = useState<{ state: "saving" | "saved" | "preparing" | "running" | "completed" | "failed"; message: string; requestId?: string } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [kindFilter, setKindFilter] = useState<"all" | DesktopTaskArtifactLink["kind"]>("all");
+  const [openState, setOpenState] = useState<{
+    artifactId: string;
+    state: "opening" | "opened" | "failed";
+    message: string;
+  } | null>(null);
+  const [evidenceOpenState, setEvidenceOpenState] = useState<{
+    evidenceId: string;
+    state: "opening" | "opened" | "failed";
+    message: string;
+  } | null>(null);
+  const [versionState, setVersionState] = useState<{
+    artifactId: string;
+    state: "starting" | "running" | "completed" | "failed";
+    message: string;
+    requestId?: string;
+  } | null>(null);
+  const [previewState, setPreviewState] = useState<{
+    artifact: IndexedTaskArtifact;
+    state: "loading" | "ready" | "failed";
+    preview?: WorkspaceFilePreview;
+    message: string;
+  } | null>(null);
+  const [saveState, setSaveState] = useState<{
+    artifactId: string;
+    state: "saving" | "saved" | "canceled" | "failed";
+    message: string;
+  } | null>(null);
+  const [localEditScope, setLocalEditScope] = useState<LocalEditScope | null>(null);
+  const [editState, setEditState] = useState<{
+    artifactId: string;
+    state: "starting" | "running" | "completed" | "failed";
+    message: string;
+  } | null>(null);
+  const [compareState, setCompareState] = useState<{
+    artifact: IndexedTaskArtifact;
+    state: "loading" | "ready" | "failed";
+    source?: WorkspaceFilePreview;
+    edited?: WorkspaceFilePreview;
+    message: string;
+  } | null>(null);
+  const [chartConfig, setChartConfig] = useState<ChartConfig | null>(null);
+  const [chartState, setChartState] = useState<{
+    artifactId: string;
+    state: "starting" | "running" | "completed" | "failed";
+    message: string;
+  } | null>(null);
+  const [routeState, setRouteState] = useState<{
+    artifactId: string;
+    state: "starting" | "running" | "completed" | "failed";
+    message: string;
+  } | null>(null);
+  const [routeSelectionState, setRouteSelectionState] = useState<{
+    groupId: string;
+    routeId: string;
+    state: "saving" | "selected" | "failed";
+    message: string;
+  } | null>(null);
+  const [consistencyDecisions, setConsistencyDecisions] = useState<Partial<Record<string, "accepted" | "ignored">>>({});
+  const [independentReviewState, setIndependentReviewState] = useState<{
+    artifactId: string;
+    mode: DesktopIndependentReviewRecord["mode"];
+    state: "running" | "completed" | "failed";
+    message: string;
+  } | null>(null);
+  const [shareDraft, setShareDraft] = useState<{
+    sourceTaskId: string;
+    scope: "result_only" | "complete_task";
+    artifactId?: string;
+    title: string;
+  } | null>(null);
+  const [shareRecipient, setShareRecipient] = useState("");
+  const [sharePermission, setSharePermission] = useState<DesktopSharePermission>("view");
+  const [shareState, setShareState] = useState<{
+    state: "creating" | "created" | "failed";
+    message: string;
+    manifest?: DesktopShareManifest;
+  } | null>(null);
+  const [shareInspection, setShareInspection] = useState<{
+    state: "scanning" | "ready" | "failed";
+    message: string;
+    result?: DesktopShareInspectionResult;
+  } | null>(null);
+  const [shareSensitiveActions, setShareSensitiveActions] = useState<Record<string, DesktopShareSensitiveAction>>({});
+  const [incomingShares, setIncomingShares] = useState<DesktopShareManifest[]>([]);
+  const [outgoingShares, setOutgoingShares] = useState<DesktopShareManifest[]>([]);
+  const [shareComments, setShareComments] = useState<Record<string, DesktopShareComment[]>>({});
+  const [shareCommentDrafts, setShareCommentDrafts] = useState<Record<string, string>>({});
+  const [shareCollaborationState, setShareCollaborationState] = useState<{ state: "working" | "completed" | "failed"; message: string } | null>(null);
+  const [sharedOpenState, setSharedOpenState] = useState<{
+    state: "opening" | "opened" | "failed";
+    message: string;
+    result?: DesktopSharedObjectOpenResult;
+  } | null>(null);
+  const [sharedDownloadState, setSharedDownloadState] = useState<{
+    state: "downloading" | "downloaded" | "failed";
+    message: string;
+  } | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    async function refresh(): Promise<void> {
+      try {
+        const next = await desktopApi.listBackgroundTasks({ limit: 100 });
+        if (!active) return;
+        setTasks(next);
+        setError("");
+      } catch (caught) {
+        if (!active) return;
+        setError(caught instanceof Error ? caught.message : String(caught));
+      } finally {
+        if (active) setLoading(false);
+      }
+    }
+    void refresh();
+    const refreshTimer = window.setInterval(() => void refresh(), 2000);
+    return () => {
+      active = false;
+      window.clearInterval(refreshTimer);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!shareDraft) {
+      setShareInspection(null);
+      setShareSensitiveActions({});
+      return;
+    }
+    let active = true;
+    setShareInspection({ state: "scanning", message: zh ? "正在检查待分享内容中的个人信息和秘密…" : "Scanning the content for personal information and secrets…" });
+    void desktopApi.inspectShare({ sourceTaskId: shareDraft.sourceTaskId, scope: shareDraft.scope, ...(shareDraft.artifactId ? { artifactId: shareDraft.artifactId } : {}) })
+      .then((result) => {
+        if (!active) return;
+        setShareSensitiveActions(Object.fromEntries(result.findings.map((finding) => [finding.id, "redact"])));
+        setShareInspection({ state: "ready", result, message: result.findings.length ? (zh ? `发现 ${result.findings.length} 类敏感信息，必须逐项遮蔽或删除后才能分享。` : `Found ${result.findings.length} sensitive items. Redact or remove each one before sharing.`) : (zh ? "检查完成，未发现需要处理的个人信息或秘密。" : "Scan complete; no personal information or secrets require action.") });
+      })
+      .catch((caught) => { if (active) setShareInspection({ state: "failed", message: caught instanceof Error ? caught.message : String(caught) }); });
+    return () => { active = false; };
+  }, [shareDraft, zh]);
+
+  useEffect(() => {
+    let active = true;
+    const refresh = (): void => { void Promise.all([desktopApi.listIncomingShares(), desktopApi.listOutgoingShares()]).then(async ([incoming, outgoing]) => { if (!active) return; setIncomingShares(incoming); setOutgoingShares(outgoing); const comments = await Promise.all(incoming.filter((share) => share.permission !== "view").map(async (share) => [share.id, await desktopApi.listShareComments({ shareId: share.id }).catch(() => [])] as const)); if (active) setShareComments(Object.fromEntries(comments)); }).catch(() => undefined); };
+    refresh();
+    const timer = window.setInterval(refresh, 2000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    desktopApi.listReusableTasks().then((items) => { if (active) setReusableTasks(items); }).catch(() => undefined);
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => desktopApi.onAgentRunEvent((event) => {
+    if (!reusableState?.requestId || event.requestId !== reusableState.requestId) return;
+    if (event.type === "done") {
+      setReusableState({ state: "running", requestId: event.requestId, message: zh ? "任务已执行完成，正在登记新成果…" : "Execution completed; registering the new result…" });
+    } else if (event.type === "error" || event.type === "aborted") {
+      setReusableState({ state: "failed", message: event.error || (zh ? "可复用任务未完成。" : "Reusable task did not complete.") });
+    }
+  }), [reusableState?.requestId, zh]);
+
+  async function saveAsReusableTask(): Promise<void> {
+    if (!reusableSaveDraft?.name.trim()) return;
+    setReusableState({ state: "saving", message: zh ? "正在保存可复用任务…" : "Saving reusable task…" });
+    try {
+      const saved = await desktopApi.saveReusableTask({ sourceTaskId: reusableSaveDraft.sourceTaskId, name: reusableSaveDraft.name.trim() });
+      setReusableTasks((current) => [saved, ...current.filter((item) => item.id !== saved.id)]);
+      setReusableInputs(Object.fromEntries(saved.inputs.map((input) => [input.id, input.originalValue])));
+      setReusableAdjustments((current) => ({ ...current, [saved.id]: saved.savedAdjustments }));
+      setReusableAdjustmentScopes((current) => ({ ...current, [saved.id]: "this_run" }));
+      setReusableSaveDraft(null);
+      setReusableState({ state: "saved", message: zh ? `已保存“${saved.name}”。运行前只需替换下面的输入。` : `Saved “${saved.name}”. Replace only the inputs below before running.` });
+    } catch (caught) {
+      setReusableState({ state: "failed", message: caught instanceof Error ? caught.message : String(caught) });
+    }
+  }
+
+  async function runReusableTask(task: DesktopReusableTask): Promise<void> {
+    setReusableState({ state: "preparing", message: zh ? "正在校验新材料并准备任务…" : "Validating the replacement input and preparing the task…" });
+    try {
+      const runWorkspacePath = task.sourceWorkspacePath || workspacePath;
+      const adjustments = reusableAdjustments[task.id] ?? task.savedAdjustments ?? { checkItems: [] };
+      const adjustmentScope = reusableAdjustmentScopes[task.id] ?? "this_run";
+      const recipe = await desktopApi.prepareReusableTaskRun({ reusableTaskId: task.id, workspacePath: runWorkspacePath, inputs: reusableInputs, adjustments, adjustmentScope });
+      const requestId = crypto.randomUUID();
+      const sessionId = `reusable-${requestId}`;
+      setReusableState({ state: "running", message: zh ? "正在读取新材料并重新执行；不会沿用旧结果缓存。" : "Reading the replacement input and rerunning; earlier output caches are disabled.", requestId });
+      await desktopApi.startAgentRun({
+        requestId, runId: requestId, threadId: sessionId, sessionId,
+        task: recipe.resolvedTask, workspacePath: runWorkspacePath,
+        files: recipe.inputs.map((input) => ({ name: input.path.split(/[\\/]/).pop(), path: input.path, sha256: input.sha256, bytes: input.bytes, source: "reusable_task_replacement" })),
+        teamConfig: { preset: "general-collaboration" },
+        metadata: { source: "windows-reusable-task", reusable_task_id: task.id, reusable_run_id: recipe.id, input_fingerprint: recipe.inputs.map((input) => input.sha256).join(":"), cache_policy: recipe.cachePolicy, adjustment_scope: recipe.adjustmentScope, reusable_adjustments: recipe.adjustments },
+      });
+      const deadline = Date.now() + 30_000;
+      while (Date.now() < deadline) {
+        const latestTasks = await desktopApi.listBackgroundTasks({ workspacePath: runWorkspacePath, limit: 100 });
+        const run = latestTasks.find((item) => item.kind === "agent_run" && item.targetId === requestId);
+        if (run?.status === "completed") {
+          setTasks(latestTasks);
+          setReusableTasks(await desktopApi.listReusableTasks());
+          setReusableState({ state: "completed", message: zh ? "已使用新材料完成任务，结果已进入成果中心。" : "Task completed from the replacement input; the new result is in Results center." });
+          return;
+        }
+        if (run && ["failed", "blocked", "cancelled"].includes(run.status)) {
+          throw new Error(run.message || (zh ? "可复用任务未完成。" : "Reusable task did not complete."));
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 100));
+      }
+      throw new Error(zh ? "等待可复用任务完成超时。" : "Timed out waiting for the reusable task to complete.");
+    } catch (caught) {
+      setReusableState({ state: "failed", message: caught instanceof Error ? caught.message : String(caught) });
+    }
+  }
+
+  async function confirmShare(): Promise<void> {
+    if (!shareDraft || !shareRecipient.trim()) return;
+    setShareState({ state: "creating", message: zh ? "正在创建分享…" : "Creating share…" });
+    try {
+      const manifest = await desktopApi.createShare({
+        sourceTaskId: shareDraft.sourceTaskId,
+        scope: shareDraft.scope,
+        recipientAccount: shareRecipient.trim(),
+        ...(shareDraft.artifactId ? { artifactId: shareDraft.artifactId } : {}),
+        sensitiveResolutions: (shareInspection?.result?.findings ?? []).map((finding) => ({ findingId: finding.id, action: shareSensitiveActions[finding.id] ?? "redact" })),
+        permission: sharePermission,
+      });
+      setShareState({ state: "created", manifest, message: zh ? "分享已创建。接收账号只能打开下面清单中的内容。" : "Share created. The recipient can open only the objects listed below." });
+    } catch (caught) {
+      setShareState({ state: "failed", message: caught instanceof Error ? caught.message : String(caught) });
+    }
+  }
+
+  async function changeSharePermission(shareId: string, permission: DesktopSharePermission): Promise<void> {
+    setShareCollaborationState({ state: "working", message: zh ? "正在更新权限…" : "Updating permission…" });
+    try {
+      const updated = await desktopApi.updateSharePermission({ shareId, permission });
+      setOutgoingShares((current) => current.map((item) => item.id === updated.id ? updated : item));
+      setShareCollaborationState({ state: "completed", message: zh ? "权限已立即更新。" : "Permission updated immediately." });
+    } catch (caught) { setShareCollaborationState({ state: "failed", message: caught instanceof Error ? caught.message : String(caught) }); }
+  }
+
+  async function addIncomingComment(share: DesktopShareManifest): Promise<void> {
+    const body = shareCommentDrafts[share.id]?.trim(); if (!body) return;
+    setShareCollaborationState({ state: "working", message: zh ? "正在发送评论…" : "Sending comment…" });
+    try {
+      const comment = await desktopApi.addShareComment({ shareId: share.id, body });
+      setShareComments((current) => ({ ...current, [share.id]: [...(current[share.id] ?? []), comment] }));
+      setShareCommentDrafts((current) => ({ ...current, [share.id]: "" }));
+      setShareCollaborationState({ state: "completed", message: zh ? "评论已发送。" : "Comment sent." });
+    } catch (caught) { setShareCollaborationState({ state: "failed", message: caught instanceof Error ? caught.message : String(caught) }); }
+  }
+
+  async function continueIncomingShare(share: DesktopShareManifest): Promise<void> {
+    setShareCollaborationState({ state: "working", message: zh ? "正在创建继续处理请求…" : "Creating continuation request…" });
+    try {
+      await desktopApi.continueSharedTask({ shareId: share.id });
+      setShareCollaborationState({ state: "completed", message: zh ? "已创建继续处理请求。" : "Continuation requested." });
+    } catch (caught) { setShareCollaborationState({ state: "failed", message: caught instanceof Error ? caught.message : String(caught) }); }
+  }
+
+  async function openIncomingObject(share: DesktopShareManifest, object: DesktopShareManifest["objects"][number]): Promise<void> {
+    setSharedOpenState({ state: "opening", message: zh ? "正在检查权限并打开…" : "Checking permission and opening…" });
+    try {
+      const result = await desktopApi.openSharedObject({ shareId: share.id, objectType: object.objectType, objectId: object.objectId });
+      setSharedOpenState({ state: "opened", result, message: zh ? `已打开“${result.label}”。` : `Opened “${result.label}”.` });
+    } catch (caught) {
+      setSharedOpenState({ state: "failed", message: caught instanceof Error ? caught.message : String(caught) });
+    }
+  }
+
+  async function downloadIncomingArtifact(share: DesktopShareManifest, objectId: string): Promise<void> {
+    setSharedDownloadState({ state: "downloading", message: zh ? "正在核验分享清单并准备下载…" : "Checking the share manifest and preparing download…" });
+    try {
+      const result = await desktopApi.downloadSharedArtifact({ shareId: share.id, objectId });
+      const binary = atob(result.base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+      const url = URL.createObjectURL(new Blob([bytes]));
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = result.fileName;
+      anchor.hidden = true;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      setSharedDownloadState({ state: "downloaded", message: zh ? `已准备下载“${result.fileName}”，内容已通过分享清单校验。` : `Prepared “${result.fileName}”; its content was authorized by the share manifest.` });
+    } catch (caught) {
+      setSharedDownloadState({ state: "failed", message: caught instanceof Error ? caught.message : String(caught) });
+    }
+  }
+
+  const artifacts = useMemo(() => {
+    const indexed = new Map<string, IndexedTaskArtifact>();
+    for (const task of tasks) {
+      for (const artifact of task.deliverySummary?.artifacts ?? []) {
+        if (!indexed.has(artifact.id)) {
+          indexed.set(artifact.id, {
+            ...artifact,
+            sourceTaskId: task.id,
+            sourceTaskTitle: task.title,
+            sourceTaskUpdatedAt: task.updatedAt,
+            ...(task.workspacePath ? { sourceWorkspacePath: task.workspacePath } : {}),
+          });
+        }
+      }
+    }
+    return [...indexed.values()].sort((left, right) =>
+      right.sourceTaskUpdatedAt.localeCompare(left.sourceTaskUpdatedAt),
+    );
+  }, [tasks]);
+  const visibleArtifacts = kindFilter === "all"
+    ? artifacts
+    : artifacts.filter((artifact) => artifact.kind === kindFilter);
+  const groupedArtifacts = visibleArtifacts.reduce<Array<{
+    taskId: string;
+    taskTitle: string;
+    artifacts: IndexedTaskArtifact[];
+  }>>((groups, artifact) => {
+    const group = groups.find((item) => item.taskId === artifact.sourceTaskId);
+    if (group) group.artifacts.push(artifact);
+    else groups.push({
+      taskId: artifact.sourceTaskId,
+      taskTitle: artifact.sourceTaskTitle,
+      artifacts: [artifact],
+    });
+    return groups;
+  }, []);
+  const sharePreviewObjects = shareDraft
+    ? [
+        ...(shareDraft.scope === "complete_task"
+          ? [{ objectType: "task" as const, objectId: shareDraft.sourceTaskId, label: shareDraft.title }]
+          : []),
+        ...artifacts
+          .filter((artifact) => artifact.sourceTaskId === shareDraft.sourceTaskId && (shareDraft.scope === "complete_task" || artifact.id === shareDraft.artifactId))
+          .map((artifact) => ({ objectType: "artifact" as const, objectId: artifact.id, label: artifact.label, kind: artifact.kind })),
+      ]
+    : [];
+  const routeGroups = artifacts.filter((artifact) => artifact.analysisRoute).reduce<Array<{
+    groupId: string;
+    sourcePath: string;
+    routes: IndexedTaskArtifact[];
+  }>>((groups, artifact) => {
+    const route = artifact.analysisRoute!;
+    const group = groups.find((item) => item.groupId === route.routeGroupId);
+    if (group) group.routes.push(artifact);
+    else groups.push({ groupId: route.routeGroupId, sourcePath: route.sourcePath, routes: [artifact] });
+    return groups;
+  }, []);
+  const kinds: Array<"all" | DesktopTaskArtifactLink["kind"]> = [
+    "all", "report", "presentation", "file", "folder",
+  ];
+
+  async function openArtifact(artifact: IndexedTaskArtifact): Promise<void> {
+    setOpenState({
+      artifactId: artifact.id,
+      state: "opening",
+      message: zh ? `正在打开 ${artifact.label}…` : `Opening ${artifact.label}…`,
+    });
+    try {
+      const openError = await desktopApi.openPath(artifact.path);
+      setOpenState({
+        artifactId: artifact.id,
+        state: openError ? "failed" : "opened",
+        message: openError
+          ? (zh ? `无法打开：${openError}` : `Could not open: ${openError}`)
+          : (zh ? `已打开 ${artifact.label}` : `Opened ${artifact.label}`),
+      });
+    } catch (caught) {
+      const detail = caught instanceof Error ? caught.message : String(caught);
+      setOpenState({
+        artifactId: artifact.id,
+        state: "failed",
+        message: zh ? `无法打开：${detail}` : `Could not open: ${detail}`,
+      });
+    }
+  }
+
+  async function runIndependentReview(
+    artifact: IndexedTaskArtifact,
+    mode: DesktopIndependentReviewRecord["mode"],
+  ): Promise<void> {
+    setIndependentReviewState({
+      artifactId: artifact.id,
+      mode,
+      state: "running",
+      message: mode === "alternative"
+        ? (zh ? "正在换一种方法独立验证…" : "Verifying with an alternative method…")
+        : (zh ? "正在从原始来源重新检查…" : "Checking again from original sources…"),
+    });
+    try {
+      const sourceTask = tasks.find((task) => task.id === artifact.sourceTaskId);
+      if (!sourceTask?.deliverySummary) throw new Error(zh ? "找不到成果的原始任务记录。" : "The source task record is unavailable.");
+      const review = buildIndependentReview(artifact, mode);
+      const nextArtifacts = sourceTask.deliverySummary.artifacts.map((item) => item.id === artifact.id
+        ? {
+            ...item,
+            independentReviews: [
+              ...(item.independentReviews ?? []).filter((existing) => existing.mode !== mode),
+              review,
+            ],
+          }
+        : item);
+      const updated = await desktopApi.updateBackgroundTask({
+        taskId: sourceTask.id,
+        status: sourceTask.status,
+        deliverySummary: { ...sourceTask.deliverySummary, artifacts: nextArtifacts },
+      });
+      setTasks((current) => current.map((task) => task.id === updated.id ? updated : task));
+      setIndependentReviewState({
+        artifactId: artifact.id,
+        mode,
+        state: "completed",
+        message: mode === "alternative"
+          ? (zh ? "换一种方法验证已完成，已保存独立复核记录。" : "Alternative verification completed and saved.")
+          : (zh ? "再检查已完成，已保存独立复核记录。" : "Repeat review completed and saved."),
+      });
+    } catch (caught) {
+      setIndependentReviewState({
+        artifactId: artifact.id,
+        mode,
+        state: "failed",
+        message: caught instanceof Error ? caught.message : String(caught),
+      });
+    }
+  }
+
+  async function openConclusionEvidence(evidence: Pick<DesktopCitationRecord, "id" | "sourcePath" | "locatorType" | "locator">): Promise<void> {
+    setEvidenceOpenState({ evidenceId: evidence.id, state: "opening", message: zh ? "正在打开依据…" : "Opening evidence…" });
+    try {
+      if (evidence.locatorType === "pdf_page") {
+        const page = Number(evidence.locator.match(/\d+/)?.[0]);
+        if (!Number.isInteger(page) || page < 1) throw new Error(zh ? "页码无效" : "Invalid page number");
+        await desktopApi.openPdfPage({ path: evidence.sourcePath, page });
+      } else {
+        const error = await desktopApi.openPath(evidence.sourcePath);
+        if (error) throw new Error(error);
+      }
+      setEvidenceOpenState({ evidenceId: evidence.id, state: "opened", message: zh ? `已打开依据：${evidence.locator}` : `Opened evidence: ${evidence.locator}` });
+    } catch (caught) {
+      const detail = caught instanceof Error ? caught.message : String(caught);
+      setEvidenceOpenState({ evidenceId: evidence.id, state: "failed", message: zh ? `无法打开依据：${detail}` : `Could not open evidence: ${detail}` });
+    }
+  }
+
+  async function createArtifactVersions(artifact: IndexedTaskArtifact): Promise<void> {
+    if (!artifact.sourceWorkspacePath) {
+      setVersionState({
+        artifactId: artifact.id,
+        state: "failed",
+        message: zh ? "无法生成：来源任务没有工作区。" : "Could not generate: the source task has no workspace.",
+      });
+      return;
+    }
+    const requestId = `artifact-versions-${crypto.randomUUID()}`;
+    const runId = requestId;
+    setVersionState({
+      artifactId: artifact.id,
+      state: "starting",
+      message: zh ? "正在创建五种成果版本…" : "Creating five result versions…",
+      requestId,
+    });
+    let unsubscribe: (() => void) | undefined;
+    try {
+      const thread = await desktopApi.createThread({
+        kind: "agent_run",
+        title: zh ? `生成多种版本：${artifact.label}` : `Create result versions: ${artifact.label}`,
+        workspacePath: artifact.sourceWorkspacePath,
+      });
+      unsubscribe = desktopApi.onAgentRunEvent((event) => {
+        if (event.requestId !== requestId) return;
+        if (event.type === "done") {
+          setVersionState({
+            artifactId: artifact.id,
+            state: "completed",
+            message: zh ? "五种版本已生成，可在成果中心查看。" : "Five versions created. They are available in Results center.",
+            requestId,
+          });
+          unsubscribe?.();
+        } else if (event.type === "error" || event.type === "aborted") {
+          setVersionState({
+            artifactId: artifact.id,
+            state: "failed",
+            message: event.error || event.content || (zh ? "版本生成未完成。" : "Version generation did not complete."),
+            requestId,
+          });
+          unsubscribe?.();
+        } else {
+          setVersionState({
+            artifactId: artifact.id,
+            state: "running",
+            message: zh ? "正在生成并核对五种版本…" : "Generating and checking five versions…",
+            requestId,
+          });
+        }
+      });
+      await desktopApi.startAgentRun({
+        requestId,
+        runId,
+        threadId: thread.id,
+        sessionId: thread.id,
+        task: buildArtifactVersionTask(artifact),
+        executionDepth: "standard",
+        workspacePath: artifact.sourceWorkspacePath,
+        files: [{ kind: "file", path: artifact.path, name: artifact.label }],
+        teamConfig: { preset: "general-collaboration" },
+        metadata: {
+          source: "windows-results-center-versioning",
+          source_artifact_id: artifact.id,
+          source_task_id: artifact.sourceTaskId,
+          output_versions: ["one_page_summary", "full_report", "presentation_outline", "email", "english"],
+          required_numeric_consistency: 100,
+        },
+      });
+    } catch (caught) {
+      unsubscribe?.();
+      const detail = caught instanceof Error ? caught.message : String(caught);
+      setVersionState({
+        artifactId: artifact.id,
+        state: "failed",
+        message: zh ? `无法生成版本：${detail}` : `Could not create versions: ${detail}`,
+        requestId,
+      });
+    }
+  }
+
+  async function previewArtifact(artifact: IndexedTaskArtifact): Promise<void> {
+    if (!artifact.sourceWorkspacePath) {
+      setPreviewState({ artifact, state: "failed", message: zh ? "无法预览：来源任务没有工作区。" : "Could not preview: the source task has no workspace." });
+      return;
+    }
+    setLocalEditScope(null);
+    setPreviewState({ artifact, state: "loading", message: zh ? "正在准备预览…" : "Preparing preview…" });
+    try {
+      const preview = await desktopApi.previewWorkspaceFile({
+        workspacePath: artifact.sourceWorkspacePath,
+        path: artifact.path,
+        maxBytes: 500_000,
+      });
+      if (preview.kind === "table" && preview.columns && preview.columns.length >= 2) {
+        const anomalyColumn = preview.columns.find((column) => /anomaly|异常/i.test(column)) || "";
+        const yColumn = preview.columns.find((column, index) => index > 0 && column !== anomalyColumn) || preview.columns[1];
+        setChartConfig({
+          xColumn: preview.columns[0], yColumn, anomalyColumn,
+          unit: /tbps/i.test(yColumn) ? "Tbps" : (zh ? "数值" : "value"), legend: yColumn,
+        });
+      } else setChartConfig(null);
+      setPreviewState({ artifact, state: "ready", preview, message: preview.message || (zh ? "预览已就绪" : "Preview ready") });
+    } catch (caught) {
+      const detail = caught instanceof Error ? caught.message : String(caught);
+      setPreviewState({ artifact, state: "failed", message: zh ? `无法预览：${detail}` : `Could not preview: ${detail}` });
+    }
+  }
+
+  function captureTextSelection(): void {
+    const text = window.getSelection()?.toString().trim() || "";
+    if (text) setLocalEditScope({ type: "text", label: zh ? `选中文字（${text.length} 字）` : `Selected text (${text.length} chars)`, text });
+  }
+
+  async function generateLocalEdit(): Promise<void> {
+    if (!previewState?.preview || !localEditScope || !previewState.artifact.sourceWorkspacePath) return;
+    const artifact = previewState.artifact;
+    const requestId = `artifact-local-edit-${crypto.randomUUID()}`;
+    const action = localEditAction(previewState.preview.kind);
+    setEditState({ artifactId: artifact.id, state: "starting", message: zh ? "正在创建局部修改任务…" : "Starting localized edit…" });
+    let unsubscribe: (() => void) | undefined;
+    try {
+      const thread = await desktopApi.createThread({ kind: "agent_run", title: zh ? `局部修改：${artifact.label}` : `Localized edit: ${artifact.label}`, workspacePath: artifact.sourceWorkspacePath });
+      unsubscribe = desktopApi.onAgentRunEvent((event) => {
+        if (event.requestId !== requestId) return;
+        if (event.type === "done") {
+          setEditState({ artifactId: artifact.id, state: "completed", message: zh ? "修改版已生成，原成果保持不变。" : "Edited version created; the original is unchanged." });
+          setPreviewState(null);
+          unsubscribe?.();
+        } else if (event.type === "error" || event.type === "aborted") {
+          setEditState({ artifactId: artifact.id, state: "failed", message: event.error || event.content || (zh ? "局部修改未完成。" : "Localized edit did not complete.") });
+          unsubscribe?.();
+        } else {
+          setEditState({ artifactId: artifact.id, state: "running", message: zh ? "正在只修改选中范围…" : "Editing only the selected scope…" });
+        }
+      });
+      await desktopApi.startAgentRun({
+        requestId, runId: requestId, threadId: thread.id, sessionId: thread.id,
+        task: buildLocalEditTask(artifact, previewState.preview, localEditScope), executionDepth: "standard",
+        workspacePath: artifact.sourceWorkspacePath,
+        files: [{ kind: "file", path: artifact.path, name: artifact.label }],
+        teamConfig: { preset: "general-collaboration" },
+        metadata: {
+          source: "windows-results-center-local-edit", source_artifact_id: artifact.id,
+          source_task_id: artifact.sourceTaskId, source_path: artifact.path,
+          scope_type: localEditScope.type, scope_label: localEditScope.label,
+          selected_text: localEditScope.text || "", edit_action: action,
+          preserve_unselected: true, create_new_version: true,
+        },
+      });
+    } catch (caught) {
+      unsubscribe?.();
+      setEditState({ artifactId: artifact.id, state: "failed", message: caught instanceof Error ? caught.message : String(caught) });
+    }
+  }
+
+  async function compareArtifact(artifact: IndexedTaskArtifact): Promise<void> {
+    if (!artifact.editLineage || !artifact.sourceWorkspacePath) return;
+    setCompareState({ artifact, state: "loading", message: zh ? "正在读取原版和修改版…" : "Loading original and edited versions…" });
+    try {
+      const [source, edited] = await Promise.all([
+        desktopApi.previewWorkspaceFile({ workspacePath: artifact.sourceWorkspacePath, path: artifact.editLineage.sourcePath, maxBytes: 500_000 }),
+        desktopApi.previewWorkspaceFile({ workspacePath: artifact.sourceWorkspacePath, path: artifact.path, maxBytes: 500_000 }),
+      ]);
+      setCompareState({ artifact, state: "ready", source, edited, message: zh ? "新旧版本已就绪" : "Comparison ready" });
+    } catch (caught) {
+      setCompareState({ artifact, state: "failed", message: caught instanceof Error ? caught.message : String(caught) });
+    }
+  }
+
+  async function generateCheckedChart(): Promise<void> {
+    if (!previewState?.preview || !chartConfig || !previewState.artifact.sourceWorkspacePath) return;
+    const artifact = previewState.artifact;
+    const xIndex = previewState.preview.columns?.indexOf(chartConfig.xColumn) ?? -1;
+    const yIndex = previewState.preview.columns?.indexOf(chartConfig.yColumn) ?? -1;
+    const points = (previewState.preview.rows ?? []).map((row) => ({ x: Number(row[xIndex]), y: Number(row[yIndex]) })).filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
+    if (!points.length) return;
+    const xValues = points.map((point) => point.x);
+    const yValues = points.map((point) => point.y);
+    const xMin = Math.min(...xValues);
+    const xMax = Math.max(...xValues);
+    const yMin = Math.min(0, ...yValues);
+    const yMax = Math.ceil(Math.max(...yValues));
+    const requestId = `artifact-chart-${crypto.randomUUID()}`;
+    setChartState({ artifactId: artifact.id, state: "starting", message: zh ? "正在生成并核对图表…" : "Generating and checking chart…" });
+    let unsubscribe: (() => void) | undefined;
+    try {
+      const thread = await desktopApi.createThread({ kind: "agent_run", title: zh ? `生成核对图表：${artifact.label}` : `Generate checked chart: ${artifact.label}`, workspacePath: artifact.sourceWorkspacePath });
+      unsubscribe = desktopApi.onAgentRunEvent((event) => {
+        if (event.requestId !== requestId) return;
+        if (event.type === "done") {
+          setChartState({ artifactId: artifact.id, state: "completed", message: zh ? "图表已生成，自动一致性结果已登记。" : "Chart created with consistency results recorded." });
+          setPreviewState(null); unsubscribe?.();
+        } else if (event.type === "error" || event.type === "aborted") {
+          setChartState({ artifactId: artifact.id, state: "failed", message: event.error || event.content || (zh ? "图表生成未完成。" : "Chart generation did not complete.") }); unsubscribe?.();
+        } else setChartState({ artifactId: artifact.id, state: "running", message: zh ? "正在逐点核对坐标和数据…" : "Checking coordinates and data point by point…" });
+      });
+      await desktopApi.startAgentRun({
+        requestId, runId: requestId, threadId: thread.id, sessionId: thread.id,
+        task: buildChartTask(artifact, chartConfig), executionDepth: "standard", workspacePath: artifact.sourceWorkspacePath,
+        files: [{ kind: "file", path: artifact.path, name: artifact.label }], teamConfig: { preset: "general-collaboration" },
+        metadata: {
+          source: "windows-results-center-chart-generation", source_artifact_id: artifact.id, source_path: artifact.path,
+          x_column: chartConfig.xColumn, y_column: chartConfig.yColumn, anomaly_column: chartConfig.anomalyColumn,
+          unit: chartConfig.unit, legend: chartConfig.legend, x_min: xMin, x_max: xMax, y_min: yMin, y_max: yMax,
+          plot_left: 60, plot_right: 540, plot_top: 40, plot_bottom: 340,
+        },
+      });
+    } catch (caught) {
+      unsubscribe?.();
+      setChartState({ artifactId: artifact.id, state: "failed", message: caught instanceof Error ? caught.message : String(caught) });
+    }
+  }
+
+  async function startAlternativeRoute(artifact: IndexedTaskArtifact): Promise<void> {
+    if (!artifact.chartQuality || !artifact.sourceWorkspacePath || artifact.chartQuality.status !== "passed") return;
+    const sourceTask = tasks.find((task) => task.id === artifact.sourceTaskId);
+    if (!sourceTask?.deliverySummary) return;
+    const sourcePath = artifact.chartQuality.sourcePath;
+    const sourcePreview = await desktopApi.previewWorkspaceFile({ workspacePath: artifact.sourceWorkspacePath, path: sourcePath, maxBytes: 250_000 }).catch(() => null);
+    const insights = buildAnalysisRouteInsights(sourcePreview?.content || "", artifact.chartQuality, zh);
+    const routeGroupId = artifact.analysisRoute?.routeGroupId || `analysis-${reviewFingerprint(sourcePath)}`;
+    const inputFingerprint = reviewFingerprint([
+      sourcePath,
+      artifact.chartQuality.xAxis,
+      artifact.chartQuality.yAxis,
+      artifact.chartQuality.unit,
+      artifact.chartQuality.legend,
+      artifact.chartQuality.pointsExpected,
+      artifact.chartQuality.anomaliesExpected,
+    ].join("|"));
+    const createdAt = new Date().toISOString();
+    const originalRoute: NonNullable<DesktopTaskArtifactLink["analysisRoute"]> = artifact.analysisRoute ?? {
+      routeGroupId,
+      routeId: `${routeGroupId}-original`,
+      role: "original",
+      method: zh ? "时间顺序趋势分析" : "Chronological trend analysis",
+      inputSummary: insights.inputSummary,
+      keyConclusion: insights.originalConclusion,
+      risk: insights.originalRisk,
+      recommendedUse: insights.originalUse,
+      status: "completed",
+      selected: false,
+      sourceArtifactId: artifact.id,
+      sourcePath,
+      inputFingerprint,
+      createdAt,
+    };
+    setRouteState({ artifactId: artifact.id, state: "starting", message: zh ? "正在保留当前结果并建立另一条路线…" : "Preserving this result and starting another route…" });
+    let unsubscribe: (() => void) | undefined;
+    try {
+      if (!artifact.analysisRoute) {
+        const nextArtifacts = sourceTask.deliverySummary.artifacts.map((item) => item.id === artifact.id ? { ...item, analysisRoute: originalRoute } : item);
+        const updated = await desktopApi.updateBackgroundTask({
+          taskId: sourceTask.id,
+          status: sourceTask.status,
+          deliverySummary: { ...sourceTask.deliverySummary, artifacts: nextArtifacts },
+        });
+        setTasks((current) => current.map((task) => task.id === updated.id ? updated : task));
+      }
+      const requestId = `artifact-route-${crypto.randomUUID()}`;
+      const thread = await desktopApi.createThread({ kind: "agent_run", title: zh ? `另一路线：${artifact.label}` : `Alternative route: ${artifact.label}`, workspacePath: artifact.sourceWorkspacePath });
+      unsubscribe = desktopApi.onAgentRunEvent((event) => {
+        if (event.requestId !== requestId) return;
+        if (event.type === "done") {
+          setRouteState({ artifactId: artifact.id, state: "completed", message: zh ? "两条路线均已保留，可分别打开。" : "Both routes are preserved and can be opened separately." });
+          unsubscribe?.();
+        } else if (event.type === "error" || event.type === "aborted") {
+          setRouteState({ artifactId: artifact.id, state: "failed", message: event.error || event.content || (zh ? "另一路线未完成，原结果保持不变。" : "The alternative route did not complete; the original is unchanged.") });
+          unsubscribe?.();
+        } else {
+          setRouteState({ artifactId: artifact.id, state: "running", message: zh ? "正在用异常点优先方法分析，原路线保持可用…" : "Running anomaly-first analysis; the original route stays available…" });
+        }
+      });
+      const quality = artifact.chartQuality;
+      await desktopApi.startAgentRun({
+        requestId,
+        runId: requestId,
+        threadId: thread.id,
+        sessionId: thread.id,
+        task: buildAlternativeRouteTask(artifact, { xColumn: quality.xAxis, yColumn: quality.yAxis, anomalyColumn: "anomaly", unit: quality.unit, legend: quality.legend }),
+        executionDepth: "standard",
+        workspacePath: artifact.sourceWorkspacePath,
+        files: [{ kind: "file", path: sourcePath, name: sourcePath.split(/[\\/]/).pop() || "data.csv" }],
+        teamConfig: { preset: "general-collaboration" },
+        metadata: {
+          source: "windows-results-center-analysis-route",
+          source_artifact_id: artifact.id,
+          source_path: sourcePath,
+          original_artifact_path: artifact.path,
+          route_group_id: routeGroupId,
+          route_id: `${routeGroupId}-alternative`,
+          route_role: "alternative",
+          route_method: zh ? "异常点优先分段分析" : "Anomaly-first segmented analysis",
+          route_input_summary: insights.inputSummary,
+          route_key_conclusion: insights.alternativeConclusion,
+          route_risk: insights.alternativeRisk,
+          route_recommended_use: insights.alternativeUse,
+          route_status: "completed",
+          route_selected: false,
+          route_created_at: createdAt,
+          input_fingerprint: inputFingerprint,
+          preserve_original: true,
+          x_column: quality.xAxis,
+          y_column: quality.yAxis,
+          anomaly_column: "anomaly",
+          unit: quality.unit,
+          legend: quality.legend,
+          x_min: 1,
+          x_max: quality.pointsExpected,
+          y_min: 0,
+          y_max: 10,
+          plot_left: 60,
+          plot_right: 540,
+          plot_top: 40,
+          plot_bottom: 340,
+        },
+      });
+    } catch (caught) {
+      unsubscribe?.();
+      setRouteState({ artifactId: artifact.id, state: "failed", message: caught instanceof Error ? caught.message : String(caught) });
+    }
+  }
+
+  async function selectAnalysisRoute(group: { groupId: string; routes: IndexedTaskArtifact[] }, selectedArtifact: IndexedTaskArtifact): Promise<void> {
+    const selectedRoute = selectedArtifact.analysisRoute;
+    if (!selectedRoute) return;
+    setRouteSelectionState({ groupId: group.groupId, routeId: selectedRoute.routeId, state: "saving", message: zh ? "正在保存所选版本…" : "Saving the selected version…" });
+    try {
+      const selectedAt = new Date().toISOString();
+      const affectedTaskIds = [...new Set(group.routes.map((route) => route.sourceTaskId))];
+      const updatedTasks: DesktopBackgroundTask[] = [];
+      for (const taskId of affectedTaskIds) {
+        const task = tasks.find((candidate) => candidate.id === taskId);
+        if (!task?.deliverySummary) throw new Error(zh ? "找不到路线对应的成果记录。" : "The route result record could not be found.");
+        const artifacts = task.deliverySummary.artifacts.map((item) => {
+          if (item.analysisRoute?.routeGroupId !== group.groupId) return item;
+          const selected = item.analysisRoute.routeId === selectedRoute.routeId;
+          return { ...item, analysisRoute: { ...item.analysisRoute, selected, ...(selected ? { selectedAt } : { selectedAt: undefined }) } };
+        });
+        updatedTasks.push(await desktopApi.updateBackgroundTask({ taskId: task.id, status: task.status, deliverySummary: { ...task.deliverySummary, artifacts } }));
+      }
+      const byId = new Map(updatedTasks.map((task) => [task.id, task]));
+      setTasks((current) => current.map((task) => byId.get(task.id) || task));
+      setRouteSelectionState({ groupId: group.groupId, routeId: selectedRoute.routeId, state: "selected", message: zh ? `已选择：${selectedRoute.method}` : `Selected: ${selectedRoute.method}` });
+    } catch (caught) {
+      setRouteSelectionState({ groupId: group.groupId, routeId: selectedRoute.routeId, state: "failed", message: caught instanceof Error ? caught.message : String(caught) });
+    }
+  }
+
+  async function saveArtifactAs(artifact: IndexedTaskArtifact): Promise<void> {
+    if (!artifact.sourceWorkspacePath) {
+      setSaveState({ artifactId: artifact.id, state: "failed", message: zh ? "无法另存：来源任务没有工作区。" : "Could not save: the source task has no workspace." });
+      return;
+    }
+    setSaveState({ artifactId: artifact.id, state: "saving", message: zh ? "正在另存并校验文件…" : "Saving and verifying file…" });
+    try {
+      const result = await desktopApi.saveWorkspaceFileAs({
+        workspacePath: artifact.sourceWorkspacePath,
+        path: artifact.path,
+        suggestedName: artifact.label,
+      });
+      setSaveState({
+        artifactId: artifact.id,
+        state: result.canceled ? "canceled" : "saved",
+        message: result.canceled
+          ? (zh ? "已取消另存，原成果未改变。" : "Save canceled; the original result is unchanged.")
+          : (zh ? `已另存并通过完整性校验：${result.destinationPath}` : `Saved with integrity verified: ${result.destinationPath}`),
+      });
+    } catch (caught) {
+      const detail = caught instanceof Error ? caught.message : String(caught);
+      setSaveState({ artifactId: artifact.id, state: "failed", message: zh ? `无法另存：${detail}` : `Could not save: ${detail}` });
+    }
+  }
+
+  function kindLabel(kind: "all" | DesktopTaskArtifactLink["kind"]): string {
+    const labels = zh
+      ? { all: "全部", report: "报告", presentation: "演示文稿", file: "文件", folder: "文件夹" }
+      : { all: "All", report: "Reports", presentation: "Presentations", file: "Files", folder: "Folders" };
+    return labels[kind];
+  }
+
+  return (
+    <section className="results-center-view" data-testid="results-center-view" data-route="results">
+      <header>
+        <div>
+          <h2>{zh ? "成果中心" : "Results center"}</h2>
+          <p>{zh ? "所有任务成果都保存在这里，可按任务和类型重新找到并打开。" : "Find and reopen every task result here, indexed by source task and type."}</p>
+        </div>
+        <span role="status">{loading ? (zh ? "正在同步…" : "Syncing…") : (zh ? `${artifacts.length} 个成果` : `${artifacts.length} results`)}</span>
+      </header>
+      <nav className="results-kind-index" aria-label={zh ? "按成果类型筛选" : "Filter by result type"}>
+        {kinds.map((kind) => (
+          <button key={kind} type="button" data-kind={kind} aria-pressed={kindFilter === kind} onClick={() => setKindFilter(kind)}>
+            {kindLabel(kind)}
+            <span>{kind === "all" ? artifacts.length : artifacts.filter((artifact) => artifact.kind === kind).length}</span>
+          </button>
+        ))}
+      </nav>
+      {outgoingShares.length ? (
+        <section className="results-shared-inbox" data-testid="outgoing-shares" aria-label={zh ? "我发出的分享" : "Shares I sent"}>
+          <header><div><strong>{zh ? "我发出的分享" : "Shares I sent"}</strong><small>{zh ? "权限修改后会立即影响接收账号" : "Permission changes take effect immediately"}</small></div><span>{outgoingShares.length}</span></header>
+          {outgoingShares.map((share) => <article key={share.id} data-testid="outgoing-share-card" data-share-id={share.id}><div><strong>{share.objects.map((item) => item.label).join("、")}</strong><small>{share.recipientAccount}</small></div><label className="share-permission-control"><span>{zh ? "权限" : "Permission"}</span><select data-testid="outgoing-share-permission" value={share.permission} onChange={(event) => void changeSharePermission(share.id, event.target.value as DesktopSharePermission)}><option value="view">{zh ? "只查看" : "View only"}</option><option value="comment">{zh ? "可评论" : "Can comment"}</option><option value="continue">{zh ? "可继续处理" : "Can continue"}</option></select></label></article>)}
+        </section>
+      ) : null}
+      {incomingShares.length ? (
+        <section className="results-shared-inbox" data-testid="shared-inbox" aria-label={zh ? "收到的分享" : "Shared with me"}>
+          <header><div><strong>{zh ? "收到的分享" : "Shared with me"}</strong><small>{zh ? "只显示分享清单中授权给当前账号的内容" : "Only objects authorized to the signed-in account are shown"}</small></div><span>{incomingShares.length}</span></header>
+          {incomingShares.map((share) => (
+            <article key={share.id} data-testid="incoming-share-card" data-share-id={share.id} data-share-scope={share.scope} data-share-permission={share.permission}>
+              <div><strong>{share.scope === "result_only" ? (zh ? "成果分享" : "Result share") : (zh ? "完整任务分享" : "Complete task share")}</strong><small>{zh ? `来自 ${share.ownerAccount}` : `From ${share.ownerAccount}`}</small><span className="share-permission-badge" data-testid="share-permission-badge">{share.permission === "view" ? (zh ? "只查看" : "View only") : share.permission === "comment" ? (zh ? "可评论" : "Can comment") : (zh ? "可继续处理" : "Can continue")}</span></div>
+              <ul>{share.objects.map((object) => <li key={`${object.objectType}:${object.objectId}`} data-shared-object-type={object.objectType} data-shared-object-id={object.objectId}><span>{object.objectType === "task" ? (zh ? "任务" : "Task") : (zh ? "成果" : "Result")} · {object.label}</span><span className="shared-object-actions"><button type="button" data-testid="shared-object-open" onClick={() => void openIncomingObject(share, object)}>{zh ? "打开" : "Open"}</button>{object.objectType === "artifact" ? <button type="button" data-testid="shared-artifact-download" onClick={() => void downloadIncomingArtifact(share, object.objectId)}>{zh ? "下载" : "Download"}</button> : null}</span></li>)}</ul>
+              {share.permission !== "view" ? <div className="share-comment-composer"><ul data-testid="share-comments">{(shareComments[share.id] ?? []).map((comment) => <li key={comment.id}><span>{comment.authorAccount}</span><p>{comment.body}</p></li>)}</ul><label><span>{zh ? "评论" : "Comment"}</span><input data-testid="share-comment-input" value={shareCommentDrafts[share.id] ?? ""} onChange={(event) => setShareCommentDrafts((current) => ({ ...current, [share.id]: event.target.value }))} /></label><button type="button" data-testid="share-comment-send" disabled={!shareCommentDrafts[share.id]?.trim()} onClick={() => void addIncomingComment(share)}>{zh ? "发送评论" : "Send comment"}</button></div> : null}
+              {share.permission === "continue" ? <button type="button" data-testid="share-continue" onClick={() => void continueIncomingShare(share)}>{zh ? "继续处理" : "Continue processing"}</button> : null}
+            </article>
+          ))}
+          {sharedOpenState ? <output data-testid="shared-object-open-status" data-state={sharedOpenState.state}>{sharedOpenState.message}</output> : null}
+          {sharedDownloadState ? <output data-testid="shared-artifact-download-status" data-state={sharedDownloadState.state}>{sharedDownloadState.message}</output> : null}
+          {shareCollaborationState ? <output data-testid="share-collaboration-status" data-state={shareCollaborationState.state}>{shareCollaborationState.message}</output> : null}
+        </section>
+      ) : null}
+      {shareDraft ? (
+        <section className="share-confirmation-dialog" role="dialog" aria-modal="true" aria-labelledby="share-dialog-title" data-testid="share-confirmation-dialog">
+          <header><div><strong id="share-dialog-title">{shareDraft.scope === "result_only" ? (zh ? "分享这个成果" : "Share this result") : (zh ? "分享完整任务" : "Share complete task")}</strong><small>{zh ? "确认接收账号和将被授权的内容" : "Confirm the recipient and authorized objects"}</small></div></header>
+          <label><span>{zh ? "接收账号" : "Recipient account"}</span><input autoFocus type="email" data-testid="share-recipient-input" placeholder="colleague@example.org" value={shareRecipient} onChange={(event) => setShareRecipient(event.target.value)} /></label>
+          <label><span>{zh ? "协作权限" : "Collaboration permission"}</span><select data-testid="share-permission-select" value={sharePermission} onChange={(event) => setSharePermission(event.target.value as DesktopSharePermission)}><option value="view">{zh ? "只查看" : "View only"}</option><option value="comment">{zh ? "可评论" : "Can comment"}</option><option value="continue">{zh ? "可继续处理" : "Can continue"}</option></select></label>
+          <div className="share-manifest-preview" data-testid="share-manifest-preview"><strong>{zh ? "分享清单" : "Share manifest"}</strong><p>{shareDraft.scope === "result_only" ? (zh ? "仅分享所选成果" : "Selected result only") : (zh ? "分享任务说明及该任务的全部成果" : "Task details and all results from this task")}</p><ul>{sharePreviewObjects.map((object) => <li key={`${object.objectType}:${object.objectId}`} data-manifest-object-type={object.objectType} data-manifest-object-id={object.objectId}>{object.objectType === "task" ? (zh ? "任务" : "Task") : (zh ? "成果" : "Result")} · {object.label}</li>)}</ul></div>
+          {shareInspection ? <section className="share-sensitive-review" data-testid="share-sensitive-review" data-state={shareInspection.state}><header><strong>{zh ? "敏感信息检查" : "Sensitive information check"}</strong><span>{shareInspection.result?.findings.length ?? 0}</span></header><p>{shareInspection.message}</p>{shareInspection.result?.findings.length ? <ul>{shareInspection.result.findings.map((finding) => <li key={finding.id} data-testid="share-sensitive-finding" data-finding-kind={finding.kind} data-finding-severity={finding.severity}><span><strong>{finding.kind === "api_key" ? "API Key" : finding.kind === "bearer_token" ? "Bearer Token" : finding.kind === "email" ? (zh ? "邮箱" : "Email") : finding.kind === "phone" ? (zh ? "手机号" : "Phone") : (zh ? "用户定义秘密" : "User-defined secret")}</strong><small>{finding.artifactLabel} · {finding.maskedPreview} · {finding.occurrences}</small></span><select data-testid="share-sensitive-action" aria-label={zh ? `处理 ${finding.kind}` : `Resolve ${finding.kind}`} value={shareSensitiveActions[finding.id] ?? "redact"} onChange={(event) => setShareSensitiveActions((current) => ({ ...current, [finding.id]: event.target.value as DesktopShareSensitiveAction }))}><option value="redact">{zh ? "遮蔽" : "Redact"}</option><option value="remove">{zh ? "删除" : "Remove"}</option></select></li>)}</ul> : null}</section> : null}
+          {shareState ? <output data-testid="share-create-status" data-state={shareState.state}>{shareState.message}</output> : null}
+          {shareState?.manifest ? <div className="share-created-manifest" data-testid="share-created-manifest" data-share-id={shareState.manifest.id}><strong>{zh ? "已授权对象" : "Authorized objects"}</strong><ul>{shareState.manifest.objects.map((object) => <li key={`${object.objectType}:${object.objectId}`}>{object.objectType} · {object.label}</li>)}</ul></div> : null}
+          <div className="share-confirmation-actions"><button type="button" data-testid="share-cancel" onClick={() => { setShareDraft(null); setShareRecipient(""); setSharePermission("view"); setShareState(null); }}>{shareState?.state === "created" ? (zh ? "完成" : "Done") : (zh ? "取消" : "Cancel")}</button>{shareState?.state !== "created" ? <button type="button" data-testid="share-confirm" disabled={!shareRecipient.trim() || shareState?.state === "creating" || shareInspection?.state !== "ready"} onClick={() => void confirmShare()}>{zh ? "确认分享" : "Confirm share"}</button> : null}</div>
+        </section>
+      ) : null}
+      <section className="results-reusable-tasks" data-testid="reusable-tasks" aria-label={zh ? "可复用任务" : "Reusable tasks"}>
+        <header><div><strong>{zh ? "可复用任务" : "Reusable tasks"}</strong><small>{zh ? "保留成功流程，下次只替换输入材料" : "Keep a successful workflow and replace only its inputs next time"}</small></div><span>{reusableTasks.length}</span></header>
+        {reusableSaveDraft ? (
+          <div className="reusable-task-save-dialog" data-testid="reusable-task-save-dialog">
+            <label><span>{zh ? "任务名称" : "Task name"}</span><input data-testid="reusable-task-name" value={reusableSaveDraft.name} onChange={(event) => setReusableSaveDraft((current) => current ? { ...current, name: event.target.value } : null)} /></label>
+            <p>{zh ? "保存后会列出下次需要替换的输入和保持不变的规则。" : "After saving, the app shows replacement inputs and rules that stay fixed."}</p>
+            <button type="button" data-testid="reusable-task-confirm-save" disabled={!reusableSaveDraft.name.trim()} onClick={() => void saveAsReusableTask()}>{zh ? "保存任务" : "Save task"}</button>
+            <button type="button" onClick={() => setReusableSaveDraft(null)}>{zh ? "取消" : "Cancel"}</button>
+          </div>
+        ) : null}
+        <div className="reusable-task-list">
+          {reusableTasks.map((task) => (
+            <article key={task.id} data-testid="reusable-task-card" data-reusable-task-id={task.id}>
+              <header><div><strong>{task.name}</strong><small>{zh ? `已运行 ${task.runCount} 次` : `Run ${task.runCount} times`}</small></div></header>
+              <div className="reusable-task-inputs"><b>{zh ? "下次替换" : "Replace next time"}</b>{task.inputs.map((input) => <label key={input.id}><span>{input.label}</span><input data-testid={`reusable-task-input-${input.id}`} value={reusableInputs[input.id] ?? input.originalValue} onChange={(event) => setReusableInputs((current) => ({ ...current, [input.id]: event.target.value }))} /></label>)}</div>
+              <details open><summary>{zh ? "保持不变的规则" : "Rules kept fixed"}</summary><ul>{task.fixedRules.map((rule) => <li key={rule}>{rule}</li>)}</ul></details>
+              <details className="reusable-task-adjustments" data-testid="reusable-task-adjustments" open>
+                <summary>{zh ? "运行前调整" : "Adjust before running"}</summary>
+                <p>{zh ? "可修改本次输出语言、截止时间和检查项目，再选择修改是否保存到以后。" : "Change language, deadline, and checks, then choose whether to save the changes for future runs."}</p>
+                <div className="reusable-task-adjustment-grid">
+                  <label><span>{zh ? "输出语言" : "Output language"}</span><select data-testid="reusable-task-adjustment-language" value={(reusableAdjustments[task.id] ?? task.savedAdjustments)?.outputLanguage ?? ""} onChange={(event) => setReusableAdjustments((current) => ({ ...current, [task.id]: { ...(current[task.id] ?? task.savedAdjustments ?? { checkItems: [] }), outputLanguage: event.target.value === "zh" || event.target.value === "en" ? event.target.value : undefined } }))}><option value="">{zh ? "按原规则" : "Keep original"}</option><option value="zh">{zh ? "中文" : "Chinese"}</option><option value="en">{zh ? "英文" : "English"}</option></select></label>
+                  <label><span>{zh ? "截止时间" : "Deadline"}</span><input data-testid="reusable-task-adjustment-deadline" placeholder={zh ? "例如：2026-07-20 18:00" : "e.g. 2026-07-20 18:00"} value={(reusableAdjustments[task.id] ?? task.savedAdjustments)?.deadline ?? ""} onChange={(event) => setReusableAdjustments((current) => ({ ...current, [task.id]: { ...(current[task.id] ?? task.savedAdjustments ?? { checkItems: [] }), deadline: event.target.value } }))} /></label>
+                  <label className="reusable-task-check-items"><span>{zh ? "检查项目（每行一项）" : "Check items (one per line)"}</span><textarea data-testid="reusable-task-adjustment-checks" value={((reusableAdjustments[task.id] ?? task.savedAdjustments)?.checkItems ?? []).join("\n")} onChange={(event) => setReusableAdjustments((current) => ({ ...current, [task.id]: { ...(current[task.id] ?? task.savedAdjustments ?? { checkItems: [] }), checkItems: event.target.value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean) } }))} /></label>
+                </div>
+                <fieldset data-testid="reusable-task-adjustment-scope"><legend>{zh ? "这次修改如何生效？" : "How should these changes apply?"}</legend>
+                  <label><input type="radio" name={`reusable-scope-${task.id}`} value="this_run" checked={(reusableAdjustmentScopes[task.id] ?? "this_run") === "this_run"} onChange={() => setReusableAdjustmentScopes((current) => ({ ...current, [task.id]: "this_run" }))} /><span><b>{zh ? "仅本次" : "This run only"}</b><small>{zh ? "运行后模板保持不变" : "Keep the saved template unchanged"}</small></span></label>
+                  <label><input type="radio" name={`reusable-scope-${task.id}`} value="update_template" checked={reusableAdjustmentScopes[task.id] === "update_template"} onChange={() => setReusableAdjustmentScopes((current) => ({ ...current, [task.id]: "update_template" }))} /><span><b>{zh ? "以后都这样" : "Use from now on"}</b><small>{zh ? "本次执行并更新保存的模板" : "Apply now and update the saved template"}</small></span></label>
+                </fieldset>
+              </details>
+              <button type="button" data-testid="reusable-task-run" disabled={reusableState?.state === "preparing" || reusableState?.state === "running"} onClick={() => void runReusableTask(task)}>{zh ? "使用新材料运行" : "Run with replacement input"}</button>
+            </article>
+          ))}
+        </div>
+        {reusableState ? <output data-testid="reusable-task-status" data-state={reusableState.state}>{reusableState.message}</output> : null}
+      </section>
+      {routeGroups.length ? (
+        <section className="results-analysis-routes" data-testid="analysis-route-groups" aria-label={zh ? "分析路线" : "Analysis routes"}>
+          <header><div><strong>{zh ? "分析路线" : "Analysis routes"}</strong><small>{zh ? "原结果和新路线彼此独立，可分别打开。" : "Original and alternative results stay independent and open separately."}</small></div></header>
+          {routeGroups.map((group) => (
+            <article key={group.groupId} data-testid="analysis-route-group" data-route-group-id={group.groupId} data-source-path={group.sourcePath}>
+              <strong>{group.sourcePath.split(/[\\/]/).pop()}</strong>
+              <div>
+                {[...group.routes].sort((left, right) => left.analysisRoute!.role.localeCompare(right.analysisRoute!.role)).map((routeArtifact) => (
+                  <section key={routeArtifact.analysisRoute!.routeId} data-testid="analysis-route-card" data-route-id={routeArtifact.analysisRoute!.routeId} data-route-role={routeArtifact.analysisRoute!.role} data-route-status={routeArtifact.analysisRoute!.status} data-input-fingerprint={routeArtifact.analysisRoute!.inputFingerprint}>
+                    <b>{routeArtifact.analysisRoute!.role === "original" ? (zh ? "原路线" : "Original route") : (zh ? "新路线" : "Alternative route")}</b>
+                    <span>{routeArtifact.analysisRoute!.method}</span>
+                    <small>{routeArtifact.label}</small>
+                    {routeArtifact.analysisRoute!.selected ? <strong data-testid="analysis-route-selected">{zh ? "当前选择" : "Current choice"}</strong> : null}
+                    <div className="results-analysis-route-actions">
+                      <button type="button" data-testid="analysis-route-open" onClick={() => void openArtifact(routeArtifact)}>{zh ? "打开这条路线" : "Open this route"}</button>
+                      <button type="button" data-testid="analysis-route-select" aria-pressed={routeArtifact.analysisRoute!.selected} onClick={() => void selectAnalysisRoute(group, routeArtifact)}>{zh ? "选择这个版本" : "Choose this version"}</button>
+                      <button type="button" data-testid="analysis-route-continue" onClick={() => onContinueQuestion(zh ? `继续询问分析路线“${routeArtifact.analysisRoute!.method}”：关键结论是“${routeArtifact.analysisRoute!.keyConclusion}”，风险是“${routeArtifact.analysisRoute!.risk}”。请基于成果 ${routeArtifact.path} 回答：` : `Continue asking about the “${routeArtifact.analysisRoute!.method}” route. Its conclusion is “${routeArtifact.analysisRoute!.keyConclusion}” and its risk is “${routeArtifact.analysisRoute!.risk}”. Use ${routeArtifact.path} to answer: `)}>{zh ? "继续询问" : "Continue asking"}</button>
+                    </div>
+                  </section>
+                ))}
+              </div>
+              {group.routes.length >= 2 ? (
+                <section className="results-analysis-comparison" data-testid="analysis-route-comparison" aria-label={zh ? "路线版本比较" : "Route version comparison"}>
+                  <header><strong>{zh ? "路线版本比较" : "Route version comparison"}</strong><small>{zh ? "每项差异都对应到具体路线，可直接选择或继续询问。" : "Every difference maps to a route you can choose or ask about."}</small></header>
+                  {([
+                    ["method", zh ? "方法" : "Method"],
+                    ["input", zh ? "输入" : "Input"],
+                    ["conclusion", zh ? "关键结论" : "Key conclusion"],
+                    ["artifact", zh ? "成果" : "Result"],
+                    ["risk", zh ? "风险" : "Risk"],
+                    ["recommendedUse", zh ? "适用场景" : "Best use"],
+                  ] as const).map(([field, label]) => (
+                    <div key={field} data-testid="analysis-route-comparison-row" data-difference-field={field}>
+                      <strong>{label}</strong>
+                      {[...group.routes].sort((left, right) => left.analysisRoute!.role.localeCompare(right.analysisRoute!.role)).map((routeArtifact) => {
+                        const route = routeArtifact.analysisRoute!;
+                        const value = field === "method" ? route.method : field === "input" ? route.inputSummary : field === "conclusion" ? route.keyConclusion : field === "artifact" ? routeArtifact.label : field === "risk" ? route.risk : route.recommendedUse;
+                        return <div key={`${field}:${route.routeId}`} data-testid="analysis-route-comparison-value" data-route-id={route.routeId} data-route-role={route.role}><b>{route.role === "original" ? (zh ? "原路线" : "Original") : (zh ? "新路线" : "Alternative")}</b><span>{value}</span>{field === "artifact" ? <button type="button" onClick={() => void openArtifact(routeArtifact)}>{zh ? "定位成果" : "Open result"}</button> : null}</div>;
+                      })}
+                    </div>
+                  ))}
+                  {routeSelectionState?.groupId === group.groupId ? <p data-testid="analysis-route-selection-status" data-state={routeSelectionState.state} data-route-id={routeSelectionState.routeId} role="status">{routeSelectionState.message}</p> : null}
+                </section>
+              ) : null}
+            </article>
+          ))}
+        </section>
+      ) : null}
+      {error ? <p className="task-center-error" role="alert">{zh ? `无法加载成果：${error}` : `Could not load results: ${error}`}</p> : null}
+      {!loading && groupedArtifacts.length === 0 ? (
+        <div className="results-center-empty" data-testid="results-center-empty">
+          <strong>{zh ? "还没有可查看的成果" : "No results yet"}</strong>
+          <p>{zh ? "任务完成并生成文件后，会自动出现在这里。" : "Completed task files will appear here automatically."}</p>
+        </div>
+      ) : (
+        <div className="results-task-index" data-testid="results-task-index">
+          {groupedArtifacts.map((group) => (
+            <section key={group.taskId} data-source-task-id={group.taskId}>
+              <header>
+                <div><small>{zh ? "来源任务" : "Source task"}</small><h3>{group.taskTitle}</h3></div>
+                <div className="results-task-group-actions"><span>{group.artifacts.length}</span><button type="button" data-testid="results-share-task" aria-label={zh ? `分享完整任务：${group.taskTitle}` : `Share complete task: ${group.taskTitle}`} onClick={() => { setShareDraft({ sourceTaskId: group.taskId, scope: "complete_task", title: group.taskTitle }); setShareRecipient(""); setSharePermission("view"); setShareState(null); }}>{zh ? "分享完整任务" : "Share complete task"}</button><button type="button" data-testid="reusable-task-save" onClick={() => setReusableSaveDraft({ sourceTaskId: group.taskId, name: group.taskTitle })}>{zh ? "保存为可复用任务" : "Save as reusable task"}</button></div>
+              </header>
+              <ul>
+                {group.artifacts.map((artifact) => (
+                  <li key={artifact.id} data-artifact-id={artifact.id} data-artifact-kind={artifact.kind} data-artifact-path={artifact.path} data-source-task-id={artifact.sourceTaskId}>
+                    <div>
+                      <span className="results-kind-badge">{kindLabel(artifact.kind)}</span>
+                      <strong>{artifact.label}</strong>
+                      <small title={artifact.path}>{artifact.path}</small>
+                      {artifact.quality ? (
+                        <span
+                          className="results-quality-badge"
+                          data-testid="results-artifact-quality"
+                          data-quality-status={artifact.quality.status}
+                        >
+                          {artifact.quality.status === "passed"
+                            ? (zh ? `质量检查已通过 · 事实覆盖 ${artifact.quality.goldenFactCoverage}%` : `Quality passed · ${artifact.quality.goldenFactCoverage}% fact coverage`)
+                            : (zh ? "质量检查未通过" : "Quality check failed")}
+                        </span>
+                      ) : null}
+                      {artifact.editLineage ? (
+                        <span className="results-edit-lineage" data-testid="results-edit-lineage">
+                          {zh ? `修改自原成果 · ${artifact.editLineage.scopeLabel}` : `Edited from original · ${artifact.editLineage.scopeLabel}`}
+                        </span>
+                      ) : null}
+                      {artifact.chartQuality ? (
+                        <span className="results-chart-quality" data-testid="results-chart-quality" data-quality-status={artifact.chartQuality.status}>
+                          {artifact.chartQuality.status === "passed"
+                            ? (zh ? `图表数据检查已通过 · 数据点 ${artifact.chartQuality.pointsMatched}/${artifact.chartQuality.pointsExpected}` : `Chart data passed · ${artifact.chartQuality.pointsMatched}/${artifact.chartQuality.pointsExpected} points`)
+                            : (zh ? `图表数据检查未通过 · ${artifact.chartQuality.mismatchCount} 项不一致` : `Chart data failed · ${artifact.chartQuality.mismatchCount} mismatches`)}
+                        </span>
+                      ) : null}
+                      {artifact.analysisRoute ? (
+                        <span className="results-analysis-route-badge" data-testid="results-analysis-route-badge" data-route-role={artifact.analysisRoute.role}>
+                          {artifact.analysisRoute.role === "original" ? (zh ? "原分析路线" : "Original analysis route") : (zh ? "新分析路线" : "Alternative analysis route")} · {artifact.analysisRoute.method}
+                        </span>
+                      ) : null}
+                      {artifact.consistencyCheck ? (
+                        <span
+                          className={`results-consistency-badge ${artifact.consistencyCheck.status}`}
+                          data-testid="results-consistency-badge"
+                          data-consistency-status={artifact.consistencyCheck.status}
+                          data-expected-issues={artifact.consistencyCheck.expectedIssues}
+                          data-detected-issues={artifact.consistencyCheck.detectedIssues}
+                        >
+                          {artifact.consistencyCheck.status === "passed"
+                            ? (zh ? "一致性检查已通过 · 未发现问题" : "Consistency passed · no issues")
+                            : (zh ? `一致性检查发现 ${artifact.consistencyCheck.detectedIssues} 项问题` : `Consistency found ${artifact.consistencyCheck.detectedIssues} issues`)}
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="results-artifact-actions">
+                      <button type="button" data-testid="results-share-artifact" aria-label={zh ? `分享成果：${artifact.label}` : `Share result: ${artifact.label}`} onClick={() => { setShareDraft({ sourceTaskId: artifact.sourceTaskId, scope: "result_only", artifactId: artifact.id, title: artifact.label }); setShareRecipient(""); setSharePermission("view"); setShareState(null); }}>{zh ? "分享" : "Share"}</button>
+                      <button type="button" data-testid="results-open-artifact" disabled={openState?.artifactId === artifact.id && openState.state === "opening"} onClick={() => void openArtifact(artifact)}>
+                        {zh ? "打开" : "Open"}
+                      </button>
+                      {artifact.kind !== "folder" ? (
+                        <>
+                          <button type="button" data-testid="results-preview-artifact" onClick={() => void previewArtifact(artifact)}>
+                            {zh ? "预览" : "Preview"}
+                          </button>
+                          <button type="button" data-testid="results-save-artifact" disabled={saveState?.artifactId === artifact.id && saveState.state === "saving"} onClick={() => void saveArtifactAs(artifact)}>
+                            {zh ? "另存为" : "Save as"}
+                          </button>
+                          {artifact.editLineage ? (
+                            <button type="button" data-testid="results-compare-artifact" onClick={() => void compareArtifact(artifact)}>
+                              {zh ? "比较" : "Compare"}
+                            </button>
+                          ) : null}
+                          <button
+                            type="button"
+                            data-testid="results-repeat-review"
+                            disabled={independentReviewState?.artifactId === artifact.id && independentReviewState.state === "running"}
+                            onClick={() => void runIndependentReview(artifact, "repeat")}
+                          >
+                            {zh ? "再检查一次" : "Check again"}
+                          </button>
+                          <button
+                            type="button"
+                            data-testid="results-alternative-review"
+                            disabled={independentReviewState?.artifactId === artifact.id && independentReviewState.state === "running"}
+                            onClick={() => void runIndependentReview(artifact, "alternative")}
+                          >
+                            {zh ? "换一种方法验证" : "Verify another way"}
+                          </button>
+                          {artifact.chartQuality?.status === "passed" && artifact.analysisRoute?.role !== "alternative" ? (
+                            <button
+                              type="button"
+                              data-testid="results-create-analysis-route"
+                              disabled={(routeState?.artifactId === artifact.id && (routeState.state === "starting" || routeState.state === "running"))
+                                || artifacts.some((candidate) => candidate.analysisRoute?.routeGroupId === (artifact.analysisRoute?.routeGroupId || `analysis-${reviewFingerprint(artifact.chartQuality!.sourcePath)}`) && candidate.analysisRoute?.role === "alternative")}
+                              onClick={() => void startAlternativeRoute(artifact)}
+                            >
+                              {artifacts.some((candidate) => candidate.analysisRoute?.routeGroupId === (artifact.analysisRoute?.routeGroupId || `analysis-${reviewFingerprint(artifact.chartQuality!.sourcePath)}`) && candidate.analysisRoute?.role === "alternative")
+                                ? (zh ? "另一路线已保留" : "Alternative route preserved")
+                                : (zh ? "保留结果并尝试另一路线" : "Keep result and try another route")}
+                            </button>
+                          ) : null}
+                        </>
+                      ) : null}
+                      {artifact.kind === "report" && artifact.quality?.status === "passed" ? (
+                        <button
+                          type="button"
+                          data-testid="results-create-versions"
+                          disabled={versionState?.artifactId === artifact.id && (versionState.state === "starting" || versionState.state === "running")}
+                          onClick={() => void createArtifactVersions(artifact)}
+                        >
+                          {zh ? "生成 5 种版本" : "Create 5 versions"}
+                        </button>
+                      ) : null}
+                    </div>
+                    {openState?.artifactId === artifact.id ? (
+                      <span data-testid="results-open-status" data-state={openState.state} role="status">{openState.message}</span>
+                    ) : null}
+                    {versionState?.artifactId === artifact.id ? (
+                      <span data-testid="results-version-status" data-state={versionState.state} role="status">{versionState.message}</span>
+                    ) : null}
+                    {saveState?.artifactId === artifact.id ? (
+                      <span data-testid="results-save-status" data-state={saveState.state} role="status">{saveState.message}</span>
+                    ) : null}
+                    {editState?.artifactId === artifact.id ? (
+                      <span data-testid="results-edit-status" data-state={editState.state} role="status">{editState.message}</span>
+                    ) : null}
+                    {chartState?.artifactId === artifact.id ? (
+                      <span data-testid="results-chart-status" data-state={chartState.state} role="status">{chartState.message}</span>
+                    ) : null}
+                    {routeState?.artifactId === artifact.id ? (
+                      <span data-testid="results-analysis-route-status" data-state={routeState.state} role="status">{routeState.message}</span>
+                    ) : null}
+                    {independentReviewState?.artifactId === artifact.id ? (
+                      <span
+                        data-testid="results-independent-review-status"
+                        data-state={independentReviewState.state}
+                        data-mode={independentReviewState.mode}
+                        role="status"
+                      >{independentReviewState.message}</span>
+                    ) : null}
+                    {artifact.quality ? (
+                      <details className="results-quality-details" data-testid="results-quality-details">
+                        <summary>{zh ? "查看自动质量检查" : "View automated quality checks"}</summary>
+                        <ul>
+                          {artifact.quality.checks.map((check) => <li key={check}>{check}</li>)}
+                        </ul>
+                      </details>
+                    ) : null}
+                    {artifact.chartQuality ? (
+                      <details className="results-quality-details" data-testid="results-chart-quality-details">
+                        <summary>{zh ? "查看图表数据核对" : "View chart-data checks"}</summary>
+                        <ul>{artifact.chartQuality.checks.map((check) => <li key={check}>{check}</li>)}</ul>
+                      </details>
+                    ) : null}
+                    {artifact.consistencyCheck ? (
+                      <details
+                        className={`results-consistency-check ${artifact.consistencyCheck.status}`}
+                        data-testid="results-consistency-check"
+                        data-status={artifact.consistencyCheck.status}
+                        data-expected-issues={artifact.consistencyCheck.expectedIssues}
+                        data-detected-issues={artifact.consistencyCheck.detectedIssues}
+                      >
+                        <summary>{artifact.consistencyCheck.status === "passed"
+                          ? (zh ? "查看一致性检查 · 通过" : "View consistency check · passed")
+                          : (zh ? `查看一致性检查 · ${artifact.consistencyCheck.detectedIssues}/${artifact.consistencyCheck.expectedIssues}` : `View consistency check · ${artifact.consistencyCheck.detectedIssues}/${artifact.consistencyCheck.expectedIssues}`)}</summary>
+                        <p>{artifact.consistencyCheck.summary}</p>
+                        {artifact.consistencyCheck.items.length ? (
+                          <ul>
+                            {artifact.consistencyCheck.items.map((item) => {
+                              const decisionKey = `${artifact.id}:${item.id}`;
+                              const decision = consistencyDecisions[decisionKey] ?? item.status;
+                              return (
+                                <li
+                                  key={item.id}
+                                  data-testid="results-consistency-issue"
+                                  data-issue-id={item.id}
+                                  data-issue-category={item.category}
+                                  data-issue-severity={item.severity}
+                                  data-issue-status={decision}
+                                  data-observed-value={item.observedValue}
+                                  data-expected-value={item.expectedValue}
+                                  data-issue-locator={item.locator}
+                                  data-issue-source-path={item.sourcePath}
+                                  data-issue-evidence={item.evidenceText}
+                                  data-issue-recommendation={item.recommendation}
+                                >
+                                  <header><strong>{item.title}</strong><em>{item.category === "outdated_number" ? (zh ? "过期数字" : "Outdated number") : item.category === "chart_mismatch" ? (zh ? "图表错误" : "Chart mismatch") : (zh ? "来源不一致" : "Source mismatch")}</em></header>
+                                  <p>{item.finding}</p>
+                                  <dl><div><dt>{zh ? "当前" : "Observed"}</dt><dd>{item.observedValue}</dd></div><div><dt>{zh ? "应为" : "Expected"}</dt><dd>{item.expectedValue}</dd></div></dl>
+                                  <small>{zh ? "依据：" : "Evidence: "}{item.evidenceText}</small>
+                                  <small><strong>{zh ? "修正建议：" : "Recommendation: "}</strong>{item.recommendation}</small>
+                                  <footer>
+                                    <button type="button" data-testid="results-open-consistency-source" onClick={() => void openConclusionEvidence(item)}>{zh ? `查看 ${item.locator}` : `Open ${item.locator}`}</button>
+                                    <button type="button" data-testid="results-accept-consistency-issue" disabled={decision !== "open"} onClick={() => setConsistencyDecisions((current) => ({ ...current, [decisionKey]: "accepted" }))}>{zh ? "接受修正建议" : "Accept recommendation"}</button>
+                                    <button type="button" data-testid="results-ignore-consistency-issue" disabled={decision !== "open"} onClick={() => setConsistencyDecisions((current) => ({ ...current, [decisionKey]: "ignored" }))}>{zh ? "忽略" : "Ignore"}</button>
+                                  </footer>
+                                  {decision !== "open" ? <output data-testid="results-consistency-decision" data-decision={decision}>{decision === "accepted" ? (zh ? "已接受修正建议" : "Recommendation accepted") : (zh ? "已忽略此项" : "Issue ignored")}</output> : null}
+                                  {evidenceOpenState?.evidenceId === item.id ? <output data-testid="results-consistency-open-status" data-state={evidenceOpenState.state}>{evidenceOpenState.message}</output> : null}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        ) : null}
+                      </details>
+                    ) : null}
+                    {artifact.independentReviews?.length ? (
+                      <details className="results-independent-reviews" data-testid="results-independent-reviews" open>
+                        <summary>{zh ? `独立复核记录 · ${artifact.independentReviews.length}` : `Independent reviews · ${artifact.independentReviews.length}`}</summary>
+                        <div className="results-independent-review-list">
+                          {artifact.independentReviews.map((review) => (
+                            <article
+                              key={review.id}
+                              className={`results-independent-review ${review.status}`}
+                              data-testid="results-independent-review"
+                              data-review-id={review.id}
+                              data-review-mode={review.mode}
+                              data-review-method={review.method}
+                              data-review-status={review.status}
+                              data-checked-claims={review.checkedClaimCount}
+                              data-checked-sources={review.checkedSourceCount}
+                              data-uses-original-answer-text={String(review.usesOriginalAnswerText)}
+                              data-evidence-fingerprint={review.evidenceFingerprint}
+                            >
+                              <header>
+                                <div><strong>{review.methodLabel}</strong><small>{review.reviewerLabel}</small></div>
+                                <em>{review.status === "passed" ? (zh ? "复核通过" : "Passed") : review.status === "issues_found" ? (zh ? "发现问题" : "Issues found") : (zh ? "信息不足" : "Inconclusive")}</em>
+                              </header>
+                              <p>{review.summary}</p>
+                              <dl>
+                                <div><dt>{zh ? "检查事实" : "Claims"}</dt><dd>{review.checkedClaimCount}</dd></div>
+                                <div><dt>{zh ? "原始位置" : "Sources"}</dt><dd>{review.checkedSourceCount}</dd></div>
+                                <div><dt>{zh ? "复核方式" : "Method difference"}</dt><dd>{review.methodDifference}</dd></div>
+                              </dl>
+                              <section data-testid="results-review-scope">
+                                <strong>{zh ? "检查范围" : "Scope"}</strong>
+                                <ul>{review.scope.map((item) => <li key={item}>{item}</li>)}</ul>
+                              </section>
+                              <section data-testid="results-review-findings">
+                                <strong>{zh ? "复核发现" : "Findings"}</strong>
+                                <ul>{review.findings.map((finding) => (
+                                  <li
+                                    key={finding.id}
+                                    data-review-finding-id={finding.id}
+                                    data-review-finding-outcome={finding.outcome}
+                                    data-review-finding-source-path={finding.sourcePath}
+                                    data-review-finding-locator={finding.locator}
+                                    data-review-finding-evidence={finding.evidenceText}
+                                  >
+                                    <span><strong>{finding.title}</strong><small>{finding.detail}</small><small>{zh ? "独立依据：" : "Independent evidence: "}{finding.evidenceText}</small></span>
+                                    <button type="button" data-testid="results-open-review-source" onClick={() => void openConclusionEvidence(finding)}>{zh ? `查看 ${finding.locator}` : `Open ${finding.locator}`}</button>
+                                    {evidenceOpenState?.evidenceId === finding.id ? <output data-testid="results-review-source-status" data-state={evidenceOpenState.state}>{evidenceOpenState.message}</output> : null}
+                                  </li>
+                                ))}</ul>
+                              </section>
+                              <section className="results-review-uncovered" data-testid="results-review-uncovered">
+                                <strong>{zh ? "本次未覆盖" : "Not covered"}</strong>
+                                <ul>{review.uncovered.map((item) => <li key={item}>{item}</li>)}</ul>
+                              </section>
+                              <footer><small>{zh ? "独立性说明：未读取首次答案文本" : "Independence: original answer text was not read"} · {review.evidenceFingerprint}</small></footer>
+                            </article>
+                          ))}
+                        </div>
+                      </details>
+                    ) : null}
+                    {artifact.keyConclusions?.length ? (
+                      <details
+                        className="results-conclusion-evidence"
+                        data-testid="results-conclusion-evidence"
+                        data-traceability-rate={artifact.conclusionTraceabilityRate}
+                        data-status={artifact.conclusionTraceabilityRate === 1 ? "passed" : "failed"}
+                      >
+                        <summary>
+                          {zh
+                            ? `查看关键结论依据 · ${artifact.keyConclusions.filter((item) => item.verified).length}/${artifact.keyConclusions.length}`
+                            : `View conclusion evidence · ${artifact.keyConclusions.filter((item) => item.verified).length}/${artifact.keyConclusions.length}`}
+                        </summary>
+                        <div>
+                          {artifact.keyConclusions.map((evidence) => (
+                            <article
+                              key={evidence.id}
+                              data-testid="results-key-conclusion"
+                              data-conclusion-id={evidence.id}
+                              data-conclusion-text={evidence.conclusion}
+                              data-evidence-text={evidence.evidenceText}
+                              data-locator={evidence.locator}
+                              data-locator-type={evidence.locatorType}
+                              data-source-path={evidence.sourcePath}
+                              data-verified={evidence.verified ? "true" : "false"}
+                            >
+                              <strong>{evidence.conclusion}</strong>
+                              <small>{evidence.evidenceText}</small>
+                              {evidence.trust ? (
+                                <section
+                                  className={`results-trust-card ${evidence.trust.status}`}
+                                  data-testid="results-trust-card"
+                                  data-trust-status={evidence.trust.status}
+                                  data-trust-label={evidence.trust.label}
+                                  data-trust-icon={evidence.trust.icon}
+                                  data-trust-rule={evidence.trust.evidenceRule}
+                                  data-trust-rule-satisfied={String(evidence.trust.ruleSatisfied)}
+                                  data-trust-evidence-ids={evidence.trust.evidenceIds.join(";")}
+                                  data-trust-conclusion-id={evidence.id}
+                                  data-trust-source-path={evidence.sourcePath}
+                                  data-trust-locator={evidence.locator}
+                                  data-trust-evidence-text={evidence.evidenceText}
+                                  role="group"
+                                  aria-label={`${evidence.trust.label}。${evidence.trust.definition}。建议动作：${evidence.trust.recommendedAction}`}
+                                >
+                                  <header>
+                                    <span className="results-trust-icon" aria-hidden="true">{evidence.trust.icon === "check" ? "✓" : evidence.trust.icon === "question" ? "?" : evidence.trust.icon === "warning" ? "!" : evidence.trust.icon === "compare" ? "⇄" : "≈"}</span>
+                                    <strong>{evidence.trust.label}</strong>
+                                    <em>{evidence.trust.ruleSatisfied ? (zh ? "证据规则匹配" : "Evidence rule matched") : (zh ? "证据规则不匹配" : "Evidence rule mismatch")}</em>
+                                  </header>
+                                  <p>{evidence.trust.definition}</p>
+                                  <small><strong>{zh ? "为什么：" : "Why: "}</strong>{evidence.trust.reason}</small>
+                                  <footer>
+                                    <span><strong>{zh ? "建议动作：" : "Next action: "}</strong>{evidence.trust.recommendedAction}</span>
+                                    <button type="button" data-testid="results-open-trust-evidence" onClick={() => void openConclusionEvidence(evidence)}>{zh ? `查看 ${evidence.locator} 依据` : `Open evidence ${evidence.locator}`}</button>
+                                  </footer>
+                                  {evidenceOpenState?.evidenceId === evidence.id ? <output data-testid="results-trust-open-status" data-state={evidenceOpenState.state}>{evidenceOpenState.message}</output> : null}
+                                </section>
+                              ) : null}
+                              {evidence.citations?.length ? (
+                                <ul className="results-citation-list">
+                                  {evidence.citations.map((citation) => (
+                                    <li
+                                      key={citation.id}
+                                      data-testid="results-citation"
+                                      data-citation-id={citation.id}
+                                      data-citation-title={citation.title}
+                                      data-citation-authors={citation.authors.join(";")}
+                                      data-citation-locator={citation.locator}
+                                      data-citation-excerpt={citation.excerpt}
+                                      data-citation-relation={citation.relation}
+                                      data-citation-score={citation.supportScore}
+                                      data-citation-source-path={citation.sourcePath}
+                                    >
+                                      <span><strong>{citation.title}</strong><small>{citation.authors.join("、")} · {citation.locator}</small></span>
+                                      <em>{citation.relation === "supports" ? (zh ? "支持结论" : "Supports") : citation.relation === "contradicts" ? (zh ? "与结论冲突" : "Contradicts") : (zh ? "证据不足" : "Insufficient")}</em>
+                                      <button type="button" data-testid="results-open-citation" onClick={() => void openConclusionEvidence(citation)}>{zh ? "打开引用" : "Open citation"}</button>
+                                      {evidenceOpenState?.evidenceId === citation.id ? <output data-testid="results-citation-open-status" data-state={evidenceOpenState.state}>{evidenceOpenState.message}</output> : null}
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : null}
+                              {evidence.numericEvidence?.length ? (
+                                <ul className="results-numeric-evidence-list">
+                                  {evidence.numericEvidence.map((numeric) => (
+                                    <li
+                                      key={numeric.id}
+                                      data-testid="results-numeric-evidence"
+                                      data-numeric-id={numeric.id}
+                                      data-numeric-label={numeric.label}
+                                      data-display-value={numeric.displayValue}
+                                      data-reported-value={numeric.reportedValue}
+                                      data-recalculated-value={numeric.recalculatedValue}
+                                      data-numeric-unit={numeric.unit}
+                                      data-numeric-kind={numeric.kind}
+                                      data-numeric-status={numeric.status}
+                                      data-numeric-formula={numeric.formula}
+                                      data-numeric-locator={numeric.locator}
+                                      data-numeric-source-path={numeric.sourcePath}
+                                      data-source-values={JSON.stringify(numeric.sourceValues)}
+                                    >
+                                      <span>
+                                        <strong>{numeric.label}：{numeric.displayValue}</strong>
+                                        <small>{numeric.formula}</small>
+                                        <small>{numeric.explanation}</small>
+                                      </span>
+                                      <em>{numeric.status === "verified" ? (zh ? "复算一致" : "Recalculated") : (zh ? "无法验证 · 已标记" : "Unverifiable · flagged")}</em>
+                                      <button type="button" data-testid="results-open-numeric-source" onClick={() => void openConclusionEvidence(numeric)}>{zh ? `查看 ${numeric.locator}` : `Open ${numeric.locator}`}</button>
+                                      {evidenceOpenState?.evidenceId === numeric.id ? <output data-testid="results-numeric-open-status" data-state={evidenceOpenState.state}>{evidenceOpenState.message}</output> : null}
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : null}
+                              {evidence.uncertainty ? (
+                                <section
+                                  className={`results-uncertainty-assessment ${evidence.uncertainty.status}`}
+                                  data-testid="results-uncertainty-assessment"
+                                  data-uncertainty-status={evidence.uncertainty.status}
+                                  data-requires-qualification={evidence.uncertainty.requiresQualification ? "true" : "false"}
+                                  data-qualifying-language={evidence.uncertainty.qualifyingLanguage.join(";")}
+                                >
+                                  <header><strong>{evidence.uncertainty.label}</strong><em>{evidence.uncertainty.status === "source_conflict" ? (zh ? "来源冲突" : "Source conflict") : evidence.uncertainty.status === "insufficient_data" ? (zh ? "数据不足" : "Insufficient data") : (zh ? "推测" : "Inference")}</em></header>
+                                  <p>{evidence.uncertainty.explanation}</p>
+                                  <ul>
+                                    {evidence.uncertainty.claims.map((claim) => (
+                                      <li
+                                        key={claim.id}
+                                        data-testid="results-uncertainty-claim"
+                                        data-claim-id={claim.id}
+                                        data-claim-position={claim.position}
+                                        data-claim-stance={claim.stance}
+                                        data-claim-locator={claim.locator}
+                                        data-claim-excerpt={claim.excerpt}
+                                        data-claim-source-path={claim.sourcePath}
+                                      >
+                                        <span><strong>{claim.position}</strong><small>{claim.excerpt}</small></span>
+                                        <em>{claim.stance === "supports" ? (zh ? "支持" : "Supports") : claim.stance === "contradicts" ? (zh ? "反方" : "Contradicts") : (zh ? "证据不足" : "Insufficient")}</em>
+                                        <button type="button" data-testid="results-open-uncertainty-claim" onClick={() => void openConclusionEvidence(claim)}>{zh ? `查看 ${claim.locator}` : `Open ${claim.locator}`}</button>
+                                        {evidenceOpenState?.evidenceId === claim.id ? <output data-testid="results-uncertainty-open-status" data-state={evidenceOpenState.state}>{evidenceOpenState.message}</output> : null}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                  <footer><strong>{zh ? "建议动作：" : "Next action: "}</strong>{evidence.uncertainty.recommendedAction}</footer>
+                                </section>
+                              ) : null}
+                              <span>
+                                <em>{evidence.verified ? (zh ? "依据已核对" : "Verified") : (zh ? "待核对" : "Unverified")}</em>
+                                <button
+                                  type="button"
+                                  data-testid="results-open-conclusion-evidence"
+                                  onClick={() => void openConclusionEvidence(evidence)}
+                                >
+                                  {zh ? `查看 ${evidence.locator}` : `Open ${evidence.locator}`}
+                                </button>
+                              </span>
+                              {evidenceOpenState?.evidenceId === evidence.id ? (
+                                <output data-testid="results-conclusion-open-status" data-state={evidenceOpenState.state}>{evidenceOpenState.message}</output>
+                              ) : null}
+                            </article>
+                          ))}
+                        </div>
+                      </details>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+        </div>
+      )}
+      {previewState ? (
+        <div className="results-preview-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPreviewState(null); }}>
+          <section className="results-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="results-preview-title" data-testid="results-preview-dialog" data-preview-state={previewState.state}>
+            <header>
+              <div>
+                <h3 id="results-preview-title">{previewState.artifact.label}</h3>
+                <small>{previewState.preview ? `${previewState.preview.kind.toUpperCase()} · ${previewState.preview.size} bytes` : previewState.message}</small>
+              </div>
+              <button type="button" data-testid="results-preview-close" onClick={() => setPreviewState(null)}>{zh ? "关闭" : "Close"}</button>
+            </header>
+            {previewState.state === "loading" ? <p role="status">{previewState.message}</p> : null}
+            {previewState.state === "failed" ? <p role="alert">{previewState.message}</p> : null}
+            {previewState.state === "ready" && previewState.preview ? (
+              <div className="results-preview-content" data-preview-kind={previewState.preview.kind} onMouseUp={previewState.preview.kind !== "table" && previewState.preview.kind !== "image" ? captureTextSelection : undefined}>
+                {previewState.preview.kind === "image" && previewState.preview.dataUrl ? (
+                  <img
+                    src={previewState.preview.dataUrl}
+                    alt={previewState.artifact.label}
+                    data-selected={localEditScope?.type === "image"}
+                    onClick={() => setLocalEditScope({ type: "image", label: zh ? "整张图片" : "Entire image" })}
+                  />
+                ) : previewState.preview.kind === "table" && previewState.preview.columns ? (
+                  <div>
+                    <button type="button" className="secondary" data-testid="results-select-table" onClick={() => setLocalEditScope({ type: "table", label: zh ? "整个表格" : "Entire table" })}>{zh ? "选择整个表格" : "Select entire table"}</button>
+                    <table data-selected={localEditScope?.type === "table"}>
+                      <thead><tr>{previewState.preview.columns.map((column, index) => <th key={`${column}-${index}`}>{column}</th>)}</tr></thead>
+                      <tbody>{(previewState.preview.rows ?? []).map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}</tr>)}</tbody>
+                    </table>
+                    {chartConfig ? (
+                      <section className="results-chart-controls" data-testid="results-chart-controls">
+                        <strong>{zh ? "生成并核对图表" : "Generate and verify chart"}</strong>
+                        <label>{zh ? "横轴" : "X axis"}<select data-testid="results-chart-x" value={chartConfig.xColumn} onChange={(event) => setChartConfig({ ...chartConfig, xColumn: event.target.value })}>{previewState.preview.columns.map((column) => <option key={column}>{column}</option>)}</select></label>
+                        <label>{zh ? "纵轴" : "Y axis"}<select data-testid="results-chart-y" value={chartConfig.yColumn} onChange={(event) => setChartConfig({ ...chartConfig, yColumn: event.target.value })}>{previewState.preview.columns.map((column) => <option key={column}>{column}</option>)}</select></label>
+                        <label>{zh ? "单位" : "Unit"}<input data-testid="results-chart-unit" value={chartConfig.unit} onChange={(event) => setChartConfig({ ...chartConfig, unit: event.target.value })} /></label>
+                        <label>{zh ? "图例" : "Legend"}<input data-testid="results-chart-legend" value={chartConfig.legend} onChange={(event) => setChartConfig({ ...chartConfig, legend: event.target.value })} /></label>
+                        <button type="button" data-testid="results-generate-chart" disabled={!chartConfig.xColumn || !chartConfig.yColumn || !chartConfig.unit || !chartConfig.legend || chartState?.state === "running"} onClick={() => void generateCheckedChart()}>{zh ? "生成并自动核对" : "Generate and verify"}</button>
+                      </section>
+                    ) : null}
+                  </div>
+                ) : (
+                  <pre>{previewState.preview.content || previewState.preview.message || (zh ? "此格式由系统应用打开查看。" : "This format opens in the system application.")}</pre>
+                )}
+              </div>
+            ) : null}
+            {previewState.state === "ready" ? (
+              <footer className="results-local-edit-controls" data-testid="results-local-edit-controls">
+                <div>
+                  <strong>{zh ? "局部修改" : "Localized edit"}</strong>
+                  <small>{localEditScope?.label || (previewState.preview?.kind === "table" ? (zh ? "请先选择整个表格" : "Select the table first") : previewState.preview?.kind === "image" ? (zh ? "请点击图片选择" : "Click the image to select it") : (zh ? "请在预览中选中文字" : "Select text in the preview"))}</small>
+                </div>
+                <button type="button" data-testid="results-generate-local-edit" disabled={!localEditScope || editState?.state === "starting" || editState?.state === "running"} onClick={() => void generateLocalEdit()}>
+                  {previewState.preview?.kind === "table" ? (zh ? "按数值排序并生成新版" : "Sort numerically and create version") : previewState.preview?.kind === "image" ? (zh ? "改为对数坐标并生成新版" : "Use log scale and create version") : (zh ? "改得更简单并生成新版" : "Simplify and create version")}
+                </button>
+              </footer>
+            ) : null}
+            {previewState.preview?.truncated ? <p className="results-preview-note">{zh ? "预览已截取；另存文件仍保持完整。" : "Preview truncated; saved copies remain complete."}</p> : null}
+          </section>
+        </div>
+      ) : null}
+      {compareState ? (
+        <div className="results-preview-backdrop" role="presentation">
+          <section className="results-preview-dialog results-compare-dialog" role="dialog" aria-modal="true" aria-labelledby="results-compare-title" data-testid="results-compare-dialog" data-compare-state={compareState.state}>
+            <header><div><h3 id="results-compare-title">{zh ? "原版与修改版比较" : "Original vs edited"}</h3><small>{compareState.artifact.editLineage?.scopeLabel}</small></div><button type="button" data-testid="results-compare-close" onClick={() => setCompareState(null)}>{zh ? "关闭" : "Close"}</button></header>
+            {compareState.state === "failed" ? <p role="alert">{compareState.message}</p> : null}
+            {compareState.state === "loading" ? <p role="status">{compareState.message}</p> : null}
+            {compareState.state === "ready" && compareState.source && compareState.edited ? (
+              <div className="results-compare-grid">
+                {[{ label: zh ? "原版" : "Original", preview: compareState.source }, { label: zh ? "修改版" : "Edited", preview: compareState.edited }].map((item) => (
+                  <article key={item.label} data-version={item.label}>
+                    <strong>{item.label}</strong>
+                    {item.preview.kind === "image" && item.preview.dataUrl ? <img src={item.preview.dataUrl} alt={item.label} /> : <pre>{item.preview.content || item.preview.message}</pre>}
+                  </article>
+                ))}
+              </div>
+            ) : null}
+          </section>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function AwaySummaryPanel({
+  language,
+  summary,
+  onDismiss,
+  onOpenTask,
+}: {
+  language: AppLanguage;
+  summary: AwaySummary;
+  onDismiss: () => void;
+  onOpenTask: (task: DesktopBackgroundTask) => void;
+}): React.JSX.Element {
+  const zh = language === "zh";
+  const groups: Array<{
+    id: "completed" | "failed" | "pending";
+    title: string;
+    empty: string;
+    tasks: DesktopBackgroundTask[];
+  }> = [
+    { id: "completed", title: zh ? "已完成" : "Completed", empty: zh ? "没有新完成事项" : "No new completions", tasks: summary.completed },
+    { id: "failed", title: zh ? "失败" : "Failed", empty: zh ? "没有新失败事项" : "No new failures", tasks: summary.failed },
+    { id: "pending", title: zh ? "待确认" : "Needs your decision", empty: zh ? "没有待确认事项" : "Nothing needs a decision", tasks: summary.pending },
+  ];
+  return (
+    <section
+      className="away-summary-panel"
+      data-away-started-at={summary.startedAt}
+      data-testid="away-summary"
+      aria-labelledby="away-summary-title"
+      aria-live="assertive"
+    >
+      <header>
+        <div>
+          <strong id="away-summary-title">{zh ? "欢迎回来，这是你离开期间的进展" : "Welcome back — here is what happened while you were away"}</strong>
+          <small>{zh ? "按结果分类，无需翻找完整时间线。" : "Grouped by outcome so you do not need to scan the full timeline."}</small>
+        </div>
+        <button type="button" className="secondary" onClick={onDismiss}>{zh ? "知道了" : "Dismiss"}</button>
+      </header>
+      <div className="away-summary-groups">
+        {groups.map((group) => (
+          <section key={group.id} data-testid={`away-summary-${group.id}`} aria-label={group.title}>
+            <h3>{group.title}<span>{group.tasks.length}</span></h3>
+            {group.tasks.length === 0 ? <p>{group.empty}</p> : (
+              <ul>
+                {group.tasks.map((task) => (
+                  <li key={task.id} data-target-id={task.targetId}>
+                    <div><strong>{redactAwaySummaryText(task.title, zh)}</strong><small>{redactAwaySummaryText(task.message, zh)}</small></div>
+                    <button
+                      type="button"
+                      data-testid={group.id === "pending" ? "away-summary-continue" : "away-summary-open-task"}
+                      onClick={() => onOpenTask(task)}
+                    >
+                      {group.id === "pending" ? zh ? "继续处理" : "Continue" : zh ? "查看任务" : "Open task"}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function redactAwaySummaryText(value: string, zh: boolean): string {
+  const hidden = zh ? "[已隐藏]" : "[hidden]";
+  const hiddenEmail = zh ? "[已隐藏邮箱]" : "[hidden email]";
+  return value
+    .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+/gi, `Bearer ${hidden}`)
+    .replace(/\bsk-[A-Za-z0-9_-]{8,}/gi, hidden)
+    .replace(/\b(api[_ -]?key|token|password|secret)\s*[:=]\s*[^\s,;]+/gi, (_match, label: string) => `${label}=${hidden}`)
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, hiddenEmail);
+}
+
+function TaskDeliverySummaryPanel({
+  language,
+  task,
+  onClose,
+  onOpenTask,
+}: {
+  language: AppLanguage;
+  task: DesktopBackgroundTask;
+  onClose: () => void;
+  onOpenTask: () => void;
+}): React.JSX.Element {
+  const zh = language === "zh";
+  const summary = task.deliverySummary!;
+  const [artifactOpenState, setArtifactOpenState] = useState<{
+    artifactId: string;
+    state: "opening" | "opened" | "failed";
+    message: string;
+  } | null>(null);
+  const importance = summary.importance === "high"
+    ? zh ? "高" : "High"
+    : summary.importance === "low" ? zh ? "低" : "Low" : zh ? "中" : "Medium";
+  async function openArtifact(artifact: DesktopTaskArtifactLink): Promise<void> {
+    setArtifactOpenState({
+      artifactId: artifact.id,
+      state: "opening",
+      message: zh ? `正在打开${artifact.label}…` : `Opening ${artifact.label}…`,
+    });
+    try {
+      const error = await desktopApi.openPath(artifact.path);
+      setArtifactOpenState({
+        artifactId: artifact.id,
+        state: error ? "failed" : "opened",
+        message: error
+          ? (zh ? `无法打开${artifact.label}：${error}` : `Could not open ${artifact.label}: ${error}`)
+          : (zh ? `已打开${artifact.label}` : `Opened ${artifact.label}`),
+      });
+    } catch (caught) {
+      const detail = caught instanceof Error ? caught.message : String(caught);
+      setArtifactOpenState({
+        artifactId: artifact.id,
+        state: "failed",
+        message: zh ? `无法打开${artifact.label}：${detail}` : `Could not open ${artifact.label}: ${detail}`,
+      });
+    }
+  }
+  return (
+    <section
+      className="task-delivery-summary"
+      data-status={task.status}
+      data-target-id={task.targetId}
+      data-testid="task-delivery-summary"
+      aria-labelledby="task-delivery-summary-title"
+      aria-live="polite"
+    >
+      <header>
+        <div>
+          <strong id="task-delivery-summary-title">{zh ? "任务交付摘要" : "Task delivery summary"}</strong>
+          <small>{redactAwaySummaryText(task.title, zh)}</small>
+        </div>
+        <button type="button" className="secondary" onClick={onClose}>{zh ? "关闭" : "Close"}</button>
+      </header>
+      <div className="task-delivery-k3-grid">
+        <article data-testid="delivery-finding"><strong>{zh ? "发现摘要" : "Finding"}</strong><p>{summary.findingSummary}</p></article>
+        <article data-importance={summary.importance} data-testid="delivery-importance"><strong>{zh ? "重要程度" : "Importance"}</strong><p>{importance} · {summary.importanceReason}</p></article>
+        <article data-testid="delivery-artifacts">
+          <strong>{zh ? "成果入口" : "Results"}</strong>
+          {summary.artifacts.length ? summary.artifacts.map((artifact) => (
+            <div key={artifact.id} className="delivery-artifact-entry">
+              <button
+                type="button"
+                data-artifact-id={artifact.id}
+                data-artifact-path={artifact.path}
+                disabled={artifactOpenState?.artifactId === artifact.id && artifactOpenState.state === "opening"}
+                onClick={() => void openArtifact(artifact)}
+              >
+                {zh ? "打开" : "Open"} {artifact.label}
+              </button>
+              {artifactOpenState?.artifactId === artifact.id ? (
+                <span
+                  data-artifact-id={artifact.id}
+                  data-state={artifactOpenState.state}
+                  data-testid="delivery-artifact-open-status"
+                  role="status"
+                >
+                  {artifactOpenState.message}
+                </span>
+              ) : null}
+            </div>
+          )) : <p>{zh ? "打开对应任务查看完整结果" : "Open the task for the full result"}</p>}
+        </article>
+        <article data-testid="delivery-action"><strong>{zh ? "建议操作" : "Suggested action"}</strong><p>{summary.suggestedAction}</p></article>
+      </div>
+      <details open>
+        <summary>{zh ? "完整完成卡" : "Full completion card"}</summary>
+        <dl>
+          <div data-testid="delivery-work-summary"><dt>{zh ? "工作摘要" : "Work summary"}</dt><dd>{summary.workSummary}</dd></div>
+          <div data-testid="delivery-core-conclusion"><dt>{zh ? "核心结论" : "Core conclusion"}</dt><dd>{summary.coreConclusion}</dd></div>
+          <div data-testid="delivery-verification"><dt>{zh ? "检查结果" : "Verification"}</dt><dd>{summary.verification}</dd></div>
+          <div className="delivery-completion-criteria" data-testid="delivery-completion-criteria">
+            <dt>{zh ? "完成标准" : "Completion criteria"}</dt>
+            <dd>
+              <section data-testid="delivery-checks-passed">
+                <strong>{zh ? "已通过的检查" : "Checks passed"}</strong>
+                <ul>{(summary.completionCriteria?.passed ?? [summary.verification]).map((item) => <li key={item}><span aria-hidden="true">✓</span>{item}</li>)}</ul>
+              </section>
+              <section data-testid="delivery-checks-incomplete">
+                <strong>{zh ? "尚未完成" : "Not completed"}</strong>
+                <ul>{(summary.completionCriteria?.incomplete ?? [summary.remainingRisks]).map((item) => <li key={item}><span aria-hidden="true">!</span>{item}</li>)}</ul>
+              </section>
+            </dd>
+          </div>
+          <div data-testid="delivery-risks"><dt>{zh ? "剩余风险" : "Remaining risks"}</dt><dd>{summary.remainingRisks}</dd></div>
+        </dl>
+      </details>
+      <button type="button" data-testid="delivery-open-task" onClick={onOpenTask}>{zh ? "查看对应任务" : "Open corresponding task"}</button>
+    </section>
+  );
 }
 
 function DesktopStatusPanel({
@@ -2661,7 +4822,7 @@ function SettingsPanel({
               <div><h2>{zh ? "启动与通知" : "Startup and notifications"}</h2><p>{zh ? "恢复上次工作状态，并在任务完成时发送桌面通知。" : "Restore your last working state and notify when a task completes."}</p></div>
               <label className="settings-toggle"><span><strong>{zh ? "恢复上次会话" : "Restore last session"}</strong><small>{zh ? "下次启动时重新打开最近使用的会话。" : "Reopen the most recently used session on launch."}</small></span><input type="checkbox" checked={restoreLastSession} onChange={(event) => onRestoreLastSessionChange(event.target.checked)} /></label>
               <label className="settings-toggle"><span><strong>{zh ? "恢复上次工作区" : "Restore last workspace"}</strong><small>{zh ? "下次启动时重新选择最近使用的工作区。" : "Select the most recently used workspace on launch."}</small></span><input type="checkbox" checked={restoreLastWorkspace} onChange={(event) => onRestoreLastWorkspaceChange(event.target.checked)} /></label>
-              <label className="settings-toggle"><span><strong>{zh ? "任务完成通知" : "Completion notifications"}</strong><small>{zh ? "会话任务完成时发送系统通知。" : "Send a system notification when a conversation task completes."}</small></span><input type="checkbox" checked={completionNotifications} onChange={(event) => onCompletionNotificationsChange(event.target.checked)} /></label>
+              <label className="settings-toggle"><span><strong>{zh ? "任务完成通知" : "Completion notifications"}</strong><small>{zh ? "会话或后台任务完成时发送 Windows 通知，点击可返回对应任务。" : "Send a Windows notification for completed conversations and background tasks; click it to return to the task."}</small></span><input type="checkbox" checked={completionNotifications} onChange={(event) => onCompletionNotificationsChange(event.target.checked)} /></label>
             </section>
           </>
         )}
