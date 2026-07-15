@@ -4,6 +4,7 @@ param(
     [string]$ExpectedVersion = "1.4.6",
     [string]$RunId = "m1-sandbox",
     [switch]$StandardUserRun,
+    [switch]$InstallOnly,
     [switch]$ShutdownOnComplete,
     [switch]$TestUninstall
 )
@@ -56,47 +57,6 @@ function Invoke-Native([string]$FilePath, [string[]]$Arguments) {
 
 $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 $currentIsElevated = $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not $StandardUserRun -and $currentIsElevated -and $env:USERNAME -eq "WDAGUtilityAccount") {
-    $standardUser = "OpenDrSaiM1"
-    $standardPassword = "M1-" + [Guid]::NewGuid().ToString("N") + "!aA1"
-    $localPackage = "C:\OpenDrSaiM1Package"
-    $localEvidence = "C:\OpenDrSaiM1Evidence"
-    $bootstrapLog = Join-Path $EvidenceDir "standard-user-bootstrap.txt"
-    function Write-Bootstrap([string]$Message) {
-        [IO.File]::AppendAllText($bootstrapLog, ((Get-Date).ToUniversalTime().ToString("o") + " " + $Message + [Environment]::NewLine))
-    }
-    Write-Bootstrap "bootstrap-started"
-    New-Item -ItemType Directory -Force -Path $localPackage, $localEvidence | Out-Null
-    Copy-Item -LiteralPath (Join-Path $PackageDir "run-windows-sandbox-acceptance.ps1") -Destination $localPackage -Force
-    Copy-Item -LiteralPath (Join-Path $PackageDir "OpenDrSaiRuntime-win-x64.zip") -Destination "C:\OpenDrSaiRuntime-win-x64.zip" -Force
-    Write-Bootstrap "runtime-copied"
-    $netUser = Invoke-Native net.exe @("user", $standardUser, $standardPassword, "/add", "/expires:never", "/passwordchg:no")
-    if ($netUser.exitCode -ne 0) {
-        $existingUser = Invoke-Native net.exe @("user", $standardUser)
-        if ($existingUser.exitCode -ne 0) { throw "Could not create the M1 standard user: $($netUser.output)" }
-    }
-    $acl = Invoke-Native icacls.exe @($localEvidence, "/grant", "${standardUser}:(OI)(CI)M")
-    if ($acl.exitCode -ne 0) { throw "Could not grant M1 evidence access: $($acl.output)" }
-    Write-Bootstrap "standard-user-ready"
-    $securePassword = ConvertTo-SecureString $standardPassword -AsPlainText -Force
-    $credential = New-Object Management.Automation.PSCredential(".\$standardUser", $securePassword)
-    $childArgs = @(
-        "-NoProfile", "-ExecutionPolicy", "Bypass",
-        "-File", (Join-Path $localPackage "run-windows-sandbox-acceptance.ps1"),
-        "-PackageDir", $PackageDir,
-        "-EvidenceDir", $localEvidence,
-        "-ExpectedVersion", $ExpectedVersion,
-        "-RunId", $RunId,
-        "-StandardUserRun"
-    )
-    if ($TestUninstall) { $childArgs += "-TestUninstall" }
-    Write-Bootstrap "standard-user-process-starting"
-    $child = Start-Process powershell.exe -Credential $credential -LoadUserProfile -WorkingDirectory $localPackage -ArgumentList $childArgs -Wait -PassThru
-    Write-Bootstrap "standard-user-process-finished exit=$($child.ExitCode)"
-    Copy-Item -Path (Join-Path $localEvidence "*") -Destination $EvidenceDir -Recurse -Force -ErrorAction SilentlyContinue
-    if ($ShutdownOnComplete) { Start-Process shutdown.exe -ArgumentList @("/s", "/t", "0") -WindowStyle Hidden }
-    exit $child.ExitCode
-}
 
 New-Item -ItemType Directory -Force -Path $EvidenceDir | Out-Null
 $startupMarker = Join-Path $EvidenceDir "sandbox-started.txt"
@@ -106,8 +66,8 @@ Start-Transcript -Path $transcriptPath -Force | Out-Null
 $msiSource = Join-Path $PackageDir "OpenDrSaiSetup.sandbox.msi"
 $msi = Join-Path $env:TEMP "OpenDrSaiSetup.sandbox.msi"
 $runtime = Join-Path $PackageDir "OpenDrSaiRuntime-win-x64.zip"
-$localRuntime = "C:\OpenDrSaiRuntime-win-x64.zip"
-$installRoot = Join-Path $env:LOCALAPPDATA "Programs\OpenDrSai"
+$localRuntime = Join-Path $env:TEMP "OpenDrSaiRuntime-win-x64.zip"
+$installRoot = Join-Path $env:ProgramFiles "OpenDrSai"
 $statePath = Join-Path $installRoot "install-state.json"
 $evidencePath = Join-Path $EvidenceDir ("windows-11-sandbox-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".json")
 $cernPdf = Join-Path $PackageDir "WLCG-20260715-WLCG-talk-IHEP-visit.pdf"
@@ -115,8 +75,8 @@ $fakeGatewayScript = Join-Path $PackageDir "m1-fake-gateway.py"
 $expectedPdfSha256 = "f6581e1a255b354667188b41b874b996a300f88bb48912721bc1c854183e913e"
 
 try {
-    Add-Check "Windows Sandbox standard identity" ($(if ($env:USERNAME -eq "OpenDrSaiM1") { "PASS" } else { "FAIL" })) $env:USERNAME
-    Add-Check "Ordinary non-elevated process" ($(if (-not $currentIsElevated) { "PASS" } else { "FAIL" })) "elevated=$currentIsElevated"
+    Add-Check "Windows Sandbox identity" ($(if ($env:USERNAME -eq "WDAGUtilityAccount") { "PASS" } else { "FAIL" })) $env:USERNAME
+    Add-Check "Elevated installer process" ($(if ($currentIsElevated) { "PASS" } else { "FAIL" })) "elevated=$currentIsElevated"
     Add-Check "MSI exists" ($(if (Test-Path $msiSource) { "PASS" } else { "FAIL" })) $msiSource
     Add-Check "Runtime exists" ($(if (Test-Path $runtime) { "PASS" } else { "FAIL" })) $runtime
     Add-Check "CERN PDF exists" ($(if (Test-Path $cernPdf) { "PASS" } else { "FAIL" })) $cernPdf
@@ -148,12 +108,12 @@ try {
     if ($installer.ExitCode -ne 0) { throw "MSI installation failed." }
 
     $state = Wait-ForFreshInstallState $statePath $startedAt
-    Add-Check "Per-user install root" ($(if ($state.installRoot -eq $installRoot) { "PASS" } else { "FAIL" })) ([string]$state.installRoot)
-    Add-Check "Per-user DrSai home" ($(if ($state.drsaiHome -eq (Join-Path $env:USERPROFILE ".drsai")) { "PASS" } else { "FAIL" })) ([string]$state.drsaiHome)
+    Add-Check "Machine install root" ($(if ($state.installRoot -eq $installRoot) { "PASS" } else { "FAIL" })) ([string]$state.installRoot)
+    Add-Check "Machine install keeps user data external" ($(if (-not $state.drsaiHome) { "PASS" } else { "FAIL" })) ([string]$state.drsaiHome)
     Add-Check "Runtime version" ($(if ($state.runtimeVersion -eq $ExpectedVersion) { "PASS" } else { "FAIL" })) ([string]$state.runtimeVersion)
     Add-Check "Desktop executable" ($(if (Test-Path $state.desktopPath) { "PASS" } else { "FAIL" })) ([string]$state.desktopPath)
-    $desktopShortcut = Join-Path ([Environment]::GetFolderPath("Desktop")) "OpenDrSai.lnk"
-    $startMenuShortcut = Join-Path ([Environment]::GetFolderPath("Programs")) "OpenDrSai\OpenDrSai.lnk"
+    $desktopShortcut = Join-Path ([Environment]::GetFolderPath("CommonDesktopDirectory")) "OpenDrSai.lnk"
+    $startMenuShortcut = Join-Path ([Environment]::GetFolderPath("CommonPrograms")) "OpenDrSai\OpenDrSai.lnk"
     Add-Check "Desktop shortcut" ($(if (Test-Path $desktopShortcut) { "PASS" } else { "FAIL" })) $desktopShortcut
     Add-Check "Start menu shortcut" ($(if (Test-Path $startMenuShortcut) { "PASS" } else { "FAIL" })) $startMenuShortcut
     $python = Join-Path $state.agentPath "venv\Scripts\python.exe"
@@ -163,6 +123,12 @@ try {
     $version = Invoke-Native $python @("-m", "drsai.backend.run_cli", "version")
     Add-Check "DrSai backend version" ($(if ($version.exitCode -eq 0 -and $version.output -match [regex]::Escape($ExpectedVersion)) { "PASS" } else { "FAIL" })) $version.output
 
+    if ($InstallOnly) {
+        $acceptanceHome = Join-Path $env:USERPROFILE ".drsai"
+        New-Item -ItemType Directory -Force -Path $acceptanceHome | Out-Null
+        [IO.File]::WriteAllText((Join-Path $acceptanceHome "msi-uninstall-preservation-marker.txt"), "preserve", (New-Object Text.UTF8Encoding($false)))
+        Add-Check "MSI install-only acceptance" "PASS" "Application workflow checks intentionally skipped."
+    } else {
     $acceptanceHome = Join-Path $env:USERPROFILE ".drsai"
     $authDir = Join-Path $acceptanceHome "auth"
     $desktopDataDir = Join-Path $acceptanceHome "desktop"
@@ -247,6 +213,7 @@ try {
     } finally {
         if ($gateway -and -not $gateway.HasExited) { Stop-Process -Id $gateway.Id -Force -ErrorAction SilentlyContinue }
     }
+    }
 
     if ($TestUninstall) {
         Get-Process OpenDrSai -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
@@ -262,6 +229,12 @@ try {
 } catch {
     Add-Check "Acceptance execution" "FAIL" $_.Exception.Message
 } finally {
+    $machineInstallerLogs = Join-Path $env:ProgramData "OpenDrSai\Installer\logs"
+    if (Test-Path -LiteralPath $machineInstallerLogs) {
+        $capturedInstallerLogs = Join-Path $EvidenceDir "installer-logs"
+        New-Item -ItemType Directory -Force -Path $capturedInstallerLogs | Out-Null
+        Copy-Item -Path (Join-Path $machineInstallerLogs "*") -Destination $capturedInstallerLogs -Force -ErrorAction SilentlyContinue
+    }
     $failed = @($results | Where-Object status -eq "FAIL")
     $evidence = [ordered]@{
         schemaVersion = 1

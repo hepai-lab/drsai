@@ -19,6 +19,7 @@ namespace OpenDrSai.Installer
             try
             {
                 string runtimeUrl = session.CustomActionData["RuntimeUrl"];
+                string sourcePath = session.CustomActionData["SourcePath"];
                 string targetPath = session.CustomActionData["TargetPath"];
                 string bootstrapperVersion = session.CustomActionData["BootstrapperVersion"];
                 long expectedSize = long.Parse(
@@ -30,7 +31,8 @@ namespace OpenDrSai.Installer
                 DeleteIfPresent(partialPath);
 
                 ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072;
-                return Download(session, runtimeUrl, partialPath, targetPath, expectedSize, bootstrapperVersion);
+                string runtimeSource = ResolveRuntimeSource(session, sourcePath, runtimeUrl);
+                return Download(session, runtimeSource, partialPath, targetPath, expectedSize, bootstrapperVersion);
             }
             catch (Exception ex)
             {
@@ -39,6 +41,27 @@ namespace OpenDrSai.Installer
                 DeleteIfPresent(partialPath);
                 return ActionResult.Failure;
             }
+        }
+
+        private static string ResolveRuntimeSource(Session session, string sourcePath, string runtimeUrl)
+        {
+            if (!string.IsNullOrWhiteSpace(sourcePath))
+            {
+                string setupDirectory = Path.GetDirectoryName(Path.GetFullPath(sourcePath));
+                if (!string.IsNullOrEmpty(setupDirectory))
+                {
+                    string adjacentRuntime = Path.Combine(setupDirectory, "OpenDrSaiRuntime-win-x64.zip");
+                    if (File.Exists(adjacentRuntime))
+                    {
+                        session.Log("Using OpenDrSai Runtime package beside Setup: " + adjacentRuntime);
+                        SendActionData(session, "Using the OpenDrSai Runtime package beside Setup...");
+                        return new Uri(adjacentRuntime).AbsoluteUri;
+                    }
+                }
+            }
+
+            session.Log("No Runtime package was found beside Setup; downloading from: " + runtimeUrl);
+            return runtimeUrl;
         }
 
         private static ActionResult Download(
@@ -53,6 +76,10 @@ namespace OpenDrSai.Installer
             IDisposable responseOwner = null;
             try
             {
+                if (!SendActionData(session, "Connecting to the OpenDrSai download server..."))
+                {
+                    return ActionResult.UserExit;
+                }
                 long responseSize;
                 OpenSource(runtimeUrl, bootstrapperVersion, out source, out responseOwner, out responseSize);
                 if (expectedSize > 0 && responseSize > 0 && responseSize != expectedSize)
@@ -186,7 +213,7 @@ namespace OpenDrSai.Installer
             }
 
             HttpWebRequest request = (HttpWebRequest)WebRequest.Create(uri);
-            request.Timeout = 300000;
+            request.Timeout = 60000;
             request.ReadWriteTimeout = 300000;
             request.AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate;
             request.UserAgent = "OpenDrSai-Setup/" + bootstrapperVersion;
@@ -196,7 +223,19 @@ namespace OpenDrSai.Installer
                 request.Proxy.Credentials = CredentialCache.DefaultCredentials;
             }
 
-            WebResponse response = request.GetResponse();
+            WebResponse response;
+            try
+            {
+                response = request.GetResponse();
+            }
+            catch (WebException ex)
+            {
+                throw new InvalidOperationException(
+                    "Could not connect to the OpenDrSai download server within 60 seconds. " +
+                    "Check this Windows environment's Internet or system proxy settings, then retry. " +
+                    "Download URL: " + runtimeUrl,
+                    ex);
+            }
             responseOwner = response;
             contentLength = response.ContentLength;
             source = response.GetResponseStream();
@@ -224,6 +263,12 @@ namespace OpenDrSai.Installer
                 total / 1048576.0,
                 speed);
             session.Log("OpenDrSai Runtime download progress: " + text);
+            return SendActionData(session, text);
+        }
+
+        private static bool SendActionData(Session session, string text)
+        {
+            session.Log("OpenDrSai installer status: " + text);
             using (Record record = new Record(1))
             {
                 record.SetString(1, text);

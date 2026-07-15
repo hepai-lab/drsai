@@ -6,7 +6,9 @@ param(
     [ValidateRange(1, 10)]
     [int]$Runs = 10,
     [ValidateRange(60, 900)]
-    [int]$TimeoutSeconds = 420
+    [int]$TimeoutSeconds = 420,
+    [switch]$InstallOnly,
+    [switch]$TestUninstall
 )
 
 $ErrorActionPreference = "Stop"
@@ -63,6 +65,8 @@ for ($index = 1; $index -le $Runs; $index += 1) {
     $packageXml = Escape-Xml $packageDir
     $runXml = Escape-Xml $runDir
     $command = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\OpenDrSaiPackage\run-windows-sandbox-acceptance.ps1 -RunId $runId -ExpectedVersion $ExpectedVersion -ShutdownOnComplete"
+    if ($InstallOnly) { $command += " -InstallOnly" }
+    if ($TestUninstall) { $command += " -TestUninstall" }
     $wsb = @"
 <Configuration>
   <VGpu>Disable</VGpu>

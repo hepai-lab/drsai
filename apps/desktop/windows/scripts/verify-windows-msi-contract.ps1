@@ -28,12 +28,10 @@ $installer = New-Object -ComObject WindowsInstaller.Installer
 $database = $installer.OpenDatabase($msi, 0)
 
 Assert-Equal (Read-SingleValue $database "SELECT ``Value`` FROM ``Property`` WHERE ``Property``='ProductName'") "OpenDrSai" "ProductName"
-$allUsers = Read-SingleValue $database "SELECT ``Value`` FROM ``Property`` WHERE ``Property``='ALLUSERS'"
-if ($allUsers) { throw "ALLUSERS must be absent for a non-elevated per-user install, got '$allUsers'." }
+Assert-Equal (Read-SingleValue $database "SELECT ``Value`` FROM ``Property`` WHERE ``Property``='ALLUSERS'") "1" "ALLUSERS"
 Assert-Equal (Read-SingleValue $database "SELECT ``Value`` FROM ``Property`` WHERE ``Property``='ARPNOREPAIR'") "1" "ARPNOREPAIR"
-Assert-Equal (Read-SingleValue $database "SELECT ``Directory_Parent`` FROM ``Directory`` WHERE ``Directory``='INSTALLFOLDER'") "LocalProgramsFolder" "INSTALLFOLDER parent"
-Assert-Equal (Read-SingleValue $database "SELECT ``Directory_Parent`` FROM ``Directory`` WHERE ``Directory``='LocalProgramsFolder'") "LocalAppDataFolder" "LocalProgramsFolder parent"
-Assert-Equal (Read-SingleValue $database "SELECT ``Root`` FROM ``Registry`` WHERE ``Key``='Software\HepAI\OpenDrSai' AND ``Name``='Installed'") "1" "Installed registry hive"
+Assert-Equal (Read-SingleValue $database "SELECT ``Directory_Parent`` FROM ``Directory`` WHERE ``Directory``='INSTALLFOLDER'") "ProgramFiles64Folder" "INSTALLFOLDER parent"
+Assert-Equal (Read-SingleValue $database "SELECT ``Root`` FROM ``Registry`` WHERE ``Key``='Software\HepAI\OpenDrSai' AND ``Name``='Installed'") "2" "Installed registry hive"
 
 $productVersion = Read-SingleValue $database "SELECT ``Value`` FROM ``Property`` WHERE ``Property``='ProductVersion'"
 $runtimeUrl = Read-SingleValue $database "SELECT ``Value`` FROM ``Property`` WHERE ``Property``='RUNTIMEURL'"
@@ -60,8 +58,12 @@ foreach ($action in @(
     $typeText = Read-SingleValue $database "SELECT ``Type`` FROM ``CustomAction`` WHERE ``Action``='$action'"
     if (-not $typeText) { throw "MSI is missing custom action $action." }
     $type = [int]$typeText
-    if (($type -band 1024) -eq 0 -or ($type -band 2048) -ne 0) {
-        throw "$action must be deferred and impersonate the ordinary user; type=$type."
+    if (($type -band 1024) -eq 0 -or ($type -band 2048) -eq 0) {
+        throw "$action must be deferred and run without impersonation; type=$type."
+    }
+    $command = Read-SingleValue $database "SELECT ``Target`` FROM ``CustomAction`` WHERE ``Action``='$action'"
+    if ($action -ne "DownloadOpenDrSaiRuntime" -and $command -notmatch '(?i)^powershell\.exe ') {
+        throw "$action must invoke PowerShell directly without a WScript/VBS wrapper: $command"
     }
 }
 
@@ -72,16 +74,23 @@ foreach ($setter in @(
     "SetCompleteOpenDrSaiInstall"
 )) {
     $target = Read-SingleValue $database "SELECT ``Target`` FROM ``CustomAction`` WHERE ``Action``='$setter'"
-    if ($target -match '(?i)-MachineInstall') {
-        throw "$setter must not force machine installation: $target"
+    if ($target -notmatch '(?i)-MachineInstall') {
+        throw "$setter must force machine installation: $target"
+    }
+    if ($target -match '(?i)-InstallRoot\s+"\[INSTALLFOLDER\]"') {
+        throw "$setter must not quote INSTALLFOLDER as a command argument because MSI directory values end with a backslash: $target"
     }
 }
 
 $downloadSource = Read-SingleValue $database "SELECT ``Source`` FROM ``CustomAction`` WHERE ``Action``='DownloadOpenDrSaiRuntime'"
 $downloadTarget = Read-SingleValue $database "SELECT ``Target`` FROM ``CustomAction`` WHERE ``Action``='DownloadOpenDrSaiRuntime'"
 $downloadType = [int](Read-SingleValue $database "SELECT ``Type`` FROM ``CustomAction`` WHERE ``Action``='DownloadOpenDrSaiRuntime'")
+$downloadData = Read-SingleValue $database "SELECT ``Target`` FROM ``CustomAction`` WHERE ``Action``='SetDownloadOpenDrSaiRuntime'"
 Assert-Equal $downloadSource "OpenDrSaiInstallerActions" "Download custom action binary"
 Assert-Equal $downloadTarget "DownloadRuntime" "Download custom action entry point"
+if ($downloadData -notmatch [regex]::Escape("SourcePath=[OriginalDatabase]")) {
+    throw "Download custom action must prefer OpenDrSaiRuntime-win-x64.zip beside Setup: $downloadData"
+}
 if (($downloadType -band 63) -ne 1) {
     throw "DownloadOpenDrSaiRuntime must be a DLL custom action; type=$downloadType."
 }
@@ -97,4 +106,4 @@ $desktopTarget = Read-SingleValue $database "SELECT ``Target`` FROM ``Shortcut``
 Assert-Equal $startMenuTarget "[INSTALLFOLDER]app\OpenDrSai.exe" "Start menu shortcut target"
 Assert-Equal $desktopTarget "[INSTALLFOLDER]app\OpenDrSai.exe" "Desktop shortcut target"
 
-Write-Host "Windows MSI contract verified for non-elevated per-user LocalAppData installation and ARP uninstall." -ForegroundColor Green
+Write-Host "Windows MSI contract verified for elevated per-machine Program Files installation and ARP uninstall." -ForegroundColor Green
