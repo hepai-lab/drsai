@@ -65,14 +65,18 @@ function Build-AppExe([string]$Path, [string]$Label, [bool]$Healthy, [string]$Cl
     File.WriteAllText(Path.Combine(installRoot, "launched-$Label.txt"), "$Label");
     bool healthy = $healthyLiteral;
     if (!healthy) return 23;
+    string token = null;
+    string statePath = null;
     foreach (var arg in args) {
-      const string prefix = "--opendrsai-update-token=";
-      if (arg.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) {
-        var token = arg.Substring(prefix.Length);
-        var updater = Path.Combine(installRoot, "updater");
-        Directory.CreateDirectory(updater);
-        File.WriteAllText(Path.Combine(updater, "health-" + token + ".ok"), "$HealthVersion");
-      }
+      const string tokenPrefix = "--opendrsai-update-token=";
+      const string statePrefix = "--opendrsai-update-state=";
+      if (arg.StartsWith(tokenPrefix, StringComparison.OrdinalIgnoreCase)) token = arg.Substring(tokenPrefix.Length);
+      if (arg.StartsWith(statePrefix, StringComparison.OrdinalIgnoreCase)) statePath = arg.Substring(statePrefix.Length);
+    }
+    if (!String.IsNullOrEmpty(token) && !String.IsNullOrEmpty(statePath)) {
+      var updateRoot = Path.GetDirectoryName(statePath);
+      Directory.CreateDirectory(updateRoot);
+      File.WriteAllText(Path.Combine(updateRoot, "health-" + token + ".ok"), "$HealthVersion");
     }
     return 0;
 "@

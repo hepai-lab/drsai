@@ -259,7 +259,7 @@ function Invoke-Apply {
     $agentPrevious = "$AgentDir.previous"
     $newApp = Join-Path $runtimeRoot "app"
     $newAgent = Join-Path $runtimeRoot "drsai-agent"
-    $marker = Join-Path (Join-Path $InstallRoot "updater") "health-$HealthToken.ok"
+    $marker = Join-Path (Split-Path -Parent $StatePath) "health-$HealthToken.ok"
     $installState = Join-Path $InstallRoot "install-state.json"
     $installStatePrevious = Join-Path $InstallRoot "install-state.json.previous"
     $hadInstallState = Test-Path -LiteralPath $installState -PathType Leaf
@@ -276,7 +276,8 @@ function Invoke-Apply {
         $desktopExe = Join-Path $appDir "OpenDrSai.exe"
         Write-InstallState $manifest $desktopExe
         Write-UpdateState "awaiting-health" "Waiting for the updated app to confirm startup."
-        $process = Start-Process -FilePath $desktopExe -WorkingDirectory $appDir -ArgumentList "--opendrsai-update-token=$HealthToken" -PassThru
+        $launchArguments = "--opendrsai-update-token=$HealthToken --opendrsai-update-state=`"$StatePath`""
+        $process = Start-Process -FilePath $desktopExe -WorkingDirectory $appDir -ArgumentList $launchArguments -PassThru
         $deadline = (Get-Date).AddSeconds($HealthTimeoutSeconds)
         do {
             if (Test-Path -LiteralPath $marker) {

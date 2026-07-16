@@ -9,6 +9,11 @@ import { fileURLToPath } from "node:url";
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const executable = join(root, "release", "win-unpacked", "OpenDrSai.exe");
 if (!existsSync(executable)) throw new Error("Build release/win-unpacked before running the runtime update E2E test.");
+const updateMainSource = readFileSync(join(root, "src", "main", "updates.ts"), "utf8");
+const updaterSource = readFileSync(join(root, "resources", "update", "update-opendrsai.ps1"), "utf8");
+assert(updateMainSource.includes("OPENDRSAI_UPDATE_DATA_ROOT") && updateMainSource.includes('join(localAppData, "OpenDrSai", "updates")'), "Update cache is not rooted in writable LocalAppData.");
+assert(updateMainSource.includes("-Verb RunAs") && updateMainSource.includes("launchElevatedUpdater"), "Program Files update apply does not request administrator approval.");
+assert(updaterSource.includes('Join-Path (Split-Path -Parent $StatePath) "health-$HealthToken.ok"'), "Update health marker still depends on the protected install root.");
 const currentVersion = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
 const targetVersion = nextTestVersion(currentVersion);
 
@@ -81,7 +86,7 @@ const server = createServer((request, response) => {
 await new Promise((resolvePromise) => server.listen(0, "127.0.0.1", resolvePromise));
 try {
   const installRoot = join(testRoot, "install");
-  const partial = join(installRoot, "update-cache", targetVersion, "OpenDrSaiRuntime-win-x64.zip.partial");
+  const partial = join(updateDataRootFor("success"), "cache", targetVersion, "OpenDrSaiRuntime-win-x64.zip.partial");
   mkdirSync(resolve(partial, ".."), { recursive: true });
   writeFileSync(partial, runtime.subarray(0, 127));
   const success = await runApp("success", installRoot);
@@ -89,8 +94,9 @@ try {
   assert(success.result?.ok === true, `Successful update protocol smoke failed: ${JSON.stringify(success.result)}`);
   assert(rangeRequests > 0, "Runtime download did not resume from the partial file with a Range request.");
   assert(success.result.checks.updateAvailable && success.result.checks.updateReady && success.result.checks.downloadComplete, "Update protocol did not reach ready state.");
+  assert(!existsSync(join(installRoot, "update-cache")) && !existsSync(join(installRoot, "update-staging")) && !existsSync(join(installRoot, "updater")) && !existsSync(join(installRoot, "update-state.json")), "Update preparation wrote mutable state inside the protected install root.");
   const requestsBeforeRestore = manifestRequests;
-  const restored = await runApp("restored", installRoot);
+  const restored = await runApp("restored", installRoot, { updateDataRoot: updateDataRootFor("success") });
   assert(restored.exitCode === 0 && restored.result?.ok === true, `Prepared update was not restored after restart: ${JSON.stringify(restored.result)}`);
   assert(manifestRequests === requestsBeforeRestore, "Restoring a prepared update unnecessarily contacted the manifest server.");
 
@@ -99,7 +105,7 @@ try {
   const badHash = await runApp("bad-hash", badHashRoot);
   assert(badHash.exitCode !== 0, "Hash mismatch scenario unexpectedly succeeded.");
   assert(badHash.result?.details?.downloaded?.errorCode === "hash-mismatch", `Hash mismatch error was not preserved: ${JSON.stringify(badHash.result)}`);
-  assert(!existsSync(join(badHashRoot, "update-cache", targetVersion, "OpenDrSaiRuntime-win-x64.zip")), "Hash mismatch left a trusted runtime archive behind.");
+  assert(!existsSync(join(updateDataRootFor("bad-hash"), "cache", targetVersion, "OpenDrSaiRuntime-win-x64.zip")), "Hash mismatch left a trusted runtime archive behind.");
 
   manifestHash = runtimeHash;
   runtimeRoute = "/redirect-runtime";
@@ -115,7 +121,9 @@ try {
 
   const rollbackRoot = join(testRoot, "rolled-back-install");
   mkdirSync(rollbackRoot, { recursive: true });
-  writeFileSync(join(rollbackRoot, "update-state.json"), `${JSON.stringify({
+  const rollbackUpdateRoot = updateDataRootFor("rolled-back");
+  mkdirSync(rollbackUpdateRoot, { recursive: true });
+  writeFileSync(join(rollbackUpdateRoot, "update-state.json"), `${JSON.stringify({
     schemaVersion: 1,
     phase: "rolled-back",
     version: targetVersion,
@@ -178,6 +186,7 @@ function runApp(name, installRoot, options = {}) {
         OPENDRSAI_ALLOW_INSECURE_UPDATE_URLS: "1",
         OPENDRSAI_ALLOW_UNSIGNED_UPDATES: "1",
         OPENDRSAI_UPDATE_INSTALL_ROOT: installRoot,
+        OPENDRSAI_UPDATE_DATA_ROOT: options.updateDataRoot || updateDataRootFor(name),
         OPENDRSAI_UPDATE_AGENT_DIR: join(testRoot, `${name}-agent`),
         OPENDRSAI_UPDATE_HELPER_PATH: join(root, "resources", "update", "update-opendrsai.ps1"),
       },
@@ -206,4 +215,8 @@ function nextTestVersion(version) {
   const stable = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
   if (!stable) throw new Error(`Update E2E requires a semantic version, got ${version}.`);
   return `${stable[1]}.${stable[2]}.${Number(stable[3]) + 1}`;
+}
+
+function updateDataRootFor(name) {
+  return join(testRoot, `${name}-update-data`);
 }

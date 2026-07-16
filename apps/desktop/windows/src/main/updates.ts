@@ -1,4 +1,4 @@
-import { spawn, execFile } from "child_process";
+import { execFile } from "child_process";
 import { createHash, randomUUID } from "crypto";
 import {
   createReadStream,
@@ -204,7 +204,7 @@ export async function installUpdate(): Promise<UpdateStatus> {
     downloaded: true,
     progress: 100,
   }));
-  const child = spawn("powershell.exe", [
+  const updaterArgs = [
     "-NoProfile",
     "-ExecutionPolicy", "Bypass",
     "-File", prepared.updaterPath,
@@ -220,12 +220,12 @@ export async function installUpdate(): Promise<UpdateStatus> {
     "-CurrentExecutable", app.getPath("exe"),
     "-RequireSignature", prepared.manifest.requireSignature ? "1" : "0",
     "-AllowUnsigned", allowUnsignedUpdates() ? "1" : "0",
-  ], {
-    detached: true,
-    stdio: "ignore",
-    windowsHide: true,
-  });
-  child.unref();
+  ];
+  try {
+    await launchElevatedUpdater(updaterArgs);
+  } catch (error) {
+    return fail("elevation-failed", errorMessage(error), prepared.manifest);
+  }
   setTimeout(() => app.quit(), 500).unref();
   return updateStatus;
 }
@@ -235,8 +235,10 @@ export function confirmPendingUpdateLaunch(): void {
   if (!tokenArg) return;
   const token = tokenArg.slice("--opendrsai-update-token=".length).trim();
   if (!/^[a-f0-9-]{20,80}$/i.test(token)) return;
-  const installRoot = getInstallRoot();
-  const marker = join(installRoot, "updater", `health-${token}.ok`);
+  const stateArg = process.argv.find((arg) => arg.startsWith("--opendrsai-update-state="));
+  const statePath = stateArg?.slice("--opendrsai-update-state=".length).trim();
+  const markerRoot = statePath ? dirname(resolve(statePath)) : getUpdateRoot();
+  const marker = join(markerRoot, `health-${token}.ok`);
   mkdirSync(dirname(marker), { recursive: true });
   writeFileSync(marker, `${app.getVersion()}\n`, "utf8");
 }
@@ -244,8 +246,7 @@ export function confirmPendingUpdateLaunch(): void {
 export function restorePreparedUpdate(): void {
   if (!app.isPackaged && process.env.OPENDRSAI_ENABLE_DEV_UPDATES !== "1") return;
   try {
-    const installRoot = getInstallRoot();
-    const statePath = join(installRoot, "update-state.json");
+    const statePath = join(getUpdateRoot(), "update-state.json");
     if (!existsSync(statePath)) return;
     const state = JSON.parse(readFileSync(statePath, "utf8")) as {
       phase?: unknown;
@@ -500,15 +501,25 @@ async function verifyFile(path: string, expectedSize: number, expectedHash: stri
 
 function resolveUpdatePaths(version: string): Omit<PreparedUpdate, "manifest"> {
   const installRoot = getInstallRoot();
-  const updaterDir = join(installRoot, "updater");
+  const updateRoot = getUpdateRoot();
+  const updaterDir = join(updateRoot, "updater");
   return {
-    archivePath: join(installRoot, "update-cache", version, "OpenDrSaiRuntime-win-x64.zip"),
-    stagingRoot: join(installRoot, "update-staging", version),
+    archivePath: join(updateRoot, "cache", version, "OpenDrSaiRuntime-win-x64.zip"),
+    stagingRoot: join(updateRoot, "staging", version),
     updaterPath: join(updaterDir, "update-opendrsai.ps1"),
     installRoot,
     agentDir: process.env.OPENDRSAI_UPDATE_AGENT_DIR?.trim() || DRSAI_REPO,
-    statePath: join(installRoot, "update-state.json"),
+    statePath: join(updateRoot, "update-state.json"),
   };
+}
+
+function getUpdateRoot(): string {
+  const override = process.env.OPENDRSAI_UPDATE_DATA_ROOT?.trim();
+  if (override) return resolve(override);
+  const localAppData = process.env.LOCALAPPDATA?.trim();
+  return localAppData
+    ? join(localAppData, "OpenDrSai", "updates")
+    : join(app.getPath("userData"), "updates");
 }
 
 function getInstallRoot(): string {
@@ -536,6 +547,37 @@ async function runUpdater(path: string, args: string[]): Promise<void> {
     const stderr = typeof error === "object" && error && "stderr" in error ? String(error.stderr).trim() : "";
     throw updateError("staging-failed", stderr || errorMessage(error));
   }
+}
+
+async function launchElevatedUpdater(args: string[]): Promise<void> {
+  if (process.platform !== "win32") {
+    throw updateError("elevation-unsupported", "Elevated runtime installation is only supported on Windows.");
+  }
+  const commandLine = args.map(quoteWindowsCommandLineArgument).join(" ");
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    `Start-Process -FilePath 'powershell.exe' -ArgumentList ${quotePowerShellLiteral(commandLine)} -Verb RunAs -WindowStyle Hidden | Out-Null`,
+  ].join("; ");
+  const encoded = Buffer.from(script, "utf16le").toString("base64");
+  try {
+    await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], {
+      windowsHide: true,
+      timeout: 60_000,
+      maxBuffer: 1024 * 1024,
+    });
+  } catch (error) {
+    const stderr = typeof error === "object" && error && "stderr" in error ? String(error.stderr).trim() : "";
+    throw updateError("elevation-failed", stderr || "Administrator approval is required to update OpenDrSai in Program Files.");
+  }
+}
+
+function quoteWindowsCommandLineArgument(value: string): string {
+  if (value.includes('"')) throw updateError("unsafe-update-argument", "The update path contains an unsupported quote character.");
+  return `"${value.replace(/(\\+)$/g, "$1$1")}"`;
+}
+
+function quotePowerShellLiteral(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
 }
 
 function requireString(value: unknown, field: string): string {
