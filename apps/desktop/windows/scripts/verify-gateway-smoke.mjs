@@ -64,7 +64,7 @@ try {
   assert(chat.text.includes("fake-agent: hello gateway smoke"), "chat SSE did not include fake agent content chunk");
   assert(chat.text.includes("data: [DONE]"), "chat SSE did not include data: [DONE]");
 
-  const oidcUser = "gateway-smoke-oidc";
+  const oidcUser = "d30fc87e-f83d-4f3c-a145-bd1b77b7fde3";
   const oidcChat = await requestText("/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -87,7 +87,7 @@ try {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${fakeOidcToken("another-user")}`,
+      Authorization: `Bearer ${fakeOidcToken("d0b66156-3680-4405-8c87-01b186b92a8c")}`,
       "X-OpenDrSai-Auth-Mode": "oidc",
     },
     body: JSON.stringify({
@@ -214,6 +214,10 @@ function fakeOidcToken(subject) {
     sub: subject,
     aud: "hai-api",
     exp: Math.floor(Date.now() / 1000) + 600,
+    typ: "access_token",
+    scope: "openid hai_api",
+    org_id: "gateway-smoke-org",
+    sid: "gateway-smoke-session",
   });
   const signature = createHmac("sha256", temporaryOidcSecret).update(`${header}.${payload}`).digest("base64url");
   return `${header}.${payload}.${signature}`;
