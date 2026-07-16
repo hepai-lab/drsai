@@ -8,7 +8,7 @@ import type {
   MyDrSaiModelConfig,
   UpdateMyDrSaiConfigRequest,
 } from "../shared/desktopApi";
-import { getGatewayStatus } from "./gateway";
+import { getGatewayRequestHeaders, getGatewayStatus } from "./gateway";
 
 const TOKENIZER_CALIBRATION_FILE = ".drsai/tokenizer-calibration.json";
 const WRITABLE_CLI_KEYS: Array<keyof UpdateMyDrSaiConfigRequest> = [
@@ -225,12 +225,15 @@ function gatewayRequest<T>(
       {
         method,
         timeout: 5000,
-        headers: bodyString
-          ? {
-              "Content-Type": "application/json",
-              "Content-Length": String(Buffer.byteLength(bodyString)),
-            }
-          : {},
+        headers: {
+          ...getGatewayRequestHeaders(),
+          ...(bodyString
+            ? {
+                "Content-Type": "application/json",
+                "Content-Length": String(Buffer.byteLength(bodyString)),
+              }
+            : {}),
+        },
       },
       (response) => {
         let data = "";
