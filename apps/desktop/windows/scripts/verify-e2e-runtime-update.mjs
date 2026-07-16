@@ -28,9 +28,11 @@ execFileSync("powershell.exe", [
 const runtime = readFileSync(runtimePath);
 const runtimeHash = createHash("sha256").update(runtime).digest("hex");
 let rangeRequests = 0;
+let runtimeRequests = 0;
 let manifestRequests = 0;
 let manifestHash = runtimeHash;
 let manifestVersion = targetVersion;
+let minimumUpdaterVersion = "1.4.2";
 let runtimeRoute = "/OpenDrSaiRuntime-win-x64.zip";
 
 const server = createServer((request, response) => {
@@ -42,7 +44,7 @@ const server = createServer((request, response) => {
       version: manifestVersion,
       channel: "dev",
       publishedAt: new Date().toISOString(),
-      minimumUpdaterVersion: "1.4.2",
+      minimumUpdaterVersion,
       mandatory: false,
       requireSignature: false,
       runtime: { url: `${baseUrl}${runtimeRoute}`, sizeBytes: runtime.length, sha256: manifestHash },
@@ -54,6 +56,7 @@ const server = createServer((request, response) => {
     return;
   }
   if (request.url === "/OpenDrSaiRuntime-win-x64.zip") {
+    runtimeRequests += 1;
     const range = request.headers.range;
     if (range) {
       const match = /^bytes=(\d+)-$/.exec(range);
@@ -114,6 +117,14 @@ try {
   assert(redirect.result?.details?.downloaded?.errorCode === "untrusted-host", `Untrusted redirect was not rejected before download: ${JSON.stringify(redirect.result)}`);
 
   runtimeRoute = "/OpenDrSaiRuntime-win-x64.zip";
+  minimumUpdaterVersion = targetVersion;
+  const runtimeRequestsBeforeOldUpdater = runtimeRequests;
+  const oldUpdater = await runApp("old-updater", join(testRoot, "old-updater-install"));
+  assert(oldUpdater.exitCode !== 0, "Unsafe updater unexpectedly attempted the runtime update.");
+  assert(oldUpdater.result?.details?.checked?.errorCode === "updater-too-old", `Unsafe updater did not receive the compatibility error: ${JSON.stringify(oldUpdater.result)}`);
+  assert(runtimeRequests === runtimeRequestsBeforeOldUpdater, "Unsafe updater contacted the runtime download endpoint.");
+
+  minimumUpdaterVersion = "1.4.2";
   manifestVersion = "1.4.1";
   const downgrade = await runApp("downgrade", join(testRoot, "downgrade-install"));
   assert(downgrade.exitCode !== 0, "Downgrade manifest unexpectedly produced an update.");
@@ -151,6 +162,7 @@ try {
       preparedUpdateRestoredAfterRestart: true,
       corruptedDownloadRejected: true,
       untrustedRedirectRejected: true,
+      unsafeUpdaterRejectedBeforeDownload: true,
       downgradeIgnored: true,
       rollbackDetectedAfterPackagedRestart: rolledBack.result.checks.rollbackDetected,
       previousRuntimeActive: rolledBack.result.checks.previousRuntimeActive,
@@ -162,7 +174,7 @@ try {
     rollbackStatus: rolledBack.result.details.restored,
   }, null, 2)}\n`);
 
-  console.log("Packaged runtime update protocol E2E passed (resume, verify, stage, restart restore, hash rejection, redirect trust, downgrade guard, visible automatic rollback)." );
+  console.log("Packaged runtime update protocol E2E passed (resume, verify, stage, restart restore, hash rejection, redirect trust, updater compatibility floor, downgrade guard, visible automatic rollback)." );
 } finally {
   await new Promise((resolvePromise) => server.close(resolvePromise));
   rmSync(testRoot, { recursive: true, force: true });

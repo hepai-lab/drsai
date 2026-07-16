@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveMinimumUpdaterVersion, updaterPolicy } from "./runtime-update-policy.mjs";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const manifestPath = resolve(process.env.OPENDRSAI_UPDATE_MANIFEST_PATH || join(root, "release", "latest-windows.json"));
@@ -22,6 +23,10 @@ assert(runtimeManifest.platform === "windows-x64" && runtimeManifest.layoutVersi
 assert(["stable", "beta", "dev"].includes(manifest.channel), "Update manifest channel is invalid.");
 assert(Number.isFinite(Date.parse(manifest.publishedAt)), "Update manifest publishedAt is invalid.");
 assert(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(manifest.minimumUpdaterVersion), "minimumUpdaterVersion is invalid.");
+assert(
+  resolveMinimumUpdaterVersion(manifest.minimumUpdaterVersion) === manifest.minimumUpdaterVersion,
+  `minimumUpdaterVersion must not be below ${updaterPolicy.minimumSafeUpdaterVersion}.`,
+);
 assert(typeof manifest.mandatory === "boolean", "mandatory must be boolean.");
 assert(typeof manifest.requireSignature === "boolean", "requireSignature must be boolean.");
 const isPrereleaseVersion = packageJson.version.includes("-");

@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveMinimumUpdaterVersion } from "./runtime-update-policy.mjs";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
@@ -10,6 +11,7 @@ const runtimePath = resolve(process.env.OPENDRSAI_RUNTIME_PATH || join(root, "re
 const outputPath = resolve(process.env.OPENDRSAI_UPDATE_MANIFEST_PATH || join(root, "release", "latest-windows.json"));
 const version = String(packageJson.version);
 const channel = String(process.env.OPENDRSAI_UPDATE_CHANNEL || "stable").toLowerCase();
+const minimumUpdaterVersion = resolveMinimumUpdaterVersion(process.env.OPENDRSAI_MINIMUM_UPDATER_VERSION);
 const isPrereleaseVersion = version.includes("-");
 const baseUrl = String(
   process.env.OPENDRSAI_RELEASE_BASE_URL ||
@@ -37,7 +39,7 @@ const manifest = {
   version,
   channel,
   publishedAt: process.env.OPENDRSAI_RELEASE_PUBLISHED_AT || new Date().toISOString(),
-  minimumUpdaterVersion: process.env.OPENDRSAI_MINIMUM_UPDATER_VERSION || "1.4.2",
+  minimumUpdaterVersion,
   mandatory: process.env.OPENDRSAI_MANDATORY_UPDATE === "1",
   // Legacy beta builds request the stable channel from releases/latest. Keep
   // prerelease compatibility manifests unsigned until a Windows certificate is

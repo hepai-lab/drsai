@@ -16,6 +16,12 @@ Do not publish the retired NSIS setup, blockmap or `latest.yml`. Runtime URLs in
 `latest-windows.json` must point to the immutable versioned Release, never to a
 moving `latest/download` URL.
 
+The updater compatibility floor is owned by
+`resources/update/updater-policy.json`. Manifest generation and verification
+must reject any `minimumUpdaterVersion` below `minimumSafeUpdaterVersion`.
+Raise this floor whenever an updater defect requires a one-time MSI recovery;
+do not lower it to make an older, unsafe updater attempt a runtime update.
+
 ## Build and local gates
 
 ```powershell
