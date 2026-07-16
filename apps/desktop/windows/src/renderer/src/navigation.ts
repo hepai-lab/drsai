@@ -29,7 +29,7 @@ export type AppLanguage = "en" | "zh";
 export const MENU_LABELS: Record<AppLanguage, Record<NavId, string>> = {
   zh: {
     [MENU_IDS.results]: "成果",
-    [MENU_IDS.approvalCenter]: "Approval Center",
+    [MENU_IDS.approvalCenter]: "审批中心",
     [MENU_IDS.currentSession]: "当前会话",
     [MENU_IDS.myAgents]: "我的智能体",
     [MENU_IDS.agentSquare]: "智能体",

@@ -1,5 +1,5 @@
 export type DebugLogLevel = "log" | "info" | "warn" | "error";
-export interface DebugLogEntry { id:number; level:DebugLogLevel; message:string; timestamp:number; source:"console"|"window"|"promise"; }
+export interface DebugLogEntry { id:number; level:DebugLogLevel; message:string; timestamp:number; source:"console"|"window"|"promise"|"chat"; }
 const listeners = new Set<() => void>();
 let entries: DebugLogEntry[] = [];
 let nextId = 1;
@@ -7,6 +7,7 @@ let installed = false;
 export const getDebugLogs = (): DebugLogEntry[] => entries;
 export function subscribeDebugLogs(listener:()=>void):()=>void { listeners.add(listener); return () => { listeners.delete(listener); }; }
 export function clearDebugLogs():void { entries=[]; listeners.forEach((listener)=>listener()); }
+export function appendDebugLog(level:DebugLogLevel,message:string,source:DebugLogEntry["source"]="console"):void { append(level,message,source); }
 export function installDebugLogCapture():void {
   if(installed) return; installed=true;
   (["log","info","warn","error"] as const).forEach((level)=>{ const original=console[level].bind(console); console[level]=(...args:unknown[])=>{ original(...args); append(level,args.map(format).join(" "),"console"); }; });

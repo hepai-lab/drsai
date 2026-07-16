@@ -653,13 +653,14 @@ function assertD2EditPlanDiagnostics(result) {
   const reportText = readFileSync(join(appHome, "edited-plan-report.md"), "utf8");
   if (!reportText.includes("## 引用") || !reportText.includes("[1]")) throw new Error("D2 result did not honor the citation requirement.");
 }
-process.exit(process.exitCode ?? 0);
-
 function cleanupTempDir(path) {
   try {
     rmSync(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
   } catch (error) {
-    console.warn(`Could not remove temporary directory ${path}: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(
+      `Could not remove temporary directory ${path}: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
   }
 }
 
@@ -683,6 +684,20 @@ function startGateway(workspacePath) {
     if (req.url === "/v1/models") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ object: "list", data: [{ id: "drsai", object: "model" }] }));
+      return;
+    }
+    if (req.url === "/v1/workspaces" && req.method === "POST") {
+      const body = await readJsonBody(req);
+      const now = new Date().toISOString();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        workspace_id: "e2e-agent-run-workspace",
+        path: body?.path || workspacePath,
+        created_at: now,
+        last_opened_at: now,
+        closed_at: null,
+        open: true,
+      }));
       return;
     }
     if (req.url === "/v1/chat/completions" && req.method === "POST") {

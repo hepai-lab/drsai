@@ -748,7 +748,7 @@ if ($LASTEXITCODE -ne 0) {
 
 }
 
-Write-Host "  drsai version: $versionResult" -ForegroundColor Green
+Write-Host "  $versionResult" -ForegroundColor Green
 
 if ($ExpectedVersion) {
 

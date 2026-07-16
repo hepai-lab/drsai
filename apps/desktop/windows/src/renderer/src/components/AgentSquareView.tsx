@@ -927,7 +927,7 @@ async function loadAgents(refresh = false): Promise<DesktopAgent[]> {
       url: gateway.baseUrl,
       error: gateway.ready
         ? undefined
-        : "当前桌面桥尚未提供 listAgents，已降级检查本机 gateway。",
+        : "当前桌面桥尚未提供 listAgents，已降级检查本机运行时服务。",
     },
   ];
 }

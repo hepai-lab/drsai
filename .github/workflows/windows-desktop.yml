@@ -67,6 +67,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Verify Windows signing contract
+        run: npm run verify:signing-contract
+
       - name: Prepare Python agent
         shell: pwsh
         run: |
@@ -193,6 +196,15 @@ jobs:
           REQUIRE_SIGNED_WINDOWS_ARTIFACTS: ${{ env.OPENDRSAI_REQUIRE_SIGNED_RELEASE }}
         run: npm run verify:signatures
 
+      - name: Generate and verify Windows signing evidence
+        if: env.OPENDRSAI_REQUIRE_SIGNED_RELEASE == '1'
+        env:
+          EXPECTED_WINDOWS_SIGNER_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
+          EXPECTED_WINDOWS_SIGNER_SUBJECT: ${{ vars.WINDOWS_CERTIFICATE_SUBJECT }}
+        run: |
+          npm run generate:signing-evidence
+          npm run verify:signing-evidence
+
       - name: Verify local release readiness
         env:
           REQUIRE_RELEASE_READY: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.publish_release) && '1' || '0' }}
@@ -209,6 +221,7 @@ jobs:
             apps/desktop/windows/release/bootstrapper/OpenDrSaiRuntime-win-x64.zip
             apps/desktop/windows/release/latest-windows.json
             apps/desktop/windows/release/release-summary.json
+            apps/desktop/windows/release/product-evidence/remote-workspace/windows-signatures.json
             apps/desktop/windows/release/visual-checks/*.png
 
       - name: Publish GitHub Release assets
@@ -224,3 +237,4 @@ jobs:
             apps/desktop/windows/release/bootstrapper/OpenDrSaiRuntime-win-x64.zip
             apps/desktop/windows/release/latest-windows.json
             apps/desktop/windows/release/release-summary.json
+            apps/desktop/windows/release/product-evidence/remote-workspace/windows-signatures.json

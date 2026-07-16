@@ -12,7 +12,7 @@ try {
     $source = @"
 using System;
 public static class FixturePython {
-  public static int Main(string[] args) { Console.WriteLine("drsai version: $Version"); return 0; }
+  public static int Main(string[] args) { Console.WriteLine("version: $Version"); return 0; }
 }
 "@
     Add-Type -TypeDefinition $source -Language CSharp -OutputAssembly (Join-Path $root "drsai-agent\venv\Scripts\python.exe") -OutputType ConsoleApplication

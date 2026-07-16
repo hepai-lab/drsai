@@ -112,6 +112,28 @@ export interface UpdateStatus {
   recovery: "automatic-rollback" | null;
 }
 
+export type CodexBackendState = "available" | "not_installed" | "version_incompatible" | "not_logged_in" | "fault";
+
+export interface CodexBackendStatus {
+  backendId: "codex";
+  state: CodexBackendState;
+  available: boolean;
+  version: string | null;
+  loggedIn: boolean;
+  authMode: string | null;
+  accountLabel: string | null;
+  reason: string | null;
+  retryable: boolean;
+  action: "none" | "install" | "upgrade" | "login" | "restart";
+}
+
+export interface CodexBackendLogin {
+  type: "chatgpt" | "chatgptDeviceCode";
+  loginId: string;
+  verificationUrl?: string;
+  userCode?: string;
+}
+
 export interface AuthUser {
   id: string;
   email: string;
@@ -319,6 +341,33 @@ export interface LogoutOptions {
   clearLocalData?: boolean;
 }
 
+export type DesktopDataCleanupScope = "sessions" | "all_local_data";
+export type DesktopDataCategory = "account" | "sessions" | "cache" | "memory" | "tasks" | "settings";
+
+export interface DesktopDataCleanupPreview {
+  scope: DesktopDataCleanupScope;
+  applicationData: Array<{ category: DesktopDataCategory; label: string; description: string }>;
+  preservedUserMaterials: Array<{ name: string; path: string; reason: string }>;
+  preservesAllWorkspaceFiles: boolean;
+  confirmationPhrase?: string;
+  requiresSignInAgain: boolean;
+}
+
+export interface DesktopDataCleanupRequest {
+  scope: DesktopDataCleanupScope;
+  confirmation: "CLEAR_SESSIONS" | "DELETE_LOCAL_DATA";
+}
+
+export interface DesktopDataCleanupResult {
+  ok: boolean;
+  scope: DesktopDataCleanupScope;
+  removedPaths: string[];
+  protectedWorkspacePaths: string[];
+  skippedTargets: string[];
+  requiresSignInAgain: boolean;
+  message: string;
+}
+
 export interface InstallProgress {
   phase: "idle" | "running" | "complete" | "error";
   message: string;
@@ -354,6 +403,7 @@ export interface ChatRequest {
   agentId?: string;
   model?: string;
   workspacePath?: string;
+  workspaceId?: string;
   threadId?: string;
   sessionId?: string;
   runId?: string;
@@ -386,7 +436,7 @@ export type ChatMessagePart =
   | { id: string; type: "patch"; path?: string; diff: string; status: ChatPartStatus }
   | { id: string; type: "approval"; requestId: string; prompt: string; status: ChatPartStatus };
 
-export type DesktopFailureKind = "network" | "file_busy" | "external_service" | "unexpected";
+export type DesktopFailureKind = "network" | "file_busy" | "external_service" | "disk_full" | "permission_denied" | "model_timeout" | "unexpected";
 
 export interface DesktopFailureRecovery {
   kind: DesktopFailureKind;
@@ -396,7 +446,9 @@ export interface DesktopFailureRecovery {
   exhausted: boolean;
   escalationLevel: "automatic" | "user_action" | "administrator";
   reason: string;
+  affectedObject: string;
   suggestedAction: string;
+  recoveryAction: "retry";
   message: string;
 }
 
@@ -471,6 +523,8 @@ export interface DesktopPendingApproval {
   actionKind: ExecutionActionKind;
   title: string;
   detail: string;
+  businessAction?: string;
+  businessObject?: string;
   target?: string;
   scope?: string;
   impact?: string;
@@ -498,6 +552,8 @@ export interface DesktopApprovalProposalRequest {
   actionKind: ExecutionActionKind;
   title: string;
   detail: string;
+  businessAction?: string;
+  businessObject?: string;
   target?: string;
   scope?: string;
   impact?: string;
@@ -1113,6 +1169,47 @@ export interface DesktopTaskArtifactLink {
   conclusionTraceabilityRate?: number;
   consistencyCheck?: DesktopConsistencyCheckResult;
   independentReviews?: DesktopIndependentReviewRecord[];
+  anomalyDecision?: DesktopAnomalyDecisionRecord;
+}
+
+export type DesktopAnomalyDecision = "keep" | "exclude" | "both";
+
+export interface DesktopAnomalyDecisionOutput {
+  role: "kept_all" | "excluded_anomalies";
+  path: string;
+  rowCount: number;
+  anomalyCount: number;
+  sha256: string;
+}
+
+export interface DesktopAnomalyDecisionRecord {
+  sourcePath: string;
+  anomalyColumn: string;
+  totalRows: number;
+  anomalyRows: number;
+  normalRows: number;
+  decision?: DesktopAnomalyDecision;
+  decidedAt?: string;
+  resultSummary?: string;
+  sourceSha256?: string;
+  receiptPath?: string;
+  outputs?: DesktopAnomalyDecisionOutput[];
+}
+
+export interface DesktopAnomalyDecisionApplyRequest {
+  workspacePath: string;
+  sourcePath: string;
+  anomalyColumn: string;
+  decision: DesktopAnomalyDecision;
+}
+
+export interface DesktopAnomalyDecisionApplyResult extends DesktopAnomalyDecisionRecord {
+  decision: DesktopAnomalyDecision;
+  decidedAt: string;
+  resultSummary: string;
+  sourceSha256: string;
+  receiptPath: string;
+  outputs: DesktopAnomalyDecisionOutput[];
 }
 
 export interface DesktopArtifactAnalysisRoute {
@@ -1725,6 +1822,7 @@ export interface CompletionNotificationTarget {
   kind: DesktopBackgroundTaskKind;
   targetId: string;
   workspacePath?: string;
+  workspaceId?: string;
   threadId?: string;
 }
 
@@ -2643,6 +2741,9 @@ export interface DesktopForkWorktreeRequest {
 }
 
 export interface DesktopForkWorktreeResult {
+  location: "local" | "remote";
+  transport?: "ssh";
+  workspaceId?: string;
   sourceWorkspacePath: string;
   repoRoot: string;
   worktreePath: string;
@@ -2669,6 +2770,9 @@ export interface WorkspaceProject {
   id: string;
   name: string;
   path: string;
+  location: "local" | "remote";
+  transport?: "ssh";
+  /** @deprecated Compatibility field for workspaces persisted before location/transport. */
   type: "local" | "remote-ssh";
   remote?: RemoteSshWorkspaceDescriptor;
   description?: string;
@@ -2741,6 +2845,7 @@ export interface WorkspaceFileNode {
 
 export interface WorkspaceFileTreeRequest {
   workspacePath: string;
+  workspaceId?: string;
   query?: string;
   maxDepth?: number;
   maxEntries?: number;
@@ -2778,6 +2883,10 @@ export interface WorkspaceFolderSummaryResult {
   fileCount: number;
   directoryCount: number;
   skippedDirectoryCount: number;
+  importedFileCount: number;
+  skippedFileCount: number;
+  failedFileCount: number;
+  unsupportedExtensions: string[];
   truncated: boolean;
   estimatedTokens: number;
   sampledFiles: WorkspaceFolderSummaryFile[];
@@ -2786,6 +2895,7 @@ export interface WorkspaceFolderSummaryResult {
 
 export interface WorkspaceFilePreviewRequest {
   workspacePath: string;
+  workspaceId?: string;
   path: string;
   maxBytes?: number;
   mode?: "auto" | "head" | "tail" | "outline";
@@ -2865,6 +2975,7 @@ export interface WorkspaceFileSaveAsResult {
 
 export interface WorkspaceFileWriteRequest {
   workspacePath: string;
+  workspaceId?: string;
   path: string;
   content: string;
   expectedHash: string;
@@ -2890,6 +3001,7 @@ export interface WorkspaceFileWriteResult {
 
 export interface WorkspaceGitDiffRequest {
   workspacePath: string;
+  workspaceId?: string;
   path?: string;
   maxChars?: number;
   staged?: boolean;
@@ -2906,6 +3018,7 @@ export interface WorkspaceGitDiffResult {
 
 export interface WorkspaceGitFileAtRefRequest {
   workspacePath: string;
+  workspaceId?: string;
   ref: string;
   path: string;
   maxBytes?: number;
@@ -2924,6 +3037,7 @@ export interface WorkspaceGitFileAtRefResult {
 
 export interface WorkspaceRevertFileRequest {
   workspacePath: string;
+  workspaceId?: string;
   path: string;
   expectedDiffHash: string;
 }
@@ -2939,6 +3053,7 @@ export interface WorkspaceRevertFileResult {
 
 export interface WorkspaceStageFileRequest {
   workspacePath: string;
+  workspaceId?: string;
   path: string;
   expectedDiffHash: string;
 }
@@ -2954,6 +3069,7 @@ export interface WorkspaceStageFileResult {
 
 export interface WorkspaceHunkActionRequest {
   workspacePath: string;
+  workspaceId?: string;
   path: string;
   expectedDiffHash: string;
   patch: string;
@@ -3019,7 +3135,24 @@ export interface RemoteSshHost {
   hostname: string;
   user?: string;
   port: number;
+  identityFiles: string[];
   proxyJump?: string;
+}
+
+export interface RemoteSshConnectivityResult {
+  hostAlias: string;
+  state: "reachable" | "authentication_failed" | "host_key_failed" | "timeout" | "dns_failed" | "unreachable" | "failed";
+  elapsedMs: number;
+  message?: string;
+  remediation?: string;
+}
+
+export interface RemoteSshHostKey {
+  hostAlias: string;
+  hostname: string;
+  port: number;
+  algorithm: string;
+  fingerprint: string;
 }
 
 export type RemoteWorkspaceConnectionState =
@@ -3033,12 +3166,15 @@ export interface RemoteSshWorkspaceDescriptor {
   hostAlias: string;
   canonicalPath: string;
   workspaceId: string;
+  runtimeId?: string;
+  instanceId?: string;
   connectionState: RemoteWorkspaceConnectionState;
   localPort?: number;
   gatewayVersion?: string;
   protocolVersion?: number;
   capabilities?: Record<string, number>;
   error?: string;
+  failureKind?: "ssh" | "runtime";
   mode?: string;
 }
 
@@ -3269,12 +3405,17 @@ export interface RemoteWorkspaceStatus extends RemoteSshWorkspaceDescriptor {
 
 export interface RemoteSshDiagnosticReport {
   generatedAt: string;
-  hosts: Array<{ hostAlias: string; state: RemoteWorkspaceConnectionState; workspaceCount: number; gatewayVersion?: string; protocolVersion?: number; reconnectAttempts: number; reconnectCount: number; ageMs: number; lastConnectedAt?: string; error?: string; events: Array<{ at: string; phase: string; elapsedMs?: number; message?: string }> }>;
+  hosts: Array<{ hostAlias: string; state: RemoteWorkspaceConnectionState; failureKind?: "ssh" | "runtime"; workspaceCount: number; gatewayVersion?: string; protocolVersion?: number; reconnectAttempts: number; reconnectCount: number; ageMs: number; lastConnectedAt?: string; error?: string; events: Array<{ at: string; phase: string; elapsedMs?: number; message?: string }> }>;
 }
 
 export interface RemoteGatewayPreflight {
   hostAlias: string;
+  operatingSystem: string;
+  architecture: string;
   pythonVersion: string;
+  compatible: boolean;
+  issues: string[];
+  installationHint?: string;
   gatewayInstalled: boolean;
   gatewayVersion?: string;
   currentRelease?: string;
@@ -3287,6 +3428,8 @@ export interface RemoteGatewayInstallRequest {
   version?: string;
   artifactPath?: string;
   artifactSha256?: string;
+  artifactPublisher?: string;
+  artifactSignature?: string;
 }
 
 export interface RemoteGatewayInstallResult extends RemoteGatewayPreflight {
@@ -3315,6 +3458,7 @@ export interface RemoteHepaiWorker {
 
 export interface WorkspaceCheckpointCreateRequest {
   workspacePath: string;
+  workspaceId?: string;
   label?: string;
   maxFiles?: number;
   maxBytesPerFile?: number;
@@ -3332,6 +3476,7 @@ export interface WorkspaceCheckpointCreateRequest {
 
 export interface WorkspaceCheckpointRestoreRequest {
   workspacePath: string;
+  workspaceId?: string;
   checkpointId: string;
   operationId?: string;
   includePaths?: string[];
@@ -3339,11 +3484,13 @@ export interface WorkspaceCheckpointRestoreRequest {
 
 export interface WorkspaceCheckpointAcceptRequest {
   workspacePath: string;
+  workspaceId?: string;
   checkpointId: string;
 }
 
 export interface WorkspaceCheckpointPreviewRequest {
   workspacePath: string;
+  workspaceId?: string;
   checkpointId: string;
   maxFiles?: number;
   maxCharsPerFile?: number;
@@ -3477,6 +3624,119 @@ export interface SaveApiKeyResult {
 export interface PickDialogResult {
   canceled: boolean;
   paths: string[];
+  files?: PickedFileDescriptor[];
+}
+
+export type PickedFileCategory =
+  | "pdf"
+  | "word"
+  | "spreadsheet"
+  | "table"
+  | "image"
+  | "presentation"
+  | "text"
+  | "other";
+
+export interface PickedFileDescriptor {
+  path: string;
+  name: string;
+  extension: string;
+  category: PickedFileCategory;
+  sizeBytes?: number;
+  status: "ready" | "unsupported" | "unreadable";
+  message?: string;
+  diagnosticCode?: "large_file" | "corrupt_file" | "password_protected" | "unsupported_format" | "inspection_timeout" | "unreadable";
+  processingMode?: "full" | "bounded" | "blocked";
+  recoveryAction?: string;
+  sensitiveDataDetected?: boolean;
+  sensitiveKinds?: Array<"api_key" | "bearer_token" | "email" | "phone" | "user_secret">;
+  sensitiveValueCount?: number;
+  privacyNotice?: string;
+}
+
+export type MaterialRole =
+  | "previous_report"
+  | "latest_data"
+  | "result_image"
+  | "reference_material";
+
+export interface MaterialRoleAnalysisRequest {
+  paths: string[];
+}
+
+export interface MaterialRoleItem {
+  path: string;
+  name: string;
+  role: MaterialRole;
+  confidence: number;
+  reason: string;
+  suggestedUse: string;
+}
+
+export interface MaterialRoleAnalysisResult {
+  items: MaterialRoleItem[];
+  roleCounts: Record<MaterialRole, number>;
+  summary: string;
+}
+
+export type MaterialConsistencyFindingKind =
+  | "consensus"
+  | "source_conflict"
+  | "outdated_number"
+  | "chart_mismatch"
+  | "evidence_gap";
+
+export interface MaterialConsistencySource {
+  path: string;
+  name: string;
+  role: MaterialRole;
+  locator: string;
+  value: string;
+  excerpt: string;
+}
+
+export interface MaterialConsistencyFinding {
+  id: string;
+  kind: MaterialConsistencyFindingKind;
+  severity: "high" | "medium" | "info";
+  title: string;
+  explanation: string;
+  recommendation: string;
+  sources: MaterialConsistencySource[];
+}
+
+export interface MaterialConsistencyAnalysisRequest {
+  paths: string[];
+}
+
+export interface MaterialConsistencyAnalysisResult {
+  findings: MaterialConsistencyFinding[];
+  counts: Record<MaterialConsistencyFindingKind, number>;
+  filesAnalyzed: number;
+  summary: string;
+}
+
+export type MaterialQueryKind = "title" | "numeric" | "method" | "comparison" | "general";
+
+export interface MaterialQueryRequest {
+  paths: string[];
+  question: string;
+}
+
+export interface MaterialQueryCitation {
+  path: string;
+  name: string;
+  locator: string;
+  excerpt: string;
+}
+
+export interface MaterialQueryResult {
+  status: "answered" | "not_found";
+  queryKind: MaterialQueryKind;
+  answer: string;
+  confidence: number;
+  citations: MaterialQueryCitation[];
+  filesSearched: number;
 }
 
 export type DesktopIdeContextSource =
@@ -3529,6 +3789,7 @@ export interface TerminalCreateOptions {
   title?: string;
   shellProfile?: TerminalShellProfile;
   remoteHostAlias?: string;
+  workspaceId?: string;
 }
 
 export type TerminalShellProfile =
@@ -3547,6 +3808,7 @@ export interface TerminalSessionInfo {
   title: string;
   workspaceKey: string;
   createdAt: string;
+  workspaceId?: string;
 }
 
 export interface TerminalDataEvent {
@@ -3572,11 +3834,17 @@ export interface DesktopApi {
   pollDesktopSsoLogin(deviceCode: string): Promise<DesktopSsoPollResult>;
   cancelDesktopSsoLogin(deviceCode: string): Promise<boolean>;
   logout(options?: LogoutOptions): Promise<{ ok: boolean; message: string }>;
+  previewLocalDataCleanup(scope: DesktopDataCleanupScope): Promise<DesktopDataCleanupPreview>;
+  clearLocalData(request: DesktopDataCleanupRequest): Promise<DesktopDataCleanupResult>;
   refreshAuthSession(): Promise<AuthSession>;
   bootstrapDesktop(): Promise<DesktopBootstrapResult>;
   getHealth(): Promise<DesktopHealth>;
   getInstallStatus(): Promise<InstallStatus>;
   getGatewayStatus(): Promise<GatewayStatus>;
+  getCodexBackendStatus(refresh?: boolean): Promise<CodexBackendStatus>;
+  startCodexBackendLogin(type?: "chatgpt" | "chatgptDeviceCode"): Promise<CodexBackendLogin>;
+  cancelCodexBackendLogin(loginId: string): Promise<boolean>;
+  logoutCodexBackend(): Promise<boolean>;
   listProviderUsageAnalytics(): Promise<DesktopProviderUsageAnalyticsRecord[]>;
   listProviderErrorAnalytics(): Promise<DesktopProviderErrorAnalyticsRecord[]>;
   checkForUpdates(): Promise<UpdateStatus>;
@@ -3589,6 +3857,8 @@ export interface DesktopApi {
   startGateway(): Promise<boolean>;
   stopGateway(): Promise<boolean>;
   listSshHosts(): Promise<RemoteSshHost[]>;
+  diagnoseSshHost(hostAlias: string): Promise<RemoteSshConnectivityResult>;
+  inspectSshHostKeys(hostAlias: string): Promise<RemoteSshHostKey[]>;
   testSshHost(hostAlias: string): Promise<boolean>;
   approveSshHostKey(hostAlias: string): Promise<boolean>;
   listRemoteDirectories(hostAlias: string, path?: string): Promise<RemoteDirectoryEntry[]>;
@@ -3611,7 +3881,7 @@ export interface DesktopApi {
   createWorkspace(request: CreateWorkspaceRequest): Promise<WorkspaceProject>;
   updateWorkspace(request: UpdateWorkspaceRequest): Promise<WorkspaceProject>;
   deleteWorkspace(id: string): Promise<boolean>;
-  getWorkspaceContextOverview(workspacePath: string): Promise<WorkspaceContextOverview>;
+  getWorkspaceContextOverview(workspacePath: string, workspaceId?: string): Promise<WorkspaceContextOverview>;
   listWorkspaceFiles(request: WorkspaceFileTreeRequest): Promise<WorkspaceFileTreeResult>;
   onWorkspaceFileChanges(callback: (event: WorkspaceFileChangeEvent) => void): () => void;
   generateManagerPresentation(
@@ -3641,9 +3911,19 @@ export interface DesktopApi {
   summarizeWorkspaceFolder(
     request: WorkspaceFolderSummaryRequest,
   ): Promise<WorkspaceFolderSummaryResult>;
+  analyzeMaterialRoles(
+    request: MaterialRoleAnalysisRequest,
+  ): Promise<MaterialRoleAnalysisResult>;
+  analyzeMaterialConsistency(
+    request: MaterialConsistencyAnalysisRequest,
+  ): Promise<MaterialConsistencyAnalysisResult>;
+  queryMaterials(request: MaterialQueryRequest): Promise<MaterialQueryResult>;
   previewWorkspaceFile(request: WorkspaceFilePreviewRequest): Promise<WorkspaceFilePreview>;
   saveWorkspaceFileAs(request: WorkspaceFileSaveAsRequest): Promise<WorkspaceFileSaveAsResult>;
   writeWorkspaceFile(request: WorkspaceFileWriteRequest): Promise<WorkspaceFileWriteResult>;
+  applyAnomalyDecision(
+    request: DesktopAnomalyDecisionApplyRequest,
+  ): Promise<DesktopAnomalyDecisionApplyResult>;
   getWorkspaceGitDiff(request: WorkspaceGitDiffRequest): Promise<WorkspaceGitDiffResult>;
   getWorkspaceGitFileAtRef(
     request: WorkspaceGitFileAtRefRequest,
@@ -3652,7 +3932,7 @@ export interface DesktopApi {
   stageWorkspaceFile(request: WorkspaceStageFileRequest): Promise<WorkspaceStageFileResult>;
   stageWorkspaceHunk(request: WorkspaceHunkActionRequest): Promise<WorkspaceHunkActionResult>;
   revertWorkspaceHunk(request: WorkspaceHunkActionRequest): Promise<WorkspaceHunkActionResult>;
-  listWorkspaceCheckpoints(workspacePath: string): Promise<WorkspaceCheckpoint[]>;
+  listWorkspaceCheckpoints(workspacePath: string, workspaceId?: string): Promise<WorkspaceCheckpoint[]>;
   createWorkspaceCheckpoint(
     request: WorkspaceCheckpointCreateRequest,
   ): Promise<WorkspaceCheckpoint>;

@@ -1189,10 +1189,34 @@ export function installMockDesktopApi(): void {
       };
       return { ok: true, message: "Mock sign-out complete." };
     },
+    previewLocalDataCleanup: async (scope) => ({
+      scope,
+      applicationData: [{ category: "sessions", label: "会话", description: "清除会话记录。" }],
+      preservedUserMaterials: [],
+      preservesAllWorkspaceFiles: true,
+      ...(scope === "all_local_data" ? { confirmationPhrase: "清除" } : {}),
+      requiresSignInAgain: scope === "all_local_data",
+    }),
+    clearLocalData: async (request) => ({
+      ok: true,
+      scope: request.scope,
+      removedPaths: [],
+      protectedWorkspacePaths: [],
+      skippedTargets: [],
+      requiresSignInAgain: request.scope === "all_local_data",
+      message: "应用数据已清除；用户工作区文件和成果未受影响。",
+    }),
     refreshAuthSession: async () => authSession,
     getHealth: async () => health,
     getInstallStatus: async () => health.install,
     getGatewayStatus: async () => health.gateway,
+    getCodexBackendStatus: async () => ({ backendId: "codex", state: "available", available: true,
+      version: "0.142.5", loggedIn: true, authMode: "chatgpt", accountLabel: "demo@example.test",
+      reason: null, retryable: false, action: "none" }),
+    startCodexBackendLogin: async (type = "chatgpt") => ({ type, loginId: "mock-codex-login",
+      verificationUrl: "https://example.test/device", userCode: "MOCK-CODE" }),
+    cancelCodexBackendLogin: async () => true,
+    logoutCodexBackend: async () => true,
     listProviderUsageAnalytics: async () => [
       {
         id: "provider-usage:mock",
@@ -1327,6 +1351,8 @@ export function installMockDesktopApi(): void {
       return true;
     },
     listSshHosts: async () => [],
+    diagnoseSshHost: async (hostAlias) => ({ hostAlias, state: "reachable", elapsedMs: 1 }),
+    inspectSshHostKeys: async (hostAlias) => [{ hostAlias, hostname: "127.0.0.1", port: 22, algorithm: "ssh-ed25519", fingerprint: "SHA256:mock" }],
     testSshHost: async () => true,
     approveSshHostKey: async () => true,
     listRemoteDirectories: async (_hostAlias, path = "/home") => [
@@ -1339,6 +1365,8 @@ export function installMockDesktopApi(): void {
         id,
         name: request.name || request.path.split("/").filter(Boolean).at(-1) || "Remote workspace",
         path: request.path,
+        location: "remote",
+        transport: "ssh",
         type: "remote-ssh",
         remote: {
           hostAlias: request.hostAlias,
@@ -1365,9 +1393,9 @@ export function installMockDesktopApi(): void {
     listRemoteHepaiWorkers: async () => [],
     setRemoteHepaiWorkerEnabled: async () => true,
     onRemoteWorkspaceStatus: () => () => undefined,
-    preflightRemoteGateway: async (hostAlias) => ({ hostAlias, pythonVersion: "3.11.0", gatewayInstalled: true, gatewayVersion: "1.4.4" }),
+    preflightRemoteGateway: async (hostAlias) => ({ hostAlias, operatingSystem: "linux", architecture: "x86_64", pythonVersion: "3.11.0", compatible: true, issues: [], gatewayInstalled: true, gatewayVersion: "1.4.4" }),
     getRemoteSshDiagnosticReport: async () => ({ generatedAt: new Date().toISOString(), hosts: [] }),
-    installRemoteGateway: async (request) => ({ hostAlias: request.hostAlias, pythonVersion: "3.11.0", gatewayInstalled: true, gatewayVersion: request.version || "1.4.4", changed: true, action: request.action }),
+    installRemoteGateway: async (request) => ({ hostAlias: request.hostAlias, operatingSystem: "linux", architecture: "x86_64", pythonVersion: "3.11.0", compatible: true, issues: [], gatewayInstalled: true, gatewayVersion: request.version || "1.4.4", changed: true, action: request.action }),
     requestRemoteGatewayInstallApproval: async () => ({ queued: true, allowed: true, requiresApproval: true, blocked: false, reason: "Mock remote Gateway operation queued for approval." }),
     cancelRemoteGatewayOperation: async () => true,
     onRemoteGatewayOperation: () => () => undefined,
@@ -1456,6 +1484,7 @@ export function installMockDesktopApi(): void {
           path.split(/[\\/]/).filter(Boolean).at(-1) ||
           "Workspace",
         path,
+        location: "local",
         type: "local",
         description: request.description,
         createdAt: now,
@@ -1690,6 +1719,7 @@ export function installMockDesktopApi(): void {
         .replace(/^-+|-+$/g, "")
         .slice(0, 32) || "subtask";
       return {
+        location: "local",
         sourceWorkspacePath: request.workspacePath,
         repoRoot: request.workspacePath,
         worktreePath: `${request.workspacePath}\\.drsai-forks\\${slug}`,
@@ -1871,6 +1901,57 @@ export function installMockDesktopApi(): void {
       createMockWorkspaceFiles(request.workspacePath, request.query),
     summarizeWorkspaceFolder: async (request) =>
       createMockWorkspaceFolderSummary(request.path),
+    analyzeMaterialRoles: async (request) => ({
+      items: request.paths.map((path, index) => ({
+        path,
+        name: path.split(/[\\/]/).at(-1) || path,
+        role: index % 4 === 0 ? "previous_report" as const : index % 4 === 1 ? "latest_data" as const : index % 4 === 2 ? "result_image" as const : "reference_material" as const,
+        confidence: 0.95,
+        reason: "Mock material role evidence.",
+        suggestedUse: "Use this material according to its detected role.",
+      })),
+      roleCounts: {
+        previous_report: request.paths.filter((_path, index) => index % 4 === 0).length,
+        latest_data: request.paths.filter((_path, index) => index % 4 === 1).length,
+        result_image: request.paths.filter((_path, index) => index % 4 === 2).length,
+        reference_material: request.paths.filter((_path, index) => index % 4 === 3).length,
+      },
+      summary: "Mock material role analysis.",
+    }),
+    analyzeMaterialConsistency: async (request) => ({
+      findings: request.paths.length >= 2 ? [{
+        id: "mock-consensus",
+        kind: "consensus" as const,
+        severity: "info" as const,
+        title: "Mock materials agree",
+        explanation: "Two mock materials contain the same conclusion.",
+        recommendation: "Keep both sources attached.",
+        sources: request.paths.slice(0, 2).map((path) => ({
+          path,
+          name: path.split(/[\\/]/).at(-1) || path,
+          role: "reference_material" as const,
+          locator: "line 1",
+          value: "agrees",
+          excerpt: "Mock agreement.",
+        })),
+      }] : [],
+      counts: { consensus: request.paths.length >= 2 ? 1 : 0, source_conflict: 0, outdated_number: 0, chart_mismatch: 0, evidence_gap: 0 },
+      filesAnalyzed: request.paths.length,
+      summary: "Mock material consistency analysis.",
+    }),
+    queryMaterials: async (request) => ({
+      status: "answered" as const,
+      queryKind: "general" as const,
+      answer: "Mock material answer.",
+      confidence: 0.95,
+      citations: request.paths.slice(0, 1).map((path) => ({
+        path,
+        name: path.split(/[\\/]/).at(-1) || path,
+        locator: "line 1",
+        excerpt: "Mock material evidence.",
+      })),
+      filesSearched: request.paths.length,
+    }),
     previewWorkspaceFile: async (request) =>
       createMockWorkspacePreview(request.workspacePath, request.path, request.mode),
     saveWorkspaceFileAs: async (request) => ({
@@ -1896,6 +1977,30 @@ export function installMockDesktopApi(): void {
       overwroteExternal: request.mode === "overwrite",
       message: "Saved with external-change protection.",
     }),
+    applyAnomalyDecision: async (request) => {
+      const base = request.sourcePath.replace(/\.csv$/i, "");
+      const outputs = request.decision === "keep"
+        ? [{ role: "kept_all" as const, path: `${base}-保留全部.csv`, rowCount: 5, anomalyCount: 2, sha256: "sha256:mock-keep" }]
+        : request.decision === "exclude"
+          ? [{ role: "excluded_anomalies" as const, path: `${base}-排除异常.csv`, rowCount: 3, anomalyCount: 0, sha256: "sha256:mock-exclude" }]
+          : [
+              { role: "kept_all" as const, path: `${base}-保留全部.csv`, rowCount: 5, anomalyCount: 2, sha256: "sha256:mock-keep" },
+              { role: "excluded_anomalies" as const, path: `${base}-排除异常.csv`, rowCount: 3, anomalyCount: 0, sha256: "sha256:mock-exclude" },
+            ];
+      return {
+        sourcePath: request.sourcePath,
+        anomalyColumn: request.anomalyColumn,
+        totalRows: 5,
+        anomalyRows: 2,
+        normalRows: 3,
+        decision: request.decision,
+        decidedAt: new Date().toISOString(),
+        resultSummary: request.decision === "keep" ? "已采用“保留异常”。" : request.decision === "exclude" ? "已采用“排除异常”。" : "已采用“两种都做”。",
+        sourceSha256: "sha256:mock-source",
+        receiptPath: `${base}-异常处理决定.json`,
+        outputs,
+      };
+    },
     getWorkspaceGitDiff: async (request) =>
       createMockWorkspaceDiff(request.workspacePath, request.path, request.staged),
     getWorkspaceGitFileAtRef: async (request) =>
@@ -4937,6 +5042,10 @@ function createMockWorkspaceFolderSummary(path: string): WorkspaceFolderSummaryR
     fileCount: 12,
     directoryCount: 4,
     skippedDirectoryCount: 2,
+    importedFileCount: 12,
+    skippedFileCount: 0,
+    failedFileCount: 0,
+    unsupportedExtensions: [],
     truncated: false,
     estimatedTokens: Math.ceil(summary.length / 4),
     sampledFiles: [

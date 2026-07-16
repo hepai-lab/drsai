@@ -1,6 +1,7 @@
 import { execFileSync, spawn } from "child_process";
-import { dirname, join } from "path";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { createHash } from "crypto";
+import { basename, dirname, join } from "path";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs";
 import { app, clipboard, type BrowserWindow } from "electron";
 import type { DesktopBackgroundTask, DesktopTaskArtifactLink } from "../shared/desktopApi";
 import {
@@ -8,6 +9,8 @@ import {
   getCompletionNotificationDiagnostics,
   notifyBackgroundTaskCompleted,
 } from "./completionNotifications";
+import { createWorkspace } from "./workspaces";
+import { createThread } from "./threads";
 
 interface SmokeResult {
   ok: boolean;
@@ -131,7 +134,24 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
     process.env.OPENDRSAI_E2E_OIDC !== "1" &&
     process.env.OPENDRSAI_E2E_A5_SERVICE_GUIDANCE !== "1" &&
     process.env.OPENDRSAI_E2E_F2_APPROVALS !== "1" &&
+    process.env.OPENDRSAI_E2E_F3_APPROVALS !== "1" &&
+    process.env.OPENDRSAI_E2E_F4_ANOMALY_DECISION !== "1" &&
+    process.env.OPENDRSAI_E2E_F1_LOW_RISK_APPROVALS !== "1" &&
+    process.env.OPENDRSAI_E2E_C1_MATERIAL_IMPORT !== "1" &&
+    process.env.OPENDRSAI_E2E_C2_FOLDER_IMPORT !== "1" &&
+    process.env.OPENDRSAI_E2E_C3_MATERIAL_ROLES !== "1" &&
+    process.env.OPENDRSAI_E2E_C4_MATERIAL_SUGGESTIONS !== "1" &&
+    process.env.OPENDRSAI_E2E_C5_MATERIAL_CONSISTENCY !== "1" &&
+    process.env.OPENDRSAI_E2E_C6_MATERIAL_QUERY !== "1" &&
+    process.env.OPENDRSAI_E2E_C7_ABNORMAL_FILES !== "1" &&
+    process.env.OPENDRSAI_E2E_C8_CHINESE_PRIVACY !== "1" &&
     process.env.OPENDRSAI_E2E_M3_WINDOW !== "1" &&
+    process.env.OPENDRSAI_E2E_M4_KEYBOARD !== "1" &&
+    process.env.OPENDRSAI_E2E_M5_ACCESSIBILITY !== "1" &&
+    process.env.OPENDRSAI_E2E_M6_PERFORMANCE !== "1" &&
+    process.env.OPENDRSAI_E2E_M7_STABILITY !== "1" &&
+    process.env.OPENDRSAI_E2E_M8_RECOVERY !== "1" &&
+    process.env.OPENDRSAI_E2E_M10_DATA_CLEANUP !== "1" &&
     process.env.OPENDRSAI_E2E_PRESENTATION_PDF_ACTION !== "1"
   ) return;
   const resultPath = process.env.OPENDRSAI_E2E_RESULT;
@@ -183,8 +203,42 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
         ? runA5ServiceGuidanceSmoke
       : process.env.OPENDRSAI_E2E_F2_APPROVALS === "1"
         ? runF2ApprovalSmoke
+      : process.env.OPENDRSAI_E2E_F3_APPROVALS === "1"
+        ? runF3ApprovalSmoke
+      : process.env.OPENDRSAI_E2E_F4_ANOMALY_DECISION === "1"
+        ? runF4AnomalyDecisionSmoke
+      : process.env.OPENDRSAI_E2E_F1_LOW_RISK_APPROVALS === "1"
+        ? runF1LowRiskApprovalSmoke
+      : process.env.OPENDRSAI_E2E_C1_MATERIAL_IMPORT === "1"
+        ? runC1MaterialImportSmoke
+      : process.env.OPENDRSAI_E2E_C2_FOLDER_IMPORT === "1"
+        ? runC2FolderImportSmoke
+      : process.env.OPENDRSAI_E2E_C3_MATERIAL_ROLES === "1"
+        ? runC3MaterialRolesSmoke
+      : process.env.OPENDRSAI_E2E_C4_MATERIAL_SUGGESTIONS === "1"
+        ? runC4MaterialSuggestionsSmoke
+      : process.env.OPENDRSAI_E2E_C5_MATERIAL_CONSISTENCY === "1"
+        ? runC5MaterialConsistencySmoke
+      : process.env.OPENDRSAI_E2E_C6_MATERIAL_QUERY === "1"
+        ? runC6MaterialQuerySmoke
+      : process.env.OPENDRSAI_E2E_C7_ABNORMAL_FILES === "1"
+        ? runC7AbnormalFilesSmoke
+      : process.env.OPENDRSAI_E2E_C8_CHINESE_PRIVACY === "1"
+        ? runC8ChinesePrivacySmoke
       : process.env.OPENDRSAI_E2E_M3_WINDOW === "1"
         ? runM3WindowScalingSmoke
+      : process.env.OPENDRSAI_E2E_M4_KEYBOARD === "1"
+        ? runM4KeyboardSmoke
+      : process.env.OPENDRSAI_E2E_M5_ACCESSIBILITY === "1"
+        ? runM5AccessibilitySmoke
+      : process.env.OPENDRSAI_E2E_M6_PERFORMANCE === "1"
+        ? runM6PerformanceSmoke
+      : process.env.OPENDRSAI_E2E_M7_STABILITY === "1"
+        ? runM7StabilitySmoke
+      : process.env.OPENDRSAI_E2E_M8_RECOVERY === "1"
+        ? runM8RecoverySmoke
+      : process.env.OPENDRSAI_E2E_M10_DATA_CLEANUP === "1"
+        ? runM10DataCleanupSmoke
       : process.env.OPENDRSAI_E2E_PRESENTATION_PDF_ACTION === "1"
         ? runPresentationPdfActionSmoke
       : process.env.OPENDRSAI_E2E_CHAT === "1"
@@ -207,6 +261,1600 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
         process.exit(1);
       });
   });
+}
+
+async function runC1MaterialImportSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  const fixturePaths = (process.env.OPENDRSAI_E2E_C1_IMPORT_PATHS || "").split("|").filter(Boolean);
+  const evidenceDir = process.env.OPENDRSAI_E2E_C1_EVIDENCE_DIR;
+  if (fixturePaths.length !== 7 || !evidenceDir || fixturePaths.slice(0, 6).some((path) => !existsSync(path)) || existsSync(fixturePaths[6]!)) {
+    throw new Error("C1 requires six readable fixtures, one missing fixture, and an evidence directory.");
+  }
+  const workspacePath = dirname(fixturePaths[0]!);
+  await createWorkspace({ source: "existing", path: workspacePath, name: "C1 CERN 标准材料包", trusted: true });
+  await new Promise<void>((resolveReload, rejectReload) => {
+    const timer = setTimeout(() => rejectReload(new Error("C1 renderer reload timed out.")), 10_000);
+    window.webContents.once("did-finish-load", () => { clearTimeout(timer); resolveReload(); });
+    window.webContents.reload();
+  });
+  window.show();
+  window.focus();
+
+  const result = await window.webContents.executeJavaScript(`
+    (async () => {
+      const api = window.openDrSai;
+      const checks = {};
+      const details = {};
+      const waitFor = async (find, timeout = 30000) => { const end = performance.now() + timeout; while (performance.now() < end) { const value = await find(); if (value) return value; await new Promise(r => setTimeout(r, 50)); } return null; };
+      const login = await api.login({ developerBypass: true, rememberMe: false });
+      checks.authenticatedProductUi = login?.ok === true && Boolean(await waitFor(() => document.querySelector('.app-shell')));
+      const workspacePath = ${JSON.stringify(workspacePath)};
+      const workspace = await waitFor(() => [...document.querySelectorAll('.workspace-item')].find(item => (item.getAttribute('title') || '').includes(workspacePath)), 10000);
+      workspace?.click();
+      checks.workspaceSelected = Boolean(await waitFor(() => workspace?.closest('.workspace-row')?.classList.contains('active')));
+      document.querySelector('.composer-tools > button:first-child')?.click();
+      const addFile = await waitFor(() => document.querySelector('.composer-tool-menu button:has([data-testid="composer-add-file-label"])'));
+      addFile?.click();
+      const chips = await waitFor(() => document.querySelectorAll('[data-testid="composer-attachment"]').length === 7 ? [...document.querySelectorAll('[data-testid="composer-attachment"]')] : null);
+      checks.allSelectionsReported = chips?.length === 7;
+      const descriptors = (chips || []).map(chip => ({ name: chip.querySelector('strong')?.textContent || '', meta: chip.querySelector('small')?.textContent || '', status: chip.getAttribute('data-import-status'), category: chip.getAttribute('data-file-category'), size: Number(chip.getAttribute('data-size-bytes') || 0), title: chip.getAttribute('title') || '' }));
+      details.descriptors = descriptors;
+      const ready = descriptors.filter(item => item.status === 'ready');
+      const failed = descriptors.filter(item => item.status === 'unreadable');
+      checks.sixSupportedFilesReady = ready.length === 6;
+      checks.failedFileIsolated = failed.length === 1 && /其他已选文件仍可使用/.test(failed[0]?.title || '');
+      checks.cernPdfVisible = ready.some(item => item.category === 'pdf' && item.name === 'WLCG-20260715-WLCG-talk-IHEP-visit.pdf');
+      checks.wordVisible = ready.some(item => item.category === 'word' && /Word 文档/.test(item.meta));
+      checks.excelVisible = ready.some(item => item.category === 'spreadsheet' && /Excel 工作簿/.test(item.meta));
+      checks.csvVisible = ready.some(item => item.category === 'table' && /表格数据/.test(item.meta));
+      checks.imageVisible = ready.some(item => item.category === 'image' && /图片/.test(item.meta));
+      checks.textVisible = ready.some(item => item.category === 'text' && /文本/.test(item.meta));
+      checks.namesTypesSizesStatusesVisible = ready.every(item => item.name && item.meta.includes('已就绪') && item.size > 0);
+      checks.failureStatusVisible = failed[0]?.meta.includes('读取失败') === true;
+      const contextPreviewText = document.querySelector('.context-assembly-preview')?.textContent || '';
+      checks.failedFileExcludedFromContext = !contextPreviewText.includes('已移动的材料.pdf') && ready.every(item => contextPreviewText.includes(item.name));
+
+      document.querySelector('.composer-tools > button:first-child')?.click();
+      (await waitFor(() => document.querySelector('.composer-tool-menu button:has([data-testid="composer-add-file-label"])')))?.click();
+      await new Promise(r => setTimeout(r, 150));
+      checks.duplicatesNotAdded = document.querySelectorAll('[data-testid="composer-attachment"]').length === 7;
+
+      const paths = ${JSON.stringify(fixturePaths.slice(0, 6))};
+      const previews = [];
+      for (const path of paths) previews.push(await api.previewWorkspaceFile({ workspacePath, path, maxBytes: 120000 }));
+      details.previews = previews.map(item => ({ name: item.name, kind: item.kind, size: item.size, hasContent: Boolean(item.content), hasDataUrl: Boolean(item.dataUrl) }));
+      const byName = Object.fromEntries(previews.map(item => [item.name, item]));
+      const pdf = byName['WLCG-20260715-WLCG-talk-IHEP-visit.pdf'];
+      checks.cernPdfReadWithoutConversion = pdf?.kind === 'pdf' && pdf?.size === 7664262 && /PDF type: presentation_pdf/.test(pdf?.content || '');
+      checks.wordReadWithoutConversion = byName['CERN 研究说明.docx']?.kind === 'office' && /CERN DOCX material/.test(byName['CERN 研究说明.docx']?.content || '');
+      checks.excelReadWithoutConversion = byName['CERN 数据.xlsx']?.kind === 'office' && /CERN throughput/.test(byName['CERN 数据.xlsx']?.content || '');
+      checks.csvReadWithoutConversion = byName['CERN 指标.csv']?.kind === 'table' && /9.6/.test(byName['CERN 指标.csv']?.content || '');
+      checks.imageReadWithoutConversion = byName['CERN 架构图.png']?.kind === 'image' && Boolean(byName['CERN 架构图.png']?.dataUrl);
+      checks.textReadWithoutConversion = byName['CERN 补充说明.md']?.kind === 'markdown' && /Data Challenge/.test(byName['CERN 补充说明.md']?.content || '');
+      checks.oneFailureDidNotBlockReadableFiles = previews.length === 6 && previews.every(item => item.size > 0);
+      checks.noAutomaticShare = (await api.listOutgoingShares()).length === 0 && (await api.listIncomingShares()).length === 0;
+      return { checks, details };
+    })()
+  `, true) as SmokeResult;
+  mkdirSync(evidenceDir, { recursive: true });
+  const screenshotPath = join(evidenceDir, "c1-material-import.png");
+  let screenshot = await window.capturePage();
+  let blackPixelRatio = calculateBlackPixelRatio(screenshot.toBitmap());
+  for (let attempt = 1; attempt < 4 && blackPixelRatio > 0.02; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    screenshot = await window.capturePage();
+    blackPixelRatio = calculateBlackPixelRatio(screenshot.toBitmap());
+  }
+  writeFileSync(screenshotPath, screenshot.toPNG());
+  result.checks.screenshotWritten = existsSync(screenshotPath);
+  result.checks.screenshotFullyPainted = blackPixelRatio <= 0.02;
+  result.details = { ...result.details, fixturePaths, screenshotPath, blackPixelRatio };
+  result.ok = Object.values(result.checks).every(Boolean);
+  return result;
+}
+
+async function runC2FolderImportSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  const folderPath = process.env.OPENDRSAI_E2E_C2_FOLDER_PATH;
+  const evidenceDir = process.env.OPENDRSAI_E2E_C2_EVIDENCE_DIR;
+  const cernPdfPath = process.env.OPENDRSAI_E2E_C2_CERN_PDF;
+  if (!folderPath || !evidenceDir || !cernPdfPath || !existsSync(folderPath) || !existsSync(cernPdfPath)) throw new Error("C2 requires the 30-file folder, CERN PDF, and evidence directory.");
+  await createWorkspace({ source: "existing", path: folderPath, name: "C2 CERN 30 文件材料包", trusted: true });
+  await new Promise<void>((resolveReload, rejectReload) => {
+    const timer = setTimeout(() => rejectReload(new Error("C2 renderer reload timed out.")), 10_000);
+    window.webContents.once("did-finish-load", () => { clearTimeout(timer); resolveReload(); });
+    window.webContents.reload();
+  });
+  window.show();
+  window.focus();
+
+  const result = await window.webContents.executeJavaScript(`
+    (async () => {
+      const api = window.openDrSai;
+      const checks = {};
+      const details = {};
+      const waitFor = async (find, timeout = 15000) => { const end = performance.now() + timeout; while (performance.now() < end) { const value = await find(); if (value) return value; await new Promise(r => setTimeout(r, 25)); } return null; };
+      const login = await api.login({ developerBypass: true, rememberMe: false });
+      checks.authenticatedProductUi = login?.ok === true && Boolean(await waitFor(() => document.querySelector('.app-shell')));
+      const folderPath = ${JSON.stringify(folderPath)};
+      const workspace = await waitFor(() => [...document.querySelectorAll('.workspace-item')].find(item => (item.getAttribute('title') || '').includes(folderPath)), 10000);
+      workspace?.click();
+      checks.workspaceSelected = Boolean(await waitFor(() => workspace?.closest('.workspace-row')?.classList.contains('active')));
+      const gaps = []; let lastBeat = performance.now(); const heartbeat = setInterval(() => { const now = performance.now(); gaps.push(now - lastBeat); lastBeat = now; }, 25);
+      const openFolderPicker = async () => {
+        document.querySelector('.composer-tools > button:first-child')?.click();
+        const button = await waitFor(() => document.querySelector('.composer-tool-menu button:has([data-testid="composer-add-folder-label"])'));
+        button?.click();
+      };
+      const started = performance.now();
+      await openFolderPicker();
+      const scanning = await waitFor(() => document.querySelector('[data-testid="composer-attachment"][data-folder-import-phase="scanning"]'), 1000);
+      details.scanningFeedbackMs = performance.now() - started;
+      checks.scanningFeedbackVisible = Boolean(scanning) && details.scanningFeedbackMs <= 1000 && /正在扫描文件夹/.test(scanning?.textContent || '');
+      const ready = await waitFor(() => document.querySelector('[data-testid="composer-attachment"][data-folder-import-phase="ready"]'), 10000);
+      details.scanCompletedMs = performance.now() - started;
+      checks.scanCompletedWithin2s = Boolean(ready) && details.scanCompletedMs <= 2000;
+      const count = (name) => Number(ready?.getAttribute(name) || -1);
+      checks.importedCountVisible = count('data-imported-count') === 27 && /已导入 27/.test(ready?.textContent || '');
+      checks.skippedCountVisible = count('data-skipped-count') === 3 && /跳过 3/.test(ready?.textContent || '');
+      checks.failedCountVisible = count('data-failed-count') === 1 && /失败 1/.test(ready?.textContent || '');
+      checks.subdirectoryCountVisible = /子目录 2/.test(ready?.textContent || '');
+      checks.unsupportedReasonVisible = /Unsupported: \.xyz/.test(ready?.getAttribute('title') || '');
+      checks.folderIsSingleContextSource = document.querySelectorAll('[data-testid="composer-attachment"]').length === 1 && (document.querySelector('.context-assembly-preview')?.textContent || '').includes('C2 CERN 30 文件材料包');
+
+      await openFolderPicker();
+      const duplicate = await waitFor(() => document.querySelector('[data-testid="composer-attachment"][data-duplicate-count="1"]'), 2000);
+      checks.duplicateExplainedWithoutDuplicateChip = Boolean(duplicate) && /重复 1/.test(duplicate?.textContent || '') && document.querySelectorAll('[data-testid="composer-attachment"]').length === 1;
+      checks.countsStableAfterDuplicate = count('data-imported-count') === 27 && count('data-skipped-count') === 3 && count('data-failed-count') === 1;
+
+      const summary = await api.summarizeWorkspaceFolder({ path: folderPath, maxDepth: 3, maxEntries: 240, maxSampleFiles: 30 });
+      details.summary = { totalEntries: summary.totalEntries, fileCount: summary.fileCount, directoryCount: summary.directoryCount, imported: summary.importedFileCount, skipped: summary.skippedFileCount, skippedDirectories: summary.skippedDirectoryCount, failed: summary.failedFileCount, unsupportedExtensions: summary.unsupportedExtensions, truncated: summary.truncated };
+      checks.exactThirtyFilesScanned = summary.fileCount === 30;
+      checks.twoNestedDirectoriesScanned = summary.directoryCount === 2;
+      checks.noisyDirectorySkipped = summary.skippedDirectoryCount === 1;
+      checks.unsupportedFilesClassified = summary.skippedFileCount === 2 && summary.unsupportedExtensions.length === 1 && summary.unsupportedExtensions[0] === '.xyz';
+      checks.corruptPdfClassifiedFailed = summary.failedFileCount === 1;
+      checks.supportedFilesImported = summary.importedFileCount === 27 && summary.sampledFiles.length === 27;
+      checks.scanNotTruncated = summary.truncated === false;
+      checks.cernPdfIncluded = summary.sampledFiles.some(item => item.path === ${JSON.stringify(cernPdfPath)} && item.kind === 'pdf' && item.size === 7664262);
+      const pdf = await api.previewWorkspaceFile({ workspacePath: folderPath, path: ${JSON.stringify(cernPdfPath)}, maxBytes: 120000 });
+      checks.cernPdfStillPresentation = pdf.kind === 'pdf' && /PDF type: presentation_pdf/.test(pdf.content || '');
+      checks.noAutomaticShare = (await api.listOutgoingShares()).length === 0 && (await api.listIncomingShares()).length === 0;
+      clearInterval(heartbeat);
+      details.heartbeat = { samples: gaps.length, maxGapMs: gaps.length ? Math.max(...gaps) : 0 };
+      checks.rendererStayedResponsive = gaps.length >= 8 && details.heartbeat.maxGapMs < 2000;
+      return { checks, details };
+    })()
+  `, true) as SmokeResult;
+  mkdirSync(evidenceDir, { recursive: true });
+  const screenshotPath = join(evidenceDir, "c2-folder-import.png");
+  let screenshot = await window.capturePage();
+  let blackPixelRatio = calculateBlackPixelRatio(screenshot.toBitmap());
+  for (let attempt = 1; attempt < 4 && blackPixelRatio > 0.02; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    screenshot = await window.capturePage();
+    blackPixelRatio = calculateBlackPixelRatio(screenshot.toBitmap());
+  }
+  writeFileSync(screenshotPath, screenshot.toPNG());
+  result.checks.screenshotWritten = existsSync(screenshotPath);
+  result.checks.screenshotFullyPainted = blackPixelRatio <= 0.02;
+  result.details = { ...result.details, folderPath, cernPdfPath, screenshotPath, blackPixelRatio };
+  result.ok = Object.values(result.checks).every(Boolean);
+  return result;
+}
+
+async function runC3MaterialRolesSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  const fixturePaths = (process.env.OPENDRSAI_E2E_C3_IMPORT_PATHS || "").split("|").filter(Boolean);
+  const evidenceDir = process.env.OPENDRSAI_E2E_C3_EVIDENCE_DIR;
+  const cernPdfPath = process.env.OPENDRSAI_E2E_C3_CERN_PDF;
+  if (fixturePaths.length !== 12 || !evidenceDir || !cernPdfPath || fixturePaths.some((path) => !existsSync(path))) {
+    throw new Error("C3 requires twelve golden materials, the fixed CERN PDF, and an evidence directory.");
+  }
+  const workspacePath = dirname(fixturePaths[0]!);
+  await createWorkspace({ source: "existing", path: workspacePath, name: "C3 D4 材料角色识别", trusted: true });
+  await new Promise<void>((resolveReload, rejectReload) => {
+    const timer = setTimeout(() => rejectReload(new Error("C3 renderer reload timed out.")), 10_000);
+    window.webContents.once("did-finish-load", () => { clearTimeout(timer); resolveReload(); });
+    window.webContents.reload();
+  });
+  window.show();
+  window.focus();
+
+  const result = await window.webContents.executeJavaScript(`
+    (async () => {
+      const api = window.openDrSai;
+      const checks = {};
+      const details = {};
+      const paths = ${JSON.stringify(fixturePaths)};
+      const expectedRoles = Object.fromEntries(paths.map((path, index) => [path, index < 3 ? 'previous_report' : index < 6 ? 'latest_data' : index < 9 ? 'result_image' : 'reference_material']));
+      const waitFor = async (find, timeout = 15000) => { const end = performance.now() + timeout; while (performance.now() < end) { const value = await find(); if (value) return value; await new Promise(r => setTimeout(r, 35)); } return null; };
+      const login = await api.login({ developerBypass: true, rememberMe: false });
+      checks.authenticatedProductUi = login?.ok === true && Boolean(await waitFor(() => document.querySelector('.app-shell')));
+      const workspacePath = ${JSON.stringify(workspacePath)};
+      const workspace = await waitFor(() => [...document.querySelectorAll('.workspace-item')].find(item => (item.getAttribute('title') || '').includes(workspacePath)), 10000);
+      workspace?.click();
+      checks.workspaceSelected = Boolean(await waitFor(() => workspace?.closest('.workspace-row')?.classList.contains('active')));
+      document.querySelector('.composer-tools > button:first-child')?.click();
+      (await waitFor(() => document.querySelector('.composer-tool-menu button:has([data-testid="composer-add-file-label"])')))?.click();
+      checks.twelveMaterialsVisible = Boolean(await waitFor(() => document.querySelectorAll('[data-testid="composer-attachment"]').length === 12));
+      const panel = await waitFor(() => document.querySelector('[data-testid="material-role-panel"][data-analysis-phase="ready"]'));
+      checks.rolePanelVisible = Boolean(panel) && /材料角色/.test(panel?.textContent || '');
+      const count = (role) => Number(panel?.querySelector('[data-material-role="' + role + '"]')?.getAttribute('data-role-count') || -1);
+      checks.fourRolesVisible = count('previous_report') === 3 && count('latest_data') === 3 && count('result_image') === 3 && count('reference_material') === 3;
+      checks.roleNamesUnderstandable = ['旧报告', '最新数据', '结果图片', '参考材料'].every(label => (panel?.textContent || '').includes(label));
+      checks.fileNamesVisibleInRoles = paths.every(path => (panel?.textContent || '').includes(path.split(/[\\\\/]/).at(-1)));
+
+      const analysis = await api.analyzeMaterialRoles({ paths });
+      const correct = analysis.items.filter(item => expectedRoles[item.path] === item.role).length;
+      details.accuracy = correct / paths.length;
+      details.analysis = analysis;
+      checks.allGoldenMaterialsAnalyzed = analysis.items.length === 12;
+      checks.keyRoleAccuracyAtLeast90 = details.accuracy >= 0.9;
+      checks.confidenceAtLeast90 = analysis.items.every(item => item.confidence >= 0.9);
+      checks.everyItemHasReason = analysis.items.every(item => item.reason && item.reason.length >= 8);
+      checks.everyItemHasSuggestedUse = analysis.items.every(item => item.suggestedUse && item.suggestedUse.length >= 8);
+      checks.summaryIncludesFourRoles = ['旧报告', '最新数据', '结果图片', '参考材料'].every(label => analysis.summary.includes(label));
+
+      const input = document.querySelector('[data-testid="composer-input"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+      setter?.call(input, '系统现在拥有哪些材料？');
+      input?.dispatchEvent(new Event('input', { bubbles: true }));
+      await new Promise(r => setTimeout(r, 50));
+      document.querySelector('button.composer-submit')?.click();
+      const answer = await waitFor(() => [...document.querySelectorAll('.message.assistant')].map(node => node.textContent || '').find(text => text.includes('旧报告（3）') && text.includes('最新数据（3）') && text.includes('结果图片（3）') && text.includes('参考材料（3）')));
+      checks.inventoryQuestionAnswered = Boolean(answer);
+      checks.answerNamesEveryMaterial = paths.every(path => answer?.includes(path.split(/[\\\\/]/).at(-1)));
+      checks.answerContainsUsageAdvice = /先用最新数据核对结果图片/.test(answer || '') && /旧报告为结构基线/.test(answer || '');
+      checks.localAnswerCompletedWithoutLoading = !document.querySelector('.message.assistant.streaming');
+      const pdf = await api.previewWorkspaceFile({ workspacePath, path: ${JSON.stringify(cernPdfPath)}, maxBytes: 120000 });
+      checks.cernPdfStillPresentation = pdf.kind === 'pdf' && pdf.size === 7664262 && /PDF type: presentation_pdf/.test(pdf.content || '');
+      checks.noAutomaticShare = (await api.listOutgoingShares()).length === 0 && (await api.listIncomingShares()).length === 0;
+      return { checks, details };
+    })()
+  `, true) as SmokeResult;
+  mkdirSync(evidenceDir, { recursive: true });
+  const screenshotPath = join(evidenceDir, "c3-material-roles.png");
+  let screenshot = await window.capturePage();
+  let blackPixelRatio = calculateBlackPixelRatio(screenshot.toBitmap());
+  for (let attempt = 1; attempt < 4 && blackPixelRatio > 0.02; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    screenshot = await window.capturePage();
+    blackPixelRatio = calculateBlackPixelRatio(screenshot.toBitmap());
+  }
+  writeFileSync(screenshotPath, screenshot.toPNG());
+  result.checks.screenshotWritten = existsSync(screenshotPath);
+  result.checks.screenshotFullyPainted = blackPixelRatio <= 0.02;
+  result.details = { ...result.details, fixturePaths, cernPdfPath, screenshotPath, blackPixelRatio };
+  result.ok = Object.values(result.checks).every(Boolean);
+  return result;
+}
+
+async function runC4MaterialSuggestionsSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  const fixturePaths = (process.env.OPENDRSAI_E2E_C4_IMPORT_PATHS || "").split("|").filter(Boolean);
+  const evidenceDir = process.env.OPENDRSAI_E2E_C4_EVIDENCE_DIR;
+  const scenario = process.env.OPENDRSAI_E2E_C4_SCENARIO || "d4";
+  if (!fixturePaths.length || !evidenceDir || fixturePaths.some((path) => !existsSync(path)) || !["d1", "d2", "d4"].includes(scenario)) {
+    throw new Error("C4 requires D1, D2, or D4 fixtures and an evidence directory.");
+  }
+  const workspacePath = dirname(fixturePaths[0]!);
+  await createWorkspace({ source: "existing", path: workspacePath, name: `C4 ${scenario.toUpperCase()} 主动建议`, trusted: true });
+  await new Promise<void>((resolveReload, rejectReload) => {
+    const timer = setTimeout(() => rejectReload(new Error("C4 renderer reload timed out.")), 10_000);
+    window.webContents.once("did-finish-load", () => { clearTimeout(timer); resolveReload(); });
+    window.webContents.reload();
+  });
+  window.show();
+  window.focus();
+  const result = await window.webContents.executeJavaScript(`
+    (async () => {
+      const api = window.openDrSai;
+      const checks = {};
+      const details = { scenario: ${JSON.stringify(scenario)} };
+      const waitFor = async (find, timeout = 20000) => { const end = performance.now() + timeout; while (performance.now() < end) { const value = await find(); if (value) return value; await new Promise(r => setTimeout(r, 40)); } return null; };
+      const login = await api.login({ developerBypass: true, rememberMe: false });
+      checks.authenticatedProductUi = login?.ok === true && Boolean(await waitFor(() => document.querySelector('.app-shell')));
+      let gateway = await api.getGatewayStatus();
+      for (let attempt = 0; attempt < 100 && !gateway.ready; attempt += 1) { await new Promise(r => setTimeout(r, 100)); gateway = await api.getGatewayStatus(); }
+      checks.realChatGatewayReady = Boolean(gateway.ready && !gateway.externalConflict);
+      const workspacePath = ${JSON.stringify(workspacePath)};
+      const workspace = await waitFor(() => [...document.querySelectorAll('.workspace-item')].find(item => (item.getAttribute('title') || '').includes(workspacePath)), 10000);
+      workspace?.click();
+      checks.workspaceSelected = Boolean(await waitFor(() => workspace?.closest('.workspace-row')?.classList.contains('active')));
+      const threadCountBefore = (await api.listThreads()).length;
+      const newChat = await waitFor(() => [...document.querySelectorAll('.sidebar-button')].find(button => /开始聊天|New chat/.test(button.textContent || button.getAttribute('title') || '')));
+      newChat?.click();
+      checks.realConversationCreated = Boolean(await waitFor(async () => (await api.listThreads()).length === threadCountBefore + 1, 5000));
+      document.querySelector('.composer-tools > button:first-child')?.click();
+      (await waitFor(() => document.querySelector('.composer-tool-menu button:has([data-testid="composer-add-file-label"])')))?.click();
+      const expectedFiles = ${fixturePaths.length};
+      checks.materialsVisible = Boolean(await waitFor(() => document.querySelectorAll('[data-testid="composer-attachment"]').length === expectedFiles));
+      const suggestionPanel = await waitFor(() => document.querySelector('[data-testid="material-task-suggestions"]'));
+      const suggestions = suggestionPanel ? [...suggestionPanel.querySelectorAll('[data-testid="material-task-suggestion"]')] : [];
+      details.suggestions = suggestions.map(button => ({ id: button.getAttribute('data-suggestion-id'), title: button.querySelector('strong')?.textContent, description: button.querySelector('span')?.textContent, prompt: button.getAttribute('data-suggestion-prompt') }));
+      checks.suggestionPanelVisibleWithoutTask = Boolean(suggestionPanel) && !document.querySelector('[data-testid="composer-input"]')?.value;
+      checks.twoToFourSuggestions = suggestions.length >= 2 && suggestions.length <= 4;
+      const scenarioIds = ${JSON.stringify({ d1: ["summarize-references", "organize-reference-questions"], d2: ["check-data", "visualize-data"], d4: ["update-report", "check-data", "check-image-data-consistency", "summarize-references"] })}[${JSON.stringify(scenario)}];
+      checks.suggestionsMatchMaterial = scenarioIds.every(id => suggestions.some(button => button.getAttribute('data-suggestion-id') === id));
+      checks.suggestionsUsePlainLanguage = details.suggestions.every(item => item.title && item.description && !/agent|mcp|ipc|json|tool call/i.test(item.title + ' ' + item.description));
+      const selected = suggestions.find(button => button.getAttribute('data-suggestion-id') === scenarioIds[0]);
+      const originalPrompt = selected?.getAttribute('data-suggestion-prompt') || '';
+      selected?.click();
+      const input = await waitFor(() => { const node = document.querySelector('[data-testid="composer-input"]'); return node?.value === originalPrompt ? node : null; });
+      checks.clickCreatesEditableTask = Boolean(input) && originalPrompt.length > 20 && document.activeElement === input;
+      checks.suggestionsHideWhileEditing = !document.querySelector('[data-testid="material-task-suggestions"]');
+      const editedPrompt = originalPrompt + ' 请使用中文，并在结尾列出材料来源。';
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+      setter?.call(input, editedPrompt);
+      input?.dispatchEvent(new Event('input', { bubbles: true }));
+      await new Promise(r => setTimeout(r, 80));
+      checks.taskRemainsEditable = document.querySelector('[data-testid="composer-input"]')?.value === editedPrompt;
+      const previewBeforeSubmit = document.querySelector('.context-assembly-preview')?.textContent || '';
+      checks.materialsRemainAttachedBeforeSubmit = ${JSON.stringify(fixturePaths.map((path) => basename(path)))}.every(name => previewBeforeSubmit.includes(name));
+      const send = await waitFor(() => { const node = document.querySelector('button.composer-submit'); return node && !node.disabled ? node : null; }, 5000);
+      checks.realSubmitEnabled = Boolean(send);
+      send?.click();
+      const userMessage = await waitFor(() => [...document.querySelectorAll('.message.user')].find(node => (node.textContent || '').includes('请使用中文，并在结尾列出材料来源。')));
+      checks.editedSuggestionSubmitted = Boolean(userMessage);
+      const assistant = await waitFor(() => [...document.querySelectorAll('.message.assistant')].find(node => (node.textContent || '').includes('C4 真实任务已创建')), 20000);
+      checks.realTaskCompleted = Boolean(assistant) && !assistant?.classList.contains('streaming');
+      checks.materialsClearedAfterSubmit = document.querySelectorAll('[data-testid="composer-attachment"]').length === 0;
+      checks.noAutomaticShare = (await api.listOutgoingShares()).length === 0 && (await api.listIncomingShares()).length === 0;
+      details.originalPrompt = originalPrompt;
+      details.editedPrompt = editedPrompt;
+      details.assistantText = assistant?.textContent || '';
+      return { checks, details };
+    })()
+  `, true) as SmokeResult;
+  mkdirSync(evidenceDir, { recursive: true });
+  const screenshotPath = join(evidenceDir, `c4-${scenario}-suggestion-task.png`);
+  let screenshot = await window.capturePage();
+  let blackPixelRatio = calculateBlackPixelRatio(screenshot.toBitmap());
+  for (let attempt = 1; attempt < 4 && blackPixelRatio > 0.02; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    screenshot = await window.capturePage();
+    blackPixelRatio = calculateBlackPixelRatio(screenshot.toBitmap());
+  }
+  writeFileSync(screenshotPath, screenshot.toPNG());
+  result.checks.screenshotWritten = existsSync(screenshotPath);
+  result.checks.screenshotFullyPainted = blackPixelRatio <= 0.02;
+  result.details = { ...result.details, fixturePaths, screenshotPath, blackPixelRatio };
+  result.ok = Object.values(result.checks).every(Boolean);
+  return result;
+}
+
+async function runC5MaterialConsistencySmoke(window: BrowserWindow): Promise<SmokeResult> {
+  const fixturePaths = (process.env.OPENDRSAI_E2E_C5_IMPORT_PATHS || "").split("|").filter(Boolean);
+  const evidenceDir = process.env.OPENDRSAI_E2E_C5_EVIDENCE_DIR;
+  const scenario = process.env.OPENDRSAI_E2E_C5_SCENARIO || "d4";
+  if (fixturePaths.length < 3 || !evidenceDir || fixturePaths.some((path) => !existsSync(path)) || !["d3", "d4"].includes(scenario)) {
+    throw new Error("C5 requires D3 or D4 fixtures and an evidence directory.");
+  }
+  const workspacePath = dirname(fixturePaths[0]!);
+  await createWorkspace({ source: "existing", path: workspacePath, name: `C5 ${scenario.toUpperCase()} 材料比较`, trusted: true });
+  await new Promise<void>((resolveReload, rejectReload) => {
+    const timer = setTimeout(() => rejectReload(new Error("C5 renderer reload timed out.")), 10_000);
+    window.webContents.once("did-finish-load", () => { clearTimeout(timer); resolveReload(); });
+    window.webContents.reload();
+  });
+  window.show();
+  window.focus();
+  const result = await window.webContents.executeJavaScript(`
+    (async () => {
+      const api = window.openDrSai;
+      const checks = {};
+      const details = { scenario: ${JSON.stringify(scenario)} };
+      const waitFor = async (find, timeout = 20000) => { const end = performance.now() + timeout; while (performance.now() < end) { const value = await find(); if (value) return value; await new Promise(r => setTimeout(r, 40)); } return null; };
+      checks.authenticatedProductUi = (await api.login({ developerBypass: true, rememberMe: false }))?.ok === true && Boolean(await waitFor(() => document.querySelector('.app-shell')));
+      const workspacePath = ${JSON.stringify(workspacePath)};
+      const workspace = await waitFor(() => [...document.querySelectorAll('.workspace-item')].find(item => (item.getAttribute('title') || '').includes(workspacePath)), 10000);
+      workspace?.click();
+      checks.workspaceSelected = Boolean(await waitFor(() => workspace?.closest('.workspace-row')?.classList.contains('active')));
+      document.querySelector('.composer-tools > button:first-child')?.click();
+      (await waitFor(() => document.querySelector('.composer-tool-menu button:has([data-testid="composer-add-file-label"])')))?.click();
+      const expectedFiles = ${fixturePaths.length};
+      checks.materialsVisible = Boolean(await waitFor(() => document.querySelectorAll('[data-testid="composer-attachment"]').length === expectedFiles));
+      const panel = await waitFor(() => { const node = document.querySelector('[data-testid="material-consistency-panel"]'); return node?.getAttribute('data-analysis-phase') === 'ready' ? node : null; });
+      checks.comparisonCompletes = Boolean(panel);
+      const findingNodes = panel ? [...panel.querySelectorAll('[data-testid="material-consistency-finding"]')] : [];
+      const findings = findingNodes.map(node => ({
+        id: node.getAttribute('data-finding-id'),
+        kind: node.getAttribute('data-finding-kind'),
+        title: node.querySelector('header strong')?.textContent || '',
+        text: node.textContent || '',
+        sources: [...node.querySelectorAll('[data-testid="material-consistency-source"]')].map(source => ({ name: source.getAttribute('data-source-name'), locator: source.getAttribute('data-source-locator'), text: source.textContent || '' })),
+      }));
+      details.findings = findings;
+      const requiredKinds = ${JSON.stringify({ d3: ["consensus", "source_conflict", "evidence_gap"], d4: ["consensus", "outdated_number", "chart_mismatch"] })}[${JSON.stringify(scenario)}];
+      checks.requiredFindingKinds = requiredKinds.every(kind => findings.some(item => item.kind === kind));
+      checks.noUnexpectedCriticalKind = ${JSON.stringify(scenario)} === 'd3'
+        ? !findings.some(item => item.kind === 'outdated_number' || item.kind === 'chart_mismatch')
+        : !findings.some(item => item.kind === 'source_conflict' || item.kind === 'evidence_gap');
+      checks.findingsUsePlainLanguage = findings.length >= 3 && findings.every(item => item.title && !/agent|mcp|ipc|json|tool call/i.test(item.text));
+      checks.everyFindingHasSources = findings.every(item => item.sources.length >= 1);
+      checks.everySourceHasLocation = findings.flatMap(item => item.sources).every(source => source.name && source.locator && source.text.includes(source.locator));
+      const expectedNames = ${JSON.stringify(fixturePaths.map((path) => basename(path)))};
+      checks.sourcesNotConfused = findings.flatMap(item => item.sources).every(source => expectedNames.includes(source.name));
+      checks.noLocalPathLeak = !String(panel?.textContent || '').includes(workspacePath);
+      if (${JSON.stringify(scenario)} === 'd3') {
+        const consensus = findings.find(item => item.kind === 'consensus');
+        const conflict = findings.find(item => item.kind === 'source_conflict');
+        const gap = findings.find(item => item.kind === 'evidence_gap');
+        checks.goldenConsensusFound = Boolean(consensus && /短期记忆/.test(consensus.text) && /study-a\.md/.test(consensus.text) && /study-b\.md/.test(consensus.text));
+        checks.goldenConflictFound = Boolean(conflict && /实施成本/.test(conflict.text) && /低/.test(conflict.text) && /高/.test(conflict.text) && conflict.sources.length === 2);
+        checks.goldenEvidenceGapFound = Boolean(gap && /长期稳定/.test(gap.text) && /证据不足/.test(gap.text) && /study-c\.md/.test(gap.text));
+      } else {
+        const outdated = findings.find(item => item.kind === 'outdated_number');
+        const mismatch = findings.find(item => item.kind === 'chart_mismatch');
+        const consensus = findings.find(item => item.kind === 'consensus');
+        checks.goldenOutdatedNumberFound = Boolean(outdated && /样本量/.test(outdated.text) && /100/.test(outdated.text) && /160/.test(outdated.text) && outdated.sources.length === 2);
+        checks.goldenChartMismatchFound = Boolean(mismatch && /样本量/.test(mismatch.text) && /150/.test(mismatch.text) && /160/.test(mismatch.text) && mismatch.sources.length === 2);
+        checks.goldenNumericConsensusFound = Boolean(consensus && /平均值/.test(consensus.text) && /47/.test(consensus.text) && consensus.sources.length >= 2);
+        checks.cernReferenceNotMisrepresented = !findings.some(item => item.text.includes('WLCG-20260715-WLCG-talk-IHEP-visit.pdf'));
+      }
+      const firstSource = panel?.querySelector('[data-testid="material-consistency-source"]');
+      firstSource?.click();
+      checks.sourceCanBeOpened = Boolean(await waitFor(() => document.querySelector('[data-testid="material-consistency-source-status"]')?.textContent?.includes(firstSource?.getAttribute('data-source-name') || '')));
+      const createTask = panel?.querySelector('[data-testid="material-consistency-create-task"]');
+      createTask?.click();
+      const input = await waitFor(() => { const node = document.querySelector('[data-testid="composer-input"]'); return node?.value?.includes('具体文件位置') ? node : null; });
+      checks.findingsCreateEditableTask = Boolean(input) && document.activeElement === input;
+      const original = input?.value || '';
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+      setter?.call(input, original + ' 请按风险高低排序。');
+      input?.dispatchEvent(new Event('input', { bubbles: true }));
+      checks.taskRemainsEditable = document.querySelector('[data-testid="composer-input"]')?.value?.endsWith('请按风险高低排序。') === true;
+      checks.materialsRemainAttached = document.querySelectorAll('[data-testid="composer-attachment"]').length === expectedFiles;
+      checks.noAutomaticShare = (await api.listOutgoingShares()).length === 0 && (await api.listIncomingShares()).length === 0;
+      details.summary = panel?.querySelector(':scope > p')?.textContent || '';
+      return { checks, details };
+    })()
+  `, true) as SmokeResult;
+  mkdirSync(evidenceDir, { recursive: true });
+  const screenshotPath = join(evidenceDir, `c5-${scenario}-material-consistency.png`);
+  let screenshot = await window.capturePage();
+  let blackPixelRatio = calculateBlackPixelRatio(screenshot.toBitmap());
+  for (let attempt = 1; attempt < 4 && blackPixelRatio > 0.02; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    screenshot = await window.capturePage();
+    blackPixelRatio = calculateBlackPixelRatio(screenshot.toBitmap());
+  }
+  writeFileSync(screenshotPath, screenshot.toPNG());
+  result.checks.screenshotWritten = existsSync(screenshotPath);
+  result.checks.screenshotFullyPainted = blackPixelRatio <= 0.02;
+  result.details = { ...result.details, fixturePaths, screenshotPath, blackPixelRatio };
+  result.ok = Object.values(result.checks).every(Boolean);
+  return result;
+}
+
+async function runC6MaterialQuerySmoke(window: BrowserWindow): Promise<SmokeResult> {
+  const fixturePaths = (process.env.OPENDRSAI_E2E_C6_IMPORT_PATHS || "").split("|").filter(Boolean);
+  const evidenceDir = process.env.OPENDRSAI_E2E_C6_EVIDENCE_DIR;
+  if (fixturePaths.length !== 4 || !evidenceDir || fixturePaths.some((path) => !existsSync(path))) {
+    throw new Error("C6 requires four readable fixtures and an evidence directory.");
+  }
+  const workspacePath = dirname(fixturePaths[0]!);
+  await createWorkspace({ source: "existing", path: workspacePath, name: "C6 CERN 材料问答", trusted: true });
+  await new Promise<void>((resolveReload, rejectReload) => {
+    const timer = setTimeout(() => rejectReload(new Error("C6 renderer reload timed out.")), 10_000);
+    window.webContents.once("did-finish-load", () => { clearTimeout(timer); resolveReload(); });
+    window.webContents.reload();
+  });
+  window.show();
+  window.focus();
+  const result = await window.webContents.executeJavaScript(`
+    (async () => {
+      const api = window.openDrSai;
+      const paths = ${JSON.stringify(fixturePaths)};
+      const checks = {};
+      const details = {};
+      const waitFor = async (find, timeout = 30000) => { const end = performance.now() + timeout; while (performance.now() < end) { const value = await find(); if (value) return value; await new Promise(r => setTimeout(r, 50)); } return null; };
+      checks.authenticatedProductUi = (await api.login({ developerBypass: true, rememberMe: false }))?.ok === true && Boolean(await waitFor(() => document.querySelector('.app-shell')));
+      const workspace = await waitFor(() => [...document.querySelectorAll('.workspace-item')].find(item => (item.getAttribute('title') || '').includes(${JSON.stringify(workspacePath)})), 10000);
+      workspace?.click();
+      checks.workspaceSelected = Boolean(await waitFor(() => workspace?.closest('.workspace-row')?.classList.contains('active')));
+      const goldens = [
+        { id: 'cern-title', question: 'What is the title of the CERN presentation?', expect: /Distributed computing for High Energy Physics/i, kind: 'title' },
+        { id: 'cern-minimal-bandwidth', question: 'What is the Minimal Model expected HL-LHC bandwidth?', expect: /4\\.8\\s*Tbps/i, locator: /42/ },
+        { id: 'cern-flexible-bandwidth', question: 'What is the Flexible Model expected HL-LHC bandwidth?', expect: /9\\.6\\s*Tbps/i, locator: /42/ },
+        { id: 'cern-2027-target', question: 'What is the 2027 Data Challenge target?', expect: /2027[\\s\\S]*50%|50%[\\s\\S]*2027/i, locator: /43/ },
+        { id: 'cern-2029-target', question: 'What is the 2029 Data Challenge target?', expect: /2029[\\s\\S]*100%|100%[\\s\\S]*2029/i, locator: /43/ },
+        { id: 'research-method', question: 'What research method does the memory study use?', expect: /randomized double-blind controlled experiment/i, kind: 'method' },
+        { id: 'latest-sample-size', question: 'What is the latest sample size?', expect: /160/, kind: 'numeric' },
+        { id: 'sample-size-difference', question: 'Compare the sample size difference across the old report and latest data.', expect: /100[\\s\\S]*160|160[\\s\\S]*100/, kind: 'comparison', minimumCitations: 2 },
+        { id: 'study-conclusion', question: 'What is the spaced repetition conclusion?', expect: /improved recall/i },
+        { id: 'explicit-source', question: 'In methods.md, what protocol was used?', expect: /randomized double-blind controlled experiment/i, kind: 'method' },
+        { id: 'not-found', question: 'What is the lead author birthday?', status: 'not_found' },
+      ];
+      const answers = [];
+      for (const golden of goldens) {
+        const response = await api.queryMaterials({ paths, question: golden.question });
+        const correctStatus = response.status === (golden.status || 'answered');
+        const correctAnswer = golden.status === 'not_found' ? /不会编造|not invent/i.test(response.answer) : golden.expect.test(response.answer);
+        const correctKind = !golden.kind || response.queryKind === golden.kind;
+        const correctLocator = !golden.locator || response.citations.some(item => golden.locator.test(item.locator));
+        const citationsValid = golden.status === 'not_found'
+          ? response.citations.length === 0 && !/第\\s*\\d+\\s*页|line\\s*\\d+/i.test(response.answer)
+          : response.citations.length >= (golden.minimumCitations || 1) && response.citations.every(item => item.name && item.locator && item.excerpt);
+        answers.push({ id: golden.id, correct: correctStatus && correctAnswer && correctKind && correctLocator && citationsValid, response });
+      }
+      details.answers = answers;
+      details.correct = answers.filter(item => item.correct).length;
+      details.total = answers.length;
+      details.accuracy = details.correct / details.total;
+      checks.goldenAccuracyAtLeast90 = details.accuracy >= 0.9;
+      checks.everyAnsweredResultCitesSource = answers.filter(item => item.response.status === 'answered').every(item => item.response.citations.length > 0);
+      checks.notFoundDoesNotInventLocation = answers.find(item => item.id === 'not-found')?.correct === true;
+      checks.cernAnswersKeepPageMapping = answers.filter(item => item.id.startsWith('cern-') && item.id !== 'cern-title').every(item => item.correct);
+      document.querySelector('.composer-tools > button:first-child')?.click();
+      (await waitFor(() => document.querySelector('.composer-tool-menu button:has([data-testid="composer-add-file-label"])')))?.click();
+      checks.materialsVisible = Boolean(await waitFor(() => document.querySelectorAll('[data-testid="composer-attachment"]').length === paths.length));
+      const input = await waitFor(() => document.querySelector('[data-testid="composer-input"]'));
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+      setter?.call(input, '这份 CERN 演示报告的标题是什么？');
+      input?.dispatchEvent(new Event('input', { bubbles: true }));
+      const send = await waitFor(() => { const node = document.querySelector('button.composer-submit'); return node && !node.disabled ? node : null; });
+      checks.localQuestionCanSubmitWithoutGateway = Boolean(send);
+      send?.click();
+      const assistant = await waitFor(() => [...document.querySelectorAll('.message.assistant')].find(node => /Distributed computing for High Energy Physics/i.test(node.textContent || '') && /来源|Sources/.test(node.textContent || '')), 35000);
+      const assistantText = assistant?.textContent || '';
+      checks.chatShowsAnswer = /Distributed computing for High Energy Physics/i.test(assistantText);
+      checks.chatShowsSourceFile = /WLCG-20260715-WLCG-talk-IHEP-visit\\.pdf/i.test(assistantText);
+      checks.chatShowsSourceLocation = /第\\s*1\\s*页|page\\s*1/i.test(assistantText);
+      checks.materialsClearedAfterSubmit = document.querySelectorAll('[data-testid="composer-attachment"]').length === 0;
+      checks.noAutomaticShare = (await api.listOutgoingShares()).length === 0 && (await api.listIncomingShares()).length === 0;
+      details.assistantText = assistantText;
+      return { checks, details };
+    })()
+  `, true) as SmokeResult;
+  mkdirSync(evidenceDir, { recursive: true });
+  const screenshotPath = join(evidenceDir, "c6-material-query.png");
+  let screenshot = await window.capturePage();
+  let blackPixelRatio = calculateBlackPixelRatio(screenshot.toBitmap());
+  for (let attempt = 1; attempt < 4 && blackPixelRatio > 0.02; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    screenshot = await window.capturePage();
+    blackPixelRatio = calculateBlackPixelRatio(screenshot.toBitmap());
+  }
+  writeFileSync(screenshotPath, screenshot.toPNG());
+  result.checks.screenshotWritten = existsSync(screenshotPath);
+  result.checks.screenshotFullyPainted = blackPixelRatio <= 0.02;
+  result.details = { ...result.details, fixturePaths, screenshotPath, blackPixelRatio };
+  result.ok = Object.values(result.checks).every(Boolean);
+  return result;
+}
+
+async function runC7AbnormalFilesSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  const fixturePaths = (process.env.OPENDRSAI_E2E_C7_IMPORT_PATHS || "").split("|").filter(Boolean);
+  const evidenceDir = process.env.OPENDRSAI_E2E_C7_EVIDENCE_DIR;
+  if (fixturePaths.length !== 5 || !evidenceDir || fixturePaths.some((path) => !existsSync(path))) {
+    throw new Error("C7 requires five readable fixture paths and an evidence directory.");
+  }
+  const workspacePath = dirname(fixturePaths[0]!);
+  await createWorkspace({ source: "existing", path: workspacePath, name: "C7 异常文件恢复", trusted: true });
+  await new Promise<void>((resolveReload, rejectReload) => {
+    const timer = setTimeout(() => rejectReload(new Error("C7 renderer reload timed out.")), 10_000);
+    window.webContents.once("did-finish-load", () => { clearTimeout(timer); resolveReload(); });
+    window.webContents.reload();
+  });
+  window.show();
+  window.focus();
+  const result = await window.webContents.executeJavaScript(`
+    (async () => {
+      const api = window.openDrSai;
+      const checks = {};
+      const details = {};
+      const waitFor = async (find, timeout = 60000) => { const end = performance.now() + timeout; while (performance.now() < end) { const value = await find(); if (value) return value; await new Promise(r => setTimeout(r, 50)); } return null; };
+      checks.authenticatedProductUi = (await api.login({ developerBypass: true, rememberMe: false }))?.ok === true && Boolean(await waitFor(() => document.querySelector('.app-shell')));
+      const workspace = await waitFor(() => [...document.querySelectorAll('.workspace-item')].find(item => (item.getAttribute('title') || '').includes(${JSON.stringify(workspacePath)})), 10000);
+      workspace?.click();
+      checks.workspaceSelected = Boolean(await waitFor(() => workspace?.closest('.workspace-row')?.classList.contains('active')));
+      const started = performance.now();
+      document.querySelector('.composer-tools > button:first-child')?.click();
+      (await waitFor(() => document.querySelector('.composer-tool-menu button:has([data-testid="composer-add-file-label"])'), 5000))?.click();
+      const nodes = await waitFor(() => { const items = [...document.querySelectorAll('[data-testid="composer-attachment"]')]; return items.length === 5 ? items : null; });
+      details.importFeedbackMs = performance.now() - started;
+      checks.statusWithin60Seconds = Boolean(nodes) && details.importFeedbackMs < 60000;
+      const records = (nodes || []).map(node => ({
+        name: node.querySelector('strong')?.textContent || '',
+        status: node.getAttribute('data-import-status'),
+        diagnostic: node.getAttribute('data-diagnostic-code'),
+        mode: node.getAttribute('data-processing-mode'),
+        message: node.querySelector('[data-testid="composer-file-status-message"]')?.textContent || '',
+        action: node.querySelector('[data-testid="composer-file-recovery-action"]')?.textContent || '',
+        text: node.textContent || '',
+      }));
+      details.records = records;
+      const byDiagnostic = code => records.find(item => item.diagnostic === code);
+      const large = byDiagnostic('large_file');
+      const corrupt = byDiagnostic('corrupt_file');
+      const password = byDiagnostic('password_protected');
+      const unsupported = byDiagnostic('unsupported_format');
+      const cern = records.find(item => /WLCG-20260715/.test(item.name));
+      checks.largeFileUsesBoundedReading = Boolean(large && large.status === 'ready' && large.mode === 'bounded' && /大文件/.test(large.message) && /继续|拆分/.test(large.action));
+      checks.corruptFileExplainsCauseAndRecovery = Boolean(corrupt && corrupt.status === 'unreadable' && corrupt.mode === 'blocked' && /损坏|不完整/.test(corrupt.message) && /重新下载|另存/.test(corrupt.action));
+      checks.passwordFileExplainsCauseAndRecovery = Boolean(password && password.status === 'unreadable' && password.mode === 'blocked' && /密码保护/.test(password.message) && /密码|不加密/.test(password.action));
+      checks.unknownFormatExplainsCauseAndRecovery = Boolean(unsupported && unsupported.status === 'unsupported' && unsupported.mode === 'blocked' && /不支持/.test(unsupported.message) && /转换/.test(unsupported.action));
+      checks.cernBaselineStillReady = Boolean(cern && cern.status === 'ready' && cern.mode === 'full');
+      checks.everyAbnormalFileHasVisibleGuidance = [large, corrupt, password, unsupported].every(item => item?.message && item?.action);
+      checks.failedFilesIsolated = records.filter(item => item.status !== 'ready').length === 3 && records.filter(item => item.status === 'ready').length === 2;
+      const input = document.querySelector('[data-testid="composer-input"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+      setter?.call(input, '系统现在拥有哪些材料？');
+      input?.dispatchEvent(new Event('input', { bubbles: true }));
+      const send = await waitFor(() => { const node = document.querySelector('button.composer-submit'); return node && !node.disabled ? node : null; }, 10000);
+      checks.remainingFilesCanSubmit = Boolean(send);
+      send?.click();
+      const assistant = await waitFor(() => [...document.querySelectorAll('.message.assistant')].find(node => /2 项材料|2 materials/i.test(node.textContent || '')), 30000);
+      checks.taskDoesNotRemainStuck = Boolean(assistant) && !assistant?.classList.contains('streaming');
+      checks.attachmentsClearAfterRecovery = document.querySelectorAll('[data-testid="composer-attachment"]').length === 0;
+      checks.appRemainsResponsive = Boolean(document.querySelector('.app-shell')) && document.querySelector('[data-testid="composer-input"]')?.disabled !== true;
+      checks.noAutomaticShare = (await api.listOutgoingShares()).length === 0 && (await api.listIncomingShares()).length === 0;
+      details.assistantText = assistant?.textContent || '';
+      return { checks, details };
+    })()
+  `, true) as SmokeResult;
+  mkdirSync(evidenceDir, { recursive: true });
+  const screenshotPath = join(evidenceDir, "c7-abnormal-files.png");
+  let screenshot = await window.capturePage();
+  let blackPixelRatio = calculateBlackPixelRatio(screenshot.toBitmap());
+  for (let attempt = 1; attempt < 4 && blackPixelRatio > 0.02; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    screenshot = await window.capturePage();
+    blackPixelRatio = calculateBlackPixelRatio(screenshot.toBitmap());
+  }
+  writeFileSync(screenshotPath, screenshot.toPNG());
+  result.checks.screenshotWritten = existsSync(screenshotPath);
+  result.checks.screenshotFullyPainted = blackPixelRatio <= 0.02;
+  result.details = { ...result.details, fixturePaths, screenshotPath, blackPixelRatio };
+  result.ok = Object.values(result.checks).every(Boolean);
+  return result;
+}
+
+async function runC8ChinesePrivacySmoke(window: BrowserWindow): Promise<SmokeResult> {
+  const fixturePaths = (process.env.OPENDRSAI_E2E_C8_IMPORT_PATHS || "").split("|").filter(Boolean);
+  const evidenceDir = process.env.OPENDRSAI_E2E_C8_EVIDENCE_DIR;
+  let sensitiveValues: string[] = [];
+  try { sensitiveValues = JSON.parse(process.env.OPENDRSAI_E2E_C8_SENSITIVE_VALUES || "[]") as string[]; } catch { sensitiveValues = []; }
+  if (fixturePaths.length !== 3 || !evidenceDir || sensitiveValues.length !== 4 || fixturePaths.some((path) => !existsSync(path))) {
+    throw new Error("C8 requires three D5/D7 fixtures, four sensitive values, and an evidence directory.");
+  }
+  const workspacePath = dirname(fixturePaths[0]!);
+  const notificationsBefore = getCompletionNotificationDiagnostics().length;
+  await createWorkspace({ source: "existing", path: workspacePath, name: "C8 中文路径 隐私材料", trusted: true });
+  await new Promise<void>((resolveReload, rejectReload) => {
+    const timer = setTimeout(() => rejectReload(new Error("C8 renderer reload timed out.")), 10_000);
+    window.webContents.once("did-finish-load", () => { clearTimeout(timer); resolveReload(); });
+    window.webContents.reload();
+  });
+  window.show();
+  window.focus();
+  const result = await window.webContents.executeJavaScript(`
+    (async () => {
+      const api = window.openDrSai;
+      const paths = ${JSON.stringify(fixturePaths)};
+      const secrets = ${JSON.stringify(sensitiveValues)};
+      const checks = {};
+      const details = {};
+      const waitFor = async (find, timeout = 30000) => { const end = performance.now() + timeout; while (performance.now() < end) { const value = await find(); if (value) return value; await new Promise(r => setTimeout(r, 50)); } return null; };
+      let stage = 'login';
+      try {
+      checks.authenticatedProductUi = (await api.login({ developerBypass: true, rememberMe: false }))?.ok === true && Boolean(await waitFor(() => document.querySelector('.app-shell')));
+      const workspace = await waitFor(() => [...document.querySelectorAll('.workspace-item')].find(item => (item.getAttribute('title') || '').includes(${JSON.stringify(workspacePath)})), 10000);
+      workspace?.click();
+      checks.workspaceSelected = Boolean(await waitFor(() => workspace?.closest('.workspace-row')?.classList.contains('active')));
+      document.querySelector('.composer-tools > button:first-child')?.click();
+      (await waitFor(() => document.querySelector('.composer-tool-menu button:has([data-testid="composer-add-file-label"])'), 5000))?.click();
+      const nodes = await waitFor(() => { const items = [...document.querySelectorAll('[data-testid="composer-attachment"]')]; return items.length === 3 ? items : null; });
+      const records = (nodes || []).map(node => ({ name: node.querySelector('strong')?.textContent || '', status: node.getAttribute('data-import-status'), sensitive: node.getAttribute('data-sensitive-detected'), kinds: node.getAttribute('data-sensitive-kinds') || '', count: Number(node.getAttribute('data-sensitive-count') || 0), privacy: node.querySelector('[data-testid="composer-file-privacy-notice"]')?.textContent || '', text: node.textContent || '' }));
+      details.records = records;
+      const expectedNames = paths.map(path => path.replaceAll('\\\\', '/').split('/').pop());
+      checks.chineseAndSpaceNamesVisible = expectedNames.every(name => records.some(item => item.name === name));
+      checks.allChinesePathFilesReady = records.length === 3 && records.every(item => item.status === 'ready');
+      const privateMaterial = records.find(item => item.name === expectedNames[0]);
+      checks.sensitiveKindsDetectedWithoutValues = Boolean(privateMaterial && privateMaterial.sensitive === 'true' && privateMaterial.count === 4 && ['api_key','email','phone','user_secret'].every(kind => privateMaterial.kinds.includes(kind)));
+      checks.visiblePrivacyNotice = Boolean(privateMaterial && privateMaterial.privacy.includes('4') && privateMaterial.privacy.includes('\u654f\u611f') && privateMaterial.privacy.includes('\u539f\u503c') && privateMaterial.privacy.includes('\u5206\u4eab'));
+      checks.unrelatedInterfaceHasNoRawSecrets = secrets.every(secret => !document.body.textContent.includes(secret));
+      stage = 'preview-files';
+      const previews = await Promise.all(paths.map(path => api.previewWorkspaceFile({ workspacePath: ${JSON.stringify(workspacePath)}, path, maxBytes: 150000 })));
+      checks.d5ImageReadable = previews.some(preview => preview.kind === 'image' && (preview.dataUrl || '').startsWith('data:image/'));
+      checks.d7TextReadable = previews.some(preview => (preview.kind === 'text' || preview.kind === 'markdown') && secrets.every(secret => (preview.content || '').includes(secret)));
+      checks.cernChinesePathReadable = previews.some(preview => preview.kind === 'pdf' && /PDF type: presentation_pdf/.test(preview.content || '') && /Pages: 48/.test(preview.content || ''));
+      checks.noAutomaticShareAfterImport = (await api.listOutgoingShares()).length === 0 && (await api.listIncomingShares()).length === 0;
+      stage = 'submit-inventory';
+      const input = document.querySelector('[data-testid="composer-input"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+      setter?.call(input, '\u7cfb\u7edf\u73b0\u5728\u62e5\u6709\u54ea\u4e9b\u6750\u6599\uff1f');
+      input?.dispatchEvent(new Event('input', { bubbles: true }));
+      const send = await waitFor(() => { const node = document.querySelector('button.composer-submit'); return node && !node.disabled ? node : null; }, 10000);
+      checks.localInventoryCanSubmit = Boolean(send);
+      send?.click();
+      const assistant = await waitFor(() => [...document.querySelectorAll('.message.assistant')].find(node => (node.textContent || '').includes('3') && ((node.textContent || '').includes('\u6750\u6599') || /materials/i.test(node.textContent || ''))), 30000);
+      const assistantText = assistant?.textContent || '';
+      checks.materialUseDoesNotExposeSecrets = Boolean(assistant) && secrets.every(secret => !assistantText.includes(secret)) && secrets.every(secret => !document.body.textContent.includes(secret));
+      checks.noAutomaticShareAfterUse = (await api.listOutgoingShares()).length === 0 && (await api.listIncomingShares()).length === 0;
+      checks.attachmentsCleared = document.querySelectorAll('[data-testid="composer-attachment"]').length === 0;
+      details.assistantText = assistantText;
+      return { checks, details };
+      } catch (error) {
+        return { checks, details: { ...details, failedStage: stage }, error: error instanceof Error ? error.stack || error.message : String(error) };
+      }
+    })()
+  `, true) as SmokeResult;
+  const notificationsAfter = getCompletionNotificationDiagnostics();
+  result.checks.importAndUseCreateNoNotification = notificationsAfter.length === notificationsBefore;
+  result.checks.notificationDiagnosticsSecretFree = sensitiveValues.every((secret) => !JSON.stringify(notificationsAfter).includes(secret));
+  mkdirSync(evidenceDir, { recursive: true });
+  const screenshotPath = join(evidenceDir, "c8-chinese-privacy.png");
+  let screenshot = await window.capturePage();
+  let blackPixelRatio = calculateBlackPixelRatio(screenshot.toBitmap());
+  for (let attempt = 1; attempt < 4 && blackPixelRatio > 0.02; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    screenshot = await window.capturePage();
+    blackPixelRatio = calculateBlackPixelRatio(screenshot.toBitmap());
+  }
+  writeFileSync(screenshotPath, screenshot.toPNG());
+  result.checks.screenshotWritten = existsSync(screenshotPath);
+  result.checks.screenshotFullyPainted = blackPixelRatio <= 0.02;
+  result.details = { ...result.details, fixturePaths, screenshotPath, blackPixelRatio, notificationCount: notificationsAfter.length };
+  result.ok = Object.values(result.checks).every(Boolean);
+  return result;
+}
+
+async function runF1LowRiskApprovalSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  const fixturePath = process.env.OPENDRSAI_E2E_F1_CERN_PDF;
+  const evidenceDir = process.env.OPENDRSAI_E2E_F1_EVIDENCE_DIR;
+  if (!fixturePath || !evidenceDir || !existsSync(fixturePath)) {
+    throw new Error("F1 requires the fixed CERN PDF and an evidence directory.");
+  }
+  const workspacePath = dirname(fixturePath);
+  await createWorkspace({ source: "existing", path: workspacePath, name: "F1 CERN 低风险任务", trusted: true });
+  await new Promise<void>((resolveReload, rejectReload) => {
+    const timer = setTimeout(() => rejectReload(new Error("F1 renderer reload timed out.")), 10_000);
+    window.webContents.once("did-finish-load", () => { clearTimeout(timer); resolveReload(); });
+    window.webContents.reload();
+  });
+  window.show();
+  window.focus();
+
+  const result = await window.webContents.executeJavaScript(`
+    (async () => {
+      const api = window.openDrSai;
+      const fixturePath = ${JSON.stringify(fixturePath)};
+      const workspacePath = ${JSON.stringify(workspacePath)};
+      const checks = { bridgeAvailable: Boolean(api) };
+      const details = { lowRiskOperations: [], approvalSamples: [], policyControl: null, presentation: null };
+      if (!api) return { checks, details };
+      const waitFor = async (find, timeout = 15000) => { const deadline = Date.now() + timeout; while (Date.now() < deadline) { const value = await find(); if (value) return value; await new Promise(resolve => setTimeout(resolve, 50)); } return null; };
+      try {
+        checks.login = (await api.login({ developerBypass: true, rememberMe: false }))?.ok === true;
+        checks.productUiReady = Boolean(await waitFor(() => document.querySelector('.app-shell')));
+        const workspace = await waitFor(() => [...document.querySelectorAll('.workspace-item')].find(item => (item.getAttribute('title') || '').includes(workspacePath)), 10000);
+        workspace?.click();
+        checks.workspaceSelected = Boolean(await waitFor(() => workspace?.closest('.workspace-row')?.classList.contains('active')));
+        checks.cleanApprovalBaseline = (await api.listPendingApprovals()).length === 0 && (await api.listPendingBrowserTaskApprovals()).length === 0;
+
+        let maximumDesktopApprovals = 0;
+        let maximumBrowserApprovals = 0;
+        const runWithoutApproval = async (id, operation) => {
+          let monitoring = true;
+          const startedAt = performance.now();
+          const monitor = (async () => {
+            while (monitoring) {
+              const desktop = await api.listPendingApprovals();
+              const browser = await api.listPendingBrowserTaskApprovals();
+              maximumDesktopApprovals = Math.max(maximumDesktopApprovals, desktop.length);
+              maximumBrowserApprovals = Math.max(maximumBrowserApprovals, browser.length);
+              details.approvalSamples.push({ id, elapsedMs: performance.now() - startedAt, desktop: desktop.map(item => ({ source: item.source, actionKind: item.actionKind, risk: item.risk })), browser: browser.length });
+              await new Promise(resolve => setTimeout(resolve, 25));
+            }
+          })();
+          try {
+            const value = await operation();
+            details.lowRiskOperations.push({ id, elapsedMs: performance.now() - startedAt, approvalWaitMs: 0 });
+            return value;
+          } finally {
+            monitoring = false;
+            await monitor;
+          }
+        };
+
+        const g1 = await runWithoutApproval('G1-material-read', () => api.previewWorkspaceFile({ workspacePath, path: fixturePath, maxBytes: 180000 }));
+        checks.g1SelectedMaterialRead = g1.kind === 'pdf' && /presentation_pdf/.test(g1.content || '') && /Pages: 48/.test(g1.content || '');
+        const g2 = await runWithoutApproval('G2-analysis', () => api.queryMaterials({ paths: [fixturePath], question: 'What are the Minimal and Flexible Model expected HL-LHC bandwidth values?' }));
+        checks.g2AnalysisCompleted = g2.status === 'answered' && /4\\.8\\s*Tbps/i.test(g2.answer) && /9\\.6\\s*Tbps/i.test(g2.answer) && g2.citations.length >= 1;
+        const g3 = await runWithoutApproval('G3-synthesis', () => api.queryMaterials({ paths: [fixturePath], question: 'Synthesize the 2027 and 2029 Data Challenge targets and cite the source.' }));
+        checks.g3SynthesisCompleted = g3.status === 'answered' && /2027[\\s\\S]*50%|50%[\\s\\S]*2027/i.test(g3.answer) && /2029[\\s\\S]*100%|100%[\\s\\S]*2029/i.test(g3.answer) && g3.citations.length >= 1;
+        const requestId = 'f1-cern-draft-' + Date.now();
+        const g4 = await runWithoutApproval('G4-draft-generation', () => api.generateManagerPresentation({ requestId, workspacePath, sourcePath: fixturePath, audience: 'non_expert_managers', requirements: ['Generate an editable mentor-facing draft; keep source pages and speaker notes.'] }));
+        details.presentation = { outputPath: g4.outputPath, manifestPath: g4.manifestPath, slideCount: g4.slideCount, speakerNotesCoverage: g4.speakerNotesCoverage, sourcePageCoverage: g4.sourcePageCoverage };
+        checks.g4DraftGenerated = g4.slideCount >= 6 && g4.slideCount <= 12 && g4.speakerNotesCoverage === 1 && g4.sourcePageCoverage === 1;
+
+        await runWithoutApproval('internal-context-refresh', async () => { await api.getWorkspaceContextOverview(workspacePath); await api.listWorkspaceFiles({ path: workspacePath, maxDepth: 2, maxEntries: 100 }); return true; });
+        const lowRiskPending = await api.listPendingApprovals();
+        const lowRiskBrowserPending = await api.listPendingBrowserTaskApprovals();
+        const tasks = await api.listBackgroundTasks({ workspacePath });
+        checks.lowRiskApprovalCountZero = maximumDesktopApprovals === 0 && lowRiskPending.length === 0;
+        checks.lowRiskBrowserApprovalCountZero = maximumBrowserApprovals === 0 && lowRiskBrowserPending.length === 0;
+        checks.internalOperationsDoNotBlock = !tasks.some(task => task.status === 'waiting_approval') && !document.querySelector('.approval-center-view');
+        checks.lowRiskApprovalWaitZero = details.lowRiskOperations.every(item => item.approvalWaitMs === 0);
+
+        const invalid = await api.proposeApproval({ source: 'network', actionKind: 'workflow.run', title: 'Invalid policy pair', detail: 'Must be rejected before entering the queue.', risk: 'high', idempotencyKey: 'f1-invalid-' + Date.now() });
+        checks.nonPolicySourceActionBlocked = invalid.blocked === true && invalid.queued === false;
+        const control = await api.proposeApproval({ source: 'workflow', actionKind: 'workflow.run', title: 'F1 critical action control', detail: 'This high-risk control proves that only a policy-listed key action interrupts the user.', target: 'CERN manager draft', scope: 'current workspace', impact: 'Would start a reviewed external workflow.', risk: 'high', idempotencyKey: 'f1-control-' + Date.now() });
+        const pendingControl = await api.listPendingApprovals();
+        details.policyControl = { proposal: control, pending: pendingControl.map(item => ({ id: item.id, source: item.source, actionKind: item.actionKind, risk: item.risk })) };
+        checks.keyActionQueuesExactlyOneApproval = control.queued === true && pendingControl.length === 1 && pendingControl[0]?.id === control.approval?.id;
+        checks.approvalMatchesPolicyTable = pendingControl[0]?.source === 'workflow' && pendingControl[0]?.actionKind === 'workflow.run' && pendingControl[0]?.risk === 'high';
+        window.dispatchEvent(new Event('drsai:e2e-open-approval-center'));
+        const controlCard = await waitFor(() => [...document.querySelectorAll('article')].find(node => (node.textContent || '').includes('F1 critical action control')), 10000);
+        checks.keyActionApprovalVisible = Boolean(controlCard && /CERN manager draft/.test(controlCard.textContent || '') && /current workspace/.test(controlCard.textContent || ''));
+        checks.rejectControl = Boolean(control.approval?.id && await api.decideApproval({ id: control.approval.id, approved: false, reason: 'reject' }));
+        checks.queueClearedAfterReject = (await api.listPendingApprovals()).length === 0;
+        checks.noUnauthorizedShare = (await api.listOutgoingShares()).length === 0 && (await api.listIncomingShares()).length === 0;
+        details.maximumDesktopApprovalsDuringLowRisk = maximumDesktopApprovals;
+        details.maximumBrowserApprovalsDuringLowRisk = maximumBrowserApprovals;
+        return { checks, details };
+      } catch (error) {
+        return { checks, details, error: error instanceof Error ? error.stack || error.message : String(error) };
+      }
+    })()
+  `, true) as SmokeResult;
+
+  const presentation = result.details.presentation as { outputPath?: string; manifestPath?: string } | null;
+  const outputPath = presentation?.outputPath;
+  const manifestPath = presentation?.manifestPath;
+  result.checks.generatedDraftFileReadable = Boolean(outputPath && existsSync(outputPath) && readFileSync(outputPath).length > 10_000);
+  result.checks.generatedManifestReadable = Boolean(manifestPath && existsSync(manifestPath));
+  if (manifestPath && existsSync(manifestPath)) {
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { source?: { sha256?: string } };
+    result.checks.generatedDraftUsesFixedCernSource = manifest.source?.sha256 === "F6581E1A255B354667188B41B874B996A300F88BB48912721BC1C854183E913E";
+  } else {
+    result.checks.generatedDraftUsesFixedCernSource = false;
+  }
+  const sourceBytes = readFileSync(fixturePath);
+  result.checks.cernFixtureSize = sourceBytes.length === 7_664_262;
+  result.checks.cernFixtureSha256 = (await import("crypto")).createHash("sha256").update(sourceBytes).digest("hex").toUpperCase() === "F6581E1A255B354667188B41B874B996A300F88BB48912721BC1C854183E913E";
+  mkdirSync(evidenceDir, { recursive: true });
+  const screenshotPath = join(evidenceDir, "f1-low-risk-approval.png");
+  const screenshot = await window.capturePage();
+  writeFileSync(screenshotPath, screenshot.toPNG());
+  result.checks.screenshotWritten = existsSync(screenshotPath);
+  result.checks.screenshotFullyPainted = calculateBlackPixelRatio(screenshot.toBitmap()) <= 0.02;
+  result.details = { ...result.details, fixturePath, screenshotPath };
+  result.ok = !result.error && Object.values(result.checks).every(Boolean);
+  return result;
+}
+
+function calculateBlackPixelRatio(bitmap: Buffer): number {
+  if (bitmap.length < 4) return 1;
+  let black = 0;
+  let sampled = 0;
+  for (let offset = 0; offset + 3 < bitmap.length; offset += 64) {
+    sampled += 1;
+    if (bitmap[offset]! < 4 && bitmap[offset + 1]! < 4 && bitmap[offset + 2]! < 4 && bitmap[offset + 3]! > 240) black += 1;
+  }
+  return sampled ? black / sampled : 1;
+}
+
+async function runM10DataCleanupSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  const fixturePath = process.env.OPENDRSAI_E2E_M10_CERN_PDF;
+  const companionPath = process.env.OPENDRSAI_E2E_M10_USER_REPORT;
+  const evidenceDir = process.env.OPENDRSAI_E2E_M10_EVIDENCE_DIR;
+  if (!fixturePath || !companionPath || !evidenceDir || !existsSync(fixturePath) || !existsSync(companionPath)) {
+    throw new Error("M10 requires the fixed CERN PDF, a user-owned report, and an evidence directory.");
+  }
+  const workspacePath = dirname(fixturePath);
+  await createWorkspace({ source: "existing", path: workspacePath, name: "M10 CERN 用户材料", trusted: true });
+  await new Promise<void>((resolveReload, rejectReload) => {
+    const timer = setTimeout(() => rejectReload(new Error("M10 renderer reload timed out.")), 10_000);
+    window.webContents.once("did-finish-load", () => { clearTimeout(timer); resolveReload(); });
+    window.webContents.reload();
+  });
+  window.show();
+  window.focus();
+
+  const phaseOne = await window.webContents.executeJavaScript(`
+    (async () => {
+      const api = window.openDrSai;
+      const checks = {};
+      const waitFor = async (find, timeout = 15000) => { const end = performance.now() + timeout; while (performance.now() < end) { const value = await find(); if (value) return value; await new Promise(r => setTimeout(r, 50)); } return null; };
+      const click = async (selector) => { const el = await waitFor(() => document.querySelector(selector)); el?.click(); return el; };
+      const login = await api.login({ developerBypass: true, rememberMe: false });
+      checks.authenticatedProductUi = login?.ok === true && Boolean(await waitFor(() => document.querySelector('.app-shell')));
+      const workspacePath = ${JSON.stringify(workspacePath)};
+      await api.createThread({ kind: 'chat', title: 'M10 CERN cleanup session', workspacePath });
+      await api.addProjectMemory({ workspacePath, content: 'M10 CERN project memory', source: 'manual' });
+      await api.upsertUserPreference({ category: 'report_format', value: 'presentation', source: 'explicit_user_request' });
+      await api.enqueueBackgroundTask({ kind: 'presentation_generation', source: 'presentation', title: 'M10 CERN report task', workspacePath, targetId: 'm10-cern-report', status: 'completed', progress: 100, message: 'User-owned report remains in the workspace.', verification: 'CERN source is pinned.', deliverySummary: { findingSummary: 'CERN report is ready.', importance: 'high', importanceReason: 'M10 cleanup acceptance.', suggestedAction: 'Preserve the user result.', workSummary: 'Prepared from the fixed CERN PDF.', coreConclusion: 'Application cleanup must not delete user materials.', verification: 'Source and report hashes are pinned.', remainingRisks: 'None.', completionCriteria: { passed: ['Report exists'], incomplete: [] }, artifacts: [{ id: 'm10-user-report', label: 'CERN user report', path: ${JSON.stringify(companionPath)}, kind: 'presentation' }] } });
+      const before = { threads: (await api.listThreads()).length, workspaces: (await api.listWorkspaces()).length, memories: (await api.listProjectMemory({ workspacePath, limit: 20 })).length, preferences: (await api.listUserPreferences()).length, tasks: (await api.listBackgroundTasks()).length };
+      checks.applicationDataSeeded = Object.values(before).every(value => value > 0);
+      await click('[data-testid=user-menu-button]');
+      await click('[data-testid=user-menu-settings]');
+      await click('[data-testid=settings-pane-other]');
+      const boundary = await waitFor(() => document.querySelector('[data-testid=data-cleanup-boundary]'));
+      const boundaryText = boundary?.textContent || '';
+      checks.clearBoundaryVisible = Boolean(boundary) && /应用数据/.test(boundaryText) && /用户原始材料/.test(boundaryText) && /PDF/.test(boundaryText) && /PPT/.test(boundaryText) && /卸载/.test(boundaryText) && /不会删除/.test(boundaryText);
+      await click('[data-testid=clear-session-data]');
+      const dialog = await waitFor(() => document.querySelector('[data-testid=data-cleanup-dialog][data-scope=sessions]'));
+      checks.sessionPreviewExplicit = Boolean(dialog) && /会话/.test(dialog.textContent || '') && /不会删除/.test(dialog.textContent || '') && /1 个工作区/.test(dialog.textContent || '');
+      await click('[data-testid=data-cleanup-confirm]');
+      checks.sessionClearReported = Boolean(await waitFor(() => document.querySelector('[data-testid=data-cleanup-status]')));
+      return { checks, before };
+    })()
+  `, true) as { checks: Record<string, boolean>; before: Record<string, number> };
+
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  const phaseTwo = await window.webContents.executeJavaScript(`
+    (async () => {
+      const api = window.openDrSai;
+      const checks = {};
+      const waitFor = async (find, timeout = 15000) => { const end = performance.now() + timeout; while (performance.now() < end) { const value = await find(); if (value) return value; await new Promise(r => setTimeout(r, 50)); } return null; };
+      const click = async (selector) => { const el = await waitFor(() => document.querySelector(selector)); el?.click(); return el; };
+      const workspacePath = ${JSON.stringify(workspacePath)};
+      checks.sessionsRemovedOnly = (await api.listThreads()).length === 0;
+      checks.workspaceRegistrationPreservedAfterSessionClear = (await api.listWorkspaces()).some(item => item.path === workspacePath);
+      checks.memoryPreservedAfterSessionClear = (await api.listProjectMemory({ workspacePath, limit: 20 })).length > 0;
+      checks.preferencesPreservedAfterSessionClear = (await api.listUserPreferences()).length > 0;
+      checks.tasksPreservedAfterSessionClear = (await api.listBackgroundTasks()).some(item => item.targetId === 'm10-cern-report');
+      await click('[data-testid=user-menu-button]');
+      await click('[data-testid=user-menu-settings]');
+      await click('[data-testid=settings-pane-other]');
+      await click('[data-testid=clear-all-local-data]');
+      const dialog = await waitFor(() => document.querySelector('[data-testid=data-cleanup-dialog][data-scope=all_local_data]'));
+      const categories = dialog?.querySelectorAll('[data-testid=data-cleanup-categories] li').length || 0;
+      const confirm = dialog?.querySelector('[data-testid=data-cleanup-confirm]');
+      checks.fullPreviewHasSixCategories = categories === 6;
+      checks.fullClearRequiresPhrase = Boolean(confirm?.disabled);
+      checks.fullPreviewProtectsUserFiles = /不会删除/.test(dialog?.textContent || '') && /PDF/.test(dialog?.textContent || '') && /PPT/.test(dialog?.textContent || '');
+      const input = dialog?.querySelector('[data-testid=data-cleanup-confirmation]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter?.call(input, '清除');
+      input?.dispatchEvent(new Event('input', { bubbles: true }));
+      input?.dispatchEvent(new Event('change', { bubbles: true }));
+      await new Promise(r => setTimeout(r, 100));
+      checks.fullClearEnabledAfterPhrase = !dialog?.querySelector('[data-testid=data-cleanup-confirm]')?.disabled;
+      return { checks, categories };
+    })()
+  `, true) as { checks: Record<string, boolean>; categories: number };
+
+  mkdirSync(evidenceDir, { recursive: true });
+  const confirmationScreenshot = join(evidenceDir, "m10-full-cleanup-confirmation.png");
+  writeFileSync(confirmationScreenshot, await window.capturePage().then((image) => image.toPNG()));
+
+  const phaseThree = await window.webContents.executeJavaScript(`
+    (async () => {
+      const waitFor = async (find, timeout = 15000) => { const end = performance.now() + timeout; while (performance.now() < end) { const value = await find(); if (value) return value; await new Promise(r => setTimeout(r, 50)); } return null; };
+      document.querySelector('[data-testid=data-cleanup-confirm]')?.click();
+      const login = await waitFor(() => document.querySelector('.login-screen'));
+      return { signedOutAfterFullClear: Boolean(login), rendererStorageCleared: localStorage.length === 0 && sessionStorage.length === 0 };
+    })()
+  `, true) as Record<string, boolean>;
+
+  const checks = {
+    ...phaseOne.checks,
+    ...phaseTwo.checks,
+    ...phaseThree,
+    cernPdfStillExists: existsSync(fixturePath),
+    userReportStillExists: existsSync(companionPath),
+    confirmationScreenshotWritten: existsSync(confirmationScreenshot),
+  };
+  return { ok: Object.values(checks).every(Boolean), checks, details: { fixturePath, companionPath, confirmationScreenshot, before: phaseOne.before, categoryCount: phaseTwo.categories } };
+}
+
+async function runM8RecoverySmoke(window: BrowserWindow): Promise<SmokeResult> {
+  const fixturePath = process.env.OPENDRSAI_E2E_M8_CERN_PDF;
+  const injectedKind = process.env.OPENDRSAI_E2E_M8_FAILURE_KIND || "";
+  const expectedKinds: Record<string, string> = { service_unavailable: "external_service", disk_full: "disk_full", permission_denied: "permission_denied", file_busy: "file_busy", model_timeout: "model_timeout" };
+  if (!fixturePath || !existsSync(fixturePath) || !expectedKinds[injectedKind]) throw new Error("M8 requires a fixed CERN PDF and a known failure kind.");
+  const workspacePath = dirname(fixturePath);
+  await createWorkspace({ source: "existing", path: workspacePath, name: `M8 ${injectedKind} recovery`, trusted: true });
+  await new Promise<void>((resolveReload, rejectReload) => {
+    const timer = setTimeout(() => rejectReload(new Error("M8 renderer reload timed out.")), 10_000);
+    window.webContents.once("did-finish-load", () => { clearTimeout(timer); resolveReload(); });
+    window.webContents.reload();
+  });
+  window.show();
+  window.focus();
+
+  const result = await window.webContents.executeJavaScript(`
+    (async () => {
+      const api = window.openDrSai;
+      const checks = {};
+      const details = { injectedKind: ${JSON.stringify(injectedKind)}, expectedKind: ${JSON.stringify(expectedKinds[injectedKind])} };
+      const waitFor = async (find, timeout = 45000) => { const deadline = performance.now() + timeout; while (performance.now() < deadline) { const value = await find(); if (value) return value; await new Promise((resolve) => setTimeout(resolve, 50)); } return null; };
+      const login = await api.login({ developerBypass: true, rememberMe: false });
+      checks.authenticatedProductUi = login?.ok === true;
+      checks.appShellVisible = Boolean(await waitFor(() => document.querySelector('.app-shell'), 10000));
+      const workspacePath = ${JSON.stringify(workspacePath)};
+      const workspace = await waitFor(() => [...document.querySelectorAll('.workspace-item')].find((item) => (item.getAttribute('title') || '').includes(workspacePath)), 10000);
+      workspace?.click();
+      checks.workspaceSelected = Boolean(await waitFor(() => workspace?.closest('.workspace-row')?.classList.contains('active'), 5000));
+      if (!document.querySelector('.files-context-panel')) document.querySelector('.titlebar-right-panel-toggle')?.click();
+      checks.filesPanelVisible = Boolean(await waitFor(() => document.querySelector('.files-context-panel'), 10000));
+      const fixtureName = ${JSON.stringify(fixturePath.split(/[\\/]/).at(-1) || "")};
+      const fileRow = await waitFor(() => [...document.querySelectorAll('.files-tree-row')].find((row) => row.getAttribute('title') === fixtureName || row.textContent?.includes(fixtureName)), 15000);
+      fileRow?.click();
+      const generate = await waitFor(() => document.querySelector('[data-testid="generate-manager-presentation"]'), 20000);
+      checks.cernRecoveryTaskAvailable = Boolean(generate);
+      window.confirm = () => true;
+      const startedAt = performance.now();
+      generate?.click();
+      const card = await waitFor(() => document.querySelector('[data-testid="manager-presentation-failure-recovery"]'), 10000);
+      details.failureTerminalMs = performance.now() - startedAt;
+      details.card = card ? { kind: card.getAttribute('data-kind'), affectedObject: card.getAttribute('data-affected-object'), recoveryAction: card.getAttribute('data-recovery-action'), text: card.textContent?.replace(/\\s+/g, ' ').trim() || '' } : null;
+      checks.failureReachedTerminalWithinThreshold = Boolean(card) && details.failureTerminalMs <= 5000 && document.querySelector('[data-testid="manager-presentation-progress"]')?.getAttribute('data-phase') === 'failed';
+      checks.failureCategoryMatchesInjection = details.card?.kind === details.expectedKind;
+      checks.affectedObjectVisible = Boolean(details.card?.affectedObject && details.card.text.includes(details.card.affectedObject));
+      checks.causeAndRecoveryGuidanceVisible = Boolean(card?.querySelectorAll('span').length >= 4 && card?.querySelector('button'));
+      const rawNoise = ['ENOSPC', 'EACCES', 'EPERM', 'EBUSY', 'MODEL_TIMEOUT', 'Error:', ' at '];
+      checks.noRawStackOrBareErrorCode = rawNoise.every((token) => !(details.card?.text || '').includes(token));
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const recovery = document.querySelector('[data-testid="manager-presentation-recovery-action"]');
+      checks.recoveryActionIsExecutable = details.card?.recoveryAction === 'retry' && recovery?.isConnected === true && !recovery.hasAttribute('disabled');
+      const retryStartedAt = performance.now();
+      recovery?.click();
+      const completed = await waitFor(() => document.querySelector('[data-testid="manager-presentation-result"]'), 45000);
+      details.recoveryCompletedMs = performance.now() - retryStartedAt;
+      details.outputPath = completed?.getAttribute('data-output-path') || '';
+      checks.recoveryActionCompletedTask = Boolean(completed);
+      checks.noInfiniteLoading = document.querySelector('[data-testid="manager-presentation-progress"]')?.getAttribute('data-phase') === 'completed';
+      const tasks = await api.listBackgroundTasks({ workspacePath, limit: 100 });
+      const failed = tasks.filter((task) => task.kind === 'presentation_generation' && task.status === 'failed');
+      const succeeded = tasks.filter((task) => task.kind === 'presentation_generation' && task.status === 'completed');
+      checks.failureAndRecoveryAreAuditable = failed.length === 1 && succeeded.length === 1;
+      details.backgroundTasks = tasks.filter((task) => task.kind === 'presentation_generation').map((task) => ({ id: task.id, status: task.status, progress: task.progress, message: task.message }));
+      return { checks, details };
+    })()
+  `, true) as { checks: Record<string, boolean>; details: Record<string, unknown> };
+  const outputPath = String(result.details.outputPath || "");
+  const manifestPath = outputPath.replace(/\.pptx$/i, ".provenance.json");
+  result.checks.recoveredPptxExists = Boolean(outputPath && existsSync(outputPath));
+  result.checks.recoveredManifestExists = Boolean(manifestPath && existsSync(manifestPath));
+  if (result.checks.recoveredPptxExists) {
+    const pptx = readFileSync(outputPath);
+    const zipText = pptx.toString("latin1");
+    result.checks.recoveredPptxIntact = pptx.length > 10_000 && pptx.subarray(0, 2).toString("ascii") === "PK" && zipText.includes("[Content_Types].xml") && zipText.includes("ppt/presentation.xml");
+    result.details.outputBytes = pptx.length;
+    result.details.outputSha256 = (await import("crypto")).createHash("sha256").update(pptx).digest("hex").toUpperCase();
+  } else result.checks.recoveredPptxIntact = false;
+  if (result.checks.recoveredManifestExists) {
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    result.checks.recoveredSourceMatchesCern = manifest?.source?.sha256 === "F6581E1A255B354667188B41B874B996A300F88BB48912721BC1C854183E913E";
+    result.details.manifestPath = manifestPath;
+  } else result.checks.recoveredSourceMatchesCern = false;
+  const screenshotPath = process.env.OPENDRSAI_E2E_SCREENSHOT;
+  if (screenshotPath) { mkdirSync(dirname(screenshotPath), { recursive: true }); writeFileSync(screenshotPath, (await window.webContents.capturePage()).toPNG()); result.details.screenshotPath = screenshotPath; }
+  return { ok: Object.values(result.checks).every(Boolean), checks: result.checks, details: result.details };
+}
+
+async function runM7StabilitySmoke(window: BrowserWindow): Promise<SmokeResult> {
+  const fixturePath = process.env.OPENDRSAI_E2E_M7_CERN_PDF;
+  if (!fixturePath || !existsSync(fixturePath)) throw new Error("M7 requires the fixed CERN PDF fixture.");
+  const workspacePath = dirname(fixturePath);
+  await createWorkspace({ source: "existing", path: workspacePath, name: "M7 CERN stability workspace", trusted: true });
+  const sessionA = await createThread({ kind: "chat", title: "M7 CERN session A", workspacePath });
+  const sessionB = await createThread({ kind: "chat", title: "M7 CERN session B", workspacePath });
+  await new Promise<void>((resolveReload, rejectReload) => {
+    const timer = setTimeout(() => rejectReload(new Error("M7 renderer reload timed out.")), 10_000);
+    window.webContents.once("did-finish-load", () => { clearTimeout(timer); resolveReload(); });
+    window.webContents.reload();
+  });
+  window.show();
+  window.focus();
+
+  const started = await window.webContents.executeJavaScript(`
+    (async () => {
+      const api = window.openDrSai;
+      const checks = {};
+      const details = {};
+      const waitFor = async (find, timeout = 15000) => { const deadline = performance.now() + timeout; while (performance.now() < deadline) { const value = find(); if (value) return value; await new Promise((resolve) => setTimeout(resolve, 40)); } return null; };
+      const login = await api.login({ developerBypass: true, rememberMe: false });
+      checks.authenticatedProductUi = login?.ok === true;
+      checks.appShellVisible = Boolean(await waitFor(() => document.querySelector('.app-shell')));
+      const workspacePath = ${JSON.stringify(workspacePath)};
+      const workspace = await waitFor(() => [...document.querySelectorAll('.workspace-item')].find((item) => (item.getAttribute('title') || '').includes(workspacePath)));
+      checks.workspaceVisible = Boolean(workspace);
+      workspace?.click();
+      checks.workspaceSelected = Boolean(await waitFor(() => workspace?.closest('.workspace-row')?.classList.contains('active')));
+      const switchSession = async (title) => {
+        const item = await waitFor(() => [...document.querySelectorAll('.thread-item')].find((button) => button.textContent?.includes(title)));
+        item?.click();
+        return Boolean(await waitFor(() => item?.classList.contains('active')));
+      };
+      checks.sessionASwitchedBeforeTask = await switchSession('M7 CERN session A');
+      checks.sessionBSwitchedBeforeTask = await switchSession('M7 CERN session B');
+      const pendingBefore = await api.listPendingApprovals();
+      const browserBefore = await api.listPendingBrowserTaskApprovals();
+      details.approvalsBefore = { desktop: pendingBefore.length, browser: browserBefore.length };
+      checks.noPendingAuthorizationBeforeTask = pendingBefore.length === 0 && browserBefore.length === 0;
+      const rightPanelToggle = document.querySelector('.titlebar-right-panel-toggle');
+      if (!document.querySelector('.files-context-panel')) rightPanelToggle?.click();
+      checks.filesPanelVisible = Boolean(await waitFor(() => document.querySelector('.files-context-panel')));
+      const fixtureName = ${JSON.stringify(fixturePath.split(/[\\/]/).at(-1) || "")};
+      const fileRow = await waitFor(() => [...document.querySelectorAll('.files-tree-row')].find((row) => row.getAttribute('title') === fixtureName || row.textContent?.includes(fixtureName)), 20000);
+      checks.cernPdfVisible = Boolean(fileRow);
+      fileRow?.click();
+      checks.presentationActionDetected = Boolean(await waitFor(() => document.querySelector('[data-testid="generate-manager-presentation"]'), 20000));
+      window.confirm = () => true;
+      document.querySelector('[data-testid="generate-manager-presentation"]')?.click();
+      const progress = await waitFor(() => { const node = document.querySelector('[data-testid="manager-presentation-progress"]'); const phase = node?.getAttribute('data-phase'); return phase && !['completed','failed','cancelled'].includes(phase) ? node : null; }, 10000);
+      checks.cernGoldenTaskRunning = Boolean(progress);
+      details.requestId = progress?.getAttribute('data-request-id') || '';
+      return { checks, details };
+    })()
+  `, true) as { checks: Record<string, boolean>; details: Record<string, unknown> };
+
+  const checks = { ...started.checks };
+  const details: Record<string, unknown> = { ...started.details, sessionIds: [sessionA.id, sessionB.id] };
+  window.minimize();
+  checks.windowMinimizedDuringCernTask = !window.isDestroyed() && window.isMinimized();
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  window.restore();
+  window.show();
+  window.focus();
+  checks.windowRestoredDuringCernTask = !window.isDestroyed() && !window.isMinimized() && window.isVisible();
+
+  const finished = await window.webContents.executeJavaScript(`
+    (async () => {
+      const api = window.openDrSai;
+      const checks = {};
+      const details = {};
+      const waitFor = async (find, timeout = 45000) => { const deadline = performance.now() + timeout; while (performance.now() < deadline) { const value = await find(); if (value) return value; await new Promise((resolve) => setTimeout(resolve, 60)); } return null; };
+      checks.appInteractiveAfterRestore = Boolean(await waitFor(() => document.querySelector('.app-shell')));
+      const switchSession = async (title) => { const item = await waitFor(() => [...document.querySelectorAll('.thread-item')].find((button) => button.textContent?.includes(title))); item?.click(); return Boolean(await waitFor(() => item?.classList.contains('active'))); };
+      checks.sessionASwitchedAfterRestore = await switchSession('M7 CERN session A');
+      checks.sessionBSwitchedAfterRestore = await switchSession('M7 CERN session B');
+      const threads = await api.listThreads();
+      const expectedIds = ${JSON.stringify([sessionA.id, sessionB.id])};
+      checks.sessionsPersistedAfterTask = expectedIds.every((id) => threads.some((thread) => thread.id === id));
+      details.threadCount = threads.length;
+      details.persistedSessionIds = threads.filter((thread) => expectedIds.includes(thread.id)).map((thread) => thread.id);
+      const pendingAfter = await api.listPendingApprovals();
+      const browserAfter = await api.listPendingBrowserTaskApprovals();
+      details.approvalsAfter = { desktop: pendingAfter.length, browser: browserAfter.length };
+      checks.noUnauthorizedApprovalOrBrowserAction = pendingAfter.length === 0 && browserAfter.length === 0;
+      const task = await waitFor(async () => {
+        const tasks = await api.listBackgroundTasks({ workspacePath: ${JSON.stringify(workspacePath)}, limit: 100 });
+        return tasks.find((candidate) => candidate.kind === 'presentation_generation' && candidate.targetId === ${JSON.stringify(String(started.details.requestId || ""))} && candidate.status === 'completed') || null;
+      }, 45000);
+      const tasks = await api.listBackgroundTasks({ workspacePath: ${JSON.stringify(workspacePath)}, limit: 100 });
+      checks.cernGoldenTaskCompleted = task?.status === 'completed' && task?.progress === 100;
+      details.outputPath = task?.deliverySummary?.artifacts?.find((artifact) => artifact.kind === 'presentation')?.path || '';
+      document.querySelector('.sidebar-action-list button:nth-child(2)')?.click();
+      const completedRow = await waitFor(() => [...document.querySelectorAll('[data-testid="background-task-list-item"]')].find((row) => row.getAttribute('data-task-status') === 'completed' && row.textContent?.includes('PPT')), 10000);
+      checks.completedStateVisible = Boolean(completedRow);
+      checks.backgroundTaskCompletedExactlyOnce = task?.status === 'completed' && task?.progress === 100 && tasks.filter((candidate) => candidate.targetId === task?.targetId).length === 1;
+      details.backgroundTask = task || null;
+      return { checks, details };
+    })()
+  `, true) as { checks: Record<string, boolean>; details: Record<string, unknown> };
+  Object.assign(checks, finished.checks);
+  Object.assign(details, finished.details);
+
+  const outputPath = String(finished.details.outputPath || "");
+  const manifestPath = outputPath.replace(/\.pptx$/i, ".provenance.json");
+  checks.pptxExists = Boolean(outputPath && existsSync(outputPath));
+  checks.provenanceExists = Boolean(manifestPath && existsSync(manifestPath));
+  if (checks.pptxExists) {
+    const pptx = readFileSync(outputPath);
+    const zipText = pptx.toString("latin1");
+    checks.pptxNotCorrupt = pptx.length > 10_000 && pptx.subarray(0, 2).toString("ascii") === "PK"
+      && zipText.includes("[Content_Types].xml") && zipText.includes("ppt/presentation.xml") && zipText.includes("ppt/slides/slide1.xml");
+    details.outputBytes = pptx.length;
+    details.outputSha256 = (await import("crypto")).createHash("sha256").update(pptx).digest("hex").toUpperCase();
+  } else checks.pptxNotCorrupt = false;
+  if (checks.provenanceExists) {
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    checks.provenanceMatchesFixedCernPdf = manifest?.source?.sha256 === "F6581E1A255B354667188B41B874B996A300F88BB48912721BC1C854183E913E";
+    details.manifestPath = manifestPath;
+    details.manifest = manifest;
+  } else checks.provenanceMatchesFixedCernPdf = false;
+  const screenshotPath = process.env.OPENDRSAI_E2E_SCREENSHOT;
+  if (screenshotPath) { mkdirSync(dirname(screenshotPath), { recursive: true }); writeFileSync(screenshotPath, (await window.webContents.capturePage()).toPNG()); details.screenshotPath = screenshotPath; }
+  return { ok: Object.values(checks).every(Boolean), checks, details };
+}
+
+async function runM6PerformanceSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  const workspacePath = process.env.OPENDRSAI_E2E_M6_WORKSPACE;
+  const largeFilePath = process.env.OPENDRSAI_E2E_M6_LARGE_FILE;
+  const cernPdfPath = process.env.OPENDRSAI_E2E_M6_CERN_PDF;
+  if (!workspacePath || !largeFilePath || !cernPdfPath) throw new Error("M6 fixture paths are required.");
+  if (![workspacePath, largeFilePath, cernPdfPath].every(existsSync)) throw new Error("M6 fixture is incomplete.");
+  window.show();
+  window.focus();
+  await createWorkspace({ source: "existing", path: workspacePath, name: "M6 100k performance workspace", trusted: true });
+  await new Promise<void>((resolveReload, rejectReload) => {
+    const timer = setTimeout(() => rejectReload(new Error("M6 renderer reload timed out.")), 10_000);
+    window.webContents.once("did-finish-load", () => {
+      clearTimeout(timer);
+      resolveReload();
+    });
+    window.webContents.reload();
+  });
+
+  const result = await window.webContents.executeJavaScript(`
+    (async () => {
+      const api = window.openDrSai;
+      const checks = {};
+      const details = { thresholdMs: 2000, timings: {}, heartbeat: {}, fixture: {} };
+      const waitFor = async (find, timeout = 10000, interval = 25) => {
+        const deadline = performance.now() + timeout;
+        while (performance.now() < deadline) {
+          const value = find();
+          if (value) return value;
+          await new Promise((resolve) => setTimeout(resolve, interval));
+        }
+        return null;
+      };
+      const timed = async (name, action, ready) => {
+        const started = performance.now();
+        action();
+        const value = await waitFor(ready, 10000);
+        const elapsed = performance.now() - started;
+        details.timings[name] = elapsed;
+        checks[name + "RespondedWithin2s"] = Boolean(value) && elapsed <= 2000;
+        return value;
+      };
+      const gaps = [];
+      let lastBeat = performance.now();
+      const heartbeat = setInterval(() => {
+        const now = performance.now();
+        gaps.push(now - lastBeat);
+        lastBeat = now;
+      }, 25);
+      try {
+        const login = await api.login({ developerBypass: true, rememberMe: false });
+        checks.authenticatedProductUi = login?.ok === true;
+        const workspacePath = ${JSON.stringify("__M6_WORKSPACE__")}.replace("__M6_WORKSPACE__", ${JSON.stringify(workspacePath)});
+        const largeFilePath = ${JSON.stringify("__M6_LARGE__")}.replace("__M6_LARGE__", ${JSON.stringify(largeFilePath)});
+        const cernPdfPath = ${JSON.stringify("__M6_PDF__")}.replace("__M6_PDF__", ${JSON.stringify(cernPdfPath)});
+        const workspace = await api.createWorkspace({ source: "existing", path: workspacePath, name: "M6 100k performance workspace", trusted: true });
+        checks.workspaceRegistered = workspace?.path === workspacePath;
+
+        const listStarted = performance.now();
+        const tree = await api.listWorkspaceFiles({ workspacePath, maxDepth: 5, maxEntries: 900 });
+        details.timings.bounded100kTreeMs = performance.now() - listStarted;
+        details.fixture.treeEntriesReturned = tree.totalEntries;
+        details.fixture.treeTruncated = tree.truncated;
+        checks.workspaceTreeBounded = tree.truncated === true && tree.totalEntries <= 901;
+        checks.workspaceTreeReturnedWithin2s = details.timings.bounded100kTreeMs <= 2000;
+
+        const workspaceButton = await waitFor(() => [...document.querySelectorAll('.workspace-item')].find((item) => (item.getAttribute('title') || '').includes(workspacePath)), 10000);
+        checks.workspaceVisible = Boolean(workspaceButton);
+        await timed("workspaceSelection", () => workspaceButton?.click(), () => workspaceButton?.closest('.workspace-row')?.classList.contains('active'));
+
+        const menuButton = document.querySelector('.composer-tools > button:first-child');
+        await timed("attachmentMenu", () => menuButton?.click(), () => document.querySelector('.composer-tool-menu'));
+        const addFileButton = document.querySelector('.composer-tool-menu button:has([data-testid="composer-add-file-label"])');
+        const importStarted = performance.now();
+        addFileButton?.click();
+        const chips = await waitFor(() => document.querySelectorAll('.composer-attachment-chip').length === 30 ? document.querySelectorAll('.composer-attachment-chip') : null, 10000);
+        details.timings.import30FilesMs = performance.now() - importStarted;
+        details.fixture.importedCount = chips?.length || 0;
+        checks.importedExactly30Files = chips?.length === 30;
+        checks.import30FilesRespondedWithin2s = Boolean(chips) && details.timings.import30FilesMs <= 2000;
+        checks.fixedCernPdfImported = [...(chips || [])].some((chip) => chip.textContent?.includes('WLCG-20260715-WLCG-talk-IHEP-visit.pdf'));
+
+        const rightToggle = document.querySelector('.titlebar-right-panel-toggle');
+        if (!document.querySelector('.files-context-panel')) rightToggle?.click();
+        checks.filesPanelVisible = Boolean(await waitFor(() => document.querySelector('.files-context-panel')));
+        const findTreeRow = (title) => [...document.querySelectorAll('.files-tree-row')].find((row) => row.getAttribute('title') === title);
+        let largeRow = await waitFor(() => findTreeRow('bucket-000/001-large-preview.txt'), 500);
+        for (let attempt = 0; !largeRow && attempt < 3; attempt += 1) {
+          const firstFolder = await waitFor(() => findTreeRow('bucket-000'), 5000);
+          firstFolder?.click();
+          largeRow = await waitFor(() => findTreeRow('bucket-000/001-large-preview.txt'), 2500);
+        }
+        checks.largePreviewRowVisible = Boolean(largeRow);
+        const previewStarted = performance.now();
+        largeRow?.click();
+        const feedback = await waitFor(() => {
+          if (document.querySelector('.files-preview-empty h3')?.textContent?.match(/Loading|读取/)) return 'loading';
+          if (document.querySelector('.files-preview-text, .files-preview-code, .files-preview-metadata, .files-preview-markdown')) return 'ready';
+          return null;
+        }, 2000);
+        details.timings.largePreviewFeedbackMs = performance.now() - previewStarted;
+        checks.largePreviewImmediateFeedback = Boolean(feedback) && details.timings.largePreviewFeedbackMs <= 2000;
+        const previewReady = feedback === 'ready' ? feedback : await waitFor(() => document.querySelector('.files-preview-text, .files-preview-code, .files-preview-metadata, .files-preview-markdown'), 10000);
+        details.timings.largePreviewReadyMs = performance.now() - previewStarted;
+        checks.largePreviewCompleted = Boolean(previewReady);
+
+        const task = await api.enqueueBackgroundTask({ kind: "presentation_generation", source: "presentation", title: "M6 long CERN analysis", workspacePath, targetId: "m6-long-task", status: "running", progress: 42, currentStep: "Analyzing page 42", message: "Long-running CERN analysis remains active while navigating.", planSteps: [{ id: "read", title: "Read fixed CERN PDF", phase: "input" }, { id: "report", title: "Generate report", phase: "output" }] });
+        checks.longTaskStarted = task?.status === "running" && task?.progress === 42;
+        const nav = async (name, button, selector) => timed(name, () => document.querySelector(button)?.click(), () => document.querySelector(selector));
+        await nav("taskCenterNavigation", '.sidebar-action-list button:nth-child(2)', '[data-testid="task-center-view"]');
+        const progress = await waitFor(() => document.querySelector('[data-task-status="running"] [role="progressbar"]'), 5000);
+        checks.longTaskHasVisibleProgress = progress?.getAttribute('aria-valuenow') === '42';
+        await nav("resultsNavigation", '[data-nav-id="results"]', '[data-testid="results-center-view"]');
+        await nav("taskCenterReturnNavigation", '.sidebar-action-list button:nth-child(2)', '[data-testid="task-center-view"]');
+        checks.longTaskSurvivesNavigation = Boolean(document.querySelector('[data-task-status="running"]'));
+        await api.updateBackgroundTask({ taskId: task.id, status: "cancelled", progress: 42, message: "M6 acceptance cleanup." });
+
+        const pdfStarted = performance.now();
+        const pdf = await api.previewWorkspaceFile({ workspacePath, path: cernPdfPath, maxBytes: 100000 });
+        details.timings.cernPdfPreviewMs = performance.now() - pdfStarted;
+        checks.fixedCernPdfPreviewed = pdf?.kind === "pdf" && pdf?.size === 7664262;
+      } finally {
+        clearInterval(heartbeat);
+      }
+      details.heartbeat.samples = gaps.length;
+      details.heartbeat.maxGapMs = gaps.length ? Math.max(...gaps) : null;
+      details.heartbeat.p95GapMs = gaps.length ? [...gaps].sort((a,b) => a-b)[Math.floor(gaps.length * .95)] : null;
+      checks.rendererHeartbeatCollected = gaps.length >= 5;
+      checks.rendererNeverBlockedFor2s = gaps.length > 0 && Math.max(...gaps) < 2000;
+      checks.allMeasuredInteractionsWithin2s = Object.entries(details.timings).filter(([name]) => /Navigation|Selection|Menu|Feedback|import30|bounded100k/i.test(name)).every(([, value]) => value <= 2000);
+      return { checks, details };
+    })()
+  `, true) as { checks: Record<string, boolean>; details: Record<string, unknown> };
+  const pdfBytes = readFileSync(cernPdfPath);
+  result.checks.cernFixtureSize = pdfBytes.length === 7_664_262;
+  result.checks.cernFixtureSha256 = (await import("crypto")).createHash("sha256").update(pdfBytes).digest("hex").toUpperCase()
+    === "F6581E1A255B354667188B41B874B996A300F88BB48912721BC1C854183E913E";
+  return { ok: Object.values(result.checks).every(Boolean), checks: result.checks, details: result.details };
+}
+
+async function runM5AccessibilitySmoke(window: BrowserWindow): Promise<SmokeResult> {
+  const fixturePath = process.env.OPENDRSAI_E2E_M5_CERN_PDF;
+  const chartPath = process.env.OPENDRSAI_E2E_M5_CERN_CHART;
+  const axePath = process.env.OPENDRSAI_E2E_M5_AXE_PATH;
+  const evidenceDir = process.env.OPENDRSAI_E2E_M5_EVIDENCE_DIR;
+  if (!fixturePath || !existsSync(fixturePath)) throw new Error("M5 requires the fixed CERN PDF fixture.");
+  if (!chartPath || !existsSync(chartPath)) throw new Error("M5 requires the CERN chart fixture.");
+  if (!axePath || !existsSync(axePath)) throw new Error("M5 requires axe-core.");
+  if (!evidenceDir) throw new Error("M5 requires an evidence directory.");
+  mkdirSync(evidenceDir, { recursive: true });
+  const fixtureWorkspacePath = dirname(fixturePath);
+  await createWorkspace({ source: "existing", path: fixtureWorkspacePath, name: "M5 CERN 无障碍工作区", trusted: true });
+  await new Promise<void>((resolveReload, rejectReload) => {
+    const timer = setTimeout(() => rejectReload(new Error("M5 renderer reload timed out.")), 10_000);
+    window.webContents.once("did-finish-load", () => { clearTimeout(timer); resolveReload(); });
+    window.webContents.reload();
+  });
+  window.show();
+  window.focus();
+
+  const checks: Record<string, boolean> = {};
+  const details: Record<string, unknown> = { pages: [] };
+  const pdfBytes = readFileSync(fixturePath);
+  checks.cernFixtureSize = pdfBytes.length === 7_664_262;
+  checks.cernFixtureSha256 = (await import("crypto")).createHash("sha256").update(pdfBytes).digest("hex").toUpperCase()
+    === "F6581E1A255B354667188B41B874B996A300F88BB48912721BC1C854183E913E";
+  const axeSource = readFileSync(axePath, "utf8");
+
+  const seeded = await window.webContents.executeJavaScript(`
+    (async () => {
+      const api = window.openDrSai;
+      const login = await api.login({ developerBypass: true, rememberMe: false });
+      if (!login?.ok) throw new Error("M5 developer login failed");
+      const workspaces = await api.listWorkspaces();
+      let activeWorkspaceTitle = "";
+      const activeDeadline = Date.now() + 5000;
+      while (Date.now() < activeDeadline && !activeWorkspaceTitle) {
+        activeWorkspaceTitle = document.querySelector('.workspace-row.active .workspace-item')?.getAttribute('title') || '';
+        if (!activeWorkspaceTitle) await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      const activeWorkspacePath = activeWorkspaceTitle.split(/\\r?\\n/).map((item) => item.trim()).filter(Boolean).at(-1) || "";
+      const workspacePath = ${JSON.stringify(fixtureWorkspacePath)};
+      const workspacePaths = [...new Set([workspacePath, ...workspaces.map((item) => item.path)])];
+      const runningTasks = [];
+      for (const [index, taskWorkspacePath] of workspacePaths.entries()) runningTasks.push(await api.enqueueBackgroundTask({ kind: "presentation_generation", source: "presentation", title: "CERN WLCG accessible report", workspacePath: taskWorkspacePath, targetId: "m5-cern-progress-" + index, status: "running", progress: 42, currentStep: "Reading page 42 capacity chart", message: "Reading the fixed CERN PDF.", verification: "Progress is announced as a value.", planSteps: [{ id: "read", title: "Read CERN PDF", phase: "input" }, { id: "report", title: "Prepare accessible report", phase: "output" }] }));
+      const result = await api.enqueueBackgroundTask({
+        kind: "presentation_generation", source: "presentation", title: "CERN WLCG accessible result", workspacePath, targetId: "m5-cern-result", status: "completed", progress: 100, message: "Accessible CERN result ready.", verification: "PDF and chart alternatives verified.", completedSteps: ["Read CERN PDF", "Prepare accessible report"],
+        deliverySummary: { findingSummary: "CERN WLCG accessible report ready.", importance: "high", importanceReason: "Screen-reader acceptance.", suggestedAction: "Review the PDF and capacity chart.", workSummary: "Read fixed CERN PDF and registered an accessible chart.", coreConclusion: "Capacity planning rises from 4.8 to 9.6 Tbps.", verification: "Source hash and chart data verified.", remainingRisks: "None.", completionCriteria: { passed: ["PDF verified", "Chart alternative provided"], incomplete: [] }, artifacts: [
+          { id: "m5-cern-pdf", label: "WLCG-20260715-WLCG-talk-IHEP-visit.pdf", path: ${JSON.stringify(fixturePath)}, kind: "document" },
+          { id: "m5-cern-chart", label: "cern-wlcg-capacity-chart.svg", path: ${JSON.stringify(chartPath)}, kind: "file", chartQuality: { status: "passed", checkedAt: "2026-07-15T00:00:00.000Z", sourcePath: ${JSON.stringify(fixturePath)}, xAxis: "year", yAxis: "throughput", unit: "Tbps", legend: "WLCG planned capacity", axisLabelsVisible: true, unitVisible: true, legendVisible: true, pointsExpected: 3, pointsMatched: 3, coordinateMatches: 3, anomaliesExpected: 0, anomaliesMatched: 0, mismatchCount: 0, checks: ["Axis labels visible", "Unit visible: Tbps", "Legend visible", "Data points 3/3"] } }
+        ] }
+      });
+      const approval = await api.proposeApproval({ source: "workflow", actionKind: "workflow.run", title: "M5 CERN accessible approval", detail: "Review the accessible CERN report.", target: "CERN WLCG result", scope: "current workspace", impact: "Publishes the reviewed result.", risk: "high", idempotencyKey: "m5-accessibility-approval" });
+      return { login: login.ok, workspacePath, workspacePaths, runningIds: runningTasks.map((task) => task.id), resultId: result.id, approvalId: approval.approval?.id || null, approvalQueued: approval.queued };
+    })()
+  `, true) as Record<string, unknown>;
+  checks.authenticatedProductUi = seeded.login === true;
+  checks.runningTaskSeeded = Array.isArray(seeded.runningIds) && seeded.runningIds.length >= 1;
+  checks.cernResultSeeded = Boolean(seeded.resultId);
+  checks.approvalSeeded = seeded.approvalQueued === true && Boolean(seeded.approvalId);
+  details.seeded = seeded;
+
+  await window.webContents.executeJavaScript(axeSource, true);
+  if (!window.webContents.debugger.isAttached()) window.webContents.debugger.attach("1.3");
+  await window.webContents.debugger.sendCommand("Accessibility.enable");
+
+  const waitForSelector = async (selector: string, timeout = 10000): Promise<boolean> => {
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+      if (await window.webContents.executeJavaScript(`Boolean(document.querySelector(${JSON.stringify(selector)}))`, true)) return true;
+      await new Promise((resolve) => setTimeout(resolve, 75));
+    }
+    return false;
+  };
+  const navigate = async (script: string, selector: string): Promise<void> => {
+    await window.webContents.executeJavaScript(script, true);
+    if (!(await waitForSelector(selector))) throw new Error(`M5 page did not become ready: ${selector}`);
+    await new Promise((resolve) => setTimeout(resolve, 180));
+  };
+  const auditPage = async (page: string): Promise<void> => {
+    const axeResult = await window.webContents.executeJavaScript(`
+      (async () => {
+        const result = await window.axe.run(document, { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] }, resultTypes: ["violations", "incomplete", "passes"] });
+        const controls = [...document.querySelectorAll('button,input,select,textarea,a[href],[role="button"],[role="menuitem"],[tabindex]:not([tabindex="-1"])')].filter((el) => { const r = el.getBoundingClientRect(); const s = getComputedStyle(el); return r.width > 0 && r.height > 0 && s.display !== "none" && s.visibility !== "hidden"; });
+        const nameFor = (el) => { const labelledBy = el.getAttribute('aria-labelledby'); const label = el.labels?.[0]?.textContent || (labelledBy ? labelledBy.split(/\\s+/).map((id) => document.getElementById(id)?.textContent || '').join(' ') : ''); return (el.getAttribute('aria-label') || label || el.getAttribute('alt') || el.getAttribute('title') || el.textContent || el.getAttribute('placeholder') || '').trim(); };
+        const unnamed = controls.filter((el) => !nameFor(el)).map((el) => el.outerHTML.slice(0, 300));
+        const stateful = [...document.querySelectorAll('[aria-expanded],[aria-pressed],[aria-selected],input[type="checkbox"],input[type="radio"],progress,[role="progressbar"]')];
+        const missingState = stateful.filter((el) => el.matches('input[type="checkbox"],input[type="radio"]') ? typeof el.checked !== "boolean" : el.matches('[role="progressbar"]') ? !el.hasAttribute("aria-valuenow") : !["aria-expanded", "aria-pressed", "aria-selected"].some((name) => el.hasAttribute(name))).map((el) => el.outerHTML.slice(0, 300));
+        return { axe: { testEngine: result.testEngine, testEnvironment: result.testEnvironment, violations: result.violations, incomplete: result.incomplete, passCount: result.passes.length }, custom: { controlCount: controls.length, unnamed, statefulCount: stateful.length, missingState, statusCount: document.querySelectorAll('[role="status"],[aria-live]').length, alertCount: document.querySelectorAll('[role="alert"]').length, progress: [...document.querySelectorAll('[role="progressbar"]')].map((el) => ({ name: nameFor(el), valueNow: el.getAttribute("aria-valuenow"), valueMin: el.getAttribute("aria-valuemin"), valueMax: el.getAttribute("aria-valuemax") })), images: [...document.querySelectorAll('img')].filter((img) => { const r = img.getBoundingClientRect(); return r.width > 0 && r.height > 0; }).map((img) => ({ alt: img.alt, src: img.currentSrc.slice(0, 80) })), errorLink: (() => { const input = document.querySelector('[data-testid=natural-schedule-input]'); const alert = document.querySelector('#natural-schedule-error[role=alert]'); return input ? { invalid: input.getAttribute('aria-invalid'), describedBy: input.getAttribute('aria-describedby'), alertId: alert?.id || null, alertText: alert?.textContent || null } : null; })() } };
+      })()
+    `, true) as { axe: { violations: Array<{ impact?: string | null }>; incomplete: unknown[]; passCount: number }; custom: Record<string, unknown> };
+    const axTree = await window.webContents.debugger.sendCommand("Accessibility.getFullAXTree") as { nodes?: Array<Record<string, unknown>> };
+    const nodes = axTree.nodes ?? [];
+    const interactiveRoles = new Set(["button", "checkbox", "combobox", "link", "menuitem", "radio", "slider", "spinbutton", "switch", "tab", "textbox"]);
+    const unnamedAx = nodes.filter((node) => interactiveRoles.has(String((node.role as { value?: unknown })?.value || "")) && !String((node.name as { value?: unknown })?.value || "").trim());
+    const severe = axeResult.axe.violations.filter((violation) => violation.impact === "critical" || violation.impact === "serious");
+    checks[`${page}AxeCriticalSeriousZero`] = severe.length === 0;
+    checks[`${page}DomControlsNamed`] = Array.isArray(axeResult.custom.unnamed) && axeResult.custom.unnamed.length === 0;
+    checks[`${page}AxControlsNamed`] = unnamedAx.length === 0;
+    checks[`${page}ControlStatesExposed`] = Array.isArray(axeResult.custom.missingState) && axeResult.custom.missingState.length === 0;
+    checks[`${page}AxeRulesExecuted`] = axeResult.axe.passCount > 0;
+    checks[`${page}AxeIncompleteZero`] = axeResult.axe.incomplete.length === 0;
+    writeFileSync(join(evidenceDir, `${page}-axe.json`), JSON.stringify(axeResult, null, 2));
+    writeFileSync(join(evidenceDir, `${page}-accessibility-tree.json`), JSON.stringify(axTree, null, 2));
+    writeFileSync(join(evidenceDir, `${page}.png`), (await window.webContents.capturePage()).toPNG());
+    (details.pages as Array<Record<string, unknown>>).push({ page, axe: axeResult, axNodeCount: nodes.length, unnamedAxCount: unnamedAx.length, severeViolationCount: severe.length });
+  };
+
+  await waitForSelector("[data-testid=composer-input]");
+  await auditPage("home");
+
+  const selectedWorkspace = await window.webContents.executeJavaScript(`
+    (async () => {
+      const workspacePath = ${JSON.stringify(String(seeded.workspacePath || ""))};
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        const item = [...document.querySelectorAll('.workspace-item')].find((candidate) => (candidate.getAttribute('title') || '').includes(workspacePath));
+        if (item) { item.click(); await new Promise((resolve) => setTimeout(resolve, 250)); return item.closest('.workspace-row')?.classList.contains('active') === true; }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      return false;
+    })()
+  `, true) as boolean;
+  checks.taskWorkspaceSelected = selectedWorkspace;
+  await navigate(`(() => { document.querySelector('.sidebar-action-list button:nth-child(2)')?.click(); return true; })()`, '[data-testid="task-center-view"]');
+  if (!(await waitForSelector('[data-testid="background-task-list-item"]'))) throw new Error("M5 running task did not appear in the selected workspace.");
+  await window.webContents.executeJavaScript(`(() => { const detail = document.querySelector('[data-task-status="running"] [data-testid="background-task-detail"]'); if (detail) detail.open = true; const input = document.querySelector('[data-testid="natural-schedule-input"]'); const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set; setter?.call(input, ''); input?.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('[data-testid="natural-schedule-understand"]')?.click(); return true; })()`, true);
+  await waitForSelector("#natural-schedule-error");
+  await auditPage("task-status");
+  const taskPage = (details.pages as Array<{ page: string; axe: unknown; custom?: unknown }>).find((item) => item.page === "task-status") as { axe?: unknown } | undefined;
+  void taskPage;
+  const taskSemantics = await window.webContents.executeJavaScript(`(() => { const progress = document.querySelector('[role="progressbar"][aria-valuenow="42"]'); const input = document.querySelector('[data-testid="natural-schedule-input"]'); const alert = document.querySelector('#natural-schedule-error[role=alert]'); return { progressName: progress?.getAttribute('aria-label') || '', progressNow: progress?.getAttribute('aria-valuenow'), liveCount: document.querySelectorAll('[role="status"],[aria-live]').length, errorAssociated: input?.getAttribute('aria-invalid') === 'true' && input?.getAttribute('aria-describedby') === alert?.id && Boolean(alert?.textContent?.trim()) }; })()`, true) as Record<string, unknown>;
+  checks.taskProgressNamedAndValued = Boolean(taskSemantics.progressName) && taskSemantics.progressNow === "42";
+  checks.taskDynamicStatusLive = Number(taskSemantics.liveCount) >= 1;
+  checks.taskErrorAssociated = taskSemantics.errorAssociated === true;
+  details.taskSemantics = taskSemantics;
+
+  await navigate(`(() => { window.dispatchEvent(new Event("drsai:e2e-open-approval-center")); return true; })()`, ".approval-center-view");
+  await auditPage("approval");
+
+  await navigate(`(() => { document.querySelector('[data-nav-id="results"]')?.click(); return true; })()`, '[data-testid="results-center-view"]');
+  await waitForSelector('li[data-artifact-id="m5-cern-chart"]');
+  await window.webContents.executeJavaScript(`(() => { document.querySelector('li[data-artifact-id="m5-cern-chart"] [data-testid="results-preview-artifact"]')?.click(); return true; })()`, true);
+  await waitForSelector('[data-testid="results-preview-dialog"] img');
+  await auditPage("results");
+  const chartSemantics = await window.webContents.executeJavaScript(`(() => { const img = document.querySelector('[data-testid="results-preview-dialog"] img'); return { alt: img?.getAttribute('alt') || '', containsAxes: /year.*throughput/i.test(img?.getAttribute('alt') || ''), containsUnit: /Tbps/.test(img?.getAttribute('alt') || ''), containsPoints: /3 data points/.test(img?.getAttribute('alt') || '') }; })()`, true) as Record<string, unknown>;
+  checks.chartHasDetailedAlternative = chartSemantics.containsAxes === true && chartSemantics.containsUnit === true && chartSemantics.containsPoints === true;
+  details.chartSemantics = chartSemantics;
+
+  if (window.webContents.debugger.isAttached()) window.webContents.debugger.detach();
+  return { ok: Object.values(checks).every(Boolean), checks, details };
+}
+
+async function runM4KeyboardSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  const fixturePath = process.env.OPENDRSAI_E2E_M4_CERN_PDF;
+  const evidenceDir = process.env.OPENDRSAI_E2E_M4_EVIDENCE_DIR;
+  if (!fixturePath || !existsSync(fixturePath)) throw new Error("M4 requires the fixed CERN PDF fixture.");
+  if (!evidenceDir) throw new Error("M4 requires an evidence directory.");
+  mkdirSync(evidenceDir, { recursive: true });
+  window.show();
+  window.focus();
+
+  const checks: Record<string, boolean> = {};
+  const focusTrace: Array<Record<string, unknown>> = [];
+  const fixtureBytes = readFileSync(fixturePath);
+  checks.cernFixtureSize = fixtureBytes.length === 7_664_262;
+  checks.cernFixtureSha256 = (await import("crypto")).createHash("sha256").update(fixtureBytes).digest("hex").toUpperCase()
+    === "F6581E1A255B354667188B41B874B996A300F88BB48912721BC1C854183E913E";
+
+  const seeded = await window.webContents.executeJavaScript(`
+    (async () => {
+      const api = window.openDrSai;
+      const login = await api.login({ developerBypass: true, rememberMe: false });
+      if (!login?.ok) throw new Error("M4 developer login failed");
+      const task = await api.enqueueBackgroundTask({
+        kind: "presentation_generation", source: "presentation", title: "CERN WLCG keyboard acceptance result",
+        workspacePath: ${JSON.stringify(dirname(fixturePath))}, targetId: "m4-keyboard-cern", status: "completed", progress: 100,
+        message: "CERN PDF result is ready.", verification: "Fixed CERN PDF hash verified.", completedSteps: ["Read PDF", "Register result"],
+        deliverySummary: { findingSummary: "CERN WLCG result ready.", importance: "high", importanceReason: "Keyboard acceptance fixture.", suggestedAction: "Open the result.", workSummary: "Registered fixed CERN PDF.", coreConclusion: "All primary actions must be keyboard reachable.", verification: "Fixture hash verified.", remainingRisks: "None.", completionCriteria: { passed: ["PDF verified", "Result registered"], incomplete: [] }, artifacts: [{ id: "m4-cern-pdf", label: "WLCG-20260715-WLCG-talk-IHEP-visit.pdf", path: ${JSON.stringify(fixturePath)}, kind: "document" }] }
+      });
+      const approval = await api.proposeApproval({ source: "workflow", actionKind: "workflow.run", title: "M4 CERN keyboard approval", detail: "Approve with Space.", target: "CERN WLCG result", scope: "current workspace", impact: "Runs the reviewed workflow.", risk: "high", idempotencyKey: "m4-keyboard-approval" });
+      window.__m4PointerEvents = [];
+      for (const name of ["pointerdown", "pointerup", "mousedown", "mouseup"]) window.addEventListener(name, (event) => window.__m4PointerEvents.push({ name, trusted: event.isTrusted }), true);
+      const style = document.createElement("style"); style.id = "m4-disable-pointer"; style.textContent = "*{pointer-events:none!important}"; document.head.append(style);
+      return { login: login.ok, taskId: task.id, approvalId: approval.approval?.id || null, approvalQueued: approval.queued };
+    })()
+  `, true) as { login: boolean; taskId: string; approvalId: string | null; approvalQueued: boolean };
+  checks.authenticatedProductUi = seeded.login === true;
+  checks.cernResultSeeded = Boolean(seeded.taskId);
+  checks.approvalSeeded = seeded.approvalQueued === true && Boolean(seeded.approvalId);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+
+  const press = async (keyCode: string, modifiers?: Array<"shift" | "control" | "alt" | "meta">): Promise<void> => {
+    window.webContents.sendInputEvent({ type: "keyDown", keyCode, ...(modifiers ? { modifiers } : {}) });
+    window.webContents.sendInputEvent({ type: "keyUp", keyCode, ...(modifiers ? { modifiers } : {}) });
+    await new Promise((resolve) => setTimeout(resolve, 45));
+  };
+  const snapshot = async (milestone: string, selector: string): Promise<Record<string, unknown>> => {
+    const value = await window.webContents.executeJavaScript(`(() => { const el = document.activeElement; const rect = el?.getBoundingClientRect(); const css = el ? getComputedStyle(el) : null; return { milestone: ${JSON.stringify(milestone)}, selector: ${JSON.stringify(selector)}, matches: Boolean(el?.matches(${JSON.stringify(selector)})), tag: el?.tagName || "", label: el?.getAttribute("aria-label") || el?.getAttribute("title") || el?.textContent?.trim().slice(0, 120) || "", focusVisible: Boolean(el?.matches(":focus-visible")), visible: Boolean(rect && rect.width > 0 && rect.height > 0 && rect.left >= 0 && rect.top >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight), outline: css?.outline || "", boxShadow: css?.boxShadow || "" }; })()`, true) as Record<string, unknown>;
+    focusTrace.push(value);
+    return value;
+  };
+  const tabUntil = async (milestone: string, selector: string, maxTabs = 240, reverse = false): Promise<Record<string, unknown>> => {
+    for (let index = 0; index < maxTabs; index += 1) {
+      const current = await snapshot(`${milestone}:probe`, selector);
+      focusTrace.pop();
+      if (current.matches === true) return snapshot(milestone, selector);
+      await press("TAB", reverse ? ["shift"] : undefined);
+    }
+    return snapshot(`${milestone}:not-found`, selector);
+  };
+  const assertFocus = (name: string, state: Record<string, unknown>): void => {
+    checks[`${name}Focused`] = state.matches === true;
+    checks[`${name}FocusVisible`] = state.focusVisible === true && state.visible === true && (state.outline !== "none" || state.boxShadow !== "none");
+  };
+  const waitDom = async (expression: string, timeout = 8000): Promise<boolean> => {
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+      if (await window.webContents.executeJavaScript(`Boolean(${expression})`, true)) return true;
+      await new Promise((resolve) => setTimeout(resolve, 75));
+    }
+    return false;
+  };
+
+  const newChat = await tabUntil("new-chat", ".sidebar-action-list .sidebar-button:first-child"); assertFocus("newChat", newChat); await press("SPACE");
+  const attachment = await tabUntil("attachment", ".composer-tools > button"); assertFocus("attachment", attachment); await press("SPACE");
+  const addFile = await tabUntil("add-file", ".composer-tool-menu button:has([data-testid=composer-add-file-label])"); assertFocus("addFile", addFile); await press("SPACE");
+  checks.filePickerActivatedByKeyboard = await waitDom("document.querySelector('.composer-attachment-chip')?.textContent?.includes('WLCG-20260715-WLCG-talk-IHEP-visit.pdf')");
+  const attachmentAgain = await tabUntil("attachment-reopen", ".composer-tools > button"); assertFocus("attachmentReopen", attachmentAgain); await press("SPACE"); await press("ESCAPE");
+  checks.attachmentMenuEscClosed = !(await window.webContents.executeJavaScript("Boolean(document.querySelector('.composer-tool-menu'))", true));
+  const attachmentAfterEsc = await snapshot("attachment-after-escape", ".composer-tools > button"); assertFocus("attachmentAfterEscape", attachmentAfterEsc);
+
+  const composer = await tabUntil("composer", "[data-testid=composer-input]"); assertFocus("composer", composer);
+  clipboard.writeText("Analyze the attached CERN WLCG PDF and prepare a concise manager report."); await press("V", ["control"]);
+  checks.composerReceivedKeyboardPaste = await waitDom("document.querySelector('[data-testid=composer-input]')?.value?.includes('Analyze the attached CERN WLCG PDF')");
+  const send = await tabUntil("send", ".composer-submit"); assertFocus("send", send); await press("SPACE");
+  checks.messageSentByKeyboard = await waitDom("[...document.querySelectorAll('*')].some((el) => el.textContent?.includes('Analyze the attached CERN WLCG PDF and prepare a concise manager report.'))");
+
+  const userMenu = await tabUntil("user-menu", "[data-testid=user-menu-button]", 240, true); assertFocus("userMenu", userMenu); await press("SPACE");
+  const settings = await tabUntil("settings", "[data-testid=user-menu-settings]"); assertFocus("settings", settings); await press("SPACE");
+  const approvalPane = await tabUntil("approval-pane", "[data-testid=settings-pane-approvals]"); assertFocus("approvalPane", approvalPane); await press("SPACE");
+  const approve = await tabUntil("approve", ".approval-pending-actions button.approve"); assertFocus("approve", approve); await press("SPACE");
+  checks.approvedWithSpace = await waitDom("!document.querySelector('.approval-pending-actions button.approve')");
+
+  const results = await tabUntil("results", '[data-nav-id="results"]'); assertFocus("results", results); await press("SPACE");
+  await waitDom("document.querySelector('[data-testid=results-open-artifact]')");
+  const openArtifact = await tabUntil("open-artifact", '[data-testid="results-open-artifact"]'); assertFocus("openArtifact", openArtifact);
+  await press("SPACE"); checks.resultOpenedByKeyboard = await waitDom("document.querySelector('[data-testid=results-open-status]')?.dataset.state === 'opened'");
+  const share = await tabUntil("share-artifact", '[data-testid="results-share-artifact"]', 20, true); assertFocus("shareArtifact", share);
+  await press("SPACE"); checks.shareDialogOpenedByKeyboard = await waitDom("document.querySelector('[data-testid=share-confirmation-dialog]')"); await press("ESCAPE");
+  checks.shareDialogEscCancelled = await waitDom("!document.querySelector('[data-testid=share-confirmation-dialog]')");
+  const shareAfterEsc = await snapshot("share-after-escape", '[data-testid="results-share-artifact"]'); assertFocus("shareAfterEscape", shareAfterEsc);
+  await press("TAB", ["shift"]); const reverse = await snapshot("reverse-tab", "button");
+  checks.shiftTabMovesBackward = reverse.tag === "BUTTON" && reverse.label !== shareAfterEsc.label;
+
+  const pointerEvents = await window.webContents.executeJavaScript("window.__m4PointerEvents || []", true) as unknown[];
+  checks.pointerEventsBlocked = pointerEvents.length === 0;
+  checks.noKeyboardTrap = focusTrace.every((item) => item.visible === true) && focusTrace.length >= 14;
+  const expectedOrder = ["new-chat", "attachment", "add-file", "attachment-reopen", "attachment-after-escape", "composer", "send", "user-menu", "settings", "approval-pane", "approve", "results", "open-artifact", "share-artifact", "share-after-escape", "reverse-tab"];
+  checks.focusOrderMatchesSnapshot = expectedOrder.every((name, index) => focusTrace[index]?.milestone === name);
+  const screenshotPath = join(evidenceDir, "m4-keyboard-final.png");
+  writeFileSync(screenshotPath, (await window.webContents.capturePage()).toPNG());
+  writeFileSync(join(evidenceDir, "focus-trace.json"), JSON.stringify({ expectedOrder, focusTrace, pointerEvents }, null, 2));
+  return { ok: Object.values(checks).every(Boolean), checks, details: { fixturePath, seeded, expectedOrder, focusTrace, pointerEvents, screenshotPath } };
 }
 
 async function runM3WindowScalingSmoke(window: BrowserWindow): Promise<SmokeResult> {
@@ -2757,9 +4405,23 @@ async function runA5ServiceGuidanceSmoke(window: BrowserWindow): Promise<SmokeRe
 
 async function runF2ApprovalSmoke(window: BrowserWindow): Promise<SmokeResult> {
   const scenario = process.env.OPENDRSAI_F2_APPROVAL_SCENARIO || "all";
+  const fixturePath = process.env.OPENDRSAI_E2E_F2_CERN_PDF;
+  const effectDir = process.env.OPENDRSAI_E2E_F2_EFFECT_DIR;
+  if (!fixturePath || !effectDir || !existsSync(fixturePath)) {
+    throw new Error("F2 requires the fixed CERN PDF and an isolated effect directory.");
+  }
+  const workspacePath = dirname(fixturePath);
+  await createWorkspace({ source: "existing", path: workspacePath, name: "F2 CERN 关键操作", trusted: true });
+  await new Promise<void>((resolveReload, rejectReload) => {
+    const timer = setTimeout(() => rejectReload(new Error("F2 renderer reload timed out.")), 10_000);
+    window.webContents.once("did-finish-load", () => { clearTimeout(timer); resolveReload(); });
+    window.webContents.reload();
+  });
   const result = (await window.webContents.executeJavaScript(`
     (async () => {
       const scenario = ${JSON.stringify(scenario)};
+      const fixturePath = ${JSON.stringify(fixturePath)};
+      const workspacePath = ${JSON.stringify(workspacePath)};
       const api = window.openDrSai;
       const checks = { bridge: Boolean(api) };
       const details = {
@@ -2785,6 +4447,8 @@ async function runF2ApprovalSmoke(window: BrowserWindow): Promise<SmokeResult> {
       } catch (error) {
         details.loginError = String(error && error.message ? error.message : error);
       }
+      const cern = await api.previewWorkspaceFile({ workspacePath, path: fixturePath, maxBytes: 100000 });
+      checks.cernPdfVerified = cern.fileHash === 'sha256:f6581e1a255b354667188b41b874b996a300f88bb48912721bc1c854183e913e' && /Pages: 48/.test(cern.content || '');
       const cases = [
         ["new_directory", "workspace", "workspace.revert", "Access new directory", "C:\\\\OpenDrSai-F2\\\\new-input", "Only the selected folder", "Directory contents may enter task context."],
         ["external_data", "network", "network.request", "Send external data", "https://f2.example.test/upload", "One outbound request", "Selected summary would leave this device."],
@@ -2885,9 +4549,20 @@ async function runF2ApprovalSmoke(window: BrowserWindow): Promise<SmokeResult> {
           impact,
           risk: approval.risk,
           decision: "reject",
-          unauthorizedExecutions: 0,
+          rejectApprovalId: approvalId,
           retries: 0,
         });
+      }
+      details.approvedControls = [];
+      for (const item of selected) {
+        const [key, source, actionKind, title, target, scope, impact] = item;
+        const idempotencyKey = 'f2-control-' + key + '-' + Date.now();
+        const proposal = await api.proposeApproval({ source, actionKind, title: title + ' authorized control', detail: impact, target, scope, impact, risk: 'high', idempotencyKey });
+        const approvalId = proposal.approval?.id;
+        const executed = Boolean(approvalId && await api.decidePendingApproval({ id: approvalId, approved: true }));
+        const repeated = await api.proposeApproval({ source, actionKind, title: title + ' authorized control', detail: impact, target, scope, impact, risk: 'high', idempotencyKey });
+        checks['approvedOnce_' + key] = Boolean(proposal.queued && executed && repeated.queued === false && repeated.requiresApproval === false);
+        details.approvedControls.push({ key, approvalId, repeated });
       }
       details.accessibleTree = [...document.querySelectorAll("button, input, [role], section, article")]
         .slice(0, 160)
@@ -2900,6 +4575,27 @@ async function runF2ApprovalSmoke(window: BrowserWindow): Promise<SmokeResult> {
       return { checks, details };
     })()
   `)) as { checks: Record<string, boolean>; details: Record<string, unknown> };
+
+  const approvalDetails = result.details.approvals as Array<{ key: string; rejectApprovalId: string; unauthorizedExecutions?: number }>;
+  const controlDetails = result.details.approvedControls as Array<{ key: string; approvalId: string }>;
+  const effectDiagnostics = approvalDetails.map((approval) => {
+    const effectPath = join(effectDir, `${approval.key}.json`);
+    const events = existsSync(effectPath)
+      ? (JSON.parse(readFileSync(effectPath, "utf8")) as { events?: Array<{ approvalId?: string; phase?: string }> }).events ?? []
+      : [];
+    const control = controlDetails.find((item) => item.key === approval.key);
+    const unauthorizedExecutions = events.filter((event) => event.approvalId === approval.rejectApprovalId || event.phase === "reject").length;
+    const authorizedExecutions = events.filter((event) => event.approvalId === control?.approvalId && event.phase === "control").length;
+    approval.unauthorizedExecutions = unauthorizedExecutions;
+    result.checks[`rejectZeroSideEffects_${approval.key}`] = unauthorizedExecutions === 0;
+    result.checks[`approvedExactlyOnce_${approval.key}`] = authorizedExecutions === 1 && events.length === 1;
+    return { key: approval.key, effectPath, events, unauthorizedExecutions, authorizedExecutions };
+  });
+  result.details.effectDiagnostics = effectDiagnostics;
+  result.details.unauthorizedExecutions = effectDiagnostics.reduce((sum, item) => sum + item.unauthorizedExecutions, 0);
+  result.checks.allRejectedOperationsHaveZeroSideEffects = result.details.unauthorizedExecutions === 0;
+  result.checks.allApprovedControlsExecuteOnce = effectDiagnostics.every((item) => item.authorizedExecutions === 1);
+  result.checks.cernFixturePreserved = existsSync(fixturePath) && readFileSync(fixturePath).length === 7_664_262;
 
   const screenshotDir = process.env.OPENDRSAI_E2E_F2_SCREENSHOT_DIR;
   if (screenshotDir) {
@@ -2914,6 +4610,349 @@ async function runF2ApprovalSmoke(window: BrowserWindow): Promise<SmokeResult> {
   result.details.exitCode = Object.values(result.checks).every(Boolean) ? 0 : 1;
   const ok = Object.values(result.checks).every(Boolean);
   return { ok, checks: result.checks, details: result.details };
+}
+
+async function runF4AnomalyDecisionSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  const fixturePath = process.env.OPENDRSAI_E2E_F4_CERN_PDF;
+  const csvPath = process.env.OPENDRSAI_E2E_F4_CSV;
+  const evidenceDir = process.env.OPENDRSAI_E2E_F4_EVIDENCE_DIR;
+  const branch = process.env.OPENDRSAI_E2E_F4_BRANCH as "keep" | "exclude" | "both" | undefined;
+  if (!fixturePath || !csvPath || !evidenceDir || !branch || !existsSync(fixturePath) || !existsSync(csvPath) || !["keep", "exclude", "both"].includes(branch)) {
+    throw new Error("F4 requires the fixed CERN PDF, a CERN CSV fixture, an evidence directory, and a valid branch.");
+  }
+  mkdirSync(evidenceDir, { recursive: true });
+  const workspacePath = dirname(csvPath);
+  const hash = (path: string): string => createHash("sha256").update(readFileSync(path)).digest("hex");
+  const originalPdfHash = hash(fixturePath);
+  const originalCsvHash = hash(csvPath);
+  const filesBefore = new Set(readdirSync(workspacePath));
+  await createWorkspace({ source: "existing", path: workspacePath, name: `F4 CERN 异常处理 ${branch}`, trusted: true });
+  await new Promise<void>((resolveReload, rejectReload) => {
+    const timer = setTimeout(() => rejectReload(new Error("F4 renderer reload timed out.")), 10_000);
+    window.webContents.once("did-finish-load", () => { clearTimeout(timer); resolveReload(); });
+    window.webContents.reload();
+  });
+  window.show();
+  window.focus();
+
+  const seeded = await window.webContents.executeJavaScript(`
+    (async () => {
+      const api = window.openDrSai;
+      const checks = { bridge: Boolean(api) };
+      if (!api) return { checks };
+      const login = await api.login({ developerBypass: true, rememberMe: false });
+      checks.login = Boolean(login?.ok);
+      const pdf = await api.previewWorkspaceFile({ workspacePath: ${JSON.stringify(workspacePath)}, path: ${JSON.stringify(fixturePath)}, maxBytes: 100000 });
+      checks.cernPdfVerified = pdf.fileHash === 'sha256:f6581e1a255b354667188b41b874b996a300f88bb48912721bc1c854183e913e' && pdf.size === 7664262;
+      await api.enqueueBackgroundTask({
+        kind: 'agent_run', source: 'agent', title: 'F4 CERN 容量异常数据处理', workspacePath: ${JSON.stringify(workspacePath)},
+        targetId: 'f4-cern-${branch}', status: 'completed', progress: 100, message: '发现两行异常容量数据。', verification: '等待用户选择处理方式。',
+        deliverySummary: {
+          findingSummary: 'CERN 容量测试数据中发现 2 行异常。', importance: 'high', importanceReason: '异常处理会改变趋势结论。',
+          suggestedAction: '选择保留、排除或同时生成两种结果。', workSummary: '从固定 CERN PDF 建立容量测试表。', coreConclusion: '应让用户明确决定异常数据的处理方式。',
+          verification: '原 PDF 和原 CSV 必须保持不变。', remainingRisks: '尚未应用异常处理决定。', completionCriteria: { passed: ['固定 CERN PDF 已校验'], incomplete: ['异常处理决定待选择'] },
+          artifacts: [{
+            id: 'f4-cern-chart', label: 'cern-wlcg-capacity-chart.svg', path: ${JSON.stringify(join(workspacePath, "cern-wlcg-capacity-chart.svg"))}, kind: 'file',
+            anomalyDecision: { sourcePath: ${JSON.stringify(csvPath)}, anomalyColumn: 'anomaly', totalRows: 5, anomalyRows: 2, normalRows: 3 },
+            chartQuality: { status: 'passed', checkedAt: '2026-07-15T00:00:00.000Z', sourcePath: ${JSON.stringify(csvPath)}, xAxis: 'year', yAxis: 'throughput_tbps', unit: 'Tbps', legend: 'WLCG capacity test', axisLabelsVisible: true, unitVisible: true, legendVisible: true, pointsExpected: 5, pointsMatched: 5, coordinateMatches: 5, anomaliesExpected: 2, anomaliesMatched: 2, mismatchCount: 0, checks: ['5/5 data points', '2/2 anomalies'] }
+          }]
+        }
+      });
+      document.querySelector('[data-nav-id="results"]')?.click();
+      const deadline = Date.now() + 8000;
+      while (Date.now() < deadline && !document.querySelector('[data-testid="results-anomaly-decision"]')) await new Promise((resolve) => setTimeout(resolve, 100));
+      const card = document.querySelector('[data-testid="results-anomaly-decision"]');
+      const options = [...(card?.querySelectorAll('input[type="radio"]') || [])];
+      checks.cardVisible = Boolean(card);
+      checks.threeExclusiveOptions = options.length === 3 && new Set(options.map((input) => input.name)).size === 1;
+      const text = (card?.innerText || '').replace(/\s+/g, ' ');
+      checks.impactCopy = ['保留异常', '排除异常', '两种都做', '便于审计', '观察基线', '互不覆盖'].every((value) => text.includes(value));
+      const target = card?.querySelector('input[value="${branch}"]');
+      target?.focus();
+      return { checks, focused: document.activeElement === target, text };
+    })()
+  `, true) as { checks: Record<string, boolean>; focused: boolean; text: string };
+  const checks = seeded.checks;
+  checks.radioFocused = seeded.focused;
+  window.webContents.sendInputEvent({ type: "keyDown", keyCode: "SPACE" });
+  window.webContents.sendInputEvent({ type: "keyUp", keyCode: "SPACE" });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  checks.keyboardSelected = await window.webContents.executeJavaScript(`
+    (() => {
+      const input = document.querySelector('[data-testid="results-anomaly-decision"] input[value="${branch}"]');
+      const button = document.querySelector('[data-testid="results-apply-anomaly-decision"]');
+      button?.focus();
+      return Boolean(input?.checked && document.activeElement === button && !button?.disabled);
+    })()
+  `, true) as boolean;
+  window.webContents.sendInputEvent({ type: "keyDown", keyCode: "SPACE" });
+  window.webContents.sendInputEvent({ type: "keyUp", keyCode: "SPACE" });
+  const completionDeadline = Date.now() + 8000;
+  let uiResult: { state?: string; decision?: string; outputCount?: string; status?: string } = {};
+  while (Date.now() < completionDeadline) {
+    uiResult = await window.webContents.executeJavaScript(`(() => {
+      const status = document.querySelector('[data-testid="results-anomaly-status"]');
+      const record = document.querySelector('[data-testid="results-anomaly-record"]');
+      return { state: status?.getAttribute('data-state'), decision: record?.getAttribute('data-decision'), outputCount: record?.getAttribute('data-output-count'), status: status?.textContent || '' };
+    })()`, true) as typeof uiResult;
+    if (uiResult.state === "completed" && uiResult.decision === branch) break;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  const base = csvPath.replace(/\.csv$/i, "");
+  const keepPath = `${base}-保留全部.csv`;
+  const excludePath = `${base}-排除异常.csv`;
+  const receiptPath = `${base}-异常处理决定.json`;
+  const expectedPaths = branch === "keep" ? [keepPath, receiptPath] : branch === "exclude" ? [excludePath, receiptPath] : [keepPath, excludePath, receiptPath];
+  const receipt = existsSync(receiptPath) ? JSON.parse(readFileSync(receiptPath, "utf8")) as Record<string, unknown> : {};
+  const readRows = (path: string): string[] => existsSync(path) ? readFileSync(path, "utf8").trim().split(/\r?\n/).slice(1) : [];
+  const keepRows = readRows(keepPath);
+  const excludeRows = readRows(excludePath);
+  checks.keyboardApplied = uiResult.state === "completed";
+  checks.decisionRecorded = uiResult.decision === branch && receipt.decision === branch;
+  checks.resultNamesDecision = String(uiResult.status || "").includes(branch === "keep" ? "保留异常" : branch === "exclude" ? "排除异常" : "两种都做");
+  checks.outputCountExact = Number(uiResult.outputCount) === (branch === "both" ? 2 : 1);
+  checks.keepBranchExact = branch === "exclude" || (keepRows.length === 5 && keepRows.filter((row) => /,true$/i.test(row)).length === 2);
+  checks.excludeBranchExact = branch === "keep" || (excludeRows.length === 3 && excludeRows.every((row) => /,false$/i.test(row)));
+  const sum = (rows: string[]): number => rows.reduce((total, row) => total + Number(row.split(",")[1] || 0), 0);
+  checks.numericConsistency = (branch === "exclude" || Math.abs(sum(keepRows) - 35.2) < 0.0001) && (branch === "keep" || Math.abs(sum(excludeRows) - 16) < 0.0001) && Number(receipt.totalRows) === 5 && Number(receipt.anomalyRows) === 2 && Number(receipt.normalRows) === 3;
+  checks.branchIsolation = branch === "keep" ? !existsSync(excludePath) : branch === "exclude" ? !existsSync(keepPath) : existsSync(keepPath) && existsSync(excludePath);
+  checks.originalsUnchanged = hash(fixturePath) === originalPdfHash && hash(csvPath) === originalCsvHash;
+  checks.outputHashesRecorded = Array.isArray(receipt.outputs) && receipt.outputs.every((output) => typeof output.sha256 === "string" && output.sha256 === `sha256:${hash(output.path)}`);
+  const filesAfter = new Set(readdirSync(workspacePath));
+  const added = [...filesAfter].filter((name) => !filesBefore.has(name)).map((name) => join(workspacePath, name)).sort();
+  checks.sideEffectLedgerExact = JSON.stringify(added) === JSON.stringify(expectedPaths.sort());
+
+  if (!window.webContents.debugger.isAttached()) window.webContents.debugger.attach("1.3");
+  await window.webContents.debugger.sendCommand("Accessibility.enable");
+  const axTree = await window.webContents.debugger.sendCommand("Accessibility.getFullAXTree") as { nodes?: Array<Record<string, unknown>> };
+  const names = (axTree.nodes ?? []).map((node) => String((node.name as { value?: unknown })?.value || ""));
+  checks.accessibilityTree = ["保留异常", "排除异常", "两种都做", "应用决定并生成结果"].every((name) => names.some((candidate) => candidate.includes(name)));
+  writeFileSync(join(evidenceDir, "accessibility-tree.json"), `${JSON.stringify(axTree, null, 2)}\n`, "utf8");
+  writeFileSync(join(evidenceDir, `f4-${branch}.png`), (await window.webContents.capturePage()).toPNG());
+  const details = { branch, workspacePath, fixturePath, csvPath, originalPdfHash, originalCsvHash, expectedPaths, added, uiResult, receipt, cardText: seeded.text };
+  writeFileSync(join(evidenceDir, "side-effect-ledger.json"), `${JSON.stringify({ filesBefore: [...filesBefore], filesAfter: [...filesAfter], added, expectedPaths }, null, 2)}\n`, "utf8");
+  return { ok: Object.values(checks).every(Boolean), checks, details };
+}
+
+async function runF3ApprovalSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  const fixturePath = process.env.OPENDRSAI_E2E_F3_CERN_PDF;
+  const effectDir = process.env.OPENDRSAI_E2E_F3_EFFECT_DIR;
+  const evidenceDir = process.env.OPENDRSAI_E2E_F3_EVIDENCE_DIR;
+  if (!fixturePath || !effectDir || !evidenceDir || !existsSync(fixturePath)) {
+    throw new Error("F3 requires the fixed CERN PDF, an isolated effect directory, and an evidence directory.");
+  }
+  mkdirSync(effectDir, { recursive: true });
+  mkdirSync(evidenceDir, { recursive: true });
+  const workspacePath = dirname(fixturePath);
+  await createWorkspace({ source: "existing", path: workspacePath, name: "F3 CERN 审批说明", trusted: true });
+  await new Promise<void>((resolveReload, rejectReload) => {
+    const timer = setTimeout(() => rejectReload(new Error("F3 renderer reload timed out.")), 10_000);
+    window.webContents.once("did-finish-load", () => { clearTimeout(timer); resolveReload(); });
+    window.webContents.reload();
+  });
+  window.show();
+  window.focus();
+
+  const cases = [
+    { key: "file_access", source: "workspace", actionKind: "workspace.revert", title: "读取新文件夹中的 CERN 材料", object: "CERN 访问资料（新目录）", scope: "仅本次任务读取这个新目录", impact: "目录中的文件会加入本次分析，但不会修改原文件。" },
+    { key: "file_modify", source: "workspace", actionKind: "workspace.stage", title: "更新 CERN 管理者报告", object: "CERN 管理者报告.docx", scope: "仅修改报告中的结论段落", impact: "现有结论段落会被新内容替换，可通过版本记录恢复。" },
+    { key: "external_send", source: "network", actionKind: "network.request", title: "向外部服务发送 CERN 摘要", object: "CERN 管理者摘要", scope: "仅发送这份摘要，不发送原始 PDF", impact: "摘要内容将离开这台设备并交给外部服务处理。" },
+    { key: "large_compute", source: "workflow", actionKind: "workflow.run", title: "启动 CERN 48 页深度分析", object: "CERN 48 页分析任务", scope: "仅运行一次，计算预算上限 250 元", impact: "会占用计算队列并可能产生最高 250 元费用。" },
+    { key: "file_delete", source: "workspace", actionKind: "workspace.revert", title: "删除 CERN 临时分析草稿", object: "临时分析草稿.csv", scope: "仅删除这一份临时草稿", impact: "文件会从工作区移除，原始 CERN PDF 不受影响。" },
+  ] as const;
+  const seeded = await window.webContents.executeJavaScript(`
+    (async () => {
+      const api = window.openDrSai;
+      const checks = { bridge: Boolean(api) };
+      const details = { approvals: [], cards: [] };
+      if (!api) return { checks, details };
+      const login = await api.login({ developerBypass: true, rememberMe: false });
+      checks.login = Boolean(login?.ok);
+      const preview = await api.previewWorkspaceFile({ workspacePath: ${JSON.stringify(workspacePath)}, path: ${JSON.stringify(fixturePath)}, maxBytes: 100000 });
+      checks.cernPdfVerified = preview.fileHash === 'sha256:f6581e1a255b354667188b41b874b996a300f88bb48912721bc1c854183e913e' && /Pages: 48/.test(preview.content || '');
+      const cases = ${JSON.stringify(cases)};
+      for (const item of cases) {
+        const proposal = await api.proposeApproval({
+          source: item.source,
+          actionKind: item.actionKind,
+          title: item.title,
+          detail: item.impact,
+          businessAction: item.title,
+          businessObject: item.object,
+          target: item.object,
+          scope: item.scope,
+          impact: item.impact,
+          risk: 'high',
+          idempotencyKey: 'f3-' + item.key + '-' + Date.now(),
+        });
+        checks['queued_' + item.key] = Boolean(proposal?.queued && proposal?.approval?.id);
+        details.approvals.push({ ...item, id: proposal?.approval?.id || null });
+      }
+      window.dispatchEvent(new Event('drsai:e2e-open-approval-center'));
+      const deadline = Date.now() + 8000;
+      while (Date.now() < deadline && document.querySelectorAll('[data-testid="business-approval-card"]').length < cases.length) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      const forbidden = /workspace\\.|network\\.|workflow\\.|shell\\.|git\\.|browser\\.|external\\.service|actionKind|JSON|MCP|tool name|命令参数/i;
+      for (const item of cases) {
+        const approval = details.approvals.find((entry) => entry.key === item.key);
+        const card = [...document.querySelectorAll('[data-testid="business-approval-card"]')]
+          .find((node) => node.getAttribute('data-approval-id') === approval?.id);
+        const text = (card?.innerText || '').replace(/\\s+/g, ' ').trim();
+        const aria = card?.getAttribute('aria-label') || '';
+        const buttons = [...(card?.querySelectorAll('button') || [])].map((button) => ({ text: (button.textContent || '').trim(), aria: button.getAttribute('aria-label') || '' }));
+        checks['cardVisible_' + item.key] = Boolean(card);
+        checks['sevenBusinessFields_' + item.key] = Boolean(
+          text.includes('要做什么') && text.includes(item.title) &&
+          text.includes('涉及对象') && text.includes(item.object) &&
+          text.includes('作用范围') && text.includes(item.scope) &&
+          text.includes('可能影响') && text.includes(item.impact) &&
+          text.includes('风险说明') && text.includes('高风险') &&
+          buttons.some((button) => /允许并执行/.test(button.text)) &&
+          buttons.some((button) => /拒绝并停止/.test(button.text))
+        );
+        checks['plainLanguage_' + item.key] = Boolean(text && !forbidden.test(text));
+        checks['cardAccessibleName_' + item.key] = Boolean(
+          aria.includes(item.title) && aria.includes(item.object) && aria.includes(item.scope) &&
+          aria.includes(item.impact) && aria.includes('高风险') &&
+          aria.includes('允许并执行') && aria.includes('拒绝并停止')
+        );
+        details.cards.push({ key: item.key, id: approval?.id, text, aria, buttons });
+      }
+      return { checks, details };
+    })()
+  `, true) as { checks: Record<string, boolean>; details: { approvals: Array<Record<string, string | null>>; cards: Array<Record<string, unknown>> } };
+  const result: SmokeResult = { ok: false, checks: seeded.checks, details: seeded.details };
+
+  if (!window.webContents.debugger.isAttached()) window.webContents.debugger.attach("1.3");
+  await window.webContents.debugger.sendCommand("Accessibility.enable");
+  const axTree = await window.webContents.debugger.sendCommand("Accessibility.getFullAXTree") as { nodes?: Array<Record<string, unknown>> };
+  const axNodes = axTree.nodes ?? [];
+  const articleNames = axNodes
+    .filter((node) => String((node.role as { value?: unknown })?.value || "") === "article")
+    .map((node) => String((node.name as { value?: unknown })?.value || ""));
+  const buttonNames = axNodes
+    .filter((node) => String((node.role as { value?: unknown })?.value || "") === "button")
+    .map((node) => String((node.name as { value?: unknown })?.value || ""));
+  for (const item of cases) {
+    result.checks[`accessibleTree_${item.key}`] = articleNames.some((name) =>
+      name.includes(item.title) && name.includes(item.object) && name.includes(item.scope) &&
+      name.includes(item.impact) && name.includes("高风险") &&
+      name.includes("允许并执行") && name.includes("拒绝并停止"),
+    );
+    result.checks[`accessibleButtons_${item.key}`] =
+      buttonNames.some((name) => name.includes(`允许并执行：${item.title}`)) &&
+      buttonNames.some((name) => name.includes(`拒绝并停止：${item.title}`));
+  }
+  const axTreePath = join(evidenceDir, "approval-accessibility-tree.json");
+  writeFileSync(axTreePath, `${JSON.stringify(axTree, null, 2)}\n`, "utf8");
+  const screenshotPath = join(evidenceDir, "approval-business-cards.png");
+  writeFileSync(screenshotPath, (await window.webContents.capturePage()).toPNG());
+  result.details.accessibilityTreePath = axTreePath;
+  result.details.screenshotPath = screenshotPath;
+
+  async function decideWithKeyboard(approvalId: string, buttonClass: "approve" | "reject"): Promise<boolean> {
+    const focused = await window.webContents.executeJavaScript(`
+      (() => {
+        const id = ${JSON.stringify(approvalId)};
+        const card = [...document.querySelectorAll('[data-testid="business-approval-card"]')]
+          .find((node) => node.getAttribute('data-approval-id') === id);
+        const button = card?.querySelector('button.${buttonClass}');
+        if (!button) return false;
+        button.focus();
+        return document.activeElement === button;
+      })()
+    `, true) as boolean;
+    if (!focused) return false;
+    window.webContents.sendInputEvent({ type: "keyDown", keyCode: "SPACE" });
+    window.webContents.sendInputEvent({ type: "keyUp", keyCode: "SPACE" });
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      const pending = await window.webContents.executeJavaScript(`window.openDrSai.listPendingApprovals()`, true) as Array<{ id?: string }>;
+      if (!pending.some((approval) => approval.id === approvalId)) return true;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return false;
+  }
+
+  for (const item of cases) {
+    const approval = seeded.details.approvals.find((entry) => entry.key === item.key);
+    const id = String(approval?.id || "");
+    result.checks[`keyboardReject_${item.key}`] = Boolean(id && await decideWithKeyboard(id, "reject"));
+  }
+
+  const controls: Array<{ key: string; approvalId: string; repeated: unknown }> = [];
+  for (const item of cases) {
+    const control = await window.webContents.executeJavaScript(`
+      (async () => {
+        const api = window.openDrSai;
+        const item = ${JSON.stringify(item)};
+        const idempotencyKey = 'f3-control-' + item.key + '-' + Date.now();
+        const proposal = await api.proposeApproval({
+          source: item.source, actionKind: item.actionKind, title: item.title, detail: item.impact,
+          businessAction: item.title, businessObject: item.object, target: item.object,
+          scope: item.scope, impact: item.impact, risk: 'high', idempotencyKey,
+        });
+        return { proposal, idempotencyKey };
+      })()
+    `, true) as { proposal?: { queued?: boolean; approval?: { id?: string } }; idempotencyKey: string };
+    const approvalId = String(control.proposal?.approval?.id || "");
+    const cardDeadline = Date.now() + 5000;
+    let visible = false;
+    while (Date.now() < cardDeadline) {
+      visible = await window.webContents.executeJavaScript(`
+        [...document.querySelectorAll('[data-testid="business-approval-card"]')]
+          .some((node) => node.getAttribute('data-approval-id') === ${JSON.stringify(approvalId)})
+      `, true) as boolean;
+      if (visible) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    result.checks[`controlCardVisible_${item.key}`] = Boolean(control.proposal?.queued && approvalId && visible);
+    result.checks[`keyboardAllow_${item.key}`] = Boolean(approvalId && await decideWithKeyboard(approvalId, "approve"));
+    const repeatResult = await window.webContents.executeJavaScript(`window.openDrSai.proposeApproval({
+      ...${JSON.stringify({
+        source: item.source,
+        actionKind: item.actionKind,
+        title: item.title,
+        detail: item.impact,
+        businessAction: item.title,
+        businessObject: item.object,
+        target: item.object,
+        scope: item.scope,
+        impact: item.impact,
+        risk: "high",
+      })},
+      idempotencyKey: ${JSON.stringify(control.idempotencyKey)}
+    })`, true) as { queued?: boolean; requiresApproval?: boolean };
+    result.checks[`idempotentOnce_${item.key}`] = repeatResult.queued === false && repeatResult.requiresApproval === false;
+    controls.push({ key: item.key, approvalId, repeated: repeatResult });
+  }
+  result.details.controls = controls;
+
+  const effectDiagnostics = cases.map((item) => {
+    const path = join(effectDir, `${item.key}.json`);
+    const events = existsSync(path)
+      ? (JSON.parse(readFileSync(path, "utf8")) as { events?: Array<{ approvalId?: string; phase?: string }> }).events ?? []
+      : [];
+    const rejectedId = seeded.details.approvals.find((approval) => approval.key === item.key)?.id;
+    const controlId = controls.find((control) => control.key === item.key)?.approvalId;
+    const rejectedExecutions = events.filter((event) => event.approvalId === rejectedId || event.phase === "reject").length;
+    const authorizedExecutions = events.filter((event) => event.approvalId === controlId && event.phase === "control").length;
+    result.checks[`rejectZeroSideEffects_${item.key}`] = rejectedExecutions === 0;
+    result.checks[`approvedExactlyOnce_${item.key}`] = authorizedExecutions === 1 && events.length === 1;
+    return { key: item.key, path, events, rejectedExecutions, authorizedExecutions };
+  });
+  result.details.effectDiagnostics = effectDiagnostics;
+  result.checks.allRejectedOperationsHaveZeroSideEffects = effectDiagnostics.every((item) => item.rejectedExecutions === 0);
+  result.checks.allApprovedOperationsExecuteOnce = effectDiagnostics.every((item) => item.authorizedExecutions === 1);
+  const pdfBytes = readFileSync(fixturePath);
+  result.checks.cernFixturePreserved = pdfBytes.length === 7_664_262 &&
+    (await import("crypto")).createHash("sha256").update(pdfBytes).digest("hex").toUpperCase() === "F6581E1A255B354667188B41B874B996A300F88BB48912721BC1C854183E913E";
+  result.details.appVersion = app.getVersion();
+  result.details.commit = process.env.OPENDRSAI_E2E_COMMIT || null;
+  result.details.exitCode = Object.values(result.checks).every(Boolean) ? 0 : 1;
+  result.ok = Object.values(result.checks).every(Boolean);
+  return result;
 }
 
 async function runChatFailureSmoke(window: BrowserWindow): Promise<SmokeResult> {
@@ -5294,6 +7333,15 @@ async function runAgentRunSmoke(window: BrowserWindow): Promise<SmokeResult> {
   const agentPlanKind = agentScenario.startsWith("d1-plan-") ? agentScenario.slice("d1-plan-".length) : "";
   const agentPlanScenario = ["g2", "g3", "g4"].includes(agentPlanKind);
   const agentUiScenario = agentBusinessProgressScenario || agentG4ReportScenario || agentContinuousTaskScenario || agentPlanScenario;
+  if (agentUiScenario) {
+    const workspacePath = process.env.OPENDRSAI_E2E_WORKSPACE_PATH || "C:\\OpenDrSai\\workspace";
+    await createWorkspace({ source: "existing", path: workspacePath, name: "E2E agent change set", trusted: true });
+    await new Promise<void>((resolveReload, rejectReload) => {
+      const timer = setTimeout(() => rejectReload(new Error("Agent UI fixture reload timed out.")), 10_000);
+      window.webContents.once("did-finish-load", () => { clearTimeout(timer); resolveReload(); });
+      window.webContents.reload();
+    });
+  }
   const agentTask = agentPlanKind === "g2"
     ? "帮我看看这份数据有没有问题。"
     : agentPlanKind === "g3"
@@ -5394,15 +7442,14 @@ async function runAgentRunSmoke(window: BrowserWindow): Promise<SmokeResult> {
         const userMenuDeadline = Date.now() + 5000;
         let userMenuButton = null;
         while (Date.now() < userMenuDeadline && !userMenuButton) {
-          userMenuButton = document.querySelector('button[aria-label="User menu"], button[aria-label="用户菜单"]');
+          userMenuButton = document.querySelector('[data-testid="user-menu-button"]');
           if (!userMenuButton) await new Promise((resolve) => setTimeout(resolve, 50));
         }
         userMenuButton?.click();
         const menuDeadline = Date.now() + 5000;
         let settingsButton = null;
         while (Date.now() < menuDeadline && !settingsButton) {
-          settingsButton = Array.from(document.querySelectorAll('[role="menuitem"]'))
-            .find((item) => /Settings|设置/.test(String(item.textContent || ""))) || null;
+          settingsButton = document.querySelector('[data-testid="user-menu-settings"]');
           if (!settingsButton) await new Promise((resolve) => setTimeout(resolve, 50));
         }
         settingsButton?.click();
@@ -5414,7 +7461,7 @@ async function runAgentRunSmoke(window: BrowserWindow): Promise<SmokeResult> {
         let agentTaskButton = null;
         while (Date.now() < agentTaskDeadline && !agentTaskButton) {
           agentTaskButton = Array.from(document.querySelectorAll(".settings-navigation button"))
-            .find((item) => /Agent tasks|Agent 任务/.test(String(item.textContent || ""))) || null;
+            .find((item) => /Agent tasks|智能体任务/.test(String(item.textContent || ""))) || null;
           if (!agentTaskButton) await new Promise((resolve) => setTimeout(resolve, 50));
         }
         agentTaskButton?.click();
@@ -5432,10 +7479,19 @@ async function runAgentRunSmoke(window: BrowserWindow): Promise<SmokeResult> {
         checks.agentBusinessProgressWorkspaceVisible = Boolean(document.querySelector(".agent-run-workspace"));
         const threadDeadline = Date.now() + 5000;
         while (Date.now() < threadDeadline && !thread) {
-          thread = (await api.listThreads()).find((item) => item.kind === "agent_run" && /New agent task|新 Agent 任务/.test(item.title)) || null;
+          thread = (await api.listThreads()).find((item) => item.kind === "agent_run" && /New agent task|新智能体任务/.test(item.title)) || null;
           if (!thread) await new Promise((resolve) => setTimeout(resolve, 50));
         }
-        if (!thread) throw new Error("The Agent task was not created from the visible Settings entry.");
+        if (!thread) throw new Error("The Agent task was not created from the visible Settings entry. " + JSON.stringify({
+          userMenuFound: Boolean(userMenuButton),
+          settingsFound: Boolean(settingsButton),
+          settingsNavigationFound: Boolean(document.querySelector(".settings-navigation")),
+          agentTaskFound: Boolean(agentTaskButton),
+          createTaskFound: Boolean(createTaskButton),
+          workspaceFound: Boolean(document.querySelector(".agent-run-workspace")),
+          settingsLabels: Array.from(document.querySelectorAll(".settings-navigation button")).map((item) => String(item.textContent || "").trim()),
+          recentThreadTitles: (await api.listThreads()).slice(0, 5).map((item) => item.title),
+        }));
       } else {
         thread = await api.createThread({
             kind: "agent_run",
@@ -8220,10 +10276,11 @@ async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
       );
       const gatewayStatus = await api.getGatewayStatus();
       details.gatewayStatus = gatewayStatus;
-      checks.unmanagedGatewayRejected = Boolean(
+      checks.developmentManagedGatewayAccepted = Boolean(
         gatewayStatus.externalReady === true &&
-          gatewayStatus.externalConflict === true &&
-          gatewayStatus.ready === false,
+          gatewayStatus.managed === true &&
+          gatewayStatus.externalConflict === false &&
+          gatewayStatus.ready === true,
       );
 
       const save = await api.saveApiKey("opendrsai-packaged-smoke-key");

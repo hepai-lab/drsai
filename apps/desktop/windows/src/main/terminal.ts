@@ -4,6 +4,7 @@ import { existsSync } from "fs";
 import { homedir } from "os";
 import { delimiter, join } from "path";
 import { getRemoteGatewayAccess } from "./remoteWorkspace";
+import { requestRemotePtyKill } from "./remotePtyLifecycle";
 
 type IPty = import("node-pty").IPty;
 type IPtyForkOptions = import("node-pty").IPtyForkOptions;
@@ -17,6 +18,7 @@ export interface TerminalCreateOptions {
   title?: string;
   shellProfile?: TerminalShellProfile;
   remoteHostAlias?: string;
+  workspaceId?: string;
 }
 
 export type TerminalShellProfile =
@@ -35,6 +37,7 @@ export interface TerminalSessionInfo {
   title: string;
   workspaceKey: string;
   createdAt: string;
+  workspaceId?: string;
 }
 
 interface TerminalSession extends TerminalSessionInfo {
@@ -287,7 +290,7 @@ export async function createTerminalSession(
 }
 
 async function createRemoteTerminalSession(event: IpcMainInvokeEvent, options: TerminalCreateOptions, cwd: string, cols: number, rows: number, shellProfile: TerminalShellProfile): Promise<TerminalSessionInfo> {
-  const access = getRemoteGatewayAccess(cwd);
+  const access = getRemoteGatewayAccess(cwd, options.workspaceId);
   if (!access) throw new Error("Remote workspace Gateway is not connected.");
   const url = `${access.baseUrl.replace(/^http/, "ws")}/v1/pty`;
   const socket = new WebSocket(url);
@@ -303,7 +306,7 @@ async function createRemoteTerminalSession(event: IpcMainInvokeEvent, options: T
       if (message.type === "created") {
         clearTimeout(timer);
         const id = String(message.id || randomUUID());
-        session = { id, pid: Number(message.pid || 0), shell: String(message.shell || "/bin/bash"), shellProfile, cwd: String(message.cwd || cwd), title, workspaceKey, createdAt: new Date().toISOString(), remoteSocket: socket, ownerId: event.sender.id, buffer: String(message.buffer || "") };
+        session = { id, pid: Number(message.pid || 0), shell: String(message.shell || "/bin/bash"), shellProfile, cwd: String(message.cwd || cwd), title, workspaceKey, createdAt: new Date().toISOString(), ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}), remoteSocket: socket, ownerId: event.sender.id, buffer: String(message.buffer || "") };
         sessions.set(id, session); resolve(toSessionInfo(session));
       } else if (message.type === "data" && session) {
         const data = String(message.data || ""); appendSessionBuffer(session, data);
@@ -328,7 +331,7 @@ function scheduleRemoteTerminalReattach(session: TerminalSession, event: IpcMain
   }
   setTimeout(() => {
     if (!sessions.has(session.id)) return;
-    const access = getRemoteGatewayAccess(session.cwd);
+    const access = getRemoteGatewayAccess(session.cwd, session.workspaceId);
     if (!access) return scheduleRemoteTerminalReattach(session, event, attempt + 1);
     const socket = new WebSocket(`${access.baseUrl.replace(/^http/, "ws")}/v1/pty`);
     let attached = false;
@@ -406,7 +409,7 @@ export function killTerminalSession(
   const session = sessionForOwner(id, event.sender.id);
   if (!session) return false;
   sessions.delete(id);
-  if (session.remoteSocket) { session.remoteSocket.send(JSON.stringify({ type: "kill", id })); session.remoteSocket.close(); }
+  if (session.remoteSocket) requestRemotePtyKill(session.remoteSocket, id);
   else session.pty?.kill();
   return true;
 }
@@ -415,7 +418,7 @@ export function killTerminalsForOwner(ownerId: number): void {
   for (const [id, session] of sessions) {
     if (session.ownerId === ownerId) {
       sessions.delete(id);
-      if (session.remoteSocket) session.remoteSocket.close(); else session.pty?.kill();
+      if (session.remoteSocket) requestRemotePtyKill(session.remoteSocket, id); else session.pty?.kill();
     }
   }
 }
@@ -423,6 +426,6 @@ export function killTerminalsForOwner(ownerId: number): void {
 export function killAllTerminalSessions(): void {
   for (const [id, session] of sessions) {
     sessions.delete(id);
-    if (session.remoteSocket) session.remoteSocket.close(); else session.pty?.kill();
+    if (session.remoteSocket) requestRemotePtyKill(session.remoteSocket, id); else session.pty?.kill();
   }
 }

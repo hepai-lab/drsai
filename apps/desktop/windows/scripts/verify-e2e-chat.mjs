@@ -371,9 +371,8 @@ try {
   if (scenario === "j6-reusable-task-adjustments") assertJ6ReusableTaskAdjustmentDiagnostics(result);
   console.log("E2E chat passed with packaged Electron + real Python fake gateway.");
 } finally {
-  if (gatewayProcess?.pid) killProcessTree(gatewayProcess.pid);
-  else if (gatewayProcess) await new Promise((resolveClose) => gatewayProcess.close(resolveClose));
-  cleanupTempDir(tempDir);
+  if (gatewayProcess) await stopGateway(gatewayProcess);
+  await cleanupTempDir(tempDir);
 }
 
 function isSuccessfulChatRoundTrip(result) {
@@ -382,14 +381,20 @@ function isSuccessfulChatRoundTrip(result) {
   return Object.entries(checks).every(([name, passed]) => name === "gatewayReady" || passed === true) &&
     checks.chatStartEvent === true && checks.chatChunk === true && checks.chatDone === true && checks.noChatError === true;
 }
-process.exit(process.exitCode ?? 0);
+process.exitCode ??= 0;
 
-function cleanupTempDir(path) {
-  try {
-    rmSync(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
-  } catch (error) {
-    console.warn(`Could not remove temporary directory ${path}: ${error instanceof Error ? error.message : String(error)}`);
+async function cleanupTempDir(path) {
+  let lastError;
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    try {
+      rmSync(path, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 500));
+    }
   }
+  throw new Error(`Could not remove temporary E2E chat directory ${path}: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
 }
 
 async function assertPortFree() {
@@ -1058,5 +1063,32 @@ function killProcessTree(pid) {
   spawnSync("taskkill.exe", ["/PID", String(pid), "/T", "/F"], {
     stdio: "ignore",
     windowsHide: true,
+  });
+}
+
+async function stopGateway(gateway) {
+  shuttingDownGateway = true;
+  if (!gateway.pid) {
+    if (typeof gateway.close !== "function") throw new Error("E2E chat Gateway does not expose a close operation.");
+    await new Promise((resolveClose, rejectClose) => gateway.close((error) => error ? rejectClose(error) : resolveClose()));
+    return;
+  }
+  if (gateway.exitCode !== null || gateway.signalCode !== null) return;
+  try { gateway.kill("SIGTERM"); } catch {}
+  await waitForChildExit(gateway, 5_000);
+  if (gateway.exitCode !== null || gateway.signalCode !== null) return;
+  killProcessTree(gateway.pid);
+  await waitForChildExit(gateway, 5_000);
+  if (gateway.exitCode === null && gateway.signalCode === null) throw new Error(`E2E chat Gateway process ${gateway.pid} did not exit.`);
+}
+
+function waitForChildExit(child, timeoutMs) {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return new Promise((resolveExit) => {
+    const timer = setTimeout(resolveExit, timeoutMs);
+    child.once("close", () => {
+      clearTimeout(timer);
+      resolveExit();
+    });
   });
 }

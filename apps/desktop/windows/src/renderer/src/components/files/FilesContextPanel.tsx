@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import type {
   ChatAttachment,
+  DesktopFailureKind,
   ManagerPresentationGenerateResult,
   ManagerPresentationAudience,
   ManagerPresentationProgressEvent,
@@ -61,6 +62,7 @@ interface FilesContextPanelProps {
   fileTraceEvents: AgentFileTraceEvent[];
   language: AppLanguage;
   scopeId: string;
+  workspaceId: string;
   workspacePath: string;
   workspaceTrusted: boolean;
   onBasketChange: (attachments: ChatAttachment[]) => void;
@@ -76,6 +78,7 @@ export function FilesContextPanel({
   fileTraceEvents,
   language,
   scopeId,
+  workspaceId,
   workspacePath,
   workspaceTrusted,
   onBasketChange,
@@ -155,11 +158,11 @@ export function FilesContextPanel({
   const loadWorkspaceCheckpoints = useCallback(async () => {
     if (!workspacePath) return;
     try {
-      setWorkspaceCheckpoints(await desktopApi.listWorkspaceCheckpoints(workspacePath));
+      setWorkspaceCheckpoints(await desktopApi.listWorkspaceCheckpoints(workspacePath, workspaceId));
     } catch (caught) {
       setCheckpointMessage(caught instanceof Error ? caught.message : String(caught));
     }
-  }, [workspacePath]);
+  }, [workspaceId, workspacePath]);
 
   const refresh = useCallback(async () => {
     if (!workspacePath) return;
@@ -167,9 +170,10 @@ export function FilesContextPanel({
     setError(null);
     try {
       const [nextOverview, fileTree] = await Promise.all([
-        desktopApi.getWorkspaceContextOverview(workspacePath),
+        desktopApi.getWorkspaceContextOverview(workspacePath, workspaceId),
         desktopApi.listWorkspaceFiles({
           workspacePath,
+          workspaceId,
           query,
           maxDepth: query.trim() ? 8 : 5,
           maxEntries: 900,
@@ -184,14 +188,14 @@ export function FilesContextPanel({
       setError(caught instanceof Error ? caught.message : String(caught));
       setLoadState("error");
     }
-  }, [loadWorkspaceCheckpoints, query, workspacePath]);
+  }, [loadWorkspaceCheckpoints, query, workspaceId, workspacePath]);
 
   const loadMore = useCallback(async () => {
     if (!workspacePath || nextOffset === null) return;
-    const page = await desktopApi.listWorkspaceFiles({ workspacePath, query, maxDepth: query.trim() ? 8 : 5, maxEntries: 900, offset: nextOffset });
+    const page = await desktopApi.listWorkspaceFiles({ workspacePath, workspaceId, query, maxDepth: query.trim() ? 8 : 5, maxEntries: 900, offset: nextOffset });
     setNodes((current) => [...current, ...page.nodes]);
     setNextOffset(page.nextOffset ?? null);
-  }, [nextOffset, query, workspacePath]);
+  }, [nextOffset, query, workspaceId, workspacePath]);
 
   useEffect(() => {
     void refresh();
@@ -217,7 +221,7 @@ export function FilesContextPanel({
     setWorkspaceCheckpoints([]);
     setCheckpointPreview(null);
     setCheckpointMessage("");
-  }, [workspacePath]);
+  }, [workspaceId, workspacePath]);
 
   useEffect(() => desktopApi.onManagerPresentationProgress((progress) => {
     if (progress.requestId !== managerPresentationRequestRef.current) return;
@@ -291,6 +295,7 @@ export function FilesContextPanel({
     try {
       const nextPreview = await desktopApi.previewWorkspaceFile({
         workspacePath,
+        workspaceId,
         path: node.path,
         maxBytes: 220_000,
       });
@@ -346,7 +351,7 @@ export function FilesContextPanel({
   function confirmLargeDirectoryContext(fileCount: number): boolean {
     return window.confirm(
       zh
-        ? `该目录包含 ${fileCount} 个文件，发送给 Agent 的 manifest 会被截断。确认加入？`
+        ? `该目录包含 ${fileCount} 个文件，交给智能体的文件清单会被截断。确认加入？`
         : `This folder contains ${fileCount} files and the agent manifest will be truncated. Attach it?`,
     );
   }
@@ -367,6 +372,7 @@ export function FilesContextPanel({
     if (!confirmUntrustedContextShare()) return;
     const diff = await desktopApi.getWorkspaceGitDiff({
       workspacePath,
+      workspaceId,
       maxChars: 80_000,
       staged: false,
     });
@@ -386,6 +392,7 @@ export function FilesContextPanel({
     if (!selectedNode) return;
     const diff = await desktopApi.getWorkspaceGitDiff({
       workspacePath,
+      workspaceId,
       path: selectedNode.relativePath,
       maxChars: 60_000,
       staged,
@@ -412,6 +419,7 @@ export function FilesContextPanel({
     try {
       const nextPreview = await desktopApi.previewWorkspaceFile({
         workspacePath,
+        workspaceId,
         path: selectedNode.path,
         maxBytes: 220_000,
         mode,
@@ -439,6 +447,7 @@ export function FilesContextPanel({
     try {
       const result = await desktopApi.writeWorkspaceFile({
         workspacePath,
+        workspaceId,
         path: safeEdit.path,
         content: safeEdit.draft,
         expectedHash,
@@ -457,7 +466,7 @@ export function FilesContextPanel({
         setSafeEdit((current) => current ? { ...current, state: "saved", message: zh ? `我的版本已另存为：${result.destinationPath}` : `My version was saved as: ${result.destinationPath}` } : current);
         return;
       }
-      const nextPreview = await desktopApi.previewWorkspaceFile({ workspacePath, path: safeEdit.path, maxBytes: 220_000 });
+      const nextPreview = await desktopApi.previewWorkspaceFile({ workspacePath, workspaceId, path: safeEdit.path, maxBytes: 220_000 });
       setPreview(nextPreview);
       setSafeEdit((current) => current ? { ...current, baseHash: nextPreview.fileHash || result.savedHash || current.baseHash, draft: nextPreview.content ?? current.draft, state: "saved", conflict: undefined, manualChoice: false, message: mode === "overwrite" ? (zh ? "已按你的明确选择覆盖，并完成最新哈希校验。" : "Overwritten by your explicit choice after a fresh hash check.") : (zh ? "保存成功，写入前未发现外部修改。" : "Saved; no external change was found before writing.") } : current);
     } catch (caught) {
@@ -468,7 +477,7 @@ export function FilesContextPanel({
   async function reloadExternalVersion(): Promise<void> {
     if (!safeEdit) return;
     try {
-      const nextPreview = await desktopApi.previewWorkspaceFile({ workspacePath, path: safeEdit.path, maxBytes: 220_000 });
+      const nextPreview = await desktopApi.previewWorkspaceFile({ workspacePath, workspaceId, path: safeEdit.path, maxBytes: 220_000 });
       setPreview(nextPreview);
       setSafeEdit({ path: nextPreview.path, baseHash: nextPreview.fileHash || "", draft: nextPreview.content || "", state: "editing", message: zh ? "已重新读取外部版本，可以在最新内容上继续编辑。" : "Reloaded the external version; you can continue from the latest content.", manualChoice: false });
     } catch (caught) {
@@ -712,7 +721,7 @@ export function FilesContextPanel({
     if (workspaceTrusted) return true;
     return window.confirm(
       zh
-        ? "该 workspace 尚未信任。确认要把这些文件上下文发送给 Agent？"
+        ? "该工作区尚未信任。确认要把这些文件材料交给智能体？"
         : "This workspace is not trusted. Attach this file context to the agent anyway?",
     );
   }
@@ -738,6 +747,7 @@ export function FilesContextPanel({
     try {
       const checkpoint = await desktopApi.createWorkspaceCheckpoint({
         workspacePath,
+        workspaceId,
         label: `Before workspace change review ${new Date().toLocaleString()}`,
       });
       setWorkspaceCheckpoints((current) => [
@@ -757,6 +767,7 @@ export function FilesContextPanel({
     try {
       const result = await desktopApi.restoreWorkspaceCheckpoint({
         workspacePath,
+        workspaceId,
         checkpointId: checkpoint.id,
         operationId: `user-version-restore-${crypto.randomUUID()}`,
         ...(includePaths ? { includePaths } : {}),
@@ -779,12 +790,13 @@ export function FilesContextPanel({
     try {
       const accepted = await desktopApi.acceptWorkspaceCheckpoint({
         workspacePath,
+        workspaceId,
         checkpointId: checkpoint.id,
       });
       setWorkspaceCheckpoints((current) =>
         current.map((item) => item.id === accepted.id ? accepted : item),
       );
-      setCheckpointMessage(zh ? "已接受本次 Agent 变更。" : "Agent changes accepted.");
+      setCheckpointMessage(zh ? "已接受本次智能体变更。" : "Agent changes accepted.");
     } catch (caught) {
       setCheckpointMessage(caught instanceof Error ? caught.message : String(caught));
     }
@@ -795,6 +807,7 @@ export function FilesContextPanel({
     try {
       const nextPreview = await desktopApi.previewWorkspaceCheckpoint({
         workspacePath,
+        workspaceId,
         checkpointId: checkpoint.id,
         maxFiles: 20,
         maxCharsPerFile: 3000,
@@ -905,8 +918,8 @@ export function FilesContextPanel({
               selectedContextNodes.length === 0 &&
               (!selectedNode || selectedNode.type !== "file" || selectedInBasket)
             }
-            title={zh ? "加入 Agent 上下文" : "Attach to agent context"}
-            aria-label={zh ? "加入 Agent 上下文" : "Attach to agent context"}
+            title={zh ? "交给智能体使用" : "Attach to agent context"}
+            aria-label={zh ? "交给智能体使用" : "Attach to agent context"}
           >
             <ListPlus size={14} />
           </button>
@@ -1211,13 +1224,20 @@ export function FilesContextPanel({
                       data-kind={managerPresentationProgress.failureRecovery.kind}
                       data-escalation={managerPresentationProgress.failureRecovery.escalationLevel}
                       data-exhausted={managerPresentationProgress.failureRecovery.exhausted}
+                      data-affected-object={managerPresentationProgress.failureRecovery.affectedObject}
+                      data-recovery-action={managerPresentationProgress.failureRecovery.recoveryAction}
                       data-testid="manager-presentation-failure-recovery"
                     >
                       <strong>{managerPresentationProgress.failureRecovery.reason}</strong>
+                      <span><strong>{zh ? "错误类别：" : "Category: "}</strong>{failureKindLabel(managerPresentationProgress.failureRecovery.kind, zh)}</span>
+                      <span><strong>{zh ? "受影响对象：" : "Affected object: "}</strong>{managerPresentationProgress.failureRecovery.affectedObject}</span>
                       <span>
                         {zh ? "已尝试" : "Attempts"}: {managerPresentationProgress.failureRecovery.attempts}/{managerPresentationProgress.failureRecovery.retryLimit}
                       </span>
                       <span>{managerPresentationProgress.failureRecovery.suggestedAction}</span>
+                      <button type="button" data-testid="manager-presentation-recovery-action" onClick={() => void createManagerPresentation()}>
+                        {zh ? "重试" : "Retry"}
+                      </button>
                     </div>
                   ) : null}
                   <progress max={100} value={managerPresentationProgress.progress} />
@@ -1556,10 +1576,10 @@ export function FilesContextPanel({
           title={zh ? "变更审阅" : "Change Review"}
         >
           {pendingAgentCheckpoint ? (
-            <section className="files-checkpoint-panel" aria-label={zh ? "Agent 变更集审阅" : "Agent change set review"}>
+            <section className="files-checkpoint-panel" aria-label={zh ? "智能体变更审阅" : "Agent change set review"}>
               <div className="files-checkpoint-header">
                 <div>
-                  <strong>{zh ? "Agent 变更待审阅" : "Agent changes awaiting review"}</strong>
+                  <strong>{zh ? "智能体变更待审阅" : "Agent changes awaiting review"}</strong>
                   <small>{pendingAgentCheckpoint.label}</small>
                 </div>
                 <div className="files-checkpoint-actions">
@@ -1610,7 +1630,7 @@ export function FilesContextPanel({
         <FilesSectionGroup
           icon={<Activity size={13} />}
           summary={`${fileTraceEvents.length} events · ${contextSnapshots.length} snapshots`}
-          title={zh ? "Agent 痕迹" : "Agent Trace"}
+          title={zh ? "智能体操作记录" : "Agent Trace"}
         >
           <AgentFileActivityPanel
             currentAttachments={basket}
@@ -1638,6 +1658,19 @@ export function FilesContextPanel({
       </div>
     </section>
   );
+}
+
+function failureKindLabel(kind: DesktopFailureKind, zh: boolean): string {
+  const labels: Record<DesktopFailureKind, [string, string]> = {
+    external_service: ["服务异常", "Service unavailable"],
+    disk_full: ["磁盘空间不足", "Disk full"],
+    permission_denied: ["权限不足", "Permission denied"],
+    file_busy: ["文件被占用", "File in use"],
+    model_timeout: ["模型超时", "Model timeout"],
+    network: ["网络异常", "Network error"],
+    unexpected: ["未预期错误", "Unexpected error"],
+  };
+  return labels[kind][zh ? 0 : 1];
 }
 
 type ManagerBusinessStageId = "understand_material" | "organize_story" | "create_deck" | "check_result" | "ready";

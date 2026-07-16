@@ -27,7 +27,6 @@ export function LoginScreen(): React.JSX.Element {
   }, [latestLoginEvent, zh]);
 
   useEffect(() => {
-    if (!import.meta.env.DEV) return;
     function handleKeyDown(event: KeyboardEvent): void {
       if (event.key !== "F12") return;
       event.preventDefault();
@@ -148,25 +147,6 @@ export function LoginScreen(): React.JSX.Element {
           </button>
         )}
 
-        {auth.message && <div className="login-message">{sanitizeDiagnosticText(auth.message)}</div>}
-
-        <section className="availability-guidance" aria-label={zh ? "无法开始任务的原因" : "Why tasks cannot start"}>
-          <strong>{authGuide.title}</strong>
-          <p data-testid="a5-guidance-message">{authGuide.body}</p>
-          <ul>
-            {authGuide.points.map((point) => <li key={point}>{point}</li>)}
-          </ul>
-          <button
-            className="login-mode-link"
-            type="button"
-            onClick={handleCopyDiagnostics}
-            data-testid="a5-copy-diagnostics"
-          >
-            {zh ? "复制脱敏诊断" : "Copy redacted diagnostics"}
-          </button>
-          {diagnosticMessage && <span className="availability-copy-status">{diagnosticMessage}</span>}
-        </section>
-
         <div className="login-footnote">
           {zh
             ? "继续即表示你同意 OpenDrSai 服务条款和隐私政策。"
@@ -174,7 +154,7 @@ export function LoginScreen(): React.JSX.Element {
         </div>
       </section>
 
-      {import.meta.env.DEV && debugOpen && (
+      {debugOpen && (
         <aside className="login-debug-panel" aria-label={loginDebugTitle}>
           <div className="login-debug-header">
             <div>
@@ -190,6 +170,23 @@ export function LoginScreen(): React.JSX.Element {
               ? "按 F12 打开或关闭。点击登录后这里会显示流程进度。"
               : "Press F12 to toggle. Login progress appears here after clicking sign in.")}
           </div>
+          <section className="availability-guidance" aria-label={zh ? "无法开始任务的原因" : "Why tasks cannot start"}>
+            <strong>{authGuide.title}</strong>
+            <p data-testid="a5-guidance-message">{authGuide.body}</p>
+            {auth.message && <code>{sanitizeDiagnosticText(auth.message)}</code>}
+            <ul>
+              {authGuide.points.map((point) => <li key={point}>{point}</li>)}
+            </ul>
+            <button
+              className="login-mode-link"
+              type="button"
+              onClick={handleCopyDiagnostics}
+              data-testid="a5-copy-diagnostics"
+            >
+              {zh ? "复制脱敏诊断" : "Copy redacted diagnostics"}
+            </button>
+            {diagnosticMessage && <span className="availability-copy-status">{diagnosticMessage}</span>}
+          </section>
           <ol className="login-debug-list">
             {loginEvents.length === 0 ? (
               <li className="login-debug-empty">

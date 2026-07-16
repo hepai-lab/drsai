@@ -329,7 +329,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
     ),
 }
 
-DEFAULT_CONFIG_NAME = "deepseek-v4-pro"
+DEFAULT_CONFIG_NAME = "deepseek-ai/deepseek-v4-pro"
 
 
 # Endpoint defaults — match run_drsai_agent.py
@@ -623,7 +623,10 @@ def create_agent(
         or DEFAULT_CONFIG_NAME
     )
     if resolved_config_name not in llm_mode_config:
-        resolved_config_name = next(iter(llm_mode_config))
+        resolved_config_name = next(
+            (alias for alias, entry in llm_mode_config.items() if entry.model == resolved_config_name),
+            next(iter(llm_mode_config)),
+        )
 
     anthropic_base_url = _resolve(
         cli_cfg, "anthropic_base_url", "ANTHROPIC_BASE_URL",

@@ -51,6 +51,7 @@ export async function prepareForkWorktree(rawRequest: unknown): Promise<DesktopF
   );
 
   return {
+    location: "local",
     sourceWorkspacePath,
     repoRoot: resolvedRepoRoot,
     worktreePath,

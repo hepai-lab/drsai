@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opendrsai.local/schemas/owop/1.0/owop.schema.json",
+  "title": "OpenDrSai Workspace Operation Protocal",
+  "version": "1.0",
+  "type": "object",
+  "oneOf": [
+    { "$ref": "#/$defs/request" },
+    { "$ref": "#/$defs/success" },
+    { "$ref": "#/$defs/failure" },
+    { "$ref": "#/$defs/event" }
+  ],
+  "x-owop-capabilities": ["workspace", "files", "search", "watch", "git", "process", "pty", "checkpoint", "artifact"],
+  "x-owop-bindings": ["in_process", "local_ipc", "ssh", "hepai_if", "mcp", "ddf"],
+  "$defs": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[A-Za-z0-9_.:-]+$" },
+    "relativePath": { "type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^(?![A-Za-z]:)(?![\\\\/])(?!.*(?:^|[\\\\/])\\.\\.(?:[\\\\/]|$)).+$" },
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["in_process", "local_ipc", "ssh", "hepai_if", "mcp", "ddf"] },
+        "endpoint": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "host_alias": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "socket_path": { "type": "string", "minLength": 1, "maxLength": 4096 }
+      }
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "request_id", "correlation_id", "workspace_id", "operation", "params", "binding"],
+      "properties": {
+        "version": { "const": "1.0" },
+        "request_id": { "$ref": "#/$defs/id" },
+        "correlation_id": { "$ref": "#/$defs/id" },
+        "workspace_id": { "$ref": "#/$defs/id" },
+        "operation": { "type": "string", "minLength": 1 },
+        "params": { "type": "object" },
+        "binding": { "$ref": "#/$defs/binding" }
+      }
+    },
+    "success": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "request_id", "correlation_id", "ok", "result"],
+      "properties": {
+        "version": { "const": "1.0" },
+        "request_id": { "$ref": "#/$defs/id" },
+        "correlation_id": { "$ref": "#/$defs/id" },
+        "ok": { "const": true },
+        "result": { "type": "object" }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "correlation_id", "retryable", "details"],
+      "properties": {
+        "code": { "$ref": "#/$defs/id" },
+        "message": { "type": "string", "minLength": 1, "maxLength": 4000 },
+        "correlation_id": { "$ref": "#/$defs/id" },
+        "retryable": { "type": "boolean" },
+        "details": { "type": "object" }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "request_id", "correlation_id", "ok", "error"],
+      "properties": {
+        "version": { "const": "1.0" },
+        "request_id": { "$ref": "#/$defs/id" },
+        "correlation_id": { "$ref": "#/$defs/id" },
+        "ok": { "const": false },
+        "error": { "$ref": "#/$defs/error" }
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "event_id", "workspace_id", "sequence", "resource_sequence", "cursor", "dedupe_key", "type", "data"],
+      "properties": {
+        "version": { "const": "1.0" },
+        "event_id": { "$ref": "#/$defs/id" },
+        "workspace_id": { "$ref": "#/$defs/id" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "resource_sequence": { "type": "integer", "minimum": 1 },
+        "cursor": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "dedupe_key": { "$ref": "#/$defs/id" },
+        "type": { "enum": ["workspace.opened", "workspace.closed", "file.created", "file.changed", "file.removed", "file.renamed", "git.changed", "process.output", "process.exited", "pty.output", "pty.exited", "checkpoint.changed", "artifact.changed", "unknown"] },
+        "data": { "type": "object" }
+      }
+    }
+  },
+  "x-owop-operations": {
+    "workspace.describe": { "type": "object", "additionalProperties": false, "properties": {} },
+    "files.list": { "type": "object", "additionalProperties": false, "required": ["path", "limit"], "properties": { "path": { "$ref": "#/$defs/relativePath" }, "cursor": { "type": "string" }, "limit": { "type": "integer", "minimum": 1, "maximum": 1000 } } },
+    "files.stat": { "type": "object", "additionalProperties": false, "required": ["path"], "properties": { "path": { "$ref": "#/$defs/relativePath" } } },
+    "files.read": { "type": "object", "additionalProperties": false, "required": ["path", "offset", "length"], "properties": { "path": { "$ref": "#/$defs/relativePath" }, "offset": { "type": "integer", "minimum": 0 }, "length": { "type": "integer", "minimum": 1, "maximum": 8388608 } } },
+    "files.write": { "type": "object", "additionalProperties": false, "required": ["path", "content_base64"], "properties": { "path": { "$ref": "#/$defs/relativePath" }, "content_base64": { "type": "string" }, "expected_digest": { "$ref": "#/$defs/digest" }, "create_parents": { "type": "boolean" } } },
+    "files.move": { "type": "object", "additionalProperties": false, "required": ["source", "destination"], "properties": { "source": { "$ref": "#/$defs/relativePath" }, "destination": { "$ref": "#/$defs/relativePath" }, "expected_digest": { "$ref": "#/$defs/digest" } } },
+    "files.remove": { "type": "object", "additionalProperties": false, "required": ["path"], "properties": { "path": { "$ref": "#/$defs/relativePath" }, "expected_digest": { "$ref": "#/$defs/digest" }, "recursive": { "type": "boolean" } } },
+    "search.query": { "type": "object", "additionalProperties": false, "required": ["query", "limit"], "properties": { "query": { "type": "string", "minLength": 1, "maxLength": 2000 }, "path": { "$ref": "#/$defs/relativePath" }, "cursor": { "type": "string" }, "limit": { "type": "integer", "minimum": 1, "maximum": 1000 }, "include_ignored": { "type": "boolean" } } },
+    "watch.subscribe": { "type": "object", "additionalProperties": false, "required": ["after_sequence"], "properties": { "path": { "$ref": "#/$defs/relativePath" }, "after_sequence": { "type": "integer", "minimum": 0 }, "limit": { "type": "integer", "minimum": 1, "maximum": 5000 } } },
+    "git.status": { "type": "object", "additionalProperties": false, "properties": {} },
+    "git.diff": { "type": "object", "additionalProperties": false, "properties": { "path": { "$ref": "#/$defs/relativePath" }, "staged": { "type": "boolean" } } },
+    "git.file_at_ref": { "type": "object", "additionalProperties": false, "required": ["path", "ref"], "properties": { "path": { "$ref": "#/$defs/relativePath" }, "ref": { "type": "string", "minLength": 1, "maxLength": 255 } } },
+    "git.stage": { "type": "object", "additionalProperties": false, "required": ["paths"], "properties": { "paths": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/relativePath" } } } },
+    "git.unstage": { "type": "object", "additionalProperties": false, "required": ["paths"], "properties": { "paths": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/relativePath" } } } },
+    "git.revert": { "type": "object", "additionalProperties": false, "required": ["paths", "diff_digest"], "properties": { "paths": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/relativePath" } }, "diff_digest": { "$ref": "#/$defs/digest" } } },
+    "git.commit": { "type": "object", "additionalProperties": false, "required": ["message", "diff_digest"], "properties": { "message": { "type": "string", "minLength": 1, "maxLength": 4000 }, "diff_digest": { "$ref": "#/$defs/digest" } } },
+    "process.start": { "type": "object", "additionalProperties": false, "required": ["argv", "cwd"], "properties": { "argv": { "type": "array", "minItems": 1, "maxItems": 256, "items": { "type": "string", "minLength": 1, "maxLength": 32768 } }, "cwd": { "$ref": "#/$defs/relativePath" }, "timeout_ms": { "type": "integer", "minimum": 1, "maximum": 3600000 }, "max_output_bytes": { "type": "integer", "minimum": 1024, "maximum": 67108864 } } },
+    "process.write": { "type": "object", "additionalProperties": false, "required": ["process_id", "content_base64"], "properties": { "process_id": { "$ref": "#/$defs/id" }, "content_base64": { "type": "string" } } },
+    "process.attach": { "type": "object", "additionalProperties": false, "required": ["process_id", "after_offset"], "properties": { "process_id": { "$ref": "#/$defs/id" }, "after_offset": { "type": "integer", "minimum": 0 } } },
+    "process.kill": { "type": "object", "additionalProperties": false, "required": ["process_id"], "properties": { "process_id": { "$ref": "#/$defs/id" }, "tree": { "type": "boolean" } } },
+    "pty.create": { "type": "object", "additionalProperties": false, "required": ["argv", "cwd", "cols", "rows"], "properties": { "argv": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }, "cwd": { "$ref": "#/$defs/relativePath" }, "cols": { "type": "integer", "minimum": 1, "maximum": 1000 }, "rows": { "type": "integer", "minimum": 1, "maximum": 1000 }, "max_buffer_bytes": { "type": "integer", "minimum": 1024, "maximum": 16777216 } } },
+    "pty.write": { "type": "object", "additionalProperties": false, "required": ["pty_id", "content_base64"], "properties": { "pty_id": { "$ref": "#/$defs/id" }, "content_base64": { "type": "string" } } },
+    "pty.resize": { "type": "object", "additionalProperties": false, "required": ["pty_id", "cols", "rows"], "properties": { "pty_id": { "$ref": "#/$defs/id" }, "cols": { "type": "integer", "minimum": 1, "maximum": 1000 }, "rows": { "type": "integer", "minimum": 1, "maximum": 1000 } } },
+    "pty.attach": { "type": "object", "additionalProperties": false, "required": ["pty_id", "after_offset"], "properties": { "pty_id": { "$ref": "#/$defs/id" }, "after_offset": { "type": "integer", "minimum": 0 } } },
+    "pty.kill": { "type": "object", "additionalProperties": false, "required": ["pty_id"], "properties": { "pty_id": { "$ref": "#/$defs/id" } } },
+    "checkpoint.create": { "type": "object", "additionalProperties": false, "properties": { "label": { "type": "string", "maxLength": 240 }, "max_file_bytes": { "type": "integer", "minimum": 1, "maximum": 1073741824 } } },
+    "checkpoint.preview": { "type": "object", "additionalProperties": false, "required": ["checkpoint_id"], "properties": { "checkpoint_id": { "$ref": "#/$defs/id" } } },
+    "checkpoint.restore": { "type": "object", "additionalProperties": false, "required": ["checkpoint_id", "preview_digest"], "properties": { "checkpoint_id": { "$ref": "#/$defs/id" }, "preview_digest": { "$ref": "#/$defs/digest" } } },
+    "checkpoint.accept": { "type": "object", "additionalProperties": false, "required": ["checkpoint_id"], "properties": { "checkpoint_id": { "$ref": "#/$defs/id" } } },
+    "artifact.metadata": { "type": "object", "additionalProperties": false, "required": ["artifact_id"], "properties": { "artifact_id": { "$ref": "#/$defs/id" } } },
+    "artifact.chunk": { "type": "object", "additionalProperties": false, "required": ["artifact_id", "offset", "length"], "properties": { "artifact_id": { "$ref": "#/$defs/id" }, "offset": { "type": "integer", "minimum": 0 }, "length": { "type": "integer", "minimum": 1, "maximum": 8388608 } } }
+  }
+}

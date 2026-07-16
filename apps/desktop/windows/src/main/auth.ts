@@ -591,7 +591,7 @@ async function createOidcSession(
   const idClaims = decodeJwtPayload<OidcIdTokenClaims>(token.id_token);
   const accessClaims = decodeJwtPayload<OidcAccessTokenClaims>(token.access_token);
   validateOidcClaims(idClaims, accessClaims, validation);
-  const userId = idClaims?.sub || accessClaims?.sub;
+  const userId = accessClaims?.sub;
   if (!userId) {
     throw new Error("OIDC token response is missing a user subject.");
   }
@@ -868,6 +868,8 @@ interface OidcAccessTokenClaims {
   sub?: string;
   aud?: string | string[];
   exp?: number;
+  typ?: string;
+  scope?: string;
   roles?: string[];
   groups?: string[];
 }
@@ -1265,6 +1267,18 @@ function validateOidcClaims(
   if (!audienceIncludes(accessClaims.aud, "hai-api")) {
     throw new Error("OIDC access token was not issued for the HAI API.");
   }
+  if (!isPlatformUserId(accessClaims.sub)) {
+    throw new Error("OIDC access token is missing a valid platform user UUID.");
+  }
+  if (idClaims.sub !== accessClaims.sub) {
+    throw new Error("OIDC ID token subject does not match the access token subject.");
+  }
+  if (accessClaims.typ !== "access_token") {
+    throw new Error("OIDC token is not an access token.");
+  }
+  if (!accessClaims.scope?.split(/\s+/).includes("hai_api")) {
+    throw new Error("OIDC access token is missing the HAI API scope.");
+  }
   if (validation.nonce && idClaims.nonce !== validation.nonce) {
     throw new Error("OIDC ID token nonce does not match the sign-in request.");
   }
@@ -1272,6 +1286,11 @@ function validateOidcClaims(
   if (!idClaims.exp || idClaims.exp <= nowSeconds || !accessClaims.exp || accessClaims.exp <= nowSeconds) {
     throw new Error("OIDC token response is already expired.");
   }
+}
+
+function isPlatformUserId(value: unknown): value is string {
+  return typeof value === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
 function audienceIncludes(audience: string | string[] | undefined, expected: string): boolean {

@@ -7,7 +7,6 @@ const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const releaseDir = join(root, "release");
 const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const requirePublicDistribution =
-  process.env.REQUIRE_RELEASE_READY === "1" ||
   process.env.REQUIRE_SIGNED_WINDOWS_ARTIFACTS === "1" ||
   process.env.OPENDRSAI_REQUIRE_SIGNED_RELEASE === "1";
 

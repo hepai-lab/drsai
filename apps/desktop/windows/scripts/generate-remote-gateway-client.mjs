@@ -5,7 +5,16 @@ const root = resolve(new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-
 const specPath = resolve(root, "resources/remote-gateway-openapi.json");
 const outputPath = resolve(root, "src/main/remoteGatewayClient.generated.ts");
 const spec = JSON.parse(readFileSync(specPath, "utf8"));
-const allowed = (path) => path.startsWith("/v1/workspaces/") || path === "/v1/remote/handshake" || path === "/v1/pty";
+const allowed = (path) =>
+  path.startsWith("/v1/workspaces/") ||
+  path.startsWith("/v1/sessions") ||
+  path.startsWith("/v1/runs/") ||
+  path.startsWith("/v1/approvals/") ||
+  path === "/v1/workspaces" ||
+  path === "/v1/runtime" ||
+  path === "/v1/capabilities" ||
+  path === "/v1/remote/handshake" ||
+  path === "/v1/pty";
 const operations = [];
 for (const [path, methods] of Object.entries(spec.paths || {})) {
   if (!allowed(path)) continue;

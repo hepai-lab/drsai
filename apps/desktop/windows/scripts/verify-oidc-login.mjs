@@ -202,8 +202,8 @@ const checks = [
   [
     "renderer presents OIDC as the only production login",
       login.includes("login-debug-panel") &&
-      login.includes("if (!import.meta.env.DEV) return") &&
-      login.includes("import.meta.env.DEV && debugOpen") &&
+      !login.includes("if (!import.meta.env.DEV) return") &&
+      login.includes("{debugOpen &&") &&
       login.includes('event.key !== "F12"') &&
       login.includes("onOidcLoginDebug") &&
       login.includes("auth.startOidcLogin({ rememberMe })") &&

@@ -1,6 +1,7 @@
 export interface ChatSseChoice {
   delta?: {
     content?: string;
+    role?: string;
     tool_call?: unknown;
     tool_calls?: unknown;
     content_block?: unknown;
@@ -143,7 +144,9 @@ export function parseCompletionSseFrame(frame: string): string[] {
   }
 
   const value = parsed as ChatSsePayload;
-  const content = value.choices?.[0]?.delta?.content ?? value.choices?.[0]?.message?.content ?? "";
+  const delta = value.choices?.[0]?.delta;
+  if (isThinkingRole(delta?.role)) return [];
+  const content = delta?.content ?? value.choices?.[0]?.message?.content ?? "";
   if (content) return [content];
 
   return readProviderTextDeltas(parsed, getSseEventName(frame));
@@ -382,6 +385,17 @@ export function isCompletionDoneFrame(frame: string): boolean {
 
 export const parseChatSseFrame = parseCompletionSseFrame;
 export const parseAgentRunSseFrame = parseCompletionSseFrame;
+
+export function parseChatSseErrorFrame(frame: string): ChatSseError | null {
+  const payload = getSseData(frame);
+  if (!payload || payload === "[DONE]") return null;
+  try {
+    const error = readChatSseError(JSON.parse(payload));
+    return error ? new ChatSseError(error.message, error.code, error.retryable) : null;
+  } catch {
+    return null;
+  }
+}
 
 export interface AgentRunSseFileEvent {
   action: "read" | "create" | "modify" | "delete" | "rename" | "patch" | "artifact";
@@ -1214,6 +1228,10 @@ function readProviderReasoningDelta(value: unknown, eventName: string): string {
   const delta = readObject(record.delta);
   const deltaType = readString(delta?.type).toLowerCase();
   const rawDelta = readRawString(record.delta);
+  const choiceDelta = readObject(readObject(normalizeUnknownItems(record.choices)[0])?.delta);
+  if (isThinkingRole(readString(choiceDelta?.role))) {
+    return readRawString(choiceDelta?.content).trim();
+  }
   if (
     rawDelta &&
     (
@@ -1234,6 +1252,11 @@ function readProviderReasoningDelta(value: unknown, eventName: string): string {
     return (readRawString(delta?.thinking) || readRawString(delta?.text) || readRawString(record.thinking)).trim();
   }
   return readGeminiCandidateTextParts(record, true).trim();
+}
+
+function isThinkingRole(role: string | undefined): boolean {
+  const normalized = role?.trim().toLowerCase();
+  return normalized === "thinking" || normalized === "reasoning" || normalized === "analysis";
 }
 
 function readGeminiCandidateTextParts(record: Record<string, unknown>, thoughtOnly: boolean): string {

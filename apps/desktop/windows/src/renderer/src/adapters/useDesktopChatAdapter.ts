@@ -38,6 +38,7 @@ import {
   readRecentTerminalTestResult,
 } from "../terminalTestResults";
 import { acceptChatEventSequence, getVisibleChatText } from "../chatOutputModel";
+import { appendDebugLog } from "../debugLogStore";
 import {
   analyzeMemorySafetyIntent,
   buildUserPreferenceSystemSection,
@@ -88,6 +89,7 @@ export function useDesktopChatAdapter({
   threadId,
   threadSnapshot,
   workspaceInstructions,
+  workspaceId,
   workspacePath,
 }: {
   availableAgents?: DesktopAgent[];
@@ -104,6 +106,7 @@ export function useDesktopChatAdapter({
   threadId: string;
   threadSnapshot?: ChatThreadSnapshot | null;
   workspaceInstructions?: WorkspaceInstructionSummary[];
+  workspaceId?: string;
   workspacePath?: string;
 }): DesktopChatAdapter {
   const [input, setInput] = useState("");
@@ -242,6 +245,30 @@ export function useDesktopChatAdapter({
     const text = input.trim();
     if (!text || activeRequestId) return false;
 
+    const materialPaths = [...new Set(attachments
+      .filter((attachment) => attachment.kind === "file" && !attachment.blockedReason && attachment.path)
+      .map((attachment) => attachment.path))];
+    if (materialPaths.length > 0 && isMaterialInventoryIntent(text)) {
+      try {
+        const analysis = await desktopApi.analyzeMaterialRoles({ paths: materialPaths });
+        publishLocalAssistantResult(text, formatMaterialInventoryAnswer(analysis, languageRef.current));
+        setInput("");
+        return true;
+      } catch {
+        // Fall through to the normal chat route when local material inspection is unavailable.
+      }
+    }
+    if (materialPaths.length > 0 && isNaturalMaterialQueryIntent(text)) {
+      try {
+        const result = await desktopApi.queryMaterials({ paths: materialPaths, question: text });
+        publishLocalAssistantResult(text, formatMaterialQueryAnswer(result, languageRef.current));
+        setInput("");
+        return true;
+      } catch {
+        // Fall through to the normal chat route when local material querying is unavailable.
+      }
+    }
+
     const memorySafety = analyzeMemorySafetyIntent(text);
     const explicitPreferences = memorySafety.temporary ? [] : parseExplicitUserPreferenceIntent(text);
     const saved: DesktopUserPreference[] = [];
@@ -327,7 +354,10 @@ export function useDesktopChatAdapter({
       return true;
     }
 
-    if (!canChat) return false;
+    if (!canChat) {
+      const liveGateway = await desktopApi.getGatewayStatus().catch(() => null);
+      if (!liveGateway?.ready || liveGateway.externalConflict) return false;
+    }
 
     const userMessage: UiMessage = {
       id: crypto.randomUUID(),
@@ -360,6 +390,7 @@ export function useDesktopChatAdapter({
         agentId: options?.agentId?.trim() || undefined,
         sessionId: threadIdRef.current,
         runId: requestId,
+        workspaceId,
         workspacePath,
         attachments,
         model: options?.model?.trim() || undefined,
@@ -443,17 +474,8 @@ export function useDesktopChatAdapter({
       return;
     }
     if (event.type === "status") {
-      setMessages((current) =>
-        publishAndReturn(
-          appendAssistantStatus(
-            current,
-            streamingAssistantByRequest.current[event.requestId],
-            event.content ?? "",
-            developerModeRef.current,
-            languageRef.current,
-          ),
-        ),
-      );
+      const statusContent = event.content ?? "";
+      if (statusContent.trim()) appendDebugLog(getDebugLevel(event.level), statusContent.trim(), "chat");
       return;
     }
     if (event.type === "reasoning") {
@@ -462,6 +484,11 @@ export function useDesktopChatAdapter({
     }
     if (event.type === "tool_timeline" && event.toolTimeline) {
       const toolTimeline = event.toolTimeline;
+      appendDebugLog(
+        toolTimeline.status === "failed" ? "error" : "info",
+        formatToolTimelineDebugLog(toolTimeline),
+        "chat",
+      );
       setMessages((current) =>
         publishAndReturn(
           appendAssistantToolTimeline(
@@ -1334,6 +1361,60 @@ export function useDesktopChatAdapter({
   };
 }
 
+function isMaterialInventoryIntent(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  return /(?:(?:我|系统)(?:目前|现在)?)?(?:有|拥有|导入|上传)(?:了|的)?哪些材料|材料(?:清单|列表|角色|分别是什么)|what (?:files|materials|sources) (?:do i|are)|list (?:my )?(?:files|materials|sources)/i.test(normalized);
+}
+
+function isNaturalMaterialQueryIntent(text: string): boolean {
+  const normalized = text.trim();
+  return /[?？]/.test(normalized)
+    || /(?:标题|题目|样本量|均值|容量|带宽|数字|数值|比例|百分比).*(?:是什么|是多少|有多少)/.test(normalized)
+    || /(?:什么|哪种|哪些).*(?:方法|实验设计|研究设计|差异|不同|区别|冲突|不一致)/.test(normalized)
+    || /(?:比较|对比).*(?:差异|不同|区别|冲突|不一致)/.test(normalized)
+    || /\b(?:what|how many|where|which|compare|difference|title|bandwidth|sample size|method|protocol|conflict)\b/i.test(normalized);
+}
+
+function formatMaterialQueryAnswer(
+  result: Awaited<ReturnType<typeof desktopApi.queryMaterials>>,
+  language: "en" | "zh",
+): string {
+  if (result.status === "not_found") {
+    return language === "zh"
+      ? `${result.answer}\n\n已检索 ${result.filesSearched} 份材料；没有找到可引用的原文位置。`
+      : `I could not find a reliable answer in the ${result.filesSearched} imported materials. I will not invent a source or location.`;
+  }
+  const sourceHeading = language === "zh" ? "来源" : "Sources";
+  const sources = result.citations.map((citation) =>
+    `- **${citation.name} · ${citation.locator}**：${citation.excerpt}`,
+  ).join("\n");
+  return `${result.answer}\n\n### ${sourceHeading}\n\n${sources}`;
+}
+
+function formatMaterialInventoryAnswer(
+  analysis: Awaited<ReturnType<typeof desktopApi.analyzeMaterialRoles>>,
+  language: "en" | "zh",
+): string {
+  const roles = [
+    ["previous_report", language === "zh" ? "旧报告" : "Previous reports"],
+    ["latest_data", language === "zh" ? "最新数据" : "Latest data"],
+    ["result_image", language === "zh" ? "结果图片" : "Result images"],
+    ["reference_material", language === "zh" ? "参考材料" : "Reference materials"],
+  ] as const;
+  const sections = roles.map(([role, label]) => {
+    const matching = analysis.items.filter((item) => item.role === role);
+    const files = matching.length
+      ? matching.map((item) => `- **${item.name}**（${Math.round(item.confidence * 100)}%）：${item.reason}${language === "zh" ? "用途：" : " Use: "}${item.suggestedUse}`).join("\n")
+      : `- ${language === "zh" ? "暂未发现" : "None detected"}`;
+    return `### ${label}（${matching.length}）\n\n${files}`;
+  });
+  return [
+    language === "zh" ? `我识别到 ${analysis.items.length} 项材料，并按它们在当前任务中的用途分成四类：` : `I found ${analysis.items.length} materials and grouped them by their likely role in this task:`,
+    ...sections,
+    language === "zh" ? "建议先用最新数据核对结果图片，再以旧报告为结构基线生成新版本；参考材料只用于补充背景和出处。" : "I suggest checking result images against the latest data first, then using the previous report as the structure for a new version. Use references for context and citations.",
+  ].join("\n\n");
+}
+
 function resolveProjectMemoryEntry(
   selector: string,
   entries: DesktopProjectMemoryEntry[],
@@ -1994,7 +2075,7 @@ function appendAssistantToolTimeline(
   const existingIndex = previous.findIndex((item) => item.id === boundedEvent.id);
   const timeline = existingIndex === -1
     ? [...previous, boundedEvent]
-    : previous.map((item, itemIndex) => itemIndex === existingIndex ? { ...item, ...boundedEvent } : item);
+    : [...previous.filter((_, itemIndex) => itemIndex !== existingIndex), { ...previous[existingIndex], ...boundedEvent }];
   next[index] = {
     ...next[index],
     toolTimeline: timeline.slice(-20),
@@ -2006,34 +2087,6 @@ function appendAssistantToolTimeline(
     event: boundedEvent,
     status: boundedEvent.status === "failed" ? "error" : boundedEvent.status === "completed" ? "completed" : "running",
   });
-  return next;
-}
-
-function appendAssistantStatus(
-  messages: UiMessage[],
-  assistantId: string | undefined,
-  content: string,
-  developerMode: boolean,
-  language: "en" | "zh",
-): UiMessage[] {
-  const status = formatAssistantStatus(content, developerMode, language).trim();
-  if (!status) return messages;
-  const next = [...messages];
-  const index = findAssistantIndex(next, assistantId);
-  if (index === -1) return next;
-  const previousStatus = developerMode ? next[index].statusContent?.trimEnd() : "";
-  const prefix = previousStatus ? "\n\n---\n\n" : "";
-  next[index] = {
-    ...next[index],
-    statusContent: developerMode ? `${previousStatus}${prefix}${status}` : status,
-  };
-  next[index].parts = upsertMessagePart(next[index].parts, {
-    id: `${next[index].id}:status`,
-    type: "status",
-    text: next[index].statusContent ?? status,
-    status: "running",
-  });
-  next[index].lastEventAt = Date.now();
   return next;
 }
 
@@ -2053,26 +2106,22 @@ function completeMessageParts(parts: ChatMessagePart[] | undefined): ChatMessage
   );
 }
 
-function formatAssistantStatus(content: string, developerMode: boolean, language: "en" | "zh"): string {
-  const raw = content.trim();
-  if (!raw || developerMode) return raw;
+function formatToolTimelineDebugLog(event: NonNullable<ChatEvent["toolTimeline"]>): string {
+  return [
+    `Tool event: ${event.title}`,
+    `id: ${event.id}`,
+    `kind: ${event.kind}`,
+    event.status ? `status: ${event.status}` : "",
+    event.toolName ? `tool: ${event.toolName}` : "",
+    event.path ? `path: ${event.path}` : "",
+    event.content ? `output:\n${event.content}` : "",
+  ].filter(Boolean).join("\n");
+}
 
-  const title = raw.match(/\*\*([^*]+)\*\*/)?.[1]?.trim() || "LLM Retry";
-  if (/model reasoning|reasoning|thinking/i.test(title)) {
-    return raw;
-  }
-  if (/LLM Retry/i.test(title) || /retry|重试/i.test(raw)) {
-    const attempt =
-      raw.match(/(?:正在重试|retrying)\s*\((\d+\s*\/\s*\d+)\)/i)?.[1]?.replace(/\s+/g, "") ||
-      raw.match(/\battempt\s+(\d+\s*\/\s*\d+)/i)?.[1]?.replace(/\s+/g, "");
-    const wait = raw.match(/(?:等待|in)\s*([0-9.]+\s*s)/i)?.[1]?.replace(/\s+/g, "");
-    const message = language === "zh"
-      ? `模型调用失败${attempt ? `，正在重试 (${attempt})` : ""}${wait ? `，等待 ${wait}` : ""}。`
-      : `Model call failed${attempt ? `, retrying (${attempt})` : ""}${wait ? `, waiting ${wait}` : ""}.`;
-    return `**LLM Retry**\n\n${message}`;
-  }
-
-  return `**${title}**\n\n${language === "zh" ? "操作暂时没有完成，请稍后重试。" : "The operation did not complete. Please try again later."}`;
+function getDebugLevel(level: string | undefined): "log" | "info" | "warn" | "error" {
+  if (/error|fatal/i.test(level ?? "")) return "error";
+  if (/warn/i.test(level ?? "")) return "warn";
+  return "info";
 }
 
 function formatAssistantError(error: string, developerMode: boolean, language: "en" | "zh"): string {

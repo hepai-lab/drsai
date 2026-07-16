@@ -214,7 +214,7 @@ async function runAgent(
           ...getGatewayRequestHeaders(),
           "X-OpenDrSai-User": authContext.userId,
           "X-OpenDrSai-Auth-Mode": authContext.authMode,
-          ...(request.workspacePath ? { "X-OpenDrSai-Workspace": request.workspacePath } : {}),
+          ...(request.workspacePath ? { "X-OpenDrSai-Workspace": encodeURIComponent(request.workspacePath) } : {}),
           ...(authContext.accessToken ? { Authorization: `Bearer ${authContext.accessToken}` } : {}),
           "Idempotency-Key": `desktop-agent-${requestId}`,
         },

@@ -285,7 +285,7 @@ function tokenResponse(nonce, refreshToken, sequence = 0) {
   return {
     access_token: jwt({
       iss: issuer,
-      sub: "e2e-hai-user",
+      sub: "1f4b65b9-9f5d-4dfc-8d7d-10a61cd9f651",
       aud: "hai-api",
       exp: Math.floor(Date.now() / 1000) + 3600,
       roles: ["user"],
@@ -296,7 +296,7 @@ function tokenResponse(nonce, refreshToken, sequence = 0) {
     }),
     id_token: jwt({
       iss: issuer,
-      sub: "e2e-hai-user",
+      sub: "1f4b65b9-9f5d-4dfc-8d7d-10a61cd9f651",
       aud: "opendrsai-desktop",
       exp: Math.floor(Date.now() / 1000) + 3600,
       nonce: nonce || undefined,

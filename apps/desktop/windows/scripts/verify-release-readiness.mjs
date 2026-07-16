@@ -23,17 +23,24 @@ const steps = [
   ["Runtime update manifest", npmScript("verify:update-manifest"), true, {}],
   ["Release summary", npmScript("summary:win"), true, {}],
   ["Release artifacts", npmScript("verify:artifacts"), true, {}],
+  ["Remote Workspace acceptance-status regressions", npmScript("verify:remote-workspace-progress-regressions"), true, {}],
+  ["Remote PTY lifecycle", npmScript("verify:remote-pty-lifecycle"), true, {}],
+  ["Windows signing contract", npmScript("verify:signing-contract"), true, {}],
+  ["Windows signing evidence regressions", npmScript("verify:signing-evidence-regressions"), true, {}],
+  ["Windows signing evidence", npmScript("verify:signing-evidence"), requireSigned, {}, /Windows signing evidence/i],
   [
     "Windows signatures",
     npmScript("verify:signatures"),
     requireSigned,
     { REQUIRE_SIGNED_WINDOWS_ARTIFACTS: requireSigned ? "1" : "0" },
+    /Windows signature verification did not pass/i,
   ],
+  ["Test temporary-directory cleanup", npmScript("verify:test-temp-cleanup"), true, {}],
 ];
 
 const results = [];
-for (const [name, command, required, env] of steps) {
-  results.push(runStep(name, command, required, env));
+for (const [name, command, required, env, warningPattern] of steps) {
+  results.push(runStep(name, command, required, env, warningPattern));
 }
 
 if (skipPublicRelease) {
@@ -66,16 +73,19 @@ if (failed.length) {
   process.exit(1);
 }
 
-function runStep(name, command, required, env) {
+function runStep(name, command, required, env, warningPattern) {
   const result = spawnSync(command[0], command.slice(1), {
     env: { ...process.env, ...env },
     stdio: "pipe",
     encoding: "utf8",
   });
+  const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
   if (result.status === 0) {
+    if (warningPattern?.test(output)) {
+      return { name, status: "warning", detail: firstUsefulLine(output) || "Optional gate reported a warning." };
+    }
     return { name, status: "passed", detail: "" };
   }
-  const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
   return {
     name,
     status: required ? "failed" : "warning",

@@ -217,7 +217,11 @@ async function startGatewayOnce(): Promise<boolean> {
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   lastGatewayLog = `${lastGatewayLog}\nGateway did not become ready within 12 seconds; stopping the spawned process tree.`.slice(-12000);
-  await stopGateway();
+  // Do not call stopGateway() here: startGateway() still owns
+  // gatewayStartPromise, and the public stop path waits for that promise.
+  const failedProcess = gatewayProcess;
+  if (isProcessRunning(failedProcess)) await terminateGatewayProcessTree(failedProcess);
+  if (gatewayProcess === failedProcess && !isProcessRunning(failedProcess)) gatewayProcess = null;
   return false;
 }
 

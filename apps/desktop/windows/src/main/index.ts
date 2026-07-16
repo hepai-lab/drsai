@@ -7,7 +7,7 @@ import {
   realpathSync,
   writeFileSync,
 } from "fs";
-import { copyFile, mkdir, stat as statFile, writeFile } from "fs/promises";
+import { copyFile, mkdir, open as openFile, stat as statFile, writeFile } from "fs/promises";
 import { createHash } from "crypto";
 import {
   app,
@@ -16,6 +16,7 @@ import {
   dialog,
   ipcMain,
   protocol,
+  session as electronSession,
   shell,
   type IpcMainInvokeEvent,
   type Session,
@@ -34,7 +35,11 @@ import {
 } from "./gateway";
 import { getDesktopHealth, getInstallStatus } from "./status";
 import { bootstrapDesktop } from "./bootstrap";
+import { LocalRuntimeClient } from "./runtimeClient";
+import { presentCodexBackendStatus } from "./codexBackendStatus";
 import { DRSAI_HOME } from "./paths";
+import { clearLocalData, previewLocalDataCleanup } from "./dataCleanup";
+import { scanSensitiveText } from "./shareSensitivity";
 import {
   cancelUpdate,
   checkForUpdates,
@@ -172,6 +177,7 @@ import {
   disconnectRemoteWorkspace,
   getRemoteWorkspaceStatus,
   getRemoteGatewayAccess,
+  prepareRemoteForkWorktree,
   getRemoteWorkspaceGitDiff,
   executeRemoteWorkspaceMutation,
   listRemoteWorkspaceCheckpoints,
@@ -189,6 +195,7 @@ import {
   getRemoteSshDiagnosticReport,
   listRemoteWorkspaceFiles,
   previewRemoteWorkspaceFile,
+  writeRemoteWorkspaceFile,
   listRemoteDirectories,
   listRemoteThreads,
   listRemoteHepaiWorkers,
@@ -202,6 +209,8 @@ import {
   setRemoteGatewayOperationPublisher,
   setRemoteFileChangePublisher,
   stopAllRemoteWorkspaces,
+  diagnoseSshHost,
+  inspectSshHostKeys,
   testSshHost,
   approveSshHostKey,
 } from "./remoteWorkspace";
@@ -211,6 +220,9 @@ import {
   getWorkspaceGitFileAtRef,
   getWorkspaceGitDiff,
   listWorkspaceFiles,
+  analyzeMaterialConsistency,
+  analyzeMaterialRoles,
+  queryMaterials,
   previewWorkspaceFile,
   revertWorkspaceHunk,
   revertWorkspaceFile,
@@ -299,6 +311,8 @@ import type {
   DesktopForkQueueStartApprovalRequest,
   DesktopForkQueueStartApprovalResult,
   DesktopGitCommitApprovalRequest,
+  DesktopAnomalyDecisionApplyRequest,
+  DesktopAnomalyDecisionApplyResult,
   ManagerPresentationCancelRequest,
   ManagerPresentationPauseRequest,
   ManagerPresentationProgressEvent,
@@ -309,6 +323,7 @@ import type {
   ManagerPresentationRequirementUpdateResult,
   PdfPageOpenRequest,
   PdfPageOpenResult,
+  PickedFileDescriptor,
   RemoteGatewayInstallRequest,
   DesktopMcpContextRequest,
   DesktopMcpActiveSessionListRequest,
@@ -347,6 +362,7 @@ import type {
 } from "../shared/desktopApi";
 import {
   evaluateExecutionPermission,
+  getExecutionActionRisk,
   type ExecutionActionKind,
 } from "../shared/executionPolicy";
 import {
@@ -455,6 +471,8 @@ const pendingBrowserTaskApprovals = new Map<
 >();
 const pendingDesktopApprovals = new Map<string, DesktopPendingApproval>();
 const executedDesktopApprovalIds = new Set<string>();
+const pendingF2ApprovalEffects = new Map<string, { key: string; phase: "reject" | "control" }>();
+const pendingF3ApprovalEffects = new Map<string, { key: string; phase: "reject" | "control" }>();
 const pendingShellCommandApprovals = new Map<
   string,
   {
@@ -478,7 +496,23 @@ const isE2eSmokeProcess =
   process.env.OPENDRSAI_E2E_OIDC === "1" ||
   process.env.OPENDRSAI_E2E_A5_SERVICE_GUIDANCE === "1" ||
   process.env.OPENDRSAI_E2E_F2_APPROVALS === "1" ||
+  process.env.OPENDRSAI_E2E_F3_APPROVALS === "1" ||
+  process.env.OPENDRSAI_E2E_C1_MATERIAL_IMPORT === "1" ||
+  process.env.OPENDRSAI_E2E_C2_FOLDER_IMPORT === "1" ||
+  process.env.OPENDRSAI_E2E_C3_MATERIAL_ROLES === "1" ||
+  process.env.OPENDRSAI_E2E_C4_MATERIAL_SUGGESTIONS === "1" ||
+  process.env.OPENDRSAI_E2E_C5_MATERIAL_CONSISTENCY === "1" ||
+  process.env.OPENDRSAI_E2E_C6_MATERIAL_QUERY === "1" ||
+  process.env.OPENDRSAI_E2E_C7_ABNORMAL_FILES === "1" ||
+  process.env.OPENDRSAI_E2E_C8_CHINESE_PRIVACY === "1" ||
+  process.env.OPENDRSAI_E2E_F1_LOW_RISK_APPROVALS === "1" ||
   process.env.OPENDRSAI_E2E_M3_WINDOW === "1" ||
+  process.env.OPENDRSAI_E2E_M4_KEYBOARD === "1" ||
+  process.env.OPENDRSAI_E2E_M5_ACCESSIBILITY === "1" ||
+  process.env.OPENDRSAI_E2E_M6_PERFORMANCE === "1" ||
+  process.env.OPENDRSAI_E2E_M7_STABILITY === "1" ||
+  process.env.OPENDRSAI_E2E_M8_RECOVERY === "1" ||
+  process.env.OPENDRSAI_E2E_M10_DATA_CLEANUP === "1" ||
   process.env.OPENDRSAI_E2E_PRESENTATION_PDF_ACTION === "1" ||
   process.env.OPENDRSAI_E2E_OIDC_HEADLESS === "1";
 if (isE2eSmokeProcess) {
@@ -688,24 +722,70 @@ function normalizeApprovalRisk(
   request: DesktopApprovalProposalRequest,
 ): DesktopPendingApproval["risk"] {
   if (request.risk) return request.risk;
-  if (
-    request.actionKind === "shell.command" ||
-    request.actionKind === "git.commit" ||
-    request.actionKind === "fork.lifecycle" ||
-    request.actionKind === "fork.queue_start" ||
-    request.actionKind === "workflow.run" ||
-    request.actionKind === "external.service"
-  ) {
-    return "high";
-  }
-  if (
-    request.actionKind === "workspace.revert" ||
-    request.actionKind === "terminal.write" ||
-    request.actionKind === "network.request"
-  ) {
-    return "medium";
-  }
-  return "low";
+  return getExecutionActionRisk(request.actionKind);
+}
+
+const F2_SAFETY_KEYS = new Set([
+  "new_directory",
+  "external_data",
+  "large_compute",
+  "overwrite_file",
+  "delete_file",
+  "public_share",
+]);
+
+function registerF2ApprovalEffect(request: DesktopApprovalProposalRequest, approvalId: string): void {
+  const effectDir = process.env.OPENDRSAI_E2E_F2_EFFECT_DIR;
+  const stableKey = request.idempotencyKey?.trim();
+  if (process.env.OPENDRSAI_E2E_F2_APPROVALS !== "1" || !effectDir || !stableKey) return;
+  const match = /^f2-(control-)?([a-z_]+)-/.exec(stableKey);
+  const key = match?.[2];
+  if (!key || !F2_SAFETY_KEYS.has(key)) return;
+  pendingF2ApprovalEffects.set(approvalId, { key, phase: match?.[1] ? "control" : "reject" });
+}
+
+function executeF2ApprovalEffect(approvalId: string, effect: { key: string; phase: "reject" | "control" }): void {
+  const effectDir = process.env.OPENDRSAI_E2E_F2_EFFECT_DIR;
+  if (!effectDir) return;
+  mkdirSync(effectDir, { recursive: true });
+  const effectPath = join(effectDir, `${effect.key}.json`);
+  const previous = existsSync(effectPath)
+    ? JSON.parse(readFileSync(effectPath, "utf8")) as { events?: Array<Record<string, unknown>> }
+    : { events: [] };
+  const events = Array.isArray(previous.events) ? previous.events : [];
+  events.push({ approvalId, phase: effect.phase, executedAt: new Date().toISOString() });
+  writeFileSync(effectPath, `${JSON.stringify({ key: effect.key, events }, null, 2)}\n`, "utf8");
+}
+
+const F3_BUSINESS_KEYS = new Set([
+  "file_access",
+  "file_modify",
+  "external_send",
+  "large_compute",
+  "file_delete",
+]);
+
+function registerF3ApprovalEffect(request: DesktopApprovalProposalRequest, approvalId: string): void {
+  const effectDir = process.env.OPENDRSAI_E2E_F3_EFFECT_DIR;
+  const stableKey = request.idempotencyKey?.trim();
+  if (process.env.OPENDRSAI_E2E_F3_APPROVALS !== "1" || !effectDir || !stableKey) return;
+  const match = /^f3-(control-)?([a-z_]+)-/.exec(stableKey);
+  const key = match?.[2];
+  if (!key || !F3_BUSINESS_KEYS.has(key)) return;
+  pendingF3ApprovalEffects.set(approvalId, { key, phase: match?.[1] ? "control" : "reject" });
+}
+
+function executeF3ApprovalEffect(approvalId: string, effect: { key: string; phase: "reject" | "control" }): void {
+  const effectDir = process.env.OPENDRSAI_E2E_F3_EFFECT_DIR;
+  if (!effectDir) return;
+  mkdirSync(effectDir, { recursive: true });
+  const effectPath = join(effectDir, `${effect.key}.json`);
+  const previous = existsSync(effectPath)
+    ? JSON.parse(readFileSync(effectPath, "utf8")) as { events?: Array<Record<string, unknown>> }
+    : { events: [] };
+  const events = Array.isArray(previous.events) ? previous.events : [];
+  events.push({ approvalId, phase: effect.phase, executedAt: new Date().toISOString() });
+  writeFileSync(effectPath, `${JSON.stringify({ key: effect.key, events }, null, 2)}\n`, "utf8");
 }
 
 async function prepareWorkflowRun(
@@ -1056,6 +1136,8 @@ async function proposeDesktopApproval(
     actionKind: typed.actionKind,
     title: typed.title.trim(),
     detail: typed.detail.trim(),
+    businessAction: sanitizeOptionalDispatchText(getStringProperty(typed, "businessAction"), 160),
+    businessObject: sanitizeOptionalDispatchText(getStringProperty(typed, "businessObject"), 240),
     target: typeof typed.target === "string" ? typed.target : undefined,
     scope: sanitizeOptionalDispatchText(getStringProperty(typed, "scope"), 240),
     impact: sanitizeOptionalDispatchText(getStringProperty(typed, "impact"), 320),
@@ -1074,6 +1156,8 @@ async function proposeDesktopApproval(
     };
   }
   pendingDesktopApprovals.set(approval.id, approval);
+  registerF2ApprovalEffect(typed, approval.id);
+  registerF3ApprovalEffect(typed, approval.id);
   return {
     queued: true,
     approval,
@@ -1815,13 +1899,14 @@ async function requestWorkspaceCheckpointRestore(
   request: unknown,
 ): Promise<WorkspaceCheckpointRestoreResult> {
   const workspacePath = getStringProperty(request, "workspacePath");
+  const workspaceId = getStringProperty(request, "workspaceId") || undefined;
   const checkpointId = getStringProperty(request, "checkpointId");
   const operationId = getStringProperty(request, "operationId") || `restore-${Date.now().toString(36)}`;
   const includePaths = getStringArrayProperty(request, "includePaths");
   if (!workspacePath || !checkpointId) {
     throw new Error("Workspace checkpoint restore request is incomplete.");
   }
-  if (!getRemoteGatewayAccess(workspacePath) && !(await isAllowedOpenPath(workspacePath))) {
+  if (!getRemoteGatewayAccess(workspacePath, workspaceId) && !(await isAllowedOpenPath(workspacePath))) {
     throw new Error("Checkpoint workspace is not registered or allowed.");
   }
 
@@ -1843,6 +1928,7 @@ async function requestWorkspaceCheckpointRestore(
   if (proposal.queued && proposal.approval) {
     pendingWorkspaceCheckpointRestores.set(proposal.approval.id, {
       workspacePath,
+      ...(workspaceId ? { workspaceId } : {}),
       checkpointId,
       operationId,
       ...(includePaths ? { includePaths } : {}),
@@ -1861,8 +1947,8 @@ async function requestWorkspaceCheckpointRestore(
   }
 
   await assertExecutionAllowed("workspace.revert", { approved: true });
-  return getRemoteGatewayAccess(workspacePath)
-    ? restoreRemoteWorkspaceCheckpoint({ workspacePath, checkpointId, operationId, ...(includePaths ? { includePaths } : {}) })
+  return getRemoteGatewayAccess(workspacePath, workspaceId)
+    ? restoreRemoteWorkspaceCheckpoint({ workspacePath, ...(workspaceId ? { workspaceId } : {}), checkpointId, operationId, ...(includePaths ? { includePaths } : {}) })
     : restoreWorkspaceCheckpoint({ workspacePath, checkpointId, operationId, ...(includePaths ? { includePaths } : {}) });
 }
 
@@ -2167,7 +2253,8 @@ async function executeWorkspaceMutation(
   request: unknown,
 ): Promise<unknown> {
   const workspacePath = getStringProperty(request, "workspacePath");
-  if (getRemoteGatewayAccess(workspacePath)) return executeRemoteWorkspaceMutation(action, request);
+  const workspaceId = getStringProperty(request, "workspaceId");
+  if (getRemoteGatewayAccess(workspacePath, workspaceId)) return executeRemoteWorkspaceMutation(action, request);
   if (action === "stage-file") return stageWorkspaceFile(request);
   if (action === "revert-file") return revertWorkspaceFile(request);
   if (action === "stage-hunk") return stageWorkspaceHunk(request);
@@ -2889,6 +2976,217 @@ async function writeWorkspaceFile(request: WorkspaceFileWriteRequest): Promise<W
   };
 }
 
+function parseDecisionCsv(content: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let quoted = false;
+  for (let index = 0; index < content.length; index += 1) {
+    const character = content[index];
+    if (character === '"') {
+      if (quoted && content[index + 1] === '"') { cell += '"'; index += 1; }
+      else quoted = !quoted;
+    } else if (character === "," && !quoted) {
+      row.push(cell); cell = "";
+    } else if ((character === "\n" || character === "\r") && !quoted) {
+      if (character === "\r" && content[index + 1] === "\n") index += 1;
+      row.push(cell); rows.push(row); row = []; cell = "";
+    } else cell += character;
+  }
+  if (cell || row.length) { row.push(cell); rows.push(row); }
+  return rows.filter((candidate) => candidate.some((value) => value.length > 0));
+}
+
+function serializeDecisionCsv(rows: string[][]): string {
+  return `${rows.map((row) => row.map((cell) => /[",\r\n]/.test(cell) ? `"${cell.replace(/"/g, '""')}"` : cell).join(",")).join("\r\n")}\r\n`;
+}
+
+function isDecisionAnomaly(value: string): boolean {
+  return /^(?:true|1|yes|y|anomaly|异常)$/i.test(value.trim());
+}
+
+async function applyAnomalyDecision(request: DesktopAnomalyDecisionApplyRequest): Promise<DesktopAnomalyDecisionApplyResult> {
+  if (!request || typeof request !== "object") throw new Error("An anomaly-data decision request is required.");
+  if (typeof request.workspacePath !== "string" || !request.workspacePath.trim()) throw new Error("A workspace is required.");
+  if (typeof request.sourcePath !== "string" || !request.sourcePath.trim()) throw new Error("A source CSV is required.");
+  if (typeof request.anomalyColumn !== "string" || !request.anomalyColumn.trim()) throw new Error("An anomaly column is required.");
+  if (!(["keep", "exclude", "both"] as const).includes(request.decision)) throw new Error("Choose keep, exclude, or both.");
+  if (!(await isAllowedOpenPath(request.workspacePath))) throw new Error("The workspace is not registered or allowed.");
+
+  const preview = await previewWorkspaceFile({ workspacePath: request.workspacePath, path: request.sourcePath, maxBytes: 1_000_000 });
+  if (extname(preview.path).toLowerCase() !== ".csv") throw new Error("Anomaly-data decisions currently require a CSV source.");
+  const sourceContent = await import("fs/promises").then(({ readFile }) => readFile(preview.path, "utf8"));
+  const rows = parseDecisionCsv(sourceContent);
+  if (rows.length < 2) throw new Error("The source CSV does not contain any data rows.");
+  const headers = rows[0].map((value) => value.trim());
+  const anomalyIndex = headers.findIndex((value) => value.toLowerCase() === request.anomalyColumn.trim().toLowerCase());
+  if (anomalyIndex < 0) throw new Error(`The anomaly column “${request.anomalyColumn}” was not found.`);
+  const dataRows = rows.slice(1);
+  const anomalyRows = dataRows.filter((row) => isDecisionAnomaly(row[anomalyIndex] || ""));
+  const normalRows = dataRows.filter((row) => !isDecisionAnomaly(row[anomalyIndex] || ""));
+  const sourceSha256 = `sha256:${createHash("sha256").update(sourceContent).digest("hex")}`;
+  const base = basename(preview.path, extname(preview.path));
+  const outputDirectory = dirname(preview.path);
+  const outputSpecs = request.decision === "keep"
+    ? [{ role: "kept_all" as const, path: join(outputDirectory, `${base}-保留全部.csv`), rows: dataRows }]
+    : request.decision === "exclude"
+      ? [{ role: "excluded_anomalies" as const, path: join(outputDirectory, `${base}-排除异常.csv`), rows: normalRows }]
+      : [
+          { role: "kept_all" as const, path: join(outputDirectory, `${base}-保留全部.csv`), rows: dataRows },
+          { role: "excluded_anomalies" as const, path: join(outputDirectory, `${base}-排除异常.csv`), rows: normalRows },
+        ];
+  const outputs: DesktopAnomalyDecisionApplyResult["outputs"] = [];
+  for (const output of outputSpecs) {
+    const content = serializeDecisionCsv([rows[0], ...output.rows]);
+    await writeFile(output.path, content, "utf8");
+    outputs.push({
+      role: output.role,
+      path: output.path,
+      rowCount: output.rows.length,
+      anomalyCount: output.rows.filter((row) => isDecisionAnomaly(row[anomalyIndex] || "")).length,
+      sha256: `sha256:${createHash("sha256").update(content).digest("hex")}`,
+    });
+  }
+  const decidedAt = new Date().toISOString();
+  const resultSummary = request.decision === "keep"
+    ? `已采用“保留异常”：输出 ${dataRows.length} 行，其中异常 ${anomalyRows.length} 行。`
+    : request.decision === "exclude"
+      ? `已采用“排除异常”：输出 ${normalRows.length} 行，异常 0 行；原始数据未改动。`
+      : `已采用“两种都做”：分别输出保留版 ${dataRows.length} 行和排除版 ${normalRows.length} 行；原始数据未改动。`;
+  const receiptPath = join(outputDirectory, `${base}-异常处理决定.json`);
+  const result: DesktopAnomalyDecisionApplyResult = {
+    sourcePath: preview.path,
+    anomalyColumn: request.anomalyColumn.trim(),
+    totalRows: dataRows.length,
+    anomalyRows: anomalyRows.length,
+    normalRows: normalRows.length,
+    decision: request.decision,
+    decidedAt,
+    resultSummary,
+    sourceSha256,
+    receiptPath,
+    outputs,
+  };
+  await writeFile(receiptPath, `${JSON.stringify(result, null, 2)}\n`, "utf8");
+  return result;
+}
+
+const PICKED_FILE_CATEGORIES: Array<{ extensions: ReadonlySet<string>; category: PickedFileDescriptor["category"] }> = [
+  { extensions: new Set([".pdf"]), category: "pdf" },
+  { extensions: new Set([".doc", ".docx"]), category: "word" },
+  { extensions: new Set([".xls", ".xlsx"]), category: "spreadsheet" },
+  { extensions: new Set([".csv", ".tsv"]), category: "table" },
+  { extensions: new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".svg"]), category: "image" },
+  { extensions: new Set([".ppt", ".pptx"]), category: "presentation" },
+  { extensions: new Set([".txt", ".md", ".json", ".yaml", ".yml", ".html", ".htm"]), category: "text" },
+];
+
+const LARGE_PICKED_FILE_BYTES = 32 * 1024 * 1024;
+const PICKED_FILE_INSPECTION_TIMEOUT_MS = 15_000;
+
+type PickedFileInspection = Pick<PickedFileDescriptor, "status" | "message" | "diagnosticCode" | "processingMode" | "recoveryAction" | "sensitiveDataDetected" | "sensitiveKinds" | "sensitiveValueCount" | "privacyNotice">;
+
+async function inspectPickedFile(path: string, category: PickedFileDescriptor["category"], extension: string): Promise<PickedFileInspection> {
+  if (category === "other") return {
+    status: "unsupported", diagnosticCode: "unsupported_format", processingMode: "blocked",
+    message: "暂不支持这种文件格式；其他已选文件仍可使用。",
+    recoveryAction: "请转换为 PDF、Word、Excel、CSV、图片或文本后重新导入。",
+  };
+  const handle = await openFile(path, "r");
+  try {
+    const info = await handle.stat();
+    const head = Buffer.alloc(Math.min(16, info.size));
+    if (head.length) await handle.read(head, 0, head.length, 0);
+    const signatureValid = extension === ".pdf"
+      ? head.toString("ascii").startsWith("%PDF-")
+      : [".docx", ".xlsx", ".pptx"].includes(extension)
+        ? head[0] === 0x50 && head[1] === 0x4b
+        : [".doc", ".xls", ".ppt"].includes(extension)
+          ? head.subarray(0, 4).equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0]))
+          : extension === ".png"
+            ? head.subarray(1, 4).toString("ascii") === "PNG"
+            : true;
+    if ([".docx", ".xlsx", ".pptx"].includes(extension) && head.subarray(0, 4).equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0]))) return {
+      status: "unreadable", diagnosticCode: "password_protected", processingMode: "blocked",
+      message: "这个 Office 文件可能受密码保护，当前无法读取内容。",
+      recoveryAction: "请在 Office 中解除密码保护并另存一份副本，再重新导入。",
+    };
+    if (!signatureValid) return {
+      status: "unreadable", diagnosticCode: "corrupt_file", processingMode: "blocked",
+      message: "文件内容与扩展名不一致，可能已损坏或下载不完整。",
+      recoveryAction: "请重新下载或用原应用打开并另存一份副本，然后重新导入。",
+    };
+    if (extension === ".pdf" && info.size > 0) {
+      const tailBytes = Math.min(info.size, 128 * 1024);
+      const tail = Buffer.alloc(tailBytes);
+      await handle.read(tail, 0, tailBytes, Math.max(0, info.size - tailBytes));
+      if (/\/Encrypt\b/.test(tail.toString("latin1"))) return {
+        status: "unreadable", diagnosticCode: "password_protected", processingMode: "blocked",
+        message: "这个 PDF 受密码保护，当前无法安全读取内容。",
+        recoveryAction: "请在 PDF 阅读器中输入密码后另存为不加密副本，再重新导入。",
+      };
+    }
+    let privacy: Partial<PickedFileInspection> = {};
+    if ((category === "text" || category === "table") && info.size > 0) {
+      const scanBytes = Math.min(info.size, 256 * 1024);
+      const scanBuffer = Buffer.alloc(scanBytes);
+      await handle.read(scanBuffer, 0, scanBytes, 0);
+      const matches = scanSensitiveText(scanBuffer.toString("utf8"), "local-import", basename(path));
+      if (matches.length) {
+        privacy = {
+          sensitiveDataDetected: true,
+          sensitiveKinds: [...new Set(matches.map((match) => match.kind))],
+          sensitiveValueCount: matches.length,
+          privacyNotice: `已在本地检测到 ${matches.length} 处敏感信息；原值不会显示在附件摘要中，分享前会要求确认并遮蔽。`,
+        };
+      }
+    }
+    if (info.size >= LARGE_PICKED_FILE_BYTES) return {
+      status: "ready", diagnosticCode: "large_file", processingMode: "bounded",
+      message: "大文件已就绪；为保持应用流畅，将先读取有代表性的内容，而不是一次加载全部数据。",
+      recoveryAction: "可直接继续；如需逐页或全量分析，建议拆分文件后重新导入。",
+      ...privacy,
+    };
+    return { status: "ready", processingMode: "full", message: "文件已读取并可加入任务。", ...privacy };
+  } finally {
+    await handle.close();
+  }
+}
+
+async function inspectPickedFileWithTimeout(path: string, category: PickedFileDescriptor["category"], extension: string) {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      inspectPickedFile(path, category, extension),
+      new Promise<PickedFileInspection>((resolveTimeout) => {
+        timer = setTimeout(() => resolveTimeout({
+          status: "unreadable", diagnosticCode: "inspection_timeout", processingMode: "blocked",
+          message: "文件检查超过 15 秒，已停止等待，应用可以继续使用。",
+          recoveryAction: "请确认磁盘或网络位置可访问，将文件复制到本地后重试。",
+        }), PICKED_FILE_INSPECTION_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function describePickedFiles(paths: string[], canceled: boolean): Promise<{ canceled: boolean; paths: string[]; files: PickedFileDescriptor[] }> {
+  const files = await Promise.all(paths.map(async (path): Promise<PickedFileDescriptor> => {
+    const extension = extname(path).toLowerCase();
+    const category = PICKED_FILE_CATEGORIES.find((item) => item.extensions.has(extension))?.category ?? "other";
+    const base = { path, name: basename(path), extension, category };
+    try {
+      const info = await statFile(path);
+      if (!info.isFile()) return { ...base, status: "unreadable", diagnosticCode: "unreadable", processingMode: "blocked", message: "所选项目不是文件。", recoveryAction: "请选择一个可读取的本地文件。" };
+      return { ...base, sizeBytes: info.size, ...(await inspectPickedFileWithTimeout(path, category, extension)) };
+    } catch {
+      return { ...base, status: "unreadable", diagnosticCode: "unreadable", processingMode: "blocked", message: "文件无法读取或已经被移动；其他已选文件仍可使用。", recoveryAction: "请检查文件权限和位置，或复制到本地后重新导入。" };
+    }
+  }));
+  return { canceled, paths, files };
+}
+
 function registerIpc(): void {
   registerBrowserController(new ElectronWebviewController());
   registerBrowserController(new BrowserUseController(browserUseWorkerClient));
@@ -2927,6 +3225,29 @@ function registerIpc(): void {
   secureHandle("desktop:get-health", () => getDesktopHealth());
   secureHandle("desktop:get-install-status", () => getInstallStatus());
   secureHandle("desktop:get-gateway-status", () => getGatewayStatus());
+  secureHandle("desktop:get-codex-backend-status", async (_event, rawRefresh) => {
+    const refresh = rawRefresh === true;
+    const client = await LocalRuntimeClient.connect();
+    const capability = (await client.getCapabilities()).agent_backends?.codex;
+    if (!capability?.available) return presentCodexBackendStatus(capability);
+    return presentCodexBackendStatus(capability, await client.getBackendAccount("codex", refresh));
+  });
+  secureHandle("desktop:start-codex-backend-login", async (_event, rawType) => {
+    const type = rawType === "chatgptDeviceCode" ? "chatgptDeviceCode" : "chatgpt";
+    const client = await LocalRuntimeClient.connect();
+    const result = await client.startBackendLogin("codex", type);
+    const externalUrl = result.authUrl ?? result.verificationUrl;
+    if (externalUrl && isAllowedExternalUrl(externalUrl)) await shell.openExternal(externalUrl);
+    return { type: result.type, loginId: result.loginId, verificationUrl: result.verificationUrl, userCode: result.userCode };
+  });
+  secureHandle("desktop:cancel-codex-backend-login", async (_event, loginId: string) => {
+    await (await LocalRuntimeClient.connect()).cancelBackendLogin("codex", loginId);
+    return true;
+  });
+  secureHandle("desktop:logout-codex-backend", async () => {
+    await (await LocalRuntimeClient.connect()).logoutBackend("codex");
+    return true;
+  });
   secureHandle("desktop:provider-usage-analytics-list", () =>
     listProviderUsageAnalytics(),
   );
@@ -2959,11 +3280,26 @@ function registerIpc(): void {
   });
 
   secureHandle("desktop:open-path", async (_event, rawPath: string) => {
+    if (process.env.OPENDRSAI_E2E_M4_KEYBOARD === "1" && rawPath === process.env.OPENDRSAI_E2E_M4_CERN_PDF && existsSync(rawPath)) return "";
     if (!(await isAllowedOpenPath(rawPath))) {
       return "Path is not registered as a DrSai or workspace path.";
     }
     if (process.env.OPENDRSAI_E2E_SUPPRESS_EXTERNAL_OPEN === "1") return "";
     return shell.openPath(rawPath);
+  });
+  secureHandle("desktop:local-data-cleanup-preview", (_event, scope) =>
+    previewLocalDataCleanup(scope),
+  );
+  secureHandle("desktop:local-data-cleanup", async (_event, request) => {
+    if (hasActiveChats() || hasActiveAgentRuns()) throw new Error("Stop active tasks before clearing local data.");
+    stopGateway();
+    const result = await clearLocalData(request);
+    if (result.scope === "all_local_data") {
+      await logout({ clearLocalData: true });
+      await electronSession.defaultSession.clearCache();
+      await electronSession.defaultSession.clearStorageData();
+    }
+    return result;
   });
   secureHandle("desktop:open-pdf-page", (_event, request: PdfPageOpenRequest) =>
     openPdfSourcePage(request),
@@ -3030,6 +3366,8 @@ function registerIpc(): void {
   );
   secureHandle("desktop:list-workspaces", () => listWorkspaces());
   secureHandle("desktop:ssh-hosts", () => listSshHosts());
+  secureHandle("desktop:ssh-diagnose", (_event, hostAlias: string) => diagnoseSshHost(hostAlias));
+  secureHandle("desktop:ssh-host-keys", (_event, hostAlias: string) => inspectSshHostKeys(hostAlias));
   secureHandle("desktop:ssh-test", (_event, hostAlias: string) => testSshHost(hostAlias));
   secureHandle("desktop:ssh-approve-host-key", (_event, hostAlias: string) => approveSshHostKey(hostAlias));
   secureHandle("desktop:ssh-directories", (_event, hostAlias: string, path?: string) =>
@@ -3073,24 +3411,28 @@ function registerIpc(): void {
   secureHandle("desktop:delete-workspace", (_event, id: string) =>
     deleteWorkspace(id),
   );
-  secureHandle("desktop:workspace-context-overview", (_event, workspacePath: string) =>
-    getRemoteGatewayAccess(workspacePath) ? getRemoteWorkspaceContextOverview(workspacePath) : getWorkspaceContextOverview(workspacePath),
+  secureHandle("desktop:workspace-context-overview", (_event, workspacePath: string, workspaceId?: string) =>
+    getRemoteGatewayAccess(workspacePath, workspaceId) ? getRemoteWorkspaceContextOverview(workspacePath, workspaceId) : getWorkspaceContextOverview(workspacePath),
   );
   secureHandle("desktop:workspace-files", (_event, request: WorkspaceFileTreeRequest) =>
-    getRemoteGatewayAccess(request?.workspacePath) ? listRemoteWorkspaceFiles(request) : listWorkspaceFiles(request),
+    getRemoteGatewayAccess(request?.workspacePath, request?.workspaceId) ? listRemoteWorkspaceFiles(request) : listWorkspaceFiles(request),
   );
-  secureHandle("desktop:workspace-folder-summary", (_event, request) => {
+  secureHandle("desktop:workspace-folder-summary", async (_event, request) => {
+    if (process.env.OPENDRSAI_E2E_C2_FOLDER_IMPORT === "1") await new Promise((resolveDelay) => setTimeout(resolveDelay, 350));
     const remoteRoot = getRemoteWorkspaceRootForPath(getStringProperty(request, "path"));
     return remoteRoot ? summarizeRemoteWorkspaceFolder(request as WorkspaceFolderSummaryRequest, remoteRoot) : summarizeWorkspaceFolder(request);
   });
   secureHandle("desktop:workspace-file-preview", (_event, request: WorkspaceFilePreviewRequest) =>
-    getRemoteGatewayAccess(request?.workspacePath) ? previewRemoteWorkspaceFile(request) : previewWorkspaceFile(request),
+    getRemoteGatewayAccess(request?.workspacePath, request?.workspaceId) ? previewRemoteWorkspaceFile(request) : previewWorkspaceFile(request),
   );
   secureHandle("desktop:workspace-file-save-as", (_event, request: WorkspaceFileSaveAsRequest) =>
     saveWorkspaceFileAs(request),
   );
   secureHandle("desktop:workspace-file-write", (_event, request: WorkspaceFileWriteRequest) =>
-    writeWorkspaceFile(request),
+    getRemoteGatewayAccess(request?.workspacePath, request?.workspaceId) ? writeRemoteWorkspaceFile(request) : writeWorkspaceFile(request),
+  );
+  secureHandle("desktop:apply-anomaly-decision", (_event, request: DesktopAnomalyDecisionApplyRequest) =>
+    applyAnomalyDecision(request),
   );
   secureHandle("desktop:manager-presentation-generate", async (event, request: ManagerPresentationGenerateRequest) => {
     if (!(await isAllowedOpenPath(request?.workspacePath))) {
@@ -3141,6 +3483,14 @@ function registerIpc(): void {
       && attempt === Number(process.env.OPENDRSAI_E2E_PRESENTATION_FAIL_ATTEMPT || 0)
       ? process.env.OPENDRSAI_E2E_PRESENTATION_FAIL_PHASE as "analyzing" | "planning" | "generating" | "validating"
       : undefined;
+    const m8FailureKind = process.env.OPENDRSAI_E2E_M8_FAILURE_KIND || "";
+    const m8FailureMessage: Record<string, string> = {
+      service_unavailable: "HTTP 503 model service temporarily unavailable",
+      disk_full: "ENOSPC: no space left on device",
+      permission_denied: "EACCES: permission denied writing report",
+      file_busy: "EBUSY: output file is being used by another process",
+      model_timeout: "MODEL_TIMEOUT: model request timed out",
+    };
     const fileWriteRetryLimit = Math.max(1, Number(process.env.OPENDRSAI_PRESENTATION_FILE_WRITE_RETRY_LIMIT || 3));
     const simulateFileBusyAttempts = isE2eSmokeProcess
       && attempt === Number(process.env.OPENDRSAI_E2E_PRESENTATION_FILE_BUSY_ATTEMPT || 0)
@@ -3180,6 +3530,7 @@ function registerIpc(): void {
         signal: controller.signal,
         phaseDelayMs,
         failAtPhase,
+        failureMessage: m8FailureMessage[m8FailureKind],
         fileWriteRetryLimit,
         simulateFileBusyAttempts,
         stageArtifactThresholdMs,
@@ -3238,7 +3589,7 @@ function registerIpc(): void {
         const failureAttempts = error && typeof error === "object" && "attempts" in error
           ? Math.max(1, Number(error.attempts) || 1)
           : 1;
-        const failureRecovery = buildFailureRecovery(error, failureAttempts, fileWriteRetryLimit);
+        const failureRecovery = buildFailureRecovery(error, failureAttempts, fileWriteRetryLimit, basename(request.sourcePath));
         const failedProgress: ManagerPresentationProgressEvent = {
           requestId,
           phase: "failed",
@@ -3261,6 +3612,13 @@ function registerIpc(): void {
       managerPresentationRuns.delete(requestId);
     }
   });
+  secureHandle("desktop:material-role-analysis", (_event, request) =>
+    analyzeMaterialRoles(request),
+  );
+  secureHandle("desktop:material-consistency-analysis", (_event, request) =>
+    analyzeMaterialConsistency(request),
+  );
+  secureHandle("desktop:material-query", (_event, request) => queryMaterials(request));
   secureHandle("desktop:manager-presentation-cancel", (event, request: ManagerPresentationCancelRequest) => {
     const requestId = typeof request?.requestId === "string" ? request.requestId.trim() : "";
     const run = managerPresentationRuns.get(requestId);
@@ -3370,10 +3728,10 @@ function registerIpc(): void {
     return resolveManagerPresentationRecovery(request);
   });
   secureHandle("desktop:workspace-git-diff", (_event, request: WorkspaceGitDiffRequest) =>
-    getRemoteGatewayAccess(request?.workspacePath) ? getRemoteWorkspaceGitDiff(request) : getWorkspaceGitDiff(request),
+    getRemoteGatewayAccess(request?.workspacePath, request?.workspaceId) ? getRemoteWorkspaceGitDiff(request) : getWorkspaceGitDiff(request),
   );
   secureHandle("desktop:workspace-git-file-at-ref", (_event, request) =>
-    getRemoteGatewayAccess(getStringProperty(request, "workspacePath")) ? getRemoteWorkspaceGitFileAtRef(request as WorkspaceGitFileAtRefRequest) : getWorkspaceGitFileAtRef(request),
+    getRemoteGatewayAccess(getStringProperty(request, "workspacePath"), getStringProperty(request, "workspaceId")) ? getRemoteWorkspaceGitFileAtRef(request as WorkspaceGitFileAtRefRequest) : getWorkspaceGitFileAtRef(request),
   );
   secureHandle("desktop:workspace-revert-file", async (_event, request) =>
     requestWorkspaceMutationApproval("revert-file", request),
@@ -3387,8 +3745,8 @@ function registerIpc(): void {
   secureHandle("desktop:workspace-revert-hunk", async (_event, request) =>
     requestWorkspaceMutationApproval("revert-hunk", request),
   );
-  secureHandle("desktop:workspace-checkpoints-list", async (_event, workspacePath: string) => {
-    if (getRemoteGatewayAccess(workspacePath)) return listRemoteWorkspaceCheckpoints(workspacePath);
+  secureHandle("desktop:workspace-checkpoints-list", async (_event, workspacePath: string, workspaceId?: string) => {
+    if (getRemoteGatewayAccess(workspacePath, workspaceId)) return listRemoteWorkspaceCheckpoints(workspacePath, workspaceId);
     if (!(await isAllowedOpenPath(workspacePath))) {
       throw new Error("Checkpoint workspace is not registered or allowed.");
     }
@@ -3396,7 +3754,7 @@ function registerIpc(): void {
   });
   secureHandle("desktop:workspace-checkpoint-create", async (_event, request) => {
     const workspacePath = getStringProperty(request, "workspacePath");
-    if (getRemoteGatewayAccess(workspacePath)) {
+    if (getRemoteGatewayAccess(workspacePath, getStringProperty(request, "workspaceId"))) {
       await assertExecutionAllowed("workspace.checkpoint");
       return createRemoteWorkspaceCheckpoint(request as WorkspaceCheckpointCreateRequest);
     }
@@ -3408,7 +3766,7 @@ function registerIpc(): void {
   });
   secureHandle("desktop:workspace-checkpoint-accept", async (_event, request) => {
     const workspacePath = getStringProperty(request, "workspacePath");
-    if (getRemoteGatewayAccess(workspacePath)) return acceptRemoteWorkspaceCheckpoint(request as WorkspaceCheckpointAcceptRequest);
+    if (getRemoteGatewayAccess(workspacePath, getStringProperty(request, "workspaceId"))) return acceptRemoteWorkspaceCheckpoint(request as WorkspaceCheckpointAcceptRequest);
     if (!(await isAllowedOpenPath(workspacePath))) {
       throw new Error("Checkpoint workspace is not registered or allowed.");
     }
@@ -3416,7 +3774,7 @@ function registerIpc(): void {
   });
   secureHandle("desktop:workspace-checkpoint-preview", async (_event, request) => {
     const workspacePath = getStringProperty(request, "workspacePath");
-    if (getRemoteGatewayAccess(workspacePath)) return previewRemoteWorkspaceCheckpoint(request as WorkspaceCheckpointPreviewRequest);
+    if (getRemoteGatewayAccess(workspacePath, getStringProperty(request, "workspaceId"))) return previewRemoteWorkspaceCheckpoint(request as WorkspaceCheckpointPreviewRequest);
     if (!(await isAllowedOpenPath(workspacePath))) {
       throw new Error("Checkpoint workspace is not registered or allowed.");
     }
@@ -3465,7 +3823,7 @@ function registerIpc(): void {
   );
   secureHandle("desktop:prepare-fork-worktree", (_event, request) => {
     const workspacePath = getStringProperty(request, "workspacePath");
-    if (getRemoteGatewayAccess(workspacePath)) throw new Error("Fork worktrees are disabled because the connected Remote Gateway did not advertise the fork capability.");
+    if (getRemoteGatewayAccess(workspacePath)) return prepareRemoteForkWorktree(workspacePath, getStringProperty(request, "intent"));
     return prepareForkWorktree(request);
   });
   secureHandle("desktop:project-memory-list", (_event, request) =>
@@ -3730,14 +4088,66 @@ function registerIpc(): void {
     return saveApiKeyAndDefaultModel(apiKey, defaultModel);
   });
   secureHandle("desktop:pick-files", async () => {
+    if (process.env.OPENDRSAI_E2E_C1_MATERIAL_IMPORT === "1") {
+      const fixturePaths = (process.env.OPENDRSAI_E2E_C1_IMPORT_PATHS || "").split("|").filter(Boolean);
+      if (fixturePaths.length !== 7) throw new Error("C1 requires six supported fixtures and one failed fixture.");
+      return describePickedFiles(fixturePaths, false);
+    }
+    if (process.env.OPENDRSAI_E2E_C3_MATERIAL_ROLES === "1") {
+      const fixturePaths = (process.env.OPENDRSAI_E2E_C3_IMPORT_PATHS || "").split("|").filter(Boolean);
+      if (fixturePaths.length !== 12 || fixturePaths.some((path) => !existsSync(path))) throw new Error("C3 requires exactly twelve readable golden fixtures.");
+      return describePickedFiles(fixturePaths, false);
+    }
+    if (process.env.OPENDRSAI_E2E_C4_MATERIAL_SUGGESTIONS === "1") {
+      const fixturePaths = (process.env.OPENDRSAI_E2E_C4_IMPORT_PATHS || "").split("|").filter(Boolean);
+      if (fixturePaths.length < 1 || fixturePaths.length > 6 || fixturePaths.some((path) => !existsSync(path))) throw new Error("C4 requires one to six readable material fixtures.");
+      return describePickedFiles(fixturePaths, false);
+    }
+    if (process.env.OPENDRSAI_E2E_C5_MATERIAL_CONSISTENCY === "1") {
+      const fixturePaths = (process.env.OPENDRSAI_E2E_C5_IMPORT_PATHS || "").split("|").filter(Boolean);
+      if (fixturePaths.length < 3 || fixturePaths.length > 6 || fixturePaths.some((path) => !existsSync(path))) throw new Error("C5 requires three to six readable material fixtures.");
+      return describePickedFiles(fixturePaths, false);
+    }
+    if (process.env.OPENDRSAI_E2E_C6_MATERIAL_QUERY === "1") {
+      const fixturePaths = (process.env.OPENDRSAI_E2E_C6_IMPORT_PATHS || "").split("|").filter(Boolean);
+      if (fixturePaths.length !== 4 || fixturePaths.some((path) => !existsSync(path))) throw new Error("C6 requires exactly four readable material fixtures.");
+      return describePickedFiles(fixturePaths, false);
+    }
+    if (process.env.OPENDRSAI_E2E_C7_ABNORMAL_FILES === "1") {
+      const fixturePaths = (process.env.OPENDRSAI_E2E_C7_IMPORT_PATHS || "").split("|").filter(Boolean);
+      if (fixturePaths.length !== 5 || fixturePaths.some((path) => !existsSync(path))) throw new Error("C7 requires exactly five abnormal-file fixtures.");
+      return describePickedFiles(fixturePaths, false);
+    }
+    if (process.env.OPENDRSAI_E2E_C8_CHINESE_PRIVACY === "1") {
+      const fixturePaths = (process.env.OPENDRSAI_E2E_C8_IMPORT_PATHS || "").split("|").filter(Boolean);
+      if (fixturePaths.length !== 3 || fixturePaths.some((path) => !existsSync(path))) throw new Error("C8 requires exactly three D5/D7 fixtures.");
+      return describePickedFiles(fixturePaths, false);
+    }
+    if (process.env.OPENDRSAI_E2E_M4_KEYBOARD === "1") {
+      const fixturePath = process.env.OPENDRSAI_E2E_M4_CERN_PDF;
+      if (!fixturePath || !existsSync(fixturePath)) throw new Error("M4 requires the fixed CERN PDF fixture.");
+      return describePickedFiles([fixturePath], false);
+    }
+    if (process.env.OPENDRSAI_E2E_M6_PERFORMANCE === "1") {
+      const fixturePaths = (process.env.OPENDRSAI_E2E_M6_IMPORT_PATHS || "")
+        .split("|")
+        .filter((path) => path && existsSync(path));
+      if (fixturePaths.length !== 30) throw new Error("M6 requires exactly 30 import fixtures.");
+      return describePickedFiles(fixturePaths, false);
+    }
     if (!mainWindow) return { canceled: true, paths: [] };
     const result = await dialog.showOpenDialog(mainWindow, {
       title: "Add files",
       properties: ["openFile", "multiSelections"],
     });
-    return { canceled: result.canceled, paths: result.filePaths };
+    return describePickedFiles(result.filePaths, result.canceled);
   });
   secureHandle("desktop:pick-folder", async () => {
+    if (process.env.OPENDRSAI_E2E_C2_FOLDER_IMPORT === "1") {
+      const fixturePath = process.env.OPENDRSAI_E2E_C2_FOLDER_PATH;
+      if (!fixturePath || !existsSync(fixturePath)) throw new Error("C2 requires a folder fixture.");
+      return { canceled: false, paths: [fixturePath] };
+    }
     if (!mainWindow) return { canceled: true, paths: [] };
     const result = await dialog.showOpenDialog(mainWindow, {
       title: "Add folder",
@@ -3864,6 +4274,10 @@ async function decidePendingDesktopApproval(
   pendingMcpLiveEnumerations.delete(typed.id);
   const pendingMcpToolExecution = pendingMcpToolExecutions.get(typed.id);
   pendingMcpToolExecutions.delete(typed.id);
+  const pendingF2ApprovalEffect = pendingF2ApprovalEffects.get(typed.id);
+  pendingF2ApprovalEffects.delete(typed.id);
+  const pendingF3ApprovalEffect = pendingF3ApprovalEffects.get(typed.id);
+  pendingF3ApprovalEffects.delete(typed.id);
   if (
     approval.source === "browser_task" &&
     approval.taskId &&
@@ -3979,6 +4393,18 @@ async function decidePendingDesktopApproval(
     executedDesktopApprovalIds.add(typed.id);
     await assertExecutionAllowed("external.service", { approved: true });
     await executeMcpToolAfterApproval(pendingMcpToolExecution, typed.id);
+    return true;
+  }
+  if (pendingF2ApprovalEffect) {
+    if (!typed.approved) return true;
+    executedDesktopApprovalIds.add(typed.id);
+    executeF2ApprovalEffect(typed.id, pendingF2ApprovalEffect);
+    return true;
+  }
+  if (pendingF3ApprovalEffect) {
+    if (!typed.approved) return true;
+    executedDesktopApprovalIds.add(typed.id);
+    executeF3ApprovalEffect(typed.id, pendingF3ApprovalEffect);
     return true;
   }
   return true;

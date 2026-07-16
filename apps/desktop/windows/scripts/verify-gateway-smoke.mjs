@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { createHmac } from "node:crypto";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -12,6 +13,7 @@ const baseUrl = `http://127.0.0.1:${port}`;
 const tempHome = mkdtempSync(join(tmpdir(), "opendrsai-gateway-smoke-"));
 const tempUserProfile = join(tempHome, "user-profile");
 const gatewayInstanceToken = "gateway-smoke-instance-token";
+const temporaryOidcSecret = "temporary-gateway-smoke-oidc-secret";
 
 let gatewayProcess = null;
 
@@ -25,6 +27,7 @@ try {
       DRSAI_API_PORT: String(port),
       DRSAI_GATEWAY_FAKE_AGENT: "1",
       OPENDRSAI_GATEWAY_INSTANCE_TOKEN: gatewayInstanceToken,
+      OPENDRSAI_OIDC_HS256_SECRET: temporaryOidcSecret,
       DRSAI_HOME: tempHome,
       USERNAME: "opendrsai-smoke",
       USERPROFILE: tempUserProfile,
@@ -102,8 +105,7 @@ try {
   process.exitCode = 1;
 } finally {
   if (gatewayProcess) {
-    killProcessTree(gatewayProcess.pid);
-    await waitForProcessExit(gatewayProcess, 3_000);
+    await stopGatewayProcess(gatewayProcess);
   }
   await cleanupTempDir(tempHome);
 }
@@ -118,7 +120,7 @@ function waitForProcessExit(child, timeoutMs) {
     });
   });
 }
-process.exit(process.exitCode ?? 0);
+process.exitCode ??= 0;
 
 async function cleanupTempDir(path) {
   let lastError;
@@ -131,23 +133,7 @@ async function cleanupTempDir(path) {
       await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
     }
   }
-  if (process.platform === "win32") {
-    const escapedPath = path.replace(/'/g, "''");
-    const helper = spawn(
-      "powershell.exe",
-      [
-        "-NoProfile",
-        "-WindowStyle",
-        "Hidden",
-        "-Command",
-        `$p='${escapedPath}'; for($i=0;$i -lt 30;$i++){ try { Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction Stop; exit 0 } catch { Start-Sleep -Milliseconds 500 } }; exit 1`,
-      ],
-      { detached: true, stdio: "ignore", windowsHide: true },
-    );
-    helper.unref();
-    return;
-  }
-  console.warn(`Could not remove temporary directory ${path}: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
+  throw new Error(`Could not remove temporary Gateway directory ${path}: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
 }
 
 function resolvePython() {
@@ -222,30 +208,31 @@ async function requestText(path, init) {
 
 function fakeOidcToken(subject) {
   const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
-  return `${encode({ alg: "RS256", typ: "JWT" })}.${encode({
+  const header = encode({ alg: "HS256", typ: "JWT" });
+  const payload = encode({
     iss: "https://ai-dev.ihep.ac.cn/api",
     sub: subject,
     aud: "hai-api",
     exp: Math.floor(Date.now() / 1000) + 600,
-  })}.test-signature`;
+  });
+  const signature = createHmac("sha256", temporaryOidcSecret).update(`${header}.${payload}`).digest("base64url");
+  return `${header}.${payload}.${signature}`;
 }
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-function killProcessTree(pid) {
-  if (!pid) return;
-  if (process.platform === "win32") {
-    spawnSync("taskkill.exe", ["/PID", String(pid), "/T", "/F"], {
-      stdio: "ignore",
-      windowsHide: true,
-    });
-    return;
+async function stopGatewayProcess(child) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  try { child.kill("SIGTERM"); } catch {}
+  await waitForProcessExit(child, 5_000);
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  if (process.platform === "win32" && child.pid) {
+    spawnSync("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+  } else {
+    try { child.kill("SIGKILL"); } catch {}
   }
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch {
-    // Best effort cleanup.
-  }
+  await waitForProcessExit(child, 5_000);
+  if (child.exitCode === null && child.signalCode === null) throw new Error(`Gateway smoke process ${child.pid || "<unknown>"} did not exit.`);
 }

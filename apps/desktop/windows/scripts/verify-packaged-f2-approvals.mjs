@@ -1,12 +1,16 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const repo = resolve(root, "../../..");
 const exePath = join(root, "release", "win-unpacked", "OpenDrSai.exe");
+const sourcePdf = resolve(process.env.OPENDRSAI_CERN_PDF || "C:/tmp/WLCG-20260715-WLCG-talk-IHEP-visit.pdf");
+const python = process.env.OPENDRSAI_PDF_PYTHON || "C:/Users/win11/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe";
+const extractor = join(repo, "cores", "python", "packages", "drsai", "src", "drsai", "backend", "presentation_pdf.py");
 const e2eTimeoutMs = Number(process.env.OPENDRSAI_E2E_TIMEOUT_MS || "45000");
 const processTimeoutMs = e2eTimeoutMs + 15_000;
 const scenarios = ["all"];
@@ -31,6 +35,10 @@ if (process.platform !== "win32") {
 if (!existsSync(exePath)) {
   throw new Error("Build the unpacked Windows app before running verify:packaged-f2-approvals.");
 }
+for (const path of [sourcePdf, python, extractor]) if (!existsSync(path)) throw new Error(`F2 dependency is missing: ${path}`);
+const sourceBytes = readFileSync(sourcePdf);
+const sourceHash = createHash("sha256").update(sourceBytes).digest("hex").toUpperCase();
+if (sourceBytes.length !== 7_664_262 || sourceHash !== "F6581E1A255B354667188B41B874B996A300F88BB48912721BC1C854183E913E") throw new Error("F2 CERN PDF fixture changed.");
 
 mkdirSync(evidenceRoot, { recursive: true });
 mkdirSync(screenshotDir, { recursive: true });
@@ -74,8 +82,14 @@ async function runScenario(scenario) {
   const stderrPath = join(evidenceRoot, `${scenario}.stderr.log`);
   const drsaiHome = join(tempDir, "drsai-home");
   const electronUserData = join(tempDir, "electron-user-data");
+  const workspace = join(tempDir, "中文 CERN 材料", "关键操作");
+  const fixturePath = join(workspace, "WLCG-20260715-WLCG-talk-IHEP-visit.pdf");
+  const effectDir = join(tempDir, "approval-effects");
   mkdirSync(drsaiHome, { recursive: true });
   mkdirSync(electronUserData, { recursive: true });
+  mkdirSync(workspace, { recursive: true });
+  mkdirSync(effectDir, { recursive: true });
+  copyFileSync(sourcePdf, fixturePath);
   const sideEffectSnapshotBefore = collectSideEffectSnapshot(drsaiHome);
   const startedAt = new Date().toISOString();
   let stdout = "";
@@ -105,8 +119,13 @@ async function runScenario(scenario) {
           APPDATA: process.env.APPDATA,
           PATH: systemPath,
           DRSAI_HOME: drsaiHome,
+          DRSAI_REPO: workspace,
           OPENDRSAI_DEV_AUTH_BYPASS: "1",
+          OPENDRSAI_PDF_PYTHON: python,
+          OPENDRSAI_PDF_SCRIPT: extractor,
           OPENDRSAI_E2E_F2_APPROVALS: "1",
+          OPENDRSAI_E2E_F2_CERN_PDF: fixturePath,
+          OPENDRSAI_E2E_F2_EFFECT_DIR: effectDir,
           OPENDRSAI_F2_APPROVAL_SCENARIO: scenario,
           OPENDRSAI_E2E_RESULT: resultPath,
           OPENDRSAI_E2E_TIMEOUT_MS: String(e2eTimeoutMs),
@@ -169,6 +188,8 @@ async function runScenario(scenario) {
     details: result?.details ?? null,
     sideEffectSnapshotBefore,
     sideEffectSnapshotAfter,
+    cernPdf: { path: fixturePath, sizeBytes: readFileSync(fixturePath).length, sha256: createHash("sha256").update(readFileSync(fixturePath)).digest("hex").toUpperCase() },
+    effectDiagnostics: result?.details?.effectDiagnostics ?? null,
     unauthorizedExecutions,
     configuredRetries: 0,
     actualRetries: 0,

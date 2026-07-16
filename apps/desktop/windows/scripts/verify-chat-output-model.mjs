@@ -6,6 +6,7 @@ import ts from "typescript";
 const sourcePath = join(process.cwd(), "src/renderer/src/chatOutputModel.ts");
 const source = readFileSync(sourcePath, "utf8");
 const componentSource = readFileSync(join(process.cwd(), "src/renderer/src/components/ChatMessageContent.tsx"), "utf8");
+const workspaceSource = readFileSync(join(process.cwd(), "src/renderer/src/components/ChatWorkspace.tsx"), "utf8");
 const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },
 }).outputText;
@@ -21,6 +22,10 @@ assert.equal(complete[0].type, "reasoning");
 assert.equal(complete[0].complete, true);
 assert.equal(complete[1].text, "Final answer");
 assert.equal(model.getVisibleChatText("<think>private</think>Final answer"), "Final answer");
+assert.equal(
+  model.getReasoningChatText("<think>first thought</think><think>second thought</think>"),
+  "first thoughtsecond thought",
+);
 
 const streaming = model.parseChatOutput("prefix<think>still streaming");
 assert.equal(streaming[0].type, "text");
@@ -57,6 +62,10 @@ assert.ok(reasoningSection.includes('thinking: "Thinking"'));
 assert.ok(
   [...reasoningSection].every((character) => character.charCodeAt(0) < 128),
   "ReasoningPart labels must stay ASCII-only to avoid Windows console mojibake.",
+);
+assert.ok(
+  workspaceSource.includes("content={getReasoningChatText(message.reasoningContent)}"),
+  "Dedicated reasoning events must not create a nested Think renderer.",
 );
 
 console.log("Chat output model verification passed.");

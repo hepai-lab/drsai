@@ -28,6 +28,7 @@ const {
   parseAgentRunSseFrame,
   parseAgentRunSseFileEvents,
   parseChatReasoningSseFrame,
+  parseChatSseErrorFrame,
   parseChatToolTimelineSseFrame,
   parseChatSseFrame,
   parseCompletionSseFrame,
@@ -35,6 +36,11 @@ const {
   parseProviderStatusSseFrame,
   parseProviderUsageAnalyticsSseFrame,
 } = module.exports;
+
+const unavailableModelError = parseChatSseErrorFrame('event: error\ndata: {"error":{"code":"MODEL_UNAVAILABLE","message":"Model is unavailable","retryable":false}}');
+if (!unavailableModelError || unavailableModelError.code !== "MODEL_UNAVAILABLE" || unavailableModelError.retryable) {
+  throw new Error("MODEL_UNAVAILABLE must remain a non-retryable stream error.");
+}
 
 function assertDeepEqual(name, actual, expected) {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
@@ -46,6 +52,16 @@ assertDeepEqual(
   "delta content",
   parseChatSseFrame('data: {"choices":[{"delta":{"content":"hello"}}]}'),
   ["hello"],
+);
+assertDeepEqual(
+  "gateway thinking delta is not chat content",
+  parseChatSseFrame('data: {"choices":[{"delta":{"role":"thinking","content":"hidden reasoning"}}]}'),
+  [],
+);
+assertDeepEqual(
+  "gateway thinking delta is reasoning",
+  parseChatReasoningSseFrame('data: {"choices":[{"delta":{"role":"thinking","content":"hidden reasoning"}}]}'),
+  { title: "Model reasoning", content: "hidden reasoning", level: "DEBUG", content_type: "reasoning" },
 );
 assertDeepEqual(
   "agent run delta content",

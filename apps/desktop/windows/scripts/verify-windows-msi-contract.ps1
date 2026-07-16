@@ -35,15 +35,18 @@ Assert-Equal (Read-SingleValue $database "SELECT ``Root`` FROM ``Registry`` WHER
 
 $productVersion = Read-SingleValue $database "SELECT ``Value`` FROM ``Property`` WHERE ``Property``='ProductVersion'"
 $runtimeUrl = Read-SingleValue $database "SELECT ``Value`` FROM ``Property`` WHERE ``Property``='RUNTIMEURL'"
+$packageVersion = (Get-Content -LiteralPath (Join-Path $PSScriptRoot "..\package.json") -Raw | ConvertFrom-Json).version
+$expectedProductVersion = if ($packageVersion -match '^(\d+\.\d+\.\d+)') { $Matches[1] } else { $packageVersion }
+Assert-Equal $productVersion $expectedProductVersion "ProductVersion"
 $isDevelopmentBuild = $env:OPENDRSAI_RELEASE_TAG -eq "latest" -or $env:OPENDRSAI_UPDATE_CHANNEL -eq "dev"
 if ($runtimeUrl -match '/releases/latest/') {
     if (-not $isDevelopmentBuild) {
         throw "Stable RUNTIMEURL must be immutable and must not use releases/latest: $runtimeUrl"
     }
 } else {
-    $expectedReleaseSegment = "/releases/download/v$productVersion/"
+    $expectedReleaseSegment = "/releases/download/v$packageVersion/"
     if (-not $runtimeUrl.Contains($expectedReleaseSegment)) {
-        throw "RUNTIMEURL must match ProductVersion $productVersion and contain '$expectedReleaseSegment': $runtimeUrl"
+        throw "RUNTIMEURL must match package version $packageVersion and contain '$expectedReleaseSegment': $runtimeUrl"
     }
 }
 

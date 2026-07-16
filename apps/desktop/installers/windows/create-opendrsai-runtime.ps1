@@ -4,6 +4,9 @@ param(
     [string]$DrsaiAgentDir = "",
     [string]$BackendSourceDir = "$PSScriptRoot\..\..\..\..\cores\python\packages\drsai\src\drsai",
     [string]$DrsaiHomeDefaultsDir = "",
+    [string]$CodexArtifactDir = "",
+    [string]$CodexTrustedPublishersPath = "",
+    [string]$OpenSshDir = "$env:WINDIR\System32\OpenSSH",
     [string]$Version = "",
     [string]$Channel = "dev"
 )
@@ -51,6 +54,32 @@ function Remove-NodePtyBuildSources([string]$AppRoot) {
             Remove-Item -LiteralPath $candidate -Recurse -Force
         }
     }
+}
+
+function Add-BundledOpenSshClient([string]$Source, [string]$AppRoot) {
+    $required = @("ssh.exe", "ssh-keyscan.exe", "ssh-keygen.exe", "scp.exe", "sftp.exe", "LICENSE.txt", "NOTICE.txt")
+    foreach ($name in $required) {
+        $candidate = Join-Path $Source $name
+        if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+            throw "Required OpenSSH client file was not found: $candidate"
+        }
+    }
+    $signature = Get-AuthenticodeSignature -LiteralPath (Join-Path $Source "ssh.exe")
+    if ($signature.Status -ne "Valid") {
+        throw "Bundled OpenSSH ssh.exe must have a valid Authenticode signature; status=$($signature.Status)."
+    }
+    $target = Join-Path $AppRoot "resources\tools\openssh"
+    New-Item -ItemType Directory -Force -Path $target | Out-Null
+    foreach ($name in $required) {
+        Copy-Item -LiteralPath (Join-Path $Source $name) -Destination (Join-Path $target $name) -Force
+    }
+    $cryptoCandidates = @(
+        (Join-Path $Source "libcrypto.dll"),
+        (Join-Path (Split-Path -Parent $Source) "libcrypto.dll")
+    )
+    $crypto = $cryptoCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+    if (-not $crypto) { throw "Required OpenSSH runtime dependency libcrypto.dll was not found beside $Source." }
+    Copy-Item -LiteralPath $crypto -Destination (Join-Path $target "libcrypto.dll") -Force
 }
 
 function Add-PortablePythonBase([string]$SourceAgent, [string]$TargetAgent) {
@@ -141,6 +170,9 @@ if (-not $Version) {
 if ($Channel -notin @("stable", "beta", "dev")) {
     throw "Unsupported channel: $Channel"
 }
+if ([bool]$CodexArtifactDir -ne [bool]$CodexTrustedPublishersPath) {
+    throw "CodexArtifactDir and CodexTrustedPublishersPath must be provided together."
+}
 
 $desktopAppDir = Resolve-FullPath $DesktopAppDir
 if (-not (Test-Path (Join-Path $desktopAppDir "OpenDrSai.exe"))) {
@@ -187,6 +219,7 @@ New-Item -ItemType Directory -Force -Path $payloadRoot | Out-Null
 
 Copy-DirectoryContents $desktopAppDir (Join-Path $payloadRoot "app")
 Remove-NodePtyBuildSources (Join-Path $payloadRoot "app")
+Add-BundledOpenSshClient (Resolve-FullPath $OpenSshDir) (Join-Path $payloadRoot "app")
 # The development agent may contain projects, caches, downloaded apps, or user
 # files alongside its venv. Only the managed Python runtime belongs in a
 # redistributable archive.
@@ -229,6 +262,38 @@ if ($DrsaiHomeDefaultsDir -and (Test-Path $DrsaiHomeDefaultsDir)) {
     }
 }
 
+$managedCodex = $null
+if ($CodexArtifactDir) {
+    $codexArtifact = Resolve-FullPath $CodexArtifactDir
+    $codexTrustStore = Resolve-FullPath $CodexTrustedPublishersPath
+    $codexManifestPath = Join-Path $codexArtifact "manifest.json"
+    if (-not (Test-Path -LiteralPath $codexManifestPath -PathType Leaf)) {
+        throw "Managed Codex artifact is missing manifest.json: $codexArtifact"
+    }
+    $codexManifest = Get-Content -LiteralPath $codexManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($Channel -in @("stable", "beta") -and $codexManifest.acceptance_only -eq $true) {
+        throw "Acceptance-only Codex artifacts cannot enter beta or stable Runtime packages."
+    }
+    $installOutput = (& $payloadPython -W ignore -m drsai.backend.codex_adapter.artifact_cli `
+        --artifact $codexArtifact --trust-store $codexTrustStore --state-root $homeDefaultsTarget 2>&1 | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) {
+        throw "Managed Codex artifact installation failed: $installOutput"
+    }
+    $installedCodex = $installOutput | ConvertFrom-Json
+    if (-not $installedCodex.release_safe -or $installedCodex.source -ne "managed") {
+        throw "Managed Codex artifact did not resolve as a release-safe product binary."
+    }
+    $managedCodex = [ordered]@{
+        version = [string]$installedCodex.version
+        publisher = [string]$codexManifest.publisher
+        platform = [string]$codexManifest.platform
+        acceptanceOnly = [bool]$codexManifest.acceptance_only
+        binaryDigest = [string]$codexManifest.binary_digest
+        schemaDigest = [string]$codexManifest.schema_digest
+    }
+    Write-Host "Installed managed Codex $($managedCodex.version) into Runtime defaults." -ForegroundColor DarkGray
+}
+
 $manifest = [ordered]@{
     name = "OpenDrSai Runtime"
     version = $Version
@@ -241,7 +306,9 @@ $manifest = [ordered]@{
         python = "drsai-agent/venv/Scripts/python.exe"
         drsai = "drsai-agent/venv/Scripts/drsai.cmd"
         gateway = "drsai-agent/venv/Scripts/drsai-gateway.cmd"
+        ssh = "app/resources/tools/openssh/ssh.exe"
     }
+    managedCodex = $managedCodex
 }
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText(

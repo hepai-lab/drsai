@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
+import hmac
 import json
 import os
 import threading
+import tempfile
 import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -17,10 +20,15 @@ from drsai.platform_auth import (
     get_platform_auth,
     get_model_credential_provider,
     platform_auth_scope,
+    revoke_gateway_instance_token,
     verify_gateway_instance,
 )
 from drsai.modules.components.model_client.LLMClient import HepAIChatCompletionClient
 from drsai.modules.components.model_client.anthropic._anthropic_client import HepAIAnthropicChatCompletionClient
+
+
+USER_ID = "d30fc87e-f83d-4f3c-a145-bd1b77b7fde3"
+SECOND_USER_ID = "d0b66156-3680-4405-8c87-01b186b92a8c"
 
 
 def jwt(claims: dict[str, object]) -> str:
@@ -28,35 +36,71 @@ def jwt(claims: dict[str, object]) -> str:
         raw = json.dumps(value, separators=(",", ":")).encode()
         return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
-    return f"{encode({'alg': 'RS256', 'typ': 'JWT'})}.{encode(claims)}.test-signature"
+    header, payload = encode({'alg': 'HS256', 'typ': 'JWT'}), encode(claims)
+    signature = hmac.new(b"temporary-oidc-test-secret", f"{header}.{payload}".encode(), hashlib.sha256).digest()
+    encoded_signature = base64.urlsafe_b64encode(signature).decode().rstrip("=")
+    return f"{header}.{payload}.{encoded_signature}"
 
 
 class PlatformAuthTests(unittest.TestCase):
-    def valid_token(self, subject: str = "user-1", issuer: str = "https://ai-dev.ihep.ac.cn/api") -> str:
-        return jwt({"sub": subject, "iss": issuer, "exp": int(time.time()) + 600, "aud": "hai-api"})
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._previous_oidc_secret = os.environ.get("OPENDRSAI_OIDC_HS256_SECRET")
+        os.environ["OPENDRSAI_OIDC_HS256_SECRET"] = "temporary-oidc-test-secret"
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        if cls._previous_oidc_secret is None:
+            os.environ.pop("OPENDRSAI_OIDC_HS256_SECRET", None)
+        else:
+            os.environ["OPENDRSAI_OIDC_HS256_SECRET"] = cls._previous_oidc_secret
+
+    def valid_token(self, subject: str = USER_ID, issuer: str = "https://ai-dev.ihep.ac.cn/api") -> str:
+        return jwt({"sub": subject, "iss": issuer, "exp": int(time.time()) + 600, "aud": "hai-api", "typ": "access_token", "scope": "openid hai_api", "org_id": "org-1", "sid": "session-1"})
 
     def test_development_context_selects_development_model_service(self) -> None:
-        context = context_from_bearer(f"Bearer {self.valid_token()}", "user-1")
-        self.assertEqual(context.subject, "user-1")
+        context = context_from_bearer(f"Bearer {self.valid_token()}", USER_ID)
+        self.assertEqual(context.subject, USER_ID)
+        self.assertEqual((context.organization_id, context.session_id, context.audience), ("org-1", "session-1", "hai-api"))
         self.assertEqual(context.model_base_url, "https://ai-dev.ihep.ac.cn/apiv2/v1")
 
     def test_production_context_selects_production_model_service(self) -> None:
         context = context_from_bearer(
             f"Bearer {self.valid_token(issuer='https://ai.ihep.ac.cn/api')}",
-            "user-1",
+            USER_ID,
         )
         self.assertEqual(context.model_base_url, "https://ai.ihep.ac.cn/apiv2/v1")
 
     def test_expired_and_mismatched_tokens_are_rejected(self) -> None:
-        expired = jwt({"sub": "user-1", "iss": "https://ai-dev.ihep.ac.cn/api", "exp": int(time.time()) - 1})
+        expired = jwt({"sub": USER_ID, "iss": "https://ai-dev.ihep.ac.cn/api", "exp": int(time.time()) - 1, "aud": "hai-api"})
         with self.assertRaisesRegex(ValueError, "token_expired"):
-            context_from_bearer(f"Bearer {expired}", "user-1")
+            context_from_bearer(f"Bearer {expired}", USER_ID)
         with self.assertRaisesRegex(ValueError, "subject_mismatch"):
-            context_from_bearer(f"Bearer {self.valid_token()}", "user-2")
+            context_from_bearer(f"Bearer {self.valid_token()}", SECOND_USER_ID)
+
+    def test_non_uuid_subject_and_missing_model_scope_are_rejected(self) -> None:
+        username_subject = jwt({"sub": "researcher", "iss": "https://ai-dev.ihep.ac.cn/api", "exp": int(time.time()) + 60, "aud": "hai-api", "typ": "access_token", "scope": "openid hai_api"})
+        with self.assertRaisesRegex(ValueError, "invalid_subject"):
+            context_from_bearer(f"Bearer {username_subject}", "researcher")
+        missing_scope = jwt({"sub": USER_ID, "iss": "https://ai-dev.ihep.ac.cn/api", "exp": int(time.time()) + 60, "aud": "hai-api", "typ": "access_token", "scope": "openid profile"})
+        with self.assertRaisesRegex(ValueError, "missing_hai_api_scope"):
+            context_from_bearer(f"Bearer {missing_scope}", USER_ID)
+
+    def test_forged_signature_audience_and_future_token_are_rejected(self) -> None:
+        valid = self.valid_token()
+        forged = valid.rsplit(".", 1)[0] + "." + base64.urlsafe_b64encode(b"forged").decode().rstrip("=")
+        with self.assertRaisesRegex(ValueError, "invalid_token_signature"):
+            context_from_bearer(f"Bearer {forged}", USER_ID)
+        wrong_audience = jwt({"sub": USER_ID, "iss": "https://ai-dev.ihep.ac.cn/api", "exp": int(time.time()) + 60, "aud": "other"})
+        with self.assertRaisesRegex(ValueError, "audience_mismatch"):
+            context_from_bearer(f"Bearer {wrong_audience}", USER_ID)
+        future = jwt({"sub": USER_ID, "iss": "https://ai-dev.ihep.ac.cn/api", "exp": int(time.time()) + 600, "nbf": int(time.time()) + 120, "aud": "hai-api"})
+        with self.assertRaisesRegex(ValueError, "token_not_yet_valid"):
+            context_from_bearer(f"Bearer {future}", USER_ID)
 
     def test_scope_is_isolated_between_concurrent_tasks(self) -> None:
-        first = context_from_bearer(f"Bearer {self.valid_token('first')}", "first")
-        second = context_from_bearer(f"Bearer {self.valid_token('second')}", "second")
+        first = context_from_bearer(f"Bearer {self.valid_token(USER_ID)}", USER_ID)
+        second = context_from_bearer(f"Bearer {self.valid_token(SECOND_USER_ID)}", SECOND_USER_ID)
 
         async def read_subject(context) -> str:
             with platform_auth_scope(context):
@@ -67,7 +111,7 @@ class PlatformAuthTests(unittest.TestCase):
         async def run() -> list[str]:
             return await asyncio.gather(read_subject(first), read_subject(second))
 
-        self.assertEqual(asyncio.run(run()), ["first", "second"])
+        self.assertEqual(asyncio.run(run()), [USER_ID, SECOND_USER_ID])
         self.assertIsNone(get_platform_auth())
 
     def test_gateway_instance_token_uses_exact_constant_time_match(self) -> None:
@@ -75,6 +119,19 @@ class PlatformAuthTests(unittest.TestCase):
             self.assertTrue(verify_gateway_instance("local-secret"))
             self.assertFalse(verify_gateway_instance("wrong-secret"))
             self.assertFalse(verify_gateway_instance(None))
+
+    def test_gateway_instance_token_expiry_and_revocation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch.dict(os.environ, {
+                "DRSAI_HOME": temporary,
+                "OPENDRSAI_GATEWAY_INSTANCE_TOKEN": "temporary-runtime-token",
+                "OPENDRSAI_GATEWAY_INSTANCE_TOKEN_EXPIRES_AT": str(time.time() - 1),
+            }, clear=False):
+                self.assertFalse(verify_gateway_instance("temporary-runtime-token"))
+                os.environ["OPENDRSAI_GATEWAY_INSTANCE_TOKEN_EXPIRES_AT"] = str(time.time() + 60)
+                self.assertTrue(verify_gateway_instance("temporary-runtime-token"))
+                revoke_gateway_instance_token("temporary-runtime-token")
+                self.assertFalse(verify_gateway_instance("temporary-runtime-token"))
 
     def test_static_credential_provider_remains_available_without_oidc(self) -> None:
         provider = get_model_credential_provider("static-key", "https://provider.example/v1")
@@ -101,7 +158,7 @@ class PlatformAuthTests(unittest.TestCase):
     def test_cached_model_client_rebinds_to_current_request(self) -> None:
         client = object.__new__(HepAIChatCompletionClient)
         client._client = SimpleNamespace(api_key="old-token", base_url="https://old.invalid/v1")
-        context = context_from_bearer(f"Bearer {self.valid_token()}", "user-1")
+        context = context_from_bearer(f"Bearer {self.valid_token()}", USER_ID)
         with platform_auth_scope(context):
             client._bind_platform_auth()
         self.assertEqual(client._client.api_key, context.access_token)
@@ -124,7 +181,7 @@ class PlatformAuthTests(unittest.TestCase):
                 base_url="https://wrong.invalid/v1",
             )
         self.assertTrue(client._oidc_credential_pending)
-        context = context_from_bearer(f"Bearer {self.valid_token()}", "user-1")
+        context = context_from_bearer(f"Bearer {self.valid_token()}", USER_ID)
         with platform_auth_scope(context):
             client._bind_platform_auth()
         self.assertFalse(client._oidc_credential_pending)
@@ -138,7 +195,7 @@ class PlatformAuthTests(unittest.TestCase):
                 self.status_code = status_code
 
         expected = {
-            401: ("token_expired", True),
+            401: ("model_unauthorized", False),
             403: ("model_forbidden", False),
             404: ("model_not_found", False),
             429: ("quota_exceeded", True),
@@ -150,6 +207,10 @@ class PlatformAuthTests(unittest.TestCase):
             self.assertNotIn("secret-canary", str(result))
         unavailable = classify_model_error(ProviderError(400, "MODEL_UNAVAILABLE"))
         self.assertEqual(unavailable["code"], "model_not_found")
+        expired = classify_model_error(ProviderError(401, "token expired"))
+        self.assertEqual((expired["code"], expired["retryable"]), ("token_expired", True))
+        invalid_token = classify_model_error(Exception("AuthenticationError: Error code: 401 - invalid_token"))
+        self.assertEqual((invalid_token["code"], invalid_token["retryable"]), ("model_unauthorized", False))
 
     def test_real_openai_client_calls_fake_apiv2_with_oidc_bearer(self) -> None:
         captured: dict[str, str] = {}
@@ -187,7 +248,7 @@ class PlatformAuthTests(unittest.TestCase):
                 "OPENDRSAI_MODEL_BASE_URL": base_url,
                 "DRSAI_ALLOW_INSECURE_MODEL_URL": "1",
             }):
-                context = context_from_bearer(f"Bearer {self.valid_token()}", "user-1")
+                context = context_from_bearer(f"Bearer {self.valid_token()}", USER_ID)
                 with platform_auth_scope(context):
                     client = HepAIChatCompletionClient(
                         model="fake-model",

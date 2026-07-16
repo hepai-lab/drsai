@@ -3,8 +3,9 @@ import { dirname, join } from "path";
 import { DRSAI_HOME } from "./paths";
 
 const CLI_CONFIG_FILE = join(DRSAI_HOME, "configs", "cli_config.json");
-const DEFAULT_MODEL_ALIAS = "deepseek-v4-pro";
+const DEFAULT_MODEL_ALIAS = "deepseek-ai/deepseek-v4-pro";
 const LEGACY_MODEL_ALIASES: Record<string, string> = {
+  "deepseek-v4-pro": DEFAULT_MODEL_ALIAS,
   "hepai/deepseek-v4-pro": DEFAULT_MODEL_ALIAS,
 };
 const MAX_MODEL_CHARS = 120;

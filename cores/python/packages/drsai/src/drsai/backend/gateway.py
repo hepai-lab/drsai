@@ -66,6 +66,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from collections import deque
+from fnmatch import fnmatch
 import inspect
 
 import hashlib
@@ -109,6 +111,32 @@ from pydantic import BaseModel, Field
 
 from drsai.backend.remote_workspace import PROTOCOL_VERSION, canonical_workspace, ensure_protocol, workspace_child
 from drsai.backend.remote_checkpoints import accept_checkpoint, create_checkpoint, list_checkpoints, preview_checkpoint, restore_checkpoint
+from drsai.backend.runtime_registry import RuntimeRegistry
+from drsai.backend.runtime_engine import RuntimeEngine, RuntimeEngineIdentity
+from drsai.backend.agent_runtime import (
+    AgentDefinition,
+    AgentDefinitionStore,
+    HAIModelAdapter,
+    ModelIdentity,
+    OpenDrSaiAgentBackend,
+    RuntimeAgentService,
+    RuntimeExecutionError,
+    RuntimeRunContext,
+    RuntimeToolDispatcher,
+)
+from drsai.backend.codex_adapter import build_codex_adapter
+from drsai.backend.runtime_security import (
+    ApprovalRegistry,
+    ApprovalRequired,
+    AuditLog,
+    OperationContext,
+    RuntimePrincipal,
+    RuntimeSecurity,
+    SecureWorkspaceFS,
+    SecurityError,
+    WorkspacePermissionStore,
+    redact_sensitive,
+)
 
 
 
@@ -265,7 +293,7 @@ def _get_default_model_alias() -> str:
         alias = load_config().get("defult_config_name")
         if isinstance(alias, str) and alias.strip():
             normalized = alias.strip()
-            return "deepseek-v4-pro" if normalized == "hepai/deepseek-v4-pro" else normalized
+            return "deepseek-ai/deepseek-v4-pro" if normalized in {"deepseek-v4-pro", "hepai/deepseek-v4-pro"} else normalized
     except Exception as e:
         logger.debug(f"Failed to read default model alias from cli config: {e}")
     return DEFAULT_CONFIG_NAME
@@ -1127,6 +1155,8 @@ async def lifespan(app: FastAPI):
 
     _get_db()
 
+    _restore_runtime_workspaces()
+
     logger.info(f"Database ready: {_DB_URI}")
 
     logger.info(f"Default user: {_get_user_id()}")
@@ -1134,6 +1164,9 @@ async def lifespan(app: FastAPI):
     yield
 
     logger.info("DrSai API Server shutting down")
+
+    if _runtime_agent_service_instance is not None:
+        await _runtime_agent_service_instance.close()
 
     # Stop any cron schedulers we started so background tasks unwind cleanly
     for uid, sm in list(_schedulers.items()):
@@ -1159,6 +1192,179 @@ app = FastAPI(
 
 _REMOTE_PROTOCOL_VERSION = PROTOCOL_VERSION
 _remote_workspaces: dict[str, Path] = {}
+_runtime_registry_instance: RuntimeRegistry | None = None
+_runtime_engine_instance: RuntimeEngine | None = None
+_runtime_tool_dispatcher_instance: RuntimeToolDispatcher | None = None
+_runtime_security_instance: RuntimeSecurity | None = None
+_runtime_agent_service_instance: RuntimeAgentService | None = None
+_REMOTE_CAPABILITY_VERSIONS = {
+    "threads": 1,
+    "chat": 1,
+    "files": 2,
+    "file-watch": 2,
+    "git": 1,
+    "approvals": 1,
+    "hepai-worker": 1,
+    "pty": 2,
+    "runtime-identity": 1,
+    "workspace-registry": 1,
+    "worktree": 1,
+    "session-run-events": 1,
+    "runtime-checkpoint": 1,
+    "agent-backend": 1,
+    "agent-backend-account": 1,
+    "workspace-permissions": 1,
+    "security-approval": 1,
+    "runtime-audit": 1,
+}
+
+
+def _runtime_registry() -> RuntimeRegistry:
+    global _runtime_registry_instance
+    if _runtime_registry_instance is None:
+        state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
+        _runtime_registry_instance = RuntimeRegistry(state_root / "runtime" / "runtime.sqlite3")
+    return _runtime_registry_instance
+
+
+def _runtime_engine() -> RuntimeEngine:
+    global _runtime_engine_instance
+    if _runtime_engine_instance is None:
+        state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
+        registry = _runtime_registry()
+        _runtime_engine_instance = RuntimeEngine(
+            state_root / "runtime" / "engine.sqlite3",
+            RuntimeEngineIdentity(registry.identity.runtime_id, registry.identity.instance_id),
+            lambda workspace_id: bool((record := registry.get_workspace(workspace_id, include_closed=True)) and record.open),
+        )
+    return _runtime_engine_instance
+
+
+def _runtime_tool_dispatcher() -> RuntimeToolDispatcher:
+    global _runtime_tool_dispatcher_instance
+    if _runtime_tool_dispatcher_instance is None:
+        _runtime_tool_dispatcher_instance = RuntimeToolDispatcher(_runtime_engine())
+    return _runtime_tool_dispatcher_instance
+
+
+def _runtime_security() -> RuntimeSecurity:
+    global _runtime_security_instance
+    if _runtime_security_instance is None:
+        state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser() / "runtime"
+        _runtime_security_instance = RuntimeSecurity(
+            WorkspacePermissionStore(state_root / "permissions.sqlite3"),
+            ApprovalRegistry(state_root / "security-approvals.sqlite3"),
+            AuditLog(state_root / "audit.sqlite3"),
+        )
+    return _runtime_security_instance
+
+
+def _security_enabled() -> bool:
+    return os.environ.get("OPENDRSAI_ENFORCE_WORKSPACE_PERMISSIONS") == "1"
+
+
+def _principal_from_request(request: Request) -> RuntimePrincipal:
+    try:
+        auth = context_from_bearer(request.headers.get("authorization"), request.headers.get("x-opendrsai-principal", ""))
+        return RuntimePrincipal.from_platform_auth(auth)
+    except (ValueError, SecurityError) as exc:
+        code = getattr(exc, "code", str(exc))
+        raise HTTPException(status_code=401, detail={"code": code, "message": "Runtime Principal identity is invalid.", "retryable": code in {"token_expired", "principal_expired"}}) from exc
+
+
+def _authorize_request(request: Request, workspace_id: str, action: str, resource: dict[str, Any] | None = None) -> RuntimePrincipal | None:
+    if not _security_enabled():
+        return None
+    principal = _principal_from_request(request)
+    identity = _runtime_registry().identity
+    context = OperationContext(
+        principal.principal_id,
+        identity.runtime_id,
+        workspace_id,
+        request.headers.get("x-opendrsai-session-id", ""),
+        request.headers.get("x-opendrsai-run-id", ""),
+        request.headers.get("x-opendrsai-tool-id", ""),
+        getattr(request.state, "correlation_id", ""),
+    )
+    try:
+        _runtime_security().authorize(principal, action, context, resource, request.headers.get("x-opendrsai-approval-id"))
+    except ApprovalRequired as exc:
+        raise HTTPException(status_code=428, detail={"code": exc.code, "message": exc.message, "retryable": True, "detail": {"approval_id": exc.approval_id}}) from exc
+    except SecurityError as exc:
+        raise HTTPException(status_code=403, detail={"code": exc.code, "message": exc.message, "retryable": False}) from exc
+    return principal
+
+
+def _controlled_runtime_model_turn(
+    prompt: str,
+    definition: AgentDefinition,
+    _context: RuntimeRunContext,
+    history: Any,
+) -> dict[str, Any]:
+    """Deterministic acceptance model; never enabled by a production default."""
+    if os.environ.get("DRSAI_RUNTIME_CONTROLLED_MODEL") != "1":
+        raise RuntimeExecutionError(
+            "agent_model_unconfigured",
+            "The OpenDrSai Agent Backend model adapter is not configured.",
+        )
+    plan = definition.raw.get("controlled_plan", {})
+    if not isinstance(plan, dict):
+        raise RuntimeExecutionError("agent_definition_invalid", "Controlled Agent plan is invalid.")
+    delay_seconds = plan.get("delay_seconds", 0)
+    if isinstance(delay_seconds, (int, float)) and delay_seconds > 0 and not history:
+        time.sleep(min(float(delay_seconds), 30.0))
+    if history:
+        return {"content": str(plan.get("final_content") or "completed"), "done": True}
+    calls = plan.get("calls", [])
+    if not isinstance(calls, list):
+        raise RuntimeExecutionError("agent_definition_invalid", "Controlled Agent calls are invalid.")
+    return {
+        "calls": calls,
+        "content": str(plan.get("content") or ("" if calls else prompt)),
+        "done": not calls,
+    }
+
+
+def _runtime_agent_service(auth_context: Any = None) -> RuntimeAgentService:
+    """Return the process-owned Backend service; request identity is validated before dispatch."""
+    global _runtime_agent_service_instance
+    if _runtime_agent_service_instance is None:
+        state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
+        _ensure_builtin_agent_definitions(state_root)
+        backend = OpenDrSaiAgentBackend(_controlled_runtime_model_turn)
+        codex_backend = build_codex_adapter(state_root, _runtime_engine())
+        _runtime_agent_service_instance = RuntimeAgentService(
+            _runtime_engine(),
+            _runtime_registry(),
+            AgentDefinitionStore(state_root / "assets" / "agents"),
+            _runtime_tool_dispatcher(),
+            {backend.backend_id: backend, codex_backend.backend_id: codex_backend},
+        )
+    return _runtime_agent_service_instance
+
+
+def _ensure_builtin_agent_definitions(state_root: Path) -> None:
+    path = state_root / "assets" / "agents" / "codex" / "1.json"
+    if path.exists():
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "id": "codex", "version": "1", "backend": "codex", "model": "gpt-5.4",
+        "instructions": "Work only inside the Runtime-authoritative Workspace and report verifiable results.",
+        "permissions": ["workspace:read", "workspace:write", "files:write", "process:execute", "permissions:grant"],
+        "backend_config": {"approvalPolicy": "on-request", "sandbox": "workspace-write"},
+    }
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def _restore_runtime_workspaces() -> None:
+    _remote_workspaces.clear()
+    for record in _runtime_registry().list_workspaces():
+        root = Path(record.path)
+        if root.is_dir():
+            _remote_workspaces[record.workspace_id] = root
 
 
 def _remote_audit(event: str, **fields: Any) -> None:
@@ -1168,7 +1374,7 @@ def _remote_audit(event: str, **fields: Any) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.exists() and path.stat().st_size > 5_000_000:
             os.replace(path, path.with_suffix(".jsonl.1"))
-        safe = {key: value for key, value in fields.items() if key not in {"token", "content", "data", "api_key"}}
+        safe = redact_sensitive({key: value for key, value in fields.items() if key not in {"content", "data"}})
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps({"at": datetime.now().astimezone().isoformat(), "event": event, **safe}, ensure_ascii=False) + "\n")
     except OSError:
@@ -1186,15 +1392,88 @@ class RemoteWorkspaceOpenRequest(BaseModel):
     path: str
 
 
+class RuntimeWorkspaceOpenRequest(BaseModel):
+    path: str = Field(min_length=1, max_length=4096)
+
+
+class RemoteWorktreeRequest(BaseModel):
+    intent: str = Field(default="subtask", max_length=240)
+
+
+class RuntimeSessionCreateRequest(BaseModel):
+    workspace_id: str = Field(min_length=1, max_length=160)
+    title: str = Field(default="New session", max_length=240)
+
+
+class RuntimeSessionUpdateRequest(BaseModel):
+    title: str | None = Field(default=None, max_length=240)
+    archived: bool | None = None
+
+
+class RuntimeRunCreateRequest(BaseModel):
+    agent_definition: str = Field(min_length=1, max_length=500)
+
+
+class RuntimeRunTransitionRequest(BaseModel):
+    status: str
+
+
+class RuntimeRunExecuteRequest(BaseModel):
+    prompt: str = Field(min_length=1, max_length=200_000)
+    user_id: str | None = Field(default=None, max_length=200)
+
+
+class BackendAccountLoginRequest(BaseModel):
+    type: str = Field(default="chatgpt", pattern=r"^(chatgpt|chatgptDeviceCode)$")
+
+
+class BackendAccountLoginCancelRequest(BaseModel):
+    login_id: str = Field(min_length=1, max_length=256)
+
+
+class RuntimeEventAppendRequest(BaseModel):
+    type: str = Field(min_length=1, max_length=160)
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
+class RuntimeApprovalRequest(BaseModel):
+    request: dict[str, Any]
+    deadline_at: str | None = None
+
+
+class RuntimeApprovalDecisionRequest(BaseModel):
+    decision: str
+    detail: dict[str, Any] = Field(default_factory=dict)
+
+
+class RuntimeCheckpointStateRequest(BaseModel):
+    state: dict[str, Any]
+
+
+class WorkspacePermissionRequest(BaseModel):
+    principal_id: str = Field(min_length=1, max_length=200)
+    role: str = Field(pattern=r"^(owner|editor|viewer|denied)$")
+
+
+class SecurityApprovalDecisionRequest(BaseModel):
+    decision: str = Field(pattern=r"^(approved|denied)$")
+
+
 class RemoteGitFileRequest(BaseModel):
     path: str
     expected_diff_hash: str
     patch: str | None = None
+    staged: bool = False
 
 
 class RemoteGitCommitRequest(BaseModel):
     message: str = Field(min_length=1, max_length=240)
     body: str | None = Field(default=None, max_length=10000)
+
+
+class RemoteGitPushRequest(BaseModel):
+    remote: str = Field(default="origin", pattern=r"^[A-Za-z0-9_.-]{1,120}$")
+    refspec: str = Field(default="HEAD", pattern=r"^[A-Za-z0-9_./:@{}^~+*-]{1,300}$")
 
 
 class RemoteFileWriteRequest(BaseModel):
@@ -1227,6 +1506,11 @@ def _canonical_workspace(path: str) -> Path:
 def _workspace_root(workspace_id: str) -> Path:
     root = _remote_workspaces.get(workspace_id)
     if root is None:
+        record = _runtime_registry().get_workspace(workspace_id)
+        if record and Path(record.path).is_dir():
+            root = Path(record.path)
+            _remote_workspaces[workspace_id] = root
+    if root is None:
         raise HTTPException(status_code=404, detail="Workspace is not open")
     return root
 
@@ -1239,7 +1523,6 @@ def _workspace_child(workspace_id: str, path: str) -> Path:
         raise HTTPException(status_code=403, detail="Path escapes the workspace") from exc
     except (OSError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return candidate
 
 
 @app.middleware("http")
@@ -1258,17 +1541,36 @@ async def authenticate_desktop_gateway(request: Request, call_next):
     return response
 
 
-def _protocol_error(request: Request, status: int, code: str, message: str, retryable: bool = False) -> JSONResponse:
+def _protocol_error(
+    request: Request,
+    status: int,
+    code: str,
+    message: str,
+    retryable: bool = False,
+    detail: dict[str, Any] | None = None,
+) -> JSONResponse:
     correlation_id = getattr(request.state, "correlation_id", uuid.uuid4().hex)
+    error: dict[str, Any] = {"code": code, "message": message, "retryable": retryable, "correlation_id": correlation_id}
+    if detail:
+        error["detail"] = detail
     return JSONResponse(
         status_code=status,
-        content={"error": {"code": code, "message": message, "retryable": retryable, "correlation_id": correlation_id}},
+        content={"error": error},
         headers={"X-Correlation-ID": correlation_id},
     )
 
 
 @app.exception_handler(HTTPException)
 async def remote_http_error(request: Request, exc: HTTPException):
+    if isinstance(exc.detail, dict) and isinstance(exc.detail.get("code"), str):
+        return _protocol_error(
+            request,
+            exc.status_code,
+            exc.detail["code"],
+            str(exc.detail.get("message") or "Runtime request failed."),
+            bool(exc.detail.get("retryable", False)),
+            exc.detail.get("detail") if isinstance(exc.detail.get("detail"), dict) else None,
+        )
     return _protocol_error(request, exc.status_code, f"http_{exc.status_code}", str(exc.detail), exc.status_code in {408, 429, 502, 503, 504})
 
 
@@ -1293,6 +1595,73 @@ async def health():
     return await manager.health()
 
 
+@app.get("/v1/runtime")
+async def runtime_identity():
+    registry = _runtime_registry()
+    try:
+        from drsai.version import __version__ as runtime_version
+    except Exception:
+        runtime_version = "unknown"
+    return {
+        "runtime_id": registry.identity.runtime_id,
+        "instance_id": registry.identity.instance_id,
+        "version": runtime_version,
+        "protocol_version": _REMOTE_PROTOCOL_VERSION,
+        "platform": sys.platform,
+    }
+
+
+@app.get("/v1/capabilities")
+async def runtime_capabilities():
+    return {
+        "protocol_version": _REMOTE_PROTOCOL_VERSION,
+        "capabilities": sorted(_REMOTE_CAPABILITY_VERSIONS),
+        "capability_versions": _REMOTE_CAPABILITY_VERSIONS,
+        "agent_backends": await _runtime_agent_service().health(),
+    }
+
+
+def _backend_account_http_error(exc: RuntimeExecutionError) -> HTTPException:
+    status = 404 if exc.code == "agent_backend_not_found" else 503 if exc.retryable or exc.code in {
+        "codex_backend_unavailable", "codex_app_server_start_failed", "codex_connection_eof",
+    } else 409
+    return HTTPException(status_code=status, detail=exc.as_dict())
+
+
+@app.get("/v1/agent-backends/{backend_id}/account")
+async def runtime_backend_account_status(backend_id: str, refresh: bool = False):
+    try:
+        return await _runtime_agent_service().backend_account_status(backend_id, refresh=refresh)
+    except RuntimeExecutionError as exc:
+        raise _backend_account_http_error(exc) from exc
+
+
+@app.post("/v1/agent-backends/{backend_id}/account/login")
+async def runtime_backend_account_login(backend_id: str, request: BackendAccountLoginRequest):
+    try:
+        return await _runtime_agent_service().backend_account_login_start(backend_id, request.type)
+    except RuntimeExecutionError as exc:
+        raise _backend_account_http_error(exc) from exc
+
+
+@app.post("/v1/agent-backends/{backend_id}/account/login/cancel")
+async def runtime_backend_account_login_cancel(backend_id: str, request: BackendAccountLoginCancelRequest):
+    try:
+        await _runtime_agent_service().backend_account_login_cancel(backend_id, request.login_id)
+        return {"cancelled": True}
+    except RuntimeExecutionError as exc:
+        raise _backend_account_http_error(exc) from exc
+
+
+@app.post("/v1/agent-backends/{backend_id}/account/logout")
+async def runtime_backend_account_logout(backend_id: str):
+    try:
+        await _runtime_agent_service().backend_account_logout(backend_id)
+        return {"logged_out": True}
+    except RuntimeExecutionError as exc:
+        raise _backend_account_http_error(exc) from exc
+
+
 @app.websocket("/v1/pty")
 async def remote_pty_socket(websocket: WebSocket):
     await websocket.accept()
@@ -1303,6 +1672,34 @@ async def remote_pty_socket(websocket: WebSocket):
     if sys.platform == "win32":
         await websocket.close(code=4400, reason="Remote PTY requires Linux"); return
     from drsai.backend.remote_pty import manager as pty_manager
+    authorized_pty_scope: tuple[str, str, str] | None = None
+    if _security_enabled():
+        try:
+            auth = context_from_bearer(str(authentication.get("authorization") or ""), str(authentication.get("principal_id") or ""))
+            principal = RuntimePrincipal.from_platform_auth(auth)
+            workspace_id = str(authentication.get("workspace_id") or "")
+            identity = _runtime_registry().identity
+            operation_context = OperationContext(
+                principal.principal_id,
+                identity.runtime_id,
+                workspace_id,
+                str(authentication.get("session_id") or ""),
+                str(authentication.get("run_id") or ""),
+                str(authentication.get("tool_id") or ""),
+                str(authentication.get("correlation_id") or ""),
+            )
+            _runtime_security().authorize(
+                principal,
+                "pty.execute",
+                operation_context,
+                {"cwd": str(authentication.get("cwd") or "."), "shell": str(authentication.get("shell") or "default")},
+                str(authentication.get("approval_id") or "") or None,
+            )
+            authorized_pty_scope = (workspace_id, str(authentication.get("cwd") or "."), str(authentication.get("shell") or "default"))
+        except ApprovalRequired as exc:
+            await websocket.send_json({"type": "approval_required", "approval_id": exc.approval_id}); await websocket.close(code=4428); return
+        except (ValueError, SecurityError):
+            await websocket.close(code=4403); return
     attached = None
 
     async def send(message: dict):
@@ -1313,23 +1710,25 @@ async def remote_pty_socket(websocket: WebSocket):
             message = await websocket.receive_json(); operation = message.get("type")
             if operation == "create":
                 workspace_id = str(message.get("workspaceId") or ""); root = _workspace_root(workspace_id)
+                if authorized_pty_scope and (workspace_id, str(message.get("cwd") or "."), str(message.get("shell") or "default")) != authorized_pty_scope:
+                    raise PermissionError("PTY create scope differs from approved operation")
                 raw_cwd = str(message.get("cwd") or str(root)); cwd = _workspace_child(workspace_id, raw_cwd)
                 if not cwd.is_dir(): raise ValueError("PTY cwd must be a directory")
                 session = pty_manager.create(workspace_id, root, cwd, int(message.get("cols") or 100), int(message.get("rows") or 30), message.get("shell"))
                 session.listeners.add(send); attached = session.id
                 _remote_audit("pty.create", workspace_id=workspace_id, session_id=session.id, cwd=session.cwd)
-                await send({"type": "created", "id": session.id, "pid": session.pid, "cwd": session.cwd, "shell": session.shell, "buffer": ""})
+                await send({"type": "created", "id": session.id, "pid": session.pid, "cwd": session.cwd, "shell": session.shell, "buffer": "", "bufferTruncated": False})
             elif operation == "attach":
                 session = pty_manager.sessions[str(message.get("id"))]
                 session.listeners.add(send); attached = session.id
                 _remote_audit("pty.attach", workspace_id=session.workspace_id, session_id=session.id)
-                await send({"type": "attached", "id": session.id, "pid": session.pid, "cwd": session.cwd, "shell": session.shell, "buffer": bytes(session.buffer).decode("utf-8", "replace")})
+                await send({"type": "attached", "id": session.id, "pid": session.pid, "cwd": session.cwd, "shell": session.shell, "buffer": bytes(session.buffer).decode("utf-8", "replace"), "bufferTruncated": session.buffer_truncated, "exited": session.exited})
             elif operation == "write":
-                data = str(message.get("data") or ""); pty_manager.write(str(message.get("id")), data); _remote_audit("pty.write", session_id=str(message.get("id")), byte_count=len(data.encode("utf-8")))
+                data = str(message.get("data") or ""); pty_manager.write(str(message.get("id")), data); _remote_audit("pty.write", session_id=str(message.get("id")), byte_count=len(data.encode("utf-8"))); await send({"type": "written", "id": str(message.get("id")), "byteCount": len(data.encode("utf-8"))})
             elif operation == "resize":
-                cols=int(message.get("cols") or 100); rows=int(message.get("rows") or 30); pty_manager.resize(str(message.get("id")), cols, rows); _remote_audit("pty.resize", session_id=str(message.get("id")), cols=cols, rows=rows)
+                cols=int(message.get("cols") or 100); rows=int(message.get("rows") or 30); pty_manager.resize(str(message.get("id")), cols, rows); _remote_audit("pty.resize", session_id=str(message.get("id")), cols=cols, rows=rows); await send({"type": "resized", "id": str(message.get("id")), "cols": max(20, min(cols, 500)), "rows": max(5, min(rows, 200))})
             elif operation == "kill":
-                pty_manager.kill(str(message.get("id"))); _remote_audit("pty.kill", session_id=str(message.get("id")))
+                killed_id = str(message.get("id")); await send({"type": "killed", "id": killed_id}); pty_manager.kill(killed_id); _remote_audit("pty.kill", session_id=killed_id)
             else: await send({"type": "error", "message": "Unknown PTY operation"})
     except (WebSocketDisconnect, KeyError):
         pass
@@ -1349,22 +1748,253 @@ async def remote_handshake(req: RemoteHandshakeRequest):
     except Exception:
         gateway_version = "unknown"
     return {
+        "runtime_id": _runtime_registry().identity.runtime_id,
+        "instance_id": _runtime_registry().identity.instance_id,
         "protocol_version": _REMOTE_PROTOCOL_VERSION,
         "gateway_version": gateway_version,
         "platform": sys.platform,
         "workspace_path": str(root),
-        "capabilities": ["threads", "chat", "files", "file-watch", "git", "approvals", "hepai-worker", "pty"],
-        "capability_versions": {
-            "threads": 1,
-            "chat": 1,
-            "files": 2,
-            "file-watch": 2,
-            "git": 1,
-            "approvals": 1,
-            "hepai-worker": 1,
-            "pty": 2,
-        },
+        "capabilities": sorted(_REMOTE_CAPABILITY_VERSIONS),
+        "capability_versions": _REMOTE_CAPABILITY_VERSIONS,
     }
+
+
+@app.post("/v1/workspaces")
+async def runtime_workspace_open(req: RuntimeWorkspaceOpenRequest, raw_request: Request):
+    principal = _principal_from_request(raw_request) if _security_enabled() else None
+    try:
+        record = _runtime_registry().open_workspace(req.path)
+    except (FileNotFoundError, OSError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    root = Path(record.path)
+    _remote_workspaces[record.workspace_id] = root
+    if principal:
+        _runtime_security().permissions.set_role(record.workspace_id, principal.principal_id, "owner")
+    _remote_audit("workspace.open", workspace_id=record.workspace_id, path=record.path)
+    return record.as_dict()
+
+
+@app.put("/v1/workspaces/{workspace_id}/permissions")
+async def runtime_workspace_permission_set(workspace_id: str, request: WorkspacePermissionRequest, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "permission.manage", {"target_principal_id": request.principal_id, "role": request.role})
+    _runtime_security().permissions.set_role(workspace_id, request.principal_id, request.role)
+    return {"workspace_id": workspace_id, "principal_id": request.principal_id, "role": request.role}
+
+
+@app.get("/v1/workspaces/{workspace_id}/permissions/me")
+async def runtime_workspace_permission_me(workspace_id: str, raw_request: Request):
+    principal = _principal_from_request(raw_request)
+    return {"workspace_id": workspace_id, "principal_id": principal.principal_id, "role": _runtime_security().permissions.role(workspace_id, principal.principal_id)}
+
+
+@app.post("/v1/security/approvals/{approval_id}/decision")
+async def runtime_security_approval_decide(approval_id: str, request: SecurityApprovalDecisionRequest, raw_request: Request):
+    principal = _principal_from_request(raw_request)
+    try:
+        approval = _runtime_security().approvals.get(approval_id)
+        if approval["principal_id"] != principal.principal_id and not _runtime_security().permissions.allowed(approval["workspace_id"], principal.principal_id, "permission.manage"):
+            raise SecurityError("permission_denied", "Approval decision is not permitted.")
+        _runtime_security().approvals.decide(approval_id, request.decision)
+    except SecurityError as exc:
+        raise HTTPException(status_code=403, detail={"code": exc.code, "message": exc.message, "retryable": False}) from exc
+    return {"approval_id": approval_id, "decision": request.decision}
+
+
+@app.get("/v1/security/audit")
+async def runtime_security_audit(workspace_id: str, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "permission.manage", {"operation": "audit.read"})
+    return {"data": [row for row in _runtime_security().audit.list() if row["context"]["workspace_id"] == workspace_id]}
+
+
+@app.get("/v1/workspaces")
+async def runtime_workspace_list(include_closed: bool = False):
+    return {"data": [record.as_dict() for record in _runtime_registry().list_workspaces(include_closed=include_closed)]}
+
+
+@app.post("/v1/sessions")
+async def runtime_session_create(request: RuntimeSessionCreateRequest):
+    try:
+        return _runtime_engine().create_session(request.workspace_id, request.title)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/v1/sessions")
+async def runtime_session_list(workspace_id: str, offset: int = Query(default=0, ge=0), limit: int = Query(default=50, ge=1, le=200), archived: bool | None = False):
+    return _runtime_engine().list_sessions(workspace_id, offset=offset, limit=limit, archived=archived)
+
+
+@app.get("/v1/sessions/{session_id}")
+async def runtime_session_get(session_id: str):
+    try:
+        return _runtime_engine().get_session(session_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.patch("/v1/sessions/{session_id}")
+async def runtime_session_update(session_id: str, request: RuntimeSessionUpdateRequest):
+    try:
+        return _runtime_engine().update_session(session_id, title=request.title, archived=request.archived)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/v1/sessions/{session_id}/runs")
+async def runtime_run_create(session_id: str, request: RuntimeRunCreateRequest, http_request: Request):
+    try:
+        state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
+        definition = AgentDefinitionStore(state_root / "assets" / "agents").load(request.agent_definition)
+        run, created = _runtime_engine().create_run(
+            session_id,
+            request.agent_definition,
+            http_request.headers.get("idempotency-key", ""),
+            definition.backend,
+        )
+        return JSONResponse(status_code=201 if created else 200, content=run)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeExecutionError as exc:
+        raise HTTPException(status_code=400, detail=exc.as_dict()) from exc
+
+
+@app.get("/v1/runs/{run_id}")
+async def runtime_run_get(run_id: str):
+    try:
+        return _runtime_engine().get_run(run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/v1/runs/{run_id}/transition")
+async def runtime_run_transition(run_id: str, request: RuntimeRunTransitionRequest):
+    try:
+        return _runtime_engine().transition_run(run_id, request.status)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/v1/runs/{run_id}/execute")
+async def runtime_run_execute(run_id: str, request: RuntimeRunExecuteRequest, raw_request: Request):
+    auth_context = None
+    if raw_request.headers.get("x-opendrsai-auth-mode") == "oidc":
+        try:
+            auth_context = context_from_bearer(raw_request.headers.get("authorization"), request.user_id or "")
+        except ValueError as exc:
+            code = str(exc)
+            raise HTTPException(
+                status_code=403 if code == "subject_mismatch" else 401,
+                detail={"code": code, "message": "The HepAI authentication context is not valid.", "retryable": code == "token_expired"},
+            ) from exc
+    run_record = _runtime_engine().get_run(run_id)
+    _authorize_request(raw_request, str(run_record["workspace_id"]), "run.execute", {"run_id": run_id})
+    try:
+        correlation_id = str(getattr(raw_request.state, "correlation_id", "")) or None
+        _runtime_engine().append_event(run_id, "trace.request.accepted", {"correlation_id": correlation_id, "run_id": run_id})
+        return await _runtime_agent_service(auth_context).execute(run_id, request.prompt, correlation_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeExecutionError as exc:
+        status = 401 if exc.code in {"token_expired", "model_unauthorized"} else 403 if exc.code == "permission_denied" else 409
+        raise HTTPException(status_code=status, detail=exc.as_dict()) from exc
+
+
+@app.post("/v1/runs/{run_id}/cancel")
+async def runtime_run_cancel(run_id: str):
+    try:
+        return await _runtime_agent_service().cancel(run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/v1/runs/{run_id}/events")
+async def runtime_event_append(run_id: str, request: RuntimeEventAppendRequest):
+    try:
+        return _runtime_engine().append_event(run_id, request.type, request.data)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/v1/runs/{run_id}/events")
+async def runtime_event_list(run_id: str, after_sequence: int = Query(default=0, ge=0), limit: int = Query(default=500, ge=1, le=2000)):
+    return {"data": _runtime_engine().list_events(run_id, after_sequence=after_sequence, limit=limit)}
+
+
+@app.get("/v1/runs/{run_id}/diagnostics")
+async def runtime_run_diagnostics(run_id: str, raw_request: Request):
+    try:
+        run = _runtime_engine().get_run(run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    _authorize_request(raw_request, str(run["workspace_id"]), "workspace.read", {"run_id": run_id, "operation": "diagnostics.export"})
+    events = _runtime_engine().list_events(run_id, after_sequence=0, limit=2000)
+    correlations = sorted({str(event.get("data", {}).get("correlation_id")) for event in events if event.get("data", {}).get("correlation_id")})
+    audit = [row for row in _runtime_security().audit.list() if row["context"].get("run_id") == run_id or row["context"].get("correlation_id") in correlations]
+    bundle = redact_sensitive({
+        "schema_version": 1,
+        "runtime": _runtime_registry().identity.__dict__,
+        "run": run,
+        "trace": {"correlation_ids": correlations, "events": events, "audit": audit},
+        "metrics": {"event_count": len(events), "audit_count": len(audit), "terminal": run["status"] in {"completed", "cancelled", "failed"}},
+    })
+    serialized = json.dumps(bundle, ensure_ascii=False)
+    unsafe = bool(re.search(r"-----BEGIN [^-]*PRIVATE KEY-----|(?i:Bearer\s+(?!\[REDACTED\])\S+)|(?i:(?:password|secret|token|api[_-]?key)\s*[:=]\s*(?!\[REDACTED\])\S+)", serialized))
+    if unsafe:
+        raise HTTPException(status_code=500, detail="Diagnostic bundle secret scan failed")
+    return {**bundle, "secret_scan": "passed"}
+
+
+@app.post("/v1/runs/{run_id}/approvals")
+async def runtime_approval_request(run_id: str, request: RuntimeApprovalRequest):
+    try:
+        return _runtime_engine().request_approval(run_id, request.request, request.deadline_at)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/v1/approvals/{approval_id}/decision")
+async def runtime_approval_decision(approval_id: str, request: RuntimeApprovalDecisionRequest):
+    try:
+        return _runtime_engine().resolve_approval(approval_id, request.decision, request.detail)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/v1/runs/{run_id}/approvals/{approval_id}/decision")
+async def runtime_backend_approval_decision(run_id: str, approval_id: str, request: RuntimeApprovalDecisionRequest):
+    try:
+        await _runtime_agent_service().respond_approval(run_id, approval_id, request.decision)
+        return {"run_id": run_id, "approval_id": approval_id, "decision": request.decision}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeExecutionError as exc:
+        raise HTTPException(status_code=409, detail=exc.as_dict()) from exc
+
+
+@app.post("/v1/runs/{run_id}/checkpoint")
+async def runtime_checkpoint_save(run_id: str, request: RuntimeCheckpointStateRequest):
+    try:
+        return _runtime_engine().save_checkpoint(run_id, request.state)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/v1/runs/{run_id}/checkpoint")
+async def runtime_checkpoint_latest(run_id: str):
+    checkpoint = _runtime_engine().latest_checkpoint(run_id)
+    if checkpoint is None:
+        raise HTTPException(status_code=404, detail="Runtime Checkpoint not found")
+    return checkpoint
 
 
 @app.post("/v1/workspaces/open")
@@ -1379,7 +2009,18 @@ async def remote_workspace_open(req: RemoteWorkspaceOpenRequest):
 @app.get("/v1/workspaces/{workspace_id}")
 async def remote_workspace_info(workspace_id: str):
     root = _workspace_root(workspace_id)
-    return {"workspace_id": workspace_id, "path": str(root), "exists": root.is_dir()}
+    record = _runtime_registry().get_workspace(workspace_id, include_closed=True)
+    return {"workspace_id": workspace_id, "path": str(root), "exists": root.is_dir(), **(record.as_dict() if record else {})}
+
+
+@app.delete("/v1/workspaces/{workspace_id}")
+async def runtime_workspace_close(workspace_id: str):
+    record = _runtime_registry().close_workspace(workspace_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Workspace is not registered")
+    _remote_workspaces.pop(workspace_id, None)
+    _remote_audit("workspace.close", workspace_id=workspace_id)
+    return record.as_dict()
 
 
 @app.get("/v1/workspaces/{workspace_id}/context")
@@ -1395,6 +2036,42 @@ async def remote_workspace_context(workspace_id: str):
         for line in completed.stdout.splitlines()[1:]:
             if len(line) >= 4: changed.append({"path": line[3:], "status": "untracked" if line[:2] == "??" else "deleted" if "D" in line[:2] else "added" if "A" in line[:2] else "modified"})
     return {"workspacePath": str(root), "trusted": True, "git": {"hasChanges": bool(changed), "changedFiles": changed}, "instructions": instructions, "stats": {"instructionCount": len(instructions), "changedFileCount": len(changed)}}
+
+
+@app.post("/v1/workspaces/{workspace_id}/worktrees")
+async def remote_workspace_worktree_create(workspace_id: str, request: RemoteWorktreeRequest):
+    root = _workspace_root(workspace_id)
+    repo = subprocess.run(["git", "-C", str(root), "rev-parse", "--show-toplevel"], capture_output=True, text=True, timeout=15, check=False)
+    if repo.returncode != 0:
+        raise HTTPException(status_code=400, detail="Workspace is not a Git repository")
+    repo_root = Path(repo.stdout.strip()).resolve()
+    base = subprocess.run(["git", "-C", str(repo_root), "rev-parse", "--short=12", "HEAD"], capture_output=True, text=True, timeout=15, check=False)
+    if base.returncode != 0:
+        raise HTTPException(status_code=400, detail=base.stderr.strip() or "Unable to resolve the current Git commit")
+    status = subprocess.run(["git", "-C", str(repo_root), "status", "--porcelain=v1"], capture_output=True, text=True, timeout=15, check=False)
+    slug = re.sub(r"[^a-z0-9]+", "-", request.intent.lower()).strip("-")[:40] or "subtask"
+    suffix = uuid.uuid4().hex[:8]
+    branch = f"drsai/fork/{slug}-{suffix}"
+    state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
+    worktree_path = state_root / "runtime" / "worktrees" / workspace_id / f"{slug}-{suffix}"
+    worktree_path.parent.mkdir(parents=True, exist_ok=True)
+    created = subprocess.run(["git", "-C", str(repo_root), "worktree", "add", "-b", branch, str(worktree_path), "HEAD"], capture_output=True, text=True, timeout=30, check=False)
+    if created.returncode != 0:
+        raise HTTPException(status_code=400, detail=created.stderr.strip() or "Unable to create an isolated Git worktree")
+    record = _runtime_registry().open_workspace(str(worktree_path))
+    _remote_audit("workspace.worktree.create", workspace_id=record.workspace_id, parent_workspace_id=workspace_id, path=record.path)
+    return {
+        "workspace_id": record.workspace_id,
+        "source_workspace_path": str(root),
+        "repo_root": str(repo_root),
+        "worktree_path": record.path,
+        "branch": branch,
+        "base_ref": base.stdout.strip(),
+        "source_has_changes": bool(status.stdout.strip()),
+        "source_status_summary": status.stdout.strip()[:2000] or None,
+        "location": "remote",
+        "transport": "ssh",
+    }
 
 
 @app.get("/v1/workspaces/{workspace_id}/directories")
@@ -1415,7 +2092,8 @@ async def remote_workspace_directories(workspace_id: str, path: str = "."):
 
 
 @app.get("/v1/workspaces/{workspace_id}/files")
-async def remote_workspace_files(workspace_id: str, path: str = ".", depth: int = Query(default=2, ge=0, le=5), query: str = "", offset: int = Query(default=0, ge=0), max_entries: int = Query(default=500, ge=1, le=5000)):
+async def remote_workspace_files(workspace_id: str, raw_request: Request, path: str = ".", depth: int = Query(default=2, ge=0, le=5), query: str = "", offset: int = Query(default=0, ge=0), max_entries: int = Query(default=500, ge=1, le=5000)):
+    _authorize_request(raw_request, workspace_id, "workspace.read", {"path": path})
     root = _workspace_root(workspace_id)
     start = _workspace_child(workspace_id, path)
     if not start.is_dir():
@@ -1432,15 +2110,48 @@ async def remote_workspace_files(workspace_id: str, path: str = ".", depth: int 
             changed_path = changed_path.strip('"').replace("\\", "/")
             git_statuses[changed_path] = "untracked" if code == "??" else "renamed" if "R" in code else "deleted" if "D" in code else "added" if "A" in code else "modified"
 
+    ignored_directories = {".git", ".hg", ".svn", "node_modules", ".venv", "__pycache__", ".mypy_cache", ".pytest_cache"}
+    try:
+        ignore_patterns = [line.strip() for line in (root / ".gitignore").read_text("utf-8", errors="replace").splitlines() if line.strip() and not line.lstrip().startswith("#")]
+    except OSError:
+        ignore_patterns = []
+    scanned = 0
+    scan_limit = min(50_000, max(5_000, offset + max_entries + 1_000))
+    scan_truncated = False
+
+    def ignored(relative_path: str, directory: bool) -> bool:
+        parts = Path(relative_path).parts
+        if any(part in ignored_directories for part in parts):
+            return True
+        normalized = relative_path.replace("\\", "/")
+        for raw_pattern in ignore_patterns:
+            negate = raw_pattern.startswith("!")
+            pattern = raw_pattern[1:] if negate else raw_pattern
+            directory_only = pattern.endswith("/")
+            pattern = pattern.rstrip("/")
+            if directory_only and not directory:
+                continue
+            if fnmatch(normalized, pattern) or fnmatch(Path(normalized).name, pattern) or fnmatch(normalized, f"*/{pattern}"):
+                if not negate:
+                    return True
+        return False
+
     def visit(directory: Path, remaining: int) -> list[dict[str, Any]]:
+        nonlocal scanned, scan_truncated
         result = []
         for entry in sorted(directory.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower())):
+            if scanned >= scan_limit:
+                scan_truncated = True
+                break
             try:
                 resolved = entry.resolve(strict=True)
                 resolved.relative_to(root)
             except (OSError, ValueError):
                 continue
-            relative_path = str(resolved.relative_to(root))
+            relative_path = str(resolved.relative_to(root)).replace("\\", "/")
+            if ignored(relative_path, resolved.is_dir()):
+                continue
+            scanned += 1
             stat = resolved.stat()
             item = {"name": entry.name, "path": relative_path, "directory": resolved.is_dir(), "size": stat.st_size, "modified_at": stat.st_mtime}
             if resolved.is_dir() and remaining > 0:
@@ -1461,25 +2172,44 @@ async def remote_workspace_files(workspace_id: str, path: str = ".", depth: int 
             collect(row.get("children", []))
     collect(tree)
     page = matched[offset:offset + max_entries]
-    return {"workspace_id": workspace_id, "data": page if needle or offset or len(matched) > max_entries else tree, "total": len(matched), "offset": offset, "next_offset": offset + len(page) if offset + len(page) < len(matched) else None, "truncated": offset + len(page) < len(matched)}
+    truncated = scan_truncated or offset + len(page) < len(matched)
+    return {"workspace_id": workspace_id, "data": page if needle or offset or len(matched) > max_entries else tree, "total": len(matched), "offset": offset, "next_offset": offset + len(page) if truncated and len(page) else None, "truncated": truncated, "scan_limit": scan_limit}
 
 
 @app.get("/v1/workspaces/{workspace_id}/file")
-async def remote_workspace_file(workspace_id: str, path: str, max_bytes: int = Query(default=262144, ge=1, le=1048576)):
+async def remote_workspace_file(workspace_id: str, raw_request: Request, path: str, max_bytes: int = Query(default=262144, ge=1, le=1048576)):
+    _authorize_request(raw_request, workspace_id, "workspace.read", {"path": path})
     target = _workspace_child(workspace_id, path)
     if not target.is_file():
         raise HTTPException(status_code=400, detail="Path must be a file")
-    raw = target.read_bytes()
-    if b"\x00" in raw[:8192]:
-        mime = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
-        encoded = base64.b64encode(raw[:max_bytes]).decode("ascii")
-        return {"path": str(target.relative_to(_workspace_root(workspace_id))), "data_url": f"data:{mime};base64,{encoded}", "mime": mime, "truncated": len(raw) > max_bytes, "size": len(raw), "modified_at": target.stat().st_mtime}
-    content = raw[:max_bytes].decode("utf-8", errors="replace")
-    return {"path": str(target.relative_to(_workspace_root(workspace_id))), "content": content, "mime": mimetypes.guess_type(target.name)[0] or "text/plain", "truncated": len(raw) > max_bytes, "size": len(raw), "modified_at": target.stat().st_mtime}
+    size = target.stat().st_size
+    with target.open("rb") as handle:
+        raw = handle.read(max_bytes + 1)
+    sample = raw[:max_bytes]
+    mime = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+    try:
+        content = sample.decode("utf-8")
+        binary = b"\x00" in sample[:8192]
+    except UnicodeDecodeError:
+        content = ""
+        binary = True
+    common = {"path": str(target.relative_to(_workspace_root(workspace_id))).replace("\\", "/"), "mime": mime, "truncated": size > max_bytes, "size": size, "modified_at": target.stat().st_mtime}
+    if binary:
+        return {**common, "data_url": f"data:{mime};base64,{base64.b64encode(sample).decode('ascii')}", "binary": True, "encoding": None}
+    return {**common, "content": content, "binary": False, "encoding": "utf-8"}
+
+
+def _stream_file_sha256(target: Path) -> str:
+    digest = hashlib.sha256()
+    with target.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 @app.get("/v1/workspaces/{workspace_id}/file/stream")
-async def remote_workspace_file_stream(workspace_id: str, path: str, offset: int = Query(default=0, ge=0), length: int = Query(default=1048576, ge=1, le=8388608)):
+async def remote_workspace_file_stream(workspace_id: str, raw_request: Request, path: str, offset: int = Query(default=0, ge=0), length: int = Query(default=1048576, ge=1, le=8388608)):
+    _authorize_request(raw_request, workspace_id, "workspace.read", {"path": path, "offset": offset, "length": length})
     target = _workspace_child(workspace_id, path)
     if not target.is_file():
         raise HTTPException(status_code=400, detail="Path must be a file")
@@ -1495,12 +2225,13 @@ async def remote_workspace_file_stream(workspace_id: str, path: str, offset: int
                 if not block: break
                 remaining -= len(block)
                 yield block
-    headers = {"X-File-Size": str(size), "X-File-SHA256": hashlib.sha256(target.read_bytes()).hexdigest(), "X-Next-Offset": str(min(size, offset + length))}
+    headers = {"X-File-Size": str(size), "X-File-SHA256": _stream_file_sha256(target), "X-Next-Offset": str(min(size, offset + length))}
     return StreamingResponse(chunks(), media_type=mimetypes.guess_type(target.name)[0] or "application/octet-stream", headers=headers)
 
 
 @app.put("/v1/workspaces/{workspace_id}/file")
-async def remote_workspace_file_write(workspace_id: str, request: RemoteFileWriteRequest):
+async def remote_workspace_file_write(workspace_id: str, request: RemoteFileWriteRequest, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "file.write", {"path": request.path, "expected_sha256": request.expected_sha256})
     root = _workspace_root(workspace_id)
     try:
         target = (root / request.path).resolve(strict=False)
@@ -1517,14 +2248,55 @@ async def remote_workspace_file_write(workspace_id: str, request: RemoteFileWrit
         content = base64.b64decode(request.content_base64, validate=True)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="content_base64 is invalid") from exc
-    temporary = target.parent / f".{target.name}.opendrsai-{uuid.uuid4().hex}.tmp"
     try:
-        temporary.write_bytes(content)
-        if target.exists(): os.chmod(temporary, target.stat().st_mode & 0o777)
-        os.replace(temporary, target)
-    finally:
-        temporary.unlink(missing_ok=True)
-    return {"path": str(target.relative_to(_workspace_root(workspace_id))), "size": len(content), "sha256": hashlib.sha256(content).hexdigest(), "modified_at": target.stat().st_mtime}
+        SecureWorkspaceFS(root).atomic_write(request.path, content)
+    except SecurityError as exc:
+        raise HTTPException(status_code=403, detail={"code": exc.code, "message": exc.message, "retryable": False}) from exc
+    return {"path": request.path.replace("\\", "/"), "size": len(content), "sha256": hashlib.sha256(content).hexdigest(), "modified_at": time.time()}
+
+
+_workspace_watch_journals: dict[str, dict[str, Any]] = {}
+
+
+def _workspace_snapshot(root: Path) -> dict[str, tuple[int, int, int]]:
+    rows: dict[str, tuple[int, int, int]] = {}
+    for index, candidate in enumerate(root.rglob("*")):
+        if index >= 50_000:
+            break
+        try:
+            resolved = candidate.resolve(strict=True)
+            resolved.relative_to(root)
+            relative = str(resolved.relative_to(root)).replace("\\", "/")
+            if resolved.is_file() and not any(part in {".git", "node_modules", ".venv", "__pycache__"} for part in Path(relative).parts):
+                stat = resolved.stat()
+                rows[relative] = (stat.st_mtime_ns, stat.st_size, getattr(stat, "st_ino", 0))
+        except (OSError, ValueError):
+            continue
+    return rows
+
+
+def _workspace_watch_scan(workspace_id: str, root: Path) -> dict[str, Any]:
+    current = _workspace_snapshot(root)
+    state = _workspace_watch_journals.setdefault(workspace_id, {"snapshot": current, "sequence": 0, "events": deque(maxlen=5000)})
+    previous = state["snapshot"]
+    deleted = set(previous) - set(current)
+    created = set(current) - set(previous)
+    deleted_by_inode = {previous[path][2]: path for path in deleted if previous[path][2]}
+    changes: list[dict[str, Any]] = []
+    for path in sorted(created):
+        old_path = deleted_by_inode.get(current[path][2]) if current[path][2] else None
+        if old_path:
+            deleted.discard(old_path)
+            changes.append({"path": path, "old_path": old_path, "type": "renamed"})
+        else:
+            changes.append({"path": path, "type": "created"})
+    changes.extend({"path": path, "type": "deleted"} for path in sorted(deleted))
+    changes.extend({"path": path, "type": "modified"} for path in sorted(set(previous) & set(current)) if previous[path] != current[path])
+    for change in changes:
+        state["sequence"] += 1
+        state["events"].append({"sequence": state["sequence"], **change})
+    state["snapshot"] = current
+    return state
 
 
 @app.websocket("/v1/workspaces/{workspace_id}/watch")
@@ -1535,23 +2307,24 @@ async def remote_workspace_watch(websocket: WebSocket, workspace_id: str):
     if authentication.get("type") != "auth" or not verify_gateway_instance(authentication.get("token")):
         await websocket.close(code=4401); return
     root = _workspace_root(workspace_id)
-    def snapshot() -> dict[str, tuple[int, int]]:
-        rows: dict[str, tuple[int, int]] = {}
-        for index, candidate in enumerate(root.rglob("*")):
-            if index >= 5000: break
-            try:
-                resolved = candidate.resolve(strict=True); resolved.relative_to(root)
-                if resolved.is_file():
-                    stat = resolved.stat(); rows[str(resolved.relative_to(root))] = (stat.st_mtime_ns, stat.st_size)
-            except (OSError, ValueError): continue
-        return rows
-    previous = snapshot()
+    after_sequence = max(0, int(authentication.get("after_sequence") or 0))
+    state = _workspace_watch_scan(workspace_id, root)
+    replay = [event for event in state["events"] if event["sequence"] > after_sequence]
+    for index in range(0, len(replay), 200):
+        batch = replay[index:index + 200]
+        await websocket.send_json({"type": "changes", "workspace_id": workspace_id, "changes": batch, "sequence": batch[-1]["sequence"], "replayed": True})
+    cursor = state["sequence"]
+    await websocket.send_json({"type": "ready", "workspace_id": workspace_id, "sequence": cursor})
     try:
         while True:
-            await asyncio.sleep(1); current = snapshot()
-            changes = [{"path": path, "type": "deleted" if path not in current else "created" if path not in previous else "modified"} for path in sorted(set(previous) | set(current)) if previous.get(path) != current.get(path)]
-            if changes: await websocket.send_json({"type": "changes", "workspace_id": workspace_id, "changes": changes})
-            previous = current
+            await asyncio.sleep(0.25)
+            state = _workspace_watch_scan(workspace_id, root)
+            pending = [event for event in state["events"] if event["sequence"] > cursor]
+            for index in range(0, len(pending), 200):
+                batch = pending[index:index + 200]
+                await websocket.send_json({"type": "changes", "workspace_id": workspace_id, "changes": batch, "sequence": batch[-1]["sequence"], "replayed": False})
+            if pending:
+                cursor = pending[-1]["sequence"]
     except WebSocketDisconnect:
         pass
 
@@ -1574,7 +2347,8 @@ async def remote_workspace_folder_summary(workspace_id: str, path: str = ".", ma
 
 
 @app.get("/v1/workspaces/{workspace_id}/git/file-at-ref")
-async def remote_workspace_git_file_at_ref(workspace_id: str, ref: str, path: str, max_bytes: int = Query(default=262144, ge=1, le=1048576)):
+async def remote_workspace_git_file_at_ref(workspace_id: str, raw_request: Request, ref: str, path: str, max_bytes: int = Query(default=262144, ge=1, le=1048576)):
+    _authorize_request(raw_request, workspace_id, "workspace.read", {"ref": ref, "path": path})
     root = _workspace_root(workspace_id); target = (root / path).resolve(strict=False)
     try: relative = str(target.relative_to(root)).replace("\\", "/")
     except ValueError as exc: raise HTTPException(status_code=403, detail="Path escapes the workspace") from exc
@@ -1585,8 +2359,50 @@ async def remote_workspace_git_file_at_ref(workspace_id: str, ref: str, path: st
     return {"workspacePath": str(root), "ref": ref, "path": str(target), "content": content, "contentHash": hashlib.sha256(raw).hexdigest(), "truncated": len(raw) > max_bytes, "missing": False, "message": "Remote Git file loaded."}
 
 
+@app.get("/v1/workspaces/{workspace_id}/git/status")
+async def remote_workspace_git_status(workspace_id: str, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "workspace.read", {"operation": "git.status"})
+    root = _workspace_root(workspace_id)
+    completed = subprocess.run(
+        ["git", "-C", str(root), "status", "--porcelain=v1", "-z", "--branch", "--untracked-files=all"],
+        capture_output=True,
+        timeout=15,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise HTTPException(status_code=400, detail={"code": "git_status_failed", "message": "Git status failed.", "retryable": False})
+    parts = completed.stdout.decode("utf-8", "replace").split("\0")
+    branch = None
+    rows: list[dict[str, Any]] = []
+    index = 0
+    while index < len(parts) and parts[index]:
+        row = parts[index]
+        if row.startswith("## "):
+            branch = row[3:]
+            index += 1
+            continue
+        code, path = row[:2], row[3:]
+        old_path = None
+        if "R" in code or "C" in code:
+            index += 1
+            if index < len(parts):
+                old_path = path
+                path = parts[index]
+        rows.append({
+            "path": path.replace("\\", "/"),
+            "old_path": old_path.replace("\\", "/") if old_path else None,
+            "index_status": code[0],
+            "worktree_status": code[1],
+            "untracked": code == "??",
+            "renamed": "R" in code,
+        })
+        index += 1
+    return {"workspace_id": workspace_id, "branch": branch, "clean": not rows, "entries": rows}
+
+
 @app.get("/v1/workspaces/{workspace_id}/git/diff")
-async def remote_workspace_git_diff(workspace_id: str, staged: bool = False, path: str | None = None):
+async def remote_workspace_git_diff(workspace_id: str, raw_request: Request, staged: bool = False, path: str | None = None):
+    _authorize_request(raw_request, workspace_id, "workspace.read", {"operation": "git.diff", "path": path, "staged": staged})
     root = _workspace_root(workspace_id)
     args = ["git", "-C", str(root), "diff"] + (["--cached"] if staged else [])
     if path:
@@ -1618,7 +2434,8 @@ async def remote_workspace_checkpoint_preview(workspace_id: str, request: Remote
 
 
 @app.post("/v1/workspaces/{workspace_id}/checkpoints/restore")
-async def remote_workspace_checkpoint_restore(workspace_id: str, request: RemoteCheckpointActionRequest):
+async def remote_workspace_checkpoint_restore(workspace_id: str, request: RemoteCheckpointActionRequest, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "workspace.restore", {"checkpoint_id": request.checkpointId})
     try:
         return restore_checkpoint(workspace_id, _workspace_root(workspace_id), request.checkpointId)
     except FileNotFoundError as exc:
@@ -1636,9 +2453,13 @@ async def remote_workspace_checkpoint_accept(workspace_id: str, request: RemoteC
 
 def _verified_git_diff(workspace_id: str, request: RemoteGitFileRequest) -> tuple[Path, str]:
     root = _workspace_root(workspace_id)
-    target = _workspace_child(workspace_id, request.path)
-    relative = str(target.relative_to(root))
-    completed = subprocess.run(["git", "-C", str(root), "diff", "--", relative], capture_output=True, text=True, timeout=15, check=False)
+    try:
+        target = (root / request.path).resolve(strict=False)
+        relative = str(target.relative_to(root)).replace("\\", "/")
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=403, detail="Path escapes the workspace") from exc
+    args = ["git", "-C", str(root), "diff"] + (["--cached"] if request.staged else []) + ["--", relative]
+    completed = subprocess.run(args, capture_output=True, text=True, timeout=15, check=False)
     if completed.returncode != 0:
         raise HTTPException(status_code=400, detail=completed.stderr.strip() or "Git diff failed")
     actual = hashlib.sha256(completed.stdout.encode()).hexdigest()
@@ -1648,7 +2469,8 @@ def _verified_git_diff(workspace_id: str, request: RemoteGitFileRequest) -> tupl
 
 
 @app.post("/v1/workspaces/{workspace_id}/git/stage")
-async def remote_workspace_git_stage(workspace_id: str, request: RemoteGitFileRequest):
+async def remote_workspace_git_stage(workspace_id: str, request: RemoteGitFileRequest, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "git.write", {"operation": "stage", "path": request.path})
     root, relative = _verified_git_diff(workspace_id, request)
     completed = subprocess.run(["git", "-C", str(root), "add", "--", relative], capture_output=True, text=True, timeout=15, check=False)
     if completed.returncode != 0:
@@ -1656,17 +2478,43 @@ async def remote_workspace_git_stage(workspace_id: str, request: RemoteGitFileRe
     return {"workspace_id": workspace_id, "path": relative, "staged": True}
 
 
+@app.post("/v1/workspaces/{workspace_id}/git/unstage")
+async def remote_workspace_git_unstage(workspace_id: str, request: RemoteGitFileRequest, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "git.write", {"operation": "unstage", "path": request.path})
+    request.staged = True
+    root, relative = _verified_git_diff(workspace_id, request)
+    completed = subprocess.run(["git", "-C", str(root), "restore", "--staged", "--", relative], capture_output=True, text=True, timeout=15, check=False)
+    if completed.returncode != 0:
+        raise HTTPException(status_code=400, detail={"code": "git_unstage_failed", "message": "Git unstage failed.", "retryable": False})
+    return {"workspace_id": workspace_id, "path": relative, "staged": False}
+
+
 @app.post("/v1/workspaces/{workspace_id}/git/commit")
-async def remote_workspace_git_commit(workspace_id: str, request: RemoteGitCommitRequest):
+async def remote_workspace_git_commit(workspace_id: str, request: RemoteGitCommitRequest, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "git.write", {"operation": "commit", "message_hash": hashlib.sha256(request.message.encode()).hexdigest()})
     root = _workspace_root(workspace_id); args = ["git", "-C", str(root), "commit", "-m", request.message]
     if request.body and request.body.strip(): args += ["-m", request.body.strip()]
     completed = subprocess.run(args, capture_output=True, text=True, timeout=60, check=False)
-    if completed.returncode != 0: raise HTTPException(status_code=400, detail=completed.stderr.strip() or completed.stdout.strip() or "Git commit failed")
-    return {"workspace_id": workspace_id, "committed": True, "output": completed.stdout[-4000:]}
+    if completed.returncode != 0:
+        combined = (completed.stderr.strip() or completed.stdout.strip() or "Git commit failed")[-4000:]
+        raise HTTPException(status_code=409, detail={"code": "git_commit_failed", "message": combined, "retryable": False, "detail": {"exit_code": completed.returncode}})
+    revision = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True, timeout=10, check=False).stdout.strip()
+    return {"workspace_id": workspace_id, "committed": True, "revision": revision, "exit_code": completed.returncode, "stdout": completed.stdout[-4000:], "stderr": completed.stderr[-4000:]}
+
+
+@app.post("/v1/workspaces/{workspace_id}/git/push")
+async def remote_workspace_git_push(workspace_id: str, request: RemoteGitPushRequest, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "git.push", {"remote": request.remote, "refspec": request.refspec})
+    root = _workspace_root(workspace_id)
+    completed = subprocess.run(["git", "-C", str(root), "push", "--porcelain", request.remote, request.refspec], capture_output=True, text=True, timeout=120, check=False)
+    if completed.returncode != 0:
+        raise HTTPException(status_code=409, detail={"code": "git_push_failed", "message": (completed.stderr.strip() or completed.stdout.strip() or "Git push failed")[-4000:], "retryable": False, "detail": {"exit_code": completed.returncode}})
+    return {"workspace_id": workspace_id, "pushed": True, "remote": request.remote, "refspec": request.refspec, "stdout": completed.stdout[-4000:], "stderr": completed.stderr[-4000:]}
 
 
 @app.post("/v1/workspaces/{workspace_id}/git/revert")
-async def remote_workspace_git_revert(workspace_id: str, request: RemoteGitFileRequest):
+async def remote_workspace_git_revert(workspace_id: str, request: RemoteGitFileRequest, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "git.write", {"operation": "revert", "path": request.path})
     root, relative = _verified_git_diff(workspace_id, request)
     tracked = subprocess.run(["git", "-C", str(root), "ls-files", "--error-unmatch", "--", relative], capture_output=True, timeout=10, check=False).returncode == 0
     if tracked:
@@ -1681,13 +2529,18 @@ async def remote_workspace_git_revert(workspace_id: str, request: RemoteGitFileR
 
 
 @app.post("/v1/workspaces/{workspace_id}/git/{operation}-hunk")
-async def remote_workspace_git_hunk(workspace_id: str, operation: str, request: RemoteGitFileRequest):
+async def remote_workspace_git_hunk(workspace_id: str, operation: str, request: RemoteGitFileRequest, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "git.write", {"operation": f"{operation}-hunk", "path": request.path})
+    if operation == "unstage":
+        request.staged = True
     root, relative = _verified_git_diff(workspace_id, request)
-    if operation not in {"stage", "revert"} or not request.patch or len(request.patch) > 1_000_000:
+    if operation not in {"stage", "unstage", "revert"} or not request.patch or len(request.patch) > 1_000_000:
         raise HTTPException(status_code=400, detail="Invalid Git hunk operation")
     args = ["git", "-C", str(root), "apply", "--whitespace=nowarn"]
     if operation == "stage":
         args.append("--cached")
+    elif operation == "unstage":
+        args.extend(["--cached", "--reverse"])
     else:
         args.append("--reverse")
     completed = subprocess.run(args, input=request.patch, capture_output=True, text=True, timeout=15, check=False)

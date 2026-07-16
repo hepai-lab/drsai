@@ -74,6 +74,25 @@ function startFakeGateway() {
       res.end(JSON.stringify({ object: "list", data: [] }));
       return;
     }
+    if (req.url === "/v1/workspaces" && req.method === "POST") {
+      let body = "";
+      req.setEncoding("utf8");
+      req.on("data", (chunk) => { body += chunk; });
+      req.on("end", () => {
+        const path = JSON.parse(body || "{}").path;
+        const now = new Date().toISOString();
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          workspace_id: `packaged-smoke-${Buffer.from(String(path)).toString("base64url").slice(0, 48)}`,
+          path,
+          created_at: now,
+          last_opened_at: now,
+          closed_at: null,
+          open: true,
+        }));
+      });
+      return;
+    }
     res.writeHead(404, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "fake gateway" }));
   });
@@ -117,6 +136,7 @@ function runPackagedApp() {
         PATH: systemPath,
         DRSAI_HOME: drsaiHome,
         OPENDRSAI_GATEWAY_PORT: String(port),
+        DRSAI_GATEWAY_DEV_MANAGED: "1",
         OPENDRSAI_E2E_SMOKE: "1",
         OPENDRSAI_E2E_RESULT: resultPath,
         OPENDRSAI_E2E_TIMEOUT_MS: String(e2eTimeoutMs),

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import json
 import os
 import time
+import urllib.request
+import uuid
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -17,6 +21,9 @@ class PlatformAuthContext:
     issuer: str
     expires_at: int
     model_base_url: str
+    organization_id: str | None = None
+    session_id: str | None = None
+    audience: str | None = None
 
     @property
     def anthropic_base_url(self) -> str:
@@ -100,12 +107,16 @@ def context_from_bearer(authorization: str | None, expected_subject: str) -> Pla
     if not authorization or not authorization.startswith("Bearer "):
         raise ValueError("invalid_token")
     access_token = authorization.removeprefix("Bearer ").strip()
-    claims = _decode_claims(access_token)
+    claims = _decode_verified_claims(access_token)
     subject = claims.get("sub")
     issuer = claims.get("iss")
     expires_at = claims.get("exp")
+    audience = claims.get("aud")
+    expected_audience = os.environ.get("OPENDRSAI_OIDC_AUDIENCE", "hai-api").strip()
     if not isinstance(subject, str) or not subject:
         raise ValueError("invalid_token")
+    if not _is_platform_user_id(subject):
+        raise ValueError("invalid_subject")
     if expected_subject and subject != expected_subject:
         raise ValueError("subject_mismatch")
     if not isinstance(issuer, str) or not issuer.startswith("https://"):
@@ -114,31 +125,101 @@ def context_from_bearer(authorization: str | None, expected_subject: str) -> Pla
         raise ValueError("invalid_token")
     if expires_at <= int(time.time()):
         raise ValueError("token_expired")
+    audiences = [audience] if isinstance(audience, str) else audience if isinstance(audience, list) else []
+    if expected_audience and expected_audience not in audiences:
+        raise ValueError("audience_mismatch")
+    not_before = claims.get("nbf")
+    if isinstance(not_before, int) and not_before > int(time.time()) + 30:
+        raise ValueError("token_not_yet_valid")
+    if claims.get("typ") != "access_token":
+        raise ValueError("invalid_token_type")
+    scopes = claims.get("scope")
+    if not isinstance(scopes, str) or "hai_api" not in scopes.split():
+        raise ValueError("missing_hai_api_scope")
+    organization_id = claims.get("organization_id") or claims.get("org_id") or claims.get("org")
+    session_id = claims.get("sid") or claims.get("session_id")
     return PlatformAuthContext(
         access_token=access_token,
         subject=subject,
         issuer=issuer,
         expires_at=expires_at,
         model_base_url=_model_base_url(issuer),
+        organization_id=str(organization_id) if organization_id else None,
+        session_id=str(session_id) if session_id else None,
+        audience=expected_audience or None,
     )
+
+
+def _is_platform_user_id(value: str) -> bool:
+    try:
+        uuid.UUID(value)
+        return True
+    except (ValueError, AttributeError, TypeError):
+        return False
 
 
 def verify_gateway_instance(provided: str | None) -> bool:
     expected = os.environ.get("OPENDRSAI_GATEWAY_INSTANCE_TOKEN", "").strip()
     if not expected:
         return True
+    if os.environ.get("OPENDRSAI_GATEWAY_INSTANCE_TOKEN_REVOKED") == "1":
+        return False
+    raw_expiry = os.environ.get("OPENDRSAI_GATEWAY_INSTANCE_TOKEN_EXPIRES_AT", "").strip()
+    if raw_expiry:
+        try:
+            if float(raw_expiry) <= time.time():
+                return False
+        except ValueError:
+            return False
+    revoked_path = os.path.join(os.environ.get("DRSAI_HOME", os.path.expanduser("~/.drsai")), "runtime", "revoked-instance-tokens.json")
+    try:
+        with open(revoked_path, encoding="utf-8") as handle:
+            revoked = json.load(handle)
+        if hashlib.sha256(expected.encode()).hexdigest() in revoked:
+            return False
+    except (OSError, ValueError, TypeError):
+        pass
     if not provided or len(provided) != len(expected):
         return False
-    import hmac
-
     return hmac.compare_digest(provided, expected)
+
+
+def revoke_gateway_instance_token(token: str) -> None:
+    """Persist only a token digest so a disconnected instance cannot return."""
+    root = os.path.join(os.environ.get("DRSAI_HOME", os.path.expanduser("~/.drsai")), "runtime")
+    os.makedirs(root, exist_ok=True)
+    path = os.path.join(root, "revoked-instance-tokens.json")
+    try:
+        with open(path, encoding="utf-8") as handle:
+            values = json.load(handle)
+        if not isinstance(values, list):
+            values = []
+    except (OSError, ValueError):
+        values = []
+    digest = hashlib.sha256(token.encode()).hexdigest()
+    if digest not in values:
+        values.append(digest)
+    temporary = f"{path}.tmp"
+    with open(temporary, "w", encoding="utf-8") as handle:
+        json.dump(values[-1000:], handle)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
 
 
 def classify_model_error(error: Exception) -> dict[str, object]:
     status_code = getattr(error, "status_code", None)
     message = str(error).lower()
-    if status_code == 401 or "token_expired" in message or "token expired" in message:
+    if "token_expired" in message or "token expired" in message or "expired token" in message:
         return {"code": "token_expired", "message": "Your HepAI session expired.", "retryable": True}
+    if (
+        status_code == 401
+        or "authenticationerror" in message
+        or "unauthorized" in message
+        or "invalid token" in message
+        or "invalid_token" in message
+    ):
+        return {"code": "model_unauthorized", "message": "The HepAI identity is not authorized.", "retryable": False}
     if status_code == 403 or "forbidden" in message or "permission" in message:
         return {"code": "model_forbidden", "message": "Your account cannot use this model.", "retryable": False}
     if status_code == 429 or "quota" in message or "rate limit" in message:
@@ -161,15 +242,78 @@ def _model_base_url(issuer: str) -> str:
     raise ValueError("unsupported_issuer")
 
 
-def _decode_claims(token: str) -> dict[str, object]:
+def _decode_verified_claims(token: str) -> dict[str, object]:
     parts = token.split(".")
     if len(parts) != 3:
         raise ValueError("invalid_token")
     try:
+        header_raw = parts[0] + "=" * (-len(parts[0]) % 4)
+        header = json.loads(base64.urlsafe_b64decode(header_raw).decode("utf-8"))
         payload = parts[1] + "=" * (-len(parts[1]) % 4)
         claims = json.loads(base64.urlsafe_b64decode(payload).decode("utf-8"))
     except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError("invalid_token") from exc
-    if not isinstance(claims, dict):
+    if not isinstance(header, dict) or not isinstance(claims, dict):
         raise ValueError("invalid_token")
+    algorithm = header.get("alg")
+    signature = _decode_segment(parts[2])
+    signing_input = f"{parts[0]}.{parts[1]}".encode()
+    if algorithm == "HS256":
+        secret = os.environ.get("OPENDRSAI_OIDC_HS256_SECRET", "").encode()
+        if not secret or not hmac.compare_digest(signature, hmac.new(secret, signing_input, hashlib.sha256).digest()):
+            raise ValueError("invalid_token_signature")
+    elif algorithm == "RS256":
+        _verify_rs256(header, claims, signing_input, signature)
+    else:
+        raise ValueError("invalid_token_algorithm")
     return claims
+
+
+def _decode_segment(value: str) -> bytes:
+    try:
+        return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    except (ValueError, TypeError) as exc:
+        raise ValueError("invalid_token") from exc
+
+
+_JWKS_CACHE: dict[str, tuple[float, dict[str, object]]] = {}
+
+
+def _verify_rs256(header: dict[str, object], claims: dict[str, object], signing_input: bytes, signature: bytes) -> None:
+    issuer = claims.get("iss")
+    kid = header.get("kid")
+    if not isinstance(issuer, str) or not isinstance(kid, str) or not kid:
+        raise ValueError("invalid_token")
+    configured = os.environ.get("OPENDRSAI_OIDC_JWKS_URL", "").strip()
+    cache_key = configured or issuer
+    cached = _JWKS_CACHE.get(cache_key)
+    if cached and cached[0] > time.time():
+        document = cached[1]
+    else:
+        try:
+            if configured:
+                jwks_url = configured
+            else:
+                discovery_url = f"{issuer.rstrip('/')}/.well-known/openid-configuration"
+                with urllib.request.urlopen(discovery_url, timeout=5) as response:
+                    discovery = json.loads(response.read(1_000_000))
+                jwks_url = discovery["jwks_uri"]
+            with urllib.request.urlopen(str(jwks_url), timeout=5) as response:
+                document = json.loads(response.read(2_000_000))
+            if not isinstance(document, dict):
+                raise ValueError("invalid JWKS")
+            _JWKS_CACHE[cache_key] = (time.time() + 300, document)
+        except Exception as exc:
+            raise ValueError("oidc_verification_unavailable") from exc
+    key = next((item for item in document.get("keys", []) if isinstance(item, dict) and item.get("kid") == kid and item.get("kty") == "RSA"), None)
+    if not key:
+        raise ValueError("invalid_token_signature")
+    try:
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import padding, rsa
+
+        modulus = int.from_bytes(_decode_segment(str(key["n"])), "big")
+        exponent = int.from_bytes(_decode_segment(str(key["e"])), "big")
+        rsa.RSAPublicNumbers(exponent, modulus).public_key().verify(signature, signing_input, padding.PKCS1v15(), hashes.SHA256())
+    except Exception as exc:
+        raise ValueError("invalid_token_signature") from exc

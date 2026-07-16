@@ -15,6 +15,7 @@ const mock = read("src/renderer/src/mockDesktopApi.ts");
 const css = read("src/renderer/src/styles.css");
 const agentRunWorkspace = read("src/renderer/src/components/AgentRunWorkspace.tsx");
 const chatWorkspace = read("src/renderer/src/components/ChatWorkspace.tsx");
+const chatMessageContent = read("src/renderer/src/components/ChatMessageContent.tsx");
 const shell = read("src/renderer/src/components/WorkspaceShell.tsx");
 const navigation = read("src/renderer/src/navigation.ts");
 const healthAdapter = read("src/renderer/src/adapters/useDesktopHealthAdapter.ts");
@@ -48,9 +49,9 @@ const checks = [
   ["renderer exposes Agent tasks from settings without a duplicate primary-sidebar action", app.includes('id: "agent-task"') && app.includes("onNewAgentTask") && !shell.includes("onNewAgentTask") && app.includes('kind: "agent_run"') && app.includes('activeThread?.kind === "agent_run"')],
   ["agent file events reveal change review", app.includes('setActiveRightTab("files")') && app.includes("setRightPanelCollapsed(false)") && app.includes("onAgentFileEvent")],
   ["agent change sets expose explicit accept and reject actions", filesContextPanel.includes("acceptWorkspaceCheckpoint") && filesContextPanel.includes("接受本次变更") && filesContextPanel.includes("拒绝并恢复运行前") && preload.includes("desktop:workspace-checkpoint-accept")],
-  ["agent tasks fail closed on incomplete rollback baselines", agentRunWorkspace.includes("checkpoint.truncated") && agentRunWorkspace.includes("checkpoint.skippedFileCount") && agentRunWorkspace.includes("Agent 任务未启动")],
-  ["chat workspace renders markdown safely through props", chatWorkspace.includes("ReactMarkdown") && chatWorkspace.includes("remarkGfm") && chatWorkspace.includes("onOpenExternal")],
-  ["chat workspace renders structured tool timeline events", chatWorkspace.includes("ChatToolTimelineEvent") && chatWorkspace.includes("ToolTimeline") && chatWorkspace.includes("message-tool-timeline") && chatAdapter.includes('event.type === "tool_timeline"') && chatAdapter.includes("appendAssistantToolTimeline") && css.includes(".message-tool-event")],
+  ["agent tasks fail closed on incomplete rollback baselines", agentRunWorkspace.includes("checkpoint.truncated") && agentRunWorkspace.includes("checkpoint.skippedFileCount") && agentRunWorkspace.includes("智能体任务未启动")],
+  ["chat workspace renders markdown safely through props", chatWorkspace.includes("ChatMessageContent") && chatWorkspace.includes("onOpenExternal") && chatMessageContent.includes("ReactMarkdown") && chatMessageContent.includes("remarkGfm")],
+  ["chat workspace sends tool detail to Debug without rendering it in chat", chatWorkspace.includes("ChatToolTimelineEvent") && !chatWorkspace.includes("ToolActivitySummary") && chatAdapter.includes('event.type === "tool_timeline"') && chatAdapter.includes("appendAssistantToolTimeline") && chatAdapter.includes("formatToolTimelineDebugLog") && !css.includes(".message-tool-activity")],
   ["chat workspace uses readable Chinese labels", chatWorkspace.includes("发送") && chatWorkspace.includes("停止") && chatWorkspace.includes("正在连接本地网关")],
   ["mock covers complete runtime update state", mock.includes("checkForUpdates") && mock.includes("downloadUpdate") && mock.includes("installUpdate") && mock.includes("cancelUpdate")],
   ["main fallback update status keeps complete runtime update shape", statusMain.includes("fallbackUpdateStatus") && ["phase", "currentVersion", "mandatory", "releaseNotesUrl", "canDownload", "canInstall", "canCancel", "errorCode", "recovery"].every((field) => statusMain.includes(`${field}:`))],
@@ -75,7 +76,7 @@ const checks = [
   ["settings exposes integration and system actions", app.includes('id: "integrations"') && app.includes("onOpenBrowserPanel") && app.includes("onCheckUpdates") && app.includes("onOpenPath") && css.includes(".settings-integration-row")],
   ["renderer exposes current right-panel tabs", navigation.includes('["files", "browser", "terminal", "debug"] as RightTab[]')],
   ["renderer has separated workspace shell", app.includes("WorkspaceShell") && shell.includes("WorkspaceShellProps") && shell.includes("mainContent: React.ReactNode") && shell.includes("rightPanel: React.ReactNode") && !shell.includes('../desktopApi') && !shell.includes('./desktopApi')],
-  ["chat composer orders agent model and thinking controls", chatWorkspace.includes("Agent: {activeAgentName}") && chatWorkspace.includes("模型：") && chatWorkspace.includes("推理：") && chatWorkspace.includes("defaultThinkingEffort") && chatWorkspace.includes("setThinkingEffort(defaultThinkingEffort)") && chatAdapter.includes("thinking_effort")],
+  ["chat composer orders agent model and thinking controls", chatWorkspace.includes('{zh ? "智能体" : "Agent"}: {activeAgentName}') && chatWorkspace.includes("模型：") && chatWorkspace.includes("推理：") && chatWorkspace.includes("defaultThinkingEffort") && chatWorkspace.includes("setThinkingEffort(defaultThinkingEffort)") && chatAdapter.includes("thinking_effort")],
   ["renderer can collapse right panel", app.includes("rightPanelCollapsed") && shell.includes("titlebar-right-panel-toggle") && css.includes(".content-grid.right-collapsed")],
   ["titlebar owns centered chat and command search", shell.includes('className="titlebar-center"') && shell.includes('className="titlebar-search-shell"') && shell.includes('id="titlebar-search-results"') && css.includes(".titlebar-search-results")],
   ["search is owned by the titlebar without a duplicate sidebar action", shell.includes('onFocus={openCommandPalette}') && !shell.includes('label={zh ? "搜索" : "Search"}') && shell.includes("commandPaletteInputRef.current?.focus()")],
@@ -91,6 +92,8 @@ const checks = [
   ["chat composer uses multiline textarea", chatWorkspace.includes("textarea") && chatWorkspace.includes("handleKeyDown") && chatWorkspace.includes("event.shiftKey")],
   ["mojibake verifier is wired into package scripts", packageJson.includes('"verify:mojibake": "node scripts/verify-no-mojibake.mjs"') && mojibakeVerifier.includes("mojibakePatterns")],
   ["background queue shows progress completed steps and decisions", skillSquare.includes("background-task-progress") && skillSquare.includes("Completed:") && skillSquare.includes("Needs you:") && css.includes(".background-task-decisions")],
+  ["file picker reports user-visible name type size and readiness", desktopApi.includes("PickedFileDescriptor") && desktopMain.includes("describePickedFiles") && chatWorkspace.includes('data-import-status') && chatWorkspace.includes('data-file-category') && chatWorkspace.includes('data-size-bytes') && chatWorkspace.includes("formatPickedFileMeta")],
+  ["failed imports are isolated from usable context", chatWorkspace.includes('blockedReason: file.message || file.status') && chatWorkspace.includes('.filter((attachment) => !attachment.blockedReason)') && css.includes('.composer-attachment-chip.import-failed')],
 ];
 
 const failures = checks.filter(([, passed]) => !passed).map(([name]) => name);

@@ -54,12 +54,19 @@ def create_checkpoint(workspace_id: str, workspace: Path, request: dict[str, Any
     changed = _changed(workspace); checkpoint_id = f"wcp-{int(time.time()*1000):x}-{hashlib.sha256(str(workspace).encode()).hexdigest()[:8]}"
     directory = _root(workspace_id) / checkpoint_id; directory.mkdir()
     entries = []
-    for index, (relative, status) in enumerate(changed[:max_files]):
-        target = (workspace / relative).resolve(); target.relative_to(workspace)
+    for relative, status in changed[:max_files]:
+        try:
+            target = (workspace / relative).resolve(strict=False)
+            target.relative_to(workspace)
+        except (OSError, ValueError):
+            # Never snapshot a symlink or a concurrently swapped path outside
+            # the authoritative Workspace root.
+            continue
         existed = target.is_file(); size = target.stat().st_size if existed else 0; stored = existed and size <= max_bytes
         entry = {"path": str(target), "relativePath": relative, "status": status, "size": size, "stored": stored, "existed": existed}
         if stored:
-            entry["fileHash"] = _hash(target); shutil.copy2(target, directory / f"{index}.snapshot")
+            snapshot_index = len(entries)
+            entry["fileHash"] = _hash(target); shutil.copy2(target, directory / f"{snapshot_index}.snapshot")
         elif existed: entry["skippedReason"] = f"larger than {max_bytes} bytes"
         entries.append(entry)
     head = subprocess.run(["git", "-C", str(workspace), "rev-parse", "HEAD"], capture_output=True, text=True, check=False)

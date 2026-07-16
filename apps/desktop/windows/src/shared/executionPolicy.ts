@@ -46,7 +46,31 @@ export interface ExecutionPolicySourceConfig {
   dangerous_allowed?: boolean;
 }
 
+export type ExecutionActionRisk = "low" | "medium" | "high";
+
+const EXECUTION_ACTION_RISKS: Record<ExecutionActionKind, ExecutionActionRisk> = {
+  "chat.model_call": "low",
+  "browser.read": "low",
+  "browser.interact": "medium",
+  "browser.sensitive_interact": "high",
+  "workspace.read": "low",
+  "workspace.diff": "low",
+  "workspace.stage": "medium",
+  "workspace.revert": "high",
+  "workspace.checkpoint": "low",
+  "terminal.create": "medium",
+  "terminal.write": "medium",
+  "shell.command": "high",
+  "git.commit": "high",
+  "fork.lifecycle": "high",
+  "fork.queue_start": "high",
+  "workflow.run": "high",
+  "network.request": "medium",
+  "external.service": "high",
+};
+
 const READ_ONLY_ACTIONS = new Set<ExecutionActionKind>([
+  "chat.model_call",
   "browser.read",
   "workspace.read",
   "workspace.diff",
@@ -132,10 +156,14 @@ export function evaluateExecutionPermission(
   if (sensitive && !policy.dangerousAllowed) {
     return approve(policy, true, "Sensitive actions require explicit approval.");
   }
-  if (policy.mode === "confirm_each" && !READ_ONLY_ACTIONS.has(action)) {
+  if (policy.mode === "confirm_each" && getExecutionActionRisk(action) !== "low") {
     return approve(policy, true, "Confirm-each mode requires approval for side effects.");
   }
   return approve(policy, false, "Action is allowed by the current execution policy.");
+}
+
+export function getExecutionActionRisk(action: ExecutionActionKind): ExecutionActionRisk {
+  return EXECUTION_ACTION_RISKS[action];
 }
 
 export function describeExecutionPolicyMode(policy: ExecutionPolicyConfig): string {

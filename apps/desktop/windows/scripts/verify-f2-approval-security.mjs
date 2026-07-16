@@ -30,14 +30,21 @@ assert(
   "main process does not prove reject-before-execute and approve-once idempotency",
 );
 assert(
-  view.includes('aria-label="Approval facts"') &&
-    view.includes("<dt>Action</dt>") &&
-    view.includes("<dt>Object</dt>") &&
-    view.includes("<dt>Scope</dt>") &&
-    view.includes("<dt>Impact</dt>") &&
-    view.includes("<dt>Risk</dt>") &&
-    view.includes("Approve") &&
-    view.includes("Reject"),
+  main.includes("pendingF2ApprovalEffects") &&
+    main.includes("executeF2ApprovalEffect") &&
+    main.includes("if (!typed.approved) return true;") &&
+    main.includes("executedDesktopApprovalIds.add(typed.id)"),
+  "F2 does not bind approval decisions to an observable main-process side effect",
+);
+assert(
+  view.includes('data-testid="business-approval-card"') &&
+    view.includes('zh ? "要做什么" : "Action"') &&
+    view.includes('zh ? "涉及对象" : "Object"') &&
+    view.includes('zh ? "作用范围" : "Scope"') &&
+    view.includes('zh ? "可能影响" : "Impact"') &&
+    view.includes('zh ? "风险说明" : "Risk"') &&
+    view.includes("允许并执行") &&
+    view.includes("拒绝并停止"),
   "approval card does not expose required action/object/scope/impact/risk/allow/reject fields",
 );
 assert(
@@ -49,10 +56,14 @@ assert(
     smoke.includes("overwrite_file") &&
     smoke.includes("delete_file") &&
     smoke.includes("public_share") &&
-    smoke.includes("unauthorizedExecutions: 0") &&
+    smoke.includes("rejectZeroSideEffects_") &&
+    smoke.includes("approvedExactlyOnce_") &&
+    smoke.includes("effectDiagnostics") &&
+    smoke.includes("cernPdfVerified") &&
     smoke.includes("retries: 0"),
   "packaged F2 smoke does not cover the six high-risk reject scenarios",
 );
+assert(!smoke.includes("unauthorizedExecutions: 0,"), "F2 must measure unauthorized execution instead of hard-coding zero.");
 assert(
   packageJson.includes('"verify:f2-approval-security"') &&
     packageJson.includes('"verify:packaged-f2-approvals"') &&

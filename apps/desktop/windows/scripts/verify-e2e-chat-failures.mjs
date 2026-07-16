@@ -31,7 +31,6 @@ for (const scenario of scenarios) {
 }
 
 console.log(`E2E chat failure paths passed: ${scenarios.join(", ")}.`);
-process.exit(process.exitCode ?? 0);
 
 async function runScenario(scenario) {
   const tempDir = mkdtempSync(join(tmpdir(), `opendrsai-e2e-${scenario}-`));
@@ -73,7 +72,10 @@ function cleanupTempDir(path) {
   try {
     rmSync(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
   } catch (error) {
-    console.warn(`Could not remove temporary directory ${path}: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(
+      `Could not remove temporary directory ${path}: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
   }
 }
 

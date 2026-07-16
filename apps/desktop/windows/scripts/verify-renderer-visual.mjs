@@ -20,7 +20,7 @@ const preloadPath = join(tempDir, "preload.cjs");
 
 writeFileSync(preloadPath, preloadSource(), "utf8");
 mkdirSync(artifactDir, { recursive: true });
-writeFileSync(mainPath, mainSource({ root, rendererHtml, preloadPath, artifactDir }), "utf8");
+writeFileSync(mainPath, mainSource({ root, rendererHtml, preloadPath, artifactDir, m9Only: process.env.OPENDRSAI_M9_ONLY === "1" }), "utf8");
 
 try {
   await runElectron(mainPath);
@@ -32,7 +32,10 @@ function cleanupTempDir(path) {
   try {
     rmSync(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
   } catch (error) {
-    console.warn(`Could not remove temporary directory ${path}: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(
+      `Could not remove temporary directory ${path}: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
   }
 }
 
@@ -98,7 +101,7 @@ function killProcessTree(pid) {
   }
 }
 
-function mainSource({ rendererHtml: htmlPath, preloadPath: preload, artifactDir: screenshots }) {
+function mainSource({ rendererHtml: htmlPath, preloadPath: preload, artifactDir: screenshots, m9Only }) {
   return String.raw`
 const { app, BrowserWindow } = require("electron");
 const path = require("path");
@@ -107,6 +110,7 @@ const fs = require("fs");
 const rendererHtml = ${JSON.stringify(htmlPath)};
 const preloadPath = ${JSON.stringify(preload)};
 const artifactDir = ${JSON.stringify(screenshots)};
+const m9Only = ${JSON.stringify(m9Only)};
 const userDataDir = path.join(path.dirname(preloadPath), "user-data");
 
 app.disableHardwareAcceleration();
@@ -180,8 +184,16 @@ async function auditWindow(win, label) {
       const r = el.getBoundingClientRect();
       return { tag: el.tagName, className: String(el.className), x: r.x, y: r.y, width: r.width, height: r.height };
     }).filter((r) => r.width > 0 && r.height > 0 && (r.x < -1 || r.x + r.width > innerWidth + 1));
+    const clippedText = Array.from(document.querySelectorAll("button,label,span,strong,small,h1,h2,h3,p,summary")).filter((el) => {
+      const r = el.getBoundingClientRect();
+      const style = getComputedStyle(el);
+      const hasText = Boolean(el.textContent && el.textContent.trim());
+      const clips = ["hidden", "clip"].includes(style.overflow) || ["hidden", "clip"].includes(style.overflowX) || ["hidden", "clip"].includes(style.overflowY);
+      return hasText && r.width > 0 && r.height > 0 && clips && (el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1);
+    }).map((el) => ({ tag: el.tagName, className: String(el.className), text: (el.textContent || "").trim().replace(/\s+/g, " ").slice(0, 160), clientWidth: el.clientWidth, scrollWidth: el.scrollWidth, clientHeight: el.clientHeight, scrollHeight: el.scrollHeight }));
     return {
       label: ${"${"}JSON.stringify(label)},
+      lang: html.lang,
       viewport: { width: innerWidth, height: innerHeight },
       scrollWidth: html.scrollWidth,
       clientWidth: html.clientWidth,
@@ -190,6 +202,7 @@ async function auditWindow(win, label) {
       inputPlaceholders: Array.from(document.querySelectorAll("input")).map((input) => input.placeholder || ""),
       buttons,
       offscreen,
+      clippedText,
       hasTextarea: Boolean(document.querySelector("textarea")),
       hasAgentRunErrorLine: Boolean(document.querySelector(".agent-run-line.error")),
     };
@@ -431,6 +444,7 @@ async function runCurrentVisual() {
 
   const includesAny = (haystack, values) => values.some((value) => haystack.includes(value));
 
+  if (!m9Only) {
   console.log("Checking bridge fallback...");
   const bridgeMissing = await createWindow(900, 650, false);
   const bridgeAudit = await auditWindow(bridgeMissing, "bridge-missing");
@@ -470,6 +484,50 @@ async function runCurrentVisual() {
     );
     if (accessibleNav.some((button) => !button.title || !button.aria)) fail(audit.label + " has inaccessible nav buttons");
     win.close();
+  }
+  }
+
+  console.log("Checking Chinese core pages...");
+  const chineseWin = await createWindow(1280, 720, true);
+  const checkChinesePage = async (label) => {
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const audit = await auditWindow(chineseWin, label);
+    await captureVisual(chineseWin, label);
+    const forbidden = [/\bAgent\b/, /\bMCP\b/, /\bIPC\b/, /\bWebUI\b/i, /Approval Center/i, /Plan mode/i, /tool call/i, /stack trace/i];
+    const corrupted = [/\uFFFD/, /\u00ef\u00bf\u00bd/, /\u00e2\u20ac/, /\{\{\s*[\w.-]+\s*\}\}/, /(?:translation|i18n)\.missing/i];
+    if (audit.lang !== "zh-CN") fail(label + " does not declare zh-CN");
+    const forbiddenMatch = forbidden.find((pattern) => pattern.test(audit.text));
+    if (forbiddenMatch) {
+      const match = audit.text.match(forbiddenMatch);
+      const index = match ? audit.text.indexOf(match[0]) : 0;
+      fail(label + " exposes unexplained internal terminology matching " + forbiddenMatch + ": " + audit.text.slice(Math.max(0, index - 60), index + 120).replace(/\s+/g, " "));
+    }
+    if (corrupted.some((pattern) => pattern.test(audit.text))) fail(label + " contains corrupted or unresolved localization text");
+    if (audit.clippedText.length) fail(label + " clips visible text: " + audit.clippedText.slice(0, 4).map((item) => item.tag + "." + item.className + "=" + item.text).join(" | "));
+    return audit;
+  };
+  await checkChinesePage("m9-chinese-home");
+  await chineseWin.webContents.executeJavaScript("document.querySelector('[data-nav-id=results]')?.click()");
+  await checkChinesePage("m9-chinese-results");
+  if (!(await clickByAnyText(chineseWin, ["Visual User", "User menu"]))) fail("could not open user menu for Chinese settings audit");
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  if (!(await clickByAnyText(chineseWin, [text.settingsZh, "Settings"]))) fail("could not open Chinese settings audit");
+  await checkChinesePage("m9-chinese-settings");
+  await chineseWin.webContents.executeJavaScript("document.querySelector('[data-testid=settings-pane-approvals]')?.click()");
+  await checkChinesePage("m9-chinese-approval");
+  chineseWin.close();
+
+  if (m9Only) {
+    if (failures.length) {
+      console.error("M9 Chinese visual verification failed:");
+      for (const failure of failures) console.error("- " + failure);
+      app.exit(1);
+      return;
+    }
+    clearTimeout(watchdog);
+    console.log("M9 Chinese visual verification passed (home + results + settings + approval)." );
+    app.exit(0);
+    return;
   }
 
   console.log("Checking chat interaction...");
@@ -639,6 +697,8 @@ contextBridge.exposeInMainWorld("openDrSai", {
     },
   }),
   logout: async () => ({ ok: true, message: "Mock sign-out complete." }),
+  previewLocalDataCleanup: async (scope) => ({ scope, applicationData: [{ category: "sessions", label: "会话", description: "清除会话记录。" }], preservedUserMaterials: [], preservesAllWorkspaceFiles: true, confirmationPhrase: scope === "all_local_data" ? "清除" : undefined, requiresSignInAgain: scope === "all_local_data" }),
+  clearLocalData: async (request) => ({ ok: true, scope: request.scope, removedPaths: [], protectedWorkspacePaths: [], skippedTargets: [], requiresSignInAgain: request.scope === "all_local_data", message: "应用数据已清除；用户工作区文件和成果未受影响。" }),
   startDesktopSsoLogin: async () => ({ ok: false, message: "Mock SSO is unavailable." }),
   pollDesktopSsoLogin: async () => ({ ok: false, state: "error", message: "Mock SSO is unavailable." }),
   cancelDesktopSsoLogin: async () => undefined,
@@ -655,6 +715,26 @@ contextBridge.exposeInMainWorld("openDrSai", {
   getHealth: async () => health,
   getInstallStatus: async () => health.install,
   getGatewayStatus: async () => health.gateway,
+  getCodexBackendStatus: async () => ({
+    backendId: "codex",
+    state: "available",
+    available: true,
+    version: "0.142.5",
+    loggedIn: true,
+    authMode: "chatgpt",
+    accountLabel: "visual@example.com",
+    reason: null,
+    retryable: false,
+    action: "none",
+  }),
+  startCodexBackendLogin: async (type = "chatgpt") => ({
+    type,
+    loginId: "visual-codex-login",
+    verificationUrl: "https://example.test/device",
+    userCode: "VISUAL-CODE",
+  }),
+  cancelCodexBackendLogin: async () => true,
+  logoutCodexBackend: async () => true,
   checkForUpdates: async () => {
     health = {
       ...health,
@@ -841,6 +921,14 @@ contextBridge.exposeInMainWorld("openDrSai", {
   restoreWorkspaceCheckpoint: async () => ({ ok: true, message: "Mock checkpoint restored." }),
   requestGitCommitApproval: async () => ({ blocked: false, queued: true, allowed: true, reason: "Mock git commit approval queued." }),
   listPendingApprovals: async () => [],
+  onBrowserTaskEvent: () => () => {},
+  listWorkflowRuns: async () => [],
+  listBackgroundTasks: async () => [],
+  listIncomingShares: async () => [],
+  listOutgoingShares: async () => [],
+  listShareCommentTasks: async () => [],
+  listShareComments: async () => [],
+  listReusableTasks: async () => [],
   decidePendingApproval: async () => ({ ok: true, message: "Mock approval decision recorded." }),
   importMcpContext: async () => ({ importedCount: 0, events: [] }),
   requestMcpLiveEnumeration: async () => ({ blocked: false, queued: true, allowed: true, reason: "Mock MCP enumeration queued." }),

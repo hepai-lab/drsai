@@ -74,7 +74,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
         setMessage("Developer workspace unlocked.");
         return;
       }
-      await retryBootstrap();
+      void retryBootstrap();
     }
   }
 
@@ -155,7 +155,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       const result = await desktopApi.startOidcLogin(request);
       if (result.ok && result.session) {
         setSession(result.session);
-        return retryBootstrap();
+        void retryBootstrap();
+        return true;
       }
       setMessage(result.message);
       return false;

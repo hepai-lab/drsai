@@ -88,7 +88,7 @@ function Build-Runtime([string]$OutputZip, [string]$TargetVersion, [bool]$Health
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Force -Path (Join-Path $work "app"), (Join-Path $work "drsai-agent\venv\Scripts") | Out-Null
     Build-AppExe (Join-Path $work "app\OpenDrSai.exe") "new-$Suffix" $Healthy "FixtureApp$Suffix" $TargetVersion
-    Build-ConsoleExe (Join-Path $work "drsai-agent\venv\Scripts\python.exe") "Console.WriteLine(`"drsai version: $TargetVersion`"); return 0;" "FixturePython$Suffix"
+    Build-ConsoleExe (Join-Path $work "drsai-agent\venv\Scripts\python.exe") "Console.WriteLine(`"version: $TargetVersion`"); return 0;" "FixturePython$Suffix"
     [IO.File]::WriteAllText((Join-Path $work "drsai-agent\venv\Scripts\drsai.cmd"), "@echo off`r`n", (New-Object Text.UTF8Encoding($false)))
     [IO.File]::WriteAllText((Join-Path $work "drsai-agent\venv\pyvenv.cfg"), "home = C:\hostedtoolcache\windows\Python\3.11.9\x64`r`n", (New-Object Text.UTF8Encoding($false)))
     [IO.File]::WriteAllText((Join-Path $work "drsai-agent\new-$Suffix.txt"), $Suffix, (New-Object Text.UTF8Encoding($false)))

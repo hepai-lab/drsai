@@ -51,6 +51,10 @@ for (let round = 1; round <= rounds; round += 1) {
     unauthorizedExecutions: Number(roundSummary?.unauthorizedExecutions || 0),
     configuredRetries: Number(roundSummary?.configuredRetries || 0),
     actualRetries: Number(roundSummary?.actualRetries || 0),
+    checkCount: Object.keys(roundSummary?.scenarios?.[0]?.checks || {}).length,
+    passedChecks: Object.values(roundSummary?.scenarios?.[0]?.checks || {}).filter(Boolean).length,
+    effectCount: Array.isArray(roundSummary?.scenarios?.[0]?.effectDiagnostics) ? roundSummary.scenarios[0].effectDiagnostics.length : 0,
+    cernSha256: roundSummary?.scenarios?.[0]?.cernPdf?.sha256 || null,
     artifactHash: roundSummary?.artifactHash || null,
   };
   summary.roundResults.push(roundResult);
@@ -68,11 +72,20 @@ summary.completedRounds = summary.roundResults.length;
 summary.passedRejectScenarios = summary.roundResults
   .filter((round) => round.ok)
   .length * summary.scenariosPerRound;
+summary.totalChecks = summary.roundResults.reduce((sum, round) => sum + round.checkCount, 0);
+summary.passedChecks = summary.roundResults.reduce((sum, round) => sum + round.passedChecks, 0);
+summary.authorizedControlExecutions = summary.roundResults.reduce((sum, round) => sum + round.effectCount, 0);
+summary.cernHashes = [...new Set(summary.roundResults.map((round) => round.cernSha256).filter(Boolean))];
 summary.exitCode =
   summary.ok &&
   summary.completedRounds === rounds &&
   summary.passedRejectScenarios === summary.expectedRejectScenarios &&
   summary.unauthorizedExecutions === 0 &&
+  summary.totalChecks === rounds * 60 &&
+  summary.passedChecks === summary.totalChecks &&
+  summary.authorizedControlExecutions === rounds * 6 &&
+  summary.cernHashes.length === 1 &&
+  summary.cernHashes[0] === "F6581E1A255B354667188B41B874B996A300F88BB48912721BC1C854183E913E" &&
   summary.configuredRetries === 0 &&
   summary.actualRetries === 0
     ? 0

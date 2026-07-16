@@ -10,6 +10,7 @@ import {
   FolderCode,
   FolderPlus,
   HelpCircle,
+  Keyboard,
   IdCard,
   LogOut,
   Maximize2,
@@ -162,6 +163,24 @@ interface WorkspaceShellProps {
   onWorkspaceSortModeChange: (mode: "recent" | "name" | "created") => void;
 }
 
+type ShortcutId = "newChat" | "newWorkspace" | "find" | "commandPalette" | "back" | "forward" | "toggleSidebar" | "toggleRightPanel" | "modelPicker" | "debug" | "settings" | "shortcuts";
+
+const SHORTCUT_STORAGE_KEY = "opendrsai.keyboardShortcuts";
+const SHORTCUTS: Array<{ id: ShortcutId; category: "task" | "navigation" | "panels" | "project" | "app"; zh: string; en: string; fallback: string }> = [
+  { id: "newChat", category: "task", zh: "新聊天", en: "New chat", fallback: "Ctrl+Alt+N" },
+  { id: "newWorkspace", category: "project", zh: "打开文件夹", en: "Open folder", fallback: "Ctrl+O" },
+  { id: "find", category: "navigation", zh: "查找", en: "Find", fallback: "Ctrl+F" },
+  { id: "commandPalette", category: "navigation", zh: "打开命令菜单", en: "Open command menu", fallback: "Ctrl+K" },
+  { id: "back", category: "navigation", zh: "后退", en: "Back", fallback: "Ctrl+[" },
+  { id: "forward", category: "navigation", zh: "前进", en: "Forward", fallback: "Ctrl+]" },
+  { id: "toggleSidebar", category: "panels", zh: "切换边栏", en: "Toggle sidebar", fallback: "Ctrl+B" },
+  { id: "toggleRightPanel", category: "panels", zh: "切换侧边面板", en: "Toggle side panel", fallback: "Ctrl+Alt+B" },
+  { id: "modelPicker", category: "panels", zh: "打开模型选择器", en: "Open model picker", fallback: "Ctrl+Shift+M" },
+  { id: "debug", category: "panels", zh: "打开调试面板", en: "Open debug panel", fallback: "F12" },
+  { id: "settings", category: "app", zh: "设置", en: "Settings", fallback: "Ctrl+," },
+  { id: "shortcuts", category: "app", zh: "显示键盘快捷键", en: "Show keyboard shortcuts", fallback: "Ctrl+Shift+/" },
+];
+
 export function WorkspaceShell({
   activeNav,
   activeRightTab,
@@ -214,6 +233,9 @@ export function WorkspaceShell({
   onWorkspaceSortModeChange,
 }: WorkspaceShellProps): React.JSX.Element {
   const [desktopStatusOpen, setDesktopStatusOpen] = useState(false);
+  const [shortcutDialogOpen, setShortcutDialogOpen] = useState(false);
+  const [shortcutDrafts, setShortcutDrafts] = useState<Record<ShortcutId, string>>(() => loadShortcutSettings());
+  const [capturingShortcut, setCapturingShortcut] = useState<ShortcutId | null>(null);
   const [helpMenuOpen, setHelpMenuOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [agentsOpen, setAgentsOpen] = useState(true);
@@ -314,9 +336,33 @@ export function WorkspaceShell({
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent): void {
-      if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k") {
+      if (capturingShortcut) return;
+      if (
+        (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey &&
+        event.key.toLowerCase() === "k" && shortcutDrafts.commandPalette === "Ctrl+K"
+      ) {
         event.preventDefault();
         setCommandPaletteOpen(true);
+        return;
+      }
+      const shortcut = keyboardShortcutFromEvent(event);
+      const command = SHORTCUTS.find((item) => shortcutDrafts[item.id] === shortcut)?.id;
+      if (command) {
+        event.preventDefault();
+        if (command === "newChat") onNewChat();
+        else if (command === "newWorkspace") setWorkspaceCreateOpen(true);
+        else if (command === "find" || command === "commandPalette") setCommandPaletteOpen(true);
+        else if (command === "back") onGoBack();
+        else if (command === "forward") onGoForward();
+        else if (command === "toggleSidebar") onToggleSidebar();
+        else if (command === "toggleRightPanel") onToggleRightPanel();
+        else if (command === "modelPicker") window.dispatchEvent(new Event("drsai:open-model-picker"));
+        else if (command === "debug") {
+          if (!rightPanelCollapsed && activeRightTab === "debug") onToggleRightPanel();
+          else { if (rightPanelCollapsed) onToggleRightPanel(); onRightTabChange("debug"); }
+        }
+        else if (command === "settings") onNavChange(MENU_IDS.profile);
+        else if (command === "shortcuts") setShortcutDialogOpen(true);
         return;
       }
       if (event.key === "Escape") {
@@ -331,7 +377,7 @@ export function WorkspaceShell({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [activeRightTab, capturingShortcut, onGoBack, onGoForward, onNavChange, onNewChat, onRightTabChange, onToggleRightPanel, onToggleSidebar, rightPanelCollapsed, shortcutDrafts]);
 
   useEffect(() => {
     if (rightPanelCollapsed) {
@@ -1195,7 +1241,7 @@ export function WorkspaceShell({
         "--right-panel-width": `${rightPanelWidth}px`,
       } as React.CSSProperties}
     >
-      <div className="workbench-menubar" role="menubar" aria-label={zh ? "应用菜单" : "Application menu"}>
+      <div className="workbench-menubar" role="toolbar" aria-label={zh ? "应用工具栏" : "Application toolbar"}>
         <button
           className="titlebar-sidebar-toggle"
           type="button"
@@ -1206,13 +1252,13 @@ export function WorkspaceShell({
         >
           <span aria-hidden />
         </button>
-        <div className="workbench-menu-items">
+        <div className="workbench-menu-items" role="menubar" aria-label={zh ? "应用菜单" : "Application menu"}>
           {workbenchMenus.map((label) => (
             <button key={label} type="button" role="menuitem">
               {label}
             </button>
           ))}
-          <div className="workbench-menu-dropdown" ref={helpMenuRef}>
+          <div className="workbench-menu-dropdown" ref={helpMenuRef} role="none">
             <button
               type="button"
               role="menuitem"
@@ -1229,6 +1275,17 @@ export function WorkspaceShell({
                   role="menuitem"
                   onClick={() => {
                     setHelpMenuOpen(false);
+                    setShortcutDialogOpen(true);
+                  }}
+                >
+                  <Keyboard size={15} />
+                  {zh ? "键盘快捷键" : "Keyboard shortcuts"}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setHelpMenuOpen(false);
                     setDesktopStatusOpen(true);
                   }}
                 >
@@ -1240,7 +1297,7 @@ export function WorkspaceShell({
           </div>
         </div>
         <div className="titlebar-center">
-          <div className="titlebar-navigation" aria-label={zh ? "导航" : "Navigation"}>
+          <nav className="titlebar-navigation" aria-label={zh ? "导航" : "Navigation"}>
           <button
             type="button"
             disabled={!canGoBack}
@@ -1259,11 +1316,12 @@ export function WorkspaceShell({
           >
             <ArrowRight size={15} />
           </button>
-          </div>
+          </nav>
           <div className="titlebar-search-shell" ref={commandPaletteRef}>
             <div className={`titlebar-search ${commandPaletteOpen ? "open" : ""}`}>
               <Search size={14} aria-hidden />
               <input
+                role="combobox"
                 ref={commandPaletteInputRef}
                 value={commandPaletteQuery}
                 onFocus={openCommandPalette}
@@ -1275,7 +1333,7 @@ export function WorkspaceShell({
                 aria-controls="titlebar-search-results"
                 aria-autocomplete="list"
                 aria-activedescendant={
-                  visibleCommandPaletteItems[commandPaletteSelectedIndex]
+                  commandPaletteOpen && visibleCommandPaletteItems[commandPaletteSelectedIndex]
                     ? `titlebar-search-option-${commandPaletteSelectedIndex}`
                     : undefined
                 }
@@ -1312,6 +1370,7 @@ export function WorkspaceShell({
         <div className="titlebar-account" ref={userMenuRef}>
           <button
             className="titlebar-avatar"
+            data-testid="user-menu-button"
             type="button"
             aria-label={zh ? "用户菜单" : "User menu"}
             aria-expanded={userMenuOpen}
@@ -1338,6 +1397,7 @@ export function WorkspaceShell({
               <button
                 type="button"
                 role="menuitem"
+                data-testid="user-menu-settings"
                 onClick={() => {
                   setUserMenuOpen(false);
                   onNavChange(MENU_IDS.profile);
@@ -1415,16 +1475,6 @@ export function WorkspaceShell({
             <div className="sidebar-section">
               <div
                 className="workspace-section-header"
-                role="button"
-                tabIndex={0}
-                aria-expanded={agentsOpen}
-                onClick={() => setAgentsOpen((open) => !open)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    setAgentsOpen((open) => !open);
-                  }
-                }}
               >
                 <span className="workspace-section-title">{agentSectionLabel}</span>
                 <div className="workspace-section-actions">
@@ -1479,16 +1529,6 @@ export function WorkspaceShell({
           <div className="sidebar-section">
             <div
               className="workspace-section-header"
-              role="button"
-              tabIndex={0}
-              aria-expanded={workspaceOpen}
-              onClick={() => setWorkspaceOpen((open) => !open)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  setWorkspaceOpen((open) => !open);
-                }
-              }}
             >
               <span className="workspace-section-title">{zh ? "工作区" : "Workspace"}</span>
               <div className="workspace-section-actions">
@@ -1541,7 +1581,13 @@ export function WorkspaceShell({
                       type="button"
                       className="workspace-item"
                       onClick={() => onWorkspaceChange(workspace.id)}
-                      title={[workspace.name, workspace.description, workspace.path].filter(Boolean).join("\n")}
+                      title={[
+                        workspace.name,
+                        workspace.description,
+                        workspace.location === "remote" && workspace.remote
+                          ? `Remote · ${workspace.remote.hostAlias} · ${workspace.remote.canonicalPath}`
+                          : `Local · ${workspace.path}`,
+                      ].filter(Boolean).join("\n")}
                     >
                       <FolderCode size={15} />
                       <span>
@@ -1566,16 +1612,6 @@ export function WorkspaceShell({
           <div className="sidebar-section">
             <div
               className="workspace-section-header workspace-session-header"
-              role="button"
-              tabIndex={0}
-              aria-expanded={historyOpen}
-              onClick={() => setHistoryOpen((open) => !open)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  setHistoryOpen((open) => !open);
-                }
-              }}
             >
               <span className="workspace-section-title workspace-session-title">
                 <span>{zh ? "会话" : "Sessions"}</span>
@@ -2255,6 +2291,22 @@ export function WorkspaceShell({
           </section>
         </div>
       )}
+      {shortcutDialogOpen && (
+        <div className="shortcut-settings-overlay" role="presentation" onMouseDown={() => setShortcutDialogOpen(false)}>
+          <section className="shortcut-settings-modal" role="dialog" aria-modal="true" aria-label={zh ? "键盘快捷键" : "Keyboard shortcuts"} onMouseDown={(event) => event.stopPropagation()}>
+            <header><div><h2>{zh ? "键盘快捷键" : "Keyboard shortcuts"}</h2><span>{zh ? "点击组合键后直接按下新的按键。" : "Select a shortcut, then press a new key combination."}</span></div><button type="button" onClick={() => setShortcutDialogOpen(false)} aria-label={zh ? "关闭" : "Close"}><X size={18} /></button></header>
+            <div className="shortcut-settings-list">
+              {(["task", "navigation", "panels", "project", "app"] as const).map((category) => {
+                const entries = SHORTCUTS.filter((item) => item.category === category);
+                if (!entries.length) return null;
+                const labels = { task: zh ? "任务" : "Task", navigation: zh ? "导航" : "Navigation", panels: zh ? "面板" : "Panels", project: zh ? "项目" : "Project", app: zh ? "应用" : "Application" };
+                return <section key={category}><h3>{labels[category]}</h3>{entries.map((item) => <div className="shortcut-settings-row" key={item.id}><span>{zh ? item.zh : item.en}</span><button type="button" className={capturingShortcut === item.id ? "capturing" : ""} onClick={() => setCapturingShortcut(item.id)} onKeyDown={(event) => { if (capturingShortcut !== item.id) return; event.preventDefault(); event.stopPropagation(); const next = keyboardShortcutFromEvent(event.nativeEvent); if (!next || next === "Escape") return; setShortcutDrafts((current) => ({ ...current, [item.id]: next })); setCapturingShortcut(null); }}>{capturingShortcut === item.id ? (zh ? "请按快捷键" : "Press shortcut") : shortcutDrafts[item.id]}</button></div>)}</section>;
+              })}
+            </div>
+            <footer><button type="button" onClick={() => { const defaults = defaultShortcutSettings(); setShortcutDrafts(defaults); window.localStorage.removeItem(SHORTCUT_STORAGE_KEY); }}>{zh ? "恢复默认" : "Restore defaults"}</button><button type="button" onClick={() => { window.localStorage.setItem(SHORTCUT_STORAGE_KEY, JSON.stringify(shortcutDrafts)); setShortcutDialogOpen(false); }}>{zh ? "完成" : "Done"}</button></footer>
+          </section>
+        </div>
+      )}
       {workspaceCreateOpen && (
         <div className="workspace-create-overlay" role="presentation" onMouseDown={() => setWorkspaceCreateOpen(false)}>
           <section
@@ -2527,6 +2579,34 @@ function highlightSearchText(text: string, rawQuery: string): React.ReactNode {
       {text.slice(matchIndex + query.length)}
     </>
   );
+}
+
+function defaultShortcutSettings(): Record<ShortcutId, string> {
+  return Object.fromEntries(SHORTCUTS.map((item) => [item.id, item.fallback])) as Record<ShortcutId, string>;
+}
+
+function loadShortcutSettings(): Record<ShortcutId, string> {
+  const defaults = defaultShortcutSettings();
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(SHORTCUT_STORAGE_KEY) || "{}") as Record<string, unknown>;
+    for (const item of SHORTCUTS) {
+      const value = parsed[item.id];
+      if (typeof value === "string" && value.trim()) defaults[item.id] = value.trim();
+    }
+  } catch {
+    // Use the shipped shortcuts when a previous preference is malformed.
+  }
+  return defaults;
+}
+
+function keyboardShortcutFromEvent(event: KeyboardEvent): string {
+  const key = event.code === "BracketLeft" ? "["
+    : event.code === "BracketRight" ? "]"
+      : event.code === "Comma" ? ","
+        : event.code === "Slash" ? "/"
+          : event.key.length === 1 ? event.key.toUpperCase() : event.key;
+  const parts = [event.ctrlKey || event.metaKey ? "Ctrl" : "", event.altKey ? "Alt" : "", event.shiftKey ? "Shift" : "", key].filter(Boolean);
+  return parts.join("+");
 }
 
 function UserAvatar({ user, fallback }: { user: AuthUser | null; fallback: string }) {

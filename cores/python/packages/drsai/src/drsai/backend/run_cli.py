@@ -29,7 +29,7 @@ from typing import Optional
 
 import typer
 
-from drsai.configs.constant import APPNAME, VERSION
+from drsai.configs.constant import VERSION
 from drsai.backend.cli import config as cli_config
 
 logger = logging.getLogger(__name__)
@@ -511,7 +511,7 @@ def sessions_cmd(
 @app.command("version")
 def version_cmd() -> None:
     """Print DrSai version."""
-    typer.echo(f"{APPNAME} version: {VERSION}")
+    typer.echo(f"version: {VERSION}")
 
 
 # ── Daemon 子命令组 ───────────────────────────────────────────────────────────

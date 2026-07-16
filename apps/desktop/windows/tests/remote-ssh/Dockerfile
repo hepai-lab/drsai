@@ -3,6 +3,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssh-server 
 RUN useradd -m -s /bin/bash vscode && mkdir -p /run/sshd /home/vscode/.ssh /home/vscode/workspace /home/vscode/workspace-two && chown -R vscode:vscode /home/vscode && chmod 700 /home/vscode/.ssh
 RUN printf 'remote fixture\n' > /home/vscode/workspace/remote.txt && chown vscode:vscode /home/vscode/workspace/remote.txt
 RUN printf 'second workspace\n' > /home/vscode/workspace-two/second.txt && chown vscode:vscode /home/vscode/workspace-two/second.txt
+RUN mkdir -p /home/vscode/workspace/nested /home/vscode/restricted && chown -R vscode:vscode /home/vscode/workspace/nested && ln -s /home/vscode/workspace /home/vscode/workspace-link && chown -h vscode:vscode /home/vscode/workspace-link && chmod 000 /home/vscode/restricted
 COPY authorized_keys /home/vscode/.ssh/authorized_keys
 COPY fixture_drsai /home/vscode/fixture_drsai
 COPY fixture_drsai /usr/local/lib/python3.11/dist-packages

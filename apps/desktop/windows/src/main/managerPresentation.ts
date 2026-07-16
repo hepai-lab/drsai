@@ -65,6 +65,7 @@ export interface ManagerPresentationGenerationOptions {
   signal?: AbortSignal;
   phaseDelayMs?: number;
   failAtPhase?: "analyzing" | "planning" | "generating" | "validating";
+  failureMessage?: string;
   isPaused?: () => boolean;
   waitUntilResumed?: () => Promise<void>;
   setActiveOperationController?: (controller: AbortController | null) => void;
@@ -157,7 +158,7 @@ export async function generateManagerPresentation(
     await new Promise<void>((done) => setTimeout(done, Math.max(0, options.phaseDelayMs ?? 0)));
     if (options.signal?.aborted) throw new ManagerPresentationCancelledError();
     await honorPause(phase);
-    if (options.failAtPhase === phase) throw new Error(`Simulated presentation failure at ${phase}.`);
+    if (options.failAtPhase === phase) throw new Error(options.failureMessage || `Simulated presentation failure at ${phase}.`);
   };
 
   let outputPath: string | undefined;

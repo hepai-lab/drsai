@@ -181,10 +181,10 @@ export function TaskCenterView({ language, workspacePath }: { language: AppLangu
 
   return <section className="task-center-view" data-testid="task-center-view">
     <header><div><h2>{zh ? "任务中心" : "Task center"}</h2><p>{zh ? "创建安排，并统一查看任务状态。" : "Create schedules and see task status in one place."}</p></div><span role="status">{loading ? (zh ? "正在更新…" : "Updating…") : (zh ? "状态已同步" : "Status synced")}</span></header>
-    {error ? <p className="task-center-error" role="alert">{error}</p> : null}
+    {error ? <p className="task-center-error" id="natural-schedule-error" role="alert">{error}</p> : null}
     <section className="natural-schedule-card" aria-label={zh ? "用一句话创建安排" : "Create a schedule in plain language"}>
       <div className="natural-schedule-heading"><h3>{zh ? "用一句话创建安排" : "Create a schedule in plain language"}</h3><p>{zh ? "例如：每周一上午九点检查这个文件夹的新数据" : "For example: Check this folder for new data every Monday at 9 AM."}</p></div>
-      <div className="natural-schedule-input-row"><input data-testid="natural-schedule-input" value={scheduleText} onChange={(event) => setScheduleText(event.target.value)} aria-label={zh ? "安排说明" : "Schedule instruction"} /><button type="button" data-testid="natural-schedule-understand" onClick={understand}>{zh ? "读懂并预览" : "Preview"}</button></div>
+      <div className="natural-schedule-input-row"><input data-testid="natural-schedule-input" value={scheduleText} onChange={(event) => setScheduleText(event.target.value)} aria-label={zh ? "安排说明" : "Schedule instruction"} aria-invalid={Boolean(error)} aria-describedby={error ? "natural-schedule-error" : undefined} /><button type="button" data-testid="natural-schedule-understand" onClick={understand}>{zh ? "读懂并预览" : "Preview"}</button></div>
       {draft ? <div className="schedule-confirmation" data-testid="schedule-confirmation"><strong>{zh ? "请确认这项安排" : "Confirm this schedule"}</strong><ScheduleDefinition definition={draft.definition} zh={zh} /><div className="schedule-confirm-actions"><button type="button" onClick={() => setDraft(null)}>{zh ? "取消" : "Cancel"}</button><button type="button" data-testid="schedule-confirm-save" disabled={busy} onClick={() => void confirm()}>{busy ? (zh ? "保存中…" : "Saving…") : (zh ? "确认并保存" : "Confirm and save")}</button></div></div> : null}
       {message ? <p className="schedule-message" role="status">{message}</p> : null}
     </section>

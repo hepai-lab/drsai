@@ -3,13 +3,17 @@ import { spawn, execFile, type ChildProcess } from "child_process";
 import { readFile, readdir, stat } from "fs/promises";
 import { homedir } from "os";
 import { basename, dirname, isAbsolute, join, resolve } from "path";
-import type { ConnectRemoteWorkspaceRequest, DesktopThread, DesktopThreadContentSearchRequest, DesktopThreadContentSearchResult, DesktopThreadSnapshot, RemoteDirectoryEntry, RemoteGatewayInstallRequest, RemoteGatewayInstallResult, RemoteGatewayOperationEvent, RemoteGatewayPreflight, RemoteHepaiWorker, RemoteSshDiagnosticReport, RemoteSshHost, RemoteWorkspaceStatus, WorkspaceCheckpoint, WorkspaceCheckpointAcceptRequest, WorkspaceCheckpointCreateRequest, WorkspaceCheckpointPreviewRequest, WorkspaceCheckpointPreviewResult, WorkspaceCheckpointRestoreRequest, WorkspaceCheckpointRestoreResult, WorkspaceContextOverview, WorkspaceFileChangeEvent, WorkspaceFilePreview, WorkspaceFilePreviewRequest, WorkspaceFileTreeRequest, WorkspaceFileTreeResult, WorkspaceFolderSummaryRequest, WorkspaceFolderSummaryResult, WorkspaceGitDiffRequest, WorkspaceGitDiffResult, WorkspaceGitFileAtRefRequest, WorkspaceGitFileAtRefResult, WorkspaceProject } from "../shared/desktopApi";
+import type { ConnectRemoteWorkspaceRequest, DesktopForkWorktreeResult, DesktopThread, DesktopThreadContentSearchRequest, DesktopThreadContentSearchResult, DesktopThreadSnapshot, RemoteDirectoryEntry, RemoteGatewayInstallRequest, RemoteGatewayInstallResult, RemoteGatewayOperationEvent, RemoteGatewayPreflight, RemoteHepaiWorker, RemoteSshConnectivityResult, RemoteSshDiagnosticReport, RemoteSshHost, RemoteSshHostKey, RemoteWorkspaceStatus, WorkspaceCheckpoint, WorkspaceCheckpointAcceptRequest, WorkspaceCheckpointCreateRequest, WorkspaceCheckpointPreviewRequest, WorkspaceCheckpointPreviewResult, WorkspaceCheckpointRestoreRequest, WorkspaceCheckpointRestoreResult, WorkspaceContextOverview, WorkspaceFileChangeEvent, WorkspaceFilePreview, WorkspaceFilePreviewRequest, WorkspaceFileTreeRequest, WorkspaceFileTreeResult, WorkspaceFileWriteRequest, WorkspaceFileWriteResult, WorkspaceFolderSummaryRequest, WorkspaceFolderSummaryResult, WorkspaceGitDiffRequest, WorkspaceGitDiffResult, WorkspaceGitFileAtRefRequest, WorkspaceGitFileAtRefResult, WorkspaceProject } from "../shared/desktopApi";
 import { createRemoteWorkspace, findWorkspaceById, listWorkspaces } from "./workspaces";
 import { RemoteGatewayClient } from "./remoteGatewayClient.generated";
 import { REMOTE_CAPABILITY_VERSIONS, REMOTE_SSH_PROTOCOL_VERSION } from "../shared/remoteSshProtocol";
+import { resolveScpExecutable, resolveSshExecutable, resolveSshKeyscanExecutable } from "./sshExecutable";
+import { ReconnectBackoff, RuntimeInstanceTracker, classifyRemoteFailure, type RemoteFailureKind } from "./runtimeReliability";
+import { loadRuntimeArtifactTrustStore, verifyRuntimeArtifactTrust } from "./runtimeArtifactTrust";
 
 const SSH_TIMEOUT_MS = 12_000;
 const REMOTE_PORT = 18642;
+const HOST_IDLE_TIMEOUT_MS = Math.max(100, Number(process.env.OPENDRSAI_REMOTE_HOST_IDLE_MS || "30000") || 30_000);
 type HostConnection = {
   tunnel: ChildProcess;
   token: string;
@@ -25,16 +29,22 @@ type HostConnection = {
   protocolVersion?: number;
   capabilities?: Record<string, number>;
   reconnectTimer?: NodeJS.Timeout;
+  idleTimer?: NodeJS.Timeout;
   createdAt: number;
   lastConnectedAt?: number;
   reconnectCount: number;
   events: Array<{ at: string; phase: string; elapsedMs?: number; message?: string }>;
   healthTimer?: NodeJS.Timeout;
   healthFailures: number;
+  failureKind?: RemoteFailureKind;
+  backoff: ReconnectBackoff;
+  instanceTracker: RuntimeInstanceTracker;
 };
 type RemoteConnection = { status: RemoteWorkspaceStatus; alias: string; path: string };
 const connections = new Map<string, RemoteConnection>();
 const hostConnections = new Map<string, HostConnection>();
+const hostConnectionFlights = new Map<string, Promise<HostConnection>>();
+const workspaceConnectionFlights = new Map<string, Promise<WorkspaceProject>>();
 const remoteThreadWorkspaces = new Map<string, string>();
 
 function recordHostEvent(host: HostConnection, phase: string, startedAt?: number, message?: string): void {
@@ -44,17 +54,17 @@ function recordHostEvent(host: HostConnection, phase: string, startedAt?: number
 
 export function getRemoteSshDiagnosticReport(): RemoteSshDiagnosticReport {
   const now = Date.now();
-  return { generatedAt: new Date(now).toISOString(), hosts: [...hostConnections.values()].map((host) => ({ hostAlias: host.alias, state: host.state, workspaceCount: host.workspaceIds.size, gatewayVersion: host.gatewayVersion, protocolVersion: host.protocolVersion, reconnectAttempts: host.retries, reconnectCount: host.reconnectCount, ageMs: now - host.createdAt, ...(host.lastConnectedAt ? { lastConnectedAt: new Date(host.lastConnectedAt).toISOString() } : {}), ...(host.error ? { error: host.error.replace(/[A-Za-z0-9_-]{32,}/g, "[redacted]") } : {}), events: host.events.map((event) => ({ ...event })) })) };
+  return { generatedAt: new Date(now).toISOString(), hosts: [...hostConnections.values()].map((host) => ({ hostAlias: host.alias, state: host.state, failureKind: host.failureKind, workspaceCount: host.workspaceIds.size, gatewayVersion: host.gatewayVersion, protocolVersion: host.protocolVersion, reconnectAttempts: host.retries, reconnectCount: host.reconnectCount, ageMs: now - host.createdAt, ...(host.lastConnectedAt ? { lastConnectedAt: new Date(host.lastConnectedAt).toISOString() } : {}), ...(host.error ? { error: host.error.replace(/[A-Za-z0-9_-]{32,}/g, "[redacted]") } : {}), events: host.events.map((event) => ({ ...event })) })) };
 }
 
 export function bindRemoteThread(threadId: string, workspaceId: string): void {
   if (threadId && connections.has(workspaceId)) remoteThreadWorkspaces.set(threadId, workspaceId);
 }
-const MAX_RECONNECT_ATTEMPTS = 5;
 let publishStatus: ((status: RemoteWorkspaceStatus) => void) | undefined;
 let publishGatewayOperation: ((event: RemoteGatewayOperationEvent) => void) | undefined;
 const activeGatewayOperations = new Map<string, { operationId: string; controller: AbortController }>();
 const remoteFileWatchers = new Map<string, WebSocket>();
+const remoteFileWatchCursors = new Map<string, number>();
 let publishFileChanges: ((event: WorkspaceFileChangeEvent) => void) | undefined;
 
 export function setRemoteWorkspaceStatusPublisher(publisher: (status: RemoteWorkspaceStatus) => void): void {
@@ -69,21 +79,28 @@ export function setRemoteFileChangePublisher(publisher: (event: WorkspaceFileCha
   publishFileChanges = publisher;
 }
 
-function ensureRemoteFileWatcher(workspacePath: string): void {
-  if (remoteFileWatchers.has(workspacePath)) return;
-  const access = getRemoteGatewayAccess(workspacePath); if (!access) return;
+function ensureRemoteFileWatcher(workspacePath: string, workspaceId?: string): void {
+  const watcherKey = workspaceId || workspacePath;
+  if (remoteFileWatchers.has(watcherKey)) return;
+  const access = getRemoteGatewayAccess(workspacePath, workspaceId); if (!access) return;
   const socket = new WebSocket(`${access.baseUrl.replace(/^http/, "ws")}/v1/workspaces/${encodeURIComponent(access.workspaceId)}/watch`);
-  remoteFileWatchers.set(workspacePath, socket);
-  socket.addEventListener("open", () => socket.send(JSON.stringify({ type: "auth", token: access.token })));
+  remoteFileWatchers.set(watcherKey, socket);
+  socket.addEventListener("open", () => socket.send(JSON.stringify({ type: "auth", token: access.token, after_sequence: remoteFileWatchCursors.get(watcherKey) ?? 0 })));
   socket.addEventListener("message", (event) => {
     try {
-      const message = JSON.parse(String(event.data)) as { type?: string; changes?: WorkspaceFileChangeEvent["changes"] };
-      if (message.type === "changes" && Array.isArray(message.changes)) publishFileChanges?.({ workspacePath, changes: message.changes });
+      const message = JSON.parse(String(event.data)) as { type?: string; sequence?: number; changes?: Array<WorkspaceFileChangeEvent["changes"][number] & { sequence?: number }> };
+      if (message.type === "changes" && Array.isArray(message.changes)) {
+        const cursor = remoteFileWatchCursors.get(watcherKey) ?? 0;
+        const fresh = message.changes.filter((change) => typeof change.sequence !== "number" || change.sequence > cursor);
+        const next = Math.max(cursor, typeof message.sequence === "number" ? message.sequence : cursor, ...fresh.map((change) => typeof change.sequence === "number" ? change.sequence : cursor));
+        remoteFileWatchCursors.set(watcherKey, next);
+        if (fresh.length) publishFileChanges?.({ workspacePath, changes: fresh });
+      }
     } catch { /* ignore malformed remote events */ }
   });
   socket.addEventListener("close", () => {
-    if (remoteFileWatchers.get(workspacePath) === socket) remoteFileWatchers.delete(workspacePath);
-    if (getRemoteGatewayAccess(workspacePath)) setTimeout(() => ensureRemoteFileWatcher(workspacePath), 1_000);
+    if (remoteFileWatchers.get(watcherKey) === socket) remoteFileWatchers.delete(watcherKey);
+    if (getRemoteGatewayAccess(workspacePath, workspaceId)) setTimeout(() => ensureRemoteFileWatcher(workspacePath, workspaceId), 1_000);
   });
 }
 
@@ -144,6 +161,20 @@ function sshConfigArgs(): string[] {
   return ["-F", configured];
 }
 
+function remotePythonCommand(): string {
+  const configured = process.env.OPENDRSAI_REMOTE_PYTHON?.trim();
+  if (!configured) return "python3";
+  if (
+    configured.length > 4096 ||
+    !configured.startsWith("/") ||
+    !/^\/[A-Za-z0-9._/+~-]+$/.test(configured) ||
+    configured.split("/").includes("..")
+  ) {
+    throw new Error("Remote Python path must be an absolute POSIX path without shell metacharacters.");
+  }
+  return configured;
+}
+
 export async function listSshHosts(): Promise<RemoteSshHost[]> {
   const rootConfig = process.env.OPENDRSAI_SSH_CONFIG?.trim() || join(homedir(), ".ssh", "config");
   const sources = await readSshConfigSources(rootConfig);
@@ -159,13 +190,15 @@ export async function listSshHosts(): Promise<RemoteSshHost[]> {
   const hosts: RemoteSshHost[] = [];
   for (const alias of aliases) {
     try {
-      const resolved = await exec("ssh.exe", [...sshConfigArgs(), "-G", alias], 5000);
-      const values = new Map(resolved.split(/\r?\n/).map((line) => {
+      const resolved = await exec(resolveSshExecutable(), [...sshConfigArgs(), "-G", alias], 5000);
+      const resolvedLines = resolved.split(/\r?\n/);
+      const values = new Map(resolvedLines.map((line) => {
         const index = line.indexOf(" ");
         return index > 0 ? [line.slice(0, index), line.slice(index + 1)] : ["", ""];
       }));
-      hosts.push({ alias, hostname: values.get("hostname") || alias, user: values.get("user") || undefined, port: Number(values.get("port") || 22), proxyJump: values.get("proxyjump") !== "none" ? values.get("proxyjump") : undefined });
-    } catch { hosts.push({ alias, hostname: alias, port: 22 }); }
+      const identityFiles = resolvedLines.filter((line) => line.startsWith("identityfile ")).map((line) => line.slice("identityfile ".length));
+      hosts.push({ alias, hostname: values.get("hostname") || alias, user: values.get("user") || undefined, port: Number(values.get("port") || 22), identityFiles, proxyJump: values.get("proxyjump") !== "none" ? values.get("proxyjump") : undefined });
+    } catch { hosts.push({ alias, hostname: alias, port: 22, identityFiles: [] }); }
   }
   return hosts.sort((a, b) => a.alias.localeCompare(b.alias));
 }
@@ -190,14 +223,78 @@ async function readSshConfigSources(rootPath: string): Promise<string[]> {
 }
 
 export async function testSshHost(hostAlias: string): Promise<boolean> {
-  try { await exec("ssh.exe", [...sshArgs(hostAlias), "printf", "opendrsai-ok"]); return true; } catch { return false; }
+  return (await diagnoseSshHost(hostAlias)).state === "reachable";
+}
+
+export async function diagnoseSshHost(hostAlias: string, timeoutMs = SSH_TIMEOUT_MS): Promise<RemoteSshConnectivityResult> {
+  const alias = assertAlias(hostAlias);
+  const startedAt = Date.now();
+  try {
+    await exec(resolveSshExecutable(), [...sshArgs(alias), "printf", "opendrsai-ok"], timeoutMs);
+    return { hostAlias: alias, state: "reachable", elapsedMs: Date.now() - startedAt };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const normalized = message.toLowerCase();
+    const elapsedMs = Date.now() - startedAt;
+    const state: RemoteSshConnectivityResult["state"] =
+      /host key verification failed|remote host identification has changed|no .* host key is known/.test(normalized) ? "host_key_failed" :
+      /permission denied|authentication failed|no supported authentication/.test(normalized) ? "authentication_failed" :
+      /could not resolve hostname|name or service not known|temporary failure in name resolution/.test(normalized) ? "dns_failed" :
+      /timed out|etimeout|connection timeout|operation timed out/.test(normalized) ? "timeout" :
+      /connection refused|no route to host|network is unreachable/.test(normalized) ? "unreachable" :
+      elapsedMs >= Math.max(100, timeoutMs - 100) ? "timeout" : "failed";
+    const remediation = state === "authentication_failed"
+      ? "Load an SSH key into the Windows system ssh-agent, attach your hardware security key, or run ssh interactively to complete authentication, then retry."
+      : undefined;
+    return { hostAlias: alias, state, elapsedMs, message, remediation };
+  }
 }
 
 export async function approveSshHostKey(hostAlias: string): Promise<boolean> {
   try {
-    await exec("ssh.exe", [...sshConfigArgs(), "-o", "StrictHostKeyChecking=accept-new", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", assertAlias(hostAlias), "printf", "opendrsai-ok"]);
+    await exec(resolveSshExecutable(), [...sshConfigArgs(), "-o", "StrictHostKeyChecking=accept-new", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", assertAlias(hostAlias), "printf", "opendrsai-ok"]);
     return true;
   } catch { return false; }
+}
+
+export async function inspectSshHostKeys(hostAlias: string): Promise<RemoteSshHostKey[]> {
+  const alias = assertAlias(hostAlias);
+  const resolved = await exec(resolveSshExecutable(), [...sshConfigArgs(), "-G", alias], 5_000);
+  const values = new Map(resolved.split(/\r?\n/).map((line) => {
+    const index = line.indexOf(" ");
+    return index > 0 ? [line.slice(0, index), line.slice(index + 1)] : ["", ""];
+  }));
+  const hostname = values.get("hostname") || alias;
+  const port = Number(values.get("port") || 22);
+  let output = "";
+  try {
+    output = await exec(resolveSshKeyscanExecutable(), ["-T", "5", "-p", String(port), hostname], 8_000);
+  } catch {
+    // Some older Windows ssh-keyscan builds cannot negotiate with newer
+    // OpenSSH servers. The signed ssh client still reports the offered key's
+    // SHA-256 fingerprint before refusing an untrusted first connection.
+  }
+  const keys: RemoteSshHostKey[] = [];
+  for (const line of output.split(/\r?\n/)) {
+    if (!line || line.startsWith("#")) continue;
+    const [, algorithm, encoded] = line.trim().split(/\s+/);
+    if (!algorithm || !encoded) continue;
+    const fingerprint = `SHA256:${createHash("sha256").update(Buffer.from(encoded, "base64")).digest("base64").replace(/=+$/, "")}`;
+    keys.push({ hostAlias: alias, hostname, port, algorithm, fingerprint });
+  }
+  if (keys.length === 0) {
+    try {
+      await exec(resolveSshExecutable(), [...sshConfigArgs(), "-vv", "-o", "StrictHostKeyChecking=ask", "-o", "UserKnownHostsFile=NUL", "-o", "BatchMode=yes", alias, "true"], 8_000);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const debugMatch = message.match(/Server host key:\s+(\S+)\s+(SHA256:[A-Za-z0-9+/]+)/i);
+      const promptMatch = message.match(/([A-Z0-9-]+) key fingerprint is (SHA256:[A-Za-z0-9+/]+)/i);
+      if (debugMatch) keys.push({ hostAlias: alias, hostname, port, algorithm: debugMatch[1], fingerprint: debugMatch[2] });
+      else if (promptMatch) keys.push({ hostAlias: alias, hostname, port, algorithm: `ssh-${promptMatch[1].toLowerCase()}`, fingerprint: promptMatch[2] });
+    }
+  }
+  if (keys.length === 0) throw new Error("Remote computer did not provide a host key.");
+  return keys;
 }
 
 export async function listRemoteDirectories(hostAlias: string, rawPath = "~"): Promise<RemoteDirectoryEntry[]> {
@@ -212,7 +309,7 @@ for e in os.scandir(p):
         st=e.stat(follow_symlinks=False)
         rows.append({"name":e.name,"path":os.path.realpath(e.path),"directory":True,"readable":os.access(e.path,os.R_OK|os.X_OK),"writable":os.access(e.path,os.W_OK),"mode":oct(st.st_mode & 0o777)})
 print(json.dumps(sorted(rows,key=lambda x:x["name"].lower())))`;
-  const output = await execWithInput("ssh.exe", [...sshArgs(alias), "python3", "-"], script);
+  const output = await execWithInput(resolveSshExecutable(), [...sshArgs(alias), remotePythonCommand(), "-"], script);
   const parsed = JSON.parse(output);
   if (!Array.isArray(parsed)) throw new Error("Remote directory response is invalid.");
   return parsed;
@@ -225,7 +322,7 @@ async function canonicalRemotePath(alias: string, path: string): Promise<string>
 p=os.path.realpath(os.path.expanduser(base64.b64decode("${payload}").decode()))
 if not os.path.isdir(p): raise SystemExit("not a directory")
 print(p)`;
-  return execWithInput("ssh.exe", [...sshArgs(alias), "python3", "-"], script);
+  return execWithInput(resolveSshExecutable(), [...sshArgs(alias), remotePythonCommand(), "-"], script);
 }
 
 export async function preflightRemoteGateway(hostAlias: string): Promise<RemoteGatewayPreflight> {
@@ -244,8 +341,19 @@ if managed.exists():
 else:
  try: version=importlib.metadata.version("drsai")
  except importlib.metadata.PackageNotFoundError: version=None
-print(json.dumps({"pythonVersion":platform.python_version(),"gatewayInstalled":version is not None,"gatewayVersion":version,"currentRelease":link("current"),"previousRelease":link("previous")}))`;
-  const result = JSON.parse(await execWithInput("ssh.exe", [...sshArgs(alias), "python3", "-"], script)) as Omit<RemoteGatewayPreflight, "hostAlias">;
+py=tuple(int(part) for part in platform.python_version_tuple()[:2]); os_name=platform.system(); arch=platform.machine(); issues=[]
+if os_name!="Linux": issues.append("Remote Runtime V1 requires Linux")
+if py<(3,11): issues.append("Python 3.11 or newer is required")
+print(json.dumps({"operatingSystem":os_name,"architecture":arch,"pythonVersion":platform.python_version(),"compatible":not issues,"issues":issues,"installationHint":"Install python3, python3-venv, git and OpenSSH server." if issues else None,"gatewayInstalled":version is not None,"gatewayVersion":version,"currentRelease":link("current"),"previousRelease":link("previous")}))`;
+  let output: string;
+  try {
+    output = await execWithInput(resolveSshExecutable(), [...sshArgs(alias), remotePythonCommand(), "-"], script);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/python.*(not found|not recognized)|command not found/i.test(message)) throw new Error("Remote computer requires Python 3.11 or newer. Install python3 and python3-venv before retrying.");
+    throw error;
+  }
+  const result = JSON.parse(output) as Omit<RemoteGatewayPreflight, "hostAlias">;
   return { hostAlias: alias, ...result };
 }
 
@@ -281,19 +389,29 @@ async function performRemoteGatewayInstall(request: RemoteGatewayInstallRequest,
     const artifactPath = request.artifactPath?.trim();
     if (!artifactPath || !/\.(whl|tar\.gz)$/i.test(artifactPath) || /[\r\n\0]/.test(artifactPath)) throw new Error("A local wheel or source archive is required.");
     const details = await stat(artifactPath); if (!details.isFile() || details.size > 1024 * 1024 * 1024) throw new Error("Gateway artifact is invalid or too large.");
-    artifactSha256 = createHash("sha256").update(await readFile(artifactPath)).digest("hex");
-    if (request.artifactSha256 && request.artifactSha256.toLowerCase() !== artifactSha256) throw new Error("Gateway artifact SHA-256 does not match.");
+    const artifact = await readFile(artifactPath);
+    const trustedPublishers = await loadRuntimeArtifactTrustStore();
+    const verified = verifyRuntimeArtifactTrust(artifact, {
+      version: version!,
+      expectedSha256: request.artifactSha256,
+      publisher: request.artifactPublisher || "",
+      signature: request.artifactSignature || "",
+    }, trustedPublishers);
+    artifactSha256 = verified.sha256;
     artifactName = basename(artifactPath);
     if (!/^[A-Za-z0-9_.+-]{1,200}$/.test(artifactName)) throw new Error("Gateway artifact filename is invalid.");
-    await execWithInput("ssh.exe", [...sshArgs(alias), "python3", "-"], `import pathlib\np=pathlib.Path.home()/".local"/"share"/"opendrsai"/"remote"/"incoming"\np.mkdir(parents=True,exist_ok=True)\n`, SSH_TIMEOUT_MS, signal);
+    await execWithInput(resolveSshExecutable(), [...sshArgs(alias), remotePythonCommand(), "-"], `import pathlib\np=pathlib.Path.home()/".local"/"share"/"opendrsai"/"remote"/"incoming"\np.mkdir(parents=True,exist_ok=True)\n`, SSH_TIMEOUT_MS, signal);
     emit("uploading", 20, "Uploading the verified artifact through SCP.");
-    await exec("scp.exe", [...sshConfigArgs(), "-q", artifactPath, `${alias}:.local/share/opendrsai/remote/incoming/${artifactName}`], 180_000, signal);
+    await exec(resolveScpExecutable(), [...sshConfigArgs(), "-q", artifactPath, `${alias}:.local/share/opendrsai/remote/incoming/${artifactName}`], 180_000, signal);
   }
   emit(request.action === "rollback" ? "switching" : "installing", request.action === "rollback" ? 60 : 40, request.action === "rollback" ? "Preparing an atomic release rollback." : "Creating an isolated candidate release.");
   const data = Buffer.from(JSON.stringify({ action: request.action, version, artifactName, artifactSha256, protocolVersion: REMOTE_SSH_PROTOCOL_VERSION }), "utf8").toString("base64");
-  const script = `import base64,json,os,pathlib,subprocess,sys,shutil,socket,time,uuid
+  const script = `import base64,fcntl,json,os,pathlib,subprocess,sys,shutil,socket,time,uuid
 cfg=json.loads(base64.b64decode("${data}")); home=pathlib.Path.home()/".local"/"share"/"opendrsai"/"remote"; releases=home/"releases"
 releases.mkdir(parents=True,exist_ok=True); current=home/"current"; previous=home/"previous"
+lock=(home/"install.lock").open("a+")
+try: fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+except BlockingIOError: raise SystemExit("Another Remote Runtime installation transaction is active.")
 def swap(link,target):
  tmp=link.with_name(link.name+".tmp")
  try: tmp.unlink()
@@ -311,9 +429,9 @@ else:
   import hashlib
   if hashlib.sha256(artifact.read_bytes()).hexdigest()!=cfg["artifactSha256"]: raise SystemExit("Artifact SHA-256 mismatch")
   try:
-   subprocess.run([sys.executable,"-m","venv","--system-site-packages",str(staging)],check=True)
+   subprocess.run([sys.executable,"-m","venv",str(staging)],check=True)
    py=staging/("Scripts/python.exe" if os.name=="nt" else "bin/python")
-   subprocess.run([str(py),"-m","pip","install","--disable-pip-version-check","--no-deps",str(artifact)],check=True)
+   subprocess.run([str(py),"-m","pip","install","--disable-pip-version-check",str(artifact)],check=True)
    subprocess.run([str(py),"-c",f'import drsai.backend.gateway as g; assert getattr(g,"_REMOTE_PROTOCOL_VERSION",None)=={cfg["protocolVersion"]}'],check=True)
    probe=socket.socket(); probe.bind(("127.0.0.1",0)); port=probe.getsockname()[1]; probe.close()
    env=os.environ.copy(); env.update({"DRSAI_API_HOST":"127.0.0.1","DRSAI_API_PORT":str(port),"OPENDRSAI_GATEWAY_INSTANCE_TOKEN":uuid.uuid4().hex})
@@ -337,7 +455,7 @@ else:
   artifact.unlink(missing_ok=True)
 print("ok")`;
   emit("health-check", 75, "Verifying protocol compatibility and candidate Gateway startup.");
-  await execWithInput("ssh.exe", [...sshArgs(alias), "python3", "-"], script, 180_000, signal);
+  await execWithInput(resolveSshExecutable(), [...sshArgs(alias), remotePythonCommand(), "-"], script, 180_000, signal);
   emit("switching", 92, "Candidate is healthy; reading the atomically switched release state.");
   return { ...(await preflightRemoteGateway(alias)), changed: true, action: request.action };
 }
@@ -346,18 +464,32 @@ function makeWorkspaceId(alias: string, path: string): string {
   return `ssh-${createHash("sha256").update(`${alias}\\0${path}`).digest("hex").slice(0, 24)}`;
 }
 
-async function startRemoteGateway(alias: string, path: string, token: string): Promise<void> {
-  const data = Buffer.from(JSON.stringify({ path, token, port: REMOTE_PORT }), "utf8").toString("base64");
-  const script = `import base64,json,os,pathlib,subprocess,sys
+async function startRemoteGateway(alias: string, path: string, token: string, generation: number): Promise<void> {
+  const data = Buffer.from(JSON.stringify({ path, token, port: REMOTE_PORT, generation }), "utf8").toString("base64");
+  const script = `import base64,fcntl,json,os,pathlib,subprocess,sys
 cfg=json.loads(base64.b64decode("${data}"))
 home=pathlib.Path.home()/".local"/"share"/"opendrsai"/"remote"
 home.mkdir(parents=True,exist_ok=True)
+startlock=open(home/"gateway.start.lock","a+")
+fcntl.flock(startlock,fcntl.LOCK_EX)
+generationfile=home/"gateway.generation"
+try: latest=int(generationfile.read_text().strip())
+except (ValueError,FileNotFoundError): latest=0
+if int(cfg["generation"])<latest:
+ print("superseded"); sys.exit(0)
+generationfile.write_text(str(int(cfg["generation"])))
 pidfile=home/"gateway.pid"
 if pidfile.exists():
  try:
   old=int(pidfile.read_text().strip())
   os.kill(old,15)
-  import time; time.sleep(.2)
+  import time
+  for _ in range(50):
+   try: os.kill(old,0)
+   except ProcessLookupError: break
+   time.sleep(.1)
+  else:
+   os.kill(old,9); time.sleep(.2)
  except (ValueError,ProcessLookupError,PermissionError): pass
 log=open(home/"gateway.log","ab",buffering=0)
 env=os.environ.copy()
@@ -367,11 +499,11 @@ python=str(managed) if managed.exists() else sys.executable
 p=subprocess.Popen([python,"-m","drsai.backend.gateway"],cwd=cfg["path"],env=env,stdin=subprocess.DEVNULL,stdout=log,stderr=log,start_new_session=True)
 pidfile.write_text(str(p.pid))
 print("started")`;
-  await execWithInput("ssh.exe", [...sshArgs(alias), "python3", "-"], script, 20_000);
+  await execWithInput(resolveSshExecutable(), [...sshArgs(alias), remotePythonCommand(), "-"], script, 20_000);
 }
 
 function openTunnel(alias: string, localPort: number): ChildProcess {
-  return spawn("ssh.exe", [...sshConfigArgs(),"-o","BatchMode=yes","-o","ExitOnForwardFailure=yes","-o","ServerAliveInterval=5","-o","ServerAliveCountMax=2","-N","-L",`127.0.0.1:${localPort}:127.0.0.1:${REMOTE_PORT}`,assertAlias(alias)], { windowsHide: true, stdio: ["ignore", "ignore", "pipe"] });
+  return spawn(resolveSshExecutable(), [...sshConfigArgs(),"-o","BatchMode=yes","-o","ExitOnForwardFailure=yes","-o","ServerAliveInterval=5","-o","ServerAliveCountMax=2","-N","-L",`127.0.0.1:${localPort}:127.0.0.1:${REMOTE_PORT}`,assertAlias(alias)], { windowsHide: true, stdio: ["ignore", "ignore", "pipe"] });
 }
 
 async function availablePort(): Promise<number> {
@@ -390,57 +522,91 @@ async function availablePort(): Promise<number> {
 export async function connectRemoteWorkspace(request: ConnectRemoteWorkspaceRequest): Promise<WorkspaceProject> {
   const alias = assertAlias(request.hostAlias);
   const path = await canonicalRemotePath(alias, request.path);
-  const id = makeWorkspaceId(alias, path);
-  const previous = connections.get(id);
-  if (previous) await disconnectRemoteWorkspace(id);
-  const status: RemoteWorkspaceStatus = { hostAlias: alias, canonicalPath: path, workspaceId: id, connectionState: "connecting", connected: false, gatewayReady: false };
-  connections.set(id, { status, alias, path });
+  const flightKey = `${alias}\0${path}`;
+  const inFlight = workspaceConnectionFlights.get(flightKey);
+  if (inFlight) return inFlight;
+  const flight = (async (): Promise<WorkspaceProject> => {
+    const previous = [...connections.entries()].find(([, item]) => item.alias === alias && item.path === path);
+    if (previous) await disconnectRemoteWorkspace(previous[0]);
+    try {
+      const host = await getOrCreateHostConnection(alias, path);
+      const registration = await registerWorkspace(host, path);
+      const id = registration.workspaceId;
+      const canonicalPath = registration.path;
+      const status: RemoteWorkspaceStatus = { hostAlias: alias, canonicalPath, workspaceId: id, runtimeId: host.instanceTracker.runtimeId, instanceId: host.instanceTracker.instanceId, connectionState: "connecting", connected: false, gatewayReady: false };
+      connections.set(id, { status, alias, path: canonicalPath });
+      host.workspaceIds.add(id);
+      status.localPort = host.localPort;
+      status.gatewayVersion = host.gatewayVersion;
+      status.protocolVersion = host.protocolVersion;
+      status.capabilities = host.capabilities;
+      status.connected = true; status.gatewayReady = true; status.connectionState = "connected";
+      emitWorkspaceStatus(status);
+    } catch (error) {
+      const failed = [...connections.entries()].find(([, item]) => item.alias === alias && item.path === path);
+      if (failed) connections.delete(failed[0]);
+      throw error;
+    }
+    const connected = [...connections.entries()].find(([, item]) => item.alias === alias && item.path === path);
+    if (!connected) throw new Error("Remote workspace registration did not produce a connection.");
+    return createRemoteWorkspace({ id: connected[0], name: request.name, path: connected[1].path, trusted: request.trusted, remote: connected[1].status });
+  })();
+  workspaceConnectionFlights.set(flightKey, flight);
   try {
-    const host = await getOrCreateHostConnection(alias, path);
-    host.workspaceIds.add(id);
-    await registerWorkspace(host, id, path);
-    status.localPort = host.localPort;
-    status.gatewayVersion = host.gatewayVersion;
-    status.protocolVersion = host.protocolVersion;
-    status.capabilities = host.capabilities;
-    status.connected = true; status.gatewayReady = true; status.connectionState = "connected";
-    emitWorkspaceStatus(status);
-  } catch (error) {
-    connections.delete(id);
-    throw error;
+    return await flight;
+  } finally {
+    if (workspaceConnectionFlights.get(flightKey) === flight) workspaceConnectionFlights.delete(flightKey);
   }
-  return createRemoteWorkspace({ id, name: request.name, path, trusted: request.trusted, remote: status });
 }
 
 async function getOrCreateHostConnection(alias: string, bootstrapPath: string): Promise<HostConnection> {
   const active = hostConnections.get(alias);
-  if (active && active.state === "connected" && active.tunnel.exitCode === null) return active;
-  if (active) closeHostConnection(active);
-  const localPort = await availablePort();
-  const host: HostConnection = { tunnel: openTunnel(alias, localPort), token: randomBytes(32).toString("base64url"), alias, bootstrapPath, localPort, retries: 0, intentionalClose: false, state: "connecting", workspaceIds: new Set(), createdAt: Date.now(), reconnectCount: 0, events: [], healthFailures: 0 };
-  recordHostEvent(host, "tunnel.connecting");
-  hostConnections.set(alias, host);
-  attachTunnelLifecycle(host);
+  if (active && active.state === "connected" && active.tunnel.exitCode === null) {
+    if (active.idleTimer) clearTimeout(active.idleTimer);
+    active.idleTimer = undefined;
+    return active;
+  }
+  const inFlight = hostConnectionFlights.get(alias);
+  if (inFlight) return inFlight;
+  const flight = (async (): Promise<HostConnection> => {
+    const stale = hostConnections.get(alias);
+    if (stale && stale.state === "connected" && stale.tunnel.exitCode === null) return stale;
+    if (stale) closeHostConnection(stale);
+    const localPort = await availablePort();
+    const host: HostConnection = { tunnel: openTunnel(alias, localPort), token: randomBytes(32).toString("base64url"), alias, bootstrapPath, localPort, retries: 0, intentionalClose: false, state: "connecting", workspaceIds: new Set(), createdAt: Date.now(), reconnectCount: 0, events: [], healthFailures: 0, backoff: new ReconnectBackoff(), instanceTracker: new RuntimeInstanceTracker() };
+    recordHostEvent(host, "tunnel.connecting");
+    hostConnections.set(alias, host);
+    attachTunnelLifecycle(host);
+    try {
+      await startRemoteGateway(alias, bootstrapPath, host.token, host.createdAt);
+      await waitForGateway(host);
+      host.state = "connected"; host.lastConnectedAt = Date.now();
+      recordHostEvent(host, "gateway.connected", host.createdAt);
+      startHostHealthMonitor(host);
+      return host;
+    } catch (error) {
+      if (hostConnections.get(alias) === host) hostConnections.delete(alias);
+      closeHostConnection(host);
+      throw error;
+    }
+  })();
+  hostConnectionFlights.set(alias, flight);
   try {
-    await startRemoteGateway(alias, bootstrapPath, host.token);
-    await waitForGateway(host);
-    host.state = "connected"; host.lastConnectedAt = Date.now();
-    recordHostEvent(host, "gateway.connected", host.createdAt);
-    startHostHealthMonitor(host);
-    return host;
-  } catch (error) {
-    if (hostConnections.get(alias) === host) hostConnections.delete(alias);
-    closeHostConnection(host);
-    throw error;
+    return await flight;
+  } finally {
+    if (hostConnectionFlights.get(alias) === flight) hostConnectionFlights.delete(alias);
   }
 }
 
 async function waitForGateway(host: HostConnection): Promise<void> {
-  const baseUrl = `http://127.0.0.1:${host.localPort}`;
   let ready = false;
-  for (let attempt = 0; attempt < 30; attempt += 1) {
-    if (host.tunnel.exitCode !== null) break;
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    if (host.tunnel.exitCode !== null) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      continue;
+    }
     try {
+      const baseUrl = `http://127.0.0.1:${host.localPort}`;
       const handshake = await fetch(`${baseUrl}/v1/remote/handshake`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-OpenDrSai-Gateway-Token": host.token },
@@ -448,8 +614,13 @@ async function waitForGateway(host: HostConnection): Promise<void> {
         signal: AbortSignal.timeout(1200),
       });
       if (handshake.ok) {
-        const payload = await handshake.json() as { protocol_version?: number; gateway_version?: string; capabilities?: string[]; capability_versions?: Record<string, number> };
+        const payload = await handshake.json() as { runtime_id?: string; instance_id?: string; protocol_version?: number; gateway_version?: string; capabilities?: string[]; capability_versions?: Record<string, number> };
         if (payload.protocol_version !== 1) throw new Error("Remote Gateway protocol is incompatible.");
+        const instanceState = host.instanceTracker.observe(payload.runtime_id, payload.instance_id);
+        if (instanceState === "restarted") {
+          host.protocolVersion = undefined; host.gatewayVersion = undefined; host.capabilities = undefined;
+          recordHostEvent(host, "runtime.instance-changed", undefined, `generation=${host.instanceTracker.generation}`);
+        }
         host.protocolVersion = payload.protocol_version;
         host.gatewayVersion = payload.gateway_version;
         host.capabilities = payload.capability_versions || Object.fromEntries((payload.capabilities || []).map((name) => [name, 1]));
@@ -466,14 +637,27 @@ async function waitForGateway(host: HostConnection): Promise<void> {
   }
 }
 
-async function registerWorkspace(host: HostConnection, workspaceId: string, path: string): Promise<void> {
-  const response = await fetch(`http://127.0.0.1:${host.localPort}/v1/workspaces/open`, {
+async function registerWorkspace(host: HostConnection, path: string, expectedWorkspaceId?: string): Promise<{ workspaceId: string; path: string }> {
+  let response = await fetch(`http://127.0.0.1:${host.localPort}/v1/workspaces`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-OpenDrSai-Gateway-Token": host.token },
-    body: JSON.stringify({ workspace_id: workspaceId, path }),
+    body: JSON.stringify({ path }),
     signal: AbortSignal.timeout(5000),
   });
+  if (response.status === 404) {
+    const legacyWorkspaceId = expectedWorkspaceId || makeWorkspaceId(host.alias, path);
+    response = await fetch(`http://127.0.0.1:${host.localPort}/v1/workspaces/open`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-OpenDrSai-Gateway-Token": host.token },
+      body: JSON.stringify({ workspace_id: legacyWorkspaceId, path }),
+      signal: AbortSignal.timeout(5000),
+    });
+  }
   if (!response.ok) throw new Error(`Remote workspace registration failed (${response.status}).`);
+  const payload = await response.json() as { workspace_id?: string; path?: string };
+  if (!payload.workspace_id || !payload.path) throw new Error("Remote workspace registration response is invalid.");
+  if (expectedWorkspaceId && payload.workspace_id !== expectedWorkspaceId) throw new Error("Runtime workspace identity changed unexpectedly.");
+  return { workspaceId: payload.workspace_id, path: payload.path };
 }
 
 function attachTunnelLifecycle(host: HostConnection): void {
@@ -482,6 +666,7 @@ function attachTunnelLifecycle(host: HostConnection): void {
     if (host.healthTimer) clearInterval(host.healthTimer);
     host.healthTimer = undefined;
     host.state = "reconnecting";
+    host.failureKind ??= "ssh";
     host.error = `SSH tunnel exited (${code ?? "unknown"}).`;
     updateHostWorkspaceStatuses(host);
     scheduleReconnect(host);
@@ -492,39 +677,46 @@ function updateHostWorkspaceStatuses(host: HostConnection): void {
   for (const workspaceId of host.workspaceIds) {
     const workspace = connections.get(workspaceId);
     if (!workspace) continue;
-    workspace.status = { ...workspace.status, localPort: host.localPort, gatewayVersion: host.gatewayVersion, protocolVersion: host.protocolVersion, capabilities: host.capabilities, connected: host.state === "connected", gatewayReady: host.state === "connected", connectionState: host.state, error: host.error };
+    workspace.status = { ...workspace.status, localPort: host.localPort, gatewayVersion: host.gatewayVersion, protocolVersion: host.protocolVersion, capabilities: host.capabilities, connected: host.state === "connected", gatewayReady: host.state === "connected", connectionState: host.state, error: host.error, failureKind: host.failureKind };
     emitWorkspaceStatus(workspace.status);
   }
 }
 
 function scheduleReconnect(host: HostConnection): void {
-  if (host.retries >= MAX_RECONNECT_ATTEMPTS) {
+  const next = host.backoff.next();
+  if (next.exhausted) {
     host.state = "failed";
     host.error = "Remote SSH reconnect attempts were exhausted.";
     recordHostEvent(host, "reconnect.exhausted", undefined, host.error);
     updateHostWorkspaceStatuses(host);
     return;
   }
-  const delay = Math.min(1000 * 2 ** host.retries, 16_000);
-  host.retries += 1;
+  const delay = next.delayMs;
+  host.retries = next.attempt;
   recordHostEvent(host, "reconnect.scheduled", undefined, `attempt=${host.retries} delayMs=${delay}`);
   host.reconnectTimer = setTimeout(async () => {
     if (hostConnections.get(host.alias) !== host || host.intentionalClose) return;
     try {
       host.localPort = await availablePort();
       host.token = randomBytes(32).toString("base64url");
-      await startRemoteGateway(host.alias, host.bootstrapPath, host.token);
+      await startRemoteGateway(host.alias, host.bootstrapPath, host.token, host.createdAt);
+      if (hostConnections.get(host.alias) !== host || host.intentionalClose) return;
       host.tunnel = openTunnel(host.alias, host.localPort);
       attachTunnelLifecycle(host);
       await waitForGateway(host);
+      if (hostConnections.get(host.alias) !== host || host.intentionalClose) return;
       for (const workspaceId of host.workspaceIds) {
         const workspace = connections.get(workspaceId);
-        if (workspace) await registerWorkspace(host, workspaceId, workspace.path);
+        if (workspace) await registerWorkspace(host, workspace.path, workspaceId);
       }
-      host.reconnectCount += 1; host.retries = 0; host.state = "connected"; host.error = undefined; host.lastConnectedAt = Date.now();
+      host.reconnectCount += 1; host.retries = 0; host.backoff.reset(); host.state = "connected"; host.error = undefined; host.failureKind = undefined; host.lastConnectedAt = Date.now();
       recordHostEvent(host, "reconnect.connected");
       startHostHealthMonitor(host);
       updateHostWorkspaceStatuses(host);
+      for (const workspaceId of host.workspaceIds) {
+        const workspace = connections.get(workspaceId);
+        if (workspace) ensureRemoteFileWatcher(workspace.path);
+      }
     } catch (error) {
       host.error = error instanceof Error ? error.message : String(error);
       recordHostEvent(host, "reconnect.failed", undefined, host.error);
@@ -536,15 +728,29 @@ function scheduleReconnect(host: HostConnection): void {
 export async function disconnectRemoteWorkspace(id: string): Promise<boolean> {
   const item = connections.get(id);
   if (!item) return false;
+  const activeHost = hostConnections.get(item.alias);
+  if (activeHost?.state === "connected") {
+    await fetch(`http://127.0.0.1:${activeHost.localPort}/v1/workspaces/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      headers: { "X-OpenDrSai-Gateway-Token": activeHost.token },
+      signal: AbortSignal.timeout(5000),
+    }).catch(() => undefined);
+  }
   connections.delete(id);
   const watcher = remoteFileWatchers.get(item.path); remoteFileWatchers.delete(item.path); watcher?.close();
+  remoteFileWatchCursors.delete(item.path);
   emitWorkspaceStatus({ ...item.status, connected: false, gatewayReady: false, connectionState: "disconnected", localPort: undefined });
   const host = hostConnections.get(item.alias);
   if (host) {
     host.workspaceIds.delete(id);
     if (host.workspaceIds.size === 0) {
-      hostConnections.delete(item.alias);
-      closeHostConnection(host);
+      if (host.idleTimer) clearTimeout(host.idleTimer);
+      host.idleTimer = setTimeout(() => {
+        if (hostConnections.get(item.alias) !== host || host.workspaceIds.size > 0) return;
+        hostConnections.delete(item.alias);
+        closeHostConnection(host);
+      }, HOST_IDLE_TIMEOUT_MS);
+      host.idleTimer.unref();
     }
   }
   return true;
@@ -552,7 +758,8 @@ export async function disconnectRemoteWorkspace(id: string): Promise<boolean> {
 
 export async function restorePersistedRemoteWorkspaces(): Promise<void> {
   for (const workspace of await listWorkspaces()) {
-    if (workspace.type !== "remote-ssh" || !workspace.remote || connections.has(workspace.id)) continue;
+    if (workspace.location !== "remote" || workspace.transport !== "ssh" || !workspace.remote || connections.has(workspace.id)) continue;
+    if ([...connections.values()].some((connection) => connection.alias === workspace.remote!.hostAlias && connection.path === workspace.remote!.canonicalPath)) continue;
     void connectRemoteWorkspace({ hostAlias: workspace.remote.hostAlias, path: workspace.remote.canonicalPath, name: workspace.name, trusted: workspace.trusted }).catch((error) => {
       emitWorkspaceStatus({ ...workspace.remote!, connected: false, gatewayReady: false, connectionState: "failed", error: error instanceof Error ? error.message : String(error) });
     });
@@ -563,6 +770,8 @@ function closeHostConnection(host: HostConnection): void {
   host.intentionalClose = true;
   if (host.reconnectTimer) clearTimeout(host.reconnectTimer);
   if (host.healthTimer) clearInterval(host.healthTimer);
+  if (host.idleTimer) clearTimeout(host.idleTimer);
+  host.idleTimer = undefined;
   host.tunnel.kill();
 }
 
@@ -572,13 +781,17 @@ function startHostHealthMonitor(host: HostConnection): void {
   host.healthTimer = setInterval(async () => {
     if (host.intentionalClose || host.state !== "connected") return;
     try {
-      const response = await fetch(`http://127.0.0.1:${host.localPort}/health`, { headers: { "X-OpenDrSai-Gateway-Token": host.token }, signal: AbortSignal.timeout(2_000) });
+      const response = await fetch(`http://127.0.0.1:${host.localPort}/v1/runtime`, { headers: { "X-OpenDrSai-Gateway-Token": host.token }, signal: AbortSignal.timeout(2_000) });
       if (!response.ok) throw new Error(`health status ${response.status}`);
       host.healthFailures = 0;
     } catch (error) {
       host.healthFailures += 1;
       recordHostEvent(host, "gateway.health-failed", undefined, error instanceof Error ? error.message : String(error));
       if (host.healthFailures >= 2) {
+        const ssh = await diagnoseSshHost(host.alias, 2_500);
+        host.failureKind = classifyRemoteFailure(false, ssh.state === "reachable");
+        host.error = host.failureKind === "ssh" ? `SSH transport unavailable (${ssh.state}).` : "Remote Runtime unavailable while SSH remains reachable.";
+        recordHostEvent(host, `${host.failureKind}.health-failed`, undefined, host.error);
         if (host.healthTimer) clearInterval(host.healthTimer);
         host.healthTimer = undefined; host.state = "reconnecting"; updateHostWorkspaceStatuses(host); host.tunnel.kill();
       }
@@ -590,22 +803,30 @@ export async function getRemoteWorkspaceStatus(id: string): Promise<RemoteWorksp
   const active = connections.get(id);
   if (active) {
     const host = hostConnections.get(active.alias);
-    return host ? { ...active.status, localPort: host.localPort, connected: host.state === "connected", gatewayReady: host.state === "connected", connectionState: host.state, error: host.error } : { ...active.status };
+    return host ? { ...active.status, localPort: host.localPort, connected: host.state === "connected", gatewayReady: host.state === "connected", connectionState: host.state, error: host.error, failureKind: host.failureKind } : { ...active.status };
   }
   const workspace = await findWorkspaceById(id);
   if (!workspace?.remote) throw new Error("Remote workspace not found.");
   return { ...workspace.remote, connected: false, gatewayReady: false, connectionState: "disconnected" };
 }
 
-export function getRemoteGatewayAccess(workspacePath?: string): { baseUrl: string; token: string; workspaceId: string } | null {
-  if (!workspacePath) return null;
-  for (const [workspaceId, connection] of connections) {
-    const host = hostConnections.get(connection.alias);
-    if (connection.status.canonicalPath === workspacePath && host?.state === "connected") {
-      return { baseUrl: `http://127.0.0.1:${host.localPort}`, token: host.token, workspaceId };
-    }
+export function getRemoteGatewayAccess(workspacePathOrId?: string, workspaceId?: string): { baseUrl: string; token: string; workspaceId: string } | null {
+  const authoritativeId = workspaceId || (workspacePathOrId && connections.has(workspacePathOrId) ? workspacePathOrId : undefined);
+  if (authoritativeId) {
+    const connection = connections.get(authoritativeId);
+    const host = connection ? hostConnections.get(connection.alias) : undefined;
+    return connection && host?.state === "connected"
+      ? { baseUrl: `http://127.0.0.1:${host.localPort}`, token: host.token, workspaceId: authoritativeId }
+      : null;
   }
-  return null;
+  if (!workspacePathOrId) return null;
+  const matches = [...connections.entries()].filter(([, connection]) => connection.status.canonicalPath === workspacePathOrId);
+  if (matches.length !== 1) return null;
+  const [matchedId, connection] = matches[0];
+  const host = hostConnections.get(connection.alias);
+  return host?.state === "connected"
+    ? { baseUrl: `http://127.0.0.1:${host.localPort}`, token: host.token, workspaceId: matchedId }
+    : null;
 }
 
 export function getRemoteWorkspaceRootForPath(path?: string): string | null {
@@ -616,38 +837,81 @@ export function getRemoteWorkspaceRootForPath(path?: string): string | null {
   return null;
 }
 
-async function remoteJson<T>(workspacePath: string, endpoint: string): Promise<T> {
-  const access = getRemoteGatewayAccess(workspacePath);
+async function remoteJson<T>(workspacePath: string, endpoint: string, workspaceId?: string): Promise<T> {
+  const access = getRemoteGatewayAccess(workspacePath, workspaceId);
   if (!access) throw new Error("Remote workspace is not connected.");
   return new RemoteGatewayClient(access.baseUrl, access.token, access.workspaceId).get<T>(endpoint);
 }
 
-async function remotePost<T>(workspacePath: string, endpoint: string, body: unknown): Promise<T> {
-  const access = getRemoteGatewayAccess(workspacePath);
+async function remotePost<T>(workspacePath: string, endpoint: string, body: unknown, workspaceId?: string): Promise<T> {
+  const access = getRemoteGatewayAccess(workspacePath, workspaceId);
   if (!access) throw new Error("Remote workspace is not connected.");
   return new RemoteGatewayClient(access.baseUrl, access.token, access.workspaceId).post<T>(endpoint, body);
 }
 
-export async function listRemoteWorkspaceCheckpoints(workspacePath: string): Promise<WorkspaceCheckpoint[]> {
-  return (await remoteJson<{ data: WorkspaceCheckpoint[] }>(workspacePath, "/checkpoints")).data;
+export async function prepareRemoteForkWorktree(workspacePath: string, intent?: string): Promise<DesktopForkWorktreeResult> {
+  const access = getRemoteGatewayAccess(workspacePath);
+  if (!access) throw new Error("Remote workspace is not connected.");
+  const parent = connections.get(access.workspaceId);
+  const host = parent ? hostConnections.get(parent.alias) : undefined;
+  if (!parent || !host) throw new Error("Remote computer connection is unavailable.");
+  const result = await remotePost<{
+    workspace_id: string;
+    source_workspace_path: string;
+    repo_root: string;
+    worktree_path: string;
+    branch: string;
+    base_ref: string;
+    source_has_changes: boolean;
+    source_status_summary?: string;
+  }>(workspacePath, "/worktrees", { intent: intent || "subtask" });
+  const status: RemoteWorkspaceStatus = {
+    hostAlias: parent.alias,
+    canonicalPath: result.worktree_path,
+    workspaceId: result.workspace_id,
+    connectionState: "connected",
+    connected: true,
+    gatewayReady: true,
+    localPort: host.localPort,
+    gatewayVersion: host.gatewayVersion,
+    protocolVersion: host.protocolVersion,
+  };
+  connections.set(result.workspace_id, { status, alias: parent.alias, path: result.worktree_path });
+  host.workspaceIds.add(result.workspace_id);
+  return {
+    location: "remote",
+    transport: "ssh",
+    workspaceId: result.workspace_id,
+    sourceWorkspacePath: result.source_workspace_path,
+    repoRoot: result.repo_root,
+    worktreePath: result.worktree_path,
+    branch: result.branch,
+    baseRef: result.base_ref,
+    sourceHasChanges: result.source_has_changes,
+    sourceStatusSummary: result.source_status_summary,
+  };
+}
+
+export async function listRemoteWorkspaceCheckpoints(workspacePath: string, workspaceId?: string): Promise<WorkspaceCheckpoint[]> {
+  return (await remoteJson<{ data: WorkspaceCheckpoint[] }>(workspacePath, "/checkpoints", workspaceId)).data;
 }
 export async function createRemoteWorkspaceCheckpoint(request: WorkspaceCheckpointCreateRequest): Promise<WorkspaceCheckpoint> {
-  return remotePost(request.workspacePath, "/checkpoints", request);
+  return remotePost(request.workspacePath, "/checkpoints", request, request.workspaceId);
 }
 export async function previewRemoteWorkspaceCheckpoint(request: WorkspaceCheckpointPreviewRequest): Promise<WorkspaceCheckpointPreviewResult> {
-  return remotePost(request.workspacePath, "/checkpoints/preview", request);
+  return remotePost(request.workspacePath, "/checkpoints/preview", request, request.workspaceId);
 }
 export async function restoreRemoteWorkspaceCheckpoint(request: WorkspaceCheckpointRestoreRequest): Promise<WorkspaceCheckpointRestoreResult> {
-  return remotePost(request.workspacePath, "/checkpoints/restore", request);
+  return remotePost(request.workspacePath, "/checkpoints/restore", request, request.workspaceId);
 }
 export async function acceptRemoteWorkspaceCheckpoint(request: WorkspaceCheckpointAcceptRequest): Promise<WorkspaceCheckpoint> {
-  return remotePost(request.workspacePath, "/checkpoints/accept", request);
+  return remotePost(request.workspacePath, "/checkpoints/accept", request, request.workspaceId);
 }
 
 export async function executeRemoteWorkspaceMutation(action: "stage-file" | "revert-file" | "stage-hunk" | "revert-hunk", request: unknown): Promise<unknown> {
-  const value = request as { workspacePath?: string; path?: string; expectedDiffHash?: string; patch?: string };
+  const value = request as { workspacePath?: string; workspaceId?: string; path?: string; expectedDiffHash?: string; patch?: string };
   if (!value.workspacePath || !value.path || !value.expectedDiffHash) throw new Error("Remote workspace mutation request is incomplete.");
-  const access = getRemoteGatewayAccess(value.workspacePath);
+  const access = getRemoteGatewayAccess(value.workspacePath, value.workspaceId);
   if (!access) throw new Error("Remote workspace is not connected.");
   const relative = value.path.startsWith(value.workspacePath) ? value.path.slice(value.workspacePath.length).replace(/^[/\\]+/, "") : value.path;
   const operation = action.startsWith("stage") ? "stage" : "revert";
@@ -670,10 +934,10 @@ export async function commitRemoteWorkspace(workspacePath: string, message: stri
 }
 
 export async function listRemoteWorkspaceFiles(request: WorkspaceFileTreeRequest): Promise<WorkspaceFileTreeResult> {
-  ensureRemoteFileWatcher(request.workspacePath);
+  ensureRemoteFileWatcher(request.workspacePath, request.workspaceId);
   const parameters = new URLSearchParams({ depth: String(Math.max(0, Math.min(5, request.maxDepth ?? 2))), max_entries: String(request.maxEntries ?? 500), offset: String(request.offset ?? 0) });
   if (request.query) parameters.set("query", request.query);
-  const payload = await remoteJson<{ data: Array<Record<string, unknown>>; total?: number; truncated?: boolean; next_offset?: number | null }>(request.workspacePath, `/files?${parameters}`);
+  const payload = await remoteJson<{ data: Array<Record<string, unknown>>; total?: number; truncated?: boolean; next_offset?: number | null }>(request.workspacePath, `/files?${parameters}`, request.workspaceId);
   let count = 0;
   const mapNode = (row: Record<string, unknown>): any => {
     count += 1;
@@ -685,20 +949,20 @@ export async function listRemoteWorkspaceFiles(request: WorkspaceFileTreeRequest
   return { workspacePath: request.workspacePath, nodes, totalEntries: payload.total ?? count, truncated: payload.truncated === true, ...(typeof payload.next_offset === "number" ? { nextOffset: payload.next_offset } : {}) };
 }
 
-export async function getRemoteWorkspaceContextOverview(workspacePath: string): Promise<WorkspaceContextOverview> {
-  return remoteJson(workspacePath, "/context");
+export async function getRemoteWorkspaceContextOverview(workspacePath: string, workspaceId?: string): Promise<WorkspaceContextOverview> {
+  return remoteJson(workspacePath, "/context", workspaceId);
 }
 
 export async function previewRemoteWorkspaceFile(request: WorkspaceFilePreviewRequest): Promise<WorkspaceFilePreview> {
   const relative = request.path.startsWith(request.workspacePath) ? request.path.slice(request.workspacePath.length).replace(/^[/\\]+/, "") : request.path;
-  const payload = await remoteJson<{ path: string; content?: string; data_url?: string; mime?: string; modified_at?: number; truncated: boolean; size: number }>(request.workspacePath, `/file?path=${encodeURIComponent(relative)}&max_bytes=${request.maxBytes ?? 262144}`);
+  const payload = await remoteJson<{ path: string; content?: string; data_url?: string; mime?: string; modified_at?: number; truncated: boolean; size: number }>(request.workspacePath, `/file?path=${encodeURIComponent(relative)}&max_bytes=${request.maxBytes ?? 262144}`, request.workspaceId);
   const kind = payload.data_url ? (payload.mime?.startsWith("image/") ? "image" : "binary") : "text";
   return { workspacePath: request.workspacePath, path: request.path, relativePath: payload.path, name: payload.path.split("/").pop() || payload.path, kind, mime: payload.mime || "text/plain", size: payload.size, modifiedAt: new Date((payload.modified_at || 0) * 1000).toISOString(), truncated: payload.truncated, content: payload.content, dataUrl: payload.data_url, mode: request.mode || "auto" };
 }
 
 export async function getRemoteWorkspaceGitDiff(request: WorkspaceGitDiffRequest): Promise<WorkspaceGitDiffResult> {
   const relative = request.path?.startsWith(request.workspacePath) ? request.path.slice(request.workspacePath.length).replace(/^[/\\]+/, "") : request.path;
-  const payload = await remoteJson<{ diff: string; staged: boolean }>(request.workspacePath, `/git/diff?staged=${request.staged === true}${relative ? `&path=${encodeURIComponent(relative)}` : ""}`);
+  const payload = await remoteJson<{ diff: string; staged: boolean }>(request.workspacePath, `/git/diff?staged=${request.staged === true}${relative ? `&path=${encodeURIComponent(relative)}` : ""}`, request.workspaceId);
   const diff = payload.diff.slice(0, request.maxChars ?? 200_000);
   return { workspacePath: request.workspacePath, path: request.path, diff, diffHash: createHash("sha256").update(payload.diff).digest("hex"), truncated: diff.length < payload.diff.length, staged: payload.staged };
 }
@@ -710,7 +974,29 @@ export async function summarizeRemoteWorkspaceFolder(request: WorkspaceFolderSum
 
 export async function getRemoteWorkspaceGitFileAtRef(request: WorkspaceGitFileAtRefRequest): Promise<WorkspaceGitFileAtRefResult> {
   const relative = request.path.startsWith(request.workspacePath) ? request.path.slice(request.workspacePath.length).replace(/^[/\\]+/, "") : request.path;
-  return remoteJson(request.workspacePath, `/git/file-at-ref?ref=${encodeURIComponent(request.ref)}&path=${encodeURIComponent(relative)}&max_bytes=${request.maxBytes ?? 262144}`);
+  return remoteJson(request.workspacePath, `/git/file-at-ref?ref=${encodeURIComponent(request.ref)}&path=${encodeURIComponent(relative)}&max_bytes=${request.maxBytes ?? 262144}`, request.workspaceId);
+}
+
+export async function writeRemoteWorkspaceFile(request: WorkspaceFileWriteRequest): Promise<WorkspaceFileWriteResult> {
+  if (request.mode === "save_as") throw new Error("Remote Save As requires an explicit remote destination workflow.");
+  const access = getRemoteGatewayAccess(request.workspacePath, request.workspaceId);
+  if (!access) throw new Error("Remote workspace is not connected.");
+  const relative = request.path.startsWith(request.workspacePath) ? request.path.slice(request.workspacePath.length).replace(/^[/\\]+/, "") : request.path;
+  const expectedHash = request.mode === "overwrite" ? undefined : request.expectedHash;
+  const response = await fetch(`${access.baseUrl}/v1/workspaces/${encodeURIComponent(access.workspaceId)}/file`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", "X-OpenDrSai-Gateway-Token": access.token },
+    body: JSON.stringify({ path: relative, content_base64: Buffer.from(request.content, "utf8").toString("base64"), expected_sha256: expectedHash }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (response.status === 409) {
+    const conflict = await response.json() as { detail?: { current_sha256?: string } };
+    const currentHash = conflict.detail?.current_sha256 || "";
+    return { status: "conflict", path: request.path, expectedHash: request.expectedHash, currentHash, savedAs: false, overwroteExternal: false, message: "Remote file changed since it was read." };
+  }
+  if (!response.ok) throw new Error(`Remote file write failed (${response.status}).`);
+  const payload = await response.json() as { sha256: string; modified_at?: number; size?: number };
+  return { status: "saved", path: request.path, expectedHash: request.expectedHash, currentHash: payload.sha256, savedHash: payload.sha256, savedAs: false, overwroteExternal: request.mode === "overwrite", ...(payload.modified_at ? { externalModifiedAt: new Date(payload.modified_at * 1000).toISOString() } : {}), ...(typeof payload.size === "number" ? { externalSize: payload.size } : {}), message: "Remote file saved." };
 }
 
 export async function listRemoteThreads(workspaceId: string): Promise<DesktopThread[]> {

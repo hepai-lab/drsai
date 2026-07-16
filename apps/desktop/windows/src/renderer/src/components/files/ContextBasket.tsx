@@ -15,12 +15,12 @@ export function ContextBasket({
   return (
     <footer className="files-context-basket" aria-label="Files context basket">
       <div className="files-basket-title">
-        <span>{zh ? "Agent 上下文" : "Agent Context"}</span>
+        <span>{zh ? "智能体使用的材料" : "Agent Context"}</span>
         <small>{attachments.length} items · {estimateContextSize(attachments)}</small>
       </div>
       <div className="files-basket-items">
         {attachments.length === 0 ? (
-          <p>{zh ? "尚未选择要发送给 Agent 的文件。" : "No files selected for the agent yet."}</p>
+          <p>{zh ? "尚未选择要交给智能体的文件。" : "No files selected for the agent yet."}</p>
         ) : (
           attachments.map((attachment, index) => (
             <span

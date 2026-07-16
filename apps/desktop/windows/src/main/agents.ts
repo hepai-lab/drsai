@@ -29,6 +29,7 @@ import {
   type PlatformAgentExecutionDescriptor,
 } from "./agentCatalog";
 import { recordAgentTelemetry } from "./agentTelemetry";
+import { LocalRuntimeClient } from "./runtimeClient";
 
 const LOCAL_AGENT_ID = "my-drsai";
 const PLATFORM_BASE_URL =
@@ -131,7 +132,7 @@ export async function respondToPlatformChatInput(
 
 async function listLocalAgents(): Promise<DesktopAgent[]> {
   const gateway = await getGatewayStatus();
-  return [{
+  const agents: DesktopAgent[] = [{
     id: LOCAL_AGENT_ID,
     name: "My DrSai",
     description: "An agent running on this computer.",
@@ -149,6 +150,19 @@ async function listLocalAgents(): Promise<DesktopAgent[]> {
         ? "The local port is already used by another service."
         : "The local DrSai gateway is not running.",
   }];
+  try {
+    const capability = (await (await LocalRuntimeClient.connect()).getCapabilities()).agent_backends?.codex;
+    agents.push({
+      id: "my-codex", name: "Codex", description: "Codex Agent Backend running in this Workspace Runtime.",
+      owner: "Local", source: "local", status: capability?.available ? "running" : "stopped", mode: "local",
+      available: capability?.available === true, capabilities: ["chat", "workspace", "tools"], catalogGroup: "local",
+      model: "gpt-5.4", error: capability?.available ? undefined : capability?.reason ?? "Codex is unavailable.",
+    });
+  } catch {
+    agents.push({ id: "my-codex", name: "Codex", description: "Codex Agent Backend is unavailable.", owner: "Local",
+      source: "local", status: "unreachable", mode: "local", available: false, capabilities: ["chat", "workspace", "tools"], catalogGroup: "local", error: "Runtime capability could not be read." });
+  }
+  return agents;
 }
 
 async function listPlatformAgents(options: DesktopAgentListOptions): Promise<DesktopAgent[]> {

@@ -1122,7 +1122,7 @@ export function BackgroundTaskQueue({
 }): React.JSX.Element {
   const zh = language === "zh";
   return (
-    <div className="background-task-queue" data-testid="background-task-queue" aria-label={zh ? "后台任务" : "Background task queue"}>
+    <div className="background-task-queue" data-testid="background-task-queue" role="region" aria-label={zh ? "后台任务" : "Background task queue"}>
       <div className="background-task-queue-top">
         <strong>
           <ClipboardList size={14} />
@@ -1154,7 +1154,7 @@ export function BackgroundTaskQueue({
                     data-testid="background-task-list-status"
                     data-user-state={state.key}
                   >
-                    <span aria-hidden="true">{state.symbol}</span>
+                    <span aria-hidden="true" data-symbol={state.symbol} />
                     {state.label}
                   </span>
                 </div>
@@ -1169,7 +1169,7 @@ export function BackgroundTaskQueue({
                         data-testid="background-task-detail-status"
                         data-user-state={state.key}
                       >
-                        <span aria-hidden="true">{state.symbol}</span>
+                        <span aria-hidden="true" data-symbol={state.symbol} />
                         {state.label}
                       </span>
                     </div>

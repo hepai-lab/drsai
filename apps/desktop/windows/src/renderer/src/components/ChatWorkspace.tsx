@@ -8,8 +8,6 @@ import {
   useRef,
   useState,
 } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import {
   ArrowUpRight,
   Bot,
@@ -44,7 +42,13 @@ import type {
   ChatToolTimelineEvent,
   ChatMessagePart,
   MyDrSaiModelConfig,
+  MaterialConsistencyAnalysisResult,
+  MaterialConsistencyFindingKind,
+  MaterialConsistencySource,
+  MaterialRoleAnalysisResult,
+  MaterialRoleItem,
   PickDialogResult,
+  PickedFileDescriptor,
   WorkspaceFolderSummaryRequest,
   WorkspaceFolderSummaryResult,
   WorkspaceInstructionSummary,
@@ -59,7 +63,7 @@ import {
   type ChatRuntimeMode,
 } from "../chatCommands";
 import { ChatMessageContent } from "./ChatMessageContent";
-import { getVisibleChatText } from "../chatOutputModel";
+import { getReasoningChatText, getVisibleChatText } from "../chatOutputModel";
 
 export type UiMessage = ChatMessage & {
   id: string;
@@ -80,7 +84,24 @@ export type UiMessage = ChatMessage & {
 
 type ComposerAttachment = ChatAttachment & {
   id: string;
+  importFile?: PickedFileDescriptor;
+  folderImport?: {
+    phase: "scanning" | "ready" | "failed";
+    imported: number;
+    skipped: number;
+    failed: number;
+    duplicates: number;
+    directories: number;
+    message?: string;
+  };
 };
+
+interface MaterialTaskSuggestion {
+  id: string;
+  title: string;
+  description: string;
+  prompt: string;
+}
 
 export type ThinkingEffort = "low" | "medium" | "high" | "xhigh";
 const THINKING_EFFORTS: ThinkingEffort[] = ["low", "medium", "high", "xhigh"];
@@ -115,6 +136,7 @@ export interface ChatSubmitOptions {
 interface ChatWorkspaceProps {
   activeRequestId: string | null;
   canChat: boolean;
+  chatUnavailableReason?: string;
   health: DesktopHealth | null;
   input: string;
   language: AppLanguage;
@@ -132,7 +154,7 @@ interface ChatWorkspaceProps {
   ideContext?: DesktopIdeContextSnapshot | null;
   workspaceInstructions?: WorkspaceInstructionSummary[];
   workspacePath?: string;
-  workspaceType?: "local" | "remote-ssh";
+  workspaceLocation?: "local" | "remote";
   onAbort: () => void;
   onClearExternalAttachments?: () => void;
   onClearRuntimeMode?: () => void;
@@ -159,6 +181,7 @@ interface ChatWorkspaceProps {
 export function ChatWorkspace({
   activeRequestId,
   canChat,
+  chatUnavailableReason,
   input,
   language,
   messages,
@@ -175,7 +198,7 @@ export function ChatWorkspace({
   ideContext,
   workspaceInstructions = [],
   workspacePath = "",
-  workspaceType = "local",
+  workspaceLocation = "local",
   onAbort,
   onClearExternalAttachments,
   onClearRuntimeMode,
@@ -195,6 +218,14 @@ export function ChatWorkspace({
 }: ChatWorkspaceProps): React.JSX.Element {
   const [toolsOpen, setToolsOpen] = useState(false);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  const [materialRoleAnalysis, setMaterialRoleAnalysis] = useState<MaterialRoleAnalysisResult | null>(null);
+  const [materialRolePhase, setMaterialRolePhase] = useState<"idle" | "analyzing" | "ready" | "failed">("idle");
+  const [materialConsistencyAnalysis, setMaterialConsistencyAnalysis] = useState<MaterialConsistencyAnalysisResult | null>(null);
+  const [materialConsistencyPhase, setMaterialConsistencyPhase] = useState<"idle" | "analyzing" | "ready" | "failed">("idle");
+  const [materialConsistencySourceStatus, setMaterialConsistencySourceStatus] = useState("");
+  const [materialSuggestionRuntimeReady, setMaterialSuggestionRuntimeReady] = useState(false);
+  const materialRoleRequestRef = useRef(0);
+  const materialConsistencyRequestRef = useRef(0);
   const [thinkingEffort, setThinkingEffort] = useState<ThinkingEffort>(defaultThinkingEffort);
   const [searchOpen, setSearchOpen] = useState(false);
   const [metaMenuOpen, setMetaMenuOpen] = useState<"agent" | "model" | "thinking" | null>(null);
@@ -215,6 +246,29 @@ export function ChatWorkspace({
   const [respondedInputRequests, setRespondedInputRequests] = useState<Set<string>>(() => new Set());
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const messageListRef = useRef<HTMLDivElement | null>(null);
+  const attachmentButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    if (!toolsOpen && !metaMenuOpen) return;
+    const handleEscape = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      const shouldRestoreAttachmentFocus = toolsOpen;
+      setToolsOpen(false);
+      setMetaMenuOpen(null);
+      if (shouldRestoreAttachmentFocus) {
+        window.requestAnimationFrame(() => attachmentButtonRef.current?.focus());
+      }
+    };
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [metaMenuOpen, toolsOpen]);
+
+  useEffect(() => {
+    const openModelPicker = (): void => setMetaMenuOpen("model");
+    window.addEventListener("drsai:open-model-picker", openModelPicker);
+    return () => window.removeEventListener("drsai:open-model-picker", openModelPicker);
+  }, []);
 
   useEffect(() => {
     setThinkingEffort(defaultThinkingEffort);
@@ -256,12 +310,14 @@ export function ChatWorkspace({
   const showStop = Boolean(activeRequestId || hasStreamingMessage);
   const emptyChat = messages.every((message) => message.id === "welcome");
   const canSaveLocalPreference = canHandleMemoryRequestLocally(input);
+  const canAnswerMaterialInventoryLocally = Boolean(materialRoleAnalysis?.items.length) && isMaterialInventoryQuestion(input);
+  const canAnswerMaterialQuestionLocally = Boolean(materialRoleAnalysis?.items.length) && isNaturalMaterialQuestion(input);
   const emptyChatPreferenceNotice = emptyChat
     ? messages.find((message) => message.id === "welcome")?.content.split("\n\n").slice(1).join("\n\n").trim() || ""
     : "";
   const activeAgentName = selectedAgentName?.trim() || "OpenDrSai";
   const workspaceLocationLabel =
-    workspaceType === "remote-ssh"
+    workspaceLocation === "remote"
       ? zh
         ? "远程工作区"
         : "Remote workspace"
@@ -316,14 +372,23 @@ export function ChatWorkspace({
     () => parseInlineContextMentions(input, workspacePath),
     [input, workspacePath],
   );
+  const materialRoleByPath = useMemo(
+    () => createMaterialRoleLookup(materialRoleAnalysis?.items || []),
+    [materialRoleAnalysis],
+  );
+  const materialTaskSuggestions = useMemo(
+    () => createMaterialTaskSuggestions(materialRoleAnalysis, zh),
+    [materialRoleAnalysis, zh],
+  );
   const queuedContextAttachments = useMemo(
     () =>
       mergeUniqueAttachments([
-        ...attachments.map(({ id: _id, ...attachment }) => attachment),
+        ...attachments.map(({ id: _id, importFile: _importFile, folderImport: _folderImport, ...attachment }) =>
+          enrichAttachmentWithMaterialRole(attachment, findMaterialRole(materialRoleByPath, attachment))),
         ...externalAttachments,
         ...inlineMentionAttachments,
-      ]),
-    [attachments, externalAttachments, inlineMentionAttachments],
+      ]).filter((attachment) => !attachment.blockedReason),
+    [attachments, externalAttachments, inlineMentionAttachments, materialRoleByPath],
   );
   const contextPreviewItems = useMemo(
     () => createContextPreviewItems(queuedContextAttachments, workspaceInstructions),
@@ -371,6 +436,53 @@ export function ChatWorkspace({
   useEffect(() => {
     setSamplePromptsExpanded(false);
   }, [samplePrompts, language]);
+
+  useEffect(() => {
+    const paths = [...new Set(attachments
+      .filter((item) => item.kind === "file" && !item.blockedReason)
+      .map((item) => item.path))];
+    const requestId = materialRoleRequestRef.current + 1;
+    materialRoleRequestRef.current = requestId;
+    if (!paths.length || !hasDesktopApi() || typeof desktopApi.analyzeMaterialRoles !== "function") {
+      setMaterialRoleAnalysis(null);
+      setMaterialRolePhase("idle");
+      return;
+    }
+    setMaterialRolePhase("analyzing");
+    void desktopApi.analyzeMaterialRoles({ paths }).then((result) => {
+      if (materialRoleRequestRef.current !== requestId) return;
+      setMaterialRoleAnalysis(result);
+      setMaterialRolePhase("ready");
+    }).catch(() => {
+      if (materialRoleRequestRef.current !== requestId) return;
+      setMaterialRoleAnalysis(null);
+      setMaterialRolePhase("failed");
+    });
+  }, [attachments]);
+
+  useEffect(() => {
+    const paths = [...new Set(attachments
+      .filter((item) => item.kind === "file" && !item.blockedReason)
+      .map((item) => item.path))];
+    const requestId = materialConsistencyRequestRef.current + 1;
+    materialConsistencyRequestRef.current = requestId;
+    setMaterialConsistencySourceStatus("");
+    if (paths.length < 2 || !hasDesktopApi() || typeof desktopApi.analyzeMaterialConsistency !== "function") {
+      setMaterialConsistencyAnalysis(null);
+      setMaterialConsistencyPhase("idle");
+      return;
+    }
+    setMaterialConsistencyPhase("analyzing");
+    void desktopApi.analyzeMaterialConsistency({ paths }).then((result) => {
+      if (materialConsistencyRequestRef.current !== requestId) return;
+      setMaterialConsistencyAnalysis(result);
+      setMaterialConsistencyPhase("ready");
+    }).catch(() => {
+      if (materialConsistencyRequestRef.current !== requestId) return;
+      setMaterialConsistencyAnalysis(null);
+      setMaterialConsistencyPhase("failed");
+    });
+  }, [attachments]);
 
   useEffect(() => {
     setForkQueueAgentSelections((current) => {
@@ -532,7 +644,8 @@ export function ChatWorkspace({
     const folderSummaryProvider =
       onSummarizeWorkspaceFolder ?? (hasDesktopApi() ? desktopApi.summarizeWorkspaceFolder : undefined);
     const submittedAttachments = await summarizeQueuedContextAttachments([
-      ...attachments.map(({ id: _id, ...attachment }) => attachment),
+      ...attachments.map(({ id: _id, importFile: _importFile, folderImport: _folderImport, ...attachment }) =>
+        enrichAttachmentWithMaterialRole(attachment, findMaterialRole(materialRoleByPath, attachment))),
       ...externalAttachments,
       ...inlineMentionAttachments,
     ], folderSummaryProvider);
@@ -923,7 +1036,7 @@ export function ChatWorkspace({
   async function addFiles(): Promise<void> {
     if (!onPickFiles) return;
     const result = await onPickFiles();
-    if (!result.canceled) addAttachments("file", result.paths);
+    if (!result.canceled) addPickedFiles(result);
   }
 
   async function addFolder(): Promise<void> {
@@ -932,74 +1045,126 @@ export function ChatWorkspace({
     if (!result.canceled) await addFolderAttachments(result.paths);
   }
 
-  function addAttachments(kind: ComposerAttachment["kind"], paths: string[]): void {
-    setAttachments((current) => {
-      const existing = new Set(current.map((item) => item.path));
-      const next = paths
-        .filter((path) => !existing.has(path))
-        .map((path) => ({
-          id: crypto.randomUUID(),
-          kind,
-          path,
-          name: getPathName(path),
-        }));
-      return [...current, ...next];
-    });
-    setToolsOpen(false);
-  }
-
-  async function addFolderAttachments(paths: string[]): Promise<void> {
-    const folderAttachments = await Promise.all(
-      paths.map(async (path): Promise<ComposerAttachment> => {
-        const base = {
-          id: crypto.randomUUID(),
-          kind: "folder" as const,
-          path,
-          name: getPathName(path),
-        };
-        if (!onSummarizeWorkspaceFolder) return base;
-        try {
-          const summary = await onSummarizeWorkspaceFolder({
-            path,
-            maxDepth: 3,
-            maxEntries: 240,
-            maxSampleFiles: 16,
-          });
-          return {
-            ...base,
-            path: summary.path,
-            name: summary.name,
-            title: `Folder summary: ${summary.name}`,
-            visibleText: summary.summary,
-            note: [
-              `${summary.fileCount} files`,
-              `${summary.directoryCount} folders`,
-              `${summary.estimatedTokens} estimated tokens`,
-              summary.truncated ? "truncated" : "",
-            ].filter(Boolean).join(", "),
-          };
-        } catch (error) {
-          return {
-            ...base,
-            note: error instanceof Error
-              ? `Folder summary unavailable: ${error.message}`
-              : "Folder summary unavailable.",
-          };
-        }
-      }),
-    );
+  function addPickedFiles(result: PickDialogResult): void {
+    const selectedFiles = result.files ?? result.paths.map((path): PickedFileDescriptor => ({
+      path,
+      name: getPathName(path),
+      extension: "",
+      category: "other",
+      status: "ready",
+    }));
     setAttachments((current) => {
       const existing = new Set(current.map((item) => item.path));
       return [
         ...current,
-        ...folderAttachments.filter((attachment) => !existing.has(attachment.path)),
+        ...selectedFiles.filter((file) => !existing.has(file.path)).map((file): ComposerAttachment => ({
+          id: crypto.randomUUID(),
+          kind: "file",
+          path: file.path,
+          name: file.name,
+          importFile: file,
+          ...(file.status === "ready" ? {} : { blockedReason: file.message || file.status }),
+        })),
       ];
     });
     setToolsOpen(false);
   }
 
+  async function addFolderAttachments(paths: string[]): Promise<void> {
+    setToolsOpen(false);
+    for (const path of paths) {
+      const existing = attachments.find((item) => item.kind === "folder" && item.path === path);
+      if (existing) {
+        setAttachments((current) => current.map((item) => item.id === existing.id ? {
+          ...item,
+          folderImport: item.folderImport ? { ...item.folderImport, duplicates: item.folderImport.duplicates + 1 } : undefined,
+        } : item));
+        continue;
+      }
+      const id = crypto.randomUUID();
+      const base: ComposerAttachment = {
+        id,
+        kind: "folder",
+        path,
+        name: getPathName(path),
+        folderImport: { phase: "scanning", imported: 0, skipped: 0, failed: 0, duplicates: 0, directories: 0 },
+      };
+      setAttachments((current) => [...current, base]);
+      if (!onSummarizeWorkspaceFolder) continue;
+      try {
+        const summary = await onSummarizeWorkspaceFolder({ path, maxDepth: 3, maxEntries: 240, maxSampleFiles: 30 });
+        setAttachments((current) => current.map((item) => item.id === id ? {
+          ...item,
+          path: summary.path,
+          name: summary.name,
+          title: `Folder summary: ${summary.name}`,
+          visibleText: summary.summary,
+          note: `${summary.importedFileCount} imported, ${summary.skippedFileCount} skipped, ${summary.failedFileCount} failed, ${summary.directoryCount} folders`,
+          folderImport: {
+            phase: "ready",
+            imported: summary.importedFileCount,
+            skipped: summary.skippedFileCount + summary.skippedDirectoryCount,
+            failed: summary.failedFileCount,
+            duplicates: item.folderImport?.duplicates || 0,
+            directories: summary.directoryCount,
+            message: summary.unsupportedExtensions.length ? `Unsupported: ${summary.unsupportedExtensions.join(", ")}` : undefined,
+          },
+        } : item));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setAttachments((current) => current.map((item) => item.id === id ? {
+          ...item,
+          blockedReason: message,
+          note: `Folder summary unavailable: ${message}`,
+          folderImport: { phase: "failed", imported: 0, skipped: 0, failed: 1, duplicates: item.folderImport?.duplicates || 0, directories: 0, message },
+        } : item));
+      }
+    }
+  }
+
   function removeAttachment(id: string): void {
     setAttachments((current) => current.filter((item) => item.id !== id));
+  }
+
+  function applyMaterialTaskSuggestion(suggestion: MaterialTaskSuggestion): void {
+    onInputChange(suggestion.prompt);
+    if (hasDesktopApi()) {
+      void desktopApi.getGatewayStatus().then((status) => {
+        setMaterialSuggestionRuntimeReady(status.ready && !status.externalConflict);
+      }).catch(() => setMaterialSuggestionRuntimeReady(false));
+    }
+    window.setTimeout(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(suggestion.prompt.length, suggestion.prompt.length);
+    }, 0);
+  }
+
+  function createTaskFromMaterialConsistency(): void {
+    if (!materialConsistencyAnalysis?.findings.length) return;
+    const issueTitles = materialConsistencyAnalysis.findings
+      .filter((finding) => finding.kind !== "consensus")
+      .map((finding) => `“${finding.title}”`)
+      .join("、");
+    const prompt = zh
+      ? `请根据材料比较结果继续核对${issueTitles ? ` ${issueTitles}` : "所有发现"}，逐项说明冲突双方或新旧数值、具体文件位置、修正建议和仍不确定的地方。不要覆盖原文件。`
+      : `Continue from the material comparison and verify ${issueTitles || "every finding"}. For each item, cite both sides or the old and new values, exact file locations, a correction, and remaining uncertainty. Do not overwrite source files.`;
+    onInputChange(prompt);
+    window.setTimeout(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(prompt.length, prompt.length);
+    }, 0);
+  }
+
+  async function openMaterialConsistencySource(source: MaterialConsistencySource): Promise<void> {
+    if (!hasDesktopApi()) return;
+    try {
+      const error = await desktopApi.openPath(source.path);
+      setMaterialConsistencySourceStatus(error
+        ? (zh ? `无法打开 ${source.name}：${error}` : `Could not open ${source.name}: ${error}`)
+        : (zh ? `已打开 ${source.name} · ${source.locator}` : `Opened ${source.name} · ${source.locator}`));
+    } catch (error) {
+      setMaterialConsistencySourceStatus(error instanceof Error ? error.message : String(error));
+    }
   }
 
   function openPreviewBrowser(url?: string): void {
@@ -1112,7 +1277,11 @@ export function ChatWorkspace({
       )}
       {!emptyChat && (
       <div className="message-list" ref={messageListRef} onScroll={handleMessageListScroll}>
-        {messages.map((message) => (
+        {messages.map((message) => {
+          const assistantContent = message.role === "assistant"
+            ? getAssistantDisplayContent(message)
+            : message.content;
+          return (
           <article
             key={message.id}
             className={`message ${message.role} ${message.error ? "error" : ""} ${searchMatches.includes(message.id) ? "search-match" : ""} ${activeMatchId === message.id ? "search-active" : ""}`}
@@ -1124,20 +1293,13 @@ export function ChatWorkspace({
                 <p>{highlightPlainText(message.content, searchQuery)}</p>
               ) : message.content ? (
                 <ChatMessageContent
-                  content={message.content}
+                  content={assistantContent}
                   streaming={message.streaming}
                   language={language}
                   onOpenLink={handleMarkdownLink}
                 />
               ) : (
                 <StreamingStatus message={message} now={now} zh={zh} />
-              )}
-              {message.statusContent && (
-                <div className="message-status">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {message.statusContent}
-                  </ReactMarkdown>
-                </div>
               )}
               {message.reasoningContent && (
                 <details className="chat-reasoning chat-event-reasoning">
@@ -1147,7 +1309,7 @@ export function ChatWorkspace({
                   </summary>
                   <div className="chat-reasoning-content">
                     <ChatMessageContent
-                      content={message.reasoningContent}
+                      content={getReasoningChatText(message.reasoningContent)}
                       streaming={message.streaming}
                       language={language}
                       onOpenLink={handleMarkdownLink}
@@ -1155,9 +1317,6 @@ export function ChatWorkspace({
                   </div>
                 </details>
               )}
-              {message.toolTimeline?.length ? (
-                <ToolTimeline events={message.toolTimeline} />
-              ) : null}
               {message.inputRequest ? (
                 <section className="chat-agent-input-request" aria-label={zh ? "智能体请求输入" : "Agent input request"}>
                   <strong>{zh ? "智能体需要你的输入" : "Agent needs your input"}</strong>
@@ -1175,16 +1334,17 @@ export function ChatWorkspace({
                   </div>
                 </section>
               ) : null}
-              {message.role === "assistant" && !message.streaming && getVisibleChatText(message.content) ? (
-                <MessageActions content={getVisibleChatText(message.content)} zh={zh} />
+              {message.role === "assistant" && !message.streaming && assistantContent ? (
+                <MessageActions content={assistantContent} zh={zh} />
               ) : null}
             </div>
           </article>
-        ))}
+          );
+        })}
       </div>
       )}
       {emptyChat && (
-        <div className="empty-chat-agent-title" aria-label={zh ? "当前智能体" : "Current Agent"}>
+        <div className="empty-chat-agent-title" role="group" aria-label={zh ? "当前智能体" : "Current Agent"}>
           <strong>{activeAgentName}</strong>
           <span>{workspaceLocationLabel}</span>
           {emptyChatPreferenceNotice ? (
@@ -1234,9 +1394,34 @@ export function ChatWorkspace({
                     ? Globe2
                     : Paperclip;
               return (
-                <span className="composer-attachment-chip" key={attachment.id} title={attachment.path}>
+                <span
+                  className={`composer-attachment-chip ${(attachment.importFile?.status && attachment.importFile.status !== "ready") || attachment.folderImport?.phase === "failed" ? "import-failed" : ""} ${attachment.folderImport?.phase === "scanning" ? "import-scanning" : ""}`}
+                  key={attachment.id}
+                  title={attachment.importFile?.message || attachment.folderImport?.message || attachment.path}
+                  data-testid="composer-attachment"
+                  data-import-status={attachment.importFile?.status || "ready"}
+                  data-file-category={attachment.importFile?.category || "other"}
+                  data-size-bytes={attachment.importFile?.sizeBytes ?? ""}
+                  data-diagnostic-code={attachment.importFile?.diagnosticCode || ""}
+                  data-processing-mode={attachment.importFile?.processingMode || ""}
+                  data-sensitive-detected={attachment.importFile?.sensitiveDataDetected ? "true" : "false"}
+                  data-sensitive-kinds={attachment.importFile?.sensitiveKinds?.join(",") || ""}
+                  data-sensitive-count={attachment.importFile?.sensitiveValueCount ?? 0}
+                  data-folder-import-phase={attachment.folderImport?.phase || ""}
+                  data-imported-count={attachment.folderImport?.imported ?? ""}
+                  data-skipped-count={attachment.folderImport?.skipped ?? ""}
+                  data-failed-count={attachment.folderImport?.failed ?? ""}
+                  data-duplicate-count={attachment.folderImport?.duplicates ?? ""}
+                >
                   <Icon size={14} />
-                  {attachment.name}
+                  <span className="composer-attachment-copy">
+                    <strong>{attachment.name}</strong>
+                    {attachment.importFile ? <small>{formatPickedFileMeta(attachment.importFile, zh)}</small> : null}
+                    {attachment.importFile?.message ? <small data-testid="composer-file-status-message">{attachment.importFile.message}</small> : null}
+                    {attachment.importFile?.recoveryAction ? <small data-testid="composer-file-recovery-action">{attachment.importFile.recoveryAction}</small> : null}
+                    {attachment.importFile?.privacyNotice ? <small data-testid="composer-file-privacy-notice">{attachment.importFile.privacyNotice}</small> : null}
+                    {attachment.folderImport ? <small>{formatFolderImportMeta(attachment.folderImport, zh)}</small> : null}
+                  </span>
                   <button
                     type="button"
                     aria-label={zh ? `绉婚櫎 ${attachment.name}` : `Remove ${attachment.name}`}
@@ -1282,32 +1467,156 @@ export function ChatWorkspace({
             })}
           </div>
 
+          {materialRolePhase !== "idle" && (
+            <section
+              className={`material-role-panel ${materialRolePhase}`}
+              data-testid="material-role-panel"
+              data-analysis-phase={materialRolePhase}
+              aria-live="polite"
+            >
+              <div className="material-role-panel-header">
+                <strong><Brain size={14} />{zh ? "材料角色" : "Material roles"}</strong>
+                <span>{materialRolePhase === "analyzing" ? (zh ? "正在识别…" : "Analyzing…") : materialRolePhase === "failed" ? (zh ? "暂时无法识别" : "Analysis unavailable") : (zh ? `已识别 ${materialRoleAnalysis?.items.length || 0} 项` : `${materialRoleAnalysis?.items.length || 0} identified`)}</span>
+              </div>
+              {materialRolePhase === "ready" && materialRoleAnalysis ? (
+                <div className="material-role-groups">
+                  {(["previous_report", "latest_data", "result_image", "reference_material"] as const).map((role) => (
+                    <article
+                      key={role}
+                      data-material-role={role}
+                      data-role-count={materialRoleAnalysis.roleCounts[role]}
+                    >
+                      <b>{formatMaterialRoleLabel(role, zh)}</b>
+                      <span>{materialRoleAnalysis.roleCounts[role]} {zh ? "项" : "items"}</span>
+                      <small>{formatMaterialRoleFiles(materialRoleAnalysis.items, role, zh)}</small>
+                    </article>
+                  ))}
+                </div>
+              ) : null}
+              {materialRolePhase === "ready" ? <p>{zh ? "你可以直接问：我有哪些材料？" : "You can ask: What materials do I have?"}</p> : null}
+            </section>
+          )}
+
+          {materialConsistencyPhase !== "idle" ? (
+            <section
+              className={`material-consistency-panel ${materialConsistencyPhase}`}
+              data-testid="material-consistency-panel"
+              data-analysis-phase={materialConsistencyPhase}
+              aria-live="polite"
+            >
+              <div className="material-consistency-header">
+                <strong>{zh ? "材料之间有哪些关系" : "How the materials relate"}</strong>
+                <span>{materialConsistencyPhase === "analyzing"
+                  ? (zh ? "正在逐项比较…" : "Comparing…")
+                  : materialConsistencyPhase === "failed"
+                    ? (zh ? "暂时无法完成比较" : "Comparison unavailable")
+                    : (zh ? `发现 ${materialConsistencyAnalysis?.findings.length || 0} 项` : `${materialConsistencyAnalysis?.findings.length || 0} findings`)}</span>
+              </div>
+              {materialConsistencyPhase === "ready" && materialConsistencyAnalysis ? (
+                <>
+                  <p>{materialConsistencyAnalysis.summary}</p>
+                  {materialConsistencyAnalysis.findings.length ? (
+                    <div className="material-consistency-findings">
+                      {materialConsistencyAnalysis.findings.map((finding) => (
+                        <article
+                          key={finding.id}
+                          className={`material-consistency-finding ${finding.kind}`}
+                          data-testid="material-consistency-finding"
+                          data-finding-kind={finding.kind}
+                          data-finding-id={finding.id}
+                        >
+                          <header>
+                            <strong>{finding.title}</strong>
+                            <em>{formatMaterialConsistencyKind(finding.kind, zh)}</em>
+                          </header>
+                          <p>{finding.explanation}</p>
+                          <small>{zh ? "建议：" : "Recommendation: "}{finding.recommendation}</small>
+                          <div className="material-consistency-sources">
+                            {finding.sources.map((source) => (
+                              <button
+                                type="button"
+                                key={`${finding.id}-${source.path}-${source.locator}`}
+                                data-testid="material-consistency-source"
+                                data-source-name={source.name}
+                                data-source-locator={source.locator}
+                                onClick={() => void openMaterialConsistencySource(source)}
+                              >
+                                <strong>{source.name}</strong>
+                                <span>{source.locator} · {source.value}</span>
+                                <small>{source.excerpt}</small>
+                              </button>
+                            ))}
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  ) : <p>{zh ? "暂未发现可以确定的共识、冲突或过期数字。" : "No reliable consensus, conflict, or outdated number was found."}</p>}
+                  {materialConsistencyAnalysis.findings.length ? (
+                    <button
+                      type="button"
+                      className="material-consistency-create-task"
+                      data-testid="material-consistency-create-task"
+                      onClick={createTaskFromMaterialConsistency}
+                    >
+                      {zh ? "基于这些发现继续核对" : "Continue checking these findings"}
+                    </button>
+                  ) : null}
+                  {materialConsistencySourceStatus ? <output data-testid="material-consistency-source-status">{materialConsistencySourceStatus}</output> : null}
+                </>
+              ) : null}
+            </section>
+          ) : null}
+
+          {materialRolePhase === "ready" && !input.trim() && materialTaskSuggestions.length > 0 ? (
+            <section className="material-task-suggestions" data-testid="material-task-suggestions">
+              <div className="material-task-suggestions-header">
+                <strong>{zh ? "你可以接着做" : "Suggested next tasks"}</strong>
+                <span>{zh ? "选择后仍可修改" : "Click to edit before sending"}</span>
+              </div>
+              <div className="material-task-suggestion-list">
+                {materialTaskSuggestions.map((suggestion) => (
+                  <button
+                    type="button"
+                    key={suggestion.id}
+                    data-testid="material-task-suggestion"
+                    data-suggestion-id={suggestion.id}
+                    data-suggestion-prompt={suggestion.prompt}
+                    onClick={() => applyMaterialTaskSuggestion(suggestion)}
+                  >
+                    <strong>{suggestion.title}</strong>
+                    <span>{suggestion.description}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
           {showContextPreview && (
-            <section className="context-assembly-preview" aria-label="Context assembly preview">
+            <section className="context-assembly-preview" aria-label={zh ? "上下文预览" : "Context assembly preview"}>
               <div className="context-assembly-preview-header">
                 <strong>
                   <Info size={13} />
-                  Context preview
+                  {zh ? "上下文预览" : "Context preview"}
                 </strong>
                 <span
                   className={`context-budget-meter ${contextBudget.level}`}
                   title={`Estimated prompt context budget: ${contextBudget.estimatedTokens} / ${contextBudget.limit} tokens. Raw estimate ${contextBudget.rawEstimatedTokens} tokens. ${contextBudget.source}. ${contextBudget.calibrationSource ?? "No tokenizer calibration samples."} ${contextBudget.calibrationDrift ?? ""} ${contextBudget.reservedOutputTokens} tokens reserved for output.`}
                 >
-                  {contextPreviewItems.length} visible source{contextPreviewItems.length === 1 ? "" : "s"} 路 {formatApproxTokens(contextBudget.estimatedTokens)}
-                  <small>{contextBudget.calibrationSource ?? contextBudget.source}</small>
+                  {zh ? `${contextPreviewItems.length} 项材料 · ${formatApproxTokensZh(contextBudget.estimatedTokens)}` : `${contextPreviewItems.length} visible source${contextPreviewItems.length === 1 ? "" : "s"} · ${formatApproxTokens(contextBudget.estimatedTokens)}`}
+                  <small>{zh ? formatContextBudgetSourceZh(contextBudget) : contextBudget.calibrationSource ?? contextBudget.source}</small>
                   {contextBudget.calibrationDrift ? <small>{contextBudget.calibrationDrift}</small> : null}
                 </span>
               </div>
               <div className="context-assembly-preview-list">
                 {contextPreviewItems.map((item) => (
                   <span className="context-assembly-preview-item" key={item.key} title={item.detail}>
-                    <b>{item.kind}</b>
+                    <b>{zh ? formatContextKindZh(item.kind) : item.kind}</b>
                     {item.label}
-                    <small>{formatApproxTokens(item.estimatedTokens)}</small>
+                    <small>{zh ? formatApproxTokensZh(item.estimatedTokens) : formatApproxTokens(item.estimatedTokens)}</small>
                   </span>
                 ))}
               </div>
-              <p>{contextBudget.message} Only these visible sources and workspace instructions are sent with the next message.</p>
+              <p>{zh ? formatContextBudgetMessageZh(contextBudget) : `${contextBudget.message} Only these visible sources and workspace instructions are sent with the next message.`}</p>
             </section>
           )}
 
@@ -1351,7 +1660,7 @@ export function ChatWorkspace({
                         aria-label={`Assign agent for fork queue subtask ${queueIndex}`}
                       >
                         <option value="">
-                          {entry.agentHint ? `Use @${entry.agentHint}` : `Default: ${activeAgentName}`}
+                          {entry.agentHint ? (zh ? `使用 @${entry.agentHint}` : `Use @${entry.agentHint}`) : (zh ? `默认：${activeAgentName}` : `Default: ${activeAgentName}`)}
                         </option>
                         {agentOptions.map((agent) => (
                           <option key={agent.id} value={agent.id}>
@@ -1370,6 +1679,7 @@ export function ChatWorkspace({
             <div className="composer-input-row">
               <div className="composer-tools">
                 <button
+                  ref={attachmentButtonRef}
                   type="button"
                   className="composer-icon-button"
                   aria-expanded={toolsOpen}
@@ -1412,12 +1722,14 @@ export function ChatWorkspace({
                       Refresh IDE context
                     </button>
                     <button type="button" onClick={addFiles}>
+                      <span data-testid="composer-add-file-label" hidden />
                       <Paperclip size={15} />
                       {zh ? "添加文件" : "Add File"}
                     </button>
                     <button type="button" onClick={addFolder}>
+                      <span data-testid="composer-add-folder-label" hidden />
                       <FolderPlus size={15} />
-                      Add Folder
+                      {zh ? "添加文件夹" : "Add Folder"}
                     </button>
                   </div>
                 )}
@@ -1440,7 +1752,8 @@ export function ChatWorkspace({
                   onStop={voiceState === "processing" ? cancelVoiceTranscription : () => stopVoiceRecording("transcribe")}
                 />
               ) : (
-              <textarea
+                <textarea
+                  data-testid="composer-input"
                 ref={textareaRef}
                 value={input}
                 onChange={(event) => onInputChange(event.target.value)}
@@ -1449,7 +1762,7 @@ export function ChatWorkspace({
                 placeholder={
                   canChat
                     ? zh ? "向 OpenDrSai 提问..." : "Ask OpenDrSai..."
-                    : zh ? "正在连接本地网关..." : "Preparing the local agent runtime..."
+                    : chatUnavailableReason ?? (zh ? "正在连接本地网关..." : "Preparing the local agent runtime...")
                 }
                 rows={1}
               />
@@ -1505,7 +1818,7 @@ export function ChatWorkspace({
                   onClick={() => toggleMetaMenu("agent")}
                 >
                   <Bot size={14} />
-                  Agent: {activeAgentName}
+                  {zh ? "智能体" : "Agent"}: {activeAgentName}
                   <ChevronDown size={13} />
                 </button>
                 {metaMenuOpen === "agent" && (
@@ -1652,7 +1965,7 @@ export function ChatWorkspace({
                     {zh ? "停止" : "Stop"}
                   </button>
                 ) : (
-                  <button className="composer-submit" type="submit" disabled={!input.trim() || (!canChat && !canSaveLocalPreference)}>
+                  <button className="composer-submit" type="submit" disabled={!input.trim() || (!canChat && !materialSuggestionRuntimeReady && !canSaveLocalPreference && !canAnswerMaterialInventoryLocally && !canAnswerMaterialQuestionLocally)}>
                     <Send size={16} />
                     {zh ? "发送" : "Send"}
                   </button>
@@ -1701,6 +2014,174 @@ export function ChatWorkspace({
   );
 }
 
+function formatPickedFileMeta(file: PickedFileDescriptor, zh: boolean): string {
+  const category = {
+    pdf: "PDF",
+    word: zh ? "Word 文档" : "Word document",
+    spreadsheet: zh ? "Excel 工作簿" : "Excel workbook",
+    table: zh ? "表格数据" : "Table data",
+    image: zh ? "图片" : "Image",
+    presentation: zh ? "演示文稿" : "Presentation",
+    text: zh ? "文本" : "Text",
+    other: zh ? "其他文件" : "Other file",
+  }[file.category];
+  const status = file.status === "ready"
+    ? (zh ? "已就绪" : "Ready")
+    : file.status === "unsupported"
+      ? (zh ? "暂不支持" : "Unsupported")
+      : (zh ? "读取失败" : "Unreadable");
+  const size = typeof file.sizeBytes === "number" ? formatPickedFileSize(file.sizeBytes) : "";
+  return [category, size, status].filter(Boolean).join(" · ");
+}
+
+function formatPickedFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function createMaterialTaskSuggestions(
+  analysis: MaterialRoleAnalysisResult | null,
+  zh: boolean,
+): MaterialTaskSuggestion[] {
+  if (!analysis?.items.length) return [];
+  const byRole = (role: MaterialRoleItem["role"]) => analysis.items.filter((item) => item.role === role).map((item) => item.name);
+  const reports = byRole("previous_report");
+  const data = byRole("latest_data");
+  const images = byRole("result_image");
+  const references = byRole("reference_material");
+  const quoted = (names: string[]) => names.map((name) => `“${name}”`).join("、");
+  const suggestions: MaterialTaskSuggestion[] = [];
+  if (reports.length && data.length) suggestions.push({
+    id: "update-report",
+    title: zh ? "用最新数据更新旧报告" : "Update the previous report",
+    description: zh ? "保留原文件，生成一份可核对的新版本" : "Keep originals and produce a reviewable new version",
+    prompt: zh ? `请用最新数据 ${quoted(data)} 更新旧报告 ${quoted(reports)}，保留原文件，列出改动和依据，并生成一份新版本。` : `Update ${quoted(reports)} with the latest data in ${quoted(data)}. Keep the originals, list every change and its evidence, and create a new version.`,
+  });
+  if (data.length) suggestions.push({
+    id: "check-data",
+    title: zh ? "检查数据是否有问题" : "Check the data for issues",
+    description: zh ? "检查字段、单位、缺失值、异常值和趋势" : "Check fields, units, missing values, outliers, and trends",
+    prompt: zh ? `请检查 ${quoted(data)} 是否有字段、单位、缺失值、异常值或趋势问题，说明发现、依据和建议。` : `Check ${quoted(data)} for field, unit, missing-value, outlier, and trend issues. Explain findings, evidence, and recommendations.`,
+  });
+  if (data.length && suggestions.length < 2) suggestions.push({
+    id: "visualize-data",
+    title: zh ? "制作数据图表" : "Create data charts",
+    description: zh ? "选择合适图表并解释主要趋势" : "Choose suitable charts and explain key trends",
+    prompt: zh ? `请分析 ${quoted(data)}，选择合适的图表展示主要趋势和异常点，保留单位、图例和数据来源，并解释为什么选择这些图表。` : `Analyze ${quoted(data)} and create suitable charts for the main trends and outliers. Preserve units, legends, and data sources, and explain the chart choices.`,
+  });
+  if (data.length && images.length) suggestions.push({
+    id: "check-image-data-consistency",
+    title: zh ? "核对图片与数据" : "Compare images with data",
+    description: zh ? "检查趋势、坐标、单位和数字是否一致" : "Verify trends, axes, units, and values",
+    prompt: zh ? `请核对结果图片 ${quoted(images)} 与最新数据 ${quoted(data)} 是否一致，逐项检查趋势、坐标、单位和关键数字，并标出冲突。` : `Compare result images ${quoted(images)} with latest data ${quoted(data)}. Check trends, axes, units, and key values, and flag every conflict.`,
+  });
+  if (references.length) suggestions.push({
+    id: "summarize-references",
+    title: zh ? "提取材料要点" : "Extract key points",
+    description: zh ? "整理结论、结构、关键数字和可引用出处" : "Organize conclusions, structure, key figures, and citations",
+    prompt: zh ? `请提取参考材料 ${quoted(references)} 的核心结论、内容结构、关键数字和可引用出处，用非专业读者能理解的语言说明。` : `Extract the main conclusions, structure, key figures, and citable sources from ${quoted(references)}, using language a non-specialist can understand.`,
+  });
+  if (references.length && suggestions.length < 2) suggestions.push({
+    id: "organize-reference-questions",
+    title: zh ? "整理值得继续追问的问题" : "Identify follow-up questions",
+    description: zh ? "区分已有结论、证据缺口和下一步问题" : "Separate known conclusions, evidence gaps, and next questions",
+    prompt: zh ? `请基于 ${quoted(references)} 整理已有结论、仍不确定的地方、证据缺口和下一步最值得追问的 5 个问题，并标明对应材料位置。` : `Using ${quoted(references)}, organize established conclusions, uncertainties, evidence gaps, and the five most useful follow-up questions, citing their source locations.`,
+  });
+  if (images.length && !data.length && suggestions.length < 2) suggestions.push({
+    id: "explain-images",
+    title: zh ? "解释图片表达了什么" : "Explain the images",
+    description: zh ? "识别图表元素、趋势和需要补充的信息" : "Identify chart elements, trends, and missing context",
+    prompt: zh ? `请解释结果图片 ${quoted(images)} 表达的趋势和结论，识别坐标、单位、图例及缺失信息；无法确认的地方请明确说明。` : `Explain the trends and conclusions in ${quoted(images)}. Identify axes, units, legends, and missing context, and clearly state anything that cannot be verified.`,
+  });
+  return suggestions.slice(0, 4);
+}
+
+function createMaterialRoleLookup(items: MaterialRoleItem[]): Map<string, MaterialRoleItem> {
+  const lookup = new Map<string, MaterialRoleItem>();
+  const nameCounts = new Map<string, number>();
+  for (const item of items) {
+    const nameKey = item.name.toLocaleLowerCase();
+    nameCounts.set(nameKey, (nameCounts.get(nameKey) || 0) + 1);
+    lookup.set(normalizeMaterialRolePath(item.path), item);
+  }
+  for (const item of items) {
+    const nameKey = item.name.toLocaleLowerCase();
+    if (nameCounts.get(nameKey) === 1) lookup.set(`name:${nameKey}`, item);
+  }
+  return lookup;
+}
+
+function findMaterialRole(
+  lookup: Map<string, MaterialRoleItem>,
+  attachment: ChatAttachment,
+): MaterialRoleItem | undefined {
+  return lookup.get(normalizeMaterialRolePath(attachment.path))
+    || lookup.get(`name:${attachment.name.toLocaleLowerCase()}`);
+}
+
+function normalizeMaterialRolePath(value: string): string {
+  return value.replace(/\\/g, "/").replace(/\/+$/, "").toLocaleLowerCase();
+}
+
+function enrichAttachmentWithMaterialRole(
+  attachment: ChatAttachment,
+  item?: MaterialRoleItem,
+): ChatAttachment {
+  if (!item) return attachment;
+  const roleSummary = `Material role: ${formatMaterialRoleLabel(item.role, false)} (${Math.round(item.confidence * 100)}% confidence). ${item.reason} Suggested use: ${item.suggestedUse}`;
+  return {
+    ...attachment,
+    note: [attachment.note, roleSummary].filter(Boolean).join("\n"),
+  };
+}
+
+function isMaterialInventoryQuestion(text: string): boolean {
+  return /(?:(?:我|系统)(?:目前|现在)?)?(?:有|拥有|导入|上传)(?:了|的)?哪些材料|材料(?:清单|列表|角色|分别是什么)|what (?:files|materials|sources) (?:do i|are)|list (?:my )?(?:files|materials|sources)/i.test(text.trim());
+}
+
+function isNaturalMaterialQuestion(text: string): boolean {
+  const normalized = text.trim();
+  return /[?？]/.test(normalized)
+    || /(?:标题|题目|样本量|均值|容量|带宽|数字|数值|比例|百分比).*(?:是什么|是多少|有多少)/.test(normalized)
+    || /(?:什么|哪种|哪些).*(?:方法|实验设计|研究设计|差异|不同|区别|冲突|不一致)/.test(normalized)
+    || /(?:比较|对比).*(?:差异|不同|区别|冲突|不一致)/.test(normalized)
+    || /\b(?:what|how many|where|which|compare|difference|title|bandwidth|sample size|method|protocol|conflict)\b/i.test(normalized);
+}
+
+function formatMaterialRoleLabel(role: MaterialRoleItem["role"], zh: boolean): string {
+  if (role === "previous_report") return zh ? "旧报告" : "Previous reports";
+  if (role === "latest_data") return zh ? "最新数据" : "Latest data";
+  if (role === "result_image") return zh ? "结果图片" : "Result images";
+  return zh ? "参考材料" : "Reference materials";
+}
+
+function formatMaterialConsistencyKind(kind: MaterialConsistencyFindingKind, zh: boolean): string {
+  if (kind === "consensus") return zh ? "多来源共识" : "Consensus";
+  if (kind === "source_conflict") return zh ? "来源冲突" : "Source conflict";
+  if (kind === "outdated_number") return zh ? "过期数字" : "Outdated number";
+  if (kind === "chart_mismatch") return zh ? "图文不一致" : "Chart mismatch";
+  return zh ? "证据不足" : "Evidence gap";
+}
+
+function formatMaterialRoleFiles(
+  items: MaterialRoleItem[],
+  role: MaterialRoleItem["role"],
+  zh: boolean,
+): string {
+  const matching = items.filter((item) => item.role === role);
+  if (!matching.length) return zh ? "暂未发现" : "None detected";
+  return matching.map((item) => `${item.name} · ${Math.round(item.confidence * 100)}%`).join("；");
+}
+
+function formatFolderImportMeta(folder: NonNullable<ComposerAttachment["folderImport"]>, zh: boolean): string {
+  if (folder.phase === "scanning") return zh ? "正在扫描文件夹…" : "Scanning folder…";
+  if (folder.phase === "failed") return zh ? `扫描失败 · ${folder.message || "无法读取"}` : `Scan failed · ${folder.message || "Unreadable"}`;
+  return zh
+    ? `已导入 ${folder.imported} · 跳过 ${folder.skipped} · 失败 ${folder.failed} · 重复 ${folder.duplicates} · 子目录 ${folder.directories}`
+    : `Imported ${folder.imported} · skipped ${folder.skipped} · failed ${folder.failed} · duplicates ${folder.duplicates} · ${folder.directories} folders`;
+}
+
 function getForkQueueCommandArgs(input: string): string {
   const match = input.trimStart().match(/^\/fork\s+([\s\S]*)$/i);
   return match?.[1]?.trim() ?? "";
@@ -1745,7 +2226,7 @@ function StreamingStatus({
   const lastEventAt = message.lastEventAt ?? startedAt;
   const idleSeconds = Math.max(0, Math.floor((now - lastEventAt) / 1000));
   const detail = elapsedSeconds < 3
-    ? zh ? "正在连接本地网关..." : "Connecting to the local gateway..."
+    ? zh ? "正在连接本地运行时..." : "Connecting to the local runtime..."
     : idleSeconds >= 10
       ? zh ? `等待模型输出 ${elapsedSeconds} 秒。` : `Waiting ${elapsedSeconds}s for model output.`
       : zh ? `正在推理 ${elapsedSeconds} 秒。` : `Thinking for ${elapsedSeconds}s.`;
@@ -1755,14 +2236,6 @@ function StreamingStatus({
       <span className="streaming-dot" aria-hidden />
       {detail}
     </p>
-  );
-}
-
-function ToolTimeline({ events }: { events: ChatToolTimelineEvent[] }): React.JSX.Element {
-  return (
-    <div className="message-tool-timeline" aria-label="Tool timeline">
-      {events.slice(-8).map((event) => <ToolTimelineItem event={event} key={event.id} />)}
-    </div>
   );
 }
 
@@ -1785,54 +2258,6 @@ function MessageActions({ content, zh }: { content: string; zh: boolean }): Reac
       </button>
     </div>
   );
-}
-
-function ToolTimelineItem({ event }: { event: ChatToolTimelineEvent }): React.JSX.Element {
-  const [open, setOpen] = useState(event.status === "failed" || event.status === "running");
-  const content = event.content?.trim() ?? "";
-  const preview = content.split(/\r?\n/, 1)[0].slice(0, 140);
-  return (
-    <details
-      className={`message-tool-event ${event.status ?? event.kind}`}
-      open={open}
-      onToggle={(toggle) => setOpen(toggle.currentTarget.open)}
-    >
-      <summary>
-        {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        <span>{event.status ?? event.kind}</span>
-        <strong>{event.title}</strong>
-        {event.toolName ? <code>{event.toolName}</code> : null}
-      </summary>
-      <div className="message-tool-detail">
-        {event.path ? <small>{event.path}</small> : null}
-        {event.kind === "diff" && content ? <ToolDiffContent value={content} /> : content ? <pre>{content}</pre> : preview ? <p>{preview}</p> : null}
-        {content ? <CopyTimelineContent value={content} /> : null}
-      </div>
-    </details>
-  );
-}
-
-function ToolDiffContent({ value }: { value: string }): React.JSX.Element {
-  return (
-    <pre className="chat-diff">
-      {value.split("\n").map((line, index) => {
-        const kind = line.startsWith("+") && !line.startsWith("+++") ? "add"
-          : line.startsWith("-") && !line.startsWith("---") ? "remove"
-            : line.startsWith("@@") ? "hunk" : "context";
-        return <span className={`chat-diff-line ${kind}`} key={`${index}-${line}`}>{line || " "}</span>;
-      })}
-    </pre>
-  );
-}
-
-function CopyTimelineContent({ value }: { value: string }): React.JSX.Element {
-  const [copied, setCopied] = useState(false);
-  async function handleCopy(): Promise<void> {
-    await navigator.clipboard.writeText(value);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1500);
-  }
-  return <button type="button" className="tool-copy-button" onClick={() => void handleCopy()}>{copied ? "Copied" : "Copy output"}</button>;
 }
 
 function VoiceCaptureBar({
@@ -2500,6 +2925,26 @@ function formatApproxTokens(tokens: number): string {
   return `~${tokens} tokens`;
 }
 
+function formatApproxTokensZh(tokens: number): string {
+  if (tokens >= 1000) return `约 ${(tokens / 1000).toFixed(tokens >= 10000 ? 0 : 1)}k 词元`;
+  return `约 ${tokens} 词元`;
+}
+
+function formatContextKindZh(kind: string): string {
+  return { Browser: "网页", File: "文件", Folder: "文件夹", Selection: "选区", Terminal: "终端", Instruction: "说明" }[kind] || kind;
+}
+
+function formatContextBudgetSourceZh(budget: ContextBudgetEstimate): string {
+  if (budget.calibrationSource) return "已按当前模型校准";
+  return budget.source.startsWith("Model limit") ? "当前模型上限" : "默认上下文上限";
+}
+
+function formatContextBudgetMessageZh(budget: ContextBudgetEstimate): string {
+  if (budget.level === "over") return "材料预计超过上下文上限；请在发送前移除较大的材料。下一条消息只会发送上面列出的材料和工作区说明。";
+  if (budget.level === "high") return "材料预计接近上下文上限。下一条消息只会发送上面列出的材料和工作区说明。";
+  return "材料预计在上下文上限内。下一条消息只会发送上面列出的材料和工作区说明。";
+}
+
 function getContextKindLabel(kind: ChatAttachment["kind"]): string {
   return {
     browser: "Browser",
@@ -2604,6 +3049,33 @@ function getSlashCommandDescription(command: ChatCommandName): string {
     fork: "Prepare isolated follow-up work.",
     status: "Summarize chat, context, and runtime status.",
   }[command];
+}
+
+function getAssistantDisplayContent(message: UiMessage): string {
+  if (!message.reasoningContent) return message.content;
+  const content = getVisibleChatText(message.content);
+  return removeDuplicatedReasoning(content, getVisibleChatText(message.reasoningContent));
+}
+
+function removeDuplicatedReasoning(content: string, reasoning: string): string {
+  const visible = content.trim();
+  const thought = reasoning.trim();
+  if (!visible || !thought) return visible;
+
+  // Some providers send the same reasoning once in a dedicated event and again
+  // in the text stream. Keep it in Think and remove only an exact leading copy.
+  if (normalizeChatText(visible) === normalizeChatText(thought)) return "";
+  if (normalizeChatText(visible).startsWith(normalizeChatText(thought))) {
+    const directPrefix = visible.slice(0, thought.length);
+    if (normalizeChatText(directPrefix) === normalizeChatText(thought)) {
+      return visible.slice(thought.length).trimStart();
+    }
+  }
+  return visible;
+}
+
+function normalizeChatText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
 }
 
 function parseAgentExamples(

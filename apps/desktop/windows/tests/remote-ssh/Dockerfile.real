@@ -1,10 +1,10 @@
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends openssh-server git python3 python3-pip python3-venv ca-certificates && rm -rf /var/lib/apt/lists/*
 RUN useradd -m -s /bin/bash vscode && mkdir -p /run/sshd /home/vscode/.ssh /home/vscode/workspace /home/vscode/workspace-two && chown -R vscode:vscode /home/vscode && chmod 700 /home/vscode/.ssh
-COPY apps/desktop/windows/tests/remote-ssh/authorized_keys /home/vscode/.ssh/authorized_keys
 COPY cores/python/packages/drsai /opt/drsai
 RUN python3 -m pip install --break-system-packages --no-cache-dir /opt/drsai
 RUN su - vscode -c 'cd /home/vscode/workspace && git init -q && git config user.email e2e@example.test && git config user.name E2E && printf "tracked\n" > tracked.txt && git add tracked.txt && git commit -qm initial' && su - vscode -c 'cd /home/vscode/workspace-two && git init -q && git config user.email e2e@example.test && git config user.name E2E && printf "second\n" > second.txt && git add second.txt && git commit -qm initial'
-RUN chown vscode:vscode /home/vscode/.ssh/authorized_keys && chmod 600 /home/vscode/.ssh/authorized_keys && printf '%s\n' 'PasswordAuthentication no' 'PermitRootLogin no' 'AllowUsers vscode' >> /etc/ssh/sshd_config
+COPY apps/desktop/windows/tests/remote-ssh/authorized_keys /home/vscode/.ssh/authorized_keys
+RUN chown vscode:vscode /home/vscode/.ssh/authorized_keys && chmod 600 /home/vscode/.ssh/authorized_keys && printf '%s\n' 'PasswordAuthentication no' 'PermitRootLogin no' 'AllowUsers vscode' 'KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group14-sha256' >> /etc/ssh/sshd_config
 EXPOSE 22
 CMD ["/usr/sbin/sshd", "-D", "-e"]

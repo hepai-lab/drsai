@@ -38,7 +38,7 @@ for (const marker of [
   "WorkspaceCheckpointRestoreRequest",
   "WorkspaceCheckpointRestoreResult",
   "WorkspaceCheckpointAcceptRequest",
-  "listWorkspaceCheckpoints(workspacePath: string)",
+  "listWorkspaceCheckpoints(workspacePath: string, workspaceId?: string)",
   "createWorkspaceCheckpoint(",
   "acceptWorkspaceCheckpoint(",
   "previewWorkspaceCheckpoint(",

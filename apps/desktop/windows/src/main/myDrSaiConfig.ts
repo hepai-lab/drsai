@@ -9,6 +9,7 @@ import type {
   UpdateMyDrSaiConfigRequest,
 } from "../shared/desktopApi";
 import { getGatewayStatus } from "./gateway";
+import { getDefaultModelAlias } from "./modelDefaults";
 
 const TOKENIZER_CALIBRATION_FILE = ".drsai/tokenizer-calibration.json";
 const WRITABLE_CLI_KEYS: Array<keyof UpdateMyDrSaiConfigRequest> = [
@@ -29,6 +30,7 @@ export async function getMyDrSaiConfig(workspacePath?: string): Promise<MyDrSaiC
       baseUrl: gateway.baseUrl,
       config: {},
       models: [],
+      defaultModelAlias: getDefaultModelAlias(),
       error: "My DrSai 尚未运行，启动后可读取配置。",
     };
   }
@@ -50,7 +52,7 @@ export async function getMyDrSaiConfig(workspacePath?: string): Promise<MyDrSaiC
       cliPath: cli.path,
       config: normalizeCliConfig(cli.config),
       models,
-      defaultModelAlias: catalog.default_alias,
+      defaultModelAlias: catalog.default_alias || getDefaultModelAlias(),
     };
   } catch (error) {
     return {
@@ -58,6 +60,7 @@ export async function getMyDrSaiConfig(workspacePath?: string): Promise<MyDrSaiC
       baseUrl: gateway.baseUrl,
       config: {},
       models: [],
+      defaultModelAlias: getDefaultModelAlias(),
       error: error instanceof Error ? error.message : String(error),
     };
   }

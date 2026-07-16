@@ -21,8 +21,13 @@ import type {
   ChatAttachment,
   CreateWorkspaceRequest,
   DesktopAgent,
+  DesktopAnomalyDecision,
   DesktopBackgroundTask,
   DesktopCitationRecord,
+  CodexBackendLogin,
+  CodexBackendStatus,
+  DesktopDataCleanupPreview,
+  DesktopDataCleanupScope,
   DesktopIndependentReviewRecord,
   DesktopReusableTask,
   DesktopReusableTaskAdjustments,
@@ -48,15 +53,13 @@ import type {
   MyDrSaiModelConfig,
   MyDrSaiConfig,
   RemoteSshHost,
+  RemoteSshHostKey,
   RemoteDirectoryEntry,
-  RemoteGatewayPreflight,
-  RemoteGatewayOperationEvent,
-  RemoteHepaiWorker,
   WorkspaceFilePreview,
   WorkspaceProject,
 } from "@shared/desktopApi";
 import { desktopApi } from "./desktopApi";
-import { LoginScreen, ServiceUnavailableScreen } from "./auth/LoginScreen";
+import { LoginScreen } from "./auth/LoginScreen";
 import { useAuth } from "./auth/AuthProvider";
 import { AgentSquareView } from "./components/AgentSquareView";
 import { AgentRunWorkspace } from "./components/AgentRunWorkspace";
@@ -189,7 +192,6 @@ function App(): React.JSX.Element {
     );
   }
   if (!auth.session.authenticated) return <LoginScreen />;
-  if (!auth.serviceReady) return <ServiceUnavailableScreen />;
 
   return (
     <AuthenticatedApp
@@ -209,6 +211,7 @@ function AuthenticatedApp({
   onLogout: () => Promise<void>;
   sessionRestoring: boolean;
 }): React.JSX.Element {
+  const auth = useAuth();
   const [language, setLanguage] = useState<AppLanguage>(() => loadLanguage());
   const developerMode = import.meta.env.DEV && loadDeveloperMode();
   const [activeNav, setActiveNav] = useState<NavId>(MENU_IDS.currentSession);
@@ -256,20 +259,18 @@ function AuthenticatedApp({
     [],
   );
   const [remoteDialogOpen, setRemoteDialogOpen] = useState(false);
+  const [workspaceLocationChoice, setWorkspaceLocationChoice] = useState<"remote" | null>(null);
+  const [remoteWorkspaceStep, setRemoteWorkspaceStep] = useState<"computer" | "directory">("computer");
   const [remoteHosts, setRemoteHosts] = useState<RemoteSshHost[]>([]);
   const [remoteHostAlias, setRemoteHostAlias] = useState("");
   const [remotePath, setRemotePath] = useState("/home/vscode");
   const [remoteDialogError, setRemoteDialogError] = useState("");
   const [remoteConnecting, setRemoteConnecting] = useState(false);
   const [remoteNeedsHostTrust, setRemoteNeedsHostTrust] = useState(false);
+  const [remoteHostKeys, setRemoteHostKeys] = useState<RemoteSshHostKey[]>([]);
   const [remoteDirectories, setRemoteDirectories] = useState<RemoteDirectoryEntry[]>([]);
   const [remoteShowHidden, setRemoteShowHidden] = useState(false);
   const [remoteRecentPaths, setRemoteRecentPaths] = useState<string[]>(() => loadRemoteRecentPaths());
-  const [remoteGatewayPreflight, setRemoteGatewayPreflight] = useState<RemoteGatewayPreflight | null>(null);
-  const [remoteGatewayArtifact, setRemoteGatewayArtifact] = useState("");
-  const [remoteGatewayOperation, setRemoteGatewayOperation] = useState<RemoteGatewayOperationEvent | null>(null);
-  const [remoteWorkers, setRemoteWorkers] = useState<RemoteHepaiWorker[]>([]);
-  useEffect(() => desktopApi.onRemoteGatewayOperation((event) => setRemoteGatewayOperation(event)), []);
   const [threads, setThreads] = useState<DesktopThread[]>([]);
   const [activeThreadId, setActiveThreadId] = useState(() => loadRestoredThreadId());
   const [threadSnapshots, setThreadSnapshots] = useState<
@@ -324,12 +325,23 @@ function AuthenticatedApp({
     navItems.find((item) => item.id === activeNav)?.label ??
     (language === "zh" ? "当前会话" : "Chat");
   const { health } = desktop;
+  const [codexStatus, setCodexStatus] = useState<CodexBackendStatus | null>(null);
+  useEffect(() => {
+    if (!health?.gatewayReady) { setCodexStatus(null); return; }
+    let active = true;
+    void desktopApi.getCodexBackendStatus().then((status) => { if (active) setCodexStatus(status); }).catch(() => {
+      if (active) setCodexStatus({ backendId: "codex", state: "fault", available: false, version: null,
+        loggedIn: false, authMode: null, accountLabel: null, reason: "runtime_unavailable", retryable: true, action: "restart" });
+    });
+    return () => { active = false; };
+  }, [health?.gatewayReady]);
   const workspacePath = health?.install.repoPath || health?.install.home || "";
   const currentWorkspaceTime = "1970-01-01T00:00:00.000Z";
   const currentWorkspace: WorkspaceProject = {
     id: "current",
     name: getWorkspaceName(workspacePath) || "drsai",
     path: workspacePath,
+    location: "local",
     type: "local",
     description: language === "zh" ? "当前项目" : "Current project",
     createdAt: currentWorkspaceTime,
@@ -353,10 +365,12 @@ function AuthenticatedApp({
   const activeThreadWorkspacePath = activeThread?.workspacePath?.trim();
   const effectiveWorkspacePath = activeThreadWorkspacePath || activeWorkspace.path;
   const effectiveWorkspace =
-    workspaces.find(
+    getComparablePath(activeWorkspace.path) === getComparablePath(effectiveWorkspacePath)
+      ? activeWorkspace
+      : workspaces.find(
       (workspace) =>
         getComparablePath(workspace.path) === getComparablePath(effectiveWorkspacePath),
-    ) ?? activeWorkspace;
+      ) ?? activeWorkspace;
   const effectiveWorkspaceInstructions =
     effectiveWorkspace.instructions ?? activeWorkspace.instructions;
   const workspaceTrusted =
@@ -444,11 +458,21 @@ function AuthenticatedApp({
     archived: thread.archived,
     unread: thread.unread,
   }));
+  const servicePreparing = auth.serviceBusy || !auth.serviceReady;
+  const chatUnavailableReason = servicePreparing
+    ? language === "zh"
+      ? "正在后台检查模型服务，完成后即可发送。"
+      : "Checking model services in the background. Sending will be available shortly."
+    : undefined;
   const chat = useDesktopChatAdapter({
     availableAgents: availableChatAgents,
     availableModels: availableChatModels,
     canChat: Boolean(
-      !sessionRestoring && (health?.installed || health?.gateway?.externalReady) && health?.gatewayReady && workspaceTrusted,
+      !sessionRestoring
+        && !servicePreparing
+        && (health?.installed || health?.gateway?.externalReady)
+        && health?.gatewayReady
+        && workspaceTrusted,
     ),
     developerMode,
     onChatComplete: () => {
@@ -467,6 +491,7 @@ function AuthenticatedApp({
     threadId: activeThreadId,
     threadSnapshot: threadSnapshots[activeThreadId] ?? null,
     workspaceInstructions: effectiveWorkspaceInstructions,
+    workspaceId: effectiveWorkspace.id,
     workspacePath: effectiveWorkspacePath,
   });
 
@@ -522,6 +547,7 @@ function AuthenticatedApp({
 
   const canChat = Boolean(
     !sessionRestoring &&
+    !servicePreparing &&
     (health?.installed || health?.gateway?.externalReady) &&
     health?.gatewayReady &&
     workspaceTrusted &&
@@ -628,6 +654,10 @@ function AuthenticatedApp({
   }, [appearance]);
 
   useEffect(() => {
+    document.documentElement.lang = language === "zh" ? "zh-CN" : "en";
+  }, [language]);
+
+  useEffect(() => {
     window.localStorage.setItem(SIDEBAR_COMPONENTS_STORAGE_KEY, JSON.stringify(sidebarComponents));
   }, [sidebarComponents]);
 
@@ -690,7 +720,7 @@ function AuthenticatedApp({
         setSelectedChatAgentId(preferredAgent.id);
         setSelectedChatAgentName(preferredAgent.name);
         setSelectedChatModel(
-          (current) => current ?? defaultAgent.model ?? myDrSaiConfig?.defaultModelAlias ?? null,
+          (current) => current ?? preferredAgent.model ?? myDrSaiConfig?.defaultModelAlias ?? null,
         );
         setSelectedChatExamples(preferredAgent.examples);
       } catch {
@@ -743,10 +773,36 @@ function AuthenticatedApp({
 
   async function handleAddWorkspace(): Promise<void> {
     setRemoteDialogError("");
+    setWorkspaceLocationChoice(null);
+    setRemoteWorkspaceStep("computer");
+    setRemoteDialogOpen(true);
+  }
+
+  async function beginRemoteWorkspace(): Promise<void> {
+    setWorkspaceLocationChoice("remote");
+    setRemoteWorkspaceStep("computer");
+    setRemoteDialogError("");
     const hosts = await desktopApi.listSshHosts();
     setRemoteHosts(hosts);
-    setRemoteHostAlias(hosts[0]?.alias || "");
-    setRemoteDialogOpen(true);
+    setRemoteHostAlias((current) => current || hosts[0]?.alias || "");
+  }
+
+  async function selectRemoteComputer(): Promise<void> {
+    setRemoteDialogError("");
+    const diagnostic = await desktopApi.diagnoseSshHost(remoteHostAlias);
+    if (diagnostic.state !== "reachable") {
+      const needsTrust = diagnostic.state === "host_key_failed";
+      setRemoteNeedsHostTrust(needsTrust);
+      setRemoteHostKeys(needsTrust ? await desktopApi.inspectSshHostKeys(remoteHostAlias).catch(() => []) : []);
+      setRemoteDialogError(needsTrust
+        ? (language === "zh" ? "请在批准前通过可信渠道核对主机密钥指纹。" : "Verify these host-key fingerprints through a trusted channel before approval.")
+        : diagnostic.message || (language === "zh" ? "无法连接这台计算机，请检查身份凭据和网络。" : "This computer is unavailable. Check its credentials and network."));
+      return;
+    }
+    setRemoteNeedsHostTrust(false);
+    setRemoteHostKeys([]);
+    setRemoteWorkspaceStep("directory");
+    await browseRemotePath(remotePath);
   }
 
   async function handleConnectRemoteWorkspace(): Promise<void> {
@@ -784,59 +840,6 @@ function AuthenticatedApp({
       const entries = await desktopApi.listRemoteDirectories(remoteHostAlias, path.trim());
       setRemoteDirectories(entries); setRemotePath(path.trim()); setRemoteDialogError("");
     } catch (error) { setRemoteDialogError(error instanceof Error ? error.message : String(error)); }
-  }
-
-  async function inspectRemoteGateway(): Promise<void> {
-    if (!remoteHostAlias) return;
-    try {
-      setRemoteGatewayPreflight(await desktopApi.preflightRemoteGateway(remoteHostAlias));
-      setRemoteDialogError("");
-    } catch (error) {
-      setRemoteDialogError(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function showRemoteDiagnostics(): Promise<void> {
-    const report = await desktopApi.getRemoteSshDiagnosticReport();
-    const host = report.hosts.find((item) => item.hostAlias === remoteHostAlias);
-    setRemoteDialogError(host ? `Diagnostics: ${host.state}; workspaces=${host.workspaceCount}; reconnects=${host.reconnectCount}; attempts=${host.reconnectAttempts}; last=${host.events.at(-1)?.phase || "none"}` : "No live host diagnostics are available yet.");
-  }
-
-  async function chooseRemoteGatewayArtifact(): Promise<void> {
-    const result = await desktopApi.pickFiles();
-    if (!result.canceled && result.paths[0]) setRemoteGatewayArtifact(result.paths[0]);
-  }
-
-  async function requestRemoteGatewayOperation(action: "install" | "upgrade" | "rollback"): Promise<void> {
-    if (!remoteHostAlias) return;
-    if (action !== "rollback" && !remoteGatewayArtifact) {
-      setRemoteDialogError("Select a signed or SHA-256-verifiable .whl/.tar.gz artifact first.");
-      return;
-    }
-    try {
-      const proposal = await desktopApi.requestRemoteGatewayInstallApproval({
-        hostAlias: remoteHostAlias,
-        action,
-        ...(remoteGatewayArtifact ? { artifactPath: remoteGatewayArtifact } : {}),
-      });
-      setRemoteDialogError(proposal.queued ? "Operation queued in Approval Center." : proposal.reason);
-      if (!proposal.queued && proposal.allowed) await inspectRemoteGateway();
-    } catch (error) {
-      setRemoteDialogError(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function loadRemoteWorkers(): Promise<void> {
-    const workspace = storedWorkspaces.find((item) => item.remote?.hostAlias === remoteHostAlias && item.remote.canonicalPath === remotePath.trim());
-    if (!workspace) return setRemoteWorkers([]);
-    setRemoteWorkers(await desktopApi.listRemoteHepaiWorkers(workspace.id));
-  }
-
-  async function toggleRemoteWorker(worker: RemoteHepaiWorker): Promise<void> {
-    const workspace = storedWorkspaces.find((item) => item.remote?.hostAlias === remoteHostAlias && item.remote.canonicalPath === remotePath.trim());
-    if (!workspace) return;
-    await desktopApi.setRemoteHepaiWorkerEnabled(workspace.id, worker.id, !worker.enabled);
-    await loadRemoteWorkers();
   }
 
   async function handleAddLocalWorkspace(): Promise<void> {
@@ -898,7 +901,7 @@ function AuthenticatedApp({
   async function handleRemoveWorkspace(workspaceId: string): Promise<void> {
     if (workspaceId === "current") return;
     const workspace = storedWorkspaces.find((item) => item.id === workspaceId);
-    if (workspace?.type === "remote-ssh") {
+    if (workspace?.location === "remote") {
       await desktopApi.disconnectRemoteWorkspace(workspaceId).catch(() => false);
     }
     await desktopApi.deleteWorkspace(workspaceId);
@@ -930,7 +933,7 @@ function AuthenticatedApp({
 
   async function handleOpenWorkspacePath(path: string): Promise<void> {
     const workspace = storedWorkspaces.find((item) => item.path === path);
-    if (workspace?.type === "remote-ssh") return;
+    if (workspace?.location === "remote") return;
     await desktopApi.openPath(path);
   }
 
@@ -1026,7 +1029,7 @@ function AuthenticatedApp({
     setRightPanelCollapsed(true);
     const thread = await desktopApi.createThread({
       kind: "agent_run",
-      title: language === "zh" ? "新 Agent 任务" : "New agent task",
+      title: language === "zh" ? "新智能体任务" : "New agent task",
       workspacePath: effectiveWorkspacePath,
     });
     setActiveThreadId(thread.id);
@@ -1356,6 +1359,7 @@ function AuthenticatedApp({
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent): void {
+      if (event.defaultPrevented) return;
       if (!event.ctrlKey || event.altKey || event.metaKey || event.shiftKey)
         return;
       if (event.key === "[") {
@@ -1417,6 +1421,7 @@ function AuthenticatedApp({
         <ChatWorkspace
           activeRequestId={chat.activeRequestId}
           canChat={canChat}
+          chatUnavailableReason={chatUnavailableReason}
           health={health}
           input={chat.input}
           language={language}
@@ -1433,7 +1438,7 @@ function AuthenticatedApp({
           ideContext={ideContext}
           workspaceInstructions={effectiveWorkspaceInstructions}
           workspacePath={effectiveWorkspacePath}
-          workspaceType={effectiveWorkspace.type}
+          workspaceLocation={effectiveWorkspace.location}
           onAbort={chat.abort}
           onClearRuntimeMode={chat.clearRuntimeMode}
           onClearExternalAttachments={() => {
@@ -1651,7 +1656,7 @@ function AuthenticatedApp({
         <h2>{title}</h2>
         <p>
           {language === "zh"
-            ? "该视图预留给 WebUI 兼容的共享组件。桌面端适配层和 IPC 边界已先行就位。"
+            ? "该功能正在准备中，完成后会直接显示在这里。"
             : "This view is reserved for WebUI-compatible shared components. The desktop adapter and IPC boundary are in place first."}
         </p>
       </div>
@@ -1662,6 +1667,7 @@ function AuthenticatedApp({
       actionMessage={desktop.actionMessage}
       busy={desktop.busy}
       health={health}
+      codexStatus={codexStatus}
       installProgress={desktop.installProgress}
       language={language}
       onCancelInstall={desktop.cancelInstall}
@@ -1671,6 +1677,9 @@ function AuthenticatedApp({
       onInstallUpdate={desktop.installUpdate}
       onOpenPath={(path) => desktopApi.openPath(path)}
       onRefresh={desktop.refreshHealth}
+      onCodexRefresh={async () => setCodexStatus(await desktopApi.getCodexBackendStatus(true))}
+      onCodexLogin={async (type) => desktopApi.startCodexBackendLogin(type)}
+      onCodexLogout={async () => { await desktopApi.logoutCodexBackend(); setCodexStatus(await desktopApi.getCodexBackendStatus(true)); }}
     />
   );
 
@@ -1680,6 +1689,7 @@ function AuthenticatedApp({
     ) : activeRightTab === "terminal" ? (
       <TerminalPanel
         cwd={effectiveWorkspacePath}
+        workspaceId={effectiveWorkspace.id}
         remoteHostAlias={activeWorkspace.remote?.hostAlias}
         language={language}
         onCommandResult={(attachment) => {
@@ -1706,6 +1716,7 @@ function AuthenticatedApp({
         fileTraceEvents={workspaceFileTraceEvents}
         language={language}
         scopeId={activeThreadId}
+        workspaceId={effectiveWorkspace.id}
         workspacePath={filesWorkspacePath}
         workspaceTrusted={workspaceTrusted}
         onBasketChange={setActiveThreadWorkspaceContextAttachments}
@@ -1977,46 +1988,56 @@ function AuthenticatedApp({
       <div style={{ position: "fixed", inset: 0, zIndex: 1000, display: "grid", placeItems: "center", background: "rgba(3, 7, 18, .68)" }}>
         <section role="dialog" aria-modal="true" aria-labelledby="remote-workspace-title" style={{ width: 520, maxWidth: "calc(100vw - 40px)", padding: 24, borderRadius: 14, background: "#111827", color: "#f9fafb", boxShadow: "0 24px 80px rgba(0,0,0,.5)" }}>
           <h2 id="remote-workspace-title" style={{ marginTop: 0 }}>{language === "zh" ? "添加工作区" : "Add workspace"}</h2>
-          <button type="button" style={{ width: "100%", padding: 10, marginBottom: 18 }} onClick={() => void handleAddLocalWorkspace()}>{language === "zh" ? "选择本地文件夹" : "Choose local folder"}</button>
-          <div style={{ paddingTop: 18, borderTop: "1px solid #374151" }}>
-            <label style={{ display: "grid", gap: 6, marginBottom: 12 }}>SSH host
+          {workspaceLocationChoice === null ? (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <button type="button" style={{ minHeight: 92, padding: 14 }} onClick={() => void handleAddLocalWorkspace()}>
+                <strong style={{ display: "block" }}>{language === "zh" ? "本地" : "Local"}</strong>
+                <small>{language === "zh" ? "选择这台电脑上的文件夹" : "Choose a folder on this computer"}</small>
+              </button>
+              <button type="button" style={{ minHeight: 92, padding: 14 }} onClick={() => void beginRemoteWorkspace()}>
+                <strong style={{ display: "block" }}>{language === "zh" ? "远程" : "Remote"}</strong>
+                <small>{language === "zh" ? "选择另一台计算机上的文件夹" : "Choose a folder on another computer"}</small>
+              </button>
+            </div>
+          ) : <div style={{ paddingTop: 8 }}>
+            <p style={{ marginTop: 0, color: "#cbd5e1" }}>
+              {remoteWorkspaceStep === "computer"
+                ? (language === "zh" ? "第 1 步（共 2 步）：选择计算机" : "Step 1 of 2: Choose a computer")
+                : (language === "zh" ? "第 2 步（共 2 步）：选择目录" : "Step 2 of 2: Choose a directory")}
+            </p>
+            {remoteWorkspaceStep === "computer" ? <>
+            <label style={{ display: "grid", gap: 6, marginBottom: 12 }}>{language === "zh" ? "计算机" : "Computer"}
               <select value={remoteHostAlias} onChange={(event) => setRemoteHostAlias(event.target.value)} style={{ padding: 9 }}>
                 {remoteHosts.map((host) => <option key={host.alias} value={host.alias}>{host.alias} — {host.user ? `${host.user}@` : ""}{host.hostname}:{host.port}</option>)}
               </select>
             </label>
-            <label style={{ display: "grid", gap: 6 }}>Remote Linux path
+            <button type="button" disabled={!remoteHostAlias} onClick={() => void selectRemoteComputer()}>{language === "zh" ? "继续" : "Continue"}</button>
+            </> : <>
+            <button type="button" style={{ marginBottom: 12 }} onClick={() => setRemoteWorkspaceStep("computer")}>
+              {language === "zh" ? `← ${remoteHostAlias}` : `← ${remoteHostAlias}`}
+            </button>
+            <label style={{ display: "grid", gap: 6 }}>{language === "zh" ? "远程目录" : "Remote directory"}
               <input value={remotePath} onChange={(event) => setRemotePath(event.target.value)} placeholder="/home/vscode" style={{ padding: 9 }} />
             </label>
             <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}><button type="button" onClick={() => void browseRemotePath()}>{language === "zh" ? "浏览" : "Browse"}</button><button type="button" onClick={() => void browseRemotePath("~")}>Home</button><button type="button" onClick={() => void browseRemotePath(remotePath.replace(/\/[^/]+\/?$/, "") || "/")}>{language === "zh" ? "父目录" : "Parent"}</button><label><input type="checkbox" checked={remoteShowHidden} onChange={(event) => setRemoteShowHidden(event.target.checked)} /> {language === "zh" ? "隐藏目录" : "Hidden"}</label></div>
             <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 8 }}>{remotePath.split("/").filter(Boolean).map((part, index, parts) => <button type="button" key={`${part}-${index}`} onClick={() => void browseRemotePath(`/${parts.slice(0, index + 1).join("/")}`)}>{index === 0 ? "/" : ""}{part}</button>)}</div>
             {remoteRecentPaths.length > 0 ? <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 8 }}><small>Recent:</small>{remoteRecentPaths.map((path) => <button type="button" key={path} title={path} onClick={() => void browseRemotePath(path)}>{path.split("/").filter(Boolean).at(-1) || path}</button>)}</div> : null}
             {remoteDirectories.length > 0 ? <div style={{ maxHeight: 180, overflow: "auto", marginTop: 8, border: "1px solid #374151" }}>{remoteDirectories.filter((entry) => remoteShowHidden || !entry.name.startsWith(".")).map((entry) => <button type="button" disabled={entry.readable === false} title={`${entry.path} · ${entry.mode || "mode unknown"}${entry.writable === false ? " · read-only" : ""}`} key={entry.path} style={{ display: "block", width: "100%", textAlign: "left", padding: 7 }} onDoubleClick={() => void browseRemotePath(entry.path)} onClick={() => setRemotePath(entry.path)}>📁 {entry.name} {entry.writable === false ? "🔒" : ""}</button>)}</div> : null}
-            <section style={{ marginTop: 14, padding: 10, border: "1px solid #374151", borderRadius: 8 }}>
-              <strong>Remote Gateway</strong>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
-                <button type="button" onClick={() => void inspectRemoteGateway()}>Preflight</button>
-                <button type="button" onClick={() => void showRemoteDiagnostics()}>Diagnostics</button>
-                <button type="button" onClick={() => void chooseRemoteGatewayArtifact()}>Select artifact</button>
-                <button type="button" onClick={() => void requestRemoteGatewayOperation(remoteGatewayPreflight?.gatewayInstalled ? "upgrade" : "install")}>{remoteGatewayPreflight?.gatewayInstalled ? "Upgrade" : "Install"}</button>
-                <button type="button" disabled={!remoteGatewayPreflight?.previousRelease} onClick={() => void requestRemoteGatewayOperation("rollback")}>Rollback</button>
-                {remoteGatewayOperation?.state === "running" ? <button type="button" onClick={() => void desktopApi.cancelRemoteGatewayOperation(remoteGatewayOperation.hostAlias)}>Cancel operation</button> : null}
-              </div>
-              {remoteGatewayArtifact ? <small style={{ display: "block", marginTop: 8, overflowWrap: "anywhere" }}>Artifact: {remoteGatewayArtifact}</small> : null}
-              {remoteGatewayPreflight ? <small style={{ display: "block", marginTop: 8 }}>Python {remoteGatewayPreflight.pythonVersion} · Gateway {remoteGatewayPreflight.gatewayVersion || "not installed"} · current {remoteGatewayPreflight.currentRelease || "none"} · previous {remoteGatewayPreflight.previousRelease || "none"}</small> : null}
-              {remoteGatewayOperation ? <div style={{ marginTop: 8 }}><progress max={100} value={remoteGatewayOperation.progress} style={{ width: "100%" }} /><small>{remoteGatewayOperation.phase} · {remoteGatewayOperation.message}</small></div> : null}
-            </section>
-            <section style={{ marginTop: 10, padding: 10, border: "1px solid #374151", borderRadius: 8 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}><strong>HepAI Workers</strong><button type="button" onClick={() => void loadRemoteWorkers()}>Refresh</button></div>
-              {remoteWorkers.map((worker) => <label key={worker.id} style={{ display: "flex", justifyContent: "space-between", gap: 10, marginTop: 7 }}><span>{worker.name} · {worker.status || "available"}{worker.callables?.length ? ` · ${worker.callables.length} tools` : ""}</span><input type="checkbox" checked={worker.enabled} onChange={() => void toggleRemoteWorker(worker)} /></label>)}
-              {remoteWorkers.length === 0 ? <small style={{ display: "block", marginTop: 7 }}>Connect this host/path, then refresh to manage discovered workers.</small> : null}
-            </section>
-            {remoteHosts.length === 0 ? <p style={{ color: "#fbbf24" }}>{language === "zh" ? "OpenSSH 配置中没有可用主机。" : "No hosts were found in the OpenSSH config."}</p> : null}
+            </>}
+            {remoteHosts.length === 0 ? <p style={{ color: "#fbbf24" }}>{language === "zh" ? "没有找到已配置的远程计算机。" : "No configured remote computers were found."}</p> : null}
             {remoteDialogError ? <p role="alert" style={{ color: "#fca5a5" }}>{remoteDialogError}</p> : null}
-            {remoteNeedsHostTrust ? <button type="button" onClick={() => void desktopApi.approveSshHostKey(remoteHostAlias).then((ok) => { setRemoteNeedsHostTrust(!ok); setRemoteDialogError(ok ? "Host key accepted. Retry the connection." : "Host key approval failed; changed keys must be resolved in known_hosts."); })}>{language === "zh" ? "确认并信任新主机密钥" : "Trust new host key"}</button> : null}
-          </div>
+            {remoteNeedsHostTrust ? <section style={{ padding: 10, border: "1px solid #f59e0b", borderRadius: 8 }}>
+              {remoteHostKeys.map((key) => <code key={`${key.algorithm}-${key.fingerprint}`} style={{ display: "block", overflowWrap: "anywhere", marginBottom: 5 }}>{key.algorithm} · {key.fingerprint}</code>)}
+              <button type="button" onClick={() => void desktopApi.approveSshHostKey(remoteHostAlias).then(async (ok) => {
+                setRemoteNeedsHostTrust(!ok);
+                setRemoteDialogError(ok ? "" : "Host key approval failed; changed keys must be resolved in known_hosts.");
+                if (ok) await selectRemoteComputer();
+              })}>{language === "zh" ? "已核对，信任这台计算机" : "Verified — trust this computer"}</button>
+            </section> : null}
+          </div>}
           <footer style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 20 }}>
             <button type="button" onClick={() => setRemoteDialogOpen(false)}>{language === "zh" ? "取消" : "Cancel"}</button>
-            <button type="button" disabled={remoteConnecting || !remoteHostAlias || !remotePath.trim()} onClick={() => void handleConnectRemoteWorkspace()}>{remoteConnecting ? (language === "zh" ? "连接中…" : "Connecting…") : "Connect Remote SSH"}</button>
+            {workspaceLocationChoice === "remote" && remoteWorkspaceStep === "directory" ? <button type="button" disabled={remoteConnecting || !remoteHostAlias || !remotePath.trim()} onClick={() => void handleConnectRemoteWorkspace()}>{remoteConnecting ? (language === "zh" ? "连接中…" : "Connecting…") : (language === "zh" ? "打开远程工作区" : "Open remote workspace")}</button> : null}
           </footer>
         </section>
       </div>
@@ -2091,7 +2112,7 @@ function showCompletionNotification(
     body:
       language === "zh"
         ? agentRun
-          ? "Agent 任务已完成。"
+          ? "智能体任务已完成。"
           : "会话任务已完成。"
         : agentRun
           ? "The Agent task has completed."
@@ -2625,6 +2646,12 @@ function ResultsCenterView({
     state: "saving" | "selected" | "failed";
     message: string;
   } | null>(null);
+  const [anomalyChoices, setAnomalyChoices] = useState<Record<string, DesktopAnomalyDecision>>({});
+  const [anomalyDecisionState, setAnomalyDecisionState] = useState<{
+    artifactId: string;
+    state: "applying" | "completed" | "failed";
+    message: string;
+  } | null>(null);
   const [consistencyDecisions, setConsistencyDecisions] = useState<Partial<Record<string, "accepted" | "ignored">>>({});
   const [independentReviewState, setIndependentReviewState] = useState<{
     artifactId: string;
@@ -2638,6 +2665,8 @@ function ResultsCenterView({
     artifactId?: string;
     title: string;
   } | null>(null);
+  const shareOpenerRef = useRef<HTMLButtonElement | null>(null);
+  const firstResultActionRef = useRef<HTMLButtonElement | null>(null);
   const [shareRecipient, setShareRecipient] = useState("");
   const [sharePermission, setSharePermission] = useState<DesktopSharePermission>("view");
   const [shareState, setShareState] = useState<{
@@ -2674,6 +2703,21 @@ function ResultsCenterView({
     state: "downloading" | "downloaded" | "failed";
     message: string;
   } | null>(null);
+
+  useEffect(() => {
+    if (!shareDraft) return;
+    const handleEscape = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setShareDraft(null);
+      setShareRecipient("");
+      setSharePermission("view");
+      setShareState(null);
+      window.requestAnimationFrame(() => shareOpenerRef.current?.focus());
+    };
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [shareDraft]);
 
   useEffect(() => {
     let active = true;
@@ -2992,6 +3036,14 @@ function ResultsCenterView({
     });
     return groups;
   }, []);
+
+  useEffect(() => {
+    if (loading || groupedArtifacts.length === 0) return;
+    const active = document.activeElement;
+    if (active?.matches('[data-nav-id="results"]') || active === document.body) {
+      window.requestAnimationFrame(() => firstResultActionRef.current?.focus());
+    }
+  }, [groupedArtifacts.length, loading]);
   const sharePreviewObjects = shareDraft
     ? [
         ...(shareDraft.scope === "complete_task"
@@ -3433,6 +3485,51 @@ function ResultsCenterView({
     }
   }
 
+  async function applyArtifactAnomalyDecision(artifact: IndexedTaskArtifact): Promise<void> {
+    const choice = anomalyChoices[artifact.id];
+    const sourcePath = artifact.anomalyDecision?.sourcePath || artifact.chartQuality?.sourcePath;
+    if (!choice || !sourcePath || !artifact.sourceWorkspacePath) return;
+    const sourceTask = tasks.find((task) => task.id === artifact.sourceTaskId);
+    if (!sourceTask?.deliverySummary) return;
+    setAnomalyDecisionState({ artifactId: artifact.id, state: "applying", message: zh ? "正在按所选方式生成独立结果…" : "Applying the selected option to independent outputs…" });
+    try {
+      const result = await desktopApi.applyAnomalyDecision({
+        workspacePath: artifact.sourceWorkspacePath,
+        sourcePath,
+        anomalyColumn: artifact.anomalyDecision?.anomalyColumn || "anomaly",
+        decision: choice,
+      });
+      const resultArtifacts: DesktopTaskArtifactLink[] = [
+        ...result.outputs.map((output) => ({
+          id: `anomaly-output-${reviewFingerprint(output.path)}`,
+          label: output.path.split(/[\\/]/).pop() || output.path,
+          path: output.path,
+          kind: "file" as const,
+        })),
+        {
+          id: `anomaly-receipt-${reviewFingerprint(result.receiptPath)}`,
+          label: result.receiptPath.split(/[\\/]/).pop() || result.receiptPath,
+          path: result.receiptPath,
+          kind: "report" as const,
+        },
+      ];
+      const replacedIds = new Set(resultArtifacts.map((item) => item.id));
+      const nextArtifacts = sourceTask.deliverySummary.artifacts
+        .filter((item) => !replacedIds.has(item.id))
+        .map((item) => item.id === artifact.id ? { ...item, anomalyDecision: result } : item)
+        .concat(resultArtifacts);
+      const updated = await desktopApi.updateBackgroundTask({
+        taskId: sourceTask.id,
+        status: sourceTask.status,
+        deliverySummary: { ...sourceTask.deliverySummary, artifacts: nextArtifacts },
+      });
+      setTasks((current) => current.map((task) => task.id === updated.id ? updated : task));
+      setAnomalyDecisionState({ artifactId: artifact.id, state: "completed", message: result.resultSummary });
+    } catch (caught) {
+      setAnomalyDecisionState({ artifactId: artifact.id, state: "failed", message: caught instanceof Error ? caught.message : String(caught) });
+    }
+  }
+
   async function selectAnalysisRoute(group: { groupId: string; routes: IndexedTaskArtifact[] }, selectedArtifact: IndexedTaskArtifact): Promise<void> {
     const selectedRoute = selectedArtifact.analysisRoute;
     if (!selectedRoute) return;
@@ -3652,14 +3749,14 @@ function ResultsCenterView({
         </div>
       ) : (
         <div className="results-task-index" data-testid="results-task-index">
-          {groupedArtifacts.map((group) => (
+          {groupedArtifacts.map((group, groupIndex) => (
             <section key={group.taskId} data-source-task-id={group.taskId}>
               <header>
                 <div><small>{zh ? "来源任务" : "Source task"}</small><h3>{group.taskTitle}</h3></div>
-                <div className="results-task-group-actions"><span>{group.artifacts.length}</span><button type="button" data-testid="results-share-task" aria-label={zh ? `分享完整任务：${group.taskTitle}` : `Share complete task: ${group.taskTitle}`} onClick={() => { setShareDraft({ sourceTaskId: group.taskId, scope: "complete_task", title: group.taskTitle }); setShareRecipient(""); setSharePermission("view"); setShareState(null); }}>{zh ? "分享完整任务" : "Share complete task"}</button><button type="button" data-testid="reusable-task-save" onClick={() => setReusableSaveDraft({ sourceTaskId: group.taskId, name: group.taskTitle })}>{zh ? "保存为可复用任务" : "Save as reusable task"}</button></div>
+                <div className="results-task-group-actions"><span>{group.artifacts.length}</span><button type="button" data-testid="results-share-task" aria-label={zh ? `分享完整任务：${group.taskTitle}` : `Share complete task: ${group.taskTitle}`} onClick={(event) => { shareOpenerRef.current = event.currentTarget; setShareDraft({ sourceTaskId: group.taskId, scope: "complete_task", title: group.taskTitle }); setShareRecipient(""); setSharePermission("view"); setShareState(null); }}>{zh ? "分享完整任务" : "Share complete task"}</button><button type="button" data-testid="reusable-task-save" onClick={() => setReusableSaveDraft({ sourceTaskId: group.taskId, name: group.taskTitle })}>{zh ? "保存为可复用任务" : "Save as reusable task"}</button></div>
               </header>
               <ul>
-                {group.artifacts.map((artifact) => (
+                {group.artifacts.map((artifact, artifactIndex) => (
                   <li key={artifact.id} data-artifact-id={artifact.id} data-artifact-kind={artifact.kind} data-artifact-path={artifact.path} data-source-task-id={artifact.sourceTaskId}>
                     <div>
                       <span className="results-kind-badge">{kindLabel(artifact.kind)}</span>
@@ -3708,8 +3805,8 @@ function ResultsCenterView({
                       ) : null}
                     </div>
                     <div className="results-artifact-actions">
-                      <button type="button" data-testid="results-share-artifact" aria-label={zh ? `分享成果：${artifact.label}` : `Share result: ${artifact.label}`} onClick={() => { setShareDraft({ sourceTaskId: artifact.sourceTaskId, scope: "result_only", artifactId: artifact.id, title: artifact.label }); setShareRecipient(""); setSharePermission("view"); setShareState(null); }}>{zh ? "分享" : "Share"}</button>
-                      <button type="button" data-testid="results-open-artifact" disabled={openState?.artifactId === artifact.id && openState.state === "opening"} onClick={() => void openArtifact(artifact)}>
+                      <button type="button" data-testid="results-share-artifact" aria-label={zh ? `分享成果：${artifact.label}` : `Share result: ${artifact.label}`} onClick={(event) => { shareOpenerRef.current = event.currentTarget; setShareDraft({ sourceTaskId: artifact.sourceTaskId, scope: "result_only", artifactId: artifact.id, title: artifact.label }); setShareRecipient(""); setSharePermission("view"); setShareState(null); }}>{zh ? "分享" : "Share"}</button>
+                      <button ref={groupIndex === 0 && artifactIndex === 0 ? firstResultActionRef : undefined} type="button" data-testid="results-open-artifact" disabled={openState?.artifactId === artifact.id && openState.state === "opening"} onClick={() => void openArtifact(artifact)}>
                         {zh ? "打开" : "Open"}
                       </button>
                       {artifact.kind !== "folder" ? (
@@ -3806,6 +3903,51 @@ function ResultsCenterView({
                         <summary>{zh ? "查看图表数据核对" : "View chart-data checks"}</summary>
                         <ul>{artifact.chartQuality.checks.map((check) => <li key={check}>{check}</li>)}</ul>
                       </details>
+                    ) : null}
+                    {(artifact.anomalyDecision || (artifact.chartQuality?.anomaliesExpected ?? 0) > 0) ? (
+                      <section
+                        className="results-anomaly-decision"
+                        data-testid="results-anomaly-decision"
+                        data-artifact-id={artifact.id}
+                        data-total-rows={artifact.anomalyDecision?.totalRows ?? artifact.chartQuality?.pointsExpected}
+                        data-anomaly-rows={artifact.anomalyDecision?.anomalyRows ?? artifact.chartQuality?.anomaliesExpected}
+                      >
+                        <header>
+                          <div><strong>{zh ? "发现异常数据，怎么处理？" : "How should anomalous data be handled?"}</strong><small>{zh ? `原文件保持不变；已识别 ${artifact.anomalyDecision?.anomalyRows ?? artifact.chartQuality?.anomaliesExpected} 行异常。` : `The source stays unchanged; ${artifact.anomalyDecision?.anomalyRows ?? artifact.chartQuality?.anomaliesExpected} anomalous rows were identified.`}</small></div>
+                        </header>
+                        <fieldset>
+                          <legend>{zh ? "选择一种处理方式" : "Choose one handling option"}</legend>
+                          {([
+                            ["keep", zh ? "保留异常" : "Keep anomalies", zh ? "输出全部数据，便于审计；异常值可能影响整体趋势。" : "Outputs every row for audit; anomalies may affect the overall trend."],
+                            ["exclude", zh ? "排除异常" : "Exclude anomalies", zh ? "只输出非异常数据，便于观察基线；原始文件仍保留。" : "Outputs only normal rows for a baseline; the source file remains available."],
+                            ["both", zh ? "两种都做" : "Do both", zh ? "生成两份互不覆盖的结果，便于比较异常是否改变结论。" : "Creates two isolated outputs so you can compare whether anomalies change the conclusion."],
+                          ] as const).map(([value, label, impact]) => (
+                            <label key={value} data-testid={`results-anomaly-option-${value}`}>
+                              <input
+                                type="radio"
+                                name={`anomaly-decision-${artifact.id}`}
+                                value={value}
+                                checked={anomalyChoices[artifact.id] === value}
+                                onChange={() => setAnomalyChoices((current) => ({ ...current, [artifact.id]: value }))}
+                              />
+                              <span><strong>{label}</strong><small>{impact}</small></span>
+                            </label>
+                          ))}
+                        </fieldset>
+                        <button
+                          type="button"
+                          data-testid="results-apply-anomaly-decision"
+                          disabled={!anomalyChoices[artifact.id] || anomalyDecisionState?.artifactId === artifact.id && anomalyDecisionState.state === "applying"}
+                          onClick={() => void applyArtifactAnomalyDecision(artifact)}
+                        >{zh ? "应用决定并生成结果" : "Apply decision and create results"}</button>
+                        {artifact.anomalyDecision?.decision ? (
+                          <output data-testid="results-anomaly-record" data-decision={artifact.anomalyDecision.decision} data-output-count={artifact.anomalyDecision.outputs?.length ?? 0}>
+                            <strong>{zh ? "已记录的决定" : "Recorded decision"}</strong>
+                            <span>{artifact.anomalyDecision.resultSummary}</span>
+                          </output>
+                        ) : null}
+                        {anomalyDecisionState?.artifactId === artifact.id ? <p data-testid="results-anomaly-status" data-state={anomalyDecisionState.state} role="status">{anomalyDecisionState.message}</p> : null}
+                      </section>
                     ) : null}
                     {artifact.consistencyCheck ? (
                       <details
@@ -4103,7 +4245,9 @@ function ResultsCenterView({
                 {previewState.preview.kind === "image" && previewState.preview.dataUrl ? (
                   <img
                     src={previewState.preview.dataUrl}
-                    alt={previewState.artifact.label}
+                    alt={previewState.artifact.chartQuality
+                      ? `${previewState.artifact.label}: ${previewState.artifact.chartQuality.xAxis} by ${previewState.artifact.chartQuality.yAxis}, ${previewState.artifact.chartQuality.unit}, ${previewState.artifact.chartQuality.pointsMatched} data points, ${previewState.artifact.chartQuality.legend}`
+                      : previewState.artifact.label}
                     data-selected={localEditScope?.type === "image"}
                     onClick={() => setLocalEditScope({ type: "image", label: zh ? "整张图片" : "Entire image" })}
                   />
@@ -4365,6 +4509,7 @@ function DesktopStatusPanel({
   actionMessage,
   busy,
   health,
+  codexStatus,
   installProgress,
   language,
   onCancelInstall,
@@ -4374,10 +4519,14 @@ function DesktopStatusPanel({
   onInstallUpdate,
   onOpenPath,
   onRefresh,
+  onCodexRefresh,
+  onCodexLogin,
+  onCodexLogout,
 }: {
   actionMessage: string | null;
   busy: boolean;
   health: DesktopHealth | null;
+  codexStatus: CodexBackendStatus | null;
   installProgress: InstallProgress | null;
   language: AppLanguage;
   onCancelInstall: () => void;
@@ -4387,8 +4536,12 @@ function DesktopStatusPanel({
   onInstallUpdate: () => void;
   onOpenPath: (path: string) => void;
   onRefresh: () => void;
+  onCodexRefresh: () => void | Promise<void>;
+  onCodexLogin: (type: "chatgpt" | "chatgptDeviceCode") => Promise<CodexBackendLogin>;
+  onCodexLogout: () => void | Promise<void>;
 }): React.JSX.Element {
   const zh = language === "zh";
+  const [codexLogin, setCodexLogin] = useState<CodexBackendLogin | null>(null);
   const version = health?.install.version ?? (zh ? "未知版本" : "unknown");
   const installStatus = health?.install.backendNeedsRepair
     ? zh
@@ -4446,7 +4599,7 @@ function DesktopStatusPanel({
           <dd>{installStatus}</dd>
         </div>
         <div>
-          <dt>{zh ? "网关" : "Gateway"}</dt>
+          <dt>{zh ? "运行时服务" : "Runtime service"}</dt>
           <dd>{gatewayStatus}</dd>
         </div>
         <div>
@@ -4458,6 +4611,24 @@ function DesktopStatusPanel({
           <dd>OIDC</dd>
         </div>
       </dl>
+
+      <section className="about-section">
+        <div className="about-section-title" data-testid="codex-backend-status">
+          <strong>Codex Agent Backend</strong>
+          <span data-testid={`codex-state-${codexStatus?.state ?? "loading"}`}>
+            {codexStatus ? `${codexStatus.state}${codexStatus.version ? ` · ${codexStatus.version}` : ""}` : (zh ? "正在读取 Runtime capability" : "Reading Runtime capability")}
+          </span>
+        </div>
+        <div className="about-action-grid">
+          <button type="button" onClick={() => void onCodexRefresh()}>{zh ? "刷新 Codex" : "Refresh Codex"}</button>
+          {codexStatus?.action === "login" && <button type="button" data-testid="codex-login" onClick={() => void onCodexLogin("chatgptDeviceCode").then(setCodexLogin)}>{zh ? "登录 ChatGPT" : "Sign in to ChatGPT"}</button>}
+          {codexStatus?.loggedIn && <button type="button" data-testid="codex-logout" onClick={() => void onCodexLogout()}>{zh ? "退出 Codex" : "Sign out of Codex"}</button>}
+          {codexStatus?.action === "install" && <span data-testid="codex-install-action">{zh ? "请安装受管 Codex 制品" : "Install the managed Codex artifact"}</span>}
+          {codexStatus?.action === "upgrade" && <span data-testid="codex-upgrade-action">{zh ? "请升级 Codex 制品" : "Upgrade the Codex artifact"}</span>}
+          {codexStatus?.action === "restart" && <span data-testid="codex-restart-action">{zh ? "请重启 Runtime 后重试" : "Restart Runtime and retry"}</span>}
+        </div>
+        {codexLogin?.userCode && <div role="status" data-testid="codex-device-code">{zh ? "设备码" : "Device code"}: {codexLogin.userCode}</div>}
+      </section>
 
       <section className="about-section">
         <div className="about-section-title">
@@ -4527,7 +4698,7 @@ function DesktopStatusPanel({
               : "repository"}
         </span>
         <span>
-          {zh ? "网关运行时：" : "Gateway runtime: "}
+          {zh ? "运行时服务：" : "Runtime service: "}
           {health?.gateway.externalConflict
             ? zh
               ? "端口被其他进程占用"
@@ -4762,13 +4933,58 @@ function SettingsPanel({
   const [remoteHostCount, setRemoteHostCount] = useState<number | null>(null);
   const [agentConfigSaving, setAgentConfigSaving] = useState(false);
   const [agentConfigMessage, setAgentConfigMessage] = useState<string | null>(null);
+  const [cleanupPreview, setCleanupPreview] = useState<DesktopDataCleanupPreview | null>(null);
+  const [cleanupConfirmation, setCleanupConfirmation] = useState("");
+  const [cleanupBusy, setCleanupBusy] = useState(false);
+  const [cleanupStatus, setCleanupStatus] = useState<string | null>(null);
+
+  async function openDataCleanup(scope: DesktopDataCleanupScope): Promise<void> {
+    setCleanupBusy(true);
+    setCleanupStatus(null);
+    try {
+      setCleanupPreview(await desktopApi.previewLocalDataCleanup(scope));
+      setCleanupConfirmation("");
+    } catch (error) {
+      setCleanupStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCleanupBusy(false);
+    }
+  }
+
+  async function confirmDataCleanup(): Promise<void> {
+    if (!cleanupPreview) return;
+    const scope = cleanupPreview.scope;
+    if (scope === "all_local_data" && cleanupConfirmation !== cleanupPreview.confirmationPhrase) return;
+    setCleanupBusy(true);
+    setCleanupStatus(null);
+    try {
+      const result = await desktopApi.clearLocalData({
+        scope,
+        confirmation: scope === "sessions" ? "CLEAR_SESSIONS" : "DELETE_LOCAL_DATA",
+      });
+      if (scope === "sessions") {
+        for (const key of [THREAD_SNAPSHOT_STORAGE_KEY, LAST_THREAD_STORAGE_KEY, AWAY_STARTED_AT_STORAGE_KEY]) window.localStorage.removeItem(key);
+      } else {
+        window.localStorage.clear();
+        window.sessionStorage.clear();
+      }
+      setCleanupPreview(null);
+      setCleanupStatus(zh ? result.message : scope === "sessions" ? "Session data cleared; workspace files and results were preserved." : "OpenDrSai app data cleared; workspace files and results were preserved.");
+      if (scope === "all_local_data") window.setTimeout(() => void onLogout(), 600);
+      else window.setTimeout(() => window.location.reload(), 900);
+    } catch (error) {
+      setCleanupStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCleanupBusy(false);
+    }
+  }
 
   async function updateAgentConfig(updates: { plan_mode?: boolean; workspace_enabled?: boolean }): Promise<void> {
     setAgentConfigSaving(true);
     setAgentConfigMessage(null);
     try {
       await onUpdateAgentConfig(updates);
-      setAgentConfigMessage(zh ? "Agent 配置已保存。" : "Agent configuration saved.");
+      setAgentConfigMessage(zh ? "智能体配置已保存。" : "Agent configuration saved.");
     } catch (error) {
       setAgentConfigMessage(error instanceof Error ? error.message : String(error));
     } finally {
@@ -4800,11 +5016,11 @@ function SettingsPanel({
       items: [{ id: "general", label: zh ? "常规" : "General", icon: Settings }],
     },
     {
-      label: "Agent",
+      label: zh ? "智能体" : "Agent",
       items: [
         { id: "agent-defaults", label: zh ? "默认配置" : "Defaults", icon: Settings },
-        { id: "agent-task", label: zh ? "Agent 任务" : "Agent tasks", icon: Bot },
-        { id: "approvals", label: "Approval Center", icon: ShieldCheck },
+        { id: "agent-task", label: zh ? "智能体任务" : "Agent tasks", icon: Bot },
+        { id: "approvals", label: zh ? "审批中心" : "Approval Center", icon: ShieldCheck },
         { id: "analytics", label: zh ? "使用分析" : "Usage analytics", icon: History },
       ],
     },
@@ -4834,6 +5050,8 @@ function SettingsPanel({
                 <button
                   key={item.id}
                   type="button"
+                  data-testid={`settings-pane-${item.id}`}
+                  autoFocus={item.id === "general"}
                   className={activePane === item.id ? "active" : ""}
                   onClick={() => setActivePane(item.id)}
                 >
@@ -4951,14 +5169,14 @@ function SettingsPanel({
         {activePane === "agent-defaults" && (
           <>
             <header className="settings-content-header">
-              <h2>{zh ? "Agent 默认配置" : "Agent defaults"}</h2>
-              <p>{zh ? "设置新会话默认使用的 Agent、模型和思考强度。" : "Choose the Agent, model, and thinking effort used by new conversations."}</p>
+              <h2>{zh ? "智能体默认配置" : "Agent defaults"}</h2>
+              <p>{zh ? "设置新会话默认使用的智能体、模型和思考强度。" : "Choose the Agent, model, and thinking effort used by new conversations."}</p>
             </header>
             <section className="settings-section">
               <div className="settings-row">
-                <span><strong>{zh ? "默认 Agent" : "Default Agent"}</strong><small>{zh ? "会同步应用到聊天输入区。" : "Also applies to the chat composer."}</small></span>
+                <span><strong>{zh ? "默认智能体" : "Default Agent"}</strong><small>{zh ? "会同步应用到聊天输入区。" : "Also applies to the chat composer."}</small></span>
                 <select value={selectedAgentId ?? ""} onChange={(event) => onSelectAgent(event.target.value)} disabled={agents.length === 0}>
-                  {agents.length === 0 && <option value="">{zh ? "暂无可用 Agent" : "No Agent available"}</option>}
+                  {agents.length === 0 && <option value="">{zh ? "暂无可用智能体" : "No Agent available"}</option>}
                   {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
                 </select>
               </div>
@@ -4981,7 +5199,7 @@ function SettingsPanel({
             </section>
             <section className="settings-section">
               <div><h2>{zh ? "执行与上下文" : "Execution and context"}</h2><p>{zh ? "这些选项保存到当前 DrSai 配置，并受现有审批策略约束。" : "These options are saved to the current DrSai configuration and remain governed by approval policy."}</p></div>
-              <label className="settings-toggle"><span><strong>Plan mode</strong><small>{zh ? "让 Agent 先生成计划，再开始执行。" : "Ask the Agent to create a plan before acting."}</small></span><input type="checkbox" checked={Boolean(myDrSaiConfig?.config.plan_mode)} disabled={agentConfigSaving || !myDrSaiConfig?.ready} onChange={(event) => void updateAgentConfig({ plan_mode: event.target.checked })} /></label>
+              <label className="settings-toggle"><span><strong>{zh ? "先规划再执行" : "Plan mode"}</strong><small>{zh ? "让智能体先生成计划，再开始执行。" : "Ask the Agent to create a plan before acting."}</small></span><input type="checkbox" checked={Boolean(myDrSaiConfig?.config.plan_mode)} disabled={agentConfigSaving || !myDrSaiConfig?.ready} onChange={(event) => void updateAgentConfig({ plan_mode: event.target.checked })} /></label>
               <label className="settings-toggle"><span><strong>{zh ? "限制在当前工作区" : "Restrict to current workspace"}</strong><small>{zh ? "文件操作优先限制在当前工作区，越界操作继续走审批。" : "Prefer file operations inside the current workspace; out-of-scope actions still require approval."}</small></span><input type="checkbox" checked={myDrSaiConfig?.config.workspace_enabled !== false} disabled={agentConfigSaving || !myDrSaiConfig?.ready} onChange={(event) => void updateAgentConfig({ workspace_enabled: event.target.checked })} /></label>
               {agentConfigMessage && <div className="settings-message">{agentConfigMessage}</div>}
             </section>
@@ -4991,14 +5209,14 @@ function SettingsPanel({
         {activePane === "agent-task" && (
           <>
             <header className="settings-content-header">
-              <h2>{zh ? "Agent 任务" : "Agent tasks"}</h2>
-              <p>{zh ? "创建隔离的 Agent 任务，并在会话中继续管理执行过程。" : "Create an isolated Agent task and manage its run from the conversation."}</p>
+              <h2>{zh ? "智能体任务" : "Agent tasks"}</h2>
+              <p>{zh ? "创建独立的智能体任务，并在会话中继续管理执行过程。" : "Create an isolated Agent task and manage its run from the conversation."}</p>
             </header>
             <section className="settings-section settings-action-section">
               <Bot size={22} />
               <div>
-                <h2>{zh ? "新建 Agent 任务" : "New Agent task"}</h2>
-                <p>{zh ? "基于当前工作区创建新的 Agent 任务会话。" : "Start a new Agent task for the current workspace."}</p>
+                <h2>{zh ? "新建智能体任务" : "New Agent task"}</h2>
+                <p>{zh ? "基于当前工作区创建新的智能体任务会话。" : "Start a new Agent task for the current workspace."}</p>
               </div>
               <button type="button" onClick={onNewAgentTask}>{zh ? "创建任务" : "Create task"}</button>
             </section>
@@ -5017,11 +5235,11 @@ function SettingsPanel({
             </header>
             <section className="settings-section settings-integration-list">
               <div className="settings-integration-row"><MessageSquare size={18} /><span><strong>{zh ? "频道" : "Channels"}</strong><small>{zh ? "连接消息渠道并导入只读上下文。" : "Connect message channels and import reviewed context."}</small></span><button type="button" onClick={() => setActivePane("channels")}>{zh ? "管理" : "Manage"}</button></div>
-              <div className="settings-integration-row"><Plug size={18} /><span><strong>MCP</strong><small>{zh ? "在 Approval Center 中管理 MCP 会话和工具审批。" : "Manage MCP sessions and tool approvals in Approval Center."}</small></span><button type="button" onClick={() => setActivePane("approvals")}>{zh ? "管理" : "Manage"}</button></div>
+              <div className="settings-integration-row"><Plug size={18} /><span><strong>{zh ? "工具连接" : "MCP"}</strong><small>{zh ? "在审批中心管理外部工具连接和操作确认。" : "Manage MCP sessions and tool approvals in Approval Center."}</small></span><button type="button" onClick={() => setActivePane("approvals")}>{zh ? "管理" : "Manage"}</button></div>
               <div className="settings-integration-row"><FileText size={18} /><span><strong>IDE</strong><small>{ideContext?.currentFile?.path || (zh ? "当前没有 IDE 文件上下文" : "No IDE file context is active")}</small></span><em>{ideContext ? (zh ? "已连接" : "Connected") : (zh ? "未连接" : "Not connected")}</em></div>
               <div className="settings-integration-row"><Globe2 size={18} /><span><strong>{zh ? "浏览器" : "Browser"}</strong><small>{zh ? "使用右侧浏览器面板查看和附加网页上下文。" : "Use the right browser panel to inspect and attach web context."}</small></span><button type="button" onClick={onOpenBrowserPanel}>{zh ? "打开" : "Open"}</button></div>
               <div className="settings-integration-row"><MessageSquare size={18} /><span><strong>{zh ? "语音" : "Voice"}</strong><small>{zh ? "聊天输入区使用的语音转写运行时。" : "Voice transcription runtime used by the chat composer."}</small></span><em>{voiceIntegrationState === null ? (zh ? "检查中" : "Checking") : voiceIntegrationState}</em></div>
-              <div className="settings-integration-row"><TerminalIcon size={18} /><span><strong>Remote SSH</strong><small>{zh ? "从本机 OpenSSH 配置发现的远程主机。" : "Remote hosts discovered from the local OpenSSH configuration."}</small></span><em>{remoteHostCount === null ? (zh ? "检查中" : "Checking") : zh ? `${remoteHostCount} 台主机` : `${remoteHostCount} hosts`}</em></div>
+              <div className="settings-integration-row"><TerminalIcon size={18} /><span><strong>{zh ? "远程计算机" : "Remote computers"}</strong><small>{zh ? "已配置、可用于远程工作区的计算机。" : "Configured computers available to remote workspaces."}</small></span><em>{remoteHostCount === null ? (zh ? "检查中" : "Checking") : zh ? `${remoteHostCount} 台计算机` : `${remoteHostCount} computers`}</em></div>
             </section>
           </>
         )}
@@ -5046,8 +5264,14 @@ function SettingsPanel({
               {updateMessage && <div className="settings-message">{updateMessage}</div>}
             </section>
             <section className="settings-section">
-              <div><h2>{zh ? "数据与隐私" : "Data and privacy"}</h2><p>{zh ? "导出本地会话和偏好，或仅重置桌面偏好。" : "Export local conversations and preferences, or reset desktop preferences only."}</p></div>
+              <div><h2>{zh ? "数据与隐私" : "Data and privacy"}</h2><p>{zh ? "导出数据、清除 OpenDrSai 应用数据，或仅重置桌面偏好。" : "Export data, clear OpenDrSai app data, or reset desktop preferences only."}</p></div>
+              <div className="settings-data-boundary" data-testid="data-cleanup-boundary">
+                <p><strong>{zh ? "应用数据" : "App data"}</strong>{zh ? "：账户登录、会话、缓存、记忆、任务和设置，可以在这里清除。" : ": sign-in, conversations, cache, memory, tasks, and settings can be cleared here."}</p>
+                <p><strong>{zh ? "用户原始材料" : "Your original files"}</strong>{zh ? "：工作区中的 PDF、PPT、数据文件和生成成果。清理应用数据或从 Windows 卸载 OpenDrSai 都不会删除这些文件。" : ": PDFs, presentations, data files, and generated results in your workspaces. Clearing app data or uninstalling OpenDrSai from Windows does not delete them."}</p>
+              </div>
               <div className="settings-button-row"><button type="button" onClick={onExportLocalData}>{zh ? "导出本地数据" : "Export local data"}</button><button type="button" onClick={() => { if (window.confirm(zh ? "重置所有桌面偏好？本地会话内容会保留。" : "Reset all desktop preferences? Local conversation content will be preserved.")) onResetPreferences(); }}>{zh ? "重置偏好" : "Reset preferences"}</button></div>
+              <div className="settings-button-row settings-danger-actions"><button type="button" data-testid="clear-session-data" disabled={cleanupBusy} onClick={() => void openDataCleanup("sessions")}>{zh ? "清除会话" : "Clear conversations"}</button><button type="button" className="danger" data-testid="clear-all-local-data" disabled={cleanupBusy} onClick={() => void openDataCleanup("all_local_data")}>{zh ? "清除全部应用数据" : "Clear all app data"}</button></div>
+              {cleanupStatus ? <p className="settings-message" role="status" data-testid="data-cleanup-status">{cleanupStatus}</p> : null}
             </section>
             <section className="settings-section">
               <div><h2>{zh ? "日志与诊断" : "Logs and diagnostics"}</h2><p>{zh ? "复制当前运行状态，便于排查桌面端问题。" : "Copy the current runtime state for desktop troubleshooting."}</p></div>
@@ -5056,6 +5280,16 @@ function SettingsPanel({
             {developerModeAvailable && <section className="settings-section"><div><h2>{zh ? "开发者选项" : "Developer options"}</h2><p>{zh ? "切换后会重新加载桌面界面。" : "Changing this option reloads the desktop interface."}</p></div><label className="settings-toggle"><span><strong>{zh ? "开发者模式" : "Developer mode"}</strong><small>{zh ? "显示详细状态和调试输出。" : "Show detailed status and debugging output."}</small></span><input type="checkbox" checked={developerMode} onChange={(event) => onDeveloperModeChange(event.target.checked)} /></label></section>}
           </>
         )}
+        {cleanupPreview ? (
+          <section className="data-cleanup-dialog" role="dialog" aria-modal="true" aria-labelledby="data-cleanup-title" data-scope={cleanupPreview.scope} data-testid="data-cleanup-dialog">
+            <h2 id="data-cleanup-title">{cleanupPreview.scope === "sessions" ? (zh ? "清除会话？" : "Clear conversations?") : (zh ? "清除全部应用数据？" : "Clear all app data?")}</h2>
+            <p>{zh ? "将清除以下 OpenDrSai 应用数据：" : "The following OpenDrSai app data will be removed:"}</p>
+            <ul data-testid="data-cleanup-categories">{cleanupPreview.applicationData.map((item) => <li key={item.category}><strong>{item.label}</strong><span>{item.description}</span></li>)}</ul>
+            <p className="data-cleanup-preserved" data-testid="data-cleanup-preserved"><strong>{zh ? "不会删除用户原始材料" : "Your original files will not be deleted"}</strong>{zh ? `。已登记 ${cleanupPreview.preservedUserMaterials.length} 个工作区；其中的 PDF、PPT、数据文件和成果都会保留。` : `. Files and results in ${cleanupPreview.preservedUserMaterials.length} registered workspace(s) are preserved.`}</p>
+            {cleanupPreview.scope === "all_local_data" ? <label><span>{zh ? `输入“${cleanupPreview.confirmationPhrase}”确认；完成后需要重新登录。` : `Type “${cleanupPreview.confirmationPhrase}” to confirm; you will need to sign in again.`}</span><input data-testid="data-cleanup-confirmation" value={cleanupConfirmation} onChange={(event) => setCleanupConfirmation(event.target.value)} /></label> : null}
+            <div className="settings-button-row"><button type="button" data-testid="data-cleanup-cancel" onClick={() => setCleanupPreview(null)}>{zh ? "取消" : "Cancel"}</button><button type="button" className="danger" data-testid="data-cleanup-confirm" disabled={cleanupBusy || (cleanupPreview.scope === "all_local_data" && cleanupConfirmation !== cleanupPreview.confirmationPhrase)} onClick={() => void confirmDataCleanup()}>{cleanupBusy ? (zh ? "正在清除…" : "Clearing…") : (zh ? "确认清除" : "Confirm clear")}</button></div>
+          </section>
+        ) : null}
       </div>
     </div>
   );
@@ -5074,7 +5308,7 @@ function SidePlaceholder({
       <strong>{tab}</strong>
       <span>
         {language === "zh"
-          ? "预留给共享 WebUI 面板内容。"
+          ? "该面板功能正在准备中。"
           : "Reserved for shared WebUI panel content."}
       </span>
     </div>

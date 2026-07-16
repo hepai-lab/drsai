@@ -162,7 +162,7 @@ export function AgentRunWorkspace({
       const checkpoint = workspacePath
         ? await desktopApi.createWorkspaceCheckpoint({
             workspacePath,
-            label: `${zh ? "Agent 运行前" : "Before agent run"} ${runId.slice(0, 8)}`,
+            label: `${zh ? "智能体运行前" : "Before agent run"} ${runId.slice(0, 8)}`,
             kind: "agent_run_baseline",
             runId,
             maxFiles: 200,
@@ -172,7 +172,7 @@ export function AgentRunWorkspace({
       if (checkpoint && (checkpoint.truncated || checkpoint.skippedFileCount > 0)) {
         throw new Error(
           zh
-            ? "无法完整保存运行前状态：现有变更文件过多，或包含超过 2 MB / 不可保存的文件。为避免丢失用户修改，Agent 任务未启动。"
+            ? "无法完整保存运行前状态：现有变更文件过多，或包含超过 2 MB / 不可保存的文件。为避免丢失用户修改，智能体任务未启动。"
             : "The pre-run state could not be captured completely because existing changes exceed checkpoint limits or include files larger than 2 MB. The agent was not started to protect user work.",
         );
       }
@@ -381,7 +381,7 @@ export function AgentRunWorkspace({
               ? "Run a stoppable agent task in the current workspace."
               : !workspaceTrusted
                 ? "Trust this workspace in workspace details before running an agent task."
-                : "Prepare the local runtime and gateway before running an agent."}
+                : "Prepare the local runtime before running an agent."}
           </p>
         </div>
       </section>

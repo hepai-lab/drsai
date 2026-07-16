@@ -20,13 +20,16 @@ import {
 } from "./paths";
 import { getGatewaySnapshot, getGatewayStatus } from "./gateway";
 import { getUpdateStatus } from "./updates";
+import { readBackendSourceVersion, readInstalledRuntimeVersion } from "./versionInfo";
 
 export async function getInstallStatus(): Promise<InstallStatus> {
   const hasPython = existsSync(DRSAI_PYTHON);
   const hasScript = existsSync(DRSAI_SCRIPT) || existsSync(DRSAI_CMD_SCRIPT);
   const hasRepo = existsSync(DRSAI_REPO);
   const prerequisites = await getPrerequisiteStatus();
-  const version = hasRepo && hasPython ? await getDrsaiVersion() : null;
+  const version = hasRepo
+    ? readInstalledRuntimeVersion(DRSAI_REPO) ?? readBackendSourceVersion(DRSAI_REPO)
+    : null;
   const expectedVersion = getExpectedBackendVersion();
   const backendNeedsRepair = Boolean(
     expectedVersion && version && !versionsMatch(version, expectedVersion),
@@ -94,13 +97,16 @@ function getStartupInstallStatus(): InstallStatus {
   const hasRepo = existsSync(DRSAI_REPO);
   const apiKeyConfigured = isApiKeyConfigured();
   const installed = hasRepo && hasPython && hasScript;
+  const version = hasRepo
+    ? readInstalledRuntimeVersion(DRSAI_REPO) ?? readBackendSourceVersion(DRSAI_REPO)
+    : null;
   return {
     installed,
     home: DRSAI_HOME,
     repoPath: hasRepo ? DRSAI_REPO : "",
     pythonPath: hasPython ? DRSAI_PYTHON : "",
     scriptPath: existsSync(DRSAI_SCRIPT) ? DRSAI_SCRIPT : existsSync(DRSAI_CMD_SCRIPT) ? DRSAI_CMD_SCRIPT : "",
-    version: null,
+    version,
     expectedVersion: getExpectedBackendVersion(),
     backendNeedsRepair: false,
     bundledBackendAvailable: hasBundledBackendSource(),
@@ -141,32 +147,6 @@ export function fallbackUpdateStatus(error: unknown): UpdateStatus {
     error: error instanceof Error ? error.message : String(error),
     recovery: null,
   };
-}
-
-function getDrsaiVersion(): Promise<string | null> {
-  return new Promise((resolve) => {
-    execFile(
-      DRSAI_PYTHON,
-      ["-m", "drsai.backend.run_cli", "version"],
-      {
-        cwd: DRSAI_REPO,
-        env: {
-          ...process.env,
-          DRSAI_HOME,
-          PATH: getEnhancedPath(),
-        },
-        timeout: 30000,
-        windowsHide: true,
-      },
-      (error, stdout) => {
-        if (error) {
-          resolve(null);
-          return;
-        }
-        resolve(stdout.toString().trim() || null);
-      },
-    );
-  });
 }
 
 async function getPrerequisiteStatus(): Promise<PrerequisiteStatus> {

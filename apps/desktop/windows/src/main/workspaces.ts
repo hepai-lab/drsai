@@ -1,5 +1,4 @@
 import { execFile } from "child_process";
-import { randomUUID } from "crypto";
 import { existsSync } from "fs";
 import { mkdir, readFile, realpath, stat, writeFile } from "fs/promises";
 import { dirname, join, normalize } from "path";
@@ -12,8 +11,12 @@ import type {
   RemoteSshWorkspaceDescriptor,
 } from "../shared/desktopApi";
 import { DRSAI_HOME } from "./paths";
+import { backupLegacyWorkspaceDataOnce, migrateLegacyWorkspaceRecords, migrateWorkspaceToAuthoritativeId, recordWorkspaceIdMigration } from "./workspaceMigrations";
+import { LocalRuntimeClient } from "./runtimeClient";
 
 const WORKSPACES_FILE = join(DRSAI_HOME, "desktop", "workspaces.json");
+const WORKSPACES_LEGACY_BACKUP_FILE = join(DRSAI_HOME, "desktop", "workspaces.legacy-v1.backup.json");
+const WORKSPACE_ID_MIGRATIONS_FILE = join(DRSAI_HOME, "desktop", "workspace-id-migrations.json");
 const MAX_WORKSPACES = 100;
 const MAX_NAME_CHARS = 80;
 const MAX_DESCRIPTION_CHARS = 240;
@@ -34,11 +37,13 @@ export async function createWorkspace(rawRequest: unknown): Promise<WorkspacePro
   const request = await validateCreateWorkspaceRequest(rawRequest);
   const now = new Date().toISOString();
   const workspacePath = await prepareWorkspacePath(request);
+  const runtimeWorkspace = await (await LocalRuntimeClient.connect()).openWorkspace(workspacePath);
   const existing = (await readWorkspaces()).filter((workspace) => !samePath(workspace.path, workspacePath));
   const workspace: WorkspaceProject = await refreshWorkspaceStatus({
-    id: `workspace-${randomUUID()}`,
+    id: runtimeWorkspace.workspace_id,
     name: request.name || getWorkspaceName(workspacePath),
-    path: workspacePath,
+    path: runtimeWorkspace.path,
+    location: "local",
     type: "local",
     description: request.description,
     createdAt: now,
@@ -79,6 +84,10 @@ export async function deleteWorkspace(rawId: unknown): Promise<boolean> {
     throw new Error("Workspace id is invalid.");
   }
   const workspaces = await readWorkspaces();
+  const existing = workspaces.find((workspace) => workspace.id === rawId);
+  if (existing?.location !== "remote") {
+    await (await LocalRuntimeClient.connect()).closeWorkspace(rawId);
+  }
   const next = workspaces.filter((workspace) => workspace.id !== rawId);
   await writeWorkspaces(next);
   return next.length !== workspaces.length;
@@ -97,26 +106,46 @@ export async function createRemoteWorkspace(request: {
 }): Promise<WorkspaceProject> {
   const now = new Date().toISOString();
   const workspaces = await readWorkspaces();
-  const workspace: WorkspaceProject = {
+  const previous = workspaces.find((item) => item.id === request.id || (
+    item.location === "remote" &&
+    item.remote?.hostAlias === request.remote.hostAlias &&
+    item.remote.canonicalPath === request.remote.canonicalPath
+  ));
+  let workspace: WorkspaceProject = {
     id: request.id,
     name: request.name?.trim().slice(0, MAX_NAME_CHARS) || getWorkspaceName(request.path),
     path: request.path,
+    location: "remote",
+    transport: "ssh",
     type: "remote-ssh",
     remote: request.remote,
-    createdAt: workspaces.find((item) => item.id === request.id)?.createdAt || now,
+    createdAt: previous?.createdAt || now,
     updatedAt: now,
     lastOpenedAt: now,
     trusted: request.trusted ?? false,
   };
-  await writeWorkspaces([workspace, ...workspaces.filter((item) => item.id !== request.id)].slice(0, MAX_WORKSPACES));
+  workspace = migrateWorkspaceToAuthoritativeId(previous, workspace);
+  if (previous && previous.id !== request.id) {
+    await recordWorkspaceIdMigration(WORKSPACE_ID_MIGRATIONS_FILE, {
+      legacyId: previous.id,
+      workspaceId: request.id,
+      hostAlias: request.remote.hostAlias,
+      canonicalPath: request.remote.canonicalPath,
+      migratedAt: now,
+    });
+  }
+  await writeWorkspaces([workspace, ...workspaces.filter((item) => item.id !== request.id && item !== previous)].slice(0, MAX_WORKSPACES));
   return workspace;
 }
 
 async function readWorkspaces(): Promise<WorkspaceProject[]> {
   try {
-    const parsed = JSON.parse(await readFile(WORKSPACES_FILE, "utf8"));
+    const raw = await readFile(WORKSPACES_FILE, "utf8");
+    const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(isWorkspace).slice(0, MAX_WORKSPACES);
+    const migration = migrateLegacyWorkspaceRecords(parsed);
+    if (migration.changed) await backupLegacyWorkspaceDataOnce(WORKSPACES_LEGACY_BACKUP_FILE, raw);
+    return migration.records.filter(isWorkspace).slice(0, MAX_WORKSPACES);
   } catch {
     return [];
   }
@@ -130,6 +159,8 @@ async function writeWorkspaces(workspaces: WorkspaceProject[]): Promise<void> {
       hostAlias: workspace.remote.hostAlias,
       canonicalPath: workspace.remote.canonicalPath,
       workspaceId: workspace.remote.workspaceId,
+      runtimeId: workspace.remote.runtimeId,
+      instanceId: workspace.remote.instanceId,
       connectionState: "disconnected" as const,
       gatewayVersion: workspace.remote.gatewayVersion,
     },
@@ -282,7 +313,7 @@ function sanitizeMetadata(value: unknown): Record<string, unknown> | undefined {
 }
 
 async function refreshWorkspaceStatus(workspace: WorkspaceProject): Promise<WorkspaceProject> {
-  if (workspace.type === "remote-ssh") return workspace;
+  if (workspace.location === "remote") return workspace;
   const git = await getGitStatus(workspace.path);
   const instructions = await readWorkspaceInstructions(workspace.path);
   return {
@@ -356,16 +387,18 @@ function isWorkspace(value: unknown): value is WorkspaceProject {
     workspace &&
       typeof workspace.id === "string" &&
       WORKSPACE_ID_PATTERN.test(workspace.id) &&
-      (workspace.type === "local" || workspace.type === "remote-ssh") &&
+      (workspace.location === "local" || workspace.location === "remote") &&
+      (workspace.location !== "remote" || workspace.transport === "ssh") &&
       typeof workspace.name === "string" &&
       typeof workspace.path === "string" &&
       typeof workspace.createdAt === "string" &&
       typeof workspace.updatedAt === "string" &&
       typeof workspace.lastOpenedAt === "string" &&
       typeof workspace.trusted === "boolean" &&
-      (workspace.type !== "remote-ssh" || Boolean(workspace.remote?.hostAlias && workspace.remote?.canonicalPath)),
+      (workspace.location !== "remote" || Boolean(workspace.remote?.hostAlias && workspace.remote?.canonicalPath)),
   );
 }
+
 
 function sortWorkspaces(workspaces: WorkspaceProject[]): WorkspaceProject[] {
   return [...workspaces].sort((left, right) => {

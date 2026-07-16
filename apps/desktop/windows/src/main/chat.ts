@@ -3,7 +3,7 @@ import { randomUUID } from "crypto";
 import { appendFileSync, mkdirSync } from "fs";
 import { readFile, stat } from "fs/promises";
 import { dirname } from "path";
-import type { ChatAttachment, ChatEvent, ChatMessage, ChatRequest } from "../shared/desktopApi";
+import type { ChatAttachment, ChatEvent, ChatMessage, ChatRequest, MaterialRoleItem } from "../shared/desktopApi";
 import { invalidateAuthSession, refreshAuthContextAfterUnauthorized, requireAuthContext, type AuthContext } from "./auth";
 import { getPlatformAgentChatUrl, getPlatformAgentExecutionDescriptor, isPlatformAgentExecutionAvailable, respondToPlatformChatInput, stopPlatformChat } from "./agents";
 import { getGatewayRequestHeaders, startGateway } from "./gateway";
@@ -15,6 +15,7 @@ import {
   parseAgentInputRequestSseFrame,
   parseAgentLogSseFrame,
   parseChatReasoningSseFrame,
+  parseChatSseErrorFrame,
   parseChatSseFrame,
   parseProviderErrorAnalyticsSseFrame,
   parseProviderStatusSseFrame,
@@ -26,8 +27,10 @@ import { persistProviderErrorAnalytics } from "./providerErrorAnalytics";
 import { persistProviderUsageAnalytics } from "./providerUsageAnalytics";
 import { bindRemoteThread, getRemoteGatewayAccess } from "./remoteWorkspace";
 import { recordAgentTelemetry } from "./agentTelemetry";
+import { analyzeMaterialRoles } from "./workspaceContext";
 import { assertAgentCircuitAvailable, recordAgentCircuitFailure, recordAgentCircuitSuccess } from "./agentCircuitBreaker";
 import { createFailureEscalation, getFailureRecovery } from "./failureRecovery";
+import { LocalRuntimeClient, type RuntimeClient, type RuntimeAgentEvent } from "./runtimeClient";
 import {
   RecoverableStreamError,
   appendResumedContent,
@@ -61,6 +64,7 @@ const REQUEST_ID_PATTERN = /^[a-zA-Z0-9_-]{8,80}$/;
 const SESSION_ID_PATTERN = /^[a-zA-Z0-9_.:-]{1,160}$/;
 const activeChats = new Map<string, AbortController>();
 const platformChatTargets = new Map<string, { agentId: string; threadId: string }>();
+const codexChatTargets = new Map<string, { client: RuntimeClient; runId: string; approvalId?: string }>();
 const chatEventSequences = new Map<string, number>();
 
 export function hasActiveChats(): boolean {
@@ -107,9 +111,12 @@ export function abortChat(requestId: string): boolean {
   if (!controller) return false;
   const platformTarget = platformChatTargets.get(requestId);
   if (platformTarget) void stopPlatformChat(platformTarget.agentId, platformTarget.threadId).catch(() => undefined);
+  const codexTarget = codexChatTargets.get(requestId);
+  if (codexTarget) void codexTarget.client.cancelAgentRun(codexTarget.runId).catch(() => undefined);
   controller.abort("user");
   activeChats.delete(requestId);
   platformChatTargets.delete(requestId);
+  codexChatTargets.delete(requestId);
   return true;
 }
 
@@ -119,8 +126,14 @@ export async function respondChatInput(
 ): Promise<boolean> {
   if (typeof requestId !== "string" || !REQUEST_ID_PATTERN.test(requestId)) return false;
   const target = platformChatTargets.get(requestId);
-  if (!target) return false;
-  return respondToPlatformChatInput(target.agentId, target.threadId, response);
+  if (target) return respondToPlatformChatInput(target.agentId, target.threadId, response);
+  const codex = codexChatTargets.get(requestId);
+  if (!codex?.approvalId) return false;
+  const value = typeof response === "string" ? response : String(response.decision ?? response.approved ?? "");
+  const decision = /^(accept|approved|true|yes)$/i.test(value) ? "accept" : /acceptforsession/i.test(value) ? "acceptForSession" : "decline";
+  await codex.client.respondAgentApproval(codex.runId, codex.approvalId, decision);
+  codex.approvalId = undefined;
+  return true;
 }
 
 function validateChatRequest(rawRequest: unknown): ChatRequest {
@@ -300,12 +313,14 @@ async function runChat(
   controller: AbortController,
 ): Promise<void> {
   let auth = await requireAuthContext();
+  writeChatDiagnostic(requestId, "stage: authenticated");
   const sessionId = request.threadId || request.sessionId || requestId;
   const runId = request.runId || requestId;
-  const platformDescriptor = request.agentId && request.agentId !== "my-drsai"
+  const isCodexBackend = request.agentId === "my-codex";
+  const platformDescriptor = request.agentId && request.agentId !== "my-drsai" && !isCodexBackend
     ? getPlatformAgentExecutionDescriptor(request.agentId)
     : null;
-  if (request.agentId && request.agentId !== "my-drsai" && !platformDescriptor) {
+  if (request.agentId && request.agentId !== "my-drsai" && !isCodexBackend && !platformDescriptor) {
     throw new Error("The selected platform agent is unavailable. Refresh the agent square and try again.");
   }
   if (platformDescriptor && !isPlatformAgentExecutionAvailable()) {
@@ -313,7 +328,7 @@ async function runChat(
   }
   if (platformDescriptor && request.agentId) assertAgentCircuitAvailable(request.agentId);
   const boundAgentId = request.agentId || "my-drsai";
-  const boundAgentName = platformDescriptor?.name || "My DrSai";
+  const boundAgentName = isCodexBackend ? "Codex" : platformDescriptor?.name || "My DrSai";
   const executionStartedAt = Date.now();
   recordAgentTelemetry({ event: "execution_started", agentId: boundAgentId, mode: platformDescriptor?.mode || "local", source: platformDescriptor ? "platform" : "local" });
   if (platformDescriptor && request.agentId) {
@@ -332,20 +347,34 @@ async function runChat(
     status: "running",
     messageCount: request.messages.length,
   });
+  writeChatDiagnostic(requestId, "stage: thread persisted");
 
   const timeout = setTimeout(() => controller.abort("timeout"), CHAT_TIMEOUT_MS);
   try {
+    if (isCodexBackend) {
+      await runCodexBackendChat(webContents, requestId, sessionId, request, controller);
+      activeChats.delete(requestId);
+      recordAgentTelemetry({ event: "execution_completed", agentId: boundAgentId, mode: "local", source: "local", durationMs: Date.now() - executionStartedAt });
+      await upsertThreadFromRun({ id: sessionId, kind: "chat", title: deriveThreadTitle(request.messages),
+        workspacePath: request.workspacePath, boundAgentId, boundAgentName, lastRunId: codexChatTargets.get(requestId)?.runId ?? runId,
+        lastRequestId: requestId, status: "idle", messageCount: request.messages.length });
+      emit(webContents, { requestId, sessionId, runId: codexChatTargets.get(requestId)?.runId ?? runId, type: "done" });
+      return;
+    }
     // Platform agents execute in HAI and must never depend on a local or
     // workspace gateway being installed/running. Gateway startup is reserved
     // for My DrSai and remote-workspace local execution.
-    const remoteGateway = platformDescriptor ? null : getRemoteGatewayAccess(request.workspacePath);
+    const remoteGateway = platformDescriptor ? null : getRemoteGatewayAccess(request.workspacePath, request.workspaceId);
     if (remoteGateway) bindRemoteThread(sessionId, remoteGateway.workspaceId);
     const ready = platformDescriptor || remoteGateway ? true : await startGateway();
+    writeChatDiagnostic(requestId, `stage: gateway ready=${ready}`);
     if (!ready) {
       throw new Error("Gateway is not ready. Install or start OpenDrSai first.");
     }
 
-    const attachmentContext = platformDescriptor || remoteGateway ? [] : await buildAttachmentContext(request.attachments);
+    const enrichedAttachments = await enrichAttachmentsWithMaterialRoles(request.attachments);
+    const attachmentContext = platformDescriptor || remoteGateway ? [] : await buildAttachmentContext(enrichedAttachments);
+    writeChatDiagnostic(requestId, `stage: attachment context built count=${attachmentContext.length}`);
     const messages = withAttachmentContext(request.messages, attachmentContext);
     const model = request.model || getDefaultModelAlias() || "drsai";
     const resumeState: StreamResumeState = { content: "", fileEventKeys: new Set() };
@@ -401,6 +430,7 @@ async function runChat(
       const gatewayHeaders = remoteGateway
         ? { "X-OpenDrSai-Gateway-Token": remoteGateway.token }
         : getGatewayRequestHeaders();
+      writeChatDiagnostic(requestId, `stage: provider request ${gatewayBaseUrl}`);
       const response = await fetch(`${gatewayBaseUrl}/v1/chat/completions`, {
         method: "POST",
         headers: {
@@ -408,7 +438,7 @@ async function runChat(
           ...gatewayHeaders,
           "X-OpenDrSai-User": authContext.userId,
           "X-OpenDrSai-Auth-Mode": authContext.authMode,
-          ...(request.workspacePath ? { "X-OpenDrSai-Workspace": request.workspacePath } : {}),
+          ...(request.workspacePath ? { "X-OpenDrSai-Workspace": encodeURIComponent(request.workspacePath) } : {}),
           ...(authContext.accessToken ? { Authorization: `Bearer ${authContext.accessToken}` } : {}),
           "Idempotency-Key": `desktop-chat-${requestId}`,
         },
@@ -427,8 +457,8 @@ async function runChat(
             desktop_request_id: requestId,
             network_retry_attempt: recoveryAttempt,
             resume_from_chars: resumeState.content.length,
-            attachments: request.attachments || [],
-            files: request.attachments || [],
+            attachments: enrichedAttachments,
+            files: enrichedAttachments,
             attachment_context: attachmentContext,
           },
         }),
@@ -528,6 +558,62 @@ async function runChat(
   } finally {
     clearTimeout(timeout);
     platformChatTargets.delete(requestId);
+    codexChatTargets.delete(requestId);
+  }
+}
+
+async function runCodexBackendChat(
+  webContents: WebContents, requestId: string, displaySessionId: string, request: ChatRequest, controller: AbortController,
+): Promise<void> {
+  if (!request.workspacePath) throw new Error("Codex requires an open Workspace.");
+  const client = await LocalRuntimeClient.connect();
+  const workspace = await client.openWorkspace(request.workspacePath);
+  const session = await client.createSession(workspace.workspace_id, deriveThreadTitle(request.messages));
+  const run = await client.createAgentRun(session.session_id, "codex@1", `desktop-codex-${requestId}`);
+  const target = { client: client as RuntimeClient, runId: run.run_id, approvalId: undefined as string | undefined };
+  codexChatTargets.set(requestId, target);
+  const prompt = request.messages.map((message) => `${message.role}: ${message.content}`).join("\n\n");
+  let completed = false;
+  let failure: unknown;
+  const execution = client.executeAgentRun(run.run_id, prompt, controller.signal)
+    .catch((error) => { failure = error; })
+    .finally(() => { completed = true; });
+  let after = 0;
+  while (!completed) {
+    const events = await client.listAgentRunEvents(run.run_id, after).catch(() => []);
+    for (const event of events) {
+      after = Math.max(after, event.sequence);
+      emitCodexRuntimeEvent(webContents, requestId, displaySessionId, run.run_id, event, target);
+    }
+    if (!completed) await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  await execution;
+  for (const event of await client.listAgentRunEvents(run.run_id, after).catch(() => [])) {
+    emitCodexRuntimeEvent(webContents, requestId, displaySessionId, run.run_id, event, target);
+  }
+  if (failure) throw failure;
+}
+
+function emitCodexRuntimeEvent(
+  webContents: WebContents, requestId: string, sessionId: string, runId: string,
+  event: RuntimeAgentEvent, target: { approvalId?: string },
+): void {
+  const content = typeof event.data.content === "string" ? event.data.content : undefined;
+  if (event.type === "agent.message.delta") emit(webContents, { requestId, sessionId, runId, type: "chunk", content });
+  else if (event.type === "audit.codex.approval.requested") {
+    target.approvalId = String(event.data.approval_id ?? "");
+    emit(webContents, { requestId, sessionId, runId, type: "input_request", inputType: "approval",
+      prompt: String((event.data.request as Record<string, unknown> | undefined)?.reason ?? "Review the Codex operation in Approval Center.") });
+  } else if (event.type === "item.file_change" || event.type === "item.patch") {
+    emit(webContents, { requestId, sessionId, runId, type: "tool_timeline", toolTimeline: {
+      id: event.event_id, kind: "diff", title: String(event.data.path ?? "Workspace change"), status: "completed",
+      content: typeof event.data.diff === "string" ? event.data.diff : undefined, path: String(event.data.path ?? ""),
+    } });
+  } else if (event.type.startsWith("item.") || event.type.startsWith("tool.")) {
+    emit(webContents, { requestId, sessionId, runId, type: "tool_timeline", toolTimeline: {
+      id: event.event_id, kind: "tool_call", title: String(event.data.operation ?? event.type), status: "completed",
+      content: typeof event.data.summary === "string" ? event.data.summary : undefined,
+    } });
   }
 }
 
@@ -551,6 +637,54 @@ interface AttachmentContextItem {
   reason?: string;
   sizeBytes?: number;
   content?: string;
+}
+
+async function enrichAttachmentsWithMaterialRoles(
+  attachments: ChatRequest["attachments"],
+): Promise<ChatAttachment[]> {
+  if (!attachments?.length) return [];
+  const fileAttachments = attachments.filter((attachment) => attachment.kind === "file");
+  if (!fileAttachments.length) return [...attachments];
+  try {
+    const analysis = await analyzeMaterialRoles({ paths: fileAttachments.map((attachment) => attachment.path) });
+    const roleByPath = createMaterialRoleLookup(analysis.items);
+    return attachments.map((attachment) => {
+      if (attachment.kind !== "file" || /Material role:/i.test(attachment.note || "")) return attachment;
+      const item = roleByPath.get(normalizeMaterialRolePath(attachment.path))
+        || roleByPath.get(`name:${attachment.name.toLocaleLowerCase()}`);
+      if (!item) return attachment;
+      const roleSummary = `Material role: ${formatMaterialRole(item.role)} (${Math.round(item.confidence * 100)}% confidence). ${item.reason} Suggested use: ${item.suggestedUse}`;
+      return { ...attachment, note: [attachment.note, roleSummary].filter(Boolean).join("\n") };
+    });
+  } catch {
+    return [...attachments];
+  }
+}
+
+function createMaterialRoleLookup(items: MaterialRoleItem[]): Map<string, MaterialRoleItem> {
+  const lookup = new Map<string, MaterialRoleItem>();
+  const nameCounts = new Map<string, number>();
+  for (const item of items) {
+    const nameKey = item.name.toLocaleLowerCase();
+    nameCounts.set(nameKey, (nameCounts.get(nameKey) || 0) + 1);
+    lookup.set(normalizeMaterialRolePath(item.path), item);
+  }
+  for (const item of items) {
+    const nameKey = item.name.toLocaleLowerCase();
+    if (nameCounts.get(nameKey) === 1) lookup.set(`name:${nameKey}`, item);
+  }
+  return lookup;
+}
+
+function normalizeMaterialRolePath(value: string): string {
+  return value.replace(/\\/g, "/").replace(/\/+$/, "").toLocaleLowerCase();
+}
+
+function formatMaterialRole(role: MaterialRoleItem["role"]): string {
+  if (role === "previous_report") return "Previous reports";
+  if (role === "latest_data") return "Latest data";
+  if (role === "result_image") return "Result images";
+  return "Reference materials";
 }
 
 async function buildAttachmentContext(attachments: ChatRequest["attachments"]): Promise<AttachmentContextItem[]> {
@@ -613,7 +747,7 @@ async function buildAttachmentContext(attachments: ChatRequest["attachments"]): 
       continue;
     }
     if (includedFiles >= MAX_ATTACHMENT_CONTEXT_FILES) {
-      context.push({ ...attachment, included: false, reason: "file-limit-exceeded" });
+      context.push(fileMetadataContext(attachment, "file-limit-exceeded"));
       continue;
     }
     try {
@@ -623,12 +757,12 @@ async function buildAttachmentContext(attachments: ChatRequest["attachments"]): 
         continue;
       }
       if (info.size > MAX_ATTACHMENT_CONTEXT_FILE_BYTES) {
-        context.push({ ...attachment, included: false, reason: "file-too-large", sizeBytes: info.size });
+        context.push(fileMetadataContext(attachment, "file-too-large", info.size));
         continue;
       }
       const buffer = await readFile(attachment.path);
       if (looksBinary(buffer)) {
-        context.push({ ...attachment, included: false, reason: "binary-file", sizeBytes: info.size });
+        context.push(fileMetadataContext(attachment, "binary-file", info.size));
         continue;
       }
       const content = buffer.toString("utf8").replace(/\u0000/g, "").trim();
@@ -656,6 +790,29 @@ async function buildAttachmentContext(attachments: ChatRequest["attachments"]): 
     }
   }
   return context;
+}
+
+function fileMetadataContext(
+  attachment: ChatAttachment,
+  reason: string,
+  sizeBytes?: number,
+): AttachmentContextItem {
+  const content = attachment.note
+    ? [
+      `File: ${attachment.name}`,
+      `Path: ${attachment.path}`,
+      attachment.title ? `Title: ${attachment.title}` : "",
+      `Note: ${attachment.note}`,
+      `File contents omitted (${reason}).`,
+    ].filter(Boolean).join("\n")
+    : undefined;
+  return {
+    ...attachment,
+    included: Boolean(content),
+    reason,
+    sizeBytes,
+    content,
+  };
 }
 
 function withAttachmentContext(messages: ChatMessage[], context: AttachmentContextItem[]): ChatMessage[] {
@@ -717,14 +874,7 @@ async function readSse(
       }
       const agentLog = parseAgentLogSseFrame(frame);
       if (agentLog) {
-        emit(webContents, {
-          requestId,
-          sessionId,
-          runId,
-          type: "status",
-          content: formatAgentLogStatus(agentLog),
-          level: agentLog.level,
-        });
+        emitAgentLog(webContents, requestId, sessionId, runId, agentLog);
         continue;
       }
       const inputRequest = parseAgentInputRequestSseFrame(frame);
@@ -750,6 +900,11 @@ async function readSse(
           level: reasoningLog.level,
         });
         continue;
+      }
+      const streamError = parseChatSseErrorFrame(frame);
+      if (streamError) {
+        recordProviderErrorAnalytics(requestId, sessionId, runId, frame);
+        throw streamError;
       }
       const providerStatus = parseProviderStatusSseFrame(frame);
       if (providerStatus) {
@@ -804,14 +959,7 @@ async function readSse(
     }
     const agentLog = parseAgentLogSseFrame(buffer);
     if (agentLog) {
-      emit(webContents, {
-        requestId,
-        sessionId,
-        runId,
-        type: "status",
-        content: formatAgentLogStatus(agentLog),
-        level: agentLog.level,
-      });
+      emitAgentLog(webContents, requestId, sessionId, runId, agentLog);
       return sawDone;
     }
     const inputRequest = parseAgentInputRequestSseFrame(buffer);
@@ -837,6 +985,11 @@ async function readSse(
         level: reasoningLog.level,
       });
       return sawDone;
+    }
+    const streamError = parseChatSseErrorFrame(buffer);
+    if (streamError) {
+      recordProviderErrorAnalytics(requestId, sessionId, runId, buffer);
+      throw streamError;
     }
     const providerStatus = parseProviderStatusSseFrame(buffer);
     if (providerStatus) {
@@ -891,6 +1044,42 @@ function formatAgentLogStatus(log: { title?: string; content?: string; level?: s
   const content = log.content?.trim() || "";
   if (!content) return "";
   return `**${title}**\n\n${content}\n\n`;
+}
+
+function emitAgentLog(
+  webContents: WebContents,
+  requestId: string,
+  sessionId: string,
+  runId: string,
+  log: { title?: string; content?: string; level?: string },
+): void {
+  const title = log.title?.trim() || "Agent status";
+  const toolNames = title.match(/^I am using tools:\s*(.+)$/i)?.[1]?.trim();
+  if (toolNames) {
+    emit(webContents, {
+      requestId,
+      sessionId,
+      runId,
+      type: "tool_timeline",
+      toolTimeline: {
+        id: `agent-log:${toolNames}:${log.content?.slice(0, 160) ?? ""}`,
+        kind: "tool_call",
+        title: "Tool call",
+        toolName: toolNames,
+        status: "running",
+        content: log.content?.trim() || undefined,
+      },
+    });
+    return;
+  }
+  emit(webContents, {
+    requestId,
+    sessionId,
+    runId,
+    type: "status",
+    content: formatAgentLogStatus(log),
+    level: log.level,
+  });
 }
 
 function recordProviderUsageAnalytics(

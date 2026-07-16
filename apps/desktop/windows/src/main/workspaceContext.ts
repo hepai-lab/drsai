@@ -1,10 +1,23 @@
 import { execFile } from "child_process";
 import { createReadStream, existsSync } from "fs";
-import { readdir, readFile, realpath, stat } from "fs/promises";
+import { open, readdir, readFile, realpath, stat } from "fs/promises";
 import { createHash } from "crypto";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "path";
 import { inflateRawSync } from "zlib";
 import type {
+  MaterialConsistencyAnalysisRequest,
+  MaterialConsistencyAnalysisResult,
+  MaterialConsistencyFinding,
+  MaterialConsistencyFindingKind,
+  MaterialConsistencySource,
+  MaterialQueryCitation,
+  MaterialQueryKind,
+  MaterialQueryRequest,
+  MaterialQueryResult,
+  MaterialRole,
+  MaterialRoleAnalysisRequest,
+  MaterialRoleAnalysisResult,
+  MaterialRoleItem,
   WorkspaceContextOverview,
   WorkspaceFileGitStatus,
   WorkspaceFileNode,
@@ -263,6 +276,10 @@ export async function summarizeWorkspaceFolder(
   let fileCount = 0;
   let directoryCount = 0;
   let skippedDirectoryCount = 0;
+  let importedFileCount = 0;
+  let skippedFileCount = 0;
+  let failedFileCount = 0;
+  const unsupportedExtensions = new Set<string>();
   let truncated = false;
 
   async function walk(dirPath: string, depth: number): Promise<void> {
@@ -286,9 +303,16 @@ export async function summarizeWorkspaceFolder(
         truncated = true;
         break;
       }
-      if (entry.isSymbolicLink()) continue;
+      if (entry.isSymbolicLink()) {
+        skippedFileCount += 1;
+        continue;
+      }
       if (entry.name.startsWith(".") && entry.name !== ".claude" && entry.name !== ".env.example") {
-        if (entry.name !== ".env" && entry.name !== ".github") continue;
+        if (entry.name !== ".env" && entry.name !== ".github") {
+          if (entry.isDirectory()) skippedDirectoryCount += 1;
+          else skippedFileCount += 1;
+          continue;
+        }
       }
       if (entry.isDirectory() && NOISY_DIRS.has(entry.name)) {
         skippedDirectoryCount += 1;
@@ -310,11 +334,25 @@ export async function summarizeWorkspaceFolder(
 
       fileCount += 1;
       const fileStat = await safeStat(absolutePath);
-      const size = toSafeNumber(fileStat?.size) ?? 0;
       const extension = extname(entry.name).toLowerCase() || "(none)";
       extensionCounts.set(extension, (extensionCounts.get(extension) ?? 0) + 1);
-      if (sampledFiles.length >= maxSampleFiles) continue;
+      if (!fileStat) {
+        failedFileCount += 1;
+        continue;
+      }
+      const size = toSafeNumber(fileStat.size) ?? 0;
       const kind = classifyPreviewKind(absolutePath, size);
+      if (kind === "unknown") {
+        skippedFileCount += 1;
+        unsupportedExtensions.add(extension);
+        continue;
+      }
+      if (!(await hasValidImportSignature(absolutePath, extension))) {
+        failedFileCount += 1;
+        continue;
+      }
+      importedFileCount += 1;
+      if (sampledFiles.length >= maxSampleFiles) continue;
       sampledFiles.push({
         path: absolutePath,
         relativePath: normalizeRel(relative(folderPath, absolutePath)),
@@ -342,8 +380,12 @@ export async function summarizeWorkspaceFolder(
     `Path: ${folderPath}`,
     `Entries scanned: ${totalEntries}${truncated ? " (truncated)" : ""}`,
     `Files: ${fileCount}`,
+    `Imported: ${importedFileCount}`,
+    `Skipped files: ${skippedFileCount}`,
+    `Failed files: ${failedFileCount}`,
     `Folders: ${directoryCount}`,
     skippedDirectoryCount ? `Skipped noisy folders: ${skippedDirectoryCount}` : "",
+    unsupportedExtensions.size ? `Unsupported extensions: ${[...unsupportedExtensions].sort().join(", ")}` : "",
     extensionSummary ? `Top file types: ${extensionSummary}` : "",
     sampledSummary.length ? "Sampled files:" : "No readable files sampled.",
     ...sampledSummary,
@@ -358,11 +400,541 @@ export async function summarizeWorkspaceFolder(
     fileCount,
     directoryCount,
     skippedDirectoryCount,
+    importedFileCount,
+    skippedFileCount,
+    failedFileCount,
+    unsupportedExtensions: [...unsupportedExtensions].sort(),
     truncated: truncated || rawSummary.length > maxChars,
     estimatedTokens: Math.ceil(summary.length / 4),
     sampledFiles,
     summary,
   };
+}
+
+const MATERIAL_DATA_EXTENSIONS = new Set([".csv", ".tsv", ".xls", ".xlsx", ".ods"]);
+const MATERIAL_REPORT_EXTENSIONS = new Set([".doc", ".docx", ".odt", ".rtf", ".md", ".txt"]);
+
+export async function analyzeMaterialRoles(
+  rawRequest: unknown,
+): Promise<MaterialRoleAnalysisResult> {
+  const request = validateMaterialRoleAnalysisRequest(rawRequest);
+  const items: MaterialRoleItem[] = [];
+  for (const rawPath of request.paths) {
+    const target = await realpath(resolve(rawPath));
+    const fileStat = await stat(target);
+    if (!fileStat.isFile()) continue;
+    items.push(await analyzeMaterialRole(target, fileStat.size));
+  }
+  const roleCounts: Record<MaterialRole, number> = {
+    previous_report: 0,
+    latest_data: 0,
+    result_image: 0,
+    reference_material: 0,
+  };
+  for (const item of items) roleCounts[item.role] += 1;
+  const summary = [
+    `材料角色识别：共 ${items.length} 项。`,
+    `旧报告 ${roleCounts.previous_report} 项；最新数据 ${roleCounts.latest_data} 项；结果图片 ${roleCounts.result_image} 项；参考材料 ${roleCounts.reference_material} 项。`,
+    ...items.map((item) => `${item.name}：${materialRoleLabel(item.role)}（${Math.round(item.confidence * 100)}%）。${item.suggestedUse}`),
+  ].join("\n");
+  return { items, roleCounts, summary };
+}
+
+type MaterialFact = {
+  key: string;
+  label: string;
+  value: string;
+  comparableValue: string;
+  numericValue?: number;
+  source: MaterialConsistencySource;
+};
+
+export async function analyzeMaterialConsistency(
+  rawRequest: unknown,
+): Promise<MaterialConsistencyAnalysisResult> {
+  const request = validateMaterialConsistencyRequest(rawRequest);
+  const facts: MaterialFact[] = [];
+  let filesAnalyzed = 0;
+  for (const rawPath of request.paths) {
+    try {
+      const target = await realpath(resolve(rawPath));
+      const fileStat = await stat(target);
+      if (!fileStat.isFile()) continue;
+      const role = await analyzeMaterialRole(target, fileStat.size);
+      const text = await readMaterialConsistencyText(target, extname(target).toLowerCase(), fileStat.size);
+      filesAnalyzed += 1;
+      facts.push(...extractMaterialFacts(text, target, role));
+    } catch {
+      // A single unreadable material must not block comparison of the remaining files.
+    }
+  }
+
+  const findings: MaterialConsistencyFinding[] = [];
+  const byKey = new Map<string, MaterialFact[]>();
+  for (const fact of facts) byKey.set(fact.key, [...(byKey.get(fact.key) || []), fact]);
+  for (const [key, grouped] of byKey) {
+    findings.push(...compareMaterialFacts(key, grouped));
+  }
+  const order: Record<MaterialConsistencyFindingKind, number> = {
+    source_conflict: 0,
+    outdated_number: 1,
+    chart_mismatch: 2,
+    evidence_gap: 3,
+    consensus: 4,
+  };
+  findings.sort((left, right) => order[left.kind] - order[right.kind] || left.title.localeCompare(right.title, "zh-CN"));
+  const counts: Record<MaterialConsistencyFindingKind, number> = {
+    consensus: 0,
+    source_conflict: 0,
+    outdated_number: 0,
+    chart_mismatch: 0,
+    evidence_gap: 0,
+  };
+  for (const finding of findings) counts[finding.kind] += 1;
+  return {
+    findings,
+    counts,
+    filesAnalyzed,
+    summary: findings.length
+      ? `比较了 ${filesAnalyzed} 份材料：发现 ${counts.consensus} 项共识、${counts.source_conflict} 项来源冲突、${counts.outdated_number} 个过期数字、${counts.chart_mismatch} 项图文不一致和 ${counts.evidence_gap} 项证据缺口。`
+      : `比较了 ${filesAnalyzed} 份材料，暂未发现可确定的材料关系或冲突。`,
+  };
+}
+
+type QueryMaterialDocument = {
+  path: string;
+  name: string;
+  title: string;
+  segments: Array<{ locator: string; text: string }>;
+};
+
+const queryMaterialDocumentCache = new Map<string, { size: number; document: QueryMaterialDocument }>();
+
+export async function queryMaterials(rawRequest: unknown): Promise<MaterialQueryResult> {
+  const request = validateMaterialQueryRequest(rawRequest);
+  const documents: QueryMaterialDocument[] = [];
+  for (const rawPath of request.paths) {
+    try {
+      const target = await realpath(resolve(rawPath));
+      const fileStat = await stat(target);
+      if (fileStat.isFile()) {
+        const cached = queryMaterialDocumentCache.get(target);
+        if (cached?.size === fileStat.size) documents.push(cached.document);
+        else {
+          const document = await readQueryMaterialDocument(target, fileStat.size);
+          queryMaterialDocumentCache.set(target, { size: fileStat.size, document });
+          documents.push(document);
+        }
+      }
+    } catch {
+      // Continue searching the remaining user-selected materials.
+    }
+  }
+  const question = request.question.trim();
+  const queryKind = classifyMaterialQuery(question);
+  if (queryKind === "comparison" && documents.length >= 2) {
+    const comparison = await analyzeMaterialConsistency({ paths: documents.map((item) => item.path) });
+    const finding = pickComparisonFinding(comparison.findings, question);
+    if (finding) {
+      return {
+        status: "answered",
+        queryKind,
+        answer: finding.explanation,
+        confidence: 0.96,
+        citations: finding.sources.map(({ path, name, locator, excerpt }) => ({ path, name, locator, excerpt })),
+        filesSearched: documents.length,
+      };
+    }
+  }
+  if (queryKind === "title") {
+    const document = pickNamedDocument(documents, question) || documents[0];
+    if (document?.title) {
+      return answeredMaterialQuery(queryKind, `标题是“${document.title}”。`, [{
+        path: document.path,
+        name: document.name,
+        locator: document.segments[0]?.locator || "文档标题",
+        excerpt: document.title,
+      }], documents.length, 0.99);
+    }
+  }
+  const terms = materialQueryTerms(question);
+  const ranked = rankMaterialSegments(documents, terms, queryKind);
+  const best = ranked[0];
+  const requiredMatches = queryKind === "general" && terms.length > 1 ? 2 : 1;
+  if (best && best.score >= (queryKind === "method" ? 5 : 3) && best.matchedTerms >= requiredMatches) {
+    const citations = ranked
+      .filter((item) => item.score >= Math.max(3, best.score - 2))
+      .slice(0, queryKind === "comparison" ? 2 : 3)
+      .map(({ document, segment }) => ({
+        path: document.path,
+        name: document.name,
+        locator: segment.locator,
+        excerpt: segment.text.slice(0, 900),
+      }));
+    const prefix = queryKind === "method" ? "材料中描述的方法是：" : queryKind === "numeric" ? "材料中的相关数字是：" : "材料中写到：";
+    return answeredMaterialQuery(queryKind, `${prefix}${best.segment.text.slice(0, 900)}`, citations, documents.length, Math.min(0.98, 0.72 + best.score / 40));
+  }
+  return {
+    status: "not_found",
+    queryKind,
+    answer: "没有在已导入材料中找到这个问题的可靠答案。我不会编造来源或位置。",
+    confidence: 0,
+    citations: [],
+    filesSearched: documents.length,
+  };
+}
+
+function validateMaterialQueryRequest(rawRequest: unknown): MaterialQueryRequest {
+  if (!rawRequest || typeof rawRequest !== "object") throw new Error("Material query request is invalid.");
+  const { paths, question } = rawRequest as Partial<MaterialQueryRequest>;
+  if (!Array.isArray(paths) || paths.length === 0 || paths.length > 100) throw new Error("Material query requires between 1 and 100 files.");
+  if (typeof question !== "string" || !question.trim() || question.length > 2_000 || /[\r\n]/.test(question)) throw new Error("Material query question is invalid.");
+  const normalized = paths.map((value) => {
+    if (typeof value !== "string" || !value.trim() || /[\r\n]/.test(value)) throw new Error("Material path is invalid.");
+    return value.trim();
+  });
+  return { paths: [...new Set(normalized)], question: question.trim() };
+}
+
+async function readQueryMaterialDocument(filePath: string, size: number): Promise<QueryMaterialDocument> {
+  const extension = extname(filePath).toLowerCase();
+  if (extension === ".pdf") {
+    const presentation = await extractPresentationPdf(filePath);
+    if (presentation) {
+      const title = presentation.analysis?.title || presentation.metadata.title || firstMeaningfulLine(presentation.pages[0]?.text || "");
+      return {
+        path: filePath,
+        name: basename(filePath),
+        title,
+        segments: presentation.pages.filter((page) => page.text.trim()).map((page) => ({ locator: `第 ${page.page} 页`, text: page.text.replace(/\s+/g, " ").trim() })),
+      };
+    }
+  }
+  const text = await readMaterialConsistencyText(filePath, extension, size);
+  const lines = text.split(/\r?\n/).map((line) => line.replace(/\s+/g, " ").trim()).filter(Boolean);
+  const titleLine = lines.find((line) => /^#{1,3}\s+/.test(line)) || lines[0] || "";
+  return {
+    path: filePath,
+    name: basename(filePath),
+    title: titleLine.replace(/^#{1,3}\s+/, "").slice(0, 240),
+    segments: lines.map((line, index) => ({ locator: extension === ".csv" || extension === ".tsv" ? `数据行 ${index + 1}` : `第 ${index + 1} 行`, text: line })),
+  };
+}
+
+function firstMeaningfulLine(text: string): string {
+  return text.split(/\r?\n/).map((line) => line.trim()).find((line) => line.length > 2) || "";
+}
+
+function classifyMaterialQuery(question: string): MaterialQueryKind {
+  if (/标题|题目|title/i.test(question)) return "title";
+  if (/差异|不同|区别|冲突|不一致|比较|对比|difference|compare|conflict/i.test(question)) return "comparison";
+  if (/方法|实验设计|研究设计|流程|method|methodology|protocol/i.test(question)) return "method";
+  if (/多少|数字|数值|比例|百分比|容量|带宽|样本量|均值|tbps|gbps|%|number|value|how many|bandwidth|sample size/i.test(question)) return "numeric";
+  return "general";
+}
+
+function pickNamedDocument(documents: QueryMaterialDocument[], question: string): QueryMaterialDocument | undefined {
+  const normalized = question.toLowerCase();
+  return documents.find((document) => normalized.includes(document.name.toLowerCase()) || normalized.includes(document.name.replace(/\.[^.]+$/, "").toLowerCase()));
+}
+
+function materialQueryTerms(question: string): string[] {
+  const normalized = question.toLowerCase()
+    .replace(/这份|这个|材料中|文档中|报告中|论文中|请问|告诉我|分别|相关|是多少|是什么|有哪些|如何|怎么|多少|数字|数值|方法|标题|题目|差异|不同|区别|比较|对比/g, " ")
+    .replace(/\b(?:what|is|the|does|do|a|an|in|of|was|were|used|for|across|and|please|tell|me)\b/g, " ")
+    .replace(/[^\p{L}\p{N}.%-]+/gu, " ");
+  const tokens = normalized.split(/\s+/).filter((token) => token.length >= 2);
+  return [...new Set(tokens)];
+}
+
+function rankMaterialSegments(documents: QueryMaterialDocument[], terms: string[], kind: MaterialQueryKind) {
+  return documents.flatMap((document) => document.segments.map((segment) => {
+    const haystack = `${document.name} ${segment.text}`.toLowerCase();
+    const matchedTerms = terms.filter((term) => haystack.includes(term)).length;
+    let score = terms.reduce((total, term) => total + (haystack.includes(term) ? Math.min(8, 2 + term.length) : 0), 0);
+    if (kind === "method" && /方法|实验设计|研究设计|method|methodology|protocol/i.test(segment.text)) score += 50;
+    if (kind === "numeric" && /\d+(?:\.\d+)?\s*(?:%|tbps|gbps|mbps|人|例|项|个)?/i.test(segment.text)) score += 2;
+    return { document, segment, score, matchedTerms };
+  })).sort((left, right) => right.score - left.score || left.segment.text.length - right.segment.text.length);
+}
+
+function pickComparisonFinding(findings: MaterialConsistencyFinding[], question: string): MaterialConsistencyFinding | undefined {
+  const terms = materialQueryTerms(question);
+  const ranked = findings.map((finding) => ({
+    finding,
+    score: terms.reduce((total, term) => total + (`${finding.title} ${finding.explanation}`.toLowerCase().includes(term) ? 1 : 0), 0)
+      + (finding.kind === "source_conflict" || finding.kind === "outdated_number" || finding.kind === "chart_mismatch" ? 1 : 0),
+  })).sort((left, right) => right.score - left.score);
+  return ranked[0]?.score ? ranked[0].finding : undefined;
+}
+
+function answeredMaterialQuery(queryKind: MaterialQueryKind, answer: string, citations: MaterialQueryCitation[], filesSearched: number, confidence: number): MaterialQueryResult {
+  return { status: "answered", queryKind, answer, confidence, citations, filesSearched };
+}
+
+function validateMaterialConsistencyRequest(rawRequest: unknown): MaterialConsistencyAnalysisRequest {
+  if (!rawRequest || typeof rawRequest !== "object") throw new Error("Material consistency request is invalid.");
+  const paths = (rawRequest as Partial<MaterialConsistencyAnalysisRequest>).paths;
+  if (!Array.isArray(paths) || paths.length < 2 || paths.length > 100) {
+    throw new Error("Material consistency analysis requires between 2 and 100 files.");
+  }
+  const normalized = paths.map((value) => {
+    if (typeof value !== "string" || !value.trim() || /[\r\n]/.test(value)) throw new Error("Material path is invalid.");
+    return value.trim();
+  });
+  return { paths: [...new Set(normalized)] };
+}
+
+async function readMaterialConsistencyText(filePath: string, extension: string, size: number): Promise<string> {
+  const maxBytes = Math.min(size, 160_000);
+  try {
+    if (extension === ".svg") {
+      return decodeXmlEntities((await readFileSlice(filePath, maxBytes)).toString("utf8")
+        .replace(/<\/(?:text|title|desc)>/gi, "\n")
+        .replace(/<[^>]+>/g, " "));
+    }
+    if (OFFICE_EXTENSIONS.has(extension)) return await extractOfficeText(filePath, extension, maxBytes);
+    if (extension === ".pdf" || extension in IMAGE_MIME) return "";
+    const buffer = await readFileSlice(filePath, maxBytes);
+    return looksBinary(buffer) ? "" : buffer.toString("utf8").replace(/\u0000/g, "");
+  } catch {
+    return "";
+  }
+}
+
+function extractMaterialFacts(text: string, filePath: string, role: MaterialRoleItem): MaterialFact[] {
+  if (!text.trim()) return [];
+  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const facts: MaterialFact[] = [];
+  const csvHeader = lines[0]?.split(",").map((cell) => cell.trim().toLowerCase()) || [];
+  const metricColumn = csvHeader.findIndex((cell) => /^(metric|指标|项目)$/.test(cell));
+  const valueColumn = csvHeader.findIndex((cell) => /^(current|value|最新值|当前值)$/.test(cell));
+  if (metricColumn >= 0 && valueColumn >= 0) {
+    for (let index = 1; index < lines.length; index += 1) {
+      const cells = lines[index]!.split(",").map((cell) => cell.trim());
+      if (cells[metricColumn] && cells[valueColumn]) {
+        const fact = createMaterialFact(cells[metricColumn]!, cells[valueColumn]!, filePath, role, `数据行 ${index + 1}`, lines[index]!);
+        if (fact) facts.push(fact);
+      }
+    }
+    return facts;
+  }
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = lines[index]!.match(/^([^:=：,]{2,80})\s*(?::|：|=)\s*(.{1,160})$/);
+    if (!match) continue;
+    const fact = createMaterialFact(match[1]!, match[2]!, filePath, role, `${extname(filePath).toLowerCase() === ".svg" ? "图中文字" : "第"} ${index + 1} ${extname(filePath).toLowerCase() === ".svg" ? "项" : "行"}`, lines[index]!);
+    if (fact) facts.push(fact);
+  }
+  return facts;
+}
+
+function createMaterialFact(
+  rawKey: string,
+  rawValue: string,
+  filePath: string,
+  role: MaterialRoleItem,
+  locator: string,
+  excerpt: string,
+): MaterialFact | null {
+  const key = normalizeMaterialFactKey(rawKey);
+  const value = rawValue.replace(/[。；;]+$/, "").trim();
+  if (!key || !value) return null;
+  const numericMatch = value.match(/-?\d+(?:\.\d+)?/);
+  return {
+    key,
+    label: materialFactLabel(key, rawKey.trim()),
+    value,
+    comparableValue: numericMatch ? numericMatch[0]! : normalizeMaterialFactValue(value),
+    numericValue: numericMatch ? Number(numericMatch[0]) : undefined,
+    source: {
+      path: filePath,
+      name: basename(filePath),
+      role: role.role,
+      locator,
+      value,
+      excerpt: excerpt.slice(0, 240),
+    },
+  };
+}
+
+function normalizeMaterialFactKey(value: string): string {
+  const normalized = value.toLowerCase().replace(/[\s_-]+/g, "");
+  if (/样本量|samplesize|samplecount|样本数/.test(normalized)) return "sample_size";
+  if (/平均值|平均分|均值|mean|average/.test(normalized)) return "mean";
+  if (/实施成本|执行成本|cost/.test(normalized)) return "implementation_cost";
+  if (/短期记忆|shorttermmemory|shorttermeffect/.test(normalized)) return "short_term_memory";
+  if (/长期稳定|长期效果|longtermstability|longtermeffect/.test(normalized)) return "long_term_stability";
+  return normalized.replace(/[^\p{L}\p{N}]+/gu, "").slice(0, 80);
+}
+
+function materialFactLabel(key: string, fallback: string): string {
+  if (key === "sample_size") return "样本量";
+  if (key === "mean") return "平均值";
+  if (key === "implementation_cost") return "实施成本";
+  if (key === "short_term_memory") return "短期记忆效果";
+  if (key === "long_term_stability") return "长期稳定性";
+  return fallback;
+}
+
+function normalizeMaterialFactValue(value: string): string {
+  return value.toLowerCase().replace(/[\s，,。；;、]+/g, "");
+}
+
+function isEvidenceGapValue(value: string): boolean {
+  return /证据不足|数据不足|尚无|未知|不确定|未验证|insufficient|unknown|uncertain|not verified/i.test(value);
+}
+
+function compareMaterialFacts(key: string, facts: MaterialFact[]): MaterialConsistencyFinding[] {
+  const findings: MaterialConsistencyFinding[] = [];
+  const label = facts[0]?.label || key;
+  const latest = facts.find((fact) => fact.source.role === "latest_data" && fact.numericValue !== undefined);
+  if (latest) {
+    for (const fact of facts) {
+      if (fact === latest || fact.numericValue === undefined || fact.numericValue === latest.numericValue) continue;
+      if (fact.source.role === "previous_report") {
+        findings.push(makeMaterialFinding("outdated_number", key, label, [fact, latest],
+          `旧报告中的${label}为 ${fact.value}，最新数据已经是 ${latest.value}。`,
+          `用 ${latest.source.name} 中的最新值替换旧值，并保留修改依据。`));
+      } else if (fact.source.role === "result_image") {
+        findings.push(makeMaterialFinding("chart_mismatch", key, label, [fact, latest],
+          `结果图中的${label}为 ${fact.value}，与最新数据 ${latest.value} 不一致。`,
+          "重新生成或修正图表，并检查坐标、标签和图注。"));
+      }
+    }
+  }
+
+  const gaps = facts.filter((fact) => isEvidenceGapValue(fact.value));
+  for (const gap of gaps) {
+    findings.push(makeMaterialFinding("evidence_gap", key, label, [gap],
+      `${gap.source.name} 明确说明${label}证据不足，当前不能写成确定结论。`,
+      "保留不确定性说明，并补充时间跨度或独立验证材料。"));
+  }
+
+  const comparable = facts.filter((fact) => !isEvidenceGapValue(fact.value));
+  const buckets = new Map<string, MaterialFact[]>();
+  for (const fact of comparable) buckets.set(fact.comparableValue, [...(buckets.get(fact.comparableValue) || []), fact]);
+  for (const bucket of buckets.values()) {
+    if (bucket.length < 2) continue;
+    findings.push(makeMaterialFinding("consensus", key, label, bucket,
+      `${bucket.map((fact) => fact.source.name).join("、")} 对${label}给出一致结果：${bucket[0]!.value}。`,
+      "可以作为多来源共同支持的结论使用，同时保留来源。"));
+  }
+  if (!latest && buckets.size > 1) {
+    const conflicting = [...buckets.values()].map((bucket) => bucket[0]!).slice(0, 4);
+    findings.push(makeMaterialFinding("source_conflict", key, label, conflicting,
+      `不同材料对${label}给出互相冲突的结果：${conflicting.map((fact) => `${fact.source.name} 为“${fact.value}”`).join("；")}。`,
+      "并列保留冲突双方，不要合并为确定结论；建议使用统一方法重新验证。"));
+  }
+  return findings;
+}
+
+function makeMaterialFinding(
+  kind: MaterialConsistencyFindingKind,
+  key: string,
+  label: string,
+  facts: MaterialFact[],
+  explanation: string,
+  recommendation: string,
+): MaterialConsistencyFinding {
+  const titles: Record<MaterialConsistencyFindingKind, string> = {
+    consensus: `${label}存在多来源共识`,
+    source_conflict: `${label}存在来源冲突`,
+    outdated_number: `旧报告中的${label}已经过期`,
+    chart_mismatch: `结果图中的${label}与数据不一致`,
+    evidence_gap: `${label}仍缺少证据`,
+  };
+  return {
+    id: `${kind}-${key}-${facts.map((fact) => fact.source.name).join("-")}`.replace(/[^\p{L}\p{N}_.-]+/gu, "-").slice(0, 180),
+    kind,
+    severity: kind === "source_conflict" || kind === "outdated_number" || kind === "chart_mismatch" ? "high" : kind === "evidence_gap" ? "medium" : "info",
+    title: titles[kind],
+    explanation,
+    recommendation,
+    sources: facts.map((fact) => fact.source),
+  };
+}
+
+async function analyzeMaterialRole(filePath: string, size: number): Promise<MaterialRoleItem> {
+  const name = basename(filePath);
+  const extension = extname(name).toLowerCase();
+  const preview = await readMaterialRolePreview(filePath, extension, size);
+  const evidence = `${name}\n${preview}`.toLowerCase();
+  const isImage = extension in IMAGE_MIME;
+  const isData = MATERIAL_DATA_EXTENSIONS.has(extension);
+  const oldCue = /(?:旧|历史|上一版|原报告|old|previous|prior|baseline|archive|202[0-5])/.test(evidence);
+  const latestCue = /(?:最新|本期|当前|更新|latest|current|updated|new[-_ ]?data|2026)/.test(evidence);
+  const reportCue = /(?:报告|汇报|总结|report|summary|review|draft)/.test(evidence);
+
+  if (isImage) {
+    return {
+      path: filePath,
+      name,
+      role: "result_image",
+      confidence: 0.98,
+      reason: "图片格式，适合作为结果图或图表核对材料。",
+      suggestedUse: "建议与最新数据核对趋势、坐标和标注，再用于更新报告。",
+    };
+  }
+  if (isData) {
+    return {
+      path: filePath,
+      name,
+      role: "latest_data",
+      confidence: latestCue ? 0.98 : 0.92,
+      reason: latestCue ? "表格内容或名称包含最新/当前时间线索。" : "结构化表格适合作为本次更新的数据依据。",
+      suggestedUse: "建议先检查字段、单位和异常值，再替换旧报告中的过期数字。",
+    };
+  }
+  if (MATERIAL_REPORT_EXTENSIONS.has(extension) && (oldCue || reportCue)) {
+    return {
+      path: filePath,
+      name,
+      role: "previous_report",
+      confidence: oldCue ? 0.98 : 0.91,
+      reason: oldCue ? "文档包含旧版、历史或基线时间线索。" : "文档结构和名称表明它是待更新的报告。",
+      suggestedUse: "建议保留原文件，以它为结构基线生成更新版本。",
+    };
+  }
+  return {
+    path: filePath,
+    name,
+    role: "reference_material",
+    confidence: 0.95,
+    reason: "未发现旧报告或最新数据特征，作为背景和引用依据处理。",
+    suggestedUse: "建议用于补充背景、术语和出处，不直接覆盖最新数据。",
+  };
+}
+
+async function readMaterialRolePreview(filePath: string, extension: string, size: number): Promise<string> {
+  const maxBytes = Math.min(size, 80_000);
+  try {
+    if (OFFICE_EXTENSIONS.has(extension)) return await extractOfficeText(filePath, extension, maxBytes);
+    if (extension === ".pdf" || extension in IMAGE_MIME) return "";
+    const buffer = await readFileSlice(filePath, maxBytes);
+    return looksBinary(buffer) ? "" : buffer.toString("utf8").replace(/\u0000/g, "");
+  } catch {
+    return "";
+  }
+}
+
+function validateMaterialRoleAnalysisRequest(rawRequest: unknown): MaterialRoleAnalysisRequest {
+  if (!rawRequest || typeof rawRequest !== "object") throw new Error("Material role analysis request is invalid.");
+  const paths = (rawRequest as Partial<MaterialRoleAnalysisRequest>).paths;
+  if (!Array.isArray(paths) || paths.length === 0 || paths.length > 100) {
+    throw new Error("Material role analysis requires between 1 and 100 files.");
+  }
+  const normalized = paths.map((value) => {
+    if (typeof value !== "string" || !value.trim() || /[\r\n]/.test(value)) throw new Error("Material path is invalid.");
+    return value.trim();
+  });
+  return { paths: [...new Set(normalized)] };
+}
+
+function materialRoleLabel(role: MaterialRole): string {
+  if (role === "previous_report") return "旧报告";
+  if (role === "latest_data") return "最新数据";
+  if (role === "result_image") return "结果图片";
+  return "参考材料";
 }
 
 export async function previewWorkspaceFile(
@@ -531,6 +1103,34 @@ export async function previewWorkspaceFile(
     ...base,
     content,
   };
+}
+
+async function hasValidImportSignature(filePath: string, extension: string): Promise<boolean> {
+  const expected = extension === ".pdf"
+    ? "%PDF-"
+    : [".docx", ".xlsx", ".pptx"].includes(extension)
+      ? "PK"
+      : [".doc", ".xls", ".ppt"].includes(extension)
+        ? "D0CF"
+        : extension === ".png"
+          ? "PNG"
+          : "";
+  if (!expected) return true;
+  try {
+    const handle = await open(filePath, "r");
+    try {
+      const buffer = Buffer.alloc(8);
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+      if (expected === "%PDF-") return buffer.subarray(0, bytesRead).toString("ascii").startsWith(expected);
+      if (expected === "PK") return buffer[0] === 0x50 && buffer[1] === 0x4b;
+      if (expected === "D0CF") return buffer.subarray(0, 4).equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0]));
+      return buffer.subarray(1, 4).toString("ascii") === expected;
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return false;
+  }
 }
 
 function buildPresentationStory(result: PresentationPdfResult): NonNullable<WorkspaceFilePreview["presentationStory"]> {

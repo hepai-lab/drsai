@@ -26,7 +26,7 @@ const checks = [
       "| \"file_event\"",
       "| \"notebook\"",
       "metadata?: Record<string, string | number | boolean | null>",
-      "getWorkspaceContextOverview(workspacePath: string)",
+      "getWorkspaceContextOverview(workspacePath: string, workspaceId?: string)",
       "listWorkspaceFiles(request: WorkspaceFileTreeRequest)",
       "previewWorkspaceFile(request: WorkspaceFilePreviewRequest)",
       "getWorkspaceGitDiff(request: WorkspaceGitDiffRequest)",

@@ -2,6 +2,14 @@ import { contextBridge, ipcRenderer } from "electron";
 import type { IpcRendererEvent } from "electron";
 import type {
   DesktopApi,
+  MaterialConsistencyAnalysisRequest,
+  MaterialConsistencyAnalysisResult,
+  MaterialQueryRequest,
+  MaterialQueryResult,
+  MaterialRoleAnalysisRequest,
+  MaterialRoleAnalysisResult,
+  DesktopDataCleanupRequest,
+  DesktopDataCleanupScope,
   AgentRunEvent,
   AgentRunRequest,
   AuthSession,
@@ -27,6 +35,8 @@ import type {
   DesktopBackgroundTaskEnqueueRequest,
   DesktopBackgroundTaskListRequest,
   DesktopBackgroundTaskUpdateRequest,
+  DesktopAnomalyDecisionApplyRequest,
+  DesktopAnomalyDecisionApplyResult,
   DesktopReusableTask,
   DesktopReusableTaskRunPrepareRequest,
   DesktopReusableTaskRunRecipe,
@@ -263,6 +273,10 @@ const api: DesktopApi = {
     options?: LogoutOptions,
   ): Promise<{ ok: boolean; message: string }> =>
     ipcRenderer.invoke("desktop:logout", options),
+  previewLocalDataCleanup: (scope: DesktopDataCleanupScope) =>
+    ipcRenderer.invoke("desktop:local-data-cleanup-preview", scope),
+  clearLocalData: (request: DesktopDataCleanupRequest) =>
+    ipcRenderer.invoke("desktop:local-data-cleanup", request),
   refreshAuthSession: (): Promise<AuthSession> =>
     ipcRenderer.invoke("desktop:refresh-auth-session"),
   bootstrapDesktop: (): Promise<DesktopBootstrapResult> =>
@@ -273,6 +287,13 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:get-install-status"),
   getGatewayStatus: (): Promise<GatewayStatus> =>
     ipcRenderer.invoke("desktop:get-gateway-status"),
+  getCodexBackendStatus: (refresh = false) =>
+    ipcRenderer.invoke("desktop:get-codex-backend-status", refresh),
+  startCodexBackendLogin: (type = "chatgpt") =>
+    ipcRenderer.invoke("desktop:start-codex-backend-login", type),
+  cancelCodexBackendLogin: (loginId: string) =>
+    ipcRenderer.invoke("desktop:cancel-codex-backend-login", loginId),
+  logoutCodexBackend: () => ipcRenderer.invoke("desktop:logout-codex-backend"),
   listProviderUsageAnalytics: (): Promise<DesktopProviderUsageAnalyticsRecord[]> =>
     ipcRenderer.invoke("desktop:provider-usage-analytics-list"),
   listProviderErrorAnalytics: (): Promise<DesktopProviderErrorAnalyticsRecord[]> =>
@@ -296,6 +317,8 @@ const api: DesktopApi = {
   stopGateway: (): Promise<boolean> =>
     ipcRenderer.invoke("desktop:stop-gateway"),
   listSshHosts: () => ipcRenderer.invoke("desktop:ssh-hosts"),
+  diagnoseSshHost: (hostAlias: string) => ipcRenderer.invoke("desktop:ssh-diagnose", hostAlias),
+  inspectSshHostKeys: (hostAlias: string) => ipcRenderer.invoke("desktop:ssh-host-keys", hostAlias),
   testSshHost: (hostAlias: string) => ipcRenderer.invoke("desktop:ssh-test", hostAlias),
   approveSshHostKey: (hostAlias: string) => ipcRenderer.invoke("desktop:ssh-approve-host-key", hostAlias),
   listRemoteDirectories: (hostAlias: string, path?: string) =>
@@ -435,8 +458,9 @@ const api: DesktopApi = {
   pickFolder: () => ipcRenderer.invoke("desktop:pick-folder"),
   getWorkspaceContextOverview: (
     workspacePath: string,
+    workspaceId?: string,
   ): Promise<WorkspaceContextOverview> =>
-    ipcRenderer.invoke("desktop:workspace-context-overview", workspacePath),
+    ipcRenderer.invoke("desktop:workspace-context-overview", workspacePath, workspaceId),
   listWorkspaceFiles: (
     request: WorkspaceFileTreeRequest,
   ): Promise<WorkspaceFileTreeResult> =>
@@ -445,6 +469,16 @@ const api: DesktopApi = {
     request: WorkspaceFolderSummaryRequest,
   ): Promise<WorkspaceFolderSummaryResult> =>
     ipcRenderer.invoke("desktop:workspace-folder-summary", request),
+  analyzeMaterialRoles: (
+    request: MaterialRoleAnalysisRequest,
+  ): Promise<MaterialRoleAnalysisResult> =>
+    ipcRenderer.invoke("desktop:material-role-analysis", request),
+  analyzeMaterialConsistency: (
+    request: MaterialConsistencyAnalysisRequest,
+  ): Promise<MaterialConsistencyAnalysisResult> =>
+    ipcRenderer.invoke("desktop:material-consistency-analysis", request),
+  queryMaterials: (request: MaterialQueryRequest): Promise<MaterialQueryResult> =>
+    ipcRenderer.invoke("desktop:material-query", request),
   previewWorkspaceFile: (
     request: WorkspaceFilePreviewRequest,
   ): Promise<WorkspaceFilePreview> =>
@@ -457,6 +491,10 @@ const api: DesktopApi = {
     request: WorkspaceFileWriteRequest,
   ): Promise<WorkspaceFileWriteResult> =>
     ipcRenderer.invoke("desktop:workspace-file-write", request),
+  applyAnomalyDecision: (
+    request: DesktopAnomalyDecisionApplyRequest,
+  ): Promise<DesktopAnomalyDecisionApplyResult> =>
+    ipcRenderer.invoke("desktop:apply-anomaly-decision", request),
   getWorkspaceGitDiff: (
     request: WorkspaceGitDiffRequest,
   ): Promise<WorkspaceGitDiffResult> =>
@@ -483,8 +521,9 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:workspace-revert-hunk", request),
   listWorkspaceCheckpoints: (
     workspacePath: string,
+    workspaceId?: string,
   ): Promise<WorkspaceCheckpoint[]> =>
-    ipcRenderer.invoke("desktop:workspace-checkpoints-list", workspacePath),
+    ipcRenderer.invoke("desktop:workspace-checkpoints-list", workspacePath, workspaceId),
   createWorkspaceCheckpoint: (
     request: WorkspaceCheckpointCreateRequest,
   ): Promise<WorkspaceCheckpoint> =>

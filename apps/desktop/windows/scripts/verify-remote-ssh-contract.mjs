@@ -18,6 +18,8 @@ const packageJson = read("package.json");
 const sharedApi = read("src/shared/desktopApi.ts");
 const main = read("src/main/index.ts");
 const remoteWorkspace = read("src/main/remoteWorkspace.ts");
+const realRemoteGateway = read("scripts/verify-real-remote-gateway.mjs");
+const runtimeReliability = read("src/main/runtimeReliability.ts");
 const workspaces = read("src/main/workspaces.ts");
 const terminal = read("src/main/terminal.ts");
 const preload = read("src/preload/index.ts");
@@ -87,6 +89,9 @@ for (const marker of [
 for (const marker of [
   "assertAlias",
   "sshConfigArgs",
+  "remotePythonCommand",
+  "OPENDRSAI_REMOTE_PYTHON",
+  "Remote Python path must be an absolute POSIX path without shell metacharacters.",
   "BatchMode=yes",
   "canonicalRemotePath",
   "startRemoteGateway",
@@ -94,7 +99,9 @@ for (const marker of [
   "waitForGateway",
   "X-OpenDrSai-Gateway-Token",
   "scheduleReconnect",
-  "MAX_RECONNECT_ATTEMPTS",
+  "ReconnectBackoff",
+  "RuntimeInstanceTracker",
+  "classifyRemoteFailure",
   "getRemoteGatewayAccess",
   "executeRemoteWorkspaceMutation",
   "listRemoteWorkspaceFiles",
@@ -105,11 +112,33 @@ for (const marker of [
   assert(remoteWorkspace.includes(marker), `remote workspace implementation missing ${marker}`);
 }
 
+assert(remoteWorkspace.includes('if py<(3,11): issues.append("Python 3.11 or newer is required")'), "remote preflight does not enforce the package Python 3.11 minimum");
+assert(remoteWorkspace.includes('[sys.executable,"-m","venv",str(staging)]'), "remote Runtime does not create an isolated candidate venv");
+assert(!remoteWorkspace.includes('"--system-site-packages"'), "remote Runtime candidate inherits system packages");
+assert(!remoteWorkspace.includes('"--no-deps",str(artifact)'), "remote Runtime skips declared dependencies in a clean environment");
+assert(realRemoteGateway.includes("hasActiveStabilityRun()"), "real Gateway E2E does not protect an active formal stability container");
+assert(realRemoteGateway.includes("cannot reuse its container and SSH port"), "real Gateway E2E active-stability refusal is not actionable");
+const stabilityVerifier = read("scripts/verify-remote-stability-evidence.mjs");
+assert(stabilityVerifier.includes("stability state is not bound to a Docker container ID"), "stability monitor does not require a bound container ID");
+assert(stabilityVerifier.includes("live SSH tunnel count"), "stability monitor does not inspect the live SSH tunnel");
+assert(stabilityVerifier.includes("inspectDockerContainer"), "stability monitor does not inspect the live Docker container");
+
+for (const marker of [
+  "baseDelayMs ?? 1_000",
+  "maxDelayMs ?? 30_000",
+  "maxWindowMs ?? 180_000",
+  "RuntimeEventAccumulator",
+]) {
+  assert(runtimeReliability.includes(marker), `runtime reliability implementation missing ${marker}`);
+}
+
 for (const marker of [
   "createRemoteWorkspace",
+  'location: "remote"',
+  'transport: "ssh"',
   'type: "remote-ssh"',
   'connectionState: "disconnected"',
-  'workspace.type === "remote-ssh"',
+  'workspace.location === "remote"',
 ]) {
   assert(workspaces.includes(marker), `workspace persistence missing ${marker}`);
 }
@@ -132,8 +161,10 @@ for (const marker of [
   "listRemoteThreads",
   "disconnectRemoteWorkspace",
   "remoteHostAlias={activeWorkspace.remote?.hostAlias}",
-  "Connect Remote SSH",
-  "No hosts were found in the OpenSSH config.",
+  "Step 1 of 2: Choose a computer",
+  "Step 2 of 2: Choose a directory",
+  "Open remote workspace",
+  "No configured remote computers were found.",
 ]) {
   assert(app.includes(marker), `renderer remote workspace UI missing ${marker}`);
 }
