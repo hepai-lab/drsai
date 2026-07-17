@@ -76,6 +76,26 @@ class MainInterfaceTest {
     }
 
     @Test
+    fun drawerExposesRemoteWorkspaceAsAProductEntry() {
+        var opened = 0
+        composeRule.setContent {
+            MaterialTheme {
+                NavigationDrawer(
+                    state = AppState(destination = AppDestination.Chat),
+                    onNewConversation = {},
+                    onOpenConversation = {},
+                    onSelectAgent = {},
+                    onRefreshAgents = {},
+                    onOpenProfile = {},
+                    onOpenRemoteWorkspaces = { opened += 1 },
+                )
+            }
+        }
+        composeRule.onNodeWithText("远程工作区").assertIsDisplayed().performClick()
+        composeRule.runOnIdle { assertEquals(1, opened) }
+    }
+
+    @Test
     fun attachmentMenuAndAttachmentOnlySendAreAvailable() {
         var sends = 0
         val draft = AttachmentDraft(

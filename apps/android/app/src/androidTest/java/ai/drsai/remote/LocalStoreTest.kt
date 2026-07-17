@@ -12,6 +12,18 @@ import ai.drsai.remote.data.MessageEntity
 import ai.drsai.remote.data.MessageAttachmentEntity
 import ai.drsai.remote.data.MIGRATION_2_3
 import ai.drsai.remote.data.MIGRATION_3_4
+import ai.drsai.remote.data.MIGRATION_4_5
+import ai.drsai.remote.data.SecureTokenStore
+import ai.drsai.remote.remote.data.RemoteCacheRepository
+import ai.drsai.remote.remote.data.RemoteRuntimeEntity
+import ai.drsai.remote.remote.data.RemoteEventEntity
+import ai.drsai.remote.remote.data.RemoteEventCursorEntity
+import ai.drsai.remote.remote.data.PendingRemoteApprovalEntity
+import ai.drsai.remote.remote.data.RemoteRunEntity
+import ai.drsai.remote.remote.data.RemoteWorkspaceEntity
+import ai.drsai.remote.remote.data.RemoteSessionEntity
+import ai.drsai.remote.remote.data.RemoteProcessRecovery
+import ai.drsai.remote.remote.data.RelayRemoteRepository
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -50,6 +62,106 @@ class LocalStoreTest {
         assertTrue(dao.attachmentSnapshot("c1").isEmpty())
     }
 
+    @Test fun encrypted_store_holds_relay_ticket_and_clear_removes_it() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val store = SecureTokenStore(context)
+        store.relayTicket = "short-lived-relay-ticket"
+        assertEquals("short-lived-relay-ticket", SecureTokenStore(context).relayTicket)
+        store.clear()
+        assertEquals(null, SecureTokenStore(context).relayTicket)
+    }
+
+    @Test fun remote_cache_is_account_scoped_and_logout_clear_preserves_other_account() = runBlocking {
+        val dao = database.remoteDao()
+        fun runtime(subject: String) = RemoteRuntimeEntity(subject, "ihep", "same-runtime", subject,
+            "instance", "1", "ONLINE", "[]", 1, false)
+        dao.saveRuntimes(listOf(runtime("alice"), runtime("bob")))
+        RemoteCacheRepository(database).clearSubject("alice")
+        assertTrue(dao.runtimes("alice", "ihep").isEmpty())
+        assertEquals(listOf("bob"), dao.runtimes("bob", "ihep").map { it.subject })
+    }
+
+    @Test fun remote_cache_ttl_and_capacity_are_account_scoped() = runBlocking {
+        val dao = database.remoteDao()
+        repeat(5) { index ->
+            dao.insertEvent(RemoteEventEntity("alice", "ihep", "rt", "ws", "s", "run", "event-$index",
+                (index + 1).toLong(), "message.delta", "2026-01-0${index + 1}T00:00:00Z"))
+        }
+        dao.insertEvent(RemoteEventEntity("bob", "ihep", "rt", "ws", "s", "run", "event-bob", 1,
+            "message.delta", "2025-01-01T00:00:00Z"))
+        dao.saveApproval(PendingRemoteApprovalEntity("alice", "ihep", "rt", "ws", "s", "run", "approval",
+            "shell.execute", "2026-01-01T00:00:00Z", 1))
+        dao.saveCursor(RemoteEventCursorEntity("alice", "ihep", "rt", "run", "run", 5, "5", 1))
+
+        RemoteCacheRepository(database).maintainAccount(
+            "alice", "ihep", eventBeforeTimestamp = "2026-01-03T00:00:00Z", cursorBeforeMillis = 2, maxEvents = 2,
+        )
+
+        assertEquals(2, dao.eventCount("alice", "ihep"))
+        assertEquals(1, dao.eventCount("bob", "ihep"))
+        assertEquals(0, dao.approvalCount("alice", "ihep"))
+        assertEquals(0, dao.cursorCount("alice", "ihep"))
+    }
+
+    @Test fun malformed_non_authoritative_projection_is_cleared_for_only_that_account() = runBlocking {
+        val dao = database.remoteDao()
+        dao.saveRuntimes(listOf(
+            RemoteRuntimeEntity("alice", "ihep", "bad", "bad", "i", "1", "ONLINE", "[]", 1),
+            RemoteRuntimeEntity("bob", "ihep", "good", "good", "i", "1", "ONLINE", "[]", 1),
+        ))
+        dao.saveRun(RemoteRunEntity("alice", "ihep", "/invalid", "ws", "s", "run", "opendrsai",
+            "not-a-status", "OFFLINE", 0, 1))
+
+        val recovered = RemoteProcessRecovery(database, RelayRemoteRepository("https://relay.invalid", { "token" }))
+            .cached("alice", "ihep")
+
+        assertTrue(recovered.isEmpty())
+        assertTrue(dao.runtimes("alice", "ihep").isEmpty())
+        assertEquals(listOf("bob"), dao.runtimes("bob", "ihep").map { it.subject })
+    }
+
+    @Test fun database_downgrade_is_rejected_without_destructive_fallback() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val name = "future-v6.db"
+        context.deleteDatabase(name)
+        SQLiteDatabase.openOrCreateDatabase(context.getDatabasePath(name), null).use { it.version = 6 }
+        val failure = runCatching {
+            Room.databaseBuilder(context, ChatDatabase::class.java, name).allowMainThreadQueries().build().openHelper.writableDatabase
+        }.exceptionOrNull()
+        assertTrue(failure != null)
+        context.deleteDatabase(name)
+    }
+
+    @Test fun identical_resource_ids_are_isolated_across_every_runtime_projection() = runBlocking {
+        val dao = database.remoteDao()
+        val subject = "alice"; val organization = "ihep"
+        dao.saveWorkspaces(listOf(
+            RemoteWorkspaceEntity(subject, organization, "rt-a", "same", "A", 1),
+            RemoteWorkspaceEntity(subject, organization, "rt-b", "same", "B", 1),
+        ))
+        dao.saveSessions(listOf(
+            RemoteSessionEntity(subject, organization, "rt-a", "same", "session", "Session A", "opendrsai", 1),
+            RemoteSessionEntity(subject, organization, "rt-b", "same", "session", "Session B", "opendrsai", 1),
+        ))
+        dao.insertEvent(RemoteEventEntity(subject, organization, "rt-a", "same", "session", "run", "event", 1,
+            "message.delta", "2026-01-01T00:00:00Z"))
+        dao.insertEvent(RemoteEventEntity(subject, organization, "rt-b", "same", "session", "run", "event", 1,
+            "message.delta", "2026-01-01T00:00:00Z"))
+        dao.saveApproval(PendingRemoteApprovalEntity(subject, organization, "rt-a", "same", "session", "run", "approval",
+            "shell.execute", "2026-01-01T00:00:00Z", 1))
+        dao.saveApproval(PendingRemoteApprovalEntity(subject, organization, "rt-b", "same", "session", "run", "approval",
+            "files.write", "2026-01-01T00:00:00Z", 1))
+
+        assertEquals("A", dao.workspaces(subject, organization, "rt-a").single().displayName)
+        assertEquals("B", dao.workspaces(subject, organization, "rt-b").single().displayName)
+        assertEquals("Session A", dao.sessions(subject, organization, "rt-a", "same").single().title)
+        assertEquals("Session B", dao.sessions(subject, organization, "rt-b", "same").single().title)
+        assertEquals("rt-a", dao.event(subject, organization, "rt-a", "event")!!.runtimeId)
+        assertEquals("rt-b", dao.event(subject, organization, "rt-b", "event")!!.runtimeId)
+        assertEquals("shell.execute", dao.approvals(subject, organization, "rt-a").single().operation)
+        assertEquals("files.write", dao.approvals(subject, organization, "rt-b").single().operation)
+    }
+
     @Test fun migration_2_to_3_preserves_conversation_and_binds_local_agent() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val name = "migration-v2-v3.db"
@@ -66,7 +178,7 @@ class LocalStoreTest {
         }
 
         val migrated = Room.databaseBuilder(context, ChatDatabase::class.java, name)
-            .addMigrations(MIGRATION_2_3, MIGRATION_3_4)
+            .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
             .allowMainThreadQueries()
             .build()
         try {
@@ -99,7 +211,7 @@ class LocalStoreTest {
             legacy.version = 3
         }
         val migrated = Room.databaseBuilder(context, ChatDatabase::class.java, name)
-            .addMigrations(MIGRATION_3_4)
+            .addMigrations(MIGRATION_3_4, MIGRATION_4_5)
             .allowMainThreadQueries()
             .build()
         try {

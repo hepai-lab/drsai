@@ -1,6 +1,7 @@
 package ai.drsai.remote.ui
 
 import android.app.Activity
+import android.app.Application
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -56,6 +57,7 @@ import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Menu
@@ -119,9 +121,23 @@ import ai.drsai.remote.data.AttachmentDraft
 import ai.drsai.remote.data.AttachmentStatus
 import ai.drsai.remote.data.ChatMessage
 import ai.drsai.remote.data.MAX_ATTACHMENTS
+import ai.drsai.remote.remote.navigation.AppRoute
+import ai.drsai.remote.remote.ui.RemoteHomeScreen
+import ai.drsai.remote.remote.ui.RemoteHomeViewModel
+import ai.drsai.remote.remote.ui.WorkspaceSessionsScreen
+import ai.drsai.remote.remote.ui.WorkspaceSessionsViewModel
+import ai.drsai.remote.remote.ui.RemoteAuditScreen
+import ai.drsai.remote.remote.ui.RemoteAuditViewModel
+import ai.drsai.remote.remote.ui.RemoteChatScreen
+import ai.drsai.remote.remote.ui.RemoteSessionViewModel
+import ai.drsai.remote.remote.ui.WorkspaceFilesScreen
+import ai.drsai.remote.remote.ui.WorkspaceFilesViewModel
+import ai.drsai.remote.remote.ui.WorkspaceGitScreen
+import ai.drsai.remote.remote.ui.WorkspaceGitViewModel
 import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.launch
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 
 private val OpenDrSaiGreen = Color(0xFF25634A)
 private val OpenDrSaiLime = Color(0xFFD8F58A)
@@ -218,6 +234,11 @@ private fun LoginScreen(state: AppState, viewModel: AppViewModel) {
 private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    var mainRoutePath by rememberSaveable { mutableStateOf(AppRoute.Chat.path) }
+    var remoteRuntimeName by rememberSaveable { mutableStateOf("") }
+    var remoteWorkspaceName by rememberSaveable { mutableStateOf("") }
+    val mainRoute = AppRoute.parse(mainRoutePath) ?: AppRoute.Chat
     fun closeDrawer() = scope.launch { drawerState.close() }
 
     ModalNavigationDrawer(
@@ -242,6 +263,10 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
                     closeDrawer()
                     viewModel.toggleProfile(true)
                 },
+                onOpenRemoteWorkspaces = {
+                    mainRoutePath = AppRoute.RemoteHome.path
+                    closeDrawer()
+                },
             )
         },
     ) {
@@ -252,41 +277,173 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
                     .padding(systemPadding)
                     .imePadding(),
             ) {
-                if (state.messages.isEmpty()) {
-                    Welcome(state.selectedAgent, Modifier.fillMaxSize().padding(top = 82.dp, bottom = 92.dp))
+                if (mainRoute == AppRoute.RemoteHome) {
+                    val remoteViewModel: RemoteHomeViewModel = viewModel(key = "remote-home")
+                    val remoteState by remoteViewModel.state.collectAsState()
+                    RemoteHomeScreen(
+                        state = remoteState,
+                        onBack = { mainRoutePath = AppRoute.Chat.path },
+                        onAssociate = {
+                            GmsBarcodeScanning.getClient(context).startScan()
+                                .addOnSuccessListener { barcode ->
+                                    barcode.rawValue?.let(remoteViewModel::associate)
+                                        ?: Toast.makeText(context, "二维码内容为空", Toast.LENGTH_SHORT).show()
+                                }
+                                .addOnFailureListener { failure ->
+                                    Toast.makeText(context, failure.message ?: "无法启动扫码", Toast.LENGTH_SHORT).show()
+                                }
+                        },
+                        onRefresh = { remoteViewModel.refresh() },
+                        onQueryChange = remoteViewModel::updateQuery,
+                        onOpenWorkspace = { workspace ->
+                            remoteViewModel.markWorkspaceOpened(workspace)
+                            remoteRuntimeName = remoteState.computers
+                                .firstOrNull { it.runtimeId == workspace.runtimeId }?.displayName
+                                ?: workspace.runtimeId.value
+                            remoteWorkspaceName = workspace.displayName
+                            mainRoutePath = AppRoute.WorkspaceSessions(workspace.runtimeId, workspace.workspaceId).path
+                        },
+                    )
+                } else if (mainRoute is AppRoute.WorkspaceSessions) {
+                    val route = mainRoute
+                    val factory = remember(route.path, remoteRuntimeName, remoteWorkspaceName) {
+                        WorkspaceSessionsViewModel.factory(
+                            context.applicationContext as Application,
+                            route.runtimeId,
+                            route.workspaceId,
+                            remoteRuntimeName.ifBlank { route.runtimeId.value },
+                            remoteWorkspaceName.ifBlank { route.workspaceId.value },
+                        )
+                    }
+                    val sessionsViewModel: WorkspaceSessionsViewModel = viewModel(key = route.path, factory = factory)
+                    val sessionsState by sessionsViewModel.state.collectAsState()
+                    WorkspaceSessionsScreen(
+                        state = sessionsState,
+                        onBack = { mainRoutePath = AppRoute.RemoteHome.path },
+                        onRefresh = { sessionsViewModel.refresh() },
+                        onSearch = sessionsViewModel::search,
+                        onCreate = sessionsViewModel::createSession,
+                        onOpen = { session ->
+                            mainRoutePath = AppRoute.RemoteSession(session.runtimeId, session.workspaceId, session.sessionId).path
+                        },
+                        onOpenCapability = { capability ->
+                            mainRoutePath = when (capability) {
+                                "Files" -> AppRoute.WorkspaceFiles(route.runtimeId, route.workspaceId).path
+                                "Git" -> AppRoute.WorkspaceGit(route.runtimeId, route.workspaceId).path
+                                else -> mainRoutePath
+                            }
+                        },
+                    )
+                } else if (mainRoute is AppRoute.RemoteSession) {
+                    val route = mainRoute
+                    val factory = remember(route.path, remoteRuntimeName, remoteWorkspaceName) {
+                        RemoteSessionViewModel.factory(
+                            context.applicationContext as Application,
+                            route.runtimeId, route.workspaceId, route.sessionId,
+                            remoteRuntimeName.ifBlank { route.runtimeId.value },
+                            remoteWorkspaceName.ifBlank { route.workspaceId.value },
+                        )
+                    }
+                    val sessionViewModel: RemoteSessionViewModel = viewModel(key = route.path, factory = factory)
+                    val remoteChatState by sessionViewModel.state.collectAsState()
+                    RemoteChatScreen(
+                        state = remoteChatState,
+                        onBack = { mainRoutePath = AppRoute.WorkspaceSessions(route.runtimeId, route.workspaceId).path },
+                        onSend = sessionViewModel::send,
+                        onCancelRun = sessionViewModel::cancel,
+                        onApproval = sessionViewModel::decide,
+                        onOpenArtifact = sessionViewModel::openArtifact,
+                        onOpenAudit = {
+                            remoteChatState.activeRunId?.let { runId ->
+                                mainRoutePath = AppRoute.RunAudit(route.runtimeId, route.workspaceId, route.sessionId, runId).path
+                            }
+                        },
+                    )
+                } else if (mainRoute is AppRoute.RunAudit) {
+                    val route = mainRoute
+                    val factory = remember(route.path, remoteRuntimeName, remoteWorkspaceName) {
+                        RemoteAuditViewModel.factory(
+                            context.applicationContext as Application,
+                            route.runtimeId, route.workspaceId, route.runId,
+                            remoteRuntimeName.ifBlank { route.runtimeId.value },
+                            remoteWorkspaceName.ifBlank { route.workspaceId.value },
+                        )
+                    }
+                    val auditViewModel: RemoteAuditViewModel = viewModel(key = route.path, factory = factory)
+                    val auditState by auditViewModel.state.collectAsState()
+                    RemoteAuditScreen(
+                        runtimeName = auditState.runtimeName,
+                        workspaceName = auditState.workspaceName,
+                        entries = auditState.entries,
+                        loading = auditState.loading,
+                        error = auditState.error,
+                        onBack = { mainRoutePath = AppRoute.WorkspaceSessions(route.runtimeId, route.workspaceId).path },
+                        onRefresh = auditViewModel::refresh,
+                    )
+                } else if (mainRoute is AppRoute.WorkspaceFiles) {
+                    val route = mainRoute
+                    val factory = remember(route.path, remoteWorkspaceName) {
+                        WorkspaceFilesViewModel.factory(context.applicationContext as Application, route.runtimeId,
+                            route.workspaceId, remoteWorkspaceName.ifBlank { route.workspaceId.value })
+                    }
+                    val filesViewModel: WorkspaceFilesViewModel = viewModel(key = route.path, factory = factory)
+                    val filesState by filesViewModel.state.collectAsState()
+                    WorkspaceFilesScreen(filesState,
+                        onBack = { mainRoutePath = AppRoute.WorkspaceSessions(route.runtimeId, route.workspaceId).path },
+                        onExpand = filesViewModel::expand,
+                        onOpen = filesViewModel::open,
+                        onSearch = filesViewModel::search,
+                        onLoadMore = filesViewModel::loadMore,
+                        onClosePreview = filesViewModel::closePreview,
+                        onCancelPreview = filesViewModel::cancelPreview,
+                        onOpenExternal = filesViewModel::openExternal)
+                } else if (mainRoute is AppRoute.WorkspaceGit) {
+                    val route = mainRoute
+                    val factory = remember(route.path) {
+                        WorkspaceGitViewModel.factory(context.applicationContext as Application, route.runtimeId, route.workspaceId)
+                    }
+                    val gitViewModel: WorkspaceGitViewModel = viewModel(key = route.path, factory = factory)
+                    val gitState by gitViewModel.state.collectAsState()
+                    WorkspaceGitScreen(gitState,
+                        onBack = { mainRoutePath = AppRoute.WorkspaceSessions(route.runtimeId, route.workspaceId).path },
+                        onOpenDiff = gitViewModel::diff)
                 } else {
-                    Messages(
-                        state.messages,
-                        state.selectedAgent?.name ?: "OpenDrSai",
-                        state.attachmentDrafts.isNotEmpty(),
-                        viewModel::retryResultAttachment,
-                        Modifier.fillMaxSize(),
+                    if (state.messages.isEmpty()) {
+                        Welcome(state.selectedAgent, Modifier.fillMaxSize().padding(top = 82.dp, bottom = 92.dp))
+                    } else {
+                        Messages(
+                            state.messages,
+                            state.selectedAgent?.name ?: "OpenDrSai",
+                            state.attachmentDrafts.isNotEmpty(),
+                            viewModel::retryResultAttachment,
+                            Modifier.fillMaxSize(),
+                        )
+                    }
+
+                    Column(
+                        Modifier.align(Alignment.TopCenter).padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        FloatingHeader(
+                            onOpenDrawer = { scope.launch { drawerState.open() } },
+                            onNewConversation = viewModel::newConversation,
+                            newConversationEnabled = !state.streaming,
+                        )
+                        state.error?.let { ErrorBar(it, viewModel::retry) }
+                        state.runtimeStatus?.let { RuntimeBar(it) }
+                        if (state.toolDowngraded) RuntimeBar("当前模型以纯对话模式运行，本地工具暂不可用")
+                    }
+
+                    Composer(
+                        state = state,
+                        onSend = viewModel::send,
+                        onStop = viewModel::stop,
+                        onAddAttachment = viewModel::addAttachment,
+                        onRemoveAttachment = viewModel::removeAttachment,
+                        onRetryAttachment = viewModel::retryAttachment,
+                        modifier = Modifier.align(Alignment.BottomCenter),
                     )
                 }
-
-                Column(
-                    Modifier.align(Alignment.TopCenter).padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    FloatingHeader(
-                        onOpenDrawer = { scope.launch { drawerState.open() } },
-                        onNewConversation = viewModel::newConversation,
-                        newConversationEnabled = !state.streaming,
-                    )
-                    state.error?.let { ErrorBar(it, viewModel::retry) }
-                    state.runtimeStatus?.let { RuntimeBar(it) }
-                    if (state.toolDowngraded) RuntimeBar("当前模型以纯对话模式运行，本地工具暂不可用")
-                }
-
-                Composer(
-                    state = state,
-                    onSend = viewModel::send,
-                    onStop = viewModel::stop,
-                    onAddAttachment = viewModel::addAttachment,
-                    onRemoveAttachment = viewModel::removeAttachment,
-                    onRetryAttachment = viewModel::retryAttachment,
-                    modifier = Modifier.align(Alignment.BottomCenter),
-                )
             }
         }
     }
@@ -350,13 +507,14 @@ internal fun FloatingHeader(
 }
 
 @Composable
-private fun NavigationDrawer(
+internal fun NavigationDrawer(
     state: AppState,
     onNewConversation: () -> Unit,
     onOpenConversation: (String) -> Unit,
     onSelectAgent: (String) -> Unit,
     onRefreshAgents: () -> Unit,
     onOpenProfile: () -> Unit,
+    onOpenRemoteWorkspaces: () -> Unit,
 ) {
     ModalDrawerSheet(Modifier.fillMaxHeight().widthIn(max = 320.dp)) {
         Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 18.dp)) {
@@ -372,6 +530,13 @@ private fun NavigationDrawer(
                 Text("新对话")
             }
             Spacer(Modifier.height(18.dp))
+            NavigationDrawerItem(
+                icon = { Icon(Icons.Default.Computer, null) },
+                label = { Text("远程工作区") },
+                selected = false,
+                onClick = onOpenRemoteWorkspaces,
+            )
+            Spacer(Modifier.height(8.dp))
             LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 item {
                     Row(verticalAlignment = Alignment.CenterVertically) {

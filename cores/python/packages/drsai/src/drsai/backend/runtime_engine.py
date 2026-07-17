@@ -43,11 +43,18 @@ class RuntimeEngineIdentity:
 class RuntimeEngine:
     """Durable Session/Run/Event state owned by one Agent Runtime."""
 
-    def __init__(self, database: Path, identity: RuntimeEngineIdentity, workspace_exists: Callable[[str], bool]):
+    def __init__(
+        self,
+        database: Path,
+        identity: RuntimeEngineIdentity,
+        workspace_exists: Callable[[str], bool],
+        worktree_for_workspace: Callable[[str], str | None] | None = None,
+    ):
         self.database = Path(database)
         self.database.parent.mkdir(parents=True, exist_ok=True)
         self.identity = identity
         self.workspace_exists = workspace_exists
+        self.worktree_for_workspace = worktree_for_workspace or (lambda _workspace_id: None)
         self._lock = threading.RLock()
         self._initialize()
 
@@ -63,13 +70,13 @@ class RuntimeEngine:
             db.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS runtime_sessions (
-                  session_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, title TEXT NOT NULL,
+                  session_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, worktree_id TEXT, title TEXT NOT NULL,
                   archived INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_runtime_sessions_workspace ON runtime_sessions(workspace_id, updated_at DESC);
                 CREATE TABLE IF NOT EXISTS runtime_runs (
                   run_id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES runtime_sessions(session_id),
-                  workspace_id TEXT NOT NULL, runtime_id TEXT NOT NULL, instance_id TEXT NOT NULL,
+                  workspace_id TEXT NOT NULL, worktree_id TEXT, runtime_id TEXT NOT NULL, instance_id TEXT NOT NULL,
                   agent_definition TEXT NOT NULL, backend_id TEXT NOT NULL, status TEXT NOT NULL, idempotency_key TEXT NOT NULL UNIQUE,
                   created_at TEXT NOT NULL, started_at TEXT, completed_at TEXT, cancel_requested_at TEXT
                 );
@@ -92,17 +99,33 @@ class RuntimeEngine:
                 """
             )
             columns = {str(row["name"]) for row in db.execute("PRAGMA table_info(runtime_runs)").fetchall()}
+            session_columns = {str(row["name"]) for row in db.execute("PRAGMA table_info(runtime_sessions)").fetchall()}
+            if "worktree_id" not in session_columns:
+                db.execute("ALTER TABLE runtime_sessions ADD COLUMN worktree_id TEXT")
+            if "worktree_id" not in columns:
+                db.execute("ALTER TABLE runtime_runs ADD COLUMN worktree_id TEXT")
             if "backend_id" not in columns:
                 db.execute("ALTER TABLE runtime_runs ADD COLUMN backend_id TEXT NOT NULL DEFAULT 'opendrsai'")
             event_columns = {str(row["name"]) for row in db.execute("PRAGMA table_info(runtime_events)").fetchall()}
             if "backend_event_key" not in event_columns:
                 db.execute("ALTER TABLE runtime_events ADD COLUMN backend_event_key TEXT")
+            workspace_rows = db.execute(
+                "SELECT workspace_id FROM runtime_sessions WHERE worktree_id IS NULL "
+                "UNION SELECT workspace_id FROM runtime_runs WHERE worktree_id IS NULL"
+            ).fetchall()
+            for workspace_row in workspace_rows:
+                workspace_id = str(workspace_row["workspace_id"])
+                worktree_id = self.worktree_for_workspace(workspace_id)
+                if worktree_id:
+                    db.execute("UPDATE runtime_sessions SET worktree_id=? WHERE workspace_id=? AND worktree_id IS NULL", (worktree_id, workspace_id))
+                    db.execute("UPDATE runtime_runs SET worktree_id=? WHERE workspace_id=? AND worktree_id IS NULL", (worktree_id, workspace_id))
             db.executescript(
                 """
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_events_backend_key
                   ON runtime_events(run_id, backend_event_key) WHERE backend_event_key IS NOT NULL;
-                CREATE TRIGGER IF NOT EXISTS runtime_runs_identity_immutable
-                BEFORE UPDATE OF session_id, workspace_id, runtime_id, instance_id, agent_definition, backend_id
+                DROP TRIGGER IF EXISTS runtime_runs_identity_immutable;
+                CREATE TRIGGER runtime_runs_identity_immutable
+                BEFORE UPDATE OF session_id, workspace_id, worktree_id, runtime_id, instance_id, agent_definition, backend_id
                 ON runtime_runs
                 BEGIN SELECT RAISE(ABORT, 'Runtime Run ownership is immutable'); END;
                 """
@@ -113,8 +136,12 @@ class RuntimeEngine:
             raise KeyError("Unknown or closed Workspace")
         now = _now()
         session_id = f"session-{uuid.uuid4()}"
+        worktree_id = self.worktree_for_workspace(workspace_id)
         with self._connect() as db:
-            db.execute("INSERT INTO runtime_sessions VALUES(?,?,?,?,?,?)", (session_id, workspace_id, title[:240] or "New session", 0, now, now))
+            db.execute(
+                "INSERT INTO runtime_sessions(session_id,workspace_id,worktree_id,title,archived,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+                (session_id, workspace_id, worktree_id, title[:240] or "New session", 0, now, now),
+            )
         return self.get_session(session_id)
 
     def import_session(self, session_id: str, workspace_id: str, title: str = "Imported session") -> tuple[dict[str, Any], bool]:
@@ -122,6 +149,7 @@ class RuntimeEngine:
         if not session_id or not self.workspace_exists(workspace_id):
             raise KeyError("Unknown or closed Workspace")
         now = _now()
+        worktree_id = self.worktree_for_workspace(workspace_id)
         with self._lock, self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             existing = db.execute("SELECT * FROM runtime_sessions WHERE session_id=?", (session_id,)).fetchone()
@@ -131,7 +159,10 @@ class RuntimeEngine:
                     raise ValueError("Imported Session identity is already bound to another Workspace")
                 db.commit()
                 return self._session(existing), False
-            db.execute("INSERT INTO runtime_sessions VALUES(?,?,?,?,?,?)", (session_id, workspace_id, title[:240] or "Imported session", 0, now, now))
+            db.execute(
+                "INSERT INTO runtime_sessions(session_id,workspace_id,worktree_id,title,archived,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+                (session_id, workspace_id, worktree_id, title[:240] or "Imported session", 0, now, now),
+            )
             db.commit()
         return self.get_session(session_id), True
 
@@ -149,6 +180,26 @@ class RuntimeEngine:
             total = db.execute(f"SELECT COUNT(*) FROM runtime_sessions WHERE {where}", args).fetchone()[0]
             rows = db.execute(f"SELECT * FROM runtime_sessions WHERE {where} ORDER BY updated_at DESC LIMIT ? OFFSET ?", [*args, max(1, min(limit, 200)), max(0, offset)]).fetchall()
         return {"object": "list", "data": [self._session(row) for row in rows], "total": total, "offset": max(0, offset)}
+
+    def active_workspace_resources(self, workspace_id: str) -> list[dict[str, Any]]:
+        """Return resources that make destructive Workspace removal unsafe."""
+        with self._connect() as db:
+            sessions = db.execute(
+                "SELECT session_id, title FROM runtime_sessions WHERE workspace_id=? AND archived=0 ORDER BY created_at",
+                (workspace_id,),
+            ).fetchall()
+            runs = db.execute(
+                "SELECT run_id, session_id, status FROM runtime_runs "
+                "WHERE workspace_id=? AND status IN ('queued','running','waiting_approval') ORDER BY created_at",
+                (workspace_id,),
+            ).fetchall()
+        return [
+            {"kind": "session", "id": str(row["session_id"]), "title": str(row["title"])}
+            for row in sessions
+        ] + [
+            {"kind": "run", "id": str(row["run_id"]), "session_id": str(row["session_id"]), "status": str(row["status"])}
+            for row in runs
+        ]
 
     def update_session(self, session_id: str, *, title: str | None = None, archived: bool | None = None) -> dict[str, Any]:
         current = self.get_session(session_id)
@@ -174,10 +225,11 @@ class RuntimeEngine:
             db.execute("BEGIN IMMEDIATE")
             existing = db.execute("SELECT * FROM runtime_runs WHERE idempotency_key=?", (idempotency_key,)).fetchone()
             if existing is not None:
-                expected = (session_id, session["workspace_id"], agent_definition, backend_id)
+                expected = (session_id, session["workspace_id"], session["worktree_id"], agent_definition, backend_id)
                 actual = (
                     str(existing["session_id"]),
                     str(existing["workspace_id"]),
+                    str(existing["worktree_id"]) if existing["worktree_id"] is not None else None,
                     str(existing["agent_definition"]),
                     str(existing["backend_id"]),
                 )
@@ -188,11 +240,11 @@ class RuntimeEngine:
                 return self._run(existing), False
             db.execute(
                 """INSERT INTO runtime_runs(
-                    run_id, session_id, workspace_id, runtime_id, instance_id, agent_definition,
+                    run_id, session_id, workspace_id, worktree_id, runtime_id, instance_id, agent_definition,
                     backend_id, status, idempotency_key, created_at, started_at, completed_at, cancel_requested_at
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
-                    run_id, session_id, session["workspace_id"], self.identity.runtime_id,
+                    run_id, session_id, session["workspace_id"], session["worktree_id"], self.identity.runtime_id,
                     self.identity.instance_id, agent_definition, backend_id, "queued",
                     idempotency_key, now, None, None, None,
                 ),
@@ -348,6 +400,14 @@ class RuntimeEngine:
         return self.get_approval(approval_id)
 
     def list_pending_approvals(self, run_id: str | None = None) -> list[dict[str, Any]]:
+        now = _now()
+        with self._connect() as db:
+            expired = db.execute(
+                "SELECT approval_id FROM runtime_approvals WHERE status='pending' AND deadline_at IS NOT NULL AND deadline_at<=?",
+                (now,),
+            ).fetchall()
+        for row in expired:
+            self.resolve_approval(str(row["approval_id"]), "timeout", {"reason": "deadline_elapsed"})
         query = "SELECT approval_id FROM runtime_approvals WHERE status='pending'"
         args: tuple[Any, ...] = ()
         if run_id is not None:
@@ -376,7 +436,7 @@ class RuntimeEngine:
 
     @staticmethod
     def _session(row: sqlite3.Row) -> dict[str, Any]:
-        return {"session_id": row["session_id"], "workspace_id": row["workspace_id"], "title": row["title"], "archived": bool(row["archived"]), "created_at": row["created_at"], "updated_at": row["updated_at"]}
+        return {"session_id": row["session_id"], "workspace_id": row["workspace_id"], "worktree_id": row["worktree_id"], "title": row["title"], "archived": bool(row["archived"]), "created_at": row["created_at"], "updated_at": row["updated_at"]}
 
     @staticmethod
     def _run(row: sqlite3.Row) -> dict[str, Any]:

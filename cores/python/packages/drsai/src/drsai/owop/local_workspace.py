@@ -135,6 +135,7 @@ class LocalWorkspaceOperations:
         journal: WorkspaceWatchJournal,
         checkpoint_store: WorkspaceCheckpointStore | None = None,
         process_pty: LocalProcessPtyOperations | None = None,
+        worktree_handlers: Mapping[str, Any] | None = None,
     ):
         self.workspace_id = workspace_id
         self.root = Path(root).resolve(strict=True)
@@ -145,6 +146,7 @@ class LocalWorkspaceOperations:
         self.process_pty = process_pty or LocalProcessPtyOperations(
             self.root, cwd_resolver=lambda value: self._path(value, strict=True)
         )
+        self.worktree_handlers = dict(worktree_handlers or {})
 
     def handlers(self) -> dict[str, Any]:
         return {
@@ -164,6 +166,7 @@ class LocalWorkspaceOperations:
             "git.unstage": self.git_unstage,
             "git.revert": self.git_revert,
             "git.commit": self.git_commit,
+            **self.worktree_handlers,
             "checkpoint.create": self.checkpoint_create,
             "checkpoint.preview": self.checkpoint_preview,
             "checkpoint.restore": self.checkpoint_restore,
@@ -231,12 +234,19 @@ class LocalWorkspaceOperations:
         if not base.is_dir():
             raise OWOPError("workspace_path_invalid", "List path is not a directory.", "operation")
         include_ignored = bool(params.get("include_ignored", False))
+        maximum_depth = int(params["depth"]) if params.get("depth") is not None else None
         entries: list[dict[str, Any]] = []
         for directory, names, files in os.walk(base):
             if not include_ignored:
                 names[:] = [name for name in names if name not in IGNORED_DIRECTORIES]
             for name in sorted([*names, *files]):
                 path = Path(directory) / name
+                try:
+                    depth = len(path.relative_to(base).parts)
+                except ValueError:
+                    continue
+                if maximum_depth is not None and depth > maximum_depth:
+                    continue
                 relative = path.relative_to(self.root).as_posix()
                 info = path.stat()
                 entries.append({"path": relative, "kind": "directory" if path.is_dir() else "file", "size": info.st_size})
@@ -408,11 +418,22 @@ class LocalWorkspaceOperations:
     def git_status(self, _params: Mapping[str, Any]) -> dict[str, Any]:
         output = self._git(["status", "--porcelain=v1", "-z", "--untracked-files=all"], text=False).stdout
         records = [item.decode("utf-8", errors="replace") for item in output.split(b"\0") if item]
-        return {"clean": not records, "entries": records}
+        branch = self._git(["branch", "--show-current"]).stdout.strip() or None
+        revision = self._git(["rev-parse", "HEAD"]).stdout.strip()
+        changes = []
+        for record in records:
+            status = record[:2]
+            path = record[3:] if len(record) > 3 else ""
+            changes.append({"relative_path": path, "status": status})
+        return {"clean": not records, "entries": records, "branch": branch, "revision": revision, "changes": changes}
 
     def git_diff(self, params: Mapping[str, Any]) -> dict[str, Any]:
         content = self._git_diff_bytes(path=str(params["path"]) if params.get("path") else None, staged=bool(params.get("staged")))
-        return {"diff": content.decode("utf-8", errors="replace"), "diff_digest": _digest(content), "staged": bool(params.get("staged"))}
+        maximum = 1024 * 1024
+        binary = b"\x00" in content
+        return {"diff": content[:maximum].decode("utf-8", errors="replace"), "text": content[:maximum].decode("utf-8", errors="replace"),
+                "diff_digest": _digest(content), "staged": bool(params.get("staged")), "binary": binary,
+                "truncated": len(content) > maximum, "stale_revision": False}
 
     def git_file_at_ref(self, params: Mapping[str, Any]) -> dict[str, Any]:
         path, reference = str(params["path"]), str(params["ref"])
@@ -420,7 +441,9 @@ class LocalWorkspaceOperations:
         if reference.startswith("-") or any(character in reference for character in "\r\n\0"):
             raise OWOPError("git_ref_invalid", "Git ref is invalid.", "operation")
         content = self._git(["show", f"{reference}:{path}"], text=False).stdout
-        return {"path": path, "ref": reference, "content_base64": base64.b64encode(content).decode("ascii"), "digest": _digest(content)}
+        maximum = int(params.get("max_bytes") or 1024 * 1024)
+        return {"path": path, "ref": reference, "content_base64": base64.b64encode(content[:maximum]).decode("ascii"),
+                "digest": _digest(content), "truncated": len(content) > maximum, "size": len(content)}
 
     def git_stage(self, params: Mapping[str, Any]) -> dict[str, Any]:
         paths = [str(value) for value in params["paths"]]

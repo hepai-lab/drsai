@@ -18,11 +18,29 @@ def class_name(operation: str) -> str:
     return "".join(part.capitalize() for part in re.split(r"[^A-Za-z0-9]+", operation)) + "Params"
 
 
+def result_class_name(operation: str) -> str:
+    return "".join(part.capitalize() for part in re.split(r"[^A-Za-z0-9]+", operation)) + "Result"
+
+
 def python_type(schema: Mapping[str, Any]) -> str:
     reference = schema.get("$ref")
     if reference:
+        if str(reference).endswith("/worktreeResource"):
+            return "OWOPWorktreeResource"
+        if str(reference).endswith("/terminalResource"):
+            return "OWOPTerminalResource"
+        if str(reference).endswith("/terminalOutputEvent"):
+            return "OWOPTerminalOutputEvent"
+        if str(reference).endswith("/terminalScreenRun"):
+            return "OWOPTerminalScreenRun"
+        if str(reference).endswith("/terminalScreenSnapshot"):
+            return "OWOPTerminalScreenSnapshot"
         return "str"
     schema_type = schema.get("type")
+    if isinstance(schema_type, list):
+        non_null = [item for item in schema_type if item != "null"]
+        base = python_type({**schema, "type": non_null[0]}) if len(non_null) == 1 else "Any"
+        return f"{base} | None" if "null" in schema_type else base
     if schema_type == "string" or "enum" in schema or "const" in schema:
         return "str"
     if schema_type == "integer":
@@ -40,12 +58,24 @@ def python_type(schema: Mapping[str, Any]) -> str:
 
 def typescript_type(schema: Mapping[str, Any]) -> str:
     if schema.get("$ref"):
+        if str(schema["$ref"]).endswith("/worktreeResource"):
+            return "OWOPWorktreeResource"
+        if str(schema["$ref"]).endswith("/terminalResource"):
+            return "OWOPTerminalResource"
+        if str(schema["$ref"]).endswith("/terminalOutputEvent"):
+            return "OWOPTerminalOutputEvent"
+        if str(schema["$ref"]).endswith("/terminalScreenRun"):
+            return "OWOPTerminalScreenRun"
+        if str(schema["$ref"]).endswith("/terminalScreenSnapshot"):
+            return "OWOPTerminalScreenSnapshot"
         return "string"
     if "enum" in schema:
         return " | ".join(json.dumps(item) for item in schema["enum"])
     if "const" in schema:
         return json.dumps(schema["const"])
     schema_type = schema.get("type")
+    if isinstance(schema_type, list):
+        return " | ".join("null" if item == "null" else typescript_type({**schema, "type": item}) for item in schema_type)
     if schema_type == "string":
         return "string"
     if schema_type in {"integer", "number"}:
@@ -65,6 +95,7 @@ def literal(values: list[str]) -> str:
 
 def generate_python(schema: Mapping[str, Any], digest: str) -> str:
     operations = schema["x-owop-operations"]
+    results = schema.get("x-owop-results", {})
     capabilities = schema["x-owop-capabilities"]
     bindings = schema["x-owop-bindings"]
     lines = [
@@ -72,7 +103,11 @@ def generate_python(schema: Mapping[str, Any], digest: str) -> str:
         "",
         "from __future__ import annotations",
         "",
-        "from typing import Any, Literal, NotRequired, Required, TypedDict, TypeAlias",
+        "from typing import Any, Literal, TypedDict",
+        "try:",
+        "    from typing import NotRequired, Required, TypeAlias",
+        "except ImportError:  # Python 3.9 compatibility for tooling hosts",
+        "    from typing_extensions import NotRequired, Required, TypeAlias",
         "",
         f'SCHEMA_SHA256 = "{digest}"',
         f'OWOP_VERSION = {schema["version"]!r}',
@@ -81,6 +116,42 @@ def generate_python(schema: Mapping[str, Any], digest: str) -> str:
         f"OWOPOperation: TypeAlias = Literal[{literal(list(operations))}]",
         "",
     ]
+    worktree_schema = schema.get("$defs", {}).get("worktreeResource")
+    if worktree_schema:
+        required = set(worktree_schema.get("required", []))
+        lines.append("class OWOPWorktreeResource(TypedDict, total=False):")
+        for name, property_schema in worktree_schema.get("properties", {}).items():
+            wrapper = "Required" if name in required else "NotRequired"
+            lines.append(f"    {name}: {wrapper}[{python_type(property_schema)}]")
+        lines.append("")
+    terminal_schema = schema.get("$defs", {}).get("terminalResource")
+    if terminal_schema:
+        required = set(terminal_schema.get("required", []))
+        lines.append("class OWOPTerminalResource(TypedDict, total=False):")
+        for name, property_schema in terminal_schema.get("properties", {}).items():
+            wrapper = "Required" if name in required else "NotRequired"
+            lines.append(f"    {name}: {wrapper}[{python_type(property_schema)}]")
+        lines.append("")
+    terminal_event_schema = schema.get("$defs", {}).get("terminalOutputEvent")
+    if terminal_event_schema:
+        required = set(terminal_event_schema.get("required", []))
+        lines.append("class OWOPTerminalOutputEvent(TypedDict, total=False):")
+        for name, property_schema in terminal_event_schema.get("properties", {}).items():
+            wrapper = "Required" if name in required else "NotRequired"
+            lines.append(f"    {name}: {wrapper}[{python_type(property_schema)}]")
+        lines.append("")
+    for definition, generated_name in (
+        ("terminalScreenRun", "OWOPTerminalScreenRun"),
+        ("terminalScreenSnapshot", "OWOPTerminalScreenSnapshot"),
+    ):
+        definition_schema = schema.get("$defs", {}).get(definition)
+        if definition_schema:
+            required = set(definition_schema.get("required", []))
+            lines.append(f"class {generated_name}(TypedDict, total=False):")
+            for name, property_schema in definition_schema.get("properties", {}).items():
+                wrapper = "Required" if name in required else "NotRequired"
+                lines.append(f"    {name}: {wrapper}[{python_type(property_schema)}]")
+            lines.append("")
     for operation, operation_schema in operations.items():
         required = set(operation_schema.get("required", []))
         lines.append(f"class {class_name(operation)}(TypedDict, total=False):")
@@ -97,11 +168,25 @@ def generate_python(schema: Mapping[str, Any], digest: str) -> str:
         "}",
         "",
     ])
+    for operation, result_schema in results.items():
+        required = set(result_schema.get("required", []))
+        lines.append(f"class {result_class_name(operation)}(TypedDict, total=False):")
+        for name, property_schema in result_schema.get("properties", {}).items():
+            wrapper = "Required" if name in required else "NotRequired"
+            lines.append(f"    {name}: {wrapper}[{python_type(property_schema)}]")
+        lines.append("")
+    lines.extend([
+        "OWOP_RESULTS_BY_OPERATION: dict[str, type[TypedDict]] = {",
+        *[f"    {operation!r}: {result_class_name(operation)}," for operation in results],
+        "}",
+        "",
+    ])
     return "\n".join(lines)
 
 
 def generate_typescript(schema: Mapping[str, Any], digest: str) -> str:
     operations = schema["x-owop-operations"]
+    results = schema.get("x-owop-results", {})
     capabilities = schema["x-owop-capabilities"]
     bindings = schema["x-owop-bindings"]
     union = lambda values: " | ".join(json.dumps(value) for value in values)
@@ -114,6 +199,46 @@ def generate_typescript(schema: Mapping[str, Any], digest: str) -> str:
         f"export type OWOPOperation = {union(list(operations))};",
         "",
     ]
+    worktree_schema = schema.get("$defs", {}).get("worktreeResource")
+    if worktree_schema:
+        required = set(worktree_schema.get("required", []))
+        lines.append("export interface OWOPWorktreeResource {")
+        for name, property_schema in worktree_schema.get("properties", {}).items():
+            optional = "" if name in required else "?"
+            lines.append(f"  {name}{optional}: {typescript_type(property_schema)};")
+        lines.append("}")
+        lines.append("")
+    terminal_schema = schema.get("$defs", {}).get("terminalResource")
+    if terminal_schema:
+        required = set(terminal_schema.get("required", []))
+        lines.append("export interface OWOPTerminalResource {")
+        for name, property_schema in terminal_schema.get("properties", {}).items():
+            optional = "" if name in required else "?"
+            lines.append(f"  {name}{optional}: {typescript_type(property_schema)};")
+        lines.append("}")
+        lines.append("")
+    terminal_event_schema = schema.get("$defs", {}).get("terminalOutputEvent")
+    if terminal_event_schema:
+        required = set(terminal_event_schema.get("required", []))
+        lines.append("export interface OWOPTerminalOutputEvent {")
+        for name, property_schema in terminal_event_schema.get("properties", {}).items():
+            optional = "" if name in required else "?"
+            lines.append(f"  {name}{optional}: {typescript_type(property_schema)};")
+        lines.append("}")
+        lines.append("")
+    for definition, generated_name in (
+        ("terminalScreenRun", "OWOPTerminalScreenRun"),
+        ("terminalScreenSnapshot", "OWOPTerminalScreenSnapshot"),
+    ):
+        definition_schema = schema.get("$defs", {}).get(definition)
+        if definition_schema:
+            required = set(definition_schema.get("required", []))
+            lines.append(f"export interface {generated_name} {{")
+            for name, property_schema in definition_schema.get("properties", {}).items():
+                optional = "" if name in required else "?"
+                lines.append(f"  {name}{optional}: {typescript_type(property_schema)};")
+            lines.append("}")
+            lines.append("")
     for operation, operation_schema in operations.items():
         required = set(operation_schema.get("required", []))
         lines.append(f"export interface {class_name(operation)} {{")
@@ -125,6 +250,20 @@ def generate_typescript(schema: Mapping[str, Any], digest: str) -> str:
     lines.extend([
         "export interface OWOPParamsByOperation {",
         *[f'  {json.dumps(operation)}: {class_name(operation)};' for operation in operations],
+        "}",
+        "",
+    ])
+    for operation, result_schema in results.items():
+        required = set(result_schema.get("required", []))
+        lines.append(f"export interface {result_class_name(operation)} {{")
+        for name, property_schema in result_schema.get("properties", {}).items():
+            optional = "" if name in required else "?"
+            lines.append(f"  {name}{optional}: {typescript_type(property_schema)};")
+        lines.append("}")
+        lines.append("")
+    lines.extend([
+        "export interface OWOPResultsByOperation {",
+        *[f'  {json.dumps(operation)}: {result_class_name(operation)};' for operation in results],
         "}",
         "",
         "export interface OWOPRequest<K extends OWOPOperation = OWOPOperation> {",
@@ -151,7 +290,8 @@ def write_or_check(path: Path, content: str, check: bool) -> bool:
     if check:
         return path.is_file() and path.read_text(encoding="utf-8") == normalized
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(normalized, encoding="utf-8", newline="\n")
+    with path.open("w", encoding="utf-8", newline="\n") as stream:
+        stream.write(normalized)
     return True
 
 

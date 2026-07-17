@@ -7,6 +7,7 @@ asset, and dispatches every tool in the Runtime process and Workspace.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -14,6 +15,7 @@ import socket
 import subprocess
 import time
 import uuid
+from datetime import UTC, datetime, timedelta
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Iterable, Mapping, Protocol, Sequence
@@ -186,6 +188,10 @@ class RuntimeState(Protocol):
         self, session_id: str, agent_definition: str, idempotency_key: str, backend_id: str = "opendrsai"
     ) -> tuple[dict[str, Any], bool]: ...
     def mark_cancel_requested(self, run_id: str) -> dict[str, Any]: ...
+    def request_approval(self, run_id: str, request: dict[str, Any], deadline_at: str | None = None) -> dict[str, Any]: ...
+    def get_approval(self, approval_id: str) -> dict[str, Any]: ...
+    def resolve_approval(self, approval_id: str, decision: str, detail: dict[str, Any] | None = None,
+                         *, resume_on_denied: bool = False) -> dict[str, Any]: ...
 
 
 class WorkspaceState(Protocol):
@@ -447,6 +453,7 @@ class OpenDrSaiAgentBackend:
         self.max_turns = max(1, min(max_turns, 64))
         self._closed = False
         self._cancelled_runs: set[str] = set()
+        self._pending_approvals: dict[str, tuple[str, asyncio.Future[str]]] = {}
 
     async def execute(
         self,
@@ -478,6 +485,8 @@ class OpenDrSaiAgentBackend:
                     raise RuntimeExecutionError("model_response_invalid", "Model call arguments are invalid.")
                 if kind == "subagent":
                     result = dict(await services.run_subagent(context, call))
+                elif kind == "approval":
+                    result = await self._await_approval(context, name, arguments, services)
                 else:
                     result = services.dispatcher.dispatch(context, kind, name, arguments)
                 turn_results.append({"kind": kind, "name": name, "result": _safe_result(result)})
@@ -495,10 +504,13 @@ class OpenDrSaiAgentBackend:
         self._cancelled_runs.add(run_id)
 
     async def respond_approval(self, run_id: str, approval_id: str, decision: str) -> None:
-        raise RuntimeExecutionError(
-            "approval_not_supported",
-            "OpenDrSai Agent Backend does not own an external approval request.",
-        )
+        pending = self._pending_approvals.get(approval_id)
+        if pending is None or pending[0] != run_id:
+            raise RuntimeExecutionError("approval_not_found", "OpenDrSai Approval is no longer pending.")
+        if decision not in {"approved", "denied", "timeout"}:
+            raise RuntimeExecutionError("approval_decision_invalid", "OpenDrSai Approval decision is invalid.")
+        if not pending[1].done():
+            pending[1].set_result(decision)
 
     async def recover(self, run_id: str) -> None:
         if self._closed:
@@ -514,6 +526,42 @@ class OpenDrSaiAgentBackend:
     async def close(self) -> None:
         self._closed = True
         self._cancelled_runs.clear()
+        for _, future in self._pending_approvals.values():
+            if not future.done():
+                future.cancel()
+        self._pending_approvals.clear()
+
+    async def _await_approval(
+        self,
+        context: RuntimeRunContext,
+        operation: str,
+        arguments: Mapping[str, Any],
+        services: AgentExecutionServices,
+    ) -> dict[str, Any]:
+        if not operation or operation not in context.permissions:
+            raise RuntimeExecutionError("permission_denied", "Run is not permitted to request this operation.")
+        timeout_seconds = min(max(float(arguments.get("timeout_seconds", 300)), 1.0), 1800.0)
+        request = {
+            "operation": operation,
+            "risk_summary": str(arguments.get("risk_summary") or f"Allow {operation}?")[:512],
+            "scope": str(arguments.get("scope") or "workspace")[:256],
+        }
+        deadline = (datetime.now(UTC) + timedelta(seconds=timeout_seconds)).isoformat()
+        approval = services.state.request_approval(context.run_id, request, deadline)
+        approval_id = str(approval["approval_id"])
+        future = asyncio.get_running_loop().create_future()
+        self._pending_approvals[approval_id] = (context.run_id, future)
+        try:
+            decision = await asyncio.wait_for(future, timeout=timeout_seconds)
+        except TimeoutError as exc:
+            if services.state.get_approval(approval_id)["status"] == "pending":
+                services.state.resolve_approval(approval_id, "timeout", {"reason": "deadline_elapsed"})
+            raise RuntimeExecutionError("approval_timeout", "OpenDrSai Approval timed out.") from exc
+        finally:
+            self._pending_approvals.pop(approval_id, None)
+        if decision != "approved":
+            raise RuntimeExecutionError("approval_denied", "OpenDrSai Approval was not granted.")
+        return {"approval_id": approval_id, "decision": decision, "operation": operation}
 
 
 class RuntimeAgentService:

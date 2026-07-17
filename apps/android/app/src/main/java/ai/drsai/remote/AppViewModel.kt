@@ -24,6 +24,7 @@ import ai.drsai.remote.data.LocalAgentRuntime
 import ai.drsai.remote.data.MIGRATION_1_2
 import ai.drsai.remote.data.MIGRATION_2_3
 import ai.drsai.remote.data.MIGRATION_3_4
+import ai.drsai.remote.data.MIGRATION_4_5
 import ai.drsai.remote.data.MessageAttachment
 import ai.drsai.remote.data.MAX_ATTACHMENTS
 import ai.drsai.remote.data.MAX_ATTACHMENT_TOTAL_BYTES
@@ -39,6 +40,8 @@ import ai.drsai.remote.data.SecureTokenStore
 import ai.drsai.remote.data.sanitizeLegacyAssistantText
 import ai.drsai.remote.data.localAgentFor
 import ai.drsai.remote.data.selectLocalModelForAttachments
+import ai.drsai.remote.remote.data.RemoteCacheRepository
+import ai.drsai.remote.remote.data.RemoteSubscriptionRegistry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -60,7 +63,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val oidcTransactions by lazy { OidcTransactionStore(app) }
     private val database by lazy {
         Room.databaseBuilder(app, ChatDatabase::class.java, "opendrsai.db")
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
             .build()
     }
     private val oidcClient by lazy { OidcClient(refreshClientId = { tokenStore.oidcClientId }) }
@@ -580,6 +583,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun setTheme(value: Boolean?) = update { it.copy(darkTheme = value) }
 
     fun logout() {
+        val remoteSubject = mutableState.value.user?.id
+        remoteSubject?.let(RemoteSubscriptionRegistry::cancelSubject)
         activeRunId?.let { runId ->
             if (activeRunSource == "platform") platformRuntime.stop(runId) else runtime.stop(runId)
         }
@@ -595,6 +600,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 runCatching { attachmentRepository.delete(remote) }
             }
             runCatching { modelClient.logout() }
+            remoteSubject?.let { runCatching { RemoteCacheRepository(database).clearSubject(it) } }
             tokenStore.clear()
             update { AppState(destination = AppDestination.Login) }
         }

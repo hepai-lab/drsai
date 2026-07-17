@@ -78,6 +78,7 @@ import json
 import os
 
 import re
+import signal
 
 import subprocess
 
@@ -112,7 +113,14 @@ from pydantic import BaseModel, Field
 from drsai.backend.remote_workspace import PROTOCOL_VERSION, canonical_workspace, ensure_protocol, workspace_child
 from drsai.backend.remote_checkpoints import accept_checkpoint, create_checkpoint, list_checkpoints, preview_checkpoint, restore_checkpoint
 from drsai.backend.runtime_registry import RuntimeRegistry
+from drsai.backend.git_worktree_service import GitWorktreeError, GitWorktreeOWOPOperations, GitWorktreeService
+from drsai.backend.terminal_state_service import TerminalStateService, TerminalWorkspaceBinding
+from drsai.owop.local_workspace import LocalWorkspaceOperations, WorkspaceWatchJournal
+from drsai.owop.process_pty import LocalProcessPtyOperations
+from drsai.owop.protocol import OWOPProtocol
+from drsai.owop.runtime_terminal import RuntimeTerminalOWOPOperations
 from drsai.backend.runtime_engine import RuntimeEngine, RuntimeEngineIdentity
+from drsai.backend.runtime_artifacts import RuntimeArtifactStore
 from drsai.backend.agent_runtime import (
     AgentDefinition,
     AgentDefinitionStore,
@@ -125,6 +133,12 @@ from drsai.backend.agent_runtime import (
     RuntimeToolDispatcher,
 )
 from drsai.backend.codex_adapter import build_codex_adapter
+from drsai.backend.structured_conversation import StructuredConversationProjector
+from drsai.backend.tui_gateway.adapter.event_translator import (
+    TurnState as ConversationTranslationState,
+    finalize as finalize_conversation_translation,
+    translate as translate_conversation_event,
+)
 from drsai.backend.runtime_security import (
     ApprovalRegistry,
     ApprovalRequired,
@@ -1161,12 +1175,25 @@ async def lifespan(app: FastAPI):
 
     logger.info(f"Default user: {_get_user_id()}")
 
+    relay_stop, relay_task = await _start_runtime_relay_bridge()
+
     yield
 
     logger.info("DrSai API Server shutting down")
 
     if _runtime_agent_service_instance is not None:
         await _runtime_agent_service_instance.close()
+
+    if _terminal_provider_instance is not None:
+        _terminal_provider_instance.close()
+
+    if relay_stop is not None:
+        relay_stop.set()
+    if relay_task is not None:
+        try:
+            await asyncio.wait_for(relay_task, timeout=5)
+        except (TimeoutError, asyncio.CancelledError):
+            relay_task.cancel()
 
     # Stop any cron schedulers we started so background tasks unwind cleanly
     for uid, sm in list(_schedulers.items()):
@@ -1197,6 +1224,13 @@ _runtime_engine_instance: RuntimeEngine | None = None
 _runtime_tool_dispatcher_instance: RuntimeToolDispatcher | None = None
 _runtime_security_instance: RuntimeSecurity | None = None
 _runtime_agent_service_instance: RuntimeAgentService | None = None
+_git_worktree_service_instance: GitWorktreeService | None = None
+_workspace_event_journal_instance: WorkspaceWatchJournal | None = None
+_terminal_state_service_instance: TerminalStateService | None = None
+_terminal_provider_instance: LocalProcessPtyOperations | None = None
+_owop_protocol_instance: OWOPProtocol | None = None
+_local_workspace_owop_instances: dict[str, LocalWorkspaceOperations] = {}
+_runtime_artifact_store_instance: RuntimeArtifactStore | None = None
 _REMOTE_CAPABILITY_VERSIONS = {
     "threads": 1,
     "chat": 1,
@@ -1206,6 +1240,7 @@ _REMOTE_CAPABILITY_VERSIONS = {
     "approvals": 1,
     "hepai-worker": 1,
     "pty": 2,
+    "owop": 1,
     "runtime-identity": 1,
     "workspace-registry": 1,
     "worktree": 1,
@@ -1219,12 +1254,126 @@ _REMOTE_CAPABILITY_VERSIONS = {
 }
 
 
+async def _start_runtime_relay_bridge():
+    """Start the optional Runtime-initiated Relay connection in this Full Runtime process."""
+    from drsai.relay.device_identity import DeviceIdentityStore
+    from drsai.relay.gateway_control import AiohttpGatewayTransport, GatewayRuntimeControlHandler
+    from drsai.relay.runtime_client import RuntimeCredentialStore, RuntimeOutboundConnector
+
+    state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
+    relay_state = state_root / "runtime" / "relay"
+    credential_path = relay_state / "credential.dpapi"
+    url_path = relay_state / "relay-wss-url"
+    configured_url = os.environ.get("OPENDRSAI_RELAY_WSS_URL", "").strip()
+    if not configured_url and url_path.is_file():
+        configured_url = url_path.read_text(encoding="utf-8").strip()
+    if not configured_url or not credential_path.is_file():
+        return None, None
+    try:
+        credential = RuntimeCredentialStore(credential_path).load()
+        identity = DeviceIdentityStore(relay_state / "device-identity.dpapi").load_or_create()
+        runtime = _runtime_registry().identity
+        token = os.environ.get("OPENDRSAI_GATEWAY_INSTANCE_TOKEN", "").strip()
+        if not token:
+            raise RuntimeError("gateway_instance_token_required_for_relay")
+        handler = GatewayRuntimeControlHandler(
+            credential.runtime_id,
+            AiohttpGatewayTransport(f"http://127.0.0.1:{DEFAULT_PORT}", token),
+            state_root / "runtime",
+        )
+        connector = RuntimeOutboundConnector(
+            configured_url, credential, identity, runtime.instance_id,
+            os.environ.get("OPENDRSAI_RUNTIME_VERSION", "1.4.7"), request_handler=handler,
+            workspace_provider=handler.published_workspaces,
+            backend_health={"opendrsai": "healthy"},
+        )
+        stop = asyncio.Event()
+        task = asyncio.create_task(connector.run_forever(stop), name="runtime-relay-bridge")
+        logger.info(f"Runtime Relay bridge enabled for {credential.runtime_id}")
+        return stop, task
+    except Exception as exc:
+        logger.error(f"Runtime Relay bridge could not start: {exc}")
+        return None, None
+
+
 def _runtime_registry() -> RuntimeRegistry:
     global _runtime_registry_instance
     if _runtime_registry_instance is None:
         state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
         _runtime_registry_instance = RuntimeRegistry(state_root / "runtime" / "runtime.sqlite3")
     return _runtime_registry_instance
+
+
+def _git_worktree_service() -> GitWorktreeService:
+    global _git_worktree_service_instance
+    registry = _runtime_registry()
+    if _git_worktree_service_instance is None or _git_worktree_service_instance.registry is not registry:
+        state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
+        _git_worktree_service_instance = GitWorktreeService(
+            registry, state_root / "runtime" / "worktrees",
+            active_resource_probe=_active_worktree_resources,
+            event_journal=_workspace_event_journal(),
+        )
+    return _git_worktree_service_instance
+
+
+def _workspace_event_journal() -> WorkspaceWatchJournal:
+    global _workspace_event_journal_instance
+    if _workspace_event_journal_instance is None:
+        state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
+        _workspace_event_journal_instance = WorkspaceWatchJournal(state_root / "runtime" / "workspace-events.sqlite3")
+    return _workspace_event_journal_instance
+
+
+def _terminal_state_service() -> TerminalStateService:
+    global _terminal_state_service_instance, _terminal_provider_instance
+    registry = _runtime_registry()
+    if _terminal_state_service_instance is None:
+        state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
+        provider_root = state_root / "runtime"
+        provider_root.mkdir(parents=True, exist_ok=True)
+        configured_node_pty = os.environ.get("OPENDRSAI_NODE_PTY_MODULE", "").strip()
+        _terminal_provider_instance = LocalProcessPtyOperations(
+            provider_root,
+            node_pty_module=Path(configured_node_pty) if configured_node_pty else None,
+        )
+
+        def resolve(workspace_id: str) -> TerminalWorkspaceBinding | None:
+            workspace = registry.get_workspace(workspace_id, include_closed=True)
+            if workspace is None or not workspace.open:
+                return None
+            worktree = registry.get_worktree_by_workspace(workspace_id)
+            return TerminalWorkspaceBinding(
+                workspace_id, Path(workspace.path), worktree.worktree_id if worktree else None
+            )
+
+        _terminal_state_service_instance = TerminalStateService(
+            provider_root / "terminals.sqlite3",
+            registry.identity.runtime_id,
+            _terminal_provider_instance,
+            resolve,
+        )
+    return _terminal_state_service_instance
+
+
+def _owop_protocol() -> OWOPProtocol:
+    global _owop_protocol_instance
+    if _owop_protocol_instance is None:
+        _owop_protocol_instance = OWOPProtocol()
+    return _owop_protocol_instance
+
+
+def _active_worktree_resources(workspace_id: str) -> list[dict[str, Any]]:
+    resources = _runtime_engine().active_workspace_resources(workspace_id)
+    for terminal in _terminal_state_service().list(workspace_id):
+        if terminal["status"] in {"starting", "running", "detached", "reconnecting"}:
+            resources.append({"kind": "terminal", "id": terminal["terminal_id"]})
+    remote_pty = sys.modules.get("drsai.backend.remote_pty")
+    manager_instance = getattr(remote_pty, "manager", None) if remote_pty else None
+    for terminal in getattr(manager_instance, "sessions", {}).values():
+        if terminal.workspace_id == workspace_id and not terminal.exited:
+            resources.append({"kind": "terminal", "id": terminal.id})
+    return resources
 
 
 def _runtime_engine() -> RuntimeEngine:
@@ -1236,6 +1385,7 @@ def _runtime_engine() -> RuntimeEngine:
             state_root / "runtime" / "engine.sqlite3",
             RuntimeEngineIdentity(registry.identity.runtime_id, registry.identity.instance_id),
             lambda workspace_id: bool((record := registry.get_workspace(workspace_id, include_closed=True)) and record.open),
+            lambda workspace_id: (record.worktree_id if (record := registry.get_worktree_by_workspace(workspace_id)) else None),
         )
     return _runtime_engine_instance
 
@@ -1243,8 +1393,26 @@ def _runtime_engine() -> RuntimeEngine:
 def _runtime_tool_dispatcher() -> RuntimeToolDispatcher:
     global _runtime_tool_dispatcher_instance
     if _runtime_tool_dispatcher_instance is None:
-        _runtime_tool_dispatcher_instance = RuntimeToolDispatcher(_runtime_engine())
+        _runtime_tool_dispatcher_instance = RuntimeToolDispatcher(
+            _runtime_engine(), tools={"artifact.publish": _publish_runtime_artifact}
+        )
     return _runtime_tool_dispatcher_instance
+
+
+def _runtime_artifact_store() -> RuntimeArtifactStore:
+    global _runtime_artifact_store_instance
+    if _runtime_artifact_store_instance is None:
+        state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
+        _runtime_artifact_store_instance = RuntimeArtifactStore(
+            state_root / "runtime" / "artifacts.sqlite3", lambda workspace_id: _workspace_root(workspace_id)
+        )
+    return _runtime_artifact_store_instance
+
+
+def _publish_runtime_artifact(context: RuntimeRunContext, arguments: dict[str, Any]) -> dict[str, Any]:
+    item = _runtime_artifact_store().publish(context, arguments)
+    _runtime_engine().append_event(context.run_id, "artifact.created", item)
+    return item
 
 
 def _runtime_security() -> RuntimeSecurity:
@@ -1398,6 +1566,35 @@ class RuntimeWorkspaceOpenRequest(BaseModel):
 
 class RemoteWorktreeRequest(BaseModel):
     intent: str = Field(default="subtask", max_length=240)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=256)
+    location: str = Field(default="remote", pattern="^(local|remote)$")
+
+
+class RuntimeWorktreeAdoptRequest(BaseModel):
+    idempotency_key: str = Field(min_length=1, max_length=256)
+    canonical_path: str = Field(min_length=1, max_length=4096)
+    branch: str = Field(min_length=1, max_length=255)
+    base_ref: str = Field(min_length=1, max_length=128)
+    location: str = Field(pattern="^(local|remote)$")
+
+
+class RuntimeWorktreeMergeRequest(BaseModel):
+    idempotency_key: str = Field(min_length=1, max_length=256)
+    expected_head: str | None = Field(default=None, min_length=7, max_length=128)
+
+
+class RuntimeWorktreeRemoveRequest(BaseModel):
+    idempotency_key: str = Field(min_length=1, max_length=256)
+    expected_status: str = Field(pattern="^(merged|archived)$")
+
+
+class RuntimeWorktreePruneRequest(BaseModel):
+    idempotency_key: str = Field(min_length=1, max_length=256)
+    dry_run: bool = True
+
+
+class RuntimeWorktreeArchiveRequest(BaseModel):
+    idempotency_key: str = Field(min_length=1, max_length=256)
 
 
 class RuntimeSessionCreateRequest(BaseModel):
@@ -1609,6 +1806,14 @@ async def runtime_identity():
         "protocol_version": _REMOTE_PROTOCOL_VERSION,
         "platform": sys.platform,
     }
+
+
+@app.post("/v1/runtime/shutdown")
+async def runtime_shutdown():
+    """Stop this authenticated Runtime instance after the response is flushed."""
+    loop = asyncio.get_running_loop()
+    loop.call_later(0.2, lambda: os.kill(os.getpid(), signal.SIGTERM))
+    return {"stopping": True, "instance_id": _runtime_registry().identity.instance_id}
 
 
 @app.get("/v1/capabilities")
@@ -1970,6 +2175,14 @@ async def runtime_approval_decision(approval_id: str, request: RuntimeApprovalDe
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+@app.get("/v1/approvals")
+async def runtime_approval_list(status: str | None = None, run_id: str | None = None):
+    if status not in {None, "pending"}:
+        raise HTTPException(status_code=400, detail="Only pending Approval listing is supported")
+    rows = _runtime_engine().list_pending_approvals(run_id)
+    return {"object": "list", "data": rows, "total": len(rows)}
+
+
 @app.post("/v1/runs/{run_id}/approvals/{approval_id}/decision")
 async def runtime_backend_approval_decision(run_id: str, approval_id: str, request: RuntimeApprovalDecisionRequest):
     try:
@@ -2038,40 +2251,236 @@ async def remote_workspace_context(workspace_id: str):
     return {"workspacePath": str(root), "trusted": True, "git": {"hasChanges": bool(changed), "changedFiles": changed}, "instructions": instructions, "stats": {"instructionCount": len(instructions), "changedFileCount": len(changed)}}
 
 
-@app.post("/v1/workspaces/{workspace_id}/worktrees")
-async def remote_workspace_worktree_create(workspace_id: str, request: RemoteWorktreeRequest):
+@app.post("/v1/owop")
+async def runtime_owop_execute(payload: dict[str, Any], raw_request: Request):
+    """Execute the same typed Workspace operation over local HTTP or an SSH tunnel."""
+    workspace_id = str(payload.get("workspace_id") or "")
+    operation = str(payload.get("operation") or "")
     root = _workspace_root(workspace_id)
-    repo = subprocess.run(["git", "-C", str(root), "rev-parse", "--show-toplevel"], capture_output=True, text=True, timeout=15, check=False)
-    if repo.returncode != 0:
-        raise HTTPException(status_code=400, detail="Workspace is not a Git repository")
-    repo_root = Path(repo.stdout.strip()).resolve()
-    base = subprocess.run(["git", "-C", str(repo_root), "rev-parse", "--short=12", "HEAD"], capture_output=True, text=True, timeout=15, check=False)
-    if base.returncode != 0:
-        raise HTTPException(status_code=400, detail=base.stderr.strip() or "Unable to resolve the current Git commit")
-    status = subprocess.run(["git", "-C", str(repo_root), "status", "--porcelain=v1"], capture_output=True, text=True, timeout=15, check=False)
-    slug = re.sub(r"[^a-z0-9]+", "-", request.intent.lower()).strip("-")[:40] or "subtask"
-    suffix = uuid.uuid4().hex[:8]
-    branch = f"drsai/fork/{slug}-{suffix}"
-    state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
-    worktree_path = state_root / "runtime" / "worktrees" / workspace_id / f"{slug}-{suffix}"
-    worktree_path.parent.mkdir(parents=True, exist_ok=True)
-    created = subprocess.run(["git", "-C", str(repo_root), "worktree", "add", "-b", branch, str(worktree_path), "HEAD"], capture_output=True, text=True, timeout=30, check=False)
-    if created.returncode != 0:
-        raise HTTPException(status_code=400, detail=created.stderr.strip() or "Unable to create an isolated Git worktree")
-    record = _runtime_registry().open_workspace(str(worktree_path))
-    _remote_audit("workspace.worktree.create", workspace_id=record.workspace_id, parent_workspace_id=workspace_id, path=record.path)
-    return {
-        "workspace_id": record.workspace_id,
-        "source_workspace_path": str(root),
-        "repo_root": str(repo_root),
-        "worktree_path": record.path,
-        "branch": branch,
-        "base_ref": base.stdout.strip(),
-        "source_has_changes": bool(status.stdout.strip()),
-        "source_status_summary": status.stdout.strip()[:2000] or None,
-        "location": "remote",
-        "transport": "ssh",
+    params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+    read_only_operations = {
+        "workspace.describe", "files.list", "files.stat", "files.read", "search.query",
+        "git.status", "git.diff", "git.file_at_ref", "git.worktree.list", "git.worktree.describe",
+        "pty.list", "pty.describe", "checkpoint.preview", "artifact.metadata", "artifact.chunk",
     }
+    read_only = operation in read_only_operations or (operation == "pty.attach" and params.get("mode") == "reader")
+    permission = "workspace.read" if read_only else "pty.execute" if operation.startswith("pty.") else "workspace.write"
+    _authorize_request(raw_request, workspace_id, permission, {
+        "operation": operation,
+        "terminal_id": params.get("pty_id"),
+        "lease_id": params.get("lease_id"),
+    })
+    local = _local_workspace_owop_instances.get(workspace_id)
+    if local is None or local.root != root:
+        if local is not None:
+            local.close()
+        worktrees = GitWorktreeOWOPOperations(_git_worktree_service(), workspace_id, _workspace_event_journal())
+        local = LocalWorkspaceOperations(
+            workspace_id, root, _workspace_event_journal(), worktree_handlers=worktrees.handlers()
+        )
+        _local_workspace_owop_instances[workspace_id] = local
+    handlers = local.handlers()
+    handlers.update(RuntimeTerminalOWOPOperations(_terminal_state_service(), workspace_id).handlers())
+    handlers.update(_runtime_artifact_store().handlers(workspace_id))
+    if operation not in handlers:
+        raise HTTPException(status_code=400, detail={"code": "owop_operation_unavailable"})
+    response = await _owop_protocol().dispatch(payload, handlers)
+    if response.get("ok"):
+        result = response.get("result") if isinstance(response.get("result"), dict) else {}
+        terminal = result.get("terminal") if isinstance(result.get("terminal"), dict) else {}
+        _remote_audit(
+            operation,
+            workspace_id=workspace_id,
+            terminal_id=terminal.get("terminal_id") or params.get("pty_id"),
+            correlation_id=payload.get("correlation_id"),
+        )
+    return response
+
+
+@app.post("/v1/workspaces/{workspace_id}/worktrees")
+async def remote_workspace_worktree_create(workspace_id: str, request: RemoteWorktreeRequest, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "worktree.write", {
+        "operation": "create", "intent": request.intent,
+        "idempotency_key": request.idempotency_key, "location": request.location,
+    })
+    root = _workspace_root(workspace_id)
+    try:
+        worktree = _git_worktree_service().create(
+            source_workspace_id=workspace_id,
+            idempotency_key=request.idempotency_key or f"legacy-{uuid.uuid4()}",
+            intent=request.intent,
+            location=request.location,
+        )
+    except GitWorktreeError as exc:
+        raise HTTPException(
+            status_code=409 if exc.code.endswith("conflict") or exc.code.endswith("exists") else 400,
+            detail={"code": exc.code, "message": str(exc), "retryable": exc.retryable, "detail": exc.detail},
+        ) from exc
+    if not worktree.workspace_id:
+        raise HTTPException(status_code=503, detail="Worktree Workspace registration is incomplete")
+    _remote_workspaces[worktree.workspace_id] = Path(worktree.canonical_path)
+    _remote_audit(
+        "workspace.worktree.create", workspace_id=worktree.workspace_id,
+        parent_workspace_id=workspace_id, worktree_id=worktree.worktree_id,
+        path=worktree.canonical_path,
+    )
+    return {
+        "worktree_id": worktree.worktree_id,
+        "workspace_id": worktree.workspace_id,
+        "source_workspace_path": str(root),
+        "repo_root": worktree.repo_root,
+        "worktree_path": worktree.canonical_path,
+        "branch": worktree.branch,
+        "base_ref": worktree.base_commit[:12],
+        "source_has_changes": worktree.source_dirty,
+        "source_status_summary": worktree.source_status_summary,
+        "location": worktree.location,
+        **({"transport": "ssh"} if worktree.location == "remote" else {}),
+    }
+
+
+def _worktree_http_error(exc: GitWorktreeError) -> HTTPException:
+    status = 404 if exc.code in {"workspace_not_found", "worktree_not_found"} else 409 if (
+        exc.code == "worktree_active_resources" or exc.code.endswith("conflict") or exc.code.endswith("exists") or exc.code.endswith("dirty")
+    ) else 400
+    return HTTPException(
+        status_code=status,
+        detail={"code": exc.code, "message": str(exc), "retryable": exc.retryable, "detail": exc.detail},
+    )
+
+
+@app.post("/v1/workspaces/{workspace_id}/worktrees/adopt")
+async def runtime_worktree_adopt(workspace_id: str, request: RuntimeWorktreeAdoptRequest, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "worktree.write", {
+        "operation": "adopt", "canonical_path": request.canonical_path,
+        "branch": request.branch, "idempotency_key": request.idempotency_key,
+    })
+    _workspace_root(workspace_id)
+    try:
+        record = _git_worktree_service().adopt(
+            source_workspace_id=workspace_id,
+            idempotency_key=request.idempotency_key,
+            canonical_path=request.canonical_path,
+            branch=request.branch,
+            base_ref=request.base_ref,
+            location=request.location,
+        )
+    except GitWorktreeError as exc:
+        raise _worktree_http_error(exc) from exc
+    if record.workspace_id:
+        _remote_workspaces[record.workspace_id] = Path(record.canonical_path)
+    _remote_audit(
+        "workspace.worktree.adopt", workspace_id=workspace_id,
+        worktree_id=record.worktree_id, path=record.canonical_path,
+    )
+    return {"worktree": _git_worktree_service().project(record)}
+
+
+@app.get("/v1/workspaces/{workspace_id}/worktrees")
+async def runtime_worktree_list(workspace_id: str, raw_request: Request, include_removed: bool = False):
+    _authorize_request(raw_request, workspace_id, "workspace.read", {"operation": "worktree.list", "include_removed": include_removed})
+    _workspace_root(workspace_id)
+    try:
+        records = _git_worktree_service().list(workspace_id, include_removed=include_removed)
+    except GitWorktreeError as exc:
+        raise _worktree_http_error(exc) from exc
+    service = _git_worktree_service()
+    return {"worktrees": [service.project(record) for record in records]}
+
+
+@app.get("/v1/workspaces/{workspace_id}/events")
+async def runtime_workspace_events(
+    workspace_id: str,
+    raw_request: Request,
+    after_sequence: int = Query(default=0, ge=0),
+    limit: int = Query(default=200, ge=1, le=1000),
+):
+    _authorize_request(raw_request, workspace_id, "workspace.read", {
+        "operation": "workspace.events", "after_sequence": after_sequence,
+    })
+    _workspace_root(workspace_id)
+    events = _workspace_event_journal().list(workspace_id, after_sequence, limit)
+    return {"events": events, "next_sequence": events[-1]["sequence"] if events else after_sequence}
+
+
+@app.post("/v1/workspaces/{workspace_id}/worktrees/prune")
+async def runtime_worktree_prune(workspace_id: str, request: RuntimeWorktreePruneRequest, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "workspace.read" if request.dry_run else "worktree.write", {
+        "operation": "prune", "dry_run": request.dry_run,
+        "idempotency_key": request.idempotency_key,
+    })
+    _workspace_root(workspace_id)
+    try:
+        candidates, pruned = _git_worktree_service().prune(workspace_id, dry_run=request.dry_run)
+    except GitWorktreeError as exc:
+        raise _worktree_http_error(exc) from exc
+    _remote_audit("workspace.worktree.prune", workspace_id=workspace_id, candidates=candidates, pruned=pruned)
+    return {"candidates": candidates, "pruned": pruned}
+
+
+@app.get("/v1/workspaces/{workspace_id}/worktrees/{worktree_id}")
+async def runtime_worktree_describe(workspace_id: str, worktree_id: str, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "workspace.read", {"operation": "worktree.describe", "worktree_id": worktree_id})
+    _workspace_root(workspace_id)
+    try:
+        record = _git_worktree_service().describe(workspace_id, worktree_id)
+    except GitWorktreeError as exc:
+        raise _worktree_http_error(exc) from exc
+    return {"worktree": _git_worktree_service().project(record)}
+
+
+@app.post("/v1/workspaces/{workspace_id}/worktrees/{worktree_id}/merge")
+async def runtime_worktree_merge(workspace_id: str, worktree_id: str, request: RuntimeWorktreeMergeRequest, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "worktree.write", {
+        "operation": "merge", "worktree_id": worktree_id, "expected_head": request.expected_head,
+        "idempotency_key": request.idempotency_key,
+    })
+    _workspace_root(workspace_id)
+    try:
+        record = _git_worktree_service().merge(workspace_id, worktree_id, expected_head=request.expected_head)
+    except GitWorktreeError as exc:
+        raise _worktree_http_error(exc) from exc
+    _remote_audit(
+        "workspace.worktree.merge", workspace_id=workspace_id, worktree_id=worktree_id,
+        status=record.status, derived_workspace_id=record.workspace_id,
+    )
+    return {"worktree": _git_worktree_service().project(record)}
+
+
+@app.post("/v1/workspaces/{workspace_id}/worktrees/{worktree_id}/archive")
+async def runtime_worktree_archive(workspace_id: str, worktree_id: str, request: RuntimeWorktreeArchiveRequest, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "worktree.write", {"operation": "archive", "worktree_id": worktree_id, "idempotency_key": request.idempotency_key})
+    _workspace_root(workspace_id)
+    try:
+        record = _git_worktree_service().archive(workspace_id, worktree_id)
+    except GitWorktreeError as exc:
+        raise _worktree_http_error(exc) from exc
+    _remote_audit(
+        "workspace.worktree.archive", workspace_id=workspace_id,
+        worktree_id=worktree_id, branch=record.branch,
+    )
+    return {"worktree": _git_worktree_service().project(record)}
+
+
+@app.delete("/v1/workspaces/{workspace_id}/worktrees/{worktree_id}")
+async def runtime_worktree_remove(workspace_id: str, worktree_id: str, request: RuntimeWorktreeRemoveRequest, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "worktree.write", {
+        "operation": "remove", "worktree_id": worktree_id, "expected_status": request.expected_status,
+        "idempotency_key": request.idempotency_key,
+    })
+    _workspace_root(workspace_id)
+    try:
+        record = _git_worktree_service().remove(
+            workspace_id, worktree_id, expected_status=request.expected_status
+        )
+    except GitWorktreeError as exc:
+        raise _worktree_http_error(exc) from exc
+    _remote_workspaces.pop(record.workspace_id or "", None)
+    _remote_audit(
+        "workspace.worktree.remove", workspace_id=workspace_id,
+        worktree_id=worktree_id, derived_workspace_id=record.workspace_id,
+    )
+    return {"worktree": _git_worktree_service().project(record)}
 
 
 @app.get("/v1/workspaces/{workspace_id}/directories")
@@ -3016,10 +3425,18 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
 
         has_content = False
         sent_done = False
+        conversation_state = ConversationTranslationState()
+        conversation_turn_id = _safe_str(
+            request.metadata.get("run_id") or request.metadata.get("desktop_request_id")
+        ).strip() or str(uuid.uuid4())
+        conversation_projector = StructuredConversationProjector(conversation_turn_id)
 
 
 
         try:
+
+            for frame in conversation_projector.encode(conversation_projector.start()):
+                yield frame
 
             with platform_auth_scope(auth_context) if auth_context else nullcontext():
                 event_stream = manager.run_stream(
@@ -3032,6 +3449,15 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
                 )
                 async for event in event_stream:
 
+                    try:
+                        semantic_events = translate_conversation_event(event, conversation_state)
+                        for semantic_type, semantic_payload in semantic_events:
+                            structured_events = conversation_projector.project(semantic_type, semantic_payload)
+                            for frame in conversation_projector.encode(structured_events):
+                                yield frame
+                    except Exception:
+                        logger.exception("Structured conversation projection failed; legacy stream continues")
+
                     sse = _event_to_sse(event)
 
                     if sse:
@@ -3039,20 +3465,32 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
                         if "[DONE]" in sse:
                             sent_done = True
 
+                            continue
+
                         if sse.startswith("data:") and "[DONE]" not in sse:
 
                             has_content = True
 
                         yield sse
 
-            if not sent_done:
-                yield "data: [DONE]\n\n"
+            complete_type, complete_payload = finalize_conversation_translation(conversation_state)
+            for frame in conversation_projector.encode(
+                conversation_projector.project(complete_type, complete_payload)
+            ):
+                yield frame
+
+            yield "data: [DONE]\n\n"
 
 
 
         except asyncio.CancelledError:
 
             logger.info(f"Request cancelled for session {thread_id}")
+
+            for frame in conversation_projector.encode(
+                conversation_projector.complete(status="cancelled")
+            ):
+                yield frame
 
             yield "data: [DONE]\n\n"
 
@@ -3070,6 +3508,13 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
             error = classify_model_error(e)
             logger.error(f"Agent error for session {thread_id}: code={error['code']}")
             logger.debug(traceback.format_exc())
+            for frame in conversation_projector.encode(
+                conversation_projector.complete(
+                    {"message": error.get("message") or "Agent turn failed."},
+                    status="error",
+                )
+            ):
+                yield frame
             yield f"data: {json.dumps({'error': error})}\n\n"
 
             yield "data: [DONE]\n\n"

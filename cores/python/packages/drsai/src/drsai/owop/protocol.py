@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Mapping
+from typing import Any, Awaitable, Callable, Mapping, Union
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
@@ -47,7 +47,7 @@ class OWOPError(RuntimeError):
         }
 
 
-Handler = Callable[[Mapping[str, Any]], Mapping[str, Any] | Awaitable[Mapping[str, Any]]]
+Handler = Callable[[Mapping[str, Any]], Union[Mapping[str, Any], Awaitable[Mapping[str, Any]]]]
 
 
 class OWOPProtocol:
@@ -59,6 +59,7 @@ class OWOPProtocol:
         self.capabilities = frozenset(self.schema["x-owop-capabilities"])
         self.bindings = frozenset(self.schema["x-owop-bindings"])
         self.operations: Mapping[str, Mapping[str, Any]] = self.schema["x-owop-operations"]
+        self.results: Mapping[str, Mapping[str, Any]] = self.schema.get("x-owop-results", {})
         self._request_validator = Draft202012Validator({
             "$schema": self.schema["$schema"],
             "$defs": self.schema["$defs"],
@@ -76,6 +77,14 @@ class OWOPProtocol:
                 **operation_schema,
             })
             for name, operation_schema in self.operations.items()
+        }
+        self._result_validators = {
+            name: Draft202012Validator({
+                "$schema": self.schema["$schema"],
+                "$defs": self.schema["$defs"],
+                **result_schema,
+            })
+            for name, result_schema in self.results.items()
         }
 
     def negotiate(self, versions: list[str], capabilities: list[str]) -> dict[str, Any]:
@@ -156,6 +165,17 @@ class OWOPProtocol:
                     "OWOP handler returned a non-object result.",
                     str(request["correlation_id"]),
                 )
+            result_validator = self._result_validators.get(operation)
+            if result_validator is not None:
+                try:
+                    result_validator.validate(dict(result))
+                except ValidationError as exc:
+                    raise OWOPError(
+                        "owop_result_invalid",
+                        f"Result for {operation} is invalid.",
+                        str(request["correlation_id"]),
+                        details={"operation": operation, "path": list(exc.absolute_path), "rule": exc.validator},
+                    ) from exc
             return {
                 "version": self.version,
                 "request_id": request["request_id"],

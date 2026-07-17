@@ -53,6 +53,10 @@ class OperationContext:
     run_id: str
     tool_id: str
     correlation_id: str
+    host_id: str = ""
+    worktree_id: str = ""
+    terminal_id: str = ""
+    operation_id: str = ""
 
     def as_dict(self) -> dict[str, str]:
         values = {
@@ -66,17 +70,23 @@ class OperationContext:
         }
         if not all(values.values()):
             raise SecurityError("audit_context_incomplete", "Sensitive operation audit context is incomplete.")
+        values.update({
+            "host_id": self.host_id,
+            "worktree_id": self.worktree_id,
+            "terminal_id": self.terminal_id,
+            "operation_id": self.operation_id,
+        })
         return values
 
 
 ROLE_ACTIONS = {
-    "owner": frozenset({"workspace.read", "file.write", "git.write", "git.push", "pty.execute", "shell.execute", "run.execute", "workspace.restore", "permission.manage"}),
-    "editor": frozenset({"workspace.read", "file.write", "git.write", "git.push", "pty.execute", "shell.execute", "run.execute", "workspace.restore"}),
+    "owner": frozenset({"workspace.read", "file.write", "git.write", "git.push", "worktree.write", "pty.execute", "shell.execute", "run.execute", "workspace.restore", "permission.manage"}),
+    "editor": frozenset({"workspace.read", "file.write", "git.write", "git.push", "worktree.write", "pty.execute", "shell.execute", "run.execute", "workspace.restore"}),
     "viewer": frozenset({"workspace.read"}),
     "denied": frozenset(),
 }
 
-SENSITIVE_ACTIONS = frozenset({"file.write", "git.push", "pty.execute", "workspace.restore", "shell.execute"})
+SENSITIVE_ACTIONS = frozenset({"file.write", "git.push", "worktree.write", "pty.execute", "workspace.restore", "shell.execute"})
 
 
 class WorkspacePermissionStore:
@@ -235,12 +245,21 @@ def redact_sensitive(value: Any, key: str = "") -> Any:
     if _SENSITIVE_KEY.search(key):
         return "[REDACTED]"
     if isinstance(value, Mapping):
-        return {str(child_key): redact_sensitive(child, str(child_key)) for child_key, child in value.items()}
+        items = list(value.items())[:100]
+        result = {str(child_key): redact_sensitive(child, str(child_key)) for child_key, child in items}
+        if len(value) > len(items):
+            result["_truncated_fields"] = len(value) - len(items)
+        return result
     if isinstance(value, (list, tuple)):
-        return [redact_sensitive(item) for item in value]
+        items = list(value)[:100]
+        result = [redact_sensitive(item) for item in items]
+        if len(value) > len(items):
+            result.append(f"[TRUNCATED {len(value) - len(items)} ITEMS]")
+        return result
     if isinstance(value, str):
         redacted = _PRIVATE_KEY.sub("[REDACTED PRIVATE KEY]", _BEARER.sub("Bearer [REDACTED]", value))
-        return _INLINE_CREDENTIAL.sub(lambda match: f"{match.group(1)}=[REDACTED]", redacted)
+        redacted = _INLINE_CREDENTIAL.sub(lambda match: f"{match.group(1)}=[REDACTED]", redacted)
+        return redacted if len(redacted) <= 4096 else f"{redacted[:4096]}[TRUNCATED {len(redacted) - 4096} CHARS]"
     return value
 
 

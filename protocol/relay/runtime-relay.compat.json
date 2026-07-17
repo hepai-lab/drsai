@@ -1,0 +1,6 @@
+{
+  "endpoints": ["runtime_list", "runtime_identity", "runtime_capabilities", "workspace_list", "session_list", "session_create", "run_create", "run_read", "run_cancel", "event_list", "file_raw"],
+  "capabilities": ["runtime.identity", "runtime.capabilities", "workspace.list", "session.list", "session.create", "run.create", "run.read", "run.cancel", "event.resume", "file.raw.read"],
+  "error_required": ["code", "message", "correlation_id", "retryable", "details", "source"],
+  "event_required": ["event_id", "sequence", "runtime_id", "workspace_id", "session_id", "run_id", "timestamp", "kind", "payload"]
+}

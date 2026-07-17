@@ -19,6 +19,12 @@ from drsai.backend.workspace_paths import WorkspacePathError, relative_parts
 from drsai.owop.protocol import OWOPError
 
 
+_WINDOWS_BACKGROUND_PROCESS_FLAGS = (
+    getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+) if os.name == "nt" else 0
+
+
 class _OutputBuffer:
     """Byte-bounded, cursor-addressable output segments."""
 
@@ -84,7 +90,26 @@ class _PtySession:
     pid: int
     output: _OutputBuffer
     exit_code: int | None = None
-    signal: int | None = None
+    signal: str | None = None
+    on_output: Callable[[bytes], None] | None = None
+    on_exit: Callable[[int | None, str | None], None] | None = None
+
+
+class _RuntimePtyHandle:
+    def __init__(self, owner: "LocalProcessPtyOperations", pty_id: str, pid: int):
+        self.owner, self.pty_id, self.pid = owner, pty_id, pid
+
+    def write(self, data: bytes) -> None:
+        self.owner._provider_call("write", {
+            "pty_id": self.pty_id,
+            "content_base64": base64.b64encode(data).decode("ascii"),
+        })
+
+    def resize(self, cols: int, rows: int) -> None:
+        self.owner._provider_call("resize", {"pty_id": self.pty_id, "cols": cols, "rows": rows})
+
+    def kill(self) -> None:
+        self.owner._provider_call("kill", {"pty_id": self.pty_id})
 
 
 class LocalProcessPtyOperations:
@@ -111,7 +136,7 @@ class LocalProcessPtyOperations:
 
     def process_start(self, params: Mapping[str, Any]) -> dict[str, Any]:
         argv = [str(value) for value in params["argv"]]
-        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+        creationflags = _WINDOWS_BACKGROUND_PROCESS_FLAGS
         try:
             process = subprocess.Popen(
                 argv, cwd=self._cwd(str(params["cwd"])), stdin=subprocess.PIPE,
@@ -169,6 +194,29 @@ class LocalProcessPtyOperations:
         self._provider_call("activate", {"pty_id": session.pty_id})
         return {"pty_id": session.pty_id, "pid": session.pid,
                 "cols": int(params["cols"]), "rows": int(params["rows"])}
+
+    def spawn(
+        self,
+        *,
+        cwd: Path,
+        argv: list[str],
+        cols: int,
+        rows: int,
+        on_output: Callable[[bytes], None],
+        on_exit: Callable[[int | None, str | None], None],
+    ) -> _RuntimePtyHandle:
+        """Implement TerminalProvider using the existing node-pty/ConPTY bridge."""
+        result = self._provider_call("create", {
+            "argv": argv, "cwd": str(cwd), "cols": cols, "rows": rows,
+        })
+        session = _PtySession(
+            str(result["pty_id"]), int(result["pid"]), _OutputBuffer(1),
+            on_output=on_output, on_exit=on_exit,
+        )
+        with self._lock:
+            self._ptys[session.pty_id] = session
+        self._provider_call("activate", {"pty_id": session.pty_id})
+        return _RuntimePtyHandle(self, session.pty_id, session.pid)
 
     def pty_write(self, params: Mapping[str, Any]) -> dict[str, Any]:
         self._get_pty(str(params["pty_id"]))
@@ -314,7 +362,7 @@ class LocalProcessPtyOperations:
                 ["node", str(Path(__file__).with_name("node_pty_provider.cjs"))],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 env=env, text=True, encoding="utf-8", errors="replace", bufsize=1,
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0)
+                creationflags=_WINDOWS_BACKGROUND_PROCESS_FLAGS)
         except OSError as exc:
             raise OWOPError("pty_provider_unavailable", "PTY provider could not start.", "operation") from exc
         threading.Thread(target=self._read_provider, daemon=True).start()
@@ -360,10 +408,15 @@ class LocalProcessPtyOperations:
                 with self._lock:
                     session = self._ptys.get(str(message.get("id")))
                 if session and message.get("event") == "data":
-                    session.output.append(base64.b64decode(str(message["content_base64"])), "pty")
+                    data = base64.b64decode(str(message["content_base64"]))
+                    session.output.append(data, "pty")
+                    if session.on_output:
+                        session.on_output(data)
                 elif session and message.get("event") == "exit":
                     session.exit_code = int(message.get("exit_code") or 0)
                     session.signal = message.get("signal")
+                    if session.on_exit:
+                        session.on_exit(session.exit_code, str(session.signal) if session.signal is not None else None)
         with self._lock:
             waiting = list(self._provider_requests.values())
             self._provider_requests.clear()

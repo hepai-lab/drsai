@@ -17,6 +17,14 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
+import ai.drsai.remote.remote.data.PendingRemoteApprovalEntity
+import ai.drsai.remote.remote.data.RemoteCacheDao
+import ai.drsai.remote.remote.data.RemoteEventCursorEntity
+import ai.drsai.remote.remote.data.RemoteEventEntity
+import ai.drsai.remote.remote.data.RemoteRunEntity
+import ai.drsai.remote.remote.data.RemoteRuntimeEntity
+import ai.drsai.remote.remote.data.RemoteSessionEntity
+import ai.drsai.remote.remote.data.RemoteWorkspaceEntity
 
 @Entity(tableName = "conversations", indices = [Index("userId")])
 data class ConversationEntity(
@@ -161,12 +169,33 @@ interface ChatDao {
 }
 
 @Database(
-    entities = [ConversationEntity::class, MessageEntity::class, MessageAttachmentEntity::class, MemoryEntity::class, AgentCatalogEntity::class],
-    version = 4,
+    entities = [ConversationEntity::class, MessageEntity::class, MessageAttachmentEntity::class, MemoryEntity::class, AgentCatalogEntity::class,
+        RemoteRuntimeEntity::class, RemoteWorkspaceEntity::class, RemoteSessionEntity::class, RemoteRunEntity::class,
+        RemoteEventCursorEntity::class, RemoteEventEntity::class, PendingRemoteApprovalEntity::class],
+    version = 5,
     exportSchema = false,
 )
 abstract class ChatDatabase : RoomDatabase() {
     abstract fun dao(): ChatDao
+    abstract fun remoteDao(): RemoteCacheDao
+}
+
+val MIGRATION_4_5 = object : Migration(4, 5) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS remote_runtimes (subject TEXT NOT NULL, organization TEXT NOT NULL, runtimeId TEXT NOT NULL, displayName TEXT NOT NULL, instanceId TEXT NOT NULL, version TEXT NOT NULL, connectionState TEXT NOT NULL, capabilitiesJson TEXT NOT NULL, lastSyncedAt INTEGER NOT NULL, authoritative INTEGER NOT NULL, PRIMARY KEY(subject, organization, runtimeId))")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_remote_runtimes_subject_organization ON remote_runtimes(subject, organization)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS remote_workspaces (subject TEXT NOT NULL, organization TEXT NOT NULL, runtimeId TEXT NOT NULL, workspaceId TEXT NOT NULL, displayName TEXT NOT NULL, lastSyncedAt INTEGER NOT NULL, authoritative INTEGER NOT NULL, PRIMARY KEY(subject, organization, runtimeId, workspaceId))")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_remote_workspaces_subject_organization_runtimeId ON remote_workspaces(subject, organization, runtimeId)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS remote_sessions (subject TEXT NOT NULL, organization TEXT NOT NULL, runtimeId TEXT NOT NULL, workspaceId TEXT NOT NULL, sessionId TEXT NOT NULL, title TEXT NOT NULL, backendId TEXT NOT NULL, lastSyncedAt INTEGER NOT NULL, authoritative INTEGER NOT NULL, PRIMARY KEY(subject, organization, runtimeId, workspaceId, sessionId))")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_remote_sessions_subject_organization_runtimeId_workspaceId ON remote_sessions(subject, organization, runtimeId, workspaceId)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS remote_runs (subject TEXT NOT NULL, organization TEXT NOT NULL, runtimeId TEXT NOT NULL, workspaceId TEXT NOT NULL, sessionId TEXT NOT NULL, runId TEXT NOT NULL, backendId TEXT NOT NULL, status TEXT NOT NULL, connectionState TEXT NOT NULL, lastSequence INTEGER NOT NULL, lastSyncedAt INTEGER NOT NULL, authoritative INTEGER NOT NULL, PRIMARY KEY(subject, organization, runtimeId, workspaceId, sessionId, runId))")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_remote_runs_subject_organization_runtimeId_workspaceId_sessionId ON remote_runs(subject, organization, runtimeId, workspaceId, sessionId)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS remote_event_cursors (subject TEXT NOT NULL, organization TEXT NOT NULL, runtimeId TEXT NOT NULL, resourceType TEXT NOT NULL, resourceId TEXT NOT NULL, lastSequence INTEGER NOT NULL, cursor TEXT, updatedAt INTEGER NOT NULL, PRIMARY KEY(subject, organization, runtimeId, resourceType, resourceId))")
+        db.execSQL("CREATE TABLE IF NOT EXISTS remote_events (subject TEXT NOT NULL, organization TEXT NOT NULL, runtimeId TEXT NOT NULL, workspaceId TEXT NOT NULL, sessionId TEXT NOT NULL, runId TEXT NOT NULL, eventId TEXT NOT NULL, sequence INTEGER NOT NULL, type TEXT NOT NULL, timestamp TEXT NOT NULL, PRIMARY KEY(subject, organization, runtimeId, eventId))")
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_remote_events_subject_organization_runtimeId_runId_sequence ON remote_events(subject, organization, runtimeId, runId, sequence)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS pending_remote_approvals (subject TEXT NOT NULL, organization TEXT NOT NULL, runtimeId TEXT NOT NULL, workspaceId TEXT NOT NULL, sessionId TEXT NOT NULL, runId TEXT NOT NULL, approvalId TEXT NOT NULL, operation TEXT NOT NULL, expiresAt TEXT NOT NULL, lastSyncedAt INTEGER NOT NULL, authoritative INTEGER NOT NULL, PRIMARY KEY(subject, organization, runtimeId, approvalId))")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_pending_remote_approvals_subject_organization_runtimeId_runId ON pending_remote_approvals(subject, organization, runtimeId, runId)")
+    }
 }
 
 val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -217,6 +246,9 @@ class SecureTokenStore(context: Context) : AuthTokenStore {
     var oidcClientId: String?
         get() = prefs.getString("oidc_client_id", null)
         set(value) = prefs.edit().putString("oidc_client_id", value).apply()
+    var relayTicket: String?
+        get() = prefs.getString("relay_ticket", null)
+        set(value) = prefs.edit().putString("relay_ticket", value).apply()
 
     override fun save(auth: AuthTokens) {
         accessToken = auth.accessToken

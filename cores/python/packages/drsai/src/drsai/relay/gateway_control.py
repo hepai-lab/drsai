@@ -1,0 +1,441 @@
+from __future__ import annotations
+
+import json
+import sqlite3
+from dataclasses import dataclass
+from pathlib import Path
+import asyncio
+from typing import Any, Protocol
+from uuid import uuid4
+
+import aiohttp
+
+from drsai.backend.agent_runtime import AgentDefinitionStore, RuntimeExecutionError
+
+
+class GatewayControlError(RuntimeError):
+    def __init__(self, code: str, message: str, *, retryable: bool = False) -> None:
+        super().__init__(message)
+        self.code, self.retryable = code, retryable
+
+
+class GatewayTransport(Protocol):
+    async def request(self, method: str, path: str, *, body: dict[str, Any] | None = None,
+                      headers: dict[str, str] | None = None) -> Any: ...
+
+
+class AiohttpGatewayTransport:
+    """Loopback-only transport used inside the registered Windows Runtime host."""
+
+    def __init__(self, base_url: str, instance_token: str) -> None:
+        if not base_url.startswith("http://127.0.0.1:"):
+            raise ValueError("gateway_control_requires_loopback")
+        self.base_url = base_url.rstrip("/")
+        self.instance_token = instance_token
+
+    async def request(self, method: str, path: str, *, body: dict[str, Any] | None = None,
+                      headers: dict[str, str] | None = None) -> Any:
+        values = {"X-OpenDrSai-Gateway-Token": self.instance_token, **(headers or {})}
+        timeout = aiohttp.ClientTimeout(total=120)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.request(method, f"{self.base_url}{path}", json=body, headers=values) as response:
+                try:
+                    result = await response.json()
+                except (aiohttp.ContentTypeError, json.JSONDecodeError) as exc:
+                    raise GatewayControlError("runtime_response_invalid", "Runtime returned an invalid response") from exc
+                if response.status >= 400:
+                    detail = result.get("detail", result) if isinstance(result, dict) else {}
+                    if not isinstance(detail, dict):
+                        detail = {"message": str(detail)}
+                    raise GatewayControlError(str(detail.get("code") or f"runtime_http_{response.status}"),
+                                              str(detail.get("message") or "Runtime request failed"),
+                                              retryable=response.status >= 500)
+                return result
+
+
+@dataclass(frozen=True)
+class _SessionBinding:
+    session_id: str
+    subject: str
+    workspace_id: str
+    definition_id: str
+    definition_version: str
+    backend_id: str
+    idempotency_key: str
+
+
+class GatewayRuntimeControlHandler:
+    """Maps Relay operations to the real Full Runtime owned by apps/desktop/windows."""
+
+    def __init__(self, runtime_id: str, transport: GatewayTransport, state_dir: Path) -> None:
+        self.runtime_id, self.transport = runtime_id, transport
+        self.state_dir = Path(state_dir)
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        self.database = self.state_dir / "relay-control.sqlite3"
+        self.definitions = AgentDefinitionStore(self.state_dir.parent / "assets" / "agents")
+        self._execution_tasks: set[asyncio.Task[Any]] = set()
+        self._initialize()
+
+    def _connect(self) -> sqlite3.Connection:
+        db = sqlite3.connect(self.database, timeout=30)
+        db.row_factory = sqlite3.Row
+        return db
+
+    def _initialize(self) -> None:
+        with self._connect() as db:
+            db.executescript("""
+              CREATE TABLE IF NOT EXISTS relay_sessions(
+                session_id TEXT PRIMARY KEY, subject TEXT NOT NULL, workspace_id TEXT NOT NULL,
+                definition_id TEXT NOT NULL, definition_version TEXT NOT NULL, backend_id TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL, UNIQUE(subject,idempotency_key)
+              );
+              CREATE TABLE IF NOT EXISTS relay_runs(
+                run_id TEXT PRIMARY KEY, subject TEXT NOT NULL, workspace_id TEXT NOT NULL, session_id TEXT NOT NULL,
+                correlation_id TEXT NOT NULL, message TEXT NOT NULL, attachment_refs_json TEXT NOT NULL,
+                retry_of TEXT, idempotency_key TEXT NOT NULL, UNIQUE(subject,idempotency_key)
+              );
+            """)
+
+    async def __call__(self, operation: str, arguments: dict[str, Any]) -> Any:
+        args, kwargs = arguments.get("args", []), arguments.get("kwargs", {})
+        if not isinstance(args, list) or not isinstance(kwargs, dict) or operation.startswith("_"):
+            raise GatewayControlError("runtime_request_invalid", "Runtime control arguments are invalid")
+        method = getattr(self, operation, None)
+        if method is None or operation not in {
+            "list_agent_definitions", "list_sessions", "list_sessions_for_subject", "create_session", "get_session",
+            "authorize_session", "list_runs", "list_runs_for_subject", "authorize_run",
+            "idempotency_result", "create_run", "get_run", "list_events", "cancel_run",
+            "pending_approvals", "pending_approvals_for_subject", "audit_entries", "audit_entries_for_subject",
+            "execute_owop", "decide_approval",
+        }:
+            raise GatewayControlError("runtime_operation_unsupported", "Runtime operation is unsupported")
+        return await method(*args, **kwargs)
+
+    async def list_agent_definitions(self) -> list[dict[str, Any]]:
+        capabilities = await self.transport.request("GET", "/v1/capabilities")
+        health = capabilities.get("agent_backends", {})
+        rows: list[dict[str, Any]] = []
+        root = self.definitions.root
+        for path in sorted(root.glob("*/*.json")) if root.exists() else ():
+            try:
+                definition = self.definitions.load(f"{path.parent.name}@{path.stem}")
+            except RuntimeExecutionError:
+                continue
+            backend = health.get(definition.backend, {})
+            rows.append({
+                "definition_id": definition.asset_id, "version": definition.version,
+                "display_name": str(definition.raw.get("name") or definition.asset_id),
+                "backend_id": definition.backend,
+                "backend_health": "healthy" if backend.get("available") else "unavailable",
+                "capabilities": sorted(definition.permissions),
+            })
+        return rows
+
+    async def published_workspaces(self) -> list[dict[str, str]]:
+        page = await self.transport.request("GET", "/v1/workspaces")
+        return [{
+            "runtime_id": self.runtime_id,
+            "workspace_id": str(item["workspace_id"]),
+            "display_name": Path(str(item["path"])).name or str(item["workspace_id"]),
+        } for item in page.get("data", []) if item.get("open", True)]
+
+    async def create_session(self, subject: str, workspace_id: str, *, title: str, definition_id: str,
+                             definition_version: str, idempotency_key: str) -> dict[str, Any]:
+        existing = self._binding_by_idempotency("relay_sessions", subject, idempotency_key)
+        if existing:
+            return await self.get_session(workspace_id, str(existing["session_id"]))
+        definition = self.definitions.load(f"{definition_id}@{definition_version}")
+        capabilities = await self.transport.request("GET", "/v1/capabilities")
+        if not capabilities.get("agent_backends", {}).get(definition.backend, {}).get("available"):
+            raise GatewayControlError("backend_unavailable", "Selected Backend is not healthy", retryable=True)
+        item = await self.transport.request("POST", "/v1/sessions", body={"workspace_id": workspace_id, "title": title})
+        with self._connect() as db:
+            db.execute("INSERT INTO relay_sessions VALUES(?,?,?,?,?,?,?)", (
+                item["session_id"], subject, workspace_id, definition_id, definition_version,
+                definition.backend, idempotency_key,
+            ))
+        return self._session(item, self._binding(str(item["session_id"])))
+
+    async def get_session(self, workspace_id: str, session_id: str) -> dict[str, Any]:
+        binding = self._binding(session_id)
+        if binding.workspace_id != workspace_id:
+            raise GatewayControlError("session_not_found", "Session was not found in this Workspace")
+        item = await self.transport.request("GET", f"/v1/sessions/{session_id}")
+        return self._session(item, binding)
+
+    async def authorize_session(self, subject: str, workspace_id: str, session_id: str) -> None:
+        binding = self._binding(session_id)
+        if binding.subject != subject or binding.workspace_id != workspace_id:
+            raise GatewayControlError("session_forbidden", "Session is not authorized")
+
+    async def list_sessions_for_subject(self, subject: str, workspace_id: str, *, cursor: str | None = None,
+                                        limit: int = 20, query: str | None = None):
+        offset = max(0, int(cursor or 0))
+        with self._connect() as db:
+            ids = [str(row[0]) for row in db.execute(
+                "SELECT session_id FROM relay_sessions WHERE subject=? AND workspace_id=? ORDER BY rowid",
+                (subject, workspace_id),
+            )]
+        rows = [await self.get_session(workspace_id, session_id) for session_id in ids]
+        if query:
+            rows = [item for item in rows if query.casefold() in item["title"].casefold()]
+        page = rows[offset:offset + limit]
+        return [page, str(offset + limit) if offset + limit < len(rows) else None]
+
+    async def list_sessions(self, workspace_id: str, *, cursor: str | None = None, limit: int = 20,
+                            query: str | None = None):
+        offset = max(0, int(cursor or 0))
+        page = await self.transport.request("GET", f"/v1/sessions?workspace_id={workspace_id}&offset={offset}&limit={limit}")
+        mapped = []
+        for item in page.get("data", []):
+            try:
+                binding = self._binding(str(item["session_id"]))
+            except GatewayControlError:
+                continue
+            if not query or query.casefold() in str(item.get("title", "")).casefold():
+                mapped.append(self._session(item, binding))
+        consumed = offset + len(page.get("data", []))
+        return [mapped, str(consumed) if consumed < int(page.get("total", consumed)) else None]
+
+    async def create_run(self, subject: str, workspace_id: str, session_id: str, *, message: str,
+                         attachment_refs: list[str], idempotency_key: str, correlation_id: str,
+                         retry_of: str | None = None, _authorization: str | None = None) -> dict[str, Any]:
+        existing = self._binding_by_idempotency("relay_runs", subject, idempotency_key)
+        if existing:
+            return await self.get_run(str(existing["run_id"]))
+        binding = self._binding(session_id)
+        if binding.workspace_id != workspace_id:
+            raise GatewayControlError("session_not_found", "Session was not found in this Workspace")
+        reference = f"{binding.definition_id}@{binding.definition_version}"
+        item = await self.transport.request("POST", f"/v1/sessions/{session_id}/runs",
+                                            body={"agent_definition": reference},
+                                            headers={"Idempotency-Key": idempotency_key})
+        with self._connect() as db:
+            db.execute("INSERT INTO relay_runs VALUES(?,?,?,?,?,?,?,?,?)", (
+                item["run_id"], subject, workspace_id, session_id, correlation_id, message,
+                json.dumps(attachment_refs), retry_of, idempotency_key,
+            ))
+        task = asyncio.create_task(self._execute_run(
+            str(item["run_id"]), message, subject, correlation_id, _authorization))
+        self._execution_tasks.add(task)
+        task.add_done_callback(self._execution_tasks.discard)
+        return await self.get_run(str(item["run_id"]))
+
+    async def _execute_run(self, run_id: str, message: str, subject: str, correlation_id: str,
+                           authorization: str | None) -> None:
+        try:
+            headers = {"X-Correlation-ID": correlation_id}
+            if authorization and authorization.startswith("Bearer "):
+                headers.update({"Authorization": authorization, "X-OpenDrSai-Auth-Mode": "oidc"})
+            await self.transport.request("POST", f"/v1/runs/{run_id}/execute",
+                                         body={"prompt": message, "user_id": subject},
+                                         headers=headers)
+        except Exception:
+            # The Full Runtime records the authoritative failure Event/status.
+            return
+
+    async def get_run(self, run_id: str) -> dict[str, Any]:
+        item = await self.transport.request("GET", f"/v1/runs/{run_id}")
+        return self._run(item, self._run_binding(run_id))
+
+    async def list_runs(self, workspace_id: str, session_id: str, *, cursor: str | None = None, limit: int = 20):
+        # Runtime has an authoritative point lookup; Relay metadata indexes only IDs it created.
+        offset = max(0, int(cursor or 0))
+        with self._connect() as db:
+            rows = db.execute("SELECT run_id FROM relay_runs WHERE workspace_id=? AND session_id=? ORDER BY rowid LIMIT ? OFFSET ?",
+                              (workspace_id, session_id, limit + 1, offset)).fetchall()
+        items = [await self.get_run(str(row["run_id"])) for row in rows[:limit]]
+        return [items, str(offset + limit) if len(rows) > limit else None]
+
+    async def list_runs_for_subject(self, subject: str, workspace_id: str, session_id: str, *,
+                                    cursor: str | None = None, limit: int = 20):
+        await self.authorize_session(subject, workspace_id, session_id)
+        offset = max(0, int(cursor or 0))
+        with self._connect() as db:
+            ids = [str(row[0]) for row in db.execute(
+                "SELECT run_id FROM relay_runs WHERE subject=? AND workspace_id=? AND session_id=? ORDER BY rowid",
+                (subject, workspace_id, session_id),
+            )]
+        rows = [await self.get_run(run_id) for run_id in ids[offset:offset + limit]]
+        return [rows, str(offset + limit) if offset + limit < len(ids) else None]
+
+    async def authorize_run(self, subject: str, run_id: str) -> None:
+        if self._run_binding(run_id)["subject"] != subject:
+            raise GatewayControlError("run_forbidden", "Run is not authorized")
+
+    async def idempotency_result(self, subject: str, operation: str, idempotency_key: str) -> dict[str, Any]:
+        table = {"session.create": "relay_sessions", "run.create": "relay_runs"}.get(operation)
+        if table is None:
+            raise GatewayControlError("idempotency_operation_invalid", "Idempotency operation is invalid")
+        row = self._binding_by_idempotency(table, subject, idempotency_key)
+        if row is None:
+            raise GatewayControlError("idempotency_result_not_found", "Idempotency result was not found")
+        return await (self.get_run(str(row["run_id"])) if table == "relay_runs"
+                      else self.get_session(str(row["workspace_id"]), str(row["session_id"])))
+
+    async def list_events(self, run_id: str, *, after_sequence: int = 0, limit: int = 500):
+        run = self._run_binding(run_id)
+        page = await self.transport.request("GET", f"/v1/runs/{run_id}/events?after_sequence={after_sequence}&limit={limit}")
+        items = [self._event_projection(item, run, run_id) for item in page.get("data", [])]
+        return [items, str(items[-1]["sequence"]) if len(items) == limit else None]
+
+    def _event_projection(self, item: dict[str, Any], run: dict[str, Any], run_id: str) -> dict[str, Any]:
+        kind = str(item["type"])
+        payload = dict(item.get("data", {}))
+        if kind == "agent.message.delta":
+            kind = "message.delta"
+            payload = {**payload, "delta": str(payload.get("delta", payload.get("content", "")))}
+        elif kind == "tool.completed":
+            kind = "tool.finished"
+        return {
+            "event_id": item["event_id"], "sequence": item["sequence"], "runtime_id": self.runtime_id,
+            "workspace_id": run["workspace_id"], "session_id": run["session_id"], "run_id": run_id,
+            "kind": kind, "timestamp": item["created_at"], "payload": payload,
+        }
+
+    async def cancel_run(self, workspace_id: str, run_id: str) -> dict[str, Any]:
+        binding = self._run_binding(run_id)
+        if binding["workspace_id"] != workspace_id:
+            raise GatewayControlError("run_scope_mismatch", "Run belongs to another Workspace")
+        await self.transport.request("POST", f"/v1/runs/{run_id}/cancel", body={})
+        return await self.get_run(run_id)
+
+    async def pending_approvals(self, workspace_id: str) -> list[dict[str, Any]]:
+        page = await self.transport.request("GET", "/v1/approvals?status=pending")
+        rows = page.get("data", page if isinstance(page, list) else [])
+        return [self._approval(item) for item in rows
+                if self._run_binding(str(item["run_id"]))["workspace_id"] == workspace_id]
+
+    async def pending_approvals_for_subject(self, subject: str, workspace_id: str) -> list[dict[str, Any]]:
+        return [item for item in await self.pending_approvals(workspace_id)
+                if self._run_binding(item["run_id"])["subject"] == subject]
+
+    async def decide_approval(self, subject: str, approval_id: str, decision: str) -> dict[str, Any]:
+        mapped = {"approve": "approved", "deny": "denied", "cancel": "denied"}.get(decision)
+        if mapped is None:
+            raise GatewayControlError("approval_decision_invalid", "Invalid approval decision")
+        page = await self.transport.request("GET", "/v1/approvals?status=pending")
+        candidates = page.get("data", page if isinstance(page, list) else [])
+        candidate = next((item for item in candidates if str(item.get("approval_id")) == approval_id), None)
+        if candidate is None:
+            raise GatewayControlError("approval_not_found", "Approval is no longer pending")
+        await self.authorize_run(subject, str(candidate["run_id"]))
+        item = await self.transport.request("POST", f"/v1/approvals/{approval_id}/decision",
+                                            body={"decision": mapped, "detail": {"subject": subject}})
+        try:
+            await self.transport.request("POST", f"/v1/runs/{item['run_id']}/approvals/{approval_id}/decision",
+                                         body={"decision": mapped, "detail": {"subject": subject}})
+        except GatewayControlError as exc:
+            if exc.code not in {"approval_not_found", "approval_not_supported"}:
+                raise
+        return self._approval(item)
+
+    async def audit_entries(self, workspace_id: str, run_id: str | None = None) -> list[dict[str, Any]]:
+        run_ids = [run_id] if run_id else self._workspace_run_ids(workspace_id)
+        entries = []
+        for current in run_ids:
+            events, _ = await self.list_events(current, limit=500)
+            binding = self._run_binding(current)
+            for event in events:
+                if event["kind"] in {"run.created", "run.cancelled", "approval.requested", "approval.approved", "approval.denied"}:
+                    entries.append({
+                        "audit_id": f"audit:{event['event_id']}", "runtime_id": self.runtime_id,
+                        "workspace_id": workspace_id, "session_id": binding["session_id"], "run_id": current,
+                        "action": event["kind"], "subject": binding["subject"],
+                        "timestamp": event["timestamp"],
+                        "correlation_id": binding["correlation_id"],
+                        "approval_id": event["payload"].get("approval_id"),
+                    })
+        return entries
+
+    async def audit_entries_for_subject(self, subject: str, workspace_id: str,
+                                        run_id: str | None = None) -> list[dict[str, Any]]:
+        if run_id is not None:
+            await self.authorize_run(subject, run_id)
+        return [item for item in await self.audit_entries(workspace_id, run_id)
+                if self._run_binding(item["run_id"])["subject"] == subject]
+
+    async def execute_owop(self, workspace_id: str, operation: str, params: dict[str, Any]) -> dict[str, Any]:
+        allowed = {"workspace.describe", "files.list", "files.stat", "files.read", "search.query",
+                   "git.status", "git.diff", "git.file_at_ref", "artifact.metadata", "artifact.chunk"}
+        if operation not in allowed:
+            raise GatewayControlError("owop_operation_forbidden", "OWOP operation is not allowed on Android")
+        request_id, correlation_id = str(uuid4()), str(uuid4())
+        response = await self.transport.request("POST", "/v1/owop", body={
+            "version": "1.0", "request_id": request_id, "correlation_id": correlation_id,
+            "workspace_id": workspace_id, "operation": operation, "params": params,
+            # Relay is the outer transport; once inside this Full Runtime the
+            # authoritative Workspace adapter is the Runtime's local binding.
+            "binding": {"kind": "in_process"},
+        })
+        if response.get("ok") is not True:
+            error = response.get("error", {})
+            raise GatewayControlError(str(error.get("code") or "owop_failed"), str(error.get("message") or "OWOP failed"))
+        result = response.get("result", {})
+        if operation == "files.list":
+            if isinstance(result.get("items"), list):
+                return result
+            entries = result.get("entries", [])
+            return {"items": [{
+                "token": str(item.get("path", "")), "relative_path": str(item.get("path", "")),
+                "type": str(item.get("kind", "file")), "size": item.get("size"), "modified_at": None,
+                "git_status": None, "truncated": False,
+            } for item in entries], "next_cursor": result.get("cursor"), "truncated": False,
+                    "ignored_hint": ".git, .drsai, node_modules and __pycache__ are hidden"}
+        if operation == "search.query":
+            matches = result.get("matches", [])
+            return {"items": [{"token": str(item.get("path", "")), "relative_path": str(item.get("path", "")),
+                                "type": "file", "size": None, "modified_at": None, "git_status": None,
+                                "truncated": False} for item in matches],
+                    "next_cursor": result.get("cursor"), "truncated": False}
+        return result
+
+    def _binding(self, session_id: str) -> _SessionBinding:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM relay_sessions WHERE session_id=?", (session_id,)).fetchone()
+        if row is None:
+            raise GatewayControlError("session_not_found", "Session was not created through this Relay")
+        return _SessionBinding(**dict(row))
+
+    def _run_binding(self, run_id: str) -> dict[str, Any]:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM relay_runs WHERE run_id=?", (run_id,)).fetchone()
+        if row is None:
+            raise GatewayControlError("run_not_found", "Run was not created through this Relay")
+        result = dict(row)
+        result["attachment_refs"] = json.loads(result.pop("attachment_refs_json"))
+        return result
+
+    def _binding_by_idempotency(self, table: str, subject: str, key: str):
+        with self._connect() as db:
+            return db.execute(f"SELECT * FROM {table} WHERE subject=? AND idempotency_key=?", (subject, key)).fetchone()
+
+    def _workspace_run_ids(self, workspace_id: str) -> list[str]:
+        with self._connect() as db:
+            return [str(row[0]) for row in db.execute("SELECT run_id FROM relay_runs WHERE workspace_id=?", (workspace_id,))]
+
+    def _session(self, item: dict[str, Any], binding: _SessionBinding) -> dict[str, Any]:
+        return {"runtime_id": self.runtime_id, "workspace_id": binding.workspace_id,
+                "session_id": binding.session_id, "title": item["title"],
+                "agent_definition_id": binding.definition_id, "agent_definition_version": binding.definition_version,
+                "backend_id": binding.backend_id, "updated_at": item["updated_at"], "lifecycle": "active",
+                "last_run_status": None}
+
+    def _run(self, item: dict[str, Any], binding: dict[str, Any]) -> dict[str, Any]:
+        return {"runtime_id": self.runtime_id, "workspace_id": binding["workspace_id"],
+                "session_id": binding["session_id"], "run_id": item["run_id"], "backend_id": item["backend_id"],
+                "status": item["status"], "correlation_id": binding["correlation_id"],
+                "created_at": item["created_at"], "retry_of": binding["retry_of"], "message": binding["message"],
+                "attachment_refs": binding["attachment_refs"]}
+
+    def _approval(self, item: dict[str, Any]) -> dict[str, Any]:
+        run = self._run_binding(str(item["run_id"]))
+        request = item.get("request", {})
+        binding = self._binding(str(run["session_id"]))
+        return {"runtime_id": self.runtime_id, "workspace_id": run["workspace_id"],
+                "session_id": run["session_id"], "run_id": item["run_id"], "approval_id": item["approval_id"],
+                "agent_definition_id": binding.definition_id, "backend_id": binding.backend_id,
+                "operation": str(request.get("operation") or request.get("tool") or "runtime.operation"),
+                "risk_summary": str(request.get("risk_summary") or request.get("reason") or "Review required"),
+                "scope": str(request.get("scope") or "workspace"), "expires_at": item.get("deadline_at") or "",
+                "correlation_id": run["correlation_id"], "status": item["status"]}

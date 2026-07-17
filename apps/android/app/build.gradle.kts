@@ -1,4 +1,5 @@
 import com.android.build.api.variant.impl.VariantOutputImpl
+import groovy.json.JsonSlurper
 
 val systemVersionFile = rootProject.file(
     "../webui/backend/src/drsai_ui/ui_backend/version.py"
@@ -55,6 +56,7 @@ android {
         buildConfigField("String", "OIDC_ISSUER", oidcIssuer.asBuildConfigString())
         buildConfigField("String", "OIDC_DISCOVERY_URL", oidcDiscoveryUrl.asBuildConfigString())
         buildConfigField("String", "MODEL_BASE_URL", "$haiBaseUrl/apiv2/v1".asBuildConfigString())
+        buildConfigField("String", "RELAY_BASE_URL", "$haiBaseUrl/api/runtime-relay".asBuildConfigString())
         buildConfigField("String", "OIDC_CLIENT_ID", androidOidcClientId.asBuildConfigString())
         buildConfigField("String", "OIDC_REDIRECT_URI", androidOidcRedirectUri.asBuildConfigString())
         manifestPlaceholders["usesCleartextTraffic"] = "false"
@@ -99,6 +101,139 @@ androidComponents {
     }
 }
 
+val owopSchemaFile = rootProject.file("../../protocol/owop/owop.schema.json")
+val generatedOwopFile = file(
+    "src/main/java/ai/drsai/remote/remote/generated/OwopSchemaGenerated.kt"
+)
+val relaySchemaFile = rootProject.file("../../protocol/relay/runtime-relay.schema.json")
+val generatedRelayFile = file(
+    "src/main/java/ai/drsai/remote/remote/generated/RelayContractGenerated.kt"
+)
+
+fun renderAndroidOwopBindings(): String {
+    @Suppress("UNCHECKED_CAST")
+    val schema = JsonSlurper().parse(owopSchemaFile) as Map<String, Any?>
+    val version = schema["version"] as String
+    val operations = (schema["x-owop-operations"] as Map<*, *>).keys.map(Any?::toString).sorted()
+    val bindings = (schema["x-owop-bindings"] as List<*>).map(Any?::toString).sorted()
+    fun quoted(values: List<String>) = values.joinToString(",\n") { "        \"$it\"" }
+    return """
+        // Generated from protocol/owop/owop.schema.json. Do not edit.
+        package ai.drsai.remote.remote.generated
+
+        object OwopSchemaGenerated {
+            const val VERSION: String = "$version"
+            val OPERATIONS: Set<String> = setOf(
+        ${quoted(operations)}
+            )
+            val BINDINGS: Set<String> = setOf(
+        ${quoted(bindings)}
+            )
+        }
+    """.trimIndent() + "\n"
+}
+
+tasks.register("generateAndroidOwopBindings") {
+    inputs.file(owopSchemaFile)
+    outputs.file(generatedOwopFile)
+    doLast {
+        generatedOwopFile.parentFile.mkdirs()
+        generatedOwopFile.writeText(renderAndroidOwopBindings())
+    }
+}
+
+tasks.register("verifyAndroidOwopBindings") {
+    mustRunAfter("generateAndroidOwopBindings")
+    inputs.file(owopSchemaFile)
+    inputs.file(generatedOwopFile)
+    doLast {
+        check(generatedOwopFile.exists()) {
+            "Missing generated Android OWOP bindings. Run generateAndroidOwopBindings."
+        }
+        check(generatedOwopFile.readText() == renderAndroidOwopBindings()) {
+            "Android OWOP bindings drifted from protocol/owop/owop.schema.json. Run generateAndroidOwopBindings."
+        }
+    }
+}
+
+fun renderAndroidRelayBindings(): String {
+    @Suppress("UNCHECKED_CAST")
+    val schema = JsonSlurper().parse(relaySchemaFile) as Map<String, Any?>
+    val endpoints = (schema["x-relay-endpoints"] as Map<*, *>)
+        .mapKeys { it.key.toString() }.mapValues { it.value.toString() }.toSortedMap()
+    val capabilities = (schema["x-relay-capabilities"] as List<*>).map(Any?::toString).sorted()
+    val endpointLines = endpoints.entries.joinToString(",\n") { "        \"${it.key}\" to \"${it.value}\"" }
+    val capabilityLines = capabilities.joinToString(",\n") { "        \"$it\"" }
+    return """// Generated from protocol/relay/runtime-relay.schema.json. Do not edit.
+package ai.drsai.remote.remote.generated
+
+object RelayContractGenerated {
+    const val SCHEMA_VERSION: String = "${schema["version"]}"
+    const val PROTOCOL_VERSION: String = "${schema["protocol_version"]}"
+    val ENDPOINTS: Map<String, String> = mapOf(
+$endpointLines
+    )
+    val CAPABILITIES: Set<String> = setOf(
+$capabilityLines
+    )
+}
+
+data class GeneratedControlRequest(
+    val requestId: String,
+    val correlationId: String,
+    val idempotencyKey: String? = null,
+)
+
+data class GeneratedErrorEnvelope(
+    val code: String,
+    val message: String,
+    val correlationId: String,
+    val retryable: Boolean,
+    val details: Map<String, Any?>,
+    val source: String,
+)
+
+data class GeneratedRelayEvent(
+    val eventId: String,
+    val sequence: Long,
+    val runtimeId: String,
+    val workspaceId: String,
+    val sessionId: String,
+    val runId: String,
+    val timestamp: String,
+    val kind: String,
+    val payload: Map<String, Any?>,
+)
+"""
+}
+
+tasks.register("generateAndroidRelayBindings") {
+    inputs.file(relaySchemaFile)
+    outputs.file(generatedRelayFile)
+    doLast {
+        generatedRelayFile.parentFile.mkdirs()
+        generatedRelayFile.writeText(renderAndroidRelayBindings())
+    }
+}
+
+tasks.register("verifyAndroidRelayBindings") {
+    mustRunAfter("generateAndroidRelayBindings")
+    inputs.file(relaySchemaFile)
+    inputs.file(generatedRelayFile)
+    doLast {
+        check(generatedRelayFile.exists()) {
+            "Missing generated Android Relay bindings. Run generateAndroidRelayBindings."
+        }
+        check(generatedRelayFile.readText() == renderAndroidRelayBindings()) {
+            "Android Relay bindings drifted from protocol/relay/runtime-relay.schema.json."
+        }
+    }
+}
+
+tasks.named("preBuild").configure {
+    dependsOn("verifyAndroidOwopBindings", "verifyAndroidRelayBindings")
+}
+
 dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.activity:activity-ktx:1.10.0")
@@ -119,6 +254,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     implementation("androidx.room:room-runtime:2.7.2")
     implementation("androidx.room:room-ktx:2.7.2")
