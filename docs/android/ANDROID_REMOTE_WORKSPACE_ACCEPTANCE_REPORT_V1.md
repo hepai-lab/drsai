@@ -5,7 +5,7 @@
 
 ## 结论
 
-当前范围 95 个功能点中 94 项完成。代码、协议、两个 Android 模拟器及生产配置测试签名 APK 已验收；唯一未完成项是 GitHub Release 资产同步，本机 `gh` 的 GitHub 凭据已失效。
+当前范围 95 个功能点全部完成。代码、协议、两个 Android 模拟器、生产配置测试签名 APK 及 GitHub Release 资产均已验收。
 
 ## 关键端到端结果
 
@@ -44,10 +44,10 @@ API 30 与 API 35 使用两个独立 AVD；网络切换、后台恢复、多客�
 
 ## 未完成门禁
 
-`gh auth status` 报告 `GH_TOKEN` 和默认 GitHub 账户凭据均失效，因此未上传最终 APK 或创建/更新 GitHub Release。公开 GitHub API 的只读核验结果如下：
+发布时清除了失效的临时 `GH_TOKEN`，通过本机代理和系统凭据完成推送及 Release 上传。公开 GitHub API 核验结果如下：
 
-- `android-v1.4.6` 正式 Release 不存在；
-- `android-v1.4.6-beta.1` 存在，但 APK 为旧构建，大小 `2,339,152` bytes，SHA-256 为 `D1709DEDC991A80FAA21D11E9DD5412E5785409E97B90D653FA7C28D6200BB04`；
+- `android-v1.4.6` 已创建为预发布 Release；
+- `OpenDrSai-Android-v1.4.6.apk` 已上传，大小 `2,811,463` bytes，SHA-256 为 `ACE7B01C48DE3F1BF393B3D54F06A364AA93A87058F6FB21CAB7B9018E5DDF81`；
 - 旧资产与本报告验收的 `ACE7B01C...E5DDF81` 不一致，不能作为本阶段完成证据。
 
-重新执行 `gh auth login -h github.com` 后，应提交本阶段代码并上传上述精确 SHA-256 的 APK，再将 M12-F08 标记完成。
+M12-F08 已完成，发布资产可从 `android-v1.4.6` Release 下载。

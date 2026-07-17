@@ -11,14 +11,14 @@
 | --- | ---: |
 | 功能点总数 | 96 |
 | 当前验收范围 | 95 |
-| 已完成 | 94 |
+| 已完成 | 95 |
 | 进行中 | 0 |
 | 未开始 | 0 |
-| 受阻 | 1 |
+| 受阻 | 0 |
 | 延期 | 1 |
-| 当前范围完成率 | 98.9% |
+| 当前范围完成率 | 100% |
 
-当前阶段：95 项当前范围中 94 项已完成；仅 GitHub Release 资产同步因本机 `gh` 凭据失效受阻。真实 E2E 只包含 `apps/desktop/windows` OpenDrSai Backend，Codex E2E 延期且不设真机门禁。
+当前阶段：95 项当前范围全部完成。真实 E2E 只包含 `apps/desktop/windows` OpenDrSai Backend，Codex E2E 延期且不设真机门禁。
 
 ## 模块进度
 
@@ -35,7 +35,7 @@
 | M09 | 只读 Files、Git 与 Artifact | 8/8 | 完成 |
 | M10 | 移动网络、后台与可靠性 | 8/8 | 完成 |
 | M11 | Backend 无关兼容与 OpenDrSai 验收 | 7/7 当前 + 1 延期 | 完成 |
-| M12 | 自动化、模拟器、构建与发布验收 | 7/8 | 发布同步受阻 |
+| M12 | 自动化、模拟器、构建与发布验收 | 8/8 | 完成 |
 
 ## 已完成证据
 
@@ -153,10 +153,10 @@
 
 ## 第 19～20 轮结论（2026-07-17）
 
-完成数由 86 增至 94，当前范围完成率 98.9%。M11-F02 已使用本仓库 `apps/desktop/windows` 的实际 Gateway/Full Runtime 完成 Session、Run、OpenDrSai Tool、Approval、Artifact、Files OWOP、幂等恢复及 Runtime 重启 E2E。生产桥接新增 Runtime 主动 WSS 控制 RPC、握手后 Workspace 自动发布和 Backend health；HAI Bearer Token 被转发到 OpenDrSai Backend，但不落库。
+完成数由 86 增至 95，当前范围完成率 100%。M11-F02 已使用本仓库 `apps/desktop/windows` 的实际 Gateway/Full Runtime 完成 Session、Run、OpenDrSai Tool、Approval、Artifact、Files OWOP、幂等恢复及 Runtime 重启 E2E。生产桥接新增 Runtime 主动 WSS 控制 RPC、握手后 Workspace 自动发布和 Backend health；HAI Bearer Token 被转发到 OpenDrSai Backend，但不落库。
 
 发布前审计修复了四项真实缺口：Windows `agent.message.delta`/`tool.completed` 统一投影为 Android 契约事件；Relay Event 补齐 `timestamp`；Android 文件点击接入有界预览/完整 digest 下载，Artifact 接入会话卡片和 FileProvider；OIDC subject、Workspace、Session、Run、Approval 与 Audit 改为逐层 fail-closed 授权。Approval deadline 在等待超时和前台查询两条路径都收敛为权威 `timeout`。
 
-最终证据：Relay/OpenDrSai Windows E2E 47 passed；Runtime/OWOP/Artifact 74 passed、58 subtests passed、1 platform skip；Windows Workspace/Git/Terminal 36 passed；Android JVM 99/99、API 30 37/37、API 35 37/37、Lint/Lint Vital/双 Schema binding 全通过。最终测试签名 APK 已 R8 构建、覆盖安装并启动，SHA-256 为 `ACE7B01C48DE3F1BF393B3D54F06A364AA93A87058F6FB21CAB7B9018E5DDF81`。M12-F08 仅剩 GitHub 资产同步；`gh auth status` 显示 GitHub 凭据失效。
+最终证据：Relay/OpenDrSai Windows E2E 47 passed；Runtime/OWOP/Artifact 74 passed、58 subtests passed、1 platform skip；Windows Workspace/Git/Terminal 36 passed；Android JVM 99/99、API 30 37/37、API 35 37/37、Lint/Lint Vital/双 Schema binding 全通过。最终测试签名 APK 已 R8 构建、覆盖安装并启动，SHA-256 为 `ACE7B01C48DE3F1BF393B3D54F06A364AA93A87058F6FB21CAB7B9018E5DDF81`，已发布到 GitHub Release `android-v1.4.6`。
 
-公开 GitHub API 复核确认 `android-v1.4.6` 不存在；已有 `android-v1.4.6-beta.1` 仍携带旧 APK（SHA-256 `D1709DEDC991A80FAA21D11E9DD5412E5785409E97B90D653FA7C28D6200BB04`），不能替代本轮最终构建。
+公开 GitHub API 复核确认 `android-v1.4.6` 已创建，资产 `OpenDrSai-Android-v1.4.6.apk` 已上传，GitHub digest 与本地 SHA-256 一致。
