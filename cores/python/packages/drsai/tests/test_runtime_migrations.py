@@ -1,4 +1,7 @@
+import sqlite3
 from pathlib import Path
+
+import pytest
 
 from drsai.backend.runtime_engine import RuntimeEngine, RuntimeEngineIdentity
 from drsai.backend.runtime_migrations import LegacySessionMigrator
@@ -38,3 +41,28 @@ def test_workdir_migration_is_runtime_scoped_idempotent_and_retains_pending(tmp_
     assert migrated_b["workspace_id"] == workspace_b.workspace_id
     assert migrated_b["session_id"] != first[0]["session_id"]
     assert engine_b.list_sessions(workspace_b.workspace_id)["total"] == 1
+
+
+def test_migration_failure_leaves_source_and_report_unchanged_then_retries(tmp_path: Path, monkeypatch):
+    root = tmp_path / "workspace"
+    root.mkdir()
+    registry, engine, migrator = build(tmp_path / "runtime")
+    registry.open_workspace(str(root))
+    source = {"session_id": "legacy-fault", "workdir": str(root), "title": "original"}
+    original = dict(source)
+    real_import = engine.import_session
+
+    def fail_before_write(*_args, **_kwargs):
+        raise sqlite3.OperationalError("injected migration failure")
+
+    monkeypatch.setattr(engine, "import_session", fail_before_write)
+    with pytest.raises(sqlite3.OperationalError):
+        migrator.migrate([source])
+    assert source == original
+    assert migrator.list_pending() == []
+
+    monkeypatch.setattr(engine, "import_session", real_import)
+    first = migrator.migrate([source])[0]
+    second = migrator.migrate([source])[0]
+    assert first == second
+    assert first["status"] == "migrated"

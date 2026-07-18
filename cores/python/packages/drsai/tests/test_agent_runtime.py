@@ -130,11 +130,44 @@ class AgentRuntimeTests(unittest.TestCase):
         asyncio.run(service.recover(recover_run["run_id"]))
         with self.assertRaises(RuntimeExecutionError) as caught:
             asyncio.run(service.respond_approval(recover_run["run_id"], "approval-1", "accept"))
-        self.assertEqual(caught.exception.code, "approval_not_supported")
+        self.assertEqual(caught.exception.code, "approval_not_found")
         self.assertTrue(asyncio.run(service.health())["opendrsai"]["available"])
         asyncio.run(service.close())
         asyncio.run(service.close())
         self.assertFalse(asyncio.run(service.health())["opendrsai"]["available"])
+
+    def test_opendrsai_run_waits_for_runtime_approval_and_resumes_once(self) -> None:
+        reference = self.definition("approval", "1", ["shell.execute"])
+        model = lambda *_: {
+            "calls": [{"kind": "approval", "name": "shell.execute", "arguments": {
+                "risk_summary": "Run a command", "scope": "workspace", "timeout_seconds": 5,
+            }}],
+            "content": "approved-complete", "done": True,
+        }
+        backend = OpenDrSaiAgentBackend(model)
+        service = self.service(backend)
+        run = self.create_runtime_run(reference, "approval-run")
+
+        async def scenario():
+            execution = asyncio.create_task(service.execute(run["run_id"], "please continue"))
+            for _ in range(100):
+                pending = self.engine.list_pending_approvals(run["run_id"])
+                if pending:
+                    break
+                await asyncio.sleep(0.01)
+            self.assertEqual(len(pending), 1)
+            approval_id = pending[0]["approval_id"]
+            self.assertEqual(self.engine.get_run(run["run_id"])["status"], "waiting_approval")
+            self.engine.resolve_approval(approval_id, "approved")
+            await service.respond_approval(run["run_id"], approval_id, "approved")
+            result = await execution
+            self.assertEqual(result["run"]["status"], "completed")
+            self.assertEqual(result["result"]["content"], "approved-complete")
+            with self.assertRaises(RuntimeExecutionError) as repeated:
+                await service.respond_approval(run["run_id"], approval_id, "approved")
+            self.assertEqual(repeated.exception.code, "approval_not_found")
+
+        asyncio.run(scenario())
 
     def test_unknown_backend_never_falls_back_to_default(self) -> None:
         reference = self.definition("codex-only", "1", [], backend="codex")

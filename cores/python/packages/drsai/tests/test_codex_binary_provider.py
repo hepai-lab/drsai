@@ -100,6 +100,23 @@ def test_windows_and_linux_launch_providers_share_one_contract(tmp_path: Path):
     assert caught.value.code == "codex_platform_unsupported"
 
 
+def test_development_provider_reports_cli_version(tmp_path: Path):
+    executable = tmp_path / ("codex.cmd" if os.name == "nt" else "codex")
+    if os.name == "nt":
+        executable.write_text("@echo off\r\necho codex-cli 0.144.5\r\n", encoding="utf-8")
+    else:
+        executable.write_text("#!/bin/sh\necho codex-cli 0.144.5\n", encoding="utf-8")
+        executable.chmod(0o755)
+    provider = CodexBinaryProvider(
+        CodexArtifactStore(tmp_path / "managed", {}),
+        mode="development",
+        environ={"CODEX_BIN": str(executable)},
+    )
+    binary = provider.resolve()
+    assert binary.version == "0.144.5"
+    assert binary.source == "CODEX_BIN" and binary.release_safe is False
+
+
 def test_signature_digest_publisher_platform_and_schema_tampering_are_rejected(tmp_path: Path, trust):
     private, publishers = trust
 

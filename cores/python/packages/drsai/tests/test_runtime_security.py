@@ -36,8 +36,8 @@ def system(tmp_path: Path):
 def test_owner_editor_viewer_denied_matrix(tmp_path: Path) -> None:
     runtime, permissions, _, _ = system(tmp_path)
     expected = {
-        "owner": {"workspace.read", "file.write", "git.write", "git.push", "pty.execute", "shell.execute", "run.execute", "workspace.restore", "permission.manage"},
-        "editor": {"workspace.read", "file.write", "git.write", "git.push", "pty.execute", "shell.execute", "run.execute", "workspace.restore"},
+        "owner": {"workspace.read", "file.write", "git.write", "git.push", "worktree.write", "pty.execute", "shell.execute", "run.execute", "workspace.restore", "permission.manage"},
+        "editor": {"workspace.read", "file.write", "git.write", "git.push", "worktree.write", "pty.execute", "shell.execute", "run.execute", "workspace.restore"},
         "viewer": {"workspace.read"},
         "denied": set(),
     }
@@ -57,7 +57,7 @@ def test_permission_is_checked_before_approval(tmp_path: Path) -> None:
     assert [row["event"] for row in audit.list()] == ["permission.denied"]
 
 
-@pytest.mark.parametrize("action", ["shell.execute", "file.write", "git.push", "workspace.restore", "pty.execute"])
+@pytest.mark.parametrize("action", ["shell.execute", "file.write", "git.push", "worktree.write", "workspace.restore", "pty.execute"])
 def test_sensitive_operations_require_scoped_one_time_approval(tmp_path: Path, action: str) -> None:
     runtime, permissions, approvals, audit = system(tmp_path)
     permissions.set_role("workspace-1", "owner", "owner")
@@ -91,6 +91,23 @@ def test_complete_audit_chain_is_append_only_and_redacted(tmp_path: Path) -> Non
         assert forbidden not in serialized
     with sqlite3.connect(audit.database) as db, pytest.raises(sqlite3.IntegrityError):
         db.execute("DELETE FROM runtime_audit")
+
+
+def test_audit_payloads_are_bounded_and_resource_correlation_is_complete(tmp_path: Path) -> None:
+    _, _, _, audit = system(tmp_path)
+    correlated = security.OperationContext(
+        "owner", "runtime-1", "workspace-1", "session-1", "run-1", "tool-1", "correlation-1",
+        host_id="host-1", worktree_id="worktree-1", terminal_id="terminal-1", operation_id="operation-1",
+    )
+    row = audit.record("bounded", correlated, {
+        "terminal_tail": "token=canary " + "x" * 10_000,
+        "snapshot": list(range(200)),
+    })
+    serialized = str(row)
+    assert "canary" not in serialized
+    assert "TRUNCATED" in serialized
+    for identity in ("host-1", "runtime-1", "workspace-1", "worktree-1", "terminal-1", "session-1", "run-1", "operation-1", "correlation-1"):
+        assert identity in serialized
 
 
 @pytest.mark.skipif(os.name == "nt", reason="openat/O_NOFOLLOW acceptance runs in Linux Docker")

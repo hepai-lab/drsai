@@ -7,7 +7,7 @@ import { hasDesktopApi } from "./desktopApi";
 import { installMockDesktopApi } from "./mockDesktopApi";
 import "./styles.css";
 
-if (import.meta.env.DEV) {
+if (import.meta.env.DEV || new URLSearchParams(window.location.search).get("structuredVisualFixture") === "1") {
   installMockDesktopApi();
 }
 

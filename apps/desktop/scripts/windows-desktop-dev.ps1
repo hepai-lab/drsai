@@ -464,7 +464,7 @@ function Start-HotReloadGateway {
         -ArgumentList $args `
         -WorkingDirectory $RepoRoot `
         -PassThru `
-        -WindowStyle Hidden `
+        -NoNewWindow `
         -RedirectStandardOutput $stdout `
         -RedirectStandardError $stderr
 

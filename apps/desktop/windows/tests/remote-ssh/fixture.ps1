@@ -16,6 +16,7 @@ $AuthorizedKeys = Join-Path $Here "authorized_keys"
 $Config = Join-Path $Here "ssh_config"
 $ConfigDirectory = Join-Path $Here "ssh_config.d"
 $KnownHosts = Join-Path $Here "known_hosts_fixture"
+$TrustedKnownHosts = Join-Path $Here "known_hosts_trusted_fixture"
 
 if ($Action -eq "Down") {
   foreach ($ContainerName in @($Name, $NameTwo)) {
@@ -23,7 +24,7 @@ if ($Action -eq "Down") {
       docker rm -f $ContainerName | Out-Null
     }
   }
-  Remove-Item -LiteralPath $Key, $Pub, $AuthorizedKeys, $Config, $KnownHosts -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $Key, $Pub, $AuthorizedKeys, $Config, $KnownHosts, $TrustedKnownHosts -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $ConfigDirectory -Recurse -Force -ErrorAction SilentlyContinue
   exit 0
 }
@@ -37,6 +38,7 @@ if (-not (Test-Path -LiteralPath $Key)) {
 }
 Copy-Item -LiteralPath $Pub -Destination $AuthorizedKeys -Force
 New-Item -ItemType File -Force -Path $KnownHosts | Out-Null
+New-Item -ItemType File -Force -Path $TrustedKnownHosts | Out-Null
 New-Item -ItemType Directory -Force -Path $ConfigDirectory | Out-Null
 $IncludePattern = ((Join-Path $ConfigDirectory "*.conf") -replace '\\', '/')
 @"
@@ -53,8 +55,8 @@ Host opendrsai-fixture
   User vscode
   IdentityFile $Key
   IdentitiesOnly yes
-  StrictHostKeyChecking no
-  UserKnownHostsFile NUL
+  StrictHostKeyChecking yes
+  UserKnownHostsFile $TrustedKnownHosts
   LogLevel ERROR
 
 Host opendrsai-fixture-two
@@ -63,8 +65,8 @@ Host opendrsai-fixture-two
   User vscode
   IdentityFile $Key
   IdentitiesOnly yes
-  StrictHostKeyChecking no
-  UserKnownHostsFile NUL
+  StrictHostKeyChecking yes
+  UserKnownHostsFile $TrustedKnownHosts
   LogLevel ERROR
 
 Host opendrsai-metadata
@@ -80,8 +82,8 @@ Host opendrsai-auth-failure
   User vscode
   IdentityFile C:/opendrsai-missing-key
   IdentitiesOnly yes
-  StrictHostKeyChecking no
-  UserKnownHostsFile NUL
+  StrictHostKeyChecking yes
+  UserKnownHostsFile $TrustedKnownHosts
 
 Host opendrsai-hostkey-failure
   HostName 127.0.0.1
@@ -109,6 +111,7 @@ Host opendrsai-timeout
 "@ | Set-Content -LiteralPath $IncludedConfig -Encoding ascii
 & icacls.exe $IncludedConfig /inheritance:r /grant:r "$env:USERNAME`:(F)" "SYSTEM`:(F)" | Out-Null
 & icacls.exe $KnownHosts /inheritance:r /grant:r "$env:USERNAME`:(F)" "SYSTEM`:(F)" | Out-Null
+& icacls.exe $TrustedKnownHosts /inheritance:r /grant:r "$env:USERNAME`:(F)" "SYSTEM`:(F)" | Out-Null
 
 docker build -t $Image $Here
 if (docker ps -a --format "{{.Names}}" | Select-String -SimpleMatch $Name) {
@@ -119,6 +122,17 @@ if (docker ps -a --format "{{.Names}}" | Select-String -SimpleMatch $NameTwo) {
   docker rm -f $NameTwo | Out-Null
 }
 docker run -d --name $NameTwo -p "127.0.0.1:${PortTwo}:22" $Image | Out-Null
+
+# Explicitly confirm only the disposable acceptance hosts. Product SSH calls keep
+# StrictHostKeyChecking=yes and never depend on an implicit trust prompt.
+for ($i = 0; $i -lt 30; $i++) {
+  ssh.exe -F $Config -o StrictHostKeyChecking=accept-new -o BatchMode=yes opendrsai-fixture "true" 2>$null
+  $FirstAccepted = $LASTEXITCODE -eq 0
+  ssh.exe -F $Config -o StrictHostKeyChecking=accept-new -o BatchMode=yes opendrsai-fixture-two "true" 2>$null
+  $SecondAccepted = $LASTEXITCODE -eq 0
+  if ($FirstAccepted -and $SecondAccepted) { break }
+  Start-Sleep -Milliseconds 500
+}
 
 for ($i = 0; $i -lt 30; $i++) {
   ssh.exe -F $Config -o BatchMode=yes opendrsai-fixture "printf fixture-ready" 2>$null

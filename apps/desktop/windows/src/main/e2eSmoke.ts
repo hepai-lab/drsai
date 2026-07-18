@@ -10337,7 +10337,7 @@ async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
 
       const staleDiff = await api.getWorkspaceGitDiff({ workspacePath: reviewFixture.workspacePath, path: reviewFixture.stalePath });
       const staleProposal = await api.revertWorkspaceFile({ workspacePath: reviewFixture.workspacePath, path: reviewFixture.stalePath, expectedDiffHash: staleDiff.diffHash });
-      const staleTerminal = await api.createTerminal({ cwd: reviewFixture.workspacePath, workspaceKey: "packaged-review", shellProfile: "cmd", title: "stale-review-writer" });
+      const staleTerminal = await api.createTerminal({ cwd: reviewFixture.workspacePath, workspaceId: reviewWorkspace.id, workspaceKey: "packaged-review", shellProfile: "cmd", title: "stale-review-writer" });
       await api.writeTerminal(staleTerminal.id, "echo external edit after review>>stale.txt\\r");
       await new Promise((resolve) => setTimeout(resolve, 500));
       await api.killTerminal(staleTerminal.id);
@@ -10361,7 +10361,7 @@ async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
 
       const nonGitWorkspace = await api.createWorkspace({ source: "existing", path: reviewFixture.nonGitWorkspacePath, name: "packaged-non-git-review", trusted: true });
       const nonGitCheckpoint = await api.createWorkspaceCheckpoint({ workspacePath: reviewFixture.nonGitWorkspacePath, label: "Before non-Git packaged edit", maxFiles: 20 });
-      const nonGitTerminal = await api.createTerminal({ cwd: reviewFixture.nonGitWorkspacePath, workspaceKey: "packaged-non-git", shellProfile: "cmd", title: "non-git-writer" });
+      const nonGitTerminal = await api.createTerminal({ cwd: reviewFixture.nonGitWorkspacePath, workspaceId: nonGitWorkspace.id, workspaceKey: "packaged-non-git", shellProfile: "cmd", title: "non-git-writer" });
       await api.writeTerminal(nonGitTerminal.id, "echo changed without git>>notes.txt\\r\\n");
       await new Promise((resolve) => setTimeout(resolve, 1500));
       await api.killTerminal(nonGitTerminal.id);

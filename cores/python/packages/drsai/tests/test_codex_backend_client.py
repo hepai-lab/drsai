@@ -81,6 +81,8 @@ class FakeRPC:
             return {"thread": {"id": identity}}
         if method == "thread/resume":
             return {"thread": {"id": values["threadId"]}}
+        if method in {"thread/archive", "thread/unarchive"}:
+            return {}
         if method == "turn/start":
             self.turn_count += 1
             identity = f"turn-{self.turn_count}"
@@ -154,6 +156,18 @@ def _services():
     return AgentExecutionServices(state, None, None), state
 
 
+@pytest.mark.parametrize("backend_config", [
+    {"approvalPolicy": "never"},
+    {"approvalPolicy": "bypass"},
+    {"sandbox": "danger-full-access"},
+    {"sandbox": "disabled"},
+])
+def test_rejects_codex_approval_or_workspace_safety_bypass(backend_config):
+    with pytest.raises(RuntimeExecutionError) as caught:
+        CodexAgentBackendClient._backend_config(_definition(backend_config=backend_config))
+    assert caught.value.code in {"codex_approval_policy_unsafe", "codex_sandbox_policy_unsafe"}
+
+
 @pytest.mark.anyio
 async def test_session_thread_run_turn_mapping_uses_authoritative_workspace_and_metadata(tmp_path: Path):
     rpc = FakeRPC()
@@ -166,6 +180,9 @@ async def test_session_thread_run_turn_mapping_uses_authoritative_workspace_and_
                                     "sandbox": "workspace-write", "reasoningEffort": "high"}),
         "implement this", services,
     )
+    await client.archive_session(context.session_id, archived=True)
+    await client.archive_session(context.session_id, archived=False)
+    assert [method for method, _ in rpc.calls if method in {"thread/archive", "thread/unarchive"}] == ["thread/archive", "thread/unarchive"]
     assert result["status"] == "completed"
     assert result["backend_metadata"] == {"thread_id": "thread-1", "turn_id": "turn-1"}
     thread_request = next(params for method, params in rpc.calls if method == "thread/start")

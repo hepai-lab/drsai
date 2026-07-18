@@ -20,7 +20,9 @@ def sample_params(schema: dict) -> dict:
     for name in schema.get("required", []):
         field = schema["properties"][name]
         reference = field.get("$ref", "")
-        if reference.endswith("relativePath"):
+        if "enum" in field:
+            value = field["enum"][0]
+        elif reference.endswith("relativePath"):
             value = "."
         elif reference.endswith("digest"):
             value = DIGEST
@@ -45,6 +47,31 @@ def sample_params(schema: dict) -> dict:
     return values
 
 
+def sample_result(schema: dict, definitions: dict) -> dict:
+    def value(field: dict):
+        reference = field.get("$ref")
+        if reference:
+            return value(definitions[reference.rsplit("/", 1)[-1]])
+        if "enum" in field:
+            return field["enum"][0]
+        field_type = field.get("type")
+        if isinstance(field_type, list):
+            field_type = next(item for item in field_type if item != "null")
+        if field_type == "object":
+            required = field.get("required", [])
+            return {name: value(field["properties"][name]) for name in required}
+        if field_type == "array":
+            return [value(field.get("items", {}))] if field.get("minItems", 0) else []
+        if field_type == "integer":
+            return max(0, field.get("minimum", 0))
+        if field_type == "number":
+            return 1.0
+        if field_type == "boolean":
+            return False
+        return "fixture-value"
+    return value(schema)
+
+
 def request(operation: str, params: dict) -> dict:
     return {
         "version": "1.0",
@@ -61,8 +88,12 @@ def test_in_process_and_local_ipc_run_same_compliance_suite() -> None:
     async def scenario() -> None:
         protocol = OWOPProtocol(SCHEMA)
         handlers = {
-            operation: (lambda params, selected=operation: {"operation": selected, "params": dict(params)})
-            for operation in protocol.operations
+            operation: (
+                lambda _params, selected=operation: sample_result(
+                    protocol.results.get(selected, {"type": "object", "properties": {}}),
+                    protocol.schema["$defs"],
+                )
+            ) for operation in protocol.operations
         }
         in_process = InProcessWorkspaceOperationsClient(protocol, handlers)
         server = LocalIPCWorkspaceOperationsServer(protocol, handlers)
@@ -75,7 +106,7 @@ def test_in_process_and_local_ipc_run_same_compliance_suite() -> None:
                     in_process.execute(operation_request), ipc.execute(operation_request)
                 )
                 assert direct == framed, operation
-                assert direct["ok"] is True
+                assert direct["ok"] is True, (operation, direct)
 
             invalid = request("files.stat", {"path": "../escape"})
             direct, framed = await asyncio.gather(in_process.execute(invalid), ipc.execute(invalid))

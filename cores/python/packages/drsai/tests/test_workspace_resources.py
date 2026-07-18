@@ -9,7 +9,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE = ROOT / "src" / "drsai" / "backend" / "workspace_resources.py"
-FIXTURES = ROOT.parents[4] / "protocol" / "orca-inspired" / "domain.fixtures.json"
+FIXTURES = ROOT.parents[3] / "protocol" / "orca-inspired" / "domain.fixtures.json"
+SCHEMA = ROOT.parents[3] / "protocol" / "orca-inspired" / "domain.schema.json"
 
 spec = importlib.util.spec_from_file_location("workspace_resources_under_test", MODULE)
 assert spec and spec.loader
@@ -23,6 +24,18 @@ class WorkspaceResourcesTests(unittest.TestCase):
         self.fixtures = json.loads(FIXTURES.read_text(encoding="utf-8"))
 
     def test_cross_language_fixtures_round_trip(self) -> None:
+        schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+        self.assertEqual(schema["version"], "1.0")
+        self.assertEqual(set(schema["$defs"]["worktreeStatus"]["enum"]), resources.WORKTREE_STATUSES)
+        self.assertEqual(set(schema["$defs"]["terminalStatus"]["enum"]), resources.TERMINAL_STATUSES)
+        self.assertEqual(
+            {key: frozenset(value) for key, value in schema["x-worktree-transitions"].items()},
+            resources.WORKTREE_TRANSITIONS,
+        )
+        self.assertEqual(
+            {key: frozenset(value) for key, value in schema["x-terminal-transitions"].items()},
+            resources.TERMINAL_TRANSITIONS,
+        )
         self.assertEqual(
             [resources.WorktreeResource.from_dict(item).as_dict() for item in self.fixtures["worktrees"]],
             self.fixtures["worktrees"],

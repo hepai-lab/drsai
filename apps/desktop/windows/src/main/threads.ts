@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { mkdir, readFile, writeFile } from "fs/promises";
+import { mkdir, readFile, rename, writeFile } from "fs/promises";
 import { dirname, join } from "path";
 import type {
   CreateThreadRequest,
@@ -14,11 +14,13 @@ import type {
   UpdateThreadRequest,
 } from "../shared/desktopApi";
 import { DRSAI_HOME } from "./paths";
+import { sanitizeStructuredTurnState } from "../shared/structuredConversation";
 
 const THREADS_FILE = join(DRSAI_HOME, "desktop", "threads.json");
 const THREAD_SNAPSHOTS_FILE = join(DRSAI_HOME, "desktop", "thread-snapshots.json");
 const MAX_THREADS = 200;
-const MAX_THREAD_SNAPSHOTS = 200;
+const MAX_ARCHIVED_THREADS = 2_000;
+const MAX_THREAD_SNAPSHOTS = 2_000;
 const MAX_SNAPSHOT_MESSAGES = 500;
 const MAX_MESSAGE_CHARS = 200_000;
 const MAX_STATUS_CHARS = 80_000;
@@ -47,12 +49,13 @@ export async function createThread(rawRequest: unknown): Promise<DesktopThread> 
     boundAgentId: request.boundAgentId,
     boundAgentName: request.boundAgentName,
     fork: request.fork,
+    execution: request.execution,
     createdAt: now,
     updatedAt: now,
     status: "idle",
     messageCount: 0,
   };
-  const threads = [thread, ...(await readThreads())].slice(0, MAX_THREADS);
+  const threads = retainThreads([thread, ...(await readThreads())]);
   await writeThreads(threads);
   return thread;
 }
@@ -70,18 +73,22 @@ export async function updateThread(rawRequest: unknown): Promise<DesktopThread> 
     boundAgentId: request.boundAgentId ?? existing?.boundAgentId,
     boundAgentName: request.boundAgentName ?? existing?.boundAgentName,
     fork: request.fork ?? existing?.fork,
+    execution: request.execution ?? existing?.execution,
     createdAt: existing?.createdAt || now,
     updatedAt: now,
     lastRunId: request.lastRunId ?? existing?.lastRunId,
     lastRequestId: request.lastRequestId ?? existing?.lastRequestId,
+    runtimeSessionId: request.runtimeSessionId ?? existing?.runtimeSessionId,
     status: request.status ?? existing?.status ?? "idle",
     messageCount: request.messageCount ?? existing?.messageCount,
     pinned: request.pinned ?? existing?.pinned,
     archived: request.archived ?? existing?.archived,
+    archivedAt: request.archived === true ? now : request.archived === false ? undefined : existing?.archivedAt,
+    archiveSource: request.archived === true ? request.archiveSource ?? existing?.archiveSource ?? "opendrsai" : request.archived === false ? undefined : existing?.archiveSource,
     unread: request.unread ?? existing?.unread,
   };
   const withoutCurrent = threads.filter((thread) => thread.id !== request.id);
-  await writeThreads([next, ...withoutCurrent].slice(0, MAX_THREADS));
+  await writeThreads(retainThreads([next, ...withoutCurrent]));
   return next;
 }
 
@@ -158,6 +165,7 @@ export async function upsertThreadFromRun(input: {
   boundAgentName?: string;
   lastRunId?: string;
   lastRequestId?: string;
+  runtimeSessionId?: string;
   status?: DesktopThread["status"];
   messageCount?: number;
 }): Promise<DesktopThread> {
@@ -166,22 +174,30 @@ export async function upsertThreadFromRun(input: {
 
 async function readThreads(): Promise<DesktopThread[]> {
   try {
-    const parsed = JSON.parse(await readFile(THREADS_FILE, "utf8"));
+    const parsed = parseStoredJson(await readFile(THREADS_FILE, "utf8"));
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(isThread).slice(0, MAX_THREADS);
+    return retainThreads(parsed.filter(isThread));
   } catch {
     return [];
   }
 }
 
 async function writeThreads(threads: DesktopThread[]): Promise<void> {
-  await mkdir(dirname(THREADS_FILE), { recursive: true });
-  await writeFile(THREADS_FILE, `${JSON.stringify(threads, null, 2)}\n`, "utf8");
+  await writeAtomicJson(THREADS_FILE, threads);
+}
+
+function retainThreads(threads: DesktopThread[]): DesktopThread[] {
+  const active: DesktopThread[] = [];
+  const archived: DesktopThread[] = [];
+  for (const thread of threads) {
+    (thread.archived ? archived : active).push(thread);
+  }
+  return [...active.slice(0, MAX_THREADS), ...archived.slice(0, MAX_ARCHIVED_THREADS)];
 }
 
 async function readThreadSnapshots(): Promise<Record<string, DesktopThreadSnapshot>> {
   try {
-    const parsed = JSON.parse(await readFile(THREAD_SNAPSHOTS_FILE, "utf8"));
+    const parsed = parseStoredJson(await readFile(THREAD_SNAPSHOTS_FILE, "utf8"));
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
     const entries = Object.values(parsed)
       .map((value) => {
@@ -207,8 +223,29 @@ async function writeThreadSnapshots(snapshots: Record<string, DesktopThreadSnaps
       .slice(0, MAX_THREAD_SNAPSHOTS)
       .map((snapshot) => [snapshot.threadId, snapshot]),
   );
-  await mkdir(dirname(THREAD_SNAPSHOTS_FILE), { recursive: true });
-  await writeFile(THREAD_SNAPSHOTS_FILE, `${JSON.stringify(capped, null, 2)}\n`, "utf8");
+  await writeAtomicJson(THREAD_SNAPSHOTS_FILE, capped);
+}
+
+async function writeAtomicJson(path: string, value: unknown): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  await rename(temporary, path);
+}
+
+function parseStoredJson(serialized: string): unknown {
+  try {
+    return JSON.parse(serialized);
+  } catch {
+    // A legacy interrupted write can leave a single string-valued property
+    // without its closing quote. Repair only that narrow, line-oriented form;
+    // all repaired data is rewritten atomically on the next normal update.
+    const repaired = serialized.replace(
+      /^(\s*"(?:id|kind|title|workspacePath|boundAgentId|boundAgentName|createdAt|updatedAt|lastRunId|lastRequestId|runtimeSessionId|status|archivedAt|archiveSource)"\s*:\s*".*?)(,\s*)$/gm,
+      (line, prefix: string, suffix: string) => prefix.endsWith('"') ? line : `${prefix}"${suffix}`,
+    );
+    return JSON.parse(repaired);
+  }
 }
 
 function validateCreateThreadRequest(rawRequest: unknown): CreateThreadRequest {
@@ -226,6 +263,7 @@ function validateCreateThreadRequest(rawRequest: unknown): CreateThreadRequest {
     boundAgentId: sanitizeOptionalAgentText(request.boundAgentId, MAX_AGENT_ID_CHARS, "Thread agent id is invalid."),
     boundAgentName: sanitizeOptionalAgentText(request.boundAgentName, MAX_AGENT_NAME_CHARS, "Thread agent name is invalid."),
     fork: sanitizeForkMetadata(request.fork),
+    execution: sanitizeExecutionBinding(request.execution),
   };
 }
 
@@ -254,14 +292,30 @@ function validateUpdateThreadRequest(rawRequest: unknown): UpdateThreadRequest {
     boundAgentId: sanitizeOptionalAgentText(request.boundAgentId, MAX_AGENT_ID_CHARS, "Thread agent id is invalid."),
     boundAgentName: sanitizeOptionalAgentText(request.boundAgentName, MAX_AGENT_NAME_CHARS, "Thread agent name is invalid."),
     fork: sanitizeForkMetadata(request.fork),
+    execution: sanitizeExecutionBinding(request.execution),
     lastRunId: sanitizeOptionalId(request.lastRunId, "Thread run id is invalid."),
     lastRequestId: sanitizeOptionalId(request.lastRequestId, "Thread request id is invalid."),
+    runtimeSessionId: sanitizeOptionalId(request.runtimeSessionId, "Thread Runtime session id is invalid."),
     status: request.status,
     messageCount: Number.isFinite(request.messageCount) ? Math.max(0, Number(request.messageCount)) : undefined,
     pinned: typeof request.pinned === "boolean" ? request.pinned : undefined,
     archived: typeof request.archived === "boolean" ? request.archived : undefined,
+    archiveSource: request.archiveSource === "opendrsai" || request.archiveSource === "codex" ? request.archiveSource : undefined,
     unread: typeof request.unread === "boolean" ? request.unread : undefined,
   };
+}
+
+function sanitizeExecutionBinding(value: unknown): DesktopThread["execution"] {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object") throw new Error("Thread execution binding is invalid.");
+  const binding = value as Partial<NonNullable<DesktopThread["execution"]>>;
+  const validId = (candidate: unknown): candidate is string => typeof candidate === "string" && /^[A-Za-z0-9_.:-]{1,200}$/.test(candidate);
+  if (!validId(binding.sourceWorkspaceId) || !validId(binding.workspaceId) || !validId(binding.worktreeId)) {
+    throw new Error("Thread execution resource identity is invalid.");
+  }
+  const canonicalPath = sanitizeWorkspacePath(binding.canonicalPath);
+  if (!canonicalPath) throw new Error("Thread execution Workspace path is invalid.");
+  return { sourceWorkspaceId: binding.sourceWorkspaceId, workspaceId: binding.workspaceId, worktreeId: binding.worktreeId, canonicalPath };
 }
 
 function validateThreadSnapshot(rawRequest: unknown): DesktopThreadSnapshot {
@@ -303,6 +357,7 @@ function sanitizeSnapshotMessage(rawMessage: unknown, index: number): DesktopThr
     typeof message.id === "string" && message.id.trim() && !/[\r\n]/.test(message.id)
       ? message.id.trim().slice(0, 160)
       : `message-${index + 1}`;
+  const structuredTurn = sanitizeStructuredTurnState(message.structuredTurn);
   return {
     id,
     role: message.role,
@@ -321,6 +376,7 @@ function sanitizeSnapshotMessage(rawMessage: unknown, index: number): DesktopThr
     ...(Array.isArray(message.parts)
       ? { parts: message.parts.slice(0, 64).flatMap(sanitizeMessagePart) }
       : {}),
+    ...(structuredTurn ? { structuredTurn } : {}),
     ...(typeof message.startedAt === "number" && Number.isFinite(message.startedAt)
       ? { startedAt: message.startedAt }
       : {}),

@@ -127,10 +127,22 @@ export function TerminalPanel({
       const raw = window.localStorage.getItem(commandHistoryKey(workspaceKey));
       const parsed = raw ? JSON.parse(raw) : [];
       setCommandHistory(Array.isArray(parsed) ? parsed.slice(0, 12) : []);
+      const shell = window.localStorage.getItem(terminalShellKey(workspaceKey));
+      if (["powershell", "pwsh", "cmd", "git-bash", "wsl"].includes(shell || "")) {
+        setSelectedShellProfile(shell as TerminalShellProfile);
+      }
     } catch {
       setCommandHistory([]);
     }
   }, [workspaceKey]);
+
+  useEffect(() => {
+    if (activeSessionId) window.localStorage.setItem(terminalSelectionKey(workspaceKey), activeSessionId);
+  }, [activeSessionId, workspaceKey]);
+
+  useEffect(() => {
+    window.localStorage.setItem(terminalShellKey(workspaceKey), selectedShellProfile);
+  }, [selectedShellProfile, workspaceKey]);
 
   useEffect(() => {
     try {
@@ -246,15 +258,17 @@ export function TerminalPanel({
   }, []);
 
   const refreshSessions = useCallback(async () => {
-    const next = await desktopApi.listTerminalSessions(workspaceKey);
+    const next = await desktopApi.listTerminalSessions(workspaceKey, workspaceId);
     setSessions(next);
     setActiveSessionId((current) => {
       if (current && next.some((session) => session.id === current))
         return current;
+      const preferred = window.localStorage.getItem(terminalSelectionKey(workspaceKey));
+      if (preferred && next.some((session) => session.id === preferred)) return preferred;
       return next[0]?.id ?? null;
     });
     return next;
-  }, [workspaceKey]);
+  }, [workspaceId, workspaceKey]);
 
   const createSession = useCallback(
     async (title?: string, shellProfile = selectedShellProfile) => {
@@ -428,37 +442,21 @@ export function TerminalPanel({
 
   useEffect(() => {
     let cancelled = false;
-    async function load(): Promise<void> {
+    async function loadExistingSessions(): Promise<void> {
       setStatusNote("Loading...");
+      setSessions([]);
+      setActiveSessionId(null);
       const existing = await desktopApi.listTerminalSessions(workspaceKey);
       if (cancelled) return;
-      if (existing.length > 0) {
-        setSessions(existing);
-        setActiveSessionId(existing[0].id);
-        setStatusNote("");
-        return;
-      }
-      const session = await desktopApi.createTerminal({
-        cwd,
-        workspaceId,
-        remoteHostAlias,
-        workspaceKey,
-        title: "Terminal 1",
-        shellProfile: selectedShellProfile,
-      });
-      if (cancelled) {
-        await desktopApi.killTerminal(session.id);
-        return;
-      }
-      setSessions([session]);
-      setActiveSessionId(session.id);
-      setStatusNote("");
+      setSessions(existing);
+      setActiveSessionId(existing[0]?.id ?? null);
+      setStatusNote(existing.length > 0 ? "" : "Select + to start a terminal.");
     }
-    void load();
+    void loadExistingSessions();
     return () => {
       cancelled = true;
     };
-  }, [cwd, remoteHostAlias, selectedShellProfile, workspaceId, workspaceKey]);
+  }, [workspaceKey]);
 
   useEffect(() => {
     activeSessionIdRef.current = activeSessionId;
@@ -626,10 +624,8 @@ export function TerminalPanel({
     const next = sessions.filter((session) => session.id !== activeSession.id);
     setSessions(next);
     setActiveSessionId(next[0]?.id ?? null);
-    if (next.length === 0) {
-      await createSession("Terminal 1");
-    }
-  }, [activeSession, createSession, sessions]);
+    if (next.length === 0) setStatusNote("Select + to start a terminal.");
+  }, [activeSession, sessions]);
 
   const killActiveSession = useCallback(async () => {
     await closeActiveSession();
@@ -855,6 +851,15 @@ export function TerminalPanel({
         ref={containerRef}
         onClick={() => setContextMenu(null)}
       >
+        {!activeSession ? (
+          <div className="terminal-empty-state">
+            <span>No terminal session</span>
+            <button type="button" onClick={() => void createSession()}>
+              <Plus size={14} />
+              New terminal
+            </button>
+          </div>
+        ) : null}
         {contextMenu && (
           <div
             className="terminal-context-menu"
@@ -902,6 +907,14 @@ function commandHistoryKey(workspaceKey: string): string {
 
 function commandRunsKey(workspaceKey: string): string {
   return `opendrsai.terminal.commandRuns.${workspaceKey}`;
+}
+
+function terminalSelectionKey(workspaceKey: string): string {
+  return `drsai:terminal-selection:${workspaceKey}`;
+}
+
+function terminalShellKey(workspaceKey: string): string {
+  return `drsai:terminal-shell:${workspaceKey}`;
 }
 
 function normalizeProposedCommand(

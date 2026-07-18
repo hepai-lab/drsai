@@ -1,5 +1,5 @@
 import { Notification } from "electron";
-import { mkdir, readFile, rename, writeFile } from "fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "fs/promises";
 import { dirname, join } from "path";
 import { randomUUID } from "crypto";
 import type {
@@ -32,10 +32,13 @@ interface CompletionNotificationHandlers {
 
 const SETTINGS_FILE = join(DRSAI_HOME, "desktop", "completion-notifications.json");
 const MAX_DIAGNOSTICS = 100;
+const FILE_REPLACE_RETRY_DELAYS_MS = [0, 25, 50, 100, 200, 400];
+const RETRYABLE_FILE_ERROR_CODES = new Set(["EACCES", "EBUSY", "EEXIST", "EPERM"]);
 const shownKeys = new Set<string>();
 const activeNotifications = new Map<string, Notification>();
 const diagnostics: CompletionNotificationDiagnostic[] = [];
 let preference: CompletionNotificationPreference = { enabled: false, language: "zh" };
+let preferenceWriteQueue: Promise<void> = Promise.resolve();
 let handlers: CompletionNotificationHandlers = {
   focusApp: () => undefined,
   publishClick: () => undefined,
@@ -59,12 +62,51 @@ export async function restoreCompletionNotificationPreference(): Promise<Complet
 export async function setCompletionNotificationPreference(
   raw: CompletionNotificationPreference,
 ): Promise<CompletionNotificationPreference> {
-  preference = normalizePreference(raw);
+  const nextPreference = normalizePreference(raw);
+  preference = nextPreference;
+  const pendingWrite = preferenceWriteQueue
+    .catch(() => undefined)
+    .then(() => persistCompletionNotificationPreference(nextPreference));
+  preferenceWriteQueue = pendingWrite;
+  await pendingWrite;
+  return { ...nextPreference };
+}
+
+async function persistCompletionNotificationPreference(
+  nextPreference: CompletionNotificationPreference,
+): Promise<void> {
   await mkdir(dirname(SETTINGS_FILE), { recursive: true });
   const temporaryPath = `${SETTINGS_FILE}.${process.pid}.${randomUUID()}.tmp`;
-  await writeFile(temporaryPath, `${JSON.stringify(preference, null, 2)}\n`, "utf8");
-  await rename(temporaryPath, SETTINGS_FILE);
-  return { ...preference };
+  try {
+    await writeFile(temporaryPath, `${JSON.stringify(nextPreference, null, 2)}\n`, "utf8");
+    await replaceFileWithRetry(temporaryPath, SETTINGS_FILE);
+  } finally {
+    await rm(temporaryPath, { force: true }).catch(() => undefined);
+  }
+}
+
+async function replaceFileWithRetry(source: string, destination: string): Promise<void> {
+  for (const [attempt, delayMs] of FILE_REPLACE_RETRY_DELAYS_MS.entries()) {
+    if (delayMs > 0) await delay(delayMs);
+    try {
+      await rename(source, destination);
+      return;
+    } catch (error) {
+      const isLastAttempt = attempt === FILE_REPLACE_RETRY_DELAYS_MS.length - 1;
+      if (isLastAttempt || !isRetryableFileError(error)) throw error;
+    }
+  }
+}
+
+function isRetryableFileError(error: unknown): boolean {
+  return typeof error === "object"
+    && error !== null
+    && "code" in error
+    && RETRYABLE_FILE_ERROR_CODES.has(String(error.code));
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 export function notifyBackgroundTaskCompleted(

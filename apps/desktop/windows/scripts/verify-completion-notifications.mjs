@@ -24,7 +24,10 @@ check("typed renderer bridge", api.includes("setCompletionNotificationPreference
 check("native Electron notification", service.includes('import { Notification } from "electron"') && service.includes("new Notification({ title, body"));
 check("Windows support respected", service.includes("Notification.isSupported()"));
 check("user preference defaults off", service.includes('enabled: false, language: "zh"'));
-check("preference persisted atomically", service.includes("completion-notifications.json") && service.includes("randomUUID()}.tmp") && service.includes("rename(temporaryPath, SETTINGS_FILE)"));
+check("preference persisted atomically", service.includes("completion-notifications.json") && service.includes("randomUUID()}.tmp") && service.includes("replaceFileWithRetry(temporaryPath, SETTINGS_FILE)"));
+check("preference writes serialized", service.includes("preferenceWriteQueue") && service.includes("persistCompletionNotificationPreference(nextPreference)"));
+check("transient Windows file locks retried", service.includes('"EACCES", "EBUSY", "EEXIST", "EPERM"') && service.includes("FILE_REPLACE_RETRY_DELAYS_MS"));
+check("temporary preference files cleaned", service.includes("rm(temporaryPath, { force: true })"));
 check("completion deduplicated", service.includes("shownKeys.has(key)") && service.includes("shownKeys.add(key)"));
 check("notification text bounded", service.includes("slice(0, 120)"));
 check("credential redaction", service.includes("Bearer") && service.includes("sk-") && service.includes("api[_-]?key") && service.includes("password"));

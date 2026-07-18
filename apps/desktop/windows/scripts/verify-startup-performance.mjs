@@ -18,6 +18,7 @@ const checks = [
   ["launcher selects on-demand by default", launcher.includes('"on-demand"') && launcher.includes("OPENDRSAI_GATEWAY_STARTUP")],
   ["launcher caches backend validation", launcher.includes("BackendValidationStamp") && launcher.includes("backendFingerprint")],
   ["launcher caches frontend validation", launcher.includes("FrontendValidationStamp") && launcher.includes("frontendFingerprint")],
+  ["Gateway hot reload reuses the existing console", launcher.includes("-NoNewWindow `") && !launcher.includes("-WindowStyle Hidden `\n        -RedirectStandardOutput $stdout")],
   ["main eager start is policy gated", main.includes('getGatewayStartupMode() !== "eager"')],
   ["background work waits for renderer load", main.includes('webContents.on("did-finish-load"') && main.includes("startDeferredStartupTasks")],
   ["startup milestones include launcher and renderer timing", launcher.includes("OPENDRSAI_DEV_START_EPOCH_MS") && main.includes('recordStartupMilestone("renderer-loaded")')],

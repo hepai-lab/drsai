@@ -1,0 +1,34 @@
+{
+  "version": 2,
+  "cases": [
+    {
+      "name": "model-unavailable",
+      "events": [
+        { "type": "activity.updated", "activity": { "kind": "retry", "status": "error", "title": "Model request failed", "attempt": 2, "limit": 2, "errorCode": "MODEL_UNAVAILABLE" } },
+        { "type": "part.completed", "part": { "kind": "notice", "status": "completed", "level": "error", "message": "The selected model is unavailable. Choose another model and retry." } },
+        { "type": "turn.error", "code": "MODEL_UNAVAILABLE", "message": "The selected model is unavailable." }
+      ]
+    },
+    {
+      "name": "tool-failure",
+      "events": [
+        { "type": "activity.updated", "activity": { "kind": "tool", "status": "error", "title": "Analysis command failed", "toolName": "run_powershell", "callId": "redacted" } },
+        { "type": "part.completed", "part": { "kind": "notice", "status": "completed", "level": "warning", "message": "The analysis step did not complete. Review Debug before retrying." } }
+      ]
+    },
+    {
+      "name": "interrupted-recovery",
+      "events": [
+        { "type": "turn.cancelled" },
+        { "type": "part.completed", "part": { "kind": "notice", "status": "completed", "level": "warning", "message": "The desktop could not reconnect to this run. Received content was kept." } }
+      ]
+    },
+    {
+      "name": "network-recovery",
+      "events": [
+        { "type": "connection", "connection": { "status": "retrying", "attempt": 1, "delayMs": 1000, "timestamp": "2026-07-17T10:00:00.000Z", "source": "remote-gateway" } },
+        { "type": "connection", "connection": { "status": "restored", "attempt": 1, "timestamp": "2026-07-17T10:00:01.000Z", "source": "remote-gateway" } }
+      ]
+    }
+  ]
+}

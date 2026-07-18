@@ -51,7 +51,7 @@ import {
   startUpdateScheduler,
   subscribeUpdateStatus,
 } from "./updates";
-import { abortChat, hasActiveChats, respondChatInput, startChat } from "./chat";
+import { abortChat, hasActiveChats, recoverChatRun, respondChatInput, startChat } from "./chat";
 import { listProviderErrorAnalytics } from "./providerErrorAnalytics";
 import { listProviderUsageAnalytics } from "./providerUsageAnalytics";
 import {
@@ -68,6 +68,9 @@ import {
 } from "./agents";
 import {
   executeForkLifecycleAction,
+  listRuntimeWorktrees,
+  listRuntimeWorktreeEvents,
+  getWorktreeMigrationDiagnostics,
   prepareForkWorktree,
 } from "./forkWorktrees";
 import { getMyDrSaiConfig, updateMyDrSaiConfig } from "./myDrSaiConfig";
@@ -83,6 +86,7 @@ import {
   updateThread,
   updateThreadSnapshot,
 } from "./threads";
+import { setThreadArchived } from "./threadArchive";
 import {
   addProjectMemory,
   clearProjectMemory,
@@ -177,6 +181,7 @@ import {
   disconnectRemoteWorkspace,
   getRemoteWorkspaceStatus,
   getRemoteGatewayAccess,
+  resolveRemoteWorkspaceTarget,
   prepareRemoteForkWorktree,
   getRemoteWorkspaceGitDiff,
   executeRemoteWorkspaceMutation,
@@ -213,6 +218,15 @@ import {
   inspectSshHostKeys,
   testSshHost,
   approveSshHostKey,
+  connectSshHost,
+  disconnectSshHost,
+  reconnectSshHost,
+  removeSshHostProfile,
+  listPortForwards,
+  createPortForward,
+  pausePortForward,
+  resumePortForward,
+  removePortForward,
 } from "./remoteWorkspace";
 import { getIdeContext } from "./ideContext";
 import {
@@ -340,6 +354,8 @@ import type {
   DesktopThread,
   DesktopThreadContentSearchRequest,
   DesktopThreadForkMetadata,
+  DesktopWorktreeListRequest,
+  DesktopWorktreeEventRequest,
   DesktopVoiceTranscriptHandoffRequest,
   DesktopVoiceTranscriptionRequest,
   DesktopBootstrapBlockerKind,
@@ -1239,7 +1255,7 @@ async function requestGitCommitApproval(
   if (!typed) {
     return blockedApprovalProposal("Git commit approval request is incomplete.");
   }
-  if (!getRemoteGatewayAccess(typed.workspacePath) && !(await isAllowedOpenPath(typed.workspacePath))) {
+  if ((await resolveRemoteWorkspaceTarget(typed.workspacePath)) === "local_or_unknown" && !(await isAllowedOpenPath(typed.workspacePath))) {
     return blockedApprovalProposal("Git commit workspace is not registered or allowed.");
   }
 
@@ -1830,7 +1846,7 @@ function getGitCommitIdempotencyKey(
 async function executeGitCommit(
   request: DesktopGitCommitApprovalRequest,
 ): Promise<void> {
-  if (getRemoteGatewayAccess(request.workspacePath)) {
+  if ((await resolveRemoteWorkspaceTarget(request.workspacePath)) !== "local_or_unknown") {
     await commitRemoteWorkspace(request.workspacePath, request.message, request.body);
     return;
   }
@@ -1906,7 +1922,7 @@ async function requestWorkspaceCheckpointRestore(
   if (!workspacePath || !checkpointId) {
     throw new Error("Workspace checkpoint restore request is incomplete.");
   }
-  if (!getRemoteGatewayAccess(workspacePath, workspaceId) && !(await isAllowedOpenPath(workspacePath))) {
+  if ((await resolveRemoteWorkspaceTarget(workspacePath, workspaceId)) === "local_or_unknown" && !(await isAllowedOpenPath(workspacePath))) {
     throw new Error("Checkpoint workspace is not registered or allowed.");
   }
 
@@ -1947,7 +1963,7 @@ async function requestWorkspaceCheckpointRestore(
   }
 
   await assertExecutionAllowed("workspace.revert", { approved: true });
-  return getRemoteGatewayAccess(workspacePath, workspaceId)
+  return (await resolveRemoteWorkspaceTarget(workspacePath, workspaceId)) !== "local_or_unknown"
     ? restoreRemoteWorkspaceCheckpoint({ workspacePath, ...(workspaceId ? { workspaceId } : {}), checkpointId, operationId, ...(includePaths ? { includePaths } : {}) })
     : restoreWorkspaceCheckpoint({ workspacePath, checkpointId, operationId, ...(includePaths ? { includePaths } : {}) });
 }
@@ -2254,7 +2270,7 @@ async function executeWorkspaceMutation(
 ): Promise<unknown> {
   const workspacePath = getStringProperty(request, "workspacePath");
   const workspaceId = getStringProperty(request, "workspaceId");
-  if (getRemoteGatewayAccess(workspacePath, workspaceId)) return executeRemoteWorkspaceMutation(action, request);
+  if ((await resolveRemoteWorkspaceTarget(workspacePath, workspaceId)) !== "local_or_unknown") return executeRemoteWorkspaceMutation(action, request);
   if (action === "stage-file") return stageWorkspaceFile(request);
   if (action === "revert-file") return revertWorkspaceFile(request);
   if (action === "stage-hunk") return stageWorkspaceHunk(request);
@@ -3343,8 +3359,8 @@ function registerIpc(): void {
       return createTerminalSession(event, options);
     },
   );
-  secureHandle("desktop:terminal-list", (event, workspaceKey?: string) =>
-    listTerminalSessions(event, workspaceKey),
+  secureHandle("desktop:terminal-list", (event, workspaceKey?: string, workspaceId?: string) =>
+    listTerminalSessions(event, workspaceKey, workspaceId),
   );
   secureHandle("desktop:terminal-buffer", (event, id: string) =>
     getTerminalBuffer(event, id),
@@ -3370,6 +3386,15 @@ function registerIpc(): void {
   secureHandle("desktop:ssh-host-keys", (_event, hostAlias: string) => inspectSshHostKeys(hostAlias));
   secureHandle("desktop:ssh-test", (_event, hostAlias: string) => testSshHost(hostAlias));
   secureHandle("desktop:ssh-approve-host-key", (_event, hostAlias: string) => approveSshHostKey(hostAlias));
+  secureHandle("desktop:ssh-host-connect", async (_event, hostAlias: string) => ({ hostAlias, action: "connect", changed: await connectSshHost(hostAlias) }));
+  secureHandle("desktop:ssh-host-disconnect", (_event, hostAlias: string) => ({ hostAlias, action: "disconnect", changed: disconnectSshHost(hostAlias) }));
+  secureHandle("desktop:ssh-host-reconnect", async (_event, hostAlias: string) => ({ hostAlias, action: "reconnect", changed: await reconnectSshHost(hostAlias) }));
+  secureHandle("desktop:ssh-host-remove", async (_event, hostAlias: string) => ({ hostAlias, action: "remove", changed: await removeSshHostProfile(hostAlias) }));
+  secureHandle("desktop:port-forward-list", (_event, filter) => listPortForwards((filter && typeof filter === "object" ? filter : {}) as { hostAlias?: string; workspaceId?: string }));
+  secureHandle("desktop:port-forward-create", (_event, request) => createPortForward(request as Parameters<typeof createPortForward>[0]));
+  secureHandle("desktop:port-forward-pause", (_event, id: string) => pausePortForward(id));
+  secureHandle("desktop:port-forward-resume", (_event, id: string) => resumePortForward(id));
+  secureHandle("desktop:port-forward-remove", (_event, id: string) => removePortForward(id));
   secureHandle("desktop:ssh-directories", (_event, hostAlias: string, path?: string) =>
     listRemoteDirectories(hostAlias, path),
   );
@@ -3411,25 +3436,26 @@ function registerIpc(): void {
   secureHandle("desktop:delete-workspace", (_event, id: string) =>
     deleteWorkspace(id),
   );
-  secureHandle("desktop:workspace-context-overview", (_event, workspacePath: string, workspaceId?: string) =>
-    getRemoteGatewayAccess(workspacePath, workspaceId) ? getRemoteWorkspaceContextOverview(workspacePath, workspaceId) : getWorkspaceContextOverview(workspacePath),
+  secureHandle("desktop:workspace-context-overview", async (_event, workspacePath: string, workspaceId?: string) =>
+    (await resolveRemoteWorkspaceTarget(workspacePath, workspaceId)) !== "local_or_unknown" ? getRemoteWorkspaceContextOverview(workspacePath, workspaceId) : getWorkspaceContextOverview(workspacePath),
   );
-  secureHandle("desktop:workspace-files", (_event, request: WorkspaceFileTreeRequest) =>
-    getRemoteGatewayAccess(request?.workspacePath, request?.workspaceId) ? listRemoteWorkspaceFiles(request) : listWorkspaceFiles(request),
+  secureHandle("desktop:workspace-files", async (_event, request: WorkspaceFileTreeRequest) =>
+    (await resolveRemoteWorkspaceTarget(request?.workspacePath, request?.workspaceId)) !== "local_or_unknown" ? listRemoteWorkspaceFiles(request) : listWorkspaceFiles(request),
   );
   secureHandle("desktop:workspace-folder-summary", async (_event, request) => {
     if (process.env.OPENDRSAI_E2E_C2_FOLDER_IMPORT === "1") await new Promise((resolveDelay) => setTimeout(resolveDelay, 350));
-    const remoteRoot = getRemoteWorkspaceRootForPath(getStringProperty(request, "path"));
+    const requestPath = getStringProperty(request, "path");
+    const remoteRoot = getRemoteWorkspaceRootForPath(requestPath) || ((await resolveRemoteWorkspaceTarget(requestPath)) !== "local_or_unknown" ? requestPath : null);
     return remoteRoot ? summarizeRemoteWorkspaceFolder(request as WorkspaceFolderSummaryRequest, remoteRoot) : summarizeWorkspaceFolder(request);
   });
-  secureHandle("desktop:workspace-file-preview", (_event, request: WorkspaceFilePreviewRequest) =>
-    getRemoteGatewayAccess(request?.workspacePath, request?.workspaceId) ? previewRemoteWorkspaceFile(request) : previewWorkspaceFile(request),
+  secureHandle("desktop:workspace-file-preview", async (_event, request: WorkspaceFilePreviewRequest) =>
+    (await resolveRemoteWorkspaceTarget(request?.workspacePath, request?.workspaceId)) !== "local_or_unknown" ? previewRemoteWorkspaceFile(request) : previewWorkspaceFile(request),
   );
   secureHandle("desktop:workspace-file-save-as", (_event, request: WorkspaceFileSaveAsRequest) =>
     saveWorkspaceFileAs(request),
   );
-  secureHandle("desktop:workspace-file-write", (_event, request: WorkspaceFileWriteRequest) =>
-    getRemoteGatewayAccess(request?.workspacePath, request?.workspaceId) ? writeRemoteWorkspaceFile(request) : writeWorkspaceFile(request),
+  secureHandle("desktop:workspace-file-write", async (_event, request: WorkspaceFileWriteRequest) =>
+    (await resolveRemoteWorkspaceTarget(request?.workspacePath, request?.workspaceId)) !== "local_or_unknown" ? writeRemoteWorkspaceFile(request) : writeWorkspaceFile(request),
   );
   secureHandle("desktop:apply-anomaly-decision", (_event, request: DesktopAnomalyDecisionApplyRequest) =>
     applyAnomalyDecision(request),
@@ -3727,11 +3753,11 @@ function registerIpc(): void {
     }
     return resolveManagerPresentationRecovery(request);
   });
-  secureHandle("desktop:workspace-git-diff", (_event, request: WorkspaceGitDiffRequest) =>
-    getRemoteGatewayAccess(request?.workspacePath, request?.workspaceId) ? getRemoteWorkspaceGitDiff(request) : getWorkspaceGitDiff(request),
+  secureHandle("desktop:workspace-git-diff", async (_event, request: WorkspaceGitDiffRequest) =>
+    (await resolveRemoteWorkspaceTarget(request?.workspacePath, request?.workspaceId)) !== "local_or_unknown" ? getRemoteWorkspaceGitDiff(request) : getWorkspaceGitDiff(request),
   );
-  secureHandle("desktop:workspace-git-file-at-ref", (_event, request) =>
-    getRemoteGatewayAccess(getStringProperty(request, "workspacePath"), getStringProperty(request, "workspaceId")) ? getRemoteWorkspaceGitFileAtRef(request as WorkspaceGitFileAtRefRequest) : getWorkspaceGitFileAtRef(request),
+  secureHandle("desktop:workspace-git-file-at-ref", async (_event, request) =>
+    (await resolveRemoteWorkspaceTarget(getStringProperty(request, "workspacePath"), getStringProperty(request, "workspaceId"))) !== "local_or_unknown" ? getRemoteWorkspaceGitFileAtRef(request as WorkspaceGitFileAtRefRequest) : getWorkspaceGitFileAtRef(request),
   );
   secureHandle("desktop:workspace-revert-file", async (_event, request) =>
     requestWorkspaceMutationApproval("revert-file", request),
@@ -3746,7 +3772,7 @@ function registerIpc(): void {
     requestWorkspaceMutationApproval("revert-hunk", request),
   );
   secureHandle("desktop:workspace-checkpoints-list", async (_event, workspacePath: string, workspaceId?: string) => {
-    if (getRemoteGatewayAccess(workspacePath, workspaceId)) return listRemoteWorkspaceCheckpoints(workspacePath, workspaceId);
+    if ((await resolveRemoteWorkspaceTarget(workspacePath, workspaceId)) !== "local_or_unknown") return listRemoteWorkspaceCheckpoints(workspacePath, workspaceId);
     if (!(await isAllowedOpenPath(workspacePath))) {
       throw new Error("Checkpoint workspace is not registered or allowed.");
     }
@@ -3754,7 +3780,7 @@ function registerIpc(): void {
   });
   secureHandle("desktop:workspace-checkpoint-create", async (_event, request) => {
     const workspacePath = getStringProperty(request, "workspacePath");
-    if (getRemoteGatewayAccess(workspacePath, getStringProperty(request, "workspaceId"))) {
+    if ((await resolveRemoteWorkspaceTarget(workspacePath, getStringProperty(request, "workspaceId"))) !== "local_or_unknown") {
       await assertExecutionAllowed("workspace.checkpoint");
       return createRemoteWorkspaceCheckpoint(request as WorkspaceCheckpointCreateRequest);
     }
@@ -3766,7 +3792,7 @@ function registerIpc(): void {
   });
   secureHandle("desktop:workspace-checkpoint-accept", async (_event, request) => {
     const workspacePath = getStringProperty(request, "workspacePath");
-    if (getRemoteGatewayAccess(workspacePath, getStringProperty(request, "workspaceId"))) return acceptRemoteWorkspaceCheckpoint(request as WorkspaceCheckpointAcceptRequest);
+    if ((await resolveRemoteWorkspaceTarget(workspacePath, getStringProperty(request, "workspaceId"))) !== "local_or_unknown") return acceptRemoteWorkspaceCheckpoint(request as WorkspaceCheckpointAcceptRequest);
     if (!(await isAllowedOpenPath(workspacePath))) {
       throw new Error("Checkpoint workspace is not registered or allowed.");
     }
@@ -3774,7 +3800,7 @@ function registerIpc(): void {
   });
   secureHandle("desktop:workspace-checkpoint-preview", async (_event, request) => {
     const workspacePath = getStringProperty(request, "workspacePath");
-    if (getRemoteGatewayAccess(workspacePath, getStringProperty(request, "workspaceId"))) return previewRemoteWorkspaceCheckpoint(request as WorkspaceCheckpointPreviewRequest);
+    if ((await resolveRemoteWorkspaceTarget(workspacePath, getStringProperty(request, "workspaceId"))) !== "local_or_unknown") return previewRemoteWorkspaceCheckpoint(request as WorkspaceCheckpointPreviewRequest);
     if (!(await isAllowedOpenPath(workspacePath))) {
       throw new Error("Checkpoint workspace is not registered or allowed.");
     }
@@ -3812,6 +3838,11 @@ function registerIpc(): void {
   secureHandle("desktop:update-thread", (_event, request) =>
     updateThread(request),
   );
+  secureHandle("desktop:set-thread-archived", (_event, request) => {
+    const value = request as { threadId?: unknown; archived?: unknown };
+    if (typeof value?.threadId !== "string" || typeof value.archived !== "boolean") throw new Error("Archive request is invalid.");
+    return setThreadArchived(value.threadId, value.archived);
+  });
   secureHandle("desktop:get-thread-snapshot", async (_event, threadId: string) =>
     (await getRemoteThreadSnapshot(threadId)) || getThreadSnapshot(threadId),
   );
@@ -3821,11 +3852,14 @@ function registerIpc(): void {
   secureHandle("desktop:update-thread-snapshot", (_event, snapshot) =>
     updateThreadSnapshot(snapshot),
   );
-  secureHandle("desktop:prepare-fork-worktree", (_event, request) => {
+  secureHandle("desktop:prepare-fork-worktree", async (_event, request) => {
     const workspacePath = getStringProperty(request, "workspacePath");
-    if (getRemoteGatewayAccess(workspacePath)) return prepareRemoteForkWorktree(workspacePath, getStringProperty(request, "intent"));
+    if ((await resolveRemoteWorkspaceTarget(workspacePath, getStringProperty(request, "workspaceId"))) !== "local_or_unknown") return prepareRemoteForkWorktree(workspacePath, getStringProperty(request, "intent"));
     return prepareForkWorktree(request);
   });
+  secureHandle("desktop:list-worktrees", (_event, request: DesktopWorktreeListRequest) => listRuntimeWorktrees(request));
+  secureHandle("desktop:list-worktree-events", (_event, request: DesktopWorktreeEventRequest) => listRuntimeWorktreeEvents(request));
+  secureHandle("desktop:worktree-migration-diagnostics", (_event, request: DesktopWorktreeListRequest) => getWorktreeMigrationDiagnostics(request));
   secureHandle("desktop:project-memory-list", (_event, request) =>
     listProjectMemory(request),
   );
@@ -4038,6 +4072,7 @@ function registerIpc(): void {
     }
     return startChat(event.sender, request);
   });
+  secureHandle("desktop:recover-chat-run", (_event, request) => recoverChatRun(request));
   secureHandle("desktop:abort-chat", (_event, requestId: string) =>
     abortChat(requestId),
   );
@@ -4295,7 +4330,7 @@ async function decidePendingDesktopApproval(
     if (!typed.approved) return true;
     executedDesktopApprovalIds.add(typed.id);
     await assertExecutionAllowed("shell.command", { approved: true });
-    const wrote = writeTerminalSession(
+    const wrote = await writeTerminalSession(
       event,
       pendingShellCommand.terminalSessionId,
       pendingShellCommand.invocation,
@@ -4806,7 +4841,7 @@ app.on("before-quit", (event) => {
   event.preventDefault();
   if (gatewayShutdownStarted) return;
   gatewayShutdownStarted = true;
-  void shutdownGateway()
+  void shutdownGateway(true)
     .catch((error) => {
       console.error("[desktop] Failed to stop gateway during shutdown:", error);
     })

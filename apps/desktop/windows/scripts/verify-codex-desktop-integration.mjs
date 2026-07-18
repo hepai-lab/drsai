@@ -39,6 +39,7 @@ try {
   assert.deepEqual(presentation.backendRetryIdentity("pending", "safe-key"), { reuseKey: true, idempotencyKey: "safe-key" });
 
   const app = await readFile(join(root, "src/renderer/src/App.tsx"), "utf8");
+  assert(app.includes("health?.update.currentVersion"), "About must show the Electron Desktop version, not the Runtime version");
   const locationBlock = app.slice(app.indexOf("workspaceLocationChoice === null"), app.indexOf("workspaceLocationChoice === \"remote\""));
   assert(locationBlock.includes('"本地" : "Local"') && locationBlock.includes('"远程" : "Remote"'));
   assert(!/Codex Workspace|Codex 工作区/.test(locationBlock), "Codex must not become a third Workspace location");
@@ -55,14 +56,36 @@ try {
   assert.deepEqual(states, ["available", "not_installed", "version_incompatible", "not_logged_in", "fault"]);
   assert(app.includes("codex-backend-status") && app.includes("codex-login") && app.includes("codex-logout"));
 
+  const gateway = await readFile(join(root, "src/main/gateway.ts"), "utf8");
+  assert(gateway.includes("getLocalCodexDevelopmentEnv") && gateway.includes('DRSAI_CODEX_DEVELOPMENT: "1"'));
+  assert(gateway.includes("app.isPackaged"), "packaged releases must keep the managed Codex artifact trust path");
+  assert(gateway.includes('"node_modules", ".bin", "codex.cmd"'), "development must prefer the project-owned standalone CLI");
+  assert(gateway.includes('/\\\\WindowsApps\\\\/i'), "inaccessible Windows Store package members must not be advertised as available");
+
   const runtimeClient = await readFile(join(root, "src/main/runtimeClient.ts"), "utf8");
-  for (const method of ["createSession", "createAgentRun", "executeAgentRun", "cancelAgentRun", "listAgentRunEvents", "respondAgentApproval"]) assert(runtimeClient.includes(method));
+  for (const method of ["createSession", "updateSession", "getAgentRun", "createAgentRun", "executeAgentRun", "cancelAgentRun", "listAgentRunEvents", "respondAgentApproval"]) assert(runtimeClient.includes(method));
   for (const forbidden of ["thread/start", "turn/start", "account/read", "turn/interrupt"]) assert(!runtimeClient.includes(forbidden), `Desktop leaked Codex JSON-RPC ${forbidden}`);
   const chat = await readFile(join(root, "src/main/chat.ts"), "utf8");
   assert(chat.includes('request.agentId === "my-codex"'));
-  assert(chat.includes('createAgentRun(session.session_id, "codex@1"'));
+  assert(chat.includes('createAgentRun(runtimeSessionId, "codex@1"'));
+  assert(chat.includes("existingThread?.runtimeSessionId"), "Codex follow-up turns must reuse the mapped Runtime Session");
   assert(chat.includes('type: "chunk"') && chat.includes('type: "tool_timeline"') && chat.includes('inputType: "approval"'));
   assert(chat.includes("cancelAgentRun") && chat.includes("respondAgentApproval"));
+  assert(chat.includes("export async function recoverChatRun"), "Codex Run output must be recoverable after an Electron restart");
+  assert(chat.includes('event.type === "agent.message.delta"') && chat.includes('type: "chunk"'), "Codex deltas must reach the Desktop chat event stream");
+  assert(chat.includes('event.type === "agent.item.reasoning"') && chat.includes('type: "reasoning"'), "Codex reasoning must use the structured reasoning part");
+  assert(chat.includes('event.type === "agent.item.file_change"') && chat.includes('kind: "diff"'), "Codex file changes must use the structured file-change activity");
+  assert(chat.includes('event.type === "agent.item.command"') && chat.includes('kind: "tool_call"'), "Codex commands must use the structured tool activity");
+  assert(chat.includes('event.type === "run.completed"') && chat.includes('type: "done"'), "Recovered Codex runs must settle the pending chat turn");
+  const adapter = await readFile(join(root, "src/renderer/src/adapters/useDesktopChatAdapter.ts"), "utf8");
+  assert(adapter.includes("desktopApi.recoverChatRun"), "Renderer must request Codex Run replay for an interrupted turn");
+  assert(adapter.includes("structuredRequests.current.delete(requestId)"), "Recovered plain-text deltas must not be suppressed as structured events");
+  assert(app.includes("archived-threads-settings"), "Settings must expose the archived-session center");
+  const threads = await readFile(join(root, "src/main/threads.ts"), "utf8");
+  assert(threads.includes("archivedAt") && threads.includes("archiveSource"), "Archive state must retain its timestamp and source");
+  assert(threads.includes("writeAtomicJson") && threads.includes("parseStoredJson"), "Thread storage must survive interrupted writes without discarding a reusable Codex Session");
+  const archive = await readFile(join(root, "src/main/threadArchive.ts"), "utf8");
+  assert(archive.includes("updateSession") && archive.includes("getAgentRun"), "Archive actions must go through Runtime and recover legacy Session bindings");
   console.log("Codex Desktop product integration verification passed.");
 } finally {
   await rm(temp, { recursive: true, force: true });

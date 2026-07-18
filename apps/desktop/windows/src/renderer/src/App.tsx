@@ -49,6 +49,7 @@ import type {
   DesktopIdeContextSnapshot,
   DesktopMcpContextResult,
   DesktopThread,
+  DesktopWorktreeSummary,
   InstallProgress,
   MyDrSaiModelConfig,
   MyDrSaiConfig,
@@ -303,6 +304,8 @@ function AuthenticatedApp({
   const [terminalCommandProposal, setTerminalCommandProposal] =
     useState<TerminalCommandProposal | null>(null);
   const [browserPanelUrl, setBrowserPanelUrl] = useState<string | undefined>();
+  const [filesPanelFocusPath, setFilesPanelFocusPath] = useState<string | undefined>();
+  const [structuredTurnFocus, setStructuredTurnFocus] = useState<{ turnId: string; nonce: number } | null>(null);
   const [browserAttachments, setBrowserAttachments] = useState<ChatAttachment[]>([]);
   const [ideContext, setIdeContext] = useState<DesktopIdeContextSnapshot | null>(null);
   const [workspaceContextAttachmentsByThread, setWorkspaceContextAttachmentsByThread] = useState<
@@ -363,7 +366,7 @@ function AuthenticatedApp({
   const activeWorkspacePathKey = getComparablePath(activeWorkspace.path);
   const activeThread = threads.find((thread) => thread.id === activeThreadId);
   const activeThreadWorkspacePath = activeThread?.workspacePath?.trim();
-  const effectiveWorkspacePath = activeThreadWorkspacePath || activeWorkspace.path;
+  const effectiveWorkspacePath = activeThread?.execution?.canonicalPath || activeThreadWorkspacePath || activeWorkspace.path;
   const effectiveWorkspace =
     getComparablePath(activeWorkspace.path) === getComparablePath(effectiveWorkspacePath)
       ? activeWorkspace
@@ -373,6 +376,7 @@ function AuthenticatedApp({
       ) ?? activeWorkspace;
   const effectiveWorkspaceInstructions =
     effectiveWorkspace.instructions ?? activeWorkspace.instructions;
+  const effectiveRuntimeWorkspaceId = activeThread?.execution?.workspaceId || effectiveWorkspace.id;
   const workspaceTrusted =
     effectiveWorkspace.id === activeWorkspace.id
       ? activeWorkspace.trusted
@@ -438,7 +442,7 @@ function AuthenticatedApp({
       id: thread.id,
       title: thread.title,
       timeLabel: formatThreadTime(thread.updatedAt, language),
-      workspaceId: getWorkspaceId(thread.workspacePath || activeWorkspace.path),
+      workspaceId: thread.execution?.workspaceId || getWorkspaceId(thread.workspacePath || activeWorkspace.path),
       workspacePath: thread.workspacePath,
       fork: thread.fork,
       active: thread.id === activeThreadId,
@@ -450,7 +454,7 @@ function AuthenticatedApp({
     id: thread.id,
     title: thread.title,
     timeLabel: formatThreadTime(thread.updatedAt, language),
-    workspaceId: getWorkspaceId(thread.workspacePath || activeWorkspace.path),
+    workspaceId: thread.execution?.workspaceId || getWorkspaceId(thread.workspacePath || activeWorkspace.path),
     workspacePath: thread.workspacePath,
     fork: thread.fork,
     active: thread.id === activeThreadId,
@@ -491,7 +495,7 @@ function AuthenticatedApp({
     threadId: activeThreadId,
     threadSnapshot: threadSnapshots[activeThreadId] ?? null,
     workspaceInstructions: effectiveWorkspaceInstructions,
-    workspaceId: effectiveWorkspace.id,
+    workspaceId: effectiveRuntimeWorkspaceId,
     workspacePath: effectiveWorkspacePath,
   });
 
@@ -1066,6 +1070,44 @@ function AuthenticatedApp({
     setSelectedChatExamples(agent.examples);
   }
 
+  async function handleNewWorktreeChat(worktree: DesktopWorktreeSummary): Promise<void> {
+    if (!worktree.workspaceId) throw new Error("Worktree execution Workspace is not registered.");
+    setRightPanelCollapsed(true);
+    const thread = await desktopApi.createThread({
+      kind: "chat",
+      title: `${language === "zh" ? "Worktree 会话" : "Worktree session"}: ${worktree.branch}`,
+      workspacePath: worktree.canonicalPath,
+      boundAgentId: selectedChatAgentId || undefined,
+      boundAgentName: selectedChatAgentName || undefined,
+      execution: {
+        sourceWorkspaceId: worktree.sourceWorkspaceId,
+        workspaceId: worktree.workspaceId,
+        worktreeId: worktree.worktreeId,
+        canonicalPath: worktree.canonicalPath,
+      },
+    });
+    setThreads((current) => sortThreadsForSidebar([thread, ...current.filter((item) => item.id !== thread.id)]));
+    setActiveThreadId(thread.id);
+    navigateTo(MENU_IDS.currentSession);
+  }
+
+  async function handleNewWorkspaceChat(workspace: WorkspaceProject): Promise<void> {
+    setRightPanelCollapsed(true);
+    const thread = await desktopApi.createThread({
+      kind: "chat",
+      title: language === "zh" ? "新会话" : "New chat",
+      workspacePath: workspace.path,
+      boundAgentId: selectedChatAgentId || undefined,
+      boundAgentName: selectedChatAgentName || undefined,
+    });
+    setActiveWorkspaceId(workspace.id);
+    setActiveThreadId(thread.id);
+    setThreads((current) =>
+      sortThreadsForSidebar([thread, ...current.filter((item) => item.id !== thread.id)]),
+    );
+    navigateTo(MENU_IDS.currentSession);
+  }
+
   async function selectChatAgent(agentId: string): Promise<boolean> {
     const agent = availableChatAgents.find((item) => item.id === agentId);
     if (!agent) return false;
@@ -1112,10 +1154,10 @@ function AuthenticatedApp({
     threadId: string,
     updates: { title?: string; pinned?: boolean; archived?: boolean; unread?: boolean; fork?: DesktopThread["fork"] },
   ): Promise<void> {
-    const thread = await desktopApi.updateThread({
+    const thread = updates.archived === undefined ? await desktopApi.updateThread({
       id: threadId,
       ...updates,
-    });
+    }) : await desktopApi.setThreadArchived({ threadId, archived: updates.archived });
     setThreads((current) =>
       sortThreadsForSidebar([
         thread,
@@ -1434,6 +1476,7 @@ function AuthenticatedApp({
           agentOptions={availableChatAgents}
           modelOptions={availableChatModels}
           samplePrompts={selectedChatExamples}
+          structuredTurnFocus={structuredTurnFocus}
           externalAttachments={externalChatAttachments}
           ideContext={ideContext}
           workspaceInstructions={effectiveWorkspaceInstructions}
@@ -1452,6 +1495,11 @@ function AuthenticatedApp({
           onSelectModel={handleChatModelSelect}
           onOpenExternal={(url) => desktopApi.openExternal(url)}
           onOpenPreviewBrowser={openPreviewBrowser}
+          onOpenWorkspaceArtifact={(path) => {
+            setFilesPanelFocusPath(path);
+            setActiveRightTab("files");
+            setRightPanelCollapsed(false);
+          }}
           onPickFiles={() => desktopApi.pickFiles()}
           onPickFolder={() => desktopApi.pickFolder()}
           onSummarizeWorkspaceFolder={(request) =>
@@ -1628,6 +1676,8 @@ function AuthenticatedApp({
         onSelectAgent={handleChatAgentSelect}
         onSelectModel={handleChatModelSelect}
         onSessionScopeChange={setSessionScope}
+        threads={threads}
+        onArchiveThread={(threadId, archived) => void handleThreadUpdate(threadId, { archived })}
         onSidebarComponentsChange={setSidebarComponents}
         onThinkingEffortChange={setDefaultThinkingEffort}
         onWorkspaceSortModeChange={setWorkspaceSortMode}
@@ -1685,11 +1735,14 @@ function AuthenticatedApp({
 
   const rightPanelContent =
     activeRightTab === "debug" ? (
-      <DebugPanel language={language} />
+      <DebugPanel
+        language={language}
+        onSelectTurn={(turnId) => setStructuredTurnFocus((current) => ({ turnId, nonce: (current?.nonce ?? 0) + 1 }))}
+      />
     ) : activeRightTab === "terminal" ? (
       <TerminalPanel
         cwd={effectiveWorkspacePath}
-        workspaceId={effectiveWorkspace.id}
+        workspaceId={effectiveRuntimeWorkspaceId}
         remoteHostAlias={activeWorkspace.remote?.hostAlias}
         language={language}
         onCommandResult={(attachment) => {
@@ -1716,9 +1769,10 @@ function AuthenticatedApp({
         fileTraceEvents={workspaceFileTraceEvents}
         language={language}
         scopeId={activeThreadId}
-        workspaceId={effectiveWorkspace.id}
+        workspaceId={effectiveRuntimeWorkspaceId}
         workspacePath={filesWorkspacePath}
         workspaceTrusted={workspaceTrusted}
+        focusPath={filesPanelFocusPath}
         onBasketChange={setActiveThreadWorkspaceContextAttachments}
         onFileTraceChange={setActiveThreadFileTraceEvents}
         onInsertPath={(path) => {
@@ -1954,6 +2008,12 @@ function AuthenticatedApp({
       onAddWorkspace={handleAddWorkspace}
       onLanguageChange={setLanguage}
       onLoadForkConflictContent={loadForkConflictContent}
+      onListWorktrees={(request) => desktopApi.listWorktrees(request)}
+      onListWorktreeEvents={(request) => desktopApi.listWorktreeEvents(request)}
+      onGetWorktreeMigrationDiagnostics={(request) => desktopApi.getWorktreeMigrationDiagnostics(request)}
+      onGetWorktreeDiff={(request) => desktopApi.getWorkspaceGitDiff(request)}
+      onCreateWorkspaceSession={handleNewWorkspaceChat}
+      onCreateWorktreeSession={handleNewWorktreeChat}
       onLogout={async () => {
         await chat.abort();
         await onLogout();
@@ -4542,7 +4602,10 @@ function DesktopStatusPanel({
 }): React.JSX.Element {
   const zh = language === "zh";
   const [codexLogin, setCodexLogin] = useState<CodexBackendLogin | null>(null);
-  const version = health?.install.version ?? (zh ? "未知版本" : "unknown");
+  // The About card describes the Desktop application, not the independently
+  // installed Python Runtime. The updater identity is always sourced from
+  // Electron's app.getVersion(), including development builds.
+  const version = health?.update.currentVersion ?? (zh ? "未知版本" : "unknown");
   const installStatus = health?.install.backendNeedsRepair
     ? zh
       ? "需要修复"
@@ -4862,6 +4925,7 @@ function SettingsPanel({
   onSelectAgent,
   onSelectModel,
   onSessionScopeChange,
+  onArchiveThread,
   onSidebarComponentsChange,
   onThinkingEffortChange,
   onWorkspaceSortModeChange,
@@ -4873,6 +4937,7 @@ function SettingsPanel({
   selectedModel,
   sessionScope,
   sidebarComponents,
+  threads,
   updateBusy,
   updateMessage,
   usageAnalyticsPanel,
@@ -4910,6 +4975,7 @@ function SettingsPanel({
   onSelectAgent: (agentId: string) => void;
   onSelectModel: (model: string) => void;
   onSessionScopeChange: (scope: "workspace" | "all") => void;
+  onArchiveThread: (threadId: string, archived: boolean) => void;
   onSidebarComponentsChange: React.Dispatch<React.SetStateAction<SidebarComponentVisibility>>;
   onThinkingEffortChange: (effort: ThinkingEffort) => void;
   onWorkspaceSortModeChange: (mode: WorkspaceSortMode) => void;
@@ -4921,6 +4987,7 @@ function SettingsPanel({
   selectedModel: string | null;
   sessionScope: "workspace" | "all";
   sidebarComponents: SidebarComponentVisibility;
+  threads: DesktopThread[];
   updateBusy: boolean;
   updateMessage: string | null;
   usageAnalyticsPanel: React.ReactNode;
@@ -4937,6 +5004,10 @@ function SettingsPanel({
   const [cleanupConfirmation, setCleanupConfirmation] = useState("");
   const [cleanupBusy, setCleanupBusy] = useState(false);
   const [cleanupStatus, setCleanupStatus] = useState<string | null>(null);
+  const [archiveSearch, setArchiveSearch] = useState("");
+  const archivedThreads = threads.filter((thread) => thread.archived).filter((thread) =>
+    thread.title.toLocaleLowerCase().includes(archiveSearch.trim().toLocaleLowerCase()),
+  );
 
   async function openDataCleanup(scope: DesktopDataCleanupScope): Promise<void> {
     setCleanupBusy(true);
@@ -5094,6 +5165,15 @@ function SettingsPanel({
                     {zh ? "中文" : "Chinese"}
                   </button>
                 </div>
+              </div>
+            </section>
+            <section className="settings-section" data-testid="archived-threads-settings">
+              <div><h2>{zh ? "已归档会话" : "Archived sessions"}</h2><p>{zh ? "归档不会删除消息或工作区内容。" : "Archiving preserves messages and workspace content."}</p></div>
+              <div className="settings-component-list">
+                <input value={archiveSearch} onChange={(event) => setArchiveSearch(event.target.value)} placeholder={zh ? "搜索已归档会话" : "Search archived sessions"} />
+                {archivedThreads.length === 0 ? <small>{zh ? "没有匹配的已归档会话。" : "No archived sessions match."}</small> : archivedThreads.map((thread) => (
+                  <div className="settings-row" key={thread.id}><span><strong>{thread.title}</strong><small>{thread.archiveSource === "codex" ? "Codex" : "OpenDrSai"}</small></span><button type="button" onClick={() => onArchiveThread(thread.id, false)}>{zh ? "取消归档" : "Unarchive"}</button></div>
+                ))}
               </div>
             </section>
             <section className="settings-section">

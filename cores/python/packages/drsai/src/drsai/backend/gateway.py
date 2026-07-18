@@ -2040,9 +2040,16 @@ async def runtime_session_get(session_id: str):
 @app.patch("/v1/sessions/{session_id}")
 async def runtime_session_update(session_id: str, request: RuntimeSessionUpdateRequest):
     try:
+        session = _runtime_engine().get_session(session_id)
+        if request.archived is not None and request.archived != session["archived"]:
+            # Mirror to the owning Agent Backend first.  If its remote archive
+            # request fails, the Runtime Session remains unchanged and retryable.
+            await _runtime_agent_service().archive_session(session_id, archived=request.archived)
         return _runtime_engine().update_session(session_id, title=request.title, archived=request.archived)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeExecutionError as exc:
+        raise HTTPException(status_code=400, detail=exc.as_dict()) from exc
 
 
 @app.post("/v1/sessions/{session_id}/runs")

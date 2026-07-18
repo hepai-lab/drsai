@@ -68,6 +68,8 @@ import type {
   WorkspaceGitDiffResult,
   WorkspaceProject,
 } from "@shared/desktopApi";
+import type { StructuredConversationEvent } from "@shared/structuredConversation";
+import drsaiImageUrl from "./assets/drsai.png";
 
 type Listener<T> = (value: T) => void;
 
@@ -1355,6 +1357,15 @@ export function installMockDesktopApi(): void {
     inspectSshHostKeys: async (hostAlias) => [{ hostAlias, hostname: "127.0.0.1", port: 22, algorithm: "ssh-ed25519", fingerprint: "SHA256:mock" }],
     testSshHost: async () => true,
     approveSshHostKey: async () => true,
+    connectSshHost: async (hostAlias) => ({ hostAlias, action: "connect", changed: true }),
+    disconnectSshHost: async (hostAlias) => ({ hostAlias, action: "disconnect", changed: true }),
+    reconnectSshHost: async (hostAlias) => ({ hostAlias, action: "reconnect", changed: true }),
+    removeSshHost: async (hostAlias) => ({ hostAlias, action: "remove", changed: true }),
+    listPortForwards: async () => [],
+    createPortForward: async (request) => ({ portForwardId: `pf-${crypto.randomUUID()}`, hostAlias: request.hostAlias, workspaceId: request.workspaceId, remoteHost: request.remoteHost || "127.0.0.1", remotePort: request.remotePort, bindAddress: "127.0.0.1", localPort: request.localPort || 18080, status: "active", reconnectPolicy: request.reconnectPolicy || "automatic", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }),
+    pausePortForward: async (id) => ({ portForwardId: id, hostAlias: "mock", workspaceId: "mock", remoteHost: "127.0.0.1", remotePort: 80, bindAddress: "127.0.0.1", localPort: 18080, status: "paused", reconnectPolicy: "automatic", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }),
+    resumePortForward: async (id) => ({ portForwardId: id, hostAlias: "mock", workspaceId: "mock", remoteHost: "127.0.0.1", remotePort: 80, bindAddress: "127.0.0.1", localPort: 18080, status: "active", reconnectPolicy: "automatic", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }),
+    removePortForward: async () => true,
     listRemoteDirectories: async (_hostAlias, path = "/home") => [
       { name: "vscode", path: `${path.replace(/\/$/, "")}/vscode`, directory: true },
     ],
@@ -1372,7 +1383,7 @@ export function installMockDesktopApi(): void {
           hostAlias: request.hostAlias,
           canonicalPath: request.path,
           workspaceId: id,
-          connectionState: "connected",
+          connectionState: "ready",
           localPort: 18643,
         },
         createdAt: now,
@@ -1677,6 +1688,14 @@ export function installMockDesktopApi(): void {
       });
       return thread;
     },
+    setThreadArchived: async ({ threadId, archived }) => {
+      const existing = threads.find((thread) => thread.id === threadId);
+      if (!existing) throw new Error("Thread no longer exists.");
+      const archiveSource: "codex" | "opendrsai" | undefined = archived ? (existing.boundAgentId === "my-codex" ? "codex" : "opendrsai") : undefined;
+      const thread = { ...existing, archived, archivedAt: archived ? new Date().toISOString() : undefined, archiveSource, updatedAt: new Date().toISOString() };
+      threads = [thread, ...threads.filter((item) => item.id !== threadId)];
+      return thread;
+    },
     getThreadSnapshot: async (threadId) => threadSnapshots[threadId] ?? null,
     searchThreadMessages: async (request) => {
       const query = request.query.trim().toLowerCase();
@@ -1728,20 +1747,122 @@ export function installMockDesktopApi(): void {
         sourceHasChanges: false,
       };
     },
-    startChat: async () => {
-      const requestId = crypto.randomUUID();
+    startChat: async (request) => {
+      const requestId = request.requestId || crypto.randomUUID();
+      const turnId = request.runId || requestId;
+      const visualFixture = request.messages.some((message) => message.content.includes("__STRUCTURED_VISUAL_FIXTURE__"));
+      const markdownContent = visualFixture ? createStructuredVisualFixtureMarkdown(drsaiImageUrl) : [
+        "Mock **desktop** chat stream.\n\n",
+        "| item | status |\n| --- | --- |\n| renderer | ok |\n\n",
+        "[OpenDrSai](https://github.com/hepai-lab/drsai)",
+      ].join("");
+      let sequence = 0;
+      const sendStructured = (event: Record<string, unknown>): void => {
+        sequence += 1;
+        emit(chatListeners, {
+          requestId,
+          sessionId: request.sessionId,
+          runId: request.runId,
+          type: "structured",
+          structuredEvent: {
+            version: 2,
+            turnId,
+            sequence,
+            dedupeKey: `${turnId}:${sequence}:${String(event.type)}`,
+            timestamp: new Date().toISOString(),
+            source: "mock-desktop",
+            ...event,
+          } as StructuredConversationEvent,
+        });
+      };
       emit(chatListeners, { requestId, type: "start" });
-      for (const content of [
+      sendStructured({ type: "turn.started" });
+      sendStructured({
+        type: "part.started",
+        part: { id: `${turnId}:reasoning`, kind: "reasoning", status: "running", segments: [] },
+      });
+      sendStructured({
+        type: "part.delta",
+        partId: `${turnId}:reasoning`,
+        delta: { kind: "reasoning.append", segmentId: "analysis", text: "Inspecting the request and preparing a concise result.", source: "mock-desktop" },
+      });
+      sendStructured({
+        type: "part.started",
+        part: { id: `${turnId}:progress`, kind: "progress", status: "running", summary: "Preparing the result" },
+      });
+      for (const content of visualFixture ? [markdownContent] : [
         "Mock **desktop** chat stream.\n\n",
         "| item | status |\n| --- | --- |\n| renderer | ok |\n\n",
         "[OpenDrSai](https://github.com/hepai-lab/drsai)",
       ]) {
         await delay(90);
-        emit(chatListeners, { requestId, type: "chunk", content });
+        if (sequence === 4) {
+          sendStructured({
+            type: "part.started",
+            part: { id: `${turnId}:markdown`, kind: "markdown", status: "running", markdown: "" },
+          });
+        }
+        sendStructured({
+          type: "part.delta",
+          partId: `${turnId}:markdown`,
+          delta: { kind: "markdown.append", text: content },
+        });
       }
+      const workspacePath = request.workspacePath || "C:\\workspace";
+      sendStructured({
+        type: "part.completed",
+        part: {
+          id: `${turnId}:artifact:report`, kind: "artifact", status: "completed",
+          artifactId: "mock-report", artifactType: "report", name: "README.md",
+          summary: "Generated workspace report", path: `${workspacePath}\\README.md`, citationIds: ["mock-docs"],
+        },
+      });
+      sendStructured({
+        type: "part.completed",
+        part: {
+          id: `${turnId}:citation:docs`, kind: "citation", status: "completed",
+          citationId: "mock-docs", title: "OpenDrSai repository", url: "https://github.com/hepai-lab/drsai",
+          markdownPartId: `${turnId}:markdown`, artifactId: "mock-report",
+        },
+      });
+      sendStructured({
+        type: "part.completed",
+        part: {
+          id: `${turnId}:subtask`, kind: "subtask", status: "completed",
+          taskId: "mock-review", title: "Renderer review", summary: "Completed",
+        },
+      });
+      sendStructured({
+        type: "part.completed",
+        part: {
+          id: `${turnId}:notice`, kind: "notice", status: "completed",
+          level: "success", message: "Structured response completed.",
+        },
+      });
+      sendStructured({
+        type: "part.completed",
+        part: {
+          id: `${turnId}:reasoning`, kind: "reasoning", status: "completed",
+          segments: [{ id: "analysis", text: "Inspecting the request and preparing a concise result.", status: "completed", source: "mock-desktop" }],
+        },
+      });
+      sendStructured({
+        type: "part.completed",
+        part: {
+          id: `${turnId}:markdown`, kind: "markdown", status: "completed",
+          markdown: markdownContent,
+          citationIds: ["mock-docs"],
+        },
+      });
+      sendStructured({
+        type: "part.completed",
+        part: { id: `${turnId}:progress`, kind: "progress", status: "completed", summary: "Result ready" },
+      });
+      sendStructured({ type: "turn.completed", meta: { model: request.model || "mock-model" } });
       emit(chatListeners, { requestId, type: "done" });
       return requestId;
     },
+    recoverChatRun: async () => [],
     abortChat: async (requestId) => {
       emit(chatListeners, { requestId, type: "aborted" });
       return true;
@@ -2001,6 +2122,9 @@ export function installMockDesktopApi(): void {
         outputs,
       };
     },
+    listWorktrees: async () => [],
+    listWorktreeEvents: async (request) => ({ events: [], nextSequence: request.afterSequence ?? 0 }),
+    getWorktreeMigrationDiagnostics: async () => [],
     getWorkspaceGitDiff: async (request) =>
       createMockWorkspaceDiff(request.workspacePath, request.path, request.staged),
     getWorkspaceGitFileAtRef: async (request) =>
@@ -4922,7 +5046,7 @@ export function installMockDesktopApi(): void {
       terminalSessions = [...terminalSessions, session];
       return session;
     },
-    listTerminalSessions: async (workspaceKey) =>
+    listTerminalSessions: async (workspaceKey, _workspaceId) =>
       terminalSessions.filter(
         (session) => !workspaceKey || session.workspaceKey === workspaceKey,
       ),
@@ -4975,6 +5099,27 @@ function emit<T>(listeners: Set<Listener<T>>, value: T): void {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function createStructuredVisualFixtureMarkdown(imageUrl: string): string {
+  const headers = Array.from({ length: 12 }, (_, index) => `Measurement ${index + 1}`);
+  const tableRows = Array.from({ length: 8 }, (_, rowIndex) =>
+    `| Sample ${rowIndex + 1} | ${headers.map((header, columnIndex) => `${header}: ${(rowIndex + 1) * (columnIndex + 3)}.000000`).join(" | ")} |`,
+  );
+  const codeLines = Array.from({ length: 28 }, (_, index) =>
+    `const detectorChannel${index + 1} = analyzeSpectrum("${"channel-".repeat(18)}${index + 1}", { reproducible: true });`,
+  );
+  return [
+    "## Structured renderer visual fixture\n\n",
+    `| Sample | ${headers.join(" | ")} |\n`,
+    `| --- | ${headers.map(() => "---:").join(" | ")} |\n`,
+    `${tableRows.join("\n")}\n\n`,
+    "```typescript\n",
+    `${codeLines.join("\n")}\n`,
+    "```\n\n",
+    `![OpenDrSai visual fixture](${imageUrl})\n\n`,
+    "The table and code block scroll within the response, while the image remains bounded by the readable column.",
+  ].join("");
 }
 
 function createMockWorkspaceOverview(

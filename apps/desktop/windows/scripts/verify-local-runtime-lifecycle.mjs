@@ -31,6 +31,7 @@ Object.assign(process.env, {
   DRSAI_REPO: repo,
   DRSAI_RUNTIME_CONTROLLED_MODEL: "1",
   OPENDRSAI_GATEWAY_PORT: String(port),
+  OPENDRSAI_RUNTIME_PERSIST: "0",
   PYTHONPATH: [join(repo, "cores", "python", "packages", "drsai", "src"), process.env.PYTHONPATH].filter(Boolean).join(";"),
 });
 

@@ -1,3 +1,5 @@
+import type { StructuredConversationEvent } from "../shared/structuredConversation";
+
 export interface ChatSseChoice {
   delta?: {
     content?: string;
@@ -69,6 +71,100 @@ export interface AgentLogSsePayload {
   content?: string;
   level?: string;
   content_type?: string;
+}
+
+export interface NormalizedChatContent {
+  text: string[];
+  reasoning: string[];
+}
+
+export interface ChatContentNormalizer {
+  pushContent(content: string): NormalizedChatContent;
+  pushNativeReasoning(content: string): string;
+  finish(): NormalizedChatContent;
+}
+
+const THINK_OPEN_TOKENS = ["<think>", "&lt;think&gt;"] as const;
+const THINK_CLOSE_TOKENS = ["</think>", "&lt;/think&gt;"] as const;
+
+export function createChatContentNormalizer(): ChatContentNormalizer {
+  let mode: "text" | "reasoning" = "text";
+  let buffer = "";
+  let hasNativeReasoning = false;
+  const nativeReasoning = new Set<string>();
+
+  function pushContent(content: string): NormalizedChatContent {
+    buffer += content;
+    const result: NormalizedChatContent = { text: [], reasoning: [] };
+    while (buffer) {
+      const tokens = mode === "text" ? THINK_OPEN_TOKENS : THINK_CLOSE_TOKENS;
+      const match = findFirstToken(buffer, tokens);
+      if (match) {
+        appendNormalizedContent(result, mode, buffer.slice(0, match.index), hasNativeReasoning);
+        buffer = buffer.slice(match.index + match.token.length);
+        mode = mode === "text" ? "reasoning" : "text";
+        continue;
+      }
+      const retained = longestTokenPrefixSuffix(buffer, tokens);
+      const readyLength = buffer.length - retained.length;
+      if (readyLength > 0) {
+        appendNormalizedContent(result, mode, buffer.slice(0, readyLength), hasNativeReasoning);
+        buffer = retained;
+      }
+      break;
+    }
+    return result;
+  }
+
+  function pushNativeReasoning(content: string): string {
+    const normalized = content.trim();
+    if (!normalized || nativeReasoning.has(normalized)) return "";
+    hasNativeReasoning = true;
+    nativeReasoning.add(normalized);
+    return content;
+  }
+
+  function finish(): NormalizedChatContent {
+    const result: NormalizedChatContent = { text: [], reasoning: [] };
+    appendNormalizedContent(result, mode, buffer, hasNativeReasoning);
+    buffer = "";
+    mode = "text";
+    return result;
+  }
+
+  return { pushContent, pushNativeReasoning, finish };
+}
+
+function appendNormalizedContent(
+  result: NormalizedChatContent,
+  mode: "text" | "reasoning",
+  content: string,
+  hasNativeReasoning: boolean,
+): void {
+  if (!content) return;
+  if (mode === "text") result.text.push(content);
+  else if (!hasNativeReasoning) result.reasoning.push(content);
+}
+
+function findFirstToken(
+  value: string,
+  tokens: readonly string[],
+): { index: number; token: string } | null {
+  let result: { index: number; token: string } | null = null;
+  for (const token of tokens) {
+    const index = value.indexOf(token);
+    if (index >= 0 && (!result || index < result.index)) result = { index, token };
+  }
+  return result;
+}
+
+function longestTokenPrefixSuffix(value: string, tokens: readonly string[]): string {
+  const maxLength = Math.min(value.length, Math.max(...tokens.map((token) => token.length - 1)));
+  for (let length = maxLength; length > 0; length -= 1) {
+    const suffix = value.slice(-length);
+    if (tokens.some((token) => token.startsWith(suffix))) return suffix;
+  }
+  return "";
 }
 
 export interface AgentInputRequestSsePayload {
@@ -176,6 +272,22 @@ export function parseAgentLogSseFrame(frame: string): AgentLogSsePayload | null 
     level: typeof value.level === "string" ? value.level : undefined,
     content_type: typeof value.content_type === "string" ? value.content_type : undefined,
   };
+}
+
+export function parseStructuredConversationSseFrame(frame: string): StructuredConversationEvent | null {
+  if (getSseEventName(frame) !== "drsai.event") return null;
+  const payload = getSseData(frame);
+  if (!payload || payload === "[DONE]") return null;
+  try {
+    const parsed = JSON.parse(payload) as Record<string, unknown>;
+    if (parsed.version !== 2 || typeof parsed.type !== "string" ||
+        typeof parsed.turnId !== "string" || typeof parsed.dedupeKey !== "string" ||
+        typeof parsed.timestamp !== "string" || typeof parsed.source !== "string" ||
+        !Number.isSafeInteger(parsed.sequence) || Number(parsed.sequence) <= 0) return null;
+    return parsed as unknown as StructuredConversationEvent;
+  } catch {
+    return null;
+  }
 }
 
 export function parseAgentInputRequestSseFrame(frame: string): AgentInputRequestSsePayload | null {

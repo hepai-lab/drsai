@@ -12,7 +12,8 @@ async def main() -> None:
     parent = gateway._runtime_registry().open_workspace("/home/vscode/workspace")
     result = await gateway.remote_workspace_worktree_create(
         parent.workspace_id,
-        gateway.RemoteWorktreeRequest(intent="inherit runtime"),
+        gateway.RemoteWorktreeRequest(intent="inherit runtime", idempotency_key="remote-e2e-create"),
+        None,
     )
     worktree = Path(result["worktree_path"])
     assert result["location"] == "remote"

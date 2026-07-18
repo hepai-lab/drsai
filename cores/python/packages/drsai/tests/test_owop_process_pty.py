@@ -2,16 +2,22 @@ from __future__ import annotations
 
 import base64
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
 
 import pytest
 
-from drsai.owop.process_pty import LocalProcessPtyOperations
+from drsai.owop.process_pty import LocalProcessPtyOperations, _WINDOWS_BACKGROUND_PROCESS_FLAGS
 
 
 pytestmark = pytest.mark.skipif(os.name != "nt", reason="C05-F07 validates Windows Process and ConPTY")
+
+
+def test_windows_background_processes_never_allocate_a_console() -> None:
+    assert _WINDOWS_BACKGROUND_PROCESS_FLAGS & subprocess.CREATE_NEW_PROCESS_GROUP
+    assert _WINDOWS_BACKGROUND_PROCESS_FLAGS & subprocess.CREATE_NO_WINDOW
 
 
 def _bytes(result: dict, stream: str | None = None) -> bytes:

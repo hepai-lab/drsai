@@ -1,10 +1,13 @@
-import type { IpcMainInvokeEvent } from "electron";
+import type { IpcMainInvokeEvent, WebContents } from "electron";
 import { randomUUID } from "crypto";
-import { existsSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { delimiter, join } from "path";
 import { getRemoteGatewayAccess } from "./remoteWorkspace";
 import { requestRemotePtyKill } from "./remotePtyLifecycle";
+import { connectRuntimeClientForWorkspace, type RuntimeClient } from "./runtimeClient";
+import { DRSAI_HOME } from "./paths";
+import { reconcileTerminalReplay } from "./terminalReplay";
 
 type IPty = import("node-pty").IPty;
 type IPtyForkOptions = import("node-pty").IPtyForkOptions;
@@ -45,9 +48,23 @@ interface TerminalSession extends TerminalSessionInfo {
   remoteSocket?: WebSocket;
   ownerId: number;
   buffer: string;
+  runtimeClient?: RuntimeClient;
+  leaseId?: string;
+  sequence?: number;
+  generation?: number;
+  needsSnapshot?: boolean;
+  pollTimer?: NodeJS.Timeout;
+  sender?: WebContents;
+  detached?: boolean;
 }
 
 const sessions = new Map<string, TerminalSession>();
+interface TerminalProjection {
+  id: string; workspaceId: string; workspaceKey: string; title: string;
+  shellProfile: TerminalShellProfile; sequence: number; generation: number;
+}
+const TERMINAL_PROJECTIONS_PATH = join(DRSAI_HOME, "desktop", "terminal-projections.json");
+const terminalProjections = new Map<string, TerminalProjection>(loadTerminalProjections().map((item) => [item.id, item]));
 const MAX_BUFFER_LENGTH = 200_000;
 const POWERSHELL_READLINE_SETUP = [
   "if (Get-Command Set-PSReadLineOption -ErrorAction SilentlyContinue) {",
@@ -207,6 +224,7 @@ function toSessionInfo(session: TerminalSession): TerminalSessionInfo {
     title: session.title,
     workspaceKey: session.workspaceKey,
     createdAt: session.createdAt,
+    ...(session.workspaceId ? { workspaceId: session.workspaceId } : {}),
   };
 }
 
@@ -227,7 +245,18 @@ export async function createTerminalSession(
       : homedir();
   const cols = clampDimension(options.cols, 100, 20, 500);
   const rows = clampDimension(options.rows, 30, 5, 200);
-  if (remoteAlias) return createRemoteTerminalSession(event, options, cwd, cols, rows, shellProfile);
+  if (options.workspaceId) {
+    return createRuntimeTerminalSession(event, options, cwd, cols, rows, shellProfile, remoteAlias ? { file: "/bin/bash", args: ["-l"] } : shell);
+  }
+  if (remoteAlias) {
+    if (process.env.OPENDRSAI_ENABLE_LEGACY_REMOTE_PTY === "1") {
+      return createRemoteTerminalSession(event, options, cwd, cols, rows, shellProfile);
+    }
+    throw new Error("Remote Terminal requires an authoritative Remote Runtime Workspace ID.");
+  }
+  if (process.env.OPENDRSAI_ENABLE_LEGACY_DESKTOP_PTY !== "1") {
+    throw new Error("Local Terminal requires an open Runtime Workspace.");
+  }
   const nodePty = loadNodePty();
   const id = randomUUID();
   const workspaceKey =
@@ -283,7 +312,7 @@ export async function createTerminalSession(
   });
 
   event.sender.once("destroyed", () => {
-    killTerminalsForOwner(event.sender.id);
+    void detachTerminalsForOwner(event.sender.id);
   });
 
   return toSessionInfo(session);
@@ -318,19 +347,19 @@ async function createRemoteTerminalSession(event: IpcMainInvokeEvent, options: T
     });
     socket.addEventListener("error", () => { if (!session) { clearTimeout(timer); reject(new Error("Remote PTY connection failed.")); } });
     socket.addEventListener("close", () => { if (session && sessions.has(session.id)) scheduleRemoteTerminalReattach(session, event, 0); });
-    event.sender.once("destroyed", () => killTerminalsForOwner(event.sender.id));
+    event.sender.once("destroyed", () => { void detachTerminalsForOwner(event.sender.id); });
   });
 }
 
 function scheduleRemoteTerminalReattach(session: TerminalSession, event: IpcMainInvokeEvent, attempt: number): void {
-  if (!sessions.has(session.id)) return;
+  if (!sessions.has(session.id) || session.detached) return;
   if (attempt >= 8) {
     sessions.delete(session.id);
     if (!event.sender.isDestroyed()) event.sender.send("desktop:terminal-exit", { id: session.id, exitCode: 255 });
     return;
   }
   setTimeout(() => {
-    if (!sessions.has(session.id)) return;
+    if (!sessions.has(session.id) || session.detached) return;
     const access = getRemoteGatewayAccess(session.cwd, session.workspaceId);
     if (!access) return scheduleRemoteTerminalReattach(session, event, attempt + 1);
     const socket = new WebSocket(`${access.baseUrl.replace(/^http/, "ws")}/v1/pty`);
@@ -342,19 +371,50 @@ function scheduleRemoteTerminalReattach(session: TerminalSession, event: IpcMain
       else if (message.type === "data") { const data = String(message.data || ""); appendSessionBuffer(session, data); if (!event.sender.isDestroyed()) event.sender.send("desktop:terminal-data", { id: session.id, data }); }
       else if (message.type === "exit") { sessions.delete(session.id); if (!event.sender.isDestroyed()) event.sender.send("desktop:terminal-exit", { id: session.id, exitCode: Number(message.exitCode || 0) }); }
     });
-    socket.addEventListener("close", () => { if (sessions.has(session.id)) scheduleRemoteTerminalReattach(session, event, attached ? 0 : attempt + 1); });
+    socket.addEventListener("close", () => { if (sessions.has(session.id) && !session.detached) scheduleRemoteTerminalReattach(session, event, attached ? 0 : attempt + 1); });
     socket.addEventListener("error", () => socket.close());
   }, Math.min(1000 * 2 ** attempt, 15_000));
 }
 
-export function listTerminalSessions(
+export async function listTerminalSessions(
   event: IpcMainInvokeEvent,
   workspaceKey?: string,
-): TerminalSessionInfo[] {
-  return [...sessions.values()]
-    .filter((session) => session.ownerId === event.sender.id)
-    .filter((session) => !workspaceKey || session.workspaceKey === workspaceKey)
-    .map(toSessionInfo);
+  workspaceId?: string,
+): Promise<TerminalSessionInfo[]> {
+  if (workspaceId && ![...sessions.values()].some((session) => session.workspaceId === workspaceId && session.runtimeClient)) {
+    const resolved = await connectRuntimeClientForWorkspace(workspaceKey || "", workspaceId);
+    const runtimeClient = resolved.client;
+    const result = await runtimeClient.executeOWOP(resolved.workspaceId, "pty.list", {});
+    for (const value of Array.isArray(result.terminals) ? result.terminals : []) {
+      if (!value || typeof value !== "object") continue;
+      const terminal = value as Record<string, unknown>;
+      if (["exited", "lost"].includes(String(terminal.status))) continue;
+      const id = String(terminal.terminal_id);
+      const projection = terminalProjections.get(id);
+      sessions.set(id, {
+        id, pid: Number(terminal.pid ?? 0), shell: String(terminal.shell ?? ""),
+        shellProfile: projection?.shellProfile ?? "powershell",
+        cwd: String(terminal.cwd ?? workspaceKey ?? ""),
+        title: projection?.title ?? `Terminal ${sessions.size + 1}`,
+        workspaceKey: projection?.workspaceKey ?? workspaceKey ?? String(terminal.cwd ?? workspaceId),
+        workspaceId, createdAt: new Date(Number(terminal.created_at ?? Date.now() / 1000) * 1000).toISOString(),
+        ownerId: 0, buffer: "", runtimeClient,
+        sequence: projection?.sequence ?? 0,
+        generation: projection?.generation ?? Number(terminal.generation ?? 1),
+        needsSnapshot: true,
+      });
+    }
+  }
+  const matching = [...sessions.values()].filter((session) => !workspaceKey || session.workspaceKey === workspaceKey);
+  for (const session of matching) {
+    if (session.runtimeClient && session.ownerId === 0) await attachRuntimeSession(session, event);
+    else if (session.remoteSocket && session.ownerId === 0) {
+      session.ownerId = event.sender.id;
+      session.detached = false;
+      scheduleRemoteTerminalReattach(session, event, 0);
+    }
+  }
+  return matching.filter((session) => session.ownerId === event.sender.id).map(toSessionInfo);
 }
 
 export function getTerminalBuffer(
@@ -373,59 +433,274 @@ export function renameTerminalSession(
   const session = sessionForOwner(id, event.sender.id);
   if (!session || typeof title !== "string" || !title.trim()) return null;
   session.title = title.trim().slice(0, 40);
+  saveTerminalProjection(session);
   return toSessionInfo(session);
 }
 
-export function writeTerminalSession(
+export async function writeTerminalSession(
   event: IpcMainInvokeEvent,
   id: string,
   data: string,
-): boolean {
+): Promise<boolean> {
   const session = sessionForOwner(id, event.sender.id);
   if (!session || typeof data !== "string") return false;
-  if (session.remoteSocket) session.remoteSocket.send(JSON.stringify({ type: "write", id, data }));
+  if (session.runtimeClient && session.workspaceId && session.leaseId) {
+    await session.runtimeClient.executeOWOP(session.workspaceId, "pty.write", {
+      pty_id: id, lease_id: session.leaseId, content_base64: Buffer.from(data, "utf8").toString("base64"),
+    });
+  } else if (session.remoteSocket) session.remoteSocket.send(JSON.stringify({ type: "write", id, data }));
   else session.pty?.write(data);
   return true;
 }
 
-export function resizeTerminalSession(
+export async function resizeTerminalSession(
   event: IpcMainInvokeEvent,
   id: string,
   cols: number,
   rows: number,
-): boolean {
+): Promise<boolean> {
   const session = sessionForOwner(id, event.sender.id);
   if (!session) return false;
   const nextCols = clampDimension(cols, 100, 20, 500); const nextRows = clampDimension(rows, 30, 5, 200);
-  if (session.remoteSocket) session.remoteSocket.send(JSON.stringify({ type: "resize", id, cols: nextCols, rows: nextRows }));
+  if (session.runtimeClient && session.workspaceId && session.leaseId) {
+    await session.runtimeClient.executeOWOP(session.workspaceId, "pty.resize", {
+      pty_id: id, lease_id: session.leaseId, cols: nextCols, rows: nextRows,
+    });
+  } else if (session.remoteSocket) session.remoteSocket.send(JSON.stringify({ type: "resize", id, cols: nextCols, rows: nextRows }));
   else session.pty?.resize(nextCols, nextRows);
   return true;
 }
 
-export function killTerminalSession(
+export async function killTerminalSession(
   event: IpcMainInvokeEvent,
   id: string,
-): boolean {
+): Promise<boolean> {
   const session = sessionForOwner(id, event.sender.id);
   if (!session) return false;
   sessions.delete(id);
-  if (session.remoteSocket) requestRemotePtyKill(session.remoteSocket, id);
+  deleteTerminalProjection(id);
+  if (session.pollTimer) clearTimeout(session.pollTimer);
+  if (session.runtimeClient && session.workspaceId) {
+    await session.runtimeClient.executeOWOP(session.workspaceId, "pty.kill", { pty_id: id });
+  } else if (session.remoteSocket) requestRemotePtyKill(session.remoteSocket, id);
   else session.pty?.kill();
   return true;
 }
 
-export function killTerminalsForOwner(ownerId: number): void {
+function loadTerminalProjections(): TerminalProjection[] {
+  try {
+    const parsed = JSON.parse(readFileSync(TERMINAL_PROJECTIONS_PATH, "utf8"));
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is TerminalProjection =>
+      item && typeof item.id === "string" && typeof item.workspaceId === "string" &&
+      typeof item.workspaceKey === "string" && typeof item.sequence === "number" && typeof item.generation === "number");
+  } catch { return []; }
+}
+
+function flushTerminalProjections(): void {
+  mkdirSync(join(DRSAI_HOME, "desktop"), { recursive: true });
+  const temporary = `${TERMINAL_PROJECTIONS_PATH}.tmp`;
+  writeFileSync(temporary, JSON.stringify([...terminalProjections.values()], null, 2), "utf8");
+  renameSync(temporary, TERMINAL_PROJECTIONS_PATH);
+}
+
+function saveTerminalProjection(session: TerminalSession): void {
+  if (!session.runtimeClient || !session.workspaceId) return;
+  terminalProjections.set(session.id, {
+    id: session.id, workspaceId: session.workspaceId, workspaceKey: session.workspaceKey,
+    title: session.title, shellProfile: session.shellProfile,
+    sequence: session.sequence ?? 0, generation: session.generation ?? 1,
+  });
+  flushTerminalProjections();
+}
+
+function deleteTerminalProjection(id: string): void {
+  if (terminalProjections.delete(id)) flushTerminalProjections();
+}
+
+function runtimeEvents(result: Record<string, unknown>): Array<{ sequence: number; generation: number; data: string }> {
+  const events = Array.isArray(result.events) ? result.events : [];
+  return events.flatMap((value) => {
+    if (!value || typeof value !== "object") return [];
+    const event = value as Record<string, unknown>;
+    if (typeof event.sequence !== "number" || typeof event.generation !== "number" || typeof event.content_base64 !== "string") return [];
+    return [{ sequence: event.sequence, generation: event.generation, data: Buffer.from(event.content_base64, "base64").toString("utf8") }];
+  });
+}
+
+function snapshotAnsi(snapshot: Record<string, unknown>): string {
+  const lines = [...(Array.isArray(snapshot.scrollback) ? snapshot.scrollback : []), ...(Array.isArray(snapshot.screen) ? snapshot.screen : [])];
+  const encoded = lines.map((line) => Array.isArray(line) ? line.map((value) => {
+    const run = value as Record<string, unknown>;
+    const style = run.style && typeof run.style === "object" ? run.style as Record<string, unknown> : {};
+    const codes: string[] = [];
+    if (style.bold) codes.push("1");
+    if (style.underline) codes.push("4");
+    if (style.inverse) codes.push("7");
+    for (const [kind, base] of [["fg", 30], ["bg", 40]] as const) {
+      const color = typeof style[kind] === "string" ? style[kind] as string : "";
+      if (color.startsWith("ansi:")) {
+        const index = Number(color.slice(5));
+        codes.push(String(index < 8 ? base + index : base + 60 + index - 8));
+      } else if (color.startsWith("index:")) codes.push(`${kind === "fg" ? 38 : 48};5;${color.slice(6)}`);
+      else if (color.startsWith("rgb:")) codes.push(`${kind === "fg" ? 38 : 48};2;${color.slice(4).replaceAll(",", ";")}`);
+    }
+    return `${codes.length ? `\x1b[${codes.join(";")}m` : ""}${String(run.text ?? "")}\x1b[0m`;
+  }).join("") : "").join("\r\n");
+  const cursor = snapshot.cursor && typeof snapshot.cursor === "object" ? snapshot.cursor as Record<string, unknown> : {};
+  return `\x1bc${encoded}\x1b[${Number(cursor.y ?? 0) + 1};${Number(cursor.x ?? 0) + 1}H`;
+}
+
+function applyRuntimeEvents(session: TerminalSession, result: Record<string, unknown>): void {
+  const snapshot = result.snapshot && typeof result.snapshot === "object" ? result.snapshot as Record<string, unknown> : null;
+  const events = runtimeEvents(result);
+  const plan = reconcileTerminalReplay(
+    { generation: session.generation ?? 1, sequence: session.sequence ?? 0 },
+    snapshot ? { generation: Number(snapshot.generation ?? 0), sequence: Number(snapshot.snapshot_sequence ?? 0) } : null,
+    events.map((event) => ({ generation: event.generation, sequence: event.sequence, value: event.data })),
+  );
+  if (snapshot && plan.snapshotAccepted) {
+    const data = snapshotAnsi(snapshot);
+    session.buffer = data;
+    session.needsSnapshot = false;
+    if (session.sender && !session.sender.isDestroyed()) session.sender.send("desktop:terminal-data", { id: session.id, data });
+  }
+  for (const event of plan.accepted) {
+    const data = event.value;
+    appendSessionBuffer(session, data);
+    if (session.sender && !session.sender.isDestroyed()) {
+      session.sender.send("desktop:terminal-data", { id: session.id, data });
+    }
+  }
+  session.generation = plan.cursor.generation;
+  session.sequence = plan.cursor.sequence;
+  session.needsSnapshot = session.needsSnapshot || plan.snapshotRequired;
+  saveTerminalProjection(session);
+}
+
+function scheduleRuntimePoll(session: TerminalSession): void {
+  if (!session.runtimeClient || !session.leaseId || session.pollTimer) return;
+  const poll = async (): Promise<void> => {
+    session.pollTimer = undefined;
+    if (!sessions.has(session.id) || !session.runtimeClient || !session.leaseId || session.ownerId === 0) return;
+    try {
+      const result = await session.runtimeClient.executeOWOP(session.workspaceId!, "pty.attach", {
+        pty_id: session.id,
+        lease_id: session.leaseId,
+        client_id: `desktop-${session.ownerId}`,
+        mode: "writer",
+        after_sequence: session.sequence ?? 0,
+        lease_seconds: 30,
+        prefer_snapshot: Boolean(session.needsSnapshot),
+      });
+      applyRuntimeEvents(session, result);
+      const terminal = result.terminal as Record<string, unknown> | undefined;
+      if (terminal?.status === "exited" || terminal?.status === "lost") {
+        sessions.delete(session.id);
+        deleteTerminalProjection(session.id);
+        if (session.sender && !session.sender.isDestroyed()) {
+          session.sender.send("desktop:terminal-exit", {
+            id: session.id,
+            exitCode: Number(terminal.exit_code ?? 255),
+            signal: terminal.exit_signal,
+          });
+        }
+        return;
+      }
+    } catch {
+      // A transient Local Runtime failure is retried; lease expiry is surfaced on the next user action.
+    }
+    if (sessions.has(session.id) && session.ownerId !== 0) session.pollTimer = setTimeout(() => void poll(), 100);
+  };
+  session.pollTimer = setTimeout(() => void poll(), 0);
+}
+
+async function attachRuntimeSession(session: TerminalSession, event: IpcMainInvokeEvent): Promise<void> {
+  if (!session.runtimeClient || !session.workspaceId) return;
+  const result = await session.runtimeClient.executeOWOP(session.workspaceId, "pty.attach", {
+    pty_id: session.id,
+    client_id: `desktop-${event.sender.id}`,
+    mode: "writer",
+    after_sequence: session.sequence ?? 0,
+    lease_seconds: 30,
+    prefer_snapshot: true,
+  });
+  session.leaseId = String(result.lease_id);
+  session.ownerId = event.sender.id;
+  session.sender = event.sender;
+  applyRuntimeEvents(session, result);
+  scheduleRuntimePoll(session);
+}
+
+async function createRuntimeTerminalSession(
+  event: IpcMainInvokeEvent,
+  options: TerminalCreateOptions,
+  cwd: string,
+  cols: number,
+  rows: number,
+  shellProfile: TerminalShellProfile,
+  shell: { file: string; args: string[] },
+): Promise<TerminalSessionInfo> {
+  if (!options.workspaceId) throw new Error("Runtime Terminal requires a Workspace ID.");
+  const resolved = await connectRuntimeClientForWorkspace(cwd, options.workspaceId);
+  const runtimeClient = resolved.client;
+  const created = await runtimeClient.executeOWOP(resolved.workspaceId, "pty.create", {
+    argv: [shell.file, ...shell.args], cwd: ".", cols, rows,
+  });
+  const terminal = created.terminal as Record<string, unknown>;
+  const workspaceKey = typeof options.workspaceKey === "string" && options.workspaceKey.trim() ? options.workspaceKey : cwd;
+  const session: TerminalSession = {
+    id: String(terminal.terminal_id), pid: Number(terminal.pid ?? 0), shell: shell.file,
+    shellProfile, cwd: String(terminal.cwd ?? cwd),
+    title: typeof options.title === "string" && options.title.trim() ? options.title.trim().slice(0, 40) : `Terminal ${sessions.size + 1}`,
+    workspaceKey, workspaceId: resolved.workspaceId,
+    createdAt: new Date(Number(terminal.created_at ?? Date.now() / 1000) * 1000).toISOString(),
+    ownerId: event.sender.id, sender: event.sender, buffer: "", runtimeClient,
+    sequence: Number(terminal.last_sequence ?? 0),
+    generation: Number(terminal.generation ?? 1),
+  };
+  sessions.set(session.id, session);
+  await attachRuntimeSession(session, event);
+  saveTerminalProjection(session);
+  event.sender.once("destroyed", () => { void detachTerminalsForOwner(event.sender.id); });
+  return toSessionInfo(session);
+}
+
+export async function detachTerminalsForOwner(ownerId: number): Promise<void> {
   for (const [id, session] of sessions) {
     if (session.ownerId === ownerId) {
-      sessions.delete(id);
-      if (session.remoteSocket) requestRemotePtyKill(session.remoteSocket, id); else session.pty?.kill();
+      if (session.pollTimer) clearTimeout(session.pollTimer);
+      session.pollTimer = undefined;
+      if (session.runtimeClient && session.workspaceId && session.leaseId) {
+        const leaseId = session.leaseId;
+        session.leaseId = undefined;
+        session.ownerId = 0;
+        session.sender = undefined;
+        saveTerminalProjection(session);
+        try {
+          await session.runtimeClient.executeOWOP(session.workspaceId, "pty.detach", { pty_id: id, lease_id: leaseId });
+        } catch { /* Runtime lease may already have expired; PTY ownership remains in Runtime. */ }
+      } else if (session.remoteSocket) {
+        session.ownerId = 0;
+        session.detached = true;
+        session.remoteSocket.close();
+      } else {
+        sessions.delete(id);
+        if (session.remoteSocket) requestRemotePtyKill(session.remoteSocket, id); else session.pty?.kill();
+      }
     }
   }
 }
 
+export const killTerminalsForOwner = detachTerminalsForOwner;
+
 export function killAllTerminalSessions(): void {
   for (const [id, session] of sessions) {
-    sessions.delete(id);
-    if (session.remoteSocket) requestRemotePtyKill(session.remoteSocket, id); else session.pty?.kill();
+    if (session.runtimeClient || session.remoteSocket) {
+      void detachTerminalsForOwner(session.ownerId);
+    } else {
+      sessions.delete(id);
+      if (session.remoteSocket) requestRemotePtyKill(session.remoteSocket, id); else session.pty?.kill();
+    }
   }
 }

@@ -1,7 +1,9 @@
 import { execFile, spawn, type ChildProcess } from "child_process";
 import { randomBytes } from "crypto";
+import { app } from "electron";
 import { get } from "http";
-import { existsSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { dirname, join } from "path";
 import type { GatewayStatus } from "../shared/desktopApi";
 import { DRSAI_HOME, DRSAI_PYTHON, DRSAI_REPO, getEnhancedPath } from "./paths";
 
@@ -10,13 +12,37 @@ const GATEWAY_PORT = getGatewayPort();
 const GATEWAY_BASE_URL = `http://${GATEWAY_HOST}:${GATEWAY_PORT}`;
 const DEV_MANAGED_EXTERNAL_GATEWAY = process.env.DRSAI_GATEWAY_DEV_MANAGED === "1";
 const HOT_RELOAD_GATEWAY = process.env.DRSAI_GATEWAY_HOT_RELOAD === "1";
-const GATEWAY_INSTANCE_TOKEN =
-  process.env.OPENDRSAI_GATEWAY_INSTANCE_TOKEN?.trim() || randomBytes(32).toString("base64url");
+const GATEWAY_TOKEN_PATH = join(DRSAI_HOME, "runtime", "instance-token");
+const GATEWAY_INSTANCE_TOKEN = loadGatewayInstanceToken();
+const PERSIST_RUNTIME = !HOT_RELOAD_GATEWAY && process.env.OPENDRSAI_RUNTIME_PERSIST !== "0";
+const GATEWAY_START_TIMEOUT_MS = Math.max(5_000, Math.min(120_000,
+  Number(process.env.OPENDRSAI_GATEWAY_START_TIMEOUT_MS || "30000") || 30_000));
+const NODE_PTY_MODULE = (() => {
+  try {
+    return dirname(dirname(require.resolve("node-pty")));
+  } catch {
+    return process.env.OPENDRSAI_NODE_PTY_MODULE?.trim() || "";
+  }
+})();
 export type GatewayStartupMode = "on-demand" | "eager" | "external";
 let gatewayProcess: ChildProcess | null = null;
 let lastGatewayLog = "";
 let gatewayStopPromise: Promise<boolean> | null = null;
 let gatewayStartPromise: Promise<boolean> | null = null;
+let adoptedPersistentRuntime = false;
+
+function loadGatewayInstanceToken(): string {
+  const configured = process.env.OPENDRSAI_GATEWAY_INSTANCE_TOKEN?.trim();
+  if (configured) return configured;
+  try {
+    const existing = readFileSync(GATEWAY_TOKEN_PATH, "utf8").trim();
+    if (/^[A-Za-z0-9_-]{32,128}$/.test(existing)) return existing;
+  } catch { /* create below */ }
+  const generated = randomBytes(32).toString("base64url");
+  mkdirSync(dirname(GATEWAY_TOKEN_PATH), { recursive: true });
+  writeFileSync(GATEWAY_TOKEN_PATH, generated, { encoding: "utf8", mode: 0o600 });
+  return generated;
+}
 
 export function getGatewayStartupMode(): GatewayStartupMode {
   const configured = process.env.OPENDRSAI_GATEWAY_STARTUP?.trim().toLowerCase();
@@ -28,7 +54,7 @@ export function getGatewayRequestHeaders(): Record<string, string> {
 }
 
 export function checkGatewayReady(): Promise<boolean> {
-  if (!isManagedGatewayRunning() && !DEV_MANAGED_EXTERNAL_GATEWAY) {
+  if (!isManagedGatewayRunning() && !DEV_MANAGED_EXTERNAL_GATEWAY && !adoptedPersistentRuntime) {
     return Promise.resolve(false);
   }
   return checkGatewayEndpoints();
@@ -53,7 +79,7 @@ export async function getGatewayStatus(): Promise<GatewayStatus> {
   const externalReady = await checkGatewayEndpoints();
   const processManaged = isManagedGatewayRunning();
   const externalMode = getGatewayStartupMode() === "external";
-  const managed = processManaged || ((DEV_MANAGED_EXTERNAL_GATEWAY || externalMode) && externalReady);
+  const managed = processManaged || adoptedPersistentRuntime || ((DEV_MANAGED_EXTERNAL_GATEWAY || externalMode) && externalReady);
   return {
     ready: managed && externalReady,
     managed,
@@ -163,19 +189,8 @@ async function startGatewayOnce(): Promise<boolean> {
     return externalReady;
   }
   if (externalReady) {
-    if (gatewayProcess && !gatewayProcess.killed) {
-      lastGatewayLog = `${lastGatewayLog}\nA managed gateway process is already running but the ready check failed.`.slice(-12000);
-      return false;
-    }
-    lastGatewayLog = `${lastGatewayLog}\nAn unmanaged service is already listening on ${GATEWAY_BASE_URL}. Attempting to reclaim the port.`.slice(-12000);
-    const killed = await killPortOccupant(GATEWAY_PORT);
-    if (killed) {
-      lastGatewayLog = `${lastGatewayLog}\nReclaimed port ${GATEWAY_PORT} from the previous occupant.`.slice(-12000);
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    } else {
-      lastGatewayLog = `${lastGatewayLog}\nCould not reclaim port ${GATEWAY_PORT}. Stop the process listening on ${GATEWAY_BASE_URL} and try again.`.slice(-12000);
-      return false;
-    }
+    adoptedPersistentRuntime = true;
+    return true;
   }
   if (gatewayProcess && !gatewayProcess.killed) return false;
   if (!existsSync(DRSAI_PYTHON)) return false;
@@ -193,6 +208,8 @@ async function startGatewayOnce(): Promise<boolean> {
       ]
     : ["-m", "drsai.backend.gateway"];
 
+  const localCodexEnv = await getLocalCodexDevelopmentEnv();
+
   gatewayProcess = spawn(DRSAI_PYTHON, args, {
     cwd: existsSync(DRSAI_REPO) ? DRSAI_REPO : undefined,
     env: {
@@ -200,29 +217,74 @@ async function startGatewayOnce(): Promise<boolean> {
       DRSAI_HOME,
       DRSAI_API_PORT: GATEWAY_PORT,
       OPENDRSAI_GATEWAY_INSTANCE_TOKEN: GATEWAY_INSTANCE_TOKEN,
+      ...(NODE_PTY_MODULE ? { OPENDRSAI_NODE_PTY_MODULE: NODE_PTY_MODULE } : {}),
+      ...localCodexEnv,
       PATH: getEnhancedPath(),
     },
     windowsHide: true,
-    stdio: ["ignore", "pipe", "pipe"],
+    detached: PERSIST_RUNTIME,
+    stdio: PERSIST_RUNTIME ? "ignore" : ["ignore", "pipe", "pipe"],
   });
   gatewayProcess.stdout?.on("data", appendGatewayLog);
   gatewayProcess.stderr?.on("data", appendGatewayLog);
   gatewayProcess.once("exit", () => {
     gatewayProcess = null;
+    adoptedPersistentRuntime = false;
   });
+  if (PERSIST_RUNTIME) gatewayProcess.unref();
 
-  const deadline = Date.now() + 12000;
+  const deadline = Date.now() + GATEWAY_START_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (await checkGatewayReady()) return true;
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  lastGatewayLog = `${lastGatewayLog}\nGateway did not become ready within 12 seconds; stopping the spawned process tree.`.slice(-12000);
+  lastGatewayLog = `${lastGatewayLog}\nGateway did not become ready within ${GATEWAY_START_TIMEOUT_MS} ms; stopping the spawned process tree.`.slice(-12000);
   // Do not call stopGateway() here: startGateway() still owns
   // gatewayStartPromise, and the public stop path waits for that promise.
   const failedProcess = gatewayProcess;
   if (isProcessRunning(failedProcess)) await terminateGatewayProcessTree(failedProcess);
   if (gatewayProcess === failedProcess && !isProcessRunning(failedProcess)) gatewayProcess = null;
   return false;
+}
+
+/**
+ * Development Desktop builds reuse the user's local Codex installation. A
+ * packaged release continues to use the signed managed artifact installed by
+ * the Runtime package, so this discovery cannot weaken the release trust path.
+ */
+async function getLocalCodexDevelopmentEnv(): Promise<Record<string, string>> {
+  if (app.isPackaged || process.env.DRSAI_CODEX_DEVELOPMENT === "0") return {};
+  const configured = process.env.CODEX_BIN?.trim();
+  const projectBinary = process.platform === "win32"
+    ? join(app.getAppPath(), "node_modules", ".bin", "codex.cmd")
+    : join(app.getAppPath(), "node_modules", ".bin", "codex");
+  const binary = configured || (existsSync(projectBinary) ? projectBinary : await findCommandOnPath("codex"));
+  if (!binary) return {};
+  return { DRSAI_CODEX_DEVELOPMENT: "1", CODEX_BIN: binary };
+}
+
+function findCommandOnPath(command: string): Promise<string | null> {
+  const locator = process.platform === "win32" ? "where.exe" : "which";
+  return new Promise((resolve) => {
+    execFile(locator, [command], {
+      env: { ...process.env, PATH: getEnhancedPath() },
+      timeout: 5000,
+      windowsHide: true,
+    }, (error, stdout) => {
+      if (error) {
+        resolve(null);
+        return;
+      }
+      const candidates = stdout.toString().split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+      // Windows Store application-package members may be listed by `where`
+      // while remaining inaccessible to an external Runtime process. Never
+      // advertise those aliases as an operational Backend executable.
+      const accessible = candidates.filter((candidate) => !/\\WindowsApps\\/i.test(candidate));
+      const selected = accessible.find((candidate) => process.platform !== "win32" || /\.(?:exe|cmd)$/i.test(candidate))
+        ?? accessible[0];
+      resolve(selected && existsSync(selected) ? selected : null);
+    });
+  });
 }
 
 function isManagedGatewayRunning(): boolean {
@@ -272,7 +334,21 @@ export async function stopGateway(): Promise<boolean> {
   if (gatewayStartPromise) await gatewayStartPromise.catch(() => false);
   if (gatewayStopPromise) return gatewayStopPromise;
   const proc = gatewayProcess;
-  if (!isProcessRunning(proc)) return false;
+  if (!isProcessRunning(proc)) {
+    if (adoptedPersistentRuntime && await checkGatewayEndpoints().then((value) => value)) {
+      const stopped = await requestRuntimeShutdown();
+      if (stopped) {
+        const deadline = Date.now() + 10_000;
+        while (Date.now() < deadline && await checkGatewayEndpoints()) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      }
+      const killed = !(await checkGatewayEndpoints()) || await killPortOccupant(GATEWAY_PORT);
+      if (killed) adoptedPersistentRuntime = false;
+      return killed;
+    }
+    return false;
+  }
 
   gatewayStopPromise = terminateGatewayProcessTree(proc).finally(() => {
     if (gatewayProcess === proc && !isProcessRunning(proc)) gatewayProcess = null;
@@ -300,8 +376,23 @@ export async function getGatewayModels(
   });
 }
 
-export async function shutdownGateway(): Promise<boolean> {
+export async function shutdownGateway(preserveRuntime = false): Promise<boolean> {
+  if (preserveRuntime && PERSIST_RUNTIME && (isManagedGatewayRunning() || adoptedPersistentRuntime)) {
+    gatewayProcess?.unref();
+    gatewayProcess = null;
+    adoptedPersistentRuntime = true;
+    return true;
+  }
   return stopGateway();
+}
+
+async function requestRuntimeShutdown(): Promise<boolean> {
+  try {
+    const response = await fetch(`${GATEWAY_BASE_URL}/v1/runtime/shutdown`, {
+      method: "POST", headers: getGatewayRequestHeaders(), signal: AbortSignal.timeout(3000),
+    });
+    return response.ok;
+  } catch { return false; }
 }
 
 function isProcessRunning(proc: ChildProcess | null): proc is ChildProcess {

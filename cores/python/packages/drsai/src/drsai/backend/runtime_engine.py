@@ -260,6 +260,16 @@ class RuntimeEngine:
             raise KeyError("Run not found")
         return self._run(row)
 
+    def list_session_runs(self, session_id: str) -> list[dict[str, Any]]:
+        """Return the durable backend bindings for one Runtime Session."""
+        self.get_session(session_id)
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT * FROM runtime_runs WHERE session_id=? ORDER BY created_at, run_id",
+                (session_id,),
+            ).fetchall()
+        return [self._run(row) for row in rows]
+
     def transition_run(self, run_id: str, status: str) -> dict[str, Any]:
         with self._lock, self._connect() as db:
             db.execute("BEGIN IMMEDIATE")

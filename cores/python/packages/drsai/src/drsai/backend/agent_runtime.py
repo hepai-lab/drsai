@@ -181,6 +181,7 @@ class RuntimeState(Protocol):
     identity: Any
 
     def get_run(self, run_id: str) -> dict[str, Any]: ...
+    def list_session_runs(self, session_id: str) -> list[dict[str, Any]]: ...
     def transition_run(self, run_id: str, status: str) -> dict[str, Any]: ...
     def append_event(self, run_id: str, event_type: str, data: dict[str, Any]) -> dict[str, Any]: ...
     def append_backend_event(self, run_id: str, event_type: str, data: dict[str, Any], backend_event_key: str) -> dict[str, Any]: ...
@@ -627,6 +628,25 @@ class RuntimeAgentService:
         backend = self._backend_for_run(run_id)
         await backend.cancel(run_id)
         return self.state.cancel_run(run_id)
+
+    async def archive_session(self, session_id: str, *, archived: bool) -> None:
+        """Ask the Session's backend to mirror a Runtime archive transition.
+
+        A Session with no Runs is Runtime-only.  Once Runs exist, they must all
+        belong to one backend before we can safely mirror a session-level action.
+        """
+        backend_ids = {str(run["backend_id"]) for run in self.state.list_session_runs(session_id)}
+        if not backend_ids:
+            return
+        if len(backend_ids) != 1:
+            raise RuntimeExecutionError(
+                "session_backend_ambiguous",
+                "Session contains Runs from multiple Agent Backends.",
+            )
+        backend_id = backend_ids.pop()
+        operation = getattr(self.router.require(backend_id), "archive_session", None)
+        if operation is not None:
+            await operation(session_id, archived=archived)
 
     async def respond_approval(self, run_id: str, approval_id: str, decision: str) -> None:
         await self._backend_for_run(run_id).respond_approval(run_id, approval_id, decision)

@@ -38,6 +38,7 @@ class FakeCodexClient:
         self.execute_count = 0
         self.close_count = 0
         self.cancelled: list[str] = []
+        self.archived_sessions: list[tuple[str, bool]] = []
         self.approvals: list[tuple[str, str, str]] = []
         self.recovered: list[str] = []
         self.account_calls: list[tuple[str, Any]] = []
@@ -57,6 +58,7 @@ class FakeCodexClient:
         }
 
     async def interrupt_turn(self, run_id): self.cancelled.append(run_id)
+    async def archive_session(self, session_id, *, archived): self.archived_sessions.append((session_id, archived))
     async def respond_approval(self, run_id, approval_id, decision): self.approvals.append((run_id, approval_id, decision))
     async def recover_turn(self, run_id): self.recovered.append(run_id)
     async def health(self): return {"available": self.available, "reason": None if self.available else (self.reason or "connection_closed")}
@@ -208,6 +210,29 @@ class AgentBackendContractTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, "codex_backend_unavailable")
         self.assertEqual(open_calls, [])
         self.assertEqual(self.engine.get_run(run["run_id"])["status"], "failed")
+
+    def test_session_archive_is_mirrored_only_to_its_codex_backend(self) -> None:
+        client = FakeCodexClient()
+        service = self.service(OpenDrSaiAgentBackend(lambda *_: {"done": True}), CodexAdapter(client))
+        session = self.engine.create_session(self.workspace_record.workspace_id, "codex archive")
+        reference = self.definition("codex-archive", "codex")
+        self.engine.create_run(session["session_id"], reference, "codex-archive-run", "codex")
+
+        asyncio.run(service.archive_session(session["session_id"], archived=True))
+        asyncio.run(service.archive_session(session["session_id"], archived=False))
+
+        self.assertEqual(client.archived_sessions, [(session["session_id"], True), (session["session_id"], False)])
+
+    def test_session_archive_rejects_mixed_backend_history(self) -> None:
+        client = FakeCodexClient()
+        service = self.service(OpenDrSaiAgentBackend(lambda *_: {"done": True}), CodexAdapter(client))
+        self.create_run(self.definition("archive-open", "opendrsai"), "archive-open")
+        self.create_run(self.definition("archive-codex", "codex"), "archive-codex")
+
+        with self.assertRaises(RuntimeExecutionError) as caught:
+            asyncio.run(service.archive_session(self.session["session_id"], archived=True))
+        self.assertEqual(caught.exception.code, "session_backend_ambiguous")
+        self.assertEqual(client.archived_sessions, [])
 
     def test_codex_terminal_errors_map_to_runtime_terminal_state_and_timestamps(self) -> None:
         class InterruptedClient(FakeCodexClient):

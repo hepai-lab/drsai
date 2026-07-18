@@ -127,6 +127,24 @@ run("ssh.exe", ["-F", sshConfig, "opendrsai-fixture", `python3 -c ${JSON.stringi
 const workspaceTwo = await remote.connectRemoteWorkspace({ hostAlias: "opendrsai-fixture", path: "/home/vscode/workspace-two", trusted: true });
 const statusTwo = await remote.getRemoteWorkspaceStatus(workspaceTwo.id);
 assert(statusTwo.connected && status.localPort === statusTwo.localPort, "same-host workspaces did not reuse one tunnel");
+const reusePaths = Array.from({ length: 8 }, (_, index) => `/home/vscode/workspace-reuse-${index + 3}`);
+run("ssh.exe", ["-F", sshConfig, "opendrsai-fixture", "mkdir", "-p", ...reusePaths]);
+const reusedWorkspaces = [];
+for (const path of reusePaths) {
+  const reused = await remote.connectRemoteWorkspace({ hostAlias: "opendrsai-fixture", path, trusted: true });
+  const reusedStatus = await remote.getRemoteWorkspaceStatus(reused.id);
+  assert(reusedStatus.connected && reusedStatus.localPort === status.localPort, `10-Workspace Host tunnel reuse failed for ${path}`);
+  reusedWorkspaces.push(reused);
+}
+assert(new Set([workspace.id, workspaceTwo.id, ...reusedWorkspaces.map((item) => item.id)]).size === 10, "10 same-Host Workspaces did not retain independent Workspace IDs");
+run("docker", ["exec", "-d", "opendrsai-remote-ssh-fixture", "python3", "-m", "http.server", "18081", "--bind", "127.0.0.1", "--directory", "/home/vscode/workspace"]);
+const forwardAuthorization = { permissionGranted: true, approvalId: "approval-forward-e2e", correlationId: "corr-forward-e2e", operationId: "operation-forward-e2e" };
+await assertRejects(() => remote.createPortForward({ hostAlias: "opendrsai-fixture", workspaceId: workspace.id, remotePort: 18081, bindAddress: "0.0.0.0", authorization: forwardAuthorization }), "non-loopback Port Forward bypassed explicit approval");
+const forward = await remote.createPortForward({ hostAlias: "opendrsai-fixture", workspaceId: workspace.id, remotePort: 18081, authorization: forwardAuthorization });
+assert(forward.bindAddress === "127.0.0.1" && forward.status === "active", "Port Forward was not loopback-active");
+assert((await waitHttp(`http://127.0.0.1:${forward.localPort}/remote.txt`)).includes("remote fixture"), "real TCP Port Forward did not reach the remote HTTP service");
+assert((await remote.pausePortForward(forward.portForwardId)).status === "paused", "Port Forward pause failed");
+assert((await remote.resumePortForward(forward.portForwardId)).status === "active", "Port Forward resume failed");
 run("ssh.exe", ["-F", sshConfig, "opendrsai-fixture", "python3 -c \"import os,pathlib; os.kill(int((pathlib.Path.home()/'.local/share/opendrsai/remote/gateway.pid').read_text()),15)\""]);
 let runtimeFailureSeen = false; let runtimeRecovered = false;
 for (let attempt = 0; attempt < 100; attempt += 1) {
@@ -164,12 +182,18 @@ for (let attempt = 0; attempt < 50; attempt += 1) {
   }
 }
 assert(sshFailureSeen && recovered, "SSH failure was not distinguished or shared host connection did not recover after remote restart");
+run("docker", ["exec", "-d", "opendrsai-remote-ssh-fixture", "python3", "-m", "http.server", "18081", "--bind", "127.0.0.1", "--directory", "/home/vscode/workspace"]);
+const recoveredForward = (await remote.listPortForwards({ workspaceId: workspace.id })).find((item) => item.portForwardId === forward.portForwardId);
+assert(recoveredForward?.status === "active", "Port Forward Registry did not restore after SSH reconnect");
+assert((await waitHttp(`http://127.0.0.1:${recoveredForward.localPort}/remote.txt`)).includes("remote fixture"), "restored Port Forward did not reach the restarted remote service");
+assert(await remote.removePortForward(forward.portForwardId), "Port Forward remove failed");
 assert(remote.getRemoteSshDiagnosticReport().hosts[0]?.events.some((event) => event.phase === "runtime.instance-changed"), "Runtime instance restart was not detected and recorded");
 const recoveredAccess = remote.getRemoteGatewayAccess(workspace.id);
 assert(recoveredAccess && recoveredAccess.token !== initialAccess.token, "Runtime restart did not rotate its temporary instance token");
 assert((await remote.getRemoteWorkspaceStatus(crossHostWorkspace.id)).connected, "restarting the first host affected the independent second host");
 assert(await remote.disconnectRemoteWorkspace(workspace.id), "disconnect failed");
 assert((await remote.getRemoteWorkspaceStatus(workspaceTwo.id)).connected, "disconnecting one workspace closed the shared host connection");
+for (const reused of reusedWorkspaces) assert(await remote.disconnectRemoteWorkspace(reused.id), `reused Workspace disconnect failed: ${reused.id}`);
 assert(await remote.disconnectRemoteWorkspace(workspaceTwo.id), "second disconnect failed");
 const fastReconnect = await remote.connectRemoteWorkspace({ hostAlias: "opendrsai-fixture", path: "/home/vscode/workspace", trusted: true });
 assert(fastReconnect.remote?.localPort === Number(new URL(recoveredAccess.baseUrl).port), "idle HostConnection was not reused for an immediate Workspace reconnect");
@@ -198,6 +222,18 @@ function capture(command, args, cwd = root) {
 }
 function assert(value, message) {
   if (!value) throw new Error(message);
+}
+async function waitHttp(url) {
+  let last;
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(1000) });
+      if (response.ok) return response.text();
+      last = new Error(`HTTP ${response.status}`);
+    } catch (error) { last = error; }
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
+  }
+  throw last || new Error("HTTP Port Forward did not become ready");
 }
 async function assertRejects(operation, message) {
   try { await operation(); } catch { return; }

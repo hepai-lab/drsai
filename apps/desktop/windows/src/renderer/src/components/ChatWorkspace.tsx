@@ -54,6 +54,7 @@ import type {
   WorkspaceInstructionSummary,
 } from "@shared/desktopApi";
 import type { ChatAttachment } from "@shared/desktopApi";
+import type { ArtifactPart, CitationPart, InteractionPart, StructuredTurnState } from "@shared/structuredConversation";
 import type { AppLanguage } from "../navigation";
 import { desktopApi, hasDesktopApi } from "../desktopApi";
 import {
@@ -63,6 +64,7 @@ import {
   type ChatRuntimeMode,
 } from "../chatCommands";
 import { ChatMessageContent } from "./ChatMessageContent";
+import { getStructuredVisibleText, StructuredMessageParts } from "./StructuredMessageParts";
 import { getReasoningChatText, getVisibleChatText } from "../chatOutputModel";
 
 export type UiMessage = ChatMessage & {
@@ -73,6 +75,7 @@ export type UiMessage = ChatMessage & {
   reasoningContent?: string;
   toolTimeline?: ChatToolTimelineEvent[];
   parts?: ChatMessagePart[];
+  structuredTurn?: StructuredTurnState;
   startedAt?: number;
   lastEventAt?: number;
   inputRequest?: {
@@ -144,6 +147,7 @@ interface ChatWorkspaceProps {
   currentRuntimeMode?: ChatRuntimeMode | null;
   defaultThinkingEffort?: ThinkingEffort;
   searchRequestNonce?: number;
+  structuredTurnFocus?: { turnId: string; nonce: number } | null;
   selectedAgentId?: string;
   selectedAgentName?: string;
   selectedModelName?: string;
@@ -163,6 +167,7 @@ interface ChatWorkspaceProps {
   onSelectModel?: (model: string) => void;
   onOpenExternal: (url: string) => void;
   onOpenPreviewBrowser?: (url?: string) => void;
+  onOpenWorkspaceArtifact?: (path: string) => void;
   onPickFiles?: () => Promise<PickDialogResult>;
   onPickFolder?: () => Promise<PickDialogResult>;
   onSummarizeWorkspaceFolder?: (
@@ -188,6 +193,7 @@ export function ChatWorkspace({
   currentRuntimeMode,
   defaultThinkingEffort = "medium",
   searchRequestNonce = 0,
+  structuredTurnFocus = null,
   selectedAgentId,
   selectedAgentName,
   selectedModelName,
@@ -207,6 +213,7 @@ export function ChatWorkspace({
   onSelectModel,
   onOpenExternal,
   onOpenPreviewBrowser,
+  onOpenWorkspaceArtifact,
   onPickFiles,
   onPickFolder,
   onSummarizeWorkspaceFolder,
@@ -217,6 +224,7 @@ export function ChatWorkspace({
   onSubmit,
 }: ChatWorkspaceProps): React.JSX.Element {
   const [toolsOpen, setToolsOpen] = useState(false);
+  const [highlightedTurnId, setHighlightedTurnId] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [materialRoleAnalysis, setMaterialRoleAnalysis] = useState<MaterialRoleAnalysisResult | null>(null);
   const [materialRolePhase, setMaterialRolePhase] = useState<"idle" | "analyzing" | "ready" | "failed">("idle");
@@ -286,6 +294,18 @@ export function ChatWorkspace({
   function requestTextAgentInput(request: NonNullable<UiMessage["inputRequest"]>): void {
     const response = window.prompt(request.prompt);
     if (response?.trim()) void respondToAgentInput(request, response.trim());
+  }
+
+  function respondToStructuredInteraction(part: InteractionPart, response: { approved: boolean }): void {
+    void respondToAgentInput({
+      requestId: part.requestId,
+      prompt: part.prompt,
+      inputType: part.interactionType === "approval" ? "approval" : "text_input",
+    }, response);
+  }
+
+  function requestStructuredTextInput(part: InteractionPart): void {
+    requestTextAgentInput({ requestId: part.requestId, prompt: part.prompt, inputType: "text_input" });
   }
   const shouldFollowOutputRef = useRef(true);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
@@ -542,6 +562,21 @@ export function ChatWorkspace({
     if (searchRequestNonce <= 0) return;
     openSearch();
   }, [openSearch, searchRequestNonce]);
+
+  useEffect(() => {
+    if (!structuredTurnFocus) return;
+    setHighlightedTurnId(structuredTurnFocus.turnId);
+    shouldFollowOutputRef.current = false;
+    const frame = window.requestAnimationFrame(() => {
+      const selector = `[data-structured-turn-id="${CSS.escape(structuredTurnFocus.turnId)}"]`;
+      messageListRef.current?.querySelector<HTMLElement>(selector)?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+    const timer = window.setTimeout(() => setHighlightedTurnId(null), 1800);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+    };
+  }, [structuredTurnFocus]);
 
   useEffect(() => {
     function handleWorkflowChatCommand(event: Event): void {
@@ -1188,6 +1223,22 @@ export function ChatWorkspace({
     onOpenExternal(href);
   }
 
+  function openStructuredArtifact(part: ArtifactPart): void {
+    if (part.url && isSafeWebUrl(part.url)) {
+      openPreviewBrowser(part.url);
+      return;
+    }
+    if (part.path) onOpenWorkspaceArtifact?.(part.path);
+  }
+
+  function openStructuredCitation(part: CitationPart): void {
+    if (part.url && isSafeWebUrl(part.url)) {
+      openPreviewBrowser(part.url);
+      return;
+    }
+    if (part.path) onOpenWorkspaceArtifact?.(part.path);
+  }
+
   return (
     <div className="chat-workspace">
       <div className={`chat-primary-pane ${emptyChat ? "empty-chat" : ""}`}>
@@ -1284,13 +1335,29 @@ export function ChatWorkspace({
           return (
           <article
             key={message.id}
-            className={`message ${message.role} ${message.error ? "error" : ""} ${searchMatches.includes(message.id) ? "search-match" : ""} ${activeMatchId === message.id ? "search-active" : ""}`}
+            className={`message ${message.role} ${message.error ? "error" : ""} ${searchMatches.includes(message.id) ? "search-match" : ""} ${activeMatchId === message.id ? "search-active" : ""} ${message.structuredTurn?.turnId === highlightedTurnId ? "structured-turn-focus" : ""}`}
             data-message-id={message.id}
+            data-structured-turn-id={message.structuredTurn?.turnId}
           >
             <strong className="message-author">{message.role === "user" ? "You" : "OpenDrSai"}</strong>
             <div className="message-body">
               {message.content && message.role === "user" ? (
                 <p>{highlightPlainText(message.content, searchQuery)}</p>
+              ) : message.role === "assistant" && message.structuredTurn ? (
+                message.structuredTurn.parts.length ? (
+                  <StructuredMessageParts
+                    turn={message.structuredTurn}
+                    language={language}
+                    respondedRequestIds={respondedInputRequests}
+                    onOpenLink={handleMarkdownLink}
+                    onOpenArtifact={openStructuredArtifact}
+                    onOpenCitation={openStructuredCitation}
+                    onRespondInteraction={respondToStructuredInteraction}
+                    onRequestTextInteraction={requestStructuredTextInput}
+                  />
+                ) : (
+                  <StreamingStatus message={message} now={now} zh={zh} />
+                )
               ) : message.content ? (
                 <ChatMessageContent
                   content={assistantContent}
@@ -1301,7 +1368,7 @@ export function ChatWorkspace({
               ) : (
                 <StreamingStatus message={message} now={now} zh={zh} />
               )}
-              {message.reasoningContent && (
+              {!message.structuredTurn && message.reasoningContent && (
                 <details className="chat-reasoning chat-event-reasoning">
                   <summary>
                     <ChevronRight size={14} />
@@ -1317,7 +1384,7 @@ export function ChatWorkspace({
                   </div>
                 </details>
               )}
-              {message.inputRequest ? (
+              {!message.structuredTurn && message.inputRequest ? (
                 <section className="chat-agent-input-request" aria-label={zh ? "智能体请求输入" : "Agent input request"}>
                   <strong>{zh ? "智能体需要你的输入" : "Agent needs your input"}</strong>
                   <p>{message.inputRequest.prompt}</p>
@@ -3052,6 +3119,7 @@ function getSlashCommandDescription(command: ChatCommandName): string {
 }
 
 function getAssistantDisplayContent(message: UiMessage): string {
+  if (message.structuredTurn) return getStructuredVisibleText(message.structuredTurn);
   if (!message.reasoningContent) return message.content;
   const content = getVisibleChatText(message.content);
   return removeDuplicatedReasoning(content, getVisibleChatText(message.reasoningContent));
@@ -3144,6 +3212,15 @@ function isPreviewBrowserUrl(href: string): boolean {
       (url.protocol === "http:" || url.protocol === "https:") &&
       ["localhost", "127.0.0.1", "::1"].includes(url.hostname)
     );
+  } catch {
+    return false;
+  }
+}
+
+function isSafeWebUrl(href: string): boolean {
+  try {
+    const url = new URL(href);
+    return url.protocol === "http:" || url.protocol === "https:";
   } catch {
     return false;
   }

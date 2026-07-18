@@ -60,6 +60,7 @@ import { RepoMapPanel } from "./RepoMapPanel";
 interface FilesContextPanelProps {
   basket: ChatAttachment[];
   fileTraceEvents: AgentFileTraceEvent[];
+  focusPath?: string;
   language: AppLanguage;
   scopeId: string;
   workspaceId: string;
@@ -76,6 +77,7 @@ type LoadState = "idle" | "loading" | "error";
 export function FilesContextPanel({
   basket,
   fileTraceEvents,
+  focusPath,
   language,
   scopeId,
   workspaceId,
@@ -200,6 +202,12 @@ export function FilesContextPanel({
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    if (!focusPath || !nodes.length || selectedNode?.path === focusPath) return;
+    const target = findNodeByPath(nodes, focusPath);
+    if (target) void selectNode(target);
+  }, [focusPath, nodes, selectedNode?.path]);
 
   useEffect(() => {
     let timer: number | undefined;

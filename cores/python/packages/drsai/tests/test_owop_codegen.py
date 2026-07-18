@@ -5,7 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from drsai.owop.generated import OWOP_PARAMS_BY_OPERATION, OWOP_VERSION
+from drsai.owop.generated import OWOP_PARAMS_BY_OPERATION, OWOP_RESULTS_BY_OPERATION, OWOP_VERSION
 from drsai.owop.protocol import OWOPProtocol
 
 
@@ -20,6 +20,7 @@ def test_generated_python_and_typescript_have_zero_drift() -> None:
     protocol = OWOPProtocol(SCHEMA)
     assert OWOP_VERSION == protocol.version
     assert set(OWOP_PARAMS_BY_OPERATION) == set(protocol.operations)
+    assert set(OWOP_RESULTS_BY_OPERATION) == set(protocol.results)
 
 
 def test_schema_change_without_regeneration_fails_drift_gate(tmp_path: Path) -> None:

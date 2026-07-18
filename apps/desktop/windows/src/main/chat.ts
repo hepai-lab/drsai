@@ -10,6 +10,7 @@ import { getGatewayRequestHeaders, startGateway } from "./gateway";
 import { getDefaultModelAlias } from "./modelDefaults";
 import {
   createChatToolTimelineAccumulator,
+  createChatContentNormalizer,
   ChatSseError,
   isCompletionDoneFrame,
   parseAgentInputRequestSseFrame,
@@ -17,20 +18,21 @@ import {
   parseChatReasoningSseFrame,
   parseChatSseErrorFrame,
   parseChatSseFrame,
+  parseStructuredConversationSseFrame,
   parseProviderErrorAnalyticsSseFrame,
   parseProviderStatusSseFrame,
   parseProviderUsageAnalyticsSseFrame,
   parseAgentRunSseFileEvents,
 } from "./sseParser";
-import { upsertThreadFromRun } from "./threads";
+import { listThreads, upsertThreadFromRun } from "./threads";
 import { persistProviderErrorAnalytics } from "./providerErrorAnalytics";
 import { persistProviderUsageAnalytics } from "./providerUsageAnalytics";
-import { bindRemoteThread, getRemoteGatewayAccess } from "./remoteWorkspace";
+import { bindRemoteThread, getRemoteGatewayAccess, resolveRemoteWorkspaceTarget } from "./remoteWorkspace";
 import { recordAgentTelemetry } from "./agentTelemetry";
 import { analyzeMaterialRoles } from "./workspaceContext";
 import { assertAgentCircuitAvailable, recordAgentCircuitFailure, recordAgentCircuitSuccess } from "./agentCircuitBreaker";
 import { createFailureEscalation, getFailureRecovery } from "./failureRecovery";
-import { LocalRuntimeClient, type RuntimeClient, type RuntimeAgentEvent } from "./runtimeClient";
+import { connectRuntimeClientForWorkspace, type RuntimeClient, type RuntimeAgentEvent } from "./runtimeClient";
 import {
   RecoverableStreamError,
   appendResumedContent,
@@ -118,6 +120,40 @@ export function abortChat(requestId: string): boolean {
   platformChatTargets.delete(requestId);
   codexChatTargets.delete(requestId);
   return true;
+}
+
+/**
+ * Rebuild the Desktop-facing portion of a Codex chat after Electron restarts.
+ * The authoritative Run and its event log remain in the Runtime, so recovery
+ * must read them there instead of treating a renderer reload as a failed run.
+ */
+export async function recoverChatRun(rawRequest: unknown): Promise<ChatEvent[]> {
+  if (!rawRequest || typeof rawRequest !== "object") return [];
+  const request = rawRequest as { requestId?: unknown; sessionId?: unknown };
+  if (
+    typeof request.requestId !== "string" || !REQUEST_ID_PATTERN.test(request.requestId)
+    || typeof request.sessionId !== "string" || !SESSION_ID_PATTERN.test(request.sessionId)
+  ) return [];
+  const requestId = request.requestId;
+  const sessionId = request.sessionId;
+  const thread = (await listThreads()).find((candidate) => candidate.id === sessionId);
+  if (!thread || thread.boundAgentId !== "my-codex" || !thread.lastRunId || !thread.workspacePath) return [];
+  const resolved = await connectRuntimeClientForWorkspace(thread.workspacePath, thread.execution?.workspaceId);
+  const events = await resolved.client.listAgentRunEvents(thread.lastRunId, 0);
+  const recovered: ChatEvent[] = [];
+  let sequence = 0;
+  const push = (event: Omit<ChatEvent, "requestId" | "sessionId" | "seq">) => {
+    recovered.push({ ...event, requestId, sessionId, seq: ++sequence });
+  };
+  const target = { approvalId: undefined as string | undefined };
+  for (const event of events) {
+    const mapped = mapCodexRuntimeEvent(requestId, sessionId, thread.lastRunId, event, target);
+    if (mapped) push(mapped);
+  }
+  if (events.some((event) => event.type === "run.completed")) push({ type: "done", runId: thread.lastRunId });
+  else if (events.some((event) => event.type === "run.cancelled")) push({ type: "aborted", runId: thread.lastRunId });
+  else if (events.some((event) => event.type === "run.failed")) push({ type: "error", runId: thread.lastRunId, error: "Codex Run failed while the Desktop was reconnecting." });
+  return recovered;
 }
 
 export async function respondChatInput(
@@ -342,7 +378,9 @@ async function runChat(
     workspacePath: request.workspacePath,
     boundAgentId,
     boundAgentName,
-    lastRunId: runId,
+    // Codex resolves legacy Runtime Session bindings from the previous Run.
+    // Do not overwrite that recovery handle until its new Run exists.
+    lastRunId: isCodexBackend ? undefined : runId,
     lastRequestId: requestId,
     status: "running",
     messageCount: request.messages.length,
@@ -364,6 +402,10 @@ async function runChat(
     // Platform agents execute in HAI and must never depend on a local or
     // workspace gateway being installed/running. Gateway startup is reserved
     // for My DrSai and remote-workspace local execution.
+    const remoteTarget = platformDescriptor ? "local_or_unknown" : await resolveRemoteWorkspaceTarget(request.workspacePath, request.workspaceId);
+    if (remoteTarget === "remote_offline") {
+      throw new Error("Remote Workspace is offline; Agent Backend execution cannot fall back to Local Runtime.");
+    }
     const remoteGateway = platformDescriptor ? null : getRemoteGatewayAccess(request.workspacePath, request.workspaceId);
     if (remoteGateway) bindRemoteThread(sessionId, remoteGateway.workspaceId);
     const ready = platformDescriptor || remoteGateway ? true : await startGateway();
@@ -499,16 +541,42 @@ async function runChat(
           throw error;
         }
         recoveryAttempt += 1;
+        const retryDelayMs = networkRetryDelayMs(recoveryAttempt);
+        emit(webContents, {
+          requestId,
+          sessionId,
+          runId,
+          type: "connection",
+          connection: {
+            status: "retrying",
+            attempt: recoveryAttempt,
+            delayMs: retryDelayMs,
+            timestamp: new Date().toISOString(),
+            source: remoteGateway ? "remote-gateway" : "gateway",
+          },
+        });
         emit(webContents, {
           requestId, sessionId, runId, type: "status", level: "WARNING",
           content: recoveryAttempt === 1
             ? "网络连接中断，现有回复已保留；正在等待恢复并安全续传…"
             : `网络仍未恢复，正在第 ${recoveryAttempt} 次重连…`,
         });
-        await waitForNetworkRetry(networkRetryDelayMs(recoveryAttempt), controller.signal);
+        await waitForNetworkRetry(retryDelayMs, controller.signal);
       }
     }
     if (recoveryAttempt > 0) {
+      emit(webContents, {
+        requestId,
+        sessionId,
+        runId,
+        type: "connection",
+        connection: {
+          status: "restored",
+          attempt: recoveryAttempt,
+          timestamp: new Date().toISOString(),
+          source: remoteGateway ? "remote-gateway" : "gateway",
+        },
+      });
       emit(webContents, { requestId, sessionId, runId, type: "status", level: "INFO", content: "网络已恢复，回复已从保存位置继续。" });
     }
     if (controller.signal.aborted) {
@@ -524,7 +592,7 @@ async function runChat(
       workspacePath: request.workspacePath,
       boundAgentId,
       boundAgentName,
-      lastRunId: runId,
+      lastRunId: isCodexBackend ? undefined : runId,
       lastRequestId: requestId,
       status: "idle",
       messageCount: request.messages.length,
@@ -549,7 +617,7 @@ async function runChat(
       workspacePath: request.workspacePath,
       boundAgentId,
       boundAgentName,
-      lastRunId: runId,
+      lastRunId: isCodexBackend ? undefined : runId,
       lastRequestId: requestId,
       status: "error",
       messageCount: request.messages.length,
@@ -566,10 +634,31 @@ async function runCodexBackendChat(
   webContents: WebContents, requestId: string, displaySessionId: string, request: ChatRequest, controller: AbortController,
 ): Promise<void> {
   if (!request.workspacePath) throw new Error("Codex requires an open Workspace.");
-  const client = await LocalRuntimeClient.connect();
-  const workspace = await client.openWorkspace(request.workspacePath);
-  const session = await client.createSession(workspace.workspace_id, deriveThreadTitle(request.messages));
-  const run = await client.createAgentRun(session.session_id, "codex@1", `desktop-codex-${requestId}`);
+  const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
+  const client = resolved.client;
+  const existingThread = (await listThreads()).find((thread) => thread.id === displaySessionId);
+  let runtimeSessionId = existingThread?.runtimeSessionId;
+  if (!runtimeSessionId && existingThread?.lastRunId) {
+    runtimeSessionId = await client.getAgentRun(existingThread.lastRunId)
+      .then((run) => run.session_id)
+      .catch(() => undefined);
+  }
+  if (!runtimeSessionId) {
+    runtimeSessionId = (await client.createSession(resolved.workspaceId, deriveThreadTitle(request.messages))).session_id;
+  }
+  const run = await client.createAgentRun(runtimeSessionId, "codex@1", `desktop-codex-${requestId}`);
+  // Persist the Runtime Run ID before execution starts. If Electron restarts
+  // while Codex is working, this is the recovery handle for its event log.
+  await upsertThreadFromRun({
+    id: displaySessionId,
+    kind: "chat",
+    workspacePath: request.workspacePath,
+    lastRunId: run.run_id,
+    lastRequestId: requestId,
+    runtimeSessionId,
+    status: "running",
+    messageCount: request.messages.length,
+  });
   const target = { client: client as RuntimeClient, runId: run.run_id, approvalId: undefined as string | undefined };
   codexChatTargets.set(requestId, target);
   const prompt = request.messages.map((message) => `${message.role}: ${message.content}`).join("\n\n");
@@ -579,8 +668,25 @@ async function runCodexBackendChat(
     .catch((error) => { failure = error; })
     .finally(() => { completed = true; });
   let after = 0;
+  let pollFailures = 0;
   while (!completed) {
-    const events = await client.listAgentRunEvents(run.run_id, after).catch(() => []);
+    let events: RuntimeAgentEvent[];
+    try {
+      events = await client.listAgentRunEvents(run.run_id, after);
+      if (pollFailures > 0) {
+        emit(webContents, { requestId, sessionId: displaySessionId, runId: run.run_id, type: "connection", connection: {
+          status: "restored", attempt: pollFailures, timestamp: new Date().toISOString(), source: "codex-runtime",
+        } });
+        pollFailures = 0;
+      }
+    } catch {
+      pollFailures += 1;
+      emit(webContents, { requestId, sessionId: displaySessionId, runId: run.run_id, type: "connection", connection: {
+        status: "retrying", attempt: pollFailures, delayMs: 100, timestamp: new Date().toISOString(), source: "codex-runtime",
+      } });
+      if (!completed) await new Promise((resolve) => setTimeout(resolve, 100));
+      continue;
+    }
     for (const event of events) {
       after = Math.max(after, event.sequence);
       emitCodexRuntimeEvent(webContents, requestId, displaySessionId, run.run_id, event, target);
@@ -598,23 +704,63 @@ function emitCodexRuntimeEvent(
   webContents: WebContents, requestId: string, sessionId: string, runId: string,
   event: RuntimeAgentEvent, target: { approvalId?: string },
 ): void {
+  const mapped = mapCodexRuntimeEvent(requestId, sessionId, runId, event, target);
+  if (mapped) emit(webContents, mapped);
+}
+
+function mapCodexRuntimeEvent(
+  requestId: string, sessionId: string, runId: string,
+  event: RuntimeAgentEvent, target: { approvalId?: string },
+): Omit<ChatEvent, "seq"> | null {
   const content = typeof event.data.content === "string" ? event.data.content : undefined;
-  if (event.type === "agent.message.delta") emit(webContents, { requestId, sessionId, runId, type: "chunk", content });
+  if (event.type === "agent.message.delta") return { requestId, sessionId, runId, type: "chunk", content };
+  if (event.type === "agent.item.reasoning") {
+    const reasoning = codexItemText(event.data);
+    return reasoning ? { requestId, sessionId, runId, type: "reasoning", content: reasoning } : null;
+  }
   else if (event.type === "audit.codex.approval.requested") {
     target.approvalId = String(event.data.approval_id ?? "");
-    emit(webContents, { requestId, sessionId, runId, type: "input_request", inputType: "approval",
-      prompt: String((event.data.request as Record<string, unknown> | undefined)?.reason ?? "Review the Codex operation in Approval Center.") });
-  } else if (event.type === "item.file_change" || event.type === "item.patch") {
-    emit(webContents, { requestId, sessionId, runId, type: "tool_timeline", toolTimeline: {
-      id: event.event_id, kind: "diff", title: String(event.data.path ?? "Workspace change"), status: "completed",
-      content: typeof event.data.diff === "string" ? event.data.diff : undefined, path: String(event.data.path ?? ""),
-    } });
-  } else if (event.type.startsWith("item.") || event.type.startsWith("tool.")) {
-    emit(webContents, { requestId, sessionId, runId, type: "tool_timeline", toolTimeline: {
-      id: event.event_id, kind: "tool_call", title: String(event.data.operation ?? event.type), status: "completed",
-      content: typeof event.data.summary === "string" ? event.data.summary : undefined,
-    } });
+    return { requestId, sessionId, runId, type: "input_request", inputType: "approval",
+      prompt: String((event.data.request as Record<string, unknown> | undefined)?.reason ?? "Review the Codex operation in Approval Center.") };
+  } else if (event.type === "agent.item.file_change" || event.type === "item.file_change" || event.type === "item.patch") {
+    const item = codexItem(event.data);
+    const path = codexItemString(item, "path") || String(event.data.path ?? "Workspace change");
+    return { requestId, sessionId, runId, type: "tool_timeline", toolTimeline: {
+      id: event.event_id, kind: "diff", title: path, status: codexEventStatus(event.data),
+      content: codexItemString(item, "diff") ?? (typeof event.data.diff === "string" ? event.data.diff : undefined), path,
+    } };
+  } else if (event.type === "agent.item.command" || event.type === "agent.item.tool" || event.type.startsWith("item.") || event.type.startsWith("tool.")) {
+    const item = codexItem(event.data);
+    const title = codexItemString(item, "command") || codexItemString(item, "name") || codexItemString(item, "title")
+      || String(event.data.operation ?? event.data.method ?? event.type);
+    return { requestId, sessionId, runId, type: "tool_timeline", toolTimeline: {
+      id: event.event_id, kind: "tool_call", title, status: codexEventStatus(event.data),
+      content: codexItemText(event.data) || (typeof event.data.summary === "string" ? event.data.summary : undefined),
+    } };
   }
+  return null;
+}
+
+function codexItem(data: Record<string, unknown>): Record<string, unknown> {
+  const item = data.item;
+  return item && typeof item === "object" && !Array.isArray(item) ? item as Record<string, unknown> : {};
+}
+
+function codexItemString(item: Record<string, unknown>, key: string): string | undefined {
+  const value = item[key];
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function codexItemText(data: Record<string, unknown>): string | undefined {
+  const item = codexItem(data);
+  return codexItemString(item, "text") || codexItemString(item, "content") || codexItemString(item, "summary")
+    || (typeof data.summary === "string" && data.summary.trim() ? data.summary : undefined);
+}
+
+function codexEventStatus(data: Record<string, unknown>): "running" | "completed" | "failed" {
+  if (data.phase === "started") return "running";
+  if (data.phase === "failed") return "failed";
+  return "completed";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -857,6 +1003,17 @@ async function readSse(
   let sawDone = false;
   const cursor = createStreamAttemptCursor(resumeState);
   const toolTimelineAccumulator = createChatToolTimelineAccumulator();
+  const contentNormalizer = createChatContentNormalizer();
+
+  const emitNormalizedContent = (content: string): void => {
+    const normalized = contentNormalizer.pushContent(content);
+    normalized.reasoning.forEach((reasoning) => {
+      emit(webContents, { requestId, sessionId, runId, type: "reasoning", content: reasoning });
+    });
+    normalized.text.forEach((text) => {
+      emit(webContents, { requestId, sessionId, runId, type: "chunk", content: text });
+    });
+  };
 
   while (!signal.aborted) {
     const { done, value } = await reader.read();
@@ -871,6 +1028,11 @@ async function readSse(
     for (const frame of frames) {
       if (isCompletionDoneFrame(frame)) {
         sawDone = true;
+      }
+      const structuredEvent = parseStructuredConversationSseFrame(frame);
+      if (structuredEvent) {
+        emit(webContents, { requestId, sessionId, runId, type: "structured", structuredEvent });
+        continue;
       }
       const agentLog = parseAgentLogSseFrame(frame);
       if (agentLog) {
@@ -891,14 +1053,17 @@ async function readSse(
       }
       const reasoningLog = parseChatReasoningSseFrame(frame);
       if (reasoningLog) {
-        emit(webContents, {
-          requestId,
-          sessionId,
-          runId,
-          type: "reasoning",
-          content: reasoningLog.content,
-          level: reasoningLog.level,
-        });
+        const reasoning = contentNormalizer.pushNativeReasoning(reasoningLog.content ?? "");
+        if (reasoning) {
+          emit(webContents, {
+            requestId,
+            sessionId,
+            runId,
+            type: "reasoning",
+            content: reasoning,
+            level: reasoningLog.level,
+          });
+        }
         continue;
       }
       const streamError = parseChatSseErrorFrame(frame);
@@ -942,7 +1107,7 @@ async function readSse(
       try {
         parseChatSseFrame(frame).forEach((content) => {
           const novel = appendResumedContent(resumeState, cursor, content);
-          if (novel) emit(webContents, { requestId, sessionId, runId, type: "chunk", content: novel });
+          if (novel) emitNormalizedContent(novel);
         });
       } catch (error) {
         if (error instanceof ChatSseError) {
@@ -956,6 +1121,11 @@ async function readSse(
   if (!signal.aborted) {
     if (isCompletionDoneFrame(buffer)) {
       sawDone = true;
+    }
+    const structuredEvent = parseStructuredConversationSseFrame(buffer);
+    if (structuredEvent) {
+      emit(webContents, { requestId, sessionId, runId, type: "structured", structuredEvent });
+      return sawDone;
     }
     const agentLog = parseAgentLogSseFrame(buffer);
     if (agentLog) {
@@ -976,14 +1146,17 @@ async function readSse(
     }
     const reasoningLog = parseChatReasoningSseFrame(buffer);
     if (reasoningLog) {
-      emit(webContents, {
-        requestId,
-        sessionId,
-        runId,
-        type: "reasoning",
-        content: reasoningLog.content,
-        level: reasoningLog.level,
-      });
+      const reasoning = contentNormalizer.pushNativeReasoning(reasoningLog.content ?? "");
+      if (reasoning) {
+        emit(webContents, {
+          requestId,
+          sessionId,
+          runId,
+          type: "reasoning",
+          content: reasoning,
+          level: reasoningLog.level,
+        });
+      }
       return sawDone;
     }
     const streamError = parseChatSseErrorFrame(buffer);
@@ -1027,7 +1200,7 @@ async function readSse(
     try {
       parseChatSseFrame(buffer).forEach((content) => {
         const novel = appendResumedContent(resumeState, cursor, content);
-        if (novel) emit(webContents, { requestId, sessionId, runId, type: "chunk", content: novel });
+        if (novel) emitNormalizedContent(novel);
       });
     } catch (error) {
       if (error instanceof ChatSseError) {
@@ -1036,6 +1209,13 @@ async function readSse(
       throw error;
     }
   }
+  const trailing = contentNormalizer.finish();
+  trailing.reasoning.forEach((content) => {
+    emit(webContents, { requestId, sessionId, runId, type: "reasoning", content });
+  });
+  trailing.text.forEach((content) => {
+    emit(webContents, { requestId, sessionId, runId, type: "chunk", content });
+  });
   return sawDone;
 }
 

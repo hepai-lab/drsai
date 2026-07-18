@@ -5,6 +5,7 @@ import importlib.util
 import os
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -75,6 +76,121 @@ def test_ten_workspaces_are_isolated_and_close_preserves_history(tmp_path: Path)
     assert historical and historical.workspace_id == opened[0].workspace_id
     assert len(registry.list_workspaces()) == 9
     assert len(registry.list_workspaces(include_closed=True)) == 10
+
+
+def test_worktree_reservation_is_idempotent_and_survives_restart(tmp_path: Path) -> None:
+    database = tmp_path / "runtime.sqlite3"
+    source_path = tmp_path / "source"
+    source_path.mkdir()
+    registry = RuntimeRegistry(database)
+    source = registry.open_workspace(str(source_path))
+    target = tmp_path / "worktrees" / "task-one"
+    arguments = {
+        "source_workspace_id": source.workspace_id,
+        "idempotency_key": "create-task-one",
+        "repo_root": str(source_path),
+        "canonical_path": str(target),
+        "branch": "opendrsai/task/task-one",
+        "base_commit": "0123456789abcdef",
+        "location": "local",
+    }
+    first = registry.reserve_worktree(**arguments)
+    repeated = registry.reserve_worktree(**arguments)
+    assert first == repeated
+    assert first.status == "creating"
+    assert first.workspace_id is None
+
+    restarted = RuntimeRegistry(database)
+    restored = restarted.get_worktree(first.worktree_id)
+    assert restored == first
+    assert restarted.get_worktree_by_idempotency(source.workspace_id, "create-task-one") == first
+
+    changed = dict(arguments, branch="opendrsai/task/other")
+    with pytest.raises(RuntimeError, match="idempotency key"):
+        restarted.reserve_worktree(**changed)
+
+
+def test_worktree_binds_independent_workspace_and_enforces_state_machine(tmp_path: Path) -> None:
+    registry = RuntimeRegistry(tmp_path / "runtime.sqlite3")
+    source_path = tmp_path / "source"
+    source_path.mkdir()
+    source = registry.open_workspace(str(source_path))
+    target = tmp_path / "worktrees" / "review"
+    reserved = registry.reserve_worktree(
+        source_workspace_id=source.workspace_id,
+        idempotency_key="review",
+        repo_root=str(source_path),
+        canonical_path=str(target),
+        branch="opendrsai/task/review",
+        base_commit="abcdef0123456789",
+        location="local",
+        source_dirty=True,
+        source_status_summary="M README.md",
+    )
+    target.mkdir(parents=True)
+    active = registry.bind_worktree_workspace(reserved.worktree_id)
+    assert active.status == "active"
+    assert active.workspace_id and active.workspace_id != source.workspace_id
+    assert registry.get_worktree_by_workspace(active.workspace_id) == active
+    assert registry.get_workspace(active.workspace_id).path == str(target.resolve())
+    assert registry.bind_worktree_workspace(active.worktree_id) == active
+
+    review = registry.transition_worktree(active.worktree_id, "review", expected_status="active")
+    pending = registry.transition_worktree(review.worktree_id, "merge_pending")
+    merged = registry.transition_worktree(pending.worktree_id, "merged")
+    removing = registry.transition_worktree(merged.worktree_id, "removing")
+    removed = registry.transition_worktree(removing.worktree_id, "removed")
+    assert removed.removed_at
+    assert registry.list_worktrees() == []
+    assert registry.list_worktrees(include_removed=True) == [removed]
+    with pytest.raises(ValueError, match="Illegal Worktree transition"):
+        registry.transition_worktree(removed.worktree_id, "active")
+
+
+def test_worktree_concurrent_idempotent_reservations_have_one_identity(tmp_path: Path) -> None:
+    registry = RuntimeRegistry(tmp_path / "runtime.sqlite3")
+    source_path = tmp_path / "source"
+    source_path.mkdir()
+    source = registry.open_workspace(str(source_path))
+    target = tmp_path / "worktrees" / "concurrent"
+
+    def reserve(_index: int):
+        return registry.reserve_worktree(
+            source_workspace_id=source.workspace_id,
+            idempotency_key="same-request",
+            repo_root=str(source_path),
+            canonical_path=str(target),
+            branch="opendrsai/task/concurrent",
+            base_commit="0123456789abcdef",
+            location="local",
+        )
+
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        results = list(pool.map(reserve, range(20)))
+    assert len({item.worktree_id for item in results}) == 1
+    assert registry.list_worktrees() == [results[0]]
+
+
+def test_worktree_errors_are_persisted_without_destroying_recovery_state(tmp_path: Path) -> None:
+    registry = RuntimeRegistry(tmp_path / "runtime.sqlite3")
+    source_path = tmp_path / "source"
+    source_path.mkdir()
+    source = registry.open_workspace(str(source_path))
+    reserved = registry.reserve_worktree(
+        source_workspace_id=source.workspace_id,
+        idempotency_key="failed-git",
+        repo_root=str(source_path),
+        canonical_path=str(tmp_path / "missing-target"),
+        branch="opendrsai/task/failed",
+        base_commit="0123456789abcdef",
+        location="local",
+    )
+    failed = registry.record_worktree_error(reserved.worktree_id, "git_worktree_create_failed", "controlled failure")
+    assert failed.status == "creating"
+    assert failed.last_error_code == "git_worktree_create_failed"
+    assert failed.last_error_message == "controlled failure"
+    restarted = RuntimeRegistry(tmp_path / "runtime.sqlite3")
+    assert restarted.get_worktree(reserved.worktree_id) == failed
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows path contract")

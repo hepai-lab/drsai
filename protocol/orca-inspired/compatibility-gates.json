@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "policy": {
+    "minimum_stable_releases": 2,
+    "required_legacy_call_count": 0
+  },
+  "entries": [
+    {
+      "id": "desktop-worktree-owner",
+      "environment_gate": "OPENDRSAI_LEGACY_DESKTOP_WORKTREE",
+      "owner_file": "apps/desktop/windows/src/main/forkWorktrees.ts",
+      "stable_releases": 0,
+      "legacy_call_count": null,
+      "removal_approved": false
+    },
+    {
+      "id": "desktop-pty-owner",
+      "environment_gate": "OPENDRSAI_ENABLE_LEGACY_DESKTOP_PTY",
+      "owner_file": "apps/desktop/windows/src/main/terminal.ts",
+      "stable_releases": 0,
+      "legacy_call_count": null,
+      "removal_approved": false
+    },
+    {
+      "id": "remote-websocket-pty",
+      "environment_gate": "OPENDRSAI_ENABLE_LEGACY_REMOTE_PTY",
+      "owner_file": "apps/desktop/windows/src/main/terminal.ts",
+      "stable_releases": 0,
+      "legacy_call_count": null,
+      "removal_approved": false
+    }
+  ]
+}

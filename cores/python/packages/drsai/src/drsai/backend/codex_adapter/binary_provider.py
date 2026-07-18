@@ -189,7 +189,7 @@ class CodexBinaryProvider:
             path = Path(override).resolve(strict=False)
             if not path.is_file():
                 raise RuntimeExecutionError("codex_development_override_invalid", "CODEX_BIN does not name a file.")
-            return CodexBinary(path, None, None, "CODEX_BIN", False)
+            return CodexBinary(path, _probe_codex_version(path), None, "CODEX_BIN", False)
         return self.store.resolve()
 
 
@@ -211,6 +211,22 @@ class CodexPlatformLauncher:
                 "The WindowsApps Codex alias cannot be executed by the Runtime; install a managed Codex artifact or set CODEX_BIN in development mode.",
             )
         return [path, *args]
+
+
+def _probe_codex_version(path: Path, *, timeout: float = 5) -> str | None:
+    """Read display metadata without treating a development binary as trusted."""
+    try:
+        completed = subprocess.run(
+            CodexPlatformLauncher.command(path, ["--version"]),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired, RuntimeExecutionError):
+        return None
+    match = _VERSION.search(f"{completed.stdout}\n{completed.stderr}")
+    return match.group("version") if completed.returncode == 0 and match else None
 
 
 def verify_codex_compatibility(binary: CodexBinary, *, timeout: float = 15) -> str:

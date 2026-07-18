@@ -82,14 +82,24 @@ class OWOPProtocolTests(unittest.TestCase):
             "git.unstage": {"paths": ["src/main.py"]},
             "git.revert": {"paths": ["src/main.py"], "diff_digest": DIGEST},
             "git.commit": {"message": "test commit", "diff_digest": DIGEST},
+            "git.worktree.list": {"include_removed": False},
+            "git.worktree.create": {"idempotency_key": "task-one", "intent": "Task one"},
+            "git.worktree.describe": {"worktree_id": "worktree-1"},
+            "git.worktree.merge": {"worktree_id": "worktree-1", "idempotency_key": "merge-1", "expected_head": "0123456789abcdef"},
+            "git.worktree.archive": {"worktree_id": "worktree-1", "idempotency_key": "archive-1"},
+            "git.worktree.remove": {"worktree_id": "worktree-1", "expected_status": "merged", "idempotency_key": "remove-1"},
+            "git.worktree.prune": {"dry_run": True, "idempotency_key": "prune-1"},
             "process.start": {"argv": ["python", "-V"], "cwd": "."},
             "process.write": {"process_id": "process-1", "content_base64": "Cg=="},
             "process.attach": {"process_id": "process-1", "after_offset": 0},
             "process.kill": {"process_id": "process-1", "tree": True},
+            "pty.list": {},
+            "pty.describe": {"pty_id": "pty-1"},
             "pty.create": {"argv": ["powershell.exe"], "cwd": ".", "cols": 120, "rows": 40},
-            "pty.write": {"pty_id": "pty-1", "content_base64": "ZGlyDQo="},
-            "pty.resize": {"pty_id": "pty-1", "cols": 100, "rows": 30},
-            "pty.attach": {"pty_id": "pty-1", "after_offset": 0},
+            "pty.write": {"pty_id": "pty-1", "lease_id": "lease-1", "content_base64": "ZGlyDQo="},
+            "pty.resize": {"pty_id": "pty-1", "lease_id": "lease-1", "cols": 100, "rows": 30},
+            "pty.attach": {"pty_id": "pty-1", "client_id": "client-1", "mode": "writer", "after_sequence": 0},
+            "pty.detach": {"pty_id": "pty-1", "lease_id": "lease-1"},
             "pty.kill": {"pty_id": "pty-1"},
             "checkpoint.create": {"label": "before edit", "max_file_bytes": 10485760},
             "checkpoint.preview": {"checkpoint_id": "checkpoint-1"},
@@ -107,6 +117,30 @@ class OWOPProtocolTests(unittest.TestCase):
                 with self.assertRaises(OWOPError) as caught:
                     self.protocol.validate_request(self.request(operation, escaped))
                 self.assertEqual(caught.exception.code, "owop_params_invalid")
+
+    def test_worktree_results_are_operation_specific_and_strict(self) -> None:
+        worktree = {
+            "worktree_id": "worktree-1",
+            "source_workspace_id": "workspace-source",
+            "workspace_id": "workspace-derived",
+            "repo_root": r"C:\\work\\project",
+            "canonical_path": r"C:\\work\\task-one",
+            "branch": "opendrsai/worktree/task-one",
+            "base_commit": "0123456789abcdef",
+            "status": "active",
+            "location": "local",
+            "created_at": "2026-07-17T10:00:00Z",
+            "updated_at": "2026-07-17T10:00:00Z",
+        }
+        request = self.request("git.worktree.create", {"idempotency_key": "task-one", "intent": "Task one"})
+        valid = asyncio.run(self.protocol.dispatch(request, {"git.worktree.create": lambda _: {"worktree": worktree}}))
+        self.assertTrue(valid["ok"])
+        invalid = asyncio.run(self.protocol.dispatch(
+            request,
+            {"git.worktree.create": lambda _: {"worktree": {**worktree, "arbitrary": True}}},
+        ))
+        self.assertFalse(invalid["ok"])
+        self.assertEqual(invalid["error"]["code"], "owop_result_invalid")
 
     def test_paths_and_process_argv_cannot_escape_typed_protocol(self) -> None:
         invalid = [

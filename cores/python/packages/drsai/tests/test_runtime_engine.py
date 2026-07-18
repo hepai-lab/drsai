@@ -1,6 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 import importlib.util
 from pathlib import Path
+import sqlite3
 import sys
 
 import pytest
@@ -17,7 +18,12 @@ RuntimeEngineIdentity = _MODULE.RuntimeEngineIdentity
 
 @pytest.fixture()
 def engine(tmp_path: Path) -> RuntimeEngine:
-    return RuntimeEngine(tmp_path / "runtime.sqlite3", RuntimeEngineIdentity("runtime-test", "instance-one"), lambda workspace_id: workspace_id in {"workspace-one", "workspace-two"})
+    return RuntimeEngine(
+        tmp_path / "runtime.sqlite3",
+        RuntimeEngineIdentity("runtime-test", "instance-one"),
+        lambda workspace_id: workspace_id in {"workspace-one", "workspace-two"},
+        lambda workspace_id: "worktree-two" if workspace_id == "workspace-two" else None,
+    )
 
 
 def test_session_lifecycle_pagination_and_workspace_binding(engine: RuntimeEngine) -> None:
@@ -28,6 +34,13 @@ def test_session_lifecycle_pagination_and_workspace_binding(engine: RuntimeEngin
     assert renamed["title"] == "Renamed" and renamed["archived"]
     assert engine.list_sessions("workspace-one")["total"] == 2
     assert engine.update_session(sessions[0]["session_id"], archived=False)["archived"] is False
+    worktree_session = engine.create_session("workspace-two", "Derived execution")
+    assert worktree_session["worktree_id"] == "worktree-two"
+    run, _ = engine.create_run(worktree_session["session_id"], "codex@1", "worktree-run", "codex")
+    assert run["workspace_id"] == "workspace-two" and run["worktree_id"] == "worktree-two"
+    assert [record["run_id"] for record in engine.list_session_runs(worktree_session["session_id"])] == [run["run_id"]]
+    with engine._connect() as db, pytest.raises(Exception):
+        db.execute("UPDATE runtime_runs SET worktree_id=NULL WHERE run_id=?", (run["run_id"],))
 
 
 def test_run_state_idempotency_cancel_and_identity(engine: RuntimeEngine) -> None:
@@ -47,6 +60,19 @@ def test_run_state_idempotency_cancel_and_identity(engine: RuntimeEngine) -> Non
     assert engine.transition_run(run["run_id"], "running")["status"] == "running"
     assert engine.cancel_run(run["run_id"])["status"] == "cancelled"
     assert engine.cancel_run(run["run_id"])["status"] == "cancelled"
+
+
+def test_active_workspace_resources_require_archived_sessions_and_terminal_runs(engine: RuntimeEngine) -> None:
+    session = engine.create_session("workspace-one", "Worktree task")
+    run, _ = engine.create_run(session["session_id"], "agent@v1", "active-resource-key")
+    resources = engine.active_workspace_resources("workspace-one")
+    assert {(item["kind"], item["id"]) for item in resources} == {
+        ("session", session["session_id"]), ("run", run["run_id"]),
+    }
+    engine.cancel_run(run["run_id"])
+    assert [item["kind"] for item in engine.active_workspace_resources("workspace-one")] == ["session"]
+    engine.update_session(session["session_id"], archived=True)
+    assert engine.active_workspace_resources("workspace-one") == []
 
 
 def test_append_only_concurrent_events_and_resume(engine: RuntimeEngine) -> None:
@@ -71,6 +97,17 @@ def test_approval_paths(engine: RuntimeEngine, decision: str, expected: str) -> 
     assert engine.get_run(run["run_id"])["status"] == expected
 
 
+def test_pending_approval_query_atomically_expires_elapsed_deadline(engine: RuntimeEngine) -> None:
+    session = engine.create_session("workspace-one")
+    run, _ = engine.create_run(session["session_id"], "agent@v1", "approval-expired")
+    engine.transition_run(run["run_id"], "running")
+    approval = engine.request_approval(run["run_id"], {"tool": "shell"}, "2000-01-01T00:00:00+00:00")
+
+    assert engine.list_pending_approvals(run["run_id"]) == []
+    assert engine.get_approval(approval["approval_id"])["status"] == "timeout"
+    assert engine.get_run(run["run_id"])["status"] == "failed"
+
+
 def test_checkpoint_and_run_survive_runtime_restart(tmp_path: Path) -> None:
     database = tmp_path / "runtime.sqlite3"
     first = RuntimeEngine(database, RuntimeEngineIdentity("runtime-test", "instance-one"), lambda _: True)
@@ -85,3 +122,26 @@ def test_checkpoint_and_run_survive_runtime_restart(tmp_path: Path) -> None:
     assert second.latest_checkpoint(run["run_id"])["state"] == state
     second.append_event(run["run_id"], "run.resumed", {"checkpoint_id": saved["checkpoint_id"]})
     assert second.transition_run(run["run_id"], "completed")["status"] == "completed"
+
+
+def test_existing_session_and_run_are_backfilled_with_authoritative_worktree_identity(tmp_path: Path) -> None:
+    database = tmp_path / "legacy.sqlite3"
+    with sqlite3.connect(database) as db:
+        db.executescript(
+            """
+            CREATE TABLE runtime_sessions(session_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, title TEXT NOT NULL,
+              archived INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+            CREATE TABLE runtime_runs(run_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+              runtime_id TEXT NOT NULL, instance_id TEXT NOT NULL, agent_definition TEXT NOT NULL, backend_id TEXT NOT NULL,
+              status TEXT NOT NULL, idempotency_key TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, started_at TEXT,
+              completed_at TEXT, cancel_requested_at TEXT);
+            INSERT INTO runtime_sessions VALUES('session-old','workspace-derived','old',0,'now','now');
+            INSERT INTO runtime_runs VALUES('run-old','session-old','workspace-derived','runtime-old','instance-old','codex@1','codex','queued','old-key','now',NULL,NULL,NULL);
+            """
+        )
+    engine = RuntimeEngine(
+        database, RuntimeEngineIdentity("runtime-new", "instance-new"), lambda _: True,
+        lambda workspace_id: "worktree-authoritative" if workspace_id == "workspace-derived" else None,
+    )
+    assert engine.get_session("session-old")["worktree_id"] == "worktree-authoritative"
+    assert engine.get_run("run-old")["worktree_id"] == "worktree-authoritative"

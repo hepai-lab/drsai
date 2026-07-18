@@ -21,6 +21,7 @@ new Script(compiled, { filename: "sseParser.ts" }).runInNewContext({
 });
 
 const {
+  createChatContentNormalizer,
   createChatToolTimelineAccumulator,
   isCompletionDoneFrame,
   parseAgentLogSseFrame,
@@ -31,11 +32,68 @@ const {
   parseChatSseErrorFrame,
   parseChatToolTimelineSseFrame,
   parseChatSseFrame,
+  parseStructuredConversationSseFrame,
   parseCompletionSseFrame,
   parseProviderErrorAnalyticsSseFrame,
   parseProviderStatusSseFrame,
   parseProviderUsageAnalyticsSseFrame,
 } = module.exports;
+
+assertDeepEqual(
+  "structured conversation named event",
+  parseStructuredConversationSseFrame('event: drsai.event\ndata: {"version":2,"type":"turn.started","turnId":"turn-1","sequence":1,"dedupeKey":"turn-1:1:turn.started","timestamp":"2026-07-17T00:00:00Z","source":"gateway"}'),
+  {
+    version: 2,
+    type: "turn.started",
+    turnId: "turn-1",
+    sequence: 1,
+    dedupeKey: "turn-1:1:turn.started",
+    timestamp: "2026-07-17T00:00:00Z",
+    source: "gateway",
+  },
+);
+assertDeepEqual(
+  "invalid structured conversation event",
+  parseStructuredConversationSseFrame('event: drsai.event\ndata: {"version":1,"type":"turn.started"}'),
+  null,
+);
+
+const tagged = createChatContentNormalizer();
+assertDeepEqual("tagged text prefix", tagged.pushContent("Answer <thi"), { text: ["Answer "], reasoning: [] });
+assertDeepEqual("cross-chunk thinking open", tagged.pushContent("nk>first"), { text: [], reasoning: ["first"] });
+assertDeepEqual("cross-chunk thinking close", tagged.pushContent(" thought</think>Final"), {
+  text: ["Final"],
+  reasoning: [" thought"],
+});
+assertDeepEqual("tagged finish", tagged.finish(), { text: [], reasoning: [] });
+
+const multipleThinking = createChatContentNormalizer();
+const multipleResult = multipleThinking.pushContent("<think>one</think>A<think>two</think>B");
+assertDeepEqual("multiple thinking stays separate from text", multipleResult, {
+  text: ["A", "B"],
+  reasoning: ["one", "two"],
+});
+
+const escapedThinking = createChatContentNormalizer();
+assertDeepEqual("escaped thinking tags", escapedThinking.pushContent("&lt;think&gt;hidden&lt;/think&gt;shown"), {
+  text: ["shown"],
+  reasoning: ["hidden"],
+});
+
+const nativeReasoning = createChatContentNormalizer();
+assertDeepEqual("native reasoning first delta", nativeReasoning.pushNativeReasoning("native thought"), "native thought");
+assertDeepEqual("native reasoning duplicate delta", nativeReasoning.pushNativeReasoning("native thought"), "");
+assertDeepEqual("native reasoning suppresses duplicated tagged reasoning", nativeReasoning.pushContent("<think>native thought</think>answer"), {
+  text: ["answer"],
+  reasoning: [],
+});
+
+const unclosedThinking = createChatContentNormalizer();
+assertDeepEqual("unclosed thinking stream", unclosedThinking.pushContent("<think>unfinished"), {
+  text: [],
+  reasoning: ["unfinished"],
+});
+assertDeepEqual("unclosed thinking finish", unclosedThinking.finish(), { text: [], reasoning: [] });
 
 const unavailableModelError = parseChatSseErrorFrame('event: error\ndata: {"error":{"code":"MODEL_UNAVAILABLE","message":"Model is unavailable","retryable":false}}');
 if (!unavailableModelError || unavailableModelError.code !== "MODEL_UNAVAILABLE" || unavailableModelError.retryable) {

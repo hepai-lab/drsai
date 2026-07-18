@@ -180,7 +180,7 @@ for (const marker of [
   "listSshHosts",
   "connectRemoteWorkspace",
   'type: "remote-ssh"',
-  'connectionState: "connected"',
+  'connectionState: "ready"',
   "getRemoteWorkspaceStatus",
   "preflightRemoteGateway",
   "installRemoteGateway",

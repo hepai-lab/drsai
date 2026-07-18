@@ -261,6 +261,12 @@ class CodexAgentBackendClient:
         await self.rpc.request("turn/interrupt", {"threadId": session.backend_session_id, "turnId": run.backend_run_id})
         self._cancelled_runs.add(run_id)
 
+    async def archive_session(self, session_id: str, *, archived: bool) -> None:
+        """Mirror an OpenDrSai session archive transition to its Codex Thread."""
+        await self.rpc.connect()
+        session = self.bindings.get_session(session_id)
+        await self.rpc.request("thread/archive" if archived else "thread/unarchive", {"threadId": session.backend_session_id})
+
     async def respond_approval(self, run_id: str, approval_id: str, decision: str) -> None:
         if self.approval_bridge is None:
             raise RuntimeExecutionError("approval_bridge_not_ready", "Codex Approval Bridge is not configured.")
@@ -386,6 +392,16 @@ class CodexAgentBackendClient:
         if unknown or "cwd" in value:
             raise RuntimeExecutionError("codex_capability_unsupported", "Agent Definition contains unsupported Codex fields.",
                                         detail={"fields": unknown or ["cwd"]})
+        if value.get("approvalPolicy") in {"never", "bypass", "untrusted"}:
+            raise RuntimeExecutionError(
+                "codex_approval_policy_unsafe",
+                "Codex Approval Bridge cannot be bypassed by Agent Definition.",
+            )
+        if value.get("sandbox") in {"danger-full-access", "disabled", "none"}:
+            raise RuntimeExecutionError(
+                "codex_sandbox_policy_unsafe",
+                "Codex workspace safety policy cannot be disabled by Agent Definition.",
+            )
         return dict(value)
 
     @staticmethod

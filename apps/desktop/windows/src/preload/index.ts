@@ -65,6 +65,11 @@ import type {
   DesktopBootstrapResult,
   DesktopForkWorktreeRequest,
   DesktopForkWorktreeResult,
+  DesktopWorktreeListRequest,
+  DesktopWorktreeSummary,
+  DesktopWorktreeEventRequest,
+  DesktopWorktreeEventBatch,
+  DesktopWorktreeMigrationDiagnostic,
   DesktopForkLifecycleApprovalRequest,
   DesktopForkLifecycleApprovalResult,
   DesktopForkConflictDraftWriteRequest,
@@ -321,6 +326,15 @@ const api: DesktopApi = {
   inspectSshHostKeys: (hostAlias: string) => ipcRenderer.invoke("desktop:ssh-host-keys", hostAlias),
   testSshHost: (hostAlias: string) => ipcRenderer.invoke("desktop:ssh-test", hostAlias),
   approveSshHostKey: (hostAlias: string) => ipcRenderer.invoke("desktop:ssh-approve-host-key", hostAlias),
+  connectSshHost: (hostAlias: string) => ipcRenderer.invoke("desktop:ssh-host-connect", hostAlias),
+  disconnectSshHost: (hostAlias: string) => ipcRenderer.invoke("desktop:ssh-host-disconnect", hostAlias),
+  reconnectSshHost: (hostAlias: string) => ipcRenderer.invoke("desktop:ssh-host-reconnect", hostAlias),
+  removeSshHost: (hostAlias: string) => ipcRenderer.invoke("desktop:ssh-host-remove", hostAlias),
+  listPortForwards: (filter = {}) => ipcRenderer.invoke("desktop:port-forward-list", filter),
+  createPortForward: (request) => ipcRenderer.invoke("desktop:port-forward-create", request),
+  pausePortForward: (id: string) => ipcRenderer.invoke("desktop:port-forward-pause", id),
+  resumePortForward: (id: string) => ipcRenderer.invoke("desktop:port-forward-resume", id),
+  removePortForward: (id: string) => ipcRenderer.invoke("desktop:port-forward-remove", id),
   listRemoteDirectories: (hostAlias: string, path?: string) =>
     ipcRenderer.invoke("desktop:ssh-directories", hostAlias, path),
   connectRemoteWorkspace: (request: ConnectRemoteWorkspaceRequest) =>
@@ -416,6 +430,7 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:create-thread", request),
   updateThread: (request: UpdateThreadRequest) =>
     ipcRenderer.invoke("desktop:update-thread", request),
+  setThreadArchived: (request) => ipcRenderer.invoke("desktop:set-thread-archived", request),
   getThreadSnapshot: (threadId: string): Promise<DesktopThreadSnapshot | null> =>
     ipcRenderer.invoke("desktop:get-thread-snapshot", threadId),
   searchThreadMessages: (
@@ -428,8 +443,15 @@ const api: DesktopApi = {
     request: DesktopForkWorktreeRequest,
   ): Promise<DesktopForkWorktreeResult> =>
     ipcRenderer.invoke("desktop:prepare-fork-worktree", request),
+  listWorktrees: (request: DesktopWorktreeListRequest): Promise<DesktopWorktreeSummary[]> =>
+    ipcRenderer.invoke("desktop:list-worktrees", request),
+  listWorktreeEvents: (request: DesktopWorktreeEventRequest): Promise<DesktopWorktreeEventBatch> =>
+    ipcRenderer.invoke("desktop:list-worktree-events", request),
+  getWorktreeMigrationDiagnostics: (request: DesktopWorktreeListRequest): Promise<DesktopWorktreeMigrationDiagnostic[]> =>
+    ipcRenderer.invoke("desktop:worktree-migration-diagnostics", request),
   startChat: (request: ChatRequest): Promise<string> =>
     ipcRenderer.invoke("desktop:start-chat", request),
+  recoverChatRun: (request) => ipcRenderer.invoke("desktop:recover-chat-run", request),
   abortChat: (requestId: string): Promise<boolean> =>
     ipcRenderer.invoke("desktop:abort-chat", requestId),
   respondChatInput: (requestId, response) =>
@@ -865,8 +887,8 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:get-file-icon", path),
   createTerminal: (options) =>
     ipcRenderer.invoke("desktop:terminal-create", options),
-  listTerminalSessions: (workspaceKey) =>
-    ipcRenderer.invoke("desktop:terminal-list", workspaceKey),
+  listTerminalSessions: (workspaceKey, workspaceId) =>
+    ipcRenderer.invoke("desktop:terminal-list", workspaceKey, workspaceId),
   getTerminalBuffer: (id) => ipcRenderer.invoke("desktop:terminal-buffer", id),
   renameTerminal: (id, title) =>
     ipcRenderer.invoke("desktop:terminal-rename", id, title),

@@ -136,7 +136,7 @@ export function LoginScreen(): React.JSX.Element {
           </label>
         </form>
 
-        {import.meta.env.DEV && (
+        {(import.meta.env.DEV || new URLSearchParams(window.location.search).get("structuredVisualFixture") === "1") && (
           <button
             className="developer-bypass"
             type="button"

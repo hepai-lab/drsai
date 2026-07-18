@@ -8,6 +8,7 @@ import type {
   BrowserUrlCheck,
 } from "./browser/types";
 import type { ExecutionActionKind } from "./executionPolicy";
+import type { StructuredConversationEvent, StructuredTurnState } from "./structuredConversation";
 
 export type {
   ExecutionActionKind,
@@ -456,7 +457,7 @@ export interface ChatEvent {
   requestId: string;
   /** Monotonic per-request sequence assigned by the main process. */
   seq?: number;
-  type: "start" | "chunk" | "reasoning" | "status" | "tool_timeline" | "input_request" | "done" | "error" | "aborted";
+  type: "start" | "structured" | "chunk" | "reasoning" | "status" | "connection" | "tool_timeline" | "input_request" | "done" | "error" | "aborted";
   content?: string;
   error?: string;
   level?: "INFO" | "WARNING" | "ERROR" | "DEBUG" | "TRACE" | "FATAL" | string;
@@ -466,6 +467,19 @@ export interface ChatEvent {
   sessionId?: string;
   runId?: string;
   failureRecovery?: DesktopFailureRecovery;
+  structuredEvent?: StructuredConversationEvent;
+  connection?: {
+    status: "retrying" | "restored";
+    attempt: number;
+    delayMs?: number;
+    timestamp: string;
+    source: "gateway" | "remote-gateway" | "codex-runtime";
+  };
+}
+
+export interface ChatRunRecoveryRequest {
+  requestId: string;
+  sessionId: string;
 }
 
 export type DesktopProviderAnalyticsProvider = "openai_responses" | "anthropic" | "google_gemini";
@@ -2665,10 +2679,13 @@ export interface DesktopThread {
   updatedAt: string;
   lastRunId?: string;
   lastRequestId?: string;
+  runtimeSessionId?: string;
   status?: "idle" | "running" | "error";
   messageCount?: number;
   pinned?: boolean;
   archived?: boolean;
+  archivedAt?: string;
+  archiveSource?: "opendrsai" | "codex";
   unread?: boolean;
 }
 
@@ -2681,6 +2698,7 @@ export interface DesktopThreadMessageSnapshot extends ChatMessage {
   toolTimeline?: ChatToolTimelineEvent[];
   /** Canonical structured display representation; legacy fields remain during migration. */
   parts?: ChatMessagePart[];
+  structuredTurn?: StructuredTurnState;
   startedAt?: number;
   lastEventAt?: number;
 }
@@ -2708,6 +2726,9 @@ export interface DesktopThreadContentSearchResult {
 }
 
 export interface DesktopThreadForkMetadata {
+  worktreeId?: string;
+  sourceWorkspaceId?: string;
+  workspaceId?: string;
   sourceWorkspacePath: string;
   repoRoot: string;
   worktreePath: string;
@@ -2741,6 +2762,8 @@ export interface DesktopForkWorktreeRequest {
 }
 
 export interface DesktopForkWorktreeResult {
+  worktreeId?: string;
+  sourceWorkspaceId?: string;
   location: "local" | "remote";
   transport?: "ssh";
   workspaceId?: string;
@@ -2751,6 +2774,50 @@ export interface DesktopForkWorktreeResult {
   baseRef: string;
   sourceHasChanges: boolean;
   sourceStatusSummary?: string;
+}
+
+export interface DesktopWorktreeListRequest {
+  workspacePath: string;
+  workspaceId?: string;
+  includeRemoved?: boolean;
+}
+
+export interface DesktopWorktreeEventRequest {
+  workspacePath: string;
+  workspaceId?: string;
+  afterSequence?: number;
+}
+
+export interface DesktopWorktreeEventBatch {
+  events: Array<{
+    eventId: string;
+    workspaceId: string;
+    sequence: number;
+    type: string;
+    data: Record<string, unknown>;
+  }>;
+  nextSequence: number;
+}
+
+export interface DesktopWorktreeSummary {
+  worktreeId: string;
+  sourceWorkspaceId: string;
+  workspaceId: string | null;
+  repoRoot: string;
+  canonicalPath: string;
+  branch: string;
+  baseCommit: string;
+  headCommit?: string | null;
+  status: "creating" | "active" | "review" | "merge_pending" | "merged" | "archived" | "removing" | "removed";
+  location: "local" | "remote";
+  dirty?: boolean;
+  ahead?: number;
+  behind?: number;
+  activity: { sessions: number; runs: number; terminals: number; total: number };
+  lastErrorCode?: string | null;
+  lastErrorMessage?: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface WorkspaceGitStatus {
@@ -2858,6 +2925,7 @@ export interface WorkspaceFileTreeResult {
   totalEntries: number;
   truncated: boolean;
   nextOffset?: number;
+  stale?: boolean;
 }
 
 export interface WorkspaceFolderSummaryRequest {
@@ -2911,6 +2979,7 @@ export interface WorkspaceFilePreview {
   size: number;
   modifiedAt: string;
   truncated: boolean;
+  stale?: boolean;
   fileHash?: string;
   content?: string;
   dataUrl?: string;
@@ -3014,6 +3083,7 @@ export interface WorkspaceGitDiffResult {
   diffHash?: string;
   truncated: boolean;
   staged?: boolean;
+  stale?: boolean;
 }
 
 export interface WorkspaceGitFileAtRefRequest {
@@ -3155,11 +3225,52 @@ export interface RemoteSshHostKey {
   fingerprint: string;
 }
 
+export interface RemoteSshHostActionResult {
+  hostAlias: string;
+  action: "connect" | "disconnect" | "reconnect" | "remove";
+  changed: boolean;
+}
+
+export type DesktopPortForwardStatus = "starting" | "active" | "paused" | "reconnecting" | "failed" | "removed";
+export interface DesktopPortForward {
+  portForwardId: string;
+  hostAlias: string;
+  workspaceId: string;
+  remoteHost: string;
+  remotePort: number;
+  bindAddress: string;
+  requestedLocalPort?: number;
+  localPort: number;
+  status: DesktopPortForwardStatus;
+  reconnectPolicy: "automatic" | "manual";
+  createdAt: string;
+  updatedAt: string;
+  lastError?: string;
+}
+export interface DesktopPortForwardCreateRequest {
+  hostAlias: string;
+  workspaceId: string;
+  remoteHost?: string;
+  remotePort: number;
+  localPort?: number;
+  reconnectPolicy?: "automatic" | "manual";
+  authorization: {
+    permissionGranted: true;
+    approvalId: string;
+    correlationId: string;
+    operationId: string;
+  };
+}
+
 export type RemoteWorkspaceConnectionState =
   | "disconnected"
+  | "resolving"
+  | "authenticating"
   | "connecting"
-  | "connected"
+  | "runtime_check"
+  | "ready"
   | "reconnecting"
+  | "degraded"
   | "failed";
 
 export interface RemoteSshWorkspaceDescriptor {
@@ -3405,7 +3516,7 @@ export interface RemoteWorkspaceStatus extends RemoteSshWorkspaceDescriptor {
 
 export interface RemoteSshDiagnosticReport {
   generatedAt: string;
-  hosts: Array<{ hostAlias: string; state: RemoteWorkspaceConnectionState; failureKind?: "ssh" | "runtime"; workspaceCount: number; gatewayVersion?: string; protocolVersion?: number; reconnectAttempts: number; reconnectCount: number; ageMs: number; lastConnectedAt?: string; error?: string; events: Array<{ at: string; phase: string; elapsedMs?: number; message?: string }> }>;
+  hosts: Array<{ hostAlias: string; state: RemoteWorkspaceConnectionState; phase: string; failureKind?: "ssh" | "runtime"; failureCategory?: "dns" | "host_key" | "authentication" | "transport" | "runtime"; workspaceCount: number; gatewayVersion?: string; protocolVersion?: number; reconnectAttempts: number; reconnectCount: number; ageMs: number; lastConnectedAt?: string; retryAt?: string; error?: string; events: Array<{ at: string; phase: string; elapsedMs?: number; message?: string }> }>;
 }
 
 export interface RemoteGatewayPreflight {
@@ -3586,10 +3697,12 @@ export interface UpdateThreadRequest {
   fork?: DesktopThreadForkMetadata;
   lastRunId?: string;
   lastRequestId?: string;
+  runtimeSessionId?: string;
   status?: DesktopThread["status"];
   messageCount?: number;
   pinned?: boolean;
   archived?: boolean;
+  archiveSource?: "opendrsai" | "codex";
   unread?: boolean;
 }
 
@@ -3861,6 +3974,15 @@ export interface DesktopApi {
   inspectSshHostKeys(hostAlias: string): Promise<RemoteSshHostKey[]>;
   testSshHost(hostAlias: string): Promise<boolean>;
   approveSshHostKey(hostAlias: string): Promise<boolean>;
+  connectSshHost(hostAlias: string): Promise<RemoteSshHostActionResult>;
+  disconnectSshHost(hostAlias: string): Promise<RemoteSshHostActionResult>;
+  reconnectSshHost(hostAlias: string): Promise<RemoteSshHostActionResult>;
+  removeSshHost(hostAlias: string): Promise<RemoteSshHostActionResult>;
+  listPortForwards(filter?: { hostAlias?: string; workspaceId?: string }): Promise<DesktopPortForward[]>;
+  createPortForward(request: DesktopPortForwardCreateRequest): Promise<DesktopPortForward>;
+  pausePortForward(id: string): Promise<DesktopPortForward>;
+  resumePortForward(id: string): Promise<DesktopPortForward>;
+  removePortForward(id: string): Promise<boolean>;
   listRemoteDirectories(hostAlias: string, path?: string): Promise<RemoteDirectoryEntry[]>;
   connectRemoteWorkspace(request: ConnectRemoteWorkspaceRequest): Promise<WorkspaceProject>;
   disconnectRemoteWorkspace(workspaceId: string): Promise<boolean>;
@@ -3954,6 +4076,7 @@ export interface DesktopApi {
   updateMyDrSaiConfig(request: UpdateMyDrSaiConfigRequest): Promise<MyDrSaiConfig>;
   createThread(request: CreateThreadRequest): Promise<DesktopThread>;
   updateThread(request: UpdateThreadRequest): Promise<DesktopThread>;
+  setThreadArchived(request: { threadId: string; archived: boolean }): Promise<DesktopThread>;
   getThreadSnapshot(threadId: string): Promise<DesktopThreadSnapshot | null>;
   searchThreadMessages(
     request: DesktopThreadContentSearchRequest,
@@ -3962,7 +4085,10 @@ export interface DesktopApi {
   prepareForkWorktree(
     request: DesktopForkWorktreeRequest,
   ): Promise<DesktopForkWorktreeResult>;
+  listWorktrees(request: DesktopWorktreeListRequest): Promise<DesktopWorktreeSummary[]>;
+  listWorktreeEvents(request: DesktopWorktreeEventRequest): Promise<DesktopWorktreeEventBatch>;
   startChat(request: ChatRequest): Promise<string>;
+  recoverChatRun(request: ChatRunRecoveryRequest): Promise<ChatEvent[]>;
   abortChat(requestId: string): Promise<boolean>;
   respondChatInput(requestId: string, response: string | Record<string, unknown>): Promise<boolean>;
   startAgentRun(
@@ -4201,7 +4327,7 @@ export interface DesktopApi {
   getIdeContext(workspacePath: string): Promise<DesktopIdeContextSnapshot>;
   getFileIcon(path: string): Promise<DesktopFileIconResult>;
   createTerminal(options?: TerminalCreateOptions): Promise<TerminalSessionInfo>;
-  listTerminalSessions(workspaceKey?: string): Promise<TerminalSessionInfo[]>;
+  listTerminalSessions(workspaceKey?: string, workspaceId?: string): Promise<TerminalSessionInfo[]>;
   getTerminalBuffer(id: string): Promise<string>;
   renameTerminal(
     id: string,
