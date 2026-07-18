@@ -236,7 +236,7 @@ export async function verifyInstall(): Promise<boolean> {
   return new Promise((resolve) => {
     execFile(
       DRSAI_PYTHON,
-      drsaiCliArgs(["--version"]),
+      drsaiCliArgs(["version"]),
       {
         cwd: DRSAI_REPO,
         env: {
@@ -279,7 +279,7 @@ export async function getDrsaiVersion(): Promise<string | null> {
   return new Promise((resolve) => {
     execFile(
       DRSAI_PYTHON,
-      drsaiCliArgs(["--version"]),
+      drsaiCliArgs(["version"]),
       {
         cwd: DRSAI_REPO,
         env: {
@@ -1037,7 +1037,7 @@ export async function readLogs(
   // Prefer the gateway: it sees the agent's real log paths even when the
   // desktop's DRSAI_HOME differs from the server's FS_DIR.
   try {
-    const port = parseInt(process.env.DRSAI_API_PORT || "8642", 10);
+    const port = parseInt(process.env.DRSAI_API_PORT || "18642", 10);
     const url = `http://127.0.0.1:${port}/v1/logs?file=${encodeURIComponent(logFile)}&lines=${lines}`;
     const resp = await new Promise<{ content: string; path: string }>(
       (resolve, reject) => {

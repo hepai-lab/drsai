@@ -582,6 +582,35 @@ class AgentAccessRequest(SQLModel, table=True):
     )
 
 
+class DesktopAuthTicket(SQLModel, table=True):
+    """Short-lived device-code ticket for Windows desktop SSO."""
+
+    __table_args__ = {"sqlite_autoincrement": True}
+    id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        sa_column=Column(String, unique=True, nullable=False),
+    )
+    created_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), server_default=func.now()),
+    )
+    updated_at: datetime = Field(
+        default_factory=datetime.now,
+        sa_column=Column(DateTime(timezone=True), onupdate=func.now()),
+    )
+    device_code: str = Field(sa_column=Column(String, unique=True, nullable=False, index=True))
+    state_nonce: str
+    status: str = Field(default="pending", index=True)
+    auth_provider: str = Field(default="ihep", index=True)
+    expires_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False, index=True))
+    user_id: Optional[str] = Field(default=None, index=True)
+    user_name: Optional[str] = None
+    avatar_url: Optional[str] = Field(default=None, sa_column=Column(Text))
+    access_token: Optional[str] = Field(default=None, sa_column=Column(Text))
+    refresh_token: Optional[str] = Field(default=None, sa_column=Column(Text))
+    claimed: bool = Field(default=False)
+
+
 ##
 
 # DatabaseModel = Team | Message | Session | Run | Gallery | Settings | Plan | AgentModeSettings | AgentModeConfig | UserAgents | UserDDFAgents| Userinfo
@@ -605,5 +634,6 @@ DatabaseModel = (
     | OrganizationMember
     | OrganizationAgent
     | AgentAccessRequest
+    | DesktopAuthTicket
 )
 

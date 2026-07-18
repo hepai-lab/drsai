@@ -1,0 +1,14 @@
+<idea-plugin>
+  <id>org.opendrsai.ide-context</id>
+  <name>OpenDrSai IDE Context</name>
+  <vendor>OpenDrSai</vendor>
+  <description>Writes active editor context for the OpenDrSai Windows desktop chat bar.</description>
+
+  <depends>com.intellij.modules.platform</depends>
+
+  <applicationListeners>
+    <listener
+      class="org.opendrsai.idecontext.OpenDrSaiIdeContextListener"
+      topic="com.intellij.openapi.fileEditor.FileEditorManagerListener" />
+  </applicationListeners>
+</idea-plugin>

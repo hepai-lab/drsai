@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "contextFile": ".drsai/ide-context.json",
+  "selectionLimitChars": 12000,
+  "producers": [
+    {
+      "id": "jetbrains",
+      "displayName": "OpenDrSai IDE Context for JetBrains IDEs",
+      "sourceTag": "jetbrains",
+      "descriptor": "jetbrains/plugin.xml",
+      "sourceFiles": [
+        "jetbrains/src/main/kotlin/org/opendrsai/idecontext/OpenDrSaiIdeContextListener.kt"
+      ],
+      "packagePreflight": [
+        "Copy plugin.xml into a JetBrains Platform plugin project.",
+        "Copy src/main/kotlin/org/opendrsai/idecontext/OpenDrSaiIdeContextListener.kt into the same project.",
+        "Build the plugin ZIP with the JetBrains Gradle plugin.",
+        "Install the ZIP from disk in a JetBrains IDE and restart the IDE."
+      ],
+      "manualValidation": [
+        "Open a project folder that matches the Windows desktop workspace.",
+        "Open a source file, select text, and switch editor focus or move the caret.",
+        "Confirm .drsai/ide-context.json contains source: \"jetbrains\", currentFile, and currentSelection.",
+        "Refresh IDE context in the desktop chat composer and attach IDE current file or IDE selection."
+      ]
+    },
+    {
+      "id": "visual-studio",
+      "displayName": "OpenDrSai IDE Context for Visual Studio",
+      "sourceTag": "visual_studio",
+      "descriptor": "visual-studio/source.extension.vsixmanifest",
+      "sourceFiles": [
+        "visual-studio/source/OpenDrSaiIdeContextPackage.cs"
+      ],
+      "packagePreflight": [
+        "Create a Visual Studio 2022 VSIX project.",
+        "Copy source.extension.vsixmanifest and source/OpenDrSaiIdeContextPackage.cs into the project.",
+        "Build the VSIX with Microsoft.VSSDK.BuildTools.",
+        "Install or debug the VSIX in an experimental Visual Studio instance."
+      ],
+      "manualValidation": [
+        "Open a solution folder that matches the Windows desktop workspace.",
+        "Open a source file, select text, and invoke the package capture command.",
+        "Confirm .drsai/ide-context.json contains source: \"visual_studio\", currentFile, and currentSelection.",
+        "Refresh IDE context in the desktop chat composer and attach IDE current file or IDE selection."
+      ]
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { Trash2 as Trash, Plus, Zap } from "lucide-react";
+import { Trash2 as Trash, Plus, Search, Zap } from "lucide-react";
 import { useI18n } from "../../components/useI18n";
 import type { UsageState } from "./types";
 
@@ -10,6 +10,7 @@ interface ChatHeaderProps {
   hasMessages: boolean;
   onToggleFast: () => void;
   onNewChat?: () => void;
+  onOpenSearch?: () => void;
   onClear: () => void;
 }
 
@@ -36,6 +37,7 @@ export const ChatHeader = memo(function ChatHeader({
   hasMessages,
   onToggleFast,
   onNewChat,
+  onOpenSearch,
   onClear,
 }: ChatHeaderProps): React.JSX.Element {
   const { t } = useI18n();
@@ -74,6 +76,15 @@ export const ChatHeader = memo(function ChatHeader({
             title={t("chat.newChat")}
           >
             <Plus size={16} />
+          </button>
+        )}
+        {hasMessages && onOpenSearch && (
+          <button
+            className="btn-ghost chat-clear-btn"
+            onClick={onOpenSearch}
+            title={t("chat.searchChat")}
+          >
+            <Search size={16} />
           </button>
         )}
         {hasMessages && (

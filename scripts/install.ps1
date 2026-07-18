@@ -34,7 +34,19 @@ param(
 
     [string]$Python,
 
-    [string]$DevSource
+    [string]$DevSource,
+
+    [string]$ExpectedVersion,
+
+    [string]$SourceArchive,
+
+    [string]$SourceArchiveSha256,
+
+    [switch]$SourceArchiveCheckOnly,
+
+    [switch]$CheckOnly,
+
+    [switch]$InstallPrerequisites
 
 )
 
@@ -74,11 +86,211 @@ if ($DevSource) {
 
 }
 
+if ($SourceArchive) {
+
+    Write-Host "  Source zip:  $SourceArchive" -ForegroundColor Yellow
+
+}
+
 Write-Host ""
 
 #  Ensure DrSai home exists
 
 New-Item -ItemType Directory -Force -Path $DrsaiHome | Out-Null
+
+function Install-WithWinget {
+
+    param(
+
+        [string]$Id,
+
+        [string]$Name
+
+    )
+
+    $winget = Get-Command winget -ErrorAction SilentlyContinue
+
+    if (-not $winget) {
+
+        throw "$Name is required but was not found, and winget is not available to install it automatically."
+
+    }
+
+    Write-Host "  Installing $Name with winget..." -ForegroundColor Yellow
+
+    & $winget.Source install --exact --id $Id --source winget --accept-package-agreements --accept-source-agreements
+
+    if ($LASTEXITCODE -ne 0) {
+
+        throw "winget failed to install $Name (exit code $LASTEXITCODE). Install it manually and run this installer again."
+
+    }
+
+}
+
+function Update-ProcessPath {
+
+    $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+
+    $env:Path = @($machinePath, $userPath, $env:Path) -join [IO.Path]::PathSeparator
+
+}
+
+function Resolve-CommandSource {
+
+    param(
+
+        [string]$Name
+
+    )
+
+    $found = Get-Command $Name -ErrorAction SilentlyContinue
+
+    if (-not $found) { return $null }
+
+    $path = $found.Source
+
+    if ($path -match 'WindowsApps') {
+
+        Write-Host "  SKIP Windows Store stub: $path" -ForegroundColor DarkGray
+
+        return $null
+
+    }
+
+    return $path
+
+}
+
+function Resolve-PyLauncherPython {
+
+    $py = Resolve-CommandSource "py"
+
+    if (-not $py) { return $null }
+
+    $resolved = & $py -3.11 -c "import sys; print(sys.executable)" 2>$null
+
+    if ($LASTEXITCODE -eq 0 -and $resolved -and (Test-Path $resolved.Trim())) {
+
+        return $resolved.Trim()
+
+    }
+
+    return $null
+
+}
+
+function Get-SemanticVersion {
+
+    param(
+
+        [string]$Value
+
+    )
+
+    if (-not $Value) { return "" }
+
+    $match = [regex]::Match($Value, "\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?")
+
+    if ($match.Success) { return $match.Value }
+
+    return $Value.Trim()
+
+}
+
+function Get-PythonVersion {
+
+    param(
+
+        [string]$PythonPath
+
+    )
+
+    $pyVerRaw = & $PythonPath -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>&1
+
+    if (-not $pyVerRaw -or $pyVerRaw -match '^\s*$') {
+
+        return $null
+
+    }
+
+    return $pyVerRaw.Trim()
+
+}
+
+function Test-SupportedPython {
+
+    param(
+
+        [string]$PythonPath
+
+    )
+
+    $pyVer = Get-PythonVersion $PythonPath
+
+    if (-not $pyVer) { return $false }
+
+    try {
+
+        $major = [int]$pyVer.Split('.')[0]
+
+        $minor = [int]$pyVer.Split('.')[1]
+
+    } catch {
+
+        return $false
+
+    }
+
+    return ($major -gt 3 -or ($major -eq 3 -and $minor -ge 11))
+
+}
+
+function Expand-SourceArchive {
+
+    if (-not $SourceArchive) {
+
+        throw "SourceArchive is required for source archive mode."
+
+    }
+
+    if (-not (Test-Path $SourceArchive)) {
+
+        throw "Source archive does not exist: $SourceArchive"
+
+    }
+
+    if ($SourceArchiveSha256) {
+
+        $actualArchiveHash = (Get-FileHash -Algorithm SHA256 -Path $SourceArchive).Hash.ToLowerInvariant()
+
+        $expectedArchiveHash = $SourceArchiveSha256.ToLowerInvariant()
+
+        if ($actualArchiveHash -ne $expectedArchiveHash) {
+
+            throw "Source archive SHA256 mismatch. Expected $expectedArchiveHash, got $actualArchiveHash."
+
+        }
+
+    }
+
+    Write-Host "  Extracting bundled source archive..." -ForegroundColor Yellow
+
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $InstallDir
+
+    New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+
+    Expand-Archive -LiteralPath $SourceArchive -DestinationPath $InstallDir -Force
+
+    if (-not (Test-Path (Join-Path $InstallDir "cores\python\packages\drsai\pyproject.toml"))) {
+
+        throw "Source archive did not contain cores\python\packages\drsai\pyproject.toml."
+
+    }
+
+}
 
 #  Find Python
 
@@ -92,13 +304,13 @@ function Find-Python {
 
     }
 
-    # Prefer "python" over "python3" on Windows (python3 is often Store stub)
-
-    # Also try common conda paths
+    # Prefer "python", then the Python Launcher, then "python3" on Windows.
 
     $toTry = @(
 
         "python",
+
+        "py",
 
         "python3"
 
@@ -106,29 +318,53 @@ function Find-Python {
 
     foreach ($name in $toTry) {
 
-        $found = Get-Command $name -ErrorAction SilentlyContinue
+        if ($name -eq "py") {
 
-        if ($found) {
+            $launcherPython = Resolve-PyLauncherPython
 
-            $path = $found.Source
+            if ($launcherPython -and (Test-SupportedPython $launcherPython)) { return $launcherPython }
 
-            # Skip Windows Store stubs
+            continue
 
-            if ($path -match 'WindowsApps') {
+        }
 
-                Write-Host "  SKIP Windows Store stub: $path" -ForegroundColor DarkGray
+        $path = Resolve-CommandSource $name
 
-                continue
+        if ($path) {
 
-            }
-
-            return $path
+            if (Test-SupportedPython $path) { return $path }
 
         }
 
     }
 
-    throw "Python >= 3.11 not found.`n`n  Install Python via one of:`n    conda:  conda create -n drsai python=3.11`n    scoop:  scoop install python`n    winget: winget install Python.Python.3.11`n    https://www.python.org/downloads/`n`n  Or if Python is installed, activate your environment first:`n    conda activate drsai_dev"
+    if ($InstallPrerequisites) {
+
+        Install-WithWinget -Id "Python.Python.3.11" -Name "Python 3.11"
+
+        Update-ProcessPath
+
+        foreach ($name in $toTry) {
+
+            if ($name -eq "py") {
+
+                $launcherPython = Resolve-PyLauncherPython
+
+                if ($launcherPython -and (Test-SupportedPython $launcherPython)) { return $launcherPython }
+
+                continue
+
+            }
+
+            $path = Resolve-CommandSource $name
+
+            if ($path -and (Test-SupportedPython $path)) { return $path }
+
+        }
+
+    }
+
+    throw "Python >= 3.11 not found.`n`n  Install Python via one of:`n    conda:  conda create -n drsai python=3.11`n    scoop:  scoop install python`n    winget: winget install --exact --id Python.Python.3.11`n    https://www.python.org/downloads/`n`n  Or if Python is installed, activate your environment first:`n    conda activate drsai_dev"
 
 }
 
@@ -168,15 +404,63 @@ if ($major -lt 3 -or ($major -eq 3 -and $minor -lt 11)) {
 
 Write-Host "  Python version: $pyVer" -ForegroundColor Green
 
-#  Check git
+#  Check git when a repository checkout is needed.
 
-if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+$RequiresGit = -not $DevSource -and -not $SourceArchive
 
-    throw "git is required but not found. Install from https://git-scm.com/"
+$GitBin = if ($RequiresGit -or $CheckOnly) { Resolve-CommandSource "git" } else { $null }
+
+if (-not $GitBin) {
+
+    if ($RequiresGit -and $InstallPrerequisites) {
+
+        Install-WithWinget -Id "Git.Git" -Name "Git"
+
+        Update-ProcessPath
+
+        $GitBin = Resolve-CommandSource "git"
+
+    }
 
 }
 
-Write-Host "  git: $(git --version)" -ForegroundColor Green
+if ($RequiresGit -and -not $GitBin) {
+
+    throw "git is required but not found. Install from https://git-scm.com/ or run: winget install --exact --id Git.Git"
+
+}
+
+$GitVersion = if ($GitBin) { & $GitBin --version } else { "not required (using source archive)" }
+
+Write-Host "  git: $GitVersion" -ForegroundColor Green
+
+if ($CheckOnly) {
+
+    Write-Host ""
+
+    Write-Host "Prerequisite check complete." -ForegroundColor Green
+
+    Write-Host "  Python: $PythonBin ($pyVer)" -ForegroundColor Green
+
+    Write-Host "  Git:    $GitVersion" -ForegroundColor Green
+
+    exit 0
+
+}
+
+if ($SourceArchiveCheckOnly) {
+
+    Write-Host ""
+
+    Write-Host "Checking bundled source archive..." -ForegroundColor Yellow
+
+    Expand-SourceArchive
+
+    Write-Host "Source archive check complete." -ForegroundColor Green
+
+    exit 0
+
+}
 
 #  Clone or symlink repo
 
@@ -228,6 +512,10 @@ if ($DevSource) {
 
     }
 
+} elseif ($SourceArchive) {
+
+    Expand-SourceArchive
+
 } else {
 
     # Normal mode: clone from GitHub
@@ -236,15 +524,27 @@ if ($DevSource) {
 
         Write-Host "  Updating existing repository..." -ForegroundColor Yellow
 
-        git -C $InstallDir fetch --all --prune
-
-        git -C $InstallDir checkout $Branch
-
-        git -C $InstallDir pull --ff-only origin $Branch
+        & $GitBin -C $InstallDir fetch --all --prune
 
         if ($LASTEXITCODE -ne 0) {
 
-            Write-Host "  WARNING: git pull failed, continuing with existing checkout" -ForegroundColor Yellow
+            throw "git fetch failed for $InstallDir (exit code $LASTEXITCODE)."
+
+        }
+
+        & $GitBin -C $InstallDir checkout $Branch
+
+        if ($LASTEXITCODE -ne 0) {
+
+            throw "git checkout $Branch failed for $InstallDir (exit code $LASTEXITCODE)."
+
+        }
+
+        & $GitBin -C $InstallDir pull --ff-only origin $Branch
+
+        if ($LASTEXITCODE -ne 0) {
+
+            throw "git pull --ff-only origin $Branch failed for $InstallDir (exit code $LASTEXITCODE)."
 
         }
 
@@ -254,7 +554,13 @@ if ($DevSource) {
 
         Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $InstallDir
 
-        git clone --branch $Branch $RepoUrl $InstallDir
+        & $GitBin clone --branch $Branch $RepoUrl $InstallDir
+
+        if ($LASTEXITCODE -ne 0) {
+
+            throw "git clone --branch $Branch failed (exit code $LASTEXITCODE)."
+
+        }
 
     }
 
@@ -266,8 +572,6 @@ Write-Host "[3/6] Creating virtual environment..." -ForegroundColor Yellow
 
 $VenvDir = Join-Path $InstallDir "venv"
 
-& $PythonBin -m venv $VenvDir
-
 $VenvPython = if ($IsWindows -or $env:OS -eq "Windows_NT") {
 
     Join-Path $VenvDir "Scripts\python.exe"
@@ -275,6 +579,22 @@ $VenvPython = if ($IsWindows -or $env:OS -eq "Windows_NT") {
 } else {
 
     Join-Path $VenvDir "bin\python"
+
+}
+
+if (Test-Path $VenvPython) {
+
+    Write-Host "  Reusing existing virtual environment: $VenvDir" -ForegroundColor Yellow
+
+} else {
+
+    & $PythonBin -m venv $VenvDir
+
+    if ($LASTEXITCODE -ne 0) {
+
+        throw "python -m venv failed for $VenvDir (exit code $LASTEXITCODE)."
+
+    }
 
 }
 
@@ -288,9 +608,24 @@ if (-not (Test-Path $VenvPython)) {
 
 Write-Host "[4/6] Installing DrSai package..." -ForegroundColor Yellow
 
-& $VenvPython -m pip install --upgrade pip setuptools wheel
+$env:PIP_DISABLE_PIP_VERSION_CHECK = "1"
+$env:PIP_PROGRESS_BAR = "off"
 
-$PackageDir = Join-Path $InstallDir "python\packages\drsai"
+& $VenvPython -m pip install --disable-pip-version-check --no-input --upgrade pip setuptools wheel
+
+if ($LASTEXITCODE -ne 0) {
+
+    throw "pip bootstrap failed (exit code $LASTEXITCODE)."
+
+}
+
+$PackageDir = Join-Path $InstallDir "cores\python\packages\drsai"
+
+if (-not (Test-Path (Join-Path $PackageDir "pyproject.toml"))) {
+
+    $PackageDir = Join-Path $InstallDir "python\packages\drsai"
+
+}
 
 if (-not (Test-Path (Join-Path $PackageDir "pyproject.toml"))) {
 
@@ -298,7 +633,13 @@ if (-not (Test-Path (Join-Path $PackageDir "pyproject.toml"))) {
 
 }
 
-& $VenvPython -m pip install -e $PackageDir
+& $VenvPython -m pip install --disable-pip-version-check --no-input -e $PackageDir
+
+if ($LASTEXITCODE -ne 0) {
+
+    throw "pip editable install failed for $PackageDir (exit code $LASTEXITCODE)."
+
+}
 
 #  Write wrappers
 
@@ -378,15 +719,45 @@ Write-Host ""
 
 Write-Host "Verifying installation..." -ForegroundColor Yellow
 
-try {
+$result = & $VenvPython -c "import drsai; print('drsai import ok')" 2>&1
 
-    $result = & $VenvPython -c "import drsai; print('drsai import ok')" 2>&1
+if ($LASTEXITCODE -ne 0) {
 
-    Write-Host "  $result" -ForegroundColor Green
+    throw "drsai import failed after installation:`n$result"
 
-} catch {
+}
 
-    Write-Host "  WARNING: drsai import failed. Check pip install output." -ForegroundColor Yellow
+Write-Host "  $result" -ForegroundColor Green
+
+$versionResult = & $VenvPython -W ignore -m drsai.backend.run_cli version 2>&1
+
+if ($LASTEXITCODE -ne 0) {
+
+    throw "drsai CLI version check failed after installation:`n$versionResult"
+
+}
+
+Write-Host "  drsai version: $versionResult" -ForegroundColor Green
+
+if ($ExpectedVersion) {
+
+    $actualVersion = Get-SemanticVersion ($versionResult | Out-String)
+
+    $targetVersion = Get-SemanticVersion $ExpectedVersion
+
+    if ($actualVersion -ne $targetVersion) {
+
+        throw "Installed DrSai backend version $actualVersion does not match expected version $targetVersion."
+
+    }
+
+    Write-Host "  backend version matches expected version: $targetVersion" -ForegroundColor Green
+
+}
+
+if (-not (Test-Path $drsaiCmd)) {
+
+    throw "CLI wrapper was not created: $drsaiCmd"
 
 }
 

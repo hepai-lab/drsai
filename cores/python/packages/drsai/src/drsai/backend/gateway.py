@@ -18,7 +18,7 @@ Also exposes session management, skills, memory, and agent control
 
 Usage:
 
-    python drsai_api_server.py                # default port 8642
+    python drsai_api_server.py                # default port 18642
 
     DRSAI_API_PORT=18642 python ...           # custom port
 
@@ -81,7 +81,7 @@ import traceback
 
 import uuid
 
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 
 from datetime import datetime
 
@@ -91,9 +91,10 @@ from typing import Any, Optional
 
 
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+import httpx
 
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from loguru import logger
 
@@ -141,10 +142,17 @@ from drsai.modules.managers.database import DatabaseManager
 from drsai.modules.managers.datamodel.db import Thread, RunStatus
 
 from drsai.modules.managers.datamodel.types import Response as DBResponse
+from drsai.modules.managers.messages import AgentLogEvent
 
 from drsai.utils.utils import compress_state, decompress_state
 
 from drsai.backend.cli.history import CLISessionStore
+from drsai.platform_auth import (
+    classify_model_error,
+    context_from_bearer,
+    platform_auth_scope,
+    verify_gateway_instance,
+)
 
 
 
@@ -200,7 +208,7 @@ except ImportError:
 
 
 
-DEFAULT_PORT = int(os.environ.get("DRSAI_API_PORT", "8642"))
+DEFAULT_PORT = int(os.environ.get("DRSAI_API_PORT", "18642"))
 
 DEFAULT_HOST = os.environ.get("DRSAI_API_HOST", "127.0.0.1")
 
@@ -237,6 +245,20 @@ def _get_user_id() -> str:
     """Resolve the effective user_id: API override > env var > system user."""
 
     return _desktop_user_name or _DEFAULT_USER_ID
+
+
+def _get_default_model_alias() -> str:
+    """Resolve the configured default model alias for desktop gateway callers."""
+    try:
+        from drsai.backend.cli.config import load_config
+
+        alias = load_config().get("defult_config_name")
+        if isinstance(alias, str) and alias.strip():
+            normalized = alias.strip()
+            return "deepseek-v4-pro" if normalized == "hepai/deepseek-v4-pro" else normalized
+    except Exception as e:
+        logger.debug(f"Failed to read default model alias from cli config: {e}")
+    return DEFAULT_CONFIG_NAME
 
 
 
@@ -313,6 +335,14 @@ class ChatRequest(BaseModel):
         description="Working directory for tool execution. "
 
                     "Defaults to the server's current working directory.",
+
+    )
+
+    metadata: dict[str, Any] = Field(
+
+        default_factory=dict,
+
+        description="Desktop request metadata, including chat runtime mode.",
 
     )
 
@@ -454,6 +484,21 @@ class AgentManager:
     def _make_key(user_id: str, thread_id: str) -> str:
 
         return f"{user_id}:{thread_id}"
+
+    def _fake_stream(self, task: str):
+        """Deterministic stream used only for desktop/API smoke tests."""
+
+        async def _stream():
+            from autogen_agentchat.messages import ModelClientStreamingChunkEvent
+            from autogen_agentchat.base import TaskResult
+
+            yield ModelClientStreamingChunkEvent(
+                content=f"fake-agent: {task}",
+                source="assistant",
+            )
+            yield TaskResult(messages=[], stop_reason="fake-agent-complete")
+
+        return _stream()
 
 
 
@@ -675,7 +720,7 @@ class AgentManager:
                     thread_id=tid,
                     user_id=uid,
                     db_manager=_get_db(),
-                    defult_config_name=model_alias or "hepai/minimax-m2.7-highspeed",
+                    defult_config_name=model_alias or _get_default_model_alias(),
                     work_dir=work_dir or os.getcwd(),
                 )
                 if inspect.iscoroutinefunction(create_agent):
@@ -747,6 +792,11 @@ class AgentManager:
         uid = user_id or _get_user_id()
 
         tid = thread_id or "__default__"
+
+        if os.environ.get("DRSAI_GATEWAY_FAKE_AGENT") == "1":
+            async for event in self._fake_stream(task):
+                yield event
+            return
 
         key = self._make_key(uid, tid)
 
@@ -1049,6 +1099,16 @@ app = FastAPI(
 )
 
 
+@app.middleware("http")
+async def authenticate_desktop_gateway(request: Request, call_next):
+    if not verify_gateway_instance(request.headers.get("x-opendrsai-gateway-token")):
+        return JSONResponse(
+            status_code=401,
+            content={"error": {"code": "gateway_unauthorized", "message": "Gateway caller is not authorized.", "retryable": False}},
+        )
+    return await call_next(request)
+
+
 
 
 
@@ -1083,6 +1143,54 @@ async def list_models():
     return {"object": "list", "data": models}
 
 
+@app.post("/v1/audio/transcriptions")
+async def audio_transcriptions(
+    file: UploadFile = File(...),
+    model: str = Form("whisper-1"),
+    language: Optional[str] = Form(None),
+):
+    """Proxy bounded speech transcription requests to the configured provider."""
+    api_key = os.environ.get("HEPAI_API_KEY", "").strip() or os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(status_code=401, detail="A transcription provider API key is required.")
+    audio = await file.read(10 * 1024 * 1024 + 1)
+    if not audio:
+        raise HTTPException(status_code=400, detail="The uploaded audio file is empty.")
+    if len(audio) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="The uploaded audio exceeds the 10 MB limit.")
+    base_url = os.environ.get("OPENAI_BASE_URL", "https://aiapi.ihep.ac.cn/apiv2").rstrip("/")
+    data = {"model": model}
+    if language:
+        data["language"] = language
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                f"{base_url}/audio/transcriptions",
+                headers={"Authorization": f"Bearer {api_key}"},
+                data=data,
+                files={"file": (file.filename or "recording.webm", audio, file.content_type or "application/octet-stream")},
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail="The transcription provider timed out.") from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="The transcription provider is unreachable.") from exc
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail="The transcription provider returned invalid JSON.") from exc
+    if response.status_code >= 400:
+        detail = payload.get("error", {}).get("message") if isinstance(payload.get("error"), dict) else payload.get("detail")
+        raise HTTPException(status_code=response.status_code, detail=detail or "The transcription provider rejected the request.")
+    text = payload.get("text") if isinstance(payload, dict) else None
+    if not isinstance(text, str):
+        raise HTTPException(status_code=502, detail="The transcription provider response omitted text.")
+    return {
+        "text": text,
+        "language": payload.get("language") or language,
+        "confidence": payload.get("confidence"),
+    }
+
+
 @app.get("/v1/config/model-catalog")
 async def get_model_catalog():
     """Return the default model catalog for desktop setup UI."""
@@ -1096,7 +1204,7 @@ def _get_live_llm_config() -> tuple[dict[str, ModelEntry], str]:
     """Get current llm config + default_alias, resolving file path."""
     config_path = get_llm_config_file_path()
     llm_config = load_llm_mode_config(config_path)
-    default_alias = DEFAULT_CONFIG_NAME
+    default_alias = _get_default_model_alias()
     if config_path:
         import yaml
         try:
@@ -1272,6 +1380,79 @@ async def set_default_model_config(alias: str):
 
 
 
+_CHAT_RUNTIME_MODE_INSTRUCTIONS = {
+    "plan": "Produce a concrete implementation plan before any execution steps. Call out assumptions, risks, verification, and the smallest safe next step.",
+    "goal": "Track the user's objective, completion criteria, and remaining blockers explicitly. Keep the response oriented around goal progress.",
+    "review": "Use code-review behavior: findings first, ordered by severity, with file and line references where possible. Keep summaries secondary.",
+    "fix": "Implement or describe a focused fix path. Prefer minimal changes, include verification, and surface residual risk.",
+    "test": "Prioritize relevant automated tests or verification commands before broader execution. Explain what each test proves.",
+    "commit": "Prepare commit-ready output only after reviewing staged scope, risk, and test evidence. Do not claim a commit happened unless a commit tool actually ran.",
+    "fork": "Plan work as an isolated fork or subtask. Identify what should happen in the child thread or worktree before touching shared state.",
+}
+
+
+def _runtime_mode_from_metadata(metadata: dict[str, Any] | None) -> dict[str, str] | None:
+
+    if not isinstance(metadata, dict):
+
+        return None
+
+    raw_mode = metadata.get("runtime_mode")
+
+    if not isinstance(raw_mode, dict):
+
+        return None
+
+    name = _safe_str(raw_mode.get("name")).strip().lower()
+
+    if name not in _CHAT_RUNTIME_MODE_INSTRUCTIONS:
+
+        return None
+
+    mode: dict[str, str] = {"name": name}
+
+    for key in ("label", "description", "intent", "activated_by"):
+
+        value = _safe_str(raw_mode.get(key)).strip()
+
+        if value:
+
+            mode[key] = value[:600]
+
+    return mode
+
+
+def _task_with_runtime_mode(task: str, metadata: dict[str, Any] | None) -> str:
+
+    runtime_mode = _runtime_mode_from_metadata(metadata)
+
+    if not runtime_mode:
+
+        return task
+
+    lines = [
+        "Desktop runtime mode:",
+        f"Mode: {runtime_mode.get('label') or runtime_mode['name']} ({runtime_mode['name']})",
+        f"Backend instruction: {_CHAT_RUNTIME_MODE_INSTRUCTIONS[runtime_mode['name']]}",
+    ]
+
+    if runtime_mode.get("description"):
+
+        lines.append(f"Mode description: {runtime_mode['description']}")
+
+    if runtime_mode.get("intent"):
+
+        lines.append(f"User mode intent: {runtime_mode['intent']}")
+
+    if runtime_mode.get("activated_by"):
+
+        lines.append(f"Activated by: {runtime_mode['activated_by']}")
+
+    lines.extend(["", "User task:", task])
+
+    return "\n".join(lines)
+
+
 @app.post("/v1/chat/completions")
 
 async def chat_completions(request: ChatRequest, raw_request: Request):
@@ -1292,6 +1473,25 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
 
     """
 
+    auth_context = None
+    if raw_request.headers.get("x-opendrsai-auth-mode") == "oidc":
+        try:
+            auth_context = context_from_bearer(
+                raw_request.headers.get("authorization"),
+                request.user_id or "",
+            )
+        except ValueError as exc:
+            code = str(exc)
+            status_code = 403 if code == "subject_mismatch" else 401
+            raise HTTPException(
+                status_code=status_code,
+                detail={
+                    "code": code,
+                    "message": "The HepAI authentication context is not valid.",
+                    "retryable": code == "token_expired",
+                },
+            ) from exc
+
     # Extract the last user message as the task
 
     user_msgs = [m for m in request.messages if m.role == "user"]
@@ -1300,7 +1500,7 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
 
         raise HTTPException(status_code=400, detail="No user message found")
 
-    task = user_msgs[-1].content
+    task = _task_with_runtime_mode(user_msgs[-1].content, request.metadata)
 
 
 
@@ -1321,36 +1521,38 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
         """Generate SSE events from agent.run_stream()."""
 
         has_content = False
+        sent_done = False
 
 
 
         try:
 
-            async for event in manager.run_stream(
+            with platform_auth_scope(auth_context) if auth_context else nullcontext():
+                event_stream = manager.run_stream(
+                    task=task,
+                    thread_id=thread_id,
+                    user_id=user_id,
+                    model_alias=request.model if request.model != "drsai" else None,
+                    work_dir=work_dir,
+                    cancellation_token=cancel_token,
+                )
+                async for event in event_stream:
 
-                task=task,
+                    sse = _event_to_sse(event)
 
-                thread_id=thread_id,
+                    if sse:
 
-                user_id=user_id,
+                        if "[DONE]" in sse:
+                            sent_done = True
 
-                model_alias=request.model if request.model != "drsai" else None,
+                        if sse.startswith("data:") and "[DONE]" not in sse:
 
-                work_dir=work_dir,
+                            has_content = True
 
-                cancellation_token=cancel_token,
+                        yield sse
 
-            ):
-
-                sse = _event_to_sse(event)
-
-                if sse:
-
-                    if sse.startswith("data:") and "[DONE]" not in sse:
-
-                        has_content = True
-
-                    yield sse
+            if not sent_done:
+                yield "data: [DONE]\n\n"
 
 
 
@@ -1371,12 +1573,10 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
 
 
         except Exception as e:
-
-            logger.error(f"Agent error for session {thread_id}: {e}")
-
-            logger.error(traceback.format_exc())
-
-            yield f"data: {json.dumps({'error': {'message': str(e)}})}\n\n"
+            error = classify_model_error(e)
+            logger.error(f"Agent error for session {thread_id}: code={error['code']}")
+            logger.debug(traceback.format_exc())
+            yield f"data: {json.dumps({'error': error})}\n\n"
 
             yield "data: [DONE]\n\n"
 
@@ -3205,6 +3405,18 @@ def _event_to_sse(event: Any) -> str | None:
 
     # ââ Tool call request âââââââââââââââââââââââââââââââââââââââââââââââââ
 
+    # Agent status/log updates, e.g. LLM retry warnings.
+    if isinstance(event, AgentLogEvent):
+        level = getattr(event, "send_level", "INFO")
+        payload = json.dumps({
+            "title": _safe_str(getattr(event, "title", "")),
+            "content": _safe_str(getattr(event, "content", "")),
+            "level": _safe_str(getattr(level, "value", level)),
+            "content_type": _safe_str(getattr(event, "content_type", "")),
+        }, ensure_ascii=False)
+
+        return f"event: agent.log\ndata: {payload}\n\n"
+
     if isinstance(event, ToolCallRequestEvent):
 
         payload = json.dumps({
@@ -3496,7 +3708,8 @@ def main():
     NOTE: This is the legacy OpenAI-compatible SSE gateway used by the
     Electron desktop app. The new TUI uses ``drsai.backend.tui_gateway``
     (JSON-RPC). This module is preserved for desktop compatibility and
-    will be deprecated when the Electron client migrates to JSON-RPC.
+    wil
+    l be deprecated when the Electron client migrates to JSON-RPC.
     """
     import sys
     sys.stderr.write(

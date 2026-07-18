@@ -73,11 +73,20 @@ export function useChatActions({
             content: m.content,
           })),
         );
-      } catch {
-        // onChatError IPC already surfaces this to the user
+      } catch (error) {
+        setIsLoading(false);
+        const detail = error instanceof Error ? error.message : String(error);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `assistant-error-${Date.now()}`,
+            role: "agent",
+            content: `Failed to send message: ${detail}`,
+          },
+        ]);
       }
     },
-    [profile, drsaiSessionId],
+    [profile, drsaiSessionId, setIsLoading, setMessages],
   );
 
   const handleSend = useCallback(

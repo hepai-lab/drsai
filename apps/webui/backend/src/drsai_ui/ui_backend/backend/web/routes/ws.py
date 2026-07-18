@@ -80,6 +80,9 @@ async def run_websocket(
     if not connected:
         await websocket.close(code=4002, reason="Failed to establish connection")
         return
+    # Capture a connection generation to prevent stale disconnects closing new sockets.
+    # (WebSocketManager increments conn_gen per run_id on connect.)
+    conn_gen = getattr(ws_manager, "_conn_gen", {}).get(run_id)
 
     try:
         logger.info(f"WebSocket connection established for run {run_id}")
@@ -124,10 +127,26 @@ async def run_websocket(
                         )
                     else:
                         logger.warning(f"Invalid start message format for run {run_id}")
+                        # Never send type=error to the frontend.
                         await websocket.send_json(
                             {
-                                "type": "error",
-                                "error": "Invalid start message format",
+                                "type": "completion",
+                                "status": "error",
+                                "data": {
+                                    "task_result": {
+                                        "messages": [
+                                            {
+                                                "source": "system",
+                                                "content": "Invalid request. Please resend your message.",
+                                                "metadata": {"internal": "no"},
+                                            }
+                                        ],
+                                        "stop_reason": "invalid_start_message",
+                                    },
+                                    "usage": "",
+                                    "duration": 0.0,
+                                    "files": None,
+                                },
                                 "timestamp": datetime.utcnow().isoformat(),
                             }
                         )
@@ -193,4 +212,5 @@ async def run_websocket(
     except Exception as e:
         logger.error(f"WebSocket error: {str(e)}")
     finally:
-        await ws_manager.disconnect(run_id)
+        # Do not stop the run on transient websocket disconnect; allow reconnect.
+        await ws_manager.disconnect(run_id, conn_gen=conn_gen, stop_run=False)

@@ -57,8 +57,9 @@ const resolvePythonSrcRoot = (): string => {
   // PYTHONPATH; default points at the in-tree drsai package src/.
   const explicit = process.env.DRSAI_PYTHON_SRC_ROOT?.trim()
   if (explicit) return explicit
-  // Default: ../../cores/python/packages/drsai/src/ relative to this file (apps/ui-tui/src/)
-  return resolve(import.meta.dirname, '../../cores/python/packages/drsai/src')
+  // Default: ../../../cores/python/packages/drsai/src/ relative to this file
+  // (apps/ui-tui/src/ in dev, apps/ui-tui/dist/ after bundling).
+  return resolve(import.meta.dirname, '../../../cores/python/packages/drsai/src')
 }
 
 export class GatewayClient extends EventEmitter {

@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import threading
 from typing import Optional
 
@@ -114,11 +115,14 @@ def _create_app() -> FastAPI:
     return app
 
 
-def start_ws_server(port: int = 0) -> int:
+def start_ws_server(port: int = 0, host: Optional[str] = None) -> int:
     """Start the WebSocket server on a daemon thread.
 
     Args:
-        port: Port to bind (0 = ephemeral). Default 0.
+        port: Port to bind (0 = 8765). Default 0.
+        host: Interface to bind. Defaults to ``DRSAI_TUI_WS_HOST`` or
+            ``127.0.0.1``. Set the environment variable to ``0.0.0.0`` only
+            on a trusted LAN when attaching a mobile client.
 
     Returns:
         The actual bound port (useful when port=0).
@@ -130,6 +134,7 @@ def start_ws_server(port: int = 0) -> int:
         return _ws_port or 0
 
     _app = _create_app()
+    bind_host = host or os.environ.get("DRSAI_TUI_WS_HOST", "127.0.0.1")
 
     # We need to find the actual port after uvicorn binds. Uvicorn doesn't
     # expose the port synchronously, so we use a threading.Event to signal
@@ -148,7 +153,7 @@ def start_ws_server(port: int = 0) -> int:
 
         uvicorn.run(
             _app,
-            host="127.0.0.1",
+            host=bind_host,
             port=bound_port[0],
             log_level="warning",
             access_log=False,
@@ -160,7 +165,7 @@ def start_ws_server(port: int = 0) -> int:
     # Wait up to 2 seconds for the server to be ready
     if ready.wait(timeout=2.0):
         _ws_port = bound_port[0]
-        logger.info("WebSocket server started on ws://127.0.0.1:%d/attach", _ws_port)
+        logger.info("WebSocket server started on ws://%s:%d/attach", bind_host, _ws_port)
         return _ws_port
     else:
         logger.error("WebSocket server failed to start within timeout")

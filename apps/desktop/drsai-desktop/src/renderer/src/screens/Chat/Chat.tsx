@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
 import { ChatHeader } from "./ChatHeader";
+import { ChatSearchBar } from "./ChatSearchBar";
 import { ChatEmptyState } from "./ChatEmptyState";
 import { MessageList } from "./MessageList";
 import { ModelPicker } from "./ModelPicker";
@@ -35,6 +36,9 @@ function Chat({
   const [drsaiSessionId, setDrsaiSessionId] = useState<string | null>(null);
   const [toolProgress, setToolProgress] = useState<string | null>(null);
   const [usage, setUsage] = useState<UsageState | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeMatchIndex, setActiveMatchIndex] = useState(0);
   const chatInputRef = useRef<ChatInputHandle>(null);
 
   const { containerRef, bottomRef } = useChatScroll(messages);
@@ -63,17 +67,73 @@ function Chat({
     }
   }, [messages]);
 
+  const searchMatches = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return [];
+    return messages
+      .filter(
+        (m) =>
+          (m.role === "user" || m.role === "agent") &&
+          (m.content || "").toLowerCase().includes(q),
+      )
+      .map((m) => m.id);
+  }, [messages, searchQuery]);
+
+  const activeMatchId =
+    searchMatches.length > 0
+      ? searchMatches[activeMatchIndex % searchMatches.length]
+      : null;
+
+  useEffect(() => {
+    setActiveMatchIndex(0);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    if (!activeMatchId) return;
+    const node = document.querySelector(
+      `[data-message-id="${activeMatchId}"]`,
+    );
+    node?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [activeMatchId]);
+
+  const openSearch = useCallback(() => {
+    setSearchOpen(true);
+  }, []);
+
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false);
+    setSearchQuery("");
+    setActiveMatchIndex(0);
+  }, []);
+
+  const selectNextMatch = useCallback(() => {
+    setActiveMatchIndex((i) =>
+      searchMatches.length > 0 ? (i + 1) % searchMatches.length : 0,
+    );
+  }, [searchMatches.length]);
+
+  const selectPreviousMatch = useCallback(() => {
+    setActiveMatchIndex((i) =>
+      searchMatches.length > 0
+        ? (i - 1 + searchMatches.length) % searchMatches.length
+        : 0,
+    );
+  }, [searchMatches.length]);
+
   // Cmd/Ctrl+N —new chat
   useEffect(() => {
     function onKey(e: KeyboardEvent): void {
       if ((e.metaKey || e.ctrlKey) && e.key === "n") {
         e.preventDefault();
         onNewChat?.();
+      } else if ((e.metaKey || e.ctrlKey) && e.key === "f") {
+        e.preventDefault();
+        openSearch();
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onNewChat]);
+  }, [onNewChat, openSearch]);
 
   const addAgentMessage = useCallback(
     (content: string) => {
@@ -130,8 +190,25 @@ function Chat({
         hasMessages={messages.length > 0}
         onToggleFast={toggleFastMode}
         onNewChat={onNewChat}
+        onOpenSearch={openSearch}
         onClear={handleClear}
       />
+
+      {searchOpen && (
+        <ChatSearchBar
+          query={searchQuery}
+          current={
+            searchMatches.length > 0
+              ? (activeMatchIndex % searchMatches.length) + 1
+              : 0
+          }
+          total={searchMatches.length}
+          onQueryChange={setSearchQuery}
+          onNext={selectNextMatch}
+          onPrevious={selectPreviousMatch}
+          onClose={closeSearch}
+        />
+      )}
 
       <div className="chat-messages" ref={containerRef}>
         {messages.length === 0 ? (
@@ -141,6 +218,9 @@ function Chat({
             messages={messages}
             isLoading={isLoading}
             toolProgress={toolProgress}
+            searchQuery={searchQuery}
+            matchingMessageIds={searchMatches}
+            activeMatchId={activeMatchId}
             onApprove={actions.handleApprove}
             onDeny={actions.handleDeny}
           />

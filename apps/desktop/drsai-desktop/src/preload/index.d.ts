@@ -110,7 +110,41 @@ interface KanbanCreateTaskInput {
   maxRetries?: number;
 }
 
+interface TerminalCreateOptions {
+  cols?: number;
+  rows?: number;
+  cwd?: string;
+}
+
+interface TerminalSessionInfo {
+  id: string;
+  pid: number;
+  shell: string;
+  cwd: string;
+}
+
+interface TerminalDataEvent {
+  id: string;
+  data: string;
+}
+
+interface TerminalExitEvent {
+  id: string;
+  exitCode: number;
+  signal?: number;
+}
+
 interface DrSaiAPI {
+  // Terminal
+  createTerminal: (
+    options?: TerminalCreateOptions,
+  ) => Promise<TerminalSessionInfo>;
+  writeTerminal: (id: string, data: string) => Promise<boolean>;
+  resizeTerminal: (id: string, cols: number, rows: number) => Promise<boolean>;
+  killTerminal: (id: string) => Promise<boolean>;
+  onTerminalData: (callback: (event: TerminalDataEvent) => void) => () => void;
+  onTerminalExit: (callback: (event: TerminalExitEvent) => void) => () => void;
+
   // Installation
   checkInstall: () => Promise<InstallStatus>;
   verifyInstall: () => Promise<boolean>;
@@ -155,7 +189,11 @@ interface DrSaiAPI {
       model: string;
       token_limit: number;
       max_tokens: number;
-      reasoning?: { supported: boolean; effort_levels: string[]; param_type: string };
+      reasoning?: {
+        supported: boolean;
+        effort_levels: string[];
+        param_type: string;
+      };
     }>;
   }>;
   setModelConfig: (
@@ -264,9 +302,11 @@ interface DrSaiAPI {
   getSessionMessages: (sessionId: string) => Promise<
     Array<{
       id: number;
-      role: "user" | "assistant";
+      role: "user" | "assistant" | "tool" | "tool_request" | "thinking";
       content: string;
       timestamp: number;
+      msgType?: string;
+      toolName?: string;
     }>
   >;
 
@@ -336,7 +376,11 @@ interface DrSaiAPI {
     config: Record<string, unknown>;
     name?: string | null;
     enabled?: boolean;
-  }) => Promise<{ index: number; type: string; config: Record<string, unknown> }>;
+  }) => Promise<{
+    index: number;
+    type: string;
+    config: Record<string, unknown>;
+  }>;
   updateTool: (
     index: number,
     entry: {
@@ -345,7 +389,11 @@ interface DrSaiAPI {
       name?: string | null;
       enabled?: boolean;
     },
-  ) => Promise<{ index: number; type: string; config: Record<string, unknown> }>;
+  ) => Promise<{
+    index: number;
+    type: string;
+    config: Record<string, unknown>;
+  }>;
   deleteTool: (index: number) => Promise<boolean>;
 
   // Skills
@@ -399,7 +447,10 @@ interface DrSaiAPI {
     }>
   >;
   updateSessionTitle: (sessionId: string, title: string) => Promise<boolean>;
-  updateSessionTitleAsync: (sessionId: string, title: string) => Promise<boolean>;
+  updateSessionTitleAsync: (
+    sessionId: string,
+    title: string,
+  ) => Promise<boolean>;
 
   // Session search
   searchSessions: (
@@ -436,7 +487,11 @@ interface DrSaiAPI {
       model: string;
       token_limit: number;
       max_tokens: number;
-      reasoning?: { supported: boolean; effort_levels: string[]; param_type: string };
+      reasoning?: {
+        supported: boolean;
+        effort_levels: string[];
+        param_type: string;
+      };
     }>;
   }>;
   getModelDetail: (alias: string) => Promise<{
@@ -446,7 +501,11 @@ interface DrSaiAPI {
     model: string;
     token_limit: number;
     max_tokens: number;
-    reasoning?: { supported: boolean; effort_levels: string[]; param_type: string };
+    reasoning?: {
+      supported: boolean;
+      effort_levels: string[];
+      param_type: string;
+    };
   }>;
   addModel: (body: {
     alias: string;
@@ -454,7 +513,11 @@ interface DrSaiAPI {
     token_limit?: number;
     max_tokens?: number;
     client_type?: string;
-    reasoning?: { supported: boolean; effort_levels: string[]; param_type: string };
+    reasoning?: {
+      supported: boolean;
+      effort_levels: string[];
+      param_type: string;
+    };
   }) => Promise<{
     alias: string;
     display_name: string;
@@ -462,7 +525,11 @@ interface DrSaiAPI {
     model: string;
     token_limit: number;
     max_tokens: number;
-    reasoning?: { supported: boolean; effort_levels: string[]; param_type: string };
+    reasoning?: {
+      supported: boolean;
+      effort_levels: string[];
+      param_type: string;
+    };
   }>;
   updateModel: (
     alias: string,
@@ -471,7 +538,11 @@ interface DrSaiAPI {
       token_limit?: number;
       max_tokens?: number;
       client_type?: string;
-      reasoning?: { supported: boolean; effort_levels: string[]; param_type: string };
+      reasoning?: {
+        supported: boolean;
+        effort_levels: string[];
+        param_type: string;
+      };
       new_alias?: string;
     },
   ) => Promise<{
@@ -481,9 +552,15 @@ interface DrSaiAPI {
     model: string;
     token_limit: number;
     max_tokens: number;
-    reasoning?: { supported: boolean; effort_levels: string[]; param_type: string };
+    reasoning?: {
+      supported: boolean;
+      effort_levels: string[];
+      param_type: string;
+    };
   }>;
-  removeModel: (alias: string) => Promise<{ ok: boolean; new_default_alias: string }>;
+  removeModel: (
+    alias: string,
+  ) => Promise<{ ok: boolean; new_default_alias: string }>;
   setDefaultModel: (alias: string) => Promise<{ default_alias: string }>;
 
   // Claw3D

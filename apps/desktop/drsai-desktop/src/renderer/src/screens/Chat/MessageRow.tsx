@@ -110,12 +110,39 @@ function cssRole(role: MessageRole): string {
   return role === "tool_request" ? "tool" : role;
 }
 
+function highlightPlainText(text: string, query: string): React.ReactNode {
+  const q = query.trim();
+  if (!q) return text;
+  const lower = text.toLowerCase();
+  const needle = q.toLowerCase();
+  const parts: React.ReactNode[] = [];
+  let cursor = 0;
+  let match = lower.indexOf(needle);
+
+  while (match !== -1) {
+    if (match > cursor) parts.push(text.slice(cursor, match));
+    parts.push(
+      <mark className="chat-search-mark" key={`${match}-${needle}`}>
+        {text.slice(match, match + q.length)}
+      </mark>,
+    );
+    cursor = match + q.length;
+    match = lower.indexOf(needle, cursor);
+  }
+
+  if (cursor < text.length) parts.push(text.slice(cursor));
+  return parts;
+}
+
 // ── Sub-components ────────────────────────────────
 
 interface MessageRowProps {
   msg: ChatMessage;
   isLast: boolean;
   isLoading: boolean;
+  searchQuery: string;
+  isSearchMatch: boolean;
+  isActiveSearchMatch: boolean;
   onApprove: () => void;
   onDeny: () => void;
 }
@@ -261,6 +288,9 @@ export const MessageRow = memo(function MessageRow({
   msg,
   isLast,
   isLoading,
+  searchQuery,
+  isSearchMatch,
+  isActiveSearchMatch,
   onApprove,
   onDeny,
 }: MessageRowProps): React.JSX.Element {
@@ -281,13 +311,16 @@ export const MessageRow = memo(function MessageRow({
   }
 
   return (
-    <div className={`chat-message chat-message-${cr}`}>
+    <div
+      className={`chat-message chat-message-${cr} ${isSearchMatch ? "chat-message-search-match" : ""} ${isActiveSearchMatch ? "chat-message-search-active" : ""}`}
+      data-message-id={msg.id}
+    >
       <RoleAvatar role={msg.role} />
       <div className={`chat-bubble chat-bubble-${cr}`}>
         {msg.role === "agent" ? (
           <AgentContent content={msg.content} />
         ) : (
-          msg.content
+          highlightPlainText(msg.content, searchQuery)
         )}
       </div>
       {showApprovalBar && (

@@ -159,10 +159,10 @@ export const useChatWebSocket = ({
                     config: {
                       ...lastMessage.config,
                       content: newContent,
-                      metadata: {
-                        ...(lastMessage.config.metadata || {}),
-                        ...(sanitizedChunkMetadata || {}),
-                      },
+                      metadata: ({
+                        ...(lastMessage.config.metadata as any),
+                        ...(sanitizedChunkMetadata as any),
+                      } as any),
                     },
                   };
 

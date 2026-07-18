@@ -778,13 +778,12 @@ class BuildTuiHook(BuildHookInterface):
         are disabled.
         """
         removed = False
-        for key in ("force_include", "force_include_editable"):
-            if key not in build_data or not isinstance(
-                build_data[key], dict
-            ):
-                continue
-            to_remove: list[str] = []
-            for src in list(build_data[key].keys()):
+
+        def remove_from_mapping(mapping: Any) -> bool:
+            if not isinstance(mapping, dict):
+                return False
+            did_remove = False
+            for src in list(mapping.keys()):
                 src_lower = src.lower().replace("\\", "/")
                 if (
                     "entry.mjs" in src_lower
@@ -793,10 +792,34 @@ class BuildTuiHook(BuildHookInterface):
                         and "package.json" in src_lower
                     )
                 ):
-                    to_remove.append(src)
-            for src in to_remove:
-                del build_data[key][src]
-                removed = True
+                    del mapping[src]
+                    did_remove = True
+            return did_remove
+
+        config_keys = (
+            "force-include",
+            "force_include",
+            "force-include-editable",
+            "force_include_editable",
+        )
+
+        for key in config_keys:
+            if key in build_data:
+                removed = remove_from_mapping(build_data[key]) or removed
+
+        # Hatchling builds the final forced inclusion map from the builder
+        # config, so update that source as well as the transient build data.
+        build_config = getattr(self, "build_config", None)
+        target_config = getattr(build_config, "target_config", None)
+        if isinstance(target_config, dict):
+            for key in config_keys:
+                if key in target_config:
+                    removed = (
+                        remove_from_mapping(target_config[key]) or removed
+                    )
+            if removed and hasattr(build_config, "__dict__"):
+                build_config.__dict__.pop("force_include", None)
+
         if removed:
             print(
                 "  [build-tui] Removed TUI force-include entries "

@@ -1,0 +1,41 @@
+appId: com.hepai.opendrsai.windows
+productName: OpenDrSai
+npmRebuild: false
+directories:
+  buildResources: build
+  output: release
+files:
+  - out/**
+  - resources/**
+  - package.json
+  - "!src/**"
+  - "!bootstrapper/**"
+  - "!electron.vite.config.{js,ts,mjs,cjs}"
+  - "!tsconfig*.json"
+asarUnpack:
+  - resources/**
+electronFuses:
+  runAsNode: false
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: false
+extraResources:
+  - from: out/renderer
+    to: renderer
+  - from: ../../../scripts/install.ps1
+    to: install/install.ps1
+  - from: build/icon.png
+    to: icon.png
+win:
+  executableName: OpenDrSai
+  icon: build/icon.ico
+protocols:
+  - name: OpenDrSai
+    schemes:
+      - opendrsai
+publish:
+  provider: github
+  owner: hepai-lab
+  repo: drsai

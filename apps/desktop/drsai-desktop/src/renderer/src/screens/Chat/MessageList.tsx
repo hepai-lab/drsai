@@ -6,6 +6,9 @@ interface MessageListProps {
   messages: ChatMessage[];
   isLoading: boolean;
   toolProgress: string | null;
+  searchQuery: string;
+  matchingMessageIds: string[];
+  activeMatchId: string | null;
   onApprove: () => void;
   onDeny: () => void;
 }
@@ -40,6 +43,9 @@ export const MessageList = memo(function MessageList({
   messages,
   isLoading,
   toolProgress,
+  searchQuery,
+  matchingMessageIds,
+  activeMatchId,
   onApprove,
   onDeny,
 }: MessageListProps): React.JSX.Element {
@@ -60,6 +66,9 @@ export const MessageList = memo(function MessageList({
           msg={msg}
           isLast={i === visibleMessages.length - 1}
           isLoading={isLoading}
+          searchQuery={searchQuery}
+          isSearchMatch={matchingMessageIds.includes(msg.id)}
+          isActiveSearchMatch={activeMatchId === msg.id}
           onApprove={onApprove}
           onDeny={onDeny}
         />

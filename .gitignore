@@ -6,6 +6,15 @@
 ########################
 # 项目特定文件
 ########################
+.pnpm-store
+.tmp-gateway.pid
+.tmp/
+**/.tmp/
+%SystemDrive%/
+/windows-edition-diagnostics.txt
+/windows-sandbox-diagnostics.txt
+/windows-sandbox-status.txt
+apps/desktop/installers/windows/.tools/
 examples/requests/zulip_python/.zuliprc
 examples/docker/browser/docker_test_dir*
 ########################
@@ -23,6 +32,7 @@ drsai/backend/owebui_pipeline/pipelines/pipelines/failed/
 drsai/backend/owebui_pipeline/pipelines/pipelines/__init__/
 .mcp/*
 *zulipchat.duckdb
+OpenDrSai-Windows11-Acceptance.wsb
 
 
 # DrSai 相关
@@ -261,10 +271,12 @@ notebooks/test.db
 **/pagelogs/
 
 ########################
-# Large/generated artifacts
+# Android / Gradle
 ########################
-core.*
-my_ragflow/
-*_page/
-.reasonix/
-eval/results/*
+.gradle/
+**/local.properties
+**/.cxx/
+**/.externalNativeBuild/
+**/captures/
+*.jks
+*.keystore

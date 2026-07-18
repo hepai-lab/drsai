@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opendrsai.local/schemas/opendrsai-runtime-manifest.schema.json",
+  "title": "OpenDrSai Runtime Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "version", "platform", "layoutVersion", "entrypoints"],
+  "properties": {
+    "name": {
+      "const": "OpenDrSai Runtime"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(?:[-+][0-9A-Za-z.-]+)?$"
+    },
+    "channel": {
+      "type": "string",
+      "enum": ["stable", "beta", "dev"]
+    },
+    "platform": {
+      "type": "string",
+      "enum": ["windows-x64"]
+    },
+    "layoutVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "createdAt": {
+      "type": "string"
+    },
+    "entrypoints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["desktop", "python", "drsai", "gateway"],
+      "properties": {
+        "desktop": {
+          "const": "app/OpenDrSai.exe"
+        },
+        "python": {
+          "const": "drsai-agent/venv/Scripts/python.exe"
+        },
+        "drsai": {
+          "const": "drsai-agent/venv/Scripts/drsai.cmd"
+        },
+        "gateway": {
+          "const": "drsai-agent/venv/Scripts/drsai-gateway.cmd"
+        }
+      }
+    }
+  }
+}

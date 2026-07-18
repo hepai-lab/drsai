@@ -1,0 +1,60 @@
+name: Windows Public Release Verification
+
+env:
+  OPENDRSAI_RELEASE_REPOSITORY: hepai-lab/drsai
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to verify"
+        required: true
+      full_download:
+        description: "Download full setup exe and verify sha256/size"
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  verify-public-windows-release:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: apps/desktop/windows
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/desktop/windows/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Resolve public release URL
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "release") {
+            $tag = "${{ github.event.release.tag_name }}"
+            $fullDownload = "1"
+          } else {
+            $tag = "${{ inputs.release_tag }}"
+            $fullDownload = if ("${{ inputs.full_download }}" -eq "true") { "1" } else { "0" }
+          }
+
+          "OPENDRSAI_RELEASE_BASE_URL=https://github.com/$env:OPENDRSAI_RELEASE_REPOSITORY/releases/download/$tag" >> $env:GITHUB_ENV
+          "VERIFY_PUBLIC_RELEASE_DOWNLOAD=$fullDownload" >> $env:GITHUB_ENV
+
+      - name: Verify public Windows release
+        env:
+          EXPECTED_WINDOWS_SIGNER_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
+          EXPECTED_WINDOWS_SIGNER_SUBJECT: ${{ vars.WINDOWS_CERTIFICATE_SUBJECT }}
+        run: npm run verify:public-release
