@@ -27,6 +27,7 @@ import { DaemonPanel } from './daemonPanel.js'
 import { AgentPicker } from './agentPicker.js'
 import { SchedulerPanel } from './schedulerPanel.js'
 import { WeChatPanel } from './wechatPanel.js'
+import { GfsPanel } from './gfsPanel.js'
 import { SlashOutputOverlay } from './slashOutputOverlay.js'
 import { TextInput } from './textInput.js'
 
@@ -228,6 +229,7 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
   const [agentPickerOpen, setAgentPickerOpen] = useState(false)
   const [schedulerPanelOpen, setSchedulerPanelOpen] = useState(false)
   const [wechatPanelOpen, setWechatPanelOpen] = useState(false)
+  const [gfsPanelOpen, setGfsPanelOpen] = useState(false)
   const [modelPicker, setModelPicker] = useState<
     { models: ModelEntry[]; currentAlias?: string } | null
   >(null)
@@ -574,6 +576,7 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
   /image <path>   - Attach image(s)
   /search <query> - Search sessions by content
   /export         - Export current session
+  /gfs            - Open GFS config panel (edit credentials, toggle on/off)
 
 ⌨️  Keyboard Shortcuts:
   Ctrl+P / Ctrl+N - Previous / next command history
@@ -627,6 +630,12 @@ For more info: https://github.com/yourusername/drsai
     // ── /wechat (no args) — open wechat panel ───────────────────────
     if (/^\/wechat$/i.test(trimmed)) {
       setWechatPanelOpen(true)
+      return
+    }
+
+    // ── /gfs — open GFS config panel ───────────────────────────────
+    if (/^\/gfs(?:\s|$)/i.test(trimmed)) {
+      setGfsPanelOpen(true)
       return
     }
 
@@ -894,6 +903,16 @@ For more info: https://github.com/yourusername/drsai
       <WeChatPanel
         gw={controller.gw}
         onDismiss={() => setWechatPanelOpen(false)}
+      />
+    )
+  }
+
+  // GFS config panel overlay
+  if (gfsPanelOpen) {
+    return (
+      <GfsPanel
+        gw={controller.gw}
+        onDismiss={() => setGfsPanelOpen(false)}
       />
     )
   }

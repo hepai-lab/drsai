@@ -418,6 +418,14 @@ COMMAND_REGISTRY: list[CommandDef] = [
         handler="async",
     ),
 
+    # ── GFS integration ──────────────────────────────────────────────────────
+    CommandDef(
+        "gfs",
+        "Configure GFS (高能所文件系统) personal-mode credentials and toggle tools",
+        "GFS",
+        handler="special",  # handled in composerPane (GfsPanel overlay), not by slash.exec RPC
+    ),
+
     # ── Meta ─────────────────────────────────────────────────────────────────
     CommandDef(
         "help",

@@ -25,6 +25,7 @@ import type { GatewayClient } from '../gatewayClient.js'
 import type { TurnController } from '../app/turnController.js'
 
 import { ComposerPane } from './composerPane.js'
+import { MemoryPreviewBanner } from './memoryPreviewBanner.js'
 import { PromptsOverlay } from './prompts.js'
 import { StatusBar } from './statusBar.js'
 import { TranscriptPane } from './transcriptPane.js'
@@ -48,6 +49,7 @@ export function AppLayout({ gw, controller, sessionId, switchSession }: Props) {
         which caused duplicate banner lines during the "thinking" phase
         on terminals where Ink's eraseLines() doesn't fully clear frames.
       */}
+      <MemoryPreviewBanner />
       <TranscriptPane sessionId={sessionId} />
       <PromptsOverlay gw={gw} />
       <StatusBar />

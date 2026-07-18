@@ -46,7 +46,8 @@ logger = logging.getLogger(__name__)
 
 
 # 读 / 写文本时的字符上限——避免 agent 一次把超大文件塞进上下文
-MAX_TEXT_PREVIEW_CHARS = 64 * 1024  # 64K chars
+MAX_TEXT_PREVIEW_CHARS = 64 * 1024  # 64K chars — 兜底上限
+MAX_OUTPUT_CHARS = 5000  # gfs_read / gfs_ls 最终输出字符上限（与 run_read 一致）
 
 
 def _format_size(n: int) -> str:
@@ -147,7 +148,13 @@ def _build_tools(
                 lines.append(f"  DIR   {it.path}")
             else:
                 lines.append(f"  {_format_size(it.size):>10}  {it.path}")
-        return "\n".join(lines)
+        result = "\n".join(lines)
+        if len(result) > MAX_OUTPUT_CHARS:
+            result = result[:MAX_OUTPUT_CHARS] + (
+                f"\n\n[... truncated, {len(items)} items total; "
+                f"use a more specific prefix or smaller max_items]"
+            )
+        return result
 
     def gfs_stat(
         path: Annotated[str, "GFS bucket 内的文件路径"],
@@ -167,24 +174,32 @@ def _build_tools(
 
     def gfs_read(
         path: Annotated[str, "GFS bucket 内的文本文件路径，例如 'uploads/run-42/data.txt'"],
+        minilimit: Annotated[int, "起始行偏移（从第几行开始读），默认 0 从头读。"] = 0,
+        maxlimit: Annotated[int, "最多读到第几行，-1 表示读到末尾。"] = -1,
     ) -> str:
         """读取 GFS bucket 内的文本文件并返回全文。
 
         - 二进制文件请改用 gfs_download
-        - 超过 32 MB 的对象会被拒绝；超过 64K 字符会被截断
+        - 超过 32 MB 的对象会被拒绝
+        - 支持 minilimit/maxlimit 按行分页读取（与 run_read 一致）
+        - 最终输出截断为 5000 字符
         """
         cli = _client()
         try:
             text = cli.read_text(path)
         except ValueError as e:
             return f"ERROR: {e}"
-        if len(text) > MAX_TEXT_PREVIEW_CHARS:
-            head = text[:MAX_TEXT_PREVIEW_CHARS]
-            return (
-                f"{head}\n\n[... truncated, full length = {len(text)} chars; "
-                f"use gfs_download to fetch the whole file]"
+        lines = text.splitlines()
+        total = len(lines)
+        if minilimit:
+            lines = lines[minilimit:maxlimit if maxlimit > 0 else None]
+        result = "\n".join(lines)
+        if len(result) > MAX_OUTPUT_CHARS:
+            result = result[:MAX_OUTPUT_CHARS] + (
+                f"\n\n[... truncated, showing lines {minilimit}-{minilimit + len(lines)} "
+                f"of {total} total; use gfs_download for the full file]"
             )
-        return text
+        return result
 
     def gfs_write(
         path: Annotated[str, "GFS bucket 内的目标路径，例如 'outputs/run-42/report.md'"],

@@ -3,13 +3,15 @@ EdgeAgent User Profile Manager Module
 用户画像与文件管理模块
 
 管理EdgeAgent的用户特定文件结构:
-work_dir/{user_id}/
-├── AGENTS.md        # 用户画像和智能体配置
-├── Memories/        # 按时间列表储存的记忆(按session组织)
-├── Skills.md        # 任务执行历史总结
-├── skills/          # 学习到的skills
-├── TOOLS.md         # 工具使用偏好
-└── USER.md          # 用户画像描述
+work_dir/{user_id}/configs/
+├── AGENTS.md            # 统一系统提示词 (System + User Profile + Skills + Tools prefs)
+├── MEMORY.md            # 智能体笔记摘要 (由 CuratedMemoryStore 管理)
+├── USER_CONFIG.json     # 结构化用户配置 (user_name, agent_name, ask_before_plan)
+├── TOOLS_CONFIG.json    # 工具配置
+├── SUBAGENT_CONFIG.json # 子智能体配置
+├── THREAD_CONFIG.json   # 线程配置
+├── SCHEDULED_TASKS.json # 定时任务
+└── skills/              # 用户学习到的 skills
 """
 
 from pathlib import Path
@@ -106,22 +108,17 @@ class UserProfileManager:
         self.thread_id = thread_id
 
         # 定义各个文件路径
-        self.agents_md = self.config_path / "AGENTS.md" # 整体的系统提示词：用户画像和智能体配置
+        self.agents_md = self.config_path / "AGENTS.md" # 统一系统提示词：System + User Profile + Skills + Tools
         self.subagent_config_path = self.config_path / "SUBAGENT_CONFIG.json" # 子智能体配置
-        self.memorie_path = self.config_path / "MEMORY.md" # 用户近期的记忆
-        self.memories_dir = self.config_path / "memories" # 用户所有的记忆文件
-        self.memories_document_ids = self.memories_dir / "document_ids.json" # 记录每个记忆文件的RAGFlow文档ID
-        self.skills_md = self.config_path / "SKILLS.md" # 调用技能描述，目前未用
+        self.memorie_path = self.config_path / "MEMORY.md" # 智能体笔记摘要 (由 CuratedMemoryStore 管理)
         self.skills_dir = self.config_path / "skills" # 用户的所有skills
-        self.tools_md = self.config_path / "TOOLS.md" # 用户的工作环境配置
         self.tools_config_path = self.config_path / "TOOLS_CONFIG.json" # 工具配置
-        self.user_md = self.config_path / "USER.md" # 用户的个人描述
-        self.user_config_path = self.config_path / "USER_CONFIG.json" # 用户配置
+        self.user_config_path = self.config_path / "USER_CONFIG.json" # 结构化用户配置
         self.thread_config_path = self.config_path / "THREAD_CONFIG.json" # Thread级别的配置（如默认子智能体）
             
         # user's user profile
         self.first_time_setup = True
-        if self.agents_md.exists() or self.user_md.exists():
+        if self.agents_md.exists():
             self.first_time_setup = False
 
         # 初始化文件
@@ -138,19 +135,10 @@ class UserProfileManager:
         self.agent_name = self.user_config.agent_name
         self.user_name = self.user_config.user_name
 
-        if not self.user_md.exists():
-            self._create_user_md()
-
-        if not self.tools_md.exists():
-            self._create_tools_md()
-        
         if not self.tools_config_path.exists():
             with self.tools_config_path.open("w", encoding='utf-8') as f:
                 json.dump([], f, indent=4, ensure_ascii=False)
 
-        if not self.skills_md.exists():
-            self._create_skills_md()
-        
         if not self.agents_md.exists():
             self._create_agents_md()
         
@@ -162,12 +150,6 @@ class UserProfileManager:
             with self.thread_config_path.open("w", encoding='utf-8') as f:
                 json.dump({}, f, indent=4, ensure_ascii=False)
         
-        # 创建目录
-        if not self.memories_dir.exists():
-            self.memories_dir.mkdir(exist_ok=True)
-            with self.memories_document_ids.open("w", encoding='utf-8') as f:
-                json.dump({}, f, indent=4, ensure_ascii=False)
-
         if not self.skills_dir.exists():
             self.skills_dir.mkdir(exist_ok=True)
 
@@ -191,9 +173,79 @@ class UserProfileManager:
         with self.user_config_path.open("w", encoding='utf-8') as f:
             json.dump(self.user_config.model_dump(), f, indent=4, ensure_ascii=False)
 
-    def _create_user_md(self):
-        """创建USER.md文件"""
-        content = f"""# User Profile
+    def _create_agents_md(self):
+        """创建统一的 AGENTS.md — 直接包含 System + User Profile + Skills + Tools 偏好
+        """
+        content = f"""# System
+
+You are an interactive tool that helps users with software engineering and scientific data analysis tasks. In addition to these tasks, you should provide educational insights about user's task along the way.
+
+## Workflow
+1. Receive user task → Analyze if planning is needed
+2. If planning needed → Generate plan → Get user approval
+3. Execute tasks:
+   - Use `TodoWrite` to track multi-step work progress
+   - Use `Skill` tool IMMEDIATELY when a task matches a skill description
+   - Use `Delegate` tool to dispatch long-running subtasks (e.g. reading large files, complex code exploration, multi-file refactoring) to sub-agents
+   - Prefer tools over prose — act, don't just explain
+4. When reading code/files: prioritize `run_grep` for keyword searches → then `run_read`-related functions; avoid reading entire files first
+5. For long-running tasks: stop polling after 2 rounds, remind user to schedule a task
+6. Record all actions, tool calls, errors in session memory
+7. Learn from execution → Save skills if requested by user
+8. Handle errors → Request user help if blocked
+9. After finishing, summarize what changed
+
+## Proactive Memory Management
+MEMORY.md is your persistent notebook across sessions — it survives process restarts and is injected into your system prompt at the start of every new session. Use it to **proactively learn** about the user, their projects, and lessons from past work.
+
+### What belongs in MEMORY.md
+- **User preferences & working style** — what they care about, what annoys them, coding conventions they enforce
+- **Project context** — architecture, key file locations, non-obvious dependencies, deployment steps
+- **Bug fixes & lessons learned** — root cause + fix approach for non-trivial issues (not "changed a typo")
+- **Important task outcomes** — what was accomplished, what remains, key decisions made
+- **User feedback & corrections** — "don't do X", "I prefer Y", "this is wrong because Z"
+
+### When to proactively save to MEMORY.md
+
+| Trigger | Action |
+|---------|--------|
+| Complex multi-step task completed (especially multi-interaction modifications) | `memory add` — summarize root cause + fix + key files. **Remind user afterwards.** |
+| User gives explicit feedback or correction | `memory add` — record the preference/correction |
+| Non-trivial bug fix | `memory add` — root cause + fix approach |
+| Discovering project convention or architecture that isn't obvious from code | `memory add` — record for future sessions |
+| Existing memory entry is outdated or wrong | `memory replace` — update with corrected info |
+
+**After saving, always remind the user:** "I've saved this to memory for future sessions."
+
+### When to save a session summary
+- Use `summry_conversation_to_memory` at the end of **complex sessions** (multi-turn tasks, debugging sessions, architecture discussions)
+- Include `keywords` (for searchability) and `questions` (natural-language queries that this summary answers)
+- Simple single-question sessions don't need a summary
+
+### When to retrieve from memory
+- At session start: MEMORY.md content is **auto-injected** into your system prompt — no action needed
+- When the user references past work: use `retrieve_from_memory` to search session summaries
+- Before adding a new entry: use `memory read` to check for duplicates and stay within the 2200-char limit
+- If MEMORY.md is near capacity: use `memory replace` to merge/condense older entries
+
+### MEMORY.md entry format
+Each entry should follow this structure:
+```
+[YYYY-MM-DD] Title: one-line summary. Key files: path1, path2. Fix/approach: brief details.
+```
+Rules:
+- Start with a **date** tag `[YYYY-MM-DD]`
+- Keep each entry **under 200 chars** when possible (hard limit ~300 chars)
+- Reference **file paths + line numbers**, not raw code
+- One topic per entry — don't merge unrelated items
+
+### What NOT to save
+- Trivial single-file reads, simple Q&A, routine tool calls
+- Duplicate or near-duplicate entries (merge instead)
+- Raw code snippets (reference file paths + line numbers instead)
+- Sensitive data (API keys, passwords, tokens)
+
+# User Profile
 
 ## Basic Information
 - **User ID:** {self.user_id}
@@ -213,13 +265,6 @@ class UserProfileManager:
 
 The more you know, the better you can help. But remember — you're learning about a person, not building a dossier. Respect the difference.
 
-"""
-        self.user_md.write_text(content, encoding='utf-8')
-
-    def _create_tools_md(self):
-        """创建TOOLS.md文件"""
-        content = f"""# Tool Preferences for User: {self.user_id}
-
 ## Environment Setup
 
 ### Agent Internal Storage (DrSai Workspace)
@@ -229,82 +274,25 @@ This is where DrSai stores its own internal configuration and data. **This is NO
     - {self.work_dir}
 
 #### Configuration Files
-    - {self.config_path}/AGENTS.md        # System prompt and agent configuration
+    - {self.config_path}/AGENTS.md            # This file — unified system prompt
+    - {self.config_path}/MEMORY.md            # Agent notes (managed by CuratedMemoryStore)
     - {self.config_path}/SUBAGENT_CONFIG.json  # Subagent settings
-    - {self.config_path}/SKILLS.md        # Skill preferences
-    - {self.config_path}/TOOLS.md         # This file
-    - {self.config_path}/TOOLS_CONFIG.json  # Tool configuration
-    - {self.config_path}/USER.md          # User profile description
-    - {self.config_path}/USER_CONFIG.json  # User settings
-    - {self.config_path}/memories/        # Session memories
-    - {self.config_path}/skills/          # User's learned skills
+    - {self.config_path}/TOOLS_CONFIG.json     # Tool configuration
+    - {self.config_path}/USER_CONFIG.json      # Structured user settings
+    - {self.config_path}/THREAD_CONFIG.json    # Thread-level config
+    - {self.config_path}/SCHEDULED_TASKS.json  # Scheduled tasks
+    - {self.config_path}/skills/              # User's learned skills
 
 ### Temporary & Download Directories
     - {self.tmp_dir}        # For code generation/testing
     - {self.download_dir}   # For downloaded files
 
-## Usage Preferences
-[To be learned from user interactions]
-
-## Frequently Used Tools and Skills
-[To be tracked automatically]
-
 **Important Usage Rules:**
-
 - **User's Project Files:** User's code, config, and project files are NOT in the Agent Internal Storage above. They are in the user's project directory (injected via system prompt).
 - **DrSai Internal Files:** The "Agent Internal Storage" is for DrSai's own configuration. Don't modify files there unless explicitly asked.
 - **File Operations:** Download files to the Download Directory. Generate and test code in the Temporary Directory.
 """
-        self.tools_md.write_text(content, encoding='utf-8')
-
-    def _create_agents_md(self):
-        """创建AGENTS.md文件"""
-
-        user_md = self.get_user_profile()
-        tools_md = self.get_tools_preferences()
-        skill_md = self.get_skills_preferences()
-       
-        content = f"""# System
-
-You are an interactive tool that helps users with software engineering and scientific data analysis tasks. In addition to these tasks, you should provide educational insights about user's task along the way.
-
-
-## Workflow
-1. Receive user task → Analyze if planning is needed
-2. If planning needed → Generate plan → Get user approval
-3. Execute tasks:
-   - Use `TodoWrite` to track multi-step work progress
-   - Use `Skill` tool IMMEDIATELY when a task matches a skill description
-   - Use `Delegate` tool to dispatch long-running subtasks (e.g. reading large files, complex code exploration, multi-file refactoring) to sub-agents
-   - Prefer tools over prose — act, don't just explain
-4. When reading code/files: prioritize `run_grep` for keyword searches → then `run_read`-related functions; avoid reading entire files first
-5. For long-running tasks: stop polling after 2 rounds, remind user to schedule a task
-6. Record all actions, tool calls, errors in session memory
-7. Learn from execution → Save skills if requested by user
-8. Handle errors → Request user help if blocked
-9. After finishing, summarize what changed
-
-{user_md}
-
-{skill_md}
-
-{tools_md}
-"""
         self.agents_md.write_text(content, encoding='utf-8')
-
-# - Don't add features, refactor code, or make "improvements" beyond what was asked. A bug fix doesn't need surrounding code cleaned up. A simple feature doesn't need extra configurability. Don't add docstrings, comments, or type annotations to code you didn't change.
-# - Don't add error handling, fallbacks, or validation for scenarios that can't happen. Trust internal code and framework guarantees. Only validate at system boundaries (user input, external APIs).
-# - Don't remove existing comments unless you're removing the code they describe or you know they're wrong. A comment that looks pointless to you may encode a constraint or a lesson from a past bug.
-# - Do NOT use the Bash tool to run commands when a relevant dedicated tool is provided.
-
-    def _create_skills_md(self):
-        """创建Skills.md文件"""
-        content = f"""# Skills Preference
-
- - When conducting academic searches, users should give priority to `academic-search`. When performing web searches, they should give priority to `playwright-cli`.
- - When users want to draw, generate photos, or perform image editing, they can use the `image-process` skill
-"""
-        self.skills_md.write_text(content, encoding='utf-8')
 
     def get_agent_system_prompt(self) -> str:
         """
@@ -368,30 +356,6 @@ You are an interactive tool that helps users with software engineering and scien
         }
         return tool_schema
     
-    def get_user_profile(self) -> str:
-        """
-        获取用户画像信息
-        Returns:
-            USER.md的内容
-        """
-        try:
-            return self.user_md.read_text(encoding='utf-8')
-        except Exception as e:
-            logger.error(f"Failed to read USER.md: {e}")
-            return ""
-
-    def update_user_profile(self, content: str):
-        """
-        更新用户画像
-        Args:
-            content: 新的用户画像内容
-        """
-        try:
-            self.user_md.write_text(content, encoding='utf-8')
-            logger.info(f"Updated USER.md for {self.user_id}")
-        except Exception as e:
-            logger.error(f"Failed to update USER.md: {e}")
-
     def get_user_config_tool(self, strict: bool = False,) -> ToolSchema:
         """
         Update user profile configuration file based on user requirements, including assistant name, user name, interests, and preferences.
@@ -437,7 +401,11 @@ You can update one or multiple fields at once. Only provide the fields that need
     
     def update_user_config(self, **kwargs) -> str:
         """
-        安全地更新用户配置并写入文件
+        安全地更新用户配置并写入文件。
+
+        同时同步更新 AGENTS.md 中的 ``# User Profile`` section 里的
+        Basic Information 字段（user_name, agent_name），保持结构化
+        配置与系统提示词一致。
 
         Args:
             **kwargs: 要更新的UserProfile字段，只接受UserProfile模型中定义的字段
@@ -454,7 +422,7 @@ You can update one or multiple fields at once. Only provide the fields that need
             kwargs['updated_at'] = datetime.now().isoformat()
             updated_config = self.user_config.model_copy(update=kwargs)
 
-            # 写入文件并更新内存中的配置
+            # 写入 USER_CONFIG.json
             self.user_config_path.write_text(
                 updated_config.model_dump_json(indent=4, ensure_ascii=False),
                 encoding='utf-8'
@@ -464,54 +432,43 @@ You can update one or multiple fields at once. Only provide the fields that need
             self.agent_name = updated_config.agent_name
             self.user_name = updated_config.user_name
 
+            # 同步更新 AGENTS.md 中的 User Profile Basic Information
+            self._sync_agents_md_profile(updated_config)
+
             logger.info(f"Successfully updated user config for {self.user_id}")
             return f"Successfully updated user config for {self.user_id}"
 
         except Exception as e:
             logger.error(f"Failed to update user config: {e}")
-            # raise
             return f"Failed to update user config: {e}"
+
+    def _sync_agents_md_profile(self, config: UserProfile) -> None:
+        """同步结构化配置到 AGENTS.md 的 User Profile section。
+
+        更新 AGENTS.md 中 ``## Basic Information`` 下的 user_name 和
+        agent_name 行，使系统提示词与 USER_CONFIG.json 保持一致。
+        其余 User Profile 内容（Preferences 等）保持不变。
+        """
+        try:
+            content = self.agents_md.read_text(encoding='utf-8')
+            lines = content.split('\n')
+            updated_lines = []
+            for line in lines:
+                stripped = line.strip()
+                if stripped.startswith('- **User Name:**'):
+                    updated_lines.append(f'- **User Name:** {config.user_name}')
+                elif stripped.startswith('- **What does the user call you:**'):
+                    updated_lines.append(f'- **What does the user call you:** {config.agent_name}')
+                else:
+                    updated_lines.append(line)
+            self.agents_md.write_text('\n'.join(updated_lines), encoding='utf-8')
+        except Exception as e:
+            logger.error(f"Failed to sync AGENTS.md profile: {e}")
 
     def load_user_tools_config(self) -> dict:
         tools_config_data = json.loads(self.tools_config_path.read_text(encoding='utf-8'))
         return tools_config_data
     
-    def get_tools_preferences(self) -> str:
-        """
-        获取工具偏好
-        Returns:
-            TOOLS.md的内容
-        """
-        try:
-            return self.tools_md.read_text(encoding='utf-8')
-        except Exception as e:
-            logger.error(f"Failed to read TOOLS.md: {e}")
-            return ""
-
-    def update_tools_preferences(self, content: str):
-        """
-        更新工具偏好
-        Args:
-            content: 新的工具偏好内容
-        """
-        try:
-            self.tools_md.write_text(content, encoding='utf-8')
-            logger.info(f"Updated TOOLS.md for {self.user_id}")
-        except Exception as e:
-            logger.error(f"Failed to update TOOLS.md: {e}")
-
-    def get_skills_preferences(self) -> str:
-        """
-        获取工具偏好
-        Returns:
-            TOOLS.md的内容
-        """
-        try:
-            return self.skills_md.read_text(encoding='utf-8')
-        except Exception as e:
-            logger.error(f"Failed to read SKILLS.md: {e}")
-            return ""
-        
     def save_learned_skill(self, skill_name: str, skill_content: str) -> str:
         """
         保存学习到的skill
@@ -532,27 +489,11 @@ You can update one or multiple fields at once. Only provide the fields that need
             else:
                 skill_file.write_text(skill_content, encoding='utf-8')
 
-            # 更新Skills.md
-            self._update_skills_summary(skill_name)
-
             logger.info(f"Saved skill '{skill_name}' to {skill_file}")
             return str(skill_file)
         except Exception as e:
             logger.error(f"Failed to save skill: {e}")
             return ""
-
-    def _update_skills_summary(self, skill_name: str):
-        """更新Skills.md,添加新的skill记录"""
-        try:
-            content = self.skills_md.read_text(encoding='utf-8')
-            timestamp = datetime.now().isoformat()
-            new_entry = f"\n## {skill_name}\n- Added: {timestamp}\n- Location: skills/{skill_name}/SKILL.md\n"
-
-            # 在文件末尾添加新条目
-            content += new_entry
-            self.skills_md.write_text(content, encoding='utf-8')
-        except Exception as e:
-            logger.error(f"Failed to update skills summary: {e}")
 
     def update_agents_config(self, new_content: str):
         """
@@ -565,73 +506,6 @@ You can update one or multiple fields at once. Only provide the fields that need
             logger.info(f"Updated AGENTS.md for {self.user_id}")
         except Exception as e:
             logger.error(f"Failed to update AGENTS.md: {e}")
-
-    def save_session_memory(self, session_memory: list[dict]):
-        """
-        保存会话记忆到Memories/目录
-        Args:
-            session_memory: list[dict]
-        Returns:
-            保存的文件路径
-        """
-        
-        try:
-            filename = f"session_{self.thread_id}.json"
-            filepath = self.memories_dir / filename
-            if filepath.exists():
-                existing = json.loads(filepath.read_text(encoding='utf-8'))
-                existing.extend(session_memory)
-                session_memory = existing
-            filepath.write_text(
-                json.dumps(session_memory, indent=4, ensure_ascii=False),
-                encoding='utf-8'
-            )
-            logger.info(f"Saved session memory to {filepath}")
-            return str(filepath)
-        except Exception as e:
-            logger.error(f"Failed to save session memory: {e}")
-    
-    def read_session_memory_by_index(self, index: int) -> str:
-        """Retrieve original tool result content from session memory by index.
-
-        Use this to retrieve the original content of a tool result that was cleared
-        during memory compression. The index is provided in the cleared marker.
-
-        Args:
-            index: The index of the message in the session memory file.
-        Returns:
-            The content of the message at the given index, as a JSON string.
-        """
-        try:
-            filepath = self.memories_dir / f"session_{self.thread_id}.json"
-            if not filepath.exists():
-                return "Error: Session memory file not found."
-            existing = json.loads(filepath.read_text(encoding='utf-8'))
-            if 0 <= index < len(existing):
-                return json.dumps(existing[index], indent=2, ensure_ascii=False)
-            return f"Error: Index {index} out of range (0-{len(existing) - 1})."
-        except Exception as e:
-            return f"Error reading session memory: {e}"
-
-    def update_document_ids(self, thread_id: str, document_id: str):
-         
-        memories_document_ids = json.loads(self.memories_document_ids.read_text(encoding='utf-8'))
-        memories_document_ids[thread_id] = document_id
-        self.memories_document_ids.write_text(
-            json.dumps(memories_document_ids, indent=4, ensure_ascii=False),
-            encoding='utf-8'
-        )
-    
-    def get_document_ids(self, thread_id: str) -> str|None:
-        """
-        获取document_id
-        Args:
-            thread_id: 会话ID
-        Returns:
-            document_id
-        """
-        memories_document_ids = json.loads(self.memories_document_ids.read_text(encoding='utf-8'))
-        return memories_document_ids.get(thread_id)
 
     def load_thread_config(self, thread_id: str) -> dict:
         """

@@ -10,7 +10,7 @@ import type { GatewayEvent } from '../gatewayTypes.js'
 
 import { $approval, $clarify, $secret, $sudo } from './overlayStore.js'
 import type { TurnController } from './turnController.js'
-import { $connectionError, $connectionStatus, $lastUsage, $sessionMeta, $skin, $statusLine, $userId } from './uiStore.js'
+import { $connectionError, $connectionStatus, $lastUsage, $memoryPreview, $sessionMeta, $skin, $statusLine, $userId } from './uiStore.js'
 import {
   applyToolComplete,
   MAX_TOOL_RESULT_CHARS,
@@ -337,6 +337,12 @@ export function createGatewayEventHandler(
       // ── Status ───────────────────────────────────────────────
       case 'status.update': {
         const p = ev.payload as { kind?: string; text?: string } | undefined
+        // Memory preview: display as a persistent banner, not a fleeting status line
+        if (p?.kind === 'memory.preview' && p?.text) {
+          $memoryPreview.set(p.text)
+          $statusLine.set('')
+          return
+        }
         if (p?.text) $statusLine.set(`${p.kind ?? 'status'}: ${p.text}`)
         else $statusLine.set('')
         return

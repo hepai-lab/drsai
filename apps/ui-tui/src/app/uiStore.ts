@@ -18,6 +18,16 @@ export const $userId = atom<string>('')
 export const $showReasoning = atom<boolean>(false)
 
 /**
+ * Memory preview content (MEMORY.md) displayed on TUI startup.
+ *
+ * Populated when the backend emits a ``status.update`` event with
+ * ``kind: "memory.preview"``. When non-empty, the TUI renders a
+ * collapsible "📋 Memory" banner above the transcript so the user
+ * can see what was done before and what to continue.
+ */
+export const $memoryPreview = atom<string>('')
+
+/**
  * Whether the terminal currently has window focus.
  *
  * Driven by XTerm focus reporting (entry.tsx enables it; <App> sniffs

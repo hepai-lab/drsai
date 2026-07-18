@@ -159,6 +159,21 @@ class AgentSession:
         meta_workdir = await self._load_thread_meta_workdir_async()
         self._workdir = str(meta_workdir or getattr(agent, "_work_dir", "") or "")
 
+        # Emit memory summary so the TUI can display a compact banner on
+        # startup (file path + entry count, not full content).
+        try:
+            from .. import server  # noqa: F811 — local import avoids NameError
+            memory_preview = ""
+            if hasattr(agent, "_curated_memory") and agent._curated_memory:
+                memory_preview = agent._curated_memory.get_display_summary()
+            if memory_preview.strip():
+                server._emit("status.update", self.session_id, {
+                    "kind": "memory.preview",
+                    "text": memory_preview,
+                })
+        except Exception:
+            pass  # Memory preview is best-effort; don't block startup.
+
     # ── Thread state persistence (DB-backed) ──────────────────────
 
     async def _load_thread_state_async(self) -> Optional[dict]:
