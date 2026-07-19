@@ -152,6 +152,7 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
     process.env.OPENDRSAI_E2E_M7_STABILITY !== "1" &&
     process.env.OPENDRSAI_E2E_M8_RECOVERY !== "1" &&
     process.env.OPENDRSAI_E2E_M10_DATA_CLEANUP !== "1" &&
+    process.env.OPENDRSAI_E2E_VOICE !== "1" &&
     process.env.OPENDRSAI_E2E_PRESENTATION_PDF_ACTION !== "1"
   ) return;
   const resultPath = process.env.OPENDRSAI_E2E_RESULT;
@@ -239,6 +240,8 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
         ? runM8RecoverySmoke
       : process.env.OPENDRSAI_E2E_M10_DATA_CLEANUP === "1"
         ? runM10DataCleanupSmoke
+      : process.env.OPENDRSAI_E2E_VOICE === "1"
+        ? runVoiceSmoke
       : process.env.OPENDRSAI_E2E_PRESENTATION_PDF_ACTION === "1"
         ? runPresentationPdfActionSmoke
       : process.env.OPENDRSAI_E2E_CHAT === "1"
@@ -6142,6 +6145,146 @@ async function runShareVersionConsistencySmoke(window: BrowserWindow): Promise<S
   const screenshotPath = process.env.OPENDRSAI_E2E_SCREENSHOT;
   if (screenshotPath) writeFileSync(screenshotPath, (await window.webContents.capturePage()).toPNG());
   return { ok: Object.values(result.checks).every(Boolean), checks: result.checks, details: result.details };
+}
+
+async function runVoiceSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  const liveFixturePath = process.env.OPENDRSAI_VOICE_LIVE_FIXTURE;
+  if (liveFixturePath && !existsSync(liveFixturePath)) throw new Error("Configured live voice fixture does not exist.");
+  const fixtureBytes = liveFixturePath
+    ? [...readFileSync(liveFixturePath)]
+    : [0x1a, 0x45, 0xdf, 0xa3, 0x42, 0x86, 0x81, 0x01];
+  const fixtureExtension = liveFixturePath ? liveFixturePath.split(".").at(-1)?.toLowerCase() : "webm";
+  const fixtureMimeType = ({ wav: "audio/wav", ogg: "audio/ogg", mp3: "audio/mpeg", m4a: "audio/mp4", mp4: "audio/mp4" } as Record<string, string>)[fixtureExtension || ""] || "audio/webm";
+  const expectedRuntime = liveFixturePath ? "gateway-provider" : "mock-local";
+  return window.webContents.executeJavaScript(`
+    (async () => {
+      const api = window.openDrSai;
+      const checks = { bridge: Boolean(api) };
+      const details = {};
+      if (!api) return { ok: false, checks, details };
+      const sttStatus = await api.getVoiceRuntimeStatus();
+      const ttsStatus = await api.getVoiceSynthesisRuntimeStatus();
+      const streamingCapabilities = await api.getStreamingVoiceCapabilities();
+      checks.sttFixtureReady = sttStatus.runtimeId === ${JSON.stringify(expectedRuntime)} && sttStatus.state === "ready";
+      checks.ttsFixtureReady = ttsStatus.runtimeId === ${JSON.stringify(expectedRuntime)} && ttsStatus.state === "ready" && ttsStatus.supportsSynthesisTask === true;
+      checks.streamingCapabilitiesReady = streamingCapabilities.streamingStt === true && streamingCapabilities.streamingTts === true && streamingCapabilities.audioEncodings.includes("pcm_s16le") && streamingCapabilities.sampleRatesHz.includes(16000);
+
+      const waitForTerminal = (subscribe, start, timeoutMessage, timeoutMs = 5000) => new Promise(async (resolve, reject) => {
+        let unsubscribe = () => {};
+        const timer = setTimeout(() => { unsubscribe(); reject(new Error(timeoutMessage)); }, timeoutMs);
+        unsubscribe = subscribe((event) => {
+          if (event.type !== "completed" && event.type !== "failed" && event.type !== "cancelled") return;
+          clearTimeout(timer);
+          unsubscribe();
+          resolve(event);
+        });
+        try { await start(); } catch (error) { clearTimeout(timer); unsubscribe(); reject(error); }
+      });
+
+      const audio = new Uint8Array(${JSON.stringify(fixtureBytes)});
+      const streamingEvents = [];
+      let streamingResult;
+      const streamingTerminal = new Promise((resolve, reject) => {
+        const timer = setTimeout(() => { unsubscribe(); reject(new Error("Packaged streaming STT timed out.")); }, 10000);
+        const unsubscribe = api.onStreamingVoiceTranscriptionEvent((event) => {
+          if (streamingResult && event.sessionId !== streamingResult.sessionId) return;
+          streamingEvents.push(event);
+          if (!["completed", "failed", "cancelled"].includes(event.type)) return;
+          clearTimeout(timer); unsubscribe(); resolve(event);
+        });
+      });
+      streamingResult = await api.startStreamingVoiceTranscription({ turnId: "packaged-streaming-turn", encoding: "pcm_s16le", sampleRateHz: 16000, channels: 1, frameDurationMs: 20, providerEndpointing: true });
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      for (let sequence = 0; sequence < 4; sequence += 1) {
+        const samples = new Int16Array(320); samples.fill(sequence + 1);
+        checks.streamingChunkAccepted = api.sendStreamingVoiceAudioChunk({ sessionId: streamingResult.sessionId, turnId: streamingResult.turnId, sequence, capturedAtMs: performance.now(), durationMs: 20, encoding: "pcm_s16le", sampleRateHz: 16000, channels: 1, audioData: new Uint8Array(samples.buffer) });
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      checks.streamingStopAccepted = await api.stopStreamingVoiceTranscription(streamingResult.sessionId, "manual");
+      const streamingTerminalEvent = await streamingTerminal;
+      const streamingTypes = streamingEvents.map((event) => event.type);
+      checks.streamingCompleted = streamingTerminalEvent.type === "completed" && streamingTypes.includes("partial") && streamingTypes.includes("final") && streamingTypes.indexOf("partial") < streamingTypes.indexOf("final") && streamingTypes.indexOf("final") < streamingTypes.indexOf("completed");
+
+      let streamingCancelResult;
+      const streamingCancelled = new Promise((resolve, reject) => {
+        const timer = setTimeout(() => { unsubscribe(); reject(new Error("Packaged streaming cancellation timed out.")); }, 5000);
+        const unsubscribe = api.onStreamingVoiceTranscriptionEvent((event) => {
+          if (streamingCancelResult && event.sessionId !== streamingCancelResult.sessionId) return;
+          if (event.type !== "cancelled") return;
+          clearTimeout(timer); unsubscribe(); resolve(event);
+        });
+      });
+      streamingCancelResult = await api.startStreamingVoiceTranscription({ turnId: "packaged-streaming-cancel-turn", encoding: "pcm_s16le", sampleRateHz: 16000, channels: 1, frameDurationMs: 20, providerEndpointing: true });
+      checks.streamingCancelAccepted = await api.cancelStreamingVoiceTranscription(streamingCancelResult.sessionId);
+      const streamingCancelledEvent = await streamingCancelled;
+      checks.streamingCancelled = streamingCancelledEvent.type === "cancelled" && streamingCancelledEvent.sessionId === streamingCancelResult.sessionId;
+
+      const sttEvent = await waitForTerminal(
+        (listener) => api.onVoiceTranscriptionEvent(listener),
+        () => api.startVoiceTranscription({ audioData: audio, mimeType: ${JSON.stringify(fixtureMimeType)}, durationSeconds: 1 }),
+        "Packaged fixture STT timed out.",
+      );
+      checks.sttCompleted = sttEvent.type === "completed" && sttEvent.result?.runtimeId === ${JSON.stringify(expectedRuntime)} && Boolean(sttEvent.result?.transcript);
+
+      let boundaryBytes = 0;
+      if (!${JSON.stringify(Boolean(liveFixturePath))}) {
+        boundaryBytes = sttStatus.maxBytes;
+        const boundaryAudio = new Uint8Array(boundaryBytes);
+        boundaryAudio.set([0x1a, 0x45, 0xdf, 0xa3]);
+        const boundaryEvent = await waitForTerminal(
+          (listener) => api.onVoiceTranscriptionEvent(listener),
+          () => api.startVoiceTranscription({ audioData: boundaryAudio, mimeType: "audio/webm", durationSeconds: 120 }),
+          "Packaged maximum-size STT timed out.",
+          15000,
+        );
+        checks.maxBoundaryCompleted = boundaryEvent.type === "completed" && boundaryEvent.result?.durationSeconds === 120;
+      } else {
+        checks.maxBoundaryCompleted = true;
+      }
+
+      let cancelRequestId = "";
+      const cancelledEvent = await waitForTerminal(
+        (listener) => api.onVoiceTranscriptionEvent(listener),
+        async () => {
+          const started = await api.startVoiceTranscription({ audioData: audio, mimeType: ${JSON.stringify(fixtureMimeType)}, durationSeconds: 1 });
+          cancelRequestId = started.requestId;
+          checks.cancelAccepted = await api.cancelVoiceTranscription(started.requestId);
+        },
+        "Packaged fixture STT cancellation timed out.",
+      );
+      checks.sttCancelled = cancelledEvent.type === "cancelled" && cancelledEvent.requestId === cancelRequestId;
+
+      const ttsEvent = await waitForTerminal(
+        (listener) => api.onVoiceSynthesisEvent(listener),
+        () => api.startVoiceSynthesis({ text: "Packaged voice fixture", language: "en-US", speed: 1, format: "wav" }),
+        "Packaged fixture TTS timed out.",
+      );
+      checks.ttsCompleted = ttsEvent.type === "completed" && ttsEvent.result?.runtimeId === ${JSON.stringify(expectedRuntime)} && ttsEvent.result?.audioData?.length > 0;
+      let voiceDiagnostics = [];
+      for (let attempt = 0; attempt < 50; attempt += 1) {
+        const snapshot = await api.getDiagnosticSnapshot({ module: "voice", limit: 50 });
+        voiceDiagnostics = snapshot.events || [];
+        if (voiceDiagnostics.some((event) => event.component === "stt" && event.status === "completed") && voiceDiagnostics.some((event) => event.component === "tts" && event.status === "completed")) break;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      const diagnosticText = JSON.stringify(voiceDiagnostics);
+      checks.diagnosticsComplete = voiceDiagnostics.some((event) => event.component === "stt" && event.status === "completed" && typeof event.durationMs === "number") && voiceDiagnostics.some((event) => event.component === "tts" && event.status === "completed" && typeof event.durationMs === "number");
+      checks.maxBoundaryDiagnostic = boundaryBytes === 0 || voiceDiagnostics.some((event) => event.component === "stt" && event.status === "started" && event.attributes?.bytes === boundaryBytes);
+      checks.noInvalidTransitions = !voiceDiagnostics.some((event) => event.component === "turn" && event.errorCode === "invalid_transition");
+      checks.diagnosticsPrivate = !diagnosticText.includes("Packaged voice fixture") && !diagnosticText.includes("Fixture voice transcript") && !diagnosticText.includes('"audioData":') && !diagnosticText.includes('"transcript":');
+      details.runtimeIds = { stt: sttStatus.runtimeId, tts: ttsStatus.runtimeId };
+      details.streaming = {
+        capabilities: streamingCapabilities,
+        terminalTypes: streamingTypes,
+        cancelledType: streamingCancelledEvent.type,
+        errors: streamingEvents.filter((event) => event.type === "failed").map((event) => ({ code: event.error?.code, message: event.error?.message })),
+      };
+      details.maxBoundaryBytes = boundaryBytes;
+      details.terminalTypes = { stt: sttEvent.type, cancelled: cancelledEvent.type, tts: ttsEvent.type };
+      details.diagnosticOperations = voiceDiagnostics.map((event) => ({ component: event.component, operation: event.operation, status: event.status, durationMs: event.durationMs, errorCode: event.errorCode }));
+      return { ok: Object.values(checks).every(Boolean), checks, details };
+    })()
+  `, true) as Promise<SmokeResult>;
 }
 
 async function runChatSmoke(window: BrowserWindow): Promise<SmokeResult> {

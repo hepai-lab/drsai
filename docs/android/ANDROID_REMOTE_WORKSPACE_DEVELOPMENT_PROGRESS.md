@@ -2,23 +2,23 @@
 
 > 基准方案：[Android 远程工作区开发方案 V1](./ANDROID_REMOTE_WORKSPACE_DEVELOPMENT_PLAN_V1.md)  
 > 统计规则：只有实现、自动化测试和对应验收证据同时存在的功能点才标记完成。  
-> 当前范围：移除真机验收，Codex 真实 Backend E2E（M11-F03）延期，OpenDrSai E2E 使用本仓库 `apps/desktop/windows`。  
-> 更新时间：2026-07-17
+> 当前范围：移除真机验收；OpenDrSai 与 Codex 真实 Backend E2E 均已完成，使用本仓库 `apps/desktop/windows`。  
+> 更新时间：2026-07-19
 
 ## 总体状态
 
 | 指标 | 当前值 |
 | --- | ---: |
 | 功能点总数 | 96 |
-| 当前验收范围 | 95 |
-| 已完成 | 95 |
+| 当前验收范围 | 96 |
+| 已完成 | 96 |
 | 进行中 | 0 |
 | 未开始 | 0 |
 | 受阻 | 0 |
-| 延期 | 1 |
+| 延期 | 0 |
 | 当前范围完成率 | 100% |
 
-当前阶段：95 项当前范围全部完成。真实 E2E 只包含 `apps/desktop/windows` OpenDrSai Backend，Codex E2E 延期且不设真机门禁。
+当前阶段：96 项全部完成。真实 E2E 包含 `apps/desktop/windows` OpenDrSai Backend 与真实 Codex Backend；不设真机门禁。
 
 ## 模块进度
 
@@ -34,7 +34,7 @@
 | M08 | Approval、用户决策与 Audit 投影 | 8/8 | 完成 |
 | M09 | 只读 Files、Git 与 Artifact | 8/8 | 完成 |
 | M10 | 移动网络、后台与可靠性 | 8/8 | 完成 |
-| M11 | Backend 无关兼容与 OpenDrSai 验收 | 7/7 当前 + 1 延期 | 完成 |
+| M11 | Backend 无关兼容与 OpenDrSai/Codex 验收 | 8/8 | 完成 |
 | M12 | 自动化、模拟器、构建与发布验收 | 8/8 | 完成 |
 
 ## 已完成证据

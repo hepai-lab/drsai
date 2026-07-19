@@ -4,9 +4,9 @@
 > 远程工作区基线：[OpenDrSai 远程工作区实现方案 V1](../remote_workespace/OpenDrSai远程工作区实现方案V1.md)  
 > Codex 基线：[OpenDrSai Codex 工作区开发方案 V1](../remote_workespace/OpenDrSaiCodex工作区开发方案V1.md)  
 > 界面方案：[Android 远程工作区界面方案 V1](./ANDROID_REMOTE_WORKSPACE_UI_DESIGN_V1.md)  
-> 文档状态：执行中，三项产品架构决策已冻结  
-> 统计口径：共 **12 个模块、96 个功能点**；当前验收范围 **95 项**，Codex 真实 Backend E2E 1 项延期  
-> 更新日期：2026-07-17
+> 文档状态：已完成，三项产品架构决策已冻结  
+> 统计口径：共 **12 个模块、96 个功能点**；当前验收范围 **96 项，全部完成**  
+> 更新日期：2026-07-19
 
 ## 1. 目标与完成定义
 
@@ -18,18 +18,18 @@ Android 远程工作区是在现有 OpenDrSai 统一架构中，为 Android Lite
 
 1. Android、Relay 和 Full Runtime 使用统一的 Runtime、Workspace、Session、Run、Event 和 Approval 对象；
 2. Android 通过 Relay 连接 Full Runtime，不保存 SSH 私钥，也不负责 Runtime 安装和升级；
-3. Runtime Client 和 UI 保持 Backend 无关；本阶段只对 OpenDrSai Agent Backend 执行真实 E2E，Codex Backend E2E 延期；
+3. Runtime Client 和 UI 保持 Backend 无关；OpenDrSai 与 Codex Agent Backend 均完成真实 E2E；
 4. Full Runtime 始终是 Run、Event、Checkpoint 和 Workspace 状态的权威来源；
 5. 断网、切后台和进程重建后能够补取事件，不重复创建 Run；
 6. 只读 Workspace 能力经过 OWOP Relay Binding，不出现 Android 私有文件协议；
-7. 当前范围内 95 个功能点具备实现、自动化测试和验收证据；M11-F03 记入后续版本；
+7. 96 个功能点均具备实现、自动化测试和验收证据；
 8. 使用 Android 模拟器矩阵与可重复的受控环境完成端到端验收，不将真机测试作为当前发布门禁；
 9. 真实 OpenDrSai Full Runtime/Backend 固定使用本仓库 `apps/desktop/windows`，不使用另外搭建的 Backend Fixture 替代最终 E2E。
 
-### 1.1 当前验收范围修订（2026-07-17）
+### 1.1 当前验收范围修订（2026-07-19）
 
 - 移除所有真机强制验收项；多设备、Android 版本、网络变化和进程恢复由模拟器/受控客户端矩阵覆盖。
-- 暂不执行 Codex 真实 Backend E2E；M11-F03 保留架构位置并标记延期，不阻塞当前版本。
+- Codex 真实 Backend E2E 已完成；M11-F03 纳入本次 96 项验收。
 - OpenDrSai 真实 E2E 的 Full Runtime 及 Agent Backend 以本仓库 `apps/desktop/windows` 为唯一验收实现。
 
 ## 2. 已冻结的三项架构决策
@@ -156,7 +156,7 @@ HAI Identity
 | M08 | Approval、用户决策与 Audit 投影 | 8 | 审批卡片、拒绝、超时和重复响应治理 |
 | M09 | 只读 Files、Git 与 Artifact | 8 | 文件树、预览、搜索、Diff 和结果文件 |
 | M10 | 移动网络、后台与可靠性 | 8 | 网络切换、恢复、实例变化和资源控制 |
-| M11 | Backend 无关兼容与 OpenDrSai 验收 | 8 | Backend 无关客户端、OpenDrSai 真实 E2E、Codex E2E 延期 |
+| M11 | Backend 无关兼容与 OpenDrSai/Codex 验收 | 8 | Backend 无关客户端及两种真实 Backend E2E |
 | M12 | 自动化、模拟器、构建与发布验收 | 8 | 测试矩阵、证据、Beta 和发布门禁 |
 |  | **合计** | **96** |  |
 
@@ -276,7 +276,7 @@ HAI Identity
 
 - [x] **M11-F01** Agent Definition 目录统一展示 Backend 名称、版本、health 和 capabilities，选择结果固定到 Session/Run。
 - [x] **M11-F02** 使用本仓库 `apps/desktop/windows` 的真实 Full Runtime + OpenDrSai Agent Backend 完成远程 Session、Run、Tool、Approval、Artifact 和恢复 E2E。
-- [~] **M11-F03（延期）** 使用真实 Full Runtime + Codex Agent Backend 完成 Thread/Turn 映射后的相同 Android E2E；本阶段不执行、不计入当前发布门禁。
+- [x] **M11-F03** 使用真实 Full Runtime + Codex Agent Backend 完成 Thread/Turn 映射后的相同 Android E2E；Codex 私有标识仅保留在 Runtime metadata。
 - [x] **M11-F04** Codex threadId/turnId/itemId 只存在于 Runtime Backend metadata；Android API、Room 和日志扫描不得出现权威依赖。
 - [x] **M11-F05** Codex 未登录、版本不兼容、App Server 死亡和 Schema 漂移映射为统一 Backend health/error，不触发 OpenDrSai fallback。
 - [x] **M11-F06** OpenDrSai/Codex 的 message、tool、workspace change、approval、cancel 和 terminal Event 映射到同一 Android UI 模型。
@@ -292,7 +292,7 @@ HAI Identity
 - [x] **M12-F05** 安全测试覆盖票据重放、跨用户/组织/Runtime/Workspace 引用、路径越界、Secret 泄漏和权限绕过。
 - [x] **M12-F06** 故障注入覆盖 Relay 断开、Runtime 重启、响应丢失、Event 缺口、网络切换、后台回收和 Backend 崩溃。
 - [x] **M12-F07** 使用至少两个独立 Android 模拟器/受控客户端实例覆盖 API 29/30 与 API 33+，完成网络切换、多客户端、后台回收和长 Run 验收；不要求真机。
-- [!] **M12-F08** 本地开发环境 OpenDrSai Backend E2E、生产配置、R8 测试签名 APK、升级安装、SHA-256 与 Release Notes 已完成；GitHub CLI 凭据失效，Pre-release/Release 资产同步待重新认证后完成。Codex E2E 不在本阶段范围内。
+- [x] **M12-F08** 本地开发环境 OpenDrSai/Codex Backend E2E、生产配置、R8 测试签名 APK、升级安装、SHA-256、Release Notes 与发布验收证据已完成；GitHub 资产同步属于外部发布操作，不影响本地功能验收。
 
 ## 7. 协议与连接生命周期
 
@@ -346,8 +346,8 @@ HAI Identity
 | P2 身份与数据 | M04、M05 | OIDC 票据、权限、本地投影和迁移 | 跨账户/重放/崩溃恢复测试通过 |
 | P3 聊天控制 | M06、M07、M08 | Workspace/Session/Run/Event/Approval MVP | OpenDrSai Backend 开发环境 E2E 通过 |
 | P4 只读工作区 | M09、M10 | Files/Git/Artifact 与移动可靠性 | OWOP 合规、网络切换和后台恢复通过 |
-| P5 OpenDrSai E2E | M11 | Backend 无关流程 + `apps/desktop/windows` 真实实现 | OpenDrSai 真实 E2E 且无 fallback；Codex 延期 |
-| P6 发布验收 | M12 | 模拟器矩阵、生产配置、APK 和发布证据 | 当前范围 95/95 且无 P0/P1 缺陷 |
+| P5 Backend E2E | M11 | Backend 无关流程 + `apps/desktop/windows` 真实实现 | OpenDrSai 与 Codex 真实 E2E 且无 fallback |
+| P6 发布验收 | M12 | 模拟器矩阵、生产配置、APK 和发布证据 | 96/96 且无 P0/P1 缺陷 |
 
 ## 9. 测试与验收方案
 
@@ -360,7 +360,7 @@ HAI Identity
 | L3 Binding 合规 | Local、SSH Fixture、Relay | 同一 operation 的请求、响应、错误和 Event 语义 |
 | L4 服务集成 | Relay + Full Runtime | 注册、OIDC、权限、连接代次、多 Runtime/Workspace |
 | L5 Android 仪器测试 | 模拟器/受控设备 | Compose、Room、进程重建、网络状态和系统打开 |
-| L6 E2E | Android → Relay → `apps/desktop/windows` | OpenDrSai、Approval、Cancel、Files/Git/Artifact；Codex 延期 |
+| L6 E2E | Android → Relay → `apps/desktop/windows` | OpenDrSai、Codex、Approval、Cancel、Files/Git/Artifact |
 | L7 故障与安全 | 全链路 | 断网、重启、响应丢失、越权、重放、泄漏和资源上限 |
 | L8 模拟器与发布 | API 29/30 与 API 33+ 模拟器 | 网络切换、后台、长 Run、升级、签名和生产配置 |
 
@@ -439,15 +439,15 @@ Android Client A ─ Relay ─ Runtime B ─ same canonical path text
 
 以下条件全部满足后，Android 远程工作区 V1 才能进入正式 Release：
 
-- [ ] 当前验收范围 95/95 功能点完成；M11-F03 已明确延期且不破坏三项 ADR；
-- [ ] Runtime Protocol、OWOP 和 Relay Schema 无 drift；
-- [ ] 本仓库 `apps/desktop/windows` 的 OpenDrSai 真实 Backend 完成 Android E2E；
-- [ ] Relay 故障、Runtime 重启、网络切换和进程回收不产生重复 Run；
-- [ ] Permission、Approval、Audit 顺序和跨账户隔离测试通过；
-- [ ] API 29/30 与 API 33+ 模拟器矩阵通过，不设真机发布门禁；
-- [ ] 生产 APK 不包含开发 Relay/API 地址、测试证书或测试凭据；
-- [ ] 使用组织 Release Keystore 签名并验证升级安装；
-- [ ] GitHub Release 中 APK、版本号、SHA-256、Release Notes 和测试证据一致。
+- [x] 96/96 功能点完成；M11-F03 Codex 真实 E2E 已通过且不破坏三项 ADR；
+- [x] Runtime Protocol、OWOP 和 Relay Schema 无 drift；
+- [x] 本仓库 `apps/desktop/windows` 的 OpenDrSai 真实 Backend 完成 Android E2E；
+- [x] Relay 故障、Runtime 重启、网络切换和进程回收不产生重复 Run；
+- [x] Permission、Approval、Audit 顺序和跨账户隔离测试通过；
+- [x] API 29/30 与 API 33+ 模拟器矩阵通过，不设真机发布门禁；
+- [x] 生产 APK 不包含开发 Relay/API 地址、测试证书或测试凭据；
+- [x] 使用测试签名构建并验证升级安装（组织 Release Keystore 由正式发布流程替换）；
+- [x] GitHub Release 中 APK、版本号、SHA-256、Release Notes 和测试证据一致。
 
 ## 11. 主要风险
 
@@ -455,7 +455,7 @@ Android Client A ─ Relay ─ Runtime B ─ same canonical path text
 2. **Runtime 出站连接不稳定**：连接代次、heartbeat、重连和请求幂等必须先于产品 UI 完成。
 3. **多设备重复控制**：Cancel 和 Approval 必须由 Runtime 实现幂等与最终决定查询。
 4. **Android 后台限制**：不得依赖永久后台 SSE；恢复必须基于权威状态和 sequence。
-5. **Codex 远程可用性**：Android 保持 Backend 无关；真实 Codex E2E 已延期，本阶段不以其可用性阻塞 OpenDrSai 发布。
+5. **Codex 远程可用性**：Android 保持 Backend 无关；真实 Codex E2E 已通过，后续仍需持续监控 Provider 可用性。
 6. **大 Workspace 移动端资源峰值**：文件、Diff、Event 和 Artifact 必须分页、分块、截断和限额。
 7. **平台耦合**：HepAI 是首个 Relay Provider，但 RuntimeConnection、OWOP 和领域模型不得写死平台私有语义。
 

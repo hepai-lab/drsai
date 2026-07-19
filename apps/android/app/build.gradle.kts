@@ -31,6 +31,12 @@ val oidcDiscoveryUrl = providers.gradleProperty("opendrsai.oidc.discoveryUrl")
     .orElse(providers.environmentVariable("OPENDRSAI_ANDROID_OIDC_DISCOVERY_URL"))
     .getOrElse("$oidcIssuer/.well-known/openid-configuration")
     .trimEnd('/')
+val androidUpdateManifestUrl = providers.gradleProperty("opendrsai.android.updateManifestUrl")
+    .orElse(providers.environmentVariable("OPENDRSAI_ANDROID_UPDATE_MANIFEST_URL"))
+    .getOrElse("https://github.com/hepai-lab/drsai/releases/latest/download/latest-android.json")
+val androidUpdateChannel = providers.gradleProperty("opendrsai.android.updateChannel")
+    .orElse(providers.environmentVariable("OPENDRSAI_ANDROID_UPDATE_CHANNEL"))
+    .getOrElse("stable")
 fun String.asBuildConfigString(): String =
     "\"${replace("\\", "\\\\").replace("\"", "\\\"")}\""
 
@@ -59,6 +65,8 @@ android {
         buildConfigField("String", "RELAY_BASE_URL", "$haiBaseUrl/api/runtime-relay".asBuildConfigString())
         buildConfigField("String", "OIDC_CLIENT_ID", androidOidcClientId.asBuildConfigString())
         buildConfigField("String", "OIDC_REDIRECT_URI", androidOidcRedirectUri.asBuildConfigString())
+        buildConfigField("String", "ANDROID_UPDATE_MANIFEST_URL", androidUpdateManifestUrl.asBuildConfigString())
+        buildConfigField("String", "ANDROID_UPDATE_CHANNEL", androidUpdateChannel.asBuildConfigString())
         manifestPlaceholders["usesCleartextTraffic"] = "false"
     }
 
@@ -251,6 +259,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
+    implementation("androidx.lifecycle:lifecycle-process:2.8.7")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
@@ -259,6 +268,7 @@ dependencies {
     implementation("androidx.room:room-runtime:2.7.2")
     implementation("androidx.room:room-ktx:2.7.2")
     kapt("androidx.room:room-compiler:2.7.2")
+    implementation("androidx.work:work-runtime-ktx:2.10.1")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20250517")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")

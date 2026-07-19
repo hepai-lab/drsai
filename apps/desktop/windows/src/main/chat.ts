@@ -42,6 +42,7 @@ import {
   waitForNetworkRetry,
   type StreamResumeState,
 } from "./networkRecovery";
+import { desktopDiagnostics, type DiagnosticOperationHandle } from "./diagnostics";
 
 const GATEWAY_BASE_URL = `http://127.0.0.1:${getGatewayPort()}`;
 const MAX_ACTIVE_CHATS = 3;
@@ -68,6 +69,7 @@ const activeChats = new Map<string, AbortController>();
 const platformChatTargets = new Map<string, { agentId: string; threadId: string }>();
 const codexChatTargets = new Map<string, { client: RuntimeClient; runId: string; approvalId?: string }>();
 const chatEventSequences = new Map<string, number>();
+const chatDiagnosticOperations = new Map<string, Promise<DiagnosticOperationHandle>>();
 
 export function hasActiveChats(): boolean {
   return activeChats.size > 0;
@@ -85,8 +87,19 @@ export function startChat(webContents: WebContents, request: unknown): string {
   const controller = new AbortController();
   activeChats.set(requestId, controller);
   chatEventSequences.set(requestId, 0);
+  chatDiagnosticOperations.set(requestId, desktopDiagnostics.start({
+    traceId: requestId,
+    module: "runtime",
+    component: "runtime-engine",
+    operation: "chat.run",
+    message: "Chat run started",
+    sessionId: validated.sessionId,
+    workspaceId: validated.workspaceId,
+    backendId: validated.agentId === "my-codex" ? "codex" : validated.agentId,
+    attributes: { route: validated.agentId === "my-codex" ? "codex" : "opendrsai" },
+  }));
 
-  runChat(webContents, requestId, validated, controller).catch((error) => {
+  runChat(webContents, requestId, validated, controller).catch(async (error) => {
     activeChats.delete(requestId);
     platformChatTargets.delete(requestId);
     const timedOut = controller.signal.aborted && controller.signal.reason === "timeout";
@@ -94,6 +107,7 @@ export function startChat(webContents: WebContents, request: unknown): string {
       ? `Gateway chat timed out after ${Math.round(CHAT_TIMEOUT_MS / 1000)} seconds.`
       : error instanceof Error ? error.message : String(error);
     writeChatDiagnostic(requestId, errorMessage);
+    await chatDiagnosticOperations.get(requestId)?.then((operation) => operation.fail(error, timedOut ? "CHAT_TIMEOUT" : undefined)).catch(() => undefined);
     emit(webContents, {
       requestId,
       type: controller.signal.aborted && !timedOut ? "aborted" : "error",
@@ -697,7 +711,12 @@ async function runCodexBackendChat(
   for (const event of await client.listAgentRunEvents(run.run_id, after).catch(() => [])) {
     emitCodexRuntimeEvent(webContents, requestId, displaySessionId, run.run_id, event, target);
   }
-  if (failure) throw failure;
+  if (failure) {
+    const diagnosticPromise = chatDiagnosticOperations.get(requestId);
+    const diagnosticOperation = await diagnosticPromise?.catch(() => undefined);
+    await ingestRuntimeDiagnostics(requestId, diagnosticOperation?.spanId, client, run.run_id);
+    throw failure;
+  }
 }
 
 function emitCodexRuntimeEvent(
@@ -1350,9 +1369,150 @@ function emit(webContents: WebContents, event: ChatEvent): void {
   const seq = (chatEventSequences.get(event.requestId) ?? 0) + 1;
   chatEventSequences.set(event.requestId, seq);
   webContents.send("desktop:chat-event", { ...event, seq });
+  void recordChatDiagnosticEvent(event, seq);
   if (event.type === "done" || event.type === "error" || event.type === "aborted") {
     chatEventSequences.delete(event.requestId);
   }
+}
+
+async function recordChatDiagnosticEvent(event: ChatEvent, seq: number): Promise<void> {
+  try {
+    const operation = await chatDiagnosticOperations.get(event.requestId);
+    if (event.type === "done") {
+      await operation?.complete("Chat run completed", { eventSequence: seq });
+      chatDiagnosticOperations.delete(event.requestId);
+      return;
+    }
+    if (event.type === "error") {
+      await operation?.fail(new Error(event.error || "Chat run failed"), "CHAT_RUN_FAILED");
+      const runtimeTarget = codexChatTargets.get(event.requestId);
+      if (runtimeTarget) await ingestRuntimeDiagnostics(event.requestId, operation?.spanId, runtimeTarget.client, runtimeTarget.runId);
+      chatDiagnosticOperations.delete(event.requestId);
+      codexChatTargets.delete(event.requestId);
+      return;
+    }
+    if (event.type === "aborted") {
+      await operation?.cancel("Chat run cancelled");
+      chatDiagnosticOperations.delete(event.requestId);
+      return;
+    }
+    const source = event.structuredEvent?.source ?? event.connection?.source ?? "gateway";
+    const component = source === "codex-runtime" ? "codex-adapter"
+      : source === "remote-gateway" ? "remote-runtime"
+      : "gateway";
+    const status = event.type === "connection" && event.connection?.status === "retrying" ? "waiting"
+      : event.type === "input_request" ? "waiting"
+      : event.type === "start" ? "started"
+      : "running";
+    await desktopDiagnostics.record({
+      traceId: event.requestId,
+      parentSpanId: operation?.spanId,
+      module: component === "codex-adapter" ? "backend" : "runtime",
+      component,
+      operation: `chat.${event.type}`,
+      message: summarizeChatDiagnosticEvent(event),
+      status,
+      level: event.level === "ERROR" || event.level === "FATAL" ? "error"
+        : event.level === "WARNING" ? "warn"
+        : "info",
+      sessionId: event.sessionId,
+      runId: event.runId,
+      backendId: component === "codex-adapter" ? "codex" : undefined,
+      attributes: { eventSequence: seq, source },
+    });
+  } catch {
+    // Diagnostic capture must never interrupt chat streaming.
+  }
+}
+
+async function ingestRuntimeDiagnostics(
+  traceId: string,
+  parentSpanId: string | undefined,
+  client: RuntimeClient,
+  runId: string,
+): Promise<void> {
+  try {
+    const bundle = await client.getAgentRunDiagnostics(runId);
+    const trace = bundle.trace && typeof bundle.trace === "object" ? bundle.trace as Record<string, unknown> : {};
+    const events = Array.isArray(trace.events) ? trace.events : [];
+    for (const rawEvent of events.slice(-200)) {
+      if (!rawEvent || typeof rawEvent !== "object") continue;
+      const runtimeEvent = rawEvent as Record<string, unknown>;
+      if (!runtimeEvent.data || typeof runtimeEvent.data !== "object") continue;
+      const data = runtimeEvent.data as Record<string, unknown>;
+      if (runtimeEvent.type === "trace.request.accepted") {
+        await desktopDiagnostics.record({
+          traceId: typeof data.trace_id === "string" && data.trace_id ? data.trace_id : traceId,
+          parentSpanId: typeof data.span_id === "string" && data.span_id ? data.span_id : parentSpanId,
+          module: "runtime",
+          component: client.location === "remote" ? "remote-runtime" : "gateway",
+          operation: "runtime.request.accepted",
+          kind: "operation",
+          level: "info",
+          status: "completed",
+          message: "Runtime accepted propagated trace context",
+          runId,
+          attributes: {
+            correlationId: typeof data.correlation_id === "string" ? data.correlation_id : "",
+            clockOffsetMs: typeof data.clock_offset_ms === "number" ? data.clock_offset_ms : 0,
+            remote: client.location === "remote",
+          },
+        });
+        continue;
+      }
+      if (runtimeEvent.type !== "agent.failed") continue;
+      const error = data.error && typeof data.error === "object" ? data.error as Record<string, unknown> : {};
+      const diagnostic = data.diagnostic && typeof data.diagnostic === "object" ? data.diagnostic as Record<string, unknown> : {};
+      const stack = Array.isArray(diagnostic.stack) ? diagnostic.stack.map(toRuntimeStackFrame).filter((frame) => frame !== null) : [];
+      const source = diagnostic.source && typeof diagnostic.source === "object" ? toRuntimeStackFrame(diagnostic.source) : null;
+      await desktopDiagnostics.record({
+        traceId,
+        parentSpanId,
+        module: "backend",
+        component: "codex-adapter",
+        operation: "runtime.agent.failed",
+        kind: "error",
+        level: "error",
+        status: "failed",
+        message: typeof error.message === "string" ? error.message : "Runtime agent execution failed",
+        errorCode: typeof error.code === "string" ? error.code : "AGENT_EXECUTION_FAILED",
+        runId,
+        backendId: "codex",
+        ...(source ? { source } : {}),
+        ...(stack.length ? { stack } : {}),
+      });
+    }
+  } catch {
+    // The primary failure is already recorded; diagnostic enrichment is best effort.
+  }
+}
+
+function toRuntimeStackFrame(value: unknown): { raw: string; file?: string; line?: number; function?: string; language: "python"; inApp?: boolean } | null {
+  if (!value || typeof value !== "object") return null;
+  const frame = value as Record<string, unknown>;
+  const file = typeof frame.file === "string" ? frame.file : undefined;
+  const line = typeof frame.line === "number" ? frame.line : undefined;
+  const functionName = typeof frame.function === "string" ? frame.function : undefined;
+  return {
+    raw: `${functionName || "<unknown>"} (${file || "<unknown>"}${line ? `:${line}` : ""})`,
+    ...(file ? { file } : {}),
+    ...(line ? { line } : {}),
+    ...(functionName ? { function: functionName } : {}),
+    language: "python",
+    ...(typeof frame.in_app === "boolean" ? { inApp: frame.in_app } : {}),
+  };
+}
+
+function summarizeChatDiagnosticEvent(event: ChatEvent): string {
+  if (event.type === "connection") return event.connection?.status === "retrying"
+    ? `Connection retry ${event.connection.attempt}`
+    : "Connection restored";
+  if (event.type === "input_request") return "Waiting for user input";
+  if (event.type === "structured") return `Structured event: ${event.structuredEvent?.type ?? "unknown"}`;
+  if (event.type === "status") return "Backend status updated";
+  if (event.type === "tool_timeline") return `Tool activity: ${event.toolTimeline?.title ?? event.toolTimeline?.kind ?? "tool"}`;
+  if (event.type === "start") return "Backend stream started";
+  return `Chat ${event.type}`;
 }
 
 function toChatFileTimelineEvent(fileEvent: ReturnType<typeof parseAgentRunSseFileEvents>[number]): NonNullable<ChatEvent["toolTimeline"]> {

@@ -42,6 +42,7 @@ import {
 } from "../chatCommands";
 import type { ChatSubmitOptions, UiMessage } from "../components/ChatWorkspace";
 import { desktopApi } from "../desktopApi";
+import { emitAssistantSpeechStreamEvent } from "../voice/streaming/assistantSpeechStream";
 import {
   formatRecentTerminalTestResult,
   readRecentTerminalTestResult,
@@ -626,6 +627,9 @@ export function useDesktopChatAdapter({
         delete recoveryTimersRef.current[event.requestId];
       }
       appendStructuredProtocolLog(structuredEvent);
+      if (structuredEvent.type === "part.delta" && structuredEvent.delta.kind === "markdown.append") {
+        emitAssistantSpeechStreamEvent({ type: "chunk", requestId: event.requestId, content: structuredEvent.delta.text, at: Date.now() });
+      }
       if (structuredEvent.type === "activity.updated") {
         appendStructuredActivityLog(structuredEvent.activity);
       }
@@ -647,6 +651,11 @@ export function useDesktopChatAdapter({
         structuredEvent.type === "turn.cancelled" ||
         structuredEvent.type === "turn.error"
       ) {
+        emitAssistantSpeechStreamEvent({
+          type: structuredEvent.type === "turn.completed" ? "done" : structuredEvent.type === "turn.cancelled" ? "aborted" : "error",
+          requestId: event.requestId,
+          at: Date.now(),
+        });
         setActiveRequestId((current) => current === event.requestId ? null : current);
         if (!completedStructuredRequests.current.has(event.requestId)) {
           completedStructuredRequests.current.add(event.requestId);
@@ -689,6 +698,7 @@ export function useDesktopChatAdapter({
       (event.type === "chunk" || event.type === "reasoning" || event.type === "status" || event.type === "tool_timeline")
     ) return;
     if (event.type === "chunk") {
+      emitAssistantSpeechStreamEvent({ type: "chunk", requestId: event.requestId, content: event.content ?? "", at: Date.now() });
       queueAssistantDelta(event.requestId, "text", event.content ?? "");
       return;
     }
@@ -736,6 +746,7 @@ export function useDesktopChatAdapter({
       return;
     }
     if (event.type === "done" || event.type === "aborted") {
+      emitAssistantSpeechStreamEvent({ type: event.type, requestId: event.requestId, at: Date.now() });
       flushPendingDeltas();
       if (structuredRequests.current.has(event.requestId)) {
         structuredRequests.current.delete(event.requestId);
@@ -768,6 +779,7 @@ export function useDesktopChatAdapter({
       return;
     }
     if (event.type === "error") {
+      emitAssistantSpeechStreamEvent({ type: "error", requestId: event.requestId, at: Date.now() });
       flushPendingDeltas();
       if (structuredRequests.current.has(event.requestId)) {
         structuredRequests.current.delete(event.requestId);

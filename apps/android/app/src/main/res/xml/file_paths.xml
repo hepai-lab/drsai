@@ -3,4 +3,5 @@
     <cache-path name="attachment_camera" path="attachments/camera/" />
     <cache-path name="attachment_results" path="attachments/results/" />
     <cache-path name="remote_artifacts" path="remote/artifacts/" />
+    <cache-path name="updates" path="updates/" />
 </paths>

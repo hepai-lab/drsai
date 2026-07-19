@@ -383,6 +383,23 @@ class AgentRuntimeTests(unittest.TestCase):
                 self.assertEqual(caught.exception.code, expected)
                 self.assertNotIn("provider-secret-canary", str(caught.exception.as_dict()))
 
+    def test_agent_failure_records_safe_code_location_diagnostics(self) -> None:
+        reference = self.definition("diagnostic-failure", "1", [])
+
+        def fail(*_args):
+            raise ValueError("provider-secret-canary")
+
+        run = self.create_runtime_run(reference, "diagnostic-failure")
+        with self.assertRaises(RuntimeExecutionError):
+            self.execute(self.service(OpenDrSaiAgentBackend(fail)), run["run_id"], "go")
+        failure = next(event for event in self.engine.list_events(run["run_id"]) if event["type"] == "agent.failed")
+        diagnostic = failure["data"]["diagnostic"]
+        self.assertTrue(diagnostic["stack"])
+        self.assertTrue(any(frame["language"] == "python" and frame["line"] > 0 for frame in diagnostic["stack"]))
+        self.assertTrue(any(frame["in_app"] for frame in diagnostic["stack"]))
+        self.assertNotIn("provider-secret-canary", json.dumps(diagnostic))
+        self.assertNotIn(str(Path.home()), json.dumps(diagnostic))
+
 
 if __name__ == "__main__":
     unittest.main()

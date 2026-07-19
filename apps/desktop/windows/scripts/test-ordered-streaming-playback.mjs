@@ -1,0 +1,48 @@
+import assert from "node:assert/strict";
+const { OrderedStreamingAudioPlaybackQueue } = await import("../src/renderer/src/voice/streaming/orderedAudioPlaybackQueue.ts");
+const segment = (index) => ({ sessionId: "s", turnId: "t", messageId: "m", segmentId: `seg-${index}`, segmentIndex: index, mimeType: "audio/wav", audioData: new Uint8Array([index]), final: true });
+const controls = [];
+const played = [];
+const prepared = []; const released = [];
+const adapter = { prepare(item) { prepared.push(item.segmentIndex); }, release(item) { released.push(item.segmentIndex); }, play(item, onEnded, onError) { const control = { item, onEnded, onError, paused: 0, resumed: 0, stopped: 0, pause() { this.paused += 1; }, resume() { this.resumed += 1; }, stop() { this.stopped += 1; } }; controls.push(control); played.push(item.segmentIndex); return control; } };
+const phases = [];
+const gaps = []; let clock = 10;
+const queue = new OrderedStreamingAudioPlaybackQueue(adapter, { maxBufferedSegments: 3, onPhase: (phase) => phases.push(phase), onGap: (gap, previous, next) => gaps.push({ gap, previous, next }), now: () => clock });
+assert.equal(queue.enqueue(segment(1)), true);
+assert.deepEqual(prepared, [1], "buffered audio must be prepared before it is playable");
+assert.equal(queue.phase, "buffering");
+assert.deepEqual(played, []);
+assert.equal(queue.enqueue(segment(0)), true);
+assert.deepEqual(played, [0]);
+assert.equal(queue.pause(), true); assert.equal(controls[0].paused, 1); assert.equal(queue.phase, "paused");
+assert.equal(queue.resume(), true); assert.equal(controls[0].resumed, 1);
+queue.finish(2);
+controls[0].onEnded();
+assert.deepEqual(played, [0, 1]);
+assert.deepEqual(gaps, [{ gap: 0, previous: 0, next: 1 }], "preloaded adjacent segments must be scheduled without a queue-induced gap");
+assert.equal(queue.enqueue(segment(2)), true);
+controls[1].onEnded();
+assert.deepEqual(played, [0, 1, 2]);
+assert.ok(gaps.every(({ gap }) => gap <= 5), `queue-induced segment gap exceeded threshold: ${JSON.stringify(gaps)}`);
+controls[2].onEnded();
+assert.equal(queue.phase, "completed");
+assert.deepEqual(queue.playedIndexes, [0, 1, 2]);
+assert.equal(queue.enqueue(segment(1)), false);
+
+const missing = new OrderedStreamingAudioPlaybackQueue(adapter);
+missing.enqueue(segment(1)); missing.finish(1);
+assert.equal(missing.phase, "draining", "missing index zero must never play index one");
+missing.stop(); assert.equal(missing.phase, "cancelled"); assert.equal(missing.bufferedCount, 0);
+assert.ok(released.includes(1), "cancel must release prepared buffered audio");
+
+const failing = new OrderedStreamingAudioPlaybackQueue(adapter);
+failing.enqueue(segment(0)); controls.at(-1).onError(new Error("device lost"));
+assert.equal(failing.phase, "failed");
+
+let syncPlays = 0;
+const synchronous = new OrderedStreamingAudioPlaybackQueue({ play(_item, ended) { syncPlays += 1; ended(); return { pause() {}, resume() {}, stop() {} }; } });
+synchronous.enqueue(segment(0)); synchronous.finish(0);
+await new Promise((resolve) => setTimeout(resolve, 0));
+assert.equal(syncPlays, 1); assert.equal(synchronous.phase, "completed", "synchronous completion must not leave a stale handle");
+
+console.log("Ordered streaming playback tests passed (out-of-order buffering, strict order, pause/resume, drain, stop, failure, duplicates, and synchronous completion race).");

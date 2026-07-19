@@ -104,7 +104,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFi
 from fastapi.exceptions import RequestValidationError
 import httpx
 
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response as FastAPIResponse, StreamingResponse
 
 from loguru import logger
 
@@ -1727,6 +1727,17 @@ async def authenticate_desktop_gateway(request: Request, call_next):
     supplied_correlation = request.headers.get("x-correlation-id", "")
     correlation_id = supplied_correlation if re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", supplied_correlation) else uuid.uuid4().hex
     request.state.correlation_id = correlation_id
+    trace_id = request.headers.get("x-opendrsai-trace-id", "")
+    span_id = request.headers.get("x-opendrsai-span-id", "")
+    parent_span_id = request.headers.get("x-opendrsai-parent-span-id", "")
+    request.state.diagnostic_trace_id = trace_id if re.fullmatch(r"[A-Za-z0-9._:-]{1,256}", trace_id) else ""
+    request.state.diagnostic_span_id = span_id if re.fullmatch(r"[A-Za-z0-9._:-]{1,256}", span_id) else ""
+    request.state.diagnostic_parent_span_id = parent_span_id if re.fullmatch(r"[A-Za-z0-9._:-]{1,256}", parent_span_id) else ""
+    try:
+        sent_at = int(request.headers.get("x-opendrsai-sent-at", "0"))
+    except ValueError:
+        sent_at = 0
+    request.state.diagnostic_clock_offset_ms = int(time.time() * 1000) - sent_at if sent_at > 0 else 0
     if not verify_gateway_instance(request.headers.get("x-opendrsai-gateway-token")):
         return JSONResponse(
             status_code=401,
@@ -1735,6 +1746,9 @@ async def authenticate_desktop_gateway(request: Request, call_next):
         )
     response = await call_next(request)
     response.headers["X-Correlation-ID"] = correlation_id
+    if request.state.diagnostic_trace_id:
+        response.headers["X-OpenDrSai-Trace-ID"] = request.state.diagnostic_trace_id
+        response.headers["X-OpenDrSai-Clock-Offset-Ms"] = str(request.state.diagnostic_clock_offset_ms)
     return response
 
 
@@ -2088,6 +2102,8 @@ async def runtime_run_transition(run_id: str, request: RuntimeRunTransitionReque
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RuntimeExecutionError as exc:
+        raise HTTPException(status_code=409, detail=exc.as_dict()) from exc
 
 
 @app.post("/v1/runs/{run_id}/execute")
@@ -2106,7 +2122,14 @@ async def runtime_run_execute(run_id: str, request: RuntimeRunExecuteRequest, ra
     _authorize_request(raw_request, str(run_record["workspace_id"]), "run.execute", {"run_id": run_id})
     try:
         correlation_id = str(getattr(raw_request.state, "correlation_id", "")) or None
-        _runtime_engine().append_event(run_id, "trace.request.accepted", {"correlation_id": correlation_id, "run_id": run_id})
+        _runtime_engine().append_event(run_id, "trace.request.accepted", {
+            "correlation_id": correlation_id,
+            "run_id": run_id,
+            "trace_id": str(getattr(raw_request.state, "diagnostic_trace_id", "")) or None,
+            "span_id": str(getattr(raw_request.state, "diagnostic_span_id", "")) or None,
+            "parent_span_id": str(getattr(raw_request.state, "diagnostic_parent_span_id", "")) or None,
+            "clock_offset_ms": int(getattr(raw_request.state, "diagnostic_clock_offset_ms", 0)),
+        })
         return await _runtime_agent_service(auth_context).execute(run_id, request.prompt, correlation_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -2123,6 +2146,8 @@ async def runtime_run_cancel(run_id: str):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RuntimeExecutionError as exc:
+        raise HTTPException(status_code=409, detail=exc.as_dict()) from exc
 
 
 @app.post("/v1/runs/{run_id}/events")
@@ -3059,6 +3084,64 @@ async def audio_transcriptions(
         "language": payload.get("language") or language,
         "confidence": payload.get("confidence"),
     }
+
+
+class AudioSpeechRequest(BaseModel):
+    text: str
+    language: Optional[str] = None
+    voice: Optional[str] = None
+    speed: float = 1.0
+    format: str = "mp3"
+
+
+@app.post("/v1/audio/speech")
+async def audio_speech(request: AudioSpeechRequest):
+    """Proxy bounded whole-response speech synthesis to the configured provider."""
+    api_key = os.environ.get("HEPAI_API_KEY", "").strip() or os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(status_code=401, detail="A speech synthesis provider API key is required.")
+    text = request.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Speech synthesis text is required.")
+    if len(text) > 12_000:
+        raise HTTPException(status_code=413, detail="Speech synthesis text exceeds the 12000 character limit.")
+    if request.speed < 0.5 or request.speed > 2.0:
+        raise HTTPException(status_code=400, detail="Speech synthesis speed must be between 0.5 and 2.")
+    if request.format not in {"mp3", "wav", "opus"}:
+        raise HTTPException(status_code=400, detail="Unsupported speech synthesis format.")
+    base_url = os.environ.get("OPENAI_BASE_URL", "https://aiapi.ihep.ac.cn/apiv2").rstrip("/")
+    payload = {
+        "model": os.environ.get("OPENDRSAI_TTS_MODEL", "gpt-4o-mini-tts"),
+        "input": text,
+        "voice": request.voice or os.environ.get("OPENDRSAI_TTS_VOICE", "alloy"),
+        "speed": request.speed,
+        "response_format": request.format,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            provider_response = await client.post(
+                f"{base_url}/audio/speech",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json=payload,
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail="The speech synthesis provider timed out.") from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="The speech synthesis provider is unreachable.") from exc
+    if provider_response.status_code >= 400:
+        try:
+            error_payload = provider_response.json()
+        except ValueError:
+            error_payload = {}
+        detail = error_payload.get("error", {}).get("message") if isinstance(error_payload.get("error"), dict) else error_payload.get("detail")
+        raise HTTPException(status_code=provider_response.status_code, detail=detail or "The speech synthesis provider rejected the request.")
+    audio = provider_response.content
+    if not audio:
+        raise HTTPException(status_code=502, detail="The speech synthesis provider returned empty audio.")
+    if len(audio) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=502, detail="The speech synthesis response exceeds the 10 MB limit.")
+    media_types = {"mp3": "audio/mpeg", "wav": "audio/wav", "opus": "audio/ogg"}
+    return FastAPIResponse(content=audio, media_type=media_types[request.format])
 
 
 @app.get("/v1/config/model-catalog")

@@ -258,7 +258,15 @@ class CodexAgentBackendClient:
         session = self.bindings.get_session(run.session_id)
         if self.approval_bridge:
             await self.approval_bridge.cancel_run(run_id)
-        await self.rpc.request("turn/interrupt", {"threadId": session.backend_session_id, "turnId": run.backend_run_id})
+        try:
+            await self.rpc.request("turn/interrupt", {"threadId": session.backend_session_id, "turnId": run.backend_run_id})
+        except RuntimeExecutionError as exc:
+            # A Turn can reach a terminal backend state between Runtime's
+            # cancel request and App Server's interrupt handling. Cancellation
+            # remains idempotent in that narrow race; every other RPC failure
+            # must still fail closed.
+            if exc.code != "codex_jsonrpc_error" or "no active turn" not in str(exc).lower():
+                raise
         self._cancelled_runs.add(run_id)
 
     async def archive_session(self, session_id: str, *, archived: bool) -> None:

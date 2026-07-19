@@ -16,6 +16,7 @@ import type {
   DesktopChannelOutboundDraftResult,
   DesktopChannelSnapshotSyncResult,
   DesktopExternalConnectionReadinessResult,
+  DiagnosticEvent,
   DesktopApi,
   DesktopCustomCommand,
   DesktopForkQueueDispatchStartedRun,
@@ -38,6 +39,8 @@ import type {
   DesktopTrustStatus,
   DesktopVoiceTranscriptHandoffResult,
   DesktopVoiceTranscriptionEvent,
+  DesktopStreamingVoiceTranscriptionEvent,
+  DesktopVoiceSynthesisEvent,
   DesktopWorkflowRun,
   DesktopWorkflowMarketplaceListResult,
   DesktopWorkflowRunStepCompleteResult,
@@ -55,6 +58,7 @@ import type {
   DesktopScheduledTaskWorkerStatus,
   DesktopShareManifest,
   InstallProgress,
+  InteractiveDebugSession,
   TerminalSessionInfo,
   UpdateStatus,
   WorkspaceCheckpoint,
@@ -616,12 +620,20 @@ export function installMockDesktopApi(): void {
   const chatListeners = new Set<Listener<ChatEvent>>();
   const completionNotificationClickListeners = new Set<Listener<CompletionNotificationClickEvent>>();
   const voiceTranscriptionListeners = new Set<Listener<DesktopVoiceTranscriptionEvent>>();
+  const streamingVoiceTranscriptionListeners = new Set<Listener<DesktopStreamingVoiceTranscriptionEvent>>();
+  const voiceSynthesisListeners = new Set<Listener<DesktopVoiceSynthesisEvent>>();
+  const streamingVoiceSessions = new Map<string, { turnId: string; eventSequence: number; partialSent: boolean }>();
   const voiceFixtureTimers = new Map<string, number>();
+  const voiceSynthesisFixtureTimers = new Map<string, number>();
   const agentRunListeners = new Set<Listener<AgentRunEvent>>();
   const installListeners = new Set<Listener<InstallProgress>>();
   const oidcLoginDebugListeners = new Set<Listener<OidcLoginDebugEvent>>();
   const updateListeners = new Set<Listener<UpdateStatus>>();
   const browserTaskListeners = new Set<Listener<BrowserTaskEvent>>();
+  const diagnosticListeners = new Set<Listener<DiagnosticEvent>>();
+  const interactiveDebugListeners = new Set<Listener<InteractiveDebugSession>>();
+  let diagnosticEvents: DiagnosticEvent[] = [];
+  let interactiveDebugSessions: InteractiveDebugSession[] = [];
   let pendingApprovals: DesktopPendingApproval[] = [];
   let mockChannelOutboundDeliveries: DesktopChannelOutboundDelivery[] = [];
   let mockChannelInboundEvents: DesktopChannelInboundEvent[] = [];
@@ -1011,6 +1023,118 @@ export function installMockDesktopApi(): void {
   }
 
   const api: DesktopApi = {
+    recordDiagnostic: async (input) => {
+      const id = input.id || crypto.randomUUID();
+      const event: DiagnosticEvent = {
+        ...input,
+        schemaVersion: 1,
+        id,
+        traceId: input.traceId || id,
+        spanId: input.spanId || id,
+        timestamp: input.timestamp || new Date().toISOString(),
+        kind: input.kind || "log",
+        level: input.level || "info",
+        status: input.status || "completed",
+        module: input.module,
+        component: input.component,
+        operation: input.operation,
+        message: input.message,
+      };
+      diagnosticEvents = [...diagnosticEvents, event].slice(-500);
+      emit(diagnosticListeners, event);
+      return event;
+    },
+    getDiagnosticSnapshot: async () => ({
+      generatedAt: new Date().toISOString(),
+      events: diagnosticEvents,
+      traces: [],
+      health: [],
+      findings: [],
+      deepTracing: { performance: [], resources: [], activeCheckpoints: [], clockOffsets: [] },
+      rootCause: { analyses: [], clusters: [], generatedAt: new Date().toISOString() },
+      droppedEvents: 0,
+      storage: { eventCount: diagnosticEvents.length, maxEvents: 500, persisted: false },
+    }),
+    clearDiagnostics: async () => {
+      const removedEvents = diagnosticEvents.length;
+      diagnosticEvents = [];
+      return { cleared: true, removedEvents };
+    },
+    exportDiagnostics: async () => ({
+      exported: false,
+      eventCount: diagnosticEvents.length,
+      message: "Mock diagnostics are not written to disk.",
+    }),
+    onDiagnosticEvent: (callback) => subscribe(diagnosticListeners, callback),
+    getProductionDiagnosticStatus: async () => ({
+      settings: { mode: "basic", retentionDays: 30, diskLimitMb: 64, remoteTransmission: false, includeSource: false, allowRemoteTargets: false, allowDebugAttach: false, allowExport: true, encryptedPackages: true },
+      lockedSettings: [], policySource: "defaults", selfCheck: "healthy", selfCheckMessages: [], degraded: false,
+      eventRatePerMinute: 0, observedEvents: diagnosticEvents.length, droppedEvents: 0, estimatedBytes: 0,
+      budgets: { cpuPercent: 2, memoryMb: 64, diskMb: 64, uiLatencyMs: 50 },
+      releaseGates: [{ id: "privacy-scan", passed: true, message: "Mock privacy gate passed." }], audit: [],
+    }),
+    updateProductionDiagnosticSettings: async (patch) => ({ ...(await api.getProductionDiagnosticStatus()), settings: { ...(await api.getProductionDiagnosticStatus()).settings, ...patch } }),
+    previewDiagnosticPackage: async () => ({ formatVersion: 1, encrypted: true, eventCount: diagnosticEvents.length, byteLength: 0, sensitiveMatchesRemoved: 0, sections: ["manifest", "snapshot"], integritySha256: "mock-sha256", warnings: [] }),
+    exportProductionDiagnosticPackage: async () => ({ ok: false, preview: await api.previewDiagnosticPackage(), message: "Mock package export is not written to disk." }),
+    importProductionDiagnosticPackage: async () => null,
+    getDiagnosticSourceContext: async (request) => {
+      const highlightLine = Math.max(1, request.source.line ?? 2);
+      const startLine = Math.max(1, highlightLine - 1);
+      return {
+        available: true,
+        address: {
+          ...request.source,
+          kind: "workspace",
+          uri: `file://${request.source.file || "mock-source.ts"}`,
+          workspaceId: request.workspaceId,
+          available: true,
+          trusted: true,
+          remote: false,
+        },
+        mapping: {
+          status: "not-required",
+          generated: request.source,
+          message: "Mock source already refers to original code.",
+        },
+        location: request.source,
+        content: "export function mockSource(): void {\n  throw new Error(\"Mock diagnostic failure\");\n}",
+        startLine,
+        endLine: startLine + 2,
+        highlightLine,
+        language: request.source.language ?? "typescript",
+        truncated: false,
+        redacted: false,
+        canOpen: true,
+      };
+    },
+    openDiagnosticSource: async (request) => ({
+      opened: true,
+      path: request.source.file,
+      line: request.source.line,
+      column: request.source.column,
+      message: "Mock source opened.",
+    }),
+    updateDiagnosticIssue: async (request) => ({ updated: true, message: `Mock diagnostic issue ${request.action} completed.` }),
+    listInteractiveDebugTargets: async () => [{ id: "electron-renderer", kind: "electron-renderer", name: "Electron Renderer", description: "Mock renderer debug target", available: true, remote: false, capabilities: { supportsPause: true, supportsStep: true, supportsConditionalBreakpoints: true, supportsHitConditionalBreakpoints: true, supportsLogPoints: true, supportsEvaluateForHovers: true, supportsSetVariable: false, supportsTerminateRequest: true, supportsRemoteTargets: false } }],
+    listInteractiveDebugSessions: async () => interactiveDebugSessions,
+    startInteractiveDebugSession: async (request) => {
+      const target = (await api.listInteractiveDebugTargets())[0];
+      const now = new Date().toISOString();
+      const session: InteractiveDebugSession = { id: `debug-${crypto.randomUUID()}`, target, state: "running", startedAt: now, updatedAt: now, breakpoints: [], stackFrames: [], message: "Mock debug session is running", traceId: request.traceId };
+      interactiveDebugSessions = [session, ...interactiveDebugSessions]; emit(interactiveDebugListeners, session); return session;
+    },
+    setInteractiveDebugBreakpoint: async (request) => {
+      const session = interactiveDebugSessions.find((item) => item.id === request.sessionId); if (!session) throw new Error("Debug session was not found.");
+      session.breakpoints = [...session.breakpoints, { id: `bp-${crypto.randomUUID()}`, source: request.source, enabled: request.enabled !== false, verified: true, condition: request.condition, hitCondition: request.hitCondition, logMessage: request.logMessage }]; session.updatedAt = new Date().toISOString(); emit(interactiveDebugListeners, session); return session;
+    },
+    controlInteractiveDebugSession: async (request) => {
+      const session = interactiveDebugSessions.find((item) => item.id === request.sessionId); if (!session) throw new Error("Debug session was not found.");
+      session.state = request.action === "pause" ? "paused" : request.action === "disconnect" || request.action === "terminate" ? "disconnected" : "running"; session.pausedReason = session.state === "paused" ? "Mock breakpoint" : undefined; session.stackFrames = session.state === "paused" ? [{ id: "mock-frame", name: "mockSource", source: { file: "mock-source.ts", line: 2, column: 3, language: "typescript" }, canRestart: false }] : []; session.activeFrameId = session.stackFrames[0]?.id; session.activeThreadId = session.state === "paused" ? "renderer" : undefined; session.updatedAt = new Date().toISOString(); emit(interactiveDebugListeners, session); return session;
+    },
+    getInteractiveDebugScopes: async (_sessionId, frameId) => [{ id: `${frameId}:local`, name: "Local", variablesReference: "mock-local", expensive: false }],
+    getInteractiveDebugVariables: async () => [{ name: "answer", value: "42", type: "number", sensitive: false }, { name: "apiToken", value: "[REDACTED]", type: "string", sensitive: true }],
+    evaluateInteractiveDebugExpression: async (request) => ({ result: request.expression === "answer" ? "42" : "undefined", type: "number", safe: true, message: "Mock read-only expression evaluated." }),
+    onInteractiveDebugEvent: (callback) => subscribe(interactiveDebugListeners, callback),
     getAuthSession: async () => authSession,
     getA5ServiceGuidanceScenario: async () => null,
     login: async (request) => {
@@ -1914,6 +2038,137 @@ export function installMockDesktopApi(): void {
       supportsPartial: false,
       providerDisclosure: "Fixture transcription is active in the development renderer.",
       message: "Fixture voice runtime is ready.",
+    }),
+    getStreamingVoiceCapabilities: async () => ({
+      serialStt: true,
+      serialTts: true,
+      streamingStt: true,
+      streamingTts: true,
+      audioEncodings: ["pcm_s16le"],
+      sampleRatesHz: [16_000, 24_000, 48_000],
+      supportsPartialTranscripts: true,
+      supportsProviderEndpointing: true,
+      supportsSessionResume: false,
+      maxBufferedAudioMs: 2_000,
+    }),
+    startStreamingVoiceTranscription: async (request) => {
+      const sessionId = `fixture-streaming-${Date.now()}`;
+      streamingVoiceSessions.set(sessionId, { turnId: request.turnId, eventSequence: 1, partialSent: false });
+      emit(streamingVoiceTranscriptionListeners, {
+        sessionId,
+        turnId: request.turnId,
+        sequence: 0,
+        type: "accepted",
+        runtimeId: "mock-local",
+      });
+      return {
+        sessionId,
+        turnId: request.turnId,
+        acceptedAt: new Date().toISOString(),
+        capabilities: await api.getStreamingVoiceCapabilities(),
+      };
+    },
+    sendStreamingVoiceAudioChunk: (chunk) => {
+      const session = streamingVoiceSessions.get(chunk.sessionId);
+      if (!session || session.turnId !== chunk.turnId) return false;
+      if ((window as Window & { __voiceFixtureStreamingError?: boolean }).__voiceFixtureStreamingError) {
+        emit(streamingVoiceTranscriptionListeners, {
+          sessionId: chunk.sessionId,
+          turnId: chunk.turnId,
+          sequence: session.eventSequence++,
+          type: "failed",
+          error: { code: "network_error", message: "Streaming transcription connection failed. Retry streaming or use serial next turn.", retryable: true },
+        });
+        streamingVoiceSessions.delete(chunk.sessionId);
+        return false;
+      }
+      emit(streamingVoiceTranscriptionListeners, {
+        sessionId: chunk.sessionId,
+        turnId: chunk.turnId,
+        sequence: session.eventSequence++,
+        type: "audio_ack",
+        ack: {
+          sessionId: chunk.sessionId,
+          turnId: chunk.turnId,
+          acknowledgedSequence: chunk.sequence,
+          bufferedAudioMs: 0,
+          receivedAt: new Date().toISOString(),
+        },
+      });
+      if ((window as Window & { __voiceFixtureSlowNetwork?: boolean }).__voiceFixtureSlowNetwork && !session.partialSent) {
+        emit(streamingVoiceTranscriptionListeners, {
+          sessionId: chunk.sessionId,
+          turnId: chunk.turnId,
+          sequence: session.eventSequence++,
+          type: "flow_control",
+          paused: true,
+          bufferedAudioMs: 1_500,
+          reason: "high_watermark",
+        });
+      }
+      if (!session.partialSent) {
+        session.partialSent = true;
+        emit(streamingVoiceTranscriptionListeners, {
+          sessionId: chunk.sessionId,
+          turnId: chunk.turnId,
+          sequence: session.eventSequence++,
+          type: "partial",
+          segment: { text: "Fixture live…", revision: 1, confidence: 0.92 },
+        });
+      }
+      return true;
+    },
+    stopStreamingVoiceTranscription: async (sessionId, reason = "manual") => {
+      const session = streamingVoiceSessions.get(sessionId);
+      if (!session) return false;
+      emit(streamingVoiceTranscriptionListeners, { sessionId, turnId: session.turnId, sequence: session.eventSequence++, type: "endpoint", reason });
+      emit(streamingVoiceTranscriptionListeners, { sessionId, turnId: session.turnId, sequence: session.eventSequence++, type: "final", segment: { text: "Fixture streaming transcript.", revision: 1, confidence: 1 } });
+      emit(streamingVoiceTranscriptionListeners, { sessionId, turnId: session.turnId, sequence: session.eventSequence++, type: "completed" });
+      streamingVoiceSessions.delete(sessionId);
+      return true;
+    },
+    cancelStreamingVoiceTranscription: async (sessionId) => {
+      const session = streamingVoiceSessions.get(sessionId);
+      if (!session) return false;
+      emit(streamingVoiceTranscriptionListeners, { sessionId, turnId: session.turnId, sequence: session.eventSequence++, type: "cancelled" });
+      streamingVoiceSessions.delete(sessionId);
+      return true;
+    },
+    startVoiceSynthesis: async () => {
+      const requestId = `fixture-tts-${Date.now()}`;
+      const timer = window.setTimeout(() => {
+        voiceSynthesisFixtureTimers.delete(requestId);
+        emit(voiceSynthesisListeners, {
+          requestId,
+          type: "completed",
+          result: {
+            audioData: new Uint8Array([82, 73, 70, 70, 0, 0, 0, 0, 87, 65, 86, 69]),
+            mimeType: "audio/wav",
+            runtimeId: "mock-local",
+            createdAt: new Date().toISOString(),
+            providerDisclosure: "Fixture synthesis is active in the development renderer.",
+          },
+        });
+      }, 200);
+      voiceSynthesisFixtureTimers.set(requestId, timer);
+      return { requestId, acceptedAt: new Date().toISOString() };
+    },
+    cancelVoiceSynthesis: async (requestId) => {
+      const timer = voiceSynthesisFixtureTimers.get(requestId);
+      if (timer === undefined) return false;
+      window.clearTimeout(timer);
+      voiceSynthesisFixtureTimers.delete(requestId);
+      emit(voiceSynthesisListeners, { requestId, type: "cancelled" });
+      return true;
+    },
+    getVoiceSynthesisRuntimeStatus: async () => ({
+      runtimeId: "mock-local",
+      state: "ready",
+      supportsSynthesisTask: true,
+      supportedFormats: ["wav"],
+      maxTextChars: 12_000,
+      providerDisclosure: "Fixture synthesis is active in the development renderer.",
+      message: "Fixture voice synthesis runtime is ready.",
     }),
     writeVoiceTranscriptHandoff: async (request): Promise<DesktopVoiceTranscriptHandoffResult> => ({
       ok: true,
@@ -5074,6 +5329,8 @@ export function installMockDesktopApi(): void {
       subscribe(oidcLoginDebugListeners, callback),
     onChatEvent: (callback) => subscribe(chatListeners, callback),
     onVoiceTranscriptionEvent: (callback) => subscribe(voiceTranscriptionListeners, callback),
+    onStreamingVoiceTranscriptionEvent: (callback) => subscribe(streamingVoiceTranscriptionListeners, callback),
+    onVoiceSynthesisEvent: (callback) => subscribe(voiceSynthesisListeners, callback),
     onAgentRunEvent: (callback) => subscribe(agentRunListeners, callback),
     onUpdateStatus: (callback) => subscribe(updateListeners, callback),
     onTerminalData: () => () => undefined,

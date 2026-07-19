@@ -46,8 +46,12 @@ def wait_for_gateway(client: Client, timeout: int = 60) -> None:
 
 def create_run(client: Client, workspace_id: str, title: str, agent_definition: str = "codex@1") -> dict[str, Any]:
     session = client.call("POST", "/v1/sessions", {"workspace_id": workspace_id, "title": title})
+    return create_run_in_session(client, session["session_id"], agent_definition)
+
+
+def create_run_in_session(client: Client, session_id: str, agent_definition: str = "codex@1") -> dict[str, Any]:
     return client.call(
-        "POST", f"/v1/sessions/{session['session_id']}/runs", {"agent_definition": agent_definition},
+        "POST", f"/v1/sessions/{session_id}/runs", {"agent_definition": agent_definition},
         headers={"Idempotency-Key": f"sandbox-{uuid.uuid4()}"},
     )
 
@@ -64,12 +68,16 @@ def execute_async(client: Client, run_id: str, prompt: str):
     return thread, result
 
 
-def wait_for_event(client: Client, run_id: str, event_type: str, timeout: int = 300) -> dict[str, Any]:
+def wait_for_event(
+    client: Client, run_id: str, event_type: str, timeout: int = 300,
+    required_data: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         events = client.call("GET", f"/v1/runs/{run_id}/events?after_sequence=0&limit=2000")["data"]
         for event in events:
-            if event["type"] == event_type:
+            data = event.get("data") if isinstance(event.get("data"), dict) else {}
+            if event["type"] == event_type and all(data.get(key) == value for key, value in (required_data or {}).items()):
                 return event
         status = client.call("GET", f"/v1/runs/{run_id}")["status"]
         if status in {"completed", "failed", "cancelled"}:
@@ -117,6 +125,7 @@ def phase_execute(
     state_path: Path,
     auth_request_path: Path,
     open_login_browser: bool = False,
+    allow_no_approval: bool = False,
 ) -> dict[str, Any]:
     wait_for_gateway(client)
     account = client.call("GET", "/v1/agent-backends/codex/account?refresh=true")
@@ -150,20 +159,42 @@ def phase_execute(
         "id": "codex-approval", "version": "1", "backend": "codex", "model": "gpt-5.4",
         "instructions": "Use the requested command exactly and stay inside the authoritative Workspace.",
         "permissions": ["workspace:read", "workspace:write", "files:write", "process:execute", "permissions:grant"],
-        "backend_config": {"approvalPolicy": "untrusted", "sandbox": "workspace-write"},
+        "backend_config": {"approvalPolicy": "on-request", "sandbox": "workspace-write"},
     }), encoding="utf-8")
     opened = client.call("POST", "/v1/workspaces", {"path": str(workspace)})
     workspace_id = opened["workspace_id"]
 
     completion = create_run(client, workspace_id, "Codex completion acceptance")
+    context_token = "OPENDRSAI_MULTI_TURN_CONTEXT_7319"
     completion_result = client.call(
         "POST", f"/v1/runs/{completion['run_id']}/execute",
-        {"prompt": "Reply with exactly OPENDRSAI_CODEX_RUNTIME_OK and do not use tools."}, timeout=600,
+        {"prompt": f"Remember the token {context_token}. Reply with exactly OPENDRSAI_CODEX_RUNTIME_OK and do not use tools."}, timeout=600,
     )
     completion_run = client.call("GET", f"/v1/runs/{completion['run_id']}")
     completion_events = client.call("GET", f"/v1/runs/{completion['run_id']}/events?after_sequence=0&limit=2000")["data"]
     if completion_run["status"] != "completed" or "OPENDRSAI_CODEX_RUNTIME_OK" not in json.dumps(completion_events):
         raise RuntimeError(f"Managed Codex completion acceptance failed: {completion_result}")
+    completion_session_id = completion["session_id"]
+    first_backend = completion_result.get("result", {}).get("backend_metadata", {})
+    continuation = create_run_in_session(client, completion_session_id)
+    continuation_result = client.call(
+        "POST", f"/v1/runs/{continuation['run_id']}/execute",
+        {"prompt": "What exact token did I ask you to remember in the previous message? Reply with only that token."}, timeout=600,
+    )
+    continuation_events = client.call("GET", f"/v1/runs/{continuation['run_id']}/events?after_sequence=0&limit=2000")["data"]
+    second_backend = continuation_result.get("result", {}).get("backend_metadata", {})
+    if context_token not in json.dumps(continuation_events):
+        raise RuntimeError("Second turn did not retain first-turn conversation context")
+    if not first_backend.get("thread_id") or first_backend.get("thread_id") != second_backend.get("thread_id"):
+        raise RuntimeError(f"Multi-turn conversation created a different Codex Thread: {first_backend} -> {second_backend}")
+    if not first_backend.get("turn_id") or first_backend.get("turn_id") == second_backend.get("turn_id"):
+        raise RuntimeError(f"Multi-turn conversation did not create distinct Codex Turns: {first_backend} -> {second_backend}")
+    archived_session = client.call("PATCH", f"/v1/sessions/{completion_session_id}", {"archived": True})
+    if archived_session.get("archived") is not True:
+        raise RuntimeError("Codex Session archive did not converge")
+    restored_session = client.call("PATCH", f"/v1/sessions/{completion_session_id}", {"archived": False})
+    if restored_session.get("archived") is not False:
+        raise RuntimeError("Codex Session unarchive did not converge")
 
     approval = create_run(client, workspace_id, "Codex approval acceptance", "codex-approval@1")
     approval_thread, approval_result = execute_async(
@@ -173,7 +204,7 @@ def phase_execute(
     approval_count = approve_until_finished(
         client, approval["run_id"], approval_thread, approval_result,
     )
-    if not approval_count:
+    if not approval_count and not allow_no_approval:
         raise RuntimeError("Approval Run completed without exercising the approval bridge")
     if not (workspace / "approval-proof.txt").is_file():
         raise RuntimeError("Approved Codex file change was not materialized")
@@ -183,7 +214,10 @@ def phase_execute(
         client, cancelled["run_id"],
         "Use the shell command `ping.exe -n 120 127.0.0.1`, then report completion.",
     )
-    wait_for_event(client, cancelled["run_id"], "audit.codex.approval.requested")
+    if allow_no_approval:
+        wait_for_event(client, cancelled["run_id"], "agent.started", required_data={"backend": "codex"})
+    else:
+        wait_for_event(client, cancelled["run_id"], "audit.codex.approval.requested")
     client.call("POST", f"/v1/runs/{cancelled['run_id']}/cancel")
     cancel_thread.join(60)
     cancelled_run = client.call("GET", f"/v1/runs/{cancelled['run_id']}")
@@ -192,8 +226,17 @@ def phase_execute(
 
     state = {
         "workspace_id": workspace_id,
-        "runs": [completion["run_id"], approval["run_id"], cancelled["run_id"]],
+        "runs": [completion["run_id"], continuation["run_id"], approval["run_id"], cancelled["run_id"]],
+        "expected_statuses": ["completed", "completed", "completed", "cancelled"],
         "auth_mode": account.get("auth_mode"),
+        "archive_roundtrip": True,
+        "multi_turn": {
+            "session_id": completion_session_id,
+            "thread_id": first_backend.get("thread_id"),
+            "first_turn_id": first_backend.get("turn_id"),
+            "second_turn_id": second_backend.get("turn_id"),
+            "context_retained": True,
+        },
     }
     state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
     return state
@@ -209,7 +252,8 @@ def phase_recover(client: Client, state_path: Path) -> dict[str, Any]:
         events = client.call("GET", f"/v1/runs/{run_id}/events?after_sequence=0&limit=2000")["data"]
         statuses.append(run["status"])
         event_counts.append(len(events))
-    if statuses != ["completed", "completed", "cancelled"] or not all(event_counts):
+    expected_statuses = state.get("expected_statuses", ["completed", "completed", "cancelled"])
+    if statuses != expected_statuses or not all(event_counts):
         raise RuntimeError(f"Restart recovery mismatch: statuses={statuses}, events={event_counts}")
     return {"recovered": True, "statuses": statuses, "event_counts": event_counts, "auth_mode": state.get("auth_mode")}
 
@@ -223,6 +267,7 @@ def main() -> int:
     parser.add_argument("--state", type=Path, required=True)
     parser.add_argument("--auth-request", type=Path)
     parser.add_argument("--open-login-browser", action="store_true")
+    parser.add_argument("--allow-no-approval", action="store_true")
     parser.add_argument("--result", type=Path, required=True)
     args = parser.parse_args()
     client = Client(args.base_url)
@@ -231,7 +276,7 @@ def main() -> int:
             parser.error("execute requires --workspace, --runtime-state-root and --auth-request")
         result = phase_execute(
             client, args.workspace, args.runtime_state_root, args.state, args.auth_request,
-            args.open_login_browser,
+            args.open_login_browser, args.allow_no_approval,
         )
     else:
         result = phase_recover(client, args.state)

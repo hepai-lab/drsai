@@ -1,11 +1,11 @@
 # OpenDrSai Android 远程工作区验收报告 V1
 
-日期：2026-07-17  
-范围：不包含真机；不执行 Codex Backend E2E；OpenDrSai Full Runtime/Backend 固定为本仓库 `apps/desktop/windows`。
+日期：2026-07-19  
+范围：不包含真机；OpenDrSai 与 Codex Backend 均执行真实 Full Runtime E2E；Full Runtime 固定为本仓库 `apps/desktop/windows`。
 
 ## 结论
 
-当前范围 95 个功能点全部完成。代码、协议、两个 Android 模拟器、生产配置测试签名 APK 及 GitHub Release 资产均已验收。
+当前范围 96 个功能点全部完成。代码、协议、两个 Android 模拟器、生产配置测试签名 APK、GitHub Release 资产及真实 Codex Backend E2E 均已验收。
 
 ## 关键端到端结果
 
@@ -26,6 +26,7 @@
 | Android API 30 模拟器 | 37/37 passed |
 | Android API 35 模拟器 | 37/37 passed |
 | Android Lint、Lint Vital、OWOP/Relay binding | passed |
+| 真实 Codex Runtime/Backend E2E | passed；3 completed、1 cancelled、approval、multi-turn、archive round-trip |
 
 API 30 与 API 35 使用两个独立 AVD；网络切换、后台恢复、多客户端隔离、Event 缺口及 10,000 Event 有界性由可重复自动化测试覆盖，不设置真机发布门禁。
 
@@ -50,4 +51,4 @@ API 30 与 API 35 使用两个独立 AVD；网络切换、后台恢复、多客�
 - `OpenDrSai-Android-v1.4.6.apk` 已上传，大小 `2,811,463` bytes，SHA-256 为 `ACE7B01C48DE3F1BF393B3D54F06A364AA93A87058F6FB21CAB7B9018E5DDF81`；
 - 旧资产与本报告验收的 `ACE7B01C...E5DDF81` 不一致，不能作为本阶段完成证据。
 
-M12-F08 已完成，发布资产可从 `android-v1.4.6` Release 下载。
+M11-F03 与 M12-F08 已完成，发布资产可从 `android-v1.4.6` Release 下载。

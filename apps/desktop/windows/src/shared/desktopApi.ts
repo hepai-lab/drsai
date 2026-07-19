@@ -9,6 +9,75 @@ import type {
 } from "./browser/types";
 import type { ExecutionActionKind } from "./executionPolicy";
 import type { StructuredConversationEvent, StructuredTurnState } from "./structuredConversation";
+import type {
+  DiagnosticClearResult,
+  DiagnosticEvent,
+  DiagnosticEventInput,
+  DiagnosticExportResult,
+  DiagnosticQuery,
+  DiagnosticSnapshot,
+  DiagnosticIssueUpdateRequest,
+  DiagnosticIssueUpdateResult,
+  InteractiveDebugBreakpointRequest,
+  InteractiveDebugControlRequest,
+  InteractiveDebugEvaluateRequest,
+  InteractiveDebugEvaluateResult,
+  InteractiveDebugScope,
+  InteractiveDebugSession,
+  InteractiveDebugStartRequest,
+  InteractiveDebugTarget,
+  InteractiveDebugVariable,
+  DiagnosticSourceContext,
+  DiagnosticSourceContextRequest,
+  DiagnosticSourceOpenRequest,
+  DiagnosticSourceOpenResult,
+  DiagnosticPackagePreview,
+  DiagnosticPackageResult,
+  ProductionDiagnosticSettings,
+  ProductionDiagnosticStatus,
+} from "./diagnostics";
+
+export type {
+  DiagnosticComponentHealth,
+  DiagnosticEvent,
+  DiagnosticEventInput,
+  DiagnosticExportResult,
+  DiagnosticFinding,
+  DiagnosticIssueUpdateRequest,
+  DiagnosticIssueUpdateResult,
+  DiagnosticRootCauseAnalysis,
+  DiagnosticRootCauseCandidate,
+  DiagnosticRootCauseSnapshot,
+  DiagnosticErrorCluster,
+  DiagnosticQuery,
+  DiagnosticSnapshot,
+  DiagnosticSourceLocation,
+  DiagnosticSourceContext,
+  DiagnosticSourceContextRequest,
+  DiagnosticSourceOpenRequest,
+  DiagnosticSourceOpenResult,
+  DiagnosticStackFrame,
+  DiagnosticStatus,
+  DiagnosticTrace,
+  InteractiveDebugBreakpoint,
+  InteractiveDebugBreakpointRequest,
+  InteractiveDebugCapabilities,
+  InteractiveDebugControlRequest,
+  InteractiveDebugEvaluateRequest,
+  InteractiveDebugEvaluateResult,
+  InteractiveDebugScope,
+  InteractiveDebugSession,
+  InteractiveDebugStackFrame,
+  InteractiveDebugStartRequest,
+  InteractiveDebugTarget,
+  InteractiveDebugVariable,
+  DiagnosticPackagePreview,
+  DiagnosticPackageResult,
+  ProductionDiagnosticAuditEntry,
+  ProductionDiagnosticMode,
+  ProductionDiagnosticSettings,
+  ProductionDiagnosticStatus,
+} from "./diagnostics";
 
 export type {
   ExecutionActionKind,
@@ -241,6 +310,112 @@ export type DesktopVoiceRuntimeId =
   | "gateway-provider"
   | "local-whisper";
 
+export type DesktopVoiceInteractionMode = "serial" | "streaming";
+
+export type DesktopStreamingAudioEncoding = "pcm_s16le";
+
+export interface DesktopStreamingVoiceCapabilities {
+  serialStt: boolean;
+  serialTts: boolean;
+  streamingStt: boolean;
+  streamingTts: boolean;
+  audioEncodings: DesktopStreamingAudioEncoding[];
+  sampleRatesHz: number[];
+  supportsPartialTranscripts: boolean;
+  supportsProviderEndpointing: boolean;
+  supportsSessionResume: boolean;
+  maxBufferedAudioMs: number;
+}
+
+export interface DesktopStreamingVoiceStartRequest {
+  turnId: string;
+  languageHint?: string;
+  encoding: DesktopStreamingAudioEncoding;
+  sampleRateHz: number;
+  channels: 1;
+  frameDurationMs: number;
+  providerEndpointing: boolean;
+}
+
+export interface DesktopStreamingVoiceStartResult {
+  sessionId: string;
+  turnId: string;
+  acceptedAt: string;
+  capabilities: DesktopStreamingVoiceCapabilities;
+}
+
+export interface DesktopStreamingVoiceAudioChunk {
+  sessionId: string;
+  turnId: string;
+  sequence: number;
+  capturedAtMs: number;
+  durationMs: number;
+  encoding: DesktopStreamingAudioEncoding;
+  sampleRateHz: number;
+  channels: 1;
+  audioData: Uint8Array;
+}
+
+export interface DesktopStreamingVoiceAudioAck {
+  sessionId: string;
+  turnId: string;
+  acknowledgedSequence: number;
+  bufferedAudioMs: number;
+  receivedAt: string;
+}
+
+export interface DesktopStreamingVoiceTranscriptSegment {
+  text: string;
+  revision: number;
+  confidence?: number;
+  startMs?: number;
+  endMs?: number;
+}
+
+export type DesktopStreamingVoiceTranscriptionEvent =
+  | { sessionId: string; turnId: string; sequence: number; type: "accepted"; runtimeId: DesktopVoiceRuntimeId }
+  | { sessionId: string; turnId: string; sequence: number; type: "audio_ack"; ack: DesktopStreamingVoiceAudioAck }
+  | { sessionId: string; turnId: string; sequence: number; type: "flow_control"; paused: boolean; bufferedAudioMs: number; reason: "high_watermark" | "low_watermark" }
+  | { sessionId: string; turnId: string; sequence: number; type: "connection_state"; state: "connected" | "reconnecting" | "reconnected"; attempt?: number }
+  | { sessionId: string; turnId: string; sequence: number; type: "partial"; segment: DesktopStreamingVoiceTranscriptSegment }
+  | { sessionId: string; turnId: string; sequence: number; type: "final"; segment: DesktopStreamingVoiceTranscriptSegment }
+  | { sessionId: string; turnId: string; sequence: number; type: "endpoint"; reason: "provider" | "local_vad" | "manual" }
+  | { sessionId: string; turnId: string; sequence: number; type: "completed" }
+  | { sessionId: string; turnId: string; sequence: number; type: "failed"; error: DesktopVoiceError }
+  | { sessionId: string; turnId: string; sequence: number; type: "cancelled" };
+
+export interface DesktopStreamingVoiceTtsSegmentRequest {
+  sessionId: string;
+  turnId: string;
+  messageId: string;
+  segmentId: string;
+  segmentIndex: number;
+  text: string;
+  voice?: string;
+  speed?: number;
+  format: "wav" | "mp3" | "opus";
+}
+
+export interface DesktopStreamingVoiceTtsAudioSegment {
+  sessionId: string;
+  turnId: string;
+  messageId: string;
+  segmentId: string;
+  segmentIndex: number;
+  mimeType: string;
+  durationMs?: number;
+  audioData: Uint8Array;
+  final: boolean;
+}
+
+export type DesktopStreamingVoiceTtsEvent =
+  | { sessionId: string; turnId: string; sequence: number; type: "accepted"; segmentId: string; segmentIndex: number }
+  | { sessionId: string; turnId: string; sequence: number; type: "audio"; segment: DesktopStreamingVoiceTtsAudioSegment }
+  | { sessionId: string; turnId: string; sequence: number; type: "segment_completed"; segmentId: string; segmentIndex: number }
+  | { sessionId: string; turnId: string; sequence: number; type: "completed" }
+  | { sessionId: string; turnId: string; sequence: number; type: "failed"; error: DesktopVoiceError; segmentId?: string }
+  | { sessionId: string; turnId: string; sequence: number; type: "cancelled" };
+
 export interface DesktopVoiceTranscriptionRequest {
   workspacePath?: string;
   audioData?: Uint8Array;
@@ -341,6 +516,47 @@ export interface LoginResult {
 export interface LogoutOptions {
   clearLocalData?: boolean;
 }
+
+export type DesktopVoiceSynthesisRuntimeId = "mock-local" | "gateway-provider" | "system";
+export type DesktopVoiceAudioFormat = "mp3" | "wav" | "opus";
+
+export interface DesktopVoiceSynthesisRequest {
+  text: string;
+  language?: string;
+  voice?: string;
+  speed?: number;
+  format?: DesktopVoiceAudioFormat;
+}
+
+export interface DesktopVoiceSynthesisStartResult {
+  requestId: string;
+  acceptedAt: string;
+}
+
+export interface DesktopVoiceSynthesisRuntimeStatus {
+  runtimeId: DesktopVoiceSynthesisRuntimeId;
+  state: "ready" | "unavailable" | "auth_required" | "degraded";
+  supportsSynthesisTask: boolean;
+  supportedFormats: DesktopVoiceAudioFormat[];
+  maxTextChars: number;
+  providerDisclosure: string;
+  message: string;
+}
+
+export interface DesktopVoiceSynthesisResult {
+  audioData: Uint8Array;
+  mimeType: string;
+  runtimeId: DesktopVoiceSynthesisRuntimeId;
+  createdAt: string;
+  providerDisclosure: string;
+}
+
+export type DesktopVoiceSynthesisEvent =
+  | { requestId: string; type: "accepted"; runtimeId: DesktopVoiceSynthesisRuntimeId }
+  | { requestId: string; type: "progress"; stage: "preparing" | "synthesizing"; message: string }
+  | { requestId: string; type: "completed"; result: DesktopVoiceSynthesisResult }
+  | { requestId: string; type: "failed"; error: DesktopVoiceError }
+  | { requestId: string; type: "cancelled" };
 
 export type DesktopDataCleanupScope = "sessions" | "all_local_data";
 export type DesktopDataCategory = "account" | "sessions" | "cache" | "memory" | "tasks" | "settings";
@@ -3936,6 +4152,28 @@ export interface TerminalExitEvent {
 }
 
 export interface DesktopApi {
+  recordDiagnostic(event: DiagnosticEventInput): Promise<DiagnosticEvent>;
+  getDiagnosticSnapshot(query?: DiagnosticQuery): Promise<DiagnosticSnapshot>;
+  clearDiagnostics(): Promise<DiagnosticClearResult>;
+  exportDiagnostics(): Promise<DiagnosticExportResult>;
+  onDiagnosticEvent(callback: (event: DiagnosticEvent) => void): () => void;
+  getDiagnosticSourceContext(request: DiagnosticSourceContextRequest): Promise<DiagnosticSourceContext>;
+  openDiagnosticSource(request: DiagnosticSourceOpenRequest): Promise<DiagnosticSourceOpenResult>;
+  updateDiagnosticIssue(request: DiagnosticIssueUpdateRequest): Promise<DiagnosticIssueUpdateResult>;
+  listInteractiveDebugTargets(): Promise<InteractiveDebugTarget[]>;
+  listInteractiveDebugSessions(): Promise<InteractiveDebugSession[]>;
+  startInteractiveDebugSession(request: InteractiveDebugStartRequest): Promise<InteractiveDebugSession>;
+  setInteractiveDebugBreakpoint(request: InteractiveDebugBreakpointRequest): Promise<InteractiveDebugSession>;
+  controlInteractiveDebugSession(request: InteractiveDebugControlRequest): Promise<InteractiveDebugSession>;
+  getInteractiveDebugScopes(sessionId: string, frameId: string): Promise<InteractiveDebugScope[]>;
+  getInteractiveDebugVariables(sessionId: string, reference: string): Promise<InteractiveDebugVariable[]>;
+  evaluateInteractiveDebugExpression(request: InteractiveDebugEvaluateRequest): Promise<InteractiveDebugEvaluateResult>;
+  onInteractiveDebugEvent(callback: (session: InteractiveDebugSession) => void): () => void;
+  getProductionDiagnosticStatus(): Promise<ProductionDiagnosticStatus>;
+  updateProductionDiagnosticSettings(patch: Partial<ProductionDiagnosticSettings>): Promise<ProductionDiagnosticStatus>;
+  previewDiagnosticPackage(): Promise<DiagnosticPackagePreview>;
+  exportProductionDiagnosticPackage(): Promise<DiagnosticPackageResult>;
+  importProductionDiagnosticPackage(): Promise<DiagnosticPackageResult | null>;
   getAuthSession(): Promise<AuthSession>;
   onAuthSessionInvalidated(callback: () => void): () => void;
   getA5ServiceGuidanceScenario(): Promise<DesktopA5ServiceGuidanceScenario | null>;
@@ -4100,12 +4338,30 @@ export interface DesktopApi {
   ): Promise<DesktopVoiceTranscriptionStartResult>;
   cancelVoiceTranscription(requestId: string): Promise<boolean>;
   getVoiceRuntimeStatus(): Promise<DesktopVoiceRuntimeStatus>;
+  getStreamingVoiceCapabilities(): Promise<DesktopStreamingVoiceCapabilities>;
+  startStreamingVoiceTranscription(
+    request: DesktopStreamingVoiceStartRequest,
+  ): Promise<DesktopStreamingVoiceStartResult>;
+  sendStreamingVoiceAudioChunk(chunk: DesktopStreamingVoiceAudioChunk): boolean;
+  stopStreamingVoiceTranscription(sessionId: string, reason?: "provider" | "local_vad" | "manual"): Promise<boolean>;
+  cancelStreamingVoiceTranscription(sessionId: string): Promise<boolean>;
+  onStreamingVoiceTranscriptionEvent(
+    callback: (event: DesktopStreamingVoiceTranscriptionEvent) => void,
+  ): () => void;
   onVoiceTranscriptionEvent(
     callback: (event: DesktopVoiceTranscriptionEvent) => void,
   ): () => void;
   writeVoiceTranscriptHandoff(
     request: DesktopVoiceTranscriptHandoffRequest,
   ): Promise<DesktopVoiceTranscriptHandoffResult>;
+  startVoiceSynthesis(
+    request: DesktopVoiceSynthesisRequest,
+  ): Promise<DesktopVoiceSynthesisStartResult>;
+  cancelVoiceSynthesis(requestId: string): Promise<boolean>;
+  getVoiceSynthesisRuntimeStatus(): Promise<DesktopVoiceSynthesisRuntimeStatus>;
+  onVoiceSynthesisEvent(
+    callback: (event: DesktopVoiceSynthesisEvent) => void,
+  ): () => void;
   saveApiKey(apiKey: string, defaultModel?: string): Promise<SaveApiKeyResult>;
   pickFiles(): Promise<PickDialogResult>;
   pickFolder(): Promise<PickDialogResult>;

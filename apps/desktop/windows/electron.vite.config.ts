@@ -6,6 +6,7 @@ import tailwindcss from "@tailwindcss/vite";
 export default defineConfig({
   main: {
     build: {
+      sourcemap: true,
       rollupOptions: {
         external: ["better-sqlite3"],
       },
@@ -13,6 +14,7 @@ export default defineConfig({
   },
   preload: {
     build: {
+      sourcemap: true,
       rollupOptions: {
         input: {
           index: resolve("src/preload/index.ts"),
@@ -21,6 +23,9 @@ export default defineConfig({
     },
   },
   renderer: {
+    build: {
+      sourcemap: true,
+    },
     resolve: {
       alias: {
         "@renderer": resolve("src/renderer/src"),

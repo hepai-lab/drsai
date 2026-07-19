@@ -33,6 +33,27 @@ def anyio_backend():
     return "asyncio"
 
 
+@pytest.mark.anyio
+async def test_cancel_is_idempotent_when_turn_finished_before_interrupt(tmp_path: Path):
+    bindings = AgentBackendBindingStore(tmp_path / "cancel-race.sqlite3")
+    bindings.bind_session(
+        session_id="session-race", workspace_id="workspace-race", backend_id="codex",
+        agent_backend_runtime_id="runtime-race", workspace_runtime_id="runtime-race",
+        backend_session_id="thread-race", backend_version="test",
+    )
+    bindings.bind_run(
+        run_id="run-race", session_id="session-race", workspace_id="workspace-race", backend_id="codex",
+        agent_backend_runtime_id="runtime-race", workspace_runtime_id="runtime-race",
+        backend_run_id="turn-race", generation=1, status="running",
+    )
+    rpc = FakeRPC()
+    rpc.interrupt_no_active = True
+    client = CodexAgentBackendClient(rpc, bindings)
+    await client.interrupt_turn("run-race")
+    await client.interrupt_turn("run-race")
+    assert [method for method, _ in rpc.calls] == ["turn/interrupt"]
+
+
 @dataclass
 class _Binary:
     version: str = "0.142.5"
@@ -59,6 +80,7 @@ class FakeRPC:
         self.fail_method: str | None = None
         self.read_turns: list[dict[str, Any]] = []
         self.delivery_gate: asyncio.Event | None = None
+        self.interrupt_no_active = False
 
     async def connect(self):
         return {"connected": True}
@@ -66,6 +88,8 @@ class FakeRPC:
     async def request(self, method: str, params: Mapping[str, Any] | None = None, **_kwargs):
         values = dict(params or {})
         self.calls.append((method, values))
+        if method == "turn/interrupt" and self.interrupt_no_active:
+            raise RuntimeExecutionError("codex_jsonrpc_error", "no active turn to interrupt")
         if method == "model/list":
             return {"data": [{"id": "gpt-5.4", "isDefault": True,
                                "supportedReasoningEfforts": ["medium", "high"], "inputModalities": ["text"]}]}

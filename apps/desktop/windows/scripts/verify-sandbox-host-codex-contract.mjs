@@ -1,0 +1,23 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+
+const invoke = await readFile(new URL("./invoke-sandbox-host-codex-acceptance.ps1", import.meta.url), "utf8");
+const guest = await readFile(new URL("./run-sandbox-host-codex-guest.ps1", import.meta.url), "utf8");
+const factory = await readFile(new URL("../../../../cores/python/packages/drsai/src/drsai/backend/codex_adapter/factory.py", import.meta.url), "utf8");
+const liveVerifier = await readFile(new URL("../../../../scripts/verify-codex-runtime-online.py", import.meta.url), "utf8");
+assert.match(invoke, /RandomNumberGenerator.*Create\(\)/);
+assert.match(invoke, /GetBytes\(\$tokenBytes\)/);
+assert.match(invoke, /DRSAI_CODEX_DEVELOPMENT="1"/);
+assert.match(invoke, /CODEX_BIN=\$HostCodexPath/);
+assert.match(invoke, /<Networking>Enable<\/Networking>/);
+assert.match(invoke, /<ReadOnly>true<\/ReadOnly>/);
+assert.match(invoke, /taskkill\.exe \/PID \$bridge\.Id \/T \/F/);
+assert.match(guest, /OPENDRSAI_CODEX_BRIDGE_URL/);
+assert.match(guest, /route\.exe print -4/);
+assert.match(guest, /Host account reused without guest login/);
+assert.match(factory, /RemoteCodexSupervisor/);
+assert.match(liveVerifier, /create_run_in_session\(client, completion_session_id\)/);
+assert.match(liveVerifier, /first_backend\.get\("thread_id"\) != second_backend\.get\("thread_id"\)/);
+assert.match(liveVerifier, /first_backend\.get\("turn_id"\) == second_backend\.get\("turn_id"\)/);
+assert.match(liveVerifier, /Second turn did not retain first-turn conversation context/);
+console.log("Sandbox/host Codex bridge contract verification passed.");

@@ -9,6 +9,7 @@ import type {
   WorkspaceProject,
 } from "../shared/desktopApi";
 import { DRSAI_HOME } from "./paths";
+import { cleanupAllVoiceTempFiles } from "./voiceTempFiles";
 
 interface CleanupTarget {
   category: DesktopDataCleanupPreview["applicationData"][number]["category"];
@@ -107,6 +108,8 @@ export async function clearLocalData(rawRequest: unknown): Promise<DesktopDataCl
     await rm(item.path, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     removedPaths.push(item.path);
   }
+
+  if (request.scope === "all_local_data") cleanupAllVoiceTempFiles();
 
   return {
     ok: true,

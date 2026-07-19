@@ -2,9 +2,10 @@ import type {
   StructuredActivityEvent,
   StructuredConversationEvent,
 } from "@shared/structuredConversation";
+import type { DiagnosticEvent, DiagnosticEventInput, DiagnosticStackFrame, DiagnosticStatus } from "@shared/diagnostics";
 
 export type DebugLogLevel = "log" | "info" | "warn" | "error";
-export type DebugLogSource = "console" | "window" | "promise" | "chat" | "activity" | "protocol";
+export type DebugLogSource = "console" | "window" | "promise" | "chat" | "activity" | "protocol" | "diagnostic";
 
 export interface DebugLogEntry {
   id: number;
@@ -19,6 +20,15 @@ export interface DebugLogEntry {
   activityStatus?: StructuredActivityEvent["status"];
   durationMs?: number;
   raw?: string;
+  diagnosticId?: string;
+  traceId?: string;
+  spanId?: string;
+  parentSpanId?: string;
+  module?: string;
+  component?: string;
+  operation?: string;
+  diagnosticStatus?: DiagnosticStatus;
+  stack?: DiagnosticStackFrame[];
 }
 
 const MAX_ENTRIES = 1000;
@@ -67,6 +77,19 @@ export function appendStructuredActivityLog(activity: StructuredActivityEvent): 
     ? entries.map((entry) => entry.id === existing.id ? next : entry)
     : [...entries, next].slice(-MAX_ENTRIES);
   notify();
+  void recordDiagnosticSafe({
+    traceId: activity.turnId,
+    spanId: activity.id,
+    module: "runtime",
+    component: "structured-conversation",
+    operation: `activity.${activity.kind}`,
+    message: activity.title,
+    status: mapActivityStatus(activity.status),
+    level: activity.status === "error" ? "error" : activity.kind === "retry" ? "warn" : "info",
+    turnId: activity.turnId,
+    ...(activity.kind === "tool" && activity.durationMs !== undefined ? { durationMs: activity.durationMs } : {}),
+    attributes: { kind: activity.kind },
+  });
 }
 
 export function appendStructuredProtocolLog(event: StructuredConversationEvent): void {
@@ -80,6 +103,19 @@ export function appendStructuredProtocolLog(event: StructuredConversationEvent):
     ...(event.type === "part.started" || event.type === "part.completed" ? { partId: event.part.id } : {}),
     raw: serializeBounded(event),
   });
+  void recordDiagnosticSafe({
+    traceId: event.turnId,
+    module: "runtime",
+    component: "structured-conversation",
+    operation: event.type,
+    message: summarizeProtocolEvent(event),
+    status: event.type === "turn.error" ? "failed"
+      : event.type === "turn.completed" ? "completed"
+      : event.type === "turn.cancelled" ? "cancelled"
+      : "running",
+    level: event.type === "turn.error" ? "error" : "info",
+    turnId: event.turnId,
+  });
 }
 
 export function installDebugLogCapture(): void {
@@ -90,21 +126,85 @@ export function installDebugLogCapture(): void {
     console[level] = (...args: unknown[]) => {
       original(...args);
       append({ level, message: args.map(format).join(" "), source: "console", timestamp: Date.now() });
+      if (level === "warn" || level === "error") {
+        void recordDiagnosticSafe({
+          module: "desktop",
+          component: "renderer",
+          operation: `console.${level}`,
+          kind: level === "error" ? "error" : "log",
+          status: level === "error" ? "failed" : "running",
+          level,
+          message: args.map(format).join(" "),
+        });
+      }
     };
   });
-  window.addEventListener("error", (event) => append({
-    level: "error",
-    message: event.error?.stack || event.message,
-    source: "window",
-    timestamp: Date.now(),
-  }));
-  window.addEventListener("unhandledrejection", (event) => append({
-    level: "error",
-    message: format(event.reason),
-    source: "promise",
-    timestamp: Date.now(),
-  }));
+  window.addEventListener("error", (event) => {
+    const message = event.error?.stack || event.message;
+    append({ level: "error", message, source: "window", timestamp: Date.now() });
+    void recordDiagnosticSafe({
+      module: "desktop", component: "renderer", operation: "window.error",
+      kind: "error", status: "failed", level: "error", message,
+      source: { file: event.filename, line: event.lineno, column: event.colno, language: "javascript" },
+    });
+  });
+  window.addEventListener("unhandledrejection", (event) => {
+    const message = format(event.reason);
+    append({ level: "error", message, source: "promise", timestamp: Date.now() });
+    void recordDiagnosticSafe({
+      module: "desktop", component: "renderer", operation: "promise.unhandled-rejection",
+      kind: "error", status: "failed", level: "error", message,
+    });
+  });
+  const api = window.openDrSai;
+  if (api) {
+    api.onDiagnosticEvent(appendDiagnosticEvent);
+    void api.getDiagnosticSnapshot({ limit: MAX_ENTRIES }).then((snapshot) => {
+      for (const event of snapshot.events) appendDiagnosticEvent(event, false);
+      notify();
+    }).catch(() => undefined);
+    void recordDiagnosticSafe({
+      module: "desktop", component: "renderer", operation: "renderer.started",
+      kind: "health", status: "completed", level: "info", message: "Renderer diagnostic capture started",
+      attributes: { userAgent: navigator.userAgent.slice(0, 200) },
+    });
+  }
   append({ level: "info", message: "Debug output capture started", source: "console", timestamp: Date.now() });
+}
+
+function appendDiagnosticEvent(event: DiagnosticEvent, shouldNotify = true): void {
+  if (entries.some((entry) => entry.diagnosticId === event.id)) return;
+  const entry: DebugLogEntry = {
+    id: nextId++,
+    level: event.level === "debug" ? "log" : event.level,
+    message: event.message,
+    timestamp: Date.parse(event.timestamp) || Date.now(),
+    source: "diagnostic",
+    diagnosticId: event.id,
+    traceId: event.traceId,
+    spanId: event.spanId,
+    parentSpanId: event.parentSpanId,
+    module: event.module,
+    component: event.component,
+    operation: event.operation,
+    diagnosticStatus: event.status,
+    turnId: event.turnId,
+    durationMs: event.durationMs,
+    stack: event.stack,
+    raw: serializeBounded(event),
+  };
+  entries = [...entries, entry].slice(-MAX_ENTRIES);
+  if (shouldNotify) notify();
+}
+
+async function recordDiagnosticSafe(input: DiagnosticEventInput): Promise<void> {
+  try { await window.openDrSai?.recordDiagnostic(input); } catch { /* Diagnostics never break product flows. */ }
+}
+
+function mapActivityStatus(status: StructuredActivityEvent["status"]): DiagnosticStatus {
+  if (status === "pending") return "waiting";
+  if (status === "error") return "failed";
+  return status;
 }
 
 function append(entry: Omit<DebugLogEntry, "id">): void {

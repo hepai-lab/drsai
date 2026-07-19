@@ -14,6 +14,7 @@ import {
   ShieldCheck,
   Sparkles,
   Terminal as TerminalIcon,
+  Volume2,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type {
@@ -47,6 +48,9 @@ import type {
   DesktopForkLifecycleAction,
   DesktopHealth,
   DesktopIdeContextSnapshot,
+  DesktopVoiceInteractionMode,
+  DesktopVoiceRuntimeStatus,
+  DesktopStreamingVoiceCapabilities,
   DesktopMcpContextResult,
   DesktopThread,
   DesktopWorktreeSummary,
@@ -94,6 +98,8 @@ import {
 } from "./adapters/useDesktopChatAdapter";
 import type { ChatCommandAction } from "./chatCommands";
 import { useDesktopHealthAdapter } from "./adapters/useDesktopHealthAdapter";
+import { resolveAvailableVoiceName, useVoicePreferences } from "./voice/useVoicePreferences";
+import { deriveVoiceModeCapabilities, getVoiceModeAvailability } from "./voice/voiceMode";
 import {
   MENU_IDS,
   getNavItems,
@@ -1464,6 +1470,7 @@ function AuthenticatedApp({
           activeRequestId={chat.activeRequestId}
           canChat={canChat}
           chatUnavailableReason={chatUnavailableReason}
+          conversationId={activeThreadId}
           health={health}
           input={chat.input}
           language={language}
@@ -4891,7 +4898,7 @@ function formatUpdateStatus(
   return zh ? "未检查" : "not checked";
 }
 
-type SettingsPane = "general" | "agent-defaults" | "agent-task" | "approvals" | "analytics" | "integrations" | "channels" | "other";
+type SettingsPane = "general" | "voice" | "agent-defaults" | "agent-task" | "approvals" | "analytics" | "integrations" | "channels" | "other";
 
 function SettingsPanel({
   agents,
@@ -4997,6 +5004,10 @@ function SettingsPanel({
   const zh = language === "zh";
   const [activePane, setActivePane] = useState<SettingsPane>("general");
   const [voiceIntegrationState, setVoiceIntegrationState] = useState<string | null>(null);
+  const [voicePreferences, updateVoicePreferences] = useVoicePreferences();
+  const [voiceRuntimeStatus, setVoiceRuntimeStatus] = useState<DesktopVoiceRuntimeStatus | null>(null);
+  const [streamingVoiceCapabilities, setStreamingVoiceCapabilities] = useState<DesktopStreamingVoiceCapabilities | null>(null);
+  const [systemVoices, setSystemVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [remoteHostCount, setRemoteHostCount] = useState<number | null>(null);
   const [agentConfigSaving, setAgentConfigSaving] = useState(false);
   const [agentConfigMessage, setAgentConfigMessage] = useState<string | null>(null);
@@ -5078,13 +5089,55 @@ function SettingsPanel({
       cancelled = true;
     };
   }, [activePane]);
+
+  useEffect(() => {
+    if (activePane !== "voice" || !("speechSynthesis" in window)) return;
+    const refreshVoices = (): void => setSystemVoices(window.speechSynthesis.getVoices());
+    refreshVoices();
+    window.speechSynthesis.addEventListener("voiceschanged", refreshVoices);
+    return () => window.speechSynthesis.removeEventListener("voiceschanged", refreshVoices);
+  }, [activePane]);
+
+  useEffect(() => {
+    if (activePane !== "voice") return;
+    let cancelled = false;
+    void Promise.all([
+      desktopApi.getVoiceRuntimeStatus().catch(() => null),
+      desktopApi.getStreamingVoiceCapabilities().catch(() => null),
+    ]).then(([status, capabilities]) => {
+      if (cancelled) return;
+      setVoiceRuntimeStatus(status);
+      setStreamingVoiceCapabilities(capabilities);
+    });
+    return () => { cancelled = true; };
+  }, [activePane]);
+
+  const voiceModeCapabilities = deriveVoiceModeCapabilities(voiceRuntimeStatus, {
+    audioWorklet: typeof AudioWorkletNode !== "undefined",
+    serialTts: "speechSynthesis" in window,
+    streamingTts: false,
+    streamingCapabilities: streamingVoiceCapabilities,
+  });
+  const streamingVoiceAvailability = getVoiceModeAvailability("streaming", voiceModeCapabilities);
+
+  useEffect(() => {
+    if (activePane !== "voice" || !systemVoices.length || !voicePreferences.voiceName) return;
+    const resolvedName = resolveAvailableVoiceName(
+      voicePreferences.voiceName,
+      systemVoices.map((voice) => voice.name),
+    );
+    if (resolvedName !== voicePreferences.voiceName) updateVoicePreferences({ voiceName: resolvedName });
+  }, [activePane, systemVoices, updateVoicePreferences, voicePreferences.voiceName]);
   const groups: Array<{
     label: string;
     items: Array<{ id: SettingsPane; label: string; icon: LucideIcon }>;
   }> = [
     {
       label: zh ? "常规" : "General",
-      items: [{ id: "general", label: zh ? "常规" : "General", icon: Settings }],
+      items: [
+        { id: "general", label: zh ? "常规" : "General", icon: Settings },
+        { id: "voice", label: zh ? "语音" : "Voice", icon: Volume2 },
+      ],
     },
     {
       label: zh ? "智能体" : "Agent",
@@ -5242,6 +5295,135 @@ function SettingsPanel({
               <label className="settings-toggle"><span><strong>{zh ? "恢复上次会话" : "Restore last session"}</strong><small>{zh ? "下次启动时重新打开最近使用的会话。" : "Reopen the most recently used session on launch."}</small></span><input type="checkbox" checked={restoreLastSession} onChange={(event) => onRestoreLastSessionChange(event.target.checked)} /></label>
               <label className="settings-toggle"><span><strong>{zh ? "恢复上次工作区" : "Restore last workspace"}</strong><small>{zh ? "下次启动时重新选择最近使用的工作区。" : "Select the most recently used workspace on launch."}</small></span><input type="checkbox" checked={restoreLastWorkspace} onChange={(event) => onRestoreLastWorkspaceChange(event.target.checked)} /></label>
               <label className="settings-toggle"><span><strong>{zh ? "任务完成通知" : "Completion notifications"}</strong><small>{zh ? "会话或后台任务完成时发送 Windows 通知，点击可返回对应任务。" : "Send a Windows notification for completed conversations and background tasks; click it to return to the task."}</small></span><input type="checkbox" checked={completionNotifications} onChange={(event) => onCompletionNotificationsChange(event.target.checked)} /></label>
+            </section>
+          </>
+        )}
+
+        {activePane === "voice" && (
+          <>
+            <header className="settings-content-header">
+              <h2>{zh ? "语音" : "Voice"}</h2>
+              <p>{zh ? "配置语音输入、回复朗读和本机系统声音。" : "Configure voice input, response reading, and Windows system voices."}</p>
+            </header>
+            <section className="settings-section">
+              <div>
+                <h2>{zh ? "交互模式" : "Interaction mode"}</h2>
+                <p>{zh ? "串行模式保持为可靠默认路径；流式模式在运行时能力和验收门禁完成后开放。" : "Serial remains the reliable default; streaming becomes available after runtime capabilities and release gates are complete."}</p>
+              </div>
+              <div className="settings-row">
+                <span>
+                  <strong>{zh ? "语音模式" : "Voice mode"}</strong>
+                  <small data-testid="voice-mode-status">{voicePreferences.interactionMode === "streaming" ? (zh ? "低延迟流式处理" : "Low-latency streaming") : (zh ? "完整录音与审核" : "Complete recording and review")}</small>
+                </span>
+                <select
+                  data-testid="voice-interaction-mode"
+                  value={voicePreferences.interactionMode}
+                  onChange={(event) => updateVoicePreferences({ interactionMode: event.target.value as DesktopVoiceInteractionMode })}
+                  aria-describedby="voice-streaming-availability"
+                >
+                  <option value="serial">{zh ? "串行（可靠）" : "Serial (reliable)"}</option>
+                  <option value="streaming" disabled={!streamingVoiceAvailability.available}>{zh ? "流式（低延迟）" : "Streaming (low latency)"}</option>
+                </select>
+              </div>
+              <div id="voice-streaming-availability" className="settings-privacy-note" role="note">
+                <strong>{zh ? "流式模式状态" : "Streaming mode status"}</strong>
+                <p>{streamingVoiceAvailability.available ? (zh ? "当前环境支持流式输入与输出。" : "The current environment supports streaming input and output.") : (zh ? "流式运行链路尚未完成；串行模式继续正常可用。" : "The streaming runtime path is not complete yet; serial mode remains fully available.")}</p>
+              </div>
+            </section>
+            <section className="settings-section">
+              <div>
+                <h2>{zh ? "回复朗读" : "Response reading"}</h2>
+                <p>{zh ? "朗读只在完整回复生成后开始，录音开始时会自动停止。" : "Reading starts only after a response is complete and stops when recording begins."}</p>
+              </div>
+              <label className="settings-toggle">
+                <span><strong>{zh ? "自动朗读完整回复" : "Automatically read completed responses"}</strong><small>{zh ? "默认关闭；不会朗读流式生成中的内容。" : "Off by default; streaming output is never read."}</small></span>
+                <input
+                  type="checkbox"
+                  data-testid="voice-auto-read"
+                  checked={voicePreferences.autoReadResponses}
+                  onChange={(event) => updateVoicePreferences({ autoReadResponses: event.target.checked })}
+                />
+              </label>
+              <label className="settings-toggle">
+                <span><strong>{zh ? "允许在线朗读" : "Allow online speech synthesis"}</strong><small>{zh ? "允许将回复文本发送给当前配置的语音服务；关闭后仅使用 Windows 本地朗读。" : "Allow response text to be sent to the configured speech provider; when off, only Windows system speech is used."}</small></span>
+                <input
+                  type="checkbox"
+                  data-testid="voice-remote-tts-consent"
+                  checked={voicePreferences.remoteTtsConsent}
+                  onChange={(event) => updateVoicePreferences({
+                    remoteTtsConsent: event.target.checked,
+                    ...(event.target.checked ? {} : { synthesisMode: "system" as const }),
+                  })}
+                />
+              </label>
+              <div className="settings-row">
+                <span><strong>{zh ? "朗读引擎" : "Reading engine"}</strong><small>{zh ? "Provider 不可用时会显示错误；切换到 Windows 系统声音需由你确认。" : "Provider failures are shown explicitly; switching to Windows system speech requires your choice."}</small></span>
+                <select
+                  data-testid="voice-synthesis-mode"
+                  value={voicePreferences.synthesisMode}
+                  onChange={(event) => updateVoicePreferences({ synthesisMode: event.target.value as "system" | "provider" })}
+                >
+                  <option value="system">{zh ? "Windows 系统声音" : "Windows system speech"}</option>
+                  <option value="provider" disabled={!voicePreferences.remoteTtsConsent}>{zh ? "语音服务 Provider" : "Speech provider"}</option>
+                </select>
+              </div>
+              <div className="settings-row">
+                <span><strong>{zh ? "语速" : "Reading speed"}</strong><small>{voicePreferences.playbackRate.toFixed(1)}x</small></span>
+                <input
+                  type="range"
+                  data-testid="voice-playback-rate"
+                  min="0.5"
+                  max="2"
+                  step="0.1"
+                  value={voicePreferences.playbackRate}
+                  onChange={(event) => updateVoicePreferences({ playbackRate: Number(event.target.value) })}
+                  aria-label={zh ? "朗读语速" : "Reading speed"}
+                />
+              </div>
+              <div className="settings-row">
+                <span><strong>{zh ? "系统声音" : "System voice"}</strong><small>{zh ? "声音由 Windows 和已安装语言包提供。" : "Voices are provided by Windows and installed language packs."}</small></span>
+                <select
+                  data-testid="voice-system-voice"
+                  value={voicePreferences.voiceName}
+                  onChange={(event) => updateVoicePreferences({ voiceName: event.target.value })}
+                >
+                  <option value="">{zh ? "自动选择" : "Automatic"}</option>
+                  {systemVoices.map((voice) => (
+                    <option key={`${voice.name}-${voice.lang}`} value={voice.name}>{voice.name} ({voice.lang})</option>
+                  ))}
+                </select>
+              </div>
+            </section>
+            <section className="settings-section">
+              <div>
+                <h2>{zh ? "语音输入" : "Voice input"}</h2>
+                <p>{zh ? "只在点击麦克风后采集；停止后才提交整段音频进行识别。" : "Audio is captured only after clicking the microphone and submitted after recording stops."}</p>
+              </div>
+              <label className="settings-toggle">
+                <span><strong>{zh ? "允许在线语音识别" : "Allow online transcription"}</strong><small>{zh ? "允许在停止录音后，将本次音频发送给当前配置的 Voice STT 服务。" : "Allow the recorded audio to be sent to the configured Voice STT provider after recording stops."}</small></span>
+                <input
+                  type="checkbox"
+                  data-testid="voice-remote-stt-consent"
+                  checked={voicePreferences.remoteSttConsent}
+                  onChange={(event) => updateVoicePreferences({ remoteSttConsent: event.target.checked })}
+                />
+              </label>
+              <div className="settings-row">
+                <span><strong>{zh ? "识别语言" : "Transcription language"}</strong><small>{zh ? "自动检测适用于中英文混合输入。" : "Automatic detection works well for mixed Chinese and English."}</small></span>
+                <select
+                  data-testid="voice-input-language"
+                  value={voicePreferences.inputLanguage}
+                  onChange={(event) => updateVoicePreferences({ inputLanguage: event.target.value as "auto" | "zh-CN" | "en-US" })}
+                >
+                  <option value="auto">{zh ? "自动检测" : "Automatic"}</option>
+                  <option value="zh-CN">中文</option>
+                  <option value="en-US">English</option>
+                </select>
+              </div>
+              <div className="settings-privacy-note" role="note">
+                <strong>{zh ? "数据说明" : "Data handling"}</strong>
+                <p>{zh ? "系统朗读在本机完成。语音识别可能按当前 Voice STT Runtime 的配置发送到服务提供方；临时录音按任务生命周期清理。" : "System speech runs locally. Transcription may be sent to the configured Voice STT provider; temporary recordings are cleaned up with the task lifecycle."}</p>
+              </div>
             </section>
           </>
         )}

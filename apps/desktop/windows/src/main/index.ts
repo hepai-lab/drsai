@@ -19,6 +19,7 @@ import {
   session as electronSession,
   shell,
   type IpcMainInvokeEvent,
+  type IpcMainEvent,
   type Session,
   type WebContents,
 } from "electron";
@@ -36,6 +37,14 @@ import {
 import { getDesktopHealth, getInstallStatus } from "./status";
 import { bootstrapDesktop } from "./bootstrap";
 import { LocalRuntimeClient } from "./runtimeClient";
+import { desktopDiagnostics } from "./diagnostics";
+import { productionDiagnostics } from "./productionDiagnostics";
+import { DiagnosticSourceNavigator } from "./sourceNavigation";
+import { extractDiagnosticContext, runWithDiagnosticContext } from "./diagnosticContext";
+import { InteractiveDebuggerService } from "./interactiveDebugger";
+import type { DiagnosticEventInput, DiagnosticIssueUpdateRequest, DiagnosticQuery, DiagnosticSourceOpenRequest, DiagnosticSourceContextRequest, ProductionDiagnosticSettings } from "../shared/diagnostics";
+
+process.setSourceMapsEnabled?.(true);
 import { presentCodexBackendStatus } from "./codexBackendStatus";
 import { DRSAI_HOME } from "./paths";
 import { clearLocalData, previewLocalDataCleanup } from "./dataCleanup";
@@ -255,9 +264,24 @@ import {
   writeVoiceTranscriptHandoff,
   startVoiceTranscription,
   cancelVoiceTranscription,
+  cancelVoiceTranscriptionsForSender,
   getVoiceRuntimeStatus,
   cleanupExpiredVoiceTempFiles,
 } from "./voice";
+import {
+  attachStreamingVoiceAudioPort,
+  cancelStreamingVoiceSessionsForSender,
+  cancelStreamingVoiceTranscription,
+  getStreamingVoiceCapabilities,
+  startStreamingVoiceTranscription,
+  stopStreamingVoiceTranscription,
+} from "./voiceStreaming";
+import {
+  cancelVoiceSynthesis,
+  cancelVoiceSynthesisForSender,
+  getVoiceSynthesisRuntimeStatus,
+  startVoiceSynthesis,
+} from "./voiceTts";
 import { saveApiKeyAndDefaultModel } from "./settings";
 import {
   cancelOidcLogin,
@@ -358,6 +382,8 @@ import type {
   DesktopWorktreeEventRequest,
   DesktopVoiceTranscriptHandoffRequest,
   DesktopVoiceTranscriptionRequest,
+  DesktopStreamingVoiceStartRequest,
+  DesktopVoiceSynthesisRequest,
   DesktopBootstrapBlockerKind,
   WorkspaceCheckpointRestoreRequest,
   WorkspaceCheckpointRestoreResult,
@@ -374,6 +400,10 @@ import type {
   WorkspaceFolderSummaryRequest,
   WorkspaceGitFileAtRefRequest,
   DesktopWorkflowRunPrepareRequest,
+  InteractiveDebugBreakpointRequest,
+  InteractiveDebugControlRequest,
+  InteractiveDebugEvaluateRequest,
+  InteractiveDebugStartRequest,
   UpdateMyDrSaiConfigRequest,
 } from "../shared/desktopApi";
 import {
@@ -400,6 +430,10 @@ import {
 } from "./managerPresentationTasks";
 
 let mainWindow: BrowserWindow | null = null;
+const interactiveDebugger = new InteractiveDebuggerService(
+  () => mainWindow?.webContents,
+  process.env.OPENDRSAI_PYTHON_PATH || join(DRSAI_HOME, "drsai-agent", "venv", "Scripts", "python.exe"),
+);
 let scheduledTaskWorker: ScheduledTaskWorkerHandle | null = null;
 let browserWebContentsPolicyRegistered = false;
 const configuredBrowserSessions = new WeakSet<Session>();
@@ -529,6 +563,7 @@ const isE2eSmokeProcess =
   process.env.OPENDRSAI_E2E_M7_STABILITY === "1" ||
   process.env.OPENDRSAI_E2E_M8_RECOVERY === "1" ||
   process.env.OPENDRSAI_E2E_M10_DATA_CLEANUP === "1" ||
+  process.env.OPENDRSAI_E2E_VOICE === "1" ||
   process.env.OPENDRSAI_E2E_PRESENTATION_PDF_ACTION === "1" ||
   process.env.OPENDRSAI_E2E_OIDC_HEADLESS === "1";
 if (isE2eSmokeProcess) {
@@ -638,6 +673,7 @@ const pendingMcpToolExecutions = new Map<
 browserUseWorkerClient.on("event", (event) => {
   updatePendingBrowserTaskApprovals(event);
   appendBrowserTaskTraceEvent(event);
+  void recordBrowserTaskDiagnostic(event);
   for (const subscriber of [...browserTaskSubscribers]) {
     if (subscriber.isDestroyed()) {
       browserTaskSubscribers.delete(subscriber);
@@ -2281,6 +2317,85 @@ browserUseWorkerClient.on("error-line", (line) => {
   console.warn("[browser-use worker]", line);
 });
 
+function recordBrowserTaskDiagnostic(event: BrowserTaskEvent): Promise<unknown> {
+  const rootSpanId = `browser-task:${event.taskId}`;
+  const actionId = "actionId" in event ? event.actionId : undefined;
+  const spanId = actionId ? `browser-action:${actionId}` : rootSpanId;
+  const terminal = event.type === "task.completed" || event.type === "task.failed" || event.type === "task.cancelled";
+  const status = event.type === "task.failed" ? "failed"
+    : event.type === "task.cancelled" ? "cancelled"
+    : event.type === "task.completed" || (event.type === "action.completed" && event.ok) ? "completed"
+    : event.type === "action.completed" ? "failed"
+    : event.type === "action.proposed" && event.requiresApproval ? "waiting"
+    : event.type === "task.started" ? "started"
+    : "running";
+  return desktopDiagnostics.record({
+    traceId: event.taskId,
+    spanId,
+    ...(spanId !== rootSpanId ? { parentSpanId: rootSpanId } : {}),
+    timestamp: event.timestamp,
+    endedAt: terminal || event.type === "action.completed" ? event.timestamp : undefined,
+    module: "tool",
+    component: "browser",
+    operation: `browser.${event.type}`,
+    message: event.type === "action.proposed" ? `Browser action proposed: ${event.action}`
+      : event.type === "action.completed" ? `Browser action ${event.ok ? "completed" : "failed"}`
+      : event.type === "task.failed" ? "Browser task failed"
+      : event.type === "task.completed" ? "Browser task completed"
+      : event.type === "task.cancelled" ? "Browser task cancelled"
+      : event.type === "page.observed" ? "Browser page observed"
+      : event.type === "screenshot" ? "Browser screenshot captured"
+      : "Browser task started",
+    kind: status === "failed" ? "error" : "operation",
+    level: status === "failed" ? "error" : status === "waiting" ? "warn" : "info",
+    status,
+    attributes: {
+      ...(event.type === "action.proposed" ? { action: event.action, requiresApproval: event.requiresApproval } : {}),
+      ...(event.type === "action.completed" ? { ok: event.ok } : {}),
+    },
+  });
+}
+
+process.on("uncaughtExceptionMonitor", (error, origin) => {
+  void desktopDiagnostics.record({
+    module: "desktop",
+    component: "electron-main",
+    operation: "process.uncaught-exception",
+    kind: "error",
+    level: "error",
+    status: "failed",
+    message: error.message,
+    errorCode: origin,
+    stack: error.stack ? error.stack.split(/\r?\n/).map((raw) => ({ raw, language: "javascript" as const })) : undefined,
+  });
+});
+
+process.on("unhandledRejection", (reason) => {
+  void desktopDiagnostics.record({
+    module: "desktop",
+    component: "electron-main",
+    operation: "process.unhandled-rejection",
+    kind: "error",
+    level: "error",
+    status: "failed",
+    message: reason instanceof Error ? (reason.stack || reason.message) : String(reason),
+  });
+});
+
+app.on("child-process-gone", (_event, details) => {
+  void desktopDiagnostics.record({
+    module: "desktop",
+    component: details.type || "child-process",
+    operation: "process.child-gone",
+    kind: "error",
+    level: details.reason === "clean-exit" ? "info" : "error",
+    status: details.reason === "clean-exit" ? "completed" : "failed",
+    message: `${details.type} process exited: ${details.reason}`,
+    errorCode: String(details.exitCode),
+    attributes: { reason: details.reason, exitCode: details.exitCode, serviceName: details.serviceName || "" },
+  });
+});
+
 if (process.env.OPENDRSAI_E2E_DISABLE_GPU === "1") {
   app.disableHardwareAcceleration();
   app.commandLine.appendSwitch("disable-gpu");
@@ -2348,6 +2463,39 @@ function createWindow(): void {
   });
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
     recordE2eStartupTrace("createWindow:render-process-gone", { ...details });
+    void desktopDiagnostics.record({
+      module: "desktop",
+      component: "renderer",
+      operation: "renderer.process-gone",
+      kind: "error",
+      level: "error",
+      status: "failed",
+      message: `Renderer process exited: ${details.reason}`,
+      errorCode: String(details.exitCode),
+      attributes: { reason: details.reason, exitCode: details.exitCode },
+    });
+  });
+  mainWindow.on("unresponsive", () => {
+    void desktopDiagnostics.record({
+      module: "desktop",
+      component: "renderer",
+      operation: "renderer.unresponsive",
+      kind: "snapshot",
+      level: "error",
+      status: "waiting",
+      message: "Renderer is not responding",
+    });
+  });
+  mainWindow.on("responsive", () => {
+    void desktopDiagnostics.record({
+      module: "desktop",
+      component: "renderer",
+      operation: "renderer.responsive",
+      kind: "health",
+      level: "info",
+      status: "completed",
+      message: "Renderer responsiveness restored",
+    });
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -2691,10 +2839,54 @@ function secureHandle<T extends unknown[]>(
   channel: string,
   handler: (event: IpcMainInvokeEvent, ...args: T) => unknown,
 ): void {
-  ipcMain.handle(channel, (event, ...args: T) => {
+  ipcMain.handle(channel, async (event, ...args: T) => {
     assertTrustedSender(event);
-    return handler(event, ...args);
+    if (channel.startsWith("desktop:diagnostics-")) return handler(event, ...args);
+    const target = classifyDiagnosticChannel(channel);
+    const propagated = extractDiagnosticContext(args[0]);
+    const operation = await desktopDiagnostics.start({
+      traceId: propagated.traceId,
+      parentSpanId: propagated.spanId ?? propagated.parentSpanId,
+      module: target.module,
+      component: target.component,
+      operation: channel,
+      message: `${channel} started`,
+      attributes: { argumentCount: args.length },
+    });
+    const waitTimer = setTimeout(() => {
+      void operation.wait(`${channel} is still running`, { waitMs: 10_000 });
+    }, 10_000);
+    try {
+      const result = await runWithDiagnosticContext({
+        traceId: operation.traceId,
+        spanId: operation.spanId,
+        ...(propagated.spanId ?? propagated.parentSpanId ? { parentSpanId: propagated.spanId ?? propagated.parentSpanId } : {}),
+        ...(propagated.sessionId ? { sessionId: propagated.sessionId } : {}),
+        ...(propagated.runId ? { runId: propagated.runId } : {}),
+        ...(propagated.workspaceId ? { workspaceId: propagated.workspaceId } : {}),
+      }, () => Promise.resolve(handler(event, ...args)));
+      await operation.complete(`${channel} completed`);
+      return result;
+    } catch (error) {
+      await operation.fail(error);
+      throw error;
+    } finally {
+      clearTimeout(waitTimer);
+    }
   });
+}
+
+function classifyDiagnosticChannel(channel: string): { module: string; component: string } {
+  if (channel.includes("codex")) return { module: "backend", component: "codex-adapter" };
+  if (channel.includes("gateway")) return { module: "runtime", component: "gateway" };
+  if (channel.includes("ssh") || channel.includes("remote")) return { module: "workspace", component: "ssh-transport" };
+  if (channel.includes("terminal")) return { module: "workspace", component: "terminal" };
+  if (channel.includes("workspace") || channel.includes("worktree")) return { module: "workspace", component: "workspace-operation" };
+  if (channel.includes("chat") || channel.includes("agent-run")) return { module: "runtime", component: "runtime-engine" };
+  if (channel.includes("browser")) return { module: "tool", component: "browser" };
+  if (channel.includes("voice")) return { module: "tool", component: "voice" };
+  if (channel.includes("mcp")) return { module: "tool", component: "mcp" };
+  return { module: "desktop", component: "electron-main" };
 }
 
 const a5ScenarioKinds: DesktopBootstrapBlockerKind[] = [
@@ -3206,6 +3398,105 @@ async function describePickedFiles(paths: string[], canceled: boolean): Promise<
 function registerIpc(): void {
   registerBrowserController(new ElectronWebviewController());
   registerBrowserController(new BrowserUseController(browserUseWorkerClient));
+  const diagnosticSourceNavigator = new DiagnosticSourceNavigator({
+    appRoot: app.getAppPath(),
+    listWorkspaces,
+    previewLocal: previewWorkspaceFile,
+    previewRemote: previewRemoteWorkspaceFile,
+  });
+  secureHandle("desktop:diagnostics-record", (_event, input: DiagnosticEventInput) =>
+    desktopDiagnostics.record(input),
+  );
+  secureHandle("desktop:diagnostics-snapshot", (_event, query?: DiagnosticQuery) =>
+    desktopDiagnostics.snapshot(query ?? {}),
+  );
+  secureHandle("desktop:diagnostics-clear", async () => {
+    const removedEvents = await desktopDiagnostics.clear();
+    return { cleared: true, removedEvents };
+  });
+  secureHandle("desktop:diagnostics-export", async () => {
+    const snapshot = await desktopDiagnostics.snapshot({ limit: 5_000 });
+    const options = {
+      title: "Export OpenDrSai diagnostics",
+      defaultPath: join(app.getPath("downloads"), `opendrsai-diagnostics-${Date.now()}.json`),
+      buttonLabel: "Export",
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    };
+    const selected = mainWindow
+      ? await dialog.showSaveDialog(mainWindow, options)
+      : await dialog.showSaveDialog(options);
+    if (selected.canceled || !selected.filePath) {
+      return { exported: false, eventCount: snapshot.events.length, message: "Diagnostic export cancelled." };
+    }
+    await writeFile(selected.filePath, await desktopDiagnostics.serializeExport(), "utf8");
+    return { exported: true, path: selected.filePath, eventCount: snapshot.events.length, message: "Diagnostic package exported." };
+  });
+  secureHandle("desktop:diagnostics-source-context", (_event, request: DiagnosticSourceContextRequest) =>
+    diagnosticSourceNavigator.context(request),
+  );
+  secureHandle("desktop:diagnostics-source-open", async (_event, request: DiagnosticSourceOpenRequest) => {
+    const resolved = await diagnosticSourceNavigator.resolveOpenPath(request);
+    if (!resolved.path) return { opened: false, ...resolved };
+    if (process.env.OPENDRSAI_E2E_SUPPRESS_EXTERNAL_OPEN === "1") {
+      return { opened: true, ...resolved, message: "Source open suppressed by the E2E environment." };
+    }
+    if (request.target === "reveal") {
+      shell.showItemInFolder(resolved.path);
+      return { opened: true, ...resolved, message: "Source file revealed in the system file manager." };
+    }
+    if (request.target === "editor") {
+      const editor = process.env.OPENDRSAI_SOURCE_EDITOR?.trim();
+      if (!editor) return { opened: false, ...resolved, message: "No external source editor is configured. Set OPENDRSAI_SOURCE_EDITOR to enable this action." };
+      let templates = ["-g", "{file}:{line}:{column}"];
+      try {
+        const configured = JSON.parse(process.env.OPENDRSAI_SOURCE_EDITOR_ARGS || "null");
+        if (Array.isArray(configured) && configured.every((item) => typeof item === "string")) templates = configured.slice(0, 20);
+      } catch {
+        return { opened: false, ...resolved, message: "OPENDRSAI_SOURCE_EDITOR_ARGS must be a JSON string array." };
+      }
+      const substitutions: Record<string, string> = {
+        "{file}": resolved.path,
+        "{line}": String(resolved.line ?? 1),
+        "{column}": String(resolved.column ?? 1),
+      };
+      const args = templates.map((template) => Object.entries(substitutions).reduce((value, [token, replacement]) => value.replaceAll(token, replacement), template));
+      try {
+        await new Promise<void>((resolveLaunch, rejectLaunch) => execFile(editor, args, { windowsHide: true, timeout: 10_000 }, (error) => error ? rejectLaunch(error) : resolveLaunch()));
+        return { opened: true, ...resolved, message: "Source opened in the configured external editor." };
+      } catch (error) {
+        return { opened: false, ...resolved, message: `Configured source editor failed: ${error instanceof Error ? error.message : String(error)}` };
+      }
+    }
+    const error = await shell.openPath(resolved.path);
+    return { opened: !error, ...resolved, message: error || "Source file opened with the system application." };
+  });
+  secureHandle("desktop:diagnostics-issue-update", (_event, request: DiagnosticIssueUpdateRequest) =>
+    desktopDiagnostics.updateIssue(request),
+  );
+  secureHandle("desktop:interactive-debug-targets", () => interactiveDebugger.listTargets());
+  secureHandle("desktop:interactive-debug-sessions", () => interactiveDebugger.listSessions());
+  secureHandle("desktop:interactive-debug-start", (_event, request: InteractiveDebugStartRequest) => interactiveDebugger.start(request));
+  secureHandle("desktop:interactive-debug-breakpoint", (_event, request: InteractiveDebugBreakpointRequest) => interactiveDebugger.setBreakpoint(request));
+  secureHandle("desktop:interactive-debug-control", (_event, request: InteractiveDebugControlRequest) => interactiveDebugger.control(request));
+  secureHandle("desktop:interactive-debug-scopes", (_event, sessionId: string, frameId: string) => interactiveDebugger.scopes(sessionId, frameId));
+  secureHandle("desktop:interactive-debug-variables", (_event, sessionId: string, reference: string) => interactiveDebugger.variables(sessionId, reference));
+  secureHandle("desktop:interactive-debug-evaluate", (_event, request: InteractiveDebugEvaluateRequest) => interactiveDebugger.evaluate(request));
+  secureHandle("desktop:production-diagnostics-status", () => productionDiagnostics.status());
+  secureHandle("desktop:production-diagnostics-settings", (_event, patch: Partial<ProductionDiagnosticSettings>) => productionDiagnostics.update(patch));
+  secureHandle("desktop:production-diagnostics-preview", async () => productionDiagnostics.preview(await desktopDiagnostics.serializeExport()));
+  secureHandle("desktop:production-diagnostics-export", async () => {
+    const preview = await productionDiagnostics.preview(await desktopDiagnostics.serializeExport());
+    const options = { title: "Export protected OpenDrSai diagnostic package", defaultPath: join(app.getPath("downloads"), `opendrsai-diagnostics-${Date.now()}.oddiag`), buttonLabel: "Export", filters: [{ name: "OpenDrSai diagnostics", extensions: ["oddiag"] }] };
+    const selected = mainWindow ? await dialog.showSaveDialog(mainWindow, options) : await dialog.showSaveDialog(options);
+    if (selected.canceled || !selected.filePath) return { ok: false, preview, message: "Diagnostic package export cancelled." };
+    return productionDiagnostics.exportPackage(await desktopDiagnostics.serializeExport(), selected.filePath);
+  });
+  secureHandle("desktop:production-diagnostics-import", async () => {
+    const options = { title: "Open OpenDrSai diagnostic package", properties: ["openFile"] as Array<"openFile">, filters: [{ name: "OpenDrSai diagnostics", extensions: ["oddiag"] }] };
+    const selected = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+    if (selected.canceled || !selected.filePaths[0]) return null;
+    return productionDiagnostics.importPackage(selected.filePaths[0]);
+  });
   secureHandle("desktop:get-auth-session", () => getAuthSession());
   secureHandle("desktop:e2e-a5-service-guidance-scenario", () =>
     getA5ServiceGuidanceScenario(),
@@ -3238,15 +3529,55 @@ function registerIpc(): void {
   });
   secureHandle("desktop:refresh-auth-session", () => refreshAuthSession());
   secureHandle("desktop:bootstrap", () => bootstrapDesktop());
-  secureHandle("desktop:get-health", () => getDesktopHealth());
+  secureHandle("desktop:get-health", async () => {
+    const health = await getDesktopHealth();
+    desktopDiagnostics.registerHealth({
+      id: "runtime:gateway",
+      module: "runtime",
+      component: "gateway",
+      state: health.gatewayReady ? "running" : "disconnected",
+      message: health.gatewayReady ? "Gateway is ready" : "Gateway is not ready",
+      pid: health.gateway.pid ?? undefined,
+      version: health.version ?? undefined,
+      restartCount: 0,
+      retryCount: 0,
+    });
+    return health;
+  });
   secureHandle("desktop:get-install-status", () => getInstallStatus());
-  secureHandle("desktop:get-gateway-status", () => getGatewayStatus());
+  secureHandle("desktop:get-gateway-status", async () => {
+    const status = await getGatewayStatus();
+    desktopDiagnostics.registerHealth({
+      id: "runtime:gateway",
+      module: "runtime",
+      component: "gateway",
+      state: status.ready ? "running" : "disconnected",
+      message: status.ready ? "Gateway is ready" : (status.lastLog || "Gateway is not ready"),
+      pid: status.pid ?? undefined,
+      restartCount: 0,
+      retryCount: 0,
+    });
+    return status;
+  });
   secureHandle("desktop:get-codex-backend-status", async (_event, rawRefresh) => {
     const refresh = rawRefresh === true;
     const client = await LocalRuntimeClient.connect();
     const capability = (await client.getCapabilities()).agent_backends?.codex;
-    if (!capability?.available) return presentCodexBackendStatus(capability);
-    return presentCodexBackendStatus(capability, await client.getBackendAccount("codex", refresh));
+    const status = !capability?.available
+      ? presentCodexBackendStatus(capability)
+      : presentCodexBackendStatus(capability, await client.getBackendAccount("codex", refresh));
+    desktopDiagnostics.registerHealth({
+      id: "backend:codex-adapter",
+      module: "backend",
+      component: "codex-adapter",
+      state: status.available ? "running" : status.retryable ? "degraded" : "stopped",
+      message: status.reason || (status.available ? "Codex backend is available" : "Codex backend is unavailable"),
+      version: status.version ?? undefined,
+      restartCount: 0,
+      retryCount: 0,
+      lastErrorCode: status.state === "fault" ? status.state : undefined,
+    });
+    return status;
   });
   secureHandle("desktop:start-codex-backend-login", async (_event, rawType) => {
     const type = rawType === "chatgptDeviceCode" ? "chatgptDeviceCode" : "chatgpt";
@@ -3311,6 +3642,7 @@ function registerIpc(): void {
     stopGateway();
     const result = await clearLocalData(request);
     if (result.scope === "all_local_data") {
+      await desktopDiagnostics.clear();
       await logout({ clearLocalData: true });
       await electronSession.defaultSession.clearCache();
       await electronSession.defaultSession.clearStorageData();
@@ -4098,6 +4430,51 @@ function registerIpc(): void {
     () => getVoiceRuntimeStatus(),
   );
   secureHandle(
+    "desktop:voice-streaming-capabilities",
+    () => getStreamingVoiceCapabilities(),
+  );
+  secureHandle(
+    "desktop:voice-streaming-start",
+    (event, request: DesktopStreamingVoiceStartRequest) => startStreamingVoiceTranscription(event.sender, request),
+  );
+  secureHandle(
+    "desktop:voice-streaming-stop",
+    (event, sessionId: string, reason?: "provider" | "local_vad" | "manual") => stopStreamingVoiceTranscription(
+      event.sender,
+      typeof sessionId === "string" ? sessionId : "",
+      reason === "provider" || reason === "local_vad" ? reason : "manual",
+    ),
+  );
+  secureHandle(
+    "desktop:voice-streaming-cancel",
+    (event, sessionId: string) => cancelStreamingVoiceTranscription(event.sender, typeof sessionId === "string" ? sessionId : ""),
+  );
+  ipcMain.on("desktop:voice-streaming-audio-port", (event: IpcMainEvent, request: unknown) => {
+    if (!isTrustedSender(event as unknown as IpcMainInvokeEvent)) {
+      event.ports[0]?.close();
+      return;
+    }
+    const sessionId = getStringProperty(request, "sessionId");
+    const port = event.ports[0];
+    if (!sessionId || !port) {
+      port?.close();
+      return;
+    }
+    attachStreamingVoiceAudioPort(event.sender, sessionId, port);
+  });
+  secureHandle(
+    "desktop:voice-synthesis-start",
+    (event, request: DesktopVoiceSynthesisRequest) => startVoiceSynthesis(event.sender, request),
+  );
+  secureHandle(
+    "desktop:voice-synthesis-cancel",
+    (_event, requestId: string) => cancelVoiceSynthesis(requestId),
+  );
+  secureHandle(
+    "desktop:voice-synthesis-runtime-status",
+    () => getVoiceSynthesisRuntimeStatus(),
+  );
+  secureHandle(
     "desktop:voice-handoff-write",
     async (_event, request: DesktopVoiceTranscriptHandoffRequest) => {
       const workspacePath = getStringProperty(request, "workspacePath");
@@ -4561,12 +4938,71 @@ app.whenReady().then(async () => {
   }
   registerDeepLinkProtocol();
   registerRendererProtocol();
+  await desktopDiagnostics.initialize();
+  await productionDiagnostics.initialize();
+  desktopDiagnostics.setPublisher((event) => {
+    productionDiagnostics.observeEvent(Buffer.byteLength(JSON.stringify(event), "utf8"), event.workspaceId);
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+        window.webContents.send("desktop:diagnostics-event", event);
+      }
+    }
+  });
+  interactiveDebugger.setPublisher((debugSession) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send("desktop:interactive-debug-event", debugSession);
+    }
+    void desktopDiagnostics.record({
+      traceId: debugSession.traceId ?? debugSession.id,
+      spanId: debugSession.id,
+      module: "desktop",
+      component: "interactive-debugger",
+      operation: `debug.${debugSession.state}`,
+      message: debugSession.message,
+      status: debugSession.state === "failed" ? "failed"
+        : debugSession.state === "paused" ? "waiting"
+        : debugSession.state === "disconnected" || debugSession.state === "stopped" ? "completed"
+        : "running",
+      level: debugSession.state === "failed" ? "error" : debugSession.state === "paused" ? "warn" : "info",
+      workspaceId: debugSession.workspaceId,
+      attributes: { target: debugSession.target.kind, breakpointCount: debugSession.breakpoints.length },
+    });
+  });
   registerIpc();
   setRemoteWorkspaceStatusPublisher((status) => {
     for (const window of BrowserWindow.getAllWindows()) window.webContents.send("desktop:remote-workspace-status-event", status);
+    desktopDiagnostics.registerHealth({
+      id: `remote:${status.hostAlias}`,
+      module: "workspace",
+      component: "ssh-transport",
+      state: status.connected && status.gatewayReady ? "running"
+        : status.connectionState === "failed" ? "failed"
+        : status.connectionState === "degraded" ? "degraded"
+        : status.connectionState === "reconnecting" ? "starting"
+        : "disconnected",
+      message: status.error || `Remote workspace is ${status.connectionState}`,
+      version: status.gatewayVersion,
+      restartCount: 0,
+      retryCount: status.connectionState === "reconnecting" ? 1 : 0,
+      lastErrorCode: status.failureKind,
+    });
   });
   setRemoteGatewayOperationPublisher((operation) => {
     for (const window of BrowserWindow.getAllWindows()) window.webContents.send("desktop:remote-gateway-operation-event", operation);
+    void desktopDiagnostics.record({
+      traceId: operation.operationId,
+      module: "runtime",
+      component: "remote-runtime",
+      operation: `remote-gateway.${operation.action}.${operation.phase}`,
+      message: operation.message,
+      status: operation.state === "running" ? "running"
+        : operation.state === "completed" ? "completed"
+        : operation.state === "cancelled" ? "cancelled"
+        : "failed",
+      level: operation.state === "failed" ? "error" : "info",
+      remoteHostId: operation.hostAlias,
+      attributes: { progress: operation.progress, phase: operation.phase },
+    });
   });
   setRemoteFileChangePublisher((change) => {
     for (const window of BrowserWindow.getAllWindows()) window.webContents.send("desktop:workspace-file-change-event", change);
@@ -4834,6 +5270,11 @@ let gatewayShutdownStarted = false;
 
 app.on("before-quit", (event) => {
   appQuitRequested = true;
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+    cancelVoiceTranscriptionsForSender(mainWindow.webContents);
+    cancelVoiceSynthesisForSender(mainWindow.webContents);
+    cancelStreamingVoiceSessionsForSender(mainWindow.webContents);
+  }
   stopScheduledTaskWorker();
   killAllTerminalSessions();
   stopAllRemoteWorkspaces();

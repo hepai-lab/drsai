@@ -1,0 +1,12 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const report = JSON.parse(readFileSync(join(root, "release", "voice-windows-hardware-evidence", "report.json"), "utf8"));
+const required = ["windows10", "windows11", "builtinMicrophone", "usbMicrophone", "bluetoothMicrophone", "builtinOutput", "usbOutput", "bluetoothOutput", "permissionDenied", "sleepResume", "deviceUnplug", "networkLoss", "systemSpeech", "twentyTurnStability", "memoryStable", "handleStable", "tempFilesClean", "privacyLogsClean"];
+assert.equal(report.evidenceClass, "physical-windows-device-matrix");
+assert.equal(report.ok, true, "Physical Windows device matrix is pending or failed.");
+assert.ok(report.tester?.name && report.tester?.signedAt, "Tester identity and signature time are required.");
+assert.ok(required.every((name) => report.checks?.[name] === true), "Every physical Windows device check must explicitly pass.");
+console.log("Windows physical voice-device matrix evidence passed.");

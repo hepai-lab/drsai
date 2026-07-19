@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { getDiagnosticPropagationHeaders } from "./diagnosticContext";
 import { parseRemoteProtocolError, REMOTE_SSH_PROTOCOL_VERSION, type RemoteProtocolErrorBody } from "../shared/remoteSshProtocol";
 import type { OWOPOperation, OWOPParamsByOperation } from "../shared/owop.generated";
 
@@ -165,6 +166,7 @@ export interface RuntimeClient {
   executeAgentRun(runId: string, prompt: string, signal?: AbortSignal): Promise<{ run: RuntimeAgentRun; result: unknown }>;
   cancelAgentRun(runId: string): Promise<RuntimeAgentRun>;
   listAgentRunEvents(runId: string, afterSequence?: number): Promise<RuntimeAgentEvent[]>;
+  getAgentRunDiagnostics(runId: string): Promise<Record<string, unknown>>;
   respondAgentApproval(runId: string, approvalId: string, decision: "accept" | "acceptForSession" | "decline" | "cancel"): Promise<void>;
   createRun(request: RuntimeRunRequest, signal?: AbortSignal): Promise<RuntimeRunStream>;
   executeOWOP<K extends OWOPOperation>(workspaceId: string, operation: K, params: OWOPParamsByOperation[K]): Promise<Record<string, unknown>>;
@@ -350,6 +352,10 @@ abstract class HttpRuntimeClient implements RuntimeClient {
     return result.data ?? [];
   }
 
+  getAgentRunDiagnostics(runId: string): Promise<Record<string, unknown>> {
+    return this.requestJson(`/v1/runs/${encodeURIComponent(runId)}/diagnostics`);
+  }
+
   async respondAgentApproval(runId: string, approvalId: string, decision: "accept" | "acceptForSession" | "decline" | "cancel"): Promise<void> {
     await this.requestJson(`/v1/runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(approvalId)}/decision`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decision }),
@@ -448,7 +454,7 @@ abstract class HttpRuntimeClient implements RuntimeClient {
   protected async request(path: string, init: RequestInit = {}): Promise<Response> {
     const response = await fetch(`${this.access.baseUrl}${path}`, {
       ...init,
-      headers: { "X-Correlation-ID": randomUUID(), ...this.access.headers, ...init.headers },
+      headers: { "X-Correlation-ID": randomUUID(), ...getDiagnosticPropagationHeaders(), ...this.access.headers, ...init.headers },
       signal: init.signal ?? AbortSignal.timeout(30_000),
     });
     if (!response.ok) {

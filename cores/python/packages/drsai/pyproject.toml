@@ -47,6 +47,7 @@ dependencies = [
     "loguru",
     "python-dotenv",
     "cryptography>=41",
+    "debugpy>=1.8,<2",
 
     # ── async networking ──────────────────────────────────────────────────
     "aiohttp",

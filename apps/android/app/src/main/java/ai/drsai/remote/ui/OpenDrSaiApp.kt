@@ -121,6 +121,8 @@ import ai.drsai.remote.data.AttachmentDraft
 import ai.drsai.remote.data.AttachmentStatus
 import ai.drsai.remote.data.ChatMessage
 import ai.drsai.remote.data.MAX_ATTACHMENTS
+import ai.drsai.remote.data.AndroidUpdateManager
+import ai.drsai.remote.data.AndroidUpdateState
 import ai.drsai.remote.remote.navigation.AppRoute
 import ai.drsai.remote.remote.ui.RemoteHomeScreen
 import ai.drsai.remote.remote.ui.RemoteHomeViewModel
@@ -995,6 +997,10 @@ private fun ErrorBar(message: String, retry: () -> Unit) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ProfileSheet(state: AppState, viewModel: AppViewModel) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val updateManager = remember { AndroidUpdateManager.get(context.applicationContext) }
+    val updateState by updateManager.state.collectAsState()
     ModalBottomSheet(onDismissRequest = { viewModel.toggleProfile(false) }) {
         Column(Modifier.fillMaxWidth().padding(22.dp)) {
             Text("个人中心", style = MaterialTheme.typography.headlineSmall)
@@ -1007,6 +1013,37 @@ private fun ProfileSheet(state: AppState, viewModel: AppViewModel) {
                 "Runtime：${if (state.selectedAgent?.source == "platform") "HAI 平台" else "Android 本机"}",
                 style = MaterialTheme.typography.bodySmall,
             )
+            Spacer(Modifier.height(12.dp))
+            val updateLabel = when (val current = updateState) {
+                AndroidUpdateState.Idle -> "检查并更新"
+                AndroidUpdateState.Checking -> "正在检查…"
+                is AndroidUpdateState.Available -> "发现 ${current.update.version}，下载并安装"
+                is AndroidUpdateState.Downloading -> "正在下载 ${current.progress}%"
+                is AndroidUpdateState.Ready -> "正在打开安装器…"
+                is AndroidUpdateState.Failed -> "重试更新"
+            }
+            OutlinedButton(
+                onClick = {
+                    if (updateState !is AndroidUpdateState.Checking && updateState !is AndroidUpdateState.Downloading) {
+                        scope.launch {
+                            when (val checked = updateManager.check()) {
+                                is AndroidUpdateState.Available -> when (val downloaded = updateManager.download(checked.update)) {
+                                    is AndroidUpdateState.Ready -> updateManager.install(context, downloaded)
+                                    else -> Unit
+                                }
+                                else -> Unit
+                            }
+                        }
+                    }
+                },
+                enabled = updateState !is AndroidUpdateState.Checking && updateState !is AndroidUpdateState.Downloading,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(updateLabel) }
+            when (val current = updateState) {
+                is AndroidUpdateState.Failed -> Text(current.message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                is AndroidUpdateState.Available -> Text("可更新到 ${current.update.version}", style = MaterialTheme.typography.bodySmall)
+                else -> Unit
+            }
             Spacer(Modifier.height(18.dp))
             TextButton(
                 onClick = { viewModel.logout(); viewModel.toggleProfile(false) },

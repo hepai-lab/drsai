@@ -10,6 +10,17 @@ import type {
   MaterialRoleAnalysisResult,
   DesktopDataCleanupRequest,
   DesktopDataCleanupScope,
+  DiagnosticEvent,
+  DiagnosticEventInput,
+  DiagnosticQuery,
+  DiagnosticSourceContextRequest,
+  DiagnosticSourceOpenRequest,
+  DiagnosticIssueUpdateRequest,
+  InteractiveDebugBreakpointRequest,
+  InteractiveDebugControlRequest,
+  InteractiveDebugEvaluateRequest,
+  InteractiveDebugSession,
+  InteractiveDebugStartRequest,
   AgentRunEvent,
   AgentRunRequest,
   AuthSession,
@@ -117,6 +128,15 @@ import type {
   DesktopVoiceTranscriptionStartResult,
   DesktopVoiceRuntimeStatus,
   DesktopVoiceTranscriptionEvent,
+  DesktopStreamingVoiceAudioChunk,
+  DesktopStreamingVoiceCapabilities,
+  DesktopStreamingVoiceStartRequest,
+  DesktopStreamingVoiceStartResult,
+  DesktopStreamingVoiceTranscriptionEvent,
+  DesktopVoiceSynthesisEvent,
+  DesktopVoiceSynthesisRequest,
+  DesktopVoiceSynthesisRuntimeStatus,
+  DesktopVoiceSynthesisStartResult,
   DesktopScheduledTask,
   DesktopScheduledTaskCreateRequest,
   DesktopScheduledTaskDeleteRequest,
@@ -250,7 +270,44 @@ import type {
   WorkspaceStageFileResult,
 } from "../shared/desktopApi";
 
+const streamingVoicePorts = new Map<string, MessagePort>();
+
 const api: DesktopApi = {
+  recordDiagnostic: (event: DiagnosticEventInput) =>
+    ipcRenderer.invoke("desktop:diagnostics-record", event),
+  getDiagnosticSnapshot: (query: DiagnosticQuery = {}) =>
+    ipcRenderer.invoke("desktop:diagnostics-snapshot", query),
+  clearDiagnostics: () => ipcRenderer.invoke("desktop:diagnostics-clear"),
+  exportDiagnostics: () => ipcRenderer.invoke("desktop:diagnostics-export"),
+  onDiagnosticEvent: (callback: (event: DiagnosticEvent) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, event: DiagnosticEvent): void => callback(event);
+    ipcRenderer.on("desktop:diagnostics-event", listener);
+    return () => ipcRenderer.removeListener("desktop:diagnostics-event", listener);
+  },
+  getDiagnosticSourceContext: (request: DiagnosticSourceContextRequest) =>
+    ipcRenderer.invoke("desktop:diagnostics-source-context", request),
+  openDiagnosticSource: (request: DiagnosticSourceOpenRequest) =>
+    ipcRenderer.invoke("desktop:diagnostics-source-open", request),
+  updateDiagnosticIssue: (request: DiagnosticIssueUpdateRequest) =>
+    ipcRenderer.invoke("desktop:diagnostics-issue-update", request),
+  listInteractiveDebugTargets: () => ipcRenderer.invoke("desktop:interactive-debug-targets"),
+  listInteractiveDebugSessions: () => ipcRenderer.invoke("desktop:interactive-debug-sessions"),
+  startInteractiveDebugSession: (request: InteractiveDebugStartRequest) => ipcRenderer.invoke("desktop:interactive-debug-start", request),
+  setInteractiveDebugBreakpoint: (request: InteractiveDebugBreakpointRequest) => ipcRenderer.invoke("desktop:interactive-debug-breakpoint", request),
+  controlInteractiveDebugSession: (request: InteractiveDebugControlRequest) => ipcRenderer.invoke("desktop:interactive-debug-control", request),
+  getInteractiveDebugScopes: (sessionId: string, frameId: string) => ipcRenderer.invoke("desktop:interactive-debug-scopes", sessionId, frameId),
+  getInteractiveDebugVariables: (sessionId: string, reference: string) => ipcRenderer.invoke("desktop:interactive-debug-variables", sessionId, reference),
+  evaluateInteractiveDebugExpression: (request: InteractiveDebugEvaluateRequest) => ipcRenderer.invoke("desktop:interactive-debug-evaluate", request),
+  onInteractiveDebugEvent: (callback: (session: InteractiveDebugSession) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, session: InteractiveDebugSession): void => callback(session);
+    ipcRenderer.on("desktop:interactive-debug-event", listener);
+    return () => ipcRenderer.removeListener("desktop:interactive-debug-event", listener);
+  },
+  getProductionDiagnosticStatus: () => ipcRenderer.invoke("desktop:production-diagnostics-status"),
+  updateProductionDiagnosticSettings: (patch) => ipcRenderer.invoke("desktop:production-diagnostics-settings", patch),
+  previewDiagnosticPackage: () => ipcRenderer.invoke("desktop:production-diagnostics-preview"),
+  exportProductionDiagnosticPackage: () => ipcRenderer.invoke("desktop:production-diagnostics-export"),
+  importProductionDiagnosticPackage: () => ipcRenderer.invoke("desktop:production-diagnostics-import"),
   getAuthSession: (): Promise<AuthSession> =>
     ipcRenderer.invoke("desktop:get-auth-session"),
   onAuthSessionInvalidated: (callback: () => void): (() => void) => {
@@ -464,6 +521,52 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:voice-transcription-cancel", requestId),
   getVoiceRuntimeStatus: (): Promise<DesktopVoiceRuntimeStatus> =>
     ipcRenderer.invoke("desktop:voice-runtime-status"),
+  getStreamingVoiceCapabilities: (): Promise<DesktopStreamingVoiceCapabilities> =>
+    ipcRenderer.invoke("desktop:voice-streaming-capabilities"),
+  startStreamingVoiceTranscription: async (
+    request: DesktopStreamingVoiceStartRequest,
+  ): Promise<DesktopStreamingVoiceStartResult> => {
+    const result = await ipcRenderer.invoke("desktop:voice-streaming-start", request) as DesktopStreamingVoiceStartResult;
+    const channel = new MessageChannel();
+    streamingVoicePorts.set(result.sessionId, channel.port2);
+    ipcRenderer.postMessage("desktop:voice-streaming-audio-port", { sessionId: result.sessionId }, [channel.port1]);
+    return result;
+  },
+  sendStreamingVoiceAudioChunk: (chunk: DesktopStreamingVoiceAudioChunk): boolean => {
+    const port = streamingVoicePorts.get(chunk.sessionId);
+    if (!port) return false;
+    // contextBridge arguments are proxied values. Rebuild a plain payload
+    // before handing it to MessagePort; directly transferring a proxied typed
+    // array can arrive as null in the Main process in packaged Electron.
+    const audioData = new Uint8Array(chunk.audioData);
+    const payload: DesktopStreamingVoiceAudioChunk = { ...chunk, audioData };
+    // Electron 39 packaged builds can deliver a null MessageEvent when an
+    // ArrayBuffer is included in this cross-context port's transfer list.
+    // Structured clone is bounded by the 100 ms batching and Main queue caps.
+    port.postMessage(payload);
+    return true;
+  },
+  stopStreamingVoiceTranscription: async (sessionId: string, reason = "manual"): Promise<boolean> => {
+    const stopped = await ipcRenderer.invoke("desktop:voice-streaming-stop", sessionId, reason) as boolean;
+    if (!stopped) return false;
+    return true;
+  },
+  cancelStreamingVoiceTranscription: async (sessionId: string): Promise<boolean> => {
+    const cancelled = await ipcRenderer.invoke("desktop:voice-streaming-cancel", sessionId) as boolean;
+    if (cancelled) {
+      streamingVoicePorts.get(sessionId)?.close();
+      streamingVoicePorts.delete(sessionId);
+    }
+    return cancelled;
+  },
+  startVoiceSynthesis: (
+    request: DesktopVoiceSynthesisRequest,
+  ): Promise<DesktopVoiceSynthesisStartResult> =>
+    ipcRenderer.invoke("desktop:voice-synthesis-start", request),
+  cancelVoiceSynthesis: (requestId: string): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:voice-synthesis-cancel", requestId),
+  getVoiceSynthesisRuntimeStatus: (): Promise<DesktopVoiceSynthesisRuntimeStatus> =>
+    ipcRenderer.invoke("desktop:voice-synthesis-runtime-status"),
   writeVoiceTranscriptHandoff: (
     request: DesktopVoiceTranscriptHandoffRequest,
   ): Promise<DesktopVoiceTranscriptHandoffResult> =>
@@ -930,6 +1033,26 @@ const api: DesktopApi = {
     const listener = (_event: IpcRendererEvent, event: DesktopVoiceTranscriptionEvent): void => callback(event);
     ipcRenderer.on("desktop:voice-transcription-event", listener);
     return () => ipcRenderer.removeListener("desktop:voice-transcription-event", listener);
+  },
+  onStreamingVoiceTranscriptionEvent: (
+    callback: (event: DesktopStreamingVoiceTranscriptionEvent) => void,
+  ): (() => void) => {
+    const listener = (_event: IpcRendererEvent, event: DesktopStreamingVoiceTranscriptionEvent): void => {
+      callback(event);
+      if (event.type === "completed" || event.type === "cancelled" || event.type === "failed") {
+        streamingVoicePorts.get(event.sessionId)?.close();
+        streamingVoicePorts.delete(event.sessionId);
+      }
+    };
+    ipcRenderer.on("desktop:voice-streaming-transcription-event", listener);
+    return () => ipcRenderer.removeListener("desktop:voice-streaming-transcription-event", listener);
+  },
+  onVoiceSynthesisEvent: (
+    callback: (event: DesktopVoiceSynthesisEvent) => void,
+  ): (() => void) => {
+    const listener = (_event: IpcRendererEvent, event: DesktopVoiceSynthesisEvent): void => callback(event);
+    ipcRenderer.on("desktop:voice-synthesis-event", listener);
+    return () => ipcRenderer.removeListener("desktop:voice-synthesis-event", listener);
   },
   onAgentRunEvent: (callback: (event: AgentRunEvent) => void): (() => void) => {
     const listener = (_event: IpcRendererEvent, event: AgentRunEvent) => {

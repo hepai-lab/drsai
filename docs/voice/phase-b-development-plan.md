@@ -1,18 +1,20 @@
-# Windows App Voice Phase B Development Plan
+# Windows 应用语音功能 Phase B 开发方案
 
-Last updated: 2026-07-11
+最后更新：2026-07-11
 
-Implementation status: completed in code on 2026-07-11. The Windows renderer now uses binary audio IPC, asynchronous request events, cancellation, runtime health disclosure, language and microphone selection, progress/error recovery, and editable transcript review. The main process provides a bounded request registry, `VoiceRuntime` selection, deterministic fixture runtime, gateway-provider runtime, timeout/retry/error normalization, temporary audio TTL cleanup, and single-terminal-state handling. The bundled Python gateway exposes a bounded authenticated `/v1/audio/transcriptions` proxy. Standard verification is network-independent; the optional live-provider and physical-microphone smoke tests still require configured credentials and Windows audio hardware at release time.
+> 文档状态：已完成的历史模块方案。本文件记录生产级整段 STT 的设计与验收，不再承担完整语音功能的总规划。当前权威方案见[串行语音交互完整开发方案](./serial-voice-interaction-development-plan.md)。
+
+实现状态：已于 2026-07-11 完成代码实现。Windows Renderer 现在使用二进制音频 IPC、异步请求事件、取消机制、Runtime 健康状态披露、语言和麦克风选择、进度与错误恢复，以及可编辑的转写审核。Main 提供有界任务注册表、`VoiceRuntime` 选择、确定性的 Fixture Runtime、Gateway Provider Runtime、超时与重试、错误规范化、临时音频 TTL 清理以及单一终态处理。随应用打包的 Python Gateway 提供受限且经过认证的 `/v1/audio/transcriptions` 代理。标准验证不依赖网络；可选的真实 Provider 和物理麦克风 Smoke 测试仍需在发布时配置凭证并使用 Windows 音频硬件。
 
 ## 1. Phase B 定位
 
-Phase B 的任务是把当前“真实录音 + mock 占位文本”升级为“真实录音 + 可取消的真实语音转写”。本阶段只负责 STT（Speech-to-Text）生产链路，不包含本地 Whisper 模型安装和 TTS；二者仍属于 Phase D。
+Phase B 的任务是把当前“真实录音 + Mock 占位文本”升级为“真实录音 + 可取消的真实语音转写”。本阶段只负责 STT（语音转文字）生产链路，不包含本地 Whisper 模型安装和 TTS；二者仍属于 Phase D。
 
 当前基础：
 
 - Renderer 已能使用 `getUserMedia` 和 `MediaRecorder` 录音。
 - `AudioContext + AnalyserNode` 已提供真实、响应式波纹。
-- Shared API、Preload、Main 已有 `transcribeVoiceRecording` IPC 骨架。
+- Shared API、Preload、Main 已有语音转写 IPC 骨架。
 - `src/main/voice.ts` 已有大小、时长、工作区和交接文件校验。
 - 当前唯一运行时是 `mock-local`，不会读取语音内容。
 
@@ -120,10 +122,10 @@ failed -> discarded -> idle
 
 ### 5.5 设置与健康状态
 
-- Runtime：Phase B 默认 `gateway-provider`，开发环境可选 fixture。
-- Language：Auto、zh-CN、en-US。
+- Runtime：Phase B 默认使用 `gateway-provider`，开发环境可选择 Fixture。
+- 语言：自动、`zh-CN`、`en-US`。
 - 超时：默认 60 秒，受安全范围约束。
-- Runtime status：ready、unavailable、auth_required、degraded。
+- Runtime 状态：`ready`、`unavailable`、`auth_required`、`degraded`。
 - 能力：支持 MIME、最大字节数、最大时长、语言和是否支持 partial。
 
 ## 6. 架构设计
@@ -145,7 +147,7 @@ src/main/voice/
 
 现有 `src/main/voice.ts` 拆分后，handoff 逻辑可以保留为 `handoff.ts`。拆分应分提交完成，避免一次性同时改协议、运行时和 UI。
 
-### 6.2 VoiceRuntime 接口
+### 6.2 `VoiceRuntime` 接口
 
 ```ts
 interface VoiceRuntime {
@@ -160,7 +162,7 @@ interface VoiceRuntime {
 
 运行时输入包含：临时音频引用、MIME、字节数、时长、language hint 和 source label。运行时不能直接写 composer 或 workspace 文件。
 
-### 6.3 Shared API
+### 6.3 共享 API
 
 新增或调整：
 
@@ -194,7 +196,7 @@ type DesktopVoiceTranscriptionEvent =
   | { requestId: string; type: "cancelled" };
 ```
 
-Desktop API：
+桌面端 API：
 
 - `startVoiceTranscription(request)`
 - `cancelVoiceTranscription(requestId)`
@@ -272,7 +274,7 @@ Phase B 推荐使用 Main 管理的临时文件或分块二进制 IPC，停止�
 
 完成标准：fixture 可产生成功、失败、超时和取消结果，类型检查通过。
 
-### B2：Request Registry 和取消
+### B2：任务注册表和取消
 
 - Main 使用 `Map<requestId, VoiceTask>` 管理 AbortController、状态和临时资源。
 - 新增 preload start/cancel/event bridge。
@@ -295,7 +297,7 @@ Phase B 推荐使用 Main 管理的临时文件或分块二进制 IPC，停止�
 
 完成标准：fixture 测试全部通过；带凭证的可选 live smoke 能识别一段短音频。
 
-### B5：Renderer Review UX
+### B5：Renderer 转写审核体验
 
 - 接入异步状态和事件。
 - 增加取消、重试、丢弃和编辑确认。
@@ -314,13 +316,13 @@ Phase B 推荐使用 Main 管理的临时文件或分块二进制 IPC，停止�
 
 ### 10.1 单元测试
 
-- Runtime registry：选择、不可用和显式 fixture。
-- Error normalization：HTTP、网络、AbortError、timeout 和异常 payload。
-- Provider parser：成功、空文本、超长文本、错误 Content-Type、恶意大响应。
-- Request registry：唯一终态、取消幂等、超时、窗口销毁、竞态。
-- Temp store：路径限制、chunk 顺序、大小上限、TTL、启动清理。
-- MIME validation：WebM/Opus、WAV、MP4/M4A、伪造 MIME 和损坏文件。
-- Transcript insertion：空输入、已有文本、光标插入、选区替换和 Unicode。
+- Runtime 注册表：选择、不可用和显式 Fixture。
+- 错误规范化：HTTP、网络、`AbortError`、超时和异常响应体。
+- Provider 解析器：成功、空文本、超长文本、错误 `Content-Type` 和恶意大响应。
+- 任务注册表：唯一终态、取消幂等、超时、窗口销毁和竞态。
+- 临时存储：路径限制、分块顺序、大小上限、TTL 和启动清理。
+- MIME 校验：WebM/Opus、WAV、MP4/M4A、伪造 MIME 和损坏文件。
+- 转写插入：空输入、已有文本、光标插入、选区替换和 Unicode。
 
 ### 10.2 音频 Fixture
 
@@ -338,19 +340,19 @@ Phase B 推荐使用 Main 管理的临时文件或分块二进制 IPC，停止�
 
 ### 10.3 IPC 集成测试
 
-- Renderer start -> Preload -> Main accepted -> completed。
+- 验证 Renderer 发起请求，经 Preload 和 Main 后依次进入 `accepted`、`completed`。
 - 上传中取消、转写中取消和完成瞬间取消。
-- Renderer reload/window close 后 Main 清理。
+- Renderer 重载或窗口关闭后，由 Main 完成清理。
 - 重复事件和过期 request ID 被忽略。
 - 未选择 workspace 时仍可完成普通 composer dictation；handoff 写入仍要求 workspace。
 - 非受信 renderer 不能调用 voice IPC。
 
-### 10.4 Provider Adapter 测试
+### 10.4 Provider 适配器测试
 
 - 本地 mock HTTP server 验证 multipart 字段、认证头、timeout 和 AbortSignal。
 - 200 正常响应、400 格式错误、401/403 鉴权、413 过大、429 限流、5xx、非 JSON 和截断响应。
 - 可选 live smoke 使用独立测试凭证，默认不在普通 CI 执行。
-- Live smoke 只断言非空、语言结构和合理延迟，不记录 transcript 正文。
+- Live Smoke 只断言结果非空、语言结构正确且延迟合理，不记录转写正文。
 
 ### 10.5 Renderer 测试
 
@@ -402,7 +404,7 @@ Phase B 推荐使用 Main 管理的临时文件或分块二进制 IPC，停止�
 
 工程验收：
 
-- UI、Preload、Main 和 runtime 之间只有类型化契约。
+- UI、Preload、Main 和 Runtime 之间仅通过类型化契约交互。
 - 生产环境不返回 mock 占位结果。
 - 所有任务只有一个终态并可证明资源清理。
 - 标准 CI 不依赖网络；provider adapter 有完整本地 HTTP 测试。
@@ -423,10 +425,10 @@ Phase B 同时为后续能力建立稳定边界：Phase D 的本地 Whisper 只�
 
 ## 13. 建议实施顺序和里程碑
 
-- Milestone 1：B1 + B2，异步任务、fixture、事件和取消闭环。
-- Milestone 2：B3，二进制音频和临时存储闭环。
-- Milestone 3：B4，真实 gateway STT 和 provider 测试闭环。
-- Milestone 4：B5，review UX 和错误恢复闭环。
-- Milestone 5：B6，性能、隐私、packaged smoke 和发布门禁。
+- 里程碑一：B1 + B2，完成异步任务、Fixture、事件和取消闭环。
+- 里程碑二：B3，完成二进制音频和临时存储闭环。
+- 里程碑三：B4，完成真实 Gateway STT 和 Provider 测试闭环。
+- 里程碑四：B5，完成审核体验和错误恢复闭环。
+- 里程碑五：B6，完成性能、隐私、安装包 Smoke 和发布门禁。
 
 每个 milestone 独立合并并保持 `npm run build` 与现有验证绿色。真实 provider 未通过 Milestone 3 验收前，不把当前 Stage 1 标记为生产可用。

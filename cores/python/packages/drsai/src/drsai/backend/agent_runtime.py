@@ -14,6 +14,7 @@ import re
 import socket
 import subprocess
 import time
+import traceback
 import uuid
 from datetime import UTC, datetime, timedelta
 from dataclasses import dataclass, field
@@ -613,7 +614,15 @@ class RuntimeAgentService:
             return {"run": self.state.get_run(run_id), "result": result, "context": context.audit_fields()}
         except Exception as exc:
             error = exc if isinstance(exc, RuntimeExecutionError) else RuntimeExecutionError("agent_execution_failed", "Agent execution failed.")
-            self.state.append_event(run_id, "agent.failed", {**context.audit_fields(), "error": error.as_dict()})
+            stack = _safe_diagnostic_stack(exc)
+            self.state.append_event(run_id, "agent.failed", {
+                **context.audit_fields(),
+                "error": error.as_dict(),
+                "diagnostic": {
+                    "stack": stack,
+                    "source": next((frame for frame in reversed(stack) if frame.get("in_app")), stack[-1] if stack else None),
+                },
+            })
             if self.state.get_run(run_id)["status"] == "running":
                 self.state.transition_run(run_id, "cancelled" if error.code == "run_cancelled" else "failed")
             raise error from exc
@@ -786,3 +795,22 @@ def _safe_result(value: Mapping[str, Any]) -> dict[str, Any]:
         return item
 
     return clean(value)
+
+
+def _safe_diagnostic_stack(exc: BaseException, limit: int = 80) -> list[dict[str, Any]]:
+    """Return code locations only; never include locals, arguments, prompts, or source lines."""
+    frames: list[dict[str, Any]] = []
+    for frame in traceback.extract_tb(exc.__traceback__, limit=limit):
+        normalized = str(Path(frame.filename)).replace("\\", "/")
+        lowered = normalized.lower()
+        home = str(Path.home()).replace("\\", "/").rstrip("/")
+        if home and lowered.startswith(home.lower() + "/"):
+            normalized = "$HOME" + normalized[len(home):]
+        frames.append({
+            "file": normalized,
+            "line": max(1, int(frame.lineno)),
+            "function": str(frame.name)[:500],
+            "language": "python",
+            "in_app": "/drsai/" in lowered or lowered.endswith("/drsai"),
+        })
+    return frames

@@ -74,13 +74,14 @@ store.clearDebugLogs();
 assert.equal(store.getDebugLogs().length, 0, "Clear must affect only this debug store.");
 
 for (const contract of [
-  'type DebugView = "activity" | "raw"',
+  'type DebugView = "overview" | "traces" | "errors" | "causes" | "interactive" | "production" | "activity" | "raw"',
   'role="tablist"',
-  'entry.source === "activity"',
-  'entry.source !== "activity"',
+  'view === "overview"',
+  'view === "traces"',
+  'view === "errors"',
   "groupActivities(filtered)",
   "navigator.clipboard.writeText(body)",
-  "clearDebugLogs(); setVisible([]);",
+  "window.openDrSai.clearDiagnostics()",
   "onSelectTurn?.(entry.turnId)",
 ]) {
   assert.ok(panelSource.includes(contract), `Missing DebugPanel contract: ${contract}`);
