@@ -193,7 +193,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
     # DeepSeek V3.2: context=163,840 (shared input+output)
     # Sources: DeepSeek API docs (api-docs.deepseek.com), litellm, OpenRouter
     "hepai/deepseek-v4-pro": ModelEntry(
-        model="deepseek-ai/deepseek-v4-pro",
+        model="hepai/deepseek-v4-pro",
         token_limit=1048576,     # context window: 1M (input+output shared, per DeepSeek docs)
         max_tokens=64000,      # max output per request (DeepSeek supports extended output)
         client_type="openai",
