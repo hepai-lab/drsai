@@ -126,14 +126,19 @@ function Check-Existing {
             Write-Info "使用 -Force, 直接覆盖"
             $overwrite = $true
         } else {
-            $response = Read-Host "是否覆盖安装? (将删除所有文件) [y/N]"
+            $response = Read-Host "是否覆盖安装? (仅删除 bin/ 和 packages/，保留配置和数据) [y/N]"
             $overwrite = ($response -match "^[yY]")
         }
 
         if ($overwrite) {
-            Write-Info "清除旧安装..."
-            Get-ChildItem -Path $script:InstallDir -Force | Remove-Item -Recurse -Force
-            Write-Ok "已清除旧安装"
+            Write-Info "清除旧安装 (保留配置、聊天记录等用户数据)..."
+            # 只删除安装脚本创建的目录，保留用户数据
+            # (configs/, workspace/, logs/ 等不受影响)
+            $binPath = Join-Path $script:InstallDir "bin"
+            $pkgPath = Join-Path $script:InstallDir "packages"
+            if (Test-Path $binPath) { Remove-Item -Path $binPath -Recurse -Force }
+            if (Test-Path $pkgPath) { Remove-Item -Path $pkgPath -Recurse -Force }
+            Write-Ok "已清除旧安装 (bin/ + packages/)"
         } else {
             Die "用户取消安装"
         }
@@ -429,8 +434,12 @@ function Create-Launcher {
 
     $launcher = Join-Path $binDir "opendrsai.cmd"
     $tuiDir = Join-Path $script:SrcRoot "apps\ui-tui"
+    $srcRoot = $script:SrcRoot
     # 转为反斜杠路径
     $tuiDir = $tuiDir -replace '/', '\'
+    $srcRoot = $srcRoot -replace '/', '\'
+    $pySrcRoot = Join-Path $srcRoot "cores\python\packages\drsai\src"
+    $venvPython = Join-Path $script:InstallDir "packages\venv\Scripts\python.exe"
 
     $content = @"
 @echo off
@@ -439,6 +448,10 @@ REM ── OpenDrSai 启动脚本 (自包含，不依赖系统 Python/Node) ─�
 set "INSTALL_DIR=%~dp0.."
 set "DRSAI_HOME=%INSTALL_DIR%"
 set "DRSAI_UI_TUI_DIR=$tuiDir"
+REM 关键：告诉 TUI 用 venv 里的 Python 来启动 gateway 子进程
+set "DRSAI_PYTHON=$venvPython"
+set "DRSAI_PYTHON_SRC_ROOT=$pySrcRoot"
+set "VIRTUAL_ENV=%INSTALL_DIR%\packages\venv"
 set "PATH=%INSTALL_DIR%\packages\node;%PATH%"
 "%INSTALL_DIR%\packages\venv\Scripts\python.exe" -m drsai.backend.run_cli %*
 "@
@@ -452,6 +465,9 @@ set "PATH=%INSTALL_DIR%\packages\node;%PATH%"
 `$INSTALL_DIR = Resolve-Path "`$PSScriptRoot\.."
 `$env:DRSAI_HOME = `$INSTALL_DIR.Path
 `$env:DRSAI_UI_TUI_DIR = "$tuiDir"
+`$env:DRSAI_PYTHON = "$venvPython"
+`$env:DRSAI_PYTHON_SRC_ROOT = "$pySrcRoot"
+`$env:VIRTUAL_ENV = "`$INSTALL_DIR\packages\venv"
 `$env:PATH = "`$INSTALL_DIR\packages\node;`$env:PATH"
 & "`$INSTALL_DIR\packages\venv\Scripts\python.exe" -m drsai.backend.run_cli `$args
 "@

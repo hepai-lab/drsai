@@ -193,14 +193,15 @@ check_existing() {
             info "使用 --force, 直接覆盖"
             REPLY="y"
         else
-            prompt_yes_no "是否覆盖安装? (将删除所有文件)"
+            prompt_yes_no "是否覆盖安装? (仅删除 bin/ 和 packages/，保留配置和数据)"
         fi
 
         if [ "$REPLY" = "y" ]; then
-            info "清除旧安装..."
-            # 删除安装目录下所有文件（保留目录本身）
-            find "$INSTALL_DIR" -mindepth 1 -delete 2>/dev/null || true
-            ok "已清除旧安装"
+            info "清除旧安装 (保留配置、聊天记录等用户数据)..."
+            # 只删除安装脚本创建的目录，保留用户数据
+            # (configs/, workspace/, logs/ 等不受影响)
+            rm -rf "$INSTALL_DIR/bin" "$INSTALL_DIR/packages" 2>/dev/null || true
+            ok "已清除旧安装 (bin/ + packages/)"
         else
             die "用户取消安装"
         fi
@@ -459,6 +460,8 @@ create_launcher() {
 
     local launcher="$bin_dir/opendrsai"
     local tui_dir="$SRC_ROOT/apps/ui-tui"
+    local venv_python="$INSTALL_DIR/packages/venv/bin/python"
+    local src_root="$SRC_ROOT"
     cat > "$launcher" <<LAUNCHER_EOF
 #!/usr/bin/env bash
 set -e
@@ -466,6 +469,11 @@ set -e
 INSTALL_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")/.." && pwd)"
 export DRSAI_HOME="\${DRSAI_HOME:-\$INSTALL_DIR}"
 export DRSAI_UI_TUI_DIR="$tui_dir"
+# 关键：告诉 TUI 用 venv 里的 Python 来启动 gateway 子进程
+# 否则 TUI 会 fallback 到系统 python3 (没有 drsai 及其依赖)
+export DRSAI_PYTHON="$venv_python"
+export DRSAI_PYTHON_SRC_ROOT="$src_root/cores/python/packages/drsai/src"
+export VIRTUAL_ENV="\$INSTALL_DIR/packages/venv"
 export PATH="\$INSTALL_DIR/packages/node/bin:\$PATH"
 exec "\$INSTALL_DIR/packages/venv/bin/python" -m drsai.backend.run_cli "\$@"
 LAUNCHER_EOF

@@ -90,6 +90,23 @@ opendrsai
 └── .download/               # 临时下载目录 (安装后自动删除)
 ```
 
+### 启动脚本 `opendrsai` 内部设置的环境变量
+
+启动脚本在执行 `python -m drsai.backend.run_cli` 前会设置以下环境变量：
+
+```bash
+export DRSAI_HOME="$INSTALL_DIR"                          # 安装根目录
+export DRSAI_UI_TUI_DIR="$INSTALL_DIR/packages/src/.../apps/ui-tui"
+export DRSAI_PYTHON="$INSTALL_DIR/packages/venv/bin/python"  # ★ 关键：TUI 用此 Python 启动 gateway
+export DRSAI_PYTHON_SRC_ROOT="$SRC_ROOT/cores/python/packages/drsai/src"
+export VIRTUAL_ENV="$INSTALL_DIR/packages/venv"
+export PATH="$INSTALL_DIR/packages/node/bin:$PATH"
+```
+
+> `DRSAI_PYTHON` 是**必须**的：TUI 的 Node.js 进程会用它来 spawn gateway 子进程。
+> 如果不设置，TUI 会 fallback 到系统 `python3`（没有 drsai 及其依赖），导致
+> `gateway exited (code=1) before ready` 错误。
+
 ## 安装流程 (10 步)
 
 ```
@@ -103,6 +120,10 @@ opendrsai
 8. 构建 TUI        → cd apps/ui-tui && pnpm install (3次重试) && pnpm build
 9. 创建启动脚本    → 生成 bin/opendrsai，硬编码环境路径
 10. 验证           → 检查 drsai 导入、版本、TUI bundle、Python、Node
+```
+
+> **覆盖安装时只删除 `bin/` 和 `packages/`**，不会删除 `configs/`、`workspace/`、`logs/` 等用户数据目录。
+> 用户的聊天记录、API 密钥配置、日志等在升级时完整保留。
 ```
 
 ## CONFIG 配置区
@@ -190,6 +211,9 @@ $NODE_URL   = "$IHEPBOX/SwjEFncFIEqOXYK/download"     # Node (windows-x64)
 |------|------|
 | `DRSAI_HOME` | 安装根目录 (默认 `~/.drsai`) |
 | `DRSAI_UI_TUI_DIR` | TUI 前端目录 (指向 `packages/src/.../apps/ui-tui`) |
+| `DRSAI_PYTHON` | venv 中的 Python 可执行文件路径 (**必须设置**，否则 TUI 会用系统 python3 启动 gateway 子进程，导致 ImportError) |
+| `DRSAI_PYTHON_SRC_ROOT` | drsai 源码包路径 (用于 PYTHONPATH，指向 `cores/python/packages/drsai/src`) |
+| `VIRTUAL_ENV` | venv 目录路径 (备用 Python 解析，某些工具会检查此变量) |
 | `PATH` | 前置 `packages/node/bin` 以确保 node 可用 |
 
 用户也可手动覆盖：
@@ -231,6 +255,33 @@ opendrsai
 **不依赖**：系统 Python、系统 Node、sudo/admin 权限、系统包管理器。
 
 ## 故障排除
+
+### `gateway exited (code=1) before ready`
+
+这表示 TUI 启动后，Python gateway 子进程立即退出。常见原因：
+
+1. **启动脚本缺少 `DRSAI_PYTHON` 环境变量**：TUI 的 `gatewayClient.ts` 按以下顺序查找 Python：
+   - `DRSAI_PYTHON` → `PYTHON` → `VIRTUAL_ENV/bin/python` → 系统 `python3`
+   - 如果没有设置前三个变量，会使用系统 Python（没有安装 drsai 及其依赖）→ ImportError → code=1
+   - **解决**：确认 `opendrsai` 脚本中有 `export DRSAI_PYTHON="$INSTALL_DIR/packages/venv/bin/python"`
+
+2. **Python 依赖缺失**：手动测试 gateway 能否启动：
+   ```bash
+   # 用 venv Python 直接运行 gateway
+   ~/.drsai/packages/venv/bin/python -m drsai.backend.tui_gateway
+   # 如果报错，检查依赖
+   ~/.drsai/packages/venv/bin/python -c "import drsai; print('OK')"
+   ```
+
+3. **查看崩溃日志**：
+   ```bash
+   cat ~/.drsai/logs/tui_gateway_crash.log
+   ```
+
+4. **检查 PYTHONPATH**：TUI 会设置 `PYTHONPATH` 指向源码目录。验证路径是否存在：
+   ```bash
+   ls ~/.drsai/packages/src/*/cores/python/packages/drsai/src/drsai/__init__.py
+   ```
 
 ### TUI 依赖安装失败
 
