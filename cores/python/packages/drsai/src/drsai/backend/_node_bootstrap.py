@@ -112,16 +112,16 @@ def _candidate_mirrors() -> list[str]:
     return list(dict.fromkeys(candidates))
 
 
-def _open_url(url: str, timeout: int):
+def _open_url(url: str, timeout: int, use_proxy: bool = True):
     """Open a URL using environment or Windows system proxy settings."""
     # urllib.getproxies() reads HTTP(S)_PROXY and, on Windows, the user/system
     # Internet Settings proxy. This also honors NO_PROXY for local endpoints.
-    proxies = urllib.request.getproxies()
+    proxies = urllib.request.getproxies() if use_proxy else {}
     opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies))
     return opener.open(url, timeout=timeout)
 
 
-def _download(url: str, dest: Path) -> None:
+def _download(url: str, dest: Path, use_proxy: bool = True) -> None:
     """Download *url* to *dest* with a progress indicator on stderr."""
     sys.stderr.write(f"  Downloading: {url}\n")
     sys.stderr.flush()
@@ -130,7 +130,7 @@ def _download(url: str, dest: Path) -> None:
     tmp = dest.with_suffix(dest.suffix + ".partial")
 
     try:
-        with _open_url(url, timeout=60) as resp:
+        with _open_url(url, timeout=60, use_proxy=use_proxy) as resp:
             total = int(resp.headers.get("Content-Length", "0") or 0)
             downloaded = 0
             chunk = 64 * 1024
@@ -167,11 +167,14 @@ def _fetch_sha_table(version: str) -> dict[str, str]:
     """Fetch the SHASUMS256.txt for *version* from the mirror; return ``{filename: sha}``."""
     for mirror in _candidate_mirrors():
         url = f"{mirror}/{version}/SHASUMS256.txt"
-        try:
-            with _open_url(url, timeout=30) as resp:
-                text = resp.read().decode("utf-8", errors="replace")
-            break
-        except (urllib.error.URLError, TimeoutError, OSError):
+        for use_proxy in (True, False):
+            try:
+                with _open_url(url, timeout=30, use_proxy=use_proxy) as resp:
+                    text = resp.read().decode("utf-8", errors="replace")
+                break
+            except (urllib.error.URLError, TimeoutError, OSError):
+                continue
+        else:
             continue
     else:
         return {}
@@ -258,12 +261,18 @@ def ensure_portable_node() -> str:
     last_error: Exception | None = None
     for mirror in _candidate_mirrors():
         url = f"{mirror}/{NODE_VERSION}/{archive_name}"
-        try:
-            _download(url, archive_path)
-            break
-        except RuntimeError as exc:
-            last_error = exc
-            sys.stderr.write(f"  Download failed; trying next mirror.\n")
+        for use_proxy in (True, False):
+            try:
+                mode = "proxy" if use_proxy and urllib.request.getproxies() else "direct"
+                sys.stderr.write(f"  Trying {mode}: {mirror}\n")
+                _download(url, archive_path, use_proxy=use_proxy)
+                break
+            except RuntimeError as exc:
+                last_error = exc
+                sys.stderr.write(f"  Download failed; trying alternate connection.\n")
+        else:
+            continue
+        break
     else:
         raise RuntimeError(f"Unable to download {archive_name} from configured or fallback mirrors.") from last_error
 
