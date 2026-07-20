@@ -20,6 +20,7 @@ const steps = [
   ["Packaged app E2E threads", npmScript("verify:e2e-threads"), true, {}],
   ["Packaged app E2E OIDC login", npmScript("verify:e2e-oidc-login"), true, {}],
   ["Backend installer check-only", npmScript("verify:install-check"), true, {}],
+  ["Runtime direct-update policy", npmScript("verify:update-policy"), true, {}],
   ["Runtime update manifest", npmScript("verify:update-manifest"), true, {}],
   ["Release summary", npmScript("summary:win"), true, {}],
   ["Release artifacts", npmScript("verify:artifacts"), true, {}],

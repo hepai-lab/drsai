@@ -12,9 +12,10 @@ parseSemver(updaterPolicy.minimumSafeUpdaterVersion);
 export function resolveMinimumUpdaterVersion(override) {
   const version = String(override || updaterPolicy.minimumSafeUpdaterVersion).trim();
   parseSemver(version);
-  if (compareSemver(version, updaterPolicy.minimumSafeUpdaterVersion) < 0) {
+  if (compareSemver(version, updaterPolicy.minimumSafeUpdaterVersion) !== 0) {
     throw new Error(
-      `minimumUpdaterVersion ${version} is below the safe updater baseline ${updaterPolicy.minimumSafeUpdaterVersion}.`,
+      `minimumUpdaterVersion ${version} must remain at the direct-update baseline ${updaterPolicy.minimumSafeUpdaterVersion}. ` +
+      "Change updater-policy.json in a reviewed compatibility migration instead of overriding a release.",
     );
   }
   return version;

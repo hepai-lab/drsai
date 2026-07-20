@@ -25,6 +25,7 @@
     "generate:fork-import-index": "node scripts/generate-fork-import-index.mjs",
     "summary:win": "node scripts/create-release-summary.mjs",
     "manifest:win": "node scripts/create-runtime-update-manifest.mjs",
+    "verify:update-policy": "node scripts/verify-runtime-update-policy.mjs",
     "verify:update-manifest": "node scripts/verify-runtime-update-manifest.mjs",
     "verify:update-legacy-beta": "node scripts/verify-legacy-beta-update-contract.mjs",
     "verify:public-release": "node scripts/verify-public-runtime-release.mjs",
