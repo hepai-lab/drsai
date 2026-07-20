@@ -1,4 +1,4 @@
-"""Slash command definitions and autocomplete for the DrSai CLI.
+"""Slash command definitions and autocomplete for the OpenDrSai CLI.
 
 Central registry for all slash commands. Every consumer -- CLI help, REPL
 dispatch, autocomplete -- derives its data from ``COMMAND_REGISTRY``.

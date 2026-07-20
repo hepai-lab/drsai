@@ -10,16 +10,19 @@ import {
   useState,
 } from "react";
 import {
-  ArrowUpRight,
   Bot,
   Brain,
+  Bug,
+  Check,
   ChevronDown,
   ChevronRight,
   ClipboardList,
   FileCode2,
+  Folder,
   FolderPlus,
   Gauge,
   Globe2,
+  Hammer,
   Info,
   Mic,
   MicOff,
@@ -29,13 +32,16 @@ import {
   Plus,
   RefreshCw,
   Search,
+  ScanSearch,
   Send,
   Square,
   TextCursorInput,
   Terminal,
+  Telescope,
   Volume2,
   X,
 } from "lucide-react";
+import drsaiLogo from "../assets/drsai.png";
 import { canHandleMemoryRequestLocally } from "../userPreferenceIntent";
 import type {
   ChatMessage,
@@ -60,6 +66,7 @@ import type {
   WorkspaceFolderSummaryRequest,
   WorkspaceFolderSummaryResult,
   WorkspaceInstructionSummary,
+  WorkspaceProject,
 } from "@shared/desktopApi";
 import type { ChatAttachment } from "@shared/desktopApi";
 import type { ArtifactPart, CitationPart, InteractionPart, StructuredTurnState } from "@shared/structuredConversation";
@@ -194,13 +201,17 @@ interface ChatWorkspaceProps {
   externalAttachments?: ChatAttachment[];
   ideContext?: DesktopIdeContextSnapshot | null;
   workspaceInstructions?: WorkspaceInstructionSummary[];
+  workspaceName?: string;
   workspacePath?: string;
   workspaceLocation?: "local" | "remote";
+  workspaceOptions?: WorkspaceProject[];
+  selectedWorkspaceId?: string;
   onAbort: () => void;
   onClearExternalAttachments?: () => void;
   onClearRuntimeMode?: () => void;
   onInputChange: (value: string) => void;
   onSelectAgent?: (agentId: string) => void;
+  onSelectWorkspace?: (workspaceId: string) => void;
   onSelectModel?: (model: string) => void;
   onOpenExternal: (url: string) => void;
   onOpenPreviewBrowser?: (url?: string) => void;
@@ -241,13 +252,17 @@ export function ChatWorkspace({
   externalAttachments = [],
   ideContext,
   workspaceInstructions = [],
+  workspaceName,
   workspacePath = "",
   workspaceLocation = "local",
+  workspaceOptions = [],
+  selectedWorkspaceId,
   onAbort,
   onClearExternalAttachments,
   onClearRuntimeMode,
   onInputChange,
   onSelectAgent,
+  onSelectWorkspace,
   onSelectModel,
   onOpenExternal,
   onOpenPreviewBrowser,
@@ -275,6 +290,8 @@ export function ChatWorkspace({
   const [thinkingEffort, setThinkingEffort] = useState<ThinkingEffort>(defaultThinkingEffort);
   const [searchOpen, setSearchOpen] = useState(false);
   const [metaMenuOpen, setMetaMenuOpen] = useState<"agent" | "model" | "thinking" | null>(null);
+  const [introMenuOpen, setIntroMenuOpen] = useState<"workspace" | "agent" | null>(null);
+  const [introSearchQuery, setIntroSearchQuery] = useState("");
   const [forkQueueAgentSelections, setForkQueueAgentSelections] = useState<Record<number, string>>({});
   const [searchQuery, setSearchQuery] = useState("");
   const [activeMatchIndex, setActiveMatchIndex] = useState(0);
@@ -452,9 +469,13 @@ export function ChatWorkspace({
     transcribe: transcribeVoiceBlob,
   } = useVoiceTranscription(setVoiceProgressMessage);
   const [respondedInputRequests, setRespondedInputRequests] = useState<Set<string>>(() => new Set());
+  const [turnRailMarkers, setTurnRailMarkers] = useState<Array<{ id: string; top: number }>>([]);
+  const [activeTurnRailId, setActiveTurnRailId] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const messageListRef = useRef<HTMLDivElement | null>(null);
+  const composerRef = useRef<HTMLFormElement | null>(null);
   const attachmentButtonRef = useRef<HTMLButtonElement | null>(null);
+  const introPickerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!toolsOpen && !metaMenuOpen) return;
@@ -471,6 +492,23 @@ export function ChatWorkspace({
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
   }, [metaMenuOpen, toolsOpen]);
+
+  useEffect(() => {
+    if (!introMenuOpen) return;
+    const closeOnPointerDown = (event: PointerEvent): void => {
+      if (introPickerRef.current?.contains(event.target as Node)) return;
+      setIntroMenuOpen(null);
+    };
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") setIntroMenuOpen(null);
+    };
+    window.addEventListener("pointerdown", closeOnPointerDown);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("pointerdown", closeOnPointerDown);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [introMenuOpen]);
 
   useEffect(() => {
     const openModelPicker = (): void => setMetaMenuOpen("model");
@@ -556,13 +594,22 @@ export function ChatWorkspace({
     () => parseAgentExamples(samplePrompts, language),
     [samplePrompts, language],
   );
-  const [samplePromptsExpanded, setSamplePromptsExpanded] = useState(false);
-  const visibleSamplePrompts = samplePromptsExpanded
-    ? parsedSamplePrompts
-    : parsedSamplePrompts.slice(0, 4);
-  const hiddenSamplePromptCount = Math.max(0, parsedSamplePrompts.length - 4);
-  const showSamplePrompts =
-    emptyChat && !input.trim() && parsedSamplePrompts.length > 0;
+  const emptyChatPrompts = useMemo(
+    () => getEmptyChatPrompts(parsedSamplePrompts, zh),
+    [parsedSamplePrompts, zh],
+  );
+  const activeWorkspaceName = workspaceName?.trim() || getWorkspaceDisplayName(workspacePath, zh);
+  const normalizedIntroSearch = introSearchQuery.trim().toLocaleLowerCase();
+  const filteredIntroWorkspaces = workspaceOptions.filter((workspace) =>
+    !normalizedIntroSearch
+      || workspace.name.toLocaleLowerCase().includes(normalizedIntroSearch)
+      || workspace.path.toLocaleLowerCase().includes(normalizedIntroSearch),
+  );
+  const filteredIntroAgents = agentOptions.filter((agent) =>
+    !normalizedIntroSearch
+      || agent.name.toLocaleLowerCase().includes(normalizedIntroSearch)
+      || getAgentOptionMeta(agent, zh).toLocaleLowerCase().includes(normalizedIntroSearch),
+  );
   const slashCommandQuery = input.trimStart().startsWith("/")
     ? input.trimStart().slice(1).toLowerCase()
     : "";
@@ -854,10 +901,6 @@ export function ChatWorkspace({
   }, []);
 
   useEffect(() => {
-    setSamplePromptsExpanded(false);
-  }, [samplePrompts, language]);
-
-  useEffect(() => {
     const paths = [...new Set(attachments
       .filter((item) => item.kind === "file" && !item.blockedReason)
       .map((item) => item.path))];
@@ -943,6 +986,22 @@ export function ChatWorkspace({
   }, [input]);
 
   useEffect(() => {
+    const composer = composerRef.current;
+    const messageList = messageListRef.current;
+    if (!composer || !messageList || emptyChat) return;
+    const updateComposerHeight = (): void => {
+      messageList.style.setProperty("--chat-composer-height", `${composer.offsetHeight}px`);
+    };
+    updateComposerHeight();
+    const observer = new ResizeObserver(updateComposerHeight);
+    observer.observe(composer);
+    return () => {
+      observer.disconnect();
+      messageList.style.removeProperty("--chat-composer-height");
+    };
+  }, [emptyChat]);
+
+  useEffect(() => {
     setActiveMatchIndex(0);
   }, [searchQuery]);
 
@@ -1009,10 +1068,63 @@ export function ChatWorkspace({
     list.scrollTo({ top: list.scrollHeight, behavior: messages.some((message) => message.streaming) ? "auto" : "smooth" });
   }, [messages]);
 
+  const updateTurnRail = useCallback((): void => {
+    const list = messageListRef.current;
+    if (!list) return;
+    const nodes = [...list.querySelectorAll<HTMLElement>(".message.user[data-message-id]")];
+    const scrollHeight = Math.max(list.scrollHeight, 1);
+    const viewportCenter = list.scrollTop + list.clientHeight / 2;
+    let nearestId: string | null = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    const markers = nodes.flatMap((node) => {
+      const id = node.dataset.messageId;
+      if (!id) return [];
+      const center = node.offsetTop + node.offsetHeight / 2;
+      const distance = Math.abs(center - viewportCenter);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestId = id;
+      }
+      return [{ id, top: Math.max(1, Math.min(99, (center / scrollHeight) * 100)) }];
+    });
+    setTurnRailMarkers(markers);
+    setActiveTurnRailId(nearestId);
+  }, []);
+
+  useEffect(() => {
+    const list = messageListRef.current;
+    if (!list || emptyChat) {
+      setTurnRailMarkers([]);
+      setActiveTurnRailId(null);
+      return undefined;
+    }
+    const frame = window.requestAnimationFrame(updateTurnRail);
+    const observer = new ResizeObserver(updateTurnRail);
+    observer.observe(list);
+    window.addEventListener("resize", updateTurnRail);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+      window.removeEventListener("resize", updateTurnRail);
+    };
+  }, [emptyChat, messages, updateTurnRail]);
+
+  function scrollToUserTurn(messageId: string): void {
+    const list = messageListRef.current;
+    const message = list?.querySelector<HTMLElement>(
+      `.message.user[data-message-id="${CSS.escape(messageId)}"]`,
+    );
+    if (!list || !message) return;
+    shouldFollowOutputRef.current = false;
+    setActiveTurnRailId(messageId);
+    list.scrollTo({ top: Math.max(0, message.offsetTop - 18), behavior: "smooth" });
+  }
+
   function handleMessageListScroll(): void {
     const list = messageListRef.current;
     if (!list) return;
     shouldFollowOutputRef.current = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+    updateTurnRail();
   }
 
   useEffect(() => {
@@ -1396,6 +1508,18 @@ export function ChatWorkspace({
   function selectAgent(agentId: string): void {
     onSelectAgent?.(agentId);
     setMetaMenuOpen(null);
+    setIntroMenuOpen(null);
+    textareaRef.current?.focus();
+  }
+
+  function toggleIntroMenu(menu: "workspace" | "agent"): void {
+    setIntroSearchQuery("");
+    setIntroMenuOpen((current) => (current === menu ? null : menu));
+  }
+
+  function selectWorkspace(workspaceId: string): void {
+    onSelectWorkspace?.(workspaceId);
+    setIntroMenuOpen(null);
     textareaRef.current?.focus();
   }
 
@@ -1683,7 +1807,7 @@ export function ChatWorkspace({
       )}
       {!emptyChat && (
       <div className="message-list" ref={messageListRef} onScroll={handleMessageListScroll}>
-        {messages.map((message) => {
+        {messages.filter((message) => message.id !== "welcome").map((message) => {
           const assistantContent = message.role === "assistant"
             ? getAssistantDisplayContent(message)
             : message.content;
@@ -1774,10 +1898,118 @@ export function ChatWorkspace({
         })}
       </div>
       )}
+      {!emptyChat && turnRailMarkers.length > 0 ? (
+        <nav className="conversation-turn-rail" aria-label={zh ? "用户输入定位" : "User message navigation"}>
+          {turnRailMarkers.map((marker, index) => {
+            const message = messages.find((item) => item.id === marker.id);
+            const label = message?.content.trim().replace(/\s+/g, " ") || `${zh ? "用户输入" : "User message"} ${index + 1}`;
+            return (
+              <button
+                key={marker.id}
+                type="button"
+                className={marker.id === activeTurnRailId ? "active" : ""}
+                style={{ top: `${marker.top}%` }}
+                title={label}
+                aria-label={`${zh ? "定位到用户输入" : "Go to user message"} ${index + 1}: ${label.slice(0, 80)}`}
+                onClick={() => scrollToUserTurn(marker.id)}
+              />
+            );
+          })}
+        </nav>
+      ) : null}
       {emptyChat && (
-        <div className="empty-chat-agent-title" role="group" aria-label={zh ? "当前智能体" : "Current Agent"}>
-          <strong>{activeAgentName}</strong>
-          <span>{workspaceLocationLabel}</span>
+        <div className="empty-chat-intro" role="group" aria-label={zh ? "新建会话" : "New conversation"}>
+          <img className="empty-chat-logo" src={drsaiLogo} alt="OpenDrSai" />
+          <h1>
+            <span>
+              {zh ? "在" : "In"}
+              <span className="empty-chat-selector" ref={introMenuOpen === "workspace" ? introPickerRef : undefined}>
+                <button
+                  type="button"
+                  className="empty-chat-selector-trigger"
+                  title={`${activeWorkspaceName} · ${workspaceLocationLabel}`}
+                  aria-expanded={introMenuOpen === "workspace"}
+                  onClick={() => toggleIntroMenu("workspace")}
+                >
+                  <strong>{activeWorkspaceName}</strong>
+                  <ChevronDown size={17} aria-hidden />
+                </button>
+                {introMenuOpen === "workspace" ? (
+                  <div className="empty-chat-selector-menu" role="dialog" aria-label={zh ? "切换工作区" : "Switch workspace"}>
+                    <label className="empty-chat-selector-search">
+                      <Search size={15} aria-hidden />
+                      <input
+                        autoFocus
+                        value={introSearchQuery}
+                        onChange={(event) => setIntroSearchQuery(event.target.value)}
+                        placeholder={zh ? "搜索工作区" : "Search workspaces"}
+                      />
+                    </label>
+                    <div className="empty-chat-selector-list">
+                      {filteredIntroWorkspaces.map((workspace) => (
+                        <button
+                          type="button"
+                          key={workspace.id}
+                          className={workspace.id === selectedWorkspaceId ? "active" : ""}
+                          onClick={() => selectWorkspace(workspace.id)}
+                        >
+                          {workspace.location === "remote" ? <Globe2 size={16} /> : <Folder size={16} />}
+                          <span><b>{workspace.name}</b><small>{workspace.location === "remote" ? (zh ? "远程" : "Remote") : (zh ? "本机" : "Local")}</small></span>
+                          {workspace.id === selectedWorkspaceId ? <Check size={16} aria-label={zh ? "当前工作区" : "Current workspace"} /> : null}
+                        </button>
+                      ))}
+                      {filteredIntroWorkspaces.length === 0 ? <p>{zh ? "没有匹配的工作区" : "No matching workspaces"}</p> : null}
+                    </div>
+                  </div>
+                ) : null}
+              </span>
+              {zh ? "工作区，" : "workspace,"}
+            </span>
+            <span>
+              {zh ? "用" : "What should we do with"}
+              <span className="empty-chat-selector" ref={introMenuOpen === "agent" ? introPickerRef : undefined}>
+                <button
+                  type="button"
+                  className="empty-chat-selector-trigger"
+                  disabled={!hasAgentOptions}
+                  aria-expanded={introMenuOpen === "agent"}
+                  onClick={() => toggleIntroMenu("agent")}
+                >
+                  <strong>{activeAgentName}</strong>
+                  <ChevronDown size={17} aria-hidden />
+                </button>
+                {introMenuOpen === "agent" ? (
+                  <div className="empty-chat-selector-menu" role="dialog" aria-label={zh ? "切换智能体" : "Switch agent"}>
+                    <label className="empty-chat-selector-search">
+                      <Search size={15} aria-hidden />
+                      <input
+                        autoFocus
+                        value={introSearchQuery}
+                        onChange={(event) => setIntroSearchQuery(event.target.value)}
+                        placeholder={zh ? "搜索智能体" : "Search agents"}
+                      />
+                    </label>
+                    <div className="empty-chat-selector-list">
+                      {filteredIntroAgents.map((agent) => (
+                        <button
+                          type="button"
+                          key={agent.id}
+                          className={agent.id === selectedAgentId ? "active" : ""}
+                          onClick={() => selectAgent(agent.id)}
+                        >
+                          <Bot size={16} />
+                          <span><b>{agent.name}</b><small>{getAgentOptionMeta(agent, zh)}</small></span>
+                          {agent.id === selectedAgentId ? <Check size={16} aria-label={zh ? "当前智能体" : "Current agent"} /> : null}
+                        </button>
+                      ))}
+                      {filteredIntroAgents.length === 0 ? <p>{zh ? "没有匹配的智能体" : "No matching agents"}</p> : null}
+                    </div>
+                  </div>
+                ) : null}
+              </span>
+              {zh ? "智能体，做什么呢？" : "?"}
+            </span>
+          </h1>
           {emptyChatPreferenceNotice ? (
             <div className="remembered-preferences-notice" data-testid="remembered-preferences-notice" role="status">
               {emptyChatPreferenceNotice}
@@ -1785,7 +2017,27 @@ export function ChatWorkspace({
           ) : null}
         </div>
       )}
+      {emptyChat && (
+        <section className="sample-prompts" aria-label={zh ? "示例任务" : "Example tasks"}>
+          {emptyChatPrompts.map((prompt, index) => {
+            const PromptIcon = [Telescope, Hammer, ScanSearch, Bug][index] ?? Telescope;
+            return (
+              <button
+                className={`sample-prompt-card sample-prompt-card-${index + 1}`}
+                key={`${index}-${prompt.slice(0, 32)}`}
+                type="button"
+                title={prompt}
+                onClick={() => selectSamplePrompt(prompt)}
+              >
+                <PromptIcon size={18} aria-hidden />
+                <span>{prompt}</span>
+              </button>
+            );
+          })}
+        </section>
+      )}
       <form
+        ref={composerRef}
         className="composer"
         data-voice-turn-phase={displayedVoicePhase}
         data-streaming-speech-segments={assistantSpeechSegments.segments.length}
@@ -2338,7 +2590,6 @@ export function ChatWorkspace({
                 <button
                   className="composer-meta-chip composer-meta-button"
                   type="button"
-                  disabled={!hasModelOptions}
                   aria-expanded={metaMenuOpen === "model"}
                   onClick={() => toggleMetaMenu("model")}
                 >
@@ -2349,7 +2600,7 @@ export function ChatWorkspace({
                 </button>
                 {metaMenuOpen === "model" && (
                   <div className="composer-meta-menu wide">
-                    {modelOptions.map((model) => (
+                    {hasModelOptions ? modelOptions.map((model) => (
                       <button
                         key={model.alias || model.model}
                         type="button"
@@ -2359,7 +2610,7 @@ export function ChatWorkspace({
                         <span>{getModelOptionLabel(model)}</span>
                         <small>{getModelOptionMeta(model)}</small>
                       </button>
-                    ))}
+                    )) : <p className="composer-meta-menu-empty">{zh ? "暂无可用模型" : "No models available"}</p>}
                   </div>
                 )}
               </div>
@@ -2447,7 +2698,7 @@ export function ChatWorkspace({
                 <button
                   type="button"
                   className={`composer-icon-button composer-voice-button ${voiceState === "recording" ? "recording" : ""}`}
-                  disabled={!canChat || showStop || voiceState === "requesting_permission" || voiceState === "processing"}
+                  disabled={showStop || voiceState === "requesting_permission" || voiceState === "processing"}
                   aria-pressed={voiceState === "recording"}
                   aria-label={
                     voiceState === "recording" || streamingVoiceInput.phase === "streaming"
@@ -2481,40 +2732,6 @@ export function ChatWorkspace({
           </div>
         </div>
       </form>
-      {showSamplePrompts && (
-        <section className="sample-prompts" aria-label="Example prompts">
-          {visibleSamplePrompts.map((prompt, index) => (
-            <button
-              className="sample-prompt-row"
-              key={`${index}-${prompt.slice(0, 32)}`}
-              type="button"
-              title={prompt}
-              onClick={() => selectSamplePrompt(prompt)}
-            >
-              <span>{prompt}</span>
-              <ArrowUpRight size={15} aria-hidden />
-            </button>
-          ))}
-          {hiddenSamplePromptCount > 0 && (
-            <button
-              className="sample-prompt-more"
-              type="button"
-              onClick={() => setSamplePromptsExpanded((expanded) => !expanded)}
-            >
-              <span>
-                {samplePromptsExpanded
-                  ? "Less examples"
-                  : `More (${hiddenSamplePromptCount})`}
-              </span>
-              <ChevronDown
-                className={samplePromptsExpanded ? "expanded" : ""}
-                size={15}
-                aria-hidden
-              />
-            </button>
-          )}
-        </section>
-      )}
       </div>
     </div>
   );
@@ -3423,15 +3640,15 @@ function getModelOptionMeta(model: MyDrSaiModelConfig): string {
     .join(" / ");
 }
 
-function getAgentOptionMeta(agent: DesktopAgent, _zh: boolean): string {
-  const source = agent.source === "local" ? "Local" : "Online";
+function getAgentOptionMeta(agent: DesktopAgent, zh: boolean): string {
+  const source = agent.source === "local" ? (zh ? "本机" : "Local") : (zh ? "在线" : "Online");
   const status =
     agent.status === "running"
-      ? "Running"
+      ? zh ? "运行中" : "Running"
       : agent.status === "stopped"
-        ? "Stopped"
-        : "Unreachable";
-  return `${source} 路 ${status}`;
+        ? zh ? "未启动" : "Stopped"
+        : zh ? "不可达" : "Unreachable";
+  return `${source} · ${status}`;
 }
 
 function getThinkingEffortLabel(effort: ThinkingEffort, zh: boolean): string {
@@ -3508,6 +3725,29 @@ function parseAgentExamples(
       return "";
     })
     .filter((item) => item.length > 0);
+}
+
+function getEmptyChatPrompts(agentPrompts: string[], zh: boolean): string[] {
+  const fallbacks = zh
+    ? [
+        "探索并理解当前工作区",
+        "构建新功能、应用或工具",
+        "审查现有内容并提出改进建议",
+        "定位并修复问题或失败",
+      ]
+    : [
+        "Explore and understand this workspace",
+        "Build a new feature, app, or tool",
+        "Review the current work and suggest improvements",
+        "Find and fix a problem or failure",
+      ];
+  return [...new Set([...agentPrompts, ...fallbacks])].slice(0, 4);
+}
+
+function getWorkspaceDisplayName(workspacePath: string | undefined, zh: boolean): string {
+  const normalized = workspacePath?.trim().replace(/[\\/]+$/, "") ?? "";
+  const name = normalized.split(/[\\/]/).filter(Boolean).at(-1);
+  return name || (zh ? "当前" : "current workspace");
 }
 
 function parseJsonIfObject(value: string): unknown {

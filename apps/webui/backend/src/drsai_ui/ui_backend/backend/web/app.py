@@ -176,9 +176,9 @@ app.add_middleware(
 # Create API router with version and documentation
 api = FastAPI(
     root_path="/api",
-    title="DrSai-UI API",
+    title="OpenDrSai-UI API",
     version=VERSION,
-    description="DrSai-UI API is an application to interact with web agents.",
+    description="OpenDrSai-UI API is an application to interact with web agents.",
     docs_url="/docs" if settings.API_DOCS else None,
 )
 

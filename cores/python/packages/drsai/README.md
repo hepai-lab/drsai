@@ -1,6 +1,6 @@
 # DrSai
 
-> A framework for developing AI Agent and Multi-Agent Systems, based on AutoGen 0.5.7. Developed by Dr. Sai's team at IHEP, CAS.
+> A framework for developing AI Agent and Multi-Agent Systems, based on the BAMS (Brain-Actuators-Memory-Sensors) architecture. Developed by Dr. Sai's team at IHEP, CAS.
 
 ---
 

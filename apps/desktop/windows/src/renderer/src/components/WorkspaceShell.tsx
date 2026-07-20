@@ -6,12 +6,15 @@ import {
   CalendarClock,
   ChevronDown,
   Cloud,
+  Copy,
+  FileText,
   Monitor,
   FolderCode,
   FolderPlus,
   GitBranch,
   GitMerge,
   HelpCircle,
+  Info,
   Keyboard,
   IdCard,
   LogOut,
@@ -19,10 +22,15 @@ import {
   MessageSquarePlus,
   Minimize2,
   MoreHorizontal,
+  PackageOpen,
+  PanelLeft,
+  PanelRight,
   RefreshCw,
+  RotateCcw,
+  RotateCw,
   Search,
   Settings,
-  Rows3,
+  Scissors,
   Trash2,
   X,
 } from "lucide-react";
@@ -31,6 +39,7 @@ import type {
   AuthUser,
   CreateWorkspaceRequest,
   DesktopForkLifecycleAction,
+  DesktopEditCommand,
   DesktopThreadContentSearchResult,
   DesktopThreadForkMetadata,
   DesktopWorktreeListRequest,
@@ -41,7 +50,8 @@ import type {
   WorkspaceGitDiffResult,
   WorkspaceProject,
 } from "@shared/desktopApi";
-import drsaiLogo from "../assets/drsai-transparent.png";
+import drsaiLogo from "../assets/drsai.png";
+import { desktopApi } from "../desktopApi";
 import { MENU_IDS, type AppLanguage, type NavId, type NavSection, type RightTab } from "../navigation";
 import {
   getConflictMarkerCount,
@@ -120,7 +130,6 @@ interface WorkspaceShellProps {
   rightPanelCollapsed: boolean;
   rightTabIcons: Record<RightTab, LucideIcon>;
   rightTabs: Array<{ id: RightTab; label: string }>;
-  sessionScope: "workspace" | "all";
   sidebarCollapsed: boolean;
   sidebarComponents: {
     square: boolean;
@@ -129,6 +138,7 @@ interface WorkspaceShellProps {
   };
   user: AuthUser | null;
   workspaceSortMode: "recent" | "name" | "created";
+  workspaceThreads: WorkspaceThread[];
   workspaces: WorkspaceProject[];
   onGoBack: () => void;
   onGoForward: () => void;
@@ -149,6 +159,7 @@ interface WorkspaceShellProps {
   onCreateWorkspaceSession: (workspace: WorkspaceProject) => void | Promise<void>;
   onCreateWorktreeSession: (worktree: DesktopWorktreeSummary) => void | Promise<void>;
   onNewChat: () => void;
+  onOpenWorkspaceResults: (workspaceId: string) => void;
   onOpenWorkspacePath: (path: string) => void | Promise<void>;
   onRefreshWorkspaces: () => void | Promise<void>;
   onRemoveWorkspace: (id: string) => void | Promise<void>;
@@ -170,7 +181,6 @@ interface WorkspaceShellProps {
     threadIds: string[],
   ) => Promise<DesktopThreadContentSearchResult[]>;
   onThreadUpdate: (threadId: string, updates: { title?: string; pinned?: boolean; archived?: boolean; unread?: boolean; fork?: DesktopThreadForkMetadata }) => void | Promise<void>;
-  onToggleSessionScope: () => void;
   onToggleRightPanel: () => void;
   onToggleSidebar: () => void;
   onUpdateWorkspace: (id: string, updates: Partial<Pick<WorkspaceProject, "name" | "description" | "trusted" | "pinned">>) => void | Promise<void>;
@@ -179,6 +189,7 @@ interface WorkspaceShellProps {
 }
 
 type ShortcutId = "newChat" | "newWorkspace" | "find" | "commandPalette" | "back" | "forward" | "toggleSidebar" | "toggleRightPanel" | "modelPicker" | "debug" | "settings" | "shortcuts";
+type WorkbenchMenuId = "file" | "edit" | "layout" | "help";
 
 const SHORTCUT_STORAGE_KEY = "opendrsai.keyboardShortcuts";
 const SHORTCUTS: Array<{ id: ShortcutId; category: "task" | "navigation" | "panels" | "project" | "app"; zh: string; en: string; fallback: string }> = [
@@ -214,11 +225,11 @@ export function WorkspaceShell({
   rightPanelCollapsed,
   rightTabIcons,
   rightTabs,
-  sessionScope,
   sidebarCollapsed,
   sidebarComponents,
   user,
   workspaceSortMode,
+  workspaceThreads,
   workspaces,
   onGoBack,
   onGoForward,
@@ -236,6 +247,7 @@ export function WorkspaceShell({
   onCreateWorktreeSession,
   onNavChange,
   onNewChat,
+  onOpenWorkspaceResults,
   onOpenWorkspacePath,
   onRefreshWorkspaces,
   onRemoveWorkspace,
@@ -246,7 +258,6 @@ export function WorkspaceShell({
   onThreadSelect,
   onSearchThreadMessages,
   onThreadUpdate,
-  onToggleSessionScope,
   onToggleRightPanel,
   onToggleSidebar,
   onUpdateWorkspace,
@@ -257,12 +268,14 @@ export function WorkspaceShell({
   const [shortcutDialogOpen, setShortcutDialogOpen] = useState(false);
   const [shortcutDrafts, setShortcutDrafts] = useState<Record<ShortcutId, string>>(() => loadShortcutSettings());
   const [capturingShortcut, setCapturingShortcut] = useState<ShortcutId | null>(null);
-  const [helpMenuOpen, setHelpMenuOpen] = useState(false);
+  const [openWorkbenchMenu, setOpenWorkbenchMenu] = useState<WorkbenchMenuId | null>(null);
+  const [aboutDialogOpen, setAboutDialogOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [agentsOpen, setAgentsOpen] = useState(true);
-  const [historyOpen, setHistoryOpen] = useState(true);
   const [workspaceOpen, setWorkspaceOpen] = useState(true);
-  const [worktreeOpen, setWorktreeOpen] = useState(true);
+  const [expandedWorkspaceId, setExpandedWorkspaceId] = useState<string | null>(activeWorkspaceId);
+  const [showAllWorkspaceThreads, setShowAllWorkspaceThreads] = useState<Set<string>>(() => new Set());
+  const [worktreeOpen, setWorktreeOpen] = useState(false);
   const [worktrees, setWorktrees] = useState<DesktopWorktreeSummary[]>([]);
   const [worktreesLoading, setWorktreesLoading] = useState(false);
   const [worktreesError, setWorktreesError] = useState<string | null>(null);
@@ -314,7 +327,7 @@ export function WorkspaceShell({
   const [sidebarWidth, setSidebarWidth] = useState(248);
   const [rightPanelWidth, setRightPanelWidth] = useState(420);
   const [rightPanelExpanded, setRightPanelExpanded] = useState(false);
-  const helpMenuRef = useRef<HTMLDivElement | null>(null);
+  const workbenchMenuRef = useRef<HTMLDivElement | null>(null);
   const userMenuRef = useRef<HTMLDivElement | null>(null);
   const commandPaletteRef = useRef<HTMLDivElement | null>(null);
   const commandPaletteInputRef = useRef<HTMLInputElement | null>(null);
@@ -322,7 +335,12 @@ export function WorkspaceShell({
   const contentSearchRequestRef = useRef(0);
   const zh = language === "zh";
   const userInitials = getUserInitials(user, zh);
-  const workbenchMenus = zh ? ["文件", "编辑", "视图"] : ["File", "Edit", "View"];
+  const workbenchMenus: Array<{ id: WorkbenchMenuId; label: string }> = [
+    { id: "file", label: zh ? "文件" : "File" },
+    { id: "edit", label: zh ? "编辑" : "Edit" },
+    { id: "layout", label: zh ? "布局" : "Layout" },
+    { id: "help", label: zh ? "帮助" : "Help" },
+  ];
   const agentItems = sidebarComponents.square
     ? getEnabledNavItems(navSections, "agents").filter((item) =>
         item.id === MENU_IDS.agentSquare
@@ -333,9 +351,25 @@ export function WorkspaceShell({
       )
     : [];
   const agentSectionLabel = navSections.find((section) => section.id === "agents")?.label ?? (zh ? "广场" : "Square");
+  const resultsItem = getEnabledNavItems(navSections, "chat").find((item) => item.id === MENU_IDS.results);
   const workspaceItems = getEnabledNavItems(navSections, "workspace");
   const workspaceDetails = workspaces.find((workspace) => workspace.id === workspaceDetailsId) ?? null;
   const activeWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? workspaces[0] ?? null;
+  const workspaceThreadsById = useMemo(() => {
+    const normalizePath = (path: string | undefined): string =>
+      (path ?? "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+    return new Map(workspaces.map((workspace) => [
+      workspace.id,
+      workspaceThreads.filter((thread) =>
+        thread.workspaceId === workspace.id ||
+        (Boolean(thread.workspacePath) && normalizePath(thread.workspacePath) === normalizePath(workspace.path)),
+      ),
+    ]));
+  }, [workspaces, workspaceThreads]);
+
+  useEffect(() => {
+    setExpandedWorkspaceId(activeWorkspaceId);
+  }, [activeWorkspaceId]);
 
   async function refreshWorktrees(): Promise<void> {
     if (!activeWorkspace?.path) {
@@ -389,7 +423,7 @@ export function WorkspaceShell({
     let disposed = false;
     let reading = false;
     const readEvents = async (): Promise<void> => {
-      if (disposed || reading) return;
+      if (disposed || reading || document.visibilityState !== "visible") return;
       reading = true;
       try {
         const batch = await onListWorktreeEvents({
@@ -407,8 +441,16 @@ export function WorkspaceShell({
       }
     };
     void readEvents();
-    const timer = window.setInterval(() => void readEvents(), 2_000);
-    return () => { disposed = true; window.clearInterval(timer); };
+    const timer = window.setInterval(() => void readEvents(), 5_000);
+    const handleVisibilityChange = (): void => {
+      if (document.visibilityState === "visible") void readEvents();
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   // Event cursors are reset only when the authoritative Workspace changes.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeWorkspace?.id, activeWorkspace?.path]);
@@ -429,8 +471,8 @@ export function WorkspaceShell({
       if (!userMenuRef.current?.contains(event.target as Node)) {
         setUserMenuOpen(false);
       }
-      if (!helpMenuRef.current?.contains(event.target as Node)) {
-        setHelpMenuOpen(false);
+      if (!workbenchMenuRef.current?.contains(event.target as Node)) {
+        setOpenWorkbenchMenu(null);
       }
       if (!commandPaletteRef.current?.contains(event.target as Node)) {
         closeCommandPalette();
@@ -474,7 +516,7 @@ export function WorkspaceShell({
       }
       if (event.key === "Escape") {
         setDesktopStatusOpen(false);
-        setHelpMenuOpen(false);
+        setOpenWorkbenchMenu(null);
         setCommandPaletteOpen(false);
         setThreadMenu(null);
         setRightPanelExpanded(false);
@@ -491,6 +533,63 @@ export function WorkspaceShell({
       setRightPanelExpanded(false);
     }
   }, [rightPanelCollapsed]);
+
+  function closeWorkbenchMenu(): void {
+    setOpenWorkbenchMenu(null);
+  }
+
+  function openCurrentWorkspaceFolder(): void {
+    if (!activeWorkspace?.path) return;
+    closeWorkbenchMenu();
+    void onOpenWorkspacePath(activeWorkspace.path);
+  }
+
+  async function openWorkspaceFolderFromMenu(): Promise<void> {
+    closeWorkbenchMenu();
+    const path = await onPickWorkspaceFolder();
+    if (!path) return;
+    await onCreateWorkspace({
+      source: "existing",
+      path,
+      name: path.split(/[\\/]/).filter(Boolean).pop() || path,
+      description: zh ? "本地工作区" : "Local workspace",
+      trusted: true,
+    });
+  }
+
+  function toggleSidebarFromMenu(): void {
+    closeWorkbenchMenu();
+    onToggleSidebar();
+  }
+
+  function toggleRightPanelFromMenu(): void {
+    closeWorkbenchMenu();
+    onToggleRightPanel();
+  }
+
+  function openDebugPanelFromMenu(): void {
+    closeWorkbenchMenu();
+    if (rightPanelCollapsed) onToggleRightPanel();
+    onRightTabChange("debug");
+  }
+
+  function resetLayoutFromMenu(): void {
+    closeWorkbenchMenu();
+    if (sidebarCollapsed) onToggleSidebar();
+    if (rightPanelCollapsed) onToggleRightPanel();
+    setRightPanelExpanded(false);
+  }
+
+  async function performEditCommand(command: DesktopEditCommand): Promise<void> {
+    closeWorkbenchMenu();
+    await desktopApi.performEditCommand(command).catch(() => false);
+  }
+
+  async function checkUpdatesFromMenu(): Promise<void> {
+    closeWorkbenchMenu();
+    setDesktopStatusOpen(true);
+    await desktopApi.checkForUpdates().catch(() => undefined);
+  }
 
   useEffect(() => {
     setForkConflictPreview(null);
@@ -624,6 +723,17 @@ export function WorkspaceShell({
     setWorkspaceNameDraft("");
     setWorkspaceDescriptionDraft("");
     setWorkspaceDeleteConfirm(false);
+  }
+
+  function openWorkspaceWorktrees(workspace: WorkspaceProject): void {
+    if (workspace.id !== activeWorkspaceId) onWorkspaceChange(workspace.id);
+    setReviewWorktreeId(null);
+    setReviewDiff(null);
+    setReviewError(null);
+    setWorktreeOpen(true);
+    closeWorkspaceDetails();
+    onRightTabChange("files");
+    if (rightPanelCollapsed) onToggleRightPanel();
   }
 
   async function saveWorkspaceDetails(): Promise<void> {
@@ -796,6 +906,36 @@ export function WorkspaceShell({
 
   function getThreadDeepLink(thread: WorkspaceThread): string {
     return `opendrsai://thread/${encodeURIComponent(thread.id)}`;
+  }
+
+  function renderWorkspaceThread(thread: WorkspaceThread): React.JSX.Element {
+    return (
+      <button
+        key={thread.id}
+        type="button"
+        className={`thread-item workspace-thread-item ${thread.active ? "active" : ""}`}
+        onClick={() => onThreadSelect(thread.id)}
+        onContextMenu={(event) => openThreadMenu(event, thread)}
+      >
+        <span>
+          {thread.unread && <b className="thread-unread-dot" aria-hidden />}
+          {thread.pinned && <b className="thread-pinned-mark" aria-hidden>{"\u2022"}</b>}
+          {thread.fork && (
+            <b
+              className={`thread-fork-mark ${thread.fork.queueStatus ? `queue-${thread.fork.queueStatus}` : ""}`}
+              title={[
+                `Fork worktree: ${thread.fork.worktreePath}`,
+                thread.fork.queueStatus ? `Queue: ${thread.fork.queueStatus}` : "",
+              ].filter(Boolean).join("\n")}
+            >
+              {thread.fork.queueStatus === "waiting_approval" ? "Wait" : thread.fork.queueStatus === "ready" ? "Ready" : "Fork"}
+            </b>
+          )}
+          {thread.title}
+        </span>
+        <time>{thread.timeLabel}</time>
+      </button>
+    );
   }
 
   function getThreadForkSummary(thread: WorkspaceThread): string {
@@ -1340,6 +1480,235 @@ export function WorkspaceShell({
     );
   }
 
+  function renderMenuItem(options: {
+    label: string;
+    icon: LucideIcon;
+    onClick: () => void;
+    shortcut?: string;
+    disabled?: boolean;
+  }): React.JSX.Element {
+    const Icon = options.icon;
+    return (
+      <button
+        type="button"
+        role="menuitem"
+        disabled={options.disabled}
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={options.onClick}
+      >
+        <Icon size={15} />
+        <span>{options.label}</span>
+        {options.shortcut ? <kbd>{options.shortcut}</kbd> : null}
+      </button>
+    );
+  }
+
+  function renderWorkbenchMenu(menuId: WorkbenchMenuId): React.JSX.Element {
+    if (menuId === "file") {
+      return (
+        <>
+          {renderMenuItem({
+            label: zh ? "新建任务" : "New task",
+            icon: MessageSquarePlus,
+            shortcut: shortcutDrafts.newChat,
+            onClick: () => {
+              closeWorkbenchMenu();
+              onNewChat();
+            },
+          })}
+          {renderMenuItem({
+            label: zh ? "打开文件夹" : "Open folder",
+            icon: FolderPlus,
+            shortcut: shortcutDrafts.newWorkspace,
+            onClick: () => void openWorkspaceFolderFromMenu(),
+          })}
+          <div className="workbench-menu-separator" role="separator" />
+          {renderMenuItem({
+            label: zh ? "打开当前工作区" : "Open current workspace",
+            icon: FolderCode,
+            disabled: !activeWorkspace?.path,
+            onClick: openCurrentWorkspaceFolder,
+          })}
+        </>
+      );
+    }
+    if (menuId === "edit") {
+      return (
+        <>
+          {renderMenuItem({ label: zh ? "撤销" : "Undo", icon: RotateCcw, shortcut: "Ctrl+Z", onClick: () => void performEditCommand("undo") })}
+          {renderMenuItem({ label: zh ? "重做" : "Redo", icon: RotateCw, shortcut: "Ctrl+Y", onClick: () => void performEditCommand("redo") })}
+          <div className="workbench-menu-separator" role="separator" />
+          {renderMenuItem({ label: zh ? "剪切" : "Cut", icon: Scissors, shortcut: "Ctrl+X", onClick: () => void performEditCommand("cut") })}
+          {renderMenuItem({ label: zh ? "复制" : "Copy", icon: Copy, shortcut: "Ctrl+C", onClick: () => void performEditCommand("copy") })}
+          {renderMenuItem({ label: zh ? "粘贴" : "Paste", icon: Keyboard, shortcut: "Ctrl+V", onClick: () => void performEditCommand("paste") })}
+          {renderMenuItem({ label: zh ? "删除" : "Delete", icon: Trash2, shortcut: "Del", onClick: () => void performEditCommand("delete") })}
+          <div className="workbench-menu-separator" role="separator" />
+          {renderMenuItem({ label: zh ? "全选" : "Select all", icon: PanelRight, shortcut: "Ctrl+A", onClick: () => void performEditCommand("selectAll") })}
+        </>
+      );
+    }
+    if (menuId === "layout") {
+      return (
+        <>
+          {renderMenuItem({
+            label: sidebarCollapsed ? (zh ? "显示左侧栏" : "Show left sidebar") : (zh ? "隐藏左侧栏" : "Hide left sidebar"),
+            icon: PanelLeft,
+            shortcut: shortcutDrafts.toggleSidebar,
+            onClick: toggleSidebarFromMenu,
+          })}
+          {renderMenuItem({
+            label: rightPanelCollapsed ? (zh ? "显示右侧栏" : "Show right sidebar") : (zh ? "隐藏右侧栏" : "Hide right sidebar"),
+            icon: PanelRight,
+            shortcut: shortcutDrafts.toggleRightPanel,
+            onClick: toggleRightPanelFromMenu,
+          })}
+          {renderMenuItem({
+            label: zh ? "打开调试面板" : "Open debug panel",
+            icon: HelpCircle,
+            shortcut: shortcutDrafts.debug,
+            onClick: openDebugPanelFromMenu,
+          })}
+          <div className="workbench-menu-separator" role="separator" />
+          {renderMenuItem({
+            label: zh ? "重置布局" : "Reset layout",
+            icon: RotateCcw,
+            onClick: resetLayoutFromMenu,
+          })}
+        </>
+      );
+    }
+    return (
+      <>
+        {renderMenuItem({
+          label: zh ? "键盘快捷键" : "Keyboard shortcuts",
+          icon: Keyboard,
+          shortcut: shortcutDrafts.shortcuts,
+          onClick: () => {
+            closeWorkbenchMenu();
+            setShortcutDialogOpen(true);
+          },
+        })}
+        {renderMenuItem({
+          label: zh ? "查看诊断信息" : "View diagnostics",
+          icon: HelpCircle,
+          onClick: () => {
+            closeWorkbenchMenu();
+            setDesktopStatusOpen(true);
+          },
+        })}
+        {renderMenuItem({
+          label: zh ? "打开日志文件夹" : "Open log folder",
+          icon: FileText,
+          onClick: () => {
+            closeWorkbenchMenu();
+            void desktopApi.openLogFolder();
+          },
+        })}
+        {renderMenuItem({
+          label: zh ? "检查更新" : "Check for updates",
+          icon: RefreshCw,
+          onClick: () => void checkUpdatesFromMenu(),
+        })}
+        <div className="workbench-menu-separator" role="separator" />
+        {renderMenuItem({
+          label: zh ? "关于 OpenDrSai" : "About OpenDrSai",
+          icon: Info,
+          onClick: () => {
+            closeWorkbenchMenu();
+            setAboutDialogOpen(true);
+          },
+        })}
+      </>
+    );
+  }
+
+  function renderWorktreePanel(): React.JSX.Element {
+    return (
+      <section className="worktree-context-panel" data-testid="runtime-worktree-list" aria-label={zh ? "隔离工作区" : "Isolated Workspaces"}>
+        <header className="worktree-context-header">
+          <div>
+            <GitBranch size={16} />
+            <span>
+              <strong>{zh ? "隔离工作区" : "Isolated Workspaces"}</strong>
+              <small>{activeWorkspace?.name || activeWorkspaceName}</small>
+            </span>
+          </div>
+          <button type="button" aria-label={zh ? "刷新隔离工作区" : "Refresh isolated workspaces"} onClick={() => void refreshWorktrees()} disabled={worktreesLoading}>
+            <RefreshCw size={14} className={worktreesLoading ? "spin" : undefined} />
+          </button>
+        </header>
+        <div className="worktree-context-body">
+          {getWorktreeListMode(worktrees.length, worktreesLoading, worktreesError) === "offline" ? <small className="worktree-error">{worktreesError}</small> : null}
+          {worktreeMigrationDiagnostics.filter((item) => item.status === "pending").map((item) => (
+            <small className="worktree-error" key={`migration-${item.threadId}`} title={item.code}>
+              {zh ? "旧 Fork 等待迁移" : "Legacy Fork migration pending"}: {item.message}
+            </small>
+          ))}
+          {getWorktreeListMode(worktrees.length, worktreesLoading, worktreesError) === "empty" ? (
+            <div className="worktree-empty-state">
+              <GitBranch size={18} />
+              <span>{zh ? "当前工作区没有隔离工作区" : "No isolated workspaces for this Workspace"}</span>
+            </div>
+          ) : null}
+          <div className="worktree-list">
+            {worktrees.map((worktree) => {
+              const linkedThread = searchableThreads.find((thread) => thread.fork?.worktreeId === worktree.worktreeId);
+              const { canMerge, canRemove } = getWorktreeActions(worktree, Boolean(linkedThread));
+              return (
+                <div className={`worktree-row state-${getWorktreeVisualState(worktree)}`} key={worktree.worktreeId}>
+                  <button type="button" className="worktree-main" onClick={() => void onOpenWorkspacePath(worktree.canonicalPath)} title={worktree.canonicalPath}>
+                    <span className="worktree-branch">{worktree.branch}</span>
+                    <span className="worktree-meta">
+                      {worktree.status} · {worktree.location}
+                      {worktree.dirty ? ` · ${zh ? "未提交" : "dirty"}` : ""}
+                      {typeof worktree.ahead === "number" ? ` · ↑${worktree.ahead}` : ""}
+                      {typeof worktree.behind === "number" ? ` ↓${worktree.behind}` : ""}
+                      {worktree.activity.total ? ` · ${worktree.activity.total} ${zh ? "个活动资源" : "active"}` : ""}
+                    </span>
+                  </button>
+                  <div className="worktree-actions">
+                    <button type="button" title={zh ? "查看变更" : "Review changes"} onClick={() => void openWorktreeReview(worktree)}><Search size={13} /></button>
+                    {worktree.workspaceId && worktree.status !== "removed" ? (
+                      <button type="button" title={zh ? "在此隔离工作区新建会话" : "New session in this isolated workspace"} onClick={() => void onCreateWorktreeSession(worktree)}><MessageSquarePlus size={13} /></button>
+                    ) : null}
+                    {canMerge ? (
+                      <button type="button" title={zh ? "申请合并" : "Request merge"} onClick={() => void onRequestForkLifecycle(linkedThread!.id, "merge_back")}><GitMerge size={13} /></button>
+                    ) : null}
+                    {canRemove ? (
+                      <button type="button" title={zh ? "申请归档并清理" : "Request archive and cleanup"} onClick={() => void onRequestForkLifecycle(linkedThread!.id, "discard")}><Trash2 size={13} /></button>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {reviewWorktreeId ? (() => {
+            const worktree = worktrees.find((item) => item.worktreeId === reviewWorktreeId);
+            if (!worktree) return null;
+            const linkedThread = searchableThreads.find((thread) => thread.fork?.worktreeId === worktree.worktreeId);
+            const review = buildWorktreeReview(worktree, linkedThread?.fork, reviewDiff || undefined);
+            return (
+              <section className="worktree-review-panel" data-testid="worktree-review-panel" aria-label="Worktree Review">
+                <header><strong>{zh ? "变更审查" : "Worktree Review"}</strong><button type="button" onClick={() => setReviewWorktreeId(null)} aria-label={zh ? "关闭审查" : "Close Review"}><X size={13} /></button></header>
+                <dl>
+                  <div><dt>{zh ? "分支" : "Branch"}</dt><dd>{review.branch}</dd></div>
+                  <div><dt>{zh ? "提交" : "Commits"}</dt><dd title={review.commitRange}>{review.commitRange}</dd></div>
+                  <div><dt>{zh ? "冲突" : "Conflicts"}</dt><dd className={review.conflict.active ? "is-blocked" : "is-ready"}>{review.conflict.active ? (review.conflict.detail || "present") : "none"}</dd></div>
+                  <div><dt>{zh ? "测试结果" : "Tests"}</dt><dd>{review.tests.status}: {review.tests.detail}</dd></div>
+                  <div><dt>{zh ? "合并就绪" : "Merge readiness"}</dt><dd className={`is-${review.readiness.status}`}>{review.readiness.status}</dd></div>
+                </dl>
+                {review.readiness.reasons.length ? <ul>{review.readiness.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul> : null}
+                {reviewLoading ? <small>{zh ? "正在读取 Runtime diff…" : "Loading Runtime diff…"}</small> : null}
+                {reviewError ? <small className="worktree-error">{reviewError}</small> : null}
+                {!reviewLoading && !reviewError ? <pre>{review.diff || (zh ? "没有 diff" : "No diff")}{review.diffTruncated ? "\n… truncated" : ""}</pre> : null}
+              </section>
+            );
+          })() : null}
+        </div>
+      </section>
+    );
+  }
+
   return (
     <div
       className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}
@@ -1359,49 +1728,25 @@ export function WorkspaceShell({
         >
           <span aria-hidden />
         </button>
-        <div className="workbench-menu-items" role="menubar" aria-label={zh ? "应用菜单" : "Application menu"}>
-          {workbenchMenus.map((label) => (
-            <button key={label} type="button" role="menuitem">
-              {label}
-            </button>
+        <div className="workbench-menu-items" ref={workbenchMenuRef} role="menubar" aria-label={zh ? "应用菜单" : "Application menu"}>
+          {workbenchMenus.map((menu) => (
+            <div className="workbench-menu-dropdown" key={menu.id} role="none">
+              <button
+                type="button"
+                role="menuitem"
+                aria-haspopup="menu"
+                aria-expanded={openWorkbenchMenu === menu.id}
+                onClick={() => setOpenWorkbenchMenu((current) => current === menu.id ? null : menu.id)}
+              >
+                {menu.label}
+              </button>
+              {openWorkbenchMenu === menu.id ? (
+                <div className="workbench-menu-popover" role="menu">
+                  {renderWorkbenchMenu(menu.id)}
+                </div>
+              ) : null}
+            </div>
           ))}
-          <div className="workbench-menu-dropdown" ref={helpMenuRef} role="none">
-            <button
-              type="button"
-              role="menuitem"
-              aria-haspopup="menu"
-              aria-expanded={helpMenuOpen}
-              onClick={() => setHelpMenuOpen((open) => !open)}
-            >
-              {zh ? "帮助" : "Help"}
-            </button>
-            {helpMenuOpen && (
-              <div className="workbench-menu-popover" role="menu">
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setHelpMenuOpen(false);
-                    setShortcutDialogOpen(true);
-                  }}
-                >
-                  <Keyboard size={15} />
-                  {zh ? "键盘快捷键" : "Keyboard shortcuts"}
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setHelpMenuOpen(false);
-                    setDesktopStatusOpen(true);
-                  }}
-                >
-                  <HelpCircle size={15} />
-                  {zh ? "关于 OpenDrSai" : "About OpenDrSai"}
-                </button>
-              </div>
-            )}
-          </div>
         </div>
         <div className="titlebar-center">
           <nav className="titlebar-navigation" aria-label={zh ? "导航" : "Navigation"}>
@@ -1573,9 +1918,20 @@ export function WorkspaceShell({
         </div>
 
         <nav className="sidebar-scroll" aria-label={zh ? "OpenDrSai 侧边栏" : "OpenDrSai sidebar"}>
+          <div className="sidebar-primary-action">
+            <SidebarButton active={activeNav === MENU_IDS.currentSession} icon={MessageSquarePlus} label={zh ? "新建任务" : "New task"} onClick={onNewChat} />
+          </div>
           <div className="sidebar-action-list">
-            <SidebarButton active={activeNav === MENU_IDS.currentSession} icon={MessageSquarePlus} label={zh ? "开始聊天" : "New chat"} onClick={onNewChat} />
             <SidebarButton active={activeNav === MENU_IDS.savedPlan} icon={CalendarClock} label={zh ? "已安排" : "Scheduled"} onClick={() => onNavChange(MENU_IDS.savedPlan)} />
+            {resultsItem ? (
+              <SidebarButton
+                active={activeNav === MENU_IDS.results}
+                icon={navIcons[MENU_IDS.results]}
+                label={resultsItem.label}
+                navId={MENU_IDS.results}
+                onClick={() => onNavChange(MENU_IDS.results)}
+              />
+            ) : null}
           </div>
 
           {agentItems.length > 0 && (
@@ -1583,7 +1939,7 @@ export function WorkspaceShell({
               <div
                 className="workspace-section-header"
               >
-                <span className="workspace-section-title">{agentSectionLabel}</span>
+                <span className="workspace-section-title sidebar-group-title">{agentSectionLabel}</span>
                 <div className="workspace-section-actions">
                   <button
                     className="workspace-section-toggle"
@@ -1637,7 +1993,7 @@ export function WorkspaceShell({
             <div
               className="workspace-section-header"
             >
-              <span className="workspace-section-title">{zh ? "工作区" : "Workspace"}</span>
+              <span className="workspace-section-title sidebar-group-title">{zh ? "工作区" : "Workspace"}</span>
               <div className="workspace-section-actions">
                 <button
                   className={`workspace-sort-button ${workspaceSortMode !== "recent" ? "active" : ""}`}
@@ -1679,205 +2035,89 @@ export function WorkspaceShell({
             </div>
             {workspaceOpen && (
               <div className="workspace-list">
-                {workspaces.map((workspace) => (
-                  <div
-                    key={workspace.id}
-                    className={`workspace-row ${workspace.id === activeWorkspaceId ? "active" : ""}`}
-                  >
-                    <button
-                      type="button"
-                      className="workspace-item"
-                      onClick={() => onWorkspaceChange(workspace.id)}
-                      title={[
-                        workspace.name,
-                        workspace.description,
-                        workspace.location === "remote" && workspace.remote
-                          ? `Remote · ${workspace.remote.hostAlias} · ${workspace.remote.canonicalPath}`
-                          : `Local · ${workspace.path}`,
-                      ].filter(Boolean).join("\n")}
-                    >
-                      <FolderCode size={15} />
-                      <span>
-                        <span className="workspace-item-name">{workspace.name}</span>
-                      </span>
-                    </button>
-                    <button
-                      className="workspace-new-session-button"
-                      type="button"
-                      aria-label={zh ? "在此工作区新建会话" : "New session in this workspace"}
-                      title={zh ? "在此工作区新建会话" : "New session in this workspace"}
-                      onClick={() => void onCreateWorkspaceSession(workspace)}
-                    >
-                      <MessageSquarePlus size={15} />
-                    </button>
-                    <button
-                      className="workspace-details-button"
-                      type="button"
-                      aria-label={zh ? "工作区详情" : "Workspace details"}
-                      title={zh ? "工作区详情" : "Workspace details"}
-                      onClick={() => openWorkspaceDetails(workspace)}
-                    >
-                      <MoreHorizontal size={15} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-            <div className="worktree-section" data-testid="runtime-worktree-list">
-              <div className="worktree-section-heading">
-                <button type="button" onClick={() => setWorktreeOpen((open) => !open)} aria-expanded={worktreeOpen}>
-                  <GitBranch size={13} />
-                  <span>{zh ? "Worktree" : "Worktrees"}</span>
-                  <small>{worktrees.length}</small>
-                </button>
-                <button type="button" aria-label={zh ? "刷新 Worktree" : "Refresh Worktrees"} onClick={() => void refreshWorktrees()} disabled={worktreesLoading}>
-                  <RefreshCw size={12} className={worktreesLoading ? "spin" : undefined} />
-                </button>
-              </div>
-              {worktreeOpen ? (
-                <div className="worktree-list">
-                  {getWorktreeListMode(worktrees.length, worktreesLoading, worktreesError) === "offline" ? <small className="worktree-error">{worktreesError}</small> : null}
-                  {worktreeMigrationDiagnostics.filter((item) => item.status === "pending").map((item) => (
-                    <small className="worktree-error" key={`migration-${item.threadId}`} title={item.code}>
-                      {zh ? "旧 Fork 等待迁移" : "Legacy Fork migration pending"}: {item.message}
-                    </small>
-                  ))}
-                  {getWorktreeListMode(worktrees.length, worktreesLoading, worktreesError) === "empty" ? (
-                    <small className="worktree-empty">{zh ? "当前工作区没有 Worktree" : "No Worktrees in this Workspace"}</small>
-                  ) : null}
-                  {worktrees.map((worktree) => {
-                    const linkedThread = searchableThreads.find((thread) => thread.fork?.worktreeId === worktree.worktreeId);
-                    const { canMerge, canRemove } = getWorktreeActions(worktree, Boolean(linkedThread));
-                    return (
-                      <div className={`worktree-row state-${getWorktreeVisualState(worktree)}`} key={worktree.worktreeId}>
-                        <button type="button" className="worktree-main" onClick={() => void onOpenWorkspacePath(worktree.canonicalPath)} title={worktree.canonicalPath}>
-                          <span className="worktree-branch">{worktree.branch}</span>
-                          <span className="worktree-meta">
-                            {worktree.status} · {worktree.location}
-                            {worktree.dirty ? ` · ${zh ? "未提交" : "dirty"}` : ""}
-                            {typeof worktree.ahead === "number" ? ` · ↑${worktree.ahead}` : ""}
-                            {typeof worktree.behind === "number" ? ` ↓${worktree.behind}` : ""}
-                            {worktree.activity.total ? ` · ${worktree.activity.total} ${zh ? "活动资源" : "active"}` : ""}
-                          </span>
+                {workspaces.map((workspace) => {
+                  const threadsForWorkspace = workspaceThreadsById.get(workspace.id) ?? [];
+                  const expanded = expandedWorkspaceId === workspace.id;
+                  const showAll = showAllWorkspaceThreads.has(workspace.id);
+                  const visibleWorkspaceThreads = showAll ? threadsForWorkspace : threadsForWorkspace.slice(0, 5);
+                  return (
+                    <div className="workspace-tree-node" key={workspace.id}>
+                      <div className={`workspace-row ${workspace.id === activeWorkspaceId ? "active" : ""}`}>
+                        <button
+                          className="workspace-node-toggle"
+                          type="button"
+                          aria-label={expanded ? (zh ? "收起工作区任务" : "Collapse workspace tasks") : (zh ? "展开工作区任务" : "Expand workspace tasks")}
+                          aria-expanded={expanded}
+                          onClick={() => setExpandedWorkspaceId((current) => current === workspace.id ? null : workspace.id)}
+                        >
+                          <ChevronDown size={13} />
                         </button>
-                        <div className="worktree-actions">
-                          <button type="button" title={zh ? "Review 面板" : "Open Review panel"} onClick={() => void openWorktreeReview(worktree)}><Search size={12} /></button>
-                          {worktree.workspaceId && worktree.status !== "removed" ? (
-                            <button type="button" title={zh ? "在此 Worktree 新建会话" : "New session in this Worktree"} onClick={() => void onCreateWorktreeSession(worktree)}><MessageSquarePlus size={12} /></button>
-                          ) : null}
-                          {canMerge ? (
-                            <button type="button" title={zh ? "申请合并" : "Request merge"} onClick={() => void onRequestForkLifecycle(linkedThread!.id, "merge_back")}><GitMerge size={12} /></button>
-                          ) : null}
-                          {canRemove ? (
-                            <button type="button" title={zh ? "申请归档并清理" : "Request archive and cleanup"} onClick={() => void onRequestForkLifecycle(linkedThread!.id, "discard")}><Trash2 size={12} /></button>
-                          ) : null}
-                        </div>
-                      </div>
-                    );
-                  })}
-                  {reviewWorktreeId ? (() => {
-                    const worktree = worktrees.find((item) => item.worktreeId === reviewWorktreeId);
-                    if (!worktree) return null;
-                    const linkedThread = searchableThreads.find((thread) => thread.fork?.worktreeId === worktree.worktreeId);
-                    const review = buildWorktreeReview(worktree, linkedThread?.fork, reviewDiff || undefined);
-                    return (
-                      <section className="worktree-review-panel" data-testid="worktree-review-panel" aria-label="Worktree Review">
-                        <header><strong>{zh ? "Worktree Review" : "Worktree Review"}</strong><button type="button" onClick={() => setReviewWorktreeId(null)} aria-label="Close Review"><X size={12} /></button></header>
-                        <dl>
-                          <div><dt>{zh ? "分支" : "Branch"}</dt><dd>{review.branch}</dd></div>
-                          <div><dt>{zh ? "提交" : "Commits"}</dt><dd title={review.commitRange}>{review.commitRange}</dd></div>
-                          <div><dt>{zh ? "冲突" : "Conflicts"}</dt><dd className={review.conflict.active ? "is-blocked" : "is-ready"}>{review.conflict.active ? (review.conflict.detail || "present") : "none"}</dd></div>
-                          <div><dt>{zh ? "测试结果" : "Tests"}</dt><dd>{review.tests.status}: {review.tests.detail}</dd></div>
-                          <div><dt>{zh ? "合并就绪" : "Merge readiness"}</dt><dd className={`is-${review.readiness.status}`}>{review.readiness.status}</dd></div>
-                        </dl>
-                        {review.readiness.reasons.length ? <ul>{review.readiness.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul> : null}
-                        {reviewLoading ? <small>{zh ? "正在读取 Runtime diff…" : "Loading Runtime diff…"}</small> : null}
-                        {reviewError ? <small className="worktree-error">{reviewError}</small> : null}
-                        {!reviewLoading && !reviewError ? <pre>{review.diff || (zh ? "没有 diff" : "No diff")}{review.diffTruncated ? "\n… truncated" : ""}</pre> : null}
-                      </section>
-                    );
-                  })() : null}
-                </div>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="sidebar-section">
-            <div
-              className="workspace-section-header workspace-session-header"
-            >
-              <span className="workspace-section-title workspace-session-title">
-                <span>{zh ? "会话" : "Sessions"}</span>
-                <small>{sessionScope === "all" ? (zh ? "全部" : "All") : activeWorkspaceName}</small>
-              </span>
-              <div className="workspace-section-actions">
-                <button
-                  className={`workspace-session-mode-button ${sessionScope === "all" ? "active" : ""}`}
-                  type="button"
-                  aria-label={
-                    sessionScope === "all"
-                      ? zh ? "切换为当前工作区会话" : "Show current workspace sessions"
-                      : zh ? "切换为全部会话" : "Show all sessions"
-                  }
-                  title={
-                    sessionScope === "all"
-                      ? zh ? "当前显示全部会话，点击切回当前工作区" : "Showing all sessions. Click to show this workspace."
-                      : zh ? "当前显示当前工作区会话，点击查看全部" : "Showing this workspace. Click to show all sessions."
-                  }
-                  aria-pressed={sessionScope === "all"}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onToggleSessionScope();
-                  }}
-                >
-                  <Rows3 size={14} />
-                </button>
-                <button
-                  className="workspace-section-toggle"
-                  type="button"
-                  aria-label={historyOpen ? (zh ? "收起会话" : "Collapse sessions") : (zh ? "展开会话" : "Expand sessions")}
-                  aria-expanded={historyOpen}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setHistoryOpen((open) => !open);
-                  }}
-                >
-                  <ChevronDown size={14} />
-                </button>
-              </div>
-            </div>
-            {historyOpen && (
-              <div className="thread-list">
-                {recentThreads.map((thread) => (
-                  <button
-                    key={thread.id}
-                    type="button"
-                    className={`thread-item ${thread.active ? "active" : ""}`}
-                    onClick={() => onThreadSelect(thread.id)}
-                    onContextMenu={(event) => openThreadMenu(event, thread)}
-                  >
-                    <span>
-                      {thread.unread && <b className="thread-unread-dot" aria-hidden />}
-                      {thread.pinned && <b className="thread-pinned-mark" aria-hidden>◆</b>}
-                      {thread.fork && (
-                        <b
-                          className={`thread-fork-mark ${thread.fork.queueStatus ? `queue-${thread.fork.queueStatus}` : ""}`}
+                        <button
+                          type="button"
+                          className="workspace-item"
+                          onClick={() => {
+                            setExpandedWorkspaceId(workspace.id);
+                            onWorkspaceChange(workspace.id);
+                          }}
                           title={[
-                            `Fork worktree: ${thread.fork.worktreePath}`,
-                            thread.fork.queueStatus ? `Queue: ${thread.fork.queueStatus}` : "",
+                            workspace.name,
+                            workspace.description,
+                            workspace.location === "remote" && workspace.remote
+                              ? `Remote · ${workspace.remote.hostAlias} · ${workspace.remote.canonicalPath}`
+                              : `Local · ${workspace.path}`,
                           ].filter(Boolean).join("\n")}
                         >
-                          {thread.fork.queueStatus === "waiting_approval" ? "Wait" : thread.fork.queueStatus === "ready" ? "Ready" : "Fork"}
-                        </b>
+                          <FolderCode size={15} />
+                          <span><span className="workspace-item-name">{workspace.name}</span></span>
+                        </button>
+                        <button
+                          className="workspace-new-session-button"
+                          type="button"
+                          aria-label={zh ? "在此工作区新建任务" : "New task in this workspace"}
+                          title={zh ? "在此工作区新建任务" : "New task in this workspace"}
+                          onClick={() => void onCreateWorkspaceSession(workspace)}
+                        >
+                          <MessageSquarePlus size={15} />
+                        </button>
+                        <button
+                          className="workspace-details-button"
+                          type="button"
+                          aria-label={zh ? "工作区详情" : "Workspace details"}
+                          title={zh ? "工作区详情" : "Workspace details"}
+                          onClick={() => openWorkspaceDetails(workspace)}
+                        >
+                          <MoreHorizontal size={15} />
+                        </button>
+                      </div>
+                      {expanded && (
+                        <div className="workspace-thread-list">
+                          {visibleWorkspaceThreads.map(renderWorkspaceThread)}
+                          {threadsForWorkspace.length === 0 && <p>{zh ? "暂无任务" : "No tasks yet"}</p>}
+                          {threadsForWorkspace.length > 5 && (
+                            <button
+                              className="workspace-thread-more"
+                              type="button"
+                              onClick={() => setShowAllWorkspaceThreads((current) => {
+                                const next = new Set(current);
+                                if (next.has(workspace.id)) next.delete(workspace.id);
+                                else next.add(workspace.id);
+                                return next;
+                              })}
+                            >
+                              {showAll
+                                ? (zh ? "收起" : "Show less")
+                                : (zh ? `显示全部 ${threadsForWorkspace.length} 个任务` : `Show all ${threadsForWorkspace.length} tasks`)}
+                            </button>
+                          )}
+                        </div>
                       )}
-                      {thread.title}
-                    </span>
-                    <time>{thread.timeLabel}</time>
-                  </button>
-                ))}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
+
         </nav>
 
       </aside>
@@ -1937,7 +2177,22 @@ export function WorkspaceShell({
                   {isRightPanelExpanded ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
                 </button>
               </div>
-              {rightPanel}
+              {activeRightTab === "files" ? (
+                <div className="files-worktree-context">
+                  <div className="files-worktree-switcher" role="tablist" aria-label={zh ? "文件面板视图" : "Files panel view"}>
+                    <button type="button" role="tab" aria-selected={!worktreeOpen} className={!worktreeOpen ? "active" : ""} onClick={() => setWorktreeOpen(false)}>
+                      <FolderCode size={13} />
+                      <span>{zh ? "文件" : "Files"}</span>
+                    </button>
+                    <button type="button" role="tab" aria-selected={worktreeOpen} className={worktreeOpen ? "active" : ""} onClick={() => setWorktreeOpen(true)}>
+                      <GitBranch size={13} />
+                      <span>{zh ? "隔离工作区" : "Worktrees"}</span>
+                      {worktrees.length > 0 ? <small>{worktrees.length}</small> : null}
+                    </button>
+                  </div>
+                  {worktreeOpen ? renderWorktreePanel() : rightPanel}
+                </div>
+              ) : rightPanel}
             </aside>
           )}
         </section>
@@ -2471,16 +2726,43 @@ export function WorkspaceShell({
             className="desktop-status-modal"
             role="dialog"
             aria-modal="true"
-            aria-label={zh ? "关于 OpenDrSai" : "About OpenDrSai"}
+            aria-label={zh ? "诊断信息" : "Diagnostics"}
             onMouseDown={(event) => event.stopPropagation()}
           >
             <div className="desktop-status-modal-header">
-              <h2>{zh ? "关于 OpenDrSai" : "About OpenDrSai"}</h2>
+              <h2>{zh ? "诊断信息" : "Diagnostics"}</h2>
               <button type="button" onClick={() => setDesktopStatusOpen(false)} aria-label={zh ? "关闭" : "Close"}>
                 ×
               </button>
             </div>
             <div className="desktop-status-modal-body">{desktopStatusPanel}</div>
+          </section>
+        </div>
+      )}
+      {aboutDialogOpen && (
+        <div className="desktop-status-overlay" role="presentation" onMouseDown={() => setAboutDialogOpen(false)}>
+          <section
+            className="desktop-status-modal about-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label={zh ? "关于 OpenDrSai" : "About OpenDrSai"}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="desktop-status-modal-header">
+              <h2>{zh ? "关于 OpenDrSai" : "About OpenDrSai"}</h2>
+              <button type="button" onClick={() => setAboutDialogOpen(false)} aria-label={zh ? "关闭" : "Close"}>
+                <X size={18} />
+              </button>
+            </div>
+            <div className="desktop-status-modal-body">
+              <div className="about-product">
+                <img src={drsaiLogo} alt="" />
+                <div>
+                  <strong>OpenDrSai Desktop</strong>
+                  <span>{zh ? "面向科研工作的桌面智能体工作台" : "A desktop agent workbench for research workflows"}</span>
+                </div>
+              </div>
+            </div>
           </section>
         </div>
       )}
@@ -2648,6 +2930,21 @@ export function WorkspaceShell({
             </div>
 
             <div className="workspace-details-actions">
+              <button
+                type="button"
+                onClick={() => {
+                  closeWorkspaceDetails();
+                  onOpenWorkspaceResults(workspaceDetails.id);
+                }}
+              >
+                <PackageOpen size={14} />
+                {zh ? "查看成果" : "View Results"}
+              </button>
+              <button type="button" onClick={() => openWorkspaceWorktrees(workspaceDetails)}>
+                <GitBranch size={14} />
+                {zh ? "隔离工作区" : "Isolated Workspaces"}
+                {workspaceDetails.id === activeWorkspaceId && worktrees.length > 0 ? <small>{worktrees.length}</small> : null}
+              </button>
               <button type="button" onClick={() => onOpenWorkspacePath(workspaceDetails.path)}>
                 {zh ? "打开文件夹" : "Open Folder"}
               </button>
@@ -2789,6 +3086,7 @@ function loadShortcutSettings(): Record<ShortcutId, string> {
   } catch {
     // Use the shipped shortcuts when a previous preference is malformed.
   }
+
   return defaults;
 }
 

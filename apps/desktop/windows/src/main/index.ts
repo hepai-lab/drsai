@@ -45,6 +45,7 @@ import { InteractiveDebuggerService } from "./interactiveDebugger";
 import type { DiagnosticEventInput, DiagnosticIssueUpdateRequest, DiagnosticQuery, DiagnosticSourceOpenRequest, DiagnosticSourceContextRequest, ProductionDiagnosticSettings } from "../shared/diagnostics";
 
 process.setSourceMapsEnabled?.(true);
+if (process.platform === "win32") app.setAppUserModelId("com.hepai.opendrsai.windows");
 import { presentCodexBackendStatus } from "./codexBackendStatus";
 import { DRSAI_HOME } from "./paths";
 import { clearLocalData, previewLocalDataCleanup } from "./dataCleanup";
@@ -2989,7 +2990,7 @@ async function openPdfSourcePage(request: PdfPageOpenRequest): Promise<PdfPageOp
   const rawPath = typeof request?.path === "string" ? request.path : "";
   const page = Number(request?.page);
   if (!(await isAllowedOpenPath(rawPath))) {
-    throw new Error("PDF source path is not registered as a DrSai or workspace path.");
+    throw new Error("PDF source path is not registered as an OpenDrSai or workspace path.");
   }
   if (extname(rawPath).toLowerCase() !== ".pdf") {
     throw new Error("Source page review requires a PDF file.");
@@ -3629,10 +3630,31 @@ function registerIpc(): void {
   secureHandle("desktop:open-path", async (_event, rawPath: string) => {
     if (process.env.OPENDRSAI_E2E_M4_KEYBOARD === "1" && rawPath === process.env.OPENDRSAI_E2E_M4_CERN_PDF && existsSync(rawPath)) return "";
     if (!(await isAllowedOpenPath(rawPath))) {
-      return "Path is not registered as a DrSai or workspace path.";
+      return "Path is not registered as an OpenDrSai or workspace path.";
     }
     if (process.env.OPENDRSAI_E2E_SUPPRESS_EXTERNAL_OPEN === "1") return "";
     return shell.openPath(rawPath);
+  });
+  secureHandle("desktop:edit-command", (event, rawCommand: string) => {
+    const command = rawCommand === "undo" || rawCommand === "redo" || rawCommand === "cut" ||
+      rawCommand === "copy" || rawCommand === "paste" || rawCommand === "delete" || rawCommand === "selectAll"
+      ? rawCommand
+      : null;
+    if (!command) return false;
+    const webContents = event.sender;
+    if (command === "undo") webContents.undo();
+    else if (command === "redo") webContents.redo();
+    else if (command === "cut") webContents.cut();
+    else if (command === "copy") webContents.copy();
+    else if (command === "paste") webContents.paste();
+    else if (command === "delete") webContents.delete();
+    else webContents.selectAll();
+    return true;
+  });
+  secureHandle("desktop:open-log-folder", async () => {
+    const logDir = join(DRSAI_HOME, "desktop", "diagnostics");
+    mkdirSync(logDir, { recursive: true });
+    return shell.openPath(logDir);
   });
   secureHandle("desktop:local-data-cleanup-preview", (_event, scope) =>
     previewLocalDataCleanup(scope),
@@ -4907,7 +4929,6 @@ async function startDeferredStartupTasks(): Promise<void> {
 
 app.whenReady().then(async () => {
   recordStartupMilestone("electron-ready");
-  if (process.platform === "win32") app.setAppUserModelId("com.hepai.opendrsai.windows");
   configureCompletionNotifications({
     focusApp: focusMainWindow,
     publishClick: (event) => {

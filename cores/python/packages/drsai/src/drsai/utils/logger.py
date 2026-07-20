@@ -71,10 +71,10 @@ class DrSaiLogger:
 
 if __name__ == "__main__":
     logger = DrSaiLogger.get_logger(
-        "DrSai",
+        "OpenDrSai",
         level="DEBUG",
         # level="INFO",
         )
-    logger.info("Hello, DrSai!")
-    logger.debug("Hello, DrSai!")
+    logger.info("Hello, OpenDrSai!")
+    logger.debug("Hello, OpenDrSai!")
 

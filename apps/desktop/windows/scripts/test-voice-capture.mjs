@@ -193,6 +193,28 @@ function createHarness(overrides = {}) {
 }
 
 {
+  const constraints = [];
+  let unavailableCount = 0;
+  const fallbackStream = new FakeStream();
+  const harness = createHarness({
+    callbacks: { onDeviceUnavailable: () => { unavailableCount += 1; } },
+    environment: { mediaDevices: {
+      enumerateDevices: async () => [{ kind: "audioinput", deviceId: "default", label: "Default mic" }],
+      getUserMedia: async (request) => {
+        constraints.push(request);
+        if (constraints.length === 1) throw new DOMException("missing", "NotFoundError");
+        return fallbackStream;
+      },
+    } },
+  });
+  assert.equal(await harness.controller.start("stale-mic"), true);
+  assert.equal(unavailableCount, 1, "a missing saved device must clear the stale selection");
+  assert.deepEqual(constraints[0].audio.deviceId, { exact: "stale-mic" });
+  assert.equal(constraints[1].audio.deviceId, undefined, "fallback capture must use the default microphone");
+  assert.equal(harness.states.at(-1), "recording");
+}
+
+{
   const harness = createHarness();
   await harness.controller.start();
   harness.streams[0].track.end();
@@ -217,4 +239,4 @@ function createHarness(overrides = {}) {
   assert.equal(harness.recorders.length, 0);
 }
 
-console.log("Voice capture behavior tests passed (10 scenarios, including sub-second duration, consent preflight, and 50-click concurrency).");
+console.log("Voice capture behavior tests passed (11 scenarios, including stale-device fallback, consent preflight, and 50-click concurrency).");

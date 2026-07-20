@@ -1,5 +1,24 @@
 # OpenDrSai Windows App 产品验收追踪记录
 
+## 2026-07-19 F4 选项清晰且有影响说明：续作复验，仍未完成
+
+| 字段 | 内容 |
+| --- | --- |
+| 功能 ID / 状态 / 得分 | **F4 / 未完成 / 0/3**。现行唯一验收方案实际包含 13 类、93 个功能点；严格完成数仍为 **79/93**。自动化提示中的“88 点”与当前方案不一致，本记录不删减现行方案的 5 个功能点。 |
+| 环境 | OpenDrSai Windows Desktop 1.4.9；Windows 11 x64；本地共享工作树；真实 `release/win-unpacked/OpenDrSai.exe`；普通 packaged E2E 隔离用户数据。 |
+| 输入材料 | 固定 CERN D9 PDF，预期 7,664,262 bytes、48 页、SHA-256 `F6581E1A255B354667188B41B874B996A300F88BB48912721BC1C854183E913E`；异常容量 CSV；keep / exclude / both 三个分支。 |
+| 派发与实现范围 | 复用既有 F 能力任务 `019f5d30-3e59-7c01-882c-8d7ef89558da` 派发 F4 续作，要求修复真实键盘执行、决定记录、三分支产物、副作用账本、CERN 固定资产校验、20 轮稳定性及三层证据；禁止新建/fork、无关重构、提交、推送、删除和发布。任务落地两处最小修复：兼容 PDF `sizeBytes/size` 字段，并把真实键盘应用动作改为 Enter。 |
+| 实际步骤 | 完整重读 529 行唯一验收方案；核对追踪表、代码、测试、历史失败证据、git diff 与既有 F 任务；运行 `npm run verify:f4-anomaly-decision`、`npm run build:unpack`、`npm run verify:packaged-f4-anomaly-decision` 和 `git diff --check`。 |
+| 单元/契约层 | **PASS 12/12**：`npm run verify:f4-anomaly-decision`。只能证明合同和静态接线，不能单独提升完成分。 |
+| 构建层 | **PASS**：TypeScript node/web、Electron/Vite build 与正式 `build:unpack` 完成；`git diff --check` 通过。 |
+| 打包版 E2E / 产品闭环层 | **FAIL**：`npm run verify:packaged-f4-anomaly-decision` 退出 1。最新三分支均在形成 smoke 检查前退出，汇总 **0/0**，尚未证明键盘决定被应用、决定被记录、分支产物准确生成、副作用账本完整或 CERN 固定资产校验成功。 |
+| 质量指标 | 旧证据 `2026-07-16T00-13-27-735Z` 为 **31/57**；新证据 `2026-07-19T09-22-51-668Z` 为 **0/0** 且 `ok=false`。连续 20 轮 / 60 场景未运行，稳定性、恢复和幂等门槛未达到。 |
+| 恢复情况 | 本轮 packaged 三个进程均正常启动到 renderer/deferred tasks 日志后以 exit code 1 结束，无结构化 smoke 结果；未观察到原文件删除或覆盖，但因检查未形成，不能把安全边界判为通过。 |
+| 证据 | 失败汇总：`apps/desktop/windows/release/f4-anomaly-decision-evidence/2026-07-19T09-22-51-668Z/summary.json`；旧失败汇总：`apps/desktop/windows/release/f4-anomaly-decision-evidence/2026-07-16T00-13-27-735Z/summary.json`；本轮代码差异：`apps/desktop/windows/src/main/e2eSmoke.ts`、`apps/desktop/windows/scripts/verify-f4-anomaly-decision.mjs`。 |
+| 失败原因 | 当前 packaged 入口在返回 F4 结构化结果前退出；本轮尚未定位退出点。旧失败中的 `keyboardApplied`、`decisionRecorded`、结果数量/命名、产物哈希和副作用账本缺口尚无通过证据。 |
+| 一票否决与发布门槛 | 一票否决项仍**不能确认清零**；F4 安全副作用账本未形成，M1 仍缺普通账户真实安装、首个任务 3 分钟内完成和连续 10 台环境证据。内部/邀请/正式发布门槛均未重新证明满足。 |
+| 下一步 | 继续在同一 F 能力任务中定位 packaged smoke 提前退出点，先取得 keep/exclude/both 单轮 57/57 和完整可审计产物，再运行 20 轮 / 60 场景；随后回归 F1～F3、M5、renderer、乱码和固定 CERN PDF。未全绿前 F4 保持 0 分。 |
+
 ## 2026-07-16 F3 审批卡包含完整业务信息：正式完成
 
 | 字段 | 内容 |

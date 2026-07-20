@@ -1,4 +1,4 @@
-"""Status display for DrSai CLI.
+"""Status display for OpenDrSai CLI.
 
 Shows agent connection status, available tools, session info,
 and configuration summary.

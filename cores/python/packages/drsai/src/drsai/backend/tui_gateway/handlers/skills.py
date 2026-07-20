@@ -1,4 +1,4 @@
-"""Skill management RPC handler for the DrSai TUI gateway.
+"""Skill management RPC handler for the OpenDrSai TUI gateway.
 
 Registered method:
     skills.manage  — unified CRUD for user skills

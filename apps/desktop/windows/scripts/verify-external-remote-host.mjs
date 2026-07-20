@@ -39,6 +39,10 @@ if (!confirmed) {
   throw new Error("Set OPENDRSAI_REMOTE_HOST_ACCEPTANCE=1 to confirm non-destructive acceptance on the selected host.");
 }
 temporaryRoot = mkdtempSync(join(tmpdir(), "opendrsai-external-host-"));
+// The acceptance bundle imports the real workspace persistence layer. Redirect it
+// before module compilation/import so a smoke host can never enter the user's
+// production Workspace list and reconnect on a later Desktop startup.
+process.env.DRSAI_HOME = join(temporaryRoot, "isolated-drsai-home");
 
 try {
   configureInlineSshTarget();

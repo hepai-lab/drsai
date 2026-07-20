@@ -1,6 +1,6 @@
 """Portable Node.js bootstrap — auto-download a private Node runtime if needed.
 
-The DrSai TUI is built on React/Ink, which requires Node.js to execute. Most
+The OpenDrSai TUI is built on React/Ink, which requires Node.js to execute. Most
 PyPI users won't have Node installed; rather than asking them to, we download
 the official prebuilt binary from nodejs.org on first launch and cache it
 under ``~/.drsai/cache/node/``.
@@ -225,7 +225,7 @@ def ensure_portable_node() -> str:
     archive_path = _cache_root() / archive_name
 
     sys.stderr.write(
-        f"\n[drsai] Node.js not found — fetching portable runtime "
+        f"\n[OpenDrSai] Node.js not found — fetching portable runtime "
         f"({NODE_VERSION}, {slug}, ~25 MB, one-time).\n"
     )
     sys.stderr.flush()

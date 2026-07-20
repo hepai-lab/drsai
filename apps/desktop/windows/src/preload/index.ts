@@ -374,6 +374,10 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:cancel-install"),
   copyTextToClipboard: (text: string): Promise<boolean> =>
     ipcRenderer.invoke("desktop:clipboard-copy-text", text),
+  performEditCommand: (command) =>
+    ipcRenderer.invoke("desktop:edit-command", command),
+  openLogFolder: () =>
+    ipcRenderer.invoke("desktop:open-log-folder"),
   startGateway: (): Promise<boolean> =>
     ipcRenderer.invoke("desktop:start-gateway"),
   stopGateway: (): Promise<boolean> =>

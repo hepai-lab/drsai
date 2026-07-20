@@ -1460,6 +1460,11 @@ export function installMockDesktopApi(): void {
         return false;
       }
     },
+    performEditCommand: async (command) => {
+      document.execCommand(command);
+      return true;
+    },
+    openLogFolder: async () => "",
     startGateway: async () => {
       health = {
         ...health,
@@ -1676,6 +1681,7 @@ export function installMockDesktopApi(): void {
         owner: "运行在本机的智能体。",
         source: "local",
         status: health.gatewayReady ? "running" : "stopped",
+        model: "deepseek-v4-pro",
         url: health.gateway.baseUrl,
         examples: [
           { zh: "你可以做什么？", en: "What can you do?" },

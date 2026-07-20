@@ -5,6 +5,7 @@ const root = resolve(import.meta.dirname, "..");
 const repoRoot = resolve(root, "..", "..", "..");
 const read = (path) => readFileSync(resolve(repoRoot, path), "utf8");
 const launcher = read("apps/desktop/scripts/windows-desktop-dev.ps1");
+const outputRunner = read("apps/desktop/windows/scripts/run-dev-with-filter.mjs");
 const main = read("apps/desktop/windows/src/main/index.ts");
 const gateway = read("apps/desktop/windows/src/main/gateway.ts");
 const status = read("apps/desktop/windows/src/main/status.ts");
@@ -18,6 +19,9 @@ const checks = [
   ["launcher selects on-demand by default", launcher.includes('"on-demand"') && launcher.includes("OPENDRSAI_GATEWAY_STARTUP")],
   ["launcher caches backend validation", launcher.includes("BackendValidationStamp") && launcher.includes("backendFingerprint")],
   ["launcher caches frontend validation", launcher.includes("FrontendValidationStamp") && launcher.includes("frontendFingerprint")],
+  ["launcher uses a byte-preserving dev output filter", launcher.includes("run-dev-with-filter.mjs") && outputRunner.includes("DevStderrFilter") && outputRunner.includes('stdio: ["inherit", "inherit", "pipe"]')],
+  ["Windows npm.cmd launch bypasses shell through npm-cli.js", outputRunner.includes("spawnNpm") && outputRunner.includes('"npm-cli.js"') && outputRunner.includes('shell: false') && !outputRunner.includes('shell: process.platform === "win32"') && !outputRunner.includes("ComSpec")],
+  ["output filter preserves startup logs while filtering only known libpng warning", outputRunner.includes("KNOWN_LIBPNG_WARNING") && outputRunner.includes("this.push(line)") && outputRunner.includes("showLibPngWarnings")],
   ["Gateway hot reload reuses the existing console", launcher.includes("-NoNewWindow `") && !launcher.includes("-WindowStyle Hidden `\n        -RedirectStandardOutput $stdout")],
   ["main eager start is policy gated", main.includes('getGatewayStartupMode() !== "eager"')],
   ["background work waits for renderer load", main.includes('webContents.on("did-finish-load"') && main.includes("startDeferredStartupTasks")],

@@ -1,4 +1,4 @@
-"""DrSai TUI Gateway — process entry point.
+"""OpenDrSai TUI Gateway — process entry point.
 
 Run via ``python -m drsai.backend.tui_gateway``. Reads JSON-RPC frames from
 stdin, dispatches to handlers in :mod:`drsai.backend.tui_gateway.server`, and

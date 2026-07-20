@@ -78,7 +78,7 @@ class DrSaiAPP(DrSai):
 
     #### --- 关于DrSai的路由 --- ####
     async def index(self, request: Request):
-        return f"Hello, world! This is DrSai WebUI {__version__}"
+        return f"Hello, world! This is OpenDrSai WebUI {__version__}"
     
     async def list_models(self, request: Request):
 

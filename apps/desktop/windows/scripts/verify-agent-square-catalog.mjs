@@ -22,7 +22,7 @@ const {
 
 const local = {
   id: "my-drsai",
-  name: "My DrSai",
+  name: "OpenDrSai",
   description: "Local",
   owner: "Local",
   source: "local",

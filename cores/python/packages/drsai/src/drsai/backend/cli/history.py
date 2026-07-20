@@ -1,4 +1,4 @@
-"""Thread-backed session store for the drsai CLI.
+"""Thread-backed session store for the OpenDrSai CLI.
 
 Wraps the existing :class:`DatabaseManager` + :class:`Thread` schema so the
 REPL can list, resume, rename, and search conversation sessions without a

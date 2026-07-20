@@ -34,6 +34,7 @@ Windows App 已形成第一阶段 **串行语音交互** 的稳定工程基线�
 | --- | --- | --- |
 | [实时语音 AI 技术调研](./realtime-voice-ai-research-2026.md) | 串行、流式、全双工的行业分类和技术调研 | 背景资料 |
 | [串行语音交互完整开发方案](./serial-voice-interaction-development-plan.md) | 第一阶段权威范围、12 个模块、功能点和逐项验收方法 | 稳定基线与强制回归门禁 |
+| [串行语音交互实施报告](./serial-voice-interaction-implementation-report.md) | 12 个模块的实现结果、真实完整回合证据和剩余物理门禁 | 自动化与真实 Provider 已完成，物理矩阵待签核 |
 | [Phase B 开发方案](./phase-b-development-plan.md) | 生产级整段 STT 的历史设计与完成记录 | 已完成基线 |
 | [流式语音交互完整开发方案](./streaming-voice-interaction-development-plan.md) | 第二阶段双模式架构、12 个模块、功能点和逐项验收方案 | 第二阶段规划 |
 

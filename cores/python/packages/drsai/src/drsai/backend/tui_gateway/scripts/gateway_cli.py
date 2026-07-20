@@ -1,4 +1,4 @@
-"""Headless JSON-RPC client for the DrSai TUI gateway.
+"""Headless JSON-RPC client for the OpenDrSai TUI gateway.
 
 A bare stdin/stdout test harness that simulates the Ink UI without rendering.
 Used by Phase 1 verification to drive a complete conversation turn end-to-end.
@@ -310,7 +310,7 @@ def cmd_smoke(args: argparse.Namespace) -> int:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="DrSai TUI gateway test harness")
+    parser = argparse.ArgumentParser(description="OpenDrSai TUI gateway test harness")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p_chat = sub.add_parser("chat", help="run a full conversation turn")

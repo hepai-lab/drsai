@@ -58,14 +58,14 @@ export async function bootstrapDesktop(): Promise<DesktopBootstrapResult> {
   if (models.length === 0) {
     return result(
       false,
-      "This account has no available DrSai service. Retry or sign in again.",
+      "This account has no available OpenDrSai service. Retry or sign in again.",
       auth.session.user!,
       [],
       {
         kind: "permission_denied",
         title: "Account has no available service",
         message:
-          "This HepAI account is signed in, but it does not currently have permission to use a DrSai model service.",
+          "This HepAI account is signed in, but it does not currently have permission to use an OpenDrSai model service.",
         retryable: true,
         canRepairRuntime: false,
         canSignInAgain: true,

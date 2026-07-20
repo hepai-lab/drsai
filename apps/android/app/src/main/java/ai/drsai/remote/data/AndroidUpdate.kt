@@ -15,6 +15,7 @@ import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.io.InterruptedIOException
 import java.security.MessageDigest
 import java.net.URI
 import java.util.concurrent.TimeUnit
@@ -115,7 +116,14 @@ class AndroidUpdateRepository(
     private val manifestUrl: String,
     private val channel: String,
     private val http: OkHttpClient = OkHttpClient.Builder()
-        .callTimeout(30, TimeUnit.SECONDS).followRedirects(false).build(),
+        // GitHub Release 下载先经过 github.com，再跳转到 release-assets CDN。
+        // 移动网络下首字节和 CDN 切换可能超过 30 秒；分段下载仍由 partial 文件保证可恢复。
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(2, TimeUnit.MINUTES)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .callTimeout(10, TimeUnit.MINUTES)
+        .retryOnConnectionFailure(true)
+        .followRedirects(false).build(),
 ) {
     suspend fun check(): AndroidUpdateState = withContext(Dispatchers.IO) {
         try {
@@ -165,7 +173,13 @@ class AndroidUpdateRepository(
             check(partial.renameTo(target)) { "update-cache-failed" }
             AndroidUpdateState.Ready(update, target)
         } catch (e: Throwable) {
-            AndroidUpdateState.Failed(e.message ?: "download-failed", e.message ?: "下载更新失败", update)
+            val timeout = e is InterruptedIOException || e.cause is InterruptedIOException ||
+                e.message.orEmpty().contains("timeout", ignoreCase = true)
+            if (timeout) {
+                AndroidUpdateState.Failed("download-timeout", "下载超时，已保留已下载部分，请重试继续", update)
+            } else {
+                AndroidUpdateState.Failed(e.message ?: "download-failed", e.message ?: "下载更新失败", update)
+            }
         }
     }
 

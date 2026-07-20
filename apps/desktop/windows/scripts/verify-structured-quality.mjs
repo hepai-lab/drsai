@@ -24,6 +24,13 @@ assert.ok(workspaceSource.includes("isSafeWebUrl(part.url)"));
 assert.ok(threadStoreSource.includes("const MAX_SNAPSHOT_MESSAGES = 500"));
 assert.ok(threadStoreSource.includes("const MAX_MESSAGE_CHARS = 200_000"));
 assert.ok(threadStoreSource.includes("const MAX_STATUS_CHARS = 80_000"));
+assert.ok(threadStoreSource.includes("atomicJsonWriteQueues"), "Thread JSON writes must be serialized per file.");
+assert.ok(threadStoreSource.includes("serializeJsonMutation(THREADS_FILE"), "Thread read-modify-write operations must be serialized.");
+assert.ok(threadStoreSource.includes("serializeJsonMutation(THREAD_SNAPSHOTS_FILE"), "Snapshot read-modify-write operations must be serialized.");
+const atomicReplaceSource = readFileSync(join(root, "src/main/atomicFileReplace.ts"), "utf8");
+assert.ok(threadStoreSource.includes("replaceFileSafely(temporary, path)"), "Thread JSON writes must use the resilient replacement helper.");
+assert.ok(atomicReplaceSource.includes('"EACCES", "EBUSY", "EEXIST", "EPERM"') && atomicReplaceSource.includes("replace-backup"), "Thread JSON writes must retry transient Windows locks and preserve a fallback backup.");
+assert.ok(threadStoreSource.includes("rm(temporary, { force: true })"), "Thread JSON writes must clean temporary files.");
 assert.ok(sharedSource.includes("serialized.length <= 80_000"));
 assert.ok(debugStoreSource.includes("const MAX_RAW_LENGTH = 256 * 1024"));
 

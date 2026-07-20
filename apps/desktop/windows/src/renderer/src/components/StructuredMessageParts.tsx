@@ -60,6 +60,9 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
   const [focusedPartId, setFocusedPartId] = useState<string | null>(null);
   const citationParts = turn.parts.filter((part): part is CitationPart => part.kind === "citation");
   const visibleParts = turn.parts.filter((part) => {
+    if (part.kind === "notice" && part.level === "error" && part.id.endsWith(":notice:turn-error")) {
+      return false;
+    }
     if (part.kind === "progress") {
       return part.status === "running" || part.status === "pending" || part.status === "error";
     }

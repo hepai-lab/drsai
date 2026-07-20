@@ -97,6 +97,8 @@ try {
   const reloaded = new main.DesktopDiagnostics();
   const restored = await reloaded.snapshot({ limit: 100 });
   assert.ok(restored.events.some((event) => event.traceId === "trace-failed"), "Persisted diagnostics must survive a service restart.");
+  assert.equal(restored.health.some((item) => item.component === "runtime-engine" && item.state === "failed"), false, "Historical failures must not be presented as current component health after restart.");
+  assert.equal(restored.findings.some((item) => item.component === "runtime-engine" && item.severity === "error"), false, "Historical failures remain in the error timeline but must not appear as new-session findings.");
 
   const removed = await diagnostics.clear();
   assert.ok(removed >= 6);

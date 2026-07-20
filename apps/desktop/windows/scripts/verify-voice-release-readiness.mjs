@@ -35,9 +35,29 @@ const requirements = [
       && report.details?.maxBoundaryBytes === 10 * 1024 * 1024,
   },
   {
-    name: "Live STT and TTS provider smoke",
+    name: "Live serial voice round (capture, ASR, LLM, TTS, playback)",
     path: join(root, "release", "voice-provider-live-evidence", "report.json"),
-    validate: (report) => report.ok === true && report.liveMode === true && report.checks?.sttCompleted === true && report.checks?.ttsCompleted === true && report.checks?.streamingCompleted === true && report.details?.runtimeIds?.stt === "gateway-provider" && report.details?.runtimeIds?.tts === "gateway-provider",
+    validate: (report) => {
+      const requiredChecks = [
+        "sttCompleted", "ttsCompleted", "fullRoundLoginBootstrap", "fullRoundCaptureStarted",
+        "fullRoundTranscribed", "fullRoundReviewInserted", "fullRoundSendReady", "fullRoundLlmReplied",
+        "fullRoundProviderTts", "fullRoundPlayback", "fullRoundCompleted", "fullRoundPhases",
+        "fullRoundDiagnosticsPrivate",
+      ];
+      const requiredPhases = [
+        "requesting_permission", "recording", "preparing_audio", "transcribing", "reviewing",
+        "ready_to_send", "submitting", "awaiting_response", "response_ready", "synthesizing",
+        "playing", "completed",
+      ];
+      return report.ok === true
+        && report.liveMode === true
+        && report.noNewVoiceTempFiles === true
+        && report.noVoiceContentInLogs === true
+        && requiredChecks.every((check) => report.checks?.[check] === true)
+        && requiredPhases.every((phase) => report.details?.fullRound?.phases?.includes(phase))
+        && report.details?.runtimeIds?.stt === "gateway-provider"
+        && report.details?.runtimeIds?.tts === "gateway-provider";
+    },
   },
   {
     name: "Windows physical audio-device matrix",

@@ -1,4 +1,4 @@
-"""Transport abstraction for the DrSai TUI gateway.
+"""Transport abstraction for the OpenDrSai TUI gateway.
 
 Ported from ``hermes-agent/tui_gateway/transport.py``. Decouples the I/O sink
 from RPC handler logic so the same dispatcher can be driven over stdio

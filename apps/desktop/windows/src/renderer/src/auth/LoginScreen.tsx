@@ -5,7 +5,7 @@ import type {
   DesktopHealth,
   OidcLoginDebugEvent,
 } from "@shared/desktopApi";
-import drsaiLogo from "../assets/drsai-transparent.png";
+import drsaiLogo from "../assets/drsai.png";
 import { desktopApi } from "../desktopApi";
 import type { AppLanguage } from "../navigation";
 import { useAuth } from "./AuthProvider";
@@ -425,12 +425,12 @@ export function getAvailabilityGuide(
     permission_denied: {
       zh: [
         "账号暂无可用服务",
-        "这个 HepAI 账号当前没有可用的 DrSai 模型服务权限，任务不会被发送。",
+        "这个 HepAI 账号当前没有可用的 OpenDrSai 模型服务权限，任务不会被发送。",
         ["可重新登录另一个有权限的账号。", "也可以复制脱敏诊断，让管理员检查账号权限。"],
       ],
       en: [
         "Account has no available service",
-        "This HepAI account does not currently have permission to use a DrSai model service, so no task was sent.",
+        "This HepAI account does not currently have permission to use an OpenDrSai model service, so no task was sent.",
         ["Sign in with another authorized account.", "Copy redacted diagnostics so an administrator can check access."],
       ],
     },

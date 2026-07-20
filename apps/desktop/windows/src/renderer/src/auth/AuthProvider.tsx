@@ -125,6 +125,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     return unsubscribe;
   }, []);
 
+  useEffect(() => {
+    if (
+      !session.authenticated ||
+      session.authMode === "offline" ||
+      serviceReady ||
+      serviceBusy ||
+      (serviceBlocker && serviceBlocker.kind !== "service_unavailable")
+    ) {
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      void retryBootstrap();
+    }, 1500);
+    return () => window.clearTimeout(timer);
+  }, [
+    serviceBlocker?.kind,
+    serviceBusy,
+    serviceReady,
+    session.authMode,
+    session.authenticated,
+  ]);
+
   async function login(request: LoginRequest): Promise<boolean> {
     setLoginBusy(true);
     setMessage(null);
@@ -294,7 +316,7 @@ function classifyBootstrapBlocker(message: string): DesktopBootstrapBlocker {
     return {
       kind: "permission_denied",
       title: "Account has no available service",
-      message: "This account does not currently have permission to use a DrSai model service.",
+      message: "This account does not currently have permission to use an OpenDrSai model service.",
       retryable: true,
       canRepairRuntime: false,
       canSignInAgain: true,

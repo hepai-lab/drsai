@@ -5,7 +5,7 @@ import requests
 from openai import OpenAI
 
 backend_port = os.environ.get("BACKEND_PORT", "42801")
-agnet_name = os.environ.get("AGNET_NAME", "DrSai")
+agnet_name = os.environ.get("AGNET_NAME", "OpenDrSai")
 
 class Pipeline:
     class Valves(BaseModel):

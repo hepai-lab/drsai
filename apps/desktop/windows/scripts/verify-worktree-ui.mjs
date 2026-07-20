@@ -36,9 +36,14 @@ try {
   const shell = readFileSync(join(root, "src/renderer/src/components/WorkspaceShell.tsx"), "utf8");
   assert(shell.includes("onListWorktreeEvents"), "Worktree UI does not consume Runtime events");
   assert(shell.includes("worktreeEventCursor.current"), "Worktree UI does not maintain an incremental event cursor");
+  assert(shell.includes('document.visibilityState !== "visible"'), "Worktree event polling must pause while the app is hidden");
+  assert(shell.includes("5_000"), "Worktree event polling interval must remain resource-conscious");
   assert(!shell.includes("git worktree list"), "Renderer must not poll Git to infer Worktree state");
   assert(shell.includes('data-testid="worktree-review-panel"'), "unified Worktree Review panel is missing");
   assert(shell.includes("onGetWorktreeDiff"), "Review panel does not use the shared local/remote workspace operation");
+  assert(shell.includes('className="files-worktree-switcher"'), "Files panel is missing the isolated Workspace subview switcher");
+  assert(shell.includes("openWorkspaceWorktrees(workspaceDetails)"), "Workspace details is missing the isolated Workspace entry");
+  assert(!shell.includes('className="worktree-section"'), "Worktree management must not return to the primary sidebar");
   console.log("Runtime Worktree UI state verification passed.");
 } finally {
   rmSync(temp, { recursive: true, force: true });

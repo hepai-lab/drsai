@@ -30,7 +30,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
-# Autogen / DrSai imports kept lazy so this module loads quickly when the agent
+# Autogen / OpenDrSai imports kept lazy so this module loads quickly when the agent
 # backend isn't yet imported (helps Phase 0 server start-up).
 
 

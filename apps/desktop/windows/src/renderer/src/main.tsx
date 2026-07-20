@@ -2,7 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import { AuthProvider } from "./auth/AuthProvider";
-import drsaiLogo from "./assets/drsai-transparent.png";
+import drsaiLogo from "./assets/drsai.png";
 import { hasDesktopApi } from "./desktopApi";
 import { installMockDesktopApi } from "./mockDesktopApi";
 import "./styles.css";

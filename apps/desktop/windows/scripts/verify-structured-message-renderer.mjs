@@ -5,6 +5,7 @@ import { join } from "node:path";
 const root = process.cwd();
 const renderer = readFileSync(join(root, "src/renderer/src/components/StructuredMessageParts.tsx"), "utf8");
 const workspace = readFileSync(join(root, "src/renderer/src/components/ChatWorkspace.tsx"), "utf8");
+const adapter = readFileSync(join(root, "src/renderer/src/adapters/useDesktopChatAdapter.ts"), "utf8");
 const app = readFileSync(join(root, "src/renderer/src/App.tsx"), "utf8");
 const files = readFileSync(join(root, "src/renderer/src/components/files/FilesContextPanel.tsx"), "utf8");
 const styles = readFileSync(join(root, "src/renderer/src/styles.css"), "utf8");
@@ -41,6 +42,10 @@ assert.ok(workspace.includes("!message.structuredTurn && message.reasoningConten
 assert.ok(workspace.includes("!message.structuredTurn && message.inputRequest"), "Legacy interaction must only be a fallback.");
 assert.ok(workspace.includes("onOpenWorkspaceArtifact"), "ChatWorkspace must expose the existing files-panel route.");
 assert.ok(workspace.includes("isSafeWebUrl(part.url)"), "Structured web targets must use an HTTP(S) allowlist.");
+assert.ok(
+  adapter.includes('streaming: structuredTurn.status === "pending" || structuredTurn.status === "running"'),
+  "Hydrated terminal turns must not retain a stale streaming indicator.",
+);
 
 assert.ok(app.includes('setActiveRightTab("files")') && app.includes("setFilesPanelFocusPath(path)"), "Artifact clicks must open the existing Files panel.");
 assert.ok(app.includes('setActiveRightTab("browser")'), "Citation URLs must use the existing Browser panel.");

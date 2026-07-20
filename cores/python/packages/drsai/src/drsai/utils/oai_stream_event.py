@@ -9,7 +9,7 @@ chatcompletionchunk = {
                 "id":"chatcmpl-123",
                 "object":"chat.completion.chunk",
                 "created":1694268190,
-                "model":"DrSai", 
+                "model":"OpenDrSai",
                 "system_fingerprint": "fp_44709d6fcb", 
                 "usage": None,
                 "choices":[
@@ -31,7 +31,7 @@ chatcompletionchunkend = {
     "id":"chatcmpl-123",
     "object":"chat.completion.chunk",
     "created":1694268190,
-    "model":"DrSai", 
+    "model":"OpenDrSai",
     "system_fingerprint": "fp_44709d6fcb", 
     "choices":[{'delta': {'content': None, 'function_call': None, 'refusal': None, 'role': None, 'tool_calls': None}, 'finish_reason': 'stop', 'index': 0, 'logprobs': None}]
     }
@@ -50,7 +50,7 @@ chatcompletions = {
         'function_call': None, 
         'tool_calls': None}}], 
         'created': 1739758379, 
-        'model': 'DrSai', 
+        'model': 'OpenDrSai',
         'object': 'chat.completion', 
         'service_tier': 'default', 
         'system_fingerprint': 'fp_13eed4fce1', 

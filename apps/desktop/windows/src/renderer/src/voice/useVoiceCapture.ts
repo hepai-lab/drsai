@@ -49,6 +49,7 @@ export function useVoiceCapture(options: UseVoiceCaptureOptions): VoiceCaptureHo
       setInterval: (callback, milliseconds) => window.setInterval(callback, milliseconds),
     }, {
       beforeStart: () => optionsRef.current.beforeStart(),
+      onDeviceUnavailable: () => optionsRef.current.onDeviceUnavailable?.(),
       onDevices: setDevices,
       onElapsed: setElapsedSeconds,
       onError: (captureError) => setError(captureError ? getVoicePermissionError(captureError) : null),

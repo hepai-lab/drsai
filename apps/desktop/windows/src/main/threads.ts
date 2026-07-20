@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { mkdir, readFile, rename, writeFile } from "fs/promises";
+import { mkdir, readFile, readdir, rm, stat, writeFile } from "fs/promises";
 import { dirname, join } from "path";
 import type {
   CreateThreadRequest,
@@ -15,6 +15,7 @@ import type {
 } from "../shared/desktopApi";
 import { DRSAI_HOME } from "./paths";
 import { sanitizeStructuredTurnState } from "../shared/structuredConversation";
+import { replaceFileSafely } from "./atomicFileReplace";
 
 const THREADS_FILE = join(DRSAI_HOME, "desktop", "threads.json");
 const THREAD_SNAPSHOTS_FILE = join(DRSAI_HOME, "desktop", "thread-snapshots.json");
@@ -33,63 +34,88 @@ const MAX_FORK_LIFECYCLE_MESSAGE_CHARS = 1200;
 const MAX_FORK_QUEUE_MESSAGE_CHARS = 800;
 const MAX_FORK_BRANCH_CLEANUP_MESSAGE_CHARS = 800;
 const THREAD_ID_PATTERN = /^[a-zA-Z0-9_.:-]{1,160}$/;
+const atomicJsonWriteQueues = new Map<string, Promise<void>>();
+const jsonMutationQueues = new Map<string, Promise<void>>();
+let staleThreadFilesCleaned = false;
 
 export async function listThreads(): Promise<DesktopThread[]> {
+  if (!staleThreadFilesCleaned) {
+    staleThreadFilesCleaned = true;
+    await cleanupStaleThreadTemporaryFiles();
+  }
   return (await readThreads()).sort(compareThreads);
+}
+
+async function cleanupStaleThreadTemporaryFiles(): Promise<void> {
+  const directory = dirname(THREADS_FILE);
+  const baseName = THREADS_FILE.slice(directory.length + 1).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`^${baseName}\\.\\d+\\.[0-9a-f-]{36}\\.tmp$`, "i");
+  const cutoff = Date.now() - 5 * 60_000;
+  try {
+    for (const name of await readdir(directory)) {
+      if (!pattern.test(name)) continue;
+      const path = join(directory, name);
+      try { if ((await stat(path)).mtimeMs < cutoff) await rm(path, { force: true }); } catch { /* best-effort startup hygiene */ }
+    }
+  } catch { /* the primary thread file remains usable without cleanup */ }
 }
 
 export async function createThread(rawRequest: unknown): Promise<DesktopThread> {
   const request = validateCreateThreadRequest(rawRequest);
-  const now = new Date().toISOString();
-  const thread: DesktopThread = {
-    id: `thread-${randomUUID()}`,
-    kind: request.kind,
-    title: request.title || defaultTitle(request.kind),
-    workspacePath: request.workspacePath,
-    boundAgentId: request.boundAgentId,
-    boundAgentName: request.boundAgentName,
-    fork: request.fork,
-    execution: request.execution,
-    createdAt: now,
-    updatedAt: now,
-    status: "idle",
-    messageCount: 0,
-  };
-  const threads = retainThreads([thread, ...(await readThreads())]);
-  await writeThreads(threads);
-  return thread;
+  return serializeJsonMutation(THREADS_FILE, async () => {
+    const now = new Date().toISOString();
+    const thread: DesktopThread = {
+      id: `thread-${randomUUID()}`,
+      kind: request.kind,
+      title: request.title || defaultTitle(request.kind),
+      workspacePath: request.workspacePath,
+      boundAgentId: request.boundAgentId,
+      boundAgentName: request.boundAgentName,
+      fork: request.fork,
+      execution: request.execution,
+      createdAt: now,
+      updatedAt: now,
+      status: "idle",
+      messageCount: 0,
+    };
+    const threads = retainThreads([thread, ...(await readThreads())]);
+    await writeThreads(threads);
+    return thread;
+  });
 }
 
 export async function updateThread(rawRequest: unknown): Promise<DesktopThread> {
   const request = validateUpdateThreadRequest(rawRequest);
-  const threads = await readThreads();
-  const now = new Date().toISOString();
-  const existing = threads.find((thread) => thread.id === request.id);
-  const next: DesktopThread = {
-    id: request.id,
-    kind: request.kind || existing?.kind || "chat",
-    title: request.title || existing?.title || defaultTitle(request.kind || existing?.kind || "chat"),
-    workspacePath: request.workspacePath ?? existing?.workspacePath,
-    boundAgentId: request.boundAgentId ?? existing?.boundAgentId,
-    boundAgentName: request.boundAgentName ?? existing?.boundAgentName,
-    fork: request.fork ?? existing?.fork,
-    execution: request.execution ?? existing?.execution,
-    createdAt: existing?.createdAt || now,
-    updatedAt: now,
-    lastRunId: request.lastRunId ?? existing?.lastRunId,
-    lastRequestId: request.lastRequestId ?? existing?.lastRequestId,
-    runtimeSessionId: request.runtimeSessionId ?? existing?.runtimeSessionId,
-    status: request.status ?? existing?.status ?? "idle",
-    messageCount: request.messageCount ?? existing?.messageCount,
-    pinned: request.pinned ?? existing?.pinned,
-    archived: request.archived ?? existing?.archived,
-    archivedAt: request.archived === true ? now : request.archived === false ? undefined : existing?.archivedAt,
-    archiveSource: request.archived === true ? request.archiveSource ?? existing?.archiveSource ?? "opendrsai" : request.archived === false ? undefined : existing?.archiveSource,
-    unread: request.unread ?? existing?.unread,
-  };
-  const withoutCurrent = threads.filter((thread) => thread.id !== request.id);
-  await writeThreads(retainThreads([next, ...withoutCurrent]));
-  return next;
+  return serializeJsonMutation(THREADS_FILE, async () => {
+    const threads = await readThreads();
+    const now = new Date().toISOString();
+    const existing = threads.find((thread) => thread.id === request.id);
+    const next: DesktopThread = {
+      id: request.id,
+      kind: request.kind || existing?.kind || "chat",
+      title: request.title || existing?.title || defaultTitle(request.kind || existing?.kind || "chat"),
+      workspacePath: request.workspacePath ?? existing?.workspacePath,
+      boundAgentId: request.boundAgentId ?? existing?.boundAgentId,
+      boundAgentName: request.boundAgentName ?? existing?.boundAgentName,
+      fork: request.fork ?? existing?.fork,
+      execution: request.execution ?? existing?.execution,
+      createdAt: existing?.createdAt || now,
+      updatedAt: now,
+      lastRunId: request.lastRunId ?? existing?.lastRunId,
+      lastRequestId: request.lastRequestId ?? existing?.lastRequestId,
+      runtimeSessionId: request.runtimeSessionId ?? existing?.runtimeSessionId,
+      status: request.status ?? existing?.status ?? "idle",
+      messageCount: request.messageCount ?? existing?.messageCount,
+      pinned: request.pinned ?? existing?.pinned,
+      archived: request.archived ?? existing?.archived,
+      archivedAt: request.archived === true ? now : request.archived === false ? undefined : existing?.archivedAt,
+      archiveSource: request.archived === true ? request.archiveSource ?? existing?.archiveSource ?? "opendrsai" : request.archived === false ? undefined : existing?.archiveSource,
+      unread: request.unread ?? existing?.unread,
+    };
+    const withoutCurrent = threads.filter((thread) => thread.id !== request.id);
+    await writeThreads(retainThreads([next, ...withoutCurrent]));
+    return next;
+  });
 }
 
 export async function getThreadSnapshot(rawThreadId: unknown): Promise<DesktopThreadSnapshot | null> {
@@ -147,13 +173,15 @@ function createSearchSnippet(content: string, matchIndex: number, matchLength: n
 
 export async function updateThreadSnapshot(rawRequest: unknown): Promise<DesktopThreadSnapshot> {
   const snapshot = validateThreadSnapshot(rawRequest);
-  const snapshots = await readThreadSnapshots();
-  const nextSnapshots = {
-    ...snapshots,
-    [snapshot.threadId]: snapshot,
-  };
-  await writeThreadSnapshots(nextSnapshots);
-  return snapshot;
+  return serializeJsonMutation(THREAD_SNAPSHOTS_FILE, async () => {
+    const snapshots = await readThreadSnapshots();
+    const nextSnapshots = {
+      ...snapshots,
+      [snapshot.threadId]: snapshot,
+    };
+    await writeThreadSnapshots(nextSnapshots);
+    return snapshot;
+  });
 }
 
 export async function upsertThreadFromRun(input: {
@@ -226,11 +254,40 @@ async function writeThreadSnapshots(snapshots: Record<string, DesktopThreadSnaps
   await writeAtomicJson(THREAD_SNAPSHOTS_FILE, capped);
 }
 
+async function serializeJsonMutation<T>(path: string, mutation: () => Promise<T>): Promise<T> {
+  const previousMutation = jsonMutationQueues.get(path) ?? Promise.resolve();
+  const result = previousMutation.catch(() => undefined).then(mutation);
+  const queueTail = result.then(() => undefined, () => undefined);
+  jsonMutationQueues.set(path, queueTail);
+  try {
+    return await result;
+  } finally {
+    if (jsonMutationQueues.get(path) === queueTail) jsonMutationQueues.delete(path);
+  }
+}
+
 async function writeAtomicJson(path: string, value: unknown): Promise<void> {
+  const previousWrite = atomicJsonWriteQueues.get(path) ?? Promise.resolve();
+  const pendingWrite = previousWrite
+    .catch(() => undefined)
+    .then(() => persistAtomicJson(path, value));
+  atomicJsonWriteQueues.set(path, pendingWrite);
+  try {
+    await pendingWrite;
+  } finally {
+    if (atomicJsonWriteQueues.get(path) === pendingWrite) atomicJsonWriteQueues.delete(path);
+  }
+}
+
+async function persistAtomicJson(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-  await rename(temporary, path);
+  try {
+    await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+    await replaceFileSafely(temporary, path);
+  } finally {
+    await rm(temporary, { force: true }).catch(() => undefined);
+  }
 }
 
 function parseStoredJson(serialized: string): unknown {

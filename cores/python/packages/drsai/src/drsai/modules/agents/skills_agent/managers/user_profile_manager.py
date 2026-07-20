@@ -222,8 +222,8 @@ The more you know, the better you can help. But remember — you're learning abo
 
 ## Environment Setup
 
-### Agent Internal Storage (DrSai Workspace)
-This is where DrSai stores its own internal configuration and data. **This is NOT the user's project directory.**
+### Agent Internal Storage (OpenDrSai Workspace)
+This is where OpenDrSai stores its own internal configuration and data. **This is NOT the user's project directory.**
 
 #### Root Directory
     - {self.work_dir}
@@ -252,7 +252,7 @@ This is where DrSai stores its own internal configuration and data. **This is NO
 **Important Usage Rules:**
 
 - **User's Project Files:** User's code, config, and project files are NOT in the Agent Internal Storage above. They are in the user's project directory (injected via system prompt).
-- **DrSai Internal Files:** The "Agent Internal Storage" is for DrSai's own configuration. Don't modify files there unless explicitly asked.
+- **OpenDrSai Internal Files:** The "Agent Internal Storage" is for OpenDrSai's own configuration. Don't modify files there unless explicitly asked.
 - **File Operations:** Download files to the Download Directory. Generate and test code in the Temporary Directory.
 """
         self.tools_md.write_text(content, encoding='utf-8')

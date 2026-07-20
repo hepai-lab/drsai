@@ -24,6 +24,7 @@ export function readInstalledRuntimeVersion(drsaiRepo: string): string | null {
 export function readBackendSourceVersion(drsaiRepo: string): string | null {
   const candidates = [
     join(drsaiRepo, "venv", "Lib", "site-packages", "drsai", "version.py"),
+    join(drsaiRepo, "cores", "python", "packages", "drsai", "src", "drsai", "version.py"),
     join(drsaiRepo, "src", "drsai", "version.py"),
     join(drsaiRepo, "drsai", "version.py"),
   ];

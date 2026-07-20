@@ -1,5 +1,5 @@
 """
-daemon_server.py — DrSai 后台常驻 Gateway 服务
+daemon_server.py — OpenDrSai 后台常驻 Gateway 服务
 
 独立于 TUI 子进程运行，通过 WebSocket 提供 JSON-RPC 接口。
 协议与现有 stdin/stdout 模式完全兼容。
@@ -125,7 +125,7 @@ def create_app(config: DaemonConfig) -> FastAPI:
         yield
         logger.info("Daemon '%s' shutting down", config.name)
 
-    app = FastAPI(title=f"DrSai Daemon [{config.name}]", lifespan=lifespan)
+    app = FastAPI(title=f"OpenDrSai Daemon [{config.name}]", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -233,7 +233,7 @@ def create_app(config: DaemonConfig) -> FastAPI:
             "params": {
                 "type": "gateway.ready",
                 "payload": {
-                    "skin": {"branding": {"name": f"DrSai Daemon [{config.name}]"}},
+                    "skin": {"branding": {"name": f"OpenDrSai Daemon [{config.name}]"}},
                     "daemon": {
                         "name": config.name,
                         "pid": os.getpid(),

@@ -141,10 +141,10 @@ function stubMainDependencies() {
     `],
     ["./gateway", `export function getGatewayRequestHeaders(){return {}}; export async function startGateway(){throw new Error("platform chat must not start the local gateway")}`],
     ["./modelDefaults", `export function getDefaultModelAlias(){return "drsai";}`],
-    ["./threads", `export async function upsertThreadFromRun(){return {};}`],
+    ["./threads", `export async function listThreads(){return [];} export async function upsertThreadFromRun(){return {};}`],
     ["./providerErrorAnalytics", `export async function persistProviderErrorAnalytics(){}`],
     ["./providerUsageAnalytics", `export async function persistProviderUsageAnalytics(){}`],
-    ["./remoteWorkspace", `export function bindRemoteThread(){}; export function getRemoteGatewayAccess(){return null;}`],
+    ["./remoteWorkspace", `export function bindRemoteThread(){}; export function getRemoteGatewayAccess(){return null;} export function resolveRemoteWorkspaceTarget(){return null;}`],
     ["./agentTelemetry", `export function recordAgentTelemetry(){}`],
     ["./agentCircuitBreaker", `export function assertAgentCircuitAvailable(){}; export function recordAgentCircuitFailure(){}; export function recordAgentCircuitSuccess(){}`],
   ]);

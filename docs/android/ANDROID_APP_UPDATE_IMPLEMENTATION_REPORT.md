@@ -1,6 +1,6 @@
 # Android APP 自动更新实现与验收报告
 
-## 当前轮次结果
+## 当前轮次结果（2026-07-19）
 
 | 项目 | 结果 |
 |---|---|
@@ -12,11 +12,14 @@
 | WorkManager 周期检查 | 已实现 |
 | 设置页“检查并更新”入口 | 已实现 |
 | 更新通知与状态恢复基础能力 | 已实现 |
+| GitHub CDN 慢速下载保护 | 已实现：连接 30 秒、读取 2 分钟、整次下载 10 分钟；保留 partial 断点文件 |
+| 超时错误提示 | 已实现：显示“下载超时，已保留已下载部分，请重试继续” |
 | JVM 单元测试 | 通过：103 项 |
 | Debug Lint | 通过 |
 | Release Lint Vital | 通过 |
-| MVP APK 构建 | 通过：`OpenDrSai-Android-v1.4.8.apk` |
-| Release APK 构建 | 通过：`OpenDrSai-Android-v1.4.8.apk` |
+| MVP APK 构建 | 通过：`OpenDrSai-Android-v1.4.9.apk` |
+| Release APK 构建 | 通过：`OpenDrSai-Android-v1.4.9.apk` |
+| 当前测试签名 APK | `apps/android/app/build/outputs/apk/mvp/OpenDrSai-Android-v1.4.9.apk`，SHA-256 `83DE554BC5C9CE40CA730A014624D352CA6157CE3EBFAE1ED732D3FB0165CDCA` |
 | 旧版 → 新版模拟器安装器 E2E | 部分完成：模拟器已连接，1.4.6 → 1.4.8 测试签名覆盖安装成功；自动更新清单当前 404 |
 
 ## 已产生的代码
@@ -43,16 +46,16 @@
 
 ## 最新模拟器复测
 
-API 30 模拟器已成功连接为 `emulator-5554`。复测结果：
+API 35 模拟器已成功连接为 `emulator-5554`。复测结果：
 
-- 预装旧版本：`versionName=1.4.6`、`versionCode=10406`；
-- 使用测试签名 MVP APK 覆盖安装成功：`versionName=1.4.8`、`versionCode=10408`；
+- 使用测试签名 Debug APK `OpenDrSai-Android-v1.4.9.apk` 覆盖安装成功并启动，无崩溃；
 - 使用未签名 Release APK 安装被 Android 拒绝：`INSTALL_PARSE_FAILED_NO_CERTIFICATES`；
 - 生产更新地址 `https://github.com/hepai-lab/drsai/releases/latest/download/latest-android.json`
-  当前返回 HTTP 404，因此无法继续自动下载/拉起安装器。
+  当前返回 HTTP 200，清单指向 `v1.4.9`，APK 大小约 2.9 MB。
 
-## 当前阻塞
+## 本轮修复
 
-需要在 GitHub Release 发布 `latest-android.json` 和对应版本化 APK（并确保 APK 使用可
-连续升级的签名）。发布后重新点击“检查并更新”即可完成自动下载和系统安装器验收；客户端
-代码、模拟器和覆盖安装链路本身已验证。
+此前下载器的 `callTimeout` 仅为 30 秒，GitHub Release 的多级重定向和 CDN 慢速响应会触发
+超时。本轮将其调整为连接 30 秒、读取 2 分钟、整次下载 10 分钟，并启用 OkHttp 网络故障重试；
+下载仍写入 `.partial` 文件，重试会从已接收字节继续。客户端代码、生产清单请求、构建和模拟器
+启动链路已验证。

@@ -20,6 +20,7 @@ class FakeResponse:
 
 class FakeAsyncClient:
     response = FakeResponse(200, {"text": "hello voice", "language": "en"})
+    last_post_kwargs = None
 
     def __init__(self, **_kwargs):
         pass
@@ -31,6 +32,7 @@ class FakeAsyncClient:
         return None
 
     async def post(self, *_args, **_kwargs):
+        type(self).last_post_kwargs = _kwargs
         return self.response
 
 
@@ -55,6 +57,14 @@ try:
     response = client.post("/v1/audio/transcriptions", files={"file": ("voice.wav", b"RIFFdata", "audio/wav")})
     assert response.status_code == 200, response.text
     assert response.json()["text"] == "hello voice"
+
+    response = client.post(
+        "/v1/audio/transcriptions",
+        data={"language": "en-US"},
+        files={"file": ("voice.webm", b"\x1a\x45\xdf\xa3data", "audio/webm")},
+    )
+    assert response.status_code == 200, response.text
+    assert FakeAsyncClient.last_post_kwargs["data"]["language"] == "en"
 
     FakeAsyncClient.response = FakeResponse(429, {"error": {"message": "slow down"}})
     response = client.post("/v1/audio/transcriptions", files={"file": ("voice.wav", b"RIFFdata", "audio/wav")})
@@ -89,4 +99,4 @@ finally:
     else:
         os.environ["HEPAI_API_KEY"] = original_key
 
-print("Voice provider behavior tests passed (11 cases).")
+print("Voice provider behavior tests passed (12 cases).")

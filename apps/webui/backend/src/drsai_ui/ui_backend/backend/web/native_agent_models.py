@@ -28,6 +28,14 @@ def public_agent(
         "featured": bool(agent.get("featured")),
         "is_default": is_default or bool(agent.get("is_default")),
         "model": _public_string(agent.get("model") or config.get("model")),
+        "models": _public_models(
+            agent.get("models")
+            or agent.get("allowed_models")
+            or agent.get("available_models")
+            or config.get("models")
+            or config.get("allowed_models")
+            or config.get("available_models")
+        ),
         "logo": _public_string(agent.get("logo") or agent.get("avatar")),
         "examples": _public_examples(agent.get("examples") or config.get("examples")),
         "capabilities": _public_capabilities(agent.get("capabilities")),
@@ -38,6 +46,20 @@ def public_agent(
 
 def _public_string(value: Any) -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _public_models(value: Any) -> list[str] | None:
+    if not isinstance(value, list):
+        return None
+    result: list[str] = []
+    for item in value:
+        candidate = item
+        if isinstance(item, dict):
+            candidate = item.get("id") or item.get("alias") or item.get("model")
+        model = _public_string(candidate)
+        if model and model not in result:
+            result.append(model)
+    return result or None
 
 
 def _public_examples(value: Any) -> list[Any] | str | None:

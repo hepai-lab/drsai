@@ -209,6 +209,10 @@ function normalizePlatformAgent(value: unknown): {
   const available = normalizeAvailability(agent);
   const publicId = `platform:${rawId}`;
   const model = firstString(agent.model, config.model) || undefined;
+  const models = normalizeModelIds(
+    agent.models ?? agent.allowed_models ?? agent.available_models ??
+    config.models ?? config.allowed_models ?? config.available_models,
+  );
   const description = normalizeLocalizedDescription(
     agent.description ?? config.description,
     "Platform agent.",
@@ -229,6 +233,7 @@ function normalizePlatformAgent(value: unknown): {
       lastUsedAt: firstString(agent.last_used_at, agent.lastUsedAt) || undefined,
       catalogGroup: normalizeCatalogGroup(agent.catalog_group, agent.catalogGroup),
       model,
+      models,
       logo: firstString(agent.logo, agent.avatar) || undefined,
       examples: normalizeExamples(agent.examples ?? config.examples),
       error: available ? undefined : "This platform agent is currently unavailable.",
@@ -336,6 +341,19 @@ function normalizeCapabilities(value: unknown): string[] {
   return Object.entries(record)
     .filter(([, enabled]) => enabled === true || (typeof enabled === "number" && enabled > 0))
     .map(([name]) => name);
+}
+
+function normalizeModelIds(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const models: string[] = [];
+  for (const item of value) {
+    const record = readRecord(item);
+    const model = typeof item === "string"
+      ? item.trim()
+      : firstString(record.id, record.alias, record.model);
+    if (model && !models.includes(model)) models.push(model);
+  }
+  return models.length > 0 ? models : undefined;
 }
 
 function normalizeLocalizedDescription(

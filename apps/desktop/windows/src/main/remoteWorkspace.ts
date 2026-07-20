@@ -4,7 +4,7 @@ import { readFile, readdir, stat } from "fs/promises";
 import { homedir } from "os";
 import { basename, dirname, isAbsolute, join, resolve } from "path";
 import type { ConnectRemoteWorkspaceRequest, DesktopForkWorktreeResult, DesktopThread, DesktopThreadContentSearchRequest, DesktopThreadContentSearchResult, DesktopThreadSnapshot, RemoteDirectoryEntry, RemoteGatewayInstallRequest, RemoteGatewayInstallResult, RemoteGatewayOperationEvent, RemoteGatewayPreflight, RemoteHepaiWorker, RemoteSshConnectivityResult, RemoteSshDiagnosticReport, RemoteSshHost, RemoteSshHostKey, RemoteWorkspaceStatus, WorkspaceCheckpoint, WorkspaceCheckpointAcceptRequest, WorkspaceCheckpointCreateRequest, WorkspaceCheckpointPreviewRequest, WorkspaceCheckpointPreviewResult, WorkspaceCheckpointRestoreRequest, WorkspaceCheckpointRestoreResult, WorkspaceContextOverview, WorkspaceFileChangeEvent, WorkspaceFilePreview, WorkspaceFilePreviewRequest, WorkspaceFileTreeRequest, WorkspaceFileTreeResult, WorkspaceFileWriteRequest, WorkspaceFileWriteResult, WorkspaceFolderSummaryRequest, WorkspaceFolderSummaryResult, WorkspaceGitDiffRequest, WorkspaceGitDiffResult, WorkspaceGitFileAtRefRequest, WorkspaceGitFileAtRefResult, WorkspaceProject } from "../shared/desktopApi";
-import { createRemoteWorkspace, findWorkspaceById, listWorkspaces } from "./workspaces";
+import { createRemoteWorkspace, findWorkspaceById, listWorkspaces, setRemoteWorkspaceAutoReconnect } from "./workspaces";
 import { RemoteGatewayClient } from "./remoteGatewayClient.generated";
 import { RemoteRuntimeClient } from "./runtimeClient";
 import { REMOTE_CAPABILITY_VERSIONS, REMOTE_SSH_PROTOCOL_VERSION } from "../shared/remoteSshProtocol";
@@ -13,6 +13,7 @@ import { ReconnectBackoff, RuntimeInstanceTracker, classifyRemoteFailure, type R
 import { loadRuntimeArtifactTrustStore, verifyRuntimeArtifactTrust } from "./runtimeArtifactTrust";
 import { HostProfileStore, assertHostCanBeRemoved, makeHostProfile, redactSshDiagnostic } from "./hostConnectionManager";
 import { PortForwardRegistry, type CreatePortForwardRequest, type PortForwardResource } from "./portForwardRegistry";
+import { shouldRestorePersistedRemoteWorkspace } from "./remoteWorkspaceRestorePolicy";
 
 const SSH_TIMEOUT_MS = 12_000;
 const REMOTE_PORT = 18642;
@@ -854,7 +855,7 @@ function scheduleReconnect(host: HostConnection): void {
 
 export async function disconnectRemoteWorkspace(id: string): Promise<boolean> {
   const item = connections.get(id);
-  if (!item) return false;
+  if (!item) { await setRemoteWorkspaceAutoReconnect(id, false); return false; }
   const activeHost = hostConnections.get(item.alias);
   if (activeHost?.state === "ready") {
     await fetch(`http://127.0.0.1:${activeHost.localPort}/v1/workspaces/${encodeURIComponent(id)}`, {
@@ -864,6 +865,7 @@ export async function disconnectRemoteWorkspace(id: string): Promise<boolean> {
     }).catch(() => undefined);
   }
   connections.delete(id);
+  await setRemoteWorkspaceAutoReconnect(id, false);
   const watcher = remoteFileWatchers.get(item.path); remoteFileWatchers.delete(item.path); watcher?.close();
   remoteFileWatchCursors.delete(item.path);
   emitWorkspaceStatus({ ...item.status, connected: false, gatewayReady: false, connectionState: "disconnected", localPort: undefined });
@@ -886,6 +888,7 @@ export async function disconnectRemoteWorkspace(id: string): Promise<boolean> {
 export async function restorePersistedRemoteWorkspaces(): Promise<void> {
   for (const workspace of await listWorkspaces()) {
     if (workspace.location !== "remote" || workspace.transport !== "ssh" || !workspace.remote || connections.has(workspace.id)) continue;
+    if (!shouldRestorePersistedRemoteWorkspace(workspace)) continue;
     if ([...connections.values()].some((connection) => connection.alias === workspace.remote!.hostAlias && connection.path === workspace.remote!.canonicalPath)) continue;
     void connectRemoteWorkspace({ hostAlias: workspace.remote.hostAlias, path: workspace.remote.canonicalPath, name: workspace.name, trusted: workspace.trusted }).catch((error) => {
       emitWorkspaceStatus({ ...workspace.remote!, connected: false, gatewayReady: false, connectionState: "failed", error: error instanceof Error ? error.message : String(error) });

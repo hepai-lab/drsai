@@ -1,7 +1,7 @@
 """
 wechat_bot.py — 微信 ilink Bot 主循环
 ======================================
-负责：长轮询接收消息 → 命令路由 → 调用 DrSai agent → 分段回复微信。
+负责：长轮询接收消息 → 命令路由 → 调用 OpenDrSai agent → 分段回复微信。
 
 命令列表：
   /help            —— 显示帮助
@@ -9,7 +9,7 @@ wechat_bot.py — 微信 ilink Bot 主循环
   /session         —— 列出该用户所有历史会话
   /session <id>    —— 切换到指定会话
 
-其他文字消息 → 转发给当前会话的 DrSai agent，逐条实时发送 TextMessage 回复。
+其他文字消息 → 转发给当前会话的 OpenDrSai agent，逐条实时发送 TextMessage 回复。
 """
 
 import asyncio
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 # 等待提示：当 agent 处理时间可能较长时先发一条占位消息
 THINKING_HINT = "⏳ 正在处理，请稍候..."
 
-HELP_TEXT = """DrSai Bot 命令列表：
+HELP_TEXT = """OpenDrSai Bot 命令列表：
 /help                 —— 显示此帮助
 /newsession           —— 新建对话（开始全新 session）
 /session              —— 查看所有历史 session

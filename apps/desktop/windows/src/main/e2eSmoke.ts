@@ -4646,7 +4646,8 @@ async function runF4AnomalyDecisionSmoke(window: BrowserWindow): Promise<SmokeRe
       const login = await api.login({ developerBypass: true, rememberMe: false });
       checks.login = Boolean(login?.ok);
       const pdf = await api.previewWorkspaceFile({ workspacePath: ${JSON.stringify(workspacePath)}, path: ${JSON.stringify(fixturePath)}, maxBytes: 100000 });
-      checks.cernPdfVerified = pdf.fileHash === 'sha256:f6581e1a255b354667188b41b874b996a300f88bb48912721bc1c854183e913e' && pdf.size === 7664262;
+      const pdfSize = Number(pdf.sizeBytes ?? pdf.size ?? 0);
+      checks.cernPdfVerified = pdf.fileHash === 'sha256:f6581e1a255b354667188b41b874b996a300f88bb48912721bc1c854183e913e' && pdfSize === 7664262;
       await api.enqueueBackgroundTask({
         kind: 'agent_run', source: 'agent', title: 'F4 CERN 容量异常数据处理', workspacePath: ${JSON.stringify(workspacePath)},
         targetId: 'f4-cern-${branch}', status: 'completed', progress: 100, message: '发现两行异常容量数据。', verification: '等待用户选择处理方式。',
@@ -4677,8 +4678,8 @@ async function runF4AnomalyDecisionSmoke(window: BrowserWindow): Promise<SmokeRe
   `, true) as { checks: Record<string, boolean>; focused: boolean; text: string };
   const checks = seeded.checks;
   checks.radioFocused = seeded.focused;
-  window.webContents.sendInputEvent({ type: "keyDown", keyCode: "SPACE" });
-  window.webContents.sendInputEvent({ type: "keyUp", keyCode: "SPACE" });
+  window.webContents.sendInputEvent({ type: "keyDown", keyCode: "Space" });
+  window.webContents.sendInputEvent({ type: "keyUp", keyCode: "Space" });
   await new Promise((resolve) => setTimeout(resolve, 100));
   checks.keyboardSelected = await window.webContents.executeJavaScript(`
     (() => {
@@ -4688,8 +4689,8 @@ async function runF4AnomalyDecisionSmoke(window: BrowserWindow): Promise<SmokeRe
       return Boolean(input?.checked && document.activeElement === button && !button?.disabled);
     })()
   `, true) as boolean;
-  window.webContents.sendInputEvent({ type: "keyDown", keyCode: "SPACE" });
-  window.webContents.sendInputEvent({ type: "keyUp", keyCode: "SPACE" });
+  window.webContents.sendInputEvent({ type: "keyDown", keyCode: "Enter" });
+  window.webContents.sendInputEvent({ type: "keyUp", keyCode: "Enter" });
   const completionDeadline = Date.now() + 8000;
   let uiResult: { state?: string; decision?: string; outputCount?: string; status?: string } = {};
   while (Date.now() < completionDeadline) {
@@ -6149,6 +6150,8 @@ async function runShareVersionConsistencySmoke(window: BrowserWindow): Promise<S
 
 async function runVoiceSmoke(window: BrowserWindow): Promise<SmokeResult> {
   const liveFixturePath = process.env.OPENDRSAI_VOICE_LIVE_FIXTURE;
+  const streamingMode = process.env.OPENDRSAI_E2E_VOICE_STREAMING === "1";
+  const fullRoundMode = Boolean(liveFixturePath) && process.env.OPENDRSAI_E2E_VOICE_FULL_ROUND === "1";
   if (liveFixturePath && !existsSync(liveFixturePath)) throw new Error("Configured live voice fixture does not exist.");
   const fixtureBytes = liveFixturePath
     ? [...readFileSync(liveFixturePath)]
@@ -6156,18 +6159,21 @@ async function runVoiceSmoke(window: BrowserWindow): Promise<SmokeResult> {
   const fixtureExtension = liveFixturePath ? liveFixturePath.split(".").at(-1)?.toLowerCase() : "webm";
   const fixtureMimeType = ({ wav: "audio/wav", ogg: "audio/ogg", mp3: "audio/mpeg", m4a: "audio/mp4", mp4: "audio/mp4" } as Record<string, string>)[fixtureExtension || ""] || "audio/webm";
   const expectedRuntime = liveFixturePath ? "gateway-provider" : "mock-local";
-  return window.webContents.executeJavaScript(`
+  const transportResult = await window.webContents.executeJavaScript(`
     (async () => {
       const api = window.openDrSai;
       const checks = { bridge: Boolean(api) };
       const details = {};
       if (!api) return { ok: false, checks, details };
+      if (${JSON.stringify(Boolean(liveFixturePath))}) await api.startGateway();
       const sttStatus = await api.getVoiceRuntimeStatus();
       const ttsStatus = await api.getVoiceSynthesisRuntimeStatus();
       const streamingCapabilities = await api.getStreamingVoiceCapabilities();
       checks.sttFixtureReady = sttStatus.runtimeId === ${JSON.stringify(expectedRuntime)} && sttStatus.state === "ready";
       checks.ttsFixtureReady = ttsStatus.runtimeId === ${JSON.stringify(expectedRuntime)} && ttsStatus.state === "ready" && ttsStatus.supportsSynthesisTask === true;
-      checks.streamingCapabilitiesReady = streamingCapabilities.streamingStt === true && streamingCapabilities.streamingTts === true && streamingCapabilities.audioEncodings.includes("pcm_s16le") && streamingCapabilities.sampleRatesHz.includes(16000);
+      checks.streamingCapabilitiesReady = ${JSON.stringify(streamingMode)}
+        ? streamingCapabilities.streamingStt === true && streamingCapabilities.streamingTts === true && streamingCapabilities.audioEncodings.includes("pcm_s16le") && streamingCapabilities.sampleRatesHz.includes(16000)
+        : streamingCapabilities.serialStt === true && streamingCapabilities.serialTts === true;
 
       const waitForTerminal = (subscribe, start, timeoutMessage, timeoutMs = 5000) => new Promise(async (resolve, reject) => {
         let unsubscribe = () => {};
@@ -6183,46 +6189,58 @@ async function runVoiceSmoke(window: BrowserWindow): Promise<SmokeResult> {
 
       const audio = new Uint8Array(${JSON.stringify(fixtureBytes)});
       const streamingEvents = [];
-      let streamingResult;
-      const streamingTerminal = new Promise((resolve, reject) => {
-        const timer = setTimeout(() => { unsubscribe(); reject(new Error("Packaged streaming STT timed out.")); }, 10000);
-        const unsubscribe = api.onStreamingVoiceTranscriptionEvent((event) => {
-          if (streamingResult && event.sessionId !== streamingResult.sessionId) return;
-          streamingEvents.push(event);
-          if (!["completed", "failed", "cancelled"].includes(event.type)) return;
-          clearTimeout(timer); unsubscribe(); resolve(event);
+      let streamingTypes = [];
+      let streamingCancelledType = "skipped";
+      if (${JSON.stringify(streamingMode)}) {
+        let streamingResult;
+        const streamingTerminal = new Promise((resolve, reject) => {
+          const timer = setTimeout(() => { unsubscribe(); reject(new Error("Packaged streaming STT timed out.")); }, 10000);
+          const unsubscribe = api.onStreamingVoiceTranscriptionEvent((event) => {
+            if (streamingResult && event.sessionId !== streamingResult.sessionId) return;
+            streamingEvents.push(event);
+            if (!["completed", "failed", "cancelled"].includes(event.type)) return;
+            clearTimeout(timer); unsubscribe(); resolve(event);
+          });
         });
-      });
-      streamingResult = await api.startStreamingVoiceTranscription({ turnId: "packaged-streaming-turn", encoding: "pcm_s16le", sampleRateHz: 16000, channels: 1, frameDurationMs: 20, providerEndpointing: true });
-      await new Promise((resolve) => setTimeout(resolve, 30));
-      for (let sequence = 0; sequence < 4; sequence += 1) {
-        const samples = new Int16Array(320); samples.fill(sequence + 1);
-        checks.streamingChunkAccepted = api.sendStreamingVoiceAudioChunk({ sessionId: streamingResult.sessionId, turnId: streamingResult.turnId, sequence, capturedAtMs: performance.now(), durationMs: 20, encoding: "pcm_s16le", sampleRateHz: 16000, channels: 1, audioData: new Uint8Array(samples.buffer) });
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      checks.streamingStopAccepted = await api.stopStreamingVoiceTranscription(streamingResult.sessionId, "manual");
-      const streamingTerminalEvent = await streamingTerminal;
-      const streamingTypes = streamingEvents.map((event) => event.type);
-      checks.streamingCompleted = streamingTerminalEvent.type === "completed" && streamingTypes.includes("partial") && streamingTypes.includes("final") && streamingTypes.indexOf("partial") < streamingTypes.indexOf("final") && streamingTypes.indexOf("final") < streamingTypes.indexOf("completed");
+        streamingResult = await api.startStreamingVoiceTranscription({ turnId: "packaged-streaming-turn", encoding: "pcm_s16le", sampleRateHz: 16000, channels: 1, frameDurationMs: 20, providerEndpointing: true });
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        for (let sequence = 0; sequence < 4; sequence += 1) {
+          const samples = new Int16Array(320); samples.fill(sequence + 1);
+          checks.streamingChunkAccepted = api.sendStreamingVoiceAudioChunk({ sessionId: streamingResult.sessionId, turnId: streamingResult.turnId, sequence, capturedAtMs: performance.now(), durationMs: 20, encoding: "pcm_s16le", sampleRateHz: 16000, channels: 1, audioData: new Uint8Array(samples.buffer) });
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        checks.streamingStopAccepted = await api.stopStreamingVoiceTranscription(streamingResult.sessionId, "manual");
+        const streamingTerminalEvent = await streamingTerminal;
+        streamingTypes = streamingEvents.map((event) => event.type);
+        checks.streamingCompleted = streamingTerminalEvent.type === "completed" && streamingTypes.includes("partial") && streamingTypes.includes("final") && streamingTypes.indexOf("partial") < streamingTypes.indexOf("final") && streamingTypes.indexOf("final") < streamingTypes.indexOf("completed");
 
-      let streamingCancelResult;
-      const streamingCancelled = new Promise((resolve, reject) => {
-        const timer = setTimeout(() => { unsubscribe(); reject(new Error("Packaged streaming cancellation timed out.")); }, 5000);
-        const unsubscribe = api.onStreamingVoiceTranscriptionEvent((event) => {
-          if (streamingCancelResult && event.sessionId !== streamingCancelResult.sessionId) return;
-          if (event.type !== "cancelled") return;
-          clearTimeout(timer); unsubscribe(); resolve(event);
+        let streamingCancelResult;
+        const streamingCancelled = new Promise((resolve, reject) => {
+          const timer = setTimeout(() => { unsubscribe(); reject(new Error("Packaged streaming cancellation timed out.")); }, 5000);
+          const unsubscribe = api.onStreamingVoiceTranscriptionEvent((event) => {
+            if (streamingCancelResult && event.sessionId !== streamingCancelResult.sessionId) return;
+            if (event.type !== "cancelled") return;
+            clearTimeout(timer); unsubscribe(); resolve(event);
+          });
         });
-      });
-      streamingCancelResult = await api.startStreamingVoiceTranscription({ turnId: "packaged-streaming-cancel-turn", encoding: "pcm_s16le", sampleRateHz: 16000, channels: 1, frameDurationMs: 20, providerEndpointing: true });
-      checks.streamingCancelAccepted = await api.cancelStreamingVoiceTranscription(streamingCancelResult.sessionId);
-      const streamingCancelledEvent = await streamingCancelled;
-      checks.streamingCancelled = streamingCancelledEvent.type === "cancelled" && streamingCancelledEvent.sessionId === streamingCancelResult.sessionId;
+        streamingCancelResult = await api.startStreamingVoiceTranscription({ turnId: "packaged-streaming-cancel-turn", encoding: "pcm_s16le", sampleRateHz: 16000, channels: 1, frameDurationMs: 20, providerEndpointing: true });
+        checks.streamingCancelAccepted = await api.cancelStreamingVoiceTranscription(streamingCancelResult.sessionId);
+        const streamingCancelledEvent = await streamingCancelled;
+        streamingCancelledType = streamingCancelledEvent.type;
+        checks.streamingCancelled = streamingCancelledEvent.type === "cancelled" && streamingCancelledEvent.sessionId === streamingCancelResult.sessionId;
+      } else {
+        checks.streamingChunkAccepted = true;
+        checks.streamingStopAccepted = true;
+        checks.streamingCompleted = true;
+        checks.streamingCancelAccepted = true;
+        checks.streamingCancelled = true;
+      }
 
       const sttEvent = await waitForTerminal(
         (listener) => api.onVoiceTranscriptionEvent(listener),
         () => api.startVoiceTranscription({ audioData: audio, mimeType: ${JSON.stringify(fixtureMimeType)}, durationSeconds: 1 }),
         "Packaged fixture STT timed out.",
+        ${liveFixturePath ? 60_000 : 5_000},
       );
       checks.sttCompleted = sttEvent.type === "completed" && sttEvent.result?.runtimeId === ${JSON.stringify(expectedRuntime)} && Boolean(sttEvent.result?.transcript);
 
@@ -6258,6 +6276,7 @@ async function runVoiceSmoke(window: BrowserWindow): Promise<SmokeResult> {
         (listener) => api.onVoiceSynthesisEvent(listener),
         () => api.startVoiceSynthesis({ text: "Packaged voice fixture", language: "en-US", speed: 1, format: "wav" }),
         "Packaged fixture TTS timed out.",
+        ${liveFixturePath ? 60_000 : 5_000},
       );
       checks.ttsCompleted = ttsEvent.type === "completed" && ttsEvent.result?.runtimeId === ${JSON.stringify(expectedRuntime)} && ttsEvent.result?.audioData?.length > 0;
       let voiceDiagnostics = [];
@@ -6276,13 +6295,213 @@ async function runVoiceSmoke(window: BrowserWindow): Promise<SmokeResult> {
       details.streaming = {
         capabilities: streamingCapabilities,
         terminalTypes: streamingTypes,
-        cancelledType: streamingCancelledEvent.type,
+        mode: ${JSON.stringify(streamingMode ? "streaming" : "serial")},
+        cancelledType: streamingCancelledType,
         errors: streamingEvents.filter((event) => event.type === "failed").map((event) => ({ code: event.error?.code, message: event.error?.message })),
       };
       details.maxBoundaryBytes = boundaryBytes;
       details.terminalTypes = { stt: sttEvent.type, cancelled: cancelledEvent.type, tts: ttsEvent.type };
       details.diagnosticOperations = voiceDiagnostics.map((event) => ({ component: event.component, operation: event.operation, status: event.status, durationMs: event.durationMs, errorCode: event.errorCode }));
       return { ok: Object.values(checks).every(Boolean), checks, details };
+    })()
+  `, true) as SmokeResult;
+  if (!fullRoundMode || !transportResult.ok) return transportResult;
+  const authenticated = await window.webContents.executeJavaScript(`
+    window.openDrSai.login({ developerBypass: true, rememberMe: false, defaultModel: 'gpt-4.1-mini' })
+  `, true) as { ok?: boolean };
+  if (!authenticated?.ok) {
+    return {
+      ok: false,
+      checks: { ...transportResult.checks, fullRoundLoginBootstrap: false },
+      details: { ...transportResult.details, fullRound: { stage: "login-bootstrap" } },
+    };
+  }
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("Voice full-round renderer reload timed out.")), 15_000);
+    window.webContents.once("did-finish-load", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    window.webContents.reload();
+  });
+  const fullRoundResult = await runVoiceFullRoundSmoke(window);
+  return {
+    ok: transportResult.ok && fullRoundResult.ok,
+    checks: { ...transportResult.checks, fullRoundLoginBootstrap: true, ...fullRoundResult.checks },
+    details: { ...transportResult.details, fullRound: fullRoundResult.details },
+  };
+}
+
+async function runVoiceFullRoundSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  return window.webContents.executeJavaScript(`
+    (async () => {
+      const api = window.openDrSai;
+      const checks = {};
+      const details = {};
+      const phases = [];
+      const stages = [];
+      const stage = (name) => {
+        stages.push({ name, atMs: Math.round(performance.now()) });
+        details.stages = stages;
+      };
+      const finish = async () => {
+        rememberPhase();
+        details.phases = phases;
+        details.voiceUi = {
+          phase: document.querySelector('form.composer')?.getAttribute('data-voice-turn-phase') || null,
+          status: document.querySelector('.composer-voice-status')?.textContent?.trim().slice(0, 500) || null,
+        };
+        const snapshot = await api.getDiagnosticSnapshot({ module: 'voice', limit: 100 });
+        details.voiceDiagnostics = (snapshot.events || []).map((event) => ({
+          component: event.component,
+          operation: event.operation,
+          status: event.status,
+          durationMs: event.durationMs,
+          errorCode: event.errorCode,
+          attributes: event.attributes,
+        }));
+        return { ok: Object.values(checks).every(Boolean), checks, details };
+      };
+      const rememberPhase = () => {
+        const phase = document.querySelector('form.composer')?.getAttribute('data-voice-turn-phase');
+        if (phase && phases.at(-1) !== phase) phases.push(phase);
+      };
+      const waitFor = async (find, timeout = 30000) => {
+        const deadline = performance.now() + timeout;
+        while (performance.now() < deadline) {
+          rememberPhase();
+          const value = await find();
+          if (value) return value;
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        return null;
+      };
+
+      const playback = { ended: 0, played: 0 };
+      class E2EAudio {
+        constructor(url) { this.url = url; this.onended = null; this.onerror = null; this.playbackRate = 1; this.timer = null; }
+        load() {}
+        pause() { if (this.timer) { clearTimeout(this.timer); this.timer = null; } }
+        play() {
+          playback.played += 1;
+          this.timer = setTimeout(() => { this.timer = null; playback.ended += 1; this.onended?.(); }, 250);
+          return Promise.resolve();
+        }
+        removeAttribute() {}
+      }
+      Object.defineProperty(window, 'Audio', { configurable: true, value: E2EAudio });
+
+      const preferences = {
+        autoReadResponses: true,
+        inputDeviceId: '',
+        inputLanguage: 'en-US',
+        interactionMode: 'serial',
+        playbackRate: 1,
+        remoteSttConsent: true,
+        remoteTtsConsent: true,
+        synthesisMode: 'provider',
+        voiceName: 'alloy',
+      };
+      localStorage.setItem('opendrsai.voicePreferences.v1', JSON.stringify({ version: 3, preferences }));
+      window.dispatchEvent(new CustomEvent('opendrsai:voice-preferences-changed', { detail: preferences }));
+
+      stage('login:start');
+      const login = await api.login({ developerBypass: true, rememberMe: false, defaultModel: 'gpt-4.1-mini' });
+      checks.fullRoundLogin = login?.ok === true;
+      stage('login:complete');
+      if (!checks.fullRoundLogin) return await finish();
+      stage('gateway:start');
+      checks.fullRoundGateway = await api.startGateway();
+      stage('gateway:complete');
+      if (!checks.fullRoundGateway) return await finish();
+      const composer = await waitFor(() => document.querySelector('form.composer'), 15000);
+      checks.fullRoundComposerReady = Boolean(composer);
+      stage('composer:ready');
+      if (!composer) return await finish();
+      const observer = composer ? new MutationObserver(rememberPhase) : null;
+      if (composer) observer?.observe(composer, { attributes: true, attributeFilter: ['data-voice-turn-phase'] });
+
+      const baselineAssistantIds = new Set([...document.querySelectorAll('.message.assistant')].map((node) => node.getAttribute('data-message-id')));
+      const baselineVoiceDiagnostics = await api.getDiagnosticSnapshot({ module: 'voice', limit: 100 });
+      const baselineTtsCompleted = (baselineVoiceDiagnostics.events || []).filter((event) => event.component === 'tts' && event.status === 'completed').length;
+      const voiceButton = await waitFor(() => {
+        const button = document.querySelector('button[aria-label="Start voice recording"]');
+        return button && !button.disabled ? button : null;
+      }, 15000);
+      checks.fullRoundVoiceButtonReady = Boolean(voiceButton);
+      stage('voice-button:ready');
+      if (!voiceButton) { observer?.disconnect(); return await finish(); }
+      voiceButton?.click();
+      checks.fullRoundCaptureStarted = Boolean(await waitFor(() => document.querySelector('form.composer[data-voice-turn-phase="recording"]'), 15000));
+      stage('capture:started');
+      if (!checks.fullRoundCaptureStarted) { observer?.disconnect(); return await finish(); }
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      const stopButton = await waitFor(() => document.querySelector('button[aria-label="Stop voice recording"]'), 5000);
+      checks.fullRoundStopButtonReady = Boolean(stopButton);
+      stage('stop-button:ready');
+      if (!stopButton) { observer?.disconnect(); return await finish(); }
+      stopButton?.click();
+
+      const transcriptionTerminal = await waitFor(() => {
+        const review = document.querySelector('textarea[aria-label="Review voice transcript"]');
+        const failed = document.querySelector('form.composer[data-voice-turn-phase="failed"]');
+        return review || failed;
+      }, 60000);
+      const review = transcriptionTerminal?.matches?.('textarea[aria-label="Review voice transcript"]')
+        ? transcriptionTerminal
+        : null;
+      const transcript = review?.value?.trim() || '';
+      checks.fullRoundTranscribed = transcript.length > 0;
+      details.transcriptChars = transcript.length;
+      stage('transcript:ready');
+      if (!checks.fullRoundTranscribed) { observer?.disconnect(); return await finish(); }
+      const insert = await waitFor(() => [...document.querySelectorAll('.composer-voice-review button')].find((button) => button.textContent?.trim() === 'Insert' && !button.disabled), 5000);
+      checks.fullRoundInsertReady = Boolean(insert);
+      if (!insert) { observer?.disconnect(); return await finish(); }
+      insert?.click();
+      const input = await waitFor(() => {
+        const node = document.querySelector('[data-testid="composer-input"]');
+        return node?.value?.trim() ? node : null;
+      }, 5000);
+      checks.fullRoundReviewInserted = Boolean(input) && input.value.trim() === transcript;
+      stage('transcript:inserted');
+      if (!checks.fullRoundReviewInserted) { observer?.disconnect(); return await finish(); }
+      const submit = await waitFor(() => {
+        const button = document.querySelector('button.composer-submit');
+        return button && !button.disabled ? button : null;
+      }, 5000);
+      checks.fullRoundSendReady = Boolean(submit);
+      stage('send:ready');
+      if (!submit) { observer?.disconnect(); return await finish(); }
+      submit?.click();
+      stage('send:clicked');
+
+      const assistant = await waitFor(() => [...document.querySelectorAll('.message.assistant')].find((node) => {
+        const id = node.getAttribute('data-message-id');
+        return id && !baselineAssistantIds.has(id) && (node.querySelector('.message-body')?.textContent || '').trim().length > 0;
+      }), 90000);
+      const assistantText = assistant?.querySelector('.message-body')?.textContent?.trim() || '';
+      checks.fullRoundLlmReplied = assistantText.length > 0;
+      details.assistantChars = assistantText.length;
+      stage('assistant:ready');
+      if (!checks.fullRoundLlmReplied) { observer?.disconnect(); return await finish(); }
+      checks.fullRoundCompleted = Boolean(await waitFor(() => document.querySelector('form.composer[data-voice-turn-phase="completed"]'), 60000));
+      await waitFor(() => playback.ended > 0, 10000);
+      observer?.disconnect();
+      rememberPhase();
+
+      const requiredPhases = ['requesting_permission', 'recording', 'transcribing', 'reviewing', 'ready_to_send', 'submitting', 'awaiting_response', 'response_ready', 'synthesizing', 'playing', 'completed'];
+      checks.fullRoundPhases = requiredPhases.every((phase) => phases.includes(phase));
+      checks.fullRoundPlayback = playback.played > 0 && playback.ended > 0;
+      const voiceDiagnostics = await api.getDiagnosticSnapshot({ module: 'voice', limit: 100 });
+      const ttsCompleted = (voiceDiagnostics.events || []).filter((event) => event.component === 'tts' && event.status === 'completed').length;
+      checks.fullRoundProviderTts = ttsCompleted > baselineTtsCompleted;
+      const diagnosticText = JSON.stringify(voiceDiagnostics.events || []);
+      checks.fullRoundDiagnosticsPrivate = !diagnosticText.includes(transcript) && !diagnosticText.includes(assistantText) && !diagnosticText.includes('audioData');
+      details.phases = phases;
+      details.playback = playback;
+      stage('round:complete');
+      return await finish();
     })()
   `, true) as Promise<SmokeResult>;
 }
@@ -10456,8 +10675,8 @@ async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
       const outsidePathResult = await api.openPath("C:\\\\\\\\Windows\\\\\\\\win.ini");
       details.outsidePathResult = outsidePathResult;
       checks.openPathOutsideRejected =
-        String(outsidePathResult).includes("outside DrSai home") ||
-        String(outsidePathResult).includes("not registered as a DrSai or workspace path");
+        String(outsidePathResult).includes("outside OpenDrSai home") ||
+        String(outsidePathResult).includes("not registered as an OpenDrSai or workspace path");
 
       const reviewFixture = ${JSON.stringify(workspaceReviewFixture)};
       const reviewWorkspace = await api.createWorkspace({ source: "existing", path: reviewFixture.workspacePath, name: "packaged-review-workspace", trusted: true });

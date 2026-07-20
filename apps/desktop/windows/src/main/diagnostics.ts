@@ -43,6 +43,7 @@ export interface DiagnosticOperationHandle {
 }
 
 export class DesktopDiagnostics {
+  private readonly historicalEventIds = new Set<string>();
   private events: DiagnosticEvent[] = [];
   private readonly ids = new Set<string>();
   private readonly health = new Map<string, DiagnosticComponentHealth>();
@@ -147,7 +148,7 @@ export class DesktopDiagnostics {
       events,
       traces,
       health,
-      findings: deriveFindings(events, health),
+      findings: deriveFindings(events.filter((event) => !this.historicalEventIds.has(event.id)), health),
       deepTracing: buildDeepTracingSnapshot(events, traces, this.resourceSamples),
       rootCause,
       droppedEvents: this.droppedEvents,
@@ -212,6 +213,7 @@ export class DesktopDiagnostics {
           const event = normalizeEvent(parsed);
           if (this.ids.has(event.id)) continue;
           this.ids.add(event.id);
+          this.historicalEventIds.add(event.id);
           this.events.push(event);
           this.sequence = Math.max(this.sequence, event.sequence ?? 0);
         } catch {
@@ -225,7 +227,6 @@ export class DesktopDiagnostics {
         this.droppedEvents += removed.length;
         needsCompaction = true;
       }
-      for (const event of this.events) this.updateHealthFromEvent(event);
       const unfinished = buildTraces(this.events).filter((trace) => !isTerminalDiagnosticStatus(trace.status)).slice(0, 50);
       for (const trace of unfinished) {
         const recovery = normalizeEvent({

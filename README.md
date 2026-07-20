@@ -15,7 +15,26 @@
   </p>
 </div>
 
-该开发框架基于Microsoft开源框架[AutoGen](https://github.com/microsoft/autogen)（当前0.5.7版本），在兼容AutoGen完整结构和生态的基础上，重新设计了智能体、多智能体系统的组件和开发逻辑，使其更适合于开发**专业科学智能体和多智能体系统🤖：如复杂多任务执行💡、状态管理和人机交互🙋‍♂️🙋‍♀️、专业科学工具管理和执行🛠️、长任务执行管理⏰、长短记忆管理等🧠**。与主流MCP、A2A协议、[HepAI](https://ai.ihep.ac.cn/)的相关生态、RAGFlow等主流RAG架构具有很好的兼容性。而且具备开发部署一体化能力，智能体或多智能体系统代码可一键启动，注册为openai ChatCompletions格式、HepAI Worker格式，作为API调用。并配套相应的人机交互前端，可以直接开发部署完整的前后端应用。docs请访问[OpenDrSai文档](https://docs-drsai.ihep.ac.cn/).
+OpenDrSai 以 **BAMS（Brain-Actuators-Memory-Sensors）** 作为智能体的总体架构：Brain 负责推理与任务决策，Actuators 负责工具调用和任务执行，Memory 负责长短期上下文、知识与执行状态，Sensors 负责接入用户输入、科学数据、外部服务和模型。框架面向专业科学智能体与多智能体系统，重点支持复杂多任务、状态与人机协同、科学工具、长任务以及记忆管理，并兼容 MCP、A2A、[HepAI](https://ai.ihep.ac.cn/)、RAGFlow 等生态。智能体可作为 OpenAI Chat Completions 兼容接口或 HepAI Worker 部署，并通过配套 WebUI、TUI、桌面端和移动端形成完整应用。文档请访问 [OpenDrSai 文档](https://docs-drsai.ihep.ac.cn/)。
+
+### 架构与技术栈定位
+
+- **BAMS 是 OpenDrSai 的上层架构。** 它定义智能体能力如何划分与协作，不是一个第三方运行库。
+- **[Microsoft AutoGen](https://github.com/microsoft/autogen) 是当前核心 Agent Runtime 与组件基础。** 仓库固定使用 AutoGen `0.5.7` 的 `autogen-core`、`autogen-agentchat` 和 `autogen-ext`；OpenDrSai 在其消息、模型客户端、工具、组件、状态和多智能体运行时之上实现 BAMS 组件、科学任务能力与部署体系。因此，OpenDrSai 不是与 AutoGen 无关的独立实现，也不应把 BAMS 与 AutoGen 描述为同一层概念。
+- **HepAI 是平台与部署技术栈。** 它提供模型 API、身份与组织服务，以及 HepAI Worker/DDF 等部署和分布式能力；OpenDrSai 通过 `hepai` 包和平台接口与其集成，但 Agent Runtime 与 BAMS 组件仍由 OpenDrSai 自身负责。
+
+### 其他主要上游项目与集成
+
+- **[Magentic-UI](https://github.com/microsoft/magentic-ui)**：OpenDrSai WebUI 的上游基础。`apps/webui/backend` 和 `apps/webui/frontend` 在其代码与交互范式上进行了集成和扩展，承载会话、计划展示、审批、浏览器/代码执行环境及多智能体交互。
+- **Magentic-One**：当前不作为 OpenDrSai 的实际架构组成。仓库仍保留 `magentic-one` 模式名、目录名及 `autogen-ext[magentic-one]` 安装 extra 等历史或兼容痕迹，但核心包未启用 AutoGen 的 `MagenticOneGroupChat`；这些命名不代表 OpenDrSai 建立在 Magentic-One 架构之上。
+- **RAGFlow / ChromaDB**：可选的知识库与长期记忆后端，不是 Agent Runtime；RAGFlow 已有专用 Memory、Agent 和 WebUI 接入，ChromaDB 通过可选依赖启用。
+- **OpenWebUI Pipeline**：OpenDrSai 提供兼容适配接口，可作为外部模型或智能体服务接入；OpenWebUI 不是本仓库 UI 的实现基础。
+- **Codex**：桌面端和远程工作区可通过 Codex Adapter 接入 Codex App Server，作为与 OpenDrSai 原生 Agent Backend 并列的可选执行后端，不属于 BAMS 核心实现。
+- **browser-use**：Windows 桌面端的可选浏览器自动化 worker 依赖，用于浏览器控制能力。
+- **Hermes Agent**：TUI 的 JSON-RPC gateway client 明确由 Hermes Agent 对应模块派生并经 OpenDrSai 改造；这是局部代码来源，不是 OpenDrSai 的 Agent Runtime。
+- **React/Ink、Gatsby/React、Electron、Android Jetpack Compose**：分别构成 TUI、Web 前端、Windows 桌面端和 Android 客户端的界面技术栈，不属于智能体架构层。
+
+Claude Code、OpenAI Codex UI 和 Orca 等还被部分设计文档用于交互、子智能体或远程工作区方案参考；除上述明确适配或派生的项目外，这类“借鉴”不等于代码依赖或基础架构。
 
 ## 1.特色
 
@@ -27,24 +46,24 @@
 
 ### &#x1F4E2; 功能比较
 
-|      功能       | OpenDrSai智能体开发框架 |    AutoGen     |    Camel AI    |    LangChain   |    AutoGPT     | Dify.AI |
-| :-------------: | :------------: | :------------: | :------------: | :------------: | :------------: | :------------: |
-| 框架特征 | ✅基于AutoGen，针对科学任务优化，扩展性和人机交互能力强，能可视化和低代码构建专业科学智能体和多智能体系统 | 以对话驱动的多智能体协同架构，模块化和通用性强，生态较好，但只提供基本框架功能 | 基于角色扮演+启示式提示的协作架构，生态较好 | 模块式组装开发  | 集成度较高的智能体和多智能体架构  | 低代码平台，可拖拽构建，扩展性较差 |
-| 模型接入 | ✅支持专业科学模型的接入及开发策略 | 目前只支持通用的大模型格式接入 | 目前只支持通用的大模型格式接入 | 目前只支持通用的大模型格式接入  | 目前只支持通用的大模型格式接入  | 目前只支持通用的大模型格式接入  |
-| 专业科学数据接入 | ✅开发了感知器等专业科学数据接入策略 | 需要开发 | 暂无 | 暂无 | 暂无 | 暂无 |
-| 记忆与知识 | ✅模块化的专业知识接入、长期智能记忆管理 | 需要开发 | ✅具有长期智能记忆 | 需要开发 | ✅具有长短期记忆机制 | ✅内置知识库和消息存储功能 |
-| 科学工具| ✅支持MCP/OpenAPI/HepAI Worker等多种工具、资源接入方式 | 只支持MCP Tool格式和本地函数，其它需要进一步开发 | ✅预设了多种通用工具和多种接入方式 | 需要开发 | 需要开发 | 内置有限工具，专业工具需要开发 |
-| 学习反思 | ✅模块化的反思和学习 | 需要开发 | ✅内置反思过程和学习步骤 | 需要开发 | ✅内置反思过程和学习步骤 | 反思能力有限，主要依赖 RAG |
-| 状态管理与人机交互 | ✅支持前后端人机交互 | 基础的userproxy模式，需要进一步开发 | 基础的userproxy模式，需要进一步开发 | 需要开发 | 需要开发 | 暂无 |
-| 长时间任务执行管理 | ✅支持超长时间科学任务监控与守护 | 暂无 | 暂无 | 暂无 | 暂无 | 暂无 |
-| 框架模块化和扩展性 | ✅模块化、扩展性强 | ✅模块化、扩展性强 | ✅模块化、扩展性强 | 具有较强的模块化、扩展性 | 扩展性较差 | 扩展性较差 |
-| 交互式应用开发 | ✅具有开发即应用的特性，构建的智能体可直接转化为人机交互的web应用 | 在AutoGen Studio中可进行拖拽构建多智能体系统 | 在CAMEL Web App进行前端应用 | 需要与其他开源界面集成 | 需要与其他开源界面集成 | 前端可拖拽构建智能体应用 |
-| 终端交互（TUI） | ✅基于React/Ink的全新TUI，支持斜杠命令、会话管理、模型切换、推理可视化 | 暂无 | 暂无 | 暂无 | 暂无 | 暂无 |
-| 桌面客户端 | ✅Electron桌面应用，支持系统托盘和远程连接 | 暂无 | 暂无 | 暂无 | 暂无 | 暂无 |
+|        功能        |                                                 OpenDrSai智能体开发框架                                                 |                                    AutoGen                                    |                  Camel AI                  |           LangChain           |             AutoGPT             |              Dify.AI              |
+| :----------------: | :---------------------------------------------------------------------------------------------------------------------: | :----------------------------------------------------------------------------: | :-----------------------------------------: | :----------------------------: | :------------------------------: | :--------------------------------: |
+|      框架特征      | ✅以BAMS组织智能体能力，以AutoGen 0.5.7提供核心运行时与组件基础；WebUI基于Magentic-UI扩展，面向科学任务、人机协同与部署 | 以对话驱动的多智能体协同架构，模块化和通用性强，生态较好，但只提供基本框架功能 | 基于角色扮演+启示式提示的协作架构，生态较好 |         模块式组装开发         | 集成度较高的智能体和多智能体架构 | 低代码平台，可拖拽构建，扩展性较差 |
+|      模型接入      |                                           ✅支持专业科学模型的接入及开发策略                                           |                         目前只支持通用的大模型格式接入                         |       目前只支持通用的大模型格式接入       | 目前只支持通用的大模型格式接入 |  目前只支持通用的大模型格式接入  |   目前只支持通用的大模型格式接入   |
+|  专业科学数据接入  |                                          ✅开发了感知器等专业科学数据接入策略                                          |                                    需要开发                                    |                    暂无                    |              暂无              |               暂无               |                暂无                |
+|     记忆与知识     |                                        ✅模块化的专业知识接入、长期智能记忆管理                                        |                                    需要开发                                    |             ✅具有长期智能记忆             |            需要开发            |       ✅具有长短期记忆机制       |     ✅内置知识库和消息存储功能     |
+|      科学工具      |                                 ✅支持MCP/OpenAPI/HepAI Worker等多种工具、资源接入方式                                 |                只支持MCP Tool格式和本地函数，其它需要进一步开发                |     ✅预设了多种通用工具和多种接入方式     |            需要开发            |             需要开发             |   内置有限工具，专业工具需要开发   |
+|      学习反思      |                                                  ✅模块化的反思和学习                                                  |                                    需要开发                                    |          ✅内置反思过程和学习步骤          |            需要开发            |     ✅内置反思过程和学习步骤     |     反思能力有限，主要依赖 RAG     |
+| 状态管理与人机交互 |                                                  ✅支持前后端人机交互                                                  |                      基础的userproxy模式，需要进一步开发                      |     基础的userproxy模式，需要进一步开发     |            需要开发            |             需要开发             |                暂无                |
+| 长时间任务执行管理 |                                            ✅支持超长时间科学任务监控与守护                                            |                                      暂无                                      |                    暂无                    |              暂无              |               暂无               |                暂无                |
+| 框架模块化和扩展性 |                                                   ✅模块化、扩展性强                                                   |                               ✅模块化、扩展性强                               |             ✅模块化、扩展性强             |    具有较强的模块化、扩展性    |            扩展性较差            |             扩展性较差             |
+|   交互式应用开发   |                            ✅具有开发即应用的特性，构建的智能体可直接转化为人机交互的web应用                            |                  在AutoGen Studio中可进行拖拽构建多智能体系统                  |         在CAMEL Web App进行前端应用         |     需要与其他开源界面集成     |      需要与其他开源界面集成      |      前端可拖拽构建智能体应用      |
+|  终端交互（TUI）  |                         ✅基于React/Ink的全新TUI，支持斜杠命令、会话管理、模型切换、推理可视化                         |                                      暂无                                      |                    暂无                    |              暂无              |               暂无               |                暂无                |
+|     桌面客户端     |                                       ✅Electron桌面应用，支持系统托盘和远程连接                                       |                                      暂无                                      |                    暂无                    |              暂无              |               暂无               |                暂无                |
 
 > 截止时间：2025年11月25日
 
-------
+---
 
 ## 2.快速开始
 
@@ -54,6 +73,7 @@
 
 > **前置条件**：源码安装需要 **Node.js (≥20)** 和 **pnpm** 来编译 TUI 前端。
 > 安装脚本会自动检测并调用 pnpm；如果未安装，请先执行：
+>
 > ```shell
 > # 安装 Node.js（推荐 LTS 版本）
 > # 方式一：从官网下载 https://nodejs.org/
@@ -64,7 +84,9 @@
 > # 安装 pnpm
 > npm install -g pnpm
 > ```
+>
 > 如果无法安装 Node.js，也可跳过 TUI 编译：
+>
 > ```shell
 > # 先创建占位文件，跳过编译
 > mkdir -p apps/ui-tui/dist && touch apps/ui-tui/dist/entry.mjs
@@ -84,6 +106,7 @@ pip install -e apps/webui/backend # for DrSai-UI  human-computer interaction fro
 
 > `pip install -e` 时会自动调用 `pnpm install && pnpm build` 编译
 > `apps/ui-tui` 前端，无需手动构建。如自动构建失败，可手动执行：
+>
 > ```shell
 > cd apps/ui-tui && pnpm install && pnpm build
 > ```
@@ -179,6 +202,7 @@ drsai chat   # 等价于 drsai
 首次启动将自动引导配置API密钥，之后即可直接在终端中与智能体对话。
 
 **TUI 核心特性：**
+
 - 🎨 基于 React/Ink 的现代化终端界面
 - 💬 支持多会话管理：创建、切换、重命名、搜索历史会话
 - 🔄 实时模型切换：`/model <name>` 切换模型，`/models` 查看可用模型
@@ -196,7 +220,7 @@ conda activate drsai
 python examples/agent_groupchat/assistant_base_R1_oai.py
 ```
 
-**NOTE**: 请根据自己的测试需要更改```if __name__ == "__main__":```中的智能体启动方式。
+**NOTE**: 请根据自己的测试需要更改``if __name__ == "__main__":``中的智能体启动方式。
 
 **NOTE**: examples/agent_groupchat中还包括了其他智能体和多智能体系统的案例，包括MCP等工具接入、RAG接入、多智能体协作系统的设计、多任务执行的设计等。
 
@@ -209,7 +233,7 @@ cp .env.example .env # 复制.env.example文件为.env, 可用于高能所部署
 drsai ui # 启动Dr.Sai-UI人机交互后端和静态前端
 ```
 
-后端和静态前端默认启动在8081端口，```drsai --help```获取更多的启动参数，连接2.2启动的R1_test智能体并在前端进行交互的视频如下：
+后端和静态前端默认启动在8081端口，``drsai --help``获取更多的启动参数，连接2.2启动的R1_test智能体并在前端进行交互的视频如下：
 
 <video width="80%" controls>
   <source src="assets/video/drsai_ui.mp4" type="video/mp4">
@@ -220,7 +244,6 @@ drsai ui # 启动Dr.Sai-UI人机交互后端和静态前端
 **NOTE:**
 
 - DrSai-General 功能需要编译python执行沙盒和浏览器VNC的Docker镜像，请确保安装了docker环境。具体docker镜像及安装配置见[docker](docker/README.md)
-
 
 ### 2.5.人机交互前端
 
@@ -267,36 +290,35 @@ drsai gateway    # 启动 SSE 网关（供桌面客户端连接）
 
 在 TUI 终端交互模式下，输入 `/help` 可查看所有可用命令。以下是部分核心命令：
 
-| 分类 | 命令 | 说明 |
-| :--- | :--- | :--- |
-| **会话管理** | `/new [name]` | 创建新会话 |
-| | `/switch <id\|name>` | 切换到指定会话 |
-| | `/list` (`/ls`) | 列出所有已保存会话 |
-| | `/resume <id\|name>` | 恢复历史会话 |
-| | `/search <query>` | 搜索历史会话 |
-| | `/rename <name>` | 重命名当前会话 |
-| | `/retry` | 重试上一条消息 |
-| | `/copy [n]` | 复制倒数第n条助手回复 |
-| **模型配置** | `/model [name]` (`/m`) | 查看/切换模型（会话级） |
-| | `/model_global [name]` (`/mg`) | 切换模型并设为全局默认 |
-| | `/models` (`/listmodels`) | 列出所有可用模型 |
-| **显示控制** | `/reasoning show\|hide\|low\|medium\|high` | 控制推理过程显示 |
-| | `/verbose` | 切换每轮统计信息显示 |
-| | `/bell on\|off` | 响应完成时终端响铃 |
-| | `/fast on\|off` | 切换至最快模型 |
-| **项目指令** | `/init` | 创建 DRSAI.md 项目指令文件 |
-| | `/memory show\|reload` | 查看/重载项目指令 |
-| **工作区** | `/workspace on\|off` (`/ws`) | 切换工作区限制 |
-| | `/dangerous on\|off` (`/dg`) | 切换危险命令执行权限 |
-| | `/cd <path>` (`/workdir`) | 切换工作目录 |
-| **子智能体** | `/agent <name\|list\|clear>` | 设置/列出子智能体 |
-| | `/delegate <type> <prompt>` (`/sub`) | 手动委托子智能体执行 |
-| **计划模式** | `/plan_mode on\|off` (`/pm`) | 切换计划模式 |
-| | `/inject prefix\|suffix\|clear` | 注入自定义提示词 |
-| **系统** | `/setup` (`/env`) | 重新打开配置向导 |
-| | `/status` | 显示智能体和会话状态 |
-| | `/quit` (`/exit`, `/q`) | 保存并退出 |
-
+| 分类               | 命令                                     | 说明                       |
+| :----------------- | :--------------------------------------- | :------------------------- |
+| **会话管理** | `/new [name]`                          | 创建新会话                 |
+|                    | `/switch <id\|name>`                    | 切换到指定会话             |
+|                    | `/list` (`/ls`)                      | 列出所有已保存会话         |
+|                    | `/resume <id\|name>`                    | 恢复历史会话               |
+|                    | `/search <query>`                      | 搜索历史会话               |
+|                    | `/rename <name>`                       | 重命名当前会话             |
+|                    | `/retry`                               | 重试上一条消息             |
+|                    | `/copy [n]`                            | 复制倒数第n条助手回复      |
+| **模型配置** | `/model [name]` (`/m`)               | 查看/切换模型（会话级）    |
+|                    | `/model_global [name]` (`/mg`)       | 切换模型并设为全局默认     |
+|                    | `/models` (`/listmodels`)            | 列出所有可用模型           |
+| **显示控制** | `/reasoning show\|hide\|low\|medium\|high` | 控制推理过程显示           |
+|                    | `/verbose`                             | 切换每轮统计信息显示       |
+|                    | `/bell on\|off`                         | 响应完成时终端响铃         |
+|                    | `/fast on\|off`                         | 切换至最快模型             |
+| **项目指令** | `/init`                                | 创建 DRSAI.md 项目指令文件 |
+|                    | `/memory show\|reload`                  | 查看/重载项目指令          |
+| **工作区**   | `/workspace on\|off` (`/ws`)          | 切换工作区限制             |
+|                    | `/dangerous on\|off` (`/dg`)          | 切换危险命令执行权限       |
+|                    | `/cd <path>` (`/workdir`)            | 切换工作目录               |
+| **子智能体** | `/agent <name\|list\|clear>`             | 设置/列出子智能体          |
+|                    | `/delegate <type> <prompt>` (`/sub`) | 手动委托子智能体执行       |
+| **计划模式** | `/plan_mode on\|off` (`/pm`)          | 切换计划模式               |
+|                    | `/inject prefix\|suffix\|clear`          | 注入自定义提示词           |
+| **系统**     | `/setup` (`/env`)                    | 重新打开配置向导           |
+|                    | `/status`                              | 显示智能体和会话状态       |
+|                    | `/quit` (`/exit`, `/q`)            | 保存并退出                 |
 
 ## 3.开发计划(TODO)
 
@@ -307,7 +329,6 @@ drsai gateway    # 启动 SSE 网关（供桌面客户端连接）
 ~~-支持HepAI平台的模型接入，具体见examples/components/model_client01.py~~
 
 - [ ] 感知层：正在开发默认支持可UTF-8编码的文本附件的解析和聊天上下文注入。
-
 - [ ] 记忆层：正在进一步开发DrSaiChatCompletionContext中长期记忆通过与RAGFlow进行关联并进行长期记忆的查询, 需要可自动为每个没有传入document_id进行自动创建，构建记忆
 
 ~~-开发基于提示词的进行长记忆压缩的ChatCompletionContext类，具体见examples/components/model_context01.py~~
@@ -317,29 +338,24 @@ drsai gateway    # 启动 SSE 网关（供桌面客户端连接）
 ~~-基于组件化开发兼容HepAI RAGFlow的知识库组件，具体见examples/components/memory_ragflow01.py~~-
 
 - [ ] 执行层: 1.正在进一步开发针对MCP工具调用，开发可进行流式输出的调用方式，并与前端联动; 2.本地函数的长任务调用; 3.MCP等长任务的并发与排队机制
-
 - [ ] 状态管理系统：暂无进一步开发计划，欢迎提出需求。
 
 ~~进一步支持长任务的状态管理，但是用户进一步开发智能体工具端、智能体长任务查询逻辑等，具体见cores/python/packages/drsai/src/drsai/modules/baseagent/drsaiagent.py的_process_long_task_query函数~~
 
 - [ ] 文件管理系统：正在进一步开发文件缓存和注入系统
-
-- [x] 智能体配置管理系统：暂无开发计划，欢迎提出需求。
+- [X] 智能体配置管理系统：暂无开发计划，欢迎提出需求。
 
 ~~进一步优化智能体配置和基于组件化和快照回复的智能体配置管理，具体见cores/python/packages/drsai/src/drsai/modules/baseagent/drsaiagent.py的_to_config、_from_config与save_state、load_state函数。~~
 
 - [ ] 智能体学习系统: 正在进一步开发智能体学习系统，在智能体回复结束后异步记录智能体根据聊天上下文任务回复的内容和策略，存入智能体知识库
-
-- [x] 智能体的事件与通知：暂无进一步开发计划，欢迎提出需求。
+- [X] 智能体的事件与通知：暂无进一步开发计划，欢迎提出需求。
 
 ~~构建智能体与Dr.Sai UI的前端前后消息联动：ModelClientStreamingChunkEvent输出流式事件；AgentLogEvent输出智能体对外展示的log事件；TaskEvent发送后端任务执行进度事件，具体见examples/agent_groupchat/assistant_custom_log_event-interaction.py~~
 
 ### 3.2.专业智能体
 
 - [ ] 长任务处理智能体及开发教程: 开发支持自我规划和多工具调用的组件调度器，作为通用的规划执行智能体
-
 - [ ] 深度检索智能体及开发教程：开发基于长记忆和自我规划的深度检索智能体
-
 - [ ] 包含长任务处理的多智能体系统及开发教程
 
 ### 3.3.多智能体系统开发
@@ -349,27 +365,24 @@ drsai gateway    # 启动 SSE 网关（供桌面客户端连接）
 ~~可进行长任务查询的智能体多智能体系统相互协同的长任务管理系统，具体案例见：examples/agent_groupchat/groupchat_task_LongTask~~
 
 - [ ] 多智能体系统层面的学习反思系统
-
 - [ ] 基于任务分发机制多智能体系统协同调度器
-
 - [ ] 可进行多远程智能体协同的多智能体系统案例
 
 ### 3.4.人机交互前后端开发
 
-- [x] ✅ 基于 React/Ink 的新一代 TUI 终端交互界面（已完成）
-- [x] ✅ Electron 桌面客户端（已完成）
-- [x] ✅ 30+ 斜杠命令系统，支持会话管理、模型切换、推理可视化（已完成）
-- [x] ✅ DrSai CLI 配置管理（`drsai config`）（已完成）
-- [x] ✅ 首次启动配置向导（已完成）
-- [x] ✅ 前端UI的任务管理系统展示交互（已完成）
-- [x] ✅ 前端UI的执行文件、log等信息的展示交互（已完成）
+- [X] ✅ 基于 React/Ink 的新一代 TUI 终端交互界面（已完成）
+- [X] ✅ Electron 桌面客户端（已完成）
+- [X] ✅ 30+ 斜杠命令系统，支持会话管理、模型切换、推理可视化（已完成）
+- [X] ✅ DrSai CLI 配置管理（`drsai config`）（已完成）
+- [X] ✅ 首次启动配置向导（已完成）
+- [X] ✅ 前端UI的任务管理系统展示交互（已完成）
+- [X] ✅ 前端UI的执行文件、log等信息的展示交互（已完成）
 - [ ] 后端数据库的自动生成id设计为UUID，以代替现在使用整数id进行自动排序的设计
 - [ ] drsai后端的智能体实例在长时间不运行时自动pop, 节约资源。
 - [ ] 前端UI的长任务的展示交互
 - [ ] 默认登录系统开发
 - [ ] 非文本文件和大文件的上传与智能体接收机制开发，计划通过文件系统进行前后端大文件交互， 支持传入HepAI文件系统的url
 - [ ] 开放可链接RAGFlow知识库/记忆知识库和MCP远程函数的智能体调用，数据格式符合apps/webui/backend/src/drsai_ui/configs/agent_config.yaml（尽快）
-
 
 ## 4.参与贡献
 
@@ -378,7 +391,7 @@ drsai gateway    # 启动 SSE 网关（供桌面客户端连接）
 - 代码贡献：包括智能体/多智能体系统组件开发、智能体/多智能体系统案例、前端UI开发等。
 - 文档贡献：包括智能体/多智能体系统文档、教程、FAQ等。
 - 问题反馈：包括Bug反馈、功能建议、使用问题等。
-- 社区活动：包括线下活动、线上沙龙、线上分享等。 
+- 社区活动：包括线下活动、线上沙龙、线上分享等。
 
 ## 5.联系我们
 

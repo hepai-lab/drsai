@@ -20,6 +20,12 @@ try {
   writeFileSync(join(sourceDir, "version.py"), '__version__ = "1.4.9"\n');
   assert.equal(readBackendSourceVersion(agent), "version: 1.4.9");
 
+  const monorepo = join(root, "monorepo");
+  const monorepoSource = join(monorepo, "cores", "python", "packages", "drsai", "src", "drsai");
+  mkdirSync(monorepoSource, { recursive: true });
+  writeFileSync(join(monorepoSource, "version.py"), '__version__ = "1.5.0"\n');
+  assert.equal(readBackendSourceVersion(monorepo), "version: 1.5.0");
+
   assert.equal(normalizeRuntimeVersionOutput("drsai version: 1.4.6\r\n"), "version: 1.4.6");
   assert.equal(normalizeRuntimeVersionOutput("version: 1.4.7-rc1"), "version: 1.4.7-rc1");
   assert.equal(normalizeRuntimeVersionOutput("1.4.8"), "version: 1.4.8");

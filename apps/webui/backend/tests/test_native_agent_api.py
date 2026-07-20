@@ -75,6 +75,11 @@ def test_public_agent_removes_secrets_and_private_urls():
                 "api_key": "MUST_NOT_LEAK_EITHER",
                 "base_url": "https://private.invalid",
                 "model": "public-model",
+                "allowed_models": [
+                    "public-model",
+                    {"id": "alternate-model", "api_key": "MUST_NOT_LEAK_MODEL_SECRET"},
+                    "public-model",
+                ],
             },
             "examples": ["Try me", {"zh": "示例", "secret": "hidden"}],
             "capabilities": {"chat": True, "admin": False},
@@ -87,6 +92,7 @@ def test_public_agent_removes_secrets_and_private_urls():
     assert "MUST_NOT_LEAK" not in serialized
     assert "private.invalid" not in serialized
     assert public["model"] == "public-model"
+    assert public["models"] == ["public-model", "alternate-model"]
     assert public["is_default"] is True
     assert public["catalog_group"] == "mine"
     assert public["capabilities"] == ["chat"]

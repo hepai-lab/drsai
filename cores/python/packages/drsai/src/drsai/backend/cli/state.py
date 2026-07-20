@@ -1,5 +1,5 @@
 """
-DrSai TUI state shared between the rendering loop and tool callbacks.
+OpenDrSai TUI state shared between the rendering loop and tool callbacks.
 
 Replaces the module-level globals that were scattered across callbacks.py
 and prompt.py with a single, explicitly-passed object (or thread-local

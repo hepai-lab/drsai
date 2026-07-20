@@ -14,11 +14,11 @@ from autogen_core.model_context import (
 )
 
 __all__ = [
-    # DrSai contexts
+    # OpenDrSai contexts
     "DrSaiChatCompletionContext",
     "DrSaiSQLiteChatCompletionContext",
     "DrSaiSQLiteContextConfig",
-    # DrSai base
+    # OpenDrSai base
     "LocalMesssage",
     # autogen_core contexts
     "ChatCompletionContext",

@@ -1,4 +1,4 @@
-"""Agent lifecycle + asyncio bridge for the DrSai TUI gateway.
+"""Agent lifecycle + asyncio bridge for the OpenDrSai TUI gateway.
 
 DrSaiCLIAssistant.run_stream is an *async* generator. The gateway dispatches
 RPCs on threads (sync ``stdin`` loop + ``ThreadPoolExecutor``). This module

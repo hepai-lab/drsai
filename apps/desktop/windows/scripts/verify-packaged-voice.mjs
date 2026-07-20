@@ -6,11 +6,26 @@ import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const repoRoot = resolve(root, "../../..");
 const exePath = join(root, "release", "win-unpacked", "OpenDrSai.exe");
 const liveMode = Boolean(process.env.OPENDRSAI_VOICE_LIVE_FIXTURE);
+const fullRoundMode = liveMode && process.env.OPENDRSAI_E2E_VOICE_FULL_ROUND === "1";
 const evidenceDir = join(root, "release", liveMode ? "voice-provider-live-evidence" : "voice-packaged-evidence");
 const tempDir = mkdtempSync(join(tmpdir(), "opendrsai-packaged-voice-"));
 const resultPath = join(tempDir, "result.json");
+const modelConfigPath = join(tempDir, "llm-config.json");
+if (fullRoundMode) {
+  writeFileSync(modelConfigPath, `${JSON.stringify({
+    _default_alias: "gpt-4.1-mini",
+    "gpt-4.1-mini": {
+      client_type: "openai",
+      max_tokens: 256,
+      model: "gpt-4.1-mini",
+      token_limit: 32768,
+      vision: false,
+    },
+  }, null, 2)}\n`, "utf8");
+}
 const voiceTempPattern = /^opendrsai-voice-[0-9a-f-]+\.(webm|ogg|wav|m4a|mp3|audio)$/i;
 const beforeVoiceFiles = new Set(readdirSync(tmpdir()).filter((name) => voiceTempPattern.test(name)));
 
@@ -54,15 +69,23 @@ function runPackagedApp() {
       "--disable-gpu-compositing",
       "--disable-gpu-sandbox",
       "--in-process-gpu",
+      ...(fullRoundMode ? [
+        "--use-fake-device-for-media-stream",
+        "--use-fake-ui-for-media-stream",
+        `--use-file-for-fake-audio-capture=${process.env.OPENDRSAI_VOICE_LIVE_FIXTURE}`,
+      ] : []),
     ], {
       cwd: root,
       env: {
         ...process.env,
         DRSAI_HOME: join(tempDir, "drsai-home"),
+        DRSAI_REPO: repoRoot,
+        ...(fullRoundMode ? { LLM_CONFIG_FILE: modelConfigPath, LLM_DEFAULT_ALIAS: "gpt-4.1-mini" } : {}),
         OPENDRSAI_DEV_AUTH_BYPASS: "1",
         OPENDRSAI_E2E_RESULT: resultPath,
-        OPENDRSAI_E2E_TIMEOUT_MS: "30000",
+        OPENDRSAI_E2E_TIMEOUT_MS: fullRoundMode ? "240000" : liveMode ? "120000" : "30000",
         OPENDRSAI_E2E_VOICE: "1",
+        OPENDRSAI_RUNTIME_PERSIST: "0",
         OPENDRSAI_VOICE_RUNTIME: liveMode ? "gateway-provider" : "fixture",
         OPENDRSAI_VOICE_TTS_RUNTIME: liveMode ? "gateway-provider" : "fixture",
         PATH: [dirname(exePath), process.env.PATH || ""].join(delimiter),
@@ -75,7 +98,7 @@ function runPackagedApp() {
       settled = true;
       killProcessTree(child.pid);
       resolvePromise({ exitCode: 124 });
-    }, 45_000);
+    }, fullRoundMode ? 300_000 : liveMode ? 150_000 : 45_000);
     child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
     child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
     child.on("error", (error) => {

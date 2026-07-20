@@ -164,11 +164,16 @@ export function useDesktopChatAdapter({
   function applyStructuredEventBatch(requestId: string, events: StructuredConversationEvent[]): void {
     if (!events.length) return;
     const assistantId = streamingAssistantByRequest.current[requestId];
-    setMessages((current) => publishAndReturn(
-      updateAssistantByIdOrLatestStreaming(current, assistantId, (message) =>
+    setMessages((current) => {
+      const updated = updateAssistantByIdOrLatestStreaming(current, assistantId, (message) =>
         events.reduce(applyStructuredEventToMessage, message),
-      ),
-    ));
+      );
+      return publishAndReturn(
+        events.some((event) => event.type === "turn.error")
+          ? settleAssistantAfterHiddenError(updated, assistantId)
+          : updated,
+      );
+    });
   }
 
   function flushStructuredEventDeltas(): void {
@@ -270,7 +275,7 @@ export function useDesktopChatAdapter({
     setCommandAttachments([]);
     setInput("");
     const restoredMessages = threadSnapshot?.messages?.length
-      ? hydrateStructuredMessages(threadSnapshot.messages)
+      ? hydrateStructuredMessages(threadSnapshot.messages).filter((message) => message.id !== "welcome")
       : [createWelcomeMessage(language, userPreferencesRef.current)];
     if (threadSnapshot?.messages?.length) {
       restoreActiveStructuredTurns(restoredMessages);
@@ -350,7 +355,7 @@ export function useDesktopChatAdapter({
   useEffect(() => {
     if (threadSnapshot?.threadId !== threadId) return;
     const restoredMessages = threadSnapshot.messages.length
-      ? hydrateStructuredMessages(threadSnapshot.messages)
+      ? hydrateStructuredMessages(threadSnapshot.messages).filter((message) => message.id !== "welcome")
       : [createWelcomeMessage(language, userPreferencesRef.current)];
     if (threadSnapshot.messages.length && restoredSnapshotThreadRef.current !== threadId) {
       restoreActiveStructuredTurns(restoredMessages);
@@ -509,7 +514,7 @@ export function useDesktopChatAdapter({
     const assistantId = crypto.randomUUID();
     const requestId = crypto.randomUUID();
     const nextMessages: UiMessage[] = [
-      ...messages,
+      ...messages.filter((message) => message.id !== "welcome"),
       userMessage,
       {
         id: assistantId,
@@ -566,20 +571,14 @@ export function useDesktopChatAdapter({
       const message = error instanceof Error
         ? error.message
         : languageRef.current === "zh" ? "聊天未能启动。" : "Chat failed to start.";
+      appendDebugLog(
+        "error",
+        `${formatAssistantError(message, false, languageRef.current)}\n\n${message}`,
+        "chat",
+      );
       setActiveRequestId(null);
       delete streamingAssistantByRequest.current[requestId];
-      setMessages((current) =>
-        current.map((item) =>
-          item.id === assistantId
-            ? {
-                ...item,
-                streaming: false,
-                error: true,
-                content: formatAssistantError(message, developerModeRef.current, languageRef.current),
-              }
-            : item,
-        ),
-      );
+      setMessages((current) => current.filter((item) => item.id !== assistantId));
       setInput(text);
       return false;
     }
@@ -646,6 +645,13 @@ export function useDesktopChatAdapter({
       const pendingStructuredEvents = pendingStructuredEventsByRequest.current[event.requestId] ?? [];
       delete pendingStructuredEventsByRequest.current[event.requestId];
       applyStructuredEventBatch(event.requestId, [...pendingStructuredEvents, structuredEvent]);
+      if (structuredEvent.type === "turn.error") {
+        appendDebugLog(
+          "error",
+          `${formatAssistantError(structuredEvent.message, false, languageRef.current)}\n\n${structuredEvent.message}`,
+          "chat",
+        );
+      }
       if (
         structuredEvent.type === "turn.completed" ||
         structuredEvent.type === "turn.cancelled" ||
@@ -794,24 +800,13 @@ export function useDesktopChatAdapter({
       const userFacingError = event.failureRecovery?.message
         || event.error
         || (languageRef.current === "zh" ? "聊天失败。" : "Chat failed.");
+      appendDebugLog(
+        "error",
+        `${formatAssistantError(userFacingError, false, languageRef.current)}\n\n${userFacingError}`,
+        "chat",
+      );
       setMessages((current) =>
-        publishAndReturn(
-          updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
-            ...message,
-            streaming: false,
-            error: true,
-            content: formatAssistantError(
-              userFacingError,
-              developerModeRef.current,
-              languageRef.current,
-            ),
-            structuredTurn: failStructuredTurn(
-              message.structuredTurn,
-              message.id,
-              formatAssistantError(userFacingError, developerModeRef.current, languageRef.current),
-            ),
-          })),
-        ),
+        publishAndReturn(settleAssistantAfterHiddenError(current, assistantId)),
       );
       delete streamingAssistantByRequest.current[event.requestId];
       delete lastSequenceByRequest.current[event.requestId];
@@ -878,7 +873,7 @@ export function useDesktopChatAdapter({
 
   function publishLocalAssistantResult(userText: string, assistantText: string): void {
     const commandMessages: UiMessage[] = [
-      ...messages,
+      ...messages.filter((message) => message.id !== "welcome"),
       {
         id: crypto.randomUUID(),
         role: "user",
@@ -2272,8 +2267,9 @@ function createWelcomeMessage(language: "en" | "zh", preferences: DesktopUserPre
 
 function hydrateStructuredMessages(messages: UiMessage[]): UiMessage[] {
   return messages.map((message) => {
-    if (message.role !== "assistant" || message.structuredTurn) return message;
-    return {
+    if (message.role !== "assistant") return message;
+    if (message.structuredTurn) return sanitizeStructuredAssistantMessage(message);
+    return sanitizeStructuredAssistantMessage({
       ...message,
       structuredTurn: migrateLegacyMessageToStructuredTurn({
         id: message.id,
@@ -2285,7 +2281,7 @@ function hydrateStructuredMessages(messages: UiMessage[]): UiMessage[] {
         parts: message.parts as Array<Record<string, unknown>> | undefined,
         toolTimeline: message.toolTimeline as Array<Record<string, unknown>> | undefined,
       }),
-    };
+    });
   });
 }
 
@@ -2445,7 +2441,7 @@ function applyStructuredEventToMessage(
   const current = message.structuredTurn?.turnId === event.turnId
     ? message.structuredTurn
     : createStructuredTurnState(event.turnId);
-  const structuredTurn = applyStructuredConversationEvent(current, event);
+  const structuredTurn = sanitizeStructuredTurnForChat(applyStructuredConversationEvent(current, event));
   const content = readStructuredMarkdown(structuredTurn);
   const reasoningContent = readStructuredReasoning(structuredTurn);
   const activeInteraction = [...structuredTurn.parts]
@@ -2456,7 +2452,7 @@ function applyStructuredEventToMessage(
     .reverse()
     .find((part): part is Extract<StructuredAssistantPart, { kind: "notice" }> =>
       part.kind === "notice" && part.level === "error");
-  return {
+  return sanitizeStructuredAssistantMessage({
     ...message,
     structuredTurn,
     content: content || errorNotice?.message || message.content,
@@ -2473,7 +2469,49 @@ function applyStructuredEventToMessage(
         }
       : {}),
     lastEventAt: Date.now(),
+  });
+}
+
+function sanitizeStructuredAssistantMessage(message: UiMessage): UiMessage {
+  const current = message.structuredTurn;
+  if (!current) return message;
+  const hiddenMessages = current.parts
+    .filter(isTerminalErrorNotice)
+    .map((part) => part.message.trim())
+    .filter(Boolean);
+  if (current.status === "error" && current.error?.message.trim()) {
+    hiddenMessages.push(current.error.message.trim());
+  }
+  const hadTerminalError = current.status === "error" || hiddenMessages.length > 0;
+  const structuredTurn = sanitizeStructuredTurnForChat(current);
+  const content = hiddenMessages.includes(message.content.trim())
+    ? readStructuredMarkdown(structuredTurn)
+    : message.content;
+  return {
+    ...message,
+    content,
+    structuredTurn,
+    // The structured turn is authoritative. Persisted renderer snapshots from an
+    // interrupted/cancelled run may still carry the older `streaming: true`
+    // flag, which otherwise leaves the elapsed-time indicator running forever.
+    streaming: structuredTurn.status === "pending" || structuredTurn.status === "running",
+    error: hadTerminalError ? false : message.error,
   };
+}
+
+function sanitizeStructuredTurnForChat(state: StructuredTurnState): StructuredTurnState {
+  const parts = state.parts.filter((part) => !isTerminalErrorNotice(part));
+  if (state.status !== "error") return parts.length === state.parts.length ? state : { ...state, parts };
+  const { error: _error, ...rest } = state;
+  return { ...rest, status: "cancelled", parts };
+}
+
+function isTerminalErrorNotice(
+  part: StructuredAssistantPart,
+): part is Extract<StructuredAssistantPart, { kind: "notice" }> {
+  return part.kind === "notice"
+    && part.level === "error"
+    && part.id.endsWith(":notice:turn-error");
 }
 
 function finalizeStructuredTurn(
@@ -2489,24 +2527,6 @@ function finalizeStructuredTurn(
     }
   }
   return applyLocalStructuredEvent(state, { type: "turn.completed" });
-}
-
-function failStructuredTurn(
-  current: StructuredTurnState | undefined,
-  turnId: string,
-  message: string,
-): StructuredTurnState {
-  let state = current ?? createStructuredTurnState(turnId);
-  if (state.status === "pending") state = applyLocalStructuredEvent(state, { type: "turn.started" });
-  const notice: StructuredAssistantPart = {
-    id: `${turnId}:notice:error`,
-    kind: "notice",
-    status: "error",
-    level: "error",
-    message,
-  };
-  state = applyLocalStructuredEvent(state, { type: "part.started", part: notice });
-  return applyLocalStructuredEvent(state, { type: "turn.error", message });
 }
 
 function formatToolTimelineDebugLog(event: NonNullable<ChatEvent["toolTimeline"]>): string {
@@ -2592,6 +2612,29 @@ function updateAssistantByIdOrLatestStreaming(
   const index = findAssistantIndex(next, assistantId);
   if (index === -1) return next;
   next[index] = update(next[index]);
+  return next;
+}
+
+function settleAssistantAfterHiddenError(
+  messages: UiMessage[],
+  assistantId: string | undefined,
+): UiMessage[] {
+  const next = [...messages];
+  const index = findAssistantIndex(next, assistantId);
+  if (index === -1) return next;
+  const message = next[index];
+  if (!message.content.trim()) {
+    next.splice(index, 1);
+    return next;
+  }
+  next[index] = {
+    ...message,
+    streaming: false,
+    error: false,
+    structuredTurn: message.structuredTurn
+      ? finalizeStructuredTurn(message.structuredTurn, message.id, "cancelled")
+      : undefined,
+  };
   return next;
 }
 

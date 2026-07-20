@@ -119,11 +119,11 @@ export async function requireAuthContext(): Promise<AuthContext> {
   const stored = readStoredSession();
   if (!stored || isExpired(stored)) {
     clearStoredSession(false);
-    throw new Error("Sign in before sending a request to DrSai Agent.");
+    throw new Error("Sign in before sending a request to OpenDrSai Agent.");
   }
   const refreshed = await refreshSsoSessionIfNeeded(stored, true);
   if (!refreshed || !refreshed.user || !refreshed.authMode) {
-    throw new Error("Sign in before sending a request to DrSai Agent.");
+    throw new Error("Sign in before sending a request to OpenDrSai Agent.");
   }
   return {
     session: toPublicSession(refreshed),

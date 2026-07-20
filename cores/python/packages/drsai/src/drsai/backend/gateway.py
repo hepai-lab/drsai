@@ -1,18 +1,18 @@
 """
 
-DrSai API Server â FastAPI SSE streaming server wrapping DrSai Assistant.
+OpenDrSai API Server â FastAPI SSE streaming server wrapping OpenDrSai Assistant.
 
 
 
 Provides an OpenAI-compatible /v1/chat/completions endpoint so the
 
-Electron desktop app can drive a local DrSai agent via HTTP SSE.
+Electron desktop app can drive a local OpenDrSai agent via HTTP SSE.
 
 
 
 Also exposes session management, skills, memory, and agent control
 
-(pause/resume/stop) endpoints â making it a full DrSai Gateway.
+(pause/resume/stop) endpoints â making it a full OpenDrSai Gateway.
 
 
 
@@ -535,7 +535,7 @@ async def _load_remote_hepai_tools(force: bool = False) -> tuple[list[Any], list
 
 class AgentManager:
 
-    """Manage DrSai agent instances keyed by (user_id, thread_id) for session isolation.
+    """Manage OpenDrSai agent instances keyed by (user_id, thread_id) for session isolation.
 
 
 
@@ -1163,7 +1163,7 @@ async def lifespan(app: FastAPI):
 
     """Startup/shutdown hooks."""
 
-    logger.info(f"DrSai API Server starting on {DEFAULT_HOST}:{DEFAULT_PORT}")
+    logger.info(f"OpenDrSai API Server starting on {DEFAULT_HOST}:{DEFAULT_PORT}")
 
     # Initialize DB eagerly so first request doesn't pay the cost
 
@@ -1179,7 +1179,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    logger.info("DrSai API Server shutting down")
+    logger.info("OpenDrSai API Server shutting down")
 
     if _runtime_agent_service_instance is not None:
         await _runtime_agent_service_instance.close()
@@ -1209,7 +1209,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
 
-    title="DrSai API Server",
+    title="OpenDrSai API Server",
 
     version="0.2.0",
 
@@ -3056,7 +3056,9 @@ async def audio_transcriptions(
     base_url = os.environ.get("OPENAI_BASE_URL", "https://aiapi.ihep.ac.cn/apiv2").rstrip("/")
     data = {"model": model}
     if language:
-        data["language"] = language
+        # OpenAI-compatible transcription APIs expect ISO-639-1, while the
+        # desktop UI stores BCP-47 locale tags such as en-US and zh-CN.
+        data["language"] = language.split("-", 1)[0].lower()
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
@@ -3618,16 +3620,19 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
         gen = generate_sse()
 
         try:
-
-            async for chunk in gen:
-
-                if await raw_request.is_disconnected():
-
-                    cancel_token.cancel()
-
+            while True:
+                next_chunk = asyncio.create_task(gen.__anext__())
+                try:
+                    while not next_chunk.done():
+                        await asyncio.wait({next_chunk}, timeout=0.25)
+                        if await raw_request.is_disconnected():
+                            cancel_token.cancel()
+                            next_chunk.cancel()
+                            await asyncio.gather(next_chunk, return_exceptions=True)
+                            return
+                    yield next_chunk.result()
+                except StopAsyncIteration:
                     break
-
-                yield chunk
 
         finally:
 
@@ -4802,7 +4807,7 @@ async def set_cli_config(key: str, req: CliConfigSetRequest):
 # Platform toggles (telegram / discord / slack / whatsapp / signal)
 # ════════════════════════════════════════════════════════════════════════════
 #
-# These are placeholder endpoints kept compatible with the desktop UI. drsai
+# These are placeholder endpoints kept compatible with the desktop UI. OpenDrSai
 # itself does not yet ship messaging-platform plugins; the on/off state is
 # persisted in cli_config.json under ``platforms`` so it survives restarts
 # and is available the moment plugins land.
@@ -4825,7 +4830,7 @@ async def list_platforms():
         "platforms": {p: bool(raw.get(p, False)) for p in _SUPPORTED_PLATFORMS},
         "implemented": False,
         "note": (
-            "Stored in cli_config.json[platforms]. drsai does not yet ship "
+            "Stored in cli_config.json[platforms]. OpenDrSai does not yet ship "
             "messaging-platform plugins; the toggles are persisted for future use."
         ),
     }
@@ -5137,7 +5142,7 @@ async def trigger_cron_job(
 # Kanban — file-backed boards / tasks
 # ════════════════════════════════════════════════════════════════════════════
 #
-# drsai has no native kanban runtime; this is a thin JSON-file store keyed by
+# OpenDrSai has no native kanban runtime; this is a thin JSON-file store keyed by
 # user_id so the desktop Kanban screen has somewhere to persist state until a
 # real backend lands. Lives at WORKDIR/<user_id>/kanban/{boards,tasks}.json.
 
@@ -5438,7 +5443,7 @@ async def kanban_comment_task(
 
 def _event_to_sse(event: Any) -> str | None:
 
-    """Map a DrSai event to an SSE-formatted string. Returns None if skip."""
+    """Map an OpenDrSai event to an SSE-formatted string. Returns None if skip."""
 
 
 
@@ -5766,7 +5771,7 @@ def _normalize_message(msg: dict) -> dict:
 # âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 def main():
-    """Start the DrSai API gateway (uvicorn).
+    """Start the OpenDrSai API gateway (uvicorn).
 
     NOTE: This is the legacy OpenAI-compatible SSE gateway used by the
     Electron desktop app. The new TUI uses ``drsai.backend.tui_gateway``

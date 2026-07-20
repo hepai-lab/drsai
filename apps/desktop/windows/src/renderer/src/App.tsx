@@ -24,6 +24,7 @@ import type {
   DesktopAgent,
   DesktopAnomalyDecision,
   DesktopBackgroundTask,
+  DesktopBootstrapBlocker,
   DesktopCitationRecord,
   CodexBackendLogin,
   CodexBackendStatus,
@@ -305,7 +306,16 @@ function AuthenticatedApp({
   const [selectedChatExamples, setSelectedChatExamples] = useState<
     DesktopAgent["examples"]
   >();
+  const chatModelOptions = useMemo(
+    () => getAgentModelOptions(
+      availableChatModels,
+      availableChatAgents.find((agent) => agent.id === selectedChatAgentId),
+      selectedChatModel,
+    ),
+    [availableChatAgents, availableChatModels, selectedChatAgentId, selectedChatModel],
+  );
   const [pendingChatInput, setPendingChatInput] = useState<string | null>(null);
+  const [resultsScopeRequestKey, setResultsScopeRequestKey] = useState(0);
   const [terminalAgentTask, setTerminalAgentTask] = useState("");
   const [terminalCommandProposal, setTerminalCommandProposal] =
     useState<TerminalCommandProposal | null>(null);
@@ -348,7 +358,7 @@ function AuthenticatedApp({
   const currentWorkspaceTime = "1970-01-01T00:00:00.000Z";
   const currentWorkspace: WorkspaceProject = {
     id: "current",
-    name: getWorkspaceName(workspacePath) || "drsai",
+    name: language === "zh" ? "默认" : "Default",
     path: workspacePath,
     location: "local",
     type: "local",
@@ -448,7 +458,7 @@ function AuthenticatedApp({
       id: thread.id,
       title: thread.title,
       timeLabel: formatThreadTime(thread.updatedAt, language),
-      workspaceId: thread.execution?.workspaceId || getWorkspaceId(thread.workspacePath || activeWorkspace.path),
+      workspaceId: thread.execution?.workspaceId || (thread.workspacePath ? getWorkspaceId(thread.workspacePath) : "current"),
       workspacePath: thread.workspacePath,
       fork: thread.fork,
       active: thread.id === activeThreadId,
@@ -460,7 +470,7 @@ function AuthenticatedApp({
     id: thread.id,
     title: thread.title,
     timeLabel: formatThreadTime(thread.updatedAt, language),
-    workspaceId: thread.execution?.workspaceId || getWorkspaceId(thread.workspacePath || activeWorkspace.path),
+    workspaceId: thread.execution?.workspaceId || (thread.workspacePath ? getWorkspaceId(thread.workspacePath) : "current"),
     workspacePath: thread.workspacePath,
     fork: thread.fork,
     active: thread.id === activeThreadId,
@@ -468,12 +478,28 @@ function AuthenticatedApp({
     archived: thread.archived,
     unread: thread.unread,
   }));
+  const workspaceThreads: WorkspaceThread[] = threads
+    .filter((thread) => !thread.archived)
+    .map((thread) => ({
+      id: thread.id,
+      title: thread.title,
+      timeLabel: formatThreadTime(thread.updatedAt, language),
+      workspaceId: thread.execution?.workspaceId || (thread.workspacePath ? getWorkspaceId(thread.workspacePath) : "current"),
+      workspacePath: thread.workspacePath,
+      fork: thread.fork,
+      active: thread.id === activeThreadId,
+      pinned: thread.pinned,
+      archived: thread.archived,
+      unread: thread.unread,
+    }));
   const servicePreparing = auth.serviceBusy || !auth.serviceReady;
-  const chatUnavailableReason = servicePreparing
+  const chatUnavailableReason = auth.serviceBusy
     ? language === "zh"
       ? "正在后台检查模型服务，完成后即可发送。"
       : "Checking model services in the background. Sending will be available shortly."
-    : undefined;
+    : !auth.serviceReady
+      ? getServiceUnavailableReason(auth.serviceBlocker, language)
+      : undefined;
   const chat = useDesktopChatAdapter({
     availableAgents: availableChatAgents,
     availableModels: availableChatModels,
@@ -685,8 +711,10 @@ function AuthenticatedApp({
   }, [activeRightTab, firstVisibleRightTab, rightTabs]);
 
   useEffect(() => {
-    if (restoreLastSession) window.localStorage.setItem(LAST_THREAD_STORAGE_KEY, activeThreadId);
-  }, [activeThreadId, restoreLastSession]);
+    if (restoreLastSession && threads.some((thread) => thread.id === activeThreadId)) {
+      window.localStorage.setItem(LAST_THREAD_STORAGE_KEY, activeThreadId);
+    }
+  }, [activeThreadId, restoreLastSession, threads]);
 
   useEffect(() => {
     if (restoreLastWorkspace) window.localStorage.setItem(LAST_WORKSPACE_STORAGE_KEY, activeWorkspaceId);
@@ -712,9 +740,7 @@ function AuthenticatedApp({
       try {
         const [agents, myDrSaiConfig] = await Promise.all([
           desktopApi.listAgents(),
-          effectiveWorkspacePath
-            ? desktopApi.getMyDrSaiConfig(effectiveWorkspacePath).catch(() => null)
-            : Promise.resolve(null),
+          desktopApi.getMyDrSaiConfig(effectiveWorkspacePath || undefined).catch(() => null),
         ]);
         if (cancelled) return;
         setAvailableChatAgents(agents);
@@ -729,9 +755,17 @@ function AuthenticatedApp({
         const preferredAgent = agents.find((agent) => agent.id === selectedChatAgentId) ?? defaultAgent;
         setSelectedChatAgentId(preferredAgent.id);
         setSelectedChatAgentName(preferredAgent.name);
-        setSelectedChatModel(
-          (current) => current ?? preferredAgent.model ?? myDrSaiConfig?.defaultModelAlias ?? null,
-        );
+        setSelectedChatModel((current) => {
+          const preferredModel = preferredAgent.model ?? preferredAgent.models?.[0]
+            ?? myDrSaiConfig?.defaultModelAlias ?? null;
+          if (
+            preferredAgent.id === "my-drsai"
+            && (!current || current === "deepseek-ai/deepseek-v4-pro")
+          ) {
+            return preferredModel;
+          }
+          return current ?? preferredModel;
+        });
         setSelectedChatExamples(preferredAgent.examples);
       } catch {
         // The chat composer should remain usable even if the agent catalog is unavailable.
@@ -977,20 +1011,7 @@ function AuthenticatedApp({
 
   async function handleNewChat(): Promise<void> {
     setRightPanelCollapsed(true);
-    const thread = await desktopApi.createThread({
-      kind: "chat",
-      title: language === "zh" ? "新会话" : "New chat",
-      workspacePath: activeWorkspace.path,
-      boundAgentId: selectedChatAgentId || undefined,
-      boundAgentName: selectedChatAgentName || undefined,
-    });
-    setActiveThreadId(thread.id);
-    setThreads((current) =>
-      sortThreadsForSidebar([
-        thread,
-        ...current.filter((item) => item.id !== thread.id),
-      ]),
-    );
+    setActiveThreadId(createLocalThreadId());
     navigateTo(MENU_IDS.currentSession);
   }
 
@@ -1013,7 +1034,7 @@ function AuthenticatedApp({
       if (boundAgent) {
         setSelectedChatAgentId(boundAgent.id);
         setSelectedChatAgentName(boundAgent.name);
-        setSelectedChatModel(boundAgent.model || null);
+        setSelectedChatModel(boundAgent.model || boundAgent.models?.[0] || null);
         setSelectedChatExamples(boundAgent.examples);
       }
     }
@@ -1072,7 +1093,7 @@ function AuthenticatedApp({
   function applyChatAgent(agent: DesktopAgent): void {
     setSelectedChatAgentId(agent.id);
     setSelectedChatAgentName(agent.name);
-    setSelectedChatModel(agent.model || selectedChatModel);
+    setSelectedChatModel(agent.model || agent.models?.[0] || selectedChatModel);
     setSelectedChatExamples(agent.examples);
   }
 
@@ -1097,20 +1118,28 @@ function AuthenticatedApp({
     navigateTo(MENU_IDS.currentSession);
   }
 
+  function handleOpenWorkspaceResults(workspaceId: string): void {
+    setActiveWorkspaceId(workspaceId);
+    setResultsScopeRequestKey((current) => current + 1);
+    navigateTo(MENU_IDS.results);
+    if (workspaceId === "current") return;
+    void desktopApi.updateWorkspace({
+      id: workspaceId,
+      lastOpenedAt: new Date().toISOString(),
+    }).then((workspace) => {
+      setStoredWorkspaces((current) => [
+        workspace,
+        ...current.filter((item) => item.id !== workspace.id),
+      ]);
+    }).catch(() => {
+      // Opening results must stay responsive if the recent timestamp cannot be persisted.
+    });
+  }
+
   async function handleNewWorkspaceChat(workspace: WorkspaceProject): Promise<void> {
     setRightPanelCollapsed(true);
-    const thread = await desktopApi.createThread({
-      kind: "chat",
-      title: language === "zh" ? "新会话" : "New chat",
-      workspacePath: workspace.path,
-      boundAgentId: selectedChatAgentId || undefined,
-      boundAgentName: selectedChatAgentName || undefined,
-    });
     setActiveWorkspaceId(workspace.id);
-    setActiveThreadId(thread.id);
-    setThreads((current) =>
-      sortThreadsForSidebar([thread, ...current.filter((item) => item.id !== thread.id)]),
-    );
+    setActiveThreadId(createLocalThreadId());
     navigateTo(MENU_IDS.currentSession);
   }
 
@@ -1150,6 +1179,24 @@ function AuthenticatedApp({
 
   function handleChatAgentSelect(agentId: string): void {
     void selectChatAgent(agentId);
+  }
+
+  async function handleEmptyChatWorkspaceSelect(workspaceId: string): Promise<void> {
+    const workspace = workspaces.find((item) => item.id === workspaceId);
+    if (!workspace) return;
+    setActiveWorkspaceId(workspace.id);
+    const thread = threads.find((item) => item.id === activeThreadId);
+    const snapshotCount = threadSnapshots[activeThreadId]?.messageCount ?? 0;
+    const hasConversation = (thread?.messageCount ?? 0) > 0 || snapshotCount > 0;
+    if (thread && !hasConversation) {
+      const updated = await desktopApi.updateThread({ id: thread.id, workspacePath: workspace.path });
+      setThreads((current) => current.map((item) => item.id === updated.id ? updated : item));
+    }
+    if (workspace.id !== "current") {
+      void desktopApi.updateWorkspace({ id: workspace.id, lastOpenedAt: new Date().toISOString() })
+        .then((updated) => setStoredWorkspaces((current) => [updated, ...current.filter((item) => item.id !== updated.id)]))
+        .catch(() => undefined);
+    }
   }
 
   function handleChatModelSelect(model: string): void {
@@ -1206,11 +1253,14 @@ function AuthenticatedApp({
     void desktopApi.updateThreadSnapshot(snapshot).catch(() => {
       // The local snapshot is still kept in renderer state and localStorage if disk persistence fails.
     });
+    const existingThread = threads.find((item) => item.id === snapshot.threadId);
     const thread = await desktopApi.updateThread({
       id: snapshot.threadId,
-      kind: threads.find((item) => item.id === snapshot.threadId)?.kind ?? "chat",
+      kind: existingThread?.kind ?? "chat",
       title: snapshot.title,
       workspacePath: effectiveWorkspacePath,
+      boundAgentId: existingThread?.boundAgentId ?? selectedChatAgentId ?? undefined,
+      boundAgentName: existingThread?.boundAgentName ?? selectedChatAgentName ?? undefined,
       status: snapshot.messages.some((message) => message.streaming)
         ? "running"
         : "idle",
@@ -1481,14 +1531,17 @@ function AuthenticatedApp({
           selectedAgentName={selectedChatAgentName}
           selectedModelName={selectedChatModel ?? undefined}
           agentOptions={availableChatAgents}
-          modelOptions={availableChatModels}
+          modelOptions={chatModelOptions}
           samplePrompts={selectedChatExamples}
           structuredTurnFocus={structuredTurnFocus}
           externalAttachments={externalChatAttachments}
           ideContext={ideContext}
           workspaceInstructions={effectiveWorkspaceInstructions}
+          workspaceName={effectiveWorkspace.name}
           workspacePath={effectiveWorkspacePath}
           workspaceLocation={effectiveWorkspace.location}
+          workspaceOptions={sortedWorkspaces}
+          selectedWorkspaceId={effectiveWorkspace.id}
           onAbort={chat.abort}
           onClearRuntimeMode={chat.clearRuntimeMode}
           onClearExternalAttachments={() => {
@@ -1499,6 +1552,7 @@ function AuthenticatedApp({
           }}
           onInputChange={chat.setInput}
           onSelectAgent={handleChatAgentSelect}
+          onSelectWorkspace={(workspaceId) => void handleEmptyChatWorkspaceSelect(workspaceId)}
           onSelectModel={handleChatModelSelect}
           onOpenExternal={(url) => desktopApi.openExternal(url)}
           onOpenPreviewBrowser={openPreviewBrowser}
@@ -1540,7 +1594,9 @@ function AuthenticatedApp({
     ) : activeNav === MENU_IDS.results ? (
       <ResultsCenterView
         language={language}
-        workspacePath={effectiveWorkspacePath}
+        scopeRequestKey={resultsScopeRequestKey}
+        workspaceName={activeWorkspace.name}
+        workspacePath={activeWorkspace.path}
         onContinueQuestion={(question) => {
           setPendingChatInput(question);
           navigateTo(MENU_IDS.currentSession);
@@ -2003,11 +2059,11 @@ function AuthenticatedApp({
       rightPanelCollapsed={rightPanelCollapsed}
       rightTabIcons={rightTabIcons}
       rightTabs={rightTabs}
-      sessionScope={sessionScope}
       sidebarCollapsed={sidebarCollapsed}
       sidebarComponents={sidebarComponents}
       user={user}
       workspaceSortMode={workspaceSortMode}
+      workspaceThreads={workspaceThreads}
       workspaces={sortedWorkspaces}
       onCreateWorkspace={handleCreateWorkspace}
       onGoBack={goBack}
@@ -2029,6 +2085,7 @@ function AuthenticatedApp({
       onNewChat={() => {
         void handleNewChat();
       }}
+      onOpenWorkspaceResults={handleOpenWorkspaceResults}
       onOpenWorkspacePath={handleOpenWorkspacePath}
       onPickWorkspaceFolder={handlePickWorkspaceFolder}
       onRefreshWorkspaces={refreshWorkspaces}
@@ -2042,9 +2099,6 @@ function AuthenticatedApp({
         desktopApi.searchThreadMessages({ query, threadIds, limit: 24 })
       }
       onThreadUpdate={handleThreadUpdate}
-      onToggleSessionScope={() =>
-        setSessionScope((scope) => (scope === "workspace" ? "all" : "workspace"))
-      }
       onToggleRightPanel={() => setRightPanelCollapsed((current) => !current)}
       onToggleSidebar={() => setSidebarCollapsed((current) => !current)}
       onUpdateWorkspace={handleUpdateWorkspace}
@@ -2638,10 +2692,14 @@ function buildIndependentReview(
 
 function ResultsCenterView({
   language,
+  scopeRequestKey,
+  workspaceName,
   workspacePath,
   onContinueQuestion,
 }: {
   language: AppLanguage;
+  scopeRequestKey: number;
+  workspaceName: string;
   workspacePath: string;
   onContinueQuestion: (question: string) => void;
 }): React.JSX.Element {
@@ -2655,7 +2713,12 @@ function ResultsCenterView({
   const [reusableState, setReusableState] = useState<{ state: "saving" | "saved" | "preparing" | "running" | "completed" | "failed"; message: string; requestId?: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [workspaceScope, setWorkspaceScope] = useState<"workspace" | "all">("workspace");
   const [kindFilter, setKindFilter] = useState<"all" | DesktopTaskArtifactLink["kind"]>("all");
+
+  useEffect(() => {
+    setWorkspaceScope("workspace");
+  }, [scopeRequestKey, workspacePath]);
   const [openState, setOpenState] = useState<{
     artifactId: string;
     state: "opening" | "opened" | "failed";
@@ -3086,9 +3149,14 @@ function ResultsCenterView({
       right.sourceTaskUpdatedAt.localeCompare(left.sourceTaskUpdatedAt),
     );
   }, [tasks]);
-  const visibleArtifacts = kindFilter === "all"
+  const scopedArtifacts = workspaceScope === "all"
     ? artifacts
-    : artifacts.filter((artifact) => artifact.kind === kindFilter);
+    : artifacts.filter((artifact) =>
+        getComparablePath(artifact.sourceWorkspacePath) === getComparablePath(workspacePath),
+      );
+  const visibleArtifacts = kindFilter === "all"
+    ? scopedArtifacts
+    : scopedArtifacts.filter((artifact) => artifact.kind === kindFilter);
   const groupedArtifacts = visibleArtifacts.reduce<Array<{
     taskId: string;
     taskTitle: string;
@@ -3121,7 +3189,7 @@ function ResultsCenterView({
           .map((artifact) => ({ objectType: "artifact" as const, objectId: artifact.id, label: artifact.label, kind: artifact.kind })),
       ]
     : [];
-  const routeGroups = artifacts.filter((artifact) => artifact.analysisRoute).reduce<Array<{
+  const routeGroups = scopedArtifacts.filter((artifact) => artifact.analysisRoute).reduce<Array<{
     groupId: string;
     sourcePath: string;
     routes: IndexedTaskArtifact[];
@@ -3659,16 +3727,24 @@ function ResultsCenterView({
     <section className="results-center-view" data-testid="results-center-view" data-route="results">
       <header>
         <div>
-          <h2>{zh ? "成果中心" : "Results center"}</h2>
-          <p>{zh ? "所有任务成果都保存在这里，可按任务和类型重新找到并打开。" : "Find and reopen every task result here, indexed by source task and type."}</p>
+          <h2>{zh ? "成果库" : "Results Library"}</h2>
+          <p>{zh ? "集中查看、复核和继续使用任务产生的文件。" : "Review, verify, and continue working with files produced by tasks."}</p>
         </div>
-        <span role="status">{loading ? (zh ? "正在同步…" : "Syncing…") : (zh ? `${artifacts.length} 个成果` : `${artifacts.length} results`)}</span>
+        <span role="status">{loading ? (zh ? "正在同步…" : "Syncing…") : (zh ? `${scopedArtifacts.length} 个成果` : `${scopedArtifacts.length} results`)}</span>
       </header>
+      <div className="results-workspace-scope" role="group" aria-label={zh ? "成果范围" : "Results scope"}>
+        <button type="button" aria-pressed={workspaceScope === "workspace"} onClick={() => setWorkspaceScope("workspace")}>
+          {workspaceName}
+        </button>
+        <button type="button" aria-pressed={workspaceScope === "all"} onClick={() => setWorkspaceScope("all")}>
+          {zh ? "全部工作区" : "All workspaces"}
+        </button>
+      </div>
       <nav className="results-kind-index" aria-label={zh ? "按成果类型筛选" : "Filter by result type"}>
         {kinds.map((kind) => (
           <button key={kind} type="button" data-kind={kind} aria-pressed={kindFilter === kind} onClick={() => setKindFilter(kind)}>
             {kindLabel(kind)}
-            <span>{kind === "all" ? artifacts.length : artifacts.filter((artifact) => artifact.kind === kind).length}</span>
+            <span>{kind === "all" ? scopedArtifacts.length : scopedArtifacts.filter((artifact) => artifact.kind === kind).length}</span>
           </button>
         ))}
       </nav>
@@ -3811,8 +3887,8 @@ function ResultsCenterView({
       {error ? <p className="task-center-error" role="alert">{zh ? `无法加载成果：${error}` : `Could not load results: ${error}`}</p> : null}
       {!loading && groupedArtifacts.length === 0 ? (
         <div className="results-center-empty" data-testid="results-center-empty">
-          <strong>{zh ? "还没有可查看的成果" : "No results yet"}</strong>
-          <p>{zh ? "任务完成并生成文件后，会自动出现在这里。" : "Completed task files will appear here automatically."}</p>
+          <strong>{workspaceScope === "workspace" ? (zh ? "当前工作区还没有成果" : "No results in this workspace") : (zh ? "还没有可查看的成果" : "No results yet")}</strong>
+          <p>{workspaceScope === "workspace" ? (zh ? "任务生成文件后会自动出现在这里，也可以切换到全部工作区查看。" : "Task files appear here automatically. You can also switch to all workspaces.") : (zh ? "任务完成并生成文件后，会自动出现在这里。" : "Completed task files will appear here automatically.")}</p>
         </div>
       ) : (
         <div className="results-task-index" data-testid="results-task-index">
@@ -4733,7 +4809,7 @@ function DesktopStatusPanel({
         <strong>{zh ? "诊断信息" : "Diagnostics"}</strong>
         <span>
           {health?.install.home ??
-            (zh ? "未检测到 DrSai 主目录" : "No DrSai home detected")}
+            (zh ? "未检测到 OpenDrSai 主目录" : "No OpenDrSai home detected")}
         </span>
         <span>
           {zh ? "缺失项：" : "Missing: "}
@@ -5443,7 +5519,7 @@ function SettingsPanel({
                 </select>
               </div>
               <div className="settings-row">
-                <span><strong>{zh ? "默认模型" : "Default model"}</strong><small>{zh ? "模型列表由当前工作区的 DrSai 配置提供。" : "Models are provided by the current workspace DrSai configuration."}</small></span>
+                <span><strong>{zh ? "默认模型" : "Default model"}</strong><small>{zh ? "模型列表由当前工作区的 OpenDrSai 配置提供。" : "Models are provided by the current workspace OpenDrSai configuration."}</small></span>
                 <select value={selectedModel ?? ""} onChange={(event) => onSelectModel(event.target.value)} disabled={models.length === 0}>
                   {models.length === 0 && <option value="">{zh ? "暂无可用模型" : "No model available"}</option>}
                   {models.map((model) => <option key={model.alias} value={model.alias}>{model.display_name || model.alias}</option>)}
@@ -5460,7 +5536,7 @@ function SettingsPanel({
               </div>
             </section>
             <section className="settings-section">
-              <div><h2>{zh ? "执行与上下文" : "Execution and context"}</h2><p>{zh ? "这些选项保存到当前 DrSai 配置，并受现有审批策略约束。" : "These options are saved to the current DrSai configuration and remain governed by approval policy."}</p></div>
+              <div><h2>{zh ? "执行与上下文" : "Execution and context"}</h2><p>{zh ? "这些选项保存到当前 OpenDrSai 配置，并受现有审批策略约束。" : "These options are saved to the current OpenDrSai configuration and remain governed by approval policy."}</p></div>
               <label className="settings-toggle"><span><strong>{zh ? "先规划再执行" : "Plan mode"}</strong><small>{zh ? "让智能体先生成计划，再开始执行。" : "Ask the Agent to create a plan before acting."}</small></span><input type="checkbox" checked={Boolean(myDrSaiConfig?.config.plan_mode)} disabled={agentConfigSaving || !myDrSaiConfig?.ready} onChange={(event) => void updateAgentConfig({ plan_mode: event.target.checked })} /></label>
               <label className="settings-toggle"><span><strong>{zh ? "限制在当前工作区" : "Restrict to current workspace"}</strong><small>{zh ? "文件操作优先限制在当前工作区，越界操作继续走审批。" : "Prefer file operations inside the current workspace; out-of-scope actions still require approval."}</small></span><input type="checkbox" checked={myDrSaiConfig?.config.workspace_enabled !== false} disabled={agentConfigSaving || !myDrSaiConfig?.ready} onChange={(event) => void updateAgentConfig({ workspace_enabled: event.target.checked })} /></label>
               {agentConfigMessage && <div className="settings-message">{agentConfigMessage}</div>}
@@ -5515,7 +5591,7 @@ function SettingsPanel({
             <section className="settings-section">
               <h2>{zh ? "路径" : "Paths"}</h2>
               <dl>
-                <div><dt>{zh ? "DrSai 主目录" : "DrSai home"}</dt><dd>{health?.install.home || (zh ? "未知" : "unknown")}</dd>{health?.install.home && <button type="button" onClick={() => onOpenPath(health.install.home)}>{zh ? "打开" : "Open"}</button>}</div>
+                <div><dt>{zh ? "OpenDrSai 主目录" : "OpenDrSai home"}</dt><dd>{health?.install.home || (zh ? "未知" : "unknown")}</dd>{health?.install.home && <button type="button" onClick={() => onOpenPath(health.install.home)}>{zh ? "打开" : "Open"}</button>}</div>
                 <div><dt>{zh ? "仓库" : "Repository"}</dt><dd>{health?.install.repoPath || (zh ? "未知" : "unknown")}</dd>{health?.install.repoPath && <button type="button" onClick={() => onOpenPath(health.install.repoPath)}>{zh ? "打开" : "Open"}</button>}</div>
                 <div><dt>Python</dt><dd>{health?.install.pythonPath || (zh ? "未知" : "unknown")}</dd></div>
               </dl>
@@ -5537,7 +5613,7 @@ function SettingsPanel({
             </section>
             <section className="settings-section">
               <div><h2>{zh ? "日志与诊断" : "Logs and diagnostics"}</h2><p>{zh ? "复制当前运行状态，便于排查桌面端问题。" : "Copy the current runtime state for desktop troubleshooting."}</p></div>
-              <div className="settings-button-row"><button type="button" onClick={onCopyDiagnostics}>{zh ? "复制诊断信息" : "Copy diagnostics"}</button>{health?.install.home && <button type="button" onClick={() => onOpenPath(health.install.home)}>{zh ? "打开 DrSai 目录" : "Open DrSai home"}</button>}</div>
+              <div className="settings-button-row"><button type="button" onClick={onCopyDiagnostics}>{zh ? "复制诊断信息" : "Copy diagnostics"}</button>{health?.install.home && <button type="button" onClick={() => onOpenPath(health.install.home)}>{zh ? "打开 OpenDrSai 目录" : "Open OpenDrSai home"}</button>}</div>
             </section>
             {developerModeAvailable && <section className="settings-section"><div><h2>{zh ? "开发者选项" : "Developer options"}</h2><p>{zh ? "切换后会重新加载桌面界面。" : "Changing this option reloads the desktop interface."}</p></div><label className="settings-toggle"><span><strong>{zh ? "开发者模式" : "Developer mode"}</strong><small>{zh ? "显示详细状态和调试输出。" : "Show detailed status and debugging output."}</small></span><input type="checkbox" checked={developerMode} onChange={(event) => onDeveloperModeChange(event.target.checked)} /></label></section>}
           </>
@@ -5596,6 +5672,59 @@ function removeExternalAttachment(
       (_attachment, itemIndex) => itemIndex !== workspaceIndex,
     ),
   );
+}
+
+function getAgentModelOptions(
+  catalog: MyDrSaiModelConfig[],
+  agent: DesktopAgent | undefined,
+  selectedModel: string | null,
+): MyDrSaiModelConfig[] {
+  const byIdentity = new Map<string, MyDrSaiModelConfig>();
+  for (const model of catalog) {
+    for (const identity of [model.alias, model.model]) {
+      if (identity?.trim()) byIdentity.set(identity.trim().toLowerCase(), model);
+    }
+  }
+
+  const requested = agent?.models?.length
+    ? agent.models
+    : catalog.map((model) => model.alias || model.model || "").filter(Boolean);
+  const fallbackIds = [agent?.model, selectedModel]
+    .filter((value): value is string => Boolean(value?.trim()));
+  const result: MyDrSaiModelConfig[] = [];
+  const seen = new Set<string>();
+  for (const id of [...requested, ...fallbackIds]) {
+    const normalized = id.trim().toLowerCase();
+    if (!normalized || seen.has(normalized)) continue;
+    const configured = byIdentity.get(normalized);
+    const model = configured ?? { alias: id.trim(), display_name: id.trim(), model: id.trim() };
+    const identity = (model.alias || model.model || normalized).toLowerCase();
+    if (seen.has(identity)) continue;
+    seen.add(normalized);
+    seen.add(identity);
+    result.push(model);
+  }
+  return result;
+}
+
+function getServiceUnavailableReason(
+  blocker: DesktopBootstrapBlocker | null,
+  language: AppLanguage,
+): string {
+  if (!blocker) {
+    return language === "zh" ? "模型服务尚未就绪。" : "Model services are not ready yet.";
+  }
+  if (language !== "zh") return blocker.message;
+  switch (blocker.kind) {
+    case "auth_required":
+      return "登录状态已失效，请重新登录。";
+    case "permission_denied":
+      return "当前账号没有可用的模型服务，请检查账号权限或重新登录。";
+    case "runtime_missing":
+      return "本地运行环境缺失或版本不匹配。";
+    case "service_unavailable":
+      return "本地模型服务暂不可用，正在后台重试。";
+  }
 }
 
 export default App;

@@ -46,7 +46,7 @@ from autogen_agentchat.messages import (
 )
 
 async def tools_reply_function( 
-    agent: AssistantAgent,  # DrSai assistant agent
+    agent: AssistantAgent,  # OpenDrSai assistant agent
     oai_messages: List[str],  # OAI messages
     agent_name: str,  # Agent name
     llm_messages: List[LLMMessage],  # AutoGen LLM messages
@@ -55,7 +55,7 @@ async def tools_reply_function(
     handoff_tools: List[BaseTool[Any, Any]],
     tools: Union[ToolSchema, List[BaseTool[Any, Any]]],
     cancellation_token: CancellationToken,  # AutoGen cancellation token,
-    db_manager: DatabaseManager,  # DrSai database manager,
+    db_manager: DatabaseManager,  # OpenDrSai database manager,
     thread_id: str,
     user_id: str,
     **kwargs) -> Union[str, AsyncGenerator[str, None]]:
@@ -120,7 +120,7 @@ async def tools_reply_function(
 
 
 async def tools_recycle_reply_function( 
-    agent: AssistantAgent,  # DrSai assistant agent
+    agent: AssistantAgent,  # OpenDrSai assistant agent
     oai_messages: List[str],  # OAI messages
     agent_name: str,  # Agent name
     llm_messages: List[LLMMessage],  # AutoGen LLM messages

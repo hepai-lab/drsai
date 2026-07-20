@@ -6,7 +6,8 @@ param(
     [switch]$SkipNpmInstall,
     [switch]$NoDevServer,
     [switch]$NoGateway,
-    [switch]$WithGateway
+    [switch]$WithGateway,
+    [switch]$ShowLibPngWarnings
 )
 
 $ErrorActionPreference = "Stop"
@@ -687,8 +688,15 @@ try {
     if (-not $npm) {
         $npm = Resolve-NpmCommand
     }
-    & $npm run dev
-    exit $LASTEXITCODE
+    $devOutputRunner = Join-Path $DesktopDir "scripts\run-dev-with-filter.mjs"
+    $devOutputArgs = @($devOutputRunner)
+    if ($ShowLibPngWarnings) {
+        $devOutputArgs += "--show-libpng-warnings"
+    }
+    $devOutputArgs += $npm
+    & node @devOutputArgs
+    $devExitCode = $LASTEXITCODE
+    exit $devExitCode
 } finally {
     Pop-Location
     if ($GatewayProcess) {

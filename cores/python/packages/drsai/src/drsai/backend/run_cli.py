@@ -1,5 +1,5 @@
 """
-DrSai CLI — thin entry point (Phase 5 rewrite).
+OpenDrSai CLI — thin entry point (Phase 5 rewrite).
 
 The bulky REPL implementation has moved to the new dual-process TUI
 (``drsai.backend.tui_gateway`` + ``apps/ui-tui/``). This module is now just a
@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 app = typer.Typer(
     name="drsai",
-    help="DrSai — local agent CLI (Ink TUI + Python gateway)",
+    help="OpenDrSai — local agent CLI (Ink TUI + Python gateway)",
     no_args_is_help=False,
 )
 
@@ -221,7 +221,7 @@ def _setup_wizard(*, first_run: bool) -> dict:
 
     if first_run:
         typer.echo(typer.style(
-            "\n  Welcome to DrSai! Let's configure your profile.\n",
+            "\n  Welcome to OpenDrSai! Let's configure your profile.\n",
             fg=typer.colors.GREEN, bold=True,
         ))
     else:
@@ -351,7 +351,7 @@ def _launch_tui(*, attach_url: Optional[str] = None) -> None:
         msg = [
             "Error: cannot launch TUI.",
             "",
-            "The DrSai TUI is a React/Ink app and needs Node.js (≥ 20) to run.",
+            "The OpenDrSai TUI is a React/Ink app and needs Node.js (≥ 20) to run.",
             "",
             f"Checked for: $DRSAI_NODE, node on PATH, pnpm, npm "
             f"(bundle: {has_bundle}, source: {has_src})",
@@ -423,7 +423,7 @@ def gateway(
     port: int = typer.Option(18642, help="API server port"),
     host: str = typer.Option("127.0.0.1", help="API server host"),
 ) -> None:
-    """Start the legacy DrSai SSE gateway (for the Electron desktop app)."""
+    """Start the legacy OpenDrSai SSE gateway (for the Electron desktop app)."""
     typer.echo(
         typer.style(
             "ℹ Note: the legacy SSE gateway (gateway.py) is preserved for desktop compatibility.\n"
@@ -510,7 +510,7 @@ def sessions_cmd(
 
 @app.command("version")
 def version_cmd() -> None:
-    """Print DrSai version."""
+    """Print OpenDrSai version."""
     typer.echo(f"version: {VERSION}")
 
 
@@ -518,7 +518,7 @@ def version_cmd() -> None:
 
 daemon_app = typer.Typer(
     name="daemon",
-    help="管理后台常驻的 DrSai Agent 服务（daemon）",
+    help="管理后台常驻的 OpenDrSai Agent 服务（daemon）",
     no_args_is_help=True,
 )
 app.add_typer(daemon_app, name="daemon")
@@ -533,7 +533,7 @@ def daemon_start(
     restart: bool = typer.Option(False, "--restart", help="如已运行则先停止再启动"),
     model: Optional[str] = typer.Option(None, "--model", "-m", help="指定 daemon 使用的模型别名（如 claude-sonnet-4-5, gpt-4o）"),
 ) -> None:
-    """启动后台常驻的 DrSai Agent Daemon。"""
+    """启动后台常驻的 OpenDrSai Agent Daemon。"""
     from drsai.backend.daemon.pid_manager import start_daemon, stop_daemon, is_running
 
     if restart and is_running(name):
@@ -556,7 +556,7 @@ def daemon_start(
         typer.echo(typer.style(f"\n  ✗ 超时: {e}", fg=typer.colors.RED))
         raise typer.Exit(1)
 
-    typer.echo(typer.style(f"\n  ✓ DrSai Daemon '{name}' 启动成功\n", fg=typer.colors.GREEN, bold=True))
+    typer.echo(typer.style(f"\n  ✓ OpenDrSai Daemon '{name}' 启动成功\n", fg=typer.colors.GREEN, bold=True))
     typer.echo(f"  PID        : {state['pid']}")
     typer.echo(f"  模型       : {state.get('model') or '(使用全局默认)'}")
     typer.echo(f"  WebSocket  : ws://127.0.0.1:{state['ws_port']}/ws")

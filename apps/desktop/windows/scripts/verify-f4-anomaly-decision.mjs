@@ -21,7 +21,7 @@ const checks = {
   decisionPersisted: app.includes("anomalyDecision: result") && app.includes('data-testid="results-anomaly-record"') && app.includes("result.resultSummary"),
   keyboardNativeControls: app.includes('type="radio"') && app.includes('type="button"') && app.includes('role="status"'),
   packagedThreeBranchCoverage: smoke.includes("runF4AnomalyDecisionSmoke") && smoke.includes("keepBranchExact") && smoke.includes("excludeBranchExact") && smoke.includes("branchIsolation"),
-  cernFixturePinned: smoke.includes("f6581e1a255b354667188b41b874b996a300f88bb48912721bc1c854183e913e") && smoke.includes("pdf.size === 7664262"),
+  cernFixturePinned: smoke.includes("f6581e1a255b354667188b41b874b996a300f88bb48912721bc1c854183e913e") && smoke.includes("pdfSize === 7664262"),
   measurableSideEffects: smoke.includes("sideEffectLedgerExact") && smoke.includes("outputHashesRecorded") && smoke.includes("originalsUnchanged"),
 };
 

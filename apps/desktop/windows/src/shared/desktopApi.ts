@@ -2816,6 +2816,7 @@ export interface DesktopAgent {
   catalogGroup?: "local" | "official" | "mine";
   url?: string;
   model?: string;
+  models?: string[];
   logo?: string;
   examples?: DesktopAgentExample[] | string;
   error?: string;
@@ -3503,6 +3504,7 @@ export interface RemoteSshWorkspaceDescriptor {
   error?: string;
   failureKind?: "ssh" | "runtime";
   mode?: string;
+  autoReconnect?: boolean;
 }
 
 export type PlatformAgentState =
@@ -4151,6 +4153,8 @@ export interface TerminalExitEvent {
   signal?: number;
 }
 
+export type DesktopEditCommand = "undo" | "redo" | "cut" | "copy" | "paste" | "delete" | "selectAll";
+
 export interface DesktopApi {
   recordDiagnostic(event: DiagnosticEventInput): Promise<DiagnosticEvent>;
   getDiagnosticSnapshot(query?: DiagnosticQuery): Promise<DiagnosticSnapshot>;
@@ -4205,6 +4209,8 @@ export interface DesktopApi {
   startInstall(options?: StartInstallOptions): Promise<void>;
   cancelInstall(): Promise<boolean>;
   copyTextToClipboard(text: string): Promise<boolean>;
+  performEditCommand(command: DesktopEditCommand): Promise<boolean>;
+  openLogFolder(): Promise<string>;
   startGateway(): Promise<boolean>;
   stopGateway(): Promise<boolean>;
   listSshHosts(): Promise<RemoteSshHost[]>;

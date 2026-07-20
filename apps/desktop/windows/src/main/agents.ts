@@ -143,12 +143,13 @@ async function listLocalAgents(): Promise<DesktopAgent[]> {
     available: gateway.ready,
     capabilities: ["chat", "workspace", "tools"],
     catalogGroup: "local",
+    model: "deepseek-v4-pro",
     url: gateway.baseUrl,
     error: gateway.ready
       ? undefined
       : gateway.externalConflict
         ? "The local port is already used by another service."
-        : "The local DrSai gateway is not running.",
+        : "The local OpenDrSai gateway is not running.",
   }];
   try {
     const capability = (await (await LocalRuntimeClient.connect()).getCapabilities()).agent_backends?.codex;
@@ -156,7 +157,8 @@ async function listLocalAgents(): Promise<DesktopAgent[]> {
       id: "my-codex", name: "Codex", description: "Codex Agent Backend running in this Workspace Runtime.",
       owner: "Local", source: "local", status: capability?.available ? "running" : "stopped", mode: "local",
       available: capability?.available === true, capabilities: ["chat", "workspace", "tools"], catalogGroup: "local",
-      model: "gpt-5.4", error: capability?.available ? undefined : capability?.reason ?? "Codex is unavailable.",
+      model: "gpt-5.4", models: ["gpt-5.4"],
+      error: capability?.available ? undefined : capability?.reason ?? "Codex is unavailable.",
     });
   } catch {
     agents.push({ id: "my-codex", name: "Codex", description: "Codex Agent Backend is unavailable.", owner: "Local",

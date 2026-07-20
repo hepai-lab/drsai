@@ -10,6 +10,7 @@ export interface VoiceCaptureResult {
 
 export interface VoiceCaptureCallbacks {
   beforeStart: () => Promise<void>;
+  onDeviceUnavailable?: () => void;
   onDevices: (devices: MediaDeviceInfo[]) => void;
   onElapsed: (seconds: number) => void;
   onError: (error: unknown) => void;
@@ -65,14 +66,14 @@ export class VoiceCaptureController {
     try {
       await this.callbacks.beforeStart();
       if (!this.isCurrent(generation)) return false;
-      const stream = await this.environment.mediaDevices.getUserMedia({
-        audio: {
-          deviceId: deviceId ? { exact: deviceId } : undefined,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
+      let stream: MediaStream;
+      try {
+        stream = await this.environment.mediaDevices.getUserMedia(createAudioConstraints(deviceId));
+      } catch (error) {
+        if (!deviceId || !isUnavailableDeviceError(error)) throw error;
+        this.callbacks.onDeviceUnavailable?.();
+        stream = await this.environment.mediaDevices.getUserMedia(createAudioConstraints());
+      }
       if (!this.isCurrent(generation)) {
         stopTracks(stream);
         return false;
@@ -239,4 +240,19 @@ export class VoiceCaptureController {
 
 function stopTracks(stream: MediaStream | null): void {
   stream?.getTracks().forEach((track) => track.stop());
+}
+
+function createAudioConstraints(deviceId = ""): MediaStreamConstraints {
+  return {
+    audio: {
+      deviceId: deviceId ? { exact: deviceId } : undefined,
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    },
+  };
+}
+
+function isUnavailableDeviceError(error: unknown): boolean {
+  return error instanceof DOMException && (error.name === "NotFoundError" || error.name === "OverconstrainedError");
 }

@@ -13,6 +13,7 @@ import type {
 import { DRSAI_HOME } from "./paths";
 import { backupLegacyWorkspaceDataOnce, migrateLegacyWorkspaceRecords, migrateWorkspaceToAuthoritativeId, recordWorkspaceIdMigration } from "./workspaceMigrations";
 import { LocalRuntimeClient } from "./runtimeClient";
+import { isRemoteAcceptanceWorkspace } from "./remoteWorkspaceRestorePolicy";
 
 const WORKSPACES_FILE = join(DRSAI_HOME, "desktop", "workspaces.json");
 const WORKSPACES_LEGACY_BACKUP_FILE = join(DRSAI_HOME, "desktop", "workspaces.legacy-v1.backup.json");
@@ -97,6 +98,17 @@ export async function findWorkspaceById(id: string): Promise<WorkspaceProject | 
   return (await readWorkspaces()).find((workspace) => workspace.id === id);
 }
 
+export async function setRemoteWorkspaceAutoReconnect(id: string, enabled: boolean): Promise<void> {
+  const workspaces = await readWorkspaces();
+  let changed = false;
+  const next = workspaces.map((workspace) => {
+    if (workspace.id !== id || workspace.location !== "remote" || !workspace.remote || workspace.remote.autoReconnect === enabled) return workspace;
+    changed = true;
+    return { ...workspace, remote: { ...workspace.remote, autoReconnect: enabled }, updatedAt: new Date().toISOString() };
+  });
+  if (changed) await writeWorkspaces(next);
+}
+
 export async function createRemoteWorkspace(request: {
   id: string;
   name?: string;
@@ -118,7 +130,7 @@ export async function createRemoteWorkspace(request: {
     location: "remote",
     transport: "ssh",
     type: "remote-ssh",
-    remote: request.remote,
+    remote: { ...request.remote, autoReconnect: true },
     createdAt: previous?.createdAt || now,
     updatedAt: now,
     lastOpenedAt: now,
@@ -145,7 +157,7 @@ async function readWorkspaces(): Promise<WorkspaceProject[]> {
     if (!Array.isArray(parsed)) return [];
     const migration = migrateLegacyWorkspaceRecords(parsed);
     if (migration.changed) await backupLegacyWorkspaceDataOnce(WORKSPACES_LEGACY_BACKUP_FILE, raw);
-    return migration.records.filter(isWorkspace).slice(0, MAX_WORKSPACES);
+    return migration.records.filter(isWorkspace).filter((workspace) => !isRemoteAcceptanceWorkspace(workspace)).slice(0, MAX_WORKSPACES);
   } catch {
     return [];
   }
@@ -163,6 +175,7 @@ async function writeWorkspaces(workspaces: WorkspaceProject[]): Promise<void> {
       instanceId: workspace.remote.instanceId,
       connectionState: "disconnected" as const,
       gatewayVersion: workspace.remote.gatewayVersion,
+      autoReconnect: workspace.remote.autoReconnect === true,
     },
   } : workspace);
   await writeFile(WORKSPACES_FILE, `${JSON.stringify(persisted, null, 2)}\n`, "utf8");
