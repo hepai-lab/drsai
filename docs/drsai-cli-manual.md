@@ -1,11 +1,4 @@
-# DrSai CLI 使用手册
-
-> 版本: 对应 Ink TUI (`apps/ui-tui/`) + `backend/tui_gateway/` + `cli/commands.py` 命令注册表
-> 最后更新: 2026-06（新增：`/compress` 手动记忆压缩命令、Session 搜索与组织 /find /tag /pin /archive、子智能体并发控制 /max_concurrent、Session FTS5 回填兼容）
->
-> **架构提示**：从本次更新起，`drsai` / `drsai chat` 启动的是基于 React/Ink 的双进程 TUI（前端 = Node.js，后端 = Python JSON-RPC gateway）。旧的单进程 `run_cli.py` 已被保留为 `_deprecated/run_cli_legacy.py`，不再接入。下文记录的所有命令都通过 JSON-RPC 的 `slash.exec` 在 gateway 端执行；命令注册表 (`cli/commands.py`) 仍是单一真相源。
-
----
+# OpenDrSai CLI 使用手册
 
 ## 目录
 
@@ -36,14 +29,14 @@
 
 ## 1 总体介绍
 
-### 1.1 DrSai CLI 是什么？
+### 1.1 OpenDrSai CLI 是什么？
 
-DrSai CLI 是 DrSai 智能体框架的**本地交互式终端客户端**。它由两个进程协作组成：
+OpenDrSai CLI 是 OpenDrSai 智能体框架的**本地交互式终端客户端**。它由两个进程协作组成：
 
 - **前端 (Node.js / Ink)**：`apps/ui-tui/` 下的 React + Ink TUI，负责渲染、输入捕获、Tab 补全、覆盖层（pickers / model editor / setup screen）。
 - **后端 (Python / tui_gateway)**：`backend/tui_gateway/` 提供基于 stdin/stdout 的 JSON-RPC 服务，承载 `DrSaiCLIAssistant` 实例和所有工具。前端用 RPC（`session.*`、`prompt.*`、`slash.exec`、`model.*` 等）调用后端，后端用事件流（`message.delta`、`tool.start`、`session.info`、`approval.request` 等）反推 UI。
 
-也支持远程附加模式：`drsai chat --attach ws://host:8765/attach` 可以让本地 TUI 接到一台远程 gateway。
+也支持远程附加模式：`opendrsai chat --attach ws://host:8765/attach` 可以让本地 TUI 接到一台远程 gateway。
 
 **核心能力**：
 
@@ -66,7 +59,7 @@ DrSai CLI 是 DrSai 智能体框架的**本地交互式终端客户端**。它�
 
 #### 记忆管理
 
-DrSai CLI 的记忆系统分为两层：
+OpenDrSai CLI 的记忆系统分为两层：
 
 | 层级 | 实现 | 作用 | 生命周期 |
 |------|------|------|----------|
@@ -91,7 +84,7 @@ DrSai CLI 的记忆系统分为两层：
 
 #### 多 Session 与目录绑定
 
-DrSai CLI 的 Session 系统与**工作目录**绑定：
+OpenDrSai CLI 的 Session 系统与**工作目录**绑定：
 
 - 启动时自动检查 `cwd` 是否有对应的 Session
 - 有 → 恢复该 Session 的对话历史和状态
@@ -104,31 +97,33 @@ DrSai CLI 的 Session 系统与**工作目录**绑定：
 
 ## 2 启动与配置
 
-事先配置好环境变量：
+## 2.1 安装
 
-```env
-SYSTEM_SKILLS_DIR="/path/to/skills" # 可以使用项目中的agent_skills/skills
-LLM_CONFIG_FILE="/path/to/llm_config.json" # 可以使用项目中的llm_mode_config.example.json
-HEPAI_API_KEY="<enter your key here>" # 任何hepai/openai/ahthropic
-```
+Linux/MacOS：`curl -fsSL https://ihepbox.ihep.ac.cn/ihepbox/index.php/s/vQFBjvXqAhxdPFb/download | bash`
 
-### 2.1 启动方式
+Windows：`iwr -UseBasicParsing https://ihepbox.ihep.ac.cn/ihepbox/index.php/s/cG0oB5NEhQiEf5r/download | iex`
+
+`请注意， Powershell版本需要>=5.1`
+
+### 2.2 启动方式
+
+**请注意，使用源码安装，或者老版本，使用以下所有命令时，将`opendrsai`命令换成`drsai`即可。**
 
 ```bash
 # 默认启动（启动 Ink TUI + 自动 spawn gateway）
-drsai
+opendrsai
 
 # 显式 chat 子命令
-drsai chat
+opendrsai chat
 
 # 附加到远程 gateway（替代本地 spawn）
-drsai chat --attach ws://remote-host:8765/attach
+opendrsai chat --attach ws://remote-host:8765/attach
 
 # 仅启动 gateway（不弹 UI，作为远程会话被附加）
-drsai tui-gateway       # 设置 DRSAI_TUI_ENABLE_WS=1 开放 WebSocket
+opendrsai tui-gateway       # 设置 DRSAI_TUI_ENABLE_WS=1 开放 WebSocket
 
 # 旧版 SSE gateway（仅供 Electron 桌面端兼容）
-drsai gateway --port 8642
+opendrsai gateway --port 8642
 ```
 
 **Node.js 依赖说明**：TUI 需要 Node.js ≥ 20。`drsai` 启动时按以下顺序解析：
@@ -180,24 +175,24 @@ drsai gateway --port 8642
 
 ```bash
 # 查看/更新配置
-drsai config --show                # 显示当前配置（敏感值已遮蔽）
-drsai config --json                # JSON 格式输出
-drsai config --api-key <KEY>       # 更新 API Key
-drsai config --plan-mode true      # 设置全局 Plan Mode
+opendrsai config --show                # 显示当前配置（敏感值已遮蔽）
+opendrsai config --json                # JSON 格式输出
+opendrsai config --api-key <KEY>       # 更新 API Key
+opendrsai config --plan-mode true      # 设置全局 Plan Mode
 
 # Session 管理
-drsai sessions                     # 列出所有已保存 Session
-drsai sessions --clear             # 清除所有 Session
+opendrsai sessions                     # 列出所有已保存 Session
+opendrsai sessions --clear             # 清除所有 Session
 
 # 版本信息
-drsai version                      # 显示版本号
+opendrsai version                      # 显示版本号
 ```
 
 ---
 
 ## 3 System Prompt 层级架构
 
-DrSai CLI 的 System Prompt 由 6 个层级组成，从上到下排列。**越靠后的层级，LLM 越重视**：
+OpenDrSai CLI 的 System Prompt 由 6 个层级组成，从上到下排列。**越靠后的层级，LLM 越重视**：
 
 ```
 ① Prefix (session级)       ← /plan_mode、/inject prefix 设置
@@ -220,7 +215,7 @@ DrSai CLI 的 System Prompt 由 6 个层级组成，从上到下排列。**越�
 
 ## 4 Session 管理
 
-Session 是 DrSai CLI 的核心组织单元。每个 Session 有独立的对话历史、模型配置、注入提示词和项目指令。
+Session 是 OpenDrSai CLI 的核心组织单元。每个 Session 有独立的对话历史、模型配置、注入提示词和项目指令。
 
 ### 4.1 自动 Session 绑定
 
@@ -279,7 +274,7 @@ drsai
 
 ## 5 Session 搜索与组织
 
-当 Session 数量增多时，传统的 `/list` 和 `/search`（子串匹配）难以快速定位目标会话。DrSai 提供了一套搜索与组织工具，让大量 Session 有序可查。
+当 Session 数量增多时，传统的 `/list` 和 `/search`（子串匹配）难以快速定位目标会话。OpenDrSai 提供了一套搜索与组织工具，让大量 Session 有序可查。
 
 ### 5.1 `/find` — 自然语言搜索
 
@@ -384,7 +379,7 @@ drsai
 
 ### 6.1 模型切换
 
-DrSai CLI 支持在会话内即时切换模型，有两种模式：
+OpenDrSai CLI 支持在会话内即时切换模型，有两种模式：
 
 | 命令 | 别名 | 作用域 | 说明 |
 |------|------|--------|------|
@@ -513,7 +508,7 @@ DrSai CLI 支持在会话内即时切换模型，有两种模式：
 
 ### 7.1 设计理念
 
-项目指令系统借鉴了 Claude Code 的 `CLAUDE.md` 机制，但适配了 DrSai 的架构。它让 AI 在每次会话开始时自动理解你的项目上下文——构建命令、编码标准、架构决策、常见工作流等。
+项目指令系统借鉴了 Claude Code 的 `CLAUDE.md` 机制，但适配了 OpenDrSai 的架构。它让 AI 在每次会话开始时自动理解你的项目上下文——构建命令、编码标准、架构决策、常见工作流等。
 
 ### 7.2 文件发现机制
 
@@ -523,7 +518,7 @@ DrSai CLI 支持在会话内即时切换模型，有两种模式：
 
 | 优先级 | 文件 | 说明 |
 |--------|------|------|
-| 1 | `.drsai/DRSAI.md` | DrSai 原生格式（推荐） |
+| 1 | `.drsai/DRSAI.md` | OpenDrSai 原生格式（推荐） |
 | 2 | `.claude/CLAUDE.md` | Claude Code 兼容格式 |
 | 3 | `DRSAI.md` | 项目根目录直放 |
 | 4 | `CLAUDE.md` | Claude Code 兼容直放 |
@@ -565,7 +560,7 @@ DRSAI.md 支持 `@path/to/file` 导入语法，在加载时递归展开：
 
 DRSAI.md 中非代码块区域的 HTML 注释 (`<!-- ... -->`) 在注入前被自动剥离，节省 context token。代码块内的注释保留不变：
 
-```markdown
+````markdown
 <!-- 这行注释会被剥离，不会浪费 token -->
 这是实际指令内容。
 
@@ -574,7 +569,7 @@ DRSAI.md 中非代码块区域的 HTML 注释 (`<!-- ... -->`) 在注入前被�
 def hello():
     pass
 ```
-```
+````
 
 ### 7.5 项目指令命令
 
@@ -634,7 +629,7 @@ def hello():
 
 ### 8.1 记忆层级
 
-DrSai CLI 的记忆系统通过 `DrSaiSQLiteChatCompletionContext` 实现，内置两个核心工具：
+OpenDrSai CLI 的记忆系统通过 `DrSaiSQLiteChatCompletionContext` 实现，内置两个核心工具：
 
 | 工具 | 说明 | 调用方式 |
 |------|------|----------|
@@ -1890,7 +1885,7 @@ wechat_user_id → chat_id (微信用户 ID)
 
 ### 21.1 概念
 
-**Subagent（子智能体）** 是 DrSai CLI 的分层任务委派机制。当主智能体遇到复杂任务时，可将子任务委派给专门的子智能体执行。子智能体具有以下特性：
+**Subagent（子智能体）** 是 OpenDrSai CLI 的分层任务委派机制。当主智能体遇到复杂任务时，可将子任务委派给专门的子智能体执行。子智能体具有以下特性：
 
 - **隔离上下文**：子智能体拥有独立的对话上下文，**看不到**父智能体的对话历史（Hermes 风格）。必须在 `prompt` 和 `context` 字段中提供完整信息
 - **独立工具集**：每个子智能体可使用不同的工具白名单/黑名单

@@ -50,16 +50,18 @@ iwr -UseBasicParsing <ihepbox_url>/install_drsai.ps1 -OutFile install_drsai.ps1
 
 ## 安装后
 
-将 `~/.drsai/bin`（Windows 为 `%USERPROFILE%\.drsai\bin`）加入 PATH：
+Linux/macOS 需手动将 `~/.drsai/bin` 加入 PATH：
 
 ```bash
 # Linux/macOS — 添加到 ~/.bashrc 或 ~/.zshrc
 export PATH="$HOME/.drsai/bin:$PATH"
 ```
 
+Windows 的 PowerShell 安装脚本会**自动**将 `%USERPROFILE%\.drsai\bin` 加入 User PATH。
+如需当前会话立即生效，运行：
+
 ```powershell
-# Windows PowerShell
-setx PATH "%USERPROFILE%\.drsai\bin;%PATH%"
+$env:PATH += ";$env:USERPROFILE\.drsai\bin"
 ```
 
 然后运行：
@@ -106,6 +108,18 @@ export PATH="$INSTALL_DIR/packages/node/bin:$PATH"
 > `DRSAI_PYTHON` 是**必须**的：TUI 的 Node.js 进程会用它来 spawn gateway 子进程。
 > 如果不设置，TUI 会 fallback 到系统 `python3`（没有 drsai 及其依赖），导致
 > `gateway exited (code=1) before ready` 错误。
+
+### 启动方式：console script vs `python -m`
+
+启动脚本优先使用 venv 中安装的 `drsai` console script（`venv/bin/drsai`），
+而非 `python -m drsai.backend.run_cli`。原因：
+
+- `drsai/backend/__init__.py` 中 `from .run_cli import run` 会提前导入 `run_cli`
+- `python -m drsai.backend.run_cli` 通过 `runpy` 执行，发现模块已在 `sys.modules` 中
+- 触发 `RuntimeWarning: 'drsai.backend.run_cli' found in sys.modules...`
+- console script 直接调用 `run()` 函数，绕过 `runpy`，**无警告**
+
+如果 console script 不存在（异常情况），自动 fallback 到 `python -m`。
 
 ## 安装流程 (10 步)
 
