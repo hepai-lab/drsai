@@ -63,4 +63,17 @@ class AttachmentProcessorTest {
         processor.cleanupOrphans(olderThanMs = 1)
         assertFalse(source.exists())
     }
+
+    @Test fun cleanupEvictsOldestUnpinnedFilesToMeetTheHardByteBudget() {
+        val old = File(processor.cameraDirectory, "budget-old.bin").apply { writeBytes(ByteArray(8)); setLastModified(1) }
+        val kept = File(processor.cameraDirectory, "budget-kept.bin").apply { writeBytes(ByteArray(8)); setLastModified(2) }
+        processor.cleanupOrphans(
+            keepPaths = setOf(kept.absolutePath),
+            olderThanMs = Long.MAX_VALUE,
+            maxCacheBytes = 8,
+        )
+        assertFalse(old.exists())
+        assertTrue(kept.exists())
+        kept.delete()
+    }
 }

@@ -1,0 +1,12 @@
+﻿{
+    "result":  "passed",
+    "device":  "emulator-5560",
+    "api":  35,
+    "physical_size":  "2560x1600",
+    "density_dpi":  320,
+    "width_dp":  1280,
+    "permanent_drawer":  true,
+    "chat_composer":  true,
+    "modal_scrim":  false,
+    "launch_status":  "ok"
+}

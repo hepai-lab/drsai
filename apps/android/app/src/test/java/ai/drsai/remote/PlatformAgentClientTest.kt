@@ -9,12 +9,14 @@ import ai.drsai.remote.data.AgentCatalogEntity
 import ai.drsai.remote.data.ChatDao
 import ai.drsai.remote.data.Conversation
 import ai.drsai.remote.data.ConversationEntity
+import ai.drsai.remote.data.ConversationSummaryEntity
 import ai.drsai.remote.data.MemoryEntity
 import ai.drsai.remote.data.MessageEntity
 import ai.drsai.remote.data.MessageAttachmentEntity
 import ai.drsai.remote.data.MessageAttachment
 import ai.drsai.remote.data.RuntimeEvent
 import ai.drsai.remote.data.TokenLifecycleClient
+import ai.drsai.remote.data.ToolArtifactEntity
 import ai.drsai.remote.data.User
 import ai.drsai.remote.data.nativeApiError
 import ai.drsai.remote.data.nativeTextDelta
@@ -166,10 +168,12 @@ private class PlatformFakeTokenLifecycle : TokenLifecycleClient {
 private class PlatformRuntimeFakeDao : ChatDao {
     val messages = mutableListOf<MessageEntity>()
     val attachments = mutableListOf<MessageAttachmentEntity>()
+    val toolArtifactRows = mutableListOf<ToolArtifactEntity>()
     override fun conversations(userId: String): Flow<List<ConversationEntity>> = flowOf(emptyList())
     override suspend fun conversationSnapshot(userId: String) = emptyList<ConversationEntity>()
     override suspend fun visibleMessageSnapshot(id: String) = messages.filter { it.conversationId == id && it.visible }
     override suspend fun runtimeMessageSnapshot(id: String) = messages.filter { it.conversationId == id }
+    override suspend fun searchVisibleMessages(userId: String, escapedQuery: String, limit: Int) = emptyList<MessageEntity>()
     override suspend fun saveConversation(item: ConversationEntity) = Unit
     override suspend fun saveMessage(item: MessageEntity) {
         messages.removeAll { it.id == item.id }
@@ -178,11 +182,25 @@ private class PlatformRuntimeFakeDao : ChatDao {
     override suspend fun saveMessages(items: List<MessageEntity>) = items.forEach { saveMessage(it) }
     override suspend fun saveAttachments(items: List<MessageAttachmentEntity>) { attachments += items }
     override suspend fun attachmentSnapshot(id: String) = attachments.filter { it.conversationId == id }
+    override suspend fun allAttachmentsForUser(userId: String) = attachments.toList()
     override suspend fun deleteAttachment(id: String) { attachments.removeAll { it.id == id } }
     override suspend fun updateConversation(id: String, title: String, updatedAt: Long) = Unit
     override suspend fun deleteConversation(id: String) = Unit
     override suspend fun saveMemory(item: MemoryEntity) = 1L
     override suspend fun searchMemories(userId: String, query: String, limit: Int) = emptyList<MemoryEntity>()
+    override suspend fun memorySnapshot(userId: String, limit: Int) = emptyList<MemoryEntity>()
+    override suspend fun deleteMemory(userId: String, id: Long) = 0
+    override suspend fun saveConversationSummary(item: ConversationSummaryEntity) = Unit
+    override suspend fun conversationSummary(conversationId: String) = null
+    override suspend fun saveToolArtifact(item: ToolArtifactEntity) { toolArtifactRows += item }
+    override suspend fun toolArtifacts(userId: String, runId: String) = toolArtifactRows.filter { it.userId == userId && it.runId == runId }
+    override suspend fun allToolArtifacts(userId: String) = toolArtifactRows.filter { it.userId == userId }
+    override suspend fun deleteToolArtifacts(userId: String, ids: List<String>): Int {
+        val before = toolArtifactRows.size
+        toolArtifactRows.removeAll { it.userId == userId && it.id in ids }
+        return before - toolArtifactRows.size
+    }
+    override suspend fun pruneToolArtifacts(userId: String, before: Long, activeRunIds: List<String>) = 0
     override suspend fun agentCatalogSnapshot(userId: String) = emptyList<AgentCatalogEntity>()
     override suspend fun saveAgentCatalog(items: List<AgentCatalogEntity>) = Unit
     override suspend fun clearAgentCatalog(userId: String) = Unit

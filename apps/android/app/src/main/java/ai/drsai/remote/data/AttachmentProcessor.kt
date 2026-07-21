@@ -97,11 +97,26 @@ class AttachmentProcessor(private val context: Context) {
         draft.thumbnailPath?.let(::File)?.takeIf(File::exists)?.delete()
     }
 
-    fun cleanupOrphans(keepPaths: Set<String> = emptySet(), olderThanMs: Long = 24 * 60 * 60 * 1000L) {
+    fun cleanupOrphans(
+        keepPaths: Set<String> = emptySet(),
+        olderThanMs: Long = 24 * 60 * 60 * 1000L,
+        maxCacheBytes: Long = 64L * 1024 * 1024,
+    ) {
+        require(maxCacheBytes >= 0) { "attachment_cache_limit_invalid" }
         val threshold = System.currentTimeMillis() - olderThanMs
-        listOf(prepared, thumbnails, cameraDirectory).flatMap { it.listFiles()?.toList().orEmpty() }.forEach { file ->
+        val files = listOf(prepared, thumbnails, cameraDirectory).flatMap { it.listFiles()?.toList().orEmpty() }
+        files.forEach { file ->
             if (file.absolutePath !in keepPaths && file.lastModified() < threshold) file.delete()
         }
+        var total = files.filter(File::isFile).sumOf(File::length)
+        files.asSequence().filter(File::isFile).filterNot { it.absolutePath in keepPaths }
+            .sortedWith(compareBy<File>(File::lastModified).thenBy(File::getAbsolutePath))
+            .forEach { file ->
+                if (total > maxCacheBytes) {
+                    val size = file.length()
+                    if (file.delete()) total -= size
+                }
+            }
     }
 
     private fun queryMetadata(uri: Uri): Pair<String?, Long?> {

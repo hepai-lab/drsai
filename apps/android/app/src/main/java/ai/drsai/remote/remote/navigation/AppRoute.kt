@@ -16,6 +16,26 @@ sealed interface AppRoute {
         override val path: String = "remote"
     }
 
+    data object Scheduled : AppRoute {
+        override val path: String = "workbench/scheduled"
+    }
+
+    data object Results : AppRoute {
+        override val path: String = "workbench/results"
+    }
+
+    data object AgentsAndSkills : AppRoute {
+        override val path: String = "workbench/agents-skills"
+    }
+
+    data object Approvals : AppRoute {
+        override val path: String = "workbench/approvals"
+    }
+
+    data object Archived : AppRoute {
+        override val path: String = "workbench/archived"
+    }
+
     data class WorkspaceSessions(
         val runtimeId: RuntimeId,
         val workspaceId: WorkspaceId,
@@ -60,6 +80,11 @@ sealed interface AppRoute {
         fun parse(path: String): AppRoute? {
             if (path == Chat.path) return Chat
             if (path == RemoteHome.path) return RemoteHome
+            if (path == Scheduled.path) return Scheduled
+            if (path == Results.path) return Results
+            if (path == AgentsAndSkills.path) return AgentsAndSkills
+            if (path == Approvals.path) return Approvals
+            if (path == Archived.path) return Archived
             val parts = path.split('/').filter(String::isNotBlank)
             if (parts.size < 5 || parts[0] != "remote" || parts[2] != "workspaces") return null
             return runCatching {
@@ -79,4 +104,3 @@ sealed interface AppRoute {
         }
     }
 }
-

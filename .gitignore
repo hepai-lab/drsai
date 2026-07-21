@@ -248,6 +248,12 @@ DRSAI.local.md
 .magentic_ui_state.json
 debug
 data
+!apps/android/app/src/main/java/ai/drsai/remote/workbench/data/
+!apps/android/app/src/main/java/ai/drsai/remote/workbench/data/**
+!apps/android/app/src/main/java/ai/drsai/remote/data/
+!apps/android/app/src/main/java/ai/drsai/remote/data/**
+!apps/android/app/src/main/java/ai/drsai/remote/remote/data/
+!apps/android/app/src/main/java/ai/drsai/remote/remote/data/**
 runs
 node_modules
 database.sqlite
@@ -291,3 +297,7 @@ notebooks/test.db
 !apps/android/app/src/main/java/ai/drsai/remote/data/**
 !apps/android/app/src/test/
 !apps/android/app/src/test/**
+
+# Android acceptance-test artifacts and device screenshots are generated locally.
+docs/android/acceptance/**/device/*.png
+docs/android/acceptance/**/emulator-results/

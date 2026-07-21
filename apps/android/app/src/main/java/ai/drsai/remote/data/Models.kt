@@ -123,10 +123,12 @@ sealed interface RuntimeEvent {
     data class TextDelta(val text: String) : RuntimeEvent
     data class ToolStarted(val name: String) : RuntimeEvent
     data class ToolFinished(val name: String) : RuntimeEvent
+    data class ToolFailed(val name: String, val code: String) : RuntimeEvent
     data class ToolDowngraded(val reason: String) : RuntimeEvent
     data class Artifact(val attachment: RemoteAttachment) : RuntimeEvent
     data object Completed : RuntimeEvent
     data object Paused : RuntimeEvent
+    data object Cancelled : RuntimeEvent
     data class Failed(val message: String, val retryable: Boolean = true) : RuntimeEvent
 }
 
@@ -140,7 +142,7 @@ val DEFAULT_AGENT = Agent(
         Never claim to have shell, arbitrary file, browser, location, contacts, or device-control access.
         Ask before storing sensitive personal information. Do not expose tool JSON to the user.
     """.trimIndent(),
-    capabilities = setOf("chat", "local-tools", "memory", "attachment-upload", "document-input"),
+    capabilities = setOf("chat", "local-tools", "memory", "attachment-upload", "document-input", "safe-device-info"),
 )
 
 internal fun localAgentFor(models: List<ModelInfo>): Agent = DEFAULT_AGENT.copy(
@@ -166,6 +168,82 @@ data class AgentCatalogStatus(
     val cached: Boolean = false,
 )
 
+data class ApprovalUiItem(
+    val id: String,
+    val operation: String,
+    val scope: String,
+    val runtimeId: String,
+    val sessionId: String,
+    val expiresAt: String,
+)
+
+data class WorkbenchSessionItem(
+    val sessionId: String,
+    val runtimeId: String,
+    val workspaceId: String,
+    val title: String,
+    val local: Boolean,
+    val pinned: Boolean,
+    val unread: Boolean,
+    val updatedAt: Long,
+    val runtimeStatus: String = "IDLE",
+)
+
+data class WorkbenchWorkspaceItem(
+    val key: String,
+    val runtimeId: String,
+    val workspaceId: String,
+    val displayName: String,
+    val local: Boolean,
+    val sessions: List<WorkbenchSessionItem>,
+    val connectionStatus: String = if (local) "local" else "offline",
+    val sessionHasMore: Boolean = false,
+)
+
+data class MemoryUiItem(val id: Long, val content: String)
+
+data class SkillUiItem(
+    val id: String,
+    val name: String,
+    val version: Int,
+    val source: String,
+    val available: Boolean,
+    val permissions: String,
+)
+
+data class WorkbenchArtifactItem(
+    val id: String,
+    val name: String,
+    val mimeType: String,
+    val size: Long,
+    val sessionId: String,
+    val runId: String? = null,
+    val source: String,
+)
+
+data class WorkbenchSearchItem(
+    val session: WorkbenchSessionItem,
+    val snippet: String,
+    val messageMatch: Boolean,
+)
+
+data class RuntimeDiagnosticUi(
+    val code: String,
+    val userAction: String,
+    val runId: String?,
+    val requestId: String?,
+    val details: String,
+) {
+    fun exportText(): String = buildString {
+        append("OpenDrSai Android diagnostic\n")
+        append("code=").append(code).append('\n')
+        append("action=").append(userAction).append('\n')
+        runId?.let { append("run_id=").append(it).append('\n') }
+        requestId?.let { append("request_id=").append(it).append('\n') }
+        append("details=").append(details)
+    }
+}
+
 sealed interface AppDestination {
     data object Splash : AppDestination
     data object Login : AppDestination
@@ -189,11 +267,23 @@ data class AppState(
     val historyOpen: Boolean = false,
     val profileOpen: Boolean = false,
     val error: String? = null,
+    val diagnostic: RuntimeDiagnosticUi? = null,
     val runtimeStatus: String? = null,
     val toolDowngraded: Boolean = false,
     val agentCatalogStatus: AgentCatalogStatus = AgentCatalogStatus(),
     val darkTheme: Boolean? = null,
     val attachmentDrafts: List<AttachmentDraft> = emptyList(),
+    val pendingApprovals: List<ApprovalUiItem> = emptyList(),
+    val localWorkspaceGranted: Boolean = false,
+    val workbenchWorkspaces: List<WorkbenchWorkspaceItem> = emptyList(),
+    val memories: List<MemoryUiItem> = emptyList(),
+    val memoryEnabled: Boolean = true,
+    val archivedSessions: List<WorkbenchSessionItem> = emptyList(),
+    val workbenchSearchResults: List<WorkbenchSearchItem> = emptyList(),
+    val workbenchArtifacts: List<WorkbenchArtifactItem> = emptyList(),
+    val skills: List<SkillUiItem> = emptyList(),
+    val requestedRoutePath: String? = null,
+    val workbenchSessionLimits: Map<String, Int> = emptyMap(),
 )
 
 internal fun sanitizeLegacyAssistantText(role: String, content: String): String {

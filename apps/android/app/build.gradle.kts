@@ -9,12 +9,15 @@ val systemVersion = Regex("""(?m)^VERSION\s*=\s*[\"']([^\"']+)[\"']""")
     ?.groupValues
     ?.get(1)
     ?: error("Unable to read OpenDrSai VERSION from $systemVersionFile")
-val versionParts = systemVersion.split(".").map { part ->
-    part.takeWhile(Char::isDigit).toIntOrNull() ?: 0
+fun versionCodeFor(version: String): Int {
+    val parts = version.split(".").map { part -> part.takeWhile(Char::isDigit).toIntOrNull() ?: 0 }
+    return (parts.getOrElse(0) { 0 } * 10_000) +
+        (parts.getOrElse(1) { 0 } * 100) + parts.getOrElse(2) { 0 }
 }
-val systemVersionCode = (versionParts.getOrElse(0) { 0 } * 10_000) +
-    (versionParts.getOrElse(1) { 0 } * 100) +
-    versionParts.getOrElse(2) { 0 }
+val systemVersionCode = versionCodeFor(systemVersion)
+val acceptanceVersion = providers.gradleProperty("opendrsai.android.acceptanceVersion").orNull?.also {
+    require(Regex("\\d+\\.\\d+\\.\\d+").matches(it)) { "Invalid acceptance version: $it" }
+}
 val androidOidcClientId = providers.gradleProperty("opendrsai.oidc.clientId")
     .orElse(providers.environmentVariable("OPENDRSAI_ANDROID_OIDC_CLIENT_ID"))
     .getOrElse("opendrsai-android")
@@ -37,6 +40,9 @@ val androidUpdateManifestUrl = providers.gradleProperty("opendrsai.android.updat
 val androidUpdateChannel = providers.gradleProperty("opendrsai.android.updateChannel")
     .orElse(providers.environmentVariable("OPENDRSAI_ANDROID_UPDATE_CHANNEL"))
     .getOrElse("stable")
+val androidUpdateAllowInsecureLocal = providers.gradleProperty("opendrsai.android.updateAllowInsecureLocal")
+    .map(String::toBooleanStrict)
+    .getOrElse(false)
 fun String.asBuildConfigString(): String =
     "\"${replace("\\", "\\\\").replace("\"", "\\\"")}\""
 
@@ -50,12 +56,14 @@ plugins {
 android {
     namespace = "ai.drsai.remote"
     compileSdk = 35
+    testBuildType = providers.gradleProperty("opendrsai.android.testBuildType").getOrElse("debug")
 
     defaultConfig {
         applicationId = "ai.drsai.remote"
         minSdk = 26
         targetSdk = 35
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testProguardFiles("proguard-android-test.pro")
         versionCode = systemVersionCode
         versionName = systemVersion
         buildConfigField("String", "HAI_BASE_URL", haiBaseUrl.asBuildConfigString())
@@ -67,6 +75,7 @@ android {
         buildConfigField("String", "OIDC_REDIRECT_URI", androidOidcRedirectUri.asBuildConfigString())
         buildConfigField("String", "ANDROID_UPDATE_MANIFEST_URL", androidUpdateManifestUrl.asBuildConfigString())
         buildConfigField("String", "ANDROID_UPDATE_CHANNEL", androidUpdateChannel.asBuildConfigString())
+        buildConfigField("boolean", "ANDROID_UPDATE_ALLOW_INSECURE_LOCAL", androidUpdateAllowInsecureLocal.toString())
         manifestPlaceholders["usesCleartextTraffic"] = "false"
     }
 
@@ -88,6 +97,15 @@ android {
             signingConfig = signingConfigs.getByName("debug")
             matchingFallbacks += listOf("release")
         }
+        create("acceptance") {
+            initWith(getByName("release"))
+            isMinifyEnabled = false
+            isShrinkResources = false
+            signingConfig = signingConfigs.getByName("debug")
+            // Test-only old-version builds may use an emulator-hosted update feed.
+            manifestPlaceholders["usesCleartextTraffic"] = "true"
+            matchingFallbacks += listOf("release")
+        }
     }
 
     buildFeatures { compose = true; buildConfig = true }
@@ -103,8 +121,13 @@ android {
 
 androidComponents {
     onVariants(selector().all()) { variant ->
+        val variantVersion = if (variant.buildType == "acceptance") acceptanceVersion ?: systemVersion else systemVersion
         variant.outputs.forEach { output ->
-            (output as VariantOutputImpl).outputFileName.set("OpenDrSai-Android-v$systemVersion.apk")
+            (output as VariantOutputImpl).apply {
+                versionName.set(variantVersion)
+                versionCode.set(versionCodeFor(variantVersion))
+                outputFileName.set("OpenDrSai-Android-v$variantVersion.apk")
+            }
         }
     }
 }
@@ -248,6 +271,7 @@ dependencies {
     implementation(platform("androidx.compose:compose-bom:2025.06.01"))
     implementation("androidx.activity:activity-compose:1.10.1")
     implementation("androidx.exifinterface:exifinterface:1.3.7")
+    implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("androidx.browser:browser:1.8.0")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")

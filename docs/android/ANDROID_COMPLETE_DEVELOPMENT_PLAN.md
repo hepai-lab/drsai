@@ -1,20 +1,21 @@
 # OpenDrSai Android 完整开发计划
 
-> 本文统一整理 Android App 从第一版 MVP 到远程工作区的四个开发阶段。
-> 阶段 1、2 是对早期散落在 `docs/android_app` 中的方案和实现记录进行结构化补全；阶段 3、4 沿用已有专项计划。
+> 本文统一整理 Android App 从第一版 MVP 到统一工作台与混合 Runtime V2 的五个开发阶段。
+> 阶段 1、2 是对早期散落在 `docs/android_app` 中的方案和实现记录进行结构化补全；阶段 3、4 沿用已有专项计划；阶段 5 是下一阶段开发基线。
 
 ## 1. 总体范围
 
-Android 产品最终形成四条连续能力链：
+Android 产品形成五条连续能力链：
 
 1. **原生 Android MVP**：登录、聊天、本地 Kotlin Agent Runtime、本地会话和安全工具。
 2. **HAI 平台 Agent**：平台 Agent 目录、能力门控、Session 绑定、SSE 对话和错误恢复。
 3. **附件闭环**：拍照、相册、文件选择、预处理、上传、Agent 处理和结果文件。
 4. **远程工作区**：通过 Relay 连接 Full Runtime，访问 Workspace、Session、Run、Approval、Files、Git 和 Artifact。
+5. **统一工作台与混合 Runtime V2**：适配 Windows 左侧工作台，并统一 Android Lite Runtime V2 与远程 Full Runtime 的领域模型、事件、审批和能力路由。
 
 阶段 3 和阶段 4 的对象模型、附件引用、OIDC 身份和聊天事件应复用前一阶段能力，不创建平行账户或聊天体系。
 
-## 2. 四阶段统计
+## 2. 五阶段统计
 
 | 阶段 | 名称 | 模块数 | 功能点数 | 当前状态 |
 |---|---|---:|---:|---|
@@ -22,9 +23,10 @@ Android 产品最终形成四条连续能力链：
 | 第 2 阶段 | HAI 平台 Agent 接入 | 4 | 22 | 已实现 |
 | 第 3 阶段 | v1.4.6 附件闭环 | 10 | 66 | 代码与 Beta 已实现，部分环境验收保留 |
 | 第 4 阶段 | Android 远程工作区 | 12 | 96 | 96/96 已完成，Codex E2E 已通过 |
-| **合计** |  | **32** | **242** | 以各阶段验收口径为准 |
+| 第 5 阶段 | 统一工作台与混合 Runtime V2 | 12 | 96 | 96/96 已完成并通过自主验收 |
+| **合计** |  | **44** | **338** | 以各阶段验收口径为准 |
 
-> 242 是四份阶段计划加上第一阶段自动更新模块后的功能点总和，不是去重后的代码 API 数量。OIDC、聊天、SSE、Room、Artifact 和更新发布链路等跨阶段能力在后续阶段被扩展时，仍按所属阶段的交付验收计数。
+> 338 是五份阶段计划加上第一阶段自动更新模块后的功能点总和，不是去重后的代码 API 数量。OIDC、聊天、SSE、Room、Artifact 和更新发布链路等跨阶段能力在后续阶段被扩展时，仍按所属阶段的交付验收计数。
 
 ## 3. 第 1 阶段：原生 Android MVP（6 个模块、58 个功能点）
 
@@ -159,15 +161,37 @@ Android 的系统 Package Installer：
 
 当前验收范围为 96 项，已完成 96 项；M11-F03 Codex Backend 真实 E2E 已通过。OpenDrSai 与 Codex 真实 Full Runtime/Backend 使用本仓库 `apps/desktop/windows`。
 
-## 7. 总体验收口径
+## 7. 第 5 阶段：统一工作台与混合 Runtime V2
+
+详细计划见 [ANDROID_UNIFIED_WORKBENCH_RUNTIME_V2_DEVELOPMENT_PLAN.md](./ANDROID_UNIFIED_WORKBENCH_RUNTIME_V2_DEVELOPMENT_PLAN.md)，共 **12 个模块、96 个功能点**：
+
+- 统一领域模型与架构边界：8
+- 自适应 Android 左侧工作台：8
+- Workspace 与 Session 树：8
+- 导航、搜索与会话操作：8
+- Kotlin Lite Runtime V2 核心：8
+- 上下文、记忆、指令与摘要：8
+- Tool Registry、Skill 与工具结果：8
+- Permission、Approval、Audit 与安全策略：8
+- Android 本地设备与文件能力：8
+- 本地/远程能力协商与任务委派：8
+- 后台、恢复、幂等、资源与错误治理：8
+- 数据迁移、自动化与发布验收：8
+
+本阶段复用既有 OIDC、HAI Agent、聊天、附件、自动更新和 Relay 能力。Android 本地不承载 Python Full Runtime 或任意 Shell；需要项目执行、Git/Worktree、Codex、MCP 和长任务时，通过用户可见的能力协商委派给远程 Full Runtime。
+
+当前实施与验收状态见 [ANDROID_STAGE5_DEVELOPMENT_PROGRESS.md](./ANDROID_STAGE5_DEVELOPMENT_PROGRESS.md)。
+
+## 8. 总体验收口径
 
 - 阶段 1、2：以 Android JVM、Lint、模拟器和 HAI OIDC/Native API 闭环为证据。
 - 阶段 3：以附件专项自动化、Native 后端测试、Beta APK 和环境联调为证据。
 - 阶段 4：以 Relay/Runtime E2E、Android JVM、API 30/API 35 模拟器、Lint、契约零漂移和 APK Release 为证据。
+- 阶段 5：以 96 项功能矩阵、统一领域契约、Lite Runtime V2/Full Runtime 双路径 E2E、数据迁移、安全矩阵和手机/平板模拟器为证据。
 - 真机测试不作为当前发布门禁。
 - Codex Backend 真实 E2E 已通过；Android 仍通过稳定 Relay/Runtime 契约保持 Backend 无关。
 
-## 8. 当前版本产物
+## 9. 当前版本产物
 
 - APK：`OpenDrSai-Android-v1.4.6.apk`
 - 生产 HAI 地址：`https://ai.ihep.ac.cn`

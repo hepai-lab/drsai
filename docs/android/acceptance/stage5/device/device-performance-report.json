@@ -1,0 +1,20 @@
+﻿{
+    "schema_version":  1,
+    "generated_at":  "2026-07-21T02:53:26.2711641+00:00",
+    "result":  "passed",
+    "device":  "emulator-5556",
+    "api":  30,
+    "apk":  "C:\\Users\\win11\\VSProjects\\drsai\\apps\\android\\app\\build\\outputs\\apk\\mvp\\OpenDrSai-Android-v1.5.0.apk",
+    "cold_start_total_ms":  2143,
+    "cold_start_wait_ms":  2144,
+    "total_pss_kb":  41976,
+    "thresholds":  {
+                       "cold_start_ms":  10000,
+                       "total_pss_kb":  262144
+                   },
+    "screenshots":  [
+                        "stage5-phone-portrait.png",
+                        "stage5-phone-landscape.png",
+                        "stage5-tablet-wide.png"
+                    ]
+}

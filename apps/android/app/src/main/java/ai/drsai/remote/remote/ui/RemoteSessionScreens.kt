@@ -28,6 +28,9 @@ data class WorkspaceSessionsUiState(
     val agentDefinitions: List<RemoteAgentDefinition> = emptyList(),
     val pendingApprovalCount: Int = 0,
     val sessions: List<RemoteSessionUi> = emptyList(),
+    val instructionVersions: Map<String, String> = emptyMap(),
+    val instructionStatus: String? = null,
+    val instructionRefreshRequired: Boolean = false,
     val loading: Boolean = false,
     val creating: Boolean = false,
     val error: String? = null,
@@ -37,7 +40,7 @@ data class WorkspaceSessionsUiState(
 fun WorkspaceSessionsScreen(state: WorkspaceSessionsUiState, onBack: () -> Unit, onRefresh: () -> Unit,
                             onSearch: (String) -> Unit, onCreate: (RemoteAgentDefinition) -> Unit,
                             onOpen: (RemoteSessionRef) -> Unit, onResume: () -> Unit = onRefresh,
-                            onOpenCapability: (String) -> Unit = {}) {
+                            onOpenCapability: (String) -> Unit = {}, onConfirmInstructions: () -> Unit = {}) {
     var agentPickerOpen by remember { mutableStateOf(false) }
     LifecycleEventEffect(Lifecycle.Event.ON_START) { onResume() }
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -48,7 +51,7 @@ fun WorkspaceSessionsScreen(state: WorkspaceSessionsUiState, onBack: () -> Unit,
                 Text(state.runtimeName, style = MaterialTheme.typography.labelSmall)
             }
             TextButton(onClick = onRefresh) { Text("刷新") }
-            Button(onClick = { agentPickerOpen = true }, enabled = !state.creating && state.agentDefinitions.isNotEmpty()) {
+            Button(onClick = { agentPickerOpen = true }, enabled = !state.creating && state.agentDefinitions.isNotEmpty() && !state.instructionRefreshRequired) {
                 Text(if (state.creating) "创建中" else "新会话")
             }
         }
@@ -59,6 +62,23 @@ fun WorkspaceSessionsScreen(state: WorkspaceSessionsUiState, onBack: () -> Unit,
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             state.capabilities.forEach { AssistChip(onClick = { onOpenCapability(it.name) }, enabled = it.available,
                 label = { Text(it.name) }) }
+        }
+        Text(
+            "文件写入、命令和 Git 修改只能在远程会话中发起，并需要逐项审批；Android 不会在设备上静默执行。",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        state.instructionStatus?.let { status ->
+            Text(
+                status + state.instructionVersions.values.firstOrNull()?.let { " · ${it.take(12)}" }.orEmpty(),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (state.instructionRefreshRequired) {
+            OutlinedButton(onClick = onConfirmInstructions, modifier = Modifier.fillMaxWidth()) {
+                Text("确认使用最新项目指令")
+            }
         }
         state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())

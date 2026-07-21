@@ -70,6 +70,31 @@ class HaiModelClientTest {
         assertTrue(body.contains("data:image/jpeg;base64,YQ=="))
     }
 
+    @Test fun model_only_receives_tools_available_for_the_current_workspace() = runTest {
+        repeat(2) {
+            server.enqueue(MockResponse().setBody("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n"))
+        }
+        val store = FakeTokenStore("token", "refresh")
+        val lifecycle = FakeTokenLifecycle()
+        val withoutWorkspace = HaiModelClient(
+            store, lifecycle, baseUrl = server.url("/v1").toString(),
+            availableToolNames = { setOf("get_current_time", "get_device_info") },
+        )
+        withoutWorkspace.streamCompletion("model", listOf(RuntimeMessage("user", "hello")), true) {}
+        val first = server.takeRequest().body.readUtf8()
+        assertTrue(first.contains("get_device_info"))
+        assertFalse(first.contains("workspace.read"))
+
+        val withWorkspace = HaiModelClient(
+            store, lifecycle, baseUrl = server.url("/v1").toString(),
+            availableToolNames = { setOf("workspace.read") },
+        )
+        withWorkspace.streamCompletion("model", listOf(RuntimeMessage("user", "hello")), true) {}
+        val second = server.takeRequest().body.readUtf8()
+        assertTrue(second.contains("workspace.read"))
+        assertFalse(second.contains("get_device_info"))
+    }
+
     @Test fun image_schema_rejection_becomes_clear_non_retryable_error() = runTest {
         server.enqueue(
             MockResponse().setResponseCode(400).setBody(

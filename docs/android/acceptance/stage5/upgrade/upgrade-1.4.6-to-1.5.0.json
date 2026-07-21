@@ -1,0 +1,14 @@
+﻿{
+    "schema_version":  1,
+    "generated_at":  "2026-07-21T02:05:29.0862762+00:00",
+    "result":  "passed",
+    "device":  "emulator-5556",
+    "old_version_code":  10406,
+    "new_version_code":  10500,
+    "first_install_time_before":  "2026-07-21 02:00:42",
+    "first_install_time_after":  "2026-07-21 02:00:42",
+    "encrypted_auth_sha256_before":  "45205b681b223820267dc89488fc159c8ea1f210860f5209be50108e9be3c749",
+    "encrypted_auth_sha256_after":  "45205b681b223820267dc89488fc159c8ea1f210860f5209be50108e9be3c749",
+    "process_id":  "20034",
+    "launch_status":  "ok"
+}
