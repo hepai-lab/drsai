@@ -114,6 +114,7 @@ export type UiMessage = ChatMessage & {
   id: string;
   streaming?: boolean;
   error?: boolean;
+  replyFailed?: boolean;
   statusContent?: string;
   reasoningContent?: string;
   toolTimeline?: ChatToolTimelineEvent[];
@@ -214,6 +215,7 @@ interface ChatWorkspaceProps {
   onSelectWorkspace?: (workspaceId: string) => void;
   onSelectModel?: (model: string) => void;
   onOpenExternal: (url: string) => void;
+  onOpenDebug?: () => void;
   onOpenPreviewBrowser?: (url?: string) => void;
   onOpenWorkspaceArtifact?: (path: string) => void;
   onPickFiles?: () => Promise<PickDialogResult>;
@@ -265,6 +267,7 @@ export function ChatWorkspace({
   onSelectWorkspace,
   onSelectModel,
   onOpenExternal,
+  onOpenDebug,
   onOpenPreviewBrowser,
   onOpenWorkspaceArtifact,
   onPickFiles,
@@ -1820,7 +1823,12 @@ export function ChatWorkspace({
           >
             <strong className="message-author">{message.role === "user" ? "You" : "OpenDrSai"}</strong>
             <div className="message-body">
-              {message.content && message.role === "user" ? (
+              {message.role === "assistant" && message.replyFailed ? (
+                <button type="button" className="chat-reply-failed" onClick={onOpenDebug}>
+                  <Bug size={14} aria-hidden />
+                  <span>{zh ? "回复未完成 · 查看调试" : "Reply incomplete · View debug"}</span>
+                </button>
+              ) : message.content && message.role === "user" ? (
                 <p>{highlightPlainText(message.content, searchQuery)}</p>
               ) : message.role === "assistant" && message.structuredTurn ? (
                 message.structuredTurn.parts.length ? (
@@ -2461,7 +2469,7 @@ export function ChatWorkspace({
                 placeholder={
                   canChat
                     ? zh ? "向 OpenDrSai 提问..." : "Ask OpenDrSai..."
-                    : chatUnavailableReason ?? (zh ? "正在连接本地网关..." : "Preparing the local agent runtime...")
+                    : chatUnavailableReason ?? (zh ? "请稍候，当前任务正在处理..." : "Please wait while the current task is running...")
                 }
                 rows={1}
               />

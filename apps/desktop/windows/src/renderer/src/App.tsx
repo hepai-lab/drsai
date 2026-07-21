@@ -493,21 +493,33 @@ function AuthenticatedApp({
       unread: thread.unread,
     }));
   const servicePreparing = auth.serviceBusy || !auth.serviceReady;
+  const runtimeAvailable = Boolean(health?.installed || health?.gateway?.externalReady);
   const chatUnavailableReason = auth.serviceBusy
     ? language === "zh"
       ? "正在后台检查模型服务，完成后即可发送。"
       : "Checking model services in the background. Sending will be available shortly."
     : !auth.serviceReady
       ? getServiceUnavailableReason(auth.serviceBlocker, language)
-      : undefined;
+      : !health
+        ? language === "zh"
+          ? "正在初始化桌面端..."
+          : "Initializing the desktop..."
+        : !runtimeAvailable
+          ? language === "zh"
+            ? "本地运行时未安装，请先完成安装。"
+            : "The local runtime is not installed. Install it first."
+          : !workspaceTrusted
+            ? language === "zh"
+              ? "请先信任当前工作区。"
+              : "Trust this workspace before sending."
+            : undefined;
   const chat = useDesktopChatAdapter({
     availableAgents: availableChatAgents,
     availableModels: availableChatModels,
     canChat: Boolean(
       !sessionRestoring
         && !servicePreparing
-        && (health?.installed || health?.gateway?.externalReady)
-        && health?.gatewayReady
+        && runtimeAvailable
         && workspaceTrusted,
     ),
     developerMode,
@@ -584,8 +596,7 @@ function AuthenticatedApp({
   const canChat = Boolean(
     !sessionRestoring &&
     !servicePreparing &&
-    (health?.installed || health?.gateway?.externalReady) &&
-    health?.gatewayReady &&
+    runtimeAvailable &&
     workspaceTrusted &&
     !chat.activeRequestId,
   );
@@ -760,7 +771,7 @@ function AuthenticatedApp({
             ?? myDrSaiConfig?.defaultModelAlias ?? null;
           if (
             preferredAgent.id === "my-drsai"
-            && (!current || current === "deepseek-ai/deepseek-v4-pro")
+            && (!current || ["deepseek-ai/deepseek-v4-pro", "hepai/deepseek-v4-pro"].includes(current))
           ) {
             return preferredModel;
           }
@@ -1555,6 +1566,10 @@ function AuthenticatedApp({
           onSelectWorkspace={(workspaceId) => void handleEmptyChatWorkspaceSelect(workspaceId)}
           onSelectModel={handleChatModelSelect}
           onOpenExternal={(url) => desktopApi.openExternal(url)}
+          onOpenDebug={() => {
+            setActiveRightTab("debug");
+            setRightPanelCollapsed(false);
+          }}
           onOpenPreviewBrowser={openPreviewBrowser}
           onOpenWorkspaceArtifact={(path) => {
             setFilesPanelFocusPath(path);

@@ -7,7 +7,7 @@ import type { ChatAttachment, ChatEvent, ChatMessage, ChatRequest, MaterialRoleI
 import { invalidateAuthSession, refreshAuthContextAfterUnauthorized, requireAuthContext, type AuthContext } from "./auth";
 import { getPlatformAgentChatUrl, getPlatformAgentExecutionDescriptor, isPlatformAgentExecutionAvailable, respondToPlatformChatInput, stopPlatformChat } from "./agents";
 import { getGatewayRequestHeaders, startGateway } from "./gateway";
-import { getDefaultModelAlias } from "./modelDefaults";
+import { getDefaultModelAlias, normalizeModelAlias } from "./modelDefaults";
 import {
   createChatToolTimelineAccumulator,
   createChatContentNormalizer,
@@ -432,7 +432,7 @@ async function runChat(
     const attachmentContext = platformDescriptor || remoteGateway ? [] : await buildAttachmentContext(enrichedAttachments);
     writeChatDiagnostic(requestId, `stage: attachment context built count=${attachmentContext.length}`);
     const messages = withAttachmentContext(request.messages, attachmentContext);
-    const model = request.model || getDefaultModelAlias() || "drsai";
+    const model = normalizeModelAlias(request.model) || getDefaultModelAlias() || "drsai";
     const resumeState: StreamResumeState = { content: "", fileEventKeys: new Set() };
     const recoveryStartedAt = Date.now();
     const send = async (authContext: AuthContext, recoveryAttempt: number): Promise<boolean> => {

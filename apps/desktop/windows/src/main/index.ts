@@ -45,7 +45,9 @@ import { InteractiveDebuggerService } from "./interactiveDebugger";
 import type { DiagnosticEventInput, DiagnosticIssueUpdateRequest, DiagnosticQuery, DiagnosticSourceOpenRequest, DiagnosticSourceContextRequest, ProductionDiagnosticSettings } from "../shared/diagnostics";
 
 process.setSourceMapsEnabled?.(true);
-if (process.platform === "win32") app.setAppUserModelId("com.hepai.opendrsai.windows");
+if (process.platform === "win32") {
+  app.setAppUserModelId(is.dev ? "com.hepai.opendrsai.windows.dev" : "com.hepai.opendrsai.windows");
+}
 import { presentCodexBackendStatus } from "./codexBackendStatus";
 import { DRSAI_HOME } from "./paths";
 import { clearLocalData, previewLocalDataCleanup } from "./dataCleanup";
@@ -2619,6 +2621,15 @@ function writeE2eStartupFailure(message: string, error: unknown): void {
 
 function registerDeepLinkProtocol(): void {
   try {
+    const developmentRuntime = Boolean(process.env.ELECTRON_RENDERER_URL) || is.dev || !app.isPackaged;
+    if (developmentRuntime) {
+      app.setAsDefaultProtocolClient(DEEP_LINK_PROTOCOL, process.execPath, [
+        app.getAppPath(),
+      ]);
+      registerDevelopmentDeepLinkCommand();
+      registerDeepLinkDisplayName();
+      return;
+    }
     if (process.defaultApp && process.argv.length >= 2) {
       app.setAsDefaultProtocolClient(DEEP_LINK_PROTOCOL, process.execPath, [
         resolve(process.argv[1]),
@@ -2634,6 +2645,25 @@ function registerDeepLinkProtocol(): void {
       error instanceof Error ? error.message : String(error),
     );
   }
+}
+
+function registerDevelopmentDeepLinkCommand(): void {
+  if (process.platform !== "win32") return;
+  const command = `"${process.execPath}" "${app.getAppPath()}" "%1"`;
+  execFile("reg.exe", [
+    "add",
+    `HKCU\\Software\\Classes\\${DEEP_LINK_PROTOCOL}\\shell\\open\\command`,
+    "/ve",
+    "/t",
+    "REG_SZ",
+    "/d",
+    command,
+    "/f",
+  ], (error) => {
+    if (error) {
+      console.warn("[desktop] Failed to register development deep link command:", error.message);
+    }
+  });
 }
 
 function registerDeepLinkDisplayName(): void {

@@ -2624,7 +2624,15 @@ function settleAssistantAfterHiddenError(
   if (index === -1) return next;
   const message = next[index];
   if (!message.content.trim()) {
-    next.splice(index, 1);
+    next[index] = {
+      ...message,
+      replyFailed: true,
+      streaming: false,
+      error: false,
+      structuredTurn: message.structuredTurn
+        ? finalizeStructuredTurn(message.structuredTurn, message.id, "cancelled")
+        : undefined,
+    };
     return next;
   }
   next[index] = {

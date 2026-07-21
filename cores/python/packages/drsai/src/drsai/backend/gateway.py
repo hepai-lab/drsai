@@ -306,11 +306,17 @@ def _get_default_model_alias() -> str:
 
         alias = load_config().get("defult_config_name")
         if isinstance(alias, str) and alias.strip():
-            normalized = alias.strip()
-            return "deepseek-ai/deepseek-v4-pro" if normalized in {"deepseek-v4-pro", "hepai/deepseek-v4-pro"} else normalized
+            return _normalize_default_model_alias(alias)
     except Exception as e:
         logger.debug(f"Failed to read default model alias from cli config: {e}")
     return DEFAULT_CONFIG_NAME
+
+
+def _normalize_default_model_alias(alias: object) -> str:
+    normalized = str(alias or "").strip()
+    if normalized in {"deepseek-ai/deepseek-v4-pro", "hepai/deepseek-v4-pro"}:
+        return "deepseek-v4-pro"
+    return normalized or DEFAULT_CONFIG_NAME
 
 
 
@@ -3165,7 +3171,7 @@ def _get_live_llm_config() -> tuple[dict[str, ModelEntry], str]:
         try:
             raw = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) or {}
             if "_default_alias" in raw:
-                default_alias = raw["_default_alias"]
+                default_alias = _normalize_default_model_alias(raw["_default_alias"])
         except Exception:
             pass
     return llm_config, default_alias
@@ -3598,7 +3604,25 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
 
         except Exception as e:
             error = classify_model_error(e)
-            logger.error(f"Agent error for session {thread_id}: code={error['code']}")
+            diagnostic_parts: list[str] = []
+            current_error: BaseException | None = e
+            seen_errors: set[int] = set()
+            while current_error is not None and id(current_error) not in seen_errors and len(diagnostic_parts) < 4:
+                seen_errors.add(id(current_error))
+                status_code = getattr(current_error, "status_code", None)
+                diagnostic_parts.append(
+                    f"{type(current_error).__name__}"
+                    + (f"(HTTP {status_code})" if status_code is not None else "")
+                )
+                current_error = current_error.__cause__ or current_error.__context__
+            diagnostic = " <- ".join(diagnostic_parts)
+            error = {**error, "message": f"{error['message']} [{diagnostic}]"}
+            logger.error(
+                "Agent error for session %s: code=%s diagnostic=%s",
+                thread_id,
+                error["code"],
+                diagnostic,
+            )
             logger.debug(traceback.format_exc())
             for frame in conversation_projector.encode(
                 conversation_projector.complete(

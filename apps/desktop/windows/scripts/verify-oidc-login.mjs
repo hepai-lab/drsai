@@ -83,9 +83,15 @@ const checks = [
       auth.includes("if (document.hidden) closePage()") &&
       !auth.includes('removeAttribute("href")') &&
       main.includes("setAsDefaultProtocolClient") &&
+      main.includes("Boolean(process.env.ELECTRON_RENDERER_URL) || is.dev || !app.isPackaged") &&
+      main.includes("app.getAppPath()") &&
+      main.includes("registerDevelopmentDeepLinkCommand") &&
+      main.includes('"%1"') &&
       main.includes('"ApplicationName"') &&
       main.includes('"OpenDrSai"') &&
       main.includes("requestSingleInstanceLock") &&
+      main.includes("const singleInstanceLock = isE2eSmokeProcess && !shouldExerciseSingleInstanceLifecycle") &&
+      !main.includes("const singleInstanceLock = is.dev ||") &&
       main.includes("handleDeepLinkArgv") &&
       auth.includes('stage: "browser-opened"') &&
       auth.includes('stage: "waiting-callback"') &&

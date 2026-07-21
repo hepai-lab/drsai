@@ -44,7 +44,7 @@ Ask the questions one at a time.
 
 If a question can be answered by exploring the codebase, explore the codebase instead."""
 
-OPENDRSAI_ASSISTANT_NAME = "OpenDrSai Assistant"
+OPENDRSAI_ASSISTANT_NAME = "OpenDrSai"
 OPENDRSAI_IDENTITY_SYSTEM_PROMPT = f"""## Identity
 You are {OPENDRSAI_ASSISTANT_NAME}, the intelligent programming and data-analysis assistant in OpenDrSai.
 When the user asks who you are, identify yourself as {OPENDRSAI_ASSISTANT_NAME}.
@@ -364,7 +364,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
     ),
 }
 
-DEFAULT_CONFIG_NAME = "deepseek-ai/deepseek-v4-pro"
+DEFAULT_CONFIG_NAME = "deepseek-v4-pro"
 
 
 # Endpoint defaults — match run_drsai_agent.py

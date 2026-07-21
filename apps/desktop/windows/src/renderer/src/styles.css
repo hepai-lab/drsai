@@ -3829,6 +3829,22 @@ button {
   color: var(--app-text-secondary);
 }
 
+.chat-reply-failed {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--app-text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.chat-reply-failed:hover {
+  color: var(--app-text-primary);
+}
+
 .streaming-dot {
   width: 7px;
   height: 7px;
