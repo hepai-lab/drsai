@@ -3,11 +3,11 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const shared = readFileSync(join(root, "src", "shared", "desktopApi.ts"), "utf8");
+const shared = readFileSync(join(root, "..", "shared", "api", "desktopApi.ts"), "utf8");
 const main = readFileSync(join(root, "src", "main", "index.ts"), "utf8");
-const preload = readFileSync(join(root, "src", "preload", "index.ts"), "utf8");
-const app = readFileSync(join(root, "src", "renderer", "src", "App.tsx"), "utf8");
-const mock = readFileSync(join(root, "src", "renderer", "src", "mockDesktopApi.ts"), "utf8");
+const preload = readFileSync(join(root, "..", "shared", "main", "preload.ts"), "utf8");
+const app = readFileSync(join(root, "..", "shared", "renderer", "src", "App.tsx"), "utf8");
+const mock = readFileSync(join(root, "..", "shared", "renderer", "src", "mockDesktopApi.ts"), "utf8");
 const smoke = readFileSync(join(root, "src", "main", "e2eSmoke.ts"), "utf8");
 
 const checks = {

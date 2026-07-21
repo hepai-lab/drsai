@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
-const api = read("src/shared/desktopApi.ts");
-const preload = read("src/preload/index.ts");
+const api = read("../shared/api/desktopApi.ts");
+const preload = read("../shared/main/preload.ts");
 const main = read("src/main/index.ts");
 for (const channel of [
   "voice-transcription-start",

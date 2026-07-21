@@ -9,7 +9,7 @@ const root = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "
 const temp = await mkdtemp(join(tmpdir(), "opendrsai-workspace-migration-"));
 try {
   const bundle = join(temp, "workspaceMigrations.mjs");
-  await build({ entryPoints: [join(root, "src", "main", "workspaceMigrations.ts")], outfile: bundle, bundle: true, platform: "node", format: "esm", target: "node22" });
+  await build({ entryPoints: [join(root, "..", "shared", "main", "workspaceMigrations.ts")], outfile: bundle, bundle: true, platform: "node", format: "esm", target: "node22" });
   const migrations = await import(pathToFileURL(bundle).href);
   const legacy = [{
     id: "remote-old-host-home-vscode",

@@ -79,8 +79,8 @@ function runPackagedApp() {
 }
 
 function verifyNormalUninstallPreservesUserData() {
-  const uninstallScript = join(repo, "apps", "desktop", "installers", "windows", "uninstall-opendrsai.ps1");
-  const uninstallVbs = join(repo, "apps", "desktop", "installers", "windows", "run-opendrsai-uninstall.vbs");
+  const uninstallScript = join(repo, "apps", "desktop", "windows", "installer", "uninstall-opendrsai.ps1");
+  const uninstallVbs = join(repo, "apps", "desktop", "windows", "installer", "run-opendrsai-uninstall.vbs");
   const scriptSource = readFileSync(uninstallScript, "utf8");
   const vbsSource = readFileSync(uninstallVbs, "utf8");
   assert(scriptSource.includes("[switch]$RemoveUserData") && scriptSource.includes("if ($RemoveUserData)"), "Uninstall script does not gate user-data removal behind an explicit switch.");

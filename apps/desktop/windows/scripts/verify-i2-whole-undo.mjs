@@ -22,10 +22,10 @@ const negative = {
 };
 assert(Object.values(negative).every(Boolean), `I2 negative mutations were not rejected: ${JSON.stringify(negative)}`);
 
-const shared = read("src/shared/desktopApi.ts");
-const store = read("src/main/workspaceCheckpoints.ts");
+const shared = read("../shared/api/desktopApi.ts");
+const store = read("../shared/main/workspaceCheckpoints.ts");
 const main = read("src/main/index.ts");
-const ui = read("src/renderer/src/components/files/FilesContextPanel.tsx");
+const ui = read("../shared/renderer/src/components/files/FilesContextPanel.tsx");
 const e2e = read("src/main/e2eSmoke.ts");
 const packageJson = read("package.json");
 const contracts = {

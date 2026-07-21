@@ -1,4 +1,4 @@
-import { migrateWorkspaceLocation } from "../src/shared/workspaceLocation.ts";
+import { migrateWorkspaceLocation } from "../../shared/api/workspaceLocation.ts";
 
 const records = [
   { id: "local-new", location: "local", type: "local" },

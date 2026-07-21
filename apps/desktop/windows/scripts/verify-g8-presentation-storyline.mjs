@@ -10,10 +10,10 @@ const manifest = JSON.parse(readFileSync(join(repo, "tests/fixtures/product/pres
 const sourcePdf = resolve(process.env.OPENDRSAI_CERN_PDF || "C:/tmp/WLCG-20260715-WLCG-talk-IHEP-visit.pdf");
 const python = resolve(process.env.OPENDRSAI_PDF_PYTHON || "C:/Users/win11/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe");
 const parser = join(repo, "cores/python/packages/drsai/src/drsai/backend/presentation_pdf.py");
-const api = readFileSync(join(root, "src/shared/desktopApi.ts"), "utf8");
-const workspace = readFileSync(join(root, "src/main/workspaceContext.ts"), "utf8");
-const panel = readFileSync(join(root, "src/renderer/src/components/files/FilesContextPanel.tsx"), "utf8");
-const styles = readFileSync(join(root, "src/renderer/src/styles.css"), "utf8");
+const api = readFileSync(join(root, "../shared/api/desktopApi.ts"), "utf8");
+const workspace = readFileSync(join(root, "../shared/main/workspaceContext.ts"), "utf8");
+const panel = readFileSync(join(root, "../shared/renderer/src/components/files/FilesContextPanel.tsx"), "utf8");
+const styles = readFileSync(join(root, "../shared/renderer/src/styles.css"), "utf8");
 const smoke = readFileSync(join(root, "src/main/e2eSmoke.ts"), "utf8");
 
 assert(existsSync(sourcePdf), `CERN PDF fixture is missing: ${sourcePdf}`);

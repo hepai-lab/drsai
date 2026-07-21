@@ -6,7 +6,7 @@ import type {
   BrowserSnapshot,
   BrowserTaskStartRequest,
   BrowserWaitTarget,
-} from "../../../shared/browser/types";
+} from "../../../../../shared/api/browser/types";
 import type { BrowserController } from "../browserController";
 import { createBrowserUseTaskCommand } from "../browserUse/protocol";
 import { BrowserUseWorkerClient } from "../browserUse/workerClient";

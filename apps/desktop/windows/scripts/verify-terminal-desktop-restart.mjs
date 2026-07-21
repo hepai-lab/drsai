@@ -24,12 +24,26 @@ Object.assign(process.env, {
 await build({
   stdin: {
     contents: [
-      'export { LocalRuntimeClient } from "./src/main/runtimeClient.ts";',
-      'export { getGatewayStatus, getGatewayRequestHeaders, shutdownGateway, stopGateway } from "./src/main/gateway.ts";',
+      'export { LocalRuntimeClient } from "./../shared/main/runtimeClient.ts";',
+      'export { getGatewayStatus, getGatewayRequestHeaders, shutdownGateway, stopGateway } from "./../shared/main/gateway.ts";',
     ].join("\n"),
     resolveDir: desktop, sourcefile: "terminal-restart.ts",
   },
-  outfile: bundle, bundle: true, platform: "node", format: "esm", target: "node22", external: ["electron"],
+  outfile: bundle,
+  bundle: true,
+  platform: "node",
+  format: "esm",
+  target: "node22",
+  plugins: [{
+    name: "electron-test-stub",
+    setup(buildApi) {
+      buildApi.onResolve({ filter: /^electron$/ }, () => ({ path: "electron", namespace: "electron-test-stub" }));
+      buildApi.onLoad({ filter: /.*/, namespace: "electron-test-stub" }, () => ({
+        contents: `export const app = { isPackaged: false, getAppPath: () => ${JSON.stringify(desktop)} };`,
+        loader: "js",
+      }));
+    },
+  }],
 });
 
 let first;

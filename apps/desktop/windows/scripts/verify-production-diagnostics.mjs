@@ -69,8 +69,8 @@ try {
   assert.ok(status.droppedEvents > 0);
 
   const mainIndex = readFileSync(join(root, "src", "main", "index.ts"), "utf8");
-  const preload = readFileSync(join(root, "src", "preload", "index.ts"), "utf8");
-  const panel = readFileSync(join(root, "src", "renderer", "src", "components", "DebugPanel.tsx"), "utf8");
+  const preload = readFileSync(join(root, "..", "shared", "main", "preload.ts"), "utf8");
+  const panel = readFileSync(join(root, "..", "shared", "renderer", "src", "components", "DebugPanel.tsx"), "utf8");
   for (const contract of ["production-diagnostics-status", "production-diagnostics-settings", "production-diagnostics-preview", "production-diagnostics-export", "production-diagnostics-import"]) assert.ok(mainIndex.includes(contract), `Missing IPC ${contract}`);
   for (const contract of ["getProductionDiagnosticStatus", "previewDiagnosticPackage", "exportProductionDiagnosticPackage", "importProductionDiagnosticPackage"]) assert.ok(preload.includes(contract), `Missing preload ${contract}`);
   for (const contract of ["Production diagnostics governance", "Privacy-safe diagnostic package", "Release gates", "Audit trail", "Offline import"]) assert.ok(panel.includes(contract), `Missing governance UI ${contract}`);

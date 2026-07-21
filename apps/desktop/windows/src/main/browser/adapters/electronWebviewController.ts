@@ -5,7 +5,7 @@ import type {
   BrowserScreenshot,
   BrowserSnapshot,
   BrowserWaitTarget,
-} from "../../../shared/browser/types";
+} from "../../../../../shared/api/browser/types";
 import type { BrowserController } from "../browserController";
 import { checkBrowserUrlSync } from "../urlPolicy";
 

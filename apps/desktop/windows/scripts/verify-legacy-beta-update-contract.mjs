@@ -8,7 +8,7 @@ const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"))
 const manifestPath = resolve(process.env.OPENDRSAI_UPDATE_MANIFEST_PATH || join(root, "release", "latest-windows.json"));
 const manifest = existsSync(manifestPath) ? JSON.parse(readFileSync(manifestPath, "utf8")) : null;
 const workflow = readFileSync(join(repoRoot, ".github", "workflows", "windows-desktop.yml"), "utf8");
-const runtimeBuilder = readFileSync(join(root, "..", "installers", "windows", "create-opendrsai-runtime.ps1"), "utf8");
+const runtimeBuilder = readFileSync(join(root, "installer", "create-opendrsai-runtime.ps1"), "utf8");
 
 const isPrereleaseVersion = packageJson.version.includes("-");
 assert(compareSemver(packageJson.version, "1.4.3-beta.1") > 0, "beta.1 would not recognize this package as newer.");

@@ -79,12 +79,12 @@ const hiddenSide = structuredClone(ui.assessments);
 hiddenSide.find((item) => item.status === "source_conflict").claims = hiddenSide.find((item) => item.status === "source_conflict").claims.slice(0, 1);
 assert(!evaluate(hiddenSide).conflictSidesVisible, "H4 evaluator accepted a conflict with one side hidden");
 
-const api = readFileSync(join(root, "src/shared/desktopApi.ts"), "utf8");
+const api = readFileSync(join(root, "../shared/api/desktopApi.ts"), "utf8");
 const background = readFileSync(join(root, "src/main/backgroundTasks.ts"), "utf8");
 const generator = readFileSync(join(root, "src/main/managerPresentation.ts"), "utf8");
-const app = readFileSync(join(root, "src/renderer/src/App.tsx"), "utf8");
-const panel = readFileSync(join(root, "src/renderer/src/components/files/FilesContextPanel.tsx"), "utf8");
-const styles = readFileSync(join(root, "src/renderer/src/styles.css"), "utf8");
+const app = readFileSync(join(root, "../shared/renderer/src/App.tsx"), "utf8");
+const panel = readFileSync(join(root, "../shared/renderer/src/components/files/FilesContextPanel.tsx"), "utf8");
+const styles = readFileSync(join(root, "../shared/renderer/src/styles.css"), "utf8");
 const smoke = readFileSync(join(root, "src/main/e2eSmoke.ts"), "utf8");
 const contracts = {
   uncertaintyAssessmentTyped: api.includes("export interface DesktopConclusionUncertainty") && api.includes('status: "source_conflict" | "insufficient_data" | "inference"'),

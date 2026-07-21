@@ -14,13 +14,13 @@ function assert(condition, message) {
   }
 }
 
-const api = read("src/shared/desktopApi.ts");
+const api = read("../shared/api/desktopApi.ts");
 const main = read("src/main/index.ts");
 const ideContext = read("src/main/ideContext.ts");
-const preload = read("src/preload/index.ts");
-const app = read("src/renderer/src/App.tsx");
-const chatWorkspace = read("src/renderer/src/components/ChatWorkspace.tsx");
-const mock = read("src/renderer/src/mockDesktopApi.ts");
+const preload = read("../shared/main/preload.ts");
+const app = read("../shared/renderer/src/App.tsx");
+const chatWorkspace = read("../shared/renderer/src/components/ChatWorkspace.tsx");
+const mock = read("../shared/renderer/src/mockDesktopApi.ts");
 const roadmap = read("docs/smart-chat-bar-roadmap.md");
 const packageJson = read("package.json");
 

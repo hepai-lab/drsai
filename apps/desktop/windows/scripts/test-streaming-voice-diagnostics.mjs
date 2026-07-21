@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-const { createStreamingVoiceDiagnostic, containsForbiddenStreamingDiagnosticData } = await import("../src/renderer/src/voice/streaming/streamingVoiceDiagnostics.ts");
+const { createStreamingVoiceDiagnostic, containsForbiddenStreamingDiagnosticData } = await import("../../shared/renderer/src/voice/streaming/streamingVoiceDiagnostics.ts");
 
 const event = createStreamingVoiceDiagnostic({
   traceId: "trace-1", turnId: "turn-1", stage: "asr", status: "completed",

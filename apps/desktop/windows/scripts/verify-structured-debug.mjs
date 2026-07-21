@@ -4,13 +4,13 @@ import { join } from "node:path";
 import ts from "typescript";
 
 const root = process.cwd();
-const storePath = join(root, "src/renderer/src/debugLogStore.ts");
+const storePath = join(root, "../shared/renderer/src/debugLogStore.ts");
 const storeSource = readFileSync(storePath, "utf8");
-const panelSource = readFileSync(join(root, "src/renderer/src/components/DebugPanel.tsx"), "utf8");
-const workspaceSource = readFileSync(join(root, "src/renderer/src/components/ChatWorkspace.tsx"), "utf8");
-const adapterSource = readFileSync(join(root, "src/renderer/src/adapters/useDesktopChatAdapter.ts"), "utf8");
-const desktopApiSource = readFileSync(join(root, "src/shared/desktopApi.ts"), "utf8");
-const mainChatSource = readFileSync(join(root, "src/main/chat.ts"), "utf8");
+const panelSource = readFileSync(join(root, "../shared/renderer/src/components/DebugPanel.tsx"), "utf8");
+const workspaceSource = readFileSync(join(root, "../shared/renderer/src/components/ChatWorkspace.tsx"), "utf8");
+const adapterSource = readFileSync(join(root, "../shared/renderer/src/adapters/useDesktopChatAdapter.ts"), "utf8");
+const desktopApiSource = readFileSync(join(root, "../shared/api/desktopApi.ts"), "utf8");
+const mainChatSource = readFileSync(join(root, "../shared/main/chat.ts"), "utf8");
 
 const output = ts.transpileModule(storeSource, {
   compilerOptions: {

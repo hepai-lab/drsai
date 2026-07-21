@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BoundedStreamingTtsScheduler } from "../src/renderer/src/voice/streaming/streamingTtsScheduler.ts";
-import { OrderedStreamingAudioPlaybackQueue } from "../src/renderer/src/voice/streaming/orderedAudioPlaybackQueue.ts";
+import { BoundedStreamingTtsScheduler } from "../../shared/renderer/src/voice/streaming/streamingTtsScheduler.ts";
+import { OrderedStreamingAudioPlaybackQueue } from "../../shared/renderer/src/voice/streaming/orderedAudioPlaybackQueue.ts";
 
 const turns = 100;
 const segmentsPerTurn = 16;

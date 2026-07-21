@@ -4,12 +4,12 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
-const timingSource = readFileSync(join(root, "src", "main", "scheduleTiming.ts"), "utf8");
+const timingSource = readFileSync(join(root, "..", "shared", "main", "scheduleTiming.ts"), "utf8");
 const schedulerSource = readFileSync(join(root, "src", "main", "scheduledTasks.ts"), "utf8");
-const apiSource = readFileSync(join(root, "src", "shared", "desktopApi.ts"), "utf8");
-const uiSource = readFileSync(join(root, "src", "renderer", "src", "components", "TaskCenterView.tsx"), "utf8");
+const apiSource = readFileSync(join(root, "..", "shared", "api", "desktopApi.ts"), "utf8");
+const uiSource = readFileSync(join(root, "..", "shared", "renderer", "src", "components", "TaskCenterView.tsx"), "utf8");
 const e2eSource = readFileSync(join(root, "src", "main", "e2eSmoke.ts"), "utf8");
-const mockSource = readFileSync(join(root, "src", "renderer", "src", "mockDesktopApi.ts"), "utf8");
+const mockSource = readFileSync(join(root, "..", "shared", "renderer", "src", "mockDesktopApi.ts"), "utf8");
 
 function assert(condition, message) {
   if (!condition) throw new Error(`K2 verification failed: ${message}`);

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-const { LocalVoiceActivityDetector, pcm16Rms, resolveEndpointReason } = await import("../src/renderer/src/voice/streaming/localVad.ts");
+const { LocalVoiceActivityDetector, pcm16Rms, resolveEndpointReason } = await import("../../shared/renderer/src/voice/streaming/localVad.ts");
 const samples = (amplitude, length = 1_600) => Int16Array.from({ length }, (_, index) => Math.round(Math.sin(index / 5) * amplitude));
 assert.equal(pcm16Rms(new Int16Array(100)), 0);
 assert.ok(pcm16Rms(samples(16_000)) > 0.3);

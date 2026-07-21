@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-const { BoundedStreamingTtsScheduler } = await import("../src/renderer/src/voice/streaming/streamingTtsScheduler.ts");
+const { BoundedStreamingTtsScheduler } = await import("../../shared/renderer/src/voice/streaming/streamingTtsScheduler.ts");
 const request = (index) => ({ sessionId: "s", turnId: "t", messageId: "m", segmentId: `seg-${index}`, segmentIndex: index, text: `text ${index}`, format: "wav" });
 const audio = (item) => ({ sessionId: item.sessionId, turnId: item.turnId, messageId: item.messageId, segmentId: item.segmentId, segmentIndex: item.segmentIndex, mimeType: "audio/wav", audioData: new Uint8Array([1, 2]), final: true });
 

@@ -11,7 +11,7 @@ const bundle = join(temp, "runtime-client.mjs");
 const home = join(temp, "home");
 process.env.DRSAI_HOME = home;
 try {
-  await build({ entryPoints: [join(root, "src/main/runtimeClient.ts")], outfile: bundle, bundle: true, platform: "node", format: "esm", target: "node22" });
+  await build({ entryPoints: [join(root, "../shared/main/runtimeClient.ts")], outfile: bundle, bundle: true, platform: "node", format: "esm", target: "node22" });
   const runtime = await import(pathToFileURL(bundle).href + `?t=${Date.now()}`);
   const server = createServer(async (request, response) => {
     const chunks = [];
@@ -56,7 +56,7 @@ try {
     const section = main.slice(main.indexOf(channel), main.indexOf(channel) + 600);
     assert(section.includes("resolveRemoteWorkspaceTarget"), `${channel} lacks offline Remote fail-closed routing`);
   }
-  const chat = readFileSync(join(root, "src/main/chat.ts"), "utf8");
+  const chat = readFileSync(join(root, "../shared/main/chat.ts"), "utf8");
   assert(chat.includes("connectRuntimeClientForWorkspace") && chat.includes("Agent Backend execution cannot fall back to Local Runtime"), "Agent Backend can still fall back locally for a Remote Workspace");
   assert(!chat.includes("LocalRuntimeClient"), "Codex Backend remains hard-wired to Local Runtime");
   console.log("Remote SSH OWOP binding, ordered recovery, unified PTY lease, stale reads, and offline fail-closed verification passed.");

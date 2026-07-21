@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-const { initialStreamingVoiceTurnState, isValidStreamingVoiceTurnState, reduceStreamingVoiceTurn } = await import("../src/renderer/src/voice/streaming/streamingVoiceTurnReducer.ts");
+const { initialStreamingVoiceTurnState, isValidStreamingVoiceTurnState, reduceStreamingVoiceTurn } = await import("../../shared/renderer/src/voice/streaming/streamingVoiceTurnReducer.ts");
 const fullTurn = [
   { type: "begin", turnId: "turn-1" }, { type: "capture_started" }, { type: "stop_input" }, { type: "asr_completed" },
   { type: "review_accepted" }, { type: "llm_started" }, { type: "tts_started" }, { type: "playback_started" },

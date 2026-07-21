@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-const { DesktopStreamingTtsRuntime } = await import("../src/renderer/src/voice/streaming/desktopStreamingTtsRuntime.ts");
+const { DesktopStreamingTtsRuntime } = await import("../../shared/renderer/src/voice/streaming/desktopStreamingTtsRuntime.ts");
 const listeners = new Set();
 let nextId = 0;
 const cancelled = [];

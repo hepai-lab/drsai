@@ -25,7 +25,7 @@ import type {
 } from "../shared/desktopApi";
 import { DRSAI_HOME } from "./paths";
 import { requireAuthContext } from "./auth";
-import { buildAgentTaskPlan, isMultiMaterialSynthesisTask } from "../shared/agentTaskPlan";
+import { buildAgentTaskPlan, isMultiMaterialSynthesisTask } from "../../../shared/api/agentTaskPlan";
 
 const BACKGROUND_TASKS_FILE = join(DRSAI_HOME, "desktop", "background-tasks.json");
 const MAX_BACKGROUND_TASKS_PER_WORKSPACE = 100;

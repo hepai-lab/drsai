@@ -63,11 +63,11 @@ const noRecommendation = structuredClone(ui.issues);
 noRecommendation[0].recommendation = "";
 assert(evaluate(noRecommendation).recommendationCoverage < 1, "H5 evaluator accepted an issue without a recommendation");
 
-const api = readFileSync(join(root, "src/shared/desktopApi.ts"), "utf8");
+const api = readFileSync(join(root, "../shared/api/desktopApi.ts"), "utf8");
 const background = readFileSync(join(root, "src/main/backgroundTasks.ts"), "utf8");
 const generator = readFileSync(join(root, "src/main/managerPresentation.ts"), "utf8");
-const app = readFileSync(join(root, "src/renderer/src/App.tsx"), "utf8");
-const styles = readFileSync(join(root, "src/renderer/src/styles.css"), "utf8");
+const app = readFileSync(join(root, "../shared/renderer/src/App.tsx"), "utf8");
+const styles = readFileSync(join(root, "../shared/renderer/src/styles.css"), "utf8");
 const smoke = readFileSync(join(root, "src/main/e2eSmoke.ts"), "utf8");
 const contracts = {
   consistencyResultTyped: api.includes("export interface DesktopConsistencyCheckResult") && api.includes("expectedIssues: number") && api.includes("detectedIssues: number"),

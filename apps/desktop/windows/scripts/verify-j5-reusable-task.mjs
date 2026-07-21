@@ -21,12 +21,12 @@ const negative = {
 };
 assert(Object.values(negative).every(Boolean), `J5 negative mutations were not rejected: ${JSON.stringify(negative)}`);
 
-const shared = read("src/shared/desktopApi.ts");
+const shared = read("../shared/api/desktopApi.ts");
 const service = read("src/main/reusableTasks.ts");
 const main = read("src/main/index.ts");
-const preload = read("src/preload/index.ts");
-const mock = read("src/renderer/src/mockDesktopApi.ts");
-const app = read("src/renderer/src/App.tsx");
+const preload = read("../shared/main/preload.ts");
+const mock = read("../shared/renderer/src/mockDesktopApi.ts");
+const app = read("../shared/renderer/src/App.tsx");
 const smoke = read("src/main/e2eSmoke.ts");
 const runner = read("scripts/verify-e2e-chat.mjs");
 const packageJson = read("package.json");

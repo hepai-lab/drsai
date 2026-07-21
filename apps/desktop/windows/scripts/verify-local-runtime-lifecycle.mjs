@@ -38,8 +38,8 @@ Object.assign(process.env, {
 await build({
   stdin: {
     contents: [
-      'export { LocalRuntimeClient } from "./src/main/runtimeClient.ts";',
-      'export { getGatewayRequestHeaders, getGatewayStatus, startGateway, stopGateway } from "./src/main/gateway.ts";',
+      'export { LocalRuntimeClient } from "./../shared/main/runtimeClient.ts";',
+      'export { getGatewayRequestHeaders, getGatewayStatus, startGateway, stopGateway } from "./../shared/main/gateway.ts";',
     ].join("\n"),
     resolveDir: desktop,
     sourcefile: "local-runtime-acceptance.ts",

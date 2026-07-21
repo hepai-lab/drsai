@@ -38,7 +38,7 @@ $workspaceDir = Join-Path $runDir "workspace"
 New-Item -ItemType Directory -Force -Path $packageDir,$evidenceDir,$workspaceDir | Out-Null
 Copy-Item -LiteralPath $runtime -Destination (Join-Path $packageDir "OpenDrSaiRuntime-win-x64.zip") -Force
 Copy-Item -LiteralPath $guest,$verifier -Destination $packageDir -Force
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot "..\..\installers\windows\install-opendrsai.ps1") -Destination $packageDir -Force
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot "..\installer\install-opendrsai.ps1") -Destination $packageDir -Force
 $descriptor=[ordered]@{sha256=(Get-FileHash -Algorithm SHA256 $runtime).Hash.ToLowerInvariant();size=(Get-Item $runtime).Length}
 [IO.File]::WriteAllText((Join-Path $packageDir "package.json"),(($descriptor|ConvertTo-Json)+[Environment]::NewLine),[Text.UTF8Encoding]::new($false))
 $tokenBytes = New-Object byte[] 32

@@ -13,18 +13,19 @@ function readHai(relativePath) {
   return readFileSync(join(haiRoot, relativePath), "utf8");
 }
 
-const auth = read("src/main/auth.ts");
-const chat = read("src/main/chat.ts");
-const agentRuns = read("src/main/agentRuns.ts");
+const auth = read("../shared/main/auth.ts");
+const platformCredentials = read("src/main/platformCredentials.ts");
+const chat = read("../shared/main/chat.ts");
+const agentRuns = read("../shared/main/agentRuns.ts");
 const bootstrap = read("src/main/bootstrap.ts");
-const gateway = read("src/main/gateway.ts");
+const gateway = read("../shared/main/gateway.ts");
 const mainProcess = read("src/main/index.ts");
-const api = read("src/shared/desktopApi.ts");
-const preload = read("src/preload/index.ts");
+const api = read("../shared/api/desktopApi.ts");
+const preload = read("../shared/main/preload.ts");
 const main = read("src/main/index.ts");
-const provider = read("src/renderer/src/auth/AuthProvider.tsx");
-const login = read("src/renderer/src/auth/LoginScreen.tsx");
-const mock = read("src/renderer/src/mockDesktopApi.ts");
+const provider = read("../shared/renderer/src/auth/AuthProvider.tsx");
+const login = read("../shared/renderer/src/auth/LoginScreen.tsx");
+const mock = read("../shared/renderer/src/mockDesktopApi.ts");
 const plan = read("docs/login_plan/oidc-login-plan.md");
 const e2eSmoke = read("src/main/e2eSmoke.ts");
 const e2eOidc = read("scripts/verify-e2e-oidc-login.mjs");
@@ -58,7 +59,7 @@ const checks = [
   [
     "main process implements Authorization Code + PKCE over loopback",
     auth.includes("getOidcMetadata") &&
-      auth.includes('is.dev') &&
+      auth.includes("IS_DESKTOP_DEV") &&
       auth.includes('"https://ai-dev.ihep.ac.cn"') &&
       auth.includes('"https://ai.ihep.ac.cn"') &&
       auth.includes('`${DEFAULT_OIDC_ORIGIN}/api`') &&
@@ -74,7 +75,7 @@ const checks = [
       auth.includes('code_challenge_method", "S256"') &&
       auth.includes("createLoopbackCallback(state)") &&
       auth.includes('server.listen(0, "127.0.0.1")') &&
-      auth.includes("shell.openExternal(url)") &&
+      auth.includes("openExternalUrl(url)") &&
       auth.includes("OPENDRSAI_E2E_OIDC_AUTO_CALLBACK") &&
       auth.includes("opendrsai://auth-complete") &&
       auth.includes('id="open-app"') &&
@@ -166,7 +167,9 @@ const checks = [
       auth.includes('join(DRSAI_HOME, "auth", "session.json")') &&
       auth.includes("renameSync(temporaryFile, AUTH_SESSION_FILE)") &&
       auth.includes("mode: 0o600") &&
-      auth.includes("safeStorage.encryptString") &&
+      auth.includes("credentialService?.protect") &&
+      platformCredentials.includes("safeStorage.encryptString") &&
+      platformCredentials.includes("safeStorage.decryptString") &&
       auth.includes("encryptedAccessToken") &&
       auth.includes("encryptedRefreshToken") &&
       auth.includes("encryptedIdToken") &&

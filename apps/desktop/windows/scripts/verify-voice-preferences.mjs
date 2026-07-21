@@ -15,7 +15,7 @@ const {
   loadVoicePreferences,
   resolveAvailableVoiceName,
   resolveVoiceSynthesisMode,
-} = await import("../src/renderer/src/voice/useVoicePreferences.ts");
+} = await import("../../shared/renderer/src/voice/useVoicePreferences.ts");
 
 assert.deepEqual(loadVoicePreferences(), defaultVoicePreferences);
 values.set(VOICE_PREFERENCES_STORAGE_KEY, "not-json");

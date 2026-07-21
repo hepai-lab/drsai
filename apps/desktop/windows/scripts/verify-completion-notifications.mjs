@@ -11,18 +11,19 @@ function check(name, condition) {
 }
 
 const packageJson = read("package.json");
-const api = read("src/shared/desktopApi.ts");
+const api = read("../shared/api/desktopApi.ts");
 const service = read("src/main/completionNotifications.ts");
+const platformNotifications = read("src/main/platformNotifications.ts");
 const main = read("src/main/index.ts");
-const preload = read("src/preload/index.ts");
-const app = read("src/renderer/src/App.tsx");
+const preload = read("../shared/main/preload.ts");
+const app = read("../shared/renderer/src/App.tsx");
 const smoke = read("src/main/e2eSmoke.ts");
 const runner = read("scripts/verify-e2e-agent-run.mjs");
 
 check("typed preference and click target", api.includes("CompletionNotificationPreference") && api.includes("CompletionNotificationClickEvent"));
 check("typed renderer bridge", api.includes("setCompletionNotificationPreference(") && api.includes("onCompletionNotificationClick("));
-check("native Electron notification", service.includes('import { Notification } from "electron"') && service.includes("new Notification({ title, body"));
-check("Windows support respected", service.includes("Notification.isSupported()"));
+check("native Electron notification adapter", platformNotifications.includes('import { Notification } from "electron"') && platformNotifications.includes("new Notification(input)"));
+check("Windows support respected", service.includes("WINDOWS_NOTIFICATION_SERVICE.supported()") && platformNotifications.includes("Notification.isSupported()"));
 check("user preference defaults off", service.includes('enabled: false, language: "zh"'));
 check("preference persisted atomically", service.includes("completion-notifications.json") && service.includes("randomUUID()}.tmp") && service.includes("replaceFileWithRetry(temporaryPath, SETTINGS_FILE)"));
 check("preference writes serialized", service.includes("preferenceWriteQueue") && service.includes("persistCompletionNotificationPreference(nextPreference)"));
@@ -33,7 +34,7 @@ check("notification text bounded", service.includes("slice(0, 120)"));
 check("credential redaction", service.includes("Bearer") && service.includes("sk-") && service.includes("api[_-]?key") && service.includes("password"));
 check("email redaction", service.includes("[已隐藏邮箱]"));
 check("click focuses and publishes target", service.includes("handlers.focusApp()") && service.includes("handlers.publishClick"));
-check("Windows AppUserModelId configured", main.includes('app.setAppUserModelId("com.hepai.opendrsai.windows")'));
+check("Windows AppUserModelId configured", main.includes("app.setAppUserModelId") && main.includes('"com.hepai.opendrsai.windows"'));
 check("Agent completions notify", main.includes('kind: "agent_run"') && main.includes("notifyBackgroundTaskCompleted(task"));
 check("presentation completions notify", main.includes('kind: "presentation_generation"') && main.includes('progress.phase === "completed"'));
 check("preload preference IPC", preload.includes("desktop:completion-notification-preference-set"));

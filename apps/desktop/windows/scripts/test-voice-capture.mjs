@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { VoiceCaptureController } from "../src/renderer/src/voice/voiceCaptureController.ts";
+import { VoiceCaptureController } from "../../shared/renderer/src/voice/voiceCaptureController.ts";
 
 class FakeTrack {
   listeners = new Map();

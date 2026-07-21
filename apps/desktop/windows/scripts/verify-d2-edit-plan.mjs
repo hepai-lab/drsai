@@ -3,11 +3,11 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const shared = readFileSync(resolve(root, "src/shared/desktopApi.ts"), "utf8");
-const plan = readFileSync(resolve(root, "src/shared/agentTaskPlan.ts"), "utf8");
-const runs = readFileSync(resolve(root, "src/main/agentRuns.ts"), "utf8");
+const shared = readFileSync(resolve(root, "../shared/api/desktopApi.ts"), "utf8");
+const plan = readFileSync(resolve(root, "../shared/api/agentTaskPlan.ts"), "utf8");
+const runs = readFileSync(resolve(root, "../shared/main/agentRuns.ts"), "utf8");
 const tasks = readFileSync(resolve(root, "src/main/backgroundTasks.ts"), "utf8");
-const view = readFileSync(resolve(root, "src/renderer/src/components/AgentRunWorkspace.tsx"), "utf8");
+const view = readFileSync(resolve(root, "../shared/renderer/src/components/AgentRunWorkspace.tsx"), "utf8");
 const smoke = readFileSync(resolve(root, "src/main/e2eSmoke.ts"), "utf8");
 const runner = readFileSync(resolve(root, "scripts/verify-e2e-agent-run.mjs"), "utf8");
 

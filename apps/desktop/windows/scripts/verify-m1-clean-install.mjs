@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
 const read = (path) => readFileSync(resolve(root, path), "utf8");
-const wix = read("../installers/windows/OpenDrSaiDesktopBootstrapper.wxs");
+const wix = read("installer/OpenDrSaiDesktopBootstrapper.wxs");
 const sandbox = read("scripts/run-windows-sandbox-acceptance.ps1");
 const matrix = read("scripts/invoke-m1-windows-sandbox-matrix.ps1");
 const e2e = read("src/main/e2eSmoke.ts");

@@ -3,10 +3,10 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import ts from "typescript";
 
-const sourcePath = join(process.cwd(), "src/renderer/src/chatOutputModel.ts");
+const sourcePath = join(process.cwd(), "../shared/renderer/src/chatOutputModel.ts");
 const source = readFileSync(sourcePath, "utf8");
-const componentSource = readFileSync(join(process.cwd(), "src/renderer/src/components/ChatMessageContent.tsx"), "utf8");
-const workspaceSource = readFileSync(join(process.cwd(), "src/renderer/src/components/ChatWorkspace.tsx"), "utf8");
+const componentSource = readFileSync(join(process.cwd(), "../shared/renderer/src/components/ChatMessageContent.tsx"), "utf8");
+const workspaceSource = readFileSync(join(process.cwd(), "../shared/renderer/src/components/ChatWorkspace.tsx"), "utf8");
 const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },
 }).outputText;

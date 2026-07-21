@@ -16,12 +16,12 @@ function assert(condition, message) {
 }
 
 const packageJson = read("package.json");
-const desktopApi = read("src/shared/desktopApi.ts");
-const preload = read("src/preload/index.ts");
+const desktopApi = read("../shared/api/desktopApi.ts");
+const preload = read("../shared/main/preload.ts");
 const main = read("src/main/index.ts");
-const mockApi = read("src/renderer/src/mockDesktopApi.ts");
-const usageStore = read("src/main/providerUsageAnalytics.ts");
-const errorStore = read("src/main/providerErrorAnalytics.ts");
+const mockApi = read("../shared/renderer/src/mockDesktopApi.ts");
+const usageStore = read("../shared/main/providerUsageAnalytics.ts");
+const errorStore = read("../shared/main/providerErrorAnalytics.ts");
 
 assert(
   packageJson.includes('"verify:provider-analytics-api": "node scripts/verify-provider-analytics-api.mjs"'),

@@ -5,7 +5,7 @@ const {
   StreamingLinearResampler,
   float32ToPcm16,
   mixAudioChannelsToMono,
-} = await import("../src/renderer/src/voice/streaming/streamingAudio.ts");
+} = await import("../../shared/renderer/src/voice/streaming/streamingAudio.ts");
 
 assert.deepEqual([...mixAudioChannelsToMono([])], []);
 assert.deepEqual(

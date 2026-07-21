@@ -1,0 +1,52 @@
+appId: com.hepai.opendrsai.macos
+productName: OpenDrSai
+npmRebuild: false
+directories:
+  buildResources: build
+  output: release
+files:
+  - out/**
+  - package.json
+  - "!src/**"
+  - "!electron.vite.config.{js,ts,mjs,cjs}"
+  - "!tsconfig*.json"
+extraResources:
+  - from: resources/runtime
+    to: runtime
+    filter:
+      - "runtime-manifest.json"
+      - "*.tar.gz"
+  - from: resources/update
+    to: update
+    filter:
+      - "update-watchdog.sh"
+asar: true
+electronFuses:
+  runAsNode: false
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+mac:
+  category: public.app-category.productivity
+  target:
+    - target: dmg
+      arch: arm64
+    - target: zip
+      arch: arm64
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.inherit.plist
+  notarize: true
+dmg:
+  sign: false
+protocols:
+  - name: OpenDrSai
+    schemes:
+      - opendrsai
+publish:
+  provider: github
+  owner: hepai-lab
+  repo: drsai

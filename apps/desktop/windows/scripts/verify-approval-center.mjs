@@ -15,10 +15,10 @@ function assert(condition, message) {
   }
 }
 
-const app = read("src/renderer/src/App.tsx");
-const navigation = read("src/renderer/src/navigation.ts");
-const view = read("src/renderer/src/components/ApprovalCenterView.tsx");
-const css = read("src/renderer/src/styles.css");
+const app = read("../shared/renderer/src/App.tsx");
+const navigation = read("../shared/renderer/src/navigation.ts");
+const view = read("../shared/renderer/src/components/ApprovalCenterView.tsx");
+const css = read("../shared/renderer/src/styles.css");
 const packageJson = read("package.json");
 const roadmap = read("docs/smart-chat-bar-roadmap.md");
 
@@ -118,54 +118,54 @@ assert(
 );
 assert(
   app.includes("ApprovalCenterView") &&
-    read("src/shared/desktopApi.ts").includes("BrowserTaskPendingApproval") &&
-    read("src/shared/desktopApi.ts").includes("DesktopPendingApproval") &&
-    read("src/shared/desktopApi.ts").includes("DesktopCommitApprovalChecklist") &&
-    read("src/shared/desktopApi.ts").includes("DesktopApprovalProposalRequest") &&
-    read("src/shared/desktopApi.ts").includes("DesktopApprovalProposalResult") &&
-    read("src/shared/desktopApi.ts").includes("DesktopApprovalDecisionRequest") &&
-    read("src/shared/desktopApi.ts").includes('reason?: "reject" | "cancel"') &&
-    read("src/shared/desktopApi.ts").includes("DesktopMcpToolExecutionAuditEntry") &&
-    read("src/shared/desktopApi.ts").includes("DesktopMcpSessionAuditEntry") &&
-    read("src/shared/desktopApi.ts").includes("DesktopMcpActiveSession") &&
-    read("src/shared/desktopApi.ts").includes("DesktopMcpReusableSession") &&
-    read("src/shared/desktopApi.ts").includes("DesktopMcpReusableSessionCloseRequest") &&
-    read("src/shared/desktopApi.ts").includes("DesktopMcpSessionCancelRequest") &&
-    read("src/shared/desktopApi.ts").includes("DesktopGitCommitApprovalRequest") &&
-    read("src/shared/desktopApi.ts").includes("DesktopForkLifecycleApprovalRequest") &&
-    read("src/shared/desktopApi.ts").includes("DesktopForkQueueStartApprovalRequest") &&
-    read("src/shared/desktopApi.ts").includes("DesktopWorkflowRunPrepareRequest") &&
-    read("src/shared/desktopApi.ts").includes("proposeApproval") &&
-    read("src/shared/desktopApi.ts").includes("requestShellCommandApproval") &&
-    read("src/shared/desktopApi.ts").includes("requestGitCommitApproval") &&
-    read("src/shared/desktopApi.ts").includes("requestForkLifecycleApproval") &&
-    read("src/shared/desktopApi.ts").includes("requestForkQueueStartApproval") &&
-    read("src/shared/desktopApi.ts").includes("listPendingApprovals") &&
-    read("src/shared/desktopApi.ts").includes("listMcpToolExecutionAudits") &&
-    read("src/shared/desktopApi.ts").includes("listMcpSessionAudits") &&
-    read("src/shared/desktopApi.ts").includes("listMcpActiveSessions") &&
-    read("src/shared/desktopApi.ts").includes("listMcpReusableSessions") &&
-    read("src/shared/desktopApi.ts").includes("closeMcpReusableSession") &&
-    read("src/shared/desktopApi.ts").includes("cancelMcpActiveSession") &&
-    read("src/shared/desktopApi.ts").includes("decidePendingApproval") &&
-    read("src/shared/desktopApi.ts").includes("decideApproval") &&
-    read("src/shared/desktopApi.ts").includes("listPendingBrowserTaskApprovals") &&
-    read("src/preload/index.ts").includes("desktop:propose-approval") &&
-    read("src/preload/index.ts").includes("desktop:shell-command-approval") &&
-    read("src/preload/index.ts").includes("desktop:git-commit-approval") &&
-    read("src/preload/index.ts").includes("desktop:fork-lifecycle-approval") &&
-    read("src/preload/index.ts").includes("desktop:fork-queue-start-approval") &&
-    read("src/preload/index.ts").includes("desktop:workflow-run-prepare") &&
-    read("src/preload/index.ts").includes("desktop:pending-approvals") &&
-    read("src/preload/index.ts").includes("desktop:mcp-execution-audits") &&
-    read("src/preload/index.ts").includes("desktop:mcp-session-audits") &&
-    read("src/preload/index.ts").includes("desktop:mcp-active-sessions") &&
-    read("src/preload/index.ts").includes("desktop:mcp-reusable-sessions") &&
-    read("src/preload/index.ts").includes("desktop:mcp-reusable-session-close") &&
-    read("src/preload/index.ts").includes("desktop:mcp-session-cancel") &&
-    read("src/preload/index.ts").includes("desktop:decide-approval") &&
-    read("src/preload/index.ts").includes("decideApproval") &&
-    read("src/preload/index.ts").includes("desktop:browser-task-pending-approvals") &&
+    read("../shared/api/desktopApi.ts").includes("BrowserTaskPendingApproval") &&
+    read("../shared/api/desktopApi.ts").includes("DesktopPendingApproval") &&
+    read("../shared/api/desktopApi.ts").includes("DesktopCommitApprovalChecklist") &&
+    read("../shared/api/desktopApi.ts").includes("DesktopApprovalProposalRequest") &&
+    read("../shared/api/desktopApi.ts").includes("DesktopApprovalProposalResult") &&
+    read("../shared/api/desktopApi.ts").includes("DesktopApprovalDecisionRequest") &&
+    read("../shared/api/desktopApi.ts").includes('reason?: "reject" | "cancel"') &&
+    read("../shared/api/desktopApi.ts").includes("DesktopMcpToolExecutionAuditEntry") &&
+    read("../shared/api/desktopApi.ts").includes("DesktopMcpSessionAuditEntry") &&
+    read("../shared/api/desktopApi.ts").includes("DesktopMcpActiveSession") &&
+    read("../shared/api/desktopApi.ts").includes("DesktopMcpReusableSession") &&
+    read("../shared/api/desktopApi.ts").includes("DesktopMcpReusableSessionCloseRequest") &&
+    read("../shared/api/desktopApi.ts").includes("DesktopMcpSessionCancelRequest") &&
+    read("../shared/api/desktopApi.ts").includes("DesktopGitCommitApprovalRequest") &&
+    read("../shared/api/desktopApi.ts").includes("DesktopForkLifecycleApprovalRequest") &&
+    read("../shared/api/desktopApi.ts").includes("DesktopForkQueueStartApprovalRequest") &&
+    read("../shared/api/desktopApi.ts").includes("DesktopWorkflowRunPrepareRequest") &&
+    read("../shared/api/desktopApi.ts").includes("proposeApproval") &&
+    read("../shared/api/desktopApi.ts").includes("requestShellCommandApproval") &&
+    read("../shared/api/desktopApi.ts").includes("requestGitCommitApproval") &&
+    read("../shared/api/desktopApi.ts").includes("requestForkLifecycleApproval") &&
+    read("../shared/api/desktopApi.ts").includes("requestForkQueueStartApproval") &&
+    read("../shared/api/desktopApi.ts").includes("listPendingApprovals") &&
+    read("../shared/api/desktopApi.ts").includes("listMcpToolExecutionAudits") &&
+    read("../shared/api/desktopApi.ts").includes("listMcpSessionAudits") &&
+    read("../shared/api/desktopApi.ts").includes("listMcpActiveSessions") &&
+    read("../shared/api/desktopApi.ts").includes("listMcpReusableSessions") &&
+    read("../shared/api/desktopApi.ts").includes("closeMcpReusableSession") &&
+    read("../shared/api/desktopApi.ts").includes("cancelMcpActiveSession") &&
+    read("../shared/api/desktopApi.ts").includes("decidePendingApproval") &&
+    read("../shared/api/desktopApi.ts").includes("decideApproval") &&
+    read("../shared/api/desktopApi.ts").includes("listPendingBrowserTaskApprovals") &&
+    read("../shared/main/preload.ts").includes("desktop:propose-approval") &&
+    read("../shared/main/preload.ts").includes("desktop:shell-command-approval") &&
+    read("../shared/main/preload.ts").includes("desktop:git-commit-approval") &&
+    read("../shared/main/preload.ts").includes("desktop:fork-lifecycle-approval") &&
+    read("../shared/main/preload.ts").includes("desktop:fork-queue-start-approval") &&
+    read("../shared/main/preload.ts").includes("desktop:workflow-run-prepare") &&
+    read("../shared/main/preload.ts").includes("desktop:pending-approvals") &&
+    read("../shared/main/preload.ts").includes("desktop:mcp-execution-audits") &&
+    read("../shared/main/preload.ts").includes("desktop:mcp-session-audits") &&
+    read("../shared/main/preload.ts").includes("desktop:mcp-active-sessions") &&
+    read("../shared/main/preload.ts").includes("desktop:mcp-reusable-sessions") &&
+    read("../shared/main/preload.ts").includes("desktop:mcp-reusable-session-close") &&
+    read("../shared/main/preload.ts").includes("desktop:mcp-session-cancel") &&
+    read("../shared/main/preload.ts").includes("desktop:decide-approval") &&
+    read("../shared/main/preload.ts").includes("decideApproval") &&
+    read("../shared/main/preload.ts").includes("desktop:browser-task-pending-approvals") &&
     read("src/main/index.ts").includes("pendingDesktopApprovals") &&
     read("src/main/index.ts").includes("pendingShellCommandApprovals") &&
     read("src/main/index.ts").includes("pendingWorkspaceMutationApprovals") &&
@@ -206,12 +206,12 @@ assert(
 );
 assert(
     read("src/main/index.ts").includes("request.body.trim()") &&
-    read("src/renderer/src/adapters/useDesktopChatAdapter.ts").includes("body: preflight.approvalBody") &&
-    read("src/renderer/src/adapters/useDesktopChatAdapter.ts").includes("checklist: preflight.checklist") &&
-    read("src/renderer/src/adapters/useDesktopChatAdapter.ts").includes("readRecentTerminalTestResult") &&
-    read("src/renderer/src/components/TerminalPanel.tsx").includes("recordRecentTerminalTestResult") &&
-    read("src/renderer/src/terminalTestResults.ts").includes("RecentTerminalTestResult") &&
-    read("src/renderer/src/mockDesktopApi.ts").includes("request.checklist"),
+    read("../shared/renderer/src/adapters/useDesktopChatAdapter.ts").includes("body: preflight.approvalBody") &&
+    read("../shared/renderer/src/adapters/useDesktopChatAdapter.ts").includes("checklist: preflight.checklist") &&
+    read("../shared/renderer/src/adapters/useDesktopChatAdapter.ts").includes("readRecentTerminalTestResult") &&
+    read("../shared/renderer/src/components/TerminalPanel.tsx").includes("recordRecentTerminalTestResult") &&
+    read("../shared/renderer/src/terminalTestResults.ts").includes("RecentTerminalTestResult") &&
+    read("../shared/renderer/src/mockDesktopApi.ts").includes("request.checklist"),
   "git commit approvals do not include the guided preflight detail and recent test result",
 );
 assert(
@@ -227,8 +227,8 @@ assert(
     read("src/main/index.ts").includes('requestWorkspaceMutationApproval("revert-file"') &&
     read("src/main/index.ts").includes('requestWorkspaceMutationApproval("stage-hunk"') &&
     read("src/main/index.ts").includes('requestWorkspaceMutationApproval("revert-hunk"') &&
-    read("src/renderer/src/components/files/PatchReviewPanel.tsx").includes("result.approvalQueued") &&
-    read("src/shared/desktopApi.ts").includes("approvalQueued?: boolean"),
+    read("../shared/renderer/src/components/files/PatchReviewPanel.tsx").includes("result.approvalQueued") &&
+    read("../shared/api/desktopApi.ts").includes("approvalQueued?: boolean"),
   "workspace patch review mutations are not queued through approval center",
 );
 assert(

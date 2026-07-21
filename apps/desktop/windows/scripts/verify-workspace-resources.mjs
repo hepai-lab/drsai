@@ -13,7 +13,7 @@ const temp = await mkdtemp(join(tmpdir(), "opendrsai-workspace-resources-"));
 
 try {
   const bundle = join(temp, "workspaceResources.mjs");
-  await build({ entryPoints: [join(app, "src/shared/workspaceResources.ts")], outfile: bundle, bundle: true, platform: "node", format: "esm", target: "node22" });
+  await build({ entryPoints: [join(app, "../shared/api/workspaceResources.ts")], outfile: bundle, bundle: true, platform: "node", format: "esm", target: "node22" });
   const api = await import(pathToFileURL(bundle).href);
   assert.equal(schema.version, "1.0");
   assert.deepEqual(schema["x-worktree-transitions"].removed, []);

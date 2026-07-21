@@ -2,11 +2,11 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const root = resolve(new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
-const shared = read("src/shared/desktopApi.ts");
-const workspaces = read("src/main/workspaces.ts");
-const app = read("src/renderer/src/App.tsx");
-const chat = read("src/renderer/src/components/ChatWorkspace.tsx");
-const shell = read("src/renderer/src/components/WorkspaceShell.tsx");
+const shared = read("../shared/api/desktopApi.ts");
+const workspaces = read("../shared/main/workspaces.ts");
+const app = read("../shared/renderer/src/App.tsx");
+const chat = read("../shared/renderer/src/components/ChatWorkspace.tsx");
+const shell = read("../shared/renderer/src/components/WorkspaceShell.tsx");
 
 assert(shared.includes('location: "local" | "remote"'), "Workspace location is not explicit");
 assert(shared.includes('transport?: "ssh"'), "Remote transport is not explicit");

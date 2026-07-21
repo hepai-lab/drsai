@@ -4,7 +4,7 @@ import { join } from "node:path";
 import ts from "typescript";
 
 const root = process.cwd();
-const policyPath = join(root, "src", "shared", "executionPolicy.ts");
+const policyPath = join(root, "..", "shared", "api", "executionPolicy.ts");
 const mainPath = join(root, "src", "main", "index.ts");
 const source = readFileSync(policyPath, "utf8");
 const compiled = ts.transpileModule(source, {

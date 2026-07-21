@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { VoiceTranscriptionController } from "../src/renderer/src/voice/voiceTranscriptionController.ts";
+import { VoiceTranscriptionController } from "../../shared/renderer/src/voice/voiceTranscriptionController.ts";
 
 function deferred() {
   let resolve;

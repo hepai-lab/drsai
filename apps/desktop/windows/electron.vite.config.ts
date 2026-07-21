@@ -23,13 +23,17 @@ export default defineConfig({
     },
   },
   renderer: {
+    root: resolve("../shared/renderer"),
     build: {
       sourcemap: true,
+      rollupOptions: {
+        input: resolve("../shared/renderer/index.html"),
+      },
     },
     resolve: {
       alias: {
-        "@renderer": resolve("src/renderer/src"),
-        "@shared": resolve("src/shared"),
+        "@renderer": resolve("../shared/renderer/src"),
+        "@shared": resolve("../shared/api"),
       },
     },
     plugins: [tailwindcss(), react()],

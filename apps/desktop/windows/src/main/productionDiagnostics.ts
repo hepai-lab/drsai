@@ -8,7 +8,7 @@ import type {
   ProductionDiagnosticAuditEntry,
   ProductionDiagnosticSettings,
   ProductionDiagnosticStatus,
-} from "../shared/diagnostics";
+} from "../../../shared/api/diagnostics";
 
 const ROOT = join(DRSAI_HOME, "desktop", "diagnostics-production");
 const SETTINGS_FILE = join(ROOT, "settings.json");

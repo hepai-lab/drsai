@@ -26,15 +26,15 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-const api = read("src/shared/desktopApi.ts");
+const api = read("../shared/api/desktopApi.ts");
 const liveBridge = read("src/main/mcpLiveBridge.ts");
 const main = read("src/main/index.ts");
-const preload = read("src/preload/index.ts");
-const adapter = read("src/renderer/src/adapters/useDesktopChatAdapter.ts");
-const commands = read("src/renderer/src/chatCommands.ts");
-const approvalCenter = read("src/renderer/src/components/ApprovalCenterView.tsx");
-const mock = read("src/renderer/src/mockDesktopApi.ts");
-const styles = read("src/renderer/src/styles.css");
+const preload = read("../shared/main/preload.ts");
+const adapter = read("../shared/renderer/src/adapters/useDesktopChatAdapter.ts");
+const commands = read("../shared/renderer/src/chatCommands.ts");
+const approvalCenter = read("../shared/renderer/src/components/ApprovalCenterView.tsx");
+const mock = read("../shared/renderer/src/mockDesktopApi.ts");
+const styles = read("../shared/renderer/src/styles.css");
 const roadmap = read("docs/smart-chat-bar-roadmap.md");
 const packageJson = read("package.json");
 

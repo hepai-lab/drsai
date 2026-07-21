@@ -40,9 +40,9 @@ import { LocalRuntimeClient } from "./runtimeClient";
 import { desktopDiagnostics } from "./diagnostics";
 import { productionDiagnostics } from "./productionDiagnostics";
 import { DiagnosticSourceNavigator } from "./sourceNavigation";
-import { extractDiagnosticContext, runWithDiagnosticContext } from "./diagnosticContext";
+import { extractDiagnosticContext, runWithDiagnosticContext } from "../../../shared/main/diagnosticContext";
 import { InteractiveDebuggerService } from "./interactiveDebugger";
-import type { DiagnosticEventInput, DiagnosticIssueUpdateRequest, DiagnosticQuery, DiagnosticSourceOpenRequest, DiagnosticSourceContextRequest, ProductionDiagnosticSettings } from "../shared/diagnostics";
+import type { DiagnosticEventInput, DiagnosticIssueUpdateRequest, DiagnosticQuery, DiagnosticSourceOpenRequest, DiagnosticSourceContextRequest, ProductionDiagnosticSettings } from "../../../shared/api/diagnostics";
 
 process.setSourceMapsEnabled?.(true);
 if (process.platform === "win32") {
@@ -50,8 +50,9 @@ if (process.platform === "win32") {
 }
 import { presentCodexBackendStatus } from "./codexBackendStatus";
 import { DRSAI_HOME } from "./paths";
+import { WINDOWS_PLATFORM_DESCRIPTOR } from "./platform";
 import { clearLocalData, previewLocalDataCleanup } from "./dataCleanup";
-import { scanSensitiveText } from "./shareSensitivity";
+import { scanSensitiveText } from "../../../shared/main/shareSensitivity";
 import {
   cancelUpdate,
   checkForUpdates,
@@ -418,7 +419,7 @@ import {
   generateManagerPresentation,
   ManagerPresentationCancelledError,
 } from "./managerPresentation";
-import { buildFailureRecovery } from "./failureRecovery";
+import { buildFailureRecovery } from "../../../shared/main/failureRecovery";
 import {
   configureCompletionNotifications,
   notifyBackgroundTaskCompleted,
@@ -3427,6 +3428,7 @@ async function describePickedFiles(paths: string[], canceled: boolean): Promise<
 }
 
 function registerIpc(): void {
+  secureHandle("desktop:platform-descriptor", () => WINDOWS_PLATFORM_DESCRIPTOR);
   registerBrowserController(new ElectronWebviewController());
   registerBrowserController(new BrowserUseController(browserUseWorkerClient));
   const diagnosticSourceNavigator = new DiagnosticSourceNavigator({

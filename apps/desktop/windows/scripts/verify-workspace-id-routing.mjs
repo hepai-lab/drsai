@@ -2,15 +2,15 @@ import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const root = resolve(new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
-const shared = read("src/shared/desktopApi.ts");
+const shared = read("../shared/api/desktopApi.ts");
 const remote = read("src/main/remoteWorkspace.ts");
 const main = read("src/main/index.ts");
-const chat = read("src/main/chat.ts");
+const chat = read("../shared/main/chat.ts");
 const terminal = read("src/main/terminal.ts");
-const preload = read("src/preload/index.ts");
-const app = read("src/renderer/src/App.tsx");
-const files = read("src/renderer/src/components/files/FilesContextPanel.tsx");
-const adapter = read("src/renderer/src/adapters/useDesktopChatAdapter.ts");
+const preload = read("../shared/main/preload.ts");
+const app = read("../shared/renderer/src/App.tsx");
+const files = read("../shared/renderer/src/components/files/FilesContextPanel.tsx");
+const adapter = read("../shared/renderer/src/adapters/useDesktopChatAdapter.ts");
 
 for (const contract of ["ChatRequest", "WorkspaceFileTreeRequest", "WorkspaceFilePreviewRequest", "WorkspaceFileWriteRequest", "WorkspaceGitDiffRequest", "WorkspaceCheckpointCreateRequest", "TerminalCreateOptions"]) {
   const block = interfaceBlock(shared, contract);

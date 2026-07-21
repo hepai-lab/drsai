@@ -13,7 +13,7 @@ await scan(join(desktop, "src"), [
   [/['"`]turn\/start['"`]/, "Desktop must not speak Codex turn/start JSON-RPC"],
   [/codex\s+app-server\s+--listen/i, "Desktop must not launch Codex App Server directly"],
 ]);
-const workspaceOwner = await readFile(join(desktop, "src", "main", "workspaces.ts"), "utf8");
+const workspaceOwner = await readFile(join(desktop, "..", "shared", "main", "workspaces.ts"), "utf8");
 assert(workspaceOwner.includes("LocalRuntimeClient.connect()).openWorkspace"), "Desktop Local Workspace creation must use Runtime Registry");
 assert(!/id:\s*`workspace-\$\{randomUUID\(\)\}`/.test(workspaceOwner), "Desktop must not generate authoritative Local Workspace IDs");
 await scan(adapterRoot, [

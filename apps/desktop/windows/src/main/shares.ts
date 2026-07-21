@@ -45,7 +45,7 @@ import {
   scanSensitiveText,
   validateSensitiveResolutions,
   type SensitiveMatch,
-} from "./shareSensitivity";
+} from "../../../shared/main/shareSensitivity";
 
 const SHARES_FILE = resolve(DRSAI_HOME, "desktop", "shares.json");
 const SHARES_LOCK_FILE = resolve(DRSAI_HOME, "desktop", "shares.lock");

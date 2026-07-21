@@ -2,8 +2,8 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const root = resolve(new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
-const augmentation = readFileSync(resolve(root, "src/shared/desktopApi.orca.d.ts"), "utf8");
-const threads = readFileSync(resolve(root, "src/main/threads.ts"), "utf8");
+const augmentation = readFileSync(resolve(root, "../shared/api/desktopApi.orca.d.ts"), "utf8");
+const threads = readFileSync(resolve(root, "../shared/main/threads.ts"), "utf8");
 for (const field of ["sourceWorkspaceId", "workspaceId", "worktreeId", "canonicalPath"]) {
   assert(augmentation.includes(field), `execution binding lacks ${field}`);
 }

@@ -16,17 +16,17 @@ function assert(condition, message) {
 }
 
 const packageJson = read("package.json");
-const api = read("src/shared/desktopApi.ts");
-const preload = read("src/preload/index.ts");
+const api = read("../shared/api/desktopApi.ts");
+const preload = read("../shared/main/preload.ts");
 const main = read("src/main/index.ts");
 const store = read("src/main/projectMemory.ts");
 const skillDraftStore = read("src/main/projectSkills.ts");
-const commands = read("src/renderer/src/chatCommands.ts");
-const adapter = read("src/renderer/src/adapters/useDesktopChatAdapter.ts");
-const app = read("src/renderer/src/App.tsx");
-const skillSquare = read("src/renderer/src/components/SkillSquareView.tsx");
-const styles = read("src/renderer/src/styles.css");
-const mock = read("src/renderer/src/mockDesktopApi.ts");
+const commands = read("../shared/renderer/src/chatCommands.ts");
+const adapter = read("../shared/renderer/src/adapters/useDesktopChatAdapter.ts");
+const app = read("../shared/renderer/src/App.tsx");
+const skillSquare = read("../shared/renderer/src/components/SkillSquareView.tsx");
+const styles = read("../shared/renderer/src/styles.css");
+const mock = read("../shared/renderer/src/mockDesktopApi.ts");
 const roadmap = read("docs/smart-chat-bar-roadmap.md");
 
 assert(packageJson.includes('"verify:project-memory": "node scripts/verify-project-memory.mjs"'), "package script is not registered");

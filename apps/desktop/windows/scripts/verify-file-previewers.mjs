@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const root = process.cwd();
-const previewerDir = join(root, "src", "renderer", "src", "components", "files", "file_previewer");
+const previewerDir = join(root, "..", "shared", "renderer", "src", "components", "files", "file_previewer");
 
 const previewers = [
   ["image", "ImagePreviewer.tsx", "preview.kind === \"image\""],
@@ -20,8 +20,8 @@ const previewers = [
 ];
 
 const router = readFileSync(join(previewerDir, "FilePreviewer.tsx"), "utf8");
-const sharedTypes = readFileSync(join(root, "src", "shared", "desktopApi.ts"), "utf8");
-const mainPreview = readFileSync(join(root, "src", "main", "workspaceContext.ts"), "utf8");
+const sharedTypes = readFileSync(join(root, "..", "shared", "api", "desktopApi.ts"), "utf8");
+const mainPreview = readFileSync(join(root, "..", "shared", "main", "workspaceContext.ts"), "utf8");
 
 const failures = [];
 

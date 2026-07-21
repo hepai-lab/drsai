@@ -10,7 +10,7 @@ import type {
   DiagnosticSourceContextRequest,
   DiagnosticSourceLocation,
   DiagnosticSourceMapping,
-} from "../shared/diagnostics";
+} from "../../../shared/api/diagnostics";
 
 const MAX_SOURCE_BYTES = 2 * 1024 * 1024;
 const DEFAULT_CONTEXT_LINES = 8;

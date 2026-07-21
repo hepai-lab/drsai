@@ -4,10 +4,10 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const tasks = readFileSync(resolve(root, "src/main/backgroundTasks.ts"), "utf8");
-const planSource = readFileSync(resolve(root, "src/shared/agentTaskPlan.ts"), "utf8");
-const shared = readFileSync(resolve(root, "src/shared/desktopApi.ts"), "utf8");
-const view = readFileSync(resolve(root, "src/renderer/src/components/SkillSquareView.tsx"), "utf8");
-const agentView = readFileSync(resolve(root, "src/renderer/src/components/AgentRunWorkspace.tsx"), "utf8");
+const planSource = readFileSync(resolve(root, "../shared/api/agentTaskPlan.ts"), "utf8");
+const shared = readFileSync(resolve(root, "../shared/api/desktopApi.ts"), "utf8");
+const view = readFileSync(resolve(root, "../shared/renderer/src/components/SkillSquareView.tsx"), "utf8");
+const agentView = readFileSync(resolve(root, "../shared/renderer/src/components/AgentRunWorkspace.tsx"), "utf8");
 const smoke = readFileSync(resolve(root, "src/main/e2eSmoke.ts"), "utf8");
 
 const forbiddenTerms = /agent|tool|function|mcp|server|json|ipc|sse|request[_ -]?id|run[_ -]?id|参数/i;

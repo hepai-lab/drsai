@@ -41,7 +41,7 @@ try {
     Copy-Item $guest $packageDir -Force
     $hash = (Get-FileHash $runtime -Algorithm SHA256).Hash.ToLowerInvariant()
     $size = (Get-Item $runtime).Length
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $desktop "..\installers\windows\build-msi.ps1") -OutDir $packageDir -RuntimePath $runtime -RuntimeUrl "https://acceptance.invalid/OpenDrSaiRuntime-win-x64.zip" -RuntimeSha256 $hash -RuntimeSizeBytes $size -BootstrapperVersion "1.4.6" -OutputName "OpenDrSaiSetup.sandbox.msi"
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $desktop "installer\build-msi.ps1") -OutDir $packageDir -RuntimePath $runtime -RuntimeUrl "https://acceptance.invalid/OpenDrSaiRuntime-win-x64.zip" -RuntimeSha256 $hash -RuntimeSizeBytes $size -BootstrapperVersion "1.4.6" -OutputName "OpenDrSaiSetup.sandbox.msi"
     if ($LASTEXITCODE -ne 0) { throw "Could not build the local-only packaged Sandbox MSI." }
 
     $buildAuthorizedKeys = Join-Path $repo "apps\desktop\windows\tests\remote-ssh\authorized_keys"

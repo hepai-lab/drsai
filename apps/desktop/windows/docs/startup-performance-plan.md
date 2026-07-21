@@ -29,7 +29,7 @@ Make the desktop shell visible and interactive before the Python agent runtime i
 
 ### Stage 1 — UI-first lifecycle
 
-- Make `-WithGateway` opt-in in `windows-desktop-dev.ps1`.
+- Make `-WithGateway` opt-in in `windows/scripts/dev.ps1`.
 - Remove unconditional main-process and renderer autostart.
 - Preserve explicit start/stop controls.
 - Coalesce concurrent `startGateway()` calls.

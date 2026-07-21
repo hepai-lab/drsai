@@ -3,12 +3,12 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const api = readFileSync(resolve(root, "src/shared/desktopApi.ts"), "utf8");
+const api = readFileSync(resolve(root, "../shared/api/desktopApi.ts"), "utf8");
 const main = readFileSync(resolve(root, "src/main/index.ts"), "utf8");
-const preload = readFileSync(resolve(root, "src/preload/index.ts"), "utf8");
-const mock = readFileSync(resolve(root, "src/renderer/src/mockDesktopApi.ts"), "utf8");
-const app = readFileSync(resolve(root, "src/renderer/src/App.tsx"), "utf8");
-const styles = readFileSync(resolve(root, "src/renderer/src/styles.css"), "utf8");
+const preload = readFileSync(resolve(root, "../shared/main/preload.ts"), "utf8");
+const mock = readFileSync(resolve(root, "../shared/renderer/src/mockDesktopApi.ts"), "utf8");
+const app = readFileSync(resolve(root, "../shared/renderer/src/App.tsx"), "utf8");
+const styles = readFileSync(resolve(root, "../shared/renderer/src/styles.css"), "utf8");
 const smoke = readFileSync(resolve(root, "src/main/e2eSmoke.ts"), "utf8");
 const e2e = readFileSync(resolve(root, "scripts/verify-e2e-agent-run.mjs"), "utf8");
 

@@ -1,17 +1,23 @@
 import { spawn, spawnSync } from "node:child_process";
 import { cp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const BRANDING_REVISION = 3;
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const appDir = resolve(scriptDir, "..");
+const requireFromLauncher = createRequire(import.meta.url);
+
+function resolvePackageRoot(packageName) {
+  return dirname(requireFromLauncher.resolve(`${packageName}/package.json`));
+}
 
 async function prepareBrandedElectron() {
   if (process.platform !== "win32") return undefined;
 
-  const electronRoot = join(appDir, "node_modules", "electron");
+  const electronRoot = resolvePackageRoot("electron");
   const electronPackage = JSON.parse(await readFile(join(electronRoot, "package.json"), "utf8"));
   const appPackage = JSON.parse(await readFile(join(appDir, "package.json"), "utf8"));
   const executableName = (await readFile(join(electronRoot, "path.txt"), "utf8")).trim();
@@ -27,7 +33,7 @@ async function prepareBrandedElectron() {
   await mkdir(dirname(brandedDist), { recursive: true });
   await cp(sourceDist, temporaryDist, { recursive: true, force: true });
 
-  const rcedit = join(appDir, "node_modules", "electron-winstaller", "vendor", "rcedit.exe");
+  const rcedit = join(resolvePackageRoot("electron-winstaller"), "vendor", "rcedit.exe");
   if (!existsSync(rcedit)) throw new Error(`Windows branding tool was not found: ${rcedit}`);
   const result = spawnSync(rcedit, [
     join(temporaryDist, executableName),
@@ -61,7 +67,7 @@ if (process.argv.includes("--prepare-only")) {
   process.exit(0);
 }
 
-const electronVite = join(appDir, "node_modules", "electron-vite", "bin", "electron-vite.js");
+const electronVite = join(resolvePackageRoot("electron-vite"), "bin", "electron-vite.js");
 const child = spawn(process.execPath, [electronVite, command, ...process.argv.slice(3)], {
   cwd: appDir,
   env: {

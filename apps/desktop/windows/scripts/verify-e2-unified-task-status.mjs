@@ -4,10 +4,10 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const read = (path) => readFileSync(join(root, path), "utf8");
-const api = read("src/shared/desktopApi.ts");
-const app = read("src/renderer/src/App.tsx");
-const queue = read("src/renderer/src/components/SkillSquareView.tsx");
-const styles = read("src/renderer/src/styles.css");
+const api = read("../shared/api/desktopApi.ts");
+const app = read("../shared/renderer/src/App.tsx");
+const queue = read("../shared/renderer/src/components/SkillSquareView.tsx");
+const styles = read("../shared/renderer/src/styles.css");
 const smoke = read("src/main/e2eSmoke.ts");
 const packaged = read("scripts/verify-packaged-presentation-pdf-action.mjs");
 

@@ -1,5 +1,5 @@
-import type { BrowserActionRequest, BrowserActionResult } from "../../shared/browser/types";
-import { validateBrowserActionRequest } from "../../shared/browser/actionPolicy";
+import type { BrowserActionRequest, BrowserActionResult } from "../../../../shared/api/browser/types";
+import { validateBrowserActionRequest } from "../../../../shared/api/browser/actionPolicy";
 import { checkBrowserUrlSync } from "./urlPolicy";
 
 export function approveBrowserActionRequest(request: unknown): BrowserActionResult {

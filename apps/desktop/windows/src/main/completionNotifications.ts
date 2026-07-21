@@ -1,4 +1,3 @@
-import { Notification } from "electron";
 import { mkdir, readFile, rename, rm, writeFile } from "fs/promises";
 import { dirname, join } from "path";
 import { randomUUID } from "crypto";
@@ -9,7 +8,9 @@ import type {
   DesktopBackgroundTask,
   DesktopTaskDeliverySummary,
 } from "../shared/desktopApi";
+import type { DesktopNotificationHandle } from "../../../shared/api";
 import { DRSAI_HOME } from "./paths";
+import { WINDOWS_NOTIFICATION_SERVICE } from "./platformNotifications";
 
 type WindowVisibility = "foreground" | "minimized" | "hidden";
 
@@ -35,7 +36,7 @@ const MAX_DIAGNOSTICS = 100;
 const FILE_REPLACE_RETRY_DELAYS_MS = [0, 25, 50, 100, 200, 400];
 const RETRYABLE_FILE_ERROR_CODES = new Set(["EACCES", "EBUSY", "EEXIST", "EPERM"]);
 const shownKeys = new Set<string>();
-const activeNotifications = new Map<string, Notification>();
+const activeNotifications = new Map<string, DesktopNotificationHandle>();
 const diagnostics: CompletionNotificationDiagnostic[] = [];
 let preference: CompletionNotificationPreference = { enabled: false, language: "zh" };
 let preferenceWriteQueue: Promise<void> = Promise.resolve();
@@ -113,7 +114,7 @@ export function notifyBackgroundTaskCompleted(
   task: DesktopBackgroundTask,
   target: CompletionNotificationTarget,
 ): boolean {
-  if (!preference.enabled || task.status !== "completed" || !Notification.isSupported()) return false;
+  if (!preference.enabled || task.status !== "completed" || !WINDOWS_NOTIFICATION_SERVICE.supported()) return false;
   const key = `${target.kind}:${target.targetId}:completed`;
   if (shownKeys.has(key)) return false;
   shownKeys.add(key);
@@ -138,7 +139,7 @@ export function notifyBackgroundTaskCompleted(
     : preference.language === "zh"
       ? safeTaskTitle ? `任务“${safeTaskTitle}”已完成，点击查看结果。` : "任务已完成，点击查看结果。"
       : safeTaskTitle ? `“${safeTaskTitle}” is complete. Click to view the result.` : "Your task is complete. Click to view the result.";
-  const notification = new Notification({ title, body, silent: false });
+  const notification = WINDOWS_NOTIFICATION_SERVICE.create({ title, body, silent: false });
   const record: CompletionNotificationDiagnostic = {
     key,
     title,
