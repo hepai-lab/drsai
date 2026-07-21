@@ -8,6 +8,76 @@ import type {
   BrowserUrlCheck,
 } from "./browser/types";
 import type { ExecutionActionKind } from "./executionPolicy";
+import type { StructuredConversationEvent, StructuredTurnState } from "./structuredConversation";
+import type {
+  DiagnosticClearResult,
+  DiagnosticEvent,
+  DiagnosticEventInput,
+  DiagnosticExportResult,
+  DiagnosticQuery,
+  DiagnosticSnapshot,
+  DiagnosticIssueUpdateRequest,
+  DiagnosticIssueUpdateResult,
+  InteractiveDebugBreakpointRequest,
+  InteractiveDebugControlRequest,
+  InteractiveDebugEvaluateRequest,
+  InteractiveDebugEvaluateResult,
+  InteractiveDebugScope,
+  InteractiveDebugSession,
+  InteractiveDebugStartRequest,
+  InteractiveDebugTarget,
+  InteractiveDebugVariable,
+  DiagnosticSourceContext,
+  DiagnosticSourceContextRequest,
+  DiagnosticSourceOpenRequest,
+  DiagnosticSourceOpenResult,
+  DiagnosticPackagePreview,
+  DiagnosticPackageResult,
+  ProductionDiagnosticSettings,
+  ProductionDiagnosticStatus,
+} from "./diagnostics";
+
+export type {
+  DiagnosticComponentHealth,
+  DiagnosticEvent,
+  DiagnosticEventInput,
+  DiagnosticExportResult,
+  DiagnosticFinding,
+  DiagnosticIssueUpdateRequest,
+  DiagnosticIssueUpdateResult,
+  DiagnosticRootCauseAnalysis,
+  DiagnosticRootCauseCandidate,
+  DiagnosticRootCauseSnapshot,
+  DiagnosticErrorCluster,
+  DiagnosticQuery,
+  DiagnosticSnapshot,
+  DiagnosticSourceLocation,
+  DiagnosticSourceContext,
+  DiagnosticSourceContextRequest,
+  DiagnosticSourceOpenRequest,
+  DiagnosticSourceOpenResult,
+  DiagnosticStackFrame,
+  DiagnosticStatus,
+  DiagnosticTrace,
+  InteractiveDebugBreakpoint,
+  InteractiveDebugBreakpointRequest,
+  InteractiveDebugCapabilities,
+  InteractiveDebugControlRequest,
+  InteractiveDebugEvaluateRequest,
+  InteractiveDebugEvaluateResult,
+  InteractiveDebugScope,
+  InteractiveDebugSession,
+  InteractiveDebugStackFrame,
+  InteractiveDebugStartRequest,
+  InteractiveDebugTarget,
+  InteractiveDebugVariable,
+  DiagnosticPackagePreview,
+  DiagnosticPackageResult,
+  ProductionDiagnosticAuditEntry,
+  ProductionDiagnosticMode,
+  ProductionDiagnosticSettings,
+  ProductionDiagnosticStatus,
+} from "./diagnostics";
 
 export type {
   ExecutionActionKind,
@@ -82,13 +152,56 @@ export interface GatewayStatus {
 }
 
 export interface UpdateStatus {
+  phase:
+    | "idle"
+    | "checking"
+    | "available"
+    | "downloading"
+    | "verifying"
+    | "staging"
+    | "ready"
+    | "installing"
+    | "complete"
+    | "rollback"
+    | "rolled-back"
+    | "failed";
   checking: boolean;
   available: boolean;
   downloading: boolean;
   downloaded: boolean;
   progress: number | null;
   version: string | null;
+  currentVersion: string;
+  mandatory: boolean;
+  releaseNotesUrl: string | null;
+  canDownload: boolean;
+  canInstall: boolean;
+  canCancel: boolean;
+  errorCode: string | null;
   error: string | null;
+  recovery: "automatic-rollback" | null;
+}
+
+export type CodexBackendState = "available" | "not_installed" | "version_incompatible" | "not_logged_in" | "fault";
+
+export interface CodexBackendStatus {
+  backendId: "codex";
+  state: CodexBackendState;
+  available: boolean;
+  version: string | null;
+  loggedIn: boolean;
+  authMode: string | null;
+  accountLabel: string | null;
+  reason: string | null;
+  retryable: boolean;
+  action: "none" | "install" | "upgrade" | "login" | "restart";
+}
+
+export interface CodexBackendLogin {
+  type: "chatgpt" | "chatgptDeviceCode";
+  loginId: string;
+  verificationUrl?: string;
+  userCode?: string;
 }
 
 export interface AuthUser {
@@ -115,6 +228,7 @@ export interface DesktopBootstrapResult {
   ready: boolean;
   message: string;
   user: AuthUser;
+  blocker?: DesktopBootstrapBlocker | null;
   capabilities: {
     chat: boolean;
     agent: boolean;
@@ -128,6 +242,29 @@ export interface DesktopBootstrapResult {
   limits: {
     maxConcurrentRuns: number;
   };
+}
+
+export type DesktopBootstrapBlockerKind =
+  | "auth_required"
+  | "service_unavailable"
+  | "runtime_missing"
+  | "permission_denied";
+
+export interface DesktopBootstrapBlocker {
+  kind: DesktopBootstrapBlockerKind;
+  title: string;
+  message: string;
+  retryable: boolean;
+  canRepairRuntime: boolean;
+  canSignInAgain: boolean;
+  diagnosticCode: string;
+}
+
+export interface DesktopA5ServiceGuidanceScenario {
+  kind: DesktopBootstrapBlockerKind;
+  message: string;
+  session: AuthSession;
+  blocker: DesktopBootstrapBlocker;
 }
 
 export type OidcLoginDebugStage =
@@ -172,6 +309,112 @@ export type DesktopVoiceRuntimeId =
   | "mock-local"
   | "gateway-provider"
   | "local-whisper";
+
+export type DesktopVoiceInteractionMode = "serial" | "streaming";
+
+export type DesktopStreamingAudioEncoding = "pcm_s16le";
+
+export interface DesktopStreamingVoiceCapabilities {
+  serialStt: boolean;
+  serialTts: boolean;
+  streamingStt: boolean;
+  streamingTts: boolean;
+  audioEncodings: DesktopStreamingAudioEncoding[];
+  sampleRatesHz: number[];
+  supportsPartialTranscripts: boolean;
+  supportsProviderEndpointing: boolean;
+  supportsSessionResume: boolean;
+  maxBufferedAudioMs: number;
+}
+
+export interface DesktopStreamingVoiceStartRequest {
+  turnId: string;
+  languageHint?: string;
+  encoding: DesktopStreamingAudioEncoding;
+  sampleRateHz: number;
+  channels: 1;
+  frameDurationMs: number;
+  providerEndpointing: boolean;
+}
+
+export interface DesktopStreamingVoiceStartResult {
+  sessionId: string;
+  turnId: string;
+  acceptedAt: string;
+  capabilities: DesktopStreamingVoiceCapabilities;
+}
+
+export interface DesktopStreamingVoiceAudioChunk {
+  sessionId: string;
+  turnId: string;
+  sequence: number;
+  capturedAtMs: number;
+  durationMs: number;
+  encoding: DesktopStreamingAudioEncoding;
+  sampleRateHz: number;
+  channels: 1;
+  audioData: Uint8Array;
+}
+
+export interface DesktopStreamingVoiceAudioAck {
+  sessionId: string;
+  turnId: string;
+  acknowledgedSequence: number;
+  bufferedAudioMs: number;
+  receivedAt: string;
+}
+
+export interface DesktopStreamingVoiceTranscriptSegment {
+  text: string;
+  revision: number;
+  confidence?: number;
+  startMs?: number;
+  endMs?: number;
+}
+
+export type DesktopStreamingVoiceTranscriptionEvent =
+  | { sessionId: string; turnId: string; sequence: number; type: "accepted"; runtimeId: DesktopVoiceRuntimeId }
+  | { sessionId: string; turnId: string; sequence: number; type: "audio_ack"; ack: DesktopStreamingVoiceAudioAck }
+  | { sessionId: string; turnId: string; sequence: number; type: "flow_control"; paused: boolean; bufferedAudioMs: number; reason: "high_watermark" | "low_watermark" }
+  | { sessionId: string; turnId: string; sequence: number; type: "connection_state"; state: "connected" | "reconnecting" | "reconnected"; attempt?: number }
+  | { sessionId: string; turnId: string; sequence: number; type: "partial"; segment: DesktopStreamingVoiceTranscriptSegment }
+  | { sessionId: string; turnId: string; sequence: number; type: "final"; segment: DesktopStreamingVoiceTranscriptSegment }
+  | { sessionId: string; turnId: string; sequence: number; type: "endpoint"; reason: "provider" | "local_vad" | "manual" }
+  | { sessionId: string; turnId: string; sequence: number; type: "completed" }
+  | { sessionId: string; turnId: string; sequence: number; type: "failed"; error: DesktopVoiceError }
+  | { sessionId: string; turnId: string; sequence: number; type: "cancelled" };
+
+export interface DesktopStreamingVoiceTtsSegmentRequest {
+  sessionId: string;
+  turnId: string;
+  messageId: string;
+  segmentId: string;
+  segmentIndex: number;
+  text: string;
+  voice?: string;
+  speed?: number;
+  format: "wav" | "mp3" | "opus";
+}
+
+export interface DesktopStreamingVoiceTtsAudioSegment {
+  sessionId: string;
+  turnId: string;
+  messageId: string;
+  segmentId: string;
+  segmentIndex: number;
+  mimeType: string;
+  durationMs?: number;
+  audioData: Uint8Array;
+  final: boolean;
+}
+
+export type DesktopStreamingVoiceTtsEvent =
+  | { sessionId: string; turnId: string; sequence: number; type: "accepted"; segmentId: string; segmentIndex: number }
+  | { sessionId: string; turnId: string; sequence: number; type: "audio"; segment: DesktopStreamingVoiceTtsAudioSegment }
+  | { sessionId: string; turnId: string; sequence: number; type: "segment_completed"; segmentId: string; segmentIndex: number }
+  | { sessionId: string; turnId: string; sequence: number; type: "completed" }
+  | { sessionId: string; turnId: string; sequence: number; type: "failed"; error: DesktopVoiceError; segmentId?: string }
+  | { sessionId: string; turnId: string; sequence: number; type: "cancelled" };
 
 export interface DesktopVoiceTranscriptionRequest {
   workspacePath?: string;
@@ -274,6 +517,74 @@ export interface LogoutOptions {
   clearLocalData?: boolean;
 }
 
+export type DesktopVoiceSynthesisRuntimeId = "mock-local" | "gateway-provider" | "system";
+export type DesktopVoiceAudioFormat = "mp3" | "wav" | "opus";
+
+export interface DesktopVoiceSynthesisRequest {
+  text: string;
+  language?: string;
+  voice?: string;
+  speed?: number;
+  format?: DesktopVoiceAudioFormat;
+}
+
+export interface DesktopVoiceSynthesisStartResult {
+  requestId: string;
+  acceptedAt: string;
+}
+
+export interface DesktopVoiceSynthesisRuntimeStatus {
+  runtimeId: DesktopVoiceSynthesisRuntimeId;
+  state: "ready" | "unavailable" | "auth_required" | "degraded";
+  supportsSynthesisTask: boolean;
+  supportedFormats: DesktopVoiceAudioFormat[];
+  maxTextChars: number;
+  providerDisclosure: string;
+  message: string;
+}
+
+export interface DesktopVoiceSynthesisResult {
+  audioData: Uint8Array;
+  mimeType: string;
+  runtimeId: DesktopVoiceSynthesisRuntimeId;
+  createdAt: string;
+  providerDisclosure: string;
+}
+
+export type DesktopVoiceSynthesisEvent =
+  | { requestId: string; type: "accepted"; runtimeId: DesktopVoiceSynthesisRuntimeId }
+  | { requestId: string; type: "progress"; stage: "preparing" | "synthesizing"; message: string }
+  | { requestId: string; type: "completed"; result: DesktopVoiceSynthesisResult }
+  | { requestId: string; type: "failed"; error: DesktopVoiceError }
+  | { requestId: string; type: "cancelled" };
+
+export type DesktopDataCleanupScope = "sessions" | "all_local_data";
+export type DesktopDataCategory = "account" | "sessions" | "cache" | "memory" | "tasks" | "settings";
+
+export interface DesktopDataCleanupPreview {
+  scope: DesktopDataCleanupScope;
+  applicationData: Array<{ category: DesktopDataCategory; label: string; description: string }>;
+  preservedUserMaterials: Array<{ name: string; path: string; reason: string }>;
+  preservesAllWorkspaceFiles: boolean;
+  confirmationPhrase?: string;
+  requiresSignInAgain: boolean;
+}
+
+export interface DesktopDataCleanupRequest {
+  scope: DesktopDataCleanupScope;
+  confirmation: "CLEAR_SESSIONS" | "DELETE_LOCAL_DATA";
+}
+
+export interface DesktopDataCleanupResult {
+  ok: boolean;
+  scope: DesktopDataCleanupScope;
+  removedPaths: string[];
+  protectedWorkspacePaths: string[];
+  skippedTargets: string[];
+  requiresSignInAgain: boolean;
+  message: string;
+}
+
 export interface InstallProgress {
   phase: "idle" | "running" | "complete" | "error";
   message: string;
@@ -306,8 +617,10 @@ export interface ChatAttachment {
 
 export interface ChatRequest {
   requestId?: string;
+  agentId?: string;
   model?: string;
   workspacePath?: string;
+  workspaceId?: string;
   threadId?: string;
   sessionId?: string;
   runId?: string;
@@ -340,20 +653,52 @@ export type ChatMessagePart =
   | { id: string; type: "patch"; path?: string; diff: string; status: ChatPartStatus }
   | { id: string; type: "approval"; requestId: string; prompt: string; status: ChatPartStatus };
 
+export type DesktopFailureKind = "network" | "file_busy" | "external_service" | "disk_full" | "permission_denied" | "model_timeout" | "unexpected";
+
+export interface DesktopFailureRecovery {
+  kind: DesktopFailureKind;
+  attempts: number;
+  retryLimit: number;
+  retryable: boolean;
+  exhausted: boolean;
+  escalationLevel: "automatic" | "user_action" | "administrator";
+  reason: string;
+  affectedObject: string;
+  suggestedAction: string;
+  recoveryAction: "retry";
+  message: string;
+}
+
 export interface ChatEvent {
   requestId: string;
   /** Monotonic per-request sequence assigned by the main process. */
   seq?: number;
-  type: "start" | "chunk" | "reasoning" | "status" | "tool_timeline" | "done" | "error" | "aborted";
+  type: "start" | "structured" | "chunk" | "reasoning" | "status" | "connection" | "tool_timeline" | "input_request" | "done" | "error" | "aborted";
   content?: string;
   error?: string;
   level?: "INFO" | "WARNING" | "ERROR" | "DEBUG" | "TRACE" | "FATAL" | string;
   toolTimeline?: ChatToolTimelineEvent;
+  prompt?: string;
+  inputType?: "text_input" | "approval";
   sessionId?: string;
   runId?: string;
+  failureRecovery?: DesktopFailureRecovery;
+  structuredEvent?: StructuredConversationEvent;
+  connection?: {
+    status: "retrying" | "restored";
+    attempt: number;
+    delayMs?: number;
+    timestamp: string;
+    source: "gateway" | "remote-gateway" | "codex-runtime";
+  };
 }
 
-export type DesktopProviderAnalyticsProvider = "openai_responses" | "anthropic";
+export interface ChatRunRecoveryRequest {
+  requestId: string;
+  sessionId: string;
+}
+
+export type DesktopProviderAnalyticsProvider = "openai_responses" | "anthropic" | "google_gemini";
 
 export interface DesktopProviderUsageAnalyticsRecord {
   id: string;
@@ -408,7 +753,11 @@ export interface DesktopPendingApproval {
   actionKind: ExecutionActionKind;
   title: string;
   detail: string;
+  businessAction?: string;
+  businessObject?: string;
   target?: string;
+  scope?: string;
+  impact?: string;
   createdAt: string;
   risk: "low" | "medium" | "high";
   checklist?: DesktopCommitApprovalChecklist;
@@ -433,7 +782,11 @@ export interface DesktopApprovalProposalRequest {
   actionKind: ExecutionActionKind;
   title: string;
   detail: string;
+  businessAction?: string;
+  businessObject?: string;
   target?: string;
+  scope?: string;
+  impact?: string;
   risk?: DesktopPendingApproval["risk"];
   checklist?: DesktopCommitApprovalChecklist;
   idempotencyKey?: string;
@@ -593,6 +946,76 @@ export interface DesktopProjectMemoryClearRequest {
 export interface DesktopProjectMemoryClearResult {
   workspacePath: string;
   removedCount: number;
+}
+
+export interface DesktopTeamMemoryEntry {
+  id: string;
+  teamId: string;
+  content: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DesktopTeamMemoryListRequest {
+  teamId?: string;
+  limit?: number;
+}
+
+export interface DesktopTeamMemoryAddRequest {
+  teamId: string;
+  content: string;
+}
+
+export interface DesktopTeamMemoryDeleteRequest {
+  teamId: string;
+  entryId: string;
+}
+
+export interface DesktopTeamMemoryDeleteResult {
+  teamId: string;
+  removedCount: number;
+}
+
+export type DesktopUserPreferenceCategory =
+  | "output_language"
+  | "chart_gridlines"
+  | "report_format"
+  | "audience";
+
+export type DesktopUserPreferenceValue =
+  | "zh"
+  | "en"
+  | "hidden"
+  | "visible"
+  | "presentation"
+  | "report"
+  | "summary"
+  | "manager"
+  | "expert"
+  | "general";
+
+export interface DesktopUserPreference {
+  category: DesktopUserPreferenceCategory;
+  value: DesktopUserPreferenceValue;
+  createdAt: string;
+  updatedAt: string;
+  source: "explicit_user_request";
+}
+
+export interface DesktopUserPreferenceUpsertRequest {
+  category: DesktopUserPreferenceCategory;
+  value: DesktopUserPreferenceValue;
+  source: "explicit_user_request";
+}
+
+export interface DesktopUserPreferenceDeleteRequest {
+  category: DesktopUserPreferenceCategory;
+}
+
+export interface DesktopUserPreferenceDeleteResult {
+  category: DesktopUserPreferenceCategory;
+  removed: boolean;
 }
 
 export interface DesktopCustomCommand {
@@ -896,7 +1319,8 @@ export type DesktopBackgroundTaskKind =
   | "workflow_run"
   | "agent_run"
   | "connector_sync"
-  | "scheduled_monitor";
+  | "scheduled_monitor"
+  | "presentation_generation";
 
 export type DesktopBackgroundTaskSource =
   | "chat"
@@ -905,7 +1329,8 @@ export type DesktopBackgroundTaskSource =
   | "connector"
   | "manual"
   | "scheduled"
-  | "monitor";
+  | "monitor"
+  | "presentation";
 
 export type DesktopBackgroundTaskStatus =
   | "queued"
@@ -916,8 +1341,29 @@ export type DesktopBackgroundTaskStatus =
   | "failed"
   | "cancelled";
 
+export type DesktopTaskPlanPhase = "input" | "process" | "check" | "output";
+
+export interface DesktopTaskPlanStep {
+  id: string;
+  phase: DesktopTaskPlanPhase;
+  title: string;
+}
+
+export interface DesktopTaskPlanAdjustment {
+  id: string;
+  failedStepId?: string;
+  failedStepTitle: string;
+  reason: string;
+  replacementStepTitle: string;
+  impact: string;
+  completeness: "partial" | "blocked";
+  timestamp?: string;
+}
+
 export interface DesktopBackgroundTask {
   id: string;
+  /** Account owner used by the main process to isolate locally persisted task results. */
+  ownerUserId?: string;
   kind: DesktopBackgroundTaskKind;
   source: DesktopBackgroundTaskSource;
   title: string;
@@ -928,8 +1374,566 @@ export interface DesktopBackgroundTask {
   targetId?: string;
   approvalId?: string;
   currentStep?: string;
+  progress?: number;
+  planSteps?: DesktopTaskPlanStep[];
+  planAdjustments?: DesktopTaskPlanAdjustment[];
+  completedSteps?: string[];
+  pendingDecisions?: string[];
   message: string;
   verification: string;
+  deliverySummary?: DesktopTaskDeliverySummary;
+}
+
+export type DesktopTaskImportance = "high" | "medium" | "low";
+
+export interface DesktopTaskArtifactLink {
+  id: string;
+  label: string;
+  path: string;
+  kind: "file" | "presentation" | "report" | "folder";
+  quality?: DesktopArtifactQuality;
+  chartQuality?: DesktopChartDataQuality;
+  editLineage?: DesktopArtifactEditLineage;
+  analysisRoute?: DesktopArtifactAnalysisRoute;
+  keyConclusions?: DesktopArtifactConclusionEvidence[];
+  conclusionTraceabilityRate?: number;
+  consistencyCheck?: DesktopConsistencyCheckResult;
+  independentReviews?: DesktopIndependentReviewRecord[];
+  anomalyDecision?: DesktopAnomalyDecisionRecord;
+}
+
+export type DesktopAnomalyDecision = "keep" | "exclude" | "both";
+
+export interface DesktopAnomalyDecisionOutput {
+  role: "kept_all" | "excluded_anomalies";
+  path: string;
+  rowCount: number;
+  anomalyCount: number;
+  sha256: string;
+}
+
+export interface DesktopAnomalyDecisionRecord {
+  sourcePath: string;
+  anomalyColumn: string;
+  totalRows: number;
+  anomalyRows: number;
+  normalRows: number;
+  decision?: DesktopAnomalyDecision;
+  decidedAt?: string;
+  resultSummary?: string;
+  sourceSha256?: string;
+  receiptPath?: string;
+  outputs?: DesktopAnomalyDecisionOutput[];
+}
+
+export interface DesktopAnomalyDecisionApplyRequest {
+  workspacePath: string;
+  sourcePath: string;
+  anomalyColumn: string;
+  decision: DesktopAnomalyDecision;
+}
+
+export interface DesktopAnomalyDecisionApplyResult extends DesktopAnomalyDecisionRecord {
+  decision: DesktopAnomalyDecision;
+  decidedAt: string;
+  resultSummary: string;
+  sourceSha256: string;
+  receiptPath: string;
+  outputs: DesktopAnomalyDecisionOutput[];
+}
+
+export interface DesktopArtifactAnalysisRoute {
+  routeGroupId: string;
+  routeId: string;
+  role: "original" | "alternative";
+  method: string;
+  inputSummary: string;
+  keyConclusion: string;
+  risk: string;
+  recommendedUse: string;
+  status: "completed" | "failed";
+  selected: boolean;
+  selectedAt?: string;
+  sourceArtifactId: string;
+  sourcePath: string;
+  inputFingerprint: string;
+  createdAt: string;
+}
+
+export interface DesktopConsistencyCheckItem {
+  id: string;
+  category: "outdated_number" | "chart_mismatch" | "source_mismatch";
+  severity: "high" | "medium" | "low";
+  status: "open" | "accepted" | "ignored";
+  title: string;
+  finding: string;
+  sourcePath: string;
+  locatorType: "pdf_page" | "file_paragraph" | "data_range" | "calculation";
+  locator: string;
+  observedValue: string;
+  expectedValue: string;
+  evidenceText: string;
+  recommendation: string;
+}
+
+export interface DesktopConsistencyCheckResult {
+  checkedAt: string;
+  status: "passed" | "issues_found";
+  expectedIssues: number;
+  detectedIssues: number;
+  summary: string;
+  items: DesktopConsistencyCheckItem[];
+}
+
+export interface DesktopIndependentReviewFinding {
+  id: string;
+  title: string;
+  outcome: "confirmed" | "issue_found" | "not_reproduced";
+  detail: string;
+  sourcePath: string;
+  locatorType: "pdf_page" | "file_paragraph" | "data_range" | "calculation";
+  locator: string;
+  evidenceText: string;
+}
+
+export interface DesktopIndependentReviewRecord {
+  id: string;
+  mode: "repeat" | "alternative";
+  method: "reverse_source_trace" | "constraint_recalculation";
+  methodLabel: string;
+  reviewerLabel: string;
+  requestedAt: string;
+  completedAt: string;
+  status: "passed" | "issues_found" | "inconclusive";
+  checkedClaimCount: number;
+  checkedSourceCount: number;
+  scope: string[];
+  findings: DesktopIndependentReviewFinding[];
+  uncovered: string[];
+  summary: string;
+  baselineCheckId: string;
+  usesOriginalAnswerText: false;
+  methodDifference: string;
+  evidenceFingerprint: string;
+}
+
+export interface DesktopArtifactConclusionEvidence {
+  id: string;
+  conclusion: string;
+  sourcePath: string;
+  locatorType: "pdf_page" | "file_paragraph" | "data_range" | "calculation";
+  locator: string;
+  evidenceText: string;
+  verified: boolean;
+  citations?: DesktopCitationRecord[];
+  numericEvidence?: DesktopNumericEvidence[];
+  uncertainty?: DesktopConclusionUncertainty;
+  trust?: DesktopTrustAssessment;
+}
+
+export type DesktopTrustStatus = "evidence_sufficient" | "needs_confirmation" | "insufficient_data" | "source_conflict" | "inference";
+
+export interface DesktopTrustAssessment {
+  status: DesktopTrustStatus;
+  label: "依据充分" | "需要确认" | "数据不足" | "来源冲突" | "属于推测";
+  definition: string;
+  reason: string;
+  icon: "check" | "question" | "warning" | "compare" | "hypothesis";
+  recommendedAction: string;
+  evidenceRule: "verified_source" | "provisional_source" | "insufficient_observation" | "conflicting_sources" | "inference_only";
+  evidenceIds: string[];
+  ruleSatisfied: boolean;
+}
+
+export interface DesktopCitationRecord {
+  id: string;
+  title: string;
+  authors: string[];
+  sourcePath: string;
+  locatorType: "pdf_page" | "file_paragraph" | "data_range" | "calculation";
+  locator: string;
+  excerpt: string;
+  relation: "supports" | "contradicts" | "insufficient";
+  supportScore: number;
+}
+
+export interface DesktopNumericSourceValue {
+  label: string;
+  value: number;
+  unit: string;
+  sourcePath: string;
+  locator: string;
+  rawText: string;
+}
+
+export interface DesktopNumericEvidence {
+  id: string;
+  label: string;
+  displayValue: string;
+  reportedValue: number;
+  unit: string;
+  kind: "direct" | "calculated";
+  sourcePath: string;
+  locatorType: "pdf_page" | "file_paragraph" | "data_range" | "calculation";
+  locator: string;
+  sourceValues: DesktopNumericSourceValue[];
+  formula: string;
+  recalculatedValue?: number;
+  tolerance: number;
+  status: "verified" | "unverifiable";
+  explanation: string;
+}
+
+export interface DesktopUncertaintyClaim {
+  id: string;
+  position: string;
+  sourcePath: string;
+  locatorType: "pdf_page" | "file_paragraph" | "data_range" | "calculation";
+  locator: string;
+  excerpt: string;
+  stance: "supports" | "contradicts" | "insufficient";
+}
+
+export interface DesktopConclusionUncertainty {
+  status: "source_conflict" | "insufficient_data" | "inference";
+  label: string;
+  explanation: string;
+  recommendedAction: string;
+  requiresQualification: true;
+  qualifyingLanguage: string[];
+  claims: DesktopUncertaintyClaim[];
+}
+
+export interface DesktopChartDataQuality {
+  status: "passed" | "failed";
+  checkedAt: string;
+  sourcePath: string;
+  xAxis: string;
+  yAxis: string;
+  unit: string;
+  legend: string;
+  axisLabelsVisible: boolean;
+  unitVisible: boolean;
+  legendVisible: boolean;
+  pointsExpected: number;
+  pointsMatched: number;
+  coordinateMatches: number;
+  anomaliesExpected: number;
+  anomaliesMatched: number;
+  mismatchCount: number;
+  checks: string[];
+}
+
+export interface DesktopArtifactEditLineage {
+  sourceArtifactId: string;
+  sourcePath: string;
+  scopeType: "text" | "table" | "image";
+  scopeLabel: string;
+  action: "simplify_text" | "sort_table_numeric" | "log_scale_image";
+}
+
+export interface DesktopArtifactQuality {
+  status: "passed" | "failed";
+  checkedAt: string;
+  format: "markdown";
+  formatValid: boolean;
+  requiredSections: string[];
+  presentSections: string[];
+  missingSections: string[];
+  placeholderCount: number;
+  mojibakeCount: number;
+  emptyImageCount: number;
+  brokenLinkCount: number;
+  goldenFactsExpected: number;
+  goldenFactsMatched: number;
+  goldenFactCoverage: number;
+  checks: string[];
+}
+
+export interface DesktopTaskDeliverySummary {
+  findingSummary: string;
+  importance: DesktopTaskImportance;
+  importanceReason: string;
+  artifacts: DesktopTaskArtifactLink[];
+  suggestedAction: string;
+  workSummary: string;
+  coreConclusion: string;
+  verification: string;
+  remainingRisks: string;
+  completionCriteria?: {
+    passed: string[];
+    incomplete: string[];
+  };
+}
+
+export type DesktopShareScope = "result_only" | "complete_task";
+export type DesktopShareObjectType = "artifact" | "task";
+
+export interface DesktopShareManifestObject {
+  objectType: DesktopShareObjectType;
+  objectId: string;
+  label: string;
+  kind?: DesktopTaskArtifactLink["kind"];
+  bytes?: number;
+  sha256?: string;
+  version: number;
+}
+
+export interface DesktopShareManifest {
+  id: string;
+  ownerAccount: string;
+  recipientAccount: string;
+  scope: DesktopShareScope;
+  sourceTaskId: string;
+  selectedArtifactId?: string;
+  objects: DesktopShareManifestObject[];
+  createdAt: string;
+  version: number;
+  versionUpdatedAt: string;
+  versionUpdatedByAccount: string;
+  status: "active" | "revoked";
+  revokedAt?: string;
+  revokedByAccount?: string;
+  permission: DesktopSharePermission;
+  sensitiveReview?: DesktopShareSensitiveReviewSummary;
+}
+
+export type DesktopSharePermission = "view" | "comment" | "continue";
+
+export interface DesktopSharePermissionUpdateRequest {
+  shareId: string;
+  permission: DesktopSharePermission;
+}
+
+export interface DesktopShareRevokeRequest {
+  shareId: string;
+  confirmation: "REVOKE";
+}
+
+export interface DesktopShareRevocationResult {
+  shareId: string;
+  status: "revoked";
+  revokedAt: string;
+  recipientAccount: string;
+  objectsInvalidated: number;
+  auditEntryId: string;
+}
+
+export interface DesktopShareComment {
+  id: string;
+  shareId: string;
+  authorAccount: string;
+  body: string;
+  target: DesktopShareCommentTarget;
+  createdAt: string;
+  version: number;
+  versionStatus: "current" | "stale";
+}
+
+export interface DesktopShareVersionFingerprint {
+  objectId: string;
+  sha256: string;
+}
+
+export interface DesktopShareVersionInspectionRequest { shareId: string }
+export interface DesktopShareVersionInspectionArtifact {
+  objectId: string;
+  label: string;
+  publishedSha256: string;
+  sourceSha256: string;
+  changed: boolean;
+}
+export interface DesktopShareVersionInspection {
+  shareId: string;
+  currentVersion: number;
+  nextVersion: number;
+  hasChanges: boolean;
+  currentCommentCount: number;
+  commentsThatWillBecomeStale: number;
+  sourceFingerprints: DesktopShareVersionFingerprint[];
+  artifacts: DesktopShareVersionInspectionArtifact[];
+}
+export interface DesktopShareVersionPublishRequest {
+  shareId: string;
+  expectedVersion: number;
+  sourceFingerprints: DesktopShareVersionFingerprint[];
+  sensitiveResolutions?: DesktopShareSensitiveResolution[];
+}
+export interface DesktopShareVersionPublishResult {
+  status: "published";
+  shareId: string;
+  previousVersion: number;
+  currentVersion: number;
+  publishedAt: string;
+  staleCommentCount: number;
+  manifest: DesktopShareManifest;
+}
+
+export interface DesktopShareCommentListRequest { shareId: string }
+export type DesktopShareCommentAnchorType = "whole_result" | "paragraph" | "chart";
+export interface DesktopShareCommentTarget {
+  objectType: DesktopShareObjectType;
+  objectId: string;
+  objectLabel: string;
+  anchorType: DesktopShareCommentAnchorType;
+  anchorLabel: string;
+}
+export interface DesktopShareCommentAddRequest {
+  shareId: string;
+  body: string;
+  objectId?: string;
+  anchorType?: DesktopShareCommentAnchorType;
+  anchorLabel?: string;
+}
+
+export interface DesktopShareCommentTaskPreviewRequest { shareId: string; commentId: string }
+export interface DesktopShareCommentTaskPreview {
+  shareId: string;
+  commentId: string;
+  title: string;
+  instructions: string;
+  commentBody: string;
+  commentAuthorAccount: string;
+  target: DesktopShareCommentTarget;
+}
+export interface DesktopShareCommentTaskCreateRequest extends DesktopShareCommentTaskPreviewRequest { title: string; instructions: string }
+export interface DesktopShareCommentTaskUpdateRequest { taskId: string; title: string; instructions: string }
+export interface DesktopShareCommentTaskCompleteRequest { taskId: string }
+export interface DesktopShareCommentTaskListRequest { shareId?: string }
+export interface DesktopShareCommentTask {
+  id: string;
+  shareId: string;
+  commentId: string;
+  backgroundTaskId: string;
+  title: string;
+  instructions: string;
+  commentBody: string;
+  commentAuthorAccount: string;
+  target: DesktopShareCommentTarget;
+  status: "ready" | "completed";
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+}
+
+export interface DesktopShareContinuationRequest { shareId: string }
+export interface DesktopShareContinuationResult {
+  id: string;
+  shareId: string;
+  requesterAccount: string;
+  sourceTaskId: string;
+  artifactIds: string[];
+  status: "requested";
+  createdAt: string;
+}
+
+export type DesktopShareAuditAction = "permission_update" | "comment" | "continue" | "comment_task" | "revoke" | "version_publish" | "version_conflict";
+export interface DesktopShareAuditEntry {
+  id: string;
+  shareId: string;
+  actorAccount: string;
+  action: DesktopShareAuditAction;
+  outcome: "allowed" | "denied";
+  permission: DesktopSharePermission;
+  reason: string;
+  createdAt: string;
+}
+export interface DesktopShareAuditListRequest { shareId: string }
+
+export type DesktopShareSensitiveFindingKind = "api_key" | "bearer_token" | "email" | "phone" | "user_secret";
+export type DesktopShareSensitiveAction = "redact" | "remove";
+
+export interface DesktopShareSensitiveFinding {
+  id: string;
+  artifactId: string;
+  artifactLabel: string;
+  kind: DesktopShareSensitiveFindingKind;
+  severity: "high" | "personal";
+  occurrences: number;
+  maskedPreview: string;
+  supportedActions: DesktopShareSensitiveAction[];
+}
+
+export interface DesktopShareSensitiveResolution {
+  findingId: string;
+  action: DesktopShareSensitiveAction;
+}
+
+export interface DesktopShareSensitiveReviewSummary {
+  findingsCount: number;
+  redactedCount: number;
+  removedCount: number;
+  highRiskSecretsDirectlyShared: 0;
+}
+
+export interface DesktopShareInspectionRequest {
+  sourceTaskId: string;
+  scope: DesktopShareScope;
+  artifactId?: string;
+}
+
+export interface DesktopShareInspectionResult {
+  sourceTaskId: string;
+  scope: DesktopShareScope;
+  artifactId?: string;
+  scannedArtifactCount: number;
+  findings: DesktopShareSensitiveFinding[];
+  requiresResolution: boolean;
+}
+
+export interface DesktopShareCreateRequest {
+  sourceTaskId: string;
+  scope: DesktopShareScope;
+  recipientAccount: string;
+  artifactId?: string;
+  sensitiveResolutions?: DesktopShareSensitiveResolution[];
+  permission?: DesktopSharePermission;
+}
+
+export interface DesktopSharedObjectOpenRequest {
+  shareId: string;
+  objectType: DesktopShareObjectType;
+  objectId: string;
+}
+
+export interface DesktopSharedObjectOpenResult {
+  shareId: string;
+  version: number;
+  objectType: DesktopShareObjectType;
+  objectId: string;
+  label: string;
+  authorized: true;
+  task?: {
+    id: string;
+    title: string;
+    status: DesktopBackgroundTaskStatus;
+    updatedAt: string;
+    artifactIds: string[];
+  };
+  artifact?: {
+    id: string;
+    label: string;
+    kind: DesktopTaskArtifactLink["kind"];
+    bytes: number;
+    sha256: string;
+    content?: string;
+  };
+}
+
+export interface DesktopSharedArtifactDownloadRequest {
+  shareId: string;
+  objectId: string;
+}
+
+export interface DesktopSharedArtifactDownloadResult {
+  shareId: string;
+  version: number;
+  artifactId: string;
+  fileName: string;
+  kind: DesktopTaskArtifactLink["kind"];
+  bytes: number;
+  sha256: string;
+  base64: string;
 }
 
 export interface DesktopBackgroundTaskListRequest {
@@ -945,17 +1949,116 @@ export interface DesktopBackgroundTaskEnqueueRequest {
   targetId?: string;
   approvalId?: string;
   currentStep?: string;
+  progress?: number;
+  planSteps?: DesktopTaskPlanStep[];
+  planAdjustments?: DesktopTaskPlanAdjustment[];
+  completedSteps?: string[];
+  pendingDecisions?: string[];
   message?: string;
   verification?: string;
   status?: DesktopBackgroundTaskStatus;
+  deliverySummary?: DesktopTaskDeliverySummary;
 }
 
 export interface DesktopBackgroundTaskUpdateRequest {
   taskId: string;
   status: DesktopBackgroundTaskStatus;
+  title?: string;
   message?: string;
   currentStep?: string;
+  progress?: number;
+  planSteps?: DesktopTaskPlanStep[];
+  planAdjustments?: DesktopTaskPlanAdjustment[];
+  completedSteps?: string[];
+  pendingDecisions?: string[];
   verification?: string;
+  deliverySummary?: DesktopTaskDeliverySummary;
+}
+
+export interface DesktopReusableTaskInput {
+  id: string;
+  label: string;
+  kind: "file" | "folder";
+  required: boolean;
+  originalValue: string;
+}
+
+export interface DesktopReusableTaskAdjustments {
+  outputLanguage?: "zh" | "en";
+  deadline?: string;
+  checkItems: string[];
+}
+
+export type DesktopReusableTaskAdjustmentScope = "this_run" | "update_template";
+
+export interface DesktopReusableTask {
+  id: string;
+  name: string;
+  sourceTaskId: string;
+  sourceTaskTitle: string;
+  sourceWorkspacePath?: string;
+  taskTemplate: string;
+  inputs: DesktopReusableTaskInput[];
+  fixedRules: string[];
+  savedAdjustments: DesktopReusableTaskAdjustments;
+  createdAt: string;
+  updatedAt: string;
+  runCount: number;
+  lastRunAt?: string;
+  lastInputFingerprint?: string;
+}
+
+export interface DesktopReusableTaskSaveRequest {
+  sourceTaskId: string;
+  name: string;
+}
+
+export interface DesktopReusableTaskRunPrepareRequest {
+  reusableTaskId: string;
+  workspacePath: string;
+  inputs: Record<string, string>;
+  adjustments: DesktopReusableTaskAdjustments;
+  adjustmentScope: DesktopReusableTaskAdjustmentScope;
+}
+
+export interface DesktopReusableTaskResolvedInput {
+  id: string;
+  label: string;
+  path: string;
+  sha256: string;
+  bytes: number;
+}
+
+export interface DesktopReusableTaskRunRecipe {
+  id: string;
+  reusableTaskId: string;
+  reusableTaskName: string;
+  workspacePath: string;
+  resolvedTask: string;
+  inputs: DesktopReusableTaskResolvedInput[];
+  fixedRules: string[];
+  adjustments: DesktopReusableTaskAdjustments;
+  adjustmentScope: DesktopReusableTaskAdjustmentScope;
+  cachePolicy: "force_fresh_input_read";
+  createdAt: string;
+}
+
+export interface CompletionNotificationPreference {
+  enabled: boolean;
+  language: "zh" | "en";
+}
+
+export interface CompletionNotificationTarget {
+  kind: DesktopBackgroundTaskKind;
+  targetId: string;
+  workspacePath?: string;
+  workspaceId?: string;
+  threadId?: string;
+}
+
+export interface CompletionNotificationClickEvent {
+  target: CompletionNotificationTarget;
+  clickedAt: string;
 }
 
 export type DesktopScheduledTaskKind = "scheduled" | "monitor";
@@ -967,6 +2070,32 @@ export type DesktopScheduledTaskCadence =
   | "hourly"
   | "daily"
   | "weekly";
+
+export interface DesktopScheduledTaskUserDefinition {
+  sourceText: string;
+  timeDescription: string;
+  materialDescription: string;
+  actionDescription: string;
+  notificationDescription: string;
+  timezone: string;
+  weekday?: number;
+  localTime?: string;
+  confirmedAt: string;
+}
+
+export type DesktopScheduledTaskMissedRunPolicy = "run_once_immediately";
+export type DesktopScheduledTaskDaylightSavingPolicy = "follow_timezone_wall_clock";
+
+export interface DesktopScheduledTaskTriggerAudit {
+  triggerKey: string;
+  scheduledFor: string;
+  triggeredAt: string;
+  missed: boolean;
+  missedByMs: number;
+  missedRunPolicy: DesktopScheduledTaskMissedRunPolicy;
+  timezone: string;
+  daylightSavingPolicy: DesktopScheduledTaskDaylightSavingPolicy;
+}
 
 export interface DesktopScheduledTask {
   id: string;
@@ -987,6 +2116,9 @@ export interface DesktopScheduledTask {
   approvalRequired: boolean;
   message: string;
   verification: string;
+  userDefinition?: DesktopScheduledTaskUserDefinition;
+  missedRunPolicy?: DesktopScheduledTaskMissedRunPolicy;
+  lastTriggerAudit?: DesktopScheduledTaskTriggerAudit;
 }
 
 export interface DesktopScheduledTaskListRequest {
@@ -1006,6 +2138,7 @@ export interface DesktopScheduledTaskCreateRequest {
   verification?: string;
   message?: string;
   status?: DesktopScheduledTaskStatus;
+  userDefinition?: DesktopScheduledTaskUserDefinition;
 }
 
 export interface DesktopScheduledTaskUpdateRequest {
@@ -1014,6 +2147,22 @@ export interface DesktopScheduledTaskUpdateRequest {
   nextRunAt?: string;
   message?: string;
   verification?: string;
+  title?: string;
+  cadence?: DesktopScheduledTaskCadence;
+  target?: string;
+  userDefinition?: DesktopScheduledTaskUserDefinition;
+}
+
+export interface DesktopScheduledTaskDeleteRequest {
+  taskId: string;
+}
+
+export interface DesktopScheduledTaskDeleteResult {
+  taskId: string;
+  removed: boolean;
+  historyPolicy: "retain_results";
+  retainedWorkflowRunId?: string;
+  message: string;
 }
 
 export type DesktopScheduledTaskRunItemStatus =
@@ -1038,6 +2187,7 @@ export interface DesktopScheduledTaskRunItem {
   workflowRunId?: string;
   approvalId?: string;
   reason?: string;
+  triggerAudit?: DesktopScheduledTaskTriggerAudit;
 }
 
 export interface DesktopScheduledTaskRunResult {
@@ -1623,6 +2773,8 @@ export interface AgentRunRequest {
   sessionId?: string;
   runId?: string;
   task: string;
+  executionDepth?: AgentTaskDepth;
+  executionPlan?: DesktopTaskPlanStep[];
   model?: string;
   workspacePath?: string;
   files?: unknown[];
@@ -1640,18 +2792,44 @@ export type DesktopAgentExample =
       zh?: string;
     };
 
+export interface DesktopAgentLocalizedText {
+  en?: string;
+  zh?: string;
+}
+
+export type AgentTaskDepth = "quick" | "standard" | "deep";
+
 export interface DesktopAgent {
   id: string;
   name: string;
   description: string;
+  localizedDescription?: DesktopAgentLocalizedText;
   owner: string;
   source: DesktopAgentSource;
   status: DesktopAgentStatus;
+  mode?: string;
+  available?: boolean;
+  featured?: boolean;
+  isDefault?: boolean;
+  capabilities?: string[];
+  lastUsedAt?: string;
+  catalogGroup?: "local" | "official" | "mine";
   url?: string;
   model?: string;
+  models?: string[];
   logo?: string;
   examples?: DesktopAgentExample[] | string;
   error?: string;
+}
+
+export interface DesktopAgentListOptions {
+  refresh?: boolean;
+}
+
+export interface DesktopAgentPreferenceResult {
+  agentId: string;
+  saved: boolean;
+  message: string;
 }
 
 export interface MyDrSaiReasoningConfig {
@@ -1711,15 +2889,20 @@ export interface DesktopThread {
   kind: "chat" | "agent_run";
   title: string;
   workspacePath?: string;
+  boundAgentId?: string;
+  boundAgentName?: string;
   fork?: DesktopThreadForkMetadata;
   createdAt: string;
   updatedAt: string;
   lastRunId?: string;
   lastRequestId?: string;
+  runtimeSessionId?: string;
   status?: "idle" | "running" | "error";
   messageCount?: number;
   pinned?: boolean;
   archived?: boolean;
+  archivedAt?: string;
+  archiveSource?: "opendrsai" | "codex";
   unread?: boolean;
 }
 
@@ -1732,6 +2915,7 @@ export interface DesktopThreadMessageSnapshot extends ChatMessage {
   toolTimeline?: ChatToolTimelineEvent[];
   /** Canonical structured display representation; legacy fields remain during migration. */
   parts?: ChatMessagePart[];
+  structuredTurn?: StructuredTurnState;
   startedAt?: number;
   lastEventAt?: number;
 }
@@ -1759,6 +2943,9 @@ export interface DesktopThreadContentSearchResult {
 }
 
 export interface DesktopThreadForkMetadata {
+  worktreeId?: string;
+  sourceWorkspaceId?: string;
+  workspaceId?: string;
   sourceWorkspacePath: string;
   repoRoot: string;
   worktreePath: string;
@@ -1792,6 +2979,11 @@ export interface DesktopForkWorktreeRequest {
 }
 
 export interface DesktopForkWorktreeResult {
+  worktreeId?: string;
+  sourceWorkspaceId?: string;
+  location: "local" | "remote";
+  transport?: "ssh";
+  workspaceId?: string;
   sourceWorkspacePath: string;
   repoRoot: string;
   worktreePath: string;
@@ -1799,6 +2991,50 @@ export interface DesktopForkWorktreeResult {
   baseRef: string;
   sourceHasChanges: boolean;
   sourceStatusSummary?: string;
+}
+
+export interface DesktopWorktreeListRequest {
+  workspacePath: string;
+  workspaceId?: string;
+  includeRemoved?: boolean;
+}
+
+export interface DesktopWorktreeEventRequest {
+  workspacePath: string;
+  workspaceId?: string;
+  afterSequence?: number;
+}
+
+export interface DesktopWorktreeEventBatch {
+  events: Array<{
+    eventId: string;
+    workspaceId: string;
+    sequence: number;
+    type: string;
+    data: Record<string, unknown>;
+  }>;
+  nextSequence: number;
+}
+
+export interface DesktopWorktreeSummary {
+  worktreeId: string;
+  sourceWorkspaceId: string;
+  workspaceId: string | null;
+  repoRoot: string;
+  canonicalPath: string;
+  branch: string;
+  baseCommit: string;
+  headCommit?: string | null;
+  status: "creating" | "active" | "review" | "merge_pending" | "merged" | "archived" | "removing" | "removed";
+  location: "local" | "remote";
+  dirty?: boolean;
+  ahead?: number;
+  behind?: number;
+  activity: { sessions: number; runs: number; terminals: number; total: number };
+  lastErrorCode?: string | null;
+  lastErrorMessage?: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface WorkspaceGitStatus {
@@ -1818,7 +3054,11 @@ export interface WorkspaceProject {
   id: string;
   name: string;
   path: string;
-  type: "local";
+  location: "local" | "remote";
+  transport?: "ssh";
+  /** @deprecated Compatibility field for workspaces persisted before location/transport. */
+  type: "local" | "remote-ssh";
+  remote?: RemoteSshWorkspaceDescriptor;
   description?: string;
   createdAt: string;
   updatedAt: string;
@@ -1889,9 +3129,11 @@ export interface WorkspaceFileNode {
 
 export interface WorkspaceFileTreeRequest {
   workspacePath: string;
+  workspaceId?: string;
   query?: string;
   maxDepth?: number;
   maxEntries?: number;
+  offset?: number;
 }
 
 export interface WorkspaceFileTreeResult {
@@ -1899,6 +3141,8 @@ export interface WorkspaceFileTreeResult {
   nodes: WorkspaceFileNode[];
   totalEntries: number;
   truncated: boolean;
+  nextOffset?: number;
+  stale?: boolean;
 }
 
 export interface WorkspaceFolderSummaryRequest {
@@ -1924,6 +3168,10 @@ export interface WorkspaceFolderSummaryResult {
   fileCount: number;
   directoryCount: number;
   skippedDirectoryCount: number;
+  importedFileCount: number;
+  skippedFileCount: number;
+  failedFileCount: number;
+  unsupportedExtensions: string[];
   truncated: boolean;
   estimatedTokens: number;
   sampledFiles: WorkspaceFolderSummaryFile[];
@@ -1932,6 +3180,7 @@ export interface WorkspaceFolderSummaryResult {
 
 export interface WorkspaceFilePreviewRequest {
   workspacePath: string;
+  workspaceId?: string;
   path: string;
   maxBytes?: number;
   mode?: "auto" | "head" | "tail" | "outline";
@@ -1947,6 +3196,7 @@ export interface WorkspaceFilePreview {
   size: number;
   modifiedAt: string;
   truncated: boolean;
+  stale?: boolean;
   fileHash?: string;
   content?: string;
   dataUrl?: string;
@@ -1956,10 +3206,88 @@ export interface WorkspaceFilePreview {
   metadata?: Record<string, string | number | boolean | null>;
   mode?: "auto" | "head" | "tail" | "outline";
   outline?: string[];
+  presentationStory?: WorkspacePresentationStory;
+}
+
+export interface WorkspacePresentationStoryItem {
+  text: string;
+  page: number;
+}
+
+export interface WorkspacePresentationStoryQuality {
+  status: "passed" | "failed";
+  checkedAt: string;
+  sourcePageCount: number;
+  agendaItems: number;
+  storySections: number;
+  summaryPoints: number;
+  numericHighlights: number;
+  sourceMappedItems: number;
+  sourceMappingExpected: number;
+  numericSourceMatches: number;
+  numericSourceExpected: number;
+  checks: string[];
+}
+
+export interface WorkspacePresentationStory {
+  title: string;
+  agenda: WorkspacePresentationStoryItem[];
+  storySections: WorkspacePresentationStoryItem[];
+  summaryPoints: WorkspacePresentationStoryItem[];
+  numericHighlights: WorkspacePresentationStoryItem[];
+  quality: WorkspacePresentationStoryQuality;
+}
+
+export interface WorkspaceFileSaveAsRequest {
+  workspacePath: string;
+  path: string;
+  suggestedName?: string;
+  /** Deterministic packaged-test destination. Interactive product calls use the native save dialog. */
+  destinationPath?: string;
+}
+
+export interface WorkspaceFileSaveAsResult {
+  canceled: boolean;
+  sourcePath: string;
+  destinationPath?: string;
+  name: string;
+  extension: string;
+  size: number;
+  sourceHash: string;
+  destinationHash?: string;
+  integrityVerified: boolean;
+  message: string;
+}
+
+export interface WorkspaceFileWriteRequest {
+  workspacePath: string;
+  workspaceId?: string;
+  path: string;
+  content: string;
+  expectedHash: string;
+  mode?: "save" | "overwrite" | "save_as";
+  suggestedName?: string;
+  /** Deterministic packaged-test destination. Interactive product calls use the native save dialog. */
+  destinationPath?: string;
+}
+
+export interface WorkspaceFileWriteResult {
+  status: "saved" | "conflict" | "canceled";
+  path: string;
+  expectedHash: string;
+  currentHash: string;
+  savedHash?: string;
+  destinationPath?: string;
+  savedAs: boolean;
+  overwroteExternal: boolean;
+  externalModifiedAt?: string;
+  externalSize?: number;
+  message: string;
 }
 
 export interface WorkspaceGitDiffRequest {
   workspacePath: string;
+  workspaceId?: string;
   path?: string;
   maxChars?: number;
   staged?: boolean;
@@ -1972,10 +3300,12 @@ export interface WorkspaceGitDiffResult {
   diffHash?: string;
   truncated: boolean;
   staged?: boolean;
+  stale?: boolean;
 }
 
 export interface WorkspaceGitFileAtRefRequest {
   workspacePath: string;
+  workspaceId?: string;
   ref: string;
   path: string;
   maxBytes?: number;
@@ -1994,6 +3324,7 @@ export interface WorkspaceGitFileAtRefResult {
 
 export interface WorkspaceRevertFileRequest {
   workspacePath: string;
+  workspaceId?: string;
   path: string;
   expectedDiffHash: string;
 }
@@ -2009,6 +3340,7 @@ export interface WorkspaceRevertFileResult {
 
 export interface WorkspaceStageFileRequest {
   workspacePath: string;
+  workspaceId?: string;
   path: string;
   expectedDiffHash: string;
 }
@@ -2024,6 +3356,7 @@ export interface WorkspaceStageFileResult {
 
 export interface WorkspaceHunkActionRequest {
   workspacePath: string;
+  workspaceId?: string;
   path: string;
   expectedDiffHash: string;
   patch: string;
@@ -2044,6 +3377,7 @@ export interface WorkspaceCheckpointEntry {
   status: WorkspaceFileGitStatus;
   size: number;
   fileHash?: string;
+  versionPath?: string;
   stored: boolean;
   existed: boolean;
   skippedReason?: string;
@@ -2058,23 +3392,434 @@ export interface WorkspaceCheckpoint {
   changedFileCount: number;
   storedFileCount: number;
   skippedFileCount: number;
+  truncated?: boolean;
   entries: WorkspaceCheckpointEntry[];
+  kind?: "manual" | "agent_run_baseline" | "artifact_version";
+  runId?: string;
+  automatic?: boolean;
+  versionGroupId?: string;
+  versionPhase?: "before" | "after";
+  versionNumber?: number;
+  versionScope?: "workspace" | "explicit_paths";
+  changeReason?: string;
+  objectLabel?: string;
+  reviewStatus?: "pending" | "accepted" | "rejected";
+  reviewedAt?: string;
+  restoreCount?: number;
+  lastRestoredAt?: string;
+  lastRestoreOperationId?: string;
+  lastRestoreMode?: "whole" | "partial";
+  lastRestoredPaths?: string[];
+}
+
+export interface WorkspaceFileChangeEvent {
+  workspacePath: string;
+  changes: Array<{ path: string; type: "created" | "modified" | "deleted" }>;
+}
+
+export interface RemoteSshHost {
+  alias: string;
+  hostname: string;
+  user?: string;
+  port: number;
+  identityFiles: string[];
+  proxyJump?: string;
+}
+
+export interface RemoteSshConnectivityResult {
+  hostAlias: string;
+  state: "reachable" | "authentication_failed" | "host_key_failed" | "timeout" | "dns_failed" | "unreachable" | "failed";
+  elapsedMs: number;
+  message?: string;
+  remediation?: string;
+}
+
+export interface RemoteSshHostKey {
+  hostAlias: string;
+  hostname: string;
+  port: number;
+  algorithm: string;
+  fingerprint: string;
+}
+
+export interface RemoteSshHostActionResult {
+  hostAlias: string;
+  action: "connect" | "disconnect" | "reconnect" | "remove";
+  changed: boolean;
+}
+
+export type DesktopPortForwardStatus = "starting" | "active" | "paused" | "reconnecting" | "failed" | "removed";
+export interface DesktopPortForward {
+  portForwardId: string;
+  hostAlias: string;
+  workspaceId: string;
+  remoteHost: string;
+  remotePort: number;
+  bindAddress: string;
+  requestedLocalPort?: number;
+  localPort: number;
+  status: DesktopPortForwardStatus;
+  reconnectPolicy: "automatic" | "manual";
+  createdAt: string;
+  updatedAt: string;
+  lastError?: string;
+}
+export interface DesktopPortForwardCreateRequest {
+  hostAlias: string;
+  workspaceId: string;
+  remoteHost?: string;
+  remotePort: number;
+  localPort?: number;
+  reconnectPolicy?: "automatic" | "manual";
+  authorization: {
+    permissionGranted: true;
+    approvalId: string;
+    correlationId: string;
+    operationId: string;
+  };
+}
+
+export type RemoteWorkspaceConnectionState =
+  | "disconnected"
+  | "resolving"
+  | "authenticating"
+  | "connecting"
+  | "runtime_check"
+  | "ready"
+  | "reconnecting"
+  | "degraded"
+  | "failed";
+
+export interface RemoteSshWorkspaceDescriptor {
+  hostAlias: string;
+  canonicalPath: string;
+  workspaceId: string;
+  runtimeId?: string;
+  instanceId?: string;
+  connectionState: RemoteWorkspaceConnectionState;
+  localPort?: number;
+  gatewayVersion?: string;
+  protocolVersion?: number;
+  capabilities?: Record<string, number>;
+  error?: string;
+  failureKind?: "ssh" | "runtime";
+  mode?: string;
+  autoReconnect?: boolean;
+}
+
+export type PlatformAgentState =
+  | "ready"
+  | "native_api_unavailable"
+  | "requires_login"
+  | "forbidden"
+  | "error";
+
+export interface PlatformAgentStatus {
+  state: PlatformAgentState;
+  apiVersion: string | null;
+  capabilities: string[];
+  message: string;
+  lastCheckedAt: string | null;
+  lastSuccessfulSyncAt?: string | null;
+  cacheState?: "none" | "fresh" | "stale";
+}
+
+export type ManagerPresentationProgressPhase =
+  | "analyzing"
+  | "planning"
+  | "generating"
+  | "validating"
+  | "pausing"
+  | "paused"
+  | "resuming"
+  | "interrupted"
+  | "cancelling"
+  | "cancelled"
+  | "completed"
+  | "failed";
+
+export type ManagerPresentationWorkStage =
+  | "analyzing"
+  | "planning"
+  | "generating"
+  | "validating";
+
+export interface ManagerPresentationStageArtifact {
+  id: string;
+  requestId: string;
+  stage: "analysis" | "outline";
+  label: string;
+  summary: string;
+  path: string;
+  createdAt: string;
+  taskElapsedMs: number;
+  temporary: true;
+  immutable: true;
+}
+
+export interface ManagerPresentationGenerateRequest {
+  requestId: string;
+  workspacePath: string;
+  sourcePath: string;
+  audience?: ManagerPresentationAudience;
+  requirements?: string[];
+}
+
+export type ManagerPresentationAudience = "non_expert_managers" | "technical_experts";
+
+export interface ManagerPresentationAudienceProfile {
+  audience: ManagerPresentationAudience;
+  goldenFactIds: string[];
+  impactDecisionSignals: number;
+  technicalDetailSignals: number;
+  acronymOccurrences: number;
+  contentHash: string;
+}
+
+export interface ManagerPresentationRequirementUpdateRequest {
+  requestId: string;
+  text: string;
+}
+
+export interface ManagerPresentationRequirementUpdateResult {
+  requestId: string;
+  accepted: boolean;
+  activeStage?: ManagerPresentationWorkStage;
+  scope: "current_unfinished_stages" | "regenerate_required";
+  requirements: string[];
+  message: string;
+}
+
+export interface ManagerPresentationCancelRequest {
+  requestId: string;
+}
+
+export interface ManagerPresentationCancelResult {
+  requestId: string;
+  accepted: boolean;
+}
+
+export interface ManagerPresentationPauseRequest {
+  requestId: string;
+}
+
+export interface ManagerPresentationPauseResult {
+  requestId: string;
+  accepted: boolean;
+}
+
+export interface ManagerPresentationRecoveryRequest {
+  workspacePath: string;
+  sourcePath: string;
+}
+
+export interface ManagerPresentationRecoveryDecisionRequest extends ManagerPresentationRecoveryRequest {
+  requestId: string;
+  decision: "restart" | "abandon";
+}
+
+export interface ManagerPresentationRecoveryDecisionResult {
+  requestId: string;
+  decision: ManagerPresentationRecoveryDecisionRequest["decision"];
+  accepted: boolean;
+}
+
+export interface ManagerPresentationRecoveryResult {
+  requestId: string;
+  workspacePath: string;
+  sourcePath: string;
+  audience?: ManagerPresentationAudience;
+  phase: ManagerPresentationProgressPhase;
+  activeStage?: ManagerPresentationWorkStage;
+  progress: number;
+  message: string;
+  outputPath?: string;
+  requirements?: string[];
+  stageArtifacts?: ManagerPresentationStageArtifact[];
+  updatedAt: string;
+}
+
+export interface ManagerPresentationProgressEvent {
+  requestId: string;
+  phase: ManagerPresentationProgressPhase;
+  activeStage?: ManagerPresentationWorkStage;
+  progress: number;
+  message: string;
+  outputPath?: string;
+  failureRecovery?: DesktopFailureRecovery;
+  stageArtifacts?: ManagerPresentationStageArtifact[];
+  deliverySummary?: DesktopTaskDeliverySummary;
+}
+
+export interface ManagerPresentationQualityResult {
+  ok: boolean;
+  checks: Record<string, boolean>;
+  failures: string[];
+  mediaCount: number;
+  sourcePageCoverage: number;
+}
+
+export interface ManagerPresentationSourceLink {
+  slide: number;
+  role: string;
+  title: string;
+  sourcePages: number[];
+}
+
+export interface ManagerPresentationKeyConclusionEvidence {
+  id: string;
+  conclusion: string;
+  sourcePath: string;
+  sourceType: "pdf_page";
+  page: number;
+  evidenceText: string;
+  verified: boolean;
+  citations: DesktopCitationRecord[];
+  numericEvidence: DesktopNumericEvidence[];
+  uncertainty?: DesktopConclusionUncertainty;
+  trust: DesktopTrustAssessment;
+}
+
+export interface ManagerPresentationGenerateResult {
+  requestId: string;
+  audience: ManagerPresentationAudience;
+  sourcePath: string;
+  outputPath: string;
+  manifestPath: string;
+  slideCount: number;
+  speakerNotesCoverage: number;
+  sourcePageCoverage: number;
+  sourceLinks: ManagerPresentationSourceLink[];
+  keyConclusions: ManagerPresentationKeyConclusionEvidence[];
+  conclusionTraceabilityRate: number;
+  appliedRequirements: string[];
+  stageArtifacts: ManagerPresentationStageArtifact[];
+  deliverySummary: DesktopTaskDeliverySummary;
+  quality: ManagerPresentationQualityResult;
+  audienceProfile: ManagerPresentationAudienceProfile;
+}
+
+export interface PdfPageOpenRequest {
+  path: string;
+  page: number;
+}
+
+export interface PdfPageOpenResult {
+  ok: boolean;
+  path: string;
+  page: number;
+  viewerUrl: string;
+}
+
+export interface RemoteDirectoryEntry {
+  name: string;
+  path: string;
+  directory: boolean;
+  readable?: boolean;
+  writable?: boolean;
+  mode?: string;
+}
+
+export interface ConnectRemoteWorkspaceRequest {
+  hostAlias: string;
+  path: string;
+  trusted?: boolean;
+  name?: string;
+}
+
+export interface RemoteWorkspaceStatus extends RemoteSshWorkspaceDescriptor {
+  connected: boolean;
+  gatewayReady: boolean;
+}
+
+export interface RemoteSshDiagnosticReport {
+  generatedAt: string;
+  hosts: Array<{ hostAlias: string; state: RemoteWorkspaceConnectionState; phase: string; failureKind?: "ssh" | "runtime"; failureCategory?: "dns" | "host_key" | "authentication" | "transport" | "runtime"; workspaceCount: number; gatewayVersion?: string; protocolVersion?: number; reconnectAttempts: number; reconnectCount: number; ageMs: number; lastConnectedAt?: string; retryAt?: string; error?: string; events: Array<{ at: string; phase: string; elapsedMs?: number; message?: string }> }>;
+}
+
+export interface RemoteGatewayPreflight {
+  hostAlias: string;
+  operatingSystem: string;
+  architecture: string;
+  pythonVersion: string;
+  compatible: boolean;
+  issues: string[];
+  installationHint?: string;
+  gatewayInstalled: boolean;
+  gatewayVersion?: string;
+  currentRelease?: string;
+  previousRelease?: string;
+}
+
+export interface RemoteGatewayInstallRequest {
+  hostAlias: string;
+  action: "install" | "upgrade" | "rollback";
+  version?: string;
+  artifactPath?: string;
+  artifactSha256?: string;
+  artifactPublisher?: string;
+  artifactSignature?: string;
+}
+
+export interface RemoteGatewayInstallResult extends RemoteGatewayPreflight {
+  changed: boolean;
+  action: RemoteGatewayInstallRequest["action"];
+}
+
+export interface RemoteGatewayOperationEvent {
+  operationId: string;
+  hostAlias: string;
+  action: RemoteGatewayInstallRequest["action"];
+  state: "running" | "completed" | "failed" | "cancelled";
+  phase: "validating" | "uploading" | "verifying" | "installing" | "health-check" | "switching" | "completed";
+  progress: number;
+  message: string;
+}
+
+export interface RemoteHepaiWorker {
+  id: string;
+  name: string;
+  description?: string;
+  enabled: boolean;
+  callables?: string[];
+  status?: "available" | "unavailable" | "disabled";
 }
 
 export interface WorkspaceCheckpointCreateRequest {
   workspacePath: string;
+  workspaceId?: string;
   label?: string;
   maxFiles?: number;
   maxBytesPerFile?: number;
+  kind?: "manual" | "agent_run_baseline" | "artifact_version";
+  runId?: string;
+  automatic?: boolean;
+  versionGroupId?: string;
+  versionPhase?: "before" | "after";
+  versionNumber?: number;
+  versionScope?: "workspace" | "explicit_paths";
+  changeReason?: string;
+  objectLabel?: string;
+  includePaths?: string[];
 }
 
 export interface WorkspaceCheckpointRestoreRequest {
   workspacePath: string;
+  workspaceId?: string;
+  checkpointId: string;
+  operationId?: string;
+  includePaths?: string[];
+}
+
+export interface WorkspaceCheckpointAcceptRequest {
+  workspacePath: string;
+  workspaceId?: string;
   checkpointId: string;
 }
 
 export interface WorkspaceCheckpointPreviewRequest {
   workspacePath: string;
+  workspaceId?: string;
   checkpointId: string;
   maxFiles?: number;
   maxCharsPerFile?: number;
@@ -2155,6 +3900,8 @@ export interface CreateThreadRequest {
   kind: DesktopThread["kind"];
   title?: string;
   workspacePath?: string;
+  boundAgentId?: string;
+  boundAgentName?: string;
   fork?: DesktopThreadForkMetadata;
 }
 
@@ -2163,13 +3910,17 @@ export interface UpdateThreadRequest {
   kind?: DesktopThread["kind"];
   title?: string;
   workspacePath?: string;
+  boundAgentId?: string;
+  boundAgentName?: string;
   fork?: DesktopThreadForkMetadata;
   lastRunId?: string;
   lastRequestId?: string;
+  runtimeSessionId?: string;
   status?: DesktopThread["status"];
   messageCount?: number;
   pinned?: boolean;
   archived?: boolean;
+  archiveSource?: "opendrsai" | "codex";
   unread?: boolean;
 }
 
@@ -2177,10 +3928,12 @@ export interface AgentRunEvent {
   requestId: string;
   sessionId: string;
   runId: string;
-  type: "start" | "chunk" | "file_event" | "done" | "error" | "aborted";
+  type: "start" | "chunk" | "status" | "plan_adjustment" | "file_event" | "done" | "error" | "aborted";
   content?: string;
   error?: string;
   fileEvent?: AgentRunFileEvent;
+  planAdjustment?: DesktopTaskPlanAdjustment;
+  failureRecovery?: DesktopFailureRecovery;
 }
 
 export interface AgentRunFileEvent {
@@ -2202,6 +3955,119 @@ export interface SaveApiKeyResult {
 export interface PickDialogResult {
   canceled: boolean;
   paths: string[];
+  files?: PickedFileDescriptor[];
+}
+
+export type PickedFileCategory =
+  | "pdf"
+  | "word"
+  | "spreadsheet"
+  | "table"
+  | "image"
+  | "presentation"
+  | "text"
+  | "other";
+
+export interface PickedFileDescriptor {
+  path: string;
+  name: string;
+  extension: string;
+  category: PickedFileCategory;
+  sizeBytes?: number;
+  status: "ready" | "unsupported" | "unreadable";
+  message?: string;
+  diagnosticCode?: "large_file" | "corrupt_file" | "password_protected" | "unsupported_format" | "inspection_timeout" | "unreadable";
+  processingMode?: "full" | "bounded" | "blocked";
+  recoveryAction?: string;
+  sensitiveDataDetected?: boolean;
+  sensitiveKinds?: Array<"api_key" | "bearer_token" | "email" | "phone" | "user_secret">;
+  sensitiveValueCount?: number;
+  privacyNotice?: string;
+}
+
+export type MaterialRole =
+  | "previous_report"
+  | "latest_data"
+  | "result_image"
+  | "reference_material";
+
+export interface MaterialRoleAnalysisRequest {
+  paths: string[];
+}
+
+export interface MaterialRoleItem {
+  path: string;
+  name: string;
+  role: MaterialRole;
+  confidence: number;
+  reason: string;
+  suggestedUse: string;
+}
+
+export interface MaterialRoleAnalysisResult {
+  items: MaterialRoleItem[];
+  roleCounts: Record<MaterialRole, number>;
+  summary: string;
+}
+
+export type MaterialConsistencyFindingKind =
+  | "consensus"
+  | "source_conflict"
+  | "outdated_number"
+  | "chart_mismatch"
+  | "evidence_gap";
+
+export interface MaterialConsistencySource {
+  path: string;
+  name: string;
+  role: MaterialRole;
+  locator: string;
+  value: string;
+  excerpt: string;
+}
+
+export interface MaterialConsistencyFinding {
+  id: string;
+  kind: MaterialConsistencyFindingKind;
+  severity: "high" | "medium" | "info";
+  title: string;
+  explanation: string;
+  recommendation: string;
+  sources: MaterialConsistencySource[];
+}
+
+export interface MaterialConsistencyAnalysisRequest {
+  paths: string[];
+}
+
+export interface MaterialConsistencyAnalysisResult {
+  findings: MaterialConsistencyFinding[];
+  counts: Record<MaterialConsistencyFindingKind, number>;
+  filesAnalyzed: number;
+  summary: string;
+}
+
+export type MaterialQueryKind = "title" | "numeric" | "method" | "comparison" | "general";
+
+export interface MaterialQueryRequest {
+  paths: string[];
+  question: string;
+}
+
+export interface MaterialQueryCitation {
+  path: string;
+  name: string;
+  locator: string;
+  excerpt: string;
+}
+
+export interface MaterialQueryResult {
+  status: "answered" | "not_found";
+  queryKind: MaterialQueryKind;
+  answer: string;
+  confidence: number;
+  citations: MaterialQueryCitation[];
+  filesSearched: number;
 }
 
 export type DesktopIdeContextSource =
@@ -2253,6 +4119,8 @@ export interface TerminalCreateOptions {
   workspaceKey?: string;
   title?: string;
   shellProfile?: TerminalShellProfile;
+  remoteHostAlias?: string;
+  workspaceId?: string;
 }
 
 export type TerminalShellProfile =
@@ -2271,6 +4139,7 @@ export interface TerminalSessionInfo {
   title: string;
   workspaceKey: string;
   createdAt: string;
+  workspaceId?: string;
 }
 
 export interface TerminalDataEvent {
@@ -2284,9 +4153,34 @@ export interface TerminalExitEvent {
   signal?: number;
 }
 
+export type DesktopEditCommand = "undo" | "redo" | "cut" | "copy" | "paste" | "delete" | "selectAll";
+
 export interface DesktopApi {
+  recordDiagnostic(event: DiagnosticEventInput): Promise<DiagnosticEvent>;
+  getDiagnosticSnapshot(query?: DiagnosticQuery): Promise<DiagnosticSnapshot>;
+  clearDiagnostics(): Promise<DiagnosticClearResult>;
+  exportDiagnostics(): Promise<DiagnosticExportResult>;
+  onDiagnosticEvent(callback: (event: DiagnosticEvent) => void): () => void;
+  getDiagnosticSourceContext(request: DiagnosticSourceContextRequest): Promise<DiagnosticSourceContext>;
+  openDiagnosticSource(request: DiagnosticSourceOpenRequest): Promise<DiagnosticSourceOpenResult>;
+  updateDiagnosticIssue(request: DiagnosticIssueUpdateRequest): Promise<DiagnosticIssueUpdateResult>;
+  listInteractiveDebugTargets(): Promise<InteractiveDebugTarget[]>;
+  listInteractiveDebugSessions(): Promise<InteractiveDebugSession[]>;
+  startInteractiveDebugSession(request: InteractiveDebugStartRequest): Promise<InteractiveDebugSession>;
+  setInteractiveDebugBreakpoint(request: InteractiveDebugBreakpointRequest): Promise<InteractiveDebugSession>;
+  controlInteractiveDebugSession(request: InteractiveDebugControlRequest): Promise<InteractiveDebugSession>;
+  getInteractiveDebugScopes(sessionId: string, frameId: string): Promise<InteractiveDebugScope[]>;
+  getInteractiveDebugVariables(sessionId: string, reference: string): Promise<InteractiveDebugVariable[]>;
+  evaluateInteractiveDebugExpression(request: InteractiveDebugEvaluateRequest): Promise<InteractiveDebugEvaluateResult>;
+  onInteractiveDebugEvent(callback: (session: InteractiveDebugSession) => void): () => void;
+  getProductionDiagnosticStatus(): Promise<ProductionDiagnosticStatus>;
+  updateProductionDiagnosticSettings(patch: Partial<ProductionDiagnosticSettings>): Promise<ProductionDiagnosticStatus>;
+  previewDiagnosticPackage(): Promise<DiagnosticPackagePreview>;
+  exportProductionDiagnosticPackage(): Promise<DiagnosticPackageResult>;
+  importProductionDiagnosticPackage(): Promise<DiagnosticPackageResult | null>;
   getAuthSession(): Promise<AuthSession>;
   onAuthSessionInvalidated(callback: () => void): () => void;
+  getA5ServiceGuidanceScenario(): Promise<DesktopA5ServiceGuidanceScenario | null>;
   login(request: LoginRequest): Promise<LoginResult>;
   startOidcLogin(request?: { rememberMe?: boolean }): Promise<LoginResult>;
   cancelOidcLogin(): Promise<boolean>;
@@ -2295,28 +4189,107 @@ export interface DesktopApi {
   pollDesktopSsoLogin(deviceCode: string): Promise<DesktopSsoPollResult>;
   cancelDesktopSsoLogin(deviceCode: string): Promise<boolean>;
   logout(options?: LogoutOptions): Promise<{ ok: boolean; message: string }>;
+  previewLocalDataCleanup(scope: DesktopDataCleanupScope): Promise<DesktopDataCleanupPreview>;
+  clearLocalData(request: DesktopDataCleanupRequest): Promise<DesktopDataCleanupResult>;
   refreshAuthSession(): Promise<AuthSession>;
   bootstrapDesktop(): Promise<DesktopBootstrapResult>;
   getHealth(): Promise<DesktopHealth>;
   getInstallStatus(): Promise<InstallStatus>;
   getGatewayStatus(): Promise<GatewayStatus>;
+  getCodexBackendStatus(refresh?: boolean): Promise<CodexBackendStatus>;
+  startCodexBackendLogin(type?: "chatgpt" | "chatgptDeviceCode"): Promise<CodexBackendLogin>;
+  cancelCodexBackendLogin(loginId: string): Promise<boolean>;
+  logoutCodexBackend(): Promise<boolean>;
   listProviderUsageAnalytics(): Promise<DesktopProviderUsageAnalyticsRecord[]>;
   listProviderErrorAnalytics(): Promise<DesktopProviderErrorAnalyticsRecord[]>;
   checkForUpdates(): Promise<UpdateStatus>;
+  downloadUpdate(): Promise<UpdateStatus>;
+  cancelUpdate(): Promise<UpdateStatus>;
+  installUpdate(): Promise<UpdateStatus>;
   startInstall(options?: StartInstallOptions): Promise<void>;
   cancelInstall(): Promise<boolean>;
+  copyTextToClipboard(text: string): Promise<boolean>;
+  performEditCommand(command: DesktopEditCommand): Promise<boolean>;
+  openLogFolder(): Promise<string>;
   startGateway(): Promise<boolean>;
   stopGateway(): Promise<boolean>;
+  listSshHosts(): Promise<RemoteSshHost[]>;
+  diagnoseSshHost(hostAlias: string): Promise<RemoteSshConnectivityResult>;
+  inspectSshHostKeys(hostAlias: string): Promise<RemoteSshHostKey[]>;
+  testSshHost(hostAlias: string): Promise<boolean>;
+  approveSshHostKey(hostAlias: string): Promise<boolean>;
+  connectSshHost(hostAlias: string): Promise<RemoteSshHostActionResult>;
+  disconnectSshHost(hostAlias: string): Promise<RemoteSshHostActionResult>;
+  reconnectSshHost(hostAlias: string): Promise<RemoteSshHostActionResult>;
+  removeSshHost(hostAlias: string): Promise<RemoteSshHostActionResult>;
+  listPortForwards(filter?: { hostAlias?: string; workspaceId?: string }): Promise<DesktopPortForward[]>;
+  createPortForward(request: DesktopPortForwardCreateRequest): Promise<DesktopPortForward>;
+  pausePortForward(id: string): Promise<DesktopPortForward>;
+  resumePortForward(id: string): Promise<DesktopPortForward>;
+  removePortForward(id: string): Promise<boolean>;
+  listRemoteDirectories(hostAlias: string, path?: string): Promise<RemoteDirectoryEntry[]>;
+  connectRemoteWorkspace(request: ConnectRemoteWorkspaceRequest): Promise<WorkspaceProject>;
+  disconnectRemoteWorkspace(workspaceId: string): Promise<boolean>;
+  getRemoteWorkspaceStatus(workspaceId: string): Promise<RemoteWorkspaceStatus>;
+  listRemoteThreads(workspaceId: string): Promise<DesktopThread[]>;
+  preflightRemoteGateway(hostAlias: string): Promise<RemoteGatewayPreflight>;
+  getRemoteSshDiagnosticReport(): Promise<RemoteSshDiagnosticReport>;
+  installRemoteGateway(request: RemoteGatewayInstallRequest): Promise<RemoteGatewayInstallResult>;
+  requestRemoteGatewayInstallApproval(
+    request: RemoteGatewayInstallRequest,
+  ): Promise<DesktopApprovalProposalResult>;
+  cancelRemoteGatewayOperation(hostAlias: string): Promise<boolean>;
+  onRemoteGatewayOperation(callback: (event: RemoteGatewayOperationEvent) => void): () => void;
+  listRemoteHepaiWorkers(workspaceId: string): Promise<RemoteHepaiWorker[]>;
+  setRemoteHepaiWorkerEnabled(workspaceId: string, workerId: string, enabled: boolean): Promise<boolean>;
+  onRemoteWorkspaceStatus(callback: (status: RemoteWorkspaceStatus) => void): () => void;
   listWorkspaces(): Promise<WorkspaceProject[]>;
   createWorkspace(request: CreateWorkspaceRequest): Promise<WorkspaceProject>;
   updateWorkspace(request: UpdateWorkspaceRequest): Promise<WorkspaceProject>;
   deleteWorkspace(id: string): Promise<boolean>;
-  getWorkspaceContextOverview(workspacePath: string): Promise<WorkspaceContextOverview>;
+  getWorkspaceContextOverview(workspacePath: string, workspaceId?: string): Promise<WorkspaceContextOverview>;
   listWorkspaceFiles(request: WorkspaceFileTreeRequest): Promise<WorkspaceFileTreeResult>;
+  onWorkspaceFileChanges(callback: (event: WorkspaceFileChangeEvent) => void): () => void;
+  generateManagerPresentation(
+    request: ManagerPresentationGenerateRequest,
+  ): Promise<ManagerPresentationGenerateResult>;
+  cancelManagerPresentation(
+    request: ManagerPresentationCancelRequest,
+  ): Promise<ManagerPresentationCancelResult>;
+  pauseManagerPresentation(
+    request: ManagerPresentationPauseRequest,
+  ): Promise<ManagerPresentationPauseResult>;
+  resumeManagerPresentation(
+    request: ManagerPresentationPauseRequest,
+  ): Promise<ManagerPresentationPauseResult>;
+  updateManagerPresentationRequirement(
+    request: ManagerPresentationRequirementUpdateRequest,
+  ): Promise<ManagerPresentationRequirementUpdateResult>;
+  getManagerPresentationRecovery(
+    request: ManagerPresentationRecoveryRequest,
+  ): Promise<ManagerPresentationRecoveryResult | null>;
+  resolveManagerPresentationRecovery(
+    request: ManagerPresentationRecoveryDecisionRequest,
+  ): Promise<ManagerPresentationRecoveryDecisionResult>;
+  onManagerPresentationProgress(
+    callback: (event: ManagerPresentationProgressEvent) => void,
+  ): () => void;
   summarizeWorkspaceFolder(
     request: WorkspaceFolderSummaryRequest,
   ): Promise<WorkspaceFolderSummaryResult>;
+  analyzeMaterialRoles(
+    request: MaterialRoleAnalysisRequest,
+  ): Promise<MaterialRoleAnalysisResult>;
+  analyzeMaterialConsistency(
+    request: MaterialConsistencyAnalysisRequest,
+  ): Promise<MaterialConsistencyAnalysisResult>;
+  queryMaterials(request: MaterialQueryRequest): Promise<MaterialQueryResult>;
   previewWorkspaceFile(request: WorkspaceFilePreviewRequest): Promise<WorkspaceFilePreview>;
+  saveWorkspaceFileAs(request: WorkspaceFileSaveAsRequest): Promise<WorkspaceFileSaveAsResult>;
+  writeWorkspaceFile(request: WorkspaceFileWriteRequest): Promise<WorkspaceFileWriteResult>;
+  applyAnomalyDecision(
+    request: DesktopAnomalyDecisionApplyRequest,
+  ): Promise<DesktopAnomalyDecisionApplyResult>;
   getWorkspaceGitDiff(request: WorkspaceGitDiffRequest): Promise<WorkspaceGitDiffResult>;
   getWorkspaceGitFileAtRef(
     request: WorkspaceGitFileAtRefRequest,
@@ -2325,9 +4298,12 @@ export interface DesktopApi {
   stageWorkspaceFile(request: WorkspaceStageFileRequest): Promise<WorkspaceStageFileResult>;
   stageWorkspaceHunk(request: WorkspaceHunkActionRequest): Promise<WorkspaceHunkActionResult>;
   revertWorkspaceHunk(request: WorkspaceHunkActionRequest): Promise<WorkspaceHunkActionResult>;
-  listWorkspaceCheckpoints(workspacePath: string): Promise<WorkspaceCheckpoint[]>;
+  listWorkspaceCheckpoints(workspacePath: string, workspaceId?: string): Promise<WorkspaceCheckpoint[]>;
   createWorkspaceCheckpoint(
     request: WorkspaceCheckpointCreateRequest,
+  ): Promise<WorkspaceCheckpoint>;
+  acceptWorkspaceCheckpoint(
+    request: WorkspaceCheckpointAcceptRequest,
   ): Promise<WorkspaceCheckpoint>;
   previewWorkspaceCheckpoint(
     request: WorkspaceCheckpointPreviewRequest,
@@ -2336,11 +4312,15 @@ export interface DesktopApi {
     request: WorkspaceCheckpointRestoreRequest,
   ): Promise<WorkspaceCheckpointRestoreResult>;
   listThreads(): Promise<DesktopThread[]>;
-  listAgents(): Promise<DesktopAgent[]>;
+  listAgents(options?: DesktopAgentListOptions): Promise<DesktopAgent[]>;
+  setDefaultAgent(agentId: string): Promise<DesktopAgentPreferenceResult>;
+  recordAgentUsage(agentId: string): Promise<DesktopAgentPreferenceResult>;
+  getPlatformAgentStatus(): Promise<PlatformAgentStatus>;
   getMyDrSaiConfig(workspacePath?: string): Promise<MyDrSaiConfig>;
   updateMyDrSaiConfig(request: UpdateMyDrSaiConfigRequest): Promise<MyDrSaiConfig>;
   createThread(request: CreateThreadRequest): Promise<DesktopThread>;
   updateThread(request: UpdateThreadRequest): Promise<DesktopThread>;
+  setThreadArchived(request: { threadId: string; archived: boolean }): Promise<DesktopThread>;
   getThreadSnapshot(threadId: string): Promise<DesktopThreadSnapshot | null>;
   searchThreadMessages(
     request: DesktopThreadContentSearchRequest,
@@ -2349,8 +4329,12 @@ export interface DesktopApi {
   prepareForkWorktree(
     request: DesktopForkWorktreeRequest,
   ): Promise<DesktopForkWorktreeResult>;
+  listWorktrees(request: DesktopWorktreeListRequest): Promise<DesktopWorktreeSummary[]>;
+  listWorktreeEvents(request: DesktopWorktreeEventRequest): Promise<DesktopWorktreeEventBatch>;
   startChat(request: ChatRequest): Promise<string>;
+  recoverChatRun(request: ChatRunRecoveryRequest): Promise<ChatEvent[]>;
   abortChat(requestId: string): Promise<boolean>;
+  respondChatInput(requestId: string, response: string | Record<string, unknown>): Promise<boolean>;
   startAgentRun(
     request: AgentRunRequest,
   ): Promise<{ requestId: string; sessionId: string; runId: string }>;
@@ -2360,12 +4344,30 @@ export interface DesktopApi {
   ): Promise<DesktopVoiceTranscriptionStartResult>;
   cancelVoiceTranscription(requestId: string): Promise<boolean>;
   getVoiceRuntimeStatus(): Promise<DesktopVoiceRuntimeStatus>;
+  getStreamingVoiceCapabilities(): Promise<DesktopStreamingVoiceCapabilities>;
+  startStreamingVoiceTranscription(
+    request: DesktopStreamingVoiceStartRequest,
+  ): Promise<DesktopStreamingVoiceStartResult>;
+  sendStreamingVoiceAudioChunk(chunk: DesktopStreamingVoiceAudioChunk): boolean;
+  stopStreamingVoiceTranscription(sessionId: string, reason?: "provider" | "local_vad" | "manual"): Promise<boolean>;
+  cancelStreamingVoiceTranscription(sessionId: string): Promise<boolean>;
+  onStreamingVoiceTranscriptionEvent(
+    callback: (event: DesktopStreamingVoiceTranscriptionEvent) => void,
+  ): () => void;
   onVoiceTranscriptionEvent(
     callback: (event: DesktopVoiceTranscriptionEvent) => void,
   ): () => void;
   writeVoiceTranscriptHandoff(
     request: DesktopVoiceTranscriptHandoffRequest,
   ): Promise<DesktopVoiceTranscriptHandoffResult>;
+  startVoiceSynthesis(
+    request: DesktopVoiceSynthesisRequest,
+  ): Promise<DesktopVoiceSynthesisStartResult>;
+  cancelVoiceSynthesis(requestId: string): Promise<boolean>;
+  getVoiceSynthesisRuntimeStatus(): Promise<DesktopVoiceSynthesisRuntimeStatus>;
+  onVoiceSynthesisEvent(
+    callback: (event: DesktopVoiceSynthesisEvent) => void,
+  ): () => void;
   saveApiKey(apiKey: string, defaultModel?: string): Promise<SaveApiKeyResult>;
   pickFiles(): Promise<PickDialogResult>;
   pickFolder(): Promise<PickDialogResult>;
@@ -2408,6 +4410,22 @@ export interface DesktopApi {
   clearProjectMemory(
     request: DesktopProjectMemoryClearRequest,
   ): Promise<DesktopProjectMemoryClearResult>;
+  listTeamMemory(
+    request?: DesktopTeamMemoryListRequest,
+  ): Promise<DesktopTeamMemoryEntry[]>;
+  addTeamMemory(
+    request: DesktopTeamMemoryAddRequest,
+  ): Promise<DesktopTeamMemoryEntry>;
+  deleteTeamMemory(
+    request: DesktopTeamMemoryDeleteRequest,
+  ): Promise<DesktopTeamMemoryDeleteResult>;
+  listUserPreferences(): Promise<DesktopUserPreference[]>;
+  upsertUserPreference(
+    request: DesktopUserPreferenceUpsertRequest,
+  ): Promise<DesktopUserPreference>;
+  deleteUserPreference(
+    request: DesktopUserPreferenceDeleteRequest,
+  ): Promise<DesktopUserPreferenceDeleteResult>;
   listCustomCommands(
     request: DesktopCustomCommandListRequest,
   ): Promise<DesktopCustomCommand[]>;
@@ -2451,12 +4469,44 @@ export interface DesktopApi {
   listBackgroundTasks(
     request?: DesktopBackgroundTaskListRequest,
   ): Promise<DesktopBackgroundTask[]>;
+  createShare(request: DesktopShareCreateRequest): Promise<DesktopShareManifest>;
+  inspectShare(request: DesktopShareInspectionRequest): Promise<DesktopShareInspectionResult>;
+  updateSharePermission(request: DesktopSharePermissionUpdateRequest): Promise<DesktopShareManifest>;
+  revokeShare(request: DesktopShareRevokeRequest): Promise<DesktopShareRevocationResult>;
+  inspectShareVersion(request: DesktopShareVersionInspectionRequest): Promise<DesktopShareVersionInspection>;
+  publishShareVersion(request: DesktopShareVersionPublishRequest): Promise<DesktopShareVersionPublishResult>;
+  listShareComments(request: DesktopShareCommentListRequest): Promise<DesktopShareComment[]>;
+  addShareComment(request: DesktopShareCommentAddRequest): Promise<DesktopShareComment>;
+  previewShareCommentTask(request: DesktopShareCommentTaskPreviewRequest): Promise<DesktopShareCommentTaskPreview>;
+  createShareCommentTask(request: DesktopShareCommentTaskCreateRequest): Promise<DesktopShareCommentTask>;
+  updateShareCommentTask(request: DesktopShareCommentTaskUpdateRequest): Promise<DesktopShareCommentTask>;
+  completeShareCommentTask(request: DesktopShareCommentTaskCompleteRequest): Promise<DesktopShareCommentTask>;
+  listShareCommentTasks(request?: DesktopShareCommentTaskListRequest): Promise<DesktopShareCommentTask[]>;
+  continueSharedTask(request: DesktopShareContinuationRequest): Promise<DesktopShareContinuationResult>;
+  listShareAudit(request: DesktopShareAuditListRequest): Promise<DesktopShareAuditEntry[]>;
+  listIncomingShares(): Promise<DesktopShareManifest[]>;
+  listOutgoingShares(): Promise<DesktopShareManifest[]>;
+  openSharedObject(request: DesktopSharedObjectOpenRequest): Promise<DesktopSharedObjectOpenResult>;
+  downloadSharedArtifact(request: DesktopSharedArtifactDownloadRequest): Promise<DesktopSharedArtifactDownloadResult>;
   enqueueBackgroundTask(
     request: DesktopBackgroundTaskEnqueueRequest,
   ): Promise<DesktopBackgroundTask>;
   updateBackgroundTask(
     request: DesktopBackgroundTaskUpdateRequest,
   ): Promise<DesktopBackgroundTask>;
+  listReusableTasks(): Promise<DesktopReusableTask[]>;
+  saveReusableTask(
+    request: DesktopReusableTaskSaveRequest,
+  ): Promise<DesktopReusableTask>;
+  prepareReusableTaskRun(
+    request: DesktopReusableTaskRunPrepareRequest,
+  ): Promise<DesktopReusableTaskRunRecipe>;
+  setCompletionNotificationPreference(
+    preference: CompletionNotificationPreference,
+  ): Promise<CompletionNotificationPreference>;
+  onCompletionNotificationClick(
+    callback: (event: CompletionNotificationClickEvent) => void,
+  ): () => void;
   listScheduledTasks(
     request?: DesktopScheduledTaskListRequest,
   ): Promise<DesktopScheduledTask[]>;
@@ -2466,6 +4516,9 @@ export interface DesktopApi {
   updateScheduledTask(
     request: DesktopScheduledTaskUpdateRequest,
   ): Promise<DesktopScheduledTask>;
+  deleteScheduledTask(
+    request: DesktopScheduledTaskDeleteRequest,
+  ): Promise<DesktopScheduledTaskDeleteResult>;
   runDueScheduledTasks(
     request?: DesktopScheduledTaskRunRequest,
   ): Promise<DesktopScheduledTaskRunResult>;
@@ -2532,10 +4585,11 @@ export interface DesktopApi {
   approveBrowserTaskAction(request: BrowserTaskApprovalRequest): Promise<boolean>;
   openExternal(url: string): Promise<void>;
   openPath(path: string): Promise<string>;
+  openPdfPage(request: PdfPageOpenRequest): Promise<PdfPageOpenResult>;
   getIdeContext(workspacePath: string): Promise<DesktopIdeContextSnapshot>;
   getFileIcon(path: string): Promise<DesktopFileIconResult>;
   createTerminal(options?: TerminalCreateOptions): Promise<TerminalSessionInfo>;
-  listTerminalSessions(workspaceKey?: string): Promise<TerminalSessionInfo[]>;
+  listTerminalSessions(workspaceKey?: string, workspaceId?: string): Promise<TerminalSessionInfo[]>;
   getTerminalBuffer(id: string): Promise<string>;
   renameTerminal(
     id: string,

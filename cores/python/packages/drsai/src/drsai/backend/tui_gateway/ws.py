@@ -1,4 +1,4 @@
-"""WebSocket attach mode for DrSai TUI Gateway.
+"""WebSocket attach mode for OpenDrSai TUI Gateway.
 
 Allows remote clients to connect to a running gateway via WebSocket instead of
 stdio. The gateway process spawns a small FastAPI server on a local port and
@@ -67,7 +67,7 @@ class WebSocketTransport(Transport):
 
 def _create_app() -> FastAPI:
     """Create the FastAPI app with a single /attach WebSocket endpoint."""
-    app = FastAPI(title="DrSai TUI Gateway WebSocket")
+    app = FastAPI(title="OpenDrSai TUI Gateway WebSocket")
 
     # Allow CORS for local web clients (optional, but helpful for debugging)
     app.add_middleware(

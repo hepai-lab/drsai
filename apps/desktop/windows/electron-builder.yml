@@ -28,6 +28,8 @@ extraResources:
     to: install/install.ps1
   - from: build/icon.png
     to: icon.png
+  - from: resources/update
+    to: update
 win:
   executableName: OpenDrSai
   icon: build/icon.ico

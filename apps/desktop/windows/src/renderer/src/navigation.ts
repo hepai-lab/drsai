@@ -3,6 +3,7 @@ export const MENU_IDS = {
   myAgents: "my_agents",
   agentSquare: "agent_square",
   savedPlan: "saved_plan",
+  results: "results",
   skillsSquare: "skills_square",
   plugins: "plugins",
   library: "library",
@@ -27,7 +28,8 @@ export type AppLanguage = "en" | "zh";
 
 export const MENU_LABELS: Record<AppLanguage, Record<NavId, string>> = {
   zh: {
-    [MENU_IDS.approvalCenter]: "Approval Center",
+    [MENU_IDS.results]: "成果库",
+    [MENU_IDS.approvalCenter]: "审批中心",
     [MENU_IDS.currentSession]: "当前会话",
     [MENU_IDS.myAgents]: "我的智能体",
     [MENU_IDS.agentSquare]: "智能体",
@@ -43,6 +45,7 @@ export const MENU_LABELS: Record<AppLanguage, Record<NavId, string>> = {
     [MENU_IDS.userManagement]: "用户管理",
   },
   en: {
+    [MENU_IDS.results]: "Results Library",
     [MENU_IDS.currentSession]: "Chat",
     [MENU_IDS.myAgents]: "My Agents",
     [MENU_IDS.agentSquare]: "Agents",
@@ -95,15 +98,26 @@ const navDefinitions: Array<{
 }> = [
   {
     id: "chat",
-    items: [{ id: MENU_IDS.currentSession, enabled: true }],
+    items: [
+      { id: MENU_IDS.currentSession, enabled: true },
+      { id: MENU_IDS.results, enabled: true },
+    ],
+  },
+  {
+    id: "agents",
+    items: [
+      { id: MENU_IDS.agentSquare, enabled: true },
+      { id: MENU_IDS.skillsSquare, enabled: true },
+      { id: MENU_IDS.plugins, enabled: false },
+    ],
   },
   {
     id: "workspace",
     items: [
       { id: MENU_IDS.library, enabled: false },
-      { id: MENU_IDS.approvalCenter, enabled: true },
-      { id: MENU_IDS.usageAnalytics, enabled: true },
-      { id: MENU_IDS.channels, enabled: true },
+      { id: MENU_IDS.approvalCenter, enabled: false },
+      { id: MENU_IDS.usageAnalytics, enabled: false },
+      { id: MENU_IDS.channels, enabled: false },
       { id: MENU_IDS.logs, enabled: false },
     ],
   },

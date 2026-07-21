@@ -62,7 +62,7 @@ def make_gfs_tools(email: str | None) -> list[Callable[..., Any]]:
     """生成一组绑定到 ``email`` 的 GFS 工具函数.
 
     Args:
-        email: 用户邮箱（DrSai user_id）。``None`` / 空串时返回空列表（不挂工具）.
+        email: 用户邮箱（OpenDrSai user_id）。``None`` / 空串时返回空列表（不挂工具）.
 
     Returns:
         可直接传给 ``DrSaiAssistant(tools=[...])`` 的函数列表.

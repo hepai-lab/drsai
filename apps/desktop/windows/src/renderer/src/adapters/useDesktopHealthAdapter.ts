@@ -16,6 +16,9 @@ export interface DesktopHealthAdapter {
   startGateway: () => Promise<void>;
   stopGateway: () => Promise<void>;
   checkUpdates: () => Promise<void>;
+  downloadUpdate: () => Promise<void>;
+  cancelUpdate: () => Promise<void>;
+  installUpdate: () => Promise<void>;
   saveApiKey: () => Promise<void>;
 }
 
@@ -155,6 +158,40 @@ export function useDesktopHealthAdapter(language: "en" | "zh" = "zh"): DesktopHe
     }
   }
 
+  async function downloadUpdate(): Promise<void> {
+    setBusy(true);
+    setActionMessage(null);
+    try {
+      const update = await desktopApi.downloadUpdate();
+      setHealth((current) => current ? { ...current, update } : { ...createFallbackHealth(), update });
+      setActionMessage(update.canInstall
+        ? zh ? "更新已下载并验证，可以重启安装。" : "The update is verified and ready to install."
+        : update.error ?? null);
+    } catch (error) {
+      setActionMessage(error instanceof Error ? error.message : zh ? "更新下载失败。" : "Update download failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function cancelUpdate(): Promise<void> {
+    const update = await desktopApi.cancelUpdate();
+    setHealth((current) => current ? { ...current, update } : { ...createFallbackHealth(), update });
+    setBusy(false);
+  }
+
+  async function installUpdate(): Promise<void> {
+    setBusy(true);
+    setActionMessage(zh ? "正在退出并安装更新…" : "Restarting to install the update…");
+    try {
+      const update = await desktopApi.installUpdate();
+      setHealth((current) => current ? { ...current, update } : { ...createFallbackHealth(), update });
+    } catch (error) {
+      setActionMessage(error instanceof Error ? error.message : zh ? "无法安装更新。" : "Unable to install update.");
+      setBusy(false);
+    }
+  }
+
   async function saveApiKey(): Promise<void> {
     setBusy(true);
     try {
@@ -185,6 +222,9 @@ export function useDesktopHealthAdapter(language: "en" | "zh" = "zh"): DesktopHe
     startGateway,
     stopGateway,
     checkUpdates,
+    downloadUpdate,
+    cancelUpdate,
+    installUpdate,
     saveApiKey,
   };
 }
@@ -237,13 +277,22 @@ export function createFallbackHealth(): DesktopHealth {
     lastLog: "",
   };
   const update = {
+    phase: "failed" as const,
     checking: false,
     available: false,
     downloading: false,
     downloaded: false,
     progress: null,
     version: null,
+    currentVersion: "0.0.0",
+    mandatory: false,
+    releaseNotesUrl: null,
+    canDownload: false,
+    canInstall: false,
+    canCancel: false,
+    errorCode: "status-unavailable",
     error: "状态不可用。",
+    recovery: null,
   };
   return {
     installed: false,

@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/hepai-lab/drsai/schemas/runtime-update-v1.json",
+  "title": "OpenDrSai Windows runtime update manifest",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "version",
+    "channel",
+    "publishedAt",
+    "minimumUpdaterVersion",
+    "mandatory",
+    "requireSignature",
+    "runtime"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$" },
+    "channel": { "enum": ["stable", "beta", "dev"] },
+    "publishedAt": { "type": "string", "format": "date-time" },
+    "minimumUpdaterVersion": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$" },
+    "mandatory": { "type": "boolean" },
+    "requireSignature": { "type": "boolean" },
+    "runtime": {
+      "type": "object",
+      "required": ["url", "sizeBytes", "sha256"],
+      "properties": {
+        "url": { "type": "string", "format": "uri", "pattern": "^https://" },
+        "sizeBytes": { "type": "integer", "minimum": 1 },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      },
+      "additionalProperties": false
+    },
+    "releaseNotesUrl": { "type": ["string", "null"], "format": "uri" }
+  },
+  "additionalProperties": false
+}

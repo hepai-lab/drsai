@@ -23,7 +23,7 @@ DEFAULT_USERNAME = "anonymous"  # for 创建assistant和获取assistant
 
 ## Paths
 REPO_ROOT = f'{here.parent.parent}'  # 项目根目录
-FS_DIR = f'{Path.home()}/.{APPNAME}'  # 文件系统根目录 (~/.drsai)
+FS_DIR = str(Path(os.environ.get("DRSAI_HOME", str(Path.home() / f".{APPNAME}"))).expanduser())
 
 # --- Legacy / fallback dirs (kept for backward compatibility) ---
 RUNS_DIR = f'{FS_DIR}/runs'  # 旧的 runs 兜底目录

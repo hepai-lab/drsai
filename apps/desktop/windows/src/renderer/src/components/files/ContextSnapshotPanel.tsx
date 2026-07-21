@@ -53,7 +53,7 @@ export function ContextSnapshotPanel({
       {snapshots.length === 0 ? (
         <p>
           {zh
-            ? "加入文件、目录、指令或 diff 后，会在这里记录发送给 Agent 的精确上下文集合。"
+            ? "加入文件、目录、指令或差异后，会在这里记录交给智能体的完整材料清单。"
             : "Attaching files, folders, instructions, or diffs records the exact context set here."}
         </p>
       ) : (

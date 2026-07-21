@@ -156,7 +156,7 @@ export function runChatCommand(
     case "plan":
       return describeModeCommand("plan", "Plan mode", "Use this chat to ask for an implementation plan before execution.", command.args);
     case "goal":
-      return describeModeCommand("goal", "Goal mode", "Track a concrete objective and completion criteria in the current thread.", command.args);
+      return describeGoalCommand(command.args, context);
     case "diff":
       return describeContextCommand("Diff context", "Open the Files panel and add workspace or file diff context before sending.", context);
     case "review":
@@ -176,7 +176,7 @@ export function runChatCommand(
     case "mention":
       return describeMentionCommand(command.args, context);
     case "compact":
-      return describeModeCommand("compact", "Compact mode", "Ask the model to summarize visible context and preserve reusable decisions before continuing.", command.args);
+      return describeCompactCommand(command.args, context);
     case "memory":
       return describeMemoryCommand(command.args, context);
     case "skills":
@@ -417,6 +417,34 @@ function describeMemoryCommand(args: string, context: ChatCommandContext): ChatC
   };
 }
 
+function describeCompactCommand(args: string, context: ChatCommandContext): ChatCommandResult {
+  const trimmed = args.trim();
+  if (/^(?:save|persist|memory)(?:\s|$)/i.test(trimmed)) {
+    return {
+      action: createRuntimeModeAction(
+        "compact",
+        "Compact mode",
+        "Prepare visible context compaction and save the reviewed local summary to durable project memory.",
+        trimmed.replace(/^(?:save|persist|memory)\s*/i, ""),
+      ),
+      title: "Compact memory handoff",
+      content: [
+        "A bounded local summary will be prepared from visible chat only.",
+        context.workspacePath
+          ? "Submitting this command saves the compact summary as project memory with a `compact-summary:` marker."
+          : "Select a workspace before saving compact summaries to project memory.",
+        "No provider call, hidden transcript pruning, external connector, filesystem mutation outside project memory, or network call is performed.",
+      ].join("\n"),
+    };
+  }
+  return describeModeCommand(
+    "compact",
+    "Compact mode",
+    "Ask the model to summarize visible context and preserve reusable decisions before continuing.",
+    args,
+  );
+}
+
 function describeModelCommand(args: string, context: ChatCommandContext): ChatCommandResult {
   const requested = args.trim();
   if (!requested) {
@@ -529,6 +557,76 @@ function describeCommitCommand(args: string): ChatCommandResult {
   };
 }
 
+function describeGoalCommand(args: string, context: ChatCommandContext): ChatCommandResult {
+  const trimmed = args.trim();
+  if (!context.workspacePath) {
+    return {
+      title: "Goal state",
+      content: "Select a workspace before setting, listing, completing, or clearing durable goals.",
+    };
+  }
+  if (/^(?:set|start|track)\s+/i.test(trimmed)) {
+    return {
+      action: createRuntimeModeAction(
+        "goal",
+        "Goal mode",
+        "Track a concrete objective and completion criteria in durable workspace goal memory.",
+        trimmed.replace(/^(?:set|start|track)\s+/i, ""),
+      ),
+      title: "Goal state set",
+      content: [
+        "The goal will be saved as durable workspace project memory with a `goal:` marker.",
+        "Active goals are injected into later natural-language chat as explicit project memory context.",
+        "Use `/goal done <index|id>` or `/goal clear <index|id>` when the objective is complete or no longer relevant.",
+      ].join("\n"),
+    };
+  }
+  if (/^(?:done|complete)\s+/i.test(trimmed)) {
+    return {
+      title: "Goal state complete",
+      content: [
+        "The selected durable goal will be marked with a `goal-done:` marker after this local command runs.",
+        "Completed goals remain reviewable project memory for later retrospectives.",
+      ].join("\n"),
+    };
+  }
+  if (/^(?:clear|delete|remove)\s+/i.test(trimmed)) {
+    return {
+      title: "Goal state clear",
+      content: "The selected durable goal will be removed from workspace project memory after this local command runs.",
+    };
+  }
+  const goals = listGoalMemoryEntries(context.projectMemory ?? []);
+  const lines = goals.length
+    ? goals.slice(0, 8).map((entry, index) => `${index + 1}. ${formatGoalMemoryContent(entry.content)}`)
+    : ["No durable goals have been saved for this workspace."];
+  return {
+    action: createRuntimeModeAction(
+      "goal",
+      "Goal mode",
+      "Track a concrete objective and completion criteria in the current thread.",
+      trimmed,
+    ),
+    title: "Goal state",
+    content: [
+      "Goal mode is active for the next natural-language message.",
+      "Durable goals are workspace-scoped project memory entries prefixed with `goal:`.",
+      "",
+      ...lines,
+      "",
+      "Use `/goal set <objective>`, `/goal done <index|id>`, `/goal clear <index|id>`, or `/goal list`.",
+    ].join("\n"),
+  };
+}
+
+function listGoalMemoryEntries(entries: DesktopProjectMemoryEntry[]): DesktopProjectMemoryEntry[] {
+  return entries.filter((entry) => /^goal(?::|-done:)/i.test(entry.content.trim()));
+}
+
+function formatGoalMemoryContent(content: string): string {
+  return content.replace(/^goal-done:\s*/i, "[done] ").replace(/^goal:\s*/i, "");
+}
+
 function describeCheckpointCommand(args: string, context: ChatCommandContext): ChatCommandResult {
   const label = args.trim();
   return {
@@ -566,6 +664,9 @@ function describeRollbackCommand(args: string, context: ChatCommandContext): Cha
 function describeStatusCommand(context: ChatCommandContext): ChatCommandResult {
   const instructionCount = context.workspaceInstructions?.length ?? 0;
   const projectMemoryCount = context.projectMemory?.length ?? 0;
+  const activeGoalCount = (context.projectMemory ?? []).filter((entry) =>
+    /^goal:\s*/i.test(entry.content.trim()),
+  ).length;
   const customCommandCount = context.customCommands?.length ?? 0;
   const availableAgentCount = context.availableAgents?.length ?? 0;
   const availableModelCount = context.availableModels?.length ?? 0;
@@ -584,6 +685,7 @@ function describeStatusCommand(context: ChatCommandContext): ChatCommandResult {
       `Context attachments: ${attachmentLabels}.`,
       `Command-created context attachments: ${commandCreatedAttachmentCount}.`,
       `Project memory entries: ${projectMemoryCount}.`,
+      `Active durable goals: ${activeGoalCount}.`,
       `Custom commands: ${customCommandCount}.`,
       `Agent: ${context.options?.agentName || "OpenDrSai"}.`,
       `Available agents: ${availableAgentCount}.`,

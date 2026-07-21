@@ -28,8 +28,10 @@ assert(
   "package script is not registered",
 );
 assert(
-  navigation.includes("{ id: MENU_IDS.usageAnalytics, enabled: true }"),
-  "usage analytics navigation is not enabled",
+  navigation.includes("{ id: MENU_IDS.usageAnalytics, enabled: false }") &&
+    app.includes('id: "analytics"') &&
+    app.includes("usageAnalyticsPanel"),
+  "usage analytics is not available from Agent settings",
 );
 assert(
   app.includes("ProviderAnalyticsView") && app.includes("MENU_IDS.usageAnalytics"),
@@ -43,6 +45,8 @@ assert(
 assert(
     component.includes("AnalyticsKind") &&
     component.includes("ProviderFilter") &&
+    component.includes("google_gemini") &&
+    component.includes("Gemini") &&
     component.includes("AnalyticsChartItem") &&
     component.includes("setQuery") &&
     component.includes("copyFilteredJson") &&

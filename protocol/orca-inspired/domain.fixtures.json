@@ -1,0 +1,51 @@
+{
+  "worktrees": [
+    {
+      "worktreeId": "worktree-11111111-1111-4111-8111-111111111111",
+      "sourceWorkspaceId": "workspace-source",
+      "workspaceId": "workspace-worktree",
+      "repoRoot": "C:\\work\\project",
+      "canonicalPath": "C:\\work\\.opendrsai\\task-one",
+      "branch": "opendrsai/task/task-one",
+      "baseCommit": "0123456789abcdef",
+      "status": "active",
+      "location": "local",
+      "createdAt": "2026-07-17T10:00:00+00:00",
+      "updatedAt": "2026-07-17T10:00:00+00:00"
+    },
+    {
+      "worktreeId": "worktree-22222222-2222-4222-8222-222222222222",
+      "sourceWorkspaceId": "workspace-remote-source",
+      "workspaceId": "workspace-remote-worktree",
+      "repoRoot": "/srv/project",
+      "canonicalPath": "/srv/.opendrsai/worktrees/task-two",
+      "branch": "opendrsai/task/task-two",
+      "baseCommit": "fedcba9876543210",
+      "status": "review",
+      "location": "remote",
+      "createdAt": "2026-07-17T11:00:00+00:00",
+      "updatedAt": "2026-07-17T11:05:00+00:00"
+    }
+  ],
+  "terminals": [
+    {
+      "terminalId": "terminal-11111111-1111-4111-8111-111111111111",
+      "runtimeId": "runtime-local",
+      "workspaceId": "workspace-worktree",
+      "worktreeId": "worktree-11111111-1111-4111-8111-111111111111",
+      "status": "running",
+      "generation": 1,
+      "lastSequence": 42,
+      "createdAt": "2026-07-17T10:01:00+00:00"
+    },
+    {
+      "terminalId": "terminal-22222222-2222-4222-8222-222222222222",
+      "runtimeId": "runtime-remote",
+      "workspaceId": "workspace-remote-source",
+      "status": "detached",
+      "generation": 3,
+      "lastSequence": 9001,
+      "createdAt": "2026-07-17T11:01:00+00:00"
+    }
+  ]
+}

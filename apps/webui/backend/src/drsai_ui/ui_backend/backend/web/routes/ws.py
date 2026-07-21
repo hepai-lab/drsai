@@ -4,6 +4,7 @@ import json
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from .....drsai_adapter.sso.jwt import decode_jwt_token
 from loguru import logger
 
 from ...datamodel import Run
@@ -69,6 +70,20 @@ async def run_websocket(
         logger.warning(f"Run not found: {run_id}")
         await websocket.close(code=4004, reason="Run not found")
         return
+
+    # Native clients send a Bearer token. Validate ownership when present;
+    # legacy browser clients remain compatible while they migrate.
+    authorization = websocket.headers.get("authorization", "")
+    if authorization.lower().startswith("bearer "):
+        try:
+            user_id = decode_jwt_token(authorization.split(" ", 1)[1]).user_id
+        except Exception:
+            await websocket.close(code=4401, reason="Unauthorized")
+            return
+        run_owner = getattr(run_response.data[0], "user_id", None)
+        if not user_id or run_owner != user_id:
+            await websocket.close(code=4403, reason="Forbidden")
+            return
 
     # run = run_response.data[0]
     # if run.status not in [RunStatus.CREATED, RunStatus.ACTIVE]:

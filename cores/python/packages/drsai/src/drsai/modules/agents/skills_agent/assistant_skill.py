@@ -627,7 +627,7 @@ Agent types:
 
         The types of sub agent:
         1. code_executor
-        2. normal drsai agent
+        2. normal OpenDrSai agent
         """
         try:
             description, prompt, agent_type = argument["description"], argument["prompt"], argument["agent_type"]
@@ -724,7 +724,7 @@ Agent types:
                     source="user",
                 )
             )
-            # send text message to save to db in drsai ui
+            # send text message to save to db in OpenDrSai UI
             yield TextMessage(
                 content=warning_prefix + todo_list,
                 source=agent_name,

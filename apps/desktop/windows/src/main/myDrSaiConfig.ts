@@ -8,7 +8,9 @@ import type {
   MyDrSaiModelConfig,
   UpdateMyDrSaiConfigRequest,
 } from "../shared/desktopApi";
-import { getGatewayStatus } from "./gateway";
+import { requireAuthContext } from "./auth";
+import { getGatewayModels, getGatewayStatus } from "./gateway";
+import { getDefaultModelAlias } from "./modelDefaults";
 
 const TOKENIZER_CALIBRATION_FILE = ".drsai/tokenizer-calibration.json";
 const WRITABLE_CLI_KEYS: Array<keyof UpdateMyDrSaiConfigRequest> = [
@@ -29,18 +31,21 @@ export async function getMyDrSaiConfig(workspacePath?: string): Promise<MyDrSaiC
       baseUrl: gateway.baseUrl,
       config: {},
       models: [],
+      defaultModelAlias: getDefaultModelAlias(),
       error: "My DrSai 尚未运行，启动后可读取配置。",
     };
   }
 
+  const availableModelsPromise = loadAvailableGatewayModels();
   try {
-    const [cli, catalog] = await Promise.all([
+    const [cli, catalog, availableModels] = await Promise.all([
       gatewayRequest<CliConfigResponse>(gateway.baseUrl, "GET", "/v1/config/cli"),
       gatewayRequest<ModelCatalogResponse>(gateway.baseUrl, "GET", "/v1/models/config"),
+      availableModelsPromise,
     ]);
 
     const models = await applyWorkspaceTokenizerCalibration(
-      normalizeModels(catalog.models),
+      mergeAvailableModels(normalizeModels(catalog.models), availableModels),
       workspacePath,
     );
 
@@ -50,17 +55,53 @@ export async function getMyDrSaiConfig(workspacePath?: string): Promise<MyDrSaiC
       cliPath: cli.path,
       config: normalizeCliConfig(cli.config),
       models,
-      defaultModelAlias: catalog.default_alias,
+      defaultModelAlias: catalog.default_alias || getDefaultModelAlias(),
     };
   } catch (error) {
+    const models = await availableModelsPromise;
     return {
       ready: false,
       baseUrl: gateway.baseUrl,
       config: {},
-      models: [],
+      models: mergeAvailableModels([], models),
+      defaultModelAlias: getDefaultModelAlias(),
       error: error instanceof Error ? error.message : String(error),
     };
   }
+}
+
+async function loadAvailableGatewayModels(): Promise<Array<{ id: string; name: string }>> {
+  try {
+    const auth = await requireAuthContext();
+    if (!auth.accessToken) return [];
+    return await getGatewayModels(auth.accessToken);
+  } catch {
+    return [];
+  }
+}
+
+function mergeAvailableModels(
+  configured: MyDrSaiModelConfig[],
+  available: Array<{ id: string; name: string }>,
+): MyDrSaiModelConfig[] {
+  const merged = [...configured];
+  const identities = new Set(
+    configured.flatMap((model) => [model.alias, model.model]
+      .filter((value): value is string => Boolean(value?.trim()))
+      .map((value) => value.trim().toLocaleLowerCase())),
+  );
+  for (const model of available) {
+    const id = model.id.trim();
+    if (!id || identities.has(id.toLocaleLowerCase())) continue;
+    merged.push({
+      alias: id,
+      display_name: model.name.trim() || id,
+      client_type: "hepai",
+      model: id,
+    });
+    identities.add(id.toLocaleLowerCase());
+  }
+  return merged;
 }
 
 export async function updateMyDrSaiConfig(

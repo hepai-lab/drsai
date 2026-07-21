@@ -192,7 +192,7 @@ class DrSai:
                 self.agent_instance.clear()
                 
         except Exception as e:
-            print(f"Error closing DrSai resources: {e}")
+            print(f"Error closing OpenDrSai resources: {e}")
             raise
 
     # ── Framework-protected params: never inject from extra_params (design-20260623 §4.3.2) ──

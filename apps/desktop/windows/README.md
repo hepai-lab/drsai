@@ -13,8 +13,8 @@ reusing its startup flow or visual shell.
   direct Gatsby embed.
 - Reuse WebUI selectively through pure React components, data models, and visual
   conventions.
-- Ship a tiny `OpenDrSai Installer.exe` bootstrapper that downloads and installs
-  the full desktop package.
+- Ship a per-user MSI for first installation and a signed unified runtime ZIP
+  for all later in-app updates.
 
 ## Project Layout
 
@@ -138,23 +138,22 @@ Packaged builds also compare the installed backend version with the desktop
 package version. A mismatch is treated as `Repair required`, which lets a shell
 update pull the matching backend tag on the next launch.
 
-Generate the release manifest consumed by the small installer:
+Generate the manifest consumed by both the MSI bootstrapper and in-app updater:
 
 ```powershell
 $env:OPENDRSAI_RELEASE_BASE_URL = "https://github.com/hepai-lab/drsai/releases/download/v0.1.0"
 npm run manifest:win
 ```
 
-Build the small bootstrapper after installing NSIS:
+Build the WiX MSI bootstrapper after creating the runtime archive:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File bootstrapper\build.ps1
+npm run build:bootstrapper
 ```
 
-The bootstrapper downloads `latest-windows.json`, validates the manifest,
-downloads the full installer from the allowed HTTPS release hosts, verifies size
-and SHA256, checks `minimumBootstrapperVersion`, and then launches the full
-installer.
+The MSI performs the first installation. Later releases are downloaded by the
+desktop updater as `OpenDrSaiRuntime-win-x64.zip`, then verified, staged and
+atomically installed with automatic startup-health rollback.
 
 See `docs/release-checklist.md` for signing, public Release assets, and clean
 machine smoke tests.

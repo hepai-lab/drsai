@@ -1,18 +1,29 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const releaseDir = join(root, "release");
+const artifactRoot = process.env.OPENDRSAI_WINDOWS_ARTIFACT_ROOT ? resolve(process.env.OPENDRSAI_WINDOWS_ARTIFACT_ROOT) : root;
+const releaseDir = join(artifactRoot, "release");
 const requireSigned = process.env.REQUIRE_SIGNED_WINDOWS_ARTIFACTS === "1";
 const expectedThumbprint = normalizeThumbprint(process.env.EXPECTED_WINDOWS_SIGNER_THUMBPRINT || "");
 const expectedSubject = (process.env.EXPECTED_WINDOWS_SIGNER_SUBJECT || "").trim();
-const artifacts = [
-  join(releaseDir, "bootstrapper", "OpenDrSaiSetup.msi"),
-];
-
+const runtimePath = join(releaseDir, "bootstrapper", "OpenDrSaiRuntime-win-x64.zip");
+const temporaryRoot = mkdtempSync(join(tmpdir(), "opendrsai-signatures-"));
+const runtimeExecutable = join(temporaryRoot, "OpenDrSai.exe");
+let temporaryRootRemoved = false;
+process.once("exit", cleanupTemporaryRoot);
+const artifacts = [join(releaseDir, "bootstrapper", "OpenDrSaiSetup-win-x64.msi")];
 const failures = [];
+if (existsSync(runtimePath)) {
+  extractRuntimeExecutable(runtimePath, runtimeExecutable);
+  artifacts.push(runtimeExecutable);
+} else {
+  failures.push(`${runtimePath}: missing`);
+}
+
 if (requireSigned && !expectedThumbprint) {
   failures.push("EXPECTED_WINDOWS_SIGNER_THUMBPRINT is required when REQUIRE_SIGNED_WINDOWS_ARTIFACTS=1.");
 }
@@ -25,6 +36,9 @@ for (const artifact of artifacts) {
   if (signature.status !== "Valid") {
     failures.push(`${artifact}: ${signature.status}`);
     continue;
+  }
+  if (requireSigned && signature.timestamped !== true) {
+    failures.push(`${artifact}: RFC 3161 timestamp is missing`);
   }
   if (expectedThumbprint && normalizeThumbprint(signature.thumbprint) !== expectedThumbprint) {
     failures.push(`${artifact}: signer thumbprint ${signature.thumbprint || "<missing>"} does not match EXPECTED_WINDOWS_SIGNER_THUMBPRINT`);
@@ -41,28 +55,36 @@ if (failures.length) {
   ].join("\n");
   if (requireSigned) {
     console.error(message);
-    process.exit(1);
+    process.exitCode = 1;
   }
   console.warn(message);
   console.warn("Continuing because REQUIRE_SIGNED_WINDOWS_ARTIFACTS is not 1.");
 } else {
   console.log("Windows signatures verified.");
 }
+cleanupTemporaryRoot();
+
+function cleanupTemporaryRoot() {
+  if (temporaryRootRemoved) return;
+  temporaryRootRemoved = true;
+  rmSync(temporaryRoot, { recursive: true, force: true });
+}
 
 function readPackageVersion() {
-  const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+  const packageJson = JSON.parse(readFileSync(join(artifactRoot, "package.json"), "utf8"));
   return packageJson.version;
 }
 
 function getSignatureInfo(path) {
   if (process.platform !== "win32") {
-    return { status: "SkippedNonWindows", thumbprint: "", subject: "" };
+    return { status: "SkippedNonWindows", thumbprint: "", subject: "", timestamped: false };
   }
   const command = [
     `$sig = Get-AuthenticodeSignature -LiteralPath ${quotePowerShellString(path)}`,
     "$thumbprint = if ($sig.SignerCertificate) { $sig.SignerCertificate.Thumbprint } else { '' }",
     "$subject = if ($sig.SignerCertificate) { $sig.SignerCertificate.Subject } else { '' }",
-    "[pscustomobject]@{ Status = [string]$sig.Status; Thumbprint = $thumbprint; Subject = $subject } | ConvertTo-Json -Compress",
+    "$timestamped = [bool]$sig.TimeStamperCertificate",
+    "[pscustomobject]@{ Status = [string]$sig.Status; Thumbprint = $thumbprint; Subject = $subject; Timestamped = $timestamped } | ConvertTo-Json -Compress",
   ].join("; ");
   try {
     const output = execFileSync(
@@ -79,14 +101,25 @@ function getSignatureInfo(path) {
       status: String(parsed.Status || ""),
       thumbprint: String(parsed.Thumbprint || ""),
       subject: String(parsed.Subject || ""),
+      timestamped: parsed.Timestamped === true,
     };
   } catch (error) {
     return {
       status: error instanceof Error ? error.message : String(error),
       thumbprint: "",
       subject: "",
+      timestamped: false,
     };
   }
+}
+
+function extractRuntimeExecutable(archive, destination) {
+  const command = [
+    "Add-Type -AssemblyName System.IO.Compression.FileSystem",
+    `$zip=[IO.Compression.ZipFile]::OpenRead(${quotePowerShellString(archive)})`,
+    `try { $entry=@($zip.Entries | Where-Object { ($_.FullName -replace '\\\\','/') -eq 'app/OpenDrSai.exe' })[0]; if(-not $entry){throw 'Runtime app executable is missing.'}; [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, ${quotePowerShellString(destination)}, $true) } finally { $zip.Dispose() }`,
+  ].join("; ");
+  execFileSync("powershell.exe", ["-NoProfile", "-Command", command], { windowsHide: true });
 }
 
 function normalizeThumbprint(value) {

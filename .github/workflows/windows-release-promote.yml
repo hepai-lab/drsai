@@ -38,6 +38,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Verify Windows signing contract
+        run: npm run verify:signing-contract
+
       - name: Verify release tag matches package version
         shell: pwsh
         run: |
@@ -58,15 +61,15 @@ jobs:
             throw "Release $tag is not a draft. Use windows-public-release-verify.yml for already published releases."
           }
 
-          New-Item -ItemType Directory -Force -Path release, release\bootstrapper | Out-Null
+          New-Item -ItemType Directory -Force -Path release, release\bootstrapper, release\product-evidence\remote-workspace | Out-Null
           gh release download $tag --repo $env:OPENDRSAI_RELEASE_REPOSITORY --dir release --clobber `
-            --pattern "OpenDrSai-*-setup.exe" `
-            --pattern "OpenDrSai-*-setup.exe.blockmap" `
-            --pattern "latest.yml" `
             --pattern "latest-windows.json" `
             --pattern "release-summary.json"
           gh release download $tag --repo $env:OPENDRSAI_RELEASE_REPOSITORY --dir release\bootstrapper --clobber `
-            --pattern "OpenDrSai Installer.exe"
+            --pattern "OpenDrSaiSetup-win-x64.msi" `
+            --pattern "OpenDrSaiRuntime-win-x64.zip"
+          gh release download $tag --repo $env:OPENDRSAI_RELEASE_REPOSITORY --dir release\product-evidence\remote-workspace --clobber `
+            --pattern "windows-signatures.json"
 
       - name: Verify draft release artifacts
         env:
@@ -74,9 +77,10 @@ jobs:
           EXPECTED_WINDOWS_SIGNER_SUBJECT: ${{ vars.WINDOWS_CERTIFICATE_SUBJECT }}
           REQUIRE_SIGNED_WINDOWS_ARTIFACTS: "1"
         run: |
-          npm run verify:manifest
+          npm run verify:update-manifest
           npm run verify:artifacts
           npm run verify:signatures
+          npm run verify:signing-evidence
 
       - name: Publish draft release
         if: inputs.promote

@@ -109,6 +109,12 @@ const routeFixtures = [
     reason: "JMeter XML must route before generic XML document/config fallbacks",
   },
   {
+    file: "runtime.jmx",
+    route: "summarizeJmeterTestPlanFile(filePath, size)",
+    before: "isKeePassDatabaseExtension(extension)",
+    reason: "JMeter JMX plans must route through bounded test plan previews before generic XML/document fallbacks",
+  },
+  {
     file: "runtime.jmeter.csv",
     route: "isTestReportFile(filePath, extension)",
     before: "summarizeCsvDataFile(filePath, size, extension)",
@@ -133,10 +139,22 @@ const routeFixtures = [
     reason: "Checkstyle/PMD/SpotBugs XML reports must route before generic XML document/config fallbacks",
   },
   {
+    file: "runtime.jfr",
+    route: "summarizeJavaFlightRecorderFile(filePath, size)",
+    before: "isBinaryArtifactExtension(extension)",
+    reason: "JFR snapshots must route through bounded flight-recorder previews before generic binary fallbacks",
+  },
+  {
     file: "web.config",
     route: "summarizeIisWebConfigFile(filePath, size)",
     before: "kind === \"document\" && extension !== \".ipynb\"",
     reason: "IIS web.config files must route before generic XML document/config fallbacks",
+  },
+  {
+    file: "applicationHost.config",
+    route: "summarizeIisWebConfigFile(filePath, size)",
+    before: "kind === \"document\" && extension !== \".ipynb\"",
+    reason: "IIS applicationHost.config files must route before generic XML document/config fallbacks",
   },
   {
     file: "nginx.conf",
@@ -235,6 +253,12 @@ const routeFixtures = [
     reason: "Nx workspace config must route before generic JSON summaries",
   },
   {
+    file: "rush.json",
+    route: "isJsWorkspaceConfigFile(filePath, extension)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "Rush workspace config must route before generic JSON summaries",
+  },
+  {
     file: "slack-export.json",
     route: "isChatExportJsonFile(filePath, extension)",
     before: "summarizeJsonDataFile(filePath, size)",
@@ -283,6 +307,12 @@ const routeFixtures = [
     reason: "browser password CSV exports must route before generic structured CSV summaries",
   },
   {
+    file: "runtime.rdp",
+    route: "extension === \".rdp\"",
+    before: "if (extension === \".reg\")",
+    reason: "Remote Desktop .rdp files must route before adjacent Windows/native and raw-text fallbacks",
+  },
+  {
     file: "whatsapp-chat.txt",
     route: "extension === \".chat-export.txt\"",
     before: "readFileSync(filePath, { encoding: \"utf8\", flag: \"r\" })",
@@ -313,6 +343,12 @@ const routeFixtures = [
     reason: "Postman environment JSON must route before generic JSON summaries",
   },
   {
+    file: "runtime.schema.json",
+    route: "isJsonSchemaFile(filePath, extension)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "JSON Schema documents must route before generic JSON summaries",
+  },
+  {
     file: "animation.json",
     route: "isLottieAnimationJsonFile(filePath, extension)",
     before: "summarizeJsonDataFile(filePath, size)",
@@ -326,11 +362,42 @@ const routeFixtures = [
     scope: "if (extension === \".json\")",
   },
   {
+    file: "runtime-extension.vsix",
+    route: "isExtensionPackageExtension(extension)",
+    before: "extension === \".zip\"",
+    reason: "VSIX extension packages must route through extension package metadata before generic ZIP fallback",
+  },
+  {
+    file: "runtime-extension.crx",
+    route: "isExtensionPackageExtension(extension)",
+    before: "isPwaWebManifestFile(filePath, extension)",
+    reason: "CRX extension packages must route through extension package metadata before adjacent web-app fallbacks",
+  },
+  {
     file: "openapi.json",
     route: "const apiSpecPreview = summarizeApiSpecFile(filePath, extension, size)",
     before: "summarizeJsonDataFile(filePath, size)",
     reason: "OpenAPI/Swagger JSON specs must route through API spec preview before generic JSON summaries",
     scope: "if (extension === \".json\")",
+  },
+  {
+    file: "asyncapi.json",
+    route: "const apiSpecPreview = summarizeApiSpecFile(filePath, extension, size)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "AsyncAPI JSON specs must route through API spec preview before generic JSON summaries",
+    scope: "if (extension === \".json\")",
+  },
+  {
+    file: "schema-introspection.json",
+    route: "summarizeGraphqlIntrospectionFile(filePath, size)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "GraphQL introspection JSON must route through schema metadata preview before generic JSON summaries",
+  },
+  {
+    file: "runtime.pact.json",
+    route: "summarizePactContractFile(filePath, size)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "Pact contract JSON must route through consumer contract preview before generic JSON summaries",
   },
   {
     file: ".drsai/tokenizer-calibration.json",
@@ -343,6 +410,42 @@ const routeFixtures = [
     route: "summarizeNetlogNetworkTraceFile(filePath, size)",
     before: "summarizeJsonDataFile(filePath, size)",
     reason: "Chrome NetLog JSON must route before generic JSON summaries",
+  },
+  {
+    file: ".devcontainer/devcontainer.json",
+    route: "summarizeDevContainerConfigFile(filePath, size)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "Dev Container config JSON must route before generic JSON summaries",
+  },
+  {
+    file: ".github/dependabot.yml",
+    route: "summarizeDependabotConfigFile(filePath, size)",
+    before: "if (extension === \".yaml\" || extension === \".yml\")",
+    reason: "Dependabot config YAML must route before generic YAML/config summaries",
+  },
+  {
+    file: ".github/ISSUE_TEMPLATE/bug_report.yml",
+    route: "summarizeGithubTemplateFile(filePath, size)",
+    before: "if (isDependabotConfigFile(filePath, extension))",
+    reason: "GitHub issue forms must route through template preview before generic YAML/config summaries",
+  },
+  {
+    file: ".github/pull_request_template.md",
+    route: "summarizeGithubTemplateFile(filePath, size)",
+    before: "if (isDependabotConfigFile(filePath, extension))",
+    reason: "GitHub PR templates must route through template preview before generic Markdown summaries",
+  },
+  {
+    file: ".pre-commit-config.yaml",
+    route: "summarizePreCommitConfigFile(filePath, size)",
+    before: "if (extension === \".yaml\" || extension === \".yml\")",
+    reason: "pre-commit hook configs must route through bounded hook previews before generic YAML/config summaries",
+  },
+  {
+    file: "renovate.json",
+    route: "summarizeRenovateConfigFile(filePath, size)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "Renovate config JSON must route before generic JSON summaries",
   },
   {
     file: "docker-compose.yaml",
@@ -365,6 +468,24 @@ const routeFixtures = [
     reason: "Helm and Kustomize package configs must route before generic YAML/API/Kubernetes fallbacks",
   },
   {
+    file: "values.yaml",
+    route: "isHelmValuesFile(filePath, extension)",
+    before: "if (extension === \".yaml\" || extension === \".yml\")",
+    reason: "Helm values files must route before generic YAML/API/Kubernetes fallbacks",
+  },
+  {
+    file: ".kube/config",
+    route: "isKubeconfigFile(filePath, extension)",
+    before: "if (isDependencyLockfile(filePath, extension))",
+    reason: "Kubernetes kubeconfig files must route before generic YAML/config and manifest fallbacks",
+  },
+  {
+    file: "release/winget/HepAI.OpenDrSai/1.4.2/HepAI.OpenDrSai.installer.yaml",
+    route: "extension === \".winget-manifest.yaml\"",
+    before: "if (extension === \".yaml\" || extension === \".yml\")",
+    reason: "winget manifests must route before generic YAML/API/Kubernetes fallbacks",
+  },
+  {
     file: "style.css",
     route: "summarizeStylesheetFile(filePath, extension, size)",
     before: "summarizeSourceCodeFile(filePath, extension, size)",
@@ -384,10 +505,40 @@ const routeFixtures = [
     scope: "if (isDirenvConfigFile(extension))",
   },
   {
+    file: ".idea/workspace.xml",
+    route: "isJetBrainsIdeConfigFile(filePath, extension)",
+    before: "kind === \"document\" && extension !== \".ipynb\"",
+    reason: "JetBrains .idea XML files must route through IDE config previews before generic XML document/config fallbacks",
+  },
+  {
     file: "runtime.prom",
     route: "summarizeMetricsSnapshotFile(filePath, extension, size)",
     before: "readFileSync(filePath, { encoding: \"utf8\", flag: \"r\" })",
     reason: "Prometheus/OpenMetrics snapshots must route before final raw text fallback",
+  },
+  {
+    file: "GITHUB_STEP_SUMMARY.md",
+    route: "summarizeGithubActionsJobSummaryFile(filePath, size)",
+    before: "summarizeDocumentText(filePath, extension, size)",
+    reason: "GitHub Actions job summaries must route through CI-summary previews before generic Markdown document summaries",
+  },
+  {
+    file: "security.txt",
+    route: "summarizeSecurityTxtFile(filePath, size)",
+    before: "summarizeConfigOrLogFile(filePath, extension, size)",
+    reason: "security.txt vulnerability disclosure policies must route through the specialized safe preview before generic text/config fallbacks",
+  },
+  {
+    file: "assetlinks.json",
+    route: "summarizeWebAppAssociationFile(filePath, size)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "Android Digital Asset Links must route through the specialized safe preview before generic JSON summaries",
+  },
+  {
+    file: "apple-app-site-association",
+    route: "summarizeWebAppAssociationFile(filePath, size)",
+    before: "summarizeJsonDataFile(filePath, size)",
+    reason: "Apple App Site Association files must route through the specialized safe preview before generic JSON summaries",
   },
   {
     file: "calendar.ical",
@@ -558,6 +709,18 @@ const routeFixtures = [
     reason: ".pypirc package index configs must route before generic config/log summaries",
   },
   {
+    file: ".ruff.toml",
+    route: "isRuffConfigFile(filePath, extension)",
+    before: "isPythonDependencyManifestFile(filePath, extension)",
+    reason: "Ruff configs must route through bounded tooling previews before Python dependency or generic TOML summaries",
+  },
+  {
+    file: "pyproject.toml",
+    route: "isRuffConfigFile(filePath, extension)",
+    before: "isPythonDependencyManifestFile(filePath, extension)",
+    reason: "pyproject.toml files with [tool.ruff] must route through Ruff previews before Python dependency summaries",
+  },
+  {
     file: "robots.txt",
     route: "isWebCrawlMetadataFile(extension)",
     before: "readFileSync(filePath, { encoding: \"utf8\", flag: \"r\" })",
@@ -694,6 +857,12 @@ const routeFixtures = [
     route: "isAndroidManifestFile(filePath, extension)",
     before: "kind === \"document\" && extension !== \".ipynb\"",
     reason: "Android manifests must route before generic XML document/config fallbacks",
+  },
+  {
+    file: "strings.xml",
+    route: "isAndroidResourceXmlFile(filePath, extension)",
+    before: "kind === \"document\" && extension !== \".ipynb\"",
+    reason: "Android resource XML files must route before generic XML document/config fallbacks",
   },
   {
     file: "Info.plist",
@@ -870,6 +1039,12 @@ const routeFixtures = [
     reason: "known config/log files must route before final raw text fallback",
   },
   {
+    file: "libs.versions.toml",
+    route: "isGradleVersionCatalogFile(filePath, extension)",
+    before: "summarizeConfigOrLogFile(filePath, extension, size)",
+    reason: "Gradle version catalogs must route through catalog previews before generic TOML/config summaries",
+  },
+  {
     file: ".ssh/config",
     route: "isSshConfigFile(filePath, extension)",
     before: "summarizeConfigOrLogFile(filePath, extension, size)",
@@ -972,6 +1147,12 @@ assertBefore(
 );
 assertBefore(
   summarizeFileBody,
+  "isRuffConfigFile(filePath, extension)",
+  "isPythonDependencyManifestFile(filePath, extension)",
+  "Ruff configs must route before Python dependency manifests and generic TOML handling",
+);
+assertBefore(
+  summarizeFileBody,
   "isGoModuleManifestFile(filePath, extension)",
   "isConfigOrLogExtension(extension)",
   "Go module manifests must route before generic config/log summaries",
@@ -1041,6 +1222,18 @@ assertBefore(
   "isDotnetNugetConfigFile(filePath, extension)",
   "kind === \"document\" && extension !== \".ipynb\"",
   ".NET/NuGet config files must route before generic document extraction",
+);
+assertBefore(
+  summarizeFileBody,
+  "isBazelBuildFile(filePath, extension)",
+  "isCppBuildManifestFile(filePath, extension)",
+  "Bazel/Starlark build files must route before generic C/C++ build manifest fallback",
+);
+assertBefore(
+  summarizeFileBody,
+  "isBazelBuildFile(filePath, extension)",
+  "kind === \"document\" && extension !== \".ipynb\"",
+  "Bazel/Starlark build files must route before generic document extraction",
 );
 assertBefore(
   summarizeFileBody,
@@ -1151,9 +1344,19 @@ assert(adapters.includes('".mailmap"'), "normalized fixture coverage omits .mail
 assert(adapters.includes('".cmakelists.txt"'), "normalized fixture coverage omits CMakeLists.txt");
 assert(adapters.includes('".compile_commands.json"'), "normalized fixture coverage omits compile_commands.json");
 assert(adapters.includes('".gradle.properties"'), "normalized fixture coverage omits gradle.properties");
+assert(adapters.includes('".gradle-version-catalog.toml"') && adapters.includes("summarizeGradleVersionCatalogFile"), "normalized fixture coverage omits Gradle version catalog files");
 assert(adapters.includes('".maven.config"'), "normalized fixture coverage omits .mvn/maven.config");
 assert(adapters.includes('".jvm.config"'), "normalized fixture coverage omits .mvn/jvm.config");
+assert(adapters.includes('".maven-settings.xml"'), "normalized fixture coverage omits Maven settings.xml files");
+assert(adapters.includes('".gha-job-summary.md"') && adapters.includes("summarizeGithubActionsJobSummaryFile"), "normalized fixture coverage omits GitHub Actions job summary Markdown");
+assert(adapters.includes('".github-template"') && adapters.includes("summarizeGithubTemplateFile"), "normalized fixture coverage omits GitHub issue/PR templates");
+assert(adapters.includes('".pre-commit-config.yaml"') && adapters.includes("summarizePreCommitConfigFile"), "normalized fixture coverage omits pre-commit config files");
+assert(adapters.includes('".ruff.toml"') && adapters.includes("summarizeRuffConfigFile"), "normalized fixture coverage omits Ruff config files");
+assert(adapters.includes('".python-tooling-config"') && adapters.includes('"pyrightconfig.json"'), "normalized fixture coverage omits Python tooling config files");
+assert(adapters.includes('".dependabot.yaml"') && adapters.includes("summarizeDependabotConfigFile"), "normalized fixture coverage omits Dependabot config files");
+assert(adapters.includes('".renovate.json"') && adapters.includes("summarizeRenovateConfigFile"), "normalized fixture coverage omits Renovate config files");
 assert(adapters.includes('".dotnet-global.json"') && adapters.includes('".nuget.config"') && adapters.includes('".packages.config"') && adapters.includes('".nuspec"'), "normalized fixture coverage omits .NET/NuGet config files");
+assert(adapters.includes('".citation.cff"') && adapters.includes("summarizeCitationCffFile"), "normalized fixture coverage omits Citation CFF files");
 assert(adapters.includes('".swift-package"'), "normalized fixture coverage omits Package.swift");
 assert(adapters.includes('".pbxproj"'), "normalized fixture coverage omits project.pbxproj");
 assert(adapters.includes('".composer.json"') && adapters.includes('".gemfile"'), "normalized fixture coverage omits PHP/Ruby package manifests");
@@ -1168,10 +1371,33 @@ assert(adapters.includes('".mcp-servers.json"'), "normalized fixture coverage om
 assert(adapters.includes('".iis-web.config"'), "normalized fixture coverage omits IIS web.config files");
 assert(adapters.includes('".web-server.conf"'), "normalized fixture coverage omits Nginx/Apache web server config files");
 assert(adapters.includes('".vscode-settings.json"') && adapters.includes('".vscode-tasks.json"') && adapters.includes('".vscode-launch.json"') && adapters.includes('".vscode-extensions.json"'), "normalized fixture coverage omits VS Code workspace config JSON files");
+assert(adapters.includes('".jetbrains-ide.xml"') && adapters.includes("summarizeJetBrainsIdeConfigFile"), "normalized fixture coverage omits JetBrains IDE config files");
+assert(adapters.includes('".docker-compose.yaml"') && adapters.includes("summarizeContainerComposeFile"), "normalized fixture coverage omits Docker Compose config files");
+assert(adapters.includes('"rush.json"') && adapters.includes("Rush workspace"), "normalized fixture coverage omits Rush workspace config files");
 assert(adapters.includes('".js-tooling-config"'), "normalized fixture coverage omits JS/TS tooling config files");
+assert(adapters.includes('"oxlintrc.json"') && adapters.includes("Oxlint"), "normalized fixture coverage omits Oxlint tooling config files");
+assert(adapters.includes('"commitlint.config.js"') && adapters.includes('".lintstagedrc"'), "normalized fixture coverage omits Commitlint/lint-staged tooling config files");
+assert(adapters.includes('"knip.json"') && adapters.includes('"knip.config.ts"'), "normalized fixture coverage omits Knip tooling config files");
+assert(adapters.includes('"cypress.config.ts"') && adapters.includes("Cypress"), "normalized fixture coverage omits Cypress tooling config files");
+assert(adapters.includes('"/.storybook/main.ts"') && adapters.includes("Storybook"), "normalized fixture coverage omits Storybook tooling config files");
+assert(adapters.includes('"postcss.config.cjs"') && adapters.includes("PostCSS"), "normalized fixture coverage omits PostCSS tooling config files");
+assert(adapters.includes('"tailwind.config.ts"') && adapters.includes("Tailwind"), "normalized fixture coverage omits Tailwind tooling config files");
+assert(adapters.includes('"deno.json"') && adapters.includes("Deno"), "normalized fixture coverage omits Deno tooling config files");
+assert(adapters.includes('"vercel.json"') && adapters.includes("Vercel"), "normalized fixture coverage omits Vercel hosting config files");
+assert(adapters.includes('"netlify.toml"') && adapters.includes("Netlify"), "normalized fixture coverage omits Netlify hosting config files");
+assert(adapters.includes('"wrangler.toml"') && adapters.includes("Cloudflare Workers"), "normalized fixture coverage omits Wrangler hosting config files");
+assert(adapters.includes('"babel.config.json"') && adapters.includes("Babel"), "normalized fixture coverage omits Babel tooling config files");
+assert(adapters.includes('".browserslistrc"') && adapters.includes("Browserslist"), "normalized fixture coverage omits Browserslist tooling config files");
+assert(adapters.includes('"tsconfig.json"') && adapters.includes("TypeScript project") && adapters.includes('"jsconfig.json"'), "normalized fixture coverage omits TS/JS project config files");
+assert(adapters.includes('"next.config.mjs"') && adapters.includes("Next.js"), "normalized fixture coverage omits Next.js tooling config files");
+assert(adapters.includes('"astro.config.mjs"') && adapters.includes("Astro"), "normalized fixture coverage omits Astro tooling config files");
+assert(adapters.includes('"svelte.config.js"') && adapters.includes("SvelteKit"), "normalized fixture coverage omits SvelteKit tooling config files");
+assert(adapters.includes('"nuxt.config.ts"') && adapters.includes("Nuxt"), "normalized fixture coverage omits Nuxt tooling config files");
+assert(adapters.includes('"vite.config.ts"') && adapters.includes('"rollup.config.mjs"') && adapters.includes('"tsup.config.ts"'), "normalized fixture coverage omits Vite/Rollup/Tsup tooling config files");
 assert(adapters.includes('".test-results.json"'), "normalized fixture coverage omits JSON test report manifests");
 assert(adapters.includes('".playwright-trace.zip"'), "normalized fixture coverage omits Playwright trace ZIP files");
 assert(adapters.includes('".jmeter.xml"') && adapters.includes('".jmeter.csv"') && adapters.includes('".jtl"'), "normalized fixture coverage omits JMeter test report files");
+assert(adapters.includes('".jmx"'), "normalized fixture coverage omits JMeter JMX test plan files");
 assert(adapters.includes('".cypress-results.json"'), "normalized fixture coverage omits Cypress JSON test report files");
 assert(adapters.includes('".mocha.json"'), "normalized fixture coverage omits Mocha JSON test report files");
 assert(adapters.includes('".allure-result.json"'), "normalized fixture coverage omits Allure JSON test report files");
@@ -1193,6 +1419,7 @@ assert(adapters.includes('".warc"') && adapters.includes('".warc.gz"'), "normali
 assert(adapters.includes('".webmanifest"'), "normalized fixture coverage omits PWA web manifest files");
 assert(adapters.includes('".browser-extension-manifest.json"'), "normalized fixture coverage omits browser extension manifest files");
 assert(adapters.includes('".browser-extension-inventory.json"'), "normalized fixture coverage omits browser extension inventory files");
+assert(adapters.includes('".vsix"') && adapters.includes('".crx"') && adapters.includes("summarizeExtensionPackageFile"), "normalized fixture coverage omits VSIX/CRX extension package files");
 assert(adapters.includes("isPwaServiceWorkerScriptFile"), "route-order coverage omits PWA service worker detection");
 assert(adapters.includes('".browser-cookies.txt"'), "normalized fixture coverage omits browser cookies.txt files");
 assert(adapters.includes('".browser-autofill.csv"') && adapters.includes('".browser-autofill.json"'), "normalized fixture coverage omits browser autofill export files");
@@ -1202,9 +1429,11 @@ assert(adapters.includes('".browser-downloads.csv"') && adapters.includes('".bro
 assert(adapters.includes('".browser-preferences.json"'), "normalized fixture coverage omits browser preferences export files");
 assert(adapters.includes('".browser-storage.json"'), "normalized fixture coverage omits browser storage export files");
 assert(adapters.includes('".browser-session.json"'), "normalized fixture coverage omits browser session tab export files");
-assert(adapters.includes('".helm-chart.yaml"') && adapters.includes('".kustomization.yaml"'), "normalized fixture coverage omits Helm/Kustomize package configs");
+assert(adapters.includes('".helm-chart.yaml"') && adapters.includes('".helm-values.yaml"') && adapters.includes('".kustomization.yaml"'), "normalized fixture coverage omits Helm values or Kubernetes package configs");
+assert(adapters.includes('".winget-manifest.yaml"') && adapters.includes("summarizeWingetManifestFile"), "normalized fixture coverage omits winget manifest files");
 assert(adapters.includes('".androidmanifest.xml"'), "normalized fixture coverage omits AndroidManifest.xml");
 assert(adapters.includes('".info.plist"'), "normalized fixture coverage omits Info.plist");
+assert(adapters.includes('".jfr"') && adapters.includes("summarizeJavaFlightRecorderFile"), "normalized fixture coverage omits Java Flight Recorder files");
 assert(adapters.includes('".oslog"') && adapters.includes("system.log") && adapters.includes('".syslog"'), "normalized fixture coverage omits Apple unified/syslog files");
 assert(adapters.includes('".crash"') && adapters.includes('".ips"'), "normalized fixture coverage omits Apple crash report files");
 assert(adapters.includes('".kdbx"') && adapters.includes('"application/x-keepass2"'), "normalized fixture coverage omits KeePass KDBX database files");
@@ -1240,7 +1469,11 @@ assert(checklist.includes("Browser Password CSV Export Input"), "checklist omits
 assert(checklist.includes("Meeting Transcript Text Input"), "checklist omits meeting transcript route-order evidence");
 assert(checklist.includes("KeePass KDBX Database Input"), "checklist omits KeePass KDBX route-order evidence");
 assert(checklist.includes("Avro Schema File Input"), "checklist omits Avro schema route-order evidence");
+assert(checklist.includes("Windows Package Manager Manifest Input"), "checklist omits winget manifest route-order evidence");
 assert(checklist.includes("LLM Website Metadata Input"), "checklist omits llms.txt route-order evidence");
+assert(checklist.includes("GitHub Issue/PR Template Input"), "checklist omits GitHub template route-order evidence");
+assert(checklist.includes("Dependabot Config Input"), "checklist omits Dependabot config route-order evidence");
+assert(checklist.includes("Renovate Config Input"), "checklist omits Renovate config route-order evidence");
 assert(checklist.includes("Browser Downloads SQLite Snapshot Input"), "checklist omits browser downloads SQLite route-order evidence");
 assert(checklist.includes("Runtime GraphML Diagram Source Fixture"), "checklist omits GraphML diagram route-order evidence");
 assert(roadmap.includes("channel adapter route-order verification"), "roadmap omits route-order verification evidence");
@@ -1263,7 +1496,11 @@ assert(roadmap.includes("runtime GraphML diagram source fixture"), "roadmap omit
 assert(roadmap.includes("browser password CSV export input"), "roadmap omits browser password CSV route-order evidence");
 assert(roadmap.includes("meeting transcript text input"), "roadmap omits meeting transcript route-order evidence");
 assert(roadmap.includes("Avro schema file input"), "roadmap omits Avro schema route-order evidence");
+assert(roadmap.includes("Windows Package Manager manifest input"), "roadmap omits winget manifest route-order evidence");
 assert(roadmap.includes("LLM website metadata input"), "roadmap omits llms.txt route-order evidence");
+assert(roadmap.includes("GitHub issue/PR template input"), "roadmap omits GitHub template route-order evidence");
+assert(roadmap.includes("Dependabot config input"), "roadmap omits Dependabot config route-order evidence");
+assert(roadmap.includes("Renovate config input"), "roadmap omits Renovate config route-order evidence");
 assert(roadmap.includes("Browser downloads SQLite snapshot input"), "roadmap omits browser downloads SQLite route-order evidence");
 
 console.log("Channel adapter route-order verification passed.");

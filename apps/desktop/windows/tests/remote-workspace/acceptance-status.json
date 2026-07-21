@@ -1,0 +1,559 @@
+{
+  "schemaVersion": 1,
+  "plan": "../../../../../docs/remote_workespace/OpenDrSai远程工作区开发方案V1.md",
+  "updatedAt": "2026-07-16T22:20:00+08:00",
+  "verified": [
+    {
+      "id": "M01-F01",
+      "evidence": "npm run verify:remote-workspace-information-architecture && npm run typecheck:web",
+      "detail": "The add-workspace dialog exposes exactly the Local and Remote location choices before any transport-specific flow."
+    },
+    {
+      "id": "M01-F02",
+      "evidence": "npm run verify:remote-workspace-information-architecture && npm run verify:workspace-location-integration",
+      "detail": "The Local choice invokes the system folder picker; the selected existing directory creates and persists a location=local Workspace in an isolated integration fixture."
+    },
+    {
+      "id": "M01-F03",
+      "evidence": "npm run verify:remote-workspace-information-architecture && npm run verify:remote-ssh",
+      "detail": "The UI enforces computer then directory selection; Docker Fake SSH verifies host discovery, directory browsing and remote Workspace creation."
+    },
+    {
+      "id": "M01-F04",
+      "evidence": "npm run verify:remote-workspace-information-architecture",
+      "detail": "Workspace UI labels local targets as Local plus path and remote targets as Remote plus host alias and canonical path."
+    },
+    {
+      "id": "M01-F05",
+      "evidence": "npm run verify:remote-workspace-information-architecture",
+      "detail": "Primary add-workspace, health and settings copy no longer presents Gateway, Remote Gateway or Remote SSH as product concepts."
+    },
+    {
+      "id": "M01-F06",
+      "evidence": "npm run verify:workspace-location-roundtrip && npm run typecheck",
+      "detail": "WorkspaceProject uses location=local|remote with transport=ssh separated for remote targets; JSON persistence round trips and legacy local/remote-ssh migration pass."
+    },
+    {
+      "id": "M01-F07",
+      "evidence": "npm run verify:remote-workspace-information-architecture && npm run typecheck:web",
+      "detail": "Agent definition state is independent from active Workspace location; reloading choices after a location change preserves the selected Agent ID when available."
+    },
+    {
+      "id": "M01-F08",
+      "evidence": "npm run verify:fork-worktree && npm run verify:remote-worktree-real",
+      "detail": "Local Worktrees remain local; a real Linux Runtime creates and registers remote Git Worktrees, and Desktop maps the child Workspace to the parent's SSH Runtime connection."
+    },
+    {
+      "id": "M02-F07",
+      "evidence": "npm run verify:remote-ssh-contract",
+      "detail": "Generated client matches all 27 Remote Runtime OpenAPI operations, including Worktree creation, and the contract verifier passes."
+    },
+    {
+      "id": "M02-F01",
+      "evidence": "npm run verify:runtime-client-contract && npm run typecheck:node",
+      "detail": "A single typed RuntimeClient contract covers identity, capabilities, Workspace, Session, Run/Event stream, Files, Git and PTY for Local and Remote implementations."
+    },
+    {
+      "id": "M02-F02",
+      "evidence": "npm run verify:runtime-client-integration",
+      "detail": "LocalRuntimeClient completes identity, capabilities, Workspace create/list/close, Session list and streaming Run through the unified interface."
+    },
+    {
+      "id": "M02-F03",
+      "evidence": "npm run verify:runtime-client-integration && npm run verify:remote-gateway-real",
+      "detail": "RemoteRuntimeClient completes the same contract through a loopback Runtime access point; the real Docker Runtime is reached through the SSH tunnel."
+    },
+    {
+      "id": "M02-F04",
+      "evidence": "npm run verify:remote-gateway-real",
+      "detail": "The real Runtime exposes /v1/runtime and /v1/capabilities with runtime/instance identity, protocol version and versioned capabilities."
+    },
+    {
+      "id": "M02-F05",
+      "evidence": "npm run verify:runtime-client-integration",
+      "detail": "Runtime identity and capabilities validate protocol_version; incompatible newer or older versions raise an explicit RuntimeProtocolCompatibilityError before task execution."
+    },
+    {
+      "id": "M02-F06",
+      "evidence": "npm run verify:runtime-client-integration && npm run verify:remote-gateway-real",
+      "detail": "Runtime failures retain code, message, correlation ID and retryable fields; the real Runtime contract verifies correlation headers and structured 4xx errors."
+    },
+    {
+      "id": "M02-F08",
+      "evidence": "npm run verify:runtime-client-integration",
+      "detail": "After the Remote Runtime endpoint is stopped, the request fails explicitly and the Local Runtime fixture receives zero additional requests."
+    },
+    {
+      "id": "M03-F08",
+      "evidence": "npm run verify:remote-ssh",
+      "detail": "Docker E2E proves two workspaces on one SSH host share one tunnel and remain reference-safe on disconnect."
+    },
+    {
+      "id": "M03-F05",
+      "evidence": "elevated npm run verify:system-ssh-agent && npm run verify:remote-ssh",
+      "detail": "An elevated clean Windows run temporarily enables the system ssh-agent, loads a temporary Ed25519 key and authenticates to the Linux Docker fixture without IdentityFile; teardown removes the key, containers and config and restores ssh-agent to Stopped/Disabled. The SSH integration suite verifies interactive-only authentication fails with actionable guidance instead of hanging."
+    },
+    {
+      "id": "M03-F01",
+      "evidence": "npm run verify:remote-ssh",
+      "detail": "OpenSSH host discovery reads the configured root plus globbed Include files and filters pattern-only Host entries."
+    },
+    {
+      "id": "M03-F02",
+      "evidence": "npm run verify:remote-ssh",
+      "detail": "Resolved HostName, User, Port, IdentityFile list and ProxyJump match the real Windows OpenSSH ssh -G output."
+    },
+    {
+      "id": "M03-F03",
+      "evidence": "npm run verify:remote-ssh",
+      "detail": "SSH diagnostics return structured reachable, authentication_failed, host_key_failed, timeout, dns_failed and unreachable states under real fault injection."
+    },
+    {
+      "id": "M03-F04",
+      "evidence": "npm run verify:remote-ssh && npm run typecheck:web",
+      "detail": "First contact is rejected until SHA-256 host-key fingerprints are exposed for review; explicit approval writes known_hosts through OpenSSH and the next connection succeeds."
+    },
+    {
+      "id": "M03-F06",
+      "evidence": "npm run verify:remote-ssh",
+      "detail": "Docker SSH directory browsing verifies readable directories, canonical symlink targets, and rejection of file, missing and unreadable directory paths."
+    },
+    {
+      "id": "M03-F07",
+      "evidence": "npm run verify:remote-ssh",
+      "detail": "A conventional local port is deliberately occupied; Desktop selects another ephemeral port and establishes loopback-only Local Forward successfully."
+    },
+    {
+      "id": "M03-F09",
+      "evidence": "npm run verify:remote-ssh",
+      "detail": "After the last Workspace closes, HostConnection state, Runtime access/token references, timers and the matching SSH process are absent; fixture teardown deletes temporary credentials."
+    },
+    {
+      "id": "M04-F02",
+      "evidence": "npm run verify:remote-gateway-real",
+      "detail": "A non-root Linux SSH user installs and starts the managed OpenDrSai Runtime entirely under its home directory."
+    },
+    {
+      "id": "M04-F01",
+      "evidence": "npm run verify:remote-ssh",
+      "detail": "Preflight reports Linux OS, architecture, Python version, compatibility issues and an actionable Python/dependency installation hint."
+    },
+    {
+      "id": "M04-F04",
+      "evidence": "npm run verify:remote-ssh",
+      "detail": "Two Runtime releases install into separate version directories with independent Python environments; current/previous links do not overwrite either release."
+    },
+    {
+      "id": "M04-F05",
+      "evidence": "npm run verify:remote-ssh",
+      "detail": "An incompatible candidate protocol is rejected and the current healthy release remains active."
+    },
+    {
+      "id": "M04-F06",
+      "evidence": "npm run verify:remote-ssh",
+      "detail": "Candidate releases are staged then moved and symlinked with atomic replace; cancellation fault injection leaves current on the complete prior release."
+    },
+    {
+      "id": "M04-F07",
+      "evidence": "npm run verify:remote-gateway-real",
+      "detail": "The real Runtime E2E upgrades two managed releases, rolls back, and verifies current/previous state."
+    },
+    {
+      "id": "M04-F08",
+      "evidence": "npm run verify:remote-ssh",
+      "detail": "Two independent Desktop module instances concurrently upgrade one Linux account; the remote fcntl user lock permits exactly one transaction and leaves one valid current release."
+    },
+    {
+      "id": "M04-F09",
+      "evidence": "npm run verify:remote-ssh",
+      "detail": "The Runtime listens only on 127.0.0.1, rejects a wrong instance token with 401, and rotates the temporary token after reconnect."
+    },
+    {
+      "id": "M05-F02",
+      "evidence": "pytest tests/test_runtime_registry.py && npm run verify:remote-gateway-real",
+      "detail": "Every Runtime process creates a new instance_id; real Gateway restart changes it while preserving runtime_id."
+    },
+    {
+      "id": "M05-F01",
+      "evidence": "pytest tests/test_runtime_registry.py && npm run verify:remote-gateway-real",
+      "detail": "runtime_id persists in SQLite across process restart and managed Runtime upgrade, while a replacement data directory produces a new identity."
+    },
+    {
+      "id": "M05-F03",
+      "evidence": "pytest tests/test_runtime_registry.py && npm run verify:remote-gateway-real",
+      "detail": "Relative, home, symlink, file and nonexistent Workspace paths have deterministic canonicalization or rejection behavior."
+    },
+    {
+      "id": "M05-F04",
+      "evidence": "npm run verify:remote-gateway-real",
+      "detail": "Desktop opens a path without sending an authoritative ID, and the Runtime returns distinct workspace-* identities."
+    },
+    {
+      "id": "M05-F05",
+      "evidence": "pytest tests/test_runtime_registry.py && npm run verify:remote-gateway-real",
+      "detail": "SQLite Workspace Registry survives a real Gateway restart and restores both open Workspace records."
+    },
+    {
+      "id": "M05-F07",
+      "evidence": "pytest tests/test_runtime_registry.py && npm run verify:remote-gateway-real",
+      "detail": "Runtime open/list/read/close lifecycle is persisted; closing removes the active mapping but retains historical registry data."
+    },
+    {
+      "id": "M06-F01",
+      "evidence": "pytest test_runtime_engine.py && npm run verify:runtime-engine-real",
+      "detail": "SQLite Session create/read/paginate/rename/archive/restore passes unit and authenticated real API tests."
+    },
+    {
+      "id": "M06-F02",
+      "evidence": "pytest test_runtime_engine.py && npm run verify:runtime-engine-real",
+      "detail": "Session creation requires an open Runtime-owned workspace_id; missing and closed Workspace identities return explicit 404 errors."
+    },
+    {
+      "id": "M06-F03",
+      "evidence": "pytest test_runtime_engine.py && npm run verify:runtime-engine-real",
+      "detail": "Runs persist Runtime, instance, Workspace, Session, versioned Agent Definition and lifecycle timestamps."
+    },
+    {
+      "id": "M06-F04",
+      "evidence": "pytest test_runtime_engine.py",
+      "detail": "Parameterized state-machine tests accept legal queued/running/waiting/terminal paths and reject illegal transitions."
+    },
+    {
+      "id": "M06-F05",
+      "evidence": "pytest test_runtime_engine.py && npm run verify:runtime-engine-real",
+      "detail": "Idempotency-Key has a unique SQLite constraint and transactional lookup; repeated API creation returns the same Run."
+    },
+    {
+      "id": "M06-F06",
+      "evidence": "pytest test_runtime_engine.py && npm run verify:runtime-engine-real",
+      "detail": "Run ownership is persisted independently of HTTP requests; a reconstructed Runtime Engine resumes and reaches a terminal state."
+    },
+    {
+      "id": "M06-F07",
+      "evidence": "pytest test_runtime_engine.py",
+      "detail": "Event Store exposes append/query only and SQLite triggers reject direct UPDATE and DELETE."
+    },
+    {
+      "id": "M06-F08",
+      "evidence": "pytest test_runtime_engine.py",
+      "detail": "BEGIN IMMEDIATE serialization assigns 100 concurrent events unique contiguous per-Run sequence numbers."
+    },
+    {
+      "id": "M06-F09",
+      "evidence": "npm run verify:runtime-engine-real",
+      "detail": "Twenty independent after_sequence API resumptions plus a final tail produce a complete ordered Event set without duplicates or gaps."
+    },
+    {
+      "id": "M06-F10",
+      "evidence": "pytest test_runtime_engine.py && npm run verify:runtime-engine-real",
+      "detail": "Only the explicit cancel operation writes cancel_requested_at, transitions to cancelled and emits run.cancelled; terminal recancel is rejected."
+    },
+    {
+      "id": "M06-F11",
+      "evidence": "pytest test_runtime_engine.py && npm run verify:runtime-engine-real",
+      "detail": "waiting_approval persists pending requests; approved resumes, denied cancels and timeout fails, each with a durable decision Event."
+    },
+    {
+      "id": "M06-F12",
+      "evidence": "pytest test_runtime_engine.py && npm run verify:runtime-engine-real",
+      "detail": "Runtime Checkpoints persist Agent, Tool and Subagent state plus Event sequence and restore unchanged after Engine restart."
+    },
+    {
+      "id": "M07-F01",
+      "evidence": "pytest test_agent_runtime.py && npm run verify:agent-runtime-real",
+      "detail": "AgentBackend is a replaceable Runtime contract; both the default OpenDrSai backend and an injected replacement backend complete Runs through the same service."
+    },
+    {
+      "id": "M07-F02",
+      "evidence": "pytest test_agent_runtime.py && npm run verify:agent-runtime-real",
+      "detail": "The OpenDrSai backend is the V1 default and a controlled deterministic Agent Loop completes in a real Linux Runtime while emitting unified Agent and Run Events."
+    },
+    {
+      "id": "M07-F03",
+      "evidence": "pytest test_agent_runtime.py && npm run verify:agent-runtime-real",
+      "detail": "Runtime-built immutable Run Context carries Runtime, instance, Workspace, Session and Run identities into every audit Event; model attempts to override reserved fields fail."
+    },
+    {
+      "id": "M07-F04",
+      "evidence": "pytest test_agent_runtime.py && npm run verify:agent-runtime-real",
+      "detail": "Agent Definitions load only from exact id@version JSON Assets; two pinned versions reproduce independently and missing, latest or mismatched versions are rejected."
+    },
+    {
+      "id": "M07-F05",
+      "evidence": "pytest test_agent_runtime.py && npm run verify:agent-runtime-real",
+      "detail": "Tool, Skill and MCP handlers are dispatched by the Linux Runtime and return its container hostname and authoritative Workspace cwd."
+    },
+    {
+      "id": "M07-F06",
+      "evidence": "pytest test_agent_runtime.py && npm run verify:agent-runtime-real",
+      "detail": "Subagents inherit the parent Workspace and permission intersection, emit parent-child correlation Events, and cannot select another Workspace or escalate permissions."
+    },
+    {
+      "id": "M07-F07",
+      "evidence": "pytest test_agent_runtime.py && npm run verify:agent-runtime-real",
+      "detail": "Shell, Process and test argv execute with shell=false inside the remote Workspace; Docker hostname/cwd and a remote marker prove execution did not occur on Desktop."
+    },
+    {
+      "id": "M07-F08",
+      "evidence": "pytest test_agent_runtime.py && docker unittest test_platform_auth.py",
+      "detail": "Valid, expired, unauthorized, rate-limited and upstream-failure model paths map to secret-free RuntimeExecutionError codes with explicit retryability."
+    },
+    {
+      "id": "M08-F01",
+      "evidence": "npm run verify:workspace-resources-real",
+      "detail": "A real Linux Workspace tree provides deterministic depth, search, pagination and truncation while excluding VCS, dependency, cache and .gitignore-matched paths."
+    },
+    {
+      "id": "M08-F02",
+      "evidence": "npm run verify:workspace-resources-real",
+      "detail": "Bounded previews distinguish UTF-8 text, invalid encoding, binary and image MIME data; size and truncation metadata match the remote files."
+    },
+    {
+      "id": "M08-F03",
+      "evidence": "npm run verify:workspace-resources-real",
+      "detail": "A 10 MB binary file is retrieved in one-megabyte chunks, reassembled byte-for-byte and checked against a streaming SHA-256 implementation with bounded block memory."
+    },
+    {
+      "id": "M08-F04",
+      "evidence": "npm run verify:workspace-resources-real",
+      "detail": "File writes fsync a sibling temporary file then atomically replace; stale digests return file_conflict without changing the target or leaving temporary files."
+    },
+    {
+      "id": "M08-F05",
+      "evidence": "npm run verify:workspace-resources-real",
+      "detail": "Workspace watch journals sequence created, modified, deleted and rename changes, batches at 200, replays after reconnect and isolates journals by workspace_id."
+    },
+    {
+      "id": "M08-F06",
+      "evidence": "npm run verify:workspace-resources-real",
+      "detail": "Real Git status, unstaged/staged diff and file-at-HEAD cover modified and untracked files with structured branch and entry metadata."
+    },
+    {
+      "id": "M08-F07",
+      "evidence": "npm run verify:workspace-resources-real",
+      "detail": "Whole-file and hunk stage, unstage and revert operations match Git CLI results and reject stale Diff Hashes before mutation."
+    },
+    {
+      "id": "M08-F08",
+      "evidence": "npm run verify:workspace-resources-real",
+      "detail": "Empty message validation, no-change failure, rejecting pre-commit hook and successful commit return structured status, output, exit code and revision evidence."
+    },
+    {
+      "id": "M08-F09",
+      "evidence": "npm run verify:workspace-resources-real && npm run verify:remote-pty-lifecycle && npm run verify:remote-pty-preflight-evidence",
+      "detail": "A real Linux PTY creates in the remote Workspace, accepts input, reports hostname/cwd and applies rows/columns in kernel winsize order. Explicit Desktop kill now keeps the WebSocket open until the matching Runtime acknowledgement (with bounded failure cleanup), while Runtime SIGHUP plus delayed SIGKILL guarantees the whole login-shell process group exits. A two-sample real Docker preflight directly records zero orphan PTY children after create/reconnect/kill."
+    },
+    {
+      "id": "M08-F10",
+      "evidence": "npm run verify:workspace-resources-real && npm run verify:remote-pty-lifecycle && npm run verify:remote-pty-preflight-evidence",
+      "detail": "A disconnected PTY reattaches with retained output; output beyond 200000 bytes is bounded and explicitly reports bufferTruncated. Acknowledgement ID isolation prevents another PTY from satisfying termination, and timeout/send-failure paths close exactly once without weakening Runtime-side process-group cleanup."
+    },
+    {
+      "id": "M08-F11",
+      "evidence": "pytest test_remote_checkpoints.py && npm run verify:workspace-resources-real",
+      "detail": "Workspace Checkpoint create, preview, restore and accept handle modified, added, deleted and oversized-skipped files without silently restoring skipped content."
+    },
+    {
+      "id": "M08-F12",
+      "evidence": "npm run verify:workspace-resources-real",
+      "detail": "Workspace Version wcp-* file snapshots and Runtime checkpoint-* Agent state use different identifiers, schemas, APIs and physical stores and restore independently."
+    },
+    {
+      "id": "M09-F01",
+      "evidence": "npm run verify:remote-ssh",
+      "detail": "A changed or unknown OpenSSH host key is classified host_key_failed and blocks connection until SHA-256 fingerprints receive an explicit approval."
+    },
+    {
+      "id": "M09-F02",
+      "evidence": "npm run verify:runtime-security-real && docker unittest test_platform_auth.py",
+      "detail": "Missing, incorrect, expired and digest-revoked short-lived Runtime instance Tokens fail HTTP and WebSocket authentication; only the current unexpired token succeeds."
+    },
+    {
+      "id": "M09-F03",
+      "evidence": "npm run verify:runtime-security-real && docker unittest test_platform_auth.py",
+      "detail": "HepAI OIDC tokens verify HS256 acceptance fixtures or production RS256 JWKS, issuer, audience, exp and nbf; Runtime Principal requires user, organization and session claims, and forged or expired tokens fail."
+    },
+    {
+      "id": "M09-F04",
+      "evidence": "pytest test_runtime_security.py && npm run verify:runtime-security-real",
+      "detail": "Persistent Workspace ACLs enforce owner/editor/viewer/denied across read, write, Git, PTY and Run actions; real API tests prove viewer-read/editor-run and denied mutations."
+    },
+    {
+      "id": "M09-F05",
+      "evidence": "pytest test_runtime_security.py && npm run verify:runtime-security-real",
+      "detail": "Relative traversal, absolute paths and outside symlinks fail; descriptor-relative openat/O_NOFOLLOW plus atomic dirfd replace withstands a deterministic parent-directory symlink swap."
+    },
+    {
+      "id": "M09-F06",
+      "evidence": "npm run verify:runtime-security-real",
+      "detail": "Even with Runtime owner authorization, a chmod 000 directory rejects the ordinary Linux Runtime user; SecureWorkspaceFS returns workspace_write_denied and performs no privilege escalation."
+    },
+    {
+      "id": "M09-F07",
+      "evidence": "pytest test_runtime_security.py && npm run verify:runtime-security-real",
+      "detail": "Shell/PTY, file write, Git push and Workspace restore policies issue scoped one-time Approvals; approved retries execute and reused or mismatched receipts fail."
+    },
+    {
+      "id": "M09-F08",
+      "evidence": "pytest test_runtime_security.py && npm run verify:runtime-security-real",
+      "detail": "RuntimeSecurity checks Workspace permission before creating Approval; a denied viewer write produces permission.denied and leaves the Approval request counter unchanged."
+    },
+    {
+      "id": "M09-F09",
+      "evidence": "npm run verify:runtime-security-real",
+      "detail": "The append-only SQLite audit chain records principal, Runtime, Workspace, Session, Run, Tool and correlation IDs for every sensitive permission, Approval and operation event."
+    },
+    {
+      "id": "M09-F10",
+      "evidence": "pytest test_runtime_security.py && npm run verify:runtime-security-real",
+      "detail": "Recursive redaction removes credential-shaped keys, Bearer values and private-key blocks; automated scans find no Token, password, private key or signing-secret canaries in Runtime state, Events or audit records."
+    },
+    {
+      "id": "M10-F01",
+      "evidence": "npm run verify:remote-ssh",
+      "detail": "Desktop probes Runtime health independently from OpenSSH reachability and reports runtime versus ssh failureKind under real fault injection."
+    },
+    {
+      "id": "M10-F02",
+      "evidence": "npm run verify:runtime-reliability && npm run verify:remote-ssh",
+      "detail": "Reconnect uses exponential 1s-to-30s backoff, bounded jitter and a 180-second retry window, and resets the policy only after recovery."
+    },
+    {
+      "id": "M10-F03",
+      "evidence": "npm run verify:runtime-recovery-real && npm run verify:remote-ssh",
+      "detail": "A stable runtime_id with a changed instance_id is detected as a Runtime restart; a changed runtime_id is rejected as unsafe reassociation."
+    },
+    {
+      "id": "M10-F04",
+      "evidence": "npm run verify:runtime-recovery-real",
+      "detail": "After reconstructing the Runtime process, the persistent Registry restores all 10 open Workspace identities without Desktop re-creation."
+    },
+    {
+      "id": "M10-F05",
+      "evidence": "npm run verify:runtime-recovery-real",
+      "detail": "A Runtime-owned delayed Run reaches a durable terminal state after its originating Desktop TestClient disconnects; a new client reads the same Run and Events."
+    },
+    {
+      "id": "M10-F06",
+      "evidence": "npm run verify:runtime-reliability && npm run verify:runtime-recovery-real",
+      "detail": "Out-of-order and overlapping Event pages are deduplicated by event_id, buffered across gaps and advance only a contiguous sequence watermark; all 42 canonical Events arrive exactly once."
+    },
+    {
+      "id": "M10-F07",
+      "evidence": "npm run verify:runtime-recovery-real",
+      "detail": "A discarded first Run-create response followed by the same Idempotency-Key returns the original sole Run."
+    },
+    {
+      "id": "M10-F08",
+      "evidence": "npm run verify:runtime-recovery-real && npm run verify:workspace-resources-real",
+      "detail": "A Linux PTY survives WebSocket disconnect, reattaches with retained output and accepts further input before clean termination."
+    },
+    {
+      "id": "M11-F01",
+      "evidence": "npm run verify:workspace-migrations",
+      "detail": "Legacy type=remote-ssh records migrate to location=remote and transport=ssh exactly once; the byte-identical source JSON is retained in a create-once rollback backup."
+    },
+    {
+      "id": "M11-F02",
+      "evidence": "npm run verify:workspace-migrations",
+      "detail": "When Runtime returns its authoritative workspace_id, the legacy alias-plus-path ID is retained in metadata and an idempotent migration journal; conflicting remaps are rejected."
+    },
+    {
+      "id": "M11-F03",
+      "evidence": "npm run verify:runtime-migrations-real",
+      "detail": "Legacy workdir Sessions resolve only through the current Runtime Registry, import with deterministic Runtime-scoped IDs and retain unmatched records as pending; two Runtime fixtures do not cross-map."
+    },
+    {
+      "id": "M11-F04",
+      "evidence": "npm run verify:m11-maintainability",
+      "detail": "A removal-dated Legacy Remote SSH request adapter translates old alias/workdir calls and emits deprecation warnings; source scanning rejects new production dependencies on it."
+    },
+    {
+      "id": "M11-F05",
+      "evidence": "npm run verify:m11-maintainability && npm run verify:remote-workspace-information-architecture",
+      "detail": "Product surfaces use Runtime, Gateway Component and Remote Workspace terminology; obsolete Runtime Server and Agent Runtime Gateway product names fail the naming gate."
+    },
+    {
+      "id": "M11-F06",
+      "evidence": "npm run verify:m11-maintainability && npm run verify:remote-ssh-contract",
+      "detail": "An enforced ownership map covers SSH, Connection, Protocol, Workspace, Files, Git, PTY and Runtime Engine with distinct implementation modules and contract-tested boundaries."
+    },
+    {
+      "id": "M11-F07",
+      "evidence": "npm run verify:agent-runtime-real && npm run verify:runtime-security-real",
+      "detail": "A correlation ID links request, Agent, Tool/Subagent Events and audit context; the diagnostics endpoint exports Run, trace, metrics and audit data only after recursive redaction and a passing Secret scan."
+    },
+    {
+      "id": "M05-F06",
+      "evidence": "npm run verify:runtime-recovery-real",
+      "detail": "One real Linux Runtime manages 10 open Workspaces whose Session lists, file-watch journals and PTY process/buffers remain isolated by authoritative workspace_id across restart."
+    },
+    {
+      "id": "M05-F08",
+      "evidence": "npm run verify:workspace-domain && npm run typecheck:node && npm run typecheck:web",
+      "detail": "Local and Remote serialize through the same RuntimeWorkspaceDomain schema; location, transport, Runtime instance and host differences exist only in connection metadata."
+    },
+    {
+      "id": "M04-F03",
+      "evidence": "npm run verify:runtime-artifact-trust && npm run verify:remote-ssh",
+      "detail": "Ed25519 verification binds version and SHA-256 to a configured trusted publisher; tampered digest, wrong signature and unknown publisher fail, while signed artifacts complete real SSH upload, install, upgrade and rollback."
+    },
+    {
+      "id": "M12-F01",
+      "evidence": "venv\\Scripts\\python.exe -m pytest tests/test_runtime_registry.py tests/test_runtime_engine.py tests/test_agent_runtime.py tests/test_runtime_security.py tests/test_remote_checkpoints.py -q && npm run typecheck",
+      "detail": "The focused Runtime Python suite passes 27 tests plus 8 subtests; its sole Windows skip is the explicitly Docker-covered openat/O_NOFOLLOW Linux acceptance. Node and Web TypeScript typechecks pass with no skips."
+    },
+    {
+      "id": "M12-F02",
+      "evidence": "npm run verify:remote-ssh-contract && npm run verify:runtime-client-contract && npm run verify:runtime-client-integration",
+      "detail": "The checked generated client matches all 48 OpenAPI operations, Runtime protocol/error contracts pass, and Local/Remote implementations satisfy the unified RuntimeClient integration contract."
+    },
+    {
+      "id": "M12-F03",
+      "evidence": "npm run typecheck && npm run summary:win && npm run verify:artifacts && npm run verify:signing-contract && npm run verify:signing-evidence-regressions && npm run verify:internal-release-ready",
+      "detail": "Desktop Node/Web typechecks, current MSI/Runtime ZIP hashes, versions and package structure pass. The current NotSigned artifacts are explicitly accepted only as internal test packages: release readiness reports signing as a warning, while the signing contract and negative regressions prove that an untrusted, untimestamped, drifted or unsigned artifact cannot satisfy the separate public-release gate. Organization Authenticode evidence remains mandatory for public stable distribution but is no longer misclassified as a Remote Workspace functional requirement."
+    },
+    {
+      "id": "M12-F04",
+      "evidence": "npm run verify:workspace-id-routing && npm run verify:remote-ssh && npm run verify:remote-gateway-real && npm run verify:runtime-engine-real && npm run verify:agent-runtime-real && npm run verify:workspace-resources-real",
+      "detail": "Controllable Linux Docker E2E covers signed Runtime install/upgrade/rollback, two independent SSH hosts, same-path cross-host isolation by authoritative workspace_id, multiple Workspaces, Files, Git, PTY, Session, Run/Event and Agent execution."
+    },
+    {
+      "id": "M12-F05",
+      "evidence": "release/product-evidence/remote-workspace-lab/sandbox-lifecycle-20260716/windows-sandbox-session-lifecycle.json",
+      "detail": "The modern wsb CLI starts a network-disabled Sandbox with a concrete session ID, List observes that ID, Stop reports success, and the ID disappears from the authoritative session list."
+    },
+    {
+      "id": "M12-F06",
+      "evidence": "npm run verify:remote-sandbox-contract && apps\\desktop\\windows\\scripts\\invoke-remote-workspace-sandbox-probe.ps1",
+      "detail": "A real Windows Sandbox run validates the generated .wsb XML and single LogonCommand, proves package and temporary-credential mappings are read-only, proves the evidence mapping is writable, and writes a passing JSON result back to the host."
+    },
+    {
+      "id": "M12-F07",
+      "evidence": "scripts\\invoke-m1-windows-sandbox-matrix.ps1 -Runs 1 -InstallOnly -TimeoutSeconds 600",
+      "detail": "A network-disabled Windows Sandbox with no Node, Python or Git development prerequisites installs version 1.4.6 using only the read-only mapped MSI and Runtime ZIP; machine paths, shortcuts, bundled Python, drsai import and backend version all pass. The unsigned warning remains isolated under M12-F03."
+    },
+    {
+      "id": "M12-F08",
+      "evidence": "release/product-evidence/remote-workspace-packaged-sandbox/remote-workspace-packaged-20260716-140703/evidence/remote-workspace-packaged-sandbox.json",
+      "detail": "A clean real Windows Sandbox installs the packaged Desktop, uses a labelled temporary offline acceptance session and temporary Ed25519 SSH/publisher credentials, then passes Local/Remote workspace modelling, host-key approval, signed Runtime install, directory selection, remote files, Session/Run terminal events, result state, shell approval denial, disconnect/reconnect and rendered product UI against a controllable Docker Linux Runtime. All 24 checks pass and temporary credentials and containers are removed."
+    },
+    {
+      "id": "M12-F09",
+      "evidence": "npm run verify:remote-ssh && npm run verify:remote-gateway-real && npm run verify:runtime-recovery-real",
+      "detail": "Fault injection distinguishes sshd and Runtime failure, restarts the target and Runtime, proves token/instance rotation, preserves an independent second host, restores 10 Workspaces and exactly 42 Events, and retains the healthy release across failed candidates."
+    },
+    {
+      "id": "M12-F10",
+      "evidence": "npm run verify:remote-3090-final && npm run verify:remote-host-evidence-regressions && release/product-evidence/remote-workspace/remote_3090-final.json",
+      "detail": "The protected final runner connects to the real zzd-3090 host as non-root user zzd over its trusted ED25519 host fingerprint, provisions a SHA-256-verified temporary user-level Python 3.11 and labelled Ed25519 key, installs the signed Runtime into an isolated dependency environment, and passes Workspace, Files, Git, Session, Run, Tool lifecycle, Approval, Checkpoint, PTY long command and reconnect checks. The independent verifier confirms 13 checks, authoritative IDs, Secret scan and zero tunnels, and now rejects missing, unverified or uncleaned prerequisite evidence; ownership markers prove the temporary Python, key and first Runtime are stopped and removed."
+    },
+    {
+      "id": "M12-F11",
+      "evidence": "npm run verify:remote-stability-evidence && npm run verify:remote-pty-preflight-evidence && npm run verify:remote-stability-watchdog && release/product-evidence/remote-workspace/remote-stability-1h.json",
+      "detail": "The formal requirement is one hour. The accepted window contains five unchanged source samples through 14,410 seconds: every sample has one SSH tunnel, one Runtime process, zero orphan PTY processes and stable Runtime/Instance identity. The earlier 86,400-second target was reduced only after more than four observed hours; controlled finalization preserves the original evidence in a timestamped archive, pins its SHA-256 in the one-hour evidence, and independently proves sample byte equivalence. The bound Watchdog removed the exact Docker container and tunnel; strict verification confirms finalTunnelCount=0, zero remaining resources and cleanupVerified=true. Future formal windows default to 3,600 seconds with five-minute sampling."
+    }
+  ],
+  "knownFailures": [
+  ]
+}

@@ -96,3 +96,10 @@ export function getVisibleChatText(content: string): string {
     .join("")
     .trim();
 }
+
+export function getReasoningChatText(content: string): string {
+  return parseChatOutput(content)
+    .map((part) => part.text)
+    .join("\n\n")
+    .trim();
+}

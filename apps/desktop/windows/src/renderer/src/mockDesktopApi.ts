@@ -2,6 +2,7 @@ import type {
   AuthSession,
   AgentRunEvent,
   ChatEvent,
+  CompletionNotificationClickEvent,
   DesktopAgent,
   DesktopBackgroundTask,
   DesktopBackgroundTaskStatus,
@@ -15,6 +16,7 @@ import type {
   DesktopChannelOutboundDraftResult,
   DesktopChannelSnapshotSyncResult,
   DesktopExternalConnectionReadinessResult,
+  DiagnosticEvent,
   DesktopApi,
   DesktopCustomCommand,
   DesktopForkQueueDispatchStartedRun,
@@ -28,12 +30,17 @@ import type {
   DesktopMcpToolExecutionAuditEntry,
   DesktopMcpToolExecutionApprovalResult,
   DesktopProjectMemoryEntry,
+  DesktopUserPreference,
   DesktopProjectSkillDraft,
   DesktopWorkflowTemplate,
   DesktopThread,
   DesktopThreadSnapshot,
+  DesktopTrustAssessment,
+  DesktopTrustStatus,
   DesktopVoiceTranscriptHandoffResult,
   DesktopVoiceTranscriptionEvent,
+  DesktopStreamingVoiceTranscriptionEvent,
+  DesktopVoiceSynthesisEvent,
   DesktopWorkflowRun,
   DesktopWorkflowMarketplaceListResult,
   DesktopWorkflowRunStepCompleteResult,
@@ -49,7 +56,9 @@ import type {
   DesktopScheduledTask,
   DesktopScheduledTaskRunItem,
   DesktopScheduledTaskWorkerStatus,
+  DesktopShareManifest,
   InstallProgress,
+  InteractiveDebugSession,
   TerminalSessionInfo,
   UpdateStatus,
   WorkspaceCheckpoint,
@@ -63,8 +72,22 @@ import type {
   WorkspaceGitDiffResult,
   WorkspaceProject,
 } from "@shared/desktopApi";
+import type { StructuredConversationEvent } from "@shared/structuredConversation";
+import drsaiImageUrl from "./assets/drsai.png";
 
 type Listener<T> = (value: T) => void;
+
+function mockTrustAssessment(status: DesktopTrustStatus): DesktopTrustAssessment {
+  const canonical = {
+    evidence_sufficient: { label: "依据充分", icon: "check", rule: "verified_source", definition: "结论可由可读取的原始来源直接支持。", action: "可以使用该结论，并保留来源位置。" },
+    needs_confirmation: { label: "需要确认", icon: "question", rule: "provisional_source", definition: "来源已有暂定信息，但关键内容尚未最终确定。", action: "保留待确认措辞，获得正式计划后再更新。" },
+    insufficient_data: { label: "数据不足", icon: "warning", rule: "insufficient_observation", definition: "现有观察范围不足以支持当前结论。", action: "补充数据后再判断。" },
+    source_conflict: { label: "来源冲突", icon: "compare", rule: "conflicting_sources", definition: "多个来源给出互相矛盾的结果。", action: "并列报告双方并重新验证。" },
+    inference: { label: "属于推测", icon: "hypothesis", rule: "inference_only", definition: "结论来自间接推断，尚无直接测量。", action: "完成直接实验后再形成确定结论。" },
+  } as const;
+  const item = canonical[status];
+  return { status, label: item.label, definition: item.definition, reason: "Mock evidence rule matched.", icon: item.icon, recommendedAction: item.action, evidenceRule: item.rule, evidenceIds: [`mock-${status}`], ruleSatisfied: true };
+}
 
 const initialHealth: DesktopHealth = {
   installed: true,
@@ -109,13 +132,22 @@ const initialHealth: DesktopHealth = {
     lastLog: "",
   },
   update: {
+    phase: "idle",
     checking: false,
     available: false,
     downloading: false,
     downloaded: false,
     progress: null,
     version: null,
+    currentVersion: "1.4.8",
+    mandatory: false,
+    releaseNotesUrl: null,
+    canDownload: false,
+    canInstall: false,
+    canCancel: false,
+    errorCode: null,
     error: null,
+    recovery: null,
   },
 };
 
@@ -586,13 +618,22 @@ export function installMockDesktopApi(): void {
   };
   let terminalCounter = 0;
   const chatListeners = new Set<Listener<ChatEvent>>();
+  const completionNotificationClickListeners = new Set<Listener<CompletionNotificationClickEvent>>();
   const voiceTranscriptionListeners = new Set<Listener<DesktopVoiceTranscriptionEvent>>();
+  const streamingVoiceTranscriptionListeners = new Set<Listener<DesktopStreamingVoiceTranscriptionEvent>>();
+  const voiceSynthesisListeners = new Set<Listener<DesktopVoiceSynthesisEvent>>();
+  const streamingVoiceSessions = new Map<string, { turnId: string; eventSequence: number; partialSent: boolean }>();
   const voiceFixtureTimers = new Map<string, number>();
+  const voiceSynthesisFixtureTimers = new Map<string, number>();
   const agentRunListeners = new Set<Listener<AgentRunEvent>>();
   const installListeners = new Set<Listener<InstallProgress>>();
   const oidcLoginDebugListeners = new Set<Listener<OidcLoginDebugEvent>>();
   const updateListeners = new Set<Listener<UpdateStatus>>();
   const browserTaskListeners = new Set<Listener<BrowserTaskEvent>>();
+  const diagnosticListeners = new Set<Listener<DiagnosticEvent>>();
+  const interactiveDebugListeners = new Set<Listener<InteractiveDebugSession>>();
+  let diagnosticEvents: DiagnosticEvent[] = [];
+  let interactiveDebugSessions: InteractiveDebugSession[] = [];
   let pendingApprovals: DesktopPendingApproval[] = [];
   let mockChannelOutboundDeliveries: DesktopChannelOutboundDelivery[] = [];
   let mockChannelInboundEvents: DesktopChannelInboundEvent[] = [];
@@ -735,11 +776,18 @@ export function installMockDesktopApi(): void {
     { threadIds: string[] }
   > = {};
   let projectMemory: DesktopProjectMemoryEntry[] = [];
+  let userPreferences: DesktopUserPreference[] = [];
+  let teamMemory: import("@shared/desktopApi").DesktopTeamMemoryEntry[] = [];
   let customCommands: DesktopCustomCommand[] = [];
   let projectSkillDrafts: DesktopProjectSkillDraft[] = [];
   let mockSyncedWorkflowTemplates: DesktopWorkflowTemplate[] = [];
   let workflowRuns: DesktopWorkflowRun[] = [];
   let backgroundTasks: DesktopBackgroundTask[] = [];
+  let reusableTasks: import("@shared/desktopApi").DesktopReusableTask[] = [];
+  let shares: DesktopShareManifest[] = [];
+  let shareComments: import("@shared/desktopApi").DesktopShareComment[] = [];
+  let shareCommentTasks: import("@shared/desktopApi").DesktopShareCommentTask[] = [];
+  let shareAudit: import("@shared/desktopApi").DesktopShareAuditEntry[] = [];
   let scheduledTasks: DesktopScheduledTask[] = [
     {
       id: "mock-scheduled-task-daily-health",
@@ -944,14 +992,18 @@ export function installMockDesktopApi(): void {
   function getMockNextScheduledRunAt(
     fromIso: string,
     cadence: DesktopScheduledTask["cadence"],
+    afterIso = fromIso,
   ): string | undefined {
     if (cadence === "manual") return undefined;
     const from = new Date(fromIso);
     if (Number.isNaN(from.getTime())) return undefined;
     const next = new Date(from.getTime());
-    if (cadence === "hourly") next.setHours(next.getHours() + 1);
-    if (cadence === "daily") next.setDate(next.getDate() + 1);
-    if (cadence === "weekly") next.setDate(next.getDate() + 7);
+    const after = new Date(afterIso);
+    do {
+      if (cadence === "hourly") next.setHours(next.getHours() + 1);
+      if (cadence === "daily") next.setDate(next.getDate() + 1);
+      if (cadence === "weekly") next.setDate(next.getDate() + 7);
+    } while (!Number.isNaN(after.getTime()) && next.getTime() <= after.getTime());
     return next.toISOString();
   }
 
@@ -971,7 +1023,120 @@ export function installMockDesktopApi(): void {
   }
 
   const api: DesktopApi = {
+    recordDiagnostic: async (input) => {
+      const id = input.id || crypto.randomUUID();
+      const event: DiagnosticEvent = {
+        ...input,
+        schemaVersion: 1,
+        id,
+        traceId: input.traceId || id,
+        spanId: input.spanId || id,
+        timestamp: input.timestamp || new Date().toISOString(),
+        kind: input.kind || "log",
+        level: input.level || "info",
+        status: input.status || "completed",
+        module: input.module,
+        component: input.component,
+        operation: input.operation,
+        message: input.message,
+      };
+      diagnosticEvents = [...diagnosticEvents, event].slice(-500);
+      emit(diagnosticListeners, event);
+      return event;
+    },
+    getDiagnosticSnapshot: async () => ({
+      generatedAt: new Date().toISOString(),
+      events: diagnosticEvents,
+      traces: [],
+      health: [],
+      findings: [],
+      deepTracing: { performance: [], resources: [], activeCheckpoints: [], clockOffsets: [] },
+      rootCause: { analyses: [], clusters: [], generatedAt: new Date().toISOString() },
+      droppedEvents: 0,
+      storage: { eventCount: diagnosticEvents.length, maxEvents: 500, persisted: false },
+    }),
+    clearDiagnostics: async () => {
+      const removedEvents = diagnosticEvents.length;
+      diagnosticEvents = [];
+      return { cleared: true, removedEvents };
+    },
+    exportDiagnostics: async () => ({
+      exported: false,
+      eventCount: diagnosticEvents.length,
+      message: "Mock diagnostics are not written to disk.",
+    }),
+    onDiagnosticEvent: (callback) => subscribe(diagnosticListeners, callback),
+    getProductionDiagnosticStatus: async () => ({
+      settings: { mode: "basic", retentionDays: 30, diskLimitMb: 64, remoteTransmission: false, includeSource: false, allowRemoteTargets: false, allowDebugAttach: false, allowExport: true, encryptedPackages: true },
+      lockedSettings: [], policySource: "defaults", selfCheck: "healthy", selfCheckMessages: [], degraded: false,
+      eventRatePerMinute: 0, observedEvents: diagnosticEvents.length, droppedEvents: 0, estimatedBytes: 0,
+      budgets: { cpuPercent: 2, memoryMb: 64, diskMb: 64, uiLatencyMs: 50 },
+      releaseGates: [{ id: "privacy-scan", passed: true, message: "Mock privacy gate passed." }], audit: [],
+    }),
+    updateProductionDiagnosticSettings: async (patch) => ({ ...(await api.getProductionDiagnosticStatus()), settings: { ...(await api.getProductionDiagnosticStatus()).settings, ...patch } }),
+    previewDiagnosticPackage: async () => ({ formatVersion: 1, encrypted: true, eventCount: diagnosticEvents.length, byteLength: 0, sensitiveMatchesRemoved: 0, sections: ["manifest", "snapshot"], integritySha256: "mock-sha256", warnings: [] }),
+    exportProductionDiagnosticPackage: async () => ({ ok: false, preview: await api.previewDiagnosticPackage(), message: "Mock package export is not written to disk." }),
+    importProductionDiagnosticPackage: async () => null,
+    getDiagnosticSourceContext: async (request) => {
+      const highlightLine = Math.max(1, request.source.line ?? 2);
+      const startLine = Math.max(1, highlightLine - 1);
+      return {
+        available: true,
+        address: {
+          ...request.source,
+          kind: "workspace",
+          uri: `file://${request.source.file || "mock-source.ts"}`,
+          workspaceId: request.workspaceId,
+          available: true,
+          trusted: true,
+          remote: false,
+        },
+        mapping: {
+          status: "not-required",
+          generated: request.source,
+          message: "Mock source already refers to original code.",
+        },
+        location: request.source,
+        content: "export function mockSource(): void {\n  throw new Error(\"Mock diagnostic failure\");\n}",
+        startLine,
+        endLine: startLine + 2,
+        highlightLine,
+        language: request.source.language ?? "typescript",
+        truncated: false,
+        redacted: false,
+        canOpen: true,
+      };
+    },
+    openDiagnosticSource: async (request) => ({
+      opened: true,
+      path: request.source.file,
+      line: request.source.line,
+      column: request.source.column,
+      message: "Mock source opened.",
+    }),
+    updateDiagnosticIssue: async (request) => ({ updated: true, message: `Mock diagnostic issue ${request.action} completed.` }),
+    listInteractiveDebugTargets: async () => [{ id: "electron-renderer", kind: "electron-renderer", name: "Electron Renderer", description: "Mock renderer debug target", available: true, remote: false, capabilities: { supportsPause: true, supportsStep: true, supportsConditionalBreakpoints: true, supportsHitConditionalBreakpoints: true, supportsLogPoints: true, supportsEvaluateForHovers: true, supportsSetVariable: false, supportsTerminateRequest: true, supportsRemoteTargets: false } }],
+    listInteractiveDebugSessions: async () => interactiveDebugSessions,
+    startInteractiveDebugSession: async (request) => {
+      const target = (await api.listInteractiveDebugTargets())[0];
+      const now = new Date().toISOString();
+      const session: InteractiveDebugSession = { id: `debug-${crypto.randomUUID()}`, target, state: "running", startedAt: now, updatedAt: now, breakpoints: [], stackFrames: [], message: "Mock debug session is running", traceId: request.traceId };
+      interactiveDebugSessions = [session, ...interactiveDebugSessions]; emit(interactiveDebugListeners, session); return session;
+    },
+    setInteractiveDebugBreakpoint: async (request) => {
+      const session = interactiveDebugSessions.find((item) => item.id === request.sessionId); if (!session) throw new Error("Debug session was not found.");
+      session.breakpoints = [...session.breakpoints, { id: `bp-${crypto.randomUUID()}`, source: request.source, enabled: request.enabled !== false, verified: true, condition: request.condition, hitCondition: request.hitCondition, logMessage: request.logMessage }]; session.updatedAt = new Date().toISOString(); emit(interactiveDebugListeners, session); return session;
+    },
+    controlInteractiveDebugSession: async (request) => {
+      const session = interactiveDebugSessions.find((item) => item.id === request.sessionId); if (!session) throw new Error("Debug session was not found.");
+      session.state = request.action === "pause" ? "paused" : request.action === "disconnect" || request.action === "terminate" ? "disconnected" : "running"; session.pausedReason = session.state === "paused" ? "Mock breakpoint" : undefined; session.stackFrames = session.state === "paused" ? [{ id: "mock-frame", name: "mockSource", source: { file: "mock-source.ts", line: 2, column: 3, language: "typescript" }, canRestart: false }] : []; session.activeFrameId = session.stackFrames[0]?.id; session.activeThreadId = session.state === "paused" ? "renderer" : undefined; session.updatedAt = new Date().toISOString(); emit(interactiveDebugListeners, session); return session;
+    },
+    getInteractiveDebugScopes: async (_sessionId, frameId) => [{ id: `${frameId}:local`, name: "Local", variablesReference: "mock-local", expensive: false }],
+    getInteractiveDebugVariables: async () => [{ name: "answer", value: "42", type: "number", sensitive: false }, { name: "apiToken", value: "[REDACTED]", type: "string", sensitive: true }],
+    evaluateInteractiveDebugExpression: async (request) => ({ result: request.expression === "answer" ? "42" : "undefined", type: "number", safe: true, message: "Mock read-only expression evaluated." }),
+    onInteractiveDebugEvent: (callback) => subscribe(interactiveDebugListeners, callback),
     getAuthSession: async () => authSession,
+    getA5ServiceGuidanceScenario: async () => null,
     login: async (request) => {
       if (request.developerBypass) {
         authSession = {
@@ -1150,10 +1315,34 @@ export function installMockDesktopApi(): void {
       };
       return { ok: true, message: "Mock sign-out complete." };
     },
+    previewLocalDataCleanup: async (scope) => ({
+      scope,
+      applicationData: [{ category: "sessions", label: "会话", description: "清除会话记录。" }],
+      preservedUserMaterials: [],
+      preservesAllWorkspaceFiles: true,
+      ...(scope === "all_local_data" ? { confirmationPhrase: "清除" } : {}),
+      requiresSignInAgain: scope === "all_local_data",
+    }),
+    clearLocalData: async (request) => ({
+      ok: true,
+      scope: request.scope,
+      removedPaths: [],
+      protectedWorkspacePaths: [],
+      skippedTargets: [],
+      requiresSignInAgain: request.scope === "all_local_data",
+      message: "应用数据已清除；用户工作区文件和成果未受影响。",
+    }),
     refreshAuthSession: async () => authSession,
     getHealth: async () => health,
     getInstallStatus: async () => health.install,
     getGatewayStatus: async () => health.gateway,
+    getCodexBackendStatus: async () => ({ backendId: "codex", state: "available", available: true,
+      version: "0.142.5", loggedIn: true, authMode: "chatgpt", accountLabel: "demo@example.test",
+      reason: null, retryable: false, action: "none" }),
+    startCodexBackendLogin: async (type = "chatgpt") => ({ type, loginId: "mock-codex-login",
+      verificationUrl: "https://example.test/device", userCode: "MOCK-CODE" }),
+    cancelCodexBackendLogin: async () => true,
+    logoutCodexBackend: async () => true,
     listProviderUsageAnalytics: async () => [
       {
         id: "provider-usage:mock",
@@ -1166,6 +1355,18 @@ export function installMockDesktopApi(): void {
         status: "completed",
         summary: "Mock OpenAI Responses stream completed. input_tokens=120 output_tokens=32 total_tokens=152",
         usage: { inputTokens: 120, outputTokens: 32, totalTokens: 152 },
+      },
+      {
+        id: "provider-usage:mock-gemini",
+        recordedAt: new Date(Date.now() - 45_000).toISOString(),
+        requestId: "mock-request-gemini-usage",
+        sessionId: "mock-session",
+        runId: "mock-run",
+        provider: "google_gemini",
+        eventName: "generateContent.stream",
+        status: "STOP",
+        summary: "Mock Gemini stream finished. finish_reason=STOP input_tokens=18 output_tokens=44 total_tokens=62",
+        usage: { inputTokens: 18, outputTokens: 44, totalTokens: 62 },
       },
     ],
     listProviderErrorAnalytics: async () => [
@@ -1187,15 +1388,47 @@ export function installMockDesktopApi(): void {
       health = {
         ...health,
         update: {
+          phase: "available",
           checking: false,
           available: true,
           downloading: false,
           downloaded: false,
           progress: null,
           version: "0.1.1",
+          currentVersion: "0.1.0",
+          mandatory: false,
+          releaseNotesUrl: "https://github.com/hepai-lab/drsai/releases/tag/v0.1.1",
+          canDownload: true,
+          canInstall: false,
+          canCancel: false,
+          errorCode: null,
           error: null,
+          recovery: null,
         },
       };
+      emit(updateListeners, health.update);
+      return health.update;
+    },
+    downloadUpdate: async () => {
+      health = {
+        ...health,
+        update: {
+          ...health.update,
+          phase: "ready",
+          downloading: false,
+          downloaded: true,
+          progress: 100,
+          canDownload: false,
+          canInstall: true,
+          canCancel: false,
+        },
+      };
+      emit(updateListeners, health.update);
+      return health.update;
+    },
+    cancelUpdate: async () => health.update,
+    installUpdate: async () => {
+      health = { ...health, update: { ...health.update, phase: "installing", canInstall: false } };
       emit(updateListeners, health.update);
       return health.update;
     },
@@ -1219,6 +1452,19 @@ export function installMockDesktopApi(): void {
       });
       return true;
     },
+    copyTextToClipboard: async (text) => {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    performEditCommand: async (command) => {
+      document.execCommand(command);
+      return true;
+    },
+    openLogFolder: async () => "",
     startGateway: async () => {
       health = {
         ...health,
@@ -1235,6 +1481,134 @@ export function installMockDesktopApi(): void {
       };
       return true;
     },
+    listSshHosts: async () => [],
+    diagnoseSshHost: async (hostAlias) => ({ hostAlias, state: "reachable", elapsedMs: 1 }),
+    inspectSshHostKeys: async (hostAlias) => [{ hostAlias, hostname: "127.0.0.1", port: 22, algorithm: "ssh-ed25519", fingerprint: "SHA256:mock" }],
+    testSshHost: async () => true,
+    approveSshHostKey: async () => true,
+    connectSshHost: async (hostAlias) => ({ hostAlias, action: "connect", changed: true }),
+    disconnectSshHost: async (hostAlias) => ({ hostAlias, action: "disconnect", changed: true }),
+    reconnectSshHost: async (hostAlias) => ({ hostAlias, action: "reconnect", changed: true }),
+    removeSshHost: async (hostAlias) => ({ hostAlias, action: "remove", changed: true }),
+    listPortForwards: async () => [],
+    createPortForward: async (request) => ({ portForwardId: `pf-${crypto.randomUUID()}`, hostAlias: request.hostAlias, workspaceId: request.workspaceId, remoteHost: request.remoteHost || "127.0.0.1", remotePort: request.remotePort, bindAddress: "127.0.0.1", localPort: request.localPort || 18080, status: "active", reconnectPolicy: request.reconnectPolicy || "automatic", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }),
+    pausePortForward: async (id) => ({ portForwardId: id, hostAlias: "mock", workspaceId: "mock", remoteHost: "127.0.0.1", remotePort: 80, bindAddress: "127.0.0.1", localPort: 18080, status: "paused", reconnectPolicy: "automatic", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }),
+    resumePortForward: async (id) => ({ portForwardId: id, hostAlias: "mock", workspaceId: "mock", remoteHost: "127.0.0.1", remotePort: 80, bindAddress: "127.0.0.1", localPort: 18080, status: "active", reconnectPolicy: "automatic", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }),
+    removePortForward: async () => true,
+    listRemoteDirectories: async (_hostAlias, path = "/home") => [
+      { name: "vscode", path: `${path.replace(/\/$/, "")}/vscode`, directory: true },
+    ],
+    connectRemoteWorkspace: async (request) => {
+      const now = new Date().toISOString();
+      const id = `ssh-mock-${crypto.randomUUID()}`;
+      const workspace: WorkspaceProject = {
+        id,
+        name: request.name || request.path.split("/").filter(Boolean).at(-1) || "Remote workspace",
+        path: request.path,
+        location: "remote",
+        transport: "ssh",
+        type: "remote-ssh",
+        remote: {
+          hostAlias: request.hostAlias,
+          canonicalPath: request.path,
+          workspaceId: id,
+          connectionState: "ready",
+          localPort: 18643,
+        },
+        createdAt: now,
+        updatedAt: now,
+        lastOpenedAt: now,
+        trusted: request.trusted ?? false,
+      };
+      workspaces = [workspace, ...workspaces];
+      return workspace;
+    },
+    disconnectRemoteWorkspace: async () => true,
+    getRemoteWorkspaceStatus: async (workspaceId) => {
+      const workspace = workspaces.find((item) => item.id === workspaceId);
+      if (!workspace?.remote) throw new Error("Remote workspace not found.");
+      return { ...workspace.remote, connected: true, gatewayReady: true };
+    },
+    listRemoteThreads: async () => [],
+    listRemoteHepaiWorkers: async () => [],
+    setRemoteHepaiWorkerEnabled: async () => true,
+    onRemoteWorkspaceStatus: () => () => undefined,
+    preflightRemoteGateway: async (hostAlias) => ({ hostAlias, operatingSystem: "linux", architecture: "x86_64", pythonVersion: "3.11.0", compatible: true, issues: [], gatewayInstalled: true, gatewayVersion: "1.4.8" }),
+    getRemoteSshDiagnosticReport: async () => ({ generatedAt: new Date().toISOString(), hosts: [] }),
+    installRemoteGateway: async (request) => ({ hostAlias: request.hostAlias, operatingSystem: "linux", architecture: "x86_64", pythonVersion: "3.11.0", compatible: true, issues: [], gatewayInstalled: true, gatewayVersion: request.version || "1.4.8", changed: true, action: request.action }),
+    requestRemoteGatewayInstallApproval: async () => ({ queued: true, allowed: true, requiresApproval: true, blocked: false, reason: "Mock remote Gateway operation queued for approval." }),
+    cancelRemoteGatewayOperation: async () => true,
+    onRemoteGatewayOperation: () => () => undefined,
+    onWorkspaceFileChanges: () => () => undefined,
+    generateManagerPresentation: async (request) => {
+      const outputPath = `${request.workspacePath}\\artifacts\\mock-manager-zh.pptx`;
+      return {
+        requestId: request.requestId,
+        audience: request.audience ?? "non_expert_managers",
+        sourcePath: request.sourcePath,
+        outputPath,
+        manifestPath: outputPath.replace(/\.pptx$/i, ".provenance.json"),
+        slideCount: 9,
+        speakerNotesCoverage: 1,
+        sourcePageCoverage: 1,
+        sourceLinks: [
+          { slide: 3, role: "background", title: "背景与规模变化", sourcePages: [3, 8, 10] },
+          { slide: 6, role: "data_challenges", title: "数据挑战", sourcePages: [41, 42, 43] },
+          { slide: 7, role: "hl_lhc_requirements", title: "带宽模型", sourcePages: [42, 43] },
+          { slide: 8, role: "conclusions", title: "总结", sourcePages: [47] },
+        ],
+        keyConclusions: [
+          { id: "hl_lhc_data_growth_10x", conclusion: "HL-LHC 将使实验数据产量增长约 10 倍。", sourcePath: request.sourcePath, sourceType: "pdf_page", page: 8, evidenceText: "increasing the volume of data produced by the experiments by a factor of 10", verified: true, citations: [{ id: "c1", title: "Distributed computing for High Energy Physics", authors: ["Edoardo Martelli"], sourcePath: request.sourcePath, locatorType: "pdf_page", locator: "p.8", excerpt: "increasing the volume of data produced by the experiments by a factor of 10", relation: "supports", supportScore: 1 }], numericEvidence: [{ id: "n1", label: "HL-LHC 数据增长倍数", displayValue: "10×", reportedValue: 10, unit: "×", kind: "direct", sourcePath: request.sourcePath, locatorType: "pdf_page", locator: "p.8", sourceValues: [{ label: "原文增长倍数", value: 10, unit: "×", sourcePath: request.sourcePath, locator: "p.8", rawText: "factor of 10" }], formula: "直接读取原文数值 10", recalculatedValue: 10, tolerance: 0, status: "verified", explanation: "报告值与原文一致。" }], trust: mockTrustAssessment("evidence_sufficient") },
+          { id: "minimal_bandwidth_4_8_tbps", conclusion: "HL-LHC 最低网络模型预计需要 4.8 Tbps 带宽。", sourcePath: request.sourcePath, sourceType: "pdf_page", page: 42, evidenceText: "4.8Tbps expected HL-LHC bandwidth", verified: true, citations: [{ id: "c2", title: "Distributed computing for High Energy Physics", authors: ["Edoardo Martelli"], sourcePath: request.sourcePath, locatorType: "pdf_page", locator: "p.42", excerpt: "4.8Tbps expected HL-LHC bandwidth", relation: "supports", supportScore: 1 }], numericEvidence: [{ id: "n2", label: "Minimal Model 带宽", displayValue: "4.8 Tbps", reportedValue: 4.8, unit: "Tbps", kind: "calculated", sourcePath: request.sourcePath, locatorType: "calculation", locator: "p.42 · Minimal Model", sourceValues: [{ label: "基础流量", value: 1.2, unit: "Tbps", sourcePath: request.sourcePath, locator: "p.42", rawText: "sum of experiment rates" }], formula: "1.2 × 2 × 2", recalculatedValue: 4.8, tolerance: 0.000001, status: "verified", explanation: "复算结果与报告值一致。" }], trust: mockTrustAssessment("evidence_sufficient") },
+          { id: "flexible_bandwidth_9_6_tbps", conclusion: "HL-LHC 灵活网络模型预计需要 9.6 Tbps 带宽。", sourcePath: request.sourcePath, sourceType: "pdf_page", page: 42, evidenceText: "9.6Tbps expected HL-LHC bandwidth", verified: true, citations: [{ id: "c3", title: "Distributed computing for High Energy Physics", authors: ["Edoardo Martelli"], sourcePath: request.sourcePath, locatorType: "pdf_page", locator: "p.42", excerpt: "9.6Tbps expected HL-LHC bandwidth", relation: "supports", supportScore: 1 }], numericEvidence: [{ id: "n3", label: "Flexible Model 带宽", displayValue: "9.6 Tbps", reportedValue: 9.6, unit: "Tbps", kind: "calculated", sourcePath: request.sourcePath, locatorType: "calculation", locator: "p.42 · Flexible Model", sourceValues: [{ label: "Minimal Model", value: 4.8, unit: "Tbps", sourcePath: request.sourcePath, locator: "p.42", rawText: "4.8Tbps" }], formula: "4.8 × 2", recalculatedValue: 9.6, tolerance: 0.000001, status: "verified", explanation: "复算结果与报告值一致。" }], trust: mockTrustAssessment("evidence_sufficient") },
+          { id: "data_challenge_2027_50_percent", conclusion: "2027 年 Data Challenge 计划验证 HL-LHC 需求的 50%。", sourcePath: request.sourcePath, sourceType: "pdf_page", page: 43, evidenceText: "2027: 50% of HL-LHC requirements", verified: true, citations: [{ id: "c4", title: "Distributed computing for High Energy Physics", authors: ["Edoardo Martelli"], sourcePath: request.sourcePath, locatorType: "pdf_page", locator: "p.43", excerpt: "2027: 50% of HL-LHC requirements", relation: "supports", supportScore: 1 }], numericEvidence: [{ id: "n4", label: "2027 Data Challenge 目标", displayValue: "50%", reportedValue: 50, unit: "%", kind: "direct", sourcePath: request.sourcePath, locatorType: "pdf_page", locator: "p.43", sourceValues: [{ label: "原文目标比例", value: 50, unit: "%", sourcePath: request.sourcePath, locator: "p.43", rawText: "2027: 50%" }], formula: "直接读取 50", recalculatedValue: 50, tolerance: 0, status: "verified", explanation: "报告值与原文一致。" }], trust: mockTrustAssessment("evidence_sufficient") },
+          { id: "data_challenge_2029_100_percent_uncertain", conclusion: "2029 年 Data Challenge 暂以验证 100% HL-LHC 需求为目标，日期和比例仍待确认。", sourcePath: request.sourcePath, sourceType: "pdf_page", page: 43, evidenceText: "2029: 100% of HL-LHC requirements (date and % to be confirmed)", verified: true, citations: [{ id: "c5", title: "Distributed computing for High Energy Physics", authors: ["Edoardo Martelli"], sourcePath: request.sourcePath, locatorType: "pdf_page", locator: "p.43", excerpt: "2029: 100% of HL-LHC requirements (date and % to be confirmed)", relation: "supports", supportScore: 1 }], numericEvidence: [{ id: "n5", label: "2029 Data Challenge 暂定目标", displayValue: "100%（待确认）", reportedValue: 100, unit: "%", kind: "direct", sourcePath: request.sourcePath, locatorType: "pdf_page", locator: "p.43", sourceValues: [{ label: "原文暂定目标", value: 100, unit: "%", sourcePath: request.sourcePath, locator: "p.43", rawText: "100% (date and % to be confirmed)" }], formula: "原文暂定值 100", tolerance: 0, status: "unverifiable", explanation: "原文明确标注日期和比例待确认。" }], uncertainty: { status: "insufficient_data", label: "计划数据不足 · 日期与比例待确认", explanation: "来源明确说明日期和比例仍待确认，不能表达为确定承诺。", recommendedAction: "等待正式计划更新并保留暂定措辞。", requiresQualification: true, qualifyingLanguage: ["暂以", "仍待确认"], claims: [{ id: "u1", position: "暂定目标", sourcePath: request.sourcePath, locatorType: "pdf_page", locator: "p.43", excerpt: "2029: 100% of HL-LHC requirements (date and % to be confirmed)", stance: "insufficient" }] }, trust: mockTrustAssessment("needs_confirmation") },
+        ],
+        conclusionTraceabilityRate: 1,
+        appliedRequirements: request.requirements ?? [],
+        stageArtifacts: [],
+        deliverySummary: {
+          findingSummary: "已生成管理者版 PPT。",
+          importance: "high",
+          importanceReason: "结果包含需要管理层关注的资源规划。",
+          artifacts: [{ id: "mock-pptx", label: "管理者版 PPT", path: outputPath, kind: "presentation" }],
+          suggestedAction: "打开 PPT 并核对关键数字。",
+          workSummary: "已分析 PDF 并生成演示文稿。",
+          coreConclusion: "需要提前准备计算和网络能力。",
+          verification: "自动结构验收通过。",
+          remainingRisks: "时间目标仍需确认。",
+        },
+        quality: {
+          ok: true,
+          checks: { mock: true },
+          failures: [],
+          mediaCount: 0,
+          sourcePageCoverage: 1,
+        },
+        audienceProfile: {
+          audience: request.audience ?? "non_expert_managers",
+          goldenFactIds: ["data_growth_10x", "minimal_4_8_tbps", "flexible_9_6_tbps", "dc_2027_50", "dc_2029_100"],
+          impactDecisionSignals: request.audience === "technical_experts" ? 1 : 8,
+          technicalDetailSignals: request.audience === "technical_experts" ? 12 : 4,
+          acronymOccurrences: request.audience === "technical_experts" ? 14 : 5,
+          contentHash: request.audience === "technical_experts" ? "mock-technical" : "mock-manager",
+        },
+      };
+    },
+    cancelManagerPresentation: async (request) => ({ requestId: request.requestId, accepted: true }),
+    pauseManagerPresentation: async (request) => ({ requestId: request.requestId, accepted: true }),
+    resumeManagerPresentation: async (request) => ({ requestId: request.requestId, accepted: true }),
+    updateManagerPresentationRequirement: async (request) => ({
+      requestId: request.requestId,
+      accepted: true,
+      activeStage: "planning",
+      scope: "current_unfinished_stages",
+      requirements: [request.text],
+      message: "已应用到当前任务尚未完成的规划、生成和验收阶段。",
+    }),
+    getManagerPresentationRecovery: async () => null,
+    resolveManagerPresentationRecovery: async (request) => ({ requestId: request.requestId, decision: request.decision, accepted: true }),
+    onManagerPresentationProgress: () => () => undefined,
     listWorkspaces: async () => workspaces,
     createWorkspace: async (request) => {
       const now = new Date().toISOString();
@@ -1250,6 +1624,7 @@ export function installMockDesktopApi(): void {
           path.split(/[\\/]/).filter(Boolean).at(-1) ||
           "Workspace",
         path,
+        location: "local",
         type: "local",
         description: request.description,
         createdAt: now,
@@ -1306,6 +1681,7 @@ export function installMockDesktopApi(): void {
         owner: "运行在本机的智能体。",
         source: "local",
         status: health.gatewayReady ? "running" : "stopped",
+        model: "deepseek-v4-pro",
         url: health.gateway.baseUrl,
         examples: [
           { zh: "你可以做什么？", en: "What can you do?" },
@@ -1335,6 +1711,23 @@ export function installMockDesktopApi(): void {
         ],
       },
     ],
+    setDefaultAgent: async (agentId) => ({
+      agentId,
+      saved: true,
+      message: "Mock default agent saved.",
+    }),
+    recordAgentUsage: async (agentId) => ({
+      agentId,
+      saved: true,
+      message: "Mock agent usage recorded.",
+    }),
+    getPlatformAgentStatus: async () => ({
+      state: "ready",
+      apiVersion: "fixture-v1",
+      capabilities: ["agents"],
+      message: "Platform Native API fixture is available.",
+      lastCheckedAt: new Date().toISOString(),
+    }),
     getMyDrSaiConfig: async (workspacePath?: string): Promise<MyDrSaiConfig> => ({
       ready: health.gatewayReady,
       baseUrl: health.gateway.baseUrl,
@@ -1425,6 +1818,14 @@ export function installMockDesktopApi(): void {
       });
       return thread;
     },
+    setThreadArchived: async ({ threadId, archived }) => {
+      const existing = threads.find((thread) => thread.id === threadId);
+      if (!existing) throw new Error("Thread no longer exists.");
+      const archiveSource: "codex" | "opendrsai" | undefined = archived ? (existing.boundAgentId === "my-codex" ? "codex" : "opendrsai") : undefined;
+      const thread = { ...existing, archived, archivedAt: archived ? new Date().toISOString() : undefined, archiveSource, updatedAt: new Date().toISOString() };
+      threads = [thread, ...threads.filter((item) => item.id !== threadId)];
+      return thread;
+    },
     getThreadSnapshot: async (threadId) => threadSnapshots[threadId] ?? null,
     searchThreadMessages: async (request) => {
       const query = request.query.trim().toLowerCase();
@@ -1467,6 +1868,7 @@ export function installMockDesktopApi(): void {
         .replace(/^-+|-+$/g, "")
         .slice(0, 32) || "subtask";
       return {
+        location: "local",
         sourceWorkspacePath: request.workspacePath,
         repoRoot: request.workspacePath,
         worktreePath: `${request.workspacePath}\\.drsai-forks\\${slug}`,
@@ -1475,24 +1877,127 @@ export function installMockDesktopApi(): void {
         sourceHasChanges: false,
       };
     },
-    startChat: async () => {
-      const requestId = crypto.randomUUID();
+    startChat: async (request) => {
+      const requestId = request.requestId || crypto.randomUUID();
+      const turnId = request.runId || requestId;
+      const visualFixture = request.messages.some((message) => message.content.includes("__STRUCTURED_VISUAL_FIXTURE__"));
+      const markdownContent = visualFixture ? createStructuredVisualFixtureMarkdown(drsaiImageUrl) : [
+        "Mock **desktop** chat stream.\n\n",
+        "| item | status |\n| --- | --- |\n| renderer | ok |\n\n",
+        "[OpenDrSai](https://github.com/hepai-lab/drsai)",
+      ].join("");
+      let sequence = 0;
+      const sendStructured = (event: Record<string, unknown>): void => {
+        sequence += 1;
+        emit(chatListeners, {
+          requestId,
+          sessionId: request.sessionId,
+          runId: request.runId,
+          type: "structured",
+          structuredEvent: {
+            version: 2,
+            turnId,
+            sequence,
+            dedupeKey: `${turnId}:${sequence}:${String(event.type)}`,
+            timestamp: new Date().toISOString(),
+            source: "mock-desktop",
+            ...event,
+          } as StructuredConversationEvent,
+        });
+      };
       emit(chatListeners, { requestId, type: "start" });
-      for (const content of [
+      sendStructured({ type: "turn.started" });
+      sendStructured({
+        type: "part.started",
+        part: { id: `${turnId}:reasoning`, kind: "reasoning", status: "running", segments: [] },
+      });
+      sendStructured({
+        type: "part.delta",
+        partId: `${turnId}:reasoning`,
+        delta: { kind: "reasoning.append", segmentId: "analysis", text: "Inspecting the request and preparing a concise result.", source: "mock-desktop" },
+      });
+      sendStructured({
+        type: "part.started",
+        part: { id: `${turnId}:progress`, kind: "progress", status: "running", summary: "Preparing the result" },
+      });
+      for (const content of visualFixture ? [markdownContent] : [
         "Mock **desktop** chat stream.\n\n",
         "| item | status |\n| --- | --- |\n| renderer | ok |\n\n",
         "[OpenDrSai](https://github.com/hepai-lab/drsai)",
       ]) {
         await delay(90);
-        emit(chatListeners, { requestId, type: "chunk", content });
+        if (sequence === 4) {
+          sendStructured({
+            type: "part.started",
+            part: { id: `${turnId}:markdown`, kind: "markdown", status: "running", markdown: "" },
+          });
+        }
+        sendStructured({
+          type: "part.delta",
+          partId: `${turnId}:markdown`,
+          delta: { kind: "markdown.append", text: content },
+        });
       }
+      const workspacePath = request.workspacePath || "C:\\workspace";
+      sendStructured({
+        type: "part.completed",
+        part: {
+          id: `${turnId}:artifact:report`, kind: "artifact", status: "completed",
+          artifactId: "mock-report", artifactType: "report", name: "README.md",
+          summary: "Generated workspace report", path: `${workspacePath}\\README.md`, citationIds: ["mock-docs"],
+        },
+      });
+      sendStructured({
+        type: "part.completed",
+        part: {
+          id: `${turnId}:citation:docs`, kind: "citation", status: "completed",
+          citationId: "mock-docs", title: "OpenDrSai repository", url: "https://github.com/hepai-lab/drsai",
+          markdownPartId: `${turnId}:markdown`, artifactId: "mock-report",
+        },
+      });
+      sendStructured({
+        type: "part.completed",
+        part: {
+          id: `${turnId}:subtask`, kind: "subtask", status: "completed",
+          taskId: "mock-review", title: "Renderer review", summary: "Completed",
+        },
+      });
+      sendStructured({
+        type: "part.completed",
+        part: {
+          id: `${turnId}:notice`, kind: "notice", status: "completed",
+          level: "success", message: "Structured response completed.",
+        },
+      });
+      sendStructured({
+        type: "part.completed",
+        part: {
+          id: `${turnId}:reasoning`, kind: "reasoning", status: "completed",
+          segments: [{ id: "analysis", text: "Inspecting the request and preparing a concise result.", status: "completed", source: "mock-desktop" }],
+        },
+      });
+      sendStructured({
+        type: "part.completed",
+        part: {
+          id: `${turnId}:markdown`, kind: "markdown", status: "completed",
+          markdown: markdownContent,
+          citationIds: ["mock-docs"],
+        },
+      });
+      sendStructured({
+        type: "part.completed",
+        part: { id: `${turnId}:progress`, kind: "progress", status: "completed", summary: "Result ready" },
+      });
+      sendStructured({ type: "turn.completed", meta: { model: request.model || "mock-model" } });
       emit(chatListeners, { requestId, type: "done" });
       return requestId;
     },
+    recoverChatRun: async () => [],
     abortChat: async (requestId) => {
       emit(chatListeners, { requestId, type: "aborted" });
       return true;
     },
+    respondChatInput: async () => true,
     startVoiceTranscription: async (request) => {
       const requestId = `fixture-voice-${Date.now()}`;
       const timer = window.setTimeout(() => {
@@ -1539,6 +2044,137 @@ export function installMockDesktopApi(): void {
       supportsPartial: false,
       providerDisclosure: "Fixture transcription is active in the development renderer.",
       message: "Fixture voice runtime is ready.",
+    }),
+    getStreamingVoiceCapabilities: async () => ({
+      serialStt: true,
+      serialTts: true,
+      streamingStt: true,
+      streamingTts: true,
+      audioEncodings: ["pcm_s16le"],
+      sampleRatesHz: [16_000, 24_000, 48_000],
+      supportsPartialTranscripts: true,
+      supportsProviderEndpointing: true,
+      supportsSessionResume: false,
+      maxBufferedAudioMs: 2_000,
+    }),
+    startStreamingVoiceTranscription: async (request) => {
+      const sessionId = `fixture-streaming-${Date.now()}`;
+      streamingVoiceSessions.set(sessionId, { turnId: request.turnId, eventSequence: 1, partialSent: false });
+      emit(streamingVoiceTranscriptionListeners, {
+        sessionId,
+        turnId: request.turnId,
+        sequence: 0,
+        type: "accepted",
+        runtimeId: "mock-local",
+      });
+      return {
+        sessionId,
+        turnId: request.turnId,
+        acceptedAt: new Date().toISOString(),
+        capabilities: await api.getStreamingVoiceCapabilities(),
+      };
+    },
+    sendStreamingVoiceAudioChunk: (chunk) => {
+      const session = streamingVoiceSessions.get(chunk.sessionId);
+      if (!session || session.turnId !== chunk.turnId) return false;
+      if ((window as Window & { __voiceFixtureStreamingError?: boolean }).__voiceFixtureStreamingError) {
+        emit(streamingVoiceTranscriptionListeners, {
+          sessionId: chunk.sessionId,
+          turnId: chunk.turnId,
+          sequence: session.eventSequence++,
+          type: "failed",
+          error: { code: "network_error", message: "Streaming transcription connection failed. Retry streaming or use serial next turn.", retryable: true },
+        });
+        streamingVoiceSessions.delete(chunk.sessionId);
+        return false;
+      }
+      emit(streamingVoiceTranscriptionListeners, {
+        sessionId: chunk.sessionId,
+        turnId: chunk.turnId,
+        sequence: session.eventSequence++,
+        type: "audio_ack",
+        ack: {
+          sessionId: chunk.sessionId,
+          turnId: chunk.turnId,
+          acknowledgedSequence: chunk.sequence,
+          bufferedAudioMs: 0,
+          receivedAt: new Date().toISOString(),
+        },
+      });
+      if ((window as Window & { __voiceFixtureSlowNetwork?: boolean }).__voiceFixtureSlowNetwork && !session.partialSent) {
+        emit(streamingVoiceTranscriptionListeners, {
+          sessionId: chunk.sessionId,
+          turnId: chunk.turnId,
+          sequence: session.eventSequence++,
+          type: "flow_control",
+          paused: true,
+          bufferedAudioMs: 1_500,
+          reason: "high_watermark",
+        });
+      }
+      if (!session.partialSent) {
+        session.partialSent = true;
+        emit(streamingVoiceTranscriptionListeners, {
+          sessionId: chunk.sessionId,
+          turnId: chunk.turnId,
+          sequence: session.eventSequence++,
+          type: "partial",
+          segment: { text: "Fixture live…", revision: 1, confidence: 0.92 },
+        });
+      }
+      return true;
+    },
+    stopStreamingVoiceTranscription: async (sessionId, reason = "manual") => {
+      const session = streamingVoiceSessions.get(sessionId);
+      if (!session) return false;
+      emit(streamingVoiceTranscriptionListeners, { sessionId, turnId: session.turnId, sequence: session.eventSequence++, type: "endpoint", reason });
+      emit(streamingVoiceTranscriptionListeners, { sessionId, turnId: session.turnId, sequence: session.eventSequence++, type: "final", segment: { text: "Fixture streaming transcript.", revision: 1, confidence: 1 } });
+      emit(streamingVoiceTranscriptionListeners, { sessionId, turnId: session.turnId, sequence: session.eventSequence++, type: "completed" });
+      streamingVoiceSessions.delete(sessionId);
+      return true;
+    },
+    cancelStreamingVoiceTranscription: async (sessionId) => {
+      const session = streamingVoiceSessions.get(sessionId);
+      if (!session) return false;
+      emit(streamingVoiceTranscriptionListeners, { sessionId, turnId: session.turnId, sequence: session.eventSequence++, type: "cancelled" });
+      streamingVoiceSessions.delete(sessionId);
+      return true;
+    },
+    startVoiceSynthesis: async () => {
+      const requestId = `fixture-tts-${Date.now()}`;
+      const timer = window.setTimeout(() => {
+        voiceSynthesisFixtureTimers.delete(requestId);
+        emit(voiceSynthesisListeners, {
+          requestId,
+          type: "completed",
+          result: {
+            audioData: new Uint8Array([82, 73, 70, 70, 0, 0, 0, 0, 87, 65, 86, 69]),
+            mimeType: "audio/wav",
+            runtimeId: "mock-local",
+            createdAt: new Date().toISOString(),
+            providerDisclosure: "Fixture synthesis is active in the development renderer.",
+          },
+        });
+      }, 200);
+      voiceSynthesisFixtureTimers.set(requestId, timer);
+      return { requestId, acceptedAt: new Date().toISOString() };
+    },
+    cancelVoiceSynthesis: async (requestId) => {
+      const timer = voiceSynthesisFixtureTimers.get(requestId);
+      if (timer === undefined) return false;
+      window.clearTimeout(timer);
+      voiceSynthesisFixtureTimers.delete(requestId);
+      emit(voiceSynthesisListeners, { requestId, type: "cancelled" });
+      return true;
+    },
+    getVoiceSynthesisRuntimeStatus: async () => ({
+      runtimeId: "mock-local",
+      state: "ready",
+      supportsSynthesisTask: true,
+      supportedFormats: ["wav"],
+      maxTextChars: 12_000,
+      providerDisclosure: "Fixture synthesis is active in the development renderer.",
+      message: "Fixture voice synthesis runtime is ready.",
     }),
     writeVoiceTranscriptHandoff: async (request): Promise<DesktopVoiceTranscriptHandoffResult> => ({
       ok: true,
@@ -1647,8 +2283,109 @@ export function installMockDesktopApi(): void {
       createMockWorkspaceFiles(request.workspacePath, request.query),
     summarizeWorkspaceFolder: async (request) =>
       createMockWorkspaceFolderSummary(request.path),
+    analyzeMaterialRoles: async (request) => ({
+      items: request.paths.map((path, index) => ({
+        path,
+        name: path.split(/[\\/]/).at(-1) || path,
+        role: index % 4 === 0 ? "previous_report" as const : index % 4 === 1 ? "latest_data" as const : index % 4 === 2 ? "result_image" as const : "reference_material" as const,
+        confidence: 0.95,
+        reason: "Mock material role evidence.",
+        suggestedUse: "Use this material according to its detected role.",
+      })),
+      roleCounts: {
+        previous_report: request.paths.filter((_path, index) => index % 4 === 0).length,
+        latest_data: request.paths.filter((_path, index) => index % 4 === 1).length,
+        result_image: request.paths.filter((_path, index) => index % 4 === 2).length,
+        reference_material: request.paths.filter((_path, index) => index % 4 === 3).length,
+      },
+      summary: "Mock material role analysis.",
+    }),
+    analyzeMaterialConsistency: async (request) => ({
+      findings: request.paths.length >= 2 ? [{
+        id: "mock-consensus",
+        kind: "consensus" as const,
+        severity: "info" as const,
+        title: "Mock materials agree",
+        explanation: "Two mock materials contain the same conclusion.",
+        recommendation: "Keep both sources attached.",
+        sources: request.paths.slice(0, 2).map((path) => ({
+          path,
+          name: path.split(/[\\/]/).at(-1) || path,
+          role: "reference_material" as const,
+          locator: "line 1",
+          value: "agrees",
+          excerpt: "Mock agreement.",
+        })),
+      }] : [],
+      counts: { consensus: request.paths.length >= 2 ? 1 : 0, source_conflict: 0, outdated_number: 0, chart_mismatch: 0, evidence_gap: 0 },
+      filesAnalyzed: request.paths.length,
+      summary: "Mock material consistency analysis.",
+    }),
+    queryMaterials: async (request) => ({
+      status: "answered" as const,
+      queryKind: "general" as const,
+      answer: "Mock material answer.",
+      confidence: 0.95,
+      citations: request.paths.slice(0, 1).map((path) => ({
+        path,
+        name: path.split(/[\\/]/).at(-1) || path,
+        locator: "line 1",
+        excerpt: "Mock material evidence.",
+      })),
+      filesSearched: request.paths.length,
+    }),
     previewWorkspaceFile: async (request) =>
       createMockWorkspacePreview(request.workspacePath, request.path, request.mode),
+    saveWorkspaceFileAs: async (request) => ({
+      canceled: false,
+      sourcePath: request.path,
+      destinationPath: request.destinationPath || `C:\\Users\\Demo\\Downloads\\${request.suggestedName || "result.md"}`,
+      name: request.suggestedName || "result.md",
+      extension: ".md",
+      size: 128,
+      sourceHash: "sha256:mock-result",
+      destinationHash: "sha256:mock-result",
+      integrityVerified: true,
+      message: "Mock file copy saved and verified.",
+    }),
+    writeWorkspaceFile: async (request) => ({
+      status: "saved",
+      path: request.path,
+      expectedHash: request.expectedHash,
+      currentHash: request.expectedHash,
+      savedHash: "sha256:mock-safe-write",
+      destinationPath: request.mode === "save_as" ? request.destinationPath || `C:\\Users\\Demo\\Downloads\\${request.suggestedName || "safe-copy.md"}` : request.path,
+      savedAs: request.mode === "save_as",
+      overwroteExternal: request.mode === "overwrite",
+      message: "Saved with external-change protection.",
+    }),
+    applyAnomalyDecision: async (request) => {
+      const base = request.sourcePath.replace(/\.csv$/i, "");
+      const outputs = request.decision === "keep"
+        ? [{ role: "kept_all" as const, path: `${base}-保留全部.csv`, rowCount: 5, anomalyCount: 2, sha256: "sha256:mock-keep" }]
+        : request.decision === "exclude"
+          ? [{ role: "excluded_anomalies" as const, path: `${base}-排除异常.csv`, rowCount: 3, anomalyCount: 0, sha256: "sha256:mock-exclude" }]
+          : [
+              { role: "kept_all" as const, path: `${base}-保留全部.csv`, rowCount: 5, anomalyCount: 2, sha256: "sha256:mock-keep" },
+              { role: "excluded_anomalies" as const, path: `${base}-排除异常.csv`, rowCount: 3, anomalyCount: 0, sha256: "sha256:mock-exclude" },
+            ];
+      return {
+        sourcePath: request.sourcePath,
+        anomalyColumn: request.anomalyColumn,
+        totalRows: 5,
+        anomalyRows: 2,
+        normalRows: 3,
+        decision: request.decision,
+        decidedAt: new Date().toISOString(),
+        resultSummary: request.decision === "keep" ? "已采用“保留异常”。" : request.decision === "exclude" ? "已采用“排除异常”。" : "已采用“两种都做”。",
+        sourceSha256: "sha256:mock-source",
+        receiptPath: `${base}-异常处理决定.json`,
+        outputs,
+      };
+    },
+    listWorktrees: async () => [],
+    listWorktreeEvents: async (request) => ({ events: [], nextSequence: request.afterSequence ?? 0 }),
+    getWorktreeMigrationDiagnostics: async () => [],
     getWorkspaceGitDiff: async (request) =>
       createMockWorkspaceDiff(request.workspacePath, request.path, request.staged),
     getWorkspaceGitFileAtRef: async (request) =>
@@ -1692,6 +2429,7 @@ export function installMockDesktopApi(): void {
         changedFileCount: 2,
         storedFileCount: 2,
         skippedFileCount: 0,
+        truncated: false,
         entries: [
           {
             path: `${workspacePath}\\src\\App.tsx`,
@@ -1699,6 +2437,7 @@ export function installMockDesktopApi(): void {
             status: "modified",
             size: 1200,
             fileHash: "sha256:mock-app",
+            versionPath: `${workspacePath}\\.drsai\\versions\\${Date.now()}-App.tsx`,
             stored: true,
             existed: true,
           },
@@ -1708,16 +2447,42 @@ export function installMockDesktopApi(): void {
             status: "untracked",
             size: 800,
             fileHash: "sha256:mock-doc",
+            versionPath: `${workspacePath}\\.drsai\\versions\\${Date.now()}-workspace-context.md`,
             stored: true,
             existed: true,
           },
         ],
+        kind: request.kind ?? "manual",
+        ...(request.runId ? { runId: request.runId } : {}),
+        ...(request.automatic ? { automatic: true } : {}),
+        ...(request.versionGroupId ? { versionGroupId: request.versionGroupId } : {}),
+        ...(request.versionPhase ? { versionPhase: request.versionPhase } : {}),
+        ...(request.versionNumber ? { versionNumber: request.versionNumber } : {}),
+        ...(request.versionScope ? { versionScope: request.versionScope } : {}),
+        ...(request.changeReason ? { changeReason: request.changeReason } : {}),
+        ...(request.objectLabel ? { objectLabel: request.objectLabel } : {}),
+        ...(request.kind === "agent_run_baseline" ? { reviewStatus: "pending" as const } : {}),
       };
       workspaceCheckpoints = [
         checkpoint,
         ...workspaceCheckpoints.filter((item) => item.id !== checkpoint.id),
       ];
       return checkpoint;
+    },
+    acceptWorkspaceCheckpoint: async (request) => {
+      const checkpoint = workspaceCheckpoints.find(
+        (item) => item.workspacePath === request.workspacePath && item.id === request.checkpointId,
+      );
+      if (!checkpoint) throw new Error("Mock checkpoint was not found.");
+      const accepted: WorkspaceCheckpoint = {
+        ...checkpoint,
+        reviewStatus: "accepted",
+        reviewedAt: new Date().toISOString(),
+      };
+      workspaceCheckpoints = workspaceCheckpoints.map((item) =>
+        item.id === accepted.id ? accepted : item,
+      );
+      return accepted;
     },
     previewWorkspaceCheckpoint: async (request) => {
       const checkpoint = workspaceCheckpoints.find(
@@ -2180,6 +2945,37 @@ export function installMockDesktopApi(): void {
         workspacePath: request.workspacePath,
         removedCount: before - projectMemory.length,
       };
+    },
+    listUserPreferences: async () => userPreferences.slice().sort((left, right) => left.category.localeCompare(right.category)),
+    upsertUserPreference: async (request) => {
+      const existing = userPreferences.find((item) => item.category === request.category);
+      const now = new Date().toISOString();
+      const preference: DesktopUserPreference = {
+        category: request.category,
+        value: request.value,
+        source: "explicit_user_request",
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+      };
+      userPreferences = [preference, ...userPreferences.filter((item) => item.category !== preference.category)];
+      return preference;
+    },
+    deleteUserPreference: async (request) => {
+      const before = userPreferences.length;
+      userPreferences = userPreferences.filter((item) => item.category !== request.category);
+      return { category: request.category, removed: userPreferences.length !== before };
+    },
+    listTeamMemory: async (request = {}) => teamMemory.filter((entry) => !request.teamId || entry.teamId === request.teamId).slice(0, request.limit ?? 20),
+    addTeamMemory: async (request) => {
+      const now = new Date().toISOString();
+      const entry = { id: `team-memory-${crypto.randomUUID()}`, teamId: request.teamId, content: request.content, createdBy: "mock-user", createdAt: now, updatedAt: now };
+      teamMemory = [entry, ...teamMemory];
+      return entry;
+    },
+    deleteTeamMemory: async (request) => {
+      const before = teamMemory.length;
+      teamMemory = teamMemory.filter((entry) => !(entry.teamId === request.teamId && entry.id === request.entryId));
+      return { teamId: request.teamId, removedCount: before - teamMemory.length };
     },
     listCustomCommands: async (request) =>
       customCommands
@@ -2689,6 +3485,7 @@ export function installMockDesktopApi(): void {
         ...(request.targetId ? { targetId: request.targetId } : {}),
         ...(request.approvalId ? { approvalId: request.approvalId } : {}),
         ...(request.currentStep ? { currentStep: request.currentStep } : {}),
+        ...(request.planSteps?.length ? { planSteps: request.planSteps.map((step) => ({ ...step })) } : {}),
         message: request.message ?? "Mock background task is queued.",
         verification:
           request.verification ??
@@ -2702,10 +3499,14 @@ export function installMockDesktopApi(): void {
       if (!task) throw new Error("Mock background task was not found.");
       const updated: DesktopBackgroundTask = {
         ...task,
+        ...(request.title !== undefined ? { title: request.title } : {}),
         status: request.status,
         updatedAt: new Date().toISOString(),
         ...(request.currentStep !== undefined
           ? { currentStep: request.currentStep }
+          : {}),
+        ...(request.planSteps !== undefined
+          ? { planSteps: request.planSteps.map((step) => ({ ...step })) }
           : {}),
         message: request.message ?? task.message,
         verification: request.verification ?? task.verification,
@@ -2715,6 +3516,183 @@ export function installMockDesktopApi(): void {
       );
       return updated;
     },
+    createShare: async (request) => {
+      const source = backgroundTasks.find((item) => item.id === request.sourceTaskId);
+      if (!source?.deliverySummary) throw new Error("Only a completed task with results can be shared.");
+      const selected = request.scope === "result_only" ? source.deliverySummary.artifacts.find((item) => item.id === request.artifactId) : undefined;
+      if (request.scope === "result_only" && !selected) throw new Error("The selected result was not found in the source task.");
+      const artifacts = selected ? [selected] : source.deliverySummary.artifacts;
+      const manifest: DesktopShareManifest = {
+        id: `share:${crypto.randomUUID()}`,
+        ownerAccount: authSession.user?.email || "developer@opendrsai.local",
+        recipientAccount: request.recipientAccount.trim().toLowerCase(),
+        scope: request.scope,
+        sourceTaskId: source.id,
+        ...(selected ? { selectedArtifactId: selected.id } : {}),
+        objects: [
+          ...(request.scope === "complete_task" ? [{ objectType: "task" as const, objectId: source.id, label: source.title, version: 1 }] : []),
+          ...artifacts.map((artifact) => ({ objectType: "artifact" as const, objectId: artifact.id, label: artifact.label, kind: artifact.kind, bytes: 1, sha256: "mock-sha256", version: 1 })),
+        ],
+        createdAt: new Date().toISOString(),
+        version: 1,
+        versionUpdatedAt: new Date().toISOString(),
+        versionUpdatedByAccount: authSession.user?.email || "developer@opendrsai.local",
+        status: "active",
+        permission: request.permission ?? "view",
+      };
+      shares = [manifest, ...shares];
+      return manifest;
+    },
+    inspectShare: async (request) => ({
+      sourceTaskId: request.sourceTaskId,
+      scope: request.scope,
+      ...(request.artifactId ? { artifactId: request.artifactId } : {}),
+      scannedArtifactCount: 0,
+      findings: [],
+      requiresResolution: false,
+    }),
+    updateSharePermission: async (request) => {
+      const share = shares.find((item) => item.id === request.shareId && item.status === "active");
+      if (!share) throw new Error("Mock share was not found.");
+      const updated = { ...share, permission: request.permission };
+      shares = shares.map((item) => item.id === updated.id ? updated : item);
+      return updated;
+    },
+    revokeShare: async (request) => {
+      if (request.confirmation !== "REVOKE") throw new Error("Type REVOKE to confirm permanent access revocation.");
+      const owner = (authSession.user?.email || "").toLowerCase();
+      const share = shares.find((item) => item.id === request.shareId);
+      if (!share || share.ownerAccount.toLowerCase() !== owner || share.status !== "active") throw new Error("Only the share owner can revoke this share.");
+      const revokedAt = new Date().toISOString();
+      const updated = { ...share, status: "revoked" as const, revokedAt, revokedByAccount: owner };
+      shares = shares.map((item) => item.id === updated.id ? updated : item);
+      const audit = { id: `share-audit:${crypto.randomUUID()}`, shareId: share.id, actorAccount: owner, action: "revoke" as const, outcome: "allowed" as const, permission: share.permission, reason: `Access revoked for ${share.objects.length} shared object(s).`, createdAt: revokedAt };
+      shareAudit = [...shareAudit, audit];
+      return { shareId: share.id, status: "revoked" as const, revokedAt, recipientAccount: share.recipientAccount, objectsInvalidated: share.objects.length, auditEntryId: audit.id };
+    },
+    inspectShareVersion: async (request) => {
+      const share = shares.find((item) => item.id === request.shareId && item.status === "active");
+      if (!share) throw new Error("Mock share was not found.");
+      const artifacts = share.objects.filter((item) => item.objectType === "artifact").map((item) => ({ objectId: item.objectId, label: item.label, publishedSha256: item.sha256 || "", sourceSha256: "f".repeat(64), changed: item.sha256 !== "f".repeat(64) }));
+      const currentCommentCount = shareComments.filter((item) => item.shareId === share.id && item.version === share.version).length;
+      return { shareId: share.id, currentVersion: share.version, nextVersion: share.version + 1, hasChanges: artifacts.some((item) => item.changed), currentCommentCount, commentsThatWillBecomeStale: currentCommentCount, sourceFingerprints: artifacts.map((item) => ({ objectId: item.objectId, sha256: item.sourceSha256 })), artifacts };
+    },
+    publishShareVersion: async (request) => {
+      const share = shares.find((item) => item.id === request.shareId && item.status === "active");
+      if (!share || share.version !== request.expectedVersion) throw new Error(`Version conflict: this share is now v${share?.version ?? "?"}.`);
+      const publishedAt = new Date().toISOString(); const currentVersion = share.version + 1;
+      const updated = { ...share, version: currentVersion, versionUpdatedAt: publishedAt, versionUpdatedByAccount: authSession.user?.email || "mock@example.org", objects: share.objects.map((item) => ({ ...item, version: currentVersion, ...(item.objectType === "artifact" ? { sha256: request.sourceFingerprints.find((fingerprint) => fingerprint.objectId === item.objectId)?.sha256 || item.sha256 } : {}) })) };
+      shares = shares.map((item) => item.id === updated.id ? updated : item);
+      const staleCommentCount = shareComments.filter((item) => item.shareId === share.id && item.version < currentVersion).length;
+      return { status: "published" as const, shareId: share.id, previousVersion: share.version, currentVersion, publishedAt, staleCommentCount, manifest: updated };
+    },
+    listShareComments: async (request) => { const share = shares.find((item) => item.id === request.shareId); return shareComments.filter((item) => item.shareId === request.shareId).map((item) => ({ ...item, versionStatus: item.version === share?.version ? "current" as const : "stale" as const })); },
+    addShareComment: async (request) => {
+      const share = shares.find((item) => item.id === request.shareId && item.status === "active" && item.recipientAccount === (authSession.user?.email || "").toLowerCase());
+      if (!share || share.permission === "view") throw new Error("The current share permission does not allow comments.");
+      const object = share.objects.find((item) => item.objectId === request.objectId) ?? share.objects.find((item) => item.objectType === "artifact") ?? share.objects[0];
+      const comment = { id: `share-comment:${crypto.randomUUID()}`, shareId: share.id, authorAccount: authSession.user?.email || "mock@example.org", body: request.body, target: { objectType: object.objectType, objectId: object.objectId, objectLabel: object.label, anchorType: request.anchorType ?? "whole_result" as const, anchorLabel: request.anchorLabel?.trim() || object.label }, createdAt: new Date().toISOString(), version: share.version, versionStatus: "current" as const };
+      shareComments = [...shareComments, comment];
+      return comment;
+    },
+    previewShareCommentTask: async (request) => {
+      const comment = shareComments.find((item) => item.shareId === request.shareId && item.id === request.commentId);
+      if (!comment) throw new Error("Mock shared comment was not found.");
+      return { shareId: request.shareId, commentId: comment.id, title: `处理评论：${comment.target.anchorLabel}`, instructions: `针对成果“${comment.target.objectLabel}”处理评论：\n${comment.body}`, commentBody: comment.body, commentAuthorAccount: comment.authorAccount, target: { ...comment.target } };
+    },
+    createShareCommentTask: async (request) => {
+      const preview = await api.previewShareCommentTask(request);
+      const now = new Date().toISOString();
+      const task = { id: `share-comment-task:${crypto.randomUUID()}`, shareId: request.shareId, commentId: request.commentId, backgroundTaskId: `background-task:agent_run:${crypto.randomUUID()}`, title: request.title, instructions: request.instructions, commentBody: preview.commentBody, commentAuthorAccount: preview.commentAuthorAccount, target: { ...preview.target }, status: "ready" as const, createdAt: now, updatedAt: now };
+      shareCommentTasks = [...shareCommentTasks, task];
+      return task;
+    },
+    updateShareCommentTask: async (request) => {
+      const task = shareCommentTasks.find((item) => item.id === request.taskId);
+      if (!task || task.status === "completed") throw new Error("Mock comment task cannot be updated.");
+      const updated = { ...task, title: request.title, instructions: request.instructions, updatedAt: new Date().toISOString() };
+      shareCommentTasks = shareCommentTasks.map((item) => item.id === updated.id ? updated : item);
+      return updated;
+    },
+    completeShareCommentTask: async (request) => {
+      const task = shareCommentTasks.find((item) => item.id === request.taskId);
+      if (!task) throw new Error("Mock comment task was not found.");
+      const completedAt = new Date().toISOString();
+      const updated = { ...task, status: "completed" as const, completedAt, updatedAt: completedAt };
+      shareCommentTasks = shareCommentTasks.map((item) => item.id === updated.id ? updated : item);
+      return updated;
+    },
+    listShareCommentTasks: async (request = {}) => shareCommentTasks.filter((item) => !request.shareId || item.shareId === request.shareId).map((item) => ({ ...item, target: { ...item.target } })),
+    continueSharedTask: async (request) => {
+      const share = shares.find((item) => item.id === request.shareId && item.status === "active" && item.recipientAccount === (authSession.user?.email || "").toLowerCase());
+      if (!share || share.permission !== "continue") throw new Error("The current share permission does not allow continued processing.");
+      return { id: `share-continuation:${crypto.randomUUID()}`, shareId: share.id, requesterAccount: authSession.user?.email || "mock@example.org", sourceTaskId: share.sourceTaskId, artifactIds: share.objects.filter((item) => item.objectType === "artifact").map((item) => item.objectId), status: "requested" as const, createdAt: new Date().toISOString() };
+    },
+    listShareAudit: async (request) => shareAudit.filter((item) => item.shareId === request.shareId).map((item) => ({ ...item })),
+    listIncomingShares: async () => shares.filter((share) => share.status === "active" && share.recipientAccount === (authSession.user?.email || "").toLowerCase()),
+    listOutgoingShares: async () => shares.filter((share) => share.ownerAccount === (authSession.user?.email || "")),
+    openSharedObject: async (request) => {
+      const share = shares.find((item) => item.id === request.shareId && item.status === "active" && item.recipientAccount === (authSession.user?.email || "").toLowerCase());
+      const object = share?.objects.find((item) => item.objectType === request.objectType && item.objectId === request.objectId);
+      if (!share || !object) throw new Error("This object is not included in the share manifest.");
+      return request.objectType === "task"
+        ? { shareId: share.id, version: share.version, objectType: "task" as const, objectId: object.objectId, label: object.label, authorized: true as const, task: { id: object.objectId, title: object.label, status: "completed" as const, updatedAt: share.createdAt, artifactIds: share.objects.filter((item) => item.objectType === "artifact").map((item) => item.objectId) } }
+        : { shareId: share.id, version: share.version, objectType: "artifact" as const, objectId: object.objectId, label: object.label, authorized: true as const, artifact: { id: object.objectId, label: object.label, kind: object.kind || "file", bytes: object.bytes || 1, sha256: object.sha256 || "mock-sha256" } };
+    },
+    downloadSharedArtifact: async (request) => {
+      const recipient = (authSession.user?.email || "").toLowerCase();
+      const share = shares.find((item) => item.id === request.shareId && item.status === "active" && item.recipientAccount === recipient);
+      const object = share?.objects.find((item) => item.objectType === "artifact" && item.objectId === request.objectId);
+      if (!share || !object) throw new Error("This result is not included in the share manifest.");
+      const content = `Mock shared result: ${object.label}`;
+      return {
+        shareId: share.id,
+        version: share.version,
+        artifactId: object.objectId,
+        fileName: object.label,
+        kind: object.kind || "file",
+        bytes: content.length,
+        sha256: object.sha256 || "mock-sha256",
+        base64: btoa(content),
+      };
+    },
+    listReusableTasks: async () => reusableTasks.map((item) => ({ ...item, inputs: item.inputs.map((input) => ({ ...input })), fixedRules: [...item.fixedRules], savedAdjustments: { ...item.savedAdjustments, checkItems: [...item.savedAdjustments.checkItems] } })),
+    saveReusableTask: async (request) => {
+      const source = backgroundTasks.find((item) => item.id === request.sourceTaskId);
+      if (!source || source.status !== "completed" || !source.deliverySummary?.artifacts.length) throw new Error("Only a completed task with a saved result can be made reusable.");
+      const now = new Date().toISOString();
+      const existing = reusableTasks.find((item) => item.name.toLowerCase() === request.name.toLowerCase());
+      const task: import("@shared/desktopApi").DesktopReusableTask = {
+        id: existing?.id ?? `reusable-task-${crypto.randomUUID()}`,
+        name: request.name,
+        sourceTaskId: source.id,
+        sourceTaskTitle: source.title,
+        ...(source.workspacePath ? { sourceWorkspacePath: source.workspacePath } : {}),
+        taskTemplate: source.title,
+        inputs: [{ id: "primary_input", label: "Primary input", kind: "file", required: true, originalValue: "" }],
+        fixedRules: [...(source.planSteps ?? []).map((step) => `${step.phase}: ${step.title}`), source.verification],
+        savedAdjustments: existing?.savedAdjustments ?? { checkItems: [] },
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+        runCount: existing?.runCount ?? 0,
+      };
+      reusableTasks = [task, ...reusableTasks.filter((item) => item.id !== task.id)];
+      return task;
+    },
+    prepareReusableTaskRun: async (request) => {
+      const task = reusableTasks.find((item) => item.id === request.reusableTaskId);
+      if (!task) throw new Error("Reusable task was not found for the signed-in user.");
+      const now = new Date().toISOString();
+      const inputs = task.inputs.map((input) => ({ id: input.id, label: input.label, path: request.inputs[input.id], sha256: "mock-fresh-input", bytes: 1 }));
+      reusableTasks = reusableTasks.map((item) => item.id === task.id ? { ...item, runCount: item.runCount + 1, lastRunAt: now, lastInputFingerprint: "mock-fresh-input", updatedAt: now, ...(request.adjustmentScope === "update_template" ? { savedAdjustments: request.adjustments } : {}) } : item);
+      return { id: `reusable-run-${crypto.randomUUID()}`, reusableTaskId: task.id, reusableTaskName: task.name, workspacePath: request.workspacePath, resolvedTask: `Run reusable task: ${task.name}\nReplacement inputs:\n${inputs.map((input) => input.path).join("\n")}\nRun adjustments: ${JSON.stringify(request.adjustments)}\nScope: ${request.adjustmentScope}\nFreshness requirement: ignore all earlier outputs and caches.`, inputs, fixedRules: [...task.fixedRules], adjustments: request.adjustments, adjustmentScope: request.adjustmentScope, cachePolicy: "force_fresh_input_read", createdAt: now };
+    },
+    setCompletionNotificationPreference: async (preference) => ({
+      enabled: preference.enabled === true,
+      language: preference.language === "en" ? "en" : "zh",
+    }),
+    onCompletionNotificationClick: (callback) =>
+      subscribe(completionNotificationClickListeners, callback),
     listScheduledTasks: async (request) =>
       scheduledTasks
         .filter(
@@ -2740,12 +3718,16 @@ export function installMockDesktopApi(): void {
           : {}),
         ...(request.nextRunAt ? { nextRunAt: request.nextRunAt } : {}),
         approvalRequired: request.approvalRequired ?? true,
+        missedRunPolicy: "run_once_immediately",
         message:
           request.message ??
           "Mock scheduled task is configured for future trigger wiring.",
         verification:
           request.verification ??
           "Mock scheduled task state is verified through the scheduler panel.",
+        ...(request.userDefinition
+          ? { userDefinition: { ...request.userDefinition } }
+          : {}),
       };
       scheduledTasks = [task, ...scheduledTasks].slice(0, 50);
       return task;
@@ -2756,15 +3738,36 @@ export function installMockDesktopApi(): void {
       const updated: DesktopScheduledTask = {
         ...task,
         status: request.status,
+        title: request.title ?? task.title,
+        cadence: request.cadence ?? task.cadence,
+        target: request.target ?? task.target,
         updatedAt: new Date().toISOString(),
         ...(request.nextRunAt !== undefined ? { nextRunAt: request.nextRunAt } : {}),
         message: request.message ?? task.message,
         verification: request.verification ?? task.verification,
+        ...(request.userDefinition
+          ? { userDefinition: { ...request.userDefinition } }
+          : {}),
       };
       scheduledTasks = scheduledTasks.map((item) =>
         item.id === updated.id ? updated : item,
       );
       return updated;
+    },
+    deleteScheduledTask: async (request) => {
+      const task = scheduledTasks.find((item) => item.id === request.taskId);
+      scheduledTasks = scheduledTasks.filter((item) => item.id !== request.taskId);
+      return {
+        taskId: request.taskId,
+        removed: Boolean(task),
+        historyPolicy: "retain_results" as const,
+        ...(task?.activeWorkflowRunId
+          ? { retainedWorkflowRunId: task.activeWorkflowRunId }
+          : {}),
+        message: task
+          ? "Future runs were deleted. Historical results remain available."
+          : "Scheduled task was already absent. Historical results remain available.",
+      };
     },
     runDueScheduledTasks: async (request) => {
       const now = new Date(request?.now ?? new Date().toISOString());
@@ -2783,6 +3786,7 @@ export function installMockDesktopApi(): void {
       const limit = request?.limit ?? 50;
       const items: DesktopScheduledTaskRunItem[] = [];
       const runs: DesktopWorkflowRun[] = [];
+      const triggerAudits = new Map<string, NonNullable<DesktopScheduledTask["lastTriggerAudit"]>>();
       for (const task of scheduledTasks) {
         if (items.length >= limit) break;
         if (request?.workspacePath && task.workspacePath !== request.workspacePath) {
@@ -2796,7 +3800,19 @@ export function installMockDesktopApi(): void {
         ) {
           continue;
         }
-        const nextRunAt = getMockNextScheduledRunAt(generatedAt, task.cadence);
+        const scheduledFor = task.nextRunAt;
+        const nextRunAt = getMockNextScheduledRunAt(scheduledFor, task.cadence, generatedAt);
+        const missedByMs = Math.max(0, Date.parse(generatedAt) - Date.parse(scheduledFor));
+        triggerAudits.set(task.id, {
+          triggerKey: `mock-${task.id}-${scheduledFor}`,
+          scheduledFor,
+          triggeredAt: generatedAt,
+          missed: missedByMs > 1000,
+          missedByMs,
+          missedRunPolicy: "run_once_immediately",
+          timezone: task.userDefinition?.timezone || "UTC",
+          daylightSavingPolicy: "follow_timezone_wall_clock",
+        });
         const activeRun = task.activeWorkflowRunId
           ? workflowRuns
               .map(applyMockRestartResumePlan)
@@ -2986,6 +4002,14 @@ export function installMockDesktopApi(): void {
             : item,
         );
       }
+      for (const item of items) {
+        const triggerAudit = triggerAudits.get(item.taskId);
+        if (triggerAudit) item.triggerAudit = triggerAudit;
+      }
+      scheduledTasks = scheduledTasks.map((task) => {
+        const lastTriggerAudit = triggerAudits.get(task.id);
+        return lastTriggerAudit ? { ...task, lastTriggerAudit } : task;
+      });
       const result = {
         generatedAt,
         checked: items.length,
@@ -4232,6 +5256,12 @@ export function installMockDesktopApi(): void {
     approveBrowserTaskAction: async () => true,
     openExternal: async () => undefined,
     openPath: async () => "",
+    openPdfPage: async (request) => ({
+      ok: true,
+      path: request.path,
+      page: request.page,
+      viewerUrl: `file:///${request.path.replace(/\\/g, "/")}#page=${request.page}&zoom=page-width`,
+    }),
     getIdeContext: async (workspacePath): Promise<DesktopIdeContextSnapshot> => ({
       available: true,
       workspacePath,
@@ -4277,7 +5307,7 @@ export function installMockDesktopApi(): void {
       terminalSessions = [...terminalSessions, session];
       return session;
     },
-    listTerminalSessions: async (workspaceKey) =>
+    listTerminalSessions: async (workspaceKey, _workspaceId) =>
       terminalSessions.filter(
         (session) => !workspaceKey || session.workspaceKey === workspaceKey,
       ),
@@ -4305,6 +5335,8 @@ export function installMockDesktopApi(): void {
       subscribe(oidcLoginDebugListeners, callback),
     onChatEvent: (callback) => subscribe(chatListeners, callback),
     onVoiceTranscriptionEvent: (callback) => subscribe(voiceTranscriptionListeners, callback),
+    onStreamingVoiceTranscriptionEvent: (callback) => subscribe(streamingVoiceTranscriptionListeners, callback),
+    onVoiceSynthesisEvent: (callback) => subscribe(voiceSynthesisListeners, callback),
     onAgentRunEvent: (callback) => subscribe(agentRunListeners, callback),
     onUpdateStatus: (callback) => subscribe(updateListeners, callback),
     onTerminalData: () => () => undefined,
@@ -4330,6 +5362,27 @@ function emit<T>(listeners: Set<Listener<T>>, value: T): void {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function createStructuredVisualFixtureMarkdown(imageUrl: string): string {
+  const headers = Array.from({ length: 12 }, (_, index) => `Measurement ${index + 1}`);
+  const tableRows = Array.from({ length: 8 }, (_, rowIndex) =>
+    `| Sample ${rowIndex + 1} | ${headers.map((header, columnIndex) => `${header}: ${(rowIndex + 1) * (columnIndex + 3)}.000000`).join(" | ")} |`,
+  );
+  const codeLines = Array.from({ length: 28 }, (_, index) =>
+    `const detectorChannel${index + 1} = analyzeSpectrum("${"channel-".repeat(18)}${index + 1}", { reproducible: true });`,
+  );
+  return [
+    "## Structured renderer visual fixture\n\n",
+    `| Sample | ${headers.join(" | ")} |\n`,
+    `| --- | ${headers.map(() => "---:").join(" | ")} |\n`,
+    `${tableRows.join("\n")}\n\n`,
+    "```typescript\n",
+    `${codeLines.join("\n")}\n`,
+    "```\n\n",
+    `![OpenDrSai visual fixture](${imageUrl})\n\n`,
+    "The table and code block scroll within the response, while the image remains bounded by the readable column.",
+  ].join("");
 }
 
 function createMockWorkspaceOverview(
@@ -4397,6 +5450,10 @@ function createMockWorkspaceFolderSummary(path: string): WorkspaceFolderSummaryR
     fileCount: 12,
     directoryCount: 4,
     skippedDirectoryCount: 2,
+    importedFileCount: 12,
+    skippedFileCount: 0,
+    failedFileCount: 0,
+    unsupportedExtensions: [],
     truncated: false,
     estimatedTokens: Math.ceil(summary.length / 4),
     sampledFiles: [

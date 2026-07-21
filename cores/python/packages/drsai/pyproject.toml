@@ -36,6 +36,7 @@ dependencies = [
     # ── data model & validation ──────────────────────────────────────────
     "pydantic",
     "pydantic-settings",
+    "pypdf==6.10.0",
 
     # ── database ──────────────────────────────────────────────────────────
     "sqlmodel",
@@ -47,6 +48,8 @@ dependencies = [
     # ── logging & config ──────────────────────────────────────────────────
     "loguru",
     "python-dotenv",
+    "cryptography>=41",
+    "debugpy>=1.8,<2",
 
     # ── async networking ──────────────────────────────────────────────────
     "aiohttp",
@@ -184,6 +187,8 @@ packages = [
 # is assembled — you no longer need to build manually before pip install.
 "../../../../apps/ui-tui/dist/entry.mjs" = "drsai/ui_tui/dist/entry.mjs"
 "../../../../apps/ui-tui/package.json"   = "drsai/ui_tui/package.json"
+"../../../../protocol/owop/owop.schema.json" = "drsai/owop/owop.schema.json"
+"src/drsai/owop/node_pty_provider.cjs" = "drsai/owop/node_pty_provider.cjs"
 
 [tool.hatch.build.hooks.custom]
 path = "build_hook.py"

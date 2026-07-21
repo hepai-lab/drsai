@@ -27,7 +27,7 @@ export function saveApiKey(rawApiKey: unknown): SaveApiKeyResult {
   mkdirSync(dirname(DRSAI_ENV_FILE), { recursive: true });
   const existing = existsSync(DRSAI_ENV_FILE)
     ? readFileSync(DRSAI_ENV_FILE, "utf8")
-    : "# DrSai environment\n";
+    : "# OpenDrSai environment\n";
   const next = upsertEnvValue(existing, API_KEY_NAME, apiKey);
   writeFileSync(DRSAI_ENV_FILE, next, "utf8");
   process.env.HEPAI_API_KEY = apiKey;

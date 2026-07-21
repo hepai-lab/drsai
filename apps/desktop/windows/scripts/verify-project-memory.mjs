@@ -107,6 +107,8 @@ assert(adapter.includes("desktopApi.updateProjectMemory"), "chat adapter does no
 assert(adapter.includes("desktopApi.clearProjectMemory"), "chat adapter does not clear /memory clear");
 assert(adapter.includes("resolveProjectMemoryEntry"), "chat adapter cannot target memory entries by index or id");
 assert(adapter.includes('source: "retrospective"'), "chat adapter does not capture retrospective memory");
+assert(adapter.includes("compact-summary:"), "/compact save does not capture reviewed compact summaries as project memory");
+assert(adapter.includes("Saved compact summary to project memory"), "/compact save project memory feedback is missing");
 assert(adapter.includes("Project memory for this workspace:"), "chat adapter does not inject project memory into model context");
 
 assert(

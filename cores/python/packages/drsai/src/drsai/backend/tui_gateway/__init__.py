@@ -1,4 +1,4 @@
-"""DrSai TUI Gateway — JSON-RPC server bridging the Ink/TS UI to DrSaiCLIAssistant.
+"""OpenDrSai TUI Gateway — JSON-RPC server bridging the Ink/TS UI to DrSaiCLIAssistant.
 
 This package replaces the legacy in-process prompt_toolkit TUI. It speaks
 JSON-RPC 2.0 over stdio (newline-delimited) by default; an optional WebSocket

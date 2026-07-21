@@ -38,7 +38,7 @@
 - **Legacy:** `legacy/` — 废弃代码，不要修改
 
 <!-- ### Framework
-- 基于 **AutoGen 0.5.7** 构建，兼容 AutoGen 完整生态
+- 基于 **BAMS架构（Brain-Actuators-Memory-Sensors）** 构建，兼容 AutoGen 完整生态
 - 模型接入：HepAI API (`https://aiapi.ihep.ac.cn/apiv2`) + Anthropic/OpenAI API
 - 数据存储：SQLite (via SQLModel) + RAGFlow 矢量知识库
 - 环境配置：`.env` 文件 (参考 `.env.example`) -->

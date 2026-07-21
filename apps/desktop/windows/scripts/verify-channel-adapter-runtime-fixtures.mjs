@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL, fileURLToPath } from "node:url";
 
@@ -141,6 +141,15 @@ function writeZipFixture(filePath) {
     zipLocalEntry("reports/summary.txt", "runtime fixture archive summary"),
     zipLocalEntry("nested/report.zip", "PK\u0003\u0004nested archive marker"),
   ]));
+}
+
+function writeCrxFixture(filePath, entries) {
+  const zipPayload = Buffer.concat(entries.map(([name, contents]) => zipLocalEntry(name, contents)));
+  const header = Buffer.alloc(12);
+  header.write("Cr24", 0, "ascii");
+  header.writeUInt32LE(3, 4);
+  header.writeUInt32LE(0, 8);
+  writeFileSync(filePath, Buffer.concat([header, zipPayload]));
 }
 
 function writePlaywrightTraceZipFixture(filePath) {
@@ -381,6 +390,25 @@ function writeJavaClassFixture(filePath) {
   header.writeUInt16BE(61, 6);
   header.writeUInt16BE(utf8Entries.length + 1, 8);
   writeFileSync(filePath, Buffer.concat([header, ...utf8Entries]));
+}
+
+function writeJavaFlightRecorderFixture(filePath) {
+  const header = Buffer.alloc(68);
+  Buffer.from([0x46, 0x4c, 0x52, 0x00]).copy(header, 0);
+  header.writeUInt16BE(2, 4);
+  header.writeUInt16BE(1, 6);
+  header.writeBigUInt64BE(256n, 8);
+  header.writeBigUInt64BE(128n, 16);
+  header.writeBigUInt64BE(96n, 24);
+  header.writeBigUInt64BE(1783598400000000000n, 32);
+  header.writeBigUInt64BE(5000000000n, 40);
+  header.writeBigUInt64BE(0n, 48);
+  header.writeBigUInt64BE(1000000000n, 56);
+  header.writeUInt32BE(1, 64);
+  writeFileSync(filePath, Buffer.concat([
+    header,
+    Buffer.from("jdk.ExecutionSample jdk.ObjectAllocationInNewTLAB HotSpot main JFR RuntimeWorker secret-jfr-token", "latin1"),
+  ]));
 }
 
 function writeMobileAppPackageFixture(filePath, kind) {
@@ -928,6 +956,15 @@ function summaryFor(result, title) {
   return item.summary;
 }
 
+function assertJsToolingNoRunnerSafety(summary, label) {
+  assert(
+    summary.includes("no node/npm/pnpm/Yarn/Bun command") &&
+      summary.includes("TypeScript compiler") &&
+      summary.includes("lint/test/format runner"),
+    `${label} summary omitted no-runner safety copy`,
+  );
+}
+
 const packageJson = read("package.json");
 const checklist = read("docs/chatbar-capability-checklist.md");
 const roadmap = read("docs/smart-chat-bar-roadmap.md");
@@ -956,6 +993,14 @@ assert(roadmap.includes("`Podfile`, `Podfile.lock`, `project.pbxproj`, `RuntimeF
 assert(checklist.includes("runtime-python-dependency-golden-agent"), "checklist omits runtime Python dependency golden fixture agent record");
 assert(checklist.includes("runtime Python dependency manifest golden fixtures"), "checklist omits runtime Python dependency fixture evidence");
 assert(roadmap.includes("runtime Python dependency golden fixtures"), "roadmap omits runtime Python dependency fixture evidence");
+assert(checklist.includes("citation-cff-input-agent"), "checklist omits Citation CFF input agent record");
+assert(checklist.includes("runtime `CITATION.cff` golden fixture"), "checklist omits Citation CFF runtime fixture evidence");
+assert(roadmap.includes("Citation CFF file input"), "roadmap omits Citation CFF input addendum");
+assert(roadmap.includes("runtime `CITATION.cff` golden fixture"), "roadmap omits Citation CFF runtime fixture evidence");
+assert(checklist.includes("python-tooling-config-input-agent"), "checklist omits Python tooling config input agent record");
+assert(checklist.includes("runtime `pyrightconfig.json`, `mypy.ini`, `pytest.ini`, and `tox.ini` golden fixtures"), "checklist omits Python tooling config runtime fixture evidence");
+assert(roadmap.includes("Python tooling config input"), "roadmap omits Python tooling config input addendum");
+assert(roadmap.includes("runtime `pyrightconfig.json`, `mypy.ini`, `pytest.ini`, and `tox.ini` golden fixtures"), "roadmap omits Python tooling config runtime fixture evidence");
 assert(checklist.includes("Python Constraints Text Input"), "checklist omits Python constraints text input addendum");
 assert(checklist.includes("`constraints-runtime.txt`"), "checklist omits Python constraints runtime fixture evidence");
 assert(roadmap.includes("Python constraints text input"), "roadmap omits Python constraints input addendum");
@@ -1054,6 +1099,14 @@ assert(checklist.includes("LaTeX/BibTeX Context Input"), "checklist omits LaTeX 
 assert(checklist.includes("runtime `paper.tex`, `references.bib`, and `latexmkrc` fixtures"), "checklist omits LaTeX runtime fixture evidence");
 assert(roadmap.includes("LaTeX/BibTeX context input"), "roadmap omits LaTeX context input addendum");
 assert(roadmap.includes("runtime `paper.tex`, `references.bib`, and `latexmkrc` fixtures"), "roadmap omits LaTeX runtime fixture evidence");
+assert(checklist.includes("devcontainer-config-input-agent"), "checklist omits Dev Container config input agent record");
+assert(checklist.includes("runtime `.devcontainer/devcontainer.json` golden fixture"), "checklist omits Dev Container runtime fixture evidence");
+assert(roadmap.includes("Dev Container config input"), "roadmap omits Dev Container config input evidence");
+assert(roadmap.includes("runtime `.devcontainer/devcontainer.json` golden fixture"), "roadmap omits Dev Container runtime fixture evidence");
+assert(checklist.includes("renovate-config-input-agent"), "checklist omits Renovate config input agent record");
+assert(checklist.includes("runtime `renovate.json` golden fixture"), "checklist omits Renovate config runtime fixture evidence");
+assert(roadmap.includes("Renovate config input"), "roadmap omits Renovate config input evidence");
+assert(roadmap.includes("runtime `renovate.json` golden fixture"), "roadmap omits Renovate config runtime fixture evidence");
 assert(checklist.includes("runtime-font-container-variant-agent"), "checklist omits runtime font container variant agent record");
 assert(checklist.includes("runtime WOFF/WOFF2 font golden fixtures"), "checklist omits runtime WOFF/WOFF2 font fixture evidence");
 assert(roadmap.includes("runtime WOFF/WOFF2 font golden fixtures"), "roadmap omits runtime WOFF/WOFF2 font fixture evidence");
@@ -1162,11 +1215,58 @@ assert(checklist.includes("VS Code Workspace Config Input"), "checklist omits VS
 assert(checklist.includes("`.vscode/settings.json`, `.vscode/tasks.json`, `.vscode/launch.json`, and `.vscode/extensions.json`"), "checklist omits VS Code workspace config fixture detail evidence");
 assert(roadmap.includes("VS Code workspace config input"), "roadmap omits VS Code workspace config evidence");
 assert(roadmap.includes("Runtime build task"), "roadmap omits VS Code task fixture evidence");
+assert(checklist.includes("jetbrains-ide-config-input-agent"), "checklist omits JetBrains IDE config input agent record");
+assert(checklist.includes("JetBrains IDE Config Input"), "checklist omits JetBrains IDE config evidence");
+assert(checklist.includes("runtime `.idea/workspace.xml`, `.idea/runConfigurations/Runtime.xml`, and `runtime.iml` golden fixtures"), "checklist omits JetBrains IDE config runtime fixture detail evidence");
+assert(roadmap.includes("JetBrains IDE config input"), "roadmap omits JetBrains IDE config evidence");
+assert(roadmap.includes("Runtime JetBrains Application"), "roadmap omits JetBrains run configuration fixture evidence");
 assert(checklist.includes("js-tooling-config-agent"), "checklist omits JS/TS tooling config agent record");
 assert(checklist.includes("JS/TS Tooling Config Input"), "checklist omits JS/TS tooling config evidence");
 assert(checklist.includes("`.eslintrc.json`, `.prettierrc.yaml`, `biome.jsonc`, `vitest.config.ts`, and `playwright.config.ts`"), "checklist omits JS/TS tooling config fixture detail evidence");
+assert(checklist.includes("oxlint-config-input-agent"), "checklist omits Oxlint config input agent record");
+assert(checklist.includes("runtime `oxlintrc.jsonc` golden fixture"), "checklist omits Oxlint config runtime fixture evidence");
+assert(checklist.includes("deno-config-input-agent"), "checklist omits Deno config input agent record");
+assert(checklist.includes("runtime `deno.jsonc` golden fixture"), "checklist omits Deno config runtime fixture evidence");
+assert(checklist.includes("cypress-config-input-agent"), "checklist omits Cypress config input agent record");
+assert(checklist.includes("runtime `cypress.config.ts` golden fixture"), "checklist omits Cypress config runtime fixture evidence");
+assert(checklist.includes("storybook-config-input-agent"), "checklist omits Storybook config input agent record");
+assert(checklist.includes("runtime `.storybook/main.ts` golden fixture"), "checklist omits Storybook config runtime fixture evidence");
+assert(checklist.includes("postcss-tailwind-config-input-agent"), "checklist omits PostCSS/Tailwind config input agent record");
+assert(checklist.includes("runtime `postcss.config.cjs` and `tailwind.config.ts` golden fixtures"), "checklist omits PostCSS/Tailwind config runtime fixture evidence");
+assert(checklist.includes("frontend-hosting-config-input-agent"), "checklist omits frontend hosting config input agent record");
+assert(checklist.includes("runtime `vercel.json`, `netlify.toml`, and `wrangler.toml` golden fixtures"), "checklist omits frontend hosting config runtime fixture evidence");
+assert(checklist.includes("babel-browserslist-config-input-agent"), "checklist omits Babel/Browserslist config input agent record");
+assert(checklist.includes("runtime `babel.config.json` and `.browserslistrc` golden fixtures"), "checklist omits Babel/Browserslist config runtime fixture evidence");
+assert(checklist.includes("ts-js-project-config-input-agent"), "checklist omits TS/JS project config input agent record");
+assert(checklist.includes("runtime `tsconfig.json` and `jsconfig.json` golden fixtures"), "checklist omits TS/JS project config runtime fixture evidence");
+assert(checklist.includes("framework-config-input-agent"), "checklist omits framework config input agent record");
+assert(checklist.includes("runtime `next.config.mjs`, `astro.config.mjs`, `svelte.config.js`, and `nuxt.config.ts` golden fixtures"), "checklist omits framework config runtime fixture evidence");
+assert(checklist.includes("markdownlint-config-input-agent"), "checklist omits Markdownlint config input agent record");
+assert(checklist.includes("runtime `.markdownlint.json` golden fixture"), "checklist omits Markdownlint config runtime fixture evidence");
+assert(checklist.includes("knip-config-input-agent"), "checklist omits Knip config input agent record");
+assert(checklist.includes("runtime `knip.jsonc` golden fixture"), "checklist omits Knip config runtime fixture evidence");
 assert(roadmap.includes("JS/TS tooling config input"), "roadmap omits JS/TS tooling config evidence");
 assert(roadmap.includes("ESLint/Prettier/Biome/Stylelint/Jest/Vitest/Playwright"), "roadmap omits JS/TS tooling config tool coverage");
+assert(roadmap.includes("Oxlint config input"), "roadmap omits Oxlint config input evidence");
+assert(roadmap.includes("runtime `oxlintrc.jsonc` golden fixture"), "roadmap omits Oxlint config runtime fixture evidence");
+assert(roadmap.includes("Deno config input"), "roadmap omits Deno config input evidence");
+assert(roadmap.includes("runtime `deno.jsonc` golden fixture"), "roadmap omits Deno config runtime fixture evidence");
+assert(roadmap.includes("Cypress config input"), "roadmap omits Cypress config input evidence");
+assert(roadmap.includes("runtime `cypress.config.ts` golden fixture"), "roadmap omits Cypress config runtime fixture evidence");
+assert(roadmap.includes("Storybook config input"), "roadmap omits Storybook config input evidence");
+assert(roadmap.includes("runtime `.storybook/main.ts` golden fixture"), "roadmap omits Storybook config runtime fixture evidence");
+assert(roadmap.includes("PostCSS/Tailwind config input"), "roadmap omits PostCSS/Tailwind config input evidence");
+assert(roadmap.includes("runtime `postcss.config.cjs` and `tailwind.config.ts` golden fixtures"), "roadmap omits PostCSS/Tailwind config runtime fixture evidence");
+assert(roadmap.includes("frontend hosting config input"), "roadmap omits frontend hosting config input evidence");
+assert(roadmap.includes("runtime `vercel.json`, `netlify.toml`, and `wrangler.toml` golden fixtures"), "roadmap omits frontend hosting config runtime fixture evidence");
+assert(roadmap.includes("Babel/Browserslist config input"), "roadmap omits Babel/Browserslist config input evidence");
+assert(roadmap.includes("runtime `babel.config.json` and `.browserslistrc` golden fixtures"), "roadmap omits Babel/Browserslist config runtime fixture evidence");
+assert(roadmap.includes("TS/JS project config input"), "roadmap omits TS/JS project config input evidence");
+assert(roadmap.includes("runtime `tsconfig.json` and `jsconfig.json` golden fixtures"), "roadmap omits TS/JS project config runtime fixture evidence");
+assert(roadmap.includes("framework config input"), "roadmap omits framework config input evidence");
+assert(roadmap.includes("runtime `next.config.mjs`, `astro.config.mjs`, `svelte.config.js`, and `nuxt.config.ts` golden fixtures"), "roadmap omits framework config runtime fixture evidence");
+assert(roadmap.includes("Markdownlint config input"), "roadmap omits Markdownlint config input evidence");
+assert(roadmap.includes("Knip config input"), "roadmap omits Knip config input evidence");
 assert(checklist.includes("js-workspace-config-input-agent"), "checklist omits JS/TS workspace config agent record");
 assert(checklist.includes("JS/TS Monorepo Workspace Config Input"), "checklist omits JS/TS workspace config evidence");
 assert(checklist.includes("`pnpm-workspace.yaml` / `pnpm-workspace.yml` / `turbo.json` / `turbo.jsonc` / `nx.json`"), "checklist omits JS/TS workspace config fixture detail evidence");
@@ -1177,8 +1277,10 @@ assert(checklist.includes("web-server-config-agent"), "checklist omits Nginx/Apa
 assert(checklist.includes("runtime `nginx.conf` golden fixture"), "checklist omits Nginx web server config runtime fixture evidence");
 assert(roadmap.includes("runtime `nginx.conf` golden fixture"), "roadmap omits Nginx web server config runtime fixture evidence");
 assert(checklist.includes("runtime `web.config` golden fixture"), "checklist omits IIS web.config runtime fixture evidence");
+assert(checklist.includes("runtime `applicationHost.config` golden fixture"), "checklist omits IIS applicationHost.config runtime fixture evidence");
 assert(roadmap.includes("IIS web.config file input"), "roadmap omits IIS web.config input evidence");
 assert(roadmap.includes("runtime `web.config` golden fixture"), "roadmap omits IIS web.config runtime fixture evidence");
+assert(roadmap.includes("runtime `applicationHost.config` golden fixture"), "roadmap omits IIS applicationHost.config runtime fixture evidence");
 assert(checklist.includes("coverage-clover-golden-agent"), "checklist omits Clover coverage golden fixture agent record");
 assert(checklist.includes("runtime Clover coverage golden fixture"), "checklist omits Clover coverage fixture evidence");
 assert(roadmap.includes("runtime Clover coverage golden fixture"), "roadmap omits Clover coverage fixture evidence");
@@ -1196,12 +1298,22 @@ assert(roadmap.includes("Avro object container input"), "roadmap omits Avro obje
 assert(checklist.includes("avro-schema-input-agent"), "checklist omits Avro schema input agent record");
 assert(checklist.includes("runtime `runtime.avsc` golden fixture"), "checklist omits Avro schema runtime fixture evidence");
 assert(roadmap.includes("Avro schema file input"), "roadmap omits Avro schema evidence");
+assert(checklist.includes("json-schema-input-agent"), "checklist omits JSON Schema input agent record");
+assert(checklist.includes("runtime `runtime.schema.json` golden fixture"), "checklist omits JSON Schema runtime fixture evidence");
+assert(roadmap.includes("JSON Schema file input"), "roadmap omits JSON Schema evidence");
+assert(roadmap.includes("runtime `runtime.schema.json`"), "roadmap omits JSON Schema runtime fixture evidence");
 assert(checklist.includes("runtime-env-config-golden-agent"), "checklist omits runtime .env config golden fixture agent record");
 assert(checklist.includes("runtime .env configuration golden fixture"), "checklist omits runtime .env config fixture evidence");
 assert(roadmap.includes("runtime .env configuration golden fixture"), "roadmap omits runtime .env config fixture evidence");
 assert(checklist.includes("direnv-envrc-input-agent"), "checklist omits direnv .envrc input agent record");
 assert(checklist.includes("runtime `.envrc` golden fixture"), "checklist omits direnv .envrc runtime fixture evidence");
 assert(roadmap.includes("direnv .envrc file input"), "roadmap omits direnv .envrc input evidence");
+assert(checklist.includes("security-txt-input-agent"), "checklist omits security.txt input agent record");
+assert(checklist.includes("Security.txt Policy File Input"), "checklist omits security.txt input evidence");
+assert(roadmap.includes("security.txt policy file input"), "roadmap omits security.txt input evidence");
+assert(checklist.includes("web-app-association-agent"), "checklist omits web app association input agent record");
+assert(checklist.includes("Web App Association File Input"), "checklist omits web app association input evidence");
+assert(roadmap.includes("web app association file input"), "roadmap omits web app association input evidence");
 assert(checklist.includes("runtime-delimited-data-golden-agent"), "checklist omits runtime delimited data golden fixture agent record");
 assert(checklist.includes("runtime CSV/TSV structured data golden fixtures"), "checklist omits runtime delimited data fixture evidence");
 assert(roadmap.includes("runtime CSV/TSV structured data golden fixtures"), "roadmap omits runtime delimited data fixture evidence");
@@ -1212,7 +1324,8 @@ try {
   const drsaiDir = join(workspace, ".drsai");
   mkdirSync(workspace, { recursive: true });
   mkdirSync(drsaiDir, { recursive: true });
-  const githubWorkflowDir = join(workspace, ".github", "workflows");
+  const githubDir = join(workspace, ".github");
+  const githubWorkflowDir = join(githubDir, "workflows");
   const codeownersPath = join(workspace, "CODEOWNERS");
   const editorconfigPath = join(workspace, ".editorconfig");
   const gitattributesPath = join(workspace, ".gitattributes");
@@ -1233,6 +1346,8 @@ try {
   const yarnClassicPath = join(workspace, ".yarnrc");
   const pnpmfilePath = join(workspace, ".pnpmfile.cjs");
   const npmignorePath = join(workspace, ".npmignore");
+  const commitlintPath = join(workspace, ".commitlintrc.json");
+  const lintStagedPath = join(workspace, ".lintstagedrc");
   const mcpServersPath = join(drsaiDir, "mcp-servers.json");
   const packageLockPath = join(workspace, "package-lock.json");
   const pnpmLockPath = join(workspace, "pnpm-lock.yaml");
@@ -1249,6 +1364,8 @@ try {
   const jacocoPath = join(workspace, "jacoco.xml");
   const checkstylePath = join(workspace, "runtime.checkstyle.xml");
   const junitPath = join(workspace, "runtime.junit.xml");
+  const robotPath = join(workspace, "output.xml");
+  const jmeterPlanPath = join(workspace, "runtime.jmx");
   const jmeterXmlPath = join(workspace, "runtime.jmeter.xml");
   const jmeterCsvPath = join(workspace, "runtime.jmeter.csv");
   const nunitPath = join(workspace, "runtime.nunit.xml");
@@ -1274,7 +1391,14 @@ try {
   const hdf5Path = join(workspace, "sample.h5");
   const netcdfPath = join(workspace, "runtime.nc");
   const matPath = join(workspace, "runtime.mat");
+  const githubIssueTemplateDir = join(githubDir, "ISSUE_TEMPLATE");
+  const githubIssueFormPath = join(githubIssueTemplateDir, "bug_report.yml");
+  const githubPullRequestTemplatePath = join(githubDir, "pull_request_template.md");
   const githubActionsPath = join(githubWorkflowDir, "runtime.yml");
+  const dependabotPath = join(githubDir, "dependabot.yml");
+  const renovatePath = join(workspace, "renovate.json");
+  const preCommitPath = join(workspace, ".pre-commit-config.yaml");
+  const githubActionsJobSummaryPath = join(workspace, "GITHUB_STEP_SUMMARY.md");
   const gitlabCiPath = join(workspace, ".gitlab-ci.yml");
   const azurePipelinesPath = join(workspace, "azure-pipelines.yml");
   const bitbucketPipelinesPath = join(workspace, "bitbucket-pipelines.yml");
@@ -1286,26 +1410,33 @@ try {
   const cmakePath = join(workspace, "CMakeLists.txt");
   const compileCommandsPath = join(workspace, "compile_commands.json");
   const gradlePropertiesPath = join(workspace, "gradle.properties");
+  const gradleVersionCatalogPath = join(workspace, "libs.versions.toml");
   const solutionPath = join(workspace, "RuntimeFixture.sln");
   const csprojPath = join(workspace, "RuntimeFixture.csproj");
   const mavenDir = join(workspace, ".mvn");
   const mavenConfigPath = join(mavenDir, "maven.config");
   const jvmConfigPath = join(mavenDir, "jvm.config");
+  const mavenUserDir = join(workspace, ".m2");
+  const mavenSettingsPath = join(mavenUserDir, "settings.xml");
   const dotnetGlobalPath = join(workspace, "global.json");
   const nugetConfigPath = join(workspace, "nuget.config");
   const packagesConfigPath = join(workspace, "packages.config");
   const nuspecPath = join(workspace, "RuntimeFixture.nuspec");
   const goModPath = join(workspace, "go.mod");
+  const citationPath = join(workspace, "CITATION.cff");
   const requirementsPath = join(workspace, "requirements-dev.txt");
   const constraintsPath = join(workspace, "constraints-runtime.txt");
   const pdfPath = join(workspace, "fixture.pdf");
   const zipPath = join(workspace, "fixture.zip");
   const playwrightTraceZipPath = join(workspace, "trace.zip");
+  const vsixPath = join(workspace, "runtime-extension.vsix");
+  const crxPath = join(workspace, "runtime-extension.crx");
   const stlPath = join(workspace, "fixture.stl");
   const objPath = join(workspace, "runtime.obj");
   const gltfPath = join(workspace, "runtime.gltf");
   const glbPath = join(workspace, "runtime.glb");
   const cargoPath = join(workspace, "Cargo.toml");
+  const bazelBuildPath = join(workspace, "BUILD.bazel");
   const pyprojectPath = join(workspace, "pyproject.toml");
   const pipfilePath = join(workspace, "Pipfile");
   const pythonEnvironmentPath = join(workspace, "environment.yml");
@@ -1350,19 +1481,27 @@ try {
   const openApiPath = join(workspace, "openapi.yaml");
   const openApiJsonPath = join(workspace, "openapi.json");
   const asyncApiPath = join(workspace, "asyncapi.yaml");
+  const asyncApiJsonPath = join(workspace, "asyncapi.json");
   const insomniaPath = join(workspace, "insomnia.json");
   const insomniaYamlPath = join(workspace, "insomnia.yaml");
   const postmanEnvironmentPath = join(workspace, "runtime.postman_environment.json");
   const brunoPath = join(workspace, "runtime.bru");
   const graphqlPath = join(workspace, "schema.graphql");
+  const graphqlIntrospectionPath = join(workspace, "schema-introspection.json");
+  const pactContractPath = join(workspace, "runtime.pact.json");
   const restClientPath = join(workspace, "runtime.http");
   const restClientRestPath = join(workspace, "runtime.rest");
   const protoPath = join(workspace, "runtime.proto");
   const dockerfilePath = join(workspace, "Dockerfile");
+  const wingetManifestPath = join(workspace, "release", "winget", "HepAI.OpenDrSai", "1.4.2", "HepAI.OpenDrSai.installer.yaml");
   const chartPath = join(workspace, "Chart.yaml");
+  const helmValuesPath = join(workspace, "values.yaml");
   const kustomizationPath = join(workspace, "kustomization.yaml");
+  const kubeDir = join(workspace, ".kube");
+  const kubeconfigPath = join(kubeDir, "config");
   const kubernetesManifestPath = join(workspace, "runtime-kubernetes.yaml");
   const iisWebConfigPath = join(workspace, "web.config");
+  const iisApplicationHostConfigPath = join(workspace, "applicationHost.config");
   const nginxConfigPath = join(workspace, "nginx.conf");
   const apacheVhostConfigPath = join(workspace, "runtime.vhost.conf");
   const htaccessConfigPath = join(workspace, ".htaccess");
@@ -1379,6 +1518,7 @@ try {
   const exePath = join(workspace, "runtime.exe");
   const jarPath = join(workspace, "runtime.jar");
   const classPath = join(workspace, "RuntimeFixture.class");
+  const jfrPath = join(workspace, "runtime.jfr");
   const geojsonPath = join(workspace, "runtime.geojson");
   const terraformPath = join(workspace, "runtime.tf");
   const terraformPlanPath = join(workspace, "runtime.tfplan.json");
@@ -1393,6 +1533,7 @@ try {
   const scssPath = join(workspace, "runtime.scss");
   const msgPath = join(workspace, "runtime.msg");
   const lnkPath = join(workspace, "runtime.lnk");
+  const rdpPath = join(workspace, "runtime.rdp");
   const regPath = join(workspace, "runtime.reg");
   const wprpPath = join(workspace, "runtime.wprp");
   const dmpPath = join(workspace, "runtime.dmp");
@@ -1407,6 +1548,7 @@ try {
   const sqlPath = join(workspace, "schema.sql");
   const prismaPath = join(workspace, "schema.prisma");
   const dbmlPath = join(workspace, "runtime.dbml");
+  const jsonSchemaPath = join(workspace, "runtime.schema.json");
   const redisRdbPath = join(workspace, "dump.rdb");
   const redisAofPath = join(workspace, "appendonly.aof");
   const systemdServicePath = join(workspace, "runtime.service");
@@ -1454,6 +1596,9 @@ try {
   const dotLottiePath = join(workspace, "runtime.lottie");
   const opmlPath = join(workspace, "subscriptions.opml");
   const robotsPath = join(workspace, "robots.txt");
+  const securityTxtPath = join(workspace, "security.txt");
+  const assetLinksPath = join(workspace, "assetlinks.json");
+  const appleAssociationPath = join(workspace, "apple-app-site-association");
   const llmsPath = join(workspace, "llms.txt");
   const warcPath = join(workspace, "runtime.warc");
   const warcGzipPath = join(workspace, "runtime.warc.gz");
@@ -1481,6 +1626,10 @@ try {
   const srtPath = join(workspace, "captions.srt");
   const vttPath = join(workspace, "captions.vtt");
   const androidManifestPath = join(workspace, "AndroidManifest.xml");
+  const androidValuesDir = join(workspace, "app", "src", "main", "res", "values");
+  const androidXmlDir = join(workspace, "app", "src", "main", "res", "xml");
+  const androidStringsPath = join(androidValuesDir, "strings.xml");
+  const androidNetworkSecurityPath = join(androidXmlDir, "network_security_config.xml");
   const androidLogcatPath = join(workspace, "runtime.logcat");
   const appleUnifiedLogPath = join(workspace, "system.log");
   const infoPlistPath = join(workspace, "Info.plist");
@@ -1499,22 +1648,63 @@ try {
   const jpegColorPath = join(workspace, "runtime-color.jpg");
   const gifAnimationPath = join(workspace, "runtime-animated.gif");
   const webpAnimationPath = join(workspace, "runtime-animated.webp");
+  const svgStructurePath = join(workspace, "runtime.svg");
   const texPath = join(workspace, "paper.tex");
   const bibPath = join(workspace, "references.bib");
   const latexmkrcPath = join(workspace, "latexmkrc");
+  const devcontainerDir = join(workspace, ".devcontainer");
+  const devcontainerPath = join(devcontainerDir, "devcontainer.json");
   const vscodeDir = join(workspace, ".vscode");
   const vscodeSettingsPath = join(vscodeDir, "settings.json");
   const vscodeTasksPath = join(vscodeDir, "tasks.json");
   const vscodeLaunchPath = join(vscodeDir, "launch.json");
   const vscodeExtensionsPath = join(vscodeDir, "extensions.json");
+  const ideaDir = join(workspace, ".idea");
+  const ideaRunConfigurationsDir = join(ideaDir, "runConfigurations");
+  const jetbrainsWorkspacePath = join(ideaDir, "workspace.xml");
+  const jetbrainsRunConfigurationPath = join(ideaRunConfigurationsDir, "Runtime.xml");
+  const jetbrainsModulePath = join(workspace, "runtime.iml");
   const eslintConfigPath = join(workspace, ".eslintrc.json");
   const prettierConfigPath = join(workspace, ".prettierrc.yaml");
   const biomeConfigPath = join(workspace, "biome.jsonc");
+  const oxlintConfigPath = join(workspace, "oxlintrc.jsonc");
+  const denoConfigPath = join(workspace, "deno.jsonc");
+  const cspellConfigPath = join(workspace, "cspell.jsonc");
+  const markdownlintConfigPath = join(workspace, ".markdownlint.json");
+  const typedocConfigPath = join(workspace, "typedoc.json");
+  const knipConfigPath = join(workspace, "knip.jsonc");
+  const babelConfigPath = join(workspace, "babel.config.json");
+  const browserslistConfigPath = join(workspace, ".browserslistrc");
+  const ruffConfigPath = join(workspace, ".ruff.toml");
+  const pyprojectRuffDir = join(workspace, "pyproject-ruff");
+  const pyprojectRuffConfigPath = join(pyprojectRuffDir, "pyproject.toml");
+  const pyrightConfigPath = join(workspace, "pyrightconfig.json");
+  const mypyConfigPath = join(workspace, "mypy.ini");
+  const pytestConfigPath = join(workspace, "pytest.ini");
+  const toxConfigPath = join(workspace, "tox.ini");
   const vitestConfigPath = join(workspace, "vitest.config.ts");
   const playwrightConfigPath = join(workspace, "playwright.config.ts");
+  const cypressConfigPath = join(workspace, "cypress.config.ts");
+  const storybookDir = join(workspace, ".storybook");
+  const storybookConfigPath = join(storybookDir, "main.ts");
+  const postcssConfigPath = join(workspace, "postcss.config.cjs");
+  const tailwindConfigPath = join(workspace, "tailwind.config.ts");
+  const vercelConfigPath = join(workspace, "vercel.json");
+  const netlifyConfigPath = join(workspace, "netlify.toml");
+  const wranglerConfigPath = join(workspace, "wrangler.toml");
+  const tsconfigPath = join(workspace, "tsconfig.json");
+  const jsconfigPath = join(workspace, "jsconfig.json");
+  const nextConfigPath = join(workspace, "next.config.mjs");
+  const astroConfigPath = join(workspace, "astro.config.mjs");
+  const svelteConfigPath = join(workspace, "svelte.config.js");
+  const nuxtConfigPath = join(workspace, "nuxt.config.ts");
+  const viteConfigPath = join(workspace, "vite.config.ts");
+  const rollupConfigPath = join(workspace, "rollup.config.mjs");
+  const tsupConfigPath = join(workspace, "tsup.config.ts");
   const pnpmWorkspacePath = join(workspace, "pnpm-workspace.yaml");
   const turboConfigPath = join(workspace, "turbo.json");
   const nxConfigPath = join(workspace, "nx.json");
+  const rushConfigPath = join(workspace, "rush.json");
 
   writeText(codeownersPath, [
     "# Runtime ownership fixture",
@@ -1641,6 +1831,24 @@ try {
     "  runtime:",
     "    npmRegistryServer: https://npm.example.test?token=secret-yarn-token",
   ].join("\n"));
+  writeText(commitlintPath, JSON.stringify({
+    extends: ["@commitlint/config-conventional"],
+    parserPreset: "conventional-changelog-conventionalcommits",
+    defaultIgnores: true,
+    helpUrl: "https://commitlint.example.test/help?token=secret-commitlint-help-token",
+    rules: {
+      "type-enum": [2, "always", ["feat", "fix", "docs"]],
+      "scope-empty": [2, "never"],
+      "secret-rule-token": "secret-commitlint-rule-token",
+    },
+  }, null, 2));
+  writeText(lintStagedPath, JSON.stringify({
+    concurrent: false,
+    relative: true,
+    shell: "powershell.exe",
+    "*.ts": "eslint --fix --token=secret-lint-staged-eslint-token",
+    "*.md": ["prettier --write"],
+  }, null, 2));
   mkdirSync(drsaiDir, { recursive: true });
   writeText(mcpServersPath, JSON.stringify({
     mcpServers: {
@@ -1664,6 +1872,36 @@ try {
         disabled: "no",
       },
     },
+  }, null, 2));
+  mkdirSync(devcontainerDir, { recursive: true });
+  mkdirSync(androidValuesDir, { recursive: true });
+  mkdirSync(androidXmlDir, { recursive: true });
+  writeText(devcontainerPath, JSON.stringify({
+    name: "Runtime Dev Container",
+    image: "mcr.microsoft.com/devcontainers/typescript-node:22",
+    dockerComposeFile: ["../docker-compose.yml"],
+    service: "app",
+    workspaceFolder: "/workspaces/drsai",
+    features: {
+      "ghcr.io/devcontainers/features/node:1": { version: "22" },
+      "ghcr.io/devcontainers/features/github-cli:1": {},
+    },
+    forwardPorts: [3000, "5173"],
+    portsAttributes: {
+      "9229": { label: "node-debug" },
+    },
+    containerEnv: {
+      RUNTIME_TOKEN: "secret-devcontainer-token",
+    },
+    remoteEnv: {
+      OPENAI_API_KEY: "secret-devcontainer-api-key",
+    },
+    customizations: {
+      vscode: {
+        extensions: ["ms-vscode.vscode-typescript-next", "GitHub.copilot"],
+      },
+    },
+    postCreateCommand: "npm install && curl https://example.test/setup.sh?token=secret-devcontainer-token",
   }, null, 2));
   mkdirSync(vscodeDir, { recursive: true });
   writeText(vscodeSettingsPath, [
@@ -1714,6 +1952,45 @@ try {
       "runtime.secret-extension-token",
     ],
   }, null, 2));
+  mkdirSync(ideaRunConfigurationsDir, { recursive: true });
+  writeText(jetbrainsWorkspacePath, [
+    "<project version=\"4\">",
+    "  <component name=\"ProjectRunConfigurationManager\">",
+    "    <configuration default=\"false\" name=\"Runtime JetBrains Application\" type=\"Application\" factoryName=\"Application\">",
+    "      <option name=\"MAIN_CLASS_NAME\" value=\"ai.drsai.runtime.MainKt\" />",
+    "      <option name=\"WORKING_DIRECTORY\" value=\"$PROJECT_DIR$/apps/desktop/windows\" />",
+    "      <option name=\"PROGRAM_PARAMETERS\" value=\"--token=secret-jetbrains-workspace-token\" />",
+    "      <envs><env name=\"API_TOKEN\" value=\"secret-jetbrains-env-token\" /></envs>",
+    "    </configuration>",
+    "  </component>",
+    "  <component name=\"ProjectRootManager\" languageLevel=\"JDK_21\" project-jdk-name=\"corretto-21\" project-jdk-type=\"JavaSDK\" />",
+    "</project>",
+  ].join("\n"));
+  writeText(jetbrainsRunConfigurationPath, [
+    "<component name=\"ProjectRunConfigurationManager\">",
+    "  <configuration name=\"Runtime Gradle Test\" type=\"GradleRunConfiguration\" factoryName=\"Gradle\">",
+    "    <option name=\"WORKING_DIRECTORY\" value=\"$PROJECT_DIR$\" />",
+    "    <option name=\"PROGRAM_PARAMETERS\" value=\"test --scan --token=secret-jetbrains-run-token\" />",
+    "    <ExternalSystemSettings>",
+    "      <option name=\"externalProjectPath\" value=\"$PROJECT_DIR$\" />",
+    "      <option name=\"taskNames\"><list><option value=\"test\" /></list></option>",
+    "    </ExternalSystemSettings>",
+    "  </configuration>",
+    "</component>",
+  ].join("\n"));
+  writeText(jetbrainsModulePath, [
+    "<module type=\"JAVA_MODULE\" version=\"4\">",
+    "  <component name=\"NewModuleRootManager\" inherit-compiler-output=\"true\">",
+    "    <content url=\"file://$MODULE_DIR$/apps/runtime\">",
+    "      <sourceFolder url=\"file://$MODULE_DIR$/apps/runtime/src/main/kotlin\" isTestSource=\"false\" />",
+    "      <sourceFolder url=\"file://$MODULE_DIR$/apps/runtime/src/test/kotlin\" isTestSource=\"true\" type=\"kotlin-test\" />",
+    "    </content>",
+    "    <orderEntry type=\"inheritedJdk\" />",
+    "    <orderEntry type=\"library\" name=\"Gradle: org.jetbrains.kotlin:kotlin-stdlib:2.1.20\" level=\"project\" />",
+    "    <orderEntry type=\"module\" module-name=\"runtime-shared\" />",
+    "  </component>",
+    "</module>",
+  ].join("\n"));
   writeText(eslintConfigPath, JSON.stringify({
     extends: ["eslint:recommended", "plugin:@typescript-eslint/recommended"],
     plugins: ["@typescript-eslint", "react-hooks"],
@@ -1745,6 +2022,204 @@ try {
     "  \"runtimeToken\": \"secret-biome-token\"",
     "}",
   ].join("\n"));
+  writeText(oxlintConfigPath, [
+    "{",
+    "  // Runtime Oxlint fixture stays local-only.",
+    "  \"categories\": { \"correctness\": \"error\", \"suspicious\": \"warn\", \"perf\": \"off\" },",
+    "  \"rules\": { \"eqeqeq\": \"error\", \"no-debugger\": \"warn\", \"react/jsx-key\": \"error\" },",
+    "  \"plugins\": [\"react\", \"typescript\"],",
+    "  \"env\": { \"browser\": true, \"node\": true },",
+    "  \"ignorePatterns\": [\"dist/**\", \"release/**\"],",
+    "  \"runtimeToken\": \"secret-oxlint-token\"",
+    "}",
+  ].join("\n"));
+  writeText(denoConfigPath, [
+    "{",
+    "  // Runtime fixture Deno config.",
+    "  \"tasks\": {",
+    "    \"dev\": \"deno run -A src/main.ts --token=secret-deno-task-token\",",
+    "    \"test\": \"deno test --coverage=coverage\"",
+    "  },",
+    "  \"imports\": {",
+    "    \"@std/assert\": \"jsr:@std/assert@1\",",
+    "    \"runtime-secret\": \"https://deno.example.test/mod.ts?token=secret-deno-import-token\"",
+    "  },",
+    "  \"lint\": { \"rules\": { \"include\": [\"recommended\"], \"exclude\": [\"no-explicit-any\"] } },",
+    "  \"fmt\": { \"lineWidth\": 100, \"semiColons\": false },",
+    "  \"test\": { \"include\": [\"tests/**/*.ts\"], \"exclude\": [\"fixtures/**\"] },",
+    "  \"compilerOptions\": { \"strict\": true, \"lib\": [\"deno.window\"] },",
+    "  \"nodeModulesDir\": \"auto\",",
+    "  \"runtimeToken\": \"secret-deno-token\"",
+    "}",
+  ].join("\n"));
+  writeText(cspellConfigPath, [
+    "{",
+    "  // Runtime fixture spell-check config.",
+    "  \"version\": \"0.2\",",
+    "  \"language\": \"en,zh-CN\",",
+    "  \"words\": [\"OpenDrSai\", \"HepAI\", \"runtimeword\"],",
+    "  \"ignoreWords\": [\"fixtureignore\"],",
+    "  \"dictionaries\": [\"typescript\", \"softwareTerms\"],",
+    "  \"ignorePaths\": [\"release/**\", \"private-dictionaries/**\"],",
+    "  \"runtimeToken\": \"secret-cspell-token\"",
+    "}",
+  ].join("\n"));
+  writeText(markdownlintConfigPath, JSON.stringify({
+    default: true,
+    MD013: { line_length: 120, tables: false },
+    MD033: { allowed_elements: ["kbd", "details"] },
+    globs: ["docs/**/*.md", "apps/**/*.md"],
+    ignores: ["release/**"],
+    runtimeToken: "secret-markdownlint-token",
+  }, null, 2));
+  writeText(typedocConfigPath, JSON.stringify({
+    entryPoints: ["src/index.ts", "src/public-api.ts"],
+    out: "docs/api",
+    plugin: ["typedoc-plugin-markdown"],
+    theme: "default",
+    readme: "README.md",
+    tsconfig: "tsconfig.json",
+    exclude: ["**/*.spec.ts"],
+    excludePrivate: true,
+    runtimeToken: "secret-typedoc-token",
+  }, null, 2));
+  writeText(knipConfigPath, [
+    "{",
+    "  // Runtime fixture unused-code config.",
+    "  \"entry\": [\"src/index.ts\", \"scripts/runtime.ts?token=secret-knip-entry-token\"],",
+    "  \"project\": [\"src/**/*.ts\", \"tests/**/*.ts\"],",
+    "  \"ignore\": [\"generated/**\", \"fixtures/**\"],",
+    "  \"ignoreDependencies\": [\"@types/node\", \"internal-runtime-helper\"],",
+    "  \"ignoreBinaries\": [\"electron-builder\"],",
+    "  \"include\": [\"dependencies\", \"exports\"],",
+    "  \"workspaces\": { \"apps/*\": { \"entry\": [\"src/main.ts\"] } }",
+    "}",
+  ].join("\n"));
+  writeText(babelConfigPath, JSON.stringify({
+    presets: [
+      ["@babel/preset-env", { targets: { browsers: ["last 2 Chrome versions", "Firefox >= 120"] }, bugfixes: true }],
+      "@babel/preset-typescript",
+      "@babel/preset-react",
+    ],
+    plugins: [
+      ["@babel/plugin-transform-runtime", { helpers: true }],
+      ["babel-plugin-runtime-secret", { endpoint: "https://babel.example.test?token=secret-babel-token" }],
+    ],
+    env: {
+      test: {
+        plugins: ["babel-plugin-istanbul"],
+      },
+    },
+    assumptions: {
+      noDocumentAll: true,
+    },
+    sourceMaps: true,
+    babelrcRoots: ["./packages/*"],
+  }, null, 2));
+  writeText(browserslistConfigPath, [
+    "# Runtime Browserslist fixture token=secret-browserslist-comment-token",
+    "defaults",
+    "not dead",
+    "chrome >= 120",
+    "firefox >= 121",
+    "",
+    "[production]",
+    "> 0.5%",
+    "ios_saf >= 16",
+    "",
+    "[development]",
+    "last 1 chrome version",
+    "node 22",
+  ].join("\n"));
+  writeText(ruffConfigPath, [
+    "target-version = \"py311\"",
+    "line-length = 100",
+    "preview = true",
+    "exclude = [\"build/**\", \"release/**\"]",
+    "runtime-token = \"secret-ruff-token\"",
+    "",
+    "[lint]",
+    "select = [\"E\", \"F\", \"I\"]",
+    "extend-select = [\"B\", \"UP\"]",
+    "ignore = [\"E501\"]",
+    "",
+    "[lint.per-file-ignores]",
+    "\"tests/**\" = [\"S101\"]",
+  ].join("\n"));
+  mkdirSync(pyprojectRuffDir, { recursive: true });
+  writeText(pyprojectRuffConfigPath, [
+    "[build-system]",
+    "requires = [\"hatchling\"]",
+    "",
+    "[project]",
+    "name = \"runtime-pyproject-ruff-fixture\"",
+    "",
+    "[tool.ruff]",
+    "target-version = \"py312\"",
+    "line-length = 88",
+    "exclude = [\"dist/**\", \"generated/**\"]",
+    "preview = true",
+    "",
+    "[tool.ruff.lint]",
+    "select = [\"E\", \"F\", \"I\", \"UP\"]",
+    "ignore = [\"E203\"]",
+    "",
+    "[tool.ruff.lint.per-file-ignores]",
+    "\"scripts/**\" = [\"T201\"]",
+    "runtime-token = \"secret-pyproject-ruff-token\"",
+  ].join("\n"));
+  writeText(pyrightConfigPath, JSON.stringify({
+    include: ["src", "tests"],
+    exclude: ["build/**", "release/**"],
+    ignore: ["generated/**"],
+    strict: ["src/critical/**"],
+    stubPath: "typings",
+    venvPath: ".venv",
+    pythonVersion: "3.11",
+    pythonPlatform: "Windows",
+    typeCheckingMode: "strict",
+    reportMissingImports: "error",
+    reportUnknownMemberType: "warning",
+    runtimeToken: "secret-pyright-token",
+  }, null, 2));
+  writeText(mypyConfigPath, [
+    "[mypy]",
+    "python_version = 3.11",
+    "files = src, tests",
+    "mypy_path = typings",
+    "strict = true",
+    "warn_return_any = true",
+    "disallow_untyped_defs = true",
+    "ignore_missing_imports = false",
+    "runtime_token = secret-mypy-token",
+    "",
+    "[mypy-drsai.generated.*]",
+    "ignore_errors = true",
+  ].join("\n"));
+  writeText(pytestConfigPath, [
+    "[pytest]",
+    "minversion = 8.0",
+    "addopts = -ra --strict-markers --token=secret-pytest-token",
+    "testpaths = tests integration",
+    "python_files = test_*.py *_spec.py",
+    "markers = slow: slow integration cases",
+    "filterwarnings = error",
+  ].join("\n"));
+  writeText(toxConfigPath, [
+    "[tox]",
+    "envlist = py311, lint",
+    "isolated_build = true",
+    "skipsdist = false",
+    "",
+    "[testenv]",
+    "deps = pytest",
+    "commands = pytest {posargs} --token=secret-tox-token",
+    "passenv = CI SECRET_TOX_TOKEN",
+    "",
+    "[testenv:lint]",
+    "deps = ruff",
+    "commands = ruff check src tests",
+  ].join("\n"));
   writeText(vitestConfigPath, [
     "import { defineConfig } from 'vitest/config';",
     "export default defineConfig({",
@@ -1767,6 +2242,237 @@ try {
     "    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },",
     "    { name: 'webkit', use: { ...devices['Desktop Safari'] } },",
     "  ],",
+    "});",
+  ].join("\n"));
+  writeText(cypressConfigPath, [
+    "import { defineConfig } from 'cypress';",
+    "export default defineConfig({",
+    "  e2e: {",
+    "    baseUrl: 'https://example.test/app?token=secret-cypress-config-token',",
+    "    specPattern: 'cypress/e2e/**/*.cy.ts',",
+    "    supportFile: 'cypress/support/e2e.ts',",
+    "    fixturesFolder: 'cypress/fixtures',",
+    "    screenshotsFolder: 'artifacts/cypress/screenshots',",
+    "    videosFolder: 'artifacts/cypress/videos',",
+    "    downloadsFolder: 'artifacts/cypress/downloads',",
+    "    retries: { runMode: 2, openMode: 0 },",
+    "    env: { apiToken: process.env.SECRET_CYPRESS_CONFIG_TOKEN },",
+    "  },",
+    "});",
+  ].join("\n"));
+  mkdirSync(storybookDir, { recursive: true });
+  writeText(storybookConfigPath, [
+    "import type { StorybookConfig } from '@storybook/react-vite';",
+    "const config: StorybookConfig = {",
+    "  framework: { name: '@storybook/react-vite', options: {} },",
+    "  stories: ['../src/**/*.stories.@(ts|tsx|mdx)'],",
+    "  addons: ['@storybook/addon-essentials', '@storybook/addon-a11y'],",
+    "  staticDirs: ['../public'],",
+    "  docs: { autodocs: 'tag' },",
+    "  features: { buildStoriesJson: true },",
+    "  refs: { designSystem: { title: 'Runtime DS', url: 'https://storybook.example.test?token=secret-storybook-token' } },",
+    "  viteFinal: async (config) => config,",
+    "};",
+    "export default config;",
+  ].join("\n"));
+  writeText(postcssConfigPath, [
+    "module.exports = {",
+    "  plugins: {",
+    "    tailwindcss: {},",
+    "    autoprefixer: {},",
+    "    'postcss-preset-env': { stage: 3 },",
+    "  },",
+    "  map: { inline: false, annotation: 'runtime.css.map?token=secret-postcss-map-token' },",
+    "};",
+  ].join("\n"));
+  writeText(tailwindConfigPath, [
+    "import type { Config } from 'tailwindcss';",
+    "const config: Config = {",
+    "  content: ['./src/**/*.{ts,tsx}', './docs/**/*.mdx?token=secret-tailwind-content-token'],",
+    "  darkMode: 'class',",
+    "  prefix: 'ods-',",
+    "  important: '#app',",
+    "  safelist: ['runtime-safe', { pattern: /^bg-runtime-/ }],",
+    "  theme: { extend: { colors: { runtime: '#1f7a8c' }, spacing: { panel: '18rem' } } },",
+    "  plugins: [require('@tailwindcss/forms')],",
+    "};",
+    "export default config;",
+  ].join("\n"));
+  writeText(vercelConfigPath, JSON.stringify({
+    framework: "vite",
+    buildCommand: "npm run build -- --token=secret-vercel-build-token",
+    outputDirectory: "dist",
+    installCommand: "npm ci",
+    devCommand: "npm run dev",
+    regions: ["iad1", "sfo1"],
+    cleanUrls: true,
+    rewrites: [{ source: "/api/:path*", destination: "https://api.example.test/:path*?token=secret-vercel-rewrite-token" }],
+    headers: [{ source: "/(.*)", headers: [{ key: "x-runtime", value: "fixture" }] }],
+    crons: [{ path: "/api/cron", schedule: "0 5 * * *" }],
+  }, null, 2));
+  writeText(netlifyConfigPath, [
+    "[build]",
+    "command = \"npm run build -- --token=secret-netlify-build-token\"",
+    "publish = \"dist\"",
+    "",
+    "[functions]",
+    "directory = \"netlify/functions\"",
+    "",
+    "[[edge_functions]]",
+    "path = \"/edge/*\"",
+    "function = \"runtime-edge\"",
+    "",
+    "[[redirects]]",
+    "from = \"/api/*\"",
+    "to = \"https://api.example.test/:splat?token=secret-netlify-redirect-token\"",
+    "status = 200",
+    "",
+    "[context.production.environment]",
+    "API_TOKEN = \"secret-netlify-env-token\"",
+  ].join("\n"));
+  writeText(wranglerConfigPath, [
+    "name = \"runtime-worker\"",
+    "main = \"src/worker.ts\"",
+    "compatibility_date = \"2026-07-13\"",
+    "compatibility_flags = [\"nodejs_compat\"]",
+    "routes = [\"https://worker.example.test/*?token=secret-wrangler-route-token\"]",
+    "",
+    "[vars]",
+    "PUBLIC_API_BASE = \"https://api.example.test?token=secret-wrangler-var-token\"",
+    "",
+    "[assets]",
+    "directory = \"./dist\"",
+    "binding = \"ASSETS\"",
+    "",
+    "[observability]",
+    "enabled = true",
+    "",
+    "[[kv_namespaces]]",
+    "binding = \"CACHE\"",
+    "id = \"runtime-kv-namespace-id\"",
+  ].join("\n"));
+  writeText(tsconfigPath, [
+    "{",
+    "  \"extends\": \"./tsconfig.base.json\",",
+    "  \"compilerOptions\": {",
+    "    \"target\": \"ES2022\",",
+    "    \"module\": \"NodeNext\",",
+    "    \"moduleResolution\": \"NodeNext\",",
+    "    \"jsx\": \"react-jsx\",",
+    "    \"strict\": true,",
+    "    \"noEmit\": true,",
+    "    \"baseUrl\": \".\",",
+    "    \"secretToken\": \"secret-tsconfig-redaction-token\",",
+    "    \"paths\": {",
+    "      \"@runtime/*\": [\"src/runtime/*\"],",
+    "      \"~shared/*\": [\"src/shared/*\"]",
+    "    },",
+    "    \"types\": [\"node\", \"electron\"],",
+    "    \"lib\": [\"ES2022\", \"DOM\"]",
+    "  },",
+    "  \"references\": [{ \"path\": \"./tsconfig.node.json\" }],",
+    "  \"include\": [\"src/**/*.ts\", \"src/**/*.tsx\"],",
+    "  \"exclude\": [\"release\", \"dist\"]",
+    "}",
+  ].join("\n"));
+  writeText(jsconfigPath, [
+    "{",
+    "  \"compilerOptions\": {",
+    "    \"target\": \"ES2021\",",
+    "    \"module\": \"ESNext\",",
+    "    \"allowJs\": true,",
+    "    \"checkJs\": true,",
+    "    \"baseUrl\": \".\",",
+    "    \"apiKey\": \"secret-jsconfig-redaction-token\",",
+    "    \"paths\": {",
+    "      \"$components/*\": [\"src/components/*\"]",
+    "    }",
+    "  },",
+    "  \"include\": [\"src/**/*.js\", \"src/**/*.jsx\"],",
+    "  \"exclude\": [\"node_modules\", \"release\"]",
+    "}",
+  ].join("\n"));
+  writeText(nextConfigPath, [
+    "const nextConfig = {",
+    "  output: 'standalone',",
+    "  distDir: '.next-runtime',",
+    "  basePath: '/runtime',",
+    "  images: { remotePatterns: [{ protocol: 'https', hostname: 'assets.example.test', pathname: '/**?token=secret-next-image-token' }] },",
+    "  experimental: { serverActions: { allowedOrigins: ['app.example.test'] } },",
+    "  transpilePackages: ['@opendrsai/ui'],",
+    "  async rewrites() { return [{ source: '/api/:path*', destination: 'https://api.example.test/:path*?token=secret-next-rewrite-token' }]; },",
+    "};",
+    "export default nextConfig;",
+  ].join("\n"));
+  writeText(astroConfigPath, [
+    "import { defineConfig } from 'astro/config';",
+    "import react from '@astrojs/react';",
+    "import node from '@astrojs/node';",
+    "export default defineConfig({",
+    "  site: 'https://docs.example.test?token=secret-astro-site-token',",
+    "  output: 'server',",
+    "  adapter: node({ mode: 'standalone' }),",
+    "  integrations: [react()],",
+    "  build: { assets: 'assets' },",
+    "});",
+  ].join("\n"));
+  writeText(svelteConfigPath, [
+    "import adapter from '@sveltejs/adapter-node';",
+    "import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';",
+    "const config = {",
+    "  preprocess: vitePreprocess(),",
+    "  kit: {",
+    "    adapter: adapter({ out: 'build-runtime' }),",
+    "    alias: { '$lib': 'src/lib' },",
+    "    paths: { base: '/runtime?token=secret-svelte-path-token' },",
+    "    prerender: { entries: ['*'] },",
+    "  },",
+    "};",
+    "export default config;",
+  ].join("\n"));
+  writeText(nuxtConfigPath, [
+    "export default defineNuxtConfig({",
+    "  modules: ['@nuxt/image', '@pinia/nuxt'],",
+    "  css: ['~/assets/runtime.css'],",
+    "  app: { baseURL: '/runtime/' },",
+    "  runtimeConfig: { apiSecret: process.env.SECRET_NUXT_CONFIG_TOKEN, public: { apiBase: 'https://api.example.test?token=secret-nuxt-public-token' } },",
+    "  routeRules: { '/api/**': { proxy: 'https://upstream.example.test/**?token=secret-nuxt-route-token' } },",
+    "  devtools: { enabled: false },",
+    "});",
+  ].join("\n"));
+  writeText(viteConfigPath, [
+    "import { defineConfig } from 'vite';",
+    "import react from '@vitejs/plugin-react';",
+    "export default defineConfig({",
+    "  base: '/desktop/',",
+    "  plugins: [react()],",
+    "  server: { port: 5173, host: '127.0.0.1' },",
+    "  preview: { port: 4173 },",
+    "  build: { outDir: 'dist', sourcemap: true, rollupOptions: { input: 'src/main.ts' } },",
+    "  runtimeToken: 'secret-vite-token',",
+    "});",
+  ].join("\n"));
+  writeText(rollupConfigPath, [
+    "import terser from '@rollup/plugin-terser';",
+    "export default {",
+    "  input: 'src/index.ts',",
+    "  external: ['react'],",
+    "  output: { file: 'dist/index.js', format: 'esm', sourcemap: true },",
+    "  plugins: [terser({ mangle: false })],",
+    "  runtimeToken: 'secret-rollup-token',",
+    "};",
+  ].join("\n"));
+  writeText(tsupConfigPath, [
+    "import { defineConfig } from 'tsup';",
+    "export default defineConfig({",
+    "  entry: ['src/index.ts', 'src/cli.ts'],",
+    "  format: ['esm', 'cjs'],",
+    "  target: 'node22',",
+    "  dts: true,",
+    "  outDir: 'dist',",
+    "  sourcemap: true,",
+    "  clean: true,",
+    "  env: { API_TOKEN: 'secret-tsup-token' },",
     "});",
   ].join("\n"));
   writeText(pnpmWorkspacePath, [
@@ -1801,6 +2507,23 @@ try {
     },
     plugins: ["@nx/vite/plugin"],
     accessToken: "secret-nx-token",
+  }, null, 2));
+  writeText(rushConfigPath, JSON.stringify({
+    "$schema": "https://developer.microsoft.com/json-schemas/rush/v5/rush.schema.json",
+    rushVersion: "5.155.0",
+    pnpmVersion: "10.12.1",
+    approvedPackagesPolicy: { reviewCategories: ["production", "tools"] },
+    commandLine: {
+      commands: {
+        build: { commandKind: "bulk", summary: "Build all projects", safeForSimultaneousRushProcesses: true },
+        test: { commandKind: "bulk", summary: "Run test suite" },
+      },
+    },
+    projects: [
+      { packageName: "@runtime/app", projectFolder: "apps/runtime-app", reviewCategory: "production" },
+      { packageName: "@runtime/lib", projectFolder: "packages/runtime-lib", reviewCategory: "tools" },
+    ],
+    telemetryToken: "secret-rush-token",
   }, null, 2));
   writeText(packageLockPath, JSON.stringify({
     name: "runtime-fixture-app",
@@ -1917,7 +2640,16 @@ try {
   writeText(coveragePath, [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<coverage line-rate="0.75" branch-rate="0.5">',
-    '  <packages><package name="core"><classes><class filename="src/app.ts" /></classes></package></packages>',
+    '  <packages><package name="core"><classes>',
+    '    <class filename="src/app.ts"><lines>',
+    '      <line number="1" hits="1" branch="false" />',
+    '      <line number="2" hits="1" branch="true" condition-coverage="50% (1/2)" />',
+    '      <line number="3" hits="1" branch="false" />',
+    '    </lines></class>',
+    '    <class filename="src/secret-token-app.ts"><lines>',
+    '      <line number="4" hits="0" branch="false" />',
+    '    </lines></class>',
+    '  </classes></package></packages>',
     "</coverage>",
   ].join("\n"));
   writeText(lcovPath, [
@@ -2022,6 +2754,17 @@ try {
     "  </testsuite>",
     "</testsuites>",
   ].join("\n"));
+  writeText(robotPath, [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<robot generator="Robot 7.1" generated="2026-07-13T09:00:00Z">',
+    '  <suite name="Runtime Robot Suite" source="tests/robot/runtime.robot">',
+    '    <test name="Runtime Robot Pass"><tag>smoke</tag><kw name="Open Runtime Chat" owner="Browser"><status status="PASS" elapsedtime="1200" /></kw><status status="PASS" elapsedtime="1500" /></test>',
+    '    <test name="Runtime Robot Fail"><tag>api</tag><kw name="Call Provider API"><status status="FAIL" elapsedtime="900">Keyword token=secret-robot-keyword-token</status></kw><status status="FAIL" elapsedtime="2100">Robot assertion token=secret-robot-token</status></test>',
+    '    <test name="Runtime Robot Skip"><tag>quarantine</tag><status status="SKIP" elapsedtime="0">Skipped by fixture</status></test>',
+    '  </suite>',
+    '  <statistics><total><stat pass="1" fail="1" skip="1">All Tests</stat></total></statistics>',
+    '</robot>',
+  ].join("\n"));
   writeText(jmeterXmlPath, [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<testResults version="1.2">',
@@ -2029,6 +2772,31 @@ try {
     '  <httpSample t="345" lt="300" ts="1783677601000" s="false" lb="POST /provider" rc="500" rm="JMeter failure token=secret-jmeter-token" tn="Runtime JMeter Thread Group 1-1"><assertionResult><name>Runtime provider SLA</name><failure>true</failure><failureMessage>JMeter assertion token=secret-jmeter-assertion</failureMessage></assertionResult><responseData>Runtime response body token=secret-jmeter-response</responseData></httpSample>',
     "  <sample t=\"90\" ts=\"1783677602000\" s=\"true\" lb=\"Local queue drain\" rc=\"200\" rm=\"OK\" tn=\"Runtime JMeter Thread Group 1-2\" />",
     "</testResults>",
+  ].join("\n"));
+  writeText(jmeterPlanPath, [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">',
+    '  <hashTree>',
+    '    <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="Runtime JMeter Plan" enabled="true">',
+    '      <stringProp name="TestPlan.comments">token=secret-jmx-comment-token</stringProp>',
+    '      <elementProp name="TestPlan.user_defined_variables" elementType="Arguments">',
+    '        <collectionProp name="Arguments.arguments">',
+    '          <elementProp name="baseUrl" elementType="Argument"><stringProp name="Argument.name">baseUrl</stringProp><stringProp name="Argument.value">https://runtime.example.test?token=secret-jmx-base-token</stringProp></elementProp>',
+    '          <elementProp name="authToken" elementType="Argument"><stringProp name="Argument.name">authToken</stringProp><stringProp name="Argument.value">secret-jmx-auth-token</stringProp></elementProp>',
+    '        </collectionProp>',
+    '      </elementProp>',
+    '    </TestPlan>',
+    '    <hashTree>',
+    '      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="Runtime Thread Group" enabled="true" />',
+    '      <hashTree>',
+    '        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Runtime GET /chat" enabled="true" />',
+    '        <hashTree><ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Runtime status assertion" enabled="true" /></hashTree>',
+    '        <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="Runtime Headers" enabled="true"><collectionProp name="HeaderManager.headers"><elementProp name="Authorization" elementType="Header"><stringProp name="Header.name">Authorization</stringProp><stringProp name="Header.value">Bearer secret-jmx-header-token</stringProp></elementProp></collectionProp></HeaderManager>',
+    '        <ConstantTimer guiclass="ConstantTimerGui" testclass="ConstantTimer" testname="Runtime pacing timer" enabled="true" />',
+    '      </hashTree>',
+    '    </hashTree>',
+    '  </hashTree>',
+    '</jmeterTestPlan>',
   ].join("\n"));
   writeText(jmeterCsvPath, [
     "timeStamp,elapsed,label,responseCode,responseMessage,success,threadName,assertionFailureMessage",
@@ -2068,7 +2836,7 @@ try {
     "  </ResultSummary>",
     "  <Results>",
     '    <UnitTestResult testName="RuntimeTrxPass" outcome="Passed" />',
-    '    <UnitTestResult testName="RuntimeTrxFail" outcome="Failed"><Output><ErrorInfo><Message>TRX runtime failure</Message></ErrorInfo></Output></UnitTestResult>',
+    '    <UnitTestResult testName="RuntimeTrxFail" outcome="Failed"><Output><ErrorInfo><Message>TRX runtime failure</Message></ErrorInfo><StdOut>[[ATTACHMENT|TestResults/secret-trx-token/failure.png]]</StdOut></Output><ResultFiles><ResultFile path="TestResults/secret-trx-token/runtime.trxlog" /></ResultFiles></UnitTestResult>',
     "  </Results>",
     "</TestRun>",
   ].join("\n"));
@@ -2367,9 +3135,40 @@ try {
   writeNetcdfFixture(netcdfPath);
   writeMatlabMatFixture(matPath);
   mkdirSync(githubWorkflowDir, { recursive: true });
+  mkdirSync(githubIssueTemplateDir, { recursive: true });
   mkdirSync(circleCiDir, { recursive: true });
   mkdirSync(buildkiteDir, { recursive: true });
+  mkdirSync(kubeDir, { recursive: true });
   mkdirSync(drsaiDir, { recursive: true });
+  writeText(githubIssueFormPath, [
+    "name: Runtime bug report",
+    "description: Report a Windows runtime issue with token=secret-template-description-token",
+    "title: \"[Bug]: \"",
+    "labels: [bug, windows]",
+    "assignees: [opendrsai/runtime]",
+    "body:",
+    "  - type: markdown",
+    "    attributes:",
+    "      value: Thanks for reporting this issue.",
+    "  - type: input",
+    "    id: runtime-version",
+    "    attributes:",
+    "      label: Runtime version",
+    "      placeholder: 1.4.2 token=secret-template-placeholder-token",
+    "  - type: textarea",
+    "    id: logs",
+    "    attributes:",
+    "      label: Relevant logs",
+  ].join("\n"));
+  writeText(githubPullRequestTemplatePath, [
+    "# Runtime PR checklist",
+    "",
+    "## Summary",
+    "",
+    "- [ ] Tests added or updated",
+    "- [ ] Windows packaged smoke considered",
+    "- [ ] No token=secret-pr-template-token values included",
+  ].join("\n"));
   writeText(githubActionsPath, [
     "name: Runtime CI",
     "on:",
@@ -2382,6 +3181,94 @@ try {
     "      - uses: actions/checkout@v4",
     "      - name: Test",
     "        run: npm test -- --token secret-ci-token",
+  ].join("\n"));
+  writeText(dependabotPath, [
+    "version: 2",
+    "registries:",
+    "  runtime-npm:",
+    "    type: npm-registry",
+    "    url: https://registry.example.test?token=secret-dependabot-registry-token",
+    "updates:",
+    "  - package-ecosystem: npm",
+    "    directory: /apps/desktop/windows",
+    "    schedule:",
+    "      interval: weekly",
+    "      day: monday",
+    "      time: \"04:00\"",
+    "      timezone: Asia/Shanghai",
+    "    target-branch: main",
+    "    labels: [dependencies, windows]",
+    "    reviewers:",
+    "      - opendrsai/runtime",
+    "    groups:",
+    "      electron-runtime:",
+    "        patterns:",
+    "          - electron*",
+    "    allow:",
+    "      - dependency-type: direct",
+    "    ignore:",
+    "      - dependency-name: vite",
+    "        update-types: [version-update:semver-major]",
+    "  - package-ecosystem: github-actions",
+    "    directory: /",
+    "    schedule:",
+    "      interval: daily",
+  ].join("\n"));
+  writeText(preCommitPath, [
+    "default_stages: [pre-commit, pre-push]",
+    "repos:",
+    "  - repo: https://github.com/pre-commit/pre-commit-hooks?token=secret-precommit-url-token",
+    "    rev: v4.6.0",
+    "    hooks:",
+    "      - id: trailing-whitespace",
+    "        name: Trim trailing whitespace",
+    "        stages: [pre-commit]",
+    "      - id: check-yaml",
+    "        args: [--unsafe]",
+    "  - repo: local",
+    "    hooks:",
+    "      - id: runtime-local-test",
+    "        name: Runtime local test",
+    "        language: system",
+    "        entry: npm test -- --token secret-precommit-entry-token",
+    "        files: ^apps/desktop/windows/",
+  ].join("\n"));
+  writeText(renovatePath, JSON.stringify({
+    extends: ["config:recommended", ":dependencyDashboard"],
+    enabledManagers: ["npm", "github-actions"],
+    schedule: ["before 5am on monday"],
+    labels: ["dependencies", "renovate"],
+    reviewers: ["opendrsai/runtime"],
+    registryAliases: {
+      npm: "https://registry.example.test?token=secret-renovate-registry-token",
+    },
+    hostRules: [
+      {
+        matchHost: "registry.example.test",
+        token: "secret-renovate-host-token",
+      },
+    ],
+    packageRules: [
+      {
+        matchManagers: ["npm"],
+        matchPackageNames: ["electron"],
+        groupName: "runtime electron",
+        automerge: false,
+      },
+    ],
+    prConcurrentLimit: 3,
+  }, null, 2));
+  writeText(githubActionsJobSummaryPath, [
+    "# Runtime GitHub Actions Summary",
+    "",
+    "| Check | Status | Notes |",
+    "| --- | --- | --- |",
+    "| Unit tests | failed | `npm test -- --token secret-gha-summary-token` |",
+    "| Coverage | warning | 72% lines, artifact uploaded |",
+    "",
+    "Failure: unit test failed with token=secret-gha-summary-token.",
+    "Artifact: [coverage report](https://artifact.example.test/report.zip?token=secret-gha-summary-link-token)",
+    "Warning: coverage below target.",
   ].join("\n"));
   writeText(gitlabCiPath, [
     "stages:",
@@ -2443,13 +3330,29 @@ try {
     "          image: node:22",
   ].join("\n"));
   writeText(composePath, [
+    "version: \"3.9\"",
     "services:",
     "  api:",
     "    image: ghcr.io/example/api:latest",
+    "    build:",
+    "      context: ./services/api",
+    "    ports:",
+    "      - \"8080:8080\"",
     "    depends_on:",
     "      - db",
+    "    profiles:",
+    "      - runtime",
+    "    environment:",
+    "      API_TOKEN: secret-compose-token",
     "  db:",
     "    image: postgres:16",
+    "volumes:",
+    "  runtime-db:",
+    "networks:",
+    "  runtime-net:",
+    "secrets:",
+    "  runtime-api-token:",
+    "    file: ./secrets/api-token.txt",
   ].join("\n"));
   writeText(chartPath, [
     "apiVersion: v2",
@@ -2462,6 +3365,48 @@ try {
     "  - name: runtime-lib",
     "    version: 1.2.3",
     "    repository: https://charts.example.test/runtime?token=secret-helm-token",
+  ].join("\n"));
+  writeText(helmValuesPath, [
+    "replicaCount: 3",
+    "image:",
+    "  repository: ghcr.io/example/runtime-api",
+    "  tag: v1.2.3",
+    "service:",
+    "  type: ClusterIP",
+    "  port: 80",
+    "ingress:",
+    "  enabled: true",
+    "  className: nginx",
+    "  hosts:",
+    "    - runtime.example.test",
+    "resources:",
+    "  requests:",
+    "    cpu: 100m",
+    "    memory: 128Mi",
+    "  limits:",
+    "    memory: 512Mi",
+    "env:",
+    "  - name: LOG_LEVEL",
+    "    value: info",
+    "config:",
+    "  APP_MODE: runtime",
+    "secretApiToken: secret-helm-values-token",
+  ].join("\n"));
+  mkdirSync(dirname(wingetManifestPath), { recursive: true });
+  writeText(wingetManifestPath, [
+    "PackageIdentifier: HepAI.OpenDrSai",
+    "PackageVersion: 1.4.2",
+    "ManifestType: installer",
+    "ManifestVersion: 1.10.0",
+    "InstallerType: wix",
+    "Scope: machine",
+    "Commands:",
+    "  - opendrsai",
+    "Installers:",
+    "  - Architecture: x64",
+    "    InstallerUrl: https://downloads.example.test/OpenDrSai-1.4.2-x64.msi?token=secret-winget-token",
+    "    InstallerSha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "    ProductCode: '{12345678-ABCD-4000-9000-123456789ABC}'",
   ].join("\n"));
   writeText(kustomizationPath, [
     "apiVersion: kustomize.config.k8s.io/v1beta1",
@@ -2476,6 +3421,28 @@ try {
     "    newTag: v1.2.3",
     "patches:",
     "  - path: patches/deployment.yaml",
+  ].join("\n"));
+  writeText(kubeconfigPath, [
+    "apiVersion: v1",
+    "kind: Config",
+    "current-context: runtime-prod",
+    "clusters:",
+    "  - name: runtime-prod-cluster",
+    "    cluster:",
+    "      server: https://kube.example.test:6443?token=secret-kube-url-token",
+    "      certificate-authority-data: secret-kube-ca-data",
+    "contexts:",
+    "  - name: runtime-prod",
+    "    context:",
+    "      cluster: runtime-prod-cluster",
+    "      user: runtime-admin",
+    "      namespace: runtime-system",
+    "users:",
+    "  - name: runtime-admin",
+    "    user:",
+    "      token: secret-kube-token",
+    "      client-certificate-data: secret-kube-cert",
+    "      client-key-data: secret-kube-key",
   ].join("\n"));
   writeText(iisWebConfigPath, [
     '<?xml version="1.0" encoding="utf-8"?>',
@@ -2515,6 +3482,33 @@ try {
     "    </rewrite>",
     "  </system.webServer>",
     '  <location path="admin/secret-iis-area" />',
+    "</configuration>",
+  ].join("\n"));
+  writeText(iisApplicationHostConfigPath, [
+    '<?xml version="1.0" encoding="utf-8"?>',
+    "<configuration>",
+    "  <system.applicationHost>",
+    "    <applicationPools>",
+    '      <add name="RuntimeAppPool" managedRuntimeVersion="v4.0" managedPipelineMode="Integrated" autoStart="true" />',
+    '      <add name="LegacyPool" managedRuntimeVersion="v2.0" managedPipelineMode="Classic" autoStart="false" />',
+    "    </applicationPools>",
+    "    <sites>",
+    '      <site name="Runtime Site" id="7" serverAutoStart="true">',
+    '        <application path="/" applicationPool="RuntimeAppPool">',
+    '          <virtualDirectory path="/" physicalPath="C:\\runtime\\site" />',
+    "        </application>",
+    "        <bindings>",
+    '          <binding protocol="https" bindingInformation="*:443:runtime-host.example.test?token=secret-apphost-binding-token" sslFlags="1" />',
+    '          <binding protocol="http" bindingInformation="*:80:runtime-host.example.test" />',
+    "        </bindings>",
+    "      </site>",
+    '      <site name="Admin Site" id="8" serverAutoStart="false">',
+    "        <bindings>",
+    '          <binding protocol="https" bindingInformation="*:8443:admin-runtime.example.test?token=secret-apphost-admin-token" />',
+    "        </bindings>",
+    "      </site>",
+    "    </sites>",
+    "  </system.applicationHost>",
     "</configuration>",
   ].join("\n"));
   writeText(nginxConfigPath, [
@@ -2638,6 +3632,26 @@ try {
     "org.gradle.jvmargs=-Xmx2g",
     "systemProp.http.proxyHost=proxy.local",
   ].join("\n"));
+  writeText(gradleVersionCatalogPath, [
+    "[versions]",
+    'agp = "8.8.2"',
+    'kotlin = "2.1.20"',
+    'composeBom = "2025.06.01"',
+    'runtimeSnapshot = "1.0.0-SNAPSHOT"',
+    "",
+    "[libraries]",
+    'androidx-core = { module = "androidx.core:core-ktx", version.ref = "kotlin" }',
+    'compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }',
+    'runtime-local = { group = "ai.drsai", name = "runtime-local", version = "1.0.0" }',
+    'secret-lib = { module = "ai.drsai:secret-runtime", version = "token-secret-gradle-catalog" }',
+    "",
+    "[plugins]",
+    'android-application = { id = "com.android.application", version.ref = "agp" }',
+    'kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }',
+    "",
+    "[bundles]",
+    'compose = ["androidx-core", "compose-bom"]',
+  ].join("\n"));
   writeText(solutionPath, [
     "Microsoft Visual Studio Solution File, Format Version 12.00",
     "# Visual Studio Version 17",
@@ -2671,6 +3685,40 @@ try {
     "-Xmx2g",
     "-XX:+UseG1GC",
     "-Druntime.token=secret-jvm-token",
+  ].join("\n"));
+  mkdirSync(mavenUserDir, { recursive: true });
+  writeText(mavenSettingsPath, [
+    "<settings>",
+    "  <localRepository>.m2/runtime-repository</localRepository>",
+    "  <mirrors>",
+    "    <mirror>",
+    "      <id>runtime-mirror</id>",
+    "      <url>https://repo.example.test/maven?token=secret-maven-url-token</url>",
+    "      <mirrorOf>*</mirrorOf>",
+    "    </mirror>",
+    "  </mirrors>",
+    "  <servers>",
+    "    <server>",
+    "      <id>runtime-releases</id>",
+    "      <username>runtime-deploy</username>",
+    "      <password>secret-maven-password</password>",
+    "      <privateKey>secret-maven-private-key</privateKey>",
+    "    </server>",
+    "  </servers>",
+    "  <profiles>",
+    "    <profile>",
+    "      <id>runtime-profile</id>",
+    "      <repositories>",
+    "        <repository><id>runtime-snapshots</id><url>https://snapshots.example.test/repository</url></repository>",
+    "      </repositories>",
+    "      <properties><runtime.secret>secret-maven-profile-token</runtime.secret></properties>",
+    "    </profile>",
+    "  </profiles>",
+    "  <activeProfiles><activeProfile>runtime-profile</activeProfile></activeProfiles>",
+    "  <proxies>",
+    "    <proxy><id>runtime-proxy</id><active>true</active><protocol>https</protocol><host>proxy.example.test</host><port>8443</port><username>proxy-user</username><password>secret-proxy-password</password></proxy>",
+    "  </proxies>",
+    "</settings>",
   ].join("\n"));
   writeText(dotnetGlobalPath, JSON.stringify({
     sdk: {
@@ -2731,6 +3779,30 @@ try {
     "",
     "require github.com/stretchr/testify v1.10.0",
   ].join("\n"));
+  writeText(citationPath, [
+    "cff-version: 1.2.0",
+    'message: "If you use this runtime fixture, cite it as below."',
+    'title: "OpenDrSai Runtime Fixture"',
+    "version: 1.4.2",
+    "date-released: 2026-07-13",
+    "doi: 10.5281/zenodo.1234567",
+    "repository-code: https://github.com/hepai-lab/drsai?token=secret-citation-token",
+    "license: MIT",
+    "authors:",
+    "  - family-names: Reviewer",
+    "    given-names: Ada",
+    "    orcid: https://orcid.org/0000-0002-1825-0097",
+    "    affiliation: OpenDrSai Runtime Lab",
+    "  - name: Grace Builder",
+    "keywords:",
+    "  - smart-chat-bar",
+    "  - windows-desktop",
+    "identifiers:",
+    "  - type: doi",
+    "    value: 10.5281/zenodo.1234567",
+    "  - type: url",
+    "    value: https://example.test/runtime-fixture?api_key=secret-citation-api-key",
+  ].join("\n"));
   writeText(requirementsPath, [
     "pytest==8.3.4",
     "-r requirements.txt",
@@ -2744,6 +3816,33 @@ try {
   writePdfFixture(pdfPath);
   writeZipFixture(zipPath);
   writePlaywrightTraceZipFixture(playwrightTraceZipPath);
+  writeFileSync(vsixPath, Buffer.concat([
+    zipLocalEntry("extension/package.json", JSON.stringify({
+      name: "runtime-vsix-extension",
+      publisher: "opendrsai",
+      version: "1.0.0",
+      activationEvents: ["onCommand:runtime.start"],
+      main: "./out/extension.js",
+    })),
+    zipLocalEntry("extension/out/extension.js", "console.log('runtime vsix extension');"),
+    zipLocalEntry("extension/media/icon.png", "PNG placeholder"),
+    zipLocalEntry("extension/_locales/en/messages.json", JSON.stringify({ title: { message: "Runtime VSIX" } })),
+    zipLocalEntry("extension/out/secret-vsix-token.js", "secret-vsix-token-value"),
+  ]));
+  writeCrxFixture(crxPath, [
+    ["manifest.json", JSON.stringify({
+      manifest_version: 3,
+      name: "Runtime CRX Extension",
+      version: "1.0.0",
+      background: { service_worker: "background.js" },
+      content_scripts: [{ matches: ["https://example.test/*"], js: ["content-script.js"] }],
+    })],
+    ["background.js", "chrome.runtime.onInstalled.addListener(() => {});"],
+    ["content-script.js", "document.documentElement.dataset.runtime = 'true';"],
+    ["_locales/en/messages.json", JSON.stringify({ name: { message: "Runtime CRX" } })],
+    ["native_host/runtime.node", "native placeholder"],
+    ["secret-crx-token.js", "secret-crx-token-value"],
+  ]);
   writeStlFixture(stlPath);
   writeText(objPath, [
     "# Runtime OBJ fixture",
@@ -2780,6 +3879,21 @@ try {
     "",
     "[features]",
     "default = []",
+  ].join("\n"));
+  writeText(bazelBuildPath, [
+    'load("@rules_js//js:defs.bzl", "js_library", "js_test")',
+    "",
+    "js_library(",
+    '    name = "runtime_bazel_lib",',
+    '    srcs = ["src/runtime.ts"],',
+    '    deps = ["//apps/desktop/windows:shared"],',
+    ")",
+    "",
+    "genrule(",
+    '    name = "runtime_codegen",',
+    '    outs = ["generated.txt"],',
+    '    cmd = "echo secret-bazel-token > $@",',
+    ")",
   ].join("\n"));
   writeText(pyprojectPath, [
     "[build-system]",
@@ -3120,10 +4234,19 @@ try {
     "VERSION:2.0",
     "BEGIN:VEVENT",
     "SUMMARY:Runtime Fixture Review",
-    "DTSTART:20260709T093000Z",
-    "DTEND:20260709T100000Z",
+    "DTSTART;TZID=Asia/Shanghai:20260709T173000",
+    "DTEND;TZID=Asia/Shanghai:20260709T180000",
     "LOCATION:Review Room token=secret-runtime-ics-token",
+    "STATUS:CONFIRMED",
+    "ORGANIZER:mailto:runtime-owner@example.test",
     "ATTENDEE:mailto:reviewer@example.test",
+    "RRULE:FREQ=WEEKLY;COUNT=4;BYDAY=TH",
+    "EXDATE;TZID=Asia/Shanghai:20260723T173000",
+    "BEGIN:VALARM",
+    "ACTION:DISPLAY",
+    "TRIGGER:-PT15M",
+    "DESCRIPTION:Review reminder token=secret-runtime-ics-alarm",
+    "END:VALARM",
     "DESCRIPTION:Review runtime fixture coverage",
     "END:VEVENT",
     "END:VCALENDAR",
@@ -3313,6 +4436,50 @@ try {
     "    brokerToken:",
     "      type: httpApiKey",
   ].join("\n"));
+  writeText(asyncApiJsonPath, JSON.stringify({
+    asyncapi: "3.0.0",
+    info: {
+      title: "Runtime Fixture JSON Events",
+      version: "1.2.0",
+    },
+    servers: {
+      production: {
+        host: "broker-json.example.test/runtime?token=secret-asyncapi-json-token",
+        protocol: "amqp",
+      },
+    },
+    channels: {
+      runtimeJsonStarted: {
+        address: "runtime/json/runs/started",
+      },
+      runtimeJsonCommands: {
+        address: "runtime/json/runs/commands",
+      },
+    },
+    operations: {
+      onRuntimeJsonStarted: {
+        action: "receive",
+        channel: {
+          $ref: "#/channels/runtimeJsonStarted",
+        },
+        summary: "Receive runtime JSON start events",
+      },
+      sendRuntimeJsonCommand: {
+        action: "send",
+        channel: {
+          $ref: "#/channels/runtimeJsonCommands",
+        },
+        operationId: "sendRuntimeJsonCommand",
+      },
+    },
+    components: {
+      securitySchemes: {
+        brokerJsonToken: {
+          type: "httpApiKey",
+        },
+      },
+    },
+  }, null, 2));
   writeText(insomniaPath, JSON.stringify({
     _type: "export",
     __export_format: 4,
@@ -3392,6 +4559,131 @@ try {
     "type RuntimeRun { id: ID! status: String! }",
     "query RuntimeFixture($id: ID!) { runtimeRun(id: $id) { id status } }",
   ].join("\n"));
+  writeText(graphqlIntrospectionPath, JSON.stringify({
+    data: {
+      __schema: {
+        queryType: { name: "Query" },
+        mutationType: { name: "Mutation" },
+        subscriptionType: null,
+        types: [
+          {
+            kind: "OBJECT",
+            name: "Query",
+            description: "token=secret-graphql-introspection-token",
+            fields: [
+              { name: "runtimeRun" },
+              { name: "runtimeRuns" },
+            ],
+          },
+          {
+            kind: "OBJECT",
+            name: "Mutation",
+            fields: [
+              { name: "startRuntimeRun" },
+            ],
+          },
+          {
+            kind: "OBJECT",
+            name: "RuntimeRun",
+            interfaces: [{ name: "Node" }],
+            fields: [
+              { name: "id" },
+              { name: "status" },
+            ],
+          },
+          {
+            kind: "INPUT_OBJECT",
+            name: "StartRunInput",
+            inputFields: [
+              { name: "prompt", defaultValue: "secret-default-value" },
+            ],
+          },
+          {
+            kind: "INTERFACE",
+            name: "Node",
+            possibleTypes: [
+              { name: "RuntimeRun" },
+            ],
+          },
+          {
+            kind: "ENUM",
+            name: "RunStatus",
+            enumValues: [
+              { name: "QUEUED" },
+              { name: "RUNNING" },
+              { name: "DONE" },
+            ],
+          },
+        ],
+        directives: [
+          { name: "include" },
+          { name: "runtimeAuth" },
+        ],
+      },
+    },
+  }, null, 2));
+  writeText(pactContractPath, JSON.stringify({
+    consumer: {
+      name: "Runtime Desktop Client",
+    },
+    provider: {
+      name: "Runtime API",
+    },
+    interactions: [
+      {
+        description: "list runtime runs",
+        providerStates: [
+          { name: "runtime runs exist" },
+        ],
+        request: {
+          method: "GET",
+          path: "/runs",
+          query: "token=secret-pact-query-token&limit=2",
+          headers: {
+            Authorization: "Bearer secret-pact-auth-token",
+          },
+        },
+        response: {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: {
+            token: "secret-pact-response-token",
+          },
+          matchingRules: {
+            "$.body.runs[*].id": {
+              matchers: [{ match: "type" }],
+            },
+          },
+        },
+      },
+      {
+        description: "create runtime run",
+        providerState: "runtime creation is allowed",
+        request: {
+          method: "POST",
+          path: "/runs",
+          body: {
+            prompt: "secret-pact-request-body-token",
+          },
+          matchingRules: {
+            "$.body.prompt": {
+              matchers: [{ match: "type" }],
+            },
+          },
+        },
+        response: {
+          status: 201,
+        },
+      },
+    ],
+    metadata: {
+      pactSpecification: {
+        version: "3.0.0",
+      },
+    },
+  }, null, 2));
   writeText(restClientPath, [
     "### @name RuntimeList",
     "GET https://api.example.test/runtime/runs?token=secret-token HTTP/1.1",
@@ -3575,6 +4867,7 @@ try {
   writePeFixture(exePath);
   writeJavaArchiveFixture(jarPath);
   writeJavaClassFixture(classPath);
+  writeJavaFlightRecorderFixture(jfrPath);
   writeText(geojsonPath, JSON.stringify({
     type: "FeatureCollection",
     features: [
@@ -3771,6 +5064,25 @@ try {
   ].join("\n"));
   writeOutlookMsgFixture(msgPath);
   writeWindowsShortcutFixture(lnkPath);
+  writeText(rdpPath, [
+    "screen mode id:i:2",
+    "desktopwidth:i:1920",
+    "desktopheight:i:1080",
+    "session bpp:i:32",
+    "full address:s:rdp.runtime.example.test",
+    "alternate full address:s:rdp-alt.runtime.example.test",
+    "username:s:RUNTIME\\fixture-user",
+    "gatewayhostname:s:gateway.runtime.example.test?token=secret-rdp-gateway-token",
+    "gatewayusagemethod:i:2",
+    "authentication level:i:2",
+    "prompt for credentials:i:1",
+    "enablecredsspsupport:i:1",
+    "redirectclipboard:i:1",
+    "redirectdrives:i:1",
+    "drivestoredirect:s:*",
+    "alternate shell:s:C:\\Runtime\\remote-app.exe",
+    "password 51:b:secret-rdp-password-blob",
+  ].join("\n"));
   writeText(regPath, [
     "Windows Registry Editor Version 5.00",
     "",
@@ -3871,6 +5183,28 @@ try {
     'Enum runtime_role { admin viewer }',
     'Ref: runtime_users.org_id > runtime_orgs.id',
   ].join("\n"));
+  writeText(jsonSchemaPath, JSON.stringify({
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    $id: "https://schema.example.test/runtime.schema.json?token=secret-schema-id-token",
+    title: "Runtime Import Payload",
+    type: "object",
+    required: ["id", "email"],
+    properties: {
+      id: { type: "string", format: "uuid" },
+      email: { type: "string", format: "email" },
+      status: { enum: ["queued", "running", "done"], default: "secret-schema-default" },
+      profile: { $ref: "#/$defs/profile" },
+      apiToken: { type: "string", pattern: "secret-schema-pattern" },
+    },
+    $defs: {
+      profile: {
+        type: "object",
+        properties: {
+          displayName: { type: "string", examples: ["secret-schema-example"] },
+        },
+      },
+    },
+  }, null, 2));
   writeFileSync(redisRdbPath, Buffer.concat([
     Buffer.from("REDIS0009", "ascii"),
     Buffer.from([0xfa, 0x09]),
@@ -4425,6 +5759,51 @@ try {
     "Crawl-delay: 5",
     "Sitemap: https://example.test/sitemap.xml?token=secret-robots-token",
   ].join("\n"));
+  writeText(securityTxtPath, [
+    "Contact: mailto:security@example.test",
+    "Contact: https://security.example.test/report?token=secret-security-token",
+    "Expires: 2026-12-31T23:59:59Z",
+    "Encryption: https://security.example.test/pgp-key.txt",
+    "Acknowledgments: https://security.example.test/thanks",
+    "Preferred-Languages: en, zh",
+    "Canonical: https://example.test/.well-known/security.txt",
+    "Policy: https://example.test/security-policy",
+    "Hiring: https://example.test/security-jobs",
+    "Unrecognized: should-stay-bounded",
+  ].join("\n"));
+  writeText(assetLinksPath, JSON.stringify([
+    {
+      relation: ["delegate_permission/common.handle_all_urls"],
+      target: {
+        namespace: "android_app",
+        package_name: "ai.drsai.runtime",
+        sha256_cert_fingerprints: [
+          "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99",
+        ],
+      },
+    },
+  ], null, 2));
+  writeText(appleAssociationPath, JSON.stringify({
+    applinks: {
+      apps: [],
+      details: [
+        {
+          appIDs: ["ABCDE12345.ai.drsai.runtime"],
+          paths: ["/chat/*", "/handoff/runtime?token=secret-aasa-token"],
+          components: [
+            { "/": "/chat/*", comment: "Runtime chat handoff" },
+            { "/": "/admin/*", exclude: true, comment: "Excluded admin path" },
+          ],
+        },
+      ],
+    },
+    webcredentials: {
+      apps: ["ABCDE12345.ai.drsai.runtime"],
+    },
+    activitycontinuation: {
+      apps: ["ABCDE12345.ai.drsai.runtime"],
+    },
+  }, null, 2));
   writeText(llmsPath, [
     "# Runtime LLM Site Guide",
     "",
@@ -4826,6 +6205,31 @@ try {
     "  </application>",
     "</manifest>",
   ].join("\n"));
+  writeText(androidStringsPath, [
+    '<?xml version="1.0" encoding="utf-8"?>',
+    "<resources>",
+    '  <string name="app_name">Runtime Fixture</string>',
+    '  <string name="api_token">secret-android-resource-token</string>',
+    '  <color name="brand_primary">#0A84FF</color>',
+    '  <bool name="feature_chat_enabled">true</bool>',
+    '  <string-array name="quick_actions">',
+    "    <item>Plan</item>",
+    "    <item>Review</item>",
+    "  </string-array>",
+    "</resources>",
+  ].join("\n"));
+  writeText(androidNetworkSecurityPath, [
+    '<?xml version="1.0" encoding="utf-8"?>',
+    "<network-security-config>",
+    '  <base-config cleartextTrafficPermitted="false">',
+    '    <trust-anchors><certificates src="system" /></trust-anchors>',
+    "  </base-config>",
+    '  <domain-config cleartextTrafficPermitted="true">',
+    '    <domain includeSubdomains="true">api.opendrsai.test</domain>',
+    '    <trust-anchors><certificates src="@raw/runtime_ca" overridePins="true" /></trust-anchors>',
+    "  </domain-config>",
+    "</network-security-config>",
+  ].join("\n"));
   writeText(androidLogcatPath, [
     "--------- beginning of main",
     "07-11 10:05:03.125  1234  1234 I ActivityTaskManager: START u0 {act=android.intent.action.MAIN cmp=org.opendrsai.runtime/.MainActivity}",
@@ -4980,6 +6384,18 @@ try {
   writeJpegColorProfileFixture(jpegColorPath);
   writeGifAnimationFixture(gifAnimationPath);
   writeWebpAnimationFixture(webpAnimationPath);
+  writeText(svgStructurePath, [
+    '<svg width="120" height="80" viewBox="0 0 120 80" xmlns="http://www.w3.org/2000/svg">',
+    "  <title>Runtime SVG Map</title>",
+    "  <desc>Workspace-local structure preview</desc>",
+    '  <symbol id="runtime-icon"><path id="runtime-path" d="M1 1 L10 10" /></symbol>',
+    '  <use href="#runtime-icon" />',
+    '  <image id="runtime-remote-image" href="https://svg.example.test/pixel.png?token=secret-svg-token" width="10" height="10" />',
+    '  <foreignObject id="runtime-foreign"><div xmlns="http://www.w3.org/1999/xhtml">Runtime HTML Island</div></foreignObject>',
+    '  <script>console.log("secret-svg-script-token")</script>',
+    '  <text id="runtime-label">Runtime SVG Label</text>',
+    "</svg>",
+  ].join("\n"));
 
   const adapters = await loadChannelAdapters(tempRoot);
   assert(typeof adapters.importChannelContext === "function", "compiled adapter module does not export importChannelContext");
@@ -4997,8 +6413,11 @@ try {
       cmakePath,
       compileCommandsPath,
       gradlePropertiesPath,
+      gradleVersionCatalogPath,
       mavenConfigPath,
+      mavenSettingsPath,
       goModPath,
+      citationPath,
       requirementsPath,
     ],
     limit: 16,
@@ -5016,8 +6435,8 @@ try {
   });
 
   assert(
-    result.items.length === 12,
-    `expected 12 imported runtime fixture items, got ${result.items.length}: ${result.items.map((item) => item.title).join(", ")}`,
+    result.items.length === 15,
+    `expected 15 imported runtime fixture items, got ${result.items.length}: ${result.items.map((item) => item.title).join(", ")}`,
   );
   assert(result.truncated === false, "runtime fixture import should not be truncated");
   assert(
@@ -5042,6 +6461,22 @@ try {
   assert(
     constraintsRuntimeResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
     "constraints runtime fixture import lost read-only verification copy",
+  );
+
+  const jfrRuntimeResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [
+      jfrPath,
+    ],
+    limit: 2,
+  });
+
+  assert(jfrRuntimeResult.items.length === 1, `expected 1 imported JFR runtime fixture item, got ${jfrRuntimeResult.items.length}`);
+  assert(jfrRuntimeResult.truncated === false, "JFR runtime fixture import should not be truncated");
+  assert(
+    jfrRuntimeResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "JFR runtime fixture import lost read-only verification copy",
   );
 
   const scientificVariantResult = adapters.importChannelContext({
@@ -5250,6 +6685,40 @@ try {
     "VS Code config runtime fixture import lost read-only verification copy",
   );
 
+  const jetbrainsConfigResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [
+      jetbrainsWorkspacePath,
+      jetbrainsRunConfigurationPath,
+      jetbrainsModulePath,
+    ],
+    limit: 3,
+  });
+
+  assert(jetbrainsConfigResult.items.length === 3, `expected 3 imported JetBrains IDE config runtime fixture items, got ${jetbrainsConfigResult.items.length}`);
+  assert(jetbrainsConfigResult.truncated === false, "JetBrains IDE config runtime fixture import should not be truncated");
+  assert(
+    jetbrainsConfigResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "JetBrains IDE config runtime fixture import lost read-only verification copy",
+  );
+
+  const devcontainerConfigResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [
+      devcontainerPath,
+    ],
+    limit: 1,
+  });
+
+  assert(devcontainerConfigResult.items.length === 1, `expected 1 imported Dev Container config runtime fixture item, got ${devcontainerConfigResult.items.length}`);
+  assert(devcontainerConfigResult.truncated === false, "Dev Container config runtime fixture import should not be truncated");
+  assert(
+    devcontainerConfigResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "Dev Container config runtime fixture import lost read-only verification copy",
+  );
+
   const jsToolingConfigResult = adapters.importChannelContext({
     adapterId: "file-input",
     workspacePath: workspace,
@@ -5257,17 +6726,62 @@ try {
       eslintConfigPath,
       prettierConfigPath,
       biomeConfigPath,
+      oxlintConfigPath,
+      denoConfigPath,
+      cspellConfigPath,
+      markdownlintConfigPath,
+      typedocConfigPath,
+      knipConfigPath,
+      babelConfigPath,
+      browserslistConfigPath,
       vitestConfigPath,
       playwrightConfigPath,
+      cypressConfigPath,
+      storybookConfigPath,
+      postcssConfigPath,
+      tailwindConfigPath,
+      vercelConfigPath,
+      netlifyConfigPath,
+      wranglerConfigPath,
+      tsconfigPath,
+      jsconfigPath,
+      nextConfigPath,
+      astroConfigPath,
+      svelteConfigPath,
+      nuxtConfigPath,
+      viteConfigPath,
+      rollupConfigPath,
+      tsupConfigPath,
     ],
-    limit: 5,
+    limit: 29,
   });
 
-  assert(jsToolingConfigResult.items.length === 5, `expected 5 imported JS/TS tooling config runtime fixture items, got ${jsToolingConfigResult.items.length}`);
+  assert(jsToolingConfigResult.items.length === 29, `expected 29 imported JS/TS tooling config runtime fixture items, got ${jsToolingConfigResult.items.length}`);
   assert(jsToolingConfigResult.truncated === false, "JS/TS tooling config runtime fixture import should not be truncated");
   assert(
     jsToolingConfigResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
     "JS/TS tooling config runtime fixture import lost read-only verification copy",
+  );
+
+  const pythonToolingConfigResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [
+      ruffConfigPath,
+      pyprojectRuffConfigPath,
+      pyrightConfigPath,
+      mypyConfigPath,
+      pytestConfigPath,
+      toxConfigPath,
+    ],
+    limit: 6,
+  });
+
+  assert(pythonToolingConfigResult.items.length === 6, `expected 6 imported Python tooling config runtime fixture items, got ${pythonToolingConfigResult.items.length}`);
+  assert(pythonToolingConfigResult.truncated === false, "Python tooling config runtime fixture import should not be truncated");
+  assert(
+    pythonToolingConfigResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "Python tooling config runtime fixture import lost read-only verification copy",
   );
 
   const jsWorkspaceConfigResult = adapters.importChannelContext({
@@ -5277,11 +6791,12 @@ try {
       pnpmWorkspacePath,
       turboConfigPath,
       nxConfigPath,
+      rushConfigPath,
     ],
-    limit: 3,
+    limit: 4,
   });
 
-  assert(jsWorkspaceConfigResult.items.length === 3, `expected 3 imported JS/TS workspace config runtime fixture items, got ${jsWorkspaceConfigResult.items.length}`);
+  assert(jsWorkspaceConfigResult.items.length === 4, `expected 4 imported JS/TS workspace config runtime fixture items, got ${jsWorkspaceConfigResult.items.length}`);
   assert(jsWorkspaceConfigResult.truncated === false, "JS/TS workspace config runtime fixture import should not be truncated");
   assert(
     jsWorkspaceConfigResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
@@ -5293,20 +6808,77 @@ try {
     workspacePath: workspace,
     paths: [
       githubActionsPath,
+      githubActionsJobSummaryPath,
       gitlabCiPath,
       azurePipelinesPath,
       bitbucketPipelinesPath,
       circleCiConfigPath,
       buildkitePipelinePath,
     ],
-    limit: 6,
+    limit: 7,
   });
 
-  assert(ciWorkflowResult.items.length === 6, `expected 6 imported CI/CD workflow runtime fixture items, got ${ciWorkflowResult.items.length}`);
+  assert(ciWorkflowResult.items.length === 7, `expected 7 imported CI/CD workflow runtime fixture items, got ${ciWorkflowResult.items.length}`);
   assert(ciWorkflowResult.truncated === false, "CI/CD workflow runtime fixture import should not be truncated");
   assert(
     ciWorkflowResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
     "CI/CD workflow runtime fixture import lost read-only verification copy",
+  );
+
+  const githubTemplateResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [githubIssueFormPath, githubPullRequestTemplatePath],
+    limit: 2,
+  });
+
+  assert(githubTemplateResult.items.length === 2, `expected 2 imported GitHub template runtime fixture items, got ${githubTemplateResult.items.length}`);
+  assert(githubTemplateResult.truncated === false, "GitHub template runtime fixture import should not be truncated");
+  assert(
+    githubTemplateResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "GitHub template runtime fixture import lost read-only verification copy",
+  );
+
+  const dependabotConfigResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [dependabotPath],
+    limit: 1,
+  });
+
+  assert(dependabotConfigResult.items.length === 1, `expected 1 imported Dependabot config runtime fixture item, got ${dependabotConfigResult.items.length}`);
+  assert(dependabotConfigResult.truncated === false, "Dependabot config runtime fixture import should not be truncated");
+  assert(
+    dependabotConfigResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "Dependabot config runtime fixture import lost read-only verification copy",
+  );
+
+  const preCommitConfigResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [preCommitPath],
+    limit: 1,
+  });
+
+  assert(preCommitConfigResult.items.length === 1, `expected 1 imported pre-commit config runtime fixture item, got ${preCommitConfigResult.items.length}`);
+  assert(preCommitConfigResult.truncated === false, "pre-commit config runtime fixture import should not be truncated");
+  assert(
+    preCommitConfigResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "pre-commit config runtime fixture import lost read-only verification copy",
+  );
+
+  const renovateConfigResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [renovatePath],
+    limit: 1,
+  });
+
+  assert(renovateConfigResult.items.length === 1, `expected 1 imported Renovate config runtime fixture item, got ${renovateConfigResult.items.length}`);
+  assert(renovateConfigResult.truncated === false, "Renovate config runtime fixture import should not be truncated");
+  assert(
+    renovateConfigResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "Renovate config runtime fixture import lost read-only verification copy",
   );
 
   const testReportResult = adapters.importChannelContext({
@@ -5314,6 +6886,8 @@ try {
     workspacePath: workspace,
     paths: [
       junitPath,
+      robotPath,
+      jmeterPlanPath,
       jmeterXmlPath,
       jmeterCsvPath,
       nunitPath,
@@ -5326,10 +6900,10 @@ try {
       allureJsonPath,
       checkstylePath,
     ],
-    limit: 12,
+    limit: 14,
   });
 
-  assert(testReportResult.items.length === 12, `expected 12 imported runtime test/static report fixture items, got ${testReportResult.items.length}`);
+  assert(testReportResult.items.length === 14, `expected 14 imported runtime test/static report fixture items, got ${testReportResult.items.length}`);
   assert(testReportResult.truncated === false, "runtime test report fixture import should not be truncated");
   assert(
     testReportResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
@@ -5420,6 +6994,7 @@ try {
     workspacePath: workspace,
     paths: [
       cargoPath,
+      bazelBuildPath,
       pubspecPath,
       pubspecLockPath,
       packageSwiftPath,
@@ -5434,7 +7009,7 @@ try {
     limit: 16,
   });
 
-  assert(packageManifestResult.items.length === 11, `expected 11 imported package/config runtime fixture items, got ${packageManifestResult.items.length}`);
+  assert(packageManifestResult.items.length === 12, `expected 12 imported package/config runtime fixture items, got ${packageManifestResult.items.length}`);
   assert(packageManifestResult.truncated === false, "package/config runtime fixture import should not be truncated");
   assert(
     packageManifestResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
@@ -5449,13 +7024,15 @@ try {
       yarnClassicPath,
       pnpmfilePath,
       npmignorePath,
+      commitlintPath,
+      lintStagedPath,
       jvmConfigPath,
       pubspecLockPath,
     ],
-    limit: 8,
+    limit: 10,
   });
 
-  assert(packageConfigVariantResult.items.length === 6, `expected 6 imported package/config variant runtime fixture items, got ${packageConfigVariantResult.items.length}`);
+  assert(packageConfigVariantResult.items.length === 8, `expected 8 imported package/config variant runtime fixture items, got ${packageConfigVariantResult.items.length}`);
   assert(packageConfigVariantResult.truncated === false, "package/config variant runtime fixture import should not be truncated");
   assert(
     packageConfigVariantResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
@@ -5563,18 +7140,23 @@ try {
       postmanEnvironmentPath,
       brunoPath,
       graphqlPath,
+      graphqlIntrospectionPath,
+      pactContractPath,
       restClientPath,
       restClientRestPath,
       protoPath,
       dockerfilePath,
       composePath,
+      wingetManifestPath,
       chartPath,
+      helmValuesPath,
       kustomizationPath,
+      kubeconfigPath,
     ],
-    limit: 12,
+    limit: 17,
   });
 
-  assert(apiSchemaContainerResult.items.length === 12, `expected 12 imported API/schema/container runtime fixture items, got ${apiSchemaContainerResult.items.length}`);
+  assert(apiSchemaContainerResult.items.length === 17, `expected 17 imported API/schema/container runtime fixture items, got ${apiSchemaContainerResult.items.length}`);
   assert(apiSchemaContainerResult.truncated === false, "API/schema/container runtime fixture import should not be truncated");
   assert(
     apiSchemaContainerResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
@@ -5606,6 +7188,22 @@ try {
 
   assert(asyncApiResult.items.length === 1, `expected 1 imported AsyncAPI runtime fixture item, got ${asyncApiResult.items.length}`);
   assert(asyncApiResult.truncated === false, "AsyncAPI runtime fixture import should not be truncated");
+
+  const asyncApiJsonResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [
+      asyncApiJsonPath,
+    ],
+    limit: 2,
+  });
+
+  assert(asyncApiJsonResult.items.length === 1, `expected 1 imported AsyncAPI JSON runtime fixture item, got ${asyncApiJsonResult.items.length}`);
+  assert(asyncApiJsonResult.truncated === false, "AsyncAPI JSON runtime fixture import should not be truncated");
+  assert(
+    asyncApiJsonResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "AsyncAPI JSON runtime fixture import lost read-only verification copy",
+  );
 
   const openApiJsonResult = adapters.importChannelContext({
     adapterId: "file-input",
@@ -5644,11 +7242,12 @@ try {
     workspacePath: workspace,
     paths: [
       iisWebConfigPath,
+      iisApplicationHostConfigPath,
     ],
-    limit: 2,
+    limit: 3,
   });
 
-  assert(iisWebConfigResult.items.length === 1, `expected 1 imported IIS web.config runtime fixture item, got ${iisWebConfigResult.items.length}`);
+  assert(iisWebConfigResult.items.length === 2, `expected 2 imported IIS config runtime fixture items, got ${iisWebConfigResult.items.length}`);
   assert(iisWebConfigResult.truncated === false, "IIS web.config runtime fixture import should not be truncated");
   assert(
     iisWebConfigResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
@@ -5734,6 +7333,7 @@ try {
     paths: [
       msgPath,
       lnkPath,
+      rdpPath,
       regPath,
       wprpPath,
       dmpPath,
@@ -5741,7 +7341,7 @@ try {
     limit: 8,
   });
 
-  assert(windowsNativeResult.items.length === 5, `expected 5 imported Windows-native runtime fixture items, got ${windowsNativeResult.items.length}`);
+  assert(windowsNativeResult.items.length === 6, `expected 6 imported Windows-native runtime fixture items, got ${windowsNativeResult.items.length}`);
   assert(windowsNativeResult.truncated === false, "Windows-native runtime fixture import should not be truncated");
   assert(
     windowsNativeResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
@@ -5841,6 +7441,20 @@ try {
   assert(
     databaseSchemaDslResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
     "database schema DSL runtime fixture import lost read-only verification copy",
+  );
+
+  const jsonSchemaResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [jsonSchemaPath],
+    limit: 1,
+  });
+
+  assert(jsonSchemaResult.items.length === 1, `expected 1 imported JSON Schema runtime fixture item, got ${jsonSchemaResult.items.length}`);
+  assert(jsonSchemaResult.truncated === false, "JSON Schema runtime fixture import should not be truncated");
+  assert(
+    jsonSchemaResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "JSON Schema runtime fixture import lost read-only verification copy",
   );
 
   const devtoolsProfileResult = adapters.importChannelContext({
@@ -5973,6 +7587,9 @@ try {
       atomPath,
       jsonFeedPath,
       robotsPath,
+      securityTxtPath,
+      assetLinksPath,
+      appleAssociationPath,
       llmsPath,
       sitemapPath,
       sitemapGzipPath,
@@ -5983,10 +7600,10 @@ try {
       srtPath,
       vttPath,
     ],
-    limit: 20,
+    limit: 23,
   });
 
-  assert(contentMediaResult.items.length === 20, `expected 20 imported content/media runtime fixture items, got ${contentMediaResult.items.length}`);
+  assert(contentMediaResult.items.length === 23, `expected 23 imported content/media runtime fixture items, got ${contentMediaResult.items.length}`);
   assert(contentMediaResult.truncated === false, "content/media runtime fixture import should not be truncated");
   assert(
     contentMediaResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
@@ -6057,6 +7674,9 @@ try {
   assert(sourceMapSummary.includes("Version: 3") && sourceMapSummary.includes("runtime.bundle.js"), "runtime.js.map summary omitted version or target evidence");
   assert(sourceMapSummary.includes("webpack://runtime-app/?token="), "runtime.js.map summary omitted sourceRoot redaction evidence");
   assert(sourceMapSummary.includes("runtime-helper.ts") && sourceMapSummary.includes("RuntimeView"), "runtime.js.map summary omitted source/name samples");
+  assert(sourceMapSummary.includes("Static source correlation hints"), "runtime.js.map summary omitted static source correlation hints");
+  assert(sourceMapSummary.includes("target .js") && sourceMapSummary.includes("sourceRoot webpack URL"), "runtime.js.map summary omitted target/sourceRoot correlation evidence");
+  assert(sourceMapSummary.includes("source extensions .ts=2") && sourceMapSummary.includes("sourcesContent coverage 2/2"), "runtime.js.map summary omitted source extension or sourcesContent coverage evidence");
   assert(sourceMapSummary.includes("sourcesContent entries: 2 (contents not expanded)"), "runtime.js.map summary omitted sourcesContent non-expansion evidence");
   assert(!sourceMapSummary.includes("secret-sourcemap-root") && !sourceMapSummary.includes("secret-sourcemap-source") && !sourceMapSummary.includes("secret-sourcemap-content"), "runtime.js.map summary leaked source map secrets or source content");
   assert(sourceMapSummary.includes("mappings were not decoded") && sourceMapSummary.includes("no bundler/devtool/browser"), "runtime.js.map summary omitted no-decode/no-runtime safety copy");
@@ -6130,6 +7750,20 @@ try {
   assert(
     browserExtensionInventoryResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
     "browser extension inventory runtime fixture import lost read-only verification copy",
+  );
+
+  const extensionPackageResult = adapters.importChannelContext({
+    adapterId: "file-input",
+    workspacePath: workspace,
+    paths: [vsixPath, crxPath],
+    limit: 2,
+  });
+
+  assert(extensionPackageResult.items.length === 2, `expected 2 imported extension package runtime fixture items, got ${extensionPackageResult.items.length}`);
+  assert(extensionPackageResult.truncated === false, "extension package runtime fixture import should not be truncated");
+  assert(
+    extensionPackageResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
+    "extension package runtime fixture import lost read-only verification copy",
   );
 
   const browserHistoryResult = adapters.importChannelContext({
@@ -6238,16 +7872,18 @@ try {
     workspacePath: workspace,
     paths: [
       androidManifestPath,
+      androidStringsPath,
+      androidNetworkSecurityPath,
       androidLogcatPath,
       appleUnifiedLogPath,
       infoPlistPath,
       appleCrashPath,
       appleIpsPath,
     ],
-    limit: 7,
+    limit: 9,
   });
 
-  assert(mobileManifestResult.items.length === 6, `expected 6 imported mobile manifest runtime fixture items, got ${mobileManifestResult.items.length}`);
+  assert(mobileManifestResult.items.length === 8, `expected 8 imported mobile manifest runtime fixture items, got ${mobileManifestResult.items.length}`);
   assert(mobileManifestResult.truncated === false, "mobile manifest runtime fixture import should not be truncated");
   assert(
     mobileManifestResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
@@ -6301,11 +7937,12 @@ try {
       jpegColorPath,
       gifAnimationPath,
       webpAnimationPath,
+      svgStructurePath,
     ],
     limit: 6,
   });
 
-  assert(imageColorResult.items.length === 4, `expected 4 imported image color/runtime fixture items, got ${imageColorResult.items.length}`);
+  assert(imageColorResult.items.length === 5, `expected 5 imported image color/runtime fixture items, got ${imageColorResult.items.length}`);
   assert(imageColorResult.truncated === false, "image color runtime fixture import should not be truncated");
   assert(
     imageColorResult.verification.includes("Read-only channel import is limited to workspace-local file summaries"),
@@ -6347,6 +7984,20 @@ try {
   assert(npmignoreSummary.includes("publish ignore pattern") && npmignoreSummary.includes("publish include override"), ".npmignore summary omitted ignore/include pattern evidence");
   assert(npmignoreSummary.includes("no npm, pnpm, Yarn, Bun, node command"), ".npmignore summary omitted no-package-manager safety copy");
 
+  const commitlintSummary = summaryFor(packageConfigVariantResult, ".commitlintrc.json");
+  assert(commitlintSummary.includes("JS/TS tooling config preview (Commitlint"), ".commitlintrc.json did not use JS/TS tooling config preview");
+  assert(commitlintSummary.includes("parserPreset") && commitlintSummary.includes("defaultIgnores"), ".commitlintrc.json summary omitted Commitlint metadata evidence");
+  assert(commitlintSummary.includes("type-enum") && commitlintSummary.includes("scope-empty"), ".commitlintrc.json summary omitted Commitlint rule evidence");
+  assert(commitlintSummary.includes("[redacted]") && !commitlintSummary.includes("secret-commitlint"), ".commitlintrc.json summary omitted secret redaction evidence");
+  assertJsToolingNoRunnerSafety(commitlintSummary, ".commitlintrc.json");
+
+  const lintStagedSummary = summaryFor(packageConfigVariantResult, ".lintstagedrc");
+  assert(lintStagedSummary.includes("JS/TS tooling config preview (lint-staged"), ".lintstagedrc did not use JS/TS tooling config preview");
+  assert(lintStagedSummary.includes("concurrent") && lintStagedSummary.includes("relative") && lintStagedSummary.includes("shell"), ".lintstagedrc summary omitted lint-staged metadata evidence");
+  assert(lintStagedSummary.includes("eslint --fix") && lintStagedSummary.includes("[redacted]"), ".lintstagedrc summary omitted command redaction evidence");
+  assert(!lintStagedSummary.includes("secret-lint-staged"), ".lintstagedrc summary leaked command secret");
+  assertJsToolingNoRunnerSafety(lintStagedSummary, ".lintstagedrc");
+
   const mcpConfigSummary = summaryFor(mcpConfigResult, "mcp-servers.json");
   assert(mcpConfigSummary.includes("MCP server configuration preview"), "mcp-servers.json did not use MCP server config preview");
   assert(mcpConfigSummary.includes("Servers declared: 3"), "mcp-servers.json summary omitted server count");
@@ -6382,12 +8033,31 @@ try {
   assert(vscodeExtensionsSummary.includes("unwanted:[redacted]"), "extensions.json summary omitted unwanted extension redaction evidence");
   assert(vscodeConfigResult.items.find((item) => item.title === "extensions.json")?.mime === "application/vnd.code.extensions+json", "extensions.json MIME provenance is missing");
 
+  const jetbrainsWorkspaceSummary = summaryFor(jetbrainsConfigResult, "workspace.xml");
+  assert(jetbrainsWorkspaceSummary.includes("JetBrains IDE config preview"), "workspace.xml did not use JetBrains IDE config preview");
+  assert(jetbrainsWorkspaceSummary.includes("ProjectRunConfigurationManager") && jetbrainsWorkspaceSummary.includes("ProjectRootManager"), "workspace.xml summary omitted JetBrains component evidence");
+  assert(jetbrainsWorkspaceSummary.includes("Runtime JetBrains Application") && jetbrainsWorkspaceSummary.includes("main=ai.drsai.runtime.MainKt"), "workspace.xml summary omitted run configuration evidence");
+  assert(jetbrainsWorkspaceSummary.includes("run parameters or environment keys present"), "workspace.xml summary omitted parameter/env risk cue evidence");
+  assert(!jetbrainsWorkspaceSummary.includes("secret-jetbrains-workspace-token") && !jetbrainsWorkspaceSummary.includes("secret-jetbrains-env-token"), "workspace.xml summary leaked JetBrains token value");
+  assert(jetbrainsWorkspaceSummary.includes("no JetBrains IDE process") && jetbrainsWorkspaceSummary.includes("run configurations were not launched"), "workspace.xml summary omitted no-IDE/no-run safety copy");
+  assert(jetbrainsConfigResult.items.find((item) => item.title === "workspace.xml")?.mime === "application/vnd.jetbrains.ide.config+xml", "workspace.xml MIME provenance is missing");
+
+  const jetbrainsRunSummary = summaryFor(jetbrainsConfigResult, "Runtime.xml");
+  assert(jetbrainsRunSummary.includes("Runtime Gradle Test") && jetbrainsRunSummary.includes("type=GradleRunConfiguration"), "Runtime.xml summary omitted Gradle run configuration evidence");
+  assert(jetbrainsRunSummary.includes("external build/task configuration present"), "Runtime.xml summary omitted external build risk cue");
+  assert(!jetbrainsRunSummary.includes("secret-jetbrains-run-token"), "Runtime.xml summary leaked JetBrains run token value");
+
+  const jetbrainsModuleSummary = summaryFor(jetbrainsConfigResult, "runtime.iml");
+  assert(jetbrainsModuleSummary.includes("NewModuleRootManager"), "runtime.iml summary omitted module component evidence");
+  assert(jetbrainsModuleSummary.includes("library Gradle: org.jetbrains.kotlin:kotlin-stdlib:2.1.20") && jetbrainsModuleSummary.includes("module runtime-shared"), "runtime.iml summary omitted dependency evidence");
+  assert(jetbrainsModuleSummary.includes("src/main/kotlin") && jetbrainsModuleSummary.includes("src/test/kotlin type=kotlin-test"), "runtime.iml summary omitted source root evidence");
+
   const eslintSummary = summaryFor(jsToolingConfigResult, ".eslintrc.json");
   assert(eslintSummary.includes("JS/TS tooling config preview (ESLint"), ".eslintrc.json did not use JS/TS tooling config preview");
   assert(eslintSummary.includes("extends key") && eslintSummary.includes("rules key"), ".eslintrc.json summary omitted ESLint metadata evidence");
   assert(eslintSummary.includes("no-console") && eslintSummary.includes("@typescript-eslint/no-explicit-any"), ".eslintrc.json summary omitted rule evidence");
   assert(!eslintSummary.includes("secret-eslint-token"), ".eslintrc.json summary leaked sensitive rule value");
-  assert(eslintSummary.includes("no node/npm/pnpm/Yarn/Bun command, lint/test/format runner"), ".eslintrc.json summary omitted no-runner safety copy");
+  assertJsToolingNoRunnerSafety(eslintSummary, ".eslintrc.json");
   assert(jsToolingConfigResult.items.every((item) => item.mime === "application/vnd.drsai.js-tooling-config"), "JS/TS tooling config MIME provenance is missing");
 
   const prettierSummary = summaryFor(jsToolingConfigResult, ".prettierrc.yaml");
@@ -6401,6 +8071,107 @@ try {
   assert(biomeSummary.includes("noDebugger"), "biome.jsonc summary omitted linter rule evidence");
   assert(!biomeSummary.includes("secret-biome-token"), "biome.jsonc summary leaked token value");
 
+  const oxlintSummary = summaryFor(jsToolingConfigResult, "oxlintrc.jsonc");
+  assert(oxlintSummary.includes("JS/TS tooling config preview (Oxlint"), "oxlintrc.jsonc did not use JS/TS tooling config preview");
+  assert(oxlintSummary.includes("categories key") && oxlintSummary.includes("rules key"), "oxlintrc.jsonc summary omitted Oxlint metadata evidence");
+  assert(oxlintSummary.includes("eqeqeq") && oxlintSummary.includes("react/jsx-key"), "oxlintrc.jsonc summary omitted Oxlint rule evidence");
+  assert(oxlintSummary.includes("no Oxlint command"), "oxlintrc.jsonc summary omitted no-Oxlint-runtime safety copy");
+  assert(!oxlintSummary.includes("secret-oxlint-token"), "oxlintrc.jsonc summary leaked token value");
+  assertJsToolingNoRunnerSafety(oxlintSummary, "oxlintrc.jsonc");
+
+  const denoSummary = summaryFor(jsToolingConfigResult, "deno.jsonc");
+  assert(denoSummary.includes("JS/TS tooling config preview (Deno"), "deno.jsonc did not use JS/TS tooling config preview");
+  assert(denoSummary.includes("tasks key") && denoSummary.includes("imports key") && denoSummary.includes("compilerOptions key"), "deno.jsonc summary omitted Deno key evidence");
+  assert(denoSummary.includes("@std/assert") && denoSummary.includes("tests/**/*.ts") && denoSummary.includes("lineWidth"), "deno.jsonc summary omitted Deno import/test/fmt evidence");
+  assert(denoSummary.includes("no Deno command"), "deno.jsonc summary omitted no-Deno-runtime safety copy");
+  assert(!denoSummary.includes("secret-deno-token") && !denoSummary.includes("secret-deno-task-token") && !denoSummary.includes("secret-deno-import-token"), "deno.jsonc summary leaked token value");
+  assertJsToolingNoRunnerSafety(denoSummary, "deno.jsonc");
+
+  const cspellSummary = summaryFor(jsToolingConfigResult, "cspell.jsonc");
+  assert(cspellSummary.includes("JS/TS tooling config preview (CSpell"), "cspell.jsonc did not use JS/TS tooling config preview");
+  assert(cspellSummary.includes("words key") && cspellSummary.includes("dictionaries key") && cspellSummary.includes("ignorePaths key"), "cspell.jsonc summary omitted CSpell metadata evidence");
+  assert(cspellSummary.includes("OpenDrSai") && cspellSummary.includes("typescript") && cspellSummary.includes("release/**"), "cspell.jsonc summary omitted spell-check word/dictionary/path evidence");
+  assert(!cspellSummary.includes("secret-cspell-token"), "cspell.jsonc summary leaked token value");
+  assertJsToolingNoRunnerSafety(cspellSummary, "cspell.jsonc");
+
+  const markdownlintSummary = summaryFor(jsToolingConfigResult, ".markdownlint.json");
+  assert(markdownlintSummary.includes("JS/TS tooling config preview (Markdownlint"), ".markdownlint.json did not use JS/TS tooling config preview");
+  assert(markdownlintSummary.includes("default key") && markdownlintSummary.includes("MD013 key") && markdownlintSummary.includes("MD033 key"), ".markdownlint.json summary omitted Markdownlint metadata evidence");
+  assert(markdownlintSummary.includes("docs/**/*.md") && markdownlintSummary.includes("release/**"), ".markdownlint.json summary omitted Markdownlint glob/ignore evidence");
+  assert(!markdownlintSummary.includes("secret-markdownlint-token"), ".markdownlint.json summary leaked token value");
+  assertJsToolingNoRunnerSafety(markdownlintSummary, ".markdownlint.json");
+
+  const typedocSummary = summaryFor(jsToolingConfigResult, "typedoc.json");
+  assert(typedocSummary.includes("JS/TS tooling config preview (TypeDoc"), "typedoc.json did not use JS/TS tooling config preview");
+  assert(typedocSummary.includes("entryPoints key") && typedocSummary.includes("out key") && typedocSummary.includes("plugin key"), "typedoc.json summary omitted TypeDoc metadata evidence");
+  assert(typedocSummary.includes("src/index.ts") && typedocSummary.includes("docs/api") && typedocSummary.includes("typedoc-plugin-markdown"), "typedoc.json summary omitted TypeDoc entry/output/plugin evidence");
+  assert(!typedocSummary.includes("secret-typedoc-token"), "typedoc.json summary leaked token value");
+  assertJsToolingNoRunnerSafety(typedocSummary, "typedoc.json");
+
+  const knipSummary = summaryFor(jsToolingConfigResult, "knip.jsonc");
+  assert(knipSummary.includes("JS/TS tooling config preview (Knip"), "knip.jsonc did not use JS/TS tooling config preview");
+  assert(knipSummary.includes("entry key") && knipSummary.includes("project key") && knipSummary.includes("ignoreDependencies key"), "knip.jsonc summary omitted Knip metadata evidence");
+  assert(knipSummary.includes("src/index.ts") && knipSummary.includes("src/**/*.ts") && knipSummary.includes("electron-builder"), "knip.jsonc summary omitted Knip entry/project/binary evidence");
+  assert(!knipSummary.includes("secret-knip"), "knip.jsonc summary leaked token value");
+  assertJsToolingNoRunnerSafety(knipSummary, "knip.jsonc");
+
+  const ruffSummary = summaryFor(pythonToolingConfigResult, ".ruff.toml");
+  assert(ruffSummary.includes("Ruff config preview (.ruff.toml"), ".ruff.toml did not use Ruff config preview");
+  assert(ruffSummary.includes("target-version=py311") && ruffSummary.includes("line-length=100"), ".ruff.toml summary omitted Ruff setting evidence");
+  assert(ruffSummary.includes("select=E,F,I") && ruffSummary.includes("extend-select=B,UP") && ruffSummary.includes("ignore=E501"), ".ruff.toml summary omitted Ruff rule selector evidence");
+  assert(
+    ruffSummary.includes("build/**") &&
+      ruffSummary.includes("release/**") &&
+      ruffSummary.includes("tests/**") &&
+      ruffSummary.includes("S101"),
+    ".ruff.toml summary omitted Ruff path/per-file evidence",
+  );
+  assert(ruffSummary.includes("preview enabled"), ".ruff.toml summary omitted Ruff static risk cue evidence");
+  assert(!ruffSummary.includes("secret-ruff-token"), ".ruff.toml summary leaked token value");
+  assert(ruffSummary.includes("no Python interpreter, Ruff command, formatter/linter execution"), ".ruff.toml summary omitted no-runtime safety copy");
+  assert(pythonToolingConfigResult.items.find((item) => item.title === ".ruff.toml")?.mime === "application/vnd.astral-sh.ruff+toml", ".ruff.toml MIME provenance is missing");
+
+  const pyprojectRuffSummary = summaryFor(pythonToolingConfigResult, "pyproject.toml");
+  assert(pyprojectRuffSummary.includes("Ruff config preview (pyproject.toml"), "pyproject.toml with [tool.ruff] did not use Ruff config preview");
+  assert(pyprojectRuffSummary.includes("pyproject.toml Ruff sections were detected"), "pyproject.toml Ruff summary omitted route evidence");
+  assert(pyprojectRuffSummary.includes("tool.ruff") && pyprojectRuffSummary.includes("tool.ruff.lint"), "pyproject.toml Ruff summary omitted tool.ruff section evidence");
+  assert(pyprojectRuffSummary.includes("target-version=py312") && pyprojectRuffSummary.includes("line-length=88"), "pyproject.toml Ruff summary omitted setting evidence");
+  assert(pyprojectRuffSummary.includes("select=E,F,I,UP") && pyprojectRuffSummary.includes("ignore=E203"), "pyproject.toml Ruff summary omitted rule selector evidence");
+  assert(pyprojectRuffSummary.includes("dist/**") && pyprojectRuffSummary.includes("scripts/**") && pyprojectRuffSummary.includes("T201"), "pyproject.toml Ruff summary omitted path/per-file evidence");
+  assert(!pyprojectRuffSummary.includes("secret-pyproject-ruff-token"), "pyproject.toml Ruff summary leaked token value");
+  assert(pyprojectRuffSummary.includes("no Python interpreter, Ruff command, formatter/linter execution"), "pyproject.toml Ruff summary omitted no-runtime safety copy");
+  assert(pythonToolingConfigResult.items.find((item) => item.path === pyprojectRuffConfigPath)?.mime === "application/vnd.astral-sh.ruff+toml", "pyproject.toml Ruff MIME provenance is missing");
+
+  const pyrightSummary = summaryFor(pythonToolingConfigResult, "pyrightconfig.json");
+  assert(pyrightSummary.includes("Python tooling config preview (Pyright"), "pyrightconfig.json did not use Python tooling config preview");
+  assert(pyrightSummary.includes("pythonVersion=3.11") && pyrightSummary.includes("typeCheckingMode=strict"), "pyrightconfig.json summary omitted Pyright type-check setting evidence");
+  assert(pyrightSummary.includes("include:src") && pyrightSummary.includes("strict:src/critical/**"), "pyrightconfig.json summary omitted Pyright path evidence");
+  assert(pyrightSummary.includes("reportMissingImports=error"), "pyrightconfig.json summary omitted Pyright diagnostic evidence");
+  assert(pyrightSummary.includes("virtualenv reference") && pyrightSummary.includes("no Python interpreter, Pyright, Mypy, Pytest, Tox"), "pyrightconfig.json summary omitted virtualenv/no-runtime safety evidence");
+  assert(!pyrightSummary.includes("secret-pyright-token"), "pyrightconfig.json summary leaked token value");
+  assert(pythonToolingConfigResult.items.find((item) => item.title === "pyrightconfig.json")?.mime === "application/vnd.drsai.python-tooling-config", "pyrightconfig.json MIME provenance is missing");
+
+  const mypySummary = summaryFor(pythonToolingConfigResult, "mypy.ini");
+  assert(mypySummary.includes("Python tooling config preview (Mypy"), "mypy.ini did not use Python tooling config preview");
+  assert(mypySummary.includes("python_version=3.11") && mypySummary.includes("strict=true"), "mypy.ini summary omitted Mypy setting evidence");
+  assert(mypySummary.includes("disallow_untyped_defs=true") && mypySummary.includes("ignore_missing_imports=false"), "mypy.ini summary omitted Mypy check evidence");
+  assert(mypySummary.includes("mypy_path=typings") && mypySummary.includes("files=src, tests"), "mypy.ini summary omitted Mypy path evidence");
+  assert(!mypySummary.includes("secret-mypy-token"), "mypy.ini summary leaked token value");
+
+  const pytestSummary = summaryFor(pythonToolingConfigResult, "pytest.ini");
+  assert(pytestSummary.includes("Python tooling config preview (Pytest"), "pytest.ini did not use Python tooling config preview");
+  assert(pytestSummary.includes("minversion=8.0") && pytestSummary.includes("addopts=-ra --strict-markers --token=[redacted]"), "pytest.ini summary omitted Pytest option/redaction evidence");
+  assert(pytestSummary.includes("testpaths=tests integration") && pytestSummary.includes("python_files=test_*.py *_spec.py"), "pytest.ini summary omitted Pytest discovery evidence");
+  assert(pytestSummary.includes("runner/plugin/environment declaration"), "pytest.ini summary omitted runner risk cue");
+  assert(!pytestSummary.includes("secret-pytest-token"), "pytest.ini summary leaked token value");
+
+  const toxSummary = summaryFor(pythonToolingConfigResult, "tox.ini");
+  assert(toxSummary.includes("Python tooling config preview (Tox"), "tox.ini did not use Python tooling config preview");
+  assert(toxSummary.includes("envlist=py311, lint") && toxSummary.includes("isolated_build=true"), "tox.ini summary omitted Tox setting evidence");
+  assert(toxSummary.includes("testenv.commands=pytest {posargs} --token=[redacted]") && toxSummary.includes("testenv:lint.commands=ruff check src tests"), "tox.ini summary omitted Tox command/redaction evidence");
+  assert(toxSummary.includes("Tox command declaration") && toxSummary.includes("Tox dependency declaration"), "tox.ini summary omitted Tox risk cue evidence");
+  assert(!toxSummary.includes("secret-tox-token"), "tox.ini summary leaked token value");
+
   const vitestSummary = summaryFor(jsToolingConfigResult, "vitest.config.ts");
   assert(vitestSummary.includes("JS/TS tooling config preview (Vitest"), "vitest.config.ts did not use JS/TS tooling config preview");
   assert(vitestSummary.includes("environment: 'jsdom'") && vitestSummary.includes("coverage"), "vitest.config.ts summary omitted test environment/coverage evidence");
@@ -6410,15 +8181,136 @@ try {
   const playwrightSummary = summaryFor(jsToolingConfigResult, "playwright.config.ts");
   assert(playwrightSummary.includes("JS/TS tooling config preview (Playwright"), "playwright.config.ts did not use JS/TS tooling config preview");
   assert(playwrightSummary.includes("project=chromium") && playwrightSummary.includes("project=webkit"), "playwright.config.ts summary omitted project evidence");
-  assert(playwrightSummary.includes("webServer declaration") && playwrightSummary.includes("Playwright browser launch"), "playwright.config.ts summary omitted webServer/no-browser evidence");
+  assert(playwrightSummary.includes("webServer declaration") && playwrightSummary.includes("Playwright/Cypress browser launch"), "playwright.config.ts summary omitted webServer/no-browser evidence");
   assert(playwrightSummary.includes("token=[redacted]") && !playwrightSummary.includes("secret-playwright-token"), "playwright.config.ts summary omitted token redaction evidence");
+
+  const cypressConfigSummary = summaryFor(jsToolingConfigResult, "cypress.config.ts");
+  assert(cypressConfigSummary.includes("JS/TS tooling config preview (Cypress"), "cypress.config.ts did not use JS/TS tooling config preview");
+  assert(cypressConfigSummary.includes("e2e cue") && cypressConfigSummary.includes("specPattern cue") && cypressConfigSummary.includes("fixturesFolder cue"), "cypress.config.ts summary omitted Cypress metadata evidence");
+  assert(cypressConfigSummary.includes("baseUrl: 'https://example.test/app?token=[redacted]'") && cypressConfigSummary.includes("retries: { runMode: 2"), "cypress.config.ts summary omitted Cypress baseUrl/retries evidence");
+  assert(cypressConfigSummary.includes("environment-variable reference") && cypressConfigSummary.includes("Playwright/Cypress browser launch"), "cypress.config.ts summary omitted static risk/no-browser safety evidence");
+  assert(!cypressConfigSummary.includes("secret-cypress-config-token"), "cypress.config.ts summary leaked Cypress config token");
+
+  const storybookSummary = summaryFor(jsToolingConfigResult, "main.ts");
+  assert(storybookSummary.includes("JS/TS tooling config preview (Storybook"), ".storybook/main.ts did not use JS/TS tooling config preview");
+  assert(storybookSummary.includes("stories cue") && storybookSummary.includes("addons cue") && storybookSummary.includes("framework cue"), ".storybook/main.ts summary omitted Storybook metadata evidence");
+  assert(storybookSummary.includes("staticDirs cue") && storybookSummary.includes("docs cue") && storybookSummary.includes("refs cue"), ".storybook/main.ts summary omitted Storybook static/docs/ref evidence");
+  assert(storybookSummary.includes("module import reference") && storybookSummary.includes("Storybook dev server/build"), ".storybook/main.ts summary omitted static risk/no-Storybook-runtime safety evidence");
+  assert(!storybookSummary.includes("secret-storybook-token"), ".storybook/main.ts summary leaked Storybook token");
+
+  const postcssSummary = summaryFor(jsToolingConfigResult, "postcss.config.cjs");
+  assert(postcssSummary.includes("JS/TS tooling config preview (PostCSS"), "postcss.config.cjs did not use JS/TS tooling config preview");
+  assert(postcssSummary.includes("plugins cue") && postcssSummary.includes("map cue"), "postcss.config.cjs summary omitted PostCSS metadata evidence");
+  assert(postcssSummary.includes("tailwindcss") && postcssSummary.includes("postcss-preset-env"), "postcss.config.cjs summary omitted PostCSS plugin evidence");
+  assert(postcssSummary.includes("PostCSS/Tailwind compile") && postcssSummary.includes("config module import, environment loading, plugin resolution"), "postcss.config.cjs summary omitted no-compile/no-plugin safety evidence");
+  assert(!postcssSummary.includes("secret-postcss-map-token"), "postcss.config.cjs summary leaked PostCSS token");
+
+  const tailwindSummary = summaryFor(jsToolingConfigResult, "tailwind.config.ts");
+  assert(tailwindSummary.includes("JS/TS tooling config preview (Tailwind"), "tailwind.config.ts did not use JS/TS tooling config preview");
+  assert(tailwindSummary.includes("content cue") && tailwindSummary.includes("darkMode cue") && tailwindSummary.includes("safelist cue"), "tailwind.config.ts summary omitted Tailwind metadata evidence");
+  assert(tailwindSummary.includes("prefix: 'ods-'") && tailwindSummary.includes("important: '#app'"), "tailwind.config.ts summary omitted Tailwind prefix/important evidence");
+  assert(tailwindSummary.includes("module import reference") && tailwindSummary.includes("PostCSS/Tailwind compile"), "tailwind.config.ts summary omitted static risk/no-compile safety evidence");
+  assert(!tailwindSummary.includes("secret-tailwind-content-token"), "tailwind.config.ts summary leaked Tailwind token");
+
+  const vercelSummary = summaryFor(jsToolingConfigResult, "vercel.json");
+  assert(vercelSummary.includes("JS/TS tooling config preview (Vercel"), "vercel.json did not use JS/TS tooling config preview");
+  assert(vercelSummary.includes("framework key") && vercelSummary.includes("buildCommand key") && vercelSummary.includes("outputDirectory key"), "vercel.json summary omitted Vercel metadata evidence");
+  assert(vercelSummary.includes("regions: iad1, sfo1") || vercelSummary.includes("regions key"), "vercel.json summary omitted Vercel regions evidence");
+  assert(vercelSummary.includes("Vercel/Netlify/Wrangler deploy/dev/build") && vercelSummary.includes("config module import, environment loading, plugin resolution"), "vercel.json summary omitted no-hosting-runtime safety evidence");
+  assert(!vercelSummary.includes("secret-vercel"), "vercel.json summary leaked Vercel token");
+
+  const netlifySummary = summaryFor(jsToolingConfigResult, "netlify.toml");
+  assert(netlifySummary.includes("JS/TS tooling config preview (Netlify"), "netlify.toml did not use JS/TS tooling config preview");
+  assert(netlifySummary.includes("build cue") && netlifySummary.includes("publish cue") && netlifySummary.includes("edge_functions cue"), "netlify.toml summary omitted Netlify metadata evidence");
+  assert(netlifySummary.includes("command: \"npm run build -- --token=[redacted]\"") && netlifySummary.includes("publish: \"dist\""), "netlify.toml summary omitted Netlify build/publish evidence");
+  assert(netlifySummary.includes("Vercel/Netlify/Wrangler deploy/dev/build") && !netlifySummary.includes("secret-netlify"), "netlify.toml summary omitted no-hosting-runtime safety or leaked token");
+
+  const wranglerSummary = summaryFor(jsToolingConfigResult, "wrangler.toml");
+  assert(wranglerSummary.includes("JS/TS tooling config preview (Cloudflare Workers"), "wrangler.toml did not use JS/TS tooling config preview");
+  assert(wranglerSummary.includes("name cue") && wranglerSummary.includes("main cue") && wranglerSummary.includes("compatibility_date cue"), "wrangler.toml summary omitted Wrangler metadata evidence");
+  assert(wranglerSummary.includes("assets cue") && wranglerSummary.includes("kv_namespaces cue"), "wrangler.toml summary omitted Wrangler resource evidence");
+  assert(wranglerSummary.includes("Vercel/Netlify/Wrangler deploy/dev/build") && !wranglerSummary.includes("secret-wrangler"), "wrangler.toml summary omitted no-hosting-runtime safety or leaked token");
+
+  const babelSummary = summaryFor(jsToolingConfigResult, "babel.config.json");
+  assert(babelSummary.includes("JS/TS tooling config preview (Babel"), "babel.config.json did not use JS/TS tooling config preview");
+  assert(babelSummary.includes("presets key") && babelSummary.includes("plugins key") && babelSummary.includes("env key"), "babel.config.json summary omitted Babel metadata evidence");
+  assert(babelSummary.includes("@babel/preset-env") && babelSummary.includes("@babel/plugin-transform-runtime"), "babel.config.json summary omitted Babel preset/plugin evidence");
+  assert(babelSummary.includes("Babel transform") && babelSummary.includes("config module import, environment loading, plugin resolution"), "babel.config.json summary omitted no-transform/no-plugin safety evidence");
+  assert(!babelSummary.includes("secret-babel-token"), "babel.config.json summary leaked Babel token");
+
+  const browserslistSummary = summaryFor(jsToolingConfigResult, ".browserslistrc");
+  assert(browserslistSummary.includes("JS/TS tooling config preview (Browserslist"), ".browserslistrc did not use JS/TS tooling config preview");
+  assert(browserslistSummary.includes("query defaults") && browserslistSummary.includes("query chrome >= 120"), ".browserslistrc summary omitted Browserslist query evidence");
+  assert(browserslistSummary.includes("production") && browserslistSummary.includes("development"), ".browserslistrc summary omitted Browserslist environment evidence");
+  assert(browserslistSummary.includes("Browserslist resolution") && browserslistSummary.includes("network call"), ".browserslistrc summary omitted no-resolution/no-network safety evidence");
+  assert(!browserslistSummary.includes("secret-browserslist"), ".browserslistrc summary leaked Browserslist token");
+
+  const tsconfigSummary = summaryFor(jsToolingConfigResult, "tsconfig.json");
+  assert(tsconfigSummary.includes("JS/TS tooling config preview (TypeScript project"), "tsconfig.json did not use JS/TS tooling config preview");
+  assert(tsconfigSummary.includes("compilerOptions key") && tsconfigSummary.includes("references key") && tsconfigSummary.includes("include key"), "tsconfig.json summary omitted TS project metadata evidence");
+  assert(tsconfigSummary.includes("moduleResolution cue") && tsconfigSummary.includes("path alias @runtime/*"), "tsconfig.json summary omitted compiler/path alias evidence");
+  assert(tsconfigSummary.includes("TypeScript compiler") && tsconfigSummary.includes("config module import, environment loading, plugin resolution"), "tsconfig.json summary omitted no-compiler/no-import safety evidence");
+  assert(!tsconfigSummary.includes("secret-tsconfig"), "tsconfig.json summary leaked TypeScript project token");
+
+  const jsconfigSummary = summaryFor(jsToolingConfigResult, "jsconfig.json");
+  assert(jsconfigSummary.includes("JS/TS tooling config preview (JavaScript project"), "jsconfig.json did not use JS/TS tooling config preview");
+  assert(jsconfigSummary.includes("compilerOptions key") && jsconfigSummary.includes("allowJs cue") && jsconfigSummary.includes("checkJs cue"), "jsconfig.json summary omitted JS project metadata evidence");
+  assert(jsconfigSummary.includes("path alias $components/*") && jsconfigSummary.includes("TypeScript compiler"), "jsconfig.json summary omitted path alias/no-compiler evidence");
+  assert(!jsconfigSummary.includes("secret-jsconfig"), "jsconfig.json summary leaked JavaScript project token");
+
+  const nextSummary = summaryFor(jsToolingConfigResult, "next.config.mjs");
+  assert(nextSummary.includes("JS/TS tooling config preview (Next.js"), "next.config.mjs did not use JS/TS tooling config preview");
+  assert(nextSummary.includes("images cue") && nextSummary.includes("rewrites cue") && nextSummary.includes("experimental cue"), "next.config.mjs summary omitted Next.js metadata evidence");
+  assert(nextSummary.includes("output: 'standalone'") && nextSummary.includes("basePath: '/runtime'"), "next.config.mjs summary omitted Next.js output/basePath evidence");
+  assert(nextSummary.includes("framework build/render") && nextSummary.includes("config module import, environment loading, plugin resolution"), "next.config.mjs summary omitted no-framework-runtime safety evidence");
+  assert(!nextSummary.includes("secret-next"), "next.config.mjs summary leaked Next.js token");
+
+  const astroSummary = summaryFor(jsToolingConfigResult, "astro.config.mjs");
+  assert(astroSummary.includes("JS/TS tooling config preview (Astro"), "astro.config.mjs did not use JS/TS tooling config preview");
+  assert(astroSummary.includes("integrations cue") && astroSummary.includes("adapter cue") && astroSummary.includes("output cue"), "astro.config.mjs summary omitted Astro metadata evidence");
+  assert(astroSummary.includes("site: 'https://docs.example.test?token=[redacted]'") && astroSummary.includes("build: { assets: 'assets'"), "astro.config.mjs summary omitted Astro site/build evidence");
+  assert(astroSummary.includes("framework build/render") && astroSummary.includes("module import reference"), "astro.config.mjs summary omitted no-framework-runtime/static-risk evidence");
+  assert(!astroSummary.includes("secret-astro"), "astro.config.mjs summary leaked Astro token");
+
+  const svelteSummary = summaryFor(jsToolingConfigResult, "svelte.config.js");
+  assert(svelteSummary.includes("JS/TS tooling config preview (SvelteKit"), "svelte.config.js did not use JS/TS tooling config preview");
+  assert(svelteSummary.includes("kit cue") && svelteSummary.includes("adapter cue") && svelteSummary.includes("preprocess cue"), "svelte.config.js summary omitted SvelteKit metadata evidence");
+  assert(svelteSummary.includes("paths: { base: '/runtime?token=[redacted]'") && svelteSummary.includes("prerender: { entries: ['*']"), "svelte.config.js summary omitted SvelteKit path/prerender evidence");
+  assert(svelteSummary.includes("framework build/render") && svelteSummary.includes("module import reference"), "svelte.config.js summary omitted no-framework-runtime/static-risk evidence");
+  assert(!svelteSummary.includes("secret-svelte"), "svelte.config.js summary leaked SvelteKit token");
+
+  const nuxtSummary = summaryFor(jsToolingConfigResult, "nuxt.config.ts");
+  assert(nuxtSummary.includes("JS/TS tooling config preview (Nuxt"), "nuxt.config.ts did not use JS/TS tooling config preview");
+  assert(nuxtSummary.includes("modules cue") && nuxtSummary.includes("runtimeConfig cue") && nuxtSummary.includes("routeRules cue"), "nuxt.config.ts summary omitted Nuxt metadata evidence");
+  assert(nuxtSummary.includes("css: ['~/assets/runtime.css']") && nuxtSummary.includes("app: { baseURL: '/runtime/'"), "nuxt.config.ts summary omitted Nuxt app/css evidence");
+  assert(nuxtSummary.includes("environment-variable reference") && nuxtSummary.includes("framework build/render"), "nuxt.config.ts summary omitted no-framework-runtime/static-risk evidence");
+  assert(!nuxtSummary.includes("secret-nuxt"), "nuxt.config.ts summary leaked Nuxt token");
+
+  const viteSummary = summaryFor(jsToolingConfigResult, "vite.config.ts");
+  assert(viteSummary.includes("JS/TS tooling config preview (Vite"), "vite.config.ts did not use JS/TS tooling config preview");
+  assert(viteSummary.includes("plugins cue") && viteSummary.includes("server cue") && viteSummary.includes("rollupOptions cue"), "vite.config.ts summary omitted Vite metadata evidence");
+  assert(viteSummary.includes("outDir: 'dist'") && viteSummary.includes("sourcemap: true") && viteSummary.includes("port: 5173"), "vite.config.ts summary omitted Vite build/server evidence");
+  assert(viteSummary.includes("Vite/Next/Astro/Svelte/Nuxt dev server") && viteSummary.includes("config module import, environment loading, plugin resolution"), "vite.config.ts summary omitted no-dev-server/no-import safety copy");
+  assert(!viteSummary.includes("secret-vite-token"), "vite.config.ts summary leaked secret value");
+
+  const rollupSummary = summaryFor(jsToolingConfigResult, "rollup.config.mjs");
+  assert(rollupSummary.includes("JS/TS tooling config preview (Rollup"), "rollup.config.mjs did not use JS/TS tooling config preview");
+  assert(rollupSummary.includes("input cue") && rollupSummary.includes("output cue") && rollupSummary.includes("external cue"), "rollup.config.mjs summary omitted Rollup metadata evidence");
+  assert(rollupSummary.includes("input: 'src/index.ts'") && rollupSummary.includes("format: 'esm'"), "rollup.config.mjs summary omitted Rollup input/output evidence");
+  assert(rollupSummary.includes("Rollup/Tsup build") && !rollupSummary.includes("secret-rollup-token"), "rollup.config.mjs summary omitted build boundary or leaked token");
+
+  const tsupSummary = summaryFor(jsToolingConfigResult, "tsup.config.ts");
+  assert(tsupSummary.includes("JS/TS tooling config preview (Tsup"), "tsup.config.ts did not use JS/TS tooling config preview");
+  assert(tsupSummary.includes("entry cue") && tsupSummary.includes("format cue") && tsupSummary.includes("dts cue"), "tsup.config.ts summary omitted Tsup metadata evidence");
+  assert(tsupSummary.includes("target: 'node22'") && tsupSummary.includes("outDir: 'dist'"), "tsup.config.ts summary omitted Tsup target/output evidence");
+  assert(tsupSummary.includes("Rollup/Tsup build") && !tsupSummary.includes("secret-tsup-token"), "tsup.config.ts summary omitted build boundary or leaked token value");
 
   const pnpmWorkspaceSummary = summaryFor(jsWorkspaceConfigResult, "pnpm-workspace.yaml");
   assert(pnpmWorkspaceSummary.includes("JS/TS workspace config preview (pnpm workspace"), "pnpm-workspace.yaml did not use JS/TS workspace config preview");
   assert(pnpmWorkspaceSummary.includes("package pattern apps/*") && pnpmWorkspaceSummary.includes("package pattern packages/*"), "pnpm-workspace.yaml summary omitted package pattern evidence");
   assert(pnpmWorkspaceSummary.includes("catalog key") && pnpmWorkspaceSummary.includes("onlyBuiltDependencies key"), "pnpm-workspace.yaml summary omitted workspace key evidence");
   assert(!pnpmWorkspaceSummary.includes("secret-pnpm-workspace-token"), "pnpm-workspace.yaml summary leaked token value");
-  assert(pnpmWorkspaceSummary.includes("no pnpm/npm/Yarn/Bun command, Turbo/Nx runner"), "pnpm-workspace.yaml summary omitted no-runner safety copy");
+  assert(pnpmWorkspaceSummary.includes("no pnpm/npm/Yarn/Bun command, Turbo/Nx/Rush runner"), "pnpm-workspace.yaml summary omitted no-runner safety copy");
   assert(jsWorkspaceConfigResult.items.every((item) => item.mime === "application/vnd.drsai.js-workspace-config"), "JS/TS workspace config MIME provenance is missing");
 
   const turboSummary = summaryFor(jsWorkspaceConfigResult, "turbo.json");
@@ -6433,9 +8325,19 @@ try {
   assert(nxSummary.includes("plugins:") && nxSummary.includes("@nx/vite/plugin"), "nx.json summary omitted plugin evidence");
   assert(!nxSummary.includes("secret-nx-token"), "nx.json summary leaked access token value");
 
+  const rushSummary = summaryFor(jsWorkspaceConfigResult, "rush.json");
+  assert(rushSummary.includes("JS/TS workspace config preview (Rush workspace"), "rush.json did not use JS/TS workspace config preview");
+  assert(rushSummary.includes("project @runtime/app at apps/runtime-app") && rushSummary.includes("project @runtime/lib at packages/runtime-lib"), "rush.json summary omitted Rush project evidence");
+  assert(rushSummary.includes("rush command build") && rushSummary.includes("rush command test"), "rush.json summary omitted Rush command evidence");
+  assert(rushSummary.includes("approvedPackagesPolicy: reviewCategories"), "rush.json summary omitted approved package policy evidence");
+  assert(!rushSummary.includes("secret-rush-token"), "rush.json summary leaked telemetry token value");
+
   const coverageSummary = summaryFor(result, "coverage.xml");
-  assert(coverageSummary.includes("Coverage report preview"), "coverage.xml did not use coverage report preview");
-  assert(coverageSummary.includes("Line coverage"), "coverage.xml summary omitted coverage rates");
+  assert(coverageSummary.includes("Coverage report preview (Cobertura XML"), "coverage.xml did not use Cobertura coverage report preview");
+  assert(coverageSummary.includes("75% (3/4)") && coverageSummary.includes("50% (1/2)"), "coverage.xml summary omitted Cobertura line/branch counts");
+  assert(coverageSummary.includes("core"), "coverage.xml summary omitted Cobertura package evidence");
+  assert(coverageSummary.includes("src/app.ts") && coverageSummary.includes("src/[redacted].ts"), "coverage.xml summary omitted Cobertura file evidence or secret redaction");
+  assert(!coverageSummary.includes("secret-token"), "coverage.xml summary leaked secret-like path segment");
   assert(coverageSummary.includes("no test runner, coverage tool"), "coverage.xml summary omitted no-runner safety copy");
 
   const lcovSummary = summaryFor(coverageReportResult, "lcov.info");
@@ -6480,6 +8382,28 @@ try {
   assert(junitSummary.includes("JUnit attachment cues: artifacts/runtime-failure.png, artifacts/[redacted].zip"), "runtime.junit.xml summary omitted attachment cue evidence");
   assert(!junitSummary.includes("secret-junit-token") && !junitSummary.includes("secret-token-trace"), "runtime.junit.xml summary leaked JUnit secret detail values");
   assert(junitSummary.includes("no test runner, build command"), "runtime.junit.xml summary omitted no-runner safety copy");
+
+  const robotSummary = summaryFor(testReportResult, "output.xml");
+  assert(robotSummary.includes("Test report preview (Robot Framework XML"), "output.xml did not use Robot Framework test report preview");
+  assert(robotSummary.includes("Cases: 3; passed: 1; non-passing: 1; skipped: 1"), "output.xml summary omitted Robot outcome counts");
+  assert(robotSummary.includes("Runtime Robot Suite"), "output.xml summary omitted Robot suite evidence");
+  assert(robotSummary.includes("Runtime Robot Fail [FAIL]"), "output.xml summary omitted failing Robot test evidence");
+  assert(robotSummary.includes("Robot tags: smoke") && robotSummary.includes("quarantine"), "output.xml summary omitted Robot tag evidence");
+  assert(robotSummary.includes("Robot keyword cues: Open Runtime Chat") && robotSummary.includes("Call Provider API"), "output.xml summary omitted Robot keyword evidence");
+  assert(!robotSummary.includes("secret-robot-token") && !robotSummary.includes("secret-robot-keyword-token"), "output.xml summary leaked Robot secret detail values");
+  assert(robotSummary.includes("no test runner, build command"), "output.xml summary omitted no-runner safety copy");
+  assert(testReportResult.items.find((item) => item.title === "output.xml")?.mime === "application/vnd.robotframework+xml", "Robot Framework MIME provenance is missing");
+
+  const jmeterPlanSummary = summaryFor(testReportResult, "runtime.jmx");
+  assert(jmeterPlanSummary.includes("JMeter test plan preview"), "runtime.jmx did not use JMeter test plan preview");
+  assert(jmeterPlanSummary.includes("Runtime JMeter Plan") && jmeterPlanSummary.includes("Runtime Thread Group"), "runtime.jmx summary omitted plan or thread group evidence");
+  assert(jmeterPlanSummary.includes("Runtime GET /chat"), "runtime.jmx summary omitted sampler evidence");
+  assert(jmeterPlanSummary.includes("Runtime status assertion"), "runtime.jmx summary omitted assertion evidence");
+  assert(jmeterPlanSummary.includes("Runtime Headers"), "runtime.jmx summary omitted config element evidence");
+  assert(jmeterPlanSummary.includes("Variable keys") && jmeterPlanSummary.includes("baseUrl") && jmeterPlanSummary.includes("authToken"), "runtime.jmx summary omitted variable-key evidence");
+  assert(jmeterPlanSummary.includes("variable values were not expanded") && jmeterPlanSummary.includes("no JMeter command, load test, HTTP replay"), "runtime.jmx summary omitted no-runtime/no-value-expansion safety copy");
+  assert(!jmeterPlanSummary.includes("secret-jmx-comment-token") && !jmeterPlanSummary.includes("secret-jmx-base-token") && !jmeterPlanSummary.includes("secret-jmx-auth-token") && !jmeterPlanSummary.includes("secret-jmx-header-token"), "runtime.jmx summary leaked JMeter plan secrets");
+  assert(testReportResult.items.find((item) => item.title === "runtime.jmx")?.mime === "application/vnd.jmeter+xml", "runtime.jmx MIME provenance is missing");
 
   const jmeterXmlSummary = summaryFor(testReportResult, "runtime.jmeter.xml");
   assert(jmeterXmlSummary.includes("Test report preview (JMeter XML"), "runtime.jmeter.xml did not use JMeter XML test report preview");
@@ -6526,6 +8450,8 @@ try {
   assert(trxSummary.includes("Cases: 3; passed: 2; non-passing: 1"), "runtime.trx summary omitted TRX outcome counts");
   assert(trxSummary.includes("ResultSummary outcome: Failed"), "runtime.trx summary omitted result summary evidence");
   assert(trxSummary.includes("RuntimeTrxFail [Failed]"), "runtime.trx summary omitted failing test evidence");
+  assert(trxSummary.includes("TRX attachment cues: TestResults/[redacted]/runtime.trxlog, TestResults/[redacted]/failure.png"), "runtime.trx summary omitted redacted TRX attachment cues");
+  assert(!trxSummary.includes("secret-trx-token"), "runtime.trx summary leaked TRX attachment secret");
   assert(trxSummary.includes("no test runner, build command"), "runtime.trx summary omitted no-runner safety copy");
 
   const tapSummary = summaryFor(testReportResult, "runtime.tap");
@@ -6848,6 +8774,17 @@ try {
   assert(gradleSummary.includes("org.gradle.jvmargs"), "gradle.properties summary omitted Gradle property evidence");
   assert(gradleSummary.includes("no Gradle/Maven/JVM command"), "gradle.properties summary omitted no-JVM-tool safety copy");
 
+  const gradleVersionCatalogSummary = summaryFor(result, "libs.versions.toml");
+  assert(gradleVersionCatalogSummary.includes("Gradle version catalog preview"), "libs.versions.toml did not use Gradle version catalog preview");
+  assert(gradleVersionCatalogSummary.includes("agp=8.8.2") && gradleVersionCatalogSummary.includes("kotlin=2.1.20"), "libs.versions.toml summary omitted version alias evidence");
+  assert(gradleVersionCatalogSummary.includes("androidx-core=androidx.core:core-ktx") && gradleVersionCatalogSummary.includes("compose-bom=androidx.compose:compose-bom"), "libs.versions.toml summary omitted library alias evidence");
+  assert(gradleVersionCatalogSummary.includes("android-application=com.android.application") && gradleVersionCatalogSummary.includes("kotlin-android=org.jetbrains.kotlin.android"), "libs.versions.toml summary omitted plugin alias evidence");
+  assert(gradleVersionCatalogSummary.includes("compose=androidx-core, compose-bom"), "libs.versions.toml summary omitted bundle evidence");
+  assert(gradleVersionCatalogSummary.includes("SNAPSHOT/pre-release dependency"), "libs.versions.toml summary omitted static risk cue evidence");
+  assert(gradleVersionCatalogSummary.includes("[redacted]") && !gradleVersionCatalogSummary.includes("token-secret-gradle-catalog"), "libs.versions.toml summary leaked token-shaped catalog value");
+  assert(gradleVersionCatalogSummary.includes("no Gradle command, wrapper launch, dependency resolution"), "libs.versions.toml summary omitted no-Gradle safety copy");
+  assert(result.items.find((item) => item.title === "libs.versions.toml")?.mime === "application/vnd.gradle.version-catalog+toml", "libs.versions.toml MIME provenance is missing");
+
   const solutionSummary = summaryFor(msbuildSolutionResult, "RuntimeFixture.sln");
   assert(solutionSummary.includes("Visual Studio solution manifest preview"), "RuntimeFixture.sln did not use solution manifest preview");
   assert(solutionSummary.includes("RuntimeFixture -> RuntimeFixture.csproj"), "RuntimeFixture.sln summary omitted project evidence");
@@ -6866,6 +8803,17 @@ try {
   assert(mavenSummary.includes("JVM build config preview"), ".mvn/maven.config did not use JVM build config preview");
   assert(mavenSummary.includes("--batch-mode"), ".mvn/maven.config summary omitted Maven option evidence");
   assert(mavenSummary.includes("no Gradle/Maven/JVM command"), ".mvn/maven.config summary omitted no-JVM-tool safety copy");
+
+  const mavenSettingsSummary = summaryFor(result, "settings.xml");
+  assert(mavenSettingsSummary.includes("Maven settings.xml preview"), ".m2/settings.xml did not use Maven settings preview");
+  assert(mavenSettingsSummary.includes("runtime-mirror") && mavenSettingsSummary.includes("mirrorOf=*"), ".m2/settings.xml summary omitted mirror evidence");
+  assert(mavenSettingsSummary.includes("runtime-releases") && mavenSettingsSummary.includes("credential keys=username,password,privateKey"), ".m2/settings.xml summary omitted server credential-key evidence");
+  assert(mavenSettingsSummary.includes("runtime-profile") && mavenSettingsSummary.includes("runtime-snapshots"), ".m2/settings.xml summary omitted profile/repository evidence");
+  assert(mavenSettingsSummary.includes("runtime-proxy") && mavenSettingsSummary.includes("proxy.example.test"), ".m2/settings.xml summary omitted proxy evidence");
+  assert(mavenSettingsSummary.includes("REDACTED") || mavenSettingsSummary.includes("[redacted]"), ".m2/settings.xml summary omitted URL token redaction evidence");
+  assert(!mavenSettingsSummary.includes("secret-maven-url-token") && !mavenSettingsSummary.includes("secret-maven-password") && !mavenSettingsSummary.includes("secret-maven-private-key") && !mavenSettingsSummary.includes("secret-proxy-password") && !mavenSettingsSummary.includes("secret-maven-profile-token"), ".m2/settings.xml summary leaked Maven settings secret values");
+  assert(mavenSettingsSummary.includes("settings.xml merge was not performed"), ".m2/settings.xml summary omitted no-merge safety copy");
+  assert(result.items.find((item) => item.title === "settings.xml")?.mime === "application/vnd.apache.maven.settings+xml", ".m2/settings.xml MIME provenance is missing");
 
   const jvmConfigSummary = summaryFor(packageConfigVariantResult, "jvm.config");
   assert(jvmConfigSummary.includes("JVM build config preview"), ".mvn/jvm.config did not use JVM build config preview");
@@ -6902,6 +8850,16 @@ try {
   assert(goModSummary.includes("example.com/runtime-fixture"), "go.mod summary omitted module evidence");
   assert(goModSummary.includes("no go command"), "go.mod summary omitted no-go-tool safety copy");
 
+  const citationSummary = summaryFor(result, "CITATION.cff");
+  assert(citationSummary.includes("Citation CFF metadata preview"), "CITATION.cff did not use Citation CFF preview");
+  assert(citationSummary.includes("OpenDrSai Runtime Fixture"), "CITATION.cff summary omitted title evidence");
+  assert(citationSummary.includes("10.5281/zenodo.1234567"), "CITATION.cff summary omitted DOI evidence");
+  assert(citationSummary.includes("Ada Reviewer") && citationSummary.includes("Grace Builder"), "CITATION.cff summary omitted author evidence");
+  assert(citationSummary.includes("doi value=10.5281/zenodo.1234567"), "CITATION.cff summary omitted identifier evidence");
+  assert(citationSummary.includes("[redacted]") && !citationSummary.includes("secret-citation-token") && !citationSummary.includes("secret-citation-api-key"), "CITATION.cff summary leaked token-like values");
+  assert(citationSummary.includes("no DOI resolver, Crossref/DataCite/GitHub API call"), "CITATION.cff summary omitted no-network safety copy");
+  assert(result.items.find((item) => item.title === "CITATION.cff")?.mime === "application/vnd.citationstyles.cff+yaml", "CITATION.cff MIME provenance is missing");
+
   const requirementsSummary = summaryFor(result, "requirements-dev.txt");
   assert(requirementsSummary.includes("Python dependency manifest preview"), "requirements-dev.txt did not use Python dependency manifest preview");
   assert(requirementsSummary.includes("pytest"), "requirements-dev.txt summary omitted package evidence");
@@ -6915,6 +8873,15 @@ try {
   assert(constraintsSummary.includes("-c base-constraints.txt"), "constraints-runtime.txt summary omitted nested constraint hint evidence");
   assert(!constraintsSummary.includes("secret-constraints-token"), "constraints-runtime.txt summary leaked token-like index URL value");
   assert(constraintsSummary.includes("no Python interpreter"), "constraints-runtime.txt summary omitted no-Python safety copy");
+
+  const preCommitSummary = summaryFor(preCommitConfigResult, ".pre-commit-config.yaml");
+  assert(preCommitSummary.includes("Pre-commit hook config preview"), ".pre-commit-config.yaml did not use pre-commit config preview");
+  assert(preCommitSummary.includes("pre-commit-hooks") && preCommitSummary.includes("local"), ".pre-commit-config.yaml summary omitted repository evidence");
+  assert(preCommitSummary.includes("trailing-whitespace") && preCommitSummary.includes("check-yaml") && preCommitSummary.includes("runtime-local-test"), ".pre-commit-config.yaml summary omitted hook id evidence");
+  assert(preCommitSummary.includes("system") && preCommitSummary.includes("pre-push"), ".pre-commit-config.yaml summary omitted language/stage evidence");
+  assert(preCommitSummary.includes("[redacted]") && !preCommitSummary.includes("secret-precommit-url-token") && !preCommitSummary.includes("secret-precommit-entry-token"), ".pre-commit-config.yaml summary leaked token-shaped values");
+  assert(preCommitSummary.includes("hooks were not installed or executed") && preCommitSummary.includes("no git hook was modified"), ".pre-commit-config.yaml summary omitted no-hook safety copy");
+  assert(preCommitConfigResult.items.find((item) => item.title === ".pre-commit-config.yaml")?.mime === "application/vnd.pre-commit.config+yaml", ".pre-commit-config.yaml MIME provenance is missing");
 
   const packageLockSummary = summaryFor(lockfileResult, "package-lock.json");
   assert(packageLockSummary.includes("Dependency lockfile preview"), "package-lock.json did not use dependency lockfile preview");
@@ -6970,6 +8937,60 @@ try {
   assert(githubActionsSummary.includes("ubuntu-latest"), "runtime.yml summary omitted runner evidence");
   assert(!githubActionsSummary.includes("secret-ci-token"), "runtime.yml summary leaked CI token-like value");
   assert(githubActionsSummary.includes("no CI runner"), "runtime.yml summary omitted no-runner safety copy");
+
+  const githubActionsJobSummary = summaryFor(ciWorkflowResult, "GITHUB_STEP_SUMMARY.md");
+  assert(githubActionsJobSummary.includes("GitHub Actions job summary preview"), "GITHUB_STEP_SUMMARY.md did not use GitHub Actions job summary preview");
+  assert(githubActionsJobSummary.includes("Runtime GitHub Actions Summary"), "GITHUB_STEP_SUMMARY.md summary omitted heading evidence");
+  assert(githubActionsJobSummary.includes("Unit tests -> failed"), "GITHUB_STEP_SUMMARY.md summary omitted table failure evidence");
+  assert(githubActionsJobSummary.includes("failed") && githubActionsJobSummary.includes("warning") && githubActionsJobSummary.includes("coverage"), "GITHUB_STEP_SUMMARY.md summary omitted status cue evidence");
+  assert(githubActionsJobSummary.includes("coverage report=https://artifact.example.test/report.zip?token=[redacted]"), "GITHUB_STEP_SUMMARY.md summary omitted redacted artifact link evidence");
+  assert(githubActionsJobSummary.includes("npm test -- --token [redacted]"), "GITHUB_STEP_SUMMARY.md summary omitted command redaction evidence");
+  assert(!githubActionsJobSummary.includes("secret-gha-summary-token") && !githubActionsJobSummary.includes("secret-gha-summary-link-token"), "GITHUB_STEP_SUMMARY.md summary leaked token-like value");
+  assert(githubActionsJobSummary.includes("no GitHub API call") && githubActionsJobSummary.includes("linked artifacts were not downloaded"), "GITHUB_STEP_SUMMARY.md summary omitted no-provider/no-artifact-download safety copy");
+  assert(ciWorkflowResult.items.find((item) => item.title === "GITHUB_STEP_SUMMARY.md")?.mime === "text/markdown+github-actions-summary", "GITHUB_STEP_SUMMARY.md MIME provenance is missing");
+
+  const githubIssueTemplateSummary = summaryFor(githubTemplateResult, "bug_report.yml");
+  assert(githubIssueTemplateSummary.includes("GitHub issue/PR template preview"), "bug_report.yml did not use GitHub template preview");
+  assert(githubIssueTemplateSummary.includes("issue form YAML"), "bug_report.yml summary omitted issue form kind");
+  assert(githubIssueTemplateSummary.includes("Runtime bug report"), "bug_report.yml summary omitted template name evidence");
+  assert(githubIssueTemplateSummary.includes("bug") && githubIssueTemplateSummary.includes("windows"), "bug_report.yml summary omitted label evidence");
+  assert(githubIssueTemplateSummary.includes("opendrsai/runtime"), "bug_report.yml summary omitted assignee evidence");
+  assert(githubIssueTemplateSummary.includes("type=input") && githubIssueTemplateSummary.includes("id=runtime-version"), "bug_report.yml summary omitted body field evidence");
+  assert(githubIssueTemplateSummary.includes("credential-shaped default redacted"), "bug_report.yml summary omitted credential-shaped risk cue");
+  assert(!githubIssueTemplateSummary.includes("secret-template-description-token") && !githubIssueTemplateSummary.includes("secret-template-placeholder-token"), "bug_report.yml summary leaked token-like value");
+  assert(githubIssueTemplateSummary.includes("no GitHub API call") && githubIssueTemplateSummary.includes("no issue or PR creation"), "bug_report.yml summary omitted no-provider/no-issue safety copy");
+  assert(githubTemplateResult.items.find((item) => item.title === "bug_report.yml")?.mime === "application/vnd.github.template", "bug_report.yml MIME provenance was not preserved");
+
+  const githubPrTemplateSummary = summaryFor(githubTemplateResult, "pull_request_template.md");
+  assert(githubPrTemplateSummary.includes("pull request template Markdown"), "pull_request_template.md summary omitted PR template kind");
+  assert(githubPrTemplateSummary.includes("Runtime PR checklist"), "pull_request_template.md summary omitted heading evidence");
+  assert(githubPrTemplateSummary.includes("Tests added or updated") && githubPrTemplateSummary.includes("Windows packaged smoke considered"), "pull_request_template.md summary omitted checklist evidence");
+  assert(!githubPrTemplateSummary.includes("secret-pr-template-token"), "pull_request_template.md summary leaked token-like value");
+  assert(githubTemplateResult.items.find((item) => item.title === "pull_request_template.md")?.mime === "application/vnd.github.template", "pull_request_template.md MIME provenance was not preserved");
+
+  const dependabotSummary = summaryFor(dependabotConfigResult, "dependabot.yml");
+  assert(dependabotSummary.includes("Dependabot config preview"), "dependabot.yml did not use Dependabot config preview");
+  assert(dependabotSummary.includes("Version: 2"), "dependabot.yml summary omitted version evidence");
+  assert(dependabotSummary.includes("Update entries in bounded preview: 2"), "dependabot.yml summary omitted update count evidence");
+  assert(dependabotSummary.includes("npm") && dependabotSummary.includes("github-actions"), "dependabot.yml summary omitted ecosystem evidence");
+  assert(dependabotSummary.includes("/apps/desktop/windows") && dependabotSummary.includes("Directories:"), "dependabot.yml summary omitted directory evidence");
+  assert(dependabotSummary.includes("interval=weekly") && dependabotSummary.includes("timezone=Asia/Shanghai"), "dependabot.yml summary omitted schedule evidence");
+  assert(dependabotSummary.includes("electron-runtime") && dependabotSummary.includes("dependency-name=vite"), "dependabot.yml summary omitted group/ignore evidence");
+  assert(dependabotSummary.includes("registries"), "dependabot.yml summary omitted registry risk cue");
+  assert(!dependabotSummary.includes("secret-dependabot-registry-token"), "dependabot.yml summary leaked registry token");
+  assert(dependabotSummary.includes("no GitHub API call") && dependabotSummary.includes("no package manager command"), "dependabot.yml summary omitted no-provider/no-package-manager safety copy");
+  assert(dependabotConfigResult.items.find((item) => item.title === "dependabot.yml")?.mime === "application/vnd.github.dependabot.config+yaml", "dependabot.yml MIME provenance is missing");
+
+  const renovateSummary = summaryFor(renovateConfigResult, "renovate.json");
+  assert(renovateSummary.includes("Renovate config preview"), "renovate.json did not use Renovate config preview");
+  assert(renovateSummary.includes("config:recommended") && renovateSummary.includes(":dependencyDashboard"), "renovate.json summary omitted extends evidence");
+  assert(renovateSummary.includes("npm") && renovateSummary.includes("github-actions"), "renovate.json summary omitted manager evidence");
+  assert(renovateSummary.includes("before 5am on monday"), "renovate.json summary omitted schedule evidence");
+  assert(renovateSummary.includes("electron") && renovateSummary.includes("packageRules configured"), "renovate.json summary omitted package rule evidence");
+  assert(renovateSummary.includes("registryAliases") && renovateSummary.includes("hostrules"), "renovate.json summary omitted registry/host risk cues");
+  assert(!renovateSummary.includes("secret-renovate-registry-token") && !renovateSummary.includes("secret-renovate-host-token"), "renovate.json summary leaked registry or host token");
+  assert(renovateSummary.includes("no Renovate CLI command") && renovateSummary.includes("no package manager command"), "renovate.json summary omitted no-runtime/no-package-manager safety copy");
+  assert(renovateConfigResult.items.find((item) => item.title === "renovate.json")?.mime === "application/vnd.renovate.config+json", "renovate.json MIME provenance is missing");
 
   const gitlabCiSummary = summaryFor(ciWorkflowResult, ".gitlab-ci.yml");
   assert(gitlabCiSummary.includes("CI/CD workflow preview (GitLab CI)"), ".gitlab-ci.yml did not use GitLab CI workflow preview");
@@ -7061,6 +9082,17 @@ try {
   assert(cargoSummary.includes("Cargo manifest preview"), "Cargo.toml did not use Cargo manifest preview");
   assert(cargoSummary.includes("runtime-fixture"), "Cargo.toml summary omitted package metadata evidence");
   assert(cargoSummary.includes("no cargo, rustc, rustup"), "Cargo.toml summary omitted no-Cargo safety copy");
+
+  const bazelBuildSummary = summaryFor(packageManifestResult, "BUILD.bazel");
+  assert(bazelBuildSummary.includes("Bazel/Starlark build file preview"), "BUILD.bazel did not use Bazel/Starlark preview");
+  assert(bazelBuildSummary.includes("Bazel BUILD package"), "BUILD.bazel summary omitted BUILD format evidence");
+  assert(bazelBuildSummary.includes("@rules_js//js:defs.bzl"), "BUILD.bazel summary omitted load statement evidence");
+  assert(bazelBuildSummary.includes("runtime_bazel_lib"), "BUILD.bazel summary omitted target evidence");
+  assert(bazelBuildSummary.includes("//apps/desktop/windows:shared"), "BUILD.bazel summary omitted dependency label evidence");
+  assert(bazelBuildSummary.includes("genrule command") && bazelBuildSummary.includes("shell command attribute"), "BUILD.bazel summary omitted static risk evidence");
+  assert(!bazelBuildSummary.includes("secret-bazel-token"), "BUILD.bazel summary leaked secret-shaped command value");
+  assert(bazelBuildSummary.includes("no bazel/bzlmod command"), "BUILD.bazel summary omitted no-Bazel safety copy");
+  assert(packageManifestResult.items.find((item) => item.title === "BUILD.bazel")?.mime === "text/x-bazel", "BUILD.bazel MIME provenance is missing");
 
   const pyprojectSummary = summaryFor(pythonManifestResult, "pyproject.toml");
   assert(pyprojectSummary.includes("Python dependency manifest preview"), "pyproject.toml did not use Python dependency manifest preview");
@@ -7243,8 +9275,13 @@ try {
   const icsSummary = summaryFor(personalInfoResult, "calendar.ics");
   assert(icsSummary.includes("Calendar ICS file preview"), "calendar.ics did not use calendar ICS preview");
   assert(icsSummary.includes("Runtime Fixture Review"), "calendar.ics summary omitted event title evidence");
+  assert(icsSummary.includes("Time zones: Asia/Shanghai"), "calendar.ics summary omitted timezone evidence");
+  assert(icsSummary.includes("Status: CONFIRMED") && icsSummary.includes("Organizer: runtime-owner@example.test"), "calendar.ics summary omitted status/organizer evidence");
+  assert(icsSummary.includes("Recurrence: FREQ=WEEKLY;COUNT=4;BYDAY=TH"), "calendar.ics summary omitted recurrence rule evidence");
+  assert(icsSummary.includes("Exdates: 20260723T173000 (Asia/Shanghai)"), "calendar.ics summary omitted recurrence exclusion evidence");
+  assert(icsSummary.includes("Alarms: action=DISPLAY") && icsSummary.includes("trigger=-PT15M") && icsSummary.includes("description=Review reminder token=[redacted]"), "calendar.ics summary omitted alarm evidence");
   assert(icsSummary.includes("token=[redacted]"), "calendar.ics summary omitted token redaction evidence");
-  assert(!icsSummary.includes("secret-runtime-ics-token"), "calendar.ics summary leaked token-like location value");
+  assert(!icsSummary.includes("secret-runtime-ics-token") && !icsSummary.includes("secret-runtime-ics-alarm"), "calendar.ics summary leaked token-like calendar value");
   assert(icsSummary.includes("no calendar app access"), "calendar.ics summary omitted no-calendar safety copy");
 
   const icalSummary = summaryFor(personalInfoResult, "calendar.ical");
@@ -7356,6 +9393,16 @@ try {
   assert(!asyncApiSummary.includes("secret-asyncapi-token"), "asyncapi.yaml summary leaked sensitive broker token");
   assert(asyncApiSummary.includes("no request execution, broker connection"), "asyncapi.yaml summary omitted no-request/no-broker safety copy");
 
+  const asyncApiJsonSummary = summaryFor(asyncApiJsonResult, "asyncapi.json");
+  assert(asyncApiJsonSummary.includes("API spec/collection preview"), "asyncapi.json did not use API spec preview");
+  assert(asyncApiJsonSummary.includes("AsyncAPI 3.0.0"), "asyncapi.json summary omitted AsyncAPI JSON format evidence");
+  assert(asyncApiJsonSummary.includes("Runtime Fixture JSON Events"), "asyncapi.json summary omitted AsyncAPI JSON title evidence");
+  assert(asyncApiJsonSummary.includes("runtime/json/runs/started"), "asyncapi.json summary omitted receive channel evidence");
+  assert(asyncApiJsonSummary.includes("runtime/json/runs/commands"), "asyncapi.json summary omitted send channel evidence");
+  assert(asyncApiJsonSummary.includes("brokerJsonToken"), "asyncapi.json summary omitted security scheme evidence");
+  assert(!asyncApiJsonSummary.includes("secret-asyncapi-json-token"), "asyncapi.json summary leaked sensitive broker token");
+  assert(asyncApiJsonSummary.includes("no request execution, broker connection"), "asyncapi.json summary omitted no-request/no-broker safety copy");
+
   const insomniaSummary = summaryFor(apiSchemaContainerResult, "insomnia.json");
   assert(insomniaSummary.includes("API spec/collection preview"), "insomnia.json did not use API client collection preview");
   assert(insomniaSummary.includes("Insomnia export"), "insomnia.json summary omitted Insomnia format evidence");
@@ -7396,6 +9443,31 @@ try {
   assert(graphqlSummary.includes("RuntimeRun"), "schema.graphql summary omitted type evidence");
   assert(graphqlSummary.includes("no request execution"), "schema.graphql summary omitted no-request safety copy");
 
+  const graphqlIntrospectionSummary = summaryFor(apiSchemaContainerResult, "schema-introspection.json");
+  assert(graphqlIntrospectionSummary.includes("GraphQL introspection JSON preview"), "schema-introspection.json did not use GraphQL introspection preview");
+  assert(graphqlIntrospectionSummary.includes("query:Query") && graphqlIntrospectionSummary.includes("mutation:Mutation"), "schema-introspection.json summary omitted root type evidence");
+  assert(graphqlIntrospectionSummary.includes("RuntimeRun") && graphqlIntrospectionSummary.includes("StartRunInput"), "schema-introspection.json summary omitted object/input type evidence");
+  assert(graphqlIntrospectionSummary.includes("@runtimeAuth"), "schema-introspection.json summary omitted directive evidence");
+  assert(graphqlIntrospectionSummary.includes("Node: RuntimeRun"), "schema-introspection.json summary omitted possible type evidence");
+  assert(!graphqlIntrospectionSummary.includes("secret-graphql-introspection-token"), "schema-introspection.json summary leaked description secret");
+  assert(!graphqlIntrospectionSummary.includes("secret-default-value"), "schema-introspection.json summary leaked default value");
+  assert(graphqlIntrospectionSummary.includes("no GraphQL request execution, schema introspection request"), "schema-introspection.json summary omitted no-request/no-introspection safety copy");
+
+  const pactContractSummary = summaryFor(apiSchemaContainerResult, "runtime.pact.json");
+  assert(pactContractSummary.includes("Pact contract JSON preview"), "runtime.pact.json did not use Pact contract preview");
+  assert(pactContractSummary.includes("Runtime Desktop Client"), "runtime.pact.json summary omitted consumer evidence");
+  assert(pactContractSummary.includes("Runtime API"), "runtime.pact.json summary omitted provider evidence");
+  assert(pactContractSummary.includes("Pact specification: 3.0.0"), "runtime.pact.json summary omitted Pact spec version evidence");
+  assert(pactContractSummary.includes("GET /runs?token=[redacted] -> 200"), "runtime.pact.json summary omitted sanitized GET interaction evidence");
+  assert(pactContractSummary.includes("POST /runs -> 201"), "runtime.pact.json summary omitted POST interaction evidence");
+  assert(pactContractSummary.includes("runtime runs exist") && pactContractSummary.includes("runtime creation is allowed"), "runtime.pact.json summary omitted provider state evidence");
+  assert(pactContractSummary.includes("$.body.runs[*].id") && pactContractSummary.includes("$.body.prompt"), "runtime.pact.json summary omitted matching rule evidence");
+  assert(!pactContractSummary.includes("secret-pact-query-token"), "runtime.pact.json summary leaked query token");
+  assert(!pactContractSummary.includes("secret-pact-auth-token"), "runtime.pact.json summary leaked auth token");
+  assert(!pactContractSummary.includes("secret-pact-request-body-token"), "runtime.pact.json summary leaked request body token");
+  assert(!pactContractSummary.includes("secret-pact-response-token"), "runtime.pact.json summary leaked response body token");
+  assert(pactContractSummary.includes("no Pact CLI command, Pact Broker connection, provider verification"), "runtime.pact.json summary omitted no-Pact-runtime safety copy");
+
   const restClientSummary = summaryFor(apiSchemaContainerResult, "runtime.http");
   assert(restClientSummary.includes("REST Client request file preview"), "runtime.http did not use REST Client preview");
   assert(restClientSummary.includes("RuntimeList: GET https://api.example.test/runtime/runs?token=[redacted]"), "runtime.http summary omitted sanitized request evidence");
@@ -7427,7 +9499,26 @@ try {
   const apiComposeSummary = summaryFor(apiSchemaContainerResult, "docker-compose.yaml");
   assert(apiComposeSummary.includes("Docker Compose file preview"), "docker-compose.yaml did not use Docker Compose preview in API/schema/container fixture group");
   assert(apiComposeSummary.includes("postgres:16"), "docker-compose.yaml summary omitted compose image evidence");
+  assert(apiComposeSummary.includes("api=./services/api"), "docker-compose.yaml summary omitted build context evidence");
+  assert(apiComposeSummary.includes("api:8080:8080"), "docker-compose.yaml summary omitted port mapping evidence");
+  assert(apiComposeSummary.includes("api->db"), "docker-compose.yaml summary omitted depends_on evidence");
+  assert(apiComposeSummary.includes("Profiles: runtime"), "docker-compose.yaml summary omitted profile evidence");
+  assert(apiComposeSummary.includes("volumes.runtime-db") && apiComposeSummary.includes("networks.runtime-net") && apiComposeSummary.includes("secrets.runtime-api-token"), "docker-compose.yaml summary omitted top-level resource evidence");
+  assert(!apiComposeSummary.includes("secret-compose-token"), "docker-compose.yaml summary leaked secret-like environment value");
   assert(apiComposeSummary.includes("no docker compose command"), "docker-compose.yaml summary omitted no-compose safety copy in API/schema/container fixture group");
+  assert(apiSchemaContainerResult.items.find((item) => item.title === "docker-compose.yaml")?.mime === "application/vnd.docker.compose+yaml", "docker-compose.yaml MIME provenance is missing");
+
+  const wingetSummary = summaryFor(apiSchemaContainerResult, "HepAI.OpenDrSai.installer.yaml");
+  assert(wingetSummary.includes("Windows Package Manager manifest preview"), "winget manifest did not use winget preview");
+  assert(wingetSummary.includes("Package identifier: HepAI.OpenDrSai"), "winget manifest summary omitted package identifier evidence");
+  assert(wingetSummary.includes("Package version: 1.4.2"), "winget manifest summary omitted package version evidence");
+  assert(wingetSummary.includes("Manifest type: installer"), "winget manifest summary omitted manifest type evidence");
+  assert(wingetSummary.includes("x64 type=wix scope=machine"), "winget manifest summary omitted installer architecture/type/scope evidence");
+  assert(wingetSummary.includes("token=REDACTED"), "winget manifest summary omitted redacted installer URL token evidence");
+  assert(wingetSummary.includes("sha256=64 chars prefix 0123456789ab"), "winget manifest summary omitted bounded SHA256 evidence");
+  assert(!wingetSummary.includes("secret-winget-token"), "winget manifest summary leaked installer URL token");
+  assert(wingetSummary.includes("no winget command, installer download, installer execution"), "winget manifest summary omitted no-winget/no-installer safety copy");
+  assert(apiSchemaContainerResult.items.find((item) => item.title === "HepAI.OpenDrSai.installer.yaml")?.mime === "application/vnd.microsoft.winget.manifest+yaml", "winget manifest MIME provenance is missing");
 
   const chartSummary = summaryFor(apiSchemaContainerResult, "Chart.yaml");
   assert(chartSummary.includes("Kubernetes package config preview"), "Chart.yaml did not use Kubernetes package config preview");
@@ -7438,6 +9529,21 @@ try {
   assert(!chartSummary.includes("secret-helm-token"), "Chart.yaml summary leaked Helm repository token");
   assert(chartSummary.includes("no helm/kubectl/kustomize command"), "Chart.yaml summary omitted no-runtime safety copy");
 
+  const helmValuesSummary = summaryFor(apiSchemaContainerResult, "values.yaml");
+  assert(helmValuesSummary.includes("Helm values preview"), "values.yaml did not use Helm values preview");
+  assert(helmValuesSummary.includes("repository=ghcr.io/example/runtime-api"), "values.yaml summary omitted image repository evidence");
+  assert(helmValuesSummary.includes("tag=v1.2.3"), "values.yaml summary omitted image tag evidence");
+  assert(helmValuesSummary.includes("replicaCount=3"), "values.yaml summary omitted replica evidence");
+  assert(helmValuesSummary.includes("type=ClusterIP") && helmValuesSummary.includes("port=80"), "values.yaml summary omitted service evidence");
+  assert(helmValuesSummary.includes("enabled=true") && helmValuesSummary.includes("className=nginx") && helmValuesSummary.includes("host=runtime.example.test"), "values.yaml summary omitted ingress evidence");
+  assert(helmValuesSummary.includes("resources.requests.cpu") && helmValuesSummary.includes("resources.limits.memory"), "values.yaml summary omitted resource key evidence");
+  assert(helmValuesSummary.includes("LOG_LEVEL"), "values.yaml summary omitted env key evidence");
+  assert(helmValuesSummary.includes("APP_MODE"), "values.yaml summary omitted config key evidence");
+  assert(helmValuesSummary.includes("secretApiToken"), "values.yaml summary omitted secret key-name evidence");
+  assert(!helmValuesSummary.includes("secret-helm-values-token"), "values.yaml summary leaked secret-shaped value");
+  assert(helmValuesSummary.includes("no helm/kubectl command, chart dependency build, template rendering"), "values.yaml summary omitted no-Helm runtime safety copy");
+  assert(apiSchemaContainerResult.items.find((item) => item.title === "values.yaml")?.mime === "application/vnd.cncf.helm.values+yaml", "Helm values MIME provenance is missing");
+
   const kustomizationSummary = summaryFor(apiSchemaContainerResult, "kustomization.yaml");
   assert(kustomizationSummary.includes("Kubernetes package config preview"), "kustomization.yaml did not use Kubernetes package config preview");
   assert(kustomizationSummary.includes("Kustomize kustomization"), "kustomization.yaml summary omitted Kustomize format evidence");
@@ -7446,6 +9552,17 @@ try {
   assert(kustomizationSummary.includes("patches/deployment.yaml"), "kustomization.yaml summary omitted patch evidence");
   assert(kustomizationSummary.includes("runtime-system"), "kustomization.yaml summary omitted namespace evidence");
   assert(kustomizationSummary.includes("no helm/kubectl/kustomize command"), "kustomization.yaml summary omitted no-runtime safety copy");
+
+  const kubeconfigSummary = summaryFor(apiSchemaContainerResult, "config");
+  assert(kubeconfigSummary.includes("Kubernetes kubeconfig preview"), ".kube/config did not use Kubernetes kubeconfig preview");
+  assert(kubeconfigSummary.includes("Current context: runtime-prod"), ".kube/config summary omitted current-context evidence");
+  assert(kubeconfigSummary.includes("runtime-prod-cluster") && kubeconfigSummary.includes("server=https://kube.example.test:6443"), ".kube/config summary omitted cluster/server evidence");
+  assert(kubeconfigSummary.includes("runtime-prod cluster=runtime-prod-cluster user=runtime-admin namespace=runtime-system"), ".kube/config summary omitted context evidence");
+  assert(kubeconfigSummary.includes("runtime-admin auth=token+client-certificate-data+client-key-data"), ".kube/config summary omitted user credential-key evidence");
+  assert(kubeconfigSummary.includes("cluster.certificate-authority-data"), ".kube/config summary omitted cluster credential-key evidence");
+  assert(!kubeconfigSummary.includes("secret-kube"), ".kube/config summary leaked kubeconfig credential material");
+  assert(kubeconfigSummary.includes("no kubectl command, cluster connection, token validation"), ".kube/config summary omitted no-kubectl/no-cluster safety copy");
+  assert(apiSchemaContainerResult.items.find((item) => item.title === "config")?.mime === "application/vnd.kubernetes.kubeconfig+yaml", ".kube/config MIME provenance is missing");
 
   const kubernetesManifestSummary = summaryFor(kubernetesManifestResult, "runtime-kubernetes.yaml");
   assert(kubernetesManifestSummary.includes("Kubernetes manifest preview"), "runtime-kubernetes.yaml did not use Kubernetes manifest preview");
@@ -7472,11 +9589,22 @@ try {
   assert(iisWebConfigSummary.includes("RuntimeHandler") && iisWebConfigSummary.includes("ManagedPipelineHandler"), "web.config summary omitted handler evidence");
   assert(iisWebConfigSummary.includes("RuntimeModule"), "web.config summary omitted module evidence");
   assert(iisWebConfigSummary.includes("authentication mode=Windows") && iisWebConfigSummary.includes("windowsAuthentication enabled=true"), "web.config summary omitted authentication evidence");
-  assert(iisWebConfigSummary.includes("Runtime rewrite") && iisWebConfigSummary.includes("token=REDACTED"), "web.config summary omitted rewrite/token redaction evidence");
+  assert(iisWebConfigSummary.includes("Runtime rewrite") && iisWebConfigSummary.includes("token=[redacted]"), "web.config summary omitted rewrite/token redaction evidence");
   assert(!iisWebConfigSummary.includes("secret-iis-token") && !iisWebConfigSummary.includes("secret-iis-url-token"), "web.config summary leaked secret tokens");
   assert(iisWebConfigSummary.includes("compilation targetFramework=4.8") && iisWebConfigSummary.includes("httpRuntime maxRequestLength=4096"), "web.config summary omitted ASP.NET hints");
   assert(iisWebConfigSummary.includes("admin/[redacted]"), "web.config summary omitted location path redaction evidence");
   assert(iisWebConfigSummary.includes("no IIS service, appcmd, PowerShell, ASP.NET runtime"), "web.config summary omitted no-IIS-runtime safety copy");
+
+  const iisApplicationHostSummary = summaryFor(iisWebConfigResult, "applicationHost.config");
+  assert(iisApplicationHostSummary.includes("IIS web.config preview (IIS applicationHost.config"), "applicationHost.config did not use IIS applicationHost preview");
+  assert(iisApplicationHostSummary.includes("name=Runtime Site id=7 serverAutoStart=true"), "applicationHost.config summary omitted Runtime Site evidence");
+  assert(iisApplicationHostSummary.includes("name=Admin Site id=8 serverAutoStart=false"), "applicationHost.config summary omitted Admin Site evidence");
+  assert(iisApplicationHostSummary.includes("name=RuntimeAppPool runtime=v4.0 pipeline=Integrated autoStart=true"), "applicationHost.config summary omitted RuntimeAppPool evidence");
+  assert(iisApplicationHostSummary.includes("name=LegacyPool runtime=v2.0 pipeline=Classic autoStart=false"), "applicationHost.config summary omitted LegacyPool evidence");
+  assert(iisApplicationHostSummary.includes("Runtime Site protocol=https binding=*:443:runtime-host.example.test?token=[redacted] sslFlags=1"), "applicationHost.config summary omitted HTTPS binding redaction evidence");
+  assert(iisApplicationHostSummary.includes("Admin Site protocol=https binding=*:8443:admin-runtime.example.test?token=[redacted]"), "applicationHost.config summary omitted admin binding redaction evidence");
+  assert(!iisApplicationHostSummary.includes("secret-apphost-binding-token") && !iisApplicationHostSummary.includes("secret-apphost-admin-token"), "applicationHost.config summary leaked binding token");
+  assert(iisApplicationHostSummary.includes("no IIS service, appcmd, PowerShell, ASP.NET runtime"), "applicationHost.config summary omitted no-IIS-runtime safety copy");
 
   const webServerConfigSummary = summaryFor(webServerConfigResult, "nginx.conf");
   assert(webServerConfigSummary.includes("Web server config preview"), "nginx.conf did not use web server config preview");
@@ -7605,6 +9733,16 @@ try {
   assert(classSummary.includes("org.opendrsai.runtime.RuntimeFixture"), "RuntimeFixture.class summary omitted constant-pool hint");
   assert(classSummary.includes("no JVM, javap, bytecode verification"), "RuntimeFixture.class summary omitted no-bytecode-runtime safety copy");
 
+  const jfrSummary = summaryFor(jfrRuntimeResult, "runtime.jfr");
+  assert(jfrSummary.includes("Java Flight Recorder snapshot preview"), "runtime.jfr did not use JFR preview");
+  assert(jfrSummary.includes("Magic: FLR\\0 JFR chunk header detected"), "runtime.jfr summary omitted JFR magic evidence");
+  assert(jfrSummary.includes("Version: 2.1"), "runtime.jfr summary omitted JFR version evidence");
+  assert(jfrSummary.includes("First chunk declared size: 256 B"), "runtime.jfr summary omitted chunk-size evidence");
+  assert(jfrSummary.includes("jdk.ExecutionSample") && jfrSummary.includes("jdk.ObjectAllocationInNewTLAB"), "runtime.jfr summary omitted readable event hints");
+  assert(!jfrSummary.includes("secret-jfr-token"), "runtime.jfr summary leaked secret-shaped value");
+  assert(jfrSummary.includes("no JVM/JDK Mission Control/jfr/jcmd command"), "runtime.jfr summary omitted no-JVM/no-JFR-command safety copy");
+  assert(jfrRuntimeResult.items.find((item) => item.title === "runtime.jfr")?.mime === "application/jfr", "runtime.jfr MIME provenance is missing");
+
   const geojsonSummary = summaryFor(opsDesignResult, "runtime.geojson");
   assert(geojsonSummary.includes("Geospatial preview"), "runtime.geojson did not use geospatial preview");
   assert(geojsonSummary.includes("Runtime Operations Site"), "runtime.geojson summary omitted feature name evidence");
@@ -7698,6 +9836,17 @@ try {
   assert(lnkSummary.includes("C:\\Runtime\\fixture.exe"), "runtime.lnk summary omitted bounded string evidence");
   assert(lnkSummary.includes("the shortcut target was not resolved or opened"), "runtime.lnk summary omitted no-follow safety copy");
 
+  const rdpSummary = summaryFor(windowsNativeResult, "runtime.rdp");
+  assert(rdpSummary.includes("Remote Desktop RDP configuration preview"), "runtime.rdp did not use RDP config preview");
+  assert(rdpSummary.includes("rdp.runtime.example.test"), "runtime.rdp summary omitted RDP host evidence");
+  assert(rdpSummary.includes("gateway.runtime.example.test?token=[redacted]"), "runtime.rdp summary omitted gateway URL redaction evidence");
+  assert(rdpSummary.includes("username length 12"), "runtime.rdp summary omitted username minimization evidence");
+  assert(rdpSummary.includes("redirectdrives=1") && rdpSummary.includes("local resource redirection requires review"), "runtime.rdp summary omitted redirection evidence");
+  assert(rdpSummary.includes("password 51 value redacted"), "runtime.rdp summary omitted password blob redaction evidence");
+  assert(!rdpSummary.includes("secret-rdp-password-blob") && !rdpSummary.includes("secret-rdp-gateway-token"), "runtime.rdp summary leaked RDP secrets");
+  assert(rdpSummary.includes("no mstsc.exe launch, RDP connection, gateway probe"), "runtime.rdp summary omitted no-RDP-runtime safety copy");
+  assert(windowsNativeResult.items.find((item) => item.title === "runtime.rdp")?.mime === "application/x-rdp", "runtime.rdp MIME provenance is missing");
+
   const regSummary = summaryFor(windowsNativeResult, "runtime.reg");
   assert(regSummary.includes("Windows registry export preview"), "runtime.reg did not use registry export preview");
   assert(regSummary.includes("RuntimeFixture"), "runtime.reg summary omitted registry key evidence");
@@ -7786,6 +9935,19 @@ try {
   assert(dbmlSummary.includes("runtime_role=admin/viewer"), "runtime.dbml summary omitted DBML enum evidence");
   assert(!dbmlSummary.includes("secret-dbml-token"), "runtime.dbml summary leaked sensitive note token");
   assert(dbmlSummary.includes("database connection, credential lookup"), "runtime.dbml summary omitted no-database/no-credential safety copy");
+
+  const jsonSchemaSummary = summaryFor(jsonSchemaResult, "runtime.schema.json");
+  assert(jsonSchemaSummary.includes("JSON Schema preview"), "runtime.schema.json did not use JSON Schema preview");
+  assert(jsonSchemaSummary.includes("Runtime Import Payload"), "runtime.schema.json summary omitted schema title evidence");
+  assert(jsonSchemaSummary.includes("Types: object"), "runtime.schema.json summary omitted type evidence");
+  assert(jsonSchemaSummary.includes("Required fields: id, email"), "runtime.schema.json summary omitted required field evidence");
+  assert(jsonSchemaSummary.includes("id type=string format=uuid") && jsonSchemaSummary.includes("email type=string format=email"), "runtime.schema.json summary omitted property/format evidence");
+  assert(jsonSchemaSummary.includes("#/$defs/profile"), "runtime.schema.json summary omitted local ref evidence");
+  assert(jsonSchemaSummary.includes("status default value hidden") && jsonSchemaSummary.includes("displayName examples value hidden"), "runtime.schema.json summary omitted default/example hiding evidence");
+  assert(!jsonSchemaSummary.includes("secret-schema-id-token") && !jsonSchemaSummary.includes("secret-schema-default") && !jsonSchemaSummary.includes("secret-schema-example") && !jsonSchemaSummary.includes("secret-schema-pattern"), "runtime.schema.json summary leaked schema secret values");
+  assert(jsonSchemaSummary.includes("$ref targets were not fetched or resolved"), "runtime.schema.json summary omitted no-ref-resolution safety copy");
+  assert(jsonSchemaSummary.includes("no schema registry lookup, instance validation, code generation"), "runtime.schema.json summary omitted no-registry/no-codegen safety copy");
+  assert(jsonSchemaResult.items[0].mime === "application/schema+json", "runtime.schema.json did not preserve JSON Schema MIME provenance");
 
   const redisRdbSummary = summaryFor(redisPersistenceResult, "dump.rdb");
   assert(redisRdbSummary.includes("Redis RDB snapshot metadata preview"), "dump.rdb did not use Redis RDB preview");
@@ -8118,6 +10280,38 @@ try {
   assert(!robotsSummary.includes("secret-robots-token"), "robots.txt summary leaked sitemap token");
   assert(robotsSummary.includes("remote URLs were not fetched, pages were not crawled, JavaScript was not executed"), "robots.txt summary omitted no-fetch/no-crawl safety copy");
 
+  const securityTxtSummary = summaryFor(contentMediaResult, "security.txt");
+  assert(securityTxtSummary.includes("security.txt vulnerability disclosure policy preview"), "security.txt did not use specialized policy preview");
+  assert(securityTxtSummary.includes("security@example.test") && securityTxtSummary.includes("https://security.example.test/report?token=[redacted]"), "security.txt summary omitted contact evidence");
+  assert(securityTxtSummary.includes("Expires values: 2026-12-31T23:59:59Z"), "security.txt summary omitted Expires evidence");
+  assert(securityTxtSummary.includes("Encryption references: https://security.example.test/pgp-key.txt"), "security.txt summary omitted Encryption evidence");
+  assert(securityTxtSummary.includes("Preferred languages: en, zh"), "security.txt summary omitted Preferred-Languages evidence");
+  assert(securityTxtSummary.includes("Canonical URLs: https://example.test/.well-known/security.txt"), "security.txt summary omitted Canonical evidence");
+  assert(securityTxtSummary.includes("Policy URLs: https://example.test/security-policy"), "security.txt summary omitted Policy evidence");
+  assert(securityTxtSummary.includes("Invalid/unrecognized lines") && securityTxtSummary.includes("Unrecognized: should-stay-bounded"), "security.txt summary omitted invalid-line evidence");
+  assert(!securityTxtSummary.includes("secret-security-token"), "security.txt summary leaked token-like contact URL value");
+  assert(securityTxtSummary.includes("contact/policy URLs were not fetched") && securityTxtSummary.includes("PGP signatures were not verified"), "security.txt summary omitted no-fetch/no-signature safety copy");
+  assert(contentMediaResult.items.find((item) => item.title === "security.txt")?.mime === "text/vnd.security", "security.txt MIME provenance is missing");
+
+  const assetLinksSummary = summaryFor(contentMediaResult, "assetlinks.json");
+  assert(assetLinksSummary.includes("Web app association preview (Android Digital Asset Links"), "assetlinks.json did not use web app association preview");
+  assert(assetLinksSummary.includes("android_app package=ai.drsai.runtime"), "assetlinks.json summary omitted package identity evidence");
+  assert(assetLinksSummary.includes("delegate_permission/common.handle_all_urls"), "assetlinks.json summary omitted relation evidence");
+  assert(assetLinksSummary.includes("SHA-256 certificate fingerprints hidden (1)"), "assetlinks.json summary omitted fingerprint hiding evidence");
+  assert(!assetLinksSummary.includes("AA:BB:CC"), "assetlinks.json summary leaked certificate fingerprint");
+  assert(assetLinksSummary.includes("association URLs were not fetched") && assetLinksSummary.includes("apps were not installed or launched"), "assetlinks.json summary omitted no-fetch/no-app-runtime safety copy");
+  assert(contentMediaResult.items.find((item) => item.title === "assetlinks.json")?.mime === "application/vnd.drsai.web-app-association+json", "assetlinks.json MIME provenance is missing");
+
+  const appleAssociationSummary = summaryFor(contentMediaResult, "apple-app-site-association");
+  assert(appleAssociationSummary.includes("Web app association preview (Apple App Site Association"), "apple-app-site-association did not use web app association preview");
+  assert(appleAssociationSummary.includes("applinks ABCDE12345.ai.drsai.runtime"), "apple-app-site-association summary omitted applinks identity evidence");
+  assert(appleAssociationSummary.includes("webcredentials") && appleAssociationSummary.includes("activitycontinuation"), "apple-app-site-association summary omitted Apple service relation evidence");
+  assert(appleAssociationSummary.includes("/chat/*") && appleAssociationSummary.includes("Excluded admin path exclude=true"), "apple-app-site-association summary omitted path/component evidence");
+  assert(appleAssociationSummary.includes("/handoff/runtime?token=REDACTED"), "apple-app-site-association summary omitted redacted path token evidence");
+  assert(!appleAssociationSummary.includes("secret-aasa-token"), "apple-app-site-association summary leaked path token");
+  assert(appleAssociationSummary.includes("domain verification ran") && appleAssociationSummary.includes("no network call or provider send"), "apple-app-site-association summary omitted no-domain/no-provider safety copy");
+  assert(contentMediaResult.items.find((item) => item.title === "apple-app-site-association")?.mime === "application/vnd.drsai.web-app-association+json", "apple-app-site-association MIME provenance is missing");
+
   const llmsSummary = summaryFor(contentMediaResult, "llms.txt");
   assert(llmsSummary.includes("LLM website metadata preview (llms.txt"), "llms.txt did not use LLM metadata preview");
   assert(llmsSummary.includes("Runtime LLM Site Guide"), "llms.txt summary omitted title evidence");
@@ -8194,6 +10388,23 @@ try {
   assert(!browserExtensionInventorySummary.includes("secret-extension-inventory-token") && !browserExtensionInventorySummary.includes("secret-extension-inventory-key"), "browser-extensions.json summary leaked extension inventory secrets");
   assert(browserExtensionInventorySummary.includes("extension code was not loaded or executed"), "browser-extensions.json summary omitted no-extension-load safety copy");
   assert(browserExtensionInventoryResult.items.find((item) => item.title === "browser-extensions.json")?.mime === "application/vnd.drsai.browser-extension-inventory+json", "browser-extensions.json MIME provenance is missing");
+
+  const vsixSummary = summaryFor(extensionPackageResult, "runtime-extension.vsix");
+  assert(vsixSummary.includes("VS Code VSIX extension package metadata preview"), "runtime-extension.vsix did not use extension package preview");
+  assert(vsixSummary.includes("extension/package.json") && vsixSummary.includes("extension/out/extension.js"), "runtime-extension.vsix summary omitted manifest/code evidence");
+  assert(vsixSummary.includes("extension/_locales/en/messages.json"), "runtime-extension.vsix summary omitted locale evidence");
+  assert(vsixSummary.includes("credential-shaped filename redacted"), "runtime-extension.vsix summary omitted credential-shaped filename redaction cue");
+  assert(!vsixSummary.includes("secret-vsix-token") && vsixSummary.includes("[redacted]"), "runtime-extension.vsix summary leaked sensitive filename evidence");
+  assert(vsixSummary.includes("VS Code/browsers/profiles were not opened") && vsixSummary.includes("extensions were not installed"), "runtime-extension.vsix summary omitted no-install/no-launch safety copy");
+  assert(extensionPackageResult.items.find((item) => item.title === "runtime-extension.vsix")?.mime === "application/vsix", "runtime-extension.vsix MIME provenance is missing");
+  const crxSummary = summaryFor(extensionPackageResult, "runtime-extension.crx");
+  assert(crxSummary.includes("Chrome CRX browser extension package metadata preview"), "runtime-extension.crx did not use CRX extension package preview");
+  assert(crxSummary.includes("CRX header: version 3") && crxSummary.includes("ZIP payload offset"), "runtime-extension.crx summary omitted CRX header evidence");
+  assert(crxSummary.includes("manifest.json") && crxSummary.includes("background.js") && crxSummary.includes("content-script.js"), "runtime-extension.crx summary omitted manifest/code evidence");
+  assert(crxSummary.includes("native or binary runtime payload") && crxSummary.includes("background/content/native integration entry"), "runtime-extension.crx summary omitted static review cues");
+  assert(!crxSummary.includes("secret-crx-token") && crxSummary.includes("[redacted]"), "runtime-extension.crx summary leaked sensitive filename evidence");
+  assert(crxSummary.includes("extension stores were not queried") && crxSummary.includes("no network call"), "runtime-extension.crx summary omitted no-store/no-network safety copy");
+  assert(extensionPackageResult.items.find((item) => item.title === "runtime-extension.crx")?.mime === "application/x-chrome-extension", "runtime-extension.crx MIME provenance is missing");
 
   const browserHistoryCsvSummary = summaryFor(browserHistoryResult, "history.csv");
   assert(browserHistoryCsvSummary.includes("Browser history export preview"), "history.csv did not use browser history export preview");
@@ -8326,6 +10537,7 @@ try {
   assert(pwaManifestSummary.includes("PWA web app manifest preview"), "site.webmanifest did not use PWA manifest preview");
   assert(pwaManifestSummary.includes("Runtime PWA Fixture"), "site.webmanifest summary omitted app name evidence");
   assert(pwaManifestSummary.includes("display=standalone"), "site.webmanifest summary omitted display evidence");
+  assert(pwaManifestSummary.includes("Static installability hints: identity present; start_url present; install display=standalone; 192/512 icon declared; maskable icon declared; scope declared"), "site.webmanifest summary omitted static installability hints");
   assert(pwaManifestSummary.includes("Icons (1): /icons/runtime-192.png?token=REDACTED"), "site.webmanifest summary omitted icon redaction evidence");
   assert(pwaManifestSummary.includes("Shortcuts (1): Open Runtime Inbox -> /app/inbox?token=REDACTED"), "site.webmanifest summary omitted shortcut redaction evidence");
   assert(pwaManifestSummary.includes("Share target: /share?token=REDACTED"), "site.webmanifest summary omitted share target redaction evidence");
@@ -8356,6 +10568,19 @@ try {
   assert(vttSummary.includes("Runtime VTT caption"), "captions.vtt summary omitted VTT cue evidence");
   assert(vttSummary.includes("no microphone capture"), "captions.vtt summary omitted no-capture safety copy");
 
+  const devcontainerSummary = summaryFor(devcontainerConfigResult, "devcontainer.json");
+  assert(devcontainerSummary.includes("Dev Container config preview"), "devcontainer.json did not use Dev Container config preview");
+  assert(devcontainerSummary.includes("Runtime Dev Container"), "devcontainer.json summary omitted name evidence");
+  assert(devcontainerSummary.includes("mcr.microsoft.com/devcontainers/typescript-node:22"), "devcontainer.json summary omitted image evidence");
+  assert(devcontainerSummary.includes("../docker-compose.yml"), "devcontainer.json summary omitted compose file evidence");
+  assert(devcontainerSummary.includes("ghcr.io/devcontainers/features/node:1"), "devcontainer.json summary omitted feature evidence");
+  assert(devcontainerSummary.includes("3000") && devcontainerSummary.includes("5173") && devcontainerSummary.includes("9229"), "devcontainer.json summary omitted forwarded port evidence");
+  assert(devcontainerSummary.includes("RUNTIME_TOKEN") && devcontainerSummary.includes("OPENAI_API_KEY"), "devcontainer.json summary omitted env key evidence");
+  assert(devcontainerSummary.includes("network download/request command") && devcontainerSummary.includes("package install command"), "devcontainer.json summary omitted static risk cues");
+  assert(!devcontainerSummary.includes("secret-devcontainer-token") && !devcontainerSummary.includes("secret-devcontainer-api-key"), "devcontainer.json summary leaked secret values");
+  assert(devcontainerSummary.includes("no VS Code Dev Containers extension") && devcontainerSummary.includes("docker/devcontainer CLI"), "devcontainer.json summary omitted no-runtime safety copy");
+  assert(devcontainerConfigResult.items.find((item) => item.title === "devcontainer.json")?.mime === "application/vnd.devcontainer+json", "devcontainer.json MIME provenance is missing");
+
   const androidManifestSummary = summaryFor(mobileManifestResult, "AndroidManifest.xml");
   assert(androidManifestSummary.includes("Android app manifest preview"), "AndroidManifest.xml did not use Android manifest preview");
   assert(androidManifestSummary.includes("org.opendrsai.runtime"), "AndroidManifest.xml summary omitted package evidence");
@@ -8366,6 +10591,26 @@ try {
   assert(androidManifestSummary.includes("com.example.API_TOKEN"), "AndroidManifest.xml summary omitted metadata key evidence");
   assert(!androidManifestSummary.includes("secret-android-token"), "AndroidManifest.xml summary leaked manifest meta-data value");
   assert(androidManifestSummary.includes("no Gradle/Android Studio/ADB/emulator/aapt/apksigner command"), "AndroidManifest.xml summary omitted no-mobile-runtime safety copy");
+
+  const androidStringsSummary = summaryFor(mobileManifestResult, "strings.xml");
+  assert(androidStringsSummary.includes("Android resource XML preview"), "strings.xml did not use Android resource XML preview");
+  assert(androidStringsSummary.includes("string=app_name"), "strings.xml summary omitted string resource evidence");
+  assert(androidStringsSummary.includes("color=brand_primary"), "strings.xml summary omitted color resource evidence");
+  assert(androidStringsSummary.includes("bool=feature_chat_enabled"), "strings.xml summary omitted bool resource evidence");
+  assert(androidStringsSummary.includes("string-array=quick_actions"), "strings.xml summary omitted array resource evidence");
+  assert(!androidStringsSummary.includes("secret-android-resource-token"), "strings.xml summary leaked Android resource value");
+  assert(androidStringsSummary.includes("resource values were not expanded"), "strings.xml summary omitted value non-expansion evidence");
+  assert(androidStringsSummary.includes("no Gradle/Android Studio/ADB/emulator/aapt/resource merger command"), "strings.xml summary omitted no-resource-runtime safety copy");
+  assert(mobileManifestResult.items.find((item) => item.title === "strings.xml")?.mime === "application/vnd.android.resource+xml", "strings.xml MIME provenance is missing");
+
+  const androidNetworkSecuritySummary = summaryFor(mobileManifestResult, "network_security_config.xml");
+  assert(androidNetworkSecuritySummary.includes("Android resource XML preview"), "network_security_config.xml did not use Android resource XML preview");
+  assert(androidNetworkSecuritySummary.includes("base-config cleartextTrafficPermitted=false"), "network_security_config.xml summary omitted base config evidence");
+  assert(androidNetworkSecuritySummary.includes("domain-config cleartextTrafficPermitted=true"), "network_security_config.xml summary omitted domain config evidence");
+  assert(androidNetworkSecuritySummary.includes("api.opendrsai.test"), "network_security_config.xml summary omitted domain evidence");
+  assert(androidNetworkSecuritySummary.includes("certificates src=@raw/runtime_ca overridePins=true"), "network_security_config.xml summary omitted certificate evidence");
+  assert(androidNetworkSecuritySummary.includes("no Gradle/Android Studio/ADB/emulator/aapt/resource merger command"), "network_security_config.xml summary omitted no-resource-runtime safety copy");
+  assert(mobileManifestResult.items.find((item) => item.title === "network_security_config.xml")?.mime === "application/vnd.android.resource+xml", "network_security_config.xml MIME provenance is missing");
 
   const androidLogcatSummary = summaryFor(mobileManifestResult, "runtime.logcat");
   assert(androidLogcatSummary.includes("Android logcat export preview"), "runtime.logcat did not use Android logcat preview");
@@ -8513,6 +10758,19 @@ try {
   assert(webpAnimationSummary.includes("Animation hints: animation frames 2"), "runtime-animated.webp summary omitted animation frame evidence");
   assert(webpAnimationSummary.includes("loop count forever"), "runtime-animated.webp summary omitted animation loop evidence");
   assert(webpAnimationSummary.includes("animation playback") && webpAnimationSummary.includes("pixel decode"), "runtime-animated.webp summary omitted no-animation/no-pixel-decode safety copy");
+
+  const svgStructureSummary = summaryFor(imageColorResult, "runtime.svg");
+  assert(svgStructureSummary.includes("Image metadata preview"), "runtime.svg did not use image metadata preview");
+  assert(svgStructureSummary.includes("Format: SVG"), "runtime.svg summary omitted SVG format evidence");
+  assert(svgStructureSummary.includes("Dimensions: 120 x 80 px"), "runtime.svg summary omitted SVG dimensions");
+  assert(svgStructureSummary.includes("viewBox=0 0 120 80"), "runtime.svg summary omitted viewBox evidence");
+  assert(svgStructureSummary.includes("symbol=1") && svgStructureSummary.includes("path=1") && svgStructureSummary.includes("image=1") && svgStructureSummary.includes("script=1") && svgStructureSummary.includes("foreignObject=1"), "runtime.svg summary omitted SVG element counts");
+  assert(svgStructureSummary.includes("runtime-icon") && svgStructureSummary.includes("runtime-label"), "runtime.svg summary omitted SVG id samples");
+  assert(svgStructureSummary.includes("script element") && svgStructureSummary.includes("foreignObject") && svgStructureSummary.includes("external reference"), "runtime.svg summary omitted SVG static risk cues");
+  assert(svgStructureSummary.includes("Runtime SVG Map") && svgStructureSummary.includes("Runtime SVG Label"), "runtime.svg summary omitted SVG text preview");
+  assert(!svgStructureSummary.includes("secret-svg-token") && !svgStructureSummary.includes("secret-svg-script-token"), "runtime.svg summary leaked SVG secret-shaped values");
+  assert(svgStructureSummary.includes("no OCR, vision model, network call") && svgStructureSummary.includes("No image renderer startup"), "runtime.svg summary omitted no-render/no-provider safety copy");
+  assert(imageColorResult.items.find((item) => item.title === "runtime.svg")?.mime === "image/svg+xml", "runtime.svg MIME provenance is missing");
 } finally {
   rmSync(tempRoot, { recursive: true, force: true });
 }

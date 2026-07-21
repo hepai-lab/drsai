@@ -15,6 +15,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
@@ -43,6 +44,13 @@ Ask the questions one at a time.
 
 If a question can be answered by exploring the codebase, explore the codebase instead."""
 
+OPENDRSAI_ASSISTANT_NAME = "OpenDrSai Assistant"
+OPENDRSAI_IDENTITY_SYSTEM_PROMPT = f"""## Identity
+You are {OPENDRSAI_ASSISTANT_NAME}, the intelligent programming and data-analysis assistant in OpenDrSai.
+When the user asks who you are, identify yourself as {OPENDRSAI_ASSISTANT_NAME}.
+Use OpenDrSai as the product name in user-facing responses and system messages. Keep technical package names, commands, paths, environment variables, and protocol identifiers unchanged.
+"""
+
 
 # ── Workspace ────────────────────────────────────────────────────────────────
 
@@ -53,6 +61,29 @@ WORKDIR = Path(WORKSPACE_RUNS_DIR)
 
 # Default path for llm_mode_config YAML (seed file)
 DEFAULT_LLM_CONFIG_FILE = str(Path(CONFIG_DIR) / "llm_mode_config.yaml")
+
+
+def normalize_provider_model_name(model: str, base_url: str) -> str:
+    """Translate catalog model IDs to the format expected by the endpoint."""
+    hostname = (urlparse(base_url).hostname or "").lower()
+    if hostname == "api.openai.com" and model.startswith("openai/"):
+        return model.split("/", 1)[1]
+    if hostname.endswith("ihep.ac.cn") and "/" not in model and model.startswith(("gpt-", "o1", "o3", "o4")):
+        return f"openai/{model}"
+    return model
+
+
+def _model_timeout_seconds(cli_cfg: dict[str, Any]) -> float:
+    raw = _resolve(
+        cli_cfg,
+        "openai_timeout_seconds",
+        "OPENDRSAI_MODEL_TIMEOUT_SECONDS",
+        default=90,
+    )
+    try:
+        return min(300.0, max(10.0, float(raw)))
+    except (TypeError, ValueError):
+        return 90.0
 
 
 # ── ReasoningConfig dataclass ─────────────────────────────────────────────────
@@ -70,7 +101,8 @@ class ReasoningConfig:
         
         For is_r1_model type: effort_levels=[] means "unlimited" (any effort works)
         For other types: effort must be in effort_levels list
-        """
+"""
+
         if not self.supported:
             return False
         if effort == "off" or effort == "hide":
@@ -332,7 +364,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
     ),
 }
 
-DEFAULT_CONFIG_NAME = "deepseek-v4-pro"
+DEFAULT_CONFIG_NAME = "deepseek-ai/deepseek-v4-pro"
 
 
 # Endpoint defaults — match run_drsai_agent.py
@@ -553,7 +585,7 @@ def _build_cwd_prompt(cli_cfg: dict[str, Any], work_dir: str = "") -> str:
             cwd = os.getcwd()
         except Exception:
             cwd = ""
-    lines: list[str] = []
+    lines: list[str] = [OPENDRSAI_IDENTITY_SYSTEM_PROMPT.strip()]
 
     # Plan mode: prepend the plan mode prompt
     if cli_cfg.get("plan_mode"):
@@ -664,7 +696,7 @@ def create_agent(
     extra_tools: Optional[list] = None,
     enable_security: bool = False,
 ) -> DrSaiAssistant:
-    """Build a local DrSai assistant from CLI config.
+    """Build a local OpenDrSai assistant from CLI config.
 
     Args:
         api_key: legacy HEPAI key (backward-compatible). Used only as a
@@ -700,7 +732,10 @@ def create_agent(
         or DEFAULT_CONFIG_NAME
     )
     if resolved_config_name not in llm_mode_config:
-        resolved_config_name = next(iter(llm_mode_config))
+        resolved_config_name = next(
+            (alias for alias, entry in llm_mode_config.items() if entry.model == resolved_config_name),
+            next(iter(llm_mode_config)),
+        )
 
     anthropic_base_url = _resolve(
         cli_cfg, "anthropic_base_url", "ANTHROPIC_BASE_URL",
@@ -717,6 +752,7 @@ def create_agent(
     openai_api_key = _resolve(
         cli_cfg, "openai_api_key", "OPENAI_API_KEY", "HEPAI_API_KEY",
     ) or api_key
+    openai_timeout = _model_timeout_seconds(cli_cfg)
 
     anthropic_cache_enabled = _as_bool(
         _resolve(
@@ -782,6 +818,7 @@ def create_agent(
         if entry is None:
             entry = llm_mode_config[resolved_config_name]
         llm_model = entry.model
+        provider_model = normalize_provider_model_name(llm_model, openai_base_url)
         token_limit = entry.token_limit
         max_tokens = entry.max_tokens if entry.max_tokens > 0 else int(token_limit * 0.25)
         client_type = entry.client_type
@@ -833,29 +870,28 @@ def create_agent(
         # Decide which token-limit parameter to use:
         #   - OpenAI new-series (gpt-5.x, gpt-4.1, o1/o3/o4) → max_completion_tokens
         #   - All other OpenAI-compatible models (DeepSeek, GLM, etc.) → max_tokens
-        if llm_model.startswith("openai/"):
-            model_suffix = llm_model.split("/", 1)[1]
-            needs_max_completion = any(
-                model_suffix.startswith(p) for p in _OPENAI_NEW_MODEL_PREFIXES
-            )
-        else:
-            needs_max_completion = False
+        model_suffix = provider_model.split("/", 1)[1] if provider_model.startswith("openai/") else provider_model
+        needs_max_completion = any(
+            model_suffix.startswith(prefix) for prefix in _OPENAI_NEW_MODEL_PREFIXES
+        )
 
         if needs_max_completion:
             return HepAIChatCompletionClient(
-                model=llm_model,
+                model=provider_model,
                 api_key=openai_api_key,
                 base_url=openai_base_url,
                 model_info=model_info,
                 max_completion_tokens=max_tokens,
+                timeout=openai_timeout,
             )
         else:
             return HepAIChatCompletionClient(
-                model=llm_model,
+                model=provider_model,
                 api_key=openai_api_key,
                 base_url=openai_base_url,
                 model_info=model_info,
                 max_tokens=max_tokens,
+                timeout=openai_timeout,
             )
 
     entry = llm_mode_config.get(resolved_config_name)
@@ -888,7 +924,7 @@ def create_agent(
     final_sub_agent_config = sub_agent_config or {}
 
     return assistant_cls(
-        name="Assistant",
+        name=OPENDRSAI_ASSISTANT_NAME,
         model_client=set_model_client(resolved_config_name),
         system_message=cwd_prompt,
         reflect_on_tool_use=False,

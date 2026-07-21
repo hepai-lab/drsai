@@ -1,27 +1,49 @@
 param(
-    [string]$RuntimeUrl = "https://github.com/hepai-lab/drsai/releases/latest/download/OpenDrSaiRuntime-win-x64.zip",
+    [string]$RuntimeUrl = "",
     [string]$RuntimeSha256 = "",
     [Int64]$RuntimeSizeBytes = 0,
-    [string]$InstallRoot = (Join-Path (Join-Path $env:LOCALAPPDATA "Programs") "OpenDrSai"),
+    [string]$InstallRoot = (Join-Path $env:ProgramFiles "OpenDrSai"),
     [string]$DrsaiHome = (Join-Path $env:USERPROFILE ".drsai"),
     [string]$Platform = "windows-x64",
     [string]$BootstrapperVersion = "0.1.0",
     [string]$LogFileOverride = "",
+    [ValidateSet("All", "Download", "Verify", "Extract", "Install", "Complete")]
+    [string]$Stage = "All",
+    [switch]$MachineInstall,
+    [switch]$NoShortcuts,
     [switch]$NoLaunch,
     [switch]$Quiet
 )
 
 $ErrorActionPreference = "Stop"
+
+function Get-Sha256Hex([string]$Path) {
+    $stream = [System.IO.File]::OpenRead($Path)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([System.BitConverter]::ToString($sha256.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha256.Dispose()
+        $stream.Dispose()
+    }
+}
 $ProgressPreference = "SilentlyContinue"
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
+if (-not $RuntimeUrl) {
+    $RuntimeUrl = "https://github.com/hepai-lab/drsai/releases/download/v$BootstrapperVersion/OpenDrSaiRuntime-win-x64.zip"
+}
+
 $CacheDir = Join-Path $InstallRoot "cache"
+$AgentDir = Join-Path $InstallRoot "drsai-agent"
 $tempRoot = if ($env:TEMP) { $env:TEMP } else { [System.IO.Path]::GetTempPath() }
 $StagingRoot = Join-Path $tempRoot "OpenDrSaiStaging"
-$LogDir = Join-Path $DrsaiHome "logs\bootstrapper"
+$machineDataRoot = Join-Path $env:ProgramData "OpenDrSai\Installer"
+$LogDir = if ($MachineInstall) { Join-Path $machineDataRoot "logs" } else { Join-Path $DrsaiHome "logs\bootstrapper" }
 $Stamp = Get-Date -Format "yyyyMMdd-HHmmss"
-$LogFile = if ($LogFileOverride) { $LogFileOverride } else { Join-Path $LogDir "install-$Stamp.log" }
+$LogFile = if ($LogFileOverride) { $LogFileOverride } else { Join-Path $LogDir "install-$BootstrapperVersion.log" }
+$ExpandedRoot = Join-Path $StagingRoot "runtime-current"
 
 function New-Directory([string]$Path) {
     New-Item -ItemType Directory -Force -Path $Path | Out-Null
@@ -85,31 +107,44 @@ function Get-SafeFileName([string]$Url, [string]$Fallback) {
     return ($leaf -replace '[^\w.\- ]', '_')
 }
 
-function Get-RuntimeArchive {
+function Get-RuntimeArchivePath {
+    return (Join-Path $CacheDir (Get-SafeFileName $RuntimeUrl "OpenDrSaiRuntime-win-x64.zip"))
+}
+
+function Assert-RuntimeMetadata {
     if (-not $RuntimeSha256 -or -not ($RuntimeSha256 -match "^[A-Fa-f0-9]{64}$")) {
         throw "RuntimeSha256 must be provided as a 64-character hex string."
     }
     if ($RuntimeSizeBytes -le 0) {
         throw "RuntimeSizeBytes must be greater than zero."
     }
+}
 
-    $target = Join-Path $CacheDir (Get-SafeFileName $RuntimeUrl "OpenDrSaiRuntime-win-x64.zip")
+function Download-RuntimeArchive {
+    Assert-RuntimeMetadata
+    $target = Get-RuntimeArchivePath
     Copy-OrDownload $RuntimeUrl $target "OpenDrSai Runtime"
+}
 
+function Assert-RuntimeArchive {
+    Assert-RuntimeMetadata
+    $target = Get-RuntimeArchivePath
+    if (-not (Test-Path -LiteralPath $target)) {
+        throw "OpenDrSai Runtime has not been downloaded: $target"
+    }
     $actualSize = (Get-Item -LiteralPath $target).Length
     if ($actualSize -ne $RuntimeSizeBytes) {
         Remove-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue
         throw "OpenDrSai Runtime size mismatch. Expected $RuntimeSizeBytes bytes, got $actualSize."
     }
 
-    $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $target).Hash.ToLowerInvariant()
+    $actualHash = Get-Sha256Hex $target
     $expectedHash = $RuntimeSha256.ToLowerInvariant()
     if ($actualHash -ne $expectedHash) {
         Remove-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue
         throw "OpenDrSai Runtime SHA256 mismatch. Expected $expectedHash, got $actualHash."
     }
 
-    return $target
 }
 
 function Expand-ZipClean([string]$Archive, [string]$Destination) {
@@ -174,6 +209,15 @@ function Swap-Directory([string]$Source, [string]$Destination) {
     Move-Item -LiteralPath $Source -Destination $Destination -Force
 }
 
+function Remove-PreviousDirectories {
+    foreach ($path in @(
+        (Join-Path $InstallRoot "app.previous"),
+        "$AgentDir.previous"
+    )) {
+        Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Write-CmdWrapper([string]$Path, [string]$PythonExe, [string]$Module) {
     $content = "@echo off`r`n`"$PythonExe`" -m $Module %*`r`n"
     $encoding = New-Object System.Text.UTF8Encoding($false)
@@ -203,8 +247,10 @@ function Copy-DefaultHomeFiles([string]$RuntimeRoot) {
     if (-not (Test-Path $homeDefaults)) {
         return
     }
+    $defaultsTarget = if ($MachineInstall) { Join-Path $InstallRoot "defaults" } else { $DrsaiHome }
+    New-Directory $defaultsTarget
     foreach ($item in Get-ChildItem -LiteralPath $homeDefaults -Force) {
-        $target = Join-Path $DrsaiHome $item.Name
+        $target = Join-Path $defaultsTarget $item.Name
         if (Test-Path $target) {
             continue
         }
@@ -237,7 +283,7 @@ function Write-InstallState($RuntimeManifest, [string]$DesktopExe, [string]$Agen
         platform = $Platform
         installedAt = (Get-Date).ToUniversalTime().ToString("o")
         installRoot = $InstallRoot
-        drsaiHome = $DrsaiHome
+        drsaiHome = if ($MachineInstall) { "" } else { $DrsaiHome }
         desktopPath = $DesktopExe
         agentPath = $AgentDir
         runtimeLayoutVersion = if ($RuntimeManifest.layoutVersion) { [int]$RuntimeManifest.layoutVersion } else { 1 }
@@ -248,65 +294,105 @@ function Write-InstallState($RuntimeManifest, [string]$DesktopExe, [string]$Agen
     [System.IO.File]::WriteAllText($statePath, (($state | ConvertTo-Json -Depth 4) + [Environment]::NewLine), $utf8NoBom)
 }
 
-try {
+function Initialize-InstallDirectories {
     New-Directory $InstallRoot
-    New-Directory $DrsaiHome
+    if (-not $MachineInstall) {
+        New-Directory $DrsaiHome
+    }
     New-Directory $CacheDir
     New-Directory $StagingRoot
     New-Directory $LogDir
+}
 
-    Write-Log "OpenDrSai Runtime install started."
-    Write-Log "Runtime URL: $RuntimeUrl"
-    Write-Log "Install root: $InstallRoot"
-    Write-Log "DrSai home: $DrsaiHome"
-
-    $runtimeArchive = Get-RuntimeArchive
-    $expanded = Join-Path $StagingRoot ("runtime-" + [guid]::NewGuid().ToString("N"))
-    Write-Log "Extracting OpenDrSai Runtime..."
-    Expand-ZipClean $runtimeArchive $expanded
-
-    $runtimeRoot = Resolve-RuntimeRoot $expanded
+function Get-ExpandedRuntime {
+    $runtimeRoot = Resolve-RuntimeRoot $ExpandedRoot
     $runtimeManifest = Read-RuntimeManifest $runtimeRoot
     Assert-RuntimePayload $runtimeRoot $runtimeManifest
+    return @($runtimeRoot, $runtimeManifest)
+}
+
+function Install-RuntimePayload {
+    $expandedRuntime = Get-ExpandedRuntime
+    $runtimeRoot = $expandedRuntime[0]
+    $runtimeManifest = $expandedRuntime[1]
 
     $appDir = Join-Path $InstallRoot "app"
-    $agentDir = Join-Path $DrsaiHome "drsai-agent"
     Write-Log "Installing desktop app..."
     Swap-Directory (Join-Path $runtimeRoot "app") $appDir
 
     Write-Log "Installing OpenDrSai agent runtime..."
-    Swap-Directory (Join-Path $runtimeRoot "drsai-agent") $agentDir
-    Repair-InstalledWrappers $agentDir
+    Swap-Directory (Join-Path $runtimeRoot "drsai-agent") $AgentDir
+    Repair-InstalledWrappers $AgentDir
     Copy-DefaultHomeFiles $runtimeRoot
 
     $desktopExe = Join-Path $appDir "OpenDrSai.exe"
-    $desktopFolder = [Environment]::GetFolderPath("Desktop")
-    if ($desktopFolder -and [System.IO.Path]::IsPathRooted($desktopFolder)) {
-        Try-NewShortcut (Join-Path $desktopFolder "OpenDrSai.lnk") $desktopExe (Split-Path -Parent $desktopExe)
-    } else {
-        Write-Log "Desktop folder was not available; skipping desktop shortcut."
-    }
-
-    $programsFolder = [Environment]::GetFolderPath("Programs")
-    if ($programsFolder -and [System.IO.Path]::IsPathRooted($programsFolder)) {
-        try {
-            $startMenuDir = Join-Path $programsFolder "OpenDrSai"
-            New-Directory $startMenuDir
-            Try-NewShortcut (Join-Path $startMenuDir "OpenDrSai.lnk") $desktopExe (Split-Path -Parent $desktopExe)
-        } catch {
-            Write-Log "Start menu shortcut could not be created: $($_.Exception.Message)"
+    if (-not $NoShortcuts) {
+        $desktopFolder = [Environment]::GetFolderPath("Desktop")
+        if ($desktopFolder -and [System.IO.Path]::IsPathRooted($desktopFolder)) {
+            Try-NewShortcut (Join-Path $desktopFolder "OpenDrSai.lnk") $desktopExe (Split-Path -Parent $desktopExe)
+        } else {
+            Write-Log "Desktop folder was not available; skipping desktop shortcut."
         }
-    } else {
-        Write-Log "Start menu programs folder was not available; skipping start menu shortcut."
+
+        $programsFolder = [Environment]::GetFolderPath("Programs")
+        if ($programsFolder -and [System.IO.Path]::IsPathRooted($programsFolder)) {
+            try {
+                $startMenuDir = Join-Path $programsFolder "OpenDrSai"
+                New-Directory $startMenuDir
+                Try-NewShortcut (Join-Path $startMenuDir "OpenDrSai.lnk") $desktopExe (Split-Path -Parent $desktopExe)
+            } catch {
+                Write-Log "Start menu shortcut could not be created: $($_.Exception.Message)"
+            }
+        } else {
+            Write-Log "Start menu programs folder was not available; skipping start menu shortcut."
+        }
     }
 
-    Write-InstallState $runtimeManifest $desktopExe $agentDir
-    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $expanded
+    Write-InstallState $runtimeManifest $desktopExe $AgentDir
+}
+
+function Complete-RuntimeInstall {
+    $desktopExe = Join-Path $InstallRoot "app\OpenDrSai.exe"
+    if (-not (Test-Path -LiteralPath $desktopExe)) {
+        throw "OpenDrSai executable was not installed: $desktopExe"
+    }
+    Remove-PreviousDirectories
+    Remove-Item -LiteralPath $ExpandedRoot -Recurse -Force -ErrorAction SilentlyContinue
 
     Write-Log "OpenDrSai Runtime installation complete."
     if (-not $NoLaunch) {
         Write-Log "Launching OpenDrSai..."
         Start-Process -FilePath $desktopExe -WorkingDirectory (Split-Path -Parent $desktopExe)
+    }
+}
+
+try {
+    Initialize-InstallDirectories
+
+    Write-Log "OpenDrSai Runtime install started."
+    Write-Log "Stage: $Stage"
+    Write-Log "Runtime URL: $RuntimeUrl"
+    Write-Log "Install root: $InstallRoot"
+    Write-Log "DrSai home: $DrsaiHome"
+
+    if ($Stage -in @("All", "Download")) {
+        Write-Log "Downloading OpenDrSai Runtime..."
+        Download-RuntimeArchive
+    }
+    if ($Stage -in @("All", "Verify")) {
+        Write-Log "Verifying OpenDrSai Runtime..."
+        Assert-RuntimeArchive
+    }
+    if ($Stage -in @("All", "Extract")) {
+        Write-Log "Extracting OpenDrSai Runtime..."
+        Expand-ZipClean (Get-RuntimeArchivePath) $ExpandedRoot
+        $null = Get-ExpandedRuntime
+    }
+    if ($Stage -in @("All", "Install")) {
+        Install-RuntimePayload
+    }
+    if ($Stage -in @("All", "Complete")) {
+        Complete-RuntimeInstall
     }
     exit 0
 } catch {

@@ -1,4 +1,4 @@
-"""DrSai TUI Gateway — JSON-RPC dispatcher and session manager.
+"""OpenDrSai TUI Gateway — JSON-RPC dispatcher and session manager.
 
 This is the Phase 0 scaffold. It provides:
 - ``_methods`` registry with ``@method("name")`` decorator
@@ -357,7 +357,7 @@ def _ping(rid, params: dict) -> dict:
 def resolve_skin() -> dict:
     """Return UI theming hints. Phase 0 stub — Phase 2 will read from config."""
     return {
-        "branding": {"name": "DrSai"},
+        "branding": {"name": "OpenDrSai"},
         "colors": {
             "primary": "#FFD700",
             "accent": "#FFBF00",

@@ -1,0 +1,55 @@
+﻿{
+    "schemaVersion":  2,
+    "generatedAt":  "2026-07-21T03:29:03.6428753+00:00",
+    "result":  "passed",
+    "device":  "emulator-5556",
+    "oldApk":  "C:\\Users\\win11\\VSProjects\\drsai\\apps\\android\\app\\build\\outputs\\apk\\acceptance\\OpenDrSai-Android-v1.4.9.apk",
+    "newApk":  "C:\\Users\\win11\\VSProjects\\drsai\\apps\\android\\app\\build\\outputs\\apk\\mvp\\OpenDrSai-Android-v1.5.0.apk",
+    "manifestUrl":  "http://127.0.0.1:8766/latest-android.json",
+    "oldVersionCode":  10409,
+    "newVersionCode":  10500,
+    "firstInstallTimeBefore":  "2026-07-21 03:28:35",
+    "firstInstallTimeAfter":  "2026-07-21 03:28:35",
+    "encryptedAuthSha256Before":  "d8b0f1e54cd5c5d75f7d1fe60877ff232ed3f531e62f9b4e32f1f24986904c5c",
+    "encryptedAuthSha256After":  "d8b0f1e54cd5c5d75f7d1fe60877ff232ed3f531e62f9b4e32f1f24986904c5c",
+    "installerActions":  [
+                             "Install"
+                         ],
+    "steps":  [
+                  {
+                      "name":  "configure-local-update-feed",
+                      "status":  "passed",
+                      "durationMs":  48
+                  },
+                  {
+                      "name":  "clean-install-old",
+                      "status":  "passed",
+                      "durationMs":  7165
+                  },
+                  {
+                      "name":  "seed-simulated-login",
+                      "status":  "passed",
+                      "durationMs":  858
+                  },
+                  {
+                      "name":  "grant-installer-and-launch",
+                      "status":  "passed",
+                      "durationMs":  6378
+                  },
+                  {
+                      "name":  "click-check-and-update",
+                      "status":  "passed",
+                      "durationMs":  2139
+                  },
+                  {
+                      "name":  "download-verify-and-install",
+                      "status":  "passed",
+                      "durationMs":  7135
+                  },
+                  {
+                      "name":  "launch-updated-app",
+                      "status":  "passed",
+                      "durationMs":  1335
+                  }
+              ]
+}

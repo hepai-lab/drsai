@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "routes": [
+    { "input": "artifact.local", "target": "files", "automatic": false, "action": "open-and-focus" },
+    { "input": "citation.web", "target": "browser", "automatic": false, "action": "open-url" },
+    { "input": "activity.tool", "target": "terminal", "automatic": false, "action": "user-owned-workbench" },
+    { "input": "activity.detail", "target": "debug", "automatic": false, "action": "open-related-turn" }
+  ]
+}

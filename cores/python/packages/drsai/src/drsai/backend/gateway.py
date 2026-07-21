@@ -1,18 +1,18 @@
 """
 
-DrSai API Server â FastAPI SSE streaming server wrapping DrSai Assistant.
+OpenDrSai API Server â FastAPI SSE streaming server wrapping OpenDrSai Assistant.
 
 
 
 Provides an OpenAI-compatible /v1/chat/completions endpoint so the
 
-Electron desktop app can drive a local DrSai agent via HTTP SSE.
+Electron desktop app can drive a local OpenDrSai agent via HTTP SSE.
 
 
 
 Also exposes session management, skills, memory, and agent control
 
-(pause/resume/stop) endpoints â making it a full DrSai Gateway.
+(pause/resume/stop) endpoints â making it a full OpenDrSai Gateway.
 
 
 
@@ -65,13 +65,22 @@ from __future__ import annotations
 
 
 import asyncio
+import base64
+from collections import deque
+from fnmatch import fnmatch
 import inspect
+
+import hashlib
+import mimetypes
 
 import json
 
 import os
 
 import re
+import signal
+
+import subprocess
 
 import sys
 
@@ -91,14 +100,57 @@ from typing import Any, Optional
 
 
 
-from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.exceptions import RequestValidationError
 import httpx
 
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response as FastAPIResponse, StreamingResponse
 
 from loguru import logger
 
 from pydantic import BaseModel, Field
+
+from drsai.backend.remote_workspace import PROTOCOL_VERSION, canonical_workspace, ensure_protocol, workspace_child
+from drsai.backend.remote_checkpoints import accept_checkpoint, create_checkpoint, list_checkpoints, preview_checkpoint, restore_checkpoint
+from drsai.backend.runtime_registry import RuntimeRegistry
+from drsai.backend.git_worktree_service import GitWorktreeError, GitWorktreeOWOPOperations, GitWorktreeService
+from drsai.backend.terminal_state_service import TerminalStateService, TerminalWorkspaceBinding
+from drsai.owop.local_workspace import LocalWorkspaceOperations, WorkspaceWatchJournal
+from drsai.owop.process_pty import LocalProcessPtyOperations
+from drsai.owop.protocol import OWOPProtocol
+from drsai.owop.runtime_terminal import RuntimeTerminalOWOPOperations
+from drsai.backend.runtime_engine import RuntimeEngine, RuntimeEngineIdentity
+from drsai.backend.runtime_artifacts import RuntimeArtifactStore
+from drsai.backend.agent_runtime import (
+    AgentDefinition,
+    AgentDefinitionStore,
+    HAIModelAdapter,
+    ModelIdentity,
+    OpenDrSaiAgentBackend,
+    RuntimeAgentService,
+    RuntimeExecutionError,
+    RuntimeRunContext,
+    RuntimeToolDispatcher,
+)
+from drsai.backend.codex_adapter import build_codex_adapter
+from drsai.backend.structured_conversation import StructuredConversationProjector
+from drsai.backend.tui_gateway.adapter.event_translator import (
+    TurnState as ConversationTranslationState,
+    finalize as finalize_conversation_translation,
+    translate as translate_conversation_event,
+)
+from drsai.backend.runtime_security import (
+    ApprovalRegistry,
+    ApprovalRequired,
+    AuditLog,
+    OperationContext,
+    RuntimePrincipal,
+    RuntimeSecurity,
+    SecureWorkspaceFS,
+    SecurityError,
+    WorkspacePermissionStore,
+    redact_sensitive,
+)
 
 
 
@@ -255,7 +307,7 @@ def _get_default_model_alias() -> str:
         alias = load_config().get("defult_config_name")
         if isinstance(alias, str) and alias.strip():
             normalized = alias.strip()
-            return "deepseek-v4-pro" if normalized == "hepai/deepseek-v4-pro" else normalized
+            return "deepseek-ai/deepseek-v4-pro" if normalized in {"deepseek-v4-pro", "hepai/deepseek-v4-pro"} else normalized
     except Exception as e:
         logger.debug(f"Failed to read default model alias from cli config: {e}")
     return DEFAULT_CONFIG_NAME
@@ -336,6 +388,11 @@ class ChatRequest(BaseModel):
 
                     "Defaults to the server's current working directory.",
 
+    )
+
+    workspace_id: Optional[str] = Field(
+        default=None,
+        description="Registered remote workspace used to constrain tool execution.",
     )
 
     metadata: dict[str, Any] = Field(
@@ -445,9 +502,40 @@ def _get_store(user_id: str | None = None) -> CLISessionStore:
 
 
 
+
+_remote_hepai_cache: tuple[float, list[Any], list[dict[str, Any]]] = (0.0, [], [])
+
+
+def _remote_hepai_model_row(item: Any) -> dict[str, Any]:
+    if isinstance(item, dict): return dict(item)
+    if hasattr(item, "model_dump"): return dict(item.model_dump())
+    if hasattr(item, "dict"): return dict(item.dict())
+    return {key: value for key, value in vars(item).items() if not key.startswith("_")}
+
+
+async def _load_remote_hepai_tools(force: bool = False) -> tuple[list[Any], list[dict[str, Any]]]:
+    global _remote_hepai_cache
+    cached_at, tools, rows = _remote_hepai_cache
+    if not force and time.time() - cached_at < 60:
+        return list(tools), [dict(row) for row in rows]
+    from hepai import HepAI
+    from hepai.tools.get_woker_functions import get_worker_sync_functions
+    from drsai.backend.remote_hepai import discover_enabled_worker_tools
+    api_key = os.environ.get("HEPAI_API_KEY")
+    base_url = os.environ.get("HEPAI_BASE_URL")
+    client = HepAI(api_key=api_key)
+    models = await asyncio.wait_for(asyncio.to_thread(client.models.list), timeout=5)
+    model_rows = [_remote_hepai_model_row(item) for item in getattr(models, "data", [])]
+    def load(worker_id: str):
+        return get_worker_sync_functions(name=worker_id, api_key=api_key, base_url=base_url)
+    tools, rows = await discover_enabled_worker_tools(model_rows, load, Path.home()/".local"/"share"/"opendrsai"/"remote"/"hepai-workers.json", timeout=5)
+    _remote_hepai_cache = (time.time(), list(tools), [dict(row) for row in rows])
+    return tools, rows
+
+
 class AgentManager:
 
-    """Manage DrSai agent instances keyed by (user_id, thread_id) for session isolation.
+    """Manage OpenDrSai agent instances keyed by (user_id, thread_id) for session isolation.
 
 
 
@@ -582,7 +670,7 @@ class AgentManager:
 
 
 
-    async def _get_or_create_thread(self, thread_id: str, user_id: str) -> Thread:
+    async def _get_or_create_thread(self, thread_id: str, user_id: str, work_dir: str | None = None) -> Thread:
 
         """Get or create a Thread record."""
 
@@ -599,8 +687,14 @@ class AgentManager:
         )
 
         if resp.status and resp.data:
-
-            return resp.data[0]
+            thread = resp.data[0]
+            if work_dir:
+                meta = dict(getattr(thread, "meta", None) or {})
+                if meta.get("workdir") != work_dir:
+                    meta["workdir"] = work_dir
+                    thread.meta = meta
+                    db.upsert(thread)
+            return thread
 
         thread = Thread(
 
@@ -611,6 +705,8 @@ class AgentManager:
             status=RunStatus.CREATED,
 
             messages=[],
+
+            meta={"workdir": work_dir} if work_dir else {},
 
         )
 
@@ -723,6 +819,11 @@ class AgentManager:
                     defult_config_name=model_alias or _get_default_model_alias(),
                     work_dir=work_dir or os.getcwd(),
                 )
+                try:
+                    remote_tools, _ = await _load_remote_hepai_tools()
+                    if remote_tools: create_agent_kwargs["extra_tools"] = remote_tools
+                except Exception as exc:
+                    logger.warning(f"HepAI remote tools unavailable; creating core agent without them: {type(exc).__name__}")
                 if inspect.iscoroutinefunction(create_agent):
                     agent = await create_agent(**create_agent_kwargs)
                 else:
@@ -755,7 +856,7 @@ class AgentManager:
 
                 # 4. Get-or-create Thread record
 
-                await self._get_or_create_thread(tid, uid)
+                await self._get_or_create_thread(tid, uid, work_dir)
 
 
 
@@ -1062,19 +1163,37 @@ async def lifespan(app: FastAPI):
 
     """Startup/shutdown hooks."""
 
-    logger.info(f"DrSai API Server starting on {DEFAULT_HOST}:{DEFAULT_PORT}")
+    logger.info(f"OpenDrSai API Server starting on {DEFAULT_HOST}:{DEFAULT_PORT}")
 
     # Initialize DB eagerly so first request doesn't pay the cost
 
     _get_db()
 
+    _restore_runtime_workspaces()
+
     logger.info(f"Database ready: {_DB_URI}")
 
     logger.info(f"Default user: {_get_user_id()}")
 
+    relay_stop, relay_task = await _start_runtime_relay_bridge()
+
     yield
 
-    logger.info("DrSai API Server shutting down")
+    logger.info("OpenDrSai API Server shutting down")
+
+    if _runtime_agent_service_instance is not None:
+        await _runtime_agent_service_instance.close()
+
+    if _terminal_provider_instance is not None:
+        _terminal_provider_instance.close()
+
+    if relay_stop is not None:
+        relay_stop.set()
+    if relay_task is not None:
+        try:
+            await asyncio.wait_for(relay_task, timeout=5)
+        except (TimeoutError, asyncio.CancelledError):
+            relay_task.cancel()
 
     # Stop any cron schedulers we started so background tasks unwind cleanly
     for uid, sm in list(_schedulers.items()):
@@ -1090,7 +1209,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
 
-    title="DrSai API Server",
+    title="OpenDrSai API Server",
 
     version="0.2.0",
 
@@ -1098,15 +1217,577 @@ app = FastAPI(
 
 )
 
+_REMOTE_PROTOCOL_VERSION = PROTOCOL_VERSION
+_remote_workspaces: dict[str, Path] = {}
+_runtime_registry_instance: RuntimeRegistry | None = None
+_runtime_engine_instance: RuntimeEngine | None = None
+_runtime_tool_dispatcher_instance: RuntimeToolDispatcher | None = None
+_runtime_security_instance: RuntimeSecurity | None = None
+_runtime_agent_service_instance: RuntimeAgentService | None = None
+_git_worktree_service_instance: GitWorktreeService | None = None
+_workspace_event_journal_instance: WorkspaceWatchJournal | None = None
+_terminal_state_service_instance: TerminalStateService | None = None
+_terminal_provider_instance: LocalProcessPtyOperations | None = None
+_owop_protocol_instance: OWOPProtocol | None = None
+_local_workspace_owop_instances: dict[str, LocalWorkspaceOperations] = {}
+_runtime_artifact_store_instance: RuntimeArtifactStore | None = None
+_REMOTE_CAPABILITY_VERSIONS = {
+    "threads": 1,
+    "chat": 1,
+    "files": 2,
+    "file-watch": 2,
+    "git": 1,
+    "approvals": 1,
+    "hepai-worker": 1,
+    "pty": 2,
+    "owop": 1,
+    "runtime-identity": 1,
+    "workspace-registry": 1,
+    "worktree": 1,
+    "session-run-events": 1,
+    "runtime-checkpoint": 1,
+    "agent-backend": 1,
+    "agent-backend-account": 1,
+    "workspace-permissions": 1,
+    "security-approval": 1,
+    "runtime-audit": 1,
+}
+
+
+async def _start_runtime_relay_bridge():
+    """Start the optional Runtime-initiated Relay connection in this Full Runtime process."""
+    from drsai.relay.device_identity import DeviceIdentityStore
+    from drsai.relay.gateway_control import AiohttpGatewayTransport, GatewayRuntimeControlHandler
+    from drsai.relay.runtime_client import RuntimeCredentialStore, RuntimeOutboundConnector
+
+    state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
+    relay_state = state_root / "runtime" / "relay"
+    credential_path = relay_state / "credential.dpapi"
+    url_path = relay_state / "relay-wss-url"
+    configured_url = os.environ.get("OPENDRSAI_RELAY_WSS_URL", "").strip()
+    if not configured_url and url_path.is_file():
+        configured_url = url_path.read_text(encoding="utf-8").strip()
+    if not configured_url or not credential_path.is_file():
+        return None, None
+    try:
+        credential = RuntimeCredentialStore(credential_path).load()
+        identity = DeviceIdentityStore(relay_state / "device-identity.dpapi").load_or_create()
+        runtime = _runtime_registry().identity
+        token = os.environ.get("OPENDRSAI_GATEWAY_INSTANCE_TOKEN", "").strip()
+        if not token:
+            raise RuntimeError("gateway_instance_token_required_for_relay")
+        handler = GatewayRuntimeControlHandler(
+            credential.runtime_id,
+            AiohttpGatewayTransport(f"http://127.0.0.1:{DEFAULT_PORT}", token),
+            state_root / "runtime",
+        )
+        connector = RuntimeOutboundConnector(
+            configured_url, credential, identity, runtime.instance_id,
+            os.environ.get("OPENDRSAI_RUNTIME_VERSION", "1.4.7"), request_handler=handler,
+            workspace_provider=handler.published_workspaces,
+            backend_health={"opendrsai": "healthy"},
+        )
+        stop = asyncio.Event()
+        task = asyncio.create_task(connector.run_forever(stop), name="runtime-relay-bridge")
+        logger.info(f"Runtime Relay bridge enabled for {credential.runtime_id}")
+        return stop, task
+    except Exception as exc:
+        logger.error(f"Runtime Relay bridge could not start: {exc}")
+        return None, None
+
+
+def _runtime_registry() -> RuntimeRegistry:
+    global _runtime_registry_instance
+    if _runtime_registry_instance is None:
+        state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
+        _runtime_registry_instance = RuntimeRegistry(state_root / "runtime" / "runtime.sqlite3")
+    return _runtime_registry_instance
+
+
+def _git_worktree_service() -> GitWorktreeService:
+    global _git_worktree_service_instance
+    registry = _runtime_registry()
+    if _git_worktree_service_instance is None or _git_worktree_service_instance.registry is not registry:
+        state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
+        _git_worktree_service_instance = GitWorktreeService(
+            registry, state_root / "runtime" / "worktrees",
+            active_resource_probe=_active_worktree_resources,
+            event_journal=_workspace_event_journal(),
+        )
+    return _git_worktree_service_instance
+
+
+def _workspace_event_journal() -> WorkspaceWatchJournal:
+    global _workspace_event_journal_instance
+    if _workspace_event_journal_instance is None:
+        state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
+        _workspace_event_journal_instance = WorkspaceWatchJournal(state_root / "runtime" / "workspace-events.sqlite3")
+    return _workspace_event_journal_instance
+
+
+def _terminal_state_service() -> TerminalStateService:
+    global _terminal_state_service_instance, _terminal_provider_instance
+    registry = _runtime_registry()
+    if _terminal_state_service_instance is None:
+        state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
+        provider_root = state_root / "runtime"
+        provider_root.mkdir(parents=True, exist_ok=True)
+        configured_node_pty = os.environ.get("OPENDRSAI_NODE_PTY_MODULE", "").strip()
+        _terminal_provider_instance = LocalProcessPtyOperations(
+            provider_root,
+            node_pty_module=Path(configured_node_pty) if configured_node_pty else None,
+        )
+
+        def resolve(workspace_id: str) -> TerminalWorkspaceBinding | None:
+            workspace = registry.get_workspace(workspace_id, include_closed=True)
+            if workspace is None or not workspace.open:
+                return None
+            worktree = registry.get_worktree_by_workspace(workspace_id)
+            return TerminalWorkspaceBinding(
+                workspace_id, Path(workspace.path), worktree.worktree_id if worktree else None
+            )
+
+        _terminal_state_service_instance = TerminalStateService(
+            provider_root / "terminals.sqlite3",
+            registry.identity.runtime_id,
+            _terminal_provider_instance,
+            resolve,
+        )
+    return _terminal_state_service_instance
+
+
+def _owop_protocol() -> OWOPProtocol:
+    global _owop_protocol_instance
+    if _owop_protocol_instance is None:
+        _owop_protocol_instance = OWOPProtocol()
+    return _owop_protocol_instance
+
+
+def _active_worktree_resources(workspace_id: str) -> list[dict[str, Any]]:
+    resources = _runtime_engine().active_workspace_resources(workspace_id)
+    for terminal in _terminal_state_service().list(workspace_id):
+        if terminal["status"] in {"starting", "running", "detached", "reconnecting"}:
+            resources.append({"kind": "terminal", "id": terminal["terminal_id"]})
+    remote_pty = sys.modules.get("drsai.backend.remote_pty")
+    manager_instance = getattr(remote_pty, "manager", None) if remote_pty else None
+    for terminal in getattr(manager_instance, "sessions", {}).values():
+        if terminal.workspace_id == workspace_id and not terminal.exited:
+            resources.append({"kind": "terminal", "id": terminal.id})
+    return resources
+
+
+def _runtime_engine() -> RuntimeEngine:
+    global _runtime_engine_instance
+    if _runtime_engine_instance is None:
+        state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
+        registry = _runtime_registry()
+        _runtime_engine_instance = RuntimeEngine(
+            state_root / "runtime" / "engine.sqlite3",
+            RuntimeEngineIdentity(registry.identity.runtime_id, registry.identity.instance_id),
+            lambda workspace_id: bool((record := registry.get_workspace(workspace_id, include_closed=True)) and record.open),
+            lambda workspace_id: (record.worktree_id if (record := registry.get_worktree_by_workspace(workspace_id)) else None),
+        )
+    return _runtime_engine_instance
+
+
+def _runtime_tool_dispatcher() -> RuntimeToolDispatcher:
+    global _runtime_tool_dispatcher_instance
+    if _runtime_tool_dispatcher_instance is None:
+        _runtime_tool_dispatcher_instance = RuntimeToolDispatcher(
+            _runtime_engine(), tools={"artifact.publish": _publish_runtime_artifact}
+        )
+    return _runtime_tool_dispatcher_instance
+
+
+def _runtime_artifact_store() -> RuntimeArtifactStore:
+    global _runtime_artifact_store_instance
+    if _runtime_artifact_store_instance is None:
+        state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
+        _runtime_artifact_store_instance = RuntimeArtifactStore(
+            state_root / "runtime" / "artifacts.sqlite3", lambda workspace_id: _workspace_root(workspace_id)
+        )
+    return _runtime_artifact_store_instance
+
+
+def _publish_runtime_artifact(context: RuntimeRunContext, arguments: dict[str, Any]) -> dict[str, Any]:
+    item = _runtime_artifact_store().publish(context, arguments)
+    _runtime_engine().append_event(context.run_id, "artifact.created", item)
+    return item
+
+
+def _runtime_security() -> RuntimeSecurity:
+    global _runtime_security_instance
+    if _runtime_security_instance is None:
+        state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser() / "runtime"
+        _runtime_security_instance = RuntimeSecurity(
+            WorkspacePermissionStore(state_root / "permissions.sqlite3"),
+            ApprovalRegistry(state_root / "security-approvals.sqlite3"),
+            AuditLog(state_root / "audit.sqlite3"),
+        )
+    return _runtime_security_instance
+
+
+def _security_enabled() -> bool:
+    return os.environ.get("OPENDRSAI_ENFORCE_WORKSPACE_PERMISSIONS") == "1"
+
+
+def _principal_from_request(request: Request) -> RuntimePrincipal:
+    try:
+        auth = context_from_bearer(request.headers.get("authorization"), request.headers.get("x-opendrsai-principal", ""))
+        return RuntimePrincipal.from_platform_auth(auth)
+    except (ValueError, SecurityError) as exc:
+        code = getattr(exc, "code", str(exc))
+        raise HTTPException(status_code=401, detail={"code": code, "message": "Runtime Principal identity is invalid.", "retryable": code in {"token_expired", "principal_expired"}}) from exc
+
+
+def _authorize_request(request: Request, workspace_id: str, action: str, resource: dict[str, Any] | None = None) -> RuntimePrincipal | None:
+    if not _security_enabled():
+        return None
+    principal = _principal_from_request(request)
+    identity = _runtime_registry().identity
+    context = OperationContext(
+        principal.principal_id,
+        identity.runtime_id,
+        workspace_id,
+        request.headers.get("x-opendrsai-session-id", ""),
+        request.headers.get("x-opendrsai-run-id", ""),
+        request.headers.get("x-opendrsai-tool-id", ""),
+        getattr(request.state, "correlation_id", ""),
+    )
+    try:
+        _runtime_security().authorize(principal, action, context, resource, request.headers.get("x-opendrsai-approval-id"))
+    except ApprovalRequired as exc:
+        raise HTTPException(status_code=428, detail={"code": exc.code, "message": exc.message, "retryable": True, "detail": {"approval_id": exc.approval_id}}) from exc
+    except SecurityError as exc:
+        raise HTTPException(status_code=403, detail={"code": exc.code, "message": exc.message, "retryable": False}) from exc
+    return principal
+
+
+def _controlled_runtime_model_turn(
+    prompt: str,
+    definition: AgentDefinition,
+    _context: RuntimeRunContext,
+    history: Any,
+) -> dict[str, Any]:
+    """Deterministic acceptance model; never enabled by a production default."""
+    if os.environ.get("DRSAI_RUNTIME_CONTROLLED_MODEL") != "1":
+        raise RuntimeExecutionError(
+            "agent_model_unconfigured",
+            "The OpenDrSai Agent Backend model adapter is not configured.",
+        )
+    plan = definition.raw.get("controlled_plan", {})
+    if not isinstance(plan, dict):
+        raise RuntimeExecutionError("agent_definition_invalid", "Controlled Agent plan is invalid.")
+    delay_seconds = plan.get("delay_seconds", 0)
+    if isinstance(delay_seconds, (int, float)) and delay_seconds > 0 and not history:
+        time.sleep(min(float(delay_seconds), 30.0))
+    if history:
+        return {"content": str(plan.get("final_content") or "completed"), "done": True}
+    calls = plan.get("calls", [])
+    if not isinstance(calls, list):
+        raise RuntimeExecutionError("agent_definition_invalid", "Controlled Agent calls are invalid.")
+    return {
+        "calls": calls,
+        "content": str(plan.get("content") or ("" if calls else prompt)),
+        "done": not calls,
+    }
+
+
+def _runtime_agent_service(auth_context: Any = None) -> RuntimeAgentService:
+    """Return the process-owned Backend service; request identity is validated before dispatch."""
+    global _runtime_agent_service_instance
+    if _runtime_agent_service_instance is None:
+        state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
+        _ensure_builtin_agent_definitions(state_root)
+        backend = OpenDrSaiAgentBackend(_controlled_runtime_model_turn)
+        codex_backend = build_codex_adapter(state_root, _runtime_engine())
+        _runtime_agent_service_instance = RuntimeAgentService(
+            _runtime_engine(),
+            _runtime_registry(),
+            AgentDefinitionStore(state_root / "assets" / "agents"),
+            _runtime_tool_dispatcher(),
+            {backend.backend_id: backend, codex_backend.backend_id: codex_backend},
+        )
+    return _runtime_agent_service_instance
+
+
+def _ensure_builtin_agent_definitions(state_root: Path) -> None:
+    path = state_root / "assets" / "agents" / "codex" / "1.json"
+    if path.exists():
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "id": "codex", "version": "1", "backend": "codex", "model": "gpt-5.4",
+        "instructions": "Work only inside the Runtime-authoritative Workspace and report verifiable results.",
+        "permissions": ["workspace:read", "workspace:write", "files:write", "process:execute", "permissions:grant"],
+        "backend_config": {"approvalPolicy": "on-request", "sandbox": "workspace-write"},
+    }
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def _restore_runtime_workspaces() -> None:
+    _remote_workspaces.clear()
+    for record in _runtime_registry().list_workspaces():
+        root = Path(record.path)
+        if root.is_dir():
+            _remote_workspaces[record.workspace_id] = root
+
+
+def _remote_audit(event: str, **fields: Any) -> None:
+    """Best-effort local audit trail; command contents, tokens and credentials are never recorded."""
+    try:
+        path = Path.home()/".local"/"share"/"opendrsai"/"remote"/"audit.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists() and path.stat().st_size > 5_000_000:
+            os.replace(path, path.with_suffix(".jsonl.1"))
+        safe = redact_sensitive({key: value for key, value in fields.items() if key not in {"content", "data"}})
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"at": datetime.now().astimezone().isoformat(), "event": event, **safe}, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
+class RemoteHandshakeRequest(BaseModel):
+    protocol_version: int = 1
+    workspace_path: str
+    client_version: str = ""
+
+
+class RemoteWorkspaceOpenRequest(BaseModel):
+    workspace_id: str
+    path: str
+
+
+class RuntimeWorkspaceOpenRequest(BaseModel):
+    path: str = Field(min_length=1, max_length=4096)
+
+
+class RemoteWorktreeRequest(BaseModel):
+    intent: str = Field(default="subtask", max_length=240)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=256)
+    location: str = Field(default="remote", pattern="^(local|remote)$")
+
+
+class RuntimeWorktreeAdoptRequest(BaseModel):
+    idempotency_key: str = Field(min_length=1, max_length=256)
+    canonical_path: str = Field(min_length=1, max_length=4096)
+    branch: str = Field(min_length=1, max_length=255)
+    base_ref: str = Field(min_length=1, max_length=128)
+    location: str = Field(pattern="^(local|remote)$")
+
+
+class RuntimeWorktreeMergeRequest(BaseModel):
+    idempotency_key: str = Field(min_length=1, max_length=256)
+    expected_head: str | None = Field(default=None, min_length=7, max_length=128)
+
+
+class RuntimeWorktreeRemoveRequest(BaseModel):
+    idempotency_key: str = Field(min_length=1, max_length=256)
+    expected_status: str = Field(pattern="^(merged|archived)$")
+
+
+class RuntimeWorktreePruneRequest(BaseModel):
+    idempotency_key: str = Field(min_length=1, max_length=256)
+    dry_run: bool = True
+
+
+class RuntimeWorktreeArchiveRequest(BaseModel):
+    idempotency_key: str = Field(min_length=1, max_length=256)
+
+
+class RuntimeSessionCreateRequest(BaseModel):
+    workspace_id: str = Field(min_length=1, max_length=160)
+    title: str = Field(default="New session", max_length=240)
+
+
+class RuntimeSessionUpdateRequest(BaseModel):
+    title: str | None = Field(default=None, max_length=240)
+    archived: bool | None = None
+
+
+class RuntimeRunCreateRequest(BaseModel):
+    agent_definition: str = Field(min_length=1, max_length=500)
+
+
+class RuntimeRunTransitionRequest(BaseModel):
+    status: str
+
+
+class RuntimeRunExecuteRequest(BaseModel):
+    prompt: str = Field(min_length=1, max_length=200_000)
+    user_id: str | None = Field(default=None, max_length=200)
+
+
+class BackendAccountLoginRequest(BaseModel):
+    type: str = Field(default="chatgpt", pattern=r"^(chatgpt|chatgptDeviceCode)$")
+
+
+class BackendAccountLoginCancelRequest(BaseModel):
+    login_id: str = Field(min_length=1, max_length=256)
+
+
+class RuntimeEventAppendRequest(BaseModel):
+    type: str = Field(min_length=1, max_length=160)
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
+class RuntimeApprovalRequest(BaseModel):
+    request: dict[str, Any]
+    deadline_at: str | None = None
+
+
+class RuntimeApprovalDecisionRequest(BaseModel):
+    decision: str
+    detail: dict[str, Any] = Field(default_factory=dict)
+
+
+class RuntimeCheckpointStateRequest(BaseModel):
+    state: dict[str, Any]
+
+
+class WorkspacePermissionRequest(BaseModel):
+    principal_id: str = Field(min_length=1, max_length=200)
+    role: str = Field(pattern=r"^(owner|editor|viewer|denied)$")
+
+
+class SecurityApprovalDecisionRequest(BaseModel):
+    decision: str = Field(pattern=r"^(approved|denied)$")
+
+
+class RemoteGitFileRequest(BaseModel):
+    path: str
+    expected_diff_hash: str
+    patch: str | None = None
+    staged: bool = False
+
+
+class RemoteGitCommitRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=240)
+    body: str | None = Field(default=None, max_length=10000)
+
+
+class RemoteGitPushRequest(BaseModel):
+    remote: str = Field(default="origin", pattern=r"^[A-Za-z0-9_.-]{1,120}$")
+    refspec: str = Field(default="HEAD", pattern=r"^[A-Za-z0-9_./:@{}^~+*-]{1,300}$")
+
+
+class RemoteFileWriteRequest(BaseModel):
+    path: str = Field(min_length=1, max_length=4096)
+    content_base64: str = Field(max_length=16_000_000)
+    expected_sha256: str | None = Field(default=None, pattern=r"^[a-fA-F0-9]{64}$")
+
+
+class RemoteCheckpointRequest(BaseModel):
+    label: str | None = None
+    maxFiles: int | None = None
+    maxBytesPerFile: int | None = None
+    kind: str | None = None
+    runId: str | None = None
+
+
+class RemoteCheckpointActionRequest(BaseModel):
+    checkpointId: str
+    maxFiles: int | None = None
+    maxCharsPerFile: int | None = None
+
+
+def _canonical_workspace(path: str) -> Path:
+    try:
+        return canonical_workspace(path)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _workspace_root(workspace_id: str) -> Path:
+    root = _remote_workspaces.get(workspace_id)
+    if root is None:
+        record = _runtime_registry().get_workspace(workspace_id)
+        if record and Path(record.path).is_dir():
+            root = Path(record.path)
+            _remote_workspaces[workspace_id] = root
+    if root is None:
+        raise HTTPException(status_code=404, detail="Workspace is not open")
+    return root
+
+
+def _workspace_child(workspace_id: str, path: str) -> Path:
+    root = _workspace_root(workspace_id)
+    try:
+        return workspace_child(root, path)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail="Path escapes the workspace") from exc
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
 
 @app.middleware("http")
 async def authenticate_desktop_gateway(request: Request, call_next):
+    supplied_correlation = request.headers.get("x-correlation-id", "")
+    correlation_id = supplied_correlation if re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", supplied_correlation) else uuid.uuid4().hex
+    request.state.correlation_id = correlation_id
+    trace_id = request.headers.get("x-opendrsai-trace-id", "")
+    span_id = request.headers.get("x-opendrsai-span-id", "")
+    parent_span_id = request.headers.get("x-opendrsai-parent-span-id", "")
+    request.state.diagnostic_trace_id = trace_id if re.fullmatch(r"[A-Za-z0-9._:-]{1,256}", trace_id) else ""
+    request.state.diagnostic_span_id = span_id if re.fullmatch(r"[A-Za-z0-9._:-]{1,256}", span_id) else ""
+    request.state.diagnostic_parent_span_id = parent_span_id if re.fullmatch(r"[A-Za-z0-9._:-]{1,256}", parent_span_id) else ""
+    try:
+        sent_at = int(request.headers.get("x-opendrsai-sent-at", "0"))
+    except ValueError:
+        sent_at = 0
+    request.state.diagnostic_clock_offset_ms = int(time.time() * 1000) - sent_at if sent_at > 0 else 0
     if not verify_gateway_instance(request.headers.get("x-opendrsai-gateway-token")):
         return JSONResponse(
             status_code=401,
-            content={"error": {"code": "gateway_unauthorized", "message": "Gateway caller is not authorized.", "retryable": False}},
+            content={"error": {"code": "gateway_unauthorized", "message": "Gateway caller is not authorized.", "retryable": False, "correlation_id": correlation_id}},
+            headers={"X-Correlation-ID": correlation_id},
         )
-    return await call_next(request)
+    response = await call_next(request)
+    response.headers["X-Correlation-ID"] = correlation_id
+    if request.state.diagnostic_trace_id:
+        response.headers["X-OpenDrSai-Trace-ID"] = request.state.diagnostic_trace_id
+        response.headers["X-OpenDrSai-Clock-Offset-Ms"] = str(request.state.diagnostic_clock_offset_ms)
+    return response
+
+
+def _protocol_error(
+    request: Request,
+    status: int,
+    code: str,
+    message: str,
+    retryable: bool = False,
+    detail: dict[str, Any] | None = None,
+) -> JSONResponse:
+    correlation_id = getattr(request.state, "correlation_id", uuid.uuid4().hex)
+    error: dict[str, Any] = {"code": code, "message": message, "retryable": retryable, "correlation_id": correlation_id}
+    if detail:
+        error["detail"] = detail
+    return JSONResponse(
+        status_code=status,
+        content={"error": error},
+        headers={"X-Correlation-ID": correlation_id},
+    )
+
+
+@app.exception_handler(HTTPException)
+async def remote_http_error(request: Request, exc: HTTPException):
+    if isinstance(exc.detail, dict) and isinstance(exc.detail.get("code"), str):
+        return _protocol_error(
+            request,
+            exc.status_code,
+            exc.detail["code"],
+            str(exc.detail.get("message") or "Runtime request failed."),
+            bool(exc.detail.get("retryable", False)),
+            exc.detail.get("detail") if isinstance(exc.detail.get("detail"), dict) else None,
+        )
+    return _protocol_error(request, exc.status_code, f"http_{exc.status_code}", str(exc.detail), exc.status_code in {408, 429, 502, 503, 504})
+
+
+@app.exception_handler(RequestValidationError)
+async def remote_validation_error(request: Request, exc: RequestValidationError):
+    return _protocol_error(request, 422, "request_validation_failed", "Remote Gateway request validation failed.")
 
 
 
@@ -1123,6 +1804,1220 @@ async def health():
     """Health check endpoint. Desktop polls this to detect API readiness."""
 
     return await manager.health()
+
+
+@app.get("/v1/runtime")
+async def runtime_identity():
+    registry = _runtime_registry()
+    try:
+        from drsai.version import __version__ as runtime_version
+    except Exception:
+        runtime_version = "unknown"
+    return {
+        "runtime_id": registry.identity.runtime_id,
+        "instance_id": registry.identity.instance_id,
+        "version": runtime_version,
+        "protocol_version": _REMOTE_PROTOCOL_VERSION,
+        "platform": sys.platform,
+    }
+
+
+@app.post("/v1/runtime/shutdown")
+async def runtime_shutdown():
+    """Stop this authenticated Runtime instance after the response is flushed."""
+    loop = asyncio.get_running_loop()
+    loop.call_later(0.2, lambda: os.kill(os.getpid(), signal.SIGTERM))
+    return {"stopping": True, "instance_id": _runtime_registry().identity.instance_id}
+
+
+@app.get("/v1/capabilities")
+async def runtime_capabilities():
+    return {
+        "protocol_version": _REMOTE_PROTOCOL_VERSION,
+        "capabilities": sorted(_REMOTE_CAPABILITY_VERSIONS),
+        "capability_versions": _REMOTE_CAPABILITY_VERSIONS,
+        "agent_backends": await _runtime_agent_service().health(),
+    }
+
+
+def _backend_account_http_error(exc: RuntimeExecutionError) -> HTTPException:
+    status = 404 if exc.code == "agent_backend_not_found" else 503 if exc.retryable or exc.code in {
+        "codex_backend_unavailable", "codex_app_server_start_failed", "codex_connection_eof",
+    } else 409
+    return HTTPException(status_code=status, detail=exc.as_dict())
+
+
+@app.get("/v1/agent-backends/{backend_id}/account")
+async def runtime_backend_account_status(backend_id: str, refresh: bool = False):
+    try:
+        return await _runtime_agent_service().backend_account_status(backend_id, refresh=refresh)
+    except RuntimeExecutionError as exc:
+        raise _backend_account_http_error(exc) from exc
+
+
+@app.post("/v1/agent-backends/{backend_id}/account/login")
+async def runtime_backend_account_login(backend_id: str, request: BackendAccountLoginRequest):
+    try:
+        return await _runtime_agent_service().backend_account_login_start(backend_id, request.type)
+    except RuntimeExecutionError as exc:
+        raise _backend_account_http_error(exc) from exc
+
+
+@app.post("/v1/agent-backends/{backend_id}/account/login/cancel")
+async def runtime_backend_account_login_cancel(backend_id: str, request: BackendAccountLoginCancelRequest):
+    try:
+        await _runtime_agent_service().backend_account_login_cancel(backend_id, request.login_id)
+        return {"cancelled": True}
+    except RuntimeExecutionError as exc:
+        raise _backend_account_http_error(exc) from exc
+
+
+@app.post("/v1/agent-backends/{backend_id}/account/logout")
+async def runtime_backend_account_logout(backend_id: str):
+    try:
+        await _runtime_agent_service().backend_account_logout(backend_id)
+        return {"logged_out": True}
+    except RuntimeExecutionError as exc:
+        raise _backend_account_http_error(exc) from exc
+
+
+@app.websocket("/v1/pty")
+async def remote_pty_socket(websocket: WebSocket):
+    await websocket.accept()
+    try: authentication = await asyncio.wait_for(websocket.receive_json(), timeout=5)
+    except (asyncio.TimeoutError, WebSocketDisconnect): await websocket.close(code=4401); return
+    if authentication.get("type") != "auth" or not verify_gateway_instance(authentication.get("token")):
+        await websocket.close(code=4401); return
+    if sys.platform == "win32":
+        await websocket.close(code=4400, reason="Remote PTY requires Linux"); return
+    from drsai.backend.remote_pty import manager as pty_manager
+    authorized_pty_scope: tuple[str, str, str] | None = None
+    if _security_enabled():
+        try:
+            auth = context_from_bearer(str(authentication.get("authorization") or ""), str(authentication.get("principal_id") or ""))
+            principal = RuntimePrincipal.from_platform_auth(auth)
+            workspace_id = str(authentication.get("workspace_id") or "")
+            identity = _runtime_registry().identity
+            operation_context = OperationContext(
+                principal.principal_id,
+                identity.runtime_id,
+                workspace_id,
+                str(authentication.get("session_id") or ""),
+                str(authentication.get("run_id") or ""),
+                str(authentication.get("tool_id") or ""),
+                str(authentication.get("correlation_id") or ""),
+            )
+            _runtime_security().authorize(
+                principal,
+                "pty.execute",
+                operation_context,
+                {"cwd": str(authentication.get("cwd") or "."), "shell": str(authentication.get("shell") or "default")},
+                str(authentication.get("approval_id") or "") or None,
+            )
+            authorized_pty_scope = (workspace_id, str(authentication.get("cwd") or "."), str(authentication.get("shell") or "default"))
+        except ApprovalRequired as exc:
+            await websocket.send_json({"type": "approval_required", "approval_id": exc.approval_id}); await websocket.close(code=4428); return
+        except (ValueError, SecurityError):
+            await websocket.close(code=4403); return
+    attached = None
+
+    async def send(message: dict):
+        await websocket.send_json(message)
+
+    try:
+        while True:
+            message = await websocket.receive_json(); operation = message.get("type")
+            if operation == "create":
+                workspace_id = str(message.get("workspaceId") or ""); root = _workspace_root(workspace_id)
+                if authorized_pty_scope and (workspace_id, str(message.get("cwd") or "."), str(message.get("shell") or "default")) != authorized_pty_scope:
+                    raise PermissionError("PTY create scope differs from approved operation")
+                raw_cwd = str(message.get("cwd") or str(root)); cwd = _workspace_child(workspace_id, raw_cwd)
+                if not cwd.is_dir(): raise ValueError("PTY cwd must be a directory")
+                session = pty_manager.create(workspace_id, root, cwd, int(message.get("cols") or 100), int(message.get("rows") or 30), message.get("shell"))
+                session.listeners.add(send); attached = session.id
+                _remote_audit("pty.create", workspace_id=workspace_id, session_id=session.id, cwd=session.cwd)
+                await send({"type": "created", "id": session.id, "pid": session.pid, "cwd": session.cwd, "shell": session.shell, "buffer": "", "bufferTruncated": False})
+            elif operation == "attach":
+                session = pty_manager.sessions[str(message.get("id"))]
+                session.listeners.add(send); attached = session.id
+                _remote_audit("pty.attach", workspace_id=session.workspace_id, session_id=session.id)
+                await send({"type": "attached", "id": session.id, "pid": session.pid, "cwd": session.cwd, "shell": session.shell, "buffer": bytes(session.buffer).decode("utf-8", "replace"), "bufferTruncated": session.buffer_truncated, "exited": session.exited})
+            elif operation == "write":
+                data = str(message.get("data") or ""); pty_manager.write(str(message.get("id")), data); _remote_audit("pty.write", session_id=str(message.get("id")), byte_count=len(data.encode("utf-8"))); await send({"type": "written", "id": str(message.get("id")), "byteCount": len(data.encode("utf-8"))})
+            elif operation == "resize":
+                cols=int(message.get("cols") or 100); rows=int(message.get("rows") or 30); pty_manager.resize(str(message.get("id")), cols, rows); _remote_audit("pty.resize", session_id=str(message.get("id")), cols=cols, rows=rows); await send({"type": "resized", "id": str(message.get("id")), "cols": max(20, min(cols, 500)), "rows": max(5, min(rows, 200))})
+            elif operation == "kill":
+                killed_id = str(message.get("id")); await send({"type": "killed", "id": killed_id}); pty_manager.kill(killed_id); _remote_audit("pty.kill", session_id=killed_id)
+            else: await send({"type": "error", "message": "Unknown PTY operation"})
+    except (WebSocketDisconnect, KeyError):
+        pass
+    finally:
+        if attached and attached in pty_manager.sessions: pty_manager.sessions[attached].listeners.discard(send)
+
+
+@app.post("/v1/remote/handshake")
+async def remote_handshake(req: RemoteHandshakeRequest):
+    try:
+        ensure_protocol(req.protocol_version)
+    except ValueError:
+        raise HTTPException(status_code=409, detail="Remote protocol version is incompatible")
+    root = _canonical_workspace(req.workspace_path)
+    try:
+        from drsai.version import __version__ as gateway_version
+    except Exception:
+        gateway_version = "unknown"
+    return {
+        "runtime_id": _runtime_registry().identity.runtime_id,
+        "instance_id": _runtime_registry().identity.instance_id,
+        "protocol_version": _REMOTE_PROTOCOL_VERSION,
+        "gateway_version": gateway_version,
+        "platform": sys.platform,
+        "workspace_path": str(root),
+        "capabilities": sorted(_REMOTE_CAPABILITY_VERSIONS),
+        "capability_versions": _REMOTE_CAPABILITY_VERSIONS,
+    }
+
+
+@app.post("/v1/workspaces")
+async def runtime_workspace_open(req: RuntimeWorkspaceOpenRequest, raw_request: Request):
+    principal = _principal_from_request(raw_request) if _security_enabled() else None
+    try:
+        record = _runtime_registry().open_workspace(req.path)
+    except (FileNotFoundError, OSError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    root = Path(record.path)
+    _remote_workspaces[record.workspace_id] = root
+    if principal:
+        _runtime_security().permissions.set_role(record.workspace_id, principal.principal_id, "owner")
+    _remote_audit("workspace.open", workspace_id=record.workspace_id, path=record.path)
+    return record.as_dict()
+
+
+@app.put("/v1/workspaces/{workspace_id}/permissions")
+async def runtime_workspace_permission_set(workspace_id: str, request: WorkspacePermissionRequest, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "permission.manage", {"target_principal_id": request.principal_id, "role": request.role})
+    _runtime_security().permissions.set_role(workspace_id, request.principal_id, request.role)
+    return {"workspace_id": workspace_id, "principal_id": request.principal_id, "role": request.role}
+
+
+@app.get("/v1/workspaces/{workspace_id}/permissions/me")
+async def runtime_workspace_permission_me(workspace_id: str, raw_request: Request):
+    principal = _principal_from_request(raw_request)
+    return {"workspace_id": workspace_id, "principal_id": principal.principal_id, "role": _runtime_security().permissions.role(workspace_id, principal.principal_id)}
+
+
+@app.post("/v1/security/approvals/{approval_id}/decision")
+async def runtime_security_approval_decide(approval_id: str, request: SecurityApprovalDecisionRequest, raw_request: Request):
+    principal = _principal_from_request(raw_request)
+    try:
+        approval = _runtime_security().approvals.get(approval_id)
+        if approval["principal_id"] != principal.principal_id and not _runtime_security().permissions.allowed(approval["workspace_id"], principal.principal_id, "permission.manage"):
+            raise SecurityError("permission_denied", "Approval decision is not permitted.")
+        _runtime_security().approvals.decide(approval_id, request.decision)
+    except SecurityError as exc:
+        raise HTTPException(status_code=403, detail={"code": exc.code, "message": exc.message, "retryable": False}) from exc
+    return {"approval_id": approval_id, "decision": request.decision}
+
+
+@app.get("/v1/security/audit")
+async def runtime_security_audit(workspace_id: str, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "permission.manage", {"operation": "audit.read"})
+    return {"data": [row for row in _runtime_security().audit.list() if row["context"]["workspace_id"] == workspace_id]}
+
+
+@app.get("/v1/workspaces")
+async def runtime_workspace_list(include_closed: bool = False):
+    return {"data": [record.as_dict() for record in _runtime_registry().list_workspaces(include_closed=include_closed)]}
+
+
+@app.post("/v1/sessions")
+async def runtime_session_create(request: RuntimeSessionCreateRequest):
+    try:
+        return _runtime_engine().create_session(request.workspace_id, request.title)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/v1/sessions")
+async def runtime_session_list(workspace_id: str, offset: int = Query(default=0, ge=0), limit: int = Query(default=50, ge=1, le=200), archived: bool | None = False):
+    return _runtime_engine().list_sessions(workspace_id, offset=offset, limit=limit, archived=archived)
+
+
+@app.get("/v1/sessions/{session_id}")
+async def runtime_session_get(session_id: str):
+    try:
+        return _runtime_engine().get_session(session_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.patch("/v1/sessions/{session_id}")
+async def runtime_session_update(session_id: str, request: RuntimeSessionUpdateRequest):
+    try:
+        session = _runtime_engine().get_session(session_id)
+        if request.archived is not None and request.archived != session["archived"]:
+            # Mirror to the owning Agent Backend first.  If its remote archive
+            # request fails, the Runtime Session remains unchanged and retryable.
+            await _runtime_agent_service().archive_session(session_id, archived=request.archived)
+        return _runtime_engine().update_session(session_id, title=request.title, archived=request.archived)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeExecutionError as exc:
+        raise HTTPException(status_code=400, detail=exc.as_dict()) from exc
+
+
+@app.post("/v1/sessions/{session_id}/runs")
+async def runtime_run_create(session_id: str, request: RuntimeRunCreateRequest, http_request: Request):
+    try:
+        state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
+        definition = AgentDefinitionStore(state_root / "assets" / "agents").load(request.agent_definition)
+        run, created = _runtime_engine().create_run(
+            session_id,
+            request.agent_definition,
+            http_request.headers.get("idempotency-key", ""),
+            definition.backend,
+        )
+        return JSONResponse(status_code=201 if created else 200, content=run)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeExecutionError as exc:
+        raise HTTPException(status_code=400, detail=exc.as_dict()) from exc
+
+
+@app.get("/v1/runs/{run_id}")
+async def runtime_run_get(run_id: str):
+    try:
+        return _runtime_engine().get_run(run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/v1/runs/{run_id}/transition")
+async def runtime_run_transition(run_id: str, request: RuntimeRunTransitionRequest):
+    try:
+        return _runtime_engine().transition_run(run_id, request.status)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RuntimeExecutionError as exc:
+        raise HTTPException(status_code=409, detail=exc.as_dict()) from exc
+
+
+@app.post("/v1/runs/{run_id}/execute")
+async def runtime_run_execute(run_id: str, request: RuntimeRunExecuteRequest, raw_request: Request):
+    auth_context = None
+    if raw_request.headers.get("x-opendrsai-auth-mode") == "oidc":
+        try:
+            auth_context = context_from_bearer(raw_request.headers.get("authorization"), request.user_id or "")
+        except ValueError as exc:
+            code = str(exc)
+            raise HTTPException(
+                status_code=403 if code == "subject_mismatch" else 401,
+                detail={"code": code, "message": "The HepAI authentication context is not valid.", "retryable": code == "token_expired"},
+            ) from exc
+    run_record = _runtime_engine().get_run(run_id)
+    _authorize_request(raw_request, str(run_record["workspace_id"]), "run.execute", {"run_id": run_id})
+    try:
+        correlation_id = str(getattr(raw_request.state, "correlation_id", "")) or None
+        _runtime_engine().append_event(run_id, "trace.request.accepted", {
+            "correlation_id": correlation_id,
+            "run_id": run_id,
+            "trace_id": str(getattr(raw_request.state, "diagnostic_trace_id", "")) or None,
+            "span_id": str(getattr(raw_request.state, "diagnostic_span_id", "")) or None,
+            "parent_span_id": str(getattr(raw_request.state, "diagnostic_parent_span_id", "")) or None,
+            "clock_offset_ms": int(getattr(raw_request.state, "diagnostic_clock_offset_ms", 0)),
+        })
+        return await _runtime_agent_service(auth_context).execute(run_id, request.prompt, correlation_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeExecutionError as exc:
+        status = 401 if exc.code in {"token_expired", "model_unauthorized"} else 403 if exc.code == "permission_denied" else 409
+        raise HTTPException(status_code=status, detail=exc.as_dict()) from exc
+
+
+@app.post("/v1/runs/{run_id}/cancel")
+async def runtime_run_cancel(run_id: str):
+    try:
+        return await _runtime_agent_service().cancel(run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RuntimeExecutionError as exc:
+        raise HTTPException(status_code=409, detail=exc.as_dict()) from exc
+
+
+@app.post("/v1/runs/{run_id}/events")
+async def runtime_event_append(run_id: str, request: RuntimeEventAppendRequest):
+    try:
+        return _runtime_engine().append_event(run_id, request.type, request.data)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/v1/runs/{run_id}/events")
+async def runtime_event_list(run_id: str, after_sequence: int = Query(default=0, ge=0), limit: int = Query(default=500, ge=1, le=2000)):
+    return {"data": _runtime_engine().list_events(run_id, after_sequence=after_sequence, limit=limit)}
+
+
+@app.get("/v1/runs/{run_id}/diagnostics")
+async def runtime_run_diagnostics(run_id: str, raw_request: Request):
+    try:
+        run = _runtime_engine().get_run(run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    _authorize_request(raw_request, str(run["workspace_id"]), "workspace.read", {"run_id": run_id, "operation": "diagnostics.export"})
+    events = _runtime_engine().list_events(run_id, after_sequence=0, limit=2000)
+    correlations = sorted({str(event.get("data", {}).get("correlation_id")) for event in events if event.get("data", {}).get("correlation_id")})
+    audit = [row for row in _runtime_security().audit.list() if row["context"].get("run_id") == run_id or row["context"].get("correlation_id") in correlations]
+    bundle = redact_sensitive({
+        "schema_version": 1,
+        "runtime": _runtime_registry().identity.__dict__,
+        "run": run,
+        "trace": {"correlation_ids": correlations, "events": events, "audit": audit},
+        "metrics": {"event_count": len(events), "audit_count": len(audit), "terminal": run["status"] in {"completed", "cancelled", "failed"}},
+    })
+    serialized = json.dumps(bundle, ensure_ascii=False)
+    unsafe = bool(re.search(r"-----BEGIN [^-]*PRIVATE KEY-----|(?i:Bearer\s+(?!\[REDACTED\])\S+)|(?i:(?:password|secret|token|api[_-]?key)\s*[:=]\s*(?!\[REDACTED\])\S+)", serialized))
+    if unsafe:
+        raise HTTPException(status_code=500, detail="Diagnostic bundle secret scan failed")
+    return {**bundle, "secret_scan": "passed"}
+
+
+@app.post("/v1/runs/{run_id}/approvals")
+async def runtime_approval_request(run_id: str, request: RuntimeApprovalRequest):
+    try:
+        return _runtime_engine().request_approval(run_id, request.request, request.deadline_at)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/v1/approvals/{approval_id}/decision")
+async def runtime_approval_decision(approval_id: str, request: RuntimeApprovalDecisionRequest):
+    try:
+        return _runtime_engine().resolve_approval(approval_id, request.decision, request.detail)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/v1/approvals")
+async def runtime_approval_list(status: str | None = None, run_id: str | None = None):
+    if status not in {None, "pending"}:
+        raise HTTPException(status_code=400, detail="Only pending Approval listing is supported")
+    rows = _runtime_engine().list_pending_approvals(run_id)
+    return {"object": "list", "data": rows, "total": len(rows)}
+
+
+@app.post("/v1/runs/{run_id}/approvals/{approval_id}/decision")
+async def runtime_backend_approval_decision(run_id: str, approval_id: str, request: RuntimeApprovalDecisionRequest):
+    try:
+        await _runtime_agent_service().respond_approval(run_id, approval_id, request.decision)
+        return {"run_id": run_id, "approval_id": approval_id, "decision": request.decision}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeExecutionError as exc:
+        raise HTTPException(status_code=409, detail=exc.as_dict()) from exc
+
+
+@app.post("/v1/runs/{run_id}/checkpoint")
+async def runtime_checkpoint_save(run_id: str, request: RuntimeCheckpointStateRequest):
+    try:
+        return _runtime_engine().save_checkpoint(run_id, request.state)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/v1/runs/{run_id}/checkpoint")
+async def runtime_checkpoint_latest(run_id: str):
+    checkpoint = _runtime_engine().latest_checkpoint(run_id)
+    if checkpoint is None:
+        raise HTTPException(status_code=404, detail="Runtime Checkpoint not found")
+    return checkpoint
+
+
+@app.post("/v1/workspaces/open")
+async def remote_workspace_open(req: RemoteWorkspaceOpenRequest):
+    if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,160}", req.workspace_id):
+        raise HTTPException(status_code=400, detail="Invalid workspace id")
+    root = _canonical_workspace(req.path)
+    _remote_workspaces[req.workspace_id] = root
+    return {"workspace_id": req.workspace_id, "path": str(root)}
+
+
+@app.get("/v1/workspaces/{workspace_id}")
+async def remote_workspace_info(workspace_id: str):
+    root = _workspace_root(workspace_id)
+    record = _runtime_registry().get_workspace(workspace_id, include_closed=True)
+    return {"workspace_id": workspace_id, "path": str(root), "exists": root.is_dir(), **(record.as_dict() if record else {})}
+
+
+@app.delete("/v1/workspaces/{workspace_id}")
+async def runtime_workspace_close(workspace_id: str):
+    record = _runtime_registry().close_workspace(workspace_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Workspace is not registered")
+    _remote_workspaces.pop(workspace_id, None)
+    _remote_audit("workspace.close", workspace_id=workspace_id)
+    return record.as_dict()
+
+
+@app.get("/v1/workspaces/{workspace_id}/context")
+async def remote_workspace_context(workspace_id: str):
+    root = _workspace_root(workspace_id); instructions = []
+    for name in ("AGENTS.md", "DRSAI.md", "CLAUDE.md", "project.md"):
+        path = root/name
+        if path.is_file():
+            raw = path.read_text("utf-8", errors="replace"); instructions.append({"name": name, "path": str(path), "content": raw[:8000], "truncated": len(raw) > 8000})
+    completed = subprocess.run(["git", "-C", str(root), "status", "--porcelain=v1", "--branch"], capture_output=True, text=True, timeout=10, check=False)
+    changed = []
+    if completed.returncode == 0:
+        for line in completed.stdout.splitlines()[1:]:
+            if len(line) >= 4: changed.append({"path": line[3:], "status": "untracked" if line[:2] == "??" else "deleted" if "D" in line[:2] else "added" if "A" in line[:2] else "modified"})
+    return {"workspacePath": str(root), "trusted": True, "git": {"hasChanges": bool(changed), "changedFiles": changed}, "instructions": instructions, "stats": {"instructionCount": len(instructions), "changedFileCount": len(changed)}}
+
+
+@app.post("/v1/owop")
+async def runtime_owop_execute(payload: dict[str, Any], raw_request: Request):
+    """Execute the same typed Workspace operation over local HTTP or an SSH tunnel."""
+    workspace_id = str(payload.get("workspace_id") or "")
+    operation = str(payload.get("operation") or "")
+    root = _workspace_root(workspace_id)
+    params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+    read_only_operations = {
+        "workspace.describe", "files.list", "files.stat", "files.read", "search.query",
+        "git.status", "git.diff", "git.file_at_ref", "git.worktree.list", "git.worktree.describe",
+        "pty.list", "pty.describe", "checkpoint.preview", "artifact.metadata", "artifact.chunk",
+    }
+    read_only = operation in read_only_operations or (operation == "pty.attach" and params.get("mode") == "reader")
+    permission = "workspace.read" if read_only else "pty.execute" if operation.startswith("pty.") else "workspace.write"
+    _authorize_request(raw_request, workspace_id, permission, {
+        "operation": operation,
+        "terminal_id": params.get("pty_id"),
+        "lease_id": params.get("lease_id"),
+    })
+    local = _local_workspace_owop_instances.get(workspace_id)
+    if local is None or local.root != root:
+        if local is not None:
+            local.close()
+        worktrees = GitWorktreeOWOPOperations(_git_worktree_service(), workspace_id, _workspace_event_journal())
+        local = LocalWorkspaceOperations(
+            workspace_id, root, _workspace_event_journal(), worktree_handlers=worktrees.handlers()
+        )
+        _local_workspace_owop_instances[workspace_id] = local
+    handlers = local.handlers()
+    handlers.update(RuntimeTerminalOWOPOperations(_terminal_state_service(), workspace_id).handlers())
+    handlers.update(_runtime_artifact_store().handlers(workspace_id))
+    if operation not in handlers:
+        raise HTTPException(status_code=400, detail={"code": "owop_operation_unavailable"})
+    response = await _owop_protocol().dispatch(payload, handlers)
+    if response.get("ok"):
+        result = response.get("result") if isinstance(response.get("result"), dict) else {}
+        terminal = result.get("terminal") if isinstance(result.get("terminal"), dict) else {}
+        _remote_audit(
+            operation,
+            workspace_id=workspace_id,
+            terminal_id=terminal.get("terminal_id") or params.get("pty_id"),
+            correlation_id=payload.get("correlation_id"),
+        )
+    return response
+
+
+@app.post("/v1/workspaces/{workspace_id}/worktrees")
+async def remote_workspace_worktree_create(workspace_id: str, request: RemoteWorktreeRequest, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "worktree.write", {
+        "operation": "create", "intent": request.intent,
+        "idempotency_key": request.idempotency_key, "location": request.location,
+    })
+    root = _workspace_root(workspace_id)
+    try:
+        worktree = _git_worktree_service().create(
+            source_workspace_id=workspace_id,
+            idempotency_key=request.idempotency_key or f"legacy-{uuid.uuid4()}",
+            intent=request.intent,
+            location=request.location,
+        )
+    except GitWorktreeError as exc:
+        raise HTTPException(
+            status_code=409 if exc.code.endswith("conflict") or exc.code.endswith("exists") else 400,
+            detail={"code": exc.code, "message": str(exc), "retryable": exc.retryable, "detail": exc.detail},
+        ) from exc
+    if not worktree.workspace_id:
+        raise HTTPException(status_code=503, detail="Worktree Workspace registration is incomplete")
+    _remote_workspaces[worktree.workspace_id] = Path(worktree.canonical_path)
+    _remote_audit(
+        "workspace.worktree.create", workspace_id=worktree.workspace_id,
+        parent_workspace_id=workspace_id, worktree_id=worktree.worktree_id,
+        path=worktree.canonical_path,
+    )
+    return {
+        "worktree_id": worktree.worktree_id,
+        "workspace_id": worktree.workspace_id,
+        "source_workspace_path": str(root),
+        "repo_root": worktree.repo_root,
+        "worktree_path": worktree.canonical_path,
+        "branch": worktree.branch,
+        "base_ref": worktree.base_commit[:12],
+        "source_has_changes": worktree.source_dirty,
+        "source_status_summary": worktree.source_status_summary,
+        "location": worktree.location,
+        **({"transport": "ssh"} if worktree.location == "remote" else {}),
+    }
+
+
+def _worktree_http_error(exc: GitWorktreeError) -> HTTPException:
+    status = 404 if exc.code in {"workspace_not_found", "worktree_not_found"} else 409 if (
+        exc.code == "worktree_active_resources" or exc.code.endswith("conflict") or exc.code.endswith("exists") or exc.code.endswith("dirty")
+    ) else 400
+    return HTTPException(
+        status_code=status,
+        detail={"code": exc.code, "message": str(exc), "retryable": exc.retryable, "detail": exc.detail},
+    )
+
+
+@app.post("/v1/workspaces/{workspace_id}/worktrees/adopt")
+async def runtime_worktree_adopt(workspace_id: str, request: RuntimeWorktreeAdoptRequest, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "worktree.write", {
+        "operation": "adopt", "canonical_path": request.canonical_path,
+        "branch": request.branch, "idempotency_key": request.idempotency_key,
+    })
+    _workspace_root(workspace_id)
+    try:
+        record = _git_worktree_service().adopt(
+            source_workspace_id=workspace_id,
+            idempotency_key=request.idempotency_key,
+            canonical_path=request.canonical_path,
+            branch=request.branch,
+            base_ref=request.base_ref,
+            location=request.location,
+        )
+    except GitWorktreeError as exc:
+        raise _worktree_http_error(exc) from exc
+    if record.workspace_id:
+        _remote_workspaces[record.workspace_id] = Path(record.canonical_path)
+    _remote_audit(
+        "workspace.worktree.adopt", workspace_id=workspace_id,
+        worktree_id=record.worktree_id, path=record.canonical_path,
+    )
+    return {"worktree": _git_worktree_service().project(record)}
+
+
+@app.get("/v1/workspaces/{workspace_id}/worktrees")
+async def runtime_worktree_list(workspace_id: str, raw_request: Request, include_removed: bool = False):
+    _authorize_request(raw_request, workspace_id, "workspace.read", {"operation": "worktree.list", "include_removed": include_removed})
+    _workspace_root(workspace_id)
+    try:
+        records = _git_worktree_service().list(workspace_id, include_removed=include_removed)
+    except GitWorktreeError as exc:
+        raise _worktree_http_error(exc) from exc
+    service = _git_worktree_service()
+    return {"worktrees": [service.project(record) for record in records]}
+
+
+@app.get("/v1/workspaces/{workspace_id}/events")
+async def runtime_workspace_events(
+    workspace_id: str,
+    raw_request: Request,
+    after_sequence: int = Query(default=0, ge=0),
+    limit: int = Query(default=200, ge=1, le=1000),
+):
+    _authorize_request(raw_request, workspace_id, "workspace.read", {
+        "operation": "workspace.events", "after_sequence": after_sequence,
+    })
+    _workspace_root(workspace_id)
+    events = _workspace_event_journal().list(workspace_id, after_sequence, limit)
+    return {"events": events, "next_sequence": events[-1]["sequence"] if events else after_sequence}
+
+
+@app.post("/v1/workspaces/{workspace_id}/worktrees/prune")
+async def runtime_worktree_prune(workspace_id: str, request: RuntimeWorktreePruneRequest, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "workspace.read" if request.dry_run else "worktree.write", {
+        "operation": "prune", "dry_run": request.dry_run,
+        "idempotency_key": request.idempotency_key,
+    })
+    _workspace_root(workspace_id)
+    try:
+        candidates, pruned = _git_worktree_service().prune(workspace_id, dry_run=request.dry_run)
+    except GitWorktreeError as exc:
+        raise _worktree_http_error(exc) from exc
+    _remote_audit("workspace.worktree.prune", workspace_id=workspace_id, candidates=candidates, pruned=pruned)
+    return {"candidates": candidates, "pruned": pruned}
+
+
+@app.get("/v1/workspaces/{workspace_id}/worktrees/{worktree_id}")
+async def runtime_worktree_describe(workspace_id: str, worktree_id: str, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "workspace.read", {"operation": "worktree.describe", "worktree_id": worktree_id})
+    _workspace_root(workspace_id)
+    try:
+        record = _git_worktree_service().describe(workspace_id, worktree_id)
+    except GitWorktreeError as exc:
+        raise _worktree_http_error(exc) from exc
+    return {"worktree": _git_worktree_service().project(record)}
+
+
+@app.post("/v1/workspaces/{workspace_id}/worktrees/{worktree_id}/merge")
+async def runtime_worktree_merge(workspace_id: str, worktree_id: str, request: RuntimeWorktreeMergeRequest, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "worktree.write", {
+        "operation": "merge", "worktree_id": worktree_id, "expected_head": request.expected_head,
+        "idempotency_key": request.idempotency_key,
+    })
+    _workspace_root(workspace_id)
+    try:
+        record = _git_worktree_service().merge(workspace_id, worktree_id, expected_head=request.expected_head)
+    except GitWorktreeError as exc:
+        raise _worktree_http_error(exc) from exc
+    _remote_audit(
+        "workspace.worktree.merge", workspace_id=workspace_id, worktree_id=worktree_id,
+        status=record.status, derived_workspace_id=record.workspace_id,
+    )
+    return {"worktree": _git_worktree_service().project(record)}
+
+
+@app.post("/v1/workspaces/{workspace_id}/worktrees/{worktree_id}/archive")
+async def runtime_worktree_archive(workspace_id: str, worktree_id: str, request: RuntimeWorktreeArchiveRequest, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "worktree.write", {"operation": "archive", "worktree_id": worktree_id, "idempotency_key": request.idempotency_key})
+    _workspace_root(workspace_id)
+    try:
+        record = _git_worktree_service().archive(workspace_id, worktree_id)
+    except GitWorktreeError as exc:
+        raise _worktree_http_error(exc) from exc
+    _remote_audit(
+        "workspace.worktree.archive", workspace_id=workspace_id,
+        worktree_id=worktree_id, branch=record.branch,
+    )
+    return {"worktree": _git_worktree_service().project(record)}
+
+
+@app.delete("/v1/workspaces/{workspace_id}/worktrees/{worktree_id}")
+async def runtime_worktree_remove(workspace_id: str, worktree_id: str, request: RuntimeWorktreeRemoveRequest, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "worktree.write", {
+        "operation": "remove", "worktree_id": worktree_id, "expected_status": request.expected_status,
+        "idempotency_key": request.idempotency_key,
+    })
+    _workspace_root(workspace_id)
+    try:
+        record = _git_worktree_service().remove(
+            workspace_id, worktree_id, expected_status=request.expected_status
+        )
+    except GitWorktreeError as exc:
+        raise _worktree_http_error(exc) from exc
+    _remote_workspaces.pop(record.workspace_id or "", None)
+    _remote_audit(
+        "workspace.worktree.remove", workspace_id=workspace_id,
+        worktree_id=worktree_id, derived_workspace_id=record.workspace_id,
+    )
+    return {"worktree": _git_worktree_service().project(record)}
+
+
+@app.get("/v1/workspaces/{workspace_id}/directories")
+async def remote_workspace_directories(workspace_id: str, path: str = "."):
+    directory = _workspace_child(workspace_id, path)
+    if not directory.is_dir():
+        raise HTTPException(status_code=400, detail="Path must be a directory")
+    rows = []
+    for entry in directory.iterdir():
+        try:
+            resolved = entry.resolve(strict=True)
+            resolved.relative_to(_workspace_root(workspace_id))
+        except (OSError, ValueError):
+            continue
+        if resolved.is_dir():
+            rows.append({"name": entry.name, "path": str(resolved), "directory": True})
+    return {"data": sorted(rows, key=lambda item: item["name"].lower())}
+
+
+@app.get("/v1/workspaces/{workspace_id}/files")
+async def remote_workspace_files(workspace_id: str, raw_request: Request, path: str = ".", depth: int = Query(default=2, ge=0, le=5), query: str = "", offset: int = Query(default=0, ge=0), max_entries: int = Query(default=500, ge=1, le=5000)):
+    _authorize_request(raw_request, workspace_id, "workspace.read", {"path": path})
+    root = _workspace_root(workspace_id)
+    start = _workspace_child(workspace_id, path)
+    if not start.is_dir():
+        raise HTTPException(status_code=400, detail="Path must be a directory")
+
+    matched: list[dict[str, Any]] = []
+    git_statuses: dict[str, str] = {}
+    completed = subprocess.run(["git", "-C", str(root), "status", "--porcelain=v1", "--untracked-files=all"], capture_output=True, text=True, timeout=10, check=False)
+    if completed.returncode == 0:
+        for line in completed.stdout.splitlines():
+            if len(line) < 4: continue
+            code, changed_path = line[:2], line[3:]
+            if " -> " in changed_path: changed_path = changed_path.split(" -> ", 1)[1]
+            changed_path = changed_path.strip('"').replace("\\", "/")
+            git_statuses[changed_path] = "untracked" if code == "??" else "renamed" if "R" in code else "deleted" if "D" in code else "added" if "A" in code else "modified"
+
+    ignored_directories = {".git", ".hg", ".svn", "node_modules", ".venv", "__pycache__", ".mypy_cache", ".pytest_cache"}
+    try:
+        ignore_patterns = [line.strip() for line in (root / ".gitignore").read_text("utf-8", errors="replace").splitlines() if line.strip() and not line.lstrip().startswith("#")]
+    except OSError:
+        ignore_patterns = []
+    scanned = 0
+    scan_limit = min(50_000, max(5_000, offset + max_entries + 1_000))
+    scan_truncated = False
+
+    def ignored(relative_path: str, directory: bool) -> bool:
+        parts = Path(relative_path).parts
+        if any(part in ignored_directories for part in parts):
+            return True
+        normalized = relative_path.replace("\\", "/")
+        for raw_pattern in ignore_patterns:
+            negate = raw_pattern.startswith("!")
+            pattern = raw_pattern[1:] if negate else raw_pattern
+            directory_only = pattern.endswith("/")
+            pattern = pattern.rstrip("/")
+            if directory_only and not directory:
+                continue
+            if fnmatch(normalized, pattern) or fnmatch(Path(normalized).name, pattern) or fnmatch(normalized, f"*/{pattern}"):
+                if not negate:
+                    return True
+        return False
+
+    def visit(directory: Path, remaining: int) -> list[dict[str, Any]]:
+        nonlocal scanned, scan_truncated
+        result = []
+        for entry in sorted(directory.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower())):
+            if scanned >= scan_limit:
+                scan_truncated = True
+                break
+            try:
+                resolved = entry.resolve(strict=True)
+                resolved.relative_to(root)
+            except (OSError, ValueError):
+                continue
+            relative_path = str(resolved.relative_to(root)).replace("\\", "/")
+            if ignored(relative_path, resolved.is_dir()):
+                continue
+            scanned += 1
+            stat = resolved.stat()
+            item = {"name": entry.name, "path": relative_path, "directory": resolved.is_dir(), "size": stat.st_size, "modified_at": stat.st_mtime}
+            if resolved.is_dir() and remaining > 0:
+                item["children"] = visit(resolved, remaining - 1)
+                descendant = next((status for changed, status in git_statuses.items() if changed == relative_path or changed.startswith(relative_path + "/")), None)
+                if descendant: item["git_status"] = descendant
+            elif relative_path in git_statuses:
+                item["git_status"] = git_statuses[relative_path]
+            result.append(item)
+        return result
+
+    tree = visit(start, depth)
+    needle = query.casefold().strip()
+    def collect(rows: list[dict[str, Any]]) -> None:
+        for row in rows:
+            if not needle or needle in row["path"].casefold():
+                matched.append({key: value for key, value in row.items() if key != "children"})
+            collect(row.get("children", []))
+    collect(tree)
+    page = matched[offset:offset + max_entries]
+    truncated = scan_truncated or offset + len(page) < len(matched)
+    return {"workspace_id": workspace_id, "data": page if needle or offset or len(matched) > max_entries else tree, "total": len(matched), "offset": offset, "next_offset": offset + len(page) if truncated and len(page) else None, "truncated": truncated, "scan_limit": scan_limit}
+
+
+@app.get("/v1/workspaces/{workspace_id}/file")
+async def remote_workspace_file(workspace_id: str, raw_request: Request, path: str, max_bytes: int = Query(default=262144, ge=1, le=1048576)):
+    _authorize_request(raw_request, workspace_id, "workspace.read", {"path": path})
+    target = _workspace_child(workspace_id, path)
+    if not target.is_file():
+        raise HTTPException(status_code=400, detail="Path must be a file")
+    size = target.stat().st_size
+    with target.open("rb") as handle:
+        raw = handle.read(max_bytes + 1)
+    sample = raw[:max_bytes]
+    mime = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+    try:
+        content = sample.decode("utf-8")
+        binary = b"\x00" in sample[:8192]
+    except UnicodeDecodeError:
+        content = ""
+        binary = True
+    common = {"path": str(target.relative_to(_workspace_root(workspace_id))).replace("\\", "/"), "mime": mime, "truncated": size > max_bytes, "size": size, "modified_at": target.stat().st_mtime}
+    if binary:
+        return {**common, "data_url": f"data:{mime};base64,{base64.b64encode(sample).decode('ascii')}", "binary": True, "encoding": None}
+    return {**common, "content": content, "binary": False, "encoding": "utf-8"}
+
+
+def _stream_file_sha256(target: Path) -> str:
+    digest = hashlib.sha256()
+    with target.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+@app.get("/v1/workspaces/{workspace_id}/file/stream")
+async def remote_workspace_file_stream(workspace_id: str, raw_request: Request, path: str, offset: int = Query(default=0, ge=0), length: int = Query(default=1048576, ge=1, le=8388608)):
+    _authorize_request(raw_request, workspace_id, "workspace.read", {"path": path, "offset": offset, "length": length})
+    target = _workspace_child(workspace_id, path)
+    if not target.is_file():
+        raise HTTPException(status_code=400, detail="Path must be a file")
+    size = target.stat().st_size
+    if offset > size:
+        raise HTTPException(status_code=416, detail="Offset exceeds file size")
+    async def chunks():
+        remaining = min(length, size - offset)
+        with target.open("rb") as handle:
+            handle.seek(offset)
+            while remaining:
+                block = handle.read(min(65536, remaining))
+                if not block: break
+                remaining -= len(block)
+                yield block
+    headers = {"X-File-Size": str(size), "X-File-SHA256": _stream_file_sha256(target), "X-Next-Offset": str(min(size, offset + length))}
+    return StreamingResponse(chunks(), media_type=mimetypes.guess_type(target.name)[0] or "application/octet-stream", headers=headers)
+
+
+@app.put("/v1/workspaces/{workspace_id}/file")
+async def remote_workspace_file_write(workspace_id: str, request: RemoteFileWriteRequest, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "file.write", {"path": request.path, "expected_sha256": request.expected_sha256})
+    root = _workspace_root(workspace_id)
+    try:
+        target = (root / request.path).resolve(strict=False)
+        target.relative_to(root)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Path escapes the workspace") from exc
+    if not target.parent.is_dir():
+        raise HTTPException(status_code=400, detail="Parent directory does not exist")
+    current = target.read_bytes() if target.is_file() else b""
+    current_hash = hashlib.sha256(current).hexdigest()
+    if request.expected_sha256 is not None and current_hash.lower() != request.expected_sha256.lower():
+        raise HTTPException(status_code=409, detail={"code": "file_conflict", "message": "File changed since it was read", "current_sha256": current_hash})
+    try:
+        content = base64.b64decode(request.content_base64, validate=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="content_base64 is invalid") from exc
+    try:
+        SecureWorkspaceFS(root).atomic_write(request.path, content)
+    except SecurityError as exc:
+        raise HTTPException(status_code=403, detail={"code": exc.code, "message": exc.message, "retryable": False}) from exc
+    return {"path": request.path.replace("\\", "/"), "size": len(content), "sha256": hashlib.sha256(content).hexdigest(), "modified_at": time.time()}
+
+
+_workspace_watch_journals: dict[str, dict[str, Any]] = {}
+
+
+def _workspace_snapshot(root: Path) -> dict[str, tuple[int, int, int]]:
+    rows: dict[str, tuple[int, int, int]] = {}
+    for index, candidate in enumerate(root.rglob("*")):
+        if index >= 50_000:
+            break
+        try:
+            resolved = candidate.resolve(strict=True)
+            resolved.relative_to(root)
+            relative = str(resolved.relative_to(root)).replace("\\", "/")
+            if resolved.is_file() and not any(part in {".git", "node_modules", ".venv", "__pycache__"} for part in Path(relative).parts):
+                stat = resolved.stat()
+                rows[relative] = (stat.st_mtime_ns, stat.st_size, getattr(stat, "st_ino", 0))
+        except (OSError, ValueError):
+            continue
+    return rows
+
+
+def _workspace_watch_scan(workspace_id: str, root: Path) -> dict[str, Any]:
+    current = _workspace_snapshot(root)
+    state = _workspace_watch_journals.setdefault(workspace_id, {"snapshot": current, "sequence": 0, "events": deque(maxlen=5000)})
+    previous = state["snapshot"]
+    deleted = set(previous) - set(current)
+    created = set(current) - set(previous)
+    deleted_by_inode = {previous[path][2]: path for path in deleted if previous[path][2]}
+    changes: list[dict[str, Any]] = []
+    for path in sorted(created):
+        old_path = deleted_by_inode.get(current[path][2]) if current[path][2] else None
+        if old_path:
+            deleted.discard(old_path)
+            changes.append({"path": path, "old_path": old_path, "type": "renamed"})
+        else:
+            changes.append({"path": path, "type": "created"})
+    changes.extend({"path": path, "type": "deleted"} for path in sorted(deleted))
+    changes.extend({"path": path, "type": "modified"} for path in sorted(set(previous) & set(current)) if previous[path] != current[path])
+    for change in changes:
+        state["sequence"] += 1
+        state["events"].append({"sequence": state["sequence"], **change})
+    state["snapshot"] = current
+    return state
+
+
+@app.websocket("/v1/workspaces/{workspace_id}/watch")
+async def remote_workspace_watch(websocket: WebSocket, workspace_id: str):
+    await websocket.accept()
+    try: authentication = await asyncio.wait_for(websocket.receive_json(), timeout=5)
+    except (asyncio.TimeoutError, WebSocketDisconnect): await websocket.close(code=4401); return
+    if authentication.get("type") != "auth" or not verify_gateway_instance(authentication.get("token")):
+        await websocket.close(code=4401); return
+    root = _workspace_root(workspace_id)
+    after_sequence = max(0, int(authentication.get("after_sequence") or 0))
+    state = _workspace_watch_scan(workspace_id, root)
+    replay = [event for event in state["events"] if event["sequence"] > after_sequence]
+    for index in range(0, len(replay), 200):
+        batch = replay[index:index + 200]
+        await websocket.send_json({"type": "changes", "workspace_id": workspace_id, "changes": batch, "sequence": batch[-1]["sequence"], "replayed": True})
+    cursor = state["sequence"]
+    await websocket.send_json({"type": "ready", "workspace_id": workspace_id, "sequence": cursor})
+    try:
+        while True:
+            await asyncio.sleep(0.25)
+            state = _workspace_watch_scan(workspace_id, root)
+            pending = [event for event in state["events"] if event["sequence"] > cursor]
+            for index in range(0, len(pending), 200):
+                batch = pending[index:index + 200]
+                await websocket.send_json({"type": "changes", "workspace_id": workspace_id, "changes": batch, "sequence": batch[-1]["sequence"], "replayed": False})
+            if pending:
+                cursor = pending[-1]["sequence"]
+    except WebSocketDisconnect:
+        pass
+
+
+@app.get("/v1/workspaces/{workspace_id}/folder-summary")
+async def remote_workspace_folder_summary(workspace_id: str, path: str = ".", max_entries: int = Query(default=500, ge=1, le=5000), max_sample_files: int = Query(default=20, ge=0, le=100), max_chars: int = Query(default=20000, ge=1000, le=200000)):
+    root = _workspace_root(workspace_id); directory = _workspace_child(workspace_id, path)
+    if not directory.is_dir(): raise HTTPException(status_code=400, detail="Path must be a directory")
+    files = []; directory_count = 0; total = 0; truncated = False
+    for candidate in directory.rglob("*"):
+        if any(part in {".git", "node_modules", ".venv", "__pycache__"} for part in candidate.relative_to(directory).parts): continue
+        total += 1
+        if total > max_entries: truncated = True; break
+        if candidate.is_dir(): directory_count += 1
+        elif candidate.is_file() and len(files) < max_sample_files:
+            size = candidate.stat().st_size; relative = str(candidate.relative_to(root)).replace("\\", "/")
+            files.append({"path": str(candidate), "relativePath": relative, "kind": "text", "size": size})
+    summary = "\n".join(f"- {item['relativePath']} ({item['size']} bytes)" for item in files)[:max_chars]
+    return {"path": str(directory), "name": directory.name, "totalEntries": min(total, max_entries), "fileCount": len(files), "directoryCount": directory_count, "skippedDirectoryCount": 0, "truncated": truncated, "estimatedTokens": len(summary) // 4, "sampledFiles": files, "summary": summary}
+
+
+@app.get("/v1/workspaces/{workspace_id}/git/file-at-ref")
+async def remote_workspace_git_file_at_ref(workspace_id: str, raw_request: Request, ref: str, path: str, max_bytes: int = Query(default=262144, ge=1, le=1048576)):
+    _authorize_request(raw_request, workspace_id, "workspace.read", {"ref": ref, "path": path})
+    root = _workspace_root(workspace_id); target = (root / path).resolve(strict=False)
+    try: relative = str(target.relative_to(root)).replace("\\", "/")
+    except ValueError as exc: raise HTTPException(status_code=403, detail="Path escapes the workspace") from exc
+    if not re.fullmatch(r"[A-Za-z0-9_./@{}^~:+-]{1,200}", ref): raise HTTPException(status_code=400, detail="Invalid Git ref")
+    completed = subprocess.run(["git", "-C", str(root), "show", f"{ref}:{relative}"], capture_output=True, timeout=15, check=False)
+    if completed.returncode != 0: return {"workspacePath": str(root), "ref": ref, "path": str(target), "content": "", "truncated": False, "missing": True, "message": "File does not exist at ref."}
+    raw = completed.stdout; content = raw[:max_bytes].decode("utf-8", errors="replace")
+    return {"workspacePath": str(root), "ref": ref, "path": str(target), "content": content, "contentHash": hashlib.sha256(raw).hexdigest(), "truncated": len(raw) > max_bytes, "missing": False, "message": "Remote Git file loaded."}
+
+
+@app.get("/v1/workspaces/{workspace_id}/git/status")
+async def remote_workspace_git_status(workspace_id: str, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "workspace.read", {"operation": "git.status"})
+    root = _workspace_root(workspace_id)
+    completed = subprocess.run(
+        ["git", "-C", str(root), "status", "--porcelain=v1", "-z", "--branch", "--untracked-files=all"],
+        capture_output=True,
+        timeout=15,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise HTTPException(status_code=400, detail={"code": "git_status_failed", "message": "Git status failed.", "retryable": False})
+    parts = completed.stdout.decode("utf-8", "replace").split("\0")
+    branch = None
+    rows: list[dict[str, Any]] = []
+    index = 0
+    while index < len(parts) and parts[index]:
+        row = parts[index]
+        if row.startswith("## "):
+            branch = row[3:]
+            index += 1
+            continue
+        code, path = row[:2], row[3:]
+        old_path = None
+        if "R" in code or "C" in code:
+            index += 1
+            if index < len(parts):
+                old_path = path
+                path = parts[index]
+        rows.append({
+            "path": path.replace("\\", "/"),
+            "old_path": old_path.replace("\\", "/") if old_path else None,
+            "index_status": code[0],
+            "worktree_status": code[1],
+            "untracked": code == "??",
+            "renamed": "R" in code,
+        })
+        index += 1
+    return {"workspace_id": workspace_id, "branch": branch, "clean": not rows, "entries": rows}
+
+
+@app.get("/v1/workspaces/{workspace_id}/git/diff")
+async def remote_workspace_git_diff(workspace_id: str, raw_request: Request, staged: bool = False, path: str | None = None):
+    _authorize_request(raw_request, workspace_id, "workspace.read", {"operation": "git.diff", "path": path, "staged": staged})
+    root = _workspace_root(workspace_id)
+    args = ["git", "-C", str(root), "diff"] + (["--cached"] if staged else [])
+    if path:
+        target = _workspace_child(workspace_id, path)
+        args += ["--", str(target.relative_to(root))]
+    completed = subprocess.run(args, capture_output=True, text=True, timeout=15, check=False)
+    if completed.returncode != 0:
+        raise HTTPException(status_code=400, detail=completed.stderr.strip() or "Git diff failed")
+    return {"workspace_id": workspace_id, "diff": completed.stdout, "diff_hash": hashlib.sha256(completed.stdout.encode()).hexdigest(), "staged": staged}
+
+
+@app.get("/v1/workspaces/{workspace_id}/checkpoints")
+async def remote_workspace_checkpoints(workspace_id: str):
+    _workspace_root(workspace_id)
+    return {"data": list_checkpoints(workspace_id)}
+
+
+@app.post("/v1/workspaces/{workspace_id}/checkpoints")
+async def remote_workspace_checkpoint_create(workspace_id: str, request: RemoteCheckpointRequest):
+    return create_checkpoint(workspace_id, _workspace_root(workspace_id), request.model_dump(exclude_none=True))
+
+
+@app.post("/v1/workspaces/{workspace_id}/checkpoints/preview")
+async def remote_workspace_checkpoint_preview(workspace_id: str, request: RemoteCheckpointActionRequest):
+    try:
+        return preview_checkpoint(workspace_id, _workspace_root(workspace_id), request.checkpointId, request.maxFiles or 20, request.maxCharsPerFile or 4000)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Checkpoint not found") from exc
+
+
+@app.post("/v1/workspaces/{workspace_id}/checkpoints/restore")
+async def remote_workspace_checkpoint_restore(workspace_id: str, request: RemoteCheckpointActionRequest, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "workspace.restore", {"checkpoint_id": request.checkpointId})
+    try:
+        return restore_checkpoint(workspace_id, _workspace_root(workspace_id), request.checkpointId)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Checkpoint not found") from exc
+
+
+@app.post("/v1/workspaces/{workspace_id}/checkpoints/accept")
+async def remote_workspace_checkpoint_accept(workspace_id: str, request: RemoteCheckpointActionRequest):
+    _workspace_root(workspace_id)
+    try:
+        return accept_checkpoint(workspace_id, request.checkpointId)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Checkpoint not found") from exc
+
+
+def _verified_git_diff(workspace_id: str, request: RemoteGitFileRequest) -> tuple[Path, str]:
+    root = _workspace_root(workspace_id)
+    try:
+        target = (root / request.path).resolve(strict=False)
+        relative = str(target.relative_to(root)).replace("\\", "/")
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=403, detail="Path escapes the workspace") from exc
+    args = ["git", "-C", str(root), "diff"] + (["--cached"] if request.staged else []) + ["--", relative]
+    completed = subprocess.run(args, capture_output=True, text=True, timeout=15, check=False)
+    if completed.returncode != 0:
+        raise HTTPException(status_code=400, detail=completed.stderr.strip() or "Git diff failed")
+    actual = hashlib.sha256(completed.stdout.encode()).hexdigest()
+    if actual != request.expected_diff_hash:
+        raise HTTPException(status_code=409, detail="Git diff changed; refresh before applying the operation")
+    return root, relative
+
+
+@app.post("/v1/workspaces/{workspace_id}/git/stage")
+async def remote_workspace_git_stage(workspace_id: str, request: RemoteGitFileRequest, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "git.write", {"operation": "stage", "path": request.path})
+    root, relative = _verified_git_diff(workspace_id, request)
+    completed = subprocess.run(["git", "-C", str(root), "add", "--", relative], capture_output=True, text=True, timeout=15, check=False)
+    if completed.returncode != 0:
+        raise HTTPException(status_code=400, detail=completed.stderr.strip() or "Git stage failed")
+    return {"workspace_id": workspace_id, "path": relative, "staged": True}
+
+
+@app.post("/v1/workspaces/{workspace_id}/git/unstage")
+async def remote_workspace_git_unstage(workspace_id: str, request: RemoteGitFileRequest, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "git.write", {"operation": "unstage", "path": request.path})
+    request.staged = True
+    root, relative = _verified_git_diff(workspace_id, request)
+    completed = subprocess.run(["git", "-C", str(root), "restore", "--staged", "--", relative], capture_output=True, text=True, timeout=15, check=False)
+    if completed.returncode != 0:
+        raise HTTPException(status_code=400, detail={"code": "git_unstage_failed", "message": "Git unstage failed.", "retryable": False})
+    return {"workspace_id": workspace_id, "path": relative, "staged": False}
+
+
+@app.post("/v1/workspaces/{workspace_id}/git/commit")
+async def remote_workspace_git_commit(workspace_id: str, request: RemoteGitCommitRequest, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "git.write", {"operation": "commit", "message_hash": hashlib.sha256(request.message.encode()).hexdigest()})
+    root = _workspace_root(workspace_id); args = ["git", "-C", str(root), "commit", "-m", request.message]
+    if request.body and request.body.strip(): args += ["-m", request.body.strip()]
+    completed = subprocess.run(args, capture_output=True, text=True, timeout=60, check=False)
+    if completed.returncode != 0:
+        combined = (completed.stderr.strip() or completed.stdout.strip() or "Git commit failed")[-4000:]
+        raise HTTPException(status_code=409, detail={"code": "git_commit_failed", "message": combined, "retryable": False, "detail": {"exit_code": completed.returncode}})
+    revision = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True, timeout=10, check=False).stdout.strip()
+    return {"workspace_id": workspace_id, "committed": True, "revision": revision, "exit_code": completed.returncode, "stdout": completed.stdout[-4000:], "stderr": completed.stderr[-4000:]}
+
+
+@app.post("/v1/workspaces/{workspace_id}/git/push")
+async def remote_workspace_git_push(workspace_id: str, request: RemoteGitPushRequest, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "git.push", {"remote": request.remote, "refspec": request.refspec})
+    root = _workspace_root(workspace_id)
+    completed = subprocess.run(["git", "-C", str(root), "push", "--porcelain", request.remote, request.refspec], capture_output=True, text=True, timeout=120, check=False)
+    if completed.returncode != 0:
+        raise HTTPException(status_code=409, detail={"code": "git_push_failed", "message": (completed.stderr.strip() or completed.stdout.strip() or "Git push failed")[-4000:], "retryable": False, "detail": {"exit_code": completed.returncode}})
+    return {"workspace_id": workspace_id, "pushed": True, "remote": request.remote, "refspec": request.refspec, "stdout": completed.stdout[-4000:], "stderr": completed.stderr[-4000:]}
+
+
+@app.post("/v1/workspaces/{workspace_id}/git/revert")
+async def remote_workspace_git_revert(workspace_id: str, request: RemoteGitFileRequest, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "git.write", {"operation": "revert", "path": request.path})
+    root, relative = _verified_git_diff(workspace_id, request)
+    tracked = subprocess.run(["git", "-C", str(root), "ls-files", "--error-unmatch", "--", relative], capture_output=True, timeout=10, check=False).returncode == 0
+    if tracked:
+        completed = subprocess.run(["git", "-C", str(root), "restore", "--worktree", "--", relative], capture_output=True, text=True, timeout=15, check=False)
+    else:
+        target = _workspace_child(workspace_id, relative)
+        target.unlink()
+        completed = subprocess.CompletedProcess([], 0, "", "")
+    if completed.returncode != 0:
+        raise HTTPException(status_code=400, detail=completed.stderr.strip() or "Git revert failed")
+    return {"workspace_id": workspace_id, "path": relative, "reverted": True}
+
+
+@app.post("/v1/workspaces/{workspace_id}/git/{operation}-hunk")
+async def remote_workspace_git_hunk(workspace_id: str, operation: str, request: RemoteGitFileRequest, raw_request: Request):
+    _authorize_request(raw_request, workspace_id, "git.write", {"operation": f"{operation}-hunk", "path": request.path})
+    if operation == "unstage":
+        request.staged = True
+    root, relative = _verified_git_diff(workspace_id, request)
+    if operation not in {"stage", "unstage", "revert"} or not request.patch or len(request.patch) > 1_000_000:
+        raise HTTPException(status_code=400, detail="Invalid Git hunk operation")
+    args = ["git", "-C", str(root), "apply", "--whitespace=nowarn"]
+    if operation == "stage":
+        args.append("--cached")
+    elif operation == "unstage":
+        args.extend(["--cached", "--reverse"])
+    else:
+        args.append("--reverse")
+    completed = subprocess.run(args, input=request.patch, capture_output=True, text=True, timeout=15, check=False)
+    if completed.returncode != 0:
+        raise HTTPException(status_code=409, detail=completed.stderr.strip() or "Git hunk no longer applies")
+    return {"workspace_id": workspace_id, "path": relative, "applied": True, "operation": operation}
+
+
+@app.get("/v1/hepai/workers")
+async def list_hepai_workers():
+    """Return configured HepAI worker tools without making workspace access depend on HepAI."""
+    try:
+        tools, rows = await _load_remote_hepai_tools(force=True)
+        _remote_audit("hepai.workers.discovered", worker_count=len(rows), callable_count=sum(len(row.get("callables", [])) for row in rows))
+        return {"object": "list", "data": rows, "available": True, "registered_tool_count": len(tools)}
+    except Exception as exc:
+        _remote_audit("hepai.workers.degraded", error=type(exc).__name__)
+        return {"object": "list", "data": [], "available": False, "error": type(exc).__name__}
+
+
+class HepaiWorkerStateRequest(BaseModel):
+    enabled: bool
+
+
+@app.put("/v1/hepai/workers/{worker_id}/state")
+async def set_hepai_worker_state(worker_id: str, request: HepaiWorkerStateRequest):
+    global _remote_hepai_cache
+    if not re.fullmatch(r"[A-Za-z0-9_.:/-]{1,200}", worker_id): raise HTTPException(status_code=400, detail="Invalid Worker id")
+    path = Path.home()/".local"/"share"/"opendrsai"/"remote"/"hepai-workers.json"; path.parent.mkdir(parents=True, exist_ok=True)
+    try: config = json.loads(path.read_text("utf-8"))
+    except (OSError, ValueError): config = {}
+    config[worker_id] = request.enabled; path.write_text(json.dumps(config, indent=2), "utf-8")
+    _remote_hepai_cache = (0.0, [], [])
+    _remote_audit("hepai.worker.state", worker_id=worker_id, enabled=request.enabled)
+    await manager.evict_user(_get_user_id())
+    return {"id": worker_id, "enabled": request.enabled}
 
 
 
@@ -1161,7 +3056,9 @@ async def audio_transcriptions(
     base_url = os.environ.get("OPENAI_BASE_URL", "https://aiapi.ihep.ac.cn/apiv2").rstrip("/")
     data = {"model": model}
     if language:
-        data["language"] = language
+        # OpenAI-compatible transcription APIs expect ISO-639-1, while the
+        # desktop UI stores BCP-47 locale tags such as en-US and zh-CN.
+        data["language"] = language.split("-", 1)[0].lower()
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
@@ -1189,6 +3086,64 @@ async def audio_transcriptions(
         "language": payload.get("language") or language,
         "confidence": payload.get("confidence"),
     }
+
+
+class AudioSpeechRequest(BaseModel):
+    text: str
+    language: Optional[str] = None
+    voice: Optional[str] = None
+    speed: float = 1.0
+    format: str = "mp3"
+
+
+@app.post("/v1/audio/speech")
+async def audio_speech(request: AudioSpeechRequest):
+    """Proxy bounded whole-response speech synthesis to the configured provider."""
+    api_key = os.environ.get("HEPAI_API_KEY", "").strip() or os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(status_code=401, detail="A speech synthesis provider API key is required.")
+    text = request.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Speech synthesis text is required.")
+    if len(text) > 12_000:
+        raise HTTPException(status_code=413, detail="Speech synthesis text exceeds the 12000 character limit.")
+    if request.speed < 0.5 or request.speed > 2.0:
+        raise HTTPException(status_code=400, detail="Speech synthesis speed must be between 0.5 and 2.")
+    if request.format not in {"mp3", "wav", "opus"}:
+        raise HTTPException(status_code=400, detail="Unsupported speech synthesis format.")
+    base_url = os.environ.get("OPENAI_BASE_URL", "https://aiapi.ihep.ac.cn/apiv2").rstrip("/")
+    payload = {
+        "model": os.environ.get("OPENDRSAI_TTS_MODEL", "gpt-4o-mini-tts"),
+        "input": text,
+        "voice": request.voice or os.environ.get("OPENDRSAI_TTS_VOICE", "alloy"),
+        "speed": request.speed,
+        "response_format": request.format,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            provider_response = await client.post(
+                f"{base_url}/audio/speech",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json=payload,
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail="The speech synthesis provider timed out.") from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="The speech synthesis provider is unreachable.") from exc
+    if provider_response.status_code >= 400:
+        try:
+            error_payload = provider_response.json()
+        except ValueError:
+            error_payload = {}
+        detail = error_payload.get("error", {}).get("message") if isinstance(error_payload.get("error"), dict) else error_payload.get("detail")
+        raise HTTPException(status_code=provider_response.status_code, detail=detail or "The speech synthesis provider rejected the request.")
+    audio = provider_response.content
+    if not audio:
+        raise HTTPException(status_code=502, detail="The speech synthesis provider returned empty audio.")
+    if len(audio) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=502, detail="The speech synthesis response exceeds the 10 MB limit.")
+    media_types = {"mp3": "audio/mpeg", "wav": "audio/wav", "opus": "audio/ogg"}
+    return FastAPIResponse(content=audio, media_type=media_types[request.format])
 
 
 @app.get("/v1/config/model-catalog")
@@ -1453,6 +3408,35 @@ def _task_with_runtime_mode(task: str, metadata: dict[str, Any] | None) -> str:
     return "\n".join(lines)
 
 
+def _task_with_remote_attachments(task: str, metadata: dict[str, Any] | None, workspace_id: str | None) -> str:
+    if not workspace_id or not isinstance(metadata, dict): return task
+    attachments = metadata.get("attachments")
+    if not isinstance(attachments, list): return task
+    blocks: list[str] = []
+    total = 0
+    for item in attachments[:20]:
+        if not isinstance(item, dict): continue
+        kind = str(item.get("kind") or ""); name = str(item.get("name") or "attachment")[:200]
+        if kind in {"browser", "terminal", "selection"}:
+            content = str(item.get("visibleText") or item.get("note") or "")[:12000]
+        elif kind == "file":
+            try:
+                target = _workspace_child(workspace_id, str(item.get("path") or ""))
+                raw = target.read_bytes()[:262144]
+                content = raw.decode("utf-8", errors="replace") if b"\x00" not in raw[:8192] else "[binary file omitted]"
+            except (HTTPException, OSError): content = "[file unavailable]"
+        elif kind == "folder":
+            try:
+                directory = _workspace_child(workspace_id, str(item.get("path") or ""))
+                content = "\n".join(str(path.relative_to(directory)) for path in directory.rglob("*") if path.is_file())[:24000]
+            except (HTTPException, OSError): content = "[folder unavailable]"
+        else: continue
+        remaining = 50000 - total
+        if remaining <= 0: break
+        content = content[:remaining]; total += len(content); blocks.append(f"Attachment: {name} ({kind})\n{content}")
+    return task if not blocks else f"{task}\n\nRemote workspace attachment context:\n" + "\n\n".join(blocks)
+
+
 @app.post("/v1/chat/completions")
 
 async def chat_completions(request: ChatRequest, raw_request: Request):
@@ -1508,7 +3492,18 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
 
     user_id = request.user_id or _get_user_id()
 
-    work_dir = request.work_dir or os.getcwd()
+    if request.workspace_id:
+        workspace_root = _workspace_root(request.workspace_id)
+        if request.work_dir:
+            work_dir = str(_workspace_child(request.workspace_id, request.work_dir))
+            if not Path(work_dir).is_dir():
+                raise HTTPException(status_code=400, detail="work_dir must be a directory")
+        else:
+            work_dir = str(workspace_root)
+    else:
+        work_dir = request.work_dir or os.getcwd()
+
+    task = _task_with_remote_attachments(task, request.metadata, request.workspace_id)
 
 
 
@@ -1522,10 +3517,18 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
 
         has_content = False
         sent_done = False
+        conversation_state = ConversationTranslationState()
+        conversation_turn_id = _safe_str(
+            request.metadata.get("run_id") or request.metadata.get("desktop_request_id")
+        ).strip() or str(uuid.uuid4())
+        conversation_projector = StructuredConversationProjector(conversation_turn_id)
 
 
 
         try:
+
+            for frame in conversation_projector.encode(conversation_projector.start()):
+                yield frame
 
             with platform_auth_scope(auth_context) if auth_context else nullcontext():
                 event_stream = manager.run_stream(
@@ -1538,6 +3541,15 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
                 )
                 async for event in event_stream:
 
+                    try:
+                        semantic_events = translate_conversation_event(event, conversation_state)
+                        for semantic_type, semantic_payload in semantic_events:
+                            structured_events = conversation_projector.project(semantic_type, semantic_payload)
+                            for frame in conversation_projector.encode(structured_events):
+                                yield frame
+                    except Exception:
+                        logger.exception("Structured conversation projection failed; legacy stream continues")
+
                     sse = _event_to_sse(event)
 
                     if sse:
@@ -1545,20 +3557,32 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
                         if "[DONE]" in sse:
                             sent_done = True
 
+                            continue
+
                         if sse.startswith("data:") and "[DONE]" not in sse:
 
                             has_content = True
 
                         yield sse
 
-            if not sent_done:
-                yield "data: [DONE]\n\n"
+            complete_type, complete_payload = finalize_conversation_translation(conversation_state)
+            for frame in conversation_projector.encode(
+                conversation_projector.project(complete_type, complete_payload)
+            ):
+                yield frame
+
+            yield "data: [DONE]\n\n"
 
 
 
         except asyncio.CancelledError:
 
             logger.info(f"Request cancelled for session {thread_id}")
+
+            for frame in conversation_projector.encode(
+                conversation_projector.complete(status="cancelled")
+            ):
+                yield frame
 
             yield "data: [DONE]\n\n"
 
@@ -1576,6 +3600,13 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
             error = classify_model_error(e)
             logger.error(f"Agent error for session {thread_id}: code={error['code']}")
             logger.debug(traceback.format_exc())
+            for frame in conversation_projector.encode(
+                conversation_projector.complete(
+                    {"message": error.get("message") or "Agent turn failed."},
+                    status="error",
+                )
+            ):
+                yield frame
             yield f"data: {json.dumps({'error': error})}\n\n"
 
             yield "data: [DONE]\n\n"
@@ -1589,16 +3620,19 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
         gen = generate_sse()
 
         try:
-
-            async for chunk in gen:
-
-                if await raw_request.is_disconnected():
-
-                    cancel_token.cancel()
-
+            while True:
+                next_chunk = asyncio.create_task(gen.__anext__())
+                try:
+                    while not next_chunk.done():
+                        await asyncio.wait({next_chunk}, timeout=0.25)
+                        if await raw_request.is_disconnected():
+                            cancel_token.cancel()
+                            next_chunk.cancel()
+                            await asyncio.gather(next_chunk, return_exceptions=True)
+                            return
+                    yield next_chunk.result()
+                except StopAsyncIteration:
                     break
-
-                yield chunk
 
         finally:
 
@@ -1648,13 +3682,18 @@ async def list_threads(
 
     offset: int = Query(default=0, ge=0),
 
+    workspace_id: str | None = Query(default=None),
+
 ):
 
     """List sessions for the given user, newest first."""
 
     store = _get_store(user_id)
 
-    infos = store.list(limit=limit)
+    infos = store.list(limit=max(limit + offset, 100) if workspace_id else limit)
+    if workspace_id:
+        root = str(_workspace_root(workspace_id))
+        infos = [info for info in infos if getattr(info, "workdir", None) == root]
 
     # Paginate in Python (CLISessionStore.list doesn't support offset natively)
 
@@ -2739,7 +4778,7 @@ async def set_cli_config(key: str, req: CliConfigSetRequest):
 # Platform toggles (telegram / discord / slack / whatsapp / signal)
 # ════════════════════════════════════════════════════════════════════════════
 #
-# These are placeholder endpoints kept compatible with the desktop UI. drsai
+# These are placeholder endpoints kept compatible with the desktop UI. OpenDrSai
 # itself does not yet ship messaging-platform plugins; the on/off state is
 # persisted in cli_config.json under ``platforms`` so it survives restarts
 # and is available the moment plugins land.
@@ -2762,7 +4801,7 @@ async def list_platforms():
         "platforms": {p: bool(raw.get(p, False)) for p in _SUPPORTED_PLATFORMS},
         "implemented": False,
         "note": (
-            "Stored in cli_config.json[platforms]. drsai does not yet ship "
+            "Stored in cli_config.json[platforms]. OpenDrSai does not yet ship "
             "messaging-platform plugins; the toggles are persisted for future use."
         ),
     }
@@ -3074,7 +5113,7 @@ async def trigger_cron_job(
 # Kanban — file-backed boards / tasks
 # ════════════════════════════════════════════════════════════════════════════
 #
-# drsai has no native kanban runtime; this is a thin JSON-file store keyed by
+# OpenDrSai has no native kanban runtime; this is a thin JSON-file store keyed by
 # user_id so the desktop Kanban screen has somewhere to persist state until a
 # real backend lands. Lives at WORKDIR/<user_id>/kanban/{boards,tasks}.json.
 
@@ -3375,7 +5414,7 @@ async def kanban_comment_task(
 
 def _event_to_sse(event: Any) -> str | None:
 
-    """Map a DrSai event to an SSE-formatted string. Returns None if skip."""
+    """Map an OpenDrSai event to an SSE-formatted string. Returns None if skip."""
 
 
 
@@ -3703,7 +5742,7 @@ def _normalize_message(msg: dict) -> dict:
 # âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 def main():
-    """Start the DrSai API gateway (uvicorn).
+    """Start the OpenDrSai API gateway (uvicorn).
 
     NOTE: This is the legacy OpenAI-compatible SSE gateway used by the
     Electron desktop app. The new TUI uses ``drsai.backend.tui_gateway``

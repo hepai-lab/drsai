@@ -25,11 +25,12 @@ Event mapping (matches design doc Section "关键事件翻译表"):
 from __future__ import annotations
 
 import json
+import hashlib
 import time
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
-# Autogen / DrSai imports kept lazy so this module loads quickly when the agent
+# Autogen / OpenDrSai imports kept lazy so this module loads quickly when the agent
 # backend isn't yet imported (helps Phase 0 server start-up).
 
 
@@ -49,6 +50,7 @@ class TurnState:
     completion_tokens: int = 0
     last_model: str = ""
     last_reasoning: str = ""
+    citation_ids: set[str] = field(default_factory=set)
 
     def usage_payload(self, status: str = "complete") -> dict:
         return {
@@ -84,6 +86,31 @@ def _parse_tool_args(raw: Any) -> dict:
     return {}
 
 
+def _artifact_type(name: str, mime: str | None) -> str:
+    normalized_mime = (mime or "").lower()
+    suffix = name.lower().rsplit(".", 1)[-1] if "." in name else ""
+    if normalized_mime.startswith("image/") or suffix in {"png", "jpg", "jpeg", "gif", "webp", "svg"}:
+        return "image"
+    if suffix in {"csv", "tsv", "xlsx", "xls", "parquet"}:
+        return "table"
+    if suffix in {"md", "pdf", "doc", "docx", "ppt", "pptx"}:
+        return "report"
+    if suffix in {"patch", "diff"}:
+        return "patch"
+    return "file"
+
+
+def _normalize_task_status(value: Any) -> str:
+    normalized = str(getattr(value, "value", value) or "running").lower()
+    if normalized in {"completed", "complete", "success", "succeeded", "done"}:
+        return "completed"
+    if normalized in {"failed", "error", "timeout", "killed"}:
+        return "error"
+    if normalized in {"cancelled", "canceled", "aborted"}:
+        return "cancelled"
+    return "running"
+
+
 def _capture_usage(message: Any, state: TurnState) -> None:
     """Best-effort harvest of prompt/completion tokens from any message type."""
     models_usage = getattr(message, "models_usage", None)
@@ -113,6 +140,47 @@ def _is_subagent_source(source: str | None) -> bool:
     return bool(source) and source.startswith("sub:")
 
 
+def extract_citation_payloads(metadata: Any, state: TurnState) -> list[dict[str, Any]]:
+    """Normalize provider citation/annotation metadata without guessing from prose."""
+    if not isinstance(metadata, dict):
+        return []
+    candidates: list[Any] = []
+    for key in ("citations", "annotations", "sources"):
+        value = metadata.get(key)
+        if isinstance(value, list):
+            candidates.extend(value)
+    payloads: list[dict[str, Any]] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        nested = candidate.get("url_citation") or candidate.get("citation") or candidate.get("source")
+        value = {**candidate, **nested} if isinstance(nested, dict) else candidate
+        url = value.get("url") or value.get("uri")
+        path = value.get("path") or value.get("file_path")
+        if not url and not path:
+            continue
+        locator = value.get("locator") or value.get("page")
+        if locator is None and value.get("start_index") is not None:
+            locator = f"chars {value.get('start_index')}-{value.get('end_index', '?')}"
+        stable_source = "|".join(str(item or "") for item in (
+            url, path, locator, value.get("title"), value.get("artifact_id"),
+        ))
+        citation_id = str(value.get("citation_id") or value.get("id") or hashlib.sha256(stable_source.encode("utf-8")).hexdigest()[:16])
+        if citation_id in state.citation_ids:
+            continue
+        state.citation_ids.add(citation_id)
+        payloads.append({
+            "citation_id": citation_id,
+            "title": str(value.get("title") or value.get("name") or url or path),
+            **({"url": str(url)} if url else {}),
+            **({"path": str(path)} if path else {}),
+            **({"locator": str(locator)} if locator is not None else {}),
+            **({"excerpt": str(value["excerpt"])} if value.get("excerpt") else {}),
+            **({"artifact_id": str(value["artifact_id"])} if value.get("artifact_id") else {}),
+        })
+    return payloads
+
+
 # ── Main translation entry ───────────────────────────────────────────
 
 
@@ -133,12 +201,25 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
         ToolCallExecutionEvent,
         ToolCallRequestEvent,
         ToolCallSummaryMessage,
+        UserInputRequestedEvent,
     )
 
     try:
-        from drsai.modules.managers.messages.agent_messages import AgentLogEvent
+        from drsai.modules.managers.messages.agent_messages import (
+            AgentLogEvent,
+            AgentLongTaskMessage,
+            BackgroundTaskEvent,
+            FilesEvent,
+            LongTaskQueryMessage,
+            ToolLongTaskEvent,
+        )
     except Exception:
         AgentLogEvent = None  # type: ignore[assignment]
+        AgentLongTaskMessage = None  # type: ignore[assignment]
+        BackgroundTaskEvent = None  # type: ignore[assignment]
+        FilesEvent = None  # type: ignore[assignment]
+        LongTaskQueryMessage = None  # type: ignore[assignment]
+        ToolLongTaskEvent = None  # type: ignore[assignment]
 
     try:
         from drsai.modules.agents.skills_agent.drsai_assistant import (
@@ -150,6 +231,77 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
         MemoryQueryEvent = None  # type: ignore[assignment]
 
     out: list[tuple[str, dict]] = []
+
+    if FilesEvent is not None and isinstance(message, FilesEvent):
+        content = getattr(message, "content", None)
+        files = getattr(content, "files", None) or []
+        title = getattr(content, "title", None) or "Agent files"
+        description = getattr(content, "description", None) or ""
+        for index, file_info in enumerate(files):
+            name = getattr(file_info, "name", None) or f"artifact-{index + 1}"
+            out.append(("artifact.created", {
+                "artifact_id": f"file:{name}:{index}",
+                "artifact_type": _artifact_type(name, getattr(file_info, "mime_type", None)),
+                "name": name,
+                "title": title,
+                "summary": getattr(file_info, "description", None) or description,
+                "url": getattr(file_info, "url", None),
+                "mime": getattr(file_info, "mime_type", None),
+                "size": getattr(file_info, "size", None),
+                "source": getattr(message, "source", "") or "agent",
+            }))
+        return out
+
+    if ToolLongTaskEvent is not None and isinstance(message, ToolLongTaskEvent):
+        out.append(("progress.update", {
+            "progress_id": f"tool:{getattr(message, 'tool_name', None) or 'long-task'}",
+            "summary": _safe_str(getattr(message, "content", None)),
+            "phase": getattr(message, "tool_name", None) or "long-task",
+            "status": _normalize_task_status(getattr(message, "task_status", None)),
+            "source": getattr(message, "source", "") or "agent",
+        }))
+        return out
+
+    if BackgroundTaskEvent is not None and isinstance(message, BackgroundTaskEvent):
+        status = str(getattr(message, "status", "running") or "running")
+        event_type = "tool.complete" if status in {"completed", "timeout", "killed", "failed"} else "tool.progress"
+        out.append((event_type, {
+            "tool_id": getattr(message, "task_id", "") or "background-task",
+            "name": "background_command",
+            "args": {"command": getattr(message, "command", "")},
+            "result": _safe_str(getattr(message, "content", None)),
+            "status": "failed" if status in {"timeout", "killed", "failed"} else status,
+            "source": getattr(message, "source", "") or "agent",
+        }))
+        return out
+
+    if AgentLongTaskMessage is not None and isinstance(message, AgentLongTaskMessage):
+        out.append(("progress.update", {
+            "progress_id": f"agent:{getattr(message, 'tool_name', None) or 'long-task'}",
+            "summary": _safe_str(getattr(message, "content", None)),
+            "phase": getattr(message, "tool_name", None) or "long-task",
+            "status": _normalize_task_status(getattr(message, "task_status", None)),
+            "source": getattr(message, "source", "") or "agent",
+        }))
+        return out
+
+    if LongTaskQueryMessage is not None and isinstance(message, LongTaskQueryMessage):
+        out.append(("interaction.request", {
+            "request_id": f"query:{int(time.time() * 1000)}",
+            "interaction_type": "text_input",
+            "prompt": _safe_str(getattr(message, "content", None)),
+            "source": getattr(message, "source", "") or "agent",
+        }))
+        return out
+
+    if isinstance(message, UserInputRequestedEvent):
+        out.append(("interaction.request", {
+            "request_id": getattr(message, "request_id", "") or f"input:{int(time.time() * 1000)}",
+            "interaction_type": "text_input",
+            "prompt": _safe_str(getattr(message, "content", None)) or "Input required",
+            "source": getattr(message, "source", "") or "agent",
+        }))
+        return out
 
     # ── Streaming visible chunk ──────────────────────────────────────
     if isinstance(message, ModelClientStreamingChunkEvent):
@@ -293,6 +445,8 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
         if metadata.get("internal") == "yes":
             return out
 
+        out.extend(("citation.added", payload) for payload in extract_citation_payloads(metadata, state))
+
         # Skip if we've already streamed this turn's visible content — the
         # final TextMessage is just a duplicate from the assistant.
         if state.streamed_visible and (
@@ -322,6 +476,7 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
             _capture_usage(chat, state)
             chat_src = getattr(chat, "source", "") or ""
             metadata = getattr(chat, "metadata", None) or {}
+            out.extend(("citation.added", payload) for payload in extract_citation_payloads(metadata, state))
             if (
                 chat_src.lower() != "user"
                 and metadata.get("internal") != "yes"

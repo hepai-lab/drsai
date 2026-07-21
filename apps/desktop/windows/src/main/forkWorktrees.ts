@@ -6,9 +6,15 @@ import type {
   DesktopForkLifecycleAction,
   DesktopForkWorktreeRequest,
   DesktopForkWorktreeResult,
+  DesktopWorktreeListRequest,
+  DesktopWorktreeSummary,
+  DesktopWorktreeEventRequest,
+  DesktopWorktreeEventBatch,
+  DesktopWorktreeMigrationDiagnostic,
   DesktopThreadForkMetadata,
 } from "../shared/desktopApi";
 import { DRSAI_HOME } from "./paths";
+import { LocalRuntimeClient, connectRuntimeClientForWorkspace, type RuntimeClient, type RuntimeWorktree } from "./runtimeClient";
 
 const MAX_WORKSPACE_PATH_CHARS = 2048;
 const MAX_INTENT_CHARS = 180;
@@ -30,6 +36,132 @@ export type ForkLifecycleExecutionResult = Pick<
 
 export async function prepareForkWorktree(rawRequest: unknown): Promise<DesktopForkWorktreeResult> {
   const request = validateRequest(rawRequest);
+  if (process.env.OPENDRSAI_LEGACY_DESKTOP_WORKTREE === "1") {
+    return prepareLegacyForkWorktree(request);
+  }
+  const client = await LocalRuntimeClient.connect();
+  const source = await client.openWorkspace(resolve(request.workspacePath));
+  const created = await client.createWorktree(
+    source.workspace_id,
+    request.intent || "subtask",
+    `desktop-${randomUUID()}`,
+  );
+  return {
+    worktreeId: created.worktree_id,
+    sourceWorkspaceId: source.workspace_id,
+    workspaceId: created.workspace_id,
+    location: "local",
+    sourceWorkspacePath: created.source_workspace_path,
+    repoRoot: created.repo_root,
+    worktreePath: created.worktree_path,
+    branch: created.branch,
+    baseRef: created.base_ref,
+    sourceHasChanges: created.source_has_changes,
+    sourceStatusSummary: created.source_status_summary || undefined,
+  };
+}
+
+export async function listRuntimeWorktrees(request: DesktopWorktreeListRequest): Promise<DesktopWorktreeSummary[]> {
+  if (!request?.workspacePath?.trim()) throw new Error("Workspace path is required to list Worktrees.");
+  const { client, sourceWorkspaceId } = await runtimeForWorkspace(request.workspacePath, request.workspaceId);
+  await migrateLegacyForks(request.workspacePath, client, sourceWorkspaceId);
+  return (await client.listWorktrees(sourceWorkspaceId, request.includeRemoved ?? false)).map((record) => ({
+    worktreeId: record.worktree_id,
+    sourceWorkspaceId: record.source_workspace_id,
+    workspaceId: record.workspace_id,
+    repoRoot: record.repo_root,
+    canonicalPath: record.canonical_path,
+    branch: record.branch,
+    baseCommit: record.base_commit,
+    headCommit: record.head_commit,
+    status: record.status,
+    location: record.location,
+    dirty: record.dirty,
+    ahead: record.ahead,
+    behind: record.behind,
+    activity: record.activity ?? { sessions: 0, runs: 0, terminals: 0, total: 0 },
+    lastErrorCode: record.last_error_code,
+    lastErrorMessage: record.last_error_message,
+    createdAt: record.created_at,
+    updatedAt: record.updated_at,
+  }));
+}
+
+const worktreeMigrationDiagnostics = new Map<string, DesktopWorktreeMigrationDiagnostic[]>();
+
+export function getWorktreeMigrationDiagnostics(request: DesktopWorktreeListRequest): DesktopWorktreeMigrationDiagnostic[] {
+  return [...(worktreeMigrationDiagnostics.get(normalizeMigrationPath(request.workspacePath)) ?? [])];
+}
+
+async function migrateLegacyForks(workspacePath: string, client: RuntimeClient, sourceWorkspaceId: string): Promise<void> {
+  const { listThreads, updateThread } = await import("./threads");
+  const key = normalizeMigrationPath(workspacePath);
+  const diagnostics: DesktopWorktreeMigrationDiagnostic[] = [];
+  for (const thread of await listThreads()) {
+    const fork = thread.fork;
+    if (!fork || fork.worktreeId || fork.lifecycleStatus === "closed") continue;
+    if (![fork.sourceWorkspacePath, fork.repoRoot].some((value) => normalizeMigrationPath(value) === key)) continue;
+    try {
+      const record = await client.adoptWorktree(sourceWorkspaceId, {
+        idempotencyKey: `legacy-thread:${thread.id}`,
+        canonicalPath: fork.worktreePath,
+        branch: fork.branch,
+        baseRef: fork.baseRef,
+      });
+      if (!record.workspace_id) throw new Error("Runtime adopted Worktree without an execution Workspace.");
+      await updateThread({
+        id: thread.id,
+        fork: { ...fork, worktreeId: record.worktree_id, sourceWorkspaceId, workspaceId: record.workspace_id },
+        execution: {
+          sourceWorkspaceId,
+          workspaceId: record.workspace_id,
+          worktreeId: record.worktree_id,
+          canonicalPath: record.canonical_path,
+        },
+      });
+      diagnostics.push({
+        threadId: thread.id, status: "migrated", retryable: false,
+        worktreeId: record.worktree_id, workspaceId: record.workspace_id,
+        message: "Legacy Fork was registered in the owning Runtime.",
+      });
+    } catch (error) {
+      const failure = error as { code?: string; retryable?: boolean; message?: string };
+      diagnostics.push({
+        threadId: thread.id, status: "pending", code: failure.code,
+        retryable: failure.retryable !== false,
+        message: failure.message || String(error),
+      });
+    }
+  }
+  worktreeMigrationDiagnostics.set(key, diagnostics);
+}
+
+function normalizeMigrationPath(value: string): string {
+  return value.trim().replaceAll("\\", "/").replace(/\/+$/, "").toLocaleLowerCase();
+}
+
+export async function listRuntimeWorktreeEvents(request: DesktopWorktreeEventRequest): Promise<DesktopWorktreeEventBatch> {
+  if (!request?.workspacePath?.trim()) throw new Error("Workspace path is required to list Worktree events.");
+  const { client, sourceWorkspaceId } = await runtimeForWorkspace(request.workspacePath, request.workspaceId);
+  const batch = await client.listWorkspaceEvents(sourceWorkspaceId, request.afterSequence ?? 0);
+  return {
+    events: batch.events.filter((event) => event.type.startsWith("worktree.")).map((event) => ({
+      eventId: event.event_id,
+      workspaceId: event.workspace_id,
+      sequence: event.sequence,
+      type: event.type,
+      data: event.data,
+    })),
+    nextSequence: batch.nextSequence,
+  };
+}
+
+async function runtimeForWorkspace(workspacePath: string, workspaceId?: string): Promise<{ client: RuntimeClient; sourceWorkspaceId: string }> {
+  const resolved = await connectRuntimeClientForWorkspace(workspacePath, workspaceId);
+  return { client: resolved.client, sourceWorkspaceId: resolved.workspaceId };
+}
+
+async function prepareLegacyForkWorktree(request: DesktopForkWorktreeRequest): Promise<DesktopForkWorktreeResult> {
   const sourceWorkspacePath = resolve(request.workspacePath);
   const repoRoot = await requireGitOutput(sourceWorkspacePath, ["rev-parse", "--show-toplevel"], "Workspace is not a Git repository.");
   const resolvedRepoRoot = resolve(repoRoot);
@@ -51,6 +183,7 @@ export async function prepareForkWorktree(rawRequest: unknown): Promise<DesktopF
   );
 
   return {
+    location: "local",
     sourceWorkspacePath,
     repoRoot: resolvedRepoRoot,
     worktreePath,
@@ -65,7 +198,66 @@ export async function executeForkLifecycleAction(
   fork: DesktopThreadForkMetadata,
   action: DesktopForkLifecycleAction,
 ): Promise<ForkLifecycleExecutionResult> {
+  if (fork.worktreeId && fork.sourceWorkspaceId) {
+    return executeRuntimeWorktreeLifecycle(fork, action);
+  }
   return action === "merge_back" ? mergeForkWorktree(fork) : cleanupForkWorktree(fork);
+}
+
+async function executeRuntimeWorktreeLifecycle(
+  fork: DesktopThreadForkMetadata,
+  action: DesktopForkLifecycleAction,
+): Promise<ForkLifecycleExecutionResult> {
+  const client = await runtimeClientForFork(fork);
+  const sourceWorkspaceId = fork.sourceWorkspaceId!;
+  const worktreeId = fork.worktreeId!;
+  if (action === "merge_back") {
+    const record = await client.mergeWorktree(sourceWorkspaceId, worktreeId, `desktop:${worktreeId}:merge`);
+    return runtimeLifecycleResult(record);
+  }
+  let record = await client.describeWorktree(sourceWorkspaceId, worktreeId);
+  const merged = record.status === "merged";
+  if (!merged && record.status !== "archived") {
+    record = await client.archiveWorktree(sourceWorkspaceId, worktreeId, `desktop:${worktreeId}:archive`);
+  }
+  const expectedStatus = merged ? "merged" : "archived";
+  record = await client.removeWorktree(sourceWorkspaceId, worktreeId, expectedStatus, `desktop:${worktreeId}:remove:${expectedStatus}`);
+  return {
+    lifecycleStatus: "closed",
+    lifecycleUpdatedAt: record.updated_at,
+    lifecycleMessage: merged
+      ? "Runtime removed the merged Worktree and safely deleted its merged branch."
+      : "Runtime removed the Worktree and retained its unmerged branch under opendrsai/archive.",
+    branchCleanupStatus: merged ? "deleted" : "archived",
+    branchCleanupMessage: merged
+      ? "Merged branch was deleted with git branch -d."
+      : `Unmerged work is retained on ${record.branch}.`,
+    ...(merged ? {} : { archivedBranch: record.branch }),
+  };
+}
+
+async function runtimeClientForFork(fork: DesktopThreadForkMetadata): Promise<RuntimeClient> {
+  return (await connectRuntimeClientForWorkspace(fork.sourceWorkspacePath, fork.sourceWorkspaceId)).client;
+}
+
+function runtimeLifecycleResult(record: RuntimeWorktree): ForkLifecycleExecutionResult {
+  if (record.status === "merge_pending") {
+    return {
+      lifecycleStatus: "merge_pending",
+      lifecycleUpdatedAt: record.updated_at,
+      lifecycleMessage: record.last_error_message || "Runtime detected a merge conflict; review both Workspaces before retrying.",
+    };
+  }
+  if (record.status !== "merged") {
+    throw new Error(`Runtime returned unexpected Worktree merge status: ${record.status}.`);
+  }
+  return {
+    lifecycleStatus: "merged",
+    lifecycleUpdatedAt: record.updated_at,
+    lifecycleMessage: "Runtime merged the Worktree branch into the Source Workspace. Cleanup remains approval-gated.",
+    branchCleanupStatus: "pending",
+    branchCleanupMessage: "Merged branch is retained until cleanup is approved.",
+  };
 }
 
 export async function mergeForkWorktree(fork: DesktopThreadForkMetadata): Promise<ForkLifecycleExecutionResult> {

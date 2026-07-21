@@ -1,6 +1,9 @@
+import type { StructuredConversationEvent } from "../shared/structuredConversation";
+
 export interface ChatSseChoice {
   delta?: {
     content?: string;
+    role?: string;
     tool_call?: unknown;
     tool_calls?: unknown;
     content_block?: unknown;
@@ -34,6 +37,8 @@ export interface ChatSsePayload {
   choices?: ChatSseChoice[];
   file_event?: unknown;
   file_events?: unknown;
+  plan_adjustment?: unknown;
+  plan_adjustments?: unknown;
   tool_call?: unknown;
   tool_calls?: unknown;
   tool_event?: unknown;
@@ -41,6 +46,8 @@ export interface ChatSsePayload {
   metadata?: {
     file_event?: unknown;
     file_events?: unknown;
+    plan_adjustment?: unknown;
+    plan_adjustments?: unknown;
     tool_call?: unknown;
     tool_calls?: unknown;
     tool_event?: unknown;
@@ -66,8 +73,107 @@ export interface AgentLogSsePayload {
   content_type?: string;
 }
 
+export interface NormalizedChatContent {
+  text: string[];
+  reasoning: string[];
+}
+
+export interface ChatContentNormalizer {
+  pushContent(content: string): NormalizedChatContent;
+  pushNativeReasoning(content: string): string;
+  finish(): NormalizedChatContent;
+}
+
+const THINK_OPEN_TOKENS = ["<think>", "&lt;think&gt;"] as const;
+const THINK_CLOSE_TOKENS = ["</think>", "&lt;/think&gt;"] as const;
+
+export function createChatContentNormalizer(): ChatContentNormalizer {
+  let mode: "text" | "reasoning" = "text";
+  let buffer = "";
+  let hasNativeReasoning = false;
+  const nativeReasoning = new Set<string>();
+
+  function pushContent(content: string): NormalizedChatContent {
+    buffer += content;
+    const result: NormalizedChatContent = { text: [], reasoning: [] };
+    while (buffer) {
+      const tokens = mode === "text" ? THINK_OPEN_TOKENS : THINK_CLOSE_TOKENS;
+      const match = findFirstToken(buffer, tokens);
+      if (match) {
+        appendNormalizedContent(result, mode, buffer.slice(0, match.index), hasNativeReasoning);
+        buffer = buffer.slice(match.index + match.token.length);
+        mode = mode === "text" ? "reasoning" : "text";
+        continue;
+      }
+      const retained = longestTokenPrefixSuffix(buffer, tokens);
+      const readyLength = buffer.length - retained.length;
+      if (readyLength > 0) {
+        appendNormalizedContent(result, mode, buffer.slice(0, readyLength), hasNativeReasoning);
+        buffer = retained;
+      }
+      break;
+    }
+    return result;
+  }
+
+  function pushNativeReasoning(content: string): string {
+    const normalized = content.trim();
+    if (!normalized || nativeReasoning.has(normalized)) return "";
+    hasNativeReasoning = true;
+    nativeReasoning.add(normalized);
+    return content;
+  }
+
+  function finish(): NormalizedChatContent {
+    const result: NormalizedChatContent = { text: [], reasoning: [] };
+    appendNormalizedContent(result, mode, buffer, hasNativeReasoning);
+    buffer = "";
+    mode = "text";
+    return result;
+  }
+
+  return { pushContent, pushNativeReasoning, finish };
+}
+
+function appendNormalizedContent(
+  result: NormalizedChatContent,
+  mode: "text" | "reasoning",
+  content: string,
+  hasNativeReasoning: boolean,
+): void {
+  if (!content) return;
+  if (mode === "text") result.text.push(content);
+  else if (!hasNativeReasoning) result.reasoning.push(content);
+}
+
+function findFirstToken(
+  value: string,
+  tokens: readonly string[],
+): { index: number; token: string } | null {
+  let result: { index: number; token: string } | null = null;
+  for (const token of tokens) {
+    const index = value.indexOf(token);
+    if (index >= 0 && (!result || index < result.index)) result = { index, token };
+  }
+  return result;
+}
+
+function longestTokenPrefixSuffix(value: string, tokens: readonly string[]): string {
+  const maxLength = Math.min(value.length, Math.max(...tokens.map((token) => token.length - 1)));
+  for (let length = maxLength; length > 0; length -= 1) {
+    const suffix = value.slice(-length);
+    if (tokens.some((token) => token.startsWith(suffix))) return suffix;
+  }
+  return "";
+}
+
+export interface AgentInputRequestSsePayload {
+  prompt: string;
+  inputType: "text_input" | "approval";
+}
+
 export interface ProviderUsageAnalyticsEvent {
-  provider: "openai_responses" | "anthropic";
+  provider: "openai_responses" | "anthropic" | "google_gemini";
   eventName: string;
   status?: string;
   stopReason?: string;
@@ -80,7 +186,7 @@ export interface ProviderUsageAnalyticsEvent {
 }
 
 export interface ProviderErrorAnalyticsEvent {
-  provider: "openai_responses" | "anthropic";
+  provider: "openai_responses" | "anthropic" | "google_gemini";
   eventName: string;
   code?: string;
   message: string;
@@ -134,7 +240,9 @@ export function parseCompletionSseFrame(frame: string): string[] {
   }
 
   const value = parsed as ChatSsePayload;
-  const content = value.choices?.[0]?.delta?.content ?? value.choices?.[0]?.message?.content ?? "";
+  const delta = value.choices?.[0]?.delta;
+  if (isThinkingRole(delta?.role)) return [];
+  const content = delta?.content ?? value.choices?.[0]?.message?.content ?? "";
   if (content) return [content];
 
   return readProviderTextDeltas(parsed, getSseEventName(frame));
@@ -164,6 +272,36 @@ export function parseAgentLogSseFrame(frame: string): AgentLogSsePayload | null 
     level: typeof value.level === "string" ? value.level : undefined,
     content_type: typeof value.content_type === "string" ? value.content_type : undefined,
   };
+}
+
+export function parseStructuredConversationSseFrame(frame: string): StructuredConversationEvent | null {
+  if (getSseEventName(frame) !== "drsai.event") return null;
+  const payload = getSseData(frame);
+  if (!payload || payload === "[DONE]") return null;
+  try {
+    const parsed = JSON.parse(payload) as Record<string, unknown>;
+    if (parsed.version !== 2 || typeof parsed.type !== "string" ||
+        typeof parsed.turnId !== "string" || typeof parsed.dedupeKey !== "string" ||
+        typeof parsed.timestamp !== "string" || typeof parsed.source !== "string" ||
+        !Number.isSafeInteger(parsed.sequence) || Number(parsed.sequence) <= 0) return null;
+    return parsed as unknown as StructuredConversationEvent;
+  } catch {
+    return null;
+  }
+}
+
+export function parseAgentInputRequestSseFrame(frame: string): AgentInputRequestSsePayload | null {
+  if (getSseEventName(frame) !== "agent.input_request") return null;
+  const payload = getSseData(frame);
+  if (!payload || payload === "[DONE]") return null;
+  try {
+    const parsed = JSON.parse(payload) as Record<string, unknown>;
+    const prompt = typeof parsed.prompt === "string" ? parsed.prompt.trim() : "";
+    if (!prompt) return null;
+    return { prompt, inputType: parsed.input_type === "approval" ? "approval" : "text_input" };
+  } catch {
+    return null;
+  }
 }
 
 export function parseChatReasoningSseFrame(frame: string): AgentLogSsePayload | null {
@@ -224,20 +362,23 @@ export function parseProviderUsageAnalyticsSseFrame(frame: string): ProviderUsag
 
   const record = readObject(parsed);
   if (!record) return null;
-  const eventName = getSseEventName(frame) || readString(record.type);
+  const rawEventName = getSseEventName(frame) || readString(record.type);
   const type = readString(record.type).toLowerCase();
   const response = readObject(record.response);
   const message = readObject(record.message);
   const delta = readObject(record.delta);
-  const usage = readObject(record.usage) || readObject(response?.usage) || readObject(message?.usage);
-  const provider = inferProviderUsageProvider(type, eventName);
+  const usage = readObject(record.usage) || readObject(response?.usage) || readObject(message?.usage) || readObject(record.usageMetadata);
+  const provider = inferProviderUsageProvider(type, rawEventName, record);
   if (!provider) return null;
+  const eventName = rawEventName || (provider === "google_gemini" ? "generateContent.stream" : "");
 
   const status =
-    readString(response?.status) ||
-    readString(record.status) ||
-    (provider === "openai_responses" ? type.replace(/^response\./, "") : "") ||
-    (provider === "anthropic" ? type || eventName : "");
+    provider === "google_gemini"
+      ? readGeminiFinishReason(record) || readString(record.status) || type || eventName
+      : readString(response?.status) ||
+        readString(record.status) ||
+        (provider === "openai_responses" ? type.replace(/^response\./, "") : "") ||
+        (provider === "anthropic" ? type || eventName : "");
   const stopReason = provider === "anthropic"
     ? readString(delta?.stop_reason) || readString(record.stop_reason) || readString(message?.stop_reason)
     : "";
@@ -266,7 +407,7 @@ export function parseProviderErrorAnalyticsSseFrame(frame: string): ProviderErro
   if (!record) return null;
   const eventName = getSseEventName(frame) || readString(record.type);
   const type = readString(record.type).toLowerCase();
-  const provider = inferProviderErrorProvider(type, eventName);
+  const provider = inferProviderErrorProvider(type, eventName, record);
   if (!provider) return null;
 
   const structuredError = readChatSseError(parsed);
@@ -275,7 +416,7 @@ export function parseProviderErrorAnalyticsSseFrame(frame: string): ProviderErro
   if (!message) return null;
   const code = structuredError.code?.trim();
   const summary = compactStatusParts([
-    provider === "openai_responses" ? "OpenAI Responses stream error." : "Anthropic stream error.",
+    readProviderErrorSummaryLabel(provider),
     code ? `code=${code}` : "",
     `message=${message}`,
     structuredError.retryable ? "retryable=true" : "retryable=false",
@@ -357,6 +498,17 @@ export function isCompletionDoneFrame(frame: string): boolean {
 export const parseChatSseFrame = parseCompletionSseFrame;
 export const parseAgentRunSseFrame = parseCompletionSseFrame;
 
+export function parseChatSseErrorFrame(frame: string): ChatSseError | null {
+  const payload = getSseData(frame);
+  if (!payload || payload === "[DONE]") return null;
+  try {
+    const error = readChatSseError(JSON.parse(payload));
+    return error ? new ChatSseError(error.message, error.code, error.retryable) : null;
+  } catch {
+    return null;
+  }
+}
+
 export interface AgentRunSseFileEvent {
   action: "read" | "create" | "modify" | "delete" | "rename" | "patch" | "artifact";
   path: string;
@@ -366,6 +518,70 @@ export interface AgentRunSseFileEvent {
   source?: string;
   targetPath?: string;
   timestamp?: string;
+}
+
+export interface AgentRunSsePlanAdjustment {
+  id: string;
+  failedStepId?: string;
+  failedStepTitle: string;
+  reason: string;
+  replacementStepTitle: string;
+  impact: string;
+  completeness: "partial" | "blocked";
+  timestamp?: string;
+}
+
+export function parseAgentRunSsePlanAdjustments(frame: string): AgentRunSsePlanAdjustment[] {
+  const payload = frame
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trimStart())
+    .join("\n")
+    .trim();
+  if (!payload || payload === "[DONE]") return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(payload);
+  } catch {
+    return [];
+  }
+  const value = parsed as ChatSsePayload;
+  return normalizePlanAdjustments([
+    ...normalizeUnknownItems(value.plan_adjustment),
+    ...normalizeUnknownItems(value.plan_adjustments),
+    ...normalizeUnknownItems(value.metadata?.plan_adjustment),
+    ...normalizeUnknownItems(value.metadata?.plan_adjustments),
+  ]);
+}
+
+function normalizePlanAdjustments(items: unknown[]): AgentRunSsePlanAdjustment[] {
+  const safeText = (value: unknown, max: number): string =>
+    typeof value === "string" && value.trim() && value.trim().length <= max && !/[\r\n]/.test(value)
+      ? value.trim()
+      : "";
+  return items.flatMap((item, index) => {
+    if (!item || typeof item !== "object") return [];
+    const record = item as Record<string, unknown>;
+    const failedStepTitle = safeText(record.failedStepTitle ?? record.failed_step_title, 240);
+    const reason = safeText(record.reason, 500);
+    const replacementStepTitle = safeText(record.replacementStepTitle ?? record.replacement_step_title, 240);
+    const impact = safeText(record.impact, 500);
+    const completeness = record.completeness === "blocked" ? "blocked" : record.completeness === "partial" ? "partial" : null;
+    if (!failedStepTitle || !reason || !replacementStepTitle || !impact || !completeness) return [];
+    const id = safeText(record.id, 80) || `plan-adjustment-${index + 1}`;
+    const failedStepId = safeText(record.failedStepId ?? record.failed_step_id, 80);
+    const timestamp = safeText(record.timestamp, 80);
+    return [{
+      id,
+      ...(failedStepId ? { failedStepId } : {}),
+      failedStepTitle,
+      reason,
+      replacementStepTitle,
+      impact,
+      completeness,
+      ...(timestamp ? { timestamp } : {}),
+    }];
+  });
 }
 
 export function parseAgentRunSseFileEvents(frame: string): AgentRunSseFileEvent[] {
@@ -457,6 +673,13 @@ function extractProviderToolCandidates(value: unknown): unknown[] {
   for (const contentItem of normalizeUnknownItems(record.content)) {
     if (isToolLikeRecord(contentItem)) items.push(contentItem);
   }
+  for (const candidate of normalizeUnknownItems(record.candidates)) {
+    const candidateRecord = readObject(candidate);
+    const candidateContent = readObject(candidateRecord?.content);
+    for (const part of normalizeUnknownItems(candidateContent?.parts)) {
+      if (isToolLikeRecord(part)) items.push(part);
+    }
+  }
   return items;
 }
 
@@ -492,15 +715,24 @@ function isToolLikeRecord(value: unknown): value is Record<string, unknown> {
     readString(record.tool) ||
     readString(record.function_name) ||
     readString(readObject(record.function)?.name) ||
+    Boolean(readObject(record.functionCall)) ||
+    Boolean(readObject(record.functionResponse)) ||
+    Boolean(readObject(record.executableCode)) ||
+    Boolean(readObject(record.codeExecutionResult)) ||
     type === "tool_use" ||
     type === "tool_result" ||
     type === "function_call" ||
+    type === "custom_tool_call" ||
+    type === "custom_tool_call_output" ||
     type === "function_result" ||
     type === "function_call_output" ||
     isProviderBuiltinToolType(type) ||
     type === "server_tool_call" ||
+    type === "server_tool_use" ||
     type === "server_tool_result" ||
+    type === "web_search_tool_result" ||
     type === "computer_call_output" ||
+    type === "local_shell_call_output" ||
     role === "tool",
   );
 }
@@ -552,7 +784,7 @@ function rememberProviderToolUse(
   streams: Map<string, ToolArgumentStreamState>,
 ): void {
   const type = readString(record.type).toLowerCase();
-  if (type !== "tool_use" && type !== "server_tool_call" && type !== "function_call") return;
+  if (type !== "tool_use" && type !== "server_tool_call" && type !== "server_tool_use" && type !== "function_call") return;
   const streamKeys = [
     record.index !== undefined ? `index:${readString(record.index)}` : "",
     record.output_index !== undefined ? `output_index:${readString(record.output_index)}` : "",
@@ -644,9 +876,18 @@ function normalizeToolTimelineEvent(
   if (!value || typeof value !== "object" || Array.isArray(value)) return [];
   const record = value as Record<string, unknown>;
   const functionRecord = readObject(record.function);
+  const geminiFunctionCall = readObject(record.functionCall);
+  const geminiFunctionResponse = readObject(record.functionResponse);
+  const geminiExecutableCode = readObject(record.executableCode);
+  const geminiCodeExecutionResult = readObject(record.codeExecutionResult);
+  const providerBuiltinToolName = readProviderBuiltinToolName(readString(record.type));
   const structuredInput =
     record.arguments ??
     functionRecord?.arguments ??
+    geminiFunctionCall?.args ??
+    geminiFunctionResponse?.response ??
+    geminiExecutableCode ??
+    geminiCodeExecutionResult ??
     record.input ??
     record.parameters ??
     record.params;
@@ -655,9 +896,13 @@ function normalizeToolTimelineEvent(
     readString(record.tool_name) ||
     readString(record.tool) ||
     readString(functionRecord?.name) ||
+    readString(geminiFunctionCall?.name) ||
+    readString(geminiFunctionResponse?.name) ||
     readString(record.function_name) ||
+    (geminiExecutableCode || geminiCodeExecutionResult ? "code_execution" : "") ||
+    (providerBuiltinToolName === "mcp_approval" ? providerBuiltinToolName : "") ||
     readString(record.name) ||
-    readProviderBuiltinToolName(readString(record.type));
+    providerBuiltinToolName;
   const providerResultId =
     readString(record.tool_call_id) ||
     readString(record.call_id) ||
@@ -672,6 +917,7 @@ function normalizeToolTimelineEvent(
     readString(record.title) ||
     (toolName ? `Tool: ${toolName}` : "") ||
     (kind === "tool_result" && providerResultId ? `Tool result: ${providerResultId}` : "") ||
+    readProviderReasoningItemTitle(record) ||
     (path ? `File: ${path}` : "") ||
     eventName ||
     "Tool event";
@@ -681,7 +927,13 @@ function normalizeToolTimelineEvent(
     readString(record.output) ||
     readString(record.diff) ||
     readString(record.summary) ||
+    readProviderServerToolContent(record) ||
+    readProviderComputerOutputContent(record) ||
+    readProviderCustomToolContent(record) ||
     readProviderContentText(record.content) ||
+    readProviderStructuredContent(record.content) ||
+    readProviderBuiltinToolContent(record) ||
+    readProviderReasoningItemContent(record) ||
     readStructuredText(structuredInput) ||
     readStructuredText(record.action) ||
     readStructuredText(record.result) ||
@@ -710,15 +962,24 @@ function normalizeToolEventKind(
   const type = readString(record.type).toLowerCase();
   const role = readString(record.role).toLowerCase();
   if (kind === "tool_result" || kind === "result") return "tool_result";
+  if (isProviderReasoningItemType(type)) return "log";
+  if (readObject(record.functionResponse)) return "tool_result";
+  if (readObject(record.codeExecutionResult)) return "tool_result";
   if (
     type === "tool_result" ||
     type === "function_result" ||
+    type === "custom_tool_call_output" ||
     type === "function_call_output" ||
     type === "server_tool_result" ||
+    type === "web_search_tool_result" ||
     type === "computer_call_output" ||
+    type === "local_shell_call_output" ||
+    type === "mcp_approval_response" ||
     role === "tool"
   ) return "tool_result";
-  if (type === "tool_use" || type === "function_call" || type === "server_tool_call" || isProviderBuiltinToolType(type)) return "tool_call";
+  if (readObject(record.functionCall)) return "tool_call";
+  if (readObject(record.executableCode)) return "tool_call";
+  if (type === "tool_use" || type === "function_call" || type === "custom_tool_call" || type === "server_tool_call" || type === "server_tool_use" || isProviderBuiltinToolType(type)) return "tool_call";
   if ((readString(record.tool_call_id) || readString(record.call_id) || readString(record.tool_use_id)) &&
     (readString(record.content) || readProviderContentText(record.content) || readString(record.output))) return "tool_result";
   if (kind === "diff" || readString(record.diff)) return "diff";
@@ -736,6 +997,10 @@ function inferToolEventStatus(
 ): ChatToolTimelineEvent["status"] | undefined {
   const normalizedEventName = eventName.toLowerCase();
   if (record.is_error === true || record.error !== undefined) return "failed";
+  if (isProviderReasoningItemType(readString(record.type).toLowerCase())) {
+    if (normalizedEventName === "response.output_item.done") return "completed";
+    if (normalizedEventName === "response.output_item.added") return "started";
+  }
   if (kind === "tool_result") return "completed";
   if (
     kind === "tool_call" &&
@@ -801,11 +1066,12 @@ function normalizeChatSseErrorPayload(
   const record = readObject(value);
   if (!record) return null;
   const message = readString(record.message) || "Model request failed.";
-  const code = readString(record.code) || readString(record.type) || undefined;
+  const status = readString(record.status);
+  const code = status || readString(record.code) || readString(record.type) || undefined;
   return {
     message,
     code,
-    retryable: record.retryable === true,
+    retryable: record.retryable === true || isRetryableGoogleErrorStatus(status),
   };
 }
 
@@ -830,20 +1096,205 @@ function readProviderContentText(value: unknown): string {
   return textParts.join("\n").trim();
 }
 
+function readProviderStructuredContent(value: unknown): string {
+  const contentItems = normalizeUnknownItems(value).flatMap((item) => {
+    const record = readObject(item);
+    if (!record) return [];
+    const payload: Record<string, unknown> = {};
+    for (const key of [
+      "type",
+      "name",
+      "id",
+      "title",
+      "url",
+      "page_age",
+      "error_code",
+      "json",
+      "data",
+      "input",
+      "output",
+      "result",
+    ]) {
+      if (record[key] !== undefined) {
+        payload[key] = stripEncryptedContent(record[key]);
+      }
+    }
+    return Object.keys(payload).length ? [payload] : [];
+  });
+  return contentItems.length ? readStructuredText(contentItems.length === 1 ? contentItems[0] : contentItems) : "";
+}
+
+function readProviderServerToolContent(record: Record<string, unknown>): string {
+  const type = readString(record.type).toLowerCase();
+  if (type !== "web_search_tool_result") return "";
+  const results = normalizeUnknownItems(record.content).flatMap((item) => {
+    const itemRecord = readObject(item);
+    if (!itemRecord) return [];
+    const result: Record<string, unknown> = {};
+    for (const key of ["type", "title", "url", "page_age", "error_code"]) {
+      if (itemRecord[key] !== undefined) {
+        result[key] = stripEncryptedContent(itemRecord[key]);
+      }
+    }
+    return Object.keys(result).length ? [result] : [];
+  });
+  return results.length ? readStructuredText(results) : "";
+}
+
+function readProviderComputerOutputContent(record: Record<string, unknown>): string {
+  const type = readString(record.type).toLowerCase();
+  if (type !== "computer_call_output") return "";
+  const payload: Record<string, unknown> = {};
+  for (const key of [
+    "output",
+    "acknowledged_safety_checks",
+    "pending_safety_checks",
+  ]) {
+    if (record[key] !== undefined) {
+      payload[key] = stripEncryptedContent(record[key]);
+    }
+  }
+  return Object.keys(payload).length ? readStructuredText(payload) : "";
+}
+
+function readProviderCustomToolContent(record: Record<string, unknown>): string {
+  const type = readString(record.type).toLowerCase();
+  if (type !== "custom_tool_call_output") return "";
+  const payload: Record<string, unknown> = {};
+  for (const key of [
+    "input",
+    "output",
+    "call_id",
+    "name",
+  ]) {
+    if (record[key] !== undefined) {
+      payload[key] = stripEncryptedContent(record[key]);
+    }
+  }
+  return Object.keys(payload).length ? readStructuredText(payload) : "";
+}
+
+function stripEncryptedContent(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => stripEncryptedContent(item));
+  }
+  const record = readObject(value);
+  if (!record) return value;
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(record)) {
+    if (key === "encrypted_content") continue;
+    sanitized[key] = stripEncryptedContent(item);
+  }
+  return sanitized;
+}
+
+function isProviderReasoningItemType(type: string): boolean {
+  return type === "reasoning" || type === "reasoning_summary";
+}
+
+function readProviderReasoningItemTitle(record: Record<string, unknown>): string {
+  return isProviderReasoningItemType(readString(record.type).toLowerCase()) ? "Model reasoning" : "";
+}
+
+function readProviderReasoningItemContent(record: Record<string, unknown>): string {
+  if (!isProviderReasoningItemType(readString(record.type).toLowerCase())) return "";
+  const payload: Record<string, unknown> = {};
+  const summary = readProviderReasoningSummary(record.summary);
+  const content = readProviderReasoningSummary(record.content);
+  const text = readString(record.text);
+  if (summary.length) payload.summary = summary;
+  if (content.length) payload.content = content;
+  if (text) payload.text = text;
+  return Object.keys(payload).length ? readStructuredText(payload) : "";
+}
+
+function readProviderReasoningSummary(value: unknown): Array<Record<string, unknown>> {
+  return normalizeUnknownItems(value).flatMap((item) => {
+    const record = readObject(item);
+    if (!record) return [];
+    const summary: Record<string, unknown> = {};
+    const type = readString(record.type);
+    const text = readString(record.text);
+    if (type) summary.type = type;
+    if (text) summary.text = text;
+    return Object.keys(summary).length ? [summary] : [];
+  });
+}
+
 function isProviderBuiltinToolType(type: string): boolean {
   return type === "web_search_call" ||
     type === "file_search_call" ||
     type === "code_interpreter_call" ||
     type === "computer_call" ||
+    type === "local_shell_call" ||
+    type === "local_shell_call_output" ||
     type === "mcp_call" ||
     type === "mcp_list_tools" ||
     type === "mcp_approval_request" ||
+    type === "mcp_approval_response" ||
     type === "image_generation_call";
 }
 
 function readProviderBuiltinToolName(type: string): string {
   if (!isProviderBuiltinToolType(type)) return "";
-  return type.replace(/_call$/, "").replace(/_request$/, "");
+  return type.replace(/_call_output$/, "").replace(/_call$/, "").replace(/_request$/, "");
+}
+
+function readProviderBuiltinToolContent(record: Record<string, unknown>): string {
+  const type = readString(record.type).toLowerCase();
+  if (!isProviderBuiltinToolType(type)) return "";
+  const payload: Record<string, unknown> = {};
+  if ((type === "computer_call" || type === "local_shell_call") && record.action !== undefined) {
+    payload.action = stripEncryptedContent(record.action);
+  }
+  for (const key of [
+    "command",
+    "query",
+    "queries",
+    "results",
+    "web_search_results",
+    "search_context",
+    "user_location",
+    "domains",
+    "allowed_domains",
+    "blocked_domains",
+    "vector_store_ids",
+    "filters",
+    "ranking_options",
+    "max_num_results",
+    "server_label",
+    "serverLabel",
+    "name",
+    "tool",
+    "tool_name",
+    "tools",
+    "arguments",
+    "output",
+    "exit_code",
+    "stdout",
+    "stderr",
+    "approval_request_id",
+    "approve",
+    "approved",
+    "decision",
+    "reason",
+    "input",
+    "outputs",
+    "acknowledged_safety_checks",
+    "pending_safety_checks",
+    "container_id",
+    "prompt",
+    "result",
+    "size",
+    "quality",
+    "output_format",
+    "background",
+  ]) {
+    if (record[key] !== undefined) {
+      payload[key] = stripEncryptedContent(record[key]);
+    }
+  }
+  return Object.keys(payload).length ? readStructuredText(payload) : "";
 }
 
 function readProviderTextDeltas(value: unknown, eventName: string): string[] {
@@ -876,6 +1327,8 @@ function readProviderTextDeltas(value: unknown, eventName: string): string[] {
     const text = readRawString(delta?.text) || readRawString(record.text);
     return text ? [text] : [];
   }
+  const geminiText = readGeminiCandidateTextParts(record, false);
+  if (geminiText) return [geminiText];
   return [];
 }
 
@@ -887,6 +1340,10 @@ function readProviderReasoningDelta(value: unknown, eventName: string): string {
   const delta = readObject(record.delta);
   const deltaType = readString(delta?.type).toLowerCase();
   const rawDelta = readRawString(record.delta);
+  const choiceDelta = readObject(readObject(normalizeUnknownItems(record.choices)[0])?.delta);
+  if (isThinkingRole(readString(choiceDelta?.role))) {
+    return readRawString(choiceDelta?.content).trim();
+  }
   if (
     rawDelta &&
     (
@@ -906,7 +1363,29 @@ function readProviderReasoningDelta(value: unknown, eventName: string): string {
   ) {
     return (readRawString(delta?.thinking) || readRawString(delta?.text) || readRawString(record.thinking)).trim();
   }
-  return "";
+  return readGeminiCandidateTextParts(record, true).trim();
+}
+
+function isThinkingRole(role: string | undefined): boolean {
+  const normalized = role?.trim().toLowerCase();
+  return normalized === "thinking" || normalized === "reasoning" || normalized === "analysis";
+}
+
+function readGeminiCandidateTextParts(record: Record<string, unknown>, thoughtOnly: boolean): string {
+  const textParts: string[] = [];
+  for (const candidate of normalizeUnknownItems(record.candidates)) {
+    const candidateRecord = readObject(candidate);
+    const candidateContent = readObject(candidateRecord?.content);
+    for (const part of normalizeUnknownItems(candidateContent?.parts)) {
+      const partRecord = readObject(part);
+      if (!partRecord || readObject(partRecord.functionCall) || readObject(partRecord.functionResponse)) continue;
+      const isThought = partRecord.thought === true;
+      if (thoughtOnly !== isThought) continue;
+      const text = readRawString(partRecord.text);
+      if (text) textParts.push(text);
+    }
+  }
+  return textParts.join("").trim();
 }
 
 function readProviderStatusSummary(value: unknown, eventName: string): string {
@@ -954,14 +1433,24 @@ function readProviderStatusSummary(value: unknown, eventName: string): string {
     return "Anthropic message stopped.";
   }
 
+  const geminiFinishReason = readGeminiFinishReason(record);
+  const geminiUsage = readObject(record.usageMetadata);
+  if (geminiFinishReason || geminiUsage) {
+    return compactStatusParts([
+      "Gemini stream finished.",
+      geminiFinishReason ? `finish_reason=${geminiFinishReason}` : "",
+      readTokenUsageSummary(geminiUsage),
+    ]);
+  }
+
   return "";
 }
 
 function readTokenUsageSummary(usage: Record<string, unknown> | null): string {
   if (!usage) return "";
-  const input = readString(usage.input_tokens) || readString(usage.prompt_tokens);
-  const output = readString(usage.output_tokens) || readString(usage.completion_tokens);
-  const total = readString(usage.total_tokens);
+  const input = readString(usage.input_tokens) || readString(usage.prompt_tokens) || readString(usage.promptTokenCount);
+  const output = readString(usage.output_tokens) || readString(usage.completion_tokens) || readString(usage.candidatesTokenCount);
+  const total = readString(usage.total_tokens) || readString(usage.totalTokenCount);
   return compactStatusParts([
     input ? `input_tokens=${input}` : "",
     output ? `output_tokens=${output}` : "",
@@ -972,9 +1461,9 @@ function readTokenUsageSummary(usage: Record<string, unknown> | null): string {
 function readTokenUsageNumbers(usage: Record<string, unknown> | null): ProviderUsageAnalyticsEvent["usage"] {
   if (!usage) return {};
   return {
-    ...readTokenUsageNumberField(usage.input_tokens, usage.prompt_tokens, "inputTokens"),
-    ...readTokenUsageNumberField(usage.output_tokens, usage.completion_tokens, "outputTokens"),
-    ...readTokenUsageNumberField(usage.total_tokens, undefined, "totalTokens"),
+    ...readTokenUsageNumberField(usage.input_tokens, usage.prompt_tokens ?? usage.promptTokenCount, "inputTokens"),
+    ...readTokenUsageNumberField(usage.output_tokens, usage.completion_tokens ?? usage.candidatesTokenCount, "outputTokens"),
+    ...readTokenUsageNumberField(usage.total_tokens, usage.totalTokenCount, "totalTokens"),
   };
 }
 
@@ -992,6 +1481,7 @@ function readTokenUsageNumberField(
 function inferProviderUsageProvider(
   type: string,
   eventName: string,
+  record: Record<string, unknown>,
 ): ProviderUsageAnalyticsEvent["provider"] | null {
   const normalizedEventName = eventName.toLowerCase();
   if (type.startsWith("response.") || normalizedEventName.startsWith("response.")) {
@@ -1007,14 +1497,30 @@ function inferProviderUsageProvider(
   ) {
     return "anthropic";
   }
+  if (readObject(record.usageMetadata) || readGeminiFinishReason(record)) {
+    return "google_gemini";
+  }
   return null;
+}
+
+function readGeminiFinishReason(record: Record<string, unknown>): string {
+  for (const candidate of normalizeUnknownItems(record.candidates)) {
+    const candidateRecord = readObject(candidate);
+    const finishReason = readString(candidateRecord?.finishReason);
+    if (finishReason) return finishReason;
+  }
+  return readString(record.finishReason);
 }
 
 function inferProviderErrorProvider(
   type: string,
   eventName: string,
+  record: Record<string, unknown>,
 ): ProviderErrorAnalyticsEvent["provider"] | null {
   const normalizedEventName = eventName.toLowerCase();
+  if (isGeminiErrorRecord(record, type, normalizedEventName)) {
+    return "google_gemini";
+  }
   if (
     type === "response.failed" ||
     type === "response.incomplete" ||
@@ -1031,6 +1537,37 @@ function inferProviderErrorProvider(
     return "anthropic";
   }
   return null;
+}
+
+function isGeminiErrorRecord(
+  record: Record<string, unknown>,
+  type: string,
+  normalizedEventName: string,
+): boolean {
+  const error = readObject(record.error);
+  if (!error) return false;
+  const status = readString(error.status);
+  if (status) return true;
+  if (normalizedEventName.includes("generatecontent") || type.includes("generatecontent")) return true;
+  return normalizeUnknownItems(error.details).some((detail) => {
+    const detailRecord = readObject(detail);
+    const detailType = readString(detailRecord?.["@type"]).toLowerCase();
+    return detailType.includes("google.rpc") || detailType.includes("googleapis.com");
+  });
+}
+
+function isRetryableGoogleErrorStatus(status: string): boolean {
+  const normalized = status.toUpperCase();
+  return normalized === "RESOURCE_EXHAUSTED" ||
+    normalized === "UNAVAILABLE" ||
+    normalized === "DEADLINE_EXCEEDED" ||
+    normalized === "ABORTED";
+}
+
+function readProviderErrorSummaryLabel(provider: ProviderErrorAnalyticsEvent["provider"]): string {
+  if (provider === "openai_responses") return "OpenAI Responses stream error.";
+  if (provider === "google_gemini") return "Gemini stream error.";
+  return "Anthropic stream error.";
 }
 
 function compactStatusParts(parts: string[], separator = " "): string {

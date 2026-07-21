@@ -1,0 +1,47 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const view = readFileSync(join(root, "src/renderer/src/components/AgentSquareView.tsx"), "utf8");
+assert(view.includes("getAgentDescription(agent, zh)"), "agent descriptions are not selected by the active UI language");
+assert(view.includes("localizedDescription?.zh") && view.includes("localizedDescription?.en"), "localized descriptions are not searchable in both languages");
+assert(view.includes("JSON.parse(text)") && view.includes("zhText || en"), "legacy JSON-string descriptions are not localized before Main restarts");
+assert(!view.includes("一键启动"), "Agent Square must not imply that an already-running platform agent needs to be started");
+assert(view.includes('zh ? "开始使用" : "Use agent"'), "Agent Square does not present the platform action as using the agent");
+assert(!view.includes('className="agent-mode-pill"'), "Agent cards must not expose backend execution modes");
+assert(view.includes("agent-default-button") && view.includes("Set as default agent"), "the default-agent control is not an accessible top-right star button");
+assert(view.indexOf("agent-default-button") < view.indexOf("agent-card-main"), "the default-agent button must appear in the card header before its main content");
+const app = readFileSync(join(root, "src/renderer/src/App.tsx"), "utf8");
+const preload = readFileSync(join(root, "src/preload/index.ts"), "utf8");
+const shared = readFileSync(join(root, "src/shared/desktopApi.ts"), "utf8");
+const adapter = readFileSync(join(root, "src/renderer/src/adapters/useDesktopChatAdapter.ts"), "utf8");
+const chat = readFileSync(join(root, "src/main/chat.ts"), "utf8");
+const agents = readFileSync(join(root, "src/main/agents.ts"), "utf8");
+const threads = readFileSync(join(root, "src/main/threads.ts"), "utf8");
+const workspace = readFileSync(join(root, "src/renderer/src/components/ChatWorkspace.tsx"), "utf8");
+const telemetry = readFileSync(join(root, "src/main/agentTelemetry.ts"), "utf8");
+
+assert(view.includes('["local", "official", "mine"]'), "C1 catalog grouping is missing");
+assert(view.includes('value={availability}') && view.includes('value={sort}'), "C2 availability filter or sorting is missing");
+assert(view.includes("agent.capabilities") && view.includes("agent.mode"), "C3 capability/mode card fields are missing");
+assert(view.includes("agent.logo && !failed") && view.includes("onError={() => setFailed(true)}"), "C4 logo fallback is missing");
+assert(view.includes("AgentDetailDialog") && view.includes("Example tasks"), "C5 detail dialog is missing");
+assert(view.includes("desktopApi.setDefaultAgent") && view.includes("desktopApi.recordAgentUsage"), "C6 preferences are not wired");
+assert(app.includes("agents.find((agent) => agent.isDefault)"), "server default is not applied to chat initialization");
+assert(preload.includes('ipcRenderer.invoke("desktop:set-default-agent"') && preload.includes('ipcRenderer.invoke("desktop:record-agent-usage"'), "preference IPC is missing");
+assert(shared.includes("agentId?: string;") && adapter.includes("agentId: options?.agentId?.trim()"), "D1 explicit agentId is missing from chat requests");
+assert(chat.includes('request.agentId !== "my-drsai"') && chat.includes("GATEWAY_BASE_URL"), "D3 local routing compatibility is missing");
+assert(chat.includes("getPlatformAgentChatUrl(platformDescriptor.platformId)") && chat.includes("readSse(webContents"), "D4 platform routing does not reuse the SSE reader");
+assert(chat.includes("platformDescriptor || remoteGateway ? true : await startGateway()"), "platform chat still depends on the local gateway");
+assert(agents.includes('capabilities.includes("agent-chat")'), "platform chat capability gate is missing");
+assert(threads.includes("boundAgentId") && threads.includes("boundAgentName"), "D2 thread agent binding is missing");
+assert(app.includes("changesBoundAgent") && app.includes("window.confirm") && app.includes("Start a new conversation"), "D5 switch protection is missing");
+assert(workspace.includes("chat-agent-input-request") && workspace.includes("respondChatInput"), "E5 native input request UI is missing");
+assert(chat.includes("stopPlatformChat") && chat.includes("parseAgentInputRequestSseFrame"), "D6 stop/input SSE handling is missing");
+assert(telemetry.includes("User messages, URLs, tokens and config are not accepted") && !telemetry.includes("messages:"), "F4 privacy-safe telemetry boundary is missing");
+assert(chat.includes('event: "execution_completed"') && chat.includes('"execution_failed"'), "F4 execution telemetry is missing");
+assert(agents.includes("OPENDRSAI_PLATFORM_AGENTS_ENABLED") && agents.includes("OPENDRSAI_PLATFORM_AGENT_CHAT_ENABLED"), "G3 rollout/rollback flags are missing");
+
+console.log("Agent square C1-C6/D1/D3/D4-client/E2 verification passed (catalog UI, explicit routing, capability gate, defaults and usage).");

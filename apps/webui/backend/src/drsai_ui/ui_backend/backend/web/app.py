@@ -4,7 +4,7 @@ import re
 import yaml
 from dotenv import load_dotenv
 
-from .routes import access_compat, admin_analytics, agent_mode, agent_worker, auth, desktop_auth, docmaster, files, local_login, models, plans, runs, sessions, settingsroute, skills, teams, users, validation
+from .routes import access_compat, admin_analytics, agent_mode, agent_worker, auth, desktop_auth, docmaster, files, local_login, models, native, plans, runs, sessions, settingsroute, skills, teams, users, validation
 load_dotenv()
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -198,9 +198,9 @@ app.add_middleware(
 # Create API router with version and documentation
 api = FastAPI(
     root_path="/api",
-    title="DrSai-UI API",
+    title="OpenDrSai-UI API",
     version=VERSION,
-    description="DrSai-UI API is an application to interact with web agents.",
+    description="OpenDrSai-UI API is an application to interact with web agents.",
     docs_url="/docs" if settings.API_DOCS else None,
 )
 
@@ -296,6 +296,21 @@ api.include_router(
     auth.router,
     prefix="/auth",
     tags=["auth"],
+    responses={401: {"description": "Unauthorized"}},
+)
+
+from .routes import mobile
+api.include_router(
+    mobile.router,
+    prefix="/mobile/v1",
+    tags=["mobile"],
+    responses={401: {"description": "Unauthorized"}},
+)
+
+api.include_router(
+    native.router,
+    prefix="/native/v1",
+    tags=["native"],
     responses={401: {"description": "Unauthorized"}},
 )
 

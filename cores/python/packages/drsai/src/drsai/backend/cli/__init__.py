@@ -1,4 +1,4 @@
-"""DrSai CLI package.
+"""OpenDrSai CLI package.
 
 Modules:
     commands  - Slash command registry (CommandDef, resolve_command, format_help)

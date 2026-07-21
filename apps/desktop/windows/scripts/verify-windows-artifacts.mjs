@@ -6,10 +6,14 @@ import { fileURLToPath } from "node:url";
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const releaseDir = join(root, "release");
 const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+const requirePublicDistribution =
+  process.env.REQUIRE_SIGNED_WINDOWS_ARTIFACTS === "1" ||
+  process.env.OPENDRSAI_REQUIRE_SIGNED_RELEASE === "1";
 
 const required = [
-  join("bootstrapper", "OpenDrSaiSetup.msi"),
+  join("bootstrapper", "OpenDrSaiSetup-win-x64.msi"),
   join("bootstrapper", "OpenDrSaiRuntime-win-x64.zip"),
+  "latest-windows.json",
   "release-summary.json",
 ];
 
@@ -33,14 +37,21 @@ const summary = JSON.parse(readFileSync(join(releaseDir, "release-summary.json")
 if (summary.version !== packageJson.version) {
   throw new Error(`release-summary.json version ${summary.version} does not match package ${packageJson.version}.`);
 }
-if (!summary.distribution || summary.distribution.requiresSignedInstallers !== true) {
+const preview = packageJson.version.includes("-");
+if (!summary.distribution || summary.distribution.releaseTier !== (preview ? "preview" : "stable")) {
   throw new Error("release-summary.json is missing installer signing distribution policy.");
+}
+if (summary.distribution.requiresSignedInstallers !== !preview) {
+  throw new Error("release-summary.json signing requirement does not match its release tier.");
+}
+if (requirePublicDistribution && summary.distribution.publicDistributionReady !== true) {
+  throw new Error("release-summary.json does not permit this artifact set to be published.");
 }
 
 const summaryArtifacts = new Map(
   (summary.artifacts || []).map((artifact) => [artifact.path, artifact]),
 );
-for (const relativePath of required.slice(0, 2)) {
+for (const relativePath of required.slice(0, 3)) {
   const normalized = relativePath.replace(/\\/g, "/");
   const artifact = summaryArtifacts.get(normalized);
   if (!artifact) {
@@ -58,4 +69,4 @@ for (const relativePath of required.slice(0, 2)) {
   }
 }
 
-console.log("Windows release artifacts verified for OpenDrSaiSetup.msi and OpenDrSaiRuntime-win-x64.zip.");
+console.log("Windows release artifacts verified for MSI, runtime ZIP, and update manifest.");

@@ -1,6 +1,6 @@
 # DrSai
 
-> A framework for developing AI Agent and Multi-Agent Systems, based on AutoGen 0.5.7. Developed by Dr. Sai's team at IHEP, CAS.
+> A framework for developing AI Agent and Multi-Agent Systems, based on the BAMS (Brain-Actuators-Memory-Sensors) architecture. Developed by Dr. Sai's team at IHEP, CAS.
 
 ---
 
@@ -347,7 +347,9 @@ Console scripts installed by pip:
 ### `pip install` succeeded but `drsai chat` errors out on Node download
 
 DrSai auto-downloads a portable Node.js runtime (~25 MB) on first launch from
-`https://nodejs.org/dist`. If that fails (offline, behind a proxy, blocked region):
+`https://nodejs.org/dist`. The downloader automatically honors `HTTP_PROXY` /
+`HTTPS_PROXY` and Windows Internet Settings, then retries public fallback
+mirrors. If that still fails (offline or blocked region):
 
 **Option 1 — use a closer mirror**
 ```bash

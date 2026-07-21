@@ -1,8 +1,5 @@
 <resources>
-    <style name="Theme.DrSaiRemote" parent="Theme.Material3.DayNight.NoActionBar">
-        <item name="colorPrimary">@color/moss</item>
-        <item name="colorOnPrimary">@color/paper</item>
-        <item name="colorSecondary">@color/lime</item>
+    <style name="Theme.DrSaiRemote" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:statusBarColor">@color/paper</item>

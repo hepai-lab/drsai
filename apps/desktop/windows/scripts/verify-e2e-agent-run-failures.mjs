@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
@@ -9,6 +9,7 @@ const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const exePath = join(root, "release", "win-unpacked", "OpenDrSai.exe");
 const port = Number(process.env.OPENDRSAI_E2E_AGENT_RUN_FAILURE_PORT || "18647");
 const baseUrl = `http://127.0.0.1:${port}`;
+const evidenceDir = join(root, "release", "product-evidence", "k4-failure-recovery");
 const systemPath = [
   process.env.SystemRoot ? join(process.env.SystemRoot, "System32") : "C:\\Windows\\System32",
   process.env.SystemRoot || "C:\\Windows",
@@ -23,7 +24,10 @@ if (!existsSync(exePath)) {
   throw new Error("Build the unpacked Windows app before running verify:e2e-agent-run-failures.");
 }
 
-const scenarios = ["abort", "sse-error", "timeout", "chunk-disconnect"];
+const scenarios = process.argv.includes("--k4-only")
+  ? ["network-exhausted", "external-service"]
+  : ["abort", "sse-error", "timeout", "chunk-disconnect", "network-exhausted", "external-service"];
+let requestAudit = [];
 
 for (const scenario of scenarios) {
   await runScenario(scenario);
@@ -32,6 +36,7 @@ for (const scenario of scenarios) {
 console.log(`E2E agent run failure paths passed: ${scenarios.join(", ")}.`);
 
 async function runScenario(scenario) {
+  requestAudit = [];
   const tempDir = mkdtempSync(join(tmpdir(), `opendrsai-e2e-agent-${scenario}-`));
   const appHome = join(tempDir, "drsai-home");
   const resultPath = join(tempDir, "result.json");
@@ -51,6 +56,24 @@ async function runScenario(scenario) {
     }
     assertScenarioDiagnostics(scenario, result);
     assertThreadPersistence(scenario, result, appHome);
+    if (["network-exhausted", "external-service"].includes(scenario)) {
+      if (requestAudit.length < 3) throw new Error(`${scenario}: retry policy did not issue at least three attempts: ${requestAudit.length}`);
+      const idempotencyKeys = new Set(requestAudit.map((entry) => entry.idempotencyKey));
+      if (idempotencyKeys.size !== 1 || ![...idempotencyKeys][0]) {
+        throw new Error(`${scenario}: retry attempts did not preserve a single idempotency key:\n${JSON.stringify(requestAudit, null, 2)}`);
+      }
+      const attemptNumbers = requestAudit.map((entry) => entry.retryAttempt);
+      if (attemptNumbers.some((value, index) => value !== index)) {
+        throw new Error(`${scenario}: retry attempt sequence is invalid: ${attemptNumbers.join(", ")}`);
+      }
+      mkdirSync(evidenceDir, { recursive: true });
+      writeFileSync(join(evidenceDir, `${scenario}-result.json`), `${JSON.stringify({
+        ok: true,
+        scenario,
+        result,
+        requestAudit,
+      }, null, 2)}\n`, "utf8");
+    }
   } finally {
     if (server) await new Promise((resolveClose) => server.close(resolveClose));
     rmSync(tempDir, { recursive: true, force: true });
@@ -63,12 +86,16 @@ function assertThreadPersistence(scenario, result, appHome) {
     "sse-error": "sseError",
     timeout: "timeout",
     "chunk-disconnect": "chunkDisconnect",
+    "network-exhausted": "networkExhausted",
+    "external-service": "externalService",
   }[scenario];
   const requestId = {
     abort: "e2e-agent-failure-abort",
     "sse-error": "e2e-agent-failure-error",
     timeout: "e2e-agent-failure-timeout",
     "chunk-disconnect": "e2e-agent-failure-disconnect",
+    "network-exhausted": "e2e-agent-failure-network-exhausted",
+    "external-service": "e2e-agent-failure-external-service",
   }[scenario];
   const summary = result?.details?.[detailKey];
   if (summary?.thread && (summary.thread.id !== requestId || summary.thread.status !== "error")) {
@@ -121,6 +148,20 @@ function startScenarioGateway(scenario) {
         body = null;
       }
       assertAgentRunFailureBody(scenario, body);
+      requestAudit.push({
+        idempotencyKey: String(req.headers["idempotency-key"] || ""),
+        retryAttempt: Number(body?.metadata?.network_retry_attempt),
+        resumeFromChars: Number(body?.metadata?.resume_from_chars),
+      });
+      if (scenario === "external-service") {
+        res.writeHead(503, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "synthetic external service unavailable" }));
+        return;
+      }
+      if (scenario === "network-exhausted") {
+        req.socket.destroy();
+        return;
+      }
       res.writeHead(200, {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
@@ -178,12 +219,16 @@ function assertScenarioDiagnostics(scenario, result) {
     "sse-error": "sseError",
     timeout: "timeout",
     "chunk-disconnect": "chunkDisconnect",
+    "network-exhausted": "networkExhausted",
+    "external-service": "externalService",
   }[scenario];
   const expectedTerminal = {
     abort: "aborted",
     "sse-error": "error",
     timeout: "error",
     "chunk-disconnect": "error",
+    "network-exhausted": "error",
+    "external-service": "error",
   }[scenario];
   const summary = detailKey ? result?.details?.[detailKey] : null;
   if (!summary || summary.firstEventType !== "start" || summary.terminalEventType !== expectedTerminal) {
@@ -201,7 +246,10 @@ function assertScenarioDiagnostics(scenario, result) {
   }
   if (
     scenario === "chunk-disconnect" &&
-    !events.some((event) => event.type === "error" && String(event.error || "").includes("ended before data: [DONE]"))
+    !events.some((event) => event.type === "error" && (
+      String(event.error || "").includes("ended before data: [DONE]") ||
+      (event.failureRecovery?.kind === "network" && event.failureRecovery.exhausted === true)
+    ))
   ) {
     throw new Error(`${scenario}: missing agent stream disconnect error:\n${JSON.stringify(events, null, 2)}`);
   }
@@ -215,7 +263,7 @@ function assertScenarioDiagnostics(scenario, result) {
 function runPackagedApp({ appHome, resultPath, scenario }) {
   return new Promise((resolveRun, reject) => {
     let settled = false;
-    const child = spawn(exePath, [], {
+    const child = spawn(exePath, [`--user-data-dir=${join(appHome, "electron-user-data")}`], {
       cwd: root,
       env: {
         SystemRoot: process.env.SystemRoot,
@@ -234,7 +282,8 @@ function runPackagedApp({ appHome, resultPath, scenario }) {
         OPENDRSAI_E2E_AGENT_RUN_FAILURE_SCENARIO: scenario,
         OPENDRSAI_E2E_RESULT: resultPath,
         OPENDRSAI_E2E_TIMEOUT_MS: "45000",
-        OPENDRSAI_AGENT_RUN_TIMEOUT_MS: "1000",
+        OPENDRSAI_NETWORK_RECOVERY_WINDOW_MS: ["chunk-disconnect", "network-exhausted", "external-service"].includes(scenario) ? "1400" : "180000",
+        OPENDRSAI_AGENT_RUN_TIMEOUT_MS: ["chunk-disconnect", "network-exhausted", "external-service"].includes(scenario) ? "12000" : "1000",
       },
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,

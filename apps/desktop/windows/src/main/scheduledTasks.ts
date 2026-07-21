@@ -5,6 +5,8 @@ import type {
   DesktopScheduledTask,
   DesktopScheduledTaskCadence,
   DesktopScheduledTaskCreateRequest,
+  DesktopScheduledTaskDeleteRequest,
+  DesktopScheduledTaskDeleteResult,
   DesktopScheduledTaskKind,
   DesktopScheduledTaskListRequest,
   DesktopScheduledTaskRunItem,
@@ -20,10 +22,16 @@ import type {
   DesktopWorkflowRun,
 } from "../shared/desktopApi";
 import { DRSAI_HOME } from "./paths";
+import {
+  createScheduledTriggerAudit,
+  DEFAULT_MISSED_RUN_POLICY,
+  getNextRunAfterTrigger,
+} from "./scheduleTiming";
 
 const SCHEDULED_TASKS_FILE = join(DRSAI_HOME, "desktop", "scheduled-tasks.json");
 const MAX_SCHEDULED_TASKS_PER_WORKSPACE = 100;
 const GLOBAL_SCHEDULED_TASK_KEY = "__global__";
+let scheduledTaskRunQueue: Promise<void> = Promise.resolve();
 
 interface ScheduledTaskStore {
   workspaces: Record<string, DesktopScheduledTask[]>;
@@ -81,12 +89,16 @@ export async function createScheduledTask(
     nextRunAt:
       typed.nextRunAt ?? getNextScheduledRunAt(now, typed.cadence),
     approvalRequired: typed.approvalRequired ?? true,
+    missedRunPolicy: DEFAULT_MISSED_RUN_POLICY,
     message:
       normalizeOptionalText(typed.message) ??
       "Scheduled task is configured for approval-gated trigger execution.",
     verification:
       normalizeOptionalText(typed.verification) ??
       "Verify persisted schedule state and due trigger results in the Skills Square scheduler panel.",
+    ...(typed.userDefinition
+      ? { userDefinition: normalizeUserDefinition(typed.userDefinition) }
+      : {}),
   };
   assertScheduledTask(task);
   const store = await readScheduledTaskStore();
@@ -113,6 +125,9 @@ export async function updateScheduledTask(
   const updated: DesktopScheduledTask = {
     ...current,
     status: typed.status,
+    title: typed.title ?? current.title,
+    cadence: typed.cadence ?? current.cadence,
+    target: typed.target ?? current.target,
     updatedAt: now,
     ...(typed.nextRunAt !== undefined
       ? normalizeOptionalText(typed.nextRunAt)
@@ -121,6 +136,9 @@ export async function updateScheduledTask(
       : {}),
     message: normalizeOptionalText(typed.message) ?? current.message,
     verification: normalizeOptionalText(typed.verification) ?? current.verification,
+    ...(typed.userDefinition
+      ? { userDefinition: normalizeUserDefinition(typed.userDefinition) }
+      : {}),
   };
   assertScheduledTask(updated);
   store.workspaces[key][taskIndex] = updated;
@@ -132,6 +150,50 @@ export async function updateScheduledTask(
 }
 
 export async function runDueScheduledTasks(
+  request: unknown,
+  runtime: ScheduledTaskRuntime,
+): Promise<DesktopScheduledTaskRunResult> {
+  const previous = scheduledTaskRunQueue;
+  let releaseQueue!: () => void;
+  scheduledTaskRunQueue = new Promise<void>((resolve) => { releaseQueue = resolve; });
+  await previous;
+  try {
+    return await runDueScheduledTasksUnlocked(request, runtime);
+  } finally {
+    releaseQueue();
+  }
+}
+
+export async function deleteScheduledTask(
+  request: unknown,
+): Promise<DesktopScheduledTaskDeleteResult> {
+  const typed = normalizeDeleteRequest(request);
+  const store = await readScheduledTaskStore();
+  const location = findScheduledTaskLocation(store, typed.taskId);
+  if (!location) {
+    return {
+      taskId: typed.taskId,
+      removed: false,
+      historyPolicy: "retain_results",
+      message: "Scheduled task was already absent. Historical results remain available.",
+    };
+  }
+  const { key, taskIndex } = location;
+  const [removed] = store.workspaces[key].splice(taskIndex, 1);
+  if (store.workspaces[key].length === 0) delete store.workspaces[key];
+  await writeScheduledTaskStore(store);
+  return {
+    taskId: typed.taskId,
+    removed: true,
+    historyPolicy: "retain_results",
+    ...(removed.activeWorkflowRunId
+      ? { retainedWorkflowRunId: removed.activeWorkflowRunId }
+      : {}),
+    message: "Future runs were deleted. Historical results remain available.",
+  };
+}
+
+async function runDueScheduledTasksUnlocked(
   request: unknown,
   runtime: ScheduledTaskRuntime,
 ): Promise<DesktopScheduledTaskRunResult> {
@@ -213,7 +275,9 @@ export function startScheduledTaskWorker(
     try {
       const result = await runDueScheduledTasks({ limit }, runtime);
       if (runtime.onWorkflowRun) {
-        await Promise.all(result.runs.map((run) => runtime.onWorkflowRun?.(run)));
+        for (const run of result.runs) {
+          await runtime.onWorkflowRun(run);
+        }
       }
       lastResult = {
         generatedAt: result.generatedAt,
@@ -289,6 +353,8 @@ async function runSingleScheduledTask(
   item: DesktopScheduledTaskRunItem;
   run?: DesktopScheduledTaskRunResult["runs"][number];
 }> {
+  const triggerAudit = createScheduledTriggerAudit(task, now);
+  const nextRunAfterTrigger = getNextRunAfterTrigger(task, now);
   const activeRun = await getActiveWorkflowRun(task, runtime);
   if (activeRun) {
     if (activeRun.status === "running" || activeRun.status === "waiting_approval") {
@@ -302,6 +368,8 @@ async function runSingleScheduledTask(
           activeWorkflowRunUpdatedAt: activeRun.updatedAt,
           message: reconnectMessage,
           verification: activeRun.verification,
+          lastTriggerAudit: triggerAudit,
+          ...(nextRunAfterTrigger ? { nextRunAt: nextRunAfterTrigger } : { nextRunAt: undefined }),
         },
         item: {
           taskId: task.id,
@@ -311,6 +379,7 @@ async function runSingleScheduledTask(
           workflowRunId: activeRun.id,
           ...(activeRun.approvalId ? { approvalId: activeRun.approvalId } : {}),
           reason: "active_workflow_run",
+          triggerAudit,
         },
         run: activeRun,
       };
@@ -326,6 +395,8 @@ async function runSingleScheduledTask(
           activeWorkflowRunUpdatedAt: activeRun.updatedAt,
           message: "Scheduled monitor is blocked by its active workflow run.",
           verification: activeRun.verification,
+          lastTriggerAudit: triggerAudit,
+          ...(nextRunAfterTrigger ? { nextRunAt: nextRunAfterTrigger } : { nextRunAt: undefined }),
         },
         item: {
           taskId: task.id,
@@ -334,6 +405,7 @@ async function runSingleScheduledTask(
           message: activeRun.message,
           workflowRunId: activeRun.id,
           reason: "active_workflow_blocked",
+          triggerAudit,
         },
         run: activeRun,
       };
@@ -350,16 +422,18 @@ async function runSingleScheduledTask(
       task: {
         ...dispatchTask,
         updatedAt: now,
-        nextRunAt: getNextScheduledRunAt(now, dispatchTask.cadence),
+        nextRunAt: nextRunAfterTrigger,
         message: "Scheduled task was due but has no workflow template to dispatch.",
+        lastTriggerAudit: triggerAudit,
       },
       item: {
         taskId: dispatchTask.id,
         title: dispatchTask.title,
         status: "skipped",
         message: "No workflow template is bound to this scheduled task.",
-        nextRunAt: getNextScheduledRunAt(now, dispatchTask.cadence),
+        nextRunAt: nextRunAfterTrigger,
         reason: "missing_workflow_template",
+        triggerAudit,
       },
     };
   }
@@ -376,6 +450,8 @@ async function runSingleScheduledTask(
         updatedAt: now,
         message: prepared.reason,
         verification: prepared.recipe.verification,
+        lastTriggerAudit: triggerAudit,
+        ...(nextRunAfterTrigger ? { nextRunAt: nextRunAfterTrigger } : { nextRunAt: undefined }),
       },
       item: {
         taskId: dispatchTask.id,
@@ -383,6 +459,7 @@ async function runSingleScheduledTask(
         status: "blocked",
         message: prepared.reason,
         reason: prepared.reason,
+        triggerAudit,
       },
     };
   }
@@ -390,7 +467,7 @@ async function runSingleScheduledTask(
   const started = await runtime.startWorkflowRun({
     recipe: prepared.recipe,
   });
-  const nextRunAt = getNextScheduledRunAt(now, dispatchTask.cadence);
+  const nextRunAt = nextRunAfterTrigger;
   const status =
     started.run.status === "waiting_approval" ? "queued_approval" : "started";
   return {
@@ -407,6 +484,7 @@ async function runSingleScheduledTask(
           ? "Scheduled task queued a workflow run that is waiting in Approval Center."
           : "Scheduled task started an approval-gated workflow run.",
       verification: started.run.verification,
+      lastTriggerAudit: triggerAudit,
     },
     item: {
       taskId: dispatchTask.id,
@@ -416,6 +494,7 @@ async function runSingleScheduledTask(
       ...(nextRunAt ? { nextRunAt } : {}),
       workflowRunId: started.run.id,
       ...(started.run.approvalId ? { approvalId: started.run.approvalId } : {}),
+      triggerAudit,
     },
     run: started.run,
   };
@@ -533,6 +612,9 @@ function normalizeCreateRequest(
       : {}),
     ...(typeof typed.message === "string" ? { message: typed.message } : {}),
     ...(typed.status ? { status: typed.status } : {}),
+    ...(typed.userDefinition
+      ? { userDefinition: normalizeUserDefinition(typed.userDefinition) }
+      : {}),
   };
 }
 
@@ -554,6 +636,30 @@ function normalizeUpdateRequest(
     ...(typeof typed.verification === "string"
       ? { verification: typed.verification }
       : {}),
+    ...(typeof typed.title === "string"
+      ? { title: normalizeRequiredText(typed.title, "Scheduled task title is required.") }
+      : {}),
+    ...(typed.cadence !== undefined
+      ? (assertScheduledTaskCadence(typed.cadence), { cadence: typed.cadence })
+      : {}),
+    ...(typeof typed.target === "string"
+      ? { target: normalizeRequiredText(typed.target, "Scheduled task target is required.") }
+      : {}),
+    ...(typed.userDefinition
+      ? { userDefinition: normalizeUserDefinition(typed.userDefinition) }
+      : {}),
+  };
+}
+
+function normalizeDeleteRequest(
+  request: unknown,
+): DesktopScheduledTaskDeleteRequest {
+  if (!request || typeof request !== "object") {
+    throw new Error("Scheduled task delete request is required.");
+  }
+  const typed = request as DesktopScheduledTaskDeleteRequest;
+  return {
+    taskId: normalizeRequiredText(typed.taskId, "Scheduled task id is required."),
   };
 }
 
@@ -597,8 +703,65 @@ function isScheduledTask(value: unknown): value is DesktopScheduledTask {
       typeof task.target === "string" &&
       typeof task.approvalRequired === "boolean" &&
       typeof task.message === "string" &&
-      typeof task.verification === "string",
+      typeof task.verification === "string" &&
+      (!task.userDefinition || isUserDefinition(task.userDefinition)) &&
+      (!task.missedRunPolicy || task.missedRunPolicy === DEFAULT_MISSED_RUN_POLICY) &&
+      (!task.lastTriggerAudit || isTriggerAudit(task.lastTriggerAudit)),
   );
+}
+
+function isTriggerAudit(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const audit = value as NonNullable<DesktopScheduledTask["lastTriggerAudit"]>;
+  return (
+    typeof audit.triggerKey === "string" && audit.triggerKey.length === 64 &&
+    typeof audit.scheduledFor === "string" &&
+    typeof audit.triggeredAt === "string" &&
+    typeof audit.missed === "boolean" &&
+    typeof audit.missedByMs === "number" && audit.missedByMs >= 0 &&
+    audit.missedRunPolicy === DEFAULT_MISSED_RUN_POLICY &&
+    typeof audit.timezone === "string" &&
+    audit.daylightSavingPolicy === "follow_timezone_wall_clock"
+  );
+}
+
+function isUserDefinition(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const definition = value as NonNullable<DesktopScheduledTask["userDefinition"]>;
+  return (
+    typeof definition.sourceText === "string" &&
+    typeof definition.timeDescription === "string" &&
+    typeof definition.materialDescription === "string" &&
+    typeof definition.actionDescription === "string" &&
+    typeof definition.notificationDescription === "string" &&
+    typeof definition.timezone === "string" &&
+    typeof definition.confirmedAt === "string" &&
+    (definition.weekday === undefined ||
+      (Number.isInteger(definition.weekday) && definition.weekday >= 0 && definition.weekday <= 6)) &&
+    (definition.localTime === undefined || /^([01]\d|2[0-3]):[0-5]\d$/.test(definition.localTime))
+  );
+}
+
+function normalizeUserDefinition(
+  value: NonNullable<DesktopScheduledTask["userDefinition"]>,
+): NonNullable<DesktopScheduledTask["userDefinition"]> {
+  if (!isUserDefinition(value)) {
+    throw new Error("Scheduled task user definition is invalid.");
+  }
+  return {
+    sourceText: normalizeRequiredText(value.sourceText, "Schedule source text is required."),
+    timeDescription: normalizeRequiredText(value.timeDescription, "Schedule time is required."),
+    materialDescription: normalizeRequiredText(value.materialDescription, "Schedule material is required."),
+    actionDescription: normalizeRequiredText(value.actionDescription, "Schedule action is required."),
+    notificationDescription: normalizeRequiredText(
+      value.notificationDescription,
+      "Schedule notification is required.",
+    ),
+    timezone: normalizeRequiredText(value.timezone, "Schedule timezone is required."),
+    ...(value.weekday !== undefined ? { weekday: value.weekday } : {}),
+    ...(value.localTime ? { localTime: value.localTime } : {}),
+    confirmedAt: normalizeRequiredText(value.confirmedAt, "Schedule confirmation time is required."),
+  };
 }
 
 function assertScheduledTask(task: DesktopScheduledTask): void {
@@ -706,7 +869,11 @@ function getNextScheduledRunAt(
 }
 
 function cloneScheduledTask(task: DesktopScheduledTask): DesktopScheduledTask {
-  return { ...task };
+  return {
+    ...task,
+    ...(task.userDefinition ? { userDefinition: { ...task.userDefinition } } : {}),
+    ...(task.lastTriggerAudit ? { lastTriggerAudit: { ...task.lastTriggerAudit } } : {}),
+  };
 }
 
 function compareScheduledTasks(

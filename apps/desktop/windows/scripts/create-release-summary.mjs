@@ -8,12 +8,13 @@ const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const releaseDir = join(root, "release");
 const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const artifacts = [
-  join("bootstrapper", "OpenDrSaiSetup.msi"),
+  join("bootstrapper", "OpenDrSaiSetup-win-x64.msi"),
   join("bootstrapper", "OpenDrSaiRuntime-win-x64.zip"),
+  "latest-windows.json",
 ];
 
 const describedArtifacts = artifacts.map((relativePath) => describeArtifact(relativePath));
-const distribution = describeDistribution(describedArtifacts);
+const distribution = describeDistribution(describedArtifacts, packageJson.version);
 
 const summary = {
   product: "OpenDrSai Windows",
@@ -39,7 +40,11 @@ function describeArtifact(relativePath) {
     exists: true,
     sizeBytes: statSync(fullPath).size,
     sha256: createHash("sha256").update(bytes).digest("hex"),
-    signatureStatus: relativePath.endsWith(".msi") ? getSignatureStatus(fullPath) : null,
+    signatureStatus: relativePath.endsWith(".msi")
+      ? getSignatureStatus(fullPath)
+      : relativePath.endsWith("OpenDrSaiRuntime-win-x64.zip")
+        ? getRuntimeExecutableSignatureStatus(fullPath)
+        : null,
   };
 }
 
@@ -56,25 +61,48 @@ function getSignatureStatus(path) {
   }
 }
 
-function describeDistribution(describedArtifacts) {
+function describeDistribution(describedArtifacts, version) {
   const signedArtifacts = describedArtifacts.filter(
-    (artifact) => artifact.exists && artifact.path.endsWith(".msi"),
+    (artifact) => artifact.exists &&
+      (artifact.path.endsWith(".msi") || artifact.path.endsWith("OpenDrSaiRuntime-win-x64.zip")),
   );
   const unsigned = signedArtifacts.filter(
     (artifact) => artifact.signatureStatus !== "Valid",
   );
+  const preview = version.includes("-");
   return {
-    publicDistributionReady: unsigned.length === 0,
-    requiresSignedInstallers: true,
+    releaseTier: preview ? "preview" : "stable",
+    publicDistributionReady: unsigned.length === 0 || preview,
+    requiresSignedInstallers: !preview,
     unsignedArtifacts: unsigned.map((artifact) => ({
       path: artifact.path,
       signatureStatus: artifact.signatureStatus,
     })),
     note:
       unsigned.length === 0
-        ? "All installer artifacts are Authenticode signed."
-        : "Do not distribute this build publicly until installer artifacts are Authenticode signed.",
+        ? "The MSI and runtime Electron executable are Authenticode signed."
+        : preview
+          ? "Unsigned prerelease preview: Windows may display an unknown-publisher warning; stable releases still require Authenticode signatures."
+          : "Do not distribute this stable build publicly until the MSI and runtime Electron executable are Authenticode signed.",
   };
+}
+
+function getRuntimeExecutableSignatureStatus(path) {
+  if (process.platform !== "win32") return "SkippedNonWindows";
+  const command = [
+    "Add-Type -AssemblyName System.IO.Compression.FileSystem",
+    "$tmp=Join-Path ([IO.Path]::GetTempPath()) ('opendrsai-summary-'+[guid]::NewGuid().ToString('N')+'.exe')",
+    `$zip=[IO.Compression.ZipFile]::OpenRead(${quotePowerShellString(path)})`,
+    "try{$entry=@($zip.Entries|Where-Object{($_.FullName -replace '\\\\','/') -eq 'app/OpenDrSai.exe'})[0];if(-not $entry){throw 'Runtime app executable missing.'};[IO.Compression.ZipFileExtensions]::ExtractToFile($entry,$tmp,$true);(Get-AuthenticodeSignature -LiteralPath $tmp).Status}finally{$zip.Dispose();Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue}",
+  ].join("; ");
+  try {
+    return execFileSync("powershell.exe", ["-NoProfile", "-Command", command], {
+      encoding: "utf8",
+      windowsHide: true,
+    }).trim();
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
 }
 
 function quotePowerShellString(value) {

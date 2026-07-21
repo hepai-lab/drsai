@@ -62,6 +62,7 @@ assert(commands.includes("Local commands are read-only"), "permission boundary f
 assert(commands.includes("Gateway ready:"), "status feedback omits gateway readiness");
 assert(commands.includes("Command-created context attachments:"), "/status omits command-created context attachment count");
 assert(commands.includes("Project memory entries:"), "/status omits project memory count");
+assert(commands.includes("Active durable goals:"), "/status omits active durable goal count");
 assert(commands.includes("Custom commands:"), "/status omits custom command count");
 assert(commands.includes("Available agents:"), "/status omits available agent count");
 assert(commands.includes("Available models:"), "/status omits available model count");
@@ -82,6 +83,9 @@ assert(commands.includes('kind: "selection"'), "/mention selection does not crea
 assert(commands.includes("Manual @selection context"), "/mention selection does not document its context source");
 assert(commands.includes("Fix mode"), "/fix local intent feedback is missing");
 assert(commands.includes("Test mode"), "/test local intent feedback is missing");
+assert(commands.includes("Goal state set"), "/goal set durable feedback is missing");
+assert(commands.includes("`goal:` marker"), "/goal durable project-memory marker copy is missing");
+assert(commands.includes("Use `/goal set <objective>`, `/goal done <index|id>`, `/goal clear <index|id>`, or `/goal list`."), "/goal durable command usage copy is missing");
 assert(commands.includes("Commit workflow"), "/commit local intent feedback is missing");
 assert(commands.includes("Workspace checkpoint"), "/checkpoint local checkpoint feedback is missing");
 assert(commands.includes("Submitting this command creates a bounded local workspace checkpoint"), "/checkpoint direct create copy is missing");
@@ -109,7 +113,9 @@ assert(commands.includes("Actual commits must use the policy-gated git workflow"
 assert(commands.includes('"compact"'), "/compact runtime mode name is missing");
 assert(commands.includes("Compact mode"), "/compact runtime mode feedback is missing");
 assert(commands.includes("summarize visible context and preserve reusable decisions"), "/compact runtime mode instruction is missing");
-assert(commands.includes('return describeModeCommand("compact"'), "/compact does not activate runtime mode");
+assert(commands.includes("describeCompactCommand"), "/compact does not route to command-specific compaction feedback");
+assert(commands.includes("Compact memory handoff"), "/compact save feedback is missing");
+assert(commands.includes("`compact-summary:` marker"), "/compact save durable marker copy is missing");
 assert(commands.includes("Memory context"), "/memory local context feedback is missing");
 assert(commands.includes("Skills workflow selector"), "/skills workflow selector feedback is missing");
 assert(commands.includes('type: "open-view"'), "/skills does not produce a navigation action");
@@ -138,6 +144,11 @@ assert(chatAdapter.includes("onOpenSkillsSquare?.(action.target)"), "adapter doe
 assert(chatAdapter.includes('action.type === "set-input"'), "adapter does not keep custom command expansion local");
 assert(chatAdapter.includes("setCurrentRuntimeMode(action.mode)"), "adapter does not persist runtime mode actions");
 assert(chatAdapter.includes("maybeApplyCustomCommand"), "adapter does not handle /command custom command changes");
+assert(chatAdapter.includes("maybeApplyGoalCommand"), "adapter does not handle durable /goal changes");
+assert(chatAdapter.includes('content: `goal: ${setMatch[1].trim()}`'), "/goal set does not persist a durable project-memory goal");
+assert(chatAdapter.includes("goal-done:"), "/goal done does not preserve completed durable goals");
+assert(chatAdapter.includes("Active durable goals for this workspace:"), "/goal state is not injected into request context");
+assert(chatAdapter.includes("formatGoalContent"), "/goal durable state formatting helper is missing");
 assert(chatAdapter.includes("maybeImportMcpContext"), "adapter does not handle /mcp resource/tool context imports");
 assert(chatAdapter.includes("desktopApi.importMcpContext"), "/mcp resource/tool import does not use the desktop bridge");
 assert(chatAdapter.includes("No MCP server connection or tool execution was performed"), "/mcp imported context safety note is missing");
@@ -150,11 +161,14 @@ assert(chatAdapter.includes("runtime_mode: currentRuntimeModeRef.current"), "ada
 assert(chatAdapter.includes("Current chat runtime mode:"), "adapter does not add runtime mode request instructions");
 assert(chatAdapter.includes("clearRuntimeMode"), "adapter does not expose a runtime mode clear action");
 assert(chatAdapter.includes("maybeRequestCommitApproval"), "/commit does not request approval from the adapter");
-assert(chatAdapter.includes("maybeApplyCompactCommand(command, messages)"), "/compact local summary runtime is not wired to command output");
+assert(chatAdapter.includes("await maybeApplyCompactCommand(") && chatAdapter.includes("refreshProjectMemory"), "/compact local summary runtime is not wired to async workspace-aware command output");
 assert(chatAdapter.includes("buildLocalCompactSummary"), "/compact local summary builder is missing");
 assert(chatAdapter.includes("Local context compaction prepared from visible chat only"), "/compact local summary feedback is missing");
 assert(chatAdapter.includes("Reusable decisions / follow-ups"), "/compact reusable decision summary is missing");
 assert(chatAdapter.includes("no gateway, model provider, external connector, filesystem mutation, or network call was performed"), "/compact local safety boundary copy is missing");
+assert(chatAdapter.includes("compact-summary:"), "/compact save does not persist a durable project-memory summary");
+assert(chatAdapter.includes("Saved compact summary to project memory"), "/compact save persisted feedback is missing");
+assert(chatAdapter.includes("Future natural-language chat includes this reviewed compact summary"), "/compact save request-context follow-up copy is missing");
 assert(chatAdapter.includes("maybeApplyWorkspaceCheckpointCommand"), "/checkpoint and /rollback are not wired to checkpoint APIs");
 assert(chatAdapter.includes("desktopApi.createWorkspaceCheckpoint"), "/checkpoint does not create a bounded workspace checkpoint");
 assert(chatAdapter.includes("desktopApi.listWorkspaceCheckpoints"), "/rollback does not list workspace checkpoints");

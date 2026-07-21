@@ -28,7 +28,7 @@ export function ArtifactsPanel({
       {artifacts.length === 0 ? (
         <p>
           {zh
-            ? "暂无新增或未跟踪文件。Agent 生成文件会在这里作为可审阅 artifact 出现。"
+            ? "暂无新增或未跟踪文件。智能体生成的文件会在这里作为可审阅成果出现。"
             : "No added or untracked files yet. Agent-generated files appear here for review."}
         </p>
       ) : (

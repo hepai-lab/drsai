@@ -13,7 +13,7 @@ on:
         description: "Release tag to verify"
         required: true
       full_download:
-        description: "Download full setup exe and verify sha256/size"
+        description: "Download MSI/runtime and verify hashes/signatures"
         required: false
         type: boolean
         default: true

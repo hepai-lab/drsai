@@ -167,6 +167,11 @@ export function SkillSquareView({
   }, [workspacePath]);
 
   useEffect(() => {
+    const refreshTimer = window.setInterval(() => void refreshBackgroundTasks(), 1000);
+    return () => window.clearInterval(refreshTimer);
+  }, [workspacePath]);
+
+  useEffect(() => {
     if (
       !workflowRun ||
       (workflowRun.status !== "complete" && workflowRun.status !== "blocked")
@@ -1038,7 +1043,7 @@ export function SkillSquareView({
               </div>
             </div>
           ) : null}
-          <BackgroundTaskQueue tasks={backgroundTasks} />
+          <BackgroundTaskQueue language={language} tasks={backgroundTasks} />
           <ScheduledTaskPanel
             tasks={scheduledTasks}
             workerStatus={scheduledWorkerStatus}
@@ -1108,44 +1113,201 @@ function buildWorkflowPostmortemDraft(run: DesktopWorkflowRun): string {
   ].join("\n");
 }
 
-function BackgroundTaskQueue({
+export function BackgroundTaskQueue({
+  language,
   tasks,
 }: {
+  language: AppLanguage;
   tasks: DesktopBackgroundTask[];
 }): React.JSX.Element {
+  const zh = language === "zh";
   return (
-    <div className="background-task-queue" aria-label="Background task queue">
+    <div className="background-task-queue" data-testid="background-task-queue" role="region" aria-label={zh ? "后台任务" : "Background task queue"}>
       <div className="background-task-queue-top">
         <strong>
           <ClipboardList size={14} />
-          Background tasks
+          {zh ? "后台任务" : "Background tasks"}
         </strong>
         <span>{tasks.length}</span>
       </div>
       {tasks.length === 0 ? (
         <div className="project-memory-empty">
-          No background tasks have been queued for this workspace.
+          {zh ? "这个工作区还没有后台任务。" : "No background tasks have been queued for this workspace."}
         </div>
       ) : (
         <ol>
-          {tasks.map((task) => (
-            <li className={task.status} key={task.id}>
-              <div>
-                <strong>{task.title}</strong>
-                <span>{task.status.replace("_", " ")}</span>
-              </div>
-              <small>
-                {task.kind} from {task.source}
-              </small>
-              {task.currentStep ? <small>Step: {task.currentStep}</small> : null}
-              <p>{task.message}</p>
-              <small>{task.verification}</small>
-            </li>
-          ))}
+          {tasks.map((task) => {
+            const state = getTaskStatePresentation(task, language);
+            return (
+              <li
+                className={`${task.status} user-state-${state.key}`}
+                data-task-id={task.id}
+                data-task-status={task.status}
+                data-testid="background-task-list-item"
+                data-user-state={state.key}
+                key={task.id}
+              >
+                <div className="background-task-list-summary">
+                  <strong>{task.title}</strong>
+                  <span
+                    className="background-task-state-badge"
+                    data-testid="background-task-list-status"
+                    data-user-state={state.key}
+                  >
+                    <span aria-hidden="true" data-symbol={state.symbol} />
+                    {state.label}
+                  </span>
+                </div>
+                <small>{state.summary}</small>
+                <details data-testid="background-task-detail">
+                  <summary>{zh ? "查看任务详情" : "View task details"}</summary>
+                  <div className="background-task-detail-grid">
+                    <div>
+                      <strong>{zh ? "当前状态" : "Current status"}</strong>
+                      <span
+                        className="background-task-state-badge"
+                        data-testid="background-task-detail-status"
+                        data-user-state={state.key}
+                      >
+                        <span aria-hidden="true" data-symbol={state.symbol} />
+                        {state.label}
+                      </span>
+                    </div>
+                    <p><strong>{zh ? "当前步骤" : "Current step"}</strong>{task.currentStep || state.defaultStep}</p>
+                    <p><strong>{zh ? "接下来" : "Next"}</strong>{state.nextAction}</p>
+                    {task.progress !== undefined ? (
+                      <div
+                        className="background-task-progress"
+                        role="progressbar"
+                        aria-label={zh ? `${task.title}进度` : `${task.title} progress`}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={task.progress}
+                      >
+                        <span style={{ width: `${task.progress}%` }} />
+                        <small>{task.progress}%</small>
+                      </div>
+                    ) : null}
+                    {task.planSteps?.length ? (
+                      <section className="background-task-plan" data-testid="background-task-plan">
+                        <strong>{zh ? "执行计划" : "Plan"}</strong>
+                        <ol>
+                          {task.planSteps.map((step) => {
+                            const completed = task.completedSteps?.includes(step.title) === true;
+                            const adjusted = task.planAdjustments?.some((item) => item.failedStepId === step.id || item.failedStepTitle === step.title) === true;
+                            const active = !completed && task.currentStep === step.title;
+                            return (
+                              <li
+                                data-phase={step.phase}
+                                data-plan-state={adjusted ? "adjusted" : completed ? "completed" : active ? "active" : "pending"}
+                                key={step.id}
+                              >
+                                <span aria-hidden="true">{adjusted ? "⚠" : completed ? "✓" : active ? "→" : "○"}</span>
+                                <span>{step.title}</span>
+                              </li>
+                            );
+                          })}
+                        </ol>
+                      </section>
+                    ) : null}
+                    {task.planAdjustments?.length ? (() => {
+                      const adjustment = task.planAdjustments[task.planAdjustments.length - 1];
+                      return (
+                        <section className="agent-plan-adjustment" data-testid="background-task-plan-adjustment" data-completeness={adjustment.completeness} role="status">
+                          <header><span aria-hidden="true">⚠</span><strong>{zh ? "计划已调整，结果不完整" : "Plan adjusted; result incomplete"}</strong></header>
+                          <dl>
+                            <div><dt>{zh ? "未完成步骤" : "Step not completed"}</dt><dd>{adjustment.failedStepTitle}</dd></div>
+                            <div><dt>{zh ? "原因" : "Reason"}</dt><dd>{adjustment.reason}</dd></div>
+                            <div><dt>{zh ? "改为" : "Replacement"}</dt><dd>{adjustment.replacementStepTitle}</dd></div>
+                            <div><dt>{zh ? "对结果的影响" : "Impact on result"}</dt><dd>{adjustment.impact}</dd></div>
+                          </dl>
+                        </section>
+                      );
+                    })() : null}
+                    {task.completedSteps?.length ? (
+                      <small>{zh ? "已完成：" : "Completed: "}{task.completedSteps.join(" · ")}</small>
+                    ) : null}
+                    {task.pendingDecisions?.length ? (
+                      <small className="background-task-decisions">
+                        {zh ? "需要你决定：" : "Needs you: "}{task.pendingDecisions.join(" · ")}
+                      </small>
+                    ) : null}
+                    <p><strong>{zh ? "状态说明" : "Status detail"}</strong>{task.message}</p>
+                    <small>{task.verification}</small>
+                  </div>
+                </details>
+              </li>
+            );
+          })}
         </ol>
       )}
     </div>
   );
+}
+
+type UserTaskState = "waiting" | "running" | "needs_decision" | "success" | "failure";
+
+interface TaskStatePresentation {
+  key: UserTaskState;
+  label: string;
+  symbol: string;
+  summary: string;
+  defaultStep: string;
+  nextAction: string;
+}
+
+function getTaskStatePresentation(
+  task: DesktopBackgroundTask,
+  language: AppLanguage,
+): TaskStatePresentation {
+  const zh = language === "zh";
+  const key: UserTaskState = task.status === "queued"
+    ? "waiting"
+    : task.status === "running"
+      ? "running"
+      : task.status === "waiting_approval" || (task.pendingDecisions?.length ?? 0) > 0
+        ? "needs_decision"
+        : task.status === "completed"
+          ? "success"
+          : "failure";
+  const content: Record<UserTaskState, Omit<TaskStatePresentation, "key">> = {
+    waiting: {
+      label: zh ? "等待中" : "Waiting",
+      symbol: "○",
+      summary: zh ? "任务已加入队列，尚未开始。" : "The task is queued and has not started yet.",
+      defaultStep: zh ? "等待可用资源" : "Waiting for available capacity",
+      nextAction: zh ? "系统会自动开始，无需操作。" : "It will start automatically; no action is needed.",
+    },
+    running: {
+      label: zh ? "进行中" : "Running",
+      symbol: "▶",
+      summary: zh ? "任务正在处理，状态会自动更新。" : "The task is being processed and will update automatically.",
+      defaultStep: zh ? "正在执行任务" : "Working on the task",
+      nextAction: zh ? "可以离开此页面，完成后会更新结果。" : "You can leave this page; the result will update when ready.",
+    },
+    needs_decision: {
+      label: zh ? "需要决定" : "Needs a decision",
+      symbol: "!",
+      summary: zh ? "任务在等待你的选择，决定后才能继续。" : "The task needs your choice before it can continue.",
+      defaultStep: zh ? "等待你的决定" : "Waiting for your decision",
+      nextAction: zh ? "打开待确认事项并作出选择。" : "Open the pending decision and choose an option.",
+    },
+    success: {
+      label: zh ? "已完成" : "Completed",
+      symbol: "✓",
+      summary: zh ? "任务已成功完成，可以查看成果。" : "The task completed successfully and its results are ready.",
+      defaultStep: zh ? "任务已完成" : "Task completed",
+      nextAction: zh ? "查看完成摘要和成果。" : "Review the completion summary and results.",
+    },
+    failure: {
+      label: zh ? "未完成" : "Not completed",
+      symbol: "×",
+      summary: zh ? "任务没有完成，请查看原因和恢复建议。" : "The task did not complete; review the reason and recovery guidance.",
+      defaultStep: zh ? "任务已停止" : "Task stopped",
+      nextAction: zh ? "查看失败原因，修复后重试。" : "Review the failure, fix the issue, and retry.",
+    },
+  };
+  return { key, ...content[key] };
 }
 
 function ScheduledTaskPanel({

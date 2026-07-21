@@ -49,6 +49,7 @@ assert(
   api.includes("listScheduledTasks(") &&
     api.includes("createScheduledTask(") &&
     api.includes("updateScheduledTask(") &&
+    api.includes("deleteScheduledTask(") &&
     api.includes("runDueScheduledTasks("),
   "desktop API omits scheduled task methods",
 );
@@ -72,6 +73,8 @@ assert(
     scheduledTasks.includes("listScheduledTasks") &&
     scheduledTasks.includes("createScheduledTask") &&
     scheduledTasks.includes("updateScheduledTask") &&
+    scheduledTasks.includes("deleteScheduledTask") &&
+    scheduledTasks.includes('historyPolicy: "retain_results"') &&
     scheduledTasks.includes("runDueScheduledTasks") &&
     scheduledTasks.includes("startScheduledTaskWorker") &&
     scheduledTasks.includes("listWorkflowRuns?") &&
@@ -110,6 +113,7 @@ assert(
     main.includes('secureHandle("desktop:scheduled-tasks-list"') &&
     main.includes('secureHandle("desktop:scheduled-task-create"') &&
     main.includes('secureHandle("desktop:scheduled-task-update"') &&
+    main.includes('secureHandle("desktop:scheduled-task-delete"') &&
     main.includes('secureHandle("desktop:scheduled-tasks-run-due"') &&
     main.includes("runDueScheduledTasksAndMirror") &&
     main.includes("getScheduledTaskWorkerStatus") &&
@@ -134,6 +138,7 @@ assert(
     preload.includes("desktop:scheduled-tasks-list") &&
     preload.includes("desktop:scheduled-task-create") &&
     preload.includes("desktop:scheduled-task-update") &&
+    preload.includes("desktop:scheduled-task-delete") &&
     preload.includes("desktop:scheduled-tasks-run-due") &&
     preload.includes("desktop:scheduled-task-worker-status"),
   "preload bridge omits scheduler APIs",
@@ -162,6 +167,7 @@ assert(
     mock.includes("listScheduledTasks") &&
     mock.includes("createScheduledTask") &&
     mock.includes("updateScheduledTask") &&
+    mock.includes("deleteScheduledTask") &&
     mock.includes("runDueScheduledTasks") &&
     mock.includes("getScheduledTaskWorkerStatus") &&
     mock.includes("mockScheduledWorkerStatus") &&

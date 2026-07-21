@@ -2,7 +2,7 @@
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
   <Product
     Id="*"
-    Name="OpenDrSai Setup"
+    Name="OpenDrSai"
     Language="1033"
     Version="$(var.ProductVersion)"
     Manufacturer="HepAI Team, IHEP"
@@ -10,8 +10,9 @@
     <Package
       InstallerVersion="500"
       Compressed="yes"
-      InstallScope="perUser"
-      Description="OpenDrSai desktop bootstrapper" />
+      InstallScope="perMachine"
+      InstallPrivileges="elevated"
+      Description="OpenDrSai desktop application" />
 
     <MajorUpgrade DowngradeErrorMessage="A newer version of OpenDrSai Setup is already installed." />
     <MediaTemplate EmbedCab="yes" />
@@ -22,41 +23,116 @@
     <Property Id="RUNTIMESIZEBYTES" Value="$(var.RuntimeSizeBytes)" />
     <Property Id="BOOTSTRAPPERVERSION" Value="$(var.BootstrapperVersion)" />
     <Property Id="EXTRAINSTALLARGS" Value="$(var.ExtraInstallArgs)" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/hepai-lab/drsai" />
+    <Property Id="ARPCONTACT" Value="ai@ihep.ac.cn" />
     <UIRef Id="WixUI_InstallDir" />
     <UIRef Id="WixUI_ErrorProgressText" />
 
     <Directory Id="TARGETDIR" Name="SourceDir">
-      <Directory Id="LocalAppDataFolder">
-        <Directory Id="ProgramsDataFolder" Name="Programs">
-          <Directory Id="INSTALLFOLDER" Name="OpenDrSaiSetup">
+      <Directory Id="ProgramFiles64Folder">
+          <Directory Id="INSTALLFOLDER" Name="OpenDrSai">
             <Component Id="InstallerScripts" Guid="A638D62D-1141-47E5-9316-80D4E54A43AC">
               <File Id="InstallOpenDrSaiScript" Source="$(var.SourceDir)\install-opendrsai.ps1" KeyPath="yes" />
               <File Id="UninstallOpenDrSaiScript" Source="$(var.SourceDir)\uninstall-opendrsai.ps1" />
+              <File Id="RunOpenDrSaiInstallScript" Source="$(var.SourceDir)\run-opendrsai-install.vbs" />
+              <File Id="RunOpenDrSaiUninstallScript" Source="$(var.SourceDir)\run-opendrsai-uninstall.vbs" />
+            </Component>
+            <Component Id="ApplicationShortcuts" Guid="DC8D9A19-1035-44A4-A0A8-C92DA51A533D">
+              <Shortcut Id="StartMenuShortcut" Directory="OpenDrSaiProgramMenu" Name="OpenDrSai"
+                Description="OpenDrSai" Target="[INSTALLFOLDER]app\OpenDrSai.exe"
+                WorkingDirectory="INSTALLFOLDER" />
+              <Shortcut Id="DesktopShortcut" Directory="DesktopFolder" Name="OpenDrSai"
+                Description="OpenDrSai" Target="[INSTALLFOLDER]app\OpenDrSai.exe"
+                WorkingDirectory="INSTALLFOLDER" />
+              <RemoveFolder Id="RemoveOpenDrSaiProgramMenu" Directory="OpenDrSaiProgramMenu" On="uninstall" />
+              <RegistryValue Root="HKLM" Key="Software\HepAI\OpenDrSai" Name="Installed"
+                Type="integer" Value="1" KeyPath="yes" />
             </Component>
           </Directory>
-        </Directory>
       </Directory>
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="OpenDrSaiProgramMenu" Name="OpenDrSai" />
+      </Directory>
+      <Directory Id="DesktopFolder" />
     </Directory>
 
     <Feature Id="MainFeature" Title="OpenDrSai Setup" Level="1">
       <ComponentRef Id="InstallerScripts" />
+      <ComponentRef Id="ApplicationShortcuts" />
     </Feature>
 
-    <CustomAction
-      Id="RunOpenDrSaiBootstrapper"
-      Directory="INSTALLFOLDER"
-      ExeCommand='powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "[INSTALLFOLDER]install-opendrsai.ps1" -RuntimeUrl "[RUNTIMEURL]" -RuntimeSha256 "[RUNTIMESHA256]" -RuntimeSizeBytes [RUNTIMESIZEBYTES] -BootstrapperVersion "[BOOTSTRAPPERVERSION]" -Quiet [EXTRAINSTALLARGS]'
-      Return="check" />
+    <Binary Id="OpenDrSaiInstallerActions" SourceFile="$(var.InstallerActionsPath)" />
 
-    <CustomAction
-      Id="RunOpenDrSaiUninstaller"
-      Directory="INSTALLFOLDER"
-      ExeCommand='powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "[INSTALLFOLDER]uninstall-opendrsai.ps1"'
-      Return="check" />
+    <CustomAction Id="SetDownloadOpenDrSaiRuntime" Property="DownloadOpenDrSaiRuntime"
+      Value='RuntimeUrl=[RUNTIMEURL];SourcePath=[OriginalDatabase];TargetPath=[INSTALLFOLDER]cache\OpenDrSaiRuntime-win-x64.zip;ExpectedSize=[RUNTIMESIZEBYTES];BootstrapperVersion=[BOOTSTRAPPERVERSION]' />
+    <CustomAction Id="SetVerifyOpenDrSaiRuntime" Property="VerifyOpenDrSaiRuntime"
+      Value='-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "[INSTALLFOLDER]install-opendrsai.ps1" -Stage Verify -RuntimeUrl "[RUNTIMEURL]" -RuntimeSha256 "[RUNTIMESHA256]" -RuntimeSizeBytes "[RUNTIMESIZEBYTES]" -BootstrapperVersion "[BOOTSTRAPPERVERSION]" -MachineInstall -NoShortcuts -NoLaunch [EXTRAINSTALLARGS]' />
+    <CustomAction Id="SetExtractOpenDrSaiRuntime" Property="ExtractOpenDrSaiRuntime"
+      Value='-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "[INSTALLFOLDER]install-opendrsai.ps1" -Stage Extract -RuntimeUrl "[RUNTIMEURL]" -RuntimeSha256 "[RUNTIMESHA256]" -RuntimeSizeBytes "[RUNTIMESIZEBYTES]" -BootstrapperVersion "[BOOTSTRAPPERVERSION]" -MachineInstall -NoShortcuts -NoLaunch [EXTRAINSTALLARGS]' />
+    <CustomAction Id="SetInstallOpenDrSaiRuntime" Property="InstallOpenDrSaiRuntime"
+      Value='-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "[INSTALLFOLDER]install-opendrsai.ps1" -Stage Install -RuntimeUrl "[RUNTIMEURL]" -RuntimeSha256 "[RUNTIMESHA256]" -RuntimeSizeBytes "[RUNTIMESIZEBYTES]" -BootstrapperVersion "[BOOTSTRAPPERVERSION]" -MachineInstall -NoShortcuts -NoLaunch [EXTRAINSTALLARGS]' />
+    <CustomAction Id="SetCompleteOpenDrSaiInstall" Property="CompleteOpenDrSaiInstall"
+      Value='-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "[INSTALLFOLDER]install-opendrsai.ps1" -Stage Complete -RuntimeUrl "[RUNTIMEURL]" -RuntimeSha256 "[RUNTIMESHA256]" -RuntimeSizeBytes "[RUNTIMESIZEBYTES]" -BootstrapperVersion "[BOOTSTRAPPERVERSION]" -MachineInstall -NoShortcuts -NoLaunch [EXTRAINSTALLARGS]' />
+    <CustomAction Id="SetRunOpenDrSaiUninstaller" Property="RunOpenDrSaiUninstaller"
+      Value='-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "[INSTALLFOLDER]uninstall-opendrsai.ps1"' />
+    <CustomAction Id="SetAdvanceVerifyProgress" Property="AdvanceVerifyProgress" Value='Ticks=50' />
+    <CustomAction Id="SetAdvanceExtractProgress" Property="AdvanceExtractProgress" Value='Ticks=200' />
+    <CustomAction Id="SetAdvanceInstallProgress" Property="AdvanceInstallProgress" Value='Ticks=120' />
+    <CustomAction Id="SetAdvanceCompleteProgress" Property="AdvanceCompleteProgress" Value='Ticks=30' />
+
+    <CustomAction Id="DownloadOpenDrSaiRuntime" BinaryKey="OpenDrSaiInstallerActions" DllEntry="DownloadRuntime"
+      Execute="deferred" Impersonate="no" Return="check" />
+    <CustomAction Id="VerifyOpenDrSaiRuntime" Directory="INSTALLFOLDER" ExeCommand='powershell.exe [VerifyOpenDrSaiRuntime]'
+      Execute="deferred" Impersonate="no" Return="check" />
+    <CustomAction Id="ExtractOpenDrSaiRuntime" Directory="INSTALLFOLDER" ExeCommand='powershell.exe [ExtractOpenDrSaiRuntime]'
+      Execute="deferred" Impersonate="no" Return="check" />
+    <CustomAction Id="InstallOpenDrSaiRuntime" Directory="INSTALLFOLDER" ExeCommand='powershell.exe [InstallOpenDrSaiRuntime]'
+      Execute="deferred" Impersonate="no" Return="check" />
+    <CustomAction Id="CompleteOpenDrSaiInstall" Directory="INSTALLFOLDER" ExeCommand='powershell.exe [CompleteOpenDrSaiInstall]'
+      Execute="deferred" Impersonate="no" Return="check" />
+    <CustomAction Id="RunOpenDrSaiUninstaller" Directory="INSTALLFOLDER" ExeCommand='powershell.exe [RunOpenDrSaiUninstaller]'
+      Execute="deferred" Impersonate="no" Return="check" />
+    <CustomAction Id="AdvanceVerifyProgress" BinaryKey="OpenDrSaiInstallerActions" DllEntry="AdvanceProgress"
+      Execute="deferred" Impersonate="no" Return="check" />
+    <CustomAction Id="AdvanceExtractProgress" BinaryKey="OpenDrSaiInstallerActions" DllEntry="AdvanceProgress"
+      Execute="deferred" Impersonate="no" Return="check" />
+    <CustomAction Id="AdvanceInstallProgress" BinaryKey="OpenDrSaiInstallerActions" DllEntry="AdvanceProgress"
+      Execute="deferred" Impersonate="no" Return="check" />
+    <CustomAction Id="AdvanceCompleteProgress" BinaryKey="OpenDrSaiInstallerActions" DllEntry="AdvanceProgress"
+      Execute="deferred" Impersonate="no" Return="check" />
 
     <InstallExecuteSequence>
-      <Custom Action="RunOpenDrSaiBootstrapper" After="InstallFinalize">NOT Installed</Custom>
-      <Custom Action="RunOpenDrSaiUninstaller" Before="RemoveFiles">REMOVE~="ALL"</Custom>
+      <Custom Action="SetDownloadOpenDrSaiRuntime" After="InstallFiles">NOT Installed</Custom>
+      <Custom Action="DownloadOpenDrSaiRuntime" After="SetDownloadOpenDrSaiRuntime">NOT Installed</Custom>
+      <Custom Action="SetVerifyOpenDrSaiRuntime" After="DownloadOpenDrSaiRuntime">NOT Installed</Custom>
+      <Custom Action="VerifyOpenDrSaiRuntime" After="SetVerifyOpenDrSaiRuntime">NOT Installed</Custom>
+      <Custom Action="SetAdvanceVerifyProgress" After="VerifyOpenDrSaiRuntime">NOT Installed</Custom>
+      <Custom Action="AdvanceVerifyProgress" After="SetAdvanceVerifyProgress">NOT Installed</Custom>
+      <Custom Action="SetExtractOpenDrSaiRuntime" After="AdvanceVerifyProgress">NOT Installed</Custom>
+      <Custom Action="ExtractOpenDrSaiRuntime" After="SetExtractOpenDrSaiRuntime">NOT Installed</Custom>
+      <Custom Action="SetAdvanceExtractProgress" After="ExtractOpenDrSaiRuntime">NOT Installed</Custom>
+      <Custom Action="AdvanceExtractProgress" After="SetAdvanceExtractProgress">NOT Installed</Custom>
+      <Custom Action="SetInstallOpenDrSaiRuntime" After="AdvanceExtractProgress">NOT Installed</Custom>
+      <Custom Action="InstallOpenDrSaiRuntime" After="SetInstallOpenDrSaiRuntime">NOT Installed</Custom>
+      <Custom Action="SetAdvanceInstallProgress" After="InstallOpenDrSaiRuntime">NOT Installed</Custom>
+      <Custom Action="AdvanceInstallProgress" After="SetAdvanceInstallProgress">NOT Installed</Custom>
+      <Custom Action="SetCompleteOpenDrSaiInstall" After="AdvanceInstallProgress">NOT Installed</Custom>
+      <Custom Action="CompleteOpenDrSaiInstall" After="SetCompleteOpenDrSaiInstall">NOT Installed</Custom>
+      <Custom Action="SetAdvanceCompleteProgress" After="CompleteOpenDrSaiInstall">NOT Installed</Custom>
+      <Custom Action="AdvanceCompleteProgress" After="SetAdvanceCompleteProgress">NOT Installed</Custom>
+      <Custom Action="SetRunOpenDrSaiUninstaller" Before="RunOpenDrSaiUninstaller">REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE</Custom>
+      <Custom Action="RunOpenDrSaiUninstaller" Before="RemoveFiles">REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE</Custom>
     </InstallExecuteSequence>
+
+    <UI>
+      <Error Id="25001">OpenDrSai Runtime download failed: [2]</Error>
+      <ProgressText Action="DownloadOpenDrSaiRuntime" Template="[1]">Downloading OpenDrSai Runtime...</ProgressText>
+      <ProgressText Action="VerifyOpenDrSaiRuntime">Verifying the downloaded package...</ProgressText>
+      <ProgressText Action="ExtractOpenDrSaiRuntime">Extracting OpenDrSai Runtime...</ProgressText>
+      <ProgressText Action="InstallOpenDrSaiRuntime">Installing OpenDrSai...</ProgressText>
+      <ProgressText Action="CompleteOpenDrSaiInstall">Finishing OpenDrSai installation...</ProgressText>
+      <ProgressText Action="RunOpenDrSaiUninstaller">Removing OpenDrSai Runtime...</ProgressText>
+    </UI>
   </Product>
 </Wix>

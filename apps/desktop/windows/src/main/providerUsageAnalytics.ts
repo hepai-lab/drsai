@@ -115,7 +115,7 @@ function isProviderUsageAnalyticsRecord(value: unknown): value is ProviderUsageA
       typeof record.requestId === "string" &&
       typeof record.sessionId === "string" &&
       typeof record.runId === "string" &&
-      (record.provider === "openai_responses" || record.provider === "anthropic") &&
+      (record.provider === "openai_responses" || record.provider === "anthropic" || record.provider === "google_gemini") &&
       typeof record.eventName === "string" &&
       typeof record.summary === "string" &&
       record.usage &&

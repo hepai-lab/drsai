@@ -1,266 +1,297 @@
-import { existsSync, readFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
 import { join } from "path";
-import type { DesktopAgent } from "../shared/desktopApi";
+import { is } from "@electron-toolkit/utils";
+import type {
+  DesktopAgent,
+  DesktopAgentListOptions,
+  DesktopAgentPreferenceResult,
+  PlatformAgentStatus,
+} from "../shared/desktopApi";
+import {
+  invalidateAuthSession,
+  refreshAuthContextAfterUnauthorized,
+  requireAuthContext,
+} from "./auth";
 import { getGatewayStatus } from "./gateway";
-import { DRSAI_ENV_FILE, DRSAI_HOME } from "./paths";
+import { DRSAI_HOME } from "./paths";
+import {
+  fetchPlatformAgents,
+  recordPlatformAgentUsage,
+  respondPlatformAgentInput,
+  setPlatformDefaultAgent,
+  stopPlatformAgentThread,
+  type PlatformAgentClientOptions,
+} from "./platformAgentClient";
+import {
+  createPublicAgentCachePayload,
+  mergeAndSortAgents,
+  parsePublicAgentCachePayload,
+  type PlatformAgentExecutionDescriptor,
+} from "./agentCatalog";
+import { recordAgentTelemetry } from "./agentTelemetry";
+import { LocalRuntimeClient } from "./runtimeClient";
 
 const LOCAL_AGENT_ID = "my-drsai";
-const HEPAI_API_BASE_URL =
-  process.env.HEPAI_API_BASE_URL?.trim().replace(/\/+$/, "") ||
-  "https://aiapi.ihep.ac.cn/apiv2";
-const REQUEST_TIMEOUT_MS = 6000;
+const PLATFORM_BASE_URL =
+  process.env.OPENDRSAI_PLATFORM_BASE_URL?.trim().replace(/\/+$/, "") ||
+  (is.dev ? "https://ai-dev.ihep.ac.cn" : "https://ai.ihep.ac.cn");
+const PLATFORM_AGENTS_ENABLED = !["0", "false", "off", "no"].includes((process.env.OPENDRSAI_PLATFORM_AGENTS_ENABLED || "true").toLowerCase());
+const PLATFORM_CHAT_ENABLED = !["0", "false", "off", "no"].includes((process.env.OPENDRSAI_PLATFORM_AGENT_CHAT_ENABLED || "true").toLowerCase());
+const PLATFORM_CACHE_PATH = join(DRSAI_HOME, "cache", "platform-agents.v1.json");
+const PLATFORM_CACHE_TTL_MS = positiveIntegerEnv("OPENDRSAI_AGENT_CACHE_TTL_MS", 2 * 60 * 60 * 1000);
 
-interface RemoteAgentConfig {
-  id?: unknown;
-  name?: unknown;
-  description?: unknown;
-  owner?: unknown;
-  url?: unknown;
-  api_key?: unknown;
-  apiKey?: unknown;
-  examples?: unknown;
-}
+let platformExecutionDescriptors = new Map<string, PlatformAgentExecutionDescriptor>();
 
-interface AgentListResponse {
-  data?: unknown;
-}
+let platformStatus: PlatformAgentStatus = {
+  state: "requires_login",
+  apiVersion: null,
+  capabilities: [],
+  message: "Sign in with HepAI to load platform agents.",
+  lastCheckedAt: null,
+};
 
-export async function listAgents(): Promise<DesktopAgent[]> {
-  const [localAgents, platformAgents, remoteAgents] = await Promise.all([
+export async function listAgents(options: DesktopAgentListOptions = {}): Promise<DesktopAgent[]> {
+  if (!PLATFORM_AGENTS_ENABLED) {
+    platformStatus = {
+      state: "native_api_unavailable",
+      apiVersion: null,
+      capabilities: [],
+      message: "Platform agents are disabled by the Windows rollout flag.",
+      lastCheckedAt: new Date().toISOString(),
+    };
+  }
+  const [localAgents, platformAgents] = await Promise.all([
     listLocalAgents(),
-    listPlatformAgents(),
-    listRemoteAgents(),
+    PLATFORM_AGENTS_ENABLED ? listPlatformAgents(options) : Promise.resolve([]),
   ]);
-  return [...localAgents, ...platformAgents, ...remoteAgents];
+  // The Agent Square has exactly two authorities: this device owns My DrSai,
+  // and HAI owns every other catalog entry. Do not merge legacy device-side
+  // remote-agent records here; those records have no platform identity
+  // or authorization context and previously made HAI agents look local.
+  const agents = mergeAndSortAgents(localAgents, platformAgents);
+  recordAgentTelemetry({ event: "catalog_refresh", source: "platform", status: platformStatus.state, count: agents.length });
+  return agents;
+}
+
+export function getPlatformAgentStatus(): PlatformAgentStatus {
+  return { ...platformStatus, capabilities: [...platformStatus.capabilities] };
+}
+
+export function getPlatformAgentExecutionDescriptor(
+  agentId: string,
+): PlatformAgentExecutionDescriptor | null {
+  const descriptor = platformExecutionDescriptors.get(agentId);
+  return descriptor ? { ...descriptor } : null;
+}
+
+export function getPlatformAgentChatUrl(platformId: string): string {
+  return `${PLATFORM_BASE_URL}/api/native/v1/agents/${encodeURIComponent(platformId)}/chat`;
+}
+
+export function isPlatformAgentExecutionAvailable(): boolean {
+  return PLATFORM_AGENTS_ENABLED && PLATFORM_CHAT_ENABLED && platformStatus.state === "ready" && platformStatus.capabilities.includes("agent-chat");
+}
+
+export async function setDefaultAgent(agentId: string): Promise<DesktopAgentPreferenceResult> {
+  if (agentId === LOCAL_AGENT_ID) {
+    recordAgentTelemetry({ event: "agent_selected", agentId, source: "local", status: "default" });
+    return { agentId, saved: true, message: "Local agent selected as the Windows default." };
+  }
+  const descriptor = getPlatformAgentExecutionDescriptor(agentId);
+  if (!descriptor) return { agentId, saved: false, message: "Agent not found in the platform catalog." };
+  const result = await setPlatformDefaultAgent(platformClientOptions(), descriptor.platformId);
+  if (result.ok) recordAgentTelemetry({ event: "agent_selected", agentId, mode: descriptor.mode, source: "platform", status: "default" });
+  return { agentId, saved: result.ok, message: result.message };
+}
+
+export async function recordAgentUsage(agentId: string): Promise<DesktopAgentPreferenceResult> {
+  if (agentId === LOCAL_AGENT_ID) {
+    return { agentId, saved: true, message: "Local agent usage recorded on this device." };
+  }
+  const descriptor = getPlatformAgentExecutionDescriptor(agentId);
+  if (!descriptor) return { agentId, saved: false, message: "Agent not found in the platform catalog." };
+  const result = await recordPlatformAgentUsage(platformClientOptions(), descriptor.platformId);
+  return { agentId, saved: result.ok, message: result.message };
+}
+
+export async function stopPlatformChat(agentId: string, threadId: string): Promise<boolean> {
+  const descriptor = getPlatformAgentExecutionDescriptor(agentId);
+  if (!descriptor) return false;
+  return (await stopPlatformAgentThread(platformClientOptions(), descriptor.platformId, threadId)).ok;
+}
+
+export async function respondToPlatformChatInput(
+  agentId: string,
+  threadId: string,
+  response: string | Record<string, unknown>,
+): Promise<boolean> {
+  const descriptor = getPlatformAgentExecutionDescriptor(agentId);
+  if (!descriptor) return false;
+  return (await respondPlatformAgentInput(platformClientOptions(), descriptor.platformId, threadId, response)).ok;
 }
 
 async function listLocalAgents(): Promise<DesktopAgent[]> {
   const gateway = await getGatewayStatus();
-  const base: DesktopAgent = {
+  const agents: DesktopAgent[] = [{
     id: LOCAL_AGENT_ID,
     name: "My DrSai",
-    description: "运行在本机的智能体。",
-    owner: "运行在本机的智能体。",
+    description: "An agent running on this computer.",
+    owner: "Local",
     source: "local",
     status: gateway.ready ? "running" : "stopped",
+    mode: "local",
+    available: gateway.ready,
+    capabilities: ["chat", "workspace", "tools"],
+    catalogGroup: "local",
+    model: "deepseek-v4-pro",
     url: gateway.baseUrl,
     error: gateway.ready
       ? undefined
       : gateway.externalConflict
-        ? "本机端口已被其他服务占用。"
-        : "本机 DrSai gateway 未启动。",
-  };
-  return [base];
-}
-
-async function listPlatformAgents(): Promise<DesktopAgent[]> {
-  const apiKey = readHepAiApiKey();
-  if (!apiKey) return [];
-
-  const response = await requestJson(joinUrl(HEPAI_API_BASE_URL, "/agents/list_agents"), {
-    Authorization: `Bearer ${apiKey}`,
-  });
-  if (!response.ok) return [];
-
-  const body = response.body as AgentListResponse;
-  const rawAgents = extractAgentArray(body);
-  return rawAgents
-    .map((agent, index) => normalizePlatformAgent(agent, index))
-    .filter((agent): agent is DesktopAgent => Boolean(agent));
-}
-
-async function listRemoteAgents(): Promise<DesktopAgent[]> {
-  const configs = readRemoteAgentConfigs();
-  return Promise.all(configs.map(checkRemoteAgent));
-}
-
-function readRemoteAgentConfigs(): RemoteAgentConfig[] {
-  const filePath =
-    process.env.OPENDRSAI_REMOTE_AGENTS_FILE ||
-    process.env.DRSAI_REMOTE_AGENTS_FILE ||
-    join(DRSAI_HOME, "remote_agents.json");
-  if (!existsSync(filePath)) return [];
+        ? "The local port is already used by another service."
+        : "The local OpenDrSai gateway is not running.",
+  }];
   try {
-    const parsed = JSON.parse(readFileSync(filePath, "utf8"));
-    return Array.isArray(parsed) ? parsed : [];
+    const capability = (await (await LocalRuntimeClient.connect()).getCapabilities()).agent_backends?.codex;
+    agents.push({
+      id: "my-codex", name: "Codex", description: "Codex Agent Backend running in this Workspace Runtime.",
+      owner: "Local", source: "local", status: capability?.available ? "running" : "stopped", mode: "local",
+      available: capability?.available === true, capabilities: ["chat", "workspace", "tools"], catalogGroup: "local",
+      model: "gpt-5.4", models: ["gpt-5.4"],
+      error: capability?.available ? undefined : capability?.reason ?? "Codex is unavailable.",
+    });
   } catch {
+    agents.push({ id: "my-codex", name: "Codex", description: "Codex Agent Backend is unavailable.", owner: "Local",
+      source: "local", status: "unreachable", mode: "local", available: false, capabilities: ["chat", "workspace", "tools"], catalogGroup: "local", error: "Runtime capability could not be read." });
+  }
+  return agents;
+}
+
+async function listPlatformAgents(options: DesktopAgentListOptions): Promise<DesktopAgent[]> {
+  try {
+    const result = await fetchPlatformAgents(platformClientOptions(options.refresh === true));
+    if (result.status.state === "ready") {
+      platformExecutionDescriptors = new Map(
+        result.executionDescriptors.map((descriptor) => [descriptor.publicId, descriptor]),
+      );
+      const syncedAt = result.status.lastCheckedAt ?? new Date().toISOString();
+      writePlatformCache(result.agents, syncedAt);
+      platformStatus = {
+        ...result.status,
+        lastSuccessfulSyncAt: syncedAt,
+        cacheState: "fresh",
+      };
+      return result.agents;
+    }
+    const cached = readPlatformCache();
+    if (cached) {
+      platformExecutionDescriptors = new Map(
+        cached.agents.map((agent) => [agent.id, cacheExecutionDescriptor(agent)]),
+      );
+      platformStatus = {
+        ...result.status,
+        message: `${result.status.message} Showing the last cached platform catalog.`,
+        lastSuccessfulSyncAt: cached.savedAt,
+        cacheState: cached.fresh ? "fresh" : "stale",
+      };
+      return cached.agents;
+    }
+    platformExecutionDescriptors.clear();
+    platformStatus = { ...result.status, lastSuccessfulSyncAt: null, cacheState: "none" };
+    return [];
+  } catch (error) {
+    const cached = readPlatformCache();
+    platformExecutionDescriptors = new Map(
+      (cached?.agents ?? []).map((agent) => [agent.id, cacheExecutionDescriptor(agent)]),
+    );
+    platformStatus = {
+      state: "error",
+      apiVersion: null,
+      capabilities: [],
+      message: error instanceof Error && error.name === "AbortError"
+        ? "Platform capability detection timed out."
+        : "Platform capability detection failed.",
+      lastCheckedAt: new Date().toISOString(),
+      lastSuccessfulSyncAt: cached?.savedAt ?? null,
+      cacheState: cached ? (cached.fresh ? "fresh" : "stale") : "none",
+    };
+    if (cached) {
+      platformStatus.message += " Showing the last cached platform catalog.";
+      return cached.agents;
+    }
+    platformStatus.message += " Local agents remain available.";
     return [];
   }
 }
 
-async function checkRemoteAgent(config: RemoteAgentConfig): Promise<DesktopAgent> {
-  const url = typeof config.url === "string" ? config.url.trim() : "";
-  const name = stringOr(config.name, "Remote Agent");
-  const id = stringOr(config.id, `remote:${url || name}`);
-  const description = stringOr(config.description, "远程连接的智能体。");
-  const owner = stringOr(config.owner, "远程智能体");
-  if (!url) {
-    return {
-      id,
-      name,
-      description,
-      owner,
-      source: "remote",
-      status: "unreachable",
-      error: "远程智能体缺少 URL。",
-    };
-  }
-
-  const headers = createRemoteHeaders(config);
-  const status = await checkRemoteBaseUrl(url, headers);
+function platformClientOptions(refresh = false): PlatformAgentClientOptions {
   return {
-    id,
-    name,
-    description,
-    owner,
-    source: "remote",
-    status: status.ok ? "running" : "unreachable",
-    url,
-    examples: normalizeExamples(config.examples),
-    error: status.ok ? undefined : status.error,
+    baseUrl: PLATFORM_BASE_URL,
+    refresh,
+    auth: {
+      getAccessToken: async () => {
+        const auth = await requireAuthContext();
+        if (auth.authMode !== "oidc" || !auth.accessToken) {
+          throw new Error("HepAI OIDC sign-in is required.");
+        }
+        return auth.accessToken;
+      },
+      refreshAfterUnauthorized: async () => {
+        const auth = await refreshAuthContextAfterUnauthorized();
+        if (!auth.accessToken) throw new Error("The refreshed session has no access token.");
+        return auth.accessToken;
+      },
+      invalidate: invalidateAuthSession,
+    },
   };
 }
 
-async function checkRemoteBaseUrl(
-  baseUrl: string,
-  headers: Record<string, string>,
-): Promise<{ ok: boolean; error?: string }> {
-  const health = await requestJson(joinUrl(baseUrl, "/health"), headers);
-  if (health.ok) return { ok: true };
-  const agents = await requestJson(joinUrl(baseUrl, "/agents/list_agents"), headers);
-  if (agents.ok) return { ok: true };
-  return { ok: false, error: health.error || agents.error };
-}
-
-async function requestJson(
-  url: string,
-  headers: Record<string, string> = {},
-): Promise<{ ok: boolean; body?: unknown; error?: string }> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+function writePlatformCache(agents: DesktopAgent[], savedAt: string): void {
+  const directory = join(DRSAI_HOME, "cache");
+  const temporaryPath = `${PLATFORM_CACHE_PATH}.tmp`;
   try {
-    const response = await fetch(url, {
-      headers,
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      return { ok: false, error: `HTTP ${response.status}` };
-    }
-    const text = await response.text();
-    return { ok: true, body: text ? JSON.parse(text) : {} };
-  } catch (error) {
-    return {
-      ok: false,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-function createRemoteHeaders(config: RemoteAgentConfig): Record<string, string> {
-  const apiKey = stringOr(config.api_key, stringOr(config.apiKey, ""));
-  return apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
-}
-
-function readHepAiApiKey(): string {
-  const envKey = process.env.HEPAI_API_KEY?.trim();
-  if (envKey) return envKey;
-  if (!existsSync(DRSAI_ENV_FILE)) return "";
-  try {
-    const content = readFileSync(DRSAI_ENV_FILE, "utf8");
-    for (const line of content.split(/\r?\n/)) {
-      const match = line.match(/^\s*HEPAI_API_KEY\s*=\s*(.+?)\s*$/);
-      if (match?.[1]?.trim()) return unquoteEnvValue(match[1].trim());
-    }
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(
+      temporaryPath,
+      `${JSON.stringify(createPublicAgentCachePayload(agents, savedAt), null, 2)}\n`,
+      { encoding: "utf8", mode: 0o600 },
+    );
+    renameSync(temporaryPath, PLATFORM_CACHE_PATH);
   } catch {
-    return "";
+    // Catalog caching is best-effort; a read-only profile must not hide live agents.
   }
-  return "";
 }
 
-function unquoteEnvValue(value: string): string {
-  if (
-    (value.startsWith('"') && value.endsWith('"')) ||
-    (value.startsWith("'") && value.endsWith("'"))
-  ) {
-    return value.slice(1, -1).trim();
+function readPlatformCache(): { agents: DesktopAgent[]; savedAt: string; fresh: boolean } | null {
+  if (!existsSync(PLATFORM_CACHE_PATH)) return null;
+  try {
+    const payload = parsePublicAgentCachePayload(
+      JSON.parse(readFileSync(PLATFORM_CACHE_PATH, "utf8")),
+    );
+    if (!payload) return null;
+    const age = Date.now() - Date.parse(payload.savedAt);
+    return {
+      agents: payload.agents,
+      savedAt: payload.savedAt,
+      fresh: Number.isFinite(age) && age >= 0 && age <= PLATFORM_CACHE_TTL_MS,
+    };
+  } catch {
+    return null;
   }
-  return value;
 }
 
-function extractAgentArray(body: AgentListResponse): unknown[] {
-  const data = body?.data;
-  if (Array.isArray(data)) return data;
-  if (data && typeof data === "object") {
-    const record = data as Record<string, unknown>;
-    if (Array.isArray(record.data)) return record.data;
-    if (Array.isArray(record.agents)) return record.agents;
-  }
-  return [];
-}
-
-function normalizePlatformAgent(value: unknown, index: number): DesktopAgent | null {
-  if (!value || typeof value !== "object") return null;
-  const agent = value as Record<string, unknown>;
-  const config = readRecord(agent.config);
-  const id = stringOr(
-    agent.id,
-    stringOr(agent.agent_id, stringOr(config.id, `hepai-agent-${index}`)),
-  );
-  const name = stringOr(
-    agent.name,
-    stringOr(config.name, stringOr(agent.worker_name, id)),
-  );
-  if (!name || isModelLikePlatformEntry(name, agent)) return null;
-  const url = stringOr(agent.url, stringOr(config.url, stringOr(config.base_url, HEPAI_API_BASE_URL)));
+function cacheExecutionDescriptor(agent: DesktopAgent): PlatformAgentExecutionDescriptor {
   return {
-    id: `hepai:${id}`,
-    name,
-    description: stringOr(agent.description, "来自 HepAI 平台的在线智能体。"),
-    owner: stringOr(agent.owner, stringOr(agent.author, "HepAI")),
-    source: "remote",
-    status: "running",
-    url,
-    model: stringOr(agent.model, stringOr(config.model, "")) || undefined,
-    examples: normalizeExamples(agent.examples),
-    logo: stringOr(agent.logo, ""),
+    publicId: agent.id,
+    platformId: agent.id.replace(/^platform:/, ""),
+    mode: agent.mode || "remote",
+    name: agent.name,
+    model: agent.model,
+    available: agent.available !== false,
   };
 }
 
-function readRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
-}
-
-function isModelLikePlatformEntry(name: string, agent: Record<string, unknown>): boolean {
-  if (agent.object === "model") return true;
-  if (agent.object === "agent") return false;
-  if (agent.mode === "ddf" || agent.mode === "remote" || agent.mode === "custom") return false;
-  return name.includes("/") && !agent.description && !agent.author && !agent.owner;
-}
-
-function joinUrl(baseUrl: string, path: string): string {
-  return `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
-}
-
-function stringOr(value: unknown, fallback: string): string {
-  return typeof value === "string" && value.trim() ? value.trim() : fallback;
-}
-
-function normalizeExamples(value: unknown): DesktopAgent["examples"] | undefined {
-  if (typeof value === "string" && value.trim()) return value.trim();
-  if (!Array.isArray(value)) return undefined;
-  const examples = value
-    .map((item) => {
-      if (typeof item === "string") return item.trim();
-      if (item && typeof item === "object") {
-        const record = item as Record<string, unknown>;
-        const en = stringOr(record.en, "");
-        const zh = stringOr(record.zh, "");
-        if (en || zh) return { en, zh };
-      }
-      return "";
-    })
-    .filter((item) => (typeof item === "string" ? item.length > 0 : item.en || item.zh));
-  return examples.length > 0 ? examples : undefined;
+function positiveIntegerEnv(name: string, fallback: number): number {
+  const parsed = Number(process.env[name]);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }

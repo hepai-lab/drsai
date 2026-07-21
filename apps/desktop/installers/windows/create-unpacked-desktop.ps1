@@ -47,8 +47,6 @@ $nodeModulesDir = Join-Path $appDir "node_modules"
 New-Item -ItemType Directory -Force -Path $nodeModulesDir | Out-Null
 foreach ($module in @(
     "@electron-toolkit",
-    "electron-updater",
-    "builder-util-runtime",
     "node-pty"
 )) {
     $source = Join-Path $windowsAppDir "node_modules\$module"

@@ -193,6 +193,11 @@ const FORK_CONFLICT_TEST_GRAPH: TestGraphRule[] = [
     match: /^apps\/webui\/backend\//,
     commands: ["python -m pytest apps/webui/backend"],
   },
+  {
+    id: "android-jvm-source",
+    match: /^apps\/android\/.*\.(java|kt|kts)$/,
+    commands: ["Run the closest Android Gradle compile or unit test when the Android toolchain is available."],
+  },
 ];
 
 const FORK_CONFLICT_IMPORT_TEST_GRAPH: TestGraphRule[] = [
@@ -230,6 +235,11 @@ const FORK_CONFLICT_IMPORT_TEST_GRAPH: TestGraphRule[] = [
     id: "python-local-import",
     match: /^(drsai|drsai_ext|drsai_ui)(?:\.|$)/,
     commands: ["Run the closest Python unit test or import smoke for this package."],
+  },
+  {
+    id: "jvm-local-import",
+    match: /^ai\.drsai\.remote(?:\.|$)/,
+    commands: ["Run the closest Android Gradle compile or unit test when the Android toolchain is available."],
   },
 ];
 
@@ -491,6 +501,9 @@ const LOCAL_MODULE_EXTENSIONS = [
   ".mdx",
   ".py",
   ".pyi",
+  ".java",
+  ".kt",
+  ".kts",
 ];
 const CONFIG_REFERENCE_ROOT_PREFIXES = [
   "apps/",
@@ -506,6 +519,9 @@ const PYTHON_PACKAGE_ROOTS = [
   { prefix: "drsai", root: "cores/python/packages/drsai/src/drsai" },
   { prefix: "drsai_ext", root: "cores/python/packages/drsai_ext/src/drsai_ext" },
   { prefix: "drsai_ui", root: "apps/webui/backend/src/drsai_ui" },
+];
+const JVM_PACKAGE_ROOTS = [
+  { prefix: "ai.drsai.remote", root: "apps/android/app/src/main/java/ai/drsai/remote" },
 ];
 
 export function splitConflictDraftLines(draft: string): string[] {
@@ -575,6 +591,7 @@ export function getForkConflictFileKind(path: string): string {
   const lowerPath = path.toLowerCase();
   if (/\.(ts|tsx|js|jsx|mjs|cjs)$/.test(lowerPath)) return "TypeScript/JavaScript";
   if (/\.(py|pyi)$/.test(lowerPath)) return "Python";
+  if (/\.(java|kt|kts)$/.test(lowerPath)) return "Java/Kotlin";
   if (/\.(css|scss|less)$/.test(lowerPath)) return "Stylesheet";
   if (/\.(md|mdx)$/.test(lowerPath)) return "Documentation";
   if (/\.(json|jsonc|ya?ml|toml)$/.test(lowerPath)) return "Configuration";
@@ -705,6 +722,29 @@ export function getForkConflictStructureSymbols(path: string, text: string): For
       }
     }
 
+    if (/\.(java|kt|kts)$/.test(lowerPath)) {
+      const jvmDeclaration = trimmed.match(
+        /^(?:public\s+|private\s+|protected\s+|internal\s+|open\s+|final\s+|abstract\s+|sealed\s+|data\s+|value\s+)*((?:enum\s+)?class|interface|object|fun)\s+([A-Za-z_][\w]*)/,
+      );
+      if (jvmDeclaration) {
+        addForkConflictStructureSymbol(
+          symbols,
+          seen,
+          jvmDeclaration[1].replace(/\s+/g, " "),
+          jvmDeclaration[2],
+          trimmed,
+          lineNumber,
+          "jvm-static-parser",
+          scope,
+        );
+        if (jvmDeclaration[1] !== "fun") {
+          scopeStack.push({ name: jvmDeclaration[2], depth: braceDepth + 1, indent });
+        }
+        braceDepth = Math.max(0, braceDepth + getBraceDepth(line));
+        return;
+      }
+    }
+
     if (/\.(css|scss|less)$/.test(lowerPath) && trimmed.includes("{") && !trimmed.startsWith("@")) {
       const selector = trimmed.slice(0, trimmed.indexOf("{")).trim();
       if (selector) {
@@ -822,6 +862,7 @@ function collectForkConflictImportSpecifiers(contents?: ForkConflictContentSet):
     specifiers.push(...collectForkConflictConfigReferenceSpecifiers(content));
     specifiers.push(...collectForkConflictPackageEntrySpecifiers(content));
     specifiers.push(...collectForkConflictPythonImportSpecifiers(content));
+    specifiers.push(...collectForkConflictJvmImportSpecifiers(content));
   }
   return Array.from(new Set(specifiers)).slice(0, 24);
 }
@@ -938,6 +979,21 @@ function collectForkConflictPythonImportSpecifiers(content: string): string[] {
   return specifiers;
 }
 
+function collectForkConflictJvmImportSpecifiers(content: string): string[] {
+  const specifiers: string[] = [];
+  const importPattern = /^\s*import\s+(?:static\s+)?([A-Za-z_][\w.]*(?:\.\*)?(?:\s+as\s+[A-Za-z_][\w]*)?)/gm;
+  for (const match of content.matchAll(importPattern)) {
+    const specifier = (match[1] ?? "")
+      .trim()
+      .replace(/\s+as\s+[A-Za-z_][\w]*$/i, "")
+      .replace(/\.\*$/, "");
+    if (/^[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)+$/.test(specifier)) {
+      specifiers.push(specifier);
+    }
+  }
+  return specifiers.slice(0, 16);
+}
+
 function parseForkConflictPythonImportedNames(value: string): string[] {
   return value
     .replace(/[()]/g, "")
@@ -1026,6 +1082,17 @@ function addForkConflictPythonPackageCandidate(candidates: Set<string>, specifie
   }
 }
 
+function addForkConflictJvmPackageCandidate(candidates: Set<string>, specifier: string): void {
+  for (const packageRoot of JVM_PACKAGE_ROOTS) {
+    if (specifier !== packageRoot.prefix && !specifier.startsWith(`${packageRoot.prefix}.`)) continue;
+    const moduleSuffix = specifier.slice(packageRoot.prefix.length).replace(/^\./, "").replace(/\./g, "/");
+    addForkConflictModuleCandidate(
+      candidates,
+      moduleSuffix ? `${packageRoot.root}/${moduleSuffix}` : packageRoot.root,
+    );
+  }
+}
+
 function collectForkConflictRepositoryPathCandidates(
   path: string,
   contents?: ForkConflictContentSet,
@@ -1062,6 +1129,7 @@ function collectForkConflictRepositoryPathCandidates(
       continue;
     }
     addForkConflictPythonPackageCandidate(candidates, specifier);
+    addForkConflictJvmPackageCandidate(candidates, specifier);
   }
   return Array.from(candidates).slice(0, 48);
 }
@@ -1073,7 +1141,7 @@ function getForkConflictModuleKey(path: string): string | null {
     .replace(/\/index\.(ts|tsx|js|jsx|mjs|cjs|json|css|scss|less|md|mdx)$/i, "")
     .replace(/\.(jsonc|ya?ml|toml|ps1|cmd)$/i, "")
     .replace(/\/__init__\.(py|pyi)$/i, "");
-  const withoutExtension = withoutIndex.replace(/\.(ts|tsx|js|jsx|mjs|cjs|json|jsonc|css|scss|less|md|mdx|py|pyi|ya?ml|toml|ps1|cmd)$/i, "");
+  const withoutExtension = withoutIndex.replace(/\.(ts|tsx|js|jsx|mjs|cjs|json|jsonc|css|scss|less|md|mdx|py|pyi|java|kt|kts|ya?ml|toml|ps1|cmd)$/i, "");
   return withoutExtension.toLowerCase();
 }
 
@@ -1518,6 +1586,9 @@ function getForkConflictExportSurfaceCommands(path: string): string[] {
   if (/(workflowmarketplace|workflowruns|backgroundtasks|scheduledtasks)/.test(normalizedPath)) {
     commands.add("npm run verify:workflow-marketplace");
   }
+  if (/^apps\/android\//.test(normalizedPath) || /\.(java|kt|kts)$/i.test(normalizedPath)) {
+    commands.add("Run the closest Android Gradle compile or unit test when the Android toolchain is available.");
+  }
   if (commands.size === 0 && collectForkConflictExportSymbols(path, "").length === 0) {
     commands.add(/\.(py|pyi)$/i.test(path) ? "Run the closest Python import smoke." : "Run the nearest import/typecheck smoke.");
   }
@@ -1773,6 +1844,8 @@ export function getForkConflictGeneratedRepositoryImportIndexSuggestions(
                   ? "exposes as package entry"
                 : importerKind === "python-import"
                   ? "imports from Python"
+                : importerKind === "jvm-import"
+                  ? "imports from JVM"
                 : "imports";
       for (const command of importer.commands) {
         suggestions.push(
@@ -1809,6 +1882,8 @@ export function getForkConflictTestSuggestions(path: string, unresolvedMarkers: 
     suggestions.push("Run the Windows desktop renderer or node verification that imports this module.");
   } else if (/\.(py|pyi)$/.test(lowerPath)) {
     suggestions.push("Run the closest Python unit test or import smoke for this package.");
+  } else if (/\.(java|kt|kts)$/.test(lowerPath)) {
+    suggestions.push("Run the closest Android Gradle compile or unit test when the Android toolchain is available.");
   } else if (/\.(css|scss|less)$/.test(lowerPath)) {
     suggestions.push("Run the UI verification and manually inspect the affected responsive surface.");
   } else if (/\.(json|jsonc|ya?ml|toml)$/.test(lowerPath)) {

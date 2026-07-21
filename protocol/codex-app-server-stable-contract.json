@@ -1,0 +1,26 @@
+{
+  "contractVersion": 1,
+  "experimentalApi": false,
+  "clientMethods": {
+    "initialize": ["clientInfo"],
+    "model/list": ["includeHidden"],
+    "thread/start": ["cwd", "model"],
+    "thread/resume": ["threadId"],
+    "thread/read": ["threadId", "includeTurns"],
+    "turn/start": ["threadId", "input", "model"],
+    "turn/interrupt": ["threadId", "turnId"],
+    "account/read": ["refreshToken"],
+    "account/login/start": ["type"],
+    "account/login/cancel": ["loginId"],
+    "account/logout": []
+  },
+  "serverRequests": [
+    "item/commandExecution/requestApproval",
+    "item/fileChange/requestApproval",
+    "item/permissions/requestApproval"
+  ],
+  "notifications": [
+    "item/agentMessage/delta",
+    "turn/completed"
+  ]
+}

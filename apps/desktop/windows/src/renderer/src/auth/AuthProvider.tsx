@@ -1,5 +1,12 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import type { AuthSession, DesktopSsoPollResult, DesktopSsoStartResult, LoginRequest } from "@shared/desktopApi";
+import type {
+  AuthSession,
+  DesktopA5ServiceGuidanceScenario,
+  DesktopBootstrapBlocker,
+  DesktopSsoPollResult,
+  DesktopSsoStartResult,
+  LoginRequest,
+} from "@shared/desktopApi";
 import { desktopApi } from "../desktopApi";
 
 interface AuthContextValue {
@@ -8,6 +15,7 @@ interface AuthContextValue {
   logoutBusy: boolean;
   serviceBusy: boolean;
   serviceReady: boolean;
+  serviceBlocker: DesktopBootstrapBlocker | null;
   message: string | null;
   session: AuthSession;
   login: (request: LoginRequest) => Promise<boolean>;
@@ -39,12 +47,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
   const [logoutBusy, setLogoutBusy] = useState(false);
   const [serviceBusy, setServiceBusy] = useState(false);
   const [serviceReady, setServiceReady] = useState(false);
+  const [serviceBlocker, setServiceBlocker] = useState<DesktopBootstrapBlocker | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+
+  function applyA5ServiceGuidanceScenario(scenario: DesktopA5ServiceGuidanceScenario): void {
+    setSession(scenario.session);
+    setServiceReady(false);
+    setServiceBlocker(scenario.blocker);
+    setMessage(scenario.message);
+  }
+
+  async function loadA5ServiceGuidanceScenario(): Promise<boolean> {
+    const scenario = await desktopApi.getA5ServiceGuidanceScenario();
+    if (!scenario) return false;
+    applyA5ServiceGuidanceScenario(scenario);
+    return true;
+  }
 
   async function refresh(): Promise<void> {
     const next = await desktopApi.getAuthSession();
     setSession(next);
-    if (next.authenticated) await retryBootstrap();
+    if (next.authenticated) {
+      if (next.authMode === "offline") {
+        setServiceReady(true);
+        setServiceBlocker(null);
+        setMessage("Developer workspace unlocked.");
+        return;
+      }
+      void retryBootstrap();
+    }
   }
 
   async function retryBootstrap(): Promise<boolean> {
@@ -52,11 +83,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     try {
       const bootstrap = await desktopApi.bootstrapDesktop();
       setServiceReady(bootstrap.ready);
+      setServiceBlocker(bootstrap.ready ? null : bootstrap.blocker ?? classifyBootstrapBlocker(bootstrap.message));
       setMessage(bootstrap.message);
       return bootstrap.ready;
     } catch (error) {
       setServiceReady(false);
-      setMessage(error instanceof Error ? error.message : "OpenDrSai service preparation failed.");
+      const nextMessage = error instanceof Error ? error.message : "OpenDrSai service preparation failed.";
+      setServiceBlocker(classifyBootstrapBlocker(nextMessage));
+      setMessage(nextMessage);
       return false;
     } finally {
       setServiceBusy(false);
@@ -67,9 +101,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     const unsubscribe = desktopApi.onAuthSessionInvalidated(() => {
       setSession(anonymousSession);
       setServiceReady(false);
+      setServiceBlocker({
+        kind: "auth_required",
+        title: "Sign in required",
+        message: "Your HepAI session is no longer valid. Sign in again before starting tasks.",
+        retryable: false,
+        canRepairRuntime: false,
+        canSignInAgain: true,
+        diagnosticCode: "auth-session-invalidated",
+      });
       setMessage("Your HepAI session is no longer valid. Sign in again.");
     });
-    refresh()
+    loadA5ServiceGuidanceScenario()
+      .then((handled) => {
+        if (handled) return undefined;
+        return refresh();
+      })
       .catch((error) => {
         setMessage(error instanceof Error ? error.message : "Could not read sign-in state.");
         setSession(anonymousSession);
@@ -77,6 +124,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       .finally(() => setLoading(false));
     return unsubscribe;
   }, []);
+
+  useEffect(() => {
+    if (
+      !session.authenticated ||
+      session.authMode === "offline" ||
+      serviceReady ||
+      serviceBusy ||
+      (serviceBlocker && serviceBlocker.kind !== "service_unavailable")
+    ) {
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      void retryBootstrap();
+    }, 1500);
+    return () => window.clearTimeout(timer);
+  }, [
+    serviceBlocker?.kind,
+    serviceBusy,
+    serviceReady,
+    session.authMode,
+    session.authenticated,
+  ]);
 
   async function login(request: LoginRequest): Promise<boolean> {
     setLoginBusy(true);
@@ -86,6 +155,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       setMessage(result.message);
       if (result.ok && result.session) {
         setSession(result.session);
+        setServiceBlocker(null);
+        if (result.session.authMode === "offline") {
+          setServiceReady(true);
+        }
         return true;
       }
       return false;
@@ -104,7 +177,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       const result = await desktopApi.startOidcLogin(request);
       if (result.ok && result.session) {
         setSession(result.session);
-        return retryBootstrap();
+        void retryBootstrap();
+        return true;
       }
       setMessage(result.message);
       return false;
@@ -189,6 +263,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       setMessage(result.message);
       setSession(anonymousSession);
       setServiceReady(false);
+      setServiceBlocker(null);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Sign-out failed.");
     } finally {
@@ -203,6 +278,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       logoutBusy,
       serviceBusy,
       serviceReady,
+      serviceBlocker,
       message,
       session,
       login,
@@ -217,10 +293,56 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       retryBootstrap,
       clearMessage: () => setMessage(null),
     }),
-    [loading, loginBusy, logoutBusy, serviceBusy, serviceReady, message, session],
+    [loading, loginBusy, logoutBusy, serviceBusy, serviceReady, serviceBlocker, message, session],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+function classifyBootstrapBlocker(message: string): DesktopBootstrapBlocker {
+  const raw = message.trim();
+  if (/sign[- ]?in|oidc|auth|session|token/i.test(raw)) {
+    return {
+      kind: "auth_required",
+      title: "Sign in required",
+      message: "OpenDrSai needs a valid HepAI sign-in before it can prepare task services.",
+      retryable: false,
+      canRepairRuntime: false,
+      canSignInAgain: true,
+      diagnosticCode: "auth-required",
+    };
+  }
+  if (/no available|permission|forbidden|cannot use|not authorized|unauthorized|account/i.test(raw)) {
+    return {
+      kind: "permission_denied",
+      title: "Account has no available service",
+      message: "This account does not currently have permission to use an OpenDrSai model service.",
+      retryable: true,
+      canRepairRuntime: false,
+      canSignInAgain: true,
+      diagnosticCode: "account-service-unavailable",
+    };
+  }
+  if (/runtime|install|repair|python|drsai-cli|backend/i.test(raw)) {
+    return {
+      kind: "runtime_missing",
+      title: "Local runtime needs repair",
+      message: "The local runtime required to run tasks is missing or needs repair.",
+      retryable: true,
+      canRepairRuntime: true,
+      canSignInAgain: false,
+      diagnosticCode: "runtime-check-required",
+    };
+  }
+  return {
+    kind: "service_unavailable",
+    title: "Local service is not available",
+    message: "OpenDrSai could not start or reach the local task service. No task was sent.",
+    retryable: true,
+    canRepairRuntime: false,
+    canSignInAgain: false,
+    diagnosticCode: "service-unavailable",
+  };
 }
 
 export function useAuth(): AuthContextValue {

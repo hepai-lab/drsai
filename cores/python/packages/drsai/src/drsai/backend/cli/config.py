@@ -1,4 +1,4 @@
-"""Configuration management for DrSai CLI.
+"""Configuration management for OpenDrSai CLI.
 
 Handles loading, saving, and display of the CLI connection configuration.
 Sensitive values (API keys) are always masked when displayed.

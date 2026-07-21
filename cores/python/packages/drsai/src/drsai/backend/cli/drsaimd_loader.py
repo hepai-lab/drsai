@@ -1,8 +1,8 @@
 """
-DrSai Project Instructions Loader (DRSAI.md / CLAUDE.md)
+OpenDrSai Project Instructions Loader (DRSAI.md / CLAUDE.md)
 
 从当前工作目录向上遍历目录树，发现并加载项目级指令文件。
-设计灵感来自 Claude Code 的 CLAUDE.md 机制，但适配 DrSai 的架构。
+设计灵感来自 Claude Code 的 CLAUDE.md 机制，但适配 OpenDrSai 的架构。
 
 核心功能:
 1. 从 cwd 向上遍历发现 DRSAI.md / CLAUDE.md / AGENTS.md 等项目级指令文件
@@ -13,10 +13,10 @@ DrSai Project Instructions Loader (DRSAI.md / CLAUDE.md)
 6. /memory 命令：查看和重新加载项目指令
 
 文件发现优先级（每个目录层级内）:
-1. .drsai/DRSAI.md          — DrSai 原生格式（推荐，优先读取）
+1. .drsai/DRSAI.md          — OpenDrSai 原生格式（推荐，优先读取）
 2. .drsai/CLAUDE.md         — .drsai/ 内的 Claude 兼容格式（后备）
 3. .claude/CLAUDE.md        — .claude/ 内的 Claude Code 兼容格式
-4. .claude/DRSAI.md         — .claude/ 内的 DrSai 格式
+4. .claude/DRSAI.md         — .claude/ 内的 OpenDrSai 格式
 5. DRSAI.md                  — 项目根目录直放
 6. CLAUDE.md                 — Claude Code 兼容直放
 
@@ -56,7 +56,7 @@ from loguru import logger
 # 项目级指令文件名（优先级从高到低：同一目录内只取第一个匹配的）
 # 注意：.drsai/ 整体优先级高于 .claude/，见 discover_project_md_files()
 PROJECT_MD_NAMES = [
-    "DRSAI.md",       # DrSai 原生格式（优先）
+    "DRSAI.md",       # OpenDrSai 原生格式（优先）
     "CLAUDE.md",      # Claude Code 兼容格式（后备）
 ]
 
@@ -424,10 +424,10 @@ def init_project_instructions(workdir: str) -> Tuple[str, bool]:
 
     content = f"""# Project Instructions: {project_name}
 
-<!-- This file contains project-level instructions for DrSai. -->
+<!-- This file contains project-level instructions for OpenDrSai. -->
 <!-- It is loaded at the start of every session and injected into the system prompt. -->
 <!-- HTML comments like this one are stripped before injection, saving context tokens. -->
-<!-- Edit this file to add project-specific instructions that DrSai should follow. -->
+<!-- Edit this file to add project-specific instructions that OpenDrSai should follow. -->
 
 ## Project Overview
 - **Project name:** {project_name}
@@ -436,7 +436,7 @@ def init_project_instructions(workdir: str) -> Tuple[str, bool]:
 - **Version control:** {'git' if has_git else 'none detected'}
 
 ## Build & Test Commands
-<!-- Add the exact commands DrSai should use for building, testing, and running your project. -->
+<!-- Add the exact commands OpenDrSai should use for building, testing, and running your project. -->
 <!-- Be specific: "Run `pytest tests/` before committing" instead of "Test your changes". -->
 {'- Build: `pip install -e .`' if has_pyproject else '- Build: (add your build command)'}
 {'- Test: `pytest`' if has_pyproject else '- Test: (add your test command)'}
@@ -451,13 +451,13 @@ def init_project_instructions(workdir: str) -> Tuple[str, bool]:
 - Prefer tools over prose; act, don't just explain
 
 ## Architecture & Key Decisions
-<!-- Describe important architectural decisions that new team members (or DrSai) need to know. -->
+<!-- Describe important architectural decisions that new team members (or OpenDrSai) need to know. -->
 <!-- Example: "API handlers live in src/api/handlers/" instead of "Keep files organized" -->
 - Key directories:
 
 ## Common Workflows
 <!-- Document workflows that are repeated frequently. -->
-<!-- When DrSai makes the same mistake twice, add a rule here. -->
+<!-- When OpenDrSai makes the same mistake twice, add a rule here. -->
 
 ## Import Example
 <!-- You can import other files using @path syntax. These are expanded at load time. -->

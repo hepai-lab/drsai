@@ -44,13 +44,13 @@ export function AgentFileActivityPanel({
     <section className="files-agent-activity" aria-label="Agent file activity">
       <div className="files-agent-activity-title">
         <History size={13} />
-        <span>{zh ? "Agent 文件痕迹" : "Agent File Trace"}</span>
+        <span>{zh ? "智能体文件记录" : "Agent File Trace"}</span>
         <small>{events.length} events · {scopeId}</small>
       </div>
       {events.length === 0 ? (
         <p>
           {zh
-            ? "尚无文件上下文授权。真实 Agent 读写痕迹将在后续事件流接入。"
+            ? "尚无文件使用授权。智能体读写记录会在这里显示。"
             : "No file context authorization yet. Real agent read/write traces will attach to this surface later."}
         </p>
       ) : (

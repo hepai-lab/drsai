@@ -30,7 +30,7 @@ export function DirectoryContextPreview({
       </header>
       <p>
         {zh
-          ? "目录上下文会作为可见清单加入 Agent 上下文，不会悄悄发送所有文件内容。"
+          ? "目录内容会作为可见清单交给智能体，不会悄悄发送所有文件内容。"
           : "Folder context is attached as a visible manifest, not silent full file contents."}
       </p>
       <ul>

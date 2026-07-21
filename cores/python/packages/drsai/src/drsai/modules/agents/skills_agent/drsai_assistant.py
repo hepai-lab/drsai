@@ -106,6 +106,32 @@ from .managers import ScheduledTask, ScheduleType, TaskStatus
 from .daemon_subagent import DaemonSubagent
 from drsai.modules.components.memory import CuratedMemoryStore
 
+
+def is_retryable_llm_error(error: BaseException) -> bool:
+    """Return whether retrying can plausibly succeed without user action."""
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        status = getattr(current, "status_code", None)
+        if status is None:
+            status = getattr(getattr(current, "response", None), "status_code", None)
+        if isinstance(status, int):
+            return status in {408, 409, 429} or status >= 500
+        if isinstance(current, (asyncio.TimeoutError, TimeoutError, ConnectionError)):
+            return True
+        if type(current).__name__ in {
+            "APIConnectionError",
+            "APITimeoutError",
+            "ConnectError",
+            "ConnectTimeout",
+            "ReadError",
+            "ReadTimeout",
+        }:
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
 # ── Built-in subagent definitions ──────────────────────────────────────────
 BUILTIN_SUBAGENTS: Dict[str, Dict[str, Any]] = {
     "explore": {
@@ -264,7 +290,7 @@ class DrSaiAssistant(DrSaiAgent):
         # context type selection
         context_type: str = "sqlite",  # "ragflow" or "sqlite"
         # LLM retry configuration
-        llm_max_retries: int = 10,  # Max retries on model error or empty output
+        llm_max_retries: int = 3,  # Retry bounded transient failures only
         llm_retry_base_delay: float = 2.0,  # Base delay (s) for exponential backoff
     ):
         super().__init__(
@@ -1404,6 +1430,9 @@ class DrSaiAssistant(DrSaiAgent):
                         #    immediately instead of entering the retry loop.
                         if cancellation_token.is_cancelled():
                             raise asyncio.CancelledError()
+
+                        if not is_retryable_llm_error(llm_err):
+                            raise
 
                         # ── Model API error — retriable ──────────────────────
                         if llm_retry_count < self._llm_max_retries:
@@ -3162,7 +3191,7 @@ class DrSaiAssistant(DrSaiAgent):
                     is_error = False,
                 ),]
             ))
-            # send text message to save to db in drsai ui
+            # send text message to save to db in OpenDrSai UI
             yield TextMessage(
                 content=warning_prefix + todo_list,
                 source=self._user_profile_manager.agent_name,

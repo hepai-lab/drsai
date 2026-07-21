@@ -6,10 +6,11 @@ import drsai.backend.gateway as gateway
 
 
 class FakeResponse:
-    def __init__(self, status_code=200, payload=None, invalid_json=False):
+    def __init__(self, status_code=200, payload=None, invalid_json=False, content=b"fixture-audio"):
         self.status_code = status_code
         self._payload = payload or {}
         self._invalid_json = invalid_json
+        self.content = content
 
     def json(self):
         if self._invalid_json:
@@ -19,6 +20,7 @@ class FakeResponse:
 
 class FakeAsyncClient:
     response = FakeResponse(200, {"text": "hello voice", "language": "en"})
+    last_post_kwargs = None
 
     def __init__(self, **_kwargs):
         pass
@@ -30,6 +32,7 @@ class FakeAsyncClient:
         return None
 
     async def post(self, *_args, **_kwargs):
+        type(self).last_post_kwargs = _kwargs
         return self.response
 
 
@@ -55,6 +58,14 @@ try:
     assert response.status_code == 200, response.text
     assert response.json()["text"] == "hello voice"
 
+    response = client.post(
+        "/v1/audio/transcriptions",
+        data={"language": "en-US"},
+        files={"file": ("voice.webm", b"\x1a\x45\xdf\xa3data", "audio/webm")},
+    )
+    assert response.status_code == 200, response.text
+    assert FakeAsyncClient.last_post_kwargs["data"]["language"] == "en"
+
     FakeAsyncClient.response = FakeResponse(429, {"error": {"message": "slow down"}})
     response = client.post("/v1/audio/transcriptions", files={"file": ("voice.wav", b"RIFFdata", "audio/wav")})
     assert response.status_code == 429, response.text
@@ -66,6 +77,21 @@ try:
     FakeAsyncClient.response = FakeResponse(200, invalid_json=True)
     response = client.post("/v1/audio/transcriptions", files={"file": ("voice.wav", b"RIFFdata", "audio/wav")})
     assert response.status_code == 502, response.text
+
+    FakeAsyncClient.response = FakeResponse(200, content=b"ID3fixture")
+    response = client.post("/v1/audio/speech", json={"text": "hello", "format": "mp3"})
+    assert response.status_code == 200, response.text
+    assert response.content == b"ID3fixture"
+
+    response = client.post("/v1/audio/speech", json={"text": "", "format": "mp3"})
+    assert response.status_code == 400, response.text
+
+    response = client.post("/v1/audio/speech", json={"text": "hello", "speed": 3})
+    assert response.status_code == 400, response.text
+
+    FakeAsyncClient.response = FakeResponse(429, {"error": {"message": "slow down"}})
+    response = client.post("/v1/audio/speech", json={"text": "hello"})
+    assert response.status_code == 429, response.text
 finally:
     gateway.httpx.AsyncClient = original_client
     if original_key is None:
@@ -73,4 +99,4 @@ finally:
     else:
         os.environ["HEPAI_API_KEY"] = original_key
 
-print("Voice provider behavior tests passed (7 cases).")
+print("Voice provider behavior tests passed (12 cases).")

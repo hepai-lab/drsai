@@ -3,7 +3,6 @@ import type {
   ChatAttachment,
   ChatEvent,
   ChatMessage,
-  ChatMessagePart,
   DesktopApprovalProposalResult,
   DesktopAgent,
   DesktopCommitApprovalChecklist,
@@ -11,6 +10,8 @@ import type {
   DesktopForkQueueDispatchResult,
   DesktopForkQueueStartApprovalResult,
   DesktopProjectMemoryEntry,
+  DesktopTeamMemoryEntry,
+  DesktopUserPreference,
   DesktopThread,
   DesktopThreadSnapshot,
   MyDrSaiModelConfig,
@@ -20,6 +21,16 @@ import type {
   WorkspaceContextOverview,
   WorkspaceInstructionSummary,
 } from "@shared/desktopApi";
+import {
+  applyStructuredConversationEvent,
+  createStructuredTurnState,
+  migrateLegacyMessageToStructuredTurn,
+  settleInterruptedStructuredTurn,
+  type StructuredAssistantPart,
+  type StructuredActivityEvent,
+  type StructuredConversationEvent,
+  type StructuredTurnState,
+} from "@shared/structuredConversation";
 import {
   parseChatCommand,
   parseForkQueueEntries,
@@ -31,11 +42,27 @@ import {
 } from "../chatCommands";
 import type { ChatSubmitOptions, UiMessage } from "../components/ChatWorkspace";
 import { desktopApi } from "../desktopApi";
+import { emitAssistantSpeechStreamEvent } from "../voice/streaming/assistantSpeechStream";
 import {
   formatRecentTerminalTestResult,
   readRecentTerminalTestResult,
 } from "../terminalTestResults";
 import { acceptChatEventSequence, getVisibleChatText } from "../chatOutputModel";
+import {
+  appendDebugLog,
+  appendStructuredActivityLog,
+  appendStructuredProtocolLog,
+} from "../debugLogStore";
+import {
+  analyzeMemorySafetyIntent,
+  buildUserPreferenceSystemSection,
+  formatMemorySafetyNotice,
+  formatAppliedPreferenceNotice,
+  formatPreferenceConfirmation,
+  isPreferenceOnlyRequest,
+  parseExplicitUserPreferenceIntent,
+  redactSensitiveMemoryText,
+} from "../userPreferenceIntent";
 
 export interface DesktopChatAdapter {
   activeRequestId: string | null;
@@ -76,6 +103,7 @@ export function useDesktopChatAdapter({
   threadId,
   threadSnapshot,
   workspaceInstructions,
+  workspaceId,
   workspacePath,
 }: {
   availableAgents?: DesktopAgent[];
@@ -92,32 +120,151 @@ export function useDesktopChatAdapter({
   threadId: string;
   threadSnapshot?: ChatThreadSnapshot | null;
   workspaceInstructions?: WorkspaceInstructionSummary[];
+  workspaceId?: string;
   workspacePath?: string;
 }): DesktopChatAdapter {
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<UiMessage[]>([createWelcomeMessage(language)]);
+  const [messages, setMessages] = useState<UiMessage[]>([createWelcomeMessage(language, [])]);
   const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
   const [currentRuntimeMode, setCurrentRuntimeMode] = useState<ChatRuntimeMode | null>(null);
   const [commandAttachments, setCommandAttachments] = useState<ChatAttachment[]>([]);
   const [customCommands, setCustomCommands] = useState<DesktopCustomCommand[]>([]);
   const [projectMemory, setProjectMemory] = useState<DesktopProjectMemoryEntry[]>([]);
+  const [userPreferences, setUserPreferences] = useState<DesktopUserPreference[]>([]);
   const streamingAssistantByRequest = useRef<Record<string, string>>({});
+  const structuredRequests = useRef<Set<string>>(new Set());
+  const completedStructuredRequests = useRef<Set<string>>(new Set());
   const lastSequenceByRequest = useRef<Record<string, number>>({});
   const pendingDeltasByRequest = useRef<Record<string, { text: string; reasoning: string }>>({});
   const deltaFlushTimerRef = useRef<number | null>(null);
+  const recoveryTimersRef = useRef<Record<string, number>>({});
+  const restoredSnapshotThreadRef = useRef<string | null>(null);
+  const pendingStructuredEventsByRequest = useRef<Record<string, StructuredConversationEvent[]>>({});
+  const structuredFlushTimerRef = useRef<number | null>(null);
   const threadIdRef = useRef(threadId);
   const languageRef = useRef(language);
   const developerModeRef = useRef(developerMode);
   const currentRuntimeModeRef = useRef<ChatRuntimeMode | null>(null);
   const customCommandsRef = useRef<DesktopCustomCommand[]>([]);
   const projectMemoryRef = useRef<DesktopProjectMemoryEntry[]>([]);
+  const teamMemoryRef = useRef<DesktopTeamMemoryEntry[]>([]);
+  const userPreferencesRef = useRef<DesktopUserPreference[]>([]);
+
+  function clearRecoveryTimers(): void {
+    Object.values(recoveryTimersRef.current).forEach((timer) => window.clearTimeout(timer));
+    recoveryTimersRef.current = {};
+  }
+
+  function clearStructuredFlush(): void {
+    pendingStructuredEventsByRequest.current = {};
+    if (structuredFlushTimerRef.current !== null) window.clearTimeout(structuredFlushTimerRef.current);
+    structuredFlushTimerRef.current = null;
+  }
+
+  function applyStructuredEventBatch(requestId: string, events: StructuredConversationEvent[]): void {
+    if (!events.length) return;
+    const assistantId = streamingAssistantByRequest.current[requestId];
+    setMessages((current) => {
+      const updated = updateAssistantByIdOrLatestStreaming(current, assistantId, (message) =>
+        events.reduce(applyStructuredEventToMessage, message),
+      );
+      return publishAndReturn(
+        events.some((event) => event.type === "turn.error")
+          ? settleAssistantAfterHiddenError(updated, assistantId)
+          : updated,
+      );
+    });
+  }
+
+  function flushStructuredEventDeltas(): void {
+    structuredFlushTimerRef.current = null;
+    const pending = pendingStructuredEventsByRequest.current;
+    pendingStructuredEventsByRequest.current = {};
+    setMessages((current) => {
+      let next = current;
+      for (const [requestId, events] of Object.entries(pending)) {
+        const assistantId = streamingAssistantByRequest.current[requestId];
+        next = updateAssistantByIdOrLatestStreaming(next, assistantId, (message) =>
+          events.reduce(applyStructuredEventToMessage, message),
+        );
+      }
+      return next === current ? current : publishAndReturn(next);
+    });
+  }
+
+  function restoreActiveStructuredTurns(snapshotMessages: UiMessage[]): void {
+    clearRecoveryTimers();
+    let latestActiveRequestId: string | null = null;
+    for (const message of snapshotMessages) {
+      const turn = message.structuredTurn;
+      const hasRecoveryNotice = turn?.parts.some((part) =>
+        part.kind === "notice" && typeof part.debugRef === "string" && part.debugRef.startsWith("recovery:"),
+      );
+      const isActive = turn?.status === "pending" || turn?.status === "running";
+      if (message.role !== "assistant" || !turn || (!isActive && !hasRecoveryNotice) || turn.turnId.startsWith("legacy:")) continue;
+      const requestId = turn.turnId;
+      if (isActive) latestActiveRequestId = requestId;
+      streamingAssistantByRequest.current[requestId] = message.id;
+      structuredRequests.current.add(requestId);
+      if (isActive) {
+        recoveryTimersRef.current[requestId] = window.setTimeout(() => {
+          setMessages((current) => publishAndReturn(current.map((candidate) => {
+            if (candidate.structuredTurn?.turnId !== turn.turnId) return candidate;
+            const settled = settleInterruptedStructuredTurn(
+              candidate.structuredTurn,
+              languageRef.current === "zh"
+                ? "桌面端未能重新连接到这次运行。已保留收到的内容，你可以重新发送请求。"
+                : "The desktop could not reconnect to this run. Received content was kept; you can send the request again.",
+            );
+            if (settled === candidate.structuredTurn) return candidate;
+            return { ...candidate, structuredTurn: settled, streaming: false, lastEventAt: Date.now() };
+          })));
+          setActiveRequestId((current) => current === requestId ? null : current);
+          delete recoveryTimersRef.current[requestId];
+          appendDebugLog("warn", `Structured turn recovery timed out: ${requestId}`, "chat");
+        }, 30_000);
+      }
+      void desktopApi.recoverChatRun({ requestId, sessionId: threadIdRef.current })
+        .then((events) => {
+          if (!events.length) return;
+          // Runtime recovery emits the same normalized chunks as a live Codex
+          // stream. Do not suppress them merely because the snapshot used the
+          // structured-turn representation before Electron restarted.
+          structuredRequests.current.delete(requestId);
+          if (hasRecoveryNotice) {
+            setMessages((current) => current.map((candidate) =>
+              candidate.structuredTurn?.turnId === requestId
+                ? {
+                    ...candidate,
+                    content: "",
+                    error: false,
+                    streaming: true,
+                    structuredTurn: createStructuredTurnState(requestId),
+                    lastEventAt: Date.now(),
+                  }
+                : candidate,
+            ));
+          }
+          window.setTimeout(() => events.forEach(applyChatEvent), 0);
+        })
+        .catch(() => {
+          // Keep the bounded timeout as the fallback for non-Codex or no-longer-readable Runs.
+        });
+    }
+    setActiveRequestId(latestActiveRequestId);
+  }
 
   useEffect(() => {
     threadIdRef.current = threadId;
     languageRef.current = language;
     streamingAssistantByRequest.current = {};
+    structuredRequests.current.clear();
+    completedStructuredRequests.current.clear();
     lastSequenceByRequest.current = {};
     pendingDeltasByRequest.current = {};
+    clearStructuredFlush();
+    clearRecoveryTimers();
+    restoredSnapshotThreadRef.current = null;
     if (deltaFlushTimerRef.current !== null) {
       window.clearTimeout(deltaFlushTimerRef.current);
       deltaFlushTimerRef.current = null;
@@ -127,8 +274,45 @@ export function useDesktopChatAdapter({
     currentRuntimeModeRef.current = null;
     setCommandAttachments([]);
     setInput("");
-    setMessages(threadSnapshot?.messages?.length ? threadSnapshot.messages : [createWelcomeMessage(language)]);
+    const restoredMessages = threadSnapshot?.messages?.length
+      ? hydrateStructuredMessages(threadSnapshot.messages).filter((message) => message.id !== "welcome")
+      : [createWelcomeMessage(language, userPreferencesRef.current)];
+    if (threadSnapshot?.messages?.length) {
+      restoreActiveStructuredTurns(restoredMessages);
+      restoredSnapshotThreadRef.current = threadId;
+    }
+    setMessages(restoredMessages);
+    return () => {
+      clearRecoveryTimers();
+      clearStructuredFlush();
+    };
   }, [language, threadId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    desktopApi.listUserPreferences().then((preferences) => {
+      if (cancelled) return;
+      userPreferencesRef.current = preferences;
+      setUserPreferences(preferences);
+    }).catch(() => {
+      if (cancelled) return;
+      userPreferencesRef.current = [];
+      setUserPreferences([]);
+    });
+    return () => { cancelled = true; };
+  }, [threadId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    desktopApi.listTeamMemory({ limit: 20 }).then((entries) => {
+      if (cancelled) return;
+      teamMemoryRef.current = entries;
+    }).catch(() => {
+      if (cancelled) return;
+      teamMemoryRef.current = [];
+    });
+    return () => { cancelled = true; };
+  }, [threadId, workspacePath]);
 
   useEffect(() => {
     let cancelled = false;
@@ -166,12 +350,26 @@ export function useDesktopChatAdapter({
     return () => {
       cancelled = true;
     };
-  }, [workspacePath]);
+  }, [threadId, workspacePath]);
 
   useEffect(() => {
     if (threadSnapshot?.threadId !== threadId) return;
-    setMessages(threadSnapshot.messages.length ? threadSnapshot.messages : [createWelcomeMessage(language)]);
+    const restoredMessages = threadSnapshot.messages.length
+      ? hydrateStructuredMessages(threadSnapshot.messages).filter((message) => message.id !== "welcome")
+      : [createWelcomeMessage(language, userPreferencesRef.current)];
+    if (threadSnapshot.messages.length && restoredSnapshotThreadRef.current !== threadId) {
+      restoreActiveStructuredTurns(restoredMessages);
+      restoredSnapshotThreadRef.current = threadId;
+    }
+    setMessages(restoredMessages);
   }, [language, threadId, threadSnapshot]);
+
+  useEffect(() => {
+    if (threadSnapshot?.messages?.length) return;
+    setMessages((current) => current.every((message) => message.id === "welcome")
+      ? [createWelcomeMessage(language, userPreferences)]
+      : current);
+  }, [language, threadId, threadSnapshot, userPreferences]);
 
   useEffect(() => {
     developerModeRef.current = developerMode;
@@ -194,6 +392,51 @@ export function useDesktopChatAdapter({
     const text = input.trim();
     if (!text || activeRequestId) return false;
 
+    const materialPaths = [...new Set(attachments
+      .filter((attachment) => attachment.kind === "file" && !attachment.blockedReason && attachment.path)
+      .map((attachment) => attachment.path))];
+    if (materialPaths.length > 0 && isMaterialInventoryIntent(text)) {
+      try {
+        const analysis = await desktopApi.analyzeMaterialRoles({ paths: materialPaths });
+        publishLocalAssistantResult(text, formatMaterialInventoryAnswer(analysis, languageRef.current));
+        setInput("");
+        return true;
+      } catch {
+        // Fall through to the normal chat route when local material inspection is unavailable.
+      }
+    }
+    if (materialPaths.length > 0 && isNaturalMaterialQueryIntent(text)) {
+      try {
+        const result = await desktopApi.queryMaterials({ paths: materialPaths, question: text });
+        publishLocalAssistantResult(text, formatMaterialQueryAnswer(result, languageRef.current));
+        setInput("");
+        return true;
+      } catch {
+        // Fall through to the normal chat route when local material querying is unavailable.
+      }
+    }
+
+    const memorySafety = analyzeMemorySafetyIntent(text);
+    const explicitPreferences = memorySafety.temporary ? [] : parseExplicitUserPreferenceIntent(text);
+    const saved: DesktopUserPreference[] = [];
+    if (explicitPreferences.length) {
+      for (const preference of explicitPreferences) saved.push(await desktopApi.upsertUserPreference(preference));
+      const refreshed = await desktopApi.listUserPreferences();
+      userPreferencesRef.current = refreshed;
+      setUserPreferences(refreshed);
+    }
+    const handleSensitiveLocally = memorySafety.hasSensitiveContent;
+    const handleTemporaryLocally = memorySafety.explicitMemoryRequest && memorySafety.temporary && isPreferenceOnlyRequest(text);
+    if (attachments.length === 0 && (handleSensitiveLocally || handleTemporaryLocally || (saved.length > 0 && isPreferenceOnlyRequest(text)))) {
+      const response = [
+        saved.length ? formatPreferenceConfirmation(saved, languageRef.current) : "",
+        formatMemorySafetyNotice(memorySafety, languageRef.current),
+      ].filter(Boolean).join("\n\n");
+      publishLocalAssistantResult(memorySafety.hasSensitiveContent ? redactSensitiveMemoryText(text) : text, response);
+      setInput("");
+      return true;
+    }
+
     const command = parseChatCommand(text);
     if (command) {
       const result = runChatCommand(command, {
@@ -211,10 +454,16 @@ export function useDesktopChatAdapter({
       applyChatCommandAction(result.action);
       const customCommandText = await maybeApplyCustomCommand(command, workspacePath);
       const approvalText = await maybeRequestCommitApproval(command, workspacePath);
+      const goalText = await maybeApplyGoalCommand(command, workspacePath);
       const memoryText = await maybeApplyMemoryCommand(command, workspacePath);
       const mcpLiveText = await maybeRequestMcpLiveBridge(command, workspacePath);
       const mcpContextText = await maybeImportMcpContext(command, workspacePath);
-      const compactText = maybeApplyCompactCommand(command, messages);
+      const compactText = await maybeApplyCompactCommand(
+        command,
+        messages,
+        workspacePath,
+        refreshProjectMemory,
+      );
       const checkpointText = await maybeApplyWorkspaceCheckpointCommand(command, workspacePath);
       const forkHandoffResult = await maybeHandoffForkQueueThread(command);
       const forkScheduleResult = await maybeScheduleForkQueue(command, workspacePath, options);
@@ -228,6 +477,7 @@ export function useDesktopChatAdapter({
           result.content,
           customCommandText,
           approvalText,
+          goalText,
           memoryText,
           mcpLiveText,
           mcpContextText,
@@ -251,7 +501,10 @@ export function useDesktopChatAdapter({
       return true;
     }
 
-    if (!canChat) return false;
+    if (!canChat) {
+      const liveGateway = await desktopApi.getGatewayStatus().catch(() => null);
+      if (!liveGateway?.ready || liveGateway.externalConflict) return false;
+    }
 
     const userMessage: UiMessage = {
       id: crypto.randomUUID(),
@@ -261,13 +514,14 @@ export function useDesktopChatAdapter({
     const assistantId = crypto.randomUUID();
     const requestId = crypto.randomUUID();
     const nextMessages: UiMessage[] = [
-      ...messages,
+      ...messages.filter((message) => message.id !== "welcome"),
       userMessage,
       {
         id: assistantId,
         role: "assistant",
         content: "",
         streaming: true,
+        structuredTurn: createStructuredTurnState(requestId),
         startedAt: Date.now(),
         lastEventAt: Date.now(),
       },
@@ -281,12 +535,15 @@ export function useDesktopChatAdapter({
     try {
       await desktopApi.startChat({
         requestId,
+        agentId: options?.agentId?.trim() || undefined,
         sessionId: threadIdRef.current,
         runId: requestId,
+        workspaceId,
         workspacePath,
         attachments,
         model: options?.model?.trim() || undefined,
         metadata: {
+          selected_agent_id: options?.agentId?.trim() || undefined,
           workspace_instructions: workspaceInstructions || [],
           selected_agent: options?.agentName?.trim() || undefined,
           thinking_effort: options?.thinkingEffort,
@@ -294,6 +551,9 @@ export function useDesktopChatAdapter({
           runtime_mode: currentRuntimeModeRef.current
             ? serializeRuntimeMode(currentRuntimeModeRef.current)
             : undefined,
+          user_preferences: userPreferencesRef.current.map(({ category, value }) => ({ category, value })),
+          project_memory: projectMemoryRef.current.map(({ id, content }) => ({ id, content })),
+          team_memory: teamMemoryRef.current.map(({ id, teamId, content }) => ({ id, teamId, content })),
         },
         messages: buildRequestMessages(
           [...messages, userMessage]
@@ -301,6 +561,8 @@ export function useDesktopChatAdapter({
             .map(({ role, content }) => ({ role, content })),
           workspaceInstructions,
           projectMemoryRef.current,
+          teamMemoryRef.current,
+          userPreferencesRef.current,
           currentRuntimeModeRef.current,
         ),
       });
@@ -309,20 +571,14 @@ export function useDesktopChatAdapter({
       const message = error instanceof Error
         ? error.message
         : languageRef.current === "zh" ? "聊天未能启动。" : "Chat failed to start.";
+      appendDebugLog(
+        "error",
+        `${formatAssistantError(message, false, languageRef.current)}\n\n${message}`,
+        "chat",
+      );
       setActiveRequestId(null);
       delete streamingAssistantByRequest.current[requestId];
-      setMessages((current) =>
-        current.map((item) =>
-          item.id === assistantId
-            ? {
-                ...item,
-                streaming: false,
-                error: true,
-                content: formatAssistantError(message, developerModeRef.current, languageRef.current),
-              }
-            : item,
-        ),
-      );
+      setMessages((current) => current.filter((item) => item.id !== assistantId));
       setInput(text);
       return false;
     }
@@ -350,27 +606,111 @@ export function useDesktopChatAdapter({
   function applyChatEvent(event: ChatEvent): void {
     if (event.sessionId && event.sessionId !== threadIdRef.current) return;
     if (!acceptChatEventSequence(lastSequenceByRequest.current, event.requestId, event.seq)) return;
+    const recoveryTimer = recoveryTimersRef.current[event.requestId];
+    if (recoveryTimer !== undefined) {
+      window.clearTimeout(recoveryTimer);
+      delete recoveryTimersRef.current[event.requestId];
+    }
     if (event.type === "start") {
       touchStreamingAssistant(event.requestId);
       setActiveRequestId(event.requestId);
       return;
     }
+    if (event.type === "structured" && event.structuredEvent) {
+      structuredRequests.current.add(event.requestId);
+      delete pendingDeltasByRequest.current[event.requestId];
+      const structuredEvent = event.structuredEvent;
+      const recoveryTimer = recoveryTimersRef.current[event.requestId];
+      if (recoveryTimer !== undefined) {
+        window.clearTimeout(recoveryTimer);
+        delete recoveryTimersRef.current[event.requestId];
+      }
+      appendStructuredProtocolLog(structuredEvent);
+      if (structuredEvent.type === "part.delta" && structuredEvent.delta.kind === "markdown.append") {
+        emitAssistantSpeechStreamEvent({ type: "chunk", requestId: event.requestId, content: structuredEvent.delta.text, at: Date.now() });
+      }
+      if (structuredEvent.type === "activity.updated") {
+        appendStructuredActivityLog(structuredEvent.activity);
+      }
+      if (structuredEvent.type === "part.delta") {
+        pendingStructuredEventsByRequest.current[event.requestId] = [
+          ...(pendingStructuredEventsByRequest.current[event.requestId] ?? []),
+          structuredEvent,
+        ];
+        if (structuredFlushTimerRef.current === null) {
+          structuredFlushTimerRef.current = window.setTimeout(flushStructuredEventDeltas, 16);
+        }
+        return;
+      }
+      const pendingStructuredEvents = pendingStructuredEventsByRequest.current[event.requestId] ?? [];
+      delete pendingStructuredEventsByRequest.current[event.requestId];
+      applyStructuredEventBatch(event.requestId, [...pendingStructuredEvents, structuredEvent]);
+      if (structuredEvent.type === "turn.error") {
+        appendDebugLog(
+          "error",
+          `${formatAssistantError(structuredEvent.message, false, languageRef.current)}\n\n${structuredEvent.message}`,
+          "chat",
+        );
+      }
+      if (
+        structuredEvent.type === "turn.completed" ||
+        structuredEvent.type === "turn.cancelled" ||
+        structuredEvent.type === "turn.error"
+      ) {
+        emitAssistantSpeechStreamEvent({
+          type: structuredEvent.type === "turn.completed" ? "done" : structuredEvent.type === "turn.cancelled" ? "aborted" : "error",
+          requestId: event.requestId,
+          at: Date.now(),
+        });
+        setActiveRequestId((current) => current === event.requestId ? null : current);
+        if (!completedStructuredRequests.current.has(event.requestId)) {
+          completedStructuredRequests.current.add(event.requestId);
+          onChatComplete();
+        }
+      }
+      return;
+    }
+    if (event.type === "connection" && event.connection) {
+      const turnId = event.runId || event.requestId;
+      const activity: StructuredActivityEvent = {
+        id: `${turnId}:connection`,
+        turnId,
+        timestamp: event.connection.timestamp,
+        source: event.connection.source,
+        status: event.connection.status === "restored" ? "completed" : "running",
+        title: event.connection.status === "restored"
+          ? (languageRef.current === "zh" ? "连接已恢复" : "Connection restored")
+          : (languageRef.current === "zh" ? "正在恢复连接" : "Reconnecting"),
+        kind: "retry",
+        attempt: event.connection.attempt,
+        limit: Math.max(1, event.connection.attempt),
+        ...(event.connection.delayMs !== undefined ? { delayMs: event.connection.delayMs } : {}),
+      };
+      appendStructuredActivityLog(activity);
+      if (!structuredRequests.current.has(event.requestId)) {
+        const assistantId = streamingAssistantByRequest.current[event.requestId];
+        setMessages((current) => publishAndReturn(
+          updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
+            ...message,
+            structuredTurn: appendConnectionActivity(message.structuredTurn, turnId, activity),
+            lastEventAt: Date.now(),
+          })),
+        ));
+      }
+      return;
+    }
+    if (
+      structuredRequests.current.has(event.requestId) &&
+      (event.type === "chunk" || event.type === "reasoning" || event.type === "status" || event.type === "tool_timeline")
+    ) return;
     if (event.type === "chunk") {
+      emitAssistantSpeechStreamEvent({ type: "chunk", requestId: event.requestId, content: event.content ?? "", at: Date.now() });
       queueAssistantDelta(event.requestId, "text", event.content ?? "");
       return;
     }
     if (event.type === "status") {
-      setMessages((current) =>
-        publishAndReturn(
-          appendAssistantStatus(
-            current,
-            streamingAssistantByRequest.current[event.requestId],
-            event.content ?? "",
-            developerModeRef.current,
-            languageRef.current,
-          ),
-        ),
-      );
+      const statusContent = event.content ?? "";
+      if (statusContent.trim()) appendDebugLog(getDebugLevel(event.level), statusContent.trim(), "chat");
       return;
     }
     if (event.type === "reasoning") {
@@ -379,6 +719,11 @@ export function useDesktopChatAdapter({
     }
     if (event.type === "tool_timeline" && event.toolTimeline) {
       const toolTimeline = event.toolTimeline;
+      appendDebugLog(
+        toolTimeline.status === "failed" ? "error" : "info",
+        formatToolTimelineDebugLog(toolTimeline),
+        "chat",
+      );
       setMessages((current) =>
         publishAndReturn(
           appendAssistantToolTimeline(
@@ -390,15 +735,45 @@ export function useDesktopChatAdapter({
       );
       return;
     }
+    if (event.type === "input_request" && event.prompt) {
+      const assistantId = streamingAssistantByRequest.current[event.requestId];
+      setMessages((current) =>
+        publishAndReturn(
+          updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
+            ...message,
+            inputRequest: {
+              requestId: event.requestId,
+              prompt: event.prompt || "Input required",
+              inputType: event.inputType || "text_input",
+            },
+          })),
+        ),
+      );
+      return;
+    }
     if (event.type === "done" || event.type === "aborted") {
+      emitAssistantSpeechStreamEvent({ type: event.type, requestId: event.requestId, at: Date.now() });
       flushPendingDeltas();
+      if (structuredRequests.current.has(event.requestId)) {
+        structuredRequests.current.delete(event.requestId);
+        completedStructuredRequests.current.delete(event.requestId);
+        delete streamingAssistantByRequest.current[event.requestId];
+        delete lastSequenceByRequest.current[event.requestId];
+        delete pendingDeltasByRequest.current[event.requestId];
+        setActiveRequestId((current) => current === event.requestId ? null : current);
+        return;
+      }
       const assistantId = streamingAssistantByRequest.current[event.requestId];
       setMessages((current) =>
         publishAndReturn(
           updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
             ...message,
             streaming: false,
-            parts: completeMessageParts(message.parts),
+            structuredTurn: finalizeStructuredTurn(
+              message.structuredTurn,
+              message.id,
+              event.type === "aborted" ? "cancelled" : "completed",
+            ),
           })),
         ),
       );
@@ -410,28 +785,28 @@ export function useDesktopChatAdapter({
       return;
     }
     if (event.type === "error") {
+      emitAssistantSpeechStreamEvent({ type: "error", requestId: event.requestId, at: Date.now() });
       flushPendingDeltas();
+      if (structuredRequests.current.has(event.requestId)) {
+        structuredRequests.current.delete(event.requestId);
+        completedStructuredRequests.current.delete(event.requestId);
+        delete streamingAssistantByRequest.current[event.requestId];
+        delete lastSequenceByRequest.current[event.requestId];
+        delete pendingDeltasByRequest.current[event.requestId];
+        setActiveRequestId((current) => current === event.requestId ? null : current);
+        return;
+      }
       const assistantId = streamingAssistantByRequest.current[event.requestId];
+      const userFacingError = event.failureRecovery?.message
+        || event.error
+        || (languageRef.current === "zh" ? "聊天失败。" : "Chat failed.");
+      appendDebugLog(
+        "error",
+        `${formatAssistantError(userFacingError, false, languageRef.current)}\n\n${userFacingError}`,
+        "chat",
+      );
       setMessages((current) =>
-        publishAndReturn(
-          updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
-            ...message,
-            streaming: false,
-            error: true,
-            content: formatAssistantError(
-              event.error || (languageRef.current === "zh" ? "聊天失败。" : "Chat failed."),
-              developerModeRef.current,
-              languageRef.current,
-            ),
-            parts: upsertMessagePart(completeMessageParts(message.parts), {
-              id: `${message.id}:error`,
-              type: "error",
-              message: event.error || "Chat failed.",
-              retryable: false,
-              status: "error",
-            }),
-          })),
-        ),
+        publishAndReturn(settleAssistantAfterHiddenError(current, assistantId)),
       );
       delete streamingAssistantByRequest.current[event.requestId];
       delete lastSequenceByRequest.current[event.requestId];
@@ -498,7 +873,7 @@ export function useDesktopChatAdapter({
 
   function publishLocalAssistantResult(userText: string, assistantText: string): void {
     const commandMessages: UiMessage[] = [
-      ...messages,
+      ...messages.filter((message) => message.id !== "welcome"),
       {
         id: crypto.randomUUID(),
         role: "user",
@@ -811,6 +1186,68 @@ export function useDesktopChatAdapter({
     return undefined;
   }
 
+  async function maybeApplyGoalCommand(
+    command: ReturnType<typeof parseChatCommand>,
+    selectedWorkspacePath?: string,
+  ): Promise<string | undefined> {
+    if (!command || command.name !== "goal") return undefined;
+    if (!selectedWorkspacePath) return undefined;
+    const args = command.args.trim();
+    const setMatch = args.match(/^(?:set|start|track)\s+([\s\S]+)$/i);
+    if (setMatch?.[1]?.trim()) {
+      const entry = await desktopApi.addProjectMemory({
+        workspacePath: selectedWorkspacePath,
+        content: `goal: ${setMatch[1].trim()}`,
+        source: "chat_command",
+      });
+      await refreshProjectMemory(selectedWorkspacePath);
+      return [
+        `Saved durable goal: ${formatGoalContent(entry.content)}`,
+        "Active durable goals are included as explicit project memory context in later natural-language chat.",
+      ].join("\n");
+    }
+    const doneMatch = args.match(/^(?:done|complete)\s+(\S+)$/i);
+    if (doneMatch?.[1]) {
+      const entries = await refreshProjectMemory(selectedWorkspacePath);
+      const goal = resolveGoalMemoryEntry(doneMatch[1], entries);
+      if (!goal) {
+        return `Durable goal not found: ${doneMatch[1]}. Run /goal list to review current goals.`;
+      }
+      const entry = await desktopApi.updateProjectMemory({
+        workspacePath: selectedWorkspacePath,
+        entryId: goal.entry.id,
+        content: `goal-done: ${goal.label}`,
+        source: "chat_command",
+      });
+      await refreshProjectMemory(selectedWorkspacePath);
+      return `Marked durable goal #${goal.index + 1} complete: ${formatGoalContent(entry.content)}`;
+    }
+    const clearMatch = args.match(/^(?:clear|delete|remove)\s+(\S+)$/i);
+    if (clearMatch?.[1]) {
+      const entries = await refreshProjectMemory(selectedWorkspacePath);
+      const goal = resolveGoalMemoryEntry(clearMatch[1], entries);
+      if (!goal) {
+        return `Durable goal not found: ${clearMatch[1]}. Run /goal list to review current goals.`;
+      }
+      const result = await desktopApi.clearProjectMemory({
+        workspacePath: selectedWorkspacePath,
+        entryId: goal.entry.id,
+      });
+      await refreshProjectMemory(selectedWorkspacePath);
+      return `Cleared ${result.removedCount} durable goal: ${goal.label}`;
+    }
+    if (!args || /^list$/i.test(args)) {
+      const entries = await refreshProjectMemory(selectedWorkspacePath);
+      const goals = listGoalMemoryEntries(entries);
+      if (!goals.length) return "No durable goals have been saved for this workspace.";
+      return [
+        "Durable goals:",
+        ...goals.map((goal, index) => `${index + 1}. ${formatGoalContent(goal.content)}`),
+      ].join("\n");
+    }
+    return undefined;
+  }
+
   async function maybeApplyWorkspaceCheckpointCommand(
     command: ReturnType<typeof parseChatCommand>,
     selectedWorkspacePath?: string,
@@ -1087,6 +1524,9 @@ export function useDesktopChatAdapter({
         title: `${queue ? `Fork ${queue.queueIndex}:` : "Fork:"} ${intent || "subtask"}`.slice(0, 120),
         workspacePath: fork.worktreePath,
         fork: {
+          ...(fork.worktreeId ? { worktreeId: fork.worktreeId } : {}),
+          ...(fork.sourceWorkspaceId ? { sourceWorkspaceId: fork.sourceWorkspaceId } : {}),
+          ...(fork.workspaceId ? { workspaceId: fork.workspaceId } : {}),
           sourceWorkspacePath: fork.sourceWorkspacePath,
           repoRoot: fork.repoRoot,
           worktreePath: fork.worktreePath,
@@ -1170,6 +1610,60 @@ export function useDesktopChatAdapter({
   };
 }
 
+function isMaterialInventoryIntent(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  return /(?:(?:我|系统)(?:目前|现在)?)?(?:有|拥有|导入|上传)(?:了|的)?哪些材料|材料(?:清单|列表|角色|分别是什么)|what (?:files|materials|sources) (?:do i|are)|list (?:my )?(?:files|materials|sources)/i.test(normalized);
+}
+
+function isNaturalMaterialQueryIntent(text: string): boolean {
+  const normalized = text.trim();
+  return /[?？]/.test(normalized)
+    || /(?:标题|题目|样本量|均值|容量|带宽|数字|数值|比例|百分比).*(?:是什么|是多少|有多少)/.test(normalized)
+    || /(?:什么|哪种|哪些).*(?:方法|实验设计|研究设计|差异|不同|区别|冲突|不一致)/.test(normalized)
+    || /(?:比较|对比).*(?:差异|不同|区别|冲突|不一致)/.test(normalized)
+    || /\b(?:what|how many|where|which|compare|difference|title|bandwidth|sample size|method|protocol|conflict)\b/i.test(normalized);
+}
+
+function formatMaterialQueryAnswer(
+  result: Awaited<ReturnType<typeof desktopApi.queryMaterials>>,
+  language: "en" | "zh",
+): string {
+  if (result.status === "not_found") {
+    return language === "zh"
+      ? `${result.answer}\n\n已检索 ${result.filesSearched} 份材料；没有找到可引用的原文位置。`
+      : `I could not find a reliable answer in the ${result.filesSearched} imported materials. I will not invent a source or location.`;
+  }
+  const sourceHeading = language === "zh" ? "来源" : "Sources";
+  const sources = result.citations.map((citation) =>
+    `- **${citation.name} · ${citation.locator}**：${citation.excerpt}`,
+  ).join("\n");
+  return `${result.answer}\n\n### ${sourceHeading}\n\n${sources}`;
+}
+
+function formatMaterialInventoryAnswer(
+  analysis: Awaited<ReturnType<typeof desktopApi.analyzeMaterialRoles>>,
+  language: "en" | "zh",
+): string {
+  const roles = [
+    ["previous_report", language === "zh" ? "旧报告" : "Previous reports"],
+    ["latest_data", language === "zh" ? "最新数据" : "Latest data"],
+    ["result_image", language === "zh" ? "结果图片" : "Result images"],
+    ["reference_material", language === "zh" ? "参考材料" : "Reference materials"],
+  ] as const;
+  const sections = roles.map(([role, label]) => {
+    const matching = analysis.items.filter((item) => item.role === role);
+    const files = matching.length
+      ? matching.map((item) => `- **${item.name}**（${Math.round(item.confidence * 100)}%）：${item.reason}${language === "zh" ? "用途：" : " Use: "}${item.suggestedUse}`).join("\n")
+      : `- ${language === "zh" ? "暂未发现" : "None detected"}`;
+    return `### ${label}（${matching.length}）\n\n${files}`;
+  });
+  return [
+    language === "zh" ? `我识别到 ${analysis.items.length} 项材料，并按它们在当前任务中的用途分成四类：` : `I found ${analysis.items.length} materials and grouped them by their likely role in this task:`,
+    ...sections,
+    language === "zh" ? "建议先用最新数据核对结果图片，再以旧报告为结构基线生成新版本；参考材料只用于补充背景和出处。" : "I suggest checking result images against the latest data first, then using the previous report as the structure for a new version. Use references for context and citations.",
+  ].join("\n\n");
+}
+
 function resolveProjectMemoryEntry(
   selector: string,
   entries: DesktopProjectMemoryEntry[],
@@ -1180,6 +1674,32 @@ function resolveProjectMemoryEntry(
     return entries[index - 1];
   }
   return entries.find((entry) => entry.id === normalized);
+}
+
+function listGoalMemoryEntries(entries: DesktopProjectMemoryEntry[]): DesktopProjectMemoryEntry[] {
+  return entries.filter((entry) => /^goal(?::|-done:)/i.test(entry.content.trim()));
+}
+
+function resolveGoalMemoryEntry(
+  selector: string,
+  entries: DesktopProjectMemoryEntry[],
+): { entry: DesktopProjectMemoryEntry; index: number; label: string } | undefined {
+  const normalized = selector.trim();
+  const goals = listGoalMemoryEntries(entries);
+  const index = Number(normalized);
+  const entry = Number.isInteger(index) && index >= 1
+    ? goals[index - 1]
+    : goals.find((item) => item.id === normalized);
+  if (!entry) return undefined;
+  return {
+    entry,
+    index: goals.indexOf(entry),
+    label: formatGoalContent(entry.content),
+  };
+}
+
+function formatGoalContent(content: string): string {
+  return content.replace(/^goal-done:\s*/i, "[done] ").replace(/^goal:\s*/i, "").trim();
 }
 
 function parseRollbackCommandArgs(args: string): {
@@ -1543,12 +2063,34 @@ function countUnstagedFiles(
   return changedFiles.filter((item) => !staged.has(item.path.replace(/\\/g, "/"))).length;
 }
 
-function maybeApplyCompactCommand(
+async function maybeApplyCompactCommand(
   command: ReturnType<typeof parseChatCommand>,
   currentMessages: UiMessage[],
-): string | undefined {
+  selectedWorkspacePath?: string,
+  refreshMemory?: (selectedWorkspacePath: string) => Promise<DesktopProjectMemoryEntry[]>,
+): Promise<string | undefined> {
   if (!command || command.name !== "compact") return undefined;
-  return buildLocalCompactSummary(currentMessages, command.args);
+  const saveMatch = command.args.match(/^(?:save|persist|memory)(?:\s+([\s\S]+))?$/i);
+  const compactIntent = saveMatch ? saveMatch[1]?.trim() ?? "" : command.args;
+  const summary = buildLocalCompactSummary(currentMessages, compactIntent);
+  if (!saveMatch) return summary;
+  if (!selectedWorkspacePath) {
+    return [
+      summary,
+      "Compact summary was not saved because no workspace is selected.",
+    ].join("\n\n");
+  }
+  const entry = await desktopApi.addProjectMemory({
+    workspacePath: selectedWorkspacePath,
+    content: `compact-summary: ${clampCompactText(summary, 3800)}`,
+    source: "retrospective",
+  });
+  await refreshMemory?.(selectedWorkspacePath);
+  return [
+    summary,
+    `Saved compact summary to project memory: ${clampCompactText(entry.content, LOCAL_COMPACT_MAX_ITEM_CHARS)}`,
+    "Future natural-language chat includes this reviewed compact summary through the existing project memory context path.",
+  ].join("\n\n");
 }
 
 function buildLocalCompactSummary(messages: UiMessage[], compactIntent: string): string {
@@ -1639,9 +2181,13 @@ function buildRequestMessages(
   messages: ChatMessage[],
   workspaceInstructions: WorkspaceInstructionSummary[] | undefined,
   projectMemory: DesktopProjectMemoryEntry[],
+  teamMemory: DesktopTeamMemoryEntry[],
+  userPreferences: DesktopUserPreference[],
   runtimeMode: ChatRuntimeMode | null,
 ): ChatMessage[] {
   const systemSections: string[] = [];
+  const userPreferenceSection = buildUserPreferenceSystemSection(userPreferences);
+  if (userPreferenceSection) systemSections.push(userPreferenceSection);
   if (runtimeMode) {
     systemSections.push(
       [
@@ -1663,12 +2209,33 @@ function buildRequestMessages(
     );
   }
   if (projectMemory.length) {
+    const activeGoals = projectMemory.filter((entry) => /^goal:\s*/i.test(entry.content.trim()));
+    if (activeGoals.length) {
+      systemSections.push(
+        [
+          "Active durable goals for this workspace:",
+          ...activeGoals
+            .slice(0, 5)
+            .map((entry, index) => `${index + 1}. ${formatGoalContent(entry.content)}`),
+        ].join("\n"),
+      );
+    }
     systemSections.push(
       [
         "Project memory for this workspace:",
         ...projectMemory
           .slice(0, 12)
           .map((entry, index) => `${index + 1}. ${entry.content}`),
+      ].join("\n"),
+    );
+  }
+  if (teamMemory.length) {
+    systemSections.push(
+      [
+        "Authorized team memory for the signed-in user:",
+        ...teamMemory
+          .slice(0, 12)
+          .map((entry, index) => `${index + 1}. [${entry.teamId}] ${entry.content}`),
       ].join("\n"),
     );
   }
@@ -1686,15 +2253,36 @@ function serializeRuntimeMode(mode: ChatRuntimeMode): Record<string, string> {
   };
 }
 
-function createWelcomeMessage(language: "en" | "zh"): UiMessage {
+function createWelcomeMessage(language: "en" | "zh", preferences: DesktopUserPreference[]): UiMessage {
+  const preferenceNotice = formatAppliedPreferenceNotice(preferences, language);
   return {
     id: "welcome",
     role: "assistant",
     content:
       language === "zh"
-        ? "OpenDrSai 桌面端已就绪。安装或启动本地网关后即可发送消息。"
-        : "OpenDrSai desktop is ready. Install or start the local gateway, then send a message.",
+        ? `OpenDrSai 桌面端已就绪。安装或启动本地网关后即可发送消息。${preferenceNotice ? `\n\n${preferenceNotice}` : ""}`
+        : `OpenDrSai desktop is ready. Install or start the local gateway, then send a message.${preferenceNotice ? `\n\n${preferenceNotice}` : ""}`,
   };
+}
+
+function hydrateStructuredMessages(messages: UiMessage[]): UiMessage[] {
+  return messages.map((message) => {
+    if (message.role !== "assistant") return message;
+    if (message.structuredTurn) return sanitizeStructuredAssistantMessage(message);
+    return sanitizeStructuredAssistantMessage({
+      ...message,
+      structuredTurn: migrateLegacyMessageToStructuredTurn({
+        id: message.id,
+        content: message.content,
+        reasoningContent: message.reasoningContent,
+        statusContent: message.statusContent,
+        streaming: message.streaming,
+        error: message.error,
+        parts: message.parts as Array<Record<string, unknown>> | undefined,
+        toolTimeline: message.toolTimeline as Array<Record<string, unknown>> | undefined,
+      }),
+    });
+  });
 }
 
 function appendAssistantChunk(
@@ -1705,14 +2293,9 @@ function appendAssistantChunk(
   const next = [...messages];
   const index = findAssistantIndex(next, assistantId);
   if (index === -1) return next;
-  next[index] = { ...next[index], content: `${next[index].content}${content}` };
-  next[index].parts = upsertMessagePart(next[index].parts, {
-    id: `${next[index].id}:text`,
-    type: "text",
-    text: next[index].content,
-    format: "markdown",
-    status: next[index].streaming ? "running" : "completed",
-  });
+  const structuredTurn = appendStructuredDelta(next[index].structuredTurn, next[index].id, "markdown", content);
+  const canonicalContent = readStructuredMarkdown(structuredTurn);
+  next[index] = { ...next[index], content: canonicalContent, structuredTurn };
   next[index].lastEventAt = Date.now();
   return next;
 }
@@ -1726,18 +2309,14 @@ function appendAssistantReasoning(
   const next = [...messages];
   const index = findAssistantIndex(next, assistantId);
   if (index === -1) return next;
+  const structuredTurn = appendStructuredDelta(next[index].structuredTurn, next[index].id, "reasoning", content);
+  const canonicalReasoning = readStructuredReasoning(structuredTurn);
   next[index] = {
     ...next[index],
-    reasoningContent: `${next[index].reasoningContent ?? ""}${content}`,
+    reasoningContent: canonicalReasoning,
+    structuredTurn,
     lastEventAt: Date.now(),
   };
-  next[index].parts = upsertMessagePart(next[index].parts, {
-    id: `${next[index].id}:reasoning`,
-    type: "reasoning",
-    text: next[index].reasoningContent ?? "",
-    visibility: "raw",
-    status: next[index].streaming ? "running" : "completed",
-  });
   return next;
 }
 
@@ -1752,89 +2331,220 @@ function appendAssistantToolTimeline(
   const boundedEvent = event.content && event.content.length > 80_000
     ? { ...event, content: `${event.content.slice(0, 80_000)}\n\n[output truncated in chat]` }
     : event;
-  const previous = next[index].toolTimeline ?? [];
-  const existingIndex = previous.findIndex((item) => item.id === boundedEvent.id);
-  const timeline = existingIndex === -1
-    ? [...previous, boundedEvent]
-    : previous.map((item, itemIndex) => itemIndex === existingIndex ? { ...item, ...boundedEvent } : item);
   next[index] = {
     ...next[index],
-    toolTimeline: timeline.slice(-20),
+    structuredTurn: appendStructuredActivity(next[index].structuredTurn, next[index].id, boundedEvent),
     lastEventAt: Date.now(),
   };
-  next[index].parts = upsertMessagePart(next[index].parts, {
-    id: `${next[index].id}:tool:${boundedEvent.id}`,
-    type: "tool",
-    event: boundedEvent,
-    status: boundedEvent.status === "failed" ? "error" : boundedEvent.status === "completed" ? "completed" : "running",
-  });
   return next;
 }
 
-function appendAssistantStatus(
-  messages: UiMessage[],
-  assistantId: string | undefined,
+function appendStructuredDelta(
+  current: StructuredTurnState | undefined,
+  turnId: string,
+  kind: "markdown" | "reasoning",
   content: string,
-  developerMode: boolean,
-  language: "en" | "zh",
-): UiMessage[] {
-  const status = formatAssistantStatus(content, developerMode, language).trim();
-  if (!status) return messages;
-  const next = [...messages];
-  const index = findAssistantIndex(next, assistantId);
-  if (index === -1) return next;
-  const previousStatus = developerMode ? next[index].statusContent?.trimEnd() : "";
-  const prefix = previousStatus ? "\n\n---\n\n" : "";
-  next[index] = {
-    ...next[index],
-    statusContent: developerMode ? `${previousStatus}${prefix}${status}` : status,
-  };
-  next[index].parts = upsertMessagePart(next[index].parts, {
-    id: `${next[index].id}:status`,
-    type: "status",
-    text: next[index].statusContent ?? status,
-    status: "running",
+): StructuredTurnState {
+  let state = current ?? createStructuredTurnState(turnId);
+  if (state.status === "pending") state = applyLocalStructuredEvent(state, { type: "turn.started" });
+  const partId = `${turnId}:${kind}`;
+  if (!state.parts.some((part) => part.id === partId)) {
+    const part: StructuredAssistantPart = kind === "markdown"
+      ? { id: partId, kind: "markdown", status: "running", markdown: "" }
+      : { id: partId, kind: "reasoning", status: "running", segments: [] };
+    state = applyLocalStructuredEvent(state, { type: "part.started", part });
+  }
+  return applyLocalStructuredEvent(state, kind === "markdown"
+    ? { type: "part.delta", partId, delta: { kind: "markdown.append", text: content } }
+    : {
+        type: "part.delta",
+        partId,
+        delta: { kind: "reasoning.append", segmentId: `${partId}:stream`, text: content, source: "desktop-sse" },
+      });
+}
+
+function appendStructuredActivity(
+  current: StructuredTurnState | undefined,
+  turnId: string,
+  event: NonNullable<ChatEvent["toolTimeline"]>,
+): StructuredTurnState {
+  let state = current ?? createStructuredTurnState(turnId);
+  if (state.status === "pending") state = applyLocalStructuredEvent(state, { type: "turn.started" });
+  return applyLocalStructuredEvent(state, {
+    type: "activity.updated",
+    activity: {
+      id: event.id,
+      turnId,
+      timestamp: event.timestamp ?? new Date().toISOString(),
+      source: "desktop-sse",
+      status: event.status === "failed" ? "error" : event.status === "completed" ? "completed" : "running",
+      title: event.title,
+      kind: "tool",
+      toolName: event.toolName ?? event.title,
+      callId: event.id,
+      ...(event.content ? { output: event.content } : {}),
+    },
   });
-  next[index].lastEventAt = Date.now();
-  return next;
 }
 
-function upsertMessagePart(parts: ChatMessagePart[] | undefined, part: ChatMessagePart): ChatMessagePart[] {
-  const current = parts ?? [];
-  const index = current.findIndex((item) => item.id === part.id);
-  return index === -1
-    ? [...current, part]
-    : current.map((item, itemIndex) => itemIndex === index ? part : item);
+function appendConnectionActivity(
+  current: StructuredTurnState | undefined,
+  turnId: string,
+  activity: StructuredActivityEvent,
+): StructuredTurnState {
+  let state = current?.turnId === turnId ? current : createStructuredTurnState(turnId);
+  if (state.status === "pending") state = applyLocalStructuredEvent(state, { type: "turn.started" });
+  return applyLocalStructuredEvent(state, { type: "activity.updated", activity });
 }
 
-function completeMessageParts(parts: ChatMessagePart[] | undefined): ChatMessagePart[] | undefined {
-  return parts?.map((part) =>
-    part.status === "running" || part.status === "pending"
-      ? { ...part, status: "completed" }
-      : part,
-  );
+type LocalStructuredEvent =
+  | Pick<Extract<StructuredConversationEvent, { type: "turn.started" }>, "type">
+  | Pick<Extract<StructuredConversationEvent, { type: "part.started" }>, "type" | "part">
+  | Pick<Extract<StructuredConversationEvent, { type: "part.delta" }>, "type" | "partId" | "delta">
+  | Pick<Extract<StructuredConversationEvent, { type: "part.completed" }>, "type" | "part">
+  | Pick<Extract<StructuredConversationEvent, { type: "activity.updated" }>, "type" | "activity">
+  | Pick<Extract<StructuredConversationEvent, { type: "turn.completed" }>, "type" | "meta">
+  | Pick<Extract<StructuredConversationEvent, { type: "turn.cancelled" }>, "type">
+  | Pick<Extract<StructuredConversationEvent, { type: "turn.error" }>, "type" | "message" | "code" | "debugRef">;
+
+function applyLocalStructuredEvent(state: StructuredTurnState, event: LocalStructuredEvent): StructuredTurnState {
+  const sequence = state.lastSequence + 1;
+  return applyStructuredConversationEvent(state, {
+    ...event,
+    version: 2,
+    turnId: state.turnId,
+    sequence,
+    dedupeKey: `${state.turnId}:${sequence}:${event.type}`,
+    timestamp: new Date().toISOString(),
+    source: "desktop-adapter",
+  } as StructuredConversationEvent);
 }
 
-function formatAssistantStatus(content: string, developerMode: boolean, language: "en" | "zh"): string {
-  const raw = content.trim();
-  if (!raw || developerMode) return raw;
+function readStructuredMarkdown(state: StructuredTurnState): string {
+  return state.parts
+    .filter((part): part is Extract<StructuredAssistantPart, { kind: "markdown" }> => part.kind === "markdown")
+    .map((part) => part.markdown)
+    .join("\n\n");
+}
 
-  const title = raw.match(/\*\*([^*]+)\*\*/)?.[1]?.trim() || "LLM Retry";
-  if (/model reasoning|reasoning|thinking/i.test(title)) {
-    return raw;
+function readStructuredReasoning(state: StructuredTurnState): string {
+  return state.parts
+    .filter((part): part is Extract<StructuredAssistantPart, { kind: "reasoning" }> => part.kind === "reasoning")
+    .flatMap((part) => part.segments.map((segment) => segment.text))
+    .join("");
+}
+
+function applyStructuredEventToMessage(
+  message: UiMessage,
+  event: StructuredConversationEvent,
+): UiMessage {
+  const current = message.structuredTurn?.turnId === event.turnId
+    ? message.structuredTurn
+    : createStructuredTurnState(event.turnId);
+  const structuredTurn = sanitizeStructuredTurnForChat(applyStructuredConversationEvent(current, event));
+  const content = readStructuredMarkdown(structuredTurn);
+  const reasoningContent = readStructuredReasoning(structuredTurn);
+  const activeInteraction = [...structuredTurn.parts]
+    .reverse()
+    .find((part): part is Extract<StructuredAssistantPart, { kind: "interaction" }> =>
+      part.kind === "interaction" && (part.status === "pending" || part.status === "running"));
+  const errorNotice = [...structuredTurn.parts]
+    .reverse()
+    .find((part): part is Extract<StructuredAssistantPart, { kind: "notice" }> =>
+      part.kind === "notice" && part.level === "error");
+  return sanitizeStructuredAssistantMessage({
+    ...message,
+    structuredTurn,
+    content: content || errorNotice?.message || message.content,
+    reasoningContent,
+    streaming: structuredTurn.status === "pending" || structuredTurn.status === "running",
+    error: structuredTurn.status === "error" || message.error,
+    ...(activeInteraction
+      ? {
+          inputRequest: {
+            requestId: activeInteraction.requestId,
+            prompt: activeInteraction.prompt,
+            inputType: activeInteraction.interactionType === "approval" ? "approval" as const : "text_input" as const,
+          },
+        }
+      : {}),
+    lastEventAt: Date.now(),
+  });
+}
+
+function sanitizeStructuredAssistantMessage(message: UiMessage): UiMessage {
+  const current = message.structuredTurn;
+  if (!current) return message;
+  const hiddenMessages = current.parts
+    .filter(isTerminalErrorNotice)
+    .map((part) => part.message.trim())
+    .filter(Boolean);
+  if (current.status === "error" && current.error?.message.trim()) {
+    hiddenMessages.push(current.error.message.trim());
   }
-  if (/LLM Retry/i.test(title) || /retry|重试/i.test(raw)) {
-    const attempt =
-      raw.match(/(?:正在重试|retrying)\s*\((\d+\s*\/\s*\d+)\)/i)?.[1]?.replace(/\s+/g, "") ||
-      raw.match(/\battempt\s+(\d+\s*\/\s*\d+)/i)?.[1]?.replace(/\s+/g, "");
-    const wait = raw.match(/(?:等待|in)\s*([0-9.]+\s*s)/i)?.[1]?.replace(/\s+/g, "");
-    const message = language === "zh"
-      ? `模型调用失败${attempt ? `，正在重试 (${attempt})` : ""}${wait ? `，等待 ${wait}` : ""}。`
-      : `Model call failed${attempt ? `, retrying (${attempt})` : ""}${wait ? `, waiting ${wait}` : ""}.`;
-    return `**LLM Retry**\n\n${message}`;
-  }
+  const hadTerminalError = current.status === "error" || hiddenMessages.length > 0;
+  const structuredTurn = sanitizeStructuredTurnForChat(current);
+  const content = hiddenMessages.includes(message.content.trim())
+    ? readStructuredMarkdown(structuredTurn)
+    : message.content;
+  return {
+    ...message,
+    content,
+    structuredTurn,
+    // The structured turn is authoritative. Persisted renderer snapshots from an
+    // interrupted/cancelled run may still carry the older `streaming: true`
+    // flag, which otherwise leaves the elapsed-time indicator running forever.
+    streaming: structuredTurn.status === "pending" || structuredTurn.status === "running",
+    error: hadTerminalError ? false : message.error,
+  };
+}
 
-  return `**${title}**\n\n${language === "zh" ? "操作暂时没有完成，请稍后重试。" : "The operation did not complete. Please try again later."}`;
+function sanitizeStructuredTurnForChat(state: StructuredTurnState): StructuredTurnState {
+  const parts = state.parts.filter((part) => !isTerminalErrorNotice(part));
+  if (state.status !== "error") return parts.length === state.parts.length ? state : { ...state, parts };
+  const { error: _error, ...rest } = state;
+  return { ...rest, status: "cancelled", parts };
+}
+
+function isTerminalErrorNotice(
+  part: StructuredAssistantPart,
+): part is Extract<StructuredAssistantPart, { kind: "notice" }> {
+  return part.kind === "notice"
+    && part.level === "error"
+    && part.id.endsWith(":notice:turn-error");
+}
+
+function finalizeStructuredTurn(
+  current: StructuredTurnState | undefined,
+  turnId: string,
+  status: "completed" | "cancelled",
+): StructuredTurnState {
+  let state = current ?? createStructuredTurnState(turnId);
+  if (status === "cancelled") return applyLocalStructuredEvent(state, { type: "turn.cancelled" });
+  for (const part of state.parts) {
+    if (part.status === "running" || part.status === "pending") {
+      state = applyLocalStructuredEvent(state, { type: "part.completed", part: { ...part, status: "completed" } });
+    }
+  }
+  return applyLocalStructuredEvent(state, { type: "turn.completed" });
+}
+
+function formatToolTimelineDebugLog(event: NonNullable<ChatEvent["toolTimeline"]>): string {
+  return [
+    `Tool event: ${event.title}`,
+    `id: ${event.id}`,
+    `kind: ${event.kind}`,
+    event.status ? `status: ${event.status}` : "",
+    event.toolName ? `tool: ${event.toolName}` : "",
+    event.path ? `path: ${event.path}` : "",
+    event.content ? `output:\n${event.content}` : "",
+  ].filter(Boolean).join("\n");
+}
+
+function getDebugLevel(level: string | undefined): "log" | "info" | "warn" | "error" {
+  if (/error|fatal/i.test(level ?? "")) return "error";
+  if (/warn/i.test(level ?? "")) return "warn";
+  return "info";
 }
 
 function formatAssistantError(error: string, developerMode: boolean, language: "en" | "zh"): string {
@@ -1849,6 +2559,16 @@ function formatAssistantError(error: string, developerMode: boolean, language: "
   }
   if (/subject_mismatch/i.test(raw)) {
     return language === "zh" ? "HepAI 登录身份不一致，请退出后重新登录。" : "Your HepAI identity does not match this session. Sign out and sign in again.";
+  }
+  if (/agent_credentials_unavailable/i.test(raw)) {
+    return language === "zh"
+      ? "当前 HepAI 账号尚未配置可用的模型访问凭据，请联系平台管理员。"
+      : "No model access credential is configured for this HepAI account. Contact the platform administrator.";
+  }
+  if (/agent_credentials_invalid/i.test(raw)) {
+    return language === "zh"
+      ? "当前 HepAI 账号的模型访问凭据已失效，请在 HepAI 平台更新或联系管理员。"
+      : "The model access credential for this HepAI account is invalid. Update it in HepAI or contact the administrator.";
   }
   if (/unsupported_issuer|invalid_model_base_url/i.test(raw)) {
     return language === "zh" ? "当前 HepAI 登录环境尚未配置对应的模型服务。" : "No model service is configured for this HepAI environment.";
@@ -1892,6 +2612,29 @@ function updateAssistantByIdOrLatestStreaming(
   const index = findAssistantIndex(next, assistantId);
   if (index === -1) return next;
   next[index] = update(next[index]);
+  return next;
+}
+
+function settleAssistantAfterHiddenError(
+  messages: UiMessage[],
+  assistantId: string | undefined,
+): UiMessage[] {
+  const next = [...messages];
+  const index = findAssistantIndex(next, assistantId);
+  if (index === -1) return next;
+  const message = next[index];
+  if (!message.content.trim()) {
+    next.splice(index, 1);
+    return next;
+  }
+  next[index] = {
+    ...message,
+    streaming: false,
+    error: false,
+    structuredTurn: message.structuredTurn
+      ? finalizeStructuredTurn(message.structuredTurn, message.id, "cancelled")
+      : undefined,
+  };
   return next;
 }
 

@@ -39,8 +39,9 @@ import type {
   DesktopApprovalProposalRequest,
 } from "../shared/desktopApi";
 import { DRSAI_HOME } from "./paths";
+import { extractPresentationPdfSync, formatPresentationPdfSummary } from "./presentationPdf";
 
-const MAX_IMPORT_ITEMS = 30;
+const MAX_IMPORT_ITEMS = 55;
 const MAX_SCAN_ENTRIES = 240;
 const MAX_SCAN_DEPTH = 3;
 const MAX_TEXT_BYTES = 4096;
@@ -86,6 +87,8 @@ const MAX_PCAP_BLOCK_PREVIEW = 12;
 const MAX_API_SPEC_PREVIEW_BYTES = 192 * 1024;
 const MAX_API_ENDPOINT_PREVIEW = 16;
 const MAX_API_SECURITY_PREVIEW = 8;
+const MAX_JSON_SCHEMA_PREVIEW_BYTES = 128 * 1024;
+const MAX_JSON_SCHEMA_ITEM_PREVIEW = 16;
 const MAX_POSTMAN_ENVIRONMENT_PREVIEW_BYTES = 96 * 1024;
 const MAX_POSTMAN_ENVIRONMENT_ITEM_PREVIEW = 16;
 const MAX_TOKENIZER_CALIBRATION_PREVIEW_BYTES = 96 * 1024;
@@ -94,6 +97,8 @@ const MAX_MCP_SERVER_CONFIG_PREVIEW_BYTES = 96 * 1024;
 const MAX_MCP_SERVER_CONFIG_ITEM_PREVIEW = 16;
 const MAX_VSCODE_WORKSPACE_CONFIG_PREVIEW_BYTES = 96 * 1024;
 const MAX_VSCODE_WORKSPACE_CONFIG_ITEM_PREVIEW = 16;
+const MAX_JETBRAINS_IDE_CONFIG_PREVIEW_BYTES = 96 * 1024;
+const MAX_JETBRAINS_IDE_CONFIG_ITEM_PREVIEW = 16;
 const MAX_REST_CLIENT_PREVIEW_BYTES = 96 * 1024;
 const MAX_REST_CLIENT_REQUEST_PREVIEW = 16;
 const MAX_REST_CLIENT_HEADER_PREVIEW = 12;
@@ -104,6 +109,10 @@ const MAX_GRAPHQL_PREVIEW_BYTES = 128 * 1024;
 const MAX_GRAPHQL_OPERATION_PREVIEW = 12;
 const MAX_GRAPHQL_TYPE_PREVIEW = 16;
 const MAX_GRAPHQL_DIRECTIVE_PREVIEW = 8;
+const MAX_GRAPHQL_INTROSPECTION_PREVIEW_BYTES = 128 * 1024;
+const MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW = 16;
+const MAX_PACT_CONTRACT_PREVIEW_BYTES = 128 * 1024;
+const MAX_PACT_INTERACTION_PREVIEW = 16;
 const MAX_PROTOBUF_PREVIEW_BYTES = 128 * 1024;
 const MAX_PROTOBUF_ITEM_PREVIEW = 16;
 const MAX_KUBERNETES_PREVIEW_BYTES = 128 * 1024;
@@ -113,6 +122,10 @@ const MAX_KUBERNETES_REFERENCE_PREVIEW = 12;
 const MAX_KUBERNETES_DETAIL_PREVIEW = 16;
 const MAX_KUBERNETES_PACKAGE_CONFIG_PREVIEW_BYTES = 96 * 1024;
 const MAX_KUBERNETES_PACKAGE_CONFIG_ITEM_PREVIEW = 16;
+const MAX_KUBECONFIG_PREVIEW_BYTES = 96 * 1024;
+const MAX_KUBECONFIG_ITEM_PREVIEW = 16;
+const MAX_HELM_VALUES_PREVIEW_BYTES = 96 * 1024;
+const MAX_HELM_VALUES_ITEM_PREVIEW = 16;
 const MAX_GEOSPATIAL_PREVIEW_BYTES = 192 * 1024;
 const MAX_GEOSPATIAL_FEATURE_PREVIEW = 16;
 const MAX_GEOSPATIAL_COORDINATE_PREVIEW = 12;
@@ -127,12 +140,16 @@ const MAX_LLMS_METADATA_PREVIEW_BYTES = 128 * 1024;
 const MAX_LLMS_METADATA_ITEM_PREVIEW = 16;
 const MAX_WARC_ARCHIVE_PREVIEW_BYTES = 192 * 1024;
 const MAX_WARC_ARCHIVE_RECORD_PREVIEW = 12;
+const MAX_WEB_APP_ASSOCIATION_PREVIEW_BYTES = 96 * 1024;
+const MAX_WEB_APP_ASSOCIATION_ITEM_PREVIEW = 16;
 const MAX_PWA_WEB_MANIFEST_PREVIEW_BYTES = 96 * 1024;
 const MAX_PWA_WEB_MANIFEST_ITEM_PREVIEW = 16;
 const MAX_BROWSER_EXTENSION_MANIFEST_PREVIEW_BYTES = 96 * 1024;
 const MAX_BROWSER_EXTENSION_MANIFEST_ITEM_PREVIEW = 16;
 const MAX_BROWSER_EXTENSION_INVENTORY_PREVIEW_BYTES = 128 * 1024;
 const MAX_BROWSER_EXTENSION_INVENTORY_ITEM_PREVIEW = 16;
+const MAX_EXTENSION_PACKAGE_PREVIEW_BYTES = 512 * 1024;
+const MAX_EXTENSION_PACKAGE_ITEM_PREVIEW = 16;
 const MAX_PWA_SERVICE_WORKER_PREVIEW_BYTES = 96 * 1024;
 const MAX_PWA_SERVICE_WORKER_ITEM_PREVIEW = 16;
 const MAX_SOURCE_MAP_PREVIEW_BYTES = 128 * 1024;
@@ -143,6 +160,8 @@ const MAX_DOTLOTTIE_ARCHIVE_PREVIEW_BYTES = 512 * 1024;
 const MAX_DOTLOTTIE_ARCHIVE_ITEM_PREVIEW = 12;
 const MAX_ANDROID_MANIFEST_PREVIEW_BYTES = 128 * 1024;
 const MAX_ANDROID_MANIFEST_ITEM_PREVIEW = 16;
+const MAX_ANDROID_RESOURCE_XML_PREVIEW_BYTES = 96 * 1024;
+const MAX_ANDROID_RESOURCE_XML_ITEM_PREVIEW = 16;
 const MAX_ANDROID_LOGCAT_PREVIEW_BYTES = 128 * 1024;
 const MAX_ANDROID_LOGCAT_LINE_PREVIEW = 16;
 const MAX_APPLE_UNIFIED_LOG_PREVIEW_BYTES = 128 * 1024;
@@ -176,6 +195,8 @@ const MAX_DESKTOP_ENTRY_PREVIEW_BYTES = 64 * 1024;
 const MAX_DESKTOP_ENTRY_ITEM_PREVIEW = 16;
 const MAX_WINDOWS_SHORTCUT_PREVIEW_BYTES = 64 * 1024;
 const MAX_WINDOWS_SHORTCUT_STRING_PREVIEW = 10;
+const MAX_RDP_CONFIG_PREVIEW_BYTES = 64 * 1024;
+const MAX_RDP_CONFIG_ITEM_PREVIEW = 16;
 const MAX_REGISTRY_EXPORT_PREVIEW_BYTES = 96 * 1024;
 const MAX_REGISTRY_KEY_PREVIEW = 12;
 const MAX_REGISTRY_VALUE_PREVIEW = 16;
@@ -196,6 +217,8 @@ const MAX_WINDOWS_ERROR_REPORT_FIELD_PREVIEW = 16;
 const MAX_WINDOWS_INSTALLER_PACKAGE_PREVIEW_BYTES = 512 * 1024;
 const MAX_WINDOWS_INSTALLER_MANIFEST_PREVIEW_BYTES = 96 * 1024;
 const MAX_WINDOWS_INSTALLER_ITEM_PREVIEW = 12;
+const MAX_WINGET_MANIFEST_PREVIEW_BYTES = 96 * 1024;
+const MAX_WINGET_MANIFEST_ITEM_PREVIEW = 16;
 const MAX_WINDOWS_TASK_PREVIEW_BYTES = 96 * 1024;
 const MAX_WINDOWS_TASK_ITEM_PREVIEW = 12;
 const MAX_XLSX_PREVIEW_SHEETS = 3;
@@ -211,6 +234,16 @@ const MAX_CONFIG_SCHEMA_HINTS = 8;
 const MAX_DOTENV_PREVIEW_BYTES = 64 * 1024;
 const MAX_DOTENV_ITEM_PREVIEW = 16;
 const MAX_CI_WORKFLOW_PREVIEW_ITEMS = 12;
+const MAX_GHA_JOB_SUMMARY_PREVIEW_BYTES = 96 * 1024;
+const MAX_GHA_JOB_SUMMARY_ITEM_PREVIEW = 16;
+const MAX_DEPENDABOT_CONFIG_PREVIEW_BYTES = 96 * 1024;
+const MAX_DEPENDABOT_CONFIG_ITEM_PREVIEW = 16;
+const MAX_RENOVATE_CONFIG_PREVIEW_BYTES = 96 * 1024;
+const MAX_RENOVATE_CONFIG_ITEM_PREVIEW = 16;
+const MAX_GITHUB_TEMPLATE_PREVIEW_BYTES = 96 * 1024;
+const MAX_GITHUB_TEMPLATE_ITEM_PREVIEW = 16;
+const MAX_PRECOMMIT_CONFIG_PREVIEW_BYTES = 96 * 1024;
+const MAX_PRECOMMIT_CONFIG_ITEM_PREVIEW = 16;
 const MAX_TERMINAL_RECORDING_PREVIEW_BYTES = 128 * 1024;
 const MAX_TERMINAL_RECORDING_EVENT_PREVIEW = 12;
 const MAX_POWERSHELL_TRANSCRIPT_PREVIEW_BYTES = 128 * 1024;
@@ -222,8 +255,12 @@ const MAX_METRICS_SNAPSHOT_ITEM_PREVIEW = 16;
 const MAX_CONTAINER_CONFIG_PREVIEW_BYTES = 96 * 1024;
 const MAX_CONTAINER_INSTRUCTION_PREVIEW = 16;
 const MAX_CONTAINER_COMPOSE_SERVICE_PREVIEW = 12;
+const MAX_DEVCONTAINER_CONFIG_PREVIEW_BYTES = 96 * 1024;
+const MAX_DEVCONTAINER_CONFIG_ITEM_PREVIEW = 16;
 const MAX_BUILD_MANIFEST_PREVIEW_BYTES = 128 * 1024;
 const MAX_BUILD_MANIFEST_ITEM_PREVIEW = 16;
+const MAX_BAZEL_BUILD_PREVIEW_BYTES = 128 * 1024;
+const MAX_BAZEL_BUILD_ITEM_PREVIEW = 16;
 const MAX_DOTNET_NUGET_CONFIG_PREVIEW_BYTES = 96 * 1024;
 const MAX_DOTNET_NUGET_CONFIG_ITEM_PREVIEW = 16;
 const MAX_CPP_BUILD_MANIFEST_PREVIEW_BYTES = 128 * 1024;
@@ -263,10 +300,16 @@ const MAX_TEST_REPORT_PREVIEW_BYTES = 128 * 1024;
 const MAX_TEST_REPORT_CASE_PREVIEW = 16;
 const MAX_TEST_REPORT_FAILURE_PREVIEW = 8;
 const MAX_TEST_REPORT_DETAIL_PREVIEW = 8;
+const MAX_JMETER_TEST_PLAN_PREVIEW_BYTES = 128 * 1024;
+const MAX_JMETER_TEST_PLAN_ITEM_PREVIEW = 16;
 const MAX_PYTHON_DEPENDENCY_PREVIEW_BYTES = 128 * 1024;
 const MAX_PYTHON_DEPENDENCY_ITEM_PREVIEW = 16;
 const MAX_PYTHON_PACKAGE_INDEX_CONFIG_PREVIEW_BYTES = 64 * 1024;
 const MAX_PYTHON_PACKAGE_INDEX_CONFIG_ITEM_PREVIEW = 12;
+const MAX_RUFF_CONFIG_PREVIEW_BYTES = 96 * 1024;
+const MAX_RUFF_CONFIG_ITEM_PREVIEW = 16;
+const MAX_PYTHON_TOOLING_CONFIG_PREVIEW_BYTES = 96 * 1024;
+const MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW = 16;
 const MAX_CARGO_MANIFEST_PREVIEW_BYTES = 96 * 1024;
 const MAX_CARGO_MANIFEST_ITEM_PREVIEW = 16;
 const MAX_DART_PUBSPEC_PREVIEW_BYTES = 96 * 1024;
@@ -291,8 +334,16 @@ const MAX_JS_WORKSPACE_CONFIG_PREVIEW_BYTES = 96 * 1024;
 const MAX_JS_WORKSPACE_CONFIG_ITEM_PREVIEW = 16;
 const MAX_JVM_BUILD_CONFIG_PREVIEW_BYTES = 64 * 1024;
 const MAX_JVM_BUILD_CONFIG_ITEM_PREVIEW = 16;
+const MAX_GRADLE_VERSION_CATALOG_PREVIEW_BYTES = 96 * 1024;
+const MAX_GRADLE_VERSION_CATALOG_ITEM_PREVIEW = 16;
+const MAX_MAVEN_SETTINGS_PREVIEW_BYTES = 96 * 1024;
+const MAX_MAVEN_SETTINGS_ITEM_PREVIEW = 16;
+const MAX_CITATION_CFF_PREVIEW_BYTES = 96 * 1024;
+const MAX_CITATION_CFF_ITEM_PREVIEW = 16;
 const MAX_JAVA_BUILD_ARTIFACT_PREVIEW_BYTES = 256 * 1024;
 const MAX_JAVA_BUILD_ARTIFACT_ITEM_PREVIEW = 16;
+const MAX_JAVA_FLIGHT_RECORDER_PREVIEW_BYTES = 192 * 1024;
+const MAX_JAVA_FLIGHT_RECORDER_STRING_PREVIEW = 16;
 const MAX_REPOSITORY_GOVERNANCE_PREVIEW_BYTES = 96 * 1024;
 const MAX_REPOSITORY_GOVERNANCE_ITEM_PREVIEW = 16;
 const MAX_SECURITY_ARTIFACT_PREVIEW_BYTES = 128 * 1024;
@@ -447,6 +498,7 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".aab",
   ".apk",
   ".bat",
+  ".bazel-build",
   ".bash",
   ".bib",
   ".bibtex",
@@ -473,6 +525,7 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".c",
   ".cabal",
   ".cat",
+  ".citation.cff",
   ".cast",
   ".cc",
   ".calendar.csv",
@@ -492,6 +545,7 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".composer.json",
   ".contacts.csv",
   ".cpp",
+  ".crx",
   ".crash",
   ".cfg",
   ".cs",
@@ -506,8 +560,11 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".dbml",
   ".dmp",
   ".dotnet-global.json",
-  ".dockerfile",
-  ".dockerignore",
+  ".devcontainer.json",
+  ".docker-compose.yaml",
+      ".dockerfile",
+      ".docker-compose.yaml",
+      ".dockerignore",
   ".doc",
   ".docm",
   ".docx",
@@ -515,6 +572,7 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".dot",
   ".drawio",
   ".dll",
+  ".dependabot.yaml",
   ".dwg",
   ".dxf",
   ".eml",
@@ -525,6 +583,7 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".editorconfig",
   ".asc",
   ".androidmanifest.xml",
+  ".android-resource.xml",
   ".logcat",
   ".oslog",
   ".syslog",
@@ -557,17 +616,22 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".go.work",
   ".gv",
   ".gql",
+  ".graphql-introspection.json",
   ".graphml",
+  ".gha-job-summary.md",
   ".gpx",
   ".h5",
   ".heapsnapshot",
   ".helm-chart.yaml",
+  ".helm-values.yaml",
   ".gradle",
   ".gradle.kts",
   ".gradle.properties",
+  ".gradle-version-catalog.toml",
   ".gitattributes",
   ".gitignore",
   ".gitmodules",
+  ".github-template",
   ".mailmap",
   ".graphql",
   ".env",
@@ -582,7 +646,9 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".iis-web.config",
   ".web-server.conf",
   ".vpn-config",
+  ".web-app-association.json",
       ".ini",
+  ".jetbrains-ide.xml",
   ".istanbul-coverage.json",
   ".inf",
   ".info.plist",
@@ -595,14 +661,18 @@ const IMPORTABLE_EXTENSIONS = new Set([
       ".vcs",
       ".ico",
       ".jar",
+      ".jfr",
       ".war",
       ".ear",
       ".class",
   ".java",
+  ".jfr",
+  ".jmx",
   ".jmeter.csv",
   ".jmeter.xml",
   ".jtl",
   ".junit.xml",
+  ".robot.xml",
   ".nunit.xml",
   ".otel.json",
   ".otlp.json",
@@ -645,6 +715,7 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".mjs",
   ".man",
   ".maven.config",
+  ".maven-settings.xml",
   ".msi",
   ".msix",
   ".msixbundle",
@@ -653,12 +724,15 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".mp4",
   ".mp3",
   ".m4a",
-  ".m4v",
-  ".mermaid",
-  ".json",
-  ".jsonfeed",
-  ".jsonl",
+      ".m4v",
+      ".mermaid",
+      ".json",
+      ".json-schema.json",
+      ".jsonfeed",
+      ".jsonl",
+  ".json-schema.json",
   ".kt",
+  ".kubeconfig.yaml",
   ".kustomization.yaml",
   ".kts",
   ".markdown",
@@ -690,6 +764,7 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".otf",
   ".obj",
   ".openmetrics",
+  ".pact.json",
   ".patch",
   ".parquet",
   ".path",
@@ -706,6 +781,7 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".podfile.lock",
   ".pbxproj",
   ".podspec",
+  ".pre-commit-config.yaml",
   ".ppt",
   ".pptm",
   ".png",
@@ -724,16 +800,20 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".pnpmfile.cjs",
   ".pmd.xml",
   ".py",
+  ".python-tooling-config",
   ".rb",
   ".rar",
   ".rdb",
+  ".rdp",
   ".rest",
   ".regex",
   ".regexp",
   ".reg",
+  ".renovate.json",
   ".diff",
   ".rss",
   ".robots.txt",
+  ".ruff.toml",
   ".r",
   ".rs",
   ".rtf",
@@ -742,6 +822,7 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".sarif.json",
   ".scss",
   ".security-audit.json",
+  ".security.txt",
   ".service",
   ".source-map.json",
   ".supervisord.conf",
@@ -803,6 +884,7 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".vscode-launch.json",
   ".vscode-settings.json",
   ".vscode-tasks.json",
+  ".vsix",
   ".vtt",
   ".wasm",
   ".wav",
@@ -812,6 +894,7 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".warc.gz",
   ".webloc",
   ".webmanifest",
+  ".winget-manifest.yaml",
   ".wer",
   ".woff",
   ".woff2",
@@ -2954,32 +3037,64 @@ function parseCalendarIcsEvents(content: string): Record<string, unknown>[] {
         lines.push(line);
       }
       return lines;
-    }, []);
+  }, []);
   const events: Record<string, unknown>[] = [];
   let current: Record<string, unknown> | null = null;
+  let inAlarm = false;
   for (const line of unfolded) {
     const trimmed = line.trimEnd();
     if (trimmed === "BEGIN:VEVENT") {
       current = {};
+      inAlarm = false;
       continue;
     }
     if (trimmed === "END:VEVENT") {
       if (current) events.push(current);
       current = null;
+      inAlarm = false;
       continue;
     }
     if (!current) continue;
+    if (trimmed === "BEGIN:VALARM") {
+      inAlarm = true;
+      continue;
+    }
+    if (trimmed === "END:VALARM") {
+      inAlarm = false;
+      continue;
+    }
     const separator = trimmed.indexOf(":");
     if (separator < 0) continue;
     const rawName = trimmed.slice(0, separator);
     const value = decodeIcsText(trimmed.slice(separator + 1));
     const name = rawName.split(";")[0].toUpperCase();
+    const timezone = readIcsParameter(rawName, "TZID");
+    if (inAlarm && ["ACTION", "TRIGGER", "DESCRIPTION"].includes(name)) {
+      const alarms = Array.isArray(current.alarms) ? current.alarms : [];
+      alarms.push(`${name.toLowerCase()}=${value}`);
+      current.alarms = alarms.slice(0, 6);
+      continue;
+    }
     if (name === "SUMMARY") current.title = value;
-    if (name === "DTSTART") current.startsAt = value;
-    if (name === "DTEND") current.endsAt = value;
+    if (name === "DTSTART") {
+      current.startsAt = value;
+      if (timezone) current.startsAtTimezone = timezone;
+    }
+    if (name === "DTEND") {
+      current.endsAt = value;
+      if (timezone) current.endsAtTimezone = timezone;
+    }
     if (name === "LOCATION") current.location = value;
     if (name === "DESCRIPTION") current.notes = value;
     if (name === "URL") current.url = value;
+    if (name === "STATUS") current.status = value;
+    if (name === "RRULE") current.recurrence = value;
+    if (name === "EXDATE") {
+      const exdates = Array.isArray(current.exdates) ? current.exdates : [];
+      exdates.push(timezone ? `${value} (${timezone})` : value);
+      current.exdates = exdates.slice(0, 6);
+    }
+    if (name === "ORGANIZER") current.organizer = value.replace(/^mailto:/i, "");
     if (name === "ATTENDEE") {
       const attendees = Array.isArray(current.attendees) ? current.attendees : [];
       attendees.push(value.replace(/^mailto:/i, ""));
@@ -2998,6 +3113,13 @@ function decodeIcsText(value: string): string {
     .trim();
 }
 
+function readIcsParameter(rawName: string, parameter: string): string {
+  const pattern = new RegExp(`(?:^|;)${parameter}=("[^"]+"|[^;:]+)`, "i");
+  const match = rawName.match(pattern);
+  if (!match) return "";
+  return decodeIcsText((match[1] || "").replace(/^"|"$/g, ""));
+}
+
 function summarizeCalendarIcsFile(filePath: string, size: number): string {
   try {
     const raw = readFileHeader(
@@ -3014,12 +3136,12 @@ function summarizeCalendarIcsFile(filePath: string, size: number): string {
       `Calendar ICS file preview (${formatBytes(size)}).`,
       status,
       ...previews,
-      "Ready for explicit attachment after visible review; no calendar app access, provider API call, schedule mutation, network call, or provider send was performed.",
+      "Ready for explicit attachment after visible review; recurrence rules were not expanded, alarms were not triggered, and no calendar app access, provider API call, schedule mutation, network call, or provider send was performed.",
     ].join("\n").slice(0, MAX_TEXT_BYTES);
   } catch {
     return [
       `Calendar ICS file ready for explicit attachment (${formatBytes(size)}).`,
-      "No calendar app access, provider API call, schedule mutation, network call, or provider send was performed.",
+      "No recurrence expansion, alarm trigger, calendar app access, provider API call, schedule mutation, network call, or provider send was performed.",
     ].join("\n").slice(0, MAX_TEXT_BYTES);
   }
 }
@@ -3030,9 +3152,21 @@ function summarizeCalendarIcsEvent(record: Record<string, unknown>, index: numbe
     getSnapshotString(record, "title") ? `Title: ${safeField(getSnapshotString(record, "title"))}` : "",
     getSnapshotString(record, "startsAt") ? `Starts: ${safeField(getSnapshotString(record, "startsAt"))}` : "",
     getSnapshotString(record, "endsAt") ? `Ends: ${safeField(getSnapshotString(record, "endsAt"))}` : "",
+    getSnapshotString(record, "startsAtTimezone") || getSnapshotString(record, "endsAtTimezone")
+      ? `Time zones: ${[getSnapshotString(record, "startsAtTimezone"), getSnapshotString(record, "endsAtTimezone")].filter(Boolean).map(safeField).join(", ")}`
+      : "",
     getSnapshotString(record, "location") ? `Location: ${safeField(getSnapshotString(record, "location"))}` : "",
+    getSnapshotString(record, "status") ? `Status: ${safeField(getSnapshotString(record, "status"))}` : "",
+    getSnapshotString(record, "organizer") ? `Organizer: ${safeField(getSnapshotString(record, "organizer"))}` : "",
     getSnapshotLabels(record.attendees).length > 0
       ? `Attendees: ${getSnapshotLabels(record.attendees).map(safeField).join(", ")}`
+      : "",
+    getSnapshotString(record, "recurrence") ? `Recurrence: ${safeField(getSnapshotString(record, "recurrence"))}` : "",
+    getSnapshotLabels(record.exdates).length > 0
+      ? `Exdates: ${getSnapshotLabels(record.exdates).map(safeField).join(", ")}`
+      : "",
+    getSnapshotLabels(record.alarms).length > 0
+      ? `Alarms: ${getSnapshotLabels(record.alarms).map(safeField).join(", ")}`
       : "",
     getSnapshotString(record, "url") ? `URL: ${safeField(getSnapshotString(record, "url"))}` : "",
     getSnapshotString(record, "notes") ? `Notes: ${safeField(getSnapshotString(record, "notes"))}` : "",
@@ -4336,6 +4470,9 @@ function getImportMime(filePath: string, extension: string): string {
   if (isChatExportJsonFile(filePath, extension)) {
     return "application/vnd.drsai.chat-export+json";
   }
+  if (isJsonSchemaFile(filePath, extension)) {
+    return "application/schema+json";
+  }
   if (isSourceMapFile(filePath, extension)) {
     return "application/vnd.drsai.source-map+json";
   }
@@ -4344,6 +4481,15 @@ function getImportMime(filePath: string, extension: string): string {
   }
   if (extension === ".dotlottie") {
     return "application/vnd.lottie+zip";
+  }
+  if (isRuffConfigFile(filePath, extension)) {
+    return "application/vnd.astral-sh.ruff+toml";
+  }
+  if (isPythonToolingConfigFile(filePath, extension)) {
+    return "application/vnd.drsai.python-tooling-config";
+  }
+  if (isCitationCffFile(filePath, extension)) {
+    return "application/vnd.citationstyles.cff+yaml";
   }
   return getMime(extension);
 }
@@ -4371,6 +4517,9 @@ function getImportExtension(filePath: string): string {
   }
   if (normalizedPath.endsWith("/.vscode/extensions.json")) {
     return ".vscode-extensions.json";
+  }
+  if ((normalizedPath.includes("/.idea/") && name.endsWith(".xml")) || name.endsWith(".iml")) {
+    return ".jetbrains-ide.xml";
   }
   if (name === "codeowners") {
     return ".codeowners";
@@ -4403,6 +4552,17 @@ function getImportExtension(filePath: string): string {
     return ".ssh-config";
   }
   if (
+    normalizedPath.endsWith("/.kube/config") ||
+    name === "kubeconfig" ||
+    name === "kubeconfig.yaml" ||
+    name === "kubeconfig.yml" ||
+    name.endsWith(".kubeconfig") ||
+    name.endsWith(".kubeconfig.yaml") ||
+    name.endsWith(".kubeconfig.yml")
+  ) {
+    return ".kubeconfig.yaml";
+  }
+  if (
     name === "license" ||
     name === "license.txt" ||
     name === "license.md" ||
@@ -4433,6 +4593,12 @@ function getImportExtension(filePath: string): string {
   if (name === ".pypirc" || name.endsWith(".pypirc")) {
     return ".pypirc";
   }
+  if (name === "citation.cff" || name.endsWith(".citation.cff") || name.endsWith(".cff")) {
+    return ".citation.cff";
+  }
+  if (name === "ruff.toml" || name === ".ruff.toml") {
+    return ".ruff.toml";
+  }
   if (name === "composer.json") {
     return ".composer.json";
   }
@@ -4457,11 +4623,34 @@ function getImportExtension(filePath: string): string {
   if (name === "go.work") {
     return ".go.work";
   }
+  if (
+    name === "schema-introspection.json" ||
+    name === "graphql-introspection.json" ||
+    name === "introspection.json" ||
+    name.endsWith(".introspection.json") ||
+    name.endsWith(".graphql-introspection.json")
+  ) {
+    return ".graphql-introspection.json";
+  }
+  if (name === "pact.json" || name.endsWith(".pact.json")) {
+    return ".pact.json";
+  }
   if (name === "cmakelists.txt") {
     return ".cmakelists.txt";
   }
   if (name === "compile_commands.json") {
     return ".compile_commands.json";
+  }
+  if (
+    name === "build" ||
+    name === "build.bazel" ||
+    name === "workspace" ||
+    name === "workspace.bazel" ||
+    name === "module.bazel" ||
+    name === ".bazelrc" ||
+    name.endsWith(".bzl")
+  ) {
+    return ".bazel-build";
   }
   if (["makefile", "gnumakefile", "bsdmakefile"].includes(name) || name.endsWith(".mk")) {
     return ".makefile";
@@ -4474,6 +4663,34 @@ function getImportExtension(filePath: string): string {
   }
   if (name === ".envrc" || name.endsWith(".envrc")) {
     return ".envrc";
+  }
+  if (name === "devcontainer.json") {
+    return ".devcontainer.json";
+  }
+  if (
+    name === "dependabot.yml" ||
+    name === "dependabot.yaml" ||
+    normalizedPath.endsWith("/.github/dependabot.yml") ||
+    normalizedPath.endsWith("/.github/dependabot.yaml")
+  ) {
+    return ".dependabot.yaml";
+  }
+  if (isGithubTemplatePath(filePath)) {
+    return ".github-template";
+  }
+  if (name === ".pre-commit-config.yaml" || name === ".pre-commit-config.yml") {
+    return ".pre-commit-config.yaml";
+  }
+  if (
+    name === "renovate.json" ||
+    name === "renovate.json5" ||
+    name === ".renovaterc" ||
+    name === ".renovaterc.json" ||
+    name === ".renovaterc.json5" ||
+    normalizedPath.endsWith("/.github/renovate.json") ||
+    normalizedPath.endsWith("/.github/renovate.json5")
+  ) {
+    return ".renovate.json";
   }
   if (name === "crontab" || name.endsWith(".crontab")) {
     return ".crontab";
@@ -4530,6 +4747,9 @@ function getImportExtension(filePath: string): string {
   if (name === ".dockerignore") {
     return ".dockerignore";
   }
+  if (/^(?:docker-)?compose(?:[.-].*)?\.ya?ml$/.test(name)) {
+    return ".docker-compose.yaml";
+  }
   if (name === "pipfile") {
     return ".pipfile";
   }
@@ -4538,6 +4758,15 @@ function getImportExtension(filePath: string): string {
   }
   if (name === "security.txt" || name.endsWith(".security.txt")) {
     return ".security.txt";
+  }
+  if (
+    name === "assetlinks.json" ||
+    name === "apple-app-site-association" ||
+    name === "aasa.json" ||
+    name.endsWith(".assetlinks.json") ||
+    name.endsWith(".aasa.json")
+  ) {
+    return ".web-app-association.json";
   }
   if (name === "llms-full.txt" || name.endsWith(".llms-full.txt")) {
     return ".llms-full.txt";
@@ -4778,6 +5007,14 @@ function getImportExtension(filePath: string): string {
     return ".jsonfeed";
   }
   if (
+    name === "schema.json" ||
+    name === "jsonschema.json" ||
+    name.endsWith(".schema.json") ||
+    name.endsWith(".jsonschema.json")
+  ) {
+    return ".json-schema.json";
+  }
+  if (
     name === "source-map.json" ||
     name === "sourcemap.json" ||
     name.endsWith(".source-map.json") ||
@@ -4815,6 +5052,7 @@ function getImportExtension(filePath: string): string {
     name === "netlog.json" ||
     name === "chrome-netlog.json" ||
     name === "edge-netlog.json" ||
+    name.endsWith("-netlog.json") ||
     name.endsWith(".netlog.json")
   ) {
     return ".netlog.json";
@@ -4902,6 +5140,15 @@ function getImportExtension(filePath: string): string {
   ) {
     return ".security-audit.json";
   }
+  if (
+    name === "pyrightconfig.json" ||
+    name === "mypy.ini" ||
+    name === ".mypy.ini" ||
+    name === "pytest.ini" ||
+    name === "tox.ini"
+  ) {
+    return ".python-tooling-config";
+  }
   if (name === "lcov.info" || name.endsWith(".lcov.info")) {
     return ".lcov";
   }
@@ -4936,11 +5183,24 @@ function getImportExtension(filePath: string): string {
     return ".junit.xml";
   }
   if (
+    name === "output.xml" ||
+    name === "robot-output.xml" ||
+    name === "robot-results.xml" ||
+    name.endsWith(".robot.xml") ||
+    name.endsWith(".robot-output.xml") ||
+    name.endsWith(".robot-results.xml")
+  ) {
+    return ".robot.xml";
+  }
+  if (
     name === "jmeter-results.xml" ||
     name === "jmeter-report.xml" ||
     name.endsWith(".jmeter.xml")
   ) {
     return ".jmeter.xml";
+  }
+  if (name.endsWith(".jmx")) {
+    return ".jmx";
   }
   if (
     name === "jmeter-results.csv" ||
@@ -5007,6 +5267,66 @@ function getImportExtension(filePath: string): string {
     name === "prettier.config.mjs" ||
     name === "biome.json" ||
     name === "biome.jsonc" ||
+    name === "oxlintrc.json" ||
+    name === "oxlintrc.jsonc" ||
+    name === ".oxlintrc" ||
+    name === ".oxlintrc.json" ||
+    name === ".oxlintrc.jsonc" ||
+    name === "oxlint.config.js" ||
+    name === "oxlint.config.cjs" ||
+    name === "oxlint.config.mjs" ||
+    name === "oxlint.config.ts" ||
+    name === "deno.json" ||
+    name === "deno.jsonc" ||
+    name === "cspell.json" ||
+    name === "cspell.jsonc" ||
+    name === ".cspell.json" ||
+    name === ".cspell.jsonc" ||
+    name === "cspell.config.yaml" ||
+    name === "cspell.config.yml" ||
+    name === ".markdownlint.json" ||
+    name === ".markdownlint.jsonc" ||
+    name === ".markdownlint.yaml" ||
+    name === ".markdownlint.yml" ||
+    name === "markdownlint.json" ||
+    name === "markdownlint.jsonc" ||
+    name === "markdownlint.yaml" ||
+    name === "markdownlint.yml" ||
+    name === "markdownlint-cli2.jsonc" ||
+    name === "markdownlint-cli2.yaml" ||
+    name === "markdownlint-cli2.yml" ||
+    name === "typedoc.json" ||
+    name === "typedoc.jsonc" ||
+    name === "typedoc.config.js" ||
+    name === "typedoc.config.cjs" ||
+    name === "typedoc.config.mjs" ||
+    name === "typedoc.config.ts" ||
+    name === "knip.json" ||
+    name === "knip.jsonc" ||
+    name === "knip.config.js" ||
+    name === "knip.config.cjs" ||
+    name === "knip.config.mjs" ||
+    name === "knip.config.ts" ||
+    name === ".commitlintrc" ||
+    name === ".commitlintrc.json" ||
+    name === ".commitlintrc.js" ||
+    name === ".commitlintrc.cjs" ||
+    name === ".commitlintrc.yaml" ||
+    name === ".commitlintrc.yml" ||
+    name === "commitlint.config.js" ||
+    name === "commitlint.config.cjs" ||
+    name === "commitlint.config.mjs" ||
+    name === "commitlint.config.ts" ||
+    name === ".lintstagedrc" ||
+    name === ".lintstagedrc.json" ||
+    name === ".lintstagedrc.js" ||
+    name === ".lintstagedrc.cjs" ||
+    name === ".lintstagedrc.yaml" ||
+    name === ".lintstagedrc.yml" ||
+    name === "lint-staged.config.js" ||
+    name === "lint-staged.config.cjs" ||
+    name === "lint-staged.config.mjs" ||
+    name === "lint-staged.config.ts" ||
     name === ".stylelintrc" ||
     name === ".stylelintrc.json" ||
     name === ".stylelintrc.yaml" ||
@@ -5014,6 +5334,36 @@ function getImportExtension(filePath: string): string {
     name === "stylelint.config.js" ||
     name === "stylelint.config.cjs" ||
     name === "stylelint.config.mjs" ||
+    name === ".babelrc" ||
+    name === ".babelrc.json" ||
+    name === ".babelrc.jsonc" ||
+    name === ".babelrc.js" ||
+    name === ".babelrc.cjs" ||
+    name === "babel.config.js" ||
+    name === "babel.config.cjs" ||
+    name === "babel.config.mjs" ||
+    name === "babel.config.json" ||
+    name === "babel.config.jsonc" ||
+    name === ".browserslistrc" ||
+    name === "browserslist" ||
+    name === "browserslist.rc" ||
+    name === "postcss.config.js" ||
+    name === "postcss.config.cjs" ||
+    name === "postcss.config.mjs" ||
+    name === "postcss.config.ts" ||
+    name === "tailwind.config.js" ||
+    name === "tailwind.config.cjs" ||
+    name === "tailwind.config.mjs" ||
+    name === "tailwind.config.ts" ||
+    name === "vercel.json" ||
+    name === "vercel.jsonc" ||
+    name === "netlify.toml" ||
+    name === "wrangler.toml" ||
+    name === "wrangler.json" ||
+    name === "wrangler.jsonc" ||
+    name === "tsconfig.json" ||
+    /^tsconfig\..+\.jsonc?$/.test(name) ||
+    name === "jsconfig.json" ||
     name === "jest.config.js" ||
     name === "jest.config.cjs" ||
     name === "jest.config.mjs" ||
@@ -5023,7 +5373,45 @@ function getImportExtension(filePath: string): string {
     name === "vitest.config.ts" ||
     name === "playwright.config.js" ||
     name === "playwright.config.mjs" ||
-    name === "playwright.config.ts"
+    name === "playwright.config.ts" ||
+    name === "cypress.config.js" ||
+    name === "cypress.config.cjs" ||
+    name === "cypress.config.mjs" ||
+    name === "cypress.config.ts" ||
+    name === "storybook.config.js" ||
+    name === "storybook.config.cjs" ||
+    name === "storybook.config.mjs" ||
+    name === "storybook.config.ts" ||
+    normalizedPath.endsWith("/.storybook/main.js") ||
+    normalizedPath.endsWith("/.storybook/main.cjs") ||
+    normalizedPath.endsWith("/.storybook/main.mjs") ||
+    normalizedPath.endsWith("/.storybook/main.ts") ||
+    normalizedPath.endsWith("/.storybook/preview.js") ||
+    normalizedPath.endsWith("/.storybook/preview.cjs") ||
+    normalizedPath.endsWith("/.storybook/preview.mjs") ||
+    normalizedPath.endsWith("/.storybook/preview.ts") ||
+    name === "next.config.js" ||
+    name === "next.config.cjs" ||
+    name === "next.config.mjs" ||
+    name === "next.config.ts" ||
+    name === "astro.config.js" ||
+    name === "astro.config.mjs" ||
+    name === "astro.config.ts" ||
+    name === "svelte.config.js" ||
+    name === "svelte.config.mjs" ||
+    name === "svelte.config.ts" ||
+    name === "nuxt.config.js" ||
+    name === "nuxt.config.mjs" ||
+    name === "nuxt.config.ts" ||
+    name === "vite.config.js" ||
+    name === "vite.config.mjs" ||
+    name === "vite.config.ts" ||
+    name === "rollup.config.js" ||
+    name === "rollup.config.mjs" ||
+    name === "rollup.config.ts" ||
+    name === "tsup.config.js" ||
+    name === "tsup.config.mjs" ||
+    name === "tsup.config.ts"
   ) {
     return ".js-tooling-config";
   }
@@ -5032,7 +5420,8 @@ function getImportExtension(filePath: string): string {
     name === "pnpm-workspace.yml" ||
     name === "turbo.json" ||
     name === "turbo.jsonc" ||
-    name === "nx.json"
+    name === "nx.json" ||
+    name === "rush.json"
   ) {
     return ".js-workspace-config";
   }
@@ -5139,6 +5528,16 @@ function getImportExtension(filePath: string): string {
     return ".cloudformation.yaml";
   }
   if (
+    (normalizedPath.includes("/release/winget/") ||
+      normalizedPath.includes("/winget/") ||
+      name.endsWith(".installer.yaml") ||
+      name.endsWith(".installer.yml") ||
+      /\.locale\.[a-z]{2}-[a-z]{2}\.ya?ml$/i.test(name)) &&
+    (name.endsWith(".yaml") || name.endsWith(".yml"))
+  ) {
+    return ".winget-manifest.yaml";
+  }
+  if (
     name === "tfplan.json" ||
     name === "terraform-plan.json" ||
     name.endsWith(".tfplan.json") ||
@@ -5154,8 +5553,18 @@ function getImportExtension(filePath: string): string {
   if (name === "gradle.properties") {
     return ".gradle.properties";
   }
+  if (name === "libs.versions.toml" || name.endsWith(".versions.toml")) {
+    return ".gradle-version-catalog.toml";
+  }
   if (name === "maven.config") {
     return ".maven.config";
+  }
+  if (
+    name === "maven-settings.xml" ||
+    name.endsWith(".maven-settings.xml") ||
+    (name === "settings.xml" && (normalizedPath.includes("/.m2/") || normalizedPath.includes("/.mvn/")))
+  ) {
+    return ".maven-settings.xml";
   }
   if (name === "jvm.config") {
     return ".jvm.config";
@@ -5184,6 +5593,16 @@ function getImportExtension(filePath: string): string {
   if (name === "chart.yaml" || name === "chart.yml") {
     return ".helm-chart.yaml";
   }
+  if (
+    name === "values.yaml" ||
+    name === "values.yml" ||
+    name.endsWith("-values.yaml") ||
+    name.endsWith("-values.yml") ||
+    name.endsWith(".values.yaml") ||
+    name.endsWith(".values.yml")
+  ) {
+    return ".helm-values.yaml";
+  }
   if (name === "kustomization.yaml" || name === "kustomization.yml" || name === "kustomization") {
     return ".kustomization.yaml";
   }
@@ -5201,6 +5620,9 @@ function getImportExtension(filePath: string): string {
   }
   if (name === "androidmanifest.xml") {
     return ".androidmanifest.xml";
+  }
+  if (isAndroidResourceXmlPath(normalizedPath, name)) {
+    return ".android-resource.xml";
   }
   if (
     name === "chrome-passwords.csv" ||
@@ -5240,6 +5662,14 @@ function getImportExtension(filePath: string): string {
   ) {
     return ".powershell-transcript.txt";
   }
+  if (
+    name === "github_step_summary.md" ||
+    name === "step-summary.md" ||
+    name === "job-summary.md" ||
+    name.endsWith(".job-summary.md")
+  ) {
+    return ".gha-job-summary.md";
+  }
   if (name === "info.plist") {
     return ".info.plist";
   }
@@ -5268,6 +5698,7 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
       ".aab",
       ".apk",
       ".androidmanifest.xml",
+      ".android-resource.xml",
       ".logcat",
       ".oslog",
       ".info.plist",
@@ -5289,6 +5720,7 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
       ".browser-session.json",
       ".cabal",
       ".cat",
+      ".citation.cff",
       ".cfg",
       ".checkstyle.xml",
       ".cmake",
@@ -5302,6 +5734,8 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
       ".contacts.csv",
       ".crash",
       ".csproj",
+      ".cff",
+      ".dependabot.yaml",
       ".doc",
       ".docm",
       ".docx",
@@ -5320,11 +5754,13 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
       ".editorconfig",
       ".avro",
       ".avsc",
+      ".bazel-build",
       ".feather",
       ".fsproj",
       ".htm",
       ".html",
       ".geojson",
+      ".gha-job-summary.md",
       ".iis-web.config",
       ".web-server.conf",
       ".glb",
@@ -5332,15 +5768,18 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
       ".gitattributes",
       ".gitignore",
       ".mailmap",
+      ".github-template",
       ".gradle",
       ".gradle.kts",
       ".gradle.properties",
+      ".gradle-version-catalog.toml",
       ".graphml",
       ".gv",
       ".gpx",
       ".h5",
       ".hdf5",
       ".helm-chart.yaml",
+      ".helm-values.yaml",
       ".hdmp",
       ".heapsnapshot",
       ".inf",
@@ -5349,6 +5788,7 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
       ".markdown",
       ".man",
       ".maven.config",
+      ".maven-settings.xml",
       ".mat",
       ".mbox",
       ".md",
@@ -5376,6 +5816,7 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
       ".otf",
       ".obj",
       ".openmetrics",
+      ".pact.json",
       ".package.yaml",
       ".packages.config",
       ".pipfile",
@@ -5385,6 +5826,7 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
       ".podfile.lock",
       ".pbxproj",
       ".podspec",
+      ".pre-commit-config.yaml",
       ".pmd.xml",
       ".ppt",
       ".pptm",
@@ -5396,7 +5838,9 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
       ".plantuml",
   ".rar",
   ".rdb",
+  ".rdp",
   ".reg",
+  ".renovate.json",
   ".robots.txt",
   ".rss",
   ".rtf",
@@ -5404,12 +5848,14 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
   ".sarif.json",
   ".security-audit.json",
   ".security.txt",
-  ".source-map.json",
+      ".source-map.json",
       ".spotbugs.xml",
+      ".jmx",
       ".jmeter.csv",
       ".jmeter.xml",
       ".jtl",
       ".junit.xml",
+      ".robot.xml",
       ".jsonfeed",
       ".kdbx",
       ".kustomization.yaml",
@@ -5463,10 +5909,13 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
       ".warc.gz",
       ".webloc",
       ".webmanifest",
+      ".winget-manifest.yaml",
       ".woff",
       ".woff2",
       ".wprp",
+      ".crx",
       ".desktop",
+      ".vsix",
       ".xls",
       ".xlsm",
       ".xlsx",
@@ -5515,6 +5964,9 @@ function summarizeFile(
   if (extension === ".lnk") {
     return summarizeWindowsShortcutFile(filePath, size);
   }
+  if (extension === ".rdp") {
+    return summarizeRdpConfigFile(filePath, size);
+  }
   if (extension === ".reg") {
     return summarizeRegistryExportFile(filePath, size);
   }
@@ -5551,6 +6003,9 @@ function summarizeFile(
   if (isWindowsInstallerPackageExtension(extension)) {
     return summarizeWindowsInstallerPackageFile(filePath, extension, size);
   }
+  if (extension === ".winget-manifest.yaml") {
+    return summarizeWingetManifestFile(filePath, size);
+  }
   if (isWindowsDriverPackageExtension(extension)) {
     return summarizeWindowsDriverPackageFile(filePath, extension, size);
   }
@@ -5575,14 +6030,35 @@ function summarizeFile(
   if (isWarcArchiveFile(extension)) {
     return summarizeWarcArchiveFile(filePath, extension, size);
   }
+  if (isWebAppAssociationFile(filePath, extension)) {
+    return summarizeWebAppAssociationFile(filePath, size);
+  }
   if (isBrowserExtensionManifestFile(filePath, extension)) {
     return summarizeBrowserExtensionManifestFile(filePath, size);
   }
   if (isBrowserExtensionInventoryFile(filePath, extension)) {
     return summarizeBrowserExtensionInventoryFile(filePath, size);
   }
+  if (isExtensionPackageExtension(extension)) {
+    return summarizeExtensionPackageFile(filePath, extension, size);
+  }
   if (isPwaWebManifestFile(filePath, extension)) {
     return summarizePwaWebManifestFile(filePath, size);
+  }
+  if (extension === ".devcontainer.json") {
+    return summarizeDevContainerConfigFile(filePath, size);
+  }
+  if (isGithubTemplateFile(filePath, extension)) {
+    return summarizeGithubTemplateFile(filePath, size);
+  }
+  if (isDependabotConfigFile(filePath, extension)) {
+    return summarizeDependabotConfigFile(filePath, size);
+  }
+  if (isRenovateConfigFile(filePath, extension)) {
+    return summarizeRenovateConfigFile(filePath, size);
+  }
+  if (isPreCommitConfigFile(filePath, extension)) {
+    return summarizePreCommitConfigFile(filePath, size);
   }
   if (isSourceMapFile(filePath, extension)) {
     return summarizeSourceMapFile(filePath, size);
@@ -5628,6 +6104,9 @@ function summarizeFile(
   }
   if (isAndroidManifestFile(filePath, extension)) {
     return summarizeAndroidManifestFile(filePath, size);
+  }
+  if (isAndroidResourceXmlFile(filePath, extension)) {
+    return summarizeAndroidResourceXmlFile(filePath, size);
   }
   if (extension === ".logcat") {
     return summarizeAndroidLogcatFile(filePath, size);
@@ -5686,6 +6165,9 @@ function summarizeFile(
   if (isBuildManifestFile(filePath, extension)) {
     return summarizeBuildManifestFile(filePath, extension, size);
   }
+  if (isBazelBuildFile(filePath, extension)) {
+    return summarizeBazelBuildFile(filePath, size);
+  }
   if (isCppBuildManifestFile(filePath, extension)) {
     return summarizeCppBuildManifestFile(filePath, extension, size);
   }
@@ -5713,8 +6195,20 @@ function summarizeFile(
   if (isJvmBuildConfigFile(filePath, extension)) {
     return summarizeJvmBuildConfigFile(filePath, extension, size);
   }
+  if (isGradleVersionCatalogFile(filePath, extension)) {
+    return summarizeGradleVersionCatalogFile(filePath, size);
+  }
+  if (isMavenSettingsFile(filePath, extension)) {
+    return summarizeMavenSettingsFile(filePath, size);
+  }
   if (isJavaBuildArtifactExtension(extension)) {
     return summarizeJavaBuildArtifactFile(filePath, extension, size);
+  }
+  if (extension === ".jfr") {
+    return summarizeJavaFlightRecorderFile(filePath, size);
+  }
+  if (extension === ".jmx" || (extension === ".xml" && looksLikeJmeterTestPlanFile(filePath))) {
+    return summarizeJmeterTestPlanFile(filePath, size);
   }
   if (isKeePassDatabaseExtension(extension)) {
     return summarizeKeePassDatabaseFile(filePath, size);
@@ -5749,6 +6243,15 @@ function summarizeFile(
   if (isPythonPackageIndexConfigFile(filePath, extension)) {
     return summarizePythonPackageIndexConfigFile(filePath, size);
   }
+  if (isRuffConfigFile(filePath, extension)) {
+    return summarizeRuffConfigFile(filePath, size);
+  }
+  if (isPythonToolingConfigFile(filePath, extension)) {
+    return summarizePythonToolingConfigFile(filePath, size);
+  }
+  if (isCitationCffFile(filePath, extension)) {
+    return summarizeCitationCffFile(filePath, size);
+  }
   if (isPythonDependencyManifestFile(filePath, extension)) {
     return summarizePythonDependencyManifestFile(filePath, extension, size);
   }
@@ -5758,11 +6261,23 @@ function summarizeFile(
   if (isKubernetesPackageConfigFile(filePath, extension)) {
     return summarizeKubernetesPackageConfigFile(filePath, extension, size);
   }
+  if (isHelmValuesFile(filePath, extension)) {
+    return summarizeHelmValuesFile(filePath, size);
+  }
+  if (isKubeconfigFile(filePath, extension)) {
+    return summarizeKubeconfigFile(filePath, size);
+  }
   if (isDependencyLockfile(filePath, extension)) {
     return summarizeDependencyLockfile(filePath, extension, size);
   }
   if (extension === ".graphql" || extension === ".gql") {
     return summarizeGraphqlFile(filePath, size);
+  }
+  if (extension === ".graphql-introspection.json") {
+    return summarizeGraphqlIntrospectionFile(filePath, size);
+  }
+  if (extension === ".pact.json") {
+    return summarizePactContractFile(filePath, size);
   }
   if (extension === ".http" || extension === ".rest") {
     return summarizeRestClientRequestFile(filePath, size);
@@ -5796,6 +6311,9 @@ function summarizeFile(
   }
   if (isVsCodeWorkspaceConfigFile(filePath, extension)) {
     return summarizeVsCodeWorkspaceConfigFile(filePath, extension, size);
+  }
+  if (isJetBrainsIdeConfigFile(filePath, extension)) {
+    return summarizeJetBrainsIdeConfigFile(filePath, size);
   }
   if (extension === ".bru") {
     return summarizeBrunoCollectionFile(filePath, size);
@@ -5867,6 +6385,9 @@ function summarizeFile(
   if (isJsonFeedDocumentFile(filePath, extension)) {
     return summarizeJsonFeedDocumentFile(filePath, size);
   }
+  if (isJsonSchemaFile(filePath, extension)) {
+    return summarizeJsonSchemaFile(filePath, size);
+  }
   if (isSourceMapFile(filePath, extension)) {
     return summarizeSourceMapFile(filePath, size);
   }
@@ -5904,11 +6425,17 @@ function summarizeFile(
     return summarizeMeetingTranscriptFile(filePath, size);
   }
   if (extension === ".json") {
+    if (isWebAppAssociationFile(filePath, extension)) {
+      return summarizeWebAppAssociationFile(filePath, size);
+    }
     if (isPwaWebManifestFile(filePath, extension)) {
       return summarizePwaWebManifestFile(filePath, size);
     }
     if (isJsonFeedDocumentFile(filePath, extension)) {
       return summarizeJsonFeedDocumentFile(filePath, size);
+    }
+    if (isJsonSchemaFile(filePath, extension)) {
+      return summarizeJsonSchemaFile(filePath, size);
     }
     if (isSourceMapFile(filePath, extension)) {
       return summarizeSourceMapFile(filePath, size);
@@ -5946,6 +6473,9 @@ function summarizeFile(
     if (isVsCodeWorkspaceConfigFile(filePath, extension)) {
       return summarizeVsCodeWorkspaceConfigFile(filePath, extension, size);
     }
+    if (isJetBrainsIdeConfigFile(filePath, extension)) {
+      return summarizeJetBrainsIdeConfigFile(filePath, size);
+    }
     if (isCloudIacTemplateFile(filePath, extension)) {
       return summarizeCloudIacTemplateFile(filePath, extension, size);
     }
@@ -5965,6 +6495,9 @@ function summarizeFile(
   }
   if (extension === ".powershell-transcript.txt") {
     return summarizePowerShellTranscriptFile(filePath, size);
+  }
+  if (extension === ".gha-job-summary.md") {
+    return summarizeGithubActionsJobSummaryFile(filePath, size);
   }
   if (extension === ".yaml" || extension === ".yml") {
     if (isContainerComposeFile(filePath, extension)) {
@@ -6005,6 +6538,9 @@ function summarizeFile(
   }
   if (extension === ".dockerfile") {
     return summarizeContainerBuildFile(filePath, size);
+  }
+  if (extension === ".docker-compose.yaml") {
+    return summarizeContainerComposeFile(filePath, size);
   }
   if (extension === ".dockerignore") {
     return summarizeDockerignoreFile(filePath, size);
@@ -6427,6 +6963,133 @@ function readAndroidAttribute(attrs: Map<string, string>, name: string): string 
 }
 
 function sanitizeAndroidManifestValue(value: string): string {
+  return clampSingleLine(maskPotentialSecretValues(value), 140);
+}
+
+interface AndroidResourceXmlPreview {
+  resources: string[];
+  networkSecurity: string[];
+}
+
+function isAndroidResourceXmlPath(normalizedPath: string, name: string): boolean {
+  if (!name.endsWith(".xml") || name === "androidmanifest.xml") return false;
+  return (
+    /\/res\/(values|xml|navigation|menu|layout)\//i.test(normalizedPath) ||
+    [
+      "strings.xml",
+      "colors.xml",
+      "dimens.xml",
+      "styles.xml",
+      "themes.xml",
+      "arrays.xml",
+      "network_security_config.xml",
+    ].includes(name)
+  );
+}
+
+function isAndroidResourceXmlFile(filePath: string, extension: string): boolean {
+  return extension === ".android-resource.xml" || isAndroidResourceXmlPath(filePath.replace(/\\/g, "/").toLowerCase(), basename(filePath).toLowerCase());
+}
+
+function summarizeAndroidResourceXmlFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_ANDROID_RESOURCE_XML_PREVIEW_BYTES).toString("utf8");
+    const preview = parseAndroidResourceXmlPreview(raw);
+    return [
+      `Android resource XML preview (${formatBytes(size)}).`,
+      preview.resources.length > 0
+        ? `Resources (${preview.resources.length}${preview.resources.length >= MAX_ANDROID_RESOURCE_XML_ITEM_PREVIEW ? "+" : ""}): ${preview.resources.join(", ")}.`
+        : "Resources: none detected in the bounded local preview.",
+      preview.networkSecurity.length > 0
+        ? `Network security cues (${preview.networkSecurity.length}${preview.networkSecurity.length >= MAX_ANDROID_RESOURCE_XML_ITEM_PREVIEW ? "+" : ""}): ${preview.networkSecurity.join(", ")}.`
+        : "Network security cues: none detected in the bounded local preview.",
+      raw.length >= MAX_ANDROID_RESOURCE_XML_PREVIEW_BYTES ? `Preview was capped at ${formatBytes(MAX_ANDROID_RESOURCE_XML_PREVIEW_BYTES)}.` : "",
+      "Ready for explicit attachment after visible review; Android resource XML metadata was parsed from bounded workspace-local XML only, resource values were not expanded, likely secrets were redacted, and no Gradle/Android Studio/ADB/emulator/aapt/resource merger command, package install, device query, network call, credential lookup, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Android resource XML ready for explicit attachment (${formatBytes(size)}).`,
+      "Android resource preview could not parse bounded local XML; no Gradle/Android Studio/ADB/emulator/aapt/resource merger command, package install, device query, network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseAndroidResourceXmlPreview(raw: string): AndroidResourceXmlPreview {
+  const xml = raw.replace(/^\uFEFF/, "");
+  return {
+    resources: collectAndroidResourceXmlEntries(xml),
+    networkSecurity: collectAndroidNetworkSecurityCues(xml),
+  };
+}
+
+function collectAndroidResourceXmlEntries(xml: string): string[] {
+  const entries: string[] = [];
+  const namedResourcePattern =
+    /<(declare-styleable|string-array|integer-array|plurals|string|color|dimen|style|array|bool|integer|item|drawable|mipmap|attr)\b([^>]*)>/gi;
+  for (const match of xml.matchAll(namedResourcePattern)) {
+    const tag = match[1] ?? "";
+    const attrs = readXmlAttributes(match[2] ?? "");
+    const name = sanitizeAndroidResourceXmlValue(attrs.get("name") || attrs.get("android:name") || "");
+    if (!name) continue;
+    const value = `${tag}=${name}`;
+    if (!entries.includes(value)) entries.push(value);
+    if (entries.length >= MAX_ANDROID_RESOURCE_XML_ITEM_PREVIEW) return entries;
+  }
+
+  const idPattern = /@\+id\/([A-Za-z0-9_.-]+)/g;
+  for (const match of xml.matchAll(idPattern)) {
+    const value = `id=${sanitizeAndroidResourceXmlValue(match[1] ?? "")}`;
+    if (value !== "id=" && !entries.includes(value)) entries.push(value);
+    if (entries.length >= MAX_ANDROID_RESOURCE_XML_ITEM_PREVIEW) return entries;
+  }
+  return entries;
+}
+
+function collectAndroidNetworkSecurityCues(xml: string): string[] {
+  const cues: string[] = [];
+  const baseConfig = xml.match(/<base-config\b([^>]*)>/i);
+  if (baseConfig) addAndroidResourceCue(cues, `base-config ${formatAndroidResourceAttributes(baseConfig[1] ?? "", ["cleartextTrafficPermitted"])}`);
+
+  const domainConfigPattern = /<domain-config\b([^>]*)>([\s\S]*?)<\/domain-config>/gi;
+  for (const match of xml.matchAll(domainConfigPattern)) {
+    const attrs = formatAndroidResourceAttributes(match[1] ?? "", ["cleartextTrafficPermitted"]);
+    const domains = uniquePreviewValues(
+      [...(match[2] ?? "").matchAll(/<domain\b([^>]*)>([\s\S]*?)<\/domain>/gi)].map((domainMatch) => {
+        const includeSubdomains = formatAndroidResourceAttributes(domainMatch[1] ?? "", ["includeSubdomains"]);
+        const domain = sanitizeAndroidResourceXmlValue((domainMatch[2] ?? "").replace(/<[^>]+>/g, "").trim());
+        return [domain, includeSubdomains].filter(Boolean).join(" ");
+      }),
+      4,
+    );
+    addAndroidResourceCue(cues, `domain-config ${[attrs, domains.length ? `domains=${domains.join("|")}` : ""].filter(Boolean).join(" ")}`);
+    if (cues.length >= MAX_ANDROID_RESOURCE_XML_ITEM_PREVIEW) return cues;
+  }
+
+  const certificates = uniquePreviewValues(
+    [...xml.matchAll(/<certificates\b([^>]*)\/?>/gi)].map((match) => formatAndroidResourceAttributes(match[1] ?? "", ["src", "overridePins"])).filter(Boolean),
+    MAX_ANDROID_RESOURCE_XML_ITEM_PREVIEW,
+  );
+  for (const certificate of certificates) addAndroidResourceCue(cues, `certificates ${certificate}`);
+  return cues;
+}
+
+function addAndroidResourceCue(cues: string[], value: string): void {
+  const cue = clampSingleLine(value.trim(), 180);
+  if (cue && !cues.includes(cue) && cues.length < MAX_ANDROID_RESOURCE_XML_ITEM_PREVIEW) cues.push(cue);
+}
+
+function formatAndroidResourceAttributes(rawAttrs: string, names: string[]): string {
+  const attrs = readXmlAttributes(rawAttrs);
+  return names
+    .map((name) => {
+      const value = sanitizeAndroidResourceXmlValue(attrs.get(name) || attrs.get(`android:${name}`) || "");
+      return value ? `${name}=${value}` : "";
+    })
+    .filter(Boolean)
+    .join(" ");
+}
+
+function sanitizeAndroidResourceXmlValue(value: string): string {
   return clampSingleLine(maskPotentialSecretValues(value), 140);
 }
 
@@ -7538,6 +8201,34 @@ function isKubernetesPackageConfigFile(filePath: string, extension: string): boo
   );
 }
 
+function isHelmValuesFile(filePath: string, extension: string): boolean {
+  const name = basename(filePath).toLowerCase();
+  return (
+    extension === ".helm-values.yaml" ||
+    name === "values.yaml" ||
+    name === "values.yml" ||
+    name.endsWith("-values.yaml") ||
+    name.endsWith("-values.yml") ||
+    name.endsWith(".values.yaml") ||
+    name.endsWith(".values.yml")
+  );
+}
+
+function isKubeconfigFile(filePath: string, extension: string): boolean {
+  const name = basename(filePath).toLowerCase();
+  const normalizedPath = filePath.replace(/\\/g, "/").toLowerCase();
+  return (
+    extension === ".kubeconfig.yaml" ||
+    normalizedPath.endsWith("/.kube/config") ||
+    name === "kubeconfig" ||
+    name === "kubeconfig.yaml" ||
+    name === "kubeconfig.yml" ||
+    name.endsWith(".kubeconfig") ||
+    name.endsWith(".kubeconfig.yaml") ||
+    name.endsWith(".kubeconfig.yml")
+  );
+}
+
 function isAnsibleAutomationFile(filePath: string, extension: string): boolean {
   if (![".yaml", ".yml", ".ini", ".cfg", ".txt", ".ansible-inventory"].includes(extension)) return false;
   const name = basename(filePath).toLowerCase();
@@ -7612,6 +8303,34 @@ function isPythonDependencyManifestFile(filePath: string, extension: string): bo
 function isPythonPackageIndexConfigFile(filePath: string, extension: string): boolean {
   const name = basename(filePath).toLowerCase();
   return extension === ".pypirc" || name === ".pypirc" || name.endsWith(".pypirc");
+}
+
+function isRuffConfigFile(filePath: string, extension: string): boolean {
+  const name = basename(filePath).toLowerCase();
+  if (extension === ".ruff.toml" || name === "ruff.toml" || name === ".ruff.toml") return true;
+  if (extension !== ".toml" || name !== "pyproject.toml") return false;
+  return pyprojectHasRuffConfig(filePath);
+}
+
+function isPythonToolingConfigFile(filePath: string, extension: string): boolean {
+  const name = basename(filePath).toLowerCase();
+  return (
+    extension === ".python-tooling-config" ||
+    name === "pyrightconfig.json" ||
+    name === "mypy.ini" ||
+    name === ".mypy.ini" ||
+    name === "pytest.ini" ||
+    name === "tox.ini"
+  );
+}
+
+function pyprojectHasRuffConfig(filePath: string): boolean {
+  try {
+    const raw = readFileHeader(filePath, MAX_RUFF_CONFIG_PREVIEW_BYTES).toString("utf8");
+    return /^\s*\[tool\.ruff(?:[.\]]|\s*\])/im.test(raw);
+  } catch {
+    return false;
+  }
 }
 
 function isGoModuleManifestFile(filePath: string, extension: string): boolean {
@@ -7691,6 +8410,7 @@ function isNodePackageManagerConfigFile(filePath: string, extension: string): bo
 
 function isJsToolingConfigFile(filePath: string, extension: string): boolean {
   const name = basename(filePath).toLowerCase();
+  const normalizedPath = filePath.replace(/\\/g, "/").toLowerCase();
   return (
     extension === ".js-tooling-config" ||
     name === "eslint.config.js" ||
@@ -7703,12 +8423,74 @@ function isJsToolingConfigFile(filePath: string, extension: string): boolean {
     name.startsWith("prettier.config.") ||
     name === "biome.json" ||
     name === "biome.jsonc" ||
+    name === "oxlintrc.json" ||
+    name === "oxlintrc.jsonc" ||
+    name === ".oxlintrc" ||
+    name.startsWith(".oxlintrc.") ||
+    name.startsWith("oxlint.config.") ||
+    name === "deno.json" ||
+    name === "deno.jsonc" ||
+    name === "cspell.json" ||
+    name === "cspell.jsonc" ||
+    name === ".cspell.json" ||
+    name === ".cspell.jsonc" ||
+    name === "cspell.config.yaml" ||
+    name === "cspell.config.yml" ||
+    name.startsWith(".markdownlint.") ||
+    name.startsWith("markdownlint.") ||
+    name.startsWith("markdownlint-cli2.") ||
+    name === "typedoc.json" ||
+    name === "typedoc.jsonc" ||
+    name.startsWith("typedoc.config.") ||
+    name === "knip.json" ||
+    name === "knip.jsonc" ||
+    name.startsWith("knip.config.") ||
+    name === ".commitlintrc" ||
+    name.startsWith(".commitlintrc.") ||
+    name.startsWith("commitlint.config.") ||
+    name === ".lintstagedrc" ||
+    name.startsWith(".lintstagedrc.") ||
+    name.startsWith("lint-staged.config.") ||
     name === ".stylelintrc" ||
     name.startsWith(".stylelintrc.") ||
     name.startsWith("stylelint.config.") ||
+    name === ".babelrc" ||
+    name.startsWith(".babelrc.") ||
+    name.startsWith("babel.config.") ||
+    name === ".browserslistrc" ||
+    name === "browserslist" ||
+    name === "browserslist.rc" ||
+    name.startsWith("postcss.config.") ||
+    name.startsWith("tailwind.config.") ||
+    name === "vercel.json" ||
+    name === "vercel.jsonc" ||
+    name === "netlify.toml" ||
+    name === "wrangler.toml" ||
+    name === "wrangler.json" ||
+    name === "wrangler.jsonc" ||
+    name === "tsconfig.json" ||
+    /^tsconfig\..+\.jsonc?$/.test(name) ||
+    name === "jsconfig.json" ||
     name.startsWith("jest.config.") ||
     name.startsWith("vitest.config.") ||
-    name.startsWith("playwright.config.")
+    name.startsWith("playwright.config.") ||
+    name.startsWith("cypress.config.") ||
+    name.startsWith("storybook.config.") ||
+    normalizedPath.endsWith("/.storybook/main.js") ||
+    normalizedPath.endsWith("/.storybook/main.cjs") ||
+    normalizedPath.endsWith("/.storybook/main.mjs") ||
+    normalizedPath.endsWith("/.storybook/main.ts") ||
+    normalizedPath.endsWith("/.storybook/preview.js") ||
+    normalizedPath.endsWith("/.storybook/preview.cjs") ||
+    normalizedPath.endsWith("/.storybook/preview.mjs") ||
+    normalizedPath.endsWith("/.storybook/preview.ts") ||
+    name.startsWith("next.config.") ||
+    name.startsWith("astro.config.") ||
+    name.startsWith("svelte.config.") ||
+    name.startsWith("nuxt.config.") ||
+    name.startsWith("vite.config.") ||
+    name.startsWith("rollup.config.") ||
+    name.startsWith("tsup.config.")
   );
 }
 
@@ -7720,7 +8502,8 @@ function isJsWorkspaceConfigFile(filePath: string, extension: string): boolean {
     name === "pnpm-workspace.yml" ||
     name === "turbo.json" ||
     name === "turbo.jsonc" ||
-    name === "nx.json"
+    name === "nx.json" ||
+    name === "rush.json"
   );
 }
 
@@ -7732,6 +8515,27 @@ function isJvmBuildConfigFile(filePath: string, extension: string): boolean {
     name === "maven.config" ||
     name === "jvm.config"
   );
+}
+
+function isGradleVersionCatalogFile(filePath: string, extension: string): boolean {
+  const name = basename(filePath).toLowerCase();
+  return extension === ".gradle-version-catalog.toml" || name === "libs.versions.toml" || name.endsWith(".versions.toml");
+}
+
+function isMavenSettingsFile(filePath: string, extension: string): boolean {
+  const name = basename(filePath).toLowerCase();
+  const normalizedPath = filePath.replace(/\\/g, "/").toLowerCase();
+  return (
+    extension === ".maven-settings.xml" ||
+    name === "maven-settings.xml" ||
+    name.endsWith(".maven-settings.xml") ||
+    (name === "settings.xml" && (normalizedPath.includes("/.m2/") || normalizedPath.includes("/.mvn/")))
+  );
+}
+
+function isCitationCffFile(filePath: string, extension: string): boolean {
+  const name = basename(filePath).toLowerCase();
+  return extension === ".citation.cff" || extension === ".cff" || name === "citation.cff" || name.endsWith(".citation.cff");
 }
 
 function isMetricsSnapshotFile(extension: string): boolean {
@@ -8045,6 +8849,384 @@ function addPythonPackageIndexSample(samples: string[], line: string): void {
   if (samples.length >= MAX_PYTHON_PACKAGE_INDEX_CONFIG_ITEM_PREVIEW) return;
   const sample = clampSingleLine(line, 220);
   if (sample) samples.push(sample);
+}
+
+interface RuffConfigPreview {
+  sections: string[];
+  settings: string[];
+  ruleSelectors: string[];
+  pathGlobs: string[];
+  riskCues: string[];
+  sampleLines: string[];
+  truncated: boolean;
+}
+
+interface PythonToolingConfigPreview {
+  tool: string;
+  sections: string[];
+  settings: string[];
+  ruleOrCheckHints: string[];
+  pathGlobs: string[];
+  riskCues: string[];
+  sampleLines: string[];
+  truncated: boolean;
+}
+
+function summarizeRuffConfigFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_RUFF_CONFIG_PREVIEW_BYTES)).toString("utf8");
+    const preview = parseRuffConfigPreview(raw);
+    return [
+      `Ruff config preview (${basename(filePath)}, ${formatBytes(size)}).`,
+      basename(filePath).toLowerCase() === "pyproject.toml"
+        ? "pyproject.toml Ruff sections were detected and routed before generic Python dependency summaries."
+        : "",
+      preview.sections.length > 0
+        ? `Sections (${preview.sections.length}${preview.sections.length >= MAX_RUFF_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.sections.join(", ")}.`
+        : "Sections: none detected in the bounded local preview.",
+      preview.settings.length > 0
+        ? `Settings (${preview.settings.length}${preview.settings.length >= MAX_RUFF_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.settings.join(", ")}.`
+        : "Settings: none detected in the bounded local preview.",
+      preview.ruleSelectors.length > 0
+        ? `Rule selectors (${preview.ruleSelectors.length}${preview.ruleSelectors.length >= MAX_RUFF_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.ruleSelectors.join(", ")}.`
+        : "Rule selectors: none detected in the bounded local preview.",
+      preview.pathGlobs.length > 0
+        ? `Path globs (${preview.pathGlobs.length}${preview.pathGlobs.length >= MAX_RUFF_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.pathGlobs.join(", ")}.`
+        : "Path globs: none detected in the bounded local preview.",
+      preview.riskCues.length > 0
+        ? `Static risk cues (${preview.riskCues.length}${preview.riskCues.length >= MAX_RUFF_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.riskCues.join(", ")}.`
+        : "Static risk cues: none detected in the bounded local preview.",
+      preview.sampleLines.length > 0
+        ? `Sanitized line samples:\n${preview.sampleLines.map((line, index) => `${index + 1}. ${line}`).join("\n")}`
+        : "Sanitized line samples: none detected in the bounded local preview.",
+      preview.truncated ? `Ruff config preview was capped at ${formatBytes(MAX_RUFF_CONFIG_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; Ruff metadata was parsed from bounded workspace-local TOML text only, token-like values were redacted, and no Python interpreter, Ruff command, formatter/linter execution, pip/uv/package-manager command, dependency resolution, network call, credential lookup, workspace mutation, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Ruff config ready for explicit attachment (${formatBytes(size)}).`,
+      "Config preview could not read bounded local TOML text.",
+      "No Python interpreter, Ruff command, formatter/linter execution, pip/uv/package-manager command, dependency resolution, network call, credential lookup, workspace mutation, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseRuffConfigPreview(raw: string): RuffConfigPreview {
+  const lines = normalizeTextPreview(raw).split("\n");
+  const sections = new Set<string>();
+  const settings = new Set<string>();
+  const ruleSelectors = new Set<string>();
+  const pathGlobs = new Set<string>();
+  const riskCues = new Set<string>();
+  const sampleLines: string[] = [];
+  let section = "";
+
+  for (const line of lines) {
+    const trimmed = stripYamlComment(line);
+    if (!trimmed) continue;
+
+    const sectionMatch = trimmed.match(/^\[([^\]]+)\]$/);
+    if (sectionMatch?.[1]) {
+      section = sanitizeRuffConfigValue(sectionMatch[1]);
+      if (sections.size < MAX_RUFF_CONFIG_ITEM_PREVIEW) sections.add(section);
+      addRuffConfigSample(sampleLines, `[${section}]`);
+      continue;
+    }
+
+    const entry = readRuffTomlKeyValuePreview(trimmed);
+    if (!entry) continue;
+    collectRuffConfigEntry(section, entry.key, entry.value, settings, ruleSelectors, pathGlobs, riskCues);
+    addRuffConfigSample(sampleLines, `${entry.key} = ${sanitizeRuffConfigEntryValue(entry.key, entry.value)}`);
+  }
+
+  return {
+    sections: [...sections].slice(0, MAX_RUFF_CONFIG_ITEM_PREVIEW),
+    settings: [...settings].slice(0, MAX_RUFF_CONFIG_ITEM_PREVIEW),
+    ruleSelectors: [...ruleSelectors].slice(0, MAX_RUFF_CONFIG_ITEM_PREVIEW),
+    pathGlobs: [...pathGlobs].slice(0, MAX_RUFF_CONFIG_ITEM_PREVIEW),
+    riskCues: [...riskCues].slice(0, MAX_RUFF_CONFIG_ITEM_PREVIEW),
+    sampleLines,
+    truncated:
+      raw.length >= MAX_RUFF_CONFIG_PREVIEW_BYTES ||
+      sections.size >= MAX_RUFF_CONFIG_ITEM_PREVIEW ||
+      settings.size >= MAX_RUFF_CONFIG_ITEM_PREVIEW ||
+      ruleSelectors.size >= MAX_RUFF_CONFIG_ITEM_PREVIEW ||
+      pathGlobs.size >= MAX_RUFF_CONFIG_ITEM_PREVIEW,
+  };
+}
+
+function readRuffTomlKeyValuePreview(line: string): { key: string; value: string } | null {
+  const match = line.match(/^("[^"]+"|'[^']+'|[A-Za-z0-9_.-]+)\s*=\s*(.*)$/);
+  if (!match?.[1]) return null;
+  return {
+    key: sanitizeRuffConfigValue(match[1].replace(/^["']|["']$/g, "")),
+    value: match[2]?.trim() || "",
+  };
+}
+
+function collectRuffConfigEntry(
+  section: string,
+  key: string,
+  value: string,
+  settings: Set<string>,
+  ruleSelectors: Set<string>,
+  pathGlobs: Set<string>,
+  riskCues: Set<string>,
+): void {
+  const keyLower = key.toLowerCase();
+  const sectionLower = section.toLowerCase();
+  const sensitiveKey = /\b(token|secret|password|api[_-]?key|credential)\b/i.test(key);
+  const values = extractTomlPreviewValues(value);
+  const valuePreview = sensitiveKey ? "[redacted]" : values.length > 0 ? values.join(",") : sanitizeRuffConfigValue(value);
+
+  if (["line-length", "target-version", "preview", "fix", "unsafe-fixes", "respect-gitignore"].includes(keyLower)) {
+    settings.add(`${keyLower}=${valuePreview}`);
+  }
+  if (["select", "extend-select", "ignore", "extend-ignore", "fixable", "unfixable"].includes(keyLower)) {
+    ruleSelectors.add(`${keyLower}=${valuePreview}`);
+  }
+  if (["exclude", "extend-exclude", "include", "extend-include", "src", "namespace-packages"].includes(keyLower)) {
+    pathGlobs.add(`${keyLower}=${valuePreview}`);
+  }
+  if (sectionLower.includes("per-file-ignores")) {
+    pathGlobs.add(`${key}=${valuePreview}`);
+  }
+  if (/^(?:preview|fix|unsafe-fixes)\s*=\s*true\b/i.test(`${keyLower}=${value}`)) {
+    riskCues.add(`${keyLower} enabled`);
+  }
+  if (/\b(token|secret|password|api[_-]?key|credential)\b/i.test(`${key} ${value}`)) {
+    riskCues.add("credential-shaped value redacted");
+  }
+}
+
+function extractTomlPreviewValues(value: string): string[] {
+  const quoted = [...value.matchAll(/["']([^"']+)["']/g)]
+    .map((match) => sanitizeRuffConfigValue(match[1]))
+    .filter(Boolean);
+  if (quoted.length > 0) return quoted.slice(0, MAX_RUFF_CONFIG_ITEM_PREVIEW);
+  return value
+    .replace(/[[\]]/g, "")
+    .split(",")
+    .map(sanitizeRuffConfigValue)
+    .filter(Boolean)
+    .slice(0, MAX_RUFF_CONFIG_ITEM_PREVIEW);
+}
+
+function sanitizeRuffConfigValue(value: string | undefined): string {
+  return clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(value || "")), 140);
+}
+
+function sanitizeRuffConfigEntryValue(key: string, value: string | undefined): string {
+  if (/\b(token|secret|password|api[_-]?key|credential)\b/i.test(key)) return "[redacted]";
+  return sanitizeRuffConfigValue(value);
+}
+
+function addRuffConfigSample(samples: string[], line: string): void {
+  if (samples.length >= MAX_RUFF_CONFIG_ITEM_PREVIEW) return;
+  const sample = clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(line)), 220);
+  if (sample) samples.push(sample);
+}
+
+function summarizePythonToolingConfigFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_PYTHON_TOOLING_CONFIG_PREVIEW_BYTES)).toString("utf8");
+    const preview = parsePythonToolingConfigPreview(filePath, raw);
+    return [
+      `Python tooling config preview (${preview.tool}, ${basename(filePath)}, ${formatBytes(size)}).`,
+      preview.sections.length > 0
+        ? `Sections (${preview.sections.length}${preview.sections.length >= MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.sections.join(", ")}.`
+        : "Sections: none detected in the bounded local preview.",
+      preview.settings.length > 0
+        ? `Settings (${preview.settings.length}${preview.settings.length >= MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.settings.join(", ")}.`
+        : "Settings: none detected in the bounded local preview.",
+      preview.ruleOrCheckHints.length > 0
+        ? `Check/test/env hints (${preview.ruleOrCheckHints.length}${preview.ruleOrCheckHints.length >= MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.ruleOrCheckHints.join(", ")}.`
+        : "Check/test/env hints: none detected in the bounded local preview.",
+      preview.pathGlobs.length > 0
+        ? `Path globs (${preview.pathGlobs.length}${preview.pathGlobs.length >= MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.pathGlobs.join(", ")}.`
+        : "Path globs: none detected in the bounded local preview.",
+      preview.riskCues.length > 0
+        ? `Static risk cues (${preview.riskCues.length}${preview.riskCues.length >= MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.riskCues.join(", ")}.`
+        : "Static risk cues: no command, plugin, or environment-like cues detected in the bounded local preview.",
+      preview.sampleLines.length > 0
+        ? `Sanitized line samples:\n${preview.sampleLines.map((line, index) => `${index + 1}. ${line}`).join("\n")}`
+        : "Sanitized line samples: none detected in the bounded local preview.",
+      preview.truncated ? `Python tooling config preview was capped at ${formatBytes(MAX_PYTHON_TOOLING_CONFIG_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; Python tooling metadata was parsed from bounded workspace-local JSON/INI text only, token-like values were redacted, and no Python interpreter, Pyright, Mypy, Pytest, Tox, Nox, type checker, test runner, virtualenv creation, package install, plugin import, environment loading, network call, credential lookup, workspace mutation, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Python tooling config ready for explicit attachment (${formatBytes(size)}).`,
+      "Config preview could not read bounded local JSON/INI text.",
+      "No Python interpreter, Pyright, Mypy, Pytest, Tox, Nox, type checker, test runner, virtualenv creation, package install, plugin import, environment loading, network call, credential lookup, workspace mutation, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parsePythonToolingConfigPreview(filePath: string, raw: string): PythonToolingConfigPreview {
+  const tool = describePythonToolingConfig(filePath);
+  const normalized = normalizeTextPreview(raw);
+  if (basename(filePath).toLowerCase() === "pyrightconfig.json") {
+    return parsePyrightConfigPreview(normalized, tool);
+  }
+  return parsePythonIniToolingConfigPreview(normalized, tool);
+}
+
+function describePythonToolingConfig(filePath: string): string {
+  const name = basename(filePath).toLowerCase();
+  if (name === "pyrightconfig.json") return "Pyright";
+  if (name === "mypy.ini" || name === ".mypy.ini") return "Mypy";
+  if (name === "pytest.ini") return "Pytest";
+  if (name === "tox.ini") return "Tox";
+  return "Python tooling";
+}
+
+function parsePyrightConfigPreview(raw: string, tool: string): PythonToolingConfigPreview {
+  const settings = new Set<string>();
+  const ruleOrCheckHints = new Set<string>();
+  const pathGlobs = new Set<string>();
+  const riskCues = collectPythonToolingRiskCues(raw);
+  const sampleLines = collectPythonToolingSampleLines(raw);
+  let parsed: unknown;
+
+  try {
+    parsed = parseJsoncLike(raw);
+  } catch {
+    parsed = undefined;
+  }
+
+  if (isRecord(parsed)) {
+    for (const key of readObjectKeys(parsed, MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      settings.add(`${key} key`);
+      if (settings.size >= MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW) break;
+    }
+    for (const key of ["pythonVersion", "pythonPlatform", "typeCheckingMode", "venvPath", "venv"]) {
+      const value = parsed[key];
+      if (typeof value === "string") settings.add(`${key}=${sanitizePythonToolingValue(key, value)}`);
+      if (settings.size >= MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW) break;
+    }
+    for (const key of ["include", "exclude", "ignore", "strict", "stubPath", "typeshedPath", "extraPaths"]) {
+      const value = parsed[key];
+      const values = Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+      for (const item of values.slice(0, 4)) pathGlobs.add(`${key}:${sanitizePythonToolingValue(key, item)}`);
+      if (typeof value === "string") pathGlobs.add(`${key}:${sanitizePythonToolingValue(key, value)}`);
+      if (pathGlobs.size >= MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW) break;
+    }
+    for (const key of readObjectKeys(parsed, MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      if (/^(?:report|enable|disable|strict|typeCheckingMode)/i.test(key)) {
+        const value = parsed[key];
+        ruleOrCheckHints.add(`${key}${typeof value === "string" ? `=${sanitizePythonToolingValue(key, value)}` : ""}`);
+      }
+      if (ruleOrCheckHints.size >= MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW) break;
+    }
+  }
+  if (/\bvenv(?:Path)?\b/i.test(raw)) riskCues.add("virtualenv reference");
+
+  return {
+    tool,
+    sections: [],
+    settings: [...settings].slice(0, MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW),
+    ruleOrCheckHints: [...ruleOrCheckHints].slice(0, MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW),
+    pathGlobs: [...pathGlobs].slice(0, MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW),
+    riskCues: [...riskCues].slice(0, MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW),
+    sampleLines,
+    truncated: raw.length >= MAX_PYTHON_TOOLING_CONFIG_PREVIEW_BYTES,
+  };
+}
+
+function parsePythonIniToolingConfigPreview(raw: string, tool: string): PythonToolingConfigPreview {
+  const lines = raw.split("\n");
+  const sections = new Set<string>();
+  const settings = new Set<string>();
+  const ruleOrCheckHints = new Set<string>();
+  const pathGlobs = new Set<string>();
+  const riskCues = collectPythonToolingRiskCues(raw);
+  const sampleLines = collectPythonToolingSampleLines(raw);
+  let section = "";
+
+  for (const line of lines) {
+    const trimmed = stripIniComment(line);
+    if (!trimmed) continue;
+    const sectionMatch = trimmed.match(/^\[([^\]]+)\]$/);
+    if (sectionMatch?.[1]) {
+      section = sanitizePythonToolingValue("section", sectionMatch[1]);
+      sections.add(section);
+      continue;
+    }
+    const entry = readIniKeyValuePreview(trimmed);
+    if (!entry) continue;
+    collectPythonToolingIniEntry(tool, section, entry.key, entry.value, settings, ruleOrCheckHints, pathGlobs, riskCues);
+  }
+
+  return {
+    tool,
+    sections: [...sections].slice(0, MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW),
+    settings: [...settings].slice(0, MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW),
+    ruleOrCheckHints: [...ruleOrCheckHints].slice(0, MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW),
+    pathGlobs: [...pathGlobs].slice(0, MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW),
+    riskCues: [...riskCues].slice(0, MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW),
+    sampleLines,
+    truncated:
+      raw.length >= MAX_PYTHON_TOOLING_CONFIG_PREVIEW_BYTES ||
+      sections.size >= MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW ||
+      settings.size >= MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW ||
+      ruleOrCheckHints.size >= MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW ||
+      pathGlobs.size >= MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW,
+  };
+}
+
+function collectPythonToolingIniEntry(
+  tool: string,
+  section: string,
+  key: string,
+  value: string,
+  settings: Set<string>,
+  ruleOrCheckHints: Set<string>,
+  pathGlobs: Set<string>,
+  riskCues: Set<string>,
+): void {
+  const keyLower = key.toLowerCase();
+  const sectionLower = section.toLowerCase();
+  const valuePreview = sanitizePythonToolingValue(key, value);
+
+  if (["python_version", "warn_return_any", "strict", "addopts", "testpaths", "python_files", "envlist", "isolated_build", "skipsdist", "minversion"].includes(keyLower)) {
+    settings.add(`${keyLower}=${valuePreview}`);
+  }
+  if (["ignore_missing_imports", "disallow_untyped_defs", "warn_unused_ignores", "markers", "filterwarnings", "deps", "commands"].includes(keyLower) || sectionLower.startsWith("testenv")) {
+    ruleOrCheckHints.add(`${section ? `${section}.` : ""}${keyLower}=${valuePreview}`);
+  }
+  if (["files", "exclude", "mypy_path", "testpaths", "python_files", "python_classes", "python_functions", "changedir"].includes(keyLower)) {
+    pathGlobs.add(`${keyLower}=${valuePreview}`);
+  }
+  if (keyLower === "commands") riskCues.add(`${tool} command declaration`);
+  if (keyLower === "deps") riskCues.add(`${tool} dependency declaration`);
+}
+
+function collectPythonToolingRiskCues(raw: string): Set<string> {
+  const cues = new Set<string>();
+  if (/\b(addopts|commands|deps|envlist|passenv|setenv|plugins?)\b/i.test(raw)) cues.add("runner/plugin/environment declaration");
+  if (/\bprocess\.env\b|\$\{?env\b|%\(env/i.test(raw)) cues.add("environment-variable reference");
+  if (/\b(pytest|tox|mypy|pyright|nox|python|pip|uv)\b/i.test(raw)) cues.add("tool command token");
+  if (/\b(token|secret|password|api[_-]?key|credential)\b/i.test(raw)) cues.add("credential-shaped value redacted");
+  return cues;
+}
+
+function collectPythonToolingSampleLines(raw: string): string[] {
+  return raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#") && !line.startsWith(";") && !line.startsWith("//"))
+    .slice(0, MAX_PYTHON_TOOLING_CONFIG_ITEM_PREVIEW)
+    .map((line) => clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(line)), 220));
+}
+
+function stripIniComment(line: string): string {
+  return line.replace(/\s[;#].*$/, "").trim();
+}
+
+function sanitizePythonToolingValue(key: string, value: string | undefined): string {
+  if (/\b(token|secret|password|api[_-]?key|credential)\b/i.test(key)) return "[redacted]";
+  return clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(value || "")), 160);
 }
 
 function parsePythonDependencyManifestPreview(
@@ -8520,6 +9702,7 @@ function parseXmlCoverageReport(raw: string): CoverageReportPreview {
   const files = extractCoverageXmlFiles(raw);
   const lineCounter = readCoverageXmlCounter(raw, "LINE");
   const branchCounter = readCoverageXmlCounter(raw, "BRANCH");
+  const coberturaCounters = readCoberturaLineCounters(raw);
   const lineRate = readCoverageRatio(rootAttrs.get("line-rate"));
   const branchRate = readCoverageRatio(rootAttrs.get("branch-rate"));
   return {
@@ -8528,10 +9711,10 @@ function parseXmlCoverageReport(raw: string): CoverageReportPreview {
     packages,
     lineRate,
     branchRate,
-    coveredLines: lineCounter.covered,
-    totalLines: lineCounter.total,
-    coveredBranches: branchCounter.covered,
-    totalBranches: branchCounter.total,
+    coveredLines: lineCounter.covered ?? coberturaCounters.coveredLines,
+    totalLines: lineCounter.total ?? coberturaCounters.totalLines,
+    coveredBranches: branchCounter.covered ?? coberturaCounters.coveredBranches,
+    totalBranches: branchCounter.total ?? coberturaCounters.totalBranches,
     truncated:
       raw.length >= MAX_COVERAGE_REPORT_PREVIEW_BYTES ||
       files.length >= MAX_COVERAGE_FILE_PREVIEW ||
@@ -8598,6 +9781,39 @@ function readCoverageXmlCounter(raw: string, type: "LINE" | "BRANCH"): { covered
   return { covered, total: covered + missed };
 }
 
+function readCoberturaLineCounters(raw: string): {
+  coveredLines: number | null;
+  totalLines: number | null;
+  coveredBranches: number | null;
+  totalBranches: number | null;
+} {
+  let coveredLines = 0;
+  let totalLines = 0;
+  let coveredBranches = 0;
+  let totalBranches = 0;
+
+  for (const match of raw.matchAll(/<line\b([^>]*)>/gi)) {
+    const attrs = readXmlAttributes(match[1] ?? "");
+    const hits = readCoverageNumber(attrs.get("hits"));
+    totalLines += 1;
+    if (hits > 0) coveredLines += 1;
+
+    const conditionCoverage = attrs.get("condition-coverage") || "";
+    const branchMatch = conditionCoverage.match(/\((\d+)\s*\/\s*(\d+)\)/);
+    if (branchMatch?.[1] && branchMatch?.[2]) {
+      coveredBranches += readCoverageNumber(branchMatch[1]);
+      totalBranches += readCoverageNumber(branchMatch[2]);
+    }
+  }
+
+  return {
+    coveredLines: totalLines > 0 ? coveredLines : null,
+    totalLines: totalLines > 0 ? totalLines : null,
+    coveredBranches: totalBranches > 0 ? coveredBranches : null,
+    totalBranches: totalBranches > 0 ? totalBranches : null,
+  };
+}
+
 function readCoverageRatio(value: string | undefined): number | null {
   if (!value) return null;
   const numeric = Number(value);
@@ -8654,6 +9870,7 @@ function isTestReportFile(filePath: string, extension: string): boolean {
     extension === ".jmeter.xml" ||
     extension === ".jmeter.csv" ||
     extension === ".jtl" ||
+    extension === ".robot.xml" ||
     extension === ".nunit.xml" ||
     extension === ".xunit.xml" ||
     extension === ".tap" ||
@@ -8669,9 +9886,10 @@ function looksLikeTestReportXml(filePath: string): boolean {
     const raw = readFileHeader(filePath, Math.min(MAX_TEST_REPORT_PREVIEW_BYTES, 16 * 1024)).toString("utf8");
     return (
       (
-        /<(testsuites|testsuite|TestRun|test-run|assemblies|assembly)\b/i.test(raw) &&
+        /<(testsuites|testsuite|TestRun|test-run|assemblies|assembly|robot)\b/i.test(raw) &&
         /<(testcase|test-case|test|UnitTestResult|ResultSummary|Counters)\b/i.test(raw)
       ) ||
+      looksLikeRobotXmlTestReport(raw) ||
       looksLikeJmeterXmlTestReport(raw)
     );
   } catch {
@@ -8705,6 +9923,8 @@ function summarizeTestReportFile(filePath: string, extension: string, size: numb
       ? parseJmeterXmlTestReport(raw)
       : extension === ".jmeter.csv" || extension === ".jtl"
       ? parseJmeterDelimitedTestReport(raw)
+      : extension === ".robot.xml" || looksLikeRobotXmlTestReport(raw)
+      ? parseRobotXmlTestReport(raw)
       : extension === ".trx" || /<TestRun\b/i.test(raw)
       ? parseTrxTestReport(raw)
       : extension === ".nunit.xml" || /<test-run\b/i.test(raw)
@@ -8736,6 +9956,102 @@ function summarizeTestReportFile(filePath: string, extension: string, size: numb
       "No test runner, build command, CI provider API call, artifact download, retry, network call, or provider send was performed.",
     ].join("\n").slice(0, MAX_TEXT_BYTES);
   }
+}
+
+function looksLikeRobotXmlTestReport(raw: string): boolean {
+  return /<robot\b/i.test(raw) && /<suite\b/i.test(raw) && /<test\b/i.test(raw) && /<status\b/i.test(raw);
+}
+
+function parseRobotXmlTestReport(raw: string): TestReportPreview {
+  const suites = [...raw.matchAll(/<suite\b([^>]*)>/gi)]
+    .map((match) => readXmlAttributes(match[1] ?? ""))
+    .map((attrs) => attrs.get("name") || attrs.get("source") || "")
+    .filter(Boolean)
+    .map((name) => clampSingleLine(maskPotentialSecretValues(name), 120))
+    .slice(0, MAX_TEST_REPORT_CASE_PREVIEW);
+  const testMatches = [...raw.matchAll(/<test\b([^>]*?)(?:\/>|>([\s\S]*?)<\/test>)/gi)];
+  const failedCases: string[] = [];
+  let passed = 0;
+  let failures = 0;
+  let skipped = 0;
+  let durationSeconds = 0;
+
+  for (const match of testMatches) {
+    const attrs = readXmlAttributes(match[1] ?? "");
+    const body = match[2] ?? "";
+    const statusMatch = [...body.matchAll(/<status\b([^>]*?)(?:\/>|>([\s\S]*?)<\/status>)/gi)].pop();
+    const statusAttrs = readXmlAttributes(statusMatch?.[1] ?? "");
+    const status = (statusAttrs.get("status") || "").toUpperCase();
+    const elapsedSeconds = readRobotElapsedSeconds(statusAttrs);
+    if (elapsedSeconds !== null) durationSeconds += elapsedSeconds;
+    if (status === "PASS") passed += 1;
+    else if (status === "SKIP") skipped += 1;
+    else {
+      failures += 1;
+      if (failedCases.length < MAX_TEST_REPORT_FAILURE_PREVIEW) {
+        const name = attrs.get("name") || "(unnamed Robot test)";
+        const message = decodeXmlEntities(statusMatch?.[2] ?? "").replace(/<[^>]+>/g, " ").trim();
+        failedCases.push(clampSingleLine(
+          `${maskPotentialSecretValues(name)} [${status || "UNKNOWN"}]${message ? `: ${maskPotentialSecretValues(message)}` : ""}`,
+          240,
+        ));
+      }
+    }
+  }
+
+  const statMatch = raw.match(/<stat\b([^>]*)>\s*All Tests\s*<\/stat>/i) || raw.match(/<stat\b([^>]*)>/i);
+  const statAttrs = readXmlAttributes(statMatch?.[1] ?? "");
+  const statPass = readXmlNumber(statAttrs, "pass");
+  const statFail = readXmlNumber(statAttrs, "fail");
+  const statSkip = readXmlNumber(statAttrs, "skip");
+  const detailLines = collectRobotReportDetails(raw);
+  const cases = testMatches.length || statPass + statFail + statSkip;
+  return {
+    format: "Robot Framework XML",
+    suites,
+    cases,
+    failures: statFail || failures,
+    errors: 0,
+    skipped: statSkip || skipped,
+    durationSeconds: durationSeconds > 0 ? durationSeconds : null,
+    failedCases,
+    detailLines,
+    resultSummary: `Cases: ${cases}; passed: ${statPass || passed}; non-passing: ${statFail || failures}; skipped: ${statSkip || skipped}.`,
+    truncated: raw.length >= MAX_TEST_REPORT_PREVIEW_BYTES || testMatches.length > MAX_TEST_REPORT_CASE_PREVIEW || detailLines.length >= MAX_TEST_REPORT_DETAIL_PREVIEW,
+  };
+}
+
+function readRobotElapsedSeconds(attrs: Map<string, string>): number | null {
+  const elapsed = readXmlNumber(attrs, "elapsedtime");
+  if (elapsed > 0) return elapsed / 1000;
+  const start = Date.parse(attrs.get("starttime") || attrs.get("start") || "");
+  const end = Date.parse(attrs.get("endtime") || attrs.get("end") || "");
+  if (Number.isFinite(start) && Number.isFinite(end) && end >= start) {
+    return (end - start) / 1000;
+  }
+  return null;
+}
+
+function collectRobotReportDetails(raw: string): string[] {
+  const details: string[] = [];
+  const tags = uniquePreviewValues(
+    [...raw.matchAll(/<tag\b[^>]*>([\s\S]*?)<\/tag>/gi)]
+      .map((match) => decodeXmlEntities((match[1] ?? "").replace(/<[^>]+>/g, " ")).trim())
+      .filter(Boolean)
+      .map((value) => maskPotentialSecretValues(clampSingleLine(value, 80))),
+    MAX_TEST_REPORT_DETAIL_PREVIEW,
+  );
+  if (tags.length > 0) details.push(`Robot tags: ${tags.join(", ")}`);
+
+  const keywords = uniquePreviewValues(
+    [...raw.matchAll(/<kw\b([^>]*)>/gi)]
+      .map((match) => readXmlAttributes(match[1] ?? "").get("name") || "")
+      .filter(Boolean)
+      .map((value) => maskPotentialSecretValues(clampSingleLine(value, 100))),
+    MAX_TEST_REPORT_DETAIL_PREVIEW,
+  );
+  if (keywords.length > 0) details.push(`Robot keyword cues: ${keywords.join(", ")}`);
+  return details.slice(0, MAX_TEST_REPORT_DETAIL_PREVIEW);
 }
 
 function parseJunitTestReport(raw: string): TestReportPreview {
@@ -8863,6 +10179,7 @@ function parseTrxTestReport(raw: string): TestReportPreview {
   const skipped = readXmlNumber(counterAttrs, "notExecuted") + readXmlNumber(counterAttrs, "notRunnable");
   const total = readXmlNumber(counterAttrs, "total") || resultMatches.length;
   const summaryOutcome = readXmlAttributes(raw.match(/<ResultSummary\b([^>]*)>/i)?.[1] ?? "").get("outcome") || "";
+  const attachmentSamples = collectTrxAttachmentSamples(raw);
   return {
     format: "Visual Studio TRX",
     suites: summaryOutcome ? [`ResultSummary outcome: ${clampSingleLine(summaryOutcome, 80)}`] : [],
@@ -8872,9 +10189,33 @@ function parseTrxTestReport(raw: string): TestReportPreview {
     skipped,
     durationSeconds: null,
     failedCases,
+    detailLines: attachmentSamples.length > 0 ? [`TRX attachment cues: ${attachmentSamples.join(", ")}`] : [],
     resultSummary: `Cases: ${total}; passed: ${readXmlNumber(counterAttrs, "passed") || (outcomeCounts.get("Passed") ?? 0)}; non-passing: ${failed || countNonPassingOutcomes(outcomeCounts)}; skipped/not executed: ${skipped}.`,
-    truncated: raw.length >= MAX_TEST_REPORT_PREVIEW_BYTES || resultMatches.length > MAX_TEST_REPORT_CASE_PREVIEW,
+    truncated: raw.length >= MAX_TEST_REPORT_PREVIEW_BYTES || resultMatches.length > MAX_TEST_REPORT_CASE_PREVIEW || attachmentSamples.length >= MAX_TEST_REPORT_DETAIL_PREVIEW,
   };
+}
+
+function collectTrxAttachmentSamples(raw: string): string[] {
+  const attachments: string[] = [];
+  for (const match of raw.matchAll(/<ResultFile\b([^>]*?)(?:\/>|>([\s\S]*?)<\/ResultFile>)/gi)) {
+    if (attachments.length >= MAX_TEST_REPORT_DETAIL_PREVIEW) break;
+    const attrs = readXmlAttributes(match[1] ?? "");
+    const value =
+      attrs.get("path") ||
+      attrs.get("fileName") ||
+      attrs.get("href") ||
+      decodeXmlEntities((match[2] ?? "").replace(/<[^>]+>/g, " ")).trim();
+    if (value) attachments.push(maskPotentialSecretPathSegments(clampSingleLine(value, 140)));
+  }
+  const outputText = [...raw.matchAll(/<Output\b[^>]*>([\s\S]*?)<\/Output>/gi)]
+    .map((match) => decodeXmlEntities((match[1] ?? "").replace(/<[^>]+>/g, " ")))
+    .join("\n");
+  for (const match of outputText.matchAll(/\[\[ATTACHMENT\|([^\]\r\n]+)\]\]|(?:^|\n)\s*(?:attachment|artifact|result file)\s*:\s*([^\r\n]+)/gi)) {
+    if (attachments.length >= MAX_TEST_REPORT_DETAIL_PREVIEW) break;
+    const value = match[1] || match[2] || "";
+    if (value) attachments.push(maskPotentialSecretPathSegments(clampSingleLine(value, 140)));
+  }
+  return uniquePreviewValues(attachments, MAX_TEST_REPORT_DETAIL_PREVIEW);
 }
 
 function parseNunitXmlTestReport(raw: string): TestReportPreview {
@@ -9149,6 +10490,175 @@ function collectJmeterDelimitedReportDetails(samples: string[][], threadIndex: n
     }
   }
   return details.slice(0, MAX_TEST_REPORT_DETAIL_PREVIEW);
+}
+
+interface JmeterTestPlanPreview {
+  testPlanName: string;
+  threadGroups: string[];
+  samplers: string[];
+  assertions: string[];
+  configs: string[];
+  variables: string[];
+  timers: string[];
+  truncated: boolean;
+}
+
+function looksLikeJmeterTestPlanFile(filePath: string): boolean {
+  try {
+    const raw = readFileHeader(filePath, Math.min(MAX_JMETER_TEST_PLAN_PREVIEW_BYTES, 32 * 1024)).toString("utf8");
+    return looksLikeJmeterTestPlan(raw);
+  } catch {
+    return false;
+  }
+}
+
+function looksLikeJmeterTestPlan(raw: string): boolean {
+  return /<jmeterTestPlan\b/i.test(raw) && /<TestPlan\b/i.test(raw);
+}
+
+function summarizeJmeterTestPlanFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_JMETER_TEST_PLAN_PREVIEW_BYTES)).toString("utf8");
+    const preview = parseJmeterTestPlanPreview(raw);
+    return [
+      `JMeter test plan preview (${formatBytes(size)}).`,
+      preview.testPlanName ? `Test plan: ${preview.testPlanName}.` : "Test plan: unnamed in the bounded preview.",
+      preview.threadGroups.length > 0
+        ? `Thread groups (${preview.threadGroups.length}${preview.threadGroups.length >= MAX_JMETER_TEST_PLAN_ITEM_PREVIEW ? "+" : ""}): ${preview.threadGroups.join(", ")}.`
+        : "Thread groups: none detected in the bounded preview.",
+      preview.samplers.length > 0
+        ? `Samplers (${preview.samplers.length}${preview.samplers.length >= MAX_JMETER_TEST_PLAN_ITEM_PREVIEW ? "+" : ""}): ${preview.samplers.join(", ")}.`
+        : "Samplers: none detected in the bounded preview.",
+      preview.assertions.length > 0
+        ? `Assertions (${preview.assertions.length}${preview.assertions.length >= MAX_JMETER_TEST_PLAN_ITEM_PREVIEW ? "+" : ""}): ${preview.assertions.join(", ")}.`
+        : "Assertions: none detected in the bounded preview.",
+      preview.configs.length > 0
+        ? `Config elements (${preview.configs.length}${preview.configs.length >= MAX_JMETER_TEST_PLAN_ITEM_PREVIEW ? "+" : ""}): ${preview.configs.join(", ")}.`
+        : "Config elements: none detected in the bounded preview.",
+      preview.variables.length > 0
+        ? `Variable keys (${preview.variables.length}${preview.variables.length >= MAX_JMETER_TEST_PLAN_ITEM_PREVIEW ? "+" : ""}; values hidden): ${preview.variables.join(", ")}.`
+        : "Variable keys: none detected in the bounded preview.",
+      preview.timers.length > 0
+        ? `Timers/pre-processors (${preview.timers.length}${preview.timers.length >= MAX_JMETER_TEST_PLAN_ITEM_PREVIEW ? "+" : ""}): ${preview.timers.join(", ")}.`
+        : "",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_JMETER_TEST_PLAN_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; JMeter .jmx metadata was parsed from bounded workspace-local XML only, variable values were not expanded, plugins were not loaded, and no JMeter command, load test, HTTP replay, property resolution, credential lookup, network call, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `JMeter test plan ready for explicit attachment (${formatBytes(size)}).`,
+      "No JMeter command, load test, HTTP replay, plugin load, property resolution, credential lookup, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseJmeterTestPlanPreview(raw: string): JmeterTestPlanPreview {
+  const normalized = raw.replace(/^\uFEFF/, "");
+  const testPlanAttrs = readXmlAttributes(normalized.match(/<TestPlan\b([^>]*)>/i)?.[1] ?? "");
+  const elementSamples = collectJmeterElementSamples(normalized);
+  const variables = collectJmeterVariableKeys(normalized);
+  return {
+    testPlanName: sanitizeJmeterPreviewValue(testPlanAttrs.get("testname") || firstJmeterStringProp(normalized, "TestPlan.name") || ""),
+    threadGroups: elementSamples.threadGroups,
+    samplers: elementSamples.samplers,
+    assertions: elementSamples.assertions,
+    configs: elementSamples.configs,
+    variables,
+    timers: elementSamples.timers,
+    truncated:
+      normalized.length >= MAX_JMETER_TEST_PLAN_PREVIEW_BYTES ||
+      elementSamples.truncated ||
+      variables.length >= MAX_JMETER_TEST_PLAN_ITEM_PREVIEW,
+  };
+}
+
+function collectJmeterElementSamples(raw: string): {
+  threadGroups: string[];
+  samplers: string[];
+  assertions: string[];
+  configs: string[];
+  timers: string[];
+  truncated: boolean;
+} {
+  const threadGroups: string[] = [];
+  const samplers: string[] = [];
+  const assertions: string[] = [];
+  const configs: string[] = [];
+  const timers: string[] = [];
+
+  for (const match of raw.matchAll(/<([A-Za-z_][\w:.-]*)\b([^>]*)>/g)) {
+    const tagName = match[1] ?? "";
+    const attrs = readXmlAttributes(match[2] ?? "");
+    const testName = attrs.get("testname") || attrs.get("name") || "";
+    const sample = sanitizeJmeterPreviewValue(testName || jmeterTagLabel(tagName));
+    if (!sample) continue;
+    if (isJmeterThreadGroupTag(tagName)) addLimitedUnique(threadGroups, sample, MAX_JMETER_TEST_PLAN_ITEM_PREVIEW);
+    else if (isJmeterSamplerTag(tagName)) addLimitedUnique(samplers, sample, MAX_JMETER_TEST_PLAN_ITEM_PREVIEW);
+    else if (isJmeterAssertionTag(tagName)) addLimitedUnique(assertions, sample, MAX_JMETER_TEST_PLAN_ITEM_PREVIEW);
+    else if (isJmeterConfigTag(tagName)) addLimitedUnique(configs, sample, MAX_JMETER_TEST_PLAN_ITEM_PREVIEW);
+    else if (isJmeterTimerOrProcessorTag(tagName)) addLimitedUnique(timers, sample, MAX_JMETER_TEST_PLAN_ITEM_PREVIEW);
+  }
+
+  return {
+    threadGroups,
+    samplers,
+    assertions,
+    configs,
+    timers,
+    truncated:
+      [threadGroups, samplers, assertions, configs, timers].some((items) => items.length >= MAX_JMETER_TEST_PLAN_ITEM_PREVIEW),
+  };
+}
+
+function collectJmeterVariableKeys(raw: string): string[] {
+  const keys: string[] = [];
+  for (const match of raw.matchAll(/<stringProp\b([^>]*)>([\s\S]*?)<\/stringProp>/gi)) {
+    const attrs = readXmlAttributes(match[1] ?? "");
+    const propName = attrs.get("name") || "";
+    if (!/^(?:Argument|Header|Cookie)\.name$/i.test(propName)) continue;
+    const key = sanitizeJmeterPreviewValue(decodeXmlEntities(match[2] ?? "").replace(/<[^>]+>/g, " ").trim());
+    if (key) addLimitedUnique(keys, key, MAX_JMETER_TEST_PLAN_ITEM_PREVIEW);
+  }
+  return keys;
+}
+
+function addLimitedUnique(target: string[], value: string, limit: number): void {
+  if (target.length >= limit || target.includes(value)) return;
+  target.push(value);
+}
+
+function firstJmeterStringProp(raw: string, propName: string): string {
+  const escapedName = escapeRegExp(propName);
+  const match = raw.match(new RegExp(`<stringProp\\b[^>]*\\bname=["']${escapedName}["'][^>]*>([\\s\\S]*?)<\\/stringProp>`, "i"));
+  return decodeXmlEntities(match?.[1] ?? "").replace(/<[^>]+>/g, " ").trim();
+}
+
+function isJmeterThreadGroupTag(tagName: string): boolean {
+  return /(?:^|[.:])(?:ThreadGroup|SetupThreadGroup|PostThreadGroup)$/i.test(tagName) || /ThreadGroup$/i.test(tagName);
+}
+
+function isJmeterSamplerTag(tagName: string): boolean {
+  return /Sampler(?:Proxy)?$/i.test(tagName) || /^(?:HTTPSamplerProxy|DebugSampler|TestAction|JSR223Sampler)$/i.test(tagName);
+}
+
+function isJmeterAssertionTag(tagName: string): boolean {
+  return /Assertion$/i.test(tagName);
+}
+
+function isJmeterConfigTag(tagName: string): boolean {
+  return /(?:Config|Manager|Arguments|CSVDataSet)$/i.test(tagName);
+}
+
+function isJmeterTimerOrProcessorTag(tagName: string): boolean {
+  return /(?:Timer|PreProcessor|PostProcessor)$/i.test(tagName);
+}
+
+function jmeterTagLabel(tagName: string): string {
+  return tagName.split(/[.:]/).filter(Boolean).pop() || tagName;
+}
+
+function sanitizeJmeterPreviewValue(value: string): string {
+  return clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(decodeXmlEntities(value).replace(/\s+/g, " ").trim())), 140);
 }
 
 function looksLikeJsonTestReportText(raw: string): boolean {
@@ -10017,6 +11527,201 @@ function readInstallerXmlAttribute(rawAttributes: string, name: string): string 
   const matcher = new RegExp(`\\b${escaped}\\s*=\\s*["']([^"']+)["']`, "i");
   const value = decodeHtmlEntities(rawAttributes.match(matcher)?.[1] ?? "").replace(/\s+/g, " ").trim();
   return value ? clampSingleLine(value, 160) : "";
+}
+
+interface WingetManifestPreview {
+  manifestType: string;
+  manifestVersion: string;
+  packageIdentifier: string;
+  packageVersion: string;
+  defaultLocale: string;
+  packageLocale: string;
+  publisher: string;
+  packageName: string;
+  moniker: string;
+  installerType: string;
+  scope: string;
+  installers: string[];
+  commands: string[];
+  tags: string[];
+  agreements: string[];
+  truncated: boolean;
+}
+
+function summarizeWingetManifestFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_WINGET_MANIFEST_PREVIEW_BYTES).toString("utf8");
+    const preview = parseWingetManifestPreview(raw);
+    return [
+      `Windows Package Manager manifest preview (${formatBytes(size)}).`,
+      preview.manifestType ? `Manifest type: ${preview.manifestType}.` : "Manifest type: none detected in the bounded local preview.",
+      preview.manifestVersion ? `Manifest version: ${preview.manifestVersion}.` : "",
+      preview.packageIdentifier ? `Package identifier: ${preview.packageIdentifier}.` : "Package identifier: none detected in the bounded local preview.",
+      preview.packageVersion ? `Package version: ${preview.packageVersion}.` : "",
+      preview.defaultLocale ? `Default locale: ${preview.defaultLocale}.` : "",
+      preview.packageLocale ? `Package locale: ${preview.packageLocale}.` : "",
+      preview.publisher ? `Publisher: ${preview.publisher}.` : "",
+      preview.packageName ? `Package name: ${preview.packageName}.` : "",
+      preview.moniker ? `Moniker: ${preview.moniker}.` : "",
+      preview.installerType ? `Installer type: ${preview.installerType}.` : "",
+      preview.scope ? `Scope: ${preview.scope}.` : "",
+      preview.commands.length > 0 ? `Commands: ${preview.commands.join(", ")}.` : "",
+      preview.tags.length > 0 ? `Tags: ${preview.tags.join(", ")}.` : "",
+      preview.agreements.length > 0 ? `Agreements: ${preview.agreements.join(" | ")}.` : "",
+      preview.installers.length > 0
+        ? `Installers (${preview.installers.length}${preview.installers.length >= MAX_WINGET_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${preview.installers.join(" | ")}.`
+        : "Installers: none detected in the bounded local preview.",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_WINGET_MANIFEST_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; winget manifest metadata was parsed from bounded workspace-local YAML only, installer URLs were redacted, installer hashes were summarized, and no winget command, installer download, installer execution, package validation, certificate trust decision, Microsoft Store lookup, network call, credential lookup, workspace mutation, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Windows Package Manager manifest ready for explicit attachment (${formatBytes(size)}).`,
+      "Winget manifest preview could not parse bounded local YAML; no winget command, installer download, installer execution, package validation, Microsoft Store lookup, network call, credential lookup, workspace mutation, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseWingetManifestPreview(raw: string): WingetManifestPreview {
+  const lines = normalizeTextPreview(stripUtf8Bom(raw)).split("\n");
+  const installerType = readWingetTopLevelYamlScalar(lines, "InstallerType");
+  const scope = readWingetTopLevelYamlScalar(lines, "Scope");
+  return {
+    manifestType: readWingetTopLevelYamlScalar(lines, "ManifestType"),
+    manifestVersion: readWingetTopLevelYamlScalar(lines, "ManifestVersion"),
+    packageIdentifier: readWingetTopLevelYamlScalar(lines, "PackageIdentifier"),
+    packageVersion: readWingetTopLevelYamlScalar(lines, "PackageVersion"),
+    defaultLocale: readWingetTopLevelYamlScalar(lines, "DefaultLocale"),
+    packageLocale: readWingetTopLevelYamlScalar(lines, "PackageLocale"),
+    publisher: readWingetTopLevelYamlScalar(lines, "Publisher"),
+    packageName: readWingetTopLevelYamlScalar(lines, "PackageName"),
+    moniker: readWingetTopLevelYamlScalar(lines, "Moniker"),
+    installerType,
+    scope,
+    installers: collectWingetInstallerPreviews(lines, installerType, scope),
+    commands: collectWingetScalarList(lines, "Commands"),
+    tags: collectWingetScalarList(lines, "Tags"),
+    agreements: collectWingetAgreementPreviews(lines),
+    truncated: raw.length >= MAX_WINGET_MANIFEST_PREVIEW_BYTES,
+  };
+}
+
+function readWingetTopLevelYamlScalar(lines: string[], key: string): string {
+  const pattern = new RegExp(`^${escapeRegExp(key)}\\s*:\\s*(.+)$`, "i");
+  for (const line of lines) {
+    if (/^\s/.test(line) || line.trim().startsWith("#")) continue;
+    const match = line.match(pattern);
+    if (match?.[1]) return sanitizeWingetManifestValue(key, match[1]);
+  }
+  return "";
+}
+
+function collectWingetInstallerPreviews(lines: string[], topLevelInstallerType = "", topLevelScope = ""): string[] {
+  return collectWingetObjectList(
+    lines,
+    "Installers",
+    ["Architecture", "InstallerType", "Scope", "InstallerUrl", "InstallerSha256", "ProductCode", "PackageFamilyName"],
+  ).map((installer) => {
+    const parts = [
+      installer.Architecture || "(architecture unknown)",
+      installer.InstallerType || topLevelInstallerType ? `type=${installer.InstallerType || topLevelInstallerType}` : "",
+      installer.Scope || topLevelScope ? `scope=${installer.Scope || topLevelScope}` : "",
+      installer.InstallerUrl ? `url=${installer.InstallerUrl}` : "",
+      installer.InstallerSha256 ? `sha256=${installer.InstallerSha256}` : "",
+      installer.ProductCode ? `product=${installer.ProductCode}` : "",
+      installer.PackageFamilyName ? `family=${installer.PackageFamilyName}` : "",
+    ].filter(Boolean);
+    return parts.join(" ");
+  });
+}
+
+function collectWingetAgreementPreviews(lines: string[]): string[] {
+  return collectWingetObjectList(
+    lines,
+    "Agreements",
+    ["AgreementLabel", "Agreement", "AgreementUrl"],
+  ).map((agreement) => {
+    const parts = [
+      agreement.AgreementLabel || "(agreement)",
+      agreement.Agreement ? `text=${agreement.Agreement}` : "",
+      agreement.AgreementUrl ? `url=${agreement.AgreementUrl}` : "",
+    ].filter(Boolean);
+    return parts.join(" ");
+  });
+}
+
+function collectWingetScalarList(lines: string[], key: string): string[] {
+  const values: string[] = [];
+  let activeIndent: number | null = null;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const indent = line.length - line.trimStart().length;
+    if (activeIndent !== null && indent <= activeIndent && !trimmed.startsWith("-")) activeIndent = null;
+    if (activeIndent === null) {
+      if (trimmed.match(new RegExp(`^${escapeRegExp(key)}\\s*:\\s*$`, "i"))) {
+        activeIndent = indent;
+      }
+      continue;
+    }
+    if (indent <= activeIndent) continue;
+    const match = trimmed.match(/^-\s*(.+)$/);
+    if (match?.[1]) values.push(sanitizeWingetManifestValue(key, match[1]));
+    if (values.length >= MAX_WINGET_MANIFEST_ITEM_PREVIEW) break;
+  }
+  return uniquePreviewValues(values.filter(Boolean), MAX_WINGET_MANIFEST_ITEM_PREVIEW);
+}
+
+function collectWingetObjectList(lines: string[], key: string, fields: string[]): Record<string, string>[] {
+  const objects: Record<string, string>[] = [];
+  let activeIndent: number | null = null;
+  let current: Record<string, string> | null = null;
+
+  const flushCurrent = () => {
+    if (current && Object.keys(current).length > 0) objects.push(current);
+    current = null;
+  };
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const indent = line.length - line.trimStart().length;
+    if (activeIndent !== null && indent <= activeIndent && !trimmed.startsWith("-")) {
+      flushCurrent();
+      activeIndent = null;
+    }
+    if (activeIndent === null) {
+      if (trimmed.match(new RegExp(`^${escapeRegExp(key)}\\s*:\\s*$`, "i"))) activeIndent = indent;
+      continue;
+    }
+    if (indent <= activeIndent) continue;
+    const listMatch = trimmed.match(/^-\s*(?:(\w[\w-]*)\s*:\s*(.+))?$/);
+    if (listMatch) {
+      flushCurrent();
+      current = {};
+      if (listMatch[1] && listMatch[2] && fields.includes(listMatch[1])) {
+        current[listMatch[1]] = sanitizeWingetManifestValue(listMatch[1], listMatch[2]);
+      }
+      if (objects.length >= MAX_WINGET_MANIFEST_ITEM_PREVIEW) break;
+      continue;
+    }
+    const pairMatch = trimmed.match(/^(\w[\w-]*)\s*:\s*(.+)$/);
+    if (current && pairMatch?.[1] && pairMatch[2] && fields.includes(pairMatch[1])) {
+      current[pairMatch[1]] = sanitizeWingetManifestValue(pairMatch[1], pairMatch[2]);
+    }
+  }
+  flushCurrent();
+  return objects.slice(0, MAX_WINGET_MANIFEST_ITEM_PREVIEW);
+}
+
+function sanitizeWingetManifestValue(key: string, value: string): string {
+  const cleaned = cleanYamlScalar(value);
+  if (/sha256/i.test(key)) {
+    const hex = cleaned.replace(/[^a-f0-9]/gi, "");
+    const prefix = hex.slice(0, 12);
+    return hex ? `${hex.length} chars${prefix ? ` prefix ${prefix}` : ""}` : "not detected";
+  }
+  return clampSingleLine(redactHarUrl(cleaned), 180);
 }
 
 function summarizeWindowsErrorReportFile(filePath: string, size: number): string {
@@ -12085,6 +13790,7 @@ function summarizeDockerignoreFile(filePath: string, size: number): string {
 }
 
 function isContainerComposeFile(filePath: string, extension: string): boolean {
+  if (extension === ".docker-compose.yaml") return true;
   if (extension !== ".yaml" && extension !== ".yml") return false;
   const name = basename(filePath).toLowerCase();
   return /^(?:docker-)?compose(?:[.-].*)?\.ya?ml$/.test(name);
@@ -12209,6 +13915,156 @@ function extractComposeDependencyHints(lines: string[]): string[] {
     .map((line) => line.trim().match(/^([A-Za-z0-9_.-]+)\s*:/)?.[1])
     .filter((value): value is string => Boolean(value));
   return [...new Set([...listValues, ...mapKeys])].slice(0, MAX_CONTAINER_COMPOSE_SERVICE_PREVIEW);
+}
+
+function summarizeDevContainerConfigFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(
+      filePath,
+      Math.min(MAX_DEVCONTAINER_CONFIG_PREVIEW_BYTES, MAX_TEXT_BYTES * 12),
+    ).toString("utf8");
+    const parsed = JSON.parse(raw.replace(/^\uFEFF/, "")) as unknown;
+    const record = isPlainRecord(parsed) ? parsed : {};
+    const preview = parseDevContainerConfigPreview(record, raw.length >= MAX_DEVCONTAINER_CONFIG_PREVIEW_BYTES);
+
+    return [
+      `Dev Container config preview (${formatBytes(size)}).`,
+      preview.name ? `Name: ${preview.name}.` : "Name: not declared in the bounded preview.",
+      preview.image ? `Image: ${preview.image}.` : "Image: none detected.",
+      preview.dockerFile ? `Dockerfile: ${preview.dockerFile}.` : "",
+      preview.composeFiles.length > 0 ? `Compose files: ${preview.composeFiles.join(", ")}.` : "",
+      preview.service ? `Service: ${preview.service}.` : "",
+      preview.workspaceFolder ? `Workspace folder: ${preview.workspaceFolder}.` : "",
+      preview.features.length > 0 ? `Features: ${preview.features.join(", ")}.` : "Features: none detected.",
+      preview.ports.length > 0 ? `Forwarded ports: ${preview.ports.join(", ")}.` : "",
+      preview.extensions.length > 0 ? `VS Code extensions: ${preview.extensions.join(", ")}.` : "",
+      preview.envKeys.length > 0 ? `Environment keys only: ${preview.envKeys.join(", ")}.` : "",
+      preview.commands.length > 0 ? `Lifecycle command cues: ${preview.commands.join(" | ")}.` : "",
+      preview.riskCues.length > 0 ? `Static risk cues: ${preview.riskCues.join(", ")}.` : "",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_DEVCONTAINER_CONFIG_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; Dev Container metadata was parsed from bounded workspace-local JSON only, with environment values hidden and no VS Code Dev Containers extension, docker/devcontainer CLI, container build, image pull, feature install, package install, command execution, registry lookup, network call, secret material read, workspace mutation, or provider send performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Dev Container config ready for explicit attachment (${formatBytes(size)}).`,
+      "Dev Container JSON preview could not be parsed in the bounded local sample; no VS Code Dev Containers extension, docker/devcontainer CLI, image pull, command execution, registry lookup, network call, secret material read, workspace mutation, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseDevContainerConfigPreview(record: Record<string, unknown>, byteTruncated: boolean): {
+  name: string;
+  image: string;
+  dockerFile: string;
+  composeFiles: string[];
+  service: string;
+  workspaceFolder: string;
+  features: string[];
+  ports: string[];
+  extensions: string[];
+  envKeys: string[];
+  commands: string[];
+  riskCues: string[];
+  truncated: boolean;
+} {
+  const build = isPlainRecord(record.build) ? record.build : {};
+  const customizations = isPlainRecord(record.customizations) ? record.customizations : {};
+  const vscode = isPlainRecord(customizations.vscode) ? customizations.vscode : {};
+  const features = isPlainRecord(record.features)
+    ? Object.keys(record.features).map((key) => maskPotentialSecretValues(key))
+    : [];
+  const envKeys = [
+    ...readDevContainerObjectKeys(record, "containerEnv"),
+    ...readDevContainerObjectKeys(record, "remoteEnv"),
+  ];
+  const commands = [
+    ...formatDevContainerCommand(record, "initializeCommand"),
+    ...formatDevContainerCommand(record, "onCreateCommand"),
+    ...formatDevContainerCommand(record, "updateContentCommand"),
+    ...formatDevContainerCommand(record, "postCreateCommand"),
+    ...formatDevContainerCommand(record, "postStartCommand"),
+    ...formatDevContainerCommand(record, "postAttachCommand"),
+  ].slice(0, MAX_DEVCONTAINER_CONFIG_ITEM_PREVIEW);
+  const riskCues = collectDevContainerRiskCues(commands);
+  const composeFiles = readDevContainerStringList(record, "dockerComposeFile")
+    .concat(readDevContainerStringList(record, "composeFile"));
+  const ports = readDevContainerStringList(record, "forwardPorts")
+    .concat(Object.keys(isPlainRecord(record.portsAttributes) ? record.portsAttributes : {}))
+    .map((value) => maskPotentialSecretValues(value));
+  const extensions = readDevContainerStringList(vscode, "extensions");
+
+  return {
+    name: clampSingleLine(maskPotentialSecretValues(readRecordString(record, "name")), 120),
+    image: clampSingleLine(maskPotentialSecretValues(readRecordString(record, "image")), 160),
+    dockerFile: clampSingleLine(
+      maskPotentialSecretValues(readRecordString(record, "dockerFile") || readRecordString(build, "dockerfile")),
+      160,
+    ),
+    composeFiles: uniquePreviewValues(composeFiles.map(maskPotentialSecretValues), MAX_DEVCONTAINER_CONFIG_ITEM_PREVIEW),
+    service: clampSingleLine(maskPotentialSecretValues(readRecordString(record, "service")), 120),
+    workspaceFolder: clampSingleLine(maskPotentialSecretValues(readRecordString(record, "workspaceFolder")), 160),
+    features: uniquePreviewValues(features, MAX_DEVCONTAINER_CONFIG_ITEM_PREVIEW),
+    ports: uniquePreviewValues(ports, MAX_DEVCONTAINER_CONFIG_ITEM_PREVIEW),
+    extensions: uniquePreviewValues(extensions.map(maskPotentialSecretValues), MAX_DEVCONTAINER_CONFIG_ITEM_PREVIEW),
+    envKeys: uniquePreviewValues(envKeys, MAX_DEVCONTAINER_CONFIG_ITEM_PREVIEW),
+    commands,
+    riskCues,
+    truncated:
+      byteTruncated ||
+      features.length >= MAX_DEVCONTAINER_CONFIG_ITEM_PREVIEW ||
+      ports.length >= MAX_DEVCONTAINER_CONFIG_ITEM_PREVIEW ||
+      extensions.length >= MAX_DEVCONTAINER_CONFIG_ITEM_PREVIEW ||
+      envKeys.length >= MAX_DEVCONTAINER_CONFIG_ITEM_PREVIEW ||
+      commands.length >= MAX_DEVCONTAINER_CONFIG_ITEM_PREVIEW,
+  };
+}
+
+function readDevContainerStringList(record: Record<string, unknown>, key: string): string[] {
+  const value = readRecordValue(record, key);
+  const values = Array.isArray(value) ? value : [value];
+  return values
+    .map((item) => typeof item === "number" ? String(item) : typeof item === "string" ? item : "")
+    .map((item) => clampSingleLine(item, 160))
+    .filter(Boolean)
+    .slice(0, MAX_DEVCONTAINER_CONFIG_ITEM_PREVIEW);
+}
+
+function readDevContainerObjectKeys(record: Record<string, unknown>, key: string): string[] {
+  const value = readRecordValue(record, key);
+  return isPlainRecord(value)
+    ? Object.keys(value).map((item) => clampSingleLine(item, 100)).filter(Boolean)
+    : [];
+}
+
+function formatDevContainerCommand(record: Record<string, unknown>, key: string): string[] {
+  const value = readRecordValue(record, key);
+  const formatValue = (command: unknown): string => {
+    if (typeof command === "string") return maskPotentialSecretValues(command);
+    if (Array.isArray(command)) {
+      return command
+        .map((part) => typeof part === "string" ? part : "")
+        .filter(Boolean)
+        .join(" ");
+    }
+    if (isPlainRecord(command)) {
+      return Object.keys(command).join(", ");
+    }
+    return "";
+  };
+  const formatted = formatValue(value);
+  return formatted ? [`${key}=${clampSingleLine(maskPotentialSecretValues(formatted), 180)}`] : [];
+}
+
+function collectDevContainerRiskCues(commands: string[]): string[] {
+  const cues = new Set<string>();
+  for (const command of commands) {
+    if (/\b(curl|wget|invoke-webrequest|irm|iwr)\b/i.test(command)) cues.add("network download/request command");
+    if (/\b(apt|apt-get|apk|dnf|yum|pip|npm|pnpm|yarn|bun|uv|go install|cargo install)\b/i.test(command)) cues.add("package install command");
+    if (/\b(docker|devcontainer)\b/i.test(command)) cues.add("container runtime command");
+    if (/\b(chmod|chown|rm|del|remove-item|mv|move-item)\b/i.test(command)) cues.add("filesystem mutation command");
+    if (cues.size >= MAX_DEVCONTAINER_CONFIG_ITEM_PREVIEW) break;
+  }
+  return [...cues];
 }
 
 function extractYamlScalarValue(lines: string[], key: string): string {
@@ -12355,6 +14211,132 @@ function summarizeBuildManifestFile(filePath: string, extension: string, size: n
       "No Maven/Gradle/MSBuild/dotnet command, package restore, plugin execution, external schema lookup, network call, credential lookup, or provider send was performed.",
     ].join("\n").slice(0, MAX_TEXT_BYTES);
   }
+}
+
+function isBazelBuildFile(filePath: string, extension: string): boolean {
+  const name = basename(filePath).toLowerCase();
+  return (
+    extension === ".bazel-build" ||
+    name === "build" ||
+    name === "build.bazel" ||
+    name === "workspace" ||
+    name === "workspace.bazel" ||
+    name === "module.bazel" ||
+    name === ".bazelrc" ||
+    name.endsWith(".bzl")
+  );
+}
+
+function summarizeBazelBuildFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(
+      filePath,
+      Math.min(MAX_BAZEL_BUILD_PREVIEW_BYTES, MAX_TEXT_BYTES * 24),
+    ).toString("utf8");
+    const normalized = normalizeTextPreview(raw);
+    const preview = parseBazelBuildPreview(normalized);
+    return [
+      `Bazel/Starlark build file preview (${formatBytes(size)}).`,
+      `Format: ${describeBazelBuildFormat(filePath)}.`,
+      preview.loads.length > 0
+        ? `Load statements (${preview.loads.length}${preview.loads.length >= MAX_BAZEL_BUILD_ITEM_PREVIEW ? "+" : ""}): ${preview.loads.join(" | ")}.`
+        : "Load statements: none detected.",
+      preview.rules.length > 0
+        ? `Rules/macros (${preview.rules.length}${preview.rules.length >= MAX_BAZEL_BUILD_ITEM_PREVIEW ? "+" : ""}): ${preview.rules.join(" | ")}.`
+        : "Rules/macros: none detected.",
+      preview.targets.length > 0
+        ? `Target names (${preview.targets.length}${preview.targets.length >= MAX_BAZEL_BUILD_ITEM_PREVIEW ? "+" : ""}): ${preview.targets.join(", ")}.`
+        : "Target names: none detected.",
+      preview.deps.length > 0
+        ? `Dependency labels (${preview.deps.length}${preview.deps.length >= MAX_BAZEL_BUILD_ITEM_PREVIEW ? "+" : ""}): ${preview.deps.join(", ")}.`
+        : "Dependency labels: none detected.",
+      preview.moduleDirectives.length > 0
+        ? `Module/workspace directives (${preview.moduleDirectives.length}${preview.moduleDirectives.length >= MAX_BAZEL_BUILD_ITEM_PREVIEW ? "+" : ""}): ${preview.moduleDirectives.join(" | ")}.`
+        : "Module/workspace directives: none detected.",
+      preview.riskCues.length > 0
+        ? `Static risk cues: ${preview.riskCues.join(", ")}.`
+        : "Static risk cues: no repository fetch, genrule, shell, or local repository cues detected in the bounded preview.",
+      normalized.length >= MAX_BAZEL_BUILD_PREVIEW_BYTES
+        ? `Bazel preview was capped at ${formatBytes(MAX_BAZEL_BUILD_PREVIEW_BYTES)}.`
+        : "",
+      "Ready for explicit attachment after visible review; Bazel/Starlark metadata was parsed from bounded workspace-local text only, and no bazel/bzlmod command, repository fetch, build/test execution, query, package install, network call, credential lookup, workspace mutation, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Bazel/Starlark build file ready for explicit attachment (${formatBytes(size)}).`,
+      `${basename(filePath)} could not be read as bounded workspace-local text.`,
+      "No bazel/bzlmod command, repository fetch, build/test execution, query, package install, network call, credential lookup, workspace mutation, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function describeBazelBuildFormat(filePath: string): string {
+  const name = basename(filePath).toLowerCase();
+  if (name === "build" || name === "build.bazel") return "Bazel BUILD package";
+  if (name === "workspace" || name === "workspace.bazel") return "Bazel WORKSPACE";
+  if (name === "module.bazel") return "Bazel module";
+  if (name === ".bazelrc") return "Bazel rc config";
+  if (name.endsWith(".bzl")) return "Starlark extension";
+  return "Bazel/Starlark text";
+}
+
+function parseBazelBuildPreview(raw: string): {
+  loads: string[];
+  rules: string[];
+  targets: string[];
+  deps: string[];
+  moduleDirectives: string[];
+  riskCues: string[];
+} {
+  const withoutComments = raw
+    .split(/\r?\n/)
+    .map((line) => line.replace(/(^|[^\\])#.*/, "$1"))
+    .join("\n");
+  const loads = [...withoutComments.matchAll(/\bload\s*\(\s*["']([^"']+)["']\s*(?:,\s*([^)]+))?\)/g)]
+    .map((match) => {
+      const source = match[1] || "";
+      const symbols = (match[2] || "")
+        .split(",")
+        .map((value) => value.trim().replace(/^["']|["']$/g, ""))
+        .filter(Boolean)
+        .slice(0, 4);
+      return clampSingleLine(`${source}${symbols.length > 0 ? ` -> ${symbols.join(", ")}` : ""}`, 180);
+    })
+    .slice(0, MAX_BAZEL_BUILD_ITEM_PREVIEW);
+  const calls = [...withoutComments.matchAll(/\b([A-Za-z_][\w.]*)\s*\(/g)]
+    .map((match) => match[1] || "")
+    .filter((name) => name && !["load", "select", "glob"].includes(name))
+    .slice(0, MAX_BAZEL_BUILD_ITEM_PREVIEW * 3);
+  const rules = uniquePreviewValues(
+    calls.filter((name) => /(?:rule|library|binary|test|proto|image|repository|module|extension|genrule|alias|exports_files|filegroup)$/i.test(name)),
+    MAX_BAZEL_BUILD_ITEM_PREVIEW,
+  );
+  const targets = [...withoutComments.matchAll(/\bname\s*=\s*["']([^"']+)["']/g)]
+    .map((match) => clampSingleLine(maskPotentialSecretValues(match[1] || ""), 120))
+    .filter(Boolean)
+    .slice(0, MAX_BAZEL_BUILD_ITEM_PREVIEW);
+  const deps = [...withoutComments.matchAll(/["']((?:(?:@[\w.+-]+)?\/\/|:)[^"'\s,)\]]+)["']/g)]
+    .map((match) => clampSingleLine(maskPotentialSecretValues(match[1] || ""), 160))
+    .filter(Boolean)
+    .slice(0, MAX_BAZEL_BUILD_ITEM_PREVIEW);
+  const moduleDirectives = [...withoutComments.matchAll(/\b(bazel_dep|module|use_extension|use_repo|git_repository|http_archive|local_repository)\s*\(([\s\S]*?)\)/g)]
+    .map((match) => clampSingleLine(`${match[1]}(${maskPotentialSecretValues((match[2] || "").replace(/\s+/g, " ").trim())})`, 220))
+    .slice(0, MAX_BAZEL_BUILD_ITEM_PREVIEW);
+  const riskCues = [
+    /\b(http_archive|git_repository|new_git_repository)\s*\(/.test(withoutComments) ? "repository fetch rule" : "",
+    /\b(local_repository|new_local_repository)\s*\(/.test(withoutComments) ? "local repository mapping" : "",
+    /\bgenrule\s*\(/.test(withoutComments) ? "genrule command" : "",
+    /\b(cmd|command)\s*=/.test(withoutComments) ? "shell command attribute" : "",
+    /\btoken|password|secret|credential/i.test(withoutComments) ? "secret-shaped key/value cue" : "",
+  ].filter(Boolean);
+  return {
+    loads: uniquePreviewValues(loads, MAX_BAZEL_BUILD_ITEM_PREVIEW),
+    rules,
+    targets: uniquePreviewValues(targets, MAX_BAZEL_BUILD_ITEM_PREVIEW),
+    deps: uniquePreviewValues(deps, MAX_BAZEL_BUILD_ITEM_PREVIEW),
+    moduleDirectives: uniquePreviewValues(moduleDirectives, MAX_BAZEL_BUILD_ITEM_PREVIEW),
+    riskCues: uniquePreviewValues(riskCues, MAX_BAZEL_BUILD_ITEM_PREVIEW),
+  };
 }
 
 function isDotnetNugetConfigFile(filePath: string, extension: string): boolean {
@@ -13866,6 +15848,99 @@ function summarizeJavaBuildArtifactFile(filePath: string, extension: string, siz
   return summarizeJavaArchiveArtifactFile(filePath, extension, size);
 }
 
+interface JavaFlightRecorderPreview {
+  validMagic: boolean;
+  majorVersion?: number;
+  minorVersion?: number;
+  chunkSize?: bigint;
+  constantPoolOffset?: bigint;
+  metadataOffset?: bigint;
+  startNanos?: bigint;
+  durationNanos?: bigint;
+  ticksPerSecond?: bigint;
+  featureFlags?: string;
+  stringHints: string[];
+}
+
+function summarizeJavaFlightRecorderFile(filePath: string, size: number): string {
+  try {
+    const buffer = readFileHeader(filePath, Math.min(size, MAX_JAVA_FLIGHT_RECORDER_PREVIEW_BYTES));
+    const preview = readJavaFlightRecorderPreview(buffer);
+    const version =
+      typeof preview.majorVersion === "number" && typeof preview.minorVersion === "number"
+        ? `${preview.majorVersion}.${preview.minorVersion}`
+        : "unknown";
+    return [
+      `Java Flight Recorder snapshot preview (${formatBytes(size)}).`,
+      preview.validMagic ? "Magic: FLR\\0 JFR chunk header detected." : "Magic: FLR\\0 header not detected in the bounded preview.",
+      `Version: ${version}.`,
+      typeof preview.chunkSize === "bigint" ? `First chunk declared size: ${formatBigIntBytes(preview.chunkSize)}.` : "",
+      typeof preview.constantPoolOffset === "bigint" ? `Constant pool offset: ${formatBigIntBytes(preview.constantPoolOffset)}.` : "",
+      typeof preview.metadataOffset === "bigint" ? `Metadata offset: ${formatBigIntBytes(preview.metadataOffset)}.` : "",
+      typeof preview.startNanos === "bigint" && typeof preview.durationNanos === "bigint"
+        ? `Time window: start ${preview.startNanos.toString()} ns; duration ${preview.durationNanos.toString()} ns.`
+        : "",
+      typeof preview.ticksPerSecond === "bigint" ? `Tick rate: ${preview.ticksPerSecond.toString()} ticks/sec.` : "",
+      preview.featureFlags ? `Feature flags: ${preview.featureFlags}.` : "",
+      preview.stringHints.length > 0
+        ? `Readable event/JVM/thread hints (${preview.stringHints.length}${preview.stringHints.length >= MAX_JAVA_FLIGHT_RECORDER_STRING_PREVIEW ? "+" : ""}): ${preview.stringHints.join(", ")}.`
+        : "Readable event/JVM/thread hints: none detected in the bounded preview.",
+      "Ready for explicit attachment after visible review; JFR metadata was read from bounded local bytes only, event payloads/stacks/allocation data were not decoded, no JVM/JDK Mission Control/jfr/jcmd command, profile recording, process attach, artifact download, network call, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Java Flight Recorder snapshot ready for explicit attachment (${formatBytes(size)}).`,
+      "The bounded local JFR preview could not be read; no JVM/JDK Mission Control/jfr/jcmd command, process attach, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function readJavaFlightRecorderPreview(buffer: Buffer): JavaFlightRecorderPreview {
+  const validMagic =
+    buffer.length >= 4 &&
+    buffer[0] === 0x46 &&
+    buffer[1] === 0x4c &&
+    buffer[2] === 0x52 &&
+    buffer[3] === 0x00;
+  const preview: JavaFlightRecorderPreview = {
+    validMagic,
+    stringHints: collectJavaFlightRecorderStringHints(buffer),
+  };
+  if (!validMagic || buffer.length < 68) return preview;
+
+  return {
+    ...preview,
+    majorVersion: buffer.readUInt16BE(4),
+    minorVersion: buffer.readUInt16BE(6),
+    chunkSize: buffer.readBigUInt64BE(8),
+    constantPoolOffset: buffer.readBigUInt64BE(16),
+    metadataOffset: buffer.readBigUInt64BE(24),
+    startNanos: buffer.readBigUInt64BE(32),
+    durationNanos: buffer.readBigUInt64BE(40),
+    ticksPerSecond: buffer.readBigUInt64BE(56),
+    featureFlags: `0x${buffer.readUInt32BE(64).toString(16).padStart(8, "0")}`,
+  };
+}
+
+function collectJavaFlightRecorderStringHints(buffer: Buffer): string[] {
+  const text = buffer.toString("latin1");
+  const hints = new Set<string>();
+  const patterns = [
+    /\bjdk\.[A-Za-z0-9_.:$-]{2,120}\b/g,
+    /\b(?:Java|JVM|HotSpot|OpenJDK|G1|ZGC|Shenandoah)[A-Za-z0-9_.:$ -]{0,80}\b/g,
+    /\b(?:main|ForkJoinPool|GC Thread|JFR|VirtualThread)[A-Za-z0-9_.:$ -]{0,80}\b/g,
+  ];
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      const value = clampSingleLine(maskPotentialSecretValues(match[0] || ""), 140);
+      if (/(secret|token|password|credential|private[_ -]?key)/i.test(value)) continue;
+      if (value) hints.add(value);
+      if (hints.size >= MAX_JAVA_FLIGHT_RECORDER_STRING_PREVIEW) return [...hints];
+    }
+  }
+  return [...hints];
+}
+
 function summarizeJavaArchiveArtifactFile(filePath: string, extension: string, size: number): string {
   try {
     const buffer = readFileHeader(
@@ -15090,6 +17165,433 @@ function collectJvmBuildConfigSamples(lines: string[]): string[] {
     .slice(0, MAX_JVM_BUILD_CONFIG_ITEM_PREVIEW);
 }
 
+interface GradleVersionCatalogPreview {
+  versions: string[];
+  libraries: string[];
+  plugins: string[];
+  bundles: string[];
+  riskCues: string[];
+  truncated: boolean;
+}
+
+function summarizeGradleVersionCatalogFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(
+      filePath,
+      Math.min(MAX_GRADLE_VERSION_CATALOG_PREVIEW_BYTES, MAX_TEXT_BYTES * 24),
+    ).toString("utf8");
+    const preview = parseGradleVersionCatalogPreview(raw);
+    return [
+      `Gradle version catalog preview (${formatBytes(size)}).`,
+      preview.versions.length > 0
+        ? `Version aliases (${preview.versions.length}${preview.versions.length >= MAX_GRADLE_VERSION_CATALOG_ITEM_PREVIEW ? "+" : ""}): ${preview.versions.join(", ")}.`
+        : "Version aliases: none detected in the bounded local preview.",
+      preview.libraries.length > 0
+        ? `Library aliases (${preview.libraries.length}${preview.libraries.length >= MAX_GRADLE_VERSION_CATALOG_ITEM_PREVIEW ? "+" : ""}): ${preview.libraries.join(" | ")}.`
+        : "Library aliases: none detected in the bounded local preview.",
+      preview.plugins.length > 0
+        ? `Plugin aliases (${preview.plugins.length}${preview.plugins.length >= MAX_GRADLE_VERSION_CATALOG_ITEM_PREVIEW ? "+" : ""}): ${preview.plugins.join(" | ")}.`
+        : "Plugin aliases: none detected in the bounded local preview.",
+      preview.bundles.length > 0
+        ? `Bundle aliases: ${preview.bundles.join(" | ")}.`
+        : "Bundle aliases: none detected in the bounded local preview.",
+      preview.riskCues.length > 0 ? `Static catalog cues: ${preview.riskCues.join(", ")}.` : "",
+      preview.truncated ? `Gradle version catalog preview was capped at ${formatBytes(MAX_GRADLE_VERSION_CATALOG_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; Gradle version catalog metadata was parsed from bounded workspace-local TOML only, with likely secrets redacted and no Gradle command, wrapper launch, dependency resolution, plugin resolution, version-catalog merge, repository lookup, package download, network call, credential validation, or provider send performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Gradle version catalog ready for explicit attachment (${formatBytes(size)}).`,
+      "Version catalog preview could not read bounded local TOML text.",
+      "No Gradle command, wrapper launch, dependency resolution, plugin resolution, version-catalog merge, repository lookup, package download, network call, credential validation, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseGradleVersionCatalogPreview(raw: string): GradleVersionCatalogPreview {
+  const versions = new Set<string>();
+  const libraries = new Set<string>();
+  const plugins = new Set<string>();
+  const bundles = new Set<string>();
+  const riskCues = new Set<string>();
+  let section = "";
+
+  for (const line of normalizeTextPreview(raw).split("\n")) {
+    const trimmed = stripTomlComment(line);
+    if (!trimmed) continue;
+    const sectionName = readTomlSectionName(trimmed);
+    if (sectionName) {
+      section = sectionName.toLowerCase();
+      continue;
+    }
+    const entry = readTomlKeyValuePreview(trimmed);
+    if (!entry) continue;
+    const key = clampSingleLine(maskPotentialSecretValues(entry.key), 100);
+    const value = sanitizeGradleVersionCatalogValue(entry.value);
+    const lowerValue = `${key} ${value}`.toLowerCase();
+    if (isSecretShapedKey(lowerValue)) riskCues.add("credential-shaped catalog value redacted");
+
+    if (section === "versions") {
+      addGradleVersionCatalogPreview(versions, `${key}=${value}`);
+    } else if (section === "libraries") {
+      addGradleVersionCatalogPreview(libraries, formatGradleCatalogDependency(key, value));
+    } else if (section === "plugins") {
+      addGradleVersionCatalogPreview(plugins, formatGradleCatalogPlugin(key, value));
+    } else if (section === "bundles") {
+      addGradleVersionCatalogPreview(bundles, `${key}=${summarizeGradleCatalogArray(value)}`);
+    }
+
+    if (lowerValue.includes("snapshot")) riskCues.add("SNAPSHOT/pre-release dependency");
+    if (lowerValue.includes("file:") || lowerValue.includes("path=")) riskCues.add("local path dependency");
+    if (versions.size + libraries.size + plugins.size + bundles.size >= MAX_GRADLE_VERSION_CATALOG_ITEM_PREVIEW * 4) {
+      break;
+    }
+  }
+
+  return {
+    versions: [...versions].slice(0, MAX_GRADLE_VERSION_CATALOG_ITEM_PREVIEW),
+    libraries: [...libraries].slice(0, MAX_GRADLE_VERSION_CATALOG_ITEM_PREVIEW),
+    plugins: [...plugins].slice(0, MAX_GRADLE_VERSION_CATALOG_ITEM_PREVIEW),
+    bundles: [...bundles].slice(0, MAX_GRADLE_VERSION_CATALOG_ITEM_PREVIEW),
+    riskCues: [...riskCues].slice(0, MAX_GRADLE_VERSION_CATALOG_ITEM_PREVIEW),
+    truncated:
+      raw.length >= MAX_GRADLE_VERSION_CATALOG_PREVIEW_BYTES ||
+      versions.size >= MAX_GRADLE_VERSION_CATALOG_ITEM_PREVIEW ||
+      libraries.size >= MAX_GRADLE_VERSION_CATALOG_ITEM_PREVIEW ||
+      plugins.size >= MAX_GRADLE_VERSION_CATALOG_ITEM_PREVIEW ||
+      bundles.size >= MAX_GRADLE_VERSION_CATALOG_ITEM_PREVIEW,
+  };
+}
+
+function formatGradleCatalogDependency(alias: string, value: string): string {
+  const module = readTomlInlineValue(value, "module") || readTomlInlineValue(value, "group");
+  const name = readTomlInlineValue(value, "name");
+  const version = readTomlInlineValue(value, "version.ref") || readTomlInlineValue(value, "version");
+  const coordinates = module || (name ? `${readTomlInlineValue(value, "group") || "(group not declared)"}:${name}` : value);
+  return [`${alias}=${coordinates}`, version ? `version=${version}` : ""].filter(Boolean).join(" ");
+}
+
+function formatGradleCatalogPlugin(alias: string, value: string): string {
+  const pluginId = readTomlInlineValue(value, "id") || value;
+  const version = readTomlInlineValue(value, "version.ref") || readTomlInlineValue(value, "version");
+  return [`${alias}=${pluginId}`, version ? `version=${version}` : ""].filter(Boolean).join(" ");
+}
+
+function readTomlInlineValue(value: string, key: string): string {
+  const escapedKey = escapeRegExp(key);
+  const match = value.match(new RegExp(`${escapedKey}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^,}]+))`, "i"));
+  return sanitizeGradleVersionCatalogValue(match?.[1] || match?.[2] || match?.[3] || "");
+}
+
+function summarizeGradleCatalogArray(value: string): string {
+  const items = [...value.matchAll(/"([^"]+)"|'([^']+)'|([A-Za-z0-9_.-]+)/g)]
+    .map((match) => sanitizeGradleVersionCatalogValue(match[1] || match[2] || match[3] || ""))
+    .filter(Boolean)
+    .slice(0, 6);
+  return items.length > 0 ? items.join(", ") : sanitizeGradleVersionCatalogValue(value);
+}
+
+function sanitizeGradleVersionCatalogValue(value: string): string {
+  return clampSingleLine(maskPotentialSecretValues(value.replace(/^[{[\s"']+|[}\]\s"',]+$/g, "")), 140);
+}
+
+function addGradleVersionCatalogPreview(target: Set<string>, value: string): void {
+  const sanitized = clampSingleLine(maskPotentialSecretValues(value), 180);
+  if (sanitized && target.size < MAX_GRADLE_VERSION_CATALOG_ITEM_PREVIEW) target.add(sanitized);
+}
+
+function summarizeMavenSettingsFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(
+      filePath,
+      Math.min(MAX_MAVEN_SETTINGS_PREVIEW_BYTES, MAX_TEXT_BYTES * 24),
+    ).toString("utf8");
+    const normalized = normalizeTextPreview(raw);
+    const localRepository = firstXmlTagValue(normalized, "localRepository");
+    const mirrors = summarizeMavenSettingsMirrors(normalized);
+    const servers = summarizeMavenSettingsServers(normalized);
+    const profiles = summarizeMavenSettingsProfiles(normalized);
+    const activeProfiles = collectMavenSettingsTagValues(normalized, "activeProfile");
+    const proxies = summarizeMavenSettingsProxies(normalized);
+    return [
+      `Maven settings.xml preview (${formatBytes(size)}).`,
+      localRepository
+        ? `Local repository: ${sanitizeMavenSettingsValue(localRepository)}.`
+        : "Local repository: none declared in the bounded preview.",
+      mirrors.length > 0
+        ? `Mirrors (${mirrors.length}${mirrors.length >= MAX_MAVEN_SETTINGS_ITEM_PREVIEW ? "+" : ""}): ${mirrors.join(" | ")}.`
+        : "Mirrors: none detected in the bounded preview.",
+      servers.length > 0
+        ? `Servers (${servers.length}${servers.length >= MAX_MAVEN_SETTINGS_ITEM_PREVIEW ? "+" : ""}): ${servers.join(" | ")}.`
+        : "Servers: none detected in the bounded preview.",
+      profiles.length > 0
+        ? `Profiles (${profiles.length}${profiles.length >= MAX_MAVEN_SETTINGS_ITEM_PREVIEW ? "+" : ""}): ${profiles.join(" | ")}.`
+        : "Profiles: none detected in the bounded preview.",
+      activeProfiles.length > 0
+        ? `Active profiles: ${activeProfiles.join(", ")}.`
+        : "Active profiles: none detected.",
+      proxies.length > 0
+        ? `Proxies (${proxies.length}${proxies.length >= MAX_MAVEN_SETTINGS_ITEM_PREVIEW ? "+" : ""}): ${proxies.join(" | ")}.`
+        : "Proxies: none detected in the bounded preview.",
+      raw.length >= MAX_MAVEN_SETTINGS_PREVIEW_BYTES
+        ? `Maven settings preview was capped at ${formatBytes(MAX_MAVEN_SETTINGS_PREVIEW_BYTES)}.`
+        : "",
+      "Ready for explicit attachment after visible review; Maven settings metadata was parsed from bounded workspace-local XML only, credential values were not expanded, settings.xml merge was not performed, and no Maven/Gradle/JVM command, wrapper launch, package restore, dependency resolution, repository reachability check, credential validation, network call, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Maven settings.xml ready for explicit attachment (${formatBytes(size)}).`,
+      "settings.xml could not be parsed from the bounded local XML preview.",
+      "No Maven/Gradle/JVM command, wrapper launch, package restore, dependency resolution, settings.xml merge, credential validation, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function summarizeMavenSettingsMirrors(raw: string): string[] {
+  return collectXmlBlocks(raw, "mirror")
+    .map((block) => {
+      const id = firstXmlTagValue(block, "id") || "mirror id not declared";
+      const mirrorOf = firstXmlTagValue(block, "mirrorOf");
+      const url = firstXmlTagValue(block, "url");
+      return [
+        sanitizeMavenSettingsValue(id),
+        mirrorOf ? `mirrorOf=${sanitizeMavenSettingsValue(mirrorOf)}` : "",
+        url ? `url=${sanitizeMavenSettingsUrl(url)}` : "",
+      ].filter(Boolean).join("; ");
+    })
+    .filter(Boolean)
+    .slice(0, MAX_MAVEN_SETTINGS_ITEM_PREVIEW);
+}
+
+function summarizeMavenSettingsServers(raw: string): string[] {
+  return collectXmlBlocks(raw, "server")
+    .map((block) => {
+      const id = firstXmlTagValue(block, "id") || "server id not declared";
+      const credentialKeys = ["username", "password", "privateKey", "passphrase"]
+        .filter((tag) => Boolean(firstXmlTagValue(block, tag)));
+      const configKeys = collectMavenSettingsDirectChildNames(firstXmlTagBlock(block, "configuration"));
+      return [
+        sanitizeMavenSettingsValue(id),
+        credentialKeys.length > 0 ? `credential keys=${credentialKeys.join(",")}; values hidden` : "credential keys=none",
+        configKeys.length > 0 ? `configuration keys=${configKeys.join(",")}` : "",
+      ].filter(Boolean).join("; ");
+    })
+    .filter(Boolean)
+    .slice(0, MAX_MAVEN_SETTINGS_ITEM_PREVIEW);
+}
+
+function summarizeMavenSettingsProfiles(raw: string): string[] {
+  return collectXmlBlocks(raw, "profile")
+    .map((block) => {
+      const id = firstXmlTagValue(block, "id") || "profile id not declared";
+      const repositories = collectXmlBlocks(block, "repository")
+        .map((repository) => firstXmlTagValue(repository, "id") || firstXmlTagValue(repository, "url"))
+        .filter((value): value is string => Boolean(value))
+        .map(sanitizeMavenSettingsValue)
+        .slice(0, 4);
+      const pluginRepositories = collectXmlBlocks(block, "pluginRepository")
+        .map((repository) => firstXmlTagValue(repository, "id") || firstXmlTagValue(repository, "url"))
+        .filter((value): value is string => Boolean(value))
+        .map(sanitizeMavenSettingsValue)
+        .slice(0, 4);
+      const propertyKeys = collectMavenSettingsDirectChildNames(firstXmlTagBlock(block, "properties"));
+      return [
+        sanitizeMavenSettingsValue(id),
+        repositories.length > 0 ? `repositories=${repositories.join(",")}` : "",
+        pluginRepositories.length > 0 ? `pluginRepositories=${pluginRepositories.join(",")}` : "",
+        propertyKeys.length > 0 ? `property keys=${propertyKeys.join(",")}` : "",
+      ].filter(Boolean).join("; ");
+    })
+    .filter(Boolean)
+    .slice(0, MAX_MAVEN_SETTINGS_ITEM_PREVIEW);
+}
+
+function summarizeMavenSettingsProxies(raw: string): string[] {
+  return collectXmlBlocks(raw, "proxy")
+    .map((block) => {
+      const id = firstXmlTagValue(block, "id") || "proxy id not declared";
+      const protocol = firstXmlTagValue(block, "protocol");
+      const host = firstXmlTagValue(block, "host");
+      const port = firstXmlTagValue(block, "port");
+      const active = firstXmlTagValue(block, "active");
+      const credentialKeys = ["username", "password"].filter((tag) => Boolean(firstXmlTagValue(block, tag)));
+      return [
+        sanitizeMavenSettingsValue(id),
+        protocol ? `protocol=${sanitizeMavenSettingsValue(protocol)}` : "",
+        host ? `host=${sanitizeMavenSettingsValue(host)}` : "",
+        port ? `port=${sanitizeMavenSettingsValue(port)}` : "",
+        active ? `active=${sanitizeMavenSettingsValue(active)}` : "",
+        credentialKeys.length > 0 ? `credential keys=${credentialKeys.join(",")}; values hidden` : "",
+      ].filter(Boolean).join("; ");
+    })
+    .filter(Boolean)
+    .slice(0, MAX_MAVEN_SETTINGS_ITEM_PREVIEW);
+}
+
+function collectMavenSettingsTagValues(raw: string, tagName: string): string[] {
+  const pattern = new RegExp(`<(?:[A-Za-z0-9_-]+:)?${escapeRegex(tagName)}\\b[^>]*>([\\s\\S]*?)<\\/(?:[A-Za-z0-9_-]+:)?${escapeRegex(tagName)}>`, "gi");
+  const values: string[] = [];
+  for (const match of raw.matchAll(pattern)) {
+    const value = sanitizeMavenSettingsValue(cleanXmlText(match[1] ?? ""));
+    if (value && !values.includes(value)) values.push(value);
+    if (values.length >= MAX_MAVEN_SETTINGS_ITEM_PREVIEW) break;
+  }
+  return values;
+}
+
+function collectXmlBlocks(raw: string, tagName: string): string[] {
+  const pattern = new RegExp(`<(?:[A-Za-z0-9_-]+:)?${escapeRegex(tagName)}\\b[^>]*>([\\s\\S]*?)<\\/(?:[A-Za-z0-9_-]+:)?${escapeRegex(tagName)}>`, "gi");
+  const blocks: string[] = [];
+  for (const match of raw.matchAll(pattern)) {
+    if (match[1]) blocks.push(match[1]);
+    if (blocks.length >= MAX_MAVEN_SETTINGS_ITEM_PREVIEW) break;
+  }
+  return blocks;
+}
+
+function firstXmlTagBlock(raw: string, tagName: string): string {
+  return collectXmlBlocks(raw, tagName)[0] || "";
+}
+
+function collectMavenSettingsDirectChildNames(raw: string): string[] {
+  if (!raw) return [];
+  const names = new Set<string>();
+  for (const match of raw.matchAll(/<([A-Za-z0-9_.:-]+)\b[^/>]*(?:\/>|>)/g)) {
+    const name = match[1]?.split(":").pop() || "";
+    if (!name || name.startsWith("!") || name.startsWith("?")) continue;
+    names.add(sanitizeMavenSettingsValue(name));
+    if (names.size >= MAX_MAVEN_SETTINGS_ITEM_PREVIEW) break;
+  }
+  return [...names].slice(0, MAX_MAVEN_SETTINGS_ITEM_PREVIEW);
+}
+
+function sanitizeMavenSettingsValue(value: string): string {
+  return clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(value)), 180);
+}
+
+function sanitizeMavenSettingsUrl(value: string): string {
+  return clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(value)), 220);
+}
+
+function summarizeCitationCffFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(
+      filePath,
+      Math.min(MAX_CITATION_CFF_PREVIEW_BYTES, MAX_TEXT_BYTES * 24),
+    ).toString("utf8");
+    const normalized = normalizeTextPreview(raw);
+    const preview = parseCitationCffPreview(normalized);
+    return [
+      `Citation CFF metadata preview (${formatBytes(size)}).`,
+      preview.title ? `Title: ${preview.title}.` : "Title: none detected in the bounded local preview.",
+      preview.version ? `Version: ${preview.version}.` : "",
+      preview.dateReleased ? `Date released: ${preview.dateReleased}.` : "",
+      preview.doi ? `DOI: ${preview.doi}.` : "DOI: none detected in the bounded local preview.",
+      preview.repository ? `Repository/code URL: ${preview.repository}.` : "",
+      preview.license ? `License field: ${preview.license}.` : "",
+      preview.authors.length > 0
+        ? `Authors (${preview.authors.length}${preview.authors.length >= MAX_CITATION_CFF_ITEM_PREVIEW ? "+" : ""}): ${preview.authors.join(" | ")}.`
+        : "Authors: none detected in the bounded local preview.",
+      preview.keywords.length > 0
+        ? `Keywords: ${preview.keywords.join(", ")}.`
+        : "Keywords: none detected in the bounded local preview.",
+      preview.identifiers.length > 0
+        ? `Identifiers (${preview.identifiers.length}${preview.identifiers.length >= MAX_CITATION_CFF_ITEM_PREVIEW ? "+" : ""}): ${preview.identifiers.join(" | ")}.`
+        : "Identifiers: none detected in the bounded local preview.",
+      preview.riskCues.length > 0
+        ? `Static risk cues: ${preview.riskCues.join(", ")}.`
+        : "Static risk cues: no credential-shaped values detected in the bounded local preview.",
+      raw.length >= MAX_CITATION_CFF_PREVIEW_BYTES
+        ? `Citation CFF preview was capped at ${formatBytes(MAX_CITATION_CFF_PREVIEW_BYTES)}.`
+        : "",
+      "Ready for explicit attachment after visible review; CITATION.cff metadata was parsed from bounded workspace-local YAML text only, token-like values were redacted, and no DOI resolver, Crossref/DataCite/GitHub API call, license compliance decision, citation formatter, network call, credential lookup, workspace mutation, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Citation CFF file ready for explicit attachment (${formatBytes(size)}).`,
+      "CITATION.cff could not be parsed from the bounded local YAML preview.",
+      "No DOI resolver, Crossref/DataCite/GitHub API call, license compliance decision, citation formatter, network call, credential lookup, workspace mutation, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseCitationCffPreview(raw: string): {
+  title: string;
+  version: string;
+  dateReleased: string;
+  doi: string;
+  repository: string;
+  license: string;
+  authors: string[];
+  keywords: string[];
+  identifiers: string[];
+  riskCues: string[];
+} {
+  const lines = raw.split("\n");
+  const authors = collectYamlObjectList(
+    lines,
+    "authors",
+    ["name", "family-names", "given-names", "orcid", "affiliation"],
+    MAX_CITATION_CFF_ITEM_PREVIEW,
+  ).map(formatCitationAuthor);
+  const identifiers = collectYamlObjectList(
+    lines,
+    "identifiers",
+    ["type", "value", "description"],
+    MAX_CITATION_CFF_ITEM_PREVIEW,
+  ).map(formatCitationIdentifier);
+  const riskCues = new Set<string>();
+  for (const line of lines) {
+    if (/\b(token|secret|password|api[_-]?key|credential|private[_-]?key)\b/i.test(line)) {
+      riskCues.add("credential-shaped value redacted");
+    }
+  }
+  return {
+    title: readCitationYamlScalar(lines, "title"),
+    version: readCitationYamlScalar(lines, "version"),
+    dateReleased: readCitationYamlScalar(lines, "date-released"),
+    doi: readCitationYamlScalar(lines, "doi"),
+    repository: readCitationYamlScalar(lines, "repository-code") || readCitationYamlScalar(lines, "url"),
+    license: readCitationYamlScalar(lines, "license"),
+    authors: uniquePreviewValues(authors.filter(Boolean), MAX_CITATION_CFF_ITEM_PREVIEW),
+    keywords: collectYamlStringList(lines, ["keywords"], MAX_CITATION_CFF_ITEM_PREVIEW).map(sanitizeCitationCffValue),
+    identifiers: uniquePreviewValues(identifiers.filter(Boolean), MAX_CITATION_CFF_ITEM_PREVIEW),
+    riskCues: uniquePreviewValues([...riskCues], MAX_CITATION_CFF_ITEM_PREVIEW),
+  };
+}
+
+function readCitationYamlScalar(lines: string[], key: string): string {
+  const pattern = new RegExp(`^${escapeRegExp(key)}\\s*:\\s*(.+)$`, "i");
+  for (const line of lines) {
+    if (/^\s/.test(line) || line.trim().startsWith("#")) continue;
+    const match = line.match(pattern);
+    if (match?.[1]) return sanitizeCitationCffValue(match[1]);
+  }
+  return "";
+}
+
+function formatCitationAuthor(author: Record<string, string>): string {
+  const name = author.name || [author["given-names"], author["family-names"]].filter(Boolean).join(" ");
+  const details = [
+    name || "(unnamed)",
+    author.orcid ? `orcid=${author.orcid}` : "",
+    author.affiliation ? `affiliation=${author.affiliation}` : "",
+  ].filter(Boolean);
+  return clampSingleLine(details.join(" "), 220);
+}
+
+function formatCitationIdentifier(identifier: Record<string, string>): string {
+  return [
+    identifier.type || "identifier",
+    identifier.value ? `value=${identifier.value}` : "",
+    identifier.description ? `description=${identifier.description}` : "",
+  ].filter(Boolean).join(" ");
+}
+
+function sanitizeCitationCffValue(value: string): string {
+  return clampSingleLine(maskPotentialSecretValues(redactHarUrl(cleanYamlScalar(value))), 180);
+}
+
 function stripJvmBuildConfigComment(line: string): string {
   const trimmed = line.trim();
   if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("!")) return "";
@@ -16235,13 +18737,13 @@ function summarizeJsWorkspaceConfigFile(filePath: string, size: number): string 
       normalized.length >= MAX_JS_WORKSPACE_CONFIG_PREVIEW_BYTES
         ? `JS/TS workspace config preview was capped at ${formatBytes(MAX_JS_WORKSPACE_CONFIG_PREVIEW_BYTES)}.`
         : "",
-      "Ready for explicit attachment after visible review; monorepo workspace metadata was parsed from bounded workspace-local text/JSON only, with likely secrets redacted and no pnpm/npm/Yarn/Bun command, Turbo/Nx runner, package install, dependency graph build, cache lookup, plugin execution, environment loading, network call, credential lookup, or provider send performed.",
+      "Ready for explicit attachment after visible review; monorepo workspace metadata was parsed from bounded workspace-local text/JSON only, with likely secrets redacted and no pnpm/npm/Yarn/Bun command, Turbo/Nx/Rush runner, package install, dependency graph build, cache lookup, plugin execution, environment loading, network call, credential lookup, or provider send performed.",
     ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
   } catch {
     return [
       `JS/TS workspace config ready for explicit attachment (${formatBytes(size)}).`,
       "Config preview could not read bounded local text.",
-      "No pnpm/npm/Yarn/Bun command, Turbo/Nx runner, package install, dependency graph build, cache lookup, plugin execution, environment loading, network call, credential lookup, or provider send was performed.",
+      "No pnpm/npm/Yarn/Bun command, Turbo/Nx/Rush runner, package install, dependency graph build, cache lookup, plugin execution, environment loading, network call, credential lookup, or provider send was performed.",
     ].join("\n").slice(0, MAX_TEXT_BYTES);
   }
 }
@@ -16251,12 +18753,13 @@ function describeJsWorkspaceConfig(filePath: string): string {
   if (name.startsWith("pnpm-workspace.")) return "pnpm workspace";
   if (name === "turbo.json" || name === "turbo.jsonc") return "Turborepo";
   if (name === "nx.json") return "Nx workspace";
+  if (name === "rush.json") return "Rush workspace";
   return "JS/TS workspace";
 }
 
 function parseJsWorkspaceConfigObject(filePath: string, raw: string): unknown {
   const name = basename(filePath).toLowerCase();
-  if (name === "turbo.json" || name === "turbo.jsonc" || name === "nx.json") {
+  if (name === "turbo.json" || name === "turbo.jsonc" || name === "nx.json" || name === "rush.json") {
     try {
       return parseJsoncLike(raw);
     } catch {
@@ -16273,7 +18776,19 @@ function collectJsWorkspaceConfigHints(tool: string, parsed: unknown, raw: strin
       hints.add(`${key} key`);
       if (hints.size >= MAX_JS_WORKSPACE_CONFIG_ITEM_PREVIEW) return [...hints];
     }
-    for (const key of ["globalDependencies", "globalEnv", "namedInputs", "plugins", "workspaceLayout", "npmScope"]) {
+    if (tool === "Rush workspace") {
+      const projects = Array.isArray(parsed.projects) ? parsed.projects : [];
+      for (const project of projects) {
+        if (!isRecord(project)) continue;
+        const packageName = typeof project.packageName === "string" ? project.packageName : undefined;
+        const projectFolder = typeof project.projectFolder === "string" ? project.projectFolder : undefined;
+        if (packageName || projectFolder) {
+          hints.add(`project ${clampSingleLine(maskPotentialSecretValues([packageName, projectFolder].filter(Boolean).join(" at ")), 140)}`);
+        }
+        if (hints.size >= MAX_JS_WORKSPACE_CONFIG_ITEM_PREVIEW) return [...hints];
+      }
+    }
+    for (const key of ["globalDependencies", "globalEnv", "namedInputs", "plugins", "workspaceLayout", "npmScope", "approvedPackagesPolicy"]) {
       const value = parsed[key];
       if (Array.isArray(value)) {
         const samples = value.filter((item): item is string => typeof item === "string").slice(0, 4);
@@ -16310,6 +18825,12 @@ function collectJsWorkspaceTaskHints(tool: string, parsed: unknown, raw: string)
     const targetDefaults = isRecord(parsed.targetDefaults) ? parsed.targetDefaults : undefined;
     for (const key of readObjectKeys(targetDefaults, MAX_JS_WORKSPACE_CONFIG_ITEM_PREVIEW)) {
       hints.add(`target default ${key}`);
+      if (hints.size >= MAX_JS_WORKSPACE_CONFIG_ITEM_PREVIEW) return [...hints];
+    }
+    const commandLine = isRecord(parsed.commandLine) ? parsed.commandLine : undefined;
+    const commands = isRecord(commandLine?.commands) ? commandLine.commands : undefined;
+    for (const key of readObjectKeys(commands, MAX_JS_WORKSPACE_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`rush command ${key}`);
       if (hints.size >= MAX_JS_WORKSPACE_CONFIG_ITEM_PREVIEW) return [...hints];
     }
   }
@@ -16395,26 +18916,53 @@ function summarizeJsToolingConfigFile(filePath: string, size: number): string {
       normalized.length >= MAX_JS_TOOLING_CONFIG_PREVIEW_BYTES
         ? `JS/TS tooling config preview was capped at ${formatBytes(MAX_JS_TOOLING_CONFIG_PREVIEW_BYTES)}.`
         : "",
-      "Ready for explicit attachment after visible review; JS/TS tooling metadata was parsed from bounded workspace-local text/JSON only, with likely secrets redacted and no node/npm/pnpm/Yarn/Bun command, lint/test/format runner, Playwright browser launch, config module import, environment loading, plugin resolution, network call, credential lookup, or provider send performed.",
+      "Ready for explicit attachment after visible review; JS/TS tooling metadata was parsed from bounded workspace-local text/JSON only, with likely secrets redacted and no node/npm/pnpm/Yarn/Bun command, no Deno command, no Oxlint command, TypeScript compiler, Babel transform, Browserslist resolution, lint/test/format runner, Vite/Next/Astro/Svelte/Nuxt dev server, Rollup/Tsup build, Playwright/Cypress browser launch, Storybook dev server/build, PostCSS/Tailwind compile, Vercel/Netlify/Wrangler deploy/dev/build, framework build/render, config module import, environment loading, plugin resolution, network call, credential lookup, or provider send performed.",
     ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
   } catch {
     return [
       `JS/TS tooling config ready for explicit attachment (${formatBytes(size)}).`,
       "Config preview could not read bounded local text.",
-      "No node/npm/pnpm/Yarn/Bun command, lint/test/format runner, Playwright browser launch, config module import, environment loading, plugin resolution, network call, credential lookup, or provider send was performed.",
+      "No node/npm/pnpm/Yarn/Bun command, no Deno command, no Oxlint command, TypeScript compiler, Babel transform, Browserslist resolution, lint/test/format runner, Vite/Next/Astro/Svelte/Nuxt dev server, Rollup/Tsup build, Playwright/Cypress browser launch, Storybook dev server/build, PostCSS/Tailwind compile, Vercel/Netlify/Wrangler deploy/dev/build, framework build/render, config module import, environment loading, plugin resolution, network call, credential lookup, or provider send was performed.",
     ].join("\n").slice(0, MAX_TEXT_BYTES);
   }
 }
 
 function describeJsToolingConfig(filePath: string): string {
   const name = basename(filePath).toLowerCase();
+  const normalizedPath = filePath.replace(/\\/g, "/").toLowerCase();
+  if (normalizedPath.includes("/.storybook/") || name.includes("storybook")) return "Storybook";
   if (name.includes("eslint")) return "ESLint";
   if (name.includes("prettier")) return "Prettier";
   if (name.includes("biome")) return "Biome";
+  if (name.includes("oxlint")) return "Oxlint";
+  if (name.includes("deno")) return "Deno";
+  if (name.includes("cspell")) return "CSpell";
+  if (name.includes("markdownlint")) return "Markdownlint";
+  if (name.includes("typedoc")) return "TypeDoc";
+  if (name.includes("knip")) return "Knip";
+  if (name.includes("commitlint")) return "Commitlint";
+  if (name.includes("lintstaged") || name.includes("lint-staged")) return "lint-staged";
   if (name.includes("stylelint")) return "Stylelint";
+  if (name.includes("babel")) return "Babel";
+  if (name.includes("browserslist")) return "Browserslist";
+  if (name.includes("postcss")) return "PostCSS";
+  if (name.includes("tailwind")) return "Tailwind";
+  if (name.includes("vercel")) return "Vercel";
+  if (name.includes("netlify")) return "Netlify";
+  if (name.includes("wrangler")) return "Cloudflare Workers";
+  if (name.startsWith("tsconfig")) return "TypeScript project";
+  if (name === "jsconfig.json") return "JavaScript project";
   if (name.includes("jest")) return "Jest";
   if (name.includes("vitest")) return "Vitest";
   if (name.includes("playwright")) return "Playwright";
+  if (name.includes("cypress")) return "Cypress";
+  if (name.includes("next")) return "Next.js";
+  if (name.includes("astro")) return "Astro";
+  if (name.includes("svelte")) return "SvelteKit";
+  if (name.includes("nuxt")) return "Nuxt";
+  if (name.includes("vite")) return "Vite";
+  if (name.includes("rollup")) return "Rollup";
+  if (name.includes("tsup")) return "Tsup";
   return "JS/TS tooling";
 }
 
@@ -16425,7 +18973,36 @@ function parseJsToolingConfigObject(filePath: string, raw: string): unknown {
     name.endsWith(".jsonc") ||
     name === ".eslintrc" ||
     name === ".prettierrc" ||
-    name === ".stylelintrc"
+    name === ".stylelintrc" ||
+    name === ".babelrc" ||
+    name === ".oxlintrc" ||
+    name === ".oxlintrc.json" ||
+    name === ".oxlintrc.jsonc" ||
+    name === "oxlintrc.json" ||
+    name === "oxlintrc.jsonc" ||
+    name === ".babelrc.json" ||
+    name === ".babelrc.jsonc" ||
+    name === "babel.config.json" ||
+    name === "babel.config.jsonc" ||
+    name === "vercel.json" ||
+    name === "vercel.jsonc" ||
+    name === "wrangler.json" ||
+    name === "wrangler.jsonc" ||
+    name === "deno.json" ||
+    name === "deno.jsonc" ||
+    name === ".markdownlint.json" ||
+    name === ".markdownlint.jsonc" ||
+    name === "markdownlint.json" ||
+    name === "markdownlint.jsonc" ||
+    name === "markdownlint-cli2.jsonc" ||
+    name === "typedoc.json" ||
+    name === "typedoc.jsonc" ||
+    name === "knip.json" ||
+    name === "knip.jsonc" ||
+    name === ".commitlintrc" ||
+    name === ".commitlintrc.json" ||
+    name === ".lintstagedrc" ||
+    name === ".lintstagedrc.json"
   ) {
     try {
       return parseJsoncLike(raw);
@@ -16445,6 +19022,12 @@ function collectJsToolingSchemaHints(tool: string, parsed: unknown, raw: string)
       if (hints.size >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW) return [...hints];
     }
   }
+  if (tool === "TypeScript project" || tool === "JavaScript project") {
+    for (const cue of collectRegexGroup(raw, /"(compilerOptions|baseUrl|paths|references|files|include|exclude|extends|target|module|moduleResolution|jsx|strict|noEmit|rootDir|outDir|types|lib|allowJs|checkJs)"\s*:/g, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`${cue} cue`);
+      if (hints.size >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW) return [...hints];
+    }
+  }
   const lower = raw.toLowerCase();
   for (const token of [
     "extends",
@@ -16458,12 +19041,190 @@ function collectJsToolingSchemaHints(tool: string, parsed: unknown, raw: string)
     "semi",
     "formatter",
     "linter",
+    "categories",
+    "correctness",
+    "suspicious",
+    "perf",
+    "nursery",
+    "tasks",
+    "imports",
+    "importMap",
+    "lint",
+    "fmt",
+    "test",
+    "bench",
+    "lock",
+    "nodeModulesDir",
+    "words",
+    "ignoreWords",
+    "dictionaries",
+    "dictionaryDefinitions",
+    "languageSettings",
+    "ignorePaths",
+    "default",
+    "MD013",
+    "MD033",
+    "globs",
+    "ignores",
+    "entryPoints",
+    "out",
+    "plugin",
+    "theme",
+    "readme",
+    "tsconfig",
+    "exclude",
+    "excludePrivate",
+    "excludeProtected",
+    "entry",
+    "project",
+    "paths",
+    "ignore",
+    "ignoreBinaries",
+    "ignoreDependencies",
+    "ignoreExportsUsedInFile",
+    "include",
+    "workspaces",
+    "parserPreset",
+    "ignores",
+    "defaultIgnores",
+    "helpUrl",
+    "concurrent",
+    "relative",
+    "shell",
+    "presets",
+    "plugins",
+    "env",
+    "targets",
+    "assumptions",
+    "sourceMaps",
+    "babelrcRoots",
+    "overrides",
+    "browsers",
+    "extends",
+    "defaults",
+    "production",
+    "development",
+    "content",
+    "darkMode",
+    "theme",
+    "extend",
+    "safelist",
+    "prefix",
+    "important",
+    "presets",
+    "corePlugins",
+    "future",
+    "map",
+    "parser",
+    "syntax",
+    "stringifier",
+    "from",
+    "to",
+    "buildCommand",
+    "outputDirectory",
+    "installCommand",
+    "devCommand",
+    "cleanUrls",
+    "crons",
+    "regions",
+    "publish",
+    "command",
+    "edge_functions",
+    "context",
+    "environment",
+    "main",
+    "compatibility_date",
+    "compatibility_flags",
+    "routes",
+    "vars",
+    "durable_objects",
+    "kv_namespaces",
+    "d1_databases",
+    "r2_buckets",
+    "assets",
+    "observability",
+    "triggers",
+    "placement",
+    "compilerOptions",
+    "baseUrl",
+    "paths",
+    "references",
+    "files",
+    "include",
+    "exclude",
+    "extends",
+    "target",
+    "module",
+    "moduleResolution",
+    "jsx",
+    "strict",
+    "noEmit",
+    "rootDir",
+    "outDir",
+    "types",
+    "lib",
+    "allowJs",
+    "checkJs",
     "testEnvironment",
     "setupFiles",
     "coverage",
     "projects",
     "webServer",
     "use",
+    "e2e",
+    "component",
+    "baseUrl",
+    "specPattern",
+    "supportFile",
+    "fixturesFolder",
+    "screenshotsFolder",
+    "videosFolder",
+    "downloadsFolder",
+    "env",
+    "stories",
+    "addons",
+    "framework",
+    "staticDirs",
+    "docs",
+    "features",
+    "core",
+    "refs",
+    "typescript",
+    "viteFinal",
+    "webpackFinal",
+    "images",
+    "redirects",
+    "rewrites",
+    "headers",
+    "experimental",
+    "transpilePackages",
+    "integrations",
+    "adapter",
+    "output",
+    "site",
+    "kit",
+    "preprocess",
+    "vitePlugin",
+    "modules",
+    "runtimeConfig",
+    "routeRules",
+    "app",
+    "css",
+    "build",
+    "plugins",
+    "server",
+    "preview",
+    "resolve",
+    "rollupOptions",
+    "input",
+    "output",
+    "external",
+    "format",
+    "target",
+    "dts",
+    "outDir",
+    "sourcemap",
+    "minify",
   ]) {
     if (lower.includes(token.toLowerCase())) hints.add(`${token} cue`);
     if (hints.size >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW) return [...hints];
@@ -16471,6 +19232,137 @@ function collectJsToolingSchemaHints(tool: string, parsed: unknown, raw: string)
   if (tool === "Playwright") {
     for (const project of collectRegexGroup(raw, /name\s*:\s*["']([^"']+)["']/g, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
       hints.add(`project=${project}`);
+    }
+  }
+  if (tool === "Cypress") {
+    for (const cue of collectRegexGroup(raw, /\b(e2e|component|baseUrl|specPattern|supportFile|fixturesFolder|screenshotsFolder|videosFolder|downloadsFolder|env)\s*:/g, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`${cue} cue`);
+    }
+  }
+  if (tool === "Storybook") {
+    for (const cue of collectRegexGroup(raw, /\b(stories|addons|framework|staticDirs|docs|features|core|refs|typescript|viteFinal|webpackFinal)\s*:/g, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`${cue} cue`);
+    }
+  }
+  if (tool === "Babel") {
+    for (const cue of collectRegexGroup(raw, /\b(presets|plugins|env|targets|assumptions|sourceMaps|babelrcRoots|overrides)\s*:/g, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`${cue} cue`);
+    }
+  }
+  if (tool === "Browserslist") {
+    for (const cue of collectRegexGroup(raw, /\b(browsers|extends|defaults|production|development|modern|legacy)\s*[:=]/g, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`${cue} cue`);
+    }
+    for (const query of collectRegexGroup(raw, /(?:^|\n)\s*((?:last\s+\d+\s+versions?|defaults|not\s+dead|chrome\s+>=\s+\d+|firefox\s+>=\s+\d+|ios_saf\s+>=\s+\d+|node\s+\d+))/gi, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`query ${query}`);
+    }
+  }
+  if (tool === "PostCSS") {
+    for (const cue of collectRegexGroup(raw, /\b(plugins|map|parser|syntax|stringifier|from|to)\s*:/g, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`${cue} cue`);
+    }
+  }
+  if (tool === "Tailwind") {
+    for (const cue of collectRegexGroup(raw, /\b(content|darkMode|theme|extend|safelist|prefix|important|presets|plugins|corePlugins|future)\s*:/g, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`${cue} cue`);
+    }
+  }
+  if (tool === "Vercel") {
+    for (const cue of collectRegexGroup(raw, /\b(framework|buildCommand|outputDirectory|installCommand|devCommand|rewrites|redirects|headers|functions|crons|env|regions|cleanUrls)\s*:/g, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`${cue} cue`);
+    }
+  }
+  if (tool === "Netlify") {
+    for (const cue of collectRegexGroup(raw, /\b(build|command|publish|functions|edge_functions|redirects|headers|plugins|context|dev|environment)\s*[:=]/g, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`${cue} cue`);
+    }
+  }
+  if (tool === "Cloudflare Workers") {
+    for (const cue of collectRegexGroup(raw, /\b(name|main|compatibility_date|compatibility_flags|routes|vars|durable_objects|kv_namespaces|d1_databases|r2_buckets|assets|observability|triggers|placement)\s*[:=]/g, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`${cue} cue`);
+    }
+  }
+  if (tool === "Next.js") {
+    for (const cue of collectRegexGroup(raw, /\b(images|redirects|rewrites|headers|experimental|transpilePackages|output|distDir|basePath)\s*:/g, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`${cue} cue`);
+    }
+  }
+  if (tool === "Astro") {
+    for (const cue of collectRegexGroup(raw, /\b(integrations|adapter|output|site|base|build|vite|markdown)\s*:/g, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`${cue} cue`);
+    }
+  }
+  if (tool === "SvelteKit") {
+    for (const cue of collectRegexGroup(raw, /\b(kit|adapter|alias|files|paths|prerender|preprocess|vitePlugin)\s*:/g, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`${cue} cue`);
+    }
+  }
+  if (tool === "Nuxt") {
+    for (const cue of collectRegexGroup(raw, /\b(modules|runtimeConfig|routeRules|app|css|devtools|nitro|vite)\s*:/g, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`${cue} cue`);
+    }
+  }
+  if (tool === "Vite") {
+    for (const cue of collectRegexGroup(raw, /\b(plugins|server|preview|build|rollupOptions|resolve)\s*:/g, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`${cue} cue`);
+    }
+  }
+  if (tool === "Rollup") {
+    for (const cue of collectRegexGroup(raw, /\b(input|output|plugins|external|treeshake)\s*:/g, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`${cue} cue`);
+    }
+  }
+  if (tool === "Tsup") {
+    for (const cue of collectRegexGroup(raw, /\b(entry|format|target|dts|outDir|sourcemap|clean|minify)\s*:/g, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)) {
+      hints.add(`${cue} cue`);
+    }
+  }
+  if (tool === "CSpell") {
+    for (const key of ["words", "ignoreWords", "dictionaries", "languageSettings", "ignorePaths"]) {
+      if (raw.toLowerCase().includes(key.toLowerCase())) hints.add(`${key} cue`);
+      if (hints.size >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW) return [...hints];
+    }
+  }
+  if (tool === "Deno") {
+    for (const key of ["tasks", "imports", "importMap", "lint", "fmt", "test", "bench", "lock", "compilerOptions", "nodeModulesDir"]) {
+      if (raw.toLowerCase().includes(key.toLowerCase())) hints.add(`${key} cue`);
+      if (hints.size >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW) return [...hints];
+    }
+  }
+  if (tool === "Oxlint") {
+    for (const key of ["categories", "rules", "plugins", "env", "globals", "settings", "ignorePatterns", "overrides"]) {
+      if (raw.toLowerCase().includes(key.toLowerCase())) hints.add(`${key} cue`);
+      if (hints.size >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW) return [...hints];
+    }
+  }
+  if (tool === "Markdownlint") {
+    for (const key of ["default", "MD013", "MD033", "globs", "ignores"]) {
+      if (raw.toLowerCase().includes(key.toLowerCase())) hints.add(`${key} cue`);
+      if (hints.size >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW) return [...hints];
+    }
+  }
+  if (tool === "TypeDoc") {
+    for (const key of ["entryPoints", "out", "plugin", "theme", "readme", "tsconfig", "exclude", "excludePrivate", "excludeProtected"]) {
+      if (raw.toLowerCase().includes(key.toLowerCase())) hints.add(`${key} cue`);
+      if (hints.size >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW) return [...hints];
+    }
+  }
+  if (tool === "Knip") {
+    for (const key of ["entry", "project", "paths", "ignore", "ignoreBinaries", "ignoreDependencies", "ignoreExportsUsedInFile", "include", "workspaces"]) {
+      if (raw.toLowerCase().includes(key.toLowerCase())) hints.add(`${key} cue`);
+      if (hints.size >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW) return [...hints];
+    }
+  }
+  if (tool === "Commitlint") {
+    for (const key of ["extends", "rules", "parserPreset", "ignores", "defaultIgnores", "helpUrl"]) {
+      if (raw.toLowerCase().includes(key.toLowerCase())) hints.add(`${key} cue`);
+      if (hints.size >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW) return [...hints];
+    }
+  }
+  if (tool === "lint-staged") {
+    for (const key of ["concurrent", "relative", "shell", "linters", "commands"]) {
+      if (raw.toLowerCase().includes(key.toLowerCase())) hints.add(`${key} cue`);
+      if (hints.size >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW) return [...hints];
     }
   }
   if (tool === "ESLint" || tool === "Stylelint" || tool === "Prettier") {
@@ -16517,6 +19409,225 @@ function collectJsToolingRuleHints(tool: string, parsed: unknown, raw: string): 
       hints.add(clampSingleLine(cue, 120));
     }
   }
+  if (tool === "Cypress") {
+    for (const cue of collectRegexGroup(raw, /\b(baseUrl|specPattern|supportFile|fixturesFolder|screenshotsFolder|videosFolder|downloadsFolder|video|retries|viewportWidth|viewportHeight)\s*:\s*([^,\n}]+)/g, 10)) {
+      hints.add(clampSingleLine(cue, 120));
+    }
+  }
+  if (tool === "Storybook") {
+    for (const cue of collectRegexGroup(raw, /\b(stories|addons|framework|staticDirs|docs|features|core|refs|typescript|viteFinal|webpackFinal)\s*:\s*([^,\n}]+)/g, 10)) {
+      hints.add(clampSingleLine(cue, 120));
+    }
+  }
+  if (tool === "Babel") {
+    for (const cue of collectRegexGroup(raw, /\b(presets|plugins|env|targets|assumptions|sourceMaps|babelrcRoots|overrides)\s*:\s*([^,\n}]+)/g, 10)) {
+      hints.add(clampSingleLine(cue, 120));
+    }
+  }
+  if (tool === "Babel" && isRecord(parsed)) {
+    for (const key of ["presets", "plugins", "babelrcRoots"]) {
+      const value = parsed[key];
+      const items = collectNestedStringValues(value, 6)
+        .map((item) => clampSingleLine(maskPotentialSecretValues(item), 100));
+      if (items.length > 0) hints.add(`${key}: ${items.join(", ")}`);
+      if (hints.size >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW) return [...hints];
+    }
+  }
+  if (tool === "Browserslist") {
+    for (const query of collectRegexGroup(raw, /(?:^|\n)\s*((?:last\s+\d+\s+versions?|defaults|not\s+dead|chrome\s+>=\s+\d+|firefox\s+>=\s+\d+|ios_saf\s+>=\s+\d+|node\s+\d+))/gi, 10)) {
+      hints.add(`query ${clampSingleLine(query, 120)}`);
+    }
+  }
+  if (tool === "PostCSS") {
+    for (const cue of collectRegexGroup(raw, /\b(plugins|map|parser|syntax|stringifier|from|to)\s*:\s*([^,\n}]+)/g, 10)) {
+      hints.add(clampSingleLine(cue, 120));
+    }
+  }
+  if (tool === "Tailwind") {
+    for (const cue of collectRegexGroup(raw, /\b(content|darkMode|theme|extend|safelist|prefix|important|presets|plugins|corePlugins|future)\s*:\s*([^,\n}]+)/g, 10)) {
+      hints.add(clampSingleLine(cue, 120));
+    }
+  }
+  if (tool === "Vercel") {
+    for (const cue of collectRegexGroup(raw, /\b(framework|buildCommand|outputDirectory|installCommand|devCommand|regions|cleanUrls)\s*:\s*([^,\n}]+)/g, 10)) {
+      hints.add(clampSingleLine(cue, 120));
+    }
+  }
+  if (tool === "Netlify") {
+    for (const cue of collectRegexGroup(raw, /\b(command|publish|functions|edge_functions|plugins|context|environment)\s*[=:]\s*([^,\n}]+)/g, 10)) {
+      hints.add(clampSingleLine(cue, 120));
+    }
+  }
+  if (tool === "Cloudflare Workers") {
+    for (const cue of collectRegexGroup(raw, /\b(name|main|compatibility_date|compatibility_flags|routes|vars|durable_objects|kv_namespaces|d1_databases|r2_buckets|assets|observability|triggers|placement)\s*[=:]\s*([^,\n}]+)/g, 10)) {
+      hints.add(clampSingleLine(cue, 120));
+    }
+  }
+  if (tool === "TypeScript project" || tool === "JavaScript project") {
+    for (const cue of collectRegexGroup(raw, /"(baseUrl|target|module|moduleResolution|jsx|strict|noEmit|rootDir|outDir|allowJs|checkJs)"\s*:\s*([^,\n}]+)/g, 10)) {
+      hints.add(clampSingleLine(cue, 120));
+    }
+    for (const cue of collectRegexGroup(raw, /"(@[^"]+|\$[^"]+|~[^"]+|\w[^"]*\/\*)"\s*:\s*\[/g, 6)) {
+      hints.add(`path alias ${clampSingleLine(cue, 80)}`);
+    }
+  }
+  if (tool === "Next.js") {
+    for (const cue of collectRegexGroup(raw, /\b(images|redirects|rewrites|headers|experimental|transpilePackages|output|distDir|basePath)\s*:\s*([^,\n}]+)/g, 10)) {
+      hints.add(clampSingleLine(cue, 120));
+    }
+  }
+  if (tool === "Astro") {
+    for (const cue of collectRegexGroup(raw, /\b(integrations|adapter|output|site|base|build|vite|markdown)\s*:\s*([^,\n}]+)/g, 10)) {
+      hints.add(clampSingleLine(cue, 120));
+    }
+  }
+  if (tool === "SvelteKit") {
+    for (const cue of collectRegexGroup(raw, /\b(kit|adapter|alias|files|paths|prerender|preprocess|vitePlugin)\s*:\s*([^,\n}]+)/g, 10)) {
+      hints.add(clampSingleLine(cue, 120));
+    }
+  }
+  if (tool === "Nuxt") {
+    for (const cue of collectRegexGroup(raw, /\b(modules|runtimeConfig|routeRules|app|css|devtools|nitro|vite)\s*:\s*([^,\n}]+)/g, 10)) {
+      hints.add(clampSingleLine(cue, 120));
+    }
+  }
+  if (tool === "Vite") {
+    for (const cue of collectRegexGroup(raw, /\b(outDir|sourcemap|minify|port|host|base|target)\s*:\s*([^,\n}]+)/g, 8)) {
+      hints.add(clampSingleLine(cue, 120));
+    }
+  }
+  if (tool === "Rollup") {
+    for (const cue of collectRegexGroup(raw, /\b(input|file|dir|format|name|external)\s*:\s*([^,\n}]+)/g, 8)) {
+      hints.add(clampSingleLine(cue, 120));
+    }
+  }
+  if (tool === "Tsup") {
+    for (const cue of collectRegexGroup(raw, /\b(entry|format|target|dts|outDir|sourcemap|minify)\s*:\s*([^,\n}]+)/g, 8)) {
+      hints.add(clampSingleLine(cue, 120));
+    }
+  }
+  if (tool === "CSpell" && isRecord(parsed)) {
+    for (const key of ["words", "ignoreWords", "dictionaries", "ignorePaths"]) {
+      const value = parsed[key];
+      if (Array.isArray(value)) {
+        const items = value
+          .filter((item): item is string => typeof item === "string")
+          .map((item) => clampSingleLine(maskPotentialSecretValues(item), 80))
+          .slice(0, 4);
+        if (items.length > 0) hints.add(`${key}: ${items.join(", ")}`);
+      }
+      if (hints.size >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW) return [...hints];
+    }
+  }
+  if (tool === "Deno" && isRecord(parsed)) {
+    for (const key of ["imports", "exclude", "include"]) {
+      const value = parsed[key];
+      if (Array.isArray(value)) {
+        const items = value
+          .filter((item): item is string => typeof item === "string")
+          .map((item) => clampSingleLine(maskPotentialSecretValues(item), 100))
+          .slice(0, 4);
+        if (items.length > 0) hints.add(`${key}: ${items.join(", ")}`);
+      }
+      if (isRecord(value)) {
+        const keys = readObjectKeys(value, 4);
+        if (keys.length > 0) hints.add(`${key}: ${keys.join(", ")}`);
+      }
+      if (hints.size >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW) return [...hints];
+    }
+    for (const key of ["tasks", "lint", "fmt", "test", "compilerOptions"]) {
+      const value = parsed[key];
+      if (isRecord(value)) {
+        const keys = readObjectKeys(value, 4);
+        if (keys.length > 0) hints.add(`${key}: ${keys.join(", ")}`);
+      }
+      if (typeof value === "string") hints.add(`${key}: ${clampSingleLine(maskPotentialSecretValues(value), 120)}`);
+      if (hints.size >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW) return [...hints];
+    }
+  }
+  if (tool === "Oxlint" && isRecord(parsed)) {
+    for (const key of ["plugins", "env", "globals", "ignorePatterns"]) {
+      const value = parsed[key];
+      if (Array.isArray(value)) {
+        const items = value
+          .filter((item): item is string => typeof item === "string")
+          .map((item) => clampSingleLine(maskPotentialSecretValues(item), 80))
+          .slice(0, 4);
+        if (items.length > 0) hints.add(`${key}: ${items.join(", ")}`);
+      }
+      if (isRecord(value)) {
+        const keys = readObjectKeys(value, 4);
+        if (keys.length > 0) hints.add(`${key}: ${keys.join(", ")}`);
+      }
+      if (hints.size >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW) return [...hints];
+    }
+    const categories = parsed.categories;
+    if (isRecord(categories)) {
+      for (const category of readObjectKeys(categories, 6)) hints.add(`category ${category}`);
+    }
+    const rules = parsed.rules;
+    if (isRecord(rules)) {
+      for (const rule of readObjectKeys(rules, 8)) hints.add(rule);
+    }
+  }
+  if (tool === "Markdownlint" && isRecord(parsed)) {
+    const markdownRuleKeys = readObjectKeys(parsed, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW)
+      .filter((key) => /^MD\d{3}$/i.test(key) || key === "default" || key === "globs" || key === "ignores");
+    for (const key of markdownRuleKeys) hints.add(key);
+    for (const key of ["globs", "ignores"]) {
+      const value = parsed[key];
+      if (Array.isArray(value)) {
+        const items = value
+          .filter((item): item is string => typeof item === "string")
+          .map((item) => clampSingleLine(maskPotentialSecretValues(item), 80))
+          .slice(0, 4);
+        if (items.length > 0) hints.add(`${key}: ${items.join(", ")}`);
+      }
+      if (hints.size >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW) return [...hints];
+    }
+  }
+  if (tool === "TypeDoc" && isRecord(parsed)) {
+    for (const key of ["entryPoints", "plugin", "exclude"]) {
+      const value = parsed[key];
+      if (Array.isArray(value)) {
+        const items = value
+          .filter((item): item is string => typeof item === "string")
+          .map((item) => clampSingleLine(maskPotentialSecretValues(item), 100))
+          .slice(0, 4);
+        if (items.length > 0) hints.add(`${key}: ${items.join(", ")}`);
+      }
+      if (hints.size >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW) return [...hints];
+    }
+    for (const key of ["out", "theme", "readme", "tsconfig"]) {
+      const value = parsed[key];
+      if (typeof value === "string") hints.add(`${key}: ${clampSingleLine(maskPotentialSecretValues(value), 120)}`);
+      if (hints.size >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW) return [...hints];
+    }
+  }
+  if (tool === "Knip" && isRecord(parsed)) {
+    for (const key of ["entry", "project", "ignore", "ignoreBinaries", "ignoreDependencies", "ignoreExportsUsedInFile", "include"]) {
+      const value = parsed[key];
+      if (Array.isArray(value)) {
+        const items = value
+          .filter((item): item is string => typeof item === "string")
+          .map((item) => clampSingleLine(maskPotentialSecretValues(item), 100))
+          .slice(0, 4);
+        if (items.length > 0) hints.add(`${key}: ${items.join(", ")}`);
+      }
+      if (typeof value === "string") hints.add(`${key}: ${clampSingleLine(maskPotentialSecretValues(value), 120)}`);
+      if (hints.size >= MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW) return [...hints];
+    }
+    const paths = parsed.paths;
+    if (isRecord(paths)) {
+      const pathKeys = readObjectKeys(paths, 4);
+      if (pathKeys.length > 0) hints.add(`paths: ${pathKeys.join(", ")}`);
+    }
+    const workspaces = parsed.workspaces;
+    if (isRecord(workspaces)) {
+      const workspaceKeys = readObjectKeys(workspaces, 4);
+      if (workspaceKeys.length > 0) hints.add(`workspaces: ${workspaceKeys.join(", ")}`);
+    }
+  }
   return [...hints].slice(0, MAX_JS_TOOLING_CONFIG_ITEM_PREVIEW);
 }
 
@@ -16539,6 +19650,24 @@ function collectRegexGroup(raw: string, pattern: RegExp, limit: number): string[
     values.push(clampSingleLine(maskPotentialSecretValues(value), 160));
     if (values.length >= limit) break;
   }
+  return values;
+}
+
+function collectNestedStringValues(value: unknown, limit: number): string[] {
+  const values: string[] = [];
+  const visit = (candidate: unknown): void => {
+    if (values.length >= limit) return;
+    if (typeof candidate === "string") {
+      values.push(candidate);
+      return;
+    }
+    if (!Array.isArray(candidate)) return;
+    for (const item of candidate) {
+      visit(item);
+      if (values.length >= limit) return;
+    }
+  };
+  visit(value);
   return values;
 }
 
@@ -18955,6 +22084,644 @@ function detectCiWorkflowKind(filePath: string): { id: string; label: string } |
   return null;
 }
 
+interface DependabotConfigPreview {
+  version: string | null;
+  updateCount: number;
+  ecosystems: string[];
+  directories: string[];
+  schedules: string[];
+  targetBranches: string[];
+  labels: string[];
+  reviewers: string[];
+  groups: string[];
+  allowRules: string[];
+  ignoreRules: string[];
+  riskCues: string[];
+  truncated: boolean;
+}
+
+interface GithubTemplatePreview {
+  kind: string;
+  titles: string[];
+  descriptions: string[];
+  labels: string[];
+  assignees: string[];
+  bodyFields: string[];
+  checklistItems: string[];
+  headings: string[];
+  riskCues: string[];
+  truncated: boolean;
+}
+
+function isGithubTemplatePath(filePath: string): boolean {
+  const name = basename(filePath).toLowerCase();
+  const normalizedPath = filePath.replace(/\\/g, "/").toLowerCase();
+  const isSupportedTemplate = /\.(md|ya?ml)$/i.test(name);
+  return (
+    (isSupportedTemplate && normalizedPath.includes("/.github/issue_template/")) ||
+    name === "pull_request_template.md" ||
+    (name.endsWith(".md") && normalizedPath.includes("/.github/pull_request_template/"))
+  );
+}
+
+function isGithubTemplateFile(filePath: string, extension: string): boolean {
+  return extension === ".github-template" || isGithubTemplatePath(filePath);
+}
+
+function summarizeGithubTemplateFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_GITHUB_TEMPLATE_PREVIEW_BYTES)).toString("utf8");
+    const preview = parseGithubTemplatePreview(filePath, raw);
+    return [
+      `GitHub issue/PR template preview (${preview.kind}, ${formatBytes(size)}).`,
+      preview.titles.length > 0
+        ? `Default titles/names: ${preview.titles.join(" | ")}.`
+        : "Default titles/names: none detected in the bounded preview.",
+      preview.descriptions.length > 0 ? `Descriptions: ${preview.descriptions.join(" | ")}.` : "",
+      preview.labels.length > 0 ? `Labels: ${preview.labels.join(", ")}.` : "",
+      preview.assignees.length > 0 ? `Assignees/reviewers: ${preview.assignees.join(", ")}.` : "",
+      preview.bodyFields.length > 0
+        ? `Body fields (${preview.bodyFields.length}${preview.bodyFields.length >= MAX_GITHUB_TEMPLATE_ITEM_PREVIEW ? "+" : ""}): ${preview.bodyFields.join(" | ")}.`
+        : "Body fields: none detected in the bounded preview.",
+      preview.checklistItems.length > 0
+        ? `Checklist items: ${preview.checklistItems.join(" | ")}.`
+        : "",
+      preview.headings.length > 0 ? `Markdown headings: ${preview.headings.join(" | ")}.` : "",
+      preview.riskCues.length > 0 ? `Static risk cues: ${preview.riskCues.join(", ")}.` : "",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_GITHUB_TEMPLATE_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; GitHub template metadata was parsed from bounded workspace-local Markdown/YAML only, token-like defaults were redacted, no GitHub API call, no issue or PR creation, no repository mutation, no network call, no credential lookup, and no provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `GitHub issue/PR template ready for explicit attachment (${formatBytes(size)}).`,
+      "Preview could not parse bounded local GitHub template text; no GitHub API call, issue creation, PR creation, repository mutation, network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseGithubTemplatePreview(filePath: string, raw: string): GithubTemplatePreview {
+  const normalized = normalizeTextPreview(raw);
+  const lines = normalized.split("\n");
+  const name = basename(filePath).toLowerCase();
+  const path = filePath.replace(/\\/g, "/").toLowerCase();
+  const kind = path.includes("/issue_template/")
+    ? name.endsWith(".yml") || name.endsWith(".yaml")
+      ? "issue form YAML"
+      : "issue template Markdown"
+    : "pull request template Markdown";
+  const titles = new Set<string>();
+  const descriptions = new Set<string>();
+  const labels = new Set<string>();
+  const assignees = new Set<string>();
+  const bodyFields = new Set<string>();
+  const checklistItems = new Set<string>();
+  const headings = new Set<string>();
+  const riskCues = new Set<string>();
+  let inBody = false;
+  let inAttributes = false;
+
+  for (const rawLine of lines) {
+    const trimmed = rawLine.trim();
+    if (!trimmed) continue;
+    const keyValue = trimmed.match(/^-?\s*([A-Za-z][A-Za-z0-9_-]*)\s*:\s*(.*)$/);
+    if (keyValue?.[1]) {
+      const key = keyValue[1].toLowerCase();
+      const value = sanitizeGithubTemplateValue(keyValue[2] || "");
+      if (key === "name" || key === "title") addGithubTemplateValue(titles, value);
+      if (key === "description") addGithubTemplateValue(descriptions, value);
+      if (key === "labels") {
+        for (const item of parseGithubTemplateList(value)) addGithubTemplateValue(labels, item);
+      }
+      if (["assignees", "reviewers"].includes(key)) {
+        for (const item of parseGithubTemplateList(value)) addGithubTemplateValue(assignees, item);
+      }
+      if (key === "body") inBody = true;
+      if (inBody && key === "type") addGithubTemplateValue(bodyFields, `type=${value}`);
+      if (inBody && key === "id") addGithubTemplateValue(bodyFields, `id=${value}`);
+      if (key === "attributes") inAttributes = true;
+      if (inBody && inAttributes && ["label", "placeholder"].includes(key)) {
+        addGithubTemplateValue(bodyFields, `${key}=${value}`);
+      }
+      if (/token|password|secret|credential|api[-_]?key/i.test(trimmed)) {
+        addGithubTemplateValue(riskCues, "credential-shaped default redacted");
+      }
+      continue;
+    }
+
+    const listValue = trimmed.match(/^-\s+(.+)$/)?.[1];
+    if (listValue) {
+      const sanitized = sanitizeGithubTemplateValue(listValue);
+      if (/^\[[ xX]\]\s+/.test(sanitized)) {
+        addGithubTemplateValue(checklistItems, sanitized.replace(/^\[[ xX]\]\s+/, ""));
+      } else if (inBody && sanitized) {
+        addGithubTemplateValue(bodyFields, sanitized);
+      }
+    }
+
+    const heading = trimmed.match(/^(#{1,6})\s+(.+)$/)?.[2];
+    if (heading) addGithubTemplateValue(headings, sanitizeGithubTemplateValue(heading));
+    const checklist = trimmed.match(/^[-*]\s+\[[ xX]\]\s+(.+)$/)?.[1];
+    if (checklist) addGithubTemplateValue(checklistItems, sanitizeGithubTemplateValue(checklist));
+  }
+
+  return {
+    kind,
+    titles: uniquePreviewValues([...titles], MAX_GITHUB_TEMPLATE_ITEM_PREVIEW),
+    descriptions: uniquePreviewValues([...descriptions], MAX_GITHUB_TEMPLATE_ITEM_PREVIEW),
+    labels: uniquePreviewValues([...labels], MAX_GITHUB_TEMPLATE_ITEM_PREVIEW),
+    assignees: uniquePreviewValues([...assignees], MAX_GITHUB_TEMPLATE_ITEM_PREVIEW),
+    bodyFields: uniquePreviewValues([...bodyFields], MAX_GITHUB_TEMPLATE_ITEM_PREVIEW),
+    checklistItems: uniquePreviewValues([...checklistItems], MAX_GITHUB_TEMPLATE_ITEM_PREVIEW),
+    headings: uniquePreviewValues([...headings], MAX_GITHUB_TEMPLATE_ITEM_PREVIEW),
+    riskCues: uniquePreviewValues([...riskCues], MAX_GITHUB_TEMPLATE_ITEM_PREVIEW),
+    truncated:
+      raw.length >= MAX_GITHUB_TEMPLATE_PREVIEW_BYTES ||
+      bodyFields.size >= MAX_GITHUB_TEMPLATE_ITEM_PREVIEW ||
+      checklistItems.size >= MAX_GITHUB_TEMPLATE_ITEM_PREVIEW,
+  };
+}
+
+function parseGithubTemplateList(value: string): string[] {
+  const trimmed = value.trim();
+  if (!trimmed) return [];
+  const unwrapped = trimmed.startsWith("[") && trimmed.endsWith("]") ? trimmed.slice(1, -1) : trimmed;
+  return unwrapped
+    .split(",")
+    .map((item) => sanitizeGithubTemplateValue(item))
+    .filter(Boolean);
+}
+
+function sanitizeGithubTemplateValue(value: string): string {
+  return clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(value.replace(/^["']|["']$/g, ""))), 140);
+}
+
+function addGithubTemplateValue(target: Set<string>, value: string): void {
+  if (value && target.size < MAX_GITHUB_TEMPLATE_ITEM_PREVIEW) target.add(value);
+}
+
+interface PreCommitConfigPreview {
+  repoCount: number;
+  repos: string[];
+  revs: string[];
+  hookIds: string[];
+  hookNames: string[];
+  languages: string[];
+  stages: string[];
+  args: string[];
+  riskCues: string[];
+  truncated: boolean;
+}
+
+function isPreCommitConfigFile(filePath: string, extension: string): boolean {
+  const name = basename(filePath).toLowerCase();
+  return extension === ".pre-commit-config.yaml" || name === ".pre-commit-config.yaml" || name === ".pre-commit-config.yml";
+}
+
+function summarizePreCommitConfigFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_PRECOMMIT_CONFIG_PREVIEW_BYTES)).toString("utf8");
+    const preview = parsePreCommitConfigPreview(raw);
+    return [
+      `Pre-commit hook config preview (${formatBytes(size)}).`,
+      `Repository entries in bounded preview: ${preview.repoCount}.`,
+      preview.repos.length > 0 ? `Repos: ${preview.repos.join(", ")}.` : "Repos: none detected in the bounded preview.",
+      preview.revs.length > 0 ? `Revisions: ${preview.revs.join(", ")}.` : "",
+      preview.hookIds.length > 0
+        ? `Hook ids (${preview.hookIds.length}${preview.hookIds.length >= MAX_PRECOMMIT_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.hookIds.join(", ")}.`
+        : "Hook ids: none detected in the bounded preview.",
+      preview.hookNames.length > 0 ? `Hook names: ${preview.hookNames.join(" | ")}.` : "",
+      preview.languages.length > 0 ? `Languages: ${preview.languages.join(", ")}.` : "",
+      preview.stages.length > 0 ? `Stages: ${preview.stages.join(", ")}.` : "",
+      preview.args.length > 0 ? `Args/entry samples: ${preview.args.join(" | ")}.` : "",
+      preview.riskCues.length > 0 ? `Static risk cues: ${preview.riskCues.join(", ")}.` : "",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_PRECOMMIT_CONFIG_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; pre-commit metadata was parsed from bounded workspace-local YAML only, token-like values were redacted, hooks were not installed or executed, no git hook was modified, no Python/Node/Ruby/Docker runtime was started, no package manager command, network call, credential lookup, workspace mutation, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Pre-commit hook config ready for explicit attachment (${formatBytes(size)}).`,
+      "Preview could not parse bounded local pre-commit YAML; no hook installation, hook execution, git hook mutation, package manager command, network call, credential lookup, workspace mutation, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parsePreCommitConfigPreview(raw: string): PreCommitConfigPreview {
+  const lines = normalizeTextPreview(raw).split("\n");
+  const repos = new Set<string>();
+  const revs = new Set<string>();
+  const hookIds = new Set<string>();
+  const hookNames = new Set<string>();
+  const languages = new Set<string>();
+  const stages = new Set<string>();
+  const args = new Set<string>();
+  const riskCues = new Set<string>();
+  let repoCount = 0;
+
+  for (const rawLine of lines) {
+    const trimmed = rawLine.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const keyValue = trimmed.match(/^-?\s*([A-Za-z][A-Za-z0-9_-]*)\s*:\s*(.*)$/);
+    if (!keyValue?.[1]) {
+      const listValue = trimmed.match(/^-\s+(.+)$/)?.[1];
+      if (listValue && (stages.size > 0 || args.size > 0)) addPreCommitPreviewValue(args, sanitizePreCommitValue(listValue));
+      continue;
+    }
+
+    const key = keyValue[1].toLowerCase();
+    const value = sanitizePreCommitValue(keyValue[2] || "");
+    if (key === "repo") {
+      repoCount += 1;
+      addPreCommitPreviewValue(repos, value);
+      if (/https?:\/\/|ssh:\/\/|git@/i.test(value)) addPreCommitPreviewValue(riskCues, "remote repository reference");
+    } else if (key === "rev") {
+      addPreCommitPreviewValue(revs, value);
+    } else if (key === "id") {
+      addPreCommitPreviewValue(hookIds, value);
+    } else if (key === "name") {
+      addPreCommitPreviewValue(hookNames, value);
+    } else if (key === "language") {
+      addPreCommitPreviewValue(languages, value);
+    } else if (key === "stages" || key === "default_stages") {
+      for (const item of parsePreCommitInlineList(value)) addPreCommitPreviewValue(stages, item);
+    } else if (["args", "entry", "files", "exclude", "types", "additional_dependencies"].includes(key)) {
+      for (const item of parsePreCommitInlineList(value)) addPreCommitPreviewValue(args, `${key}=${item}`);
+    }
+    if (/token|password|secret|credential|api[-_]?key/i.test(trimmed)) addPreCommitPreviewValue(riskCues, "credential-shaped value redacted");
+    if (/\b(system|docker|docker_image|script|pygrep|node|python|ruby|golang|rust)\b/i.test(`${key} ${value}`)) {
+      addPreCommitPreviewValue(riskCues, "runtime-backed hook");
+    }
+  }
+
+  return {
+    repoCount,
+    repos: uniquePreviewValues([...repos], MAX_PRECOMMIT_CONFIG_ITEM_PREVIEW),
+    revs: uniquePreviewValues([...revs], MAX_PRECOMMIT_CONFIG_ITEM_PREVIEW),
+    hookIds: uniquePreviewValues([...hookIds], MAX_PRECOMMIT_CONFIG_ITEM_PREVIEW),
+    hookNames: uniquePreviewValues([...hookNames], MAX_PRECOMMIT_CONFIG_ITEM_PREVIEW),
+    languages: uniquePreviewValues([...languages], MAX_PRECOMMIT_CONFIG_ITEM_PREVIEW),
+    stages: uniquePreviewValues([...stages], MAX_PRECOMMIT_CONFIG_ITEM_PREVIEW),
+    args: uniquePreviewValues([...args], MAX_PRECOMMIT_CONFIG_ITEM_PREVIEW),
+    riskCues: uniquePreviewValues([...riskCues], MAX_PRECOMMIT_CONFIG_ITEM_PREVIEW),
+    truncated:
+      raw.length >= MAX_PRECOMMIT_CONFIG_PREVIEW_BYTES ||
+      repos.size >= MAX_PRECOMMIT_CONFIG_ITEM_PREVIEW ||
+      hookIds.size >= MAX_PRECOMMIT_CONFIG_ITEM_PREVIEW,
+  };
+}
+
+function parsePreCommitInlineList(value: string): string[] {
+  const trimmed = value.trim();
+  if (!trimmed) return [];
+  const unwrapped = trimmed.startsWith("[") && trimmed.endsWith("]") ? trimmed.slice(1, -1) : trimmed;
+  return unwrapped
+    .split(",")
+    .map((item) => sanitizePreCommitValue(item))
+    .filter(Boolean);
+}
+
+function sanitizePreCommitValue(value: string): string {
+  return clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(cleanYamlScalar(value))), 140);
+}
+
+function addPreCommitPreviewValue(target: Set<string>, value: string): void {
+  if (value && target.size < MAX_PRECOMMIT_CONFIG_ITEM_PREVIEW) target.add(value);
+}
+
+function isDependabotConfigFile(filePath: string, extension: string): boolean {
+  const name = basename(filePath).toLowerCase();
+  const normalizedPath = filePath.replace(/\\/g, "/").toLowerCase();
+  return (
+    extension === ".dependabot.yaml" ||
+    name === "dependabot.yml" ||
+    name === "dependabot.yaml" ||
+    normalizedPath.endsWith("/.github/dependabot.yml") ||
+    normalizedPath.endsWith("/.github/dependabot.yaml")
+  );
+}
+
+function summarizeDependabotConfigFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_DEPENDABOT_CONFIG_PREVIEW_BYTES)).toString("utf8");
+    const preview = parseDependabotConfigPreview(raw);
+    return [
+      `Dependabot config preview (${formatBytes(size)}).`,
+      preview.version ? `Version: ${preview.version}.` : "Version: none detected in the bounded preview.",
+      `Update entries in bounded preview: ${preview.updateCount}.`,
+      preview.ecosystems.length > 0
+        ? `Package ecosystems: ${preview.ecosystems.join(", ")}.`
+        : "Package ecosystems: none detected in the bounded preview.",
+      preview.directories.length > 0
+        ? `Directories: ${preview.directories.join(", ")}.`
+        : "Directories: none detected in the bounded preview.",
+      preview.schedules.length > 0
+        ? `Schedules: ${preview.schedules.join(" | ")}.`
+        : "Schedules: none detected in the bounded preview.",
+      preview.targetBranches.length > 0 ? `Target branches: ${preview.targetBranches.join(", ")}.` : "",
+      preview.labels.length > 0 ? `Labels: ${preview.labels.join(", ")}.` : "",
+      preview.reviewers.length > 0 ? `Reviewers: ${preview.reviewers.join(", ")}.` : "",
+      preview.groups.length > 0 ? `Groups: ${preview.groups.join(", ")}.` : "",
+      preview.allowRules.length > 0 ? `Allow rules: ${preview.allowRules.join(" | ")}.` : "",
+      preview.ignoreRules.length > 0 ? `Ignore rules: ${preview.ignoreRules.join(" | ")}.` : "",
+      preview.riskCues.length > 0 ? `Static risk cues: ${preview.riskCues.join(", ")}.` : "",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_DEPENDABOT_CONFIG_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; Dependabot metadata was parsed from bounded workspace-local YAML only, registry/token-like values were redacted, package updates were not resolved, no GitHub API call, no package manager command, no dependency installation, no PR creation, no network call, no credential lookup, no workspace mutation, and no provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Dependabot config ready for explicit attachment (${formatBytes(size)}).`,
+      "Preview could not parse bounded local Dependabot YAML; no GitHub API call, package manager command, dependency installation, PR creation, network call, credential lookup, workspace mutation, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseDependabotConfigPreview(raw: string): DependabotConfigPreview {
+  const lines = normalizeTextPreview(raw).split("\n");
+  const ecosystems = new Set<string>();
+  const directories = new Set<string>();
+  const schedules = new Set<string>();
+  const targetBranches = new Set<string>();
+  const labels = new Set<string>();
+  const reviewers = new Set<string>();
+  const groups = new Set<string>();
+  const allowRules = new Set<string>();
+  const ignoreRules = new Set<string>();
+  const riskCues = new Set<string>();
+  let version: string | null = null;
+  let updateCount = 0;
+  let section = "";
+  let nestedSection = "";
+  let inUpdates = false;
+
+  for (const rawLine of lines) {
+    const trimmed = rawLine.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const indent = rawLine.length - rawLine.trimStart().length;
+    const keyValue = trimmed.match(/^-?\s*([A-Za-z][A-Za-z0-9_-]*)\s*:\s*(.*)$/);
+    if (!keyValue?.[1]) continue;
+    const key = keyValue[1];
+    const value = sanitizeDependabotValue(keyValue[2] || "");
+    const lowerKey = key.toLowerCase();
+
+    if (indent === 0) {
+      section = lowerKey;
+      nestedSection = "";
+      inUpdates = section === "updates";
+      if (section === "version" && value) version = value;
+      if (["registry", "registries"].includes(section)) addPreviewValue(riskCues, section);
+      continue;
+    }
+    if (["registry", "registries"].includes(lowerKey)) addPreviewValue(riskCues, lowerKey);
+    if (!inUpdates) continue;
+
+    if (trimmed.startsWith("- ")) {
+      if (lowerKey === "package-ecosystem") {
+        updateCount += 1;
+        addPreviewValue(ecosystems, value);
+        nestedSection = "";
+      }
+    }
+
+    if (lowerKey === "package-ecosystem") addPreviewValue(ecosystems, value);
+    if (lowerKey === "directory") addPreviewValue(directories, value);
+    if (lowerKey === "target-branch") addPreviewValue(targetBranches, value);
+    if (["labels", "reviewers", "assignees", "groups", "allow", "ignore"].includes(lowerKey)) {
+      nestedSection = lowerKey;
+      const inlineValues = parseInlineDependabotList(value);
+      for (const inlineValue of inlineValues) {
+        collectDependabotNestedValue(nestedSection, inlineValue, labels, reviewers, groups, allowRules, ignoreRules);
+      }
+      continue;
+    }
+    if (lowerKey === "interval" && value) addPreviewValue(schedules, `interval=${value}`);
+    if (lowerKey === "day" && value) addPreviewValue(schedules, `day=${value}`);
+    if (lowerKey === "time" && value) addPreviewValue(schedules, `time=${value}`);
+    if (lowerKey === "timezone" && value) addPreviewValue(schedules, `timezone=${value}`);
+    if (["registry", "registries", "vendor", "insecure-external-code-execution"].includes(lowerKey)) {
+      addPreviewValue(riskCues, lowerKey);
+    }
+    if (nestedSection === "groups" && !value && !["patterns", "update-types"].includes(lowerKey)) {
+      addPreviewValue(groups, key);
+    }
+    if (nestedSection && trimmed.startsWith("- ")) {
+      const listValue = sanitizeDependabotValue(trimmed.replace(/^-\s*/, ""));
+      collectDependabotNestedValue(nestedSection, listValue, labels, reviewers, groups, allowRules, ignoreRules);
+    }
+    if (nestedSection && ["dependency-name", "dependency-type", "update-types", "patterns"].includes(lowerKey)) {
+      collectDependabotNestedValue(nestedSection, `${lowerKey}=${value}`, labels, reviewers, groups, allowRules, ignoreRules);
+    }
+  }
+
+  return {
+    version,
+    updateCount,
+    ecosystems: uniquePreviewValues([...ecosystems], MAX_DEPENDABOT_CONFIG_ITEM_PREVIEW),
+    directories: uniquePreviewValues([...directories], MAX_DEPENDABOT_CONFIG_ITEM_PREVIEW),
+    schedules: uniquePreviewValues([...schedules], MAX_DEPENDABOT_CONFIG_ITEM_PREVIEW),
+    targetBranches: uniquePreviewValues([...targetBranches], MAX_DEPENDABOT_CONFIG_ITEM_PREVIEW),
+    labels: uniquePreviewValues([...labels], MAX_DEPENDABOT_CONFIG_ITEM_PREVIEW),
+    reviewers: uniquePreviewValues([...reviewers], MAX_DEPENDABOT_CONFIG_ITEM_PREVIEW),
+    groups: uniquePreviewValues([...groups], MAX_DEPENDABOT_CONFIG_ITEM_PREVIEW),
+    allowRules: uniquePreviewValues([...allowRules], MAX_DEPENDABOT_CONFIG_ITEM_PREVIEW),
+    ignoreRules: uniquePreviewValues([...ignoreRules], MAX_DEPENDABOT_CONFIG_ITEM_PREVIEW),
+    riskCues: uniquePreviewValues([...riskCues], MAX_DEPENDABOT_CONFIG_ITEM_PREVIEW),
+    truncated:
+      raw.length >= MAX_DEPENDABOT_CONFIG_PREVIEW_BYTES ||
+      ecosystems.size >= MAX_DEPENDABOT_CONFIG_ITEM_PREVIEW ||
+      directories.size >= MAX_DEPENDABOT_CONFIG_ITEM_PREVIEW,
+  };
+}
+
+function collectDependabotNestedValue(
+  nestedSection: string,
+  value: string,
+  labels: Set<string>,
+  reviewers: Set<string>,
+  groups: Set<string>,
+  allowRules: Set<string>,
+  ignoreRules: Set<string>,
+): void {
+  if (!value) return;
+  if (nestedSection === "labels") addPreviewValue(labels, value);
+  if (nestedSection === "reviewers" || nestedSection === "assignees") addPreviewValue(reviewers, value);
+  if (nestedSection === "groups") addPreviewValue(groups, value.replace(/:\s*$/, ""));
+  if (nestedSection === "allow") addPreviewValue(allowRules, value);
+  if (nestedSection === "ignore") addPreviewValue(ignoreRules, value);
+}
+
+function parseInlineDependabotList(value: string): string[] {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("[") || !trimmed.endsWith("]")) return [];
+  return trimmed
+    .slice(1, -1)
+    .split(",")
+    .map((item) => sanitizeDependabotValue(item))
+    .filter(Boolean);
+}
+
+function sanitizeDependabotValue(value: string): string {
+  return clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(value.replace(/^["']|["']$/g, ""))), 140);
+}
+
+interface RenovateConfigPreview {
+  extendsPresets: string[];
+  packageRules: string[];
+  managers: string[];
+  schedules: string[];
+  labels: string[];
+  reviewers: string[];
+  enabledManagers: string[];
+  registryAliases: string[];
+  riskCues: string[];
+  truncated: boolean;
+}
+
+function isRenovateConfigFile(filePath: string, extension: string): boolean {
+  const name = basename(filePath).toLowerCase();
+  const normalizedPath = filePath.replace(/\\/g, "/").toLowerCase();
+  return (
+    extension === ".renovate.json" ||
+    name === "renovate.json" ||
+    name === "renovate.json5" ||
+    name === ".renovaterc" ||
+    name === ".renovaterc.json" ||
+    name === ".renovaterc.json5" ||
+    normalizedPath.endsWith("/.github/renovate.json") ||
+    normalizedPath.endsWith("/.github/renovate.json5")
+  );
+}
+
+function summarizeRenovateConfigFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_RENOVATE_CONFIG_PREVIEW_BYTES)).toString("utf8");
+    const preview = parseRenovateConfigPreview(raw);
+    return [
+      `Renovate config preview (${formatBytes(size)}).`,
+      preview.extendsPresets.length > 0
+        ? `Extends presets: ${preview.extendsPresets.join(", ")}.`
+        : "Extends presets: none detected in the bounded preview.",
+      preview.packageRules.length > 0
+        ? `Package rules (${preview.packageRules.length}${preview.packageRules.length >= MAX_RENOVATE_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.packageRules.join(" | ")}.`
+        : "Package rules: none detected in the bounded preview.",
+      preview.managers.length > 0 ? `Managers: ${preview.managers.join(", ")}.` : "",
+      preview.enabledManagers.length > 0 ? `Enabled managers: ${preview.enabledManagers.join(", ")}.` : "",
+      preview.schedules.length > 0 ? `Schedules: ${preview.schedules.join(" | ")}.` : "",
+      preview.labels.length > 0 ? `Labels: ${preview.labels.join(", ")}.` : "",
+      preview.reviewers.length > 0 ? `Reviewers: ${preview.reviewers.join(", ")}.` : "",
+      preview.registryAliases.length > 0 ? `Registry aliases: ${preview.registryAliases.join(", ")}.` : "",
+      preview.riskCues.length > 0 ? `Static risk cues: ${preview.riskCues.join(", ")}.` : "",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_RENOVATE_CONFIG_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; Renovate metadata was parsed from bounded workspace-local config text only, token-like registry values were redacted, package updates were not resolved, no Renovate CLI command, no package manager command, no GitHub/GitLab API call, no dependency installation, no PR creation, no network call, no credential lookup, no workspace mutation, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Renovate config ready for explicit attachment (${formatBytes(size)}).`,
+      "Preview could not parse bounded local Renovate config text; no Renovate CLI command, package manager command, provider API call, dependency installation, PR creation, network call, credential lookup, workspace mutation, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseRenovateConfigPreview(raw: string): RenovateConfigPreview {
+  const normalized = normalizeTextPreview(raw);
+  const lines = normalized.split("\n");
+  const extendsPresets = new Set<string>();
+  const packageRules = new Set<string>();
+  const managers = new Set<string>();
+  const schedules = new Set<string>();
+  const labels = new Set<string>();
+  const reviewers = new Set<string>();
+  const enabledManagers = new Set<string>();
+  const registryAliases = new Set<string>();
+  const riskCues = new Set<string>();
+
+  collectRenovateListValues(normalized, "extends", extendsPresets);
+  collectRenovateListValues(normalized, "enabledManagers", enabledManagers);
+  collectRenovateListValues(normalized, "labels", labels);
+  collectRenovateListValues(normalized, "addLabels", labels);
+  collectRenovateListValues(normalized, "reviewers", reviewers);
+  collectRenovateListValues(normalized, "schedule", schedules);
+  collectRenovateListValues(normalized, "matchManagers", managers);
+  collectRenovateListValues(normalized, "matchDatasources", managers);
+  collectRenovateListValues(normalized, "matchPackageNames", packageRules);
+  collectRenovateListValues(normalized, "matchPackagePatterns", packageRules);
+  collectRenovateListValues(normalized, "matchDepNames", packageRules);
+
+  for (const rawLine of lines) {
+    const trimmed = rawLine.trim();
+    if (!trimmed || trimmed.startsWith("//") || trimmed.startsWith("#")) continue;
+    const redacted = sanitizeRenovateValue(trimmed.replace(/[,;]\s*$/, ""));
+    const key = trimmed.match(/^["']?([A-Za-z][A-Za-z0-9_-]*)["']?\s*[:=]/)?.[1]?.toLowerCase() || "";
+    if (key === "packageRules".toLowerCase() && packageRules.size < MAX_RENOVATE_CONFIG_ITEM_PREVIEW) {
+      addRenovatePreviewValue(packageRules, "packageRules configured");
+    }
+    if (["matchpackagenames", "matchpackagepatterns", "matchdepnames"].includes(key)) {
+      addRenovatePreviewValue(packageRules, redacted);
+    }
+    if (key === "groupname") {
+      addRenovatePreviewValue(packageRules, redacted);
+    }
+    if (["matchmanagers", "managerfilepatterns", "filematch"].includes(key)) {
+      addRenovatePreviewValue(managers, redacted);
+    }
+    if (["schedule", "timezone", "minimumreleaseage"].includes(key)) {
+      addRenovatePreviewValue(schedules, redacted);
+    }
+    if (["registryaliases", "hostrules", "hosttype", "matchhost"].includes(key)) {
+      addRenovatePreviewValue(registryAliases, redacted);
+      addRenovatePreviewValue(riskCues, key);
+    }
+    if (["automerge", "platformautomerge", "dependencydashboard", "prconcurrentlimit", "prhourlylimit"].includes(key)) {
+      addRenovatePreviewValue(riskCues, redacted);
+    }
+    if (/token|password|secret|credential|npmrc|encrypted/i.test(trimmed)) {
+      addRenovatePreviewValue(riskCues, "credential material redacted");
+    }
+  }
+
+  return {
+    extendsPresets: uniquePreviewValues([...extendsPresets], MAX_RENOVATE_CONFIG_ITEM_PREVIEW),
+    packageRules: uniquePreviewValues([...packageRules], MAX_RENOVATE_CONFIG_ITEM_PREVIEW),
+    managers: uniquePreviewValues([...managers], MAX_RENOVATE_CONFIG_ITEM_PREVIEW),
+    schedules: uniquePreviewValues([...schedules], MAX_RENOVATE_CONFIG_ITEM_PREVIEW),
+    labels: uniquePreviewValues([...labels], MAX_RENOVATE_CONFIG_ITEM_PREVIEW),
+    reviewers: uniquePreviewValues([...reviewers], MAX_RENOVATE_CONFIG_ITEM_PREVIEW),
+    enabledManagers: uniquePreviewValues([...enabledManagers], MAX_RENOVATE_CONFIG_ITEM_PREVIEW),
+    registryAliases: uniquePreviewValues([...registryAliases], MAX_RENOVATE_CONFIG_ITEM_PREVIEW),
+    riskCues: uniquePreviewValues([...riskCues], MAX_RENOVATE_CONFIG_ITEM_PREVIEW),
+    truncated:
+      raw.length >= MAX_RENOVATE_CONFIG_PREVIEW_BYTES ||
+      extendsPresets.size >= MAX_RENOVATE_CONFIG_ITEM_PREVIEW ||
+      packageRules.size >= MAX_RENOVATE_CONFIG_ITEM_PREVIEW,
+  };
+}
+
+function collectRenovateListValues(raw: string, key: string, target: Set<string>): void {
+  const quotedKey = escapeRegex(key);
+  const arrayPattern = new RegExp(`["']?${quotedKey}["']?\\s*:\\s*\\[([\\s\\S]*?)\\]`, "gi");
+  for (const match of raw.matchAll(arrayPattern)) {
+    const body = match[1] || "";
+    for (const item of body.matchAll(/["']([^"'\r\n]+)["']/g)) {
+      addRenovatePreviewValue(target, sanitizeRenovateValue(item[1] || ""));
+    }
+  }
+
+  const scalarPattern = new RegExp(`["']?${quotedKey}["']?\\s*:\\s*["']([^"'\r\n]+)["']`, "gi");
+  for (const match of raw.matchAll(scalarPattern)) {
+    addRenovatePreviewValue(target, sanitizeRenovateValue(match[1] || ""));
+  }
+}
+
+function sanitizeRenovateValue(value: string): string {
+  return clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(value.replace(/^["']|["']$/g, ""))), 140);
+}
+
+function addRenovatePreviewValue(target: Set<string>, value: string): void {
+  if (value && target.size < MAX_RENOVATE_CONFIG_ITEM_PREVIEW) target.add(value);
+}
+
+function addPreviewValue(target: Set<string>, value: string): void {
+  if (value && target.size < MAX_DEPENDABOT_CONFIG_ITEM_PREVIEW) target.add(value);
+}
+
 function extractCiWorkflowTriggers(
   lines: string[],
   kind: { id: string; label: string },
@@ -21066,6 +24833,37 @@ interface KubernetesPackageConfigPreview {
   truncated: boolean;
 }
 
+interface HelmValuesPreview {
+  images: string[];
+  replicas: string[];
+  services: string[];
+  ingress: string[];
+  resources: string[];
+  envKeys: string[];
+  configKeys: string[];
+  secretKeys: string[];
+  truncated: boolean;
+}
+
+interface KubeconfigPreview {
+  currentContext: string;
+  clusters: string[];
+  contexts: string[];
+  users: string[];
+  authKeys: string[];
+  truncated: boolean;
+}
+
+interface KubeconfigSectionItem {
+  section: "clusters" | "contexts" | "users";
+  name: string;
+  server: string;
+  cluster: string;
+  user: string;
+  namespace: string;
+  authKeys: Set<string>;
+}
+
 function summarizeKubernetesPackageConfigFile(filePath: string, extension: string, size: number): string {
   try {
     const raw = readFileHeader(filePath, MAX_KUBERNETES_PACKAGE_CONFIG_PREVIEW_BYTES).toString("utf8");
@@ -21101,6 +24899,343 @@ function summarizeKubernetesPackageConfigFile(filePath: string, extension: strin
       "No helm/kubectl/kustomize command, chart dependency build, template rendering, cluster connection, registry lookup, network call, or provider send was performed.",
     ].join("\n").slice(0, MAX_TEXT_BYTES);
   }
+}
+
+function summarizeKubeconfigFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_KUBECONFIG_PREVIEW_BYTES).toString("utf8");
+    const preview = parseKubeconfigPreview(raw);
+    return [
+      `Kubernetes kubeconfig preview (${formatBytes(size)}).`,
+      preview.currentContext ? `Current context: ${preview.currentContext}.` : "Current context: none detected in the bounded local preview.",
+      preview.clusters.length > 0
+        ? `Clusters (${preview.clusters.length}${preview.clusters.length >= MAX_KUBECONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.clusters.join(" | ")}.`
+        : "Clusters: none detected in the bounded local preview.",
+      preview.contexts.length > 0
+        ? `Contexts (${preview.contexts.length}${preview.contexts.length >= MAX_KUBECONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.contexts.join(" | ")}.`
+        : "Contexts: none detected in the bounded local preview.",
+      preview.users.length > 0
+        ? `Users (${preview.users.length}${preview.users.length >= MAX_KUBECONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.users.join(" | ")}.`
+        : "Users: none detected in the bounded local preview.",
+      preview.authKeys.length > 0
+        ? `Credential-bearing fields: ${preview.authKeys.join(", ")}.`
+        : "Credential-bearing fields: none detected in the bounded local preview.",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_KUBECONFIG_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; kubeconfig metadata was parsed from bounded workspace-local YAML only, credential values and certificate/key data were not expanded, and no kubectl command, cluster connection, token validation, certificate/key decoding, system kubeconfig read, context switch, namespace mutation, network call, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Kubernetes kubeconfig file ready for explicit attachment (${formatBytes(size)}).`,
+      "No kubectl command, cluster connection, token validation, certificate/key decoding, system kubeconfig read, context switch, namespace mutation, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseKubeconfigPreview(raw: string): KubeconfigPreview {
+  const lines = normalizeTextPreview(raw).split("\n");
+  const clusters: string[] = [];
+  const contexts: string[] = [];
+  const users: string[] = [];
+  const authKeys = new Set<string>();
+  let currentContext = "";
+  let section: KubeconfigSectionItem["section"] | null = null;
+  let nestedKey = "";
+  let current: KubeconfigSectionItem | null = null;
+
+  const flushCurrent = () => {
+    if (!current) return;
+    if (current.section === "clusters") {
+      const parts = [
+        current.name || "(unnamed)",
+        current.server ? `server=${current.server}` : "",
+      ].filter(Boolean);
+      for (const key of current.authKeys) authKeys.add(key);
+      clusters.push(parts.join(" "));
+    } else if (current.section === "contexts") {
+      const parts = [
+        current.name || "(unnamed)",
+        current.cluster ? `cluster=${current.cluster}` : "",
+        current.user ? `user=${current.user}` : "",
+        current.namespace ? `namespace=${current.namespace}` : "",
+      ].filter(Boolean);
+      contexts.push(parts.join(" "));
+    } else {
+      const keys = [...current.authKeys];
+      for (const key of keys) authKeys.add(key);
+      users.push(`${current.name || "(unnamed)"} auth=${keys.length > 0 ? keys.join("+") : "none detected"}`);
+    }
+    current = null;
+  };
+
+  const startItem = (targetSection: KubeconfigSectionItem["section"]) => {
+    flushCurrent();
+    current = {
+      section: targetSection,
+      name: "",
+      server: "",
+      cluster: "",
+      user: "",
+      namespace: "",
+      authKeys: new Set<string>(),
+    };
+    nestedKey = "";
+  };
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const indent = line.length - line.trimStart().length;
+    const topPair = indent === 0 ? trimmed.match(/^([A-Za-z0-9_.-]+)\s*:\s*(.*)$/) : null;
+    if (topPair?.[1]) {
+      const key = topPair[1];
+      const value = sanitizeKubeconfigScalar(topPair[2] || "");
+      if (key === "current-context") currentContext = value;
+      if (key === "clusters" || key === "contexts" || key === "users") {
+        flushCurrent();
+        section = key;
+        nestedKey = "";
+        continue;
+      }
+      if (!["apiVersion", "kind", "preferences"].includes(key)) {
+        flushCurrent();
+        section = null;
+        nestedKey = "";
+      }
+    }
+    if (!section) continue;
+
+    const listMatch = trimmed.match(/^-\s*(?:(name|cluster|context|user)\s*:\s*(.*))?$/);
+    if (listMatch) {
+      startItem(section);
+      const key = listMatch[1] || "";
+      const value = sanitizeKubeconfigScalar(listMatch[2] || "");
+      if (key && value && current) assignKubeconfigPair(current, nestedKey, key, value);
+      continue;
+    }
+    if (!current) continue;
+
+    const nestedMatch = trimmed.match(/^(cluster|context|user)\s*:\s*$/);
+    if (nestedMatch?.[1]) {
+      nestedKey = nestedMatch[1];
+      continue;
+    }
+    const pairMatch = trimmed.match(/^([A-Za-z0-9_.-]+)\s*:\s*(.*)$/);
+    if (pairMatch?.[1]) {
+      assignKubeconfigPair(current, nestedKey, pairMatch[1], sanitizeKubeconfigScalar(pairMatch[2] || ""));
+    }
+  }
+  flushCurrent();
+
+  return {
+    currentContext,
+    clusters: uniquePreviewValues(clusters.filter(Boolean), MAX_KUBECONFIG_ITEM_PREVIEW),
+    contexts: uniquePreviewValues(contexts.filter(Boolean), MAX_KUBECONFIG_ITEM_PREVIEW),
+    users: uniquePreviewValues(users.filter(Boolean), MAX_KUBECONFIG_ITEM_PREVIEW),
+    authKeys: uniquePreviewValues([...authKeys], MAX_KUBECONFIG_ITEM_PREVIEW),
+    truncated:
+      raw.length >= MAX_KUBECONFIG_PREVIEW_BYTES ||
+      clusters.length >= MAX_KUBECONFIG_ITEM_PREVIEW ||
+      contexts.length >= MAX_KUBECONFIG_ITEM_PREVIEW ||
+      users.length >= MAX_KUBECONFIG_ITEM_PREVIEW,
+  };
+}
+
+function assignKubeconfigPair(
+  item: KubeconfigSectionItem,
+  nestedKey: string,
+  key: string,
+  value: string,
+): void {
+  const lowerKey = key.toLowerCase();
+  if (lowerKey === "name" && !item.name) item.name = value;
+  if (item.section === "clusters" && nestedKey === "cluster" && lowerKey === "server") {
+    item.server = value;
+  }
+  if (item.section === "contexts" && nestedKey === "context") {
+    if (lowerKey === "cluster") item.cluster = value;
+    if (lowerKey === "user") item.user = value;
+    if (lowerKey === "namespace") item.namespace = value;
+  }
+  if (item.section === "users" && nestedKey === "user" && isKubeconfigCredentialKey(lowerKey)) {
+    item.authKeys.add(key);
+  }
+  if (item.section === "clusters" && nestedKey === "cluster" && /certificate-authority|insecure-skip-tls-verify/.test(lowerKey)) {
+    item.authKeys.add(`cluster.${key}`);
+  }
+}
+
+function isKubeconfigCredentialKey(lowerKey: string): boolean {
+  return /token|certificate|client-key|password|username|auth-provider|exec|cmd-path|cmd-args|identity|id-token/.test(lowerKey);
+}
+
+function sanitizeKubeconfigScalar(value: string): string {
+  if (!value) return "";
+  const cleaned = cleanYamlScalar(value);
+  if (/^https?:\/\//i.test(cleaned)) return clampSingleLine(redactHarUrl(cleaned), 180);
+  if (isKubeconfigCredentialKey(cleaned.toLowerCase())) return "[redacted]";
+  return clampSingleLine(maskPotentialSecretValues(redactHarUrl(cleaned)), 180);
+}
+
+function summarizeHelmValuesFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_HELM_VALUES_PREVIEW_BYTES).toString("utf8");
+    const preview = parseHelmValuesPreview(raw);
+    return [
+      `Helm values preview (${formatBytes(size)}).`,
+      preview.images.length > 0
+        ? `Image hints (${preview.images.length}${preview.images.length >= MAX_HELM_VALUES_ITEM_PREVIEW ? "+" : ""}): ${preview.images.join(" | ")}.`
+        : "Image hints: none detected in the bounded local preview.",
+      preview.replicas.length > 0
+        ? `Replica/autoscaling hints: ${preview.replicas.join(", ")}.`
+        : "Replica/autoscaling hints: none detected in the bounded local preview.",
+      preview.services.length > 0
+        ? `Service hints: ${preview.services.join(", ")}.`
+        : "Service hints: none detected in the bounded local preview.",
+      preview.ingress.length > 0
+        ? `Ingress hints: ${preview.ingress.join(" | ")}.`
+        : "Ingress hints: none detected in the bounded local preview.",
+      preview.resources.length > 0
+        ? `Resource request/limit keys: ${preview.resources.join(", ")}.`
+        : "Resource request/limit keys: none detected in the bounded local preview.",
+      preview.envKeys.length > 0 ? `Environment keys: ${preview.envKeys.join(", ")}.` : "",
+      preview.configKeys.length > 0 ? `Config keys: ${preview.configKeys.join(", ")}.` : "",
+      preview.secretKeys.length > 0 ? `Secret-shaped keys: ${preview.secretKeys.join(", ")}.` : "",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_HELM_VALUES_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; Helm values metadata was parsed from bounded workspace-local YAML only, secret-shaped values were redacted or reported as key names only, and no helm/kubectl command, chart dependency build, template rendering, values merge, cluster connection, image pull, registry lookup, network call, workspace mutation, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Helm values file ready for explicit attachment (${formatBytes(size)}).`,
+      "No helm/kubectl command, chart dependency build, template rendering, values merge, cluster connection, image pull, registry lookup, network call, workspace mutation, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseHelmValuesPreview(raw: string): HelmValuesPreview {
+  const lines = normalizeTextPreview(raw).split("\n");
+  const images = new Set<string>();
+  const replicas = new Set<string>();
+  const services = new Set<string>();
+  const ingress = new Set<string>();
+  const resources = new Set<string>();
+  const envKeys = new Set<string>();
+  const configKeys = new Set<string>();
+  const secretKeys = new Set<string>();
+  const stack: { indent: number; key: string }[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const indent = line.length - line.trimStart().length;
+    while (stack.length > 0 && indent <= stack[stack.length - 1].indent) stack.pop();
+
+    const scalarListMatch = trimmed.match(/^-\s*([^:#[]+)$/);
+    if (scalarListMatch?.[1]) {
+      const parentPath = stack.map((entry) => entry.key.toLowerCase()).join(".");
+      const value = sanitizeHelmValuesScalar(scalarListMatch[1]);
+      if (parentPath.includes("ingress") && parentPath.includes("host")) addHelmPreviewValue(ingress, `host=${value}`);
+      if (parentPath.includes("imagepullsecrets")) addHelmPreviewValue(secretKeys, "imagePullSecrets");
+      continue;
+    }
+
+    const pairMatch = trimmed.match(/^-?\s*([A-Za-z0-9_.-]+)\s*:\s*(.*)$/);
+    if (!pairMatch?.[1]) continue;
+    const key = pairMatch[1];
+    const value = sanitizeHelmValuesScalar(pairMatch[2] || "");
+    const lowerKey = key.toLowerCase();
+    const pathParts = [...stack.map((entry) => entry.key), key];
+    const lowerPath = pathParts.map((part) => part.toLowerCase()).join(".");
+
+    collectHelmValuesPair(lowerPath, lowerKey, key, value, {
+      images,
+      replicas,
+      services,
+      ingress,
+      resources,
+      envKeys,
+      configKeys,
+      secretKeys,
+    });
+
+    if (!value || trimmed.endsWith(":")) {
+      stack.push({ indent, key });
+    }
+  }
+
+  return {
+    images: uniquePreviewValues([...images], MAX_HELM_VALUES_ITEM_PREVIEW),
+    replicas: uniquePreviewValues([...replicas], MAX_HELM_VALUES_ITEM_PREVIEW),
+    services: uniquePreviewValues([...services], MAX_HELM_VALUES_ITEM_PREVIEW),
+    ingress: uniquePreviewValues([...ingress], MAX_HELM_VALUES_ITEM_PREVIEW),
+    resources: uniquePreviewValues([...resources], MAX_HELM_VALUES_ITEM_PREVIEW),
+    envKeys: uniquePreviewValues([...envKeys], MAX_HELM_VALUES_ITEM_PREVIEW),
+    configKeys: uniquePreviewValues([...configKeys], MAX_HELM_VALUES_ITEM_PREVIEW),
+    secretKeys: uniquePreviewValues([...secretKeys], MAX_HELM_VALUES_ITEM_PREVIEW),
+    truncated:
+      raw.length >= MAX_HELM_VALUES_PREVIEW_BYTES ||
+      images.size >= MAX_HELM_VALUES_ITEM_PREVIEW ||
+      envKeys.size >= MAX_HELM_VALUES_ITEM_PREVIEW ||
+      secretKeys.size >= MAX_HELM_VALUES_ITEM_PREVIEW,
+  };
+}
+
+function collectHelmValuesPair(
+  lowerPath: string,
+  lowerKey: string,
+  key: string,
+  value: string,
+  output: {
+    images: Set<string>;
+    replicas: Set<string>;
+    services: Set<string>;
+    ingress: Set<string>;
+    resources: Set<string>;
+    envKeys: Set<string>;
+    configKeys: Set<string>;
+    secretKeys: Set<string>;
+  },
+): void {
+  if (isSecretShapedKey(lowerPath)) {
+    addHelmPreviewValue(output.secretKeys, key);
+    return;
+  }
+
+  if (lowerPath.includes("image") && ["repository", "registry", "tag", "digest", "name"].includes(lowerKey) && value) {
+    addHelmPreviewValue(output.images, `${key}=${value}`);
+  }
+  if (lowerKey === "image" && value && /[:/@]/.test(value)) addHelmPreviewValue(output.images, `image=${value}`);
+  if (["replicacount", "replicas", "minreplicas", "maxreplicas", "enabled"].includes(lowerKey) && lowerPath.match(/(^|\.)(autoscaling|replica|replicacount|replicas)(\.|$)/) && value) {
+    addHelmPreviewValue(output.replicas, `${key}=${value}`);
+  }
+  if (lowerPath.includes("service") && ["type", "port", "targetport", "nodeport", "protocol"].includes(lowerKey) && value) {
+    addHelmPreviewValue(output.services, `${key}=${value}`);
+  }
+  if (lowerPath.includes("ingress") && ["enabled", "classname", "class", "host", "hostname", "path", "secretname"].includes(lowerKey) && value) {
+    addHelmPreviewValue(output.ingress, `${key}=${value}`);
+  }
+  if (lowerPath.includes("resources") && ["limits", "requests", "cpu", "memory"].includes(lowerKey)) {
+    addHelmPreviewValue(output.resources, lowerPath.replace(/^.*resources\./, "resources."));
+  }
+  if (lowerPath.match(/(^|\.)(env|envvars|environment|extraenv)(\.|$)/)) {
+    if (lowerKey === "name" && value) addHelmPreviewValue(output.envKeys, value);
+    if (value && lowerKey !== "value") addHelmPreviewValue(output.envKeys, key);
+  }
+  if (lowerPath.match(/(^|\.)(config|configmap|settings)(\.|$)/) && lowerKey !== "value") {
+    addHelmPreviewValue(output.configKeys, key);
+  }
+}
+
+function sanitizeHelmValuesScalar(value: string): string {
+  return clampSingleLine(maskPotentialSecretValues(value.replace(/^["']|["']$/g, "")), 140);
+}
+
+function isSecretShapedKey(value: string): boolean {
+  return /(?:token|secret|password|passwd|pwd|api[_-]?key|private[_-]?key|credential)/i.test(value);
+}
+
+function addHelmPreviewValue(target: Set<string>, value: string): void {
+  const trimmed = value.trim();
+  if (trimmed && target.size < MAX_HELM_VALUES_ITEM_PREVIEW) target.add(trimmed);
 }
 
 function parseKubernetesPackageConfigPreview(
@@ -21982,6 +26117,305 @@ function collectGraphqlRootFields(text: string): string[] {
   return [...fields];
 }
 
+interface GraphqlIntrospectionPreview {
+  rootTypes: string[];
+  objectTypes: string[];
+  inputTypes: string[];
+  interfaces: string[];
+  enums: string[];
+  directives: string[];
+  fieldSamples: string[];
+  possibleTypeSamples: string[];
+  truncated: boolean;
+}
+
+function summarizeGraphqlIntrospectionFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_GRAPHQL_INTROSPECTION_PREVIEW_BYTES)).toString("utf8");
+    const preview = parseGraphqlIntrospectionPreview(raw);
+    if (!preview) {
+      return [
+        `GraphQL introspection JSON ready for explicit attachment (${formatBytes(size)}).`,
+        "GraphQL introspection preview did not detect a __schema payload in the bounded local JSON; no GraphQL request execution, schema introspection request, validation, code generation, mock server startup, credential lookup, network call, or provider send was performed.",
+      ].join("\n").slice(0, MAX_TEXT_BYTES);
+    }
+    return [
+      `GraphQL introspection JSON preview (${formatBytes(size)}).`,
+      `Root types: ${preview.rootTypes.join(", ") || "none detected"}.`,
+      `Object types (${preview.objectTypes.length}${preview.objectTypes.length >= MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW ? "+" : ""}): ${preview.objectTypes.join(", ") || "none detected"}.`,
+      `Input types (${preview.inputTypes.length}${preview.inputTypes.length >= MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW ? "+" : ""}): ${preview.inputTypes.join(", ") || "none detected"}.`,
+      `Interfaces (${preview.interfaces.length}${preview.interfaces.length >= MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW ? "+" : ""}): ${preview.interfaces.join(", ") || "none detected"}.`,
+      `Enums (${preview.enums.length}${preview.enums.length >= MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW ? "+" : ""}): ${preview.enums.join(", ") || "none detected"}.`,
+      `Directives (${preview.directives.length}${preview.directives.length >= MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW ? "+" : ""}): ${preview.directives.join(", ") || "none detected"}.`,
+      `Field samples: ${preview.fieldSamples.join(" | ") || "none detected"}.`,
+      `Possible type samples: ${preview.possibleTypeSamples.join(" | ") || "none detected"}.`,
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_GRAPHQL_INTROSPECTION_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; GraphQL introspection metadata was parsed from bounded workspace-local JSON only, descriptions/default values were not expanded, and no GraphQL request execution, schema introspection request, validation, code generation, mock server startup, credential lookup, network call, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `GraphQL introspection JSON ready for explicit attachment (${formatBytes(size)}).`,
+      "GraphQL introspection preview could not read bounded local JSON; no GraphQL request execution, schema introspection request, validation, code generation, mock server startup, credential lookup, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseGraphqlIntrospectionPreview(raw: string): GraphqlIntrospectionPreview | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+  } catch {
+    return null;
+  }
+  const schema = readGraphqlIntrospectionSchema(parsed);
+  if (!schema) return null;
+
+  const rootTypes = ["queryType", "mutationType", "subscriptionType"]
+    .map((key) => {
+      const value = schema[key];
+      if (!isPlainRecord(value)) return "";
+      const name = readRecordString(value, "name");
+      return name ? `${key.replace(/Type$/, "")}:${sanitizeGraphqlIntrospectionName(name)}` : "";
+    })
+    .filter(Boolean)
+    .slice(0, 3);
+  const objectTypes: string[] = [];
+  const inputTypes: string[] = [];
+  const interfaces: string[] = [];
+  const enums: string[] = [];
+  const fieldSamples: string[] = [];
+  const possibleTypeSamples: string[] = [];
+
+  for (const typeValue of readJsonArray(schema, "types")) {
+    if (!isPlainRecord(typeValue)) continue;
+    const kind = readRecordString(typeValue, "kind").toUpperCase();
+    const name = sanitizeGraphqlIntrospectionName(readRecordString(typeValue, "name"));
+    if (!name || name.startsWith("__")) continue;
+    if (kind === "OBJECT" && objectTypes.length < MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW) objectTypes.push(name);
+    if (kind === "INPUT_OBJECT" && inputTypes.length < MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW) inputTypes.push(name);
+    if (kind === "INTERFACE" && interfaces.length < MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW) interfaces.push(name);
+    if (kind === "ENUM" && enums.length < MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW) {
+      const enumValues = readJsonArray(typeValue, "enumValues")
+        .filter(isPlainRecord)
+        .map((entry) => sanitizeGraphqlIntrospectionName(readRecordString(entry, "name")))
+        .filter(Boolean)
+        .slice(0, 4);
+      enums.push(enumValues.length > 0 ? `${name} (${enumValues.join(", ")})` : name);
+    }
+    if ((kind === "OBJECT" || kind === "INTERFACE") && fieldSamples.length < MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW) {
+      for (const field of readJsonArray(typeValue, "fields")) {
+        if (!isPlainRecord(field)) continue;
+        const fieldName = sanitizeGraphqlIntrospectionName(readRecordString(field, "name"));
+        if (fieldName) fieldSamples.push(`${name}.${fieldName}`);
+        if (fieldSamples.length >= MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW) break;
+      }
+    }
+    if ((kind === "INTERFACE" || kind === "UNION") && possibleTypeSamples.length < MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW) {
+      const possible = readJsonArray(typeValue, "possibleTypes")
+        .filter(isPlainRecord)
+        .map((entry) => sanitizeGraphqlIntrospectionName(readRecordString(entry, "name")))
+        .filter(Boolean)
+        .slice(0, 6);
+      if (possible.length > 0) possibleTypeSamples.push(`${name}: ${possible.join(", ")}`);
+    }
+  }
+
+  const directives = readJsonArray(schema, "directives")
+    .filter(isPlainRecord)
+    .map((directive) => sanitizeGraphqlIntrospectionName(readRecordString(directive, "name")))
+    .filter(Boolean)
+    .slice(0, MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW)
+    .map((name) => `@${name}`);
+  return {
+    rootTypes,
+    objectTypes,
+    inputTypes,
+    interfaces,
+    enums,
+    directives,
+    fieldSamples: fieldSamples.slice(0, MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW),
+    possibleTypeSamples: possibleTypeSamples.slice(0, MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW),
+    truncated:
+      raw.length >= MAX_GRAPHQL_INTROSPECTION_PREVIEW_BYTES ||
+      readJsonArray(schema, "types").length > MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW ||
+      readJsonArray(schema, "directives").length > MAX_GRAPHQL_INTROSPECTION_ITEM_PREVIEW,
+  };
+}
+
+function readGraphqlIntrospectionSchema(value: unknown): Record<string, unknown> | null {
+  if (!isPlainRecord(value)) return null;
+  if (isPlainRecord(value.__schema)) return value.__schema;
+  if (isPlainRecord(value.data) && isPlainRecord(value.data.__schema)) return value.data.__schema;
+  return null;
+}
+
+function sanitizeGraphqlIntrospectionName(value: string): string {
+  return clampSingleLine(value.replace(/[^\w.:-]/g, ""), 80);
+}
+
+interface PactContractPreview {
+  consumer: string;
+  provider: string;
+  specVersion: string;
+  interactionCount: number;
+  interactionSamples: string[];
+  providerStates: string[];
+  matchingRuleSamples: string[];
+  truncated: boolean;
+}
+
+function summarizePactContractFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_PACT_CONTRACT_PREVIEW_BYTES)).toString("utf8");
+    const preview = parsePactContractPreview(raw);
+    if (!preview) {
+      return [
+        `Pact contract JSON ready for explicit attachment (${formatBytes(size)}).`,
+        "Pact preview did not detect a consumer/provider interactions payload in the bounded local JSON; no Pact CLI command, Pact Broker connection, provider verification, mock server startup, credential lookup, network call, workspace mutation, or provider send was performed.",
+      ].join("\n").slice(0, MAX_TEXT_BYTES);
+    }
+    return [
+      `Pact contract JSON preview (${formatBytes(size)}).`,
+      `Consumer: ${preview.consumer || "none detected"}.`,
+      `Provider: ${preview.provider || "none detected"}.`,
+      `Pact specification: ${preview.specVersion || "none detected"}.`,
+      `Interactions: ${preview.interactionCount}${preview.interactionSamples.length < preview.interactionCount ? `; showing first ${preview.interactionSamples.length}` : ""}.`,
+      preview.interactionSamples.length > 0
+        ? `Interaction samples:\n${preview.interactionSamples.map((sample, index) => `- ${index + 1}. ${sample}`).join("\n")}`
+        : "Interaction samples: none detected in the bounded local preview.",
+      preview.providerStates.length > 0
+        ? `Provider states (${preview.providerStates.length}${preview.providerStates.length >= MAX_PACT_INTERACTION_PREVIEW ? "+" : ""}): ${preview.providerStates.join(", ")}.`
+        : "Provider states: none detected in the bounded local preview.",
+      preview.matchingRuleSamples.length > 0
+        ? `Matching rule samples: ${preview.matchingRuleSamples.join(", ")}.`
+        : "Matching rule samples: none detected in the bounded local preview.",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_PACT_CONTRACT_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; Pact contract metadata was parsed from bounded workspace-local JSON only, request/response bodies and header values were not expanded, and no Pact CLI command, Pact Broker connection, provider verification, mock server startup, credential lookup, network call, workspace mutation, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Pact contract JSON ready for explicit attachment (${formatBytes(size)}).`,
+      "Pact preview could not read bounded local JSON; no Pact CLI command, Pact Broker connection, provider verification, mock server startup, credential lookup, network call, workspace mutation, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parsePactContractPreview(raw: string): PactContractPreview | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+  } catch {
+    return null;
+  }
+  if (!isPlainRecord(parsed)) return null;
+  const interactions = readJsonArray(parsed, "interactions").filter(isPlainRecord);
+  const consumer = readPactPartyName(parsed.consumer);
+  const provider = readPactPartyName(parsed.provider);
+  if (!consumer && !provider && interactions.length === 0) return null;
+
+  const states = new Set<string>();
+  const matchingRules = new Set<string>();
+  const interactionSamples = interactions.slice(0, MAX_PACT_INTERACTION_PREVIEW).map((interaction) => {
+    collectPactProviderStates(interaction, states);
+    collectPactMatchingRuleSamples(interaction, matchingRules);
+    return formatPactInteractionSample(interaction);
+  });
+  for (const interaction of interactions.slice(MAX_PACT_INTERACTION_PREVIEW)) {
+    collectPactProviderStates(interaction, states);
+    collectPactMatchingRuleSamples(interaction, matchingRules);
+    if (states.size >= MAX_PACT_INTERACTION_PREVIEW && matchingRules.size >= MAX_PACT_INTERACTION_PREVIEW) break;
+  }
+
+  return {
+    consumer,
+    provider,
+    specVersion: readPactSpecificationVersion(parsed),
+    interactionCount: interactions.length,
+    interactionSamples,
+    providerStates: [...states].slice(0, MAX_PACT_INTERACTION_PREVIEW),
+    matchingRuleSamples: [...matchingRules].slice(0, MAX_PACT_INTERACTION_PREVIEW),
+    truncated:
+      raw.length >= MAX_PACT_CONTRACT_PREVIEW_BYTES ||
+      interactions.length > MAX_PACT_INTERACTION_PREVIEW ||
+      states.size > MAX_PACT_INTERACTION_PREVIEW ||
+      matchingRules.size > MAX_PACT_INTERACTION_PREVIEW,
+  };
+}
+
+function readPactPartyName(value: unknown): string {
+  if (!isPlainRecord(value)) return "";
+  return sanitizePactText(readRecordString(value, "name"));
+}
+
+function readPactSpecificationVersion(record: Record<string, unknown>): string {
+  const metadata = isPlainRecord(record.metadata) ? record.metadata : {};
+  const pactSpec = isPlainRecord(metadata.pactSpecification) ? metadata.pactSpecification : {};
+  return sanitizePactText(
+    readRecordString(pactSpec, "version") ||
+      readRecordString(metadata, "pactSpecificationVersion") ||
+      readRecordString(metadata, "pactSpecification"),
+  );
+}
+
+function formatPactInteractionSample(interaction: Record<string, unknown>): string {
+  const description = sanitizePactText(readRecordString(interaction, "description") || readRecordString(interaction, "descriptionText"));
+  const request = isPlainRecord(interaction.request) ? interaction.request : {};
+  const response = isPlainRecord(interaction.response) ? interaction.response : {};
+  const method = sanitizePactText(readRecordString(request, "method") || (isPlainRecord(interaction.contents) ? "MESSAGE" : "interaction"));
+  const path = readPactRequestTarget(request);
+  const status = readJsonNumber(response, "status");
+  const statusText = status === null ? "no status" : String(status);
+  return clampSingleLine(`${method.toUpperCase()} ${path || "(no path)"} -> ${statusText}${description ? ` (${description})` : ""}`, 220);
+}
+
+function readPactRequestTarget(request: Record<string, unknown>): string {
+  const path = sanitizePactPath(readRecordString(request, "path") || readRecordString(request, "url"));
+  const query = request.query;
+  if (typeof query === "string" && query.trim()) {
+    return sanitizePactPath(`${path || ""}${query.startsWith("?") ? query : `?${query}`}`);
+  }
+  if (isPlainRecord(query)) {
+    const keys = Object.keys(query).filter(Boolean).slice(0, 8).map(sanitizePactText);
+    if (keys.length > 0) return `${path || ""}?${keys.join(",")}`;
+  }
+  return path;
+}
+
+function collectPactProviderStates(interaction: Record<string, unknown>, target: Set<string>): void {
+  const providerState = sanitizePactText(readRecordString(interaction, "providerState"));
+  if (providerState) target.add(providerState);
+  for (const state of readJsonArray(interaction, "providerStates")) {
+    if (!isPlainRecord(state)) continue;
+    const name = sanitizePactText(readRecordString(state, "name"));
+    if (name) target.add(name);
+    if (target.size >= MAX_PACT_INTERACTION_PREVIEW) return;
+  }
+}
+
+function collectPactMatchingRuleSamples(interaction: Record<string, unknown>, target: Set<string>): void {
+  const containers = [
+    interaction.matchingRules,
+    isPlainRecord(interaction.request) ? interaction.request.matchingRules : undefined,
+    isPlainRecord(interaction.response) ? interaction.response.matchingRules : undefined,
+  ];
+  for (const container of containers) {
+    if (!isPlainRecord(container)) continue;
+    for (const key of Object.keys(container)) {
+      const sanitized = sanitizePactText(key);
+      if (sanitized) target.add(sanitized);
+      if (target.size >= MAX_PACT_INTERACTION_PREVIEW) return;
+    }
+  }
+}
+
+function sanitizePactPath(value: string): string {
+  return sanitizePactText(redactHarUrl(value));
+}
+
+function sanitizePactText(value: string): string {
+  return maskPotentialSecretValues(redactUrlQuerySecrets(clampSingleLine(value.replace(/\s+/g, " ").trim(), 160)));
+}
+
 interface ProtobufSchemaPreview {
   syntaxVersions: string[];
   packages: string[];
@@ -22423,6 +26857,141 @@ interface WarcArchivePreview {
   recordIds: string[];
   truncated: boolean;
   decompressed: boolean;
+}
+
+interface SecurityTxtPreview {
+  contacts: string[];
+  expires: string[];
+  encryption: string[];
+  acknowledgments: string[];
+  preferredLanguages: string[];
+  canonical: string[];
+  policy: string[];
+  hiring: string[];
+  signedMarkers: string[];
+  invalidLines: string[];
+  truncated: boolean;
+}
+
+function summarizeSecurityTxtFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_SECURITY_TXT_PREVIEW_BYTES).toString("utf8");
+    const preview = parseSecurityTxtPreview(raw);
+    return [
+      `security.txt vulnerability disclosure policy preview (${formatBytes(size)}).`,
+      preview.contacts.length > 0
+        ? `Contact fields (${preview.contacts.length}${preview.contacts.length >= MAX_SECURITY_TXT_ITEM_PREVIEW ? "+" : ""}): ${preview.contacts.join(" | ")}.`
+        : "Contact fields: none detected in the bounded local preview.",
+      preview.expires.length > 0 ? `Expires values: ${preview.expires.join(", ")}.` : "Expires values: none detected.",
+      preview.encryption.length > 0 ? `Encryption references: ${preview.encryption.join(" | ")}.` : "Encryption references: none detected.",
+      preview.acknowledgments.length > 0 ? `Acknowledgments: ${preview.acknowledgments.join(" | ")}.` : "Acknowledgments: none detected.",
+      preview.preferredLanguages.length > 0 ? `Preferred languages: ${preview.preferredLanguages.join(", ")}.` : "Preferred languages: none detected.",
+      preview.canonical.length > 0 ? `Canonical URLs: ${preview.canonical.join(" | ")}.` : "Canonical URLs: none detected.",
+      preview.policy.length > 0 ? `Policy URLs: ${preview.policy.join(" | ")}.` : "Policy URLs: none detected.",
+      preview.hiring.length > 0 ? `Hiring URLs: ${preview.hiring.join(" | ")}.` : "Hiring URLs: none detected.",
+      preview.signedMarkers.length > 0 ? `Signature markers: ${preview.signedMarkers.join(", ")}.` : "Signature markers: none detected.",
+      preview.invalidLines.length > 0
+        ? `Invalid/unrecognized lines (${preview.invalidLines.length}${preview.invalidLines.length >= MAX_SECURITY_TXT_ITEM_PREVIEW ? "+" : ""}): ${preview.invalidLines.join(" | ")}.`
+        : "Invalid/unrecognized lines: none detected in the bounded local preview.",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_SECURITY_TXT_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; security.txt was parsed from bounded workspace-local text only, contact/policy URLs were not fetched, PGP signatures were not verified, mail addresses were not contacted, no vulnerability report was submitted, and no browser, network call, credential lookup, workspace mutation, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `security.txt policy file ready for explicit attachment (${formatBytes(size)}).`,
+      "Preview could not parse bounded local security.txt content; contact/policy URLs were not fetched, signatures were not verified, no network call, credential lookup, workspace mutation, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseSecurityTxtPreview(raw: string): SecurityTxtPreview {
+  const contacts: string[] = [];
+  const expires: string[] = [];
+  const encryption: string[] = [];
+  const acknowledgments: string[] = [];
+  const preferredLanguages: string[] = [];
+  const canonical: string[] = [];
+  const policy: string[] = [];
+  const hiring: string[] = [];
+  const signedMarkers = new Set<string>();
+  const invalidLines: string[] = [];
+
+  for (const line of normalizeTextPreview(raw).split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (/^-{5}BEGIN PGP SIGNED MESSAGE-{5}$/i.test(trimmed)) {
+      signedMarkers.add("PGP signed message");
+      continue;
+    }
+    if (/^-{5}BEGIN PGP SIGNATURE-{5}$/i.test(trimmed)) {
+      signedMarkers.add("PGP signature block");
+      continue;
+    }
+    if (trimmed.startsWith("#")) continue;
+    const match = trimmed.match(/^([A-Za-z][A-Za-z-]*)\s*:\s*(.+)$/);
+    if (!match) {
+      addSecurityTxtValue(invalidLines, sanitizeSecurityTxtValue(trimmed), MAX_SECURITY_TXT_ITEM_PREVIEW);
+      continue;
+    }
+
+    const key = match[1].toLowerCase();
+    const value = sanitizeSecurityTxtValue(match[2] || "");
+    switch (key) {
+      case "contact":
+        addSecurityTxtValue(contacts, value, MAX_SECURITY_TXT_ITEM_PREVIEW);
+        break;
+      case "expires":
+        addSecurityTxtValue(expires, value, MAX_SECURITY_TXT_ITEM_PREVIEW);
+        break;
+      case "encryption":
+        addSecurityTxtValue(encryption, value, MAX_SECURITY_TXT_ITEM_PREVIEW);
+        break;
+      case "acknowledgments":
+        addSecurityTxtValue(acknowledgments, value, MAX_SECURITY_TXT_ITEM_PREVIEW);
+        break;
+      case "preferred-languages":
+        addSecurityTxtValue(preferredLanguages, value, MAX_SECURITY_TXT_ITEM_PREVIEW);
+        break;
+      case "canonical":
+        addSecurityTxtValue(canonical, value, MAX_SECURITY_TXT_ITEM_PREVIEW);
+        break;
+      case "policy":
+        addSecurityTxtValue(policy, value, MAX_SECURITY_TXT_ITEM_PREVIEW);
+        break;
+      case "hiring":
+        addSecurityTxtValue(hiring, value, MAX_SECURITY_TXT_ITEM_PREVIEW);
+        break;
+      default:
+        addSecurityTxtValue(invalidLines, `${match[1]}: ${value}`, MAX_SECURITY_TXT_ITEM_PREVIEW);
+        break;
+    }
+  }
+
+  return {
+    contacts,
+    expires,
+    encryption,
+    acknowledgments,
+    preferredLanguages,
+    canonical,
+    policy,
+    hiring,
+    signedMarkers: [...signedMarkers],
+    invalidLines,
+    truncated:
+      raw.length >= MAX_SECURITY_TXT_PREVIEW_BYTES ||
+      contacts.length >= MAX_SECURITY_TXT_ITEM_PREVIEW ||
+      invalidLines.length >= MAX_SECURITY_TXT_ITEM_PREVIEW,
+  };
+}
+
+function addSecurityTxtValue(target: string[], value: string, limit: number): void {
+  if (!value || target.length >= limit || target.includes(value)) return;
+  target.push(value);
+}
+
+function sanitizeSecurityTxtValue(value: string): string {
+  return clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(value)), 220);
 }
 
 function summarizeWebCrawlMetadataFile(filePath: string, extension: string, size: number): string {
@@ -22975,6 +27544,119 @@ function finalizeBrowserExtensionInventoryPreview(
   };
 }
 
+function isExtensionPackageExtension(extension: string): boolean {
+  return extension === ".vsix" || extension === ".crx";
+}
+
+function summarizeExtensionPackageFile(filePath: string, extension: string, size: number): string {
+  const packageLabel = extension === ".vsix" ? "VS Code VSIX extension package" : "Chrome CRX browser extension package";
+  try {
+    const buffer = readFileHeader(filePath, Math.min(size, MAX_EXTENSION_PACKAGE_PREVIEW_BYTES));
+    const crxMetadata = extension === ".crx" ? readCrxPackageMetadata(buffer) : undefined;
+    const archiveBuffer = crxMetadata?.zipOffset ? buffer.subarray(crxMetadata.zipOffset) : buffer;
+    const { entries, truncated } = readZipArchiveMetadata(archiveBuffer);
+    if (entries.length === 0) throw new Error("No readable extension package entries");
+    const preview = summarizeExtensionPackageEntries(entries);
+    const fileCount = entries.filter((entry) => !entry.directory).length;
+    return [
+      `${packageLabel} metadata preview (${formatBytes(size)}).`,
+      crxMetadata
+        ? `CRX header: version ${crxMetadata.version}; header size ${formatBytes(crxMetadata.headerSize)}; ZIP payload offset ${formatBytes(crxMetadata.zipOffset)}.`
+        : "",
+      `${fileCount} file entr${fileCount === 1 ? "y" : "ies"} found in the bounded local package header scan.`,
+      truncated ? "Extension package preview was truncated before every entry could be listed." : "",
+      preview.manifests.length > 0
+        ? `Manifest/package metadata entries: ${preview.manifests.join(", ")}.`
+        : "Manifest/package metadata entries: none detected in the bounded local package header scan.",
+      preview.code.length > 0 ? `Code/runtime entries: ${preview.code.join(", ")}.` : "",
+      preview.assets.length > 0 ? `UI/media/resource entries: ${preview.assets.join(", ")}.` : "",
+      preview.locales.length > 0 ? `Locale entries: ${preview.locales.join(", ")}.` : "",
+      preview.riskCues.length > 0 ? `Static review cues: ${preview.riskCues.join(", ")}.` : "",
+      "Ready for explicit attachment after visible review; extension package metadata was parsed from bounded workspace-local package headers only, package contents were not extracted to disk, extension code was not loaded or executed, VS Code/browsers/profiles were not opened, extensions were not installed, extension stores were not queried, URLs were not fetched, and no network call, credential lookup, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `${packageLabel} ready for explicit attachment (${formatBytes(size)}).`,
+      "Extension package preview could not parse readable bounded local package headers; package contents were not extracted, extension code was not loaded or executed, VS Code/browsers were not opened, extensions were not installed, stores were not queried, and no network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function readCrxPackageMetadata(buffer: Buffer): { version: number; headerSize: number; zipOffset: number } | undefined {
+  if (buffer.length < 12 || buffer.subarray(0, 4).toString("ascii") !== "Cr24") return undefined;
+  const version = buffer.readUInt32LE(4);
+  if (version === 2) {
+    if (buffer.length < 16) return undefined;
+    const publicKeySize = buffer.readUInt32LE(8);
+    const signatureSize = buffer.readUInt32LE(12);
+    const zipOffset = 16 + publicKeySize + signatureSize;
+    if (zipOffset > buffer.length) return undefined;
+    return { version, headerSize: publicKeySize + signatureSize, zipOffset };
+  }
+  if (version === 3) {
+    const headerSize = buffer.readUInt32LE(8);
+    const zipOffset = 12 + headerSize;
+    if (zipOffset > buffer.length) return undefined;
+    return { version, headerSize, zipOffset };
+  }
+  return { version, headerSize: 0, zipOffset: 12 };
+}
+
+function summarizeExtensionPackageEntries(entries: ChannelZipEntryMetadata[]): {
+  manifests: string[];
+  code: string[];
+  assets: string[];
+  locales: string[];
+  riskCues: string[];
+} {
+  const manifests = new Set<string>();
+  const code = new Set<string>();
+  const assets = new Set<string>();
+  const locales = new Set<string>();
+  const riskCues = new Set<string>();
+
+  for (const entry of entries.filter((item) => !item.directory)) {
+    const name = entry.name.replace(/\\/g, "/");
+    const lower = name.toLowerCase();
+    const safeName = sanitizeExtensionPackageEntryName(name);
+    if (/(^|\/)(package\.json|manifest\.json|extension\.vsixmanifest|\[content_types\]\.xml)$/.test(lower)) {
+      manifests.add(safeName);
+    }
+    if (/\.(?:js|mjs|cjs|ts|tsx|wasm|node|dll|exe)$/i.test(lower)) {
+      code.add(safeName);
+    }
+    if (/\.(?:html|css|png|jpe?g|gif|svg|webp|ico|json)$/i.test(lower) && !/(^|\/)(package\.json|manifest\.json)$/.test(lower)) {
+      assets.add(safeName);
+    }
+    if (lower.includes("_locales/") || lower.includes("package.nls")) {
+      locales.add(safeName);
+    }
+    if (/(^|\/)(background|service[_-]?worker|content[_-]?script|native[_-]?host)/i.test(lower)) {
+      riskCues.add("background/content/native integration entry");
+    }
+    if (/\.(?:wasm|node|dll|exe)$/i.test(lower)) {
+      riskCues.add("native or binary runtime payload");
+    }
+    if (safeName.includes("[redacted]")) {
+      riskCues.add("credential-shaped filename redacted");
+    }
+  }
+
+  return {
+    manifests: [...manifests].slice(0, MAX_EXTENSION_PACKAGE_ITEM_PREVIEW),
+    code: [...code].slice(0, MAX_EXTENSION_PACKAGE_ITEM_PREVIEW),
+    assets: [...assets].slice(0, MAX_EXTENSION_PACKAGE_ITEM_PREVIEW),
+    locales: [...locales].slice(0, MAX_EXTENSION_PACKAGE_ITEM_PREVIEW),
+    riskCues: [...riskCues].slice(0, MAX_EXTENSION_PACKAGE_ITEM_PREVIEW),
+  };
+}
+
+function sanitizeExtensionPackageEntryName(value: string): string {
+  return clampSingleLine(redactUrlQuerySecrets(value), 160)
+    .replace(/(^|\/)([^/]*(?:token|secret|password|passwd|pwd|api[_-]?key|private[_-]?key|credential)[^/]*)(?=\/|$)/gi, "$1[redacted]")
+    .replace(/([?&][^=&#]*(?:token|secret|password|passwd|pwd|api[_-]?key|private[_-]?key|credential|auth|session|cookie|signature)[^=&#]*=)[^&#\s]+/gi, "$1[redacted]");
+}
+
 function summarizePwaWebManifestFile(filePath: string, size: number): string {
   try {
     const raw = readFileHeader(filePath, MAX_PWA_WEB_MANIFEST_PREVIEW_BYTES).toString("utf8");
@@ -23038,11 +27720,13 @@ function summarizePwaWebManifestFile(filePath: string, size: number): string {
         const acceptKeys = isRecord(handler.accept) ? Object.keys(handler.accept).map(sanitizePwaWebManifestValue).slice(0, 4).join(", ") : "";
         return acceptKeys ? `${action} accepts ${acceptKeys}` : action;
       });
+    const installabilityHints = describePwaManifestInstallabilityHints(parsed);
 
     return [
       `PWA web app manifest preview (${formatBytes(size)}).`,
       identity.length > 0 ? `Identity: ${identity.join("; ")}.` : "Identity: no name/start_url/scope fields detected in bounded local JSON.",
       presentation.length > 0 ? `Presentation: ${presentation.join("; ")}.` : "",
+      installabilityHints.length > 0 ? `Static installability hints: ${installabilityHints.join("; ")}.` : "",
       categories.length > 0 ? `Categories (${categories.length}${categories.length >= MAX_PWA_WEB_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${categories.join(", ")}.` : "",
       icons.length > 0 ? `Icons (${icons.length}${icons.length >= MAX_PWA_WEB_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${icons.join(" | ")}.` : "",
       shortcuts.length > 0 ? `Shortcuts (${shortcuts.length}${shortcuts.length >= MAX_PWA_WEB_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${shortcuts.join(" | ")}.` : "",
@@ -23061,6 +27745,199 @@ function summarizePwaWebManifestFile(filePath: string, size: number): string {
   }
 }
 
+function describePwaManifestInstallabilityHints(record: Record<string, unknown>): string[] {
+  const hints: string[] = [];
+  const name = readJsonString(record, "name") || readJsonString(record, "short_name");
+  hints.push(name ? "identity present" : "missing name/short_name");
+
+  const startUrl = readJsonString(record, "start_url");
+  hints.push(startUrl ? "start_url present" : "missing start_url");
+
+  const display = readJsonString(record, "display").toLowerCase();
+  if (["standalone", "fullscreen", "minimal-ui", "window-controls-overlay"].includes(display)) {
+    hints.push(`install display=${sanitizePwaWebManifestValue(display)}`);
+  } else if (display) {
+    hints.push(`non-install display=${sanitizePwaWebManifestValue(display)}`);
+  } else {
+    hints.push("missing display");
+  }
+
+  const icons = readJsonArray(record, "icons").filter(isRecord);
+  const iconSizes = icons
+    .map((icon) => readJsonString(icon, "sizes"))
+    .filter(Boolean)
+    .join(" ");
+  const hasAnyIcon = icons.length > 0;
+  const hasLargeIcon = /(?:^|\s)(?:192x192|512x512)(?:\s|$)/i.test(iconSizes);
+  hints.push(hasLargeIcon ? "192/512 icon declared" : hasAnyIcon ? "icons declared without 192/512 evidence" : "missing icons");
+
+  const hasMaskable = icons.some((icon) => /\bmaskable\b/i.test(readJsonString(icon, "purpose")));
+  if (hasMaskable) hints.push("maskable icon declared");
+
+  const scope = readJsonString(record, "scope");
+  if (scope) hints.push("scope declared");
+
+  return hints.slice(0, MAX_PWA_WEB_MANIFEST_ITEM_PREVIEW).map(sanitizePwaWebManifestValue);
+}
+
+function isWebAppAssociationFile(filePath: string, extension: string): boolean {
+  if (extension === ".web-app-association.json") return true;
+  const name = basename(filePath).toLowerCase();
+  return (
+    name === "assetlinks.json" ||
+    name === "apple-app-site-association" ||
+    name === "aasa.json" ||
+    name.endsWith(".assetlinks.json") ||
+    name.endsWith(".aasa.json")
+  );
+}
+
+function summarizeWebAppAssociationFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_WEB_APP_ASSOCIATION_PREVIEW_BYTES).toString("utf8");
+    const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+    const preview = parseWebAppAssociationPreview(parsed, basename(filePath));
+    return [
+      `Web app association preview (${preview.format}, ${formatBytes(size)}).`,
+      preview.identities.length > 0
+        ? `App/site identities (${preview.identities.length}${preview.identities.length >= MAX_WEB_APP_ASSOCIATION_ITEM_PREVIEW ? "+" : ""}): ${preview.identities.join(" | ")}.`
+        : "App/site identities: none detected in bounded local JSON.",
+      preview.relations.length > 0
+        ? `Relations/services (${preview.relations.length}${preview.relations.length >= MAX_WEB_APP_ASSOCIATION_ITEM_PREVIEW ? "+" : ""}): ${preview.relations.join(", ")}.`
+        : "Relations/services: none detected.",
+      preview.paths.length > 0
+        ? `Path/component rules (${preview.paths.length}${preview.paths.length >= MAX_WEB_APP_ASSOCIATION_ITEM_PREVIEW ? "+" : ""}): ${preview.paths.join(" | ")}.`
+        : "",
+      preview.details.length > 0 ? `Static review cues: ${preview.details.join(" | ")}.` : "",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_WEB_APP_ASSOCIATION_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; web/app association metadata was parsed from bounded workspace-local JSON only, certificate fingerprints and credential-shaped values were hidden, association URLs were not fetched, apps were not installed or launched, devices were not queried, no domain verification ran, and no network call or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Web app association file ready for explicit attachment (${formatBytes(size)}).`,
+      "Structured association preview was unavailable from the bounded local byte sample; no association URL fetch, package verification, app install, device query, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseWebAppAssociationPreview(parsed: unknown, fileName: string): {
+  format: string;
+  identities: string[];
+  relations: string[];
+  paths: string[];
+  details: string[];
+  truncated: boolean;
+} {
+  const identities = new Set<string>();
+  const relations = new Set<string>();
+  const paths = new Set<string>();
+  const details = new Set<string>();
+  let truncated = false;
+
+  if (Array.isArray(parsed)) {
+    for (const entry of parsed.slice(0, MAX_WEB_APP_ASSOCIATION_ITEM_PREVIEW)) {
+      if (!isRecord(entry)) continue;
+      const target = isRecord(entry.target) ? entry.target : {};
+      const namespace = sanitizeWebAppAssociationValue(readJsonString(target, "namespace"));
+      const packageName = sanitizeWebAppAssociationValue(readJsonString(target, "package_name"));
+      if (namespace || packageName) {
+        identities.add([namespace || "namespace not declared", packageName ? `package=${packageName}` : ""].filter(Boolean).join(" "));
+      }
+      for (const relation of readJsonArray(entry, "relation")) {
+        if (typeof relation === "string") relations.add(sanitizeWebAppAssociationValue(relation));
+      }
+      const fingerprints = readJsonArray(target, "sha256_cert_fingerprints").filter((value): value is string => typeof value === "string");
+      if (fingerprints.length > 0) details.add(`SHA-256 certificate fingerprints hidden (${fingerprints.length})`);
+    }
+    truncated = parsed.length > MAX_WEB_APP_ASSOCIATION_ITEM_PREVIEW;
+    return {
+      format: "Android Digital Asset Links",
+      identities: [...identities].slice(0, MAX_WEB_APP_ASSOCIATION_ITEM_PREVIEW),
+      relations: [...relations].slice(0, MAX_WEB_APP_ASSOCIATION_ITEM_PREVIEW),
+      paths: [...paths].slice(0, MAX_WEB_APP_ASSOCIATION_ITEM_PREVIEW),
+      details: [...details].slice(0, MAX_WEB_APP_ASSOCIATION_ITEM_PREVIEW),
+      truncated,
+    };
+  }
+
+  if (!isRecord(parsed)) throw new Error("association root must be object or array");
+  const applinks = isRecord(parsed.applinks) ? parsed.applinks : {};
+  const webcredentials = isRecord(parsed.webcredentials) ? parsed.webcredentials : {};
+  const activitycontinuation = isRecord(parsed.activitycontinuation) ? parsed.activitycontinuation : {};
+  const detailsRecords = readJsonArray(applinks, "details").filter(isRecord);
+
+  for (const app of readJsonArray(webcredentials, "apps")) {
+    if (typeof app === "string") identities.add(`webcredentials ${sanitizeWebAppAssociationValue(app)}`);
+  }
+  for (const app of readJsonArray(activitycontinuation, "apps")) {
+    if (typeof app === "string") identities.add(`activitycontinuation ${sanitizeWebAppAssociationValue(app)}`);
+  }
+  if (Array.isArray(applinks.apps) && applinks.apps.length === 0) details.add("applinks.apps declared empty");
+
+  for (const detail of detailsRecords.slice(0, MAX_WEB_APP_ASSOCIATION_ITEM_PREVIEW)) {
+    const appIDs = collectAppleAssociationAppIDs(detail);
+    for (const appID of appIDs) identities.add(`applinks ${sanitizeWebAppAssociationValue(appID)}`);
+    for (const path of readJsonArray(detail, "paths")) {
+      if (typeof path === "string") paths.add(sanitizeWebAppAssociationValue(path));
+    }
+    for (const component of readJsonArray(detail, "components").filter(isRecord)) {
+      const pathRule = readJsonString(component, "/");
+      const fragmentRule = readJsonString(component, "#");
+      const comment = readJsonString(component, "comment");
+      const queryRule = isRecord(component["?"])
+        ? Object.entries(component["?"])
+            .slice(0, MAX_WEB_APP_ASSOCIATION_ITEM_PREVIEW)
+            .map(([key, value]) => {
+              const safeKey = sanitizeWebAppAssociationValue(key);
+              const safeValue = /(?:token|secret|password|passwd|api[-_]?key|authorization|cookie)/i.test(key)
+                ? "[redacted]"
+                : sanitizeWebAppAssociationValue(String(value));
+              return `${safeKey}=${safeValue}`;
+            })
+            .join("&")
+        : "";
+      const exclude = component.exclude === true ? " exclude=true" : "";
+      const pathSample = pathRule ? sanitizeWebAppAssociationValue(pathRule) : "";
+      const rule = [
+        pathSample ? (pathSample.startsWith("/") ? pathSample : `/${pathSample}`) : "",
+        queryRule ? `?${queryRule}` : "",
+        fragmentRule ? `#${sanitizeWebAppAssociationValue(fragmentRule)}` : "",
+        comment ? `comment=${sanitizeWebAppAssociationValue(comment)}` : "",
+      ].filter(Boolean).join(" ");
+      if (rule) paths.add(`${rule}${exclude}`);
+    }
+  }
+  if (detailsRecords.length > 0) relations.add("applinks");
+  if (readJsonArray(webcredentials, "apps").length > 0) relations.add("webcredentials");
+  if (readJsonArray(activitycontinuation, "apps").length > 0) relations.add("activitycontinuation");
+  truncated = detailsRecords.length > MAX_WEB_APP_ASSOCIATION_ITEM_PREVIEW;
+
+  return {
+    format: fileName.toLowerCase() === "apple-app-site-association" ? "Apple App Site Association" : "Apple AASA JSON",
+    identities: [...identities].slice(0, MAX_WEB_APP_ASSOCIATION_ITEM_PREVIEW),
+    relations: [...relations].slice(0, MAX_WEB_APP_ASSOCIATION_ITEM_PREVIEW),
+    paths: [...paths].slice(0, MAX_WEB_APP_ASSOCIATION_ITEM_PREVIEW),
+    details: [...details].slice(0, MAX_WEB_APP_ASSOCIATION_ITEM_PREVIEW),
+    truncated,
+  };
+}
+
+function collectAppleAssociationAppIDs(detail: Record<string, unknown>): string[] {
+  const values = new Set<string>();
+  const appID = readJsonString(detail, "appID");
+  if (appID) values.add(appID);
+  for (const value of readJsonArray(detail, "appIDs")) {
+    if (typeof value === "string") values.add(value);
+  }
+  return [...values].slice(0, MAX_WEB_APP_ASSOCIATION_ITEM_PREVIEW);
+}
+
+function sanitizeWebAppAssociationValue(value: string): string {
+  const redactedUrl = redactUrlQuerySecrets(value);
+  if (redactedUrl !== value) return clampSingleLine(redactedUrl, 180);
+  return clampSingleLine(maskPotentialSecretValues(value), 180);
+}
+
 function isPwaServiceWorkerScriptFile(filePath: string, extension: string): boolean {
   if (extension !== ".js" && extension !== ".mjs") return false;
   const name = basename(filePath).toLowerCase();
@@ -23072,7 +27949,7 @@ function isPwaServiceWorkerScriptFile(filePath: string, extension: string): bool
     "serviceworker.js",
     "firebase-messaging-sw.js",
     "ngsw-worker.js",
-  ].includes(name) || name.endsWith(".service-worker.js") || name.endsWith(".service-worker.mjs");
+  ].includes(name) || name.endsWith(".service-worker.js") || name.endsWith(".service-worker.mjs") || name.endsWith("-service-worker.js") || name.endsWith("-service-worker.mjs");
 }
 
 function summarizePwaServiceWorkerScriptFile(filePath: string, size: number): string {
@@ -23306,6 +28183,206 @@ type LottieAnimationPreview = {
   assets: string[];
   markers: string[];
 };
+
+type JsonSchemaPreview = {
+  schemaUri: string;
+  id: string;
+  title: string;
+  types: string[];
+  required: string[];
+  properties: string[];
+  definitions: string[];
+  refs: string[];
+  formats: string[];
+  enums: string[];
+  constraints: string[];
+  riskCues: string[];
+  truncated: boolean;
+};
+
+function isJsonSchemaFile(filePath: string, extension: string): boolean {
+  if (extension === ".json-schema.json") return true;
+  if (extension !== ".json") return false;
+  const name = basename(filePath).toLowerCase();
+  if (name === "schema.json" || name === "jsonschema.json" || name.endsWith(".schema.json") || name.endsWith(".jsonschema.json")) {
+    return true;
+  }
+  try {
+    const raw = readFileHeader(filePath, MAX_JSON_SCHEMA_PREVIEW_BYTES).toString("utf8");
+    const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+    return looksLikeJsonSchemaRecord(parsed);
+  } catch {
+    return false;
+  }
+}
+
+function summarizeJsonSchemaFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_JSON_SCHEMA_PREVIEW_BYTES)).toString("utf8");
+    const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+    if (!looksLikeJsonSchemaRecord(parsed)) throw new Error("not a JSON Schema record");
+    const preview = parseJsonSchemaPreview(parsed, raw);
+    return [
+      `JSON Schema preview (${formatBytes(size)}).`,
+      `Schema: ${preview.schemaUri || "none detected"}; id: ${preview.id || "none detected"}; title: ${preview.title || "none detected"}.`,
+      preview.types.length > 0 ? `Types: ${preview.types.join(", ")}.` : "Types: none detected in bounded schema.",
+      preview.required.length > 0 ? `Required fields: ${preview.required.join(", ")}.` : "Required fields: none detected in bounded schema.",
+      preview.properties.length > 0
+        ? `Properties (${preview.properties.length}${preview.properties.length >= MAX_JSON_SCHEMA_ITEM_PREVIEW ? "+" : ""}): ${preview.properties.join(" | ")}.`
+        : "Properties: none detected in bounded schema.",
+      preview.definitions.length > 0 ? `Definitions: ${preview.definitions.join(", ")}.` : "",
+      preview.refs.length > 0 ? `Refs: ${preview.refs.join(", ")}.` : "",
+      preview.formats.length > 0 ? `Formats: ${preview.formats.join(", ")}.` : "",
+      preview.enums.length > 0 ? `Enum hints: ${preview.enums.join(" | ")}.` : "",
+      preview.constraints.length > 0 ? `Constraint hints: ${preview.constraints.join(" | ")}.` : "",
+      preview.riskCues.length > 0 ? `Static risk cues: ${preview.riskCues.join(", ")}.` : "",
+      preview.truncated ? `JSON Schema preview was capped at ${formatBytes(MAX_JSON_SCHEMA_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; JSON Schema metadata was parsed from bounded workspace-local JSON only, default/example/const values were not expanded, $ref targets were not fetched or resolved, no schema registry lookup, instance validation, code generation, package install, network call, credential lookup, workspace mutation, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `JSON Schema ready for explicit attachment (${formatBytes(size)}).`,
+      "Preview could not parse bounded local JSON Schema; no $ref resolution, schema registry lookup, instance validation, code generation, package install, network call, credential lookup, workspace mutation, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function looksLikeJsonSchemaRecord(value: unknown): value is Record<string, unknown> {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.$schema === "string" ||
+    typeof value.$id === "string" ||
+    typeof value.id === "string" ||
+    Array.isArray(value.required) ||
+    isRecord(value.properties) ||
+    isRecord(value.definitions) ||
+    isRecord(value.$defs)
+  ) && (
+    Object.prototype.hasOwnProperty.call(value, "type") ||
+    Object.prototype.hasOwnProperty.call(value, "properties") ||
+    Object.prototype.hasOwnProperty.call(value, "$ref") ||
+    Object.prototype.hasOwnProperty.call(value, "oneOf") ||
+    Object.prototype.hasOwnProperty.call(value, "anyOf") ||
+    Object.prototype.hasOwnProperty.call(value, "allOf")
+  );
+}
+
+function parseJsonSchemaPreview(value: unknown, raw: string): JsonSchemaPreview {
+  const record = isRecord(value) ? value : {};
+  const required = readJsonArray(record, "required")
+    .filter((item): item is string => typeof item === "string")
+    .map(sanitizeJsonSchemaText);
+  const propertiesRecord = isRecord(record.properties) ? record.properties : {};
+  const properties = Object.entries(propertiesRecord)
+    .slice(0, MAX_JSON_SCHEMA_ITEM_PREVIEW)
+    .map(([key, property]) => formatJsonSchemaProperty(key, property))
+    .filter(Boolean);
+  const definitionsRecord = isRecord(record.$defs)
+    ? record.$defs
+    : isRecord(record.definitions)
+      ? record.definitions
+      : {};
+  const definitions = Object.keys(definitionsRecord)
+    .slice(0, MAX_JSON_SCHEMA_ITEM_PREVIEW)
+    .map(sanitizeJsonSchemaText);
+  const refs = new Set<string>();
+  const formats = new Set<string>();
+  const enums = new Set<string>();
+  const constraints = new Set<string>();
+  const riskCues = new Set<string>();
+  collectJsonSchemaPreviewHints(record, "", refs, formats, enums, constraints, riskCues, 0);
+
+  return {
+    schemaUri: sanitizeJsonSchemaText(readJsonString(record, "$schema")),
+    id: sanitizeJsonSchemaText(readJsonString(record, "$id") || readJsonString(record, "id")),
+    title: sanitizeJsonSchemaText(readJsonString(record, "title")),
+    types: readJsonSchemaTypeNames(record).map(sanitizeJsonSchemaText),
+    required: uniquePreviewValues(required, MAX_JSON_SCHEMA_ITEM_PREVIEW),
+    properties: uniquePreviewValues(properties, MAX_JSON_SCHEMA_ITEM_PREVIEW),
+    definitions: uniquePreviewValues(definitions, MAX_JSON_SCHEMA_ITEM_PREVIEW),
+    refs: uniquePreviewValues([...refs], MAX_JSON_SCHEMA_ITEM_PREVIEW),
+    formats: uniquePreviewValues([...formats], MAX_JSON_SCHEMA_ITEM_PREVIEW),
+    enums: uniquePreviewValues([...enums], MAX_JSON_SCHEMA_ITEM_PREVIEW),
+    constraints: uniquePreviewValues([...constraints], MAX_JSON_SCHEMA_ITEM_PREVIEW),
+    riskCues: uniquePreviewValues([...riskCues], MAX_JSON_SCHEMA_ITEM_PREVIEW),
+    truncated:
+      raw.length >= MAX_JSON_SCHEMA_PREVIEW_BYTES ||
+      Object.keys(propertiesRecord).length > MAX_JSON_SCHEMA_ITEM_PREVIEW ||
+      refs.size >= MAX_JSON_SCHEMA_ITEM_PREVIEW,
+  };
+}
+
+function formatJsonSchemaProperty(key: string, value: unknown): string {
+  const property = isRecord(value) ? value : {};
+  const typeNames = readJsonSchemaTypeNames(property);
+  const format = readJsonString(property, "format");
+  const ref = readJsonString(property, "$ref");
+  return [
+    sanitizeJsonSchemaText(key),
+    typeNames.length > 0 ? `type=${typeNames.map(sanitizeJsonSchemaText).join("/")}` : "",
+    format ? `format=${sanitizeJsonSchemaText(format)}` : "",
+    ref ? `ref=${sanitizeJsonSchemaText(ref)}` : "",
+  ].filter(Boolean).join(" ");
+}
+
+function collectJsonSchemaPreviewHints(
+  value: unknown,
+  path: string,
+  refs: Set<string>,
+  formats: Set<string>,
+  enums: Set<string>,
+  constraints: Set<string>,
+  riskCues: Set<string>,
+  depth: number,
+): void {
+  if (depth > 4 || refs.size >= MAX_JSON_SCHEMA_ITEM_PREVIEW) return;
+  if (Array.isArray(value)) {
+    value.slice(0, MAX_JSON_SCHEMA_ITEM_PREVIEW).forEach((item, index) => {
+      collectJsonSchemaPreviewHints(item, `${path}[${index}]`, refs, formats, enums, constraints, riskCues, depth + 1);
+    });
+    return;
+  }
+  if (!isRecord(value)) return;
+  const ref = readJsonString(value, "$ref");
+  if (ref) refs.add(sanitizeJsonSchemaText(ref));
+  const format = readJsonString(value, "format");
+  if (format) formats.add(sanitizeJsonSchemaText(format));
+  const enumValues = readJsonArray(value, "enum");
+  if (enumValues.length > 0) {
+    enums.add(`${path || "root"} enum=${enumValues.length}`);
+  }
+  for (const key of ["minimum", "maximum", "minLength", "maxLength", "pattern", "minItems", "maxItems", "additionalProperties"]) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) {
+      const rawValue = value[key];
+      const formatted = key === "pattern"
+        ? "present"
+        : typeof rawValue === "string" || typeof rawValue === "number" || typeof rawValue === "boolean"
+        ? sanitizeJsonSchemaText(String(rawValue))
+        : "present";
+      constraints.add(`${path || "root"} ${key}=${formatted}`);
+    }
+  }
+  for (const key of ["default", "examples", "const"]) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) {
+      riskCues.add(`${path || "root"} ${key} value hidden`);
+    }
+  }
+  for (const [key, nested] of Object.entries(value).slice(0, MAX_JSON_SCHEMA_ITEM_PREVIEW)) {
+    if (["default", "examples", "const"].includes(key)) continue;
+    collectJsonSchemaPreviewHints(nested, path ? `${path}.${key}` : key, refs, formats, enums, constraints, riskCues, depth + 1);
+  }
+}
+
+function readJsonSchemaTypeNames(record: Record<string, unknown>): string[] {
+  const value = record.type;
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string");
+  return [];
+}
+
+function sanitizeJsonSchemaText(value: string): string {
+  return clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(value)), 140);
+}
 
 function isLottieAnimationJsonFile(filePath: string, extension: string): boolean {
   if (extension === ".lottie.json") return true;
@@ -23774,6 +28851,7 @@ type SourceMapPreview = {
   names: string[];
   mappingsLength: number | null;
   sourcesContentCount: number;
+  sourceCount: number;
 };
 
 function isSourceMapFile(filePath: string, extension: string): boolean {
@@ -23807,6 +28885,7 @@ function summarizeSourceMapFile(filePath: string, size: number): string {
       preview.names.length > 0
         ? `Name samples (${preview.names.length}${preview.names.length >= MAX_SOURCE_MAP_ITEM_PREVIEW ? "+" : ""}): ${preview.names.join(", ")}.`
         : "Name samples: none detected in the bounded local preview.",
+      describeSourceMapCorrelationHints(preview),
       `Mappings: ${preview.mappingsLength ?? "unknown"} characters in bounded JSON; sourcesContent entries: ${preview.sourcesContentCount} (contents not expanded).`,
       raw.length >= MAX_SOURCE_MAP_PREVIEW_BYTES
         ? `Source map preview was capped at ${formatBytes(MAX_SOURCE_MAP_PREVIEW_BYTES)}.`
@@ -23841,11 +28920,61 @@ function parseSourceMapPreview(value: unknown): SourceMapPreview {
     names,
     mappingsLength: mappings ? mappings.length : null,
     sourcesContentCount: sourcesContent.length,
+    sourceCount: readJsonArray(record, "sources").filter((item) => typeof item === "string").length,
   };
 }
 
 function sanitizeSourceMapValue(value: string): string {
   return clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(value)), 140);
+}
+
+function describeSourceMapCorrelationHints(preview: SourceMapPreview): string {
+  const hints: string[] = [];
+  const targetExtension = inferSourceMapPathExtension(preview.file);
+  if (targetExtension) hints.push(`target ${targetExtension}`);
+
+  const sourceRootKind = describeSourceMapRootKind(preview.sourceRoot);
+  if (sourceRootKind) hints.push(`sourceRoot ${sourceRootKind}`);
+
+  const extensionCounts = summarizeSourceMapSourceExtensions(preview.sources);
+  if (extensionCounts.length > 0) hints.push(`source extensions ${extensionCounts.join(", ")}`);
+
+  if (preview.sourceCount > 0) {
+    const coverage = Math.min(preview.sourcesContentCount, preview.sourceCount);
+    hints.push(`sourcesContent coverage ${coverage}/${preview.sourceCount}`);
+  }
+
+  return hints.length > 0
+    ? `Static source correlation hints: ${hints.join("; ")}.`
+    : "Static source correlation hints: none detected in the bounded local preview.";
+}
+
+function describeSourceMapRootKind(sourceRoot: string): string {
+  if (!sourceRoot) return "";
+  const scheme = sourceRoot.match(/^([a-z][a-z0-9+.-]*):\/\//i)?.[1]?.toLowerCase();
+  if (scheme) return `${scheme} URL`;
+  if (/^[a-z]:[\\/]/i.test(sourceRoot) || sourceRoot.startsWith("/") || sourceRoot.startsWith("\\")) return "absolute path";
+  return "relative path";
+}
+
+function summarizeSourceMapSourceExtensions(sources: string[]): string[] {
+  const counts = new Map<string, number>();
+  for (const source of sources) {
+    const extension = inferSourceMapPathExtension(source);
+    if (!extension) continue;
+    counts.set(extension, (counts.get(extension) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, 8)
+    .map(([extension, count]) => `${extension}=${count}`);
+}
+
+function inferSourceMapPathExtension(value: string): string {
+  const pathLike = value.split(/[?#]/, 1)[0] ?? "";
+  const basename = pathLike.split(/[\\/]/).pop() ?? pathLike;
+  const match = basename.match(/(\.[A-Za-z0-9]+)$/);
+  return match ? match[1].toLowerCase() : "";
 }
 
 function parseRssFeedPreview(xml: string): FeedDocumentPreview {
@@ -24897,6 +30026,9 @@ function estimateTokenizerCalibrationHeuristicTokens(text: string): number {
 
 interface IisWebConfigPreview {
   format: string;
+  sites: string[];
+  applicationPools: string[];
+  bindings: string[];
   appSettings: string[];
   connectionStrings: string[];
   handlers: string[];
@@ -24925,6 +30057,15 @@ function summarizeIisWebConfigFile(filePath: string, size: number): string {
     const preview = parseIisWebConfigPreview(filePath, raw);
     return [
       `IIS web.config preview (${preview.format}, ${formatBytes(size)}).`,
+      preview.sites.length > 0
+        ? `Sites (${preview.sites.length}${preview.sites.length >= MAX_IIS_WEB_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.sites.join(" | ")}.`
+        : "Sites: none detected in the bounded XML preview.",
+      preview.applicationPools.length > 0
+        ? `Application pools (${preview.applicationPools.length}${preview.applicationPools.length >= MAX_IIS_WEB_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.applicationPools.join(" | ")}.`
+        : "Application pools: none detected in the bounded XML preview.",
+      preview.bindings.length > 0
+        ? `Bindings (${preview.bindings.length}${preview.bindings.length >= MAX_IIS_WEB_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.bindings.join(" | ")}.`
+        : "Bindings: none detected in the bounded XML preview.",
       preview.appSettings.length > 0
         ? `App settings (${preview.appSettings.length}${preview.appSettings.length >= MAX_IIS_WEB_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.appSettings.join(" | ")}.`
         : "App settings: none detected in the bounded XML preview.",
@@ -24969,10 +30110,15 @@ function parseIisWebConfigPreview(filePath: string, raw: string): IisWebConfigPr
   const rewriteSection = extractXmlSection(normalized, "rewrite");
   const systemWebSection = extractXmlSection(normalized, "system.web");
   const systemWebServerSection = extractXmlSection(normalized, "system.webServer");
+  const sitesSection = extractXmlSection(normalized, "sites");
+  const applicationPoolsSection = extractXmlSection(normalized, "applicationPools");
   const authSection = `${systemWebSection}\n${systemWebServerSection}`;
 
   return {
     format: basename(filePath).toLowerCase() === "applicationhost.config" ? "IIS applicationHost.config" : "IIS web.config",
+    sites: collectIisSites(sitesSection),
+    applicationPools: collectIisApplicationPools(applicationPoolsSection),
+    bindings: collectIisBindings(sitesSection),
     appSettings: collectIisAppSettings(appSettingsSection),
     connectionStrings: collectIisConnectionStrings(connectionStringsSection),
     handlers: collectIisNamedPathTags(handlersSection, "add", ["name", "path", "verb", "modules"]),
@@ -24985,6 +30131,56 @@ function parseIisWebConfigPreview(filePath: string, raw: string): IisWebConfigPr
   };
 }
 
+function collectIisSites(section: string): string[] {
+  return collectIisTagBlocks(section, "site", MAX_IIS_WEB_CONFIG_ITEM_PREVIEW)
+    .map((block) => {
+      const attrs = readIisXmlAttributes(block.attrs);
+      const name = attrs.get("name") || "";
+      if (!name) return "";
+      return [
+        `name=${sanitizeIisPreviewValue(name, 80)}`,
+        attrs.get("id") ? `id=${sanitizeIisPreviewValue(attrs.get("id") ?? "", 30)}` : "",
+        attrs.get("serverAutoStart") ? `serverAutoStart=${sanitizeIisPreviewValue(attrs.get("serverAutoStart") ?? "", 20)}` : "",
+      ].filter(Boolean).join(" ");
+    })
+    .filter(Boolean);
+}
+
+function collectIisApplicationPools(section: string): string[] {
+  return collectIisTagAttributes(section, "add", MAX_IIS_WEB_CONFIG_ITEM_PREVIEW)
+    .map((attrs) => {
+      const name = attrs.get("name") || "";
+      if (!name) return "";
+      return [
+        `name=${sanitizeIisPreviewValue(name, 80)}`,
+        attrs.get("managedRuntimeVersion") ? `runtime=${sanitizeIisPreviewValue(attrs.get("managedRuntimeVersion") ?? "", 40)}` : "",
+        attrs.get("managedPipelineMode") ? `pipeline=${sanitizeIisPreviewValue(attrs.get("managedPipelineMode") ?? "", 40)}` : "",
+        attrs.get("autoStart") ? `autoStart=${sanitizeIisPreviewValue(attrs.get("autoStart") ?? "", 20)}` : "",
+      ].filter(Boolean).join(" ");
+    })
+    .filter(Boolean);
+}
+
+function collectIisBindings(section: string): string[] {
+  const bindings: string[] = [];
+  for (const site of collectIisTagBlocks(section, "site", MAX_IIS_WEB_CONFIG_ITEM_PREVIEW)) {
+    const siteName = readIisXmlAttributes(site.attrs).get("name") || "site";
+    for (const attrs of collectIisTagAttributes(site.body, "binding", MAX_IIS_WEB_CONFIG_ITEM_PREVIEW)) {
+      const protocol = attrs.get("protocol") || "";
+      const bindingInformation = attrs.get("bindingInformation") || "";
+      if (!protocol && !bindingInformation) continue;
+      bindings.push([
+        sanitizeIisPreviewValue(siteName, 60),
+        protocol ? `protocol=${sanitizeIisPreviewValue(protocol, 30)}` : "",
+        bindingInformation ? `binding=${sanitizeIisPreviewValue(bindingInformation, 120)}` : "",
+        attrs.get("sslFlags") ? `sslFlags=${sanitizeIisPreviewValue(attrs.get("sslFlags") ?? "", 20)}` : "",
+      ].filter(Boolean).join(" "));
+      if (bindings.length >= MAX_IIS_WEB_CONFIG_ITEM_PREVIEW) return bindings;
+    }
+  }
+  return bindings;
+}
+
 function collectIisAppSettings(section: string): string[] {
   return collectIisTagAttributes(section, "add", MAX_IIS_WEB_CONFIG_ITEM_PREVIEW)
     .map((attrs) => {
@@ -24993,10 +30189,10 @@ function collectIisAppSettings(section: string): string[] {
       if (!key) return "";
       const safeValue = isSensitiveConfigKey(key)
         ? "[redacted]"
-        : clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(value)), 120);
+        : sanitizeIisPreviewValue(value, 120);
       return value
-        ? `${clampSingleLine(maskPotentialSecretValues(key), 80)}=${safeValue}`
-        : clampSingleLine(maskPotentialSecretValues(key), 80);
+        ? `${sanitizeIisPreviewValue(key, 80)}=${safeValue}`
+        : sanitizeIisPreviewValue(key, 80);
     })
     .filter(Boolean);
 }
@@ -25012,8 +30208,8 @@ function collectIisConnectionStrings(section: string): string[] {
       if (!name) return "";
       const provider = attrs.get("providerName");
       return [
-        clampSingleLine(maskPotentialSecretValues(name), 80),
-        provider ? `provider=${clampSingleLine(maskPotentialSecretValues(provider), 80)}` : "",
+        sanitizeIisPreviewValue(name, 80),
+        provider ? `provider=${sanitizeIisPreviewValue(provider, 80)}` : "",
       ].filter(Boolean).join(" ");
     })
     .filter(Boolean);
@@ -25024,7 +30220,7 @@ function collectIisNamedPathTags(section: string, tagName: string, keys: string[
     .map((attrs) => keys
       .map((key) => {
         const value = attrs.get(key);
-        return value ? `${key}=${clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(value)), 80)}` : "";
+        return value ? `${key}=${sanitizeIisPreviewValue(value, 80)}` : "";
       })
       .filter(Boolean)
       .join(" "))
@@ -25035,7 +30231,7 @@ function collectIisAuthenticationHints(section: string): string[] {
   const hints = new Set<string>();
   for (const attrs of collectIisTagAttributes(section, "authentication", MAX_IIS_WEB_CONFIG_ITEM_PREVIEW)) {
     const mode = attrs.get("mode");
-    if (mode) hints.add(`authentication mode=${clampSingleLine(maskPotentialSecretValues(mode), 60)}`);
+    if (mode) hints.add(`authentication mode=${sanitizeIisPreviewValue(mode, 60)}`);
   }
   for (const tag of ["anonymousAuthentication", "windowsAuthentication", "basicAuthentication", "clientCertificateMappingAuthentication"]) {
     for (const attrs of collectIisTagAttributes(section, tag, MAX_IIS_WEB_CONFIG_ITEM_PREVIEW)) {
@@ -25052,10 +30248,10 @@ function collectIisRewriteRules(section: string): string[] {
     const actionAttrs = readIisXmlAttributes(block.body.match(/<action\b([^>]*)\/?>/i)?.[1] ?? "");
     const matchAttrs = readIisXmlAttributes(block.body.match(/<match\b([^>]*)\/?>/i)?.[1] ?? "");
     return [
-      ruleAttrs.get("name") ? `name=${clampSingleLine(maskPotentialSecretValues(ruleAttrs.get("name") ?? ""), 80)}` : "",
-      matchAttrs.get("url") ? `match=${clampSingleLine(redactUrlQuerySecrets(matchAttrs.get("url") ?? ""), 80)}` : "",
-      actionAttrs.get("type") ? `action=${clampSingleLine(maskPotentialSecretValues(actionAttrs.get("type") ?? ""), 60)}` : "",
-      actionAttrs.get("url") ? `url=${clampSingleLine(redactUrlQuerySecrets(actionAttrs.get("url") ?? ""), 120)}` : "",
+      ruleAttrs.get("name") ? `name=${sanitizeIisPreviewValue(ruleAttrs.get("name") ?? "", 80)}` : "",
+      matchAttrs.get("url") ? `match=${sanitizeIisPreviewValue(matchAttrs.get("url") ?? "", 80)}` : "",
+      actionAttrs.get("type") ? `action=${sanitizeIisPreviewValue(actionAttrs.get("type") ?? "", 60)}` : "",
+      actionAttrs.get("url") ? `url=${sanitizeIisPreviewValue(actionAttrs.get("url") ?? "", 120)}` : "",
     ].filter(Boolean).join(" ");
   }).filter(Boolean);
 }
@@ -25082,6 +30278,10 @@ function collectIisLocationPaths(raw: string): string[] {
     .map((attrs) => attrs.get("path") || "")
     .filter(Boolean)
     .map((path) => clampSingleLine(maskPotentialSecretPathSegments(path), 120));
+}
+
+function sanitizeIisPreviewValue(value: string, maxLength: number): string {
+  return clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(value)), maxLength);
 }
 
 function extractXmlSection(raw: string, tagName: string): string {
@@ -25392,6 +30592,165 @@ function sanitizeHostsFileToken(value: string): string {
       .replace(/\b[A-Za-z0-9-]*(?:token|secret|password|passwd|pwd|api[_-]?key|credential)[A-Za-z0-9-]*(?=\.|$)/gi, "[redacted]"),
     140,
   );
+}
+
+interface RdpConfigPreview {
+  connectionHints: string[];
+  displayHints: string[];
+  redirectHints: string[];
+  authHints: string[];
+  programHints: string[];
+  riskHints: string[];
+  sampleLines: string[];
+  lineCount: number;
+  truncated: boolean;
+}
+
+function summarizeRdpConfigFile(filePath: string, size: number): string {
+  try {
+    const raw = decodeRdpConfigText(readFileHeader(filePath, Math.min(size, MAX_RDP_CONFIG_PREVIEW_BYTES)));
+    const preview = parseRdpConfigPreview(raw);
+    return [
+      `Remote Desktop RDP configuration preview (${formatBytes(size)}).`,
+      preview.connectionHints.length > 0
+        ? `Connection hints (${preview.connectionHints.length}${preview.connectionHints.length >= MAX_RDP_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.connectionHints.join(" | ")}.`
+        : "Connection hints: none detected in the bounded preview.",
+      preview.displayHints.length > 0
+        ? `Display hints: ${preview.displayHints.join(", ")}.`
+        : "Display hints: none detected.",
+      preview.redirectHints.length > 0
+        ? `Device/resource redirection hints: ${preview.redirectHints.join(", ")}.`
+        : "Device/resource redirection hints: none detected.",
+      preview.authHints.length > 0
+        ? `Authentication hints: ${preview.authHints.join(", ")}.`
+        : "Authentication hints: none detected.",
+      preview.programHints.length > 0
+        ? `Program/session hints: ${preview.programHints.join(" | ")}.`
+        : "Program/session hints: none detected.",
+      preview.riskHints.length > 0
+        ? `Static risk cues: ${preview.riskHints.join(" | ")}.`
+        : "Static risk cues: none detected in the bounded preview.",
+      preview.sampleLines.length > 0 ? `Sample settings:\n${preview.sampleLines.join("\n")}` : "",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_RDP_CONFIG_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; RDP settings were parsed from bounded workspace-local text only, password blobs and token-like values were redacted, and no mstsc.exe launch, RDP connection, gateway probe, redirected drive access, credential lookup, registry mutation, network call, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Remote Desktop RDP configuration ready for explicit attachment (${formatBytes(size)}).`,
+      "RDP preview could not read bounded local text; no mstsc.exe launch, RDP connection, gateway probe, redirected drive access, credential lookup, registry mutation, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function decodeRdpConfigText(buffer: Buffer): string {
+  if (buffer.length >= 2 && buffer[0] === 0xff && buffer[1] === 0xfe) {
+    return buffer.subarray(2).toString("utf16le");
+  }
+  if (buffer.subarray(0, Math.min(buffer.length, 200)).includes(0)) {
+    return buffer.toString("utf16le");
+  }
+  return buffer.toString("utf8");
+}
+
+function parseRdpConfigPreview(raw: string): RdpConfigPreview {
+  const connectionHints = new Set<string>();
+  const displayHints = new Set<string>();
+  const redirectHints = new Set<string>();
+  const authHints = new Set<string>();
+  const programHints = new Set<string>();
+  const riskHints = new Set<string>();
+  const sampleLines: string[] = [];
+  const lines = normalizeTextPreview(raw)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  for (const line of lines) {
+    const parsed = parseRdpSettingLine(line);
+    if (!parsed) continue;
+    const { key, type, value } = parsed;
+    const safeValue = sanitizeRdpSettingValue(key, value);
+    if (sampleLines.length < 10) sampleLines.push(`${key}:${type}:${clampSingleLine(safeValue, 180)}`);
+    collectRdpSettingPreview(key, safeValue, connectionHints, displayHints, redirectHints, authHints, programHints, riskHints);
+  }
+
+  return {
+    connectionHints: uniquePreviewValues([...connectionHints], MAX_RDP_CONFIG_ITEM_PREVIEW),
+    displayHints: uniquePreviewValues([...displayHints], MAX_RDP_CONFIG_ITEM_PREVIEW),
+    redirectHints: uniquePreviewValues([...redirectHints], MAX_RDP_CONFIG_ITEM_PREVIEW),
+    authHints: uniquePreviewValues([...authHints], MAX_RDP_CONFIG_ITEM_PREVIEW),
+    programHints: uniquePreviewValues([...programHints], MAX_RDP_CONFIG_ITEM_PREVIEW),
+    riskHints: uniquePreviewValues([...riskHints], MAX_RDP_CONFIG_ITEM_PREVIEW),
+    sampleLines,
+    lineCount: lines.length,
+    truncated: raw.length >= MAX_RDP_CONFIG_PREVIEW_BYTES,
+  };
+}
+
+function parseRdpSettingLine(line: string): { key: string; type: string; value: string } | null {
+  const match = line.match(/^([^:]+):([a-z]):([\s\S]*)$/i);
+  if (!match?.[1] || !match[2]) return null;
+  return {
+    key: clampSingleLine(match[1].trim().toLowerCase(), 90),
+    type: match[2].toLowerCase(),
+    value: match[3] || "",
+  };
+}
+
+function collectRdpSettingPreview(
+  key: string,
+  value: string,
+  connectionHints: Set<string>,
+  displayHints: Set<string>,
+  redirectHints: Set<string>,
+  authHints: Set<string>,
+  programHints: Set<string>,
+  riskHints: Set<string>,
+): void {
+  if (key === "full address" && connectionHints.size < MAX_RDP_CONFIG_ITEM_PREVIEW) connectionHints.add(`full address=${value}`);
+  if (key === "gatewayhostname" && connectionHints.size < MAX_RDP_CONFIG_ITEM_PREVIEW) connectionHints.add(`gateway=${value}`);
+  if (key === "username" && connectionHints.size < MAX_RDP_CONFIG_ITEM_PREVIEW) connectionHints.add(`username=${summarizeRdpUserLabel(value)}`);
+  if (key === "alternate full address" && connectionHints.size < MAX_RDP_CONFIG_ITEM_PREVIEW) connectionHints.add(`alternate address=${value}`);
+  if (["screen mode id", "desktopwidth", "desktopheight", "session bpp", "use multimon"].includes(key) && displayHints.size < MAX_RDP_CONFIG_ITEM_PREVIEW) {
+    displayHints.add(`${key}=${value}`);
+  }
+  if (/^(?:redirect|drivestoredirect|devicestoredirect|audiomode|camerastoredirect|usbdevicestoredirect|redirectsmartcards)/i.test(key)) {
+    if (redirectHints.size < MAX_RDP_CONFIG_ITEM_PREVIEW) redirectHints.add(`${key}=${value}`);
+    if (["redirectdrives", "drivestoredirect", "redirectclipboard", "redirectsmartcards", "usbdevicestoredirect"].includes(key)) {
+      riskHints.add("local resource redirection requires review");
+    }
+  }
+  if (["authentication level", "prompt for credentials", "enablecredsspsupport", "negotiate security layer", "gatewayusagemethod", "gatewaycredentialssource"].includes(key)) {
+    if (authHints.size < MAX_RDP_CONFIG_ITEM_PREVIEW) authHints.add(`${key}=${value}`);
+  }
+  if (["alternate shell", "shell working directory", "remoteapplicationprogram", "remoteapplicationname", "remoteapplicationcmdline"].includes(key)) {
+    if (programHints.size < MAX_RDP_CONFIG_ITEM_PREVIEW) programHints.add(`${key}=${value}`);
+    riskHints.add("remote program/session launch setting present");
+  }
+  if (/password|credential|cookie|loadbalanceinfo/i.test(key)) riskHints.add(`${key} value redacted`);
+  if (/gateway/i.test(key)) riskHints.add("gateway setting present");
+}
+
+function sanitizeRdpSettingValue(key: string, value: string): string {
+  if (/password|credential|cookie|loadbalanceinfo/i.test(key)) return "[redacted]";
+  return clampSingleLine(
+    maskPotentialSecretValues(redactUrlQuerySecrets(value))
+      .replace(/\bsecret[-_][A-Za-z0-9._/-]+/gi, "[redacted]")
+      .replace(/\b[A-Za-z0-9+/=]{48,}\b/g, "[redacted]"),
+    220,
+  );
+}
+
+function summarizeRdpUserLabel(value: string): string {
+  const safe = sanitizeRdpSettingValue("username", value);
+  if (!safe) return "[empty]";
+  if (safe.includes("@")) {
+    const domain = safe.split("@").pop() || "";
+    return domain ? `email user [redacted]@${domain}` : "email user [redacted]";
+  }
+  const parts = safe.split(/[\\/]/).filter(Boolean);
+  const user = parts.pop() || safe;
+  return `username length ${user.length}`;
 }
 
 interface VpnConfigPreview {
@@ -25830,6 +31189,155 @@ function summarizeVsCodeWorkspaceConfigFile(filePath: string, extension: string,
       "VS Code config preview could not parse bounded local JSON/JSONC; no VS Code process, task/debug launch, extension install, terminal command, network call, or provider send was performed.",
     ].join("\n").slice(0, MAX_TEXT_BYTES);
   }
+}
+
+function isJetBrainsIdeConfigFile(filePath: string, extension: string): boolean {
+  if (extension === ".jetbrains-ide.xml") return true;
+  const normalizedPath = filePath.replace(/\\/g, "/").toLowerCase();
+  return (normalizedPath.includes("/.idea/") && normalizedPath.endsWith(".xml")) || normalizedPath.endsWith(".iml");
+}
+
+function summarizeJetBrainsIdeConfigFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_JETBRAINS_IDE_CONFIG_PREVIEW_BYTES)).toString("utf8");
+    const preview = readJetBrainsIdeConfigPreview(filePath, raw);
+    return [
+      `JetBrains IDE config preview (${preview.format}, ${formatBytes(size)}).`,
+      preview.components.length > 0
+        ? `Components (${preview.components.length}${preview.components.length >= MAX_JETBRAINS_IDE_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.components.join(", ")}.`
+        : "Components: none detected in the bounded XML preview.",
+      preview.modules.length > 0
+        ? `Modules (${preview.modules.length}${preview.modules.length >= MAX_JETBRAINS_IDE_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.modules.join(", ")}.`
+        : "Modules: none detected in the bounded XML preview.",
+      preview.dependencies.length > 0
+        ? `SDK/dependency entries (${preview.dependencies.length}${preview.dependencies.length >= MAX_JETBRAINS_IDE_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.dependencies.join(" | ")}.`
+        : "SDK/dependency entries: none detected in the bounded XML preview.",
+      preview.runConfigurations.length > 0
+        ? `Run configurations (${preview.runConfigurations.length}${preview.runConfigurations.length >= MAX_JETBRAINS_IDE_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.runConfigurations.join(" | ")}.`
+        : "Run configurations: none detected in the bounded XML preview.",
+      preview.sourceRoots.length > 0
+        ? `Source/content roots (${preview.sourceRoots.length}${preview.sourceRoots.length >= MAX_JETBRAINS_IDE_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.sourceRoots.join(", ")}.`
+        : "Source/content roots: none detected in the bounded XML preview.",
+      preview.riskHints.length > 0
+        ? `Static risk cues: ${preview.riskHints.join(" | ")}.`
+        : "Static risk cues: none detected in the bounded preview.",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_JETBRAINS_IDE_CONFIG_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; JetBrains IDE metadata was parsed from bounded workspace-local XML only, run configurations were not launched, path macros were not resolved, project indexing/import was not started, no JetBrains IDE process, Gradle/Maven/npm command, plugin install, filesystem mutation, network call, credential lookup, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `JetBrains IDE config ready for explicit attachment (${formatBytes(size)}).`,
+      "JetBrains IDE config preview could not parse bounded local XML; no JetBrains IDE process, run configuration launch, project import, build command, network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function readJetBrainsIdeConfigPreview(filePath: string, raw: string): {
+  format: string;
+  components: string[];
+  modules: string[];
+  dependencies: string[];
+  runConfigurations: string[];
+  sourceRoots: string[];
+  riskHints: string[];
+  truncated: boolean;
+} {
+  const components = [...raw.matchAll(/<component\b([^>]*)>/gi)]
+    .map((match) => sanitizeJetBrainsIdeValue(readXmlAttribute(match[1] ?? "", "name")))
+    .filter(Boolean);
+  const modules = [
+    ...[...raw.matchAll(/<module\b([^>]*)>/gi)]
+      .map((match) => formatJetBrainsPathLabel(readXmlAttribute(match[1] ?? "", "fileurl") || readXmlAttribute(match[1] ?? "", "filepath"))),
+    ...[...raw.matchAll(/<content\b([^>]*)>/gi)]
+      .map((match) => formatJetBrainsPathLabel(readXmlAttribute(match[1] ?? "", "url"))),
+  ].filter(Boolean);
+  const dependencies = [...raw.matchAll(/<orderEntry\b([^>]*)>/gi)]
+    .map((match) => formatJetBrainsOrderEntry(match[1] ?? ""))
+    .filter(Boolean);
+  const runConfigurations = [...raw.matchAll(/<configuration\b([^>]*)>/gi)]
+    .map((match) => formatJetBrainsRunConfiguration(match[1] ?? "", raw))
+    .filter(Boolean);
+  const sourceRoots = [...raw.matchAll(/<sourceFolder\b([^>]*)>/gi)]
+    .map((match) => {
+      const attrs = match[1] ?? "";
+      const root = formatJetBrainsPathLabel(readXmlAttribute(attrs, "url"));
+      const type = sanitizeJetBrainsIdeValue(readXmlAttribute(attrs, "type"));
+      return [root, type ? `type=${type}` : ""].filter(Boolean).join(" ");
+    })
+    .filter(Boolean);
+  const riskHints = collectJetBrainsIdeRiskHints(raw);
+  return {
+    format: readJetBrainsIdeConfigFormat(filePath),
+    components: uniquePreviewValues(components, MAX_JETBRAINS_IDE_CONFIG_ITEM_PREVIEW),
+    modules: uniquePreviewValues(modules, MAX_JETBRAINS_IDE_CONFIG_ITEM_PREVIEW),
+    dependencies: uniquePreviewValues(dependencies, MAX_JETBRAINS_IDE_CONFIG_ITEM_PREVIEW),
+    runConfigurations: uniquePreviewValues(runConfigurations, MAX_JETBRAINS_IDE_CONFIG_ITEM_PREVIEW),
+    sourceRoots: uniquePreviewValues(sourceRoots, MAX_JETBRAINS_IDE_CONFIG_ITEM_PREVIEW),
+    riskHints: uniquePreviewValues(riskHints, MAX_JETBRAINS_IDE_CONFIG_ITEM_PREVIEW),
+    truncated:
+      raw.length >= MAX_JETBRAINS_IDE_CONFIG_PREVIEW_BYTES ||
+      components.length > MAX_JETBRAINS_IDE_CONFIG_ITEM_PREVIEW ||
+      modules.length > MAX_JETBRAINS_IDE_CONFIG_ITEM_PREVIEW ||
+      dependencies.length > MAX_JETBRAINS_IDE_CONFIG_ITEM_PREVIEW ||
+      runConfigurations.length > MAX_JETBRAINS_IDE_CONFIG_ITEM_PREVIEW,
+  };
+}
+
+function readJetBrainsIdeConfigFormat(filePath: string): string {
+  const normalizedPath = filePath.replace(/\\/g, "/").toLowerCase();
+  const name = basename(filePath);
+  if (normalizedPath.includes("/.idea/runconfigurations/")) return `JetBrains run configuration ${name}`;
+  if (name.toLowerCase().endsWith(".iml")) return `JetBrains module ${name}`;
+  return `JetBrains .idea ${name}`;
+}
+
+function formatJetBrainsOrderEntry(attrs: string): string {
+  const type = sanitizeJetBrainsIdeValue(readXmlAttribute(attrs, "type"));
+  const name = sanitizeJetBrainsIdeValue(readXmlAttribute(attrs, "name") || readXmlAttribute(attrs, "module-name"));
+  const jdkName = sanitizeJetBrainsIdeValue(readXmlAttribute(attrs, "jdkName"));
+  const jdkType = sanitizeJetBrainsIdeValue(readXmlAttribute(attrs, "jdkType"));
+  return [type || "orderEntry", name, jdkName ? `jdk=${jdkName}` : "", jdkType ? `type=${jdkType}` : ""]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function formatJetBrainsRunConfiguration(attrs: string, raw: string): string {
+  const name = sanitizeJetBrainsIdeValue(readXmlAttribute(attrs, "name") || "(unnamed)");
+  const type = sanitizeJetBrainsIdeValue(readXmlAttribute(attrs, "type"));
+  const factory = sanitizeJetBrainsIdeValue(readXmlAttribute(attrs, "factoryName"));
+  const mainClass = sanitizeJetBrainsIdeValue(readJetBrainsOptionValue(raw, "MAIN_CLASS_NAME"));
+  const workingDirectory = formatJetBrainsPathLabel(readJetBrainsOptionValue(raw, "WORKING_DIRECTORY"));
+  return [name, type ? `type=${type}` : "", factory ? `factory=${factory}` : "", mainClass ? `main=${mainClass}` : "", workingDirectory ? `cwd=${workingDirectory}` : ""]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function readJetBrainsOptionValue(raw: string, optionName: string): string {
+  const escapedName = optionName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = raw.match(new RegExp(`<option\\b[^>]*\\bname=["']${escapedName}["'][^>]*\\bvalue=["']([^"']*)["']`, "i"));
+  return match?.[1] ? decodeXmlEntities(match[1]).trim() : "";
+}
+
+function collectJetBrainsIdeRiskHints(raw: string): string[] {
+  const hints = new Set<string>();
+  if (/\bPROGRAM_PARAMETERS\b|\bVM_PARAMETERS\b|\benvs\b|<env\b/i.test(raw)) hints.add("run parameters or environment keys present");
+  if (/\bGradleRunConfiguration\b|\bExternalSystemTaskExecutionSettings\b/i.test(raw)) hints.add("external build/task configuration present");
+  if (/\bMavenRunConfiguration\b|\bmaven\b/i.test(raw)) hints.add("Maven configuration present");
+  if (/\bhttp:\/\/|\bhttps:\/\//i.test(raw)) hints.add("URL reference present");
+  if (/\btoken\b|\bsecret\b|\bpassword\b|\bapi[_-]?key\b/i.test(raw)) hints.add("credential-shaped value redacted");
+  return [...hints];
+}
+
+function formatJetBrainsPathLabel(value: string): string {
+  const sanitized = sanitizeJetBrainsIdeValue(value);
+  if (!sanitized) return "";
+  const withoutMacro = sanitized.replace(/\$PROJECT_DIR\$/g, "$PROJECT_DIR");
+  const parts = withoutMacro.replace(/\\/g, "/").split("/").filter(Boolean);
+  return clampSingleLine(parts.slice(-3).join("/") || withoutMacro, 140);
+}
+
+function sanitizeJetBrainsIdeValue(value: string): string {
+  return clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(decodeXmlEntities(value))), 180);
 }
 
 function parseJsoncLike(raw: string): unknown {
@@ -27781,6 +33289,8 @@ function normalizeNetlogConstant(value: unknown, parsed: unknown, group: string)
   if (typeof value !== "number") return "";
   const constants = isRecord(parsed) && isRecord(parsed.constants) ? parsed.constants : {};
   const mapping = isRecord(constants[group]) ? constants[group] : {};
+  const direct = mapping[String(value)];
+  if (typeof direct === "string" && direct.trim()) return clampSingleLine(direct, 120);
   const match = Object.entries(mapping).find(([, raw]) => Number(raw) === value)?.[0];
   return match ? clampSingleLine(match, 120) : String(value);
 }
@@ -27827,6 +33337,8 @@ function collectNetlogDetailSamples(params: Record<string, unknown>): string[] {
 
 function sanitizeNetlogValue(value: string): string {
   if (/^https?:\/\//i.test(value)) return redactHarUrl(value);
+  const sensitiveHeader = value.match(/^\s*(authorization|proxy-authorization|cookie|set-cookie)\s*:/i);
+  if (sensitiveHeader) return `${sensitiveHeader[1]}: [redacted]`;
   return clampSingleLine(maskPotentialSecretValues(value), 180);
 }
 
@@ -28654,7 +34166,15 @@ function readSvgImageMetadata(filePath: string): ChannelImageMetadata | null {
     const tag = svg.match(/<svg\b[^>]*>/i)?.[0] || "";
     const dimensions = readSvgDimensions(tag);
     const text = extractSvgTextPreview(svg);
-    return dimensions || text ? { format: "SVG", ...(dimensions ? { dimensions } : {}), ...(text ? { text } : {}) } : null;
+    const detail = summarizeSvgStructureHints(svg, tag);
+    return dimensions || text || detail
+      ? {
+          format: "SVG",
+          ...(dimensions ? { dimensions } : {}),
+          ...(detail ? { detail } : {}),
+          ...(text ? { text } : {}),
+        }
+      : null;
   } catch {
     return null;
   }
@@ -28695,6 +34215,51 @@ function extractSvgTextPreview(svg: string): string {
     .slice(0, 4)
     .join(" | ")
     .slice(0, 480);
+}
+
+function summarizeSvgStructureHints(svg: string, svgTag: string): string | undefined {
+  const hints: string[] = [];
+  const viewBox = readXmlAttribute(svgTag, "viewBox");
+  if (viewBox) hints.push(`viewBox=${clampSingleLine(viewBox, 80)}`);
+
+  const elementCounts: Array<[string, number]> = [];
+  for (const tagName of ["symbol", "use", "path", "image", "script", "foreignObject"]) {
+    const count = countSvgElements(svg, tagName);
+    if (count > 0) elementCounts.push([tagName, count]);
+  }
+  if (elementCounts.length > 0) {
+    hints.push(`elements ${elementCounts.map(([name, count]) => `${name}=${count}`).join(", ")}`);
+  }
+
+  const idSamples = [...svg.matchAll(/\bid\s*=\s*["']([^"']+)["']/gi)]
+    .map((match) => sanitizeSvgHintValue(match[1] || ""))
+    .filter(Boolean)
+    .slice(0, 6);
+  if (idSamples.length > 0) hints.push(`ids ${uniqueBounded(idSamples, 6).join(", ")}`);
+
+  const riskCues = summarizeSvgRiskCues(svg);
+  if (riskCues.length > 0) hints.push(`risk cues ${riskCues.join(", ")}`);
+
+  return hints.join("; ").slice(0, 640) || undefined;
+}
+
+function countSvgElements(svg: string, tagName: string): number {
+  return (svg.match(new RegExp(`<${tagName}\\b`, "gi")) || []).length;
+}
+
+function summarizeSvgRiskCues(svg: string): string[] {
+  const cues = new Set<string>();
+  if (/<script\b/i.test(svg)) cues.add("script element");
+  if (/<foreignObject\b/i.test(svg)) cues.add("foreignObject");
+  if (/\son[a-z]+\s*=/i.test(svg)) cues.add("inline event handler");
+  if (/\b(?:href|xlink:href)\s*=\s*["']https?:\/\//i.test(svg)) cues.add("external reference");
+  if (/\b(?:href|xlink:href)\s*=\s*["']data:/i.test(svg)) cues.add("data URI reference");
+  if (/\b(?:href|xlink:href)\s*=\s*["']javascript:/i.test(svg)) cues.add("javascript URI reference");
+  return [...cues].slice(0, 8);
+}
+
+function sanitizeSvgHintValue(value: string): string {
+  return clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(decodeXmlEntities(value))), 120);
 }
 
 function readFileHeader(filePath: string, maxBytes: number): Buffer {
@@ -29549,6 +35114,10 @@ function decodeQuotedPrintable(value: string): string {
 
 function extractPdfTextSummary(filePath: string): string {
   try {
+    const structured = extractPresentationPdfSync(filePath);
+    if (structured) {
+      return formatPresentationPdfSummary(structured, MAX_TEXT_BYTES);
+    }
     const raw = readFileHeader(filePath, MAX_PDF_METADATA_PREVIEW_BYTES).toString("latin1");
     const metadata = readPdfMetadataSummary(raw);
     const structureSecurity = readPdfStructureSecurityHints(raw);
@@ -29891,6 +35460,129 @@ function extractMarkdownTextSummary(filePath: string, size: number): string {
   } catch {
     return "";
   }
+}
+
+interface GithubActionsJobSummaryPreview {
+  headings: string[];
+  statusCues: string[];
+  failureCues: string[];
+  tableRows: string[];
+  links: string[];
+  commandCues: string[];
+  truncated: boolean;
+}
+
+function summarizeGithubActionsJobSummaryFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_GHA_JOB_SUMMARY_PREVIEW_BYTES)).toString("utf8");
+    const preview = parseGithubActionsJobSummaryPreview(raw);
+    return [
+      `GitHub Actions job summary preview (${formatBytes(size)}).`,
+      preview.headings.length > 0 ? `Headings: ${preview.headings.join(" | ")}.` : "Headings: none detected.",
+      preview.statusCues.length > 0 ? `Status cues: ${preview.statusCues.join(" | ")}.` : "Status cues: none detected.",
+      preview.tableRows.length > 0 ? `Table rows: ${preview.tableRows.join(" | ")}.` : "Table rows: none detected.",
+      preview.failureCues.length > 0 ? `Failure/warning cues: ${preview.failureCues.join(" | ")}.` : "Failure/warning cues: none detected.",
+      preview.commandCues.length > 0 ? `Command/code cues: ${preview.commandCues.join(" | ")}.` : "",
+      preview.links.length > 0 ? `Links: ${preview.links.join(" | ")}.` : "",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_GHA_JOB_SUMMARY_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; GitHub Actions job summary Markdown was parsed from bounded workspace-local text only, likely secrets were redacted, linked artifacts were not downloaded, no GitHub API call, CI runner, log fetch, network call, workspace mutation, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `GitHub Actions job summary ready for explicit attachment (${formatBytes(size)}).`,
+      "The bounded local job summary preview could not be read; no GitHub API call, CI runner, log fetch, artifact download, network call, workspace mutation, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseGithubActionsJobSummaryPreview(raw: string): GithubActionsJobSummaryPreview {
+  const normalized = normalizeTextPreview(stripUtf8Bom(raw));
+  const lines = normalized.split("\n");
+  const headings: string[] = [];
+  const statusCues = new Set<string>();
+  const failureCues: string[] = [];
+  const tableRows: string[] = [];
+  const links: string[] = [];
+  const commandCues: string[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    const heading = trimmed.match(/^(#{1,6})\s+(.+)$/);
+    if (heading?.[2] && headings.length < MAX_GHA_JOB_SUMMARY_ITEM_PREVIEW) {
+      headings.push(clampSingleLine(maskPotentialSecretValues(stripMarkdownInline(heading[2])), 140));
+    }
+
+    collectGithubActionsStatusCues(trimmed, statusCues);
+
+    if (/(\bfail(?:ed|ure|ing)?\b|\berror\b|\bwarning\b|\bcancel(?:led|ed)?\b|\btimed?\s*out\b)/i.test(trimmed)) {
+      addGithubActionsJobSummaryItem(
+        failureCues,
+        clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(stripMarkdownInline(trimmed))), 220),
+      );
+    }
+
+    if (/^\|.+\|$/.test(trimmed) && !/^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$/.test(trimmed)) {
+      const cells = trimmed
+        .split("|")
+        .map((cell) => stripMarkdownInline(cell.trim()))
+        .filter(Boolean);
+      if (cells.length > 0) {
+        addGithubActionsJobSummaryItem(
+          tableRows,
+          clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(cells.join(" -> "))), 220),
+        );
+      }
+    }
+
+    for (const match of trimmed.matchAll(/\[([^\]]+)]\(([^)]+)\)/g)) {
+      if (!match[1] || !match[2]) continue;
+      addGithubActionsJobSummaryItem(
+        links,
+        `${clampSingleLine(maskPotentialSecretValues(stripMarkdownInline(match[1])), 80)}=${clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(match[2])), 160)}`,
+      );
+    }
+
+    for (const match of trimmed.matchAll(/`([^`]{2,160})`/g)) {
+      if (!match[1]) continue;
+      addGithubActionsJobSummaryItem(
+        commandCues,
+        clampSingleLine(maskPotentialSecretValues(match[1]), 160),
+      );
+    }
+  }
+
+  return {
+    headings,
+    statusCues: [...statusCues].slice(0, MAX_GHA_JOB_SUMMARY_ITEM_PREVIEW),
+    failureCues,
+    tableRows,
+    links,
+    commandCues,
+    truncated: raw.length >= MAX_GHA_JOB_SUMMARY_PREVIEW_BYTES || lines.length > MAX_GHA_JOB_SUMMARY_ITEM_PREVIEW * 8,
+  };
+}
+
+function collectGithubActionsStatusCues(line: string, output: Set<string>): void {
+  const statusPatterns: Array<[RegExp, string]> = [
+    [/\b(pass(?:ed)?|success|succeeded|green)\b/i, "passed/succeeded"],
+    [/\b(fail(?:ed|ure|ing)?|red)\b/i, "failed"],
+    [/\b(error|exception)\b/i, "error"],
+    [/\b(warn(?:ing)?|yellow)\b/i, "warning"],
+    [/\b(skip(?:ped)?|neutral)\b/i, "skipped"],
+    [/\b(cancel(?:led|ed)?|timed?\s*out)\b/i, "cancelled/timeout"],
+    [/\bartifact(s)?\b/i, "artifact reference"],
+    [/\bcoverage\b/i, "coverage"],
+  ];
+  for (const [pattern, label] of statusPatterns) {
+    if (pattern.test(line) && output.size < MAX_GHA_JOB_SUMMARY_ITEM_PREVIEW) output.add(label);
+  }
+}
+
+function addGithubActionsJobSummaryItem(target: string[], value: string): void {
+  if (!value || target.includes(value) || target.length >= MAX_GHA_JOB_SUMMARY_ITEM_PREVIEW) return;
+  target.push(value);
 }
 
 function stripMarkdownInline(raw: string): string {
@@ -33498,6 +39190,7 @@ function getMime(extension: string): string {
       ".aof": "application/vnd.redis.aof",
       ".ansible-inventory": "text/x-ansible-inventory",
       ".androidmanifest.xml": "application/vnd.android.package-archive.manifest+xml",
+      ".android-resource.xml": "application/vnd.android.resource+xml",
       ".apk": "application/vnd.android.package-archive",
       ".appx": "application/vnd.ms-appx",
       ".appxmanifest": "application/vnd.ms-appxmanifest+xml",
@@ -33534,18 +39227,22 @@ function getMime(extension: string): string {
       ".browser-session.json": "application/vnd.drsai.browser-session+json",
       ".browser-storage.json": "application/vnd.drsai.browser-storage+json",
       ".bru": "text/x-bruno",
+      ".bazel-build": "text/x-bazel",
       ".c": "text/x-c",
       ".cabal": "text/x-cabal",
       ".cat": "application/vnd.ms-pki.seccat",
+      ".citation.cff": "application/vnd.citationstyles.cff+yaml",
       ".cast": "application/vnd.asciinema.cast",
       ".cc": "text/x-c++",
       ".calendar.csv": "text/csv+calendar",
       ".checkstyle.xml": "application/vnd.checkstyle+xml",
+      ".cff": "application/vnd.citationstyles.cff+yaml",
       ".cjs": "text/javascript",
       ".cmd": "text/x-msdos-batch",
       ".cfg": "text/plain",
       ".codeowners": "text/x-codeowners",
       ".cpuprofile": "application/vnd.v8.cpuprofile+json",
+      ".crx": "application/x-chrome-extension",
       ".chat-export.csv": "text/csv+chat-export",
       ".chat-export.json": "application/vnd.drsai.chat-export+json",
       ".chat-export.txt": "text/plain+chat-export",
@@ -33593,7 +39290,11 @@ function getMime(extension: string): string {
       ".crt": "application/x-x509-ca-cert",
       ".der": "application/pkix-cert",
       ".desktop": "application/x-desktop",
+      ".dependabot.yaml": "application/vnd.github.dependabot.config+yaml",
+      ".renovate.json": "application/vnd.renovate.config+json",
+      ".devcontainer.json": "application/vnd.devcontainer+json",
       ".diff": "text/x-diff",
+      ".docker-compose.yaml": "application/vnd.docker.compose+yaml",
       ".env": "text/x-dotenv",
       ".envrc": "text/x-direnv",
       ".exe": "application/vnd.microsoft.portable-executable",
@@ -33614,6 +39315,7 @@ function getMime(extension: string): string {
       ".glb": "model/gltf-binary",
       ".gltf": "model/gltf+json",
       ".gitattributes": "text/x-gitattributes",
+      ".github-template": "application/vnd.github.template",
       ".gitignore": "text/x-gitignore",
       ".gitmodules": "text/x-gitmodules",
       ".mailmap": "text/x-mailmap",
@@ -33624,11 +39326,15 @@ function getMime(extension: string): string {
       ".hdmp": "application/vnd.microsoft.minidump",
       ".heapsnapshot": "application/vnd.v8.heapsnapshot+json",
       ".helm-chart.yaml": "application/vnd.cncf.helm.chart+yaml",
+      ".helm-values.yaml": "application/vnd.cncf.helm.values+yaml",
       ".go": "text/x-go",
       ".gql": "application/graphql",
+      ".graphql-introspection.json": "application/vnd.graphql.introspection+json",
       ".gradle": "text/x-gradle",
       ".gradle.kts": "text/x-kotlin",
       ".gradle.properties": "text/x-gradle-properties",
+      ".gradle-version-catalog.toml": "application/vnd.gradle.version-catalog+toml",
+      ".gha-job-summary.md": "text/markdown+github-actions-summary",
       ".gv": "text/vnd.graphviz",
       ".gpx": "application/gpx+xml",
       ".graphql": "application/graphql",
@@ -33637,7 +39343,9 @@ function getMime(extension: string): string {
       ".http": "message/http",
       ".iis-web.config": "application/vnd.microsoft.iis.config+xml",
       ".web-server.conf": "text/x-web-server-config",
+      ".web-app-association.json": "application/vnd.drsai.web-app-association+json",
       ".webmanifest": "application/manifest+json",
+      ".winget-manifest.yaml": "application/vnd.microsoft.winget.manifest+yaml",
       ".ini": "text/plain",
       ".istanbul-coverage.json": "application/vnd.istanbul.coverage+json",
       ".inf": "text/x-setup-inf",
@@ -33655,16 +39363,21 @@ function getMime(extension: string): string {
       ".ear": "application/java-archive",
       ".class": "application/java-vm",
       ".java": "text/x-java-source",
+      ".jetbrains-ide.xml": "application/vnd.jetbrains.ide.config+xml",
+      ".jfr": "application/jfr",
+      ".jmx": "application/vnd.jmeter+xml",
       ".jmeter.csv": "text/csv+jmeter",
       ".jmeter.xml": "application/vnd.jmeter+xml",
       ".jtl": "text/csv+jmeter",
       ".junit.xml": "application/junit+xml",
+      ".robot.xml": "application/vnd.robotframework+xml",
       ".nunit.xml": "application/vnd.nunit+xml",
       ".otel.json": "application/vnd.opentelemetry.otlp+json",
       ".otlp.json": "application/vnd.opentelemetry.otlp+json",
       ".lighthouse.json": "application/vnd.lighthouse.report+json",
       ".playwright-trace.zip": "application/vnd.playwright.trace+zip",
       ".powershell-transcript.txt": "text/x-powershell-transcript",
+      ".python-tooling-config": "application/vnd.drsai.python-tooling-config",
       ".test-results.json": "application/vnd.drsai.test-results+json",
       ".tokenizer-calibration.json": "application/vnd.drsai.tokenizer-calibration+json",
       ".trace.json": "application/x-chrome-trace+json",
@@ -33676,6 +39389,7 @@ function getMime(extension: string): string {
       ".kdbx": "application/x-keepass2",
       ".kml": "application/vnd.google-earth.kml+xml",
       ".kt": "text/x-kotlin",
+      ".kubeconfig.yaml": "application/vnd.kubernetes.kubeconfig+yaml",
       ".kustomization.yaml": "application/vnd.kubernetes.kustomization+yaml",
       ".kts": "text/x-kotlin",
       ".jpeg": "image/jpeg",
@@ -33701,6 +39415,7 @@ function getMime(extension: string): string {
       ".mjs": "text/javascript",
       ".man": "application/vnd.ms-etw-manifest+xml",
       ".maven.config": "text/x-maven-config",
+      ".maven-settings.xml": "application/vnd.apache.maven.settings+xml",
       ".msi": "application/x-msi",
       ".msix": "application/vnd.ms-appx",
       ".msixbundle": "application/vnd.ms-appxBundle",
@@ -33716,6 +39431,7 @@ function getMime(extension: string): string {
       ".mp3": "audio/mpeg",
       ".mmd": "text/vnd.mermaid",
       ".json": "application/json",
+      ".json-schema.json": "application/schema+json",
       ".jsonfeed": "application/feed+json",
       ".jsonl": "application/x-ndjson",
       ".md": "text/markdown",
@@ -33741,6 +39457,7 @@ function getMime(extension: string): string {
       ".otf": "font/otf",
       ".obj": "model/obj",
       ".openmetrics": "application/openmetrics-text",
+      ".pact.json": "application/vnd.pact.consumer+json",
       ".patch": "text/x-diff",
       ".parquet": "application/vnd.apache.parquet",
       ".path": "text/x-systemd-unit",
@@ -33757,6 +39474,7 @@ function getMime(extension: string): string {
       ".podfile.lock": "text/x-cocoapods-lockfile",
       ".pbxproj": "application/vnd.apple.xcode.pbxproj",
       ".podspec": "text/x-cocoapods-podspec",
+      ".pre-commit-config.yaml": "application/vnd.pre-commit.config+yaml",
       ".ppt": "application/vnd.ms-powerpoint",
       ".pptm": "application/vnd.ms-powerpoint.presentation.macroEnabled.12",
       ".png": "image/png",
@@ -33778,6 +39496,7 @@ function getMime(extension: string): string {
       ".rb": "text/x-ruby",
       ".rar": "application/vnd.rar",
       ".rdb": "application/vnd.redis.rdb",
+      ".rdp": "application/x-rdp",
       ".regex": "text/x-regex",
       ".regexp": "text/x-regex",
       ".reg": "text/x-windows-registry",
@@ -33787,11 +39506,13 @@ function getMime(extension: string): string {
       ".robots.txt": "text/plain",
       ".rs": "text/rust",
       ".rtf": "application/rtf",
+      ".ruff.toml": "application/vnd.astral-sh.ruff+toml",
       ".sass": "text/x-sass",
       ".sarif": "application/sarif+json",
       ".sarif.json": "application/sarif+json",
       ".scss": "text/x-scss",
       ".security-audit.json": "application/vnd.drsai.security-scan+json",
+      ".security.txt": "text/vnd.security",
       ".source-map.json": "application/vnd.drsai.source-map+json",
       ".service": "text/x-systemd-unit",
       ".supervisord.conf": "text/x-supervisord-conf",
@@ -33853,6 +39574,7 @@ function getMime(extension: string): string {
       ".vscode-launch.json": "application/vnd.code.launch+json",
       ".vscode-settings.json": "application/vnd.code.settings+json",
       ".vscode-tasks.json": "application/vnd.code.tasks+json",
+      ".vsix": "application/vsix",
       ".vtt": "text/vtt",
       ".vpn-config": "application/vnd.drsai.vpn-config",
       ".warc": "application/warc",

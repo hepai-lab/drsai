@@ -3,10 +3,16 @@ import { createSign, generateKeyPairSync } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { delimiter, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const currentBackendSource = resolve(root, "..", "..", "..", "cores", "python", "packages", "drsai", "src");
+const preparedAgentPython = process.env.OPENDRSAI_GATEWAY_SMOKE_PYTHON ||
+  join(root, ".tmp", "bootstrapper-msi3", ".drsai", "drsai-agent", "venv", "Scripts", "python.exe");
+const preparedAgentDir = existsSync(preparedAgentPython)
+  ? dirname(dirname(dirname(preparedAgentPython)))
+  : "";
 const exePath = join(root, "release", "win-unpacked", "OpenDrSai.exe");
 const electronCmd = process.platform === "win32"
   ? join(root, "node_modules", "electron", "dist", "electron.exe")
@@ -279,7 +285,7 @@ function tokenResponse(nonce, refreshToken, sequence = 0) {
   return {
     access_token: jwt({
       iss: issuer,
-      sub: "e2e-hai-user",
+      sub: "1f4b65b9-9f5d-4dfc-8d7d-10a61cd9f651",
       aud: "hai-api",
       exp: Math.floor(Date.now() / 1000) + 3600,
       roles: ["user"],
@@ -290,7 +296,7 @@ function tokenResponse(nonce, refreshToken, sequence = 0) {
     }),
     id_token: jwt({
       iss: issuer,
-      sub: "e2e-hai-user",
+      sub: "1f4b65b9-9f5d-4dfc-8d7d-10a61cd9f651",
       aud: "opendrsai-desktop",
       exp: Math.floor(Date.now() / 1000) + 3600,
       nonce: nonce || undefined,
@@ -361,7 +367,9 @@ function runPackagedApp() {
         LOCALAPPDATA: process.env.LOCALAPPDATA,
         APPDATA: process.env.APPDATA,
         PATH: systemPath,
+        PYTHONPATH: [currentBackendSource, process.env.PYTHONPATH].filter(Boolean).join(delimiter),
         DRSAI_HOME: drsaiHome,
+        ...(preparedAgentDir ? { DRSAI_REPO: preparedAgentDir } : {}),
         DRSAI_GATEWAY_DEV_MANAGED: "1",
         OPENDRSAI_GATEWAY_PORT: String(gatewayPort),
         OPENDRSAI_OIDC_ISSUER: issuer,
@@ -446,9 +454,7 @@ function electronArgs(appArgs) {
     "--disable-gpu",
     "--disable-gpu-compositing",
     "--disable-gpu-sandbox",
-    "--disable-software-rasterizer",
     "--disable-features=VizDisplayCompositor",
-    "--single-process",
     ...appArgs,
   ];
 }

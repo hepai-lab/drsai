@@ -119,11 +119,11 @@ export async function requireAuthContext(): Promise<AuthContext> {
   const stored = readStoredSession();
   if (!stored || isExpired(stored)) {
     clearStoredSession(false);
-    throw new Error("Sign in before sending a request to DrSai Agent.");
+    throw new Error("Sign in before sending a request to OpenDrSai Agent.");
   }
   const refreshed = await refreshSsoSessionIfNeeded(stored, true);
   if (!refreshed || !refreshed.user || !refreshed.authMode) {
-    throw new Error("Sign in before sending a request to DrSai Agent.");
+    throw new Error("Sign in before sending a request to OpenDrSai Agent.");
   }
   return {
     session: toPublicSession(refreshed),
@@ -591,7 +591,7 @@ async function createOidcSession(
   const idClaims = decodeJwtPayload<OidcIdTokenClaims>(token.id_token);
   const accessClaims = decodeJwtPayload<OidcAccessTokenClaims>(token.access_token);
   validateOidcClaims(idClaims, accessClaims, validation);
-  const userId = idClaims?.sub || accessClaims?.sub;
+  const userId = accessClaims?.sub;
   if (!userId) {
     throw new Error("OIDC token response is missing a user subject.");
   }
@@ -627,6 +627,8 @@ async function createOidcSession(
 
 function createDeveloperSession(rememberMe = true): StoredAuthSession {
   const now = new Date().toISOString();
+  const e2eUserId = process.env.OPENDRSAI_E2E_AUTH_USER_ID?.trim() || "developer-local";
+  const e2eGroups = process.env.OPENDRSAI_E2E_AUTH_GROUPS?.split(",").map((group) => group.trim()).filter(Boolean);
   return {
     authenticated: true,
     sessionId: randomUUID(),
@@ -634,16 +636,21 @@ function createDeveloperSession(rememberMe = true): StoredAuthSession {
     expiresAt: getExpiryDate(rememberMe ? 7 : 1),
     authMode: "offline",
     user: {
-      id: "developer-local",
-      email: "developer@opendrsai.local",
+      id: e2eUserId,
+      email: process.env.OPENDRSAI_E2E_AUTH_EMAIL?.trim() || "developer@opendrsai.local",
       name: "Developer",
       role: "admin",
+      groups: e2eGroups?.length ? e2eGroups : undefined,
     },
   };
 }
 
 function isDeveloperBypassAllowed(): boolean {
-  return is.dev || process.env.OPENDRSAI_DEV_AUTH_BYPASS === "1";
+  return (
+    is.dev ||
+    process.env.OPENDRSAI_DEV_AUTH_BYPASS === "1" ||
+    process.env.OPENDRSAI_E2E_F2_APPROVALS === "1"
+  );
 }
 
 function getExpiryDate(days: number): string {
@@ -861,6 +868,8 @@ interface OidcAccessTokenClaims {
   sub?: string;
   aud?: string | string[];
   exp?: number;
+  typ?: string;
+  scope?: string;
   roles?: string[];
   groups?: string[];
 }
@@ -953,6 +962,34 @@ async function refreshOidcSessionIfNeeded(
     return await oidcRefreshPromise;
   } finally {
     oidcRefreshPromise = null;
+  }
+}
+
+export async function refreshAuthContextAfterUnauthorized(): Promise<AuthContext> {
+  const stored = readStoredSession();
+  if (!stored || stored.authMode !== "oidc" || !stored.refreshToken) {
+    clearStoredSession(false);
+    throw new Error("The HepAI session cannot be refreshed. Sign in again.");
+  }
+  try {
+    const token = await exchangeOidcRefreshToken(stored.refreshToken);
+    const refreshed = await createOidcSession(
+      { ...token, refresh_token: token.refresh_token || stored.refreshToken },
+      true,
+    );
+    writeStoredSession(refreshed);
+    if (!refreshed.accessToken || !refreshed.user || !refreshed.authMode) {
+      throw new Error("The refreshed HepAI session is incomplete.");
+    }
+    return {
+      session: toPublicSession(refreshed),
+      userId: refreshed.user.id || refreshed.user.email,
+      accessToken: refreshed.accessToken,
+      authMode: refreshed.authMode,
+    };
+  } catch {
+    clearStoredSession(false);
+    throw new Error("The HepAI session refresh failed. Sign in again.");
   }
 }
 
@@ -1230,6 +1267,18 @@ function validateOidcClaims(
   if (!audienceIncludes(accessClaims.aud, "hai-api")) {
     throw new Error("OIDC access token was not issued for the HAI API.");
   }
+  if (!isPlatformUserId(accessClaims.sub)) {
+    throw new Error("OIDC access token is missing a valid platform user UUID.");
+  }
+  if (idClaims.sub !== accessClaims.sub) {
+    throw new Error("OIDC ID token subject does not match the access token subject.");
+  }
+  if (accessClaims.typ !== "access_token") {
+    throw new Error("OIDC token is not an access token.");
+  }
+  if (!accessClaims.scope?.split(/\s+/).includes("hai_api")) {
+    throw new Error("OIDC access token is missing the HAI API scope.");
+  }
   if (validation.nonce && idClaims.nonce !== validation.nonce) {
     throw new Error("OIDC ID token nonce does not match the sign-in request.");
   }
@@ -1237,6 +1286,11 @@ function validateOidcClaims(
   if (!idClaims.exp || idClaims.exp <= nowSeconds || !accessClaims.exp || accessClaims.exp <= nowSeconds) {
     throw new Error("OIDC token response is already expired.");
   }
+}
+
+function isPlatformUserId(value: unknown): value is string {
+  return typeof value === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
 function audienceIncludes(audience: string | string[] | undefined, expected: string): boolean {

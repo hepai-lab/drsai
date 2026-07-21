@@ -1,12 +1,12 @@
 """GFS OpenAPI 管理面客户端.
 
-只封装 DrSai 实际会用到的端点。所有调用通过 ``X-API-Key`` 鉴权。
+只封装 OpenDrSai 实际会用到的端点。所有调用通过 ``X-API-Key`` 鉴权。
 
 实测发现（截至 2026-06-11，详见 ``test/task/task-20260610/gfs-api-finding.md``）：
 
 * ``user_id`` 在请求路径中可以直接传邮箱（如 ``alice@ihep.ac.cn``），无需做 sanitize。
 * ``GET /v1/users/{user_id}/credentials`` 会返回 **明文** ``access_key`` / ``secret_key``，
-  这是 DrSai 拿用户凭证的主路径。
+  这是 OpenDrSai 拿用户凭证的主路径。
 * ``POST /v1/users/{user_id}/credentials`` 实测只返回 ``{"code":200,"message":"ok"}``，
   body 中没有 AK/SK；POST 之后必须再 ``GET`` 一次确认列表变化。
 * 凭证里的 ``resources`` 字段可能缺失/为空，业务侧无法据此推断 ``ro/rw``，
@@ -67,13 +67,13 @@ class GfsBucketInfo:
 
 @dataclass(frozen=True)
 class GfsCredential:
-    """完整可用的 S3 凭证（拼好了一个用户在 DrSai 侧需要的所有字段）."""
+    """完整可用的 S3 凭证（拼好了一个用户在 OpenDrSai 侧需要的所有字段）."""
 
     access_key: str
     secret_key: str
     bucket: str                # 完整桶名
     s3_endpoint: str           # S3 endpoint URL（数据面）
-    email: str                 # DrSai 这一层的用户标识（邮箱）
+    email: str                 # OpenDrSai 这一层的用户标识（邮箱）
     owner_id: str              # GFS 内部数字 user_id
     expiration: int = -1       # 时间戳，-1 / 9999999999 都视为永不过期
     status: str = "active"
@@ -239,7 +239,7 @@ class GfsAdminClient:
         4. 三层 fallback 都拿不到时，抛 ``GfsAdminError("NO_CREDENTIAL", ...)``。
 
         Args:
-            email: 用户邮箱（DrSai user_id）。
+            email: 用户邮箱（OpenDrSai user_id）。
             require_writable: 当 ``True`` 时，凡 ``resources`` 明确表明只读的凭证一律排除；
                 ``resources`` 缺失/为空时仍接受（GFS 实测中常见，多数情况下等价于全权限）。
 
@@ -333,7 +333,7 @@ _admin_lock = threading.Lock()
 def get_admin_client(*, refresh: bool = False) -> GfsAdminClient:
     """返回进程级 ``GfsAdminClient`` 单例.
 
-    所有 DrSai 模块都应通过本函数获取 admin client，避免多份连接池。
+    所有 OpenDrSai 模块都应通过本函数获取 admin client，避免多份连接池。
     """
     global _admin_singleton
     if refresh or _admin_singleton is None:

@@ -1,43 +1,35 @@
 Option Explicit
 
-Dim shell, fso, scriptDir, installScript, command, exitCode, extraArg
+Dim shell, fso, scriptDir, command, exitCode
 Set shell = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
-
 scriptDir = fso.GetParentFolderName(WScript.ScriptFullName)
-installScript = fso.BuildPath(scriptDir, "install-opendrsai.ps1")
 
-command = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File " & Quote(installScript)
-command = command & " -RuntimeUrl " & Quote(Arg("RuntimeUrl"))
-command = command & " -RuntimeSha256 " & Quote(Arg("RuntimeSha256"))
-command = command & " -RuntimeSizeBytes " & Arg("RuntimeSizeBytes")
-command = command & " -BootstrapperVersion " & Quote(Arg("BootstrapperVersion"))
+command = "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden"
+command = command & " -File " & Quote(fso.BuildPath(scriptDir, "install-opendrsai.ps1"))
+command = command & " -Stage " & Quote(NamedArg("Stage"))
+command = command & " -RuntimeUrl " & Quote(NamedArg("RuntimeUrl"))
+command = command & " -RuntimeSha256 " & Quote(NamedArg("RuntimeSha256"))
+command = command & " -RuntimeSizeBytes " & Quote(NamedArg("RuntimeSizeBytes"))
+command = command & " -BootstrapperVersion " & Quote(NamedArg("BootstrapperVersion"))
+command = command & " -InstallRoot " & Quote(scriptDir)
 command = command & " -Quiet"
 
-For Each extraArg In WScript.Arguments.Unnamed
-  If Left(extraArg, 1) = "-" Then
-    command = command & " " & extraArg
-  Else
-    command = command & " " & Quote(extraArg)
-  End If
+Dim argument
+For Each argument In WScript.Arguments.Unnamed
+    command = command & " " & Quote(argument)
 Next
-
-If WScript.Arguments.Named.Exists("Debug") Then
-  WScript.Echo command
-  WScript.Quit 0
-End If
 
 exitCode = shell.Run(command, 0, True)
 WScript.Quit exitCode
 
-Function Arg(name)
-  If Not WScript.Arguments.Named.Exists(name) Then
-    WScript.Echo "Missing argument: " & name
-    WScript.Quit 2
-  End If
-  Arg = WScript.Arguments.Named(name)
+Function NamedArg(name)
+    If Not WScript.Arguments.Named.Exists(name) Then
+        WScript.Quit 87
+    End If
+    NamedArg = WScript.Arguments.Named.Item(name)
 End Function
 
 Function Quote(value)
-  Quote = Chr(34) & Replace(value, Chr(34), Chr(34) & Chr(34)) & Chr(34)
+    Quote = Chr(34) & Replace(CStr(value), Chr(34), Chr(34) & Chr(34)) & Chr(34)
 End Function

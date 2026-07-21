@@ -48,6 +48,22 @@ try {
   });
   if (!stored) throw new Error("Provider error analytics record was not persisted.");
 
+  const storedGemini = await persistProviderErrorAnalytics({
+    requestId: "request-gemini-error-fixture",
+    sessionId: "thread-gemini-error-fixture",
+    runId: "run-gemini-error-fixture",
+    event: {
+      provider: "google_gemini",
+      eventName: "error",
+      code: "RESOURCE_EXHAUSTED",
+      message: "Quota exhausted",
+      retryable: true,
+      summary: "Gemini stream error. code=RESOURCE_EXHAUSTED message=Quota exhausted retryable=true",
+      rawPayload: { metadata: { secret: "do-not-store" } },
+    },
+  });
+  if (!storedGemini) throw new Error("Gemini provider error analytics record was not persisted.");
+
   const skipped = await persistProviderErrorAnalytics({
     requestId: "request-without-message",
     sessionId: "thread-without-message",
@@ -64,13 +80,18 @@ try {
   if (skipped !== null) throw new Error("Provider error analytics persisted an event without a message.");
 
   const records = await listProviderErrorAnalytics();
-  if (records.length !== 1) throw new Error(`Expected one analytics record, found ${records.length}.`);
-  const [record] = records;
+  if (records.length !== 2) throw new Error(`Expected two analytics records, found ${records.length}.`);
+  const record = records.find((item) => item.provider === "openai_responses");
+  if (!record) throw new Error(`OpenAI provider error record was not found: ${JSON.stringify(records)}`);
   if (record.requestId !== "request-error-fixture" || record.code !== "rate_limit_exceeded" || record.retryable !== false) {
     throw new Error(`Persisted provider error record is malformed: ${JSON.stringify(record)}`);
   }
   if (!record.id.startsWith("provider-error:") || record.provider !== "openai_responses") {
     throw new Error(`Persisted provider error record identity is malformed: ${JSON.stringify(record)}`);
+  }
+  const geminiRecord = records.find((item) => item.provider === "google_gemini");
+  if (!geminiRecord || geminiRecord.code !== "RESOURCE_EXHAUSTED" || geminiRecord.retryable !== true) {
+    throw new Error(`Persisted Gemini provider error record is malformed: ${JSON.stringify(records)}`);
   }
 
   const rawStore = await readFile(join(tempHome, "desktop", "provider-error-analytics.json"), "utf8");

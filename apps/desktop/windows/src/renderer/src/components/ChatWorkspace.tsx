@@ -5,50 +5,71 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
 } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import {
-  ArrowUpRight,
   Bot,
   Brain,
+  Bug,
+  Check,
   ChevronDown,
   ChevronRight,
   ClipboardList,
   FileCode2,
+  Folder,
   FolderPlus,
   Gauge,
   Globe2,
+  Hammer,
   Info,
   Mic,
   MicOff,
   Paperclip,
+  Pause,
+  Play,
   Plus,
   RefreshCw,
   Search,
+  ScanSearch,
   Send,
   Square,
   TextCursorInput,
   Terminal,
+  Telescope,
+  Volume2,
   X,
 } from "lucide-react";
+import drsaiLogo from "../assets/drsai.png";
+import { canHandleMemoryRequestLocally } from "../userPreferenceIntent";
 import type {
   ChatMessage,
   DesktopAgent,
   DesktopHealth,
   DesktopIdeContextSnapshot,
+  DiagnosticEventInput,
+  DesktopVoiceInteractionMode,
+  DesktopVoiceRuntimeStatus,
+  DesktopStreamingVoiceCapabilities,
   DesktopVoiceTranscriptionResult,
   ChatToolTimelineEvent,
   ChatMessagePart,
   MyDrSaiModelConfig,
+  MaterialConsistencyAnalysisResult,
+  MaterialConsistencyFindingKind,
+  MaterialConsistencySource,
+  MaterialRoleAnalysisResult,
+  MaterialRoleItem,
   PickDialogResult,
+  PickedFileDescriptor,
   WorkspaceFolderSummaryRequest,
   WorkspaceFolderSummaryResult,
   WorkspaceInstructionSummary,
+  WorkspaceProject,
 } from "@shared/desktopApi";
 import type { ChatAttachment } from "@shared/desktopApi";
+import type { ArtifactPart, CitationPart, InteractionPart, StructuredTurnState } from "@shared/structuredConversation";
 import type { AppLanguage } from "../navigation";
 import { desktopApi, hasDesktopApi } from "../desktopApi";
 import {
@@ -58,7 +79,36 @@ import {
   type ChatRuntimeMode,
 } from "../chatCommands";
 import { ChatMessageContent } from "./ChatMessageContent";
-import { getVisibleChatText } from "../chatOutputModel";
+import { StructuredMessageParts } from "./StructuredMessageParts";
+import { getReasoningChatText, getVisibleChatText } from "../chatOutputModel";
+import { VoiceCaptureBar } from "./voice/VoiceCaptureBar";
+import { VoiceReviewBar } from "./voice/VoiceReviewBar";
+import { StreamingVoiceCaptureBar } from "./voice/StreamingVoiceCaptureBar";
+import { StreamingVoiceOutputBar } from "./voice/StreamingVoiceOutputBar";
+import {
+  useSystemVoicePlayback,
+  type SystemVoicePlayback,
+} from "../voice/useSystemVoicePlayback";
+import { resolveVoiceSynthesisMode, useVoicePreferences } from "../voice/useVoicePreferences";
+import { canSwitchVoiceMode, deriveVoiceModeCapabilities, getVoiceModeAvailability } from "../voice/voiceMode";
+import { insertVoiceTranscript } from "../voice/voiceComposer";
+import {
+  getVoiceStatusLabel,
+} from "../voice/voiceAudio";
+import { useVoiceCapture } from "../voice/useVoiceCapture";
+import { useStreamingVoiceInput } from "../voice/streaming/useStreamingVoiceInput";
+import { useAssistantSpeechSegments } from "../voice/streaming/assistantSpeechStream";
+import { useStreamingVoiceOutput } from "../voice/streaming/useStreamingVoiceOutput";
+import { createStreamingVoiceDiagnostic } from "../voice/streaming/streamingVoiceDiagnostics";
+import { useVoiceTranscription } from "../voice/useVoiceTranscription";
+import { getAssistantSpeechText } from "../voice/voiceMessageText";
+import {
+  createVoiceTurnId,
+  initialVoiceTurnState,
+  isVoiceCaptureActive,
+  reduceVoiceTurn,
+  type VoiceTurnEvent,
+} from "../voice/voiceTurnReducer";
 
 export type UiMessage = ChatMessage & {
   id: string;
@@ -68,28 +118,51 @@ export type UiMessage = ChatMessage & {
   reasoningContent?: string;
   toolTimeline?: ChatToolTimelineEvent[];
   parts?: ChatMessagePart[];
+  structuredTurn?: StructuredTurnState;
   startedAt?: number;
   lastEventAt?: number;
+  inputRequest?: {
+    requestId: string;
+    prompt: string;
+    inputType: "text_input" | "approval";
+  };
 };
+
+async function recordVoiceDiagnostic(input: Omit<DiagnosticEventInput, "module">): Promise<void> {
+  if (!hasDesktopApi() || typeof desktopApi.recordDiagnostic !== "function") return;
+  try {
+    await desktopApi.recordDiagnostic({ ...input, module: "voice" });
+  } catch {
+    // Diagnostics must never interrupt voice interaction.
+  }
+}
 
 type ComposerAttachment = ChatAttachment & {
   id: string;
+  importFile?: PickedFileDescriptor;
+  folderImport?: {
+    phase: "scanning" | "ready" | "failed";
+    imported: number;
+    skipped: number;
+    failed: number;
+    duplicates: number;
+    directories: number;
+    message?: string;
+  };
 };
+
+interface MaterialTaskSuggestion {
+  id: string;
+  title: string;
+  description: string;
+  prompt: string;
+}
 
 export type ThinkingEffort = "low" | "medium" | "high" | "xhigh";
 const THINKING_EFFORTS: ThinkingEffort[] = ["low", "medium", "high", "xhigh"];
 const MAX_CLIPBOARD_IMAGE_BYTES = 1_250_000;
 const MAX_CLIPBOARD_IMAGE_COUNT = 4;
 const MAX_CLIPBOARD_PATH_MENTIONS = 6;
-const VOICE_LEVEL_COUNT = 72;
-const VOICE_LEVEL_SAMPLE_INTERVAL_MS = 32;
-const VOICE_NOISE_FLOOR = 0.018;
-type VoiceRecordingState =
-  | "idle"
-  | "requesting_permission"
-  | "recording"
-  | "processing"
-  | "failed";
 
 export interface ChatForkQueueAgentAssignment {
   queueIndex: number;
@@ -98,6 +171,7 @@ export interface ChatForkQueueAgentAssignment {
 }
 
 export interface ChatSubmitOptions {
+  agentId?: string;
   agentName?: string;
   forkQueueAgentAssignments?: ChatForkQueueAgentAssignment[];
   model?: string;
@@ -108,12 +182,16 @@ export interface ChatSubmitOptions {
 interface ChatWorkspaceProps {
   activeRequestId: string | null;
   canChat: boolean;
+  chatUnavailableReason?: string;
+  conversationId: string;
   health: DesktopHealth | null;
   input: string;
   language: AppLanguage;
   messages: UiMessage[];
   currentRuntimeMode?: ChatRuntimeMode | null;
+  defaultThinkingEffort?: ThinkingEffort;
   searchRequestNonce?: number;
+  structuredTurnFocus?: { turnId: string; nonce: number } | null;
   selectedAgentId?: string;
   selectedAgentName?: string;
   selectedModelName?: string;
@@ -123,15 +201,21 @@ interface ChatWorkspaceProps {
   externalAttachments?: ChatAttachment[];
   ideContext?: DesktopIdeContextSnapshot | null;
   workspaceInstructions?: WorkspaceInstructionSummary[];
+  workspaceName?: string;
   workspacePath?: string;
+  workspaceLocation?: "local" | "remote";
+  workspaceOptions?: WorkspaceProject[];
+  selectedWorkspaceId?: string;
   onAbort: () => void;
   onClearExternalAttachments?: () => void;
   onClearRuntimeMode?: () => void;
   onInputChange: (value: string) => void;
   onSelectAgent?: (agentId: string) => void;
+  onSelectWorkspace?: (workspaceId: string) => void;
   onSelectModel?: (model: string) => void;
   onOpenExternal: (url: string) => void;
   onOpenPreviewBrowser?: (url?: string) => void;
+  onOpenWorkspaceArtifact?: (path: string) => void;
   onPickFiles?: () => Promise<PickDialogResult>;
   onPickFolder?: () => Promise<PickDialogResult>;
   onSummarizeWorkspaceFolder?: (
@@ -150,11 +234,15 @@ interface ChatWorkspaceProps {
 export function ChatWorkspace({
   activeRequestId,
   canChat,
+  chatUnavailableReason,
+  conversationId,
   input,
   language,
   messages,
   currentRuntimeMode,
+  defaultThinkingEffort = "medium",
   searchRequestNonce = 0,
+  structuredTurnFocus = null,
   selectedAgentId,
   selectedAgentName,
   selectedModelName,
@@ -164,15 +252,21 @@ export function ChatWorkspace({
   externalAttachments = [],
   ideContext,
   workspaceInstructions = [],
+  workspaceName,
   workspacePath = "",
+  workspaceLocation = "local",
+  workspaceOptions = [],
+  selectedWorkspaceId,
   onAbort,
   onClearExternalAttachments,
   onClearRuntimeMode,
   onInputChange,
   onSelectAgent,
+  onSelectWorkspace,
   onSelectModel,
   onOpenExternal,
   onOpenPreviewBrowser,
+  onOpenWorkspaceArtifact,
   onPickFiles,
   onPickFolder,
   onSummarizeWorkspaceFolder,
@@ -183,49 +277,305 @@ export function ChatWorkspace({
   onSubmit,
 }: ChatWorkspaceProps): React.JSX.Element {
   const [toolsOpen, setToolsOpen] = useState(false);
+  const [highlightedTurnId, setHighlightedTurnId] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
-  const [thinkingEffort, setThinkingEffort] = useState<ThinkingEffort>("medium");
+  const [materialRoleAnalysis, setMaterialRoleAnalysis] = useState<MaterialRoleAnalysisResult | null>(null);
+  const [materialRolePhase, setMaterialRolePhase] = useState<"idle" | "analyzing" | "ready" | "failed">("idle");
+  const [materialConsistencyAnalysis, setMaterialConsistencyAnalysis] = useState<MaterialConsistencyAnalysisResult | null>(null);
+  const [materialConsistencyPhase, setMaterialConsistencyPhase] = useState<"idle" | "analyzing" | "ready" | "failed">("idle");
+  const [materialConsistencySourceStatus, setMaterialConsistencySourceStatus] = useState("");
+  const [materialSuggestionRuntimeReady, setMaterialSuggestionRuntimeReady] = useState(false);
+  const materialRoleRequestRef = useRef(0);
+  const materialConsistencyRequestRef = useRef(0);
+  const [thinkingEffort, setThinkingEffort] = useState<ThinkingEffort>(defaultThinkingEffort);
   const [searchOpen, setSearchOpen] = useState(false);
   const [metaMenuOpen, setMetaMenuOpen] = useState<"agent" | "model" | "thinking" | null>(null);
+  const [introMenuOpen, setIntroMenuOpen] = useState<"workspace" | "agent" | null>(null);
+  const [introSearchQuery, setIntroSearchQuery] = useState("");
   const [forkQueueAgentSelections, setForkQueueAgentSelections] = useState<Record<number, string>>({});
   const [searchQuery, setSearchQuery] = useState("");
   const [activeMatchIndex, setActiveMatchIndex] = useState(0);
-  const [voiceState, setVoiceState] = useState<VoiceRecordingState>("idle");
-  const [voiceError, setVoiceError] = useState<string | null>(null);
-  const [voiceElapsedSeconds, setVoiceElapsedSeconds] = useState(0);
-  const [voiceLevels, setVoiceLevels] = useState<number[]>(() => createSilentVoiceLevels());
   const [voiceReviewText, setVoiceReviewText] = useState<string | null>(null);
+  const [voiceReviewSource, setVoiceReviewSource] = useState<"serial" | "streaming" | null>(null);
+  const [streamingVoiceReadyToSend, setStreamingVoiceReadyToSend] = useState(false);
+  const [streamingVoiceResponseArmed, setStreamingVoiceResponseArmed] = useState(false);
   const [voiceRuntimeDisclosure, setVoiceRuntimeDisclosure] = useState<string | null>(null);
-  const [voiceLanguage, setVoiceLanguage] = useState<"auto" | "zh-CN" | "en-US">("auto");
-  const [voiceDeviceId, setVoiceDeviceId] = useState("");
-  const [voiceDevices, setVoiceDevices] = useState<MediaDeviceInfo[]>([]);
+  const [voiceRuntimeStatus, setVoiceRuntimeStatus] = useState<DesktopVoiceRuntimeStatus | null>(null);
+  const [streamingVoiceCapabilities, setStreamingVoiceCapabilities] = useState<DesktopStreamingVoiceCapabilities | null>(null);
+  const [voiceConsentRequired, setVoiceConsentRequired] = useState(false);
+  const [voicePreferences, updateVoicePreferences] = useVoicePreferences();
+  const [voiceTurnState, dispatchVoiceTurnBase] = useReducer(reduceVoiceTurn, initialVoiceTurnState);
+  const voiceTurnStateRef = useRef(voiceTurnState);
+  voiceTurnStateRef.current = voiceTurnState;
+  const dispatchVoiceTurn = useCallback((event: VoiceTurnEvent): void => {
+    const current = voiceTurnStateRef.current;
+    const next = reduceVoiceTurn(current, event);
+    if (next === current) {
+      const idempotentCleanup = (event.type === "cancel" && ["idle", "completed", "failed"].includes(current.phase))
+        || (event.type === "cancelled" && current.phase === "idle")
+        || (event.type === "reset" && current.phase === "idle");
+      if (!idempotentCleanup) {
+        void recordVoiceDiagnostic({
+          traceId: current.turnId ?? crypto.randomUUID(),
+          component: "turn",
+          operation: "voice.turn.transition",
+          message: "Voice turn transition rejected",
+          status: "completed",
+          level: "warn",
+          errorCode: "invalid_transition",
+          attributes: { eventType: event.type, phase: current.phase },
+        });
+      }
+    } else {
+      voiceTurnStateRef.current = next;
+    }
+    dispatchVoiceTurnBase(event);
+  }, []);
+  const voiceLanguage = voicePreferences.inputLanguage;
+  const voiceDeviceId = voicePreferences.inputDeviceId;
+  const voiceModeCapabilities = deriveVoiceModeCapabilities(voiceRuntimeStatus, {
+    audioWorklet: typeof AudioWorkletNode !== "undefined",
+    serialTts: "speechSynthesis" in window,
+    streamingTts: false,
+    streamingCapabilities: streamingVoiceCapabilities,
+  });
+  const streamingVoiceAvailability = getVoiceModeAvailability("streaming", voiceModeCapabilities);
   const [voiceProgressMessage, setVoiceProgressMessage] = useState("");
   const [voiceRuntimeLabel, setVoiceRuntimeLabel] = useState("Voice STT");
+  const voicePlayback = useSystemVoicePlayback();
+  const {
+    devices: voiceDevices,
+    elapsedSeconds: voiceElapsedSeconds,
+    error: voiceError,
+    levels: voiceLevels,
+    setElapsedSeconds: setVoiceElapsedSeconds,
+    setError: setVoiceError,
+    setState: setVoiceState,
+    start: startVoiceCapture,
+    state: voiceState,
+    stop: stopVoiceCapture,
+  } = useVoiceCapture({
+    beforeStart: async () => {
+      voicePlayback.stop();
+      setVoiceConsentRequired(false);
+      if (hasDesktopApi() && typeof desktopApi.getVoiceRuntimeStatus === "function") {
+        const [runtime, streamingCapabilities] = await Promise.all([
+          desktopApi.getVoiceRuntimeStatus(),
+          desktopApi.getStreamingVoiceCapabilities().catch(() => null),
+        ]);
+        setVoiceRuntimeStatus(runtime);
+        setStreamingVoiceCapabilities(streamingCapabilities);
+        setVoiceRuntimeDisclosure(runtime.providerDisclosure);
+        if (runtime.state !== "ready") throw new Error(runtime.message);
+        if (runtime.runtimeId === "gateway-provider" && !voicePreferences.remoteSttConsent) {
+          setVoiceConsentRequired(true);
+          throw new Error(zh
+            ? "使用在线语音识别前，需要允许将录音发送给当前语音服务提供方。"
+            : "Allow sending recordings to the configured speech provider before using online transcription.");
+        }
+      }
+    },
+    deviceId: voiceDeviceId,
+    onDeviceUnavailable: () => {
+      updateVoicePreferences({ inputDeviceId: "" });
+      setVoiceError("The selected microphone is no longer available. The default microphone will be used.");
+    },
+    onRecorded: ({ blob, durationSeconds }) => {
+      void processVoiceRecording(blob, durationSeconds);
+    },
+  });
+  const streamingVoiceInput = useStreamingVoiceInput({
+    deviceId: voiceDeviceId,
+    languageHint: voiceLanguage === "auto" ? undefined : voiceLanguage,
+    onReview: (transcript) => {
+      setVoiceReviewSource("streaming");
+      setVoiceReviewText(transcript);
+      setVoiceRuntimeDisclosure(voiceRuntimeStatus?.providerDisclosure ?? "Live transcription completed.");
+    },
+  });
+  const streamingDiagnosticKeysRef = useRef(new Set<string>());
+  const assistantSpeechSegments = useAssistantSpeechSegments(voicePreferences.interactionMode === "streaming");
+  const streamingVoiceOutput = useStreamingVoiceOutput({
+    enabled: streamingVoiceResponseArmed,
+    segments: assistantSpeechSegments.segments,
+    textCompleted: assistantSpeechSegments.completed,
+    voice: voicePreferences.voiceName || undefined,
+    speed: voicePreferences.playbackRate,
+    onTerminal: (terminal) => {
+      if (terminal === "completed") {
+        streamingVoiceInput.markTtsCompleted();
+        streamingVoiceInput.markPlaybackCompleted();
+      } else if (terminal === "cancelled") streamingVoiceInput.cancelOutput();
+      else streamingVoiceInput.failOutput("Streaming reply audio could not be played.");
+      setStreamingVoiceResponseArmed(false);
+    },
+  });
+
+  useEffect(() => {
+    const turnId = streamingVoiceInput.turnState.turnId;
+    if (!turnId) return;
+    const phase = streamingVoiceInput.turnState.phase;
+    const key = `${turnId}:turn:${phase}:${streamingVoiceInput.turnState.terminal ?? "active"}`;
+    if (streamingDiagnosticKeysRef.current.has(key)) return;
+    streamingDiagnosticKeysRef.current.add(key);
+    const status = streamingVoiceInput.turnState.terminal ?? (phase === "user" ? "started" : "running");
+    const event = createStreamingVoiceDiagnostic({
+      traceId: turnId,
+      turnId,
+      stage: phase === "user" || phase === "review" ? "asr" : phase === "assistant" ? "llm" : "transport",
+      status,
+      metrics: {
+        sequence: streamingVoiceInput.transcript.lastEventSequence,
+        bufferedAudioMs: streamingVoiceInput.flowControl.bufferedAudioMs,
+        partialCount: streamingVoiceInput.transcript.revision,
+        finalCount: streamingVoiceInput.transcript.committedText ? 1 : 0,
+        segmentCount: assistantSpeechSegments.segments.length,
+        playedSegmentCount: streamingVoiceOutput.playedSegments,
+        paused: streamingVoiceInput.flowControl.paused,
+      },
+      errorCode: streamingVoiceInput.turnState.terminal === "failed" ? "streaming_turn_failed" : undefined,
+    });
+    const { module: _module, ...voiceEvent } = event;
+    void recordVoiceDiagnostic(voiceEvent);
+  }, [
+    assistantSpeechSegments.segments.length,
+    streamingVoiceInput.flowControl.bufferedAudioMs,
+    streamingVoiceInput.flowControl.paused,
+    streamingVoiceInput.transcript.committedText,
+    streamingVoiceInput.transcript.lastEventSequence,
+    streamingVoiceInput.transcript.revision,
+    streamingVoiceInput.turnState.phase,
+    streamingVoiceInput.turnState.terminal,
+    streamingVoiceInput.turnState.turnId,
+    streamingVoiceOutput.playedSegments,
+  ]);
+
+  useEffect(() => {
+    if (!streamingVoiceResponseArmed) return;
+    if (assistantSpeechSegments.completed) streamingVoiceInput.markAssistantTextCompleted();
+  }, [assistantSpeechSegments.completed, streamingVoiceResponseArmed]);
+
+  useEffect(() => {
+    if (!streamingVoiceResponseArmed) return;
+    if (["synthesizing", "playing", "paused", "draining", "completed"].includes(streamingVoiceOutput.phase)) {
+      streamingVoiceInput.markTtsStarted();
+    }
+    if (["playing", "paused", "draining", "completed"].includes(streamingVoiceOutput.phase)) {
+      streamingVoiceInput.markPlaybackStarted();
+    }
+  }, [streamingVoiceOutput.phase, streamingVoiceResponseArmed]);
+  const {
+    cancel: cancelVoiceTranscriptionTask,
+    transcribe: transcribeVoiceBlob,
+  } = useVoiceTranscription(setVoiceProgressMessage);
+  const [respondedInputRequests, setRespondedInputRequests] = useState<Set<string>>(() => new Set());
+  const [turnRailMarkers, setTurnRailMarkers] = useState<Array<{ id: string; top: number }>>([]);
+  const [activeTurnRailId, setActiveTurnRailId] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const messageListRef = useRef<HTMLDivElement | null>(null);
+  const composerRef = useRef<HTMLFormElement | null>(null);
+  const attachmentButtonRef = useRef<HTMLButtonElement | null>(null);
+  const introPickerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!toolsOpen && !metaMenuOpen) return;
+    const handleEscape = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      const shouldRestoreAttachmentFocus = toolsOpen;
+      setToolsOpen(false);
+      setMetaMenuOpen(null);
+      if (shouldRestoreAttachmentFocus) {
+        window.requestAnimationFrame(() => attachmentButtonRef.current?.focus());
+      }
+    };
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [metaMenuOpen, toolsOpen]);
+
+  useEffect(() => {
+    if (!introMenuOpen) return;
+    const closeOnPointerDown = (event: PointerEvent): void => {
+      if (introPickerRef.current?.contains(event.target as Node)) return;
+      setIntroMenuOpen(null);
+    };
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") setIntroMenuOpen(null);
+    };
+    window.addEventListener("pointerdown", closeOnPointerDown);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("pointerdown", closeOnPointerDown);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [introMenuOpen]);
+
+  useEffect(() => {
+    const openModelPicker = (): void => setMetaMenuOpen("model");
+    window.addEventListener("drsai:open-model-picker", openModelPicker);
+    return () => window.removeEventListener("drsai:open-model-picker", openModelPicker);
+  }, []);
+
+  useEffect(() => {
+    setThinkingEffort(defaultThinkingEffort);
+  }, [defaultThinkingEffort]);
+
+  async function respondToAgentInput(
+    request: NonNullable<UiMessage["inputRequest"]>,
+    response: string | Record<string, unknown>,
+  ): Promise<void> {
+    const accepted = await desktopApi.respondChatInput(request.requestId, response);
+    if (!accepted) return;
+    setRespondedInputRequests((current) => new Set(current).add(request.requestId));
+  }
+
+  function requestTextAgentInput(request: NonNullable<UiMessage["inputRequest"]>): void {
+    const response = window.prompt(request.prompt);
+    if (response?.trim()) void respondToAgentInput(request, response.trim());
+  }
+
+  function respondToStructuredInteraction(part: InteractionPart, response: { approved: boolean }): void {
+    void respondToAgentInput({
+      requestId: part.requestId,
+      prompt: part.prompt,
+      inputType: part.interactionType === "approval" ? "approval" : "text_input",
+    }, response);
+  }
+
+  function requestStructuredTextInput(part: InteractionPart): void {
+    requestTextAgentInput({ requestId: part.requestId, prompt: part.prompt, inputType: "text_input" });
+  }
   const shouldFollowOutputRef = useRef(true);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const voiceStreamRef = useRef<MediaStream | null>(null);
-  const voiceChunksRef = useRef<Blob[]>([]);
-  const voiceStartedAtRef = useRef<number>(0);
-  const voiceTimerRef = useRef<number | null>(null);
-  const voiceAudioContextRef = useRef<AudioContext | null>(null);
-  const voiceAnalyserRef = useRef<AnalyserNode | null>(null);
-  const voiceSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
-  const voiceAnimationFrameRef = useRef<number | null>(null);
-  const voiceLastSampleAtRef = useRef(0);
-  const voiceSmoothedLevelRef = useRef(0);
-  const voiceStopModeRef = useRef<"transcribe" | "discard">("transcribe");
-  const voiceRequestIdRef = useRef<string | null>(null);
   const voiceRetryBlobRef = useRef<Blob | null>(null);
+  const voiceRetryDurationRef = useRef(0);
   const voiceSelectionRef = useRef<{ start: number; end: number } | null>(null);
+  const voiceCaptureDiagnosticRef = useRef<{ startedAt: number; traceId: string } | null>(null);
+  const voicePlaybackDiagnosticRef = useRef<{ messageId: string; startedAt: number; traceId: string } | null>(null);
+  const voiceResponseBaselineRef = useRef<Set<string>>(new Set());
+  const voiceTtsRequestIdRef = useRef<string | null>(null);
+  const autoReadInitializedRef = useRef(false);
+  const lastAutoReadMessageIdRef = useRef<string | null>(null);
   const zh = language === "zh";
   const [now, setNow] = useState(Date.now());
   const hasStreamingMessage = messages.some((message) => message.streaming);
   const showStop = Boolean(activeRequestId || hasStreamingMessage);
   const emptyChat = messages.every((message) => message.id === "welcome");
+  const canSaveLocalPreference = canHandleMemoryRequestLocally(input);
+  const canAnswerMaterialInventoryLocally = Boolean(materialRoleAnalysis?.items.length) && isMaterialInventoryQuestion(input);
+  const canAnswerMaterialQuestionLocally = Boolean(materialRoleAnalysis?.items.length) && isNaturalMaterialQuestion(input);
+  const emptyChatPreferenceNotice = emptyChat
+    ? messages.find((message) => message.id === "welcome")?.content.split("\n\n").slice(1).join("\n\n").trim() || ""
+    : "";
   const activeAgentName = selectedAgentName?.trim() || "OpenDrSai";
+  const workspaceLocationLabel =
+    workspaceLocation === "remote"
+      ? zh
+        ? "远程工作区"
+        : "Remote workspace"
+      : zh
+        ? "本机工作区"
+        : "Local workspace";
   const runtimeModeLabel = currentRuntimeMode
     ? currentRuntimeMode.intent
       ? `${currentRuntimeMode.label}: ${currentRuntimeMode.intent}`
@@ -244,13 +594,22 @@ export function ChatWorkspace({
     () => parseAgentExamples(samplePrompts, language),
     [samplePrompts, language],
   );
-  const [samplePromptsExpanded, setSamplePromptsExpanded] = useState(false);
-  const visibleSamplePrompts = samplePromptsExpanded
-    ? parsedSamplePrompts
-    : parsedSamplePrompts.slice(0, 4);
-  const hiddenSamplePromptCount = Math.max(0, parsedSamplePrompts.length - 4);
-  const showSamplePrompts =
-    emptyChat && !input.trim() && parsedSamplePrompts.length > 0;
+  const emptyChatPrompts = useMemo(
+    () => getEmptyChatPrompts(parsedSamplePrompts, zh),
+    [parsedSamplePrompts, zh],
+  );
+  const activeWorkspaceName = workspaceName?.trim() || getWorkspaceDisplayName(workspacePath, zh);
+  const normalizedIntroSearch = introSearchQuery.trim().toLocaleLowerCase();
+  const filteredIntroWorkspaces = workspaceOptions.filter((workspace) =>
+    !normalizedIntroSearch
+      || workspace.name.toLocaleLowerCase().includes(normalizedIntroSearch)
+      || workspace.path.toLocaleLowerCase().includes(normalizedIntroSearch),
+  );
+  const filteredIntroAgents = agentOptions.filter((agent) =>
+    !normalizedIntroSearch
+      || agent.name.toLocaleLowerCase().includes(normalizedIntroSearch)
+      || getAgentOptionMeta(agent, zh).toLocaleLowerCase().includes(normalizedIntroSearch),
+  );
   const slashCommandQuery = input.trimStart().startsWith("/")
     ? input.trimStart().slice(1).toLowerCase()
     : "";
@@ -274,14 +633,23 @@ export function ChatWorkspace({
     () => parseInlineContextMentions(input, workspacePath),
     [input, workspacePath],
   );
+  const materialRoleByPath = useMemo(
+    () => createMaterialRoleLookup(materialRoleAnalysis?.items || []),
+    [materialRoleAnalysis],
+  );
+  const materialTaskSuggestions = useMemo(
+    () => createMaterialTaskSuggestions(materialRoleAnalysis, zh),
+    [materialRoleAnalysis, zh],
+  );
   const queuedContextAttachments = useMemo(
     () =>
       mergeUniqueAttachments([
-        ...attachments.map(({ id: _id, ...attachment }) => attachment),
+        ...attachments.map(({ id: _id, importFile: _importFile, folderImport: _folderImport, ...attachment }) =>
+          enrichAttachmentWithMaterialRole(attachment, findMaterialRole(materialRoleByPath, attachment))),
         ...externalAttachments,
         ...inlineMentionAttachments,
-      ]),
-    [attachments, externalAttachments, inlineMentionAttachments],
+      ]).filter((attachment) => !attachment.blockedReason),
+    [attachments, externalAttachments, inlineMentionAttachments, materialRoleByPath],
   );
   const contextPreviewItems = useMemo(
     () => createContextPreviewItems(queuedContextAttachments, workspaceInstructions),
@@ -303,6 +671,212 @@ export function ChatWorkspace({
     voiceState === "requesting_permission" ||
     voiceState === "recording" ||
     voiceState === "processing";
+  const showStreamingVoiceCaptureBar = ["starting", "streaming", "stopping", "cancelling"].includes(streamingVoiceInput.phase);
+  const showAnyVoiceCaptureBar = showVoiceCaptureBar || showStreamingVoiceCaptureBar;
+  const displayedVoicePhase = voicePreferences.interactionMode === "streaming"
+    ? streamingVoiceInput.phase
+    : voiceTurnState.phase;
+  const latestCompletedAssistantMessage = [...messages]
+    .reverse()
+    .find((message) => message.role === "assistant" && !message.streaming && !message.error && getAssistantDisplayContent(message));
+  const latestCompletedAssistantSpeechText = latestCompletedAssistantMessage
+    ? getAssistantDisplayContent(latestCompletedAssistantMessage)
+    : "";
+
+  useEffect(() => {
+    voicePlayback.stop();
+    stopVoiceCapture("discard");
+    void streamingVoiceInput.cancel();
+    streamingVoiceInput.reset();
+    cancelVoiceTranscriptionTask();
+    setVoiceReviewText(null);
+    setVoiceRuntimeDisclosure(null);
+    setVoiceConsentRequired(false);
+    voiceRetryBlobRef.current = null;
+    voiceRetryDurationRef.current = 0;
+    autoReadInitializedRef.current = true;
+    lastAutoReadMessageIdRef.current = latestCompletedAssistantMessage?.id ?? null;
+    dispatchVoiceTurn({ type: "cancel" });
+    dispatchVoiceTurn({ type: "cancelled" });
+    dispatchVoiceTurn({ type: "reset" });
+  }, [conversationId]);
+
+  useEffect(() => {
+    const stopVoiceActivityForLifecycle = (event?: Event): void => {
+      if (event?.type === "visibilitychange" && document.visibilityState !== "hidden") return;
+      voicePlayback.stop();
+      stopVoiceCapture("discard");
+      void streamingVoiceInput.cancel();
+      streamingVoiceOutput.stop();
+      if (streamingVoiceResponseArmed && (activeRequestId || hasStreamingMessage)) onAbort();
+      cancelVoiceTranscriptionTask();
+      dispatchVoiceTurn({ type: "cancel" });
+      dispatchVoiceTurn({ type: "cancelled" });
+    };
+    document.addEventListener("visibilitychange", stopVoiceActivityForLifecycle);
+    window.addEventListener("pagehide", stopVoiceActivityForLifecycle);
+    window.addEventListener("offline", stopVoiceActivityForLifecycle);
+    return () => {
+      document.removeEventListener("visibilitychange", stopVoiceActivityForLifecycle);
+      window.removeEventListener("pagehide", stopVoiceActivityForLifecycle);
+      window.removeEventListener("offline", stopVoiceActivityForLifecycle);
+    };
+  }, [activeRequestId, cancelVoiceTranscriptionTask, hasStreamingMessage, onAbort, stopVoiceCapture, streamingVoiceOutput.stop, streamingVoiceResponseArmed, voicePlayback.stop]);
+
+  useEffect(() => {
+    if (voiceState === "recording" && !voiceCaptureDiagnosticRef.current) {
+      const traceId = crypto.randomUUID();
+      voiceCaptureDiagnosticRef.current = { startedAt: Date.now(), traceId };
+      void recordVoiceDiagnostic({
+        traceId,
+        component: "capture",
+        operation: "voice.capture",
+        message: "Voice capture started",
+        status: "started",
+        attributes: { selectedDevice: Boolean(voiceDeviceId) },
+      });
+      return;
+    }
+    const active = voiceCaptureDiagnosticRef.current;
+    if (!active || voiceState === "recording" || voiceState === "requesting_permission") return;
+    voiceCaptureDiagnosticRef.current = null;
+    void recordVoiceDiagnostic({
+      traceId: active.traceId,
+      component: "capture",
+      operation: "voice.capture",
+      message: voiceState === "failed" ? "Voice capture failed" : "Voice capture completed",
+      status: voiceState === "failed" ? "failed" : "completed",
+      errorCode: voiceState === "failed" ? "capture_error" : undefined,
+      durationMs: Date.now() - active.startedAt,
+    });
+  }, [voiceDeviceId, voiceState]);
+
+  useEffect(() => {
+    const activeMessageId = voicePlayback.activeMessageId;
+    if (activeMessageId && voicePlayback.phase !== "idle" && voicePlayback.phase !== "failed" && !voicePlaybackDiagnosticRef.current) {
+      const traceId = crypto.randomUUID();
+      voicePlaybackDiagnosticRef.current = { messageId: activeMessageId, startedAt: Date.now(), traceId };
+      void recordVoiceDiagnostic({
+        traceId,
+        component: "playback",
+        operation: "voice.playback",
+        message: "Voice playback started",
+        status: "started",
+      });
+      return;
+    }
+    const active = voicePlaybackDiagnosticRef.current;
+    if (!active || (activeMessageId === active.messageId && voicePlayback.phase !== "idle" && voicePlayback.phase !== "failed")) return;
+    voicePlaybackDiagnosticRef.current = null;
+    void recordVoiceDiagnostic({
+      traceId: active.traceId,
+      component: "playback",
+      operation: "voice.playback",
+      message: voicePlayback.phase === "failed" ? "Voice playback failed" : "Voice playback completed",
+      status: voicePlayback.phase === "failed" ? "failed" : "completed",
+      errorCode: voicePlayback.phase === "failed" ? "playback_error" : undefined,
+      durationMs: Date.now() - active.startedAt,
+    });
+  }, [voicePlayback.activeMessageId, voicePlayback.phase]);
+
+  useEffect(() => {
+    if (!autoReadInitializedRef.current) {
+      autoReadInitializedRef.current = true;
+      lastAutoReadMessageIdRef.current = latestCompletedAssistantMessage?.id ?? null;
+      return;
+    }
+    if (!latestCompletedAssistantMessage || lastAutoReadMessageIdRef.current === latestCompletedAssistantMessage.id) return;
+    lastAutoReadMessageIdRef.current = latestCompletedAssistantMessage.id;
+    if (!voicePreferences.autoReadResponses || showAnyVoiceCaptureBar) return;
+    voicePlayback.play(
+      latestCompletedAssistantMessage.id,
+      latestCompletedAssistantSpeechText,
+      zh ? "zh" : "en",
+      { mode: resolveVoiceSynthesisMode(voicePreferences.synthesisMode, voicePreferences.remoteTtsConsent), rate: voicePreferences.playbackRate, voiceName: voicePreferences.voiceName },
+    );
+  }, [
+    latestCompletedAssistantMessage?.id,
+    latestCompletedAssistantSpeechText,
+    showAnyVoiceCaptureBar,
+    voicePlayback.play,
+    voicePreferences.autoReadResponses,
+    voicePreferences.playbackRate,
+    voicePreferences.remoteTtsConsent,
+    voicePreferences.synthesisMode,
+    voicePreferences.voiceName,
+    zh,
+  ]);
+
+  useEffect(() => {
+    if (!voicePlayback.activeMessageId) return;
+    if (messages.some((message) => message.id === voicePlayback.activeMessageId)) return;
+    voicePlayback.stop();
+  }, [messages, voicePlayback.activeMessageId, voicePlayback.stop]);
+
+  useEffect(() => {
+    if (voiceTurnState.phase !== "awaiting_response") return;
+    const response = [...messages].reverse().find((message) =>
+      message.role === "assistant"
+      && !message.streaming
+      && !message.error
+      && !voiceResponseBaselineRef.current.has(message.id)
+      && Boolean(getAssistantDisplayContent(message)));
+    if (response) dispatchVoiceTurn({ type: "response_completed", messageId: response.id });
+  }, [messages, voiceTurnState.phase]);
+
+  useEffect(() => {
+    const phase = voiceTurnState.phase;
+    if (phase === "response_ready" && !voicePreferences.autoReadResponses) {
+      dispatchVoiceTurn({ type: "finish" });
+      return;
+    }
+    const isOwnedPlayback = Boolean(
+      voiceTurnState.responseMessageId
+      && voicePlayback.activeMessageId === voiceTurnState.responseMessageId,
+    );
+    if (phase === "response_ready" && isOwnedPlayback) {
+      const requestId = `voice-tts-${crypto.randomUUID()}`;
+      voiceTtsRequestIdRef.current = requestId;
+      dispatchVoiceTurn({ type: "tts_started", requestId });
+      return;
+    }
+    if (phase === "synthesizing" && isOwnedPlayback && voicePlayback.phase === "playing") {
+      const requestId = voiceTtsRequestIdRef.current;
+      if (requestId) dispatchVoiceTurn({ type: "tts_completed", requestId });
+      dispatchVoiceTurn({ type: "play" });
+      return;
+    }
+    if (phase === "playing" && voicePlayback.phase === "paused") {
+      dispatchVoiceTurn({ type: "pause" });
+      return;
+    }
+    if (phase === "paused" && voicePlayback.phase === "playing") {
+      dispatchVoiceTurn({ type: "resume" });
+      return;
+    }
+    if ((phase === "playing" || phase === "paused") && voicePlayback.phase === "idle") {
+      dispatchVoiceTurn({ type: "finish" });
+      return;
+    }
+    if ((phase === "synthesizing" || phase === "playing" || phase === "paused") && voicePlayback.phase === "failed") {
+      dispatchVoiceTurn({
+        type: "fail",
+        error: {
+          stage: phase,
+          code: "playback_error",
+          message: voicePlayback.error || "Voice playback failed.",
+          retryable: true,
+        },
+      });
+    }
+  }, [
+    voicePlayback.activeMessageId,
+    voicePlayback.error,
+    voicePlayback.phase,
+    voicePreferences.autoReadResponses,
+    voiceTurnState.phase,
+    voiceTurnState.responseMessageId,
+  ]);
 
   const searchableMessages = useMemo(
     () => messages.filter((message) => getVisibleChatText(message.content)),
@@ -327,8 +901,51 @@ export function ChatWorkspace({
   }, []);
 
   useEffect(() => {
-    setSamplePromptsExpanded(false);
-  }, [samplePrompts, language]);
+    const paths = [...new Set(attachments
+      .filter((item) => item.kind === "file" && !item.blockedReason)
+      .map((item) => item.path))];
+    const requestId = materialRoleRequestRef.current + 1;
+    materialRoleRequestRef.current = requestId;
+    if (!paths.length || !hasDesktopApi() || typeof desktopApi.analyzeMaterialRoles !== "function") {
+      setMaterialRoleAnalysis(null);
+      setMaterialRolePhase("idle");
+      return;
+    }
+    setMaterialRolePhase("analyzing");
+    void desktopApi.analyzeMaterialRoles({ paths }).then((result) => {
+      if (materialRoleRequestRef.current !== requestId) return;
+      setMaterialRoleAnalysis(result);
+      setMaterialRolePhase("ready");
+    }).catch(() => {
+      if (materialRoleRequestRef.current !== requestId) return;
+      setMaterialRoleAnalysis(null);
+      setMaterialRolePhase("failed");
+    });
+  }, [attachments]);
+
+  useEffect(() => {
+    const paths = [...new Set(attachments
+      .filter((item) => item.kind === "file" && !item.blockedReason)
+      .map((item) => item.path))];
+    const requestId = materialConsistencyRequestRef.current + 1;
+    materialConsistencyRequestRef.current = requestId;
+    setMaterialConsistencySourceStatus("");
+    if (paths.length < 2 || !hasDesktopApi() || typeof desktopApi.analyzeMaterialConsistency !== "function") {
+      setMaterialConsistencyAnalysis(null);
+      setMaterialConsistencyPhase("idle");
+      return;
+    }
+    setMaterialConsistencyPhase("analyzing");
+    void desktopApi.analyzeMaterialConsistency({ paths }).then((result) => {
+      if (materialConsistencyRequestRef.current !== requestId) return;
+      setMaterialConsistencyAnalysis(result);
+      setMaterialConsistencyPhase("ready");
+    }).catch(() => {
+      if (materialConsistencyRequestRef.current !== requestId) return;
+      setMaterialConsistencyAnalysis(null);
+      setMaterialConsistencyPhase("failed");
+    });
+  }, [attachments]);
 
   useEffect(() => {
     setForkQueueAgentSelections((current) => {
@@ -369,6 +986,22 @@ export function ChatWorkspace({
   }, [input]);
 
   useEffect(() => {
+    const composer = composerRef.current;
+    const messageList = messageListRef.current;
+    if (!composer || !messageList || emptyChat) return;
+    const updateComposerHeight = (): void => {
+      messageList.style.setProperty("--chat-composer-height", `${composer.offsetHeight}px`);
+    };
+    updateComposerHeight();
+    const observer = new ResizeObserver(updateComposerHeight);
+    observer.observe(composer);
+    return () => {
+      observer.disconnect();
+      messageList.style.removeProperty("--chat-composer-height");
+    };
+  }, [emptyChat]);
+
+  useEffect(() => {
     setActiveMatchIndex(0);
   }, [searchQuery]);
 
@@ -388,6 +1021,21 @@ export function ChatWorkspace({
     if (searchRequestNonce <= 0) return;
     openSearch();
   }, [openSearch, searchRequestNonce]);
+
+  useEffect(() => {
+    if (!structuredTurnFocus) return;
+    setHighlightedTurnId(structuredTurnFocus.turnId);
+    shouldFollowOutputRef.current = false;
+    const frame = window.requestAnimationFrame(() => {
+      const selector = `[data-structured-turn-id="${CSS.escape(structuredTurnFocus.turnId)}"]`;
+      messageListRef.current?.querySelector<HTMLElement>(selector)?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+    const timer = window.setTimeout(() => setHighlightedTurnId(null), 1800);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+    };
+  }, [structuredTurnFocus]);
 
   useEffect(() => {
     function handleWorkflowChatCommand(event: Event): void {
@@ -420,10 +1068,63 @@ export function ChatWorkspace({
     list.scrollTo({ top: list.scrollHeight, behavior: messages.some((message) => message.streaming) ? "auto" : "smooth" });
   }, [messages]);
 
+  const updateTurnRail = useCallback((): void => {
+    const list = messageListRef.current;
+    if (!list) return;
+    const nodes = [...list.querySelectorAll<HTMLElement>(".message.user[data-message-id]")];
+    const scrollHeight = Math.max(list.scrollHeight, 1);
+    const viewportCenter = list.scrollTop + list.clientHeight / 2;
+    let nearestId: string | null = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    const markers = nodes.flatMap((node) => {
+      const id = node.dataset.messageId;
+      if (!id) return [];
+      const center = node.offsetTop + node.offsetHeight / 2;
+      const distance = Math.abs(center - viewportCenter);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestId = id;
+      }
+      return [{ id, top: Math.max(1, Math.min(99, (center / scrollHeight) * 100)) }];
+    });
+    setTurnRailMarkers(markers);
+    setActiveTurnRailId(nearestId);
+  }, []);
+
+  useEffect(() => {
+    const list = messageListRef.current;
+    if (!list || emptyChat) {
+      setTurnRailMarkers([]);
+      setActiveTurnRailId(null);
+      return undefined;
+    }
+    const frame = window.requestAnimationFrame(updateTurnRail);
+    const observer = new ResizeObserver(updateTurnRail);
+    observer.observe(list);
+    window.addEventListener("resize", updateTurnRail);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+      window.removeEventListener("resize", updateTurnRail);
+    };
+  }, [emptyChat, messages, updateTurnRail]);
+
+  function scrollToUserTurn(messageId: string): void {
+    const list = messageListRef.current;
+    const message = list?.querySelector<HTMLElement>(
+      `.message.user[data-message-id="${CSS.escape(messageId)}"]`,
+    );
+    if (!list || !message) return;
+    shouldFollowOutputRef.current = false;
+    setActiveTurnRailId(messageId);
+    list.scrollTo({ top: Math.max(0, message.offsetTop - 18), behavior: "smooth" });
+  }
+
   function handleMessageListScroll(): void {
     const list = messageListRef.current;
     if (!list) return;
     shouldFollowOutputRef.current = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+    updateTurnRail();
   }
 
   useEffect(() => {
@@ -442,23 +1143,13 @@ export function ChatWorkspace({
   useEffect(() => {
     if (!hasDesktopApi() || typeof desktopApi.getVoiceRuntimeStatus !== "function") return;
     void desktopApi.getVoiceRuntimeStatus().then((runtime) => {
+      setVoiceRuntimeStatus(runtime);
       setVoiceRuntimeDisclosure(runtime.providerDisclosure);
       setVoiceRuntimeLabel(runtime.runtimeId === "gateway-provider" ? "Online STT" : "Fixture STT");
     }).catch(() => setVoiceRuntimeLabel("STT unavailable"));
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      stopVoiceTimer();
-      stopVoiceAnalyzer();
-      if (voiceRequestIdRef.current) void desktopApi.cancelVoiceTranscription(voiceRequestIdRef.current);
-      stopVoiceStream();
-      const recorder = mediaRecorderRef.current;
-      if (recorder && recorder.state !== "inactive") {
-        voiceStopModeRef.current = "discard";
-        recorder.stop();
-      }
-    };
+    void desktopApi.getStreamingVoiceCapabilities()
+      .then(setStreamingVoiceCapabilities)
+      .catch(() => setStreamingVoiceCapabilities(null));
   }, []);
 
   function handleSubmit(event: FormEvent): void {
@@ -487,16 +1178,29 @@ export function ChatWorkspace({
   }
 
   async function submitWithAttachments(): Promise<void> {
+    const isVoiceSubmission = voiceTurnState.phase === "ready_to_send";
+    const isStreamingVoiceSubmission = streamingVoiceReadyToSend;
+    if (isVoiceSubmission) {
+      voiceResponseBaselineRef.current = new Set(messages
+        .filter((message) => message.role === "assistant")
+        .map((message) => message.id));
+      dispatchVoiceTurn({
+        type: "submit_started",
+        messageId: `voice-user-${voiceTurnState.turnId ?? crypto.randomUUID()}`,
+      });
+    }
     const folderSummaryProvider =
       onSummarizeWorkspaceFolder ?? (hasDesktopApi() ? desktopApi.summarizeWorkspaceFolder : undefined);
     const submittedAttachments = await summarizeQueuedContextAttachments([
-      ...attachments.map(({ id: _id, ...attachment }) => attachment),
+      ...attachments.map(({ id: _id, importFile: _importFile, folderImport: _folderImport, ...attachment }) =>
+        enrichAttachmentWithMaterialRole(attachment, findMaterialRole(materialRoleByPath, attachment))),
       ...externalAttachments,
       ...inlineMentionAttachments,
     ], folderSummaryProvider);
     const submitted = await onSubmit(
       submittedAttachments.filter((attachment) => !attachment.blockedReason),
       {
+        agentId: selectedAgentId,
         agentName: activeAgentName,
         forkQueueAgentAssignments: buildForkQueueAgentAssignments(
           forkQueueEntries,
@@ -511,6 +1215,23 @@ export function ChatWorkspace({
     if (submitted) {
       setAttachments([]);
       onClearExternalAttachments?.();
+      if (isVoiceSubmission) dispatchVoiceTurn({ type: "response_started" });
+      if (isStreamingVoiceSubmission) {
+        streamingVoiceInput.acceptReview();
+        streamingVoiceInput.markAssistantTextStarted();
+        setStreamingVoiceReadyToSend(false);
+        setStreamingVoiceResponseArmed(true);
+      }
+    } else if (isVoiceSubmission) {
+      dispatchVoiceTurn({
+        type: "fail",
+        error: {
+          stage: "submitting",
+          code: "chat_error",
+          message: zh ? "语音消息发送失败，请重试。" : "The voice message could not be sent. Try again.",
+          retryable: true,
+        },
+      });
     }
   }
 
@@ -520,11 +1241,35 @@ export function ChatWorkspace({
   }
 
   async function toggleVoiceRecording(): Promise<void> {
+    if (voicePreferences.interactionMode === "streaming") {
+      if (streamingVoiceInput.phase === "streaming") {
+        await streamingVoiceInput.stop();
+        return;
+      }
+      await startStreamingVoiceRecording();
+      return;
+    }
     if (voiceState === "recording") {
       stopVoiceRecording("transcribe");
       return;
     }
     await startVoiceRecording();
+  }
+
+  async function startStreamingVoiceRecording(): Promise<void> {
+    if (!streamingVoiceAvailability.available) {
+      setVoiceError(streamingVoiceAvailability.reason ?? "Live transcription is unavailable.");
+      return;
+    }
+    voicePlayback.stop();
+    streamingVoiceOutput.stop();
+    setVoiceReviewText(null);
+    setVoiceReviewSource(null);
+    setVoiceError(null);
+    voiceSelectionRef.current = textareaRef.current
+      ? { start: textareaRef.current.selectionStart, end: textareaRef.current.selectionEnd }
+      : { start: input.length, end: input.length };
+    await streamingVoiceInput.start();
   }
 
   async function startVoiceRecording(): Promise<void> {
@@ -533,117 +1278,71 @@ export function ChatWorkspace({
       setVoiceError("Voice recording is unavailable in this desktop runtime.");
       return;
     }
-    setVoiceError(null);
+    dispatchVoiceTurn({ type: "begin_capture", turnId: createVoiceTurnId() });
     voiceSelectionRef.current = textareaRef.current
       ? { start: textareaRef.current.selectionStart, end: textareaRef.current.selectionEnd }
       : { start: input.length, end: input.length };
-    setVoiceElapsedSeconds(0);
-    setVoiceLevels(createSilentVoiceLevels());
-    setVoiceState("requesting_permission");
-    try {
-      if (hasDesktopApi() && typeof desktopApi.getVoiceRuntimeStatus === "function") {
-        const runtime = await desktopApi.getVoiceRuntimeStatus();
-        setVoiceRuntimeDisclosure(runtime.providerDisclosure);
-        if (runtime.state !== "ready") throw new Error(runtime.message);
-      }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          deviceId: voiceDeviceId ? { exact: voiceDeviceId } : undefined,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
+    const started = await startVoiceCapture();
+    if (started) {
+      dispatchVoiceTurn({ type: "permission_granted" });
+    } else {
+      dispatchVoiceTurn({
+        type: "fail",
+        error: {
+          stage: "requesting_permission",
+          code: "capture_error",
+          message: zh ? "无法启动麦克风录音。" : "Microphone capture could not be started.",
+          retryable: true,
         },
       });
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      setVoiceDevices(devices.filter((device) => device.kind === "audioinput"));
-      const mimeType = getPreferredVoiceMimeType();
-      const recorder = mimeType
-        ? new MediaRecorder(stream, { mimeType })
-        : new MediaRecorder(stream);
-      voiceStreamRef.current = stream;
-      mediaRecorderRef.current = recorder;
-      voiceChunksRef.current = [];
-      voiceStopModeRef.current = "transcribe";
-      voiceStartedAtRef.current = Date.now();
-      startVoiceAnalyzer(stream);
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) voiceChunksRef.current.push(event.data);
-      };
-      recorder.onerror = () => {
-        setVoiceState("failed");
-        setVoiceError("Voice recording failed. Please try again.");
-        stopVoiceTimer();
-        stopVoiceAnalyzer();
-        stopVoiceStream();
-      };
-      recorder.onstop = () => {
-        void finishVoiceRecording(recorder.mimeType || mimeType || "audio/webm");
-      };
-      recorder.start();
-      setVoiceState("recording");
-      startVoiceTimer();
-    } catch (error) {
-      setVoiceState("failed");
-      setVoiceError(getVoicePermissionError(error));
-      stopVoiceTimer();
-      stopVoiceAnalyzer();
-      stopVoiceStream();
     }
   }
 
   function stopVoiceRecording(mode: "transcribe" | "discard"): void {
-    const recorder = mediaRecorderRef.current;
-    voiceStopModeRef.current = mode;
-    stopVoiceTimer();
-    stopVoiceAnalyzer();
-    if (recorder && recorder.state !== "inactive") {
-      recorder.stop();
-      return;
+    if (mode === "transcribe") {
+      dispatchVoiceTurn({ type: "recording_stopped" });
+    } else {
+      dispatchVoiceTurn({ type: "cancel" });
+      dispatchVoiceTurn({ type: "cancelled" });
     }
-    stopVoiceStream();
-    setVoiceLevels(createSilentVoiceLevels());
-    setVoiceState("idle");
+    stopVoiceCapture(mode);
   }
 
-  async function finishVoiceRecording(mimeType: string): Promise<void> {
-    const chunks = voiceChunksRef.current;
-    const durationSeconds = voiceStartedAtRef.current
-      ? Math.max(0, Math.round((Date.now() - voiceStartedAtRef.current) / 1000))
-      : voiceElapsedSeconds;
-    stopVoiceStream();
-    stopVoiceAnalyzer();
-    mediaRecorderRef.current = null;
-    voiceChunksRef.current = [];
-    if (voiceStopModeRef.current === "discard") {
-      setVoiceState("idle");
-      setVoiceError(null);
-      setVoiceElapsedSeconds(0);
-      return;
-    }
-    const blob = new Blob(chunks, { type: mimeType });
-    if (!blob.size) {
-      setVoiceState("failed");
-      setVoiceError("Voice recording was empty. Please try again.");
-      return;
-    }
+  async function processVoiceRecording(blob: Blob, durationSeconds: number): Promise<void> {
+    const requestId = `voice-stt-${crypto.randomUUID()}`;
+    dispatchVoiceTurn({ type: "stt_started", requestId });
     setVoiceState("processing");
     setVoiceProgressMessage("Preparing audio...");
     voiceRetryBlobRef.current = blob;
+    voiceRetryDurationRef.current = durationSeconds;
     try {
       const result = await transcribeVoiceRecordingAsync(
         blob,
         durationSeconds,
       );
+      setVoiceReviewSource("serial");
       setVoiceReviewText(result.transcript);
+      dispatchVoiceTurn({ type: "stt_completed", requestId });
       setVoiceRuntimeDisclosure(result.providerDisclosure);
       setVoiceState("idle");
       setVoiceError(null);
       setVoiceElapsedSeconds(0);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
+        dispatchVoiceTurn({ type: "cancel" });
+        dispatchVoiceTurn({ type: "cancelled" });
         setVoiceState("idle");
         setVoiceError(null);
       } else {
+        dispatchVoiceTurn({
+          type: "fail",
+          error: {
+            stage: "transcribing",
+            code: "provider_error",
+            message: error instanceof Error ? error.message : "Voice transcription failed.",
+            retryable: true,
+          },
+        });
         setVoiceState("failed");
         setVoiceError(error instanceof Error ? error.message : "Voice transcription failed.");
       }
@@ -676,78 +1375,22 @@ export function ChatWorkspace({
     setToolsOpen(false);
   }
 
-  function startVoiceTimer(): void {
-    stopVoiceTimer();
-    voiceTimerRef.current = window.setInterval(() => {
-      const elapsed = Math.max(0, Math.floor((Date.now() - voiceStartedAtRef.current) / 1000));
-      setVoiceElapsedSeconds(elapsed);
-      if (elapsed >= 120) stopVoiceRecording("transcribe");
-    }, 250);
-  }
-
-  function stopVoiceTimer(): void {
-    if (voiceTimerRef.current !== null) {
-      window.clearInterval(voiceTimerRef.current);
-      voiceTimerRef.current = null;
-    }
-  }
-
-  function stopVoiceStream(): void {
-    voiceStreamRef.current?.getTracks().forEach((track) => track.stop());
-    voiceStreamRef.current = null;
-  }
-
   async function transcribeVoiceRecordingAsync(
     blob: Blob,
     durationSeconds: number,
   ): Promise<DesktopVoiceTranscriptionResult> {
-    if (!hasDesktopApi()) {
-      throw new Error("Voice transcription requires the desktop runtime.");
-    }
-    const audioData = new Uint8Array(await blob.arrayBuffer());
-    return new Promise((resolve, reject) => {
-      let settled = false;
-      const unsubscribe = desktopApi.onVoiceTranscriptionEvent((event) => {
-        if (event.requestId !== voiceRequestIdRef.current || settled) return;
-        if (event.type === "progress") {
-          setVoiceProgressMessage(event.message);
-        } else if (event.type === "completed") {
-          settled = true;
-          voiceRequestIdRef.current = null;
-          unsubscribe();
-          resolve(event.result);
-        } else if (event.type === "failed") {
-          settled = true;
-          voiceRequestIdRef.current = null;
-          unsubscribe();
-          reject(new Error(event.error.message));
-        } else if (event.type === "cancelled") {
-          settled = true;
-          voiceRequestIdRef.current = null;
-          unsubscribe();
-          reject(new DOMException("Voice transcription was cancelled.", "AbortError"));
-        }
-      });
-      void desktopApi.startVoiceTranscription({
-        workspacePath: workspacePath || undefined,
-        audioData,
-        mimeType: blob.type || "audio/webm",
-        durationSeconds,
-        languageHint: voiceLanguage === "auto" ? undefined : voiceLanguage,
-        sourceLabel: "Desktop composer microphone",
-      }).then(({ requestId }) => {
-        voiceRequestIdRef.current = requestId;
-      }).catch((error) => {
-        settled = true;
-        unsubscribe();
-        reject(error);
-      });
+    return transcribeVoiceBlob({
+      blob,
+      durationSeconds,
+      languageHint: voiceLanguage === "auto" ? undefined : voiceLanguage,
+      workspacePath: workspacePath || undefined,
     });
   }
 
   function cancelVoiceTranscription(): void {
-    const requestId = voiceRequestIdRef.current;
-    if (requestId) void desktopApi.cancelVoiceTranscription(requestId);
+    dispatchVoiceTurn({ type: "cancel" });
+    dispatchVoiceTurn({ type: "cancelled" });
+    cancelVoiceTranscriptionTask();
   }
 
   async function retryVoiceTranscription(): Promise<void> {
@@ -757,16 +1400,31 @@ export function ChatWorkspace({
     setVoiceProgressMessage("Preparing audio...");
     setVoiceReviewText(null);
     setVoiceState("processing");
+    const requestId = `voice-stt-${crypto.randomUUID()}`;
+    dispatchVoiceTurn({ type: "stt_started", requestId });
     try {
-      const result = await transcribeVoiceRecordingAsync(blob, voiceElapsedSeconds);
+      const result = await transcribeVoiceRecordingAsync(blob, voiceRetryDurationRef.current);
+      setVoiceReviewSource("serial");
       setVoiceReviewText(result.transcript);
+      dispatchVoiceTurn({ type: "stt_completed", requestId });
       setVoiceRuntimeDisclosure(result.providerDisclosure);
       setVoiceState("idle");
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
+        dispatchVoiceTurn({ type: "cancel" });
+        dispatchVoiceTurn({ type: "cancelled" });
         setVoiceState("idle");
         setVoiceError(null);
       } else {
+        dispatchVoiceTurn({
+          type: "fail",
+          error: {
+            stage: "transcribing",
+            code: "provider_error",
+            message: error instanceof Error ? error.message : "Voice transcription failed.",
+            retryable: true,
+          },
+        });
         setVoiceState("failed");
         setVoiceError(error instanceof Error ? error.message : "Voice transcription failed.");
       }
@@ -775,62 +1433,62 @@ export function ChatWorkspace({
 
   function acceptVoiceReview(): void {
     const text = voiceReviewText?.trim();
+    const streamingReview = voiceReviewSource === "streaming";
+    let cursor: number | null = null;
     if (text) {
       const selection = voiceSelectionRef.current ?? { start: input.length, end: input.length };
-      onInputChange(`${input.slice(0, selection.start)}${text}${input.slice(selection.end)}`);
+      const insertion = insertVoiceTranscript(input, text, selection);
+      onInputChange(insertion.value);
+      cursor = insertion.cursor;
     }
-    discardVoiceReview();
+    if (voiceReviewSource === "serial") dispatchVoiceTurn({ type: "review_accepted" });
+    else {
+      assistantSpeechSegments.clear();
+    }
+    clearVoiceReview();
+    if (streamingReview) setStreamingVoiceReadyToSend(true);
+    restoreComposerFocus(cursor);
+  }
+
+  async function retryVoiceReview(): Promise<void> {
+    if (voiceReviewSource !== "streaming") {
+      await retryVoiceTranscription();
+      return;
+    }
+    clearVoiceReview();
+    streamingVoiceInput.reset();
+    await startStreamingVoiceRecording();
   }
 
   function discardVoiceReview(): void {
+    if (voiceReviewSource === "serial") {
+      dispatchVoiceTurn({ type: "cancel" });
+      dispatchVoiceTurn({ type: "cancelled" });
+    } else {
+      streamingVoiceInput.reset();
+    }
+    clearVoiceReview();
+    restoreComposerFocus(null);
+  }
+
+  function clearVoiceReview(): void {
     setVoiceReviewText(null);
+    setVoiceReviewSource(null);
+    setStreamingVoiceReadyToSend(false);
     setVoiceRuntimeDisclosure(null);
     setVoiceError(null);
     voiceRetryBlobRef.current = null;
+    voiceRetryDurationRef.current = 0;
     setVoiceState("idle");
   }
 
-  function startVoiceAnalyzer(stream: MediaStream): void {
-    stopVoiceAnalyzer();
-    const audioContext = new AudioContext();
-    const source = audioContext.createMediaStreamSource(stream);
-    const analyser = audioContext.createAnalyser();
-    analyser.fftSize = 64;
-    analyser.smoothingTimeConstant = 0.55;
-    source.connect(analyser);
-    voiceAudioContextRef.current = audioContext;
-    voiceSourceRef.current = source;
-    voiceAnalyserRef.current = analyser;
-    voiceLastSampleAtRef.current = 0;
-    voiceSmoothedLevelRef.current = 0;
-
-    const samples = new Float32Array(analyser.fftSize);
-    const sampleLevel = (timestamp: number): void => {
-      if (voiceAnalyserRef.current !== analyser) return;
-      if (timestamp - voiceLastSampleAtRef.current >= VOICE_LEVEL_SAMPLE_INTERVAL_MS) {
-        analyser.getFloatTimeDomainData(samples);
-        const level = calculateVoiceLevel(samples, voiceSmoothedLevelRef.current);
-        voiceSmoothedLevelRef.current = level;
-        voiceLastSampleAtRef.current = timestamp;
-        setVoiceLevels((current) => [...current.slice(1), level]);
-      }
-      voiceAnimationFrameRef.current = window.requestAnimationFrame(sampleLevel);
-    };
-    voiceAnimationFrameRef.current = window.requestAnimationFrame(sampleLevel);
-  }
-
-  function stopVoiceAnalyzer(): void {
-    if (voiceAnimationFrameRef.current !== null) {
-      window.cancelAnimationFrame(voiceAnimationFrameRef.current);
-      voiceAnimationFrameRef.current = null;
-    }
-    voiceSourceRef.current?.disconnect();
-    voiceSourceRef.current = null;
-    voiceAnalyserRef.current = null;
-    const audioContext = voiceAudioContextRef.current;
-    voiceAudioContextRef.current = null;
-    if (audioContext && audioContext.state !== "closed") void audioContext.close();
-    voiceSmoothedLevelRef.current = 0;
+  function restoreComposerFocus(cursor: number | null): void {
+    window.requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      textarea.focus();
+      if (cursor !== null) textarea.setSelectionRange(cursor, cursor);
+    });
   }
 
   function selectSamplePrompt(prompt: string): void {
@@ -850,6 +1508,18 @@ export function ChatWorkspace({
   function selectAgent(agentId: string): void {
     onSelectAgent?.(agentId);
     setMetaMenuOpen(null);
+    setIntroMenuOpen(null);
+    textareaRef.current?.focus();
+  }
+
+  function toggleIntroMenu(menu: "workspace" | "agent"): void {
+    setIntroSearchQuery("");
+    setIntroMenuOpen((current) => (current === menu ? null : menu));
+  }
+
+  function selectWorkspace(workspaceId: string): void {
+    onSelectWorkspace?.(workspaceId);
+    setIntroMenuOpen(null);
     textareaRef.current?.focus();
   }
 
@@ -880,7 +1550,7 @@ export function ChatWorkspace({
   async function addFiles(): Promise<void> {
     if (!onPickFiles) return;
     const result = await onPickFiles();
-    if (!result.canceled) addAttachments("file", result.paths);
+    if (!result.canceled) addPickedFiles(result);
   }
 
   async function addFolder(): Promise<void> {
@@ -889,74 +1559,126 @@ export function ChatWorkspace({
     if (!result.canceled) await addFolderAttachments(result.paths);
   }
 
-  function addAttachments(kind: ComposerAttachment["kind"], paths: string[]): void {
-    setAttachments((current) => {
-      const existing = new Set(current.map((item) => item.path));
-      const next = paths
-        .filter((path) => !existing.has(path))
-        .map((path) => ({
-          id: crypto.randomUUID(),
-          kind,
-          path,
-          name: getPathName(path),
-        }));
-      return [...current, ...next];
-    });
-    setToolsOpen(false);
-  }
-
-  async function addFolderAttachments(paths: string[]): Promise<void> {
-    const folderAttachments = await Promise.all(
-      paths.map(async (path): Promise<ComposerAttachment> => {
-        const base = {
-          id: crypto.randomUUID(),
-          kind: "folder" as const,
-          path,
-          name: getPathName(path),
-        };
-        if (!onSummarizeWorkspaceFolder) return base;
-        try {
-          const summary = await onSummarizeWorkspaceFolder({
-            path,
-            maxDepth: 3,
-            maxEntries: 240,
-            maxSampleFiles: 16,
-          });
-          return {
-            ...base,
-            path: summary.path,
-            name: summary.name,
-            title: `Folder summary: ${summary.name}`,
-            visibleText: summary.summary,
-            note: [
-              `${summary.fileCount} files`,
-              `${summary.directoryCount} folders`,
-              `${summary.estimatedTokens} estimated tokens`,
-              summary.truncated ? "truncated" : "",
-            ].filter(Boolean).join(", "),
-          };
-        } catch (error) {
-          return {
-            ...base,
-            note: error instanceof Error
-              ? `Folder summary unavailable: ${error.message}`
-              : "Folder summary unavailable.",
-          };
-        }
-      }),
-    );
+  function addPickedFiles(result: PickDialogResult): void {
+    const selectedFiles = result.files ?? result.paths.map((path): PickedFileDescriptor => ({
+      path,
+      name: getPathName(path),
+      extension: "",
+      category: "other",
+      status: "ready",
+    }));
     setAttachments((current) => {
       const existing = new Set(current.map((item) => item.path));
       return [
         ...current,
-        ...folderAttachments.filter((attachment) => !existing.has(attachment.path)),
+        ...selectedFiles.filter((file) => !existing.has(file.path)).map((file): ComposerAttachment => ({
+          id: crypto.randomUUID(),
+          kind: "file",
+          path: file.path,
+          name: file.name,
+          importFile: file,
+          ...(file.status === "ready" ? {} : { blockedReason: file.message || file.status }),
+        })),
       ];
     });
     setToolsOpen(false);
   }
 
+  async function addFolderAttachments(paths: string[]): Promise<void> {
+    setToolsOpen(false);
+    for (const path of paths) {
+      const existing = attachments.find((item) => item.kind === "folder" && item.path === path);
+      if (existing) {
+        setAttachments((current) => current.map((item) => item.id === existing.id ? {
+          ...item,
+          folderImport: item.folderImport ? { ...item.folderImport, duplicates: item.folderImport.duplicates + 1 } : undefined,
+        } : item));
+        continue;
+      }
+      const id = crypto.randomUUID();
+      const base: ComposerAttachment = {
+        id,
+        kind: "folder",
+        path,
+        name: getPathName(path),
+        folderImport: { phase: "scanning", imported: 0, skipped: 0, failed: 0, duplicates: 0, directories: 0 },
+      };
+      setAttachments((current) => [...current, base]);
+      if (!onSummarizeWorkspaceFolder) continue;
+      try {
+        const summary = await onSummarizeWorkspaceFolder({ path, maxDepth: 3, maxEntries: 240, maxSampleFiles: 30 });
+        setAttachments((current) => current.map((item) => item.id === id ? {
+          ...item,
+          path: summary.path,
+          name: summary.name,
+          title: `Folder summary: ${summary.name}`,
+          visibleText: summary.summary,
+          note: `${summary.importedFileCount} imported, ${summary.skippedFileCount} skipped, ${summary.failedFileCount} failed, ${summary.directoryCount} folders`,
+          folderImport: {
+            phase: "ready",
+            imported: summary.importedFileCount,
+            skipped: summary.skippedFileCount + summary.skippedDirectoryCount,
+            failed: summary.failedFileCount,
+            duplicates: item.folderImport?.duplicates || 0,
+            directories: summary.directoryCount,
+            message: summary.unsupportedExtensions.length ? `Unsupported: ${summary.unsupportedExtensions.join(", ")}` : undefined,
+          },
+        } : item));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setAttachments((current) => current.map((item) => item.id === id ? {
+          ...item,
+          blockedReason: message,
+          note: `Folder summary unavailable: ${message}`,
+          folderImport: { phase: "failed", imported: 0, skipped: 0, failed: 1, duplicates: item.folderImport?.duplicates || 0, directories: 0, message },
+        } : item));
+      }
+    }
+  }
+
   function removeAttachment(id: string): void {
     setAttachments((current) => current.filter((item) => item.id !== id));
+  }
+
+  function applyMaterialTaskSuggestion(suggestion: MaterialTaskSuggestion): void {
+    onInputChange(suggestion.prompt);
+    if (hasDesktopApi()) {
+      void desktopApi.getGatewayStatus().then((status) => {
+        setMaterialSuggestionRuntimeReady(status.ready && !status.externalConflict);
+      }).catch(() => setMaterialSuggestionRuntimeReady(false));
+    }
+    window.setTimeout(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(suggestion.prompt.length, suggestion.prompt.length);
+    }, 0);
+  }
+
+  function createTaskFromMaterialConsistency(): void {
+    if (!materialConsistencyAnalysis?.findings.length) return;
+    const issueTitles = materialConsistencyAnalysis.findings
+      .filter((finding) => finding.kind !== "consensus")
+      .map((finding) => `“${finding.title}”`)
+      .join("、");
+    const prompt = zh
+      ? `请根据材料比较结果继续核对${issueTitles ? ` ${issueTitles}` : "所有发现"}，逐项说明冲突双方或新旧数值、具体文件位置、修正建议和仍不确定的地方。不要覆盖原文件。`
+      : `Continue from the material comparison and verify ${issueTitles || "every finding"}. For each item, cite both sides or the old and new values, exact file locations, a correction, and remaining uncertainty. Do not overwrite source files.`;
+    onInputChange(prompt);
+    window.setTimeout(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(prompt.length, prompt.length);
+    }, 0);
+  }
+
+  async function openMaterialConsistencySource(source: MaterialConsistencySource): Promise<void> {
+    if (!hasDesktopApi()) return;
+    try {
+      const error = await desktopApi.openPath(source.path);
+      setMaterialConsistencySourceStatus(error
+        ? (zh ? `无法打开 ${source.name}：${error}` : `Could not open ${source.name}: ${error}`)
+        : (zh ? `已打开 ${source.name} · ${source.locator}` : `Opened ${source.name} · ${source.locator}`));
+    } catch (error) {
+      setMaterialConsistencySourceStatus(error instanceof Error ? error.message : String(error));
+    }
   }
 
   function openPreviewBrowser(url?: string): void {
@@ -978,6 +1700,22 @@ export function ChatWorkspace({
       return;
     }
     onOpenExternal(href);
+  }
+
+  function openStructuredArtifact(part: ArtifactPart): void {
+    if (part.url && isSafeWebUrl(part.url)) {
+      openPreviewBrowser(part.url);
+      return;
+    }
+    if (part.path) onOpenWorkspaceArtifact?.(part.path);
+  }
+
+  function openStructuredCitation(part: CitationPart): void {
+    if (part.url && isSafeWebUrl(part.url)) {
+      openPreviewBrowser(part.url);
+      return;
+    }
+    if (part.path) onOpenWorkspaceArtifact?.(part.path);
   }
 
   return (
@@ -1069,19 +1807,39 @@ export function ChatWorkspace({
       )}
       {!emptyChat && (
       <div className="message-list" ref={messageListRef} onScroll={handleMessageListScroll}>
-        {messages.map((message) => (
+        {messages.filter((message) => message.id !== "welcome").map((message) => {
+          const assistantContent = message.role === "assistant"
+            ? getAssistantDisplayContent(message)
+            : message.content;
+          return (
           <article
             key={message.id}
-            className={`message ${message.role} ${message.error ? "error" : ""} ${searchMatches.includes(message.id) ? "search-match" : ""} ${activeMatchId === message.id ? "search-active" : ""}`}
+            className={`message ${message.role} ${message.error ? "error" : ""} ${searchMatches.includes(message.id) ? "search-match" : ""} ${activeMatchId === message.id ? "search-active" : ""} ${message.structuredTurn?.turnId === highlightedTurnId ? "structured-turn-focus" : ""}`}
             data-message-id={message.id}
+            data-structured-turn-id={message.structuredTurn?.turnId}
           >
             <strong className="message-author">{message.role === "user" ? "You" : "OpenDrSai"}</strong>
             <div className="message-body">
               {message.content && message.role === "user" ? (
                 <p>{highlightPlainText(message.content, searchQuery)}</p>
+              ) : message.role === "assistant" && message.structuredTurn ? (
+                message.structuredTurn.parts.length ? (
+                  <StructuredMessageParts
+                    turn={message.structuredTurn}
+                    language={language}
+                    respondedRequestIds={respondedInputRequests}
+                    onOpenLink={handleMarkdownLink}
+                    onOpenArtifact={openStructuredArtifact}
+                    onOpenCitation={openStructuredCitation}
+                    onRespondInteraction={respondToStructuredInteraction}
+                    onRequestTextInteraction={requestStructuredTextInput}
+                  />
+                ) : (
+                  <StreamingStatus message={message} now={now} zh={zh} />
+                )
               ) : message.content ? (
                 <ChatMessageContent
-                  content={message.content}
+                  content={assistantContent}
                   streaming={message.streaming}
                   language={language}
                   onOpenLink={handleMarkdownLink}
@@ -1089,14 +1847,7 @@ export function ChatWorkspace({
               ) : (
                 <StreamingStatus message={message} now={now} zh={zh} />
               )}
-              {message.statusContent && (
-                <div className="message-status">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {message.statusContent}
-                  </ReactMarkdown>
-                </div>
-              )}
-              {message.reasoningContent && (
+              {!message.structuredTurn && message.reasoningContent && (
                 <details className="chat-reasoning chat-event-reasoning">
                   <summary>
                     <ChevronRight size={14} />
@@ -1104,7 +1855,7 @@ export function ChatWorkspace({
                   </summary>
                   <div className="chat-reasoning-content">
                     <ChatMessageContent
-                      content={message.reasoningContent}
+                      content={getReasoningChatText(message.reasoningContent)}
                       streaming={message.streaming}
                       language={language}
                       onOpenLink={handleMarkdownLink}
@@ -1112,18 +1863,187 @@ export function ChatWorkspace({
                   </div>
                 </details>
               )}
-              {message.toolTimeline?.length ? (
-                <ToolTimeline events={message.toolTimeline} />
+              {!message.structuredTurn && message.inputRequest ? (
+                <section className="chat-agent-input-request" aria-label={zh ? "智能体请求输入" : "Agent input request"}>
+                  <strong>{zh ? "智能体需要你的输入" : "Agent needs your input"}</strong>
+                  <p>{message.inputRequest.prompt}</p>
+                  <div>
+                    {message.inputRequest.inputType === "approval" ? (
+                      <>
+                        <button type="button" disabled={respondedInputRequests.has(message.inputRequest.requestId)} onClick={() => void respondToAgentInput(message.inputRequest!, { approved: false })}>{zh ? "拒绝" : "Reject"}</button>
+                        <button type="button" disabled={respondedInputRequests.has(message.inputRequest.requestId)} onClick={() => void respondToAgentInput(message.inputRequest!, { approved: true })}>{zh ? "批准" : "Approve"}</button>
+                      </>
+                    ) : (
+                      <button type="button" disabled={respondedInputRequests.has(message.inputRequest.requestId)} onClick={() => requestTextAgentInput(message.inputRequest!)}>{zh ? "回复" : "Respond"}</button>
+                    )}
+                    {respondedInputRequests.has(message.inputRequest.requestId) && <span>{zh ? "已发送" : "Sent"}</span>}
+                  </div>
+                </section>
               ) : null}
-              {message.role === "assistant" && !message.streaming && getVisibleChatText(message.content) ? (
-                <MessageActions content={getVisibleChatText(message.content)} zh={zh} />
+              {message.role === "assistant" && !message.streaming && !message.error && assistantContent ? (
+                <MessageActions
+                  content={assistantContent}
+                  messageId={message.id}
+                  playback={voicePlayback}
+                  playbackDisabled={showAnyVoiceCaptureBar || isVoiceCaptureActive(voiceTurnState.phase)}
+                  playbackRate={voicePreferences.playbackRate}
+                  synthesisMode={resolveVoiceSynthesisMode(voicePreferences.synthesisMode, voicePreferences.remoteTtsConsent)}
+                  voiceName={voicePreferences.voiceName}
+                  zh={zh}
+                />
               ) : null}
             </div>
           </article>
-        ))}
+          );
+        })}
       </div>
       )}
-      <form className="composer" onSubmit={handleSubmit}>
+      {!emptyChat && turnRailMarkers.length > 0 ? (
+        <nav className="conversation-turn-rail" aria-label={zh ? "用户输入定位" : "User message navigation"}>
+          {turnRailMarkers.map((marker, index) => {
+            const message = messages.find((item) => item.id === marker.id);
+            const label = message?.content.trim().replace(/\s+/g, " ") || `${zh ? "用户输入" : "User message"} ${index + 1}`;
+            return (
+              <button
+                key={marker.id}
+                type="button"
+                className={marker.id === activeTurnRailId ? "active" : ""}
+                style={{ top: `${marker.top}%` }}
+                title={label}
+                aria-label={`${zh ? "定位到用户输入" : "Go to user message"} ${index + 1}: ${label.slice(0, 80)}`}
+                onClick={() => scrollToUserTurn(marker.id)}
+              />
+            );
+          })}
+        </nav>
+      ) : null}
+      {emptyChat && (
+        <div className="empty-chat-intro" role="group" aria-label={zh ? "新建会话" : "New conversation"}>
+          <img className="empty-chat-logo" src={drsaiLogo} alt="OpenDrSai" />
+          <h1>
+            <span>
+              {zh ? "在" : "In"}
+              <span className="empty-chat-selector" ref={introMenuOpen === "workspace" ? introPickerRef : undefined}>
+                <button
+                  type="button"
+                  className="empty-chat-selector-trigger"
+                  title={`${activeWorkspaceName} · ${workspaceLocationLabel}`}
+                  aria-expanded={introMenuOpen === "workspace"}
+                  onClick={() => toggleIntroMenu("workspace")}
+                >
+                  <strong>{activeWorkspaceName}</strong>
+                  <ChevronDown size={17} aria-hidden />
+                </button>
+                {introMenuOpen === "workspace" ? (
+                  <div className="empty-chat-selector-menu" role="dialog" aria-label={zh ? "切换工作区" : "Switch workspace"}>
+                    <label className="empty-chat-selector-search">
+                      <Search size={15} aria-hidden />
+                      <input
+                        autoFocus
+                        value={introSearchQuery}
+                        onChange={(event) => setIntroSearchQuery(event.target.value)}
+                        placeholder={zh ? "搜索工作区" : "Search workspaces"}
+                      />
+                    </label>
+                    <div className="empty-chat-selector-list">
+                      {filteredIntroWorkspaces.map((workspace) => (
+                        <button
+                          type="button"
+                          key={workspace.id}
+                          className={workspace.id === selectedWorkspaceId ? "active" : ""}
+                          onClick={() => selectWorkspace(workspace.id)}
+                        >
+                          {workspace.location === "remote" ? <Globe2 size={16} /> : <Folder size={16} />}
+                          <span><b>{workspace.name}</b><small>{workspace.location === "remote" ? (zh ? "远程" : "Remote") : (zh ? "本机" : "Local")}</small></span>
+                          {workspace.id === selectedWorkspaceId ? <Check size={16} aria-label={zh ? "当前工作区" : "Current workspace"} /> : null}
+                        </button>
+                      ))}
+                      {filteredIntroWorkspaces.length === 0 ? <p>{zh ? "没有匹配的工作区" : "No matching workspaces"}</p> : null}
+                    </div>
+                  </div>
+                ) : null}
+              </span>
+              {zh ? "工作区，" : "workspace,"}
+            </span>
+            <span>
+              {zh ? "用" : "What should we do with"}
+              <span className="empty-chat-selector" ref={introMenuOpen === "agent" ? introPickerRef : undefined}>
+                <button
+                  type="button"
+                  className="empty-chat-selector-trigger"
+                  disabled={!hasAgentOptions}
+                  aria-expanded={introMenuOpen === "agent"}
+                  onClick={() => toggleIntroMenu("agent")}
+                >
+                  <strong>{activeAgentName}</strong>
+                  <ChevronDown size={17} aria-hidden />
+                </button>
+                {introMenuOpen === "agent" ? (
+                  <div className="empty-chat-selector-menu" role="dialog" aria-label={zh ? "切换智能体" : "Switch agent"}>
+                    <label className="empty-chat-selector-search">
+                      <Search size={15} aria-hidden />
+                      <input
+                        autoFocus
+                        value={introSearchQuery}
+                        onChange={(event) => setIntroSearchQuery(event.target.value)}
+                        placeholder={zh ? "搜索智能体" : "Search agents"}
+                      />
+                    </label>
+                    <div className="empty-chat-selector-list">
+                      {filteredIntroAgents.map((agent) => (
+                        <button
+                          type="button"
+                          key={agent.id}
+                          className={agent.id === selectedAgentId ? "active" : ""}
+                          onClick={() => selectAgent(agent.id)}
+                        >
+                          <Bot size={16} />
+                          <span><b>{agent.name}</b><small>{getAgentOptionMeta(agent, zh)}</small></span>
+                          {agent.id === selectedAgentId ? <Check size={16} aria-label={zh ? "当前智能体" : "Current agent"} /> : null}
+                        </button>
+                      ))}
+                      {filteredIntroAgents.length === 0 ? <p>{zh ? "没有匹配的智能体" : "No matching agents"}</p> : null}
+                    </div>
+                  </div>
+                ) : null}
+              </span>
+              {zh ? "智能体，做什么呢？" : "?"}
+            </span>
+          </h1>
+          {emptyChatPreferenceNotice ? (
+            <div className="remembered-preferences-notice" data-testid="remembered-preferences-notice" role="status">
+              {emptyChatPreferenceNotice}
+            </div>
+          ) : null}
+        </div>
+      )}
+      {emptyChat && (
+        <section className="sample-prompts" aria-label={zh ? "示例任务" : "Example tasks"}>
+          {emptyChatPrompts.map((prompt, index) => {
+            const PromptIcon = [Telescope, Hammer, ScanSearch, Bug][index] ?? Telescope;
+            return (
+              <button
+                className={`sample-prompt-card sample-prompt-card-${index + 1}`}
+                key={`${index}-${prompt.slice(0, 32)}`}
+                type="button"
+                title={prompt}
+                onClick={() => selectSamplePrompt(prompt)}
+              >
+                <PromptIcon size={18} aria-hidden />
+                <span>{prompt}</span>
+              </button>
+            );
+          })}
+        </section>
+      )}
+      <form
+        ref={composerRef}
+        className="composer"
+        data-voice-turn-phase={displayedVoicePhase}
+        data-streaming-speech-segments={assistantSpeechSegments.segments.length}
+        data-streaming-speech-completed={assistantSpeechSegments.completed ? "true" : "false"}
+        onSubmit={handleSubmit}
+      >
         <div className="composer-shell">
           {externalAttachments.some((attachment) => attachment.kind === "terminal") && (
             <div className="composer-terminal-cards">
@@ -1163,9 +2083,34 @@ export function ChatWorkspace({
                     ? Globe2
                     : Paperclip;
               return (
-                <span className="composer-attachment-chip" key={attachment.id} title={attachment.path}>
+                <span
+                  className={`composer-attachment-chip ${(attachment.importFile?.status && attachment.importFile.status !== "ready") || attachment.folderImport?.phase === "failed" ? "import-failed" : ""} ${attachment.folderImport?.phase === "scanning" ? "import-scanning" : ""}`}
+                  key={attachment.id}
+                  title={attachment.importFile?.message || attachment.folderImport?.message || attachment.path}
+                  data-testid="composer-attachment"
+                  data-import-status={attachment.importFile?.status || "ready"}
+                  data-file-category={attachment.importFile?.category || "other"}
+                  data-size-bytes={attachment.importFile?.sizeBytes ?? ""}
+                  data-diagnostic-code={attachment.importFile?.diagnosticCode || ""}
+                  data-processing-mode={attachment.importFile?.processingMode || ""}
+                  data-sensitive-detected={attachment.importFile?.sensitiveDataDetected ? "true" : "false"}
+                  data-sensitive-kinds={attachment.importFile?.sensitiveKinds?.join(",") || ""}
+                  data-sensitive-count={attachment.importFile?.sensitiveValueCount ?? 0}
+                  data-folder-import-phase={attachment.folderImport?.phase || ""}
+                  data-imported-count={attachment.folderImport?.imported ?? ""}
+                  data-skipped-count={attachment.folderImport?.skipped ?? ""}
+                  data-failed-count={attachment.folderImport?.failed ?? ""}
+                  data-duplicate-count={attachment.folderImport?.duplicates ?? ""}
+                >
                   <Icon size={14} />
-                  {attachment.name}
+                  <span className="composer-attachment-copy">
+                    <strong>{attachment.name}</strong>
+                    {attachment.importFile ? <small>{formatPickedFileMeta(attachment.importFile, zh)}</small> : null}
+                    {attachment.importFile?.message ? <small data-testid="composer-file-status-message">{attachment.importFile.message}</small> : null}
+                    {attachment.importFile?.recoveryAction ? <small data-testid="composer-file-recovery-action">{attachment.importFile.recoveryAction}</small> : null}
+                    {attachment.importFile?.privacyNotice ? <small data-testid="composer-file-privacy-notice">{attachment.importFile.privacyNotice}</small> : null}
+                    {attachment.folderImport ? <small>{formatFolderImportMeta(attachment.folderImport, zh)}</small> : null}
+                  </span>
                   <button
                     type="button"
                     aria-label={zh ? `绉婚櫎 ${attachment.name}` : `Remove ${attachment.name}`}
@@ -1211,32 +2156,156 @@ export function ChatWorkspace({
             })}
           </div>
 
+          {materialRolePhase !== "idle" && (
+            <section
+              className={`material-role-panel ${materialRolePhase}`}
+              data-testid="material-role-panel"
+              data-analysis-phase={materialRolePhase}
+              aria-live="polite"
+            >
+              <div className="material-role-panel-header">
+                <strong><Brain size={14} />{zh ? "材料角色" : "Material roles"}</strong>
+                <span>{materialRolePhase === "analyzing" ? (zh ? "正在识别…" : "Analyzing…") : materialRolePhase === "failed" ? (zh ? "暂时无法识别" : "Analysis unavailable") : (zh ? `已识别 ${materialRoleAnalysis?.items.length || 0} 项` : `${materialRoleAnalysis?.items.length || 0} identified`)}</span>
+              </div>
+              {materialRolePhase === "ready" && materialRoleAnalysis ? (
+                <div className="material-role-groups">
+                  {(["previous_report", "latest_data", "result_image", "reference_material"] as const).map((role) => (
+                    <article
+                      key={role}
+                      data-material-role={role}
+                      data-role-count={materialRoleAnalysis.roleCounts[role]}
+                    >
+                      <b>{formatMaterialRoleLabel(role, zh)}</b>
+                      <span>{materialRoleAnalysis.roleCounts[role]} {zh ? "项" : "items"}</span>
+                      <small>{formatMaterialRoleFiles(materialRoleAnalysis.items, role, zh)}</small>
+                    </article>
+                  ))}
+                </div>
+              ) : null}
+              {materialRolePhase === "ready" ? <p>{zh ? "你可以直接问：我有哪些材料？" : "You can ask: What materials do I have?"}</p> : null}
+            </section>
+          )}
+
+          {materialConsistencyPhase !== "idle" ? (
+            <section
+              className={`material-consistency-panel ${materialConsistencyPhase}`}
+              data-testid="material-consistency-panel"
+              data-analysis-phase={materialConsistencyPhase}
+              aria-live="polite"
+            >
+              <div className="material-consistency-header">
+                <strong>{zh ? "材料之间有哪些关系" : "How the materials relate"}</strong>
+                <span>{materialConsistencyPhase === "analyzing"
+                  ? (zh ? "正在逐项比较…" : "Comparing…")
+                  : materialConsistencyPhase === "failed"
+                    ? (zh ? "暂时无法完成比较" : "Comparison unavailable")
+                    : (zh ? `发现 ${materialConsistencyAnalysis?.findings.length || 0} 项` : `${materialConsistencyAnalysis?.findings.length || 0} findings`)}</span>
+              </div>
+              {materialConsistencyPhase === "ready" && materialConsistencyAnalysis ? (
+                <>
+                  <p>{materialConsistencyAnalysis.summary}</p>
+                  {materialConsistencyAnalysis.findings.length ? (
+                    <div className="material-consistency-findings">
+                      {materialConsistencyAnalysis.findings.map((finding) => (
+                        <article
+                          key={finding.id}
+                          className={`material-consistency-finding ${finding.kind}`}
+                          data-testid="material-consistency-finding"
+                          data-finding-kind={finding.kind}
+                          data-finding-id={finding.id}
+                        >
+                          <header>
+                            <strong>{finding.title}</strong>
+                            <em>{formatMaterialConsistencyKind(finding.kind, zh)}</em>
+                          </header>
+                          <p>{finding.explanation}</p>
+                          <small>{zh ? "建议：" : "Recommendation: "}{finding.recommendation}</small>
+                          <div className="material-consistency-sources">
+                            {finding.sources.map((source) => (
+                              <button
+                                type="button"
+                                key={`${finding.id}-${source.path}-${source.locator}`}
+                                data-testid="material-consistency-source"
+                                data-source-name={source.name}
+                                data-source-locator={source.locator}
+                                onClick={() => void openMaterialConsistencySource(source)}
+                              >
+                                <strong>{source.name}</strong>
+                                <span>{source.locator} · {source.value}</span>
+                                <small>{source.excerpt}</small>
+                              </button>
+                            ))}
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  ) : <p>{zh ? "暂未发现可以确定的共识、冲突或过期数字。" : "No reliable consensus, conflict, or outdated number was found."}</p>}
+                  {materialConsistencyAnalysis.findings.length ? (
+                    <button
+                      type="button"
+                      className="material-consistency-create-task"
+                      data-testid="material-consistency-create-task"
+                      onClick={createTaskFromMaterialConsistency}
+                    >
+                      {zh ? "基于这些发现继续核对" : "Continue checking these findings"}
+                    </button>
+                  ) : null}
+                  {materialConsistencySourceStatus ? <output data-testid="material-consistency-source-status">{materialConsistencySourceStatus}</output> : null}
+                </>
+              ) : null}
+            </section>
+          ) : null}
+
+          {materialRolePhase === "ready" && !input.trim() && materialTaskSuggestions.length > 0 ? (
+            <section className="material-task-suggestions" data-testid="material-task-suggestions">
+              <div className="material-task-suggestions-header">
+                <strong>{zh ? "你可以接着做" : "Suggested next tasks"}</strong>
+                <span>{zh ? "选择后仍可修改" : "Click to edit before sending"}</span>
+              </div>
+              <div className="material-task-suggestion-list">
+                {materialTaskSuggestions.map((suggestion) => (
+                  <button
+                    type="button"
+                    key={suggestion.id}
+                    data-testid="material-task-suggestion"
+                    data-suggestion-id={suggestion.id}
+                    data-suggestion-prompt={suggestion.prompt}
+                    onClick={() => applyMaterialTaskSuggestion(suggestion)}
+                  >
+                    <strong>{suggestion.title}</strong>
+                    <span>{suggestion.description}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
           {showContextPreview && (
-            <section className="context-assembly-preview" aria-label="Context assembly preview">
+            <section className="context-assembly-preview" aria-label={zh ? "上下文预览" : "Context assembly preview"}>
               <div className="context-assembly-preview-header">
                 <strong>
                   <Info size={13} />
-                  Context preview
+                  {zh ? "上下文预览" : "Context preview"}
                 </strong>
                 <span
                   className={`context-budget-meter ${contextBudget.level}`}
                   title={`Estimated prompt context budget: ${contextBudget.estimatedTokens} / ${contextBudget.limit} tokens. Raw estimate ${contextBudget.rawEstimatedTokens} tokens. ${contextBudget.source}. ${contextBudget.calibrationSource ?? "No tokenizer calibration samples."} ${contextBudget.calibrationDrift ?? ""} ${contextBudget.reservedOutputTokens} tokens reserved for output.`}
                 >
-                  {contextPreviewItems.length} visible source{contextPreviewItems.length === 1 ? "" : "s"} 路 {formatApproxTokens(contextBudget.estimatedTokens)}
-                  <small>{contextBudget.calibrationSource ?? contextBudget.source}</small>
+                  {zh ? `${contextPreviewItems.length} 项材料 · ${formatApproxTokensZh(contextBudget.estimatedTokens)}` : `${contextPreviewItems.length} visible source${contextPreviewItems.length === 1 ? "" : "s"} · ${formatApproxTokens(contextBudget.estimatedTokens)}`}
+                  <small>{zh ? formatContextBudgetSourceZh(contextBudget) : contextBudget.calibrationSource ?? contextBudget.source}</small>
                   {contextBudget.calibrationDrift ? <small>{contextBudget.calibrationDrift}</small> : null}
                 </span>
               </div>
               <div className="context-assembly-preview-list">
                 {contextPreviewItems.map((item) => (
                   <span className="context-assembly-preview-item" key={item.key} title={item.detail}>
-                    <b>{item.kind}</b>
+                    <b>{zh ? formatContextKindZh(item.kind) : item.kind}</b>
                     {item.label}
-                    <small>{formatApproxTokens(item.estimatedTokens)}</small>
+                    <small>{zh ? formatApproxTokensZh(item.estimatedTokens) : formatApproxTokens(item.estimatedTokens)}</small>
                   </span>
                 ))}
               </div>
-              <p>{contextBudget.message} Only these visible sources and workspace instructions are sent with the next message.</p>
+              <p>{zh ? formatContextBudgetMessageZh(contextBudget) : `${contextBudget.message} Only these visible sources and workspace instructions are sent with the next message.`}</p>
             </section>
           )}
 
@@ -1280,7 +2349,7 @@ export function ChatWorkspace({
                         aria-label={`Assign agent for fork queue subtask ${queueIndex}`}
                       >
                         <option value="">
-                          {entry.agentHint ? `Use @${entry.agentHint}` : `Default: ${activeAgentName}`}
+                          {entry.agentHint ? (zh ? `使用 @${entry.agentHint}` : `Use @${entry.agentHint}`) : (zh ? `默认：${activeAgentName}` : `Default: ${activeAgentName}`)}
                         </option>
                         {agentOptions.map((agent) => (
                           <option key={agent.id} value={agent.id}>
@@ -1299,6 +2368,7 @@ export function ChatWorkspace({
             <div className="composer-input-row">
               <div className="composer-tools">
                 <button
+                  ref={attachmentButtonRef}
                   type="button"
                   className="composer-icon-button"
                   aria-expanded={toolsOpen}
@@ -1341,12 +2411,14 @@ export function ChatWorkspace({
                       Refresh IDE context
                     </button>
                     <button type="button" onClick={addFiles}>
+                      <span data-testid="composer-add-file-label" hidden />
                       <Paperclip size={15} />
                       {zh ? "添加文件" : "Add File"}
                     </button>
                     <button type="button" onClick={addFolder}>
+                      <span data-testid="composer-add-folder-label" hidden />
                       <FolderPlus size={15} />
-                      Add Folder
+                      {zh ? "添加文件夹" : "Add Folder"}
                     </button>
                   </div>
                 )}
@@ -1358,8 +2430,18 @@ export function ChatWorkspace({
                   disclosure={voiceRuntimeDisclosure}
                   onChange={setVoiceReviewText}
                   onAccept={acceptVoiceReview}
-                  onRetry={() => void retryVoiceTranscription()}
+                  onRetry={() => void retryVoiceReview()}
                   onDiscard={discardVoiceReview}
+                />
+              ) : showStreamingVoiceCaptureBar ? (
+                <StreamingVoiceCaptureBar
+                  committedText={streamingVoiceInput.transcript.committedText}
+                  elapsedSeconds={streamingVoiceInput.elapsedSeconds}
+                  levels={streamingVoiceInput.levels}
+                  phase={streamingVoiceInput.phase}
+                  transportMessage={streamingVoiceInput.flowControl.paused ? (zh ? "连接较慢，正在控制音频发送速度…" : "Connection is slow; audio flow is being limited…") : undefined}
+                  unstableText={streamingVoiceInput.transcript.unstableText}
+                  onStop={() => void streamingVoiceInput.stop()}
                 />
               ) : showVoiceCaptureBar ? (
                 <VoiceCaptureBar
@@ -1369,7 +2451,8 @@ export function ChatWorkspace({
                   onStop={voiceState === "processing" ? cancelVoiceTranscription : () => stopVoiceRecording("transcribe")}
                 />
               ) : (
-              <textarea
+                <textarea
+                  data-testid="composer-input"
                 ref={textareaRef}
                 value={input}
                 onChange={(event) => onInputChange(event.target.value)}
@@ -1378,7 +2461,7 @@ export function ChatWorkspace({
                 placeholder={
                   canChat
                     ? zh ? "向 OpenDrSai 提问..." : "Ask OpenDrSai..."
-                    : zh ? "正在连接本地网关..." : "Preparing the local agent runtime..."
+                    : chatUnavailableReason ?? (zh ? "正在连接本地网关..." : "Preparing the local agent runtime...")
                 }
                 rows={1}
               />
@@ -1386,9 +2469,9 @@ export function ChatWorkspace({
 
             </div>
 
-            {voiceError || voiceState === "processing" ? (
+            {voiceError || streamingVoiceInput.error || voiceState === "processing" ? (
               <div
-                className={`composer-voice-status ${voiceState === "failed" ? "error" : ""}`}
+                className={`composer-voice-status ${voiceState === "failed" || streamingVoiceInput.phase === "failed" ? "error" : ""}`}
                 aria-live="polite"
               >
                 <span>
@@ -1396,14 +2479,64 @@ export function ChatWorkspace({
                     ? voiceProgressMessage
                     : getVoiceStatusLabel(voiceState, voiceElapsedSeconds)}
                 </span>
-                {voiceError ? <small>{voiceError}</small> : null}
+                {voiceError || streamingVoiceInput.error ? <small>{voiceError ?? streamingVoiceInput.error}</small> : null}
+                {voiceConsentRequired ? (
+                  <span className="composer-voice-error-actions">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        updateVoicePreferences({ remoteSttConsent: true });
+                        setVoiceConsentRequired(false);
+                        setVoiceError(null);
+                        setVoiceState("idle");
+                      }}
+                    >
+                      {zh ? "允许在线识别" : "Allow online transcription"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setVoiceConsentRequired(false);
+                        setVoiceError(null);
+                        setVoiceState("idle");
+                      }}
+                    >
+                      {zh ? "暂不使用" : "Not now"}
+                    </button>
+                  </span>
+                ) : null}
                 {voiceError && voiceRetryBlobRef.current ? (
                   <span className="composer-voice-error-actions">
                     <button type="button" onClick={() => void retryVoiceTranscription()}>Retry</button>
                     <button type="button" onClick={discardVoiceReview}>Discard</button>
                   </span>
                 ) : null}
+                {streamingVoiceInput.phase === "failed" ? (
+                  <span className="composer-voice-error-actions" aria-label="Streaming voice recovery actions">
+                    <button type="button" onClick={() => void startStreamingVoiceRecording()}>Retry streaming</button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        streamingVoiceInput.reset();
+                        setStreamingVoiceReadyToSend(false);
+                        setStreamingVoiceResponseArmed(false);
+                        updateVoicePreferences({ interactionMode: "serial" });
+                      }}
+                    >
+                      Use serial next turn
+                    </button>
+                  </span>
+                ) : null}
               </div>
+            ) : null}
+            {streamingVoiceResponseArmed && !["idle", "completed", "cancelled"].includes(streamingVoiceOutput.phase) ? (
+              <StreamingVoiceOutputBar
+                output={streamingVoiceOutput}
+                onStop={() => {
+                  streamingVoiceOutput.stop();
+                  if (activeRequestId || hasStreamingMessage) onAbort();
+                }}
+              />
             ) : null}
 
             <div className="composer-meta-bar">
@@ -1434,7 +2567,7 @@ export function ChatWorkspace({
                   onClick={() => toggleMetaMenu("agent")}
                 >
                   <Bot size={14} />
-                  Agent: {activeAgentName}
+                  {zh ? "智能体" : "Agent"}: {activeAgentName}
                   <ChevronDown size={13} />
                 </button>
                 {metaMenuOpen === "agent" && (
@@ -1457,7 +2590,6 @@ export function ChatWorkspace({
                 <button
                   className="composer-meta-chip composer-meta-button"
                   type="button"
-                  disabled={!hasModelOptions}
                   aria-expanded={metaMenuOpen === "model"}
                   onClick={() => toggleMetaMenu("model")}
                 >
@@ -1468,7 +2600,7 @@ export function ChatWorkspace({
                 </button>
                 {metaMenuOpen === "model" && (
                   <div className="composer-meta-menu wide">
-                    {modelOptions.map((model) => (
+                    {hasModelOptions ? modelOptions.map((model) => (
                       <button
                         key={model.alias || model.model}
                         type="button"
@@ -1478,7 +2610,7 @@ export function ChatWorkspace({
                         <span>{getModelOptionLabel(model)}</span>
                         <small>{getModelOptionMeta(model)}</small>
                       </button>
-                    ))}
+                    )) : <p className="composer-meta-menu-empty">{zh ? "暂无可用模型" : "No models available"}</p>}
                   </div>
                 )}
               </div>
@@ -1511,15 +2643,24 @@ export function ChatWorkspace({
               )}
               </div>
               <div className="composer-actions composer-actions-meta">
-                <span className="composer-voice-runtime-label" title={voiceRuntimeDisclosure || voiceRuntimeLabel}>
-                  {voiceRuntimeLabel}
-                </span>
+                <select
+                  className="composer-voice-mode"
+                  data-testid="composer-voice-mode"
+                  value={voicePreferences.interactionMode}
+                  onChange={(event) => updateVoicePreferences({ interactionMode: event.target.value as DesktopVoiceInteractionMode })}
+                  disabled={!canSwitchVoiceMode(voiceTurnState.phase) || showStreamingVoiceCaptureBar || streamingVoiceInput.phase === "reviewing" || streamingVoiceReadyToSend || streamingVoiceResponseArmed}
+                  aria-label={zh ? "语音交互模式" : "Voice interaction mode"}
+                  title={streamingVoiceAvailability.reason ?? voiceRuntimeDisclosure ?? voiceRuntimeLabel}
+                >
+                  <option value="serial">{zh ? "串行" : "Serial"}</option>
+                  <option value="streaming" disabled={!streamingVoiceAvailability.available}>{zh ? "流式" : "Streaming"}</option>
+                </select>
                 {voiceDevices.length > 1 ? (
                   <select
                     className="composer-voice-device"
                     value={voiceDeviceId}
-                    onChange={(event) => setVoiceDeviceId(event.target.value)}
-                    disabled={showVoiceCaptureBar}
+                    onChange={(event) => updateVoicePreferences({ inputDeviceId: event.target.value })}
+                    disabled={showAnyVoiceCaptureBar}
                     aria-label="Microphone device"
                     title="Microphone device"
                   >
@@ -1534,8 +2675,8 @@ export function ChatWorkspace({
                 <select
                   className="composer-voice-language"
                   value={voiceLanguage}
-                  onChange={(event) => setVoiceLanguage(event.target.value as "auto" | "zh-CN" | "en-US")}
-                  disabled={showVoiceCaptureBar}
+                  onChange={(event) => updateVoicePreferences({ inputLanguage: event.target.value as "auto" | "zh-CN" | "en-US" })}
+                  disabled={showAnyVoiceCaptureBar}
                   aria-label="Voice transcription language"
                   title="Voice transcription language"
                 >
@@ -1557,15 +2698,15 @@ export function ChatWorkspace({
                 <button
                   type="button"
                   className={`composer-icon-button composer-voice-button ${voiceState === "recording" ? "recording" : ""}`}
-                  disabled={!canChat || showStop || voiceState === "requesting_permission" || voiceState === "processing"}
+                  disabled={showStop || voiceState === "requesting_permission" || voiceState === "processing"}
                   aria-pressed={voiceState === "recording"}
                   aria-label={
-                    voiceState === "recording"
+                    voiceState === "recording" || streamingVoiceInput.phase === "streaming"
                       ? "Stop voice recording"
                       : "Start voice recording"
                   }
                   title={
-                    voiceState === "recording"
+                    voiceState === "recording" || streamingVoiceInput.phase === "streaming"
                       ? "Stop voice recording"
                       : "Start voice recording"
                   }
@@ -1573,7 +2714,7 @@ export function ChatWorkspace({
                     void toggleVoiceRecording();
                   }}
                 >
-                  {voiceState === "recording" ? <MicOff size={16} /> : <Mic size={16} />}
+                  {voiceState === "recording" || streamingVoiceInput.phase === "streaming" ? <MicOff size={16} /> : <Mic size={16} />}
                 </button>
                 {showStop ? (
                   <button className="composer-submit stop" type="button" onClick={onAbort}>
@@ -1581,7 +2722,7 @@ export function ChatWorkspace({
                     {zh ? "停止" : "Stop"}
                   </button>
                 ) : (
-                  <button className="composer-submit" type="submit" disabled={!input.trim() || !canChat}>
+                  <button className="composer-submit" type="submit" disabled={!input.trim() || (!canChat && !materialSuggestionRuntimeReady && !canSaveLocalPreference && !canAnswerMaterialInventoryLocally && !canAnswerMaterialQuestionLocally)}>
                     <Send size={16} />
                     {zh ? "发送" : "Send"}
                   </button>
@@ -1591,43 +2732,177 @@ export function ChatWorkspace({
           </div>
         </div>
       </form>
-      {showSamplePrompts && (
-        <section className="sample-prompts" aria-label="Example prompts">
-          {visibleSamplePrompts.map((prompt, index) => (
-            <button
-              className="sample-prompt-row"
-              key={`${index}-${prompt.slice(0, 32)}`}
-              type="button"
-              title={prompt}
-              onClick={() => selectSamplePrompt(prompt)}
-            >
-              <span>{prompt}</span>
-              <ArrowUpRight size={15} aria-hidden />
-            </button>
-          ))}
-          {hiddenSamplePromptCount > 0 && (
-            <button
-              className="sample-prompt-more"
-              type="button"
-              onClick={() => setSamplePromptsExpanded((expanded) => !expanded)}
-            >
-              <span>
-                {samplePromptsExpanded
-                  ? "Less examples"
-                  : `More (${hiddenSamplePromptCount})`}
-              </span>
-              <ChevronDown
-                className={samplePromptsExpanded ? "expanded" : ""}
-                size={15}
-                aria-hidden
-              />
-            </button>
-          )}
-        </section>
-      )}
       </div>
     </div>
   );
+}
+
+function formatPickedFileMeta(file: PickedFileDescriptor, zh: boolean): string {
+  const category = {
+    pdf: "PDF",
+    word: zh ? "Word 文档" : "Word document",
+    spreadsheet: zh ? "Excel 工作簿" : "Excel workbook",
+    table: zh ? "表格数据" : "Table data",
+    image: zh ? "图片" : "Image",
+    presentation: zh ? "演示文稿" : "Presentation",
+    text: zh ? "文本" : "Text",
+    other: zh ? "其他文件" : "Other file",
+  }[file.category];
+  const status = file.status === "ready"
+    ? (zh ? "已就绪" : "Ready")
+    : file.status === "unsupported"
+      ? (zh ? "暂不支持" : "Unsupported")
+      : (zh ? "读取失败" : "Unreadable");
+  const size = typeof file.sizeBytes === "number" ? formatPickedFileSize(file.sizeBytes) : "";
+  return [category, size, status].filter(Boolean).join(" · ");
+}
+
+function formatPickedFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function createMaterialTaskSuggestions(
+  analysis: MaterialRoleAnalysisResult | null,
+  zh: boolean,
+): MaterialTaskSuggestion[] {
+  if (!analysis?.items.length) return [];
+  const byRole = (role: MaterialRoleItem["role"]) => analysis.items.filter((item) => item.role === role).map((item) => item.name);
+  const reports = byRole("previous_report");
+  const data = byRole("latest_data");
+  const images = byRole("result_image");
+  const references = byRole("reference_material");
+  const quoted = (names: string[]) => names.map((name) => `“${name}”`).join("、");
+  const suggestions: MaterialTaskSuggestion[] = [];
+  if (reports.length && data.length) suggestions.push({
+    id: "update-report",
+    title: zh ? "用最新数据更新旧报告" : "Update the previous report",
+    description: zh ? "保留原文件，生成一份可核对的新版本" : "Keep originals and produce a reviewable new version",
+    prompt: zh ? `请用最新数据 ${quoted(data)} 更新旧报告 ${quoted(reports)}，保留原文件，列出改动和依据，并生成一份新版本。` : `Update ${quoted(reports)} with the latest data in ${quoted(data)}. Keep the originals, list every change and its evidence, and create a new version.`,
+  });
+  if (data.length) suggestions.push({
+    id: "check-data",
+    title: zh ? "检查数据是否有问题" : "Check the data for issues",
+    description: zh ? "检查字段、单位、缺失值、异常值和趋势" : "Check fields, units, missing values, outliers, and trends",
+    prompt: zh ? `请检查 ${quoted(data)} 是否有字段、单位、缺失值、异常值或趋势问题，说明发现、依据和建议。` : `Check ${quoted(data)} for field, unit, missing-value, outlier, and trend issues. Explain findings, evidence, and recommendations.`,
+  });
+  if (data.length && suggestions.length < 2) suggestions.push({
+    id: "visualize-data",
+    title: zh ? "制作数据图表" : "Create data charts",
+    description: zh ? "选择合适图表并解释主要趋势" : "Choose suitable charts and explain key trends",
+    prompt: zh ? `请分析 ${quoted(data)}，选择合适的图表展示主要趋势和异常点，保留单位、图例和数据来源，并解释为什么选择这些图表。` : `Analyze ${quoted(data)} and create suitable charts for the main trends and outliers. Preserve units, legends, and data sources, and explain the chart choices.`,
+  });
+  if (data.length && images.length) suggestions.push({
+    id: "check-image-data-consistency",
+    title: zh ? "核对图片与数据" : "Compare images with data",
+    description: zh ? "检查趋势、坐标、单位和数字是否一致" : "Verify trends, axes, units, and values",
+    prompt: zh ? `请核对结果图片 ${quoted(images)} 与最新数据 ${quoted(data)} 是否一致，逐项检查趋势、坐标、单位和关键数字，并标出冲突。` : `Compare result images ${quoted(images)} with latest data ${quoted(data)}. Check trends, axes, units, and key values, and flag every conflict.`,
+  });
+  if (references.length) suggestions.push({
+    id: "summarize-references",
+    title: zh ? "提取材料要点" : "Extract key points",
+    description: zh ? "整理结论、结构、关键数字和可引用出处" : "Organize conclusions, structure, key figures, and citations",
+    prompt: zh ? `请提取参考材料 ${quoted(references)} 的核心结论、内容结构、关键数字和可引用出处，用非专业读者能理解的语言说明。` : `Extract the main conclusions, structure, key figures, and citable sources from ${quoted(references)}, using language a non-specialist can understand.`,
+  });
+  if (references.length && suggestions.length < 2) suggestions.push({
+    id: "organize-reference-questions",
+    title: zh ? "整理值得继续追问的问题" : "Identify follow-up questions",
+    description: zh ? "区分已有结论、证据缺口和下一步问题" : "Separate known conclusions, evidence gaps, and next questions",
+    prompt: zh ? `请基于 ${quoted(references)} 整理已有结论、仍不确定的地方、证据缺口和下一步最值得追问的 5 个问题，并标明对应材料位置。` : `Using ${quoted(references)}, organize established conclusions, uncertainties, evidence gaps, and the five most useful follow-up questions, citing their source locations.`,
+  });
+  if (images.length && !data.length && suggestions.length < 2) suggestions.push({
+    id: "explain-images",
+    title: zh ? "解释图片表达了什么" : "Explain the images",
+    description: zh ? "识别图表元素、趋势和需要补充的信息" : "Identify chart elements, trends, and missing context",
+    prompt: zh ? `请解释结果图片 ${quoted(images)} 表达的趋势和结论，识别坐标、单位、图例及缺失信息；无法确认的地方请明确说明。` : `Explain the trends and conclusions in ${quoted(images)}. Identify axes, units, legends, and missing context, and clearly state anything that cannot be verified.`,
+  });
+  return suggestions.slice(0, 4);
+}
+
+function createMaterialRoleLookup(items: MaterialRoleItem[]): Map<string, MaterialRoleItem> {
+  const lookup = new Map<string, MaterialRoleItem>();
+  const nameCounts = new Map<string, number>();
+  for (const item of items) {
+    const nameKey = item.name.toLocaleLowerCase();
+    nameCounts.set(nameKey, (nameCounts.get(nameKey) || 0) + 1);
+    lookup.set(normalizeMaterialRolePath(item.path), item);
+  }
+  for (const item of items) {
+    const nameKey = item.name.toLocaleLowerCase();
+    if (nameCounts.get(nameKey) === 1) lookup.set(`name:${nameKey}`, item);
+  }
+  return lookup;
+}
+
+function findMaterialRole(
+  lookup: Map<string, MaterialRoleItem>,
+  attachment: ChatAttachment,
+): MaterialRoleItem | undefined {
+  return lookup.get(normalizeMaterialRolePath(attachment.path))
+    || lookup.get(`name:${attachment.name.toLocaleLowerCase()}`);
+}
+
+function normalizeMaterialRolePath(value: string): string {
+  return value.replace(/\\/g, "/").replace(/\/+$/, "").toLocaleLowerCase();
+}
+
+function enrichAttachmentWithMaterialRole(
+  attachment: ChatAttachment,
+  item?: MaterialRoleItem,
+): ChatAttachment {
+  if (!item) return attachment;
+  const roleSummary = `Material role: ${formatMaterialRoleLabel(item.role, false)} (${Math.round(item.confidence * 100)}% confidence). ${item.reason} Suggested use: ${item.suggestedUse}`;
+  return {
+    ...attachment,
+    note: [attachment.note, roleSummary].filter(Boolean).join("\n"),
+  };
+}
+
+function isMaterialInventoryQuestion(text: string): boolean {
+  return /(?:(?:我|系统)(?:目前|现在)?)?(?:有|拥有|导入|上传)(?:了|的)?哪些材料|材料(?:清单|列表|角色|分别是什么)|what (?:files|materials|sources) (?:do i|are)|list (?:my )?(?:files|materials|sources)/i.test(text.trim());
+}
+
+function isNaturalMaterialQuestion(text: string): boolean {
+  const normalized = text.trim();
+  return /[?？]/.test(normalized)
+    || /(?:标题|题目|样本量|均值|容量|带宽|数字|数值|比例|百分比).*(?:是什么|是多少|有多少)/.test(normalized)
+    || /(?:什么|哪种|哪些).*(?:方法|实验设计|研究设计|差异|不同|区别|冲突|不一致)/.test(normalized)
+    || /(?:比较|对比).*(?:差异|不同|区别|冲突|不一致)/.test(normalized)
+    || /\b(?:what|how many|where|which|compare|difference|title|bandwidth|sample size|method|protocol|conflict)\b/i.test(normalized);
+}
+
+function formatMaterialRoleLabel(role: MaterialRoleItem["role"], zh: boolean): string {
+  if (role === "previous_report") return zh ? "旧报告" : "Previous reports";
+  if (role === "latest_data") return zh ? "最新数据" : "Latest data";
+  if (role === "result_image") return zh ? "结果图片" : "Result images";
+  return zh ? "参考材料" : "Reference materials";
+}
+
+function formatMaterialConsistencyKind(kind: MaterialConsistencyFindingKind, zh: boolean): string {
+  if (kind === "consensus") return zh ? "多来源共识" : "Consensus";
+  if (kind === "source_conflict") return zh ? "来源冲突" : "Source conflict";
+  if (kind === "outdated_number") return zh ? "过期数字" : "Outdated number";
+  if (kind === "chart_mismatch") return zh ? "图文不一致" : "Chart mismatch";
+  return zh ? "证据不足" : "Evidence gap";
+}
+
+function formatMaterialRoleFiles(
+  items: MaterialRoleItem[],
+  role: MaterialRoleItem["role"],
+  zh: boolean,
+): string {
+  const matching = items.filter((item) => item.role === role);
+  if (!matching.length) return zh ? "暂未发现" : "None detected";
+  return matching.map((item) => `${item.name} · ${Math.round(item.confidence * 100)}%`).join("；");
+}
+
+function formatFolderImportMeta(folder: NonNullable<ComposerAttachment["folderImport"]>, zh: boolean): string {
+  if (folder.phase === "scanning") return zh ? "正在扫描文件夹…" : "Scanning folder…";
+  if (folder.phase === "failed") return zh ? `扫描失败 · ${folder.message || "无法读取"}` : `Scan failed · ${folder.message || "Unreadable"}`;
+  return zh
+    ? `已导入 ${folder.imported} · 跳过 ${folder.skipped} · 失败 ${folder.failed} · 重复 ${folder.duplicates} · 子目录 ${folder.directories}`
+    : `Imported ${folder.imported} · skipped ${folder.skipped} · failed ${folder.failed} · duplicates ${folder.duplicates} · ${folder.directories} folders`;
 }
 
 function getForkQueueCommandArgs(input: string): string {
@@ -1674,7 +2949,7 @@ function StreamingStatus({
   const lastEventAt = message.lastEventAt ?? startedAt;
   const idleSeconds = Math.max(0, Math.floor((now - lastEventAt) / 1000));
   const detail = elapsedSeconds < 3
-    ? zh ? "正在连接本地网关..." : "Connecting to the local gateway..."
+    ? zh ? "正在连接本地运行时..." : "Connecting to the local runtime..."
     : idleSeconds >= 10
       ? zh ? `等待模型输出 ${elapsedSeconds} 秒。` : `Waiting ${elapsedSeconds}s for model output.`
       : zh ? `正在推理 ${elapsedSeconds} 秒。` : `Thinking for ${elapsedSeconds}s.`;
@@ -1687,16 +2962,30 @@ function StreamingStatus({
   );
 }
 
-function ToolTimeline({ events }: { events: ChatToolTimelineEvent[] }): React.JSX.Element {
-  return (
-    <div className="message-tool-timeline" aria-label="Tool timeline">
-      {events.slice(-8).map((event) => <ToolTimelineItem event={event} key={event.id} />)}
-    </div>
-  );
-}
-
-function MessageActions({ content, zh }: { content: string; zh: boolean }): React.JSX.Element {
+function MessageActions({
+  content,
+  messageId,
+  playback,
+  playbackDisabled,
+  playbackRate,
+  synthesisMode,
+  voiceName,
+  zh,
+}: {
+  content: string;
+  messageId: string;
+  playback: SystemVoicePlayback;
+  playbackDisabled: boolean;
+  playbackRate: number;
+  synthesisMode: "system" | "provider";
+  voiceName: string;
+  zh: boolean;
+}): React.JSX.Element {
   const [copied, setCopied] = useState(false);
+  const isActive = playback.activeMessageId === messageId;
+  const isPlaying = isActive && playback.phase === "playing";
+  const isPaused = isActive && playback.phase === "paused";
+  const isSynthesizing = isActive && playback.phase === "synthesizing";
   async function handleCopy(): Promise<void> {
     try {
       await navigator.clipboard.writeText(content);
@@ -1707,136 +2996,46 @@ function MessageActions({ content, zh }: { content: string; zh: boolean }): Reac
     window.setTimeout(() => setCopied(false), 1500);
   }
   return (
-    <div className="message-actions">
+    <div className={`message-actions ${isActive || playback.error ? "active" : ""}`} aria-live="polite">
       <button type="button" onClick={() => void handleCopy()} title={zh ? "复制回答" : "Copy response"}>
         {copied ? "✓" : <ClipboardList size={13} />}
         <span>{copied ? (zh ? "已复制" : "Copied") : (zh ? "复制" : "Copy")}</span>
       </button>
-    </div>
-  );
-}
-
-function ToolTimelineItem({ event }: { event: ChatToolTimelineEvent }): React.JSX.Element {
-  const [open, setOpen] = useState(event.status === "failed" || event.status === "running");
-  const content = event.content?.trim() ?? "";
-  const preview = content.split(/\r?\n/, 1)[0].slice(0, 140);
-  return (
-    <details
-      className={`message-tool-event ${event.status ?? event.kind}`}
-      open={open}
-      onToggle={(toggle) => setOpen(toggle.currentTarget.open)}
-    >
-      <summary>
-        {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        <span>{event.status ?? event.kind}</span>
-        <strong>{event.title}</strong>
-        {event.toolName ? <code>{event.toolName}</code> : null}
-      </summary>
-      <div className="message-tool-detail">
-        {event.path ? <small>{event.path}</small> : null}
-        {event.kind === "diff" && content ? <ToolDiffContent value={content} /> : content ? <pre>{content}</pre> : preview ? <p>{preview}</p> : null}
-        {content ? <CopyTimelineContent value={content} /> : null}
-      </div>
-    </details>
-  );
-}
-
-function ToolDiffContent({ value }: { value: string }): React.JSX.Element {
-  return (
-    <pre className="chat-diff">
-      {value.split("\n").map((line, index) => {
-        const kind = line.startsWith("+") && !line.startsWith("+++") ? "add"
-          : line.startsWith("-") && !line.startsWith("---") ? "remove"
-            : line.startsWith("@@") ? "hunk" : "context";
-        return <span className={`chat-diff-line ${kind}`} key={`${index}-${line}`}>{line || " "}</span>;
-      })}
-    </pre>
-  );
-}
-
-function CopyTimelineContent({ value }: { value: string }): React.JSX.Element {
-  const [copied, setCopied] = useState(false);
-  async function handleCopy(): Promise<void> {
-    await navigator.clipboard.writeText(value);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1500);
-  }
-  return <button type="button" className="tool-copy-button" onClick={() => void handleCopy()}>{copied ? "Copied" : "Copy output"}</button>;
-}
-
-function VoiceCaptureBar({
-  elapsedSeconds,
-  levels,
-  state,
-  onStop,
-}: {
-  elapsedSeconds: number;
-  levels: number[];
-  state: VoiceRecordingState;
-  onStop: () => void;
-}): React.JSX.Element {
-  const processing = state === "processing" || state === "requesting_permission";
-  const bars = levels.map((level, index) => {
-    const height = Math.max(2, Math.round(level * 30));
-    return (
-      <span
-        className="composer-voice-wave-bar"
-        key={index}
-        style={{
-          height: `${height}px`,
-          opacity: level > 0.01 ? 1 : 0,
-        }}
-      />
-    );
-  });
-
-  return (
-    <div
-      className={`composer-voice-capture ${processing ? "processing" : "recording"}`}
-      aria-label={processing ? "Preparing voice input" : "Recording voice input"}
-    >
-      <div className="composer-voice-wave" aria-hidden>
-        {bars}
-      </div>
-      <span className="composer-voice-time">{formatVoiceDuration(elapsedSeconds)}</span>
-      <button
-        className="composer-voice-stop"
-        type="button"
-        disabled={state === "requesting_permission"}
-        onClick={onStop}
-        aria-label="Stop voice recording"
-        title="Stop voice recording"
-      >
-        <Square size={11} fill="currentColor" />
-      </button>
-    </div>
-  );
-}
-
-function VoiceReviewBar({
-  value,
-  disclosure,
-  onChange,
-  onAccept,
-  onRetry,
-  onDiscard,
-}: {
-  value: string;
-  disclosure: string | null;
-  onChange: (value: string) => void;
-  onAccept: () => void;
-  onRetry: () => void;
-  onDiscard: () => void;
-}): React.JSX.Element {
-  return (
-    <div className="composer-voice-review">
-      <textarea value={value} onChange={(event) => onChange(event.target.value)} aria-label="Review voice transcript" rows={2} />
-      <div className="composer-voice-review-actions">
-        <button type="button" onClick={onRetry}>Retry</button>
-        <button type="button" onClick={onDiscard}>Discard</button>
-        <button className="primary" type="button" onClick={onAccept} disabled={!value.trim()}>Insert</button>
-      </div>
-      {disclosure ? <small>{disclosure}</small> : null}
+      {isSynthesizing ? (
+        <button type="button" disabled title={zh ? "正在合成语音" : "Synthesizing speech"}>
+          <RefreshCw size={13} className="spinning" />
+          <span>{zh ? "合成中" : "Synthesizing"}</span>
+        </button>
+      ) : isPlaying ? (
+        <button type="button" onClick={playback.pause} title={zh ? "暂停朗读" : "Pause reading"}>
+          <Pause size={13} />
+          <span>{zh ? "暂停" : "Pause"}</span>
+        </button>
+      ) : isPaused ? (
+        <button type="button" onClick={playback.resume} title={zh ? "继续朗读" : "Resume reading"}>
+          <Play size={13} />
+          <span>{zh ? "继续" : "Resume"}</span>
+        </button>
+      ) : (
+        <button
+          type="button"
+          disabled={playbackDisabled || !playback.isAvailable}
+          onClick={() => playback.play(messageId, content, zh ? "zh" : "en", { mode: synthesisMode, rate: playbackRate, voiceName })}
+          title={zh ? "朗读回复" : "Read response aloud"}
+        >
+          <Volume2 size={13} />
+          <span>{zh ? "朗读" : "Read"}</span>
+        </button>
+      )}
+      {isActive ? (
+        <button type="button" onClick={playback.stop} title={zh ? "停止朗读" : "Stop reading"}>
+          <Square size={12} />
+          <span>{zh ? "停止" : "Stop"}</span>
+        </button>
+      ) : null}
+      {playback.error && !playback.activeMessageId ? (
+        <span className="message-action-error" role="status">{playback.error}</span>
+      ) : null}
     </div>
   );
 }
@@ -1868,68 +3067,6 @@ function highlightPlainText(text: string, query: string): React.ReactNode {
 function getPathName(path: string): string {
   const normalized = path.replace(/\\/g, "/");
   return normalized.split("/").filter(Boolean).pop() ?? path;
-}
-
-function getPreferredVoiceMimeType(): string | undefined {
-  if (typeof MediaRecorder === "undefined") return undefined;
-  const candidates = [
-    "audio/webm;codecs=opus",
-    "audio/webm",
-    "audio/mp4",
-    "audio/wav",
-  ];
-  return candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate));
-}
-
-function createSilentVoiceLevels(): number[] {
-  return Array.from({ length: VOICE_LEVEL_COUNT }, () => 0);
-}
-
-function calculateVoiceLevel(samples: Float32Array, previousLevel: number): number {
-  if (!samples.length) return 0;
-  let sumOfSquares = 0;
-  let peak = 0;
-  for (const sample of samples) {
-    sumOfSquares += sample * sample;
-    peak = Math.max(peak, Math.abs(sample));
-  }
-  const rms = Math.sqrt(sumOfSquares / samples.length);
-  const signal = Math.max(rms * 2.8, peak * 0.75);
-  const normalized = signal <= VOICE_NOISE_FLOOR
-    ? 0
-    : Math.min(1, (signal - VOICE_NOISE_FLOOR) / (0.5 - VOICE_NOISE_FLOOR));
-  const attack = normalized > previousLevel ? 0.62 : 0.28;
-  const smoothed = previousLevel + (normalized - previousLevel) * attack;
-  return smoothed < 0.012 ? 0 : smoothed;
-}
-
-function getVoicePermissionError(error: unknown): string {
-  if (error instanceof DOMException) {
-    if (error.name === "NotAllowedError" || error.name === "SecurityError") {
-      return "Microphone permission was denied.";
-    }
-    if (error.name === "NotFoundError" || error.name === "DevicesNotFoundError") {
-      return "No microphone was found.";
-    }
-    if (error.name === "NotReadableError" || error.name === "TrackStartError") {
-      return "The microphone is already in use or unavailable.";
-    }
-  }
-  return error instanceof Error ? error.message : "Unable to start voice recording.";
-}
-
-function getVoiceStatusLabel(state: VoiceRecordingState, elapsedSeconds: number): string {
-  if (state === "requesting_permission") return "Requesting microphone permission...";
-  if (state === "recording") return `Recording ${formatVoiceDuration(elapsedSeconds)}`;
-  if (state === "processing") return "Preparing voice transcript...";
-  if (state === "failed") return "Voice input needs attention.";
-  return "";
-}
-
-function formatVoiceDuration(seconds: number): string {
-  const minutes = Math.floor(seconds / 60);
-  const remainder = seconds % 60;
-  return `${minutes}:${remainder.toString().padStart(2, "0")}`;
 }
 
 async function createClipboardImageAttachment(
@@ -2429,6 +3566,26 @@ function formatApproxTokens(tokens: number): string {
   return `~${tokens} tokens`;
 }
 
+function formatApproxTokensZh(tokens: number): string {
+  if (tokens >= 1000) return `约 ${(tokens / 1000).toFixed(tokens >= 10000 ? 0 : 1)}k 词元`;
+  return `约 ${tokens} 词元`;
+}
+
+function formatContextKindZh(kind: string): string {
+  return { Browser: "网页", File: "文件", Folder: "文件夹", Selection: "选区", Terminal: "终端", Instruction: "说明" }[kind] || kind;
+}
+
+function formatContextBudgetSourceZh(budget: ContextBudgetEstimate): string {
+  if (budget.calibrationSource) return "已按当前模型校准";
+  return budget.source.startsWith("Model limit") ? "当前模型上限" : "默认上下文上限";
+}
+
+function formatContextBudgetMessageZh(budget: ContextBudgetEstimate): string {
+  if (budget.level === "over") return "材料预计超过上下文上限；请在发送前移除较大的材料。下一条消息只会发送上面列出的材料和工作区说明。";
+  if (budget.level === "high") return "材料预计接近上下文上限。下一条消息只会发送上面列出的材料和工作区说明。";
+  return "材料预计在上下文上限内。下一条消息只会发送上面列出的材料和工作区说明。";
+}
+
 function getContextKindLabel(kind: ChatAttachment["kind"]): string {
   return {
     browser: "Browser",
@@ -2483,15 +3640,15 @@ function getModelOptionMeta(model: MyDrSaiModelConfig): string {
     .join(" / ");
 }
 
-function getAgentOptionMeta(agent: DesktopAgent, _zh: boolean): string {
-  const source = agent.source === "local" ? "Local" : "Online";
+function getAgentOptionMeta(agent: DesktopAgent, zh: boolean): string {
+  const source = agent.source === "local" ? (zh ? "本机" : "Local") : (zh ? "在线" : "Online");
   const status =
     agent.status === "running"
-      ? "Running"
+      ? zh ? "运行中" : "Running"
       : agent.status === "stopped"
-        ? "Stopped"
-        : "Unreachable";
-  return `${source} 路 ${status}`;
+        ? zh ? "未启动" : "Stopped"
+        : zh ? "不可达" : "Unreachable";
+  return `${source} · ${status}`;
 }
 
 function getThinkingEffortLabel(effort: ThinkingEffort, zh: boolean): string {
@@ -2535,6 +3692,10 @@ function getSlashCommandDescription(command: ChatCommandName): string {
   }[command];
 }
 
+function getAssistantDisplayContent(message: UiMessage): string {
+  return getAssistantSpeechText(message, getVisibleChatText);
+}
+
 function parseAgentExamples(
   raw: DesktopAgent["examples"] | undefined,
   language: AppLanguage,
@@ -2564,6 +3725,29 @@ function parseAgentExamples(
       return "";
     })
     .filter((item) => item.length > 0);
+}
+
+function getEmptyChatPrompts(agentPrompts: string[], zh: boolean): string[] {
+  const fallbacks = zh
+    ? [
+        "探索并理解当前工作区",
+        "构建新功能、应用或工具",
+        "审查现有内容并提出改进建议",
+        "定位并修复问题或失败",
+      ]
+    : [
+        "Explore and understand this workspace",
+        "Build a new feature, app, or tool",
+        "Review the current work and suggest improvements",
+        "Find and fix a problem or failure",
+      ];
+  return [...new Set([...agentPrompts, ...fallbacks])].slice(0, 4);
+}
+
+function getWorkspaceDisplayName(workspacePath: string | undefined, zh: boolean): string {
+  const normalized = workspacePath?.trim().replace(/[\\/]+$/, "") ?? "";
+  const name = normalized.split(/[\\/]/).filter(Boolean).at(-1);
+  return name || (zh ? "当前" : "current workspace");
 }
 
 function parseJsonIfObject(value: string): unknown {
@@ -2601,6 +3785,15 @@ function isPreviewBrowserUrl(href: string): boolean {
       (url.protocol === "http:" || url.protocol === "https:") &&
       ["localhost", "127.0.0.1", "::1"].includes(url.hostname)
     );
+  } catch {
+    return false;
+  }
+}
+
+function isSafeWebUrl(href: string): boolean {
+  try {
+    const url = new URL(href);
+    return url.protocol === "http:" || url.protocol === "https:";
   } catch {
     return false;
   }

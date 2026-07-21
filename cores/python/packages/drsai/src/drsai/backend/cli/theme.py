@@ -1,4 +1,4 @@
-"""Unified color theme for the DrSai CLI.
+"""Unified color theme for the OpenDrSai CLI.
 
 All visual elements — user echoes, assistant output borders, tool
 messages, system notifications, separators, and footers — reference

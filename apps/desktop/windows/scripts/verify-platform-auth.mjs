@@ -16,9 +16,11 @@ const desktopGateway = read("apps/desktop/windows/src/main/gateway.ts");
 const chatAdapter = read("apps/desktop/windows/src/renderer/src/adapters/useDesktopChatAdapter.ts");
 const authProvider = read("apps/desktop/windows/src/renderer/src/auth/AuthProvider.tsx");
 const modelDefaults = read("apps/desktop/windows/src/main/modelDefaults.ts");
+const myDrSaiConfig = read("apps/desktop/windows/src/main/mydrsaiconfig.ts");
 const modelFactory = read("cores/python/packages/drsai/src/drsai/backend/run_drsai_agent_factory.py");
 const mainProcess = read("apps/desktop/windows/src/main/index.ts");
 const status = read("apps/desktop/windows/src/main/status.ts");
+const devLauncher = read("apps/desktop/scripts/windows-desktop-dev.ps1");
 
 for (const [name, passed] of [
   ["request-scoped platform auth", gateway.includes("platform_auth_scope(auth_context)")],
@@ -27,15 +29,17 @@ for (const [name, passed] of [
   ["credential provider abstraction", modelClient.includes("get_model_credential_provider") && anthropicClient.includes("get_model_credential_provider")],
   ["Anthropic client dynamic token binding", anthropicClient.includes("credential.anthropic_base_url") && anthropicClient.includes("self._bind_platform_auth()")],
   ["no OIDC token environment mutation", !gateway.includes('os.environ["HEPAI_API_KEY"] =')],
-  ["chat token-expiry retry", chat.includes('error.code !== "token_expired"') && chat.includes("auth = await requireAuthContext()")],
-  ["agent token-expiry retry", agentRuns.includes('error.code !== "token_expired"') && agentRuns.includes("auth = await requireAuthContext()")],
+  ["chat token-expiry retry", chat.includes('error.code === "token_expired"') && chat.includes("!refreshedToken") && chat.includes("await refreshAuthContextAfterUnauthorized()") && chat.includes("await requireAuthContext()")],
+  ["agent token-expiry retry", agentRuns.includes('error.code === "token_expired"') && agentRuns.includes("!refreshedToken") && agentRuns.includes("auth = await requireAuthContext()")],
   ["invalid token clears local session", chat.includes("invalidateAuthSession()") && agentRuns.includes("invalidateAuthSession()")],
   ["invalid token returns renderer to login", chat.includes("desktop:auth-session-invalidated") && authProvider.includes("onAuthSessionInvalidated")],
   ["gateway instance secret", desktopGateway.includes("randomBytes(32)") && desktopGateway.includes("X-OpenDrSai-Gateway-Token")],
-  ["renderer structured auth errors", ["token_expired", "model_forbidden", "quota_exceeded", "model_not_found", "upstream_unavailable"].every((code) => chatAdapter.includes(code))],
+  ["renderer structured auth errors", ["token_expired", "agent_credentials_unavailable", "agent_credentials_invalid", "model_forbidden", "quota_exceeded", "model_not_found", "upstream_unavailable"].every((code) => chatAdapter.includes(code))],
   ["OIDC install status does not require API key", !status.includes('prerequisites.apiKeyConfigured ? null : "api-key"') && !status.includes('apiKeyConfigured ? null : "HEPAI_API_KEY is not configured."')],
-  ["desktop default model alias", modelDefaults.includes('const DEFAULT_MODEL_ALIAS = "deepseek-v4-pro"') && modelDefaults.includes('"hepai/deepseek-v4-pro": DEFAULT_MODEL_ALIAS')],
-  ["default model resolves to DDF canonical id", modelFactory.includes('DEFAULT_CONFIG_NAME = "deepseek-v4-pro"') && modelFactory.includes('model="deepseek-ai/deepseek-v4-pro"')],
+  ["desktop development disables static credential fallback", devLauncher.includes('$env:OPENDRSAI_OIDC_ONLY = "1"') && devLauncher.includes("Env:HEPAI_API_KEY")],
+  ["desktop default model alias", modelDefaults.includes('const DEFAULT_MODEL_ALIAS = "deepseek-ai/deepseek-v4-pro"') && modelDefaults.includes('"deepseek-v4-pro": DEFAULT_MODEL_ALIAS')],
+  ["desktop model picker uses the authenticated available-model catalog", myDrSaiConfig.includes("getGatewayModels(auth.accessToken)") && myDrSaiConfig.includes("mergeAvailableModels") && myDrSaiConfig.includes("availableModelsPromise")],
+  ["default model resolves to DDF canonical id", modelFactory.includes('DEFAULT_CONFIG_NAME = "deepseek-ai/deepseek-v4-pro"') && modelFactory.includes('entry.model == resolved_config_name')],
   ["chat selection reaches gateway", chatAdapter.includes("model: options?.model?.trim() || undefined") && chat.includes("const model = request.model || getDefaultModelAlias()")],
   ["unregistered workspace falls back to global model catalog", mainProcess.includes("return getMyDrSaiConfig();")],
   ["empty failed assistant messages are excluded", chatAdapter.includes("!message.error && message.content.trim().length > 0")],
@@ -44,12 +48,14 @@ for (const [name, passed] of [
 }
 const candidates = [
   process.env.OPENDRSAI_GATEWAY_SMOKE_PYTHON,
+  process.env.pythonLocation ? join(process.env.pythonLocation, "python.exe") : null,
   join(repoRoot, "venv", "Scripts", "python.exe"),
   join(repoRoot, ".venv", "Scripts", "python.exe"),
   join(repoRoot, "venv", "bin", "python"),
   join(repoRoot, ".venv", "bin", "python"),
+  process.platform === "win32" ? "python.exe" : "python",
 ].filter(Boolean);
-const python = candidates.find((candidate) => existsSync(candidate));
+const python = candidates.find((candidate) => candidate.includes("\\") || candidate.includes("/") ? existsSync(candidate) : true);
 if (!python) throw new Error("A project Python environment is required for platform auth tests.");
 
 const result = spawnSync(

@@ -8,7 +8,7 @@ An integrated framework for rapid development and deployment of agents and multi
   </p>
 </div>
 
-This framework is built upon Microsoft’s open-source project [AutoGen](https://github.com/microsoft/autogen) (current version 0.5.7). While maintaining compatibility with the complete structure and ecosystem of AutoGen, it redesigns the components and development logic of agent and multi-agent systems, making it more suitable for building **professional scientific agents and multi-agent systems 🤖: such as complex multi-task execution 💡, state management and human-computer interaction 🙋‍♂️🙋‍♀️, professional scientific tool management and execution 🛠️, long-duration task execution ⏰, and memory management 🧠**.
+This framework adopts the **BAMS (Brain-Actuators-Memory-Sensors) architecture**, with Brain as the core reasoning engine, Actuators for tool orchestration and task execution, Memory for long/short-term context management, and Sensors for external data and model integration. It redesigns the components and development logic of agent and multi-agent systems, making it more suitable for building **professional scientific agents and multi-agent systems 🤖: such as complex multi-task execution 💡, state management and human-computer interaction 🙋‍♂️🙋‍♀️, professional scientific tool management and execution 🛠️, long-duration task execution ⏰, and memory management 🧠**.
 
 It ensures strong compatibility with mainstream MCP and A2A protocols, the [HepAI](https://ai.ihep.ac.cn/) ecosystem, and RAGFlow as a representative RAG architecture. Furthermore, it provides integrated capabilities for both development and deployment: agent or multi-agent system code can be launched with a single command, registered as an OpenAI ChatCompletions format service or HepAI Worker service, and directly exposed as an API. Together with the bundled human-computer interaction frontend, developers can rapidly build and deploy complete end-to-end applications.
 
@@ -62,7 +62,7 @@ setx "HEPAI_API_KEY" "your_api_key"
 
 #### Agent Example Test
 
-See [examples/oai\_client/assistant\_R1\_oai.py](examples/oai_client/assistant_R1_oai.py) for a demonstration of quickly developing an agent system with OpenDrSai.
+See [examples/oai_client/assistant_R1_oai.py](examples/oai_client/assistant_R1_oai.py) for a demonstration of quickly developing an agent system with OpenDrSai.
 
 ### 2.2 Launch Human-Computer Interaction Frontend
 
@@ -113,54 +113,43 @@ drsai backend --agent-config agent_config.yaml # deploy agent/multi-agent as Ope
 model_config: &client
   provider: drsai.HepAIChatCompletionClient
   config:
-    model: openai/gpt-4o
-    api_key: sk-****
-    base_url: "https://aiapi.ihep.ac.cn/apiv2"
-    max_retries: 10
-# Assemble your agent
-myassistant:
-  type: AssistantAgent # agent type, provided by OpenDrSai or user-developed
-  name: myassistant
-  system_message: "You are a helpful assistant who responds to user requests based on your tools and knowledge."
-  description: "An agent that provides assistance with ability to use tools."
-  model_client: *client
+    model: claude-sonnet-4-6
+    api_key: ${HEPAI_API_KEY}
+    base_url: https://aiapi.ihep.ac.cn/apiv2
+
+agent_config:
+  - name: assistant
+    type: AssistantAgent
+    model_context: DrSaiChatCompletionContext
+    model_client: *client
+    tools:
+      - provider: drsai.modules.components.tool.get_current_time
+    memory:
+      - provider: drsai.RAGFlowMemory
 ```
 
-For detailed configuration, see [Configuration Documentation](docs/agent_factory.md). On our [AI platform](https://drsai.ihep.ac.cn), we provide a wide selection of base models, MCP/HEPAI Worker tools, RAG memory plugins, various agent and multi-agent frameworks, and pre-defined workflows. You can combine these in the frontend or backend to rapidly construct your own agent or multi-agent collaboration system. For detailed instructions on configuration-based construction, see: `docs/agent_factory.md`.
+## 3. Development
 
-## 3. Documentation
+### 3.1 Core Package (dr-sai)
 
-Tutorials (in development, contact us for issues):
+The core package is located at `cores/python/packages/drsai/`.
 
-```
-tutorials/base01-hepai.md: Model configuration and usage on the HepAI platform
-tutorials/base02-worker.md: Configuration and usage of HEPAI Worker remote functions
-tutorials/base03-use_claude-code.md: Using Claude-Code via the HepAI platform
-tutorials/agents: Agent and multi-agent system examples
-tutorials/components: Agent component development examples
+```shell
+cd cores/python/packages/drsai
+pip install -e ".[all]"
 ```
 
-Documentation (in development, contact us for issues):
+### 3.2 Testing
 
-```
-docs/develop.md: Agent/multi-agent system development guide
-docs/agent_factory.md: Agent/multi-agent open development and community contribution guide
-docs/drsai_ui.md: Human-computer interaction frontend user guide
-docs/open-webui.md: Using OpenAI-compatible frontend and OpenWebUI Pipeline plugin
+```shell
+cd cores/python/packages/drsai
+python -m pytest tests/
 ```
 
-## 4. Contribution
+## 4. Documentation
 
-We welcome contributions to OpenDrSai, including code, documentation, issues, and suggestions. Contributions can take many forms, such as:
+For full documentation, visit [OpenDrSai Docs](https://docs-drsai.ihep.ac.cn/).
 
-* Code contributions: agent/multi-agent system components, system examples, frontend UI development.
-* Documentation contributions: system guides, tutorials, FAQs.
-* Issue reporting: bug reports, feature suggestions, usage problems.
-* Community activities: offline events, online meetups, knowledge sharing.
+## 5. License
 
-## 5. Contact
-
-* Email: [hepai@ihep.ac.cn](mailto:hepai@ihep.ac.cn) / [xiongdb@ihep.ac.cn](mailto:xiongdb@ihep.ac.cn)
-* WeChat: xiongdongbo\_12138
-* WeChat Group: HepAI LLM Tech Exchange Group 3:
-  ![alt text](assets/微信三群.jpg)
+This project is licensed under the terms of the LICENSE file in the repository.

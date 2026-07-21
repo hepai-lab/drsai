@@ -1,8 +1,6 @@
 param(
-    [string]$InstallRoot = (Join-Path (Join-Path $env:LOCALAPPDATA "Programs") "OpenDrSai"),
+    [string]$InstallRoot = (Join-Path $env:ProgramFiles "OpenDrSai"),
     [string]$DrsaiHome = (Join-Path $env:USERPROFILE ".drsai"),
-    [string]$DesktopShortcut = (Join-Path ([Environment]::GetFolderPath("Desktop")) "OpenDrSai.lnk"),
-    [string]$StartMenuDir = (Join-Path ([Environment]::GetFolderPath("Programs")) "OpenDrSai"),
     [switch]$RemoveUserData
 )
 
@@ -17,9 +15,20 @@ Get-Process -Name "OpenDrSai" -ErrorAction SilentlyContinue |
     Where-Object { $_.Path -and $_.Path.StartsWith($InstallRoot, [StringComparison]::OrdinalIgnoreCase) } |
     Stop-Process -Force -ErrorAction SilentlyContinue
 
-Remove-Safely $DesktopShortcut
-Remove-Safely $StartMenuDir
-Remove-Safely $InstallRoot
+foreach ($relativePath in @(
+    "app",
+    "app.previous",
+    "drsai-agent",
+    "drsai-agent.previous",
+    "defaults",
+    "cache",
+    "install-state.json"
+)) {
+    Remove-Safely (Join-Path $InstallRoot $relativePath)
+}
+
+$machineInstallerData = Join-Path $env:ProgramData "OpenDrSai\Installer"
+Remove-Safely $machineInstallerData
 
 if ($RemoveUserData) {
     Remove-Safely $DrsaiHome

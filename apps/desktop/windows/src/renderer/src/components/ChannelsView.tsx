@@ -258,7 +258,7 @@ export function ChannelsView({
           adapterId: adapter.id,
           workspacePath,
           target: `${adapter.provider}:review-target`,
-          subject: "DrSai channel draft",
+          subject: "OpenDrSai channel draft",
           body: `Draft prepared from the ${adapter.name} adapter. Approval Center must approve before a live connector runtime can send it.`,
           idempotencyKey: `channels-view:${adapter.id}:demo-draft`,
         }),
