@@ -215,7 +215,8 @@ class GfsProvisioner:
         cache_dir: Path | str | None = None,
         credential_store: "CredentialStore | None" = None,
     ) -> None:
-        self.admin: GfsAdminClient = admin or get_admin_client()
+        
+        self._admin: GfsAdminClient | None = admin
 
         # CredentialStore（优先）：与 LLM API Key 存储统一
         self._cred_store: CredentialStore | None = credential_store
@@ -232,6 +233,17 @@ class GfsProvisioner:
         if self._cred_store is None:
             # 没有 CredentialStore 时才创建旧缓存目录
             self._ensure_cache_dir()
+
+    @property
+    def admin(self) -> GfsAdminClient:
+        """懒加载 admin client——仅在 admin 模式下首次访问时创建。
+
+        personal 模式走 ``get_personal_user_client()``，完全不触碰本属性，
+        因此不会因 ``GFS_OPENAPI_KEY`` 缺失而报错。
+        """
+        if self._admin is None:
+            self._admin = get_admin_client()
+        return self._admin
 
     def _ensure_cache_dir(self) -> None:
         self.cache_dir.mkdir(parents=True, exist_ok=True)

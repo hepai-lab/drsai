@@ -4,7 +4,7 @@ from typing import List, Dict, Any, Union, Optional, Sequence, AsyncGenerator, C
 
 from drsai import CancellationToken
 from drsai.modules.baseagent import DrSaiAgent, Response
-from drsai_ui.agent_factory.remote_agent import StatusAgent
+# from drsai_ui.agent_factory.remote_agent import StatusAgent
 from drsai.modules.managers.messages import HandoffMessage
 from drsai.modules.components.model_client import (
     HepAIChatCompletionClient, 
@@ -264,7 +264,7 @@ if __name__ == "__main__":
             # 后端服务配置
             port = 42610, 
             no_register=False,
-            enable_openwebui_pipeline=True, 
+            # enable_openwebui_pipeline=True, 
             history_mode = "backend",
             # use_api_key_mode = "backend",
         )

@@ -104,6 +104,7 @@ from .managers.scheduled_task_manager import (
 from .utils.utils import HELP_TEXT
 from .managers import ScheduledTask, ScheduleType, TaskStatus
 from .daemon_subagent import DaemonSubagent
+from drsai.modules.components.memory import CuratedMemoryStore
 
 
 def is_retryable_llm_error(error: BaseException) -> bool:
@@ -352,11 +353,9 @@ class DrSaiAssistant(DrSaiAgent):
         )
         self._update_user_config_tools = [self._user_profile_manager.get_user_config_tool()]
 
-        # === curated memory (hermes-style MEMORY.md / USER.md entries) ===
-        from drsai.modules.components.memory import CuratedMemoryStore
+        # === curated memory (hermes-style MEMORY.md entries) ===
         self._curated_memory = CuratedMemoryStore(
             memory_path=self._user_profile_manager.memorie_path,
-            user_path=self._user_profile_manager.user_md,
         )
         try:
             self._curated_memory.load_from_disk()
@@ -364,14 +363,26 @@ class DrSaiAssistant(DrSaiAgent):
             logger.warning(f"Failed to load curated memory: {e}")
 
         # combine system messages
+        #
+        # Prefix-cache layout:
+        #   STABLE PREFIX:  developer_msg + AGENTS.md + MEMORY.md (frozen snapshot)
+        #   DYNAMIC SUFFIX: Session_ID + project_instructions + injected_prefix/suffix
+        #
+        # Session_ID is in the suffix so the prefix (which is identical across
+        # sessions for the same user) hits the LLM prefix cache.
         self._only_system_message = only_system_message
         if not self._only_system_message:
             user_sys_prompt = self._user_profile_manager.get_agent_system_prompt()
             memory_block = self._curated_memory.system_prompt_block()
-            enhanced_system_message = f"""{self._developer_system_message}\n{user_sys_prompt}\n
-Current Session_ID is {self._thread_id}"""
+            # STABLE PREFIX
+            parts = [self._developer_system_message]
+            if user_sys_prompt:
+                parts.append(user_sys_prompt)
             if memory_block:
-                enhanced_system_message += f"\n\n{memory_block}"
+                parts.append(memory_block)
+            # DYNAMIC SUFFIX
+            parts.append(f"Current Session_ID is {self._thread_id}")
+            enhanced_system_message = "\n".join(parts)
         else:
             enhanced_system_message = self._developer_system_message
         self._system_messages = [SystemMessage(content=enhanced_system_message)]
@@ -431,8 +442,9 @@ Current Session_ID is {self._thread_id}"""
         self._rag_flow_token = rag_flow_token
         self._memory_dataset_id = memory_dataset_id
         self._learning_dataset_id = learning_dataset_id or memory_dataset_id
-        self._memory_document_id = self._user_profile_manager.get_document_ids(self._thread_id)
-        self._learning_document_id = self._user_profile_manager.get_document_ids(self._user_id)
+        # Document IDs are RAGFlow-specific; SQLite mode doesn't use them.
+        self._memory_document_id = None
+        self._learning_document_id = None
         
         # memory manager
         model_config = model_client.dump_component()
@@ -580,14 +592,18 @@ Current Session_ID is {self._thread_id}"""
         """
         existing_names = {t.name for t in self._tools}
 
-        funcs = [
-            self._user_profile_manager.read_session_memory_by_index,  # TODO: 后面进行测试修正
-        ]
+        # read_session_memory_by_index is provided by the SQLite model context
+        # (DrSaiSQLiteChatCompletionContext), which queries the SessionMessage
+        # table directly.  The old file-based version in UserProfileManager
+        # has been removed.
+        funcs = []
 
         if hasattr(self._model_context, 'retrieve_from_memory'):
             funcs.append(self._model_context.retrieve_from_memory)
         if hasattr(self._model_context, 'summry_conversation_to_memory'):
             funcs.append(self._model_context.summry_conversation_to_memory)
+        if hasattr(self._model_context, 'read_session_memory_by_index'):
+            funcs.append(self._model_context.read_session_memory_by_index)
 
         for func in funcs:
             if func and callable(func):
@@ -603,45 +619,38 @@ Current Session_ID is {self._thread_id}"""
 
             def memory(
                 action: str,
-                target: str = "memory",
                 content: str = "",
                 old_text: str = "",
             ) -> str:
-                """Persistent curated memory across sessions. Two stores: ``memory`` (your agent notes — environment facts, conventions, things learned about the project) and ``user`` (the user profile — preferences, habits, what they care about).
+                """Persistent curated memory across sessions.
+
+                ``MEMORY.md`` is your agent notes — environment facts, conventions,
+                things learned about the project. Entries are injected into the
+                system prompt at session start. Mid-session writes update the file
+                but NOT the live prompt (preserves prefix cache — next session
+                will pick up the latest content).
 
                 ``action`` selects the operation:
                   - ``add``: append a new entry to MEMORY.md. ``content`` required.
                   - ``replace``: find an entry containing ``old_text`` and replace it with ``content``. Both required.
                   - ``remove``: delete the entry containing ``old_text``. ``old_text`` required.
-                  - ``read``: list current entries (or USER.md text when ``target=user``).
-                  - ``write_user``: overwrite USER.md with ``content``. Only valid when ``target=user``.
+                  - ``read``: list current entries with usage stats.
 
-                Stores are bounded (MEMORY.md ≤ 2200 chars, USER.md ≤ 1375 chars). Failed mutations return an error JSON with the current usage. Entries injected into the system prompt at session start — mid-session writes update the file but NOT the live prompt (preserves prefix cache).
+                Stores are bounded (MEMORY.md ≤ 2200 chars). Failed mutations return
+                an error JSON with the current usage.
 
                 Returns a JSON string with the result.
                 """
-                target = (target or "memory").lower()
-                if target not in ("memory", "user"):
-                    return _json.dumps({"success": False, "error": "target must be 'memory' or 'user'"})
-
                 if action == "add":
-                    if target == "user":
-                        return _json.dumps({"success": False, "error": "USER.md does not support add — use action=write_user."})
                     return _json.dumps(store.add_entry(content))
 
                 if action == "replace":
-                    if target == "user":
-                        return _json.dumps(store.write_user(content))
                     return _json.dumps(store.replace_by_text(old_text, content))
 
                 if action == "remove":
-                    if target == "user":
-                        return _json.dumps({"success": False, "error": "USER.md does not support remove — use write_user with empty content to clear."})
                     return _json.dumps(store.remove_by_text(old_text))
 
                 if action == "read":
-                    if target == "user":
-                        return _json.dumps({"success": True, "content": store.read_user(), "charCount": len(store.read_user()), "charLimit": store.user_char_limit})
                     entries = store.list_entries()
                     return _json.dumps({
                         "success": True,
@@ -650,10 +659,7 @@ Current Session_ID is {self._thread_id}"""
                         "charLimit": store.memory_char_limit,
                     })
 
-                if action == "write_user":
-                    return _json.dumps(store.write_user(content))
-
-                return _json.dumps({"success": False, "error": f"Unknown action '{action}'. Use add/replace/remove/read/write_user."})
+                return _json.dumps({"success": False, "error": f"Unknown action '{action}'. Use add/replace/remove/read."})
 
             self._tools.append(FunctionTool(memory, description=memory.__doc__ or "memory tool"))
             existing_names.add("memory")
@@ -690,7 +696,7 @@ Current Session_ID is {self._thread_id}"""
         """Check if a file/dir has been modified since last check, updating the cached mtime."""
         try:
             mtime = path.stat().st_mtime
-        except FileNotFoundError:
+        except OSError as e:
             return True
         key = str(path)
         if self._config_mtimes.get(key) != mtime:
@@ -719,21 +725,11 @@ Current Session_ID is {self._thread_id}"""
         if not hasattr(self._model_context, '_rag_flow_manager') or self._model_context._rag_flow_manager is None:
             return
 
-        if self._user_profile_manager.first_time_setup:
-            self._learning_document_id = await self._model_context.create_new_session_document(
-                dataset_id=self._learning_dataset_id, create_type="learning_memory"
-            )
-            self._user_profile_manager.update_document_ids(
-                thread_id=self._user_id, document_id=self._learning_document_id
-            )
         if self._memory_document_id is None:
             self._memory_document_id = await self._model_context.create_new_session_document(
                 user_id=self._user_id,
                 thread_id=self._thread_id,
                 work_dir=self._work_dir,
-            )
-            self._user_profile_manager.update_document_ids(
-                thread_id=self._thread_id, document_id=self._memory_document_id
             )
             self._model_context._document_id = self._memory_document_id
 
@@ -836,13 +832,16 @@ Current Session_ID is {self._thread_id}"""
         """获取agent描述、用户画像并更新系统消息
         
         保持与 inject_system_prompt() 的层级一致：
+        Prefix-cache layout (stable → dynamic):
             ① prefix          — session级覆盖
             ② developer_msg   — 硬编码基础提示词
-            ③ user_sys_prompt — 全局用户级 (AGENTS.md)
-            ④ project_instr   — 项目级 (DRSAI.md/CLAUDE.md)
-            ⑤ Session_ID      — 固定标识行
-            ⑥ suffix          — session级覆盖
-            additional_prompt  — 工具提示词（在 ⑥ 之后追加）
+            ③ user_sys_prompt — 全局用户级 (AGENTS.md，含 User Profile / Skills / Tools)
+            ④ memory_block    — MEMORY.md 冻结快照
+            ──── 以下为 DYNAMIC SUFFIX（不命中 prefix cache）────
+            ⑤ project_instr   — 项目级 (DRSAI.md/CLAUDE.md)
+            ⑥ Session_ID      — 固定标识行
+            ⑦ suffix          — session级覆盖
+            additional_prompt  — 工具提示词（在 ⑦ 之后追加）
         """
         user_sys_prompt = self._user_profile_manager.get_agent_system_prompt()
         memory_block = (
@@ -851,6 +850,7 @@ Current Session_ID is {self._thread_id}"""
             else ""
         )
         parts = []
+        # ── STABLE PREFIX ──
         if self._injected_prefix:
             parts.extend([self._injected_prefix, ""])
         if self._developer_system_message:
@@ -859,6 +859,7 @@ Current Session_ID is {self._thread_id}"""
             parts.extend([user_sys_prompt, ""])
         if memory_block:
             parts.extend([memory_block, ""])
+        # ── DYNAMIC SUFFIX ──
         if self._project_instructions:
             parts.extend([self._project_instructions, ""])
         parts.append(f"Current Session_ID is {self._thread_id}")
@@ -878,12 +879,15 @@ Current Session_ID is {self._thread_id}"""
         """动态注入额外提示词到 system message。
 
         系统提示词层级（从上到下，越靠后 LLM 越重视）:
+        Prefix-cache layout (stable → dynamic):
             ① prefix          — session级覆盖 (plan_mode 等)
             ② developer_msg   — 硬编码基础提示词
-            ③ user_sys_prompt — 全局用户级 (AGENTS.md，来自 workspace)
-            ④ project_instr   — 🆕 项目级 (DRSAI.md/CLAUDE.md，来自 cwd 向上遍历)
-            ⑤ Session_ID      — 固定标识行
-            ⑥ suffix          — session级覆盖 (/inject suffix)
+            ③ user_sys_prompt — 全局用户级 (AGENTS.md，含 User Profile / Skills / Tools)
+            ④ memory_block    — MEMORY.md 冻结快照
+            ──── 以下为 DYNAMIC SUFFIX（不命中 prefix cache）────
+            ⑤ project_instr   — 🆕 项目级 (DRSAI.md/CLAUDE.md，来自 cwd 向上遍历)
+            ⑥ Session_ID      — 固定标识行
+            ⑦ suffix          — session级覆盖 (/inject suffix)
 
         Args:
             prefix: 要添加到 system message 开头的前缀提示词
@@ -908,6 +912,7 @@ Current Session_ID is {self._thread_id}"""
         )
 
         parts = []
+        # ── STABLE PREFIX ──
         if prefix:
             parts.extend([prefix, ""])
         if self._developer_system_message:
@@ -916,6 +921,7 @@ Current Session_ID is {self._thread_id}"""
             parts.extend([user_sys_prompt, ""])
         if memory_block:
             parts.extend([memory_block, ""])
+        # ── DYNAMIC SUFFIX ──
         if self._project_instructions:
             parts.extend([self._project_instructions, ""])
         parts.append(f"Current Session_ID is {self._thread_id}")
@@ -1201,14 +1207,14 @@ Current Session_ID is {self._thread_id}"""
         """
         if not self._elevated_tools:
             return
+        _shared = self._workbench._tools is self._tools
         for tool in self._elevated_tools:
-            # Remove from workbench tools if present
-            if hasattr(self, '_workbench') and self._workbench is not None:
-                if tool in self._workbench._tools:
-                    self._workbench._tools.remove(tool)
-            # Remove from self._tools if present
+            # Remove from self._tools (primary list)
             if tool in self._tools:
                 self._tools.remove(tool)
+            # Remove from workbench only if it's a separate list object
+            if not _shared and tool in self._workbench._tools:
+                self._workbench._tools.remove(tool)
         self._elevated_tools.clear()
         self._elevated_tool_names.clear()
         logger.debug("Skill elevated tools cleared — default permission restored")
@@ -1228,10 +1234,11 @@ Current Session_ID is {self._thread_id}"""
             if tool.name in required_tools and tool.name not in self._elevated_tool_names:
                 self._elevated_tools.append(tool)
                 self._elevated_tool_names.add(tool.name)
-                if hasattr(self, '_workbench') and self._workbench is not None:
+                self._tools.append(tool)
+                # Only append to workbench if it's a separate list object
+                if self._workbench._tools is not self._tools:
                     self._workbench._tools.append(tool)
-                else:
-                    self._tools.append(tool)
+                    
         if self._elevated_tools:
             logger.info(
                 f"Skill '{skill_name}' elevated tools: "
@@ -1604,13 +1611,11 @@ Current Session_ID is {self._thread_id}"""
                     )
 
             # Save conversation on response completion
-            if self._context_type == "ragflow" and hasattr(self._model_context, '_current_messages'):
-                # RAGFlow: background upload + file save
+            # SQLite mode: _flush_to_db() persists messages to SessionMessage table.
+            # RAGFlow mode: upload to RAGFlow service (file-based session memory removed).
+            if self._context_type == "ragflow" and hasattr(self._model_context, '_current_messages') and hasattr(self._model_context, 'upload_conversation_to_ragflow'):
                 current_messages = self._model_context._current_messages
-                history_messages = getattr(self._model_context, '_history_messages', [])
                 rag_manager = getattr(self._model_context, '_rag_flow_manager', None)
-                user_profile_manager = self._user_profile_manager
-
                 self._model_context._current_messages = []
 
                 async def background_save():
@@ -1619,12 +1624,6 @@ Current Session_ID is {self._thread_id}"""
                             await self._model_context.upload_conversation_to_ragflow(current_messages=current_messages)
                         except Exception as e:
                             logger.warning(f"RAGFlow upload failed: {e}")
-
-                    if history_messages:
-                        try:
-                            await asyncio.to_thread(user_profile_manager.save_session_memory, history_messages)
-                        except Exception as e:
-                            logger.warning(f"Session save failed: {e}")
 
                 asyncio.create_task(background_save())
 

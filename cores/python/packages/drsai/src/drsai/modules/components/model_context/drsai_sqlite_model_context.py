@@ -677,9 +677,16 @@ class DrSaiSQLiteChatCompletionContext(
         self,
         messages: List[LLMMessage],
         cancellation_token: Optional[CancellationToken] = None,
+        keep_recent: int = 6,
     ) -> List[LLMMessage]:
-        """Layer 2: LLM compression with semantic continuity."""
-        keep_count = self._find_safe_split_point(messages, keep_count=6)
+        """Layer 2: LLM compression with semantic continuity.
+
+        Args:
+            messages: The full message list to compress.
+            cancellation_token: Optional cancellation token.
+            keep_recent: Number of recent messages to keep uncompressed.
+        """
+        keep_count = self._find_safe_split_point(messages, keep_count=keep_recent)
         split_idx = len(messages) - keep_count
         to_compress = messages[:split_idx]
         to_keep = messages[split_idx:]
@@ -716,6 +723,79 @@ class DrSaiSQLiteChatCompletionContext(
         ] + to_keep
 
         return remaining
+
+    async def manual_compress(
+        self,
+        keep_recent: int = 6,
+        cancellation_token: Optional[CancellationToken] = None,
+    ) -> Dict[str, Any]:
+        """Manually trigger memory compression, bypassing the token_limit check.
+
+        This is the public entry point for the ``/compress`` slash command.
+        It forces Layer 2 LLM compression on the current conversation history,
+        regardless of whether the token count exceeds ``_token_limit``.
+
+        Args:
+            keep_recent: Number of recent messages to keep uncompressed (default 6).
+            cancellation_token: Optional cancellation token.
+
+        Returns:
+            Dict with compression statistics:
+            - ``compressed_count``: number of messages that were compressed
+            - ``kept_count``: number of messages kept after compression
+            - ``total_count``: total messages before compression
+            - ``token_before``: token count before compression
+            - ``token_after``: token count after compression
+            - ``summary_preview``: first 200 chars of the compressed summary
+        """
+        # Ensure pending messages are flushed and Layer 1 tool-result clearing runs
+        self._flush_to_db()
+        self._compress_tool_results()
+
+        messages = list(self._messages)
+        total_before = len(messages)
+        token_before = self.count_prompt_tokens()
+
+        if total_before <= keep_recent:
+            return {
+                "compressed_count": 0,
+                "kept_count": total_before,
+                "total_count": total_before,
+                "token_before": token_before,
+                "token_after": token_before,
+                "summary_preview": "(not enough messages to compress)",
+            }
+
+        compressed = await self._incremental_compress(
+            messages,
+            cancellation_token=cancellation_token,
+            keep_recent=keep_recent,
+        )
+
+        # Update in-memory cache (same logic as get_messages)
+        self._messages = compressed
+        current_set = set(id(m) for m in compressed)
+        self._current_messages = [m for m in self._current_messages if id(m) in current_set]
+        self._token_count = self.count_prompt_tokens()
+
+        token_after = self._token_count
+        kept_count = len(compressed)
+
+        # Extract summary preview from the compressed message
+        summary_preview = ""
+        for m in compressed:
+            if isinstance(m, UserMessage) and isinstance(m.content, str) and m.source == "compression":
+                summary_preview = m.content[:200]
+                break
+
+        return {
+            "compressed_count": total_before - kept_count,
+            "kept_count": kept_count,
+            "total_count": total_before,
+            "token_before": token_before,
+            "token_after": token_after,
+            "summary_preview": summary_preview,
+        }
 
     @staticmethod
     def _extract_summary(llm_output: str) -> str:

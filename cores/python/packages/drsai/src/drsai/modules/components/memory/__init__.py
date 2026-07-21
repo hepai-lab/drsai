@@ -5,7 +5,6 @@ from .curated_memory import (
     CuratedMemoryStore,
     ENTRY_DELIMITER,
     DEFAULT_MEMORY_CHAR_LIMIT,
-    DEFAULT_USER_CHAR_LIMIT,
 )
 from autogen_core.memory import (
     Memory, 
@@ -21,7 +20,6 @@ __all__ = [
     "CuratedMemoryStore",
     "ENTRY_DELIMITER",
     "DEFAULT_MEMORY_CHAR_LIMIT",
-    "DEFAULT_USER_CHAR_LIMIT",
     "RAGFlowMemory",
     "RAGFlowMemoryManager",
     "RAGFlowMemoryConfig",

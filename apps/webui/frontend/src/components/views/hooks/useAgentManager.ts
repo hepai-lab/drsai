@@ -4,6 +4,7 @@ import { useModeConfigStore } from '../../../store/modeConfig';
 import { getFirstRecentAgentId } from '../../../utils/recentAgentsStorage';
 import {
   pickAgentForSessionStart,
+  pickPreferredAgentFromList,
   shouldRefreshAgentCatalog,
   type PlatformAgentPolicy,
 } from '../../../utils/agentPreference';
@@ -77,6 +78,7 @@ export const useAgentManager = (userEmail: string | undefined) => {
         platformPolicy = {
           auto_load_default_agent: userDefault?.auto_load_default_agent,
           default_agent_name: userDefault?.default_agent_name ?? null,
+          science_default_agent_name: userDefault?.science_default_agent_name ?? null,
         };
         setPlatformAgentPolicy(platformPolicy);
       } catch {
@@ -169,6 +171,15 @@ export const useAgentManager = (userEmail: string | undefined) => {
 
       if (fallbackAgent) {
         await applyAgent(fallbackAgent);
+      }
+
+      // Final fallback: when no agent was auto-selected (e.g. science_user with
+      // only one agent and no platform policy), pick the preferred agent from the list.
+      if (!useModeConfigStore.getState().agentId && res.length > 0) {
+        const preferred = pickPreferredAgentFromList(res);
+        if (preferred) {
+          await applyAgent(preferred);
+        }
       }
     } catch (error) {
       console.error("Error fetching agent list:", error);

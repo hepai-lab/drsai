@@ -101,8 +101,23 @@ const LoginPage: React.FC = () => {
             setError(t("login.error.usernameTooShort"));
             return;
         }
-        if (regPassword.length < 6) {
+        if (regPassword.length < 12) {
             setError(t("login.error.passwordTooShort"));
+            return;
+        }
+        // 密码复杂度校验：至少包含大小写字母、数字、特殊符号中3种
+        let pwdTypes = 0;
+        if (/[a-z]/.test(regPassword)) pwdTypes++;
+        if (/[A-Z]/.test(regPassword)) pwdTypes++;
+        if (/\d/.test(regPassword)) pwdTypes++;
+        if (/[^a-zA-Z\d]/.test(regPassword)) pwdTypes++;
+        if (pwdTypes < 3) {
+            setError(t("login.error.passwordTooSimple"));
+            return;
+        }
+        // 拒绝含用户名全拼或日期格式
+        if (regPassword.toLowerCase().includes(regUsername.toLowerCase()) || /\d{4}-?\d{2}-?\d{2}/.test(regPassword)) {
+            setError(t("login.error.passwordWeakPattern"));
             return;
         }
         if (regPassword !== regConfirmPassword) {

@@ -18,7 +18,7 @@ import { parseHistory } from './app/historyParser.js'
 import { disableMouseTracking, enableMouseTracking } from './app/terminalControl.js'
 import { TurnController } from './app/turnController.js'
 import { $current, $isStreaming, $transcript, setTranscript } from './app/turnStore.js'
-import { $connectionError, $connectionStatus, $copyMode, $lastUsage, $statusLine, $terminalFocused, $toolDetail, $userId } from './app/uiStore.js'
+import { $connectionError, $connectionStatus, $copyMode, $lastUsage, $memoryPreview, $statusLine, $terminalFocused, $toolDetail, $userId } from './app/uiStore.js'
 import { AppLayout } from './components/appLayout.js'
 import { SetupScreen } from './components/setupScreen.js'
 import type { GatewayClient } from './gatewayClient.js'
@@ -27,6 +27,38 @@ import { theme } from './theme.js'
 
 interface AppProps {
   gw: GatewayClient
+}
+
+/**
+ * Pre-print the MEMORY.md banner to stdout BEFORE Ink commits <Static> items.
+ *
+ * The banner is now a compact one-line summary: file path + entry count.
+ * This avoids flooding the terminal with full MEMORY.md content on startup.
+ * Users can open the file directly to see details.
+ *
+ * IMPORTANT: We use `console.log()` (NOT `process.stdout.write()`) because
+ * Ink patches `console.*` via `patch-console`.  The patched `console.log`
+ * coordinates with Ink's output management:
+ *   1. `logUpdate.clear()` — erases the current dynamic frame
+ *   2. `stdout.write(data)` — writes the banner into scrollback
+ *   3. `restoreLastOutput()` — re-renders the dynamic frame below the banner
+ *
+ * Using `process.stdout.write()` directly bypasses this coordination,
+ * corrupting Ink's cursor/line-count tracking and causing the TUI to crash
+ * on the next render cycle.
+ *
+ * Backend sends: "~/.drsai/.../MEMORY.md (2/15 entries)"
+ */
+function preprintMemoryBanner(text: string): void {
+  const clean = text.trim()
+  if (!clean) return
+
+  const primary = '\x1b[1m\x1b[38;2;255;215;0m' // bold gold
+  const muted = '\x1b[38;2;110;110;110m'       // grey
+  const reset = '\x1b[0m'
+
+  // Single-line: 📋 Memory  ~/.drsai/.../MEMORY.md (2/15 entries)
+  console.log(`${primary}📋 Memory${reset} ${muted}${clean}${reset}`)
 }
 
 type Bootstrap =
@@ -228,9 +260,17 @@ export function App({ gw }: AppProps) {
         // showing the previous session's token counts until the next turn
         // completes in the new session. We refill it below from history.
         $lastUsage.set(null)
+        // Clear any stale memory preview from the previous session.
+        $memoryPreview.set('')
         const result = await gw.request<SessionResumeResult>('session.resume', {
           session_id: sid,
         })
+
+        // Pre-print memory banner BEFORE loading transcript into <Static>.
+        if (result.memory_preview && result.memory_preview.trim()) {
+          preprintMemoryBanner(result.memory_preview)
+          $memoryPreview.set('')  // Clear to avoid duplicate in dynamic frame
+        }
 
         // Load history for the new session (Issue #2 fix)
         if (result.history && result.history.length > 0) {
@@ -324,6 +364,13 @@ export function App({ gw }: AppProps) {
         session_id: session.session_id,
       })
       if (cancelled) return
+      
+      // Pre-print memory banner BEFORE loading transcript into <Static>.
+      // This places it above transcript history in terminal scrollback.
+      if (result.memory_preview && result.memory_preview.trim()) {
+        preprintMemoryBanner(result.memory_preview)
+        $memoryPreview.set('')  // Clear to avoid duplicate in dynamic frame
+      }
       
       // ADDED: Load history into transcript (Issue #2 fix)
       if (result.history && result.history.length > 0) {
@@ -434,8 +481,8 @@ function BootScreen({ text }: { text: string }) {
   const err = useStore($connectionError)
   return (
     <Box flexDirection="column" paddingX={1}>
+      {/* Banner is pre-printed in entry.tsx; only show "· starting" here */}
       <Box>
-        <Text color={theme.primary} bold>⚡ DrSai </Text>
         <Text color={theme.muted} dimColor>· starting</Text>
       </Box>
       <Box marginTop={1}>

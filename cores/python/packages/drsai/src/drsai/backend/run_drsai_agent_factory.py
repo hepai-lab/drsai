@@ -10,6 +10,7 @@ Secrets and endpoints follow the env-first, config-fallback pattern:
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -32,6 +33,8 @@ from drsai.modules.components.model_client.anthropic import (
 from drsai.modules.managers.database import DatabaseManager
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 
 # ── Plan Mode Prompt ─────────────────────────────────────────────────────────
@@ -222,7 +225,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
     # DeepSeek V3.2: context=163,840 (shared input+output)
     # Sources: DeepSeek API docs (api-docs.deepseek.com), litellm, OpenRouter
     "hepai/deepseek-v4-pro": ModelEntry(
-        model="deepseek-ai/deepseek-v4-pro",
+        model="hepai/deepseek-v4-pro",
         token_limit=1048576,     # context window: 1M (input+output shared, per DeepSeek docs)
         max_tokens=64000,      # max output per request (DeepSeek supports extended output)
         client_type="openai",
@@ -605,6 +608,80 @@ def _build_cwd_prompt(cli_cfg: dict[str, Any], work_dir: str = "") -> str:
     return "\n\n".join(lines) if lines else ""
 
 
+def _build_gfs_tools(
+    user_id: str | None,
+    cli_cfg: dict[str, Any] | None = None,
+) -> list:
+    """根据 ``cli_cfg["gfs"]`` 配置生成 GFS personal-mode 工具列表。
+
+    **唯一配置来源是 ``cli_cfg["gfs"]``**（即 ``cli_config.json`` 中用户通过
+    TUI ``/gfs`` 面板输入的值）。不读取 ``os.environ``，不回退 ``.env``。
+
+    若 ``cli_cfg`` 无 ``gfs`` 配置、``enabled`` 为 false、或凭证不完整，
+    返回空列表 — 不加载任何 GFS 工具，不浪费 agent 上下文。
+
+    失败时仅记日志，不抛异常，避免影响 agent 创建。
+    """
+    if not cli_cfg:
+        return []
+
+    gfs_cfg = cli_cfg.get("gfs")
+    if not isinstance(gfs_cfg, dict) or not gfs_cfg:
+        return []
+
+    # ── 仅从用户配置读取 ──
+    enabled = _as_bool(gfs_cfg.get("enabled"), default=False)
+    if not enabled:
+        return []
+
+    ak = gfs_cfg.get("access_key") or ""
+    sk = gfs_cfg.get("secret_key") or ""
+    bucket = gfs_cfg.get("bucket") or ""
+    if not (ak and sk and bucket):
+        logger.warning(
+            "GFS enabled in config but personal credentials incomplete "
+            "(need access_key, secret_key, bucket). Skipping GFS tools."
+        )
+        return []
+
+    email = gfs_cfg.get("email") or user_id or "personal@local"
+    s3_endpoint = gfs_cfg.get("s3_endpoint") or "https://fgws3-gfs.ihep.ac.cn"
+
+    try:
+        from drsai.modules.managers.gfs import make_gfs_tools_personal
+        from drsai.modules.managers.gfs.admin_client import GfsCredential
+        from drsai.modules.managers.gfs.user_client import GfsUserClient
+
+        # 直接从用户配置构造凭证 + client，完全绕过 os.environ
+        cred = GfsCredential(
+            access_key=ak,
+            secret_key=sk,
+            bucket=bucket,
+            s3_endpoint=s3_endpoint,
+            email=email,
+            owner_id="",
+            expiration=-1,
+            status="active",
+            resources=[],
+        )
+        client = GfsUserClient(cred)
+        tools = make_gfs_tools_personal(client=client)
+        logger.info(
+            "GFS personal mode enabled: %s tools registered (user=%s, bucket=%s)",
+            len(tools), email, bucket,
+        )
+        return tools
+    except ImportError as e:
+        logger.warning("GFS module import failed: %s", e)
+        return []
+    except Exception as e:
+        logger.warning(
+            "GFS tool init failed (personal, user=%s): %s. Falling back to no GFS.",
+            user_id, e,
+        )
+        return []
+
+
 def create_agent(
     api_key: Optional[str] = None,
     thread_id: Optional[str] = None,
@@ -836,8 +913,12 @@ def create_agent(
         only_in_workspace_sec = cli_cfg.get("workspace_enabled", True)
         allow_dangerous = cli_cfg.get("dangerous_allowed", False)
 
-    # ── Merge extra_tools with existing tools ──
-    final_tools = list(extra_tools) if extra_tools else None
+    # ── Merge extra_tools with GFS tools ──
+    gfs_tools = _build_gfs_tools(user_id, cli_cfg=cli_cfg)
+    if gfs_tools:
+        final_tools = list(extra_tools or []) + gfs_tools
+    else:
+        final_tools = list(extra_tools) if extra_tools else None
 
     # ── Sub-agent config ──
     final_sub_agent_config = sub_agent_config or {}

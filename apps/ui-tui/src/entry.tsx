@@ -173,6 +173,22 @@ if (!process.stdin.isTTY) {
   // The App component sniffs them via useInput to drive the cursor blink.
   enableFocusReporting()
 
+  // ── Banner (pre-print) ──────────────────────────────────────────────
+  // Print the "⚡ DrSai" banner ONCE via raw stdout BEFORE Ink takes over
+  // the dynamic frame.  Previously the banner lived inside <AppLayout>'s
+  // dynamic frame, which meant Ink re-rendered it on every state update
+  // (spinner tick, streaming flush, status change).  On terminals where
+  // Ink's eraseLines() doesn't perfectly clear the previous frame, the
+  // banner accumulated as duplicate lines — especially visible during
+  // the "thinking" phase where the 100ms spinner causes frequent repaints.
+  //
+  // By writing it to stdout here, the banner becomes part of the
+  // terminal's native scrollback, outside Ink's control.  Ink starts
+  // rendering below it and never touches it again.
+  //
+  // Color: #FFD700 (gold) = theme.primary, applied via ANSI true-colour.
+  process.stdout.write('\x1b[1m\x1b[38;2;255;215;0m⚡ DrSai\x1b[0m\n')
+
   inkInstance = render(<App gw={gw} />, { exitOnCtrlC: false })
   inkInstance.waitUntilExit().then(() => {
     restoreTerminal()

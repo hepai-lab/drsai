@@ -4418,12 +4418,11 @@ async def delete_tool(
 from drsai.modules.components.memory import (
     CuratedMemoryStore,
     DEFAULT_MEMORY_CHAR_LIMIT,
-    DEFAULT_USER_CHAR_LIMIT,
 )
 
 
 def _get_curated_store(user_id: str | None = None) -> CuratedMemoryStore:
-    """Build a CuratedMemoryStore pointing at this user's MEMORY.md / USER.md.
+    """Build a CuratedMemoryStore pointing at this user's MEMORY.md.
 
     Files live in ``WORKDIR/<user_id>/configs/`` — the same directory the
     agent's UserProfileManager writes to, so reads/writes here are seen by
@@ -4433,19 +4432,16 @@ def _get_curated_store(user_id: str | None = None) -> CuratedMemoryStore:
     cfg_dir.mkdir(parents=True, exist_ok=True)
     return CuratedMemoryStore(
         memory_path=cfg_dir / "MEMORY.md",
-        user_path=cfg_dir / "USER.md",
     )
 
 
 def _memory_payload(user_id: str | None = None) -> dict:
-    """Build the GET /v1/memory response payload (hermes-shaped)."""
+    """Build the GET /v1/memory response payload."""
     store = _get_curated_store(user_id)
     entries = store.list_entries()
     mem_path = store.memory_path
-    user_path = store.user_path
     mtimes = store.last_modified()
     counts = store.char_counts()
-    user_content = store.read_user()
 
     # Session / message stats from the shared DB
     total_sessions, total_messages = 0, 0
@@ -4471,13 +4467,6 @@ def _memory_payload(user_id: str | None = None) -> dict:
             "charCount": counts["memory"],
             "charLimit": store.memory_char_limit,
         },
-        "user": {
-            "content": user_content,
-            "exists": user_path.exists(),
-            "lastModified": mtimes["user"],
-            "charCount": counts["user"],
-            "charLimit": store.user_char_limit,
-        },
         "stats": {
             "totalSessions": total_sessions,
             "totalMessages": total_messages,
@@ -4496,10 +4485,6 @@ async def get_memory(user_id: str | None = Query(default=None)):
 
 class MemoryEntryRequest(BaseModel):
     content: str = Field(..., description="Entry content (will be trimmed).")
-
-
-class MemoryUserRequest(BaseModel):
-    content: str = Field(..., description="Full USER.md replacement content.")
 
 
 @app.post("/v1/memory/entries")
@@ -4544,25 +4529,11 @@ async def delete_memory_entry(
     return _memory_payload(user_id)
 
 
-@app.put("/v1/memory/user")
-async def write_memory_user(
-    req: MemoryUserRequest,
-    user_id: str | None = Query(default=None),
-):
-    """Overwrite USER.md with ``content`` (bounded by user_char_limit)."""
-    store = _get_curated_store(user_id)
-    result = store.write_user(req.content)
-    if not result.get("success"):
-        raise HTTPException(status_code=400, detail=result.get("error", "Write failed"))
-    return _memory_payload(user_id)
-
-
 @app.get("/v1/memory/limits")
 async def get_memory_limits():
     """Return curated-memory character limits (constants)."""
     return {
         "memoryCharLimit": DEFAULT_MEMORY_CHAR_LIMIT,
-        "userCharLimit": DEFAULT_USER_CHAR_LIMIT,
     }
 
 

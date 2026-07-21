@@ -23,6 +23,7 @@ from .initialization import AppInitializer
 from .routes import (
     ws,
 )
+from ....drsai_adapter.sso.science_user_router import router as science_user_router
 import httpx
 from fastapi.responses import HTMLResponse, RedirectResponse
 
@@ -149,6 +150,24 @@ async def ui_path_prefix_redirects(request: Request, call_next):
     return await call_next(request)
 
 
+# 允许外部系统通过 iframe 嵌入本站
+# IFRAME_ALLOWED_ORIGINS: 空格分隔的允许来源，优先读环境变量，方便不同环境覆盖
+# 例：IFRAME_ALLOWED_ORIGINS="https://portal.lssf.cas.cn https://other.cas.cn"
+_IFRAME_ALLOWED_ORIGINS = os.getenv(
+    "IFRAME_ALLOWED_ORIGINS",
+    "https://user.heps.ihep.ac.cn https://drsaiv2.ihep.ac.cn https://drsai.ihep.ac.cn",
+)
+
+@app.middleware("http")
+async def iframe_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    frame_ancestors = f"'self' {_IFRAME_ALLOWED_ORIGINS}"
+    response.headers["Content-Security-Policy"] = f"frame-ancestors {frame_ancestors}"
+    if "x-frame-options" in response.headers:
+        del response.headers["x-frame-options"]
+    return response
+
+
 # CORS middleware configuration
 app.add_middleware(
     CORSMiddleware,
@@ -166,6 +185,9 @@ app.add_middleware(
         r"|10(\.\d{1,3}){3}"
         r"|192\.168(\.\d{1,3}){2}"
         r"|172\.(1[6-9]|2\d|3[01])(\.\d{1,3}){2}"
+        # IHEP 公网段
+        r"|202\.122(\.\d{1,3}){2}"
+        r"|202\.38(\.\d{1,3}){2}"
         r"):\d+"
     ),
     allow_credentials=True,

@@ -21,6 +21,7 @@ from .....agent_factory.agent_mode_cofigs import (
     get_platform_agent_policy,
     get_user_agents,
 )
+from ..auth_source import get_user_source
 
 from loguru import logger
 
@@ -221,7 +222,8 @@ async def remove_remote_agent(
 async def get_user_agents_route(user_id: str, authorization: str = Header(...), is_refresh: bool = False, db=Depends(get_db)) -> Dict:
 
     try:
-        return await get_user_agents(user_id, authorization, is_refresh, db)
+        user_source = get_user_source(db, user_id)
+        return await get_user_agents(user_id, authorization, is_refresh, db, user_source=user_source)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 @router.get("/user_agents/{agent_id}")

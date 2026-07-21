@@ -209,11 +209,24 @@ def _resume(rid, params: dict) -> dict:
         return _err(rid, 5032, f"agent init failed: {type(exc).__name__}: {exc}")
 
     history = store.load(info.thread_id)
+
+    # Extract memory summary for the TUI startup banner.
+    # Shows file path + entry count — compact, avoids flooding the terminal
+    # with full MEMORY.md content on every startup.
+    memory_preview = ""
+    try:
+        agent = getattr(sess, "agent", None)
+        if agent and hasattr(agent, "_curated_memory") and agent._curated_memory:
+            memory_preview = agent._curated_memory.get_display_summary()
+    except Exception:
+        pass  # Memory preview is best-effort.
+
     return _ok(rid, {
         "session": _info_to_dict(info),
         "history": history,
         "info": sess.info(),
         "user_id": user_id,
+        "memory_preview": memory_preview,
     })
 
 

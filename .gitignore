@@ -17,6 +17,16 @@
 apps/desktop/installers/windows/.tools/
 examples/requests/zulip_python/.zuliprc
 examples/docker/browser/docker_test_dir*
+########################
+# Cursor IDE（个人配置，不提交）
+########################
+.cursor/
+
+########################
+# 项目特定文件
+########################
+examples/requests/zulip_python/.zuliprc
+examples/docker/browser/docker_test_dir*
 drsai/backend/owebui_pipeline/pipelines/pipelines/drsai_pipeline/*.json
 drsai/backend/owebui_pipeline/pipelines/pipelines/failed/
 drsai/backend/owebui_pipeline/pipelines/pipelines/__init__/
@@ -49,6 +59,10 @@ scratch.py
 
 # DocMaster — user-uploaded templates and fill outputs (never share)
 examples/agent_groupchat/docmaster/workspace/
+
+# eval
+
+eval/results/
 
 ########################
 # 操作系统相关文件
@@ -247,6 +261,7 @@ OAI_CONFIG_LIST
 src/magentic_ui/backend/web/workdir/*
 src/magentic_ui/backend/web/ui/*
 python/packages/drsai_ui/src/drsai_ui/ui_backend/backend/web/ui/
+apps/webui/backend/src/drsai_ui/ui_backend/backend/web/ui/
 src/magentic_ui/backend/web/skills/user/*
 .release.sh
 .nightly.sh

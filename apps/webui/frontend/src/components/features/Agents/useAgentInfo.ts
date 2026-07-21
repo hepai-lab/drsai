@@ -150,6 +150,7 @@ export const useAgentInfo = (userIdProp?: string) => {
           const platformPolicy = {
             auto_load_default_agent: userDefault?.auto_load_default_agent,
             default_agent_name: userDefault?.default_agent_name ?? null,
+            science_default_agent_name: userDefault?.science_default_agent_name ?? null,
           };
           const preferred = pickAgentForSessionStart(
             agents || [],

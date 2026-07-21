@@ -61,8 +61,8 @@ module.exports = {
           '50%': { transform: 'translateY(-5px)' },
         },
         'marquee-x': {
-          '0%': { transform: 'translateX(0)' },
-          '100%': { transform: 'translateX(-50%)' },
+          '0%':   { transform: 'translateX(0%)' },
+          '100%': { transform: 'translateX(-300%)' },
         },
       },
       animation: {

@@ -111,8 +111,9 @@ class GfsUserClient:
             aws_access_key_id=credential.access_key,
             aws_secret_access_key=credential.secret_key,
             endpoint_url=credential.s3_endpoint,
+            use_ssl=True,
             config=Config(
-                signature_version="s3v4",
+                # signature_version="s3v4",
                 s3={"addressing_style": "path"},
                 retries={"max_attempts": 3, "mode": "standard"},
             ),
