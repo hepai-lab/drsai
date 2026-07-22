@@ -8,7 +8,7 @@ const {
   getVoiceModeAvailability,
   normalizeVoiceInteractionMode,
   resolveVoiceModeSelection,
-} = await import("../src/renderer/src/voice/voiceMode.ts");
+} = await import("../../shared/renderer/src/voice/voiceMode.ts");
 
 assert.equal(DEFAULT_VOICE_MODE, "serial");
 assert.equal(normalizeVoiceInteractionMode("serial"), "serial");

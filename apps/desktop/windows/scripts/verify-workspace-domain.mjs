@@ -9,7 +9,7 @@ const app = resolve(new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z
 const temp = await mkdtemp(join(tmpdir(), "opendrsai-workspace-domain-"));
 try {
   const bundle = join(temp, "workspaceDomain.mjs");
-  await build({ entryPoints: [join(app, "src/shared/workspaceDomain.ts")], outfile: bundle, bundle: true, platform: "node", format: "esm", target: "node22" });
+  await build({ entryPoints: [join(app, "../shared/api/workspaceDomain.ts")], outfile: bundle, bundle: true, platform: "node", format: "esm", target: "node22" });
   const { toRuntimeWorkspaceDomain, toWorkspaceExecutionTarget } = await import(pathToFileURL(bundle).href);
   const common = { name: "project", path: "/project", type: "local", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-02T00:00:00Z", lastOpenedAt: "2026-01-02T00:00:00Z", trusted: true };
   const local = toRuntimeWorkspaceDomain({ ...common, id: "workspace-local", location: "local" });

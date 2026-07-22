@@ -29,7 +29,7 @@ if (!operations.length) throw new Error("OpenAPI document has no Remote Gateway 
 const table = operations.map(({ id, method, path }) => `  ${JSON.stringify(id)}: { method: ${JSON.stringify(method)}, path: ${JSON.stringify(path)} },`).join("\n");
 const source = `// Generated from resources/remote-gateway-openapi.json. Do not edit manually.\n` +
 `import { randomUUID } from "crypto";\n` +
-`import { parseRemoteProtocolError, type RemoteProtocolErrorBody } from "../shared/remoteSshProtocol";\n\n` +
+`import { parseRemoteProtocolError, type RemoteProtocolErrorBody } from "../../../shared/api/remoteSshProtocol";\n\n` +
 `export const REMOTE_GATEWAY_OPERATIONS = {\n${table}\n} as const;\n` +
 `export type RemoteGatewayOperationId = keyof typeof REMOTE_GATEWAY_OPERATIONS;\n\n` +
 `export class RemoteGatewayClient {\n` +

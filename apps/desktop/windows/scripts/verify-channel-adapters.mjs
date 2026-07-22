@@ -16,16 +16,16 @@ function assert(condition, message) {
 }
 
 const packageJson = read("package.json");
-const api = read("src/shared/desktopApi.ts");
-const preload = read("src/preload/index.ts");
+const api = read("../shared/api/desktopApi.ts");
+const preload = read("../shared/main/preload.ts");
 const main = read("src/main/index.ts");
 const adapters = read("src/main/channelAdapters.ts");
 const e2eSmoke = read("src/main/e2eSmoke.ts");
-const navigation = read("src/renderer/src/navigation.ts");
-const app = read("src/renderer/src/App.tsx");
-const view = read("src/renderer/src/components/ChannelsView.tsx");
-const mock = read("src/renderer/src/mockDesktopApi.ts");
-const styles = read("src/renderer/src/styles.css");
+const navigation = read("../shared/renderer/src/navigation.ts");
+const app = read("../shared/renderer/src/App.tsx");
+const view = read("../shared/renderer/src/components/ChannelsView.tsx");
+const mock = read("../shared/renderer/src/mockDesktopApi.ts");
+const styles = read("../shared/renderer/src/styles.css");
 const checklist = read("docs/chatbar-capability-checklist.md");
 const roadmap = read("docs/smart-chat-bar-roadmap.md");
 

@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const source = readFileSync(resolve(root, "src/main/agentCircuitBreaker.ts"), "utf8");
+const source = readFileSync(resolve(root, "../shared/main/agentCircuitBreaker.ts"), "utf8");
 const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },
 }).outputText;

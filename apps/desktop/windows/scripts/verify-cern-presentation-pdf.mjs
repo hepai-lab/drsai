@@ -138,7 +138,7 @@ assert(blueprint.slides.find((slide) => slide.role === "hl_lhc_requirements")?.s
 assert(blueprint.slides.find((slide) => slide.role === "data_challenges")?.sourcePages.includes(43), "Data Challenges slide does not cite page 43");
 assert(blueprint.slides.find((slide) => slide.role === "conclusions")?.sourcePages.includes(47), "Conclusions slide does not cite page 47");
 
-const workspaceSource = readFileSync(join(repo, "apps/desktop/windows/src/main/workspaceContext.ts"), "utf8");
+const workspaceSource = readFileSync(join(repo, "apps/desktop/windows/../shared/main/workspaceContext.ts"), "utf8");
 const channelSource = readFileSync(join(repo, "apps/desktop/windows/src/main/channelAdapters.ts"), "utf8");
 const dependencySource = readFileSync(join(repo, "cores/python/packages/drsai/pyproject.toml"), "utf8");
 assert(workspaceSource.includes('extension === ".pdf"') && workspaceSource.indexOf('extension === ".pdf"') < workspaceSource.indexOf('size > 2_000_000'), "Large PDFs are still classified as generic large files");

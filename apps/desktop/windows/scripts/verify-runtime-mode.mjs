@@ -20,9 +20,9 @@ function assert(condition, message) {
   }
 }
 
-const chatCommands = read("src/renderer/src/chatCommands.ts");
-const chatAdapter = read("src/renderer/src/adapters/useDesktopChatAdapter.ts");
-const mainChat = read("src/main/chat.ts");
+const chatCommands = read("../shared/renderer/src/chatCommands.ts");
+const chatAdapter = read("../shared/renderer/src/adapters/useDesktopChatAdapter.ts");
+const mainChat = read("../shared/main/chat.ts");
 const gateway = readRepo("cores/python/packages/drsai/src/drsai/backend/gateway.py");
 const roadmap = read("docs/smart-chat-bar-roadmap.md");
 const packageJson = read("package.json");

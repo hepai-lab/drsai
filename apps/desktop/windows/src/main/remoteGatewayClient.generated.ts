@@ -1,6 +1,6 @@
 // Generated from resources/remote-gateway-openapi.json. Do not edit manually.
 import { randomUUID } from "crypto";
-import { parseRemoteProtocolError, type RemoteProtocolErrorBody } from "../shared/remoteSshProtocol";
+import { parseRemoteProtocolError, type RemoteProtocolErrorBody } from "../../../shared/api/remoteSshProtocol";
 
 export const REMOTE_GATEWAY_OPERATIONS = {
   "remote_handshake_v1_remote_handshake_post": { method: "POST", path: "/v1/remote/handshake" },

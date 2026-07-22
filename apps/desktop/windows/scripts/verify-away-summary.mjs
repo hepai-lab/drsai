@@ -4,8 +4,8 @@ import { fileURLToPath } from "node:url";
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 const read = (path) => readFileSync(join(root, path), "utf8");
-const app = read("src/renderer/src/App.tsx");
-const styles = read("src/renderer/src/styles.css");
+const app = read("../shared/renderer/src/App.tsx");
+const styles = read("../shared/renderer/src/styles.css");
 const e2e = read("src/main/e2eSmoke.ts");
 const runner = read("scripts/verify-e2e-agent-run.mjs");
 

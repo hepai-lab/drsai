@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const chatWorkspace = await readFile(
-  new URL("../src/renderer/src/components/ChatWorkspace.tsx", import.meta.url),
+  new URL("../../shared/renderer/src/components/ChatWorkspace.tsx", import.meta.url),
   "utf8",
 );
 

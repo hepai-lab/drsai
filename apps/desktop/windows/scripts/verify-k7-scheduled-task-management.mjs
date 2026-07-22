@@ -4,12 +4,12 @@ import { fileURLToPath } from "node:url";
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 const read = (...parts) => readFileSync(join(root, ...parts), "utf8");
-const apiSource = read("src", "shared", "desktopApi.ts");
+const apiSource = read("..", "shared", "api", "desktopApi.ts");
 const schedulerSource = read("src", "main", "scheduledTasks.ts");
 const mainSource = read("src", "main", "index.ts");
-const preloadSource = read("src", "preload", "index.ts");
-const uiSource = read("src", "renderer", "src", "components", "TaskCenterView.tsx");
-const mockSource = read("src", "renderer", "src", "mockDesktopApi.ts");
+const preloadSource = read("..", "shared", "main", "preload.ts");
+const uiSource = read("..", "shared", "renderer", "src", "components", "TaskCenterView.tsx");
+const mockSource = read("..", "shared", "renderer", "src", "mockDesktopApi.ts");
 const e2eSource = read("src", "main", "e2eSmoke.ts");
 const runnerSource = read("scripts", "verify-e2e-chat.mjs");
 

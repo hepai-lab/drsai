@@ -18,7 +18,7 @@ function loadTypeScript(path, requireFn) {
 }
 
 try {
-  const module = loadTypeScript(join(root, "src/main/rootCauseAnalysis.ts"), require);
+  const module = loadTypeScript(join(root, "../shared/main/rootCauseAnalysis.ts"), require);
   const engine = new module.DiagnosticRootCauseEngine(join(tempRoot, "issues.json"));
   const timestamp = new Date().toISOString();
   const events = [
@@ -55,8 +55,8 @@ try {
   assert.equal(snapshot.clusters.filter((cluster) => cluster.eventIds.some((id) => id.startsWith("network-failure"))).length, 1);
 
   const mainIndex = readFileSync(join(root, "src/main/index.ts"), "utf8");
-  const preload = readFileSync(join(root, "src/preload/index.ts"), "utf8");
-  const panel = readFileSync(join(root, "src/renderer/src/components/DebugPanel.tsx"), "utf8");
+  const preload = readFileSync(join(root, "../shared/main/preload.ts"), "utf8");
+  const panel = readFileSync(join(root, "../shared/renderer/src/components/DebugPanel.tsx"), "utf8");
   assert.ok(mainIndex.includes("desktop:diagnostics-issue-update"));
   assert.ok(preload.includes("updateDiagnosticIssue"));
   for (const contract of ["RootCauseView", "Root cause analysis", "Facts and inference", "Error clusters and trends", "Mark known", "Resolve", "Reopen", "Copy AI analysis brief", "FACTS:", "INFERENCES:", "UNCERTAINTIES:"]) assert.ok(panel.includes(contract), `Missing root-cause UI contract: ${contract}`);

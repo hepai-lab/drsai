@@ -18,7 +18,7 @@ try {
   assert.match(warnings[0], /deprecated/);
 
   const boundaryBundle = join(temp, "boundaries.mjs");
-  await build({ entryPoints: [join(app, "src/main/remoteWorkspaceBoundaries.ts")], outfile: boundaryBundle, bundle: true, platform: "node", format: "esm", target: "node22" });
+  await build({ entryPoints: [join(app, "../shared/main/remoteWorkspaceBoundaries.ts")], outfile: boundaryBundle, bundle: true, platform: "node", format: "esm", target: "node22" });
   const { REMOTE_WORKSPACE_BOUNDARIES } = await import(pathToFileURL(boundaryBundle).href);
   assert.deepEqual(Object.keys(REMOTE_WORKSPACE_BOUNDARIES), ["ssh", "connection", "protocol", "workspace", "files", "git", "pty", "runtimeEngine"]);
   const sourceNames = new Set((await collectFiles(join(app, "src"))).concat(await collectFiles(join(repo, "cores/python/packages/drsai/src/drsai/backend"))).map((path) => basename(path)));
@@ -35,8 +35,8 @@ try {
   assert.deepEqual(legacyDependencyHits, [], "New production code depends on the removal-bound Legacy API Adapter");
 
   const productSurfaces = [
-    join(app, "src/renderer/src/App.tsx"),
-    join(app, "src/shared/desktopApi.ts"),
+    join(app, "../shared/renderer/src/App.tsx"),
+    join(app, "../shared/api/desktopApi.ts"),
     join(repo, "docs/remote_workespace/OpenDrSai远程工作区实现方案V1.md"),
   ];
   for (const file of productSurfaces) {

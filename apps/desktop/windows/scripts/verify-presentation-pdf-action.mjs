@@ -4,19 +4,19 @@ import { fileURLToPath } from "node:url";
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 const read = (path) => readFileSync(join(root, path), "utf8");
-const action = read("src/renderer/src/components/files/presentationPdfAction.ts");
-const panel = read("src/renderer/src/components/files/FilesContextPanel.tsx");
-const app = read("src/renderer/src/App.tsx");
-const css = read("src/renderer/src/styles.css");
-const sharedApi = read("src/shared/desktopApi.ts");
-const preload = read("src/preload/index.ts");
+const action = read("../shared/renderer/src/components/files/presentationPdfAction.ts");
+const panel = read("../shared/renderer/src/components/files/FilesContextPanel.tsx");
+const app = read("../shared/renderer/src/App.tsx");
+const css = read("../shared/renderer/src/styles.css");
+const sharedApi = read("../shared/api/desktopApi.ts");
+const preload = read("../shared/main/preload.ts");
 const main = read("src/main/index.ts");
 const generator = read("src/main/managerPresentation.ts");
-const parser = read("src/main/presentationPdf.ts");
+const parser = read("../shared/main/presentationPdf.ts");
 const taskStore = read("src/main/managerPresentationTasks.ts");
 const backgroundTasks = read("src/main/backgroundTasks.ts");
 const e2eSmoke = read("src/main/e2eSmoke.ts");
-const skillSquare = read("src/renderer/src/components/SkillSquareView.tsx");
+const skillSquare = read("../shared/renderer/src/components/SkillSquareView.tsx");
 
 const checks = [
   ["presentation PDFs require the structured backend marker", action.includes('content.includes("PDF type: presentation_pdf")')],

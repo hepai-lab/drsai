@@ -6,7 +6,7 @@ import { Script } from "node:vm";
 import ts from "typescript";
 
 const require = createRequire(import.meta.url);
-const source = readFileSync(join(process.cwd(), "src/shared/structuredConversation.ts"), "utf8");
+const source = readFileSync(join(process.cwd(), "../shared/api/structuredConversation.ts"), "utf8");
 const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, strict: true },
 }).outputText;

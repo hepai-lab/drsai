@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { prepareTextForSpeech, selectSpeechVoice } from "../src/renderer/src/voice/voiceSpeech.ts";
+import { prepareTextForSpeech, selectSpeechVoice } from "../../shared/renderer/src/voice/voiceSpeech.ts";
 
 assert.equal(
   prepareTextForSpeech("## 标题\n\n- **第一项**\n- [第二项](https://example.com)\n```ts\nconst hidden = true;\n```"),

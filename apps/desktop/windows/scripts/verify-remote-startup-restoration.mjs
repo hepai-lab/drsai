@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import ts from "typescript";
 
 const root = process.cwd();
-const sourcePath = join(root, "src", "main", "remoteWorkspaceRestorePolicy.ts");
+const sourcePath = join(root, "..", "shared", "main", "remoteWorkspaceRestorePolicy.ts");
 const output = ts.transpileModule(readFileSync(sourcePath, "utf8"), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   fileName: sourcePath,

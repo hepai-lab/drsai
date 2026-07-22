@@ -1,4 +1,4 @@
-import type { BrowserUrlCheck } from "../../shared/browser/types";
+import type { BrowserUrlCheck } from "../../../../shared/api/browser/types";
 
 const TRUSTED_BROWSER_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 

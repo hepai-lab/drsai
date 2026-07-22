@@ -146,7 +146,7 @@ try {
   assert(rolledBack.result?.checks?.rollbackDetected, "Packaged app did not expose the failed update as rolled back.");
   assert(rolledBack.result?.checks?.previousRuntimeActive, "Packaged app did not report the working runtime after rollback.");
   assert(rolledBack.result?.checks?.recoveryIsAutomatic, "Packaged app did not identify the recovery as automatic.");
-  const rendererSource = readFileSync(join(root, "src", "renderer", "src", "App.tsx"), "utf8");
+  const rendererSource = readFileSync(join(root, "..", "shared", "renderer", "src", "App.tsx"), "utf8");
   assert(rendererSource.includes("已自动恢复到可用版本") && rendererSource.includes("账户、任务、工作区和文件未受影响"), "Chinese user-facing rollback explanation is missing.");
   assert(rendererSource.includes("automatically restored working version") && rendererSource.includes("account, tasks, workspace, and files were not affected"), "English user-facing rollback explanation is missing.");
   const evidenceDir = join(root, "release", "product-evidence", "m2-update-rollback");

@@ -1,5 +1,5 @@
 import { EventEmitter } from "events";
-import type { BrowserTaskEvent } from "../../../shared/browser/types";
+import type { BrowserTaskEvent } from "../../../../../shared/api/browser/types";
 import {
   BrowserUseWorkerCommand,
   parseBrowserUseWorkerEvent,

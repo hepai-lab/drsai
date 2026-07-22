@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { VoicePlaybackController } from "../src/renderer/src/voice/voicePlaybackController.ts";
+import { VoicePlaybackController } from "../../shared/renderer/src/voice/voicePlaybackController.ts";
 
 function voice(name, lang, localService = true, isDefault = false) {
   return { name, lang, localService, default: isDefault };
 }
 
-function createHarness({ providerStatus = "ready", withProvider = true, withSystem = true } = {}) {
+function createHarness({ audioPlayError = null, mediaError = null, providerStatus = "ready", withProvider = true, withSystem = true } = {}) {
   const snapshots = [];
   const utterances = [];
   const audios = [];
@@ -41,6 +41,7 @@ function createHarness({ providerStatus = "ready", withProvider = true, withSyst
   const controller = new VoicePlaybackController({
     createAudio: (url) => {
       const audio = {
+        error: mediaError,
         loadCount: 0,
         onended: null,
         onerror: null,
@@ -50,7 +51,7 @@ function createHarness({ providerStatus = "ready", withProvider = true, withSyst
         removed: [],
         load() { this.loadCount += 1; },
         pause() { this.pauseCount += 1; },
-        async play() { this.playCount += 1; },
+        async play() { this.playCount += 1; if (audioPlayError) throw audioPlayError; },
         removeAttribute(name) { this.removed.push(name); },
         url,
       };
@@ -206,4 +207,32 @@ const systemRequest = {
   assert.equal(harness.snapshots.at(-1).phase, "failed");
 }
 
-console.log("Voice playback behavior tests passed (8 scenarios).");
+{
+  const harness = createHarness({ audioPlayError: new DOMException("play() requires a user gesture", "NotAllowedError") });
+  harness.controller.play({ ...systemRequest, mode: "provider" });
+  await Promise.resolve();
+  await Promise.resolve();
+  harness.emit({ requestId: "tts-1", type: "completed", result: {
+    audioData: new Uint8Array([82, 73, 70, 70]), mimeType: "audio/wav", runtimeId: "mock-local",
+    createdAt: new Date(0).toISOString(), providerDisclosure: "fixture",
+  } });
+  await Promise.resolve();
+  assert.equal(harness.snapshots.at(-1).phase, "failed");
+  assert.match(harness.snapshots.at(-1).error, /NotAllowedError/);
+}
+
+{
+  const harness = createHarness({ mediaError: { code: 4, message: "DEMUXER_ERROR_COULD_NOT_OPEN" } });
+  harness.controller.play({ ...systemRequest, mode: "provider" });
+  await Promise.resolve();
+  await Promise.resolve();
+  harness.emit({ requestId: "tts-1", type: "completed", result: {
+    audioData: new Uint8Array([82, 73, 70, 70]), mimeType: "audio/wav", runtimeId: "mock-local",
+    createdAt: new Date(0).toISOString(), providerDisclosure: "fixture",
+  } });
+  harness.audios[0].onerror();
+  assert.equal(harness.snapshots.at(-1).phase, "failed");
+  assert.match(harness.snapshots.at(-1).error, /media code 4: DEMUXER_ERROR_COULD_NOT_OPEN/);
+}
+
+console.log("Voice playback behavior tests passed (10 scenarios).");

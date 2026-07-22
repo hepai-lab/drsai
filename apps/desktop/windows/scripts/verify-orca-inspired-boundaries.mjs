@@ -5,7 +5,7 @@ import { extname, join, relative, resolve } from "node:path";
 const app = resolve(new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
 const root = resolve(app, "../../..");
 
-const rendererFiles = await sourceFiles(join(app, "src/renderer"), new Set([".ts", ".tsx", ".js", ".jsx"]));
+const rendererFiles = await sourceFiles(join(app, "../shared/renderer"), new Set([".ts", ".tsx", ".js", ".jsx"]));
 for (const file of rendererFiles) {
   const source = await readFile(file, "utf8");
   assert.doesNotMatch(source, /(?:from|require\s*\()\s*["'](?:node:)?(?:child_process|node-pty|ssh2)["']/, `${relative(root, file)} must not own process, PTY, or SSH transports`);

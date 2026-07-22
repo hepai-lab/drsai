@@ -15,16 +15,16 @@ function assert(condition, message) {
   }
 }
 
-const commands = read("src/renderer/src/chatCommands.ts");
-const chatWorkspace = read("src/renderer/src/components/ChatWorkspace.tsx");
-const chatAdapter = read("src/renderer/src/adapters/useDesktopChatAdapter.ts");
-const app = read("src/renderer/src/App.tsx");
-const skillSquareView = read("src/renderer/src/components/SkillSquareView.tsx");
-const preload = read("src/preload/index.ts");
+const commands = read("../shared/renderer/src/chatCommands.ts");
+const chatWorkspace = read("../shared/renderer/src/components/ChatWorkspace.tsx");
+const chatAdapter = read("../shared/renderer/src/adapters/useDesktopChatAdapter.ts");
+const app = read("../shared/renderer/src/App.tsx");
+const skillSquareView = read("../shared/renderer/src/components/SkillSquareView.tsx");
+const preload = read("../shared/main/preload.ts");
 const mainIndex = read("src/main/index.ts");
-const mockDesktopApi = read("src/renderer/src/mockDesktopApi.ts");
-const terminalTestResults = read("src/renderer/src/terminalTestResults.ts");
-const css = read("src/renderer/src/styles.css");
+const mockDesktopApi = read("../shared/renderer/src/mockDesktopApi.ts");
+const terminalTestResults = read("../shared/renderer/src/terminalTestResults.ts");
+const css = read("../shared/renderer/src/styles.css");
 const packageJson = read("package.json");
 
 const expectedCommands = [
@@ -272,7 +272,7 @@ assert(mockDesktopApi.includes("importMcpContext"), "mock desktop API does not e
 assert(terminalTestResults.includes("recordRecentTerminalTestResult"), "terminal test result recorder is missing");
 assert(terminalTestResults.includes("No terminal test run captured for this workspace"), "missing empty recent-test-result fallback");
 assert(terminalTestResults.includes("npm\\s+run\\s+(test|verify|typecheck|build)"), "terminal verifier does not recognize npm verification commands");
-assert(read("src/renderer/src/components/TerminalPanel.tsx").includes("recordRecentTerminalTestResult(workspaceKey, run)"), "terminal panel does not persist recent test results");
+assert(read("../shared/renderer/src/components/TerminalPanel.tsx").includes("recordRecentTerminalTestResult(workspaceKey, run)"), "terminal panel does not persist recent test results");
 assert(skillSquareView.includes("initialFocus"), "Skills Square cannot receive /skills focused targets");
 assert(skillSquareView.includes("filteredWorkflowTemplates"), "Skills Square does not filter workflow templates from command focus");
 assert(skillSquareView.includes("matchesWorkflowTemplate"), "Skills Square cannot match focused workflow templates");

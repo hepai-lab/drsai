@@ -13,10 +13,9 @@ VERSION_FILE = ROOT / "cores/VERSION"
 
 CORE_VERSION = ROOT / "cores/python/packages/drsai/src/drsai/version.py"
 WEBUI_VERSION = ROOT / "apps/webui/backend/src/drsai_ui/ui_backend/version.py"
-DESKTOP_PACKAGE = ROOT / "apps/desktop/drsai-desktop/package.json"
-DESKTOP_LOCK = ROOT / "apps/desktop/drsai-desktop/package-lock.json"
+DESKTOP_LOCK = ROOT / "apps/desktop/package-lock.json"
 WINDOWS_DESKTOP_PACKAGE = ROOT / "apps/desktop/windows/package.json"
-WINDOWS_DESKTOP_LOCK = ROOT / "apps/desktop/windows/package-lock.json"
+MACOS_DESKTOP_PACKAGE = ROOT / "apps/desktop/macos/package.json"
 
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
 
@@ -64,10 +63,9 @@ def main(argv: list[str]) -> int:
         r'^__version__\s*=\s*"[^"]+"',
         f'__version__ = "{version}"',
     )
-    update_json_version(DESKTOP_PACKAGE, version)
-    replace(DESKTOP_LOCK, r'("version"\s*:\s*)"[^"]+"', rf'\g<1>"{version}"', expected=2)
     update_json_version(WINDOWS_DESKTOP_PACKAGE, version)
-    replace(WINDOWS_DESKTOP_LOCK, r'("version"\s*:\s*)"[^"]+"', rf'\g<1>"{version}"', expected=2)
+    update_json_version(MACOS_DESKTOP_PACKAGE, version)
+    replace(DESKTOP_LOCK, r'("version"\s*:\s*)"[^"]+"', rf'\g<1>"{version}"', expected=2)
 
     print(f"Synchronized DrSai version to {version}")
     return 0

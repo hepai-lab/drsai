@@ -23,9 +23,9 @@ const negative = {
 assert(Object.values(negative).every(Boolean), `J2 negative mutations were not rejected: ${JSON.stringify(negative)}`);
 
 const service = read("src/main/userPreferences.ts");
-const intent = read("src/renderer/src/userPreferenceIntent.ts");
-const adapter = read("src/renderer/src/adapters/useDesktopChatAdapter.ts");
-const chat = read("src/renderer/src/components/ChatWorkspace.tsx");
+const intent = read("../shared/renderer/src/userPreferenceIntent.ts");
+const adapter = read("../shared/renderer/src/adapters/useDesktopChatAdapter.ts");
+const chat = read("../shared/renderer/src/components/ChatWorkspace.tsx");
 const smoke = read("src/main/e2eSmoke.ts");
 const runner = read("scripts/verify-e2e-chat.mjs");
 const packageJson = read("package.json");

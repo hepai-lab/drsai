@@ -4,11 +4,11 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const read = (path) => readFileSync(join(root, path), "utf8");
-const api = read("src/shared/desktopApi.ts");
+const api = read("../shared/api/desktopApi.ts");
 const tasks = read("src/main/backgroundTasks.ts");
 const notifications = read("src/main/completionNotifications.ts");
 const generator = read("src/main/managerPresentation.ts");
-const renderer = read("src/renderer/src/App.tsx");
+const renderer = read("../shared/renderer/src/App.tsx");
 const smoke = read("src/main/e2eSmoke.ts");
 
 const checks = {

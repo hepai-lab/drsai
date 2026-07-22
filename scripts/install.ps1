@@ -792,9 +792,9 @@ Write-Host ""
 
 Write-Host "  Next steps:" -ForegroundColor Yellow
 
-Write-Host "    .\desktop\scripts\dev.ps1          # Start in dev mode (hot reload)" -ForegroundColor White
+Write-Host "    .\desktop\windows\scripts\dev.ps1  # Start Windows desktop in dev mode" -ForegroundColor White
 
-Write-Host "    .\launch_desktop.ps1               # Quick start (Electron spawns gateway)" -ForegroundColor White
+Write-Host "    .\apps\desktop\windows-desktop-dev.cmd  # Start the formal Windows desktop" -ForegroundColor White
 
 Write-Host ""
 

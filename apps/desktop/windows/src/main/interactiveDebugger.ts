@@ -18,7 +18,7 @@ import type {
   InteractiveDebugStartRequest,
   InteractiveDebugTarget,
   InteractiveDebugVariable,
-} from "../shared/diagnostics";
+} from "../../../shared/api/diagnostics";
 import { DRSAI_HOME } from "./paths";
 
 type DebugPublisher = (session: InteractiveDebugSession) => void;

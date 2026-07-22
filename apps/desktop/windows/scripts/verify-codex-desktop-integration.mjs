@@ -9,7 +9,7 @@ const root = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "
 const temp = await mkdtemp(join(tmpdir(), "opendrsai-codex-desktop-"));
 try {
   const bundle = join(temp, "integration.mjs");
-  await build({ entryPoints: [join(root, "src/shared/agentBackendPresentation.ts")], outfile: bundle, bundle: true, platform: "node", format: "esm", target: "node22" });
+  await build({ entryPoints: [join(root, "../shared/api/agentBackendPresentation.ts")], outfile: bundle, bundle: true, platform: "node", format: "esm", target: "node22" });
   const presentation = await import(pathToFileURL(bundle).href);
   const context = { requestId: "request-1", sessionId: "session-1", runId: "run-1" };
   const event = (type, data = {}) => ({ event_id: `event-${type}`, run_id: "run-1", sequence: 1, type, data, created_at: "2026-01-01T00:00:00Z" });
@@ -38,7 +38,7 @@ try {
   assert.deepEqual(presentation.backendRetryIdentity("unknown", "old-key"), { reuseKey: false, idempotencyKey: null });
   assert.deepEqual(presentation.backendRetryIdentity("pending", "safe-key"), { reuseKey: true, idempotencyKey: "safe-key" });
 
-  const app = await readFile(join(root, "src/renderer/src/App.tsx"), "utf8");
+  const app = await readFile(join(root, "../shared/renderer/src/App.tsx"), "utf8");
   assert(app.includes("health?.update.currentVersion"), "About must show the Electron Desktop version, not the Runtime version");
   const locationBlock = app.slice(app.indexOf("workspaceLocationChoice === null"), app.indexOf("workspaceLocationChoice === \"remote\""));
   assert(locationBlock.includes('"本地" : "Local"') && locationBlock.includes('"远程" : "Remote"'));
@@ -56,16 +56,16 @@ try {
   assert.deepEqual(states, ["available", "not_installed", "version_incompatible", "not_logged_in", "fault"]);
   assert(app.includes("codex-backend-status") && app.includes("codex-login") && app.includes("codex-logout"));
 
-  const gateway = await readFile(join(root, "src/main/gateway.ts"), "utf8");
+  const gateway = await readFile(join(root, "../shared/main/gateway.ts"), "utf8");
   assert(gateway.includes("getLocalCodexDevelopmentEnv") && gateway.includes('DRSAI_CODEX_DEVELOPMENT: "1"'));
   assert(gateway.includes("app.isPackaged"), "packaged releases must keep the managed Codex artifact trust path");
   assert(gateway.includes('"node_modules", ".bin", "codex.cmd"'), "development must prefer the project-owned standalone CLI");
   assert(gateway.includes('/\\\\WindowsApps\\\\/i'), "inaccessible Windows Store package members must not be advertised as available");
 
-  const runtimeClient = await readFile(join(root, "src/main/runtimeClient.ts"), "utf8");
+  const runtimeClient = await readFile(join(root, "../shared/main/runtimeClient.ts"), "utf8");
   for (const method of ["createSession", "updateSession", "getAgentRun", "createAgentRun", "executeAgentRun", "cancelAgentRun", "listAgentRunEvents", "respondAgentApproval"]) assert(runtimeClient.includes(method));
   for (const forbidden of ["thread/start", "turn/start", "account/read", "turn/interrupt"]) assert(!runtimeClient.includes(forbidden), `Desktop leaked Codex JSON-RPC ${forbidden}`);
-  const chat = await readFile(join(root, "src/main/chat.ts"), "utf8");
+  const chat = await readFile(join(root, "../shared/main/chat.ts"), "utf8");
   assert(chat.includes('request.agentId === "my-codex"'));
   assert(chat.includes('createAgentRun(runtimeSessionId, "codex@1"'));
   assert(chat.includes("existingThread?.runtimeSessionId"), "Codex follow-up turns must reuse the mapped Runtime Session");
@@ -77,11 +77,11 @@ try {
   assert(chat.includes('event.type === "agent.item.file_change"') && chat.includes('kind: "diff"'), "Codex file changes must use the structured file-change activity");
   assert(chat.includes('event.type === "agent.item.command"') && chat.includes('kind: "tool_call"'), "Codex commands must use the structured tool activity");
   assert(chat.includes('event.type === "run.completed"') && chat.includes('type: "done"'), "Recovered Codex runs must settle the pending chat turn");
-  const adapter = await readFile(join(root, "src/renderer/src/adapters/useDesktopChatAdapter.ts"), "utf8");
+  const adapter = await readFile(join(root, "../shared/renderer/src/adapters/useDesktopChatAdapter.ts"), "utf8");
   assert(adapter.includes("desktopApi.recoverChatRun"), "Renderer must request Codex Run replay for an interrupted turn");
   assert(adapter.includes("structuredRequests.current.delete(requestId)"), "Recovered plain-text deltas must not be suppressed as structured events");
   assert(app.includes("archived-threads-settings"), "Settings must expose the archived-session center");
-  const threads = await readFile(join(root, "src/main/threads.ts"), "utf8");
+  const threads = await readFile(join(root, "../shared/main/threads.ts"), "utf8");
   assert(threads.includes("archivedAt") && threads.includes("archiveSource"), "Archive state must retain its timestamp and source");
   assert(threads.includes("writeAtomicJson") && threads.includes("parseStoredJson"), "Thread storage must survive interrupted writes without discarding a reusable Codex Session");
   const archive = await readFile(join(root, "src/main/threadArchive.ts"), "utf8");

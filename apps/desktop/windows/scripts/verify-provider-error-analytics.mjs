@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 
 const require = createRequire(import.meta.url);
 const tempHome = await mkdtemp(join(tmpdir(), "opendrsai-provider-error-"));
-const source = readFileSync(new URL("../src/main/providerErrorAnalytics.ts", import.meta.url), "utf8");
+const source = readFileSync(new URL("../../shared/main/providerErrorAnalytics.ts", import.meta.url), "utf8");
 const compiled = ts.transpileModule(source, {
   compilerOptions: {
     module: ts.ModuleKind.CommonJS,

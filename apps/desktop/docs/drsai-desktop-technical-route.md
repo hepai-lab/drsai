@@ -1,6 +1,11 @@
 # DrSai Desktop 技术路线说明
 
-> 适用范围：`desktop/drsai-desktop` Electron 桌面客户端，以及它通过 `desktop/drsai_api_server.py` / `drsai.backend.gateway` 访问的本地 DrSai Gateway。
+> **Legacy 文档。** 本文只描述归档的 `apps/desktop/legacy/drsai-desktop`，不再代表
+> 正式 Windows 主线，也不作为 macOS 实现基线。新的 Windows/macOS 共享架构、
+> 迁移阶段和测试验收门禁见
+> [OpenDrSai 桌面端跨平台重构方案](desktop-cross-platform-refactoring-plan.md)。
+
+> 适用范围：历史 `apps/desktop/legacy/drsai-desktop` Electron 客户端，以及它访问的本地 DrSai Gateway。以下命令和路径仅用于考古，不是正式开发入口。
 
 ## 1. 总体定位
 
@@ -361,7 +366,7 @@ data: [DONE]
 常用 npm scripts：
 
 ```bash
-cd desktop/drsai-desktop
+cd apps/desktop/legacy/drsai-desktop
 npm run dev              # electron-vite 开发模式
 npm run typecheck        # node + web TS 类型检查
 npm run test             # Vitest

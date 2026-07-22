@@ -15,23 +15,23 @@ function assert(condition, message) {
   }
 }
 
-const api = read("src/shared/desktopApi.ts");
+const api = read("../shared/api/desktopApi.ts");
 const main = read("src/main/index.ts");
 const forkWorktrees = read("src/main/forkWorktrees.ts");
-const threads = read("src/main/threads.ts");
-const preload = read("src/preload/index.ts");
-const mock = read("src/renderer/src/mockDesktopApi.ts");
-const chatCommands = read("src/renderer/src/chatCommands.ts");
-const chatAdapter = read("src/renderer/src/adapters/useDesktopChatAdapter.ts");
-const chatWorkspace = read("src/renderer/src/components/ChatWorkspace.tsx");
-const app = read("src/renderer/src/App.tsx");
-const workspaceShell = read("src/renderer/src/components/WorkspaceShell.tsx");
-const forkConflictAnalysis = read("src/renderer/src/components/forkConflictAnalysis.ts");
-const generatedImportIndex = read("src/renderer/src/components/forkConflictGeneratedImportIndex.ts");
+const threads = read("../shared/main/threads.ts");
+const preload = read("../shared/main/preload.ts");
+const mock = read("../shared/renderer/src/mockDesktopApi.ts");
+const chatCommands = read("../shared/renderer/src/chatCommands.ts");
+const chatAdapter = read("../shared/renderer/src/adapters/useDesktopChatAdapter.ts");
+const chatWorkspace = read("../shared/renderer/src/components/ChatWorkspace.tsx");
+const app = read("../shared/renderer/src/App.tsx");
+const workspaceShell = read("../shared/renderer/src/components/WorkspaceShell.tsx");
+const forkConflictAnalysis = read("../shared/renderer/src/components/forkConflictAnalysis.ts");
+const generatedImportIndex = read("../shared/renderer/src/components/forkConflictGeneratedImportIndex.ts");
 const importIndexGenerator = read("scripts/generate-fork-import-index.mjs");
 const e2eSmoke = read("src/main/e2eSmoke.ts");
 const e2eForkMerge = read("scripts/verify-e2e-fork-merge.mjs");
-const styles = read("src/renderer/src/styles.css");
+const styles = read("../shared/renderer/src/styles.css");
 const roadmap = read("docs/smart-chat-bar-roadmap.md");
 const packageJson = read("package.json");
 
@@ -319,21 +319,21 @@ assert(generatedImportIndex.includes('"kind": "python-import"'), "generated impo
 assert(generatedImportIndex.includes('"kind": "jvm-import"'), "generated import index does not persist Java/Kotlin import metadata");
 assert(generatedImportIndex.includes("apps/android/app/src/main/java/ai/drsai/remote/databinding/itemrowbinding"), "generated import index does not include Android Kotlin binding importer evidence");
 assert(generatedImportIndex.includes('"path": "docs/chatbar-capability-checklist.md"'), "generated import index does not include Markdown documentation importers");
-assert(generatedImportIndex.includes('"path": "src/renderer/src/styles.css"'), "generated import index does not include stylesheet importers");
+assert(generatedImportIndex.includes('"path": "../shared/renderer/src/styles.css"'), "generated import index does not include stylesheet importers");
 assert(generatedImportIndex.includes('"path": "package.json"'), "generated import index does not include package.json config importers");
 assert(generatedImportIndex.includes('"specifier": "./out/main/index.js"'), "generated import index does not include package main entry references");
 assert(generatedImportIndex.includes('"specifier": "scripts/verify-fork-worktree.mjs"'), "generated import index does not include package script config references");
 assert(generatedImportIndex.includes('"path": "tsconfig.web.json"'), "generated import index does not include tsconfig config importers");
-assert(generatedImportIndex.includes('"specifier": "src/renderer/src/env.d.ts"'), "generated import index does not include tsconfig file references");
+assert(generatedImportIndex.includes('"specifier": "../shared/renderer/src/env.d.ts"'), "generated import index does not include tsconfig file references");
 assert(generatedImportIndex.includes('"changedModule": "src/shared/desktopapi"'), "generated import index does not include shared desktop API importers");
 assert(generatedImportIndex.includes('"module": "src/shared/desktopapi"'), "generated AST export index does not include shared desktop API module");
 assert(generatedImportIndex.includes('"name": "DesktopApi"'), "generated AST export index does not include shared DesktopApi symbol");
-assert(generatedImportIndex.includes('"module": "src/renderer/src/components/forkconflictanalysis"'), "generated AST export index does not include fork conflict analyzer module");
+assert(generatedImportIndex.includes('"module": "../shared/renderer/src/components/forkconflictanalysis"'), "generated AST export index does not include fork conflict analyzer module");
 assert(generatedImportIndex.includes('"name": "getForkConflictCompilerAstExportTestGraphSuggestions"'), "generated AST export index does not include compiler AST suggestion export");
 assert(generatedImportIndex.includes('"kind": "InterfaceDeclaration"'), "generated AST export index does not preserve TypeScript symbol kinds");
 assert(generatedImportIndex.includes('"path": "src/main/index.ts"'), "generated import index does not include main IPC importers");
-assert(generatedImportIndex.includes('"changedModule": "src/renderer/src/components/forkconflictanalysis"'), "generated import index does not include conflict analyzer importers");
-assert(generatedImportIndex.includes('"path": "src/renderer/src/components/WorkspaceShell.tsx"'), "generated import index does not include WorkspaceShell importer evidence");
+assert(generatedImportIndex.includes('"changedModule": "../shared/renderer/src/components/forkconflictanalysis"'), "generated import index does not include conflict analyzer importers");
+assert(generatedImportIndex.includes('"path": "../shared/renderer/src/components/WorkspaceShell.tsx"'), "generated import index does not include WorkspaceShell importer evidence");
 assert(importIndexGenerator.includes("collectImportEdges"), "fork import-index generator does not scan import/export metadata");
 assert(importIndexGenerator.includes('from "typescript"'), "fork import-index generator does not load the TypeScript compiler API");
 assert(importIndexGenerator.includes("collectAstExportSymbols"), "fork import-index generator does not collect compiler AST export symbols");
@@ -414,7 +414,7 @@ assert(forkConflictAnalysis.indexOf("getForkConflictCompilerAstExportTestGraphSu
 assert(forkConflictAnalysis.indexOf("getForkConflictLiveDraftCompilerDiagnosticTestGraphSuggestions(path, contents)") < forkConflictAnalysis.indexOf("getForkConflictCompilerDiagnosticTestGraphSuggestions(path, contents)"), "static compiler diagnostics should run after live draft diagnostic preflight");
 assert(forkConflictAnalysis.includes("__all__"), "fork conflict export graph does not inspect Python explicit export lists");
 assert(forkConflictAnalysis.includes("desktopapi\\.ts"), "export surface graph does not cover shared desktop API downstream checks");
-assert(forkConflictAnalysis.includes("src/shared/") && forkConflictAnalysis.includes("src/renderer/src/"), "fork conflict analysis module does not resolve shared or renderer import aliases");
+assert(forkConflictAnalysis.includes("src/shared/") && forkConflictAnalysis.includes("../shared/renderer/src/"), "fork conflict analysis module does not resolve shared or renderer import aliases");
 assert(forkConflictAnalysis.includes("Package script graph"), "fork conflict analysis module does not inspect package script metadata");
 assert(forkConflictAnalysis.includes("Import dependency graph"), "fork conflict analysis module does not label import-derived test suggestions");
 assert(forkConflictAnalysis.includes("collectForkConflictPythonImportSpecifiers"), "fork conflict analysis module does not inspect Python import metadata");

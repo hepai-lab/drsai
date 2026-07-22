@@ -52,7 +52,7 @@ $runtimeHash = Get-Sha256Hex $runtime
 $runtimeSize = (Get-Item -LiteralPath $runtime).Length
 $sandboxMsi = Join-Path $packageDir "OpenDrSaiSetup.sandbox.msi"
 $runtimeUrl = "https://github.com/hepai-lab/drsai/releases/download/v$ExpectedVersion/OpenDrSaiRuntime-win-x64.zip"
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PSScriptRoot\..\..\installers\windows\build-msi.ps1" `
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PSScriptRoot\..\installer\build-msi.ps1" `
     -OutDir $packageDir -RuntimePath $runtime -RuntimeUrl $runtimeUrl -RuntimeSha256 $runtimeHash `
     -RuntimeSizeBytes $runtimeSize -BootstrapperVersion $ExpectedVersion -OutputName "OpenDrSaiSetup.sandbox.msi"
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $sandboxMsi)) { throw "Failed to build the local-only M1 Sandbox MSI." }

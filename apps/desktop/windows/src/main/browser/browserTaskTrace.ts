@@ -4,7 +4,7 @@ import { app } from "electron";
 import type {
   BrowserTaskEvent,
   BrowserTaskStartRequest,
-} from "../../shared/browser/types";
+} from "../../../../shared/api/browser/types";
 
 interface BrowserTaskTrace {
   taskId: string;

@@ -31,7 +31,7 @@ copyFileSync(join(hostOpenSsh, "ssh.exe"), override);
 process.env.OPENDRSAI_SSH_EXECUTABLE = override;
 assert(module.resolveSshExecutable() === override, "explicit SSH executable override was not honored");
 
-const packager = readFileSync(resolve(root, "..", "installers", "windows", "create-opendrsai-runtime.ps1"), "utf8");
+const packager = readFileSync(resolve(root, "installer", "create-opendrsai-runtime.ps1"), "utf8");
 for (const marker of ["Add-BundledOpenSshClient", "resources\\tools\\openssh", "libcrypto.dll", 'ssh = "app/resources/tools/openssh/ssh.exe"', "Get-AuthenticodeSignature"]) {
   assert(packager.includes(marker), `runtime packager lacks ${marker}`);
 }

@@ -1,4 +1,4 @@
-import type { BrowserActionName, BrowserTaskEvent, BrowserTaskStartRequest } from "../../../shared/browser/types";
+import type { BrowserActionName, BrowserTaskEvent, BrowserTaskStartRequest } from "../../../../../shared/api/browser/types";
 
 export type BrowserUseWorkerCommand =
   | {

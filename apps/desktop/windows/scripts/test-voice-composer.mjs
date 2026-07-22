@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { insertVoiceTranscript } from "../src/renderer/src/voice/voiceComposer.ts";
+import { insertVoiceTranscript } from "../../shared/renderer/src/voice/voiceComposer.ts";
 
 const cases = [
   { name: "empty", input: "", transcript: "hello", selection: { start: 0, end: 0 }, expected: { value: "hello", cursor: 5 } },

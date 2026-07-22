@@ -5,7 +5,7 @@ import {
   MAX_VOICE_RECORDING_BYTES,
   normalizeVoiceMimeType,
   validateVoiceSignature,
-} from "../src/main/voiceValidation.ts";
+} from "../../shared/main/voiceValidation.ts";
 
 const request = (audioData) => ({ audioData, durationSeconds: 1, mimeType: "audio/webm" });
 const expectCode = (code) => (error) => error?.code === code;

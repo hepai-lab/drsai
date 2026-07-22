@@ -16,19 +16,19 @@ function assert(condition, message) {
 }
 
 const packageJson = read("package.json");
-const api = read("src/shared/desktopApi.ts");
-const preload = read("src/preload/index.ts");
+const api = read("../shared/api/desktopApi.ts");
+const preload = read("../shared/main/preload.ts");
 const main = read("src/main/index.ts");
-const voice = read("src/main/voice.ts");
-const voiceValidation = read("src/main/voiceValidation.ts");
-const chatWorkspace = read("src/renderer/src/components/ChatWorkspace.tsx");
-const app = read("src/renderer/src/App.tsx");
-const voiceAudio = read("src/renderer/src/voice/voiceAudio.ts");
-const voiceMode = read("src/renderer/src/voice/voiceMode.ts");
-const voicePreferences = read("src/renderer/src/voice/useVoicePreferences.ts");
-const voiceLevelMeter = read("src/renderer/src/voice/useVoiceLevelMeter.ts");
-const voiceTranscriptionHook = read("src/renderer/src/voice/useVoiceTranscription.ts");
-const mock = read("src/renderer/src/mockDesktopApi.ts");
+const voice = read("../shared/main/voice.ts");
+const voiceValidation = read("../shared/main/voiceValidation.ts");
+const chatWorkspace = read("../shared/renderer/src/components/ChatWorkspace.tsx");
+const app = read("../shared/renderer/src/App.tsx");
+const voiceAudio = read("../shared/renderer/src/voice/voiceAudio.ts");
+const voiceMode = read("../shared/renderer/src/voice/voiceMode.ts");
+const voicePreferences = read("../shared/renderer/src/voice/useVoicePreferences.ts");
+const voiceLevelMeter = read("../shared/renderer/src/voice/useVoiceLevelMeter.ts");
+const voiceTranscriptionHook = read("../shared/renderer/src/voice/useVoiceTranscription.ts");
+const mock = read("../shared/renderer/src/mockDesktopApi.ts");
 const plan = read("../../../docs/voice/voice-feature-plan.md");
 const checklist = read("docs/chatbar-capability-checklist.md");
 const roadmap = read("docs/smart-chat-bar-roadmap.md");

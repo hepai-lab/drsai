@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-const { SemanticSpeechSegmenter, filterSpeakableAssistantText } = await import("../src/renderer/src/voice/streaming/semanticSpeechSegmenter.ts");
+const { SemanticSpeechSegmenter, filterSpeakableAssistantText } = await import("../../shared/renderer/src/voice/streaming/semanticSpeechSegmenter.ts");
 
 const segmenter = new SemanticSpeechSegmenter({ firstMinChars: 5, normalMinChars: 8, maxChars: 40, firstMaxWaitMs: 500 });
 assert.deepEqual(segmenter.push("你好，这是", 0), []);

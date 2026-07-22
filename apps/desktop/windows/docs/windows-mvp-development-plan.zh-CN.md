@@ -8,7 +8,7 @@ MVP 不是现有桌面能力的集合，也不以“功能数量最多”为目�
 
 > Windows 用户通过 OIDC 登录，打开本地项目，用自然语言让 DrSai 安全地理解、修改并验证项目，并能审阅全过程和最终差异。
 
-本方案以 `apps/desktop/windows` 为唯一 Windows MVP 产品代码主线。`apps/desktop/drsai-desktop` 不再承担 Windows MVP 的新增产品开发。
+本方案以 `apps/desktop/windows` 为唯一 Windows MVP 产品代码主线。`apps/desktop/legacy/drsai-desktop` 仅为历史归档，不承担新增产品开发。
 
 ## 2. 产品目标
 

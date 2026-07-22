@@ -7,7 +7,7 @@ import ts from "typescript";
 const root = process.cwd();
 const require = createRequire(import.meta.url);
 const testRequire = (id) => id === "./paths" ? { DRSAI_HOME: join(root, "out", "verification", "python-dap-state") } : require(id);
-const pythonPath = join(root, "../../../venv/Scripts/python.exe");
+const pythonPath = process.env.OPENDRSAI_TEST_PYTHON || join(root, "../../../venv/Scripts/python.exe");
 assert.ok(existsSync(pythonPath), "Repository Python runtime was not found.");
 const program = join(root, "scripts", "fixtures", "python_debug_target.py");
 

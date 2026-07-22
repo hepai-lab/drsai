@@ -17,7 +17,7 @@ $runDir = Join-Path $EvidenceRoot $runId; $packageDir = Join-Path $runDir "packa
 New-Item -ItemType Directory -Force -Path $packageDir,$evidenceDir | Out-Null
 Copy-Item $runtime (Join-Path $packageDir "OpenDrSaiRuntime-win-x64.zip") -Force
 Copy-Item $guest,$verifier $packageDir -Force
-Copy-Item (Join-Path $PSScriptRoot "..\..\installers\windows\install-opendrsai.ps1") $packageDir -Force
+Copy-Item (Join-Path $PSScriptRoot "..\installer\install-opendrsai.ps1") $packageDir -Force
 $descriptor=[ordered]@{sha256=(Get-FileHash -Algorithm SHA256 $runtime).Hash.ToLowerInvariant();size=(Get-Item $runtime).Length}
 [IO.File]::WriteAllText((Join-Path $packageDir "package.json"),(($descriptor|ConvertTo-Json)+[Environment]::NewLine),[Text.UTF8Encoding]::new($false))
 function Escape-Xml([string]$Value){[Security.SecurityElement]::Escape($Value)}

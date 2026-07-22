@@ -8,16 +8,16 @@ function read(relativePath) {
   return readFileSync(join(root, relativePath), "utf8");
 }
 
-const sharedApi = read("src/shared/desktopApi.ts");
-const threads = read("src/main/threads.ts");
+const sharedApi = read("../shared/api/desktopApi.ts");
+const threads = read("../shared/main/threads.ts");
 const main = read("src/main/index.ts");
-const app = read("src/renderer/src/App.tsx");
-const chatAdapter = read("src/renderer/src/adapters/useDesktopChatAdapter.ts");
-const shell = read("src/renderer/src/components/WorkspaceShell.tsx");
-const forkConflictAnalysis = read("src/renderer/src/components/forkConflictAnalysis.ts");
-const css = read("src/renderer/src/styles.css");
-const mock = read("src/renderer/src/mockDesktopApi.ts");
-const preload = read("src/preload/index.ts");
+const app = read("../shared/renderer/src/App.tsx");
+const chatAdapter = read("../shared/renderer/src/adapters/useDesktopChatAdapter.ts");
+const shell = read("../shared/renderer/src/components/WorkspaceShell.tsx");
+const forkConflictAnalysis = read("../shared/renderer/src/components/forkConflictAnalysis.ts");
+const css = read("../shared/renderer/src/styles.css");
+const mock = read("../shared/renderer/src/mockDesktopApi.ts");
+const preload = read("../shared/main/preload.ts");
 
 const checks = [
   [

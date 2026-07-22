@@ -6,6 +6,7 @@
 ########################
 # 项目特定文件
 ########################
+.github
 .pnpm-store
 .tmp-gateway.pid
 .tmp/
@@ -14,7 +15,7 @@
 /windows-edition-diagnostics.txt
 /windows-sandbox-diagnostics.txt
 /windows-sandbox-status.txt
-apps/desktop/installers/windows/.tools/
+apps/desktop/windows/installer/.tools/
 examples/requests/zulip_python/.zuliprc
 examples/docker/browser/docker_test_dir*
 ########################
@@ -291,6 +292,9 @@ notebooks/test.db
 **/captures/
 *.jks
 *.keystore
+
+# Backup copies of desktop assets are not release resources.
+**/*.bak.*
 
 # Android source and tests share names with generic generated-data rules above.
 !apps/android/app/src/main/java/ai/drsai/remote/data/

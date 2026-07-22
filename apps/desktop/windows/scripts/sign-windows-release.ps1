@@ -113,11 +113,11 @@ try {
     $desktopExecutable = Join-Path $appRoot "release\win-unpacked\OpenDrSai.exe"
     Sign-Artifact $desktopExecutable
 
-    $runtimeBuilder = Join-Path $repoRoot "apps\desktop\installers\windows\create-opendrsai-runtime.ps1"
+    $runtimeBuilder = Join-Path $repoRoot "apps\desktop\windows\installer\create-opendrsai-runtime.ps1"
     & $runtimeBuilder -DesktopAppDir (Join-Path $appRoot "release\win-unpacked")
     if (-not $?) { throw "Runtime ZIP rebuild failed." }
 
-    $msiBuilder = Join-Path $repoRoot "apps\desktop\installers\windows\build-msi.ps1"
+    $msiBuilder = Join-Path $repoRoot "apps\desktop\windows\installer\build-msi.ps1"
     & $msiBuilder -RuntimePath (Join-Path $appRoot "release\bootstrapper\OpenDrSaiRuntime-win-x64.zip")
     if (-not $?) { throw "MSI rebuild failed." }
     $msi = Join-Path $appRoot "release\bootstrapper\OpenDrSaiSetup-win-x64.msi"

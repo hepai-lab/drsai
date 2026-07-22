@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   MAX_TTS_AUDIO_BYTES,
   normalizeAndValidateTtsAudio,
   normalizeVoiceSynthesisRequest,
   readBoundedVoiceAudio,
-} from "../src/main/voiceTtsValidation.ts";
+} from "../../shared/main/voiceTtsValidation.ts";
 
 const expectCode = (code) => (error) => error?.code === code;
 
@@ -45,4 +46,12 @@ await assert.rejects(
 assert.equal(cancelled, true, "oversized TTS response stream must be cancelled before full buffering");
 assert.equal(MAX_TTS_AUDIO_BYTES, 10 * 1024 * 1024);
 
-console.log("Voice TTS validation tests passed (request, MIME, signature, and bounded streaming response).");
+const ttsRuntimeSource = readFileSync(new URL("../../shared/main/voiceTts.ts", import.meta.url), "utf8");
+const settingsSource = readFileSync(new URL("../../shared/main/settings.ts", import.meta.url), "utf8");
+const devLauncherSource = readFileSync(new URL("./dev.ps1", import.meta.url), "utf8");
+assert.match(ttsRuntimeSource, /return "gateway-provider";/, "provider TTS must be the default task runtime");
+assert.match(ttsRuntimeSource, /syncSavedApiKeyToGateway\(\)/, "saved TTS credentials must be synchronized before synthesis");
+assert.match(settingsSource, /getGatewayRequestHeaders\(\)/, "credential sync must use the gateway instance token");
+assert.match(devLauncherSource, /OPENDRSAI_VOICE_TTS_RUNTIME = "gateway-provider"/, "desktop dev must enable provider TTS explicitly");
+
+console.log("Voice TTS validation tests passed (request, MIME, runtime, credential sync, and bounded streaming response).");

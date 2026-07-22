@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs";
-const source = readFileSync(new URL("../src/main/voice.ts", import.meta.url), "utf8");
-const validationSource = readFileSync(new URL("../src/main/voiceValidation.ts", import.meta.url), "utf8");
-const ttsSource = readFileSync(new URL("../src/main/voiceTts.ts", import.meta.url), "utf8");
-const ttsValidationSource = readFileSync(new URL("../src/main/voiceTtsValidation.ts", import.meta.url), "utf8");
-const tempSource = readFileSync(new URL("../src/main/voiceTempFiles.ts", import.meta.url), "utf8");
+const source = readFileSync(new URL("../../shared/main/voice.ts", import.meta.url), "utf8");
+const validationSource = readFileSync(new URL("../../shared/main/voiceValidation.ts", import.meta.url), "utf8");
+const ttsSource = readFileSync(new URL("../../shared/main/voiceTts.ts", import.meta.url), "utf8");
+const ttsValidationSource = readFileSync(new URL("../../shared/main/voiceTtsValidation.ts", import.meta.url), "utf8");
+const tempSource = readFileSync(new URL("../../shared/main/voiceTempFiles.ts", import.meta.url), "utf8");
 const checks = [
   ["byte limit", validationSource.includes("MAX_VOICE_RECORDING_BYTES")],
   ["duration limit", validationSource.includes("MAX_VOICE_RECORDING_SECONDS")],

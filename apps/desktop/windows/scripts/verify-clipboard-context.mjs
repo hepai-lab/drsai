@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 
@@ -16,7 +17,9 @@ function assert(condition, message) {
 }
 
 const packageJson = read("package.json");
-const chatWorkspace = read("src/renderer/src/components/ChatWorkspace.tsx");
+const chatWorkspace = read("../shared/renderer/src/components/ChatWorkspace.tsx");
+const clipboardSource = read("../shared/renderer/src/clipboard.ts");
+const debugPanel = read("../shared/renderer/src/components/DebugPanel.tsx");
 const checklist = read("docs/chatbar-capability-checklist.md");
 const roadmap = read("docs/smart-chat-bar-roadmap.md");
 
@@ -40,6 +43,32 @@ assert(chatWorkspace.includes('kind: "selection"'), "clipboard image context is 
 assert(chatWorkspace.includes("screenshotDataUrl"), "clipboard image data URL is not attached for model-capable visual context");
 assert(chatWorkspace.includes("Image data URL was not attached because it exceeds"), "large clipboard image downgrade copy is missing");
 assert(chatWorkspace.includes("No OCR, vision model, filesystem write, network call, or provider send was performed"), "clipboard image safety boundary copy is missing");
+assert(clipboardSource.includes("copyTextToClipboard"), "copy helper must prefer the Electron main-process clipboard");
+assert(clipboardSource.includes('document.execCommand("copy")'), "copy helper must retain a browser fallback");
+assert(debugPanel.includes("copyTextSafely") && !debugPanel.includes("navigator.clipboard.writeText"), "diagnostic copy actions must not leak Clipboard permission rejections");
+
+function loadClipboard(hasBridge, bridgeResult, navigatorRejects) {
+  const output = ts.transpileModule(clipboardSource, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const module = { exports: {} };
+  let appended = false;
+  const textarea = { value: "", style: {}, setAttribute() {}, select() {}, remove() {} };
+  new Function("exports", "module", "require", "navigator", "document", output)(
+    module.exports,
+    module,
+    () => ({
+      hasDesktopApi: () => hasBridge,
+      desktopApi: { copyTextToClipboard: async () => bridgeResult },
+    }),
+    { clipboard: { writeText: async () => { if (navigatorRejects) throw new DOMException("denied", "NotAllowedError"); } } },
+    { createElement: () => textarea, execCommand: () => appended, body: { appendChild: () => { appended = true; } } },
+  );
+  return module.exports.copyTextSafely;
+}
+
+assert(await loadClipboard(true, true, true)("main-process"), "main-process clipboard must work even when browser permission is denied");
+assert(await loadClipboard(false, false, true)("legacy-fallback"), "permission denial must fall back without rejecting");
 
 assert(checklist.includes("clipboard-context-agent"), "checklist omits clipboard context agent record");
 assert(checklist.includes("Clipboard Text/Image Paste Context"), "checklist omits clipboard context addendum");

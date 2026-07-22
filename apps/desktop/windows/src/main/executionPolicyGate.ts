@@ -3,7 +3,7 @@ import {
   evaluateExecutionPermission,
   type ExecutionActionKind,
   type ExecutionPolicyConfig,
-} from "../shared/executionPolicy";
+} from "../../../shared/api/executionPolicy";
 import { getMyDrSaiConfig } from "./myDrSaiConfig";
 
 export interface ExecutionGateOptions {

@@ -4,7 +4,7 @@ const {
   getStreamingTranscriptDisplayText,
   initialStreamingTranscriptState,
   reconcileStreamingTranscript,
-} = await import("../src/renderer/src/voice/streaming/transcriptReconciler.ts");
+} = await import("../../shared/renderer/src/voice/streaming/transcriptReconciler.ts");
 
 const envelope = (sequence, event) => ({ sessionId: "s1", turnId: "t1", sequence, ...event });
 let state = initialStreamingTranscriptState;

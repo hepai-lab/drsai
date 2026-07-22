@@ -86,8 +86,8 @@ try {
   await isolatedService.control({ sessionId: isolated.id, action: "disconnect" });
 
   const mainIndex = readFileSync(join(root, "src/main/index.ts"), "utf8");
-  const preload = readFileSync(join(root, "src/preload/index.ts"), "utf8");
-  const panel = readFileSync(join(root, "src/renderer/src/components/DebugPanel.tsx"), "utf8");
+  const preload = readFileSync(join(root, "../shared/main/preload.ts"), "utf8");
+  const panel = readFileSync(join(root, "../shared/renderer/src/components/DebugPanel.tsx"), "utf8");
   const pyproject = readFileSync(join(root, "../../../cores/python/packages/drsai/pyproject.toml"), "utf8");
   for (const contract of ["interactive-debug-start", "interactive-debug-breakpoint", "interactive-debug-control", "interactive-debug-scopes", "interactive-debug-variables", "interactive-debug-evaluate"]) assert.ok(mainIndex.includes(contract), `Missing interactive debug IPC: ${contract}`);
   assert.ok(preload.includes("onInteractiveDebugEvent"));

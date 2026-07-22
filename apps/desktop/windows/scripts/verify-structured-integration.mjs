@@ -20,8 +20,8 @@ function loadTypeScriptModule(path) {
   return module.exports;
 }
 
-const protocol = loadTypeScriptModule(join(root, "src/shared/structuredConversation.ts"));
-const parser = loadTypeScriptModule(join(root, "src/main/sseParser.ts"));
+const protocol = loadTypeScriptModule(join(root, "../shared/api/structuredConversation.ts"));
+const parser = loadTypeScriptModule(join(root, "../shared/main/sseParser.ts"));
 const fixture = JSON.parse(readFileSync(join(root, "scripts/fixtures/structured-conversation.json"), "utf8"));
 const routeFixture = JSON.parse(readFileSync(join(root, "scripts/fixtures/structured-sidebar-routes.json"), "utf8"));
 const failureFixture = JSON.parse(readFileSync(join(root, "scripts/fixtures/structured-failure-events.json"), "utf8"));
@@ -47,9 +47,9 @@ const networkRecovery = failureFixture.cases.find((item) => item.name === "netwo
 assert.deepEqual(networkRecovery.events.map((event) => event.connection?.status), ["retrying", "restored"]);
 assert.ok(networkRecovery.events.every((event) => event.type === "connection"));
 
-const appSource = readFileSync(join(root, "src/renderer/src/App.tsx"), "utf8");
-const rendererSource = readFileSync(join(root, "src/renderer/src/components/StructuredMessageParts.tsx"), "utf8");
-const adapterSource = readFileSync(join(root, "src/renderer/src/adapters/useDesktopChatAdapter.ts"), "utf8");
+const appSource = readFileSync(join(root, "../shared/renderer/src/App.tsx"), "utf8");
+const rendererSource = readFileSync(join(root, "../shared/renderer/src/components/StructuredMessageParts.tsx"), "utf8");
+const adapterSource = readFileSync(join(root, "../shared/renderer/src/adapters/useDesktopChatAdapter.ts"), "utf8");
 assert.ok(appSource.includes('setActiveRightTab("files")'));
 assert.ok(appSource.includes('setActiveRightTab("browser")'));
 assert.ok(appSource.includes('<DebugPanel'));

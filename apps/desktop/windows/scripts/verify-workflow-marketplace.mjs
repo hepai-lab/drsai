@@ -16,14 +16,14 @@ function assert(condition, message) {
 }
 
 const packageJson = read("package.json");
-const api = read("src/shared/desktopApi.ts");
-const policy = read("src/shared/executionPolicy.ts");
+const api = read("../shared/api/desktopApi.ts");
+const policy = read("../shared/api/executionPolicy.ts");
 const marketplace = read("src/main/workflowMarketplace.ts");
 const main = read("src/main/index.ts");
-const preload = read("src/preload/index.ts");
-const skillSquare = read("src/renderer/src/components/SkillSquareView.tsx");
-const mock = read("src/renderer/src/mockDesktopApi.ts");
-const styles = read("src/renderer/src/styles.css");
+const preload = read("../shared/main/preload.ts");
+const skillSquare = read("../shared/renderer/src/components/SkillSquareView.tsx");
+const mock = read("../shared/renderer/src/mockDesktopApi.ts");
+const styles = read("../shared/renderer/src/styles.css");
 const roadmap = read("docs/smart-chat-bar-roadmap.md");
 
 assert(
@@ -369,7 +369,7 @@ assert(
     skillSquare.includes("Resume checkpoint"),
   "Skills view does not render workflow restart resume state and external reconnect actions",
 );
-const terminalPanel = read("src/renderer/src/components/TerminalPanel.tsx");
+const terminalPanel = read("../shared/renderer/src/components/TerminalPanel.tsx");
 assert(
   terminalPanel.includes("completeWorkflowRunStep") &&
     terminalPanel.includes("drsai:workflow-run-updated") &&
@@ -384,7 +384,7 @@ assert(
     terminalPanel.includes("workflowStepId: proposal.workflowStepId"),
   "terminal panel does not pass workflow metadata into shell approval",
 );
-const approvalCenter = read("src/renderer/src/components/ApprovalCenterView.tsx");
+const approvalCenter = read("../shared/renderer/src/components/ApprovalCenterView.tsx");
 assert(
   approvalCenter.includes("broadcastLatestWorkflowRunUpdate") &&
     approvalCenter.includes("desktopApi.listWorkflowRuns") &&
@@ -392,8 +392,8 @@ assert(
     approvalCenter.includes('step.status === "running"'),
   "approval center does not refresh workflow running state after shell approval",
 );
-const chatWorkspace = read("src/renderer/src/components/ChatWorkspace.tsx");
-const app = read("src/renderer/src/App.tsx");
+const chatWorkspace = read("../shared/renderer/src/components/ChatWorkspace.tsx");
+const app = read("../shared/renderer/src/App.tsx");
 assert(
   chatWorkspace.includes("drsai:workflow-chat-command") &&
     chatWorkspace.includes("onInputChange(command.trim())"),

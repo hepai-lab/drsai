@@ -26,7 +26,7 @@ import {
   createScheduledTriggerAudit,
   DEFAULT_MISSED_RUN_POLICY,
   getNextRunAfterTrigger,
-} from "./scheduleTiming";
+} from "../../../shared/main/scheduleTiming";
 
 const SCHEDULED_TASKS_FILE = join(DRSAI_HOME, "desktop", "scheduled-tasks.json");
 const MAX_SCHEDULED_TASKS_PER_WORKSPACE = 100;

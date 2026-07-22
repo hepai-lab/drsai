@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { VoicePlaybackController } from "../src/renderer/src/voice/voicePlaybackController.ts";
-import { VoiceTranscriptionController } from "../src/renderer/src/voice/voiceTranscriptionController.ts";
+import { VoicePlaybackController } from "../../shared/renderer/src/voice/voicePlaybackController.ts";
+import { VoiceTranscriptionController } from "../../shared/renderer/src/voice/voiceTranscriptionController.ts";
 
 const ITERATIONS = 1_000;
 

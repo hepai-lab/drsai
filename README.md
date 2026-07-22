@@ -7,7 +7,7 @@
 由中国科学院高能物理研究所[HepAI](https://ai.ihep.ac.cn/)团队开发的智能体、多智能体协同系统快速开发和部署一体化框架，可快速地开发和部署自己的智能体、多智能体协同系统前后端服务。
 
 > [!IMPORTANT]
-> `apps/desktop/drsai-desktop` 已弃用，不再维护。Windows 桌面客户端的开发、构建和发布已统一迁移至 `apps/desktop/windows`，后续请使用新目录。
+> 旧 Hermes 桌面客户端已归档到 `apps/desktop/legacy/drsai-desktop`，不再维护。正式桌面客户端位于 `apps/desktop/windows` 与 `apps/desktop/macos`。
 
 <div align="center">
   <p>

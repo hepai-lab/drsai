@@ -6,9 +6,9 @@ const read = (path) => readFileSync(resolve(root, path), "utf8");
 const service = read("../../../cores/python/packages/drsai/src/drsai/backend/git_worktree_service.py");
 const gateway = read("../../../cores/python/packages/drsai/src/drsai/backend/gateway.py");
 const facade = read("src/main/forkWorktrees.ts");
-const threads = read("src/main/threads.ts");
-const shell = read("src/renderer/src/components/WorkspaceShell.tsx");
-const app = read("src/renderer/src/App.tsx");
+const threads = read("../shared/main/threads.ts");
+const shell = read("../shared/renderer/src/components/WorkspaceShell.tsx");
+const app = read("../shared/renderer/src/App.tsx");
 
 for (const marker of ["def adopt(", "legacy_worktree_missing", "legacy_worktree_branch_mismatch"]) assert(service.includes(marker), `Runtime adoption lacks ${marker}`);
 assert(gateway.includes("runtime_worktree_adopt"), "Gateway adoption endpoint is missing");

@@ -15,13 +15,13 @@ function assert(condition, message) {
   }
 }
 
-const loginScreen = read("src/renderer/src/auth/LoginScreen.tsx");
-const authProvider = read("src/renderer/src/auth/AuthProvider.tsx");
+const loginScreen = read("../shared/renderer/src/auth/LoginScreen.tsx");
+const authProvider = read("../shared/renderer/src/auth/AuthProvider.tsx");
 const mainIndex = read("src/main/index.ts");
-const preload = read("src/preload/index.ts");
+const preload = read("../shared/main/preload.ts");
 const bootstrap = read("src/main/bootstrap.ts");
-const desktopApi = read("src/shared/desktopApi.ts");
-const css = read("src/renderer/src/styles.css");
+const desktopApi = read("../shared/api/desktopApi.ts");
+const css = read("../shared/renderer/src/styles.css");
 const packagedA5 = read("scripts/verify-packaged-a5-service-guidance.mjs");
 const packagedA5Stability = read("scripts/verify-packaged-a5-service-guidance-stability.mjs");
 const e2eSmoke = read("src/main/e2eSmoke.ts");

@@ -170,7 +170,7 @@ jobs:
       - name: Build bootstrapper MSI
         shell: pwsh
         run: |
-          powershell -ExecutionPolicy Bypass -File ..\installers\windows\build-msi.ps1 `
+          powershell -ExecutionPolicy Bypass -File installer\build-msi.ps1 `
             -RuntimePath release\bootstrapper\OpenDrSaiRuntime-win-x64.zip `
             -RuntimeUrl "$env:OPENDRSAI_RELEASE_BASE_URL/OpenDrSaiRuntime-win-x64.zip"
 

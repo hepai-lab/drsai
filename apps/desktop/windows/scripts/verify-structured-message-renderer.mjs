@@ -3,12 +3,12 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const root = process.cwd();
-const renderer = readFileSync(join(root, "src/renderer/src/components/StructuredMessageParts.tsx"), "utf8");
-const workspace = readFileSync(join(root, "src/renderer/src/components/ChatWorkspace.tsx"), "utf8");
-const adapter = readFileSync(join(root, "src/renderer/src/adapters/useDesktopChatAdapter.ts"), "utf8");
-const app = readFileSync(join(root, "src/renderer/src/App.tsx"), "utf8");
-const files = readFileSync(join(root, "src/renderer/src/components/files/FilesContextPanel.tsx"), "utf8");
-const styles = readFileSync(join(root, "src/renderer/src/styles.css"), "utf8");
+const renderer = readFileSync(join(root, "../shared/renderer/src/components/StructuredMessageParts.tsx"), "utf8");
+const workspace = readFileSync(join(root, "../shared/renderer/src/components/ChatWorkspace.tsx"), "utf8");
+const adapter = readFileSync(join(root, "../shared/renderer/src/adapters/useDesktopChatAdapter.ts"), "utf8");
+const app = readFileSync(join(root, "../shared/renderer/src/App.tsx"), "utf8");
+const files = readFileSync(join(root, "../shared/renderer/src/components/files/FilesContextPanel.tsx"), "utf8");
+const styles = readFileSync(join(root, "../shared/renderer/src/styles.css"), "utf8");
 
 for (const kind of ["markdown", "reasoning", "progress", "artifact", "citation", "interaction", "subtask", "notice"]) {
   const present = kind === "notice"
@@ -35,9 +35,18 @@ assert.ok(renderer.includes("onOpenArtifact") && renderer.includes("onOpenCitati
 assert.ok(renderer.includes("part.citationIds.map") && renderer.includes("focusPart(citation.id)"), "Markdown citations must locate stable citation cards.");
 assert.ok(renderer.includes("part.markdownPartId") && renderer.includes("structured-citation-back"), "Citation cards must navigate back to the related markdown part.");
 assert.ok(renderer.includes("data-artifact-id={part.artifactId}") && renderer.includes("data-status={part.status}"), "Artifact cards must expose stable identity and status.");
+assert.ok(renderer.includes("<StructuredActivitySummary") && renderer.includes('activity.status === "pending" || activity.status === "running"'), "Active work must have a compact transcript footer.");
+assert.ok(renderer.includes('activity.kind === "tool"') && renderer.includes("activity.toolName"), "Tool activity footer must show only the concise tool name.");
+assert.ok(renderer.includes('turn.status !== "pending" && turn.status !== "running"'), "Activity footer must disappear when the turn ends.");
+assert.ok(renderer.includes("formatRunDuration") && renderer.includes("startedAt ?? now"), "Active turns must expose a live elapsed duration.");
+assert.equal(renderer.includes('className="structured-run-stop"'), false, "The transcript must not duplicate the Composer stop action.");
 
 assert.ok(workspace.includes('message.role === "assistant" && message.structuredTurn'), "ChatWorkspace must prefer the V2 document.");
 assert.ok(workspace.includes("<StructuredMessageParts"), "ChatWorkspace must render V2 parts directly.");
+assert.ok(workspace.includes("onOpenDebug={onOpenDebug}"), "Compact activity must route details to the Debug panel.");
+assert.ok(workspace.includes('messages.some((message) => message.streaming)'), "Elapsed duration must refresh for the entire streaming turn.");
+assert.ok(workspace.includes("<StreamingStatus") && workspace.includes("已执行"), "Pre-output streaming state must expose elapsed time without a duplicate stop action.");
+assert.ok(adapter.includes("const aborted = await desktopApi.abortChat(requestId)") && adapter.includes('event.type === "aborted" ? "cancelled" : "completed"'), "Composer stop must abort the runtime and settle structured streaming state.");
 assert.ok(workspace.includes("!message.structuredTurn && message.reasoningContent"), "Legacy reasoning must only be a fallback.");
 assert.ok(workspace.includes("!message.structuredTurn && message.inputRequest"), "Legacy interaction must only be a fallback.");
 assert.ok(workspace.includes("onOpenWorkspaceArtifact"), "ChatWorkspace must expose the existing files-panel route.");
@@ -51,7 +60,7 @@ assert.ok(app.includes('setActiveRightTab("files")') && app.includes("setFilesPa
 assert.ok(app.includes('setActiveRightTab("browser")'), "Citation URLs must use the existing Browser panel.");
 assert.ok(files.includes("focusPath") && files.includes("findNodeByPath(nodes, focusPath)"), "Files panel must focus the selected artifact.");
 
-for (const className of ["structured-message-parts", "structured-progress", "structured-artifact", "structured-citation", "structured-notice"]) {
+for (const className of ["structured-message-parts", "structured-progress", "structured-artifact", "structured-citation", "structured-notice", "structured-activity-summary"]) {
   assert.ok(styles.includes(`.${className}`), `Missing ${className} styles.`);
 }
 assert.ok(styles.includes(".structured-progress,") && !styles.includes(".structured-progress {\n  border:"), "Progress must remain a quiet text-level status.");

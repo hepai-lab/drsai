@@ -6,9 +6,9 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 
 const files = {
   sharedTypes: read("src/shared/browser/types.ts"),
-  desktopApi: read("src/shared/desktopApi.ts"),
-  preload: read("src/preload/index.ts"),
-  mockApi: read("src/renderer/src/mockDesktopApi.ts"),
+  desktopApi: read("../shared/api/desktopApi.ts"),
+  preload: read("../shared/main/preload.ts"),
+  mockApi: read("../shared/renderer/src/mockDesktopApi.ts"),
   main: read("src/main/index.ts"),
   protocol: read("src/main/browser/browserUse/protocol.ts"),
   processManager: read("src/main/browser/browserUse/processManager.ts"),

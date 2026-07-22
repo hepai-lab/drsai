@@ -6,13 +6,13 @@ import {
   isVoiceCaptureActive,
   isVoicePlaybackActive,
   reduceVoiceTurn,
-} from "../src/renderer/src/voice/voiceTurnReducer.ts";
+} from "../../shared/renderer/src/voice/voiceTurnReducer.ts";
 import {
   calculateVoiceLevel,
   createSilentVoiceLevels,
   formatVoiceDuration,
   getPreferredVoiceMimeType,
-} from "../src/renderer/src/voice/voiceAudio.ts";
+} from "../../shared/renderer/src/voice/voiceAudio.ts";
 
 let state = initialVoiceTurnState;
 state = reduceVoiceTurn(state, { type: "begin_capture", turnId: "turn-1" });

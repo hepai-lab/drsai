@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const read = (path) => readFileSync(join(root, path), "utf8");
 const tasks = read("src/main/backgroundTasks.ts");
-const plans = read("src/shared/agentTaskPlan.ts");
+const plans = read("../shared/api/agentTaskPlan.ts");
 const smoke = read("src/main/e2eSmoke.ts");
 const packaged = read("scripts/verify-e2e-agent-run.mjs");
 

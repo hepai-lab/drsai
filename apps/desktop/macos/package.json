@@ -1,0 +1,35 @@
+{
+  "name": "opendrsai-macos-desktop",
+  "version": "1.5.1",
+  "private": true,
+  "type": "module",
+  "description": "OpenDrSai macOS desktop shell",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "typecheck": "tsc --noEmit -p tsconfig.json --composite false",
+    "build": "npm run typecheck && electron-vite build",
+    "prepare:runtime:macos": "bash scripts/build-runtime-artifact.sh",
+    "build:mac:arm64": "npm run build && electron-builder --mac dmg zip --arm64",
+    "build:mac:dir": "npm run build && electron-builder --mac dir --arm64",
+    "verify:release-contract": "node ../shared/test-kit/verify-macos-release-contract.mjs",
+    "verify:packaged": "node scripts/verify-packaged-smoke.mjs",
+    "verify": "npm run typecheck && node ../shared/test-kit/verify-macos-contract.mjs && node ../shared/test-kit/verify-workspace-file-mutations.mjs && npm run verify:release-contract"
+  },
+  "dependencies": {
+    "builder-util-runtime": "9.3.1",
+    "electron-updater": "6.6.2",
+    "node-pty": "1.1.0"
+  },
+  "devDependencies": {
+    "@electron-toolkit/tsconfig": "2.0.0",
+    "@tailwindcss/vite": "4.1.18",
+    "@types/node": "22.20.0",
+    "@vitejs/plugin-react": "5.1.1",
+    "electron": "39.8.10",
+    "electron-builder": "26.0.12",
+    "electron-vite": "5.0.0",
+    "typescript": "5.9.3",
+    "vite": "7.3.6"
+  }
+}
