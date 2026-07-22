@@ -10,11 +10,13 @@ import type { UpdateStatus } from "../../../shared/api/desktopApi";
 
 let cancellationToken: CancellationToken | null = null;
 let status: UpdateStatus = idleStatus();
+let healthConfirmation: { confirmed: boolean; version: string | null; confirmedAt: string | null } = { confirmed: false, version: null, confirmedAt: null };
 const execFileAsync = promisify(execFile);
 
 autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = false;
 autoUpdater.allowDowngrade = false;
+configureSignedUpdateLabFeed();
 autoUpdater.on("checking-for-update", () => patch({ phase: "checking", checking: true, error: null, errorCode: null }));
 autoUpdater.on("update-available", (info) => patchAvailable(info));
 autoUpdater.on("update-not-available", () => { status = idleStatus(); });
@@ -64,7 +66,8 @@ export async function installUpdate(): Promise<UpdateStatus> {
   if (!version) return getUpdateStatus();
   await prepareRollback(version);
   patch({ phase: "installing", canInstall: false });
-  setImmediate(() => autoUpdater.quitAndInstall(false, true));
+  const labDelay = process.env.OPENDRSAI_MACOS_SIGNED_UPDATE_LAB === "1" ? 1_000 : 0;
+  setTimeout(() => autoUpdater.quitAndInstall(false, true), labDelay);
   return getUpdateStatus();
 }
 
@@ -72,6 +75,28 @@ export async function markUpdateHealthy(): Promise<void> {
   const healthFile = updateHealthFile();
   await mkdir(dirname(healthFile), { recursive: true });
   await writeFile(healthFile, JSON.stringify({ version: app.getVersion(), healthyAt: new Date().toISOString() }), "utf8");
+  healthConfirmation = { confirmed: true, version: app.getVersion(), confirmedAt: new Date().toISOString() };
+}
+
+export function getUpdateHealthConfirmation(): { confirmed: boolean; version: string | null; confirmedAt: string | null } {
+  return { ...healthConfirmation };
+}
+
+export function scheduleUpdateHealthConfirmation(): () => void {
+  healthConfirmation = { confirmed: false, version: null, confirmedAt: null };
+  const acceptance = Boolean(process.env.OPENDRSAI_MACOS_PACKAGED_SCENARIO);
+  const configured = Number(process.env.OPENDRSAI_UPDATE_HEALTH_DELAY_MS || "30000");
+  const minimum = acceptance ? 1_000 : 30_000;
+  const delayMs = Math.max(minimum, Math.min(300_000, Number.isFinite(configured) ? configured : 30_000));
+  let active = true;
+  const timer = setTimeout(() => {
+    if (!active) return;
+    void markUpdateHealthy();
+  }, delayMs);
+  return () => {
+    active = false;
+    clearTimeout(timer);
+  };
 }
 
 async function prepareRollback(expectedVersion: string): Promise<void> {
@@ -112,4 +137,14 @@ function idleStatus(): UpdateStatus {
 
 function redact(message: string): string {
   return message.replace(/((?:token|password|secret|authorization))=?[^\s,;]+/gi, "$1=[redacted]").slice(0, 500);
+}
+
+function configureSignedUpdateLabFeed(): void {
+  if (process.env.OPENDRSAI_MACOS_SIGNED_UPDATE_LAB !== "1" || process.env.OPENDRSAI_MACOS_PACKAGED_SCENARIO !== "online-update-lab") return;
+  const raw = process.env.OPENDRSAI_MACOS_UPDATE_FEED_URL?.trim();
+  const expectedHost = process.env.OPENDRSAI_MACOS_UPDATE_FEED_HOST?.trim();
+  if (!raw || !expectedHost) throw new Error("Signed update lab requires an explicit HTTPS feed and expected host.");
+  const url = new URL(raw);
+  if (url.protocol !== "https:" || url.hostname !== expectedHost || url.username || url.password) throw new Error("Signed update lab feed is not an approved HTTPS origin.");
+  autoUpdater.setFeedURL({ provider: "generic", url: url.toString() });
 }

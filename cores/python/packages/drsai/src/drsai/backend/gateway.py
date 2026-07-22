@@ -98,6 +98,8 @@ from pathlib import Path
 
 from typing import Any, Optional
 
+from urllib.parse import urlparse
+
 
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
@@ -1226,6 +1228,7 @@ app = FastAPI(
 _REMOTE_PROTOCOL_VERSION = PROTOCOL_VERSION
 _remote_workspaces: dict[str, Path] = {}
 _runtime_registry_instance: RuntimeRegistry | None = None
+_mobile_pairing_service_instance = None
 _runtime_engine_instance: RuntimeEngine | None = None
 _runtime_tool_dispatcher_instance: RuntimeToolDispatcher | None = None
 _runtime_security_instance: RuntimeSecurity | None = None
@@ -1308,6 +1311,15 @@ def _runtime_registry() -> RuntimeRegistry:
         state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
         _runtime_registry_instance = RuntimeRegistry(state_root / "runtime" / "runtime.sqlite3")
     return _runtime_registry_instance
+
+
+def _mobile_pairing_service():
+    global _mobile_pairing_service_instance
+    if _mobile_pairing_service_instance is None:
+        from drsai.relay.mobile_pairing import MobilePairingService
+        state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
+        _mobile_pairing_service_instance = MobilePairingService(state_root)
+    return _mobile_pairing_service_instance
 
 
 def _git_worktree_service() -> GitWorktreeService:
@@ -1634,6 +1646,12 @@ class BackendAccountLoginCancelRequest(BaseModel):
     login_id: str = Field(min_length=1, max_length=256)
 
 
+class MobilePairingRegistrationRequest(BaseModel):
+    registration_code: str = Field(min_length=16, max_length=2048, pattern=r"^[^\r\n\x00]+$")
+    relay_https_url: str = Field(min_length=1, max_length=512)
+    display_name: str = Field(min_length=1, max_length=120, pattern=r"^[^\r\n\x00]*\S[^\r\n\x00]*$")
+
+
 class RuntimeEventAppendRequest(BaseModel):
     type: str = Field(min_length=1, max_length=160)
     data: dict[str, Any] = Field(default_factory=dict)
@@ -1672,6 +1690,7 @@ class RemoteGitFileRequest(BaseModel):
 class RemoteGitCommitRequest(BaseModel):
     message: str = Field(min_length=1, max_length=240)
     body: str | None = Field(default=None, max_length=10000)
+    idempotency_key: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_.:-]{1,200}$")
 
 
 class RemoteGitPushRequest(BaseModel):
@@ -1844,6 +1863,99 @@ async def runtime_capabilities():
         "capability_versions": _REMOTE_CAPABILITY_VERSIONS,
         "agent_backends": await _runtime_agent_service().health(),
     }
+
+
+def _mobile_pairing_http_error(exc):
+    status = 404 if exc.code in {"runtime_not_registered", "access_grant_not_found"} else \
+        401 if exc.code == "runtime_credential_invalid" else \
+        429 if exc.code == "pairing_rate_limited" else \
+        503 if exc.retryable else 409
+    return HTTPException(status_code=status, detail={
+        "code": exc.code, "message": exc.message, "retryable": exc.retryable,
+        "correlation_id": exc.correlation_id,
+        "detail": {"action": exc.action},
+    })
+
+
+def _trusted_mobile_pairing_relay(value: str) -> tuple[str, str]:
+    parsed = urlparse(value.strip())
+    host = (parsed.hostname or "").lower()
+    try:
+        port = parsed.port
+    except ValueError:
+        port = -1
+    if (parsed.scheme != "https" or parsed.username or parsed.password or
+            port not in {None, 443} or host not in {"ai.ihep.ac.cn", "ai-dev.ihep.ac.cn"} or
+            parsed.path.rstrip("/") != "/api/runtime-relay" or parsed.query or parsed.fragment):
+        raise HTTPException(status_code=400, detail={"code": "relay_url_not_trusted",
+                                                    "message": "Runtime Relay URL is not trusted."})
+    root = f"https://{host}/api/runtime-relay"
+    return root, f"wss://{host}/api/runtime-relay/v1/runtime-connect"
+
+
+@app.post("/v1/mobile-pairing/register")
+async def runtime_mobile_pairing_register(request: MobilePairingRegistrationRequest):
+    """Consume a short-lived code locally; the HepAI OIDC token never enters Runtime."""
+    from drsai.relay.device_identity import DeviceIdentityStore
+    from drsai.relay.runtime_client import AiohttpRegistrationTransport, RuntimeCredentialStore, RuntimeEnrollmentClient
+
+    relay_https, relay_wss = _trusted_mobile_pairing_relay(request.relay_https_url)
+    state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
+    relay_state = state_root / "runtime" / "relay"
+    try:
+        enrollment = RuntimeEnrollmentClient(
+            DeviceIdentityStore(relay_state / "device-identity.dpapi"),
+            AiohttpRegistrationTransport(relay_https),
+        )
+        credential = await enrollment.enroll(
+            request.registration_code,
+            request.display_name.strip(),
+            os.environ.get("OPENDRSAI_RUNTIME_VERSION", "1.5.1"),
+        )
+        RuntimeCredentialStore(relay_state / "credential.dpapi").save(credential)
+        relay_state.mkdir(parents=True, exist_ok=True)
+        temporary = relay_state / "relay-wss-url.tmp"
+        temporary.write_text(relay_wss, encoding="utf-8")
+        temporary.replace(relay_state / "relay-wss-url")
+        return {"registered": True, "runtime_id": credential.runtime_id}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("Runtime Relay enrollment failed")
+        raise HTTPException(status_code=502, detail={"code": "runtime_registration_failed",
+                                                    "message": "Runtime Relay registration failed."}) from exc
+
+
+@app.get("/v1/mobile-pairing/status")
+async def runtime_mobile_pairing_status():
+    return _mobile_pairing_service().readiness()
+
+
+@app.post("/v1/mobile-pairing/grants")
+async def runtime_mobile_pairing_create():
+    from drsai.relay.mobile_pairing import MobilePairingError
+    try:
+        return (await _mobile_pairing_service().create()).public()
+    except MobilePairingError as exc:
+        raise _mobile_pairing_http_error(exc) from exc
+
+
+@app.get("/v1/mobile-pairing/grants/{grant_id}")
+async def runtime_mobile_pairing_read(grant_id: str):
+    from drsai.relay.mobile_pairing import MobilePairingError
+    try:
+        return (await _mobile_pairing_service().read(grant_id)).public()
+    except MobilePairingError as exc:
+        raise _mobile_pairing_http_error(exc) from exc
+
+
+@app.delete("/v1/mobile-pairing/grants/{grant_id}")
+async def runtime_mobile_pairing_revoke(grant_id: str):
+    from drsai.relay.mobile_pairing import MobilePairingError
+    try:
+        return (await _mobile_pairing_service().revoke(grant_id)).public()
+    except MobilePairingError as exc:
+        raise _mobile_pairing_http_error(exc) from exc
 
 
 def _backend_account_http_error(exc: RuntimeExecutionError) -> HTTPException:
@@ -2114,6 +2226,43 @@ async def runtime_run_transition(run_id: str, request: RuntimeRunTransitionReque
 
 @app.post("/v1/runs/{run_id}/execute")
 async def runtime_run_execute(run_id: str, request: RuntimeRunExecuteRequest, raw_request: Request):
+    metadata = request.metadata if isinstance(request.metadata, dict) else {}
+    fixture_request_id = str(metadata.get("desktop_request_id") or "")
+    packaged_recovery_fixture = (
+        os.getenv("OPENDRSAI_PACKAGED_CHAT_RECOVERY_FIXTURE") == "1"
+        and os.getenv("OPENDRSAI_DEV_AUTH_BYPASS") == "1"
+        and raw_request.headers.get("x-opendrsai-auth-mode") == "offline"
+        and request.user_id == "packaged-l5-user"
+        and fixture_request_id == "packaged_chat_recovery_001"
+        and metadata.get("packaged_recovery_fixture") is True
+    )
+    if packaged_recovery_fixture:
+        retry_attempt = metadata.get("network_retry_attempt")
+        resume_from_chars = metadata.get("resume_from_chars")
+        if (retry_attempt, resume_from_chars) not in {(0, 0), (1, 5)}:
+            raise HTTPException(status_code=409, detail="Packaged Chat recovery attempt/cursor pair is inconsistent.")
+
+        async def packaged_recovery_sse():
+            yield f"data: {json.dumps({'choices': [{'delta': {'content': 'alpha'}}]})}\n\n"
+            if retry_attempt == 0:
+                # Deliberately end a real HTTP response without [DONE]. The
+                # Desktop must classify the incomplete stream as recoverable.
+                return
+            yield f"data: {json.dumps({'choices': [{'delta': {'content': ' beta'}}]})}\n\n"
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(
+            packaged_recovery_sse(),
+            media_type="text/event-stream",
+            headers={
+                "X-Drsai-Session-Id": request.thread_id or fixture_request_id,
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+                "X-OpenDrSai-Packaged-Recovery-Fixture": "1",
+            },
+        )
+
     auth_context = None
     if raw_request.headers.get("x-opendrsai-auth-mode") == "oidc":
         try:
@@ -2939,14 +3088,24 @@ async def remote_workspace_git_unstage(workspace_id: str, request: RemoteGitFile
 @app.post("/v1/workspaces/{workspace_id}/git/commit")
 async def remote_workspace_git_commit(workspace_id: str, request: RemoteGitCommitRequest, raw_request: Request):
     _authorize_request(raw_request, workspace_id, "git.write", {"operation": "commit", "message_hash": hashlib.sha256(request.message.encode()).hexdigest()})
-    root = _workspace_root(workspace_id); args = ["git", "-C", str(root), "commit", "-m", request.message]
+    root = _workspace_root(workspace_id)
+    marker = f"OpenDrSai-Approval: {request.idempotency_key}" if request.idempotency_key else None
+    if marker:
+        history = subprocess.run(["git", "-C", str(root), "log", "--all", "-n", "200", "--format=%H%x00%B%x00"], capture_output=True, text=True, timeout=15, check=False)
+        if history.returncode == 0:
+            parts = history.stdout.split("\x00")
+            for index in range(0, len(parts) - 1, 2):
+                if any(line.strip() == marker for line in parts[index + 1].splitlines()):
+                    return {"workspace_id": workspace_id, "committed": True, "replayed": True, "revision": parts[index].strip(), "exit_code": 0, "stdout": "", "stderr": ""}
+    args = ["git", "-C", str(root), "commit", "-m", request.message]
     if request.body and request.body.strip(): args += ["-m", request.body.strip()]
+    if marker: args += ["-m", marker]
     completed = subprocess.run(args, capture_output=True, text=True, timeout=60, check=False)
     if completed.returncode != 0:
         combined = (completed.stderr.strip() or completed.stdout.strip() or "Git commit failed")[-4000:]
         raise HTTPException(status_code=409, detail={"code": "git_commit_failed", "message": combined, "retryable": False, "detail": {"exit_code": completed.returncode}})
     revision = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True, timeout=10, check=False).stdout.strip()
-    return {"workspace_id": workspace_id, "committed": True, "revision": revision, "exit_code": completed.returncode, "stdout": completed.stdout[-4000:], "stderr": completed.stderr[-4000:]}
+    return {"workspace_id": workspace_id, "committed": True, "replayed": False, "revision": revision, "exit_code": completed.returncode, "stdout": completed.stdout[-4000:], "stderr": completed.stderr[-4000:]}
 
 
 @app.post("/v1/workspaces/{workspace_id}/git/push")

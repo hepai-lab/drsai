@@ -6,6 +6,7 @@ import { dirname, join } from "path";
 import type { GatewayStatus } from "../api/desktopApi";
 import type { DesktopProcessService } from "../api";
 import { DRSAI_HOME, DRSAI_PYTHON, DRSAI_REPO, getEnhancedPath } from "./paths";
+import { redactDesktopSecrets } from "./secretRedaction";
 
 let processService: DesktopProcessService | null = null;
 let desktopAppRuntime = {
@@ -44,6 +45,7 @@ let lastGatewayLog = "";
 let gatewayStopPromise: Promise<boolean> | null = null;
 let gatewayStartPromise: Promise<boolean> | null = null;
 let adoptedPersistentRuntime = false;
+let gatewaySpawnError: Error | null = null;
 
 function loadGatewayInstanceToken(): string {
   const configured = process.env.OPENDRSAI_GATEWAY_INSTANCE_TOKEN?.trim();
@@ -224,6 +226,7 @@ async function startGatewayOnce(): Promise<boolean> {
 
   const localCodexEnv = await getLocalCodexDevelopmentEnv();
 
+  gatewaySpawnError = null;
   gatewayProcess = spawn(DRSAI_PYTHON, args, {
     cwd: existsSync(DRSAI_REPO) ? DRSAI_REPO : undefined,
     env: {
@@ -241,6 +244,10 @@ async function startGatewayOnce(): Promise<boolean> {
   });
   gatewayProcess.stdout?.on("data", appendGatewayLog);
   gatewayProcess.stderr?.on("data", appendGatewayLog);
+  gatewayProcess.once("error", (error) => {
+    gatewaySpawnError = error;
+    appendGatewayLog(Buffer.from(`\nGateway process failed to start: ${error.message}`));
+  });
   gatewayProcess.once("exit", () => {
     gatewayProcess = null;
     adoptedPersistentRuntime = false;
@@ -250,6 +257,10 @@ async function startGatewayOnce(): Promise<boolean> {
   const deadline = Date.now() + GATEWAY_START_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (await checkGatewayReady()) return true;
+    if (gatewaySpawnError || !isProcessRunning(gatewayProcess)) {
+      appendGatewayLog(Buffer.from("\nGateway exited before its health checks became ready."));
+      return false;
+    }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   lastGatewayLog = `${lastGatewayLog}\nGateway did not become ready within ${GATEWAY_START_TIMEOUT_MS} ms; stopping the spawned process tree.`.slice(-12000);
@@ -306,7 +317,7 @@ function isManagedGatewayRunning(): boolean {
 }
 
 function appendGatewayLog(chunk: Buffer): void {
-  lastGatewayLog = `${lastGatewayLog}${chunk.toString()}`.slice(-12000);
+  lastGatewayLog = redactDesktopSecrets(`${lastGatewayLog}${chunk.toString()}`).slice(-12000);
 }
 
 function requestJson(

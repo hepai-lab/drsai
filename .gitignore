@@ -87,6 +87,12 @@ __pycache__/
 # Distribution / packaging
 .Python
 build/
+!/apps/desktop/macos/build/
+!/apps/desktop/macos/build/entitlements.mac.plist
+!/apps/desktop/macos/build/entitlements.mac.inherit.plist
+apps/desktop/macos/build/*
+!/apps/desktop/macos/build/entitlements.mac.plist
+!/apps/desktop/macos/build/entitlements.mac.inherit.plist
 develop-eggs/
 dist/
 downloads/

@@ -22,7 +22,7 @@ const negative = {
 assert(Object.values(negative).every(Boolean), `J6 negative mutations were not rejected: ${JSON.stringify(negative)}`);
 
 const shared = read("../shared/api/desktopApi.ts");
-const service = read("src/main/reusableTasks.ts");
+const service = read("../shared/main/reusableTasks.ts");
 const app = read("../shared/renderer/src/App.tsx");
 const mock = read("../shared/renderer/src/mockDesktopApi.ts");
 const smoke = read("src/main/e2eSmoke.ts");

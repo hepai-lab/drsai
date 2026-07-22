@@ -4,9 +4,15 @@
 
 当前阶段只完成工程实现、跨主机静态门禁和 CI 准备。因暂无可用 macOS 设备，真机运行、签名、公证、DMG 安装、系统权限、升级和回滚验收已延期；完成这些验收前不得宣称 macOS 已达到正式发布条件。
 
+当前能力审计、与 Windows 的差距以及达到完整产品功能的分阶段计划见 [macOS 全功能开发计划](docs/macos-full-function-development-plan.zh-CN.md)。
+
+跨机器继续开发前，请先阅读 [macOS 开发交接与恢复说明](docs/macos-development-handoff.zh-CN.md)。该文档标记了最后一次全绿基线、当前未验收的 R113 修改、工作树迁移风险以及 Apple Silicon 上的恢复与验收顺序。
+
 ## 开发与验证
 
-平台脚本位于 `scripts/`：`dev.sh` 启动本地 Gateway 与 Electron 热更新，`start.sh` 启动正式 macOS workspace，`setup-dev.sh` 准备本地开发桩。
+平台脚本位于 `scripts/`：`dev.sh` 启动本地 Gateway 与 Electron 热更新，`start.sh` 启动正式 macOS workspace，`setup-dev.sh` 在 `~/.drsai/drsai-agent` 创建隔离 venv、以 editable 模式安装真实 Python Runtime、验证 CLI/import，并安装和 typecheck Desktop 依赖。它不再创建可误报就绪状态的开发桩。
+
+GitHub Channel 真实授权使用 Device OAuth。开发/打包环境必须提供 OAuth App 的 `OPENDRSAI_GITHUB_CLIENT_ID`；未配置时授权入口失败关闭。Device code 和 access token 不写入 Channel JSON，macOS 仅保存 Keychain reference；授权完成前 adapter 保持 `config_required`。
 
 在 `apps/desktop` 目录运行：
 

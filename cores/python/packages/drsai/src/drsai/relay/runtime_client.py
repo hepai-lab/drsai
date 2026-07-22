@@ -53,7 +53,8 @@ class AiohttpRegistrationTransport:
                 "display_name": display_name, "version": version, "public_key": public_key}
         async with aiohttp.ClientSession() as session:
             async with session.post(f"{self.root}/v1/runtimes/register", json=body,
-                                    headers={"X-Registration-Code": registration_code}) as response:
+                                    headers={"X-Registration-Code": registration_code},
+                                    allow_redirects=False) as response:
                 if response.status >= 400:
                     raise RuntimeError(f"runtime_registration_failed:{response.status}")
                 result = await response.json()

@@ -72,7 +72,7 @@ assert(evaluate(evidenceMismatch).statusAccuracy < 1, "H7 evaluator accepted a c
 
 const api = readFileSync(join(root, "../shared/api/desktopApi.ts"), "utf8");
 const background = readFileSync(join(root, "src/main/backgroundTasks.ts"), "utf8");
-const generator = readFileSync(join(root, "src/main/managerPresentation.ts"), "utf8");
+const generator = readFileSync(join(root, "../shared/main/managerPresentation.ts"), "utf8");
 const app = readFileSync(join(root, "../shared/renderer/src/App.tsx"), "utf8");
 const filesPanel = readFileSync(join(root, "../shared/renderer/src/components/files/FilesContextPanel.tsx"), "utf8");
 const styles = readFileSync(join(root, "../shared/renderer/src/styles.css"), "utf8");

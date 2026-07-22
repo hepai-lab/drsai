@@ -18,6 +18,8 @@ function assert(condition, message) {
 const packageJson = read("package.json");
 const api = read("../shared/api/desktopApi.ts");
 const scheduledTasks = read("src/main/scheduledTasks.ts");
+const workflowRuns = read("src/main/workflowRuns.ts");
+const durableStore = read("../shared/main/durableJsonStore.ts");
 const main = read("src/main/index.ts");
 const preload = read("../shared/main/preload.ts");
 const skillSquare = read("../shared/renderer/src/components/SkillSquareView.tsx");
@@ -70,6 +72,16 @@ assert(
   "main scheduler store is not durable and workspace-scoped",
 );
 assert(
+  scheduledTasks.includes("readDurableJson") &&
+    scheduledTasks.includes("writeDurableJson") &&
+    workflowRuns.includes("readDurableJson") &&
+    workflowRuns.includes("writeDurableJson") &&
+    durableStore.includes("`${filePath}.bak`") &&
+    durableStore.includes("replaceFileSafely") &&
+    durableStore.includes("mode: 0o600"),
+  "scheduled task and Workflow history do not share atomic primary/backup recovery",
+);
+assert(
     scheduledTasks.includes("listScheduledTasks") &&
     scheduledTasks.includes("createScheduledTask") &&
     scheduledTasks.includes("updateScheduledTask") &&
@@ -84,6 +96,10 @@ assert(
     scheduledTasks.includes('status: "reconnected"') &&
     scheduledTasks.includes("restart-recovered workflow run") &&
     scheduledTasks.includes("getNextScheduledRunAt") &&
+    scheduledTasks.includes("scheduledRecipeId") &&
+    scheduledTasks.includes("triggerKey: triggerAudit.triggerKey") &&
+    scheduledTasks.includes('status: "failed"') &&
+    scheduledTasks.includes("workflow_trigger_failed") &&
     scheduledTasks.includes("isTaskDue"),
   "main scheduler CRUD functions are missing",
 );
@@ -153,6 +169,7 @@ assert(
     skillSquare.includes("desktopApi.getScheduledTaskWorkerStatus") &&
     skillSquare.includes("scheduled-worker-status") &&
     skillSquare.includes("result.reconnected") &&
+    skillSquare.includes("result.failed") &&
     skillSquare.includes("activeWorkflowRunId") &&
     skillSquare.includes("onResume") &&
     skillSquare.includes('aria-label="Scheduled and monitoring tasks"') &&

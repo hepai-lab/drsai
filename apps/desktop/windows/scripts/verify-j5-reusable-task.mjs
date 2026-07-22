@@ -22,7 +22,7 @@ const negative = {
 assert(Object.values(negative).every(Boolean), `J5 negative mutations were not rejected: ${JSON.stringify(negative)}`);
 
 const shared = read("../shared/api/desktopApi.ts");
-const service = read("src/main/reusableTasks.ts");
+const service = read("../shared/main/reusableTasks.ts");
 const main = read("src/main/index.ts");
 const preload = read("../shared/main/preload.ts");
 const mock = read("../shared/renderer/src/mockDesktopApi.ts");

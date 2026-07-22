@@ -81,7 +81,7 @@ assert(supportNegative.supportAccuracy < 0.95, "H2 evaluator accepted an excerpt
 
 const api = readFileSync(join(root, "../shared/api/desktopApi.ts"), "utf8");
 const background = readFileSync(join(root, "src/main/backgroundTasks.ts"), "utf8");
-const generator = readFileSync(join(root, "src/main/managerPresentation.ts"), "utf8");
+const generator = readFileSync(join(root, "../shared/main/managerPresentation.ts"), "utf8");
 const app = readFileSync(join(root, "../shared/renderer/src/App.tsx"), "utf8");
 const panel = readFileSync(join(root, "../shared/renderer/src/components/files/FilesContextPanel.tsx"), "utf8");
 const styles = readFileSync(join(root, "../shared/renderer/src/styles.css"), "utf8");

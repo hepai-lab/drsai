@@ -36,6 +36,7 @@ class HttpRelayDiscoveryService(
     private val http: OkHttpClient = OkHttpClient(),
 ) : RelayDiscoveryService {
     private val root = baseUrl.trimEnd('/').toHttpUrl()
+    private val pairingIssuer = "${root.scheme}://${root.host}"
 
     override suspend fun listRuntimes(cursor: String?, query: String?): Page<DiscoveredRuntime> =
         getPage("v1/runtimes", cursor, query) { item ->
@@ -64,14 +65,23 @@ class HttpRelayDiscoveryService(
         }
 
     override suspend fun associate(accessGrantPayload: String): RuntimeId = withContext(Dispatchers.IO) {
-        val code = parseAccessGrantCode(accessGrantPayload)
+        val code = parseAccessGrantCode(accessGrantPayload, pairingIssuer)
         val body = JSONObject().put("request_id", java.util.UUID.randomUUID().toString())
             .put("correlation_id", java.util.UUID.randomUUID().toString()).put("code", code)
-        val request = Request.Builder().url(root.newBuilder().addPathSegments("v1/associations").build())
-            .header("Authorization", "Bearer ${accessToken()}")
-            .post(body.toString().toRequestBody("application/json".toMediaType())).build()
-        http.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw RelayHttpException(response.code, response.header("X-Correlation-Id"))
+        val url = root.newBuilder().addPathSegments("v1/associations").build()
+        val encodedBody = body.toString().toRequestBody("application/json".toMediaType())
+        fun execute(token: String) = http.newCall(Request.Builder().url(url)
+            .header("Authorization", "Bearer $token").post(encodedBody).build()).execute()
+        val initialToken = accessToken()
+        var response = execute(initialToken)
+        if (response.code == 401) {
+            response.close()
+            val refreshed = refreshAfter(initialToken)
+            if (refreshed.isNullOrBlank()) throw RelayHttpException(401, null, "oidc_auth_invalid")
+            response = execute(refreshed)
+        }
+        response.use {
+            if (!response.isSuccessful) throw relayHttpException(response)
             RuntimeId(JSONObject(response.body?.string() ?: error("relay_empty_response")).getString("runtime_id"))
         }
     }
@@ -94,7 +104,7 @@ class HttpRelayDiscoveryService(
                 response = execute(refreshed)
             }
             response.use {
-                if (!response.isSuccessful) throw RelayHttpException(response.code, response.header("X-Correlation-Id"))
+                if (!response.isSuccessful) throw relayHttpException(response)
                 val rootObject = JSONObject(response.body?.string() ?: error("relay_empty_response"))
                 val items = rootObject.getJSONArray("items")
                 Page(List(items.length()) { index -> decode(items.getJSONObject(index)) },
@@ -103,14 +113,70 @@ class HttpRelayDiscoveryService(
         }
 }
 
-fun parseAccessGrantCode(payload: String): String {
+fun parseAccessGrantCode(payload: String, expectedIssuer: String = "https://ai.ihep.ac.cn"): String {
     val trimmed = payload.trim()
     val code = if (trimmed.startsWith("opendrsai://associate")) {
-        android.net.Uri.parse(trimmed).getQueryParameter("code").orEmpty()
+        val uri = java.net.URI(trimmed)
+        require(uri.scheme == "opendrsai" && uri.host == "associate" && uri.rawAuthority == "associate" &&
+            uri.path.orEmpty().isEmpty() && uri.userInfo == null && uri.port == -1 && uri.fragment == null) {
+            "access_grant_payload_invalid"
+        }
+        fun decode(value: String): String = java.net.URLDecoder.decode(value, Charsets.UTF_8.name())
+        val parts = uri.rawQuery.orEmpty().split('&').filter(String::isNotBlank)
+        require(parts.all { it.contains('=') }) { "access_grant_payload_invalid" }
+        val names = parts.map { decode(it.substringBefore('=')) }
+        require(names.size == names.toSet().size && names.toSet() == setOf("v", "environment", "issuer", "code")) {
+            "access_grant_payload_invalid"
+        }
+        val values = parts.associate { decode(it.substringBefore('=')) to decode(it.substringAfter('=')) }
+        val normalizedIssuer = expectedIssuer.trimEnd('/')
+        val expectedIssuerUri = java.net.URI(normalizedIssuer)
+        require(expectedIssuerUri.scheme == "https" && expectedIssuerUri.port == -1 &&
+            expectedIssuerUri.path.orEmpty().isEmpty() && expectedIssuerUri.query == null && expectedIssuerUri.fragment == null &&
+            expectedIssuerUri.userInfo == null) {
+            "access_grant_environment_mismatch"
+        }
+        val expectedEnvironment = when (expectedIssuerUri.host?.lowercase()) {
+            "ai.ihep.ac.cn" -> "production"
+            "ai-dev.ihep.ac.cn" -> "development"
+            else -> throw IllegalArgumentException("access_grant_environment_mismatch")
+        }
+        require(values["v"] == "1" &&
+            values["environment"] == expectedEnvironment &&
+            values["issuer"] == normalizedIssuer
+        ) { "access_grant_environment_mismatch" }
+        values["code"].orEmpty()
     } else trimmed
     require(code.matches(Regex("^[A-Za-z0-9_-]{16,128}$"))) { "access_grant_payload_invalid" }
     return code
 }
 
-class RelayHttpException(val status: Int, val correlationId: String?) :
+private fun relayHttpException(response: okhttp3.Response): RelayHttpException {
+    val raw = response.body?.string().orEmpty()
+    val body = runCatching { JSONObject(raw) }.getOrNull()
+    return RelayHttpException(
+        response.code,
+        response.header("X-Correlation-Id") ?: body?.optString("correlation_id")?.takeIf(String::isNotBlank),
+        body?.optString("code")?.takeIf(String::isNotBlank),
+    )
+}
+
+class RelayHttpException(val status: Int, val correlationId: String?, val errorCode: String? = null) :
     IllegalStateException("relay_http_$status${correlationId?.let { " ($it)" }.orEmpty()}")
+
+fun associationErrorMessage(failure: Throwable): String = when {
+    failure is IllegalArgumentException && failure.message == "access_grant_environment_mismatch" ->
+        "二维码环境与当前应用不一致"
+    failure is IllegalArgumentException -> "二维码格式无效，请在电脑端刷新后重试"
+    failure is RelayHttpException && failure.errorCode == "access_grant_expired" ->
+        "二维码已过期，请在电脑端刷新后重试"
+    failure is RelayHttpException && failure.errorCode == "access_grant_consumed" ->
+        "二维码已使用，请在电脑端刷新后重试"
+    failure is RelayHttpException && failure.errorCode == "access_grant_revoked" ->
+        "二维码已撤销，请在电脑端刷新后重试"
+    failure is RelayHttpException && (failure.status == 401 || failure.errorCode == "oidc_auth_invalid") ->
+        "HepAI 登录已过期，请重新登录"
+    failure is RelayHttpException && failure.status == 429 -> "操作过于频繁，请稍后重试"
+    failure is java.io.IOException -> "网络连接失败，请检查网络后重试"
+    else -> "关联失败，请重试"
+}

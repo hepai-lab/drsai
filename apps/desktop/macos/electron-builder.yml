@@ -11,10 +11,17 @@ files:
   - "!electron.vite.config.{js,ts,mjs,cjs}"
   - "!tsconfig*.json"
 extraResources:
+  - from: ../shared/browser-use-worker
+    to: browser-use-worker
+    filter:
+      - "*.py"
+      - "requirements.txt"
   - from: resources/runtime
     to: runtime
     filter:
       - "runtime-manifest.json"
+      - "runtime-sbom-*.json"
+      - "runtime-provenance-*.json"
       - "*.tar.gz"
   - from: resources/update
     to: update
@@ -40,6 +47,9 @@ mac:
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.inherit.plist
   notarize: true
+  extendInfo:
+    NSMicrophoneUsageDescription: OpenDrSai uses the microphone only when you start voice input.
+    NSAppleEventsUsageDescription: OpenDrSai requests automation access only for actions you explicitly approve.
 dmg:
   sign: false
 protocols:

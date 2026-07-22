@@ -53,8 +53,8 @@ const negative = evaluate(corrupted);
 assert(negative.goldenFactIds.length < 5, "Independent semantic evaluator accepted a corrupted 9.6 Tbps fact");
 
 const api = readFileSync(join(root, "../shared/api/desktopApi.ts"), "utf8");
-const generator = readFileSync(join(root, "src/main/managerPresentation.ts"), "utf8");
-const tasks = readFileSync(join(root, "src/main/managerPresentationTasks.ts"), "utf8");
+const generator = readFileSync(join(root, "../shared/main/managerPresentation.ts"), "utf8");
+const tasks = readFileSync(join(root, "../shared/main/managerPresentationTasks.ts"), "utf8");
 const panel = readFileSync(join(root, "../shared/renderer/src/components/files/FilesContextPanel.tsx"), "utf8");
 const smoke = readFileSync(join(root, "src/main/e2eSmoke.ts"), "utf8");
 const contracts = {

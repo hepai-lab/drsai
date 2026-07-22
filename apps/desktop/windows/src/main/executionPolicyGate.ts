@@ -4,7 +4,7 @@ import {
   type ExecutionActionKind,
   type ExecutionPolicyConfig,
 } from "../../../shared/api/executionPolicy";
-import { getMyDrSaiConfig } from "./myDrSaiConfig";
+import { getMyDrSaiConfig } from "../../../shared/main/myDrSaiConfig";
 
 export interface ExecutionGateOptions {
   approved?: boolean;

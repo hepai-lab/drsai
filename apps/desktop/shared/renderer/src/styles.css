@@ -35,7 +35,7 @@
   --app-text-primary: #2f2a3a;
   --app-text-secondary: #5f5870;
   --app-text-muted: #5f5870;
-  --app-group-title: #aaa4b2;
+  --app-group-title: #665e70;
   --app-panel-border: #ddd3ef;
   --app-panel-soft: #fafafe;
   --app-card-bg: #ffffff;
@@ -49,11 +49,59 @@
   --app-success: #2f7d5b;
   --app-success-soft: #f1fbf6;
   --app-success-border: #cfeedd;
+  --app-warning: #b54708;
   --app-shadow-sm: 0 1px 2px rgba(47, 42, 58, 0.08);
   --app-shadow-menu: 0 16px 42px rgba(47, 42, 58, 0.14);
   --app-shadow-panel: 0 12px 30px rgba(47, 42, 58, 0.1);
   --app-shadow-panel-focus: 0 14px 34px rgba(47, 42, 58, 0.12);
   --app-shadow-elevated: 0 18px 50px rgba(47, 42, 58, 0.11);
+
+  /*
+   * Compatibility layer for surfaces that were authored before the desktop
+   * design tokens were consolidated under the --app-* namespace.  Leaving a
+   * custom property undefined makes the complete CSS declaration invalid;
+   * modal panels then become transparent and inherit the dimmed backdrop.
+   * Keep these semantic aliases centralized so every dialog (including
+   * keyboard shortcuts and mobile pairing) has an opaque, theme-aware surface.
+   */
+  --app-bg: var(--app-surface-bg);
+  --app-border-subtle: var(--app-border-soft);
+  --app-danger-text: var(--app-danger);
+  --app-font: var(--app-font-family);
+  --app-hover-bg: var(--app-sidebar-hover);
+  --app-input-bg: var(--app-card-bg);
+  --app-muted: var(--app-text-muted);
+  --app-muted-text: var(--app-text-muted);
+  --app-panel: var(--app-card-bg);
+  --app-panel-bg: var(--app-card-bg);
+  --app-shadow-md: var(--app-shadow-panel);
+  --app-success-text: var(--app-success);
+  --app-text: var(--app-text-primary);
+  --app-text-tertiary: var(--app-text-muted);
+  --app-warning-text: var(--app-warning);
+  --accent: var(--app-accent);
+  --border: var(--app-panel-border);
+  --border-color: var(--app-panel-border);
+  --border-subtle: var(--app-panel-border);
+  --color-border: var(--app-panel-border);
+  --color-surface: var(--app-card-bg);
+  --color-surface-soft: var(--app-panel-soft);
+  --danger: var(--app-danger);
+  --font-mono: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  --panel-bg: var(--app-card-bg);
+  --success: var(--app-success);
+  --surface: var(--app-card-bg);
+  --surface-canvas: var(--app-surface-bg);
+  --surface-color: var(--app-card-bg);
+  --surface-hover: var(--app-sidebar-hover);
+  --surface-muted: var(--app-subtle-bg);
+  --surface-raised: var(--app-card-bg);
+  --surface-subtle: var(--app-panel-soft);
+  --text-muted: var(--app-text-muted);
+  --text-primary: var(--app-text-primary);
+  --text-secondary: var(--app-text-secondary);
+  --text-tertiary: var(--app-text-muted);
+  --warning: var(--app-warning);
   color: var(--app-text-primary);
   background: var(--app-surface-bg);
   font-family: var(--app-font-family);
@@ -337,6 +385,7 @@
   --app-danger-border: #6e3449;
   --app-success-soft: #1b3027;
   --app-success-border: #315d49;
+  --app-warning: #f0b45a;
   --app-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.28);
   --app-shadow-menu: 0 16px 42px rgba(0, 0, 0, 0.42);
   --app-shadow-panel: 0 12px 30px rgba(0, 0, 0, 0.34);
@@ -11940,7 +11989,7 @@ button.structured-activity-detail:hover {
 }
 
 .shortcut-settings-overlay { position:fixed; inset:0; z-index:140; display:grid; place-items:center; padding:24px; background:rgba(15,23,42,.34); }
-.shortcut-settings-modal { display:flex; flex-direction:column; width:min(620px,100%); max-height:min(760px,calc(100vh - 48px)); border:1px solid var(--app-panel-border); border-radius:8px; background:var(--app-panel); box-shadow:0 18px 54px rgba(15,23,42,.22); overflow:hidden; }
+.shortcut-settings-modal { display:flex; flex-direction:column; width:min(620px,100%); max-height:min(760px,calc(100vh - 48px)); border:1px solid var(--app-panel-border); border-radius:8px; background:var(--app-card-bg); color:var(--app-text-primary); box-shadow:0 18px 54px rgba(15,23,42,.22); overflow:hidden; }
 .shortcut-settings-modal > header,.shortcut-settings-modal > footer { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:16px 18px; border-bottom:1px solid var(--app-panel-border); }
 .shortcut-settings-modal > header h2 { margin:0; font-size:18px; }
 .shortcut-settings-modal > header span { display:block; margin-top:4px; color:var(--app-muted); font-size:12px; }
@@ -17479,3 +17528,85 @@ button.structured-activity-detail:hover {
 .production-diagnostics-workbench ul { list-style: none; padding: 0; display: grid; gap: 6px; }
 .production-diagnostics-workbench li { border-left: 2px solid var(--accent); padding-left: 7px; }
 .production-diagnostics-workbench li.failed, .production-diagnostics-workbench .warning { border-color: var(--danger); color: var(--danger); }
+
+.mobile-pairing-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(0 0 0 / 46%);
+  backdrop-filter: blur(4px);
+}
+
+.approval-pending-row.ambiguous {
+  border-color: #d97706;
+  background: #fff7ed;
+}
+
+.mobile-pairing-dialog {
+  width: min(440px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  padding: 18px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 18px;
+  background: var(--app-card-bg);
+  color: var(--app-text-primary);
+  box-shadow: 0 24px 80px rgb(0 0 0 / 30%);
+}
+
+.mobile-pairing-dialog > header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+}
+
+.mobile-pairing-dialog h2,
+.mobile-pairing-dialog h3,
+.mobile-pairing-dialog p { margin: 0; }
+.mobile-pairing-dialog header p,
+.mobile-pairing-privacy { margin-top: 4px; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+.mobile-pairing-heading-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; background: color-mix(in srgb, var(--accent) 13%, transparent); color: var(--accent); }
+.mobile-pairing-icon-button { display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 9px; background: transparent; color: var(--text-secondary); }
+.mobile-pairing-icon-button:hover { background: var(--surface-hover); color: var(--text-primary); }
+.mobile-pairing-device { display: grid; grid-template-columns: auto 1fr; gap: 5px 12px; margin: 10px 0; padding: 8px 12px; border-radius: 10px; background: var(--surface-muted); font-size: 12px; }
+.mobile-pairing-device > span { color: var(--text-secondary); }
+.mobile-pairing-qr { display: grid; place-items: center; width: fit-content; margin: 8px auto; padding: 8px; border: 1px solid #dedede; border-radius: 14px; background: #fff; }
+.mobile-pairing-qr img { display: block; width: min(240px, 62vw); height: auto; image-rendering: pixelated; }
+.mobile-pairing-state { min-height: 300px; display: grid; place-items: center; align-content: center; gap: 12px; padding: 24px; text-align: center; }
+.mobile-pairing-success { color: #15803d; }
+.mobile-pairing-warning { color: var(--danger); }
+.mobile-pairing-countdown { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; align-items: center; font-size: 12px; color: var(--text-secondary); }
+.mobile-pairing-countdown strong { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.mobile-pairing-countdown progress { grid-column: 1 / -1; width: 100%; height: 5px; accent-color: var(--accent); }
+.mobile-pairing-manual { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 9px 0; padding: 8px 12px; border: 1px solid var(--border-subtle); border-radius: 10px; }
+.mobile-pairing-manual > span { min-width: 0; display: grid; gap: 3px; }
+.mobile-pairing-manual small { color: var(--text-secondary); }
+.mobile-pairing-manual code { overflow-wrap: anywhere; letter-spacing: .08em; }
+.mobile-pairing-manual button { display: inline-flex; align-items: center; gap: 5px; flex: none; }
+.mobile-pairing-privacy { margin: 9px 0 !important; }
+.mobile-pairing-dialog > footer { display: flex; justify-content: flex-end; gap: 8px; }
+.mobile-pairing-dialog button:not(.mobile-pairing-icon-button) {
+  min-height: 34px;
+  padding: 0 13px;
+  border: 1px solid var(--app-panel-border);
+  border-radius: 8px;
+  background: var(--app-card-bg);
+  color: var(--app-text-primary);
+  font-weight: 600;
+}
+.mobile-pairing-dialog button:not(.mobile-pairing-icon-button):hover:not(:disabled) { background: var(--app-sidebar-hover); }
+.mobile-pairing-dialog button.primary { border-color: var(--app-accent); background: var(--app-accent); color: #fff; }
+.mobile-pairing-dialog button.primary:hover:not(:disabled) { background: var(--app-accent-strong); }
+.mobile-pairing-dialog button:disabled { cursor: not-allowed; opacity: .48; }
+.mobile-pairing-dialog button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mobile-pairing-dialog .spin { animation: mobile-pairing-spin .9s linear infinite; }
+@keyframes mobile-pairing-spin { to { transform: rotate(360deg); } }
+@media (max-width: 520px) {
+  .mobile-pairing-backdrop { padding: 10px; }
+  .mobile-pairing-dialog { max-height: calc(100vh - 20px); padding: 16px; border-radius: 14px; }
+}
+@media (prefers-reduced-motion: reduce) { .mobile-pairing-dialog .spin { animation: none; } }

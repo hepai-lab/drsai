@@ -74,6 +74,7 @@ data class RemoteHomeUiState(
     val refreshing: Boolean = false,
     val stale: Boolean = false,
     val error: String? = null,
+    val recentlyAssociatedRuntimeId: RuntimeId? = null,
 )
 
 @Composable
@@ -227,7 +228,7 @@ private fun RemoteComputerList(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         items(state.computers, key = { it.runtimeId.value }) { computer ->
-            RemoteComputerCard(computer, onOpenWorkspace)
+            RemoteComputerCard(computer, computer.runtimeId == state.recentlyAssociatedRuntimeId, onOpenWorkspace)
         }
     }
 }
@@ -235,12 +236,14 @@ private fun RemoteComputerList(
 @Composable
 private fun RemoteComputerCard(
     computer: RemoteComputerUi,
+    recentlyAssociated: Boolean,
     onOpenWorkspace: (RemoteWorkspaceRef) -> Unit,
 ) {
     var expanded by remember(computer.runtimeId) { mutableStateOf(true) }
     Surface(
         shape = RoundedCornerShape(20.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        border = BorderStroke(if (recentlyAssociated) 2.dp else 1.dp,
+            if (recentlyAssociated) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant),
         color = MaterialTheme.colorScheme.surface,
     ) {
         Column {
@@ -252,6 +255,9 @@ private fun RemoteComputerCard(
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(computer.displayName, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (recentlyAssociated) {
+                        Text("刚刚关联", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                    }
                     Text(
                         "${connectionLabel(computer.state)} · ${computer.lastSeenLabel}",
                         style = MaterialTheme.typography.bodySmall,

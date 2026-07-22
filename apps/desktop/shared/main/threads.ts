@@ -118,6 +118,25 @@ export async function updateThread(rawRequest: unknown): Promise<DesktopThread> 
   });
 }
 
+export async function deleteThread(rawThreadId: unknown): Promise<boolean> {
+  const threadId = sanitizeThreadId(rawThreadId);
+  const deleted = await serializeJsonMutation(THREADS_FILE, async () => {
+    const threads = await readThreads();
+    if (!threads.some((thread) => thread.id === threadId)) return false;
+    await writeThreads(threads.filter((thread) => thread.id !== threadId));
+    return true;
+  });
+  if (!deleted) return false;
+  await serializeJsonMutation(THREAD_SNAPSHOTS_FILE, async () => {
+    const snapshots = await readThreadSnapshots();
+    if (snapshots[threadId]) {
+      delete snapshots[threadId];
+      await writeThreadSnapshots(snapshots);
+    }
+  });
+  return true;
+}
+
 export async function getThreadSnapshot(rawThreadId: unknown): Promise<DesktopThreadSnapshot | null> {
   const threadId = sanitizeThreadId(rawThreadId);
   const snapshots = await readThreadSnapshots();
@@ -558,6 +577,9 @@ function sanitizeForkMetadata(value: unknown): DesktopThreadForkMetadata | undef
         ? "queued"
         : undefined;
   return {
+    worktreeId: sanitizeOptionalId(fork.worktreeId, "Fork Worktree id is invalid."),
+    sourceWorkspaceId: sanitizeOptionalId(fork.sourceWorkspaceId, "Fork source Workspace id is invalid."),
+    workspaceId: sanitizeOptionalId(fork.workspaceId, "Fork execution Workspace id is invalid."),
     sourceWorkspacePath: sanitizeRequiredPath(fork.sourceWorkspacePath, "Fork source workspace path is invalid."),
     repoRoot: sanitizeRequiredPath(fork.repoRoot, "Fork repo root is invalid."),
     worktreePath: sanitizeRequiredPath(fork.worktreePath, "Fork worktree path is invalid."),

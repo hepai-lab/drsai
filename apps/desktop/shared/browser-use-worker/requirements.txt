@@ -1,0 +1,2 @@
+browser-use
+# Chromium is installed and managed by browser-use/Playwright at runtime.

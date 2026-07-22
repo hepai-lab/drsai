@@ -29,6 +29,8 @@ class _Code:
     runtime_id: str | None
     expires_at: datetime
     used: bool = False
+    grant_id: str | None = None
+    revoked: bool = False
 
 
 @dataclass
@@ -58,6 +60,7 @@ class RelayRegistry:
         self._runtimes: dict[str, _Runtime] = {}
         self._registration_codes: dict[str, _Code] = {}
         self._access_codes: dict[str, _Code] = {}
+        self._access_grants: dict[str, _Code] = {}
         self._idempotency: dict[tuple[str, str], object] = {}
         self.audit: list[dict[str, str]] = []
         self.code_ttl = timedelta(seconds=code_ttl_seconds)
@@ -93,20 +96,73 @@ class RelayRegistry:
 
     @staticmethod
     def _consume(ticket: _Code | None, code: str) -> None:
-        if ticket is None or ticket.used or ticket.expires_at <= datetime.now(UTC):
+        if ticket is None or ticket.used or ticket.revoked or ticket.expires_at <= datetime.now(UTC):
             raise RelayRegistryError(code, "Code is invalid, expired, or already used")
         ticket.used = True
 
-    def issue_access_grant(self, runtime_id: str, registration_token: str) -> tuple[str, datetime]:
+    @staticmethod
+    def _consume_access_grant(ticket: _Code | None) -> None:
+        if ticket is None:
+            raise RelayRegistryError("access_grant_invalid", "Access grant is invalid")
+        if ticket.used:
+            raise RelayRegistryError("access_grant_consumed", "Access grant was already used")
+        if ticket.revoked:
+            raise RelayRegistryError("access_grant_revoked", "Access grant was revoked")
+        if ticket.expires_at <= datetime.now(UTC):
+            raise RelayRegistryError("access_grant_expired", "Access grant expired")
+        ticket.used = True
+
+    def issue_access_grant(self, runtime_id: str, registration_token: str) -> tuple[str, str, datetime]:
         runtime = self._authenticated(runtime_id, registration_token)
-        code, expires = secrets.token_urlsafe(18), datetime.now(UTC) + self.code_ttl
-        self._access_codes[self._digest(code)] = _Code(self._digest(code), runtime.runtime_id, expires)
-        return code, expires
+        with self._lock:
+            for ticket in self._access_grants.values():
+                if ticket.runtime_id == runtime.runtime_id and self._grant_status(ticket) == "pending":
+                    ticket.revoked = True
+            grant_id, code = f"ag_{uuid4().hex}", secrets.token_urlsafe(18)
+            ticket = _Code(self._digest(code), runtime.runtime_id, datetime.now(UTC) + self.code_ttl,
+                           grant_id=grant_id)
+            self._access_codes[ticket.digest] = ticket
+            self._access_grants[grant_id] = ticket
+            self.audit.append({"action": "runtime.access_grant.issue", "runtime_id": runtime.runtime_id,
+                               "grant_id": grant_id})
+            return grant_id, code, ticket.expires_at
+
+    def access_grant_status(self, runtime_id: str, registration_token: str,
+                            grant_id: str) -> tuple[str, datetime]:
+        runtime = self._authenticated(runtime_id, registration_token)
+        with self._lock:
+            ticket = self._access_grants.get(grant_id)
+            if ticket is None or ticket.runtime_id != runtime.runtime_id:
+                raise RelayRegistryError("access_grant_not_found", "Access grant was not found")
+            return self._grant_status(ticket), ticket.expires_at
+
+    def revoke_access_grant(self, runtime_id: str, registration_token: str,
+                            grant_id: str) -> tuple[str, datetime]:
+        runtime = self._authenticated(runtime_id, registration_token)
+        with self._lock:
+            ticket = self._access_grants.get(grant_id)
+            if ticket is None or ticket.runtime_id != runtime.runtime_id:
+                raise RelayRegistryError("access_grant_not_found", "Access grant was not found")
+            if self._grant_status(ticket) == "pending":
+                ticket.revoked = True
+                self.audit.append({"action": "runtime.access_grant.revoke", "runtime_id": runtime.runtime_id,
+                                   "grant_id": grant_id})
+            return self._grant_status(ticket), ticket.expires_at
+
+    @staticmethod
+    def _grant_status(ticket: _Code) -> str:
+        if ticket.used:
+            return "consumed"
+        if ticket.revoked:
+            return "revoked"
+        if ticket.expires_at <= datetime.now(UTC):
+            return "expired"
+        return "pending"
 
     def associate(self, subject: str, code: str) -> str:
         with self._lock:
             ticket = self._access_codes.get(self._digest(code))
-            self._consume(ticket, "access_grant_invalid")
+            self._consume_access_grant(ticket)
             assert ticket and ticket.runtime_id
             runtime = self._require_runtime(ticket.runtime_id)
             runtime.subjects.add(subject)

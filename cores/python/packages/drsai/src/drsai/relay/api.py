@@ -12,6 +12,7 @@ from drsai.platform_auth import context_from_bearer
 
 from .models import (
     AccessGrantResult,
+    AccessGrantStatusResult,
     AssociationRequest,
     ErrorEnvelope,
     HeartbeatRequest,
@@ -119,7 +120,7 @@ def create_relay_app(registry: RelayRegistry | None = None,
         correlation_id = request.headers.get("x-correlation-id", str(uuid4()))
         error = ErrorEnvelope(code=exc.code, message=exc.message, correlation_id=correlation_id,
                               retryable=exc.retryable, details={}, source=exc.source)
-        status = 401 if exc.code == "oidc_auth_invalid" else 403 if exc.code.endswith(("forbidden", "auth_invalid")) else 404 if exc.code == "runtime_not_found" else 400
+        status = 401 if exc.code == "oidc_auth_invalid" else 403 if exc.code.endswith(("forbidden", "auth_invalid")) else 404 if exc.code in {"runtime_not_found", "access_grant_not_found"} else 400
         return JSONResponse(status_code=status, content=error.model_dump(mode="json"))
 
     @app.get("/v1/admin/registration-code")
@@ -136,8 +137,20 @@ def create_relay_app(registry: RelayRegistry | None = None,
 
     @app.post("/v1/runtimes/{runtime_id}/access-grants", response_model=AccessGrantResult)
     async def access_grant(runtime_id: str, x_runtime_token: str = Header()) -> AccessGrantResult:
-        code, expires_at = store.issue_access_grant(runtime_id, x_runtime_token)
-        return AccessGrantResult(code=code, expires_at=expires_at)
+        grant_id, code, expires_at = store.issue_access_grant(runtime_id, x_runtime_token)
+        return AccessGrantResult(grant_id=grant_id, code=code, expires_at=expires_at, status="pending")
+
+    @app.get("/v1/runtimes/{runtime_id}/access-grants/{grant_id}", response_model=AccessGrantStatusResult)
+    async def access_grant_status(runtime_id: str, grant_id: str,
+                                  x_runtime_token: str = Header()) -> AccessGrantStatusResult:
+        status, expires_at = store.access_grant_status(runtime_id, x_runtime_token, grant_id)
+        return AccessGrantStatusResult(grant_id=grant_id, expires_at=expires_at, status=status)
+
+    @app.delete("/v1/runtimes/{runtime_id}/access-grants/{grant_id}", response_model=AccessGrantStatusResult)
+    async def revoke_access_grant(runtime_id: str, grant_id: str,
+                                  x_runtime_token: str = Header()) -> AccessGrantStatusResult:
+        status, expires_at = store.revoke_access_grant(runtime_id, x_runtime_token, grant_id)
+        return AccessGrantStatusResult(grant_id=grant_id, expires_at=expires_at, status=status)
 
     @app.post("/v1/associations")
     async def associate(body: AssociationRequest, x_subject: str = Depends(oidc_subject)) -> dict[str, str]:

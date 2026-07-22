@@ -84,7 +84,30 @@ class RemoteWorkspaceUiTest {
     }
 
     @Test fun associationQrDeepLinkExtractsOnlyOneTimeCode() {
-        assertEquals("abcdefghijklmnop", parseAccessGrantCode("opendrsai://associate?code=abcdefghijklmnop"))
+        assertEquals(
+            "abcdefghijklmnop",
+            parseAccessGrantCode(
+                "opendrsai://associate?v=1&environment=production&issuer=https%3A%2F%2Fai.ihep.ac.cn&code=abcdefghijklmnop",
+            ),
+        )
+    }
+
+    @Test fun newlyAssociatedComputerIsHighlightedAfterRefresh() {
+        val runtimeId = RuntimeId("runtime-new")
+        composeRule.setContent {
+            MaterialTheme {
+                RemoteHomeScreen(
+                    state = RemoteHomeUiState(
+                        computers = listOf(RemoteComputerUi(runtimeId, "刚关联的电脑", RemoteConnectionState.ONLINE,
+                            "刚刚连接", emptyList())),
+                        recentlyAssociatedRuntimeId = runtimeId,
+                    ),
+                    onBack = {}, onAssociate = {}, onRefresh = {}, onOpenWorkspace = {},
+                )
+            }
+        }
+        composeRule.onNodeWithText("刚关联的电脑").assertIsDisplayed()
+        composeRule.onNodeWithText("刚刚关联").assertIsDisplayed()
     }
 
     @Test fun directorySearchIsVisibleAndForwardsInput() {

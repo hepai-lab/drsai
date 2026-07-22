@@ -79,7 +79,7 @@ const negative = evaluate(corrupted, pages);
 assert(negative.traceabilityRate < 1, "Independent H1 evaluator accepted a conclusion mapped to the wrong page");
 
 const api = readFileSync(join(root, "../shared/api/desktopApi.ts"), "utf8");
-const generator = readFileSync(join(root, "src/main/managerPresentation.ts"), "utf8");
+const generator = readFileSync(join(root, "../shared/main/managerPresentation.ts"), "utf8");
 const panel = readFileSync(join(root, "../shared/renderer/src/components/files/FilesContextPanel.tsx"), "utf8");
 const styles = readFileSync(join(root, "../shared/renderer/src/styles.css"), "utf8");
 const smoke = readFileSync(join(root, "src/main/e2eSmoke.ts"), "utf8");

@@ -3,9 +3,16 @@ import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const rendererHtml = join(root, "out", "renderer", "index.html");
+const electronCli = createRequire(import.meta.url).resolve("electron/cli.js");
+const rendererHtml = process.env.OPENDRSAI_RENDERER_HTML || join(root, "out", "renderer", "index.html");
+const l3Only = process.env.OPENDRSAI_RENDERER_L3_ONLY === "1";
+const axePath = join(root, "node_modules", "axe-core", "axe.min.js");
+const disabledFeatures = new Set((process.env.OPENDRSAI_RENDERER_DISABLED_FEATURES || "").split(",").map((value) => value.trim()).filter(Boolean));
+const featureKeys = ["auth", "runtime", "chat", "agents", "threads", "workspaceFiles", "git", "terminal", "serialVoice", "streamingVoice", "approvals", "browser", "debugger", "mcp", "remoteWorkspace", "portForwarding", "checkpoints", "worktrees", "automation", "collaboration", "channels", "diagnostics", "codexBackend"];
+const featureCapabilities = Object.fromEntries(featureKeys.map((key) => [key, !disabledFeatures.has(key)]));
 const artifactDir =
   process.env.OPENDRSAI_VISUAL_ARTIFACT_DIR ||
   join(root, "release", "visual-checks");
@@ -18,9 +25,9 @@ const tempDir = mkdtempSync(join(tmpdir(), "opendrsai-visual-"));
 const mainPath = join(tempDir, "main.cjs");
 const preloadPath = join(tempDir, "preload.cjs");
 
-writeFileSync(preloadPath, preloadSource(), "utf8");
+writeFileSync(preloadPath, preloadSource(featureCapabilities), "utf8");
 mkdirSync(artifactDir, { recursive: true });
-writeFileSync(mainPath, mainSource({ root, rendererHtml, preloadPath, artifactDir, m9Only: process.env.OPENDRSAI_M9_ONLY === "1" }), "utf8");
+writeFileSync(mainPath, mainSource({ root, rendererHtml, preloadPath, artifactDir, axePath, disabledFeatures: [...disabledFeatures], l3Only, m9Only: process.env.OPENDRSAI_M9_ONLY === "1", pairingOnly: process.argv.includes("--pairing-only") }), "utf8");
 
 try {
   await runElectron(mainPath);
@@ -42,7 +49,7 @@ function cleanupTempDir(path) {
 function runElectron(scriptPath) {
   return new Promise((resolvePromise, reject) => {
     let settled = false;
-    const child = spawn(process.execPath, [join(root, "node_modules", "electron", "cli.js"), scriptPath], {
+    const child = spawn(process.execPath, [electronCli, scriptPath], {
       cwd: root,
       env: {
         ...process.env,
@@ -101,7 +108,7 @@ function killProcessTree(pid) {
   }
 }
 
-function mainSource({ rendererHtml: htmlPath, preloadPath: preload, artifactDir: screenshots, m9Only }) {
+function mainSource({ rendererHtml: htmlPath, preloadPath: preload, artifactDir: screenshots, axePath, disabledFeatures, l3Only, m9Only, pairingOnly }) {
   return String.raw`
 const { app, BrowserWindow } = require("electron");
 const path = require("path");
@@ -111,6 +118,10 @@ const rendererHtml = ${JSON.stringify(htmlPath)};
 const preloadPath = ${JSON.stringify(preload)};
 const artifactDir = ${JSON.stringify(screenshots)};
 const m9Only = ${JSON.stringify(m9Only)};
+const pairingOnly = ${JSON.stringify(pairingOnly)};
+const l3Only = ${JSON.stringify(l3Only)};
+const disabledFeatures = ${JSON.stringify(disabledFeatures)};
+const axeSource = fs.readFileSync(${JSON.stringify(axePath)}, "utf8");
 const userDataDir = path.join(path.dirname(preloadPath), "user-data");
 
 app.disableHardwareAcceleration();
@@ -444,6 +455,125 @@ async function runCurrentVisual() {
 
   const includesAny = (haystack, values) => values.some((value) => haystack.includes(value));
 
+  if (l3Only) {
+    console.log("Checking L3 renderer capability, keyboard and accessibility gates...");
+    const win = await createWindow(1280, 800, true);
+    const focusTrace = [];
+    let openedSettings = false;
+    let openedUserMenu = false;
+    for (let index = 0; index < 100; index += 1) {
+      win.webContents.sendInputEvent({ type: "keyDown", keyCode: "TAB" });
+      win.webContents.sendInputEvent({ type: "keyUp", keyCode: "TAB" });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      const focus = await win.webContents.executeJavaScript("(() => { const el=document.activeElement; return { tag: el?.tagName || '', name: el?.getAttribute?.('aria-label') || el?.getAttribute?.('title') || el?.innerText?.trim?.() || '', disabled: Boolean(el?.disabled) }; })()");
+      if (focus.name) focusTrace.push(focus);
+      if (!openedUserMenu && ["用户菜单", "User menu"].includes(focus.name)) {
+        win.webContents.sendInputEvent({ type: "keyDown", keyCode: "ENTER" });
+        win.webContents.sendInputEvent({ type: "keyUp", keyCode: "ENTER" });
+        openedUserMenu = true;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        let expanded = await win.webContents.executeJavaScript("document.querySelector('[data-testid=user-menu-button]')?.getAttribute('aria-expanded')");
+        if (expanded !== "true") {
+          win.webContents.sendInputEvent({ type: "keyDown", keyCode: "SPACE" });
+          win.webContents.sendInputEvent({ type: "keyUp", keyCode: "SPACE" });
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          expanded = await win.webContents.executeJavaScript("document.querySelector('[data-testid=user-menu-button]')?.getAttribute('aria-expanded')");
+        }
+        if (expanded !== "true") fail("Enter did not open the focused user menu");
+        continue;
+      }
+      if (["设置", "Settings"].includes(focus.name)) {
+        win.webContents.sendInputEvent({ type: "keyDown", keyCode: "SPACE" });
+        win.webContents.sendInputEvent({ type: "keyUp", keyCode: "SPACE" });
+        openedSettings = true;
+        break;
+      }
+    }
+    if (!openedSettings) fail("keyboard traversal could not reach Settings: " + JSON.stringify(focusTrace.slice(0, 30)));
+    if (focusTrace.length < 6 || focusTrace.some((item) => item.disabled)) fail("keyboard traversal did not produce a usable focus sequence");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    let openedIntegrations = false;
+    for (let index = 0; index < 30; index += 1) {
+      win.webContents.sendInputEvent({ type: "keyDown", keyCode: "TAB" });
+      win.webContents.sendInputEvent({ type: "keyUp", keyCode: "TAB" });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      const focus = await win.webContents.executeJavaScript("document.activeElement?.innerText?.trim?.() || document.activeElement?.getAttribute?.('aria-label') || ''");
+      if (["集成概览", "Overview"].includes(focus)) {
+        win.webContents.sendInputEvent({ type: "keyDown", keyCode: "SPACE" });
+        win.webContents.sendInputEvent({ type: "keyUp", keyCode: "SPACE" });
+        openedIntegrations = true;
+        break;
+      }
+    }
+    if (!openedIntegrations) fail("keyboard traversal could not open Integration overview; active=" + await win.webContents.executeJavaScript("document.activeElement?.outerHTML || ''"));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const gateAudit = await win.webContents.executeJavaScript(${"`"}(() => ({
+      rightTabs: Array.from(document.querySelectorAll('.right-tabs button')).map((button) => button.getAttribute('aria-label') || button.innerText.trim()),
+      settingsPanes: Array.from(document.querySelectorAll('[data-testid^=settings-pane-]')).map((button) => button.getAttribute('data-testid')),
+      integrations: Array.from(document.querySelectorAll('.settings-integration-row strong')).map((item) => item.textContent.trim()),
+      horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+    }))()${"`"});
+    const forbidden = {
+      browser: ["Browser", "浏览器"], debugger: ["Debug", "调试"], terminal: ["Terminal", "终端"],
+      channels: ["Channels", "频道"], mcp: ["MCP", "工具连接"], remoteWorkspace: ["Remote computers", "远程计算机", "Android", "Android 端"],
+      serialVoice: ["Voice", "语音"], agents: ["Agent tasks", "智能体任务"], approvals: ["Approval Center", "审批中心"], diagnostics: ["Usage analytics", "使用分析"],
+    };
+    for (const feature of disabledFeatures) {
+      const labels = forbidden[feature] || [];
+      if ([...gateAudit.rightTabs, ...gateAudit.integrations].some((value) => labels.includes(value))) fail(feature + " remained actionable while capability=false");
+    }
+    if (disabledFeatures.includes("channels") && gateAudit.settingsPanes.includes("settings-pane-channels")) fail("Channels settings pane remained visible while disabled");
+    if (disabledFeatures.includes("agents") && gateAudit.settingsPanes.includes("settings-pane-agent-task")) fail("Agent settings remained visible while disabled");
+    if (disabledFeatures.includes("approvals") && gateAudit.settingsPanes.includes("settings-pane-approvals")) fail("Approval settings remained visible while disabled");
+    if (disabledFeatures.includes("diagnostics") && gateAudit.settingsPanes.includes("settings-pane-analytics")) fail("Analytics settings remained visible while disabled");
+    if (gateAudit.horizontalOverflow) fail("L3 viewport has horizontal overflow");
+    await win.webContents.executeJavaScript(axeSource);
+    const axe = await win.webContents.executeJavaScript("axe.run(document, { resultTypes: ['violations'], runOnly: { type: 'tag', values: ['wcag2a','wcag2aa','wcag21a','wcag21aa'] } }).then((result) => result.violations.map((item) => ({ id:item.id, impact:item.impact, nodes:item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })))");
+    const severe = axe.filter((item) => item.impact === "critical" || item.impact === "serious");
+    if (severe.length) fail("axe serious/critical violations: " + JSON.stringify(severe));
+    await captureVisual(win, "l3-capability-gating");
+    win.close();
+    if (failures.length) { for (const failure of failures) console.error("- " + failure); app.exit(1); return; }
+    clearTimeout(watchdog);
+    console.log("L3 renderer integration passed (keyboard-only navigation, fail-closed capabilities, responsive layout, axe serious/critical=0)." );
+    app.exit(0);
+    return;
+  }
+
+  if (pairingOnly) {
+    console.log("Checking Android pairing dialog...");
+    const win = await createWindow(1024, 760, true);
+    if (!(await clickByAnyText(win, ["Visual User", "User menu"]))) fail("could not open user menu for Android pairing");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    if (!(await clickByAnyText(win, [text.settingsZh, "Settings"]))) fail("could not open settings for Android pairing");
+    await win.webContents.executeJavaScript("document.querySelector('[data-testid=settings-pane-integrations]')?.click()");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    if (!(await clickByAnyText(win, ["连接 Android", "Connect Android"]))) fail("could not open Android pairing dialog");
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const audit = await win.webContents.executeJavaScript("(() => { const dialog = document.querySelector('[data-testid=mobile-pairing-dialog]'); const image = dialog?.querySelector('img'); const style = dialog ? getComputedStyle(dialog) : null; return { text: dialog?.innerText || '', hasDialog: Boolean(dialog), qrWidth: image?.naturalWidth || 0, background: style?.backgroundColor || '', color: style?.color || '', opacity: style?.opacity || '' }; })()");
+    await captureVisual(win, "android-pairing-dialog");
+    if (!audit.hasDialog || !(audit.text.includes("手工配对码") || audit.text.includes("Manual pairing code"))) fail("Android pairing content did not render");
+    if (audit.qrWidth < 200) fail("Android pairing QR image did not render");
+    if (audit.background === "rgba(0, 0, 0, 0)" || audit.background === "transparent") fail("Android pairing dialog surface is transparent");
+    if (audit.opacity !== "1") fail("Android pairing dialog opacity dims its own content");
+    await win.webContents.executeJavaScript("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    if (!(await win.webContents.executeJavaScript("!document.querySelector('[data-testid=mobile-pairing-dialog]')"))) fail("Escape did not close Android pairing dialog");
+    await win.webContents.executeJavaScript("window.dispatchEvent(new KeyboardEvent('keydown', { key: '/', code: 'Slash', ctrlKey: true, shiftKey: true, bubbles: true }))");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const shortcutAudit = await win.webContents.executeJavaScript("(() => { const dialog = document.querySelector('.shortcut-settings-modal'); const style = dialog ? getComputedStyle(dialog) : null; return { visible: Boolean(dialog), background: style?.backgroundColor || '', color: style?.color || '', opacity: style?.opacity || '' }; })()");
+    await captureVisual(win, "keyboard-shortcuts-dialog");
+    if (!shortcutAudit.visible) fail("Keyboard shortcuts dialog did not open from its default shortcut");
+    if (shortcutAudit.background === "rgba(0, 0, 0, 0)" || shortcutAudit.background === "transparent") fail("Keyboard shortcuts dialog surface is transparent");
+    if (shortcutAudit.opacity !== "1") fail("Keyboard shortcuts dialog opacity dims its own content");
+    win.close();
+    if (failures.length) { for (const failure of failures) console.error("- " + failure); app.exit(1); return; }
+    clearTimeout(watchdog);
+    console.log("Android pairing visual verification passed.");
+    app.exit(0);
+    return;
+  }
+
   if (!m9Only) {
   console.log("Checking bridge fallback...");
   const bridgeMissing = await createWindow(900, 650, false);
@@ -581,7 +711,7 @@ app.whenReady().then(runCurrentVisual).catch((error) => {
 `;
 }
 
-function preloadSource() {
+function preloadSource(featureCapabilities) {
   return String.raw`
 const { contextBridge } = require("electron");
 
@@ -657,6 +787,12 @@ function subscribe(listeners, callback) {
 }
 
 contextBridge.exposeInMainWorld("openDrSai", {
+  getPlatformDescriptor: async () => ({ id: "windows", defaultTerminalShell: "powershell", capabilities: { terminal: true, credentials: true, notifications: true, permissions: true, install: true, update: true, features: ${JSON.stringify(featureCapabilities)} } }),
+  onOpenRequest: () => () => undefined,
+  onLifecycleEvent: () => () => undefined,
+  onDiagnosticEvent: () => () => undefined,
+  recordDiagnostic: async (event) => ({ ...event, id: "visual-diagnostic", timestamp: new Date().toISOString() }),
+  getDiagnosticSnapshot: async () => ({ generatedAt: new Date().toISOString(), events: [], traces: [], health: [], findings: [], deepTracing: { performance: [], resources: [], activeCheckpoints: [], clockOffsets: [] }, rootCause: { analyses: [], clusters: [], generatedAt: new Date().toISOString() }, droppedEvents: 0, storage: { eventCount: 0, maxEvents: 500, persisted: false } }),
   getAuthSession: async () => ({
     authenticated: true,
     user: {
@@ -776,6 +912,15 @@ contextBridge.exposeInMainWorld("openDrSai", {
   cancelInstall: async () => true,
   startGateway: async () => true,
   stopGateway: async () => true,
+  getMobilePairingReadiness: async () => ({ state: "ready", action: "scan", runtime_id: "runtime_visual", environment: "production" }),
+  createMobilePairingGrant: async () => ({
+    grant_id: "ag_00000000000000000000000000000000",
+    expires_at: new Date(Date.now() + 120000).toISOString(),
+    status: "pending",
+    payload: "opendrsai://associate?v=1&environment=production&issuer=https%3A%2F%2Fai.ihep.ac.cn&code=ABCDEFGHJKLMNPQR",
+  }),
+  getMobilePairingGrant: async (grantId) => ({ grant_id: grantId, expires_at: new Date(Date.now() + 120000).toISOString(), status: "pending" }),
+  revokeMobilePairingGrant: async (grantId) => ({ grant_id: grantId, expires_at: new Date().toISOString(), status: "revoked" }),
   onRemoteGatewayOperation: () => () => undefined,
   onRemoteWorkspaceStatus: () => () => undefined,
   onWorkspaceFileChanges: () => () => undefined,
@@ -806,6 +951,10 @@ contextBridge.exposeInMainWorld("openDrSai", {
     providerDisclosure: "Visual fixture transcription is active.",
     message: "Visual fixture voice runtime is ready.",
   }),
+  onStreamingVoiceTranscriptionEvent: () => () => undefined,
+  getStreamingVoiceCapabilities: async () => null,
+  recoverChatRun: async () => [],
+  listSshHosts: async () => [],
   listWorkspaces: async () => [],
   createWorkspace: async (request) => ({
     id: "workspace-" + crypto.randomUUID(),

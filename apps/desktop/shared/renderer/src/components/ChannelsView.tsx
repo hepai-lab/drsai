@@ -78,6 +78,14 @@ export function ChannelsView({
   const [syncingSnapshots, setSyncingSnapshots] = useState(false);
   const [configuringAdapterId, setConfiguringAdapterId] = useState<string | null>(null);
   const [authStartingAdapterId, setAuthStartingAdapterId] = useState<string | null>(null);
+  const [liveRepository, setLiveRepository] = useState("");
+  const [slackToken, setSlackToken] = useState("");
+  const [slackChannel, setSlackChannel] = useState("");
+  const [outboundTarget, setOutboundTarget] = useState("");
+  const [docsToken, setDocsToken] = useState("");
+  const [docsDocumentId, setDocsDocumentId] = useState("");
+  const [calendarToken, setCalendarToken] = useState("");
+  const [calendarId, setCalendarId] = useState("primary");
   const [draftingAdapterId, setDraftingAdapterId] = useState<string | null>(null);
   const [routingEventId, setRoutingEventId] = useState<string | null>(null);
 
@@ -129,32 +137,6 @@ export function ChannelsView({
     }
   }
 
-  async function configureProviderSession(adapter: DesktopChannelAdapter): Promise<void> {
-    setConfiguringAdapterId(adapter.id);
-    setImportError(null);
-    setConfigureResult(null);
-    try {
-      const configured = await desktopApi.configureChannelAdapter({
-        adapterId: adapter.id,
-        workspacePath,
-        mode: "session_stub",
-        accountLabel: `${adapter.name} account`,
-        scopeLabel: `${adapter.provider}:workspace`,
-        credentialState: "placeholder",
-      });
-      setConfigureResult(configured);
-      await loadAdapters();
-    } catch (loadError) {
-      setImportError(
-        loadError instanceof Error
-          ? loadError.message
-          : "Unable to configure provider session.",
-      );
-    } finally {
-      setConfiguringAdapterId(null);
-    }
-  }
-
   async function startAdapterAuth(adapter: DesktopChannelAdapter): Promise<void> {
     setAuthStartingAdapterId(adapter.id);
     setImportError(null);
@@ -175,6 +157,53 @@ export function ChannelsView({
     } finally {
       setAuthStartingAdapterId(null);
     }
+  }
+
+  async function pollAdapterAuth(adapter: DesktopChannelAdapter): Promise<void> {
+    const operationId = authResult?.adapterId === adapter.id ? authResult.operationId : adapter.authOperationId;
+    if (!operationId) return;
+    setAuthStartingAdapterId(adapter.id); setImportError(null);
+    try {
+      const polled = await desktopApi.pollChannelAdapterAuth({ adapterId: adapter.id, workspacePath, operationId });
+      if (polled.status === "complete") { setAuthResult(null); await loadAdapters(); }
+      else setImportError(polled.message);
+    } catch (loadError) { setImportError(loadError instanceof Error ? loadError.message : "Unable to check connector authorization."); }
+    finally { setAuthStartingAdapterId(null); }
+  }
+
+  async function revokeAdapterAuth(adapter: DesktopChannelAdapter): Promise<void> {
+    setAuthStartingAdapterId(adapter.id); setImportError(null);
+    try { const result = await desktopApi.revokeChannelAdapterAuth({ adapterId: adapter.id, workspacePath }); setConfigureResult(null); setImportError(result.message); await loadAdapters(); }
+    catch (loadError) { setImportError(loadError instanceof Error ? loadError.message : "Unable to revoke connector authorization."); }
+    finally { setAuthStartingAdapterId(null); }
+  }
+
+  async function syncLiveProvider(adapter: DesktopChannelAdapter): Promise<void> {
+    setImportingAdapterId(adapter.id); setImportError(null);
+    try { const imported = await desktopApi.syncLiveChannelContext({ adapterId: adapter.id, workspacePath, ...(adapter.id === "slack-chat" ? { channelId: slackChannel } : adapter.id === "docs-connector" ? { documentId: docsDocumentId } : adapter.id === "calendar-connector" ? { calendarId } : { repository: liveRepository }), limit: 10 }); setImportResult(imported); setInboundEvents(await desktopApi.listChannelInboundEvents({ workspacePath, limit: 6 })); }
+    catch (loadError) { setImportError(loadError instanceof Error ? loadError.message : "Unable to sync live provider context."); }
+    finally { setImportingAdapterId(null); }
+  }
+
+  async function configureSlackToken(): Promise<void> {
+    setAuthStartingAdapterId("slack-chat"); setImportError(null);
+    try { const result = await desktopApi.configureChannelProviderToken({ adapterId: "slack-chat", workspacePath, token: slackToken }); setSlackToken(""); setImportError(result.message); await loadAdapters(); }
+    catch (loadError) { setImportError(loadError instanceof Error ? loadError.message : "Unable to authorize Slack connector."); }
+    finally { setAuthStartingAdapterId(null); }
+  }
+
+  async function configureDocsToken(): Promise<void> {
+    setAuthStartingAdapterId("docs-connector"); setImportError(null);
+    try { const result = await desktopApi.configureChannelProviderToken({ adapterId: "docs-connector", workspacePath, token: docsToken }); setDocsToken(""); setImportError(result.message); await loadAdapters(); }
+    catch (loadError) { setImportError(loadError instanceof Error ? loadError.message : "Unable to authorize Google Docs connector."); }
+    finally { setAuthStartingAdapterId(null); }
+  }
+
+  async function configureCalendarToken(): Promise<void> {
+    setAuthStartingAdapterId("calendar-connector"); setImportError(null);
+    try { const result = await desktopApi.configureChannelProviderToken({ adapterId: "calendar-connector", workspacePath, token: calendarToken }); setCalendarToken(""); setImportError(result.message); await loadAdapters(); }
+    catch (loadError) { setImportError(loadError instanceof Error ? loadError.message : "Unable to authorize Google Calendar connector."); }
+    finally { setAuthStartingAdapterId(null); }
   }
 
   async function importContext(adapter: DesktopChannelAdapter): Promise<void> {
@@ -257,7 +286,7 @@ export function ChannelsView({
         await desktopApi.proposeChannelOutboundDraft({
           adapterId: adapter.id,
           workspacePath,
-          target: `${adapter.provider}:review-target`,
+          target: outboundTarget.trim() || `${adapter.provider}:review-target`,
           subject: "OpenDrSai channel draft",
           body: `Draft prepared from the ${adapter.name} adapter. Approval Center must approve before a live connector runtime can send it.`,
           idempotencyKey: `channels-view:${adapter.id}:demo-draft`,
@@ -475,6 +504,11 @@ export function ChannelsView({
             Code {authResult.userCode} expires {new Date(authResult.expiresAt).toLocaleString()}.
           </p>
           <p>{authResult.verificationUri}</p>
+          {authResult.adapterId === "github-connector" && (
+            <button type="button" className="channel-import-button" onClick={() => void desktopApi.openExternal(authResult.verificationUri)}>
+              Open GitHub authorization
+            </button>
+          )}
         </section>
       )}
       {inboundEvents.length > 0 && (
@@ -557,8 +591,30 @@ export function ChannelsView({
               drafting={draftingAdapterId === adapter.id}
               language={language}
               onConfigure={configureAdapter}
-              onConfigureSession={configureProviderSession}
               onStartAuth={startAdapterAuth}
+              onPollAuth={pollAdapterAuth}
+              onRevokeAuth={revokeAdapterAuth}
+              authOperationId={authResult?.adapterId === adapter.id ? authResult.operationId : adapter.authOperationId}
+              liveRepository={liveRepository}
+              onLiveRepositoryChange={setLiveRepository}
+              slackToken={slackToken}
+              slackChannel={slackChannel}
+              onSlackTokenChange={setSlackToken}
+              onSlackChannelChange={setSlackChannel}
+              onConfigureSlackToken={configureSlackToken}
+              outboundTarget={outboundTarget}
+              onOutboundTargetChange={setOutboundTarget}
+              docsToken={docsToken}
+              docsDocumentId={docsDocumentId}
+              onDocsTokenChange={setDocsToken}
+              onDocsDocumentIdChange={setDocsDocumentId}
+              onConfigureDocsToken={configureDocsToken}
+              calendarToken={calendarToken}
+              calendarId={calendarId}
+              onCalendarTokenChange={setCalendarToken}
+              onCalendarIdChange={setCalendarId}
+              onConfigureCalendarToken={configureCalendarToken}
+              onLiveSync={syncLiveProvider}
               onImport={importContext}
               onPickFiles={pickFileContext}
               onQueueOutboundDraft={queueOutboundDraft}
@@ -580,8 +636,30 @@ export function ChannelsView({
               drafting={draftingAdapterId === adapter.id}
               language={language}
               onConfigure={configureAdapter}
-              onConfigureSession={configureProviderSession}
               onStartAuth={startAdapterAuth}
+              onPollAuth={pollAdapterAuth}
+              onRevokeAuth={revokeAdapterAuth}
+              authOperationId={authResult?.adapterId === adapter.id ? authResult.operationId : adapter.authOperationId}
+              liveRepository={liveRepository}
+              onLiveRepositoryChange={setLiveRepository}
+              slackToken={slackToken}
+              slackChannel={slackChannel}
+              onSlackTokenChange={setSlackToken}
+              onSlackChannelChange={setSlackChannel}
+              onConfigureSlackToken={configureSlackToken}
+              outboundTarget={outboundTarget}
+              onOutboundTargetChange={setOutboundTarget}
+              docsToken={docsToken}
+              docsDocumentId={docsDocumentId}
+              onDocsTokenChange={setDocsToken}
+              onDocsDocumentIdChange={setDocsDocumentId}
+              onConfigureDocsToken={configureDocsToken}
+              calendarToken={calendarToken}
+              calendarId={calendarId}
+              onCalendarTokenChange={setCalendarToken}
+              onCalendarIdChange={setCalendarId}
+              onConfigureCalendarToken={configureCalendarToken}
+              onLiveSync={syncLiveProvider}
               onImport={importContext}
               onPickFiles={pickFileContext}
               onQueueOutboundDraft={queueOutboundDraft}
@@ -603,8 +681,30 @@ export function ChannelsView({
               drafting={draftingAdapterId === adapter.id}
               language={language}
               onConfigure={configureAdapter}
-              onConfigureSession={configureProviderSession}
               onStartAuth={startAdapterAuth}
+              onPollAuth={pollAdapterAuth}
+              onRevokeAuth={revokeAdapterAuth}
+              authOperationId={authResult?.adapterId === adapter.id ? authResult.operationId : adapter.authOperationId}
+              liveRepository={liveRepository}
+              onLiveRepositoryChange={setLiveRepository}
+              slackToken={slackToken}
+              slackChannel={slackChannel}
+              onSlackTokenChange={setSlackToken}
+              onSlackChannelChange={setSlackChannel}
+              onConfigureSlackToken={configureSlackToken}
+              outboundTarget={outboundTarget}
+              onOutboundTargetChange={setOutboundTarget}
+              docsToken={docsToken}
+              docsDocumentId={docsDocumentId}
+              onDocsTokenChange={setDocsToken}
+              onDocsDocumentIdChange={setDocsDocumentId}
+              onConfigureDocsToken={configureDocsToken}
+              calendarToken={calendarToken}
+              calendarId={calendarId}
+              onCalendarTokenChange={setCalendarToken}
+              onCalendarIdChange={setCalendarId}
+              onConfigureCalendarToken={configureCalendarToken}
+              onLiveSync={syncLiveProvider}
               onImport={importContext}
               onPickFiles={pickFileContext}
               onQueueOutboundDraft={queueOutboundDraft}
@@ -705,8 +805,30 @@ function ChannelAdapterCard({
   drafting,
   language,
   onConfigure,
-  onConfigureSession,
   onStartAuth,
+  onPollAuth,
+  onRevokeAuth,
+  authOperationId,
+  liveRepository,
+  onLiveRepositoryChange,
+  slackToken,
+  slackChannel,
+  onSlackTokenChange,
+  onSlackChannelChange,
+  onConfigureSlackToken,
+  outboundTarget,
+  onOutboundTargetChange,
+  docsToken,
+  docsDocumentId,
+  onDocsTokenChange,
+  onDocsDocumentIdChange,
+  onConfigureDocsToken,
+  calendarToken,
+  calendarId,
+  onCalendarTokenChange,
+  onCalendarIdChange,
+  onConfigureCalendarToken,
+  onLiveSync,
   onImport,
   onPickFiles,
   onQueueOutboundDraft,
@@ -718,8 +840,30 @@ function ChannelAdapterCard({
   drafting: boolean;
   language: AppLanguage;
   onConfigure: (adapter: DesktopChannelAdapter) => void | Promise<void>;
-  onConfigureSession: (adapter: DesktopChannelAdapter) => void | Promise<void>;
   onStartAuth: (adapter: DesktopChannelAdapter) => void | Promise<void>;
+  onPollAuth: (adapter: DesktopChannelAdapter) => void | Promise<void>;
+  onRevokeAuth: (adapter: DesktopChannelAdapter) => void | Promise<void>;
+  authOperationId?: string;
+  liveRepository: string;
+  onLiveRepositoryChange: (value: string) => void;
+  slackToken: string;
+  slackChannel: string;
+  onSlackTokenChange: (value: string) => void;
+  onSlackChannelChange: (value: string) => void;
+  onConfigureSlackToken: () => void | Promise<void>;
+  outboundTarget: string;
+  onOutboundTargetChange: (value: string) => void;
+  docsToken: string;
+  docsDocumentId: string;
+  onDocsTokenChange: (value: string) => void;
+  onDocsDocumentIdChange: (value: string) => void;
+  onConfigureDocsToken: () => void | Promise<void>;
+  calendarToken: string;
+  calendarId: string;
+  onCalendarTokenChange: (value: string) => void;
+  onCalendarIdChange: (value: string) => void;
+  onConfigureCalendarToken: () => void | Promise<void>;
+  onLiveSync: (adapter: DesktopChannelAdapter) => void | Promise<void>;
   onImport: (adapter: DesktopChannelAdapter) => void | Promise<void>;
   onPickFiles: (adapter: DesktopChannelAdapter) => void | Promise<void>;
   onQueueOutboundDraft: (adapter: DesktopChannelAdapter) => void | Promise<void>;
@@ -728,11 +872,7 @@ function ChannelAdapterCard({
   const Icon = providerIcons[adapter.provider];
   const canConfigureLocalGitHub =
     adapter.id === "github-connector" && adapter.authMode !== "local_git_remote";
-  const canConfigureProviderSession =
-    ["slack-chat", "github-connector", "docs-connector", "calendar-connector"].includes(
-      adapter.id,
-    ) && adapter.authMode !== "session_stub";
-  const canStartAuth = ["mobile-chat", "slack-chat", "github-connector", "docs-connector", "calendar-connector"].includes(
+  const canStartAuth = ["mobile-chat", "github-connector"].includes(
     adapter.id,
   );
   const canImportContext =
@@ -764,7 +904,7 @@ function ChannelAdapterCard({
       </div>
       <p>{adapter.description}</p>
       <div className="channel-adapter-meta">
-        <span>{adapter.configured ? (zh ? "已配置" : "Configured") : zh ? "未配置" : "Not configured"}</span>
+        <span>{adapter.configured ? (zh ? "已验证配置" : "Verified configuration") : adapter.authPreparedAt ? (zh ? "授权尚未完成" : "Authorization incomplete") : zh ? "未配置" : "Not configured"}</span>
         <span>{adapter.requiresApproval ? (zh ? "需要审批" : "Approval required") : zh ? "无需审批" : "No approval gate"}</span>
         {adapter.authMode && adapter.authMode !== "not_configured" && (
           <span>{adapter.authMode}</span>
@@ -793,17 +933,6 @@ function ChannelAdapterCard({
           {configuring ? "Configuring" : "Use local Git remote"}
         </button>
       )}
-      {canConfigureProviderSession && (
-        <button
-          type="button"
-          className="channel-import-button"
-          onClick={() => void onConfigureSession(adapter)}
-          disabled={configuring}
-        >
-          <KeyRound size={15} />
-          {configuring ? "Configuring" : "Configure session"}
-        </button>
-      )}
       {canStartAuth && (
         <button
           type="button"
@@ -814,6 +943,30 @@ function ChannelAdapterCard({
           <KeyRound size={15} />
           {authStarting ? "Preparing" : "Prepare auth"}
         </button>
+      )}
+      {adapter.id === "github-connector" && authOperationId && !adapter.configured && (
+        <button type="button" className="channel-import-button" onClick={() => void onPollAuth(adapter)} disabled={authStarting}><KeyRound size={15} />{authStarting ? "Checking" : "Check authorization"}</button>
+      )}
+      {adapter.id === "github-connector" && adapter.authMode === "oauth" && adapter.configured && (
+        <><input value={liveRepository} onChange={(event) => onLiveRepositoryChange(event.target.value)} placeholder="owner/repository" aria-label="GitHub live repository" /><button type="button" className="channel-import-button" onClick={() => void onLiveSync(adapter)} disabled={importing || !liveRepository.trim()}>{importing ? "Syncing" : "Sync live issues / PRs"}</button><button type="button" className="channel-import-button" onClick={() => void onRevokeAuth(adapter)} disabled={authStarting}>{authStarting ? "Revoking" : "Revoke authorization"}</button></>
+      )}
+      {adapter.id === "slack-chat" && !adapter.configured && (
+        <><input type="password" value={slackToken} onChange={(event) => onSlackTokenChange(event.target.value)} placeholder="xoxb-…" autoComplete="off" aria-label="Slack bot token" /><button type="button" className="channel-import-button" onClick={() => void onConfigureSlackToken()} disabled={authStarting || !slackToken.trim()}>{authStarting ? "Verifying" : "Verify bot token"}</button></>
+      )}
+      {adapter.id === "slack-chat" && adapter.authMode === "provider_token" && adapter.configured && (
+        <><input value={slackChannel} onChange={(event) => onSlackChannelChange(event.target.value.toUpperCase())} placeholder="C0123456789" aria-label="Slack channel ID" /><button type="button" className="channel-import-button" onClick={() => void onLiveSync(adapter)} disabled={importing || !slackChannel.trim()}>{importing ? "Syncing" : "Sync live history"}</button><button type="button" className="channel-import-button" onClick={() => void onRevokeAuth(adapter)} disabled={authStarting}>{authStarting ? "Revoking" : "Revoke authorization"}</button></>
+      )}
+      {adapter.id === "docs-connector" && !adapter.configured && (
+        <><input type="password" value={docsToken} onChange={(event) => onDocsTokenChange(event.target.value)} placeholder="ya29.…" autoComplete="off" aria-label="Google OAuth access token" /><button type="button" className="channel-import-button" onClick={() => void onConfigureDocsToken()} disabled={authStarting || !docsToken.trim()}>{authStarting ? "Verifying" : "Verify Google token"}</button></>
+      )}
+      {adapter.id === "docs-connector" && adapter.authMode === "provider_token" && adapter.configured && (
+        <><input value={docsDocumentId} onChange={(event) => onDocsDocumentIdChange(event.target.value)} placeholder="Google document ID or URL" aria-label="Google document ID" /><button type="button" className="channel-import-button" onClick={() => void onLiveSync(adapter)} disabled={importing || !docsDocumentId.trim()}>{importing ? "Syncing" : "Sync live document"}</button><button type="button" className="channel-import-button" onClick={() => void onRevokeAuth(adapter)} disabled={authStarting}>{authStarting ? "Revoking" : "Revoke authorization"}</button></>
+      )}
+      {adapter.id === "calendar-connector" && !adapter.configured && (
+        <><input type="password" value={calendarToken} onChange={(event) => onCalendarTokenChange(event.target.value)} placeholder="ya29.…" autoComplete="off" aria-label="Google Calendar OAuth access token" /><button type="button" className="channel-import-button" onClick={() => void onConfigureCalendarToken()} disabled={authStarting || !calendarToken.trim()}>{authStarting ? "Verifying" : "Verify Calendar token"}</button></>
+      )}
+      {adapter.id === "calendar-connector" && adapter.authMode === "provider_token" && adapter.configured && (
+        <><input value={calendarId} onChange={(event) => onCalendarIdChange(event.target.value)} placeholder="primary or calendar@example.com" aria-label="Google Calendar ID" /><button type="button" className="channel-import-button" onClick={() => void onLiveSync(adapter)} disabled={importing || !calendarId.trim()}>{importing ? "Syncing" : "Sync next 7 days"}</button><button type="button" className="channel-import-button" onClick={() => void onRevokeAuth(adapter)} disabled={authStarting}>{authStarting ? "Revoking" : "Revoke authorization"}</button></>
       )}
       {canImportContext && (
         <button
@@ -838,15 +991,15 @@ function ChannelAdapterCard({
         </button>
       )}
       {canQueueOutboundDraft && (
-        <button
+        <><input value={outboundTarget} onChange={(event) => onOutboundTargetChange(event.target.value)} placeholder={adapter.id === "slack-chat" ? "Slack channel ID" : adapter.id === "github-connector" ? "owner/repository#issue" : "Reviewed delivery target"} aria-label={`${adapter.name} outbound target`} /><button
           type="button"
           className="channel-import-button"
           onClick={() => void onQueueOutboundDraft(adapter)}
-          disabled={drafting}
+          disabled={drafting || !outboundTarget.trim()}
         >
           <Send size={15} />
           {drafting ? "Queueing" : "Queue draft approval"}
-        </button>
+        </button></>
       )}
       {adapter.setupHint && <small>{adapter.setupHint}</small>}
     </article>
