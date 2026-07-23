@@ -93,6 +93,7 @@ import {
 } from "./executionPolicyGate";
 import {
   createThread,
+  deleteThread,
   getThreadSnapshot,
   listThreads,
   searchThreadMessages,
@@ -288,6 +289,31 @@ import {
 } from "./voiceTts";
 import { saveApiKeyAndDefaultModel } from "./settings";
 import {
+  listInstalledSkills,
+  listAvailableSkills,
+  getSkillContent,
+  installSkill,
+  uninstallSkill,
+  updateSkill,
+  reloadSkills,
+} from "./skills";
+import {
+  gfsList,
+  gfsStat,
+  gfsRead,
+  gfsWrite,
+  gfsUploadFile,
+  gfsDownloadFile,
+  gfsDelete,
+  gfsShareUrl,
+  gfsHealthcheck,
+} from "./gfs";
+import {
+  createThreadShare,
+  openThreadShare,
+  revealThreadShare,
+} from "./threadShare";
+import {
   cancelOidcLogin,
   cancelDesktopSsoLogin,
   getAuthSession,
@@ -332,7 +358,6 @@ import type {
   CompletionNotificationPreference,
   DesktopApprovalProposalRequest,
   DesktopApprovalProposalResult,
-  DesktopA5ServiceGuidanceScenario,
   DesktopChannelAdapterConfigureRequest,
   DesktopChannelAdapterAuthStartRequest,
   DesktopChannelContextImportRequest,
@@ -380,7 +405,6 @@ import type {
   DesktopScheduledTaskWorkerStatus,
   DesktopShellCommandApprovalRequest,
   DesktopThread,
-  DesktopThreadContentSearchRequest,
   DesktopThreadForkMetadata,
   DesktopWorktreeListRequest,
   DesktopWorktreeEventRequest,
@@ -576,6 +600,7 @@ if (isE2eSmokeProcess) {
   app.commandLine.appendSwitch("disable-gpu");
   app.commandLine.appendSwitch("disable-gpu-compositing");
   app.commandLine.appendSwitch("disable-gpu-sandbox");
+  app.commandLine.appendSwitch("in-process-gpu");
 }
 const shouldExerciseSingleInstanceLifecycle =
   process.env.OPENDRSAI_E2E_PRESENTATION_SCENARIO === "background-close" ||
@@ -644,10 +669,6 @@ const pendingWorkspaceCheckpointRestores = new Map<
 const pendingGitCommitApprovals = new Map<
   string,
   DesktopGitCommitApprovalRequest
->();
-const pendingRemoteGatewayInstallApprovals = new Map<
-  string,
-  RemoteGatewayInstallRequest
 >();
 const pendingForkLifecycleApprovals = new Map<
   string,
@@ -1195,22 +1216,10 @@ async function proposeDesktopApproval(
     businessAction: sanitizeOptionalDispatchText(getStringProperty(typed, "businessAction"), 160),
     businessObject: sanitizeOptionalDispatchText(getStringProperty(typed, "businessObject"), 240),
     target: typeof typed.target === "string" ? typed.target : undefined,
-    scope: sanitizeOptionalDispatchText(getStringProperty(typed, "scope"), 240),
-    impact: sanitizeOptionalDispatchText(getStringProperty(typed, "impact"), 320),
     createdAt: new Date().toISOString(),
     risk: normalizeApprovalRisk(typed),
     ...(typed.checklist ? { checklist: typed.checklist } : {}),
   };
-  if (executedDesktopApprovalIds.has(approval.id)) {
-    return {
-      queued: false,
-      approval,
-      allowed: true,
-      requiresApproval: false,
-      blocked: false,
-      reason: "Approval idempotency key already executed once.",
-    };
-  }
   pendingDesktopApprovals.set(approval.id, approval);
   registerF2ApprovalEffect(typed, approval.id);
   registerF3ApprovalEffect(typed, approval.id);
@@ -2405,6 +2414,7 @@ if (process.env.OPENDRSAI_E2E_DISABLE_GPU === "1") {
   app.commandLine.appendSwitch("disable-gpu");
   app.commandLine.appendSwitch("disable-gpu-compositing");
   app.commandLine.appendSwitch("disable-gpu-sandbox");
+  app.commandLine.appendSwitch("disable-software-rasterizer");
   app.commandLine.appendSwitch("disable-features", "VizDisplayCompositor");
 }
 
@@ -2567,33 +2577,6 @@ function createWindow(): void {
       writeE2eStartupFailure("Renderer loadFile failed.", error);
     });
   }
-}
-
-async function requestRemoteGatewayInstallApproval(
-  request: RemoteGatewayInstallRequest,
-): Promise<DesktopApprovalProposalResult> {
-  if (!request?.hostAlias || !["install", "upgrade", "rollback"].includes(request.action)) {
-    return blockedApprovalProposal("Remote Gateway operation is incomplete.");
-  }
-  const proposal = await proposeDesktopApproval({
-    source: "workspace",
-    actionKind: "external.service",
-    title: `${request.action[0].toUpperCase()}${request.action.slice(1)} remote Gateway`,
-    detail: request.action === "rollback"
-      ? `Swap the managed current and previous Gateway releases on ${request.hostAlias}.`
-      : `Upload and verify ${request.artifactPath || "the selected artifact"}, create an isolated release, run health checks, then atomically switch current on ${request.hostAlias}.`,
-    target: request.hostAlias,
-    risk: "high",
-    idempotencyKey: ["remote-gateway", request.hostAlias, request.action, request.version || "", request.artifactSha256 || request.artifactPath || ""].join(":"),
-  });
-  if (proposal.blocked || !proposal.allowed) return proposal;
-  if (proposal.queued && proposal.approval) {
-    pendingRemoteGatewayInstallApprovals.set(proposal.approval.id, request);
-    return proposal;
-  }
-  await assertExecutionAllowed("external.service", { approved: true });
-  await installRemoteGateway(request);
-  return proposal;
 }
 
 function writeE2eStartupFailure(message: string, error: unknown): void {
@@ -3531,9 +3514,6 @@ function registerIpc(): void {
     return productionDiagnostics.importPackage(selected.filePaths[0]);
   });
   secureHandle("desktop:get-auth-session", () => getAuthSession());
-  secureHandle("desktop:e2e-a5-service-guidance-scenario", () =>
-    getA5ServiceGuidanceScenario(),
-  );
   secureHandle("desktop:login", (_event, request) => login(request));
   secureHandle("desktop:start-oidc-login", async (event, request) => {
     const result = await startOidcLogin(request, (debugEvent) => {
@@ -3638,21 +3618,6 @@ function registerIpc(): void {
     subscribeUpdateStatus(event.sender);
     return checkForUpdates();
   });
-  secureHandle("desktop:download-update", (event) => {
-    subscribeUpdateStatus(event.sender);
-    return downloadUpdate();
-  });
-  secureHandle("desktop:cancel-update", () => cancelUpdate());
-  secureHandle("desktop:install-update", async () => {
-    if (hasActiveChats() || hasActiveAgentRuns()) {
-      throw new Error("Finish or stop active chat and agent tasks before installing an update.");
-    }
-    if (pendingWorkspaceMutationApprovals.size > 0 || pendingWorkspaceCheckpointRestores.size > 0) {
-      throw new Error("Resolve pending workspace change reviews before installing an update.");
-    }
-    await shutdownGateway();
-    return installUpdate();
-  });
 
   secureHandle("desktop:open-external", async (_event, rawUrl: string) => {
     if (!isAllowedExternalUrl(rawUrl)) return;
@@ -3730,11 +3695,6 @@ function registerIpc(): void {
     await startInstall(event.sender, options ?? {});
   });
   secureHandle("desktop:cancel-install", () => cancelInstall());
-  secureHandle("desktop:clipboard-copy-text", (_event, text: string) => {
-    if (typeof text !== "string" || text.length > 50_000) return false;
-    clipboard.writeText(text);
-    return true;
-  });
 
   secureHandle("desktop:start-gateway", () => startGateway());
   secureHandle("desktop:stop-gateway", () => stopGateway());
@@ -4199,16 +4159,7 @@ function registerIpc(): void {
     requestForkConflictDraftWrite(request),
   );
   secureHandle("desktop:list-threads", () => listThreads());
-  secureHandle("desktop:list-agents", (_event, options) => listAgents(
-    options && typeof options === "object" && (options as { refresh?: unknown }).refresh === true
-      ? { refresh: true }
-      : {},
-  ));
-  secureHandle("desktop:get-platform-agent-status", () => getPlatformAgentStatus());
-  secureHandle("desktop:set-default-agent", (_event, agentId) =>
-    setDefaultAgent(typeof agentId === "string" ? agentId : ""));
-  secureHandle("desktop:record-agent-usage", (_event, agentId) =>
-    recordAgentUsage(typeof agentId === "string" ? agentId : ""));
+  secureHandle("desktop:list-agents", () => listAgents());
   secureHandle("desktop:get-my-drsai-config", async (_event, workspacePath?: string) => {
     if (workspacePath && !(await isAllowedOpenPath(workspacePath))) {
       return getMyDrSaiConfig();
@@ -4224,6 +4175,9 @@ function registerIpc(): void {
   secureHandle("desktop:update-thread", (_event, request) =>
     updateThread(request),
   );
+  secureHandle("desktop:delete-thread", (_event, threadId: string) =>
+    deleteThread(threadId),
+  );
   secureHandle("desktop:set-thread-archived", (_event, request) => {
     const value = request as { threadId?: unknown; archived?: unknown };
     if (typeof value?.threadId !== "string" || typeof value.archived !== "boolean") throw new Error("Archive request is invalid.");
@@ -4232,11 +4186,20 @@ function registerIpc(): void {
   secureHandle("desktop:get-thread-snapshot", async (_event, threadId: string) =>
     (await getRemoteThreadSnapshot(threadId)) || getThreadSnapshot(threadId),
   );
-  secureHandle("desktop:search-thread-messages", async (_event, request: DesktopThreadContentSearchRequest) =>
-    (await searchRemoteThreadMessages(request)) || searchThreadMessages(request),
+  secureHandle("desktop:search-thread-messages", (_event, request) =>
+    searchThreadMessages(request),
   );
   secureHandle("desktop:update-thread-snapshot", (_event, snapshot) =>
     updateThreadSnapshot(snapshot),
+  );
+  secureHandle("desktop:create-thread-share", (_event, request) =>
+    createThreadShare(request),
+  );
+  secureHandle("desktop:open-thread-share", (_event, filePath) =>
+    openThreadShare(filePath),
+  );
+  secureHandle("desktop:reveal-thread-share", (_event, filePath) =>
+    revealThreadShare(filePath),
   );
   secureHandle("desktop:prepare-fork-worktree", async (_event, request) => {
     const workspacePath = getStringProperty(request, "workspacePath");
@@ -4462,14 +4425,6 @@ function registerIpc(): void {
   secureHandle("desktop:abort-chat", (_event, requestId: string) =>
     abortChat(requestId),
   );
-  secureHandle("desktop:respond-chat-input", (_event, requestId, response) =>
-    respondChatInput(
-      typeof requestId === "string" ? requestId : "",
-      typeof response === "string" || (response && typeof response === "object" && !Array.isArray(response))
-        ? response as string | Record<string, unknown>
-        : "",
-    ),
-  );
   secureHandle(
     "desktop:voice-transcription-start",
     (event, request: DesktopVoiceTranscriptionRequest) =>
@@ -4538,12 +4493,9 @@ function registerIpc(): void {
       return writeVoiceTranscriptHandoff(request);
     },
   );
-  secureHandle("desktop:start-agent-run", (event, request) => {
-    if (getA5ServiceGuidanceScenario()) {
-      throw new Error("A5 service guidance blocks Agent runs until the service is available.");
-    }
-    return startAgentRun(event.sender, request);
-  });
+  secureHandle("desktop:start-agent-run", (event, request) =>
+    startAgentRun(event.sender, request),
+  );
   secureHandle("desktop:abort-agent-run", (_event, requestId: string) =>
     abortAgentRun(requestId),
   );
@@ -4620,6 +4572,16 @@ function registerIpc(): void {
       properties: ["openDirectory"],
     });
     return { canceled: result.canceled, paths: result.filePaths };
+  });
+  secureHandle("desktop:clipboard-copy-text", (_event, rawText: unknown) => {
+    if (typeof rawText !== "string") {
+      throw new Error("Clipboard text must be a string.");
+    }
+    if (rawText.length > 50_000) {
+      throw new Error("Clipboard text is too large.");
+    }
+    clipboard.writeText(rawText);
+    return true;
   });
   secureHandle("desktop:browser-check-url", (_event, rawUrl: string) =>
     checkBrowserUrlSync(rawUrl),
@@ -4699,6 +4661,65 @@ function registerIpc(): void {
     });
     return true;
   });
+
+  // ── Skills (gateway-managed) ─────────────────────────────────────────────
+  secureHandle("desktop:list-installed-skills", (_event, request) =>
+    listInstalledSkills((request as { userId?: string } | undefined)?.userId),
+  );
+  secureHandle("desktop:list-available-skills", (_event, request) =>
+    listAvailableSkills((request as { userId?: string } | undefined)?.userId),
+  );
+  secureHandle("desktop:get-skill-content", (_event, request) =>
+    getSkillContent((request as { skillPath: string }).skillPath),
+  );
+  secureHandle("desktop:install-skill", (_event, request) =>
+    installSkill(request as Parameters<typeof installSkill>[0]),
+  );
+  secureHandle("desktop:uninstall-skill", (_event, request) => {
+    const r = request as { name: string; userId?: string };
+    return uninstallSkill(r.name, r.userId);
+  });
+  secureHandle("desktop:update-skill", (_event, request) => {
+    const r = request as { name: string; content: string; userId?: string };
+    return updateSkill(r.name, r.content, r.userId);
+  });
+  secureHandle("desktop:reload-skills", (_event, request) => {
+    const r = (request ?? {}) as { threadId?: string; userId?: string };
+    return reloadSkills(r.threadId, r.userId);
+  });
+
+  // ── GFS cloud storage ────────────────────────────────────────────────────
+  secureHandle("desktop:gfs-list", (_event, request) =>
+    gfsList(request as Parameters<typeof gfsList>[0]),
+  );
+  secureHandle("desktop:gfs-stat", (_event, request) =>
+    gfsStat((request as { path: string }).path),
+  );
+  secureHandle("desktop:gfs-read", (_event, request) =>
+    gfsRead((request as { path: string }).path),
+  );
+  secureHandle("desktop:gfs-write", (_event, request) => {
+    const r = request as { path: string; content: string; contentType?: string };
+    return gfsWrite(r.path, r.content, r.contentType);
+  });
+  secureHandle("desktop:gfs-upload-file", (_event, request) =>
+    gfsUploadFile(request as Parameters<typeof gfsUploadFile>[0]),
+  );
+  secureHandle("desktop:gfs-download-file", (_event, request) =>
+    gfsDownloadFile(request as Parameters<typeof gfsDownloadFile>[0]),
+  );
+  secureHandle("desktop:gfs-delete", (_event, request) =>
+    gfsDelete((request as { path: string }).path),
+  );
+  secureHandle("desktop:gfs-share-url", (_event, request) => {
+    const r = request as {
+      path: string;
+      ttlMinutes?: number;
+      responseContentType?: string;
+    };
+    return gfsShareUrl(r.path, r.ttlMinutes, r.responseContentType);
+  });
+  secureHandle("desktop:gfs-healthcheck", () => gfsHealthcheck());
 }
 
 async function decidePendingDesktopApproval(
@@ -4715,9 +4736,6 @@ async function decidePendingDesktopApproval(
   const approval = pendingDesktopApprovals.get(typed.id);
   if (!approval) return false;
   pendingDesktopApprovals.delete(typed.id);
-  if (typed.approved && executedDesktopApprovalIds.has(typed.id)) {
-    return true;
-  }
   const pendingShellCommand = pendingShellCommandApprovals.get(typed.id);
   pendingShellCommandApprovals.delete(typed.id);
   const pendingWorkspaceMutation = pendingWorkspaceMutationApprovals.get(typed.id);
@@ -4726,8 +4744,6 @@ async function decidePendingDesktopApproval(
   pendingWorkspaceCheckpointRestores.delete(typed.id);
   const pendingGitCommit = pendingGitCommitApprovals.get(typed.id);
   pendingGitCommitApprovals.delete(typed.id);
-  const pendingRemoteGatewayInstall = pendingRemoteGatewayInstallApprovals.get(typed.id);
-  pendingRemoteGatewayInstallApprovals.delete(typed.id);
   const pendingForkLifecycle = pendingForkLifecycleApprovals.get(typed.id);
   pendingForkLifecycleApprovals.delete(typed.id);
   const pendingForkQueueStart = pendingForkQueueStartApprovals.get(typed.id);
@@ -4759,7 +4775,6 @@ async function decidePendingDesktopApproval(
   }
   if (pendingShellCommand) {
     if (!typed.approved) return true;
-    executedDesktopApprovalIds.add(typed.id);
     await assertExecutionAllowed("shell.command", { approved: true });
     const wrote = await writeTerminalSession(
       event,
@@ -4773,7 +4788,6 @@ async function decidePendingDesktopApproval(
   }
   if (pendingWorkspaceMutation) {
     if (!typed.approved) return true;
-    executedDesktopApprovalIds.add(typed.id);
     await assertExecutionAllowed(
       getWorkspaceMutationActionKind(pendingWorkspaceMutation.action),
       { approved: true },
@@ -4786,46 +4800,33 @@ async function decidePendingDesktopApproval(
   }
   if (pendingWorkspaceCheckpointRestore) {
     if (!typed.approved) return true;
-    executedDesktopApprovalIds.add(typed.id);
     await assertExecutionAllowed("workspace.revert", { approved: true });
     await restoreWorkspaceCheckpoint(pendingWorkspaceCheckpointRestore);
     return true;
   }
   if (pendingGitCommit) {
     if (!typed.approved) return true;
-    executedDesktopApprovalIds.add(typed.id);
     await assertExecutionAllowed("git.commit", { approved: true });
     await executeGitCommit(pendingGitCommit);
     return true;
   }
-  if (pendingRemoteGatewayInstall) {
-    if (!typed.approved) return true;
-    executedDesktopApprovalIds.add(typed.id);
-    await assertExecutionAllowed("external.service", { approved: true });
-    await installRemoteGateway(pendingRemoteGatewayInstall);
-    return true;
-  }
   if (pendingForkLifecycle) {
     if (!typed.approved) return true;
-    executedDesktopApprovalIds.add(typed.id);
     await executeForkLifecycleApproval(pendingForkLifecycle);
     return true;
   }
   if (pendingForkQueueStart) {
-    if (typed.approved) executedDesktopApprovalIds.add(typed.id);
     await executeForkQueueStartApproval(pendingForkQueueStart, typed.approved);
     return true;
   }
   if (pendingForkConflictDraftWrite) {
     if (!typed.approved) return true;
-    executedDesktopApprovalIds.add(typed.id);
     await assertExecutionAllowed("workspace.revert", { approved: true });
     await executeForkConflictDraftWrite(pendingForkConflictDraftWrite);
     return true;
   }
   if (pendingChannelOutboundDraft) {
     if (typed.approved) {
-      executedDesktopApprovalIds.add(typed.id);
       await assertExecutionAllowed("external.service", { approved: true });
     }
     executeChannelOutboundDelivery(
@@ -4842,7 +4843,6 @@ async function decidePendingDesktopApproval(
       }
       return true;
     }
-    if (typed.approved) executedDesktopApprovalIds.add(typed.id);
     await assertExecutionAllowed("network.request", { approved: true });
     await enumerateMcpLiveServer(pendingMcpLiveEnumeration);
     return true;
@@ -4856,7 +4856,6 @@ async function decidePendingDesktopApproval(
       }
       return true;
     }
-    executedDesktopApprovalIds.add(typed.id);
     await assertExecutionAllowed("external.service", { approved: true });
     await executeMcpToolAfterApproval(pendingMcpToolExecution, typed.id);
     return true;
@@ -4954,7 +4953,6 @@ async function startDeferredStartupTasks(): Promise<void> {
   await recoverWorkflowRunStateAfterRestart();
   startScheduledTaskWorkerIfEnabled();
   await autoStartGatewayWhenInstalled();
-  await restorePersistedRemoteWorkspaces();
   recordStartupMilestone("deferred-tasks-complete");
   recordE2eStartupTrace("startup:deferred-tasks-complete");
 }
@@ -4981,10 +4979,6 @@ app.whenReady().then(async () => {
   restorePreparedUpdate();
   cleanupExpiredVoiceTempFiles();
   if (!singleInstanceLock) return;
-  if (process.env.OPENDRSAI_E2E_UPDATE_PROTOCOL === "1") {
-    void runHeadlessUpdateProtocolSmoke();
-    return;
-  }
   if (process.env.OPENDRSAI_E2E_OIDC_HEADLESS === "1") {
     void runHeadlessOidcSmoke();
     return;
@@ -5061,7 +5055,6 @@ app.whenReady().then(async () => {
     for (const window of BrowserWindow.getAllWindows()) window.webContents.send("desktop:workspace-file-change-event", change);
   });
   createWindow();
-  startUpdateScheduler();
   handleDeepLinkArgv(process.argv);
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -5330,7 +5323,6 @@ app.on("before-quit", (event) => {
   }
   stopScheduledTaskWorker();
   killAllTerminalSessions();
-  stopAllRemoteWorkspaces();
   if (gatewayShutdownComplete) return;
   event.preventDefault();
   if (gatewayShutdownStarted) return;

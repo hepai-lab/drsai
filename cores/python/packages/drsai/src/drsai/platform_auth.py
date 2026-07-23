@@ -68,10 +68,28 @@ class StaticModelCredentialProvider:
         return self.openai_base_url
 
 
+# ---------------------------------------------------------------------------
+# TEMPORARY — bypass OIDC platform auth and route model calls directly to any
+# OpenAI-compatible API.  Intended for development / PAYG-without-worker
+# scenarios.  Remove once platform auth is healthy again.
+#
+#   DRSAI_BYPASS_PLATFORM_AUTH=1              ← enable the bypass
+#   DRSAI_DIRECT_API_KEY=sk-...               ← your direct API key
+#   OPENDRSAI_MODEL_BASE_URL=https://.../v1    ← target API base URL
+# ---------------------------------------------------------------------------
+_BYPASS_PLATFORM = os.environ.get("DRSAI_BYPASS_PLATFORM_AUTH", "").strip() == "1"
+
+
 def get_model_credential_provider(
     fallback_token: str | None = None,
     fallback_base_url: str | None = None,
 ) -> ModelCredentialProvider | None:
+    if _BYPASS_PLATFORM:
+        direct_key = os.environ.get("DRSAI_DIRECT_API_KEY", "").strip()
+        direct_url = os.environ.get("OPENDRSAI_MODEL_BASE_URL", "").strip().rstrip("/")
+        if direct_key and direct_url:
+            return StaticModelCredentialProvider(access_token=direct_key, openai_base_url=direct_url)
+
     context = get_platform_auth()
     if context:
         return OidcModelCredentialProvider(context)

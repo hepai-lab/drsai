@@ -527,6 +527,8 @@ export interface DesktopVoiceSynthesisRequest {
   voice?: string;
   speed?: number;
   format?: DesktopVoiceAudioFormat;
+  /** Prefer a specific synthesis backend for this request. */
+  runtime?: DesktopVoiceSynthesisRuntimeId;
 }
 
 export interface DesktopVoiceSynthesisStartResult {
@@ -2919,6 +2921,8 @@ export interface DesktopThreadMessageSnapshot extends ChatMessage {
   structuredTurn?: StructuredTurnState;
   startedAt?: number;
   lastEventAt?: number;
+  /** User-uploaded context shown as chips in the conversation bubble. */
+  attachments?: ChatAttachment[];
 }
 
 export interface DesktopThreadSnapshot {
@@ -3925,6 +3929,86 @@ export interface UpdateThreadRequest {
   unread?: boolean;
 }
 
+/** Read-only conversation share (local HTML preview + optional WebUI public link). */
+export interface CreateThreadShareRequest {
+  threadId: string;
+  /** When omitted, all non-system messages are included. */
+  messageIds?: string[];
+  title?: string;
+}
+
+export interface DesktopThreadShareResult {
+  shareId: string;
+  threadId: string;
+  title: string;
+  messageCount: number;
+  filePath: string;
+  /** file:// URL for opening a local preview in a browser */
+  fileUrl: string;
+  /**
+   * Public WebUI share URL (`/share?token=...`) when publish succeeded.
+   * Prefer this for "Copy link" so others can open it.
+   */
+  publicShareUrl?: string;
+  shareToken?: string;
+  /** Present when local HTML was saved but WebUI publish failed. */
+  publishError?: string;
+  deepLink: string;
+  createdAt: string;
+  readOnly: true;
+}
+
+export interface GatewaySkill {
+  name: string;
+  category: string;
+  description: string;
+  path: string;
+  size?: number;
+  mtime?: number;
+}
+
+export interface GatewayAvailableSkill extends GatewaySkill {
+  source: string;
+  installed: boolean;
+}
+
+export interface GatewaySkillInstallRequest {
+  name: string;
+  content?: string;
+  source?: string;
+  userId?: string;
+}
+
+export interface GfsObjectInfo {
+  path: string;
+  size: number;
+  etag: string;
+  modifiedMs: number;
+  isDir: boolean;
+}
+
+export interface GfsListRequest {
+  prefix?: string;
+  recursive?: boolean;
+  maxItems?: number;
+}
+
+export interface GfsListResult {
+  items: GfsObjectInfo[];
+  prefix: string;
+  truncated: boolean;
+}
+
+export interface GfsUploadRequest {
+  localPath: string;
+  remotePath: string;
+}
+
+export interface GfsDownloadRequest {
+  remotePath: string;
+  localPath: string;
+}
+
 export interface AgentRunEvent {
   requestId: string;
   sessionId: string;
@@ -4324,12 +4408,16 @@ export interface DesktopApi {
   updateMyDrSaiConfig(request: UpdateMyDrSaiConfigRequest): Promise<MyDrSaiConfig>;
   createThread(request: CreateThreadRequest): Promise<DesktopThread>;
   updateThread(request: UpdateThreadRequest): Promise<DesktopThread>;
+  deleteThread(threadId: string): Promise<void>;
   setThreadArchived(request: { threadId: string; archived: boolean }): Promise<DesktopThread>;
   getThreadSnapshot(threadId: string): Promise<DesktopThreadSnapshot | null>;
   searchThreadMessages(
     request: DesktopThreadContentSearchRequest,
   ): Promise<DesktopThreadContentSearchResult[]>;
   updateThreadSnapshot(snapshot: DesktopThreadSnapshot): Promise<DesktopThreadSnapshot>;
+  createThreadShare(request: CreateThreadShareRequest): Promise<DesktopThreadShareResult>;
+  openThreadShare(filePath: string): Promise<boolean>;
+  revealThreadShare(filePath: string): Promise<boolean>;
   prepareForkWorktree(
     request: DesktopForkWorktreeRequest,
   ): Promise<DesktopForkWorktreeResult>;
@@ -4610,4 +4698,32 @@ export interface DesktopApi {
   onTerminalData(callback: (event: TerminalDataEvent) => void): () => void;
   onTerminalExit(callback: (event: TerminalExitEvent) => void): () => void;
   onBrowserTaskEvent(callback: (event: BrowserTaskEvent) => void): () => void;
+
+  // Skills (gateway-managed)
+  listInstalledSkills(request?: { userId?: string }): Promise<GatewaySkill[]>;
+  listAvailableSkills(request?: { userId?: string }): Promise<GatewayAvailableSkill[]>;
+  getSkillContent(request: { skillPath: string }): Promise<{ path: string; content: string }>;
+  installSkill(request: GatewaySkillInstallRequest): Promise<{ status: string; name: string; path: string }>;
+  updateSkill(request: { name: string; content: string; userId?: string }): Promise<{ status: string; name: string; path: string }>;
+  uninstallSkill(request: { name: string; userId?: string }): Promise<{ status: string; name: string }>;
+  reloadSkills(request?: { threadId?: string; userId?: string }): Promise<{ ok: boolean; reloaded: boolean }>;
+
+  // GFS cloud storage
+  gfsList(request: GfsListRequest): Promise<GfsListResult>;
+  gfsStat(request: { path: string }): Promise<GfsObjectInfo>;
+  gfsRead(request: { path: string }): Promise<{ path: string; content: string }>;
+  gfsWrite(request: {
+    path: string;
+    content: string;
+    contentType?: string;
+  }): Promise<{ path: string; etag: string }>;
+  gfsUploadFile(request: GfsUploadRequest): Promise<{ path: string; size: number }>;
+  gfsDownloadFile(request: GfsDownloadRequest): Promise<{ localPath: string; size: number }>;
+  gfsDelete(request: { path: string }): Promise<{ path: string }>;
+  gfsShareUrl(request: {
+    path: string;
+    ttlMinutes?: number;
+    responseContentType?: string;
+  }): Promise<{ url: string; expiresAt: string }>;
+  gfsHealthcheck(): Promise<{ ok: boolean; bucket?: string; mode?: string; reason?: string }>;
 }

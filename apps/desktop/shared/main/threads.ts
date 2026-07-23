@@ -84,6 +84,20 @@ export async function createThread(rawRequest: unknown): Promise<DesktopThread> 
   });
 }
 
+export async function deleteThread(rawThreadId: unknown): Promise<void> {
+  const threadId = sanitizeThreadId(rawThreadId);
+  await serializeJsonMutation(THREADS_FILE, async () => {
+    const threads = await readThreads();
+    await writeThreads(threads.filter((thread) => thread.id !== threadId));
+  });
+  await serializeJsonMutation(THREAD_SNAPSHOTS_FILE, async () => {
+    const snapshots = await readThreadSnapshots();
+    if (!(threadId in snapshots)) return;
+    const { [threadId]: _removed, ...remaining } = snapshots;
+    await writeThreadSnapshots(remaining);
+  });
+}
+
 export async function updateThread(rawRequest: unknown): Promise<DesktopThread> {
   const request = validateUpdateThreadRequest(rawRequest);
   return serializeJsonMutation(THREADS_FILE, async () => {

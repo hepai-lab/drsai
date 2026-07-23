@@ -76,6 +76,8 @@ import { ChatWorkspace, type ThinkingEffort } from "./components/ChatWorkspace";
 import { PreviewBrowserPanel } from "./components/PreviewBrowserPanel";
 import { ProviderAnalyticsView } from "./components/ProviderAnalyticsView";
 import { BackgroundTaskQueue, SkillSquareView } from "./components/SkillSquareView";
+import { SkillsManager } from "./components/SkillsManager";
+import { GfsView } from "./components/GfsView";
 import { TaskCenterView } from "./components/TaskCenterView";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { DebugPanel } from "./components/DebugPanel";
@@ -1221,6 +1223,14 @@ function AuthenticatedApp({
     setSelectedChatModel(model);
   }
 
+  async function handleDeleteThread(threadId: string): Promise<void> {
+    await desktopApi.deleteThread(threadId);
+    setThreads((current) => current.filter((thread) => thread.id !== threadId));
+    if (activeThreadId === threadId) {
+      void handleNewChat();
+    }
+  }
+
   async function handleThreadUpdate(
     threadId: string,
     updates: { title?: string; pinned?: boolean; archived?: boolean; unread?: boolean; fork?: DesktopThread["fork"] },
@@ -1651,11 +1661,10 @@ function AuthenticatedApp({
         />
       </section>
     ) : activeNav === MENU_IDS.skillsSquare ? (
-      <section className="skills-square-panel">
-        <SkillSquareView
-          initialFocus={skillSquareCommandTarget ?? undefined}
+      <section className="skills-square-panel skills-manager-panel">
+        <SkillsManager
+          activeThreadId={activeThreadId}
           language={language}
-          workspacePath={effectiveWorkspacePath}
         />
       </section>
     ) : activeNav === MENU_IDS.myAgents ? (
@@ -1712,6 +1721,8 @@ function AuthenticatedApp({
       />
     ) : activeNav === MENU_IDS.usageAnalytics ? (
       <ProviderAnalyticsView language={language} />
+    ) : activeNav === MENU_IDS.library ? (
+      <GfsView language={language} />
     ) : activeNav === MENU_IDS.profile ? (
       <SettingsPanel
         agents={availableChatAgents}
@@ -2129,6 +2140,7 @@ function AuthenticatedApp({
         desktopApi.searchThreadMessages({ query, threadIds, limit: 24 })
       }
       onThreadUpdate={handleThreadUpdate}
+      onDeleteThread={handleDeleteThread}
       onToggleRightPanel={() => setRightPanelCollapsed((current) => !current)}
       onToggleSidebar={() => setSidebarCollapsed((current) => !current)}
       onUpdateWorkspace={handleUpdateWorkspace}

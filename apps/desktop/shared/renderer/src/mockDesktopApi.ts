@@ -71,6 +71,7 @@ import type {
   WorkspaceGitFileAtRefResult,
   WorkspaceGitDiffResult,
   WorkspaceProject,
+  GatewaySkill,
 } from "@shared/desktopApi";
 import type { StructuredConversationEvent } from "@shared/structuredConversation";
 import drsaiImageUrl from "./assets/drsai.png";
@@ -1022,6 +1023,12 @@ export function installMockDesktopApi(): void {
     });
   }
 
+  type MockSkill = GatewaySkill & { content: string };
+  function defaultMockSkillContent(name: string): string {
+    return `---\nname: ${name}\ndescription: ""\ncategory: user\n---\n\n# ${name}\n\nDescribe what this skill does here.\n`;
+  }
+  let mockInstalledSkills: MockSkill[] = [];
+
   const api: DesktopApi = {
     getPlatformDescriptor: async () => ({
       id: "windows",
@@ -1830,6 +1837,11 @@ export function installMockDesktopApi(): void {
       });
       return thread;
     },
+    deleteThread: async (threadId) => {
+      threads = threads.filter((thread) => thread.id !== threadId);
+      const { [threadId]: _removed, ...remaining } = threadSnapshots;
+      threadSnapshots = remaining;
+    },
     setThreadArchived: async ({ threadId, archived }) => {
       const existing = threads.find((thread) => thread.id === threadId);
       if (!existing) throw new Error("Thread no longer exists.");
@@ -1873,6 +1885,71 @@ export function installMockDesktopApi(): void {
       };
       return snapshot;
     },
+    createThreadShare: async (request) => {
+      const snapshot = threadSnapshots[request.threadId];
+      if (!snapshot) throw new Error("Conversation not found or has no messages to share.");
+      const selectedIds = request.messageIds ? new Set(request.messageIds) : null;
+      const messages = snapshot.messages
+        .filter((message) => message.role !== "system")
+        .filter((message) => (selectedIds ? selectedIds.has(message.id) : true));
+      if (!messages.length) throw new Error("Select at least one message to share.");
+      const shareId = `share_${Date.now().toString(36)}`;
+      const title = request.title?.trim() || snapshot.messages.find((m) => m.role === "user")?.content?.slice(0, 40) || "Conversation";
+      const filePath = `mock://shares/${shareId}.html`;
+      return {
+        shareId,
+        threadId: request.threadId,
+        title,
+        messageCount: messages.length,
+        filePath,
+        fileUrl: filePath,
+        publicShareUrl: `https://opendrsai.ihep.ac.cn/share?token=${shareId}`,
+        shareToken: shareId,
+        deepLink: `opendrsai://share/${shareId}`,
+        createdAt: new Date().toISOString(),
+        readOnly: true as const,
+      };
+    },
+    openThreadShare: async () => true,
+    revealThreadShare: async () => true,
+    listInstalledSkills: async () =>
+      mockInstalledSkills.map(({ content: _content, ...skill }) => skill),
+    listAvailableSkills: async () => [],
+    getSkillContent: async (request) => {
+      const skill = mockInstalledSkills.find((item) => item.path === request.skillPath || item.name === request.skillPath);
+      if (!skill) throw new Error(`Skill not found: ${request.skillPath}`);
+      return { path: `${skill.path}/SKILL.md`, content: skill.content };
+    },
+    installSkill: async (request) => {
+      if (mockInstalledSkills.some((skill) => skill.name === request.name)) {
+        throw new Error(`skill '${request.name}' already exists`);
+      }
+      const content = request.content || defaultMockSkillContent(request.name);
+      const path = `mock://skills/${request.name}`;
+      mockInstalledSkills.push({
+        name: request.name,
+        category: "user",
+        description: "",
+        path,
+        size: content.length,
+        mtime: Date.now() / 1000,
+        content,
+      });
+      return { status: "ok", name: request.name, path };
+    },
+    updateSkill: async (request) => {
+      const skill = mockInstalledSkills.find((item) => item.name === request.name);
+      if (!skill) throw new Error(`skill '${request.name}' not found`);
+      skill.content = request.content;
+      skill.size = request.content.length;
+      skill.mtime = Date.now() / 1000;
+      return { status: "ok", name: request.name, path: skill.path };
+    },
+    uninstallSkill: async (request) => {
+      mockInstalledSkills = mockInstalledSkills.filter((skill) => skill.name !== request.name);
+      return { status: "ok", name: request.name };
+    },
+    reloadSkills: async () => ({ ok: true, reloaded: true }),
     prepareForkWorktree: async (request) => {
       const slug = (request.intent || "subtask")
         .toLowerCase()

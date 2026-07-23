@@ -46,9 +46,16 @@ Endpoints:
 
     POST /v1/threads/{thread_id}/stop          (stop & save state)
 
-    GET  /v1/skills                            (list installed skills)
+    GET  /v1/gfs/health                        (GFS cloud disk probe)
+    POST /v1/gfs/list|stat|read|write|upload|download|delete|share-url
 
+    GET  /v1/skills                            (list installed skills)
+    GET  /v1/skills/available                  (list bundled/available skills)
     GET  /v1/skills/{skill_path:path}          (get skill content)
+    POST /v1/skills/install                    (create/install a skill)
+    PUT  /v1/skills/{skill_name}               (update skill SKILL.md)
+    DELETE /v1/skills/{skill_name}             (uninstall a skill)
+    POST /v1/skills/reload                     (hot-reload via DrSaiAssistant.update_user_skills)
 
     GET  /v1/memory                            (get memory/user profile)
 
@@ -319,7 +326,38 @@ def _normalize_default_model_alias(alias: object) -> str:
     return normalized or DEFAULT_CONFIG_NAME
 
 
+async def _apply_agent_model(agent: Any, model_alias: str | None) -> str | None:
+    """Ensure ``agent`` is bound to ``model_alias`` when one is requested.
 
+    Returns the effective alias after any switch (or the agent's current alias).
+    """
+    if not model_alias:
+        current = getattr(agent, "_defult_config_name", None)
+        return current if isinstance(current, str) and current.strip() else None
+
+    current = getattr(agent, "_defult_config_name", None)
+    if current == model_alias:
+        return model_alias
+
+    set_fn = getattr(agent, "_set_model_client", None)
+    switch_fn = getattr(agent, "switch_model", None)
+    if not callable(set_fn) or not callable(switch_fn):
+        logger.warning(
+            f"Cannot apply model '{model_alias}': agent lacks switch_model support"
+        )
+        return current if isinstance(current, str) and current.strip() else model_alias
+
+    try:
+        new_client = set_fn(model_alias)
+        maybe = switch_fn(new_client)
+        if inspect.isawaitable(maybe):
+            await maybe
+        agent._defult_config_name = model_alias
+        logger.info(f"Applied requested model '{model_alias}' (was '{current}')")
+        return model_alias
+    except Exception as exc:
+        logger.warning(f"Failed to apply requested model '{model_alias}': {exc}")
+        return current if isinstance(current, str) and current.strip() else None
 
 
 # ââ Logging ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
@@ -426,6 +464,16 @@ class SkillInstallRequest(BaseModel):
     name: str = Field(..., description="Skill name (directory name)")
     content: str = Field(default="", description="SKILL.md content (optional if source is provided)")
     source: str | None = Field(default=None, description="Source collection name for installing from bundled skills")
+
+
+class SkillUpdateRequest(BaseModel):
+    name: str = Field(..., description="Skill name (directory name)")
+    content: str = Field(..., description="Full SKILL.md content")
+
+
+class SkillReloadRequest(BaseModel):
+    thread_id: str | None = Field(default=None, description="Active thread/session to hot-reload; omit to reload all agents for the user")
+    user_id: str | None = Field(default=None, description="User id owning the skills directory")
 
 
 class ToolEntry(BaseModel):
@@ -566,6 +614,8 @@ class AgentManager:
         self._agents: dict[str, Any] = {}            # "{user_id}:{thread_id}" â agent
 
         self._model_aliases: dict[str, str] = {}     # key â current model alias
+
+        self._work_dirs: dict[str, str] = {}         # key â work_dir used at create time
 
         self._locks: dict[str, asyncio.Lock] = {}    # key â request lock
 
@@ -802,15 +852,50 @@ class AgentManager:
 
             current_alias = self._model_aliases.get(key)
 
+            current_work_dir = self._work_dirs.get(key) if hasattr(self, "_work_dirs") else None
 
+            if not hasattr(self, "_work_dirs"):
+                self._work_dirs = {}
 
-            if agent is None or (model_alias and model_alias != current_alias):
+            desired_work_dir = (work_dir or "").strip() or os.getcwd()
+
+            work_dir_changed = False
+            if agent is not None and desired_work_dir:
+                if not current_work_dir:
+                    # Cached agent from before work_dir tracking — rebind once.
+                    work_dir_changed = True
+                else:
+                    work_dir_changed = (
+                        os.path.normcase(os.path.normpath(desired_work_dir))
+                        != os.path.normcase(os.path.normpath(current_work_dir))
+                    )
+
+            if agent is None or (model_alias and model_alias != current_alias) or work_dir_changed:
+
+                model_changed = bool(agent is not None and model_alias and model_alias != current_alias)
+                if (work_dir_changed or model_changed) and agent is not None:
+                    reason = "work_dir" if work_dir_changed else "model"
+                    logger.info(
+                        f"Recreating agent for {reason} change: "
+                        f"model {current_alias} -> {model_alias}, "
+                        f"work_dir {current_work_dir} -> {desired_work_dir} ({key})"
+                    )
+                    try:
+                        if hasattr(agent, "close"):
+                            maybe = agent.close()
+                            if inspect.isawaitable(maybe):
+                                await maybe
+                    except Exception as exc:
+                        logger.warning(f"Failed to close agent before recreate: {exc}")
+                    self._agents.pop(key, None)
+                    self._model_aliases.pop(key, None)
+                    self._work_dirs.pop(key, None)
 
                 logger.info(
 
                     f"Creating agent: user_id={uid}, thread_id={tid}, "
 
-                    f"model={model_alias}, work_dir={work_dir}"
+                    f"model={model_alias}, work_dir={desired_work_dir}"
 
                 )
 
@@ -823,7 +908,7 @@ class AgentManager:
                     user_id=uid,
                     db_manager=_get_db(),
                     defult_config_name=model_alias or _get_default_model_alias(),
-                    work_dir=work_dir or os.getcwd(),
+                    work_dir=desired_work_dir,
                 )
                 try:
                     remote_tools, _ = await _load_remote_hepai_tools()
@@ -849,26 +934,42 @@ class AgentManager:
 
 
                 # 3. Load saved state from Thread.state
+                # When the desktop UI sends an explicit model alias, do not let
+                # the previous session model overwrite that selection.
 
                 state_dict = await self._load_thread_state(tid, uid)
 
                 if state_dict and hasattr(agent, "load_state"):
-
-                    await agent.load_state(state_dict)
+                    load_state = agent.load_state
+                    try:
+                        await load_state(state_dict, restore_model=not bool(model_alias))
+                    except TypeError:
+                        # Older agents without the restore_model kwarg.
+                        await load_state(state_dict)
 
                     logger.info(f"Loaded saved state for {key}")
+
+                effective_alias = await _apply_agent_model(agent, model_alias)
 
 
 
                 # 4. Get-or-create Thread record
 
-                await self._get_or_create_thread(tid, uid, work_dir)
+                await self._get_or_create_thread(tid, uid, desired_work_dir)
 
 
 
                 self._agents[key] = agent
 
-                self._model_aliases[key] = model_alias
+                self._model_aliases[key] = effective_alias or model_alias
+
+                self._work_dirs[key] = desired_work_dir
+
+            elif model_alias:
+                # Cache hit: still honor a per-request model override in case
+                # a prior load_state left the agent on a different model.
+                effective_alias = await _apply_agent_model(agent, model_alias)
+                self._model_aliases[key] = effective_alias or model_alias
 
 
 
@@ -1049,6 +1150,51 @@ class AgentManager:
 
 
 
+    def reload_user_skills(
+        self,
+        user_id: str | None = None,
+        thread_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Call ``DrSaiAssistant.update_user_skills()`` on live agent(s).
+
+        Mirrors TUI ``skills.manage`` action=reload. When ``thread_id`` is set,
+        only that session is refreshed; otherwise every in-memory agent for the
+        user is refreshed.
+        """
+        uid = user_id or _get_user_id()
+        reloaded: list[str] = []
+        errors: list[str] = []
+
+        if thread_id:
+            keys = [self._make_key(uid, thread_id)]
+        else:
+            prefix = f"{uid}:"
+            keys = [k for k in self._agents if k.startswith(prefix)]
+
+        for key in keys:
+            agent = self._agents.get(key)
+            if agent is None:
+                continue
+            if not hasattr(agent, "update_user_skills"):
+                continue
+            try:
+                _loader, err = agent.update_user_skills()
+                if err:
+                    errors.append(f"{key}: {err}")
+                else:
+                    reloaded.append(key)
+                    logger.info(f"skills: reloaded agent skills for {key}")
+            except Exception as e:
+                errors.append(f"{key}: {e}")
+                logger.exception(f"skills: update_user_skills failed for {key}")
+
+        return {
+            "ok": not errors,
+            "reloaded": bool(reloaded),
+            "agents": reloaded,
+            "errors": errors,
+        }
+
     async def stop_agent(self, thread_id: str, user_id: str | None = None) -> bool:
 
         """Stop an agent, save its final state, and remove from pool."""
@@ -1060,6 +1206,8 @@ class AgentManager:
         agent = self._agents.pop(key, None)
 
         self._model_aliases.pop(key, None)
+
+        self._work_dirs.pop(key, None)
 
         if agent is None:
 
@@ -1122,6 +1270,7 @@ class AgentManager:
             for k in keys:
                 agent = self._agents.pop(k, None)
                 self._model_aliases.pop(k, None)
+                self._work_dirs.pop(k, None)
                 if agent is not None and hasattr(agent, "close"):
                     try:
                         await agent.close()
@@ -1170,6 +1319,27 @@ async def lifespan(app: FastAPI):
     """Startup/shutdown hooks."""
 
     logger.info(f"OpenDrSai API Server starting on {DEFAULT_HOST}:{DEFAULT_PORT}")
+
+    # Load ~/.drsai/.env so GFS_* / HEPAI_* credentials are visible to tools
+    # and /v1/gfs routes even when the process was not launched from that cwd.
+    try:
+        from dotenv import load_dotenv
+
+        env_path = Path(FS_DIR) / ".env"
+        if env_path.is_file():
+            load_dotenv(env_path, override=False)
+            logger.info(f"Loaded env file: {env_path}")
+        # Dev convenience: also pick up repo-root .env when present (no override).
+        # gateway.py lives at cores/python/packages/drsai/src/drsai/backend/
+        repo_env = Path(__file__).resolve().parents[7] / ".env"
+        if repo_env.is_file():
+            load_dotenv(repo_env, override=False)
+            logger.info(f"Loaded env file: {repo_env}")
+        from drsai.backend.gfs_api import _normalize_gfs_env_aliases
+
+        _normalize_gfs_env_aliases()
+    except Exception as exc:
+        logger.warning(f"Failed to load GFS-related env files: {exc}")
 
     # Initialize DB eagerly so first request doesn't pay the cost
 
@@ -1222,6 +1392,10 @@ app = FastAPI(
     lifespan=lifespan,
 
 )
+
+from drsai.backend.gfs_api import register_gfs_routes
+
+register_gfs_routes(app)
 
 _REMOTE_PROTOCOL_VERSION = PROTOCOL_VERSION
 _remote_workspaces: dict[str, Path] = {}
@@ -3415,32 +3589,95 @@ def _task_with_runtime_mode(task: str, metadata: dict[str, Any] | None) -> str:
 
 
 def _task_with_remote_attachments(task: str, metadata: dict[str, Any] | None, workspace_id: str | None) -> str:
-    if not workspace_id or not isinstance(metadata, dict): return task
+    if not isinstance(metadata, dict):
+        return task
+
+    # Desktop may pre-read local attachments into attachment_context. Prefer that
+    # so uploaded files outside the workspace are still visible to the agent.
+    # Skip when desktop already embedded the same block into the last user message.
+    prebuilt = metadata.get("attachment_context")
+    if (
+        isinstance(prebuilt, list)
+        and prebuilt
+        and "The user attached the following local context." not in task
+    ):
+        blocks: list[str] = []
+        total = 0
+        for item in prebuilt[:20]:
+            if not isinstance(item, dict):
+                continue
+            if not item.get("included"):
+                continue
+            content = str(item.get("content") or "").strip()
+            if not content:
+                continue
+            name = str(item.get("name") or "attachment")[:200]
+            kind = str(item.get("kind") or "file")[:40]
+            path = str(item.get("path") or "")[:2048]
+            remaining = 50000 - total
+            if remaining <= 0:
+                break
+            content = content[:remaining]
+            total += len(content)
+            blocks.append(
+                f"Attachment: {name} ({kind})\nPath: {path}\nContent:\n{content}"
+            )
+        if blocks:
+            return (
+                f"{task}\n\nThe user attached the following local context. "
+                "Answer using these attachments directly when the user asks about "
+                "\"the file\", \"this file\", or similar.\n\n"
+                + "\n\n".join(blocks)
+            )
+
+    if not workspace_id:
+        return task
     attachments = metadata.get("attachments")
-    if not isinstance(attachments, list): return task
-    blocks: list[str] = []
+    if not isinstance(attachments, list):
+        return task
+    blocks = []
     total = 0
     for item in attachments[:20]:
-        if not isinstance(item, dict): continue
-        kind = str(item.get("kind") or ""); name = str(item.get("name") or "attachment")[:200]
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind") or "")
+        name = str(item.get("name") or "attachment")[:200]
         if kind in {"browser", "terminal", "selection"}:
             content = str(item.get("visibleText") or item.get("note") or "")[:12000]
         elif kind == "file":
             try:
                 target = _workspace_child(workspace_id, str(item.get("path") or ""))
                 raw = target.read_bytes()[:262144]
-                content = raw.decode("utf-8", errors="replace") if b"\x00" not in raw[:8192] else "[binary file omitted]"
-            except (HTTPException, OSError): content = "[file unavailable]"
+                content = (
+                    raw.decode("utf-8", errors="replace")
+                    if b"\x00" not in raw[:8192]
+                    else "[binary file omitted]"
+                )
+            except (HTTPException, OSError):
+                content = "[file unavailable]"
         elif kind == "folder":
             try:
                 directory = _workspace_child(workspace_id, str(item.get("path") or ""))
-                content = "\n".join(str(path.relative_to(directory)) for path in directory.rglob("*") if path.is_file())[:24000]
-            except (HTTPException, OSError): content = "[folder unavailable]"
-        else: continue
+                content = "\n".join(
+                    str(path.relative_to(directory))
+                    for path in directory.rglob("*")
+                    if path.is_file()
+                )[:24000]
+            except (HTTPException, OSError):
+                content = "[folder unavailable]"
+        else:
+            continue
         remaining = 50000 - total
-        if remaining <= 0: break
-        content = content[:remaining]; total += len(content); blocks.append(f"Attachment: {name} ({kind})\n{content}")
-    return task if not blocks else f"{task}\n\nRemote workspace attachment context:\n" + "\n\n".join(blocks)
+        if remaining <= 0:
+            break
+        content = content[:remaining]
+        total += len(content)
+        blocks.append(f"Attachment: {name} ({kind})\n{content}")
+    return (
+        task
+        if not blocks
+        else f"{task}\n\nRemote workspace attachment context:\n" + "\n\n".join(blocks)
+    )
 
 
 @app.post("/v1/chat/completions")
@@ -3617,13 +3854,13 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
                 current_error = current_error.__cause__ or current_error.__context__
             diagnostic = " <- ".join(diagnostic_parts)
             error = {**error, "message": f"{error['message']} [{diagnostic}]"}
-            logger.error(
-                "Agent error for session %s: code=%s diagnostic=%s",
+            logger.exception(
+                "Agent error for session {}: code={} diagnostic={} message={}",
                 thread_id,
                 error["code"],
                 diagnostic,
+                error.get("message"),
             )
-            logger.debug(traceback.format_exc())
             for frame in conversation_projector.encode(
                 conversation_projector.complete(
                     {"message": error.get("message") or "Agent turn failed."},
@@ -3897,28 +4134,78 @@ async def rename_thread(
 
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Skills — HTTP surface mirroring TUI ``skills.manage`` + DrSaiAssistant
+# Storage: ~/.drsai/workspace/runs/<user>/configs/skills/<name>/SKILL.md
+# Hot-reload: AgentManager.reload_user_skills → update_user_skills()
+# ═══════════════════════════════════════════════════════════════════════════
 
-# âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
-
-# Skills
-
-# âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
-
+_SKILL_FILENAME = "SKILL.md"
+_VALID_SKILL_NAME_RE = re.compile(r"^[a-zA-Z0-9_\-]+$")
+_MAX_SKILL_CONTENT_BYTES = 4 * 1024 * 1024  # 4 MB (same as TUI)
 
 
 def _get_skills_dir(user_id: str | None = None) -> Path:
+    """Resolve the skills directory for a user.
 
-    """Resolve the skills directory for a user."""
-
+    Aligned with ``UserProfileManager.skills_dir`` and TUI
+    ``_get_user_skills_dir``: ``WORKDIR / user_id / configs / skills``.
+    """
     uid = user_id or _get_user_id()
+    from drsai.backend.run_drsai_agent_factory import WORKDIR
+    return Path(WORKDIR) / uid / "configs" / "skills"
 
-    # Aligned with create_agent's storage_dir: WORKDIR / user_id
+
+def _migrate_legacy_os_user_skills(user_id: str | None = None) -> list[str]:
+    """Copy skills from the OS-username tree into the auth user tree once.
+
+    Desktop Skills UI historically omitted ``user_id``, so skills were written
+    under ``WORKDIR/<OS_USERNAME>/configs/skills`` while chat agents use the
+    OIDC/SSO subject under ``WORKDIR/<auth_user_id>/configs/skills``. Without
+    this migration, Skills Manager shows skills the agent cannot load.
+    """
+    import shutil
+
+    uid = (user_id or _get_user_id()).strip()
+    legacy_uid = (_DEFAULT_USER_ID or "").strip()
+    if not uid or not legacy_uid or uid == legacy_uid:
+        return []
 
     from drsai.backend.run_drsai_agent_factory import WORKDIR
 
-    # Aligned with UserProfileManager: skills_dir = config_path / "skills"
-    #   where config_path = WORKDIR / user_id / "configs"
-    return Path(WORKDIR) / uid / "configs" / "skills"
+    legacy_dir = Path(WORKDIR) / legacy_uid / "configs" / "skills"
+    target_dir = Path(WORKDIR) / uid / "configs" / "skills"
+    if not legacy_dir.exists():
+        return []
+
+    migrated: list[str] = []
+    target_dir.mkdir(parents=True, exist_ok=True)
+    for skill_dir in sorted(legacy_dir.iterdir()):
+        if not skill_dir.is_dir():
+            continue
+        skill_md = skill_dir / _SKILL_FILENAME
+        if not skill_md.exists():
+            continue
+        dest = target_dir / skill_dir.name
+        if dest.exists():
+            continue
+        try:
+            shutil.copytree(skill_dir, dest)
+            migrated.append(skill_dir.name)
+            logger.info(
+                "skills: migrated '%s' from legacy user '%s' to '%s'",
+                skill_dir.name,
+                legacy_uid,
+                uid,
+            )
+        except Exception:
+            logger.exception(
+                "skills: failed to migrate '%s' from '%s' to '%s'",
+                skill_dir.name,
+                legacy_uid,
+                uid,
+            )
+    return migrated
 
 
 def _get_config_dir(user_id: str | None = None) -> Path:
@@ -3926,6 +4213,66 @@ def _get_config_dir(user_id: str | None = None) -> Path:
     from drsai.backend.run_drsai_agent_factory import WORKDIR
     uid = user_id or _get_user_id()
     return Path(WORKDIR) / uid / "configs"
+
+
+def _validate_skill_name(name: str) -> None:
+    """Raise HTTPException if skill name is invalid (TUI parity)."""
+    if not name:
+        raise HTTPException(status_code=400, detail="skill name is required")
+    if not _VALID_SKILL_NAME_RE.match(name):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"invalid skill name '{name}': "
+                "only letters, digits, hyphens and underscores are allowed"
+            ),
+        )
+    if len(name) > 64:
+        raise HTTPException(
+            status_code=400,
+            detail=f"skill name too long ({len(name)} chars, max 64)",
+        )
+
+
+def _require_valid_skill_md(content: str, *, fallback_name: str | None = None) -> tuple[str, dict[str, str]]:
+    """Validate SKILL.md has YAML frontmatter.
+
+    Returns ``(normalized_content, meta)``. When frontmatter ``name`` is empty
+    but ``fallback_name`` is provided (desktop create flow), injects the name.
+    """
+    if not content or not content.strip():
+        raise HTTPException(status_code=400, detail="content is required")
+    if len(content.encode("utf-8")) > _MAX_SKILL_CONTENT_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"content too large (max {_MAX_SKILL_CONTENT_BYTES // 1024} KB)",
+        )
+    if not content.lstrip().startswith("---"):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "content must be a valid SKILL.md with YAML frontmatter "
+                "containing 'name' and 'description' fields"
+            ),
+        )
+    name, description, category = _parse_skill_frontmatter(content)
+    normalized = content
+    if not name and fallback_name:
+        # Sync directory name into frontmatter (desktop editor keeps them separate).
+        # Use [ \t]* not \s* — \s matches newlines and would swallow the next YAML line.
+        normalized = re.sub(
+            r"(?m)^(name:[ \t]*).*$",
+            rf"\1{fallback_name}",
+            content,
+            count=1,
+        )
+        name = fallback_name
+    if not name:
+        raise HTTPException(
+            status_code=400,
+            detail="SKILL.md frontmatter must include a 'name' field",
+        )
+    return normalized, {"name": name, "description": description or "", "category": category or ""}
 
 
 def _get_available_skills_dirs() -> list[Path]:
@@ -3946,9 +4293,8 @@ def _get_available_skills_dirs() -> list[Path]:
                 if p.exists() and p.is_dir():
                     dirs.append(p.resolve())
 
-    # Also scan project-root agent_skills/ collections
     project_root_candidates = [
-        Path(__file__).resolve().parents[6],  # gateway → backend → drsai → src → pkg → python → project
+        Path(__file__).resolve().parents[6],
         Path.cwd(),
     ]
     for root in project_root_candidates:
@@ -3964,91 +4310,51 @@ def _get_available_skills_dirs() -> list[Path]:
 
 
 def _find_bundled_skill_md(name: str, source: str | None = None) -> Path | None:
-    """Find a SKILL.md in the bundled skill collections.
-
-    Args:
-        name: Skill name (directory name).
-        source: Optional collection name to restrict the search.
-            If not provided, all collections are scanned.
-
-    Returns:
-        Path to SKILL.md if found, else None.
-    """
+    """Find a SKILL.md in the bundled skill collections."""
     for skills_dir in _get_available_skills_dirs():
         if source and skills_dir.name != source:
             continue
-        candidate = skills_dir / name / "SKILL.md"
+        candidate = skills_dir / name / _SKILL_FILENAME
         if candidate.exists():
             return candidate
     return None
 
 
-
-
-
 @app.get("/v1/skills")
-
 async def list_skills(
-
     user_id: str | None = Query(default=None),
-
 ):
-
-    """List installed skills for the given user."""
-
+    """List installed skills for the given user (TUI ``skills.manage`` action=list)."""
+    _migrate_legacy_os_user_skills(user_id)
     skills_dir = _get_skills_dir(user_id)
-
     skills: list[dict] = []
 
-
-
     if skills_dir.exists():
-
         for skill_dir in sorted(skills_dir.iterdir()):
-
             if not skill_dir.is_dir():
-
                 continue
-
-            skill_md = skill_dir / "SKILL.md"
-
+            skill_md = skill_dir / _SKILL_FILENAME
             if not skill_md.exists():
-
                 continue
-
             try:
-
                 content = skill_md.read_text(encoding="utf-8", errors="replace")[:4000]
-
                 name, description, category = _parse_skill_frontmatter(content)
-
+                st = skill_md.stat()
                 skills.append({
-
                     "name": name or skill_dir.name,
-
-                    "category": category or "",
-
+                    "category": category or "user",
                     "description": description or "",
-
                     "path": str(skill_dir),
-
+                    "size": st.st_size,
+                    "mtime": st.st_mtime,
                 })
-
             except Exception:
-
                 skills.append({
-
                     "name": skill_dir.name,
-
-                    "category": "",
-
+                    "category": "user",
                     "description": "",
-
                     "path": str(skill_dir),
-
                 })
-
-
 
     return {"object": "list", "data": sorted(skills, key=lambda s: (s["category"], s["name"]))}
 
@@ -4057,17 +4363,13 @@ async def list_skills(
 async def list_available_skills(
     user_id: str | None = Query(default=None),
 ):
-    """List bundled/available skills from agent_skills collections.
-
-    Returns all skills from system collections with an ``installed`` flag
-    indicating whether the skill already exists in the user's skills dir.
-    """
-    # Resolve installed set
+    """List bundled/available skills from agent_skills collections."""
+    _migrate_legacy_os_user_skills(user_id)
     installed_names: set[str] = set()
     user_skills_dir = _get_skills_dir(user_id)
     if user_skills_dir.exists():
         for d in user_skills_dir.iterdir():
-            if d.is_dir() and (d / "SKILL.md").exists():
+            if d.is_dir() and (d / _SKILL_FILENAME).exists():
                 installed_names.add(d.name)
 
     results: list[dict] = []
@@ -4078,7 +4380,7 @@ async def list_available_skills(
         for skill_dir in sorted(skills_dir.iterdir()):
             if not skill_dir.is_dir():
                 continue
-            skill_md = skill_dir / "SKILL.md"
+            skill_md = skill_dir / _SKILL_FILENAME
             if not skill_md.exists():
                 continue
             try:
@@ -4090,7 +4392,8 @@ async def list_available_skills(
                     "description": description or "",
                     "category": source_name,
                     "source": source_name,
-                    "installed": name in installed_names,
+                    "path": str(skill_dir),
+                    "installed": name in installed_names or skill_dir.name in installed_names,
                 })
             except Exception:
                 results.append({
@@ -4098,10 +4401,10 @@ async def list_available_skills(
                     "description": "",
                     "category": source_name,
                     "source": source_name,
+                    "path": str(skill_dir),
                     "installed": skill_dir.name in installed_names,
                 })
 
-    # Deduplicate by name (first occurrence wins)
     seen: set[str] = set()
     deduped: list[dict] = []
     for r in results:
@@ -4112,55 +4415,19 @@ async def list_available_skills(
     return {"object": "list", "data": sorted(deduped, key=lambda s: (s["category"], s["name"]))}
 
 
-@app.get("/v1/skills/{skill_path:path}")
-
-async def get_skill_content(skill_path: str):
-
-    """Get the full SKILL.md content for a skill."""
-
-    path = Path(skill_path)
-
-    if not path.is_absolute():
-
-        # Resolve relative to skills dir
-
-        path = _get_skills_dir() / skill_path
-
-    skill_md = path / "SKILL.md" if path.is_dir() else path
-
-    if not skill_md.exists():
-
-        raise HTTPException(status_code=404, detail="Skill not found")
-
-    try:
-
-        content = skill_md.read_text(encoding="utf-8", errors="replace")
-
-        return {"path": str(skill_md), "content": content}
-
-    except Exception as e:
-
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 @app.post("/v1/skills/install")
 async def install_skill(
     req: SkillInstallRequest,
     user_id: str | None = Query(default=None),
 ):
-    """Install a skill by writing SKILL.md to the user's skills directory.
-
-    If ``source`` is provided, the backend reads SKILL.md from the
-    bundled ``agent_skills/{source}/{name}/`` directory and copies it.
-    Otherwise, ``content`` is written directly.
-    """
+    """Create/install a skill (TUI ``skills.manage`` action=create)."""
+    _validate_skill_name(req.name)
+    _migrate_legacy_os_user_skills(user_id)
     skills_dir = _get_skills_dir(user_id)
     skill_dir = skills_dir / req.name
 
-    # Determine content: from bundled source or from request body
     content = req.content
     if req.source and not content:
-        # Install from a bundled collection
         bundled_skill_md = _find_bundled_skill_md(req.name, req.source)
         if bundled_skill_md is None:
             raise HTTPException(
@@ -4169,12 +4436,61 @@ async def install_skill(
             )
         content = bundled_skill_md.read_text(encoding="utf-8", errors="replace")
 
-    if not content:
-        raise HTTPException(status_code=400, detail="content must not be empty")
+    content, _meta = _require_valid_skill_md(content, fallback_name=req.name)
 
-    skill_dir.mkdir(parents=True, exist_ok=True)
-    (skill_dir / "SKILL.md").write_text(content, encoding="utf-8")
+    if skill_dir.exists():
+        raise HTTPException(
+            status_code=409,
+            detail=f"skill '{req.name}' already exists; use PUT to overwrite",
+        )
+
+    skills_dir.mkdir(parents=True, exist_ok=True)
+    skill_dir.mkdir(parents=True, exist_ok=False)
+    skill_file = skill_dir / _SKILL_FILENAME
+    skill_file.write_text(content, encoding="utf-8")
+    logger.info(f"skills.install: created skill '{req.name}' for user {user_id or _get_user_id()}")
     return {"status": "ok", "name": req.name, "path": str(skill_dir)}
+
+
+@app.post("/v1/skills/reload")
+async def reload_skills(req: SkillReloadRequest = SkillReloadRequest()):
+    """Hot-reload skills on live DrSaiAssistant agent(s) (TUI action=reload).
+
+    Registered before ``GET /v1/skills/{skill_path}`` so ``reload`` is never
+    mistaken for a skill path (which would yield HTTP 405 on POST).
+    """
+    _migrate_legacy_os_user_skills(req.user_id)
+    result = manager.reload_user_skills(
+        user_id=req.user_id,
+        thread_id=req.thread_id,
+    )
+    return result
+
+
+@app.put("/v1/skills/{skill_name}")
+async def update_skill(
+    skill_name: str,
+    req: SkillUpdateRequest,
+    user_id: str | None = Query(default=None),
+):
+    """Update an existing skill's SKILL.md (TUI ``skills.manage`` action=update)."""
+    _validate_skill_name(skill_name)
+    if req.name and req.name != skill_name:
+        raise HTTPException(status_code=400, detail="body name must match path skill_name")
+    content, _meta = _require_valid_skill_md(req.content, fallback_name=skill_name)
+
+    skills_dir = _get_skills_dir(user_id)
+    skill_dir = skills_dir / skill_name
+    skill_file = skill_dir / _SKILL_FILENAME
+    if not skill_file.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"skill '{skill_name}' not found; use POST /v1/skills/install to create it",
+        )
+
+    skill_file.write_text(content, encoding="utf-8")
+    logger.info(f"skills.update: updated skill '{skill_name}' for user {user_id or _get_user_id()}")
+    return {"status": "ok", "name": skill_name, "path": str(skill_dir)}
 
 
 @app.delete("/v1/skills/{skill_name}")
@@ -4182,75 +4498,84 @@ async def uninstall_skill(
     skill_name: str,
     user_id: str | None = Query(default=None),
 ):
-    """Uninstall a skill by removing its directory."""
+    """Uninstall a skill by removing its directory (TUI action=delete)."""
     import shutil
+
+    _validate_skill_name(skill_name)
     skills_dir = _get_skills_dir(user_id)
     skill_dir = skills_dir / skill_name
     if not skill_dir.exists():
         raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
     shutil.rmtree(skill_dir)
+    logger.info(f"skills.delete: deleted skill '{skill_name}' for user {user_id or _get_user_id()}")
     return {"status": "ok", "name": skill_name}
 
 
+@app.get("/v1/skills/{skill_path:path}")
+async def get_skill_content(skill_path: str):
+    """Get the full SKILL.md content for a skill (TUI action=show)."""
+    # Reserve API suffixes that are not skill directories.
+    if skill_path in {"available", "install", "reload"} or skill_path.startswith(("available/", "install/", "reload/")):
+        raise HTTPException(status_code=404, detail="Skill not found")
+
+    path = Path(skill_path)
+    if not path.is_absolute():
+        path = _get_skills_dir() / skill_path
+
+    skill_md = path / _SKILL_FILENAME if path.is_dir() else path
+    if not skill_md.exists():
+        raise HTTPException(status_code=404, detail="Skill not found")
+
+    try:
+        content = skill_md.read_text(encoding="utf-8", errors="replace")
+        return {"path": str(skill_md), "content": content}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
 def _parse_skill_frontmatter(content: str) -> tuple[str, str, str]:
-
     """Parse SKILL.md frontmatter for name, description, and category."""
-
     name, description, category = "", "", ""
 
     if not content.startswith("---"):
-
-        # Fall back to first heading and paragraph
-
-        import re
-
         heading = re.search(r"^#\s+(.+)", content, re.MULTILINE)
-
         if heading:
-
             name = heading.group(1).strip()
-
         para = re.search(r"^(?!#)(?!---).+", content, re.MULTILINE)
-
         if para:
-
             description = para.group(0).strip()[:120]
-
         return name, description, category
-
-
 
     end_idx = content.find("---", 3)
-
     if end_idx == -1:
-
         return name, description, category
-
-
 
     frontmatter = content[3:end_idx]
 
-    import re
+    try:
+        import yaml
+
+        metadata = yaml.safe_load(frontmatter) or {}
+        if isinstance(metadata, dict):
+            if metadata.get("name") is not None:
+                name = str(metadata["name"]).strip()
+            if metadata.get("description") is not None:
+                description = str(metadata["description"]).strip()
+            if metadata.get("category") is not None:
+                category = str(metadata["category"]).strip()
+            return name, description, category
+    except Exception:
+        pass
 
     name_match = re.search(r"^\s*name:\s*[\"']?([^\"'\n]+)[\"']?\s*$", frontmatter, re.MULTILINE)
-
     if name_match:
-
         name = name_match.group(1).strip()
-
     desc_match = re.search(r"^\s*description:\s*[\"']?([^\"'\n]+)[\"']?\s*$", frontmatter, re.MULTILINE)
-
     if desc_match:
-
         description = desc_match.group(1).strip()
-
     cat_match = re.search(r"^\s*category:\s*[\"']?([^\"'\n]+)[\"']?\s*$", frontmatter, re.MULTILINE)
-
     if cat_match:
-
         category = cat_match.group(1).strip()
-
-
 
     return name, description, category
 

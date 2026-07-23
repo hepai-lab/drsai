@@ -18,6 +18,7 @@ import {
   ChevronRight,
   ClipboardList,
   FileCode2,
+  FileText,
   Folder,
   FolderPlus,
   Gauge,
@@ -40,6 +41,7 @@ import {
   Telescope,
   Volume2,
   X,
+  Zap,
 } from "lucide-react";
 import drsaiLogo from "../assets/drsai.png";
 import { canHandleMemoryRequestLocally } from "../userPreferenceIntent";
@@ -67,6 +69,7 @@ import type {
   WorkspaceFolderSummaryResult,
   WorkspaceInstructionSummary,
   WorkspaceProject,
+  GatewaySkill,
 } from "@shared/desktopApi";
 import type { ChatAttachment } from "@shared/desktopApi";
 import type { ArtifactPart, CitationPart, InteractionPart, StructuredTurnState } from "@shared/structuredConversation";
@@ -123,6 +126,8 @@ export type UiMessage = ChatMessage & {
   structuredTurn?: StructuredTurnState;
   startedAt?: number;
   lastEventAt?: number;
+  /** Files/folders attached when the user sent this message (shown as chips in the bubble). */
+  attachments?: ChatAttachment[];
   inputRequest?: {
     requestId: string;
     prompt: string;
@@ -178,6 +183,7 @@ export interface ChatSubmitOptions {
   forkQueueAgentAssignments?: ChatForkQueueAgentAssignment[];
   model?: string;
   runtimeMode?: ChatRuntimeMode | null;
+  skillName?: string | null;
   thinkingEffort: ThinkingEffort;
 }
 
@@ -295,7 +301,11 @@ export function ChatWorkspace({
   const materialConsistencyRequestRef = useRef(0);
   const [thinkingEffort, setThinkingEffort] = useState<ThinkingEffort>(defaultThinkingEffort);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [metaMenuOpen, setMetaMenuOpen] = useState<"agent" | "model" | "thinking" | null>(null);
+  const [metaMenuOpen, setMetaMenuOpen] = useState<"agent" | "model" | "thinking" | "skill" | null>(null);
+  const [installedSkills, setInstalledSkills] = useState<GatewaySkill[]>([]);
+  const [skillsLoading, setSkillsLoading] = useState(false);
+  const [skillsLoadError, setSkillsLoadError] = useState<string | null>(null);
+  const [selectedSkillName, setSelectedSkillName] = useState<string | null>(null);
   const [introMenuOpen, setIntroMenuOpen] = useState<"workspace" | "agent" | null>(null);
   const [introSearchQuery, setIntroSearchQuery] = useState("");
   const [forkQueueAgentSelections, setForkQueueAgentSelections] = useState<Record<number, string>>({});
@@ -481,6 +491,7 @@ export function ChatWorkspace({
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLFormElement | null>(null);
   const attachmentButtonRef = useRef<HTMLButtonElement | null>(null);
+  const toolsMenuRef = useRef<HTMLDivElement | null>(null);
   const introPickerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -495,8 +506,25 @@ export function ChatWorkspace({
         window.requestAnimationFrame(() => attachmentButtonRef.current?.focus());
       }
     };
+    const handlePointerDown = (event: PointerEvent): void => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (toolsOpen && !toolsMenuRef.current?.contains(target)) {
+        setToolsOpen(false);
+      }
+      if (metaMenuOpen) {
+        // Only keep the active meta menu open when clicking its own chip/panel —
+        // not the whole meta bar (voice controls / send would otherwise block dismiss).
+        const inActiveMenu = target.closest(`[data-meta-menu="${metaMenuOpen}"]`);
+        if (!inActiveMenu) setMetaMenuOpen(null);
+      }
+    };
     window.addEventListener("keydown", handleEscape);
-    return () => window.removeEventListener("keydown", handleEscape);
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      window.removeEventListener("keydown", handleEscape);
+      window.removeEventListener("pointerdown", handlePointerDown);
+    };
   }, [metaMenuOpen, toolsOpen]);
 
   useEffect(() => {
@@ -1227,12 +1255,14 @@ export function ChatWorkspace({
         ),
         model: selectedModelName,
         runtimeMode: currentRuntimeMode,
+        skillName: selectedSkillName,
         thinkingEffort,
       },
     );
     if (submitted) {
       setAttachments([]);
       onClearExternalAttachments?.();
+      setSelectedSkillName(null);
       if (isVoiceSubmission) dispatchVoiceTurn({ type: "response_started" });
       if (isStreamingVoiceSubmission) {
         streamingVoiceInput.acceptReview();
@@ -1519,8 +1549,59 @@ export function ChatWorkspace({
     textareaRef.current?.focus();
   }
 
-  function toggleMetaMenu(menu: "agent" | "model" | "thinking"): void {
-    setMetaMenuOpen((current) => (current === menu ? null : menu));
+  function toggleMetaMenu(menu: "agent" | "model" | "thinking" | "skill"): void {
+    setMetaMenuOpen((current) => {
+      const next = current === menu ? null : menu;
+      if (next === "skill") void loadInstalledSkillsForPicker();
+      return next;
+    });
+  }
+
+  async function loadInstalledSkillsForPicker(): Promise<void> {
+    if (!hasDesktopApi() || typeof desktopApi.listInstalledSkills !== "function") {
+      setInstalledSkills([]);
+      setSkillsLoadError(zh ? "当前环境不支持读取 Skills。" : "Skills are unavailable in this environment.");
+      return;
+    }
+    setSkillsLoading(true);
+    setSkillsLoadError(null);
+    try {
+      const skills = await desktopApi.listInstalledSkills();
+      setInstalledSkills(Array.isArray(skills) ? skills : []);
+    } catch (error) {
+      setInstalledSkills([]);
+      setSkillsLoadError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSkillsLoading(false);
+    }
+  }
+
+  function stripSkillPrefixFromInput(value: string, skillName?: string | null): string {
+    const specific = skillName?.trim()
+      ? zh
+        ? new RegExp(`^用\\s+${escapeRegExp(skillName.trim())}\\s*`)
+        : new RegExp(`^Use\\s+${escapeRegExp(skillName.trim())}\\s+skill\\s+to\\s*`, "i")
+      : null;
+    if (specific?.test(value)) return value.replace(specific, "");
+    const generic = zh
+      ? /^(用\s+)[A-Za-z0-9_\-]+(\s+|$)/
+      : /^(Use\s+)[A-Za-z0-9_\-]+(\s+skill\s+to\s+)/i;
+    return generic.test(value) ? value.replace(generic, "") : value;
+  }
+
+  function applySkillToComposer(skillName: string): void {
+    const cleaned = stripSkillPrefixFromInput(input, selectedSkillName).replace(/^\s+/, "");
+    if (cleaned !== input) onInputChange(cleaned);
+    setSelectedSkillName(skillName);
+    setMetaMenuOpen(null);
+    textareaRef.current?.focus();
+  }
+
+  function clearSelectedSkill(): void {
+    const cleaned = stripSkillPrefixFromInput(input, selectedSkillName);
+    if (cleaned !== input) onInputChange(cleaned);
+    setSelectedSkillName(null);
+    textareaRef.current?.focus();
   }
 
   function selectAgent(agentId: string): void {
@@ -1838,6 +1919,20 @@ export function ChatWorkspace({
           >
             <strong className="message-author">{message.role === "user" ? "You" : "OpenDrSai"}</strong>
             <div className="message-body">
+              {message.role === "user" && message.attachments?.length ? (
+                <div className="message-attachment-badges" aria-label={zh ? "附件" : "Attachments"}>
+                  {message.attachments.map((attachment, index) => (
+                    <span
+                      className="message-attachment-badge"
+                      key={`${message.id}-attachment-${index}-${attachment.path || attachment.name}`}
+                      title={attachment.path || attachment.name}
+                    >
+                      {renderMessageAttachmentIcon(attachment.kind)}
+                      <span>{attachment.name}</span>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
               {message.role === "assistant" && message.replyFailed ? (
                 <button type="button" className="chat-reply-failed" onClick={onOpenDebug}>
                   <Bug size={14} aria-hidden />
@@ -1870,7 +1965,7 @@ export function ChatWorkspace({
                   language={language}
                   onOpenLink={handleMarkdownLink}
                 />
-              ) : (
+              ) : message.role === "user" && message.attachments?.length ? null : (
                 <StreamingStatus message={message} now={now} zh={zh} />
               )}
               {!message.structuredTurn && message.reasoningContent && (
@@ -2195,7 +2290,9 @@ export function ChatWorkspace({
               </div>
               {materialRolePhase === "ready" && materialRoleAnalysis ? (
                 <div className="material-role-groups">
-                  {(["previous_report", "latest_data", "result_image", "reference_material"] as const).map((role) => (
+                  {(["previous_report", "latest_data", "result_image", "reference_material"] as const)
+                    .filter((role) => (materialRoleAnalysis.roleCounts[role] || 0) > 0)
+                    .map((role) => (
                     <article
                       key={role}
                       data-material-role={role}
@@ -2392,7 +2489,7 @@ export function ChatWorkspace({
 
           <div className="composer-box">
             <div className="composer-input-row">
-              <div className="composer-tools">
+              <div className="composer-tools" ref={toolsMenuRef}>
                 <button
                   ref={attachmentButtonRef}
                   type="button"
@@ -2477,20 +2574,38 @@ export function ChatWorkspace({
                   onStop={voiceState === "processing" ? cancelVoiceTranscription : () => stopVoiceRecording("transcribe")}
                 />
               ) : (
-                <textarea
-                  data-testid="composer-input"
-                ref={textareaRef}
-                value={input}
-                onChange={(event) => onInputChange(event.target.value)}
-                onKeyDown={handleKeyDown}
-                onPaste={handlePaste}
-                placeholder={
-                  canChat
-                    ? zh ? "向 OpenDrSai 提问..." : "Ask OpenDrSai..."
-                    : chatUnavailableReason ?? (zh ? "请稍候，当前任务正在处理..." : "Please wait while the current task is running...")
-                }
-                rows={1}
-              />
+                <div className="composer-editor">
+                  {selectedSkillName ? (
+                    <div className="composer-skill-tags" aria-label={zh ? "已选技能" : "Selected skill"}>
+                      <span className="composer-skill-tag" data-testid="composer-skill-tag">
+                        <Zap size={12} aria-hidden="true" />
+                        <span className="composer-skill-tag-label">{selectedSkillName}</span>
+                        <button
+                          type="button"
+                          aria-label={zh ? `移除技能 ${selectedSkillName}` : `Remove skill ${selectedSkillName}`}
+                          title={zh ? "移除技能" : "Remove skill"}
+                          onClick={clearSelectedSkill}
+                        >
+                          <X size={12} />
+                        </button>
+                      </span>
+                    </div>
+                  ) : null}
+                  <textarea
+                    data-testid="composer-input"
+                    ref={textareaRef}
+                    value={input}
+                    onChange={(event) => onInputChange(event.target.value)}
+                    onKeyDown={handleKeyDown}
+                    onPaste={handlePaste}
+                    placeholder={
+                      canChat
+                        ? zh ? "向 OpenDrSai 提问..." : "Ask OpenDrSai..."
+                        : chatUnavailableReason ?? (zh ? "请稍候，当前任务正在处理..." : "Please wait while the current task is running...")
+                    }
+                    rows={1}
+                  />
+                </div>
               )}
 
             </div>
@@ -2584,7 +2699,7 @@ export function ChatWorkspace({
                   </span>
                 </div>
               )}
-              <div className="composer-meta-item">
+              <div className="composer-meta-item" data-meta-menu="agent">
                 <button
                   className="composer-meta-chip composer-meta-button"
                   type="button"
@@ -2612,7 +2727,7 @@ export function ChatWorkspace({
                   </div>
                 )}
               </div>
-              <div className="composer-meta-item">
+              <div className="composer-meta-item" data-meta-menu="model">
                 <button
                   className="composer-meta-chip composer-meta-button"
                   type="button"
@@ -2640,7 +2755,48 @@ export function ChatWorkspace({
                   </div>
                 )}
               </div>
-              <div className="composer-meta-item">
+              <div className="composer-meta-item" data-meta-menu="skill">
+                <button
+                  className={`composer-meta-chip composer-meta-button${selectedSkillName ? " active" : ""}`}
+                  type="button"
+                  aria-expanded={metaMenuOpen === "skill"}
+                  onClick={() => toggleMetaMenu("skill")}
+                  title={zh ? "从 Skills 管理中选择技能" : "Pick a skill from Skills manager"}
+                >
+                  <Zap size={14} />
+                  {zh ? "技能" : "Skill"}
+                  <ChevronDown size={13} />
+                </button>
+                {metaMenuOpen === "skill" && (
+                  <div className="composer-meta-menu wide" role="listbox" aria-label={zh ? "已安装技能" : "Installed skills"}>
+                    {skillsLoading ? (
+                      <p className="composer-meta-menu-empty">{zh ? "正在加载 Skills…" : "Loading skills…"}</p>
+                    ) : skillsLoadError ? (
+                      <p className="composer-meta-menu-empty">{skillsLoadError}</p>
+                    ) : installedSkills.length ? (
+                      installedSkills.map((skill) => (
+                        <button
+                          key={skill.path || skill.name}
+                          type="button"
+                          role="option"
+                          className={skill.name === selectedSkillName ? "active" : ""}
+                          onClick={() => applySkillToComposer(skill.name)}
+                        >
+                          <span>{skill.name}</span>
+                          <small>{skill.description || skill.category || (zh ? "用户技能" : "User skill")}</small>
+                        </button>
+                      ))
+                    ) : (
+                      <p className="composer-meta-menu-empty">
+                        {zh
+                          ? "还没有已安装技能。可到左侧 Skills 管理中新建。"
+                          : "No installed skills yet. Create one in Skills manager."}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="composer-meta-item" data-meta-menu="thinking">
               <button
                 className="composer-meta-chip composer-meta-button"
                 type="button"
@@ -3009,10 +3165,23 @@ function MessageActions({
   zh: boolean;
 }): React.JSX.Element {
   const [copied, setCopied] = useState(false);
+  const [localPending, setLocalPending] = useState(false);
   const isActive = playback.activeMessageId === messageId;
   const isPlaying = isActive && playback.phase === "playing";
   const isPaused = isActive && playback.phase === "paused";
-  const isSynthesizing = isActive && playback.phase === "synthesizing";
+  const isSynthesizing = localPending || (isActive && playback.phase === "synthesizing");
+
+  useEffect(() => {
+    if (!localPending) return;
+    if (playback.activeMessageId === messageId && playback.phase !== "idle") {
+      setLocalPending(false);
+      return;
+    }
+    if (playback.error && playback.phase === "failed") {
+      setLocalPending(false);
+    }
+  }, [localPending, messageId, playback.activeMessageId, playback.error, playback.phase]);
+
   async function handleCopy(): Promise<void> {
     try {
       if (!await copyTextSafely(content)) return;
@@ -3022,8 +3191,23 @@ function MessageActions({
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1500);
   }
+
+  function handleReadAloud(): void {
+    setLocalPending(true);
+    try {
+      playback.play(messageId, content, zh ? "zh" : "en", {
+        mode: synthesisMode,
+        rate: playbackRate,
+        voiceName,
+      });
+    } catch (error) {
+      setLocalPending(false);
+      console.error("voice playback failed to start", error);
+    }
+  }
+
   return (
-    <div className={`message-actions ${isActive || playback.error ? "active" : ""}`} aria-live="polite">
+    <div className={`message-actions ${isActive || isSynthesizing || playback.error ? "active" : ""}`} aria-live="polite">
       <button type="button" onClick={() => void handleCopy()} title={zh ? "复制回答" : "Copy response"}>
         {copied ? "✓" : <ClipboardList size={13} />}
         <span>{copied ? (zh ? "已复制" : "Copied") : (zh ? "复制" : "Copy")}</span>
@@ -3047,20 +3231,33 @@ function MessageActions({
         <button
           type="button"
           disabled={playbackDisabled || !playback.isAvailable}
-          onClick={() => playback.play(messageId, content, zh ? "zh" : "en", { mode: synthesisMode, rate: playbackRate, voiceName })}
-          title={zh ? "朗读回复" : "Read response aloud"}
+          onClick={handleReadAloud}
+          title={
+            playbackDisabled
+              ? (zh ? "录音进行中，暂不可朗读" : "Unavailable while recording")
+              : !playback.isAvailable
+                ? (zh ? "当前环境不支持朗读" : "Speech playback unavailable")
+                : (zh ? "朗读回复" : "Read response aloud")
+          }
         >
           <Volume2 size={13} />
           <span>{zh ? "朗读" : "Read"}</span>
         </button>
       )}
-      {isActive ? (
-        <button type="button" onClick={playback.stop} title={zh ? "停止朗读" : "Stop reading"}>
+      {isActive || isSynthesizing ? (
+        <button
+          type="button"
+          onClick={() => {
+            setLocalPending(false);
+            playback.stop();
+          }}
+          title={zh ? "停止朗读" : "Stop reading"}
+        >
           <Square size={12} />
           <span>{zh ? "停止" : "Stop"}</span>
         </button>
       ) : null}
-      {playback.error && !playback.activeMessageId ? (
+      {playback.error ? (
         <span className="message-action-error" role="status">{playback.error}</span>
       ) : null}
     </div>
@@ -3139,6 +3336,24 @@ function formatBytes(size: number): string {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function renderMessageAttachmentIcon(kind: ChatAttachment["kind"]): React.JSX.Element {
+  const Icon =
+    kind === "folder"
+      ? FolderPlus
+      : kind === "terminal"
+        ? Terminal
+        : kind === "selection"
+          ? ClipboardList
+          : kind === "browser"
+            ? Globe2
+            : FileText;
+  return <Icon size={14} aria-hidden="true" />;
 }
 
 function mergeUniqueAttachments(attachments: ChatAttachment[]): ChatAttachment[] {

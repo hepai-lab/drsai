@@ -1,4 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { spawn } from "node:child_process";
 import type { WebContents } from "electron";
 import type {
   DesktopVoiceError,
@@ -39,17 +43,26 @@ function configuredRuntimeId(): DesktopVoiceSynthesisRuntimeId {
   return "gateway-provider";
 }
 
+function resolveRuntimeId(request: DesktopVoiceSynthesisRequest): DesktopVoiceSynthesisRuntimeId {
+  if (request.runtime === "system" || request.runtime === "mock-local" || request.runtime === "gateway-provider") {
+    return request.runtime;
+  }
+  return configuredRuntimeId();
+}
+
 export async function getVoiceSynthesisRuntimeStatus(): Promise<DesktopVoiceSynthesisRuntimeStatus> {
   const runtimeId = configuredRuntimeId();
   if (runtimeId === "system") {
     return {
       runtimeId,
-      state: "ready",
-      supportsSynthesisTask: false,
-      supportedFormats: [],
+      state: process.platform === "win32" ? "ready" : "unavailable",
+      supportsSynthesisTask: process.platform === "win32",
+      supportedFormats: process.platform === "win32" ? ["wav"] : [],
       maxTextChars: MAX_TTS_TEXT_CHARS,
-      providerDisclosure: "System speech is generated and played locally in the desktop renderer.",
-      message: "System speech is available through message playback controls.",
+      providerDisclosure: "System speech is synthesized locally with Windows Speech API.",
+      message: process.platform === "win32"
+        ? "Windows system speech synthesis is ready."
+        : "Native system speech synthesis is only available on Windows.",
     };
   }
   if (runtimeId === "mock-local") {
@@ -89,15 +102,18 @@ export function startVoiceSynthesis(
   sender: WebContents,
   request: DesktopVoiceSynthesisRequest,
 ): DesktopVoiceSynthesisStartResult {
-  const runtimeId = configuredRuntimeId();
-  if (runtimeId === "system") {
-    throw ttsFailure("runtime_unavailable", "System speech is controlled directly by the message playback UI.", false);
+  const runtimeId = resolveRuntimeId(request);
+  if (runtimeId === "system" && process.platform !== "win32") {
+    throw ttsFailure("runtime_unavailable", "Native system speech synthesis is only available on Windows.", false);
   }
   if (activeTtsTasks.size >= 3) throw ttsFailure("runtime_unavailable", "Too many active voice synthesis tasks.", true);
   if ([...activeTtsTasks.values()].some((task) => task.sender === sender && !task.terminal)) {
     throw ttsFailure("runtime_unavailable", "A voice synthesis task is already active for this window.", true);
   }
-  const normalizedRequest = normalizeVoiceSynthesisRequest(request);
+  const normalizedRequest = normalizeVoiceSynthesisRequest({
+    ...request,
+    format: runtimeId === "system" ? "wav" : request.format,
+  });
   const requestId = randomUUID();
   const controller = new AbortController();
   const handleSenderDestroyed = (): void => controller.abort();
@@ -143,14 +159,16 @@ export function cancelVoiceSynthesisForSender(sender: WebContents): void {
 async function runVoiceSynthesis(
   requestId: string,
   request: NormalizedVoiceSynthesisRequest,
-  runtimeId: Exclude<DesktopVoiceSynthesisRuntimeId, "system">,
+  runtimeId: DesktopVoiceSynthesisRuntimeId,
   task: ActiveTtsTask,
 ): Promise<void> {
   try {
     emitTtsEvent(task, { requestId, type: "progress", stage: "preparing", message: "Preparing reply text..." });
     const result = runtimeId === "mock-local"
       ? await synthesizeFixture(request, task.controller.signal)
-      : await synthesizeThroughGateway(request, task.controller.signal);
+      : runtimeId === "system"
+        ? await synthesizeWithWindowsSpeech(request, task.controller.signal)
+        : await synthesizeThroughGateway(request, task.controller.signal);
     finishTtsTask(requestId, task, { requestId, type: "completed", result });
   } catch (error) {
     if (task.controller.signal.aborted) {
@@ -174,6 +192,115 @@ async function synthesizeFixture(
     createdAt: new Date().toISOString(),
     providerDisclosure: "Deterministic fixture synthesis is active for tests.",
   };
+}
+
+async function synthesizeWithWindowsSpeech(
+  request: NormalizedVoiceSynthesisRequest,
+  parentSignal: AbortSignal,
+): Promise<DesktopVoiceSynthesisResult> {
+  if (process.platform !== "win32") {
+    throw ttsFailure("runtime_unavailable", "Windows Speech API is unavailable on this platform.", false);
+  }
+  const dir = await mkdtemp(join(tmpdir(), "opendrsai-tts-"));
+  const scriptPath = join(dir, "speak.ps1");
+  const wavPath = join(dir, "speech.wav");
+  const payloadPath = join(dir, "text.txt");
+  try {
+    await writeFile(payloadPath, request.text, "utf8");
+    const rate = Math.max(-10, Math.min(10, Math.round((request.speed - 1) * 10)));
+    const preferredVoice = request.voice?.trim() ?? "";
+    const language = (request.language || "zh-CN").replace(/'/g, "''");
+    const voiceBlock = preferredVoice
+      ? `
+  $preferred = '${preferredVoice.replace(/'/g, "''")}'
+  try { $synth.SelectVoice($preferred) } catch {
+    $match = $synth.GetInstalledVoices() | Where-Object { $_.Enabled -and $_.VoiceInfo.Name -eq $preferred } | Select-Object -First 1
+    if (-not $match) {
+      $match = $synth.GetInstalledVoices() | Where-Object { $_.Enabled -and $_.VoiceInfo.Culture.Name -like ('${language}'.Split('-')[0] + '*') } | Select-Object -First 1
+    }
+    if ($match) { $synth.SelectVoice($match.VoiceInfo.Name) }
+  }`
+      : `
+  $match = $synth.GetInstalledVoices() | Where-Object { $_.Enabled -and $_.VoiceInfo.Culture.Name -like ('${language}'.Split('-')[0] + '*') } | Select-Object -First 1
+  if ($match) { $synth.SelectVoice($match.VoiceInfo.Name) }`;
+    // Render to WAV so the renderer can play/pause/stop. Chromium speechSynthesis is unreliable in Electron.
+    const script = `
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Speech
+$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer
+try {
+  $synth.Rate = ${rate}
+${voiceBlock}
+  $text = [System.IO.File]::ReadAllText(${JSON.stringify(payloadPath)}, [System.Text.Encoding]::UTF8)
+  $synth.SetOutputToWaveFile(${JSON.stringify(wavPath)})
+  $synth.Speak($text)
+  $synth.SetOutputToNull()
+} finally {
+  $synth.Dispose()
+}
+`;
+    await writeFile(scriptPath, script, "utf8");
+    await runPowerShell(scriptPath, parentSignal);
+    const audioData = new Uint8Array(await readFile(wavPath));
+    if (audioData.byteLength < 44) {
+      throw ttsFailure("provider_error", "Windows speech synthesis produced empty audio.", true);
+    }
+    return {
+      audioData,
+      mimeType: "audio/wav",
+      runtimeId: "system",
+      createdAt: new Date().toISOString(),
+      providerDisclosure: "Reply text was synthesized locally with Windows Speech API.",
+    };
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+function runPowerShell(scriptPath: string, parentSignal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath],
+      { windowsHide: true },
+    );
+    let stderr = "";
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(ttsFailure("timeout", "Windows speech synthesis timed out.", true));
+    }, TTS_TIMEOUT_MS);
+    const onAbort = (): void => {
+      child.kill();
+      reject(new DOMException("Cancelled", "AbortError"));
+    };
+    parentSignal.addEventListener("abort", onAbort, { once: true });
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      parentSignal.removeEventListener("abort", onAbort);
+      reject(ttsFailure("internal_error", error.message, true));
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      parentSignal.removeEventListener("abort", onAbort);
+      if (parentSignal.aborted) {
+        reject(new DOMException("Cancelled", "AbortError"));
+        return;
+      }
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(ttsFailure(
+        "provider_error",
+        stderr.trim() || `Windows speech synthesis failed (exit ${code ?? "unknown"}).`,
+        true,
+      ));
+    });
+  });
 }
 
 async function synthesizeThroughGateway(
@@ -219,12 +346,12 @@ function emitTtsEvent(task: ActiveTtsTask, event: DesktopVoiceSynthesisEvent): v
   if (!task.sender.isDestroyed()) task.sender.send("desktop:voice-synthesis-event", event);
 }
 
-function finishTtsTask(requestId: string, task: ActiveTtsTask, event: DesktopVoiceSynthesisEvent): void {
+function finishTtsTask(taskRequestId: string, task: ActiveTtsTask, event: DesktopVoiceSynthesisEvent): void {
   if (task.terminal) return;
   task.terminal = true;
   task.cleanupSenderListener();
   emitTtsEvent(task, event);
-  activeTtsTasks.delete(requestId);
+  activeTtsTasks.delete(taskRequestId);
   void task.diagnostic.then((diagnostic) => {
     if (event.type === "completed") return diagnostic.complete("Voice synthesis completed", { runtime: event.result.runtimeId, audioBytes: event.result.audioData.byteLength });
     if (event.type === "cancelled") return diagnostic.cancel("Voice synthesis cancelled");

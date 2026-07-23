@@ -4,6 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { parseChatOutput } from "../chatOutputModel";
 import { copyTextSafely } from "../clipboard";
+import { copyTextReliable } from "../threadShareClient";
 
 interface ChatMessageContentProps {
   content: string;
@@ -15,17 +16,11 @@ interface ChatMessageContentProps {
 function CopyButton({ value, label }: { value: string; label: string }): React.JSX.Element {
   const [copied, setCopied] = useState(false);
   async function copy(): Promise<void> {
+    if (!value) return;
     try {
       if (!await copyTextSafely(value)) throw new Error("Clipboard copy is not available.");
     } catch {
-      const textarea = document.createElement("textarea");
-      textarea.value = value;
-      textarea.style.position = "fixed";
-      textarea.style.opacity = "0";
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand("copy");
-      textarea.remove();
+      return;
     }
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1600);
@@ -126,8 +121,8 @@ function isSafeImageSource(src: string): boolean {
 function ReasoningPart({ text, complete, language }: { text: string; complete: boolean; language: "en" | "zh" }): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const labels = language === "zh"
-    ? { reasoning: "Reasoning", thinking: "Thinking" }
-    : { reasoning: "Reasoning", thinking: "Thinking" };
+    ? { reasoning: "思考过程", thinking: "正在思考…" }
+    : { reasoning: "Reasoning", thinking: "Thinking…" };
   const title = complete ? labels.reasoning : labels.thinking;
   return (
     <details className="chat-reasoning" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>

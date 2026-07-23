@@ -47,6 +47,11 @@ const ACCESS_TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
 const DESKTOP_AUTH_BASE_URL =
   process.env.OPENDRSAI_AUTH_BASE_URL?.replace(/\/+$/, "") ||
   "https://opendrsai.ihep.ac.cn";
+
+/** Public WebUI origin used for desktop-auth and share links. */
+export function getWebUiBaseUrl(): string {
+  return DESKTOP_AUTH_BASE_URL;
+}
 const CONFIGURED_OIDC_ISSUER =
   process.env.OPENDRSAI_OIDC_ISSUER?.replace(/\/+$/, "") ||
   process.env.HAI_OIDC_ISSUER?.replace(/\/+$/, "");

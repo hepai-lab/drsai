@@ -389,7 +389,20 @@ export function useDesktopChatAdapter({
     attachments: ChatAttachment[] = [],
     options?: ChatSubmitOptions,
   ): Promise<boolean> {
-    const text = input.trim();
+    const skillName = options?.skillName?.trim();
+    const skillPrefix = skillName
+      ? languageRef.current === "zh"
+        ? `用 ${skillName} `
+        : `Use ${skillName} skill to `
+      : "";
+    const rawInput = input.trim();
+    const alreadyPrefixed = Boolean(
+      skillName &&
+        (languageRef.current === "zh"
+          ? new RegExp(`^用\\s+${skillName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(rawInput)
+          : new RegExp(`^Use\\s+${skillName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+skill\\s+to\\b`, "i").test(rawInput)),
+    );
+    const text = (skillPrefix && !alreadyPrefixed ? `${skillPrefix}${rawInput}` : rawInput).trim();
     if (!text || activeRequestId) return false;
 
     const materialPaths = [...new Set(attachments
@@ -398,7 +411,7 @@ export function useDesktopChatAdapter({
     if (materialPaths.length > 0 && isMaterialInventoryIntent(text)) {
       try {
         const analysis = await desktopApi.analyzeMaterialRoles({ paths: materialPaths });
-        publishLocalAssistantResult(text, formatMaterialInventoryAnswer(analysis, languageRef.current));
+        publishLocalAssistantResult(text, formatMaterialInventoryAnswer(analysis, languageRef.current), attachments);
         setInput("");
         return true;
       } catch {
@@ -408,7 +421,7 @@ export function useDesktopChatAdapter({
     if (materialPaths.length > 0 && isNaturalMaterialQueryIntent(text)) {
       try {
         const result = await desktopApi.queryMaterials({ paths: materialPaths, question: text });
-        publishLocalAssistantResult(text, formatMaterialQueryAnswer(result, languageRef.current));
+        publishLocalAssistantResult(text, formatMaterialQueryAnswer(result, languageRef.current), attachments);
         setInput("");
         return true;
       } catch {
@@ -510,6 +523,7 @@ export function useDesktopChatAdapter({
       id: crypto.randomUUID(),
       role: "user",
       content: text,
+      ...(attachments.length ? { attachments } : {}),
     };
     const assistantId = crypto.randomUUID();
     const requestId = crypto.randomUUID();
@@ -908,13 +922,18 @@ export function useDesktopChatAdapter({
     });
   }
 
-  function publishLocalAssistantResult(userText: string, assistantText: string): void {
+  function publishLocalAssistantResult(
+    userText: string,
+    assistantText: string,
+    attachments: ChatAttachment[] = [],
+  ): void {
     const commandMessages: UiMessage[] = [
       ...messages.filter((message) => message.id !== "welcome"),
       {
         id: crypto.randomUUID(),
         role: "user",
         content: userText,
+        ...(attachments.length ? { attachments } : {}),
       },
       {
         id: crypto.randomUUID(),

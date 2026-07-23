@@ -42,6 +42,7 @@ import type {
   DesktopEditCommand,
   DesktopThreadContentSearchResult,
   DesktopThreadForkMetadata,
+  DesktopThreadMessageSnapshot,
   DesktopWorktreeListRequest,
   DesktopWorktreeEventRequest,
   DesktopWorktreeEventBatch,
@@ -53,6 +54,16 @@ import type {
 import drsaiLogo from "../assets/drsai.png";
 import { desktopApi } from "../desktopApi";
 import { copyTextSafely } from "../clipboard";
+import { loadThreadMessages } from "../adapters/threadMessages";
+import {
+  copyThreadShareLinkClient,
+  createThreadShareClient,
+  openThreadShareClient,
+  type LocalThreadShare,
+} from "../threadShareClient";
+import { getAssistantVisibleAnswer } from "../chatOutputModel";
+import { extractShareConclusion, extractShareMessageText } from "@shared/threadShareHtml";
+import { ChatMessageContent } from "./ChatMessageContent";
 import { MENU_IDS, type AppLanguage, type NavId, type NavSection, type RightTab } from "../navigation";
 import {
   getConflictMarkerCount,
@@ -182,6 +193,7 @@ interface WorkspaceShellProps {
     threadIds: string[],
   ) => Promise<DesktopThreadContentSearchResult[]>;
   onThreadUpdate: (threadId: string, updates: { title?: string; pinned?: boolean; archived?: boolean; unread?: boolean; fork?: DesktopThreadForkMetadata }) => void | Promise<void>;
+  onDeleteThread: (threadId: string) => void | Promise<void>;
   onToggleRightPanel: () => void;
   onToggleSidebar: () => void;
   onUpdateWorkspace: (id: string, updates: Partial<Pick<WorkspaceProject, "name" | "description" | "trusted" | "pinned">>) => void | Promise<void>;
@@ -259,6 +271,7 @@ export function WorkspaceShell({
   onThreadSelect,
   onSearchThreadMessages,
   onThreadUpdate,
+  onDeleteThread,
   onToggleRightPanel,
   onToggleSidebar,
   onUpdateWorkspace,
@@ -309,6 +322,26 @@ export function WorkspaceShell({
     x: number;
     y: number;
   } | null>(null);
+  const [deleteConfirmThread, setDeleteConfirmThread] = useState<WorkspaceThread | null>(null);
+  const [renameThreadTarget, setRenameThreadTarget] = useState<WorkspaceThread | null>(null);
+  const [renameThreadTitle, setRenameThreadTitle] = useState("");
+  const [shareDialog, setShareDialog] = useState<{
+    thread: WorkspaceThread;
+    loading: boolean;
+    error: string | null;
+    messages: DesktopThreadMessageSnapshot[];
+    selectedIds: string[];
+    share: LocalThreadShare | null;
+    shareSelectionKey: string | null;
+    busy: boolean;
+    status: string | null;
+  } | null>(null);
+  const [shareToast, setShareToast] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
+  const shareToastTimerRef = useRef<number | null>(null);
+  const renameInputRef = useRef<HTMLInputElement | null>(null);
   const [forkConflictPreview, setForkConflictPreview] = useState<{
     key: string;
     path: string;
@@ -612,6 +645,12 @@ export function WorkspaceShell({
   }, [commandPaletteOpen]);
 
   useEffect(() => {
+    if (!renameThreadTarget) return;
+    renameInputRef.current?.focus();
+    renameInputRef.current?.select();
+  }, [renameThreadTarget?.id]);
+
+  useEffect(() => {
     setCommandPaletteSelectedIndex(0);
   }, [commandPaletteQuery, commandPaletteOpen]);
 
@@ -815,6 +854,14 @@ export function WorkspaceShell({
           if (activeWorkspace?.path) void onOpenWorkspacePath(activeWorkspace.path);
         },
       },
+      {
+        id: "command:settings",
+        group: "recommendations",
+        label: zh ? "设置" : "Settings",
+        shortcut: "Ctrl+,",
+        icon: Settings,
+        run: () => onNavChange(MENU_IDS.profile),
+      },
     ];
 
     return [...chatItems, ...recommendationItems];
@@ -888,7 +935,7 @@ export function WorkspaceShell({
     event.preventDefault();
     event.stopPropagation();
     const menuWidth = 260;
-    const menuHeight = thread.fork ? 560 : 306;
+    const menuHeight = thread.fork ? 590 : 336;
     setThreadMenu({
       thread,
       x: Math.min(event.clientX, Math.max(12, window.innerWidth - menuWidth - 12)),
@@ -900,10 +947,285 @@ export function WorkspaceShell({
     setThreadMenu(null);
   }
 
+  function openRenameThreadDialog(thread: WorkspaceThread): void {
+    setRenameThreadTarget(thread);
+    setRenameThreadTitle(thread.title);
+  }
+
+  function closeRenameThreadDialog(): void {
+    setRenameThreadTarget(null);
+    setRenameThreadTitle("");
+  }
+
+  function submitRenameThread(): void {
+    if (!renameThreadTarget) return;
+    const nextTitle = renameThreadTitle.trim();
+    if (!nextTitle || nextTitle === renameThreadTarget.title) {
+      closeRenameThreadDialog();
+      return;
+    }
+    void onThreadUpdate(renameThreadTarget.id, { title: nextTitle }).finally(() => {
+      closeRenameThreadDialog();
+    });
+  }
+
   function renameThread(thread: WorkspaceThread): void {
-    const nextTitle = window.prompt(zh ? "重命名对话" : "Rename conversation", thread.title);
-    if (!nextTitle || nextTitle.trim() === thread.title) return;
-    void onThreadUpdate(thread.id, { title: nextTitle.trim() });
+    openRenameThreadDialog(thread);
+  }
+
+  function closeShareDialog(): void {
+    setShareDialog(null);
+    setShareToast(null);
+    if (shareToastTimerRef.current !== null) {
+      window.clearTimeout(shareToastTimerRef.current);
+      shareToastTimerRef.current = null;
+    }
+  }
+
+  function showShareToast(type: "success" | "error", message: string): void {
+    setShareToast({ type, message });
+    if (shareToastTimerRef.current !== null) {
+      window.clearTimeout(shareToastTimerRef.current);
+    }
+    shareToastTimerRef.current = window.setTimeout(() => {
+      setShareToast(null);
+      shareToastTimerRef.current = null;
+    }, 2400);
+  }
+
+  function openShareDialog(thread: WorkspaceThread): void {
+    setShareDialog({
+      thread,
+      loading: true,
+      error: null,
+      messages: [],
+      selectedIds: [],
+      share: null,
+      shareSelectionKey: null,
+      busy: false,
+      status: null,
+    });
+    void (async () => {
+      try {
+        const snapshot = await loadThreadMessages(thread.id);
+        const messages = (snapshot?.messages || []).filter((message) => message.role !== "system");
+        if (!messages.length) {
+          setShareDialog((current) =>
+            current && current.thread.id === thread.id
+              ? {
+                  ...current,
+                  loading: false,
+                  error: zh
+                    ? "当前对话还没有可分享的消息。"
+                    : "This conversation has no messages to share yet.",
+                }
+              : current,
+          );
+          return;
+        }
+        setShareDialog((current) =>
+          current && current.thread.id === thread.id
+            ? {
+                ...current,
+                loading: false,
+                messages,
+                selectedIds: messages.map((message) => message.id),
+                error: null,
+              }
+            : current,
+        );
+      } catch (error) {
+        setShareDialog((current) =>
+          current && current.thread.id === thread.id
+            ? {
+                ...current,
+                loading: false,
+                error: error instanceof Error ? error.message : String(error),
+              }
+            : current,
+        );
+      }
+    })();
+  }
+
+  function toggleShareMessage(messageId: string): void {
+    setShareDialog((current) => {
+      if (!current) return current;
+      const selected = new Set(current.selectedIds);
+      if (selected.has(messageId)) selected.delete(messageId);
+      else selected.add(messageId);
+      return { ...current, selectedIds: [...selected], share: null, shareSelectionKey: null, status: null };
+    });
+  }
+
+  function setShareSelection(all: boolean): void {
+    setShareDialog((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        selectedIds: all ? current.messages.map((message) => message.id) : [],
+        share: null,
+        shareSelectionKey: null,
+        status: null,
+      };
+    });
+  }
+
+  async function ensureThreadShare(): Promise<LocalThreadShare | null> {
+    if (!shareDialog) return null;
+    if (!shareDialog.selectedIds.length) {
+      setShareDialog((current) =>
+        current
+          ? {
+              ...current,
+              error: zh ? "请至少勾选一条消息。" : "Select at least one message.",
+            }
+          : current,
+      );
+      return null;
+    }
+    const selectionKey = `${shareDialog.selectedIds.slice().sort().join(",")}:conclusion-md-v3`;
+    if (
+      shareDialog.share &&
+      shareDialog.shareSelectionKey === selectionKey &&
+      shareDialog.share.publicShareUrl
+    ) {
+      return shareDialog.share;
+    }
+    setShareDialog((current) =>
+      current ? { ...current, busy: true, error: null, status: null } : current,
+    );
+    try {
+      const selectedMessages = shareDialog.messages.filter((message) =>
+        shareDialog.selectedIds.includes(message.id),
+      );
+      const share = await createThreadShareClient({
+        request: {
+          threadId: shareDialog.thread.id,
+          messageIds: shareDialog.selectedIds,
+          title: shareDialog.thread.title,
+        },
+        messages: selectedMessages,
+      });
+      setShareDialog((current) =>
+        current
+          ? {
+              ...current,
+              busy: false,
+              share,
+              shareSelectionKey: selectionKey,
+              status:
+                share.mode === "ipc"
+                  ? share.publicShareUrl
+                    ? zh
+                      ? "已生成公开分享链接（对方可只读打开）"
+                      : "Public share link ready (read-only for recipients)"
+                    : zh
+                      ? share.publishError
+                        ? `本地预览已生成，但公开链接发布失败：${share.publishError}`
+                        : "已生成本地预览（公开链接未发布）"
+                      : share.publishError
+                        ? `Local preview ready, but public publish failed: ${share.publishError}`
+                        : "Local preview ready (public link not published)"
+                  : zh
+                    ? "已生成只读分享页（当前为本地预览模式）"
+                    : "Read-only share ready (local preview mode)",
+            }
+          : current,
+      );
+      return share;
+    } catch (error) {
+      setShareDialog((current) =>
+        current
+          ? {
+              ...current,
+              busy: false,
+              error: error instanceof Error ? error.message : String(error),
+            }
+          : current,
+      );
+      return null;
+    }
+  }
+
+  async function copyShareLink(): Promise<void> {
+    const share = await ensureThreadShare();
+    if (!share) {
+      showShareToast("error", zh ? "复制失败" : "Copy failed");
+      return;
+    }
+    try {
+      const copied = await copyThreadShareLinkClient(share);
+      setShareDialog((current) =>
+        current
+          ? {
+              ...current,
+              error: null,
+              status: zh
+                ? "已复制公开分享链接（对方可只读打开）"
+                : "Public share link copied (read-only for recipients)",
+              share: {
+                ...share,
+                fileUrl: share.publicShareUrl || copied,
+                publicShareUrl: share.publicShareUrl || copied,
+              },
+            }
+          : current,
+      );
+      showShareToast("success", zh ? "复制成功" : "Copied successfully");
+    } catch (error) {
+      setShareDialog((current) =>
+        current
+          ? {
+              ...current,
+              error: error instanceof Error ? error.message : String(error),
+            }
+          : current,
+      );
+      showShareToast("error", zh ? "复制失败" : "Copy failed");
+    }
+  }
+
+  async function openSharePreview(): Promise<void> {
+    const share = await ensureThreadShare();
+    if (!share) return;
+    try {
+      await openThreadShareClient(share);
+      setShareDialog((current) =>
+        current
+          ? {
+              ...current,
+              error: null,
+              status: zh ? "已打开只读预览" : "Opened read-only preview",
+            }
+          : current,
+      );
+    } catch (error) {
+      setShareDialog((current) =>
+        current
+          ? {
+              ...current,
+              error: error instanceof Error ? error.message : String(error),
+            }
+          : current,
+      );
+    }
+  }
+
+  function extractShareMessagePreview(message: DesktopThreadMessageSnapshot): string {
+    if (message.role === "assistant") {
+      const fromParts = message.parts
+        ?.filter((part) => part.type === "text")
+        .map((part) => part.text)
+        .filter(Boolean)
+        .join("\n\n");
+      const raw = fromParts?.trim() || message.content || "";
+      return (
+        extractShareConclusion(raw, message.reasoningContent) ||
+        getAssistantVisibleAnswer(raw, message.reasoningContent)
+      );
+    }
+    return extractShareMessageText(message);
   }
 
   function copyText(text: string): void {
@@ -912,10 +1234,6 @@ export function WorkspaceShell({
 
   function getThreadWorkspacePath(thread: WorkspaceThread): string {
     return thread.workspacePath || activeWorkspace?.path || "";
-  }
-
-  function getThreadDeepLink(thread: WorkspaceThread): string {
-    return `opendrsai://thread/${encodeURIComponent(thread.id)}`;
   }
 
   function renderWorkspaceThread(thread: WorkspaceThread): React.JSX.Element {
@@ -1415,7 +1733,9 @@ export function WorkspaceShell({
           ? "Ctrl+N"
           : key === "o"
             ? "Ctrl+O"
-            : null;
+            : event.key === ","
+              ? "Ctrl+,"
+              : null;
       const item = shortcut
         ? visibleCommandPaletteItems.find((candidate) => candidate.shortcut === shortcut)
         : null;
@@ -1902,16 +2222,6 @@ export function WorkspaceShell({
           )}
         </div>
         <div className="titlebar-window-divider" aria-hidden />
-        <button
-          className="titlebar-right-panel-toggle"
-          type="button"
-          onClick={onToggleRightPanel}
-          title={rightPanelCollapsed ? (zh ? "显示右侧栏" : "Show right panel") : (zh ? "隐藏右侧栏" : "Hide right panel")}
-          aria-label={rightPanelCollapsed ? (zh ? "显示右侧栏" : "Show right panel") : (zh ? "隐藏右侧栏" : "Hide right panel")}
-          aria-pressed={!rightPanelCollapsed}
-        >
-          <span aria-hidden />
-        </button>
       </div>
 
       <aside className="sidebar">
@@ -2130,9 +2440,7 @@ export function WorkspaceShell({
               </div>
             )}
           </div>
-
         </nav>
-
       </aside>
       {!sidebarCollapsed && (
         <div
@@ -2150,7 +2458,38 @@ export function WorkspaceShell({
             isRightPanelExpanded ? "right-expanded" : ""
           }`}
         >
-          <section className="main-content-area">{mainContent}</section>
+          <section className="main-content-area">
+            {mainContent}
+            {/* Floating open/close control stays on the chat surface top-right. */}
+            {activeNav === MENU_IDS.currentSession && !isRightPanelExpanded && (
+              <button
+                className="titlebar-right-panel-toggle chat-right-panel-float-toggle"
+                type="button"
+                onClick={onToggleRightPanel}
+                title={
+                  rightPanelCollapsed
+                    ? zh
+                      ? "显示右侧栏"
+                      : "Show right panel"
+                    : zh
+                      ? "隐藏右侧栏"
+                      : "Hide right panel"
+                }
+                aria-label={
+                  rightPanelCollapsed
+                    ? zh
+                      ? "显示右侧栏"
+                      : "Show right panel"
+                    : zh
+                      ? "隐藏右侧栏"
+                      : "Hide right panel"
+                }
+                aria-pressed={!rightPanelCollapsed}
+              >
+                <span aria-hidden />
+              </button>
+            )}
+          </section>
           {!rightPanelCollapsed && !isRightPanelExpanded && (
             <div
               className="right-resize-handle"
@@ -2161,9 +2500,22 @@ export function WorkspaceShell({
             />
           )}
 
-          {!rightPanelCollapsed && (
+          {!rightPanelCollapsed ? (
             <aside className={rightPanelClassName}>
               <div className="right-tabs">
+                {/* Close control lives on the chat float button; only keep one here when panel is fullscreen. */}
+                {isRightPanelExpanded ? (
+                  <button
+                    className="titlebar-right-panel-toggle"
+                    type="button"
+                    onClick={onToggleRightPanel}
+                    title={zh ? "隐藏右侧栏" : "Hide right panel"}
+                    aria-label={zh ? "隐藏右侧栏" : "Hide right panel"}
+                    aria-pressed
+                  >
+                    <span aria-hidden />
+                  </button>
+                ) : null}
                 {rightTabs.map(({ id, label }) => {
                   const Icon = rightTabIcons[id];
                   return (
@@ -2207,7 +2559,7 @@ export function WorkspaceShell({
                 </div>
               ) : rightPanel}
             </aside>
-          )}
+          ) : null}
         </section>
       </main>
       {threadMenu && (
@@ -2232,7 +2584,7 @@ export function WorkspaceShell({
             <button type="button" role="menuitem" onClick={() => runThreadMenuAction(() => renameThread(threadMenu.thread))}>
               {zh ? "重命名对话" : "Rename conversation"}
             </button>
-            <button
+            {/* <button
               type="button"
               role="menuitem"
               onClick={() =>
@@ -2242,7 +2594,7 @@ export function WorkspaceShell({
               }
             >
               {threadMenu.thread.archived ? (zh ? "取消归档对话" : "Unarchive conversation") : (zh ? "归档对话" : "Archive conversation")}
-            </button>
+            </button> */}
             <button
               type="button"
               role="menuitem"
@@ -2253,6 +2605,48 @@ export function WorkspaceShell({
               }
             >
               {threadMenu.thread.unread ? (zh ? "标记为已读" : "Mark as read") : (zh ? "标记为未读" : "Mark as unread")}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => runThreadMenuAction(() => openShareDialog(threadMenu.thread))}
+            >
+              {zh ? "分享对话" : "Share conversation"}
+            </button>
+            <div className="thread-context-separator" />
+            <button
+              type="button"
+              role="menuitem"
+              disabled={!getThreadWorkspacePath(threadMenu.thread)}
+              onClick={() =>
+                runThreadMenuAction(() => {
+                  const path = getThreadWorkspacePath(threadMenu.thread);
+                  if (path) void onOpenWorkspacePath(path);
+                })
+              }
+            >
+              {zh ? "在资源管理器中打开" : "Open in File Explorer"}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              disabled={!getThreadWorkspacePath(threadMenu.thread)}
+              onClick={() => runThreadMenuAction(() => copyText(getThreadWorkspacePath(threadMenu.thread)))}
+            >
+              {zh ? "复制工作目录" : "Copy working directory"}
+            </button>
+            <div className="thread-context-separator" />
+            <button
+              type="button"
+              role="menuitem"
+              className="thread-context-danger"
+              onClick={() =>
+                runThreadMenuAction(() => {
+                  setDeleteConfirmThread(threadMenu.thread);
+                })
+              }
+            >
+              {zh ? "删除对话" : "Delete conversation"}
             </button>
             {threadMenu.thread.fork && (
               <>
@@ -2696,41 +3090,263 @@ export function WorkspaceShell({
                 </button>
               </>
             )}
-            <div className="thread-context-separator" />
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() =>
-                runThreadMenuAction(() => {
-                  const path = getThreadWorkspacePath(threadMenu.thread);
-                  if (path) void onOpenWorkspacePath(path);
-                })
-              }
-            >
-              {zh ? "在资源管理器中打开" : "Open in File Explorer"}
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => runThreadMenuAction(() => copyText(getThreadWorkspacePath(threadMenu.thread)))}
-            >
-              {zh ? "复制工作目录" : "Copy working directory"}
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => runThreadMenuAction(() => copyText(threadMenu.thread.id))}
-            >
-              {zh ? "复制会话 ID" : "Copy conversation ID"}
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => runThreadMenuAction(() => copyText(getThreadDeepLink(threadMenu.thread)))}
-            >
-              {zh ? "复制深度链接" : "Copy deep link"}
-            </button>
           </div>
+        </div>
+      )}
+      {renameThreadTarget && (
+        <div
+          className="thread-delete-confirm-overlay"
+          role="presentation"
+          onMouseDown={closeRenameThreadDialog}
+        >
+          <section
+            className="thread-delete-confirm-dialog thread-rename-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="thread-rename-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="thread-delete-confirm-copy">
+              <h2 id="thread-rename-title">{zh ? "重命名对话" : "Rename conversation"}</h2>
+              <label className="thread-rename-form">
+                <span>{zh ? "对话名称" : "Conversation name"}</span>
+                <input
+                  ref={renameInputRef}
+                  value={renameThreadTitle}
+                  onChange={(event) => setRenameThreadTitle(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      submitRenameThread();
+                    }
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      closeRenameThreadDialog();
+                    }
+                  }}
+                  maxLength={120}
+                  placeholder={zh ? "输入新的对话名称" : "Enter a new conversation name"}
+                />
+              </label>
+            </div>
+            <div className="thread-delete-confirm-actions">
+              <button type="button" className="thread-delete-confirm-cancel" onClick={closeRenameThreadDialog}>
+                {zh ? "取消" : "Cancel"}
+              </button>
+              <button
+                type="button"
+                className="thread-rename-confirm-save"
+                onClick={submitRenameThread}
+                disabled={!renameThreadTitle.trim()}
+              >
+                {zh ? "保存" : "Save"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+      {shareDialog && (
+        <div
+          className="thread-delete-confirm-overlay"
+          role="presentation"
+          onMouseDown={closeShareDialog}
+        >
+          <section
+            className="thread-share-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="thread-share-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="thread-share-header">
+              <div>
+                <h2 id="thread-share-title">{zh ? "分享对话" : "Share conversation"}</h2>
+                <p>
+                  {zh
+                    ? "生成只读分享页：对方只能查看聊天记录，无法继续提问。"
+                    : "Create a read-only share page. Recipients can view the chat, but cannot continue the conversation."}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="thread-share-close"
+                onClick={closeShareDialog}
+                aria-label={zh ? "关闭" : "Close"}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="thread-share-title-row">
+              <strong>{shareDialog.thread.title}</strong>
+              <span>
+                {shareDialog.loading
+                  ? zh
+                    ? "加载中…"
+                    : "Loading…"
+                  : zh
+                    ? `已选 ${shareDialog.selectedIds.length}/${shareDialog.messages.length} 条`
+                    : `${shareDialog.selectedIds.length}/${shareDialog.messages.length} selected`}
+              </span>
+            </div>
+            <div className="thread-share-selection-actions">
+              <button type="button" onClick={() => setShareSelection(true)} disabled={shareDialog.loading}>
+                {zh ? "全选" : "Select all"}
+              </button>
+              <button type="button" onClick={() => setShareSelection(false)} disabled={shareDialog.loading}>
+                {zh ? "清空" : "Clear"}
+              </button>
+            </div>
+            <div className="thread-share-messages" role="group" aria-label={zh ? "分享消息" : "Messages to share"}>
+              {shareDialog.loading ? (
+                <p className="thread-share-empty">{zh ? "正在读取聊天记录…" : "Loading chat history…"}</p>
+              ) : shareDialog.messages.length ? (
+                shareDialog.messages.map((message) => {
+                  const checked = shareDialog.selectedIds.includes(message.id);
+                  const rawContent = extractShareMessagePreview(message);
+                  return (
+                    <div
+                      key={message.id}
+                      className={`thread-share-message ${message.role}${checked ? " selected" : ""}`}
+                    >
+                      <label className="thread-share-message-select">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleShareMessage(message.id)}
+                        />
+                        <strong>
+                          {message.role === "user" ? (zh ? "你" : "You") : (zh ? "助手" : "Assistant")}
+                        </strong>
+                      </label>
+                      <div className="thread-share-message-body">
+                        {message.role === "assistant" ? (
+                          rawContent.trim() ? (
+                            <ChatMessageContent
+                              content={rawContent}
+                              language={language}
+                              onOpenLink={() => undefined}
+                            />
+                          ) : (
+                            <span className="thread-share-empty-inline">
+                              {zh ? "（空消息）" : "(empty)"}
+                            </span>
+                          )
+                        ) : (
+                          <p className="thread-share-user-text">
+                            {rawContent.trim() || (zh ? "（空消息）" : "(empty)")}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <p className="thread-share-empty">
+                  {shareDialog.error || (zh ? "没有可分享的消息" : "No messages to share")}
+                </p>
+              )}
+            </div>
+            {(shareDialog.error || shareDialog.status || shareDialog.share) && (
+              <div className="thread-share-status" role="status">
+                {shareDialog.error ? <p className="thread-share-error">{shareDialog.error}</p> : null}
+                {shareDialog.status ? <p>{shareDialog.status}</p> : null}
+                {shareDialog.share ? (
+                  <code title={shareDialog.share.publicShareUrl || shareDialog.share.filePath}>
+                    {shareDialog.share.publicShareUrl || shareDialog.share.fileUrl}
+                  </code>
+                ) : null}
+              </div>
+            )}
+            {shareToast ? (
+              <div
+                className={`thread-share-toast thread-share-toast-${shareToast.type}`}
+                role="status"
+                aria-live="polite"
+              >
+                {shareToast.message}
+              </div>
+            ) : null}
+            <div className="thread-share-actions">
+              <button type="button" className="thread-delete-confirm-cancel" onClick={closeShareDialog}>
+                {zh ? "取消" : "Cancel"}
+              </button>
+              <button
+                type="button"
+                className="thread-share-secondary"
+                onClick={() => void openSharePreview()}
+                disabled={shareDialog.loading || shareDialog.busy || !shareDialog.selectedIds.length}
+              >
+                {zh ? "打开预览" : "Open preview"}
+              </button>
+              <button
+                type="button"
+                className="thread-share-primary"
+                onClick={() => void copyShareLink()}
+                disabled={shareDialog.loading || shareDialog.busy || !shareDialog.selectedIds.length}
+              >
+                {shareDialog.busy
+                  ? zh
+                    ? "生成中…"
+                    : "Working…"
+                  : zh
+                    ? "复制链接"
+                    : "Copy link"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+      {deleteConfirmThread && (
+        <div
+          className="thread-delete-confirm-overlay"
+          role="presentation"
+          onMouseDown={() => setDeleteConfirmThread(null)}
+        >
+          <section
+            className="thread-delete-confirm-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="thread-delete-confirm-title"
+            aria-describedby="thread-delete-confirm-desc"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="thread-delete-confirm-body">
+              <span className="thread-delete-confirm-icon" aria-hidden>
+                !
+              </span>
+              <div className="thread-delete-confirm-copy">
+                <h2 id="thread-delete-confirm-title">
+                  {zh ? "确定删除对话？" : "Delete this conversation?"}
+                </h2>
+                <p id="thread-delete-confirm-desc">
+                  <span className="thread-delete-confirm-name">{deleteConfirmThread.title}</span>
+                  {zh
+                    ? "删除后，聊天记录将不可恢复。"
+                    : "Chat history cannot be recovered after deletion."}
+                </p>
+              </div>
+            </div>
+            <div className="thread-delete-confirm-actions">
+              <button
+                type="button"
+                className="thread-delete-confirm-cancel"
+                onClick={() => setDeleteConfirmThread(null)}
+              >
+                {zh ? "取消" : "Cancel"}
+              </button>
+              <button
+                type="button"
+                className="thread-delete-confirm-delete"
+                onClick={() => {
+                  const threadId = deleteConfirmThread.id;
+                  setDeleteConfirmThread(null);
+                  void onDeleteThread(threadId);
+                }}
+              >
+                {zh ? "删除" : "Delete"}
+              </button>
+            </div>
+          </section>
         </div>
       )}
       {desktopStatusOpen && (
