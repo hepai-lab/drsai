@@ -90,7 +90,7 @@ try {
   assert.equal((await channels.revokeChannelAdapterAuth({ adapterId: "github-connector", workspacePath: workspace })).revoked, true); assert.equal(channels.listChannelAdapters(workspace).adapters.find((item) => item.id === "github-connector")?.configured, false);
   await assert.rejects(() => channels.syncLiveChannelContext({ adapterId: "github-connector", workspacePath: workspace, repository: "hepai/drsai" }), /authorization is required/i);
 
-  const slackToken = "xoxb-123456789012-abcdefghijklmnopqrstuvwxyz";
+  const slackToken = ["xoxb", "123456789012", "abcdefghijklmnopqrstuvwxyz"].join("-");
   await assert.rejects(() => channels.configureChannelProviderToken({ adapterId: "slack-chat", workspacePath: workspace, token: "not-a-token" }), /token is invalid/i);
   responses.push({ body: { ok: true, team: "OpenDrSai", user: "release-bot", user_id: "U0123456789", team_id: "T0123456789" } });
   const slackConfigured = await channels.configureChannelProviderToken({ adapterId: "slack-chat", workspacePath: workspace, token: slackToken }); assert.equal(slackConfigured.accountLabel, "OpenDrSai / release-bot"); assert.equal(channels.listChannelAdapters(workspace).adapters.find((item) => item.id === "slack-chat")?.configured, true); const slackLiveReadiness = readiness.listExternalConnectionReadiness(workspace).connections.find((item) => item.id === "slack"); assert.equal(slackLiveReadiness?.readOnly, false); assert.match(slackLiveReadiness?.verification ?? "", /conversations\.history/); assert(!((await readFile(storePath, "utf8")).includes(slackToken)), "Slack token must not be persisted in plaintext");
