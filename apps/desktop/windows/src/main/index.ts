@@ -413,6 +413,7 @@ import type {
   DesktopStreamingVoiceStartRequest,
   DesktopVoiceSynthesisRequest,
   DesktopBootstrapBlockerKind,
+  DesktopA5ServiceGuidanceScenario,
   WorkspaceCheckpointRestoreRequest,
   WorkspaceCheckpointRestoreResult,
   WorkspaceCheckpointCreateRequest,
@@ -3514,6 +3515,7 @@ function registerIpc(): void {
     return productionDiagnostics.importPackage(selected.filePaths[0]);
   });
   secureHandle("desktop:get-auth-session", () => getAuthSession());
+  secureHandle("desktop:e2e-a5-service-guidance-scenario", () => getA5ServiceGuidanceScenario());
   secureHandle("desktop:login", (_event, request) => login(request));
   secureHandle("desktop:start-oidc-login", async (event, request) => {
     const result = await startOidcLogin(request, (debugEvent) => {
