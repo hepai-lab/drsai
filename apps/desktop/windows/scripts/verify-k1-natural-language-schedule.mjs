@@ -4,9 +4,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
-const parserPath = join(root, "src", "renderer", "src", "naturalLanguageSchedule.ts");
-const componentPath = join(root, "src", "renderer", "src", "components", "TaskCenterView.tsx");
-const apiPath = join(root, "src", "shared", "desktopApi.ts");
+const parserPath = join(root, "..", "shared", "renderer", "src", "naturalLanguageSchedule.ts");
+const componentPath = join(root, "..", "shared", "renderer", "src", "components", "TaskCenterView.tsx");
+const apiPath = join(root, "..", "shared", "api", "desktopApi.ts");
 const servicePath = join(root, "src", "main", "scheduledTasks.ts");
 const parserSource = readFileSync(parserPath, "utf8");
 const component = readFileSync(componentPath, "utf8");

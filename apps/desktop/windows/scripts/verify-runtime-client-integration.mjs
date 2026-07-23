@@ -8,7 +8,7 @@ import { pathToFileURL } from "node:url";
 const root = resolve(new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
 const temp = mkdtempSync(join(tmpdir(), "opendrsai-runtime-client-"));
 const bundle = join(temp, "runtimeClient.mjs");
-await build({ entryPoints: [join(root, "src/main/runtimeClient.ts")], outfile: bundle, bundle: true, platform: "node", format: "esm", target: "node22", external: ["electron"] });
+await build({ entryPoints: [join(root, "../shared/main/runtimeClient.ts")], outfile: bundle, bundle: true, platform: "node", format: "esm", target: "node22", external: ["electron"] });
 const { LocalRuntimeClient, RemoteRuntimeClient, RuntimeProtocolCompatibilityError } = await import(pathToFileURL(bundle).href);
 
 const localFixture = await startFixture(false);

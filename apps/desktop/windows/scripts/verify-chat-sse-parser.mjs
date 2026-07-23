@@ -4,7 +4,7 @@ import { Script } from "node:vm";
 import ts from "typescript";
 
 const require = createRequire(import.meta.url);
-const source = readFileSync(new URL("../src/main/sseParser.ts", import.meta.url), "utf8");
+const source = readFileSync(new URL("../../shared/main/sseParser.ts", import.meta.url), "utf8");
 const compiled = ts.transpileModule(source, {
   compilerOptions: {
     module: ts.ModuleKind.CommonJS,

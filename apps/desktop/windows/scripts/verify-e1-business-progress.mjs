@@ -4,11 +4,11 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const read = (path) => readFileSync(join(root, path), "utf8");
-const api = read("src/shared/desktopApi.ts");
-const generator = read("src/main/managerPresentation.ts");
-const renderer = read("src/renderer/src/components/files/FilesContextPanel.tsx");
-const agentRenderer = read("src/renderer/src/components/AgentRunWorkspace.tsx");
-const styles = read("src/renderer/src/styles.css");
+const api = read("../shared/api/desktopApi.ts");
+const generator = read("../shared/main/managerPresentation.ts");
+const renderer = read("../shared/renderer/src/components/files/FilesContextPanel.tsx");
+const agentRenderer = read("../shared/renderer/src/components/AgentRunWorkspace.tsx");
+const styles = read("../shared/renderer/src/styles.css");
 const smoke = read("src/main/e2eSmoke.ts");
 const packaged = read("scripts/verify-packaged-presentation-pdf-action.mjs");
 const packagedAgent = read("scripts/verify-e2e-agent-run.mjs");

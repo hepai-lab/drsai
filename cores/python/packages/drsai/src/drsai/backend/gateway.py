@@ -98,6 +98,8 @@ from pathlib import Path
 
 from typing import Any, Optional
 
+from urllib.parse import urlparse
+
 
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
@@ -306,11 +308,17 @@ def _get_default_model_alias() -> str:
 
         alias = load_config().get("defult_config_name")
         if isinstance(alias, str) and alias.strip():
-            normalized = alias.strip()
-            return "deepseek-ai/deepseek-v4-pro" if normalized in {"deepseek-v4-pro", "hepai/deepseek-v4-pro"} else normalized
+            return _normalize_default_model_alias(alias)
     except Exception as e:
         logger.debug(f"Failed to read default model alias from cli config: {e}")
     return DEFAULT_CONFIG_NAME
+
+
+def _normalize_default_model_alias(alias: object) -> str:
+    normalized = str(alias or "").strip()
+    if normalized in {"deepseek-ai/deepseek-v4-pro", "hepai/deepseek-v4-pro"}:
+        return "deepseek-v4-pro"
+    return normalized or DEFAULT_CONFIG_NAME
 
 
 
@@ -1220,6 +1228,7 @@ app = FastAPI(
 _REMOTE_PROTOCOL_VERSION = PROTOCOL_VERSION
 _remote_workspaces: dict[str, Path] = {}
 _runtime_registry_instance: RuntimeRegistry | None = None
+_mobile_pairing_service_instance = None
 _runtime_engine_instance: RuntimeEngine | None = None
 _runtime_tool_dispatcher_instance: RuntimeToolDispatcher | None = None
 _runtime_security_instance: RuntimeSecurity | None = None
@@ -1302,6 +1311,15 @@ def _runtime_registry() -> RuntimeRegistry:
         state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
         _runtime_registry_instance = RuntimeRegistry(state_root / "runtime" / "runtime.sqlite3")
     return _runtime_registry_instance
+
+
+def _mobile_pairing_service():
+    global _mobile_pairing_service_instance
+    if _mobile_pairing_service_instance is None:
+        from drsai.relay.mobile_pairing import MobilePairingService
+        state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
+        _mobile_pairing_service_instance = MobilePairingService(state_root)
+    return _mobile_pairing_service_instance
 
 
 def _git_worktree_service() -> GitWorktreeService:
@@ -1628,6 +1646,12 @@ class BackendAccountLoginCancelRequest(BaseModel):
     login_id: str = Field(min_length=1, max_length=256)
 
 
+class MobilePairingRegistrationRequest(BaseModel):
+    registration_code: str = Field(min_length=16, max_length=2048, pattern=r"^[^\r\n\x00]+$")
+    relay_https_url: str = Field(min_length=1, max_length=512)
+    display_name: str = Field(min_length=1, max_length=120, pattern=r"^[^\r\n\x00]*\S[^\r\n\x00]*$")
+
+
 class RuntimeEventAppendRequest(BaseModel):
     type: str = Field(min_length=1, max_length=160)
     data: dict[str, Any] = Field(default_factory=dict)
@@ -1666,6 +1690,7 @@ class RemoteGitFileRequest(BaseModel):
 class RemoteGitCommitRequest(BaseModel):
     message: str = Field(min_length=1, max_length=240)
     body: str | None = Field(default=None, max_length=10000)
+    idempotency_key: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_.:-]{1,200}$")
 
 
 class RemoteGitPushRequest(BaseModel):
@@ -1838,6 +1863,99 @@ async def runtime_capabilities():
         "capability_versions": _REMOTE_CAPABILITY_VERSIONS,
         "agent_backends": await _runtime_agent_service().health(),
     }
+
+
+def _mobile_pairing_http_error(exc):
+    status = 404 if exc.code in {"runtime_not_registered", "access_grant_not_found"} else \
+        401 if exc.code == "runtime_credential_invalid" else \
+        429 if exc.code == "pairing_rate_limited" else \
+        503 if exc.retryable else 409
+    return HTTPException(status_code=status, detail={
+        "code": exc.code, "message": exc.message, "retryable": exc.retryable,
+        "correlation_id": exc.correlation_id,
+        "detail": {"action": exc.action},
+    })
+
+
+def _trusted_mobile_pairing_relay(value: str) -> tuple[str, str]:
+    parsed = urlparse(value.strip())
+    host = (parsed.hostname or "").lower()
+    try:
+        port = parsed.port
+    except ValueError:
+        port = -1
+    if (parsed.scheme != "https" or parsed.username or parsed.password or
+            port not in {None, 443} or host not in {"ai.ihep.ac.cn", "ai-dev.ihep.ac.cn"} or
+            parsed.path.rstrip("/") != "/api/runtime-relay" or parsed.query or parsed.fragment):
+        raise HTTPException(status_code=400, detail={"code": "relay_url_not_trusted",
+                                                    "message": "Runtime Relay URL is not trusted."})
+    root = f"https://{host}/api/runtime-relay"
+    return root, f"wss://{host}/api/runtime-relay/v1/runtime-connect"
+
+
+@app.post("/v1/mobile-pairing/register")
+async def runtime_mobile_pairing_register(request: MobilePairingRegistrationRequest):
+    """Consume a short-lived code locally; the HepAI OIDC token never enters Runtime."""
+    from drsai.relay.device_identity import DeviceIdentityStore
+    from drsai.relay.runtime_client import AiohttpRegistrationTransport, RuntimeCredentialStore, RuntimeEnrollmentClient
+
+    relay_https, relay_wss = _trusted_mobile_pairing_relay(request.relay_https_url)
+    state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
+    relay_state = state_root / "runtime" / "relay"
+    try:
+        enrollment = RuntimeEnrollmentClient(
+            DeviceIdentityStore(relay_state / "device-identity.dpapi"),
+            AiohttpRegistrationTransport(relay_https),
+        )
+        credential = await enrollment.enroll(
+            request.registration_code,
+            request.display_name.strip(),
+            os.environ.get("OPENDRSAI_RUNTIME_VERSION", "1.5.1"),
+        )
+        RuntimeCredentialStore(relay_state / "credential.dpapi").save(credential)
+        relay_state.mkdir(parents=True, exist_ok=True)
+        temporary = relay_state / "relay-wss-url.tmp"
+        temporary.write_text(relay_wss, encoding="utf-8")
+        temporary.replace(relay_state / "relay-wss-url")
+        return {"registered": True, "runtime_id": credential.runtime_id}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("Runtime Relay enrollment failed")
+        raise HTTPException(status_code=502, detail={"code": "runtime_registration_failed",
+                                                    "message": "Runtime Relay registration failed."}) from exc
+
+
+@app.get("/v1/mobile-pairing/status")
+async def runtime_mobile_pairing_status():
+    return _mobile_pairing_service().readiness()
+
+
+@app.post("/v1/mobile-pairing/grants")
+async def runtime_mobile_pairing_create():
+    from drsai.relay.mobile_pairing import MobilePairingError
+    try:
+        return (await _mobile_pairing_service().create()).public()
+    except MobilePairingError as exc:
+        raise _mobile_pairing_http_error(exc) from exc
+
+
+@app.get("/v1/mobile-pairing/grants/{grant_id}")
+async def runtime_mobile_pairing_read(grant_id: str):
+    from drsai.relay.mobile_pairing import MobilePairingError
+    try:
+        return (await _mobile_pairing_service().read(grant_id)).public()
+    except MobilePairingError as exc:
+        raise _mobile_pairing_http_error(exc) from exc
+
+
+@app.delete("/v1/mobile-pairing/grants/{grant_id}")
+async def runtime_mobile_pairing_revoke(grant_id: str):
+    from drsai.relay.mobile_pairing import MobilePairingError
+    try:
+        return (await _mobile_pairing_service().revoke(grant_id)).public()
+    except MobilePairingError as exc:
+        raise _mobile_pairing_http_error(exc) from exc
 
 
 def _backend_account_http_error(exc: RuntimeExecutionError) -> HTTPException:
@@ -2108,6 +2226,43 @@ async def runtime_run_transition(run_id: str, request: RuntimeRunTransitionReque
 
 @app.post("/v1/runs/{run_id}/execute")
 async def runtime_run_execute(run_id: str, request: RuntimeRunExecuteRequest, raw_request: Request):
+    metadata = request.metadata if isinstance(request.metadata, dict) else {}
+    fixture_request_id = str(metadata.get("desktop_request_id") or "")
+    packaged_recovery_fixture = (
+        os.getenv("OPENDRSAI_PACKAGED_CHAT_RECOVERY_FIXTURE") == "1"
+        and os.getenv("OPENDRSAI_DEV_AUTH_BYPASS") == "1"
+        and raw_request.headers.get("x-opendrsai-auth-mode") == "offline"
+        and request.user_id == "packaged-l5-user"
+        and fixture_request_id == "packaged_chat_recovery_001"
+        and metadata.get("packaged_recovery_fixture") is True
+    )
+    if packaged_recovery_fixture:
+        retry_attempt = metadata.get("network_retry_attempt")
+        resume_from_chars = metadata.get("resume_from_chars")
+        if (retry_attempt, resume_from_chars) not in {(0, 0), (1, 5)}:
+            raise HTTPException(status_code=409, detail="Packaged Chat recovery attempt/cursor pair is inconsistent.")
+
+        async def packaged_recovery_sse():
+            yield f"data: {json.dumps({'choices': [{'delta': {'content': 'alpha'}}]})}\n\n"
+            if retry_attempt == 0:
+                # Deliberately end a real HTTP response without [DONE]. The
+                # Desktop must classify the incomplete stream as recoverable.
+                return
+            yield f"data: {json.dumps({'choices': [{'delta': {'content': ' beta'}}]})}\n\n"
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(
+            packaged_recovery_sse(),
+            media_type="text/event-stream",
+            headers={
+                "X-Drsai-Session-Id": request.thread_id or fixture_request_id,
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+                "X-OpenDrSai-Packaged-Recovery-Fixture": "1",
+            },
+        )
+
     auth_context = None
     if raw_request.headers.get("x-opendrsai-auth-mode") == "oidc":
         try:
@@ -2933,14 +3088,24 @@ async def remote_workspace_git_unstage(workspace_id: str, request: RemoteGitFile
 @app.post("/v1/workspaces/{workspace_id}/git/commit")
 async def remote_workspace_git_commit(workspace_id: str, request: RemoteGitCommitRequest, raw_request: Request):
     _authorize_request(raw_request, workspace_id, "git.write", {"operation": "commit", "message_hash": hashlib.sha256(request.message.encode()).hexdigest()})
-    root = _workspace_root(workspace_id); args = ["git", "-C", str(root), "commit", "-m", request.message]
+    root = _workspace_root(workspace_id)
+    marker = f"OpenDrSai-Approval: {request.idempotency_key}" if request.idempotency_key else None
+    if marker:
+        history = subprocess.run(["git", "-C", str(root), "log", "--all", "-n", "200", "--format=%H%x00%B%x00"], capture_output=True, text=True, timeout=15, check=False)
+        if history.returncode == 0:
+            parts = history.stdout.split("\x00")
+            for index in range(0, len(parts) - 1, 2):
+                if any(line.strip() == marker for line in parts[index + 1].splitlines()):
+                    return {"workspace_id": workspace_id, "committed": True, "replayed": True, "revision": parts[index].strip(), "exit_code": 0, "stdout": "", "stderr": ""}
+    args = ["git", "-C", str(root), "commit", "-m", request.message]
     if request.body and request.body.strip(): args += ["-m", request.body.strip()]
+    if marker: args += ["-m", marker]
     completed = subprocess.run(args, capture_output=True, text=True, timeout=60, check=False)
     if completed.returncode != 0:
         combined = (completed.stderr.strip() or completed.stdout.strip() or "Git commit failed")[-4000:]
         raise HTTPException(status_code=409, detail={"code": "git_commit_failed", "message": combined, "retryable": False, "detail": {"exit_code": completed.returncode}})
     revision = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True, timeout=10, check=False).stdout.strip()
-    return {"workspace_id": workspace_id, "committed": True, "revision": revision, "exit_code": completed.returncode, "stdout": completed.stdout[-4000:], "stderr": completed.stderr[-4000:]}
+    return {"workspace_id": workspace_id, "committed": True, "replayed": False, "revision": revision, "exit_code": completed.returncode, "stdout": completed.stdout[-4000:], "stderr": completed.stderr[-4000:]}
 
 
 @app.post("/v1/workspaces/{workspace_id}/git/push")
@@ -3165,7 +3330,7 @@ def _get_live_llm_config() -> tuple[dict[str, ModelEntry], str]:
         try:
             raw = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) or {}
             if "_default_alias" in raw:
-                default_alias = raw["_default_alias"]
+                default_alias = _normalize_default_model_alias(raw["_default_alias"])
         except Exception:
             pass
     return llm_config, default_alias
@@ -3598,7 +3763,25 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
 
         except Exception as e:
             error = classify_model_error(e)
-            logger.error(f"Agent error for session {thread_id}: code={error['code']}")
+            diagnostic_parts: list[str] = []
+            current_error: BaseException | None = e
+            seen_errors: set[int] = set()
+            while current_error is not None and id(current_error) not in seen_errors and len(diagnostic_parts) < 4:
+                seen_errors.add(id(current_error))
+                status_code = getattr(current_error, "status_code", None)
+                diagnostic_parts.append(
+                    f"{type(current_error).__name__}"
+                    + (f"(HTTP {status_code})" if status_code is not None else "")
+                )
+                current_error = current_error.__cause__ or current_error.__context__
+            diagnostic = " <- ".join(diagnostic_parts)
+            error = {**error, "message": f"{error['message']} [{diagnostic}]"}
+            logger.error(
+                "Agent error for session %s: code=%s diagnostic=%s",
+                thread_id,
+                error["code"],
+                diagnostic,
+            )
             logger.debug(traceback.format_exc())
             for frame in conversation_projector.encode(
                 conversation_projector.complete(
@@ -4418,12 +4601,11 @@ async def delete_tool(
 from drsai.modules.components.memory import (
     CuratedMemoryStore,
     DEFAULT_MEMORY_CHAR_LIMIT,
-    DEFAULT_USER_CHAR_LIMIT,
 )
 
 
 def _get_curated_store(user_id: str | None = None) -> CuratedMemoryStore:
-    """Build a CuratedMemoryStore pointing at this user's MEMORY.md / USER.md.
+    """Build a CuratedMemoryStore pointing at this user's MEMORY.md.
 
     Files live in ``WORKDIR/<user_id>/configs/`` — the same directory the
     agent's UserProfileManager writes to, so reads/writes here are seen by
@@ -4433,19 +4615,16 @@ def _get_curated_store(user_id: str | None = None) -> CuratedMemoryStore:
     cfg_dir.mkdir(parents=True, exist_ok=True)
     return CuratedMemoryStore(
         memory_path=cfg_dir / "MEMORY.md",
-        user_path=cfg_dir / "USER.md",
     )
 
 
 def _memory_payload(user_id: str | None = None) -> dict:
-    """Build the GET /v1/memory response payload (hermes-shaped)."""
+    """Build the GET /v1/memory response payload."""
     store = _get_curated_store(user_id)
     entries = store.list_entries()
     mem_path = store.memory_path
-    user_path = store.user_path
     mtimes = store.last_modified()
     counts = store.char_counts()
-    user_content = store.read_user()
 
     # Session / message stats from the shared DB
     total_sessions, total_messages = 0, 0
@@ -4471,13 +4650,6 @@ def _memory_payload(user_id: str | None = None) -> dict:
             "charCount": counts["memory"],
             "charLimit": store.memory_char_limit,
         },
-        "user": {
-            "content": user_content,
-            "exists": user_path.exists(),
-            "lastModified": mtimes["user"],
-            "charCount": counts["user"],
-            "charLimit": store.user_char_limit,
-        },
         "stats": {
             "totalSessions": total_sessions,
             "totalMessages": total_messages,
@@ -4496,10 +4668,6 @@ async def get_memory(user_id: str | None = Query(default=None)):
 
 class MemoryEntryRequest(BaseModel):
     content: str = Field(..., description="Entry content (will be trimmed).")
-
-
-class MemoryUserRequest(BaseModel):
-    content: str = Field(..., description="Full USER.md replacement content.")
 
 
 @app.post("/v1/memory/entries")
@@ -4544,25 +4712,11 @@ async def delete_memory_entry(
     return _memory_payload(user_id)
 
 
-@app.put("/v1/memory/user")
-async def write_memory_user(
-    req: MemoryUserRequest,
-    user_id: str | None = Query(default=None),
-):
-    """Overwrite USER.md with ``content`` (bounded by user_char_limit)."""
-    store = _get_curated_store(user_id)
-    result = store.write_user(req.content)
-    if not result.get("success"):
-        raise HTTPException(status_code=400, detail=result.get("error", "Write failed"))
-    return _memory_payload(user_id)
-
-
 @app.get("/v1/memory/limits")
 async def get_memory_limits():
     """Return curated-memory character limits (constants)."""
     return {
         "memoryCharLimit": DEFAULT_MEMORY_CHAR_LIMIT,
-        "userCharLimit": DEFAULT_USER_CHAR_LIMIT,
     }
 
 

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -631,6 +633,135 @@ def cmd_memory(ctx: SlashContext) -> dict:
         return {"output": "\n".join(lines)}
 
     return {"output": "Usage: /memory show|reload|status"}
+
+
+# ── Memory Compression ────────────────────────────────────────────────────────
+
+def cmd_compress(ctx: SlashContext) -> dict:
+    """Manually compress conversation memory via LLM summarization.
+
+    Usage:
+        /compress              — compress with default keep_recent=6
+        /compress keep_recent=N — keep the last N messages, compress the rest
+        /compress status       — show current token usage and compression eligibility
+    """
+    if not ctx.session or not ctx.session.agent:
+        return {"output": "Error: no active session"}
+
+    agent = ctx.session.agent
+    context = getattr(agent, "_model_context", None)
+    if context is None:
+        return {"output": "Error: no model context available"}
+
+    # Handle status subcommand
+    args = ctx.args.strip().lower()
+    if args == "status":
+        token_count = getattr(context, "_token_count", 0)
+        token_limit = getattr(context, "_token_limit", None)
+        msg_count = len(getattr(context, "_messages", []))
+        has_compress = hasattr(context, "manual_compress")
+        lines = [
+            "Memory compression status:",
+            f"  Messages in context: {msg_count}",
+            f"  Token count:         {token_count}",
+            f"  Token limit:         {token_limit or '(unlimited)'}",
+            f"  Compression support: {'✅ yes' if has_compress else '❌ no'}",
+        ]
+        if token_limit:
+            pct = (token_count / token_limit) * 100
+            lines.append(f"  Usage:               {pct:.1f}%")
+            if pct > 80:
+                lines.append("  ⚠️  Approaching limit — consider running /compress")
+        return {"output": "\n".join(lines)}
+
+    # Check if context supports manual compression
+    if not hasattr(context, "manual_compress"):
+        context_type = getattr(agent, "_context_type", "?")
+        return {"output": f"Error: context type '{context_type}' does not support compression. Only SQLite context supports this feature."}
+
+    # Parse keep_recent argument
+    keep_recent = 6  # default
+    if args:
+        try:
+            if args.startswith("keep_recent="):
+                keep_recent = int(args.split("=")[1])
+            elif args.isdigit():
+                keep_recent = int(args)
+            else:
+                return {"output": f"Invalid argument: {ctx.args}\nUsage: /compress [keep_recent=N|status]"}
+        except ValueError:
+            return {"output": f"Invalid keep_recent value: {ctx.args}\nUsage: /compress [keep_recent=N|status]"}
+
+    if keep_recent < 1:
+        return {"output": "Error: keep_recent must be at least 1"}
+
+    # ── Spinner: emit rotating status frames while compression runs ──
+    # The compression involves an LLM call that can take 10–60 seconds.
+    # We run a lightweight background thread that pushes ``status.update``
+    # events every 100ms so the TUI status bar shows a live spinner.
+    _SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+    stop_spinner = threading.Event()
+
+    def _spinner_loop():
+        idx = 0
+        while not stop_spinner.is_set():
+            glyph = _SPINNER_FRAMES[idx % len(_SPINNER_FRAMES)]
+            _emit("status.update", ctx.session_id, {
+                "kind": "compress",
+                "text": f"{glyph} 正在压缩记忆 (保留最近 {keep_recent} 条)…",
+            })
+            idx += 1
+            stop_spinner.wait(0.1)  # 100ms per frame
+
+    spinner_thread = threading.Thread(target=_spinner_loop, daemon=True)
+    spinner_thread.start()
+
+    # Run compression on the agent's event loop (it's async)
+    from ..adapter.agent_runner import _run_coro
+    try:
+        result = _run_coro(
+            ctx.session._loop,
+            context.manual_compress(keep_recent=keep_recent),
+            timeout=120.0,
+        )
+    except TimeoutError:
+        stop_spinner.set()
+        _emit("status.update", ctx.session_id, {"kind": "compress", "text": ""})
+        return {"output": "Error: compression timed out (120s). The model may be slow — try again."}
+    except Exception as e:
+        stop_spinner.set()
+        _emit("status.update", ctx.session_id, {"kind": "compress", "text": ""})
+        logger.exception("compress command failed")
+        return {"output": f"Compression failed: {type(e).__name__}: {e}"}
+    finally:
+        stop_spinner.set()
+        spinner_thread.join(timeout=1.0)
+
+    # Clear the spinner from the status bar
+    _emit("status.update", ctx.session_id, {"kind": "compress", "text": ""})
+
+    # Format result
+    compressed_n = result.get("compressed_count", 0)
+    if compressed_n == 0:
+        return {"output": f"Nothing to compress (only {result.get('total_count', 0)} messages, keep_recent={keep_recent})."}
+
+    token_before = result.get("token_before", 0)
+    token_after = result.get("token_after", 0)
+    saved = token_before - token_after
+    saved_pct = (saved / token_before * 100) if token_before > 0 else 0
+
+    lines = [
+        "✅ Memory compressed successfully!",
+        f"  Messages:  {result.get('total_count', 0)} → {result.get('kept_count', 0)} (compressed {compressed_n})",
+        f"  Tokens:    {token_before} → {token_after} (saved {saved}, {saved_pct:.1f}%)",
+    ]
+    preview = result.get("summary_preview", "")
+    if preview:
+        lines.append("")
+        lines.append("  Summary preview:")
+        lines.append(f"  {preview}{'…' if len(preview) >= 200 else ''}")
+
+    return {"output": "\n".join(lines)}
 
 
 # ── Workspace ─────────────────────────────────────────────────────────────────
@@ -1583,6 +1714,8 @@ SLASH_HANDLERS: dict[str, Any] = {
     "inject": cmd_inject,
     "init": cmd_init,
     "memory": cmd_memory,
+    "compress": cmd_compress,
+    "cmp": cmd_compress,
     "workspace": cmd_workspace,
     "ws": cmd_workspace,
     "ws_global": cmd_ws_global,

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-const { OrderedStreamingAudioPlaybackQueue } = await import("../src/renderer/src/voice/streaming/orderedAudioPlaybackQueue.ts");
+const { OrderedStreamingAudioPlaybackQueue } = await import("../../shared/renderer/src/voice/streaming/orderedAudioPlaybackQueue.ts");
 const segment = (index) => ({ sessionId: "s", turnId: "t", messageId: "m", segmentId: `seg-${index}`, segmentIndex: index, mimeType: "audio/wav", audioData: new Uint8Array([index]), final: true });
 const controls = [];
 const played = [];

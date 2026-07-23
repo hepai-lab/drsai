@@ -2,6 +2,8 @@ package ai.drsai.remote
 
 import ai.drsai.remote.remote.data.HttpRelayDiscoveryService
 import ai.drsai.remote.remote.data.parseAccessGrantCode
+import ai.drsai.remote.remote.data.RelayHttpException
+import ai.drsai.remote.remote.data.associationErrorMessage
 import ai.drsai.remote.remote.model.RemoteConnectionState
 import ai.drsai.remote.remote.model.RuntimeId
 import kotlinx.coroutines.test.runTest
@@ -13,6 +15,8 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.json.JSONObject
+import java.io.File
 
 class RelayDiscoveryClientTest {
     private lateinit var server: MockWebServer
@@ -74,8 +78,32 @@ class RelayDiscoveryClientTest {
 
     @Test fun `plain access grant is strictly validated`() {
         assertEquals("abcdefghijklmnop", parseAccessGrantCode("abcdefghijklmnop"))
+        assertEquals(
+            "A_secure-code_123456",
+            parseAccessGrantCode(
+                "opendrsai://associate?v=1&environment=production&issuer=https%3A%2F%2Fai.ihep.ac.cn&code=A_secure-code_123456",
+            ),
+        )
+        assertEquals(
+            "Dev_secure-code_1234",
+            parseAccessGrantCode(
+                "opendrsai://associate?v=1&environment=development&issuer=https%3A%2F%2Fai-dev.ihep.ac.cn&code=Dev_secure-code_1234",
+                "https://ai-dev.ihep.ac.cn",
+            ),
+        )
         kotlin.runCatching { parseAccessGrantCode("short") }.onSuccess { error("short grant accepted") }
         kotlin.runCatching { parseAccessGrantCode("../../secret-secret") }.onSuccess { error("path grant accepted") }
+        listOf(
+            "opendrsai://associate?v=2&environment=production&issuer=https%3A%2F%2Fai.ihep.ac.cn&code=A_secure-code_123456",
+            "opendrsai://associate?v=1&environment=development&issuer=https%3A%2F%2Fai-dev.ihep.ac.cn&code=A_secure-code_123456",
+            "opendrsai://associate?v=1&environment=production&issuer=http%3A%2F%2Fai.ihep.ac.cn&code=A_secure-code_123456",
+            "opendrsai://associate?v=1&environment=production&issuer=https%3A%2F%2Fevil.example&code=A_secure-code_123456",
+            "opendrsai://associate?v=1&environment=production&issuer=https%3A%2F%2Fai.ihep.ac.cn&code=A_secure-code_123456&code=Duplicate_code_123",
+            "opendrsai://associate/extra?v=1&environment=production&issuer=https%3A%2F%2Fai.ihep.ac.cn&code=A_secure-code_123456",
+            "opendrsai://associate:123?v=1&environment=production&issuer=https%3A%2F%2Fai.ihep.ac.cn&code=A_secure-code_123456",
+        ).forEach { invalid ->
+            kotlin.runCatching { parseAccessGrantCode(invalid) }.onSuccess { error("invalid grant accepted: $invalid") }
+        }
     }
 
     @Test fun `association derives principal only from bearer token`() = runTest {
@@ -84,7 +112,62 @@ class RelayDiscoveryClientTest {
         assertEquals("rt-associated", service.associate("abcdefghijklmnop").value)
         server.takeRequest().apply {
             assertEquals("Bearer token", getHeader("Authorization")); assertEquals(null, getHeader("X-Subject"))
-            assertTrue(body.readUtf8().contains("\"code\":\"abcdefghijklmnop\""))
+            val bodyText = body.readUtf8()
+            assertTrue(bodyText.contains("\"code\":\"abcdefghijklmnop\""))
+            assertTrue(!bodyText.contains("opendrsai://"))
+        }
+    }
+
+    @Test fun `association refreshes expired oidc token exactly once`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(401).setBody("{\"code\":\"oidc_auth_invalid\"}"))
+        server.enqueue(MockResponse().setResponseCode(200).setBody("{\"runtime_id\":\"rt-refreshed\"}"))
+        var refreshes = 0
+        val service = HttpRelayDiscoveryService(server.url("/").toString(), { "expired" }, {
+            refreshes += 1
+            "fresh"
+        })
+        assertEquals("rt-refreshed", service.associate("abcdefghijklmnop").value)
+        assertEquals(1, refreshes)
+        assertEquals("Bearer expired", server.takeRequest().getHeader("Authorization"))
+        assertEquals("Bearer fresh", server.takeRequest().getHeader("Authorization"))
+    }
+
+    @Test fun `association errors have stable user messages`() {
+        assertEquals("二维码已过期，请在电脑端刷新后重试", associationErrorMessage(RelayHttpException(400, "c", "access_grant_expired")))
+        assertEquals("二维码已使用，请在电脑端刷新后重试", associationErrorMessage(RelayHttpException(400, "c", "access_grant_consumed")))
+        assertEquals("二维码已撤销，请在电脑端刷新后重试", associationErrorMessage(RelayHttpException(400, "c", "access_grant_revoked")))
+        assertEquals("HepAI 登录已过期，请重新登录", associationErrorMessage(RelayHttpException(401, "c", "oidc_auth_invalid")))
+        assertEquals("操作过于频繁，请稍后重试", associationErrorMessage(RelayHttpException(429, "c")))
+        assertEquals("二维码环境与当前应用不一致", associationErrorMessage(IllegalArgumentException("access_grant_environment_mismatch")))
+    }
+
+    @Test fun `association reads structured relay error without exposing scanned payload`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(400).setHeader("X-Correlation-Id", "corr-safe")
+            .setBody("{\"code\":\"access_grant_expired\",\"message\":\"expired\"}"))
+        val service = HttpRelayDiscoveryService(server.url("/").toString(), { "token" })
+        val failure = runCatching { service.associate("abcdefghijklmnop") }.exceptionOrNull() as RelayHttpException
+        assertEquals("access_grant_expired", failure.errorCode)
+        assertEquals("corr-safe", failure.correlationId)
+        assertTrue(!failure.message.orEmpty().contains("abcdefghijklmnop"))
+    }
+
+    @Test fun `shared pairing fixtures parse without drift`() {
+        val candidates = listOf(
+            File("../../../protocol/relay/mobile-pairing-fixtures.json"),
+            File("../../protocol/relay/mobile-pairing-fixtures.json"),
+            File("protocol/relay/mobile-pairing-fixtures.json"),
+        )
+        val fixtureFile = candidates.firstOrNull(File::isFile) ?: error("shared pairing fixtures not found")
+        val fixtures = JSONObject(fixtureFile.readText())
+        val valid = fixtures.getJSONArray("valid")
+        repeat(valid.length()) { index ->
+            val item = valid.getJSONObject(index)
+            assertEquals(item.getString("code"), parseAccessGrantCode(item.getString("payload"), item.getString("issuer")))
+        }
+        val invalid = fixtures.getJSONArray("invalid")
+        repeat(invalid.length()) { index ->
+            kotlin.runCatching { parseAccessGrantCode(invalid.getString(index)) }
+                .onSuccess { error("invalid shared fixture accepted") }
         }
     }
 }

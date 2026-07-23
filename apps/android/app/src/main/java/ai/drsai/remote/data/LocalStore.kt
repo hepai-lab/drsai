@@ -25,6 +25,14 @@ import ai.drsai.remote.remote.data.RemoteRunEntity
 import ai.drsai.remote.remote.data.RemoteRuntimeEntity
 import ai.drsai.remote.remote.data.RemoteSessionEntity
 import ai.drsai.remote.remote.data.RemoteWorkspaceEntity
+import ai.drsai.remote.workbench.data.WorkbenchApprovalEntity
+import ai.drsai.remote.workbench.data.WorkbenchApprovalGrantEntity
+import ai.drsai.remote.workbench.data.WorkbenchAuditEntity
+import ai.drsai.remote.workbench.data.WorkbenchDao
+import ai.drsai.remote.workbench.data.WorkbenchEventEntity
+import ai.drsai.remote.workbench.data.WorkbenchRunEntity
+import ai.drsai.remote.workbench.data.WorkbenchSessionEntity
+import ai.drsai.remote.workbench.data.WorkbenchWorkspaceEntity
 
 @Entity(tableName = "conversations", indices = [Index("userId")])
 data class ConversationEntity(
@@ -114,6 +122,28 @@ data class MemoryEntity(
     val createdAt: Long = System.currentTimeMillis(),
 )
 
+@Entity(tableName = "conversation_summaries", indices = [Index("conversationId")])
+data class ConversationSummaryEntity(
+    @PrimaryKey val conversationId: String,
+    val fromMessageId: String,
+    val toMessageId: String,
+    val content: String,
+    val sourceCount: Int,
+    val updatedAt: Long,
+)
+
+@Entity(tableName = "tool_artifacts", indices = [Index("userId", "runId")])
+data class ToolArtifactEntity(
+    @PrimaryKey val id: String,
+    val userId: String,
+    val runId: String,
+    val sessionId: String,
+    val toolCallId: String,
+    val toolId: String,
+    val content: String,
+    val createdAt: Long,
+)
+
 @Dao
 interface ChatDao {
     @Query("SELECT * FROM conversations WHERE userId=:userId ORDER BY updatedAt DESC")
@@ -127,6 +157,9 @@ interface ChatDao {
 
     @Query("SELECT * FROM messages WHERE conversationId=:id ORDER BY createdAt")
     suspend fun runtimeMessageSnapshot(id: String): List<MessageEntity>
+
+    @Query("SELECT messages.* FROM messages INNER JOIN conversations ON conversations.id=messages.conversationId WHERE conversations.userId=:userId AND messages.visible=1 AND messages.content LIKE '%' || :escapedQuery || '%' ESCAPE '\\' ORDER BY messages.createdAt DESC LIMIT :limit")
+    suspend fun searchVisibleMessages(userId: String, escapedQuery: String, limit: Int): List<MessageEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun saveConversation(item: ConversationEntity)
@@ -143,6 +176,9 @@ interface ChatDao {
     @Query("SELECT * FROM message_attachments WHERE conversationId=:id ORDER BY createdAt")
     suspend fun attachmentSnapshot(id: String): List<MessageAttachmentEntity>
 
+    @Query("SELECT a.* FROM message_attachments a INNER JOIN conversations c ON c.id=a.conversationId WHERE c.userId=:userId ORDER BY a.createdAt DESC")
+    suspend fun allAttachmentsForUser(userId: String): List<MessageAttachmentEntity>
+
     @Query("DELETE FROM message_attachments WHERE id=:id")
     suspend fun deleteAttachment(id: String)
 
@@ -158,6 +194,33 @@ interface ChatDao {
     @Query("SELECT * FROM memories WHERE userId=:userId AND content LIKE '%' || :query || '%' ORDER BY createdAt DESC LIMIT :limit")
     suspend fun searchMemories(userId: String, query: String, limit: Int): List<MemoryEntity>
 
+    @Query("SELECT * FROM memories WHERE userId=:userId ORDER BY createdAt DESC LIMIT :limit")
+    suspend fun memorySnapshot(userId: String, limit: Int = 100): List<MemoryEntity>
+
+    @Query("DELETE FROM memories WHERE userId=:userId AND id=:id")
+    suspend fun deleteMemory(userId: String, id: Long): Int
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun saveConversationSummary(item: ConversationSummaryEntity)
+
+    @Query("SELECT * FROM conversation_summaries WHERE conversationId=:conversationId")
+    suspend fun conversationSummary(conversationId: String): ConversationSummaryEntity?
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun saveToolArtifact(item: ToolArtifactEntity)
+
+    @Query("SELECT * FROM tool_artifacts WHERE userId=:userId AND runId=:runId ORDER BY createdAt")
+    suspend fun toolArtifacts(userId: String, runId: String): List<ToolArtifactEntity>
+
+    @Query("SELECT * FROM tool_artifacts WHERE userId=:userId ORDER BY createdAt DESC")
+    suspend fun allToolArtifacts(userId: String): List<ToolArtifactEntity>
+
+    @Query("DELETE FROM tool_artifacts WHERE userId=:userId AND id IN (:ids)")
+    suspend fun deleteToolArtifacts(userId: String, ids: List<String>): Int
+
+    @Query("DELETE FROM tool_artifacts WHERE userId=:userId AND createdAt < :before AND runId NOT IN (:activeRunIds)")
+    suspend fun pruneToolArtifacts(userId: String, before: Long, activeRunIds: List<String>): Int
+
     @Query("SELECT * FROM agent_catalog WHERE userId=:userId ORDER BY isDefault DESC, name COLLATE NOCASE")
     suspend fun agentCatalogSnapshot(userId: String): List<AgentCatalogEntity>
 
@@ -169,15 +232,75 @@ interface ChatDao {
 }
 
 @Database(
-    entities = [ConversationEntity::class, MessageEntity::class, MessageAttachmentEntity::class, MemoryEntity::class, AgentCatalogEntity::class,
+    entities = [ConversationEntity::class, MessageEntity::class, MessageAttachmentEntity::class, MemoryEntity::class,
+        ConversationSummaryEntity::class, ToolArtifactEntity::class, AgentCatalogEntity::class,
         RemoteRuntimeEntity::class, RemoteWorkspaceEntity::class, RemoteSessionEntity::class, RemoteRunEntity::class,
-        RemoteEventCursorEntity::class, RemoteEventEntity::class, PendingRemoteApprovalEntity::class],
-    version = 5,
+        RemoteEventCursorEntity::class, RemoteEventEntity::class, PendingRemoteApprovalEntity::class,
+        WorkbenchWorkspaceEntity::class, WorkbenchSessionEntity::class, WorkbenchRunEntity::class,
+        WorkbenchEventEntity::class, WorkbenchApprovalEntity::class, WorkbenchApprovalGrantEntity::class,
+        WorkbenchAuditEntity::class],
+    version = 6,
     exportSchema = false,
 )
 abstract class ChatDatabase : RoomDatabase() {
     abstract fun dao(): ChatDao
     abstract fun remoteDao(): RemoteCacheDao
+    abstract fun workbenchDao(): WorkbenchDao
+}
+
+class MemorySettingsStore(context: Context) {
+    private val preferences = context.getSharedPreferences("opendrsai_memory_settings", Context.MODE_PRIVATE)
+    fun enabled(subject: String): Boolean = preferences.getBoolean(subject.hashCode().toUInt().toString(16), true)
+    fun setEnabled(subject: String, enabled: Boolean) {
+        preferences.edit().putBoolean(subject.hashCode().toUInt().toString(16), enabled).apply()
+    }
+}
+
+val MIGRATION_5_6 = object : Migration(5, 6) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS workbench_workspaces (subject TEXT NOT NULL, organization TEXT NOT NULL, runtimeId TEXT NOT NULL, workspaceId TEXT NOT NULL, displayName TEXT NOT NULL, kind TEXT NOT NULL, authority TEXT NOT NULL, lastSyncedAt INTEGER NOT NULL, PRIMARY KEY(subject, organization, runtimeId, workspaceId))")
+        db.execSQL("CREATE TABLE IF NOT EXISTS conversation_summaries (conversationId TEXT NOT NULL, fromMessageId TEXT NOT NULL, toMessageId TEXT NOT NULL, content TEXT NOT NULL, sourceCount INTEGER NOT NULL, updatedAt INTEGER NOT NULL, PRIMARY KEY(conversationId))")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_conversation_summaries_conversationId ON conversation_summaries(conversationId)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS tool_artifacts (id TEXT NOT NULL, userId TEXT NOT NULL, runId TEXT NOT NULL, sessionId TEXT NOT NULL, toolCallId TEXT NOT NULL, toolId TEXT NOT NULL, content TEXT NOT NULL, createdAt INTEGER NOT NULL, PRIMARY KEY(id))")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_tool_artifacts_userId_runId ON tool_artifacts(userId, runId)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_workbench_workspaces_subject_organization_runtimeId ON workbench_workspaces(subject, organization, runtimeId)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS workbench_sessions (subject TEXT NOT NULL, organization TEXT NOT NULL, runtimeId TEXT NOT NULL, workspaceId TEXT NOT NULL, sessionId TEXT NOT NULL, title TEXT NOT NULL, backendId TEXT NOT NULL, authority TEXT NOT NULL, sourceConversationId TEXT, pinned INTEGER NOT NULL, archived INTEGER NOT NULL, unread INTEGER NOT NULL, updatedAt INTEGER NOT NULL, PRIMARY KEY(subject, organization, runtimeId, workspaceId, sessionId))")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_workbench_sessions_subject_organization_runtimeId_workspaceId ON workbench_sessions(subject, organization, runtimeId, workspaceId)")
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_workbench_sessions_sourceConversationId ON workbench_sessions(sourceConversationId)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS workbench_runs (subject TEXT NOT NULL, organization TEXT NOT NULL, runtimeId TEXT NOT NULL, workspaceId TEXT NOT NULL, sessionId TEXT NOT NULL, runId TEXT NOT NULL, backendId TEXT NOT NULL, authority TEXT NOT NULL, status TEXT NOT NULL, lastSequence INTEGER NOT NULL, idempotencyKey TEXT NOT NULL, input TEXT NOT NULL, skillVersionsJson TEXT NOT NULL DEFAULT '{}', completedSideEffectsJson TEXT NOT NULL, failureCode TEXT, updatedAt INTEGER NOT NULL, PRIMARY KEY(subject, organization, runtimeId, runId))")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_workbench_runs_subject_organization_runtimeId_workspaceId_sessionId ON workbench_runs(subject, organization, runtimeId, workspaceId, sessionId)")
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_workbench_runs_subject_idempotencyKey ON workbench_runs(subject, idempotencyKey)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS workbench_events (subject TEXT NOT NULL, organization TEXT NOT NULL, runtimeId TEXT NOT NULL, workspaceId TEXT NOT NULL, sessionId TEXT NOT NULL, runId TEXT NOT NULL, eventId TEXT NOT NULL, sequence INTEGER NOT NULL, timestamp TEXT NOT NULL, kind TEXT NOT NULL, payloadVersion INTEGER NOT NULL, payloadJson TEXT NOT NULL, PRIMARY KEY(subject, organization, runtimeId, eventId))")
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_workbench_events_subject_organization_runtimeId_runId_sequence ON workbench_events(subject, organization, runtimeId, runId, sequence)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS workbench_approvals (subject TEXT NOT NULL, organization TEXT NOT NULL, runtimeId TEXT NOT NULL, sessionId TEXT NOT NULL, runId TEXT NOT NULL, approvalId TEXT NOT NULL, toolCallId TEXT NOT NULL, operation TEXT NOT NULL, argumentsDigest TEXT NOT NULL, scope TEXT NOT NULL, status TEXT NOT NULL, expiresAt TEXT NOT NULL, updatedAt INTEGER NOT NULL, PRIMARY KEY(subject, organization, runtimeId, approvalId))")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_workbench_approvals_subject_organization_runtimeId_runId ON workbench_approvals(subject, organization, runtimeId, runId)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS workbench_approval_grants (subject TEXT NOT NULL, organization TEXT NOT NULL, runtimeId TEXT NOT NULL, sessionId TEXT NOT NULL, toolId TEXT NOT NULL, createdAt INTEGER NOT NULL, expiresAt INTEGER, PRIMARY KEY(subject, organization, runtimeId, sessionId, toolId))")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_workbench_approval_grants_subject_organization_runtimeId_sessionId ON workbench_approval_grants(subject, organization, runtimeId, sessionId)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS workbench_audit (subject TEXT NOT NULL, organization TEXT NOT NULL, auditId TEXT NOT NULL, runtimeId TEXT NOT NULL, runId TEXT, action TEXT NOT NULL, outcome TEXT NOT NULL, createdAt INTEGER NOT NULL, detailsJson TEXT NOT NULL, PRIMARY KEY(subject, organization, auditId))")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_workbench_audit_subject_organization_runtimeId_runId ON workbench_audit(subject, organization, runtimeId, runId)")
+
+        // Preserve current local conversations as Sessions in a stable virtual Workspace.
+        db.execSQL("INSERT OR IGNORE INTO workbench_workspaces SELECT userId, '', 'android-local', 'local', 'OpenDrSai 本地', 'LOCAL', 'LOCAL_DEVICE', MAX(updatedAt) FROM conversations GROUP BY userId")
+        db.execSQL("INSERT OR IGNORE INTO workbench_sessions SELECT userId, '', 'android-local', 'local', id, title, 'opendrsai', 'LOCAL_DEVICE', id, 0, 0, 0, updatedAt FROM conversations")
+
+        // Preserve remote projections. These remain non-authoritative caches even
+        // though they are now available through the unified read model.
+        db.execSQL("INSERT OR IGNORE INTO workbench_workspaces SELECT subject, organization, runtimeId, workspaceId, displayName, 'REMOTE', 'REMOTE_RUNTIME', lastSyncedAt FROM remote_workspaces")
+        db.execSQL("INSERT OR IGNORE INTO workbench_sessions SELECT subject, organization, runtimeId, workspaceId, sessionId, title, backendId, 'REMOTE_RUNTIME', NULL, 0, 0, 0, lastSyncedAt FROM remote_sessions")
+        db.execSQL("""
+            INSERT OR IGNORE INTO workbench_runs (
+                subject, organization, runtimeId, workspaceId, sessionId, runId, backendId,
+                authority, status, lastSequence, idempotencyKey, input, skillVersionsJson,
+                completedSideEffectsJson, failureCode, updatedAt
+            )
+            SELECT subject, organization, runtimeId, workspaceId, sessionId, runId, backendId,
+                'REMOTE_RUNTIME', status, lastSequence, 'legacy:' || runtimeId || ':' || runId,
+                'legacy remote run', '{}', '[]', NULL, lastSyncedAt
+            FROM remote_runs
+        """.trimIndent())
+        db.execSQL("INSERT OR IGNORE INTO workbench_events SELECT subject, organization, runtimeId, workspaceId, sessionId, runId, eventId, sequence, timestamp, type, 1, '{}' FROM remote_events")
+        db.execSQL("INSERT OR IGNORE INTO workbench_approvals SELECT subject, organization, runtimeId, sessionId, runId, approvalId, approvalId, operation, 'legacy-unavailable', 'once', 'PENDING', expiresAt, lastSyncedAt FROM pending_remote_approvals")
+    }
 }
 
 val MIGRATION_4_5 = object : Migration(4, 5) {
@@ -224,31 +347,31 @@ class SecureTokenStore(context: Context) : AuthTokenStore {
 
     override var accessToken: String?
         get() = prefs.getString("access", null)
-        set(value) = prefs.edit().putString("access", value).apply()
+        set(value) { check(prefs.edit().putString("access", value).commit()) { "auth-store-write-failed" } }
     override var refreshToken: String?
         get() = prefs.getString("refresh", null)
-        set(value) = prefs.edit().putString("refresh", value).apply()
+        set(value) { check(prefs.edit().putString("refresh", value).commit()) { "auth-store-write-failed" } }
     var userId: String?
         get() = prefs.getString("user", null)
-        set(value) = prefs.edit().putString("user", value).apply()
+        set(value) { check(prefs.edit().putString("user", value).commit()) { "auth-store-write-failed" } }
     var userName: String?
         get() = prefs.getString("user_name", null)
-        set(value) = prefs.edit().putString("user_name", value).apply()
+        set(value) { check(prefs.edit().putString("user_name", value).commit()) { "auth-store-write-failed" } }
     var avatarUrl: String?
         get() = prefs.getString("avatar", null)
-        set(value) = prefs.edit().putString("avatar", value).apply()
+        set(value) { check(prefs.edit().putString("avatar", value).commit()) { "auth-store-write-failed" } }
     var selectedModelId: String?
         get() = prefs.getString("model", null)
-        set(value) = prefs.edit().putString("model", value).apply()
+        set(value) { check(prefs.edit().putString("model", value).commit()) { "auth-store-write-failed" } }
     var selectedAgentId: String?
         get() = prefs.getString("agent", null)
-        set(value) = prefs.edit().putString("agent", value).apply()
+        set(value) { check(prefs.edit().putString("agent", value).commit()) { "auth-store-write-failed" } }
     var oidcClientId: String?
         get() = prefs.getString("oidc_client_id", null)
-        set(value) = prefs.edit().putString("oidc_client_id", value).apply()
+        set(value) { check(prefs.edit().putString("oidc_client_id", value).commit()) { "auth-store-write-failed" } }
     var relayTicket: String?
         get() = prefs.getString("relay_ticket", null)
-        set(value) = prefs.edit().putString("relay_ticket", value).apply()
+        set(value) { check(prefs.edit().putString("relay_ticket", value).commit()) { "auth-store-write-failed" } }
 
     override fun save(auth: AuthTokens) {
         accessToken = auth.accessToken
@@ -259,7 +382,7 @@ class SecureTokenStore(context: Context) : AuthTokenStore {
     }
 
     fun user(): User? = userId?.let { User(it, userName ?: it, avatarUrl) }
-    fun clear() = prefs.edit().clear().apply()
+    fun clear() { check(prefs.edit().clear().commit()) { "auth-store-clear-failed" } }
 }
 
 val MIGRATION_3_4 = object : Migration(3, 4) {

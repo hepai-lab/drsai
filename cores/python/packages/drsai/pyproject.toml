@@ -28,8 +28,10 @@ dependencies = [
     # , docker
     
     # ── HepAI platform (pulls in: openai, damei, fastapi, uvicorn, etc.) ─
-    "hepai>=1.4.1",
     "fastapi[standard]",
+    "easydict",
+    "numpy",
+    "hepai>=1.4.8",
 
     # ── data model & validation ──────────────────────────────────────────
     "pydantic",
@@ -63,6 +65,8 @@ dependencies = [
     # ── WeChat integration ───────────────────────────────────────────────
     "qrcode[pil]",
 
+    # ── GFS ───────────────────────────────────────────────
+    "boto3",
     # 
     # "pystray>=0.19",
     # "Pillow>=9.0"

@@ -12,7 +12,7 @@ $ErrorActionPreference = "Stop"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = (Resolve-Path (Join-Path $ScriptDir "..")).Path
-$MovedScript = Join-Path $RepoRoot "apps\desktop\scripts\windows-desktop-dev.ps1"
+$MovedScript = Join-Path $RepoRoot "apps\desktop\windows\scripts\dev.ps1"
 
 $forwardArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $MovedScript)
 if ($DrsaiHome) {

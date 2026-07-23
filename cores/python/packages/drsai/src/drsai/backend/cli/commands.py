@@ -236,6 +236,14 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="show|reload|status",
         handler="async",
     ),
+    CommandDef(
+        "compress",
+        "Manually compress conversation memory (LLM summarization of older messages)",
+        "Memory",
+        aliases=("cmp",),
+        args_hint="[keep_recent=N]",
+        handler="async",
+    ),
 
     # ── Workspace ──────────────────────────────────────────────────────
     CommandDef(
@@ -408,6 +416,14 @@ COMMAND_REGISTRY: list[CommandDef] = [
         "WeChat",
         args_hint="status|sessions|login|logout",
         handler="async",
+    ),
+
+    # ── GFS integration ──────────────────────────────────────────────────────
+    CommandDef(
+        "gfs",
+        "Configure GFS (高能所文件系统) personal-mode credentials and toggle tools",
+        "GFS",
+        handler="special",  # handled in composerPane (GfsPanel overlay), not by slash.exec RPC
     ),
 
     # ── Meta ─────────────────────────────────────────────────────────────────

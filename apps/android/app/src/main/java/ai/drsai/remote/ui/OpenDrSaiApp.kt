@@ -20,12 +20,14 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -50,6 +52,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Login
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowUpward
@@ -57,18 +60,33 @@ import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.TaskAlt
+import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.PendingActions
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -82,6 +100,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
@@ -97,6 +116,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -116,14 +136,21 @@ import ai.drsai.remote.AppViewModel
 import ai.drsai.remote.R
 import ai.drsai.remote.data.AppDestination
 import ai.drsai.remote.data.AppState
+import ai.drsai.remote.data.ApprovalUiItem
 import ai.drsai.remote.data.Agent
 import ai.drsai.remote.data.AttachmentDraft
 import ai.drsai.remote.data.AttachmentStatus
 import ai.drsai.remote.data.ChatMessage
+import ai.drsai.remote.data.WorkbenchSessionItem
+import ai.drsai.remote.data.WorkbenchWorkspaceItem
+import ai.drsai.remote.data.WorkbenchArtifactItem
+import ai.drsai.remote.data.SkillUiItem
 import ai.drsai.remote.data.MAX_ATTACHMENTS
 import ai.drsai.remote.data.AndroidUpdateManager
 import ai.drsai.remote.data.AndroidUpdateState
 import ai.drsai.remote.remote.navigation.AppRoute
+import ai.drsai.remote.runtime.security.ApprovalDecision
+import ai.drsai.remote.runtime.device.ClipboardAccessPolicy
 import ai.drsai.remote.remote.ui.RemoteHomeScreen
 import ai.drsai.remote.remote.ui.RemoteHomeViewModel
 import ai.drsai.remote.remote.ui.WorkspaceSessionsScreen
@@ -237,23 +264,72 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val localWorkspaceLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        uri?.let(viewModel::grantLocalWorkspace)
+    }
     var mainRoutePath by rememberSaveable { mutableStateOf(AppRoute.Chat.path) }
     var remoteRuntimeName by rememberSaveable { mutableStateOf("") }
     var remoteWorkspaceName by rememberSaveable { mutableStateOf("") }
     val mainRoute = AppRoute.parse(mainRoutePath) ?: AppRoute.Chat
+    LaunchedEffect(state.requestedRoutePath) {
+        state.requestedRoutePath?.let { requested ->
+            if (AppRoute.parse(requested) != null) mainRoutePath = requested
+            viewModel.consumeRequestedRoute()
+        }
+    }
     fun closeDrawer() = scope.launch { drawerState.close() }
+    var wideDrawerVisible by rememberSaveable { mutableStateOf(true) }
+    var newTaskPickerOpen by rememberSaveable { mutableStateOf(false) }
+    val remoteTargets = state.workbenchWorkspaces.filterNot { it.local }
+    val requestNewTask: () -> Unit = {
+        if (remoteTargets.isEmpty()) viewModel.newConversation() else newTaskPickerOpen = true
+    }
 
-    ModalNavigationDrawer(
-        drawerState = drawerState,
-        drawerContent = {
+    if (newTaskPickerOpen) {
+        NewTaskTargetDialog(
+            remoteTargets = remoteTargets,
+            onDismiss = { newTaskPickerOpen = false },
+            onLocal = {
+                newTaskPickerOpen = false
+                viewModel.newConversation()
+                mainRoutePath = AppRoute.Chat.path
+                closeDrawer()
+            },
+            onRemote = { workspace ->
+                newTaskPickerOpen = false
+                mainRoutePath = AppRoute.WorkspaceSessions(
+                    ai.drsai.remote.remote.model.RuntimeId(workspace.runtimeId),
+                    ai.drsai.remote.remote.model.WorkspaceId(workspace.workspaceId),
+                ).path
+                closeDrawer()
+            },
+        )
+    }
+
+    val drawerContent: @Composable (Boolean) -> Unit = { modal ->
             NavigationDrawer(
                 state = state,
+                modal = modal,
                 onNewConversation = {
-                    viewModel.newConversation()
-                    closeDrawer()
+                    requestNewTask()
+                    if (!newTaskPickerOpen) closeDrawer()
                 },
                 onOpenConversation = {
                     viewModel.openConversation(it)
+                    mainRoutePath = AppRoute.Chat.path
+                    closeDrawer()
+                },
+                onOpenWorkbenchSession = { session ->
+                    if (session.local) {
+                        viewModel.openConversation(session.sessionId)
+                        mainRoutePath = AppRoute.Chat.path
+                    } else {
+                        mainRoutePath = AppRoute.RemoteSession(
+                            ai.drsai.remote.remote.model.RuntimeId(session.runtimeId),
+                            ai.drsai.remote.remote.model.WorkspaceId(session.workspaceId),
+                            ai.drsai.remote.remote.model.SessionId(session.sessionId),
+                        ).path
+                    }
                     closeDrawer()
                 },
                 onSelectAgent = {
@@ -269,9 +345,37 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
                     mainRoutePath = AppRoute.RemoteHome.path
                     closeDrawer()
                 },
+                onOpenScheduled = {
+                    mainRoutePath = AppRoute.Scheduled.path
+                    closeDrawer()
+                },
+                onOpenResults = {
+                    mainRoutePath = AppRoute.Results.path
+                    closeDrawer()
+                },
+                onOpenAgentsAndSkills = {
+                    mainRoutePath = AppRoute.AgentsAndSkills.path
+                    closeDrawer()
+                },
+                onOpenApprovals = {
+                    mainRoutePath = AppRoute.Approvals.path
+                    closeDrawer()
+                },
+                onOpenArchived = {
+                    mainRoutePath = AppRoute.Archived.path
+                    closeDrawer()
+                },
+                onRenameSession = viewModel::renameSession,
+                onSetSessionPinned = viewModel::setSessionPinned,
+                onArchiveSession = { viewModel.setSessionArchived(it, true) },
+                onSetSessionUnread = viewModel::setSessionUnread,
+                onWorkbenchSearch = viewModel::searchWorkbench,
+                onLoadMoreSessions = viewModel::loadMoreWorkbenchSessions,
+                onGrantLocalWorkspace = { localWorkspaceLauncher.launch(null) },
+                onClearLocalWorkspace = viewModel::clearLocalWorkspace,
             )
-        },
-    ) {
+    }
+    val screenContent: @Composable (Boolean) -> Unit = { wide ->
         Scaffold { systemPadding ->
             Box(
                 Modifier
@@ -279,9 +383,46 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
                     .padding(systemPadding)
                     .imePadding(),
             ) {
-                if (mainRoute == AppRoute.RemoteHome) {
+                if (mainRoute == AppRoute.Approvals) {
+                    ApprovalsScreen(
+                        approvals = state.pendingApprovals,
+                        onBack = { mainRoutePath = AppRoute.Chat.path },
+                        onDecision = viewModel::decideApproval,
+                    )
+                } else if (mainRoute == AppRoute.Archived) {
+                    ArchivedSessionsScreen(
+                        sessions = state.archivedSessions,
+                        onBack = { mainRoutePath = AppRoute.Chat.path },
+                        onRestore = { viewModel.setSessionArchived(it, false) },
+                    )
+                } else if (mainRoute == AppRoute.Scheduled) {
+                    WorkbenchInfoScreen(
+                        title = "定时任务",
+                        description = "定时任务需要支持后台运行的远程 Runtime。连接工作区后，可在对应 Runtime 中创建和管理任务。",
+                        onBack = { mainRoutePath = AppRoute.Chat.path },
+                        actionLabel = if (remoteTargets.isEmpty()) "连接远程 Runtime" else "选择远程工作区",
+                        onAction = { mainRoutePath = AppRoute.RemoteHome.path },
+                    )
+                } else if (mainRoute == AppRoute.Results) {
+                    WorkbenchResultsScreen(
+                        artifacts = state.workbenchArtifacts,
+                        onBack = { mainRoutePath = AppRoute.Chat.path },
+                    )
+                } else if (mainRoute == AppRoute.AgentsAndSkills) {
+                    AgentsAndSkillsScreen(
+                        agents = state.agents,
+                        skills = state.skills,
+                        onBack = { mainRoutePath = AppRoute.Chat.path },
+                        onRefresh = viewModel::refreshAgents,
+                    )
+                } else if (mainRoute == AppRoute.RemoteHome) {
                     val remoteViewModel: RemoteHomeViewModel = viewModel(key = "remote-home")
                     val remoteState by remoteViewModel.state.collectAsState()
+                    LaunchedEffect(remoteState.computers) {
+                        viewModel.projectRemoteWorkspaces(remoteState.computers.flatMap { computer ->
+                            computer.workspaces.map { computer.displayName to it }
+                        })
+                    }
                     RemoteHomeScreen(
                         state = remoteState,
                         onBack = { mainRoutePath = AppRoute.Chat.path },
@@ -319,6 +460,9 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
                     }
                     val sessionsViewModel: WorkspaceSessionsViewModel = viewModel(key = route.path, factory = factory)
                     val sessionsState by sessionsViewModel.state.collectAsState()
+                    LaunchedEffect(sessionsState.sessions) {
+                        viewModel.projectRemoteSessions(sessionsState.sessions.map { it.reference })
+                    }
                     WorkspaceSessionsScreen(
                         state = sessionsState,
                         onBack = { mainRoutePath = AppRoute.RemoteHome.path },
@@ -335,6 +479,7 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
                                 else -> mainRoutePath
                             }
                         },
+                        onConfirmInstructions = sessionsViewModel::confirmInstructionRefresh,
                     )
                 } else if (mainRoute is AppRoute.RemoteSession) {
                     val route = mainRoute
@@ -427,11 +572,22 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         FloatingHeader(
-                            onOpenDrawer = { scope.launch { drawerState.open() } },
-                            onNewConversation = viewModel::newConversation,
+                            onOpenDrawer = {
+                                if (wide) wideDrawerVisible = !wideDrawerVisible
+                                else scope.launch { drawerState.open() }
+                            },
+                            onNewConversation = requestNewTask,
                             newConversationEnabled = !state.streaming,
                         )
-                        state.error?.let { ErrorBar(it, viewModel::retry) }
+                        if (state.pendingApprovals.isNotEmpty()) {
+                            PendingApprovalCard(
+                                state.pendingApprovals.first(),
+                                state.pendingApprovals.size,
+                                onOpenAll = { mainRoutePath = AppRoute.Approvals.path },
+                                onDecision = viewModel::decideApproval,
+                            )
+                        }
+                        state.error?.let { ErrorBar(it, state.diagnostic, viewModel::retry) }
                         state.runtimeStatus?.let { RuntimeBar(it) }
                         if (state.toolDowngraded) RuntimeBar("当前模型以纯对话模式运行，本地工具暂不可用")
                     }
@@ -449,7 +605,51 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
             }
         }
     }
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val wide = usesPermanentWorkbenchDrawer(maxWidth)
+        if (wide) {
+            Row(Modifier.fillMaxSize()) {
+                if (wideDrawerVisible) drawerContent(false)
+                Box(Modifier.weight(1f).fillMaxHeight()) { screenContent(true) }
+            }
+        } else {
+            ModalNavigationDrawer(
+                drawerState = drawerState,
+                drawerContent = { drawerContent(true) },
+            ) { screenContent(false) }
+        }
+    }
     if (state.profileOpen) ProfileSheet(state, viewModel)
+}
+
+internal fun usesPermanentWorkbenchDrawer(width: androidx.compose.ui.unit.Dp): Boolean = width >= 840.dp
+
+@Composable
+internal fun NewTaskTargetDialog(
+    remoteTargets: List<WorkbenchWorkspaceItem>,
+    onDismiss: () -> Unit,
+    onLocal: () -> Unit,
+    onRemote: (WorkbenchWorkspaceItem) -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("选择任务运行位置") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Run 创建后会固定到所选 Runtime，不会静默切换。", style = MaterialTheme.typography.bodySmall)
+                OutlinedButton(onClick = onLocal, modifier = Modifier.fillMaxWidth()) {
+                    Text("Android 本地 · Lite Runtime")
+                }
+                remoteTargets.forEach { workspace ->
+                    Button(onClick = { onRemote(workspace) }, modifier = Modifier.fillMaxWidth()) {
+                        Text("${workspace.displayName} · 远程 Runtime", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
 }
 
 @Composable
@@ -511,15 +711,49 @@ internal fun FloatingHeader(
 @Composable
 internal fun NavigationDrawer(
     state: AppState,
+    modal: Boolean = true,
     onNewConversation: () -> Unit,
     onOpenConversation: (String) -> Unit,
+    onOpenWorkbenchSession: (WorkbenchSessionItem) -> Unit = { if (it.local) onOpenConversation(it.sessionId) },
     onSelectAgent: (String) -> Unit,
     onRefreshAgents: () -> Unit,
     onOpenProfile: () -> Unit,
     onOpenRemoteWorkspaces: () -> Unit,
+    onOpenScheduled: () -> Unit = {},
+    onOpenResults: () -> Unit = {},
+    onOpenAgentsAndSkills: () -> Unit = {},
+    onOpenApprovals: () -> Unit = {},
+    onOpenArchived: () -> Unit = {},
+    onRenameSession: (String, String) -> Unit = { _, _ -> },
+    onSetSessionPinned: (String, Boolean) -> Unit = { _, _ -> },
+    onArchiveSession: (String) -> Unit = {},
+    onSetSessionUnread: (String, Boolean) -> Unit = { _, _ -> },
+    onWorkbenchSearch: (String) -> Unit = {},
+    onLoadMoreSessions: (String) -> Unit = {},
+    onGrantLocalWorkspace: () -> Unit = {},
+    onClearLocalWorkspace: () -> Unit = {},
 ) {
-    ModalDrawerSheet(Modifier.fillMaxHeight().widthIn(max = 320.dp)) {
+    var query by rememberSaveable { mutableStateOf("") }
+    var agentsExpanded by rememberSaveable { mutableStateOf(true) }
+    var collapsedWorkspaceKeys by rememberSaveable { mutableStateOf("") }
+    var renameTarget by remember { mutableStateOf<WorkbenchSessionItem?>(null) }
+    var renameText by remember { mutableStateOf("") }
+    val normalizedQuery = query.trim()
+    val visibleAgents = state.agents.filter {
+        normalizedQuery.isEmpty() || it.name.contains(normalizedQuery, ignoreCase = true) ||
+            it.description.contains(normalizedQuery, ignoreCase = true)
+    }
+    val collapsed = collapsedWorkspaceKeys.split('|').filter(String::isNotBlank).toSet()
+    val visibleWorkspaces = state.workbenchWorkspaces.mapNotNull { workspace ->
+        val workspaceMatches = normalizedQuery.isEmpty() || workspace.displayName.contains(normalizedQuery, ignoreCase = true)
+        val sessions = if (workspaceMatches) workspace.sessions else workspace.sessions.filter {
+            it.title.contains(normalizedQuery, ignoreCase = true)
+        }
+        workspace.copy(sessions = sessions).takeIf { workspaceMatches || sessions.isNotEmpty() }
+    }
+    val content: @Composable () -> Unit = {
         Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 18.dp)) {
+            Column(Modifier.fillMaxWidth().weight(0.55f).verticalScroll(rememberScrollState())) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 BrandLogo(38.dp)
                 Spacer(Modifier.width(10.dp))
@@ -532,21 +766,75 @@ internal fun NavigationDrawer(
                 Text("新对话")
             }
             Spacer(Modifier.height(18.dp))
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it.take(100); onWorkbenchSearch(query) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                leadingIcon = { Icon(Icons.Default.Search, null) },
+                placeholder = { Text("搜索会话和智能体") },
+            )
+            Spacer(Modifier.height(10.dp))
             NavigationDrawerItem(
                 icon = { Icon(Icons.Default.Computer, null) },
                 label = { Text("远程工作区") },
                 selected = false,
                 onClick = onOpenRemoteWorkspaces,
             )
+            NavigationDrawerItem(
+                icon = { Icon(Icons.Default.FolderOpen, null) },
+                label = { Text("本地工作区") },
+                badge = { if (state.localWorkspaceGranted) Text("已授权") },
+                selected = false,
+                onClick = onGrantLocalWorkspace,
+            )
+            if (state.localWorkspaceGranted) {
+                TextButton(onClick = onClearLocalWorkspace, modifier = Modifier.padding(start = 40.dp)) {
+                    Text("移除本地工作区授权")
+                }
+            }
+            NavigationDrawerItem(
+                icon = { Icon(Icons.Default.Schedule, null) },
+                label = { Text("定时任务") },
+                selected = false,
+                onClick = onOpenScheduled,
+            )
+            NavigationDrawerItem(
+                icon = { Icon(Icons.Default.TaskAlt, null) },
+                label = { Text("结果") },
+                selected = false,
+                onClick = onOpenResults,
+            )
+            NavigationDrawerItem(
+                icon = { Icon(Icons.Default.Extension, null) },
+                label = { Text("智能体与技能") },
+                selected = false,
+                onClick = onOpenAgentsAndSkills,
+            )
+            NavigationDrawerItem(
+                icon = { Icon(Icons.Default.PendingActions, null) },
+                label = { Text("待审批") },
+                badge = { if (state.pendingApprovals.isNotEmpty()) Text(state.pendingApprovals.size.toString()) },
+                selected = false,
+                onClick = onOpenApprovals,
+            )
+            NavigationDrawerItem(
+                icon = { Icon(Icons.Default.History, null) },
+                label = { Text("已归档") },
+                badge = { if (state.archivedSessions.isNotEmpty()) Text(state.archivedSessions.size.toString()) },
+                selected = false,
+                onClick = onOpenArchived,
+            )
             Spacer(Modifier.height(8.dp))
-            LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            }
+            LazyColumn(Modifier.weight(0.45f).testTag("drawer-list"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 item {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("智能体", Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
                         IconButton(
                             onClick = onRefreshAgents,
                             enabled = state.agentCatalogStatus.state != "loading" && !state.streaming,
-                            modifier = Modifier.size(36.dp),
+                            modifier = Modifier.size(48.dp),
                         ) {
                             if (state.agentCatalogStatus.state == "loading") {
                                 CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
@@ -554,9 +842,12 @@ internal fun NavigationDrawer(
                                 Icon(Icons.Default.Refresh, "刷新智能体", Modifier.size(19.dp))
                             }
                         }
+                        IconButton(onClick = { agentsExpanded = !agentsExpanded }, modifier = Modifier.size(48.dp)) {
+                            Icon(if (agentsExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, "展开或收起智能体")
+                        }
                     }
                 }
-                items(state.agents, key = { "agent:${it.id}" }) { agent ->
+                if (agentsExpanded) items(visibleAgents, key = { "agent:${it.id}" }) { agent ->
                     NavigationDrawerItem(
                         label = {
                             Column {
@@ -587,22 +878,98 @@ internal fun NavigationDrawer(
                         )
                     }
                     HorizontalDivider(Modifier.padding(vertical = 10.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.History, null, Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("本机会话", style = MaterialTheme.typography.labelLarge)
-                    }
+                    Text("工作区与会话", style = MaterialTheme.typography.labelLarge)
                     Spacer(Modifier.height(8.dp))
                 }
-                if (state.conversations.isEmpty()) {
-                    item { Text("还没有本地对话", Modifier.padding(12.dp), style = MaterialTheme.typography.bodyMedium) }
-                } else {
-                    items(state.conversations, key = { it.id }) { conversation ->
+                if (visibleWorkspaces.isEmpty()) {
+                    item { Text("还没有会话", Modifier.padding(12.dp), style = MaterialTheme.typography.bodyMedium) }
+                }
+                if (normalizedQuery.isNotEmpty() && state.workbenchSearchResults.isNotEmpty()) {
+                    item { Text("全局搜索结果", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(8.dp)) }
+                    items(state.workbenchSearchResults, key = { "search:${it.messageMatch}:${it.session.sessionId}:${it.snippet.hashCode()}" }) { result ->
                         NavigationDrawerItem(
-                            label = { Text(conversation.title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
-                            selected = state.currentConversation?.id == conversation.id,
-                            onClick = { onOpenConversation(conversation.id) },
+                            label = {
+                                Column {
+                                    Text(result.session.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(result.snippet, style = MaterialTheme.typography.labelSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                }
+                            },
+                            badge = { if (result.messageMatch) Text("消息") else Text("会话") },
+                            selected = false,
+                            onClick = { onOpenWorkbenchSession(result.session) },
                         )
+                    }
+                }
+                visibleWorkspaces.forEach { workspace ->
+                    item(key = "workspace:${workspace.key}") {
+                        Row(
+                            Modifier.fillMaxWidth().clickable {
+                                val next = if (workspace.key in collapsed) collapsed - workspace.key else collapsed + workspace.key
+                                collapsedWorkspaceKeys = next.sorted().joinToString("|")
+                            }.padding(horizontal = 8.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(if (workspace.local) Icons.Default.FolderOpen else Icons.Default.Computer, null, Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(workspace.displayName, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            if (!workspace.local) {
+                                Text(
+                                    if (workspace.connectionStatus == "online") "在线" else "过期",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (workspace.connectionStatus == "online") MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.error,
+                                )
+                                Spacer(Modifier.width(6.dp))
+                            }
+                            Icon(if (workspace.key in collapsed) Icons.Default.ExpandMore else Icons.Default.ExpandLess, "展开或收起工作区")
+                        }
+                    }
+                    if (workspace.key !in collapsed) items(workspace.sessions, key = { "session:${workspace.key}:${it.sessionId}" }) { session ->
+                        var menuOpen by remember(session.sessionId) { mutableStateOf(false) }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            NavigationDrawerItem(
+                                label = { Text(session.title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+                                badge = {
+                                    when {
+                                        session.runtimeStatus == "WAITING_APPROVAL" -> Text("待审批", style = MaterialTheme.typography.labelSmall)
+                                        session.runtimeStatus == "RUNNING" || session.runtimeStatus == "QUEUED" -> Text("运行中", style = MaterialTheme.typography.labelSmall)
+                                        session.runtimeStatus == "PAUSED" -> Text("已暂停", style = MaterialTheme.typography.labelSmall)
+                                        session.unread -> Text("未读", style = MaterialTheme.typography.labelSmall)
+                                        session.pinned -> Text("置顶", style = MaterialTheme.typography.labelSmall)
+                                    }
+                                },
+                                selected = session.local && state.currentConversation?.id == session.sessionId,
+                                onClick = { onOpenWorkbenchSession(session) },
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (session.local) Box {
+                                IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(48.dp)) {
+                                    Icon(Icons.Default.MoreVert, "会话操作")
+                                }
+                                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                                    DropdownMenuItem(text = { Text("重命名") }, onClick = {
+                                        menuOpen = false; renameTarget = session; renameText = session.title
+                                    })
+                                    DropdownMenuItem(text = { Text(if (session.pinned) "取消置顶" else "置顶") }, onClick = {
+                                        menuOpen = false; onSetSessionPinned(session.sessionId, !session.pinned)
+                                    })
+                                    DropdownMenuItem(text = { Text(if (session.unread) "标为已读" else "标为未读") }, onClick = {
+                                        menuOpen = false; onSetSessionUnread(session.sessionId, !session.unread)
+                                    })
+                                    DropdownMenuItem(text = { Text("归档") }, onClick = {
+                                        menuOpen = false; onArchiveSession(session.sessionId)
+                                    })
+                                }
+                            }
+                        }
+                    }
+                    if (workspace.key !in collapsed && workspace.sessionHasMore) {
+                        item(key = "more:${workspace.key}:${workspace.sessions.size}") {
+                            TextButton(
+                                onClick = { onLoadMoreSessions(workspace.key) },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text("加载更多会话") }
+                        }
                     }
                 }
             }
@@ -625,6 +992,29 @@ internal fun NavigationDrawer(
             )
         }
     }
+    if (modal) {
+        ModalDrawerSheet(Modifier.fillMaxHeight().widthIn(max = 320.dp)) { content() }
+    } else {
+        Surface(
+            Modifier.fillMaxHeight().width(320.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 1.dp,
+        ) { content() }
+    }
+    renameTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { renameTarget = null },
+            title = { Text("重命名会话") },
+            text = { OutlinedTextField(renameText, { renameText = it.take(120) }, singleLine = true) },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (renameText.isNotBlank()) onRenameSession(target.sessionId, renameText.trim())
+                    renameTarget = null
+                }) { Text("保存") }
+            },
+            dismissButton = { TextButton(onClick = { renameTarget = null }) { Text("取消") } },
+        )
+    }
 }
 
 private fun agentStatus(agent: Agent): String = when {
@@ -633,6 +1023,228 @@ private fun agentStatus(agent: Agent): String = when {
     agent.source == "local" -> "Android 本机运行"
     agent.mode == "ddf" -> "HAI 平台运行"
     else -> "远程智能体"
+}
+
+@Composable
+private fun ArchivedSessionsScreen(
+    sessions: List<WorkbenchSessionItem>,
+    onBack: () -> Unit,
+    onRestore: (String) -> Unit,
+) {
+    Column(Modifier.fillMaxSize().padding(20.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
+            Spacer(Modifier.width(8.dp))
+            Text("已归档会话", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+        }
+        if (sessions.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("没有已归档会话") }
+        } else {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(sessions, key = { it.sessionId }) { session ->
+                    Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(session.title, Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            if (session.local) TextButton(onClick = { onRestore(session.sessionId) }) { Text("恢复") }
+                            else Text("在远程工作区恢复", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WorkbenchInfoScreen(
+    title: String,
+    description: String,
+    onBack: () -> Unit,
+    actionLabel: String? = null,
+    onAction: () -> Unit = {},
+) {
+    Column(Modifier.fillMaxSize().padding(20.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
+            Spacer(Modifier.width(8.dp))
+            Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+        }
+        Spacer(Modifier.height(28.dp))
+        Text(description, style = MaterialTheme.typography.bodyLarge)
+        actionLabel?.let {
+            Spacer(Modifier.height(20.dp))
+            Button(onClick = onAction) { Text(it) }
+        }
+    }
+}
+
+@Composable
+private fun WorkbenchResultsScreen(artifacts: List<WorkbenchArtifactItem>, onBack: () -> Unit) {
+    Column(Modifier.fillMaxSize().padding(20.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
+            Spacer(Modifier.width(8.dp))
+            Text("结果", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+        }
+        if (artifacts.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("还没有附件或工具结果", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        } else {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(artifacts, key = { "${it.source}:${it.id}" }) { artifact ->
+                    Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                        Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                            Text(artifact.name, fontWeight = FontWeight.Medium)
+                            Text(
+                                "${artifact.mimeType} · ${artifact.size} B · 会话 ${artifact.sessionId}" +
+                                    (artifact.runId?.let { " · Run $it" } ?: ""),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AgentsAndSkillsScreen(
+    agents: List<Agent>,
+    skills: List<SkillUiItem>,
+    onBack: () -> Unit,
+    onRefresh: () -> Unit,
+) {
+    Column(Modifier.fillMaxSize().padding(20.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
+            Spacer(Modifier.width(8.dp))
+            Text("智能体与技能", Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+            IconButton(onClick = onRefresh) { Icon(Icons.Default.Refresh, "刷新智能体") }
+        }
+        Spacer(Modifier.height(12.dp))
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            item { Text("智能体", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) }
+            items(agents, key = Agent::id) { agent ->
+                Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                    Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                        Text(agent.name, fontWeight = FontWeight.Medium)
+                        Text(agentStatus(agent), style = MaterialTheme.typography.labelMedium)
+                        Text(
+                            "来源：${if (agent.source == "local") "Android 内置" else "HepAI 平台"} · " +
+                                "运行位置：${if (agent.source == "local") "Lite Runtime" else "远程 Runtime"} · " +
+                                if (agent.available && agent.chatSupported) "可用" else "不可用",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        if (agent.capabilities.isNotEmpty()) {
+                            Text(
+                                agent.capabilities.sorted().joinToString(" · "),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        } else {
+                            Text(
+                                if (agent.source == "local") "权限：安全设备信息、经授权的 SAF 文件与本地记忆" else "权限：由平台目录声明",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+            item { Text("技能", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) }
+            items(skills, key = { "${it.source}:${it.id}" }) { skill ->
+                Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                    Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                        Text(skill.name, fontWeight = FontWeight.Medium)
+                        Text("${skill.source} · v${skill.version} · ${if (skill.available) "可用" else "不可用"}", style = MaterialTheme.typography.labelMedium)
+                        Text(skill.permissions, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun PendingApprovalCard(
+    approval: ApprovalUiItem,
+    count: Int,
+    onOpenAll: () -> Unit,
+    onDecision: (String, ApprovalDecision) -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.tertiaryContainer,
+    ) {
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.PendingActions, null)
+                Spacer(Modifier.width(8.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(approval.operation, fontWeight = FontWeight.Medium)
+                    Text("${approval.scope} · $count 项待审批", style = MaterialTheme.typography.labelSmall)
+                }
+                TextButton(onClick = onOpenAll) { Text("全部") }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = { onDecision(approval.id, ApprovalDecision.DECLINE) }) { Text("拒绝") }
+                OutlinedButton(onClick = { onDecision(approval.id, ApprovalDecision.ALLOW_ONCE) }) { Text("允许一次") }
+                if (approval.scope == "session") {
+                    Button(onClick = { onDecision(approval.id, ApprovalDecision.ALLOW_SESSION) }) { Text("本会话允许") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun ApprovalsScreen(
+    approvals: List<ApprovalUiItem>,
+    onBack: () -> Unit,
+    onDecision: (String, ApprovalDecision) -> Unit,
+) {
+    Column(Modifier.fillMaxSize().padding(20.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
+            Spacer(Modifier.width(8.dp))
+            Text("待审批", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+        }
+        if (approvals.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("没有等待审批的操作", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        } else {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                items(approvals, key = ApprovalUiItem::id) { approval ->
+                    Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                        Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                            Text(approval.operation, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "Runtime: ${approval.runtimeId} · 范围: ${approval.scope}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Spacer(Modifier.height(10.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                TextButton(onClick = { onDecision(approval.id, ApprovalDecision.DECLINE) }) { Text("拒绝") }
+                                OutlinedButton(onClick = { onDecision(approval.id, ApprovalDecision.ALLOW_ONCE) }) { Text("允许一次") }
+                                if (approval.scope == "session") {
+                                    Button(onClick = { onDecision(approval.id, ApprovalDecision.ALLOW_SESSION) }) { Text("本会话允许") }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -700,10 +1312,12 @@ private fun MessageBubble(message: ChatMessage, assistantName: String, retryAtta
                     Spacer(Modifier.height(8.dp))
                     IconButton(
                         onClick = {
+                            val safeText = ClipboardAccessPolicy.sanitizeForWrite(message.text, userInitiated = true)
                             (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
-                                .setPrimaryClip(ClipData.newPlainText("OpenDrSai", message.text))
+                                .setPrimaryClip(ClipData.newPlainText("OpenDrSai", safeText))
+                            Toast.makeText(context, "已复制（敏感信息已隐藏）", Toast.LENGTH_SHORT).show()
                         },
-                        modifier = Modifier.size(30.dp),
+                        modifier = Modifier.size(48.dp),
                     ) { Icon(Icons.Default.ContentCopy, "复制", Modifier.size(16.dp)) }
                 }
                 if (message.status != "complete" && message.status != "streaming") {
@@ -736,6 +1350,16 @@ private fun MessageBubble(message: ChatMessage, assistantName: String, retryAtta
 @Composable
 private fun MessageAttachments(attachments: List<ai.drsai.remote.data.MessageAttachment>, retry: (String) -> Unit) {
     val context = LocalContext.current
+    var pendingSave by remember { mutableStateOf<File?>(null) }
+    val saveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+        val source = pendingSave
+        pendingSave = null
+        if (uri != null && source != null) {
+            runCatching {
+                context.contentResolver.openOutputStream(uri, "wt")!!.use { output -> source.inputStream().use { it.copyTo(output) } }
+            }.onFailure { Toast.makeText(context, "保存文件失败", Toast.LENGTH_SHORT).show() }
+        }
+    }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         attachments.forEach { attachment ->
             val localFile = attachment.localPath?.let(::File)?.takeIf(File::isFile)
@@ -768,6 +1392,19 @@ private fun MessageAttachments(attachments: List<ai.drsai.remote.data.MessageAtt
                 }
                 if (attachment.status == "download_failed") {
                     TextButton(onClick = { retry(attachment.id) }) { Text("重试") }
+                } else if (localFile != null) {
+                    IconButton(onClick = {
+                        val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", localFile)
+                        val intent = Intent(Intent.ACTION_SEND).setType(attachment.mimeType)
+                            .putExtra(Intent.EXTRA_STREAM, uri)
+                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            .apply { clipData = ClipData.newRawUri(attachment.name, uri) }
+                        context.startActivity(Intent.createChooser(intent, "分享 ${attachment.name}"))
+                    }) { Icon(Icons.Default.Share, "分享附件") }
+                    IconButton(onClick = {
+                        pendingSave = localFile
+                        saveLauncher.launch(attachment.name)
+                    }) { Icon(Icons.Default.Download, "保存附件") }
                 }
             }
         }
@@ -971,7 +1608,7 @@ private fun AttachmentDraftCard(draft: AttachmentDraft, remove: () -> Unit, retr
                 )
             }
             if (draft.status == AttachmentStatus.FAILED) TextButton(onClick = retry) { Text("重试") }
-            else IconButton(onClick = remove, enabled = draft.status != AttachmentStatus.UPLOADING, modifier = Modifier.size(30.dp)) {
+            else IconButton(onClick = remove, enabled = draft.status != AttachmentStatus.UPLOADING, modifier = Modifier.size(48.dp)) {
                 Icon(Icons.Default.Close, "移除附件", Modifier.size(17.dp))
             }
         }
@@ -985,10 +1622,22 @@ private fun formatBytes(size: Long): String = when {
 }
 
 @Composable
-private fun ErrorBar(message: String, retry: () -> Unit) {
+private fun ErrorBar(message: String, diagnostic: ai.drsai.remote.data.RuntimeDiagnosticUi?, retry: () -> Unit) {
+    val context = LocalContext.current
     Surface(color = MaterialTheme.colorScheme.errorContainer) {
         Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(message, Modifier.weight(1f), color = MaterialTheme.colorScheme.onErrorContainer)
+            Column(Modifier.weight(1f)) {
+                Text(message, color = MaterialTheme.colorScheme.onErrorContainer)
+                diagnostic?.let { Text("错误码：${it.code}", style = MaterialTheme.typography.labelSmall) }
+            }
+            diagnostic?.let {
+                TextButton(onClick = {
+                    val safe = ClipboardAccessPolicy.sanitizeForWrite(it.exportText(), userInitiated = true)
+                    (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
+                        .setPrimaryClip(ClipData.newPlainText("OpenDrSai diagnostic", safe))
+                    Toast.makeText(context, "脱敏诊断已复制", Toast.LENGTH_SHORT).show()
+                }) { Text("诊断") }
+            }
             TextButton(onClick = retry) { Text("重试") }
         }
     }
@@ -1013,6 +1662,26 @@ private fun ProfileSheet(state: AppState, viewModel: AppViewModel) {
                 "Runtime：${if (state.selectedAgent?.source == "platform") "HAI 平台" else "Android 本机"}",
                 style = MaterialTheme.typography.bodySmall,
             )
+            Spacer(Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("长期记忆", fontWeight = FontWeight.Medium)
+                    Text("按当前 HAI 账号隔离，可随时关闭或删除", style = MaterialTheme.typography.bodySmall)
+                }
+                Switch(checked = state.memoryEnabled, onCheckedChange = viewModel::setMemoryEnabled)
+            }
+            if (state.memories.isNotEmpty()) {
+                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 160.dp)) {
+                    items(state.memories, key = { "memory:${it.id}" }) { memory ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(memory.content, Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            IconButton(onClick = { viewModel.deleteMemory(memory.id) }) {
+                                Icon(Icons.Default.Delete, "删除记忆")
+                            }
+                        }
+                    }
+                }
+            }
             Spacer(Modifier.height(12.dp))
             val updateLabel = when (val current = updateState) {
                 AndroidUpdateState.Idle -> "检查并更新"

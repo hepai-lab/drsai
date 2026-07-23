@@ -82,6 +82,7 @@ class HaiModelClient(
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .callTimeout(5, TimeUnit.MINUTES)
         .build(),
+    private val availableToolNames: () -> Set<String> = { BASE_LOCAL_TOOL_NAMES },
 ) : ModelGateway {
     private val refreshMutex = Mutex()
     private val activeCall = AtomicReference<okhttp3.Call?>()
@@ -129,7 +130,7 @@ class HaiModelClient(
             .put("stream", true)
             .put("max_tokens", 2048)
         if (toolsEnabled) {
-            body.put("tools", toolDefinitions())
+            body.put("tools", toolDefinitions(availableToolNames()))
             body.put("tool_choice", "auto")
         }
         val response = authenticatedResponse { token ->
@@ -275,8 +276,9 @@ class HaiModelClient(
         return json
     }
 
-    private fun toolDefinitions() = JSONArray(listOf(
+    private fun toolDefinitions(available: Set<String>) = JSONArray(listOf(
         tool("get_current_time", "Get the current device time and timezone", JSONObject().put("type", "object").put("properties", JSONObject())),
+        tool("get_device_info", "Get non-identifying Android environment information", JSONObject().put("type", "object").put("properties", JSONObject())),
         tool("save_memory", "Save a short fact the user explicitly wants remembered", JSONObject()
             .put("type", "object")
             .put("properties", JSONObject().put("content", JSONObject().put("type", "string").put("maxLength", 500)))
@@ -287,7 +289,20 @@ class HaiModelClient(
                 .put("query", JSONObject().put("type", "string").put("maxLength", 100))
                 .put("limit", JSONObject().put("type", "integer").put("minimum", 1).put("maximum", 10)))
             .put("required", JSONArray().put("query"))),
-    ))
+        tool("workspace.list", "List files in the user-granted workspace", JSONObject()
+            .put("type", "object").put("properties", JSONObject().put("path", JSONObject().put("type", "string")))),
+        tool("workspace.read", "Read a text file in the user-granted workspace", JSONObject()
+            .put("type", "object").put("properties", JSONObject().put("path", JSONObject().put("type", "string")))
+            .put("required", JSONArray().put("path"))),
+        tool("workspace.search", "Search file names in the user-granted workspace", JSONObject()
+            .put("type", "object").put("properties", JSONObject().put("query", JSONObject().put("type", "string")))
+            .put("required", JSONArray().put("query"))),
+        tool("workspace.write", "Write a file in the user-granted workspace after approval", JSONObject()
+            .put("type", "object").put("properties", JSONObject()
+                .put("path", JSONObject().put("type", "string"))
+                .put("content", JSONObject().put("type", "string")))
+            .put("required", JSONArray().put("path").put("content"))),
+    ).filter { it.optJSONObject("function")?.optString("name") in available })
 
     private fun tool(name: String, description: String, parameters: JSONObject) = JSONObject()
         .put("type", "function")
@@ -305,6 +320,10 @@ internal fun selectPreferredModel(models: List<ModelInfo>): ModelInfo {
         ?: models.firstOrNull { it.id.contains("deepseek-v4-pro", ignoreCase = true) }
         ?: models.first()
 }
+
+private val BASE_LOCAL_TOOL_NAMES = setOf(
+    "get_current_time", "get_device_info", "save_memory", "search_memory",
+)
 
 internal fun selectVisionModel(models: List<ModelInfo>, preferred: ModelInfo? = null): ModelInfo? =
     preferred?.takeIf(ModelInfo::vision) ?: models.firstOrNull(ModelInfo::vision)

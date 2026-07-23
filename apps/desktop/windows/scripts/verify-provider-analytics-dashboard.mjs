@@ -15,10 +15,10 @@ function assert(condition, message) {
   }
 }
 
-const app = read("src/renderer/src/App.tsx");
-const navigation = read("src/renderer/src/navigation.ts");
-const component = read("src/renderer/src/components/ProviderAnalyticsView.tsx");
-const css = read("src/renderer/src/styles.css");
+const app = read("../shared/renderer/src/App.tsx");
+const navigation = read("../shared/renderer/src/navigation.ts");
+const component = read("../shared/renderer/src/components/ProviderAnalyticsView.tsx");
+const css = read("../shared/renderer/src/styles.css");
 const packageJson = read("package.json");
 const checklist = read("docs/chatbar-capability-checklist.md");
 const roadmap = read("docs/smart-chat-bar-roadmap.md");

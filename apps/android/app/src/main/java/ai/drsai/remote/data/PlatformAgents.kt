@@ -285,13 +285,13 @@ class PlatformAgentRuntime(
             } catch (_: CancellationException) {
                 val paused = runId in pausedRuns
                 markAssistant(assistantId, conversation.id, text.toString(), if (paused) "paused" else "stopped")
-                send(if (paused) RuntimeEvent.Paused else RuntimeEvent.Completed)
+                send(if (paused) RuntimeEvent.Paused else RuntimeEvent.Cancelled)
             } catch (error: Throwable) {
                 val interrupted = runId in pausedRuns || runId in stoppedRuns
                 if (interrupted) {
                     val paused = runId in pausedRuns
                     markAssistant(assistantId, conversation.id, text.toString(), if (paused) "paused" else "stopped")
-                    send(if (paused) RuntimeEvent.Paused else RuntimeEvent.Completed)
+                    send(if (paused) RuntimeEvent.Paused else RuntimeEvent.Cancelled)
                 } else {
                     markAssistant(assistantId, conversation.id, text.toString(), "failed")
                     send(RuntimeEvent.Failed(error.message ?: "平台智能体运行失败", (error as? ApiException)?.retryable ?: true))

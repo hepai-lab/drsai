@@ -6,7 +6,7 @@ const e2eSmoke = readFileSync(join(root, "src/main/e2eSmoke.ts"), "utf8");
 
 const checks = [
   {
-    file: "src/shared/desktopApi.ts",
+    file: "../shared/api/desktopApi.ts",
     markers: [
       "WorkspaceContextOverview",
       "WorkspaceFilePreview",
@@ -50,7 +50,7 @@ const checks = [
     ],
   },
   {
-    file: "src/preload/index.ts",
+    file: "../shared/main/preload.ts",
     markers: [
       "desktop:workspace-context-overview",
       "desktop:workspace-files",
@@ -63,7 +63,7 @@ const checks = [
     ],
   },
   {
-    file: "src/renderer/src/navigation.ts",
+    file: "../shared/renderer/src/navigation.ts",
     markers: [
       "getRightTabs",
       "[\"files\", \"browser\", \"terminal\", \"debug\"]",
@@ -71,7 +71,7 @@ const checks = [
     ],
   },
   {
-    file: "src/main/workspaceContext.ts",
+    file: "../shared/main/workspaceContext.ts",
     markers: [
       "readInstructionChain",
       "getGitChangedFiles",
@@ -107,7 +107,7 @@ const checks = [
     ],
   },
   {
-    file: "src/renderer/src/components/files/file_previewer/FilePreviewer.tsx",
+    file: "../shared/renderer/src/components/files/file_previewer/FilePreviewer.tsx",
     markers: [
       "NotebookPreviewer",
       "preview.kind === \"notebook\"",
@@ -116,7 +116,7 @@ const checks = [
     ],
   },
   {
-    file: "src/renderer/src/components/files/file_previewer/NotebookPreviewer.tsx",
+    file: "../shared/renderer/src/components/files/file_previewer/NotebookPreviewer.tsx",
     markers: [
       "NotebookPreviewer",
       "Notebook cells",
@@ -124,14 +124,14 @@ const checks = [
     ],
   },
   {
-    file: "src/renderer/src/components/files/file_previewer/ImagePreviewer.tsx",
+    file: "../shared/renderer/src/components/files/file_previewer/ImagePreviewer.tsx",
     markers: [
       "MetadataList",
       "preview.metadata",
     ],
   },
   {
-    file: "src/main/sseParser.ts",
+    file: "../shared/main/sseParser.ts",
     markers: [
       "parseAgentRunSseFileEvents",
       "file_event",
@@ -141,7 +141,7 @@ const checks = [
     ],
   },
   {
-    file: "src/main/agentRuns.ts",
+    file: "../shared/main/agentRuns.ts",
     markers: [
       "parseAgentRunSseFileEvents",
       "type: \"file_event\"",
@@ -153,7 +153,7 @@ const checks = [
     ],
   },
   {
-    file: "src/renderer/src/components/files/FilesContextPanel.tsx",
+    file: "../shared/renderer/src/components/files/FilesContextPanel.tsx",
     markers: [
       "FilesContextPanel",
       "files-context-header",
@@ -196,7 +196,7 @@ const checks = [
     ],
   },
   {
-    file: "src/renderer/src/components/files/AgentFileActivityPanel.tsx",
+    file: "../shared/renderer/src/components/files/AgentFileActivityPanel.tsx",
     markers: [
       "AgentFileActivityPanel",
       "AgentFileTraceEvent",
@@ -221,7 +221,7 @@ const checks = [
     ],
   },
   {
-    file: "src/renderer/src/components/files/FileConflictPanel.tsx",
+    file: "../shared/renderer/src/components/files/FileConflictPanel.tsx",
     markers: [
       "FileConflictPanel",
       "collectConflicts",
@@ -232,7 +232,7 @@ const checks = [
     ],
   },
   {
-    file: "src/renderer/src/components/AgentRunWorkspace.tsx",
+    file: "../shared/renderer/src/components/AgentRunWorkspace.tsx",
     markers: [
       "fileContextAttachments",
       "onAgentFileEvent",
@@ -245,7 +245,7 @@ const checks = [
     ],
   },
   {
-    file: "src/renderer/src/components/files/ContextSnapshotPanel.tsx",
+    file: "../shared/renderer/src/components/files/ContextSnapshotPanel.tsx",
     markers: [
       "ContextSnapshotPanel",
       "ContextSnapshot",
@@ -258,7 +258,7 @@ const checks = [
     ],
   },
   {
-    file: "src/renderer/src/components/files/ArtifactsPanel.tsx",
+    file: "../shared/renderer/src/components/files/ArtifactsPanel.tsx",
     markers: [
       "ArtifactsPanel",
       "collectArtifacts",
@@ -272,7 +272,7 @@ const checks = [
     ],
   },
   {
-    file: "src/renderer/src/components/files/PatchReviewPanel.tsx",
+    file: "../shared/renderer/src/components/files/PatchReviewPanel.tsx",
     markers: [
       "PatchReviewPanel",
       "parseDiffHunks",
@@ -292,7 +292,7 @@ const checks = [
     ],
   },
   {
-    file: "src/renderer/src/components/files/RepoMapPanel.tsx",
+    file: "../shared/renderer/src/components/files/RepoMapPanel.tsx",
     markers: [
       "RepoMapPanel",
       "collectRepoStats",
@@ -305,7 +305,7 @@ const checks = [
     ],
   },
   {
-    file: "src/renderer/src/components/files/DirectoryContextPreview.tsx",
+    file: "../shared/renderer/src/components/files/DirectoryContextPreview.tsx",
     markers: [
       "DirectoryContextPreview",
       "files-directory-preview",
@@ -314,7 +314,7 @@ const checks = [
     ],
   },
   {
-    file: "src/renderer/src/components/files/GitDiffPreview.tsx",
+    file: "../shared/renderer/src/components/files/GitDiffPreview.tsx",
     markers: [
       "GitDiffPreview",
       "files-diff-preview",
@@ -323,7 +323,7 @@ const checks = [
     ],
   },
   {
-    file: "src/renderer/src/components/files/ContextBasket.tsx",
+    file: "../shared/renderer/src/components/files/ContextBasket.tsx",
     markers: [
       "ContextBasket",
       "files-context-basket",
@@ -336,7 +336,7 @@ const checks = [
     ],
   },
   {
-    file: "src/renderer/src/components/files/FilePreview.tsx",
+    file: "../shared/renderer/src/components/files/FilePreview.tsx",
     markers: [
       "FilePreviewErrorBoundary",
       "componentDidCatch",
@@ -345,7 +345,7 @@ const checks = [
     ],
   },
   {
-    file: "src/renderer/src/components/files/file_previewer/FilePreviewer.tsx",
+    file: "../shared/renderer/src/components/files/file_previewer/FilePreviewer.tsx",
     markers: [
       "FilePreviewer",
       "preview.kind === \"image\"",
@@ -361,7 +361,7 @@ const checks = [
     ],
   },
   {
-    file: "src/renderer/src/components/files/file_previewer/PdfPreviewer.tsx",
+    file: "../shared/renderer/src/components/files/file_previewer/PdfPreviewer.tsx",
     markers: [
       "files-preview-pdf-safe",
       "Inline PDF rendering is disabled",
@@ -369,7 +369,7 @@ const checks = [
     ],
   },
   {
-    file: "src/renderer/src/components/files/file_previewer/MarkdownPreviewer.tsx",
+    file: "../shared/renderer/src/components/files/file_previewer/MarkdownPreviewer.tsx",
     markers: [
       "ReactMarkdown",
       "remarkGfm",
@@ -377,7 +377,7 @@ const checks = [
     ],
   },
   {
-    file: "src/renderer/src/components/files/file_previewer/TablePreviewer.tsx",
+    file: "../shared/renderer/src/components/files/file_previewer/TablePreviewer.tsx",
     markers: [
       "pageRows",
       "preview.columns",
@@ -388,7 +388,7 @@ const checks = [
     ],
   },
   {
-    file: "src/renderer/src/components/files/file_previewer/StructuredPreviewer.tsx",
+    file: "../shared/renderer/src/components/files/file_previewer/StructuredPreviewer.tsx",
     markers: [
       "StructuredPreviewer",
       "parseStructuredContent",
@@ -396,7 +396,7 @@ const checks = [
     ],
   },
   {
-    file: "src/renderer/src/components/files/FilesTree.tsx",
+    file: "../shared/renderer/src/components/files/FilesTree.tsx",
     markers: [
       "FilesTree",
       "autoExpand",
@@ -414,7 +414,7 @@ const checks = [
     ],
   },
   {
-    file: "src/renderer/src/components/files/InstructionChainPreview.tsx",
+    file: "../shared/renderer/src/components/files/InstructionChainPreview.tsx",
     markers: [
       "InstructionChainPreview",
       "files-instruction-chain",
@@ -424,7 +424,7 @@ const checks = [
     ],
   },
   {
-    file: "src/renderer/src/App.tsx",
+    file: "../shared/renderer/src/App.tsx",
     markers: [
       "workspaceContextAttachments",
       "workspaceContextAttachmentsByThread",
@@ -442,7 +442,7 @@ const checks = [
     ],
   },
   {
-    file: "src/renderer/src/mockDesktopApi.ts",
+    file: "../shared/renderer/src/mockDesktopApi.ts",
     markers: [
       "createMockWorkspaceOverview",
       "createMockWorkspaceFiles",
@@ -499,7 +499,7 @@ for (const check of checks) {
   }
 }
 
-const appContent = readFileSync(join(root, "src/renderer/src/App.tsx"), "utf8");
+const appContent = readFileSync(join(root, "../shared/renderer/src/App.tsx"), "utf8");
 const forbiddenAppMarkers = [
   "WorkspaceFilePreviewPane",
   "workspaceFilePreview",
@@ -508,12 +508,12 @@ const forbiddenAppMarkers = [
 ];
 for (const marker of forbiddenAppMarkers) {
   if (appContent.includes(marker)) {
-    failures.push(`src/renderer/src/App.tsx must not contain marker: ${marker}`);
+    failures.push(`../shared/renderer/src/App.tsx must not contain marker: ${marker}`);
   }
 }
 
 const filesContextContent = readFileSync(
-  join(root, "src/renderer/src/components/files/FilesContextPanel.tsx"),
+  join(root, "../shared/renderer/src/components/files/FilesContextPanel.tsx"),
   "utf8",
 );
 for (const marker of [
@@ -527,7 +527,7 @@ for (const marker of [
 }
 
 const shellContent = readFileSync(
-  join(root, "src/renderer/src/components/WorkspaceShell.tsx"),
+  join(root, "../shared/renderer/src/components/WorkspaceShell.tsx"),
   "utf8",
 );
 for (const marker of [
@@ -539,7 +539,7 @@ for (const marker of [
   }
 }
 
-const stylesContent = readFileSync(join(root, "src/renderer/src/styles.css"), "utf8");
+const stylesContent = readFileSync(join(root, "../shared/renderer/src/styles.css"), "utf8");
 for (const marker of [
   ".right-panel.context-right-panel",
   ".context-right-panel .right-tabs",

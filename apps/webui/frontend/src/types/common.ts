@@ -35,4 +35,5 @@ export interface Agent {
     baseUrl?: string;
     type?: AgentType;
     examples?: AgentExample[];
+    announcements?: (string | LocalizedExample)[];
 }

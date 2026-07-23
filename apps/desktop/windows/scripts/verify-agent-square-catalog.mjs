@@ -18,7 +18,7 @@ const {
   createPublicAgentCachePayload,
   mergeAndSortAgents,
   parsePublicAgentCachePayload,
-} = await importTypeScript("src/main/agentCatalog.ts");
+} = await importTypeScript("../shared/main/agentCatalog.ts");
 
 const local = {
   id: "my-drsai",
@@ -136,8 +136,8 @@ const legacyLocalizedCache = parsePublicAgentCachePayload({
 assert.equal(legacyLocalizedCache.agents[0].description, "Legacy English");
 assert.deepEqual(legacyLocalizedCache.agents[0].localizedDescription, { en: "Legacy English", zh: "旧缓存中文" });
 
-const agentSource = readFileSync(join(root, "src/main/agents.ts"), "utf8");
-const preloadSource = readFileSync(join(root, "src/preload/index.ts"), "utf8");
+const agentSource = readFileSync(join(root, "../shared/main/agents.ts"), "utf8");
+const preloadSource = readFileSync(join(root, "../shared/main/preload.ts"), "utf8");
 assert(agentSource.includes("platformExecutionDescriptors"), "Main-private execution descriptor map is missing");
 assert(agentSource.includes("PLATFORM_CACHE_TTL_MS"), "catalog cache TTL is missing");
 assert(agentSource.includes("createPublicAgentCachePayload"), "public-only cache serializer is not used");

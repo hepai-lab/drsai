@@ -43,4 +43,17 @@ class AndroidUpdatePolicyTest {
         runCatching { AndroidUpdatePolicy.parseManifest(manifest(sha = "x".repeat(64))) }
             .onSuccess { error("bad hash should be rejected") }
     }
+
+    @Test fun insecureLocalFeedRequiresExplicitAcceptanceFlag() {
+        val local = manifest(apkUrl = "http://10.0.2.2:8766/OpenDrSai-Android-v1.4.7.apk")
+        runCatching { AndroidUpdatePolicy.parseManifest(local) }
+            .onSuccess { error("production policy must reject cleartext local URLs") }
+        assertEquals(10407, AndroidUpdatePolicy.parseManifest(local, allowInsecureLocal = true).versionCode)
+        runCatching {
+            AndroidUpdatePolicy.parseManifest(
+                manifest(apkUrl = "http://example.com/OpenDrSai-Android-v1.4.7.apk"),
+                allowInsecureLocal = true,
+            )
+        }.onSuccess { error("acceptance flag must not allow remote cleartext hosts") }
+    }
 }

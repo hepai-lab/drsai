@@ -18,18 +18,18 @@ function loadTypeScript(path, requireFn) {
 }
 
 try {
-  const shared = loadTypeScript(join(root, "src/shared/diagnostics.ts"), require);
-  const rootCause = loadTypeScript(join(root, "src/main/rootCauseAnalysis.ts"), (specifier) => {
-    if (specifier === "../shared/diagnostics") return shared;
+  const shared = loadTypeScript(join(root, "../shared/api/diagnostics.ts"), require);
+  const rootCause = loadTypeScript(join(root, "../shared/main/rootCauseAnalysis.ts"), (specifier) => {
+    if (specifier === "../api/diagnostics") return shared;
     return require(specifier);
   });
-  const diagnosticsModule = loadTypeScript(join(root, "src/main/diagnostics.ts"), (specifier) => {
-    if (specifier === "../shared/diagnostics") return shared;
+  const diagnosticsModule = loadTypeScript(join(root, "../shared/main/diagnostics.ts"), (specifier) => {
+    if (specifier === "../api/diagnostics") return shared;
     if (specifier === "./rootCauseAnalysis") return rootCause;
     if (specifier === "./paths") return { DRSAI_HOME: tempRoot };
     return require(specifier);
   });
-  const contextModule = loadTypeScript(join(root, "src/main/diagnosticContext.ts"), require);
+  const contextModule = loadTypeScript(join(root, "../shared/main/diagnosticContext.ts"), require);
   const diagnostics = new diagnosticsModule.DesktopDiagnostics();
   const rootOperation = await diagnostics.start({ traceId: "deep-trace", spanId: "root-span", module: "runtime", component: "runtime-engine", operation: "run.execute", message: "Run started" });
   const child = await diagnostics.start({ traceId: "deep-trace", spanId: "child-span", parentSpanId: rootOperation.spanId, module: "tool", component: "browser", operation: "browser.click", message: "Browser click started" });
@@ -69,10 +69,10 @@ try {
   assert.ok(restoredSnapshot.deepTracing.activeCheckpoints.some((item) => item.traceId === "active-trace" && item.recovered));
 
   const mainIndex = readFileSync(join(root, "src/main/index.ts"), "utf8");
-  const runtimeClient = readFileSync(join(root, "src/main/runtimeClient.ts"), "utf8");
+  const runtimeClient = readFileSync(join(root, "../shared/main/runtimeClient.ts"), "utf8");
   const gateway = readFileSync(join(root, "../../../cores/python/packages/drsai/src/drsai/backend/gateway.py"), "utf8");
-  const panel = readFileSync(join(root, "src/renderer/src/components/DebugPanel.tsx"), "utf8");
-  for (const contract of ["runWithDiagnosticContext", "recordBrowserTaskDiagnostic", "diagnostic.trace.recovered"]) assert.ok(mainIndex.includes(contract) || readFileSync(join(root, "src/main/diagnostics.ts"), "utf8").includes(contract), `Missing deep tracing contract: ${contract}`);
+  const panel = readFileSync(join(root, "../shared/renderer/src/components/DebugPanel.tsx"), "utf8");
+  for (const contract of ["runWithDiagnosticContext", "recordBrowserTaskDiagnostic", "diagnostic.trace.recovered"]) assert.ok(mainIndex.includes(contract) || readFileSync(join(root, "../shared/main/diagnostics.ts"), "utf8").includes(contract), `Missing deep tracing contract: ${contract}`);
   assert.ok(runtimeClient.includes("getDiagnosticPropagationHeaders"));
   for (const contract of ["diagnostic_trace_id", "diagnostic_clock_offset_ms", "trace.request.accepted"]) assert.ok(gateway.includes(contract), `Missing Gateway trace contract: ${contract}`);
   for (const contract of ["Performance hotspots", "diagnostic-waterfall", "critical", "active checkpoints"]) assert.ok(panel.includes(contract), `Missing deep tracing UI contract: ${contract}`);

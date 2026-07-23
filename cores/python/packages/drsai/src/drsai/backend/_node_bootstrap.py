@@ -42,6 +42,10 @@ from typing import Optional
 NODE_VERSION = "v22.22.3"
 
 DEFAULT_MIRROR = "https://nodejs.org/dist"
+FALLBACK_MIRRORS = (
+    "https://npmmirror.com/mirrors/node",
+    "https://mirrors.tuna.tsinghua.edu.cn/nodejs-release",
+)
 
 
 def _cache_root() -> Path:
@@ -99,7 +103,25 @@ def _mirror_url() -> str:
     return (os.environ.get("DRSAI_NODE_MIRROR") or DEFAULT_MIRROR).rstrip("/")
 
 
-def _download(url: str, dest: Path) -> None:
+def _candidate_mirrors() -> list[str]:
+    """Return the configured mirror followed by safe public fallbacks."""
+    configured = _mirror_url()
+    candidates = [configured]
+    if configured == DEFAULT_MIRROR:
+        candidates.extend(FALLBACK_MIRRORS)
+    return list(dict.fromkeys(candidates))
+
+
+def _open_url(url: str, timeout: int, use_proxy: bool = True):
+    """Open a URL using environment or Windows system proxy settings."""
+    # urllib.getproxies() reads HTTP(S)_PROXY and, on Windows, the user/system
+    # Internet Settings proxy. This also honors NO_PROXY for local endpoints.
+    proxies = urllib.request.getproxies() if use_proxy else {}
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies))
+    return opener.open(url, timeout=timeout)
+
+
+def _download(url: str, dest: Path, use_proxy: bool = True) -> None:
     """Download *url* to *dest* with a progress indicator on stderr."""
     sys.stderr.write(f"  Downloading: {url}\n")
     sys.stderr.flush()
@@ -108,7 +130,7 @@ def _download(url: str, dest: Path) -> None:
     tmp = dest.with_suffix(dest.suffix + ".partial")
 
     try:
-        with urllib.request.urlopen(url, timeout=60) as resp:
+        with _open_url(url, timeout=60, use_proxy=use_proxy) as resp:
             total = int(resp.headers.get("Content-Length", "0") or 0)
             downloaded = 0
             chunk = 64 * 1024
@@ -129,7 +151,7 @@ def _download(url: str, dest: Path) -> None:
                         sys.stderr.flush()
             if sys.stderr.isatty():
                 sys.stderr.write("\n")
-    except urllib.error.URLError as exc:
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
         if tmp.exists():
             tmp.unlink()
         raise RuntimeError(
@@ -143,12 +165,19 @@ def _download(url: str, dest: Path) -> None:
 
 def _fetch_sha_table(version: str) -> dict[str, str]:
     """Fetch the SHASUMS256.txt for *version* from the mirror; return ``{filename: sha}``."""
-    url = f"{_mirror_url()}/{version}/SHASUMS256.txt"
-    try:
-        with urllib.request.urlopen(url, timeout=30) as resp:
-            text = resp.read().decode("utf-8", errors="replace")
-    except urllib.error.URLError:
-        return {}  # checksums optional — failure to fetch shouldn't block install
+    for mirror in _candidate_mirrors():
+        url = f"{mirror}/{version}/SHASUMS256.txt"
+        for use_proxy in (True, False):
+            try:
+                with _open_url(url, timeout=30, use_proxy=use_proxy) as resp:
+                    text = resp.read().decode("utf-8", errors="replace")
+                break
+            except (urllib.error.URLError, TimeoutError, OSError):
+                continue
+        else:
+            continue
+    else:
+        return {}
     table: dict[str, str] = {}
     for line in text.splitlines():
         parts = line.split()
@@ -221,7 +250,6 @@ def ensure_portable_node() -> str:
     slug, ext = _platform_slug()
     install_dir = _cache_root() / NODE_VERSION / slug
     archive_name = f"node-{NODE_VERSION}-{slug}.{ext}"
-    url = f"{_mirror_url()}/{NODE_VERSION}/{archive_name}"
     archive_path = _cache_root() / archive_name
 
     sys.stderr.write(
@@ -230,7 +258,23 @@ def ensure_portable_node() -> str:
     )
     sys.stderr.flush()
 
-    _download(url, archive_path)
+    last_error: Exception | None = None
+    for mirror in _candidate_mirrors():
+        url = f"{mirror}/{NODE_VERSION}/{archive_name}"
+        for use_proxy in (True, False):
+            try:
+                mode = "proxy" if use_proxy and urllib.request.getproxies() else "direct"
+                sys.stderr.write(f"  Trying {mode}: {mirror}\n")
+                _download(url, archive_path, use_proxy=use_proxy)
+                break
+            except RuntimeError as exc:
+                last_error = exc
+                sys.stderr.write(f"  Download failed; trying alternate connection.\n")
+        else:
+            continue
+        break
+    else:
+        raise RuntimeError(f"Unable to download {archive_name} from configured or fallback mirrors.") from last_error
 
     # Optional SHA-256 verification — silently skipped if checksums unreachable.
     expected = _fetch_sha_table(NODE_VERSION).get(archive_name)

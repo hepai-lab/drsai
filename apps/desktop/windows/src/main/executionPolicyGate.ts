@@ -3,8 +3,8 @@ import {
   evaluateExecutionPermission,
   type ExecutionActionKind,
   type ExecutionPolicyConfig,
-} from "../shared/executionPolicy";
-import { getMyDrSaiConfig } from "./myDrSaiConfig";
+} from "../../../shared/api/executionPolicy";
+import { getMyDrSaiConfig } from "../../../shared/main/myDrSaiConfig";
 
 export interface ExecutionGateOptions {
   approved?: boolean;

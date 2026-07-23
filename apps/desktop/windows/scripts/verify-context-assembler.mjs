@@ -15,15 +15,15 @@ function assert(condition, message) {
   }
 }
 
-const chatWorkspace = read("src/renderer/src/components/ChatWorkspace.tsx");
-const chatMain = read("src/main/chat.ts");
-const workspaceContext = read("src/main/workspaceContext.ts");
+const chatWorkspace = read("../shared/renderer/src/components/ChatWorkspace.tsx");
+const chatMain = read("../shared/main/chat.ts");
+const workspaceContext = read("../shared/main/workspaceContext.ts");
 const myDrSaiConfig = read("src/main/myDrSaiConfig.ts");
-const preload = read("src/preload/index.ts");
-const mock = read("src/renderer/src/mockDesktopApi.ts");
-const sharedApi = read("src/shared/desktopApi.ts");
-const app = read("src/renderer/src/App.tsx");
-const styles = read("src/renderer/src/styles.css");
+const preload = read("../shared/main/preload.ts");
+const mock = read("../shared/renderer/src/mockDesktopApi.ts");
+const sharedApi = read("../shared/api/desktopApi.ts");
+const app = read("../shared/renderer/src/App.tsx");
+const styles = read("../shared/renderer/src/styles.css");
 const packageJson = read("package.json");
 
 assert(

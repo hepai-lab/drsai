@@ -22,6 +22,8 @@ electronFuses:
   enableEmbeddedAsarIntegrityValidation: true
   onlyLoadAppFromAsar: false
 extraResources:
+  - from: ../shared/browser-use-worker
+    to: browser-use-worker
   - from: out/renderer
     to: renderer
   - from: ../../../scripts/install.ps1

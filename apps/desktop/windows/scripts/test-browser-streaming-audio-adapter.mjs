@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-const { BrowserStreamingAudioAdapter } = await import("../src/renderer/src/voice/streaming/browserStreamingAudioAdapter.ts");
+const { BrowserStreamingAudioAdapter } = await import("../../shared/renderer/src/voice/streaming/browserStreamingAudioAdapter.ts");
 const audios = [];
 const revoked = [];
 const adapter = new BrowserStreamingAudioAdapter({

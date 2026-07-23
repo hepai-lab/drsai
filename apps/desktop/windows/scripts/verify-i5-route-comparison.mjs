@@ -27,11 +27,11 @@ const negative = {
 };
 assert(Object.values(negative).every(Boolean), `I5 negative mutations were not rejected: ${JSON.stringify(negative)}`);
 
-const shared = read("src/shared/desktopApi.ts");
+const shared = read("../shared/api/desktopApi.ts");
 const tasks = read("src/main/backgroundTasks.ts");
-const app = read("src/renderer/src/App.tsx");
-const files = read("src/renderer/src/components/files/FilesContextPanel.tsx");
-const styles = read("src/renderer/src/styles.css");
+const app = read("../shared/renderer/src/App.tsx");
+const files = read("../shared/renderer/src/components/files/FilesContextPanel.tsx");
+const styles = read("../shared/renderer/src/styles.css");
 const smoke = read("src/main/e2eSmoke.ts");
 const runner = read("scripts/verify-e2e-agent-run.mjs");
 const packageJson = read("package.json");

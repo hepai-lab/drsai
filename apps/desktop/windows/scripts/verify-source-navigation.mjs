@@ -42,9 +42,9 @@ try {
   const workspaceFile = join(workspaceRoot, "worker.py");
   writeFileSync(workspaceFile, "def run():\n    password = 'do-not-leak'\n    raise RuntimeError('broken')\n");
 
-  const shared = loadTypeScript(join(root, "src/shared/diagnostics.ts"), (specifier) => require(specifier));
-  const main = loadTypeScript(join(root, "src/main/sourceNavigation.ts"), (specifier) => {
-    if (specifier === "../shared/diagnostics") return shared;
+  const shared = loadTypeScript(join(root, "../shared/api/diagnostics.ts"), (specifier) => require(specifier));
+  const main = loadTypeScript(join(root, "../shared/main/sourceNavigation.ts"), (specifier) => {
+    if (specifier === "../api/diagnostics") return shared;
     return require(specifier);
   });
   const workspaces = [
@@ -84,8 +84,8 @@ try {
   assert.match(blocked.reason, /outside registered/);
 
   const mainIndex = readFileSync(join(root, "src/main/index.ts"), "utf8");
-  const preload = readFileSync(join(root, "src/preload/index.ts"), "utf8");
-  const panel = readFileSync(join(root, "src/renderer/src/components/DebugPanel.tsx"), "utf8");
+  const preload = readFileSync(join(root, "../shared/main/preload.ts"), "utf8");
+  const panel = readFileSync(join(root, "../shared/renderer/src/components/DebugPanel.tsx"), "utf8");
   for (const contract of ["desktop:diagnostics-source-context", "desktop:diagnostics-source-open", "DiagnosticSourceNavigator", "OPENDRSAI_SOURCE_EDITOR", "OPENDRSAI_SOURCE_EDITOR_ARGS"]) {
     assert.ok(mainIndex.includes(contract), `Missing source navigation main contract: ${contract}`);
   }

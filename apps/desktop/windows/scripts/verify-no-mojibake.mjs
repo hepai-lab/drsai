@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 const roots = [
-  "src/renderer/src",
+  "../shared/renderer/src",
   "scripts",
 ];
 const extensions = new Set([".ts", ".tsx", ".mjs", ".js", ".css", ".html"]);

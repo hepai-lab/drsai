@@ -67,7 +67,7 @@ def relay_registry(workspace_id: str):
         serialization.Encoding.Raw, serialization.PublicFormat.Raw)).rstrip(b"=").decode()
     runtime_id, token = registry.register(registry.issue_registration_code(), "Windows OpenDrSai", "1.4.7",
                                           public, "windows-e2e-registration")
-    grant, _ = registry.issue_access_grant(runtime_id, token)
+    _, grant, _ = registry.issue_access_grant(runtime_id, token)
     registry.associate("alice", grant)
     registry.publish_workspaces(runtime_id, token, [Workspace(
         runtime_id=runtime_id, workspace_id=workspace_id, display_name="Windows E2E")])

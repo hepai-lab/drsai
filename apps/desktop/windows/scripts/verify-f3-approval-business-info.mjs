@@ -8,9 +8,9 @@ const assert = (condition, message) => {
   if (!condition) throw new Error(`F3 business approval contract failed: ${message}`);
 };
 
-const api = read("src/shared/desktopApi.ts");
+const api = read("../shared/api/desktopApi.ts");
 const main = read("src/main/index.ts");
-const view = read("src/renderer/src/components/ApprovalCenterView.tsx");
+const view = read("../shared/renderer/src/components/ApprovalCenterView.tsx");
 const smoke = read("src/main/e2eSmoke.ts");
 const packageJson = read("package.json");
 

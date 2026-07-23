@@ -1,0 +1,17 @@
+{
+  "name": "opendrsai-desktop",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "shared/renderer",
+    "windows",
+    "macos"
+  ],
+  "scripts": {
+    "typecheck": "npm run typecheck:windows && npm run typecheck --workspace opendrsai-macos-desktop",
+    "typecheck:windows": "npm run typecheck --workspace opendrsai-windows-desktop",
+    "verify:windows": "npm run verify --workspace opendrsai-windows-desktop",
+    "verify:macos": "npm run verify --workspace opendrsai-macos-desktop",
+    "verify:architecture": "node shared/test-kit/verify-architecture-boundaries.mjs && node --experimental-strip-types shared/test-kit/verify-platform-contract.mjs"
+  }
+}

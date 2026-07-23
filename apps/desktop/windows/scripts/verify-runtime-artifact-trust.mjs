@@ -10,7 +10,7 @@ const app = resolve(new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z
 const temp = await mkdtemp(join(tmpdir(), "opendrsai-artifact-trust-"));
 try {
   const bundle = join(temp, "runtimeArtifactTrust.mjs");
-  await build({ entryPoints: [join(app, "src/main/runtimeArtifactTrust.ts")], outfile: bundle, bundle: true, platform: "node", format: "esm", target: "node22" });
+  await build({ entryPoints: [join(app, "../shared/main/runtimeArtifactTrust.ts")], outfile: bundle, bundle: true, platform: "node", format: "esm", target: "node22" });
   const trust = await import(pathToFileURL(bundle).href);
   const trusted = generateKeyPairSync("ed25519");
   const wrong = generateKeyPairSync("ed25519");

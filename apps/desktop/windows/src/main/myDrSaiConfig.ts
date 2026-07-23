@@ -9,7 +9,7 @@ import type {
   UpdateMyDrSaiConfigRequest,
 } from "../shared/desktopApi";
 import { requireAuthContext } from "./auth";
-import { getGatewayModels, getGatewayStatus } from "./gateway";
+import { getGatewayModels, getGatewayRequestHeaders, getGatewayStatus } from "./gateway";
 import { getDefaultModelAlias } from "./modelDefaults";
 
 const TOKENIZER_CALIBRATION_FILE = ".drsai/tokenizer-calibration.json";
@@ -266,12 +266,15 @@ function gatewayRequest<T>(
       {
         method,
         timeout: 5000,
-        headers: bodyString
-          ? {
-              "Content-Type": "application/json",
-              "Content-Length": String(Buffer.byteLength(bodyString)),
-            }
-          : {},
+        headers: {
+          ...getGatewayRequestHeaders(),
+          ...(bodyString
+            ? {
+                "Content-Type": "application/json",
+                "Content-Length": String(Buffer.byteLength(bodyString)),
+              }
+            : {}),
+        },
       },
       (response) => {
         let data = "";

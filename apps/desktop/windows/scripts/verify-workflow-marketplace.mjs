@@ -16,15 +16,24 @@ function assert(condition, message) {
 }
 
 const packageJson = read("package.json");
-const api = read("src/shared/desktopApi.ts");
-const policy = read("src/shared/executionPolicy.ts");
+const api = read("../shared/api/desktopApi.ts");
+const policy = read("../shared/api/executionPolicy.ts");
 const marketplace = read("src/main/workflowMarketplace.ts");
+const durableStore = read("../shared/main/durableJsonStore.ts");
 const main = read("src/main/index.ts");
-const preload = read("src/preload/index.ts");
-const skillSquare = read("src/renderer/src/components/SkillSquareView.tsx");
-const mock = read("src/renderer/src/mockDesktopApi.ts");
-const styles = read("src/renderer/src/styles.css");
+const preload = read("../shared/main/preload.ts");
+const skillSquare = read("../shared/renderer/src/components/SkillSquareView.tsx");
+const mock = read("../shared/renderer/src/mockDesktopApi.ts");
+const styles = read("../shared/renderer/src/styles.css");
 const roadmap = read("docs/smart-chat-bar-roadmap.md");
+
+assert(
+  marketplace.includes("readDurableJson(WORKFLOW_MARKETPLACE_IMPORTS_FILE") &&
+    marketplace.includes("writeDurableJson(WORKFLOW_MARKETPLACE_IMPORTS_FILE") &&
+    durableStore.includes("`${filePath}.bak`") &&
+    durableStore.includes("replaceFileSafely"),
+  "workflow marketplace imports do not use atomic primary/backup recovery",
+);
 
 assert(
   packageJson.includes(
@@ -127,10 +136,29 @@ assert(
   "marketplace templates do not expose approval and verification commitments",
 );
 assert(
+  marketplace.includes("Workflow approval proposal is required before this recipe can become ready") &&
+    marketplace.includes("template.approvalRequired && !proposal") &&
+    marketplace.includes("the /commit step owns the write approval"),
+  "marketplace does not fail closed on missing template approval or avoid duplicate commit approval",
+);
+assert(
+  marketplace.includes('id: "connector-digest"') &&
+    marketplace.includes('status: "available"') &&
+    marketplace.includes('id: "review-context"') &&
+    marketplace.includes('id: "draft-brief"') &&
+    marketplace.includes('id: "verify-brief"') &&
+    marketplace.includes("only the reviewed Channel import attachments") &&
+    marketplace.includes("do not fetch or send provider data") &&
+    !marketplace.includes("Add connector runtime verifier after live OAuth is wired"),
+  "connector digest is not an honest executable reviewed-import recipe",
+);
+assert(
   marketplace.includes("createWorkflowRunRecipe") &&
     marketplace.includes("getWorkflowTemplate") &&
     marketplace.includes('"approval_queued"') &&
-    marketplace.includes("/commit <message>"),
+    marketplace.includes("/commit <message>") &&
+    marketplace.includes("/memory retrospective <lesson>") &&
+    !marketplace.includes("/workflow ${template.id}"),
   "marketplace does not build executable workflow run recipes",
 );
 assert(
@@ -194,11 +222,11 @@ assert(
 );
 assert(
   workflowRuns.includes("completeWorkflowRunStep") &&
-    workflowRuns.includes("Only terminal workflow steps can be completed") &&
-    workflowRuns.includes("Terminal command completed with exit code 0") &&
-    workflowRuns.includes("Terminal command failed with exit code") &&
+    workflowRuns.includes("Only dispatched terminal/chat steps or explicitly reconnected external runtimes can be completed") &&
+    workflowRuns.includes('"External runtime reconnect"') &&
+    workflowRuns.includes("Only a running workflow step or waiting external runtime can be completed") &&
     workflowRuns.includes("Workflow run is blocked by a failed or blocked step"),
-  "main workflow run engine does not record terminal step completion",
+  "main workflow run engine does not record truthful terminal/chat/external step completion",
 );
 assert(
   workflowRuns.includes("markWorkflowRunTerminalStepRunning") &&
@@ -369,7 +397,14 @@ assert(
     skillSquare.includes("Resume checkpoint"),
   "Skills view does not render workflow restart resume state and external reconnect actions",
 );
-const terminalPanel = read("src/renderer/src/components/TerminalPanel.tsx");
+assert(
+  skillSquare.includes("Confirm chat complete") &&
+    skillSquare.includes("Confirm runtime reconnected") &&
+    skillSquare.includes("isCompletableWorkflowStep") &&
+    skillSquare.includes("completeWorkflowRunStep"),
+  "Skills view cannot explicitly complete chat or reconnected external runtime steps",
+);
+const terminalPanel = read("../shared/renderer/src/components/TerminalPanel.tsx");
 assert(
   terminalPanel.includes("completeWorkflowRunStep") &&
     terminalPanel.includes("drsai:workflow-run-updated") &&
@@ -384,7 +419,7 @@ assert(
     terminalPanel.includes("workflowStepId: proposal.workflowStepId"),
   "terminal panel does not pass workflow metadata into shell approval",
 );
-const approvalCenter = read("src/renderer/src/components/ApprovalCenterView.tsx");
+const approvalCenter = read("../shared/renderer/src/components/ApprovalCenterView.tsx");
 assert(
   approvalCenter.includes("broadcastLatestWorkflowRunUpdate") &&
     approvalCenter.includes("desktopApi.listWorkflowRuns") &&
@@ -392,8 +427,8 @@ assert(
     approvalCenter.includes('step.status === "running"'),
   "approval center does not refresh workflow running state after shell approval",
 );
-const chatWorkspace = read("src/renderer/src/components/ChatWorkspace.tsx");
-const app = read("src/renderer/src/App.tsx");
+const chatWorkspace = read("../shared/renderer/src/components/ChatWorkspace.tsx");
+const app = read("../shared/renderer/src/App.tsx");
 assert(
   chatWorkspace.includes("drsai:workflow-chat-command") &&
     chatWorkspace.includes("onInputChange(command.trim())"),
@@ -448,15 +483,16 @@ assert(
 );
 assert(
   mock.includes("dispatchWorkflowRunStep") &&
-    mock.includes("Mock dispatched to the chat bar") &&
-    mock.includes("Mock terminal command is ready"),
+    mock.includes("Mock chat command prepared; confirm this step only after the chat action finishes") &&
+    mock.includes("Mock terminal command dispatched; waiting for its exit result"),
   "mock bridge omits workflow step dispatch",
 );
 assert(
   mock.includes("completeWorkflowRunStep") &&
-    mock.includes("Mock terminal workflow command completed") &&
+    mock.includes('step.kind === "external_runtime" && step.status === "waiting_approval"') &&
+    mock.includes("Mock ${label} completed") &&
     mock.includes("Mock workflow run is blocked by a failed terminal command"),
-  "mock bridge omits workflow terminal step completion",
+  "mock bridge omits truthful workflow terminal/chat/external step completion",
 );
 assert(
   mock.includes("pendingShellWorkflowApprovals") &&

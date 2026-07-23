@@ -30,6 +30,7 @@ class AndroidUpdateManager private constructor(private val context: Context) {
         context = context,
         manifestUrl = BuildConfig.ANDROID_UPDATE_MANIFEST_URL,
         channel = BuildConfig.ANDROID_UPDATE_CHANNEL,
+        allowInsecureLocal = BuildConfig.ANDROID_UPDATE_ALLOW_INSECURE_LOCAL,
     )
     private val mutableState = MutableStateFlow<AndroidUpdateState>(AndroidUpdateState.Idle)
     val state: StateFlow<AndroidUpdateState> = mutableState.asStateFlow()

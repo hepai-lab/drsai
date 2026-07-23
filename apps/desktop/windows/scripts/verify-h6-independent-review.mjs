@@ -61,10 +61,10 @@ copiedAnswer[0].usesOriginalAnswerText = "true";
 copiedAnswer[0].text += " CERN 黄金数字、来源页码、图表引用和不确定性措辞一致";
 assert(evaluate(copiedAnswer).independenceCoverage < 1, "H6 evaluator accepted a record that reused the first answer");
 
-const api = readFileSync(join(root, "src/shared/desktopApi.ts"), "utf8");
+const api = readFileSync(join(root, "../shared/api/desktopApi.ts"), "utf8");
 const background = readFileSync(join(root, "src/main/backgroundTasks.ts"), "utf8");
-const app = readFileSync(join(root, "src/renderer/src/App.tsx"), "utf8");
-const styles = readFileSync(join(root, "src/renderer/src/styles.css"), "utf8");
+const app = readFileSync(join(root, "../shared/renderer/src/App.tsx"), "utf8");
+const styles = readFileSync(join(root, "../shared/renderer/src/styles.css"), "utf8");
 const smoke = readFileSync(join(root, "src/main/e2eSmoke.ts"), "utf8");
 const contracts = {
   reviewRecordTyped: api.includes("export interface DesktopIndependentReviewRecord") && api.includes('mode: "repeat" | "alternative"') && api.includes("usesOriginalAnswerText: false"),

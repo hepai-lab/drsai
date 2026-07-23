@@ -7,7 +7,9 @@ import { getRemoteGatewayAccess } from "./remoteWorkspace";
 import { requestRemotePtyKill } from "./remotePtyLifecycle";
 import { connectRuntimeClientForWorkspace, type RuntimeClient } from "./runtimeClient";
 import { DRSAI_HOME } from "./paths";
-import { reconcileTerminalReplay } from "./terminalReplay";
+import { reconcileTerminalReplay } from "../../../shared/main/terminalReplay";
+import type { DesktopTerminalShellProfile } from "../../../shared/api";
+import { WINDOWS_TERMINAL_SERVICE } from "./platformTerminals";
 
 type IPty = import("node-pty").IPty;
 type IPtyForkOptions = import("node-pty").IPtyForkOptions;
@@ -24,12 +26,7 @@ export interface TerminalCreateOptions {
   workspaceId?: string;
 }
 
-export type TerminalShellProfile =
-  | "powershell"
-  | "pwsh"
-  | "cmd"
-  | "git-bash"
-  | "wsl";
+export type TerminalShellProfile = DesktopTerminalShellProfile;
 
 export interface TerminalSessionInfo {
   id: string;
@@ -157,7 +154,10 @@ function normalizeShellProfile(profile: unknown): TerminalShellProfile {
   ) {
     return profile;
   }
-  return "powershell";
+  if (process.platform !== "win32" && (profile === "zsh" || profile === "bash")) {
+    return profile;
+  }
+  return WINDOWS_TERMINAL_SERVICE.defaultShell;
 }
 
 function resolveShell(profile: TerminalShellProfile): { file: string; args: string[] } {
@@ -190,6 +190,8 @@ function resolveShell(profile: TerminalShellProfile): { file: string; args: stri
     };
   }
 
+  if (profile === "zsh") return { file: process.env.SHELL || "/bin/zsh", args: [] };
+  if (profile === "bash") return { file: "/bin/bash", args: [] };
   return { file: process.env.SHELL || "/bin/bash", args: [] };
 }
 

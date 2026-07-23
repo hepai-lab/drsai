@@ -5,6 +5,9 @@ object RelayContractGenerated {
     const val SCHEMA_VERSION: String = "1.0.0"
     const val PROTOCOL_VERSION: String = "owop/1"
     val ENDPOINTS: Map<String, String> = mapOf(
+        "access_grant_create" to "POST /v1/runtimes/{runtime_id}/access-grants",
+        "access_grant_read" to "GET /v1/runtimes/{runtime_id}/access-grants/{grant_id}",
+        "access_grant_revoke" to "DELETE /v1/runtimes/{runtime_id}/access-grants/{grant_id}",
         "event_list" to "GET /v1/runtimes/{runtime_id}/runs/{run_id}/events",
         "file_raw" to "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/files/raw",
         "run_cancel" to "POST /v1/runtimes/{runtime_id}/runs/{run_id}/cancel",

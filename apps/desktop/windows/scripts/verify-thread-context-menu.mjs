@@ -8,16 +8,16 @@ function read(relativePath) {
   return readFileSync(join(root, relativePath), "utf8");
 }
 
-const sharedApi = read("src/shared/desktopApi.ts");
-const threads = read("src/main/threads.ts");
+const sharedApi = read("../shared/api/desktopApi.ts");
+const threads = read("../shared/main/threads.ts");
 const main = read("src/main/index.ts");
-const app = read("src/renderer/src/App.tsx");
-const chatAdapter = read("src/renderer/src/adapters/useDesktopChatAdapter.ts");
-const shell = read("src/renderer/src/components/WorkspaceShell.tsx");
-const forkConflictAnalysis = read("src/renderer/src/components/forkConflictAnalysis.ts");
-const css = read("src/renderer/src/styles.css");
-const mock = read("src/renderer/src/mockDesktopApi.ts");
-const preload = read("src/preload/index.ts");
+const app = read("../shared/renderer/src/App.tsx");
+const chatAdapter = read("../shared/renderer/src/adapters/useDesktopChatAdapter.ts");
+const shell = read("../shared/renderer/src/components/WorkspaceShell.tsx");
+const forkConflictAnalysis = read("../shared/renderer/src/components/forkConflictAnalysis.ts");
+const css = read("../shared/renderer/src/styles.css");
+const mock = read("../shared/renderer/src/mockDesktopApi.ts");
+const preload = read("../shared/main/preload.ts");
 
 const checks = [
   [
@@ -102,8 +102,10 @@ const checks = [
   ],
   [
     "chat adapter refreshes displayed messages when the selected thread snapshot changes",
-    chatAdapter.includes("setMessages(threadSnapshot?.messages?.length ? threadSnapshot.messages") &&
-      chatAdapter.includes("[language, threadId, threadSnapshot]"),
+    chatAdapter.includes("if (threadSnapshot?.threadId !== threadId) return") &&
+      chatAdapter.includes("hydrateStructuredMessages(threadSnapshot.messages)") &&
+      chatAdapter.includes("setMessages(restoredMessages)") &&
+      chatAdapter.includes("[activeRequestId, language, threadId, threadSnapshot]"),
   ],
   [
     "sidebar supports a right click context menu on conversations",
@@ -142,8 +144,8 @@ const checks = [
   [
     "copy working directory action uses the clipboard",
     shell.includes("复制工作目录") &&
-      shell.includes("navigator.clipboard.writeText") &&
-      shell.includes("getThreadWorkspacePath(threadMenu.thread)"),
+      shell.includes("copyTextSafely(text)") &&
+      shell.includes("copyText(getThreadWorkspacePath(threadMenu.thread))"),
   ],
   [
     "copy conversation id action uses the clipboard",

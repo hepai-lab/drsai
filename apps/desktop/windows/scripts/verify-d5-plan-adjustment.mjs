@@ -4,13 +4,13 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const read = (path) => readFileSync(resolve(root, path), "utf8");
-const api = read("src/shared/desktopApi.ts");
-const parser = read("src/main/sseParser.ts");
-const runner = read("src/main/agentRuns.ts");
+const api = read("../shared/api/desktopApi.ts");
+const parser = read("../shared/main/sseParser.ts");
+const runner = read("../shared/main/agentRuns.ts");
 const tasks = read("src/main/backgroundTasks.ts");
-const workspace = read("src/renderer/src/components/AgentRunWorkspace.tsx");
-const taskCenter = read("src/renderer/src/components/SkillSquareView.tsx");
-const styles = read("src/renderer/src/styles.css");
+const workspace = read("../shared/renderer/src/components/AgentRunWorkspace.tsx");
+const taskCenter = read("../shared/renderer/src/components/SkillSquareView.tsx");
+const styles = read("../shared/renderer/src/styles.css");
 const smoke = read("src/main/e2eSmoke.ts");
 const packaged = read("scripts/verify-e2e-agent-run.mjs");
 

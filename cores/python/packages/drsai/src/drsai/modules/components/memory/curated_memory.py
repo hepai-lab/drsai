@@ -1,9 +1,12 @@
-"""Curated memory — bounded MEMORY.md / USER.md store.
+"""Curated memory — bounded MEMORY.md store.
 
-Hermes-style persistent memory: two § -delimited files the agent (and the
+Hermes-style persistent memory: a §-delimited file the agent (and the
 desktop UI) can both read and mutate.  ``MEMORY.md`` holds the agent's own
-notes (environment facts, conventions, things learned).  ``USER.md`` holds
-the user profile.
+notes (environment facts, conventions, things learned about the project).
+
+USER.md is no longer managed here — user profile content lives directly
+inside AGENTS.md, which is the single source of truth for system prompt
+configuration.
 
 Design:
 - Atomic writes via tempfile + os.replace so concurrent readers always see a
@@ -34,7 +37,14 @@ logger = logging.getLogger(__name__)
 
 ENTRY_DELIMITER = "\n§\n"
 DEFAULT_MEMORY_CHAR_LIMIT = 2200
-DEFAULT_USER_CHAR_LIMIT = 1375
+DEFAULT_MAX_ENTRIES = 15          # hard cap on number of entries
+# When char usage reaches this fraction of the limit, old entries are
+# auto-condensed to make room for new ones.
+_REFRESH_THRESHOLD = 0.80
+# Number of most-recent entries to keep full-length during condensation.
+_KEEP_FULL_RECENT = 5
+# Condensed entries are truncated to this many characters.
+_CONDENSED_LEN = 120
 
 # fcntl is Unix-only; on Windows fall back to msvcrt
 try:
@@ -100,30 +110,29 @@ def _scan_content(content: str) -> Optional[str]:
 
 
 class CuratedMemoryStore:
-    """Two-file curated memory (MEMORY.md + USER.md) with bounded entries.
+    """Single-file curated memory (MEMORY.md) with bounded §-delimited entries.
+
+    USER.md is no longer managed by this store.  User profile content is
+    embedded directly in AGENTS.md, which is the unified system-prompt file
+    managed by ``UserProfileManager``.
 
     Args:
         memory_path: Path to MEMORY.md.
-        user_path:   Path to USER.md.
         memory_char_limit: Whole-file char budget for MEMORY.md.
-        user_char_limit:   Whole-file char budget for USER.md (treated as a
-            single blob, not § -split, matching hermes USER.md semantics).
     """
 
     def __init__(
         self,
         memory_path: Path,
-        user_path: Path,
         memory_char_limit: int = DEFAULT_MEMORY_CHAR_LIMIT,
-        user_char_limit: int = DEFAULT_USER_CHAR_LIMIT,
+        max_entries: int = DEFAULT_MAX_ENTRIES,
     ) -> None:
         self.memory_path = Path(memory_path)
-        self.user_path = Path(user_path)
         self.memory_char_limit = memory_char_limit
-        self.user_char_limit = user_char_limit
+        self.max_entries = max_entries
 
         self.memory_entries: List[str] = []
-        self._system_prompt_snapshot: Dict[str, str] = {"memory": "", "user": ""}
+        self._system_prompt_snapshot: str = ""
 
     # ── load / snapshot ────────────────────────────────────────────────
 
@@ -131,26 +140,59 @@ class CuratedMemoryStore:
         """Read MEMORY.md into entries; capture frozen system-prompt snapshot."""
         self.memory_path.parent.mkdir(parents=True, exist_ok=True)
         self.memory_entries = list(dict.fromkeys(self._read_entries(self.memory_path)))
-        user_content = self._read_text(self.user_path)
-        self._system_prompt_snapshot = {
-            "memory": self._render_memory_block(self.memory_entries),
-            "user": user_content,
-        }
+        self._system_prompt_snapshot = self._render_memory_block(self.memory_entries)
 
     def system_prompt_block(self) -> str:
-        """Return the frozen memory block for system-prompt injection."""
-        parts: List[str] = []
-        if self._system_prompt_snapshot["memory"].strip():
-            parts.append("## MEMORY (agent notes)\n" + self._system_prompt_snapshot["memory"])
-        if self._system_prompt_snapshot["user"].strip():
-            parts.append("## USER PROFILE\n" + self._system_prompt_snapshot["user"])
-        return "\n\n".join(parts)
+        """Return the frozen MEMORY block for system-prompt injection.
+
+        Only MEMORY entries are returned.  User profile is part of AGENTS.md
+        and is injected separately by the agent.
+        """
+        if self._system_prompt_snapshot.strip():
+            return "## MEMORY (agent notes)\n" + self._system_prompt_snapshot
+        return ""
+
+    def get_display_block(self) -> str:
+        """Return a human-readable rendering of MEMORY.md for TUI display."""
+        entries = self._read_entries(self.memory_path)
+        return self._render_memory_block(entries)
+
+    def get_display_summary(self) -> str:
+        """Return a compact one-line summary for TUI startup banner.
+
+        Shows the file path (shortened with ``~``) and entry count, e.g.::
+
+            ~/.drsai/workspace/runs/xiongdb/configs/MEMORY.md (2/15 entries)
+
+        This avoids flooding the terminal with full MEMORY.md content on
+        every startup.  Users can open the file directly to see details.
+        """
+        entries = self._read_entries(self.memory_path)
+        n = len(entries)
+        if n == 0:
+            return ""
+        path_str = str(self.memory_path)
+        home = str(Path.home())
+        if path_str.startswith(home):
+            path_str = "~" + path_str[len(home):]
+        return f"{path_str} ({n}/{self.max_entries} entries)"
 
     @staticmethod
     def _render_memory_block(entries: List[str]) -> str:
+        """Render entries as a clean, numbered list with separators.
+
+        Used both for system-prompt injection and TUI display.  Each entry
+        is prefixed with ``[N]`` (1-based index) and entries are separated
+        by a blank line for readability.
+        """
         if not entries:
             return ""
-        return "\n\n".join(f"- {e}" for e in entries)
+        lines = []
+        for i, e in enumerate(entries, 1):
+            # Indent multi-line entries for visual continuity
+            formatted = e.replace("\n", "\n  ")
+            lines.append(f"[{i}] {formatted}")
+        return "\n\n".join(lines)
 
     # ── public API: MEMORY.md entries ──────────────────────────────────
 
@@ -161,7 +203,12 @@ class CuratedMemoryStore:
         return [{"index": i, "content": e} for i, e in enumerate(entries)]
 
     def add_entry(self, content: str) -> Dict[str, Any]:
-        """Append a new entry to MEMORY.md."""
+        """Append a new entry to MEMORY.md.
+
+        If the addition would exceed the char or entry-count limit, older
+        entries are auto-condensed (truncated with ``…``) to make room.
+        Only fails if condensation cannot free enough space.
+        """
         content = (content or "").strip()
         if not content:
             return {"success": False, "error": "Content cannot be empty."}
@@ -178,18 +225,22 @@ class CuratedMemoryStore:
             if content in entries:
                 return {"success": True, "noop": True, "message": "Entry already exists."}
 
-            new_total = len(ENTRY_DELIMITER.join(entries + [content]))
+            entries.append(content)
+            # Auto-condense old entries if we're over limits
+            entries = self._refresh_entries(entries)
+
+            new_total = len(ENTRY_DELIMITER.join(entries))
             if new_total > self.memory_char_limit:
                 return {
                     "success": False,
                     "error": (
                         f"Memory at {self._char_count(entries):,}/"
-                        f"{self.memory_char_limit:,} chars. Adding this entry "
-                        f"({len(content)} chars) would exceed the limit."
+                        f"{self.memory_char_limit:,} chars and {len(entries)}/"
+                        f"{self.max_entries} entries. Even after condensation, "
+                        f"adding this entry ({len(content)} chars) exceeds the limit."
                     ),
                 }
 
-            entries.append(content)
             self._write_entries(self.memory_path, entries)
             self.memory_entries = entries
             return {"success": True, "index": len(entries) - 1}
@@ -289,6 +340,8 @@ class CuratedMemoryStore:
                     ),
                 }
             entries[idx] = new_content
+            # Auto-condense if replacement pushed us over limits
+            entries = self._refresh_entries(entries)
             self._write_entries(self.memory_path, entries)
             self.memory_entries = entries
             return {"success": True, "index": idx}
@@ -319,39 +372,19 @@ class CuratedMemoryStore:
             self.memory_entries = entries
             return {"success": True}
 
-    # ── public API: USER.md (single blob) ──────────────────────────────
-
-    def read_user(self) -> str:
-        return self._read_text(self.user_path)
-
-    def write_user(self, content: str) -> Dict[str, Any]:
-        content = content or ""
-        if len(content) > self.user_char_limit:
-            return {
-                "success": False,
-                "error": (
-                    f"USER.md exceeds limit ({len(content)}/{self.user_char_limit} chars)."
-                ),
-            }
-        scan = _scan_content(content)
-        if scan:
-            return {"success": False, "error": scan}
-        with self._file_lock(self.user_path):
-            self.user_path.parent.mkdir(parents=True, exist_ok=True)
-            self._write_text_atomic(self.user_path, content)
-        return {"success": True}
-
     # ── stats ──────────────────────────────────────────────────────────
 
     def char_counts(self) -> Dict[str, int]:
         entries = self._read_entries(self.memory_path)
-        return {
-            "memory": self._char_count(entries),
-            "user": len(self._read_text(self.user_path)),
-        }
+        return {"memory": self._char_count(entries)}
 
     def char_limits(self) -> Dict[str, int]:
-        return {"memory": self.memory_char_limit, "user": self.user_char_limit}
+        return {"memory": self.memory_char_limit}
+
+    def entry_counts(self) -> Dict[str, int]:
+        """Return current entry count and max for MEMORY.md."""
+        entries = self._read_entries(self.memory_path)
+        return {"memory": len(entries), "memory_max": self.max_entries}
 
     def last_modified(self) -> Dict[str, Optional[int]]:
         def mtime(p: Path) -> Optional[int]:
@@ -359,7 +392,7 @@ class CuratedMemoryStore:
                 return int(p.stat().st_mtime) if p.exists() else None
             except OSError:
                 return None
-        return {"memory": mtime(self.memory_path), "user": mtime(self.user_path)}
+        return {"memory": mtime(self.memory_path)}
 
     # ── internals ──────────────────────────────────────────────────────
 
@@ -368,6 +401,55 @@ class CuratedMemoryStore:
         if not entries:
             return 0
         return len(ENTRY_DELIMITER.join(entries))
+
+    def _refresh_entries(self, entries: List[str]) -> List[str]:
+        """Condense old entries to make room within char and count limits.
+
+        Strategy:
+        1. If entry count exceeds ``max_entries``, drop the oldest entries
+           beyond ``max_entries``.
+        2. If char usage exceeds ``_REFRESH_THRESHOLD * char_limit``,
+           condense all entries except the most recent ``_KEEP_FULL_RECENT``
+           by truncating to ``_CONDENSED_LEN`` chars with a ``…`` suffix.
+        3. Repeat step 2 with increasingly aggressive truncation until
+           the total fits within ``char_limit``.
+
+        Returns the condensed list (caller persists to disk).
+        """
+        if not entries:
+            return entries
+
+        # Step 1: enforce entry count limit
+        if len(entries) > self.max_entries:
+            entries = entries[-(self.max_entries):]
+
+        # Step 2+3: condense old entries to fit char budget
+        total = self._char_count(entries)
+        if total <= int(self.memory_char_limit * _REFRESH_THRESHOLD):
+            return entries
+
+        keep_full = _KEEP_FULL_RECENT
+        condensed_len = _CONDENSED_LEN
+        for _ in range(10):  # max 10 condensation rounds
+            result = []
+            n = len(entries)
+            for i, e in enumerate(entries):
+                if i >= n - keep_full:
+                    result.append(e)  # keep recent entries full
+                else:
+                    if len(e) > condensed_len:
+                        result.append(e[:condensed_len].rstrip() + "…")
+                    else:
+                        result.append(e)
+            total = self._char_count(result)
+            if total <= self.memory_char_limit:
+                entries = result
+                break
+            # More aggressive: reduce kept-full count and condensed length
+            keep_full = max(1, keep_full - 1)
+            condensed_len = max(60, condensed_len - 20)
+            entries = result
+        return entries
 
     @staticmethod
     def _read_entries(path: Path) -> List[str]:

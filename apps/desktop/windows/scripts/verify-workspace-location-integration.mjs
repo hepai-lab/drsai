@@ -13,7 +13,7 @@ mkdirSync(localFolder, { recursive: true });
 process.env.DRSAI_HOME = home;
 
 try {
-  await build({ entryPoints: [join(root, "src/main/workspaces.ts")], outfile: bundle, bundle: true, platform: "node", format: "esm", target: "node22" });
+  await build({ entryPoints: [join(root, "../shared/main/workspaces.ts")], outfile: bundle, bundle: true, platform: "node", format: "esm", target: "node22" });
   const api = await import(`${pathToFileURL(bundle).href}?fixture=${Date.now()}`);
   const created = await api.createWorkspace({ source: "existing", path: localFolder, name: "Selected local", trusted: true });
   assert(created.location === "local" && created.type === "local", "Local folder did not create a Local Workspace");

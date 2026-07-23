@@ -70,6 +70,23 @@ def test_registration_association_heartbeat_and_discovery_flow() -> None:
     assert client.get(f"/v1/runtimes/{runtime_id}/capabilities", headers={"x-subject": "alice"}).status_code == 200
 
 
+def test_access_grant_status_and_revoke_lifecycle() -> None:
+    client = TestClient(_testing_app())
+    _, runtime_id, token = register(client)
+    headers = {"x-runtime-token": token}
+    created = client.post(f"/v1/runtimes/{runtime_id}/access-grants", headers=headers)
+    assert created.status_code == 200
+    body = created.json()
+    assert body["grant_id"].startswith("ag_") and body["status"] == "pending"
+    status_url = f"/v1/runtimes/{runtime_id}/access-grants/{body['grant_id']}"
+    assert client.get(status_url, headers=headers).json()["status"] == "pending"
+    revoked = client.delete(status_url, headers=headers)
+    assert revoked.status_code == 200 and revoked.json()["status"] == "revoked"
+    assert client.delete(status_url, headers=headers).json()["status"] == "revoked"
+    assert client.post("/v1/associations", headers={"x-subject": "alice"},
+                       json={**control(), "code": body["code"]}).status_code == 400
+
+
 def test_production_relay_derives_principal_from_verified_oidc_and_ignores_client_subject(monkeypatch) -> None:
     secret = b"relay-oidc-test-secret"
     monkeypatch.setenv("OPENDRSAI_OIDC_HS256_SECRET", secret.decode())
@@ -134,7 +151,7 @@ def test_runtime_establishes_authenticated_outbound_websocket() -> None:
         socket.send_json({"type": "runtime.workspaces", "workspaces": [{
             "runtime_id": runtime_id, "workspace_id": "workspace-one", "display_name": "Project",
         }]})
-    code, _ = client.app.state.registry.issue_access_grant(runtime_id, token)
+    _, code, _ = client.app.state.registry.issue_access_grant(runtime_id, token)
     client.app.state.registry.associate("alice", code)
     workspaces, _ = client.app.state.registry.list_workspaces("alice", runtime_id)
     assert [item.workspace_id for item in workspaces] == ["workspace-one"]

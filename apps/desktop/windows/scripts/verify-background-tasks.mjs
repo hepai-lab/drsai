@@ -16,13 +16,14 @@ function assert(condition, message) {
 }
 
 const packageJson = read("package.json");
-const api = read("src/shared/desktopApi.ts");
+const api = read("../shared/api/desktopApi.ts");
 const backgroundTasks = read("src/main/backgroundTasks.ts");
+const durableStore = read("../shared/main/durableJsonStore.ts");
 const main = read("src/main/index.ts");
-const preload = read("src/preload/index.ts");
-const skillSquare = read("src/renderer/src/components/SkillSquareView.tsx");
-const mock = read("src/renderer/src/mockDesktopApi.ts");
-const styles = read("src/renderer/src/styles.css");
+const preload = read("../shared/main/preload.ts");
+const skillSquare = read("../shared/renderer/src/components/SkillSquareView.tsx");
+const mock = read("../shared/renderer/src/mockDesktopApi.ts");
+const styles = read("../shared/renderer/src/styles.css");
 const roadmap = read("docs/smart-chat-bar-roadmap.md");
 
 assert(
@@ -93,8 +94,11 @@ assert(
   "Agent runs are not supervised through the generic background queue",
 );
 assert(
-  backgroundTasks.includes("rename(temporaryPath, BACKGROUND_TASKS_FILE)") &&
-    backgroundTasks.includes("randomUUID()}.tmp"),
+  backgroundTasks.includes("readDurableJson(BACKGROUND_TASKS_FILE") &&
+    backgroundTasks.includes("writeDurableJson(BACKGROUND_TASKS_FILE") &&
+    durableStore.includes("replaceFileSafely") &&
+    durableStore.includes("`${filePath}.bak`") &&
+    durableStore.includes("mode: 0o600"),
   "background task persistence is not atomic",
 );
 assert(

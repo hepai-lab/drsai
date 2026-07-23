@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const view = readFileSync(join(root, "src/renderer/src/components/AgentSquareView.tsx"), "utf8");
+const view = readFileSync(join(root, "../shared/renderer/src/components/AgentSquareView.tsx"), "utf8");
 assert(view.includes("getAgentDescription(agent, zh)"), "agent descriptions are not selected by the active UI language");
 assert(view.includes("localizedDescription?.zh") && view.includes("localizedDescription?.en"), "localized descriptions are not searchable in both languages");
 assert(view.includes("JSON.parse(text)") && view.includes("zhText || en"), "legacy JSON-string descriptions are not localized before Main restarts");
@@ -13,15 +13,15 @@ assert(view.includes('zh ? "开始使用" : "Use agent"'), "Agent Square does no
 assert(!view.includes('className="agent-mode-pill"'), "Agent cards must not expose backend execution modes");
 assert(view.includes("agent-default-button") && view.includes("Set as default agent"), "the default-agent control is not an accessible top-right star button");
 assert(view.indexOf("agent-default-button") < view.indexOf("agent-card-main"), "the default-agent button must appear in the card header before its main content");
-const app = readFileSync(join(root, "src/renderer/src/App.tsx"), "utf8");
-const preload = readFileSync(join(root, "src/preload/index.ts"), "utf8");
-const shared = readFileSync(join(root, "src/shared/desktopApi.ts"), "utf8");
-const adapter = readFileSync(join(root, "src/renderer/src/adapters/useDesktopChatAdapter.ts"), "utf8");
-const chat = readFileSync(join(root, "src/main/chat.ts"), "utf8");
-const agents = readFileSync(join(root, "src/main/agents.ts"), "utf8");
-const threads = readFileSync(join(root, "src/main/threads.ts"), "utf8");
-const workspace = readFileSync(join(root, "src/renderer/src/components/ChatWorkspace.tsx"), "utf8");
-const telemetry = readFileSync(join(root, "src/main/agentTelemetry.ts"), "utf8");
+const app = readFileSync(join(root, "../shared/renderer/src/App.tsx"), "utf8");
+const preload = readFileSync(join(root, "../shared/main/preload.ts"), "utf8");
+const shared = readFileSync(join(root, "../shared/api/desktopApi.ts"), "utf8");
+const adapter = readFileSync(join(root, "../shared/renderer/src/adapters/useDesktopChatAdapter.ts"), "utf8");
+const chat = readFileSync(join(root, "../shared/main/chat.ts"), "utf8");
+const agents = readFileSync(join(root, "../shared/main/agents.ts"), "utf8");
+const threads = readFileSync(join(root, "../shared/main/threads.ts"), "utf8");
+const workspace = readFileSync(join(root, "../shared/renderer/src/components/ChatWorkspace.tsx"), "utf8");
+const telemetry = readFileSync(join(root, "../shared/main/agentTelemetry.ts"), "utf8");
 
 assert(view.includes('["local", "official", "mine"]'), "C1 catalog grouping is missing");
 assert(view.includes('value={availability}') && view.includes('value={sort}'), "C2 availability filter or sorting is missing");

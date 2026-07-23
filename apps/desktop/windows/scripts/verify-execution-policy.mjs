@@ -15,14 +15,14 @@ function assert(condition, message) {
   }
 }
 
-const policy = read("src/shared/executionPolicy.ts");
-const browserPolicy = read("src/shared/browser/actionPolicy.ts");
+const policy = read("../shared/api/executionPolicy.ts");
+const browserPolicy = read("../shared/api/browser/actionPolicy.ts");
 const mainGate = read("src/main/executionPolicyGate.ts");
 const main = read("src/main/index.ts");
 const normalizedMain = main.replace(/\r\n/g, "\n");
-const chatCommands = read("src/renderer/src/chatCommands.ts");
-const desktopApi = read("src/shared/desktopApi.ts");
-const terminalPanel = read("src/renderer/src/components/TerminalPanel.tsx");
+const chatCommands = read("../shared/renderer/src/chatCommands.ts");
+const desktopApi = read("../shared/api/desktopApi.ts");
+const terminalPanel = read("../shared/renderer/src/components/TerminalPanel.tsx");
 const packageJson = read("package.json");
 const roadmap = read("docs/smart-chat-bar-roadmap.md");
 

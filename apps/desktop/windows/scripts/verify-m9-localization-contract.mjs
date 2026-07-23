@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const rendererRoot = join(root, "src", "renderer", "src");
+const rendererRoot = join(root, "..", "shared", "renderer", "src");
 const sourceFiles = [...walk(rendererRoot)].filter((file) => [".ts", ".tsx"].includes(extname(file)));
 const failures = [];
 const localizedBranches = [];

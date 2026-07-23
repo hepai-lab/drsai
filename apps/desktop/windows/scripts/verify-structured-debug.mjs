@@ -4,13 +4,15 @@ import { join } from "node:path";
 import ts from "typescript";
 
 const root = process.cwd();
-const storePath = join(root, "src/renderer/src/debugLogStore.ts");
+const storePath = join(root, "../shared/renderer/src/debugLogStore.ts");
 const storeSource = readFileSync(storePath, "utf8");
-const panelSource = readFileSync(join(root, "src/renderer/src/components/DebugPanel.tsx"), "utf8");
-const workspaceSource = readFileSync(join(root, "src/renderer/src/components/ChatWorkspace.tsx"), "utf8");
-const adapterSource = readFileSync(join(root, "src/renderer/src/adapters/useDesktopChatAdapter.ts"), "utf8");
-const desktopApiSource = readFileSync(join(root, "src/shared/desktopApi.ts"), "utf8");
-const mainChatSource = readFileSync(join(root, "src/main/chat.ts"), "utf8");
+const panelSource = readFileSync(join(root, "../shared/renderer/src/components/DebugPanel.tsx"), "utf8");
+const clipboardPath = join(root, "../shared/renderer/src/clipboard.ts");
+const clipboardSource = readFileSync(clipboardPath, "utf8");
+const workspaceSource = readFileSync(join(root, "../shared/renderer/src/components/ChatWorkspace.tsx"), "utf8");
+const adapterSource = readFileSync(join(root, "../shared/renderer/src/adapters/useDesktopChatAdapter.ts"), "utf8");
+const desktopApiSource = readFileSync(join(root, "../shared/api/desktopApi.ts"), "utf8");
+const mainChatSource = readFileSync(join(root, "../shared/main/chat.ts"), "utf8");
 
 const output = ts.transpileModule(storeSource, {
   compilerOptions: {
@@ -73,6 +75,91 @@ assert.equal(entries[1].partId, "answer");
 store.clearDebugLogs();
 assert.equal(store.getDebugLogs().length, 0, "Clear must affect only this debug store.");
 
+const clipboardOutput = ts.transpileModule(clipboardSource, {
+  compilerOptions: {
+    module: ts.ModuleKind.CommonJS,
+    target: ts.ScriptTarget.ES2022,
+    esModuleInterop: true,
+  },
+  fileName: clipboardPath,
+}).outputText;
+
+function loadClipboard({ desktopAvailable, desktopResult }) {
+  const clipboardModule = { exports: {} };
+  new Function("exports", "module", "require", clipboardOutput)(
+    clipboardModule.exports,
+    clipboardModule,
+    () => ({
+      desktopApi: {
+        copyTextToClipboard: async () => desktopResult,
+      },
+      hasDesktopApi: () => desktopAvailable,
+    }),
+  );
+  return clipboardModule.exports;
+}
+
+const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
+let browserCopies = 0;
+let fallbackCopies = 0;
+Object.defineProperty(globalThis, "navigator", {
+  configurable: true,
+  value: {
+    clipboard: {
+      writeText: async () => {
+        browserCopies += 1;
+      },
+    },
+  },
+});
+Object.defineProperty(globalThis, "document", {
+  configurable: true,
+  value: {
+    body: {
+      appendChild: () => undefined,
+    },
+    createElement: () => ({
+      value: "",
+      style: {},
+      setAttribute: () => undefined,
+      select: () => undefined,
+      remove: () => undefined,
+    }),
+    execCommand: () => {
+      fallbackCopies += 1;
+      return true;
+    },
+  },
+});
+try {
+  assert.equal(
+    await loadClipboard({ desktopAvailable: true, desktopResult: true }).copyTextSafely("desktop"),
+    true,
+  );
+  assert.equal(browserCopies, 0, "Successful desktop clipboard writes must not invoke browser permissions.");
+
+  assert.equal(
+    await loadClipboard({ desktopAvailable: false, desktopResult: false }).copyTextSafely("browser"),
+    true,
+  );
+  assert.equal(browserCopies, 1, "Browser clipboard fallback was not used.");
+
+  globalThis.navigator.clipboard.writeText = async () => {
+    throw new Error("permission denied");
+  };
+  assert.equal(
+    await loadClipboard({ desktopAvailable: false, desktopResult: false }).copyTextSafely("legacy"),
+    true,
+  );
+  assert.equal(fallbackCopies, 1, "Legacy copy fallback was not used.");
+} finally {
+  if (originalNavigator) Object.defineProperty(globalThis, "navigator", originalNavigator);
+  else delete globalThis.navigator;
+  if (originalDocument) Object.defineProperty(globalThis, "document", originalDocument);
+  else delete globalThis.document;
+}
+
 for (const contract of [
   'type DebugView = "overview" | "traces" | "errors" | "causes" | "interactive" | "production" | "activity" | "raw"',
   'role="tablist"',
@@ -80,7 +167,7 @@ for (const contract of [
   'view === "traces"',
   'view === "errors"',
   "groupActivities(filtered)",
-  "navigator.clipboard.writeText(body)",
+  "copyTextSafely(body)",
   "window.openDrSai.clearDiagnostics()",
   "onSelectTurn?.(entry.turnId)",
 ]) {

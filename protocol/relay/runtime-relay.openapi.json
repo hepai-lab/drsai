@@ -12,13 +12,50 @@
             "format": "date-time",
             "title": "Expires At",
             "type": "string"
+          },
+          "grant_id": {
+            "title": "Grant Id",
+            "type": "string"
+          },
+          "status": {
+            "pattern": "^(pending|consumed|expired|revoked)$",
+            "title": "Status",
+            "type": "string"
           }
         },
         "required": [
+          "grant_id",
           "code",
-          "expires_at"
+          "expires_at",
+          "status"
         ],
         "title": "AccessGrantResult",
+        "type": "object"
+      },
+      "AccessGrantStatusResult": {
+        "additionalProperties": false,
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "grant_id": {
+            "title": "Grant Id",
+            "type": "string"
+          },
+          "status": {
+            "pattern": "^(pending|consumed|expired|revoked)$",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "grant_id",
+          "expires_at",
+          "status"
+        ],
+        "title": "AccessGrantStatusResult",
         "type": "object"
       },
       "AssociationRequest": {
@@ -845,6 +882,118 @@
           }
         },
         "summary": "Access Grant"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/access-grants/{grant_id}": {
+      "delete": {
+        "operationId": "revoke_access_grant_v1_runtimes__runtime_id__access_grants__grant_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "grant_id",
+            "required": true,
+            "schema": {
+              "title": "Grant Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-runtime-token",
+            "required": true,
+            "schema": {
+              "title": "X-Runtime-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessGrantStatusResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Access Grant"
+      },
+      "get": {
+        "operationId": "access_grant_status_v1_runtimes__runtime_id__access_grants__grant_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "grant_id",
+            "required": true,
+            "schema": {
+              "title": "Grant Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-runtime-token",
+            "required": true,
+            "schema": {
+              "title": "X-Runtime-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessGrantStatusResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Access Grant Status"
       }
     },
     "/v1/runtimes/{runtime_id}/agent-definitions": {

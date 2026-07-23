@@ -89,8 +89,16 @@ class RegistrationResult(StrictModel):
 
 
 class AccessGrantResult(StrictModel):
+    grant_id: str
     code: str
     expires_at: datetime
+    status: str = Field(pattern="^(pending|consumed|expired|revoked)$")
+
+
+class AccessGrantStatusResult(StrictModel):
+    grant_id: str
+    expires_at: datetime
+    status: str = Field(pattern="^(pending|consumed|expired|revoked)$")
 
 
 class AssociationRequest(ControlRequest):

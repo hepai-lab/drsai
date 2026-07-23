@@ -5,9 +5,9 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const source = readFileSync(join(root, "src/main/platformAgentClient.ts"), "utf8");
-const agentsSource = readFileSync(join(root, "src/main/agents.ts"), "utf8");
-const authSource = readFileSync(join(root, "src/main/auth.ts"), "utf8");
+const source = readFileSync(join(root, "../shared/main/platformAgentClient.ts"), "utf8");
+const agentsSource = readFileSync(join(root, "../shared/main/agents.ts"), "utf8");
+const authSource = readFileSync(join(root, "../shared/main/auth.ts"), "utf8");
 const fixture = JSON.parse(readFileSync(join(root, "tests/fixtures/platform-agent-catalog.v1.json"), "utf8"));
 const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },

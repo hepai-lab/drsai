@@ -8,27 +8,27 @@ function read(relativePath) {
   return readFileSync(join(root, relativePath), "utf8");
 }
 
-const main = read("src/renderer/src/main.tsx");
-const app = read("src/renderer/src/App.tsx");
-const loginScreen = read("src/renderer/src/auth/LoginScreen.tsx");
-const mock = read("src/renderer/src/mockDesktopApi.ts");
-const css = read("src/renderer/src/styles.css");
-const agentRunWorkspace = read("src/renderer/src/components/AgentRunWorkspace.tsx");
-const chatWorkspace = read("src/renderer/src/components/ChatWorkspace.tsx");
-const chatMessageContent = read("src/renderer/src/components/ChatMessageContent.tsx");
-const shell = read("src/renderer/src/components/WorkspaceShell.tsx");
-const navigation = read("src/renderer/src/navigation.ts");
-const healthAdapter = read("src/renderer/src/adapters/useDesktopHealthAdapter.ts");
-const chatAdapter = read("src/renderer/src/adapters/useDesktopChatAdapter.ts");
+const main = read("../shared/renderer/src/main.tsx");
+const app = read("../shared/renderer/src/App.tsx");
+const loginScreen = read("../shared/renderer/src/auth/LoginScreen.tsx");
+const mock = read("../shared/renderer/src/mockDesktopApi.ts");
+const css = read("../shared/renderer/src/styles.css");
+const agentRunWorkspace = read("../shared/renderer/src/components/AgentRunWorkspace.tsx");
+const chatWorkspace = read("../shared/renderer/src/components/ChatWorkspace.tsx");
+const chatMessageContent = read("../shared/renderer/src/components/ChatMessageContent.tsx");
+const shell = read("../shared/renderer/src/components/WorkspaceShell.tsx");
+const navigation = read("../shared/renderer/src/navigation.ts");
+const healthAdapter = read("../shared/renderer/src/adapters/useDesktopHealthAdapter.ts");
+const chatAdapter = read("../shared/renderer/src/adapters/useDesktopChatAdapter.ts");
 const packageJson = read("package.json");
 const mojibakeVerifier = read("scripts/verify-no-mojibake.mjs");
-const desktopApi = read("src/shared/desktopApi.ts");
-const preload = read("src/preload/index.ts");
+const desktopApi = read("../shared/api/desktopApi.ts");
+const preload = read("../shared/main/preload.ts");
 const desktopMain = read("src/main/index.ts");
-const threadsMain = read("src/main/threads.ts");
+const threadsMain = read("../shared/main/threads.ts");
 const statusMain = read("src/main/status.ts");
-const filesContextPanel = read("src/renderer/src/components/files/FilesContextPanel.tsx");
-const skillSquare = read("src/renderer/src/components/SkillSquareView.tsx");
+const filesContextPanel = read("../shared/renderer/src/components/files/FilesContextPanel.tsx");
+const skillSquare = read("../shared/renderer/src/components/SkillSquareView.tsx");
 
 function navItemEnabled(source, menuId) {
   const pattern = new RegExp(`id: MENU_IDS\\.${menuId}, enabled: (true|false)`);
@@ -56,7 +56,7 @@ const checks = [
   ["composer model picker remains actionable and explains an empty catalog", !chatWorkspace.includes('disabled={!hasModelOptions}') && chatWorkspace.includes('No models available') && css.includes(".composer-meta-menu-empty")],
   ["agent picker status metadata is localized without mojibake", chatWorkspace.includes('return `${source} · ${status}`') && chatWorkspace.includes('zh ? "运行中" : "Running"') && !chatWorkspace.includes('`${source} 路 ${status}`')],
   ["chat workspace sends tool detail to Debug without rendering it in chat", chatWorkspace.includes("ChatToolTimelineEvent") && !chatWorkspace.includes("ToolActivitySummary") && chatAdapter.includes('event.type === "tool_timeline"') && chatAdapter.includes("appendAssistantToolTimeline") && chatAdapter.includes("formatToolTimelineDebugLog") && !css.includes(".message-tool-activity")],
-  ["chat workspace uses readable Chinese labels", chatWorkspace.includes("发送") && chatWorkspace.includes("停止") && chatWorkspace.includes("正在连接本地网关")],
+  ["chat workspace uses readable Chinese labels", chatWorkspace.includes("发送") && chatWorkspace.includes("停止") && chatWorkspace.includes("正在连接本地运行时")],
   ["mock covers complete runtime update state", mock.includes("checkForUpdates") && mock.includes("downloadUpdate") && mock.includes("installUpdate") && mock.includes("cancelUpdate")],
   ["main fallback update status keeps complete runtime update shape", statusMain.includes("fallbackUpdateStatus") && ["phase", "currentVersion", "mandatory", "releaseNotesUrl", "canDownload", "canInstall", "canCancel", "errorCode", "recovery"].every((field) => statusMain.includes(`${field}:`))],
   ["mock covers settings save state", mock.includes("saveApiKey") && mock.includes("Mock API key saved")],
@@ -71,11 +71,12 @@ const checks = [
   ["about dialog disables update check while busy", app.includes("<button disabled={busy} onClick={onCheckUpdates}>")],
   ["renderer has shared navigation model", navigation.includes("current_session") && navigation.includes("agent_square") && navigation.includes("skills_square") && navigation.includes("getNavSections") && navigation.includes("getRightTabs") && app.includes('from "./navigation"') && shell.includes("navSections.filter")],
   ["renderer keeps primary sidebar focused on chat and square", navItemEnabled(navigation, "currentSession") && navItemEnabled(navigation, "agentSquare") && navItemEnabled(navigation, "skillsSquare") && !shell.includes("settingsItems.map") && !shell.includes('id: "command:settings"') && shell.includes("onNavChange(MENU_IDS.profile)") && !navItemEnabled(navigation, "approvalCenter") && !navItemEnabled(navigation, "usageAnalytics") && !navItemEnabled(navigation, "channels") && !navItemEnabled(navigation, "plugins") && !navItemEnabled(navigation, "library")],
-  ["new task action stays visible while the sidebar scrolls", shell.includes('className="sidebar-primary-action"') && css.includes(".sidebar-primary-action") && css.includes("position: sticky") && css.includes("top: 0") && css.includes("border-bottom: 1px solid var(--app-border-soft)")],
+  ["new task action stays visible and gains a divider while the sidebar scrolls", shell.includes('className="sidebar-primary-action"') && shell.includes('sidebarScrolled ? "is-scrolled" : ""') && shell.includes("event.currentTarget.scrollTop > 0") && css.includes(".sidebar-primary-action") && css.includes("position: sticky") && css.includes("top: 0") && css.includes("margin-bottom: -6px") && css.includes("border-bottom: 1px solid transparent") && css.includes(".sidebar-scroll.is-scrolled .sidebar-primary-action") && css.includes("padding-bottom: 4px")],
   ["new task stays local until the first message is published", app.includes("async function handleNewChat()") && app.includes("setActiveThreadId(createLocalThreadId())") && !app.match(/async function handleNewChat\(\)[\s\S]{0,500}desktopApi\.createThread/) && app.includes("threads.some((thread) => thread.id === activeThreadId)") && app.includes("existingThread?.boundAgentId ?? selectedChatAgentId")],
   ["primary sidebar restores the collapsible square group", navigation.includes('id: "agents"') && shell.includes('getEnabledNavItems(navSections, "agents")') && shell.includes("agentsOpen")],
   ["workspace names use regular text weight", shell.includes('className="workspace-item-name"') && !shell.includes("<strong>{workspace.name}</strong>") && css.includes(".workspace-item-name") && css.includes("font-weight: 400")],
-  ["workspace tree nests recent tasks under each workspace", app.includes("workspaceThreads={workspaceThreads}") && shell.includes("workspaceThreadsById") && shell.includes("expandedWorkspaceId") && shell.includes("workspace-thread-list") && shell.includes("threadsForWorkspace.slice(0, 5)") && shell.includes("显示全部") && !shell.includes("workspace-session-header") && css.includes(".workspace-tree-node")],
+  ["workspace tree nests recent tasks under each workspace", app.includes("workspaceThreads={workspaceThreads}") && shell.includes("workspaceThreadsById") && shell.includes("expandedWorkspaceIds") && shell.includes("workspace-thread-list") && shell.includes("threadsForWorkspace.slice(0, 5)") && shell.includes("显示全部") && !shell.includes("workspace-session-header") && css.includes(".workspace-tree-node")],
+  ["workspace rows expand independently and reveal actions on interaction", !shell.includes('className="workspace-node-toggle"') && shell.includes("aria-expanded={expanded}") && shell.includes("expandedWorkspaceIds.has(workspace.id)") && shell.includes("const next = new Set(current)") && shell.includes("next.delete(workspace.id)") && shell.includes("next.add(workspace.id)") && css.includes("grid-template-columns: minmax(0, 1fr) auto auto") && css.includes(".workspace-row:hover .workspace-new-session-button") && css.includes(".workspace-row:focus-within .workspace-details-button")],
   ["square and workspace group titles use muted emphasized text", shell.includes('className="workspace-section-title sidebar-group-title"') && css.includes(".sidebar-group-title") && css.includes("color: var(--app-group-title)") && css.includes("font-weight: 650")],
   ["settings groups agent and integration tools", app.includes('type SettingsPane = "general"') && app.includes('id: "agent-task"') && app.includes('id: "approvals"') && app.includes('id: "analytics"') && app.includes('id: "channels"') && css.includes(".settings-navigation")],
   ["settings exposes real general and Agent preferences", app.includes("SESSION_SCOPE_STORAGE_KEY") && app.includes("DEFAULT_AGENT_STORAGE_KEY") && app.includes("DEFAULT_MODEL_STORAGE_KEY") && app.includes("THINKING_EFFORT_STORAGE_KEY") && app.includes('id: "agent-defaults"') && app.includes("onSessionScopeChange")],
@@ -83,7 +84,7 @@ const checks = [
   ["settings controls right sidebar components with debug hidden by default", app.includes("RIGHT_SIDEBAR_COMPONENTS_STORAGE_KEY") && app.includes("onRightSidebarComponentsChange") && app.includes("rightSidebarComponents[id]") && app.includes("debug: false") && app.includes("firstVisibleRightTab") && app.includes("setRightPanelCollapsed(true)")],
   ["settings exposes integration and system actions", app.includes('id: "integrations"') && app.includes("onOpenBrowserPanel") && app.includes("onCheckUpdates") && app.includes("onOpenPath") && css.includes(".settings-integration-row")],
   ["renderer exposes current right-panel tabs", navigation.includes('["files", "browser", "terminal", "debug"] as RightTab[]')],
-  ["renderer has separated workspace shell", app.includes("WorkspaceShell") && shell.includes("WorkspaceShellProps") && shell.includes("mainContent: React.ReactNode") && shell.includes("rightPanel: React.ReactNode") && !shell.includes('../desktopApi') && !shell.includes('./desktopApi')],
+  ["renderer has separated workspace shell", app.includes("WorkspaceShell") && shell.includes("WorkspaceShellProps") && shell.includes("mainContent: React.ReactNode") && shell.includes("rightPanel: React.ReactNode") && shell.includes("export function WorkspaceShell")],
   ["chat composer orders agent model and thinking controls", chatWorkspace.includes('{zh ? "智能体" : "Agent"}: {activeAgentName}') && chatWorkspace.includes("模型：") && chatWorkspace.includes("推理：") && chatWorkspace.includes("defaultThinkingEffort") && chatWorkspace.includes("setThinkingEffort(defaultThinkingEffort)") && chatAdapter.includes("thinking_effort")],
   ["renderer can collapse right panel", app.includes("rightPanelCollapsed") && shell.includes("titlebar-right-panel-toggle") && css.includes(".content-grid.right-collapsed")],
   ["titlebar owns centered chat and command search", shell.includes('className="titlebar-center"') && shell.includes('className="titlebar-search-shell"') && shell.includes('id="titlebar-search-results"') && css.includes(".titlebar-search-results")],

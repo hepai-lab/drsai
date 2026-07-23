@@ -1,8 +1,11 @@
 import { spawnSync } from "node:child_process";
+import { readdirSync } from "node:fs";
+import { tmpdir } from "node:os";
 
 const strict = process.env.REQUIRE_RELEASE_READY === "1";
 const requireSigned = process.env.REQUIRE_SIGNED_WINDOWS_ARTIFACTS === "1";
 const skipPublicRelease = process.env.SKIP_PUBLIC_RELEASE_CHECK === "1";
+const testTempBaseline = listTestTempDirectories();
 const steps = [
   ["Project invariants", npmScript("verify"), true, {}],
   ["Renderer UI invariants", npmScript("verify:ui"), true, {}],
@@ -20,6 +23,7 @@ const steps = [
   ["Packaged app E2E threads", npmScript("verify:e2e-threads"), true, {}],
   ["Packaged app E2E OIDC login", npmScript("verify:e2e-oidc-login"), true, {}],
   ["Backend installer check-only", npmScript("verify:install-check"), true, {}],
+  ["Runtime direct-update policy", npmScript("verify:update-policy"), true, {}],
   ["Runtime update manifest", npmScript("verify:update-manifest"), true, {}],
   ["Release summary", npmScript("summary:win"), true, {}],
   ["Release artifacts", npmScript("verify:artifacts"), true, {}],
@@ -35,7 +39,12 @@ const steps = [
     { REQUIRE_SIGNED_WINDOWS_ARTIFACTS: requireSigned ? "1" : "0" },
     /Windows signature verification did not pass/i,
   ],
-  ["Test temporary-directory cleanup", npmScript("verify:test-temp-cleanup"), true, {}],
+  [
+    "Test temporary-directory cleanup",
+    npmScript("verify:test-temp-cleanup"),
+    true,
+    { OPENDRSAI_TEST_TEMP_BASELINE: JSON.stringify(testTempBaseline) },
+  ],
 ];
 
 const results = [];
@@ -89,7 +98,7 @@ function runStep(name, command, required, env, warningPattern) {
   return {
     name,
     status: required ? "failed" : "warning",
-    detail: firstUsefulLine(output) || `Exit code ${result.status ?? 1}`,
+    detail: failureDetail(output) || `Exit code ${result.status ?? 1}`,
   };
 }
 
@@ -98,6 +107,30 @@ function firstUsefulLine(output) {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .find((line) => line && !line.startsWith(">")) ?? "";
+}
+
+function failureDetail(output) {
+  const lines = output
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter((line) =>
+      line.trim() &&
+      !line.trimStart().startsWith(">") &&
+      !line.startsWith("npm error Lifecycle script") &&
+      !line.startsWith("npm error workspace") &&
+      !line.startsWith("npm error location") &&
+      !line.startsWith("npm error command"),
+    );
+  const failureIndex = lines.findIndex((line) => /(?:failed|failure|error|assertion)/i.test(line));
+  const relevant = failureIndex >= 0 ? lines.slice(failureIndex) : lines;
+  return relevant.slice(-12).join("\n");
+}
+
+function listTestTempDirectories() {
+  return readdirSync(tmpdir(), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && /^opendrsai-[A-Za-z0-9_.-]+$/.test(entry.name))
+    .map((entry) => entry.name)
+    .sort();
 }
 
 function printSummary(results) {

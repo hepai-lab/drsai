@@ -1,6 +1,7 @@
 # api/routes/local_login.py
 from typing import Dict
 from datetime import timedelta
+import re
 
 from fastapi import APIRouter, Depends, HTTPException
 import hashlib
@@ -27,6 +28,39 @@ def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
 
+def validate_password_strength(password: str, user_id: str) -> tuple[bool, str]:
+    """
+    校验密码强度。
+    规则：
+      - 长度 ≥ 12 位
+      - 包含 ≥3 种：小写字母、大写字母、数字、特殊符号
+      - 拒绝含 user_id 全拼或常见日期格式（YYYYMMDD、YYYY-MM-DD）
+    返回 (is_valid, error_message)
+    """
+    if len(password) < 12:
+        return False, "密码长度至少为12位"
+
+    types = 0
+    if re.search(r"[a-z]", password):
+        types += 1
+    if re.search(r"[A-Z]", password):
+        types += 1
+    if re.search(r"\d", password):
+        types += 1
+    if re.search(r"[^a-zA-Z\d]", password):
+        types += 1
+    if types < 3:
+        return False, "密码需包含大小写字母、数字、特殊符号中至少3种"
+
+    if user_id.lower() in password.lower():
+        return False, "密码不能包含用户名全拼"
+
+    if re.search(r"\d{4}-?\d{2}-?\d{2}", password):
+        return False, "密码不能包含生日格式日期"
+
+    return True, ""
+
+
 @router.post("/")
 async def create_new_user(user_id: str, password: str, db=Depends(get_db)) -> Dict:
     '''
@@ -37,6 +71,11 @@ async def create_new_user(user_id: str, password: str, db=Depends(get_db)) -> Di
         response = db.get(Userinfo, filters={"user_id": user_id})
         if response.status and response.data:
             raise HTTPException(status_code=400, detail="User already exists")
+
+        # 校验密码强度
+        valid, error_msg = validate_password_strength(password, user_id)
+        if not valid:
+            raise HTTPException(status_code=400, detail=error_msg)
 
         # 创建新用户，密码进行哈希加密
         hashed_password = hash_password(password)
@@ -78,21 +117,35 @@ async def create_new_user(user_id: str, password: str, db=Depends(get_db)) -> Di
 @router.put("/")
 async def update_user_info(user_id: str, old_password: str, new_password: str, db=Depends(get_db)) -> Dict:
     '''
-    TODO: 更新用户密码
+    更新用户密码
     '''
     try:
-        # response = db.get(AgentModeSettings, filters={"user_id": user_id}, return_json = False)
-        # if not response.status or not response.data:
-        #     raise HTTPException(status_code=404, detail="User's AgentModeSettings not found")
-        # AgentsMode: AgentModeSettings = response.data[0]
-        # agent_mode_config["agent_mode_config"]["id"] = str(uuid.uuid4())
-        # AgentsMode.agents_mode.append(agent_mode_config["agent_mode_config"])
-        # response = db.upsert(AgentsMode)
-        # if not response.status:
-        #     raise HTTPException(status_code=500, detail="Failed to update AgentModeSettings")
-        # return {"status": True, "data": response.data}
-        return {"status": True, "data": {}}
+        # 查找用户
+        response = db.get(Userinfo, filters={"user_id": user_id})
+        if not response.status or not response.data:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        user = response.data[0]
+
+        # 验证旧密码
+        if user.password != hash_password(old_password):
+            raise HTTPException(status_code=401, detail="Old password is incorrect")
+
+        # 校验新密码强度
+        valid, error_msg = validate_password_strength(new_password, user_id)
+        if not valid:
+            raise HTTPException(status_code=400, detail=error_msg)
+
+        # 更新密码
+        user.password = hash_password(new_password)
+        result = db.upsert(user)
+        if not result.status:
+            raise HTTPException(status_code=500, detail="Failed to update password")
+
+        return {"status": True, "data": {"user_id": user_id}}
     
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 

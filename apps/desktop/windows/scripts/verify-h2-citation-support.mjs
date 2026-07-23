@@ -79,12 +79,12 @@ unsupported[0].excerpt = "The intervention reduced accuracy to 10%.";
 const supportNegative = evaluateGolden(unsupported);
 assert(supportNegative.supportAccuracy < 0.95, "H2 evaluator accepted an excerpt that does not support its conclusion");
 
-const api = readFileSync(join(root, "src/shared/desktopApi.ts"), "utf8");
+const api = readFileSync(join(root, "../shared/api/desktopApi.ts"), "utf8");
 const background = readFileSync(join(root, "src/main/backgroundTasks.ts"), "utf8");
-const generator = readFileSync(join(root, "src/main/managerPresentation.ts"), "utf8");
-const app = readFileSync(join(root, "src/renderer/src/App.tsx"), "utf8");
-const panel = readFileSync(join(root, "src/renderer/src/components/files/FilesContextPanel.tsx"), "utf8");
-const styles = readFileSync(join(root, "src/renderer/src/styles.css"), "utf8");
+const generator = readFileSync(join(root, "../shared/main/managerPresentation.ts"), "utf8");
+const app = readFileSync(join(root, "../shared/renderer/src/App.tsx"), "utf8");
+const panel = readFileSync(join(root, "../shared/renderer/src/components/files/FilesContextPanel.tsx"), "utf8");
+const styles = readFileSync(join(root, "../shared/renderer/src/styles.css"), "utf8");
 const smoke = readFileSync(join(root, "src/main/e2eSmoke.ts"), "utf8");
 const contracts = {
   citationRecordTyped: api.includes("export interface DesktopCitationRecord") && ["title", "authors", "sourcePath", "locator", "excerpt", "relation", "supportScore"].every((field) => api.includes(`${field}:`)),

@@ -78,10 +78,10 @@ corrupted.find((item) => item.id === "minimal_bandwidth_4_8_tbps").page = 41;
 const negative = evaluate(corrupted, pages);
 assert(negative.traceabilityRate < 1, "Independent H1 evaluator accepted a conclusion mapped to the wrong page");
 
-const api = readFileSync(join(root, "src/shared/desktopApi.ts"), "utf8");
-const generator = readFileSync(join(root, "src/main/managerPresentation.ts"), "utf8");
-const panel = readFileSync(join(root, "src/renderer/src/components/files/FilesContextPanel.tsx"), "utf8");
-const styles = readFileSync(join(root, "src/renderer/src/styles.css"), "utf8");
+const api = readFileSync(join(root, "../shared/api/desktopApi.ts"), "utf8");
+const generator = readFileSync(join(root, "../shared/main/managerPresentation.ts"), "utf8");
+const panel = readFileSync(join(root, "../shared/renderer/src/components/files/FilesContextPanel.tsx"), "utf8");
+const styles = readFileSync(join(root, "../shared/renderer/src/styles.css"), "utf8");
 const smoke = readFileSync(join(root, "src/main/e2eSmoke.ts"), "utf8");
 const backgroundTasks = readFileSync(join(root, "src/main/backgroundTasks.ts"), "utf8");
 const contracts = {
@@ -97,7 +97,7 @@ const contracts = {
   genericArtifactEvidenceTyped: api.includes("DesktopArtifactConclusionEvidence") && api.includes('"file_paragraph"') && api.includes('"data_range"'),
   genericEvidencePersists: backgroundTasks.includes("artifact.keyConclusions") && backgroundTasks.includes("conclusionTraceabilityRate"),
   resultsCenterShowsAndOpensEvidence: panel.includes('data-testid="presentation-key-conclusions"')
-    && readFileSync(join(root, "src/renderer/src/App.tsx"), "utf8").includes('data-testid="results-conclusion-evidence"'),
+    && readFileSync(join(root, "../shared/renderer/src/App.tsx"), "utf8").includes('data-testid="results-conclusion-evidence"'),
   g1G3G4PackagedCoverage: smoke.includes("g1G3G4ConclusionTraceability100") && smoke.includes("paragraphAndDataRangeLocatorsCovered"),
 };
 const failedContracts = Object.entries(contracts).filter(([, passed]) => !passed).map(([name]) => name);

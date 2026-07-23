@@ -11,6 +11,9 @@
     "run.cancel", "event.resume", "file.raw.read"
   ],
   "x-relay-endpoints": {
+    "access_grant_create": "POST /v1/runtimes/{runtime_id}/access-grants",
+    "access_grant_read": "GET /v1/runtimes/{runtime_id}/access-grants/{grant_id}",
+    "access_grant_revoke": "DELETE /v1/runtimes/{runtime_id}/access-grants/{grant_id}",
     "runtime_list": "GET /v1/runtimes",
     "runtime_identity": "GET /v1/runtimes/{runtime_id}/runtime",
     "runtime_capabilities": "GET /v1/runtimes/{runtime_id}/capabilities",

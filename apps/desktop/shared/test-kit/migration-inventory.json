@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "sourceRoot": "apps/desktop/windows/src/shared",
+  "targetRoot": "apps/desktop/shared/api",
+  "removeCompatibilityPathsBy": "M3",
+  "entries": [
+    { "source": "agentBackendPresentation.ts", "target": "agentBackendPresentation.ts", "status": "migrated", "compatibility": "windows/src/shared re-export" },
+    { "source": "agentTaskDepth.ts", "target": "agentTaskDepth.ts", "status": "migrated", "compatibility": "windows/src/shared re-export" },
+    { "source": "agentTaskPlan.ts", "target": "agentTaskPlan.ts", "status": "migrated", "compatibility": "windows/src/shared re-export" },
+    { "source": "browser/actionPolicy.ts", "target": "browser/actionPolicy.ts", "status": "migrated", "compatibility": "windows/src/shared re-export" },
+    { "source": "browser/snapshotSchema.ts", "target": "browser/snapshotSchema.ts", "status": "migrated", "compatibility": "windows/src/shared re-export" },
+    { "source": "browser/types.ts", "target": "browser/types.ts", "status": "migrated", "compatibility": "windows/src/shared re-export" },
+    { "source": "desktopApi.orca.d.ts", "target": "desktopApi.orca.d.ts", "status": "migrated", "compatibility": "windows/src/shared augmentation import" },
+    { "source": "desktopApi.ts", "target": "desktopApi.ts", "status": "migrated", "compatibility": "windows/src/shared re-export" },
+    { "source": "diagnostics.ts", "target": "diagnostics.ts", "status": "migrated", "compatibility": "windows/src/shared re-export" },
+    { "source": "executionPolicy.ts", "target": "executionPolicy.ts", "status": "migrated", "compatibility": "windows/src/shared re-export" },
+    { "source": "owop.generated.ts", "target": "owop.generated.ts", "status": "migrated", "compatibility": "windows/src/shared re-export" },
+    { "source": "remoteSshProtocol.ts", "target": "remoteSshProtocol.ts", "status": "migrated", "compatibility": "windows/src/shared re-export" },
+    { "source": "structuredConversation.ts", "target": "structuredConversation.ts", "status": "migrated", "compatibility": "windows/src/shared re-export" },
+    { "source": "workspaceDomain.ts", "target": "workspaceDomain.ts", "status": "migrated", "compatibility": "windows/src/shared re-export" },
+    { "source": "workspaceLocation.ts", "target": "workspaceLocation.ts", "status": "migrated", "compatibility": "windows/src/shared re-export" },
+    { "source": "workspaceResources.ts", "target": "workspaceResources.ts", "status": "migrated", "compatibility": "windows/src/shared re-export" }
+  ]
+}

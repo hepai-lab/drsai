@@ -273,46 +273,38 @@ if __name__ == "__main__":
 
     asyncio.run(
         run_worker(
-            # 智能体注册信息
-            agent_name="My Dr.Sai 007",
-            author = "xiongdb@ihep.ac.cn",
-            # permission='groups: "drsai, payg"; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: xiongdb@ihep.ac.cn',
-            # permission={
-            #     "groups": "drsai, payg", 
-            #     "users": [], 
-            #     "owner": "admin"
-            #     },
-            description = '{"en":"Your personal assistant❤","zh":"您的专属AI智能体❤"}',
-            version = "0.1.0",
-            logo="https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
-            examples=[
-               {
-                "en":"/help",
-                "zh":"/帮助"
-               },
-               {
-                "en":"/skills",
-                "zh":"/技能"
-               },
-               {
-                "en":"/settings",
-                "zh":"/设置"
-               }
-            ],
-            agent_config = llm_mode_config,
-            defult_config_name="hepai/deepseek-v4-flash",
-            # 智能体实体
-            agent_factory=create_agent, 
-            # 后端服务配置
+            # ── Worker 展示信息（→ _info）──
+            worker_info={
+                "name": "My Dr.Sai",
+                "description": '{"en":"Your personal assistant❤","zh":"您的专属AI智能体❤"}',
+                "version": "0.1.0",
+                "author": "xiongdb@ihep.ac.cn",
+                "logo": "https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
+                "examples": [
+                    {"en": "/help", "zh": "/帮助"},
+                    {"en": "/skills", "zh": "/技能"},
+                    {"en": "/settings", "zh": "/设置"},
+                ],
+                "agent_config": llm_mode_config,
+                "defult_config_name": "hepai/deepseek-v4-flash",
+                "announcements": [
+                    {"en": "My Dr.Sai is ready to serve you!", "zh": "我的Dr.Sai已经准备好为您服务！"},
+                    {"en": "reasoning is coming!", "zh": "推理功能即将上线！"},
+                    {"en": "try the latest Dr.Sai features today!", "zh": "尝试最新的Dr.Sai功能今天！"},
+                ],
+            },
+            # ── 智能体实体 ──
+            agent_factory=create_agent,
+            # ── 后端服务配置 ──
             # controller_address = "http://127.0.0.1:42501",
-            port = 42858, 
+            port=42858,
             no_register=False,
-            drsai_dir = DATASET,
-            enable_openwebui_pipeline=False, 
-            history_mode = "backend",
+            drsai_dir=DATASET,
+            enable_openwebui_pipeline=False,
+            history_mode="backend",
             # use_api_key_mode = "backend",
             # join_topics = ["drsai-agent"],
             # metadata={"others": "drsai-agent"},
-            link_wechat = False,
+            link_wechat=False,
         )
     )

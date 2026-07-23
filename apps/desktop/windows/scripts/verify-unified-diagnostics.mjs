@@ -20,15 +20,15 @@ function loadTypeScript(path, requireFn) {
   return loaded.exports;
 }
 
-const sharedPath = join(root, "src/shared/diagnostics.ts");
+const sharedPath = join(root, "../shared/api/diagnostics.ts");
 const shared = loadTypeScript(sharedPath, (specifier) => { throw new Error(`Unexpected shared import: ${specifier}`); });
-const rootCause = loadTypeScript(join(root, "src/main/rootCauseAnalysis.ts"), (specifier) => {
-  if (specifier === "../shared/diagnostics") return shared;
+const rootCause = loadTypeScript(join(root, "../shared/main/rootCauseAnalysis.ts"), (specifier) => {
+  if (specifier === "../api/diagnostics") return shared;
   return require(specifier);
 });
-const mainPath = join(root, "src/main/diagnostics.ts");
+const mainPath = join(root, "../shared/main/diagnostics.ts");
 const main = loadTypeScript(mainPath, (specifier) => {
-  if (specifier === "../shared/diagnostics") return shared;
+  if (specifier === "../api/diagnostics") return shared;
   if (specifier === "./rootCauseAnalysis") return rootCause;
   if (specifier === "./paths") return { DRSAI_HOME: tempRoot };
   return require(specifier);
@@ -105,8 +105,9 @@ try {
   assert.equal((await diagnostics.snapshot()).events.length, 0);
 
   const mainIndex = readFileSync(join(root, "src/main/index.ts"), "utf8");
-  const preload = readFileSync(join(root, "src/preload/index.ts"), "utf8");
-  const panel = readFileSync(join(root, "src/renderer/src/components/DebugPanel.tsx"), "utf8");
+  const preload = readFileSync(join(root, "../shared/main/preload.ts"), "utf8");
+  const panel = readFileSync(join(root, "../shared/renderer/src/components/DebugPanel.tsx"), "utf8");
+  const debugStore = readFileSync(join(root, "../shared/renderer/src/debugLogStore.ts"), "utf8");
   for (const contract of [
     "desktop:diagnostics-record",
     "desktop:diagnostics-snapshot",
@@ -116,6 +117,8 @@ try {
     "renderer.process-gone",
   ]) assert.ok(mainIndex.includes(contract), `Missing main diagnostic contract: ${contract}`);
   assert.ok(preload.includes("onDiagnosticEvent"));
+  assert.ok(debugStore.includes("isBenignResizeObserverError(message)"), "ResizeObserver browser warnings must be classified before recording a renderer failure.");
+  assert.ok(debugStore.includes('operation: "resize-observer.warning"') && debugStore.includes('status: "completed"'), "ResizeObserver warnings must not degrade renderer health.");
   for (const contract of ["DiagnosticOverview", "TraceCard", "DiagnosticErrorCard", "Current execution"]) {
     assert.ok(panel.includes(contract), `Missing diagnostic UI contract: ${contract}`);
   }

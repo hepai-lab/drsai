@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { getAssistantSpeechText } from "../src/renderer/src/voice/voiceMessageText.ts";
+import { getAssistantSpeechText } from "../../shared/renderer/src/voice/voiceMessageText.ts";
 
 assert.equal(getAssistantSpeechText({ content: "Final answer" }), "Final answer");
 assert.equal(getAssistantSpeechText({

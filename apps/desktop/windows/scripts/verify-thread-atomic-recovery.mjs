@@ -13,7 +13,7 @@ const destinationPath = join(stateRoot, "threads.json");
 await writeFile(sourcePath, '{"version":"new"}\n');
 await writeFile(destinationPath, '{"version":"old"}\n');
 
-const modulePath = join(root, "src", "main", "atomicFileReplace.ts");
+const modulePath = join(root, "..", "shared", "main", "atomicFileReplace.ts");
 const output = ts.transpileModule(await readFile(modulePath, "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }, fileName: modulePath }).outputText;
 const loaded = { exports: {} };
 new Function("exports", "module", "require", output)(loaded.exports, loaded, createRequire(import.meta.url));
@@ -38,7 +38,7 @@ const refusingCopy = { ...common, copyFile: async (source, destination) => {
 await assert.rejects(loaded.exports.replaceFileSafely(sourcePath, destinationPath, refusingCopy));
 assert.equal(await readFile(destinationPath, "utf8"), '{"version":"stable"}\n', "A failed fallback must restore the prior thread file.");
 
-const threadsSource = await readFile(join(root, "src", "main", "threads.ts"), "utf8");
+const threadsSource = await readFile(join(root, "..", "shared", "main", "threads.ts"), "utf8");
 assert.ok(threadsSource.includes("replaceFileSafely(temporary, path)"));
 assert.ok(threadsSource.includes("cleanupStaleThreadTemporaryFiles") && threadsSource.includes("5 * 60_000"));
 await rm(stateRoot, { recursive: true, force: true });

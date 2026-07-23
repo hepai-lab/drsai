@@ -8,7 +8,7 @@ const files = {
   sharedTypes: read("src/shared/browser/types.ts"),
   actionPolicy: read("src/shared/browser/actionPolicy.ts"),
   snapshotSchema: read("src/shared/browser/snapshotSchema.ts"),
-  desktopApi: read("src/shared/desktopApi.ts"),
+  desktopApi: read("../shared/api/desktopApi.ts"),
   urlPolicy: read("src/main/browser/urlPolicy.ts"),
   actionApproval: read("src/main/browser/actionApproval.ts"),
   controller: read("src/main/browser/browserController.ts"),

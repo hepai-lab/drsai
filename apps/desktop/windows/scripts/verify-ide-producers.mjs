@@ -15,7 +15,7 @@ function assert(condition, message) {
 }
 
 const packageJson = read("package.json");
-const desktopApi = read("src/shared/desktopApi.ts");
+const desktopApi = read("../shared/api/desktopApi.ts");
 const ideContext = read("src/main/ideContext.ts");
 const vsCodeReadme = read("editor-integrations/vscode/README.md");
 const packagingManifest = JSON.parse(read("editor-integrations/packaging-manifest.json"));

@@ -9,7 +9,7 @@ const root = resolve(new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-
 const temp = mkdtempSync(join(tmpdir(), "opendrsai-terminal-replay-"));
 try {
   const output = join(temp, "replay.mjs");
-  await build({ entryPoints: [join(root, "src/main/terminalReplay.ts")], outfile: output, bundle: true, platform: "node", format: "esm" });
+  await build({ entryPoints: [join(root, "../shared/main/terminalReplay.ts")], outfile: output, bundle: true, platform: "node", format: "esm" });
   const { reconcileTerminalReplay } = await import(pathToFileURL(output).href);
   const base = { generation: 2, sequence: 4 };
   const duplicate = reconcileTerminalReplay(base, null, [{ generation: 2, sequence: 4, value: "duplicate" }, { generation: 2, sequence: 5, value: "fresh" }]);

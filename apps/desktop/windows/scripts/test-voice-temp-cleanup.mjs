@@ -3,7 +3,7 @@ import { existsSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { cleanupAllVoiceTempFiles, cleanupExpiredVoiceTempFiles } from "../src/main/voiceTempFiles.ts";
+import { cleanupAllVoiceTempFiles, cleanupExpiredVoiceTempFiles } from "../../shared/main/voiceTempFiles.ts";
 
 const oldVoice = join(tmpdir(), `opendrsai-voice-${randomUUID()}.webm`);
 const newVoice = join(tmpdir(), `opendrsai-voice-${randomUUID()}.wav`);

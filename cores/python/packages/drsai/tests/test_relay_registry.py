@@ -46,13 +46,50 @@ def test_registration_is_short_lived_single_use_and_idempotent() -> None:
 def test_access_grant_only_associates_existing_runtime_and_is_single_use() -> None:
     registry = RelayRegistry()
     _, runtime_id, token = registered(registry)
-    code, expires = registry.issue_access_grant(runtime_id, token)
+    grant_id, code, expires = registry.issue_access_grant(runtime_id, token)
     assert expires > datetime.now(UTC)
+    assert registry.access_grant_status(runtime_id, token, grant_id)[0] == "pending"
     assert registry.associate("alice", code) == runtime_id
-    with pytest.raises(RelayRegistryError):
+    assert registry.access_grant_status(runtime_id, token, grant_id)[0] == "consumed"
+    with pytest.raises(RelayRegistryError) as consumed:
         registry.associate("bob", code)
+    assert consumed.value.code == "access_grant_consumed"
     assert [x.runtime.runtime_id for x in registry.list_runtimes("alice")[0]] == [runtime_id]
     assert registry.list_runtimes("bob")[0] == []
+
+
+def test_access_grant_refresh_revokes_previous_and_revoke_is_idempotent() -> None:
+    registry = RelayRegistry()
+    _, runtime_id, token = registered(registry)
+    first_id, first_code, _ = registry.issue_access_grant(runtime_id, token)
+    second_id, second_code, _ = registry.issue_access_grant(runtime_id, token)
+    assert registry.access_grant_status(runtime_id, token, first_id)[0] == "revoked"
+    assert registry.access_grant_status(runtime_id, token, second_id)[0] == "pending"
+    with pytest.raises(RelayRegistryError) as revoked:
+        registry.associate("alice", first_code)
+    assert revoked.value.code == "access_grant_revoked"
+    assert registry.revoke_access_grant(runtime_id, token, second_id)[0] == "revoked"
+    assert registry.revoke_access_grant(runtime_id, token, second_id)[0] == "revoked"
+    with pytest.raises(RelayRegistryError) as revoked_second:
+        registry.associate("alice", second_code)
+    assert revoked_second.value.code == "access_grant_revoked"
+
+
+def test_access_grant_status_is_runtime_scoped_and_expires() -> None:
+    registry = RelayRegistry()
+    _, runtime_id, token = registered(registry)
+    registry.code_ttl = timedelta(seconds=-1)
+    grant_id, expired_code, _ = registry.issue_access_grant(runtime_id, token)
+    assert registry.access_grant_status(runtime_id, token, grant_id)[0] == "expired"
+    with pytest.raises(RelayRegistryError) as expired:
+        registry.associate("alice", expired_code)
+    assert expired.value.code == "access_grant_expired"
+    other = RelayRegistry()
+    _, other_runtime, other_token = registered(other)
+    with pytest.raises(RelayRegistryError, match="not found"):
+        registry.access_grant_status(runtime_id, token, "ag_missing")
+    with pytest.raises(RelayRegistryError):
+        registry.access_grant_status(runtime_id, other_token, grant_id)
 
 
 def test_signed_heartbeat_rejects_replay_and_rotates_instance_generation() -> None:
@@ -106,8 +143,8 @@ def test_workspace_scope_is_runtime_qualified_and_client_path_is_absent() -> Non
     registry = RelayRegistry()
     _, runtime_a, token_a = registered(registry)
     _, runtime_b, token_b = registered(registry)
-    code_a, _ = registry.issue_access_grant(runtime_a, token_a)
-    code_b, _ = registry.issue_access_grant(runtime_b, token_b)
+    _, code_a, _ = registry.issue_access_grant(runtime_a, token_a)
+    _, code_b, _ = registry.issue_access_grant(runtime_b, token_b)
     registry.associate("alice", code_a)
     registry.associate("alice", code_b)
     registry.publish_workspaces(runtime_a, token_a, [Workspace(runtime_id=runtime_a, workspace_id="same", display_name="A")])
@@ -121,7 +158,7 @@ def test_workspace_scope_is_runtime_qualified_and_client_path_is_absent() -> Non
 def test_pagination_search_offline_and_revoke_audit() -> None:
     registry = RelayRegistry(offline_after_seconds=-1)
     private, runtime_id, token = registered(registry)
-    grant, _ = registry.issue_access_grant(runtime_id, token)
+    _, grant, _ = registry.issue_access_grant(runtime_id, token)
     registry.associate("alice", grant)
     heartbeat(registry, private, runtime_id, token)
     assert registry.identity("alice", runtime_id).status == RuntimeStatus.OFFLINE

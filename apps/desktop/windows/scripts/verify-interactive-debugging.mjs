@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 import ts from "typescript";
@@ -10,7 +10,9 @@ const require = createRequire(import.meta.url);
 const stateRoot = join(root, "out", "verification", "interactive-debug-state");
 rmSync(stateRoot, { recursive: true, force: true });
 mkdirSync(stateRoot, { recursive: true });
-const testRequire = (id) => id === "./paths" ? { DRSAI_HOME: stateRoot } : require(id);
+const testRequire = (id) => id === "./paths" ? { DRSAI_HOME: stateRoot } : id === "./atomicFileReplace" ? { replaceFileSafely: async (source, destination) => renameSync(source, destination) } : require(id);
+const implementationPath = join(root, "../shared/main/interactiveDebugger.ts");
+const policyImplementationPath = join(root, "../shared/main/interactiveDebugPolicy.ts");
 
 function loadTypeScript(path, requireFn) {
   const source = readFileSync(path, "utf8");
@@ -38,7 +40,20 @@ class FakeDebugger extends EventEmitter {
 const previous = process.env.OPENDRSAI_ENABLE_INTERACTIVE_DEBUG;
 process.env.OPENDRSAI_ENABLE_INTERACTIVE_DEBUG = "1";
 try {
-  const module = loadTypeScript(join(root, "src/main/interactiveDebugger.ts"), testRequire);
+  const policyModule = loadTypeScript(policyImplementationPath, testRequire);
+  const policyFile = join(stateRoot, "interactive-debug-policy.json");
+  const policyStore = new policyModule.InteractiveDebugPolicyStore(policyFile, {});
+  assert.deepEqual(await policyStore.initialize(), { enabled: false, source: "default", locked: false }, "Interactive debugging must fail closed on first run.");
+  await assert.rejects(() => policyStore.update({ enabled: true }), /risk acknowledgement/i);
+  const enabledPolicy = await policyStore.update({ enabled: true, acknowledgedRisk: true });
+  assert.equal(enabledPolicy.enabled, true); assert.equal(enabledPolicy.source, "user");
+  const restoredPolicy = new policyModule.InteractiveDebugPolicyStore(policyFile, {});
+  assert.equal((await restoredPolicy.initialize()).enabled, true, "Explicit policy must survive restart.");
+  const lockedPolicy = new policyModule.InteractiveDebugPolicyStore(policyFile, { OPENDRSAI_DISABLE_INTERACTIVE_DEBUG: "1" });
+  assert.deepEqual(await lockedPolicy.initialize(), { enabled: false, source: "environment", locked: true });
+  await assert.rejects(() => lockedPolicy.update({ enabled: true, acknowledgedRisk: true }), /locked by environment policy/i);
+
+  const module = loadTypeScript(implementationPath, testRequire);
   const debuggerApi = new FakeDebugger();
   const renderer = { debugger: debuggerApi, isDestroyed: () => false };
   const service = new module.InteractiveDebuggerService(() => renderer, "C:\\Python\\python.exe");
@@ -86,16 +101,16 @@ try {
   await isolatedService.control({ sessionId: isolated.id, action: "disconnect" });
 
   const mainIndex = readFileSync(join(root, "src/main/index.ts"), "utf8");
-  const preload = readFileSync(join(root, "src/preload/index.ts"), "utf8");
-  const panel = readFileSync(join(root, "src/renderer/src/components/DebugPanel.tsx"), "utf8");
+  const preload = readFileSync(join(root, "../shared/main/preload.ts"), "utf8");
+  const panel = readFileSync(join(root, "../shared/renderer/src/components/DebugPanel.tsx"), "utf8");
   const pyproject = readFileSync(join(root, "../../../cores/python/packages/drsai/pyproject.toml"), "utf8");
-  for (const contract of ["interactive-debug-start", "interactive-debug-breakpoint", "interactive-debug-control", "interactive-debug-scopes", "interactive-debug-variables", "interactive-debug-evaluate"]) assert.ok(mainIndex.includes(contract), `Missing interactive debug IPC: ${contract}`);
+  for (const contract of ["interactive-debug-policy", "interactive-debug-policy-update", "interactive-debug-start", "interactive-debug-breakpoint", "interactive-debug-control", "interactive-debug-scopes", "interactive-debug-variables", "interactive-debug-evaluate"]) assert.ok(mainIndex.includes(contract), `Missing interactive debug IPC: ${contract}`);
   assert.ok(preload.includes("onInteractiveDebugEvent"));
-  for (const contract of ["InteractiveDebugWorkbench", "Start debugging", "Step over", "Step in", "Step out", "Read-only evaluate", "Breakpoints", "Call stack", "Variables", "Detach"]) assert.ok(panel.includes(contract), `Missing debug workbench contract: ${contract}`);
+  for (const contract of ["InteractiveDebugWorkbench", "Allow interactive debugging", "acknowledgedRisk: true", "Start debugging", "Step over", "Step in", "Step out", "Read-only evaluate", "Breakpoints", "Call stack", "Variables", "Detach"]) assert.ok(panel.includes(contract), `Missing debug workbench contract: ${contract}`);
   assert.ok(pyproject.includes('"debugpy>=1.8,<2"'));
-  const serviceSource = readFileSync(join(root, "src/main/interactiveDebugger.ts"), "utf8");
+  const serviceSource = readFileSync(implementationPath, "utf8");
   for (const contract of ["debugpy.adapter", "Content-Length", "setBreakpoints", "stackTrace", "throwOnSideEffect", "[REDACTED]", "loopback WebSocket"]) assert.ok(serviceSource.includes(contract), `Missing debug adapter contract: ${contract}`);
-  console.log("Interactive debugging verification passed (capabilities, CDP attach, breakpoints, pause, stack, scopes, redaction, read-only evaluation, stepping, detach, DAP contract, IPC, and UI).");
+  console.log("Interactive debugging verification passed (durable fail-closed policy, explicit risk acknowledgement, environment lock, capabilities, CDP attach, breakpoints, pause, stack, scopes, redaction, read-only evaluation, stepping, detach, DAP contract, IPC, and UI).");
 } finally {
   rmSync(stateRoot, { recursive: true, force: true });
   if (previous === undefined) delete process.env.OPENDRSAI_ENABLE_INTERACTIVE_DEBUG;

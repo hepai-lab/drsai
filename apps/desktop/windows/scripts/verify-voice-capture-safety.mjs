@@ -1,10 +1,10 @@
 import { readFileSync } from "node:fs";
 
-const source = readFileSync(new URL("../src/renderer/src/components/ChatWorkspace.tsx", import.meta.url), "utf8");
-const controller = readFileSync(new URL("../src/renderer/src/voice/voiceCaptureController.ts", import.meta.url), "utf8");
-const hook = readFileSync(new URL("../src/renderer/src/voice/useVoiceCapture.ts", import.meta.url), "utf8");
-const transcriptionHook = readFileSync(new URL("../src/renderer/src/voice/useVoiceTranscription.ts", import.meta.url), "utf8");
-const meter = readFileSync(new URL("../src/renderer/src/voice/useVoiceLevelMeter.ts", import.meta.url), "utf8");
+const source = readFileSync(new URL("../../shared/renderer/src/components/ChatWorkspace.tsx", import.meta.url), "utf8");
+const controller = readFileSync(new URL("../../shared/renderer/src/voice/voiceCaptureController.ts", import.meta.url), "utf8");
+const hook = readFileSync(new URL("../../shared/renderer/src/voice/useVoiceCapture.ts", import.meta.url), "utf8");
+const transcriptionHook = readFileSync(new URL("../../shared/renderer/src/voice/useVoiceTranscription.ts", import.meta.url), "utf8");
+const meter = readFileSync(new URL("../../shared/renderer/src/voice/useVoiceLevelMeter.ts", import.meta.url), "utf8");
 const checks = [
   ["capture extracted from workspace", source.includes("useVoiceCapture(") && !source.includes("new MediaRecorder(")],
   ["concurrent start guard", controller.includes("this.disposed || this.isActive")],

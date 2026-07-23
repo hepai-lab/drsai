@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { initialStreamingTranscriptState, reconcileStreamingTranscript } from "../src/renderer/src/voice/streaming/transcriptReconciler.ts";
-import { SemanticSpeechSegmenter } from "../src/renderer/src/voice/streaming/semanticSpeechSegmenter.ts";
+import { initialStreamingTranscriptState, reconcileStreamingTranscript } from "../../shared/renderer/src/voice/streaming/transcriptReconciler.ts";
+import { SemanticSpeechSegmenter } from "../../shared/renderer/src/voice/streaming/semanticSpeechSegmenter.ts";
 
 const fixture = {
   id: "voice-comparison-en-001",

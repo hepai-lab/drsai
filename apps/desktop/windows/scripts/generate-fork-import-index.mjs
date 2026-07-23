@@ -8,7 +8,7 @@ const monorepoRoot = resolve(root, "../../..");
 const sourceRoots = [
   "src/main",
   "src/preload",
-  "src/renderer/src",
+  "../shared/renderer/src",
   "src/shared",
   "docs",
   "../../../cores/python/packages/drsai/src",
@@ -24,7 +24,7 @@ const configSourceFiles = [
   "electron-builder.yml",
   "electron.vite.config.ts",
 ];
-const outputPath = join(root, "src/renderer/src/components/forkConflictGeneratedImportIndex.ts");
+const outputPath = join(root, "../shared/renderer/src/components/forkConflictGeneratedImportIndex.ts");
 const sourceExtensions = new Set([
   ".ts",
   ".tsx",
@@ -485,7 +485,7 @@ function resolveSpecifierBase(specifier, importerRepoPath) {
     return normalizeRepoPath(`src/shared/${specifier.slice("@shared/".length)}`);
   }
   if (specifier.startsWith("@renderer/")) {
-    return normalizeRepoPath(`src/renderer/src/${specifier.slice("@renderer/".length)}`);
+    return normalizeRepoPath(`../shared/renderer/src/${specifier.slice("@renderer/".length)}`);
   }
   if (specifier.startsWith("src/")) {
     return normalizeRepoPath(specifier);
@@ -531,7 +531,7 @@ function resolveLocalModuleKey(specifier, importerRepoPath) {
 function commandsForImporter(importerPath) {
   const commands = new Set();
   const normalized = importerPath.toLowerCase();
-  if (normalized.startsWith("src/renderer/")) {
+  if (normalized.startsWith("../shared/renderer/")) {
     commands.add("npm run typecheck:web");
   }
   if (normalized.startsWith("src/main/") || normalized.startsWith("src/preload/")) {

@@ -51,7 +51,7 @@ internal object AndroidUpdatePolicy {
         "release-assets.githubusercontent.com",
     )
 
-    fun parseManifest(raw: String): AndroidApkUpdate {
+    fun parseManifest(raw: String, allowInsecureLocal: Boolean = false): AndroidApkUpdate {
         if (raw.toByteArray(Charsets.UTF_8).size > 64 * 1024) error("manifest-too-large")
         val root = runCatching { JSONObject(raw) }.getOrElse { error("manifest-json") }
         require(root.optInt("schemaVersion", -1) == 1) { "manifest-schema" }
@@ -69,18 +69,22 @@ internal object AndroidUpdatePolicy {
             publishedAt = root.optString("publishedAt").also { require(it.isNotBlank()) { "manifest-date" } },
             minimumSupportedVersion = root.optString("minimumSupportedVersion", "0.0.0").also { require(SEMVER.matches(it)) { "invalid-minimum-version" } },
             mandatory = root.optBoolean("mandatory", false),
-            apkUrl = apk.optString("url").also(::requireTrustedUrl),
+            apkUrl = apk.optString("url").also { requireTrustedUrl(it, allowInsecureLocal) },
             sizeBytes = apk.optLong("sizeBytes", -1).also { require(it in 1..512_000_000) { "manifest-size" } },
             sha256 = apk.optString("sha256").lowercase().also { require(HASH.matches(it)) { "manifest-hash" } },
             signingCertSha256 = apk.optString("signingCertSha256").lowercase().also { require(HASH.matches(it)) { "manifest-signature" } },
-            releaseNotesUrl = root.optString("releaseNotesUrl").takeIf { it.isNotBlank() }?.also(::requireTrustedUrl),
+            releaseNotesUrl = root.optString("releaseNotesUrl").takeIf { it.isNotBlank() }
+                ?.also { requireTrustedUrl(it, allowInsecureLocal) },
         )
         require(!update.apkUrl.contains("/latest/")) { "mutable-apk-url" }
         return update
     }
 
-    fun requireTrustedUrl(raw: String) {
+    fun requireTrustedUrl(raw: String, allowInsecureLocal: Boolean = false) {
         val url = runCatching { URI(raw) }.getOrElse { error("invalid-url") }
+        if (allowInsecureLocal && url.scheme.equals("http", ignoreCase = true) &&
+            url.host in setOf("10.0.2.2", "127.0.0.1", "localhost") && url.userInfo == null
+        ) return
         require(url.scheme.equals("https", ignoreCase = true)) { "unsafe-url" }
         require(hosts.contains(url.host?.lowercase())) { "untrusted-host" }
         require(url.userInfo == null) { "unsafe-url" }
@@ -115,6 +119,7 @@ class AndroidUpdateRepository(
     private val context: Context,
     private val manifestUrl: String,
     private val channel: String,
+    private val allowInsecureLocal: Boolean = false,
     private val http: OkHttpClient = OkHttpClient.Builder()
         // GitHub Release 下载先经过 github.com，再跳转到 release-assets CDN。
         // 移动网络下首字节和 CDN 切换可能超过 30 秒；分段下载仍由 partial 文件保证可恢复。
@@ -127,10 +132,13 @@ class AndroidUpdateRepository(
 ) {
     suspend fun check(): AndroidUpdateState = withContext(Dispatchers.IO) {
         try {
-            AndroidUpdatePolicy.requireTrustedUrl(manifestUrl)
+            AndroidUpdatePolicy.requireTrustedUrl(manifestUrl, allowInsecureLocal)
             val response = executeTrusted(Request.Builder().url(manifestUrl).header("Accept", "application/json").build())
             if (!response.isSuccessful) return@withContext AndroidUpdateState.Failed("manifest-http", "更新清单请求失败（HTTP ${response.code}）")
-            val update = AndroidUpdatePolicy.parseManifest(response.body?.string() ?: error("manifest-empty"))
+            val update = AndroidUpdatePolicy.parseManifest(
+                response.body?.string() ?: error("manifest-empty"),
+                allowInsecureLocal,
+            )
             if (update.channel != channel) return@withContext AndroidUpdateState.Failed("channel-mismatch", "更新渠道不匹配")
             val info = packageInfo()
             if (!AndroidUpdatePolicy.isNewer(versionCode(info), update.versionCode)) return@withContext AndroidUpdateState.Idle
@@ -196,7 +204,7 @@ class AndroidUpdateRepository(
             val location = response.header("Location") ?: error("redirect-missing")
             response.close()
             val next = URI(request.url.toString()).resolve(location).toString()
-            AndroidUpdatePolicy.requireTrustedUrl(next)
+            AndroidUpdatePolicy.requireTrustedUrl(next, allowInsecureLocal)
             request = request.newBuilder().url(next).build()
             if (index == 5) error("redirect-limit")
         }

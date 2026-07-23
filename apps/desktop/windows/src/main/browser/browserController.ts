@@ -5,7 +5,7 @@ import type {
   BrowserScreenshot,
   BrowserSnapshot,
   BrowserWaitTarget,
-} from "../../shared/browser/types";
+} from "../../../../shared/api/browser/types";
 
 export interface BrowserController {
   readonly engine: "electron-webview" | "browser-use";

@@ -16,16 +16,16 @@ function assert(condition, message) {
 }
 
 const packageJson = read("package.json");
-const api = read("src/shared/desktopApi.ts");
-const preload = read("src/preload/index.ts");
+const api = read("../shared/api/desktopApi.ts");
+const preload = read("../shared/main/preload.ts");
 const main = read("src/main/index.ts");
-const adapters = read("src/main/channelAdapters.ts");
+const adapters = read("../shared/main/channelAdapters.ts");
 const e2eSmoke = read("src/main/e2eSmoke.ts");
-const navigation = read("src/renderer/src/navigation.ts");
-const app = read("src/renderer/src/App.tsx");
-const view = read("src/renderer/src/components/ChannelsView.tsx");
-const mock = read("src/renderer/src/mockDesktopApi.ts");
-const styles = read("src/renderer/src/styles.css");
+const navigation = read("../shared/renderer/src/navigation.ts");
+const app = read("../shared/renderer/src/App.tsx");
+const view = read("../shared/renderer/src/components/ChannelsView.tsx");
+const mock = read("../shared/renderer/src/mockDesktopApi.ts");
+const styles = read("../shared/renderer/src/styles.css");
 const checklist = read("docs/chatbar-capability-checklist.md");
 const roadmap = read("docs/smart-chat-bar-roadmap.md");
 
@@ -42,10 +42,11 @@ assert(api.includes("DesktopChannelAdapterAuthStartResult"), "shared API omits c
 assert(api.includes("DesktopChannelConnection"), "shared API omits channel connection contract");
 assert(api.includes("configureChannelAdapter("), "desktop API omits configureChannelAdapter");
 assert(api.includes("startChannelAdapterAuth("), "desktop API omits startChannelAdapterAuth");
-assert(api.includes('"session_stub"'), "shared API omits provider session stub configuration mode");
+assert(!api.match(/DesktopChannelAdapterConfigureRequest[\s\S]{0,240}"session_stub"/), "public channel configuration still exposes session placeholders");
 assert(api.includes("credentialState"), "shared API omits channel credential state metadata");
 assert(api.includes("sessionExpiresAt"), "shared API omits channel session expiry metadata");
 assert(api.includes("authPreparedAt"), "shared API omits channel auth preparation metadata");
+assert(api.includes("authOperationId?: string"), "shared API omits resumable channel authorization operation metadata");
 assert(api.includes("DesktopChannelContextImportRequest"), "shared API omits channel context import request");
 assert(api.includes("paths?: string[]"), "shared API omits explicit selected file import paths");
 assert(api.includes("slackSnapshotPath?: string"), "shared API omits optional Slack snapshot import path");
@@ -83,16 +84,16 @@ assert(api.includes('"workspace_local_outbox"'), "shared API omits workspace-loc
 assert(api.includes("outboxPath?: string"), "shared API omits outbound delivery outbox path");
 
 assert(adapters.includes("CHANNEL_ADAPTERS"), "main adapter catalog is missing");
+for (const staleCatalogCopy of ["Use local Git remote now; live OAuth", "Live Slack OAuth/session sync is still pending", "live OAuth/session sync is still pending", "Live mobile device pairing and notification routing are still pending", "Live microphone capture and transcription runtime are still pending"]) assert(!adapters.includes(staleCatalogCopy), `main adapter catalog retains superseded copy: ${staleCatalogCopy}`);
+for (const implementedCapability of ["Sync live issues and pull requests with Device OAuth", "Send approved messages through chat.postMessage", "Append approved revision-bound edits", "Read bounded live Google Calendar events", "Use dedicated Mobile Pairing for device authorization"]) assert(adapters.includes(implementedCapability), `main adapter catalog omits implemented capability: ${implementedCapability}`);
 assert(adapters.includes("CHANNEL_CONNECTIONS_FILE"), "main connector configuration store is missing");
 assert(adapters.includes("configureChannelAdapter"), "main adapter runtime omits connector configuration");
-assert(adapters.includes("configureChannelAdapterSessionStub"), "main adapter runtime omits provider session stub configuration");
+assert(!adapters.includes("function configureChannelAdapterSessionStub"), "main adapter runtime still exposes provider session placeholders");
 assert(adapters.includes("startChannelAdapterAuth"), "main adapter runtime omits connector authorization preparation");
-assert(adapters.includes("CONNECTOR_AUTH_EXPIRY_MINUTES"), "connector authorization preparation is not expiry bounded");
 assert(adapters.includes("normalizeAuthScopes"), "connector authorization preparation does not normalize scopes");
-assert(adapters.includes("buildAuthUserCode"), "connector authorization preparation does not create a reviewed user code");
-assert(adapters.includes("no browser was opened, no provider network call was made, no token was stored"), "connector authorization preparation omits no-network/no-secret safety copy");
-assert(adapters.includes("Session configuration is workspace-scoped metadata only"), "session stub configuration omits no-secret safety copy");
-assert(adapters.includes("normalizeCredentialState"), "session stub configuration does not normalize credential state");
+assert(adapters.includes("channelProviderAuth.startGitHub"), "connector authorization does not delegate to real GitHub Device OAuth");
+assert(adapters.includes("placeholders cannot be configured"), "legacy provider session configuration does not fail closed");
+assert(adapters.includes("configureChannelProviderToken"), "provider-token configuration runtime is missing");
 assert(adapters.includes("local_git_remote"), "connector configuration does not record local Git remote auth mode");
 assert(adapters.includes("readGitRemote"), "GitHub connector does not derive scope from local Git remote");
 assert(adapters.includes("parseGitHubRemote"), "GitHub connector does not parse GitHub remote scope");
@@ -1959,13 +1960,9 @@ assert(adapters.includes("normalizeVoiceTranscriptItems"), "Voice input does not
 assert(adapters.includes("createVoiceTranscriptItem"), "Voice input does not create transcript context items");
 assert(adapters.includes("createDocsSnapshotItem"), "Docs connector does not create document context items");
 assert(adapters.includes("createCalendarSnapshotItem"), "Calendar connector does not create meeting context items");
-assert(adapters.includes(".drsai/docs-context.json"), "Docs connector snapshot handoff path is missing");
-assert(adapters.includes(".drsai/calendar-context.json"), "Calendar connector snapshot handoff path is missing");
-assert(adapters.includes(".drsai/calendar-context.ics"), "Calendar connector ICS handoff path is missing");
-assert(adapters.includes(".drsai/database-context.json"), "Database connector snapshot handoff path is missing");
-assert(adapters.includes(".drsai/slack-context.json"), "Slack connector snapshot handoff path is missing");
-assert(adapters.includes(".drsai/mobile-context.json"), "Mobile chat handoff path is missing");
-assert(adapters.includes(".drsai/voice-context.json"), "Voice transcript handoff path is missing");
+for (const snapshotName of ["docs-context.json", "calendar-context.json", "calendar-context.ics", "database-context.json", "slack-context.json", "mobile-context.json", "voice-context.json"]) {
+  assert(adapters.includes(`join(".drsai", "${snapshotName}")`), `${snapshotName} handoff path is missing`);
+}
 assert(adapters.includes("no device pairing, push notification, network call, or provider send was performed"), "Mobile chat import omits no-device/no-network safety copy");
 assert(adapters.includes("no OAuth flow, Slack API call, network call, or provider send was performed"), "Slack import omits no-OAuth/no-network safety copy");
 assert(adapters.includes("no network or provider send was performed"), "GitHub snapshot import omits no-network safety copy");
@@ -2054,9 +2051,10 @@ assert(view.includes("desktopApi.listChannelAdapters"), "Channels view does not 
 assert(view.includes("desktopApi.configureChannelAdapter"), "Channels view does not configure adapters through desktop API");
 assert(view.includes("desktopApi.startChannelAdapterAuth"), "Channels view does not prepare connector authorization through desktop API");
 assert(view.includes("Prepare auth"), "Channels view does not expose connector authorization preparation");
+assert(view.includes("adapter.authOperationId"), "Channels view cannot resume a pending authorization after reload");
 assert(view.includes('aria-label="Channel connector authorization"'), "Channels view does not label connector authorization results");
-assert(view.includes("Configure session"), "Channels view does not expose provider session configuration");
-assert(view.includes('mode: "session_stub"'), "Channels view does not request session stub configuration");
+assert(!view.includes("Configure session"), "Channels view must not expose fake provider session configuration");
+assert(!view.includes('mode: "session_stub"'), "Channels view must not request session placeholder configuration");
 assert(view.includes("credentialState"), "Channels view does not display credential state");
 assert(view.includes("desktopApi.importChannelContext"), "Channels view does not import channel context through desktop API");
 assert(view.includes("desktopApi.pickFiles"), "Channels view does not expose explicit file picker imports");
@@ -2105,8 +2103,7 @@ assert(mock.includes("startChannelAdapterAuth"), "mock bridge omits startChannel
 assert(mock.includes("Mock prepared") && mock.includes("authorization for review"), "mock bridge omits channel authorization fixture");
 assert(mock.includes("provider network call, token storage, or live send"), "mock channel authorization omits no-network/no-secret safety copy");
 assert(mock.includes("Mock configured GitHub connector"), "mock bridge omits GitHub connector configuration fixture");
-assert(mock.includes("Mock configured") && mock.includes("session stub"), "mock bridge omits channel session stub fixture");
-assert(mock.includes("workspace-scoped metadata only"), "mock session configuration omits no-secret safety copy");
+assert(mock.includes("Mock channel session placeholders cannot be configured"), "mock bridge does not reject legacy session placeholders");
 assert(mock.includes("importChannelContext"), "mock bridge omits importChannelContext");
 assert(mock.includes("selected file/image/audio/video/document context"), "mock bridge omits selected file import fixture");
 assert(mock.includes("Audio metadata preview"), "mock bridge omits audio metadata fixture");
@@ -3141,7 +3138,7 @@ assert(roadmap.includes("workspace-local log monitor cursor snapshots"), "roadma
 assert(roadmap.includes("log-monitor.json"), "roadmap does not record log monitor handoff path");
 assert(roadmap.includes("mobile chat handoff"), "roadmap does not record mobile chat handoff import");
 assert(roadmap.includes("workspace-local Slack snapshot import"), "roadmap does not record Slack snapshot import");
-assert(roadmap.includes("workspace-scoped provider session stub configuration"), "roadmap does not record provider session stub configuration");
+assert(roadmap.includes("Legacy session-placeholder configuration is removed"), "roadmap does not record removal of provider session placeholders");
 assert(roadmap.includes("reviewed connector authorization preparation"), "roadmap does not record connector authorization preparation");
 assert(roadmap.includes("npm run verify:channel-adapters"), "roadmap does not record channel adapter verification");
 

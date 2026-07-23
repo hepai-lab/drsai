@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 import ts from "typescript";
 
 const root = process.cwd();
 const require = createRequire(import.meta.url);
-const testRequire = (id) => id === "./paths" ? { DRSAI_HOME: join(root, "out", "verification", "python-dap-state") } : require(id);
-const pythonPath = join(root, "../../../venv/Scripts/python.exe");
+const testRequire = (id) => id === "./paths" ? { DRSAI_HOME: join(root, "out", "verification", "python-dap-state") } : id === "./atomicFileReplace" ? { replaceFileSafely: async (source, destination) => renameSync(source, destination) } : require(id);
+const pythonPath = process.env.OPENDRSAI_TEST_PYTHON || join(root, "../../../venv/Scripts/python.exe");
 assert.ok(existsSync(pythonPath), "Repository Python runtime was not found.");
 const program = join(root, "scripts", "fixtures", "python_debug_target.py");
 
@@ -22,7 +22,7 @@ function loadTypeScript(path, requireFn) {
 const previous = process.env.OPENDRSAI_ENABLE_INTERACTIVE_DEBUG;
 process.env.OPENDRSAI_ENABLE_INTERACTIVE_DEBUG = "1";
 try {
-const module = loadTypeScript(join(root, "src/main/interactiveDebugger.ts"), testRequire);
+const module = loadTypeScript(join(root, "../shared/main/interactiveDebugger.ts"), testRequire);
   const service = new module.InteractiveDebuggerService(() => undefined, pythonPath);
   const pauseWaiters = [];
   const waitForPause = () => new Promise((resolve, reject) => { const timer = setTimeout(() => reject(new Error("Python debuggee did not pause.")), 15_000); pauseWaiters.push((session) => { clearTimeout(timer); resolve(session); }); });

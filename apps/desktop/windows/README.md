@@ -1,7 +1,14 @@
 # OpenDrSai Windows Desktop
 
+> Cross-platform refactoring note: this directory remains the production
+> Windows product shell. Platform-neutral API, main-process services, renderer,
+> and test utilities will be extracted incrementally into `../shared`; macOS
+> will use a separate `../macos` shell. See the
+> [cross-platform desktop refactoring plan](../docs/desktop-cross-platform-refactoring-plan.md)
+> for migration stages and acceptance gates.
+
 This directory is the new Windows-first desktop implementation. It is intended
-to replace the Hermes-derived renderer in `apps/desktop/drsai-desktop` without
+to replace the archived Hermes-derived renderer in `apps/desktop/legacy/drsai-desktop` without
 reusing its startup flow or visual shell.
 
 ## Goals
@@ -53,7 +60,7 @@ Useful variants:
 
 Use the `.cmd` wrapper for double-click or normal terminal startup. If you run
 the PowerShell file directly, invoke it from a PowerShell terminal with
-`powershell -ExecutionPolicy Bypass -File .\apps\desktop\scripts\windows-desktop-dev.ps1`.
+`powershell -ExecutionPolicy Bypass -File .\apps\desktop\windows\scripts\dev.ps1`.
 
 From the desktop app directory, the same flow is available as npm scripts:
 

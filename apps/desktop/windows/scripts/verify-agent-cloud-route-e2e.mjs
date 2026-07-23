@@ -12,7 +12,9 @@ const state = {
   stopRequests: 0,
   requestBodies: [],
   cancelledConnections: 0,
+  diagnostics: [],
 };
+globalThis.__agentCloudDiagnostics = state.diagnostics;
 
 const server = createServer(async (request, response) => {
   if (request.url === "/input" && request.method === "POST") {
@@ -66,7 +68,7 @@ globalThis.__agentCloudBase = `http://127.0.0.1:${address.port}`;
 
 try {
   const output = await build({
-    entryPoints: [resolve(root, "src/main/chat.ts")],
+    entryPoints: [resolve(root, "../shared/main/chat.ts")],
     bundle: true,
     format: "esm",
     platform: "node",
@@ -119,6 +121,12 @@ try {
   await waitFor(() => state.stopRequests === 1 && cancelEvents.some((event) => event.type === "aborted"), 3000);
   assert.equal(state.stopRequests, 1);
   assert(cancelEvents.some((event) => event.type === "aborted"));
+  await waitFor(() => state.diagnostics.some((event) => event.type === "cancel"), 3000);
+  assert.equal(
+    state.diagnostics.some((event) => event.type === "fail" && /\buser\b/i.test(event.message)),
+    false,
+    "A user-requested chat abort must not be diagnosed as Error: user.",
+  );
 
   console.log("Agent cloud route E2E passed (explicit agentId, HTTP 401 refresh, SSE text/tool/file/input, continuation, stop and secret isolation).");
 } finally {
@@ -140,13 +148,28 @@ function stubMainDependencies() {
       export async function stopPlatformChat(){ const result=await fetch(globalThis.__agentCloudBase+"/stop",{method:"POST"}); return result.ok; }
     `],
     ["./gateway", `export function getGatewayRequestHeaders(){return {}}; export async function startGateway(){throw new Error("platform chat must not start the local gateway")}`],
-    ["./modelDefaults", `export function getDefaultModelAlias(){return "drsai";}`],
+    ["./modelDefaults", `export function getDefaultModelAlias(){return "drsai";} export function normalizeModelAlias(value){return value || "";}`],
     ["./threads", `export async function listThreads(){return [];} export async function upsertThreadFromRun(){return {};}`],
     ["./providerErrorAnalytics", `export async function persistProviderErrorAnalytics(){}`],
     ["./providerUsageAnalytics", `export async function persistProviderUsageAnalytics(){}`],
     ["./remoteWorkspace", `export function bindRemoteThread(){}; export function getRemoteGatewayAccess(){return null;} export function resolveRemoteWorkspaceTarget(){return null;}`],
     ["./agentTelemetry", `export function recordAgentTelemetry(){}`],
     ["./agentCircuitBreaker", `export function assertAgentCircuitAvailable(){}; export function recordAgentCircuitFailure(){}; export function recordAgentCircuitSuccess(){}`],
+    ["./diagnostics", `
+      const events = globalThis.__agentCloudDiagnostics;
+      export const desktopDiagnostics = {
+        async start(){
+          return {
+            spanId:"diagnostic-span",
+            async complete(message){ events.push({type:"complete",message}); },
+            async wait(message){ events.push({type:"wait",message}); },
+            async fail(error){ events.push({type:"fail",message:error instanceof Error ? error.message : String(error)}); },
+            async cancel(message){ events.push({type:"cancel",message}); },
+          };
+        },
+        async record(input){ events.push({type:"record",message:input.message}); return input; },
+      };
+    `],
   ]);
   return {
     name: "agent-cloud-main-stubs",

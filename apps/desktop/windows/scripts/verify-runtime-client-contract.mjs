@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const root = resolve(new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
-const source = readFileSync(resolve(root, "src/main/runtimeClient.ts"), "utf8");
+const source = readFileSync(resolve(root, "../shared/main/runtimeClient.ts"), "utf8");
 
 for (const marker of [
   "interface RuntimeClient",

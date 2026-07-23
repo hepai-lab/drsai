@@ -83,6 +83,7 @@ export interface SessionResumeResult {
   history: Array<Record<string, unknown>>
   info: SessionMetadata
   user_id?: string
+  memory_preview?: string
 }
 
 export interface SessionMetadata {
@@ -140,6 +141,37 @@ export interface ScheduledTask {
 
 export interface SchedulerListResult {
   tasks: ScheduledTask[]
+}
+
+// ── GFS (高能所文件系统) config ─────────────────────────────────────
+
+export interface GfsConfig {
+  enabled: boolean
+  mode: string            // "personal" | "admin" | "" (auto-detect)
+  detected_mode: string   // resolved mode after auto-detection
+  has_personal_creds: boolean
+  access_key_masked: string
+  secret_key_masked: string
+  bucket: string
+  email: string
+  s3_endpoint: string
+  config_path: string
+  config_exists: boolean
+}
+
+export interface GfsTestResult {
+  ok: boolean
+  error?: string
+  bucket?: string
+  email?: string
+  s3_endpoint?: string
+  message?: string
+}
+
+export interface GfsSaveResult {
+  ok: boolean
+  config_path: string
+  message: string
 }
 
 // ── Tool payloads ────────────────────────────────────────────────────

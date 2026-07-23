@@ -4,9 +4,9 @@ import { resolve } from "node:path";
 
 const root = resolve(new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
 const terminal = readFileSync(resolve(root, "src/main/terminal.ts"), "utf8");
-const runtimeClient = readFileSync(resolve(root, "src/main/runtimeClient.ts"), "utf8");
+const runtimeClient = readFileSync(resolve(root, "../shared/main/runtimeClient.ts"), "utf8");
 const gateway = readFileSync(resolve(root, "../../../cores/python/packages/drsai/src/drsai/backend/gateway.py"), "utf8");
-const panel = readFileSync(resolve(root, "src/renderer/src/components/TerminalPanel.tsx"), "utf8");
+const panel = readFileSync(resolve(root, "../shared/renderer/src/components/TerminalPanel.tsx"), "utf8");
 
 for (const operation of ["pty.create", "pty.attach", "pty.write", "pty.resize", "pty.detach", "pty.kill"]) {
   assert(terminal.includes(`"${operation}"`), `Terminal Runtime Facade does not use ${operation}`);

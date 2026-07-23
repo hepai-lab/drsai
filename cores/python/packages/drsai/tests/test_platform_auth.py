@@ -212,6 +212,12 @@ class PlatformAuthTests(unittest.TestCase):
         invalid_token = classify_model_error(Exception("AuthenticationError: Error code: 401 - invalid_token"))
         self.assertEqual((invalid_token["code"], invalid_token["retryable"]), ("model_unauthorized", False))
 
+    def test_default_model_name_is_a_catalog_alias(self) -> None:
+        from drsai.backend.run_drsai_agent_factory import DEFAULT_CONFIG_NAME, DEFAULT_LLM_MODE_CONFIG
+
+        self.assertEqual(DEFAULT_CONFIG_NAME, "deepseek-v4-pro")
+        self.assertIn(DEFAULT_CONFIG_NAME, DEFAULT_LLM_MODE_CONFIG)
+
     def test_real_openai_client_calls_fake_apiv2_with_oidc_bearer(self) -> None:
         captured: dict[str, str] = {}
 

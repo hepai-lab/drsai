@@ -42,11 +42,11 @@ const negative = {
 };
 assert(Object.values(negative).every(Boolean), `I1 negative mutations were not rejected: ${JSON.stringify(negative)}`);
 
-const shared = read("src/shared/desktopApi.ts");
-const store = read("src/main/workspaceCheckpoints.ts");
-const agent = read("src/main/agentRuns.ts");
+const shared = read("../shared/api/desktopApi.ts");
+const store = read("../shared/main/workspaceCheckpoints.ts");
+const agent = read("../shared/main/agentRuns.ts");
 const main = read("src/main/index.ts");
-const ui = read("src/renderer/src/components/files/FilesContextPanel.tsx");
+const ui = read("../shared/renderer/src/components/files/FilesContextPanel.tsx");
 const e2e = read("src/main/e2eSmoke.ts");
 const contracts = {
   typedVersionMetadata: ["automatic?: boolean", "versionGroupId?: string", "versionPhase?: \"before\" | \"after\"", "changeReason?: string", "objectLabel?: string"].every((marker) => shared.includes(marker)),

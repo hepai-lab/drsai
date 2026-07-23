@@ -1,11 +1,4 @@
-# DrSai CLI 使用手册
-
-> 版本: 对应 Ink TUI (`apps/ui-tui/`) + `backend/tui_gateway/` + `cli/commands.py` 命令注册表
-> 最后更新: 2026-06（新增：Session 搜索与组织 /find /tag /pin /archive、子智能体并发控制 /max_concurrent、Session FTS5 回填兼容）
->
-> **架构提示**：从本次更新起，`drsai` / `drsai chat` 启动的是基于 React/Ink 的双进程 TUI（前端 = Node.js，后端 = Python JSON-RPC gateway）。旧的单进程 `run_cli.py` 已被保留为 `_deprecated/run_cli_legacy.py`，不再接入。下文记录的所有命令都通过 JSON-RPC 的 `slash.exec` 在 gateway 端执行；命令注册表 (`cli/commands.py`) 仍是单一真相源。
-
----
+# OpenDrSai CLI 使用手册
 
 ## 目录
 
@@ -30,19 +23,20 @@
 19. [Daemon 后台常驻服务](#19-daemon-后台常驻服务)
 20. [微信接入](#20-微信接入)
 21. [Subagent / 子智能体 (Delegate)](#21-subagent子智能体-delegate)
+22. [GFS 高能所文件系统集成](#22-gfs-高能所文件系统集成)
 
 ---
 
 ## 1 总体介绍
 
-### 1.1 DrSai CLI 是什么？
+### 1.1 OpenDrSai CLI 是什么？
 
-DrSai CLI 是 DrSai 智能体框架的**本地交互式终端客户端**。它由两个进程协作组成：
+OpenDrSai CLI 是 OpenDrSai 智能体框架的**本地交互式终端客户端**。它由两个进程协作组成：
 
 - **前端 (Node.js / Ink)**：`apps/ui-tui/` 下的 React + Ink TUI，负责渲染、输入捕获、Tab 补全、覆盖层（pickers / model editor / setup screen）。
 - **后端 (Python / tui_gateway)**：`backend/tui_gateway/` 提供基于 stdin/stdout 的 JSON-RPC 服务，承载 `DrSaiCLIAssistant` 实例和所有工具。前端用 RPC（`session.*`、`prompt.*`、`slash.exec`、`model.*` 等）调用后端，后端用事件流（`message.delta`、`tool.start`、`session.info`、`approval.request` 等）反推 UI。
 
-也支持远程附加模式：`drsai chat --attach ws://host:8765/attach` 可以让本地 TUI 接到一台远程 gateway。
+也支持远程附加模式：`opendrsai chat --attach ws://host:8765/attach` 可以让本地 TUI 接到一台远程 gateway。
 
 **核心能力**：
 
@@ -50,7 +44,7 @@ DrSai CLI 是 DrSai 智能体框架的**本地交互式终端客户端**。它�
 - **连续多轮对话**: 流式输出、工具调用、思考过程可视化
 - **多 Session 管理**: 创建、切换、搜索、恢复多个独立会话，每个会话有独立的状态和对话历史
 - **项目指令系统**: 自动发现并加载项目目录中的 `DRSAI.md` / `CLAUDE.md`，让 AI 理解你的项目上下文
-- **记忆管理**: 通过 SQLite/RAGFlow 实现短期对话记忆 + 长期学习记忆，支持跨会话检索
+- **记忆管理**: 通过 SQLite/RAGFlow 实现短期对话记忆 + 长期学习记忆，支持跨会话检索和手动 LLM 摘要压缩 (`/compress`)
 - **动态模型切换**: 在会话内即时切换 LLM 模型，支持 session-local 和 global 两种模式
 - **Plan Mode**: 启用后 AI 会先访谈用户确认计划再执行，适合复杂任务规划
 - **Prompt 注入**: 可动态注入 prefix/suffix 到 system prompt，灵活控制 AI 行为
@@ -65,11 +59,11 @@ DrSai CLI 是 DrSai 智能体框架的**本地交互式终端客户端**。它�
 
 #### 记忆管理
 
-DrSai CLI 的记忆系统分为两层：
+OpenDrSai CLI 的记忆系统分为两层：
 
 | 层级 | 实现 | 作用 | 生命周期 |
 |------|------|------|----------|
-| 短期对话记忆 | `DrSaiSQLiteChatCompletionContext` | 当前会话的完整对话历史，支持 token 压缩 | session 级 |
+| 短期对话记忆 | `DrSaiSQLiteChatCompletionContext` | 当前会话的完整对话历史，支持自动 token 压缩和手动 `/compress` 压缩 | session 级 |
 | 长期学习记忆 | SQLite FTS5 (`session_messages_fts`) | 跨会话的知识存储，支持 BM25 全文检索 | user 级 |
 
 用户可通过内置工具 `retrieve_from_memory` 和 `summry_conversation_to_memory` 进行记忆的检索和总结。系统在每个对话轮次结束时自动保存状态。
@@ -90,7 +84,7 @@ DrSai CLI 的记忆系统分为两层：
 
 #### 多 Session 与目录绑定
 
-DrSai CLI 的 Session 系统与**工作目录**绑定：
+OpenDrSai CLI 的 Session 系统与**工作目录**绑定：
 
 - 启动时自动检查 `cwd` 是否有对应的 Session
 - 有 → 恢复该 Session 的对话历史和状态
@@ -103,31 +97,33 @@ DrSai CLI 的 Session 系统与**工作目录**绑定：
 
 ## 2 启动与配置
 
-事先配置好环境变量：
+## 2.1 安装
 
-```env
-SYSTEM_SKILLS_DIR="/path/to/skills" # 可以使用项目中的agent_skills/skills
-LLM_CONFIG_FILE="/path/to/llm_config.json" # 可以使用项目中的llm_mode_config.example.json
-HEPAI_API_KEY="<enter your key here>" # 任何hepai/openai/ahthropic
-```
+Linux/MacOS：`curl -fsSL https://ihepbox.ihep.ac.cn/ihepbox/index.php/s/vQFBjvXqAhxdPFb/download | bash`
 
-### 2.1 启动方式
+Windows：`iwr -UseBasicParsing https://ihepbox.ihep.ac.cn/ihepbox/index.php/s/cG0oB5NEhQiEf5r/download | iex`
+
+`请注意， Powershell版本需要>=5.1`
+
+### 2.2 启动方式
+
+**请注意，使用源码安装，或者老版本，使用以下所有命令时，将`opendrsai`命令换成`drsai`即可。**
 
 ```bash
 # 默认启动（启动 Ink TUI + 自动 spawn gateway）
-drsai
+opendrsai
 
 # 显式 chat 子命令
-drsai chat
+opendrsai chat
 
 # 附加到远程 gateway（替代本地 spawn）
-drsai chat --attach ws://remote-host:8765/attach
+opendrsai chat --attach ws://remote-host:8765/attach
 
 # 仅启动 gateway（不弹 UI，作为远程会话被附加）
-drsai tui-gateway       # 设置 DRSAI_TUI_ENABLE_WS=1 开放 WebSocket
+opendrsai tui-gateway       # 设置 DRSAI_TUI_ENABLE_WS=1 开放 WebSocket
 
 # 旧版 SSE gateway（仅供 Electron 桌面端兼容）
-drsai gateway --port 8642
+opendrsai gateway --port 8642
 ```
 
 **Node.js 依赖说明**：TUI 需要 Node.js ≥ 20。`drsai` 启动时按以下顺序解析：
@@ -179,24 +175,24 @@ drsai gateway --port 8642
 
 ```bash
 # 查看/更新配置
-drsai config --show                # 显示当前配置（敏感值已遮蔽）
-drsai config --json                # JSON 格式输出
-drsai config --api-key <KEY>       # 更新 API Key
-drsai config --plan-mode true      # 设置全局 Plan Mode
+opendrsai config --show                # 显示当前配置（敏感值已遮蔽）
+opendrsai config --json                # JSON 格式输出
+opendrsai config --api-key <KEY>       # 更新 API Key
+opendrsai config --plan-mode true      # 设置全局 Plan Mode
 
 # Session 管理
-drsai sessions                     # 列出所有已保存 Session
-drsai sessions --clear             # 清除所有 Session
+opendrsai sessions                     # 列出所有已保存 Session
+opendrsai sessions --clear             # 清除所有 Session
 
 # 版本信息
-drsai version                      # 显示版本号
+opendrsai version                      # 显示版本号
 ```
 
 ---
 
 ## 3 System Prompt 层级架构
 
-DrSai CLI 的 System Prompt 由 6 个层级组成，从上到下排列。**越靠后的层级，LLM 越重视**：
+OpenDrSai CLI 的 System Prompt 由 6 个层级组成，从上到下排列。**越靠后的层级，LLM 越重视**：
 
 ```
 ① Prefix (session级)       ← /plan_mode、/inject prefix 设置
@@ -219,7 +215,7 @@ DrSai CLI 的 System Prompt 由 6 个层级组成，从上到下排列。**越�
 
 ## 4 Session 管理
 
-Session 是 DrSai CLI 的核心组织单元。每个 Session 有独立的对话历史、模型配置、注入提示词和项目指令。
+Session 是 OpenDrSai CLI 的核心组织单元。每个 Session 有独立的对话历史、模型配置、注入提示词和项目指令。
 
 ### 4.1 自动 Session 绑定
 
@@ -278,7 +274,7 @@ drsai
 
 ## 5 Session 搜索与组织
 
-当 Session 数量增多时，传统的 `/list` 和 `/search`（子串匹配）难以快速定位目标会话。DrSai 提供了一套搜索与组织工具，让大量 Session 有序可查。
+当 Session 数量增多时，传统的 `/list` 和 `/search`（子串匹配）难以快速定位目标会话。OpenDrSai 提供了一套搜索与组织工具，让大量 Session 有序可查。
 
 ### 5.1 `/find` — 自然语言搜索
 
@@ -383,7 +379,7 @@ drsai
 
 ### 6.1 模型切换
 
-DrSai CLI 支持在会话内即时切换模型，有两种模式：
+OpenDrSai CLI 支持在会话内即时切换模型，有两种模式：
 
 | 命令 | 别名 | 作用域 | 说明 |
 |------|------|--------|------|
@@ -512,7 +508,7 @@ DrSai CLI 支持在会话内即时切换模型，有两种模式：
 
 ### 7.1 设计理念
 
-项目指令系统借鉴了 Claude Code 的 `CLAUDE.md` 机制，但适配了 DrSai 的架构。它让 AI 在每次会话开始时自动理解你的项目上下文——构建命令、编码标准、架构决策、常见工作流等。
+项目指令系统借鉴了 Claude Code 的 `CLAUDE.md` 机制，但适配了 OpenDrSai 的架构。它让 AI 在每次会话开始时自动理解你的项目上下文——构建命令、编码标准、架构决策、常见工作流等。
 
 ### 7.2 文件发现机制
 
@@ -522,7 +518,7 @@ DrSai CLI 支持在会话内即时切换模型，有两种模式：
 
 | 优先级 | 文件 | 说明 |
 |--------|------|------|
-| 1 | `.drsai/DRSAI.md` | DrSai 原生格式（推荐） |
+| 1 | `.drsai/DRSAI.md` | OpenDrSai 原生格式（推荐） |
 | 2 | `.claude/CLAUDE.md` | Claude Code 兼容格式 |
 | 3 | `DRSAI.md` | 项目根目录直放 |
 | 4 | `CLAUDE.md` | Claude Code 兼容直放 |
@@ -564,7 +560,7 @@ DRSAI.md 支持 `@path/to/file` 导入语法，在加载时递归展开：
 
 DRSAI.md 中非代码块区域的 HTML 注释 (`<!-- ... -->`) 在注入前被自动剥离，节省 context token。代码块内的注释保留不变：
 
-```markdown
+````markdown
 <!-- 这行注释会被剥离，不会浪费 token -->
 这是实际指令内容。
 
@@ -573,7 +569,7 @@ DRSAI.md 中非代码块区域的 HTML 注释 (`<!-- ... -->`) 在注入前被�
 def hello():
     pass
 ```
-```
+````
 
 ### 7.5 项目指令命令
 
@@ -633,7 +629,7 @@ def hello():
 
 ### 8.1 记忆层级
 
-DrSai CLI 的记忆系统通过 `DrSaiSQLiteChatCompletionContext` 实现，内置两个核心工具：
+OpenDrSai CLI 的记忆系统通过 `DrSaiSQLiteChatCompletionContext` 实现，内置两个核心工具：
 
 | 工具 | 说明 | 调用方式 |
 |------|------|----------|
@@ -641,7 +637,47 @@ DrSai CLI 的记忆系统通过 `DrSaiSQLiteChatCompletionContext` 实现，内�
 | `summry_conversation_to_memory` | 将对话总结存入长期记忆 | AI 自动调用或手动触发 |
 | `read_session_memory_by_index` | 按索引读取压缩前的原始消息 | 用于恢复被压缩的详细内容 |
 
-### 8.2 记忆检索
+### 8.2 手动压缩 (`/compress`)
+
+`/compress` 命令主动触发 LLM 摘要压缩，无需等待 token 超限自动触发。
+
+**语法**：
+
+```
+/compress                    使用默认 keep_recent=6 压缩
+/compress keep_recent=N      保留最近 N 条消息，压缩更早的消息
+/compress 10                 等价于 keep_recent=10
+/cmp                         别名
+/compress status             查看 token 使用情况（不执行压缩）
+```
+
+**压缩流程**（三层）：
+
+1. **Layer 0 — flush**：将内存中待写的消息刷新到 `SessionMessage` 表
+2. **Layer 1 — 工具结果清除**：`_compress_tool_results()` 将旧的工具调用结果替换为占位符（原始内容仍在 DB 中，可通过 `read_session_memory_by_index` 取回）
+3. **Layer 2 — LLM 摘要**：`_incremental_compress()` 将 `keep_recent` 之前的消息发给 LLM 生成摘要，用一条 `UserMessage("[Compressed conversation history]\n{摘要}")` 替换旧消息；摘要同时写入 `SessionSummary` 表供 FTS5 检索
+
+**压缩效果示例**：
+
+```
+✅ Memory compressed successfully!
+  Messages:  28 → 7 (compressed 21)
+  Tokens:    18500 → 3200 (saved 15300, 82.7%)
+
+  Summary preview:
+  用户讨论了 DrSai 项目的两个 bug 修复：SYSTEM_SKILLS_DIR 路径转义问题和 TUI banner 重复打印…
+```
+
+**进度反馈**：压缩期间（LLM 调用通常 10–60 秒），TUI 底部状态栏显示旋转 spinner 动画 `⠋ 正在压缩记忆 (保留最近 N 条)…`，完成后自动清除。
+
+**注意事项**：
+
+- 压缩仅修改内存中的 `_messages`，**不会删除** `SessionMessage` 表中的原始消息行
+- 压缩后的状态通过 `save_state()` 持久化到 `Thread.state`，下次回溯时加载的是压缩后的消息列表
+- 原始消息可通过 `retrieve_from_memory`（FTS5 检索）或 `read_session_memory_by_index`（按索引取回）访问
+- 如果消息数 ≤ `keep_recent`，压缩不会执行（无需压缩）
+
+### 8.3 记忆检索
 
 `retrieve_from_memory` 使用 BM25 排序的 FTS5 全文检索：
 
@@ -650,7 +686,7 @@ DrSai CLI 的记忆系统通过 `DrSaiSQLiteChatCompletionContext` 实现，内�
 - 支持元数据条件过滤（如按 thread_id）
 - 可调节相似度阈值和分页大小
 
-### 8.3 记忆与 Session 的关系
+### 8.4 记忆与 Session 的关系
 
 ```
 Session A (thread_id: aaa...)
@@ -1128,6 +1164,12 @@ drsai --url http://localhost:42858/apiv2
 | `/init` | | 创建 DRSAI.md |
 | `/memory` | `show|reload|status` | 项目指令管理 |
 
+### 记忆管理
+
+| 命令 | 别名 | 参数 | 说明 |
+|------|------|------|------|
+| `/compress` | `/cmp` | `[keep_recent=N\|status]` | 手动压缩对话记忆（LLM 摘要），默认保留最近 6 条；`status` 查看 token 使用情况 |
+
 ### 状态与信息
 
 | 命令 | 说明 |
@@ -1199,6 +1241,14 @@ drsai --url http://localhost:42858/apiv2
 |------|------|------|------|
 | `/daemons` | — | — | 打开 Daemon 管理面板（attach / stop / 查看日志） |
 | `/daemon-model` | `/dmodel` | `<name> [model]` | 查看或切换 daemon 模型 |
+
+### GFS 集成
+
+| 命令 | 别名 | 参数 | 说明 |
+|------|------|------|------|
+| `/gfs` | — | — | 打开 GFS 配置面板（状态查看、内联编辑、测试连接、清除配置） |
+
+> GFS (高能所文件系统) 集成让 Agent 通过 function-calling 直接读写用户的 GFS bucket。详见 [§22](#22-gfs-高能所文件系统集成)。
 
 ---
 
@@ -1768,7 +1818,7 @@ wechat_user_id → chat_id (微信用户 ID)
 
 | 文件 | 路径 | 说明 |
 |------|------|------|
-| CLI 配置 | `~/.drsai/configs/cli_config.json` | API Key、模型、Plan Mode、max_agent_concurrent 等 |
+| CLI 配置 | `~/.drsai/configs/cli_config.json` | API Key、模型、Plan Mode、max_agent_concurrent、GFS 配置（`gfs` 子对象）等 |
 | Session 存储 | SQLite `Thread` 表 | 对话历史、状态、元数据（含 tags/pinned/archived） |
 | Agent Workspace | `~/.drsai/workspace/runs/<user_id>/` | Agent 工作目录 |
 | Agent 配置 | `~/.drsai/workspace/runs/<user_id>/configs/` | AGENTS.md、TOOLS_CONFIG.json 等 |
@@ -1835,7 +1885,7 @@ wechat_user_id → chat_id (微信用户 ID)
 
 ### 21.1 概念
 
-**Subagent（子智能体）** 是 DrSai CLI 的分层任务委派机制。当主智能体遇到复杂任务时，可将子任务委派给专门的子智能体执行。子智能体具有以下特性：
+**Subagent（子智能体）** 是 OpenDrSai CLI 的分层任务委派机制。当主智能体遇到复杂任务时，可将子任务委派给专门的子智能体执行。子智能体具有以下特性：
 
 - **隔离上下文**：子智能体拥有独立的对话上下文，**看不到**父智能体的对话历史（Hermes 风格）。必须在 `prompt` 和 `context` 字段中提供完整信息
 - **独立工具集**：每个子智能体可使用不同的工具白名单/黑名单
@@ -2166,3 +2216,140 @@ Daemon Process (独立进程)
 - `/agent <name>` → 写入 `_thread_state.default_subagent` + 可选持久化到 `THREAD_CONFIG.json`
 - `/agent clear` → 清空 `_thread_state.default_subagent`
 - Session 恢复时：`_thread_state > THREAD_CONFIG.json`（内存优先）
+
+---
+
+## 22 GFS 高能所文件系统集成
+
+> **实现状态**：Personal 模式已实现（`modules/managers/gfs/`）。TUI 配置面板已实现（`/gfs`），支持状态查看、内联编辑、连接测试、配置清除。TUI 只支持 Personal 模式。
+
+### 22.1 概述
+
+GFS (高能所文件系统) 集成让 Agent 通过 function-calling 工具直接读写用户的 GFS bucket。Agent 可以：
+
+- `gfs_ls` — 列出 bucket 内的文件/目录（输出截断至 5000 字符）
+- `gfs_stat` — 查看文件元信息（大小、etag、修改时间）
+- `gfs_read` — 读取文本文件全文（支持 `minilimit`/`maxlimit` 按行分页，输出截断至 5000 字符）
+- `gfs_write` — 写入文本到 bucket
+- `gfs_upload` — 上传本地文件到 bucket
+- `gfs_download` — 下载文件到本地
+- `gfs_share_url` — 生成临时预签名下载 URL（限时分享）
+- `gfs_delete` — 删除文件
+
+工具名以 `gfs_` 前缀，与 Agent 内置的 `run_read` / `run_write` 等本地文件工具共存，由 system prompt 引导选择。`gfs_read` 和 `gfs_ls` 的输出限制与 `run_read` 保持一致（5000 字符截断），防止单次工具调用占用过多上下文。
+
+### 22.2 两种模式
+
+| 模式 | 凭证来源 | 适用场景 | 是否需要管理员 Key |
+|------|---------|---------|-------------------|
+| **Personal**（个人） | 用户自己的 AK/SK | 本地 / 单用户实例（TUI `/gfs` 配置） | 否 |
+| **Admin**（管理员） | 管理员 X-API-Key 按用户邮箱自动分配 | 多用户服务（生产 worker） | 是 |
+
+> **TUI 只支持 Personal 模式。** Admin 模式由生产环境 worker 使用，不在 CLI/TUI 上下文中。
+
+### 22.3 TUI 配置（`/gfs`）
+
+在 TUI 中输入 `/gfs` 打开 GFS 配置面板。面板有两个视图：**状态视图**（默认）和**编辑视图**。
+
+#### 状态视图
+
+```
+📁 GFS Configuration — 高能所文件系统
+
+● GFS Tools: ENABLED (mode: personal)
+
+Credentials:
+▶ Enabled: true (Enter to toggle)
+  Access Key: ***niLd (Enter to edit)
+  Secret Key: ***QMgw (Enter to edit)
+  Bucket: 20235-xiongdb (Enter to edit)
+  Email: xiongdb@ihep.ac.cn (Enter to edit)
+  S3 Endpoint: (default) (Enter to edit)
+
+config: /home/xiongdb/.drsai/configs/cli_config.json
+
+↑↓ navigate · Enter/→ edit · s toggle · t test · c clear · q quit
+```
+
+| 快捷键 | 功能 |
+|--------|------|
+| `↑` / `↓` | 上下移动光标，选中配置项（Enabled / Access Key / Secret Key / Bucket / Email / S3 Endpoint） |
+| `Enter` | 光标在 Enabled 行 → 切换启用/禁用；在字段行 → 进入该字段编辑 |
+| `→` (右箭头) | 进入当前选中字段的编辑（同 Enter 字段行） |
+| `e` | 进入完整编辑表单（从第一个字段开始） |
+| `t` | 测试连接（S3 健康检查，调用 `list_objects_v2`） |
+| `s` | 切换启用/禁用 |
+| `c` | 清除所有 GFS 配置 |
+| `r` | 刷新配置状态 |
+| `q` / `Esc` | 退出面板 |
+
+#### 编辑视图
+
+在状态视图选中某项后按 `Enter`、`→` 或按 `e` 进入编辑视图，可直接键盘输入修改字段内容：
+
+- **↑ / ↓** 或 **Tab**：在 5 个字段间切换
+- **键盘输入**：编辑当前字段文本（字符追加到末尾）
+- **Backspace**：删除末尾字符
+- **s**：在编辑视图中直接切换启用/禁用
+- **Enter**：切换到下一个字段；在最后一个字段（S3 Endpoint）按 Enter 保存
+- **Esc**：取消编辑，返回状态视图
+
+已有的 AK/SK 显示为 `(unchanged — ***)`，留空表示不修改原值。
+
+### 22.4 配置存储
+
+GFS 配置持久化在 `~/.drsai/configs/cli_config.json` 的 `"gfs"` 键下：
+
+```json
+{
+  "user_id": "xiongdb",
+  "api_key": "...",
+  "gfs": {
+    "enabled": true,
+    "mode": "personal",
+    "access_key": "e94UWOls...",
+    "secret_key": "2psxS5...",
+    "bucket": "20235-xiongdb",
+    "email": "xiongdb@ihep.ac.cn",
+    "s3_endpoint": ""
+  }
+}
+```
+
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| `enabled` | 是 | `true`/`false`，总开关 |
+| `mode` | 否 | `"personal"` / 留空（自动判定） |
+| `access_key` | Personal 模式必填 | 个人 Access Key |
+| `secret_key` | Personal 模式必填 | 个人 Secret Key |
+| `bucket` | Personal 模式必填 | 完整桶名（如 `20235-xiongdb`） |
+| `email` | 否 | 仅用于日志标识 |
+| `s3_endpoint` | 否 | 默认 `https://fgws3-gfs.ihep.ac.cn` |
+
+> **凭证获取**：在 https://gfs.ihep.ac.cn 网页端「密钥管理」页拿到自己的 AK/SK。
+
+### 22.5 工具注入流程
+
+```
+Session 创建 (_ensure_agent_session)
+  ↓ cli_config.load_config() → cli_cfg (含 "gfs" 子dict)
+  ↓
+create_agent(cli_cfg=cli_cfg)
+  ↓ _build_gfs_tools(user_id, cli_cfg=cli_cfg)
+     ↓ 只从 cli_cfg["gfs"] 读取配置（不读 os.environ）
+     ↓ GfsCredential(access_key, secret_key, bucket, ...)
+     ↓ GfsUserClient(cred) → make_gfs_tools_personal(client=client) → 8个工具
+  ↓
+DrSaiAssistant(tools=[..., *gfs_tools])
+```
+
+**重要**：GFS 工具在 Agent 创建时注入。保存配置后需重启 Session（`/new` 或 `/switch`）才能让新配置生效。
+
+### 22.6 RPC 方法
+
+| RPC 方法 | 说明 | 是否长操作 |
+|----------|------|-----------|
+| `gfs.status` | 读取当前 GFS 配置（凭证掩码显示） | 否 |
+| `gfs.save` | 保存配置到 `cli_config.json`（不写入 `os.environ`） | 否 |
+| `gfs.test` | 测试 GFS 连接（S3 健康检查） | 是（`_LONG_HANDLERS`） |
+| `gfs.clear` | 清除 GFS 配置（同时清理 `os.environ` 中的残留） | 否 |

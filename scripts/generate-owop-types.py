@@ -11,7 +11,7 @@ from typing import Any, Mapping
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SCHEMA = ROOT / "protocol" / "owop" / "owop.schema.json"
 DEFAULT_PYTHON = ROOT / "cores" / "python" / "packages" / "drsai" / "src" / "drsai" / "owop" / "generated.py"
-DEFAULT_TYPESCRIPT = ROOT / "apps" / "desktop" / "windows" / "src" / "shared" / "owop.generated.ts"
+DEFAULT_TYPESCRIPT = ROOT / "apps" / "desktop" / "shared" / "api" / "owop.generated.ts"
 
 
 def class_name(operation: str) -> str:

@@ -7,19 +7,41 @@ from ..datamodel.db import Userinfo
 AuthSource = Literal["local", "sso"]
 
 
-def record_auth_source(db, user_id: str, source: AuthSource) -> None:
-    """Persist the most recent login method for user-management display."""
+def record_auth_source(
+    db, user_id: str, source: AuthSource, user_source: str | None = None
+) -> None:
+    """Persist the most recent login method for user-management display.
+
+    Args:
+        user_source: Optional discriminator for SSO subtypes (e.g. "science_user").
+                     Stored in meta alongside auth_source.
+    """
     response = db.get(Userinfo, filters={"user_id": user_id}, return_json=False)
     if response.status and response.data:
         user: Userinfo = response.data[0]
         meta = dict(getattr(user, "meta", None) or {})
         meta["auth_source"] = source
+        if user_source:
+            meta["user_source"] = user_source
         user.meta = meta
         db.upsert(user)
         return
 
+    meta: dict = {"auth_source": source}
+    if user_source:
+        meta["user_source"] = user_source
     if source == "sso":
-        db.upsert(Userinfo(user_id=user_id, password=None, meta={"auth_source": "sso"}))
+        db.upsert(Userinfo(user_id=user_id, password=None, meta=meta))
+
+
+def get_user_source(db, user_id: str) -> str | None:
+    """Read user_source from Userinfo.meta, or None if not set."""
+    response = db.get(Userinfo, filters={"user_id": user_id}, return_json=False)
+    if response.status and response.data:
+        user: Userinfo = response.data[0]
+        meta = dict(getattr(user, "meta", None) or {})
+        return meta.get("user_source")
+    return None
 
 
 def resolve_auth_source(

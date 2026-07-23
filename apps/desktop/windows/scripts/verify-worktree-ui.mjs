@@ -8,7 +8,7 @@ const root = resolve(new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-
 const temp = mkdtempSync(join(tmpdir(), "opendrsai-worktree-ui-"));
 const bundle = join(temp, "presentation.mjs");
 try {
-  await build({ entryPoints: [join(root, "src/renderer/src/components/worktreePresentation.ts")], outfile: bundle, bundle: true, platform: "node", format: "esm", target: "node22" });
+  await build({ entryPoints: [join(root, "../shared/renderer/src/components/worktreePresentation.ts")], outfile: bundle, bundle: true, platform: "node", format: "esm", target: "node22" });
   const { buildWorktreeReview, getWorktreeActions, getWorktreeListMode, getWorktreeVisualState } = await import(pathToFileURL(bundle).href);
   assert(getWorktreeListMode(0, false, null) === "empty", "empty state failed");
   assert(getWorktreeListMode(0, false, "Runtime offline") === "offline", "offline state failed");
@@ -33,7 +33,7 @@ try {
     { diff: "+change" },
   );
   assert(blocked.readiness.status === "blocked" && blocked.conflict.active, "conflict must block merge readiness");
-  const shell = readFileSync(join(root, "src/renderer/src/components/WorkspaceShell.tsx"), "utf8");
+  const shell = readFileSync(join(root, "../shared/renderer/src/components/WorkspaceShell.tsx"), "utf8");
   assert(shell.includes("onListWorktreeEvents"), "Worktree UI does not consume Runtime events");
   assert(shell.includes("worktreeEventCursor.current"), "Worktree UI does not maintain an incremental event cursor");
   assert(shell.includes('document.visibilityState !== "visible"'), "Worktree event polling must pause while the app is hidden");

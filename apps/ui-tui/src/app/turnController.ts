@@ -17,6 +17,7 @@
 import type { GatewayClient } from '../gatewayClient.js'
 
 import { $isStreaming, $current, appendTurn, setCurrent } from './turnStore.js'
+import { $memoryPreview } from './uiStore.js'
 import { newAssistantTurn } from './types.js'
 
 export interface ImageAttachment {
@@ -47,6 +48,10 @@ export class TurnController {
     const trimmed = opts.text.trim()
     if (!trimmed) return
     if ($isStreaming.get()) return
+
+    // Clear the memory preview banner — user has seen it and is now
+    // starting a new interaction.
+    $memoryPreview.set('')
 
     // Lock in user turn + start a placeholder assistant turn.
     appendTurn({ role: 'user', text: opts.displayText?.trim() || trimmed, ts: Date.now() })

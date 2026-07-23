@@ -14,16 +14,16 @@ function assert(condition, message) {
   }
 }
 
-const sharedApi = read("src/shared/desktopApi.ts");
-const policy = read("src/shared/executionPolicy.ts");
+const sharedApi = read("../shared/api/desktopApi.ts");
+const policy = read("../shared/api/executionPolicy.ts");
 const main = read("src/main/index.ts");
-const agentRuns = read("src/main/agentRuns.ts");
-const checkpoints = read("src/main/workspaceCheckpoints.ts");
-const preload = read("src/preload/index.ts");
-const mock = read("src/renderer/src/mockDesktopApi.ts");
-const filesPanel = read("src/renderer/src/components/files/FilesContextPanel.tsx");
-const approvalCenter = read("src/renderer/src/components/ApprovalCenterView.tsx");
-const styles = read("src/renderer/src/styles.css");
+const agentRuns = read("../shared/main/agentRuns.ts");
+const checkpoints = read("../shared/main/workspaceCheckpoints.ts");
+const preload = read("../shared/main/preload.ts");
+const mock = read("../shared/renderer/src/mockDesktopApi.ts");
+const filesPanel = read("../shared/renderer/src/components/files/FilesContextPanel.tsx");
+const approvalCenter = read("../shared/renderer/src/components/ApprovalCenterView.tsx");
+const styles = read("../shared/renderer/src/styles.css");
 const e2eSmoke = read("src/main/e2eSmoke.ts");
 const packageJson = read("package.json");
 const roadmap = read("docs/smart-chat-bar-roadmap.md");

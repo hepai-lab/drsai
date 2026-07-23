@@ -15,17 +15,17 @@ function assert(condition, message) {
 }
 
 const packageJson = read("package.json");
-const sharedApi = read("src/shared/desktopApi.ts");
+const sharedApi = read("../shared/api/desktopApi.ts");
 const main = read("src/main/index.ts");
 const remoteWorkspace = read("src/main/remoteWorkspace.ts");
 const realRemoteGateway = read("scripts/verify-real-remote-gateway.mjs");
 const runtimeReliability = read("src/main/runtimeReliability.ts");
-const workspaces = read("src/main/workspaces.ts");
+const workspaces = read("../shared/main/workspaces.ts");
 const terminal = read("src/main/terminal.ts");
-const preload = read("src/preload/index.ts");
-const app = read("src/renderer/src/App.tsx");
-const terminalPanel = read("src/renderer/src/components/TerminalPanel.tsx");
-const mock = read("src/renderer/src/mockDesktopApi.ts");
+const preload = read("../shared/main/preload.ts");
+const app = read("../shared/renderer/src/App.tsx");
+const terminalPanel = read("../shared/renderer/src/components/TerminalPanel.tsx");
+const mock = read("../shared/renderer/src/mockDesktopApi.ts");
 const checklist = read("docs/chatbar-capability-checklist.md");
 const roadmap = read("docs/smart-chat-bar-roadmap.md");
 

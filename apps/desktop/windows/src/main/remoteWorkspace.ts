@@ -7,13 +7,13 @@ import type { ConnectRemoteWorkspaceRequest, DesktopForkWorktreeResult, DesktopT
 import { createRemoteWorkspace, findWorkspaceById, listWorkspaces, setRemoteWorkspaceAutoReconnect } from "./workspaces";
 import { RemoteGatewayClient } from "./remoteGatewayClient.generated";
 import { RemoteRuntimeClient } from "./runtimeClient";
-import { REMOTE_CAPABILITY_VERSIONS, REMOTE_SSH_PROTOCOL_VERSION } from "../shared/remoteSshProtocol";
+import { REMOTE_CAPABILITY_VERSIONS, REMOTE_SSH_PROTOCOL_VERSION } from "../../../shared/api/remoteSshProtocol";
 import { resolveScpExecutable, resolveSshExecutable, resolveSshKeyscanExecutable } from "./sshExecutable";
 import { ReconnectBackoff, RuntimeInstanceTracker, classifyRemoteFailure, type RemoteFailureKind } from "./runtimeReliability";
-import { loadRuntimeArtifactTrustStore, verifyRuntimeArtifactTrust } from "./runtimeArtifactTrust";
+import { loadRuntimeArtifactTrustStore, verifyRuntimeArtifactTrust } from "../../../shared/main/runtimeArtifactTrust";
 import { HostProfileStore, assertHostCanBeRemoved, makeHostProfile, redactSshDiagnostic } from "./hostConnectionManager";
 import { PortForwardRegistry, type CreatePortForwardRequest, type PortForwardResource } from "./portForwardRegistry";
-import { shouldRestorePersistedRemoteWorkspace } from "./remoteWorkspaceRestorePolicy";
+import { shouldRestorePersistedRemoteWorkspace } from "../../../shared/main/remoteWorkspaceRestorePolicy";
 
 const SSH_TIMEOUT_MS = 12_000;
 const REMOTE_PORT = 18642;
@@ -1082,8 +1082,8 @@ export async function executeRemoteWorkspaceMutation(action: "stage-file" | "rev
     : { workspacePath: value.workspacePath, path: value.path, reverted: true, message: "Remote file reverted." };
 }
 
-export async function commitRemoteWorkspace(workspacePath: string, message: string, body?: string): Promise<void> {
-  await remotePost(workspacePath, "/git/commit", { message, body });
+export async function commitRemoteWorkspace(workspacePath: string, message: string, body?: string, approvalId?: string): Promise<void> {
+  await remotePost(workspacePath, "/git/commit", { message, body, idempotency_key: approvalId });
 }
 
 export async function listRemoteWorkspaceFiles(request: WorkspaceFileTreeRequest): Promise<WorkspaceFileTreeResult> {
