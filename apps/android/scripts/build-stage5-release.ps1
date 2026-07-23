@@ -1,7 +1,7 @@
 param(
     [switch]$SkipBuild,
     [switch]$SkipStage5Acceptance,
-    [string]$Channel = "stable",
+    [string]$Channel = "beta",
     [string]$ReleaseBaseUrl = "https://github.com/hepai-lab/drsai/releases/download"
 )
 
@@ -53,7 +53,8 @@ if (-not $certLine) { throw "APK signer SHA-256 digest missing" }
 $certSha256 = ($certLine -split 'SHA-256 digest:', 2)[1].Trim()
 $hash = (Get-FileHash -LiteralPath $apk -Algorithm SHA256).Hash.ToLowerInvariant()
 $size = (Get-Item -LiteralPath $apk).Length
-$url = "$($ReleaseBaseUrl.TrimEnd('/'))/android-v$version/$fileName"
+$releaseTag = "v$version"
+$url = "$($ReleaseBaseUrl.TrimEnd('/'))/$releaseTag/$fileName"
 
 $output = Join-Path $project "app\build\stage5-release"
 New-Item -ItemType Directory -Force -Path $output | Out-Null
@@ -64,7 +65,7 @@ $manifest = [ordered]@{
     version = $version
     versionCode = ([int]($version.Split('.')[0]) * 10000) + ([int]($version.Split('.')[1]) * 100) + [int]($version.Split('.')[2])
     publishedAt = [DateTimeOffset]::UtcNow.ToString('o')
-    minimumSupportedVersion = "1.4.0"
+    minimumSupportedVersion = "1.4.9"
     mandatory = $false
     apk = [ordered]@{
         url = $url
@@ -72,6 +73,7 @@ $manifest = [ordered]@{
         sha256 = $hash
         signingCertSha256 = $certSha256.ToLowerInvariant()
     }
+    releaseNotesUrl = "https://github.com/hepai-lab/drsai/releases/tag/$releaseTag"
 }
 $report = [ordered]@{
     generated_at = [DateTimeOffset]::UtcNow.ToString('o')
