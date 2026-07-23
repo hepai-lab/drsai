@@ -425,7 +425,7 @@ async function run() {
   await captureVisual(languageWin, "language-switch");
   if (!languageAudit.text.includes("Desktop Status")) fail("English desktop status did not render");
   if (!languageAudit.text.includes("Check Updates")) fail("English action labels did not render");
-  if (!languageAudit.buttons.some((button) => button.text === "New chat" || button.text === "Settings")) fail("English navigation did not render");
+  if (!languageAudit.buttons.some((button) => button.text === "New task" || button.text === "Settings")) fail("English navigation did not render");
   languageWin.close();
 
   if (failures.length) {
@@ -441,7 +441,7 @@ async function run() {
 
 async function runCurrentVisual() {
   const text = {
-    newChatZh: "\u5f00\u59cb\u804a\u5929",
+    newTaskZh: "\u65b0\u5efa\u4efb\u52a1",
     searchZh: "\u641c\u7d22",
     scheduledZh: "\u5df2\u5b89\u6392",
     agentsZh: "\u667a\u80fd\u4f53",
@@ -601,14 +601,14 @@ async function runCurrentVisual() {
       );
     }
     if (!audit.text.includes("OpenDrSai")) fail(audit.label + " is missing brand text");
-    if (!includesAny(audit.text, [text.newChatZh, "New chat"])) fail(audit.label + " is missing new chat action");
+    if (!includesAny(audit.text, [text.newTaskZh, "New task"])) fail(audit.label + " is missing new task action");
     if (!includesAny([audit.text, ...audit.inputPlaceholders].join(" "), [text.searchZh, "Search"])) {
       fail(audit.label + " is missing search action");
     }
     if (!includesAny(audit.text, [text.workspaceZh, "Workspace"])) fail(audit.label + " is missing workspace section");
     if (!audit.hasTextarea) fail(audit.label + " is missing chat textarea");
     const accessibleNav = audit.buttons.filter((button) =>
-      [text.newChatZh, text.searchZh, text.scheduledZh, text.agentsZh, text.skillsZh, text.settingsZh, "New chat", "Search", "Scheduled", "Agents", "Skills", "Settings"].includes(
+      [text.newTaskZh, text.searchZh, text.scheduledZh, text.agentsZh, text.skillsZh, text.settingsZh, "New task", "Search", "Scheduled", "Agents", "Skills", "Settings"].includes(
         button.text,
       ),
     );
@@ -688,7 +688,7 @@ async function runCurrentVisual() {
   await new Promise((resolve) => setTimeout(resolve, 50));
   const languageAudit = await auditWindow(languageWin, "language-switch");
   await captureVisual(languageWin, "language-switch");
-  if (!languageAudit.text.includes("New chat")) fail("English new chat action did not render");
+  if (!languageAudit.text.includes("New task")) fail("English new task action did not render");
   if (!languageAudit.text.includes("Settings")) fail("English settings navigation did not render");
   if (!languageAudit.text.includes("Workspace")) fail("English workspace section did not render");
   languageWin.close();

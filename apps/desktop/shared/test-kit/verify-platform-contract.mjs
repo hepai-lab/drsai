@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import { readFileSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -14,6 +14,9 @@ const windowsRoot = join(desktopRoot, "windows");
 const requireFromApp = createRequire(join(desktopRoot, "package.json"));
 const { build } = requireFromApp("esbuild");
 const temp = await mkdtemp(join(tmpdir(), "opendrsai-platform-contract-"));
+process.once("exit", () => {
+  rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+});
 const bundle = join(temp, "windows-platform.mjs");
 const macosBundle = join(temp, "macos-platform.mjs");
 await build({

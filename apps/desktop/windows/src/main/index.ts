@@ -5566,7 +5566,7 @@ function publicSessionLooksHeadlessOidc(
   const asRecord = session as unknown as Record<string, unknown>;
   const strictFakeUser =
     !process.env.OPENDRSAI_E2E_OIDC_EXTERNAL_ISSUER &&
-    session.user?.id === "e2e-hai-user" &&
+    session.user?.id === "1f4b65b9-9f5d-4dfc-8d7d-10a61cd9f651" &&
     session.user?.email === "e2e-hai-user@ihep.ac.cn";
   const externalIssuerUser =
     Boolean(process.env.OPENDRSAI_E2E_OIDC_EXTERNAL_ISSUER) &&

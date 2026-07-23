@@ -1,4 +1,5 @@
 import { build } from "esbuild";
+import { rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -25,6 +26,11 @@ if (!source) throw new Error("Bundled test produced no executable output.");
 const directory = coverageBundleRoot
   ? join(resolve(coverageBundleRoot), `${Date.now()}-${process.pid}-${Math.random().toString(16).slice(2)}`)
   : await mkdtemp(join(tmpdir(), "opendrsai-bundled-test-"));
+if (!coverageBundleRoot) {
+  process.once("exit", () => {
+    rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  });
+}
 await mkdir(directory, { recursive: true });
 const output = join(directory, "test.mjs");
 try { await writeFile(output, source, "utf8"); await import(pathToFileURL(output).href); }
