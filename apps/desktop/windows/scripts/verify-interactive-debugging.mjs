@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { createRequire } from "node:module";
 import ts from "typescript";
+import { macosIpcSource } from "../../shared/test-kit/desktopIpcSource.mjs";
 
 const root = process.cwd();
 const require = createRequire(import.meta.url);
@@ -100,7 +101,9 @@ try {
   await secondService.control({ sessionId: restored.id, action: "disconnect" });
   await isolatedService.control({ sessionId: isolated.id, action: "disconnect" });
 
-  const mainIndex = readFileSync(join(root, "src/main/index.ts"), "utf8");
+  const mainIndex = basename(root) === "macos"
+    ? macosIpcSource(resolve(root, ".."))
+    : readFileSync(join(root, "src/main/index.ts"), "utf8");
   const preload = readFileSync(join(root, "../shared/main/preload.ts"), "utf8");
   const panel = readFileSync(join(root, "../shared/renderer/src/components/DebugPanel.tsx"), "utf8");
   const pyproject = readFileSync(join(root, "../../../cores/python/packages/drsai/pyproject.toml"), "utf8");

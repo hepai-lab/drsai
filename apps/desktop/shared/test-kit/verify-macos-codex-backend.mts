@@ -8,7 +8,7 @@ assert.equal(presentCodexBackendStatus({ backend_id: "codex", available: true, v
 const available = presentCodexBackendStatus({ backend_id: "codex", available: true, version: "1" }, { logged_in: true, auth_mode: "chatgpt", email: "user@example.test", plan_type: null, credential_source: null });
 assert.equal(available.state, "available"); assert.equal(available.accountLabel, "user@example.test");
 
-const main = await readFile(new URL("../../macos/src/main/index.ts", import.meta.url), "utf8");
-for (const channel of ["desktop:get-codex-backend-status", "desktop:start-codex-backend-login", "desktop:cancel-codex-backend-login", "desktop:logout-codex-backend"]) assert.ok(main.includes(channel));
-assert.match(main, /assertAllowedExternalUrl\(externalUrl\)/, "Codex login URL must use the external URL allowlist.");
+const runtimeServices = await readFile(new URL("../../macos/src/main/ipc/registerRuntimeServicesIpc.ts", import.meta.url), "utf8");
+for (const channel of ["desktop:get-codex-backend-status", "desktop:start-codex-backend-login", "desktop:cancel-codex-backend-login", "desktop:logout-codex-backend"]) assert.ok(runtimeServices.includes(channel));
+assert.match(runtimeServices, /assertAllowedExternalUrl\(externalUrl\)/, "Codex login URL must use the external URL allowlist.");
 console.log("macOS Codex backend lifecycle verification passed.");

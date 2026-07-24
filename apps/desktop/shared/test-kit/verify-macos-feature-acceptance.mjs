@@ -9,6 +9,7 @@ import { coreStateMachineSources, coverageThresholds, integrationAdapterSources,
 import { macosFeatureModules } from "./macosFeatureCatalog.mjs";
 import { macosVerificationSuiteDefinition, macosVerificationSuites, macosVerificationSuiteIds } from "./macosVerificationSuites.mjs";
 import { assertEvidenceFeatureCoverage } from "./platformFeatureEvidence.mjs";
+import { macosIpcSource } from "./desktopIpcSource.mjs";
 
 const scriptRoot = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(scriptRoot, "../..");
@@ -152,7 +153,11 @@ const rendererL3Evidence = (() => {
 })();
 const preloadChannels = channelSet("shared/main/preload.ts", [/ipcRenderer\.invoke\(\s*["'](desktop:[^"']+)["']/g]);
 const windowsChannels = channelSet("windows/src/main/index.ts", [/secureHandle\(\s*["'](desktop:[^"']+)["']/g, /ipcMain\.handle\(\s*["'](desktop:[^"']+)["']/g]);
-const macosChannels = channelSet("macos/src/main/index.ts", [/secureHandle\(\s*["'](desktop:[^"']+)["']/g, /ipcMain\.handle\(\s*["'](desktop:[^"']+)["']/g]);
+const macosChannels = (() => {
+  const source = macosIpcSource(desktopRoot); const result = new Set();
+  for (const pattern of [/secureHandle\(\s*["'](desktop:[^"']+)["']/g, /ipcMain\.handle\(\s*["'](desktop:[^"']+)["']/g]) for (const match of source.matchAll(pattern)) result.add(match[1]);
+  return result;
+})();
 const missingOnMacos = [...preloadChannels].filter((channel) => !macosChannels.has(channel)).sort();
 const missingOnWindows = [...preloadChannels].filter((channel) => !windowsChannels.has(channel)).sort();
 assert.deepEqual(missingOnMacos, [], "acceptance report found preload IPC missing on macOS");

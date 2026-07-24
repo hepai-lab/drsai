@@ -7,9 +7,14 @@ import { promisify } from "node:util";
 import { app } from "electron";
 import type { InstallProgress } from "../../../shared/api/desktopApi";
 import { DRSAI_HOME, DRSAI_PYTHON, DRSAI_REPO, DRSAI_SCRIPT } from "../../../shared/main/paths";
+import { assertRuntimeSymlinkStaysInsideRoot } from "./runtimeFilesystemPolicy";
+import { isVirtualEnvironmentConfig, relocateRuntimeVirtualEnvironments, verifyRelocatedVirtualEnvironmentConfig } from "./runtimeVirtualEnvironment";
 
 const execFileAsync = promisify(execFile);
 const MIN_FREE_BYTES = 512 * 1024 * 1024;
+const MIN_ARCHIVE_BYTES_PER_SECOND = 8 * 1024 * 1024;
+const MIN_EXTRACTION_TIMEOUT_MS = 120_000;
+const MAX_EXTRACTION_TIMEOUT_MS = 600_000;
 
 interface RuntimeFile { path: string; sha256: string; size: number }
 interface RuntimeManifest {
@@ -55,14 +60,18 @@ export async function ensureBundledRuntimeInstalled(onProgress: (progress: Insta
     const backup = `${DRSAI_REPO}.previous`;
     let movedExisting = false;
     try {
-      emit("Extracting bundled Runtime...");
+      const extractionTimeoutMs = runtimeExtractionTimeoutMs(manifest.archiveSize);
+      emit(`Extracting bundled Runtime (timeout ${Math.ceil(extractionTimeoutMs / 1_000)}s)...`);
       await mkdir(transactionRoot, { recursive: true });
-      await execFileAsync("/usr/bin/tar", ["-xzf", archive, "-C", transactionRoot], { timeout: 120_000, signal: controller.signal });
+      await execFileAsync("/usr/bin/tar", ["-xzf", archive, "-C", transactionRoot], { timeout: extractionTimeoutMs, signal: controller.signal });
+      emit("Verifying extracted Runtime inventory...");
       await verifyRuntimeContents(candidate, manifest.files, controller.signal);
+      emit("Relocating Runtime virtual environments...");
+      await relocateRuntimeVirtualEnvironments(candidate, manifest.pythonVersion);
       const candidatePython = join(candidate, manifest.python);
       emit("Checking Runtime Python architecture and imports...");
       const importStatement = "import drsai";
-      const probe = await execFileAsync(candidatePython, ["-c", `${importStatement}; import platform; print(platform.machine()); print(platform.python_version()); print(drsai.__file__)`], { timeout: 60_000, signal: controller.signal, env: { ...process.env, PYTHONNOUSERSITE: "1" } });
+      const probe = await execFileAsync(candidatePython, ["-c", `${importStatement}; import platform; print(platform.machine()); print(platform.python_version()); print(drsai.__file__)`], { timeout: 60_000, signal: controller.signal, env: { ...process.env, PYTHONNOUSERSITE: "1", PYTHONDONTWRITEBYTECODE: "1" } });
       const [architecture, pythonVersion] = probe.stdout.trim().split(/\r?\n/);
       if (architecture !== manifest.arch || pythonVersion !== manifest.pythonVersion) throw new Error("Bundled Runtime Python architecture or version is invalid.");
       if (!existsSync(join(candidate, manifest.launcher))) throw new Error("Bundled Runtime launcher is missing.");
@@ -72,6 +81,9 @@ export async function ensureBundledRuntimeInstalled(onProgress: (progress: Insta
       await rm(backup, { recursive: true, force: true });
       if (existsSync(DRSAI_REPO)) { await rename(DRSAI_REPO, backup); movedExisting = true; }
       await rename(candidate, DRSAI_REPO);
+      // The probe above needs candidate-relative metadata; activation changes
+      // that absolute root, so seal the venv metadata to its final location.
+      await relocateRuntimeVirtualEnvironments(DRSAI_REPO, manifest.pythonVersion);
       await rm(backup, { recursive: true, force: true });
       onProgress({ phase: "complete", message: "Runtime installation complete.", log, exitCode: 0 });
       return true;
@@ -86,12 +98,17 @@ export async function ensureBundledRuntimeInstalled(onProgress: (progress: Insta
   } finally { activeInstall = null; }
 }
 
+export function runtimeExtractionTimeoutMs(archiveSize: number): number {
+  if (!Number.isSafeInteger(archiveSize) || archiveSize <= 0) throw new Error("Runtime archive size is invalid.");
+  return Math.min(MAX_EXTRACTION_TIMEOUT_MS, Math.max(MIN_EXTRACTION_TIMEOUT_MS, Math.ceil(archiveSize / MIN_ARCHIVE_BYTES_PER_SECOND) * 1_000));
+}
+
 export async function inspectInstalledRuntime(): Promise<{ version: string | null; healthy: boolean }> {
   const marker = join(DRSAI_REPO, ".opendrsai-runtime.json");
   if (!existsSync(marker) || !existsSync(DRSAI_PYTHON) || !existsSync(DRSAI_SCRIPT)) return { version: null, healthy: false };
   try {
     const manifest = validateManifest(JSON.parse(await readFile(marker, "utf8")) as Partial<RuntimeManifest>);
-    await verifyRuntimeContents(DRSAI_REPO, manifest.files, new AbortController().signal, true);
+    await verifyRuntimeContents(DRSAI_REPO, manifest.files, new AbortController().signal, true, manifest.pythonVersion);
     return { version: manifest.version, healthy: true };
   } catch { return { version: null, healthy: false }; }
 }
@@ -106,7 +123,7 @@ function validateManifest(parsed: Partial<RuntimeManifest>): RuntimeManifest {
   return parsed as RuntimeManifest;
 }
 
-async function verifyRuntimeContents(root: string, expected: RuntimeFile[], signal: AbortSignal, installed = false): Promise<void> {
+async function verifyRuntimeContents(root: string, expected: RuntimeFile[], signal: AbortSignal, installed = false, pythonVersion?: string): Promise<void> {
   const actual = (await listFiles(root)).filter((path) => !installed || path !== ".opendrsai-runtime.json");
   if (actual.length !== expected.length) throw new Error("Bundled Runtime file inventory is incomplete or contains unexpected files.");
   const expectedByPath = new Map(expected.map((entry) => [entry.path, entry]));
@@ -114,7 +131,9 @@ async function verifyRuntimeContents(root: string, expected: RuntimeFile[], sign
     assertNotCancelled(signal);
     const entry = expectedByPath.get(path); if (!entry) throw new Error(`Unexpected Runtime file: ${path}`);
     const absolute = join(root, ...path.split("/")); const info = await stat(absolute);
-    if (info.size !== entry.size || await sha256(absolute) !== entry.sha256) throw new Error(`Runtime file verification failed: ${path}`);
+    if (installed && isVirtualEnvironmentConfig(path)) {
+      await verifyRelocatedVirtualEnvironmentConfig(root, path, absolute, pythonVersion);
+    } else if (info.size !== entry.size || await sha256(absolute) !== entry.sha256) throw new Error(`Runtime file verification failed: ${path}`);
   }
 }
 
@@ -123,8 +142,9 @@ async function listFiles(root: string): Promise<string[]> {
   async function visit(directory: string): Promise<void> {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const absolute = join(directory, entry.name);
-      if (entry.isSymbolicLink()) throw new Error(`Runtime contains a forbidden symbolic link: ${entry.name}`);
-      if (entry.isDirectory()) await visit(absolute); else if (entry.isFile()) result.push(relative(root, absolute).split(sep).join("/")); else throw new Error(`Runtime contains an unsupported entry: ${entry.name}`);
+      if (entry.isSymbolicLink()) {
+        await assertRuntimeSymlinkStaysInsideRoot(root, absolute);
+      } else if (entry.isDirectory()) await visit(absolute); else if (entry.isFile()) result.push(relative(root, absolute).split(sep).join("/")); else throw new Error(`Runtime contains an unsupported entry: ${entry.name}`);
     }
   }
   await visit(root); return result.sort();

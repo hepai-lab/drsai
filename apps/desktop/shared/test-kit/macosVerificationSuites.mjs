@@ -8,6 +8,10 @@ const typed = (id, file, aspects = ["positive", "negative"]) => ({ id, command: 
 // the behavior classes that the suite proves and is validated per feature.
 export const macosVerificationSuites = [
   direct("suite:macos-dev-setup", "../shared/test-kit/verify-macos-dev-setup.mjs", ["positive", "negative", "architecture"]),
+  direct("p2:native-helper", "../shared/test-kit/verify-native-helper-static.mjs", ["positive", "negative", "architecture", "authorization"]),
+  typed("p2:native-protocol", "../shared/test-kit/verify-native-helper.mts", ["positive", "negative", "cancel-timeout", "recovery"]),
+  typed("p2:native-keychain", "../shared/test-kit/verify-native-credential-service.mts", ["positive", "negative", "authorization", "recovery", "privacy"]),
+  typed("p2:process-lifecycle", "../shared/test-kit/verify-managed-process-registry.mts", ["positive", "negative", "cancel-timeout", "recovery", "architecture"]),
   direct("suite:shell-contract", "../shared/test-kit/verify-macos-contract.mjs", ["positive", "platform-contract"]),
   direct("suite:secure-ipc", "../shared/test-kit/verify-secure-ipc.mts", ["positive", "negative", "authorization", "cancel-timeout", "idempotency"]),
   direct("suite:security-policy", "../shared/test-kit/verify-desktop-security-policy.mts", ["positive", "negative", "authorization"]),
@@ -35,6 +39,7 @@ export const macosVerificationSuites = [
   direct("suite:credentials", "../shared/test-kit/verify-macos-credentials.mts", ["positive", "negative", "authorization", "recovery"]),
   direct("suite:system-permissions", "../shared/test-kit/verify-macos-system-permissions.mjs", ["positive", "negative", "authorization"]),
   direct("suite:runtime-contract", "../shared/test-kit/verify-macos-runtime-contract.mjs", ["positive", "negative", "cancel-timeout", "recovery", "reproducibility", "artifact-integrity"]),
+  typed("p2:runtime-filesystem-policy", "../shared/test-kit/verify-macos-runtime-filesystem-policy.mts", ["positive", "negative", "authorization", "artifact-integrity"]),
   direct("suite:file-mutations", "../shared/test-kit/verify-workspace-file-mutations.mjs", ["positive", "negative", "authorization", "idempotency"]),
   typed("suite:workspace-git-actions", "../shared/test-kit/verify-workspace-git-actions.mts", ["positive", "negative", "authorization", "idempotency"]),
   direct("suite:mcp-sessions", "../shared/test-kit/verify-macos-mcp-sessions.mjs", ["positive", "negative", "authorization", "cancel-timeout", "recovery"]),

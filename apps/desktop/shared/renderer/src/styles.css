@@ -17,7 +17,7 @@
 }
 
 :root {
-  --app-font-family: "Segoe UI", "Open Sans", sans-serif;
+  --app-font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Open Sans", sans-serif;
   --app-surface-bg: #fafafe;
   --app-sidebar-bg: #fafafe;
   --app-sidebar-hover: #f1eef7;
@@ -17610,3 +17610,49 @@ button.structured-activity-detail:hover {
   .mobile-pairing-dialog { max-height: calc(100vh - 20px); padding: 16px; border-radius: 14px; }
 }
 @media (prefers-reduced-motion: reduce) { .mobile-pairing-dialog .spin { animation: none; } }
+
+/* macOS Accessibility display preferences apply to every product surface. */
+@media (prefers-reduced-motion: reduce) {
+  :root { scroll-behavior: auto; }
+
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-delay: 0ms !important;
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-delay: 0ms !important;
+    transition-duration: 1ms !important;
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --app-border-soft: currentColor;
+    --app-panel-border: currentColor;
+    --app-accent-border: currentColor;
+    --app-focus-ring: currentColor;
+    --app-shadow-sm: none;
+    --app-shadow-menu: none;
+    --app-shadow-panel: none;
+    --app-shadow-panel-focus: none;
+    --app-shadow-elevated: none;
+  }
+
+  :where(button, input, textarea, select, [role="button"], [role="menuitem"], [role="tab"]):focus-visible {
+    outline: 3px solid currentColor;
+    outline-offset: 2px;
+  }
+}
+
+@media (forced-colors: active) {
+  :root { forced-color-adjust: auto; }
+
+  :where(button, input, textarea, select, [role="button"], [role="menuitem"], [role="tab"]) {
+    border: 1px solid ButtonText;
+  }
+
+  :where([aria-selected="true"], [aria-current], [aria-pressed="true"]) {
+    outline: 2px solid Highlight;
+    outline-offset: 1px;
+  }
+}

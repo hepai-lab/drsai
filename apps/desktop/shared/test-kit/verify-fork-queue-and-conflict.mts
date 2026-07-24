@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -19,6 +19,7 @@ try {
   await exec("git", ["-C", repo, "config", "user.name", "Desktop Test"]);
   await writeFile(join(repo, "conflict.txt"), "base\n");
   await exec("git", ["-C", repo, "add", "conflict.txt"]); await exec("git", ["-C", repo, "commit", "-m", "base"]);
+  const canonicalRepo = await realpath(repo);
 
   const threads = await import("../main/threads.ts");
   const queue = await import("../main/forkQueue.ts");
@@ -47,12 +48,15 @@ try {
 
   await queue.updateForkQueueThreads(ids, "ready", "approved");
   const starts: Array<Record<string, unknown>> = [];
+  const validatedForks: string[] = [];
   const dispatched = await queue.dispatchForkQueue({ threadIds: ids, selectedAgentName: "Default", threadAgentAssignments: { [second.id]: { agentId: "reviewer", agentName: "Reviewer" } }, model: "test-model" }, {
     assertWorkspaceAllowed: async (path) => { assert.equal(path, repo); },
+    assertForkAllowed: async (thread) => { validatedForks.push(thread.id); },
     startRun: async (request) => { starts.push(request); return { requestId: `request-${starts.length}`, runId: String(request.runId) }; },
     now: () => new Date("2026-07-22T00:00:00.000Z"),
   });
   assert.equal(dispatched.startedRuns.length, 2); assert.deepEqual(dispatched.blockedThreadIds, []);
+  assert.deepEqual(validatedForks, ids, "every dispatched fork must pass its managed-worktree ownership boundary");
   assert.equal((starts[1]!.metadata as Record<string, unknown>).selected_agent_id, "reviewer");
   assert.match(String(starts[1]!.task), /Assigned agent: Reviewer/);
 
@@ -73,7 +77,7 @@ try {
   for (const invalid of [null, {}, { threadId: conflictThread.id, workspacePath: repo, path: "conflict.txt", draft: 3, expectedDiffHash: reviewedDiff.diffHash }, { threadId: conflictThread.id, workspacePath: repo, path: "conflict.txt", draft: "x\0", expectedDiffHash: reviewedDiff.diffHash }, { threadId: conflictThread.id, workspacePath: repo, path: "conflict.txt", draft: "x".repeat(500_001), expectedDiffHash: reviewedDiff.diffHash }, { threadId: conflictThread.id, workspacePath: repo, path: "conflict.txt", draft: "x", expectedDiffHash: "bad" }]) {
     assert.throws(() => queue.normalizeForkConflictDraftRequest(invalid), /invalid|incomplete|large|null|hash/i);
   }
-  const request = await queue.validateForkConflictDraft({ threadId: conflictThread.id, workspacePath: repo, path: "conflict.txt", draft: "resolved\n", expectedDiffHash: reviewedDiff.diffHash }, async (path) => { assert.equal(path, repo); });
+  const request = await queue.validateForkConflictDraft({ threadId: conflictThread.id, workspacePath: repo, path: "conflict.txt", draft: "resolved\n", expectedDiffHash: reviewedDiff.diffHash }, async (path) => { assert.equal(path, canonicalRepo); });
   await assert.rejects(() => queue.validateForkConflictDraft({ ...request, threadId: "thread:missing" }, async () => undefined), /no longer exists/i);
   await assert.rejects(() => queue.validateForkConflictDraft({ ...request, threadId: first.id }, async () => undefined), /merge recovery/i);
   await assert.rejects(() => queue.validateForkConflictDraft({ ...request, workspacePath: worktreeA }, async () => undefined), /does not match/i);

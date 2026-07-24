@@ -2,6 +2,7 @@ import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { macosIpcSource } from "./desktopIpcSource.mjs";
 
 const scriptRoot = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(scriptRoot, "../..");
@@ -40,10 +41,13 @@ const windows = channels(read("windows/src/main/index.ts"), [
   /secureHandle\(\s*["'](desktop:[^"']+)["']/g,
   /ipcMain\.handle\(\s*["'](desktop:[^"']+)["']/g,
 ]);
-const macos = channels(read("macos/src/main/index.ts"), [
+const macosSource = macosIpcSource(desktopRoot);
+const macos = channels(macosSource, [
   /secureHandle\(\s*["'](desktop:[^"']+)["']/g,
   /ipcMain\.handle\(\s*["'](desktop:[^"']+)["']/g,
 ]);
+const macosRegistrations = [...macosSource.matchAll(/ipcMain\.handle\(\s*["'](desktop:[^"']+)["']/g)].map((match) => match[1]);
+assert.equal(new Set(macosRegistrations).size, macosRegistrations.length, "macOS IPC channel registration must not contain duplicates across registrars");
 
 assert.ok(preload.length > 0, "desktop IPC inventory found no preload invoke channels");
 assert.ok(windows.length > 0, "desktop IPC inventory found no Windows handlers");

@@ -1,5 +1,5 @@
 export type RendererRecoveryAction = "reload" | "recreate" | "relaunch";
-export type InterruptionReason = "resume" | "network-online" | "display-change" | "renderer-recovered" | "gpu-recovered";
+export type InterruptionReason = "resume" | "unlock" | "network-online" | "display-change" | "renderer-recovered" | "gpu-recovered";
 
 export type DesktopLifecycleRecoveryEvent = {
   reason: InterruptionReason;
@@ -12,6 +12,7 @@ export class MacosLifecycleRecoveryCoordinator {
   #gatewayWasReady = false;
   #online: boolean | null = null;
   #recovery: Promise<DesktopLifecycleRecoveryEvent> | null = null;
+  readonly #interruptionObservations = new Set<Promise<void>>();
   #shuttingDown = false;
 
   recordRendererFailure(now = Date.now()): RendererRecoveryAction {
@@ -25,6 +26,15 @@ export class MacosLifecycleRecoveryCoordinator {
 
   suspend(gatewayReady: boolean): void {
     this.#gatewayWasReady ||= gatewayReady;
+  }
+
+  observeInterruption(getGatewayReady: () => Promise<boolean>): void {
+    let observation!: Promise<void>;
+    observation = Promise.resolve().then(getGatewayReady)
+      .then((ready) => this.suspend(ready))
+      .catch(() => undefined)
+      .finally(() => this.#interruptionObservations.delete(observation));
+    this.#interruptionObservations.add(observation);
   }
 
   setNetworkOnline(online: boolean): boolean {
@@ -48,6 +58,7 @@ export class MacosLifecycleRecoveryCoordinator {
   ): Promise<DesktopLifecycleRecoveryEvent> {
     if (this.#recovery) return this.#recovery;
     this.#recovery = (async () => {
+      await Promise.allSettled([...this.#interruptionObservations]);
       const recoverGateway = this.#gatewayWasReady && !this.#shuttingDown;
       if (recoverGateway) await startGateway();
       this.#gatewayWasReady = false;

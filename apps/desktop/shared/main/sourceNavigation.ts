@@ -1,4 +1,5 @@
 import { readFile, realpath, stat } from "fs/promises";
+import { realpathSync } from "fs";
 import { createHash } from "crypto";
 import { SourceMap, type SourceMapPayload } from "module";
 import { dirname, extname, isAbsolute, relative, resolve } from "path";
@@ -143,7 +144,7 @@ export class DiagnosticSourceNavigator {
         file: rawFile || candidate,
         kind,
         uri: allowed ? pathToFileURL(candidate).href : `opendrsai-source:${encodeURIComponent(rawFile)}`,
-        ...(allowedWorkspace ? { workspaceId: allowedWorkspace.id, relativePath: relative(allowedWorkspace.path, candidate).replace(/\\/g, "/") } : {}),
+        ...(allowedWorkspace ? { workspaceId: allowedWorkspace.id, relativePath: relative(canonicalPath(allowedWorkspace.path), candidate).replace(/\\/g, "/") } : {}),
         available: allowed,
         trusted: withinApp || Boolean(allowedWorkspace?.trusted),
         remote: false,
@@ -290,8 +291,12 @@ async function resolveLocalCandidate(file: string, workspacePath: string | undef
 
 function containsPath(root: string, candidate: string): boolean {
   if (!root || !candidate) return false;
-  const rel = relative(resolve(root), resolve(candidate));
+  const rel = relative(canonicalPath(root), canonicalPath(candidate));
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function canonicalPath(path: string): string {
+  try { return realpathSync(resolve(path)); } catch { return resolve(path); }
 }
 
 function pathBelongsTo(file: string, root: string): boolean {

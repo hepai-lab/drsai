@@ -1,11 +1,16 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { macosIpcSource } from "./desktopIpcSource.mjs";
 
 const desktopRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const read = (path) => readFileSync(join(desktopRoot, path), "utf8");
 const bridge = read("shared/main/mcpLiveBridge.ts");
-const mac = read("macos/src/main/index.ts");
+const mac = macosIpcSource(desktopRoot);
+const trust = read("macos/src/main/ipc/registerTrustIpc.ts");
+const main = read("macos/src/main/index.ts");
+const shutdownPlan = read("macos/src/main/bootstrap/shutdownPlan.ts");
+const coordinators = read("macos/src/main/bootstrap/createMcpCoordinators.ts");
 const approvalStore = read("shared/main/approvalStore.ts");
 const windowsBridge = read("windows/src/main/mcpLiveBridge.ts");
 
@@ -28,12 +33,12 @@ for (const token of [
   "recordMcpSessionAudit", "assertSafeMcpContextWriteTarget",
 ]) assert(bridge.includes(token), `shared bridge missing ${token}`);
 
-assert(mac.includes("assertAllowedDesktopPath(request?.workspacePath"), "workspace path authorization is missing");
-assert(mac.includes("() => { shutdownMcpSessions(); }"), "MCP child cleanup is not part of app shutdown");
+assert(trust.includes("assertAllowedDesktopPath(path, await roots()") && trust.includes("await assertWorkspace(request?.workspacePath)"), "workspace path authorization is missing");
+assert(shutdownPlan.includes('name: "mcp-sessions"') && main.includes("shutdownMcpSessions,"), "MCP child cleanup is not part of the injected app shutdown plan");
 assert(windowsBridge.trim() === 'export * from "../../../shared/main/mcpLiveBridge";', "Windows does not use the shared bridge");
-assert(!mac.includes("executeApprovedMcpTool"), "macOS still uses the obsolete one-shot MCP executor");
+assert(!coordinators.includes("executeApprovedMcpTool"), "macOS still uses the obsolete one-shot MCP executor");
 assert(approvalStore.includes("alreadyExecuted: true"), "approval replay does not expose a durable completed discriminator");
-assert(mac.includes("if (proposal.alreadyExecuted) return {") && mac.includes('status: "already_executed" as const'), "macOS MCP replay can reach the external executor again");
-assert(mac.indexOf("if (proposal.alreadyExecuted) return {") < mac.indexOf("if (!proposal.queued && proposal.allowed && !proposal.blocked) return executeMcpToolAfterApproval"), "macOS MCP replay guard must run before the direct executor branch");
+assert(coordinators.includes("if (proposal.alreadyExecuted) return {") && coordinators.includes('status: "already_executed" as const'), "macOS MCP replay can reach the external executor again");
+assert(coordinators.indexOf("if (proposal.alreadyExecuted) return {") < coordinators.indexOf("if (!proposal.queued && proposal.allowed && !proposal.blocked) return executeMcpToolAfterApproval"), "macOS MCP replay guard must run before the direct executor branch");
 
 console.log("macOS MCP context, approval, session, cancellation, audit and shutdown contract passed.");

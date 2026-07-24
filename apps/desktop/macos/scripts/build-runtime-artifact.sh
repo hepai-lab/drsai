@@ -10,6 +10,7 @@ SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$REPO_ROOT" log -1 --format=%c
 LOCK_FILE="$APP_ROOT/resources/runtime/runtime-requirements.lock"
 BROWSER_LOCK_FILE="$APP_ROOT/resources/runtime/browser-requirements.lock"
 EXPECTED_PYTHON="3.11.9"
+RUNTIME_PYTHON="${OPENDRSAI_RUNTIME_PYTHON:-python3}"
 
 if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
   echo "Runtime artifact must be built on Apple Silicon macOS." >&2
@@ -26,7 +27,14 @@ fi
 
 rm -rf "$STAGING"
 mkdir -p "$STAGING/drsai-agent" "$OUTPUT"
-python3 -m venv "$STAGING/drsai-agent/venv"
+PYTHON_BASE="$("$RUNTIME_PYTHON" -c 'import sys; print(sys.base_prefix)')"
+/usr/bin/ditto "$PYTHON_BASE" "$STAGING/drsai-agent/python-runtime"
+BUNDLED_PYTHON="$STAGING/drsai-agent/python-runtime/bin/python3"
+"$BUNDLED_PYTHON" -m venv "$STAGING/drsai-agent/venv"
+rm -f "$STAGING/drsai-agent/venv/bin/python" "$STAGING/drsai-agent/venv/bin/python3" "$STAGING/drsai-agent/venv/bin/python3.11"
+ln -s ../../python-runtime/bin/python3.11 "$STAGING/drsai-agent/venv/bin/python"
+ln -s ../../python-runtime/bin/python3.11 "$STAGING/drsai-agent/venv/bin/python3"
+ln -s ../../python-runtime/bin/python3.11 "$STAGING/drsai-agent/venv/bin/python3.11"
 PYTHON="$STAGING/drsai-agent/venv/bin/python"
 PYTHON_VERSION="$("$PYTHON" -c 'import platform; print(platform.python_version())')"
 if [[ "$PYTHON_VERSION" != "$EXPECTED_PYTHON" ]]; then
@@ -37,7 +45,11 @@ fi
 "$PYTHON" -m pip install --disable-pip-version-check --no-input --no-deps "$REPO_ROOT/cores/python/packages/drsai"
 "$PYTHON" -c "import drsai; print(drsai.__file__)"
 
-python3 -m venv "$STAGING/drsai-agent/browser-venv"
+"$BUNDLED_PYTHON" -m venv "$STAGING/drsai-agent/browser-venv"
+rm -f "$STAGING/drsai-agent/browser-venv/bin/python" "$STAGING/drsai-agent/browser-venv/bin/python3" "$STAGING/drsai-agent/browser-venv/bin/python3.11"
+ln -s ../../python-runtime/bin/python3.11 "$STAGING/drsai-agent/browser-venv/bin/python"
+ln -s ../../python-runtime/bin/python3.11 "$STAGING/drsai-agent/browser-venv/bin/python3"
+ln -s ../../python-runtime/bin/python3.11 "$STAGING/drsai-agent/browser-venv/bin/python3.11"
 BROWSER_PYTHON="$STAGING/drsai-agent/browser-venv/bin/python"
 "$BROWSER_PYTHON" -m pip install --disable-pip-version-check --no-input --require-hashes -r "$BROWSER_LOCK_FILE"
 PLAYWRIGHT_BROWSERS_PATH="$STAGING/drsai-agent/browser-browsers" "$BROWSER_PYTHON" -m playwright install chromium
@@ -58,6 +70,8 @@ chmod 0755 "$STAGING/drsai-agent/drsai"
 SBOM="runtime-sbom-${VERSION}.json"
 PROVENANCE="runtime-provenance-${VERSION}.json"
 "$PYTHON" -m pip inspect > "$OUTPUT/$SBOM"
+find "$STAGING/drsai-agent" -type d -name __pycache__ -prune -exec rm -rf {} +
+find "$STAGING/drsai-agent" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
 GIT_COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD)"
 LOCK_SHA256="$(shasum -a 256 "$LOCK_FILE" | awk '{print $1}')"
 BROWSER_LOCK_SHA256="$(shasum -a 256 "$BROWSER_LOCK_FILE" | awk '{print $1}')"
@@ -70,14 +84,7 @@ ARCHIVE="opendrsai-runtime-macos-arm64-${VERSION}.tar.gz"
 SHA256="$(shasum -a 256 "$OUTPUT/$ARCHIVE" | awk '{print $1}')"
 ARCHIVE_SIZE="$(stat -f %z "$OUTPUT/$ARCHIVE")"
 
-"$PYTHON" - "$STAGING/drsai-agent" "$OUTPUT/runtime-files.json" <<'PY'
-import hashlib, json, pathlib, sys
-root = pathlib.Path(sys.argv[1])
-files = []
-for path in sorted(item for item in root.rglob("*") if item.is_file() and not item.is_symlink()):
-    files.append({"path": path.relative_to(root).as_posix(), "size": path.stat().st_size, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
-pathlib.Path(sys.argv[2]).write_text(json.dumps(files, separators=(",", ":")) + "\n")
-PY
+node "$APP_ROOT/scripts/generate-runtime-file-inventory.mjs" "$STAGING/drsai-agent" "$OUTPUT/runtime-files.json"
 node -e 'const fs=require("fs"); const [path,filesPath,archive,archiveSize,sha,version,pythonVersion,sbom,provenance]=process.argv.slice(1); const files=JSON.parse(fs.readFileSync(filesPath,"utf8")); fs.writeFileSync(path,JSON.stringify({schemaVersion:2,platform:"darwin",arch:"arm64",version,pythonVersion,archive,archiveSize:Number(archiveSize),sha256:sha,root:"drsai-agent",python:"venv/bin/python",browserPython:"browser-venv/bin/python",browserPath:"browser-browsers",launcher:"drsai",sbom,provenance,files},null,2)+"\n")' "$OUTPUT/runtime-manifest.json" "$OUTPUT/runtime-files.json" "$ARCHIVE" "$ARCHIVE_SIZE" "$SHA256" "$VERSION" "$PYTHON_VERSION" "$SBOM" "$PROVENANCE"
 rm "$OUTPUT/runtime-files.json"
 echo "Built $OUTPUT/$ARCHIVE ($SHA256)"

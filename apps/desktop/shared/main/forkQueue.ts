@@ -19,6 +19,7 @@ const MAX_DRAFT_CHARS = 500_000;
 
 export interface ForkQueueDispatchDependencies {
   assertWorkspaceAllowed(path: string): Promise<void>;
+  assertForkAllowed?(thread: DesktopThread): Promise<void>;
   startRun(request: Record<string, unknown>): Promise<{ requestId: string; runId: string }>;
   now?: () => Date;
 }
@@ -93,6 +94,7 @@ export async function dispatchForkQueue(
     const fork = thread.fork!;
     try {
       await dependencies.assertWorkspaceAllowed(fork.sourceWorkspacePath);
+      await dependencies.assertForkAllowed?.(thread);
       const assignment = resolveAssignment(thread, request);
       const [running] = await updateForkQueueThreads([thread.id], "running", assignment.agentName
         ? `Fork queue subtask is running in its isolated worktree. Assigned agent: ${assignment.agentName}.`

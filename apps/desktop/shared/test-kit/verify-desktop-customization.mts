@@ -72,4 +72,12 @@ try {
   assert(gatewayWrites.some((item) => item.path === "/v1/config/cli/plan_mode" && item.body === JSON.stringify({ value: false })));
   assert(gatewayWrites.some((item) => item.path === "/v1/config/cli/dangerous_allowed" && item.body === JSON.stringify({ value: true })));
   console.log("Desktop preferences, custom commands, legacy migration, concurrency and real fake-Gateway My DrSai config passed.");
-} finally { await new Promise<void>((resolve) => server.close(() => resolve())); await rm(root, { recursive: true, force: true }); }
+} finally {
+  await new Promise<void>((resolve) => {
+    server.close(() => resolve());
+    server.closeAllConnections?.();
+  });
+  delete process.env.OPENDRSAI_GATEWAY_PORT;
+  delete process.env.OPENDRSAI_GATEWAY_STARTUP;
+  await rm(root, { recursive: true, force: true });
+}

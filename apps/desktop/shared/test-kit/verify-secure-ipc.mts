@@ -104,6 +104,17 @@ assert.equal(deduplicatedExecutions, 1, "concurrent duplicate requests must exec
 assert.deepEqual(await deduplicate(dedupeEvent, { requestId: "same-request" }), firstResult, "completed duplicate must use the idempotency window");
 assert.equal(deduplicatedExecutions, 1);
 
+let mutableExecutions = 0;
+const mutableHandle = createSecureIpcHandle({
+  registrar: { handle: (channel, handler) => { handlers.set(channel, handler); } },
+  getTrustedWebContents: () => owner,
+  policyForChannel: (channel) => channel === "desktop:mutable-proposal" ? { deduplicate: false } : undefined,
+});
+mutableHandle("desktop:mutable-proposal", () => ({ execution: ++mutableExecutions }));
+const mutableProposal = handlers.get("desktop:mutable-proposal")!;
+assert.deepEqual(await mutableProposal(dedupeEvent, { requestId: "same-request" }), { execution: 1 });
+assert.deepEqual(await mutableProposal(dedupeEvent, { requestId: "same-request" }), { execution: 2 }, "stateful proposal channels must be able to bypass stale completed-response caching");
+
 let timeoutSignal: AbortSignal | undefined;
 const timeoutHandle = createSecureIpcHandle({
   registrar: { handle: (channel, handler) => { handlers.set(channel, handler); } },

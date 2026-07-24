@@ -4211,7 +4211,7 @@ export interface DesktopBackgroundTaskRecoveryResult {
   tasks: DesktopBackgroundTask[];
 }
 
-export type DesktopSystemPermissionKind = "microphone" | "notifications" | "files" | "automation";
+export type DesktopSystemPermissionKind = "microphone" | "notifications" | "files" | "automation" | "accessibility" | "screen-recording";
 export type DesktopSystemPermissionState = "granted" | "denied" | "restricted" | "not-determined" | "unknown";
 export interface DesktopSystemPermissionStatus {
   kind: DesktopSystemPermissionKind;
@@ -4219,6 +4219,7 @@ export interface DesktopSystemPermissionStatus {
   canRequest: boolean;
   canOpenSettings: boolean;
   message: string;
+  source?: "native-helper" | "electron" | "system-settings";
 }
 
 export type DesktopMobilePairingReadinessState =

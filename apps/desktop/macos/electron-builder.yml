@@ -11,6 +11,11 @@ files:
   - "!electron.vite.config.{js,ts,mjs,cjs}"
   - "!tsconfig*.json"
 extraResources:
+  - from: native/OpenDrSaiNativeHelper/.build/debug
+    to: native
+    filter:
+      - OpenDrSaiNativeHelper
+      - libOpenDrSaiNativeProtocol.dylib
   - from: ../shared/browser-use-worker
     to: browser-use-worker
     filter:
@@ -28,6 +33,8 @@ extraResources:
     filter:
       - "update-watchdog.sh"
 asar: true
+afterPack: scripts/after-pack-native-permissions.cjs
+afterSign: scripts/after-pack.cjs
 electronFuses:
   runAsNode: false
   enableCookieEncryption: true

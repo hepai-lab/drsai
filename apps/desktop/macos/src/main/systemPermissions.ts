@@ -2,13 +2,17 @@ import { Notification, shell, systemPreferences } from "electron";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { DesktopSystemPermissionKind, DesktopSystemPermissionState, DesktopSystemPermissionStatus } from "../../../shared/api/desktopApi";
+import { nativeHelperExecutablePath } from "./native/nativeHelperPath";
+import { invokeNativePermission } from "./native/nativePermissionService";
 
-const KINDS: DesktopSystemPermissionKind[] = ["microphone", "notifications", "files", "automation"];
+const KINDS: DesktopSystemPermissionKind[] = ["microphone", "notifications", "files", "automation", "accessibility", "screen-recording"];
 const SETTINGS: Record<DesktopSystemPermissionKind, string> = {
   microphone: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
   notifications: "x-apple.systempreferences:com.apple.preference.notifications",
   files: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
   automation: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation",
+  accessibility: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+  "screen-recording": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
 };
 const execFileAsync = promisify(execFile);
 let automationState: DesktopSystemPermissionState = "unknown";
@@ -18,6 +22,8 @@ export function getMacosSystemPermissions(): DesktopSystemPermissionStatus[] {
 }
 
 export function getMacosSystemPermission(kind: DesktopSystemPermissionKind): DesktopSystemPermissionStatus {
+  const native = invokeNativePermission(nativeHelperExecutablePath(), "permission.status", kind);
+  if (native && typeof native !== "boolean") return native;
   if (kind === "microphone") return status(kind, normalizeMediaStatus(systemPreferences.getMediaAccessStatus("microphone")), true);
   if (kind === "notifications") {
     return status(kind, "unknown", Notification.isSupported());
@@ -28,6 +34,8 @@ export function getMacosSystemPermission(kind: DesktopSystemPermissionKind): Des
 
 export async function requestMacosSystemPermission(value: unknown): Promise<DesktopSystemPermissionStatus> {
   const kind = assertKind(value);
+  const native = invokeNativePermission(nativeHelperExecutablePath(), "permission.request", kind);
+  if (native && typeof native !== "boolean") return native;
   if (kind === "microphone") await systemPreferences.askForMediaAccess("microphone");
   else if (kind === "notifications") {
     if (Notification.isSupported()) new Notification({ title: "OpenDrSai", body: "Notifications are enabled for task completion.", silent: true }).show();
@@ -45,6 +53,7 @@ export async function requestMacosSystemPermission(value: unknown): Promise<Desk
 
 export async function openMacosSystemPermissionSettings(value: unknown): Promise<boolean> {
   const kind = assertKind(value);
+  if (invokeNativePermission(nativeHelperExecutablePath(), "permission.open-settings", kind) === true) return true;
   await shell.openExternal(SETTINGS[kind]);
   return true;
 }
@@ -53,7 +62,7 @@ function normalizeMediaStatus(value: string): DesktopSystemPermissionState {
   return value === "granted" || value === "denied" || value === "restricted" || value === "not-determined" ? value : "unknown";
 }
 function assertKind(value: unknown): DesktopSystemPermissionKind {
-  if (value === "microphone" || value === "notifications" || value === "files" || value === "automation") return value;
+  if (value === "microphone" || value === "notifications" || value === "files" || value === "automation" || value === "accessibility" || value === "screen-recording") return value;
   throw new Error("Unsupported macOS permission kind.");
 }
 function status(kind: DesktopSystemPermissionKind, state: DesktopSystemPermissionState, canRequest: boolean): DesktopSystemPermissionStatus {

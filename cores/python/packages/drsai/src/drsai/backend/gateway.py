@@ -3622,6 +3622,43 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
 
     """
 
+    metadata = request.metadata if isinstance(request.metadata, dict) else {}
+    fixture_request_id = str(metadata.get("desktop_request_id") or "")
+    packaged_recovery_fixture = (
+        os.getenv("OPENDRSAI_PACKAGED_CHAT_RECOVERY_FIXTURE") == "1"
+        and os.getenv("OPENDRSAI_DEV_AUTH_BYPASS") == "1"
+        and raw_request.headers.get("x-opendrsai-auth-mode") == "offline"
+        and request.user_id == "packaged-l5-user"
+        and fixture_request_id == "packaged_chat_recovery_001"
+        and metadata.get("packaged_recovery_fixture") is True
+    )
+    if packaged_recovery_fixture:
+        retry_attempt = metadata.get("network_retry_attempt")
+        resume_from_chars = metadata.get("resume_from_chars")
+        if (retry_attempt, resume_from_chars) not in {(0, 0), (1, 5)}:
+            raise HTTPException(status_code=409, detail="Packaged Chat recovery attempt/cursor pair is inconsistent.")
+
+        async def packaged_chat_recovery_sse():
+            if retry_attempt == 0:
+                yield f"data: {json.dumps({'choices': [{'delta': {'content': 'alpha'}}]})}\n\n"
+                # End the real HTTP response without [DONE] so Desktop recovery
+                # must resume from the persisted five-character cursor.
+                return
+            yield f"data: {json.dumps({'choices': [{'delta': {'content': ' beta'}}]})}\n\n"
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(
+            packaged_chat_recovery_sse(),
+            media_type="text/event-stream",
+            headers={
+                "X-Drsai-Session-Id": request.thread_id or fixture_request_id,
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+                "X-OpenDrSai-Packaged-Recovery-Fixture": "1",
+            },
+        )
+
     auth_context = None
     if raw_request.headers.get("x-opendrsai-auth-mode") == "oidc":
         try:

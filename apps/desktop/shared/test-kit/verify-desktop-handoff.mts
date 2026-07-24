@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
 const root = await mkdtemp(join(tmpdir(), "opendrsai-handoff-"));
 try {
@@ -23,8 +23,9 @@ try {
   const handoff = await import("../main/desktopHandoff.ts");
   assert.equal(handoff.normalizeDesktopEditCommand("selectAll"), "selectAll"); assert.equal(handoff.normalizeDesktopEditCommand("inspectElement"), null);
   const pdf = join(workspace, "evidence.PDF"); await writeFile(pdf, "%PDF-1.7\n");
+  const canonicalPdf = await realpath(pdf);
   const opened: string[] = [];
-  const result = await handoff.openPdfSourcePage({ path: pdf, page: 42 }, { assertAllowedPath: async (path) => { assert.equal(path, resolve(pdf)); }, openExternal: async (url) => { opened.push(url); } });
+  const result = await handoff.openPdfSourcePage({ path: pdf, page: 42 }, { assertAllowedPath: async (path) => { assert.equal(path, canonicalPdf); }, openExternal: async (url) => { opened.push(url); } });
   assert.equal(result.page, 42); assert.match(result.viewerUrl, /#page=42&zoom=page-width$/); assert.deepEqual(opened, [result.viewerUrl]);
   await assert.rejects(() => handoff.openPdfSourcePage({ path: source, page: 1 }, { assertAllowedPath: async () => undefined, openExternal: async () => undefined }), /requires a PDF/);
   await assert.rejects(() => handoff.openPdfSourcePage({ path: pdf, page: 0 }, { assertAllowedPath: async () => undefined, openExternal: async () => undefined }), /between 1 and 10000/);

@@ -70,6 +70,23 @@ const macosPaths = createDesktopPathService({
 assert.equal(macosPaths.layout.pythonExecutable, "/Users/tester/.drsai/drsai-agent/venv/bin/python");
 assert.equal(macosPaths.layout.cliExecutable, "/Users/tester/.drsai/drsai-agent/drsai");
 assert.ok(macosPaths.layout.enhancedPathEntries.includes("/opt/homebrew/bin"));
+const packagedMacosPaths = createDesktopPathService({
+  platform: "macos",
+  userHome: "/Users/tester",
+  resourcesPath: "/Applications/OpenDrSai.app/Contents/Resources",
+  defaultApp: false,
+  environment: { DRSAI_HOME: "/private/tmp/opendrsai-isolated" },
+});
+assert.equal(packagedMacosPaths.layout.repository, "/private/tmp/opendrsai-isolated/drsai-agent", "packaged macOS Runtime must not mutate the signed App bundle");
+assert.ok(!packagedMacosPaths.layout.repository.includes("OpenDrSai.app"));
+const explicitMacosRepository = createDesktopPathService({
+  platform: "macos",
+  userHome: "/Users/tester",
+  resourcesPath: "/Applications/OpenDrSai.app/Contents/Resources",
+  defaultApp: false,
+  environment: { DRSAI_HOME: "/private/tmp/opendrsai-isolated", DRSAI_REPO: "/private/tmp/reviewed-runtime" },
+});
+assert.equal(explicitMacosRepository.layout.repository, "/private/tmp/reviewed-runtime", "an explicit process-level Runtime override must remain available for isolated acceptance");
 for (const service of ["paths", "terminal", "credentials", "notifications", "processes"]) {
   assert.ok(windowsPlatformServices.includes(`${service}:`), `Windows platform services omit ${service}`);
 }

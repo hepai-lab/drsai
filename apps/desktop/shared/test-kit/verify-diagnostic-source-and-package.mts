@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -17,7 +17,7 @@ try {
   const mapped = await navigator.context({ source: { file: generated, line: 2, column: 1, language: "javascript" }, workspaceId: "workspace-1" });
   assert.equal(mapped.mapping.status, "mapped"); assert.equal(mapped.location.language, "typescript"); assert.doesNotMatch(mapped.content ?? "", /secret-map-token/);
   const outside = await navigator.context({ source: { file: join(home, "outside.ts"), line: 1 } }); assert.equal(outside.available, false); assert.equal(outside.canOpen, false);
-  const resolved = await navigator.resolveOpenPath({ source: { file: source, line: 2, column: 3 }, workspaceId: "workspace-1" }); assert.equal(resolved.path, source); assert.equal(resolved.line, 2);
+  const resolved = await navigator.resolveOpenPath({ source: { file: source, line: 2, column: 3 }, workspaceId: "workspace-1" }); assert.equal(resolved.path, await realpath(source)); assert.equal(resolved.line, 2);
 
   const { ProductionDiagnosticsService } = await import("../main/productionDiagnostics.ts");
   const service = new ProductionDiagnosticsService(); await service.initialize();

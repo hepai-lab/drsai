@@ -1,31 +1,47 @@
-import { app, type BrowserWindow } from "electron";
+import { app, powerMonitor, type BrowserWindow } from "electron";
 import { writeFile } from "node:fs/promises";
 import { getUpdateHealthConfirmation } from "./updater";
+import type { NativeHelperSupervisor } from "./native/nativeHelperSupervisor";
 
-type PackagedScenario = "smoke" | "core" | "product-state" | "restart" | "fault" | "crash-ready" | "recovery" | "stability" | "tcc" | "online-update-lab";
+type PackagedScenario = "smoke" | "core" | "product-state" | "approval-replay" | "restart" | "fault" | "crash-ready" | "recovery" | "stability" | "performance-ready" | "managed-process-crash" | "sleep-wake" | "tcc" | "online-update-lab";
 
 interface PackagedScenarioConfig {
   workspacePath?: string;
+  workspaceId?: string;
   threadId?: string;
   approvalId?: string;
   durationMs?: number;
   intervalMs?: number;
   targetVersion?: string;
+  readyPath?: string;
 }
 
 /**
  * Executes opt-in packaged acceptance scenarios through the real preload and
  * ipcMain boundary. Normal product launches never enter this path.
  */
-export function runPackagedSmokeIfRequested(window: BrowserWindow): void {
+export function runPackagedSmokeIfRequested(window: BrowserWindow, nativeHelper: NativeHelperSupervisor): void {
   const output = process.env.OPENDRSAI_MACOS_PACKAGED_SMOKE_FILE?.trim();
   if (!output) return;
   if (!app.isPackaged) throw new Error("macOS packaged acceptance requires a packaged application.");
   const scenario = normalizeScenario(process.env.OPENDRSAI_MACOS_PACKAGED_SCENARIO);
   const config = parseConfig(process.env.OPENDRSAI_MACOS_PACKAGED_SCENARIO_CONFIG);
-  window.webContents.once("did-finish-load", async () => {
+  const execute = async () => {
     try {
-      const result = await window.webContents.executeJavaScript(buildScenarioScript(scenario, config), true);
+      let result = scenario === "sleep-wake"
+        ? await runSleepWakeScenario(window, config)
+        : await window.webContents.executeJavaScript(buildScenarioScript(scenario, config), true);
+      if (scenario === "managed-process-crash") {
+        const gatewayBefore = (result as { gateway?: { pid?: number } }).gateway;
+        const helperBefore = { ...nativeHelper.state(), pid: nativeHelper.processId() };
+        if (helperBefore.status !== "ready" || !helperBefore.pid || !gatewayBefore?.pid) throw new Error("managed crash scenario requires ready Helper and Gateway processes");
+        process.kill(helperBefore.pid, "SIGKILL");
+        await waitUntil(() => nativeHelper.state().status === "ready" && Boolean(nativeHelper.processId()) && nativeHelper.processId() !== helperBefore.pid, 5_000, "Native Helper did not recover after SIGKILL");
+        const helperAfter = { ...nativeHelper.state(), pid: nativeHelper.processId(), pong: (await nativeHelper.request("ping")).result?.pong === true };
+        process.kill(gatewayBefore.pid, "SIGKILL");
+        const gatewayAfter = await window.webContents.executeJavaScript(`(async () => { const api = window.openDrSai; const previousPid = ${gatewayBefore.pid}; let crashObserved = false; for (let attempt = 0; attempt < 100; attempt += 1) { const status = await api.getGatewayStatus(); if (!status.ready || status.pid !== previousPid) { crashObserved = true; break; } await new Promise((resolve) => setTimeout(resolve, 50)); } if (!crashObserved) throw new Error("Gateway crash was not observable"); if (!(await api.startGateway())) throw new Error("Gateway did not restart after SIGKILL"); const status = await api.getGatewayStatus(); if (!status.ready || !status.pid || status.pid === previousPid) throw new Error("Gateway restart did not produce a new healthy PID"); return status; })()`, true);
+        result = { ...(result as object), helperBefore, helperAfter, gatewayAfter };
+      }
       const updateHealth = scenario === "online-update-lab" && (result as { postUpdateHealthy?: boolean }).postUpdateHealthy
         ? getUpdateHealthConfirmation()
         : undefined;
@@ -36,12 +52,14 @@ export function runPackagedSmokeIfRequested(window: BrowserWindow): void {
       await writeFile(output, `${JSON.stringify({ ok: false, scenario, error: error instanceof Error ? error.message : String(error) }, null, 2)}\n`, "utf8").catch(() => undefined);
       app.exit(1);
     }
-  });
+  };
+  if (window.webContents.isLoading()) window.webContents.once("did-finish-load", () => { void execute(); });
+  else queueMicrotask(() => { void execute(); });
 }
 
 function normalizeScenario(value: string | undefined): PackagedScenario {
   const scenario = value?.trim() || "smoke";
-  if (["smoke", "core", "product-state", "restart", "fault", "crash-ready", "recovery", "stability", "tcc", "online-update-lab"].includes(scenario)) return scenario as PackagedScenario;
+  if (["smoke", "core", "product-state", "approval-replay", "restart", "fault", "crash-ready", "recovery", "stability", "performance-ready", "managed-process-crash", "sleep-wake", "tcc", "online-update-lab"].includes(scenario)) return scenario as PackagedScenario;
   throw new Error(`Unsupported packaged acceptance scenario: ${scenario}`);
 }
 
@@ -52,14 +70,56 @@ function parseConfig(raw: string | undefined): PackagedScenarioConfig {
   return parsed;
 }
 
+async function waitUntil(predicate: () => boolean, timeoutMs: number, message: string): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) { if (predicate()) return; await new Promise((resolve) => setTimeout(resolve, 25)); }
+  throw new Error(message);
+}
+
+async function runSleepWakeScenario(window: BrowserWindow, config: PackagedScenarioConfig): Promise<unknown> {
+  if (!config.readyPath) throw new Error("sleep-wake scenario requires readyPath");
+  const eventNames = ["lock-screen", "suspend", "resume", "unlock-screen"] as const;
+  const observed: Array<{ type: typeof eventNames[number]; at: string; uptimeSeconds: number }> = [];
+  const listeners = new Map<typeof eventNames[number], () => void>();
+  const lifecycleMonitor = powerMonitor as unknown as NodeJS.EventEmitter;
+  for (const type of eventNames) {
+    const listener = () => { observed.push({ type, at: new Date().toISOString(), uptimeSeconds: process.uptime() }); };
+    listeners.set(type, listener);
+    lifecycleMonitor.on(type, listener);
+  }
+  try {
+    const gatewayBefore = await window.webContents.executeJavaScript(`(async () => { const api = window.openDrSai; await api.startInstall({}); const install = await api.getInstallStatus(); if (!install.installed) throw new Error("sleep-wake scenario could not install the bundled Runtime"); if (!(await api.startGateway())) throw new Error("sleep-wake scenario could not start Gateway"); const status = await api.getGatewayStatus(); if (!status.ready || !status.pid) throw new Error("sleep-wake Gateway was not healthy before interruption"); return status; })()`, true);
+    await writeFile(config.readyPath, `${JSON.stringify({ ready: true, scenario: "sleep-wake", appPid: process.pid, gatewayBefore, expectedEvents: eventNames }, null, 2)}\n`, "utf8");
+    const timeoutMs = Math.max(60_000, Math.min(config.durationMs ?? 900_000, 1_800_000));
+    await waitUntil(() => eventNames.every((type) => observed.some((event) => event.type === type)), timeoutMs, `sleep-wake did not observe all native lifecycle events: ${observed.map((event) => event.type).join(",")}`);
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    const gatewayAfter = await window.webContents.executeJavaScript(`window.openDrSai.getGatewayStatus()`, true);
+    if (!gatewayAfter.ready || !gatewayAfter.pid) throw new Error("sleep-wake Gateway was not healthy after recovery");
+    const indexes = Object.fromEntries(eventNames.map((type) => [type, observed.findIndex((event) => event.type === type)]));
+    if (indexes.suspend > indexes.resume || indexes["lock-screen"] > indexes["unlock-screen"]) throw new Error("sleep-wake lifecycle events were out of order");
+    return { gatewayBefore, gatewayAfter, events: observed, eventOrderValid: true, allExpectedEventsObserved: true };
+  } finally {
+    for (const [type, listener] of listeners) lifecycleMonitor.removeListener(type, listener);
+  }
+}
+
 function buildScenarioScript(scenario: PackagedScenario, config: PackagedScenarioConfig): string {
-  return `(${rendererScenario.toString()})(${JSON.stringify(scenario)}, ${JSON.stringify(config)})`;
+  return `(() => { const terminalRoundtrip = ${terminalRoundtrip.toString()}; return (${rendererScenario.toString()})(${JSON.stringify(scenario)}, ${JSON.stringify(config)}); })()`;
 }
 
 async function rendererScenario(scenario: PackagedScenario, config: PackagedScenarioConfig): Promise<unknown> {
   const api = window.openDrSai;
   const descriptor = await api.getPlatformDescriptor();
   if (descriptor.id !== "macos") throw new Error("packaged scenario did not load the macOS platform adapter");
+
+  if (scenario === "performance-ready") return { descriptor, interactive: true };
+
+  if (scenario === "managed-process-crash") {
+    if (!(await api.startGateway())) throw new Error("managed crash scenario could not start Gateway");
+    const gateway = await api.getGatewayStatus();
+    if (!gateway.ready || !gateway.pid) throw new Error("managed crash scenario Gateway did not expose a healthy PID");
+    return { descriptor, gateway };
+  }
 
   if (scenario === "smoke" || scenario === "core") {
     await api.startInstall({});
@@ -75,6 +135,8 @@ async function rendererScenario(scenario: PackagedScenario, config: PackagedScen
     if (!config.workspacePath) throw new Error("core scenario requires workspacePath");
     let workspace = (await api.listWorkspaces()).find((item) => item.path === config.workspacePath);
     workspace ??= await api.createWorkspace({ source: "existing", path: config.workspacePath, name: "L5 packaged workspace", trusted: true });
+    if (!workspace.trusted) workspace = await api.updateWorkspace({ id: workspace.id, trusted: true });
+    if (!workspace.trusted) throw new Error("core scenario could not persist workspace trust");
     const thread = await api.createThread({ kind: "chat", title: "L5 packaged persistence", workspacePath: workspace.path });
     await api.upsertUserPreference({ category: "output_language", value: "zh", source: "explicit_user_request" });
     const preferences = await api.listUserPreferences();
@@ -99,10 +161,20 @@ async function rendererScenario(scenario: PackagedScenario, config: PackagedScen
     return { descriptor, threadId: config.threadId, threadRecovered: true, preferenceRecovered: true };
   }
 
+  if (scenario === "approval-replay") {
+    if (!config.workspacePath) throw new Error("approval-replay scenario requires workspacePath");
+    const proposal = await api.requestGitCommitApproval({ workspacePath: config.workspacePath, message: "Packaged L5 approved commit", body: "Verify durable packaged Approval Center execution.", requestId: "packaged-l5-git-approval" });
+    return { descriptor, proposal };
+  }
+
   if (scenario === "product-state") {
     if (!config.workspacePath) throw new Error("product-state scenario requires workspacePath");
-    const workspace = (await api.listWorkspaces()).find((item) => item.path === config.workspacePath);
-    if (!workspace?.trusted) throw new Error("product-state scenario requires the trusted packaged workspace");
+    const workspaces = await api.listWorkspaces();
+    const workspace = workspaces.find((item) => (config.workspaceId ? item.id === config.workspaceId : item.path === config.workspacePath));
+    if (!workspace?.trusted) {
+      const install = await api.getInstallStatus();
+      throw new Error(`product-state scenario requires the trusted packaged workspace (found=${Boolean(workspace)}, trusted=${workspace?.trusted ?? "missing"}, count=${workspaces.length}, home=${install.home}, repo=${install.repoPath})`);
+    }
     const auth = await api.login({ developerBypass: true, rememberMe: true });
     if (!auth.ok || !auth.session?.authenticated || auth.session.user?.id !== "packaged-l5-user") throw new Error("packaged product journey did not establish its isolated E2E identity");
     if (!(await api.startGateway())) throw new Error("packaged Chat/Agent journey could not start the managed Gateway");
@@ -198,7 +270,7 @@ async function rendererScenario(scenario: PackagedScenario, config: PackagedScen
     if (!(await api.decideApproval({ id: gitProposal.approval.id, approved: true }))) throw new Error("approved packaged git commit did not execute");
     if ((await api.listPendingApprovals()).some((item) => item.id === gitProposal.approval?.id)) throw new Error("executed git approval remained pending");
     const replayedGitProposal = await api.requestGitCommitApproval({ workspacePath: workspace.path, message: "Packaged L5 approved commit", body: "Verify durable packaged Approval Center execution.", requestId: "packaged-l5-git-approval" });
-    if (!replayedGitProposal.alreadyExecuted || replayedGitProposal.queued) throw new Error("executed git approval was not replay-safe");
+    if (!replayedGitProposal.alreadyExecuted || replayedGitProposal.queued) throw new Error(`executed git approval was not replay-safe: ${JSON.stringify(replayedGitProposal)}`);
 
     const gitActionPath = `${workspace.path}/git-action.txt`;
     const gitBaseline = await api.previewWorkspaceFile({ workspacePath: workspace.path, path: gitActionPath });

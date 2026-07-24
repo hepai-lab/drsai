@@ -22,8 +22,12 @@ try {
   await writeFile(file, "later version\n");
   const preview = await checkpoints.previewWorkspaceCheckpoint({ workspacePath: workspace, checkpointId: checkpoint.id });
   assert.equal(preview.changedEntryCount, 1);
-  const restored = await checkpoints.restoreWorkspaceCheckpoint({ workspacePath: workspace, checkpointId: checkpoint.id, operationId: "restore-test-001" });
+  const restored = await checkpoints.restoreWorkspaceCheckpoint({ workspacePath: workspace, checkpointId: checkpoint.id, operationId: "restore-test-001", includePaths: [file] });
   assert.equal(restored.restored, true); assert.equal(await readFile(file, "utf8"), "checkpoint version\n");
+  await writeFile(file, "later again\n");
+  const relativeRestore = await checkpoints.restoreWorkspaceCheckpoint({ workspacePath: workspace, checkpointId: checkpoint.id, operationId: "restore-test-002", includePaths: ["result.txt"] });
+  assert.equal(relativeRestore.restored, true); assert.equal(await readFile(file, "utf8"), "checkpoint version\n");
+  await assert.rejects(() => checkpoints.restoreWorkspaceCheckpoint({ workspacePath: workspace, checkpointId: checkpoint.id, includePaths: [join(workspace, "..", "outside.txt")] }), /escapes the active workspace/);
   assert.equal((await checkpoints.listWorkspaceCheckpoints(workspace))[0]?.id, checkpoint.id);
   const baseline = await checkpoints.createWorkspaceCheckpoint({ workspacePath: workspace, label: "Agent baseline", kind: "agent_run_baseline", runId: "run-test-001" });
   assert.equal((await checkpoints.acceptWorkspaceCheckpoint({ workspacePath: workspace, checkpointId: baseline.id })).reviewStatus, "accepted");

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { createMacosCredentialService } from "../../macos/src/main/platformCredentials.ts";
+import { createLegacyMacosCredentialService as createMacosCredentialService } from "../../macos/src/main/native/legacyCredentialService.ts";
 
 const calls: string[][] = [];
 const service = createMacosCredentialService((_command, args) => {
@@ -17,6 +17,7 @@ assert.equal(service.unprotect("keychain:../../invalid"), undefined);
 assert.equal(service.remove?.("plaintext"), false);
 assert.equal(createMacosCredentialService(() => ({ status: 1 }), "darwin").protect("secret"), undefined);
 assert.equal(createMacosCredentialService(() => ({ status: 0 }), "win32").available(), false);
+
 
 const auth = await readFile(new URL("../main/auth.ts", import.meta.url), "utf8");
 assert.match(auth, /credentialService\?\.available\(\) && !reference[\s\S]{0,100}throw new Error/, "Locked Keychain must not fall back to plaintext.");

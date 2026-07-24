@@ -3,7 +3,7 @@
 更新时间：2026-07-22  
 当前分支：`feature/desktop`  
 当前 Git HEAD：`9438b52a release: bump desktop refactor to v1.5.1`  
-交接状态：**R112 已完成本机自动化验证；R113 正在开发且尚未验证；尚无 Apple 真机验收证据。**
+交接状态：**R112 已完成既有自动化验证；R113 正在开发且尚未验证。2026-07-23 已具备 Apple Silicon macOS 开发机，但没有 Developer ID 签名；可开始无签名真机与 packaged 验证，签名身份、TCC 持久性、公证、正式更新和回滚仍无验收证据。**
 
 ## 1. 恢复时先看什么
 
@@ -134,4 +134,3 @@ npm run verify:acceptance
 2. 在 Apple Silicon 上跑通 R112 已定义但尚未实际执行的 packaged journeys，并形成真实 L4/L5 回执。
 3. 完成 R113 F06.2 真机 L5。
 4. 按主计划逐功能补齐其余缺失的 L4～L6 journey；只有功能自身被相应层级 `featureIds` 精确覆盖时才能从 partial 升级为 accepted。
-

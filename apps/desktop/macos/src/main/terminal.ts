@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import type { IPty, IPtyForkOptions } from "node-pty";
 import type { TerminalCreateOptions, TerminalSessionInfo, TerminalShellProfile } from "../../../shared/api/desktopApi";
+import { managedProcessRegistry, type ManagedProcessRegistration } from "../../../shared/main/managedProcessRegistry";
 
 interface TerminalSession extends TerminalSessionInfo {
   ownerId: number;
@@ -14,6 +15,7 @@ interface TerminalSession extends TerminalSessionInfo {
   terminating: boolean;
   exitPromise: Promise<void>;
   resolveExit: () => void;
+  registration: ManagedProcessRegistration;
 }
 
 const sessions = new Map<string, TerminalSession>();
@@ -32,6 +34,7 @@ export function configureMacosTerminalPtyFactory(factory?: PtyFactory): void { p
 export function configureMacosRemoteTerminalResolver(resolver?: RemoteTerminalResolver): void { remoteTerminalResolver = resolver; }
 
 export function createTerminalSession(event: IpcMainInvokeEvent, options: TerminalCreateOptions = {}): TerminalSessionInfo {
+  if (!managedProcessRegistry.accepting) throw new Error("Terminal sessions cannot start during application shutdown.");
   const remote = options.remoteHostAlias ? remoteTerminalResolver?.(options) : undefined;
   if (options.remoteHostAlias && !remote) throw new Error("Remote terminal routing is unavailable.");
   const shellProfile: TerminalShellProfile = remote ? "zsh" : options.shellProfile === "bash" ? "bash" : "zsh";
@@ -46,12 +49,20 @@ export function createTerminalSession(event: IpcMainInvokeEvent, options: Termin
   });
   let resolveExit: () => void = () => {};
   const exitPromise = new Promise<void>((resolvePromise) => { resolveExit = resolvePromise; });
+  const id = randomUUID();
+  const registration = managedProcessRegistry.register({
+    id: `pty:${id}`, kind: "pty", owner: `web-contents:${event.sender.id}`, pid: pty.pid,
+    stop: () => { try { pty.kill(); } catch { /* already exited */ } },
+    forceStop: () => { signalProcessGroup(pty.pid, "SIGKILL"); try { pty.kill("SIGKILL"); } catch { /* already exited */ } },
+    alive: () => sessions.has(id),
+  });
+  registration.transition("running");
   const session: TerminalSession = {
-    id: randomUUID(), pid: pty.pid, shell, shellProfile, cwd,
+    id, pid: pty.pid, shell, shellProfile, cwd,
     title: options.title?.trim().slice(0, 120) || shellProfile,
     workspaceKey: options.workspaceKey?.trim() || cwd,
     workspaceId: options.workspaceId,
-    createdAt: new Date().toISOString(), ownerId: event.sender.id, sender: event.sender, pty, buffer: "", terminating: false, exitPromise, resolveExit,
+    createdAt: new Date().toISOString(), ownerId: event.sender.id, sender: event.sender, pty, buffer: "", terminating: false, exitPromise, resolveExit, registration,
   };
   sessions.set(session.id, session);
   pty.onData((data) => {
@@ -59,6 +70,7 @@ export function createTerminalSession(event: IpcMainInvokeEvent, options: Termin
     if (session.sender && !session.sender.isDestroyed()) session.sender.send("desktop:terminal-data", { id: session.id, data });
   });
   pty.onExit(({ exitCode, signal }) => {
+    if (exitCode === 0) session.registration.exited(exitCode, String(signal)); else session.registration.crashed(exitCode, String(signal));
     sessions.delete(session.id);
     session.resolveExit();
     if (session.sender && !session.sender.isDestroyed()) session.sender.send("desktop:terminal-exit", { id: session.id, exitCode, signal });
@@ -130,13 +142,14 @@ function owned(event: IpcMainInvokeEvent, id: string): TerminalSession | null {
 }
 
 function publicInfo(session: TerminalSession): TerminalSessionInfo {
-  const { ownerId: _ownerId, sender: _sender, pty: _pty, buffer: _buffer, terminating: _terminating, exitPromise: _exitPromise, resolveExit: _resolveExit, ...info } = session;
+  const { ownerId: _ownerId, sender: _sender, pty: _pty, buffer: _buffer, terminating: _terminating, exitPromise: _exitPromise, resolveExit: _resolveExit, registration: _registration, ...info } = session;
   return info;
 }
 
 async function terminateSession(session: TerminalSession): Promise<void> {
   if (session.terminating) return session.exitPromise;
   session.terminating = true;
+  session.registration.transition("stopping");
   signalProcessGroup(session.pid, "SIGTERM");
   try { session.pty.kill(); } catch { session.resolveExit(); }
   await Promise.race([session.exitPromise, delay(TERMINATE_GRACE_MS)]);
@@ -145,6 +158,7 @@ async function terminateSession(session: TerminalSession): Promise<void> {
     try { session.pty.kill("SIGKILL"); } catch { /* already exited */ }
     sessions.delete(session.id);
     session.resolveExit();
+    session.registration.crashed(null, "SIGKILL");
   }
 }
 function signalProcessGroup(pid: number, signal: NodeJS.Signals): void { if (!Number.isInteger(pid) || pid <= 0) return; try { process.kill(-Math.abs(pid), signal); } catch { /* process group may already be gone */ } }

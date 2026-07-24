@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawn } from "node:child_process";
@@ -9,19 +9,21 @@ if (process.platform !== "darwin" || process.arch !== "arm64") throw new Error("
 const root = resolve(new URL("..", import.meta.url).pathname);
 const executable = join(root, "release", "mac-arm64", "OpenDrSai.app", "Contents", "MacOS", "OpenDrSai");
 assert.ok(existsSync(executable), `packaged executable missing: ${executable}`);
+const runtimeRoot = join(root, "release", "mac-arm64", "OpenDrSai.app", "Contents", "Resources", "runtime");
+const runtimeManifest = JSON.parse(await readFile(join(runtimeRoot, "runtime-manifest.json"), "utf8"));
+const runtimeArchive = await stat(join(runtimeRoot, runtimeManifest.archive));
+const runtimeGiB = Math.ceil(runtimeArchive.size / (1024 ** 3));
+const timeoutMs = Math.min(360_000, 45_000 + runtimeGiB * 45_000);
 const temp = await mkdtemp(join(tmpdir(), "opendrsai-macos-packaged-"));
 const resultPath = join(temp, "result.json");
 const child = spawn(executable, [], {
-  env: { ...process.env, DRSAI_HOME: join(temp, "home"), OPENDRSAI_MACOS_PACKAGED_SMOKE_FILE: resultPath, ELECTRON_ENABLE_LOGGING: "1" },
+  env: { ...process.env, DRSAI_HOME: join(temp, "home"), OPENDRSAI_RUNTIME_PERSIST: "0", OPENDRSAI_MACOS_PACKAGED_SMOKE_FILE: resultPath, ELECTRON_ENABLE_LOGGING: "1" },
   stdio: ["ignore", "pipe", "pipe"],
 });
 let stderr = "";
 child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
-const exitCode = await Promise.race([
-  new Promise((resolveExit) => child.once("exit", (code) => resolveExit(code))),
-  new Promise((_, reject) => setTimeout(() => reject(new Error("Packaged smoke timed out.")), 45_000)),
-]).finally(() => { if (child.exitCode === null) child.kill("SIGKILL"); });
 try {
+  const exitCode = await waitForCleanClose(child, timeoutMs, runtimeArchive.size);
   assert.equal(exitCode, 0, stderr);
   const result = JSON.parse(await readFile(resultPath, "utf8"));
   assert.equal(result.ok, true);
@@ -53,9 +55,30 @@ try {
     },
     generatedAt: new Date().toISOString()
   }, null, 2)}\n`, "utf8");
-  console.log("macOS packaged smoke passed (renderer/preload/IPC, concurrent Gateway start, zsh PTY, zero orphan processes)." );
+  console.log(`macOS packaged smoke passed (renderer/preload/IPC, ${runtimeGiB}GiB Runtime budget, concurrent Gateway start, zsh PTY, zero orphan processes).`);
+} catch (error) {
+  const failureLog = join(root, "build", "acceptance", "packaged-smoke-failure.log");
+  await mkdir(dirname(failureLog), { recursive: true });
+  const scenarioResult = await readFile(resultPath, "utf8").catch(() => "<packaged scenario did not write a result>\n");
+  await writeFile(failureLog, `Scenario result:\n${scenarioResult}\nCaptured stderr:\n${stderr}`, "utf8");
+  if (stderr.trim()) console.error(stderr.trim());
+  throw error;
 } finally {
   await rm(temp, { recursive: true, force: true });
+}
+
+function waitForCleanClose(process, timeout, runtimeBytes) {
+  return new Promise((resolveClose, reject) => {
+    const timer = setTimeout(() => {
+      process.kill("SIGKILL");
+      reject(new Error(`Packaged smoke timed out after ${timeout}ms while installing a ${runtimeBytes}-byte Runtime.`));
+    }, timeout);
+    process.once("close", (code, signal) => {
+      clearTimeout(timer);
+      if (signal) reject(new Error(`Packaged smoke App exited from signal ${signal}.`));
+      else resolveClose(code);
+    });
+  });
 }
 
 function isProcessAlive(pid) {

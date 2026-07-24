@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -18,7 +18,8 @@ try {
   const created = await worktrees.prepareForkWorktree({ workspacePath: repo, intent: "Review result" });
   assert.match(created.branch, /^drsai\/fork\/review-result-/); assert.equal(created.sourceHasChanges, false);
   const listed = await worktrees.listRuntimeWorktrees({ workspacePath: repo });
-  assert.equal(listed.some((item) => resolve(item.canonicalPath) === resolve(created.worktreePath) && item.branch === created.branch), true);
+  const createdCanonicalPath = await realpath(created.worktreePath);
+  assert.equal(listed.some((item) => resolve(item.canonicalPath) === resolve(createdCanonicalPath) && item.branch === created.branch), true);
   assert.deepEqual(await worktrees.listRuntimeWorktreeEvents({ workspacePath: repo, afterSequence: 7 }), { events: [], nextSequence: 7 });
   assert.deepEqual(worktrees.getWorktreeMigrationDiagnostics({ workspacePath: repo }), []);
   const threads = await import("../main/threads.ts");

@@ -4,11 +4,15 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { execFile } from "node:child_process";
-import { CancellationToken } from "builder-util-runtime";
-import { autoUpdater, type UpdateInfo } from "electron-updater";
+import { createRequire } from "node:module";
+import type { UpdateInfo } from "electron-updater";
 import type { UpdateStatus } from "../../../shared/api/desktopApi";
+import { managedProcessRegistry } from "../../../shared/main/managedProcessRegistry";
 
-let cancellationToken: CancellationToken | null = null;
+const require = createRequire(import.meta.url);
+const { CancellationToken } = require("builder-util-runtime") as typeof import("builder-util-runtime");
+const { autoUpdater } = require("electron-updater") as typeof import("electron-updater");
+let cancellationToken: InstanceType<typeof CancellationToken> | null = null;
 let status: UpdateStatus = idleStatus();
 let healthConfirmation: { confirmed: boolean; version: string | null; confirmedAt: string | null } = { confirmed: false, version: null, confirmedAt: null };
 const execFileAsync = promisify(execFile);
@@ -100,6 +104,7 @@ export function scheduleUpdateHealthConfirmation(): () => void {
 }
 
 async function prepareRollback(expectedVersion: string): Promise<void> {
+  if (!managedProcessRegistry.accepting) throw new Error("Update watchdog cannot start during application shutdown.");
   const executable = app.getPath("exe");
   const currentApp = resolve(executable, "../../..");
   const rollbackRoot = join(app.getPath("userData"), "update-rollback");
@@ -111,6 +116,9 @@ async function prepareRollback(expectedVersion: string): Promise<void> {
   await rm(healthFile, { force: true });
   await execFileAsync("/usr/bin/ditto", [currentApp, backupApp], { timeout: 120_000 });
   const helper = spawn("/bin/sh", [watchdog, String(process.pid), currentApp, backupApp, healthFile, expectedVersion], { detached: true, stdio: "ignore" });
+  if (!helper.pid) { helper.kill("SIGKILL"); throw new Error("Update watchdog did not expose a process id."); }
+  const registration = managedProcessRegistry.register({ id: `update-watchdog:${expectedVersion}`, kind: "update-watchdog", owner: "signed-update", pid: helper.pid, detached: true, stop: () => undefined, alive: () => helper.exitCode === null });
+  helper.once("exit", (code, signal) => { if (code === 0) registration.exited(code, signal); else registration.crashed(code, signal); });
   helper.unref();
 }
 

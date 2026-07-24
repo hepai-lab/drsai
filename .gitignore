@@ -6,7 +6,6 @@
 ########################
 # 项目特定文件
 ########################
-.github
 .pnpm-store
 .tmp-gateway.pid
 .tmp/
@@ -301,6 +300,10 @@ notebooks/test.db
 
 # Backup copies of desktop assets are not release resources.
 **/*.bak.*
+
+# Locally downloaded, checksum-verified toolchains used to reproduce macOS artifacts.
+.runtime-tools/
+apps/desktop/macos/native/OpenDrSaiNativeHelper/.build/
 
 # Android source and tests share names with generic generated-data rules above.
 !apps/android/app/src/main/java/ai/drsai/remote/data/

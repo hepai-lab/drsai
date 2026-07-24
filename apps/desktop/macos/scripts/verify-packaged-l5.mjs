@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,8 +9,19 @@ import { createServer } from "node:net";
 if (process.platform !== "darwin" || process.arch !== "arm64") throw new Error("Packaged L5 must run on Apple Silicon macOS.");
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const executable = join(root, "release", "mac-arm64", "OpenDrSai.app", "Contents", "MacOS", "OpenDrSai");
+const appBundle = join(root, "release", "mac-arm64", "OpenDrSai.app");
+const signature = spawnSync("/usr/bin/codesign", ["--verify", "--deep", "--strict", appBundle], { encoding: "utf8" });
+assert.equal(signature.status, 0, `Packaged L5 requires a valid sealed App bundle. Build unsigned development packages with npm run build:mac:dir:unsigned.\n${signature.stderr}`);
+const runtimeRoot = join(root, "release", "mac-arm64", "OpenDrSai.app", "Contents", "Resources", "runtime");
+const runtimeManifest = JSON.parse(readFileSync(join(runtimeRoot, "runtime-manifest.json"), "utf8"));
+const runtimeArchive = statSync(join(runtimeRoot, runtimeManifest.archive));
+const runtimeGiB = Math.ceil(runtimeArchive.size / (1024 ** 3));
+const coreTimeoutMs = Math.min(900_000, 180_000 + runtimeGiB * 180_000);
+console.log(`L5 driver initialized (${runtimeGiB}GiB Runtime, ${coreTimeoutMs}ms core budget).`);
 const acceptance = join(root, "build", "acceptance");
 const temp = mkdtempSync(join(tmpdir(), "opendrsai-macos-l5-"));
+const keepTempOnFailure = process.env.OPENDRSAI_MACOS_L5_KEEP_TEMP_ON_FAILURE === "1";
+let suitePassed = false;
 const home = join(temp, "home");
 const workspacePath = join(temp, "workspace");
 mkdirSync(workspacePath, { recursive: true });
@@ -32,11 +43,17 @@ writeFileSync(join(workspacePath, "git-action.txt"), "version one\n", "utf8");
 const staged = spawnSync("/usr/bin/git", ["-C", workspacePath, "add", "approval-change.txt", "git-action.txt"], { encoding: "utf8" });
 assert.equal(staged.status, 0, staged.stderr);
 mkdirSync(acceptance, { recursive: true });
+console.log("L5 fixture workspace and Git repository are ready.");
 
 try {
+  const coldPerformance = await runScenario("performance-ready", {}, {}, 30_000);
+  assert.equal(coldPerformance.result.ok, true, coldPerformance.result.error);
+  assert.equal(coldPerformance.result.interactive, true);
+  console.log("L5 reserving an isolated Gateway port...");
   const gatewayPort = await freePort();
-  const core = await runScenario("core", { workspacePath }, { DRSAI_API_PORT: String(gatewayPort) }, 120_000);
-  assert.equal(core.result.ok, true);
+  console.log(`L5 starting core scenario on Gateway port ${gatewayPort}...`);
+  const core = await runScenario("core", { workspacePath }, { DRSAI_API_PORT: String(gatewayPort) }, coreTimeoutMs);
+  assert.equal(core.result.ok, true, core.result.error);
   assert.equal(core.result.persistenceChecks, 2);
   assert.match(core.result.terminalOutput, /OPENDRSAI_MACOS_PTY_OK/);
   assert.equal(isAlive(core.result.terminal.pid), false, "core PTY survived graceful App exit");
@@ -50,8 +67,8 @@ try {
     ptyOrphans: 0,
   });
 
-  const product = await runScenario("product-state", { workspacePath }, {}, 120_000);
-  assert.equal(product.result.ok, true);
+  const product = await runScenario("product-state", { workspacePath, workspaceId: core.result.workspace.id }, {}, 300_000);
+  assert.equal(product.result.ok, true, product.result.error);
   for (const check of ["threadLifecycle", "chatAbortRecoveryLifecycle", "chatNetworkRecoveryLifecycle", "agentCatalogAbortRecoveryLifecycle", "gitApprovalExecution", "workspaceGitReviewLifecycle", "checkpointLifecycle", "worktreeQueueLifecycle", "desktopHandoffLifecycle", "customCommandCrud", "projectMemoryCrud", "projectSkillApprovalInstall", "workflowLifecycle", "reusableAndScheduledLifecycle", "diagnosticsRoundtrip", "backgroundTaskLifecycle", "interactiveDebuggerRoundtrip"]) assert.equal(product.result[check], true, `product-state missing ${check}`);
   assertNoRuntimeErrors(`${product.stdout}\n${product.stderr}`, "product-state journeys");
   const gitLog = spawnSync("/usr/bin/git", ["-C", workspacePath, "log", "-1", "--format=%B"], { encoding: "utf8" });
@@ -68,12 +85,29 @@ try {
     unexpectedSideEffects: 0,
   });
 
+  const warmPerformance = [];
+  for (let iteration = 0; iteration < 5; iteration += 1) warmPerformance.push(await runScenario("performance-ready", {}, {}, 30_000));
+  for (const run of warmPerformance) assert.equal(run.result.ok, true, run.result.error);
+
+  const managedCrash = await runScenario("managed-process-crash", {}, {}, 60_000);
+  assert.equal(managedCrash.result.ok, true, managedCrash.result.error);
+  assert.equal(managedCrash.result.helperBefore.status, "ready");
+  assert.equal(managedCrash.result.helperAfter.status, "ready");
+  assert.equal(managedCrash.result.helperAfter.pong, true);
+  assert.notEqual(managedCrash.result.helperAfter.pid, managedCrash.result.helperBefore.pid, "Native Helper SIGKILL did not create a new process");
+  assert.notEqual(managedCrash.result.gatewayAfter.pid, managedCrash.result.gateway.pid, "Gateway SIGKILL did not create a new process");
+  assert.equal(managedCrash.result.gatewayAfter.ready, true);
+  assertNoRuntimeErrors(`${managedCrash.stdout}\n${managedCrash.stderr}`, "managed process crash recovery");
+  writeReceipt("managed-process-crash-recovery", { featureIds: ["F06.3"], nativeHelperForcedCrashes: 1, nativeHelperRecovered: true, gatewayForcedCrashes: 1, gatewayRecovered: true, residualProcessCount: managedCrash.resources.residualPids.length });
+
   const iterations = boundedInteger(process.env.OPENDRSAI_MACOS_L5_RESTART_ITERATIONS, 100, 1, 100);
+  const restartResources = [];
   for (let iteration = 0; iteration < iterations; iteration += 1) {
     const restart = await runScenario("restart", { threadId: core.result.thread.id }, {}, 30_000);
-    assert.equal(restart.result.ok, true, `restart iteration ${iteration + 1}`);
+    assert.equal(restart.result.ok, true, `restart iteration ${iteration + 1}: ${restart.result.error ?? "unknown error"}`);
     assert.equal(restart.result.threadRecovered, true);
     assert.equal(restart.result.preferenceRecovered, true);
+    restartResources.push(restart.resources);
     assertNoRuntimeErrors(`${restart.stdout}\n${restart.stderr}`, `restart iteration ${iteration + 1}`);
   }
 
@@ -85,8 +119,9 @@ try {
   assert.match(crash.result.approvalId, /^approval:/);
   crash.child.kill("SIGKILL");
   await waitForExit(crash.child, 15_000);
+  await assertNoObservedResiduals(crash.resources, "forced-crash App tree");
   const recovery = await runScenario("recovery", { threadId: core.result.thread.id, approvalId: crash.result.approvalId }, {}, 30_000);
-  assert.equal(recovery.result.ok, true);
+  assert.equal(recovery.result.ok, true, recovery.result.error);
   assert.equal(recovery.result.threadRecovered, true);
   assert.equal(recovery.result.approvalRecoveredRejected, true);
   assertNoRuntimeErrors(`${recovery.stdout}\n${recovery.stderr}`, "post-crash recovery");
@@ -99,10 +134,25 @@ try {
 
   const stabilityDurationMs = boundedInteger(process.env.OPENDRSAI_MACOS_L5_STABILITY_MS, 7_200_000, 60_000, 7_300_000);
   const stability = await runScenario("stability", { durationMs: stabilityDurationMs, intervalMs: 30_000 }, {}, stabilityDurationMs + 90_000);
-  assert.equal(stability.result.ok, true);
+  assert.equal(stability.result.ok, true, stability.result.error);
   assert.ok(stability.result.durationMs >= stabilityDurationMs);
   assert.ok(stability.result.heartbeats >= Math.floor(stabilityDurationMs / 30_000));
   assertNoRuntimeErrors(`${stability.stdout}\n${stability.stderr}`, "stability soak");
+  const resourceSummary = summarizeResources([coldPerformance.resources, core.resources, product.resources, ...warmPerformance.map((run) => run.resources), managedCrash.resources, ...restartResources, crash.resources, recovery.resources, stability.resources]);
+  const restartGrowth = summarizeRestartGrowth(restartResources);
+  assert.ok(resourceSummary.sampleCount >= 6, "packaged L5 did not collect enough process resource samples");
+  assert.equal(resourceSummary.residualProcessCount, 0, "packaged L5 left an observed App descendant alive");
+  if (iterations === 100) assert.equal(restartGrowth.withinBudget, true, `100-restart resource growth exceeded budget: ${JSON.stringify(restartGrowth)}`);
+  writeReceipt("packaged-resource-sampling", {
+    featureIds: ["F06.5", "F08.5", "F10.3"],
+    restartIterations: iterations,
+    formalHundredRestartBudgetSatisfied: iterations === 100 && restartGrowth.withinBudget,
+    restartGrowth,
+    ...resourceSummary,
+  });
+  const performance = summarizePerformance(coldPerformance.resources, warmPerformance.map((run) => run.resources), stability.resources);
+  assert.equal(performance.withinBudget, true, `Packaged performance exceeded budget: ${JSON.stringify(performance)}`);
+  writeReceipt("packaged-performance-budget", { featureIds: ["F01.1", "F08.5", "F10.3"], ...performance });
   writeReceipt("restart-stability", {
     featureIds: ["F03.4", "F03.5", "F04.5", "F06.4", "F06.6", "F10.1"],
     restartIterations: iterations,
@@ -118,7 +168,7 @@ try {
   });
 
   const fault = await runScenario("fault", { workspacePath }, {}, 30_000);
-  assert.equal(fault.result.ok, true);
+  assert.equal(fault.result.ok, true, fault.result.error);
   assert.deepEqual(fault.result.rejected.sort(), ["unregistered-workspace", "unsafe-url", "workspace-traversal"]);
   assertNoRuntimeErrors(`${fault.stdout}\n${fault.stderr}`, "fault injection");
   writeReceipt("fault-injection", {
@@ -127,12 +177,15 @@ try {
     expectedRejections: 3,
     unexpectedSideEffects: 0,
   });
+  suitePassed = true;
   console.log(`macOS packaged L5 passed (${iterations} restarts, one forced crash, ${stability.result.durationMs}ms stability).`);
 } finally {
-  rmSync(temp, { recursive: true, force: true });
+  if (!suitePassed && keepTempOnFailure) console.error(`L5 preserved failed fixture at ${temp}`);
+  else rmSync(temp, { recursive: true, force: true });
 }
 
 async function runScenario(scenario, config, extraEnv, timeoutMs, keepRunning = false) {
+  const startedAt = Date.now();
   const resultPath = join(temp, `${scenario}-${Date.now()}-${Math.random().toString(16).slice(2)}.json`);
   const child = spawn(executable, [], {
     env: {
@@ -151,16 +204,21 @@ async function runScenario(scenario, config, extraEnv, timeoutMs, keepRunning = 
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
+  console.log(`L5 ${scenario} spawned App PID ${child.pid ?? "pending"}.`);
   let stdout = "";
   let stderr = "";
+  const resources = { scenario, samples: [], observedPids: new Set(), residualPids: [] };
   child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
   child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
-  const result = await waitForResult(resultPath, child, timeoutMs, () => stderr);
+  const result = await waitForResult(resultPath, child, timeoutMs, () => stderr, () => sampleProcessTree(child.pid, resources, startedAt));
+  resources.durationMs = Date.now() - startedAt;
+  writeFileSync(join(acceptance, "packaged-l5-last-scenario.json"), `${JSON.stringify({ schemaVersion: 1, scenario, result, generatedAt: new Date().toISOString() }, null, 2)}\n`, "utf8");
   if (!keepRunning) {
     const exit = await waitForExit(child, 30_000);
     assert.equal(exit.code, result.ok ? 0 : 1, `${scenario} exit mismatch\n${stderr}`);
+    await assertNoObservedResiduals(resources, `${scenario} App tree`);
   }
-  return { child, result, stdout, stderr };
+  return { child, result, stdout, stderr, resources };
 }
 
 function escapeRegExp(value) { return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
@@ -187,15 +245,89 @@ function minimalPdf() {
   return Buffer.from(body, "ascii");
 }
 
-async function waitForResult(path, child, timeoutMs, stderr) {
+async function waitForResult(path, child, timeoutMs, stderr, sample) {
   const deadline = Date.now() + timeoutMs;
+  let nextSampleAt = 0;
   while (Date.now() < deadline) {
-    try { return JSON.parse(readFileSync(path, "utf8")); } catch { /* wait */ }
-    if (child.exitCode !== null) throw new Error(`App exited before ${path} was written (${child.exitCode}).\n${stderr()}`);
+    if (Date.now() >= nextSampleAt) { sample?.(); nextSampleAt = Date.now() + 2_000; }
+    try { const result = JSON.parse(readFileSync(path, "utf8")); sample?.(); return result; } catch { /* wait */ }
+    if (child.exitCode !== null || child.signalCode !== null) throw new Error(`App exited before ${path} was written (code=${child.exitCode}, signal=${child.signalCode}).\n${stderr()}`);
     await delay(100);
   }
   child.kill("SIGKILL");
   throw new Error(`Packaged scenario timed out after ${timeoutMs}ms.\n${stderr()}`);
+}
+
+function sampleProcessTree(rootPid, tracker, startedAt) {
+  if (!Number.isInteger(rootPid) || rootPid <= 0) return;
+  const ps = spawnSync("/bin/ps", ["-axo", "pid=,ppid=,rss=,%cpu=,comm="], { encoding: "utf8" });
+  if (ps.status !== 0) throw new Error(`Unable to sample packaged process tree: ${ps.stderr}`);
+  const rows = ps.stdout.split(/\r?\n/).flatMap((line) => {
+    const match = line.match(/^\s*(\d+)\s+(\d+)\s+(\d+)\s+([\d.]+)\s+(.+)$/); return match ? [{ pid: Number(match[1]), ppid: Number(match[2]), rssKiB: Number(match[3]), cpuPercent: Number(match[4]), command: match[5].trim() }] : [];
+  });
+  const pids = new Set([rootPid]);
+  for (let changed = true; changed;) { changed = false; for (const row of rows) if (pids.has(row.ppid) && !pids.has(row.pid)) { pids.add(row.pid); changed = true; } }
+  const tree = rows.filter((row) => pids.has(row.pid));
+  for (const row of tree) tracker.observedPids.add(row.pid);
+  const lsof = tree.length ? spawnSync("/usr/sbin/lsof", ["-nP", "-a", "-p", tree.map((row) => row.pid).join(",")], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 }) : null;
+  const fdCount = lsof && (lsof.status === 0 || lsof.status === 1) ? Math.max(0, lsof.stdout.split(/\r?\n/).filter(Boolean).length - 1) : 0;
+  tracker.samples.push({ at: new Date().toISOString(), elapsedMs: Date.now() - startedAt, processCount: tree.length, rssKiB: tree.reduce((sum, row) => sum + row.rssKiB, 0), cpuPercent: tree.reduce((sum, row) => sum + row.cpuPercent, 0), fdCount });
+}
+
+async function assertNoObservedResiduals(tracker, phase) {
+  const deadline = Date.now() + 5_000;
+  let alive = [];
+  do { alive = [...tracker.observedPids].filter(isAlive); if (!alive.length) break; await delay(100); } while (Date.now() < deadline);
+  tracker.residualPids = alive;
+  assert.deepEqual(alive, [], `${phase} left observed process pid(s): ${alive.join(", ")}`);
+}
+
+function summarizeResources(trackers) {
+  const samples = trackers.flatMap((tracker) => tracker.samples);
+  return {
+    sampleCount: samples.length,
+    maxProcessCount: Math.max(0, ...samples.map((sample) => sample.processCount)),
+    maxRssKiB: Math.max(0, ...samples.map((sample) => sample.rssKiB)),
+    maxFdCount: Math.max(0, ...samples.map((sample) => sample.fdCount)),
+    residualProcessCount: trackers.reduce((sum, tracker) => sum + tracker.residualPids.length, 0),
+  };
+}
+
+function summarizeRestartGrowth(trackers) {
+  const rss = trackers.map((tracker) => Math.max(0, ...tracker.samples.map((sample) => sample.rssKiB)));
+  const fds = trackers.map((tracker) => Math.max(0, ...tracker.samples.map((sample) => sample.fdCount)));
+  const windowSize = Math.max(1, Math.min(10, Math.floor(trackers.length / 4) || 1));
+  const firstRssAverageKiB = average(rss.slice(0, windowSize)); const lastRssAverageKiB = average(rss.slice(-windowSize));
+  const firstFdAverage = average(fds.slice(0, windowSize)); const lastFdAverage = average(fds.slice(-windowSize));
+  const rssSlopeKiBPerIteration = linearSlope(rss); const fdSlopePerIteration = linearSlope(fds);
+  const rssGrowthBudgetKiB = 64 * 1024; const fdGrowthBudget = 32;
+  const withinBudget = lastRssAverageKiB <= firstRssAverageKiB + rssGrowthBudgetKiB
+    && lastFdAverage <= firstFdAverage + fdGrowthBudget
+    && rssSlopeKiBPerIteration <= 1_024
+    && fdSlopePerIteration <= 0.5;
+  return { sampleIterations: trackers.length, windowSize, firstRssAverageKiB, lastRssAverageKiB, rssSlopeKiBPerIteration, rssGrowthBudgetKiB, firstFdAverage, lastFdAverage, fdSlopePerIteration, fdGrowthBudget, withinBudget };
+}
+
+function summarizePerformance(cold, warm, stability) {
+  const warmInteractiveMs = warm.map((tracker) => tracker.durationMs).sort((left, right) => left - right);
+  const idle = stability.samples.filter((sample) => sample.elapsedMs >= 10_000);
+  const idleCpu = idle.map((sample) => sample.cpuPercent).sort((left, right) => left - right);
+  const idleRss = idle.map((sample) => sample.rssKiB);
+  const coldInteractiveBudgetMs = 45_000; const warmInteractiveP95BudgetMs = 10_000; const idleAverageCpuBudgetPercent = 15; const idleP95CpuBudgetPercent = 40; const idleMaxRssBudgetKiB = 1_258_291;
+  const coldInteractiveMs = cold.durationMs; const warmInteractiveP95Ms = percentile(warmInteractiveMs, 0.95); const idleAverageCpuPercent = Math.round((idleCpu.reduce((sum, value) => sum + value, 0) / Math.max(1, idleCpu.length)) * 100) / 100; const idleP95CpuPercent = percentile(idleCpu, 0.95); const idleMaxRssKiB = Math.max(0, ...idleRss);
+  const withinBudget = coldInteractiveMs <= coldInteractiveBudgetMs && warmInteractiveP95Ms <= warmInteractiveP95BudgetMs && idle.length >= 2 && idleAverageCpuPercent <= idleAverageCpuBudgetPercent && idleP95CpuPercent <= idleP95CpuBudgetPercent && idleMaxRssKiB <= idleMaxRssBudgetKiB;
+  return { coldInteractiveMs, coldInteractiveBudgetMs, warmInteractiveRuns: warmInteractiveMs.length, warmInteractiveP95Ms, warmInteractiveP95BudgetMs, idleSampleCount: idle.length, idleAverageCpuPercent, idleAverageCpuBudgetPercent, idleP95CpuPercent, idleP95CpuBudgetPercent, idleMaxRssKiB, idleMaxRssBudgetKiB, withinBudget };
+}
+
+function percentile(values, fraction) { if (!values.length) return 0; return values[Math.min(values.length - 1, Math.ceil(values.length * fraction) - 1)]; }
+
+function average(values) { return values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : 0; }
+function linearSlope(values) {
+  if (values.length < 2) return 0;
+  const meanX = (values.length - 1) / 2; const meanY = values.reduce((sum, value) => sum + value, 0) / values.length;
+  let numerator = 0; let denominator = 0;
+  for (const [index, value] of values.entries()) { numerator += (index - meanX) * (value - meanY); denominator += (index - meanX) ** 2; }
+  return Math.round((numerator / denominator) * 1_000) / 1_000;
 }
 
 function waitForExit(child, timeoutMs) {
@@ -228,12 +360,25 @@ function isAlive(pid) {
 function freePort() {
   return new Promise((resolvePort, reject) => {
     const server = createServer();
-    server.once("error", reject);
+    let settled = false;
+    const finish = (error, port = 0) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(listenTimer);
+      if (error) reject(error); else resolvePort(port);
+    };
+    const listenTimer = setTimeout(() => { server.close(); finish(new Error("Timed out while reserving a local Gateway port.")); }, 5_000);
+    server.once("error", (error) => finish(error));
     server.listen(0, "127.0.0.1", () => {
       const address = server.address();
       const port = typeof address === "object" && address ? address.port : 0;
-      server.close((error) => error ? reject(error) : resolvePort(port));
+      if (!port) { server.close(); finish(new Error("Local Gateway port reservation returned no port.")); return; }
+      clearTimeout(listenTimer);
+      const closeTimer = setTimeout(() => finish(undefined, port), 2_000);
+      server.once("close", () => { clearTimeout(closeTimer); finish(undefined, port); });
+      server.close();
     });
+    server.unref();
   });
 }
 

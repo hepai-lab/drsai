@@ -22,6 +22,17 @@ try {
   assert.equal(recovery.setNetworkOnline(false), false);
   assert.equal(recovery.setNetworkOnline(true), true);
 
+  let releaseObservation!: (ready: boolean) => void;
+  const delayedReady = new Promise<boolean>((resolve) => { releaseObservation = resolve; });
+  recovery.observeInterruption(() => delayedReady);
+  let racedStarts = 0;
+  const racedRecovery = recovery.recover("unlock", async () => { racedStarts += 1; });
+  await Promise.resolve();
+  assert.equal(racedStarts, 0, "recovery must wait for in-flight interruption status capture");
+  releaseObservation(true);
+  assert.equal((await racedRecovery).recoveredGateway, true);
+  assert.equal(racedStarts, 1, "captured ready Gateway must recover despite immediate unlock");
+
   recovery.suspend(true);
   let starts = 0;
   let release!: () => void;
@@ -33,9 +44,12 @@ try {
   assert.deepEqual(await first, { reason: "resume", recoveredGateway: true, at: "2026-07-22T00:00:00.000Z" });
   assert.equal(starts, 1);
   recovery.suspend(true);
+  assert.deepEqual(await recovery.recover("unlock", async () => { starts += 1; }, () => new Date("2026-07-22T00:01:00.000Z")), { reason: "unlock", recoveredGateway: true, at: "2026-07-22T00:01:00.000Z" });
+  assert.equal(starts, 2, "unlock must use the same bounded Gateway recovery path as resume");
+  recovery.suspend(true);
   recovery.beginShutdown();
   assert.equal((await recovery.recover("resume", async () => { starts += 1; })).recoveredGateway, false);
-  assert.equal(starts, 1, "shutdown must suppress service recovery");
+  assert.equal(starts, 2, "shutdown must suppress service recovery");
 } finally {
   await rm(temp, { recursive: true, force: true });
 }

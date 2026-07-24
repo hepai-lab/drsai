@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -39,8 +39,8 @@ try {
   await mkdir(outside);
   const file = join(allowed, "artifact.txt");
   await writeFile(file, "safe", "utf8");
-  assert.equal(assertAllowedDesktopPath(file, [allowed]), file);
-  assert.equal(assertAllowedDesktopPath(allowed, [allowed], { directory: true }), allowed);
+  assert.equal(assertAllowedDesktopPath(file, [allowed]), await realpath(file));
+  assert.equal(assertAllowedDesktopPath(allowed, [allowed], { directory: true }), await realpath(allowed));
   assert.throws(() => assertAllowedDesktopPath(outside, [allowed]), (error) => error instanceof DesktopIpcBoundaryError && error.code === "IPC_PATH_OUTSIDE_ALLOWED_ROOTS");
   assert.throws(() => assertAllowedDesktopPath(file, [allowed], { directory: true }), (error) => error instanceof DesktopIpcBoundaryError && error.code === "IPC_PATH_NOT_DIRECTORY");
 

@@ -119,6 +119,7 @@ export function startChat(webContents: ChatEventTarget, request: unknown): strin
   }
   const validated = validateChatRequest(request);
   const requestId = validated.requestId || randomUUID();
+  const runRequest: ChatRequest = { ...validated, runId: validated.runId || randomUUID() };
   if (activeChats.has(requestId)) {
     throw new Error("Chat request is already active.");
   }
@@ -138,7 +139,7 @@ export function startChat(webContents: ChatEventTarget, request: unknown): strin
     attributes: { route: validated.agentId === "my-codex" ? "codex" : "opendrsai" },
   }));
 
-  runChat(webContents, requestId, validated, controller).catch(async (error) => {
+  runChat(webContents, requestId, runRequest, controller).catch(async (error) => {
     activeChats.delete(requestId);
     activeChatEventTargets.delete(requestId);
     platformChatTargets.delete(requestId);
@@ -159,6 +160,8 @@ export function startChat(webContents: ChatEventTarget, request: unknown): strin
     }
     emit(webContents, {
       requestId,
+      sessionId: runRequest.sessionId,
+      runId: runRequest.runId,
       type: cancelledByUser ? "aborted" : "error",
       error: errorMessage,
       failureRecovery: getFailureRecovery(error),
