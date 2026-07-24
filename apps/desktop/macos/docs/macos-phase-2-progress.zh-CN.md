@@ -1,7 +1,7 @@
 # OpenDrSai macOS 第二阶段实施进度
 
 更新时间：2026-07-24
-当前轮次：P2-R034
+当前轮次：P2-R035
 范围：10 个模块、50 个功能点
 总体状态：实施中；未达到 signed release 验收条件
 
@@ -9,12 +9,33 @@
 
 | 状态 | 数量 |
 |---|---:|
-| accepted | 30 |
+| accepted | 31 |
 | implemented_unsigned | 8 |
-| in_progress | 10 |
+| in_progress | 9 |
 | not_started | 0 |
 | blocked_on_signing | 2 |
 | 合计 | 50 |
+
+## P2-R035：完整 Xcode 与 Swift XCTest 闭环
+
+### 本轮结果
+
+- 主机升级到 macOS 26.5.2，安装并初始化 Xcode 26.6；全局 developer directory 为 `/Applications/Xcode.app/Contents/Developer`，`xcrun --find xctest` 指向完整 Xcode 工具链。
+- `swift test --package-path apps/desktop/macos/native/OpenDrSaiNativeHelper` 真实执行 7 个 XCTest，0 failure；覆盖合法 handshake，以及不兼容版本、畸形 JSON、非空参数、超限 payload、未知字段和未知 operation 拒绝。
+- 新增 `verify-native-helper-xctest.mjs`：强制 Apple Silicon、完整 Xcode 来源、至少 7 个零失败测试，并生成 0600 `native-helper-xctest.json` 机器回执；该门禁已接入 `test:native-helper` 和 unsigned CI。
+- P2-F03.5 从 `in_progress` 提升为 `accepted`。系统升级中断了此前已进入 soak 的 clean L5，必须在新系统上重新执行，不能沿用中断回执。
+
+| 功能 | 旧状态 | 新状态 | 证据 |
+| --- | --- | --- | --- |
+| P2-F03.5 TypeScript/Swift 协议契约 | in_progress | accepted | Xcode 26.6、完整 xctest、Swift XCTest 7/7、现有真实 executable fixture 与 reproducibility |
+
+本轮汇总为 **31 accepted、8 implemented_unsigned、9 in_progress、0 not_started、2 blocked_on_signing**。
+
+### 下一轮
+
+1. 在 macOS 26.5.2/Xcode 26.6 上重新生成 clean source/L4，并重新执行被升级中断的正式 L5。
+2. L5 聚合后推进 F01.1/F06.3/F06.5/F08.5/F09.1/F10.2/F10.3。
+3. Developer ID 与公证凭据到位后完成稳定身份和 signed L6。
 
 ## P2-R034：50 点机器状态台账与计数纠偏
 

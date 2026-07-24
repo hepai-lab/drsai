@@ -50,7 +50,7 @@ for (const contract of ["../shared/browser-use-worker", "to: browser-use-worker"
   assert.ok(builder.includes(contract), `macOS builder omits Browser worker resource contract: ${contract}`);
 }
 for (const contract of ["native/OpenDrSaiNativeHelper/.build/debug", "to: native", "OpenDrSaiNativeHelper", "libOpenDrSaiNativeProtocol.dylib"]) assert.ok(builder.includes(contract), `macOS builder omits Native Helper resource contract: ${contract}`);
-for (const contract of ["arm64-apple-macosx11.0", "MacOSX11.3.sdk", "OpenDrSaiNativeHelper", "-emit-library", 'lib${MODULE}.dylib']) assert.ok(nativeBuild.includes(contract), `Native Helper reproducible Debug build omits ${contract}`);
+for (const contract of ["arm64-apple-macosx11.0", "xcrun --sdk macosx --show-sdk-path", "xcrun --find swiftc", "OpenDrSaiNativeHelper", "-emit-library", 'lib${MODULE}.dylib']) assert.ok(nativeBuild.includes(contract), `Native Helper reproducible Debug build omits ${contract}`);
 assert.ok(packageJson.scripts["build:mac:dir"]?.includes("build:native-helper") && packageJson.scripts["test:native-helper"], "macOS package scripts must build and test the Native Helper before packaging");
 for (const path of ["../shared/browser-use-worker/worker.py", "../shared/browser-use-worker/protocol.py", "../shared/browser-use-worker/requirements.txt"]) {
   assert.ok(existsSync(resolve(root, path)), `missing shared Browser worker resource: ${path}`);

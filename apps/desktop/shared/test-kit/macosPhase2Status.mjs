@@ -6,7 +6,7 @@ const B = "blocked_on_signing";
 export const macosPhase2Statuses = [
   [P, A, A, A, A],
   [A, A, A, A, A],
-  [A, A, A, A, P],
+  [A, A, A, A, A],
   [U, U, U, A, U],
   [U, U, U, P, A],
   [A, A, P, A, P],

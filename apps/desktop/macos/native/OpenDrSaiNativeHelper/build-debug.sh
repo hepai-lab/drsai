@@ -4,7 +4,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 OUTPUT="${ROOT}/.build/debug"
 MODULE="OpenDrSaiNativeProtocol"
-SDK="${OPENDRSAI_SWIFT_SDK:-/Library/Developer/CommandLineTools/SDKs/MacOSX11.3.sdk}"
+SDK="${OPENDRSAI_SWIFT_SDK:-$(/usr/bin/xcrun --sdk macosx --show-sdk-path)}"
+SWIFTC="${OPENDRSAI_SWIFTC:-$(/usr/bin/xcrun --find swiftc)}"
 CACHE="${ROOT}/.build/module-cache"
 ARCH="$(uname -m)"
 if [[ "${ARCH}" != "arm64" ]]; then
@@ -12,14 +13,15 @@ if [[ "${ARCH}" != "arm64" ]]; then
   exit 2
 fi
 if [[ ! -d "${SDK}" ]]; then echo "Compatible macOS SDK is missing: ${SDK}" >&2; exit 3; fi
+if [[ ! -x "${SWIFTC}" ]]; then echo "Swift compiler is missing: ${SWIFTC}" >&2; exit 4; fi
 mkdir -p "${OUTPUT}" "${CACHE}"
-/usr/bin/xcrun swiftc -sdk "${SDK}" -module-cache-path "${CACHE}" -Onone -target arm64-apple-macosx11.0 \
+"${SWIFTC}" -sdk "${SDK}" -module-cache-path "${CACHE}" -Onone -target arm64-apple-macosx11.0 \
   -Xlinker -no_uuid \
   -emit-library -emit-module -module-name "${MODULE}" \
   -emit-module-path "${OUTPUT}/${MODULE}.swiftmodule" \
   "${ROOT}/Sources/${MODULE}/NativeProtocol.swift" "${ROOT}/Sources/${MODULE}/Keychain.swift" "${ROOT}/Sources/${MODULE}/SystemPermissions.swift" -framework Security -framework AVFoundation -framework ApplicationServices -framework CoreGraphics -framework AppKit \
   -o "${OUTPUT}/lib${MODULE}.dylib"
-/usr/bin/xcrun swiftc -sdk "${SDK}" -module-cache-path "${CACHE}" -Onone -target arm64-apple-macosx11.0 \
+"${SWIFTC}" -sdk "${SDK}" -module-cache-path "${CACHE}" -Onone -target arm64-apple-macosx11.0 \
   -Xlinker -no_uuid \
   -I "${OUTPUT}" -L "${OUTPUT}" -l"${MODULE}" \
   -Xlinker -rpath -Xlinker @executable_path \
