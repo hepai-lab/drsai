@@ -12,21 +12,21 @@ class AndroidUpdatePolicyTest {
         versionCode: Long = 10407,
         sha: String = "a".repeat(64),
         cert: String = "b".repeat(64),
-        apkUrl: String = "https://github.com/hepai-lab/drsai/releases/download/android-v1.4.7/OpenDrSai-Android-v1.4.7.apk",
+        apkUrl: String = "https://download-opendrsai.ihep.ac.cn/releases/v1.4.7/android/OpenDrSai-Android-v1.4.7.apk",
     ) = """
         {"schemaVersion":1,"platform":"android","channel":"stable","version":"$version",
          "versionCode":$versionCode,"publishedAt":"2026-07-18T00:00:00Z","minimumSupportedVersion":"1.4.0",
          "mandatory":false,"apk":{"url":"$apkUrl","sizeBytes":1234,"sha256":"$sha","signingCertSha256":"$cert"}}
     """.trimIndent()
 
-    @Test fun parsesAndAcceptsImmutableGithubApk() {
+    @Test fun parsesAndAcceptsImmutableOpenDrSaiCdnApk() {
         val update = AndroidUpdatePolicy.parseManifest(manifest())
         assertEquals(10407, update.versionCode)
         assertEquals("1.4.7", update.version)
     }
 
     @Test fun rejectsMutableLatestApkUrl() {
-        runCatching { AndroidUpdatePolicy.parseManifest(manifest(apkUrl = "https://github.com/hepai-lab/drsai/releases/latest/download/app.apk")) }
+        runCatching { AndroidUpdatePolicy.parseManifest(manifest(apkUrl = "https://download-opendrsai.ihep.ac.cn/releases/latest/android/app.apk")) }
             .onSuccess { error("mutable APK URL should be rejected") }
     }
 

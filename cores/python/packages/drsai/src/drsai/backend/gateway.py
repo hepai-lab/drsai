@@ -1910,7 +1910,7 @@ async def runtime_mobile_pairing_register(request: MobilePairingRegistrationRequ
         credential = await enrollment.enroll(
             request.registration_code,
             request.display_name.strip(),
-            os.environ.get("OPENDRSAI_RUNTIME_VERSION", "1.5.1"),
+            os.environ.get("OPENDRSAI_RUNTIME_VERSION", "1.5.2"),
         )
         RuntimeCredentialStore(relay_state / "credential.dpapi").save(credential)
         relay_state.mkdir(parents=True, exist_ok=True)

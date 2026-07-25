@@ -1,5 +1,5 @@
 param(
-    [string]$MsiPath = "$PSScriptRoot\..\release\bootstrapper\OpenDrSaiSetup-win-x64.msi"
+    [string]$MsiPath = "$PSScriptRoot\..\release\bootstrapper\OpenDrSai-Windows-Installer-x64.msi"
 )
 
 $ErrorActionPreference = "Stop"
@@ -44,10 +44,8 @@ if ($runtimeUrl -match '/releases/latest/') {
         throw "Stable RUNTIMEURL must be immutable and must not use releases/latest: $runtimeUrl"
     }
 } else {
-    $expectedReleaseSegment = "/releases/download/v$packageVersion/"
-    if (-not $runtimeUrl.Contains($expectedReleaseSegment)) {
-        throw "RUNTIMEURL must match package version $packageVersion and contain '$expectedReleaseSegment': $runtimeUrl"
-    }
+    $expectedRuntimeUrl = "https://download-opendrsai.ihep.ac.cn/releases/v$packageVersion/windows/OpenDrSai-Windows-v$packageVersion-x64.zip"
+    Assert-Equal $runtimeUrl $expectedRuntimeUrl "RUNTIMEURL"
 }
 
 foreach ($action in @(
@@ -109,7 +107,10 @@ $downloadData = Read-SingleValue $database "SELECT ``Target`` FROM ``CustomActio
 Assert-Equal $downloadSource "OpenDrSaiInstallerActions" "Download custom action binary"
 Assert-Equal $downloadTarget "DownloadRuntime" "Download custom action entry point"
 if ($downloadData -notmatch [regex]::Escape("SourcePath=[OriginalDatabase]")) {
-    throw "Download custom action must prefer OpenDrSaiRuntime-win-x64.zip beside Setup: $downloadData"
+    throw "Download custom action must prefer the versioned OpenDrSai Runtime ZIP beside Setup: $downloadData"
+}
+if ($downloadData -notmatch [regex]::Escape("OpenDrSai-Windows-v[BOOTSTRAPPERVERSION]-x64.zip")) {
+    throw "Download custom action cache path must use the versioned OpenDrSai Runtime ZIP name: $downloadData"
 }
 if (($downloadType -band 63) -ne 1) {
     throw "DownloadOpenDrSaiRuntime must be a DLL custom action; type=$downloadType."

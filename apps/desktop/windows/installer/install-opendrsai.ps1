@@ -32,7 +32,7 @@ $ProgressPreference = "SilentlyContinue"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 if (-not $RuntimeUrl) {
-    $RuntimeUrl = "https://github.com/hepai-lab/drsai/releases/download/v$BootstrapperVersion/OpenDrSaiRuntime-win-x64.zip"
+    $RuntimeUrl = "https://download-opendrsai.ihep.ac.cn/releases/v$BootstrapperVersion/windows/OpenDrSai-Windows-v$BootstrapperVersion-x64.zip"
 }
 
 $CacheDir = Join-Path $InstallRoot "cache"
@@ -108,7 +108,7 @@ function Get-SafeFileName([string]$Url, [string]$Fallback) {
 }
 
 function Get-RuntimeArchivePath {
-    return (Join-Path $CacheDir (Get-SafeFileName $RuntimeUrl "OpenDrSaiRuntime-win-x64.zip"))
+    return (Join-Path $CacheDir (Get-SafeFileName $RuntimeUrl "OpenDrSai-Windows-v$BootstrapperVersion-x64.zip"))
 }
 
 function Assert-RuntimeMetadata {

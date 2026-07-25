@@ -1,6 +1,6 @@
 {
   "name": "opendrsai-windows-desktop",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "private": true,
   "description": "OpenDrSai Windows desktop shell and installer host",
   "main": "./out/main/index.js",
@@ -23,7 +23,7 @@
     "build:win": "npm run build:runtime && npm run build:bootstrapper",
     "build:unpack": "npm run build && electron-builder --dir --config.electronDist=../node_modules/electron/dist",
     "build:runtime": "npm run build:unpack && powershell -ExecutionPolicy Bypass -File installer\\create-opendrsai-runtime.ps1 -DesktopAppDir release\\win-unpacked",
-    "build:bootstrapper": "powershell -ExecutionPolicy Bypass -File installer\\build-msi.ps1 -RuntimePath release\\bootstrapper\\OpenDrSaiRuntime-win-x64.zip",
+    "build:bootstrapper": "powershell -ExecutionPolicy Bypass -File installer\\build-msi.ps1",
     "generate:fork-import-index": "node scripts/generate-fork-import-index.mjs",
     "summary:win": "node scripts/create-release-summary.mjs",
     "manifest:win": "node scripts/create-runtime-update-manifest.mjs",

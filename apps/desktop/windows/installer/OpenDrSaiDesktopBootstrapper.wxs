@@ -65,7 +65,7 @@
     <Binary Id="OpenDrSaiInstallerActions" SourceFile="$(var.InstallerActionsPath)" />
 
     <CustomAction Id="SetDownloadOpenDrSaiRuntime" Property="DownloadOpenDrSaiRuntime"
-      Value='RuntimeUrl=[RUNTIMEURL];SourcePath=[OriginalDatabase];TargetPath=[INSTALLFOLDER]cache\OpenDrSaiRuntime-win-x64.zip;ExpectedSize=[RUNTIMESIZEBYTES];BootstrapperVersion=[BOOTSTRAPPERVERSION]' />
+      Value='RuntimeUrl=[RUNTIMEURL];SourcePath=[OriginalDatabase];TargetPath=[INSTALLFOLDER]cache\OpenDrSai-Windows-v[BOOTSTRAPPERVERSION]-x64.zip;ExpectedSize=[RUNTIMESIZEBYTES];BootstrapperVersion=[BOOTSTRAPPERVERSION]' />
     <CustomAction Id="SetVerifyOpenDrSaiRuntime" Property="VerifyOpenDrSaiRuntime"
       Value='-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "[INSTALLFOLDER]install-opendrsai.ps1" -Stage Verify -RuntimeUrl "[RUNTIMEURL]" -RuntimeSha256 "[RUNTIMESHA256]" -RuntimeSizeBytes "[RUNTIMESIZEBYTES]" -BootstrapperVersion "[BOOTSTRAPPERVERSION]" -MachineInstall -NoShortcuts -NoLaunch [EXTRAINSTALLARGS]' />
     <CustomAction Id="SetExtractOpenDrSaiRuntime" Property="ExtractOpenDrSaiRuntime"

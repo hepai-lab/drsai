@@ -72,7 +72,7 @@ function call(server: Server, tool: string, input: Record<string, unknown>): Pro
       else rejectPromise(new Error(stderr.trim() ? `MCP tool execution produced no result: ${stderr.trim()}` : "MCP tool execution produced no result."));
     }));
     child.stdin.end([
-      { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "opendrsai-desktop", version: "1.5.1" } } },
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "opendrsai-desktop", version: "1.5.2" } } },
       { jsonrpc: "2.0", method: "notifications/initialized", params: {} },
       { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: tool, arguments: input } },
     ].map((value) => JSON.stringify(value)).join("\n") + "\n");

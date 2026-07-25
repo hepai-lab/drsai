@@ -47,6 +47,7 @@ sealed interface AndroidUpdateState {
 
 internal object AndroidUpdatePolicy {
     private val hosts = setOf(
+        "download-opendrsai.ihep.ac.cn",
         "github.com", "objects.githubusercontent.com", "github-releases.githubusercontent.com",
         "release-assets.githubusercontent.com",
     )

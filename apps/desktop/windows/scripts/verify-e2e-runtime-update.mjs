@@ -11,6 +11,8 @@ const executable = join(root, "release", "win-unpacked", "OpenDrSai.exe");
 if (!existsSync(executable)) throw new Error("Build release/win-unpacked before running the runtime update E2E test.");
 const updateMainSource = readFileSync(join(root, "src", "main", "updates.ts"), "utf8");
 const updaterSource = readFileSync(join(root, "resources", "update", "update-opendrsai.ps1"), "utf8");
+assert(updateMainSource.includes('"https://download-opendrsai.ihep.ac.cn/channels/beta/latest-windows.json"'), "Desktop updater does not default to the OpenDrSai beta channel manifest.");
+assert(updateMainSource.includes('"download-opendrsai.ihep.ac.cn"'), "Desktop updater does not trust the OpenDrSai CDN host.");
 assert(updateMainSource.includes("OPENDRSAI_UPDATE_DATA_ROOT") && updateMainSource.includes('join(localAppData, "OpenDrSai", "updates")'), "Update cache is not rooted in writable LocalAppData.");
 assert(updateMainSource.includes("-Verb RunAs") && updateMainSource.includes("launchElevatedUpdater"), "Program Files update apply does not request administrator approval.");
 assert(updaterSource.includes('Join-Path (Split-Path -Parent $StatePath) "health-$HealthToken.ok"'), "Update health marker still depends on the protected install root.");

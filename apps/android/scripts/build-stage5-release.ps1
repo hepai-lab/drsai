@@ -1,8 +1,8 @@
 param(
     [switch]$SkipBuild,
     [switch]$SkipStage5Acceptance,
-    [string]$Channel = "beta",
-    [string]$ReleaseBaseUrl = "https://github.com/hepai-lab/drsai/releases/download"
+    [string]$Channel = "stable",
+    [string]$ReleaseBaseUrl = "https://download-opendrsai.ihep.ac.cn/releases"
 )
 
 $ErrorActionPreference = "Stop"
@@ -54,7 +54,7 @@ $certSha256 = ($certLine -split 'SHA-256 digest:', 2)[1].Trim()
 $hash = (Get-FileHash -LiteralPath $apk -Algorithm SHA256).Hash.ToLowerInvariant()
 $size = (Get-Item -LiteralPath $apk).Length
 $releaseTag = "v$version"
-$url = "$($ReleaseBaseUrl.TrimEnd('/'))/$releaseTag/$fileName"
+$url = "$($ReleaseBaseUrl.TrimEnd('/'))/$releaseTag/android/$fileName"
 
 $output = Join-Path $project "app\build\stage5-release"
 New-Item -ItemType Directory -Force -Path $output | Out-Null
