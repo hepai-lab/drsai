@@ -34,10 +34,10 @@ interface FormField {
 }
 
 const FORM_FIELDS: FormField[] = [
-  { key: 'access_key',  label: 'Access Key',  placeholder: 'e94UWOls...' },
-  { key: 'secret_key',  label: 'Secret Key',  placeholder: '2psxS5dpw...' },
-  { key: 'bucket',      label: 'Bucket',      placeholder: '20235-xiongdb' },
-  { key: 'email',       label: 'Email',       placeholder: 'xiongdb@ihep.ac.cn (optional)' },
+  { key: 'access_key',  label: 'Access Key',  placeholder: '(paste your access key)' },
+  { key: 'secret_key',  label: 'Secret Key',  placeholder: '(paste your secret key)' },
+  { key: 'bucket',      label: 'Bucket',      placeholder: 'your-bucket-name' },
+  { key: 'email',       label: 'Email',       placeholder: 'user@example.com (optional)' },
   { key: 's3_endpoint', label: 'S3 Endpoint', placeholder: '(default: https://fgws3-gfs.ihep.ac.cn)' },
 ]
 
@@ -82,6 +82,15 @@ export function GfsPanel({ gw, onDismiss }: Props) {
     setFormField(fieldIdx)
     setMessage('')
     setView('edit')
+  }
+
+  // Return a hint string for the edit view, showing the current masked value
+  // for credential fields so the user knows their existing config.
+  function fieldHint(field: FormField): string {
+    if (!config) return field.placeholder
+    if (field.key === 'access_key') return config.access_key_masked ? `current: ${config.access_key_masked}` : field.placeholder
+    if (field.key === 'secret_key') return config.secret_key_masked ? `current: ${config.secret_key_masked}` : field.placeholder
+    return field.placeholder
   }
 
   async function saveConfig() {
@@ -180,7 +189,8 @@ export function GfsPanel({ gw, onDismiss }: Props) {
         return
       }
       // Any other printable character → append to current field
-      if (input && !key.ctrl && !key.meta && input.length === 1) {
+      // (supports multi-char paste — same pattern as ModelEditor)
+      if (input && !key.ctrl && !key.meta) {
         const field = FORM_FIELDS[formField]
         setFormValues(v => ({ ...v, [field.key]: (v[field.key] || '') + input }))
       }
@@ -233,13 +243,11 @@ export function GfsPanel({ gw, onDismiss }: Props) {
         {FORM_FIELDS.map((field, i) => {
           const isCursor = i === formField
           const val = formValues[field.key] || ''
-          const hasExisting =
-            (field.key === 'access_key' && !!config?.access_key_masked) ||
-            (field.key === 'secret_key' && !!config?.secret_key_masked)
+          const hint = fieldHint(field)
           return (
             <Text key={field.key} color={isCursor ? theme.accent : theme.text}>
               {isCursor ? '▶' : ' '} {field.label}:{' '}
-              {val || (hasExisting ? '(unchanged — ***)' : field.placeholder)}
+              {val || <Text dimColor>{hint}</Text>}
               {isCursor && val ? '█' : ''}
             </Text>
           )

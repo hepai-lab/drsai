@@ -129,6 +129,81 @@ detect_platform() {
 }
 
 # ==============================================================================
+#  1b. DETECT SYSTEM DEPENDENCIES (skip portable download if available)
+# ==============================================================================
+detect_system_deps() {
+    section "Detecting System Dependencies"
+
+    # Ensure INSTALL_DIR is set (may be empty if --install-dir was not passed)
+    [ -z "$INSTALL_DIR" ] && INSTALL_DIR="$DEFAULT_INSTALL_DIR"
+
+    USE_SYSTEM_PYTHON=0
+    USE_SYSTEM_NODE=0
+
+    # -- Check for system Python 3.11 ~ 3.13 in PATH --
+    if command -v python3 >/dev/null 2>&1; then
+        local py_ver
+        py_ver=$(python3 -c "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}')" 2>/dev/null)
+        local py_major="${py_ver%%.*}"
+        local py_minor="${py_ver#*.}"
+        py_minor="${py_minor%%.*}"
+        if [ "${py_major:-0}" -eq 3 ] && [ "${py_minor:-0}" -ge 11 ] && [ "${py_minor:-0}" -le 13 ]; then
+            ok "System Python ${py_ver} found — will use it (skip portable Python)"
+            USE_SYSTEM_PYTHON=1
+            PYTHON_BIN="$(command -v python3)"
+        else
+            info "System Python ${py_ver} found but not in range [3.11, 3.13] — will download portable Python"
+        fi
+    else
+        info "No system Python found — will download portable Python"
+    fi
+
+    # -- Check for DrSai portable Python (from previous install) --
+    if [ "$USE_SYSTEM_PYTHON" -ne 1 ]; then
+        local drsai_py="$INSTALL_DIR/packages/python/bin/python3"
+        if [ -x "$drsai_py" ]; then
+            local drsai_py_ver
+            drsai_py_ver=$("$drsai_py" --version 2>&1)
+            ok "DrSai portable Python found at $INSTALL_DIR/packages/python — will reuse it"
+            ok "  $drsai_py_ver (skip download)"
+            USE_SYSTEM_PYTHON=1
+            PYTHON_BIN="$drsai_py"
+        fi
+    fi
+
+    # -- Check for system Node >= 20 in PATH --
+    if command -v node >/dev/null 2>&1; then
+        local node_ver
+        node_ver=$(node --version 2>/dev/null | sed 's/^v//')
+        local node_major="${node_ver%%.*}"
+        if [ "${node_major:-0}" -ge 20 ]; then
+            ok "System Node v${node_ver} found — will use it (skip portable Node)"
+            USE_SYSTEM_NODE=1
+            NODE_BIN="$(command -v node)"
+            NODE_DIR="$(dirname "$NODE_BIN")"
+        else
+            info "System Node v${node_ver} found but < 20 — will download portable Node"
+        fi
+    else
+        info "No system Node found — will download portable Node"
+    fi
+
+    # -- Check for DrSai portable Node (from previous install) --
+    if [ "$USE_SYSTEM_NODE" -ne 1 ]; then
+        local drsai_node="$INSTALL_DIR/packages/node/bin/node"
+        if [ -x "$drsai_node" ]; then
+            local drsai_node_ver
+            drsai_node_ver=$("$drsai_node" -v 2>&1)
+            ok "DrSai portable Node found at $INSTALL_DIR/packages/node — will reuse it"
+            ok "  $drsai_node_ver (skip download)"
+            USE_SYSTEM_NODE=1
+            NODE_BIN="$drsai_node"
+            NODE_DIR="$INSTALL_DIR/packages/node"
+        fi
+    fi
+}
+
+# ==============================================================================
 #  2. INSTALL DIRECTORY SELECTION (>=2GB)
 # ==============================================================================
 select_install_dir() {
@@ -190,8 +265,16 @@ check_existing() {
 
         if [ "$REPLY" = "y" ]; then
             info "Cleaning old installation (preserving configs, workspace, logs)..."
-            rm -rf "$INSTALL_DIR/bin" "$INSTALL_DIR/packages" 2>/dev/null || true
-            ok "Old installation cleared (bin/ + packages/)"
+            rm -rf "$INSTALL_DIR/bin" 2>/dev/null || true
+            rm -rf "$INSTALL_DIR/packages/venv" "$INSTALL_DIR/packages/src" "$INSTALL_DIR/packages/.download" 2>/dev/null || true
+            # Preserve portable Python/Node if they were detected for reuse
+            if [ "$USE_SYSTEM_PYTHON" -ne 1 ]; then
+                rm -rf "$INSTALL_DIR/packages/python" 2>/dev/null || true
+            fi
+            if [ "$USE_SYSTEM_NODE" -ne 1 ]; then
+                rm -rf "$INSTALL_DIR/packages/node" 2>/dev/null || true
+            fi
+            ok "Old installation cleared (bin/ + venv + src; python/node preserved if reused)"
         else
             die "Installation cancelled by user"
         fi
@@ -220,13 +303,21 @@ download_files() {
     curl -fsSL "$SRC_URL" -o "$tmp_dir/drsai.zip" || die "Source download failed"
     ok "Source: $(du -h "$tmp_dir/drsai.zip" | cut -f1)"
 
-    info "Downloading Python 3.12.13 ($PLATFORM)..."
-    curl -fsSL "$py_url" -o "$tmp_dir/python.tar.gz" || die "Python download failed"
-    ok "Python: $(du -h "$tmp_dir/python.tar.gz" | cut -f1)"
+    if [ "$USE_SYSTEM_PYTHON" -ne 1 ]; then
+        info "Downloading Python 3.12.13 ($PLATFORM)..."
+        curl -fsSL "$py_url" -o "$tmp_dir/python.tar.gz" || die "Python download failed"
+        ok "Python: $(du -h "$tmp_dir/python.tar.gz" | cut -f1)"
+    else
+        ok "Skipping Python download (using system Python)"
+    fi
 
-    info "Downloading Node.js v22.22.3 ($PLATFORM)..."
-    curl -fsSL "$node_url" -o "$tmp_dir/node.tar.xz" || die "Node download failed"
-    ok "Node: $(du -h "$tmp_dir/node.tar.xz" | cut -f1)"
+    if [ "$USE_SYSTEM_NODE" -ne 1 ]; then
+        info "Downloading Node.js v22.22.3 ($PLATFORM)..."
+        curl -fsSL "$node_url" -o "$tmp_dir/node.tar.xz" || die "Node download failed"
+        ok "Node: $(du -h "$tmp_dir/node.tar.xz" | cut -f1)"
+    else
+        ok "Skipping Node download (using system Node)"
+    fi
 
     DOWNLOAD_DIR="$tmp_dir"
 }
@@ -241,48 +332,59 @@ extract_all() {
     mkdir -p "$pkg_dir"
 
     # -- Python (tar.gz -> packages/python/) --
-    info "Extracting Python..."
-    local py_tmp="$pkg_dir/_py_tmp"
-    mkdir -p "$py_tmp"
-    tar xzf "$DOWNLOAD_DIR/python.tar.gz" -C "$py_tmp"
+    if [ "$USE_SYSTEM_PYTHON" -ne 1 ]; then
+        info "Extracting Python..."
+        rm -rf "$pkg_dir/python" 2>/dev/null || true
+        local py_tmp="$pkg_dir/_py_tmp"
+        mkdir -p "$py_tmp"
+        tar xzf "$DOWNLOAD_DIR/python.tar.gz" -C "$py_tmp"
 
-    local py_src_dir
-    if [ -d "$py_tmp/python" ]; then
-        py_src_dir="$py_tmp/python"
+        local py_src_dir
+        if [ -d "$py_tmp/python" ]; then
+            py_src_dir="$py_tmp/python"
+        else
+            py_src_dir=$(find "$py_tmp" -maxdepth 1 -mindepth 1 -type d | head -1)
+        fi
+        [ -n "$py_src_dir" ] || die "Python extraction failed: no python directory found"
+
+        mv "$py_src_dir" "$pkg_dir/python"
+        rm -rf "$py_tmp"
+
+        local py_bin="$pkg_dir/python/bin/python3"
+        [ -x "$py_bin" ] || py_bin="$pkg_dir/python/bin/python"
+        [ -x "$py_bin" ] || die "Python binary not found: $pkg_dir/python/bin/"
+        ok "Python: $($py_bin --version 2>&1)"
+
+        PYTHON_BIN="$py_bin"
     else
-        py_src_dir=$(find "$py_tmp" -maxdepth 1 -mindepth 1 -type d | head -1)
+        ok "Using system Python: $($PYTHON_BIN --version 2>&1)"
     fi
-    [ -n "$py_src_dir" ] || die "Python extraction failed: no python directory found"
-
-    mv "$py_src_dir" "$pkg_dir/python"
-    rm -rf "$py_tmp"
-
-    local py_bin="$pkg_dir/python/bin/python3"
-    [ -x "$py_bin" ] || py_bin="$pkg_dir/python/bin/python"
-    [ -x "$py_bin" ] || die "Python binary not found: $pkg_dir/python/bin/"
-    ok "Python: $($py_bin --version 2>&1)"
-
-    PYTHON_BIN="$py_bin"
 
     # -- Node (tar.xz -> packages/node/) --
-    info "Extracting Node..."
-    local node_tmp="$pkg_dir/_node_tmp"
-    mkdir -p "$node_tmp"
-    tar xJf "$DOWNLOAD_DIR/node.tar.xz" -C "$node_tmp" 2>/dev/null || \
-    tar xf "$DOWNLOAD_DIR/node.tar.xz" -C "$node_tmp"
+    if [ "$USE_SYSTEM_NODE" -ne 1 ]; then
+        info "Extracting Node..."
+        rm -rf "$pkg_dir/node" 2>/dev/null || true
+        local node_tmp="$pkg_dir/_node_tmp"
+        mkdir -p "$node_tmp"
+        tar xJf "$DOWNLOAD_DIR/node.tar.xz" -C "$node_tmp" 2>/dev/null || \
+        tar xf "$DOWNLOAD_DIR/node.tar.xz" -C "$node_tmp"
 
-    local node_src_dir
-    node_src_dir=$(find "$node_tmp" -maxdepth 1 -type d -name "node*" | head -1)
-    [ -n "$node_src_dir" ] || die "Node extraction failed: no node directory found"
+        local node_src_dir
+        node_src_dir=$(find "$node_tmp" -maxdepth 1 -type d -name "node*" | head -1)
+        [ -n "$node_src_dir" ] || die "Node extraction failed: no node directory found"
 
-    mv "$node_src_dir" "$pkg_dir/node"
-    rm -rf "$node_tmp"
+        mv "$node_src_dir" "$pkg_dir/node"
+        rm -rf "$node_tmp"
 
-    local node_bin="$pkg_dir/node/bin/node"
-    [ -x "$node_bin" ] || die "Node binary not found: $pkg_dir/node/bin/"
-    ok "Node: $($node_bin -v 2>&1)"
+        local node_bin="$pkg_dir/node/bin/node"
+        [ -x "$node_bin" ] || die "Node binary not found: $pkg_dir/node/bin/"
+        ok "Node: $($node_bin -v 2>&1)"
 
-    NODE_BIN="$node_bin"
+        NODE_BIN="$node_bin"
+        NODE_DIR="$pkg_dir/node"
+    else
+        ok "Using system Node: $($NODE_BIN -v 2>&1)"
+    fi
 
     # -- Source (zip -> packages/src/) --
     info "Extracting source..."
@@ -352,6 +454,44 @@ setup_python() {
 setup_node() {
     section "Node.js Environment Setup"
 
+    if [ "$USE_SYSTEM_NODE" -eq 1 ]; then
+        # Using system or DrSai portable node — find pnpm/npm
+        local pnpm_bin=""
+        local npm_bin=""
+
+        # Check NODE_DIR/bin first (DrSai portable case)
+        if [ -x "$NODE_DIR/bin/pnpm" ]; then
+            pnpm_bin="$NODE_DIR/bin/pnpm"
+        elif command -v pnpm >/dev/null 2>&1; then
+            pnpm_bin="$(command -v pnpm)"
+        fi
+
+        if [ -x "$NODE_DIR/bin/npm" ]; then
+            npm_bin="$NODE_DIR/bin/npm"
+        elif command -v npm >/dev/null 2>&1; then
+            npm_bin="$(command -v npm)"
+        fi
+
+        if [ -n "$pnpm_bin" ]; then
+            ok "Using pnpm: $(pnpm -v 2>&1)"
+            PNPM_BIN="$pnpm_bin"
+        elif [ -n "$npm_bin" ]; then
+            info "Installing pnpm via npm..."
+            "$npm_bin" install -g pnpm 2>/dev/null || true
+            pnpm_bin=$(command -v pnpm 2>/dev/null)
+            if [ -n "$pnpm_bin" ]; then
+                ok "pnpm installed: $(pnpm -v 2>&1)"
+                PNPM_BIN="$pnpm_bin"
+            else
+                warn "pnpm install failed — will use npm to build TUI"
+            fi
+        else
+            warn "No pnpm or npm found — will try npm to build TUI"
+        fi
+        return 0
+    fi
+
+    # Portable node — original logic
     local node_dir="$INSTALL_DIR/packages/node"
     local npm_bin="$node_dir/bin/npm"
 
@@ -387,10 +527,27 @@ build_tui() {
         return 0
     fi
 
-    export PATH="$NODE_DIR/bin:$PATH"
+    # Set PATH for node/pnpm/npm
+    if [ "$USE_SYSTEM_NODE" -ne 1 ]; then
+        export PATH="$NODE_DIR/bin:$PATH"
+    fi
 
     local pnpm_bin="$NODE_DIR/bin/pnpm"
     local npm_bin="$NODE_DIR/bin/npm"
+
+    if [ "$USE_SYSTEM_NODE" -eq 1 ]; then
+        # Check NODE_DIR/bin first (DrSai portable), then system PATH
+        if [ -x "$NODE_DIR/bin/pnpm" ]; then
+            pnpm_bin="$NODE_DIR/bin/pnpm"
+        else
+            pnpm_bin="$(command -v pnpm 2>/dev/null)"
+        fi
+        if [ -x "$NODE_DIR/bin/npm" ]; then
+            npm_bin="$NODE_DIR/bin/npm"
+        else
+            npm_bin="$(command -v npm 2>/dev/null)"
+        fi
+    fi
 
     cd "$tui_dir"
 
@@ -437,6 +594,14 @@ create_launcher() {
     local tui_dir="$SRC_ROOT/apps/ui-tui"
     local venv_python="$INSTALL_DIR/packages/venv/bin/python"
     local src_root="$SRC_ROOT"
+
+    # Only include portable node PATH if the directory exists
+    # (covers both freshly extracted and reused DrSai portable node)
+    local node_path_line=""
+    if [ -d "$INSTALL_DIR/packages/node/bin" ]; then
+        node_path_line='export PATH="$INSTALL_DIR/packages/node/bin:$PATH"'
+    fi
+
     cat > "$launcher" <<LAUNCHER_EOF
 #!/usr/bin/env bash
 set -e
@@ -448,7 +613,7 @@ export DRSAI_UI_TUI_DIR="$tui_dir"
 export DRSAI_PYTHON="$venv_python"
 export DRSAI_PYTHON_SRC_ROOT="$src_root/cores/python/packages/drsai/src"
 export VIRTUAL_ENV="\$INSTALL_DIR/packages/venv"
-export PATH="\$INSTALL_DIR/packages/node/bin:\$PATH"
+${node_path_line}
 # Use console script (drsai) instead of python -m to avoid runpy RuntimeWarning
 if [ -x "\$INSTALL_DIR/packages/venv/bin/drsai" ]; then
     exec "\$INSTALL_DIR/packages/venv/bin/drsai" "\$@"
@@ -459,6 +624,49 @@ LAUNCHER_EOF
     chmod +x "$launcher"
 
     ok "Launcher: $launcher"
+}
+
+# ==============================================================================
+#  9b. ADD PATH TO SHELL RC (.bashrc / .zshrc)
+# ==============================================================================
+add_to_shell_rc() {
+    section "Configuring Shell PATH"
+
+    local bin_dir="$INSTALL_DIR/bin"
+    local marker="# OpenDrSai installer"
+    local export_line="export PATH=\"$bin_dir:\$PATH\"  $marker"
+
+    # Determine which rc file to use based on $SHELL
+    local rc_file=""
+    local shell_name
+    shell_name="$(basename "${SHELL:-/bin/bash}")"
+    case "$shell_name" in
+        zsh)  rc_file="$HOME/.zshrc" ;;
+        bash) rc_file="$HOME/.bashrc" ;;
+        *)    rc_file="$HOME/.bashrc" ;;  # fallback to .bashrc
+    esac
+
+    # macOS default shell is zsh since Catalina
+    if [ "$OS" = "macos" ] && [ "$shell_name" != "zsh" ]; then
+        # Still check if .zshrc exists and user might use zsh
+        if [ -f "$HOME/.zshrc" ] && [ ! -f "$HOME/.bashrc" ]; then
+            rc_file="$HOME/.zshrc"
+        fi
+    fi
+
+    # Check if already added (idempotent)
+    if [ -f "$rc_file" ] && grep -q "$marker" "$rc_file" 2>/dev/null; then
+        ok "PATH already configured in $rc_file"
+        RC_FILE="$rc_file"
+        return 0
+    fi
+
+    # Append to rc file
+    echo "" >> "$rc_file"
+    echo "$export_line" >> "$rc_file"
+    ok "Added PATH export to $rc_file"
+
+    RC_FILE="$rc_file"
 }
 
 # ==============================================================================
@@ -479,8 +687,10 @@ verify() {
 
     [ -x "$INSTALL_DIR/bin/opendrsai" ] && ok "Launcher: $INSTALL_DIR/bin/opendrsai"
     [ -f "$SRC_ROOT/apps/ui-tui/dist/entry.mjs" ] && ok "TUI bundle: OK"
-    [ -x "$INSTALL_DIR/packages/python/bin/python3" ] && ok "Python: $($INSTALL_DIR/packages/python/bin/python3 --version 2>&1)"
-    [ -x "$INSTALL_DIR/packages/node/bin/node" ] && ok "Node: $($INSTALL_DIR/packages/node/bin/node -v 2>&1)"
+    # Show Python info (system, DrSai portable, or freshly installed)
+    ok "Python: $($PYTHON_BIN --version 2>&1)"
+    # Show Node info (system, DrSai portable, or freshly installed)
+    ok "Node: $($NODE_BIN -v 2>&1)"
 }
 
 # ==============================================================================
@@ -496,6 +706,7 @@ main() {
 
     detect_platform
     select_install_dir
+    detect_system_deps
     check_existing
     download_files
     extract_all
@@ -503,6 +714,7 @@ main() {
     setup_node
     build_tui
     create_launcher
+    add_to_shell_rc
     verify
 
     printf "\n${C_G}${C_B}"
@@ -519,8 +731,9 @@ main() {
     printf "  ${C_B}Launcher:${C_RST}    $INSTALL_DIR/bin/opendrsai\n"
     printf "\n"
     printf "  ${C_Y}Next steps:${C_RST}\n"
-    printf "    Add to PATH:\n"
-    printf "    ${C_B}export PATH=\"$INSTALL_DIR/bin:\$PATH\"${C_RST}\n"
+    printf "    PATH has been added to ${C_B}${RC_FILE:-$HOME/.bashrc}${C_RST}\n"
+    printf "    Run the following to apply in this session:\n"
+    printf "    ${C_B}source ${RC_FILE:-$HOME/.bashrc}${C_RST}\n"
     printf "\n"
     printf "    Then run: ${C_B}opendrsai${C_RST}\n"
     printf "    First run will trigger API key setup wizard.\n"

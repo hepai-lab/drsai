@@ -427,6 +427,8 @@ class DrSai:
             start_time = time.time()
             start_mono = time.monotonic()
             inactivity_timeout_s, total_timeout_s = _get_stream_timeouts()
+            trace_id = kwargs.get("trace_id") or uuid.uuid4().hex[:8]
+
             # 处理用户的kwargs参数，保存UserInput到数据库
             user_input: UserInput = await self.handle_input_info(**kwargs)
             user_id = user_input.user_id
