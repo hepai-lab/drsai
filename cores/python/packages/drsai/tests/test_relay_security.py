@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import json
+from pathlib import Path
 
 import pytest
 
 from drsai.relay.registry import RelayRegistryError
 from drsai.relay.security import RelayTicketIssuer, RuntimePermissionEnforcer, redact_secrets
+
+
+ROOT = Path(__file__).resolve().parents[5]
 
 
 def ticket(issuer: RelayTicketIssuer, now: datetime | None = None) -> str:
@@ -49,3 +54,14 @@ def test_secret_redaction_covers_headers_codes_tokens_and_file_content() -> None
     redacted = redact_secrets(raw)
     assert not any(secret in redacted for secret in ("Bearer-abc", "session-x", "jwt", "key", "once", "private"))
     assert redacted.count("[REDACTED]") == 6
+
+
+def test_shared_secret_redaction_canaries() -> None:
+    fixtures = json.loads(
+        (ROOT / "cores/protocol/relay/secret-redaction-fixtures.json").read_text(encoding="utf-8")
+    )
+    for sample in fixtures["samples"]:
+        redacted = redact_secrets(sample["input"])
+        assert "[REDACTED]" in redacted
+        for canary in sample["must_not_contain"]:
+            assert canary not in redacted

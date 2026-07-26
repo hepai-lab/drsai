@@ -95,8 +95,23 @@ class RuntimePermissionEnforcer:
             raise RelayRegistryError("runtime_permission_denied", "Runtime denied this workspace operation")
 
 
-_SECRET = re.compile(r"(?i)(authorization|cookie|token|secret|code|file_content)(\s*[:=]\s*)([^\s,;}]+)")
+_BEARER = re.compile(r"(?i)\b(Bearer\s+)[A-Za-z0-9._~+/=-]+")
+_SECRET = re.compile(
+    r"""(?ix)(
+      ["']?
+      (?:authorization|cookie|token|secret|code|state|api[_-]?key|
+         access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|
+         registration[_-]?token|access[_-]?grant[_-]?code|password|
+         file[_-]?content|message|prompt|command|arguments)
+      ["']?\s*[:=]\s*["']?
+    )([^\s"',;&}\]]+)"""
+)
+_QUERY_SECRET = re.compile(
+    r"(?i)([?&](?:code|state|token|access_token|refresh_token|id_token|client_secret)=)[^&#\s]+"
+)
 
 
 def redact_secrets(value: str) -> str:
-    return _SECRET.sub(lambda match: f"{match.group(1)}{match.group(2)}[REDACTED]", value)
+    redacted = _BEARER.sub(r"\1[REDACTED]", value)
+    redacted = _QUERY_SECRET.sub(r"\1[REDACTED]", redacted)
+    return _SECRET.sub(r"\1[REDACTED]", redacted)

@@ -8,6 +8,7 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from .models import RelayEvent
+from .models import ResourceLifecycle
 from .registry import RelayRegistryError
 from .streaming import RelayEventStore
 
@@ -63,7 +64,7 @@ class Session:
     agent_definition_version: str
     backend_id: str
     updated_at: datetime
-    lifecycle: str = "active"
+    lifecycle: ResourceLifecycle = ResourceLifecycle.ACTIVE
     last_run_status: str | None = None
 
 
@@ -144,7 +145,8 @@ class RuntimeAuthority:
 
     def list_sessions(self, workspace_id: str, *, cursor: str | None = None, limit: int = 20,
                       query: str | None = None) -> tuple[list[Session], str | None]:
-        rows = [item for item in self.sessions.values() if item.workspace_id == workspace_id]
+        rows = [item for item in self.sessions.values()
+                if item.workspace_id == workspace_id and item.lifecycle == ResourceLifecycle.ACTIVE]
         if query:
             rows = [item for item in rows if query.casefold() in item.title.casefold()]
         rows.sort(key=lambda item: item.updated_at, reverse=True)
@@ -154,18 +156,15 @@ class RuntimeAuthority:
 
     def list_sessions_for_subject(self, subject: str, workspace_id: str, *, cursor: str | None = None,
                                   limit: int = 20, query: str | None = None):
-        rows = [item for item in self.sessions.values()
-                if item.workspace_id == workspace_id and self.session_subjects.get(item.session_id) == subject]
-        if query:
-            rows = [item for item in rows if query.casefold() in item.title.casefold()]
-        rows.sort(key=lambda item: item.updated_at, reverse=True)
-        start, end = int(cursor or 0), min(int(cursor or 0) + limit, len(rows))
-        return rows[start:end], str(end) if end < len(rows) else None
+        # Runtime access is granted by the Relay association. Session ownership
+        # must not hide existing Windows sessions from an associated Mobile
+        # client; subject remains audit/idempotency metadata only.
+        return self.list_sessions(workspace_id, cursor=cursor, limit=limit, query=query)
 
     def authorize_session(self, subject: str, workspace_id: str, session_id: str) -> None:
-        self._session(workspace_id, session_id)
-        if self.session_subjects.get(session_id) != subject:
-            raise RelayRegistryError("session_forbidden", "Session is not authorized")
+        session = self._session(workspace_id, session_id)
+        if session.lifecycle != ResourceLifecycle.ACTIVE:
+            raise RelayRegistryError("session_forbidden", "Session is not active")
 
     def idempotency_result(self, subject: str, operation: str, idempotency_key: str) -> Any:
         if operation not in {"session.create", "run.create"}:
@@ -211,15 +210,53 @@ class RuntimeAuthority:
                               cursor: str | None = None, limit: int = 20):
         self.authorize_session(subject, workspace_id, session_id)
         rows = [item for item in self.runs.values() if item.workspace_id == workspace_id
-                and item.session_id == session_id and self.run_subjects.get(item.run_id) == subject]
+                and item.session_id == session_id]
         rows.sort(key=lambda item: item.created_at)
         start, end = int(cursor or 0), min(int(cursor or 0) + limit, len(rows))
         return rows[start:end], str(end) if end < len(rows) else None
 
+    def conversation_for_subject(
+        self,
+        subject: str,
+        workspace_id: str,
+        session_id: str,
+        *,
+        cursor: str | None = None,
+        limit: int = 100,
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        self.authorize_session(subject, workspace_id, session_id)
+        items: list[dict[str, Any]] = []
+        runs, _ = self.list_runs(workspace_id, session_id, limit=max(1, len(self.runs)))
+        for run in runs:
+            if run.message:
+                items.append({
+                    "item_id": f"user:{run.run_id}",
+                    "sequence": 0,
+                    "kind": "message.user",
+                    "timestamp": run.created_at.isoformat(),
+                    "payload": {"content": run.message, "run_id": run.run_id},
+                })
+            events, _ = self.list_events(run.run_id, after_sequence=0, limit=500)
+            for event in events:
+                items.append({
+                    "item_id": event.event_id,
+                    "sequence": 0,
+                    "kind": event.kind,
+                    "timestamp": event.timestamp.isoformat(),
+                    "payload": {**event.payload, "run_id": run.run_id},
+                })
+        # Runtime Run order plus per-Run Event sequence is authoritative.
+        # Wall-clock timestamps may have coarse resolution and are not a safe
+        # ordering key across persisted/replayed events.
+        for sequence, item in enumerate(items, 1):
+            item["sequence"] = sequence
+        start = max(0, int(cursor or 0))
+        end = min(start + limit, len(items))
+        return items[start:end], str(end) if end < len(items) else None
+
     def authorize_run(self, subject: str, run_id: str) -> None:
-        self._run(run_id)
-        if self.run_subjects.get(run_id) != subject:
-            raise RelayRegistryError("run_forbidden", "Run is not authorized")
+        run = self._run(run_id)
+        self.authorize_session(subject, run.workspace_id, run.session_id)
 
     def append_event(self, run_id: str, kind: str, payload: dict[str, Any]) -> RelayEvent:
         run = self._run(run_id)
@@ -261,7 +298,15 @@ class RuntimeAuthority:
         self.append_event(run_id, "approval.requested", {"approval_id": approval.approval_id, "status": "waiting_approval"})
         return approval
 
-    def decide_approval(self, subject: str, approval_id: str, decision: str) -> Approval:
+    def decide_approval(
+        self, subject: str, approval_id: str, decision: str, idempotency_key: str | None = None
+    ) -> Approval:
+        replay_key = (subject, "approval.decide", idempotency_key) if idempotency_key else None
+        if replay_key is not None and replay_key in self.idempotency:
+            prior_approval_id, prior_decision, prior_result = self.idempotency[replay_key]
+            if prior_approval_id != approval_id or prior_decision != decision:
+                raise RelayRegistryError("idempotency_conflict", "Idempotency key was reused with another decision")
+            return prior_result
         approval = self.approvals.get(approval_id)
         if approval is None:
             raise RelayRegistryError("approval_not_found", "Approval was not found")
@@ -280,6 +325,8 @@ class RuntimeAuthority:
         self._append_audit(self._run(approval.run_id), f"approval.{wanted.value}", subject,
                            approval.correlation_id, approval_id)
         self.append_event(approval.run_id, "approval.resolved", {"approval_id": approval_id, "decision": wanted.value})
+        if replay_key is not None:
+            self.idempotency[replay_key] = (approval_id, decision, approval)
         return approval
 
     def pending_approvals(self, workspace_id: str) -> list[Approval]:
@@ -291,7 +338,7 @@ class RuntimeAuthority:
 
     def pending_approvals_for_subject(self, subject: str, workspace_id: str) -> list[Approval]:
         return [item for item in self.pending_approvals(workspace_id)
-                if self.run_subjects.get(item.run_id) == subject]
+                if self.sessions[item.session_id].lifecycle == ResourceLifecycle.ACTIVE]
 
     def audit_entries(self, workspace_id: str, run_id: str | None = None) -> tuple[AuditEntry, ...]:
         return tuple(item for item in self.audit
@@ -301,8 +348,7 @@ class RuntimeAuthority:
                                   run_id: str | None = None) -> tuple[AuditEntry, ...]:
         if run_id is not None:
             self.authorize_run(subject, run_id)
-        return tuple(item for item in self.audit_entries(workspace_id, run_id)
-                     if self.run_subjects.get(item.run_id) == subject)
+        return self.audit_entries(workspace_id, run_id)
 
     def execute_owop(self, workspace_id: str, operation: str, params: dict[str, Any]) -> dict[str, Any]:
         allowed = {"workspace.describe", "files.list", "files.stat", "files.read", "search.query",

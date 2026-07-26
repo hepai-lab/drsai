@@ -22,7 +22,7 @@ definition.write_text(json.dumps({
 
 from fastapi.testclient import TestClient
 from drsai.backend import gateway
-from drsai.backend.remote_pty import manager as pty_manager
+from drsai.backend.remote_ssh.pty import manager as pty_manager
 
 
 headers = {"X-OpenDrSai-Gateway-Token": "temporary-m10-runtime-token"}

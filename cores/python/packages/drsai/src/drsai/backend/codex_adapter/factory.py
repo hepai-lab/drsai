@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Any, Mapping
 
-from drsai.backend.agent_backend_bindings import AgentBackendBindingStore
+from drsai.backend.runtime.agent_bindings import AgentBackendBindingStore
 from drsai.backend.codex_adapter.adapter import CodexAdapter
 from drsai.backend.codex_adapter.app_server_process import CodexAppServerProcess
 from drsai.backend.codex_adapter.backend_client import CodexAgentBackendClient

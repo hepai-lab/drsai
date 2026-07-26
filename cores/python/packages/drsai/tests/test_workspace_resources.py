@@ -8,9 +8,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MODULE = ROOT / "src" / "drsai" / "backend" / "workspace_resources.py"
-FIXTURES = ROOT.parents[3] / "protocol" / "orca-inspired" / "domain.fixtures.json"
-SCHEMA = ROOT.parents[3] / "protocol" / "orca-inspired" / "domain.schema.json"
+MODULE = ROOT / "src" / "drsai" / "backend" / "workspace" / "resources.py"
+FIXTURES = ROOT.parents[3] / "cores" / "protocol" / "orca-inspired" / "domain.fixtures.json"
+SCHEMA = ROOT.parents[3] / "cores" / "protocol" / "orca-inspired" / "domain.schema.json"
 
 spec = importlib.util.spec_from_file_location("workspace_resources_under_test", MODULE)
 assert spec and spec.loader

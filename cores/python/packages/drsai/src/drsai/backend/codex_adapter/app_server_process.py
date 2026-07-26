@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable, Sequence
 
-from drsai.backend.agent_runtime import RuntimeExecutionError
+from drsai.backend.runtime.agent import RuntimeExecutionError
 from drsai.backend.codex_adapter.binary_provider import (
     CodexBinary,
     CodexBinaryProvider,

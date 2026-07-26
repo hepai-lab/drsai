@@ -1,0 +1,7 @@
+extends: ./electron-builder.yml
+appId: com.hepai.opendrsai.macos.development
+productName: OpenDrSai
+mac:
+  identity: null
+  notarize: false
+publish: null

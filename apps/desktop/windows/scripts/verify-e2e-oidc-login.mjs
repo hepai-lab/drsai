@@ -1,23 +1,18 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createSign, generateKeyPairSync } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { delimiter, dirname, join, resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const currentBackendSource = resolve(root, "..", "..", "..", "cores", "python", "packages", "drsai", "src");
-const preparedAgentPython = process.env.OPENDRSAI_GATEWAY_SMOKE_PYTHON ||
-  join(root, ".tmp", "bootstrapper-msi3", ".drsai", "drsai-agent", "venv", "Scripts", "python.exe");
-const preparedAgentDir = existsSync(preparedAgentPython)
-  ? dirname(dirname(dirname(preparedAgentPython)))
-  : "";
+const currentBackendVersionFile = resolve(currentBackendSource, "drsai", "version.py");
 const exePath = join(root, "release", "win-unpacked", "OpenDrSai.exe");
 const electronCmd = process.platform === "win32"
   ? join(root, "node_modules", "electron", "dist", "electron.exe")
   : join(root, "node_modules", ".bin", "electron");
-const builtMain = join(root, "out", "main", "index.js");
 const port = Number(process.env.OPENDRSAI_E2E_OIDC_PORT || "18649");
 const gatewayPort = Number(process.env.OPENDRSAI_E2E_OIDC_GATEWAY_PORT || "18650");
 const modelPort = Number(process.env.OPENDRSAI_E2E_OIDC_MODEL_PORT || "18651");
@@ -49,11 +44,13 @@ if (!existsSync(exePath) && !existsSync(electronCmd)) {
 
 const tempDir = mkdtempSync(join(tmpdir(), "opendrsai-e2e-oidc-"));
 const drsaiHome = join(tempDir, "drsai-home");
+const runtimeRepo = join(tempDir, "runtime", "drsai-agent");
 const userDataDir = join(tempDir, "electron-user-data");
 const resultPath = join(tempDir, "result.json");
 const sessionPath = join(drsaiHome, "auth", "auth.json");
 mkdirSync(drsaiHome, { recursive: true });
 mkdirSync(userDataDir, { recursive: true });
+createRuntimeFixture(runtimeRepo);
 
 try {
   const fakeModel = await startFakeModelService();
@@ -93,7 +90,7 @@ try {
   if (globalThis.__opendrsaiOidcFakeModel) {
     await new Promise((resolve) => globalThis.__opendrsaiOidcFakeModel.close(resolve));
   }
-  rmSync(tempDir, { recursive: true, force: true });
+  rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
 }
 
 function startFakeGateway() {
@@ -369,7 +366,7 @@ function runPackagedApp() {
         PATH: systemPath,
         PYTHONPATH: [currentBackendSource, process.env.PYTHONPATH].filter(Boolean).join(delimiter),
         DRSAI_HOME: drsaiHome,
-        ...(preparedAgentDir ? { DRSAI_REPO: preparedAgentDir } : {}),
+        DRSAI_REPO: runtimeRepo,
         DRSAI_GATEWAY_DEV_MANAGED: "1",
         OPENDRSAI_GATEWAY_PORT: String(gatewayPort),
         OPENDRSAI_OIDC_ISSUER: issuer,
@@ -426,18 +423,22 @@ function runPackagedApp() {
   });
 }
 
+function createRuntimeFixture(repository) {
+  const scriptsDir = join(repository, "venv", "Scripts");
+  const versionDir = join(repository, "cores", "python", "packages", "drsai", "src", "drsai");
+  mkdirSync(scriptsDir, { recursive: true });
+  mkdirSync(versionDir, { recursive: true });
+  writeFileSync(join(scriptsDir, "python.exe"), "", "utf8");
+  writeFileSync(join(scriptsDir, "drsai.cmd"), "@echo off\r\n", "utf8");
+  copyFileSync(currentBackendVersionFile, join(versionDir, "version.py"));
+}
+
 function resolveElectronRuntime() {
-  const forcePackaged = process.env.OPENDRSAI_E2E_OIDC_USE_PACKAGED === "1";
-  const usePackaged = existsSync(exePath) && (forcePackaged || (
-    process.env.OPENDRSAI_E2E_OIDC_USE_SOURCE !== "1" &&
-    existsSync(exePath) &&
-    (!existsSync(builtMain) || statSync(exePath).mtimeMs >= statSync(builtMain).mtimeMs)
-  ));
-  if (usePackaged) {
+  if (existsSync(exePath) && process.env.OPENDRSAI_E2E_OIDC_USE_SOURCE !== "1") {
     return { command: exePath, args: electronArgs([]) };
   }
   if (!existsSync(electronCmd)) {
-    throw new Error("Current build is newer than win-unpacked, and Electron runtime is unavailable.");
+    throw new Error("Packaged OpenDrSai is unavailable, and the source Electron runtime was not found.");
   }
   return { command: electronCmd, args: electronArgs(["."]) };
 }

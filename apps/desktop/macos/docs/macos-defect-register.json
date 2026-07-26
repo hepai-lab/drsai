@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "product": "opendrsai-macos-desktop",
+  "owner": "desktop-release",
+  "reviewedAt": "2026-07-22T00:00:00.000Z",
+  "policy": {
+    "releaseBlockingSeverities": ["P0", "P1"],
+    "allowedStatuses": ["open", "in_progress", "resolved", "verified", "wont_fix"],
+    "wontFixRequiresException": true
+  },
+  "defects": [
+    {
+      "id": "MAC-DESKTOP-P1-001",
+      "severity": "P1",
+      "status": "verified",
+      "title": "Browser task terminal event could leave a stale generic approval",
+      "featureIds": ["F06.5", "F08.2"],
+      "owner": "desktop-core",
+      "discoveredAt": "2026-07-22T00:00:00.000Z",
+      "resolvedAt": "2026-07-22T00:00:00.000Z",
+      "resolution": "Track the generic approval inbox IDs independently while BrowserTaskService remains the execution source of truth, then clear the index on action and task terminal events.",
+      "verificationTestIds": ["verify:browser-tasks"]
+    },
+    {
+      "id": "MAC-DESKTOP-P1-002",
+      "severity": "P1",
+      "status": "verified",
+      "title": "Renderer exposed capability-gated controls before the platform descriptor loaded",
+      "featureIds": ["F02.5", "F08.1", "F08.3", "F09.5", "F11.3", "F11.5"],
+      "owner": "desktop-core",
+      "discoveredAt": "2026-07-22T00:00:00.000Z",
+      "resolvedAt": "2026-07-22T00:00:00.000Z",
+      "resolution": "Require capability === true for sensitive renderer entry points, hide Settings integrations consistently and return to General if an active pane becomes unavailable.",
+      "verificationTestIds": ["verify:renderer-l3"]
+    },
+    {
+      "id": "MAC-DESKTOP-P1-003",
+      "severity": "P1",
+      "status": "verified",
+      "title": "Sidebar group labels failed WCAG AA color contrast",
+      "featureIds": ["F01.1", "F02.5"],
+      "owner": "desktop-core",
+      "discoveredAt": "2026-07-22T00:00:00.000Z",
+      "resolvedAt": "2026-07-22T00:00:00.000Z",
+      "resolution": "Increase the light-theme group-title token contrast and enforce zero serious or critical axe WCAG 2/2.1 A/AA violations in the real Electron renderer.",
+      "verificationTestIds": ["verify:renderer-l3"]
+    }
+  ],
+  "exceptions": []
+}

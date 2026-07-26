@@ -2,6 +2,10 @@ import { contextBridge, ipcRenderer } from "electron";
 import type { IpcRendererEvent } from "electron";
 import type {
   DesktopApi,
+  DesktopOpenRequest,
+  DesktopLifecycleEvent,
+  DesktopSystemPermissionKind,
+  DesktopSystemPermissionStatus,
   MaterialConsistencyAnalysisRequest,
   MaterialConsistencyAnalysisResult,
   MaterialQueryRequest,
@@ -43,8 +47,10 @@ import type {
   WorkspaceFileChangeEvent,
   CreateThreadRequest,
   DesktopBackgroundTask,
+  DesktopBackgroundTaskActionRequest,
   DesktopBackgroundTaskEnqueueRequest,
   DesktopBackgroundTaskListRequest,
+  DesktopBackgroundTaskRecoveryResult,
   DesktopBackgroundTaskUpdateRequest,
   DesktopAnomalyDecisionApplyRequest,
   DesktopAnomalyDecisionApplyResult,
@@ -56,9 +62,16 @@ import type {
   DesktopChannelAdapterConfigureResult,
   DesktopChannelAdapterAuthStartRequest,
   DesktopChannelAdapterAuthStartResult,
+  DesktopChannelAdapterAuthPollRequest,
+  DesktopChannelAdapterAuthPollResult,
+  DesktopChannelAdapterAuthRevokeRequest,
+  DesktopChannelAdapterAuthRevokeResult,
+  DesktopChannelProviderTokenConfigureRequest,
+  DesktopChannelProviderTokenConfigureResult,
   DesktopChannelAdapterListResult,
   DesktopChannelContextImportRequest,
   DesktopChannelContextImportResult,
+  DesktopChannelLiveSyncRequest,
   DesktopChannelInboundEvent,
   DesktopChannelInboundEventListRequest,
   DesktopChannelInboundEventRouteRequest,
@@ -274,6 +287,22 @@ const streamingVoicePorts = new Map<string, MessagePort>();
 
 const api: DesktopApi = {
   getPlatformDescriptor: () => ipcRenderer.invoke("desktop:platform-descriptor"),
+  onOpenRequest: (callback: (request: DesktopOpenRequest) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, request: DesktopOpenRequest): void => callback(request);
+    ipcRenderer.on("desktop:open-request", listener);
+    return () => ipcRenderer.removeListener("desktop:open-request", listener);
+  },
+  onLifecycleEvent: (callback: (event: DesktopLifecycleEvent) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, event: DesktopLifecycleEvent): void => callback(event);
+    ipcRenderer.on("desktop:lifecycle-event", listener);
+    return () => ipcRenderer.removeListener("desktop:lifecycle-event", listener);
+  },
+  getSystemPermissions: (): Promise<DesktopSystemPermissionStatus[]> =>
+    ipcRenderer.invoke("desktop:system-permissions-get"),
+  requestSystemPermission: (kind: DesktopSystemPermissionKind): Promise<DesktopSystemPermissionStatus> =>
+    ipcRenderer.invoke("desktop:system-permission-request", kind),
+  openSystemPermissionSettings: (kind: DesktopSystemPermissionKind): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:system-permission-settings", kind),
   recordDiagnostic: (event: DiagnosticEventInput) =>
     ipcRenderer.invoke("desktop:diagnostics-record", event),
   getDiagnosticSnapshot: (query: DiagnosticQuery = {}) =>
@@ -291,6 +320,8 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:diagnostics-source-open", request),
   updateDiagnosticIssue: (request: DiagnosticIssueUpdateRequest) =>
     ipcRenderer.invoke("desktop:diagnostics-issue-update", request),
+  getInteractiveDebugPolicy: () => ipcRenderer.invoke("desktop:interactive-debug-policy"),
+  updateInteractiveDebugPolicy: (request) => ipcRenderer.invoke("desktop:interactive-debug-policy-update", request),
   listInteractiveDebugTargets: () => ipcRenderer.invoke("desktop:interactive-debug-targets"),
   listInteractiveDebugSessions: () => ipcRenderer.invoke("desktop:interactive-debug-sessions"),
   startInteractiveDebugSession: (request: InteractiveDebugStartRequest) => ipcRenderer.invoke("desktop:interactive-debug-start", request),
@@ -383,6 +414,20 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:start-gateway"),
   stopGateway: (): Promise<boolean> =>
     ipcRenderer.invoke("desktop:stop-gateway"),
+  getMobilePairingReadiness: () =>
+    ipcRenderer.invoke("desktop:mobile-pairing-readiness"),
+  createMobilePairingGrant: () =>
+    ipcRenderer.invoke("desktop:mobile-pairing-create"),
+  getMobilePairingGrant: (grantId: string) =>
+    ipcRenderer.invoke("desktop:mobile-pairing-read", grantId),
+  revokeMobilePairingGrant: (grantId: string) =>
+    ipcRenderer.invoke("desktop:mobile-pairing-revoke", grantId),
+  listMobileAssociations: () =>
+    ipcRenderer.invoke("desktop:mobile-associations-list"),
+  revokeMobileAssociation: (associationId: string) =>
+    ipcRenderer.invoke("desktop:mobile-association-revoke", associationId),
+  revokeMobileRuntimeEnrollment: () =>
+    ipcRenderer.invoke("desktop:mobile-enrollment-revoke"),
   listSshHosts: () => ipcRenderer.invoke("desktop:ssh-hosts"),
   diagnoseSshHost: (hostAlias: string) => ipcRenderer.invoke("desktop:ssh-diagnose", hostAlias),
   inspectSshHostKeys: (hostAlias: string) => ipcRenderer.invoke("desktop:ssh-host-keys", hostAlias),
@@ -492,6 +537,7 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:create-thread", request),
   updateThread: (request: UpdateThreadRequest) =>
     ipcRenderer.invoke("desktop:update-thread", request),
+  deleteThread: (threadId: string) => ipcRenderer.invoke("desktop:delete-thread", threadId),
   setThreadArchived: (request) => ipcRenderer.invoke("desktop:set-thread-archived", request),
   getThreadSnapshot: (threadId: string): Promise<DesktopThreadSnapshot | null> =>
     ipcRenderer.invoke("desktop:get-thread-snapshot", threadId),
@@ -582,6 +628,8 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:start-agent-run", request),
   abortAgentRun: (requestId: string): Promise<boolean> =>
     ipcRenderer.invoke("desktop:abort-agent-run", requestId),
+  recoverAgentRun: (threadId: string): Promise<AgentRunEvent[]> =>
+    ipcRenderer.invoke("desktop:recover-agent-run", threadId),
   saveApiKey: (apiKey: string, defaultModel?: string): Promise<SaveApiKeyResult> =>
     ipcRenderer.invoke("desktop:save-api-key", apiKey, defaultModel),
   pickFiles: () => ipcRenderer.invoke("desktop:pick-files"),
@@ -814,6 +862,12 @@ const api: DesktopApi = {
     request: DesktopBackgroundTaskUpdateRequest,
   ): Promise<DesktopBackgroundTask> =>
     ipcRenderer.invoke("desktop:background-task-update", request),
+  cancelBackgroundTask: (request: DesktopBackgroundTaskActionRequest): Promise<DesktopBackgroundTask> =>
+    ipcRenderer.invoke("desktop:background-task-cancel", request),
+  retryBackgroundTask: (request: DesktopBackgroundTaskActionRequest): Promise<DesktopBackgroundTask> =>
+    ipcRenderer.invoke("desktop:background-task-retry", request),
+  recoverBackgroundTasks: (): Promise<DesktopBackgroundTaskRecoveryResult> =>
+    ipcRenderer.invoke("desktop:background-tasks-recover"),
   listReusableTasks: (): Promise<DesktopReusableTask[]> =>
     ipcRenderer.invoke("desktop:reusable-tasks-list"),
   saveReusableTask: (
@@ -905,10 +959,18 @@ const api: DesktopApi = {
     request: DesktopChannelAdapterAuthStartRequest,
   ): Promise<DesktopChannelAdapterAuthStartResult> =>
     ipcRenderer.invoke("desktop:channel-adapter-auth-start", request),
+  pollChannelAdapterAuth: (request: DesktopChannelAdapterAuthPollRequest): Promise<DesktopChannelAdapterAuthPollResult> =>
+    ipcRenderer.invoke("desktop:channel-adapter-auth-poll", request),
+  revokeChannelAdapterAuth: (request: DesktopChannelAdapterAuthRevokeRequest): Promise<DesktopChannelAdapterAuthRevokeResult> =>
+    ipcRenderer.invoke("desktop:channel-adapter-auth-revoke", request),
+  configureChannelProviderToken: (request: DesktopChannelProviderTokenConfigureRequest): Promise<DesktopChannelProviderTokenConfigureResult> =>
+    ipcRenderer.invoke("desktop:channel-provider-token-configure", request),
   importChannelContext: (
     request: DesktopChannelContextImportRequest,
   ): Promise<DesktopChannelContextImportResult> =>
     ipcRenderer.invoke("desktop:channel-context-import", request),
+  syncLiveChannelContext: (request: DesktopChannelLiveSyncRequest): Promise<DesktopChannelContextImportResult> =>
+    ipcRenderer.invoke("desktop:channel-live-sync", request),
   syncChannelSnapshots: (
     request: DesktopChannelSnapshotSyncRequest,
   ): Promise<DesktopChannelSnapshotSyncResult> =>

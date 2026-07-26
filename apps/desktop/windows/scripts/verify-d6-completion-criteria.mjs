@@ -6,7 +6,7 @@ const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const read = (path) => readFileSync(join(root, path), "utf8");
 const api = read("../shared/api/desktopApi.ts");
 const backgroundTasks = read("src/main/backgroundTasks.ts");
-const presentation = read("src/main/managerPresentation.ts");
+const presentation = read("../shared/main/managerPresentation.ts");
 const renderer = read("../shared/renderer/src/App.tsx");
 const styles = read("../shared/renderer/src/styles.css");
 const smoke = read("src/main/e2eSmoke.ts");

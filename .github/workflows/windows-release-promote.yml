@@ -66,8 +66,8 @@ jobs:
             --pattern "latest-windows.json" `
             --pattern "release-summary.json"
           gh release download $tag --repo $env:OPENDRSAI_RELEASE_REPOSITORY --dir release\bootstrapper --clobber `
-            --pattern "OpenDrSaiSetup-win-x64.msi" `
-            --pattern "OpenDrSaiRuntime-win-x64.zip"
+            --pattern "OpenDrSai-Windows-Installer-x64.msi" `
+            --pattern "OpenDrSai-Windows-v*-x64.zip"
           gh release download $tag --repo $env:OPENDRSAI_RELEASE_REPOSITORY --dir release\product-evidence\remote-workspace --clobber `
             --pattern "windows-signatures.json"
 

@@ -14,7 +14,9 @@
       InstallPrivileges="elevated"
       Description="OpenDrSai desktop application" />
 
-    <MajorUpgrade DowngradeErrorMessage="A newer version of OpenDrSai Setup is already installed." />
+    <MajorUpgrade
+      AllowSameVersionUpgrades="yes"
+      DowngradeErrorMessage="A newer version of OpenDrSai Setup is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
@@ -65,17 +67,17 @@
     <Binary Id="OpenDrSaiInstallerActions" SourceFile="$(var.InstallerActionsPath)" />
 
     <CustomAction Id="SetDownloadOpenDrSaiRuntime" Property="DownloadOpenDrSaiRuntime"
-      Value='RuntimeUrl=[RUNTIMEURL];SourcePath=[OriginalDatabase];TargetPath=[INSTALLFOLDER]cache\OpenDrSaiRuntime-win-x64.zip;ExpectedSize=[RUNTIMESIZEBYTES];BootstrapperVersion=[BOOTSTRAPPERVERSION]' />
+      Value='RuntimeUrl=[RUNTIMEURL];SourcePath=[OriginalDatabase];TargetPath=[INSTALLFOLDER]cache\OpenDrSai-Windows-v[BOOTSTRAPPERVERSION]-x64.zip;ExpectedSize=[RUNTIMESIZEBYTES];BootstrapperVersion=[BOOTSTRAPPERVERSION]' />
     <CustomAction Id="SetVerifyOpenDrSaiRuntime" Property="VerifyOpenDrSaiRuntime"
-      Value='-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "[INSTALLFOLDER]install-opendrsai.ps1" -Stage Verify -RuntimeUrl "[RUNTIMEURL]" -RuntimeSha256 "[RUNTIMESHA256]" -RuntimeSizeBytes "[RUNTIMESIZEBYTES]" -BootstrapperVersion "[BOOTSTRAPPERVERSION]" -MachineInstall -NoShortcuts -NoLaunch [EXTRAINSTALLARGS]' />
+      Value='-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "[INSTALLFOLDER]install-opendrsai.ps1" -Stage Verify -InstallRoot "[INSTALLFOLDER]." -RuntimeUrl "[RUNTIMEURL]" -RuntimeSha256 "[RUNTIMESHA256]" -RuntimeSizeBytes "[RUNTIMESIZEBYTES]" -BootstrapperVersion "[BOOTSTRAPPERVERSION]" -MachineInstall -NoShortcuts -NoLaunch [EXTRAINSTALLARGS]' />
     <CustomAction Id="SetExtractOpenDrSaiRuntime" Property="ExtractOpenDrSaiRuntime"
-      Value='-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "[INSTALLFOLDER]install-opendrsai.ps1" -Stage Extract -RuntimeUrl "[RUNTIMEURL]" -RuntimeSha256 "[RUNTIMESHA256]" -RuntimeSizeBytes "[RUNTIMESIZEBYTES]" -BootstrapperVersion "[BOOTSTRAPPERVERSION]" -MachineInstall -NoShortcuts -NoLaunch [EXTRAINSTALLARGS]' />
+      Value='-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "[INSTALLFOLDER]install-opendrsai.ps1" -Stage Extract -InstallRoot "[INSTALLFOLDER]." -RuntimeUrl "[RUNTIMEURL]" -RuntimeSha256 "[RUNTIMESHA256]" -RuntimeSizeBytes "[RUNTIMESIZEBYTES]" -BootstrapperVersion "[BOOTSTRAPPERVERSION]" -MachineInstall -NoShortcuts -NoLaunch [EXTRAINSTALLARGS]' />
     <CustomAction Id="SetInstallOpenDrSaiRuntime" Property="InstallOpenDrSaiRuntime"
-      Value='-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "[INSTALLFOLDER]install-opendrsai.ps1" -Stage Install -RuntimeUrl "[RUNTIMEURL]" -RuntimeSha256 "[RUNTIMESHA256]" -RuntimeSizeBytes "[RUNTIMESIZEBYTES]" -BootstrapperVersion "[BOOTSTRAPPERVERSION]" -MachineInstall -NoShortcuts -NoLaunch [EXTRAINSTALLARGS]' />
+      Value='-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "[INSTALLFOLDER]install-opendrsai.ps1" -Stage Install -InstallRoot "[INSTALLFOLDER]." -RuntimeUrl "[RUNTIMEURL]" -RuntimeSha256 "[RUNTIMESHA256]" -RuntimeSizeBytes "[RUNTIMESIZEBYTES]" -BootstrapperVersion "[BOOTSTRAPPERVERSION]" -MachineInstall -NoShortcuts -NoLaunch [EXTRAINSTALLARGS]' />
     <CustomAction Id="SetCompleteOpenDrSaiInstall" Property="CompleteOpenDrSaiInstall"
-      Value='-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "[INSTALLFOLDER]install-opendrsai.ps1" -Stage Complete -RuntimeUrl "[RUNTIMEURL]" -RuntimeSha256 "[RUNTIMESHA256]" -RuntimeSizeBytes "[RUNTIMESIZEBYTES]" -BootstrapperVersion "[BOOTSTRAPPERVERSION]" -MachineInstall -NoShortcuts -NoLaunch [EXTRAINSTALLARGS]' />
+      Value='-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "[INSTALLFOLDER]install-opendrsai.ps1" -Stage Complete -InstallRoot "[INSTALLFOLDER]." -RuntimeUrl "[RUNTIMEURL]" -RuntimeSha256 "[RUNTIMESHA256]" -RuntimeSizeBytes "[RUNTIMESIZEBYTES]" -BootstrapperVersion "[BOOTSTRAPPERVERSION]" -MachineInstall -NoShortcuts -NoLaunch [EXTRAINSTALLARGS]' />
     <CustomAction Id="SetRunOpenDrSaiUninstaller" Property="RunOpenDrSaiUninstaller"
-      Value='-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "[INSTALLFOLDER]uninstall-opendrsai.ps1"' />
+      Value='-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "[INSTALLFOLDER]uninstall-opendrsai.ps1" -InstallRoot "[INSTALLFOLDER]."' />
     <CustomAction Id="SetAdvanceVerifyProgress" Property="AdvanceVerifyProgress" Value='Ticks=50' />
     <CustomAction Id="SetAdvanceExtractProgress" Property="AdvanceExtractProgress" Value='Ticks=200' />
     <CustomAction Id="SetAdvanceInstallProgress" Property="AdvanceInstallProgress" Value='Ticks=120' />

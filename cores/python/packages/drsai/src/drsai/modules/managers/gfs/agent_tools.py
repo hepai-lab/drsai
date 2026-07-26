@@ -195,9 +195,11 @@ def _build_tools(
             lines = lines[minilimit:maxlimit if maxlimit > 0 else None]
         result = "\n".join(lines)
         if len(result) > MAX_OUTPUT_CHARS:
+            total_characters = len(result)
             result = result[:MAX_OUTPUT_CHARS] + (
                 f"\n\n[... truncated, showing lines {minilimit}-{minilimit + len(lines)} "
-                f"of {total} total; use gfs_download for the full file]"
+                f"of {total} total ({total_characters} characters); "
+                "use gfs_download for the full file]"
             )
         return result
 

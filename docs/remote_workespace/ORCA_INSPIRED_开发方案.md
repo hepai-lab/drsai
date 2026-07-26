@@ -67,8 +67,8 @@ Orca 的 PTY + Hook + Transcript Agent 接入方式不进入 Codex Agent Backend
 直接复用：
 
 - `cores/python/packages/drsai/src/drsai/owop/`
-- `cores/python/packages/drsai/src/drsai/backend/runtime_registry.py`
-- `cores/python/packages/drsai/src/drsai/backend/runtime_engine.py`
+- `cores/python/packages/drsai/src/drsai/backend/runtime/registry.py`
+- `cores/python/packages/drsai/src/drsai/backend/runtime/engine.py`
 - `apps/desktop/windows/src/main/runtimeClient.ts`
 - `apps/desktop/windows/src/main/remoteWorkspace.ts`
 - `apps/desktop/windows/src/main/runtimeReliability.ts`

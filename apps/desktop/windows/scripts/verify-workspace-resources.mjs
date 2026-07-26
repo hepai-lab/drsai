@@ -7,8 +7,8 @@ import { pathToFileURL } from "node:url";
 
 const app = resolve(new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
 const root = resolve(app, "../../..");
-const fixtures = JSON.parse(await readFile(join(root, "protocol/orca-inspired/domain.fixtures.json"), "utf8"));
-const schema = JSON.parse(await readFile(join(root, "protocol/orca-inspired/domain.schema.json"), "utf8"));
+const fixtures = JSON.parse(await readFile(join(root, "cores/protocol/orca-inspired/domain.fixtures.json"), "utf8"));
+const schema = JSON.parse(await readFile(join(root, "cores/protocol/orca-inspired/domain.schema.json"), "utf8"));
 const temp = await mkdtemp(join(tmpdir(), "opendrsai-workspace-resources-"));
 
 try {

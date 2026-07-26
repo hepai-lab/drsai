@@ -5,7 +5,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from drsai.backend.runtime_security import SecureWorkspaceFS, SecurityError
+from drsai.backend.runtime.security import SecureWorkspaceFS, SecurityError
 
 
 with tempfile.TemporaryDirectory(prefix="opendrsai-security-") as directory:

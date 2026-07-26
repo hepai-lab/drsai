@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 import ts from "typescript";
@@ -11,7 +11,13 @@ rmSync(stateRoot, { recursive: true, force: true });
 mkdirSync(productionRoot, { recursive: true });
 writeFileSync(join(productionRoot, "settings.json"), "{corrupt", "utf8");
 const nativeRequire = createRequire(import.meta.url);
-const testRequire = (id) => id === "./paths" ? { DRSAI_HOME: stateRoot } : nativeRequire(id);
+const testRequire = (id) => {
+  if (id === "./paths") return { DRSAI_HOME: stateRoot };
+  if (id === "./atomicFileReplace") {
+    return { replaceFileSafely: async (source, destination) => renameSync(source, destination) };
+  }
+  return nativeRequire(id);
+};
 
 function loadTypeScript(path) {
   const source = readFileSync(path, "utf8");
@@ -24,7 +30,7 @@ function loadTypeScript(path) {
 const previousMode = process.env.OPENDRSAI_DIAGNOSTICS_MODE;
 process.env.OPENDRSAI_DIAGNOSTICS_MODE = "detailed";
 try {
-  const module = loadTypeScript(join(root, "src", "main", "productionDiagnostics.ts"));
+  const module = loadTypeScript(join(root, "..", "shared", "main", "productionDiagnostics.ts"));
   const service = new module.ProductionDiagnosticsService();
   await service.initialize();
   let status = await service.status();

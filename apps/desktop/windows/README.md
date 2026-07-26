@@ -148,7 +148,7 @@ update pull the matching backend tag on the next launch.
 Generate the manifest consumed by both the MSI bootstrapper and in-app updater:
 
 ```powershell
-$env:OPENDRSAI_RELEASE_BASE_URL = "https://github.com/hepai-lab/drsai/releases/download/v0.1.0"
+$env:OPENDRSAI_RELEASE_BASE_URL = "https://download-opendrsai.ihep.ac.cn/releases/v1.5.2/windows"
 npm run manifest:win
 ```
 
@@ -158,8 +158,9 @@ Build the WiX MSI bootstrapper after creating the runtime archive:
 npm run build:bootstrapper
 ```
 
-The MSI performs the first installation. Later releases are downloaded by the
-desktop updater as `OpenDrSaiRuntime-win-x64.zip`, then verified, staged and
+The MSI performs the first installation. The desktop updater checks
+`https://download-opendrsai.ihep.ac.cn/channels/beta/latest-windows.json` and
+downloads the versioned Windows Runtime ZIP, then verifies, stages and
 atomically installed with automatic startup-health rollback.
 
 See `docs/release-checklist.md` for signing, public Release assets, and clean

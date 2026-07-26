@@ -12,7 +12,7 @@ const resultPath = join(cernDir, "packaged-presentation-action-h3-numeric-tracea
 const manifestPath = join(cernDir, "packaged-generated-manager-zh-h3-numeric-traceability.provenance.json");
 const sourcePdf = resolve(process.env.OPENDRSAI_CERN_PDF || "C:/tmp/WLCG-20260715-WLCG-talk-IHEP-visit.pdf");
 const python = resolve(process.env.OPENDRSAI_PDF_PYTHON || "C:/Users/win11/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe");
-const parser = join(repo, "cores/python/packages/drsai/src/drsai/backend/presentation_pdf.py");
+const parser = join(repo, "cores/python/packages/drsai/src/drsai/content/pdf/presentation.py");
 const fixture = JSON.parse(readFileSync(join(repo, "tests/fixtures/product/presentation-report-wlcg.json"), "utf8"));
 const numericSourcePath = join(goldenDir, "numeric-source.csv");
 for (const path of [resultPath, manifestPath, sourcePdf, numericSourcePath, join(goldenDir, "numeric-report.md")]) {
@@ -69,7 +69,7 @@ assert(!falseConfidenceAudit.unverifiableExplicit, "H3 evaluator accepted an unv
 
 const api = readFileSync(join(root, "../shared/api/desktopApi.ts"), "utf8");
 const background = readFileSync(join(root, "src/main/backgroundTasks.ts"), "utf8");
-const generator = readFileSync(join(root, "src/main/managerPresentation.ts"), "utf8");
+const generator = readFileSync(join(root, "../shared/main/managerPresentation.ts"), "utf8");
 const app = readFileSync(join(root, "../shared/renderer/src/App.tsx"), "utf8");
 const panel = readFileSync(join(root, "../shared/renderer/src/components/files/FilesContextPanel.tsx"), "utf8");
 const styles = readFileSync(join(root, "../shared/renderer/src/styles.css"), "utf8");

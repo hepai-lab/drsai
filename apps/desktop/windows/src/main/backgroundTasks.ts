@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "crypto";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "fs/promises";
+import { readFile, stat } from "fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "path";
 import type {
   AgentRunEvent,
@@ -26,8 +26,10 @@ import type {
 import { DRSAI_HOME } from "./paths";
 import { requireAuthContext } from "./auth";
 import { buildAgentTaskPlan, isMultiMaterialSynthesisTask } from "../../../shared/api/agentTaskPlan";
+import { readDurableJson, writeDurableJson } from "../../../shared/main/durableJsonStore";
 
 const BACKGROUND_TASKS_FILE = join(DRSAI_HOME, "desktop", "background-tasks.json");
+const MAX_BACKGROUND_TASK_STORE_BYTES = 64 * 1024 * 1024;
 const MAX_BACKGROUND_TASKS_PER_WORKSPACE = 100;
 const GLOBAL_BACKGROUND_TASK_KEY = "__global__";
 
@@ -130,6 +132,25 @@ export async function updateBackgroundTask(
     .slice(0, MAX_BACKGROUND_TASKS_PER_WORKSPACE);
   await writeBackgroundTaskStore(store);
   return cloneBackgroundTask(updated);
+}
+
+export async function cancelBackgroundTask(request: unknown): Promise<DesktopBackgroundTask> {
+  const row = request as { taskId?: unknown; reason?: unknown }; const taskId = normalizeRequiredText(row?.taskId, "Background task id is required.");
+  const current = (await listBackgroundTasks({ limit: 100 })).find((task) => task.id === taskId); if (!current) throw new Error("Background task was not found."); if (current.status === "completed") throw new Error("Completed background tasks cannot be cancelled."); if (current.status === "cancelled") return current;
+  return updateBackgroundTask({ taskId, status: "cancelled", message: normalizeOptionalText(row.reason) ?? "Background task was cancelled." });
+}
+
+export async function retryBackgroundTask(request: unknown): Promise<DesktopBackgroundTask> {
+  const row = request as { taskId?: unknown; reason?: unknown }; const taskId = normalizeRequiredText(row?.taskId, "Background task id is required.");
+  const current = (await listBackgroundTasks({ limit: 100 })).find((task) => task.id === taskId); if (!current || !["failed", "blocked", "cancelled"].includes(current.status)) throw new Error("Only failed, blocked or cancelled background tasks can be retried.");
+  const attempt = (current.attempt ?? 1) + 1; if (attempt > (current.maxAttempts ?? 3)) throw new Error("Background task retry limit was reached.");
+  const updated = await updateBackgroundTask({ taskId, status: "queued", progress: 0, message: normalizeOptionalText(row.reason) ?? `Retry attempt ${attempt} is queued.` }); return { ...updated, attempt, retryOfTaskId: current.retryOfTaskId ?? current.id };
+}
+
+export async function recoverBackgroundTasksAfterRestart(): Promise<{ generatedAt: string; recovered: number; tasks: DesktopBackgroundTask[] }> {
+  const generatedAt = new Date().toISOString(); const current = await listBackgroundTasks({ limit: 100 }); const tasks: DesktopBackgroundTask[] = [];
+  for (const task of current.filter((item) => ["queued", "running", "waiting_approval"].includes(item.status))) tasks.push(await updateBackgroundTask({ taskId: task.id, status: task.status === "running" ? "queued" : task.status, message: task.status === "running" ? "Recovered after restart; explicit dispatch is required." : task.message }));
+  return { generatedAt, recovered: tasks.length, tasks };
 }
 
 export async function upsertBackgroundTaskForWorkflowRun(
@@ -436,13 +457,13 @@ function mapWorkflowRunStatus(
 }
 
 async function readBackgroundTaskStore(): Promise<BackgroundTaskStore> {
-  try {
-    const parsed = JSON.parse(await readFile(BACKGROUND_TASKS_FILE, "utf8"));
-    if (!parsed || typeof parsed !== "object") return { workspaces: {} };
+  return (await readDurableJson(BACKGROUND_TASKS_FILE, decodeBackgroundTaskStore, { maxBytes: MAX_BACKGROUND_TASK_STORE_BYTES }))?.value ?? { workspaces: {} };
+}
+
+function decodeBackgroundTaskStore(parsed: unknown): BackgroundTaskStore {
+    if (!parsed || typeof parsed !== "object") throw new Error("Background task store schema is invalid.");
     const rawWorkspaces = (parsed as BackgroundTaskStore).workspaces;
-    if (!rawWorkspaces || typeof rawWorkspaces !== "object") {
-      return { workspaces: {} };
-    }
+    if (!rawWorkspaces || typeof rawWorkspaces !== "object" || Array.isArray(rawWorkspaces)) throw new Error("Background task store schema is invalid.");
     const workspaces: BackgroundTaskStore["workspaces"] = {};
     for (const [key, tasks] of Object.entries(rawWorkspaces)) {
       if (!Array.isArray(tasks)) continue;
@@ -454,23 +475,10 @@ async function readBackgroundTaskStore(): Promise<BackgroundTaskStore> {
       if (validTasks.length) workspaces[key] = validTasks;
     }
     return { workspaces };
-  } catch {
-    return { workspaces: {} };
-  }
 }
 
 async function writeBackgroundTaskStore(store: BackgroundTaskStore): Promise<void> {
-  await mkdir(dirname(BACKGROUND_TASKS_FILE), { recursive: true });
-  const temporaryPath = `${BACKGROUND_TASKS_FILE}.${process.pid}.${randomUUID()}.tmp`;
-  await writeFile(temporaryPath, `${JSON.stringify(store, null, 2)}\n`, "utf8");
-  try {
-    await rename(temporaryPath, BACKGROUND_TASKS_FILE);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST"
-      && (error as NodeJS.ErrnoException).code !== "EPERM") throw error;
-    await rm(BACKGROUND_TASKS_FILE, { force: true });
-    await rename(temporaryPath, BACKGROUND_TASKS_FILE);
-  }
+  await writeDurableJson(BACKGROUND_TASKS_FILE, store, { maxBytes: MAX_BACKGROUND_TASK_STORE_BYTES });
 }
 
 function findBackgroundTaskLocation(

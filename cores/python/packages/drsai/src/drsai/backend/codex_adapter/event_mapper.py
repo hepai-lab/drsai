@@ -8,7 +8,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from drsai.backend.agent_runtime import AgentExecutionServices, RuntimeRunContext
+from drsai.backend.runtime.agent import AgentExecutionServices, RuntimeRunContext
 
 
 _SECRET_KEY = re.compile(r"(?:token|secret|password|cookie|authorization|api.?key|credential)", re.I)

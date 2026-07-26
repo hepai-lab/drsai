@@ -14,18 +14,20 @@ import { dirname, join, resolve } from "path";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { promisify } from "util";
-import { app, type WebContents } from "electron";
+import { app, net, type WebContents } from "electron";
 import type { UpdateStatus } from "../shared/desktopApi";
 import { DRSAI_REPO } from "./paths";
 
 const execFileAsync = promisify(execFile);
 const UPDATE_SCHEMA_VERSION = 1;
+const DEFAULT_UPDATE_CHANNEL = "beta";
 const DEFAULT_MANIFEST_URL =
-  "https://github.com/hepai-lab/drsai/releases/latest/download/latest-windows.json";
+  "https://download-opendrsai.ihep.ac.cn/channels/beta/latest-windows.json";
 const MAX_MANIFEST_BYTES = 64 * 1024;
 const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const UPDATE_STARTUP_DELAY_MS = 30 * 1000;
 const ALLOWED_UPDATE_HOSTS = new Set([
+  "download-opendrsai.ihep.ac.cn",
   "github.com",
   "objects.githubusercontent.com",
   "github-releases.githubusercontent.com",
@@ -124,7 +126,7 @@ export async function downloadUpdate(): Promise<UpdateStatus> {
   if (!manifest || !updateStatus.available) return updateStatus;
   if (activeDownload) return updateStatus;
 
-  const paths = resolveUpdatePaths(manifest.version);
+  const paths = resolveUpdatePaths(manifest.version, manifest.runtime.url);
   activeDownload = new AbortController();
   try {
     await mkdir(dirname(paths.archivePath), { recursive: true });
@@ -263,12 +265,13 @@ export function restorePreparedUpdate(): void {
       return;
     }
     if (state.phase !== "ready" || typeof state.version !== "string") return;
-    const paths = resolveUpdatePaths(state.version);
-    const metadataPath = join(paths.stagingRoot, "prepared-update.json");
-    if (!existsSync(metadataPath) || !existsSync(join(paths.stagingRoot, "runtime"))) return;
+    const stagingRoot = join(getUpdateRoot(), "staging", state.version);
+    const metadataPath = join(stagingRoot, "prepared-update.json");
+    if (!existsSync(metadataPath) || !existsSync(join(stagingRoot, "runtime"))) return;
     const manifest = parseManifest(JSON.parse(readFileSync(metadataPath, "utf8")));
     assertManifestUsable(manifest);
     if (compareSemver(manifest.version, app.getVersion()) <= 0) return;
+    const paths = resolveUpdatePaths(state.version, manifest.runtime.url);
     preparedUpdate = { manifest, ...paths };
     selectedManifest = manifest;
     setStatus(statusFor("ready", {
@@ -405,7 +408,7 @@ function assertManifestUsable(manifest: RuntimeUpdateManifest): void {
   if (compareSemver(app.getVersion(), manifest.minimumUpdaterVersion) < 0) {
     throw updateError("updater-too-old", `OpenDrSai ${manifest.minimumUpdaterVersion} or newer is required to install this update.`);
   }
-  const requestedChannel = (process.env.OPENDRSAI_UPDATE_CHANNEL || "stable").toLowerCase();
+  const requestedChannel = (process.env.OPENDRSAI_UPDATE_CHANNEL || DEFAULT_UPDATE_CHANNEL).toLowerCase();
   if (manifest.channel !== requestedChannel) throw updateError("channel-mismatch", `The ${manifest.channel} update does not match the ${requestedChannel} channel.`);
 }
 
@@ -477,7 +480,15 @@ async function fetchWithTrustedRedirects(
 ): Promise<Response> {
   let url = initialUrl;
   for (let redirects = 0; redirects <= 5; redirects += 1) {
-    const response = await fetch(url, { ...options, redirect: "manual" });
+    let response: Response;
+    try {
+      response = await net.fetch(url.href, { ...options, redirect: "manual" });
+    } catch (error) {
+      if (error instanceof Error && /redirect was cancelled/i.test(error.message)) {
+        throw updateError("redirect-blocked", `The ${label} request attempted a blocked redirect.`);
+      }
+      throw error;
+    }
     if (![301, 302, 303, 307, 308].includes(response.status)) return response;
     const location = response.headers.get("location");
     if (!location) throw updateError("redirect-missing", `The ${label} redirect has no destination.`);
@@ -499,18 +510,34 @@ async function verifyFile(path: string, expectedSize: number, expectedHash: stri
   }
 }
 
-function resolveUpdatePaths(version: string): Omit<PreparedUpdate, "manifest"> {
+function resolveUpdatePaths(version: string, runtimeUrl?: string): Omit<PreparedUpdate, "manifest"> {
   const installRoot = getInstallRoot();
   const updateRoot = getUpdateRoot();
   const updaterDir = join(updateRoot, "updater");
+  const archiveName = runtimeUrl ? safeArchiveName(runtimeUrl) : `OpenDrSai-Windows-v${version}-x64.zip`;
+  const cacheDir = join(updateRoot, "cache", version);
+  const preferredArchivePath = join(cacheDir, archiveName);
+  const legacyArchivePath = join(cacheDir, "OpenDrSaiRuntime-win-x64.zip");
   return {
-    archivePath: join(updateRoot, "cache", version, "OpenDrSaiRuntime-win-x64.zip"),
+    archivePath: existsSync(preferredArchivePath) || !existsSync(legacyArchivePath)
+      ? preferredArchivePath
+      : legacyArchivePath,
     stagingRoot: join(updateRoot, "staging", version),
     updaterPath: join(updaterDir, "update-opendrsai.ps1"),
     installRoot,
     agentDir: process.env.OPENDRSAI_UPDATE_AGENT_DIR?.trim() || DRSAI_REPO,
     statePath: join(updateRoot, "update-state.json"),
   };
+}
+
+function safeArchiveName(runtimeUrl: string): string {
+  try {
+    const name = decodeURIComponent(new URL(runtimeUrl).pathname.split("/").pop() || "");
+    if (/^(?:OpenDrSai-Windows-v\d+\.\d+\.\d+(?:-[\w.-]+)?-x64|OpenDrSaiRuntime-win-x64)\.zip$/i.test(name)) return name;
+  } catch {
+    // The manifest URL has already been validated; retain a safe fallback here.
+  }
+  return "OpenDrSai-runtime-update.zip";
 }
 
 function getUpdateRoot(): string {

@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opendrsai.local/cores/protocol/orca-inspired/domain.schema.json",
+  "title": "OpenDrSai Worktree and Terminal Domain Contract",
+  "version": "1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["worktrees", "terminals"],
+  "properties": {
+    "worktrees": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/worktreeResource" }
+    },
+    "terminals": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/terminalResource" }
+    }
+  },
+  "$defs": {
+    "nonEmptyString": { "type": "string", "minLength": 1, "maxLength": 4096 },
+    "worktreeId": { "type": "string", "pattern": "^worktree-[A-Za-z0-9][A-Za-z0-9-]{0,127}$" },
+    "terminalId": { "type": "string", "pattern": "^terminal-[A-Za-z0-9][A-Za-z0-9-]{0,127}$" },
+    "worktreeStatus": {
+      "enum": ["creating", "active", "review", "merge_pending", "merged", "archived", "removing", "removed"]
+    },
+    "terminalStatus": {
+      "enum": ["starting", "running", "detached", "reconnecting", "exited", "lost"]
+    },
+    "worktreeResource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "worktreeId", "sourceWorkspaceId", "workspaceId", "repoRoot", "canonicalPath", "branch",
+        "baseCommit", "status", "location", "createdAt", "updatedAt"
+      ],
+      "properties": {
+        "worktreeId": { "$ref": "#/$defs/worktreeId" },
+        "sourceWorkspaceId": { "$ref": "#/$defs/nonEmptyString" },
+        "workspaceId": { "$ref": "#/$defs/nonEmptyString" },
+        "repoRoot": { "$ref": "#/$defs/nonEmptyString" },
+        "canonicalPath": { "$ref": "#/$defs/nonEmptyString" },
+        "branch": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "baseCommit": { "type": "string", "minLength": 7, "maxLength": 128 },
+        "status": { "$ref": "#/$defs/worktreeStatus" },
+        "location": { "enum": ["local", "remote"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "terminalResource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["terminalId", "runtimeId", "workspaceId", "status", "generation", "lastSequence", "createdAt"],
+      "properties": {
+        "terminalId": { "$ref": "#/$defs/terminalId" },
+        "runtimeId": { "$ref": "#/$defs/nonEmptyString" },
+        "workspaceId": { "$ref": "#/$defs/nonEmptyString" },
+        "worktreeId": { "$ref": "#/$defs/worktreeId" },
+        "status": { "$ref": "#/$defs/terminalStatus" },
+        "generation": { "type": "integer", "minimum": 1 },
+        "lastSequence": { "type": "integer", "minimum": 0 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "exitedAt": { "type": "string", "format": "date-time" }
+      }
+    }
+  },
+  "x-worktree-transitions": {
+    "creating": ["active", "archived", "removing"],
+    "active": ["review", "merge_pending", "archived", "removing"],
+    "review": ["active", "merge_pending", "merged", "archived", "removing"],
+    "merge_pending": ["active", "review", "merged", "archived", "removing"],
+    "merged": ["removing"],
+    "archived": ["active", "removing"],
+    "removing": ["removed"],
+    "removed": []
+  },
+  "x-terminal-transitions": {
+    "starting": ["running", "exited", "lost"],
+    "running": ["detached", "reconnecting", "exited", "lost"],
+    "detached": ["running", "reconnecting", "exited", "lost"],
+    "reconnecting": ["running", "detached", "exited", "lost"],
+    "exited": [],
+    "lost": []
+  }
+}

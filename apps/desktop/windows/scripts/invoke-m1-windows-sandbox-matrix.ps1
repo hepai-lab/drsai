@@ -51,7 +51,7 @@ Copy-Item -LiteralPath "$PSScriptRoot\m1-fake-gateway.py" -Destination $packageD
 $runtimeHash = Get-Sha256Hex $runtime
 $runtimeSize = (Get-Item -LiteralPath $runtime).Length
 $sandboxMsi = Join-Path $packageDir "OpenDrSaiSetup.sandbox.msi"
-$runtimeUrl = "https://github.com/hepai-lab/drsai/releases/download/v$ExpectedVersion/OpenDrSaiRuntime-win-x64.zip"
+$runtimeUrl = "https://download-opendrsai.ihep.ac.cn/releases/v$ExpectedVersion/windows/OpenDrSai-Windows-v$ExpectedVersion-x64.zip"
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PSScriptRoot\..\installer\build-msi.ps1" `
     -OutDir $packageDir -RuntimePath $runtime -RuntimeUrl $runtimeUrl -RuntimeSha256 $runtimeHash `
     -RuntimeSizeBytes $runtimeSize -BootstrapperVersion $ExpectedVersion -OutputName "OpenDrSaiSetup.sandbox.msi"

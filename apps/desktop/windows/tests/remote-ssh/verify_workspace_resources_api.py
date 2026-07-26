@@ -22,7 +22,7 @@ faulthandler.dump_traceback_later(90, repeat=True)
 
 from fastapi.testclient import TestClient
 from drsai.backend import gateway
-from drsai.backend.remote_pty import manager as pty_manager
+from drsai.backend.remote_ssh.pty import manager as pty_manager
 
 
 headers = {"X-OpenDrSai-Gateway-Token": "temporary-workspace-resources-token"}
@@ -195,8 +195,10 @@ with TestClient(gateway.app) as client:
     hook_failure = request(client, "POST", f"/v1/workspaces/{wid}/git/commit", expected=409, json={"message": "blocked"})
     assert hook_failure["error"]["code"] == "git_commit_failed" and "hook-denied" in hook_failure["error"]["message"]
     hook.unlink()
-    committed = request(client, "POST", f"/v1/workspaces/{wid}/git/commit", json={"message": "successful commit"})
-    assert committed["committed"] and len(committed["revision"]) == 40 and committed["exit_code"] == 0
+    committed = request(client, "POST", f"/v1/workspaces/{wid}/git/commit", json={"message": "successful commit", "idempotency_key": "approval:remote-response-lost"})
+    assert committed["committed"] and not committed["replayed"] and len(committed["revision"]) == 40 and committed["exit_code"] == 0
+    replayed = request(client, "POST", f"/v1/workspaces/{wid}/git/commit", json={"message": "successful commit", "idempotency_key": "approval:remote-response-lost"})
+    assert replayed["committed"] and replayed["replayed"] and replayed["revision"] == committed["revision"]
 
     mark("F09-F10")
     # F09 create/write/resize/kill and F10 attach/bounded output buffer.

@@ -43,6 +43,7 @@ import {
 } from "lucide-react";
 import drsaiLogo from "../assets/drsai.png";
 import { canHandleMemoryRequestLocally } from "../userPreferenceIntent";
+import { isTextCompositionEvent, shouldSubmitTextInput } from "../imeKeyboardPolicy";
 import type {
   ChatMessage,
   DesktopAgent,
@@ -1176,7 +1177,7 @@ export function ChatWorkspace({
   }
 
   function handleKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>): void {
-    if (event.key !== "Enter" || event.shiftKey) return;
+    if (!shouldSubmitTextInput(event.nativeEvent)) return;
     event.preventDefault();
     void submitWithAttachments();
   }
@@ -1768,6 +1769,7 @@ export function ChatWorkspace({
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
             onKeyDown={(event) => {
+              if (isTextCompositionEvent(event.nativeEvent)) return;
               if (event.key === "Escape") {
                 event.preventDefault();
                 closeSearch();

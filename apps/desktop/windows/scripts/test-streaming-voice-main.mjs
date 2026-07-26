@@ -9,7 +9,7 @@ import { build } from "esbuild";
 const bundlePath = join(tmpdir(), `opendrsai-streaming-voice-main-${process.pid}-${Date.now()}.mjs`);
 process.env.OPENDRSAI_VOICE_RUNTIME = "fixture";
 await build({
-  entryPoints: [new URL("../src/main/voiceStreaming/index.ts", import.meta.url).pathname.replace(/^\/(?:[A-Za-z]:)/, (value) => value.slice(1))],
+  entryPoints: [new URL("../../shared/main/voiceStreaming/index.ts", import.meta.url).pathname.replace(/^\/(?:[A-Za-z]:)/, (value) => value.slice(1))],
   outfile: bundlePath,
   bundle: true,
   format: "esm",

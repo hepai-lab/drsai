@@ -8,7 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "cores/python/packages/drsai/src"
-OUTPUT = ROOT / "protocol/relay/runtime-relay.openapi.json"
+OUTPUT = ROOT / "cores/protocol/relay/runtime-relay.openapi.json"
 sys.path.insert(0, str(PACKAGE))
 
 from drsai.relay.api import create_relay_app  # noqa: E402
