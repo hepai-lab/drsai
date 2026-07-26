@@ -317,6 +317,3 @@ apps/desktop/macos/native/OpenDrSaiNativeHelper/.build/
 docs/android/acceptance/**/device/*.png
 docs/android/acceptance/**/emulator-results/
 device.png
-
-# Local application screenshots are review artifacts, not product assets.
-assets/apps/
