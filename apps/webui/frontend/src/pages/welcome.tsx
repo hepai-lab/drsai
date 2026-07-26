@@ -26,6 +26,7 @@ const WelcomePage = () => {
   const [copied, setCopied] = useState(false);
   const [activeClient, setActiveClient] = useState<ClientTab | null>(null);
   const clientDetailsRef = useRef<HTMLDivElement>(null);
+  const skipClientScrollRef = useRef(false);
   const isZh = lang === "zh";
 
   useEffect(() => {
@@ -34,7 +35,17 @@ const WelcomePage = () => {
   }, [darkMode]);
 
   useEffect(() => {
+    if (!window.matchMedia("(max-width: 639px)").matches) return;
+    skipClientScrollRef.current = true;
+    setActiveClient("android");
+  }, []);
+
+  useEffect(() => {
     if (!activeClient || !clientDetailsRef.current) return;
+    if (skipClientScrollRef.current) {
+      skipClientScrollRef.current = false;
+      return;
+    }
     clientDetailsRef.current.focus({ preventScroll: true });
     clientDetailsRef.current.scrollIntoView({
       behavior: "smooth",
@@ -142,7 +153,7 @@ const WelcomePage = () => {
           {isZh ? "您的智能体，随处可用" : "Your agent, everywhere"}
         </p>
         <h1 className="max-w-4xl text-3xl font-extrabold leading-[1.1] tracking-[-0.045em] min-[390px]:text-4xl sm:text-6xl sm:tracking-[-0.055em]">
-          {isZh ? "让智能体，随处与您协作" : "Your agent, ready to collaborate anywhere"}
+          {isZh ? "让智能体，随时为您工作" : "Your agent, ready to work for you anytime"}
         </h1>
         <p className="mt-5 max-w-2xl text-sm font-medium leading-6 text-slate-500 sm:mt-6 sm:text-lg sm:leading-7 dark:text-slate-400">
           {isZh
@@ -153,15 +164,26 @@ const WelcomePage = () => {
         <div className="mt-7 flex w-full max-w-md flex-col gap-3 sm:mt-8 sm:flex-row sm:justify-center">
           <a
             href="/login"
-            className="group inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-blue-600 px-5 py-3 text-sm font-extrabold text-white no-underline shadow-lg shadow-violet-500/20 transition hover:-translate-y-0.5"
+            className="group inline-flex flex-1 flex-col items-center justify-center gap-0.5 rounded-xl bg-gradient-to-r from-violet-600 to-blue-600 px-5 py-2.5 text-sm font-extrabold text-white no-underline shadow-lg shadow-violet-500/20 transition hover:-translate-y-0.5"
           >
-            {isZh ? "直接开始对话" : "Start chatting"}
-            <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+            <span className="inline-flex items-center gap-2">
+              {isZh ? "直接开始对话" : "Start chatting"}
+              <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+            </span>
+            <span className="text-[11px] font-semibold text-white/75">
+              {isZh ? "（在浏览器中使用）" : "(Use in your browser)"}
+            </span>
           </a>
           <div className="inline-flex flex-1 flex-col items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white/70 px-5 py-2.5 text-sm font-extrabold text-slate-700 no-underline transition hover:border-violet-300 hover:text-violet-700 dark:border-white/10 dark:bg-white/5 dark:text-slate-200 dark:hover:border-violet-400/40">
             <button
               type="button"
-              onClick={() => openClient("windows")}
+              onClick={() =>
+                openClient(
+                  window.matchMedia("(max-width: 639px)").matches
+                    ? "android"
+                    : "windows",
+                )
+              }
               className="inline-flex items-center gap-2 bg-transparent font-extrabold"
             >
               <Download className="h-4 w-4" />
@@ -194,7 +216,11 @@ const WelcomePage = () => {
               <button
                 type="button"
                 onClick={() => toggleClient("android")}
-                className="rounded-md p-0.5 transition hover:bg-emerald-50 dark:hover:bg-white/10"
+                className={`rounded-md p-0.5 transition hover:bg-emerald-50 dark:hover:bg-white/10 ${
+                  activeClient === "android"
+                    ? "bg-emerald-50 ring-1 ring-emerald-300 dark:bg-emerald-500/15 dark:ring-emerald-500/40"
+                    : ""
+                }`}
                 aria-label="Android"
               >
                 <span className="block scale-100 sm:scale-75">
@@ -216,7 +242,7 @@ const WelcomePage = () => {
 
       <section id="clients" className="relative z-10 mx-auto max-w-6xl px-4 sm:px-8">
         <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white/80 shadow-[0_18px_60px_-36px_rgba(76,29,149,0.35)] backdrop-blur dark:border-white/10 dark:bg-white/[0.035]">
-          <div className="flex snap-x snap-mandatory overflow-x-auto sm:grid sm:grid-cols-2 sm:overflow-visible lg:grid-cols-5">
+          <div className="hidden sm:grid sm:grid-cols-2 lg:grid-cols-5">
             <ClientItem
               icon={<WebBrowserLogo />}
               title="WebUI"
@@ -301,12 +327,165 @@ const WelcomePage = () => {
         </div>
       </section>
 
-      <footer className="relative z-10 mx-auto mt-20 flex max-w-6xl items-center justify-center border-t border-slate-200/70 px-5 py-6 text-xs font-semibold text-slate-400 dark:border-white/5 sm:px-8">
+      <section className="relative z-10 mx-auto mt-20 max-w-6xl px-4 sm:mt-28 sm:px-8">
+        <div className="mx-auto max-w-3xl text-center">
+          <p className="text-xs font-extrabold uppercase tracking-[0.22em] text-violet-600 dark:text-violet-400">
+            {isZh ? "一个智能体，多种工作方式" : "One agent, every workflow"}
+          </p>
+          <h2 className="mt-4 text-3xl font-extrabold tracking-[-0.04em] sm:text-5xl">
+            {isZh ? "从浏览器到本地终端，工作始终连贯" : "A continuous workspace, from browser to terminal"}
+          </h2>
+          <p className="mt-5 text-sm font-medium leading-6 text-slate-500 sm:text-base sm:leading-7 dark:text-slate-400">
+            {isZh
+              ? "选择最适合当前场景的界面，随时查看上下文、运行过程与工作成果。"
+              : "Choose the interface that fits the moment while keeping context, execution, and results within reach."}
+          </p>
+        </div>
+
+        <div className="mt-14 space-y-20 sm:mt-20 sm:space-y-28">
+          <ProductShowcase
+            eyebrow="WebUI"
+            title={isZh ? "打开浏览器，立即进入完整工作台" : "Your complete workspace, right in the browser"}
+            description={
+              isZh
+                ? "无需安装即可开始对话，在同一界面中管理文件、查看智能体运行过程，并回到历史会话继续工作。"
+                : "Start without installing anything. Chat, manage files, inspect agent execution, and return to previous sessions in one interface."
+            }
+            features={
+              isZh
+                ? ["对话、文件空间与运行概览并排协作", "实时查看工具调用与执行状态", "跨设备访问连续的会话与工作内容"]
+                : ["Chat, files, and execution views side by side", "Inspect tool calls and execution status in real time", "Continue sessions and work across devices"]
+            }
+            image="/apps/screenshot_webui.png"
+            imageAlt={isZh ? "OpenDrSai WebUI 工作界面" : "OpenDrSai WebUI workspace"}
+          />
+          <ProductShowcase
+            eyebrow="Terminal UI"
+            title={isZh ? "在命令行中保持专注与高效" : "Stay focused and fast in the terminal"}
+            description={
+              isZh
+                ? "为开发者和远程环境提供轻量入口，在熟悉的终端里对话、切换模型并调用工作工具。"
+                : "A lightweight interface for developers and remote environments, with conversations, model selection, and tools inside the terminal."
+            }
+            features={
+              isZh
+                ? ["一条 pip 命令即可安装使用", "清晰展示连接、模型、工具与工作区状态", "键盘优先，适合 SSH 与远程服务器"]
+                : ["Install with a single pip command", "See connection, model, tools, and workspace status", "Keyboard-first for SSH and remote servers"]
+            }
+            image="/apps/screenshot_tui.png"
+            imageAlt={isZh ? "OpenDrSai Terminal UI 界面" : "OpenDrSai Terminal UI"}
+            reverse
+          />
+          <ProductShowcase
+            eyebrow={isZh ? "桌面端" : "Desktop"}
+            title={isZh ? "让智能体深入您的本地工作区" : "Bring the agent into your local workspace"}
+            description={
+              isZh
+                ? "面向需要处理本地项目和长任务的工作场景，将对话、文件、浏览器和终端集中在一个桌面工作台。"
+                : "Built for local projects and longer-running work, with chat, files, browser, and terminal brought together in one desktop workspace."
+            }
+            features={
+              isZh
+                ? ["直接理解并操作本地工作区", "文件、浏览器与终端工具集中呈现", "任务、成果与版本变化持续可追踪"]
+                : ["Work directly with local workspaces", "Files, browser, and terminal in one place", "Keep tasks, artifacts, and changes traceable"]
+            }
+            image="/apps/screenshot_desktop.png"
+            imageAlt={isZh ? "OpenDrSai 桌面端工作界面" : "OpenDrSai desktop workspace"}
+          />
+          <ProductShowcase
+            eyebrow="Android"
+            title={isZh ? "把智能体带到移动端" : "Take your agent with you"}
+            description={
+              isZh
+                ? "通过 HepAI 账号安全连接远程工作区，在手机上随时指挥智能体执行任务、查看进度并持续推进工作。"
+                : "Connect securely to remote workspaces with your HepAI account, direct agents from your phone, and keep tasks moving wherever you are."
+            }
+            features={
+              isZh
+                ? ["使用 HepAI 账号快速登录", "为移动屏幕优化的轻量入口", "随时查看任务状态并延续工作"]
+                : ["Quick sign-in with your HepAI account", "A lightweight experience designed for mobile", "Check task status and continue work anywhere"]
+            }
+            image="/apps/screenshot_android.png"
+            imageAlt={isZh ? "OpenDrSai Android 登录界面" : "OpenDrSai Android sign-in screen"}
+            reverse
+            portrait
+          />
+        </div>
+      </section>
+
+      <footer className="relative z-10 mx-auto mt-24 flex max-w-6xl items-center justify-center border-t border-slate-200/70 px-5 py-6 text-xs font-semibold text-slate-400 dark:border-white/5 sm:mt-32 sm:px-8">
         © {new Date().getFullYear()} OpenDrSai · HepAI · HEP CAS
       </footer>
     </main>
   );
 };
+
+interface ProductShowcaseProps {
+  eyebrow: string;
+  title: string;
+  description: string;
+  features: string[];
+  image: string;
+  imageAlt: string;
+  reverse?: boolean;
+  portrait?: boolean;
+}
+
+const ProductShowcase = ({
+  eyebrow,
+  title,
+  description,
+  features,
+  image,
+  imageAlt,
+  reverse = false,
+  portrait = false,
+}: ProductShowcaseProps) => (
+  <article className="grid items-center gap-8 lg:grid-cols-[minmax(0,0.82fr)_minmax(0,1.6fr)] lg:gap-12">
+    <div className={reverse ? "lg:order-2" : ""}>
+      <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-violet-600 dark:text-violet-400">
+        {eyebrow}
+      </p>
+      <h3 className="mt-3 text-2xl font-extrabold leading-tight tracking-[-0.035em] sm:text-3xl">
+        {title}
+      </h3>
+      <p className="mt-4 text-sm font-medium leading-6 text-slate-500 sm:text-base sm:leading-7 dark:text-slate-400">
+        {description}
+      </p>
+      <ul className="mt-6 space-y-3">
+        {features.map((feature) => (
+          <li
+            key={feature}
+            className="flex items-start gap-3 text-sm font-semibold leading-6 text-slate-700 dark:text-slate-200"
+          >
+            <span className="mt-1 grid h-5 w-5 flex-none place-items-center rounded-full bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300">
+              <Check className="h-3 w-3" />
+            </span>
+            <span>{feature}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+    <figure
+      className={`overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-1.5 shadow-[0_28px_80px_-38px_rgba(76,29,149,0.42)] dark:border-white/10 dark:bg-white/[0.06] ${
+        portrait ? "flex justify-center bg-gradient-to-br from-violet-50 to-slate-100 py-8 dark:from-violet-950/30 dark:to-slate-900" : ""
+      } ${
+        reverse ? "lg:order-1" : ""
+      }`}
+    >
+      <img
+        src={image}
+        alt={imageAlt}
+        loading="lazy"
+        className={`block h-auto rounded-xl ${
+          portrait
+            ? "w-[min(72%,20rem)] shadow-[0_20px_60px_-28px_rgba(15,23,42,0.55)]"
+            : "w-full"
+        }`}
+      />
+    </figure>
+  </article>
+);
 
 interface ClientItemProps {
   icon: React.ReactNode;
