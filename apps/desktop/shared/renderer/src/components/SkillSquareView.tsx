@@ -356,7 +356,7 @@ export function SkillSquareView({
       await refreshBackgroundTasks();
       await refreshScheduledWorkerStatus();
       setWorkflowMessage(
-        `Scheduled scan checked ${result.checked} due task(s), triggered ${result.triggered}, reconnected ${result.reconnected}, skipped ${result.skipped}, blocked ${result.blocked}.`,
+        `Scheduled scan checked ${result.checked} due task(s), triggered ${result.triggered}, reconnected ${result.reconnected}, skipped ${result.skipped}, failed ${result.failed}, blocked ${result.blocked}.`,
       );
     } catch (error) {
       setWorkflowMessage(
@@ -490,6 +490,33 @@ export function SkillSquareView({
         error instanceof Error
           ? error.message
           : "Failed to dispatch workflow step.",
+      );
+    } finally {
+      setWorkflowDispatchBusyId(null);
+    }
+  }
+
+  async function completeWorkflowStep(
+    run: DesktopWorkflowRun,
+    stepId: string,
+  ): Promise<void> {
+    setWorkflowDispatchBusyId(`${run.id}:${stepId}`);
+    setWorkflowMessage(null);
+    try {
+      const result = await desktopApi.completeWorkflowRunStep({
+        runId: run.id,
+        stepId,
+        exitCode: 0,
+        output: run.steps.find((step) => step.id === stepId)?.kind === "external_runtime"
+          ? "Operator confirmed the provider runtime was reconnected."
+          : "Confirmed after the chat action finished.",
+      });
+      setWorkflowRun(result.run);
+      await refreshBackgroundTasks();
+      setWorkflowMessage(result.message);
+    } catch (error) {
+      setWorkflowMessage(
+        error instanceof Error ? error.message : "Failed to complete workflow step.",
       );
     } finally {
       setWorkflowDispatchBusyId(null);
@@ -997,6 +1024,7 @@ export function SkillSquareView({
               run={workflowRun}
               busyStepKey={workflowDispatchBusyId}
               onDispatch={dispatchWorkflowStep}
+              onComplete={completeWorkflowStep}
             />
           ) : null}
           {workflowRun &&
@@ -1454,10 +1482,12 @@ function WorkflowRunExecution({
   run,
   busyStepKey,
   onDispatch,
+  onComplete,
 }: {
   run: DesktopWorkflowRun;
   busyStepKey: string | null;
   onDispatch: (run: DesktopWorkflowRun, stepId: string) => void;
+  onComplete: (run: DesktopWorkflowRun, stepId: string) => void;
 }): React.JSX.Element {
   return (
     <div className={`workflow-run-execution ${run.status}`} aria-label="Workflow run status">
@@ -1489,12 +1519,14 @@ function WorkflowRunExecution({
               type="button"
               className="workflow-step-dispatch"
               disabled={!canDispatchWorkflowStep(step) || busyStepKey === `${run.id}:${step.id}`}
-              onClick={() => onDispatch(run, step.id)}
+              onClick={() => isCompletableWorkflowStep(step)
+                ? onComplete(run, step.id)
+                : onDispatch(run, step.id)}
               title={getWorkflowDispatchTitle(step)}
             >
               {getWorkflowDispatchIcon(step)}
               {busyStepKey === `${run.id}:${step.id}`
-                ? "Dispatching"
+                ? isCompletableWorkflowStep(step) ? "Confirming" : "Dispatching"
                 : getWorkflowDispatchLabel(step)}
             </button>
           </li>
@@ -1505,15 +1537,17 @@ function WorkflowRunExecution({
 }
 
 function canDispatchWorkflowStep(step: DesktopWorkflowRun["steps"][number]): boolean {
-  return (
-    step.status !== "blocked" &&
-    step.status !== "waiting_approval" &&
-    step.status !== "completed" &&
-    step.kind !== "approval"
-  );
+  return step.status === "ready" || isCompletableWorkflowStep(step);
+}
+
+function isCompletableWorkflowStep(step: DesktopWorkflowRun["steps"][number]): boolean {
+  return (step.kind === "chat_command" && step.status === "running") ||
+    (step.kind === "external_runtime" && step.status === "waiting_approval");
 }
 
 function getWorkflowDispatchLabel(step: DesktopWorkflowRun["steps"][number]): string {
+  if (step.kind === "chat_command" && step.status === "running") return "Confirm chat complete";
+  if (step.kind === "external_runtime" && step.status === "waiting_approval") return "Confirm runtime reconnected";
   if (step.resumeAction === "dispatch_chat") return "Resume chat";
   if (step.resumeAction === "prepare_terminal") return "Resume terminal";
   if (step.resumeAction === "reconnect_external") return "Reconnect runtime";

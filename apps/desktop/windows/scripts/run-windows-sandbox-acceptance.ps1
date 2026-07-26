@@ -160,7 +160,7 @@ try {
     [IO.File]::WriteAllText((Join-Path $authDir "auth.json"), (($auth | ConvertTo-Json -Depth 6) + [Environment]::NewLine), $utf8NoBom)
     [IO.File]::WriteAllText((Join-Path $desktopDataDir "workspaces.json"), ((ConvertTo-Json -InputObject $workspace -Depth 6) + [Environment]::NewLine), $utf8NoBom)
 
-    $parser = Join-Path $state.agentPath "venv\Lib\site-packages\drsai\backend\presentation_pdf.py"
+    $parser = Join-Path $state.agentPath "venv\Lib\site-packages\drsai\content\pdf\presentation.py"
     Add-Check "Bundled CERN PDF parser" ($(if (Test-Path $parser) { "PASS" } else { "FAIL" })) $parser
     if (-not (Test-Path $parser)) { throw "Bundled presentation parser is missing." }
 

@@ -1,6 +1,7 @@
 package ai.drsai.remote.remote.data
 
 import androidx.room.Dao
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.Insert
@@ -40,6 +41,9 @@ data class RemoteWorkspaceEntity(
     val displayName: String,
     val lastSyncedAt: Long,
     val authoritative: Boolean = false,
+    @ColumnInfo(defaultValue = "'active'") val lifecycle: String = "active",
+    @ColumnInfo(defaultValue = "1") val revision: Long = 1,
+    @ColumnInfo(defaultValue = "''") val updatedAt: String = "",
 )
 
 @Entity(
@@ -57,6 +61,8 @@ data class RemoteSessionEntity(
     val backendId: String,
     val lastSyncedAt: Long,
     val authoritative: Boolean = false,
+    @ColumnInfo(defaultValue = "'active'") val lifecycle: String = "active",
+    @ColumnInfo(defaultValue = "''") val updatedAt: String = "",
 )
 
 @Entity(
@@ -146,13 +152,23 @@ interface RemoteCacheDao {
 
     @Query("SELECT * FROM remote_events WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND eventId=:eventId")
     suspend fun event(subject: String, organization: String, runtimeId: String, eventId: String): RemoteEventEntity?
+    @Query("SELECT * FROM remote_events WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND runId=:runId ORDER BY sequence")
+    suspend fun runEvents(subject: String, organization: String, runtimeId: String, runId: String): List<RemoteEventEntity>
+    @Query("DELETE FROM remote_events WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND runId=:runId")
+    suspend fun clearRunEvents(subject: String, organization: String, runtimeId: String, runId: String)
+    @Query("DELETE FROM remote_event_cursors WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND resourceType='run' AND resourceId=:runId")
+    suspend fun clearRunCursor(subject: String, organization: String, runtimeId: String, runId: String)
 
     @Query("SELECT * FROM remote_runtimes WHERE subject=:subject AND organization=:organization ORDER BY displayName")
     suspend fun runtimes(subject: String, organization: String): List<RemoteRuntimeEntity>
-    @Query("SELECT * FROM remote_workspaces WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId ORDER BY workspaceId")
+    @Query("SELECT * FROM remote_workspaces WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND lifecycle='active' ORDER BY workspaceId")
     suspend fun workspaces(subject: String, organization: String, runtimeId: String): List<RemoteWorkspaceEntity>
-    @Query("SELECT * FROM remote_sessions WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND workspaceId=:workspaceId ORDER BY sessionId")
+    @Query("SELECT * FROM remote_sessions WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND workspaceId=:workspaceId AND lifecycle='active' ORDER BY sessionId")
     suspend fun sessions(subject: String, organization: String, runtimeId: String, workspaceId: String): List<RemoteSessionEntity>
+    @Query("SELECT * FROM remote_workspaces WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId ORDER BY workspaceId")
+    suspend fun allWorkspaces(subject: String, organization: String, runtimeId: String): List<RemoteWorkspaceEntity>
+    @Query("SELECT * FROM remote_sessions WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND workspaceId=:workspaceId ORDER BY sessionId")
+    suspend fun allSessions(subject: String, organization: String, runtimeId: String, workspaceId: String): List<RemoteSessionEntity>
     @Query("SELECT * FROM pending_remote_approvals WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId ORDER BY approvalId")
     suspend fun approvals(subject: String, organization: String, runtimeId: String): List<PendingRemoteApprovalEntity>
     @Query("SELECT * FROM remote_runs WHERE subject=:subject AND organization=:organization ORDER BY lastSyncedAt DESC")
@@ -212,6 +228,14 @@ fun offlineRemotePolicy(online: Boolean): OfflineRemotePolicy = if (online) {
 }
 
 class RemoteCacheRepository(private val database: ChatDatabase) {
+    suspend fun runCursor(
+        subject: String,
+        organization: String,
+        runtimeId: String,
+        runId: String,
+    ): RemoteEventCursorEntity? =
+        database.remoteDao().cursor(subject, organization, runtimeId, "run", runId)
+
     suspend fun applyEvent(event: RemoteEventEntity, expectedRuntimeId: String, expectedRunId: String,
                            cursorValue: String?, syncedAt: Long): EventDecision =
         database.withTransaction {
@@ -231,6 +255,32 @@ class RemoteCacheRepository(private val database: ChatDatabase) {
             }
             decision
         }
+
+    suspend fun replaceRunProjection(
+        subject: String,
+        organization: String,
+        runtimeId: String,
+        runId: String,
+        events: List<RemoteEventEntity>,
+        syncedAt: Long,
+    ) = database.withTransaction {
+        val dao = database.remoteDao()
+        dao.clearRunEvents(subject, organization, runtimeId, runId)
+        dao.clearRunCursor(subject, organization, runtimeId, runId)
+        val ordered = events.distinctBy { it.eventId }.sortedBy { it.sequence }
+        var expected = ordered.firstOrNull()?.sequence?.minus(1) ?: 0L
+        ordered.forEach { event ->
+            require(event.subject == subject && event.organization == organization &&
+                event.runtimeId == runtimeId && event.runId == runId) { "remote_event_scope_mismatch" }
+            require(event.sequence == expected + 1) { "remote_event_sequence_gap" }
+            check(dao.insertEvent(event) != -1L) { "remote_event_insert_conflict" }
+            expected = event.sequence
+        }
+        dao.saveCursor(RemoteEventCursorEntity(
+            subject, organization, runtimeId, "run", runId, expected,
+            expected.takeIf { it > 0 }?.toString(), syncedAt,
+        ))
+    }
 
     suspend fun clearAccount(subject: String, organization: String) = database.withTransaction {
         database.remoteDao().apply {

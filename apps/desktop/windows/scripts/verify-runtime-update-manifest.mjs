@@ -7,8 +7,9 @@ import { resolveMinimumUpdaterVersion, updaterPolicy } from "./runtime-update-po
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const manifestPath = resolve(process.env.OPENDRSAI_UPDATE_MANIFEST_PATH || join(root, "release", "latest-windows.json"));
-const runtimePath = resolve(process.env.OPENDRSAI_RUNTIME_PATH || join(root, "release", "bootstrapper", "OpenDrSaiRuntime-win-x64.zip"));
 const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+const runtimeArchiveName = `OpenDrSai-Windows-v${packageJson.version}-x64.zip`;
+const runtimePath = resolve(process.env.OPENDRSAI_RUNTIME_PATH || join(root, "release", "bootstrapper", runtimeArchiveName));
 const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
 const runtimeManifest = readRuntimeManifest(runtimePath);
 
@@ -37,8 +38,14 @@ assert(
 assert(/^https:\/\//.test(manifest.runtime?.url || ""), "Runtime URL must use HTTPS.");
 if (manifest.channel === "stable") {
   assert(
-    manifest.runtime.url === `https://github.com/hepai-lab/drsai/releases/download/v${packageJson.version}/OpenDrSaiRuntime-win-x64.zip`,
-    "Stable runtime URL must be the immutable versioned GitHub Release asset.",
+    manifest.runtime.url === `https://download-opendrsai.ihep.ac.cn/releases/v${packageJson.version}/windows/${runtimeArchiveName}`,
+    "Stable runtime URL must be the immutable versioned OpenDrSai CDN asset.",
+  );
+}
+if (manifest.channel === "beta") {
+  assert(
+    manifest.runtime.url === `https://download-opendrsai.ihep.ac.cn/releases/v${packageJson.version}/windows/${runtimeArchiveName}`,
+    "Beta runtime URL must be the immutable versioned OpenDrSai CDN asset.",
   );
 }
 assert(manifest.runtime.sizeBytes === statSync(runtimePath).size, "Runtime size does not match the manifest.");

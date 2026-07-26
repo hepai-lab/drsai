@@ -21,6 +21,60 @@ const view = read("../shared/renderer/src/components/ApprovalCenterView.tsx");
 const css = read("../shared/renderer/src/styles.css");
 const packageJson = read("package.json");
 const roadmap = read("docs/smart-chat-bar-roadmap.md");
+const mainSource = read("src/main/index.ts");
+const approvalStateSource = read("src/main/desktopApprovalState.ts");
+const approvalProtectionSource = read("src/main/desktopApprovalPayloadProtection.ts");
+const mcpRecoverySource = read("src/main/mcpApprovalRecovery.ts");
+
+assert(
+  mainSource.includes("restoreDesktopApprovalState()") &&
+    mainSource.includes("persistDesktopApprovalState()") &&
+    mainSource.includes("desktopApprovalDecisionQueue") &&
+    mainSource.includes("executedDesktopApprovalIds.delete(typed.id)") &&
+    mainSource.includes("restoreDesktopApprovalPayloadOwner(payload)") &&
+    mainSource.includes('registerDesktopApprovalPayload(proposal.approval.id, "git_commit"') &&
+    mainSource.includes('registerDesktopApprovalPayload(proposal.approval.id, "workspace_mutation"') &&
+    mainSource.includes('registerDesktopApprovalPayload(proposal.approval.id, "workspace_checkpoint_restore"') &&
+    mainSource.includes('registerDesktopApprovalPayload(proposal.approval.id, "remote_gateway_install"') &&
+    mainSource.includes('registerDesktopApprovalPayload(proposal.approval.id, "fork_lifecycle"') &&
+    mainSource.includes('registerDesktopApprovalPayload(proposal.approval.id, "fork_queue_start"') &&
+    mainSource.includes('registerDesktopApprovalPayload(proposal.approval.id, "fork_conflict_draft"') &&
+    mainSource.includes("deleteDesktopApprovalPayloads(typed.id)") &&
+    mainSource.includes("desktopApprovalPayloadKey(approvalId, kind)") &&
+    mainSource.includes("migratedLegacyPayload") &&
+    mainSource.includes("recoveredAmbiguousMcp") &&
+    mainSource.includes('executionState: "executing"') &&
+    mcpRecoverySource.includes('executionState: "ambiguous"') &&
+    mcpRecoverySource.includes('return approved ? "acknowledge" : "keep"') &&
+    mainSource.includes("recordAmbiguousMcpToolExecutionAudit") &&
+    mainSource.includes("isProtectedDesktopApprovalEnvelope(payload.value)") &&
+    mainSource.includes("setProtectedDesktopApprovalPayload(approvalId, kind, value)") &&
+    mainSource.includes('setProtectedDesktopApprovalPayload(approval.id, "approval_review", approval)') &&
+    mainSource.includes('payload.kind === "approval_review"') &&
+    approvalStateSource.includes("readDurableJson") &&
+    approvalStateSource.includes("writeDurableJson") &&
+    approvalStateSource.includes('item.source !== "browser_task"') &&
+    mainSource.includes("registerProtectedDesktopApprovalPayload") &&
+    mainSource.includes("protectDesktopApprovalPayload(WINDOWS_CREDENTIAL_SERVICE, value)") &&
+    mainSource.includes("unprotectDesktopApprovalPayload(WINDOWS_CREDENTIAL_SERVICE, value)") &&
+    mainSource.includes('registerProtectedDesktopApprovalPayload(proposal.approval.id, "channel_outbound"') &&
+    mainSource.includes('registerProtectedDesktopApprovalPayload(proposal.approval.id, "mcp_tool_execution"') &&
+    (mainSource.match(/deferPersistence: true/g) || []).length === 3 &&
+    mainSource.includes('envelope ?? { protectedPayload: "unavailable" }') &&
+    !mainSource.includes('registerDesktopApprovalPayload(proposal.approval.id, "channel_outbound"') &&
+    approvalStateSource.includes("protectedPayload.length <= 1_500_000") &&
+    approvalStateSource.includes("MAX_PAYLOAD_STORE_CHARS") &&
+    approvalStateSource.includes("MAX_APPROVAL_STATE_BYTES") &&
+    approvalStateSource.includes("{ maxBytes: this.maxBytes }") &&
+    approvalStateSource.includes("schemaVersion: 3") &&
+    approvalStateSource.includes("allowLegacyPlaintext") &&
+    approvalStateSource.includes("protectedApprovalSummary(item)") &&
+    approvalStateSource.includes("Sensitive review details are encrypted") &&
+    mainSource.includes("restoreProtectedDesktopApprovalReview") &&
+    approvalProtectionSource.includes("credentials.protect(serialized)") &&
+    approvalProtectionSource.includes("credentials.unprotect(protectedPayload)"),
+  "approval state is not restart-safe, payload-restoring, secret-protected, serialized and failure-preserving",
+);
 
 assert(
   navigation.includes("approvalCenter") &&
@@ -74,6 +128,8 @@ assert(
     view.includes("isMcpPendingApproval") &&
     view.includes('reason === "cancel"') &&
     view.includes("Cancel MCP") &&
+    view.includes("Acknowledge; do not replay") &&
+    view.includes('approval.executionState === "ambiguous"') &&
     view.includes("Close idle") &&
     view.includes("Close session") &&
     view.includes("Attach result") &&
@@ -200,7 +256,7 @@ assert(
     read("src/main/index.ts").includes("desktop:workflow-run-prepare") &&
     read("src/main/index.ts").includes("toDesktopBrowserTaskApproval") &&
     read("src/main/index.ts").includes("decidePendingDesktopApproval") &&
-    read("src/main/index.ts").includes("pendingBrowserTaskApprovals") &&
+    read("src/main/index.ts").includes("browserTaskService.pendingApprovals()") &&
     read("src/main/index.ts").includes("updatePendingBrowserTaskApprovals"),
   "approval center is not wired to live unified pending approvals",
 );

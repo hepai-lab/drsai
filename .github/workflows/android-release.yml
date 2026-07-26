@@ -1,0 +1,131 @@
+name: Android release
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Android update channel
+        required: true
+        default: beta
+        type: choice
+        options:
+          - beta
+          - stable
+      publish:
+        description: Publish verified assets to OSS/CDN and GitHub
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-publish:
+    runs-on: windows-2022
+    environment: ${{ inputs.channel == 'stable' && 'android-stable-release' || 'android-beta-release' }}
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      OPENDRSAI_ANDROID_BETA_STORE_PASSWORD: ${{ secrets.ANDROID_BETA_STORE_PASSWORD }}
+      OPENDRSAI_ANDROID_BETA_KEY_ALIAS: ${{ secrets.ANDROID_BETA_KEY_ALIAS }}
+      OPENDRSAI_ANDROID_BETA_KEY_PASSWORD: ${{ secrets.ANDROID_BETA_KEY_PASSWORD }}
+      OPENDRSAI_ANDROID_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_STORE_PASSWORD }}
+      OPENDRSAI_ANDROID_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+      OPENDRSAI_ANDROID_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+      OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+      OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+      OSS_ENDPOINT: ${{ secrets.OSS_ENDPOINT }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Decode channel signing keystore
+        env:
+          BETA_KEYSTORE_BASE64: ${{ secrets.ANDROID_BETA_KEYSTORE_BASE64 }}
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
+        run: |
+          $keys = Join-Path $env:RUNNER_TEMP "android-signing"
+          New-Item -ItemType Directory -Force -Path $keys | Out-Null
+          if ("${{ inputs.channel }}" -eq "stable") {
+            if ([string]::IsNullOrWhiteSpace($env:RELEASE_KEYSTORE_BASE64)) { throw "Stable keystore secret is missing" }
+            $path = Join-Path $keys "release.jks"
+            [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:RELEASE_KEYSTORE_BASE64))
+            "OPENDRSAI_ANDROID_RELEASE_KEYSTORE=$path" >> $env:GITHUB_ENV
+          } else {
+            if ([string]::IsNullOrWhiteSpace($env:BETA_KEYSTORE_BASE64)) { throw "Beta keystore secret is missing" }
+            $path = Join-Path $keys "beta.jks"
+            [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:BETA_KEYSTORE_BASE64))
+            "OPENDRSAI_ANDROID_BETA_KEYSTORE=$path" >> $env:GITHUB_ENV
+          }
+
+      - name: Build, test and generate dual manifests
+        working-directory: apps/android
+        run: |
+          .\scripts\build-stage5-release.ps1 `
+            -Channel "${{ inputs.channel }}" `
+            -SkipStage5Acceptance
+
+      - name: Verify local Android release contract
+        working-directory: apps/android
+        run: |
+          $version = (Get-Content ..\webui\backend\src\drsai_ui\ui_backend\version.py -Raw |
+            Select-String '(?m)^VERSION\s*=\s*["'']([^"'']+)["'']').Matches[0].Groups[1].Value
+          $variant = if ("${{ inputs.channel }}" -eq "stable") { "release" } else { "mvp" }
+          .\scripts\verify-android-release.ps1 `
+            -Apk ".\app\build\outputs\apk\$variant\OpenDrSai-Android-v$version.apk" `
+            -CdnManifest ".\app\build\stage5-release\latest-android-cdn.json" `
+            -GitHubManifest ".\app\build\stage5-release\latest-android-github.json" `
+            -Report ".\app\build\stage5-release\android-release-verification.json"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenDrSai-Android-${{ inputs.channel }}
+          if-no-files-found: error
+          path: |
+            apps/android/app/build/outputs/apk/mvp/*.apk
+            apps/android/app/build/outputs/apk/release/*.apk
+            apps/android/app/build/stage5-release/*.json
+
+      - name: Install and configure ossutil
+        if: ${{ inputs.publish }}
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP "ossutil.zip"
+          $directory = Join-Path $env:RUNNER_TEMP "ossutil"
+          Invoke-WebRequest `
+            -Uri "https://gosspublic.alicdn.com/ossutil/1.7.19/ossutil64.zip" `
+            -OutFile $archive
+          Expand-Archive -LiteralPath $archive -DestinationPath $directory -Force
+          $binary = Get-ChildItem $directory -Recurse -Filter "ossutil64.exe" | Select-Object -First 1
+          if (-not $binary) { throw "ossutil64.exe is missing" }
+          & $binary.FullName config -e $env:OSS_ENDPOINT -i $env:OSS_ACCESS_KEY_ID -k $env:OSS_ACCESS_KEY_SECRET -L CH
+          "OSSUTIL_PATH=$($binary.FullName)" >> $env:GITHUB_ENV
+
+      - name: Publish version assets and channel manifest last
+        if: ${{ inputs.publish }}
+        working-directory: apps/android
+        run: |
+          $version = (Get-Content ..\webui\backend\src\drsai_ui\ui_backend\version.py -Raw |
+            Select-String '(?m)^VERSION\s*=\s*["'']([^"'']+)["'']').Matches[0].Groups[1].Value
+          $variant = if ("${{ inputs.channel }}" -eq "stable") { "release" } else { "mvp" }
+          .\scripts\publish-android-release.ps1 `
+            -Apk ".\app\build\outputs\apk\$variant\OpenDrSai-Android-v$version.apk" `
+            -ReleaseDirectory ".\app\build\stage5-release" `
+            -Channel "${{ inputs.channel }}" `
+            -OssUtil $env:OSSUTIL_PATH `
+            -VerifyOnline `
+            -Report ".\app\build\stage5-release\android-publish-report.json"
+
+      - name: Remove signing material
+        if: ${{ always() }}
+        run: |
+          Remove-Item -LiteralPath (Join-Path $env:RUNNER_TEMP "android-signing") -Recurse -Force -ErrorAction SilentlyContinue

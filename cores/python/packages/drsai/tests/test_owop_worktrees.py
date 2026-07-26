@@ -11,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[5]
 BACKEND = ROOT / "cores" / "python" / "packages" / "drsai" / "src" / "drsai" / "backend"
 OWOP = ROOT / "cores" / "python" / "packages" / "drsai" / "src" / "drsai" / "owop"
-SCHEMA = ROOT / "protocol" / "owop" / "owop.schema.json"
+SCHEMA = ROOT / "cores" / "protocol" / "owop" / "owop.schema.json"
 
 for package_name, package_path in (
     ("drsai", BACKEND.parent), ("drsai.backend", BACKEND), ("drsai.owop", OWOP),
@@ -32,8 +32,8 @@ def load(name: str, path: Path):
 
 protocol_module = load("drsai.owop.protocol", OWOP / "protocol.py")
 bindings_module = load("drsai.owop.bindings", OWOP / "bindings.py")
-registry_module = load("drsai.backend.runtime_registry", BACKEND / "runtime_registry.py")
-service_module = load("drsai.backend.git_worktree_service", BACKEND / "git_worktree_service.py")
+registry_module = load("drsai.backend.runtime.registry", BACKEND / "runtime" / "registry.py")
+service_module = load("drsai.backend.workspace.git_worktree_service", BACKEND / "workspace" / "git_worktree_service.py")
 
 
 def git(cwd: Path, *args: str) -> str:

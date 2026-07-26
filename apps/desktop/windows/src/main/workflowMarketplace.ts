@@ -1,7 +1,7 @@
 import { createHash } from "crypto";
 import { existsSync, realpathSync } from "fs";
-import { mkdir, readFile, writeFile } from "fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "path";
+import { readFile } from "fs/promises";
+import { isAbsolute, join, relative, resolve } from "path";
 import type {
   DesktopApprovalProposalResult,
   DesktopWorkflowMarketplaceListResult,
@@ -14,12 +14,14 @@ import type {
   DesktopWorkflowTemplate,
 } from "../shared/desktopApi";
 import { DRSAI_HOME } from "./paths";
+import { readDurableJson, writeDurableJson } from "../../../shared/main/durableJsonStore";
 
 const WORKFLOW_MARKETPLACE_IMPORTS_FILE = join(
   DRSAI_HOME,
   "desktop",
   "workflow-marketplace-imports.json",
 );
+const MAX_WORKFLOW_MARKETPLACE_STORE_BYTES = 16 * 1024 * 1024;
 const MAX_SYNCED_TEMPLATES_PER_WORKSPACE = 40;
 const MAX_SYNC_SOURCE_BYTES = 256 * 1024;
 const MAX_TEMPLATE_TEXT_CHARS = 600;
@@ -81,8 +83,9 @@ const WORKFLOW_TEMPLATES: DesktopWorkflowTemplate[] = [
       "git diff preflight",
       "approval center",
     ],
-    approvalRequired: true,
-    verification: "Use verify:approval-center and verify:execution-policy.",
+    approvalRequired: false,
+    verification:
+      "Use verify:approval-center and verify:execution-policy; the /commit step owns the write approval.",
     risk: "high",
   },
   {
@@ -108,24 +111,24 @@ const WORKFLOW_TEMPLATES: DesktopWorkflowTemplate[] = [
     id: "connector-digest",
     name: "Connector digest",
     category: "research",
-    status: "planned",
+    status: "available",
     summary:
-      "Import read-only context from approved channels and prepare a single task brief for the active thread.",
-    trigger: "Channels view connector import",
+      "Turn explicitly reviewed, read-only Channel context into a task brief without silently fetching or sending provider data.",
+    trigger: "Channels view reviewed context",
     steps: [
-      "Check configured connector accounts.",
-      "Request read-only import approval when required.",
-      "Normalize imported context into attachments.",
-      "Insert a brief into the active thread.",
+      "Load and visibly review Channel context.",
+      "Draft a task brief from the reviewed attachments.",
+      "Verify citations and provider boundaries.",
     ],
     requiredCapabilities: [
       "channel adapters",
-      "approval center",
-      "context injection",
+      "reviewed context attachments",
+      "chat context injection",
     ],
-    approvalRequired: true,
-    verification: "Add connector runtime verifier after live OAuth is wired.",
-    risk: "high",
+    approvalRequired: false,
+    verification:
+      "Run workflow and Channel adapter verification; confirm the brief only cites visible reviewed attachments.",
+    risk: "medium",
   },
   {
     id: "external-runtime-reconnect",
@@ -270,6 +273,15 @@ export async function createWorkflowRunRecipe(
       reason,
     };
   }
+  if (template.approvalRequired && !proposal) {
+    const reason = "Workflow approval proposal is required before this recipe can become ready.";
+    return {
+      recipe: createBlockedRecipe(request, createdAt, reason, template),
+      blocked: true,
+      queued: false,
+      reason,
+    };
+  }
   if (proposal?.blocked || proposal?.allowed === false) {
     return {
       recipe: createBlockedRecipe(request, createdAt, proposal.reason, template),
@@ -386,11 +398,44 @@ function buildWorkflowRunSteps(
       },
       {
         id: "commit",
-        kind: "approval",
-        title: "Queue commit approval",
-        detail: "Use /commit <message> to route the commit through Approval Center.",
+        kind: "chat_command",
+        title: "Request commit approval",
+        detail: "Replace the placeholder, then use /commit <message> to route the commit through Approval Center.",
         command: "/commit <message>",
-        requiresApproval: true,
+        requiresApproval: false,
+      },
+    ];
+  }
+  if (template.id === "memory-to-skill") {
+    return [
+      {
+        id: "retrospective",
+        kind: "chat_command",
+        title: "Save retrospective",
+        detail: "Replace the placeholder with the durable project lesson to save.",
+        command: "/memory retrospective <lesson>",
+        requiresApproval: false,
+      },
+      {
+        id: "draft",
+        kind: "manual_review",
+        title: "Create skill draft",
+        detail: "In Skills, create a project skill draft from the reviewed retrospective.",
+        requiresApproval: false,
+      },
+      {
+        id: "review-skill",
+        kind: "manual_review",
+        title: "Review SKILL.md",
+        detail: "Inspect frontmatter, instructions, scope, and secret scan before installation.",
+        requiresApproval: false,
+      },
+      {
+        id: "install-skill",
+        kind: "manual_review",
+        title: "Install after approval",
+        detail: "Use the project skill install control and complete its own Approval Center flow.",
+        requiresApproval: false,
       },
     ];
   }
@@ -418,6 +463,36 @@ function buildWorkflowRunSteps(
         title: "Confirm runtime result",
         detail:
           "Review runtime output, background task state, and scheduled monitor state before marking the workflow complete.",
+        requiresApproval: false,
+      },
+    ];
+  }
+  if (template.id === "connector-digest") {
+    return [
+      {
+        id: "review-context",
+        kind: "manual_review",
+        title: "Review Channel context",
+        detail:
+          "Open Channels, load read-only provider context, and visibly review the attachments before confirming this checkpoint. The workflow does not fetch provider data itself.",
+        requiresApproval: false,
+      },
+      {
+        id: "draft-brief",
+        kind: "chat_command",
+        title: "Draft connector brief",
+        detail:
+          "Ask Chat to synthesize only the reviewed Channel attachments already visible in the active thread.",
+        command:
+          "Prepare a concise task brief using only the reviewed Channel import attachments visible in this thread. Cite each attachment, separate facts from inferences, and do not fetch or send provider data.",
+        requiresApproval: false,
+      },
+      {
+        id: "verify-brief",
+        kind: "manual_review",
+        title: "Verify brief boundaries",
+        detail:
+          "Confirm every claim is traceable to a visible reviewed attachment and that no provider write or hidden network fetch occurred.",
         requiresApproval: false,
       },
     ];
@@ -452,11 +527,13 @@ async function listSyncedWorkflowTemplates(
 }
 
 async function readWorkflowMarketplaceImportStore(): Promise<WorkflowMarketplaceImportStore> {
-  try {
-    const parsed = JSON.parse(await readFile(WORKFLOW_MARKETPLACE_IMPORTS_FILE, "utf8"));
-    if (!parsed || typeof parsed !== "object") return { workspaces: {} };
+  return (await readDurableJson(WORKFLOW_MARKETPLACE_IMPORTS_FILE, decodeWorkflowMarketplaceImportStore, { maxBytes: MAX_WORKFLOW_MARKETPLACE_STORE_BYTES }))?.value ?? { workspaces: {} };
+}
+
+function decodeWorkflowMarketplaceImportStore(parsed: unknown): WorkflowMarketplaceImportStore {
+    if (!parsed || typeof parsed !== "object") throw new Error("Workflow marketplace store schema is invalid.");
     const rawWorkspaces = (parsed as WorkflowMarketplaceImportStore).workspaces;
-    if (!rawWorkspaces || typeof rawWorkspaces !== "object") return { workspaces: {} };
+    if (!rawWorkspaces || typeof rawWorkspaces !== "object" || Array.isArray(rawWorkspaces)) throw new Error("Workflow marketplace store schema is invalid.");
     const workspaces: WorkflowMarketplaceImportStore["workspaces"] = {};
     for (const [key, entry] of Object.entries(rawWorkspaces)) {
       if (!entry || typeof entry !== "object" || !Array.isArray(entry.templates)) {
@@ -479,20 +556,12 @@ async function readWorkflowMarketplaceImportStore(): Promise<WorkflowMarketplace
       };
     }
     return { workspaces };
-  } catch {
-    return { workspaces: {} };
-  }
 }
 
 async function writeWorkflowMarketplaceImportStore(
   store: WorkflowMarketplaceImportStore,
 ): Promise<void> {
-  await mkdir(dirname(WORKFLOW_MARKETPLACE_IMPORTS_FILE), { recursive: true });
-  await writeFile(
-    WORKFLOW_MARKETPLACE_IMPORTS_FILE,
-    `${JSON.stringify(store, null, 2)}\n`,
-    "utf8",
-  );
+  await writeDurableJson(WORKFLOW_MARKETPLACE_IMPORTS_FILE, store, { maxBytes: MAX_WORKFLOW_MARKETPLACE_STORE_BYTES });
 }
 
 function validateSyncRequest(

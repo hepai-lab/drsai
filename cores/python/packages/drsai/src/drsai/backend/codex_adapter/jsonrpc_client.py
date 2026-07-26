@@ -8,7 +8,7 @@ import json
 from collections import defaultdict
 from typing import Any, Awaitable, Callable, Mapping
 
-from drsai.backend.agent_runtime import RuntimeExecutionError
+from drsai.backend.runtime.agent import RuntimeExecutionError
 from drsai.backend.codex_adapter.app_server_process import CodexAppServerProcess
 
 

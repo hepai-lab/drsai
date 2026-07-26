@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 from drsai.backend import gateway
-from drsai.backend.runtime_registry import RuntimeRegistry
+from drsai.backend.runtime.registry import RuntimeRegistry
 
 
 async def main() -> None:

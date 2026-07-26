@@ -6,6 +6,8 @@ import { dirname, join } from "path";
 import type { GatewayStatus } from "../api/desktopApi";
 import type { DesktopProcessService } from "../api";
 import { DRSAI_HOME, DRSAI_PYTHON, DRSAI_REPO, getEnhancedPath } from "./paths";
+import { managedProcessRegistry, type ManagedProcessRegistration } from "./managedProcessRegistry";
+import { redactDesktopSecrets } from "./secretRedaction";
 
 let processService: DesktopProcessService | null = null;
 let desktopAppRuntime = {
@@ -44,6 +46,8 @@ let lastGatewayLog = "";
 let gatewayStopPromise: Promise<boolean> | null = null;
 let gatewayStartPromise: Promise<boolean> | null = null;
 let adoptedPersistentRuntime = false;
+let gatewaySpawnError: Error | null = null;
+let gatewayRegistration: ManagedProcessRegistration | null = null;
 
 function loadGatewayInstanceToken(): string {
   const configured = process.env.OPENDRSAI_GATEWAY_INSTANCE_TOKEN?.trim();
@@ -197,6 +201,7 @@ async function killPortOccupant(port: string): Promise<boolean> {
 }
 
 async function startGatewayOnce(): Promise<boolean> {
+  if (!managedProcessRegistry.accepting) return false;
   if (await checkGatewayReady()) return true;
   const externalReady = await checkGatewayEndpoints();
   if (getGatewayStartupMode() === "external") {
@@ -224,12 +229,14 @@ async function startGatewayOnce(): Promise<boolean> {
 
   const localCodexEnv = await getLocalCodexDevelopmentEnv();
 
+  gatewaySpawnError = null;
   gatewayProcess = spawn(DRSAI_PYTHON, args, {
     cwd: existsSync(DRSAI_REPO) ? DRSAI_REPO : undefined,
     env: {
       ...process.env,
       DRSAI_HOME,
       DRSAI_API_PORT: GATEWAY_PORT,
+      PYTHONDONTWRITEBYTECODE: "1",
       OPENDRSAI_GATEWAY_INSTANCE_TOKEN: GATEWAY_INSTANCE_TOKEN,
       ...(NODE_PTY_MODULE ? { OPENDRSAI_NODE_PTY_MODULE: NODE_PTY_MODULE } : {}),
       ...localCodexEnv,
@@ -239,9 +246,26 @@ async function startGatewayOnce(): Promise<boolean> {
     detached: PERSIST_RUNTIME,
     stdio: PERSIST_RUNTIME ? "ignore" : ["ignore", "pipe", "pipe"],
   });
+  if (gatewayProcess.pid) {
+    const registeredProcess = gatewayProcess;
+    gatewayRegistration = managedProcessRegistry.register({
+      id: "gateway:local", kind: "gateway", owner: "desktop-runtime", pid: gatewayProcess.pid, detached: PERSIST_RUNTIME,
+      stop: async () => { await terminateGatewayProcessTree(registeredProcess); },
+      forceStop: () => { if (!registeredProcess.killed) registeredProcess.kill("SIGKILL"); },
+      alive: () => isProcessRunning(registeredProcess),
+    });
+    if (!PERSIST_RUNTIME) gatewayRegistration.transition("running");
+  }
   gatewayProcess.stdout?.on("data", appendGatewayLog);
   gatewayProcess.stderr?.on("data", appendGatewayLog);
-  gatewayProcess.once("exit", () => {
+  gatewayProcess.once("error", (error) => {
+    gatewaySpawnError = error;
+    appendGatewayLog(Buffer.from(`\nGateway process failed to start: ${error.message}`));
+  });
+  gatewayProcess.once("exit", (code, signal) => {
+    if (code === 0 || signal === "SIGTERM") gatewayRegistration?.exited(code, signal);
+    else gatewayRegistration?.crashed(code, signal);
+    gatewayRegistration = null;
     gatewayProcess = null;
     adoptedPersistentRuntime = false;
   });
@@ -250,6 +274,10 @@ async function startGatewayOnce(): Promise<boolean> {
   const deadline = Date.now() + GATEWAY_START_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (await checkGatewayReady()) return true;
+    if (gatewaySpawnError || !isProcessRunning(gatewayProcess)) {
+      appendGatewayLog(Buffer.from("\nGateway exited before its health checks became ready."));
+      return false;
+    }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   lastGatewayLog = `${lastGatewayLog}\nGateway did not become ready within ${GATEWAY_START_TIMEOUT_MS} ms; stopping the spawned process tree.`.slice(-12000);
@@ -306,7 +334,7 @@ function isManagedGatewayRunning(): boolean {
 }
 
 function appendGatewayLog(chunk: Buffer): void {
-  lastGatewayLog = `${lastGatewayLog}${chunk.toString()}`.slice(-12000);
+  lastGatewayLog = redactDesktopSecrets(`${lastGatewayLog}${chunk.toString()}`).slice(-12000);
 }
 
 function requestJson(

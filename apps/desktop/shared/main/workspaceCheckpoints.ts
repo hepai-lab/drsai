@@ -253,7 +253,7 @@ export async function restoreWorkspaceCheckpoint(
   let removedFileCount = 0;
   let skippedFileCount = 0;
   const checkpointDir = join(CHECKPOINT_ROOT, checkpoint.id);
-  const selectedPaths = normalizeRestorePaths(checkpoint, request.includePaths);
+  const selectedPaths = await normalizeRestorePaths(workspacePath, checkpoint, request.includePaths);
   const selectedPathSet = selectedPaths ? new Set(selectedPaths) : null;
   for (const [index, entry] of checkpoint.entries.entries()) {
     if (selectedPathSet && !selectedPathSet.has(normalizeRel(entry.relativePath))) {
@@ -411,10 +411,13 @@ function validateRestoreRequest(rawRequest: unknown): WorkspaceCheckpointRestore
   return request;
 }
 
-function normalizeRestorePaths(checkpoint: WorkspaceCheckpoint, includePaths: string[] | undefined): string[] | null {
+async function normalizeRestorePaths(workspacePath: string, checkpoint: WorkspaceCheckpoint, includePaths: string[] | undefined): Promise<string[] | null> {
   if (includePaths === undefined) return null;
   const available = new Set(checkpoint.entries.map((entry) => normalizeRel(entry.relativePath)));
-  const selected = [...new Set(includePaths.map((path) => normalizeRel(path.trim())))];
+  const selected = [...new Set(await Promise.all(includePaths.map(async (path) => {
+    const target = await resolvePossiblyMissingInsideWorkspace(workspacePath, path.trim());
+    return normalizeRel(relative(workspacePath, target));
+  })))];
   if (selected.some((path) => !path || !available.has(path))) {
     throw new Error("A partial restore target is not part of this version.");
   }

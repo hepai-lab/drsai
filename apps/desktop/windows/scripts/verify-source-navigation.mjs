@@ -43,8 +43,8 @@ try {
   writeFileSync(workspaceFile, "def run():\n    password = 'do-not-leak'\n    raise RuntimeError('broken')\n");
 
   const shared = loadTypeScript(join(root, "../shared/api/diagnostics.ts"), (specifier) => require(specifier));
-  const main = loadTypeScript(join(root, "src/main/sourceNavigation.ts"), (specifier) => {
-    if (specifier === "../../../shared/api/diagnostics") return shared;
+  const main = loadTypeScript(join(root, "../shared/main/sourceNavigation.ts"), (specifier) => {
+    if (specifier === "../api/diagnostics") return shared;
     return require(specifier);
   });
   const workspaces = [

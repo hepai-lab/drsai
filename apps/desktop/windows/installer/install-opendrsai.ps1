@@ -16,6 +16,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$InstallRoot = [IO.Path]::GetFullPath($InstallRoot)
 
 function Get-Sha256Hex([string]$Path) {
     $stream = [System.IO.File]::OpenRead($Path)
@@ -32,7 +33,7 @@ $ProgressPreference = "SilentlyContinue"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 if (-not $RuntimeUrl) {
-    $RuntimeUrl = "https://github.com/hepai-lab/drsai/releases/download/v$BootstrapperVersion/OpenDrSaiRuntime-win-x64.zip"
+    $RuntimeUrl = "https://download-opendrsai.ihep.ac.cn/releases/v$BootstrapperVersion/windows/OpenDrSai-Windows-v$BootstrapperVersion-x64.zip"
 }
 
 $CacheDir = Join-Path $InstallRoot "cache"
@@ -56,6 +57,57 @@ function Write-Log([string]$Message) {
     if (-not $Quiet) {
         Write-Host $Message
     }
+}
+
+function Stop-InstalledProcessTrees {
+    $normalizedRoot = $InstallRoot.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+    $processes = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.ProcessId -ne $PID -and
+            $_.ExecutablePath -and
+            $_.ExecutablePath.StartsWith($normalizedRoot, [StringComparison]::OrdinalIgnoreCase)
+        } |
+        Sort-Object ProcessId -Descending
+
+    foreach ($process in $processes) {
+        Write-Log "Stopping installed process tree: $($process.Name) (PID $($process.ProcessId))"
+        & taskkill.exe /PID $process.ProcessId /T /F 2>&1 | ForEach-Object {
+            Write-Log "taskkill: $_"
+        }
+    }
+
+    $deadline = (Get-Date).AddSeconds(15)
+    do {
+        $remaining = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.ProcessId -ne $PID -and
+                $_.ExecutablePath -and
+                $_.ExecutablePath.StartsWith($normalizedRoot, [StringComparison]::OrdinalIgnoreCase)
+            }
+        if (-not $remaining) { return }
+        Start-Sleep -Milliseconds 250
+    } while ((Get-Date) -lt $deadline)
+
+    $description = ($remaining | ForEach-Object { "$($_.Name) (PID $($_.ProcessId))" }) -join ", "
+    throw "Installed OpenDrSai processes did not exit: $description"
+}
+
+function Remove-PathWithRetry([string]$Path, [int]$MaxAttempts = 6) {
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    $lastError = $null
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        try {
+            Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+            return
+        } catch {
+            $lastError = $_
+            if ($attempt -lt $MaxAttempts) {
+                Write-Log "Could not remove $Path (attempt $attempt of $MaxAttempts): $($_.Exception.Message)"
+                Start-Sleep -Milliseconds (250 * $attempt)
+            }
+        }
+    }
+    throw "Could not remove $Path after $MaxAttempts attempts: $($lastError.Exception.Message)"
 }
 
 function Resolve-LocalPathFromUri([string]$Value) {
@@ -108,7 +160,7 @@ function Get-SafeFileName([string]$Url, [string]$Fallback) {
 }
 
 function Get-RuntimeArchivePath {
-    return (Join-Path $CacheDir (Get-SafeFileName $RuntimeUrl "OpenDrSaiRuntime-win-x64.zip"))
+    return (Join-Path $CacheDir (Get-SafeFileName $RuntimeUrl "OpenDrSai-Windows-v$BootstrapperVersion-x64.zip"))
 }
 
 function Assert-RuntimeMetadata {
@@ -201,7 +253,7 @@ function Assert-RuntimePayload([string]$RuntimeRoot, $RuntimeManifest) {
 
 function Swap-Directory([string]$Source, [string]$Destination) {
     $previous = "$Destination.previous"
-    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $previous
+    Remove-PathWithRetry $previous
     if (Test-Path $Destination) {
         Move-Item -LiteralPath $Destination -Destination $previous -Force
     }
@@ -214,7 +266,7 @@ function Remove-PreviousDirectories {
         (Join-Path $InstallRoot "app.previous"),
         "$AgentDir.previous"
     )) {
-        Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-PathWithRetry $path
     }
 }
 
@@ -389,6 +441,8 @@ try {
         $null = Get-ExpandedRuntime
     }
     if ($Stage -in @("All", "Install")) {
+        Write-Log "Stopping an existing OpenDrSai runtime before installation..."
+        Stop-InstalledProcessTrees
         Install-RuntimePayload
     }
     if ($Stage -in @("All", "Complete")) {

@@ -20,7 +20,7 @@ def _default_schema_path() -> Path:
     if packaged.is_file():
         return packaged
     for parent in current.parents:
-        candidate = parent / "protocol" / "owop" / "owop.schema.json"
+        candidate = parent / "cores" / "protocol" / "owop" / "owop.schema.json"
         if candidate.is_file():
             return candidate
     raise RuntimeError("OWOP schema is not installed")

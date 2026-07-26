@@ -8,8 +8,8 @@ import os
 import tempfile
 from pathlib import Path
 
-from drsai.backend.agent_backend_bindings import AgentBackendBindingStore
-from drsai.backend.agent_runtime import (
+from drsai.backend.runtime.agent_bindings import AgentBackendBindingStore
+from drsai.backend.runtime.agent import (
     AgentDefinitionStore,
     OpenDrSaiAgentBackend,
     RuntimeAgentService,
@@ -25,8 +25,8 @@ from drsai.backend.codex_adapter import (
     CodexJSONRPCClient,
     CodexRestartPolicy,
 )
-from drsai.backend.runtime_engine import RuntimeEngine, RuntimeEngineIdentity
-from drsai.backend.runtime_registry import RuntimeRegistry
+from drsai.backend.runtime.engine import RuntimeEngine, RuntimeEngineIdentity
+from drsai.backend.runtime.registry import RuntimeRegistry
 
 
 async def verify() -> dict[str, object]:

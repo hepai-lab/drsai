@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SCHEMA = ROOT / "protocol/relay/runtime-relay.schema.json"
+SCHEMA = ROOT / "cores/protocol/relay/runtime-relay.schema.json"
 PY_OUT = ROOT / "cores/python/packages/drsai/src/drsai/relay/generated_contract.py"
 KT_OUT = ROOT / "apps/android/app/src/main/java/ai/drsai/remote/remote/generated/RelayContractGenerated.kt"
 
@@ -14,7 +14,7 @@ def render_python(data: dict[str, object]) -> str:
     endpoints = data["x-relay-endpoints"]
     capabilities = data["x-relay-capabilities"]
     return (
-        '"""Generated from protocol/relay/runtime-relay.schema.json. Do not edit."""\n'
+        '"""Generated from cores/protocol/relay/runtime-relay.schema.json. Do not edit."""\n'
         'from __future__ import annotations\n'
         'from datetime import datetime\n'
         'from typing import Any, Literal\n'
@@ -36,7 +36,7 @@ def render_kotlin(data: dict[str, object]) -> str:
     capabilities = data["x-relay-capabilities"]
     endpoint_lines = ",\n".join(f'        "{k}" to "{v}"' for k, v in sorted(endpoints.items()))
     capability_lines = ",\n".join(f'        "{value}"' for value in sorted(capabilities))
-    return f'''// Generated from protocol/relay/runtime-relay.schema.json. Do not edit.
+    return f'''// Generated from cores/protocol/relay/runtime-relay.schema.json. Do not edit.
 package ai.drsai.remote.remote.generated
 
 object RelayContractGenerated {{

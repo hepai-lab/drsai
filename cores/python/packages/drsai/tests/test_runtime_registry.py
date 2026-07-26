@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-_MODULE_PATH = Path(__file__).parents[1] / "src" / "drsai" / "backend" / "runtime_registry.py"
+_MODULE_PATH = Path(__file__).parents[1] / "src" / "drsai" / "backend" / "runtime" / "registry.py"
 _SPEC = importlib.util.spec_from_file_location("runtime_registry", _MODULE_PATH)
 assert _SPEC and _SPEC.loader
 _MODULE = importlib.util.module_from_spec(_SPEC)

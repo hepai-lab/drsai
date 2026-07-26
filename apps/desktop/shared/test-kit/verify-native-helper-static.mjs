@@ -1,0 +1,27 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+const root = resolve(import.meta.dirname, "../..");
+const read = (path) => readFileSync(resolve(root, path), "utf8");
+const manifest = read("macos/native/OpenDrSaiNativeHelper/Package.swift");
+const protocol = read("macos/native/OpenDrSaiNativeHelper/Sources/OpenDrSaiNativeProtocol/NativeProtocol.swift");
+const entry = read("macos/native/OpenDrSaiNativeHelper/Sources/OpenDrSaiNativeHelper/main.swift");
+const keychain = read("macos/native/OpenDrSaiNativeHelper/Sources/OpenDrSaiNativeProtocol/Keychain.swift");
+const permissions = read("macos/native/OpenDrSaiNativeHelper/Sources/OpenDrSaiNativeProtocol/SystemPermissions.swift");
+const supervisor = read("macos/src/main/native/nativeHelperSupervisor.ts");
+const tsProtocol = read("macos/src/main/native/nativeProtocol.ts");
+const fixtures = JSON.parse(read("shared/test-kit/fixtures/native-helper/protocol-v1.json"));
+assert.ok(manifest.includes("OpenDrSaiNativeProtocolTests") && manifest.includes(".executableTarget"));
+for (const token of ["nativeProtocolVersion = 1", "case handshake, capabilities, ping, shutdown", 'keychainPut = "keychain.put"', "unknown_field", "unknown_operation", "payload_too_large", "incompatible_version"]) assert.ok(protocol.includes(token), `Swift protocol omits ${token}`);
+assert.ok(entry.includes("readLine") && entry.includes("FileHandle.standardOutput.write") && !entry.includes("Process("), "Helper entrypoint must remain a JSON-lines process without arbitrary process execution");
+for (const forbidden of ["/bin/sh", "URLSession", "Process(", "NSTask", "system("]) assert.equal(`${protocol}\n${entry}`.includes(forbidden), false, `Native Helper contains forbidden capability ${forbidden}`);
+for (const token of ["SecItemAdd", "SecItemUpdate", "SecItemCopyMatching", "SecItemDelete", "errSecUserCanceled", "errSecInteractionNotAllowed", "errSecItemNotFound", 'allowedService = "ai.drsai.desktop"']) assert.ok(keychain.includes(token), `Native Keychain adapter omits ${token}`);
+for (const forbidden of ["kSecAttrAccessGroup", "URLSession", "Process(", "NSTask", "system("]) assert.equal(keychain.includes(forbidden), false, `Native Keychain contains forbidden capability ${forbidden}`);
+for (const token of ["AVCaptureDevice.authorizationStatus", "AXIsProcessTrusted", "CGPreflightScreenCaptureAccess", 'parameters["userInitiated"] == "true"', "x-apple.systempreferences:"]) assert.ok(permissions.includes(token), `Native permission adapter omits ${token}`);
+assert.equal(permissions.includes("UNUserNotificationCenter"), false, "A command-line Helper has no application bundle proxy and must not initialize UserNotifications.");
+for (const forbidden of ["URLSession", "Process(", "NSTask", "system("]) assert.equal(permissions.includes(forbidden), false, `Native permission adapter contains forbidden capability ${forbidden}`);
+for (const token of ["NATIVE_PROTOCOL_VERSION = 1", '"keychain.put", "keychain.get", "keychain.delete"', "unknown field", "incompatible"]) assert.ok(tsProtocol.includes(token), `TypeScript protocol omits ${token}`);
+for (const token of ["shell: false", "request timed out", "request was cancelled", "maxRestarts", "output buffer exceeded", "executable is missing"]) assert.ok(supervisor.includes(token), `Native Helper supervisor omits ${token}`);
+assert.deepEqual(fixtures.cases.map(({ name }) => name), ["handshake", "ping", "unknown-operation", "unknown-field", "incompatible-version", "keychain-invalid-service", "keychain-invalid-account", "keychain-unknown-parameter", "permission-unsupported-kind", "permission-user-gesture-required", "permission-unknown-parameter", "shutdown"]);
+console.log("Native Helper Swift/TypeScript schema, allowlist and supervisor static contract passed.");

@@ -10,7 +10,7 @@ const repo = resolve(root, "../../..");
 const executable = join(root, "release", "win-unpacked", "OpenDrSai.exe");
 const sourcePdf = resolve(process.env.OPENDRSAI_CERN_PDF || "C:/tmp/WLCG-20260715-WLCG-talk-IHEP-visit.pdf");
 const python = process.env.OPENDRSAI_PDF_PYTHON || "C:/Users/win11/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe";
-const extractor = join(repo, "cores", "python", "packages", "drsai", "src", "drsai", "backend", "presentation_pdf.py");
+const extractor = join(repo, "cores", "python", "packages", "drsai", "src", "drsai", "content", "pdf", "presentation.py");
 const runId = process.env.OPENDRSAI_C8_RUN_ID?.trim() || "latest";
 if (!/^[a-z0-9-]+$/i.test(runId)) throw new Error("OPENDRSAI_C8_RUN_ID must be alphanumeric with optional hyphens.");
 for (const path of [executable, sourcePdf, python, extractor]) if (!existsSync(path)) throw new Error(`C8 dependency is missing: ${path}`);

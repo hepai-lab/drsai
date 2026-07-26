@@ -21,6 +21,12 @@ class RuntimeStatus(StrEnum):
     REVOKED = "revoked"
 
 
+class ResourceLifecycle(StrEnum):
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+    REMOVED = "removed"
+
+
 class ControlRequest(GeneratedControlRequest):
     correlation_id: str = Field(min_length=1, max_length=128)
     idempotency_key: str | None = Field(default=None, min_length=8, max_length=128)
@@ -33,6 +39,7 @@ class RuntimeIdentity(StrictModel):
     protocol_version: str = PROTOCOL_VERSION
     status: RuntimeStatus
     connection_generation: int = Field(ge=1)
+    last_seen_at: datetime | None = None
 
 
 class RuntimeCapabilities(StrictModel):
@@ -44,6 +51,9 @@ class Workspace(StrictModel):
     runtime_id: str
     workspace_id: str
     display_name: str
+    lifecycle: ResourceLifecycle = ResourceLifecycle.ACTIVE
+    revision: int = Field(default=1, ge=1)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class RuntimeSummary(StrictModel):
@@ -89,8 +99,26 @@ class RegistrationResult(StrictModel):
 
 
 class AccessGrantResult(StrictModel):
+    grant_id: str
     code: str
     expires_at: datetime
+    status: str = Field(pattern="^(pending|consumed|expired|revoked)$")
+
+
+class AccessGrantStatusResult(StrictModel):
+    grant_id: str
+    expires_at: datetime
+    status: str = Field(pattern="^(pending|consumed|expired|revoked)$")
+    subject_summary: str | None = Field(default=None, pattern=r"^sub_[0-9a-f]{12}$")
+
+
+class AssociationResult(StrictModel):
+    association_id: str
+    runtime_id: str
+    subject_summary: str = Field(pattern=r"^sub_[0-9a-f]{12}$")
+    status: str = Field(pattern="^(active|revoked)$")
+    created_at: datetime
+    revoked_at: datetime | None = None
 
 
 class AssociationRequest(ControlRequest):

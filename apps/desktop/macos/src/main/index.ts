@@ -1,226 +1,347 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell } from "electron";
+import { app, BrowserWindow, ipcMain, screen, type WebContents } from "electron";
 import { join } from "node:path";
-import { MACOS_PLATFORM_DESCRIPTOR } from "./platform";
+import { homedir } from "node:os";
+import { createHash } from "node:crypto";
+import { createSecureIpcHandle } from "../../../shared/main/secureIpc";
+import { assertAllowedDesktopPath } from "../../../shared/main/desktopPathPolicy";
+import { DesktopOpenRequestQueue, parseMacosOpenFile, parseMacosOpenUrl, parseMacosSecondInstanceArgv } from "./lifecycleRouting";
+import { MacosLifecycleRecoveryCoordinator, type InterruptionReason } from "./lifecycleRecovery";
+import { MacosAppShutdownCoordinator } from "./appShutdown";
 import { MACOS_PLATFORM_SERVICES } from "./platformServices";
-import { getGatewayStatus, startGateway, stopGateway } from "./gateway";
-import {
-  createThread,
-  getThreadSnapshot,
-  listThreads,
-  searchThreadMessages,
-  updateThread,
-  updateThreadSnapshot,
-} from "../../../shared/main/threads";
-import { configureRuntimeWorkspaceRouting } from "../../../shared/main/runtimeClient";
-import {
-  createWorkspace,
-  deleteWorkspace,
-  findWorkspaceById,
-  listWorkspaces,
-  updateWorkspace,
-} from "../../../shared/main/workspaces";
-import { abortAgentRun, startAgentRun } from "../../../shared/main/agentRuns";
-import { abortChat, startChat } from "../../../shared/main/chat";
-import { bootstrapDesktop, getHealth, getInstallStatus, installBundledRuntime } from "./desktopLifecycle";
-import { cancelUpdate, checkForUpdates, downloadUpdate, installUpdate, markUpdateHealthy } from "./updater";
-import {
-  analyzeMaterialConsistency, analyzeMaterialRoles, getWorkspaceContextOverview,
-  getWorkspaceGitDiff, getWorkspaceGitFileAtRef, listWorkspaceFiles, previewWorkspaceFile,
-  queryMaterials, revertWorkspaceFile, revertWorkspaceHunk, stageWorkspaceFile,
-  stageWorkspaceHunk, summarizeWorkspaceFolder,
-} from "../../../shared/main/workspaceContext";
-import { configureWorkspaceFileDialogs, saveWorkspaceFileAs, writeWorkspaceFile } from "../../../shared/main/workspaceFileMutations";
-import { cancelVoiceTranscription, cleanupAllVoiceTempFiles, getVoiceRuntimeStatus, startVoiceTranscription, writeVoiceTranscriptHandoff } from "../../../shared/main/voice";
-import { cancelVoiceSynthesis, getVoiceSynthesisRuntimeStatus, startVoiceSynthesis } from "../../../shared/main/voiceTts";
+import { restoreCompletionNotificationPreference } from "../../../shared/main/completionNotifications";
+import { startGateway, stopGateway } from "./gateway";
+import { LocalRuntimeClient } from "../../../shared/main/runtimeClient";
+import { MobilePairingController } from "../../../shared/main/mobilePairingController";
+import { findWorkspaceById, listWorkspaces } from "../../../shared/main/workspaces";
+import { shutdownAgentRunJournal } from "../../../shared/main/agentRunJournal";
+import { shutdownChatRunJournal } from "../../../shared/main/chatRunJournal";
+import { shutdownMcpSessions } from "../../../shared/main/mcpLiveBridge";
+import { desktopDiagnostics } from "../../../shared/main/diagnostics";
+import { DiagnosticSourceNavigator } from "../../../shared/main/sourceNavigation";
+import { productionDiagnostics } from "../../../shared/main/productionDiagnostics";
+import { sshHostService } from "../../../shared/main/sshHosts";
+import { remoteGatewayInstaller } from "../../../shared/main/remoteGatewayInstaller";
+import { remoteWorkspaceController } from "../../../shared/main/remoteWorkspaceController";
+import { portForwardRegistry } from "../../../shared/main/portForwards";
+import { createWorkflowRunRecipe, getWorkflowTemplate } from "../../../shared/main/workflowMarketplace";
+import { listWorkflowRuns, recoverWorkflowRunsAfterRestart, startWorkflowRun } from "../../../shared/main/workflowRuns";
+import { scheduledTaskStore, startScheduledTaskWorker, type ScheduledTaskRuntime, type ScheduledTaskWorker } from "../../../shared/main/scheduledTasks";
+import { backgroundTaskStore } from "../../../shared/main/backgroundTasks";
+import { cancelBundledRuntimeInstall } from "./runtimeInstaller";
+import { scheduleUpdateHealthConfirmation } from "./updater";
+import { previewWorkspaceFile } from "../../../shared/main/workspaceContext";
+import { cleanupAllVoiceTempFiles } from "../../../shared/main/voice";
+import { cancelStreamingVoiceSessionsForSender } from "../../../shared/main/voiceStreaming";
 import { runPackagedSmokeIfRequested } from "./packagedSmoke";
-import {
-  createTerminalSession, getTerminalBuffer, killAllTerminalSessions, killTerminalSession,
-  killTerminalSessionsForOwner, listTerminalSessions, renameTerminalSession,
-  resizeTerminalSession, writeTerminalSession,
-} from "./terminal";
-import {
-  getPlatformAgentStatus,
-  listAgents,
-  recordAgentUsage,
-  setDefaultAgent,
-} from "../../../shared/main/agents";
-import {
-  cancelDesktopSsoLogin,
-  cancelOidcLogin,
-  configureAuthPlatform,
-  getAuthSession,
-  login,
-  logout,
-  pollDesktopSsoLogin,
-  refreshAuthSession,
-  startDesktopSsoLogin,
-  startOidcLogin,
-  startWechatDesktopLogin,
-} from "../../../shared/main/auth";
+import { isAllowedDevelopmentRendererUrl } from "./rendererNavigationPolicy";
+import { createMacosMainWindow } from "./bootstrap/createWindow";
+import { runMacosAppReadyPlan } from "./bootstrap/appReadyPlan";
+import { configureMacosPlatformBindings } from "./bootstrap/configurePlatformBindings";
+import { createMacosAppServices, type MacosAppServices } from "./bootstrap/createAppServices";
+import { createMacosMcpCoordinators } from "./bootstrap/createMcpCoordinators";
+import { installMacosAppIntegrations } from "./bootstrap/installAppIntegrations";
+import { createMacosShutdownPlan } from "./bootstrap/shutdownPlan";
+import { registerMacosDesktopIpc } from "./ipc/registerAllIpc";
+import type { MacosServiceContainer } from "./serviceContainer";
+import { killAllTerminalSessions, detachTerminalSessionsForOwner } from "./terminal";
+import { managedProcessRegistry } from "../../../shared/main/managedProcessRegistry";
+let mainWindow: BrowserWindow | null = null;
+let appServices: MacosAppServices;
+const openRequests = new DesktopOpenRequestQueue();
+const recoveryCoordinator = new MacosLifecycleRecoveryCoordinator();
+const shutdownCoordinator = new MacosAppShutdownCoordinator();
+const singleInstanceLock = app.requestSingleInstanceLock();
+let relaunchScheduled = false;
+let disposeAppIntegrations: () => void = () => {};
+let scheduledTaskWorker: ScheduledTaskWorker | null = null;
+const mobilePairingControllers = new Map<number, MobilePairingController>();
 
-configureAuthPlatform({
-  credentials: MACOS_PLATFORM_SERVICES.credentials,
-  openExternal: (url) => shell.openExternal(url),
-});
-configureRuntimeWorkspaceRouting({
-  getRemoteGatewayAccess: () => undefined,
-  findWorkspaceById,
-});
-configureWorkspaceFileDialogs({
-  selectSavePath: async ({ title, suggestedName, extension }) => {
-    const result = await dialog.showSaveDialog({
-      title,
-      defaultPath: join(app.getPath("downloads"), suggestedName),
-      ...(extension ? { filters: [{ name: `${extension.slice(1).toUpperCase()} file`, extensions: [extension.slice(1)] }] } : {}),
-    });
-    return result.canceled ? null : result.filePath || null;
+function mobilePairingControllerFor(sender: WebContents): MobilePairingController {
+  const existing = mobilePairingControllers.get(sender.id);
+  if (existing) return existing;
+  const controller = new MobilePairingController(() => LocalRuntimeClient.connect());
+  mobilePairingControllers.set(sender.id, controller);
+  sender.once("destroyed", () => {
+    mobilePairingControllers.delete(sender.id);
+    void controller.close();
+  });
+  return controller;
+}
+
+async function closeMobilePairingControllers(): Promise<void> {
+  const controllers = [...mobilePairingControllers.values()];
+  mobilePairingControllers.clear();
+  await Promise.allSettled(controllers.map((controller) => controller.close()));
+}
+
+const scheduledTaskRuntime: ScheduledTaskRuntime = {
+  prepare: (request) => prepareWorkflowRun(request, request.triggerKey),
+  start: async (request) => { const result = await startWorkflowRun(request); await backgroundTaskStore.upsertWorkflow(result.run); return result; },
+  listRuns: (workspacePath) => listWorkflowRuns(workspacePath),
+};
+
+async function prepareWorkflowRun(request: { templateId: string; workspacePath?: string }, scheduledTriggerKey?: string) {
+  if (request.workspacePath !== undefined) await assertRegisteredWorkspacePath(request.workspacePath);
+  const template = await getWorkflowTemplate(request.templateId, request.workspacePath);
+  if (!template || template.status !== "available" || !template.approvalRequired) return createWorkflowRunRecipe(request);
+  const stable = createHash("sha256").update(`${template.id}\0${request.workspacePath ?? "global"}\0${scheduledTriggerKey ?? "interactive"}`).digest("hex");
+  const proposal = await appServices.approvalStore.propose({ source: "workflow", actionKind: "workflow.run", title: `Run workflow: ${template.name}`, detail: `${template.summary}\nTrigger: ${template.trigger}\nVerification: ${template.verification}`, target: request.workspacePath, risk: template.risk, idempotencyKey: `workflow:${stable}` }, async () => true);
+  return createWorkflowRunRecipe(request, proposal);
+}
+
+function createMacosServiceContainer(): MacosServiceContainer { return {
+  workspace: {
+    assertPath: assertRegisteredWorkspacePath,
+    findByPath: async (path) => (await listWorkspaces()).find((workspace) => workspace.path === path),
+    allowedRoots: allowedDesktopRoots,
+    isRemoteTarget: async (workspacePath, workspaceId) => {
+      const target = await remoteWorkspaceController.resolveTarget(workspacePath, workspaceId);
+      if (target === "remote_offline") throw new Error("Remote workspace is offline.");
+      return target === "remote_online";
+    },
+    isRemotePath: (path) => {
+      if (typeof path !== "string") return false;
+      const target = remoteWorkspaceController.resolvePathTarget(path);
+      if (target === "remote_offline") throw new Error("Remote workspace is offline.");
+      return target === "remote_online";
+    },
   },
-});
+  approvals: appServices.approvalStore,
+  automation: {
+    prepareWorkflowRun,
+    scheduledTaskRuntime,
+    getScheduledTaskWorkerStatus: () => scheduledTaskWorker?.getStatus() ?? { enabled: false, running: false, stopped: true, intervalMs: 0, initialDelayMs: 0, message: "Scheduled task worker is disabled." },
+  },
+}; }
+
+function sendLifecycleEvent(event: Awaited<ReturnType<MacosLifecycleRecoveryCoordinator["recover"]>>): void {
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+    mainWindow.webContents.send("desktop:lifecycle-event", event);
+  }
+}
+
+async function recoverAfterInterruption(reason: InterruptionReason): Promise<void> {
+  try {
+    const event = await recoveryCoordinator.recover(reason, async () => { await startGateway(); });
+    sendLifecycleEvent(event);
+    await appServices.ipcAuditWriter({ channel: `desktop:lifecycle-${reason}`, outcome: "succeeded", durationMs: 0, argumentCount: 0 });
+  } catch {
+    await appServices.ipcAuditWriter({ channel: `desktop:lifecycle-${reason}`, outcome: "failed", durationMs: 0, argumentCount: 0, errorCode: "LIFECYCLE_RECOVERY_FAILED" });
+  }
+}
+
+async function orderlyRelaunch(errorCode: string): Promise<void> {
+  if (relaunchScheduled || recoveryCoordinator.shuttingDown) return;
+  relaunchScheduled = true;
+  recoveryCoordinator.beginShutdown();
+  await appServices?.ipcAuditWriter({ channel: "desktop:lifecycle-relaunch", outcome: "failed", durationMs: 0, argumentCount: 0, errorCode }).catch(() => undefined);
+  killAllTerminalSessions();
+  cleanupAllVoiceTempFiles();
+  await Promise.race([stopGateway().catch(() => undefined), new Promise<void>((resolve) => setTimeout(resolve, 3_000))]);
+  app.relaunch();
+  app.exit(1);
+}
+
+function ensureMainWindowOnScreen(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isFullScreen() || mainWindow.isSimpleFullScreen() || mainWindow.isMaximized()) return;
+  const bounds = mainWindow.getBounds();
+  const workArea = screen.getDisplayMatching(bounds).workArea;
+  const width = Math.min(bounds.width, workArea.width);
+  const height = Math.min(bounds.height, workArea.height);
+  const x = Math.max(workArea.x, Math.min(bounds.x, workArea.x + workArea.width - width));
+  const y = Math.max(workArea.y, Math.min(bounds.y, workArea.y + workArea.height - height));
+  if (x !== bounds.x || y !== bounds.y || width !== bounds.width || height !== bounds.height) {
+    mainWindow.setBounds({ x, y, width, height });
+  }
+}
+
+function focusOrCreateMainWindow(): void {
+  if (!app.isReady()) return;
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function routeOpenRequest(request: ReturnType<typeof parseMacosOpenUrl> | ReturnType<typeof parseMacosOpenFile>): void {
+  if (!request) return;
+  openRequests.enqueue(request);
+  focusOrCreateMainWindow();
+}
+
+if (!singleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", (_event, argv) => {
+    for (const request of parseMacosSecondInstanceArgv(argv, [process.execPath, app.getAppPath()])) openRequests.enqueue(request);
+    focusOrCreateMainWindow();
+  });
+  app.on("open-url", (event, url) => {
+    event.preventDefault();
+    routeOpenRequest(parseMacosOpenUrl(url));
+  });
+  app.on("open-file", (event, path) => {
+    event.preventDefault();
+    routeOpenRequest(parseMacosOpenFile(path));
+  });
+  for (const request of parseMacosSecondInstanceArgv(process.argv, [process.execPath, app.getAppPath(), process.argv[1] || ""])) openRequests.enqueue(request);
+}
+const allowDevelopmentRendererUrl = (url: string): boolean => {
+  if (app.isPackaged) return false;
+  const configured = process.env.ELECTRON_RENDERER_URL;
+  return isAllowedDevelopmentRendererUrl(url, configured);
+};
+const protectedIpcMain = {
+  handle: createSecureIpcHandle({
+    registrar: ipcMain,
+    getTrustedWebContents: () => mainWindow?.webContents,
+    allowDevelopmentUrl: allowDevelopmentRendererUrl,
+    audit: (entry) => appServices.ipcAuditWriter(entry),
+    policyForChannel: (channel) => channel === "desktop:git-commit-approval" || channel === "desktop:propose-approval" ? { deduplicate: false } : undefined,
+  }) as typeof ipcMain.handle,
+};
+const rawIpcMain = ipcMain;
+async function allowedDesktopRoots(): Promise<string[]> {
+  const workspaces = await listWorkspaces().catch(() => []);
+  return [...new Set([
+    homedir(),
+    app.getPath("downloads"),
+    app.getPath("documents"),
+    ...workspaces.filter((workspace) => workspace.location !== "remote").map((workspace) => workspace.path),
+  ])];
+}
+async function assertRegisteredWorkspacePath(raw: unknown): Promise<string> {
+  if (typeof raw !== "string" || !raw.trim() || raw.length > 4096 || /[\r\n\0]/.test(raw)) throw new Error("Workspace path is invalid.");
+  const path = raw.trim();
+  const workspaces = await listWorkspaces();
+  if (!workspaces.some((workspace) => workspace.path === path)) throw new Error("Workspace is not registered.");
+  return path;
+}
 
 function createWindow(): BrowserWindow {
-  const window = new BrowserWindow({
-    width: 1440,
-    height: 960,
-    minWidth: 960,
-    minHeight: 640,
-    show: false,
-    titleBarStyle: "hiddenInset",
-    trafficLightPosition: { x: 16, y: 16 },
-    webPreferences: {
-      preload: join(__dirname, "../preload/index.mjs"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
+  const window = createMacosMainWindow({
+    preloadPath: join(app.getAppPath(), "out", "preload", "index.mjs"),
+    rendererHtmlPath: join(app.getAppPath(), "out", "renderer", "index.html"),
+    rendererUrl: app.isPackaged ? undefined : process.env.ELECTRON_RENDERER_URL,
+    onDidFinishLoad: (loadedWindow) => {
+      openRequests.attach((request) => loadedWindow.webContents.send("desktop:open-request", request));
+      return scheduleUpdateHealthConfirmation();
     },
+    onRendererGone: (failedWindow, details) => {
+    if (details.reason === "clean-exit" || recoveryCoordinator.shuttingDown) return;
+    const action = recoveryCoordinator.recordRendererFailure();
+    void appServices.ipcAuditWriter({ channel: "desktop:lifecycle-renderer-gone", outcome: "failed", durationMs: 0, argumentCount: 0, errorCode: `RENDERER_${details.reason.toUpperCase().replaceAll("-", "_")}` });
+      if (action === "reload" && !failedWindow.webContents.isDestroyed()) {
+        failedWindow.webContents.reload();
+      void recoverAfterInterruption("renderer-recovered");
+    } else if (action === "recreate") {
+        failedWindow.destroy();
+      focusOrCreateMainWindow();
+      void recoverAfterInterruption("renderer-recovered");
+    } else {
+      void orderlyRelaunch("RENDERER_CRASH_LOOP");
+    }
+    },
+    onWebContentsDestroyed: (destroyedWindow, destroyedWebContents, ownerId) => {
+      cancelStreamingVoiceSessionsForSender(destroyedWebContents);
+      detachTerminalSessionsForOwner(ownerId);
+      if (mainWindow === destroyedWindow) openRequests.detach();
+    },
+    onClosed: (closedWindow) => { if (mainWindow === closedWindow) mainWindow = null; },
   });
-  window.once("ready-to-show", () => window.show());
-  window.webContents.once("did-finish-load", () => { void markUpdateHealthy(); });
-  window.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith("https://")) void shell.openExternal(url);
-    return { action: "deny" };
-  });
-  const terminalOwnerId = window.webContents.id;
-  window.webContents.once("destroyed", () => killTerminalSessionsForOwner(terminalOwnerId));
-  if (process.env.ELECTRON_RENDERER_URL) void window.loadURL(process.env.ELECTRON_RENDERER_URL);
-  else void window.loadFile(join(__dirname, "../renderer/index.html"));
+  mainWindow = window;
   return window;
 }
 
-app.whenReady().then(() => {
-  app.setName("OpenDrSai");
-  Menu.setApplicationMenu(Menu.buildFromTemplate([
-    { role: "appMenu" },
-    { role: "fileMenu" },
-    { role: "editMenu" },
-    { role: "viewMenu" },
-    { role: "windowMenu" },
-  ]));
-  ipcMain.handle("desktop:platform-descriptor", () => MACOS_PLATFORM_DESCRIPTOR);
-  ipcMain.handle("desktop:bootstrap", () => bootstrapDesktop());
-  ipcMain.handle("desktop:get-health", () => getHealth());
-  ipcMain.handle("desktop:get-install-status", () => getInstallStatus());
-  ipcMain.handle("desktop:start-install", () => installBundledRuntime());
-  ipcMain.handle("desktop:cancel-install", () => false);
-  ipcMain.handle("desktop:check-for-updates", () => checkForUpdates());
-  ipcMain.handle("desktop:download-update", () => downloadUpdate());
-  ipcMain.handle("desktop:cancel-update", () => cancelUpdate());
-  ipcMain.handle("desktop:install-update", () => installUpdate());
-  ipcMain.handle("desktop:terminal-shells", () => MACOS_PLATFORM_SERVICES.terminal.availableShells());
-  ipcMain.handle("desktop:clipboard-copy-text", (_event, text) => {
-    if (typeof text !== "string" || text.length > 50_000) return false;
-    clipboard.writeText(text);
-    return true;
+app.whenReady().then(async () => {
+  if (!singleInstanceLock) return;
+  appServices = createMacosAppServices({
+    getMainWebContents: () => mainWindow?.webContents,
+    isAllowedDesktopPath: async (path) => { try { assertAllowedDesktopPath(path, await allowedDesktopRoots()); return true; } catch { return false; } },
   });
-  ipcMain.handle("desktop:open-external", (_event, url) => typeof url === "string" && url.startsWith("https://") ? shell.openExternal(url).then(() => true) : false);
-  ipcMain.handle("desktop:open-path", (_event, path) => typeof path === "string" ? shell.openPath(path).then((error) => !error) : false);
-  ipcMain.handle("desktop:pick-files", async () => {
-    const result = await dialog.showOpenDialog({ properties: ["openFile", "multiSelections"] });
-    return result.canceled ? [] : result.filePaths;
+  const macosServices = createMacosServiceContainer();
+  const mcpCoordinators = createMacosMcpCoordinators({ approvalStore: appServices.approvalStore, allowedDesktopRoots });
+  await configureMacosPlatformBindings({
+    platformServices: MACOS_PLATFORM_SERVICES,
+    remoteWorkspaces: remoteWorkspaceController,
+    findWorkspaceById,
+    remoteTerminalCommand: (options) => sshHostService.remoteTerminalCommand(options.remoteHostAlias, options.cwd),
   });
-  ipcMain.handle("desktop:pick-folder", async () => {
-    const result = await dialog.showOpenDialog({ properties: ["openDirectory", "createDirectory"] });
-    return result.canceled ? null : result.filePaths[0] || null;
+  await runMacosAppReadyPlan([
+    { name: "completion-notification-preference", critical: false, run: async () => { await restoreCompletionNotificationPreference(); } },
+    { name: "core-state", critical: true, run: async () => { await Promise.all([desktopDiagnostics.initialize(), productionDiagnostics.initialize(), portForwardRegistry.restore(), appServices.interactiveDebugPolicy.initialize()]); } },
+    { name: "workflow-run-recovery", critical: false, run: async () => { await recoverWorkflowRunsAfterRestart(); } },
+    { name: "background-task-recovery", critical: false, run: async () => { await backgroundTaskStore.recover(); } },
+    { name: "native-helper-handshake", critical: false, run: async () => { const state = await appServices.nativeHelperSupervisor.start(); if (state.status !== "ready") throw new Error(state.reason || "Native Helper is unavailable."); } },
+  ], async (failure) => {
+    await appServices.ipcAuditWriter({ channel: `desktop:startup-${failure.name}`, outcome: "failed", durationMs: 0, argumentCount: 0, errorCode: failure.critical ? "STARTUP_CRITICAL_FAILED" : "STARTUP_DEGRADED" });
   });
-  ipcMain.handle("desktop:terminal-create", (event, options) => createTerminalSession(event, options));
-  ipcMain.handle("desktop:terminal-list", (event, workspaceKey, workspaceId) => listTerminalSessions(event, workspaceKey, workspaceId));
-  ipcMain.handle("desktop:terminal-buffer", (event, id) => getTerminalBuffer(event, id));
-  ipcMain.handle("desktop:terminal-rename", (event, id, title) => renameTerminalSession(event, id, title));
-  ipcMain.handle("desktop:terminal-write", (event, id, data) => writeTerminalSession(event, id, data));
-  ipcMain.handle("desktop:terminal-resize", (event, id, cols, rows) => resizeTerminalSession(event, id, cols, rows));
-  ipcMain.handle("desktop:terminal-kill", (event, id) => killTerminalSession(event, id));
-  ipcMain.handle("desktop:get-auth-session", () => getAuthSession());
-  ipcMain.handle("desktop:login", (_event, request) => login(request));
-  ipcMain.handle("desktop:start-oidc-login", (event, request) =>
-    startOidcLogin(request, (debugEvent) => event.sender.send("desktop:oidc-login-debug", debugEvent)),
-  );
-  ipcMain.handle("desktop:cancel-oidc-login", () => cancelOidcLogin());
-  ipcMain.handle("desktop:start-desktop-sso-login", () => startDesktopSsoLogin());
-  ipcMain.handle("desktop:start-wechat-desktop-login", () => startWechatDesktopLogin());
-  ipcMain.handle("desktop:poll-desktop-sso-login", (_event, deviceCode) => pollDesktopSsoLogin(deviceCode));
-  ipcMain.handle("desktop:cancel-desktop-sso-login", (_event, deviceCode) => cancelDesktopSsoLogin(deviceCode));
-  ipcMain.handle("desktop:refresh-auth-session", () => refreshAuthSession());
-  ipcMain.handle("desktop:logout", (_event, options) => logout(options));
-  ipcMain.handle("desktop:get-gateway-status", () => getGatewayStatus());
-  ipcMain.handle("desktop:start-gateway", () => startGateway());
-  ipcMain.handle("desktop:stop-gateway", () => stopGateway());
-  ipcMain.handle("desktop:list-threads", () => listThreads());
-  ipcMain.handle("desktop:list-agents", (_event, options) => listAgents(
-    options && typeof options === "object" && (options as { refresh?: unknown }).refresh === true
-      ? { refresh: true }
-      : {},
-  ));
-  ipcMain.handle("desktop:get-platform-agent-status", () => getPlatformAgentStatus());
-  ipcMain.handle("desktop:set-default-agent", (_event, agentId) =>
-    setDefaultAgent(typeof agentId === "string" ? agentId : ""));
-  ipcMain.handle("desktop:record-agent-usage", (_event, agentId) =>
-    recordAgentUsage(typeof agentId === "string" ? agentId : ""));
-  ipcMain.handle("desktop:create-thread", (_event, request) => createThread(request));
-  ipcMain.handle("desktop:update-thread", (_event, request) => updateThread(request));
-  ipcMain.handle("desktop:set-thread-archived", (_event, request: { threadId: string; archived: boolean }) =>
-    updateThread({ id: request.threadId, archived: request.archived }),
-  );
-  ipcMain.handle("desktop:get-thread-snapshot", (_event, threadId) => getThreadSnapshot(threadId));
-  ipcMain.handle("desktop:search-thread-messages", (_event, request) => searchThreadMessages(request));
-  ipcMain.handle("desktop:update-thread-snapshot", (_event, request) => updateThreadSnapshot(request));
-  ipcMain.handle("desktop:list-workspaces", () => listWorkspaces());
-  ipcMain.handle("desktop:create-workspace", (_event, request) => createWorkspace(request));
-  ipcMain.handle("desktop:update-workspace", (_event, request) => updateWorkspace(request));
-  ipcMain.handle("desktop:delete-workspace", (_event, id) => deleteWorkspace(id));
-  ipcMain.handle("desktop:workspace-context-overview", (_event, workspacePath) => getWorkspaceContextOverview(workspacePath));
-  ipcMain.handle("desktop:workspace-files", (_event, request) => listWorkspaceFiles(request));
-  ipcMain.handle("desktop:workspace-folder-summary", (_event, request) => summarizeWorkspaceFolder(request));
-  ipcMain.handle("desktop:workspace-file-preview", (_event, request) => previewWorkspaceFile(request));
-  ipcMain.handle("desktop:workspace-file-save-as", (_event, request) => saveWorkspaceFileAs(request));
-  ipcMain.handle("desktop:workspace-file-write", (_event, request) => writeWorkspaceFile(request));
-  ipcMain.handle("desktop:workspace-git-diff", (_event, request) => getWorkspaceGitDiff(request));
-  ipcMain.handle("desktop:workspace-git-file-at-ref", (_event, request) => getWorkspaceGitFileAtRef(request));
-  ipcMain.handle("desktop:workspace-stage-file", (_event, request) => stageWorkspaceFile(request));
-  ipcMain.handle("desktop:workspace-revert-file", (_event, request) => revertWorkspaceFile(request));
-  ipcMain.handle("desktop:workspace-stage-hunk", (_event, request) => stageWorkspaceHunk(request));
-  ipcMain.handle("desktop:workspace-revert-hunk", (_event, request) => revertWorkspaceHunk(request));
-  ipcMain.handle("desktop:material-role-analysis", (_event, request) => analyzeMaterialRoles(request));
-  ipcMain.handle("desktop:material-consistency-analysis", (_event, request) => analyzeMaterialConsistency(request));
-  ipcMain.handle("desktop:material-query", (_event, request) => queryMaterials(request));
-  ipcMain.handle("desktop:voice-transcription-start", (event, request) => startVoiceTranscription(event.sender, request));
-  ipcMain.handle("desktop:voice-transcription-cancel", (_event, requestId) => cancelVoiceTranscription(requestId));
-  ipcMain.handle("desktop:voice-runtime-status", () => getVoiceRuntimeStatus());
-  ipcMain.handle("desktop:voice-synthesis-start", (event, request) => startVoiceSynthesis(event.sender, request));
-  ipcMain.handle("desktop:voice-synthesis-cancel", (_event, requestId) => cancelVoiceSynthesis(requestId));
-  ipcMain.handle("desktop:voice-synthesis-runtime-status", () => getVoiceSynthesisRuntimeStatus());
-  ipcMain.handle("desktop:voice-handoff-write", (_event, request) => writeVoiceTranscriptHandoff(request));
-  ipcMain.handle("desktop:start-agent-run", (event, request) => startAgentRun(event.sender, request));
-  ipcMain.handle("desktop:abort-agent-run", (_event, requestId) => abortAgentRun(requestId));
-  ipcMain.handle("desktop:start-chat", (event, request) => startChat(event.sender, request));
-  ipcMain.handle("desktop:abort-chat", (_event, requestId) => abortChat(requestId));
+  if (process.env.DRSAI_DISABLE_SCHEDULED_TASK_WORKER !== "1") scheduledTaskWorker = startScheduledTaskWorker(scheduledTaskStore, scheduledTaskRuntime);
+  const diagnosticSourceNavigator = new DiagnosticSourceNavigator({
+    appRoot: app.getAppPath(), listWorkspaces,
+    previewLocal: (request) => previewWorkspaceFile(request),
+    previewRemote: async () => { throw new Error("Remote source navigation is unavailable until a remote workspace is connected."); },
+  });
+  disposeAppIntegrations = installMacosAppIntegrations({
+    recovery: recoveryCoordinator, interactiveDebugger: appServices.interactiveDebugger,
+    focusApp: focusOrCreateMainWindow, openSettings: () => { openRequests.enqueue({ kind: "settings", source: "menu" }); focusOrCreateMainWindow(); },
+    ensureWindowOnScreen: ensureMainWindowOnScreen, recover: (reason) => { void recoverAfterInterruption(reason); }, getScheduledTaskWorker: () => scheduledTaskWorker,
+    getWindowVisibility: () => !mainWindow || mainWindow.isDestroyed() ? "hidden" : mainWindow.isMinimized() ? "minimized" : mainWindow.isVisible() ? "foreground" : "hidden",
+    reloadMainWindow: () => { if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) mainWindow.webContents.reload(); },
+    publish: (channel, event) => { for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send(channel, event); },
+  });
+  registerMacosDesktopIpc({
+    ipcMain: protectedIpcMain, rawIpcMain, services: macosServices, allowedDesktopRoots,
+    diagnostics: { sourceNavigator: diagnosticSourceNavigator, interactiveDebugger: appServices.interactiveDebugger, interactiveDebugPolicy: appServices.interactiveDebugPolicy },
+    trust: mcpCoordinators,
+    voice: { getTrustedWebContents: () => mainWindow?.webContents, allowDevelopmentRendererUrl },
+    runtimeServices: { browserTaskService: appServices.browserTaskService },
+    catalog: { mobilePairingControllerFor },
+  });
   const window = createWindow();
-  runPackagedSmokeIfRequested(window);
+  runPackagedSmokeIfRequested(window, appServices.nativeHelperSupervisor);
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    focusOrCreateMainWindow();
   });
 });
 
-app.on("before-quit", () => {
-  killAllTerminalSessions();
-  cleanupAllVoiceTempFiles();
+app.on("before-quit", (event) => {
+  recoveryCoordinator.beginShutdown();
+  managedProcessRegistry.beginShutdown();
+  if (shutdownCoordinator.running) return;
+  event.preventDefault();
+  const plan = createMacosShutdownPlan({
+    stopScheduledTaskWorker: () => { scheduledTaskWorker?.stop(); scheduledTaskWorker = null; },
+    killTerminalSessions: killAllTerminalSessions,
+    cleanupVoiceFiles: cleanupAllVoiceTempFiles,
+    cancelRuntimeInstall: cancelBundledRuntimeInstall,
+    shutdownApprovalStore: () => appServices.approvalStore.shutdown(),
+    shutdownInteractiveDebugger: () => appServices.interactiveDebugger.shutdown(),
+    shutdownBrowserTasks: () => appServices.browserTaskService.shutdown(),
+    shutdownNativeHelper: () => appServices.nativeHelperSupervisor.stop(),
+    shutdownMcpSessions,
+    shutdownPortForwards: () => portForwardRegistry.shutdown(),
+    shutdownSshHosts: () => sshHostService.shutdown(),
+    shutdownRemoteGatewayInstaller: () => remoteGatewayInstaller.shutdown(),
+    shutdownRemoteWorkspaces: () => remoteWorkspaceController.shutdown(),
+    closeMobilePairingControllers,
+    shutdownAgentJournal: shutdownAgentRunJournal,
+    shutdownChatJournal: shutdownChatRunJournal,
+    stopGateway: async () => { await stopGateway(); },
+    shutdownManagedProcesses: () => managedProcessRegistry.shutdownAll(),
+  });
+  void shutdownCoordinator.run(plan.map((step) => step.run)).finally(() => app.exit(0));
 });
-app.on("window-all-closed", () => app.quit());
+app.on("will-quit", () => {
+  disposeAppIntegrations();
+});
+app.on("window-all-closed", () => {
+  // Remain active in the Dock until the user explicitly chooses Quit.
+});
+
+process.on("uncaughtException", () => { void orderlyRelaunch("MAIN_UNCAUGHT_EXCEPTION"); });
+process.on("unhandledRejection", () => { void orderlyRelaunch("MAIN_UNHANDLED_REJECTION"); });

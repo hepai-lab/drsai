@@ -62,6 +62,18 @@ const productSharedRoots = [
   join(sharedRoot, "main"),
   join(sharedRoot, "renderer"),
 ];
+for (const path of [join(sharedRoot, "main"), join(windowsRoot, "src", "main")].flatMap(sourceFiles)) {
+  if (path.endsWith("durableJsonStore.ts")) continue;
+  const lines = readFileSync(path, "utf8").split(/\r?\n/);
+  for (const [index, line] of lines.entries()) {
+    if (line.includes("readDurableJson(") && !line.includes("maxBytes:")) {
+      fail(path, `durable JSON read at line ${index + 1} must declare an explicit maxBytes resource boundary`);
+    }
+    if (line.includes("writeDurableJson(") && !line.includes("maxBytes:")) {
+      fail(path, `durable JSON write at line ${index + 1} must declare an explicit maxBytes resource boundary`);
+    }
+  }
+}
 for (const path of productSharedRoots.flatMap(sourceFiles)) {
   const source = readFileSync(path, "utf8");
   if (/from\s+["'][^"']*(?:windows|macos)\//.test(source)) {
@@ -72,13 +84,35 @@ for (const path of productSharedRoots.flatMap(sourceFiles)) {
   }
 }
 
+for (const [platformName, platformRoot, siblingName] of [
+  ["windows", windowsRoot, "macos"],
+  ["macos", macosRoot, "windows"],
+]) {
+  for (const path of sourceFiles(join(platformRoot, "src"))) {
+    const source = readFileSync(path, "utf8");
+    const siblingReference = new RegExp(`(?:apps/desktop/|\\.\\./)${siblingName}(?:/|["'])`);
+    if (siblingReference.test(source)) {
+      fail(path, `${platformName} shell must not import or address the ${siblingName} shell`);
+    }
+  }
+}
+
+for (const platformRoot of [windowsRoot, macosRoot]) {
+  for (const path of sourceFiles(join(platformRoot, "src", "main"))) {
+    const source = readFileSync(path, "utf8");
+    if (/from\s+["'][^"']*shared\/renderer/.test(source)) {
+      fail(path, "platform main must not import renderer implementation");
+    }
+  }
+}
+
 const sharedMainRoot = join(sharedRoot, "main");
 const forbiddenMainPatterns = [
-  [/powershell(?:\.exe)?/i, "PowerShell command"],
-  [/cmd\.exe/i, "cmd.exe command"],
-  [/wsl\.exe/i, "WSL command"],
+  [/(?:execFile|execFileSync|spawn|spawnSync)\s*\(\s*["']powershell(?:\.exe)?["']/i, "PowerShell command"],
+  [/(?:execFile|execFileSync|spawn|spawnSync)\s*\(\s*["']cmd\.exe["']/i, "cmd.exe command"],
+  [/(?:execFile|execFileSync|spawn|spawnSync)\s*\(\s*["']wsl\.exe["']/i, "WSL command"],
   [/\bDPAPI\b/i, "DPAPI implementation"],
-  [/\bKeychain\b|security\s+(?:add|find|delete)-generic-password/i, "Keychain implementation"],
+  [/(?:execFile|execFileSync|spawn|spawnSync)\s*\(\s*["']security["']|security\s+(?:add|find|delete)-generic-password/i, "Keychain implementation"],
 ];
 for (const path of sourceFiles(sharedMainRoot)) {
   const source = readFileSync(path, "utf8");
@@ -127,6 +161,15 @@ for (const entry of mainInventory.entries) {
   else if (!readFileSync(compatibilityPath, "utf8").includes("@deprecated M3 compatibility entrypoint")) {
     fail(compatibilityPath, "M3 compatibility entrypoint must carry an explicit removal marker");
   }
+}
+
+const windowsMainIndex = readFileSync(join(windowsRoot, "src", "main", "index.ts"), "utf8");
+const macosMainIndex = readFileSync(join(macosRoot, "src", "main", "index.ts"), "utf8");
+if (!windowsMainIndex.includes('from "../../../shared/main/secureIpc"')) {
+  fail(join(windowsRoot, "src", "main", "index.ts"), "Windows must reuse the shared IPC trust boundary");
+}
+if (!macosMainIndex.includes('from "../../../shared/main/secureIpc"')) {
+  fail(join(macosRoot, "src", "main", "index.ts"), "macOS must reuse the shared IPC trust boundary");
 }
 
 if (!existsSync(macosRoot)) {

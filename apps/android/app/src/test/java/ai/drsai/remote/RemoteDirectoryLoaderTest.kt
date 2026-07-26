@@ -101,6 +101,7 @@ class RemoteDirectoryLoaderTest {
         }
 
         override suspend fun associate(accessGrantPayload: String): RuntimeId = error("not used")
+        override suspend fun revokeAssociation(runtimeId: RuntimeId): Unit = error("not used")
 
         private fun runtime(id: String, name: String) = DiscoveredRuntime(
             reference = RemoteRuntimeRef(RuntimeId(id), name),

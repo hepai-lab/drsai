@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Protocol
 
-from drsai.backend.agent_runtime import (
+from drsai.backend.runtime.agent import (
     AgentDefinition,
     AgentExecutionServices,
     RuntimeExecutionError,

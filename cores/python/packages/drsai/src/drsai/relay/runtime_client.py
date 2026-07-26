@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Protocol
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from uuid import uuid4
 
 import aiohttp
@@ -53,7 +54,8 @@ class AiohttpRegistrationTransport:
                 "display_name": display_name, "version": version, "public_key": public_key}
         async with aiohttp.ClientSession() as session:
             async with session.post(f"{self.root}/v1/runtimes/register", json=body,
-                                    headers={"X-Registration-Code": registration_code}) as response:
+                                    headers={"X-Registration-Code": registration_code},
+                                    allow_redirects=False) as response:
                 if response.status >= 400:
                     raise RuntimeError(f"runtime_registration_failed:{response.status}")
                 result = await response.json()
@@ -83,42 +85,98 @@ class RuntimeOutboundConnector:
     def __init__(self, relay_wss_url: str, credential: RuntimeCredential, identity: DeviceIdentity,
                  instance_id: str, version: str, *, session_factory: Any = aiohttp.ClientSession,
                  request_handler: Callable[[str, dict[str, Any]], Awaitable[Any]] | None = None,
+                 http_request_handler: Callable[
+                     [str, str, dict[str, Any] | None, str], Awaitable[tuple[int, Any]]
+                 ] | None = None,
+                 event_provider: Callable[[], Awaitable[list[dict[str, Any]]]] | None = None,
                  workspace_provider: Callable[[], Awaitable[list[dict[str, str]]]] | None = None,
-                 backend_health: dict[str, str] | None = None) -> None:
+                 backend_health: dict[str, str] | None = None,
+                 wire_protocol: str = "legacy-operation") -> None:
         parsed = urlparse(relay_wss_url)
         if parsed.scheme != "wss" or not parsed.hostname:
             raise ValueError("relay_url_must_use_wss")
         self.url, self.credential, self.identity = relay_wss_url, credential, identity
         self.instance_id, self.version, self.session_factory = instance_id, version, session_factory
         self.request_handler = request_handler
+        self.http_request_handler = http_request_handler
+        self.event_provider = event_provider
         self.workspace_provider = workspace_provider
         self.backend_health = dict(backend_health or {})
+        if wire_protocol not in {"legacy-operation", "hai-http"}:
+            raise ValueError("runtime_wire_protocol_invalid")
+        self.wire_protocol = wire_protocol
 
     async def run_once(self) -> None:
-        headers = {"Authorization": f"Runtime {self.credential.registration_token}"}
+        if self.wire_protocol == "hai-http":
+            headers = {"X-Runtime-Token": self.credential.registration_token}
+            parsed = urlparse(self.url)
+            query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+            query.update({
+                "runtime_id": self.credential.runtime_id,
+                "instance_id": self.instance_id,
+                "version": self.version,
+            })
+            connection_url = urlunparse(parsed._replace(query=urlencode(query)))
+        else:
+            headers = {"Authorization": f"Runtime {self.credential.registration_token}"}
+            connection_url = self.url
         async with self.session_factory(headers=headers) as session:
-            async with session.ws_connect(self.url, heartbeat=20) as socket:
-                nonce = str(uuid4())
-                proof = f"{self.credential.runtime_id}\n{self.instance_id}\n{nonce}".encode()
-                await socket.send_json({
-                    "type": "runtime.hello", "runtime_id": self.credential.runtime_id,
-                    "instance_id": self.instance_id, "version": self.version,
-                    "protocol_version": PROTOCOL_VERSION, "capabilities": sorted(CAPABILITIES),
-                    "backend_health": self.backend_health,
-                    "nonce": nonce, "signature": self.identity.sign(proof),
-                })
-                async for message in socket:
-                    if message.type == aiohttp.WSMsgType.TEXT:
-                        payload = json.loads(message.data)
-                        if payload.get("type") == "ping":
-                            await socket.send_json({"type": "pong", "request_id": payload.get("request_id")})
-                        elif payload.get("type") == "runtime.connected" and self.workspace_provider is not None:
-                            await socket.send_json({"type": "runtime.workspaces",
-                                                    "workspaces": await self.workspace_provider()})
-                        elif payload.get("type") == "runtime.request":
-                            await self._handle_request(socket, payload)
-                    elif message.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
-                        break
+            async with session.ws_connect(connection_url, heartbeat=20) as socket:
+                background_tasks: list[asyncio.Task[Any]] = []
+                if self.wire_protocol == "hai-http":
+                    await socket.send_json({"type": "heartbeat", "timestamp": time.time()})
+                    background_tasks.append(asyncio.create_task(self._send_heartbeats(socket)))
+                    if self.event_provider is not None:
+                        background_tasks.append(asyncio.create_task(self._forward_events(socket)))
+                else:
+                    nonce = str(uuid4())
+                    proof = f"{self.credential.runtime_id}\n{self.instance_id}\n{nonce}".encode()
+                    await socket.send_json({
+                        "type": "runtime.hello", "runtime_id": self.credential.runtime_id,
+                        "instance_id": self.instance_id, "version": self.version,
+                        "protocol_version": PROTOCOL_VERSION, "capabilities": sorted(CAPABILITIES),
+                        "backend_health": self.backend_health,
+                        "nonce": nonce, "signature": self.identity.sign(proof),
+                    })
+                try:
+                    async for message in socket:
+                        if message.type == aiohttp.WSMsgType.TEXT:
+                            payload = json.loads(message.data)
+                            if payload.get("type") == "ping":
+                                await socket.send_json({"type": "pong", "request_id": payload.get("request_id")})
+                            elif payload.get("type") == "runtime.connected" and self.workspace_provider is not None:
+                                await socket.send_json({"type": "runtime.workspaces",
+                                                        "workspaces": await self.workspace_provider()})
+                            elif payload.get("type") == "runtime.request":
+                                await self._handle_request(socket, payload)
+                            elif payload.get("type") == "request":
+                                await self._handle_http_request(socket, payload)
+                        elif message.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                            break
+                finally:
+                    for task in background_tasks:
+                        task.cancel()
+                    if background_tasks:
+                        await asyncio.gather(*background_tasks, return_exceptions=True)
+
+    @staticmethod
+    async def _send_heartbeats(socket: Any) -> None:
+        while True:
+            await asyncio.sleep(15)
+            await socket.send_json({"type": "heartbeat", "timestamp": time.time()})
+
+    async def _forward_events(self, socket: Any) -> None:
+        while True:
+            try:
+                for event in await self.event_provider():
+                    run_id = str(event.get("run_id") or "")
+                    if run_id:
+                        await socket.send_json({"type": "event", "run_id": run_id, "event": event})
+            except Exception:
+                # A failed poll must not tear down the control channel. The
+                # next iteration resumes from the Runtime-owned sequence.
+                pass
+            await asyncio.sleep(1)
 
     async def _handle_request(self, socket: Any, payload: dict[str, Any]) -> None:
         request_id = str(payload.get("request_id") or "")
@@ -136,6 +194,90 @@ class RuntimeOutboundConnector:
             response = {"type": "runtime.response", "request_id": request_id, "ok": False, "error": {
                 "code": str(code), "message": str(exc), "retryable": bool(getattr(exc, "retryable", False)),
             }}
+        await socket.send_json(response)
+
+    async def _handle_http_request(self, socket: Any, payload: dict[str, Any]) -> None:
+        request_id = str(payload.get("request_id") or "")
+        correlation_id = str(payload.get("correlation_id") or "")
+        method = str(payload.get("method") or "").upper()
+        path = str(payload.get("path") or "")
+        body = payload.get("body")
+        if (
+            not request_id
+            or not correlation_id
+            or method not in {"GET", "POST", "PATCH", "PUT", "DELETE"}
+            or not path.startswith("/v1/")
+            or body is not None and not isinstance(body, dict)
+        ):
+            return
+        try:
+            if self.http_request_handler is None:
+                raise RuntimeError("runtime_http_proxy_unsupported")
+            status, result = await self.http_request_handler(method, path, body, correlation_id)
+            if (
+                int(status) < 400
+                and method == "GET"
+                and path.partition("?")[0] == "/v1/runtime"
+                and isinstance(result, dict)
+            ):
+                # The Relay enrollment is the externally authoritative Runtime
+                # identity. The loopback gateway has its own installation
+                # identity and package version, which must never leak through
+                # the HAI proxy as a conflicting Runtime.
+                result = {
+                    **result,
+                    "runtime_id": self.credential.runtime_id,
+                    "instance_id": self.instance_id,
+                    "version": self.version,
+                    "protocol_version": PROTOCOL_VERSION,
+                }
+            if int(status) >= 400:
+                raw_error = result.get("error") if isinstance(result, dict) else None
+                if not isinstance(raw_error, dict) and isinstance(result, dict):
+                    raw_error = result.get("detail")
+                if not isinstance(raw_error, dict):
+                    raw_error = {}
+                response = {
+                    "type": "response",
+                    "request_id": request_id,
+                    "status": int(status),
+                    "error": {
+                        "code": str(raw_error.get("code") or f"runtime_http_{status}"),
+                        "message": str(raw_error.get("message") or "Runtime request failed"),
+                        "correlation_id": str(raw_error.get("correlation_id") or correlation_id),
+                        "retryable": bool(raw_error.get("retryable", int(status) >= 500)),
+                        "details": (
+                            raw_error.get("details")
+                            if isinstance(raw_error.get("details"), dict)
+                            else raw_error.get("detail")
+                            if isinstance(raw_error.get("detail"), dict)
+                            else {}
+                        ),
+                        "source": "runtime",
+                    },
+                }
+            else:
+                response = {
+                    "type": "response",
+                    "request_id": request_id,
+                    "status": int(status),
+                    "body": result,
+                }
+        except Exception as exc:
+            code = getattr(exc, "code", None) or str(exc) or "runtime_request_failed"
+            response = {
+                "type": "response",
+                "request_id": request_id,
+                "status": 503 if bool(getattr(exc, "retryable", False)) else 400,
+                "error": {
+                    "code": str(code),
+                    "message": str(exc),
+                    "correlation_id": correlation_id,
+                    "retryable": bool(getattr(exc, "retryable", False)),
+                    "details": {},
+                    "source": "runtime",
+                },
+            }
         await socket.send_json(response)
 
     async def run_forever(self, stop: asyncio.Event, *, maximum_backoff: float = 30.0) -> None:

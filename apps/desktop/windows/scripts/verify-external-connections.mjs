@@ -17,7 +17,7 @@ function assert(condition, message) {
 
 const packageJson = read("package.json");
 const api = read("../shared/api/desktopApi.ts");
-const readiness = read("src/main/externalConnectionReadiness.ts");
+const readiness = read("../shared/main/externalConnectionReadiness.ts");
 const main = read("src/main/index.ts");
 const preload = read("../shared/main/preload.ts");
 const mock = read("../shared/renderer/src/mockDesktopApi.ts");
@@ -68,6 +68,10 @@ for (const connection of [
 }
 
 assert(readiness.includes("listChannelAdapters(workspacePath)"), "readiness catalog does not derive from channel adapters");
+for (const staleGap of ["Live GitHub OAuth/API sync", "Live Slack OAuth/session sync", "Live Docs provider authorization", "Live Calendar OAuth/API sync"]) {
+  assert(!readiness.includes(staleGap), `readiness catalog still reports implemented capability as a gap: ${staleGap}`);
+}
+assert(readiness.includes("fake-provider Device OAuth") && readiness.includes("conversations.history") && readiness.includes("revision-bound batchUpdate") && readiness.includes("bounded events.list"), "readiness catalog omits implemented live-provider evidence");
 assert(readiness.includes("mobile-chat") && readiness.includes(".drsai/mobile-context.json"), "readiness catalog omits Mobile connector evidence");
 assert(readiness.includes("github-connector"), "readiness catalog omits GitHub connector evidence");
 assert(readiness.includes("slack-chat") && readiness.includes(".drsai/slack-context.json"), "readiness catalog omits Slack connector evidence");
@@ -97,6 +101,8 @@ assert(mock.includes('id: "slack"') && mock.includes('id: "docs"') && mock.inclu
 assert(mock.includes('id: "mobile"') && mock.includes('id: "database"') && mock.includes('id: "log-monitor"'), "mock readiness fixture omits local channel readiness cards");
 assert(mock.includes("buildMockExternalReconnectPolicy"), "mock readiness fixture omits reconnect policy fallback");
 assert(mock.includes("buildMockReconnectReadinessChecks"), "mock readiness fixture omits reconnect readiness checks");
+assert(mock.includes("buildMockExternalConnectionReadiness") && mock.includes('adapter?.authMode === "provider_token"') && mock.includes('base.id !== "calendar"'), "mock readiness is not derived from current provider adapter state");
+for (const staleGap of ["Live GitHub OAuth/API sync", "Live Slack OAuth/session sync", "Live Docs provider authorization", "Live Calendar OAuth/API sync", "Mock local snapshot or session stub is configured"]) assert(!mock.includes(staleGap), `mock readiness retains superseded copy: ${staleGap}`);
 assert(mock.includes("Mock reconnect policy is local metadata only"), "mock readiness reconnect policy omits no-runtime evidence");
 
 assert(channelsView.includes("externalReadiness") && channelsView.includes("ExternalReadinessCard"), "Channels view omits readiness rendering");

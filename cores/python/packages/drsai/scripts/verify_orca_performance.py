@@ -7,8 +7,8 @@ import tempfile
 import time
 from pathlib import Path
 
-from drsai.backend.runtime_registry import RuntimeRegistry
-from drsai.backend.terminal_state_service import TerminalStateService, TerminalWorkspaceBinding
+from drsai.backend.runtime.registry import RuntimeRegistry
+from drsai.backend.runtime.terminal.state_service import TerminalStateService, TerminalWorkspaceBinding
 
 
 class Handle:

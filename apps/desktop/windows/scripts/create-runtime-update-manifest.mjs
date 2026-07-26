@@ -7,21 +7,22 @@ import { resolveMinimumUpdaterVersion } from "./runtime-update-policy.mjs";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
-const runtimePath = resolve(process.env.OPENDRSAI_RUNTIME_PATH || join(root, "release", "bootstrapper", "OpenDrSaiRuntime-win-x64.zip"));
-const outputPath = resolve(process.env.OPENDRSAI_UPDATE_MANIFEST_PATH || join(root, "release", "latest-windows.json"));
 const version = String(packageJson.version);
-const channel = String(process.env.OPENDRSAI_UPDATE_CHANNEL || "stable").toLowerCase();
+const runtimeArchiveName = `OpenDrSai-Windows-v${version}-x64.zip`;
+const runtimePath = resolve(process.env.OPENDRSAI_RUNTIME_PATH || join(root, "release", "bootstrapper", runtimeArchiveName));
+const outputPath = resolve(process.env.OPENDRSAI_UPDATE_MANIFEST_PATH || join(root, "release", "latest-windows.json"));
+const channel = String(process.env.OPENDRSAI_UPDATE_CHANNEL || "beta").toLowerCase();
 const minimumUpdaterVersion = resolveMinimumUpdaterVersion(process.env.OPENDRSAI_MINIMUM_UPDATER_VERSION);
 const isPrereleaseVersion = version.includes("-");
 const baseUrl = String(
   process.env.OPENDRSAI_RELEASE_BASE_URL ||
-  `https://github.com/hepai-lab/drsai/releases/download/v${version}`,
+  `https://download-opendrsai.ihep.ac.cn/releases/v${version}/windows`,
 ).replace(/\/+$/, "");
 
 if (!/^(stable|beta|dev)$/.test(channel)) throw new Error(`Unsupported update channel: ${channel}`);
 if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) throw new Error(`Invalid package version: ${version}`);
 if (!baseUrl.startsWith("https://")) throw new Error("OPENDRSAI_RELEASE_BASE_URL must use HTTPS.");
-const stableBaseUrl = `https://github.com/hepai-lab/drsai/releases/download/v${version}`;
+const stableBaseUrl = `https://download-opendrsai.ihep.ac.cn/releases/v${version}/windows`;
 if (channel === "stable" && baseUrl !== stableBaseUrl) {
   throw new Error(`Stable runtime updates must use the immutable versioned URL ${stableBaseUrl}.`);
 }
@@ -46,7 +47,7 @@ const manifest = {
   // available, while continuing to require signatures for every stable version.
   requireSignature: channel === "stable" && !isPrereleaseVersion || process.env.OPENDRSAI_REQUIRE_UPDATE_SIGNATURE === "1",
   runtime: {
-    url: `${baseUrl}/OpenDrSaiRuntime-win-x64.zip`,
+    url: `${baseUrl}/${runtimeArchiveName}`,
     sizeBytes: statSync(runtimePath).size,
     sha256: createHash("sha256").update(runtime).digest("hex"),
   },

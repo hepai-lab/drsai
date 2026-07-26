@@ -10,35 +10,38 @@ const manifest = existsSync(manifestPath) ? JSON.parse(readFileSync(manifestPath
 const workflow = readFileSync(join(repoRoot, ".github", "workflows", "windows-desktop.yml"), "utf8");
 const runtimeBuilder = readFileSync(join(root, "installer", "create-opendrsai-runtime.ps1"), "utf8");
 
-const isPrereleaseVersion = packageJson.version.includes("-");
 assert(compareSemver(packageJson.version, "1.4.3-beta.1") > 0, "beta.1 would not recognize this package as newer.");
 assert(/draft:\s*false/.test(workflow), "The tag workflow must publish rather than leave a draft invisible to beta.1.");
 assert(/prerelease:\s*false/.test(workflow), "The compatibility Release must participate in GitHub releases/latest.");
 assert(/make_latest:\s*true/.test(workflow), "The compatibility Release must advance GitHub releases/latest.");
+assert(/\$channel = "beta"/.test(workflow), "Tagged Windows releases must publish the beta update channel.");
+assert(
+  /https:\/\/download-opendrsai\.ihep\.ac\.cn\/releases\/\$tag\/windows/.test(workflow),
+  "Tagged Windows releases must use the immutable OpenDrSai CDN directory.",
+);
 assert(
   /Copy-DirectoryContents \(Join-Path \$drsaiAgentDir "venv"\)/.test(runtimeBuilder),
   "Runtime packaging must copy only the managed agent venv.",
 );
 
-if (manifest?.version === packageJson.version && manifest.channel === "stable") {
+if (manifest?.version === packageJson.version && manifest.channel === "beta") {
+  const runtimeArchiveName = `OpenDrSai-Windows-v${packageJson.version}-x64.zip`;
   assert(
-    manifest.requireSignature === !isPrereleaseVersion,
-    isPrereleaseVersion
-      ? "Unsigned beta compatibility manifest must not request Authenticode verification."
-      : "Stable compatibility manifest must require Authenticode verification.",
+    manifest.requireSignature === false,
+    "The beta channel manifest must not require a release signature until beta signing is enabled.",
   );
   assert(
-    manifest.runtime.url === `https://github.com/hepai-lab/drsai/releases/download/v${packageJson.version}/OpenDrSaiRuntime-win-x64.zip`,
-    "Compatibility manifest must retain an immutable versioned runtime URL.",
+    manifest.runtime.url === `https://download-opendrsai.ihep.ac.cn/releases/v${packageJson.version}/windows/${runtimeArchiveName}`,
+    "The beta manifest must use the immutable versioned OpenDrSai CDN runtime URL.",
   );
-  console.log(`Legacy beta update contract passed: 1.4.3-beta.1 -> ${manifest.version} via releases/latest.`);
+  console.log(`Beta update contract passed for ${manifest.version} via the OpenDrSai CDN.`);
 } else {
   const reason = manifest
     ? manifest.version === packageJson.version
       ? `${manifest.channel} branch manifest ignored`
       : `stale ${manifest.version} manifest ignored`
     : "manifest not generated";
-  console.log(`Legacy beta static release contract passed for ${packageJson.version}; ${reason}.`);
+  console.log(`Beta static release contract passed for ${packageJson.version}; ${reason}.`);
 }
 
 function compareSemver(left, right) {

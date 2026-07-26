@@ -94,8 +94,10 @@ export function validateSensitiveResolutions(
   resolutions: DesktopShareSensitiveResolution[],
 ): void {
   const actions = new Map<string, DesktopShareSensitiveAction>();
+  const findingIds = new Set(findings.map((finding) => finding.id));
   for (const resolution of resolutions) {
     if (resolution.action !== "redact" && resolution.action !== "remove") throw new Error("Sensitive information resolution is invalid.");
+    if (!findingIds.has(resolution.findingId) || actions.has(resolution.findingId)) throw new Error("Sensitive information resolution does not match exactly one current finding.");
     actions.set(resolution.findingId, resolution.action);
   }
   if (findings.some((finding) => !actions.has(finding.id))) {

@@ -47,6 +47,27 @@ class RemoteSessionUiTest {
         rule.runOnIdle { assertEquals(healthy, selected) }
     }
 
+    @Test fun workspaceSessionListExcludesArchivedAndRemovedLifecycle() {
+        fun session(id: String, title: String, lifecycle: RemoteResourceLifecycle) = RemoteSessionUi(
+            RemoteSessionRef(RuntimeId("rt"), WorkspaceId("ws"), SessionId(id), title, "opendrsai", lifecycle),
+            null,
+            "刚刚",
+            lifecycle.toWire(),
+        )
+        rule.setContent { MaterialTheme { WorkspaceSessionsScreen(
+            state = WorkspaceSessionsUiState("开发机", "项目", sessions = listOf(
+                session("active", "活动会话", RemoteResourceLifecycle.ACTIVE),
+                session("archived", "归档会话", RemoteResourceLifecycle.ARCHIVED),
+                session("removed", "已移除会话", RemoteResourceLifecycle.REMOVED),
+            )),
+            onBack = {}, onRefresh = {}, onSearch = {}, onCreate = {}, onOpen = {},
+        ) } }
+
+        rule.onNodeWithText("活动会话").assertIsDisplayed()
+        rule.onAllNodesWithText("归档会话").assertCountEquals(0)
+        rule.onAllNodesWithText("已移除会话").assertCountEquals(0)
+    }
+
     @Test fun chatShowsIdentityOfflineAuthorityApprovalAndAuditWithoutPrivateIds() {
         val identity = RemoteRunIdentity(RuntimeId("rt"), WorkspaceId("ws"), SessionId("s"), RunId("run"), "codex")
         val approval = RemoteApprovalCard(ApprovalId("approval"), identity, "开发机", "项目", "Agent", "shell.execute",

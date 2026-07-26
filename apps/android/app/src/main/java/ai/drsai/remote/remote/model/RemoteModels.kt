@@ -41,11 +41,70 @@ data class RemoteRuntimeRef(
     val displayName: String,
 )
 
+enum class RemoteResourceLifecycle {
+    ACTIVE,
+    ARCHIVED,
+    REMOVED;
+
+    companion object {
+        fun fromWire(value: String): RemoteResourceLifecycle = when (value.lowercase()) {
+            "active" -> ACTIVE
+            "archived" -> ARCHIVED
+            "removed" -> REMOVED
+            else -> throw IllegalArgumentException("remote_resource_lifecycle_invalid")
+        }
+    }
+
+    fun toWire(): String = name.lowercase()
+}
+
 data class RemoteWorkspaceRef(
     val runtimeId: RuntimeId,
     val workspaceId: WorkspaceId,
     val displayName: String,
-)
+    val lifecycle: RemoteResourceLifecycle = RemoteResourceLifecycle.ACTIVE,
+    val revision: Long = 1,
+    val updatedAt: String = "",
+) {
+    init {
+        require(revision > 0) { "workspace_revision_invalid" }
+    }
+}
+
+@JvmName("activeWorkspacesOnly")
+fun Iterable<RemoteWorkspaceRef>.activeOnly(): List<RemoteWorkspaceRef> =
+    filter { it.lifecycle == RemoteResourceLifecycle.ACTIVE }
+
+@JvmName("activeSessionsOnly")
+fun Iterable<RemoteSessionRef>.activeOnly(): List<RemoteSessionRef> =
+    filter { it.lifecycle == RemoteResourceLifecycle.ACTIVE }
+
+data class RemoteConversationItem(
+    val eventId: String,
+    val sequence: Long,
+    val kind: String,
+    val timestamp: String,
+    val payload: Map<String, Any?>,
+) {
+    init {
+        require(eventId.isNotBlank()) { "conversation_event_id_required" }
+        require(sequence > 0) { "conversation_sequence_invalid" }
+        require(kind.isNotBlank()) { "conversation_kind_required" }
+        require(timestamp.isNotBlank()) { "conversation_timestamp_required" }
+    }
+}
+
+data class RemoteConversationProjection(
+    val items: List<RemoteConversationItem>,
+    val nextCursor: String?,
+) {
+    init {
+        require(items.zipWithNext().all { (left, right) -> left.sequence < right.sequence }) {
+            "conversation_sequence_not_strictly_increasing"
+        }
+        require(items.distinctBy { it.eventId }.size == items.size) { "conversation_event_duplicate" }
+    }
+}
 
 data class RemoteSessionRef(
     val runtimeId: RuntimeId,
@@ -53,6 +112,8 @@ data class RemoteSessionRef(
     val sessionId: SessionId,
     val title: String,
     val backendId: String,
+    val lifecycle: RemoteResourceLifecycle = RemoteResourceLifecycle.ACTIVE,
+    val updatedAt: String = "",
 ) {
     init {
         require(backendId.isNotBlank()) { "backend_id_required" }
