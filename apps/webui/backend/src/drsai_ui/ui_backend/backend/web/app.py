@@ -4,7 +4,7 @@ import re
 import yaml
 from dotenv import load_dotenv
 
-from .routes import access_compat, admin_analytics, agent_mode, agent_worker, auth, desktop_auth, docmaster, files, local_login, models, native, plans, runs, sessions, settingsroute, skills, teams, users, validation
+from .routes import access_compat, admin_analytics, agent_mode, agent_worker, auth, desktop_auth, docmaster, files, local_login, models, native, plans, releases, runs, sessions, settingsroute, skills, teams, users, validation
 load_dotenv()
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -354,6 +354,12 @@ api.include_router(
     prefix="/docmaster",
     tags=["docmaster"],
     responses={404: {"description": "Not found"}},
+)
+
+api.include_router(
+    releases.router,
+    prefix="/releases",
+    tags=["releases"],
 )
 
 # Version endpoint

@@ -10,21 +10,49 @@ import {
 } from "lucide-react";
 import React, { useContext, useEffect, useRef, useState } from "react";
 import openDrSaiLogo from "../assets/logo.svg";
+import { getServerUrl } from "../components/utils";
 import { appContext } from "../hooks/provider";
 
 const WINDOWS_DOWNLOAD_URL =
   process.env.GATSBY_WINDOWS_DOWNLOAD_URL ||
-  "https://download-opendrsai.ihep.ac.cn/releases/v1.5.2/windows/OpenDrSai-Windows-Installer-x64.msi";
+  "https://download-opendrsai.ihep.ac.cn/releases/v1.5.3/windows/OpenDrSai-Windows-Installer-x64.msi";
 const ANDROID_DOWNLOAD_URL =
   process.env.GATSBY_ANDROID_DOWNLOAD_URL ||
-  "https://download-opendrsai.ihep.ac.cn/releases/v1.5.1/android/OpenDrSai-Android-v1.5.1.apk";
-const TUI_COMMAND = "pip install -U drsai";
+  "https://download-opendrsai.ihep.ac.cn/releases/v1.5.3/android/OpenDrSai-Android-v1.5.3.apk";
+const TUI_UNIX_COMMAND =
+  "curl -fsSL https://ihepbox.ihep.ac.cn/ihepbox/index.php/s/vQFBjvXqAhxdPFb/download | bash";
+const TUI_WINDOWS_COMMAND =
+  "iwr -UseBasicParsing https://ihepbox.ihep.ac.cn/ihepbox/index.php/s/cG0oB5NEhQiEf5r/download | iex";
 type ClientTab = "windows" | "android" | "terminal" | "macos";
+type CopiedCommand = "unix" | "windows";
+type ReleasePlatform = "windows" | "android";
+
+interface ReleaseAsset {
+  url: string;
+  file: string;
+  sizeBytes: number | null;
+  sha256?: string;
+}
+
+interface LatestRelease {
+  platform: ReleasePlatform;
+  version: string;
+  channel: string;
+  publishedAt?: string;
+  download: ReleaseAsset;
+  program?: ReleaseAsset;
+}
 
 const WelcomePage = () => {
   const { darkMode, setDarkMode, lang, setLang } = useContext(appContext);
-  const [copied, setCopied] = useState(false);
+  const [copiedCommand, setCopiedCommand] = useState<CopiedCommand | null>(null);
   const [activeClient, setActiveClient] = useState<ClientTab | null>(null);
+  const [latestReleases, setLatestReleases] = useState<
+    Partial<Record<ReleasePlatform, LatestRelease>>
+  >({});
+  const [loadingRelease, setLoadingRelease] = useState<ReleasePlatform | null>(
+    null,
+  );
   const clientDetailsRef = useRef<HTMLDivElement>(null);
   const skipClientScrollRef = useRef(false);
   const isZh = lang === "zh";
@@ -53,13 +81,46 @@ const WelcomePage = () => {
     });
   }, [activeClient]);
 
-  const copyTuiCommand = async () => {
+  useEffect(() => {
+    if (activeClient !== "windows" && activeClient !== "android") return;
+    const platform = activeClient;
+    const controller = new AbortController();
+    setLoadingRelease(platform);
+
+    fetch(`${getServerUrl()}/releases/latest/${platform}`, {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Release metadata: ${response.status}`);
+        return (await response.json()) as LatestRelease;
+      })
+      .then((release) => {
+        if (release.platform !== platform || !release.download?.url) {
+          throw new Error("Invalid release metadata");
+        }
+        setLatestReleases((current) => ({ ...current, [platform]: release }));
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoadingRelease(null);
+      });
+
+    return () => controller.abort();
+  }, [activeClient]);
+
+  const copyTuiCommand = async (
+    command: string,
+    target: CopiedCommand,
+  ) => {
     try {
-      await navigator.clipboard.writeText(TUI_COMMAND);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1600);
+      await navigator.clipboard.writeText(command);
+      setCopiedCommand(target);
+      window.setTimeout(() => setCopiedCommand(null), 1600);
     } catch {
-      setCopied(false);
+      setCopiedCommand(null);
     }
   };
 
@@ -152,7 +213,13 @@ const WelcomePage = () => {
         <p className="mb-5 text-xs font-extrabold uppercase tracking-[0.22em] text-violet-600 dark:text-violet-400">
           {isZh ? "您的智能体，随处可用" : "Your agent, everywhere"}
         </p>
-        <h1 className="max-w-4xl text-3xl font-extrabold leading-[1.1] tracking-[-0.045em] min-[390px]:text-4xl sm:text-6xl sm:tracking-[-0.055em]">
+        <h1
+          className={`max-w-4xl font-extrabold leading-[1.1] tracking-[-0.045em] sm:text-6xl sm:tracking-[-0.055em] ${
+            isZh
+              ? "whitespace-nowrap text-[clamp(1.5rem,7vw,1.75rem)] sm:whitespace-normal"
+              : "text-3xl min-[390px]:text-4xl"
+          }`}
+        >
           {isZh ? "让智能体，随时为您工作" : "Your agent, ready to work for you anytime"}
         </h1>
         <p className="mt-5 max-w-2xl text-sm font-medium leading-6 text-slate-500 sm:mt-6 sm:text-lg sm:leading-7 dark:text-slate-400">
@@ -163,7 +230,7 @@ const WelcomePage = () => {
 
         <div className="mt-7 flex w-full max-w-md flex-col gap-3 sm:mt-8 sm:flex-row sm:justify-center">
           <a
-            href="/login"
+            href="https://opendrsai.ihep.ac.cn"
             className="group inline-flex flex-1 flex-col items-center justify-center gap-0.5 rounded-xl bg-gradient-to-r from-violet-600 to-blue-600 px-5 py-2.5 text-sm font-extrabold text-white no-underline shadow-lg shadow-violet-500/20 transition hover:-translate-y-0.5"
           >
             <span className="inline-flex items-center gap-2">
@@ -283,8 +350,8 @@ const WelcomePage = () => {
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block font-extrabold">Terminal UI</span>
-                <span className="mt-1 block truncate font-agent-mono text-[11px] text-slate-400">
-                  {TUI_COMMAND}
+                <span className="mt-1 block text-xs font-medium leading-4 text-slate-400">
+                  {isZh ? "终端 Vibe Coding" : "Terminal vibe coding"}
                 </span>
               </span>
               <span className="hidden text-xs font-extrabold text-violet-700 sm:inline dark:text-violet-300">
@@ -319,8 +386,14 @@ const WelcomePage = () => {
               <ClientDetails
                 active={activeClient}
                 isZh={isZh}
-                copied={copied}
+                copiedCommand={copiedCommand}
                 onCopy={copyTuiCommand}
+                latestRelease={
+                  activeClient === "windows" || activeClient === "android"
+                    ? latestReleases[activeClient]
+                    : undefined
+                }
+                loadingRelease={loadingRelease === activeClient}
               />
             </div>
           )}
@@ -369,8 +442,8 @@ const WelcomePage = () => {
             }
             features={
               isZh
-                ? ["一条 pip 命令即可安装使用", "清晰展示连接、模型、工具与工作区状态", "键盘优先，适合 SSH 与远程服务器"]
-                : ["Install with a single pip command", "See connection, model, tools, and workspace status", "Keyboard-first for SSH and remote servers"]
+                ? ["提供 Linux、macOS 与 Windows 安装命令", "清晰展示连接、模型、工具与工作区状态", "键盘优先，适合 SSH 与远程服务器"]
+                : ["Install commands for Linux, macOS, and Windows", "See connection, model, tools, and workspace status", "Keyboard-first for SSH and remote servers"]
             }
             image="/apps/screenshot_tui.png"
             imageAlt={isZh ? "OpenDrSai Terminal UI 界面" : "OpenDrSai Terminal UI"}
@@ -599,75 +672,112 @@ const ClientItem = ({
 interface ClientDetailsProps {
   active: ClientTab;
   isZh: boolean;
-  copied: boolean;
-  onCopy: () => void;
+  copiedCommand: CopiedCommand | null;
+  onCopy: (command: string, target: CopiedCommand) => void;
+  latestRelease?: LatestRelease;
+  loadingRelease: boolean;
 }
+
+const formatBytes = (sizeBytes: number) => {
+  if (sizeBytes >= 1024 * 1024) {
+    return `${(sizeBytes / (1024 * 1024)).toFixed(
+      sizeBytes >= 100 * 1024 * 1024 ? 0 : 2,
+    )} MB`;
+  }
+  return `${Math.round(sizeBytes / 1024)} KB`;
+};
 
 const ClientDetails = ({
   active,
   isZh,
-  copied,
+  copiedCommand,
   onCopy,
+  latestRelease,
+  loadingRelease,
 }: ClientDetailsProps) => {
   const releases = {
     windows: {
       icon: <WindowsLogo />,
       title: "OpenDrSai for Windows",
-      version: "v1.5.2",
+      version: "v1.5.3",
       file: "OpenDrSai-Windows-Installer-x64.msi",
-      size: "632 KB",
+      sizeBytes: 647168,
       sha256:
-        "4dc7618f26c05cca4d467ec27a653aa9ac6d461585a0053f43bbd97499734853",
-      programFile: "OpenDrSai-Windows-v1.5.2-x64.zip",
-      programSize: "223 MB",
+        "07b2b300df27811519eea9d9e9df744933f2b3986e816a2e4171a8e52f817e99",
+      programFile: "OpenDrSai-Windows-v1.5.3-x64.zip",
+      programSizeBytes: 233589539,
       href: WINDOWS_DOWNLOAD_URL,
     },
     android: {
       icon: <AndroidLogo />,
       title: "OpenDrSai for Android",
-      version: "v1.5.1",
-      file: "OpenDrSai-Android-v1.5.1.apk",
-      size: "2.89 MB",
+      version: "v1.5.3",
+      file: "OpenDrSai-Android-v1.5.3.apk",
+      sizeBytes: 3076779,
       sha256:
-        "5ad72a12e6a9abb18bba35510bbabd9547dfc077839ff172fd508e98099a117b",
+        "74fcb63c37ed5777196681b0b98d390ab74ba92c52b309e12c86778ba4051f8e",
       href: ANDROID_DOWNLOAD_URL,
     },
   };
 
   if (active === "terminal") {
+    const commands = [
+      {
+        id: "unix" as const,
+        platform: "Linux / macOS",
+        command: TUI_UNIX_COMMAND,
+      },
+      {
+        id: "windows" as const,
+        platform: "Windows · PowerShell",
+        command: TUI_WINDOWS_COMMAND,
+      },
+    ];
+
     return (
       <div className="border-t border-slate-200/80 p-6 dark:border-white/10 sm:p-8">
-        <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-center">
+        <div className="flex items-center gap-3">
+          <span className="grid h-10 w-10 place-items-center rounded-xl bg-slate-900 text-white dark:bg-white/10">
+            <Terminal className="h-5 w-5" />
+          </span>
           <div>
-            <div className="flex items-center gap-3">
-              <span className="grid h-10 w-10 place-items-center rounded-xl bg-slate-900 text-white dark:bg-white/10">
-                <Terminal className="h-5 w-5" />
-              </span>
-              <div>
-                <h2 className="font-extrabold">OpenDrSai Terminal UI</h2>
-                <p className="mt-1 text-xs font-medium text-slate-400">
-                  Python · pip
-                </p>
+            <h2 className="font-extrabold">OpenDrSai Terminal UI</h2>
+            <p className="mt-1 text-xs font-medium text-slate-400">
+              Linux · macOS · Windows
+            </p>
+          </div>
+        </div>
+        <div className="mt-5 grid gap-4">
+          {commands.map(({ id, platform, command }) => (
+            <div key={id}>
+              <p className="mb-2 text-xs font-extrabold text-slate-500 dark:text-slate-400">
+                {platform}
+              </p>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <code className="min-w-0 flex-1 break-all rounded-xl bg-slate-950 px-4 py-3 font-agent-mono text-xs leading-5 text-slate-100 sm:text-sm">
+                  {command}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => onCopy(command, id)}
+                  className="inline-flex w-full flex-none items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-extrabold text-white sm:w-auto dark:bg-white dark:text-slate-950"
+                >
+                  {copiedCommand === id ? (
+                    <Check className="h-4 w-4" />
+                  ) : (
+                    <Copy className="h-4 w-4" />
+                  )}
+                  {copiedCommand === id
+                    ? isZh
+                      ? "已复制"
+                      : "Copied"
+                    : isZh
+                      ? "复制"
+                      : "Copy"}
+                </button>
               </div>
             </div>
-            <code className="mt-5 block rounded-xl bg-slate-950 px-4 py-3 font-agent-mono text-sm text-slate-100">
-              {TUI_COMMAND}
-            </code>
-          </div>
-          <button
-            type="button"
-            onClick={onCopy}
-            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-5 py-3 text-sm font-extrabold text-white sm:w-auto dark:bg-white dark:text-slate-950"
-          >
-            {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-            {copied
-              ? isZh
-                ? "已复制"
-                : "Copied"
-              : isZh
-                ? "复制安装命令"
-                : "Copy install command"}
-          </button>
+          ))}
         </div>
       </div>
     );
@@ -691,7 +801,29 @@ const ClientDetails = ({
     );
   }
 
-  const release = releases[active];
+  const fallbackRelease = releases[active];
+  const release = latestRelease
+    ? {
+        ...fallbackRelease,
+        version: `v${latestRelease.version}`,
+        file: latestRelease.download.file,
+        sizeBytes: latestRelease.download.sizeBytes,
+        sha256:
+          latestRelease.program?.sha256 ||
+          latestRelease.download.sha256 ||
+          fallbackRelease.sha256,
+        href: latestRelease.download.url,
+        ...("programFile" in fallbackRelease
+          ? {
+              programFile:
+                latestRelease.program?.file || fallbackRelease.programFile,
+              programSizeBytes:
+                latestRelease.program?.sizeBytes ||
+                fallbackRelease.programSizeBytes,
+            }
+          : {}),
+      }
+    : fallbackRelease;
   return (
     <div className="border-t border-slate-200/80 p-6 dark:border-white/10 sm:p-8">
       <div className="flex flex-col justify-between gap-6 lg:flex-row lg:items-center">
@@ -704,7 +836,13 @@ const ClientDetails = ({
               <h2 className="font-extrabold">{release.title}</h2>
               <p className="mt-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
                 {isZh ? "最新版本" : "Latest release"} · {release.version}
+                {latestRelease ? ` · ${latestRelease.channel}` : ""}
               </p>
+              {loadingRelease && (
+                <p className="mt-1 text-[11px] font-medium text-slate-400">
+                  {isZh ? "正在获取 OSS 最新版本…" : "Checking OSS for updates…"}
+                </p>
+              )}
             </div>
           </div>
           <dl className="mt-5 grid gap-x-8 gap-y-3 text-xs sm:grid-cols-[auto_1fr]">
@@ -712,7 +850,8 @@ const ClientDetails = ({
               {isZh ? "安装包" : "Package"}
             </dt>
             <dd className="min-w-0 break-all font-agent-mono text-slate-600 dark:text-slate-300">
-              {release.file} · {release.size}
+              {release.file}
+              {release.sizeBytes ? ` · ${formatBytes(release.sizeBytes)}` : ""}
             </dd>
             {"programFile" in release && (
               <>
@@ -720,11 +859,20 @@ const ClientDetails = ({
                   {isZh ? "主体程序" : "Application package"}
                 </dt>
                 <dd className="min-w-0 break-all font-agent-mono text-slate-600 dark:text-slate-300">
-                  {release.programFile} · {release.programSize}
+                  {release.programFile}
+                  {release.programSizeBytes
+                    ? ` · ${formatBytes(release.programSizeBytes)}`
+                    : ""}
                 </dd>
               </>
             )}
-            <dt className="font-semibold text-slate-400">SHA-256</dt>
+            <dt className="font-semibold text-slate-400">
+              {"programFile" in release
+                ? isZh
+                  ? "SHA-256（主体程序）"
+                  : "SHA-256 (application)"
+                : "SHA-256"}
+            </dt>
             <dd className="min-w-0 break-all font-agent-mono text-slate-600 dark:text-slate-300">
               {release.sha256}
             </dd>
