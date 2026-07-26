@@ -5,7 +5,7 @@ import { verifyAuthSession, saveAuthSession } from "../utils/authSession";
 import { authAPI } from "../components/views/api";
 import ScienceUserErrorPage from "./ScienceUserErrorPage";
 
-const PUBLIC_ROUTES = ["/login", "/auth", "/share"];
+const PUBLIC_ROUTES = ["/welcome", "/login", "/auth", "/share"];
 
 const normalizePath = (path: string) => path.replace(/\/{2,}/g, "/").replace(/\/$/, "") || "/";
 
@@ -102,9 +102,9 @@ export const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
             }
 
             if (isLogout) {
-                // 退出后从 /umt/logout 跳回 /，直接放行到 /login
+                // 退出后从 /umt/logout 跳回公开欢迎页
                 if (!cancelled) {
-                    navigate("/login?logout=1", { replace: true });
+                    navigate("/welcome", { replace: true });
                 }
                 return;
             }
@@ -128,7 +128,7 @@ export const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
                 if (search) {
                     try { document.cookie = "drsai_pending_search=" + encodeURIComponent(search) + "; path=/; max-age=600; SameSite=Lax"; } catch {}
                 }
-                navigate("/login?logout=1", { replace: true });
+                navigate("/welcome", { replace: true });
             }
         };
 

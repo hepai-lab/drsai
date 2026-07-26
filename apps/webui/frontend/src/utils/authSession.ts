@@ -86,10 +86,16 @@ export type AuthVerifyResult =
 
 /** Use httpOnly refresh-token cookie to obtain a new access token (SSO production). */
 export async function refreshAccessToken(): Promise<AuthVerifyResult> {
-  const response = await fetch(`${getServerUrl()}/auth/refresh`, {
-    method: "POST",
-    credentials: "include",
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${getServerUrl()}/auth/refresh`, {
+      method: "POST",
+      credentials: "include",
+    });
+  } catch {
+    return { ok: false };
+  }
+
   if (!response.ok) {
     return { ok: false };
   }
@@ -113,12 +119,18 @@ export async function verifyAuthSession(): Promise<AuthVerifyResult> {
     return refreshed.ok ? refreshed : { ok: false };
   }
 
-  const meResponse = await fetch(`${getServerUrl()}/auth/me`, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-    credentials: "include",
-  });
+  let meResponse: Response;
+  try {
+    meResponse = await fetch(`${getServerUrl()}/auth/me`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      credentials: "include",
+    });
+  } catch {
+    clearAuthSession();
+    return { ok: false };
+  }
 
   if (meResponse.ok) {
     const payload = await meResponse.json();
