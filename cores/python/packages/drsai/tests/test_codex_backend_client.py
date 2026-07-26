@@ -9,8 +9,8 @@ from typing import Any, Mapping
 
 import pytest
 
-from drsai.backend.agent_backend_bindings import AgentBackendBindingStore
-from drsai.backend.agent_runtime import (
+from drsai.backend.runtime.agent_bindings import AgentBackendBindingStore
+from drsai.backend.runtime.agent import (
     AgentDefinitionStore,
     AgentDefinition,
     AgentExecutionServices,
@@ -22,8 +22,8 @@ from drsai.backend.agent_runtime import (
 )
 from drsai.backend.codex_adapter import CodexAdapter
 from drsai.backend.codex_adapter.backend_client import CodexAgentBackendClient
-from drsai.backend.runtime_engine import RuntimeEngine, RuntimeEngineIdentity
-from drsai.backend.runtime_registry import RuntimeRegistry
+from drsai.backend.runtime.engine import RuntimeEngine, RuntimeEngineIdentity
+from drsai.backend.runtime.registry import RuntimeRegistry
 from drsai.owop.local_workspace import LocalWorkspaceOperations, WorkspaceWatchJournal
 from drsai.owop.process_pty import LocalProcessPtyOperations
 
@@ -450,7 +450,11 @@ async def test_ten_workspace_runtime_event_watch_conpty_and_codex_thread_joint_i
     )
     journal = WorkspaceWatchJournal(tmp_path / "joint-watch.sqlite3")
     repo_root = Path(__file__).resolve().parents[5]
-    node_pty = repo_root / "apps" / "desktop" / "windows" / "node_modules" / "node-pty"
+    candidates = (
+        repo_root / "apps" / "desktop" / "windows" / "node_modules" / "node-pty",
+        repo_root / "apps" / "desktop" / "node_modules" / "node-pty",
+    )
+    node_pty = next((candidate for candidate in candidates if candidate.is_dir()), candidates[0])
     assert node_pty.is_dir()
     operations: list[LocalWorkspaceOperations] = []
     runs: list[dict[str, Any]] = []

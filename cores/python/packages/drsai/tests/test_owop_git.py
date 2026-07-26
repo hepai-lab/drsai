@@ -9,7 +9,7 @@ from drsai.owop import InProcessWorkspaceOperationsClient, OWOPProtocol
 from drsai.owop.local_workspace import LocalWorkspaceOperations, WorkspaceWatchJournal
 
 
-SCHEMA = Path(__file__).resolve().parents[5] / "protocol" / "owop" / "owop.schema.json"
+SCHEMA = Path(__file__).resolve().parents[5] / "cores" / "protocol" / "owop" / "owop.schema.json"
 
 
 def git(root: Path, *args: str) -> str:

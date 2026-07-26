@@ -17587,6 +17587,11 @@ button.structured-activity-detail:hover {
 .mobile-pairing-manual small { color: var(--text-secondary); }
 .mobile-pairing-manual code { overflow-wrap: anywhere; letter-spacing: .08em; }
 .mobile-pairing-manual button { display: inline-flex; align-items: center; gap: 5px; flex: none; }
+.mobile-pairing-associations { display: grid; gap: 8px; margin: 10px 0; padding: 10px 12px; border: 1px solid var(--border-subtle); border-radius: 10px; }
+.mobile-pairing-association { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.mobile-pairing-association > span { min-width: 0; display: grid; gap: 2px; }
+.mobile-pairing-association small { color: var(--text-secondary); font-family: ui-monospace, monospace; }
+.mobile-pairing-association button { display: inline-flex; align-items: center; gap: 5px; flex: none; }
 .mobile-pairing-privacy { margin: 9px 0 !important; }
 .mobile-pairing-dialog > footer { display: flex; justify-content: flex-end; gap: 8px; }
 .mobile-pairing-dialog button:not(.mobile-pairing-icon-button) {
@@ -17601,6 +17606,7 @@ button.structured-activity-detail:hover {
 .mobile-pairing-dialog button:not(.mobile-pairing-icon-button):hover:not(:disabled) { background: var(--app-sidebar-hover); }
 .mobile-pairing-dialog button.primary { border-color: var(--app-accent); background: var(--app-accent); color: #fff; }
 .mobile-pairing-dialog button.primary:hover:not(:disabled) { background: var(--app-accent-strong); }
+.mobile-pairing-dialog button.danger { border-color: var(--danger, #c33); color: var(--danger, #c33); }
 .mobile-pairing-dialog button:disabled { cursor: not-allowed; opacity: .48; }
 .mobile-pairing-dialog button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .mobile-pairing-dialog .spin { animation: mobile-pairing-spin .9s linear infinite; }

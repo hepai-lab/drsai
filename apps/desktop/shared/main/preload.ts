@@ -422,6 +422,12 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:mobile-pairing-read", grantId),
   revokeMobilePairingGrant: (grantId: string) =>
     ipcRenderer.invoke("desktop:mobile-pairing-revoke", grantId),
+  listMobileAssociations: () =>
+    ipcRenderer.invoke("desktop:mobile-associations-list"),
+  revokeMobileAssociation: (associationId: string) =>
+    ipcRenderer.invoke("desktop:mobile-association-revoke", associationId),
+  revokeMobileRuntimeEnrollment: () =>
+    ipcRenderer.invoke("desktop:mobile-enrollment-revoke"),
   listSshHosts: () => ipcRenderer.invoke("desktop:ssh-hosts"),
   diagnoseSshHost: (hostAlias: string) => ipcRenderer.invoke("desktop:ssh-diagnose", hostAlias),
   inspectSshHostKeys: (hostAlias: string) => ipcRenderer.invoke("desktop:ssh-host-keys", hostAlias),

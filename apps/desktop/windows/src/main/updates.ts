@@ -14,7 +14,7 @@ import { dirname, join, resolve } from "path";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { promisify } from "util";
-import { app, type WebContents } from "electron";
+import { app, net, type WebContents } from "electron";
 import type { UpdateStatus } from "../shared/desktopApi";
 import { DRSAI_REPO } from "./paths";
 
@@ -480,7 +480,15 @@ async function fetchWithTrustedRedirects(
 ): Promise<Response> {
   let url = initialUrl;
   for (let redirects = 0; redirects <= 5; redirects += 1) {
-    const response = await fetch(url, { ...options, redirect: "manual" });
+    let response: Response;
+    try {
+      response = await net.fetch(url.href, { ...options, redirect: "manual" });
+    } catch (error) {
+      if (error instanceof Error && /redirect was cancelled/i.test(error.message)) {
+        throw updateError("redirect-blocked", `The ${label} request attempted a blocked redirect.`);
+      }
+      throw error;
+    }
     if (![301, 302, 303, 307, 308].includes(response.status)) return response;
     const location = response.headers.get("location");
     if (!location) throw updateError("redirect-missing", `The ${label} redirect has no destination.`);

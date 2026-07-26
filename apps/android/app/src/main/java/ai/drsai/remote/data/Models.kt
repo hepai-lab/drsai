@@ -250,6 +250,8 @@ sealed interface AppDestination {
     data object Chat : AppDestination
 }
 
+enum class AssociationState { IDLE, PENDING_LOGIN, ASSOCIATING, ASSOCIATED, AUTH_REQUIRED, FAILED }
+
 data class AppState(
     val destination: AppDestination = AppDestination.Splash,
     val user: User? = null,
@@ -284,6 +286,7 @@ data class AppState(
     val skills: List<SkillUiItem> = emptyList(),
     val requestedRoutePath: String? = null,
     val workbenchSessionLimits: Map<String, Int> = emptyMap(),
+    val associationState: AssociationState = AssociationState.IDLE,
 )
 
 internal fun sanitizeLegacyAssistantText(role: String, content: String): String {

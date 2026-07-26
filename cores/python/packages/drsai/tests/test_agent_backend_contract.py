@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from drsai.backend.agent_runtime import (
+from drsai.backend.runtime.agent import (
     AgentDefinitionStore,
     OpenDrSaiAgentBackend,
     RuntimeAgentService,
@@ -16,8 +16,8 @@ from drsai.backend.agent_runtime import (
     RuntimeToolDispatcher,
 )
 from drsai.backend.codex_adapter import CodexAdapter
-from drsai.backend.runtime_engine import RuntimeEngine, RuntimeEngineIdentity
-from drsai.backend.runtime_registry import RuntimeRegistry
+from drsai.backend.runtime.engine import RuntimeEngine, RuntimeEngineIdentity
+from drsai.backend.runtime.registry import RuntimeRegistry
 
 
 class TestBackend:
@@ -106,8 +106,11 @@ class AgentBackendContractTests(unittest.TestCase):
         return f"{asset_id}@1"
 
     def create_run(self, reference: str, key: str) -> dict[str, Any]:
+        session = self.engine.get_session(self.session["session_id"])
+        if session["agent_definition"] not in {None, reference}:
+            session = self.engine.create_session(self.workspace_record.workspace_id, f"contract-{key}")
         record, _ = self.engine.create_run(
-            self.session["session_id"], reference, key, self.store.load(reference).backend
+            session["session_id"], reference, key, self.store.load(reference).backend
         )
         return record
 
@@ -211,6 +214,31 @@ class AgentBackendContractTests(unittest.TestCase):
         self.assertEqual(open_calls, [])
         self.assertEqual(self.engine.get_run(run["run_id"])["status"], "failed")
 
+    def test_twenty_concurrent_cancels_invoke_backend_once(self) -> None:
+        client = FakeCodexClient()
+        service = self.service(
+            OpenDrSaiAgentBackend(lambda *_: {"done": True}),
+            CodexAdapter(client),
+        )
+        run = self.create_run(self.definition("codex-cancel", "codex"), "codex-cancel")
+        self.engine.transition_run(run["run_id"], "running")
+
+        async def cancel_all():
+            return await asyncio.gather(*(
+                service.cancel(run["run_id"])
+                for _ in range(20)
+            ))
+
+        results = asyncio.run(cancel_all())
+        self.assertEqual({row["status"] for row in results}, {"cancelled"})
+        self.assertEqual(client.cancelled, [run["run_id"]])
+        event_types = [
+            event["type"]
+            for event in self.engine.list_events(run["run_id"])
+        ]
+        self.assertEqual(event_types.count("run.cancel_requested"), 1)
+        self.assertEqual(event_types.count("run.cancelled"), 1)
+
     def test_session_archive_is_mirrored_only_to_its_codex_backend(self) -> None:
         client = FakeCodexClient()
         service = self.service(OpenDrSaiAgentBackend(lambda *_: {"done": True}), CodexAdapter(client))
@@ -223,15 +251,21 @@ class AgentBackendContractTests(unittest.TestCase):
 
         self.assertEqual(client.archived_sessions, [(session["session_id"], True), (session["session_id"], False)])
 
-    def test_session_archive_rejects_mixed_backend_history(self) -> None:
+    def test_session_rejects_mixed_backend_history_before_archive(self) -> None:
         client = FakeCodexClient()
         service = self.service(OpenDrSaiAgentBackend(lambda *_: {"done": True}), CodexAdapter(client))
-        self.create_run(self.definition("archive-open", "opendrsai"), "archive-open")
-        self.create_run(self.definition("archive-codex", "codex"), "archive-codex")
+        open_reference = self.definition("archive-open", "opendrsai")
+        self.engine.create_run(self.session["session_id"], open_reference, "archive-open", "opendrsai")
+        codex_reference = self.definition("archive-codex", "codex")
 
-        with self.assertRaises(RuntimeExecutionError) as caught:
-            asyncio.run(service.archive_session(self.session["session_id"], archived=True))
-        self.assertEqual(caught.exception.code, "session_backend_ambiguous")
+        with self.assertRaisesRegex(ValueError, "another Agent Definition"):
+            self.engine.create_run(
+                self.session["session_id"],
+                codex_reference,
+                "archive-codex",
+                "codex",
+            )
+        asyncio.run(service.archive_session(self.session["session_id"], archived=True))
         self.assertEqual(client.archived_sessions, [])
 
     def test_codex_terminal_errors_map_to_runtime_terminal_state_and_timestamps(self) -> None:

@@ -51,6 +51,51 @@ class RelayDiscoveryClientTest {
         assertNull(empty.nextCursor)
     }
 
+    @Test fun `workspace page sends bounded limit and opaque cursor`() = runTest {
+        server.enqueue(MockResponse().setBody("""
+            {"items":[{"runtime_id":"rt-a","workspace_id":"active","display_name":"Active",
+            "lifecycle":"active","revision":3,"updated_at":"2026-07-26T10:00:00Z"}],
+            "next_cursor":"opaque-page-two"}
+        """.trimIndent()))
+        val service = HttpRelayDiscoveryService(server.url("/").toString(), { "token" })
+
+        val page = service.listWorkspacePage(
+            RuntimeId("rt-a"),
+            cursor = "opaque-page-one",
+            limit = 1,
+        )
+
+        assertEquals("opaque-page-two", page.nextCursor)
+        server.takeRequest().requestUrl?.apply {
+            assertEquals("opaque-page-one", queryParameter("cursor"))
+            assertEquals("1", queryParameter("limit"))
+            assertEquals("active", queryParameter("lifecycle"))
+        }
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `workspace page rejects invalid limit before network`() = runTest {
+        HttpRelayDiscoveryService(server.url("/").toString(), { "token" })
+            .listWorkspacePage(RuntimeId("rt-a"), limit = 0)
+    }
+
+    @Test fun `workspace lifecycle is parsed and only active rows survive defensively`() = runTest {
+        server.enqueue(MockResponse().setBody("""
+            {"items":[
+              {"runtime_id":"rt-a","workspace_id":"active","display_name":"Active","lifecycle":"active","revision":3,"updated_at":"2026-07-26T10:00:00Z"},
+              {"runtime_id":"rt-a","workspace_id":"archived","display_name":"Archived","lifecycle":"archived","revision":4,"updated_at":"2026-07-26T11:00:00Z"},
+              {"runtime_id":"rt-a","workspace_id":"removed","display_name":"Removed","lifecycle":"removed","revision":5,"updated_at":"2026-07-26T12:00:00Z"}
+            ],"next_cursor":null}
+        """.trimIndent()))
+
+        val page = HttpRelayDiscoveryService(server.url("/").toString(), { "token" })
+            .listWorkspaces(RuntimeId("rt-a"))
+
+        assertEquals(listOf("active"), page.items.map { it.workspaceId.value })
+        assertEquals(3, page.items.single().revision)
+        assertEquals("active", server.takeRequest().requestUrl?.queryParameter("lifecycle"))
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun `workspace response from another runtime fails closed`() = runTest {
         server.enqueue(MockResponse().setBody("""
@@ -132,6 +177,45 @@ class RelayDiscoveryClientTest {
         assertEquals("Bearer fresh", server.takeRequest().getHeader("Authorization"))
     }
 
+    @Test fun `user can revoke only the selected runtime association`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(
+            """{"association_id":"association-one","runtime_id":"runtime-one","status":"revoked","revoked_at":"2026-07-26T00:00:00Z"}"""
+        ))
+        val service = HttpRelayDiscoveryService(server.url("/").toString(), { "token" })
+
+        service.revokeAssociation(RuntimeId("runtime-one"))
+
+        server.takeRequest().apply {
+            assertEquals("DELETE", method)
+            assertEquals("/v1/associations/runtime-one", path)
+            assertEquals("Bearer token", getHeader("Authorization"))
+            assertNull(getHeader("X-Subject"))
+        }
+    }
+
+    @Test fun `association revoke refreshes oidc once and preserves structured failure`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(401))
+        server.enqueue(MockResponse().setResponseCode(403).setBody(
+            """{"code":"association_required","correlation_id":"revoke-correlation"}"""
+        ))
+        var refreshes = 0
+        val service = HttpRelayDiscoveryService(server.url("/").toString(), { "expired" }, {
+            refreshes += 1
+            "fresh"
+        })
+
+        val failure = runCatching {
+            service.revokeAssociation(RuntimeId("runtime-one"))
+        }.exceptionOrNull() as RelayHttpException
+
+        assertEquals(1, refreshes)
+        assertEquals(403, failure.status)
+        assertEquals("association_required", failure.errorCode)
+        assertEquals("revoke-correlation", failure.correlationId)
+        assertEquals("Bearer expired", server.takeRequest().getHeader("Authorization"))
+        assertEquals("Bearer fresh", server.takeRequest().getHeader("Authorization"))
+    }
+
     @Test fun `association errors have stable user messages`() {
         assertEquals("二维码已过期，请在电脑端刷新后重试", associationErrorMessage(RelayHttpException(400, "c", "access_grant_expired")))
         assertEquals("二维码已使用，请在电脑端刷新后重试", associationErrorMessage(RelayHttpException(400, "c", "access_grant_consumed")))
@@ -153,9 +237,9 @@ class RelayDiscoveryClientTest {
 
     @Test fun `shared pairing fixtures parse without drift`() {
         val candidates = listOf(
-            File("../../../protocol/relay/mobile-pairing-fixtures.json"),
-            File("../../protocol/relay/mobile-pairing-fixtures.json"),
-            File("protocol/relay/mobile-pairing-fixtures.json"),
+            File("../../../cores/protocol/relay/mobile-pairing-fixtures.json"),
+            File("../../cores/protocol/relay/mobile-pairing-fixtures.json"),
+            File("cores/protocol/relay/mobile-pairing-fixtures.json"),
         )
         val fixtureFile = candidates.firstOrNull(File::isFile) ?: error("shared pairing fixtures not found")
         val fixtures = JSONObject(fixtureFile.readText())
@@ -169,5 +253,28 @@ class RelayDiscoveryClientTest {
             kotlin.runCatching { parseAccessGrantCode(invalid.getString(index)) }
                 .onSuccess { error("invalid shared fixture accepted") }
         }
+    }
+
+    @Test fun `shared runtime directory fixture preserves frozen identity fields`() = runTest {
+        val candidates = listOf(
+            File("../../../cores/protocol/relay/runtime-directory-fixtures.json"),
+            File("../../cores/protocol/relay/runtime-directory-fixtures.json"),
+            File("cores/protocol/relay/runtime-directory-fixtures.json"),
+        )
+        val fixtureFile = candidates.firstOrNull(File::isFile)
+            ?: error("shared runtime directory fixture not found")
+        val fixture = JSONObject(fixtureFile.readText()).getJSONObject("runtime_list")
+        server.enqueue(MockResponse().setBody(fixture.toString()))
+
+        val runtime = HttpRelayDiscoveryService(server.url("/").toString(), { "token" })
+            .listRuntimes()
+            .items
+            .single()
+
+        assertEquals("runtime-fixture", runtime.reference.runtimeId.value)
+        assertEquals("Fixture Windows", runtime.reference.displayName)
+        assertEquals(RemoteConnectionState.ONLINE, runtime.state)
+        assertEquals(7L, runtime.connectionGeneration)
+        assertEquals(setOf("workspace.list", "session.list"), runtime.capabilities)
     }
 }

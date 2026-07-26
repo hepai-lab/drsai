@@ -12,7 +12,7 @@ const resultPath = join(cernDir, "packaged-presentation-action-h3-numeric-tracea
 const manifestPath = join(cernDir, "packaged-generated-manager-zh-h3-numeric-traceability.provenance.json");
 const sourcePdf = resolve(process.env.OPENDRSAI_CERN_PDF || "C:/tmp/WLCG-20260715-WLCG-talk-IHEP-visit.pdf");
 const python = resolve(process.env.OPENDRSAI_PDF_PYTHON || "C:/Users/win11/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe");
-const parser = join(repo, "cores/python/packages/drsai/src/drsai/backend/presentation_pdf.py");
+const parser = join(repo, "cores/python/packages/drsai/src/drsai/content/pdf/presentation.py");
 const fixture = JSON.parse(readFileSync(join(repo, "tests/fixtures/product/presentation-report-wlcg.json"), "utf8"));
 const numericSourcePath = join(goldenDir, "numeric-source.csv");
 for (const path of [resultPath, manifestPath, sourcePdf, numericSourcePath, join(goldenDir, "numeric-report.md")]) {

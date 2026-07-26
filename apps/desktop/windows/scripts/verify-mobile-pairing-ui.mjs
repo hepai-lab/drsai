@@ -26,6 +26,7 @@ const checks = [
   ["keyboard focus containment", component.includes('event.key === "Escape"') && component.includes('event.key !== "Tab"') && component.includes("focusable")],
   ["minimum IPC exposure", preload.includes("desktop:mobile-pairing-readiness") && preload.includes("desktop:mobile-pairing-create") && preload.includes("desktop:mobile-pairing-read") && preload.includes("desktop:mobile-pairing-revoke")],
   ["trusted IPC handlers", main.includes('secureHandle("desktop:mobile-pairing-create"') && main.includes("mobilePairingControllerFor(event.sender)")],
+  ["association and device revocation", component.includes("listMobileAssociations") && component.includes("revokeMobileAssociation") && component.includes("revokeMobileRuntimeEnrollment") && preload.includes("desktop:mobile-association-revoke") && main.includes('secureHandle("desktop:mobile-enrollment-revoke"')],
   ["responsive and reduced-motion CSS", styles.includes(".mobile-pairing-dialog") && styles.includes("prefers-reduced-motion") && styles.includes("max-width: 520px")],
   ["opaque theme-aware modal tokens", styles.includes("--surface-raised: var(--app-card-bg)") && styles.includes("--app-panel: var(--app-card-bg)") && styles.includes("--text-primary: var(--app-text-primary)")],
   ["automatic stale Runtime repair", main.includes("repairMobilePairingRuntime") && main.includes("await stopGateway()") && main.includes("await startInstall(sender") && main.includes("await client.getMobilePairingReadiness()")],

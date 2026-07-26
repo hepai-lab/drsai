@@ -6,6 +6,8 @@
 ########################
 # 项目特定文件
 ########################
+release
+.tmp-runtime-inspect
 .pnpm-store
 .tmp-gateway.pid
 .tmp/
@@ -314,3 +316,7 @@ apps/desktop/macos/native/OpenDrSaiNativeHelper/.build/
 # Android acceptance-test artifacts and device screenshots are generated locally.
 docs/android/acceptance/**/device/*.png
 docs/android/acceptance/**/emulator-results/
+device.png
+
+# Local application screenshots are review artifacts, not product assets.
+assets/apps/

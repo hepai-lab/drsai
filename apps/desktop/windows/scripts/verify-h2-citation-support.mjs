@@ -12,7 +12,7 @@ const resultPath = join(cernEvidenceDir, "packaged-presentation-action-h2-citati
 const manifestPath = join(cernEvidenceDir, "packaged-generated-manager-zh-h2-citation-support.provenance.json");
 const sourcePdf = resolve(process.env.OPENDRSAI_CERN_PDF || "C:/tmp/WLCG-20260715-WLCG-talk-IHEP-visit.pdf");
 const python = resolve(process.env.OPENDRSAI_PDF_PYTHON || "C:/Users/win11/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe");
-const parser = join(repo, "cores/python/packages/drsai/src/drsai/backend/presentation_pdf.py");
+const parser = join(repo, "cores/python/packages/drsai/src/drsai/content/pdf/presentation.py");
 const fixture = JSON.parse(readFileSync(join(repo, "tests/fixtures/product/presentation-report-wlcg.json"), "utf8"));
 for (const path of [resultPath, manifestPath, sourcePdf, join(goldenEvidenceDir, "paper-source.md"), join(goldenEvidenceDir, "synthesis-sources.md")]) {
   assert(existsSync(path), `H2 evidence is missing: ${path}. Run npm run verify:packaged-h2-citation-support first.`);

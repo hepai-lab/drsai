@@ -56,7 +56,7 @@ write_definition()
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 from drsai.backend import gateway
-from drsai.backend.runtime_security import SecureWorkspaceFS, SecurityError
+from drsai.backend.runtime.security import SecureWorkspaceFS, SecurityError
 from drsai.platform_auth import revoke_gateway_instance_token
 
 

@@ -3165,7 +3165,10 @@ async function repairMobilePairingRuntime(
     await client.registerMobilePairingRuntime({
       registrationCode,
       relayHttpsUrl: relayBaseUrl,
-      displayName: `OpenDrSai Desktop (${hostname().slice(0, 64) || "Windows"})`,
+      displayName: hostname()
+        .trim()
+        .replace(/[^A-Za-z0-9._-]/g, "-")
+        .slice(0, 64) || "Windows",
     });
 
     // Registration is persisted by Runtime. Restart once so its outbound WSS
@@ -4069,6 +4072,15 @@ function registerIpc(): void {
   );
   secureHandle("desktop:mobile-pairing-revoke", (event, grantId: string) =>
     mobilePairingControllerFor(event.sender).revoke(grantId),
+  );
+  secureHandle("desktop:mobile-associations-list", (event) =>
+    mobilePairingControllerFor(event.sender).associations(),
+  );
+  secureHandle("desktop:mobile-association-revoke", (event, associationId: string) =>
+    mobilePairingControllerFor(event.sender).revokeAssociation(associationId),
+  );
+  secureHandle("desktop:mobile-enrollment-revoke", (event) =>
+    mobilePairingControllerFor(event.sender).revokeEnrollment(),
   );
   secureHandle(
     "desktop:terminal-create",

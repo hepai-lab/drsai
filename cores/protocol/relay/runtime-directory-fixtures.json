@@ -1,0 +1,37 @@
+{
+  "runtime_list": {
+    "items": [
+      {
+        "runtime": {
+          "runtime_id": "runtime-fixture",
+          "instance_id": "instance-fixture",
+          "version": "2.0.0",
+          "protocol_version": "owop/1",
+          "status": "online",
+          "connection_generation": 7,
+          "last_seen_at": "2026-07-26T05:34:21Z"
+        },
+        "display_name": "Fixture Windows",
+        "capabilities": [
+          "workspace.list",
+          "session.list"
+        ]
+      }
+    ],
+    "next_cursor": null
+  },
+  "runtime_detail": {
+    "runtime_id": "runtime-fixture",
+    "instance_id": "instance-fixture",
+    "version": "2.0.0",
+    "protocol_version": "owop/1",
+    "status": "online",
+    "connection_generation": 7,
+    "last_seen_at": "2026-07-26T05:34:21Z",
+    "display_name": "Fixture Windows",
+    "capabilities": [
+      "workspace.list",
+      "session.list"
+    ]
+  }
+}

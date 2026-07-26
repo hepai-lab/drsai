@@ -13,6 +13,7 @@ const updateMainSource = readFileSync(join(root, "src", "main", "updates.ts"), "
 const updaterSource = readFileSync(join(root, "resources", "update", "update-opendrsai.ps1"), "utf8");
 assert(updateMainSource.includes('"https://download-opendrsai.ihep.ac.cn/channels/beta/latest-windows.json"'), "Desktop updater does not default to the OpenDrSai beta channel manifest.");
 assert(updateMainSource.includes('"download-opendrsai.ihep.ac.cn"'), "Desktop updater does not trust the OpenDrSai CDN host.");
+assert(updateMainSource.includes("net.fetch("), "Desktop updater does not use Electron's system-trusted network stack.");
 assert(updateMainSource.includes("OPENDRSAI_UPDATE_DATA_ROOT") && updateMainSource.includes('join(localAppData, "OpenDrSai", "updates")'), "Update cache is not rooted in writable LocalAppData.");
 assert(updateMainSource.includes("-Verb RunAs") && updateMainSource.includes("launchElevatedUpdater"), "Program Files update apply does not request administrator approval.");
 assert(updaterSource.includes('Join-Path (Split-Path -Parent $StatePath) "health-$HealthToken.ok"'), "Update health marker still depends on the protected install root.");
@@ -116,7 +117,7 @@ try {
   runtimeRoute = "/redirect-runtime";
   const redirect = await runApp("untrusted-redirect", join(testRoot, "untrusted-redirect-install"));
   assert(redirect.exitCode !== 0, "Untrusted runtime redirect unexpectedly succeeded.");
-  assert(redirect.result?.details?.downloaded?.errorCode === "untrusted-host", `Untrusted redirect was not rejected before download: ${JSON.stringify(redirect.result)}`);
+  assert(redirect.result?.details?.downloaded?.errorCode === "redirect-blocked", `Untrusted redirect was not rejected before download: ${JSON.stringify(redirect.result)}`);
 
   runtimeRoute = "/OpenDrSaiRuntime-win-x64.zip";
   minimumUpdaterVersion = targetVersion;

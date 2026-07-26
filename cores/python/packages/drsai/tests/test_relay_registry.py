@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -8,7 +9,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from drsai.relay.generated_contract import CAPABILITIES, PROTOCOL_VERSION
-from drsai.relay.models import RuntimeStatus, Workspace
+from drsai.relay.models import ResourceLifecycle, RuntimeStatus, Workspace
 from drsai.relay.registry import RelayRegistry, RelayRegistryError
 
 
@@ -58,6 +59,54 @@ def test_access_grant_only_associates_existing_runtime_and_is_single_use() -> No
     assert registry.list_runtimes("bob")[0] == []
 
 
+def test_access_grant_has_exactly_one_winner_under_concurrent_consumption() -> None:
+    registry = RelayRegistry()
+    _, runtime_id, token = registered(registry)
+    grant_id, code, _ = registry.issue_access_grant(runtime_id, token)
+
+    def consume(index: int) -> tuple[str, str]:
+        try:
+            return "ok", registry.associate(f"subject-{index}", code)
+        except RelayRegistryError as exc:
+            return "error", exc.code
+
+    with ThreadPoolExecutor(max_workers=32) as pool:
+        results = list(pool.map(consume, range(100)))
+
+    assert results.count(("ok", runtime_id)) == 1
+    assert [result for result in results if result[0] == "error"] == [
+        ("error", "access_grant_consumed")
+    ] * 99
+    assert registry.access_grant_status(runtime_id, token, grant_id)[0] == "consumed"
+    assert len([entry for entry in registry.audit if entry["action"] == "runtime.associate"]) == 1
+
+
+def test_association_revocation_is_subject_and_runtime_scoped() -> None:
+    registry = RelayRegistry()
+    _, runtime_a, token_a = registered(registry)
+    _, runtime_b, token_b = registered(registry)
+    grant_a, code_a, _ = registry.issue_access_grant(runtime_a, token_a)
+    _, code_b, _ = registry.issue_access_grant(runtime_b, token_b)
+    registry.associate("alice", code_a)
+    registry.associate("alice", code_b)
+
+    assert registry.access_grant_subject_summary(runtime_a, token_a, grant_a).startswith("sub_")
+    association_a = registry.list_associations(runtime_a, token_a)[0]
+    assert "subject" not in association_a
+    with pytest.raises(RelayRegistryError) as cross_runtime:
+        registry.revoke_runtime_association(
+            runtime_b, token_b, str(association_a["association_id"])
+        )
+    assert cross_runtime.value.code == "association_not_found"
+
+    revoked = registry.revoke_association("alice", runtime_a)
+    assert revoked["status"] == "revoked"
+    assert registry.list_runtimes("alice")[0][0].runtime.runtime_id == runtime_b
+    with pytest.raises(RelayRegistryError) as repeated:
+        registry.revoke_association("alice", runtime_a)
+    assert repeated.value.code == "association_required"
+
+
 def test_access_grant_refresh_revokes_previous_and_revoke_is_idempotent() -> None:
     registry = RelayRegistry()
     _, runtime_id, token = registered(registry)
@@ -101,6 +150,24 @@ def test_signed_heartbeat_rejects_replay_and_rotates_instance_generation() -> No
         heartbeat(registry, private, runtime_id, token)
     second = heartbeat(registry, private, runtime_id, token, "instance-b", "nonce-b")
     assert second.connection_generation == first.connection_generation + 1
+
+
+def test_signed_heartbeat_nonce_has_one_winner_under_concurrency() -> None:
+    registry = RelayRegistry()
+    private, runtime_id, token = registered(registry)
+
+    def send(_: int) -> str:
+        try:
+            heartbeat(registry, private, runtime_id, token, nonce="shared-nonce")
+            return "ok"
+        except RelayRegistryError as exc:
+            return exc.code
+
+    with ThreadPoolExecutor(max_workers=32) as pool:
+        results = list(pool.map(send, range(100)))
+
+    assert results.count("ok") == 1
+    assert results.count("heartbeat_replay") == 99
 
 
 def test_bad_signature_and_unknown_capability_are_rejected() -> None:
@@ -153,6 +220,29 @@ def test_workspace_scope_is_runtime_qualified_and_client_path_is_absent() -> Non
     assert registry.list_workspaces("alice", runtime_b)[0][0].display_name == "B"
     with pytest.raises(Exception):
         Workspace(runtime_id=runtime_a, workspace_id="x", display_name="X", canonical_path="C:/secret")
+
+
+def test_workspace_lifecycle_defaults_to_active_and_tombstones_do_not_reappear() -> None:
+    registry = RelayRegistry()
+    _, runtime_id, token = registered(registry)
+    _, code, _ = registry.issue_access_grant(runtime_id, token)
+    registry.associate("alice", code)
+    registry.publish_workspaces(runtime_id, token, [
+        Workspace(runtime_id=runtime_id, workspace_id="active", display_name="Active"),
+        Workspace(runtime_id=runtime_id, workspace_id="archived", display_name="Archived",
+                  lifecycle=ResourceLifecycle.ARCHIVED, revision=2),
+        Workspace(runtime_id=runtime_id, workspace_id="removed", display_name="Removed",
+                  lifecycle=ResourceLifecycle.REMOVED, revision=3),
+    ])
+
+    assert [item.workspace_id for item in registry.list_workspaces("alice", runtime_id)[0]] == ["active"]
+    assert [item.workspace_id for item in registry.list_workspaces(
+        "alice", runtime_id, lifecycle=ResourceLifecycle.ARCHIVED)[0]] == ["archived"]
+    with pytest.raises(RelayRegistryError) as archived:
+        registry.authorize_workspace("alice", runtime_id, "archived")
+    assert archived.value.code == "workspace_forbidden"
+    with pytest.raises(RelayRegistryError):
+        registry.authorize_workspace("alice", runtime_id, "removed")
 
 
 def test_pagination_search_offline_and_revoke_audit() -> None:

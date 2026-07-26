@@ -120,6 +120,38 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
             .onFailure { failure -> mutableState.update { it.copy(refreshing = false, error = associationErrorMessage(failure)) } }
     }
 
+    fun revokeAssociation(runtimeId: ai.drsai.remote.remote.model.RuntimeId) =
+        viewModelScope.launch(Dispatchers.IO) {
+            mutableState.update { it.copy(refreshing = true, error = null) }
+            runCatching { relay.revokeAssociation(runtimeId) }
+                .onSuccess {
+                    mutableState.update { state ->
+                        state.copy(
+                            computers = state.computers.filterNot { it.runtimeId == runtimeId },
+                            recentlyAssociatedRuntimeId = state.recentlyAssociatedRuntimeId
+                                ?.takeUnless { it == runtimeId },
+                            refreshing = false,
+                            stale = false,
+                        )
+                    }
+                    refresh()
+                }
+                .onFailure { failure ->
+                    mutableState.update {
+                        it.copy(
+                            refreshing = false,
+                            error = if (failure is ai.drsai.remote.remote.data.RelayHttpException &&
+                                failure.status == 401
+                            ) {
+                                "HepAI 登录已过期，请重新登录"
+                            } else {
+                                "解除关联失败，请重试"
+                            },
+                        )
+                    }
+                }
+        }
+
     override fun onCleared() {
         connectivity.close()
         super.onCleared()

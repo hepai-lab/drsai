@@ -22,10 +22,34 @@ const client = {
     revokes += 1;
     return { grant_id: grantId, expires_at: expiry(), status: "revoked" };
   },
+  async listMobileAssociations() {
+    return [{
+      association_id: "assoc_00000000000000000000000000000000",
+      subject_summary: "sub_000000000000",
+      status: "active",
+      created_at: new Date().toISOString(),
+      revoked_at: null,
+    }];
+  },
+  async revokeMobileAssociation(associationId) {
+    return {
+      association_id: associationId,
+      subject_summary: "sub_000000000000",
+      status: "revoked",
+      created_at: new Date().toISOString(),
+      revoked_at: new Date().toISOString(),
+    };
+  },
+  async revokeMobileRuntimeEnrollment() {
+    return { runtime_id: "runtime_test", status: "revoked", revoked_at: new Date().toISOString() };
+  },
 };
 
 const controller = new MobilePairingController(async () => client);
 assert.equal((await controller.readiness()).state, "ready");
+const association = (await controller.associations()).at(0);
+assert.equal(association.subject_summary, "sub_000000000000");
+assert.equal((await controller.revokeAssociation(association.association_id)).status, "revoked");
 const [first, duplicate] = await Promise.all([controller.create(), controller.create()]);
 assert.equal(creates, 1, "concurrent creation must be coalesced");
 assert.equal(first.grant_id, duplicate.grant_id);

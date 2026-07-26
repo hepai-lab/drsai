@@ -4244,6 +4244,20 @@ export interface DesktopMobilePairingGrant {
   payload?: string;
 }
 
+export interface DesktopMobileAssociation {
+  association_id: string;
+  subject_summary: string;
+  status: "active" | "revoked";
+  created_at: string;
+  revoked_at?: string | null;
+}
+
+export interface DesktopRuntimeEnrollmentRevocation {
+  runtime_id: string;
+  status: "revoked";
+  revoked_at?: string | null;
+}
+
 export interface DesktopApi {
   getPlatformDescriptor(): Promise<DesktopPlatformDescriptor>;
   onOpenRequest(callback: (request: DesktopOpenRequest) => void): () => void;
@@ -4314,6 +4328,9 @@ export interface DesktopApi {
   createMobilePairingGrant(): Promise<DesktopMobilePairingGrant>;
   getMobilePairingGrant(grantId: string): Promise<DesktopMobilePairingGrant>;
   revokeMobilePairingGrant(grantId: string): Promise<DesktopMobilePairingGrant>;
+  listMobileAssociations(): Promise<DesktopMobileAssociation[]>;
+  revokeMobileAssociation(associationId: string): Promise<DesktopMobileAssociation>;
+  revokeMobileRuntimeEnrollment(): Promise<DesktopRuntimeEnrollmentRevocation>;
   listSshHosts(): Promise<RemoteSshHost[]>;
   diagnoseSshHost(hostAlias: string): Promise<RemoteSshConnectivityResult>;
   inspectSshHostKeys(hostAlias: string): Promise<RemoteSshHostKey[]>;

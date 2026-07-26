@@ -19,6 +19,9 @@ export function registerMacosCatalogIpc(
   ipcMain.handle("desktop:mobile-pairing-create", (event) => dependencies.mobilePairingControllerFor(event.sender).create());
   ipcMain.handle("desktop:mobile-pairing-read", (event, grantId: string) => dependencies.mobilePairingControllerFor(event.sender).read(grantId));
   ipcMain.handle("desktop:mobile-pairing-revoke", (event, grantId: string) => dependencies.mobilePairingControllerFor(event.sender).revoke(grantId));
+  ipcMain.handle("desktop:mobile-associations-list", (event) => dependencies.mobilePairingControllerFor(event.sender).associations());
+  ipcMain.handle("desktop:mobile-association-revoke", (event, associationId: string) => dependencies.mobilePairingControllerFor(event.sender).revokeAssociation(associationId));
+  ipcMain.handle("desktop:mobile-enrollment-revoke", (event) => dependencies.mobilePairingControllerFor(event.sender).revokeEnrollment());
   ipcMain.handle("desktop:list-threads", () => listThreads());
   ipcMain.handle("desktop:list-agents", (_event, options) => listAgents(options && typeof options === "object" && (options as { refresh?: unknown }).refresh === true ? { refresh: true } : {}));
   ipcMain.handle("desktop:get-platform-agent-status", () => getPlatformAgentStatus());

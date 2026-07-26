@@ -20,6 +20,9 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 data class RemoteCapabilityUi(val name: String, val available: Boolean)
 data class RemoteSessionUi(val reference: RemoteSessionRef, val lastRunStatus: String?, val updatedAtLabel: String,
                            val lifecycle: String = "active")
+fun activeRemoteSessions(items: List<RemoteSessionUi>): List<RemoteSessionUi> = items.filter {
+    it.lifecycle == "active" && it.reference.lifecycle == RemoteResourceLifecycle.ACTIVE
+}
 data class WorkspaceSessionsUiState(
     val runtimeName: String,
     val workspaceName: String,
@@ -42,6 +45,7 @@ fun WorkspaceSessionsScreen(state: WorkspaceSessionsUiState, onBack: () -> Unit,
                             onOpen: (RemoteSessionRef) -> Unit, onResume: () -> Unit = onRefresh,
                             onOpenCapability: (String) -> Unit = {}, onConfirmInstructions: () -> Unit = {}) {
     var agentPickerOpen by remember { mutableStateOf(false) }
+    val activeSessions = activeRemoteSessions(state.sessions)
     LifecycleEventEffect(Lifecycle.Event.ON_START) { onResume() }
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -83,13 +87,12 @@ fun WorkspaceSessionsScreen(state: WorkspaceSessionsUiState, onBack: () -> Unit,
         state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(state.sessions, key = { it.reference.sessionId.value }) { session ->
-                Card(onClick = { onOpen(session.reference) }, enabled = session.lifecycle == "active") {
+            items(activeSessions, key = { it.reference.sessionId.value }) { session ->
+                Card(onClick = { onOpen(session.reference) }) {
                     Column(Modifier.fillMaxWidth().padding(14.dp)) {
                         Text(session.reference.title, fontWeight = FontWeight.SemiBold)
                         Text("${session.reference.backendId} · ${session.lastRunStatus ?: "尚未运行"} · ${session.updatedAtLabel}",
                             style = MaterialTheme.typography.bodySmall)
-                        if (session.lifecycle != "active") Text(session.lifecycle, color = MaterialTheme.colorScheme.error)
                     }
                 }
             }
@@ -172,6 +175,7 @@ data class RemoteChatUiState(
     val activeRunId: RunId? = null,
     val artifacts: List<RemoteArtifactUi> = emptyList(),
     val scopeKey: String = "",
+    val connectionState: RemoteConnectionState = RemoteConnectionState.ONLINE,
 )
 
 @Composable
@@ -193,8 +197,8 @@ fun RemoteChatScreen(state: RemoteChatUiState, onBack: () -> Unit, onSend: (Stri
             items(state.messages, key = { it.id }) { message ->
                 Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
                     Column(Modifier.fillMaxWidth().padding(12.dp)) {
-                        Text(if (message.role == "user") "你" else "OpenDrSai", fontWeight = FontWeight.SemiBold)
-                        Text(message.text)
+                        Text(remoteRoleLabel(message.role), fontWeight = FontWeight.SemiBold)
+                        Text(remoteMarkdown(message.text))
                         message.progress?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                     }
                 }

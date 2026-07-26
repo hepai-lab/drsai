@@ -7,8 +7,8 @@ import re
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
-from drsai.backend.agent_backend_bindings import AgentBackendBindingStore
-from drsai.backend.agent_runtime import RuntimeExecutionError, RuntimeRunContext
+from drsai.backend.runtime.agent_bindings import AgentBackendBindingStore
+from drsai.backend.runtime.agent import RuntimeExecutionError, RuntimeRunContext
 from drsai.backend.codex_adapter.jsonrpc_client import CodexJSONRPCClient
 
 

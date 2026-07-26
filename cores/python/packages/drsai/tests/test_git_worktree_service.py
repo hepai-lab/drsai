@@ -26,8 +26,8 @@ def load(name: str, filename: str):
     return module
 
 
-registry_module = load("drsai.backend.runtime_registry", "runtime_registry.py")
-service_module = load("drsai.backend.git_worktree_service", "git_worktree_service.py")
+registry_module = load("drsai.backend.runtime.registry", "runtime/registry.py")
+service_module = load("drsai.backend.workspace.git_worktree_service", "workspace/git_worktree_service.py")
 
 RuntimeRegistry = registry_module.RuntimeRegistry
 GitWorktreeService = service_module.GitWorktreeService

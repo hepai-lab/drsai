@@ -5,8 +5,8 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-schema = json.loads((ROOT / "protocol/relay/runtime-relay.schema.json").read_text(encoding="utf-8"))
-baseline = json.loads((ROOT / "protocol/relay/runtime-relay.compat.json").read_text(encoding="utf-8"))
+schema = json.loads((ROOT / "cores/protocol/relay/runtime-relay.schema.json").read_text(encoding="utf-8"))
+baseline = json.loads((ROOT / "cores/protocol/relay/runtime-relay.compat.json").read_text(encoding="utf-8"))
 
 checks = {
     "endpoints": set(schema["x-relay-endpoints"]),

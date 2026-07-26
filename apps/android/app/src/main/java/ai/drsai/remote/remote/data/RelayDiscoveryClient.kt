@@ -1,10 +1,12 @@
 package ai.drsai.remote.remote.data
 
 import ai.drsai.remote.remote.model.RemoteConnectionState
+import ai.drsai.remote.remote.model.RemoteResourceLifecycle
 import ai.drsai.remote.remote.model.RemoteRuntimeRef
 import ai.drsai.remote.remote.model.RemoteWorkspaceRef
 import ai.drsai.remote.remote.model.RuntimeId
 import ai.drsai.remote.remote.model.WorkspaceId
+import ai.drsai.remote.remote.model.activeOnly
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -21,12 +23,14 @@ data class DiscoveredRuntime(
     val protocolVersion: String,
     val connectionGeneration: Long,
     val state: RemoteConnectionState,
+    val capabilities: Set<String> = emptySet(),
 )
 
 interface RelayDiscoveryService {
     suspend fun listRuntimes(cursor: String? = null, query: String? = null): Page<DiscoveredRuntime>
     suspend fun listWorkspaces(runtimeId: RuntimeId, cursor: String? = null, query: String? = null): Page<RemoteWorkspaceRef>
     suspend fun associate(accessGrantPayload: String): RuntimeId
+    suspend fun revokeAssociation(runtimeId: RuntimeId)
 }
 
 class HttpRelayDiscoveryService(
@@ -54,15 +58,45 @@ class HttpRelayDiscoveryService(
                     "offline" -> RemoteConnectionState.OFFLINE
                     else -> RemoteConnectionState.INCOMPATIBLE
                 },
+                capabilities = item.optJSONArray("capabilities")
+                    ?.let { values ->
+                        (0 until values.length()).map(values::getString).toSet()
+                    }
+                    .orEmpty(),
             )
         }
 
-    override suspend fun listWorkspaces(runtimeId: RuntimeId, cursor: String?, query: String?): Page<RemoteWorkspaceRef> =
-        getPage("v1/runtimes/${runtimeId.value}/workspaces", cursor, query) { item ->
+    override suspend fun listWorkspaces(
+        runtimeId: RuntimeId,
+        cursor: String?,
+        query: String?,
+    ): Page<RemoteWorkspaceRef> = listWorkspacePage(runtimeId, cursor, query)
+
+    suspend fun listWorkspacePage(
+        runtimeId: RuntimeId,
+        cursor: String? = null,
+        query: String? = null,
+        limit: Int = 100,
+    ): Page<RemoteWorkspaceRef> {
+        require(limit in 1..100) { "relay_workspace_limit_invalid" }
+        return getPage(
+            "v1/runtimes/${runtimeId.value}/workspaces",
+            cursor,
+            query,
+            listOf("lifecycle" to "active", "limit" to limit.toString()),
+        ) { item ->
             val returnedRuntime = RuntimeId(item.getString("runtime_id"))
             require(returnedRuntime == runtimeId) { "relay_workspace_runtime_mismatch" }
-            RemoteWorkspaceRef(returnedRuntime, WorkspaceId(item.getString("workspace_id")), item.getString("display_name"))
-        }
+            RemoteWorkspaceRef(
+                returnedRuntime,
+                WorkspaceId(item.getString("workspace_id")),
+                item.getString("display_name"),
+                RemoteResourceLifecycle.fromWire(item.getString("lifecycle")),
+                item.getLong("revision"),
+                item.getString("updated_at"),
+            )
+        }.let { page -> page.copy(items = page.items.activeOnly()) }
+    }
 
     override suspend fun associate(accessGrantPayload: String): RuntimeId = withContext(Dispatchers.IO) {
         val code = parseAccessGrantCode(accessGrantPayload, pairingIssuer)
@@ -86,11 +120,44 @@ class HttpRelayDiscoveryService(
         }
     }
 
-    private suspend fun <T> getPage(path: String, cursor: String?, query: String?, decode: (JSONObject) -> T): Page<T> =
+    override suspend fun revokeAssociation(runtimeId: RuntimeId): Unit = withContext(Dispatchers.IO) {
+        require(runtimeId.value.isNotBlank()) { "runtime_id_required" }
+        val url = root.newBuilder()
+            .addPathSegments("v1/associations/${runtimeId.value}")
+            .build()
+        fun execute(token: String) = http.newCall(
+            Request.Builder().url(url)
+                .header("Authorization", "Bearer $token")
+                .delete()
+                .build()
+        ).execute()
+        val initialToken = accessToken()
+        var response = execute(initialToken)
+        if (response.code == 401) {
+            response.close()
+            val refreshed = refreshAfter(initialToken)
+            if (refreshed.isNullOrBlank()) {
+                throw RelayHttpException(401, null, "oidc_auth_invalid")
+            }
+            response = execute(refreshed)
+        }
+        response.use {
+            if (!response.isSuccessful) throw relayHttpException(response)
+        }
+    }
+
+    private suspend fun <T> getPage(
+        path: String,
+        cursor: String?,
+        query: String?,
+        extraQueries: List<Pair<String, String>> = emptyList(),
+        decode: (JSONObject) -> T,
+    ): Page<T> =
         withContext(Dispatchers.IO) {
             val url = root.newBuilder().addPathSegments(path).apply {
                 cursor?.let { addQueryParameter("cursor", it) }
                 query?.takeIf(String::isNotBlank)?.let { addQueryParameter("query", it) }
+                extraQueries.forEach { addQueryParameter(it.first, it.second) }
             }.build()
             val initialToken = accessToken()
             fun execute(token: String) = http.newCall(
@@ -151,13 +218,17 @@ fun parseAccessGrantCode(payload: String, expectedIssuer: String = "https://ai.i
     return code
 }
 
-private fun relayHttpException(response: okhttp3.Response): RelayHttpException {
+internal fun relayHttpException(response: okhttp3.Response): RelayHttpException {
     val raw = response.body?.string().orEmpty()
     val body = runCatching { JSONObject(raw) }.getOrNull()
+    val detail = body?.optJSONObject("detail")
     return RelayHttpException(
         response.code,
-        response.header("X-Correlation-Id") ?: body?.optString("correlation_id")?.takeIf(String::isNotBlank),
-        body?.optString("code")?.takeIf(String::isNotBlank),
+        response.header("X-Correlation-Id")
+            ?: body?.optString("correlation_id")?.takeIf(String::isNotBlank)
+            ?: detail?.optString("correlation_id")?.takeIf(String::isNotBlank),
+        body?.optString("code")?.takeIf(String::isNotBlank)
+            ?: detail?.optString("code")?.takeIf(String::isNotBlank),
     )
 }
 

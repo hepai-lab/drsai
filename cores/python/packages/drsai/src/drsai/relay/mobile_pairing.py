@@ -16,6 +16,8 @@ from .runtime_client import RuntimeCredential, RuntimeCredentialStore
 GRANT_ID = re.compile(r"^ag_[0-9a-f]{32}$")
 GRANT_CODE = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
 GRANT_STATUS = frozenset({"pending", "consumed", "expired", "revoked"})
+ASSOCIATION_ID = re.compile(r"^[A-Za-z0-9_.:-]{3,160}$")
+SUBJECT_SUMMARY = re.compile(r"^sub_[0-9a-f]{12}$")
 TRUSTED_RELAY_HOSTS = frozenset({"ai.ihep.ac.cn", "ai-dev.ihep.ac.cn"})
 
 
@@ -47,10 +49,36 @@ class MobilePairingGrant:
         return result
 
 
+@dataclass(frozen=True)
+class MobileAssociation:
+    association_id: str
+    subject_summary: str
+    status: str
+    created_at: datetime
+    revoked_at: datetime | None = None
+
+    def public(self) -> dict[str, Any]:
+        return {
+            "association_id": self.association_id,
+            "subject_summary": self.subject_summary,
+            "status": self.status,
+            "created_at": self.created_at.isoformat(),
+            "revoked_at": self.revoked_at.isoformat() if self.revoked_at else None,
+        }
+
+
 class MobilePairingTransport(Protocol):
     async def create(self, credential: RuntimeCredential) -> MobilePairingGrant: ...
     async def read(self, credential: RuntimeCredential, grant_id: str) -> MobilePairingGrant: ...
     async def revoke(self, credential: RuntimeCredential, grant_id: str) -> MobilePairingGrant: ...
+    async def list_associations(self, credential: RuntimeCredential) -> list[MobileAssociation]: ...
+    async def revoke_association(
+        self, credential: RuntimeCredential, association_id: str,
+    ) -> MobileAssociation: ...
+    async def revoke_enrollment(self, credential: RuntimeCredential) -> dict[str, Any]: ...
+    async def inject_connection_owner_restart(
+        self, credential: RuntimeCredential, ttl_seconds: int,
+    ) -> dict[str, Any]: ...
 
 
 def relay_https_from_wss(raw: str) -> str:
@@ -121,6 +149,144 @@ class AiohttpMobilePairingTransport:
         return await self._request(credential, "DELETE",
                                    f"/v1/runtimes/{credential.runtime_id}/access-grants/{grant_id}", False)
 
+    async def list_associations(self, credential: RuntimeCredential) -> list[MobileAssociation]:
+        body = await self._request_json(
+            credential, "GET", f"/v1/runtimes/{credential.runtime_id}/associations"
+        )
+        rows = body.get("items", []) if isinstance(body, dict) else body
+        if not isinstance(rows, list):
+            raise self._invalid_response()
+        return [self._decode_association(item) for item in rows]
+
+    async def revoke_association(
+        self, credential: RuntimeCredential, association_id: str,
+    ) -> MobileAssociation:
+        if not ASSOCIATION_ID.fullmatch(association_id):
+            raise MobilePairingError(
+                "association_id_invalid", "Association ID is invalid.",
+                retryable=False, action="refresh",
+            )
+        body = await self._request_json(
+            credential,
+            "DELETE",
+            f"/v1/runtimes/{credential.runtime_id}/associations/{association_id}",
+        )
+        return self._decode_association(body)
+
+    async def revoke_enrollment(self, credential: RuntimeCredential) -> dict[str, Any]:
+        body = await self._request_json(
+            credential, "DELETE", f"/v1/runtimes/{credential.runtime_id}/enrollment"
+        )
+        if not isinstance(body, dict) or body.get("runtime_id") != credential.runtime_id or body.get("status") != "revoked":
+            raise self._invalid_response()
+        return {"runtime_id": credential.runtime_id, "status": "revoked",
+                "revoked_at": body.get("revoked_at")}
+
+    async def inject_connection_owner_restart(
+        self, credential: RuntimeCredential, ttl_seconds: int,
+    ) -> dict[str, Any]:
+        if not 1 <= ttl_seconds <= 30:
+            raise MobilePairingError(
+                "fault_ttl_invalid", "Fault injection TTL is invalid.",
+                retryable=False, action="repair_test",
+            )
+        body = await self._request_json(
+            credential,
+            "POST",
+            f"/v1/runtimes/{credential.runtime_id}/fault-injections/connection-owner-restart",
+            json_body={"ttl_seconds": ttl_seconds},
+        )
+        if not isinstance(body, dict):
+            raise self._invalid_response()
+        recovery = body.get("recovery")
+        generation = body.get("generation")
+        try:
+            expires_at = datetime.fromisoformat(
+                str(body.get("expires_at", "")).replace("Z", "+00:00")
+            )
+        except ValueError as exc:
+            raise self._invalid_response() from exc
+        if (
+            body.get("runtime_id") != credential.runtime_id
+            or body.get("status") != "scheduled"
+            or not isinstance(body.get("fault_id"), str)
+            or not str(body["fault_id"]).startswith("fault_")
+            or not isinstance(generation, int)
+            or generation < 1
+            or expires_at.tzinfo is None
+            or not isinstance(recovery, dict)
+            or recovery.get("route_available_after_ttl") is not True
+            or recovery.get("presence_required") is not True
+            or recovery.get("event_replay_preserved") is not True
+            or recovery.get("required_generation") != generation + 1
+        ):
+            raise self._invalid_response()
+        return {
+            "fault_id": body["fault_id"],
+            "runtime_id": credential.runtime_id,
+            "status": "scheduled",
+            "generation": generation,
+            "expires_at": expires_at.isoformat(),
+            "recovery": {
+                "route_available_after_ttl": True,
+                "required_generation": generation + 1,
+                "presence_required": True,
+                "event_replay_preserved": True,
+            },
+        }
+
+    async def _request_json(
+        self, credential: RuntimeCredential, method: str, path: str,
+        json_body: dict[str, Any] | None = None,
+    ) -> Any:
+        last_error: MobilePairingError | None = None
+        for attempt in range(2):
+            correlation_id = str(uuid4())
+            try:
+                return await self._request_json_once(
+                    credential, method, path, correlation_id, json_body
+                )
+            except MobilePairingError as exc:
+                last_error = exc
+                if not exc.retryable or attempt == 1:
+                    raise
+        assert last_error is not None
+        raise last_error
+
+    async def _request_json_once(
+        self, credential: RuntimeCredential, method: str, path: str,
+        correlation_id: str, json_body: dict[str, Any] | None = None,
+    ) -> Any:
+        try:
+            async with self.session_factory(timeout=self.timeout, raise_for_status=False) as session:
+                request_args: dict[str, Any] = {
+                    "headers": {
+                        "X-Runtime-Token": credential.registration_token,
+                        "X-Correlation-ID": correlation_id,
+                    },
+                    "allow_redirects": False,
+                }
+                if json_body is not None:
+                    request_args["json"] = json_body
+                async with session.request(
+                    method, f"{self.root}{path}", **request_args
+                ) as response:
+                    if response.status >= 400:
+                        self._raise_http(
+                            response.status,
+                            response.headers.get("X-Correlation-ID") or correlation_id,
+                        )
+                    return await response.json()
+        except MobilePairingError:
+            raise
+        except (aiohttp.ClientConnectionError, aiohttp.ServerTimeoutError, TimeoutError) as exc:
+            raise MobilePairingError(
+                "relay_unavailable", "Runtime Relay is unavailable.",
+                retryable=True, action="retry", correlation_id=correlation_id,
+            ) from exc
+        except (aiohttp.ClientError, ValueError, TypeError) as exc:
+            raise self._invalid_response(correlation_id) from exc
+
     async def _request(self, credential: RuntimeCredential, method: str, path: str,
                        include_code: bool) -> MobilePairingGrant:
         last_error: MobilePairingError | None = None
@@ -189,6 +355,42 @@ class AiohttpMobilePairingTransport:
         return MobilePairingGrant(grant_id, code, expires_at, status)
 
     @staticmethod
+    def _decode_association(body: Any) -> MobileAssociation:
+        if not isinstance(body, dict):
+            raise AiohttpMobilePairingTransport._invalid_response()
+        association_id = str(body.get("association_id", ""))
+        subject_summary = str(body.get("subject_summary", ""))
+        status = str(body.get("status", ""))
+        try:
+            created_at = datetime.fromisoformat(
+                str(body.get("created_at", "")).replace("Z", "+00:00")
+            )
+            revoked_raw = body.get("revoked_at")
+            revoked_at = datetime.fromisoformat(
+                str(revoked_raw).replace("Z", "+00:00")
+            ) if revoked_raw else None
+        except ValueError as exc:
+            raise AiohttpMobilePairingTransport._invalid_response() from exc
+        if (
+            not ASSOCIATION_ID.fullmatch(association_id)
+            or not SUBJECT_SUMMARY.fullmatch(subject_summary)
+            or status not in {"active", "revoked"}
+            or (status == "active" and revoked_at is not None)
+            or (status == "revoked" and revoked_at is None)
+        ):
+            raise AiohttpMobilePairingTransport._invalid_response()
+        return MobileAssociation(
+            association_id, subject_summary, status, created_at, revoked_at
+        )
+
+    @staticmethod
+    def _invalid_response(correlation_id: str | None = None) -> MobilePairingError:
+        return MobilePairingError(
+            "relay_response_invalid", "Runtime Relay returned an invalid response.",
+            retryable=True, action="retry", correlation_id=correlation_id,
+        )
+
+    @staticmethod
     def _validate_grant_id(grant_id: str) -> None:
         if not GRANT_ID.fullmatch(grant_id):
             raise MobilePairingError("access_grant_id_invalid", "Access grant ID is invalid.",
@@ -232,6 +434,35 @@ class MobilePairingService:
     async def revoke(self, grant_id: str) -> MobilePairingGrant:
         credential, _, transport = self._configured()
         return await self._with_connectivity_state(transport.revoke(credential, grant_id))
+
+    async def associations(self) -> list[MobileAssociation]:
+        credential, _, transport = self._configured()
+        return await self._with_connectivity_state(
+            transport.list_associations(credential)
+        )
+
+    async def revoke_association(self, association_id: str) -> MobileAssociation:
+        credential, _, transport = self._configured()
+        return await self._with_connectivity_state(
+            transport.revoke_association(credential, association_id)
+        )
+
+    async def revoke_enrollment(self) -> dict[str, Any]:
+        credential, _, transport = self._configured()
+        result = await self._with_connectivity_state(
+            transport.revoke_enrollment(credential)
+        )
+        self.credential_store.path.unlink(missing_ok=True)
+        (self.relay_state / "relay-wss-url").unlink(missing_ok=True)
+        return result
+
+    async def inject_connection_owner_restart(
+        self, ttl_seconds: int = 5,
+    ) -> dict[str, Any]:
+        credential, _, transport = self._configured()
+        return await self._with_connectivity_state(
+            transport.inject_connection_owner_restart(credential, ttl_seconds)
+        )
 
     async def _with_connectivity_state(self, operation):
         try:

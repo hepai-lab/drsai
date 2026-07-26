@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Computer
+import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Folder
@@ -27,6 +28,7 @@ import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -36,6 +38,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -43,7 +46,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.font.FontWeight
@@ -52,8 +55,6 @@ import androidx.compose.ui.unit.dp
 import ai.drsai.remote.remote.model.RemoteConnectionState
 import ai.drsai.remote.remote.model.RemoteWorkspaceRef
 import ai.drsai.remote.remote.model.RuntimeId
-
-private val RemoteHeaderInk = Color(0xFF18211D)
 
 data class RemoteComputerUi(
     val runtimeId: RuntimeId,
@@ -84,6 +85,7 @@ fun RemoteHomeScreen(
     onAssociate: () -> Unit,
     onRefresh: () -> Unit,
     onOpenWorkspace: (RemoteWorkspaceRef) -> Unit,
+    onRevokeAssociation: (RuntimeId) -> Unit = {},
     onQueryChange: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
@@ -91,7 +93,7 @@ fun RemoteHomeScreen(
         when {
             state.loading && state.computers.isEmpty() -> RemoteLoadingState(Modifier.align(Alignment.Center))
             state.computers.isEmpty() -> RemoteEmptyState(onAssociate, Modifier.align(Alignment.Center))
-            else -> RemoteComputerList(state, onOpenWorkspace)
+            else -> RemoteComputerList(state, onOpenWorkspace, onRevokeAssociation)
         }
 
         Column(
@@ -130,7 +132,8 @@ fun FloatingPageHeader(
     modifier: Modifier = Modifier,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
-    val controlColor = Color.White.copy(alpha = 0.60f)
+    val controlColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.60f)
+        .compositeOver(MaterialTheme.colorScheme.background)
     Box(modifier.fillMaxWidth().height(52.dp)) {
         HeaderControl(Modifier.align(Alignment.CenterStart)) {
             IconButton(onClick = onBack) {
@@ -141,8 +144,8 @@ fun FloatingPageHeader(
             modifier = Modifier.align(Alignment.Center),
             shape = RoundedCornerShape(20.dp),
             color = controlColor,
-            contentColor = RemoteHeaderInk,
-            tonalElevation = 2.dp,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            tonalElevation = 0.dp,
             shadowElevation = 5.dp,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         ) {
@@ -174,12 +177,14 @@ fun FloatingPageHeader(
 
 @Composable
 private fun HeaderControl(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    val controlColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.60f)
+        .compositeOver(MaterialTheme.colorScheme.background)
     Surface(
         modifier = modifier.size(52.dp),
         shape = RoundedCornerShape(20.dp),
-        color = Color.White.copy(alpha = 0.60f),
-        contentColor = RemoteHeaderInk,
-        tonalElevation = 2.dp,
+        color = controlColor,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        tonalElevation = 0.dp,
         shadowElevation = 5.dp,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         content = content,
@@ -222,13 +227,19 @@ private fun RemoteLoadingState(modifier: Modifier = Modifier) {
 private fun RemoteComputerList(
     state: RemoteHomeUiState,
     onOpenWorkspace: (RemoteWorkspaceRef) -> Unit,
+    onRevokeAssociation: (RuntimeId) -> Unit,
 ) {
     LazyColumn(
         Modifier.fillMaxSize().padding(start = 12.dp, end = 12.dp, top = 146.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         items(state.computers, key = { it.runtimeId.value }) { computer ->
-            RemoteComputerCard(computer, computer.runtimeId == state.recentlyAssociatedRuntimeId, onOpenWorkspace)
+            RemoteComputerCard(
+                computer,
+                computer.runtimeId == state.recentlyAssociatedRuntimeId,
+                onOpenWorkspace,
+                onRevokeAssociation,
+            )
         }
     }
 }
@@ -238,8 +249,11 @@ private fun RemoteComputerCard(
     computer: RemoteComputerUi,
     recentlyAssociated: Boolean,
     onOpenWorkspace: (RemoteWorkspaceRef) -> Unit,
+    onRevokeAssociation: (RuntimeId) -> Unit,
 ) {
     var expanded by remember(computer.runtimeId) { mutableStateOf(true) }
+    var menuOpen by remember(computer.runtimeId) { mutableStateOf(false) }
+    var confirmRevoke by remember(computer.runtimeId) { mutableStateOf(false) }
     Surface(
         shape = RoundedCornerShape(20.dp),
         border = BorderStroke(if (recentlyAssociated) 2.dp else 1.dp,
@@ -276,6 +290,27 @@ private fun RemoteComputerCard(
                     Spacer(Modifier.width(8.dp))
                 }
                 Icon(if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, if (expanded) "收起工作区" else "展开工作区")
+                Box {
+                    IconButton(onClick = { menuOpen = true }) {
+                        Icon(Icons.Default.MoreVert, "计算机操作")
+                    }
+                    DropdownMenu(
+                        expanded = menuOpen,
+                        onDismissRequest = { menuOpen = false },
+                    ) {
+                        DropdownMenuItem(
+                            modifier = Modifier.semantics {
+                                contentDescription = "解除 ${computer.displayName} 的关联"
+                            },
+                            text = { Text("解除关联") },
+                            leadingIcon = { Icon(Icons.Default.DeleteForever, null) },
+                            onClick = {
+                                menuOpen = false
+                                confirmRevoke = true
+                            },
+                        )
+                    }
+                }
             }
             if (expanded) {
                 HorizontalDivider()
@@ -291,6 +326,26 @@ private fun RemoteComputerCard(
                 }
             }
         }
+    }
+    if (confirmRevoke) {
+        AlertDialog(
+            onDismissRequest = { confirmRevoke = false },
+            title = { Text("解除关联？") },
+            text = {
+                Text("解除后，这台设备将立即停止接收 ${computer.displayName} 的会话和事件。重新扫码可以恢复访问。")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmRevoke = false
+                        onRevokeAssociation(computer.runtimeId)
+                    },
+                ) { Text("解除关联") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmRevoke = false }) { Text("取消") }
+            },
+        )
     }
 }
 

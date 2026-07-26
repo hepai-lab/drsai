@@ -12,7 +12,7 @@ const managerManifestPath = join(evidenceDir, "packaged-generated-manager-zh-g11
 const technicalPptx = join(evidenceDir, "packaged-generated-technical-zh-g11-audience-versions.pptx");
 const technicalManifestPath = join(evidenceDir, "packaged-generated-technical-zh-g11-audience-versions.provenance.json");
 const python = resolve(process.env.OPENDRSAI_PDF_PYTHON || "C:/Users/win11/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe");
-const acceptance = join(repo, "cores/python/packages/drsai/src/drsai/backend/presentation_pptx_acceptance.py");
+const acceptance = join(repo, "scripts/acceptance/presentation/verify_pptx.py");
 const fixture = JSON.parse(readFileSync(join(repo, "tests/fixtures/product/presentation-report-wlcg.json"), "utf8"));
 
 for (const path of [managerPptx, managerManifestPath, technicalPptx, technicalManifestPath]) {

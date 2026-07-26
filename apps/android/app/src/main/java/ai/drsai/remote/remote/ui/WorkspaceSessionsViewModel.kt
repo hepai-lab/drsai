@@ -40,7 +40,9 @@ class WorkspaceSessionsViewModel(
 ) : AndroidViewModel(app) {
     private val tokenStore = SecureTokenStore(app)
     private val auth = AccessTokenCoordinator(tokenStore, OidcClient(refreshClientId = { tokenStore.oidcClientId }))
-    private val repository = RelayRemoteRepository(BuildConfig.RELAY_BASE_URL, auth::current)
+    private val repository = RelayRemoteRepository(
+        BuildConfig.RELAY_BASE_URL, auth::current, refreshAfter = auth::refreshAfter,
+    )
     private val instructionLoader = RemoteProjectInstructionLoader(
         RelayWorkspaceOperationsClient(HttpOwopRelayTransport(BuildConfig.RELAY_BASE_URL, runtimeId, auth::current)),
     )

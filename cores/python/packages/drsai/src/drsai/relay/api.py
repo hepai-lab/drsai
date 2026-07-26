@@ -13,6 +13,7 @@ from drsai.platform_auth import context_from_bearer
 from .models import (
     AccessGrantResult,
     AccessGrantStatusResult,
+    AssociationResult,
     AssociationRequest,
     ErrorEnvelope,
     HeartbeatRequest,
@@ -20,6 +21,7 @@ from .models import (
     RegistrationResult,
     WorkspacePublishRequest,
     Workspace,
+    ResourceLifecycle,
 )
 from .registry import RelayRegistry, RelayRegistryError
 from .runtime_domain import RuntimeAuthority
@@ -53,6 +55,7 @@ class _ApprovalDecision(_StrictBody):
     request_id: str
     correlation_id: str
     decision: str
+    idempotency_key: str | None = None
 
 
 class _OwopRequest(_StrictBody):
@@ -63,12 +66,16 @@ class _OwopRequest(_StrictBody):
     params: dict
 
 
+class _RuntimeRename(_StrictBody):
+    display_name: str
+
+
 def create_relay_app(registry: RelayRegistry | None = None,
                      runtimes: dict[str, RuntimeAuthority] | None = None,
                      channels: RuntimeChannelHub | None = None,
                      principal_resolver: Callable[[Request], str] | None = None) -> FastAPI:
     store = registry or RelayRegistry()
-    app = FastAPI(title="OpenDrSai Runtime Relay", version="1.0.0")
+    app = FastAPI(title="OpenDrSai Runtime Relay", version="2.0.0")
     app.state.registry = store
     authorities = runtimes or {}
     channel_hub = channels or RuntimeChannelHub()
@@ -120,7 +127,12 @@ def create_relay_app(registry: RelayRegistry | None = None,
         correlation_id = request.headers.get("x-correlation-id", str(uuid4()))
         error = ErrorEnvelope(code=exc.code, message=exc.message, correlation_id=correlation_id,
                               retryable=exc.retryable, details={}, source=exc.source)
-        status = 401 if exc.code == "oidc_auth_invalid" else 403 if exc.code.endswith(("forbidden", "auth_invalid")) else 404 if exc.code in {"runtime_not_found", "access_grant_not_found"} else 400
+        status = 401 if exc.code in {"oidc_auth_invalid", "runtime_auth_invalid"} else 403 if (
+            exc.code.endswith("forbidden") or exc.code == "association_required"
+        ) else 404 if exc.code in {
+            "runtime_not_found", "access_grant_not_found", "association_not_found",
+            "session_not_found", "run_not_found", "approval_not_found",
+        } else 400
         return JSONResponse(status_code=status, content=error.model_dump(mode="json"))
 
     @app.get("/v1/admin/registration-code")
@@ -144,17 +156,75 @@ def create_relay_app(registry: RelayRegistry | None = None,
     async def access_grant_status(runtime_id: str, grant_id: str,
                                   x_runtime_token: str = Header()) -> AccessGrantStatusResult:
         status, expires_at = store.access_grant_status(runtime_id, x_runtime_token, grant_id)
-        return AccessGrantStatusResult(grant_id=grant_id, expires_at=expires_at, status=status)
+        return AccessGrantStatusResult(
+            grant_id=grant_id,
+            expires_at=expires_at,
+            status=status,
+            subject_summary=store.access_grant_subject_summary(
+                runtime_id, x_runtime_token, grant_id
+            ),
+        )
 
     @app.delete("/v1/runtimes/{runtime_id}/access-grants/{grant_id}", response_model=AccessGrantStatusResult)
     async def revoke_access_grant(runtime_id: str, grant_id: str,
                                   x_runtime_token: str = Header()) -> AccessGrantStatusResult:
         status, expires_at = store.revoke_access_grant(runtime_id, x_runtime_token, grant_id)
-        return AccessGrantStatusResult(grant_id=grant_id, expires_at=expires_at, status=status)
+        return AccessGrantStatusResult(
+            grant_id=grant_id,
+            expires_at=expires_at,
+            status=status,
+            subject_summary=store.access_grant_subject_summary(
+                runtime_id, x_runtime_token, grant_id
+            ),
+        )
 
     @app.post("/v1/associations")
     async def associate(body: AssociationRequest, x_subject: str = Depends(oidc_subject)) -> dict[str, str]:
         return {"runtime_id": store.associate(x_subject, body.code)}
+
+    @app.delete("/v1/associations/{runtime_id}", response_model=AssociationResult)
+    async def revoke_user_association(
+        runtime_id: str,
+        x_subject: str = Depends(oidc_subject),
+    ) -> AssociationResult:
+        return AssociationResult.model_validate(
+            store.revoke_association(x_subject, runtime_id)
+        )
+
+    @app.get(
+        "/v1/runtimes/{runtime_id}/associations",
+        response_model=list[AssociationResult],
+    )
+    async def runtime_associations(
+        runtime_id: str,
+        x_runtime_token: str = Header(),
+    ) -> list[AssociationResult]:
+        return [
+            AssociationResult.model_validate(item)
+            for item in store.list_associations(runtime_id, x_runtime_token)
+        ]
+
+    @app.delete(
+        "/v1/runtimes/{runtime_id}/associations/{association_id}",
+        response_model=AssociationResult,
+    )
+    async def revoke_runtime_association(
+        runtime_id: str,
+        association_id: str,
+        x_runtime_token: str = Header(),
+    ) -> AssociationResult:
+        return AssociationResult.model_validate(
+            store.revoke_runtime_association(
+                runtime_id, x_runtime_token, association_id
+            )
+        )
+
+    @app.delete("/v1/runtimes/{runtime_id}/enrollment")
+    async def revoke_runtime_enrollment(
+        runtime_id: str,
+        x_runtime_token: str = Header(),
+    ) -> dict[str, str | None]:
+        return store.revoke_enrollment(runtime_id, x_runtime_token)
 
     @app.post("/v1/runtime-connections/{runtime_id}/heartbeat")
     async def heartbeat(runtime_id: str, body: HeartbeatRequest, x_runtime_token: str = Header()):
@@ -176,14 +246,24 @@ def create_relay_app(registry: RelayRegistry | None = None,
     async def identity(runtime_id: str, x_subject: str = Depends(oidc_subject)):
         return store.identity(x_subject, runtime_id)
 
+    @app.patch("/v1/runtimes/{runtime_id}")
+    async def rename_runtime(
+        runtime_id: str,
+        body: _RuntimeRename,
+        x_subject: str = Depends(oidc_subject),
+    ) -> dict[str, str]:
+        return store.rename_runtime(x_subject, runtime_id, body.display_name)
+
     @app.get("/v1/runtimes/{runtime_id}/capabilities")
     async def capabilities(runtime_id: str, x_subject: str = Depends(oidc_subject)):
         return store.capabilities(x_subject, runtime_id)
 
     @app.get("/v1/runtimes/{runtime_id}/workspaces")
     async def workspaces(runtime_id: str, x_subject: str = Depends(oidc_subject), cursor: str | None = None,
-                         limit: int = Query(20, ge=1, le=100), query: str | None = None):
-        items, next_cursor = store.list_workspaces(x_subject, runtime_id, cursor=cursor, limit=limit, query=query)
+                         limit: int = Query(20, ge=1, le=100), query: str | None = None,
+                         lifecycle: ResourceLifecycle | None = ResourceLifecycle.ACTIVE):
+        items, next_cursor = store.list_workspaces(
+            x_subject, runtime_id, cursor=cursor, limit=limit, query=query, lifecycle=lifecycle)
         return {"items": [item.model_dump(mode="json") for item in items], "next_cursor": next_cursor}
 
     @app.get("/v1/runtimes/{runtime_id}/agent-definitions")
@@ -221,6 +301,21 @@ def create_relay_app(registry: RelayRegistry | None = None,
         rows, next_cursor = await runtime_call(runtime_id, "list_runs_for_subject", x_subject, workspace_id,
                                                session_id, cursor=cursor, limit=limit)
         return {"items": [json_dataclass(item) for item in rows], "next_cursor": next_cursor}
+
+    @app.get("/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/conversation")
+    async def conversation(
+        runtime_id: str,
+        workspace_id: str,
+        session_id: str,
+        x_subject: str = Depends(oidc_subject),
+        cursor: str | None = None,
+        limit: int = Query(100, ge=1, le=500),
+    ):
+        authorize_workspace(x_subject, runtime_id, workspace_id)
+        rows, next_cursor = await runtime_call(
+            runtime_id, "conversation_for_subject", x_subject, workspace_id, session_id,
+            cursor=cursor, limit=limit)
+        return {"items": rows, "next_cursor": next_cursor}
 
     @app.get("/v1/runtimes/{runtime_id}/idempotency/{operation}/{idempotency_key}")
     async def idempotency_result(runtime_id: str, operation: str, idempotency_key: str,
@@ -301,7 +396,9 @@ def create_relay_app(registry: RelayRegistry | None = None,
     @app.post("/v1/runtimes/{runtime_id}/approvals/{approval_id}/decision")
     async def decide(runtime_id: str, approval_id: str, body: _ApprovalDecision, x_subject: str = Depends(oidc_subject)):
         store.identity(x_subject, runtime_id)
-        return json_dataclass(await runtime_call(runtime_id, "decide_approval", x_subject, approval_id, body.decision))
+        return json_dataclass(await runtime_call(
+            runtime_id, "decide_approval", x_subject, approval_id, body.decision, body.idempotency_key
+        ))
 
     @app.delete("/v1/admin/runtimes/{runtime_id}", status_code=204)
     async def revoke(runtime_id: str):

@@ -5,6 +5,7 @@ param(
     [Parameter(Mandatory = $true)][string]$TestBridgeApk,
     [string]$Serial = "emulator-5556",
     [string]$SeedTest = "ai.drsai.remote.UpdateAcceptanceSeedTest",
+    [string]$PackageName = "ai.drsai.remote",
     [int]$TimeoutSeconds = 600,
     [string]$Report = "update-e2e-report.json"
 )
@@ -27,7 +28,7 @@ function Invoke-Adb([string[]]$CommandArgs) {
     return ($output -join "`n")
 }
 
-function Get-PackageDump { Invoke-Adb @("shell", "dumpsys", "package", "ai.drsai.remote") }
+function Get-PackageDump { Invoke-Adb @("shell", "dumpsys", "package", $PackageName) }
 function Get-PackageVersion {
     $match = [regex]::Match((Get-PackageDump), "versionCode=(\d+)")
     if (-not $match.Success) { return $null }
@@ -67,11 +68,72 @@ function Click-UiLabel([string]$Label, [int]$WaitSeconds = 30) {
     }
     throw "UI label not found: $Label"
 }
+function Wait-UiLabel([string]$Label, [int]$WaitSeconds = 30) {
+    $deadline = (Get-Date).AddSeconds($WaitSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $ui = Get-UiXml
+        $node = @($ui.SelectNodes("//node") | Where-Object {
+            $_.GetAttribute("text") -eq $Label -or $_.GetAttribute("content-desc") -eq $Label
+        })[0]
+        if ($null -ne $node) { return }
+        Start-Sleep -Milliseconds 500
+    }
+    throw "UI label not found: $Label"
+}
+function Try-Click-UiLabel([string]$Label, [int]$WaitSeconds = 5) {
+    $deadline = (Get-Date).AddSeconds($WaitSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $ui = Get-UiXml
+        $node = @($ui.SelectNodes("//node") | Where-Object {
+            $_.GetAttribute("text") -eq $Label -or $_.GetAttribute("content-desc") -eq $Label
+        })[0]
+        if ($null -ne $node) {
+            Click-UiNode $node
+            return $true
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    return $false
+}
+function Click-UiContainingAnyLabel([string[]]$Labels, [int]$WaitSeconds = 30) {
+    $deadline = (Get-Date).AddSeconds($WaitSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $ui = Get-UiXml
+        $node = @($ui.SelectNodes("//node") | Where-Object {
+            $text = $_.GetAttribute("text")
+            $description = $_.GetAttribute("content-desc")
+            @($Labels | Where-Object {
+                ($text -and $text.Contains($_)) -or
+                ($description -and $description.Contains($_))
+            }).Count -gt 0
+        })[0]
+        if ($null -ne $node) {
+            Click-UiNode $node
+            return
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    throw "No matching UI action found: $($Labels -join ', ')"
+}
+function Assert-DeviceUnlocked {
+    Invoke-Adb @("shell", "input", "keyevent", "KEYCODE_WAKEUP") | Out-Null
+    Invoke-Adb @("shell", "wm", "dismiss-keyguard") | Out-Null
+    Start-Sleep -Milliseconds 750
+    $windowDump = Invoke-Adb @("shell", "dumpsys", "window")
+    if ($windowDump -match "mCurrentFocus=Window\{[^\r\n]*\s(?:Bouncer|Keyguard)" -or
+        $windowDump -match "mDreamingLockscreen=true") {
+        throw "The Android device is locked. Unlock it manually, keep the screen on, and rerun the acceptance test."
+    }
+}
 function Get-FirstInstallTime([string]$Dump) {
     [regex]::Match($Dump, "firstInstallTime=([^\r\n]+)").Groups[1].Value.Trim()
 }
 function Get-AuthHash {
-    (Invoke-Adb @("shell", "sha256sum", "/data/user/0/ai.drsai.remote/shared_prefs/opendrsai_auth.xml")).Split(" ")[0]
+    $output = Invoke-Adb @(
+        "shell", "run-as", $PackageName,
+        "sha256sum", "shared_prefs/opendrsai_auth.xml"
+    )
+    return $output.Split(" ")[0]
 }
 
 $steps = [System.Collections.Generic.List[object]]::new()
@@ -79,11 +141,17 @@ $steps = [System.Collections.Generic.List[object]]::new()
 # without a BOM using the active ANSI code page.
 $openSidebarLabel = -join (0x5C55, 0x5F00, 0x4FA7, 0x680F | ForEach-Object { [char]$_ })
 $checkAndUpdateLabel = -join (0x68C0, 0x67E5, 0x5E76, 0x66F4, 0x65B0 | ForEach-Object { [char]$_ })
+$downloadAndInstallLabel = -join (0x4E0B, 0x8F7D, 0x5E76, 0x5B89, 0x88C5 | ForEach-Object { [char]$_ })
+$continueInstallLabel = -join (0x7EE7, 0x7EED, 0x5B89, 0x88C5 | ForEach-Object { [char]$_ })
+$retryLabel = -join (0x91CD, 0x8BD5 | ForEach-Object { [char]$_ })
 $installerLabels = @("INSTALL", "Install", "UPDATE", "Update") + @(
     -join (0x5B89, 0x88C5 | ForEach-Object { [char]$_ }),
     -join (0x66F4, 0x65B0 | ForEach-Object { [char]$_ }),
     -join (0x7EE7, 0x7EED, 0x5B89, 0x88C5 | ForEach-Object { [char]$_ }),
-    -join (0x5141, 0x8BB8 | ForEach-Object { [char]$_ })
+    -join (0x5141, 0x8BB8 | ForEach-Object { [char]$_ }),
+    -join (0x8F6F, 0x4EF6, 0x5305, 0x5B89, 0x88C5, 0x7A0B, 0x5E8F | ForEach-Object { [char]$_ }),
+    -join (0x4EC5, 0x6B64, 0x4E00, 0x6B21 | ForEach-Object { [char]$_ }),
+    -join (0x59CB, 0x7EC8 | ForEach-Object { [char]$_ })
 )
 function Step([string]$Name, [scriptblock]$Action) {
     $begin = Get-Date
@@ -103,23 +171,32 @@ if ($manifestUri.Host -in @("127.0.0.1", "localhost")) {
     }
 }
 
+Step "prepare-unlocked-device" {
+    Invoke-Adb @("shell", "svc", "power", "stayon", "usb") | Out-Null
+    Assert-DeviceUnlocked
+}
 Step "clean-install-old" {
     Invoke-Adb @("shell", "am", "force-stop", "com.google.android.packageinstaller") | Out-Null
-    & $adb -s $Serial uninstall ai.drsai.remote.test 2>$null | Out-Null
-    & $adb -s $Serial uninstall ai.drsai.remote 2>$null | Out-Null
+    & $adb -s $Serial uninstall "$PackageName.test" 2>$null | Out-Null
+    & $adb -s $Serial uninstall $PackageName 2>$null | Out-Null
     Invoke-Adb @("install", $oldApkPath) | Out-Null
     Invoke-Adb @("install", $bridgePath) | Out-Null
 }
 Step "seed-simulated-login" {
-    $result = Invoke-Adb @("shell", "am", "instrument", "-w", "-r", "-e", "class", $SeedTest, "ai.drsai.remote.test/androidx.test.runner.AndroidJUnitRunner")
+    $result = Invoke-Adb @("shell", "am", "instrument", "-w", "-r", "-e", "class", $SeedTest, "$PackageName.test/androidx.test.runner.AndroidJUnitRunner")
     if ($result -notmatch "OK \(1 test\)") { throw "Seed test failed: $result" }
 }
 Step "grant-installer-and-launch" {
     # Changing this app-op kills the process, so it must happen before launch.
-    Invoke-Adb @("shell", "appops", "set", "ai.drsai.remote", "REQUEST_INSTALL_PACKAGES", "allow") | Out-Null
-    Invoke-Adb @("shell", "am", "start", "-W", "-n", "ai.drsai.remote/.MainActivity") | Out-Null
-    Click-UiLabel $openSidebarLabel
-    Click-UiLabel "Stage 5 Update Acceptance"
+    Invoke-Adb @("shell", "appops", "set", $PackageName, "REQUEST_INSTALL_PACKAGES", "allow") | Out-Null
+    Invoke-Adb @("shell", "am", "start", "-W", "-n", "$PackageName/ai.drsai.remote.MainActivity") | Out-Null
+    # Tablets keep the navigation rail open. Phones require opening the modal
+    # drawer first; probing the account avoids accidentally closing a tablet rail.
+    if (-not (Try-Click-UiLabel "Stage 5 Update Acceptance" 10)) {
+        Click-UiLabel $openSidebarLabel
+        Click-UiLabel "Stage 5 Update Acceptance"
+    }
+    Wait-UiLabel (-join (0x4E2A, 0x4EBA, 0x4E2D, 0x5FC3 | ForEach-Object { [char]$_ }))
 }
 
 $beforeDump = Get-PackageDump
@@ -127,14 +204,21 @@ $oldCode = Get-PackageVersion
 $firstInstallBefore = Get-FirstInstallTime $beforeDump
 $authHashBefore = Get-AuthHash
 $installerActions = [System.Collections.Generic.List[string]]::new()
-Step "click-check-and-update" { Click-UiLabel $checkAndUpdateLabel }
+Step "click-check-and-update" {
+    Click-UiContainingAnyLabel @(
+        $checkAndUpdateLabel,
+        $downloadAndInstallLabel,
+        $continueInstallLabel,
+        $retryLabel
+    )
+}
 Step "download-verify-and-install" {
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
         $currentCode = Get-PackageVersion
         if ($currentCode -gt $oldCode) { return }
         $ui = Get-UiXml
-        $candidate = @($ui.SelectNodes("//node[@clickable='true']") | Where-Object {
+        $candidate = @($ui.SelectNodes("//node") | Where-Object {
             $installerLabels -contains $_.GetAttribute("text") -or
             $installerLabels -contains $_.GetAttribute("content-desc")
         })[0]
@@ -152,7 +236,7 @@ $newCode = Get-PackageVersion
 $afterDump = Get-PackageDump
 $firstInstallAfter = Get-FirstInstallTime $afterDump
 $authHashAfter = Get-AuthHash
-Step "launch-updated-app" { Invoke-Adb @("shell", "am", "start", "-W", "-n", "ai.drsai.remote/.MainActivity") | Out-Null }
+Step "launch-updated-app" { Invoke-Adb @("shell", "am", "start", "-W", "-n", "$PackageName/ai.drsai.remote.MainActivity") | Out-Null }
 
 $passed = $newCode -gt $oldCode -and $firstInstallBefore -eq $firstInstallAfter -and $authHashBefore -eq $authHashAfter
 $result = [ordered]@{
@@ -160,6 +244,7 @@ $result = [ordered]@{
     generatedAt = [DateTimeOffset]::UtcNow.ToString("o")
     result = if ($passed) { "passed" } else { "failed" }
     device = $Serial
+    packageName = $PackageName
     oldApk = $oldApkPath
     newApk = $newApkPath
     manifestUrl = $ManifestUrl

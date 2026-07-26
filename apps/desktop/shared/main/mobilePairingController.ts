@@ -1,6 +1,8 @@
 import type {
   DesktopMobilePairingGrant,
   DesktopMobilePairingReadiness,
+  DesktopMobileAssociation,
+  DesktopRuntimeEnrollmentRevocation,
 } from "../api/desktopApi";
 
 export interface MobilePairingRuntimeClient {
@@ -8,6 +10,9 @@ export interface MobilePairingRuntimeClient {
   createMobilePairingGrant(): Promise<DesktopMobilePairingGrant>;
   getMobilePairingGrant(grantId: string): Promise<DesktopMobilePairingGrant>;
   revokeMobilePairingGrant(grantId: string): Promise<DesktopMobilePairingGrant>;
+  listMobileAssociations(): Promise<DesktopMobileAssociation[]>;
+  revokeMobileAssociation(associationId: string): Promise<DesktopMobileAssociation>;
+  revokeMobileRuntimeEnrollment(): Promise<DesktopRuntimeEnrollmentRevocation>;
 }
 
 export type MobilePairingRuntimeRecovery = (
@@ -65,6 +70,27 @@ export class MobilePairingController {
     const grant = (await this.invoke((client) => client.revokeMobilePairingGrant(grantId))).value;
     this.active = undefined;
     return grant;
+  }
+
+  async associations(): Promise<DesktopMobileAssociation[]> {
+    this.assertOpen();
+    return (await this.invoke((client) => client.listMobileAssociations())).value;
+  }
+
+  async revokeAssociation(associationId: string): Promise<DesktopMobileAssociation> {
+    this.assertOpen();
+    return (
+      await this.invoke((client) => client.revokeMobileAssociation(associationId))
+    ).value;
+  }
+
+  async revokeEnrollment(): Promise<DesktopRuntimeEnrollmentRevocation> {
+    this.assertOpen();
+    const result = (
+      await this.invoke((client) => client.revokeMobileRuntimeEnrollment())
+    ).value;
+    this.active = undefined;
+    return result;
   }
 
   async close(): Promise<void> {

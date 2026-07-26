@@ -9,14 +9,14 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from drsai.backend.agent_backend_bindings import (
+from drsai.backend.runtime.agent_bindings import (
     AgentBackendBindingError,
     AgentBackendBindingOperation,
     AgentBackendBindingStore,
     AgentBackendRunBinding,
     AgentBackendSessionBinding,
 )
-from drsai.backend.agent_runtime import (
+from drsai.backend.runtime.agent import (
     AgentDefinition,
     AgentExecutionServices,
     RuntimeExecutionError,

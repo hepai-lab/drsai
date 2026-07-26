@@ -1,0 +1,258 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opendrsai.org/cores/protocol/relay/runtime-relay.schema.json",
+  "title": "OpenDrSai Runtime Relay Protocol",
+  "version": "2.0.0",
+  "protocol_version": "owop/1",
+  "x-relay-bindings": ["https", "wss"],
+  "x-relay-capabilities": [
+    "runtime.identity", "runtime.capabilities", "runtime.rename", "workspace.list",
+    "session.list", "session.read", "session.create", "conversation.read",
+    "run.list", "run.create", "run.read", "run.cancel",
+    "event.resume", "event.stream", "event.cursor_expired",
+    "approval.list", "approval.decide",
+    "association.revoke", "association.list", "enrollment.revoke",
+    "file.raw.read"
+  ],
+  "x-relay-endpoints": {
+    "access_grant_create": "POST /v1/runtimes/{runtime_id}/access-grants",
+    "access_grant_read": "GET /v1/runtimes/{runtime_id}/access-grants/{grant_id}",
+    "access_grant_revoke": "DELETE /v1/runtimes/{runtime_id}/access-grants/{grant_id}",
+    "association_create": "POST /v1/associations",
+    "association_revoke": "DELETE /v1/associations/{runtime_id}",
+    "runtime_association_list": "GET /v1/runtimes/{runtime_id}/associations",
+    "runtime_association_revoke": "DELETE /v1/runtimes/{runtime_id}/associations/{association_id}",
+    "runtime_enrollment_revoke": "DELETE /v1/runtimes/{runtime_id}/enrollment",
+    "runtime_connect": "WS /v1/runtime-connect",
+    "runtime_list": "GET /v1/runtimes",
+    "runtime_identity": "GET /v1/runtimes/{runtime_id}/runtime",
+    "runtime_rename": "PATCH /v1/runtimes/{runtime_id}",
+    "runtime_capabilities": "GET /v1/runtimes/{runtime_id}/capabilities",
+    "workspace_list": "GET /v1/runtimes/{runtime_id}/workspaces",
+    "session_list": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions",
+    "session_read": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}",
+    "session_create": "POST /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions",
+    "conversation_read": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/conversation",
+    "run_list": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/runs",
+    "run_create": "POST /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/runs",
+    "run_read": "GET /v1/runtimes/{runtime_id}/runs/{run_id}",
+    "run_cancel": "POST /v1/runtimes/{runtime_id}/runs/{run_id}/cancel",
+    "event_list": "GET /v1/runtimes/{runtime_id}/runs/{run_id}/events",
+    "event_stream": "GET /v1/runtimes/{runtime_id}/runs/{run_id}/events/stream",
+    "approval_list": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/approvals",
+    "approval_decision": "POST /v1/runtimes/{runtime_id}/approvals/{approval_id}/decision",
+    "file_raw": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/files/raw"
+  },
+  "$defs": {
+    "resource_lifecycle": {
+      "type": "string",
+      "enum": ["active", "archived", "removed"]
+    },
+    "workspace": {
+      "type": "object",
+      "required": [
+        "runtime_id", "workspace_id", "display_name", "lifecycle",
+        "revision", "updated_at"
+      ],
+      "properties": {
+        "runtime_id": {"type": "string", "minLength": 1},
+        "workspace_id": {"type": "string", "minLength": 1},
+        "display_name": {"type": "string", "minLength": 1},
+        "lifecycle": {"$ref": "#/$defs/resource_lifecycle"},
+        "revision": {"type": "integer", "minimum": 1},
+        "updated_at": {"type": "string", "format": "date-time"}
+      },
+      "additionalProperties": false
+    },
+    "session": {
+      "type": "object",
+      "required": [
+        "runtime_id", "workspace_id", "session_id", "title",
+        "lifecycle", "updated_at"
+      ],
+      "properties": {
+        "runtime_id": {"type": "string", "minLength": 1},
+        "workspace_id": {"type": "string", "minLength": 1},
+        "session_id": {"type": "string", "minLength": 1},
+        "title": {"type": "string"},
+        "lifecycle": {"$ref": "#/$defs/resource_lifecycle"},
+        "updated_at": {"type": "string", "format": "date-time"},
+        "agent_definition_id": {"type": ["string", "null"]},
+        "agent_definition_version": {"type": ["string", "null"]},
+        "backend_id": {"type": ["string", "null"]},
+        "last_run_status": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "conversation_item": {
+      "type": "object",
+      "required": ["item_id", "sequence", "kind", "timestamp", "payload"],
+      "properties": {
+        "item_id": {"type": "string", "minLength": 1},
+        "sequence": {"type": "integer", "minimum": 1},
+        "kind": {"type": "string", "minLength": 1},
+        "timestamp": {"type": "string", "format": "date-time"},
+        "payload": {"type": "object"}
+      },
+      "additionalProperties": false
+    },
+    "control_request": {
+      "type": "object",
+      "required": ["request_id", "correlation_id"],
+      "properties": {
+        "request_id": {"type": "string", "format": "uuid"},
+        "correlation_id": {"type": "string", "minLength": 1},
+        "idempotency_key": {"type": "string", "minLength": 8}
+      },
+      "additionalProperties": false
+    },
+    "error": {
+      "type": "object",
+      "required": ["code", "message", "correlation_id", "retryable", "details", "source"],
+      "properties": {
+        "code": {"type": "string"}, "message": {"type": "string"},
+        "correlation_id": {"type": "string"}, "retryable": {"type": "boolean"},
+        "details": {"type": "object"},
+        "source": {"enum": ["relay", "runtime"]}
+      },
+      "additionalProperties": false
+    },
+    "event": {
+      "type": "object",
+      "required": ["event_id", "sequence", "runtime_id", "workspace_id", "session_id", "run_id", "timestamp", "kind", "payload"],
+      "properties": {
+        "event_id": {"type": "string"}, "sequence": {"type": "integer", "minimum": 1},
+        "runtime_id": {"type": "string"}, "workspace_id": {"type": "string"},
+        "session_id": {"type": "string"}, "run_id": {"type": "string"},
+        "timestamp": {"type": "string", "format": "date-time"},
+        "kind": {"type": "string"}, "payload": {"type": "object"}
+      },
+      "additionalProperties": false
+    },
+    "subject_summary": {
+      "type": "string",
+      "pattern": "^sub_[0-9a-f]{12}$",
+      "description": "Irreversible subject summary. Raw OIDC subject is never returned."
+    },
+    "access_grant_status": {
+      "type": "object",
+      "required": ["grant_id", "status", "expires_at", "subject_summary"],
+      "properties": {
+        "grant_id": {"type": "string", "minLength": 1},
+        "status": {"enum": ["pending", "consumed", "expired", "revoked"]},
+        "expires_at": {"type": "string", "format": "date-time"},
+        "subject_summary": {
+          "oneOf": [
+            {"$ref": "#/$defs/subject_summary"},
+            {"type": "null"}
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "association": {
+      "type": "object",
+      "required": [
+        "association_id", "runtime_id", "subject_summary", "status",
+        "created_at", "revoked_at"
+      ],
+      "properties": {
+        "association_id": {"type": "string", "minLength": 1},
+        "runtime_id": {"type": "string", "minLength": 1},
+        "subject_summary": {"$ref": "#/$defs/subject_summary"},
+        "status": {"enum": ["active", "revoked"]},
+        "created_at": {"type": "string", "format": "date-time"},
+        "updated_at": {"type": ["string", "null"], "format": "date-time"},
+        "revoked_at": {"type": ["string", "null"], "format": "date-time"}
+      },
+      "additionalProperties": false
+    },
+    "cursor_expired_error": {
+      "allOf": [
+        {"$ref": "#/$defs/error"},
+        {
+          "properties": {
+            "code": {"const": "cursor_expired"},
+            "retryable": {"const": false},
+            "details": {
+              "type": "object",
+              "required": [
+                "reason", "requested_sequence", "earliest_sequence",
+                "latest_sequence", "runtime_id", "run_id"
+              ],
+              "properties": {
+                "reason": {"const": "history_truncated"},
+                "requested_sequence": {"type": "integer", "minimum": 0},
+                "earliest_sequence": {"type": "integer", "minimum": 1},
+                "latest_sequence": {"type": "integer", "minimum": 1},
+                "runtime_id": {"type": "string", "minLength": 1},
+                "run_id": {"type": "string", "minLength": 1}
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      ]
+    },
+    "runtime_http_request_frame": {
+      "type": "object",
+      "required": ["type", "request_id", "correlation_id", "method", "path", "body"],
+      "properties": {
+        "type": {"const": "request"},
+        "request_id": {"type": "string", "format": "uuid"},
+        "correlation_id": {"type": "string", "minLength": 1},
+        "method": {"enum": ["GET", "POST", "PATCH", "PUT", "DELETE"]},
+        "path": {"type": "string", "pattern": "^/v1/"},
+        "body": {"type": ["object", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "runtime_http_response_frame": {
+      "type": "object",
+      "required": ["type", "request_id", "status"],
+      "properties": {
+        "type": {"const": "response"},
+        "request_id": {"type": "string", "format": "uuid"},
+        "status": {"type": "integer", "minimum": 100, "maximum": 599},
+        "body": {},
+        "error": {"$ref": "#/$defs/error"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"minimum": 400}}},
+          "then": {"required": ["error"], "not": {"required": ["body"]}},
+          "else": {"required": ["body"], "not": {"required": ["error"]}}
+        }
+      ],
+      "additionalProperties": false
+    },
+    "runtime_heartbeat_frame": {
+      "type": "object",
+      "required": ["type", "timestamp"],
+      "properties": {
+        "type": {"const": "heartbeat"},
+        "timestamp": {"type": "number"}
+      },
+      "additionalProperties": true
+    },
+    "runtime_heartbeat_ack_frame": {
+      "type": "object",
+      "required": ["type", "timestamp"],
+      "properties": {
+        "type": {"const": "heartbeat_ack"},
+        "timestamp": {"type": "number"}
+      },
+      "additionalProperties": false
+    },
+    "runtime_event_frame": {
+      "type": "object",
+      "required": ["type", "run_id", "event"],
+      "properties": {
+        "type": {"const": "event"},
+        "run_id": {"type": "string", "minLength": 1},
+        "event": {"$ref": "#/$defs/event"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

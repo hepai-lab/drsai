@@ -14,6 +14,8 @@
 /releases/v1.5.2/windows/OpenDrSai-Windows-Installer-x64.msi
 /releases/v1.5.2/windows/OpenDrSai-Windows-v1.5.2-x64.zip
 /releases/v1.5.2/android/OpenDrSai-Android-v1.5.2.apk
+/channels/beta/latest-windows.json
+/channels/beta/latest-android.json
 /channels/stable/latest-windows.json
 /channels/stable/latest-android.json
 ```

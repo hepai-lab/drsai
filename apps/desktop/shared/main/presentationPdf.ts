@@ -65,7 +65,7 @@ function pythonExecutable(): string {
 function commandArgs(filePath: string, format: "json" | "context", maxChars?: number): string[] {
   const script = process.env.OPENDRSAI_PDF_SCRIPT?.trim();
   return [
-    ...(script ? [script] : ["-m", "drsai.backend.presentation_pdf"]),
+    ...(script ? [script] : ["-m", "drsai.content.pdf.presentation"]),
     filePath,
     "--format",
     format,

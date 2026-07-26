@@ -13,6 +13,7 @@ from drsai.relay.mobile_pairing import (
     AiohttpMobilePairingTransport,
     MobilePairingError,
     MobilePairingGrant,
+    MobileAssociation,
     MobilePairingService,
     build_pairing_payload,
     relay_https_from_wss,
@@ -52,6 +53,54 @@ class FakeTransport:
         self.calls.append(("revoke", grant_id))
         return MobilePairingGrant(grant_id, None, self.expires, "revoked")
 
+    async def list_associations(self, credential: RuntimeCredential) -> list[MobileAssociation]:
+        self.calls.append(("associations", credential.runtime_id))
+        return [MobileAssociation(
+            "assoc_" + "b" * 32,
+            "sub_" + "c" * 12,
+            "active",
+            datetime.now(UTC),
+        )]
+
+    async def revoke_association(
+        self, credential: RuntimeCredential, association_id: str,
+    ) -> MobileAssociation:
+        self.calls.append(("revoke_association", association_id))
+        return MobileAssociation(
+            association_id,
+            "sub_" + "c" * 12,
+            "revoked",
+            datetime.now(UTC),
+            datetime.now(UTC),
+        )
+
+    async def revoke_enrollment(self, credential: RuntimeCredential) -> dict:
+        self.calls.append(("revoke_enrollment", credential.runtime_id))
+        return {
+            "runtime_id": credential.runtime_id,
+            "status": "revoked",
+            "revoked_at": datetime.now(UTC).isoformat(),
+        }
+
+    async def inject_connection_owner_restart(
+        self, credential: RuntimeCredential, ttl_seconds: int,
+    ) -> dict:
+        self.calls.append(("fault", f"{credential.runtime_id}:{ttl_seconds}"))
+        generation = 7
+        return {
+            "fault_id": "fault_test-correlation",
+            "runtime_id": credential.runtime_id,
+            "status": "scheduled",
+            "generation": generation,
+            "expires_at": (datetime.now(UTC) + timedelta(seconds=ttl_seconds)).isoformat(),
+            "recovery": {
+                "route_available_after_ttl": True,
+                "required_generation": generation + 1,
+                "presence_required": True,
+                "event_replay_preserved": True,
+            },
+        }
+
 
 def configured_service(tmp_path: Path) -> tuple[MobilePairingService, FakeTransport]:
     relay = tmp_path / "runtime" / "relay"
@@ -86,7 +135,7 @@ def test_relay_url_derivation_and_pairing_payload_are_canonical() -> None:
 
 def test_production_pairing_payload_matches_cross_platform_fixture() -> None:
     root = Path(__file__).resolve().parents[5]
-    fixtures = json.loads((root / "protocol/relay/mobile-pairing-fixtures.json").read_text(encoding="utf-8"))
+    fixtures = json.loads((root / "cores/protocol/relay/mobile-pairing-fixtures.json").read_text(encoding="utf-8"))
     production = next(item for item in fixtures["valid"] if item["name"] == "production")
     assert build_pairing_payload(production["code"], "https://ai.ihep.ac.cn/api/runtime-relay") == production["payload"]
 
@@ -104,6 +153,32 @@ def test_service_keeps_runtime_token_out_of_public_grant(tmp_path: Path) -> None
     assert asyncio.run(service.read(created.grant_id)).status == "consumed"
     assert asyncio.run(service.revoke(created.grant_id)).status == "revoked"
     assert [item[0] for item in transport.calls] == ["create", "read", "revoke"]
+
+
+def test_service_lists_redacted_associations_and_revokes_selected_device(tmp_path: Path) -> None:
+    service, transport = configured_service(tmp_path)
+
+    listed = asyncio.run(service.associations())
+    assert [item.subject_summary for item in listed] == ["sub_" + "c" * 12]
+    assert "canary-runtime-token" not in repr([item.public() for item in listed])
+    revoked = asyncio.run(
+        service.revoke_association("assoc_" + "b" * 32)
+    )
+    assert revoked.status == "revoked"
+    assert [item[0] for item in transport.calls] == [
+        "associations", "revoke_association",
+    ]
+
+
+def test_service_schedules_guarded_connection_owner_restart_without_exposing_token(
+    tmp_path: Path,
+) -> None:
+    service, transport = configured_service(tmp_path)
+    result = asyncio.run(service.inject_connection_owner_restart(5))
+    assert result["status"] == "scheduled"
+    assert result["recovery"]["required_generation"] == result["generation"] + 1
+    assert transport.calls == [("fault", "rt_one:5")]
+    assert "canary-runtime-token" not in json.dumps(result)
 
 
 def test_readiness_distinguishes_missing_and_broken_credentials(tmp_path: Path) -> None:
@@ -254,18 +329,66 @@ def test_full_runtime_exposes_authenticated_pairing_control_api(monkeypatch, tmp
     gateway._DATASET.mkdir(parents=True, exist_ok=True)
     gateway._DB_URI = f"sqlite:///{gateway._DATASET}/drsai.db"
     gateway._db_manager = None
+    gateway._runtime_registry_instance = None
     service, _ = configured_service(tmp_path)
     gateway._mobile_pairing_service_instance = service
     headers = {"X-OpenDrSai-Gateway-Token": token}
     try:
         with TestClient(gateway.app) as client:
+            active_path = tmp_path / "active-workspace"
+            archived_path = tmp_path / "archived-workspace"
+            removed_path = tmp_path / "removed-workspace"
+            for path in (active_path, archived_path, removed_path):
+                path.mkdir()
+            registry = gateway._runtime_registry()
+            registry.open_workspace(str(active_path))
+            archived = registry.open_workspace(str(archived_path))
+            removed = registry.open_workspace(str(removed_path))
+            registry.close_workspace(archived.workspace_id)
+            registry.remove_workspace(removed.workspace_id)
             readiness = client.get("/v1/mobile-pairing/status", headers=headers)
             assert readiness.status_code == 200 and readiness.json()["state"] == "ready"
+            lifecycles = client.get(
+                "/v1/mobile-pairing/diagnostics/workspace-lifecycles",
+                headers=headers,
+            )
+            assert lifecycles.status_code == 200
+            assert lifecycles.json() == {
+                "counts": {"active": 1, "archived": 1, "removed": 1},
+                "total": 3,
+            }
+            assert "path" not in lifecycles.text.lower()
+            assert client.get(
+                "/v1/mobile-pairing/diagnostics/workspace-lifecycles"
+            ).status_code == 401
             created = client.post("/v1/mobile-pairing/grants", headers=headers)
             assert created.status_code == 200 and created.json()["payload"].startswith("opendrsai://associate?")
             grant_id = created.json()["grant_id"]
             assert client.get(f"/v1/mobile-pairing/grants/{grant_id}", headers=headers).json()["status"] == "consumed"
             assert client.delete(f"/v1/mobile-pairing/grants/{grant_id}", headers=headers).json()["status"] == "revoked"
+            associations = client.get("/v1/mobile-pairing/associations", headers=headers)
+            assert associations.status_code == 200
+            association_id = associations.json()["items"][0]["association_id"]
+            revoked = client.delete(
+                f"/v1/mobile-pairing/associations/{association_id}",
+                headers=headers,
+            )
+            assert revoked.status_code == 200 and revoked.json()["status"] == "revoked"
+            fault = client.post(
+                "/v1/mobile-pairing/fault-injections/connection-owner-restart",
+                headers=headers,
+                json={"ttl_seconds": 5},
+            )
+            assert fault.status_code == 202
+            assert fault.json()["recovery"]["required_generation"] == 8
+            assert client.post(
+                "/v1/mobile-pairing/fault-injections/connection-owner-restart",
+                json={"ttl_seconds": 5},
+            ).status_code == 401
+            enrollment = client.delete("/v1/mobile-pairing/enrollment", headers=headers)
+            assert enrollment.status_code == 200 and enrollment.json()["status"] == "revoked"
+            assert client.get("/v1/mobile-pairing/status", headers=headers).json()["state"] == "not_registered"
             assert client.get("/v1/mobile-pairing/status").status_code == 401
     finally:
         gateway._mobile_pairing_service_instance = None
+        gateway._runtime_registry_instance = None

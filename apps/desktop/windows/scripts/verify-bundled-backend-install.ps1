@@ -17,7 +17,7 @@ New-Item -ItemType Directory -Force -Path $expanded, $wheels | Out-Null
 try {
     Expand-Archive -LiteralPath $archivePath -DestinationPath $expanded -Force
     $package = Join-Path $expanded "cores\python\packages\drsai"
-    $required = Join-Path $expanded "protocol\owop\owop.schema.json"
+    $required = Join-Path $expanded "cores\protocol\owop\owop.schema.json"
     if (-not (Test-Path $required)) { throw "Extracted archive omits required OWOP schema" }
     $env:DRSAI_SKIP_TUI_BUILD = "1"
     # Match the production installer: let pip create an isolated Hatchling

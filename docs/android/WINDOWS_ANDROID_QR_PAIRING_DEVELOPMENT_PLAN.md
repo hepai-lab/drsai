@@ -195,8 +195,8 @@ PENDING → CONSUMED
 - `cores/python/packages/drsai/src/drsai/relay/api.py`
 - `cores/python/packages/drsai/src/drsai/relay/runtime_client.py`
 - `cores/python/packages/drsai/src/drsai/backend/gateway.py`
-- `protocol/relay/runtime-relay.schema.json`
-- `protocol/relay/runtime-relay.openapi.json`
+- `cores/protocol/relay/runtime-relay.schema.json`
+- `cores/protocol/relay/runtime-relay.openapi.json`
 
 ### Windows Desktop
 

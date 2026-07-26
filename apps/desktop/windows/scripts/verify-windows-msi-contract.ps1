@@ -32,6 +32,10 @@ Assert-Equal (Read-SingleValue $database "SELECT ``Value`` FROM ``Property`` WHE
 Assert-Equal (Read-SingleValue $database "SELECT ``Value`` FROM ``Property`` WHERE ``Property``='ARPNOREPAIR'") "1" "ARPNOREPAIR"
 Assert-Equal (Read-SingleValue $database "SELECT ``Directory_Parent`` FROM ``Directory`` WHERE ``Directory``='INSTALLFOLDER'") "ProgramFiles64Folder" "INSTALLFOLDER parent"
 Assert-Equal (Read-SingleValue $database "SELECT ``Root`` FROM ``Registry`` WHERE ``Key``='Software\HepAI\OpenDrSai' AND ``Name``='Installed'") "2" "Installed registry hive"
+$sameVersionUpgradeAttributes = [int](Read-SingleValue $database "SELECT ``Attributes`` FROM ``Upgrade`` WHERE ``ActionProperty``='WIX_UPGRADE_DETECTED'")
+if (($sameVersionUpgradeAttributes -band 512) -eq 0) {
+    throw "MajorUpgrade must include the current product version so a repaired MSI can replace the same published version; attributes=$sameVersionUpgradeAttributes."
+}
 
 $productVersion = Read-SingleValue $database "SELECT ``Value`` FROM ``Property`` WHERE ``Property``='ProductVersion'"
 $runtimeUrl = Read-SingleValue $database "SELECT ``Value`` FROM ``Property`` WHERE ``Property``='RUNTIMEURL'"
@@ -89,14 +93,15 @@ foreach ($setter in @(
     "SetVerifyOpenDrSaiRuntime",
     "SetExtractOpenDrSaiRuntime",
     "SetInstallOpenDrSaiRuntime",
-    "SetCompleteOpenDrSaiInstall"
+    "SetCompleteOpenDrSaiInstall",
+    "SetRunOpenDrSaiUninstaller"
 )) {
     $target = Read-SingleValue $database "SELECT ``Target`` FROM ``CustomAction`` WHERE ``Action``='$setter'"
-    if ($target -notmatch '(?i)-MachineInstall') {
+    if ($setter -ne "SetRunOpenDrSaiUninstaller" -and $target -notmatch '(?i)-MachineInstall') {
         throw "$setter must force machine installation: $target"
     }
-    if ($target -match '(?i)-InstallRoot\s+"\[INSTALLFOLDER\]"') {
-        throw "$setter must not quote INSTALLFOLDER as a command argument because MSI directory values end with a backslash: $target"
+    if ($target -notmatch '(?i)-InstallRoot\s+"\[INSTALLFOLDER\]\."') {
+        throw "$setter must pass the selected INSTALLFOLDER with a trailing dot that safely terminates quoted paths: $target"
     }
 }
 

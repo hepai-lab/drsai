@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import QRCode from "qrcode";
-import { Check, Copy, RefreshCw, Smartphone, X } from "lucide-react";
+import { Check, Copy, RefreshCw, Smartphone, Trash2, X } from "lucide-react";
 import type {
+  DesktopMobileAssociation,
   DesktopMobilePairingGrant,
   DesktopMobilePairingReadiness,
 } from "@shared/desktopApi";
@@ -61,6 +62,7 @@ export function MobilePairingDialog({
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [associations, setAssociations] = useState<DesktopMobileAssociation[]>([]);
 
   const revokeActive = useCallback(async (): Promise<void> => {
     const active = activeGrantRef.current;
@@ -84,8 +86,12 @@ export function MobilePairingDialog({
       setReadiness(currentReadiness);
       if (currentReadiness.state !== "ready") {
         setGrant(null);
+        setAssociations([]);
         return;
       }
+      const linked = await desktopApi.listMobileAssociations().catch(() => []);
+      if (!mountedRef.current) return;
+      setAssociations(linked.filter((item) => item.status === "active"));
       const created = await desktopApi.createMobilePairingGrant();
       if (!mountedRef.current) return;
       activeGrantRef.current = created;
@@ -173,6 +179,43 @@ export function MobilePairingDialog({
     await createGrant();
   }
 
+  async function revokeAssociation(associationId: string): Promise<void> {
+    setBusy(true);
+    setError(null);
+    try {
+      await desktopApi.revokeMobileAssociation(associationId);
+      if (mountedRef.current) {
+        setAssociations((items) => items.filter((item) => item.association_id !== associationId));
+      }
+    } catch (reason) {
+      if (mountedRef.current) setError(mobilePairingErrorText(reason, language));
+    } finally {
+      if (mountedRef.current) setBusy(false);
+    }
+  }
+
+  async function revokeEnrollment(): Promise<void> {
+    const confirmed = window.confirm(zh
+      ? "这会断开所有 Android 设备并撤销此电脑的 Runtime 注册。确定继续吗？"
+      : "This disconnects every Android device and revokes this computer's Runtime enrollment. Continue?");
+    if (!confirmed) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await desktopApi.revokeMobileRuntimeEnrollment();
+      if (!mountedRef.current) return;
+      activeGrantRef.current = null;
+      setGrant(null);
+      setQrDataUrl(null);
+      setAssociations([]);
+      setReadiness({ state: "not_registered", action: "register_runtime" });
+    } catch (reason) {
+      if (mountedRef.current) setError(mobilePairingErrorText(reason, language));
+    } finally {
+      if (mountedRef.current) setBusy(false);
+    }
+  }
+
   const readinessText: Record<string, string> = zh ? {
     not_registered: "此电脑尚未注册到 HepAI，请先完成 Runtime 注册。",
     credential_invalid: "此电脑的 Relay 凭据不可用，请重新注册 Runtime。",
@@ -205,8 +248,34 @@ export function MobilePairingDialog({
           <div className="mobile-pairing-manual"><span><small>{zh ? "手工配对码" : "Manual pairing code"}</small><code>{code}</code></span><button type="button" aria-label={zh ? "复制手工配对码" : "Copy manual pairing code"} onClick={() => void copyTextSafely(code).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1_500); })}>{copied ? <Check size={16} /> : <Copy size={16} />}{copied ? (zh ? "已复制" : "Copied") : (zh ? "复制" : "Copy")}</button></div>
         </> : null}
 
+        {readiness?.state === "ready" && associations.length > 0 ? (
+          <div className="mobile-pairing-associations" data-testid="mobile-associations">
+            <h3>{zh ? "已连接设备" : "Connected devices"}</h3>
+            {associations.map((association) => (
+              <div key={association.association_id} className="mobile-pairing-association">
+                <span>
+                  <strong>{zh ? "Android 设备" : "Android device"}</strong>
+                  <small>{association.subject_summary}</small>
+                </span>
+                <button
+                  type="button"
+                  disabled={busy}
+                  data-testid="mobile-association-revoke"
+                  onClick={() => void revokeAssociation(association.association_id)}
+                >
+                  <Trash2 size={15} />{zh ? "断开" : "Disconnect"}
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
         <p className="mobile-pairing-privacy">{zh ? "二维码仅包含短时、单次使用的授权码，不包含密码、工作区路径或 Runtime 凭据。" : "The QR contains only a short-lived, single-use grant. It contains no password, workspace path, or Runtime credential."}</p>
-        <footer><button type="button" onClick={() => void refresh()} disabled={busy || readiness?.state !== "ready"}>{zh ? "刷新二维码" : "Refresh QR code"}</button><button type="button" className="primary" onClick={onClose}>{grant?.status === "consumed" ? (zh ? "完成" : "Done") : (zh ? "取消" : "Cancel")}</button></footer>
+        <footer>
+          <button type="button" onClick={() => void refresh()} disabled={busy || readiness?.state !== "ready"}>{zh ? "刷新二维码" : "Refresh QR code"}</button>
+          {readiness?.state === "ready" ? <button type="button" className="danger" data-testid="mobile-enrollment-revoke" onClick={() => void revokeEnrollment()} disabled={busy}>{zh ? "撤销此电脑" : "Revoke computer"}</button> : null}
+          <button type="button" className="primary" onClick={onClose}>{grant?.status === "consumed" ? (zh ? "完成" : "Done") : (zh ? "取消" : "Cancel")}</button>
+        </footer>
       </section>
     </div>
   );

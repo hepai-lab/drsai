@@ -6,6 +6,8 @@ import type { OWOPOperation, OWOPParamsByOperation } from "../api/owop.generated
 import type {
   DesktopMobilePairingGrant,
   DesktopMobilePairingReadiness,
+  DesktopMobileAssociation,
+  DesktopRuntimeEnrollmentRevocation,
   WorkspaceProject,
 } from "../api/desktopApi";
 
@@ -203,6 +205,9 @@ export interface RuntimeClient {
   createMobilePairingGrant(): Promise<DesktopMobilePairingGrant>;
   getMobilePairingGrant(grantId: string): Promise<DesktopMobilePairingGrant>;
   revokeMobilePairingGrant(grantId: string): Promise<DesktopMobilePairingGrant>;
+  listMobileAssociations(): Promise<DesktopMobileAssociation[]>;
+  revokeMobileAssociation(associationId: string): Promise<DesktopMobileAssociation>;
+  revokeMobileRuntimeEnrollment(): Promise<DesktopRuntimeEnrollmentRevocation>;
 }
 
 export interface RuntimeAccess {
@@ -477,6 +482,25 @@ abstract class HttpRuntimeClient implements RuntimeClient {
 
   revokeMobilePairingGrant(grantId: string): Promise<DesktopMobilePairingGrant> {
     return this.requestJson(`/v1/mobile-pairing/grants/${this.pairingGrantId(grantId)}`, { method: "DELETE" });
+  }
+
+  async listMobileAssociations(): Promise<DesktopMobileAssociation[]> {
+    const result = await this.requestJson<{ items: DesktopMobileAssociation[] }>(
+      "/v1/mobile-pairing/associations",
+    );
+    return result.items;
+  }
+
+  revokeMobileAssociation(associationId: string): Promise<DesktopMobileAssociation> {
+    this.assertResourceId("Association", associationId);
+    return this.requestJson(
+      `/v1/mobile-pairing/associations/${encodeURIComponent(associationId)}`,
+      { method: "DELETE" },
+    );
+  }
+
+  revokeMobileRuntimeEnrollment(): Promise<DesktopRuntimeEnrollmentRevocation> {
+    return this.requestJson("/v1/mobile-pairing/enrollment", { method: "DELETE" });
   }
 
   private workspaceRequest<T>(workspaceId: string, endpoint: string, init?: RequestInit): Promise<T> {
