@@ -27,7 +27,7 @@ function delay(ms) {
 }
 
 const api = read("../shared/api/desktopApi.ts");
-const liveBridge = read("src/main/mcpLiveBridge.ts");
+const liveBridge = read("../shared/main/mcpLiveBridge.ts");
 const main = read("src/main/index.ts");
 const preload = read("../shared/main/preload.ts");
 const adapter = read("../shared/renderer/src/adapters/useDesktopChatAdapter.ts");

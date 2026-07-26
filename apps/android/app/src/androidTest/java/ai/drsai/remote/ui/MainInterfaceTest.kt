@@ -10,7 +10,6 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -19,7 +18,6 @@ import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -30,8 +28,6 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
-import androidx.compose.ui.test.performTouchInput
-import androidx.compose.ui.test.swipe
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.unit.dp
@@ -70,18 +66,22 @@ class MainInterfaceTest {
 
     @Test
     fun permanentWorkbenchDrawerRendersItsPrimaryNavigation() {
+        var searchOpened = 0
         composeRule.setContent {
             MaterialTheme {
                 NavigationDrawer(
                     state = AppState(user = ai.drsai.remote.data.User("wide", "宽屏账户")),
                     modal = false,
                     onNewConversation = {}, onOpenConversation = {}, onSelectAgent = {}, onRefreshAgents = {},
-                    onOpenProfile = {}, onOpenRemoteWorkspaces = {},
+                    onOpenProfile = {}, onOpenSearch = { searchOpened += 1 }, onOpenRemoteWorkspaces = {},
                 )
             }
         }
         composeRule.onNodeWithText("远程工作区").assertIsDisplayed()
         composeRule.onNodeWithText("宽屏账户").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("搜索").assertIsDisplayed().performClick()
+        composeRule.onAllNodes(hasSetTextAction()).assertCountEquals(0)
+        composeRule.runOnIdle { assertEquals(1, searchOpened) }
     }
 
     @Test
@@ -135,9 +135,9 @@ class MainInterfaceTest {
                 }
             }
         }
-        composeRule.onNode(hasSetTextAction()).assertIsDisplayed()
-        composeRule.onNodeWithTag("drawer-list").performScrollToIndex(2)
-        composeRule.onNodeWithText("工作区与会话").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("搜索").assertIsDisplayed()
+        composeRule.onNodeWithTag("drawer-list").performScrollToIndex(4)
+        composeRule.onNodeWithText("会话").assertIsDisplayed()
         composeRule.onNodeWithTag("drawer-list").performScrollToIndex(0)
         composeRule.onNodeWithText("智能体").assertIsDisplayed()
     }
@@ -194,8 +194,8 @@ class MainInterfaceTest {
     }
 
     @Test
-    fun drawerExposesWorkbenchEntriesAndFiltersSessions() {
-        var resultsOpened = 0
+    fun drawerUsesDesktopNavigationAndKeepsSessionActions() {
+        var agentsOpened = 0
         var pinned: Pair<String, Boolean>? = null
         composeRule.setContent {
             MaterialTheme {
@@ -216,28 +216,25 @@ class MainInterfaceTest {
                     onRefreshAgents = {},
                     onOpenProfile = {},
                     onOpenRemoteWorkspaces = {},
-                    onOpenResults = { resultsOpened += 1 },
+                    onOpenAgentsAndSkills = { agentsOpened += 1 },
                     onSetSessionPinned = { id, value -> pinned = id to value },
                 )
             }
         }
-        composeRule.onNodeWithText("定时任务").assertIsDisplayed()
-        composeRule.onNodeWithText("结果").performScrollTo().assertIsDisplayed().performClick()
-        composeRule.onNodeWithText("智能体与技能").performScrollTo().assertIsDisplayed()
-        composeRule.runOnIdle { assertEquals(1, resultsOpened) }
-        composeRule.onNode(hasSetTextAction()).performTextInput("Beta")
+        composeRule.onNodeWithText("已安排").assertIsDisplayed()
+        composeRule.onNodeWithText("远程工作区").assertIsDisplayed()
+        composeRule.onAllNodesWithText("结果").assertCountEquals(0)
+        composeRule.onAllNodesWithText("本地工作区").assertCountEquals(0)
+        composeRule.onNodeWithText("智能体").assertIsDisplayed().performClick()
+        composeRule.runOnIdle { assertEquals(1, agentsOpened) }
+        composeRule.onNodeWithTag("drawer-list").performScrollToIndex(5)
         assertTrue(composeRule.onAllNodesWithText("Beta").fetchSemanticsNodes().isNotEmpty())
-        composeRule.onAllNodesWithText("Alpha").assertCountEquals(0)
-        composeRule.onNodeWithTag("drawer-list").performScrollToIndex(3).performTouchInput {
-            swipe(Offset(center.x, bottom - 8), Offset(center.x, bottom - 104), 200)
-        }
-        assertTrue(composeRule.onAllNodesWithText("待审批").fetchSemanticsNodes().isNotEmpty())
-        composeRule.onNodeWithContentDescription("会话操作").performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.onNodeWithTag("session-action-two").performSemanticsAction(SemanticsActions.OnClick)
         composeRule.onNodeWithText("取消置顶").performClick()
         composeRule.runOnIdle { assertEquals("two" to false, pinned) }
     }
 
-    @Test fun remoteWorkspaceShowsAuthoritativeConnectionFreshness() {
+    @Test fun drawerHidesWorkspaceContainersWhenThereAreNoSessions() {
         composeRule.setContent {
             MaterialTheme {
                 NavigationDrawer(
@@ -252,8 +249,9 @@ class MainInterfaceTest {
                 )
             }
         }
-        composeRule.onNodeWithTag("drawer-list").performScrollToIndex(3)
-        assertTrue(composeRule.onAllNodesWithText("在线").fetchSemanticsNodes().isNotEmpty())
+        composeRule.onNodeWithTag("drawer-list").performScrollToIndex(4)
+        composeRule.onNodeWithText("会话").assertIsDisplayed()
+        composeRule.onAllNodesWithText("远程实验").assertCountEquals(0)
     }
 
     @Test fun drawerRequestsTheNextSessionPageForTheExactWorkspace() {
@@ -276,15 +274,14 @@ class MainInterfaceTest {
                 )
             }
         }
-        composeRule.onNodeWithTag("drawer-list").performScrollToIndex(5)
+        composeRule.onNodeWithTag("drawer-list").performScrollToIndex(6)
         composeRule.onNode(hasText("加载更多会话") and hasClickAction())
             .performSemanticsAction(SemanticsActions.OnClick)
         composeRule.runOnIdle { assertEquals("runtime:workspace", requested) }
     }
 
-    @Test fun collapsedWorkspaceStateSurvivesSavedInstanceStateRestoration() {
-        val restoration = StateRestorationTester(composeRule)
-        restoration.setContent {
+    @Test fun drawerListsSessionsWithoutWorkspaceContainerNames() {
+        composeRule.setContent {
             MaterialTheme {
                 NavigationDrawer(
                     state = AppState(
@@ -301,12 +298,9 @@ class MainInterfaceTest {
                 )
             }
         }
-        composeRule.onNodeWithTag("drawer-list").performScrollToIndex(3)
-        composeRule.onNodeWithContentDescription("展开或收起工作区").performClick()
-        composeRule.onAllNodesWithText("恢复会话").assertCountEquals(0)
-
-        restoration.emulateSavedInstanceStateRestore()
-        composeRule.onAllNodesWithText("恢复会话").assertCountEquals(0)
+        composeRule.onNodeWithTag("drawer-list").performScrollToIndex(5)
+        composeRule.onNodeWithText("恢复会话").assertIsDisplayed()
+        composeRule.onAllNodesWithText("恢复工作区").assertCountEquals(0)
     }
 
     @Test fun newTaskTargetSelectionIsExplicitAndUserCanOverrideTheRemoteSuggestion() {
@@ -361,25 +355,36 @@ class MainInterfaceTest {
         composeRule.runOnIdle { assertEquals("approval-inline" to ApprovalDecision.ALLOW_ONCE, decision) }
     }
 
-    @Test fun drawerGlobalMessageResultOpensItsOwningSession() {
+    @Test fun dedicatedSearchScreenKeepsInputBelowResultsAndOpensOwningSession() {
         val session = WorkbenchSessionItem("s1", "android-local", "local", "会话", true, false, false, 1)
         var opened = ""
+        var searched = ""
         composeRule.setContent {
             MaterialTheme {
-                NavigationDrawer(
+                WorkbenchSearchScreen(
                     state = AppState(
                         destination = AppDestination.Chat,
+                        workbenchWorkspaces = listOf(
+                            WorkbenchWorkspaceItem("local", "android-local", "local", "本地", true, listOf(session)),
+                        ),
                         workbenchSearchResults = listOf(WorkbenchSearchItem(session, "needle in message", true)),
                     ),
-                    onNewConversation = {}, onOpenConversation = {}, onOpenWorkbenchSession = { opened = it.sessionId },
-                    onSelectAgent = {}, onRefreshAgents = {}, onOpenProfile = {}, onOpenRemoteWorkspaces = {},
+                    onBack = {},
+                    onSearch = { searched = it },
+                    onOpenSession = { opened = it.sessionId },
+                    onSelectAgent = {},
                 )
             }
         }
         composeRule.onNode(hasSetTextAction()).performTextInput("needle")
-        composeRule.onNodeWithTag("drawer-list").performScrollToIndex(4)
         composeRule.onNodeWithText("needle in message").performSemanticsAction(SemanticsActions.OnClick)
-        composeRule.runOnIdle { assertEquals("s1", opened) }
+        val inputBottom = composeRule.onNode(hasSetTextAction()).fetchSemanticsNode().boundsInRoot.bottom
+        val resultBottom = composeRule.onNodeWithText("needle in message").fetchSemanticsNode().boundsInRoot.bottom
+        composeRule.runOnIdle {
+            assertEquals("needle", searched)
+            assertEquals("s1", opened)
+            assertTrue(inputBottom > resultBottom)
+        }
     }
 
     @Test

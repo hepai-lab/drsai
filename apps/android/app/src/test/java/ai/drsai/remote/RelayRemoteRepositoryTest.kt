@@ -5,8 +5,10 @@ import ai.drsai.remote.remote.model.*
 import kotlinx.coroutines.test.runTest
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.SocketPolicy
 import okhttp3.OkHttpClient
 import java.net.SocketTimeoutException
+import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -23,6 +25,50 @@ class RelayRemoteRepositoryTest {
         val page = repository.sessions(RuntimeId("rt"), WorkspaceId("ws"), query = "T")
         assertEquals("s", page.items.single().reference.sessionId.value); assertEquals("1", page.nextCursor)
         assertEquals("Bearer token", server.takeRequest().getHeader("Authorization"))
+    }
+
+    @Test fun `repository refreshes one expired bearer and retries once`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(401).setBody("""{"code":"invalid_token"}"""))
+        server.enqueue(MockResponse().setBody("""{"items":[],"next_cursor":null}"""))
+        repository = RelayRemoteRepository(
+            server.url("/").toString(),
+            { "expired" },
+            refreshAfter = { failed -> if (failed == "expired") "refreshed" else null },
+        )
+
+        assertTrue(repository.agentDefinitions(RuntimeId("rt")).isEmpty())
+        assertEquals("Bearer expired", server.takeRequest().getHeader("Authorization"))
+        assertEquals("Bearer refreshed", server.takeRequest().getHeader("Authorization"))
+    }
+
+    @Test fun `session lifecycle parsing filters archived and removed rows`() = runTest {
+        server.enqueue(MockResponse().setBody("""{"items":[
+            {"runtime_id":"rt","workspace_id":"ws","session_id":"active","title":"Active","backend_id":"opendrsai","agent_definition_id":"a","agent_definition_version":"1","last_run_status":"running","updated_at":"2026-07-26T10:00:00Z","lifecycle":"active"},
+            {"runtime_id":"rt","workspace_id":"ws","session_id":"archived","title":"Archived","backend_id":"opendrsai","agent_definition_id":"a","agent_definition_version":"1","last_run_status":null,"updated_at":"2026-07-26T09:00:00Z","lifecycle":"archived"},
+            {"runtime_id":"rt","workspace_id":"ws","session_id":"removed","title":"Removed","backend_id":"opendrsai","agent_definition_id":"a","agent_definition_version":"1","last_run_status":null,"updated_at":"2026-07-26T08:00:00Z","lifecycle":"removed"}
+        ],"next_cursor":null}"""))
+
+        val page = repository.sessions(RuntimeId("rt"), WorkspaceId("ws"))
+
+        assertEquals(listOf("active"), page.items.map { it.reference.sessionId.value })
+        assertEquals("active", server.takeRequest().requestUrl?.queryParameter("lifecycle"))
+    }
+
+    @Test fun `conversation endpoint loads stable paged Windows transcript`() = runTest {
+        server.enqueue(MockResponse().setBody("""{"items":[
+            {"item_id":"user:run-1","sequence":1,"kind":"message.user","timestamp":"2026-07-26T10:00:00Z","payload":{"content":"Windows question","run_id":"run-1"}},
+            {"item_id":"event-1","sequence":2,"kind":"message.delta","timestamp":"2026-07-26T10:00:01Z","payload":{"delta":"Windows answer","run_id":"run-1"}}
+        ],"next_cursor":"2"}"""))
+
+        val page = repository.conversation(RuntimeId("rt"), WorkspaceId("ws"), SessionId("session"), limit = 100)
+
+        assertEquals(listOf("message.user", "message.delta"), page.items.map { it.kind })
+        assertEquals("Windows question", page.items.first().payload["content"])
+        assertEquals("2", page.nextCursor)
+        server.takeRequest().apply {
+            assertEquals("/v1/runtimes/rt/workspaces/ws/sessions/session/conversation?limit=100", path)
+            assertEquals("Bearer token", getHeader("Authorization"))
+        }
     }
 
     @Test fun `exact healthy definition creates session and stable idempotency header body`() = runTest {
@@ -82,6 +128,21 @@ class RelayRemoteRepositoryTest {
         val audit = repository.audit(RuntimeId("rt"), WorkspaceId("ws"), RunId("r"))
         assertEquals("corr", audit.single().correlationId)
         assertTrue(server.takeRequest().path!!.endsWith("/audit?run_id=r"))
+    }
+
+    @Test fun `approval lost response retries with one stable idempotency key`() = runTest {
+        server.enqueue(MockResponse().setBody("""{"status":"approved"}""")
+            .setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST))
+        server.enqueue(MockResponse().setBody("""{"status":"approved"}"""))
+
+        assertEquals("approved", repository.decide(RuntimeId("rt"), ApprovalId("approval-1"), "approve"))
+
+        val first = JSONObject(server.takeRequest().body.readUtf8())
+        val second = JSONObject(server.takeRequest().body.readUtf8())
+        assertEquals("approval:approval-1:approve", first.getString("idempotency_key"))
+        assertEquals(first.getString("idempotency_key"), second.getString("idempotency_key"))
+        assertNotEquals(first.getString("request_id"), second.getString("request_id"))
+        assertEquals(2, server.requestCount)
     }
 
     @Test fun `session run history and rest events retain complete authority scope`() = runTest {

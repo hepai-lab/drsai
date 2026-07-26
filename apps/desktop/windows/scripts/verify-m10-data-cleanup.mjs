@@ -82,9 +82,19 @@ function verifyNormalUninstallPreservesUserData() {
   const uninstallScript = join(repo, "apps", "desktop", "windows", "installer", "uninstall-opendrsai.ps1");
   const uninstallVbs = join(repo, "apps", "desktop", "windows", "installer", "run-opendrsai-uninstall.vbs");
   const scriptSource = readFileSync(uninstallScript, "utf8");
+  const installSource = readFileSync(join(repo, "apps", "desktop", "windows", "installer", "install-opendrsai.ps1"), "utf8");
   const vbsSource = readFileSync(uninstallVbs, "utf8");
   assert(scriptSource.includes("[switch]$RemoveUserData") && scriptSource.includes("if ($RemoveUserData)"), "Uninstall script does not gate user-data removal behind an explicit switch.");
   assert(!vbsSource.includes("-RemoveUserData"), "Normal MSI uninstall unexpectedly opts into user-data deletion.");
+  for (const [source, label] of [[installSource, "Install"], [scriptSource, "Uninstall"]]) {
+    assert(source.includes("function Stop-InstalledProcessTrees"), `${label} script does not stop installed process trees.`);
+    assert(source.includes("Get-CimInstance Win32_Process"), `${label} script does not discover all processes running from the install root.`);
+    assert(source.includes("taskkill.exe /PID $process.ProcessId /T /F"), `${label} script does not terminate child process trees.`);
+  }
+  assert(scriptSource.includes("function Remove-Safely([string]$Path, [int]$MaxAttempts = 6)"), "Uninstall cleanup does not retry transient file-lock failures.");
+  assert(scriptSource.includes('Write-Log "ERROR: $($_.Exception.Message)"'), "Uninstall failures are not written to a diagnostic log.");
+  assert(/Stop-InstalledProcessTrees\r?\n\s+Install-RuntimePayload/.test(installSource), "Install stage does not stop the previous runtime before swapping directories.");
+  assert(installSource.includes("function Remove-PathWithRetry"), "Install cleanup does not retry transient file-lock failures.");
 
   const installRoot = join(testRoot, "fake installed runtime");
   const uninstallHome = join(testRoot, "normal uninstall app data");
@@ -100,7 +110,7 @@ function verifyNormalUninstallPreservesUserData() {
   assert(existsSync(join(uninstallHome, "user-data-marker.json")), "Normal uninstall deleted application data without explicit opt-in.");
   assert(existsSync(fixturePath) && sha256(readFileSync(fixturePath)) === sourceHash, "Normal uninstall changed the CERN PDF workspace fixture.");
   assert(existsSync(reportPath) && sha256(readFileSync(reportPath)) === sha256(reportBytes), "Normal uninstall changed the user report.");
-  return { removeUserDataRequiresExplicitSwitch: true, normalMsiPassesRemoveUserData: false, isolatedExecutionPassed: true, cernPdfPreserved: true, userReportPreserved: true };
+  return { removeUserDataRequiresExplicitSwitch: true, normalMsiPassesRemoveUserData: false, processTreeCleanupCovered: true, retryCleanupCovered: true, failureLoggingCovered: true, isolatedExecutionPassed: true, cernPdfPreserved: true, userReportPreserved: true };
 }
 
 function sha256(value) { return createHash("sha256").update(value).digest("hex").toUpperCase(); }

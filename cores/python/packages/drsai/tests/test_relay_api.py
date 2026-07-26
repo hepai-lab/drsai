@@ -70,6 +70,118 @@ def test_registration_association_heartbeat_and_discovery_flow() -> None:
     assert client.get(f"/v1/runtimes/{runtime_id}/capabilities", headers={"x-subject": "alice"}).status_code == 200
 
 
+def test_access_grant_status_and_revoke_lifecycle() -> None:
+    client = TestClient(_testing_app())
+    _, runtime_id, token = register(client)
+    headers = {"x-runtime-token": token}
+    created = client.post(f"/v1/runtimes/{runtime_id}/access-grants", headers=headers)
+    assert created.status_code == 200
+    body = created.json()
+    assert body["grant_id"].startswith("ag_") and body["status"] == "pending"
+    status_url = f"/v1/runtimes/{runtime_id}/access-grants/{body['grant_id']}"
+    assert client.get(status_url, headers=headers).json()["status"] == "pending"
+    revoked = client.delete(status_url, headers=headers)
+    assert revoked.status_code == 200 and revoked.json()["status"] == "revoked"
+    assert client.delete(status_url, headers=headers).json()["status"] == "revoked"
+    assert client.post("/v1/associations", headers={"x-subject": "alice"},
+                       json={**control(), "code": body["code"]}).status_code == 400
+
+
+def test_association_and_enrollment_revocation_are_scoped_and_redacted() -> None:
+    client = TestClient(_testing_app())
+    _, runtime_id, runtime_token = register(client)
+    runtime_headers = {"x-runtime-token": runtime_token}
+    grant = client.post(
+        f"/v1/runtimes/{runtime_id}/access-grants", headers=runtime_headers
+    ).json()
+    associated = client.post(
+        "/v1/associations",
+        headers={"x-subject": "alice"},
+        json={**control(), "code": grant["code"]},
+    )
+    assert associated.status_code == 200
+
+    consumed = client.get(
+        f"/v1/runtimes/{runtime_id}/access-grants/{grant['grant_id']}",
+        headers=runtime_headers,
+    ).json()
+    assert consumed["status"] == "consumed"
+    assert consumed["subject_summary"].startswith("sub_")
+    assert "alice" not in json.dumps(consumed)
+    associations = client.get(
+        f"/v1/runtimes/{runtime_id}/associations", headers=runtime_headers
+    ).json()
+    assert len(associations) == 1
+    assert associations[0]["status"] == "active"
+    assert "alice" not in json.dumps(associations)
+
+    revoked = client.delete(
+        f"/v1/associations/{runtime_id}", headers={"x-subject": "alice"}
+    )
+    assert revoked.status_code == 200
+    assert revoked.json()["status"] == "revoked"
+    assert client.get(
+        f"/v1/runtimes/{runtime_id}/runtime", headers={"x-subject": "alice"}
+    ).status_code == 403
+
+    second_grant = client.post(
+        f"/v1/runtimes/{runtime_id}/access-grants", headers=runtime_headers
+    ).json()
+    assert second_grant["status"] == "pending"
+    enrollment = client.delete(
+        f"/v1/runtimes/{runtime_id}/enrollment", headers=runtime_headers
+    )
+    assert enrollment.status_code == 200
+    assert enrollment.json()["status"] == "revoked"
+    assert client.get(
+        f"/v1/runtimes/{runtime_id}/access-grants/{second_grant['grant_id']}",
+        headers=runtime_headers,
+    ).status_code == 401
+
+
+def test_runtime_display_name_is_safe_and_associated_user_can_rename() -> None:
+    client = TestClient(_testing_app())
+    _, runtime_id, runtime_token = register(client)
+    grant = client.post(
+        f"/v1/runtimes/{runtime_id}/access-grants",
+        headers={"x-runtime-token": runtime_token},
+    ).json()["code"]
+    assert client.post(
+        "/v1/associations",
+        headers={"x-subject": "alice"},
+        json={**control(), "code": grant},
+    ).status_code == 200
+
+    renamed = client.patch(
+        f"/v1/runtimes/{runtime_id}",
+        headers={"x-subject": "alice"},
+        json={"display_name": "  Lab   Workstation  "},
+    )
+    assert renamed.status_code == 200
+    assert renamed.json() == {
+        "runtime_id": runtime_id,
+        "display_name": "Lab Workstation",
+    }
+    assert "path" not in json.dumps(renamed.json())
+    assert client.get(
+        "/v1/runtimes", headers={"x-subject": "alice"}
+    ).json()["items"][0]["display_name"] == "Lab Workstation"
+    for unsafe in (
+        "192.168.1.2",
+        "2001:db8::1",
+        "https://host.example",
+        r"C:\Users\owner",
+        "/home/owner",
+    ):
+        response = client.patch(
+            f"/v1/runtimes/{runtime_id}",
+            headers={"x-subject": "alice"},
+            json={"display_name": unsafe},
+        )
+        assert response.status_code == 400
+        assert response.json()["code"] == "runtime_display_name_invalid"
+
+
 def test_production_relay_derives_principal_from_verified_oidc_and_ignores_client_subject(monkeypatch) -> None:
     secret = b"relay-oidc-test-secret"
     monkeypatch.setenv("OPENDRSAI_OIDC_HS256_SECRET", secret.decode())
@@ -115,6 +227,11 @@ def test_generated_openapi_contains_runtime_handshake_and_pagination() -> None:
     assert "/v1/runtimes/{runtime_id}/capabilities" in schema["paths"]
     parameters = schema["paths"]["/v1/runtimes"]["get"]["parameters"]
     assert {item["name"] for item in parameters} >= {"cursor", "limit", "query"}
+    assert "/v1/associations/{runtime_id}" in schema["paths"]
+    assert "/v1/runtimes/{runtime_id}/associations" in schema["paths"]
+    assert "/v1/runtimes/{runtime_id}/associations/{association_id}" in schema["paths"]
+    assert "/v1/runtimes/{runtime_id}/enrollment" in schema["paths"]
+    assert "patch" in schema["paths"]["/v1/runtimes/{runtime_id}"]
 
 
 def test_runtime_establishes_authenticated_outbound_websocket() -> None:
@@ -134,7 +251,7 @@ def test_runtime_establishes_authenticated_outbound_websocket() -> None:
         socket.send_json({"type": "runtime.workspaces", "workspaces": [{
             "runtime_id": runtime_id, "workspace_id": "workspace-one", "display_name": "Project",
         }]})
-    code, _ = client.app.state.registry.issue_access_grant(runtime_id, token)
+    _, code, _ = client.app.state.registry.issue_access_grant(runtime_id, token)
     client.app.state.registry.associate("alice", code)
     workspaces, _ = client.app.state.registry.list_workspaces("alice", runtime_id)
     assert [item.workspace_id for item in workspaces] == ["workspace-one"]

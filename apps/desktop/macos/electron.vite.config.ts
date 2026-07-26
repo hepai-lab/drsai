@@ -4,7 +4,12 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
-  main: { build: { sourcemap: true } },
+  main: {
+    define: {
+      __OPENDRSAI_BUILD_CHANNEL__: JSON.stringify(process.env.OPENDRSAI_BUILD_CHANNEL === "development" ? "development" : "release"),
+    },
+    build: { sourcemap: true, rollupOptions: { input: { index: resolve("src/main/bootstrapEntry.ts") } } },
+  },
   preload: {
     build: {
       sourcemap: true,

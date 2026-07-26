@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from drsai.backend.runtime_observability import METRICS, ResourceCorrelation, RuntimeObservability
+from drsai.backend.runtime.observability import METRICS, ResourceCorrelation, RuntimeObservability
 
 
 def test_required_runtime_metrics_are_bounded_correlated_and_redacted(tmp_path):

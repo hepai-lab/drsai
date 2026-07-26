@@ -17,6 +17,8 @@ class AppRouteTest {
         val workspace = WorkspaceId("workspace-a")
         val session = SessionId("session-a")
         val routes = listOf(
+            AppRoute.Chat,
+            AppRoute.Search,
             AppRoute.Scheduled,
             AppRoute.Results,
             AppRoute.AgentsAndSkills,
@@ -33,6 +35,11 @@ class AppRouteTest {
     }
 
     @Test fun workbenchDeepLinksAreStrictAndMapToSingleExistingRoutes() {
+        assertEquals(AppRoute.RemoteHome, WorkbenchDeepLinkParser.route("opendrsai://remote"))
+        assertEquals(
+            AppRoute.WorkspaceSessions(RuntimeId("runtime"), WorkspaceId("workspace")),
+            WorkbenchDeepLinkParser.route("opendrsai://workspace/runtime/workspace"),
+        )
         assertEquals(
             AppRoute.RemoteSession(RuntimeId("runtime"), WorkspaceId("workspace"), SessionId("session")),
             WorkbenchDeepLinkParser.route("opendrsai://session/runtime/workspace/session"),
@@ -44,6 +51,8 @@ class AppRouteTest {
         assertEquals(AppRoute.Approvals, WorkbenchDeepLinkParser.route("opendrsai://approval/approval-1"))
         assertEquals(AppRoute.Results, WorkbenchDeepLinkParser.route("opendrsai://artifact/artifact-1"))
         assertEquals(null, WorkbenchDeepLinkParser.route("opendrsai://session/runtime/missing"))
+        assertEquals(null, WorkbenchDeepLinkParser.route("opendrsai://workspace/runtime"))
+        assertEquals(null, WorkbenchDeepLinkParser.route("opendrsai://remote/unexpected"))
         assertEquals(null, WorkbenchDeepLinkParser.route("https://session/runtime/workspace/session"))
     }
 

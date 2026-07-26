@@ -39,7 +39,9 @@ class RemoteAuditViewModel(
 ) : AndroidViewModel(app) {
     private val tokens = SecureTokenStore(app)
     private val auth = AccessTokenCoordinator(tokens, OidcClient(refreshClientId = { tokens.oidcClientId }))
-    private val repository = RelayRemoteRepository(BuildConfig.RELAY_BASE_URL, auth::current)
+    private val repository = RelayRemoteRepository(
+        BuildConfig.RELAY_BASE_URL, auth::current, refreshAfter = auth::refreshAfter,
+    )
     private val mutableState = MutableStateFlow(RemoteAuditUiState(runtimeName, workspaceName))
     val state: StateFlow<RemoteAuditUiState> = mutableState.asStateFlow()
 

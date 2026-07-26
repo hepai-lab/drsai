@@ -102,8 +102,10 @@ const checks = [
   ],
   [
     "chat adapter refreshes displayed messages when the selected thread snapshot changes",
-    chatAdapter.includes("setMessages(threadSnapshot?.messages?.length ? threadSnapshot.messages") &&
-      chatAdapter.includes("[language, threadId, threadSnapshot]"),
+    chatAdapter.includes("if (threadSnapshot?.threadId !== threadId) return") &&
+      chatAdapter.includes("hydrateStructuredMessages(threadSnapshot.messages)") &&
+      chatAdapter.includes("setMessages(restoredMessages)") &&
+      chatAdapter.includes("[activeRequestId, language, threadId, threadSnapshot]"),
   ],
   [
     "sidebar supports a right click context menu on conversations",
@@ -142,8 +144,8 @@ const checks = [
   [
     "copy working directory action uses the clipboard",
     shell.includes("复制工作目录") &&
-      shell.includes("navigator.clipboard.writeText") &&
-      shell.includes("getThreadWorkspacePath(threadMenu.thread)"),
+      shell.includes("copyTextSafely(text)") &&
+      shell.includes("copyText(getThreadWorkspacePath(threadMenu.thread))"),
   ],
   [
     "copy conversation id action uses the clipboard",

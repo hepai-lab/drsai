@@ -1,0 +1,5 @@
+# Isolated from the Gateway venv because browser-use pins a different OpenAI client line.
+# The native core is required by Browser Use 0.13; Playwright is pinned solely to
+# provision a reproducible bundled Chromium instead of relying on user-installed Chrome.
+browser-use[core]==0.13.6
+playwright==1.58.0

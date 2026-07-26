@@ -145,7 +145,7 @@ export function SetupScreen({ gw, configExists, onComplete }: SetupScreenProps) 
   const banner = (
     <Box flexDirection="column">
       <Box>
-        <Text color={theme.primary} bold>⚡ OpenDrSai </Text>
+        <Text color={theme.primary} bold>⚡ DrSai </Text>
         <Text color={theme.warn}>· setup</Text>
       </Box>
       <Box marginTop={1}>

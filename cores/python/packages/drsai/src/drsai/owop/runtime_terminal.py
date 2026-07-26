@@ -6,7 +6,7 @@ import base64
 import binascii
 from typing import Any, Callable, Mapping
 
-from drsai.backend.terminal_state_service import TerminalStateError, TerminalStateService
+from drsai.backend.runtime.terminal.state_service import TerminalStateError, TerminalStateService
 from drsai.owop.protocol import OWOPError
 
 

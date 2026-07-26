@@ -10,7 +10,7 @@ const repo = resolve(root, "../../..");
 const executable = join(root, "release", "win-unpacked", "OpenDrSai.exe");
 const sourcePdf = resolve(process.env.OPENDRSAI_CERN_PDF || "C:/tmp/WLCG-20260715-WLCG-talk-IHEP-visit.pdf");
 const python = resolve(process.env.OPENDRSAI_PDF_PYTHON || "C:/Users/win11/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe");
-const parser = join(repo, "cores/python/packages/drsai/src/drsai/backend/presentation_pdf.py");
+const parser = join(repo, "cores/python/packages/drsai/src/drsai/content/pdf/presentation.py");
 const runId = process.env.OPENDRSAI_M7_RUN_ID?.trim() || "latest";
 if (!/^[a-z0-9-]+$/i.test(runId)) throw new Error("OPENDRSAI_M7_RUN_ID must be alphanumeric with optional hyphens.");
 const evidenceDir = join(root, "release", "product-evidence", "m7-stability", runId);

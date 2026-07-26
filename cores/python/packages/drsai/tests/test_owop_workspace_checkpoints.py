@@ -3,12 +3,12 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from drsai.backend.runtime_engine import RuntimeEngine, RuntimeEngineIdentity
+from drsai.backend.runtime.engine import RuntimeEngine, RuntimeEngineIdentity
 from drsai.owop import InProcessWorkspaceOperationsClient, OWOPProtocol
 from drsai.owop.local_workspace import LocalWorkspaceOperations, WorkspaceWatchJournal
 
 
-SCHEMA = Path(__file__).resolve().parents[5] / "protocol" / "owop" / "owop.schema.json"
+SCHEMA = Path(__file__).resolve().parents[5] / "cores" / "protocol" / "owop" / "owop.schema.json"
 
 
 def test_workspace_checkpoint_modify_add_delete_large_skip_restore_accept_and_runtime_isolation(tmp_path: Path) -> None:

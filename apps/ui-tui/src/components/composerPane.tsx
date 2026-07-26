@@ -665,53 +665,45 @@ For more info: https://github.com/yourusername/drsai
     }
 
     // Detect slash command
-    // Only treat input as a slash command if the first token matches a
-    // known command from the catalog. This prevents pasted paths like
-    // /tmp/file.txt from being misinterpreted as slash commands.
     if (trimmed.startsWith('/')) {
       const parts = trimmed.slice(1).split(/\s+/)
       const command = parts[0]
       const args = parts.slice(1).join(' ')
 
-      // Check if this is a known command. If completions are loaded and
-      // the command is not in the catalog, treat the input as plain text.
-      if (completions.length > 0 && !completions.includes('/' + command.toLowerCase())) {
-        // Not a known slash command — fall through to normal message submission
-      } else {
-        // Special case: /quit should exit
-        if (command === 'quit' || command === 'exit' || command === 'q') {
-          controller.gw.kill()
-          exit()
-          return
-        }
+      // Special case: /quit should exit
+      if (command === 'quit' || command === 'exit' || command === 'q') {
+        controller.gw.kill()
+        exit()
+        return
+      }
 
-        // /find without args: open empty smart search
-        if (command === 'find' && !args) {
-          setSmartSearch({ query: '', results: [] })
-          return
-        }
+      // /find without args: open empty smart search
+      if (command === 'find' && !args) {
+        setSmartSearch({ query: '', results: [] })
+        return
+      }
 
-        // Interactive pickers (when called with no args)
-        if ((command === 'list' || command === 'ls' || command === 'switch') && !args) {
-          await openSessionPicker()
-          return
-        }
-        if ((command === 'model' || command === 'm') && !args) {
-          await openModelPicker()
-          return
-        }
+      // Interactive pickers (when called with no args)
+      if ((command === 'list' || command === 'ls' || command === 'switch') && !args) {
+        await openSessionPicker()
+        return
+      }
+      if ((command === 'model' || command === 'm') && !args) {
+        await openModelPicker()
+        return
+      }
 
-        // Execute via slash.exec RPC
-        try {
-          const result = await controller.gw.request('slash.exec', {
-            session_id: sessionId,
-            command,
-            args,
-          }) as { output?: string; ui_action?: string; name?: string; target?: string; n?: number }
-          const output = result.output || '(no output)'
+      // Execute via slash.exec RPC
+      try {
+        const result = await controller.gw.request('slash.exec', {
+          session_id: sessionId,
+          command,
+          args,
+        }) as { output?: string; ui_action?: string; name?: string; target?: string; n?: number }
+        const output = result.output || '(no output)'
 
-          // Handle UI actions returned by handlers
-          switch (result.ui_action) {
+        // Handle UI actions returned by handlers
+        switch (result.ui_action) {
           case 'session.new': {
             try {
               const created = await controller.gw.request<{
@@ -824,12 +816,11 @@ For more info: https://github.com/yourusername/drsai
 
         // Keep informational slash-command output visible until the user dismisses it.
         showSlashOutput(output)
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err)
-          showSlashOutput(`Error: ${msg}`, 5000)
-        }
-        return
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        showSlashOutput(`Error: ${msg}`, 5000)
       }
+      return
     }
 
     // Regular prompt

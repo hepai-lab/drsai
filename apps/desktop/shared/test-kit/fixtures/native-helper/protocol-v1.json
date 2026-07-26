@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    { "name": "handshake", "request": { "protocolVersion": 1, "requestId": "golden-handshake", "operation": "handshake", "parameters": {} }, "status": "ok" },
+    { "name": "ping", "request": { "protocolVersion": 1, "requestId": "golden-ping", "operation": "ping" }, "status": "ok" },
+    { "name": "unknown-operation", "request": { "protocolVersion": 1, "requestId": "golden-operation", "operation": "shell" }, "status": "error", "errorCode": "unknown_operation" },
+    { "name": "unknown-field", "request": { "protocolVersion": 1, "requestId": "golden-field", "operation": "ping", "command": "id" }, "status": "error", "errorCode": "unknown_field" },
+    { "name": "incompatible-version", "request": { "protocolVersion": 2, "requestId": "golden-version", "operation": "ping" }, "status": "error", "errorCode": "incompatible_version" },
+    { "name": "keychain-invalid-service", "request": { "protocolVersion": 1, "requestId": "golden-service", "operation": "keychain.get", "parameters": { "account": "00000000-0000-0000-0000-000000000001", "service": "other.service" } }, "status": "error", "errorCode": "invalid_service" },
+    { "name": "keychain-invalid-account", "request": { "protocolVersion": 1, "requestId": "golden-account", "operation": "keychain.delete", "parameters": { "account": "../../bad", "service": "ai.drsai.desktop" } }, "status": "error", "errorCode": "invalid_account" },
+    { "name": "keychain-unknown-parameter", "request": { "protocolVersion": 1, "requestId": "golden-key", "operation": "keychain.get", "parameters": { "account": "00000000-0000-0000-0000-000000000001", "service": "ai.drsai.desktop", "accessGroup": "wildcard" } }, "status": "error", "errorCode": "invalid_parameters" },
+    { "name": "permission-unsupported-kind", "request": { "protocolVersion": 1, "requestId": "golden-permission-kind", "operation": "permission.status", "parameters": { "kind": "camera" } }, "status": "error", "errorCode": "unsupported_permission" },
+    { "name": "permission-user-gesture-required", "request": { "protocolVersion": 1, "requestId": "golden-permission-gesture", "operation": "permission.request", "parameters": { "kind": "microphone", "userInitiated": "false" } }, "status": "error", "errorCode": "user_gesture_required" },
+    { "name": "permission-unknown-parameter", "request": { "protocolVersion": 1, "requestId": "golden-permission-key", "operation": "permission.status", "parameters": { "kind": "microphone", "prompt": "true" } }, "status": "error", "errorCode": "invalid_parameters" },
+    { "name": "shutdown", "request": { "protocolVersion": 1, "requestId": "golden-shutdown", "operation": "shutdown" }, "status": "ok" }
+  ]
+}

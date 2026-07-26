@@ -87,13 +87,13 @@ Use WiX Toolset. The build script first looks for portable WiX binaries under
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass `
   -File .\apps\desktop\windows\installer\build-msi.ps1 `
-  -RuntimePath .\apps\desktop\windows\release\bootstrapper\OpenDrSaiRuntime-win-x64.zip
+  -RuntimePath .\apps\desktop\windows\release\bootstrapper\OpenDrSai-Windows-v1.5.2-x64.zip
 ```
 
 Output:
 
 ```text
-apps\desktop\windows\release\bootstrapper\OpenDrSaiSetup-win-x64.msi
+apps\desktop\windows\release\bootstrapper\OpenDrSai-Windows-Installer-x64.msi
 ```
 
 For public releases, pass the public runtime URL while keeping `-RuntimePath` so
@@ -102,12 +102,12 @@ the MSI embeds the expected hash and size:
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass `
   -File .\apps\desktop\windows\installer\build-msi.ps1 `
-  -RuntimePath .\apps\desktop\windows\release\bootstrapper\OpenDrSaiRuntime-win-x64.zip `
-  -RuntimeUrl https://github.com/hepai-lab/drsai/releases/download/v1.4.6/OpenDrSaiRuntime-win-x64.zip
+  -RuntimePath .\apps\desktop\windows\release\bootstrapper\OpenDrSai-Windows-v1.5.2-x64.zip `
+  -RuntimeUrl https://download-opendrsai.ihep.ac.cn/releases/v1.5.2/windows/OpenDrSai-Windows-v1.5.2-x64.zip
 ```
 
 When `-RuntimeUrl` is omitted, `build-msi.ps1` derives the immutable versioned
-GitHub Release URL from `BootstrapperVersion`. Do not use a `releases/latest`
+OpenDrSai CDN URL from `BootstrapperVersion`. Do not use a mutable channel URL
 URL: the MSI embeds a fixed Runtime size and SHA256, while `latest` can later
 point to a different asset and make an otherwise valid installer fail.
 

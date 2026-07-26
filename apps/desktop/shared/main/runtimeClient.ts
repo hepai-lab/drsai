@@ -3,7 +3,13 @@ import { getDiagnosticPropagationHeaders } from "./diagnosticContext";
 import { getGatewayRequestHeaders, getGatewayStatus, startGateway } from "./gateway";
 import { parseRemoteProtocolError, REMOTE_SSH_PROTOCOL_VERSION, type RemoteProtocolErrorBody } from "../api/remoteSshProtocol";
 import type { OWOPOperation, OWOPParamsByOperation } from "../api/owop.generated";
-import type { WorkspaceProject } from "../api/desktopApi";
+import type {
+  DesktopMobilePairingGrant,
+  DesktopMobilePairingReadiness,
+  DesktopMobileAssociation,
+  DesktopRuntimeEnrollmentRevocation,
+  WorkspaceProject,
+} from "../api/desktopApi";
 
 interface RemoteGatewayAccess {
   baseUrl: string;
@@ -195,6 +201,13 @@ export interface RuntimeClient {
   requestFiles<T>(workspaceId: string, endpoint: string, init?: RequestInit): Promise<T>;
   requestGit<T>(workspaceId: string, endpoint: string, init?: RequestInit): Promise<T>;
   ptyEndpoint(): string;
+  getMobilePairingReadiness(): Promise<DesktopMobilePairingReadiness>;
+  createMobilePairingGrant(): Promise<DesktopMobilePairingGrant>;
+  getMobilePairingGrant(grantId: string): Promise<DesktopMobilePairingGrant>;
+  revokeMobilePairingGrant(grantId: string): Promise<DesktopMobilePairingGrant>;
+  listMobileAssociations(): Promise<DesktopMobileAssociation[]>;
+  revokeMobileAssociation(associationId: string): Promise<DesktopMobileAssociation>;
+  revokeMobileRuntimeEnrollment(): Promise<DesktopRuntimeEnrollmentRevocation>;
 }
 
 export interface RuntimeAccess {
@@ -439,6 +452,57 @@ abstract class HttpRuntimeClient implements RuntimeClient {
     return `${this.access.baseUrl.replace(/^http/, "ws")}/v1/pty`;
   }
 
+  getMobilePairingReadiness(): Promise<DesktopMobilePairingReadiness> {
+    return this.requestJson("/v1/mobile-pairing/status");
+  }
+
+  registerMobilePairingRuntime(input: {
+    registrationCode: string;
+    relayHttpsUrl: string;
+    displayName: string;
+  }): Promise<{ registered: true; runtime_id: string }> {
+    return this.requestJson("/v1/mobile-pairing/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        registration_code: input.registrationCode,
+        relay_https_url: input.relayHttpsUrl,
+        display_name: input.displayName,
+      }),
+    });
+  }
+
+  createMobilePairingGrant(): Promise<DesktopMobilePairingGrant> {
+    return this.requestJson("/v1/mobile-pairing/grants", { method: "POST" });
+  }
+
+  getMobilePairingGrant(grantId: string): Promise<DesktopMobilePairingGrant> {
+    return this.requestJson(`/v1/mobile-pairing/grants/${this.pairingGrantId(grantId)}`);
+  }
+
+  revokeMobilePairingGrant(grantId: string): Promise<DesktopMobilePairingGrant> {
+    return this.requestJson(`/v1/mobile-pairing/grants/${this.pairingGrantId(grantId)}`, { method: "DELETE" });
+  }
+
+  async listMobileAssociations(): Promise<DesktopMobileAssociation[]> {
+    const result = await this.requestJson<{ items: DesktopMobileAssociation[] }>(
+      "/v1/mobile-pairing/associations",
+    );
+    return result.items;
+  }
+
+  revokeMobileAssociation(associationId: string): Promise<DesktopMobileAssociation> {
+    this.assertResourceId("Association", associationId);
+    return this.requestJson(
+      `/v1/mobile-pairing/associations/${encodeURIComponent(associationId)}`,
+      { method: "DELETE" },
+    );
+  }
+
+  revokeMobileRuntimeEnrollment(): Promise<DesktopRuntimeEnrollmentRevocation> {
+    return this.requestJson("/v1/mobile-pairing/enrollment", { method: "DELETE" });
+  }
+
   private workspaceRequest<T>(workspaceId: string, endpoint: string, init?: RequestInit): Promise<T> {
     if (!/^[A-Za-z0-9_.:-]{1,160}$/.test(workspaceId)) throw new Error("Runtime Workspace ID is invalid.");
     const normalized = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
@@ -466,6 +530,11 @@ abstract class HttpRuntimeClient implements RuntimeClient {
 
   private assertIdempotencyKey(value: string): void {
     if (!value || value.length > 256 || /[\r\n\0]/.test(value)) throw new Error("Worktree idempotency key is invalid.");
+  }
+
+  private pairingGrantId(value: string): string {
+    if (!/^ag_[0-9a-f]{32}$/.test(value)) throw new Error("Mobile pairing grant ID is invalid.");
+    return encodeURIComponent(value);
   }
 
   protected async requestJson<T>(path: string, init?: RequestInit): Promise<T> {

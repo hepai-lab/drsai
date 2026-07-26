@@ -1,5 +1,17 @@
 export const DIAGNOSTIC_SCHEMA_VERSION = 1 as const;
 
+export interface InteractiveDebugPolicy {
+  enabled: boolean;
+  source: "default" | "user" | "environment";
+  updatedAt?: string;
+  locked: boolean;
+}
+
+export interface InteractiveDebugPolicyUpdateRequest {
+  enabled: boolean;
+  acknowledgedRisk: true;
+}
+
 export type DiagnosticLevel = "debug" | "info" | "warn" | "error";
 export type DiagnosticStatus =
   | "started"

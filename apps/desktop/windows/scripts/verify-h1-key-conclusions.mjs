@@ -13,7 +13,7 @@ const pptxPath = join(evidenceDir, "packaged-generated-manager-zh-h1-key-conclus
 const manifestPath = join(evidenceDir, "packaged-generated-manager-zh-h1-key-conclusions.provenance.json");
 const sourcePdf = resolve(process.env.OPENDRSAI_CERN_PDF || "C:/tmp/WLCG-20260715-WLCG-talk-IHEP-visit.pdf");
 const python = resolve(process.env.OPENDRSAI_PDF_PYTHON || "C:/Users/win11/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe");
-const parser = join(repo, "cores/python/packages/drsai/src/drsai/backend/presentation_pdf.py");
+const parser = join(repo, "cores/python/packages/drsai/src/drsai/content/pdf/presentation.py");
 const fixture = JSON.parse(readFileSync(join(repo, "tests/fixtures/product/presentation-report-wlcg.json"), "utf8"));
 
 for (const path of [resultPath, pptxPath, manifestPath, sourcePdf]) {
@@ -79,7 +79,7 @@ const negative = evaluate(corrupted, pages);
 assert(negative.traceabilityRate < 1, "Independent H1 evaluator accepted a conclusion mapped to the wrong page");
 
 const api = readFileSync(join(root, "../shared/api/desktopApi.ts"), "utf8");
-const generator = readFileSync(join(root, "src/main/managerPresentation.ts"), "utf8");
+const generator = readFileSync(join(root, "../shared/main/managerPresentation.ts"), "utf8");
 const panel = readFileSync(join(root, "../shared/renderer/src/components/files/FilesContextPanel.tsx"), "utf8");
 const styles = readFileSync(join(root, "../shared/renderer/src/styles.css"), "utf8");
 const smoke = readFileSync(join(root, "src/main/e2eSmoke.ts"), "utf8");

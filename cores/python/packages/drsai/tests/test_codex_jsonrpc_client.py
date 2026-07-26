@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from drsai.backend.agent_runtime import RuntimeExecutionError
+from drsai.backend.runtime.agent import RuntimeExecutionError
 from drsai.backend.codex_adapter.app_server_process import CodexAppServerProcess, CodexRestartPolicy
 from drsai.backend.codex_adapter.binary_provider import CodexArtifactStore, CodexBinaryProvider
 from drsai.backend.codex_adapter.jsonrpc_client import CodexJSONRPCClient

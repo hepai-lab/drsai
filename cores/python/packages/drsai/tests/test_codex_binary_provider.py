@@ -11,7 +11,7 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from drsai.backend.agent_runtime import RuntimeExecutionError
+from drsai.backend.runtime.agent import RuntimeExecutionError
 from drsai.backend.codex_adapter.binary_provider import (
     CodexArtifactStore,
     CodexBinaryProvider,

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from drsai.backend.agent_runtime import AgentExecutionServices, RuntimeRunContext, RuntimeToolDispatcher
+from drsai.backend.runtime.agent import AgentExecutionServices, RuntimeRunContext, RuntimeToolDispatcher
 from drsai.backend.codex_adapter.event_mapper import CodexEventMapper
-from drsai.backend.runtime_engine import RuntimeEngine, RuntimeEngineIdentity
-from drsai.backend.runtime_registry import RuntimeRegistry
+from drsai.backend.runtime.engine import RuntimeEngine, RuntimeEngineIdentity
+from drsai.backend.runtime.registry import RuntimeRegistry
 
 
 def _fixture(tmp_path: Path):

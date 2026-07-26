@@ -7,12 +7,12 @@ from typing import Any, Mapping
 
 import pytest
 
-from drsai.backend.agent_backend_bindings import AgentBackendBindingStore
-from drsai.backend.agent_runtime import RuntimeRunContext
-from drsai.backend.agent_runtime import RuntimeExecutionError
+from drsai.backend.runtime.agent_bindings import AgentBackendBindingStore
+from drsai.backend.runtime.agent import RuntimeRunContext
+from drsai.backend.runtime.agent import RuntimeExecutionError
 from drsai.backend.codex_adapter.security import CodexAccountManager, CodexApprovalBridge
-from drsai.backend.runtime_engine import RuntimeEngine, RuntimeEngineIdentity
-from drsai.backend.runtime_registry import RuntimeRegistry
+from drsai.backend.runtime.engine import RuntimeEngine, RuntimeEngineIdentity
+from drsai.backend.runtime.registry import RuntimeRegistry
 
 
 @pytest.fixture

@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from drsai.relay.registry import RelayRegistryError
+from drsai.relay.models import ResourceLifecycle
 from drsai.relay.runtime_domain import AgentDefinition, ApprovalStatus, RunStatus, RuntimeAuthority
 
 
@@ -104,3 +105,25 @@ def test_two_runtime_authorities_never_share_same_ids_or_events() -> None:
                                    idempotency_key="run-key-0001", correlation_id="c")
     assert first_run.run_id != second_run.run_id
     assert second.events.after("rt-b", first_run.run_id, 0)[0] == []
+
+
+def test_existing_active_session_and_conversation_are_visible_after_runtime_association() -> None:
+    runtime = authority()
+    created = session(runtime)
+    created_run = runtime.create_run(
+        "windows-owner", "ws-a", created.session_id, message="created on Windows",
+        attachment_refs=[], idempotency_key="windows-run", correlation_id="windows-correlation",
+    )
+    runtime.append_event(created_run.run_id, "message.delta", {"delta": "Windows response"})
+
+    listed, _ = runtime.list_sessions_for_subject("mobile-user", "ws-a")
+    assert [item.session_id for item in listed] == [created.session_id]
+    transcript, _ = runtime.conversation_for_subject("mobile-user", "ws-a", created.session_id)
+    assert [item["kind"] for item in transcript] == ["message.user", "run.queued", "message.delta"]
+    assert [item["sequence"] for item in transcript] == [1, 2, 3]
+
+    created.lifecycle = ResourceLifecycle.ARCHIVED
+    assert runtime.list_sessions_for_subject("mobile-user", "ws-a")[0] == []
+    with pytest.raises(RelayRegistryError) as archived:
+        runtime.authorize_session("mobile-user", "ws-a", created.session_id)
+    assert archived.value.code == "session_forbidden"

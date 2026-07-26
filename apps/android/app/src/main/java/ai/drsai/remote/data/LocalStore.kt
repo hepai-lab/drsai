@@ -239,13 +239,23 @@ interface ChatDao {
         WorkbenchWorkspaceEntity::class, WorkbenchSessionEntity::class, WorkbenchRunEntity::class,
         WorkbenchEventEntity::class, WorkbenchApprovalEntity::class, WorkbenchApprovalGrantEntity::class,
         WorkbenchAuditEntity::class],
-    version = 6,
+    version = 7,
     exportSchema = false,
 )
 abstract class ChatDatabase : RoomDatabase() {
     abstract fun dao(): ChatDao
     abstract fun remoteDao(): RemoteCacheDao
     abstract fun workbenchDao(): WorkbenchDao
+}
+
+val MIGRATION_6_7 = object : Migration(6, 7) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE remote_workspaces ADD COLUMN lifecycle TEXT NOT NULL DEFAULT 'active'")
+        db.execSQL("ALTER TABLE remote_workspaces ADD COLUMN revision INTEGER NOT NULL DEFAULT 1")
+        db.execSQL("ALTER TABLE remote_workspaces ADD COLUMN updatedAt TEXT NOT NULL DEFAULT ''")
+        db.execSQL("ALTER TABLE remote_sessions ADD COLUMN lifecycle TEXT NOT NULL DEFAULT 'active'")
+        db.execSQL("ALTER TABLE remote_sessions ADD COLUMN updatedAt TEXT NOT NULL DEFAULT ''")
+    }
 }
 
 class MemorySettingsStore(context: Context) {

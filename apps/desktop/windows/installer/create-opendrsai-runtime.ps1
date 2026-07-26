@@ -317,7 +317,7 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
     $utf8NoBom
 )
 
-$runtimeZip = Join-Path $outDir "OpenDrSaiRuntime-win-x64.zip"
+$runtimeZip = Join-Path $outDir "OpenDrSai-Windows-v$Version-x64.zip"
 Remove-Item -LiteralPath $runtimeZip -Force -ErrorAction SilentlyContinue
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 [System.IO.Compression.ZipFile]::CreateFromDirectory(

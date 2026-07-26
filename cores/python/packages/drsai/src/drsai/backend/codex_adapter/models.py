@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
-from drsai.backend.agent_runtime import RuntimeExecutionError
+from drsai.backend.runtime.agent import RuntimeExecutionError
 from drsai.backend.codex_adapter.jsonrpc_client import CodexJSONRPCClient
 
 

@@ -7,7 +7,7 @@ const read = (path) => readFileSync(join(root, path), "utf8");
 const api = read("../shared/api/desktopApi.ts");
 const tasks = read("src/main/backgroundTasks.ts");
 const notifications = read("src/main/completionNotifications.ts");
-const generator = read("src/main/managerPresentation.ts");
+const generator = read("../shared/main/managerPresentation.ts");
 const renderer = read("../shared/renderer/src/App.tsx");
 const smoke = read("src/main/e2eSmoke.ts");
 

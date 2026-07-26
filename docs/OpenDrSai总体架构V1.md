@@ -99,13 +99,13 @@ Session   1 ── 0..N Run 1 ── 0..N Event
 
 采用“执行 Runtime 权威”原则：Run 在哪个 Runtime 执行，哪个 Runtime 就是该 Run、Event 和 Checkpoint 的权威来源。
 
-| 数据 | 权威来源 |
-| --- | --- |
-| Session 元数据 | 创建并管理 Session 的 Runtime |
-| Run / Event / Checkpoint | 实际执行 Run 的 Runtime |
-| Workspace 文件与 Git | Workspace 所在机器 |
-| Client、BFF 和 Lite Runtime 缓存 | 非权威副本 |
-| 身份与组织 | HepAI Platform Services |
+| 数据                             | 权威来源                      |
+| -------------------------------- | ----------------------------- |
+| Session 元数据                   | 创建并管理 Session 的 Runtime |
+| Run / Event / Checkpoint         | 实际执行 Run 的 Runtime       |
+| Workspace 文件与 Git             | Workspace 所在机器            |
+| Client、BFF 和 Lite Runtime 缓存 | 非权威副本                    |
+| 身份与组织                       | HepAI Platform Services       |
 
 Lite Runtime 将任务委托给 Full Runtime 时，只保存 `runtime_id`、`remote_session_id` 和 `remote_run_id` 等远程引用。它可以缓存远端事件用于展示和离线访问，但不能改写远端 Run 的权威状态。
 

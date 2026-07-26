@@ -11,7 +11,7 @@ from drsai.owop import (
 )
 
 
-SCHEMA = Path(__file__).resolve().parents[5] / "protocol" / "owop" / "owop.schema.json"
+SCHEMA = Path(__file__).resolve().parents[5] / "cores" / "protocol" / "owop" / "owop.schema.json"
 DIGEST = "sha256:" + "b" * 64
 
 

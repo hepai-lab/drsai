@@ -23,7 +23,7 @@ import {
   parseProviderUsageAnalyticsSseFrame,
   parseAgentRunSseFileEvents,
 } from "./sseParser";
-import { listThreads, upsertThreadFromRun } from "./threads";
+import { listThreads, updateThread, upsertThreadFromRun } from "./threads";
 import { persistProviderErrorAnalytics } from "./providerErrorAnalytics";
 import { persistProviderUsageAnalytics } from "./providerUsageAnalytics";
 import { recordAgentTelemetry } from "./agentTelemetry";
@@ -41,9 +41,28 @@ import {
   type StreamResumeState,
 } from "./networkRecovery";
 import { desktopDiagnostics, type DiagnosticOperationHandle } from "./diagnostics";
+import { BoundedEventDispatcher } from "./boundedEventDispatcher";
+import { listRecordedChatRunEvents, recordChatRunEvent } from "./chatRunJournal";
 
 export interface ChatEventTarget {
   send(channel: string, ...args: unknown[]): void;
+}
+
+const chatEventDispatchers = new WeakMap<ChatEventTarget, BoundedEventDispatcher<ChatEvent>>();
+
+function getChatEventDispatcher(target: ChatEventTarget): BoundedEventDispatcher<ChatEvent> {
+  const existing = chatEventDispatchers.get(target);
+  if (existing) return existing;
+  const dispatcher = new BoundedEventDispatcher<ChatEvent>({
+    capacity: 256,
+    deliver: (event) => target.send("desktop:chat-event", event),
+    merge: (previous, next) => {
+      if (previous.requestId !== next.requestId || previous.type !== next.type || (next.type !== "chunk" && next.type !== "reasoning")) return null;
+      return { ...next, content: `${previous.content ?? ""}${next.content ?? ""}` };
+    },
+  });
+  chatEventDispatchers.set(target, dispatcher);
+  return dispatcher;
 }
 
 export interface ChatRemoteRouting {
@@ -84,6 +103,7 @@ const NETWORK_RECOVERY_WINDOW_MS = getPositiveIntEnv("OPENDRSAI_NETWORK_RECOVERY
 const REQUEST_ID_PATTERN = /^[a-zA-Z0-9_-]{8,80}$/;
 const SESSION_ID_PATTERN = /^[a-zA-Z0-9_.:-]{1,160}$/;
 const activeChats = new Map<string, AbortController>();
+const activeChatEventTargets = new Map<string, ChatEventTarget>();
 const platformChatTargets = new Map<string, { agentId: string; threadId: string }>();
 const codexChatTargets = new Map<string, { client: RuntimeClient; runId: string; approvalId?: string }>();
 const chatEventSequences = new Map<string, number>();
@@ -99,11 +119,13 @@ export function startChat(webContents: ChatEventTarget, request: unknown): strin
   }
   const validated = validateChatRequest(request);
   const requestId = validated.requestId || randomUUID();
+  const runRequest: ChatRequest = { ...validated, runId: validated.runId || randomUUID() };
   if (activeChats.has(requestId)) {
     throw new Error("Chat request is already active.");
   }
   const controller = new AbortController();
   activeChats.set(requestId, controller);
+  activeChatEventTargets.set(requestId, webContents);
   chatEventSequences.set(requestId, 0);
   chatDiagnosticOperations.set(requestId, desktopDiagnostics.start({
     traceId: requestId,
@@ -117,8 +139,9 @@ export function startChat(webContents: ChatEventTarget, request: unknown): strin
     attributes: { route: validated.agentId === "my-codex" ? "codex" : "opendrsai" },
   }));
 
-  runChat(webContents, requestId, validated, controller).catch(async (error) => {
+  runChat(webContents, requestId, runRequest, controller).catch(async (error) => {
     activeChats.delete(requestId);
+    activeChatEventTargets.delete(requestId);
     platformChatTargets.delete(requestId);
     const timedOut = controller.signal.aborted && controller.signal.reason === "timeout";
     const cancelledByUser = controller.signal.aborted && !timedOut;
@@ -137,6 +160,8 @@ export function startChat(webContents: ChatEventTarget, request: unknown): strin
     }
     emit(webContents, {
       requestId,
+      sessionId: runRequest.sessionId,
+      runId: runRequest.runId,
       type: cancelledByUser ? "aborted" : "error",
       error: errorMessage,
       failureRecovery: getFailureRecovery(error),
@@ -158,6 +183,7 @@ export function abortChat(requestId: string): boolean {
   if (codexTarget) void codexTarget.client.cancelAgentRun(codexTarget.runId).catch(() => undefined);
   controller.abort("user");
   activeChats.delete(requestId);
+  activeChatEventTargets.delete(requestId);
   platformChatTargets.delete(requestId);
   codexChatTargets.delete(requestId);
   return true;
@@ -168,7 +194,7 @@ export function abortChat(requestId: string): boolean {
  * The authoritative Run and its event log remain in the Runtime, so recovery
  * must read them there instead of treating a renderer reload as a failed run.
  */
-export async function recoverChatRun(rawRequest: unknown): Promise<ChatEvent[]> {
+export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEventTarget): Promise<ChatEvent[]> {
   if (!rawRequest || typeof rawRequest !== "object") return [];
   const request = rawRequest as { requestId?: unknown; sessionId?: unknown };
   if (
@@ -177,8 +203,18 @@ export async function recoverChatRun(rawRequest: unknown): Promise<ChatEvent[]> 
   ) return [];
   const requestId = request.requestId;
   const sessionId = request.sessionId;
+  if (eventTarget && activeChats.has(requestId)) activeChatEventTargets.set(requestId, eventTarget);
   const thread = (await listThreads()).find((candidate) => candidate.id === sessionId);
-  if (!thread || thread.boundAgentId !== "my-codex" || !thread.lastRunId || !thread.workspacePath) return [];
+  if (!thread?.lastRunId) return [];
+  if (thread.boundAgentId !== "my-codex" || !thread.workspacePath) {
+    const journal = await listRecordedChatRunEvents(thread.lastRunId);
+    const recovered = journal.map((event, index) => ({ ...event, requestId, sessionId, seq: index + 1 }));
+    if (thread.status === "running" && !activeChats.has(thread.lastRequestId ?? requestId)) {
+      recovered.push({ requestId, sessionId, runId: thread.lastRunId, seq: recovered.length + 1, type: "error", error: "Chat run was interrupted by an application restart. Recovered output is preserved." });
+      await updateThread({ id: thread.id, status: "error" });
+    }
+    return recovered;
+  }
   const resolved = await connectRuntimeClientForWorkspace(thread.workspacePath, thread.execution?.workspaceId);
   const events = await resolved.client.listAgentRunEvents(thread.lastRunId, 0);
   const recovered: ChatEvent[] = [];
@@ -1401,10 +1437,14 @@ async function readLimitedText(response: Response, maxBytes: number): Promise<st
 function emit(webContents: ChatEventTarget, event: ChatEvent): void {
   const seq = (chatEventSequences.get(event.requestId) ?? 0) + 1;
   chatEventSequences.set(event.requestId, seq);
-  webContents.send("desktop:chat-event", { ...event, seq });
+  const sequenced = { ...event, seq };
+  const currentTarget = activeChatEventTargets.get(event.requestId) ?? webContents;
+  getChatEventDispatcher(currentTarget).enqueue(sequenced);
+  recordChatRunEvent(sequenced);
   void recordChatDiagnosticEvent(event, seq);
   if (event.type === "done" || event.type === "error" || event.type === "aborted") {
     chatEventSequences.delete(event.requestId);
+    activeChatEventTargets.delete(event.requestId);
   }
 }
 

@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import { readFileSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -14,7 +14,11 @@ const windowsRoot = join(desktopRoot, "windows");
 const requireFromApp = createRequire(join(desktopRoot, "package.json"));
 const { build } = requireFromApp("esbuild");
 const temp = await mkdtemp(join(tmpdir(), "opendrsai-platform-contract-"));
+process.once("exit", () => {
+  rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+});
 const bundle = join(temp, "windows-platform.mjs");
+const macosBundle = join(temp, "macos-platform.mjs");
 await build({
   entryPoints: [join(windowsRoot, "src/main/platform.ts")],
   outfile: bundle,
@@ -24,6 +28,15 @@ await build({
   target: "node22",
 });
 const { WINDOWS_PLATFORM_DESCRIPTOR } = await import(pathToFileURL(bundle).href);
+await build({
+  entryPoints: [join(desktopRoot, "macos/src/main/platform.ts")],
+  outfile: macosBundle,
+  bundle: true,
+  platform: "node",
+  format: "esm",
+  target: "node22",
+});
+const { MACOS_PLATFORM_DESCRIPTOR } = await import(pathToFileURL(macosBundle).href);
 const windowsMainRoot = join(windowsRoot, "src/main");
 const windowsPlatformServices = readFileSync(join(windowsMainRoot, "platformServices.ts"), "utf8");
 
@@ -31,6 +44,14 @@ assert.doesNotThrow(() => assertDesktopPlatformDescriptor(WINDOWS_PLATFORM_DESCR
 assert.equal(WINDOWS_PLATFORM_DESCRIPTOR.id, "windows");
 assert.equal(WINDOWS_PLATFORM_DESCRIPTOR.defaultTerminalShell, "powershell");
 assert.equal(WINDOWS_PLATFORM_DESCRIPTOR.capabilities.terminal, true);
+assert.ok(Object.values(WINDOWS_PLATFORM_DESCRIPTOR.capabilities.features).every((value) => value === true));
+assert.doesNotThrow(() => assertDesktopPlatformDescriptor(MACOS_PLATFORM_DESCRIPTOR));
+assert.equal(MACOS_PLATFORM_DESCRIPTOR.capabilities.features.chat, true);
+assert.equal(MACOS_PLATFORM_DESCRIPTOR.capabilities.features.terminal, true);
+for (const capability of ["browser", "mcp", "remoteWorkspace", "portForwarding", "checkpoints", "worktrees", "automation", "collaboration", "channels"]) {
+  assert.equal(MACOS_PLATFORM_DESCRIPTOR.capabilities.features[capability], true, `macOS must expose implemented ${capability}`);
+}
+assert.equal(MACOS_PLATFORM_DESCRIPTOR.capabilities.features.debugger, true, "Debugger UI must expose its productized fail-closed policy control.");
 
 const windowsPaths = createDesktopPathService({
   platform: "windows",
@@ -49,6 +70,23 @@ const macosPaths = createDesktopPathService({
 assert.equal(macosPaths.layout.pythonExecutable, "/Users/tester/.drsai/drsai-agent/venv/bin/python");
 assert.equal(macosPaths.layout.cliExecutable, "/Users/tester/.drsai/drsai-agent/drsai");
 assert.ok(macosPaths.layout.enhancedPathEntries.includes("/opt/homebrew/bin"));
+const packagedMacosPaths = createDesktopPathService({
+  platform: "macos",
+  userHome: "/Users/tester",
+  resourcesPath: "/Applications/OpenDrSai.app/Contents/Resources",
+  defaultApp: false,
+  environment: { DRSAI_HOME: "/private/tmp/opendrsai-isolated" },
+});
+assert.equal(packagedMacosPaths.layout.repository, "/private/tmp/opendrsai-isolated/drsai-agent", "packaged macOS Runtime must not mutate the signed App bundle");
+assert.ok(!packagedMacosPaths.layout.repository.includes("OpenDrSai.app"));
+const explicitMacosRepository = createDesktopPathService({
+  platform: "macos",
+  userHome: "/Users/tester",
+  resourcesPath: "/Applications/OpenDrSai.app/Contents/Resources",
+  defaultApp: false,
+  environment: { DRSAI_HOME: "/private/tmp/opendrsai-isolated", DRSAI_REPO: "/private/tmp/reviewed-runtime" },
+});
+assert.equal(explicitMacosRepository.layout.repository, "/private/tmp/reviewed-runtime", "an explicit process-level Runtime override must remain available for isolated acceptance");
 for (const service of ["paths", "terminal", "credentials", "notifications", "processes"]) {
   assert.ok(windowsPlatformServices.includes(`${service}:`), `Windows platform services omit ${service}`);
 }
@@ -61,6 +99,13 @@ for (const invalid of [
   {
     ...WINDOWS_PLATFORM_DESCRIPTOR,
     capabilities: { ...WINDOWS_PLATFORM_DESCRIPTOR.capabilities, update: "yes" },
+  },
+  {
+    ...WINDOWS_PLATFORM_DESCRIPTOR,
+    capabilities: {
+      ...WINDOWS_PLATFORM_DESCRIPTOR.capabilities,
+      features: { ...WINDOWS_PLATFORM_DESCRIPTOR.capabilities.features, browser: "yes" },
+    },
   },
 ]) {
   assert.throws(() => assertDesktopPlatformDescriptor(invalid));

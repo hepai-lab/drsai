@@ -20,19 +20,30 @@ class RelaySseClient(
     baseUrl: String,
     private val accessToken: () -> String,
     private val http: OkHttpClient = OkHttpClient(),
+    private val refreshAfter: suspend (String) -> String? = { null },
 ) {
     private val root = baseUrl.trimEnd('/').toHttpUrl()
 
     fun stream(identity: RemoteRunIdentity, afterSequence: Long): Flow<RelayStreamEvent> = channelFlow {
         require(afterSequence >= 0) { "after_sequence_invalid" }
-        val call = http.newCall(Request.Builder().url(root.newBuilder()
+        val url = root.newBuilder()
             .addPathSegments("v1/runtimes/${identity.runtimeId.value}/runs/${identity.runId.value}/events/stream")
-            .addQueryParameter("after_sequence", afterSequence.toString()).build())
-            .header("Accept", "text/event-stream")
-            .header("Authorization", "Bearer ${accessToken()}").build())
+            .addQueryParameter("after_sequence", afterSequence.toString()).build()
+        var activeCall: okhttp3.Call? = null
         val reader = launch(Dispatchers.IO) {
-            call.execute().use { response ->
-                if (!response.isSuccessful) throw RelayHttpException(response.code, response.header("X-Correlation-Id"))
+            val initialToken = accessToken()
+            fun call(token: String) = http.newCall(Request.Builder().url(url)
+                .header("Accept", "text/event-stream")
+                .header("Authorization", "Bearer $token").build()).also { activeCall = it }
+            var response = call(initialToken).execute()
+            if (response.code == 401) {
+                response.close()
+                val refreshed = refreshAfter(initialToken)
+                if (refreshed.isNullOrBlank()) throw RelayHttpException(401, null, "oidc_auth_invalid")
+                response = call(refreshed).execute()
+            }
+            response.use {
+                if (!response.isSuccessful) throw relayHttpException(response)
                 val source = response.body?.source() ?: error("relay_sse_empty")
                 var data: String? = null
                 while (!source.exhausted()) {
@@ -62,6 +73,6 @@ class RelaySseClient(
             }
             close()
         }
-        awaitClose { call.cancel(); reader.cancel() }
+        awaitClose { activeCall?.cancel(); reader.cancel() }
     }
 }
