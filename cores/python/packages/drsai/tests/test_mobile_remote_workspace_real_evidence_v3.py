@@ -81,8 +81,11 @@ def stability_report() -> dict:
                 "status": "passed",
                 "transcript_hash_preserved": True,
                 "snapshot_sequence_preserved": True,
+                "run_count_preserved": True,
+                "event_count_preserved": True,
                 "identity_transition_valid": True,
                 "duplicate_run_count": 0,
+                "duplicate_sequence_count": 0,
                 "missing_sequence_count": 0,
                 "recovery_seconds": 3.5,
             }

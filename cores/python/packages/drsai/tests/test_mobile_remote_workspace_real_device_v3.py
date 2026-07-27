@@ -83,6 +83,52 @@ def test_three_client_session_proof_fails_closed(mutate, error: str) -> None:
         MODULE.validate_proof(runtime, android, digest)
 
 
+def approval_proof() -> dict:
+    return {
+        "phase": "interaction",
+        "terminal_status": "completed",
+        "approval_status": "approved",
+        "successful_decisions": 1,
+        "tool_execution_count": 1,
+        "sse_event_count": 3,
+        "event_count": 8,
+        "event_sha256": "a" * 64,
+        "conversation_before": 0,
+        "conversation_after": 3,
+        "conversation_sha256": "b" * 64,
+        "session_ui_visible": True,
+    }
+
+
+def test_approval_proof_requires_exactly_one_decision_and_tool_execution() -> None:
+    result = MODULE.validate_approval_proof(approval_proof())
+    assert result["successful_decisions"] == 1
+    assert result["tool_execution_count"] == 1
+    assert result["session_ui_visible"] is True
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("terminal_status", "failed"),
+        ("successful_decisions", 2),
+        ("tool_execution_count", 0),
+        ("sse_event_count", 0),
+        ("conversation_after", 0),
+        ("session_ui_visible", False),
+        ("event_sha256", "not-a-digest"),
+    ],
+)
+def test_approval_proof_fails_closed(field: str, value) -> None:
+    candidate = approval_proof()
+    candidate[field] = value
+    with pytest.raises(
+        RuntimeError,
+        match="v3_approval_single_execution_proof_invalid",
+    ):
+        MODULE.validate_approval_proof(candidate)
+
+
 def test_windows_two_run_sender_uses_runtime_semantics_and_source_ids() -> None:
     class Client:
         def __init__(self) -> None:
@@ -189,3 +235,39 @@ def test_public_relay_preflight_requires_https_200_without_redirect() -> None:
 
     with pytest.raises(RuntimeError, match="v3_public_relay_url_invalid"):
         asyncio.run(MODULE.public_relay_preflight("http://ai-dev.ihep.ac.cn/"))
+
+
+def test_public_relay_preflight_retries_transient_connection_once() -> None:
+    attempts = 0
+
+    class Response:
+        status = 200
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+    class Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        def get(self, *_args, **_kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise MODULE.aiohttp.ClientConnectionError("transient")
+            return Response()
+
+    asyncio.run(
+        MODULE.public_relay_preflight(
+            "https://ai-dev.ihep.ac.cn/api/runtime-relay/",
+            session_factory=lambda **_kwargs: Session(),
+            retry_delay=0,
+        )
+    )
+    assert attempts == 2

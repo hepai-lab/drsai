@@ -16,13 +16,16 @@ import ai.drsai.remote.remote.model.conversationProjectionDigest
 import ai.drsai.remote.remote.model.sessionConversationDigest
 import ai.drsai.remote.remote.security.androidRelayDeviceProof
 import android.content.Intent
+import android.graphics.Rect
 import android.net.Uri
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -39,6 +42,7 @@ import java.util.concurrent.ConcurrentHashMap
 @RunWith(AndroidJUnit4::class)
 class RealRemoteWorkspaceE2ETest {
     private var activityStarted = false
+    private var activeRouteUri: String? = null
 
     @Test
     fun authenticatedCatalogPhaseIsFailClosedAndProducesSanitizedProof() = runBlocking {
@@ -178,21 +182,39 @@ class RealRemoteWorkspaceE2ETest {
                 sessionId,
                 limit = 500,
             )
+            val sessionRoute =
+                "opendrsai://session/${runtimeId.value}/${workspaceId.value}/${sessionId.value}"
+            openRoute(sessionRoute)
             val arrivals = ConcurrentHashMap<String, Long>()
             val streamJob = launch {
-                RelaySseClient(
-                    baseUrl,
-                    auth::current,
-                    refreshAfter = auth::refreshAfter,
-                    deviceProof = deviceProof,
-                ).sessionStream(
-                    runtimeId,
-                    workspaceId,
-                    sessionId,
-                    before.snapshotSequence,
-                ).collect { event ->
-                    event.runId?.let { runId ->
-                        arrivals.putIfAbsent(runId, System.currentTimeMillis())
+                var committedSequence = before.snapshotSequence
+                while (true) {
+                    try {
+                        RelaySseClient(
+                            baseUrl,
+                            auth::current,
+                            refreshAfter = auth::refreshAfter,
+                            deviceProof = deviceProof,
+                        ).sessionStream(
+                            runtimeId,
+                            workspaceId,
+                            sessionId,
+                            committedSequence,
+                        ).collect { event ->
+                            committedSequence = maxOf(
+                                committedSequence,
+                                event.sessionSequence,
+                            )
+                            event.runId?.let { runId ->
+                                arrivals.putIfAbsent(runId, System.currentTimeMillis())
+                            }
+                        }
+                    } catch (_: IOException) {
+                        // HTTP/2 peers and mobile networks may reset a healthy
+                        // long-lived stream. Resume from the last committed
+                        // Session cursor exactly as the production ViewModel
+                        // does; never replay from the original snapshot.
+                        delay(250)
                     }
                 }
             }
@@ -236,7 +258,7 @@ class RealRemoteWorkspaceE2ETest {
                     matched.mapNotNull { it.runId }.all(arrivals::containsKey),
                 )
                 assertRouteShows(
-                    "opendrsai://session/${runtimeId.value}/${workspaceId.value}/${sessionId.value}",
+                    sessionRoute,
                     setOf(expectedMarker),
                 )
                 val arrivalBySourceHash = JSONObject()
@@ -285,23 +307,37 @@ class RealRemoteWorkspaceE2ETest {
                 limit = 500,
             )
             val arrivals = ConcurrentHashMap<String, Long>()
+            val streamReady = CompletableDeferred<Unit>()
             val streamJob = launch {
-                RelaySseClient(
-                    baseUrl,
-                    auth::current,
-                    refreshAfter = auth::refreshAfter,
-                    deviceProof = deviceProof,
-                ).sessionStream(
-                    runtimeId,
-                    workspaceId,
-                    sessionId,
-                    before.snapshotSequence,
-                ).collect { event ->
-                    event.runId?.let { runId ->
-                        arrivals.putIfAbsent(runId, System.nanoTime())
+                var committedSequence = before.snapshotSequence
+                while (true) {
+                    try {
+                        RelaySseClient(
+                            baseUrl,
+                            auth::current,
+                            refreshAfter = auth::refreshAfter,
+                            deviceProof = deviceProof,
+                        ).sessionStream(
+                            runtimeId,
+                            workspaceId,
+                            sessionId,
+                            committedSequence,
+                            onConnected = { streamReady.complete(Unit) },
+                        ).collect { event ->
+                            committedSequence = maxOf(
+                                committedSequence,
+                                event.sessionSequence,
+                            )
+                            event.runId?.let { runId ->
+                                arrivals.putIfAbsent(runId, System.nanoTime())
+                            }
+                        }
+                    } catch (_: IOException) {
+                        delay(250)
                     }
                 }
             }
+            withTimeout(30_000) { streamReady.await() }
             val runStarts = linkedMapOf<String, Long>()
             val sourceMessageIds = mutableListOf<String>()
             val runs = (1..2).map { index ->
@@ -491,12 +527,31 @@ class RealRemoteWorkspaceE2ETest {
             val streamed = Collections.synchronizedList(
                 mutableListOf<ai.drsai.remote.remote.data.RelayStreamEvent>()
             )
+            val streamReady = CompletableDeferred<Unit>()
             val streamJob = launch {
-                RelaySseClient(
-                    baseUrl, auth::current, refreshAfter = auth::refreshAfter,
-                    deviceProof = deviceProof,
-                ).stream(run, 0).collect { streamed += it }
+                var committedSequence = 0L
+                while (true) {
+                    try {
+                        RelaySseClient(
+                            baseUrl, auth::current, refreshAfter = auth::refreshAfter,
+                            deviceProof = deviceProof,
+                        ).stream(
+                            run,
+                            committedSequence,
+                            onConnected = { streamReady.complete(Unit) },
+                        ).collect { event ->
+                            streamed += event
+                            committedSequence = maxOf(
+                                committedSequence,
+                                event.event.sequence.toLong(),
+                            )
+                        }
+                    } catch (_: IOException) {
+                        delay(250)
+                    }
+                }
             }
+            withTimeout(30_000) { streamReady.await() }
             var approval = repository.approvals(runtimeId, workspace.workspaceId)
                 .firstOrNull { it.runId == run.runId && it.status == "pending" }
             repeat(120) {
@@ -516,6 +571,10 @@ class RealRemoteWorkspaceE2ETest {
                 delay(1_000)
                 terminal = repository.getRun(runtimeId, run.runId).second
             }
+            repeat(120) {
+                if (streamed.isNotEmpty()) return@repeat
+                delay(250)
+            }
             streamJob.cancel()
             assertEquals("completed", terminal)
             val events = repository.events(run, 0, 500).items
@@ -528,7 +587,7 @@ class RealRemoteWorkspaceE2ETest {
             assertTrue(afterConversation.size > beforeConversation)
             assertRouteShows(
                 "opendrsai://session/${runtimeId.value}/${workspace.workspaceId.value}/${session.sessionId.value}",
-                setOf("Android Real Device Acceptance"),
+                setOf(message),
             )
             emitProof(JSONObject()
                 .put("phase", phase)
@@ -648,16 +707,8 @@ class RealRemoteWorkspaceE2ETest {
         require(required.isNotEmpty() && required.none(String::isBlank)) {
             "real_ui_required_text_invalid"
         }
+        openRoute(uri)
         val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(uri))
-            .setClassName(instrumentation.targetContext, "ai.drsai.remote.MainActivity")
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        if (activityStarted) {
-            instrumentation.targetContext.startActivity(intent)
-        } else {
-            instrumentation.startActivitySync(intent)
-            activityStarted = true
-        }
         val observed = linkedSetOf<String>()
         repeat(30) { attempt ->
             delay(500)
@@ -674,22 +725,46 @@ class RealRemoteWorkspaceE2ETest {
         error("real_ui_expected_content_missing_${Uri.parse(uri).host.orEmpty()}")
     }
 
+    private fun openRoute(uri: String) {
+        if (activeRouteUri == uri) return
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(uri))
+            .setClassName(instrumentation.targetContext, "ai.drsai.remote.MainActivity")
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        if (activityStarted) {
+            instrumentation.targetContext.startActivity(intent)
+        } else {
+            instrumentation.startActivitySync(intent)
+            activityStarted = true
+        }
+        activeRouteUri = uri
+    }
+
     private fun scrollForward(root: AccessibilityNodeInfo?): Boolean {
         if (root == null) return false
         val queue = ArrayDeque<AccessibilityNodeInfo>()
+        val candidates = mutableListOf<Pair<Int, AccessibilityNodeInfo>>()
         queue.add(root)
         while (queue.isNotEmpty()) {
             val node = queue.removeFirst()
             if (
                 node.isScrollable &&
-                node.actionList.any { it.id == AccessibilityNodeInfo.ACTION_SCROLL_FORWARD } &&
-                node.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+                node.actionList.any { it.id == AccessibilityNodeInfo.ACTION_SCROLL_FORWARD }
             ) {
-                return true
+                val bounds = Rect()
+                node.getBoundsInScreen(bounds)
+                candidates += bounds.left to node
             }
             for (index in 0 until node.childCount) node.getChild(index)?.let(queue::add)
         }
-        return false
+        // Tablet layouts contain a scrollable navigation rail before the
+        // main Session transcript in accessibility order. Prefer the
+        // right-most scrollable so verification follows the conversation.
+        return candidates
+            .sortedByDescending { it.first }
+            .any { (_, node) ->
+                node.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+            }
     }
 
     private fun accessibilityStrings(root: AccessibilityNodeInfo?): Set<String> {

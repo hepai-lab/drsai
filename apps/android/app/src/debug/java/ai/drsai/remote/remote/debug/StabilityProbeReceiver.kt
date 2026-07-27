@@ -80,6 +80,19 @@ class StabilityProbeReceiver : BroadcastReceiver() {
                     workspaceId,
                     sessionId,
                 )
+                val runs = readRuns(repository, runtimeId, workspaceId, sessionId)
+                val events = readSessionEvents(
+                    repository,
+                    runtimeId,
+                    workspaceId,
+                    sessionId,
+                )
+                val duplicateRunCount = runs.size - runs.distinct().size
+                val duplicateSequenceCount = events.size -
+                    events.distinct().size
+                val missingSequenceCount = events.zipWithNext().sumOf { (left, right) ->
+                    (right - left - 1).coerceAtLeast(0)
+                }
                 JSONObject()
                     .put("nonce", nonce)
                     .put("status", "passed")
@@ -89,6 +102,11 @@ class StabilityProbeReceiver : BroadcastReceiver() {
                     .put("snapshot_sequence", snapshotSequence)
                     .put("conversation_item_count", conversation.size)
                     .put("transcript_sha256", sessionConversationDigest(conversation))
+                    .put("run_count", runs.size)
+                    .put("duplicate_run_count", duplicateRunCount)
+                    .put("session_event_count", events.size)
+                    .put("duplicate_sequence_count", duplicateSequenceCount)
+                    .put("missing_sequence_count", missingSequenceCount)
             }.getOrElse { failure ->
                 JSONObject()
                     .put("nonce", nonce.takeIf(NONCE::matches) ?: "invalid")
@@ -137,6 +155,54 @@ class StabilityProbeReceiver : BroadcastReceiver() {
         return requireNotNull(snapshotSequence) to items
     }
 
+    private suspend fun readRuns(
+        repository: RelayRemoteRepository,
+        runtimeId: RuntimeId,
+        workspaceId: WorkspaceId,
+        sessionId: SessionId,
+    ): List<String> {
+        val runIds = mutableListOf<String>()
+        var cursor: String? = null
+        do {
+            val page = repository.runs(runtimeId, workspaceId, sessionId, cursor)
+            runIds += page.items.map { it.identity.runId.value }
+            cursor = page.nextCursor
+            require(runIds.size <= MAX_RUNS) { "stability_runs_too_large" }
+        } while (cursor != null)
+        return runIds
+    }
+
+    private suspend fun readSessionEvents(
+        repository: RelayRemoteRepository,
+        runtimeId: RuntimeId,
+        workspaceId: WorkspaceId,
+        sessionId: SessionId,
+    ): List<Long> {
+        val sequences = mutableListOf<Long>()
+        var afterSequence = 0L
+        do {
+            val page = repository.sessionEvents(
+                runtimeId,
+                workspaceId,
+                sessionId,
+                afterSequence,
+                SESSION_EVENT_PAGE_SIZE,
+            )
+            val pageSequences = page.items.map { it.sessionSequence }
+            require(pageSequences.zipWithNext().all { (left, right) -> left < right }) {
+                "stability_session_event_order_invalid"
+            }
+            sequences += pageSequences
+            require(sequences.size <= MAX_SESSION_EVENTS) {
+                "stability_session_events_too_large"
+            }
+            if (pageSequences.isNotEmpty()) {
+                afterSequence = pageSequences.last()
+            }
+        } while (page.items.size == SESSION_EVENT_PAGE_SIZE)
+        return sequences
+    }
+
     private fun writeProof(context: Context, proof: JSONObject) {
         val output = File(context.noBackupFilesDir, FILE_NAME)
         val temporary = File(context.noBackupFilesDir, "$FILE_NAME.tmp")
@@ -153,7 +219,10 @@ class StabilityProbeReceiver : BroadcastReceiver() {
         const val ACTION = "ai.drsai.remote.debug.STABILITY_PROBE"
         const val FILE_NAME = "remote-workspace-stability-proof.json"
         private const val SNAPSHOT_PAGE_SIZE = 500
+        private const val SESSION_EVENT_PAGE_SIZE = 500
         private const val MAX_SNAPSHOT_ITEMS = 100_000
+        private const val MAX_SESSION_EVENTS = 100_000
+        private const val MAX_RUNS = 100_000
         private val NONCE = Regex("^[a-f0-9]{32}$")
     }
 }

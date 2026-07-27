@@ -1187,6 +1187,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"Default user: {_get_user_id()}")
 
     relay_stop, relay_task = await _start_runtime_relay_bridge()
+    logger.info("OpenDrSai API Server startup hooks complete")
 
     yield
 
@@ -1317,7 +1318,20 @@ async def _start_runtime_relay_bridge():
             ),
         )
         stop = asyncio.Event()
-        task = asyncio.create_task(connector.run_forever(stop), name="runtime-relay-bridge")
+
+        async def run_after_server_startup() -> None:
+            # Uvicorn opens the listening socket before the FastAPI lifespan
+            # startup phase has completed.  The Relay connector immediately
+            # polls this Gateway through that socket after WSS attach.  Give
+            # Uvicorn one short startup window so those loopback requests do
+            # not queue behind the still-running lifespan hook.
+            await asyncio.sleep(10)
+            await connector.run_forever(stop)
+
+        task = asyncio.create_task(
+            run_after_server_startup(),
+            name="runtime-relay-bridge",
+        )
         logger.info(f"Runtime Relay bridge enabled for {credential.runtime_id}")
         return stop, task
     except Exception as exc:
@@ -1458,9 +1472,24 @@ def _sync_desktop_session_id(session_id: str) -> DesktopThreadProjection:
     if not projection.has_thread(session_id):
         return projection
     for workspace in _runtime_registry().list_workspaces(include_closed=False):
-        _, rows = _sync_desktop_sessions(workspace.workspace_id)
-        if any(row["session_id"] == session_id for row in rows):
-            break
+        rows = projection.threads_for_workspace(workspace.path)
+        row = next(
+            (item for item in rows if item["session_id"] == session_id),
+            None,
+        )
+        if row is None:
+            continue
+        _runtime_engine().import_session(
+            session_id,
+            workspace.workspace_id,
+            str(row["title"]),
+            agent_definition=row.get("agent_definition"),
+            backend_id=row.get("backend_id"),
+            created_at=str(row.get("created_at") or ""),
+            updated_at=str(row.get("updated_at") or ""),
+            archived=bool(row.get("archived")),
+        )
+        break
     return projection
 
 
@@ -2488,15 +2517,11 @@ async def runtime_session_create(request: RuntimeSessionCreateRequest):
 @app.get("/v1/sessions")
 async def runtime_session_list(workspace_id: str, offset: int = Query(default=0, ge=0), limit: int = Query(default=50, ge=1, le=200), archived: bool | None = False):
     try:
-        _, desktop_rows = _sync_desktop_sessions(workspace_id)
-        if desktop_rows:
-            selected = [
-                _runtime_engine().get_session(str(row["session_id"]))
-                for row in desktop_rows
-                if archived is None or bool(row["archived"]) is archived
-            ]
-            page = selected[offset:offset + limit]
-            return {"object": "list", "data": page, "total": len(selected), "offset": offset}
+        # Desktop Threads are one producer of authoritative Runtime Sessions,
+        # not a replacement catalog. Import their latest metadata first, then
+        # list the unified engine store so Sessions created by Android/SDK
+        # remain visible to every client.
+        _sync_desktop_sessions(workspace_id)
         return _runtime_engine().list_sessions(
             workspace_id, offset=offset, limit=limit, archived=archived
         )

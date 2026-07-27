@@ -414,11 +414,31 @@ class RuntimeEngine:
                 if str(existing["workspace_id"]) != workspace_id:
                     db.rollback()
                     raise ValueError("Imported Session identity is already bound to another Workspace")
+                normalized_title = title[:240] or "Imported session"
+                effective_agent_definition = (
+                    agent_definition
+                    if agent_definition is not None
+                    else existing["agent_definition"]
+                )
+                effective_backend_id = (
+                    backend_id if backend_id is not None else existing["backend_id"]
+                )
+                changed = any((
+                    str(existing["title"]) != normalized_title,
+                    bool(existing["archived"]) != bool(archived),
+                    str(existing["lifecycle"]) != lifecycle,
+                    existing["agent_definition"] != effective_agent_definition,
+                    existing["backend_id"] != effective_backend_id,
+                    str(existing["updated_at"]) != updated,
+                ))
+                if not changed:
+                    db.rollback()
+                    return self._session(existing), False
                 db.execute(
                     "UPDATE runtime_sessions SET title=?, archived=?, lifecycle=?, "
                     "agent_definition=COALESCE(?,agent_definition), backend_id=COALESCE(?,backend_id), "
                     "revision=revision+1, updated_at=? WHERE session_id=?",
-                    (title[:240] or "Imported session", int(archived), lifecycle,
+                    (normalized_title, int(archived), lifecycle,
                      agent_definition, backend_id, updated, session_id),
                 )
                 revision = int(existing["revision"]) + 1
@@ -427,7 +447,7 @@ class RuntimeEngine:
                     session_id,
                     "session.archived" if archived else "session.updated",
                     {
-                        "title": title[:240] or "Imported session",
+                        "title": normalized_title,
                         "lifecycle": lifecycle,
                         "revision": revision,
                         "imported": True,

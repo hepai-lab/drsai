@@ -8,6 +8,7 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.util.concurrent.TimeUnit
@@ -27,7 +28,11 @@ class RelaySseClientTest {
             : keep-alive
 
         """.trimIndent()))
-        val events = RelaySseClient(server.url("/").toString(), { "token" }).stream(identity, 2).toList()
+        var connected = false
+        val events = RelaySseClient(server.url("/").toString(), { "token" })
+            .stream(identity, 2, onConnected = { connected = true })
+            .toList()
+        assertTrue(connected)
         assertEquals(1, events.size)
         assertEquals("你好", events.single().payload.getString("delta"))
         assertEquals(3, events.single().event.sequence)
@@ -95,10 +100,18 @@ class RelaySseClientTest {
             ),
         )
 
+        var connected = false
         val events = RelaySseClient(server.url("/").toString(), { "token" })
-            .sessionStream(RuntimeId("rt"), WorkspaceId("ws"), SessionId("session"), 3)
+            .sessionStream(
+                RuntimeId("rt"),
+                WorkspaceId("ws"),
+                SessionId("session"),
+                3,
+                onConnected = { connected = true },
+            )
             .toList()
 
+        assertTrue(connected)
         assertEquals(4, events.single().sessionSequence)
         assertEquals("run-2", events.single().runId)
         server.takeRequest().apply {

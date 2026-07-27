@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -57,6 +58,17 @@ class GatewayFixture:
                         "payload": {**event["data"], "run_id": run["run_id"]},
                     })
             return {"data": items, "next_cursor": None}
+        if (
+            method == "GET"
+            and path.split("?", 1)[0].endswith("/conversation-snapshot")
+        ):
+            session_id = path.split("/")[3]
+            return {
+                "session_id": session_id,
+                "snapshot_sequence": 0,
+                "items": [],
+                "next_cursor": None,
+            }
         if method == "GET" and path.startswith("/v1/sessions/"):
             return self.sessions[path.rsplit("/", 1)[-1]]
         if method == "POST" and path.endswith("/runs"):
@@ -141,7 +153,11 @@ class SessionJournalGatewayFixture(GatewayFixture):
             after = int(path.split("after_sequence=", 1)[1].split("&", 1)[0])
             rows = [row for row in self.session_events if row["session_sequence"] > after]
             return {"object": "list", "data": rows, "next_sequence": rows[-1]["session_sequence"] if rows else after}
-        if method == "GET" and path.endswith("/conversation-snapshot"):
+        if (
+            method == "GET"
+            and path.split("?", 1)[0].endswith("/conversation-snapshot")
+        ):
+            self.calls.append((method, path))
             return {
                 "session_id": "session-one",
                 "snapshot_sequence": 1,
@@ -161,21 +177,182 @@ def write_definition_asset(root: Path, definition_id: str, backend: str) -> None
 def test_session_journal_snapshot_replay_and_relay_cursor(tmp_path: Path) -> None:
     async def scenario():
         gateway = SessionJournalGatewayFixture()
+        state_dir = tmp_path / "runtime"
+        handler = GatewayRuntimeControlHandler(
+            "runtime-one", gateway, state_dir
+        )
+        # Existing Windows history establishes the initial waterline instead
+        # of flooding the Relay every time the Gateway starts.
+        assert await handler.relay_session_events() == []
+        gateway.session_events.append({
+            **gateway.session_events[0],
+            "event_id": "session-event-two",
+            "session_sequence": 2,
+        })
+        second = await handler.relay_session_events()
+        assert [event["session_sequence"] for event in second] == [2]
+
+        # A new process resumes from the durable cursor and forwards only
+        # events committed while it was offline.
+        restarted = GatewayRuntimeControlHandler("runtime-one", gateway, state_dir)
+        gateway.session_events.append({
+            **gateway.session_events[0],
+            "event_id": "session-event-three",
+            "session_sequence": 3,
+        })
+        third = await restarted.relay_session_events()
+        assert [event["session_sequence"] for event in third] == [3]
+
+        snapshot = await restarted.conversation_snapshot_for_subject(
+            "alice", "workspace-one", "session-one", limit=37
+        )
+        assert snapshot["snapshot_sequence"] == 1
+        assert gateway.calls[-1] == (
+            "GET",
+            "/v1/sessions/session-one/conversation-snapshot?limit=37",
+        )
+        page = await restarted.session_events_for_subject(
+            "alice", "workspace-one", "session-one", after_sequence=0
+        )
+        assert [event["session_sequence"] for event in page["data"]] == [1, 2, 3]
+
+    asyncio.run(scenario())
+
+
+def test_session_journal_cold_start_bootstraps_sessions_concurrently(
+    tmp_path: Path,
+) -> None:
+    class ConcurrentSnapshotFixture(GatewayFixture):
+        def __init__(self) -> None:
+            super().__init__()
+            self.inflight = 0
+            self.max_inflight = 0
+            for index in range(40):
+                session_id = f"session-{index}"
+                self.sessions[session_id] = {
+                    "session_id": session_id,
+                    "workspace_id": "workspace-one",
+                    "title": session_id,
+                    "updated_at": "2026-07-27T00:00:00+00:00",
+                }
+
+        async def request(self, method, path, *, body=None, headers=None):
+            if method == "GET" and path.endswith("/conversation-snapshot"):
+                self.inflight += 1
+                self.max_inflight = max(self.max_inflight, self.inflight)
+                try:
+                    await asyncio.sleep(0.02)
+                    session_id = path.split("/")[3]
+                    return {
+                        "session_id": session_id,
+                        "snapshot_sequence": 0,
+                        "items": [],
+                        "next_cursor": None,
+                    }
+                finally:
+                    self.inflight -= 1
+            return await super().request(method, path, body=body, headers=headers)
+
+    async def scenario() -> None:
+        gateway = ConcurrentSnapshotFixture()
+        state_dir = tmp_path / "runtime"
+        handler = GatewayRuntimeControlHandler("runtime-one", gateway, state_dir)
+
+        assert await handler.relay_session_events() == []
+        assert gateway.max_inflight > 1
+        restored = GatewayRuntimeControlHandler("runtime-one", gateway, state_dir)
+        assert len(restored._relay_session_event_cursors) == 40
+
+    asyncio.run(scenario())
+
+
+def test_session_journal_prioritizes_hot_sessions_and_rotates_cold_sessions(
+    tmp_path: Path,
+) -> None:
+    class RotatingFixture(GatewayFixture):
+        def __init__(self) -> None:
+            super().__init__()
+            self.session_events: dict[str, list[dict]] = {}
+            for index in range(12):
+                session_id = f"session-{index}"
+                self.sessions[session_id] = {
+                    "session_id": session_id,
+                    "workspace_id": "workspace-one",
+                    "title": session_id,
+                    "updated_at": f"2026-07-27T00:00:{59 - index:02d}+00:00",
+                }
+                self.session_events[session_id] = []
+
+        async def request(self, method, path, *, body=None, headers=None):
+            if method == "GET" and path.endswith("/conversation-snapshot"):
+                session_id = path.split("/")[3]
+                return {
+                    "session_id": session_id,
+                    "snapshot_sequence": 0,
+                    "items": [],
+                    "next_cursor": None,
+                }
+            if method == "GET" and "/events?after_sequence=" in path:
+                session_id = path.split("/")[3]
+                after = int(path.split("after_sequence=", 1)[1].split("&", 1)[0])
+                rows = [
+                    event
+                    for event in self.session_events[session_id]
+                    if event["session_sequence"] > after
+                ]
+                return {"data": rows}
+            return await super().request(method, path, body=body, headers=headers)
+
+    def event(session_id: str) -> dict:
+        return {
+            "event_id": f"event-{session_id}",
+            "runtime_id": "runtime-one",
+            "workspace_id": "workspace-one",
+            "session_id": session_id,
+            "run_id": None,
+            "session_sequence": 1,
+            "kind": "session.updated",
+            "timestamp": "2026-07-27T00:00:00+00:00",
+            "payload": {},
+        }
+
+    async def scenario() -> None:
+        gateway = RotatingFixture()
         handler = GatewayRuntimeControlHandler(
             "runtime-one", gateway, tmp_path / "runtime"
         )
-        first = await handler.relay_session_events()
-        assert [event["session_sequence"] for event in first] == [1]
         assert await handler.relay_session_events() == []
 
-        snapshot = await handler.conversation_snapshot_for_subject(
-            "alice", "workspace-one", "session-one"
-        )
-        assert snapshot["snapshot_sequence"] == 1
-        page = await handler.session_events_for_subject(
-            "alice", "workspace-one", "session-one", after_sequence=0
-        )
-        assert page["data"] == first
+        gateway.session_events["session-0"].append(event("session-0"))
+        gateway.session_events["session-4"].append(event("session-4"))
+        with sqlite3.connect(handler.journal_database) as db:
+            db.execute(
+                "CREATE TABLE runtime_session_sequences("
+                "session_id TEXT PRIMARY KEY,last_sequence INTEGER NOT NULL)"
+            )
+            db.execute(
+                "CREATE TABLE runtime_session_journal("
+                "session_id TEXT NOT NULL,session_sequence INTEGER NOT NULL)"
+            )
+            db.execute(
+                "INSERT INTO runtime_session_sequences VALUES(?,?)",
+                ("session-4", 1),
+            )
+            db.execute(
+                "INSERT INTO runtime_session_journal VALUES(?,?)",
+                ("session-4", 1),
+            )
+        gateway.calls.clear()
+        first = await handler.relay_session_events()
+        assert {item["session_id"] for item in first} == {"session-0", "session-4"}
+        event_calls = [path for method, path in gateway.calls if "/events?" in path]
+        assert len(event_calls) <= 9
+
+        gateway.session_events["session-8"].append(event("session-8"))
+        second = await handler.relay_session_events()
+        assert second == []
+        third = await handler.relay_session_events()
+        assert [item["session_id"] for item in third] == ["session-8"]
 
     asyncio.run(scenario())
 
@@ -349,7 +526,8 @@ def test_gateway_handler_maps_relay_to_authoritative_runtime_and_recovers_metada
         assert (await handler("create_session", session_args))["session_id"] == session["session_id"]
         run_args = {"args": ["alice", "workspace-one", session["session_id"]], "kwargs": {
             "message": "hello", "attachment_refs": ["attachment-one"], "idempotency_key": "run-key",
-            "correlation_id": "correlation-one", "retry_of": None}}
+            "correlation_id": "correlation-one", "retry_of": None,
+            "source_message_id": "android-message-one"}}
         run = await handler("create_run", run_args)
         for _ in range(50):
             run = await handler("get_run", {"args": [run["run_id"]], "kwargs": {}})
@@ -365,7 +543,7 @@ def test_gateway_handler_maps_relay_to_authoritative_runtime_and_recovers_metada
         assert execute_request["body"]["metadata"]["source_client"] == "android"
         assert (
             execute_request["body"]["metadata"]["source_message_id"]
-            == "android:run-key"
+            == "android-message-one"
         )
         assert execute_request["body"]["metadata"]["attachment_refs"] == [
             "attachment-one"

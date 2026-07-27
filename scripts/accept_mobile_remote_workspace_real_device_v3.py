@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse
@@ -22,6 +23,7 @@ from accept_mobile_remote_workspace_real_device_v2 import (
     adb,
     adb_shell_quote,
     capture_screenshot,
+    open_android_route,
     phase,
 )
 
@@ -58,6 +60,8 @@ async def public_relay_preflight(
     base_url: str,
     *,
     session_factory: Any = aiohttp.ClientSession,
+    attempts: int = 3,
+    retry_delay: float = 0.25,
 ) -> None:
     parsed = urlparse(base_url)
     if (
@@ -70,21 +74,35 @@ async def public_relay_preflight(
         raise RuntimeError("v3_public_relay_url_invalid")
     health_url = urljoin(base_url.rstrip("/") + "/", "v2/health")
     timeout = aiohttp.ClientTimeout(total=15)
-    try:
-        async with session_factory(timeout=timeout) as session:
-            async with session.get(
-                health_url,
-                allow_redirects=False,
-                headers={"Accept": "application/json"},
-            ) as response:
-                if response.status != 200:
-                    raise RuntimeError(
-                        f"v3_public_relay_preflight_http_{response.status}"
-                    )
-    except (aiohttp.ClientSSLError, aiohttp.ClientConnectorCertificateError) as exc:
-        raise RuntimeError("v3_public_relay_preflight_tls") from exc
-    except (aiohttp.ClientConnectionError, asyncio.TimeoutError) as exc:
-        raise RuntimeError("v3_public_relay_preflight_unavailable") from exc
+    if attempts < 1:
+        raise ValueError("preflight_attempts_must_be_positive")
+    last_error: BaseException | None = None
+    last_code = "v3_public_relay_preflight_unavailable"
+    for attempt in range(attempts):
+        try:
+            async with session_factory(timeout=timeout) as session:
+                async with session.get(
+                    health_url,
+                    allow_redirects=False,
+                    headers={"Accept": "application/json"},
+                ) as response:
+                    if response.status != 200:
+                        raise RuntimeError(
+                            f"v3_public_relay_preflight_http_{response.status}"
+                        )
+                    return
+        except aiohttp.ClientConnectorCertificateError as exc:
+            # Certificate identity failures are never transiently ignored.
+            raise RuntimeError("v3_public_relay_preflight_tls") from exc
+        except aiohttp.ClientSSLError as exc:
+            last_error = exc
+            last_code = "v3_public_relay_preflight_tls"
+        except (aiohttp.ClientConnectionError, asyncio.TimeoutError) as exc:
+            last_error = exc
+            last_code = "v3_public_relay_preflight_unavailable"
+        if attempt + 1 < attempts:
+            await asyncio.sleep(retry_delay)
+    raise RuntimeError(last_code) from last_error
 
 
 def desktop_digest(snapshot: dict[str, Any]) -> str:
@@ -155,6 +173,41 @@ def validate_proof(
         "session_event_count": int(android_proof.get("session_event_count", 0)),
         "duplicate_sequence_count": 0,
         "missing_sequence_count": 0,
+    }
+
+
+def validate_approval_proof(proof: dict[str, Any]) -> dict[str, Any]:
+    event_sha256 = proof.get("event_sha256")
+    conversation_sha256 = proof.get("conversation_sha256")
+    if not (
+        proof.get("phase") == "interaction"
+        and proof.get("terminal_status") == "completed"
+        and proof.get("approval_status") == "approved"
+        and int(proof.get("successful_decisions", 0)) == 1
+        and int(proof.get("tool_execution_count", 0)) == 1
+        and int(proof.get("sse_event_count", 0)) > 0
+        and int(proof.get("event_count", 0)) > 0
+        and int(proof.get("conversation_after", 0))
+        > int(proof.get("conversation_before", 0))
+        and proof.get("session_ui_visible") is True
+        and isinstance(event_sha256, str)
+        and DIGEST.fullmatch(event_sha256)
+        and isinstance(conversation_sha256, str)
+        and DIGEST.fullmatch(conversation_sha256)
+    ):
+        raise RuntimeError("v3_approval_single_execution_proof_invalid")
+    return {
+        "name": "approval_single_execution",
+        "status": "passed",
+        "terminal_status": "completed",
+        "approval_status": "approved",
+        "successful_decisions": 1,
+        "tool_execution_count": 1,
+        "sse_event_count": int(proof["sse_event_count"]),
+        "event_count": int(proof["event_count"]),
+        "event_sha256": event_sha256,
+        "conversation_sha256": conversation_sha256,
+        "session_ui_visible": True,
     }
 
 
@@ -381,7 +434,9 @@ async def collect_windows_two_runs(
         and int(proof.get("missing_sequence_count", -1)) == 0
         and 0 <= p95 < 2
     ):
-        raise RuntimeError("v3_windows_two_runs_proof_invalid")
+        raise RuntimeError(
+            f"v3_windows_two_runs_proof_invalid:p95_seconds={p95:.3f}"
+        )
     return (
         {
             "name": "windows_to_android_two_runs",
@@ -404,6 +459,35 @@ async def collect(args: argparse.Namespace) -> dict[str, Any]:
         timeout_seconds=args.phase_timeout_seconds,
     )
     checks: list[dict[str, Any]] = []
+    if args.approval_only:
+        interaction_id = args.interaction_id or uuid4().hex
+        approval = phase(
+            args,
+            "interaction",
+            extras={
+                "interactionWorkspaceId": args.workspace_id,
+                "interactionAgentDefinitionId": args.approval_agent_definition_id,
+                "interactionId": interaction_id,
+                "interactionMessage": args.interaction_message,
+            },
+        )
+        if approval is None:
+            raise RuntimeError("v3_approval_single_execution_proof_missing")
+        check = validate_approval_proof(approval)
+        open_android_route(
+            args,
+            "opendrsai://session/"
+            f"{args.runtime_id}/{args.workspace_id}/{approval['session_id']}",
+        )
+        time.sleep(5)
+        check.update(capture_screenshot(args, "approval-single-execution"))
+        return {
+            "schema_version": 1,
+            "passed": True,
+            "checks": [check],
+        }
+    if not args.session_id:
+        raise RuntimeError("v3_session_id_required")
     expected_source_ids = list(args.expected_source_message_id)
     if args.windows_two_runs:
         windows_check, windows_source_ids = await collect_windows_two_runs(
@@ -497,11 +581,16 @@ def main() -> int:
     state_root = Path(os.getenv("DRSAI_HOME", str(Path.home() / ".drsai")))
     parser.add_argument("--runtime-id", required=True)
     parser.add_argument("--workspace-id", required=True)
-    parser.add_argument("--session-id", required=True)
+    parser.add_argument("--session-id")
     parser.add_argument("--expected-source-message-id", action="append", default=[])
     parser.add_argument("--expected-run-count", type=int, default=4)
     parser.add_argument("--android-two-runs", action="store_true")
     parser.add_argument("--windows-two-runs", action="store_true")
+    parser.add_argument("--approval-only", action="store_true")
+    parser.add_argument(
+        "--approval-agent-definition-id",
+        default="mobile-acceptance",
+    )
     parser.add_argument("--interaction-id")
     parser.add_argument(
         "--interaction-message",

@@ -119,8 +119,11 @@ def _recovery_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
         if not (
             row.get("transcript_hash_preserved") is True
             and row.get("snapshot_sequence_preserved") is True
+            and row.get("run_count_preserved") is True
+            and row.get("event_count_preserved") is True
             and row.get("identity_transition_valid") is True
             and int(row.get("duplicate_run_count", -1)) == 0
+            and int(row.get("duplicate_sequence_count", -1)) == 0
             and int(row.get("missing_sequence_count", -1)) == 0
         ):
             raise RuntimeError(f"v3_stability_fault_invalid:{fault_name}")
@@ -129,7 +132,10 @@ def _recovery_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
                 "name": check_name,
                 "status": "passed",
                 "transcript_hash_preserved": True,
+                "run_count_preserved": True,
+                "event_count_preserved": True,
                 "duplicate_run_count": 0,
+                "duplicate_sequence_count": 0,
                 "missing_sequence_count": 0,
                 "recovery_seconds": row.get("recovery_seconds"),
             }

@@ -40,13 +40,25 @@ def test_gateway_lists_desktop_catalog_and_projects_snapshot(tmp_path: Path, mon
     gateway._runtime_registry_instance = None
     gateway._runtime_engine_instance = None
     opened = gateway._runtime_registry().open_workspace(str(workspace))
+    mobile = gateway._runtime_engine().create_session(
+        opened.workspace_id,
+        "Android 新会话",
+        agent_definition="mobile-acceptance@1",
+        backend_id="opendrsai",
+    )
 
     listed = asyncio.run(gateway.runtime_session_list(opened.workspace_id, 0, 50, False))
     conversation = asyncio.run(gateway.runtime_session_conversation(thread_id, None, 100))
 
-    assert listed["total"] == 1
-    assert listed["data"][0]["session_id"] == thread_id
-    assert listed["data"][0]["title"] == "Windows 当前任务"
+    assert listed["total"] == 2
+    assert {item["session_id"] for item in listed["data"]} == {
+        thread_id,
+        mobile["session_id"],
+    }
+    assert {item["title"] for item in listed["data"]} == {
+        "Windows 当前任务",
+        "Android 新会话",
+    }
     assert [item["kind"] for item in conversation["data"]] == [
         "message.user", "message.assistant",
     ]

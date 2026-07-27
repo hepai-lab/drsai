@@ -18,6 +18,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 import java.io.IOException
+import java.util.concurrent.TimeUnit
 
 data class RemoteAgentDefinition(val id: String, val version: String, val name: String, val backendId: String,
                                  val backendHealth: String, val capabilities: Set<String>)
@@ -56,7 +57,9 @@ data class RemoteAuditEntry(
 class RelayRemoteRepository(
     baseUrl: String,
     private val accessToken: () -> String,
-    private val http: OkHttpClient = OkHttpClient(),
+    private val http: OkHttpClient = OkHttpClient.Builder()
+        .readTimeout(60, TimeUnit.SECONDS)
+        .build(),
     private val refreshAfter: suspend (String) -> String? = { null },
     private val deviceProof: RelayDeviceProof? = null,
 ) {
@@ -308,26 +311,40 @@ class RelayRemoteRepository(
         execute(Request.Builder().url(root.newBuilder().addPathSegments(path).build()).post(body.toString().toRequestBody(json)).build())
     }
     private suspend fun execute(request: Request): JSONObject {
-        val initialToken = accessToken()
-        fun call(token: String) = http.newCall(
-            authorizeRelayRequest(
-                deviceProof,
-                request.newBuilder()
-                    .header("Authorization", "Bearer $token")
-                    .build(),
-                token,
-            )
-        ).execute()
-        var response = call(initialToken)
-        if (response.code == 401) {
-            response.close()
-            val refreshed = refreshAfter(initialToken)
-            if (refreshed.isNullOrBlank()) throw RelayHttpException(401, null, "oidc_auth_invalid")
-            response = call(refreshed)
-        }
-        return response.use {
-            if (!it.isSuccessful) throw relayHttpException(it)
-            JSONObject(it.body?.string() ?: error("relay_empty_response"))
+        var networkAttempt = 0
+        while (true) {
+            val initialToken = accessToken()
+            fun call(token: String) = http.newCall(
+                authorizeRelayRequest(
+                    deviceProof,
+                    request.newBuilder()
+                        .header("Authorization", "Bearer $token")
+                        .build(),
+                    token,
+                )
+            ).execute()
+            try {
+                var response = call(initialToken)
+                if (response.code == 401) {
+                    response.close()
+                    val refreshed = refreshAfter(initialToken)
+                    if (refreshed.isNullOrBlank()) throw RelayHttpException(401, null, "oidc_auth_invalid")
+                    response = call(refreshed)
+                }
+                return response.use {
+                    if (!it.isSuccessful) throw relayHttpException(it)
+                    JSONObject(it.body?.string() ?: error("relay_empty_response"))
+                }
+            } catch (failure: IOException) {
+                // Snapshot/catalog reads are safe to replay after a mobile
+                // handover or an HTTP/2 stream reset.  Writes are deliberately
+                // excluded here and retain their operation-specific
+                // idempotency recovery paths.
+                if (request.method != "GET" || networkAttempt >= 1) throw failure
+                networkAttempt += 1
+                http.connectionPool.evictAll()
+                delay(250)
+            }
         }
     }
 

@@ -106,7 +106,10 @@ def evidence(tmp_path: Path) -> tuple[Path, ...]:
     ):
         by_name[name].update(
             transcript_hash_preserved=True,
+            run_count_preserved=True,
+            event_count_preserved=True,
             duplicate_run_count=0,
+            duplicate_sequence_count=0,
             missing_sequence_count=0,
         )
     real = {"passed": True, "checks": checks}
@@ -123,6 +126,12 @@ def evidence(tmp_path: Path) -> tuple[Path, ...]:
                 "name": name,
                 "status": "passed",
                 "transcript_hash_preserved": True,
+                "snapshot_sequence_preserved": True,
+                "run_count_preserved": True,
+                "event_count_preserved": True,
+                "duplicate_run_count": 0,
+                "duplicate_sequence_count": 0,
+                "missing_sequence_count": 0,
             }
             for name in sorted(MODULE.REQUIRED_FAULTS)
         ],

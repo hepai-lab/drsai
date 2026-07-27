@@ -38,7 +38,11 @@ class RelaySseClient(
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .build()
 
-    fun stream(identity: RemoteRunIdentity, afterSequence: Long): Flow<RelayStreamEvent> = channelFlow {
+    fun stream(
+        identity: RemoteRunIdentity,
+        afterSequence: Long,
+        onConnected: () -> Unit = {},
+    ): Flow<RelayStreamEvent> = channelFlow {
         require(afterSequence >= 0) { "after_sequence_invalid" }
         val url = root.newBuilder()
             .addPathSegments("v1/runtimes/${identity.runtimeId.value}/runs/${identity.runId.value}/events/stream")
@@ -66,6 +70,7 @@ class RelaySseClient(
             response.use {
                 if (!response.isSuccessful) throw relayHttpException(response)
                 val source = response.body?.source() ?: error("relay_sse_empty")
+                onConnected()
                 var data: String? = null
                 while (!source.exhausted()) {
                     val line = source.readUtf8Line() ?: break
@@ -102,6 +107,7 @@ class RelaySseClient(
         workspaceId: WorkspaceId,
         sessionId: SessionId,
         afterSequence: Long,
+        onConnected: () -> Unit = {},
     ): Flow<GeneratedSessionEvent> = channelFlow {
         require(afterSequence >= 0) { "after_sequence_invalid" }
         val url = root.newBuilder()
@@ -133,6 +139,7 @@ class RelaySseClient(
             response.use {
                 if (!response.isSuccessful) throw relayHttpException(response)
                 val source = response.body?.source() ?: error("relay_session_sse_empty")
+                onConnected()
                 val data = StringBuilder()
                 while (!source.exhausted()) {
                     val line = source.readUtf8Line() ?: break

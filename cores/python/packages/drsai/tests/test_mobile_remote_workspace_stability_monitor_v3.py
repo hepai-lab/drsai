@@ -60,6 +60,9 @@ def fault(
         5,
         True,
         True,
+        True,
+        True,
+        0,
         0,
         0,
         generation_before,
@@ -158,6 +161,37 @@ def test_v3_probe_requires_canonical_digest_and_snapshot_sequence() -> None:
             pass
         else:
             raise AssertionError("invalid V3 probe was accepted")
+
+
+def test_v3_probe_integrity_requires_measured_counts_and_rejects_gaps() -> None:
+    valid = {
+        "run_count": 4,
+        "session_event_count": 17,
+        "duplicate_run_count": 0,
+        "duplicate_sequence_count": 0,
+        "missing_sequence_count": 0,
+    }
+    assert MODULE._probe_integrity(valid) == (4, 17, 0, 0)
+    for key in valid:
+        invalid = {**valid, key: None}
+        try:
+            MODULE._probe_integrity(invalid)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError(f"missing measured count was accepted: {key}")
+    for key in (
+        "duplicate_run_count",
+        "duplicate_sequence_count",
+        "missing_sequence_count",
+    ):
+        invalid = {**valid, key: 1}
+        try:
+            MODULE._probe_integrity(invalid)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError(f"integrity failure was accepted: {key}")
 
 
 def test_v3_fault_identity_transitions_are_strict() -> None:

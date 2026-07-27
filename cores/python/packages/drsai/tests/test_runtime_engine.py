@@ -61,6 +61,16 @@ def test_imported_desktop_session_preserves_identity_and_refreshes_metadata(engi
     assert first["session_id"] == refreshed["session_id"] == "thread-desktop"
     assert refreshed["title"] == "Renamed title"
     assert refreshed["updated_at"] == "2026-07-03T00:00:00Z"
+    before = engine.conversation_snapshot("thread-desktop")
+    unchanged, repeated_again = engine.import_session(
+        "thread-desktop", "workspace-one", "Renamed title",
+        agent_definition="codex@1", backend_id="codex",
+        created_at="2026-07-01T00:00:00Z", updated_at="2026-07-03T00:00:00Z",
+    )
+    after = engine.conversation_snapshot("thread-desktop")
+    assert repeated_again is False
+    assert unchanged["revision"] == refreshed["revision"]
+    assert after["snapshot_sequence"] == before["snapshot_sequence"]
 
 
 def test_session_agent_binding_removed_tombstone_and_revision(engine: RuntimeEngine) -> None:

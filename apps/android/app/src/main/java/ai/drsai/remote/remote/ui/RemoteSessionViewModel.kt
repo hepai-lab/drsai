@@ -34,6 +34,8 @@ import org.json.JSONObject
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -110,25 +112,50 @@ class RemoteSessionViewModel(
         runCatching {
             val session = repository.session(runtimeId, workspaceId, sessionId)
             require(session.lifecycle == RemoteResourceLifecycle.ACTIVE) { "remote_session_not_active" }
-            val snapshot = loadConversationSnapshot()
-            cache.replaceSessionSnapshot(
-                subject, organization, runtimeId.value, workspaceId.value,
-                snapshot, System.currentTimeMillis(),
-            )
-            val runs = collectAllPages { cursor -> repository.runs(runtimeId, workspaceId, sessionId, cursor) }
-            val latest = runs.lastOrNull()
-            val conversation = snapshot.toLegacyItems()
-            val messages = projectConversationMessages(conversation).map {
-                RemoteMessageUi(it.id, it.role, it.text, it.progress)
+            coroutineScope {
+                val snapshotRequest = async { loadConversationSnapshot() }
+                val runsRequest = async {
+                    collectAllPages { cursor ->
+                        repository.runs(runtimeId, workspaceId, sessionId, cursor)
+                    }
+                }
+                val approvalsRequest = async { repository.approvals(runtimeId, workspaceId) }
+                val snapshot = snapshotRequest.await()
+                cache.replaceSessionSnapshot(
+                    subject, organization, runtimeId.value, workspaceId.value,
+                    snapshot, System.currentTimeMillis(),
+                )
+                val conversation = snapshot.toLegacyItems()
+                val messages = projectConversationMessages(conversation).map {
+                    RemoteMessageUi(it.id, it.role, it.text, it.progress)
+                }
+                val artifacts = conversation.asSequence()
+                    .filter { it.kind == "artifact.created" }
+                    .mapNotNull(::conversationArtifact)
+                    .distinctBy { it.artifactId }
+                    .toList()
+
+                // Conversation is the primary screen content. Publish it as
+                // soon as the authoritative Snapshot arrives; slow Run or
+                // Approval metadata must not leave the chat blank.
+                mutableState.update {
+                    it.copy(
+                        sessionTitle = session.title,
+                        messages = messages,
+                        artifacts = artifacts,
+                        online = true,
+                        connectionState = RemoteConnectionState.ONLINE,
+                    )
+                }
+
+                val runs = runsRequest.await()
+                val latest = runs.lastOrNull()
+                val pending = approvalsRequest.await().firstOrNull {
+                    it.sessionId == sessionId &&
+                        (latest == null || it.runId == latest.identity.runId)
+                }
+                LoadedSession(session, runs, messages, artifacts, emptyList(), pending)
             }
-            val artifacts = conversation.asSequence()
-                .filter { it.kind == "artifact.created" }
-                .mapNotNull(::conversationArtifact)
-                .distinctBy { it.artifactId }
-                .toList()
-            val pending = repository.approvals(runtimeId, workspaceId)
-                .firstOrNull { it.sessionId == sessionId && (latest == null || it.runId == latest.identity.runId) }
-            LoadedSession(session, runs, messages, artifacts, emptyList(), pending)
         }.onSuccess { loaded ->
             val latest = loaded.runs.lastOrNull()
             activeRun = latest?.identity
@@ -302,18 +329,28 @@ class RemoteSessionViewModel(
     }
 
     private suspend fun reloadSessionProjection() {
-        val snapshot = loadConversationSnapshot()
+        val (snapshot, runs, approvals) = coroutineScope {
+            val snapshotRequest = async { loadConversationSnapshot() }
+            val runsRequest = async {
+                collectAllPages { cursor ->
+                    repository.runs(runtimeId, workspaceId, sessionId, cursor)
+                }
+            }
+            val approvalsRequest = async { repository.approvals(runtimeId, workspaceId) }
+            Triple(
+                snapshotRequest.await(),
+                runsRequest.await(),
+                approvalsRequest.await(),
+            )
+        }
         cache.replaceSessionSnapshot(
             subject, organization, runtimeId.value, workspaceId.value,
             snapshot, System.currentTimeMillis(),
         )
         renderCachedSessionItems()
-        val runs = collectAllPages { cursor ->
-            repository.runs(runtimeId, workspaceId, sessionId, cursor)
-        }
         val latest = runs.lastOrNull()
         activeRun = latest?.identity
-        val pending = repository.approvals(runtimeId, workspaceId)
+        val pending = approvals
             .firstOrNull { it.sessionId == sessionId && (latest == null || it.runId == latest.identity.runId) }
         mutableState.update { current ->
             current.copy(

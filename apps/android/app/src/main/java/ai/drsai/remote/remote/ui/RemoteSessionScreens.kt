@@ -3,6 +3,7 @@ package ai.drsai.remote.remote.ui
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -198,6 +199,14 @@ fun RemoteChatScreen(state: RemoteChatUiState, onBack: () -> Unit, onSend: (Stri
                      onCancelRun: () -> Unit, onApproval: (String, String) -> Unit, onOpenAudit: () -> Unit,
                      onOpenArtifact: (String) -> Unit = {}) {
     var input by remember(state.scopeKey) { mutableStateOf("") }
+    val transcriptListState = rememberLazyListState()
+    val transcriptItemCount =
+        state.messages.size + state.artifacts.size + if (state.approval == null) 0 else 1
+    LaunchedEffect(state.scopeKey, transcriptItemCount) {
+        if (transcriptItemCount > 0) {
+            transcriptListState.scrollToItem(transcriptItemCount - 1)
+        }
+    }
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onBack) { Text("返回") }
@@ -208,7 +217,11 @@ fun RemoteChatScreen(state: RemoteChatUiState, onBack: () -> Unit, onSend: (Stri
             state.correlationId?.let { TextButton(onClick = onOpenAudit) { Text("审计") } }
         }
         if (!state.online) Text("连接已中断，任务可能仍在运行", color = MaterialTheme.colorScheme.error)
-        LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyColumn(
+            Modifier.weight(1f),
+            state = transcriptListState,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             items(state.messages, key = { it.id }) { message ->
                 val isUser = message.role == "user"
                 Box(

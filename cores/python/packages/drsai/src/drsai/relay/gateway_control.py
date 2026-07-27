@@ -79,11 +79,13 @@ class GatewayRuntimeControlHandler:
         self.state_dir = Path(state_dir)
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.database = self.state_dir / "relay-control.sqlite3"
+        self.journal_database = self.state_dir / "engine.sqlite3"
         self.definitions = AgentDefinitionStore(self.state_dir.parent / "assets" / "agents")
         self._execution_tasks: set[asyncio.Task[Any]] = set()
         self.execution_failures: dict[str, str] = {}
         self._relay_event_cursors: dict[str, int] = {}
         self._relay_session_event_cursors: dict[str, int] = {}
+        self._relay_session_scan_offsets: dict[str, int] = {}
         self._relay_terminal_runs: set[str] = set()
         self._approval_decision_lock = asyncio.Lock()
         self._initialize()
@@ -104,14 +106,90 @@ class GatewayRuntimeControlHandler:
               CREATE TABLE IF NOT EXISTS relay_runs(
                 run_id TEXT PRIMARY KEY, subject TEXT NOT NULL, workspace_id TEXT NOT NULL, session_id TEXT NOT NULL,
                 correlation_id TEXT NOT NULL, message TEXT NOT NULL, attachment_refs_json TEXT NOT NULL,
-                retry_of TEXT, idempotency_key TEXT NOT NULL, UNIQUE(subject,idempotency_key)
+                retry_of TEXT, idempotency_key TEXT NOT NULL, source_message_id TEXT,
+                UNIQUE(subject,idempotency_key)
               );
               CREATE TABLE IF NOT EXISTS relay_approval_decisions(
                 subject TEXT NOT NULL, idempotency_key TEXT NOT NULL, approval_id TEXT NOT NULL,
                 decision TEXT NOT NULL, result_json TEXT NOT NULL,
                 PRIMARY KEY(subject,idempotency_key)
               );
+              CREATE TABLE IF NOT EXISTS relay_session_event_cursors(
+                session_id TEXT PRIMARY KEY,
+                after_sequence INTEGER NOT NULL CHECK(after_sequence >= 0)
+              );
             """)
+            columns = {
+                str(row["name"])
+                for row in db.execute("PRAGMA table_info(relay_runs)")
+            }
+            if "source_message_id" not in columns:
+                db.execute("ALTER TABLE relay_runs ADD COLUMN source_message_id TEXT")
+            self._relay_session_event_cursors.update(
+                {
+                    str(row["session_id"]): int(row["after_sequence"])
+                    for row in db.execute(
+                        "SELECT session_id,after_sequence FROM relay_session_event_cursors"
+                    )
+                }
+            )
+
+    def _store_session_event_cursor(self, session_id: str, sequence: int) -> None:
+        value = max(0, int(sequence))
+        with self._connect() as db:
+            db.execute(
+                """
+                INSERT INTO relay_session_event_cursors(session_id,after_sequence)
+                VALUES(?,?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                  after_sequence=MAX(relay_session_event_cursors.after_sequence,excluded.after_sequence)
+                """,
+                (session_id, value),
+            )
+            stored = db.execute(
+                "SELECT after_sequence FROM relay_session_event_cursors WHERE session_id=?",
+                (session_id,),
+            ).fetchone()
+        self._relay_session_event_cursors[session_id] = int(stored["after_sequence"])
+
+    def _sessions_with_pending_journal_events(self) -> list[str]:
+        """Read Runtime waterlines without scanning every Session over HTTP."""
+        if not self.journal_database.is_file():
+            return []
+        try:
+            with sqlite3.connect(self.journal_database, timeout=5) as db:
+                rows = db.execute(
+                    "SELECT q.session_id,q.last_sequence,COALESCE(j.rowid,0) "
+                    "FROM runtime_session_sequences q "
+                    "LEFT JOIN runtime_session_journal j "
+                    "ON j.session_id=q.session_id "
+                    "AND j.session_sequence=q.last_sequence"
+                ).fetchall()
+        except sqlite3.Error:
+            # The HTTP hot/cold scan remains the fail-safe fallback while a
+            # migration or a short SQLite lock is in progress.
+            return []
+        pending = [
+            (int(latest_rowid), str(session_id))
+            for session_id, last_sequence, latest_rowid in rows
+            if str(session_id) in self._relay_session_event_cursors
+            and int(last_sequence)
+            > self._relay_session_event_cursors[str(session_id)]
+        ]
+        pending.sort(reverse=True)
+        return [session_id for _, session_id in pending]
+
+    async def _ensure_session_event_cursor(self, session_id: str) -> int:
+        existing = self._relay_session_event_cursors.get(session_id)
+        if existing is not None:
+            return existing
+        snapshot = await self.transport.request(
+            "GET",
+            f"/v1/sessions/{quote(session_id, safe='')}/conversation-snapshot",
+        )
+        sequence = int(snapshot.get("snapshot_sequence") or 0)
+        self._store_session_event_cursor(session_id, sequence)
+        return sequence
 
     async def __call__(self, operation: str, arguments: dict[str, Any]) -> Any:
         args, kwargs = arguments.get("args", []), arguments.get("kwargs", {})
@@ -216,7 +294,69 @@ class GatewayRuntimeControlHandler:
     async def relay_events(self) -> list[dict[str, Any]]:
         """Poll authoritative Runtime events for HAI's bounded SSE replay buffer."""
         forwarded: list[dict[str, Any]] = []
-        for workspace in await self.published_workspaces():
+        published = await self.published_workspaces()
+        active_workspace_ids = {
+            str(workspace["workspace_id"])
+            for workspace in published
+            if workspace["lifecycle"] == "active"
+        }
+        # The Runtime event table is the authoritative change index. Forward
+        # newly appended events before walking historical Workspace catalogs;
+        # otherwise a short controlled Run can finish before its SSE replay
+        # buffer is populated.
+        if active_workspace_ids:
+            try:
+                placeholders = ",".join("?" for _ in active_workspace_ids)
+                with sqlite3.connect(self.journal_database, timeout=5) as journal:
+                    changed_runs = list(
+                        journal.execute(
+                            "SELECT r.run_id,r.session_id,r.workspace_id,r.backend_id,"
+                            "r.status,r.created_at,MAX(e.sequence) AS latest_sequence,"
+                            "MAX(e.rowid) AS latest_rowid "
+                            "FROM runtime_runs r JOIN runtime_events e ON e.run_id=r.run_id "
+                            f"WHERE r.workspace_id IN ({placeholders}) "
+                            "GROUP BY r.run_id ORDER BY latest_rowid DESC LIMIT 16",
+                            tuple(active_workspace_ids),
+                        )
+                    )
+            except sqlite3.Error:
+                changed_runs = []
+            for row in changed_runs:
+                run_id = str(row[0])
+                latest_sequence = int(row[6])
+                after = self._relay_event_cursors.get(run_id, 0)
+                if run_id in self._relay_terminal_runs or latest_sequence <= after:
+                    continue
+                events = await self.transport.request(
+                    "GET",
+                    f"/v1/runs/{quote(run_id, safe='')}/events"
+                    f"?after_sequence={after}&limit=2000",
+                )
+                item = {
+                    "run_id": run_id,
+                    "session_id": str(row[1]),
+                    "workspace_id": str(row[2]),
+                    "backend_id": str(row[3]),
+                    "status": str(row[4]),
+                    "created_at": str(row[5]),
+                }
+                binding = self._run_binding_optional(run_id, item)
+                projected = [
+                    self._event_projection(event, binding, run_id)
+                    for event in events.get("data", [])
+                ]
+                if projected:
+                    self._relay_event_cursors[run_id] = int(projected[-1]["sequence"])
+                    forwarded.extend(projected)
+                if (
+                    item["status"] in {"completed", "failed", "cancelled"}
+                    and len(projected) < 2000
+                ):
+                    self._relay_terminal_runs.add(run_id)
+            if forwarded:
+                return forwarded
+
+        for workspace in published:
             if workspace["lifecycle"] != "active":
                 continue
             workspace_id = str(workspace["workspace_id"])
@@ -257,17 +397,25 @@ class GatewayRuntimeControlHandler:
     async def relay_session_events(self) -> list[dict[str, Any]]:
         """Poll authoritative Session Journal events for Relay fan-out/replay."""
         forwarded: list[dict[str, Any]] = []
-        for workspace in await self.published_workspaces():
-            if workspace["lifecycle"] != "active":
-                continue
-            workspace_id = str(workspace["workspace_id"])
-            sessions = await self.transport.request(
-                "GET",
-                f"/v1/sessions?workspace_id={quote(workspace_id, safe='')}&offset=0&limit=200",
-            )
-            for session in sessions.get("data", []):
-                session_id = str(session["session_id"])
-                after = self._relay_session_event_cursors.get(session_id, 0)
+        # Keep loopback polling parallel enough to avoid serial startup scans,
+        # but bounded below the Gateway's shared DB/HTTP capacity.  A burst of
+        # one request per historical Session can otherwise monopolize the
+        # co-hosted server and delay interactive/mobile traffic.
+        concurrency = asyncio.Semaphore(4)
+        pending_session_ids = self._sessions_with_pending_journal_events()
+
+        async def poll_session(session: dict[str, Any]) -> list[dict[str, Any]]:
+            session_id = str(session["session_id"])
+            async with concurrency:
+                if session_id not in self._relay_session_event_cursors:
+                    # A legacy Windows Session may contain years of Journal
+                    # history. Its first Relay observation establishes the
+                    # current waterline; subsequent restarts resume from the
+                    # durable cursor and therefore retain downtime events
+                    # without replaying the entire historical Journal.
+                    await self._ensure_session_event_cursor(session_id)
+                    return []
+                after = self._relay_session_event_cursors[session_id]
                 try:
                     page = await self.transport.request(
                         "GET",
@@ -281,16 +429,100 @@ class GatewayRuntimeControlHandler:
                         "GET",
                         f"/v1/sessions/{quote(session_id, safe='')}/conversation-snapshot",
                     )
-                    self._relay_session_event_cursors[session_id] = int(
-                        snapshot["snapshot_sequence"]
+                    self._store_session_event_cursor(
+                        session_id, int(snapshot["snapshot_sequence"])
                     )
-                    continue
+                    return []
                 events = page.get("data", [])
                 if events:
-                    self._relay_session_event_cursors[session_id] = int(
-                        events[-1]["session_sequence"]
+                    self._store_session_event_cursor(
+                        session_id, int(events[-1]["session_sequence"])
                     )
+                return events
+
+        published = await self.published_workspaces()
+        active_workspace_ids = {
+            str(workspace["workspace_id"])
+            for workspace in published
+            if workspace["lifecycle"] == "active"
+        }
+        # Changed Sessions are the latency-sensitive path. The Runtime DB
+        # already binds each Session to a Workspace, so avoid waiting for every
+        # Workspace catalog and cold-session scan before forwarding a newly
+        # committed Journal event.
+        if pending_session_ids and active_workspace_ids:
+            placeholders = ",".join("?" for _ in pending_session_ids)
+            try:
+                with sqlite3.connect(self.journal_database, timeout=5) as journal:
+                    eligible = [
+                        {"session_id": str(row[0])}
+                        for row in journal.execute(
+                            "SELECT session_id FROM runtime_sessions "
+                            f"WHERE session_id IN ({placeholders}) "
+                            f"AND workspace_id IN ({','.join('?' for _ in active_workspace_ids)})",
+                            (*pending_session_ids, *active_workspace_ids),
+                        )
+                    ][:8]
+            except sqlite3.Error:
+                eligible = []
+            if eligible:
+                pages = await asyncio.gather(
+                    *(poll_session(session) for session in eligible)
+                )
+                for events in pages:
                     forwarded.extend(events)
+                if forwarded:
+                    return forwarded
+
+        for workspace in published:
+            if workspace["lifecycle"] != "active":
+                continue
+            workspace_id = str(workspace["workspace_id"])
+            sessions = await self.transport.request(
+                "GET",
+                f"/v1/sessions?workspace_id={quote(workspace_id, safe='')}&offset=0&limit=200",
+            )
+            session_items = list(sessions.get("data", []))
+            unknown = [
+                session
+                for session in session_items
+                if str(session["session_id"]) not in self._relay_session_event_cursors
+            ]
+            sessions_by_id = {
+                str(session["session_id"]): session for session in session_items
+            }
+            changed = [
+                sessions_by_id[session_id]
+                for session_id in pending_session_ids
+                if session_id in sessions_by_id
+            ][:4]
+            hot = session_items[:4]
+            cold = session_items[4:]
+            cold_offset = self._relay_session_scan_offsets.get(workspace_id, 0)
+            rotating = (
+                [
+                    cold[(cold_offset + index) % len(cold)]
+                    for index in range(min(4, len(cold)))
+                ]
+                if cold
+                else []
+            )
+            if cold:
+                self._relay_session_scan_offsets[workspace_id] = (
+                    cold_offset + len(rotating)
+                ) % len(cold)
+            selected: list[dict[str, Any]] = []
+            selected_ids: set[str] = set()
+            for session in [*changed, *hot, *rotating, *unknown]:
+                session_id = str(session["session_id"])
+                if session_id not in selected_ids:
+                    selected.append(session)
+                    selected_ids.add(session_id)
+            pages = await asyncio.gather(
+                *(poll_session(session) for session in selected)
+            )
+            for events in pages:
+                forwarded.extend(events)
         return forwarded
 
     async def create_session(self, subject: str, workspace_id: str, *, title: str, definition_id: str,
@@ -317,6 +549,7 @@ class GatewayRuntimeControlHandler:
                 item["session_id"], subject, workspace_id, definition_id, definition_version,
                 definition.backend, idempotency_key,
             ))
+        await self._ensure_session_event_cursor(str(item["session_id"]))
         return self._session(item, self._binding(str(item["session_id"])))
 
     async def get_session(self, workspace_id: str, session_id: str) -> dict[str, Any]:
@@ -350,7 +583,8 @@ class GatewayRuntimeControlHandler:
 
     async def create_run(self, subject: str, workspace_id: str, session_id: str, *, message: str,
                          attachment_refs: list[str], idempotency_key: str, correlation_id: str,
-                         retry_of: str | None = None, _authorization: str | None = None) -> dict[str, Any]:
+                         retry_of: str | None = None, source_message_id: str | None = None,
+                         _authorization: str | None = None) -> dict[str, Any]:
         existing = self._binding_by_idempotency("relay_runs", subject, idempotency_key)
         if existing:
             return await self.get_run(str(existing["run_id"]))
@@ -363,10 +597,17 @@ class GatewayRuntimeControlHandler:
                                             body={"agent_definition": reference},
                                             headers={"Idempotency-Key": idempotency_key})
         with self._connect() as db:
-            db.execute("INSERT INTO relay_runs VALUES(?,?,?,?,?,?,?,?,?)", (
+            db.execute(
+                "INSERT INTO relay_runs("
+                "run_id,subject,workspace_id,session_id,correlation_id,message,"
+                "attachment_refs_json,retry_of,idempotency_key,source_message_id"
+                ") VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (
                 item["run_id"], subject, workspace_id, session_id, correlation_id, redact_secrets(message),
                 json.dumps(attachment_refs), retry_of, idempotency_key,
-            ))
+                source_message_id or idempotency_key,
+                ),
+            )
         task = asyncio.create_task(self._execute_run(
             str(item["run_id"]), message, subject, correlation_id, _authorization))
         self._execution_tasks.add(task)
@@ -386,9 +627,9 @@ class GatewayRuntimeControlHandler:
                                              "metadata": {
                                                  "attachment_refs": self._run_binding(run_id)["attachment_refs"],
                                                  "source_client": "android",
-                                                 "source_message_id": (
-                                                     "android:"
-                                                     + str(self._run_binding(run_id)["idempotency_key"])
+                                                 "source_message_id": str(
+                                                     self._run_binding(run_id)["source_message_id"]
+                                                     or self._run_binding(run_id)["idempotency_key"]
                                                  ),
                                              },
                                          },
@@ -469,11 +710,14 @@ class GatewayRuntimeControlHandler:
         subject: str,
         workspace_id: str,
         session_id: str,
+        *,
+        limit: int = 500,
     ) -> dict[str, Any]:
         await self.authorize_session(subject, workspace_id, session_id)
         return await self.transport.request(
             "GET",
-            f"/v1/sessions/{quote(session_id, safe='')}/conversation-snapshot",
+            f"/v1/sessions/{quote(session_id, safe='')}/conversation-snapshot"
+            f"?limit={max(1, min(2000, int(limit)))}",
         )
 
     async def session_events_for_subject(
@@ -669,6 +913,7 @@ class GatewayRuntimeControlHandler:
         session_id = str(item["session_id"])
         existing = self._binding_optional(session_id)
         if existing is not None:
+            await self._ensure_session_event_cursor(session_id)
             return existing
         definitions = await self.list_agent_definitions()
         healthy = [row for row in definitions if row["backend_health"] == "healthy"]
@@ -726,6 +971,7 @@ class GatewayRuntimeControlHandler:
                     binding.backend_id, binding.idempotency_key,
                 ),
             )
+        await self._ensure_session_event_cursor(session_id)
         return self._binding(session_id)
 
     def _run_binding(self, run_id: str) -> dict[str, Any]:

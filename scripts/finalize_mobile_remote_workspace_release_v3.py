@@ -265,7 +265,10 @@ def validate_reports(
         row = checks[name]
         if not (
             row.get("transcript_hash_preserved") is True
+            and row.get("run_count_preserved") is True
+            and row.get("event_count_preserved") is True
             and int(row.get("duplicate_run_count", -1)) == 0
+            and int(row.get("duplicate_sequence_count", -1)) == 0
             and int(row.get("missing_sequence_count", -1)) == 0
         ):
             raise RuntimeError(f"release_{name}_invalid")
@@ -289,6 +292,12 @@ def validate_reports(
         if isinstance(row, dict)
         and row.get("status") == "passed"
         and row.get("transcript_hash_preserved") is True
+        and row.get("snapshot_sequence_preserved") is True
+        and row.get("run_count_preserved") is True
+        and row.get("event_count_preserved") is True
+        and int(row.get("duplicate_run_count", -1)) == 0
+        and int(row.get("duplicate_sequence_count", -1)) == 0
+        and int(row.get("missing_sequence_count", -1)) == 0
     }
     missing = REQUIRED_FAULTS - fault_names
     if missing:

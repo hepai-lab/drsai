@@ -51,7 +51,10 @@ class FaultRecord:
     recovery_seconds: float
     transcript_hash_preserved: bool
     snapshot_sequence_preserved: bool
+    run_count_preserved: bool
+    event_count_preserved: bool
     duplicate_run_count: int
+    duplicate_sequence_count: int
     missing_sequence_count: int
     generation_before: int | None
     generation_after: int | None
@@ -74,6 +77,32 @@ def _probe_snapshot(proof: dict[str, Any]) -> tuple[str, int]:
     ):
         raise RuntimeError("v3_stability_probe_snapshot_invalid")
     return digest, sequence
+
+
+def _probe_integrity(proof: dict[str, Any]) -> tuple[int, int, int, int]:
+    keys = (
+        "run_count",
+        "session_event_count",
+        "duplicate_run_count",
+        "duplicate_sequence_count",
+        "missing_sequence_count",
+    )
+    values = {key: proof.get(key) for key in keys}
+    if any(
+        not isinstance(value, int) or isinstance(value, bool) or value < 0
+        for value in values.values()
+    ):
+        raise RuntimeError("v3_stability_probe_integrity_invalid")
+    if values["duplicate_run_count"] or values["duplicate_sequence_count"]:
+        raise RuntimeError("v3_stability_probe_duplicate_detected")
+    if values["missing_sequence_count"]:
+        raise RuntimeError("v3_stability_probe_sequence_gap")
+    return (
+        values["run_count"],
+        values["session_event_count"],
+        values["duplicate_run_count"],
+        values["missing_sequence_count"],
+    )
 
 
 def evaluate(
@@ -102,7 +131,10 @@ def evaluate(
         if item.status == "passed"
         and item.transcript_hash_preserved
         and item.snapshot_sequence_preserved
+        and item.run_count_preserved
+        and item.event_count_preserved
         and item.duplicate_run_count == 0
+        and item.duplicate_sequence_count == 0
         and item.missing_sequence_count == 0
         and item.identity_transition_valid
     }
@@ -274,6 +306,9 @@ async def _fault(
 ) -> FaultRecord:
     before, _ = await _wait_probe(args, timeout_seconds=args.recovery_timeout_seconds)
     before_digest, before_sequence = _probe_snapshot(before)
+    before_runs, before_events, before_duplicate_runs, before_missing = (
+        _probe_integrity(before)
+    )
     _, before_pid = android_state(args.adb, args.device, args.package)
     windows_pid_before = gateway_pid(args.gateway_port)
     began = time.monotonic()
@@ -281,6 +316,9 @@ async def _fault(
     after, _ = await _wait_probe(args, timeout_seconds=args.recovery_timeout_seconds)
     recovered = time.monotonic()
     after_digest, after_sequence = _probe_snapshot(after)
+    after_runs, after_events, after_duplicate_runs, after_missing = (
+        _probe_integrity(after)
+    )
     _, after_pid = android_state(args.adb, args.device, args.package)
     windows_pid_after = gateway_pid(args.gateway_port)
     generation_before = before.get("runtime_generation")
@@ -302,8 +340,14 @@ async def _fault(
         recovery_seconds=round(recovered - began, 3),
         transcript_hash_preserved=before_digest == after_digest,
         snapshot_sequence_preserved=before_sequence == after_sequence,
-        duplicate_run_count=0,
-        missing_sequence_count=0,
+        run_count_preserved=before_runs == after_runs,
+        event_count_preserved=before_events == after_events,
+        duplicate_run_count=max(before_duplicate_runs, after_duplicate_runs),
+        duplicate_sequence_count=max(
+            int(before.get("duplicate_sequence_count", -1)),
+            int(after.get("duplicate_sequence_count", -1)),
+        ),
+        missing_sequence_count=max(before_missing, after_missing),
         generation_before=generation_before,
         generation_after=generation_after,
         android_pid_before=before_pid,

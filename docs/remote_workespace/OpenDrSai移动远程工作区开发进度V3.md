@@ -656,3 +656,151 @@ TypeScript 生成模型和三端最低版本/capability 门禁。
 2. emulator 完成同账号 OIDC 登录后，建立独立 association；验证复制证明拒绝、撤销 A 后
    A 的目录/Snapshot/SSE 失效而 B 继续 200。
 3. 完成 Approval 单执行、五类故障、一小时稳定性、端侧 canary 扫描和 V3 finalizer。
+
+## 第 11 轮：Windows→Android 实时会话闭环
+
+更新时间：2026-07-27
+
+- ai-dev 恢复后，使用当前权威 Workspace/Session 标识完成真实公网、Windows Runtime、
+  三星真机三段联合验收。最终证据：
+  - Windows 连续创建 2 个 Run；
+  - Android 在创建 Run 前已打开目标会话并建立 Session SSE；
+  - `run_count=2`、`duplicate_run_count=0`、`missing_sequence_count=0`；
+  - Windows 发起到 Android 收到事件的 P95 为 `1.590s`，满足 `<2s`；
+  - 同一页面的 Accessibility 断言能看到最新测试消息。
+- 证据文件：
+  `release/product-evidence/mobile-remote-workspace-v3/session-convergence-windows.json`。
+- Runtime 修复：
+  - Session Relay 游标持久化到 SQLite，Gateway 重启不再重放约 8.5 万条历史事件；
+  - 首次发现的历史 Session 以当前 Snapshot 水位建立游标，重启后从持久游标恢复；
+  - Session 轮询由全目录串行等待改为有界并发、热 Session + 冷 Session 轮转；
+  - 直接读取 Runtime Journal 水位，只优先轮询已真实产生新 sequence 的发布 Session；
+  - 单 Session 操作只同步目标 Desktop Thread，不再重复导入整个工作区目录；
+  - `import_session` 对完全相同的 Desktop 元数据真正幂等，修复
+    “读取 Snapshot → 写 session.updated → Android 重载 Snapshot”的反馈环。
+- 反馈环修复后实测：目标 Session 空闲 5 秒 Journal 增长为 `0`，Relay cursor 与
+  Runtime `last_sequence` 差值为 `0`。Runtime/Gateway/Journal 聚焦回归
+  `60 passed`；Session 轮询与恢复组合回归 `42 passed`。
+- Android 修复：
+  - 普通 HTTP 客户端的有限 read timeout 不再作用于长连接 SSE；
+  - HTTP/2 stream reset/EOF 后从最后已提交 `session_sequence` 自动续订；
+  - 幂等 GET 在瞬时连接失败时清理旧连接并仅重试一次，写请求不进入通用重试；
+  - Snapshot、Runs、Approvals 并发读取，Snapshot 先于非关键元数据呈现；
+  - 长会话打开及新增消息时自动定位最新消息；
+  - 真机驱动先打开真实会话页，再由 Windows 发消息，不再用测试专用 collector
+    代替产品 ViewModel；平板自动化滚动明确选择右侧会话列表。
+- Android JVM 全量 `233/233`；主 APK/Test APK 均仅通过 `adb install -r`
+  覆盖三星，未清登录和配对数据：
+  - 主 APK SHA-256：
+    `A141F31063A45F4FD038E3FA476A6AFCB6068C138792ED61015638ABDFDBDF3D`
+  - Test APK SHA-256：
+    `22E063C16DF8E358180C31B7B6AC80287A12ED22E663BE82A9B1D34538F1AD25`
+- 真实验收结束后，Windows Gateway 已关闭临时
+  `DRSAI_RUNTIME_CONTROLLED_MODEL` 并恢复生产模式，本地认证 health 为 200。
+- ai-dev 偶发 TLS `internal_error` 时，验收只对只读 health 预检做 3 次有界重试；
+  证书身份错误仍立即 fail-closed。对应驱动回归 `13 passed`。
+
+### 状态口径
+
+- Windows→Android 两轮实时 Session 同步已经取得真实公网/真机证据。
+- M10-F06 还要求 Android→Windows 与真实 Approval 单执行，因此仍保持
+  `unverified`，不拆分或提前升级。
+- 累计账本保持 `96 local_pass + 8 unverified`。
+
+### 下一步
+
+1. 执行 Android→Windows 两个 Run，并比较 Runtime、Windows、Android 三份
+   transcript SHA-256。
+2. 执行真实 Approval：Android 批准后 Windows Tool 只执行一次。
+3. emulator 完成同账号 OIDC 登录后执行 A/B association 隔离与单设备撤销。
+4. 完成五类故障、一小时稳定性、端侧 canary 扫描和 V3 finalizer。
+
+## 第 12 轮：Android→Windows 实时会话闭环
+
+更新时间：2026-07-27
+
+- 完成真实公网、三星真机、ai-dev Relay 与 Windows Runtime 的反向两轮验收：
+  - Android 连续创建 2 个 Run；
+  - `run_count=2`、`duplicate_run_count=0`、`missing_sequence_count=0`；
+  - Android 发起至 Session 事件到达的 P95 为 `1.020s`，满足 `<2s`；
+  - Runtime、Windows、Android 三份规范化 transcript SHA-256 完全一致：
+    `14c1dd742e17275dfb02178f7dfa3c1b81c797e7975416c5b9cd7f2d4fd56e41`；
+  - Snapshot 水位为 `11237`，43 个会话项、500 个回放事件，无重复或缺失 sequence；
+  - 证据文件：
+    `release/product-evidence/mobile-remote-workspace-v3/session-convergence-android.json`。
+- 修复 Android 消息身份在跨端链路中的合同漂移：
+  - ai-dev 之前未把 `source_message_id` 写入 `runtime.request.arguments.kwargs`；
+    已由 revision `df3ddf5` 原样透传、限制长度并保持日志脱敏；
+  - Windows `GatewayRuntimeControlHandler` 新增兼容数据库列，幂等重试仍返回同一 Run，
+    并把原始 `source_message_id` 写入 Runtime Conversation Journal；
+  - Windows 聚焦回归 `29 passed`。
+- 为达到实时门禁，Session Journal 新增变化会话快速路径：先以发布 Workspace 集合校验
+  可见范围，再直接轮询确有新 Journal sequence 的 Session，不等待历史 Workspace 与冷
+  Session 扫描完成；Gateway control 回归 `11 passed`。优化前 P95 为 `3.094s`，
+  优化后为 `1.020s`。
+- 本轮安装构建物未清除 Android 登录、配对或 Room 数据：
+  - 主 APK SHA-256：
+    `F5FFC99036C63626A2ED2208951AF79CF4EE155276C6081469252E025AD4EDBB`
+  - Test APK SHA-256：
+    `F1FDEB928D811D76C050F88EEA97F766F17739FA3CBE6C3BCFB2EE0BD115209E`
+- 验收结束后 Windows Gateway 已退出临时受控模型并恢复生产模式，认证 health 为 200。
+
+### 状态口径
+
+- Windows→Android 与 Android→Windows 的双向两轮实时同步、Session sequence 连续性、
+  UI 可见性和三端 transcript 收敛均已有真实证据。
+- M10-F06 仍包含真实 Approval 单执行验收，因此完整功能点暂不升级；累计账本继续保持
+  `96 local_pass + 8 unverified`。
+
+### 下一步
+
+1. 执行真实 Approval：Android 批准后 Windows Tool 只执行一次。
+2. emulator 完成同账号 OIDC 登录后执行 A/B association 隔离与单设备撤销。
+3. 完成五类故障、一小时稳定性、Windows/Android canary 扫描和 V3 finalizer。
+## 第 13 轮：真实 Approval 单次执行闭环
+
+更新时间：2026-07-27
+
+- 完成三星真机、ai-dev Relay 与 Windows Runtime 的真实 Approval 联合验收：
+  - Android 创建 Session 和 Run；
+  - Windows Runtime 产生待审请求；
+  - Android 批准恰好一次；
+  - Run 终态为 `completed`；
+  - Tool 终态事件恰好一条；
+  - Run SSE 共收到 14 条事件；
+  - Conversation Snapshot 增长且产品会话页可见；
+  - 全程未把 Runtime registration token、OIDC bearer、消息正文或工作区路径写入证据。
+- 机器证据：
+  `release/product-evidence/mobile-remote-workspace-v3/approval-single-execution.json`；
+  截图：
+  `release/product-evidence/mobile-remote-workspace-v3/real-device-approval-single-execution.png`。
+- V3 验收脚本新增 `--approval-only`：
+  只有 `successful_decisions=1`、`tool_execution_count=1`、
+  `terminal_status=completed`、SSE 非空、Conversation 增长和真机 UI 可见全部成立时才写入通过证据；
+  对错误终态、重复决策、零/重复 Tool、空 SSE、无 Conversation 增长和非法 digest 全部 fail-closed。
+- Windows Runtime 合同补齐：
+  `conversation_snapshot_for_subject` 接收并限制 `limit`，与 Relay 冻结 Snapshot 分页参数一致；
+  聚焦 Python 回归 `64 passed`。
+- ai-dev 完成语义通道与 DTO 漂移修复：
+  - `73417e5`：Session detail 改为 `get_session`；
+  - `ad0b552`：Snapshot 和 Session events list 改为 Runtime control；
+  - `68c21b3`：`role`、`source_message_id` 按共享合同保留 nullable，禁止伪造；
+  - `91c495d`：Run events list 改为 `list_events`，由 Windows 统一投影
+    `tool.completed -> tool.finished`。
+- Android JVM 全量回归 `233/233`，V3 驱动聚焦回归 `21 passed`；
+  `git diff --check` 与验收脚本编译通过。
+- Approval 验收结束后已移除 `DRSAI_RUNTIME_CONTROLLED_MODEL`，Windows Gateway
+  恢复生产模式，认证 health 为 200。
+
+### 状态口径
+
+- M10-F06 所需的双向两轮 Session 同步和真实 Approval 单次 Tool 执行均已有真机证据。
+- 最终账本仍保持 `96 local_pass + 8 unverified`：在五类故障、A/B 设备隔离、
+  一小时稳定性、端侧 canary 和 V3 finalizer 完成前，不提前把单项证据升级为
+  `full_pass`。
+
+### 下一步
+
+1. 完成五类故障注入与恢复验收。
+2. emulator 登录后完成 A/B association 隔离和单设备撤销。
+3. 执行一小时稳定性、Windows/Android canary 扫描和 V3 104 项 finalizer。

@@ -41,6 +41,30 @@ class RelayRemoteRepositoryTest {
         assertEquals("Bearer refreshed", server.takeRequest().getHeader("Authorization"))
     }
 
+    @Test fun `safe get retries once on transient transport failure`() = runTest {
+        var failFirstGet = true
+        val transientClient = OkHttpClient.Builder().addInterceptor { chain ->
+            if (failFirstGet && chain.request().method == "GET") {
+                failFirstGet = false
+                throw SocketTimeoutException("transient response timeout")
+            }
+            chain.proceed(chain.request())
+        }.build()
+        repository = RelayRemoteRepository(
+            server.url("/").toString(),
+            { "token" },
+            transientClient,
+        )
+        server.enqueue(
+            MockResponse().setBody(
+                """{"items":[{"definition_id":"agent","version":"1","display_name":"Agent","backend_id":"opendrsai","backend_health":"healthy","capabilities":[]}]}"""
+            )
+        )
+
+        assertEquals("agent", repository.agentDefinitions(RuntimeId("rt")).single().id)
+        assertEquals(1, server.requestCount)
+    }
+
     @Test fun `session lifecycle parsing filters archived and removed rows`() = runTest {
         server.enqueue(MockResponse().setBody("""{"items":[
             {"runtime_id":"rt","workspace_id":"ws","session_id":"active","title":"Active","backend_id":"opendrsai","agent_definition_id":"a","agent_definition_version":"1","last_run_status":"running","updated_at":"2026-07-26T10:00:00Z","lifecycle":"active"},
