@@ -149,6 +149,8 @@ const initialHealth: DesktopHealth = {
     errorCode: null,
     error: null,
     recovery: null,
+    source: null,
+    fallbackUsed: false,
   },
 };
 
@@ -1513,6 +1515,8 @@ export function installMockDesktopApi(): void {
           errorCode: null,
           error: null,
           recovery: null,
+          source: "cdn",
+          fallbackUsed: false,
         },
       };
       emit(updateListeners, health.update);

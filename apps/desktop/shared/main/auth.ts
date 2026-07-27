@@ -670,6 +670,17 @@ function readStoredSession(): StoredAuthSession | null {
     if ((parsed.authMode === "oidc" || parsed.authMode === "sso") && !parsed.accessToken) {
       return null;
     }
+    if (
+      (parsed.authMode === "oidc" || parsed.authMode === "sso") &&
+      parsed.issuer &&
+      parsed.issuer.replace(/\/+$/, "") !== OIDC_ISSUER
+    ) {
+      // Never reuse a development-environment token after the Desktop has
+      // switched to production (or vice versa). The issuers route model calls
+      // to different gateways and their credentials are not interchangeable.
+      clearStoredSession(false);
+      return null;
+    }
     if (sourceFile === LEGACY_AUTH_SESSION_FILE) {
       writeStoredSession(parsed);
       rmSync(LEGACY_AUTH_SESSION_FILE, { force: true });

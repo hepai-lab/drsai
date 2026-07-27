@@ -43,6 +43,8 @@ electronFuses:
   enableEmbeddedAsarIntegrityValidation: true
   onlyLoadAppFromAsar: true
 mac:
+  icon: ../../android/app/src/main/res/drawable-nodpi/opendrsai_logo.png
+  artifactName: OpenDrSai-macOS-v${version}-${arch}.${ext}
   category: public.app-category.productivity
   target:
     - target: dmg
@@ -64,6 +66,6 @@ protocols:
     schemes:
       - opendrsai
 publish:
-  provider: github
-  owner: hepai-lab
-  repo: drsai
+  provider: generic
+  url: https://download-opendrsai.ihep.ac.cn/channels/stable/macos/arm64/
+  channel: latest

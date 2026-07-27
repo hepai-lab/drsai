@@ -225,6 +225,9 @@ function AuthenticatedApp({
   sessionRestoring: boolean;
 }): React.JSX.Element {
   const auth = useAuth();
+  const nativePlatformId = document.documentElement.dataset.desktopPlatform === "macos" || /Macintosh|Mac OS X/i.test(navigator.userAgent)
+    ? "macos"
+    : "windows";
   const [language, setLanguage] = useState<AppLanguage>(() => loadLanguage());
   const [platformDescriptor, setPlatformDescriptor] = useState<DesktopPlatformDescriptor | null>(null);
   const developerMode = import.meta.env.DEV && loadDeveloperMode();
@@ -277,6 +280,7 @@ function AuthenticatedApp({
   const [storedWorkspaces, setStoredWorkspaces] = useState<WorkspaceProject[]>(
     [],
   );
+  const [workspacesLoaded, setWorkspacesLoaded] = useState(false);
   const [remoteDialogOpen, setRemoteDialogOpen] = useState(false);
   const [workspaceLocationChoice, setWorkspaceLocationChoice] = useState<"remote" | null>(null);
   const [remoteWorkspaceStep, setRemoteWorkspaceStep] = useState<"computer" | "directory">("computer");
@@ -629,6 +633,30 @@ function AuthenticatedApp({
   useEffect(() => {
     void refreshWorkspaces();
   }, []);
+
+  useEffect(() => {
+    if (!workspacesLoaded || !health?.gatewayReady || !workspacePath) return;
+    if (storedWorkspaces.some((workspace) => getComparablePath(workspace.path) === getComparablePath(workspacePath))) return;
+    let cancelled = false;
+    void desktopApi.createWorkspace({
+      source: "existing",
+      path: workspacePath,
+      name: getWorkspaceName(workspacePath) || (language === "zh" ? "默认" : "Default"),
+      description: language === "zh" ? "当前项目" : "Current project",
+      trusted: true,
+      pinned: true,
+    }).then((workspace) => {
+      if (cancelled) return;
+      setStoredWorkspaces((current) => [
+        workspace,
+        ...current.filter((item) => item.id !== workspace.id && getComparablePath(item.path) !== getComparablePath(workspace.path)),
+      ]);
+    }).catch(() => {
+      // Runtime health and workspace registration can briefly race during startup.
+      // A later health transition or manual workspace refresh will retry safely.
+    });
+    return () => { cancelled = true; };
+  }, [health?.gatewayReady, language, storedWorkspaces, workspacePath, workspacesLoaded]);
 
   useEffect(() => desktopApi.onRemoteWorkspaceStatus((status) => {
     setStoredWorkspaces((current) => current.map((workspace) => workspace.id === status.workspaceId ? { ...workspace, remote: status, updatedAt: new Date().toISOString() } : workspace));
@@ -1059,31 +1087,35 @@ function AuthenticatedApp({
   }
 
   async function refreshWorkspaces(): Promise<void> {
-    const remoteWorkspaces = await desktopApi.listWorkspaces();
-    const migrated =
-      window.localStorage.getItem(WORKSPACE_MIGRATION_KEY) === "true";
-    const legacyWorkspaces = migrated ? [] : loadLegacyWorkspaces();
-    if (legacyWorkspaces.length > 0) {
-      const created: WorkspaceProject[] = [];
-      for (const legacy of legacyWorkspaces) {
-        try {
-          created.push(
-            await desktopApi.createWorkspace({
-              path: legacy.path,
-              name: legacy.name,
-              description: legacy.description,
-              trusted: true,
-            }),
-          );
-        } catch {
-          // Ignore stale legacy folders; the user can add them again from the picker.
+    try {
+      const remoteWorkspaces = await desktopApi.listWorkspaces();
+      const migrated =
+        window.localStorage.getItem(WORKSPACE_MIGRATION_KEY) === "true";
+      const legacyWorkspaces = migrated ? [] : loadLegacyWorkspaces();
+      if (legacyWorkspaces.length > 0) {
+        const created: WorkspaceProject[] = [];
+        for (const legacy of legacyWorkspaces) {
+          try {
+            created.push(
+              await desktopApi.createWorkspace({
+                path: legacy.path,
+                name: legacy.name,
+                description: legacy.description,
+                trusted: true,
+              }),
+            );
+          } catch {
+            // Ignore stale legacy folders; the user can add them again from the picker.
+          }
         }
+        window.localStorage.setItem(WORKSPACE_MIGRATION_KEY, "true");
+        setStoredWorkspaces([...created, ...remoteWorkspaces]);
+        return;
       }
-      window.localStorage.setItem(WORKSPACE_MIGRATION_KEY, "true");
-      setStoredWorkspaces([...created, ...remoteWorkspaces]);
-      return;
+      setStoredWorkspaces(remoteWorkspaces);
+    } finally {
+      setWorkspacesLoaded(true);
     }
-    setStoredWorkspaces(remoteWorkspaces);
   }
 
   async function handleNewChat(): Promise<void> {
@@ -2145,6 +2177,7 @@ function AuthenticatedApp({
       mainContent={mainContent}
       navIcons={navIcons}
       navSections={navSections}
+      platformId={platformDescriptor?.id ?? nativePlatformId}
       recentThreads={recentThreads}
       searchableThreads={searchableThreads}
       rightPanel={rightPanelContent}

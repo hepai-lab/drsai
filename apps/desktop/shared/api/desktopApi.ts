@@ -185,6 +185,8 @@ export interface UpdateStatus {
   errorCode: string | null;
   error: string | null;
   recovery: "automatic-rollback" | null;
+  source: "cdn" | "github" | "test" | null;
+  fallbackUsed: boolean;
 }
 
 export type CodexBackendState = "available" | "not_installed" | "version_incompatible" | "not_logged_in" | "fault";

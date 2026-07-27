@@ -1,5 +1,5 @@
 import { writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { app } from "electron";
 
 declare const __OPENDRSAI_BUILD_CHANNEL__: "development" | "release";
@@ -7,6 +7,8 @@ declare const __OPENDRSAI_BUILD_CHANNEL__: "development" | "release";
 const buildChannel = __OPENDRSAI_BUILD_CHANNEL__;
 if (buildChannel === "development") {
   app.setPath("userData", join(app.getPath("appData"), "OpenDrSai Development"));
+  const developmentIcon = resolve(process.cwd(), "../../android/app/src/main/res/drawable-nodpi/opendrsai_logo.png");
+  void app.whenReady().then(() => app.dock?.setIcon(developmentIcon));
 }
 
 const acceptanceOutput = process.env.OPENDRSAI_MACOS_PACKAGED_SMOKE_FILE?.trim();

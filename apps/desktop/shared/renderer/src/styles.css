@@ -17,6 +17,8 @@
 }
 
 :root {
+  --titlebar-leading-inset: 14px;
+  --titlebar-trailing-inset: 150px;
   --app-font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Open Sans", sans-serif;
   --app-surface-bg: #fafafe;
   --app-sidebar-bg: #fafafe;
@@ -109,6 +111,12 @@
   text-rendering: geometricPrecision;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+html[data-desktop-platform="macos"],
+.app-shell.platform-macos {
+  --titlebar-leading-inset: 84px;
+  --titlebar-trailing-inset: 14px;
 }
 
 .away-summary-panel {
@@ -1854,12 +1862,18 @@ button {
   align-items: center;
   gap: 10px;
   min-height: 34px;
-  padding: 0 150px 0 14px;
+  padding-block: 0;
+  padding-inline: var(--titlebar-leading-inset) var(--titlebar-trailing-inset);
   border-bottom: 0;
   background: var(--app-surface-bg);
   color: var(--app-sidebar-text);
   user-select: none;
   -webkit-app-region: drag;
+}
+
+html[data-desktop-platform="macos"] .workbench-menu-items,
+.app-shell.platform-macos .workbench-menu-items {
+  display: none;
 }
 
 .titlebar-sidebar-toggle,
@@ -17318,7 +17332,8 @@ button.structured-activity-detail:hover {
 
   .workbench-menubar {
     gap: 8px;
-    padding: 0 10px;
+    padding-block: 0;
+    padding-inline: var(--titlebar-leading-inset) var(--titlebar-trailing-inset);
   }
 
   .titlebar-center {
