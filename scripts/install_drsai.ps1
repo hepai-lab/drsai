@@ -200,6 +200,48 @@ function Select-InstallDir {
 }
 
 # ==============================================================================
+#  2b. CHECK FOR RUNNING DRSAI PROCESSES
+# ==============================================================================
+function Check-Running {
+    Write-Section "Checking for Running DrSai Processes"
+
+    $found = $false
+    try {
+        $procs = Get-CimInstance Win32_Process -ErrorAction Stop |
+            Where-Object {
+                $_.CommandLine -and
+                ($_.CommandLine -match 'opendrsai|drsai\.backend|entry\.mjs') -and
+                $_.ProcessId -ne $PID
+            }
+
+        if ($procs) {
+            $found = $true
+            Write-Warn "DrSai is currently running. Please stop ALL instances before updating:"
+            foreach ($p in @($procs)) {
+                Write-Warn "  PID $($p.ProcessId): $($p.Name)"
+            }
+        }
+    } catch {
+        # WMI not available - try Get-Process by name
+        $procs = Get-Process -ErrorAction SilentlyContinue |
+            Where-Object { $_.ProcessName -match 'opendrsai|drsai' -and $_.Id -ne $PID }
+        if ($procs) {
+            $found = $true
+            Write-Warn "DrSai is currently running. Please stop ALL instances before updating:"
+            foreach ($p in @($procs)) {
+                Write-Warn "  PID $($p.Id): $($p.ProcessName)"
+            }
+        }
+    }
+
+    if ($found) {
+        Die "Please close all running DrSai terminals/processes, then re-run this installer."
+    } else {
+        Write-Ok "No running DrSai processes found"
+    }
+}
+
+# ==============================================================================
 #  3. EXISTING INSTALLATION CHECK
 # ==============================================================================
 function Check-Existing {
@@ -705,6 +747,7 @@ Write-Host ""
 try {
     Detect-Platform
     Select-InstallDir
+    Check-Running
     Detect-SystemDeps
     Check-Existing
     Download-Files
