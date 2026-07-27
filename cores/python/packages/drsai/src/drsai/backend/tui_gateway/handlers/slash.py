@@ -1949,11 +1949,40 @@ def _complete_path(rid, params: dict) -> dict:
 
     Returns:
         {items: [{text, display, meta}, ...]}
+
+    Behaviour:
+        - ``prefix=""``  → list the contents of ``cwd`` itself.
+        - ``prefix="ap"``→ list items in ``cwd`` whose names start with "ap".
+        - ``prefix="src/ap"`` → list items in ``cwd/src`` starting with "ap".
     """
     prefix = params.get("prefix", "")
     cwd = params.get("cwd", str(Path.cwd()))
 
     try:
+        # When prefix is empty, list the contents of cwd itself.
+        # Without this guard, Path(cwd) / "" == Path(cwd), whose .parent is
+        # the PARENT of cwd and whose .name is the last component of cwd —
+        # so the general logic below would list cwd's parent filtered by
+        # cwd's basename instead of listing cwd's own children.
+        if prefix == "":
+            target_dir = Path(cwd)
+            if not target_dir.exists() or not target_dir.is_dir():
+                return _ok(rid, {"items": []})
+            items = []
+            for child in target_dir.iterdir():
+                # Skip hidden files unless the user explicitly typed a dot
+                if child.name.startswith("."):
+                    continue
+                is_dir = child.is_dir()
+                items.append({
+                    "text": child.name,
+                    "display": child.name + ("/" if is_dir else ""),
+                    "meta": "dir" if is_dir else "file",
+                })
+            # Sort: directories first, then files, each alphabetical
+            items.sort(key=lambda c: (c["meta"] != "dir", c["display"].lower()))
+            return _ok(rid, {"items": items[:50]})  # limit 50
+
         p = Path(cwd) / prefix
         parent = p.parent
         if not parent.exists():
@@ -1962,13 +1991,17 @@ def _complete_path(rid, params: dict) -> dict:
         items = []
         for child in parent.iterdir():
             if child.name.startswith(p.name):
+                # Skip hidden files unless the filter itself starts with a dot
+                if child.name.startswith(".") and not p.name.startswith("."):
+                    continue
                 is_dir = child.is_dir()
                 items.append({
                     "text": str(child.relative_to(cwd)),
                     "display": child.name + ("/" if is_dir else ""),
                     "meta": "dir" if is_dir else "file",
                 })
-
+        # Sort: directories first, then files, each alphabetical
+        items.sort(key=lambda c: (c["meta"] != "dir", c["display"].lower()))
         return _ok(rid, {"items": items[:50]})  # limit 50
     except Exception as exc:
         logger.exception("complete.path failed")

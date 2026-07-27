@@ -504,6 +504,46 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
     pasteCounterRef.current = 0
   }
 
+  /**
+   * Path completion callback for the TextInput @-mode.
+   *
+   * Splits the user's prefix into a directory part and a name part,
+   * resolves the directory to an absolute path (using DRSAI_USER_CWD
+   * so relative paths map to the user's real cwd, not the ui-tui
+   * package dir), and calls the ``complete.path`` RPC.
+   *
+   * Returns items whose ``text`` is relative to the resolved directory,
+   * so the TextInput can build the full path as ``dirPart + candidate.text``.
+   */
+  async function completePath(prefix: string): Promise<Array<{
+    text: string; display: string; meta: string
+  }>> {
+    const baseCwd = process.env.DRSAI_USER_CWD?.trim() || process.cwd()
+
+    // Split "src/app" → dir="src/", name="app"
+    // Split "src/"   → dir="src/", name=""
+    // Split "app"    → dir="",     name="app"
+    let dir = ''
+    let name = prefix
+    const lastSlash = prefix.lastIndexOf('/')
+    if (lastSlash >= 0) {
+      dir = prefix.substring(0, lastSlash + 1)
+      name = prefix.substring(lastSlash + 1)
+    }
+
+    // Resolve the directory part to an absolute path
+    const absCwd = dir ? resolveFilePath(dir) : baseCwd
+
+    try {
+      const result = await controller.gw.request<{
+        items: Array<{ text: string; display: string; meta: string }>
+      }>('complete.path', { prefix: name, cwd: absCwd })
+      return result.items || []
+    } catch {
+      return []
+    }
+  }
+
   async function handleSubmit(text: string) {
     // Fix 4.4: Prevent concurrent requests
     if (isProcessingRef.current) {
@@ -591,12 +631,14 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
   Ctrl+C (2x)     - Exit TUI
   Ctrl+D          - Exit TUI
   Tab             - Autocomplete slash commands
+  @ <path>        - Insert file/directory path (Tab/↑↓ navigate)
 
 🖱️  Mouse:
   Scroll wheel    - Native terminal scrollback
   Drag select     - In copy mode (Ctrl+Y) to copy text
 
 💡 Tips:
+  • Type @ to browse files — images (@/path/to.png) are sent as multimodal
   • Completed turns flow into terminal scrollback (scroll natively)
   • Token usage shown in status bar
   • History loads automatically on restart
@@ -1124,12 +1166,13 @@ For more info: https://github.com/yourusername/drsai
         isActive={activeOverlay === null}
         placeholder={isStreaming
           ? '⏳ streaming… (Ctrl+C to cancel)'
-          : 'Send a message · Ctrl+O newline · / commands · Tab complete · Ctrl+P/N history'}
+          : 'Send a message · @ files · / commands · Tab complete · Ctrl+O newline'}
         onSubmit={handleSubmit}
         completions={completions}
         history={historyRef.current}
         onHistoryChange={savePromptHistory}
         onPaste={maybeCollapsePaste}
+        onCompletePath={completePath}
       />
     </Box>
   )

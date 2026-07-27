@@ -9,6 +9,8 @@
  *   - Up/Down            move between lines in multiline input;
  *                        at boundary (first/last line) walk command history
  *   - Tab                cycle through slash-command completions
+ *   - @ <path>           path completion mode: browse dirs/files, Tab/Enter
+ *                        to select; Backspace to go back; Esc to cancel
  *   - Ctrl+A / Ctrl+E    start / end of current line
  *   - Ctrl+U             clear current line
  *   - Ctrl+Home          start of entire text (if terminal sends it)
@@ -113,6 +115,23 @@ function cursorFromLineCol(lines: string[], line: number, col: number): number {
 
 // ── Component ─────────────────────────────────────────────────────────
 
+export interface PathCandidate {
+  /** Path text relative to the directory being browsed. */
+  text: string
+  /** Display name (e.g. "src/" for dirs, "app.tsx" for files). */
+  display: string
+  /** "dir" or "file". */
+  meta: string
+}
+
+interface PathModeState {
+  active: boolean
+  atPos: number
+  candidates: PathCandidate[]
+  idx: number
+  loading: boolean
+}
+
 export interface TextInputProps {
   prompt: string
   placeholder?: string
@@ -185,6 +204,22 @@ export interface TextInputProps {
    * Default ``false`` — no masking, behaves like before.
    */
   mask?: boolean | string
+
+  /**
+   * Path completion provider. When the user types a standalone ``@``
+   * (not inside a word/URL), the TextInput enters "path mode":
+   *   1. Calls this callback with the current prefix (text after @).
+   *   2. Displays returned candidates below the input.
+   *   3. Tab/Enter complete the highlighted candidate (dir→enter,
+   *      file→insert path and exit).
+   *   4. Up/Down navigate the list; Backspace deletes or exits;
+   *      Esc cancels and removes the @.
+   *
+   * The callback should split the prefix into a directory part and a
+   * name part, resolve the directory to an absolute path, and return
+   * items relative to that directory.
+   */
+  onCompletePath?: (prefix: string) => Promise<PathCandidate[]>
 }
 
 export function TextInput({
@@ -200,6 +235,7 @@ export function TextInput({
   blink = true,
   isActive = true,
   mask = false,
+  onCompletePath,
 }: TextInputProps) {
   const [value, setValue] = useState('')
   const [cursor, setCursor] = useState(0)
@@ -241,6 +277,69 @@ export function TextInput({
   // Return < 80ms after a normal character all the time, and we don't want
   // their Enter to be silently turned into a newline.
   const pasteBurstUntilRef = useRef(0)
+
+  // ── @ Path completion mode ─────────────────────────────────────────
+  // State is mirrored in a ref so the useInput handler can read it
+  // synchronously (React state updates are batched and won't be visible
+  // in the same event-handler tick).
+  const [pathState, setPathState] = useState<PathModeState>({
+    active: false, atPos: -1, candidates: [], idx: 0, loading: false,
+  })
+  const pathRef = useRef(pathState)
+  const pathReqId = useRef(0)
+
+  function updatePath(updates: Partial<PathModeState>) {
+    setPathState(prev => {
+      const next = { ...prev, ...updates }
+      pathRef.current = next
+      return next
+    })
+  }
+
+  function enterPathMode(atPos: number) {
+    pendingEscapeRef.current = false // cancel any pending Esc-then-Enter
+    updatePath({ active: true, atPos, candidates: [], idx: 0, loading: true })
+    fetchPathCandidates('')
+  }
+
+  function exitPathMode() {
+    pathReqId.current++ // invalidate any in-flight fetch
+    updatePath({ active: false, atPos: -1, candidates: [], idx: 0, loading: false })
+  }
+
+  async function fetchPathCandidates(prefix: string) {
+    if (!onCompletePath) return
+    const reqId = ++pathReqId.current
+    updatePath({ loading: true })
+    try {
+      const items = await onCompletePath(prefix)
+      if (reqId !== pathReqId.current) return // stale response
+      updatePath({ candidates: items, idx: 0, loading: false })
+    } catch {
+      if (reqId === pathReqId.current) {
+        updatePath({ candidates: [], idx: 0, loading: false })
+      }
+    }
+  }
+
+  /** Extract the current path prefix (text after @, up to cursor). */
+  function getPathPrefix(val: string, cur: number, atPos: number): string {
+    const raw = val.slice(atPos + 1, cur)
+    // Stop at whitespace (shouldn't happen in path mode, but guard anyway)
+    const ws = raw.search(/\s/)
+    return ws >= 0 ? raw.substring(0, ws) : raw
+  }
+
+  /** Replace the prefix after @ with a new path and update cursor. */
+  function replacePathPrefix(
+    val: string, cur: number, atPos: number, newPrefix: string,
+  ): { value: string; cursor: number } {
+    const oldPrefix = getPathPrefix(val, cur, atPos)
+    const before = val.slice(0, atPos + 1)
+    const after = val.slice(atPos + 1 + oldPrefix.length)
+    const newValue = before + newPrefix + after
+    return { value: newValue, cursor: atPos + 1 + newPrefix.length }
+  }
 
   function resetCompletion() {
     if (tabCandidates.length > 0) {
@@ -297,7 +396,11 @@ export function TextInput({
     // input payload. Treat it as literal text insertion before key.return can
     // accidentally submit the first line. Also mark a short paste-burst
     // window so any Return key arriving inside it counts as a pasted newline.
+    //
+    // When @ path mode is active, exit path mode first so the pasted text
+    // is inserted as-is (bypassing path completion).
     if (input && looksLikePastedText(input)) {
+      if (pathRef.current.active) exitPathMode()
       const pastedText = normalisePastedText(input)
       const replacement = onPaste?.(pastedText)
       if (replacement === undefined) {
@@ -316,7 +419,10 @@ export function TextInput({
     // Esc then Enter is a portable newline chord in terminals that don't
     // distinguish Shift+Enter. Record Esc here and consume it; the next
     // Enter inserts a newline instead of submitting. Any other key cancels it.
-    if (key.escape) {
+    //
+    // BUT: when @ path mode is active, Esc should cancel path mode —
+    // don't swallow it here. Let it fall through to the path mode handler.
+    if (key.escape && !pathRef.current.active) {
       pendingEscapeRef.current = true
       return
     }
@@ -328,6 +434,139 @@ export function TextInput({
     if (key.ctrl && input === 'o') {
       insertNewline()
       return
+    }
+
+    // ── @ Path completion mode ───────────────────────────────────────
+    // When path mode is active, intercept Tab/Enter/Up/Down/Backspace/
+    // Esc/Left/Right/printable. Unhandled keys exit path mode and fall
+    // through to the normal handlers below.
+    if (pathRef.current.active) {
+      const ps = pathRef.current
+      const atPos = ps.atPos
+      const currentPrefix = getPathPrefix(value, cursor, atPos)
+
+      // Esc: cancel and remove @ + everything typed after it.
+      if (key.escape) {
+        const next = value.slice(0, atPos) + value.slice(atPos + 1 + currentPrefix.length)
+        setValue(next)
+        setCursor(atPos)
+        exitPathMode()
+        return
+      }
+
+      // Tab: complete the currently selected candidate.
+      // Up/Down or Shift+Tab cycle the selection first if you want a
+      // different candidate.  Tab on a dir enters it; Tab on a file
+      // inserts the path and exits path mode.
+      if (key.tab) {
+        if (ps.candidates.length === 0) return
+        const idx = key.shift
+          ? (ps.idx - 1 + ps.candidates.length) % ps.candidates.length
+          : ps.idx  // no cycle on plain Tab — complete the selected one
+        const selected = ps.candidates[idx]
+        const lastSlash = currentPrefix.lastIndexOf('/')
+        const dirPart = lastSlash >= 0 ? currentPrefix.substring(0, lastSlash + 1) : ''
+        const fullPath = dirPart + selected.text
+
+        if (selected.meta === 'dir') {
+          // Enter directory: prefix becomes "dirPart + text/"
+          const newPrefix = fullPath + '/'
+          const { value: nv, cursor: nc } = replacePathPrefix(value, cursor, atPos, newPrefix)
+          setValue(nv)
+          setCursor(nc)
+          updatePath({ idx: 0 })
+          fetchPathCandidates(newPrefix)
+        } else {
+          // File: complete path and exit path mode.
+          const { value: nv, cursor: nc } = replacePathPrefix(value, cursor, atPos, fullPath)
+          setValue(nv)
+          setCursor(nc)
+          exitPathMode()
+        }
+        return
+      }
+
+      // Up/Down: navigate candidate list (not multiline/history).
+      if (key.upArrow && ps.candidates.length > 0) {
+        updatePath({ idx: (ps.idx - 1 + ps.candidates.length) % ps.candidates.length })
+        return
+      }
+      if (key.downArrow && ps.candidates.length > 0) {
+        updatePath({ idx: (ps.idx + 1) % ps.candidates.length })
+        return
+      }
+
+      // Enter: confirm selected candidate (dir→enter, file→insert).
+      // If no candidates, exit path mode and fall through to submit.
+      if (key.return && ps.candidates.length > 0) {
+        const selected = ps.candidates[ps.idx]
+        const lastSlash = currentPrefix.lastIndexOf('/')
+        const dirPart = lastSlash >= 0 ? currentPrefix.substring(0, lastSlash + 1) : ''
+        const fullPath = dirPart + selected.text
+
+        if (selected.meta === 'dir') {
+          const newPrefix = fullPath + '/'
+          const { value: nv, cursor: nc } = replacePathPrefix(value, cursor, atPos, newPrefix)
+          setValue(nv)
+          setCursor(nc)
+          fetchPathCandidates(newPrefix)
+        } else {
+          const { value: nv, cursor: nc } = replacePathPrefix(value, cursor, atPos, fullPath)
+          setValue(nv)
+          setCursor(nc)
+          exitPathMode()
+        }
+        return
+      }
+
+      // Backspace: delete char or remove @ → exit path mode.
+      if (key.backspace || key.delete) {
+        if (cursor <= atPos + 1) {
+          // Deleting the @ itself: remove @ and exit.
+          const next = value.slice(0, atPos) + value.slice(atPos + 1)
+          setValue(next)
+          setCursor(atPos)
+          exitPathMode()
+          return
+        }
+        // Normal delete: remove last char, refetch candidates.
+        const next = value.slice(0, cursor - 1) + value.slice(cursor)
+        setValue(next)
+        setCursor(cursor - 1)
+        const newPrefix = getPathPrefix(next, cursor - 1, atPos)
+        fetchPathCandidates(newPrefix)
+        return
+      }
+
+      // Left/Right: move cursor within path text, or exit if leaving area.
+      if (key.leftArrow) {
+        if (cursor > atPos + 1) {
+          setCursor(cursor - 1)
+          return
+        }
+        // At @ boundary: exit path mode and fall through to normal left.
+        exitPathMode()
+      } else if (key.rightArrow) {
+        const nextChar = value[cursor] ?? ''
+        if (nextChar && !/\s/.test(nextChar)) {
+          setCursor(cursor + 1)
+          return
+        }
+        // At path boundary: exit path mode and fall through to normal right.
+        exitPathMode()
+      } else if (input && !key.ctrl && !key.meta && input !== ' ' && input !== '@') {
+        // Printable input (non-space, non-@): extend prefix.
+        const next = value.slice(0, cursor) + input + value.slice(cursor)
+        setValue(next)
+        setCursor(cursor + 1)
+        pendingEscapeRef.current = false
+        const newPrefix = getPathPrefix(next, cursor + 1, atPos)
+        fetchPathCandidates(newPrefix)
+        return
+      }
+      // Any other key (space, @, Ctrl+*, Enter w/o candidates, etc.):
+      // exit path mode and fall through to the normal handlers below.
+      exitPathMode()
     }
 
     // ── Tab: cycle slash command completions ────────────────────────────
@@ -543,6 +782,27 @@ export function TextInput({
     // Plain printable input. Multi-character non-newline bursts are inserted
     // atomically; multiline/bracketed paste is handled near the top.
     if (input && !key.ctrl && !key.meta) {
+      // ── @ Activation: enter path completion mode ──────────────────
+      // A standalone @ (preceded by whitespace, start-of-input, or
+      // other non-word chars) triggers path mode if a completion
+      // provider is available. Mirrors the inline-image @/path regex
+      // which uses (?<![:\w])@ to avoid matching inside URLs.
+      if (
+        input === '@' &&
+        !pathRef.current.active &&
+        onCompletePath
+      ) {
+        const prevChar = cursor > 0 ? value[cursor - 1] : '\n'
+        if (!/[a-zA-Z0-9_:]/.test(prevChar)) {
+          // Insert @ and enter path mode
+          const next = value.slice(0, cursor) + '@' + value.slice(cursor)
+          setValue(next)
+          setCursor(cursor + 1)
+          enterPathMode(cursor) // cursor = position of @
+          return
+        }
+      }
+
       insertText(input)
     }
   }, { isActive })
@@ -568,6 +828,20 @@ export function TextInput({
   // does not pretend to accept input.
   const blinkOn = useCursorBlink(!disabled && blink)
   const showCursorBlock = !disabled && blinkOn
+
+  // ── Path mode: windowed vertical candidate list ─────────────────────
+  // Show a fixed-height window of candidates centred on the selected
+  // item so the list scrolls vertically (like `ls -1` with a cursor).
+  const PATH_MAX_SHOW = 8
+  const pathStartIdx = pathState.active && pathState.candidates.length > 0
+    ? Math.max(0, Math.min(
+        pathState.idx - Math.floor(PATH_MAX_SHOW / 2),
+        pathState.candidates.length - PATH_MAX_SHOW,
+      ))
+    : 0
+  const pathVisible = pathState.active
+    ? pathState.candidates.slice(pathStartIdx, pathStartIdx + PATH_MAX_SHOW)
+    : []
 
   // Pick the cursor's visible representation:
   //   enabled + blink-on   → bright reverse block
@@ -661,6 +935,42 @@ export function TextInput({
               <Text color={theme.muted} dimColor>…+{tabCandidates.length - 20} more</Text>
             )}
           </Box>
+        </Box>
+      )}
+      {pathState.active && (
+        <Box paddingLeft={2} flexDirection="column">
+          <Text color={theme.muted} dimColor>
+            {pathState.loading
+              ? '📂 Loading…'
+              : pathState.candidates.length > 0
+                ? `📂 ${pathState.idx + 1}/${pathState.candidates.length} — ↑↓ select · Tab complete · Enter open · Backspace back · Esc cancel`
+                : '📂 No matches — Backspace back · Esc cancel'}
+          </Text>
+          {pathVisible.length > 0 && (
+            <Box flexDirection="column">
+              {pathStartIdx > 0 && (
+                <Text color={theme.muted} dimColor>  ↑ {pathStartIdx} above</Text>
+              )}
+              {pathVisible.map((c, i) => {
+                const actualIdx = pathStartIdx + i
+                const isSelected = actualIdx === pathState.idx
+                return (
+                  <Box key={c.text}>
+                    <Text color={isSelected ? theme.accent : theme.muted}
+                          bold={isSelected}>
+                      {isSelected ? '▸ ' : '  '}
+                      {c.meta === 'dir' ? '📁 ' : '📄 '}{c.display}
+                    </Text>
+                  </Box>
+                )
+              })}
+              {pathStartIdx + PATH_MAX_SHOW < pathState.candidates.length && (
+                <Text color={theme.muted} dimColor>
+                  {'  ↓ '}{pathState.candidates.length - pathStartIdx - PATH_MAX_SHOW} below
+                </Text>
+              )}
+            </Box>
+          )}
         </Box>
       )}
     </Box>
