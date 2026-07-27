@@ -441,6 +441,7 @@ def test_hai_workspace_proxy_normalizes_contract_before_leaving_runtime(tmp_path
             assert headers == {"X-Correlation-ID": "correlation-one"}
             return 200, {"data": [{
                 "workspace_id": "workspace-one",
+                "display_name": "默认",
                 "path": r"C:\Users\owner\private-project",
                 "open": True,
                 "lifecycle": "active",
@@ -458,7 +459,7 @@ def test_hai_workspace_proxy_normalizes_contract_before_leaving_runtime(tmp_path
             "data": [{
                 "runtime_id": "runtime-enrollment",
                 "workspace_id": "workspace-one",
-                "display_name": "private-project",
+                "display_name": "默认",
                 "lifecycle": "active",
                 "revision": 3,
                 "updated_at": "2026-07-26T00:00:00+00:00",
@@ -477,21 +478,27 @@ def test_workspace_publication_preserves_lifecycle_revision_and_tombstone(tmp_pa
             return {"data": [
                 {
                     "workspace_id": "active",
+                    "display_name": "默认",
                     "path": r"C:\projects\active-project",
+                    "pid": 4242,
                     "lifecycle": "active",
                     "revision": 1,
                     "updated_at": "2026-07-26T00:00:00+00:00",
                 },
                 {
                     "workspace_id": "archived",
+                    "display_name": "Archive Label",
                     "path": r"C:\projects\archived-project",
+                    "internal_port": 18642,
                     "lifecycle": "archived",
                     "revision": 2,
                     "updated_at": "2026-07-26T00:01:00+00:00",
                 },
                 {
                     "workspace_id": "removed",
+                    "display_name": "Removed Label",
                     "path": r"C:\projects\removed-project",
+                    "credential": "secret",
                     "lifecycle": "removed",
                     "revision": 3,
                     "updated_at": "2026-07-26T00:02:00+00:00",
@@ -504,10 +511,12 @@ def test_workspace_publication_preserves_lifecycle_revision_and_tombstone(tmp_pa
         assert [row["lifecycle"] for row in rows] == ["active", "archived", "removed"]
         assert [row["revision"] for row in rows] == [1, 2, 3]
         assert [row["display_name"] for row in rows] == [
-            "active-project", "archived-project", "removed-project",
+            "默认", "Archive Label", "Removed Label",
         ]
         assert all(row["runtime_id"] == "runtime-one" for row in rows)
         assert "path" not in json.dumps(rows)
+        assert "4242" not in json.dumps(rows)
+        assert "secret" not in json.dumps(rows)
 
     asyncio.run(scenario())
 

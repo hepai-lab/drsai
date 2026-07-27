@@ -1,12 +1,21 @@
 package ai.drsai.remote.remote.ui
 
 import android.app.Application
+import androidx.room.Room
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import ai.drsai.remote.BuildConfig
 import ai.drsai.remote.data.AccessTokenCoordinator
+import ai.drsai.remote.data.ChatDatabase
+import ai.drsai.remote.data.MIGRATION_1_2
+import ai.drsai.remote.data.MIGRATION_2_3
+import ai.drsai.remote.data.MIGRATION_3_4
+import ai.drsai.remote.data.MIGRATION_4_5
+import ai.drsai.remote.data.MIGRATION_5_6
+import ai.drsai.remote.data.MIGRATION_6_7
+import ai.drsai.remote.data.MIGRATION_7_8
 import ai.drsai.remote.data.OidcClient
 import ai.drsai.remote.data.SecureTokenStore
 import ai.drsai.remote.remote.data.RelayRemoteRepository
@@ -16,6 +25,9 @@ import ai.drsai.remote.remote.data.HttpOwopRelayTransport
 import ai.drsai.remote.remote.data.RelayWorkspaceOperationsClient
 import ai.drsai.remote.remote.data.RemoteProjectInstructionLoader
 import ai.drsai.remote.remote.data.WorkspaceInstructionVersionStore
+import ai.drsai.remote.remote.data.RelayHttpException
+import ai.drsai.remote.remote.data.RoomRemoteDirectoryCache
+import ai.drsai.remote.remote.data.AndroidDevicePresence
 import ai.drsai.remote.runtime.context.PromptFragment
 import ai.drsai.remote.remote.model.RuntimeId
 import ai.drsai.remote.remote.model.WorkspaceId
@@ -62,6 +74,13 @@ class WorkspaceSessionsViewModel(
         ),
     )
     private val instructionVersionStore = WorkspaceInstructionVersionStore(app)
+    private val database = Room.databaseBuilder(app, ChatDatabase::class.java, "opendrsai.db")
+        .addMigrations(
+            MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
+            MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8,
+        )
+        .build()
+    private val directoryCache = RoomRemoteDirectoryCache(database)
     private val mutableState = MutableStateFlow(
         WorkspaceSessionsUiState(runtimeName = runtimeName, workspaceName = workspaceName, loading = true),
     )
@@ -72,7 +91,10 @@ class WorkspaceSessionsViewModel(
         instructionVersionStore.accepted(subject, runtimeId, workspaceId)
     }
 
-    init { refresh() }
+    init {
+        AndroidDevicePresence.markAccessing(runtimeId)
+        refresh()
+    }
 
     fun refresh(query: String? = mutableState.value.query) = viewModelScope.launch(Dispatchers.IO) {
         val requestGeneration = generation.incrementAndGet()
@@ -135,7 +157,26 @@ class WorkspaceSessionsViewModel(
             }
         }.onFailure { failure ->
             if (requestGeneration == generation.get()) {
-                mutableState.update { it.copy(loading = false, error = failure.message ?: "会话加载失败") }
+                if (failure is RelayHttpException && failure.status == 403) {
+                    tokenStore.user()?.id?.let { subject ->
+                        directoryCache.removeRuntime(subject, "", runtimeId)
+                    }
+                }
+                mutableState.update {
+                    it.copy(
+                        loading = false,
+                        sessions = if (failure is RelayHttpException && failure.status == 403) {
+                            emptyList()
+                        } else {
+                            it.sessions
+                        },
+                        error = if (failure is RelayHttpException && failure.status == 403) {
+                            "当前设备已无权访问此远程主机"
+                        } else {
+                            failure.message ?: "会话加载失败"
+                        },
+                    )
+                }
             }
         }
     }
@@ -186,6 +227,11 @@ class WorkspaceSessionsViewModel(
             .onFailure { failure ->
                 mutableState.update { it.copy(creating = false, error = failure.message ?: "会话创建失败") }
             }
+    }
+
+    override fun onCleared() {
+        database.close()
+        super.onCleared()
     }
 
     companion object {

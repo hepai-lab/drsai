@@ -27,6 +27,7 @@ data class DiscoveredRuntime(
     val connectionGeneration: Long,
     val state: RemoteConnectionState,
     val capabilities: Set<String> = emptySet(),
+    val lastSeenAt: String? = null,
 )
 
 internal const val MINIMUM_WINDOWS_RUNTIME_VERSION = "1.5.3"
@@ -69,6 +70,7 @@ interface RelayDiscoveryService {
     suspend fun listWorkspaces(runtimeId: RuntimeId, cursor: String? = null, query: String? = null): Page<RemoteWorkspaceRef>
     suspend fun associate(accessGrantPayload: String): RuntimeId
     suspend fun revokeAssociation(runtimeId: RuntimeId)
+    suspend fun recordPresence(runtimeId: RuntimeId, accessing: Boolean = false)
 }
 
 class HttpRelayDiscoveryService(
@@ -98,6 +100,8 @@ class HttpRelayDiscoveryService(
                         (0 until values.length()).map(values::getString).toSet()
                     }
                     .orEmpty(),
+                lastSeenAt = identity.optString("last_seen_at")
+                    .takeIf { it.isNotBlank() && it != "null" },
             )
         }
 
@@ -178,6 +182,40 @@ class HttpRelayDiscoveryService(
                 .header("Authorization", "Bearer $token")
                 .delete()
                 .build(),
+                token,
+            )
+        ).execute()
+        val initialToken = accessToken()
+        var response = execute(initialToken)
+        if (response.code == 401) {
+            response.close()
+            val refreshed = refreshAfter(initialToken)
+            if (refreshed.isNullOrBlank()) {
+                throw RelayHttpException(401, null, "oidc_auth_invalid")
+            }
+            response = execute(refreshed)
+        }
+        response.use {
+            if (!response.isSuccessful) throw relayHttpException(response)
+        }
+    }
+
+    override suspend fun recordPresence(runtimeId: RuntimeId, accessing: Boolean): Unit = withContext(Dispatchers.IO) {
+        require(runtimeId.value.isNotBlank()) { "runtime_id_required" }
+        val url = root.newBuilder()
+            .addPathSegments("v1/associations/${runtimeId.value}/presence")
+            .build()
+        val encodedBody = JSONObject()
+            .put("accessing", accessing)
+            .toString()
+            .toRequestBody("application/json".toMediaType())
+        fun execute(token: String) = http.newCall(
+            authorizeRelayRequest(
+                deviceProof,
+                Request.Builder().url(url)
+                    .header("Authorization", "Bearer $token")
+                    .post(encodedBody)
+                    .build(),
                 token,
             )
         ).execute()

@@ -1232,6 +1232,7 @@ app = FastAPI(
 _REMOTE_PROTOCOL_VERSION = PROTOCOL_VERSION
 _remote_workspaces: dict[str, Path] = {}
 _runtime_registry_instance: RuntimeRegistry | None = None
+_runtime_relay_connector: Any | None = None
 _mobile_pairing_service_instance = None
 _runtime_engine_instance: RuntimeEngine | None = None
 _runtime_tool_dispatcher_instance: RuntimeToolDispatcher | None = None
@@ -1317,6 +1318,8 @@ async def _start_runtime_relay_bridge():
                 else "legacy-operation"
             ),
         )
+        global _runtime_relay_connector
+        _runtime_relay_connector = connector
         stop = asyncio.Event()
 
         async def run_after_server_startup() -> None:
@@ -1337,6 +1340,16 @@ async def _start_runtime_relay_bridge():
     except Exception as exc:
         logger.error(f"Runtime Relay bridge could not start: {exc}")
         return None, None
+
+
+def _mark_workspace_catalog_changed() -> None:
+    connector = _runtime_relay_connector
+    if connector is None:
+        return
+    try:
+        connector.mark_workspaces_dirty()
+    except Exception as exc:
+        logger.warning(f"Runtime workspace catalog dirty mark failed: {type(exc).__name__}")
 
 
 def _runtime_registry() -> RuntimeRegistry:
@@ -1827,6 +1840,11 @@ class RemoteWorkspaceOpenRequest(BaseModel):
 
 class RuntimeWorkspaceOpenRequest(BaseModel):
     path: str = Field(min_length=1, max_length=4096)
+    display_name: str | None = Field(default=None, min_length=1, max_length=120, pattern=r"^[^\r\n\x00]*\S[^\r\n\x00]*$")
+
+
+class RuntimeWorkspaceRenameRequest(BaseModel):
+    display_name: str = Field(min_length=1, max_length=120, pattern=r"^[^\r\n\x00]*\S[^\r\n\x00]*$")
 
 
 class RemoteWorktreeRequest(BaseModel):
@@ -2154,6 +2172,7 @@ async def runtime_agent_definitions():
 def _mobile_pairing_http_error(exc):
     status = 404 if exc.code in {"runtime_not_registered", "access_grant_not_found"} else \
         401 if exc.code == "runtime_credential_invalid" else \
+        403 if exc.code in {"runtime_access_forbidden", "fault_injection_disabled"} else \
         429 if exc.code == "pairing_rate_limited" else \
         503 if exc.retryable else 409
     return HTTPException(status_code=status, detail={
@@ -2453,7 +2472,7 @@ async def remote_handshake(req: RemoteHandshakeRequest):
 async def runtime_workspace_open(req: RuntimeWorkspaceOpenRequest, raw_request: Request):
     principal = _principal_from_request(raw_request) if _security_enabled() else None
     try:
-        record = _runtime_registry().open_workspace(req.path)
+        record = _runtime_registry().open_workspace(req.path, display_name=req.display_name)
     except (FileNotFoundError, OSError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     root = Path(record.path)
@@ -2461,6 +2480,20 @@ async def runtime_workspace_open(req: RuntimeWorkspaceOpenRequest, raw_request: 
     if principal:
         _runtime_security().permissions.set_role(record.workspace_id, principal.principal_id, "owner")
     _remote_audit("workspace.open", workspace_id=record.workspace_id, path=record.path)
+    _mark_workspace_catalog_changed()
+    return record.as_dict()
+
+
+@app.put("/v1/workspaces/{workspace_id}/display-name")
+async def runtime_workspace_display_name_update(workspace_id: str, req: RuntimeWorkspaceRenameRequest, raw_request: Request):
+    if _security_enabled():
+        _authorize_request(raw_request, workspace_id, "workspace.write", {"operation": "workspace.rename"})
+    try:
+        record = _runtime_registry().update_workspace_display_name(workspace_id, req.display_name)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    _remote_audit("workspace.rename", workspace_id=record.workspace_id)
+    _mark_workspace_catalog_changed()
     return record.as_dict()
 
 
@@ -3033,6 +3066,7 @@ async def runtime_workspace_close(workspace_id: str):
         raise HTTPException(status_code=404, detail="Workspace is not registered")
     _remote_workspaces.pop(workspace_id, None)
     _remote_audit("workspace.close", workspace_id=workspace_id)
+    _mark_workspace_catalog_changed()
     return record.as_dict()
 
 
@@ -3049,6 +3083,7 @@ async def runtime_workspace_remove(workspace_id: str):
         raise HTTPException(status_code=404, detail="Workspace is not registered")
     _remote_workspaces.pop(workspace_id, None)
     _remote_audit("workspace.remove", workspace_id=workspace_id)
+    _mark_workspace_catalog_changed()
     return record.as_dict()
 
 
@@ -3140,6 +3175,7 @@ async def remote_workspace_worktree_create(workspace_id: str, request: RemoteWor
         parent_workspace_id=workspace_id, worktree_id=worktree.worktree_id,
         path=worktree.canonical_path,
     )
+    _mark_workspace_catalog_changed()
     return {
         "worktree_id": worktree.worktree_id,
         "workspace_id": worktree.workspace_id,
@@ -3185,6 +3221,7 @@ async def runtime_worktree_adopt(workspace_id: str, request: RuntimeWorktreeAdop
         raise _worktree_http_error(exc) from exc
     if record.workspace_id:
         _remote_workspaces[record.workspace_id] = Path(record.canonical_path)
+        _mark_workspace_catalog_changed()
     _remote_audit(
         "workspace.worktree.adopt", workspace_id=workspace_id,
         worktree_id=record.worktree_id, path=record.canonical_path,
@@ -3260,6 +3297,7 @@ async def runtime_worktree_merge(workspace_id: str, worktree_id: str, request: R
         "workspace.worktree.merge", workspace_id=workspace_id, worktree_id=worktree_id,
         status=record.status, derived_workspace_id=record.workspace_id,
     )
+    _mark_workspace_catalog_changed()
     return {"worktree": _git_worktree_service().project(record)}
 
 
@@ -3275,6 +3313,7 @@ async def runtime_worktree_archive(workspace_id: str, worktree_id: str, request:
         "workspace.worktree.archive", workspace_id=workspace_id,
         worktree_id=worktree_id, branch=record.branch,
     )
+    _mark_workspace_catalog_changed()
     return {"worktree": _git_worktree_service().project(record)}
 
 
@@ -3296,6 +3335,7 @@ async def runtime_worktree_remove(workspace_id: str, worktree_id: str, request: 
         "workspace.worktree.remove", workspace_id=workspace_id,
         worktree_id=worktree_id, derived_workspace_id=record.workspace_id,
     )
+    _mark_workspace_catalog_changed()
     return {"worktree": _git_worktree_service().project(record)}
 
 

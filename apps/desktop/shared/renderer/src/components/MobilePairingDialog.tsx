@@ -46,15 +46,18 @@ export function mobilePairingErrorText(reason: unknown, language: Language): str
 export function MobilePairingDialog({
   language,
   onClose,
+  onConnected,
 }: {
   language: Language;
   onClose: () => void;
+  onConnected?: () => void;
 }): React.JSX.Element {
   const zh = language === "zh";
   const dialogRef = useRef<HTMLElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const activeGrantRef = useRef<DesktopMobilePairingGrant | null>(null);
   const mountedRef = useRef(true);
+  const connectedNotifiedRef = useRef(false);
   const [readiness, setReadiness] = useState<DesktopMobilePairingReadiness | null>(null);
   const [grant, setGrant] = useState<DesktopMobilePairingGrant | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
@@ -150,6 +153,10 @@ export function MobilePairingDialog({
           activeGrantRef.current = next.status === "pending" ? next : null;
           setGrant(next);
           if (next.status !== "pending") setQrDataUrl(null);
+          if (next.status === "consumed" && !connectedNotifiedRef.current) {
+            connectedNotifiedRef.current = true;
+            onConnected?.();
+          }
         })
         .catch((reason) => {
           if (mountedRef.current) setError(mobilePairingErrorText(reason, language));
@@ -157,7 +164,7 @@ export function MobilePairingDialog({
         .finally(() => { reading = false; });
     }, 2_000);
     return () => window.clearInterval(poll);
-  }, [grant?.grant_id, grant?.status, language]);
+  }, [grant?.grant_id, grant?.status, language, onConnected]);
 
   const secondsLeft = grant ? Math.max(0, Math.ceil((Date.parse(grant.expires_at) - now) / 1_000)) : 0;
   const expired = grant?.status === "expired" || (grant?.status === "pending" && secondsLeft === 0);

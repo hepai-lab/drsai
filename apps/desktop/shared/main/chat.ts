@@ -82,6 +82,7 @@ const MAX_TOTAL_CHARS = 80_000;
 const MAX_MODEL_CHARS = 120;
 const MAX_AGENT_ID_CHARS = 160;
 const MAX_WORKSPACE_PATH_CHARS = 2048;
+const MAX_WORKSPACE_NAME_CHARS = 120;
 const MAX_ATTACHMENTS = 20;
 const MAX_ATTACHMENT_PATH_CHARS = 2048;
 const MAX_ATTACHMENT_NAME_CHARS = 260;
@@ -279,6 +280,20 @@ function validateChatRequest(rawRequest: unknown): ChatRequest {
     throw new Error("Chat workspace path is invalid.");
   }
   if (
+    request.workspaceId !== undefined &&
+    (typeof request.workspaceId !== "string" || !SESSION_ID_PATTERN.test(request.workspaceId))
+  ) {
+    throw new Error("Chat workspace id is invalid.");
+  }
+  if (
+    request.workspaceName !== undefined &&
+    (typeof request.workspaceName !== "string" ||
+      request.workspaceName.length > MAX_WORKSPACE_NAME_CHARS ||
+      /[\r\n\0]/.test(request.workspaceName))
+  ) {
+    throw new Error("Chat workspace name is invalid.");
+  }
+  if (
     request.threadId !== undefined &&
     (typeof request.threadId !== "string" || !SESSION_ID_PATTERN.test(request.threadId))
   ) {
@@ -327,6 +342,8 @@ function validateChatRequest(rawRequest: unknown): ChatRequest {
     agentId: request.agentId?.trim() || undefined,
     model: request.model?.trim() || undefined,
     workspacePath: request.workspacePath?.trim() || undefined,
+    workspaceId: request.workspaceId?.trim() || undefined,
+    workspaceName: request.workspaceName?.trim() || undefined,
     threadId: request.threadId?.trim() || undefined,
     sessionId: request.sessionId?.trim() || undefined,
     runId: request.runId?.trim() || undefined,
@@ -467,6 +484,7 @@ async function runChat(
         request,
         controller,
         isCodexBackend ? "codex@1" : "opendrsai@1",
+        auth,
       );
       activeChats.delete(requestId);
       recordAgentTelemetry({ event: "execution_completed", agentId: boundAgentId, mode: "local", source: "local", durationMs: Date.now() - executionStartedAt });
@@ -647,9 +665,10 @@ async function runChat(
 async function runRuntimeBackendChat(
   webContents: ChatEventTarget, requestId: string, displaySessionId: string, request: ChatRequest, controller: AbortController,
   agentDefinition: "codex@1" | "opendrsai@1",
+  auth: AuthContext,
 ): Promise<void> {
   if (!request.workspacePath) throw new Error("Runtime Agent requires an open Workspace.");
-  const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
+  const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId, request.workspaceName);
   const client = resolved.client;
   const existingThread = (await listThreads()).find((thread) => thread.id === displaySessionId);
   let runtimeSessionId = existingThread?.runtimeSessionId;
@@ -694,7 +713,9 @@ async function runRuntimeBackendChat(
   });
   const target = { client: client as RuntimeClient, runId: run.run_id, approvalId: undefined as string | undefined };
   codexChatTargets.set(requestId, target);
-  const prompt = request.messages.map((message) => `${message.role}: ${message.content}`).join("\n\n");
+  const prompt = agentDefinition === "opendrsai@1"
+    ? latestUserPrompt(request.messages)
+    : request.messages.map((message) => `${message.role}: ${message.content}`).join("\n\n");
   let completed = false;
   let failure: unknown;
   const execution = client.executeAgentRun(
@@ -706,6 +727,9 @@ async function runRuntimeBackendChat(
       sourceMessageId,
       attachmentRefs: (request.attachments ?? []).map((item) => item.path),
     },
+    auth.authMode === "oidc" && auth.accessToken
+      ? { authMode: "oidc", accessToken: auth.accessToken, userId: auth.userId }
+      : undefined,
   )
     .catch((error) => { failure = error; })
     .finally(() => { completed = true; });
@@ -825,6 +849,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function deriveThreadTitle(messages: ChatMessage[]): string {
   const firstUser = messages.find((message) => message.role === "user");
   return firstUser?.content.trim().slice(0, 80) || "New chat";
+}
+
+function latestUserPrompt(messages: ChatMessage[]): string {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role === "user" && message.content.trim()) return message.content;
+  }
+  return messages.at(-1)?.content ?? "";
 }
 
 export interface AttachmentContextItem {

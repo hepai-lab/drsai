@@ -42,6 +42,11 @@ class RuntimeChannelHub:
             self._connections.pop(runtime_id, None)
             self._fail_pending(current, "runtime_disconnected")
 
+    async def is_current(self, runtime_id: str, generation: str) -> bool:
+        async with self._lock:
+            current = self._connections.get(runtime_id)
+            return current is not None and current.generation == generation
+
     async def request(self, runtime_id: str, operation: str, arguments: dict[str, Any]) -> Any:
         async with self._lock:
             connection = self._connections.get(runtime_id)

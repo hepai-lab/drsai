@@ -14,6 +14,7 @@ from .models import (
     AccessGrantResult,
     AccessGrantStatusResult,
     AssociationResult,
+    AssociationPresenceRequest,
     AssociationRequest,
     ErrorEnvelope,
     HeartbeatRequest,
@@ -201,6 +202,22 @@ def create_relay_app(registry: RelayRegistry | None = None,
                 x_subject,
                 runtime_id,
                 x_relay_device_id,
+            )
+        )
+
+    @app.post("/v1/associations/{runtime_id}/presence", response_model=AssociationResult)
+    async def record_user_association_presence(
+        runtime_id: str,
+        body: AssociationPresenceRequest,
+        x_subject: str = Depends(oidc_subject),
+        x_relay_device_id: str = Header(),
+    ) -> AssociationResult:
+        return AssociationResult.model_validate(
+            store.record_device_presence(
+                x_subject,
+                runtime_id,
+                x_relay_device_id,
+                accessing=body.accessing,
             )
         )
 
@@ -448,6 +465,8 @@ def create_relay_app(registry: RelayRegistry | None = None,
                     if not isinstance(rows, list):
                         await socket.close(code=4400, reason="runtime_workspaces_invalid")
                         return
+                    if not await channel_hub.is_current(hello["runtime_id"], generation):
+                        continue
                     store.publish_workspaces(hello["runtime_id"], token,
                                              [Workspace.model_validate(row) for row in rows])
         except WebSocketDisconnect:

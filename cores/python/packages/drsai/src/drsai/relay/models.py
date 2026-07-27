@@ -210,8 +210,14 @@ class AssociationResult(StrictModel):
         pattern=r".*\S.*",
     )
     status: str = Field(pattern="^(active|revoked)$")
+    access_state: str = Field(pattern="^(online|offline|accessing|revoked)$")
     created_at: datetime
+    last_seen_at: datetime | None = None
     revoked_at: datetime | None = None
+
+
+class AssociationPresenceRequest(StrictModel):
+    accessing: bool = False
 
 
 class AssociationRequest(ControlRequest):

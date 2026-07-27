@@ -77,6 +77,7 @@ export interface BackendLoginStart {
 export interface RuntimeWorkspace {
   workspace_id: string;
   path: string;
+  display_name?: string;
   created_at: string;
   last_opened_at: string;
   closed_at?: string | null;
@@ -215,7 +216,8 @@ export interface RuntimeClient {
   startBackendLogin(backendId: string, type?: "chatgpt" | "chatgptDeviceCode"): Promise<BackendLoginStart>;
   cancelBackendLogin(backendId: string, loginId: string): Promise<void>;
   logoutBackend(backendId: string): Promise<void>;
-  openWorkspace(path: string): Promise<RuntimeWorkspace>;
+  openWorkspace(path: string, displayName?: string): Promise<RuntimeWorkspace>;
+  updateWorkspaceDisplayName(workspaceId: string, displayName: string): Promise<RuntimeWorkspace>;
   listWorkspaces(includeClosed?: boolean): Promise<RuntimeWorkspace[]>;
   closeWorkspace(workspaceId: string): Promise<RuntimeWorkspace>;
   createWorktree(workspaceId: string, intent: string, idempotencyKey: string): Promise<RuntimeWorktreeCreateResult>;
@@ -239,6 +241,7 @@ export interface RuntimeClient {
     prompt: string,
     signal?: AbortSignal,
     provenance?: { sourceClient: "windows" | "android"; sourceMessageId: string; attachmentRefs?: string[] },
+    auth?: RuntimeExecutionAuth,
   ): Promise<{ run: RuntimeAgentRun; result: unknown }>;
   cancelAgentRun(runId: string): Promise<RuntimeAgentRun>;
   listAgentRunEvents(runId: string, afterSequence?: number): Promise<RuntimeAgentEvent[]>;
@@ -261,6 +264,12 @@ export interface RuntimeClient {
 export interface RuntimeAccess {
   baseUrl: string;
   headers: Record<string, string>;
+}
+
+export interface RuntimeExecutionAuth {
+  authMode: "oidc";
+  accessToken: string;
+  userId: string;
 }
 
 export class RuntimeProtocolCompatibilityError extends Error {
@@ -306,11 +315,20 @@ abstract class HttpRuntimeClient implements RuntimeClient {
     await this.requestJson(`/v1/agent-backends/${this.backendId(backendId)}/account/logout`, { method: "POST" });
   }
 
-  openWorkspace(path: string): Promise<RuntimeWorkspace> {
+  openWorkspace(path: string, displayName?: string): Promise<RuntimeWorkspace> {
     return this.requestJson("/v1/workspaces", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path }),
+      body: JSON.stringify({ path, ...(displayName ? { display_name: displayName } : {}) }),
+    });
+  }
+
+  updateWorkspaceDisplayName(workspaceId: string, displayName: string): Promise<RuntimeWorkspace> {
+    this.assertResourceId("Workspace", workspaceId);
+    return this.requestJson(`/v1/workspaces/${encodeURIComponent(workspaceId)}/display-name`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ display_name: displayName }),
     });
   }
 
@@ -455,10 +473,19 @@ abstract class HttpRuntimeClient implements RuntimeClient {
     prompt: string,
     signal?: AbortSignal,
     provenance?: { sourceClient: "windows" | "android"; sourceMessageId: string; attachmentRefs?: string[] },
+    auth?: RuntimeExecutionAuth,
   ): Promise<{ run: RuntimeAgentRun; result: unknown }> {
     return this.requestJson(`/v1/runs/${encodeURIComponent(runId)}/execute`, { method: "POST", signal,
-      headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+      headers: {
+        "Content-Type": "application/json",
+        ...(auth ? {
+          Authorization: `Bearer ${auth.accessToken}`,
+          "X-OpenDrSai-Auth-Mode": auth.authMode,
+          "X-OpenDrSai-Principal": auth.userId,
+        } : {}),
+      }, body: JSON.stringify({
         prompt,
+        ...(auth ? { user_id: auth.userId } : {}),
         metadata: provenance ? {
           source_client: provenance.sourceClient,
           source_message_id: provenance.sourceMessageId,
@@ -679,6 +706,7 @@ export class RemoteRuntimeClient extends HttpRuntimeClient {
 export async function connectRuntimeClientForWorkspace(
   workspacePath: string,
   workspaceId?: string,
+  workspaceName?: string,
 ): Promise<{ client: RuntimeClient; workspaceId: string }> {
   const access = workspaceRouting.getRemoteGatewayAccess(workspacePath, workspaceId);
   if (access) {
@@ -696,7 +724,7 @@ export async function connectRuntimeClientForWorkspace(
   // Runtime owns a distinct authoritative Workspace ID, so resolve it by path.
   // A non-persisted ID is already a Runtime execution identity (for example a
   // Worktree Workspace selected by a Thread) and must remain unchanged.
-  if (workspaceId && !persisted) return { client, workspaceId };
-  const opened = await client.openWorkspace(workspacePath);
+  if (workspaceId && workspaceId !== "current" && !persisted) return { client, workspaceId };
+  const opened = await client.openWorkspace(workspacePath, persisted?.name ?? workspaceName);
   return { client, workspaceId: opened.workspace_id };
 }

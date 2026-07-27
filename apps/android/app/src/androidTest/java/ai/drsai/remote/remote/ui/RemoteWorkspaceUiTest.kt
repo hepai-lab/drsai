@@ -50,6 +50,7 @@ class RemoteWorkspaceUiTest {
     @Test
     fun computerExpandsWorkspaceAndRoutesByReference() {
         var opened: RemoteWorkspaceRef? = null
+        var refreshed: RuntimeId? = null
         val workspace = RemoteWorkspaceRef(RuntimeId("runtime-a"), WorkspaceId("workspace-a"), "OpenDrSai")
         composeRule.setContent {
             MaterialTheme {
@@ -71,6 +72,7 @@ class RemoteWorkspaceUiTest {
                     onBack = {},
                     onAssociate = {},
                     onRefresh = {},
+                    onRefreshWorkspaces = { refreshed = it },
                     onOpenWorkspace = { opened = it },
                 )
             }
@@ -80,8 +82,14 @@ class RemoteWorkspaceUiTest {
         composeRule.onNodeWithContentDescription("连接状态：在线").assertIsDisplayed()
         composeRule.onNodeWithText("刚刚").assertIsDisplayed()
         composeRule.onNodeWithText("OpenDrSai 1.4.6").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("刷新 开发服务器 的工作区")
+            .assertIsDisplayed()
+            .performClick()
         composeRule.onNodeWithText("OpenDrSai").assertIsDisplayed().performClick()
-        composeRule.runOnIdle { assertEquals(workspace, opened) }
+        composeRule.runOnIdle {
+            assertEquals(RuntimeId("runtime-a"), refreshed)
+            assertEquals(workspace, opened)
+        }
     }
 
     @Test
@@ -102,8 +110,15 @@ class RemoteWorkspaceUiTest {
                                 RuntimeId("offline"),
                                 "离线计算机",
                                 RemoteConnectionState.OFFLINE,
-                                "离线",
-                                emptyList(),
+                                "缓存 · 上次同步 07-28 10:30",
+                                listOf(
+                                    RemoteWorkspaceRef(
+                                        RuntimeId("offline"),
+                                        WorkspaceId("cached"),
+                                        "缓存项目",
+                                    )
+                                ),
+                                workspacesCached = true,
                             ),
                             RemoteComputerUi(
                                 RuntimeId("connecting"),
@@ -124,6 +139,8 @@ class RemoteWorkspaceUiTest {
 
         composeRule.onNodeWithContentDescription("连接状态：在线").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("连接状态：离线").assertIsDisplayed()
+        composeRule.onNodeWithText("缓存 · 上次同步 07-28 10:30").assertIsDisplayed()
+        composeRule.onNodeWithText("缓存项目").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("连接状态：正在连接").assertIsDisplayed()
         composeRule.onNodeWithText("连接中…").assertIsDisplayed()
     }

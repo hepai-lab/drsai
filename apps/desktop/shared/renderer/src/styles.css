@@ -16125,6 +16125,22 @@ button.structured-activity-detail:hover {
   color: var(--app-danger, #b42318);
 }
 
+.settings-integration-actions > button.android-refresh-button {
+  display: inline-grid;
+  width: 30px;
+  min-width: 30px;
+  padding: 0;
+  place-items: center;
+}
+
+.android-refresh-button svg {
+  display: block;
+}
+
+.android-refresh-button.is-loading svg {
+  animation: android-refresh-spin 800ms linear infinite;
+}
+
 .settings-integration-actions > button.settings-connection-switch {
   position: relative;
   width: 40px;
@@ -16168,6 +16184,139 @@ button.structured-activity-detail:hover {
 .settings-connection-switch:focus-visible {
   outline: 2px solid var(--app-accent-strong);
   outline-offset: 2px;
+}
+
+.android-remote-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px 0 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.android-remote-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.android-remote-header > span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.android-remote-header small,
+.android-remote-message,
+.android-device-row small {
+  color: var(--text-secondary);
+}
+
+.android-remote-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.android-remote-counts span {
+  padding: 4px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.android-remote-message {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  font-size: 12px;
+}
+
+.android-remote-message[data-state="failed"],
+.android-remote-message[data-state="permission-denied"] {
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--border-subtle));
+  color: var(--danger);
+}
+
+.android-device-list {
+  display: grid;
+  gap: 8px;
+}
+
+.android-device-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.android-device-row > span:not(.android-device-presence) {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.android-device-row strong,
+.android-device-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.android-device-row small {
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+}
+
+.android-device-row em {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.android-device-row button {
+  min-width: 60px;
+}
+
+.android-device-presence {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+}
+
+.android-device-row[data-state="online"] .android-device-presence {
+  background: #16a34a;
+}
+
+.android-device-row[data-state="accessing"] .android-device-presence {
+  background: #2563eb;
+}
+
+.android-device-row[data-state="offline"] .android-device-presence {
+  background: #94a3b8;
+}
+
+@keyframes android-refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .android-refresh-button.is-loading svg {
+    animation: none;
+  }
 }
 
 .settings-button-row {
@@ -17359,6 +17508,18 @@ button.structured-activity-detail:hover {
     align-items: stretch;
     flex-direction: column;
     gap: 8px;
+  }
+
+  .android-remote-header,
+  .android-device-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .android-remote-header .settings-integration-actions,
+  .android-device-row em,
+  .android-device-row button {
+    grid-column: 2;
+    justify-self: start;
   }
 
   .settings-row select {

@@ -394,6 +394,165 @@ def test_runtime_connector_publishes_authoritative_workspaces_after_handshake(tm
         FakeSocket.incoming = []
 
 
+def test_runtime_connector_republishes_complete_workspace_catalog_when_dirty(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        socket = FakeSocket()
+        rows = [{"runtime_id": "rt-one", "workspace_id": "ws-one", "display_name": "One"}]
+
+        async def workspaces():
+            return list(rows)
+
+        identity = DeviceIdentityStore(tmp_path / "id", XorProtector()).load_or_create()
+        connector = RuntimeOutboundConnector(
+            "wss://relay.example/v1/runtime-connect",
+            RuntimeCredential("rt-one", "token"),
+            identity,
+            "instance-one",
+            "1.5.3",
+            workspace_provider=workspaces,
+        )
+        task = asyncio.create_task(connector._forward_workspaces(socket))
+        await asyncio.wait_for(_wait_for_sent(socket, 1), timeout=0.5)
+        rows.append({"runtime_id": "rt-one", "workspace_id": "ws-two", "display_name": "Two"})
+        connector.mark_workspaces_dirty()
+        await asyncio.wait_for(_wait_for_sent(socket, 2), timeout=0.5)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        assert socket.sent[-1] == {"type": "runtime.workspaces", "workspaces": [
+            {"runtime_id": "rt-one", "workspace_id": "ws-one", "display_name": "One"},
+            {"runtime_id": "rt-one", "workspace_id": "ws-two", "display_name": "Two"},
+        ]}
+
+    asyncio.run(scenario())
+
+
+def test_runtime_connector_republishes_remove_and_rename_as_full_catalog(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        socket = FakeSocket()
+        rows = [
+            {"runtime_id": "rt-one", "workspace_id": "stable-ws", "display_name": "Old"},
+            {"runtime_id": "rt-one", "workspace_id": "removed-ws", "display_name": "Removed"},
+        ]
+
+        async def workspaces():
+            return list(rows)
+
+        identity = DeviceIdentityStore(tmp_path / "id", XorProtector()).load_or_create()
+        connector = RuntimeOutboundConnector(
+            "wss://relay.example/v1/runtime-connect",
+            RuntimeCredential("rt-one", "token"),
+            identity,
+            "instance-one",
+            "1.5.3",
+            workspace_provider=workspaces,
+        )
+        task = asyncio.create_task(connector._forward_workspaces(socket))
+        await asyncio.wait_for(_wait_for_sent(socket, 1), timeout=0.5)
+        rows[:] = [{"runtime_id": "rt-one", "workspace_id": "stable-ws", "display_name": "New"}]
+        connector.mark_workspaces_dirty()
+        await asyncio.wait_for(_wait_for_sent(socket, 2), timeout=0.5)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        assert socket.sent[-1]["workspaces"] == [
+            {"runtime_id": "rt-one", "workspace_id": "stable-ws", "display_name": "New"},
+        ]
+
+    asyncio.run(scenario())
+
+
+def test_runtime_connector_coalesces_fast_workspace_changes_to_latest_catalog(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        socket = FakeSocket()
+        rows = [{"runtime_id": "rt-one", "workspace_id": "ws-one", "display_name": "One"}]
+
+        async def workspaces():
+            return list(rows)
+
+        identity = DeviceIdentityStore(tmp_path / "id", XorProtector()).load_or_create()
+        connector = RuntimeOutboundConnector(
+            "wss://relay.example/v1/runtime-connect",
+            RuntimeCredential("rt-one", "token"),
+            identity,
+            "instance-one",
+            "1.5.3",
+            workspace_provider=workspaces,
+        )
+        task = asyncio.create_task(connector._forward_workspaces(socket))
+        await asyncio.wait_for(_wait_for_sent(socket, 1), timeout=0.5)
+        rows[:] = [{"runtime_id": "rt-one", "workspace_id": "ws-one", "display_name": "Interim"}]
+        connector.mark_workspaces_dirty()
+        rows[:] = [{"runtime_id": "rt-one", "workspace_id": "ws-one", "display_name": "Final"}]
+        connector.mark_workspaces_dirty()
+        await asyncio.wait_for(_wait_for_sent(socket, 2), timeout=0.5)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        assert socket.sent[-1]["workspaces"][0]["display_name"] == "Final"
+
+    asyncio.run(scenario())
+
+
+def test_runtime_connector_keeps_workspace_dirty_after_publish_failure_and_retries(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        socket = FakeSocket()
+        calls = 0
+
+        async def workspaces():
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise RuntimeError("catalog_backend_unavailable")
+            return [{"runtime_id": "rt-one", "workspace_id": "ws-one", "display_name": f"Call {calls}"}]
+
+        identity = DeviceIdentityStore(tmp_path / "id", XorProtector()).load_or_create()
+        connector = RuntimeOutboundConnector(
+            "wss://relay.example/v1/runtime-connect",
+            RuntimeCredential("rt-one", "token"),
+            identity,
+            "instance-one",
+            "1.5.3",
+            workspace_provider=workspaces,
+        )
+        task = asyncio.create_task(connector._forward_workspaces(socket))
+        await asyncio.wait_for(_wait_for_sent(socket, 1), timeout=0.5)
+        connector.mark_workspaces_dirty()
+        await asyncio.wait_for(_wait_for_sent(socket, 2), timeout=1.5)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        assert calls >= 3
+        assert socket.sent[-1]["workspaces"][0]["display_name"] == "Call 3"
+
+    asyncio.run(scenario())
+
+
+def test_runtime_connector_reconnect_publishes_dirty_workspace_catalog(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        socket = FakeSocket()
+        rows = [{"runtime_id": "rt-one", "workspace_id": "ws-one", "display_name": "Offline Change"}]
+
+        async def workspaces():
+            return list(rows)
+
+        identity = DeviceIdentityStore(tmp_path / "id", XorProtector()).load_or_create()
+        connector = RuntimeOutboundConnector(
+            "wss://relay.example/v1/runtime-connect",
+            RuntimeCredential("rt-one", "token"),
+            identity,
+            "instance-one",
+            "1.5.3",
+            workspace_provider=workspaces,
+        )
+        connector.mark_workspaces_dirty()
+        assert await connector._try_publish_workspaces(socket)
+        assert socket.sent == [{"type": "runtime.workspaces", "workspaces": rows}]
+
+    asyncio.run(scenario())
+
+
+async def _wait_for_sent(socket: FakeSocket, count: int) -> None:
+    while len(socket.sent) < count:
+        await asyncio.sleep(0.01)
+
+
 def test_runtime_connector_backs_off_after_clean_peer_disconnect(tmp_path: Path) -> None:
     async def scenario() -> None:
         identity = DeviceIdentityStore(tmp_path / "id", XorProtector()).load_or_create()

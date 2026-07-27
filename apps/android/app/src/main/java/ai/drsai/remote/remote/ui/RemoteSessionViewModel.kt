@@ -97,6 +97,7 @@ class RemoteSessionViewModel(
     }
 
     init {
+        AndroidDevicePresence.markAccessing(runtimeId)
         ProcessLifecycleOwner.get().lifecycle.addObserver(lifecycleObserver)
         viewModelScope.launch {
             connectivity.online.drop(1).collect { online ->
@@ -182,6 +183,7 @@ class RemoteSessionViewModel(
             startSessionSync()
         }.onFailure { failure ->
             when {
+                handleAuthoritativeRevocation(failure) -> Unit
                 recoverAuthentication(failure) -> refresh()
                 mutableState.value.connectionState == RemoteConnectionState.AUTH_REQUIRED -> Unit
                 else -> mutableState.update {
@@ -213,8 +215,12 @@ class RemoteSessionViewModel(
                 sourceMessageId = sourceMessageId,
             )
         }.onSuccess { reconcileSession() }
-            .onFailure { failure -> mutableState.update { it.copy(messages = it.messages +
-                RemoteMessageUi("send-error-${UUID.randomUUID()}", "assistant", failure.message ?: "发送失败")) } }
+            .onFailure { failure ->
+                if (!handleAuthoritativeRevocation(failure)) {
+                    mutableState.update { it.copy(messages = it.messages +
+                        RemoteMessageUi("send-error-${UUID.randomUUID()}", "assistant", failure.message ?: "发送失败")) }
+                }
+            }
     }
 
     fun cancel() = viewModelScope.launch(Dispatchers.IO) {
@@ -444,6 +450,7 @@ class RemoteSessionViewModel(
                 } catch (cancelled: kotlinx.coroutines.CancellationException) {
                     throw cancelled
                 } catch (failure: Throwable) {
+                    if (handleAuthoritativeRevocation(failure)) break
                     if (failure is RelayHttpException && failure.requiresSnapshotRecovery()) {
                         reloadSessionProjection()
                         continue
@@ -527,6 +534,7 @@ class RemoteSessionViewModel(
                 } catch (cancelled: kotlinx.coroutines.CancellationException) {
                     throw cancelled
                 } catch (failure: Throwable) {
+                    if (handleAuthoritativeRevocation(failure)) break
                     if (failure is RelayHttpException && failure.requiresSnapshotRecovery()) {
                         rebuildProjection(identity)
                         continue
@@ -645,6 +653,33 @@ class RemoteSessionViewModel(
             it.copy(online = false, running = false, connectionState = RemoteConnectionState.AUTH_REQUIRED)
         }
         return false
+    }
+
+    private suspend fun handleAuthoritativeRevocation(failure: Throwable): Boolean {
+        if (failure !is RelayHttpException || failure.status != 403) return false
+        RoomRemoteDirectoryCache(database).removeRuntime(
+            subject,
+            organization,
+            runtimeId,
+        )
+        activeRun = null
+        mutableState.update {
+            it.copy(
+                online = false,
+                running = false,
+                connectionState = RemoteConnectionState.AUTH_REQUIRED,
+                messages = listOf(
+                    RemoteMessageUi(
+                        "access-revoked",
+                        "assistant",
+                        "当前设备的远程访问授权已撤销",
+                    )
+                ),
+                artifacts = emptyList(),
+                approval = null,
+            )
+        }
+        return true
     }
 
     override fun onCleared() {

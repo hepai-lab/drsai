@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -118,6 +120,35 @@ def test_v3_stability_rejects_missing_fault_or_transcript_drift() -> None:
     assert MODULE.evaluate(drift, full_faults(), 3_600)["passed"] is False
 
 
+def test_v3_stability_preserves_sanitized_probe_error_details() -> None:
+    details = [
+        {
+            "elapsed_seconds": 120.5,
+            "code": "stability_android_probe_timeout",
+        }
+    ]
+    result = MODULE.evaluate(
+        [sample(0), MODULE.Sample(
+            120.5, 0, "probe_error", None, 0, True, 10, 20, 1_000, 10, None,
+        )],
+        [],
+        3_600,
+        details,
+    )
+    assert result["passed"] is False
+    assert result["probe_error_count"] == 1
+    assert result["probe_errors"] == details
+
+
+def test_v3_safe_error_code_never_exposes_unstructured_detail() -> None:
+    assert MODULE._safe_error_code(
+        RuntimeError("stability_android_probe_timeout")
+    ) == "stability_android_probe_timeout"
+    assert MODULE._safe_error_code(
+        RuntimeError("server said: secret value with spaces")
+    ) == "RuntimeError"
+
+
 def test_v3_stability_rejects_failed_fault_and_excessive_resource_slope() -> None:
     failed = full_faults()
     failed[0] = MODULE.FaultRecord(
@@ -171,7 +202,7 @@ def test_v3_probe_integrity_requires_measured_counts_and_rejects_gaps() -> None:
         "duplicate_sequence_count": 0,
         "missing_sequence_count": 0,
     }
-    assert MODULE._probe_integrity(valid) == (4, 17, 0, 0)
+    assert MODULE._probe_integrity(valid) == (4, 17, 0, 0, 0)
     for key in valid:
         invalid = {**valid, key: None}
         try:
@@ -225,3 +256,161 @@ def test_v3_fault_identity_transitions_are_strict() -> None:
         "runtime_restart",
         **{**common, "windows_pid_after": 21},
     )
+
+
+def test_v3_fault_matrix_writes_only_complete_measured_matrix(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    records = {item.name: item for item in full_faults()}
+
+    async def measured(_args, name, _service, _started):
+        return records[name]
+
+    monkeypatch.setattr(MODULE, "_fault", measured)
+    monkeypatch.setattr(MODULE, "_open_session", lambda _args: None)
+    output = tmp_path / "faults.json"
+    token = tmp_path / "token"
+    token.write_text("fixture_instance_token_00000000000", encoding="utf-8")
+    result = asyncio.run(
+        MODULE.fault_matrix(
+            SimpleNamespace(
+                gateway_url="http://127.0.0.1:1",
+                token_path=token,
+                output=output,
+            )
+        )
+    )
+    assert result["passed"] is True
+    assert output.exists()
+    assert {row["name"] for row in result["faults"]} == set(MODULE.FAULT_NAMES)
+
+
+def test_v3_fault_matrix_rejects_failed_measurement(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    records = {item.name: item for item in full_faults()}
+    records["network_change"] = MODULE.FaultRecord(
+        **{
+            **records["network_change"].__dict__,
+            "status": "failed",
+            "missing_sequence_count": 1,
+        }
+    )
+
+    async def measured(_args, name, _service, _started):
+        return records[name]
+
+    monkeypatch.setattr(MODULE, "_fault", measured)
+    monkeypatch.setattr(MODULE, "_open_session", lambda _args: None)
+    token = tmp_path / "token"
+    token.write_text("fixture_instance_token_00000000000", encoding="utf-8")
+    try:
+        asyncio.run(
+            MODULE.fault_matrix(
+                    SimpleNamespace(
+                        gateway_url="http://127.0.0.1:1",
+                        token_path=token,
+                    output=tmp_path / "faults.json",
+                )
+            )
+        )
+    except RuntimeError as exc:
+        assert str(exc) == "v3_stability_fault_failed:network_change"
+    else:
+        raise AssertionError("failed measured fault was accepted")
+
+
+def test_v3_failed_fault_record_is_explicit_and_sanitized(monkeypatch) -> None:
+    monkeypatch.setattr(MODULE, "android_state", lambda *_args: (True, 10))
+    monkeypatch.setattr(MODULE, "gateway_pid", lambda _port: 20)
+    record = MODULE._failed_fault_record(
+        "runtime_restart",
+        started=1.0,
+        began=2.0,
+        exc=RuntimeError("v3_stability_restarted_runtime_exited"),
+        args=SimpleNamespace(
+            adb="adb",
+            device="device",
+            package="package",
+            gateway_port=18642,
+        ),
+    )
+    assert record.status == "failed"
+    assert record.failure_code == "v3_stability_restarted_runtime_exited"
+    assert record.identity_transition_valid is False
+    assert MODULE._fault_passed(record) is False
+
+
+def test_v3_runtime_restart_explicitly_starts_replacement(monkeypatch) -> None:
+    pids = iter((20, None, 21))
+    started = []
+
+    class Service:
+        async def shutdown_runtime(self):
+            return {"status": "stopping"}
+
+    class Process:
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(MODULE, "gateway_pid", lambda _port: next(pids))
+    monkeypatch.setattr(
+        MODULE,
+        "start_runtime",
+        lambda args: started.append(args) or Process(),
+    )
+    args = SimpleNamespace(
+        gateway_port=18642,
+        recovery_timeout_seconds=30,
+        supervisor_restart_grace_seconds=0,
+    )
+    asyncio.run(MODULE._runtime_reconnect(args, Service()))
+    assert started == [args]
+
+
+def test_v3_runtime_restart_prefers_supervisor_replacement(monkeypatch) -> None:
+    pids = iter((20, None, 21))
+    started = []
+
+    class Service:
+        async def shutdown_runtime(self):
+            return {"status": "stopping"}
+
+    monkeypatch.setattr(MODULE, "gateway_pid", lambda _port: next(pids))
+    monkeypatch.setattr(
+        MODULE,
+        "start_runtime",
+        lambda args: started.append(args),
+    )
+    args = SimpleNamespace(
+        gateway_port=18642,
+        recovery_timeout_seconds=30,
+        supervisor_restart_grace_seconds=10,
+    )
+    asyncio.run(MODULE._runtime_reconnect(args, Service()))
+    assert started == []
+
+
+def test_v3_runtime_restart_accepts_supervisor_after_fallback_exit(
+    monkeypatch,
+) -> None:
+    pids = iter((20, None, None, 21))
+
+    class Service:
+        async def shutdown_runtime(self):
+            return {"status": "stopping"}
+
+    class Process:
+        def poll(self):
+            return 1
+
+    monkeypatch.setattr(MODULE, "gateway_pid", lambda _port: next(pids))
+    monkeypatch.setattr(MODULE, "start_runtime", lambda _args: Process())
+    args = SimpleNamespace(
+        gateway_port=18642,
+        recovery_timeout_seconds=30,
+        supervisor_restart_grace_seconds=0,
+    )
+    asyncio.run(MODULE._runtime_reconnect(args, Service()))

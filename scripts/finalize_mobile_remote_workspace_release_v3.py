@@ -165,8 +165,12 @@ def validate_screenshot(row: dict[str, Any], *, label: str) -> Path:
     return path
 
 
+def junit_files(path: Path) -> list[Path]:
+    return sorted(path.glob("**/TEST-*.xml")) if path.is_dir() else [path]
+
+
 def validate_junit(path: Path, *, label: str, minimum_tests: int) -> int:
-    files = sorted(path.glob("**/TEST-*.xml")) if path.is_dir() else [path]
+    files = junit_files(path)
     if not files or any(not file.is_file() for file in files):
         raise RuntimeError(f"release_{label}_junit_missing")
     tests = failures = errors = 0
@@ -448,9 +452,9 @@ def finalize(
 
     artifacts = [
         *reports,
-        python_junit_path,
-        android_junit_path,
-        desktop_junit_path,
+        *junit_files(python_junit_path),
+        *junit_files(android_junit_path),
+        *junit_files(desktop_junit_path),
         apk_path,
         *screenshots,
     ]

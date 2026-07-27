@@ -1618,7 +1618,9 @@ export function installMockDesktopApi(): void {
       device_summary: "dev_000000000000",
       device_name: "Samsung SM-X936C",
       status: "active",
+      access_state: "online",
       created_at: new Date().toISOString(),
+      last_seen_at: new Date().toISOString(),
       revoked_at: null,
     }],
     revokeMobileAssociation: async (associationId) => ({
@@ -1627,7 +1629,9 @@ export function installMockDesktopApi(): void {
       device_summary: "dev_000000000000",
       device_name: "Samsung SM-X936C",
       status: "revoked",
+      access_state: "revoked",
       created_at: new Date().toISOString(),
+      last_seen_at: new Date().toISOString(),
       revoked_at: new Date().toISOString(),
     }),
     revokeMobileRuntimeEnrollment: async () => ({

@@ -26,8 +26,12 @@ const client = {
     return [{
       association_id: "assoc_00000000000000000000000000000000",
       subject_summary: "sub_000000000000",
+      device_summary: "dev_000000000000",
+      device_name: "Samsung SM-X936C",
       status: "active",
+      access_state: "online",
       created_at: new Date().toISOString(),
+      last_seen_at: new Date().toISOString(),
       revoked_at: null,
     }];
   },
@@ -35,8 +39,12 @@ const client = {
     return {
       association_id: associationId,
       subject_summary: "sub_000000000000",
+      device_summary: "dev_000000000000",
+      device_name: "Samsung SM-X936C",
       status: "revoked",
+      access_state: "revoked",
       created_at: new Date().toISOString(),
+      last_seen_at: new Date().toISOString(),
       revoked_at: new Date().toISOString(),
     };
   },

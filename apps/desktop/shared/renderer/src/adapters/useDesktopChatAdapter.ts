@@ -104,6 +104,7 @@ export function useDesktopChatAdapter({
   threadSnapshot,
   workspaceInstructions,
   workspaceId,
+  workspaceName,
   workspacePath,
 }: {
   availableAgents?: DesktopAgent[];
@@ -121,6 +122,7 @@ export function useDesktopChatAdapter({
   threadSnapshot?: ChatThreadSnapshot | null;
   workspaceInstructions?: WorkspaceInstructionSummary[];
   workspaceId?: string;
+  workspaceName?: string;
   workspacePath?: string;
 }): DesktopChatAdapter {
   const [input, setInput] = useState("");
@@ -549,6 +551,7 @@ export function useDesktopChatAdapter({
         sessionId: threadIdRef.current,
         runId: requestId,
         workspaceId,
+        workspaceName,
         workspacePath,
         attachments,
         model: options?.model?.trim() || undefined,
@@ -567,7 +570,7 @@ export function useDesktopChatAdapter({
         },
         messages: buildRequestMessages(
           [...messages, userMessage]
-            .filter((message) => !message.error && message.content.trim().length > 0)
+            .filter((message) => message.id !== "welcome" && !message.error && message.content.trim().length > 0)
             .map(({ role, content }) => ({ role, content })),
           workspaceInstructions,
           projectMemoryRef.current,

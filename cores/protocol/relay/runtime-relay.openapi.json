@@ -70,6 +70,18 @@
         "title": "AccessGrantStatusResult",
         "type": "object"
       },
+      "AssociationPresenceRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "accessing": {
+            "default": false,
+            "title": "Accessing",
+            "type": "boolean"
+          }
+        },
+        "title": "AssociationPresenceRequest",
+        "type": "object"
+      },
       "AssociationRequest": {
         "additionalProperties": false,
         "properties": {
@@ -137,6 +149,11 @@
       "AssociationResult": {
         "additionalProperties": false,
         "properties": {
+          "access_state": {
+            "pattern": "^(online|offline|accessing|revoked)$",
+            "title": "Access State",
+            "type": "string"
+          },
           "association_id": {
             "title": "Association Id",
             "type": "string"
@@ -157,6 +174,18 @@
             "pattern": "^dev_[0-9a-f]{12}$",
             "title": "Device Summary",
             "type": "string"
+          },
+          "last_seen_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen At"
           },
           "revoked_at": {
             "anyOf": [
@@ -192,6 +221,7 @@
           "device_summary",
           "device_name",
           "status",
+          "access_state",
           "created_at"
         ],
         "title": "AssociationResult",
@@ -802,6 +832,64 @@
           }
         },
         "summary": "Revoke User Association"
+      }
+    },
+    "/v1/associations/{runtime_id}/presence": {
+      "post": {
+        "operationId": "record_user_association_presence_v1_associations__runtime_id__presence_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-relay-device-id",
+            "required": true,
+            "schema": {
+              "title": "X-Relay-Device-Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssociationPresenceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssociationResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Record User Association Presence"
       }
     },
     "/v1/runtime-connections/{runtime_id}/heartbeat": {

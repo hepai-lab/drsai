@@ -285,7 +285,7 @@ class GatewayRuntimeControlHandler:
         return [{
             "runtime_id": self.runtime_id,
             "workspace_id": str(item["workspace_id"]),
-            "display_name": Path(str(item["path"])).name or str(item["workspace_id"]),
+            "display_name": str(item.get("display_name") or item["workspace_id"]),
             "lifecycle": item.get("lifecycle") or ("active" if item.get("open", True) else "archived"),
             "revision": int(item.get("revision") or 1),
             "updated_at": item.get("updated_at") or item.get("last_opened_at") or item.get("created_at"),

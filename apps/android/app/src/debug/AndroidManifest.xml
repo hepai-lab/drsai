@@ -9,5 +9,13 @@
                 <action android:name="ai.drsai.remote.debug.STABILITY_PROBE" />
             </intent-filter>
         </receiver>
+        <receiver
+            android:name=".remote.debug.SecurityCanaryProbeReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="ai.drsai.remote.debug.SECURITY_CANARY_PROBE" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

@@ -57,7 +57,9 @@ class MobileAssociation:
     device_summary: str
     device_name: str
     status: str
+    access_state: str
     created_at: datetime
+    last_seen_at: datetime | None = None
     revoked_at: datetime | None = None
 
     def public(self) -> dict[str, Any]:
@@ -67,7 +69,9 @@ class MobileAssociation:
             "device_summary": self.device_summary,
             "device_name": self.device_name,
             "status": self.status,
+            "access_state": self.access_state,
             "created_at": self.created_at.isoformat(),
+            "last_seen_at": self.last_seen_at.isoformat() if self.last_seen_at else None,
             "revoked_at": self.revoked_at.isoformat() if self.revoked_at else None,
         }
 
@@ -280,6 +284,7 @@ class AiohttpMobilePairingTransport:
                         self._raise_http(
                             response.status,
                             response.headers.get("X-Correlation-ID") or correlation_id,
+                            await self._error_code(response),
                         )
                     return await response.json()
         except MobilePairingError:
@@ -315,7 +320,11 @@ class AiohttpMobilePairingTransport:
                                                     "X-Correlation-ID": correlation_id},
                                            allow_redirects=False) as response:
                     if response.status >= 400:
-                        self._raise_http(response.status, response.headers.get("X-Correlation-ID") or correlation_id)
+                        self._raise_http(
+                            response.status,
+                            response.headers.get("X-Correlation-ID") or correlation_id,
+                            await self._error_code(response),
+                        )
                     body = await response.json()
         except MobilePairingError:
             raise
@@ -328,10 +337,55 @@ class AiohttpMobilePairingTransport:
         return self._decode(body, include_code)
 
     @staticmethod
-    def _raise_http(status: int, correlation_id: str | None = None) -> None:
-        if status in {401, 403}:
+    async def _error_code(response: Any) -> str | None:
+        try:
+            body = await response.json()
+        except Exception:
+            return None
+        if not isinstance(body, dict):
+            return None
+        candidates = [body]
+        for key in ("detail", "error"):
+            nested = body.get(key)
+            if isinstance(nested, dict):
+                candidates.append(nested)
+        for candidate in candidates:
+            value = candidate.get("code")
+            if (
+                isinstance(value, str)
+                and 2 <= len(value) <= 64
+                and value[0].islower()
+                and all(character.islower() or character.isdigit() or character == "_"
+                        for character in value)
+            ):
+                return value
+        return None
+
+    @staticmethod
+    def _raise_http(
+        status: int,
+        correlation_id: str | None = None,
+        server_code: str | None = None,
+    ) -> None:
+        if status == 401:
             raise MobilePairingError("runtime_credential_invalid", "Runtime Relay credential was rejected.",
                                      retryable=False, action="repair_runtime", correlation_id=correlation_id)
+        if status == 403:
+            if server_code == "fault_injection_disabled":
+                raise MobilePairingError(
+                    "fault_injection_disabled",
+                    "Runtime Relay fault injection is disabled.",
+                    retryable=False,
+                    action="enable_test_faults",
+                    correlation_id=correlation_id,
+                )
+            raise MobilePairingError(
+                "runtime_access_forbidden",
+                "Runtime Relay denied this operation.",
+                retryable=False,
+                action="check_runtime_access",
+                correlation_id=correlation_id,
+            )
         if status == 404:
             raise MobilePairingError("access_grant_not_found", "Access grant was not found.",
                                      retryable=False, action="refresh", correlation_id=correlation_id)
@@ -368,10 +422,15 @@ class AiohttpMobilePairingTransport:
         device_summary = str(body.get("device_summary", ""))
         device_name = str(body.get("device_name", ""))
         status = str(body.get("status", ""))
+        access_state = str(body.get("access_state", ""))
         try:
             created_at = datetime.fromisoformat(
                 str(body.get("created_at", "")).replace("Z", "+00:00")
             )
+            last_seen_raw = body.get("last_seen_at")
+            last_seen_at = datetime.fromisoformat(
+                str(last_seen_raw).replace("Z", "+00:00")
+            ) if last_seen_raw else None
             revoked_raw = body.get("revoked_at")
             revoked_at = datetime.fromisoformat(
                 str(revoked_raw).replace("Z", "+00:00")
@@ -385,6 +444,9 @@ class AiohttpMobilePairingTransport:
             or not 1 <= len(device_name) <= 128
             or not device_name.strip()
             or status not in {"active", "revoked"}
+            or access_state not in {"online", "offline", "accessing", "revoked"}
+            or (status == "active" and access_state == "revoked")
+            or (status == "revoked" and access_state != "revoked")
             or (status == "active" and revoked_at is not None)
             or (status == "revoked" and revoked_at is None)
         ):
@@ -395,7 +457,9 @@ class AiohttpMobilePairingTransport:
             device_summary=device_summary,
             device_name=device_name,
             status=status,
+            access_state=access_state,
             created_at=created_at,
+            last_seen_at=last_seen_at,
             revoked_at=revoked_at,
         )
 

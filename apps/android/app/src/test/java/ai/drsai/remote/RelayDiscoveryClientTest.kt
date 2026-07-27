@@ -7,6 +7,9 @@ import ai.drsai.remote.remote.data.associationErrorMessage
 import ai.drsai.remote.remote.data.compatibleWindowsRuntimeVersion
 import ai.drsai.remote.remote.model.RemoteConnectionState
 import ai.drsai.remote.remote.model.RuntimeId
+import ai.drsai.remote.remote.security.RelayAssociationDevice
+import ai.drsai.remote.remote.security.RelayDeviceProof
+import ai.drsai.remote.remote.security.RelayDeviceSigner
 import kotlinx.coroutines.test.runTest
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -50,6 +53,51 @@ class RelayDiscoveryClientTest {
         val empty = service.listWorkspaces(RuntimeId("rt-a"))
         assertTrue(empty.items.isEmpty())
         assertNull(empty.nextCursor)
+    }
+
+    @Test fun `catalog DTO ignores absolute paths process data and credentials`() = runTest {
+        server.enqueue(
+            MockResponse().setBody(
+                """
+                {"items":[{"runtime":{"runtime_id":"rt-a","instance_id":"boot","version":"1.5.3",
+                "protocol_version":"2.0.0","status":"online","connection_generation":1,
+                "last_seen_at":"2026-07-28T00:00:00Z","pid":4242,"internal_port":18642,
+                "credential":"runtime-secret"},"display_name":"Office",
+                "windows_path":"C:\\Users\\private"}],"next_cursor":null}
+                """.trimIndent(),
+            )
+        )
+        server.enqueue(
+            MockResponse().setBody(
+                """
+                {"items":[{"runtime_id":"rt-a","workspace_id":"ws","display_name":"Project",
+                "lifecycle":"active","revision":1,"updated_at":"2026-07-28T00:00:00Z",
+                "absolute_path":"C:\\Users\\private\\project","ssh_key":"secret"}],
+                "next_cursor":null}
+                """.trimIndent(),
+            )
+        )
+        val service = HttpRelayDiscoveryService(server.url("/").toString(), { "token" })
+
+        val runtime = service.listRuntimes().items.single()
+        val workspace = service.listWorkspaces(RuntimeId("rt-a")).items.single()
+        val projection = "$runtime $workspace"
+
+        assertEquals("2026-07-28T00:00:00Z", runtime.lastSeenAt)
+        assertEquals("Project", workspace.displayName)
+        assertEquals(false, projection.contains("C:\\Users"))
+        assertEquals(false, projection.contains("runtime-secret"))
+        assertEquals(false, projection.contains("18642"))
+        assertEquals(false, projection.contains("4242"))
+        assertEquals(
+            setOf(
+                "reference", "instanceId", "version", "protocolVersion",
+                "connectionGeneration", "state", "capabilities", "lastSeenAt",
+            ),
+            runtime::class.java.declaredFields.map { it.name }.filterNot {
+                it.startsWith("$")
+            }.toSet(),
+        )
     }
 
     @Test fun `runtime compatibility follows the version declared by the connected windows owner`() {
@@ -203,6 +251,68 @@ class RelayDiscoveryClientTest {
         }
     }
 
+    @Test fun `foreground heartbeat uses signed association proof and strict false body`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(
+            """
+            {"association_id":"association-one","runtime_id":"runtime-one","status":"active",
+            "access_state":"accessing","last_seen_at":"2026-07-28T01:02:03Z"}
+            """.trimIndent()
+        ))
+        val service = HttpRelayDiscoveryService(
+            server.url("/").toString(),
+            { "token" },
+            deviceProof = RelayDeviceProof(
+                CapturingSigner(),
+                epochSeconds = { 1_785_100_000L },
+                nonce = { "nonce-0123456789abcdef" },
+            ),
+        )
+
+        service.recordPresence(RuntimeId("runtime-one"), accessing = false)
+
+        server.takeRequest().apply {
+            assertEquals("POST", method)
+            assertEquals("/v1/associations/runtime-one/presence", path)
+            assertEquals("Bearer token", getHeader("Authorization"))
+            assertEquals("android.test-device", getHeader("X-Relay-Device-Id"))
+            assertEquals("1785100000", getHeader("X-Relay-Device-Timestamp"))
+            assertEquals("nonce-0123456789abcdef", getHeader("X-Relay-Device-Nonce"))
+            assertEquals(86, getHeader("X-Relay-Device-Signature")?.length)
+            assertEquals(false, JSONObject(body.readUtf8()).getBoolean("accessing"))
+        }
+    }
+
+    @Test fun `device presence refreshes oidc once and signs both attempts`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(401))
+        server.enqueue(MockResponse().setResponseCode(200).setBody("{}"))
+        var refreshes = 0
+        val service = HttpRelayDiscoveryService(
+            server.url("/").toString(),
+            { "expired-token" },
+            refreshAfter = {
+                refreshes += 1
+                "refreshed-token"
+            },
+            deviceProof = RelayDeviceProof(
+                CapturingSigner(),
+                epochSeconds = { 1_785_100_000L },
+                nonce = { "nonce-0123456789abcdef" },
+            ),
+        )
+
+        service.recordPresence(RuntimeId("runtime-one"), accessing = false)
+
+        assertEquals(1, refreshes)
+        listOf("Bearer expired-token", "Bearer refreshed-token").forEach { expectedBearer ->
+            server.takeRequest().apply {
+                assertEquals(expectedBearer, getHeader("Authorization"))
+                assertEquals("android.test-device", getHeader("X-Relay-Device-Id"))
+                assertEquals(86, getHeader("X-Relay-Device-Signature")?.length)
+                assertEquals(false, JSONObject(body.readUtf8()).getBoolean("accessing"))
+            }
+        }
+    }
+
     @Test fun `association revoke refreshes oidc once and preserves structured failure`() = runTest {
         server.enqueue(MockResponse().setResponseCode(401))
         server.enqueue(MockResponse().setResponseCode(403).setBody(
@@ -286,5 +396,15 @@ class RelayDiscoveryClientTest {
         assertEquals(RemoteConnectionState.ONLINE, runtime.state)
         assertEquals(7L, runtime.connectionGeneration)
         assertEquals(setOf("workspace.list", "session.list"), runtime.capabilities)
+    }
+
+    private class CapturingSigner : RelayDeviceSigner {
+        override val associationDevice = RelayAssociationDevice(
+            deviceId = "android.test-device",
+            deviceName = "Android test device",
+            devicePublicKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        )
+
+        override fun sign(message: ByteArray): ByteArray = ByteArray(64) { it.toByte() }
     }
 }

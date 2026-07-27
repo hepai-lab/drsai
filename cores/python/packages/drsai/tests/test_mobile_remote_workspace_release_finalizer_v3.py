@@ -188,6 +188,25 @@ def test_v3_finalizer_requires_complete_evidence_and_emits_digest_manifest(
     assert all(MODULE.DIGEST.fullmatch(row["sha256"]) for row in manifest["artifacts"])
 
 
+def test_v3_finalizer_expands_junit_directory_into_manifest(
+    tmp_path: Path,
+) -> None:
+    paths = list(evidence(tmp_path))
+    android_junit = paths[-2]
+    android_directory = tmp_path / "android-junit"
+    android_directory.mkdir()
+    moved = android_directory / "TEST-android.xml"
+    android_junit.replace(moved)
+    paths[-2] = android_directory
+
+    ledger, manifest = finalize(tuple(paths))
+
+    assert len(ledger["items"]) == 104
+    artifacts = {row["path"] for row in manifest["artifacts"]}
+    assert any(path.endswith("/TEST-android.xml") for path in artifacts)
+    assert str(android_directory) not in artifacts
+
+
 @pytest.mark.parametrize(
     ("report_index", "mutation", "error"),
     [

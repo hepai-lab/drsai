@@ -6,7 +6,14 @@ from pathlib import Path
 import sys
 
 
-MODULE_PATH = Path(__file__).parents[1] / "src" / "drsai" / "backend" / "structured_conversation.py"
+MODULE_PATH = (
+    Path(__file__).parents[1]
+    / "src"
+    / "drsai"
+    / "backend"
+    / "runtime"
+    / "conversation.py"
+)
 SPEC = importlib.util.spec_from_file_location("drsai_structured_conversation_test", MODULE_PATH)
 assert SPEC and SPEC.loader
 MODULE = importlib.util.module_from_spec(SPEC)

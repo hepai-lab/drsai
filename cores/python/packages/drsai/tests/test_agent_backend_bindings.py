@@ -8,7 +8,13 @@ import unittest
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[1] / "src" / "drsai" / "backend"
+ROOT = (
+    Path(__file__).resolve().parents[1]
+    / "src"
+    / "drsai"
+    / "backend"
+    / "runtime"
+)
 
 
 def load(name: str, filename: str):
@@ -20,7 +26,7 @@ def load(name: str, filename: str):
     return module
 
 
-bindings = load("agent_backend_bindings_under_test", "agent_backend_bindings.py")
+bindings = load("agent_backend_bindings_under_test", "agent_bindings.py")
 
 
 class AgentBackendBindingStoreTests(unittest.TestCase):

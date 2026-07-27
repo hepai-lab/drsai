@@ -42,9 +42,9 @@ def _session_event_kind(event_type: str) -> str:
         return "approval.decided"
     if event_type == "artifact.created":
         return "artifact.created"
-    if event_type in {"message.delta", "thinking.delta"}:
+    if event_type in {"message.delta", "agent.message.delta", "thinking.delta"}:
         return "conversation.item.delta"
-    if event_type in {"message.complete", "message.user"}:
+    if event_type in {"message.complete", "agent.completed", "message.user"}:
         return "conversation.item.upsert"
     return "session.updated"
 
@@ -316,15 +316,35 @@ class RuntimeEngine:
                 "JOIN runtime_runs r ON r.run_id=e.run_id "
                 "ORDER BY r.created_at,r.run_id,e.sequence"
             ).fetchall()
+            message_backfill_runs = {
+                str(row["run_id"])
+                for row in db.execute(
+                    "SELECT DISTINCT e.run_id FROM runtime_events e "
+                    "WHERE e.event_type IN ('agent.message.delta','agent.completed') "
+                    "AND NOT EXISTS ("
+                    "SELECT 1 FROM runtime_conversation_items i "
+                    "WHERE i.item_id='assistant:' || e.run_id"
+                    ")"
+                ).fetchall()
+            }
             for event in events:
                 dedupe_key = f"runtime-event:{event['event_id']}"
+                data = json.loads(str(event["data_json"]))
+                if str(event["run_id"]) in message_backfill_runs:
+                    changed = self._record_runtime_event_item_in_transaction(
+                        db,
+                        session_id=str(event["session_id"]),
+                        run_id=str(event["run_id"]),
+                        event_type=str(event["event_type"]),
+                        data=data,
+                        created_at=str(event["created_at"]),
+                    ) or changed
                 if db.execute(
                     "SELECT 1 FROM runtime_session_journal "
                     "WHERE session_id=? AND dedupe_key=?",
                     (event["session_id"], dedupe_key),
                 ).fetchone() is not None:
                     continue
-                data = json.loads(str(event["data_json"]))
                 _, created = self.conversation_journal.append_event_in_transaction(
                     db,
                     str(event["session_id"]),
@@ -1037,7 +1057,9 @@ class RuntimeEngine:
         item_kind: str
         role: str | None
         item_id: str
-        if event_type in {"message.delta", "message.complete"}:
+        message_delta_events = {"message.delta", "agent.message.delta"}
+        message_complete_events = {"message.complete", "agent.completed"}
+        if event_type in message_delta_events or event_type in message_complete_events:
             item_kind, role, item_id = "message", "assistant", f"assistant:{run_id}"
         elif event_type == "thinking.delta":
             item_kind, role, item_id = "reasoning", "assistant", f"reasoning:{run_id}"
@@ -1063,11 +1085,11 @@ class RuntimeEngine:
         revision = int(existing["revision"]) + 1 if existing is not None else 1
         prior = json.loads(str(existing["payload_json"])) if existing is not None else {}
         payload = {**prior, **data, "event_type": event_type}
-        if event_type in {"message.delta", "thinking.delta"}:
+        if event_type in message_delta_events or event_type == "thinking.delta":
             delta = str(data.get("text") or data.get("content") or data.get("delta") or "")
             payload["text"] = f"{prior.get('text', '')}{delta}"
             payload["status"] = "streaming"
-        elif event_type == "message.complete":
+        elif event_type in message_complete_events:
             final = str(data.get("text") or data.get("content") or "")
             payload["text"] = final or str(prior.get("text") or "")
             payload["status"] = "completed"
@@ -1089,7 +1111,7 @@ class RuntimeEngine:
             run_id=run_id,
             event_kind=(
                 "conversation.item.delta"
-                if event_type in {"message.delta", "thinking.delta"}
+                if event_type in message_delta_events or event_type == "thinking.delta"
                 else None
             ),
             updated_at=created_at,

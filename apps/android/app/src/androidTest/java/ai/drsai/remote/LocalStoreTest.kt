@@ -28,6 +28,7 @@ import ai.drsai.remote.remote.data.RemoteRunEntity
 import ai.drsai.remote.remote.data.RemoteWorkspaceEntity
 import ai.drsai.remote.remote.data.RemoteSessionEntity
 import ai.drsai.remote.remote.data.RemoteProcessRecovery
+import ai.drsai.remote.remote.data.RoomRemoteDirectoryCache
 import ai.drsai.remote.remote.data.WorkspaceInstructionVersionStore
 import ai.drsai.remote.remote.model.RuntimeId
 import ai.drsai.remote.remote.model.WorkspaceId
@@ -129,6 +130,45 @@ class LocalStoreTest {
         RemoteCacheRepository(database).clearSubject("alice")
         assertTrue(dao.runtimes("alice", "ihep").isEmpty())
         assertEquals(listOf("bob"), dao.runtimes("bob", "ihep").map { it.subject })
+    }
+
+    @Test fun authoritativeEmptyDeviceCatalogPurgesHostWorkspaceAndSessionProjections() = runBlocking {
+        val dao = database.remoteDao()
+        dao.saveRuntimes(
+            listOf(
+                RemoteRuntimeEntity(
+                    "alice", "", "runtime-a", "Computer", "instance", "1.5.3",
+                    "ONLINE", "[]", 1, false,
+                )
+            )
+        )
+        dao.saveWorkspaces(
+            listOf(
+                RemoteWorkspaceEntity(
+                    "alice", "", "runtime-a", "workspace-a", "Project",
+                    1, false,
+                )
+            )
+        )
+        dao.saveSessions(
+            listOf(
+                RemoteSessionEntity(
+                    "alice", "", "runtime-a", "workspace-a", "session-a",
+                    "Conversation", "opendrsai", 1, false,
+                )
+            )
+        )
+
+        RoomRemoteDirectoryCache(database).reconcileRuntimes(
+            subject = "alice",
+            organization = "",
+            runtimes = emptyList(),
+            syncedAt = 2,
+        )
+
+        assertTrue(dao.runtimes("alice", "").isEmpty())
+        assertTrue(dao.workspaces("alice", "", "runtime-a").isEmpty())
+        assertTrue(dao.sessions("alice", "", "runtime-a", "workspace-a").isEmpty())
     }
 
     @Test fun runtime_v2_journal_atomically_persists_event_and_checkpoint() = runBlocking {

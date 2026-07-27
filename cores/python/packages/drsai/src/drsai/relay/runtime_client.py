@@ -106,7 +106,7 @@ class RuntimeOutboundConnector:
                  ] | None = None,
                  event_provider: Callable[[], Awaitable[list[dict[str, Any]]]] | None = None,
                  session_event_provider: Callable[[], Awaitable[list[dict[str, Any]]]] | None = None,
-                 workspace_provider: Callable[[], Awaitable[list[dict[str, str]]]] | None = None,
+                 workspace_provider: Callable[[], Awaitable[list[dict[str, Any]]]] | None = None,
                  backend_health: dict[str, str] | None = None,
                  wire_protocol: str = "legacy-operation") -> None:
         parsed = urlparse(relay_wss_url)
@@ -119,6 +119,9 @@ class RuntimeOutboundConnector:
         self.event_provider = event_provider
         self.session_event_provider = session_event_provider
         self.workspace_provider = workspace_provider
+        self._workspace_dirty = asyncio.Event()
+        self._workspace_revision = 0
+        self._workspace_published_revision = -1
         self.backend_health = dict(backend_health or {})
         if wire_protocol not in {"legacy-operation", "hai-http"}:
             raise ValueError("runtime_wire_protocol_invalid")
@@ -144,6 +147,8 @@ class RuntimeOutboundConnector:
                 if self.wire_protocol == "hai-http":
                     await socket.send_json({"type": "heartbeat", "timestamp": time.time()})
                     background_tasks.append(asyncio.create_task(self._send_heartbeats(socket)))
+                    if self.workspace_provider is not None:
+                        background_tasks.append(asyncio.create_task(self._forward_workspaces(socket)))
                     if self.event_provider is not None:
                         background_tasks.append(asyncio.create_task(self._forward_events(socket)))
                     if self.session_event_provider is not None:
@@ -165,8 +170,12 @@ class RuntimeOutboundConnector:
                             if payload.get("type") == "ping":
                                 await socket.send_json({"type": "pong", "request_id": payload.get("request_id")})
                             elif payload.get("type") == "runtime.connected" and self.workspace_provider is not None:
-                                await socket.send_json({"type": "runtime.workspaces",
-                                                        "workspaces": await self.workspace_provider()})
+                                await self._try_publish_workspaces(socket)
+                                if not any(task.get_name() == "runtime-workspaces" for task in background_tasks):
+                                    background_tasks.append(asyncio.create_task(
+                                        self._forward_workspaces(socket, publish_initial=False),
+                                        name="runtime-workspaces"
+                                    ))
                             elif payload.get("type") == "runtime.request":
                                 await self._handle_request(socket, payload)
                             elif payload.get("type") == "request":
@@ -184,6 +193,42 @@ class RuntimeOutboundConnector:
         while True:
             await asyncio.sleep(15)
             await socket.send_json({"type": "heartbeat", "timestamp": time.time()})
+
+    def mark_workspaces_dirty(self) -> None:
+        if self.workspace_provider is None:
+            return
+        self._workspace_revision += 1
+        self._workspace_dirty.set()
+
+    async def _try_publish_workspaces(self, socket: Any) -> bool:
+        if self.workspace_provider is None:
+            return True
+        target_revision = self._workspace_revision
+        try:
+            workspaces = await self.workspace_provider()
+            await socket.send_json({"type": "runtime.workspaces", "workspaces": workspaces})
+        except Exception:
+            self._workspace_dirty.set()
+            return False
+        if self._workspace_revision == target_revision:
+            self._workspace_published_revision = target_revision
+            self._workspace_dirty.clear()
+        else:
+            self._workspace_dirty.set()
+        return True
+
+    async def _forward_workspaces(self, socket: Any, *, publish_initial: bool = True) -> None:
+        if publish_initial:
+            await self._try_publish_workspaces(socket)
+        retry_delay = 0.5
+        while True:
+            await self._workspace_dirty.wait()
+            await asyncio.sleep(0.05)
+            if await self._try_publish_workspaces(socket):
+                retry_delay = 0.5
+            else:
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, 10.0)
 
     async def _forward_events(self, socket: Any) -> None:
         while True:

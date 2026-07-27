@@ -211,6 +211,57 @@ def test_conversation_projection_uses_authoritative_input_and_stable_cursor(engi
     assert stored["attachment_refs"] == ["artifact-one"]
 
 
+def test_agent_events_project_to_assistant_message_snapshot(engine: RuntimeEngine) -> None:
+    session = engine.create_session(
+        "workspace-one",
+        agent_definition="opendrsai@1",
+        backend_id="opendrsai",
+    )
+    run, _ = engine.create_run(session["session_id"], "opendrsai@1", "agent-projection-key")
+    engine.append_event(run["run_id"], "agent.message.delta", {"delta": "hello "})
+    engine.append_event(run["run_id"], "agent.message.delta", {"content": "world"})
+    engine.append_event(run["run_id"], "agent.completed", {"content": "hello world"})
+
+    snapshot = engine.conversation_snapshot(session["session_id"])
+    assistant = next(item for item in snapshot["items"] if item["item_id"] == f"assistant:{run['run_id']}")
+    assert assistant["kind"] == "message"
+    assert assistant["role"] == "assistant"
+    assert assistant["payload"]["text"] == "hello world"
+    assert assistant["payload"]["status"] == "completed"
+
+
+def test_reconcile_backfills_missing_agent_message_projection(engine: RuntimeEngine) -> None:
+    session = engine.create_session(
+        "workspace-one",
+        agent_definition="opendrsai@1",
+        backend_id="opendrsai",
+    )
+    run, _ = engine.create_run(session["session_id"], "opendrsai@1", "agent-backfill-key")
+    with engine._connect() as db:
+        db.execute(
+            "INSERT INTO runtime_events(event_id,run_id,sequence,event_type,data_json,created_at,backend_event_key) "
+            "VALUES(?,?,?,?,?,?,NULL)",
+            ("legacy-agent-delta", run["run_id"], 2, "agent.message.delta", '{"delta":"restored "}', "2026-07-01T00:00:01Z"),
+        )
+        db.execute(
+            "INSERT INTO runtime_events(event_id,run_id,sequence,event_type,data_json,created_at,backend_event_key) "
+            "VALUES(?,?,?,?,?,?,NULL)",
+            ("legacy-agent-completed", run["run_id"], 3, "agent.completed", '{"content":"restored answer"}', "2026-07-01T00:00:02Z"),
+        )
+
+    restored = RuntimeEngine(
+        engine.database,
+        RuntimeEngineIdentity("runtime-test", "instance-one"),
+        lambda workspace_id: workspace_id in {"workspace-one", "workspace-two"},
+        lambda workspace_id: "worktree-two" if workspace_id == "workspace-two" else None,
+    )
+
+    snapshot = restored.conversation_snapshot(session["session_id"])
+    assistant = next(item for item in snapshot["items"] if item["item_id"] == f"assistant:{run['run_id']}")
+    assert assistant["payload"]["text"] == "restored answer"
+    assert assistant["payload"]["status"] == "completed"
+
+
 @pytest.mark.parametrize("decision,expected", [("approved", "running"), ("denied", "cancelled"), ("timeout", "failed")])
 def test_approval_paths(engine: RuntimeEngine, decision: str, expected: str) -> None:
     session = engine.create_session("workspace-one")

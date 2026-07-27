@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -75,6 +76,8 @@ data class RemoteComputerUi(
     val instanceId: String = "",
     val connectionGeneration: Long = 0,
     val pendingApprovalCount: Int = 0,
+    val workspacesCached: Boolean = false,
+    val lastSyncedAtMillis: Long? = null,
 )
 
 data class RemoteHomeUiState(
@@ -85,6 +88,7 @@ data class RemoteHomeUiState(
     val stale: Boolean = false,
     val error: String? = null,
     val recentlyAssociatedRuntimeId: RuntimeId? = null,
+    val refreshingRuntimeIds: Set<RuntimeId> = emptySet(),
 )
 
 @Composable
@@ -94,6 +98,7 @@ fun RemoteHomeScreen(
     onAssociate: () -> Unit,
     onRefresh: () -> Unit,
     onOpenWorkspace: (RemoteWorkspaceRef) -> Unit,
+    onRefreshWorkspaces: (RuntimeId) -> Unit = {},
     onRevokeAssociation: (RuntimeId) -> Unit = {},
     onQueryChange: (String) -> Unit = {},
     modifier: Modifier = Modifier,
@@ -102,7 +107,12 @@ fun RemoteHomeScreen(
         when {
             state.loading && state.computers.isEmpty() -> RemoteLoadingState(Modifier.align(Alignment.Center))
             state.computers.isEmpty() -> RemoteEmptyState(onAssociate, Modifier.align(Alignment.Center))
-            else -> RemoteComputerList(state, onOpenWorkspace, onRevokeAssociation)
+            else -> RemoteComputerList(
+                state,
+                onOpenWorkspace,
+                onRevokeAssociation,
+                onRefreshWorkspaces,
+            )
         }
 
         Column(
@@ -237,6 +247,7 @@ private fun RemoteComputerList(
     state: RemoteHomeUiState,
     onOpenWorkspace: (RemoteWorkspaceRef) -> Unit,
     onRevokeAssociation: (RuntimeId) -> Unit,
+    onRefreshWorkspaces: (RuntimeId) -> Unit,
 ) {
     LazyColumn(
         Modifier.fillMaxSize().padding(start = 12.dp, end = 12.dp, top = 146.dp, bottom = 24.dp),
@@ -248,6 +259,8 @@ private fun RemoteComputerList(
                 computer.runtimeId == state.recentlyAssociatedRuntimeId,
                 onOpenWorkspace,
                 onRevokeAssociation,
+                onRefreshWorkspaces,
+                computer.runtimeId in state.refreshingRuntimeIds,
             )
         }
     }
@@ -259,6 +272,8 @@ private fun RemoteComputerCard(
     recentlyAssociated: Boolean,
     onOpenWorkspace: (RemoteWorkspaceRef) -> Unit,
     onRevokeAssociation: (RuntimeId) -> Unit,
+    onRefreshWorkspaces: (RuntimeId) -> Unit,
+    refreshingWorkspaces: Boolean,
 ) {
     var expanded by remember(computer.runtimeId) { mutableStateOf(true) }
     var menuOpen by remember(computer.runtimeId) { mutableStateOf(false) }
@@ -282,6 +297,14 @@ private fun RemoteComputerCard(
                         Text("刚刚关联", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                     }
                     RemoteConnectionIndicator(computer.state, computer.lastSeenLabel)
+                    if (computer.workspacesCached && computer.state != RemoteConnectionState.OFFLINE) {
+                        Text(
+                            computer.lastSeenLabel.takeIf(String::isNotBlank)
+                                ?: "缓存的工作区目录",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     if (computer.version.isNotBlank()) {
                         Text(
                             "OpenDrSai ${computer.version}",
@@ -294,7 +317,28 @@ private fun RemoteComputerCard(
                     Text("待确认 ${computer.pendingApprovalCount}", color = MaterialTheme.colorScheme.error)
                     Spacer(Modifier.width(8.dp))
                 }
-                Icon(if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, if (expanded) "收起工作区" else "展开工作区")
+                IconButton(
+                    enabled = !refreshingWorkspaces,
+                    onClick = { onRefreshWorkspaces(computer.runtimeId) },
+                ) {
+                    if (refreshingWorkspaces) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        Icon(
+                            Icons.Default.Refresh,
+                            "刷新 ${computer.displayName} 的工作区",
+                        )
+                    }
+                }
+                IconButton(onClick = { expanded = !expanded }) {
+                    Icon(
+                        if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        if (expanded) "收起工作区" else "展开工作区",
+                    )
+                }
                 Box {
                     IconButton(onClick = { menuOpen = true }) {
                         Icon(Icons.Default.MoreVert, "计算机操作")
@@ -390,7 +434,7 @@ private fun RemoteConnectionIndicator(
         RemoteConnectionState.ONLINE -> lastSeenLabel.takeUnless {
             it.isBlank() || it == "在线"
         }
-        RemoteConnectionState.OFFLINE -> null
+        RemoteConnectionState.OFFLINE -> lastSeenLabel.takeIf(String::isNotBlank) ?: "离线"
         RemoteConnectionState.CONNECTING -> "连接中…"
         RemoteConnectionState.DEGRADED -> "连接异常"
         RemoteConnectionState.AUTH_REQUIRED -> "需要登录"

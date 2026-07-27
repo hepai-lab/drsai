@@ -35,6 +35,7 @@ class RuntimeIdentity:
 class WorkspaceRecord:
     workspace_id: str
     path: str
+    display_name: str
     created_at: str
     last_opened_at: str
     closed_at: str | None
@@ -51,6 +52,7 @@ class WorkspaceRecord:
         return {
             "workspace_id": self.workspace_id,
             "path": self.path,
+            "display_name": self.display_name,
             "created_at": self.created_at,
             "last_opened_at": self.last_opened_at,
             "closed_at": self.closed_at,
@@ -189,11 +191,32 @@ class RuntimeRegistry:
                 connection.execute("ALTER TABLE workspaces ADD COLUMN updated_at TEXT")
             if "removed_at" not in columns:
                 connection.execute("ALTER TABLE workspaces ADD COLUMN removed_at TEXT")
+            if "display_name" not in columns:
+                connection.execute("ALTER TABLE workspaces ADD COLUMN display_name TEXT")
             connection.execute(
                 "UPDATE workspaces SET lifecycle=CASE WHEN closed_at IS NULL THEN 'active' ELSE 'archived' END "
                 "WHERE lifecycle IS NULL OR lifecycle NOT IN ('active','archived','removed') "
                 "OR (lifecycle='active' AND closed_at IS NOT NULL)"
             )
+            connection.execute(
+                "UPDATE workspaces SET display_name=TRIM(COALESCE(display_name,''))"
+            )
+            connection.execute(
+                "UPDATE workspaces SET display_name=NULL WHERE display_name=''"
+            )
+            connection.execute(
+                "UPDATE workspaces SET display_name=? WHERE display_name IS NULL AND canonical_path=''",
+                ("Workspace",),
+            )
+            rows = connection.execute(
+                "SELECT workspace_id,canonical_path FROM workspaces WHERE display_name IS NULL"
+            ).fetchall()
+            for row in rows:
+                fallback = Path(str(row["canonical_path"])).name or str(row["workspace_id"])
+                connection.execute(
+                    "UPDATE workspaces SET display_name=? WHERE workspace_id=? AND display_name IS NULL",
+                    (self._fallback_display_name(fallback, str(row["workspace_id"])), row["workspace_id"]),
+                )
             connection.execute(
                 "UPDATE workspaces SET updated_at=COALESCE(updated_at,last_opened_at,created_at)"
             )
@@ -227,29 +250,68 @@ class RuntimeRegistry:
             raise ValueError("Workspace path must be a directory")
         return canonical
 
-    def open_workspace(self, path: str, *, cwd: Path | None = None, home: Path | None = None) -> WorkspaceRecord:
+    @staticmethod
+    def _sanitize_display_name(value: str) -> str:
+        normalized = " ".join(str(value or "").split())
+        if not normalized or len(normalized) > 120 or "\x00" in normalized or "\r" in normalized or "\n" in normalized:
+            raise ValueError("Invalid workspace display name")
+        return normalized
+
+    @staticmethod
+    def _fallback_display_name(value: str, workspace_id: str) -> str:
+        normalized = " ".join(str(value or "").replace("\x00", "").split())
+        return (normalized[:120].strip() or workspace_id[:120] or "Workspace")
+
+    def open_workspace(
+        self,
+        path: str,
+        *,
+        display_name: str | None = None,
+        cwd: Path | None = None,
+        home: Path | None = None,
+    ) -> WorkspaceRecord:
         canonical = str(self.canonical_path(path, cwd=cwd, home=home))
         opened_at = _now()
+        safe_display_name = self._sanitize_display_name(display_name) if display_name is not None else None
         with self._lock, self._connect() as connection:
             row = connection.execute("SELECT * FROM workspaces WHERE canonical_path=?", (canonical,)).fetchone()
             if row:
                 revision = int(row["revision"]) + 1
+                next_display_name = safe_display_name or str(row["display_name"])
                 connection.execute(
                     "UPDATE workspaces SET last_opened_at=?, closed_at=NULL, lifecycle='active', "
-                    "revision=?, updated_at=?, removed_at=NULL WHERE workspace_id=?",
-                    (opened_at, revision, opened_at, row["workspace_id"]),
+                    "display_name=?, revision=?, updated_at=?, removed_at=NULL WHERE workspace_id=?",
+                    (opened_at, next_display_name, revision, opened_at, row["workspace_id"]),
                 )
                 return WorkspaceRecord(
-                    str(row["workspace_id"]), canonical, str(row["created_at"]), opened_at, None,
+                    str(row["workspace_id"]), canonical, next_display_name, str(row["created_at"]), opened_at, None,
                     "active", revision, opened_at, None,
                 )
             workspace_id = f"workspace-{uuid.uuid4()}"
+            next_display_name = safe_display_name or self._sanitize_display_name(Path(canonical).name or workspace_id)
             connection.execute(
                 "INSERT INTO workspaces(workspace_id, canonical_path, created_at, last_opened_at, closed_at, "
-                "lifecycle, revision, updated_at, removed_at) VALUES(?, ?, ?, ?, NULL, 'active', 1, ?, NULL)",
-                (workspace_id, canonical, opened_at, opened_at, opened_at),
+                "display_name, lifecycle, revision, updated_at, removed_at) VALUES(?, ?, ?, ?, NULL, ?, 'active', 1, ?, NULL)",
+                (workspace_id, canonical, opened_at, opened_at, next_display_name, opened_at),
             )
-            return WorkspaceRecord(workspace_id, canonical, opened_at, opened_at, None, "active", 1, opened_at, None)
+            return WorkspaceRecord(workspace_id, canonical, next_display_name, opened_at, opened_at, None, "active", 1, opened_at, None)
+
+    def update_workspace_display_name(self, workspace_id: str, display_name: str) -> WorkspaceRecord:
+        safe_display_name = self._sanitize_display_name(display_name)
+        updated_at = _now()
+        with self._lock, self._connect() as connection:
+            row = connection.execute("SELECT * FROM workspaces WHERE workspace_id=?", (workspace_id,)).fetchone()
+            if not row:
+                raise KeyError("Workspace not found")
+            if str(row["display_name"]) != safe_display_name:
+                connection.execute(
+                    "UPDATE workspaces SET display_name=?, revision=revision+1, updated_at=? WHERE workspace_id=?",
+                    (safe_display_name, updated_at, workspace_id),
+                )
+        record = self.get_workspace(workspace_id, include_closed=True)
+        if record is None:
+            raise KeyError("Workspace not found")
+        return record
 
     def get_workspace(self, workspace_id: str, *, include_closed: bool = False) -> WorkspaceRecord | None:
         with self._lock, self._connect() as connection:
@@ -510,6 +572,9 @@ class RuntimeRegistry:
         return WorkspaceRecord(
             str(row["workspace_id"]),
             str(row["canonical_path"]),
+            str(row["display_name"]) if "display_name" in row.keys() and row["display_name"] is not None else (
+                Path(str(row["canonical_path"])).name or str(row["workspace_id"])
+            ),
             str(row["created_at"]),
             str(row["last_opened_at"]),
             str(row["closed_at"]) if row["closed_at"] is not None else None,

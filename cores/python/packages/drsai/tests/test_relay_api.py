@@ -127,9 +127,23 @@ def test_association_and_enrollment_revocation_are_scoped_and_redacted() -> None
     ).json()
     assert len(associations) == 1
     assert associations[0]["status"] == "active"
+    assert associations[0]["access_state"] == "online"
+    assert associations[0]["last_seen_at"]
     assert associations[0]["device_summary"].startswith("dev_")
     assert associations[0]["device_name"] == "Android Test Device"
     assert "alice" not in json.dumps(associations)
+
+    presence = client.post(
+        f"/v1/associations/{runtime_id}/presence",
+        headers={
+            "x-subject": "alice",
+            "x-relay-device-id": "android-device-0001",
+        },
+        json={"accessing": True},
+    )
+    assert presence.status_code == 200
+    assert presence.json()["access_state"] == "accessing"
+    assert "android-device-0001" not in json.dumps(presence.json())
 
     revoked = client.delete(
         f"/v1/associations/{runtime_id}",
@@ -325,6 +339,54 @@ def test_runtime_establishes_authenticated_outbound_websocket() -> None:
     )
     workspaces, _ = client.app.state.registry.list_workspaces("alice", runtime_id)
     assert [item.workspace_id for item in workspaces] == ["workspace-one"]
+
+
+def test_runtime_workspace_catalog_from_old_generation_is_ignored() -> None:
+    client = TestClient(_testing_app())
+    private, runtime_id, token = register(client)
+    _, code, _ = client.app.state.registry.issue_access_grant(runtime_id, token)
+    device = association_body(code)
+    client.app.state.registry.associate(
+        "alice",
+        code,
+        device["device_id"],
+        device["device_name"],
+        device["device_public_key"],
+    )
+
+    def hello(instance: str, nonce: str) -> dict[str, object]:
+        return {
+            "type": "runtime.hello",
+            "runtime_id": runtime_id,
+            "instance_id": instance,
+            "version": "1.4.6",
+            "protocol_version": PROTOCOL_VERSION,
+            "capabilities": sorted(CAPABILITIES),
+            "backend_health": {},
+            "nonce": nonce,
+            "signature": encoded(private.sign(f"{runtime_id}\n{instance}\n{nonce}".encode())),
+        }
+
+    with client.websocket_connect("/v1/runtime-connect", headers={"authorization": f"Runtime {token}"}) as stale:
+        stale.send_json(hello("ws-stale", "nonce-stale"))
+        assert stale.receive_json()["type"] == "runtime.connected"
+        with client.websocket_connect("/v1/runtime-connect", headers={"authorization": f"Runtime {token}"}) as current:
+            current.send_json(hello("ws-current", "nonce-current"))
+            assert current.receive_json()["type"] == "runtime.connected"
+            stale.send_json({"type": "runtime.workspaces", "workspaces": [{
+                "runtime_id": runtime_id, "workspace_id": "stale-workspace", "display_name": "Stale",
+            }]})
+            current.send_json({"type": "runtime.workspaces", "workspaces": [{
+                "runtime_id": runtime_id, "workspace_id": "current-workspace", "display_name": "Current",
+            }]})
+            deadline = time.time() + 1
+            while True:
+                workspaces, _ = client.app.state.registry.list_workspaces("alice", runtime_id)
+                if [item.workspace_id for item in workspaces] == ["current-workspace"]:
+                    break
+                if time.time() > deadline:
+                    assert [item.workspace_id for item in workspaces] == ["current-workspace"]
+                time.sleep(0.01)
 
 
 def test_runtime_websocket_rejects_unauthenticated_client() -> None:

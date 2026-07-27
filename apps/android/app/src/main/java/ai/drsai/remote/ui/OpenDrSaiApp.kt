@@ -485,6 +485,7 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
                                 }
                         },
                         onRefresh = { remoteViewModel.refresh() },
+                        onRefreshWorkspaces = remoteViewModel::refreshWorkspaces,
                         onQueryChange = remoteViewModel::updateQuery,
                         onRevokeAssociation = remoteViewModel::revokeAssociation,
                         onOpenWorkspace = { workspace ->

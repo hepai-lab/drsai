@@ -45,6 +45,8 @@ class _Association:
     device_name: str
     device_public_key: bytes
     created_at: datetime
+    last_seen_at: datetime | None = None
+    accessing_until: datetime | None = None
     revoked_at: datetime | None = None
 
 
@@ -230,6 +232,7 @@ class RelayRegistry:
             ticket.consumed_subject_summary = summary
             association_key = (subject, device_id)
             existing = runtime.associations.get(association_key)
+            now = datetime.now(UTC)
             if existing is None or existing.revoked_at is not None:
                 runtime.associations[association_key] = _Association(
                     association_id=f"assoc_{uuid4().hex}",
@@ -239,14 +242,27 @@ class RelayRegistry:
                     device_summary=self._device_summary(subject, device_id),
                     device_name=safe_device_name,
                     device_public_key=public_key,
-                    created_at=datetime.now(UTC),
+                    created_at=now,
+                    last_seen_at=now,
                 )
+            else:
+                existing.device_name = safe_device_name
+                existing.last_seen_at = now
             runtime.subjects.add(subject)
             self.audit.append({"action": "runtime.associate", "runtime_id": runtime.runtime_id, "subject": subject})
             return runtime.runtime_id
 
-    @staticmethod
-    def _association_result(runtime_id: str, association: _Association) -> dict[str, str | None]:
+    def _association_access_state(self, association: _Association) -> str:
+        now = datetime.now(UTC)
+        if association.revoked_at is not None:
+            return "revoked"
+        if association.accessing_until is not None and association.accessing_until > now:
+            return "accessing"
+        if association.last_seen_at is not None and now - association.last_seen_at <= self.offline_after:
+            return "online"
+        return "offline"
+
+    def _association_result(self, runtime_id: str, association: _Association) -> dict[str, str | None]:
         return {
             "association_id": association.association_id,
             "runtime_id": runtime_id,
@@ -254,9 +270,35 @@ class RelayRegistry:
             "device_summary": association.device_summary,
             "device_name": association.device_name,
             "status": "revoked" if association.revoked_at is not None else "active",
+            "access_state": self._association_access_state(association),
             "created_at": association.created_at.isoformat(),
+            "last_seen_at": association.last_seen_at.isoformat() if association.last_seen_at else None,
             "revoked_at": association.revoked_at.isoformat() if association.revoked_at else None,
         }
+
+    def record_device_presence(
+        self,
+        subject: str,
+        runtime_id: str,
+        device_id: str,
+        *,
+        accessing: bool = False,
+    ) -> dict[str, str | None]:
+        with self._lock:
+            runtime = self._require_runtime(runtime_id)
+            association = runtime.associations.get((subject, device_id))
+            if association is None or association.revoked_at is not None:
+                raise RelayRegistryError("association_required", "Runtime association is not active")
+            now = datetime.now(UTC)
+            association.last_seen_at = now
+            if accessing:
+                association.accessing_until = now + timedelta(seconds=30)
+            self.audit.append({
+                "action": "runtime.association.presence",
+                "runtime_id": runtime_id,
+                "association_id": association.association_id,
+            })
+            return self._association_result(runtime_id, association)
 
     def revoke_association(
         self,

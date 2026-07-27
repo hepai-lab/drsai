@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import androidx.work.WorkManager
+import ai.drsai.remote.remote.data.AndroidDevicePresence
 import ai.drsai.remote.data.AppDestination
 import ai.drsai.remote.data.AppState
 import ai.drsai.remote.data.AssociationState
@@ -306,6 +307,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 oidcSession = null
                 tokenStore.save(auth)
                 tokenStore.oidcClientId = session.transaction.clientId
+                AndroidDevicePresence.authenticationChanged()
                 loadWorkspace(auth.user)
                 consumePendingAssociation()
             }
@@ -442,7 +444,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         associationJob = viewModelScope.launch(Dispatchers.IO) {
             update { it.copy(associationState = AssociationState.ASSOCIATING, error = null) }
             runCatching { relayDiscovery.associate(code) }
-                .onSuccess {
+                .onSuccess { runtimeId ->
+                    runCatching { relayDiscovery.recordPresence(runtimeId) }
                     pendingAssociationCode = null
                     update {
                         it.copy(
@@ -1300,6 +1303,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun setTheme(value: Boolean?) = update { it.copy(darkTheme = value) }
 
     fun logout() {
+        AndroidDevicePresence.logout()
         val remoteSubject = mutableState.value.user?.id
         remoteSubject?.let(RemoteSubscriptionRegistry::cancelSubject)
         activeRunId?.let { runId ->

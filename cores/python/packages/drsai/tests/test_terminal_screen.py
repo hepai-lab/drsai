@@ -6,7 +6,15 @@ import sys
 from pathlib import Path
 
 
-MODULE = Path(__file__).parents[1] / "src" / "drsai" / "backend" / "terminal_screen.py"
+MODULE = (
+    Path(__file__).parents[1]
+    / "src"
+    / "drsai"
+    / "backend"
+    / "runtime"
+    / "terminal"
+    / "screen.py"
+)
 SPEC = importlib.util.spec_from_file_location("terminal_screen_under_test", MODULE)
 assert SPEC and SPEC.loader
 screen_module = importlib.util.module_from_spec(SPEC)

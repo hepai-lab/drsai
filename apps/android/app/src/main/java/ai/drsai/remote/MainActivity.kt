@@ -11,6 +11,7 @@ import ai.drsai.remote.data.AndroidUpdateManager
 import ai.drsai.remote.runtime.device.ACTION_STOP_LOCAL_RUN
 import ai.drsai.remote.runtime.device.EXTRA_RUN_ID
 import ai.drsai.remote.runtime.reliability.ACTION_OPEN_RECOVERABLE_RUN
+import ai.drsai.remote.remote.data.AndroidDevicePresence
 
 class MainActivity : ComponentActivity() {
     private val appViewModel: AppViewModel by viewModels()
@@ -18,6 +19,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         installAndroidUpdateLifecycle(application)
+        AndroidDevicePresence.install(application)
         setContent { OpenDrSaiApp(appViewModel) }
         handleViewIntent(intent)
         handleRunAction(intent)

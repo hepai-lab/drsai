@@ -61,6 +61,8 @@ class FakeTransport:
             "dev_" + "d" * 12,
             "Samsung SM-X936C",
             "active",
+            "online",
+            datetime.now(UTC),
             datetime.now(UTC),
         )]
 
@@ -74,6 +76,8 @@ class FakeTransport:
             "dev_" + "d" * 12,
             "Samsung SM-X936C",
             "revoked",
+            "revoked",
+            datetime.now(UTC),
             datetime.now(UTC),
             datetime.now(UTC),
         )
@@ -203,7 +207,7 @@ def test_readiness_distinguishes_missing_and_broken_credentials(tmp_path: Path) 
 def test_http_error_mapping_is_structured_and_secret_free() -> None:
     cases = {
         401: ("runtime_credential_invalid", False),
-        403: ("runtime_credential_invalid", False),
+        403: ("runtime_access_forbidden", False),
         404: ("access_grant_not_found", False),
         429: ("pairing_rate_limited", True),
         503: ("relay_http_error", True),
@@ -212,6 +216,38 @@ def test_http_error_mapping_is_structured_and_secret_free() -> None:
         with pytest.raises(MobilePairingError) as failure:
             AiohttpMobilePairingTransport._raise_http(status)
         assert (failure.value.code, failure.value.retryable) == expected
+
+
+def test_fault_injection_disabled_is_not_misreported_as_invalid_token() -> None:
+    with pytest.raises(MobilePairingError) as failure:
+        AiohttpMobilePairingTransport._raise_http(
+            403,
+            "correlation-safe-403",
+            "fault_injection_disabled",
+        )
+    assert failure.value.code == "fault_injection_disabled"
+    assert failure.value.action == "enable_test_faults"
+    assert failure.value.correlation_id == "correlation-safe-403"
+
+
+def test_relay_error_code_reads_only_valid_structured_code() -> None:
+    class Response:
+        def __init__(self, body):
+            self.body = body
+
+        async def json(self):
+            return self.body
+
+    assert asyncio.run(
+        AiohttpMobilePairingTransport._error_code(
+            Response({"detail": {"code": "fault_injection_disabled", "message": "secret"}})
+        )
+    ) == "fault_injection_disabled"
+    assert asyncio.run(
+        AiohttpMobilePairingTransport._error_code(
+            Response({"detail": {"code": "INVALID TOKEN"}})
+        )
+    ) is None
 
 
 def test_offline_readiness_is_sticky_until_a_successful_relay_call(tmp_path: Path) -> None:
@@ -253,13 +289,15 @@ def test_association_decoder_requires_device_identity_fields() -> None:
         "device_summary": "dev_" + "c" * 12,
         "device_name": "Samsung SM-X936C",
         "status": "active",
+        "access_state": "online",
         "created_at": created_at,
+        "last_seen_at": created_at,
         "revoked_at": None,
     })
     assert decoded.device_summary == "dev_" + "c" * 12
     assert decoded.device_name == "Samsung SM-X936C"
 
-    for missing in ("device_summary", "device_name", "created_at"):
+    for missing in ("device_summary", "device_name", "created_at", "access_state"):
         payload = decoded.public()
         payload.pop(missing)
         with pytest.raises(MobilePairingError) as failure:

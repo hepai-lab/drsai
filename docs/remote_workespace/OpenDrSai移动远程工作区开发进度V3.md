@@ -804,3 +804,217 @@ TypeScript 生成模型和三端最低版本/capability 门禁。
 1. 完成五类故障注入与恢复验收。
 2. emulator 登录后完成 A/B association 隔离和单设备撤销。
 3. 执行一小时稳定性、Windows/Android canary 扫描和 V3 104 项 finalizer。
+
+## 第 14 轮：五类真实故障恢复矩阵
+
+更新时间：2026-07-27
+
+- 完成三星真机、ai-dev Relay 与 Windows Runtime 的五类真实故障注入：
+  - Android 退到后台后重新打开 Session；
+  - Android 进程被 `force-stop` 后由 deep link 重新启动；
+  - Wi-Fi 与移动数据同时断开、保持 5 秒后恢复原网络状态；
+  - Windows Gateway/Runtime 确认离线后，以同一 Runtime 身份显式启动替代进程；
+  - ai-dev 仅对目标 Runtime 临时开放 allowlist，执行 TTL=5 秒的 Relay
+    connection owner restart，完成后立即请求关闭故障开关。
+- 五项均满足：
+  - `transcript_hash_preserved=true`；
+  - `snapshot_sequence_preserved=true`；
+  - `run_count_preserved=true`；
+  - `event_count_preserved=true`；
+  - `duplicate_run_count=0`；
+  - `duplicate_sequence_count=0`；
+  - `missing_sequence_count=0`；
+  - Android PID、Windows PID 与 Relay generation 的变化均符合对应故障类型。
+- 实测身份变化：
+  - Android 进程回收：Android PID 变化，Windows PID 与 generation 不变；
+  - Runtime 重启：Windows PID 变化，generation `46225 → 46226`；
+  - Relay owner 重启：Windows/Android PID 不变，generation `46226 → 46227`。
+- 机器证据：
+  `release/product-evidence/mobile-remote-workspace-v3/fault-matrix.json`。
+- 修复稳定性验收器的两处假阳性风险：
+  - 不再把重复 Run 和缺失 sequence 写死为 0；Debug 真机探针现在完整分页读取
+    Run 与 Session Event，并计算 Run 重复、sequence 重复和连续性；
+  - `shutdown_runtime` 后不再假定外部监督器自动拉起 Gateway；驱动必须观察离线，
+    再按当前 Runtime 版本、同一 `DRSAI_HOME` 和实例身份显式启动替代进程。
+- 加固 V3 汇总器和最终发布门禁：故障记录还必须证明 Run/Event 数量保持、
+  snapshot 水位保持、无重复 sequence，缺失任一测量字段即 fail closed。
+- 修复 Runtime Relay 403 的本地错误映射：
+  - HTTP 401 才表示 `runtime_credential_invalid`；
+  - 403 映射为 `runtime_access_forbidden`；
+  - 服务端 `fault_injection_disabled` 被安全解析为同名结构化错误，不再误报令牌失效；
+  - 只读取格式受限的错误 `code`，不传播服务端正文或敏感字段。
+- 本轮回归：
+  - 故障矩阵、真实证据汇总器、V3 finalizer 聚焦回归 `19 passed`；
+  - Mobile Pairing、故障矩阵及发布门禁组合回归 `36 passed`；
+  - Android `testDebugUnitTest` 与 `assembleDebug` 通过；
+  - `py_compile` 与 `git diff --check` 通过。
+
+### 状态口径
+
+- M10-F07 所要求的五类真实故障已有完整单轮机器证据。
+- 一小时稳定性仍须在同一 3600 秒窗口内再次注入五类故障，因此本轮证据不能替代
+  M09-F08/M16-F04。
+- 最终账本继续保持 `96 local_pass + 8 unverified`，等待 A/B 设备隔离、单设备撤销、
+  一小时稳定性、端侧 canary 和 V3 finalizer 一并闭环后再升级。
+
+### 下一步
+
+1. 确认 ai-dev 已关闭临时故障注入开关。
+2. emulator 完成同账号 OIDC 登录后执行 A/B association 隔离与单设备撤销。
+3. 执行一小时稳定性、Windows/Android/Relay canary 扫描和 V3 finalizer。
+
+## 第 15 轮：三端敏感信息扫描闭环与稳定性监督器竞态修复
+
+更新时间：2026-07-28
+
+- 新增独立的远程工作区架构文档：
+  `docs/remote_workespace/OpenDrSai远程工作区架构.md`，统一说明 Client、
+  Full Agent Runtime、Workspace & Asset Management、HAI Relay、扫码关联、
+  Session 级事件流、数据权威、故障恢复和三种部署形态。
+- Android 端安全扫描入口完成真实设备验收：
+  - Debug Receiver 从应用私有 stdin 文件读取本轮随机 canary，广播参数只携带 nonce；
+  - 使用 AndroidX `EncryptedSharedPreferences` 验证端侧加密存储；
+  - 使用生产 `redactRemoteSecrets` 验证日志脱敏；
+  - 收集器扫描已安装 APK、当前应用 PID 日志，以及 Room/SharedPreferences/files/no-backup；
+  - 修复 ADB `sh -c` 参数边界缺陷，改用 `run-as ... dd of=...` 从 stdin 写入，
+    canary 不进入命令行或标准输出。
+- 三端端点本地扫描与汇总全部通过：
+  - Android：APK、日志、Room 共 3 个非空来源；
+  - Windows：数据库、日志、转储、诊断包共 4 个非空来源；
+  - Relay：日志、Redis、PostgreSQL 共 3 个非空来源；
+  - 共 10 个来源全部 `clean`，`matches=0`，原始产物未跨越信任边界。
+- 机器证据：
+  - `release/product-evidence/mobile-remote-workspace-v3/android-secret-scan.json`；
+  - `release/product-evidence/mobile-remote-workspace-v3/windows-secret-scan.json`；
+  - `release/product-evidence/mobile-remote-workspace-v3/relay-secret-scan.json`；
+  - `release/product-evidence/mobile-remote-workspace-v3/secret-scan.json`。
+- Android Debug APK 已在三星真机使用 `adb install -r` 覆盖安装，未清除应用数据；
+  构建产物 SHA-256 为
+  `1BC167FF9A5DD4F7A005E73CD15E1792FBF18E885AA0D5961DAA2076A61E7FE3`。
+- 一小时稳定性门禁进行了两次严格失败处理，均未计入通过：
+  - 第一轮在 ai-dev 开启故障开关并热加载时出现一次 `probe_error`，窗口立即作废；
+  - 第二轮前三类故障通过，但 Runtime 重启阶段的开发进程与安装版监督器发生竞态；
+    开发进程因沙箱权限/监督器抢占退出，驱动误判为恢复失败。
+- 修复监督器恢复算法：
+  - `shutdown_runtime` 后优先等待安装版监督器产生新 PID；
+  - 仅在监督器未恢复时启动开发替代进程；
+  - 替代进程退出前再次检查权威监听器是否已由监督器接管；
+  - 新增显式启动、监督器优先、监督器抢占三类回归，聚焦测试 `12 passed`。
+- 本轮其他回归：
+  - Android collector `3 passed`；
+  - 三端 secret-scan assembler `6 passed`；
+  - Android Debug APK 构建通过；
+  - Python 编译和 `git diff --check` 通过。
+
+### 状态口径
+
+- M16-F04 的三端脱敏扫描部分已有完整真实证据，但 3600 秒连续稳定性仍未通过。
+- 五故障快速重验属于主动断网、杀进程和 Runtime/Relay 重启，执行环境要求用户对本次
+  破坏性测试明确授权；安全审批拒绝后未执行故障端点，ai-dev 开关已请求关闭。
+- emulator 仍停在“使用 HepAI 继续”，因此 A/B association 隔离与单设备撤销仍待用户
+  手工完成第二台设备 OIDC 登录。
+- 最终账本继续保持 `96 local_pass + 8 unverified`，不得用单独安全扫描或历史故障矩阵
+  代替一小时稳定性和 A/B 隔离门禁。
+
+### 下一步
+
+1. 获得用户对本次五故障真实注入的明确授权后，先运行快速门禁，再从零运行 3600 秒窗口。
+2. 用户在 `emulator-5556` 手工完成 OIDC 登录后，执行 A/B association 隔离与单设备撤销。
+3. 汇总稳定性、A/B、三端扫描和既有 E2E 证据，运行 V3 104/104 finalizer。
+
+## 第 16 轮：全量发布测试与 JUnit 证据收口
+
+更新时间：2026-07-28
+
+- 首次运行 Python 全套发布测试时，严格保留 collection error 和失败 JUnit，没有用
+  聚焦测试替代全量门禁。修复以下历史漂移：
+  - 7 组测试仍从旧的 `backend/*.py` 扁平路径动态加载已迁移模块，现统一指向
+    `backend/runtime`、`backend/remote_ssh`、`backend/integrations` 和
+    `backend/runtime/terminal` 的当前权威位置；
+  - Android/Relay Runtime E2E fixture 仍调用旧的 subject-only association，
+    现补齐 `device_id`、安全设备名和 Ed25519 device public key；
+  - V2 ledger 生成器现在在模块移动后自动调和本地 code/test 证据，不再保留指向
+    已删除文件的绿色证据；V2/V3 ledger 零漂移检查分别恢复为
+    `71 local_pass + 9 unverified` 与 `96 local_pass + 8 unverified`；
+  - Relay OpenAPI 重新从当前应用生成，并通过向后兼容检查；
+  - `OWOPError` 不再声明为 frozen dataclass，异常框架可以正常设置 traceback；
+  - `test_owop_worktrees.py` 不再覆盖全局 `drsai.owop.protocol` 模块，消除仅在全套
+    测试顺序下出现的异常类身份分裂。
+- Python 全套最终结果：
+  `641 passed, 4 skipped, 81 subtests passed`；正式 JUnit 中记录
+  `726 tests, 0 failures, 0 errors`。
+- Android `testDebugUnitTest` 构建成功；正式归档 49 份 `TEST-*.xml`，
+  合计 `238 tests, 0 failures, 0 errors`。
+- Desktop V3 四项发布门禁重新执行，结果 `4/4 passed`。
+- 修复 V3 finalizer 的 JUnit 目录处理：
+  - 计数和 manifest 使用同一 `junit_files()` 展开规则；
+  - Android JUnit 目录被展开为独立 `TEST-*.xml` 文件逐个计算 SHA-256；
+  - 不再尝试对目录本身执行 `read_bytes()`；
+  - 新增目录输入正向回归，V3 finalizer 测试 `8 passed`。
+- 正式测试证据：
+  - `release/product-evidence/mobile-remote-workspace-v3/python-junit.xml`；
+  - `release/product-evidence/mobile-remote-workspace-v3/android-junit/TEST-*.xml`；
+  - `release/product-evidence/mobile-remote-workspace-v3/desktop-junit.xml`。
+
+### 状态口径
+
+- Python、Android、Desktop 三套 JUnit 的数量、失败数和错误数均已达到 V3 finalizer
+  门槛。
+- 三端 secret scan 和三套 JUnit 已闭环；剩余发布阻断仍是两项真实外部验收：
+  3600 秒五故障稳定性窗口，以及两台物理/虚拟 Android 的 association 隔离与撤销。
+- emulator 当前已打开 OpenDrSai 登录页，仍显示“使用 HepAI 继续”；自动化没有读取、
+  代填或保存用户凭据。
+- 最终账本继续保持 `96 local_pass + 8 unverified`。
+
+### 下一步
+
+1. 用户明确授权本轮真实五故障注入后，执行快速门禁与完整 3600 秒窗口。
+2. 用户在 emulator 完成 OIDC 登录后，执行 A/B association 隔离、凭据复制拒绝和
+   单设备撤销断流。
+3. 生成 `real-device-session-e2e.json`，运行 V3 finalizer 并审计 manifest 的全部
+   revision、截图、JUnit、APK 与报告 digest。
+
+## 第 17 轮：稳定性失败证据闭环与安全基线恢复
+
+更新时间：2026-07-28
+
+- 对上一轮 `real-stability-1h.json` 与 stderr 进行交叉核验：
+  - 监测窗口实际运行 `2399.735/3600` 秒；
+  - Android 后台、Android 进程回收、网络切换三项故障均通过；
+  - 真正导致进程退出的是第 4 项 Windows Runtime restart 的旧版恢复竞态，
+    stderr 明确记录 `v3_stability_restarted_runtime_exited`；
+  - 窗口内另有一次严格记录的 Android probe error，因此该窗口继续判定
+    `passed=false`，不作为一小时稳定性证据。
+- 当前 Runtime restart 已采用安装版 supervisor 优先恢复策略：
+  - 先观察 supervisor 是否直接替换监听 PID；
+  - 观察到离线后给予 supervisor 独占恢复宽限期；
+  - 仅在 supervisor 未恢复时启动开发 fallback；
+  - fallback 因端口竞争退出时，再次以权威监听 PID 判断是否已被 supervisor 接管。
+- 稳定性驱动新增失败证据闭环：
+  - 任一故障步骤抛出异常时，立即写入 `status=failed` 的故障记录；
+  - 写入脱敏、格式受限的 `failure_code`，不写服务端正文、令牌或路径；
+  - 同时原子刷新当前稳定性报告后再退出，避免仅靠 stderr 才能定位故障；
+  - 普通 probe error 与故障 error 复用同一安全错误码规则。
+- 聚焦回归：
+  `22 passed`，覆盖 supervisor 三种恢复路径、故障失败落盘、错误码脱敏、
+  五故障完整性和 finalizer fail-closed。
+- ai-dev 管理任务已只读确认：
+  `HAI_RUNTIME_RELAY_FAULT_INJECTION_ENABLED=false`，公开 Relay health 为
+  HTTP 200；未修改 enrollment、association 或业务数据。
+
+### 状态口径
+
+- 三端 secret scan、Python/Android/Desktop JUnit、双向会话同步、Approval
+  单执行和独立五故障矩阵已有证据。
+- 正式 3600 秒窗口尚未通过；历史 `2399.735` 秒失败报告不得升级为通过。
+- 模拟器仍停在“使用 HepAI 继续”，A/B association 隔离与单设备撤销仍需
+  第二台设备完成 OIDC 登录。
+- 最终账本保持 `96 local_pass + 8 unverified`。
+
+### 下一步
+
+1. 获得本轮破坏性五故障验收的明确授权后，先运行快速矩阵，再从零运行
+   3600 秒正式窗口。
+2. 用户在 `emulator-5556` 完成 OIDC 登录后，执行 A/B association 隔离、
+   凭据复制拒绝、单设备撤销和断流恢复验收。
+3. 汇总真实稳定性、A/B 隔离与现有证据，运行 V3 104/104 finalizer。

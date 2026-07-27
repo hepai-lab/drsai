@@ -626,6 +626,7 @@ export interface ChatRequest {
   model?: string;
   workspacePath?: string;
   workspaceId?: string;
+  workspaceName?: string;
   threadId?: string;
   sessionId?: string;
   runId?: string;
@@ -4262,7 +4263,9 @@ export interface DesktopMobileAssociation {
   device_summary: string;
   device_name: string;
   status: "active" | "revoked";
+  access_state: "online" | "offline" | "accessing" | "revoked";
   created_at: string;
+  last_seen_at?: string | null;
   revoked_at?: string | null;
 }
 
