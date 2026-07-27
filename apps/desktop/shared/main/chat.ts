@@ -791,7 +791,7 @@ function mapCodexRuntimeEvent(
   requestId: string, sessionId: string, runId: string,
   event: RuntimeAgentEvent, target: { approvalId?: string },
 ): Omit<ChatEvent, "seq"> | null {
-  const content = typeof event.data.content === "string" ? event.data.content : undefined;
+  const content = runtimeEventText(event.data);
   if (event.type === "agent.message.delta") return { requestId, sessionId, runId, type: "chunk", content };
   if (event.type === "agent.item.reasoning") {
     const reasoning = codexItemText(event.data);
@@ -849,6 +849,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function deriveThreadTitle(messages: ChatMessage[]): string {
   const firstUser = messages.find((message) => message.role === "user");
   return firstUser?.content.trim().slice(0, 80) || "New chat";
+}
+
+function runtimeEventText(data: Record<string, unknown>): string | undefined {
+  for (const key of ["content", "delta", "text"]) {
+    const value = data[key];
+    if (typeof value === "string") return value;
+  }
+  return undefined;
 }
 
 function latestUserPrompt(messages: ChatMessage[]): string {

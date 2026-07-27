@@ -1678,9 +1678,11 @@ class GatewayOpenDrSaiAgentBackend:
     @staticmethod
     def _normalize_event(event_type: str, payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         if event_type == "message.delta":
+            delta = str(payload.get("text") or payload.get("delta") or payload.get("content") or "")
             return "agent.message.delta", {
                 **payload,
-                "delta": str(payload.get("text") or payload.get("delta") or ""),
+                "delta": delta,
+                "content": delta,
             }
         if event_type == "tool.start":
             return "tool.started", payload

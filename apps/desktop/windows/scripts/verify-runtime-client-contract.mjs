@@ -58,6 +58,12 @@ for (const marker of [
   "userId: auth.userId",
 ]) assert(chatSource.includes(marker), `Runtime Agent chat auth caller lacks ${marker}`);
 
+for (const marker of [
+  "function runtimeEventText",
+  "\"content\", \"delta\", \"text\"",
+  "event.type === \"agent.message.delta\"",
+]) assert(chatSource.includes(marker), `Runtime Agent event text bridge lacks ${marker}`);
+
 console.log("Unified Runtime Client contract verification passed.");
 
 function assert(value, message) {

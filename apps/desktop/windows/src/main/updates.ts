@@ -311,6 +311,8 @@ function statusFor(
     errorCode: null,
     error: null,
     recovery: null,
+    source: null,
+    fallbackUsed: false,
     ...overrides,
   };
 }
