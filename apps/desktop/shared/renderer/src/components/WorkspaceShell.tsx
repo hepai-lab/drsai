@@ -35,6 +35,7 @@ import {
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import type { DesktopPlatformId } from "@shared/platform";
 import type {
   AuthUser,
   CreateWorkspaceRequest,
@@ -126,6 +127,7 @@ interface WorkspaceShellProps {
   mainContent: React.ReactNode;
   navIcons: Record<NavId, LucideIcon>;
   navSections: NavSection[];
+  platformId: DesktopPlatformId;
   recentThreads: WorkspaceThread[];
   searchableThreads: WorkspaceThread[];
   rightPanel: React.ReactNode;
@@ -221,6 +223,7 @@ export function WorkspaceShell({
   mainContent,
   navIcons,
   navSections,
+  platformId,
   recentThreads,
   searchableThreads,
   rightPanel,
@@ -1723,7 +1726,7 @@ export function WorkspaceShell({
 
   return (
     <div
-      className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}
+      className={`app-shell platform-${platformId} ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}
       style={{
         "--sidebar-width": `${sidebarWidth}px`,
         "--right-panel-width": `${rightPanelWidth}px`,

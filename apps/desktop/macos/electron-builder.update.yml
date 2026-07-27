@@ -1,0 +1,27 @@
+extends: ./electron-builder.yml
+afterPack: scripts/after-pack-update.cjs
+extraResources:
+  - from: native/OpenDrSaiNativeHelper/.build/debug
+    to: native
+    filter:
+      - OpenDrSaiNativeHelper
+      - libOpenDrSaiNativeProtocol.dylib
+  - from: ../shared/browser-use-worker
+    to: browser-use-worker
+    filter:
+      - "*.py"
+      - requirements.txt
+  - from: resources/runtime
+    to: runtime
+    filter:
+      - runtime-manifest.json
+      - runtime-sbom-*.json
+      - runtime-provenance-*.json
+  - from: resources/update
+    to: update
+    filter:
+      - update-watchdog.sh
+mac:
+  target:
+    - target: zip
+      arch: arm64

@@ -8,12 +8,16 @@ import { createRequire } from "node:module";
 import type { UpdateInfo } from "electron-updater";
 import type { UpdateStatus } from "../../../shared/api/desktopApi";
 import { managedProcessRegistry } from "../../../shared/main/managedProcessRegistry";
+import { MACOS_UPDATE_CDN_URL, MACOS_UPDATE_GITHUB_OWNER, MACOS_UPDATE_GITHUB_REPO, runtimeMetadataMatchesInstalled, validateFallbackCandidate, validateHttpsUpdateFeed } from "./updateFeedPolicy";
+import { inspectInstalledRuntime } from "./runtimeInstaller";
 
 const require = createRequire(import.meta.url);
 const { CancellationToken } = require("builder-util-runtime") as typeof import("builder-util-runtime");
 const { autoUpdater } = require("electron-updater") as typeof import("electron-updater");
 let cancellationToken: InstanceType<typeof CancellationToken> | null = null;
 let status: UpdateStatus = idleStatus();
+let selectedInfo: UpdateInfo | null = null;
+let operationActive = false;
 let healthConfirmation: { confirmed: boolean; version: string | null; confirmedAt: string | null } = { confirmed: false, version: null, confirmedAt: null };
 const execFileAsync = promisify(execFile);
 
@@ -22,11 +26,13 @@ autoUpdater.autoInstallOnAppQuit = false;
 autoUpdater.allowDowngrade = false;
 configureSignedUpdateLabFeed();
 autoUpdater.on("checking-for-update", () => patch({ phase: "checking", checking: true, error: null, errorCode: null }));
-autoUpdater.on("update-available", (info) => patchAvailable(info));
+autoUpdater.on("update-available", (info) => { selectedInfo = info; patchAvailable(info); });
 autoUpdater.on("update-not-available", () => { status = idleStatus(); });
 autoUpdater.on("download-progress", (progress) => patch({ phase: "downloading", downloading: true, progress: progress.percent }));
 autoUpdater.on("update-downloaded", (info) => patch({ phase: "ready", downloading: false, downloaded: true, progress: 100, version: info.version, canInstall: true, canCancel: false }));
-autoUpdater.on("error", (error) => patch({ phase: "failed", checking: false, downloading: false, canCancel: false, errorCode: "macos-update-failed", error: redact(error.message) }));
+autoUpdater.on("error", (error) => {
+  if (!operationActive) patch({ phase: "failed", checking: false, downloading: false, canCancel: false, errorCode: "macos-update-failed", error: redact(error.message) });
+});
 
 export function getUpdateStatus(): UpdateStatus {
   return { ...status };
@@ -37,23 +43,55 @@ export async function checkForUpdates(): Promise<UpdateStatus> {
     patch({ phase: "failed", errorCode: "development-build", error: "Update checks require a packaged macOS build." });
     return getUpdateStatus();
   }
-  await autoUpdater.checkForUpdates();
-  return getUpdateStatus();
+  selectedInfo = null;
+  const lab = signedUpdateLabFeed();
+  if (lab) return runCheck("test", false, () => configureGenericFeed(lab));
+  try {
+    return await runCheck("cdn", false, configureCdnFeed);
+  } catch (primaryError) {
+    try {
+      return await runCheck("github", true, configureGithubFeed);
+    } catch (fallbackError) {
+      return fail("macos-update-sources-failed", `${redactError(primaryError)}; GitHub fallback: ${redactError(fallbackError)}`);
+    }
+  }
 }
 
 export async function downloadUpdate(): Promise<UpdateStatus> {
   if (!status.available || status.downloading) return getUpdateStatus();
+  if (!selectedInfo || !(await runtimeCompatibleWith(selectedInfo))) {
+    return fail("macos-update-runtime-incompatible", "This update requires a different OpenDrSai Runtime. Install the full DMG to update safely.");
+  }
   cancellationToken = new CancellationToken();
   patch({ phase: "downloading", downloading: true, canDownload: false, canCancel: true, error: null, errorCode: null });
+  operationActive = true;
   try {
     await autoUpdater.downloadUpdate(cancellationToken);
   } catch (error) {
     if (cancellationToken.cancelled) {
       patch({ phase: "available", downloading: false, progress: null, canDownload: true, canCancel: false });
+    } else if (status.source === "cdn" && status.version) {
+      const targetVersion = status.version;
+      const primarySha512 = selectedInfo?.files?.[0]?.sha512 ?? null;
+      try {
+        configureGithubFeed();
+        const result = await autoUpdater.checkForUpdates();
+        const fallbackInfo = result?.updateInfo;
+        if (!fallbackInfo) throw new Error("GitHub fallback did not return update metadata.");
+        const fallbackSha512 = fallbackInfo.files?.[0]?.sha512 ?? null;
+        validateFallbackCandidate({ version: targetVersion, sha512: primarySha512 }, { version: fallbackInfo.version, sha512: fallbackSha512 });
+        selectedInfo = fallbackInfo;
+        patch({ source: "github", fallbackUsed: true, phase: "downloading", downloading: true, canCancel: true, error: null, errorCode: null });
+        cancellationToken = new CancellationToken();
+        await autoUpdater.downloadUpdate(cancellationToken);
+      } catch (fallbackError) {
+        fail("macos-update-download-sources-failed", `${redactError(error)}; GitHub fallback: ${redactError(fallbackError)}`);
+      }
     } else {
-      patch({ phase: "failed", downloading: false, canCancel: false, errorCode: "macos-update-download-failed", error: redact(error instanceof Error ? error.message : String(error)) });
+      fail("macos-update-download-failed", redactError(error));
     }
   } finally {
+    operationActive = false;
     cancellationToken = null;
   }
   return getUpdateStatus();
@@ -139,12 +177,56 @@ function idleStatus(): UpdateStatus {
     phase: "idle", checking: false, available: false, downloading: false, downloaded: false,
     progress: null, version: null, currentVersion: app.getVersion(), mandatory: false,
     releaseNotesUrl: null, canDownload: false, canInstall: false, canCancel: false,
-    errorCode: null, error: null, recovery: null,
+    errorCode: null, error: null, recovery: null, source: null, fallbackUsed: false,
   };
+}
+
+async function runCheck(source: NonNullable<UpdateStatus["source"]>, fallbackUsed: boolean, configure: () => void): Promise<UpdateStatus> {
+  configure();
+  operationActive = true;
+  patch({ source, fallbackUsed, phase: "checking", checking: true, error: null, errorCode: null });
+  try {
+    await autoUpdater.checkForUpdates();
+    patch({ source, fallbackUsed });
+    return getUpdateStatus();
+  } finally {
+    operationActive = false;
+  }
+}
+
+function fail(errorCode: string, error: string): UpdateStatus {
+  patch({ phase: "failed", checking: false, downloading: false, canCancel: false, canDownload: false, errorCode, error: redact(error) });
+  return getUpdateStatus();
 }
 
 function redact(message: string): string {
   return message.replace(/((?:token|password|secret|authorization))=?[^\s,;]+/gi, "$1=[redacted]").slice(0, 500);
+}
+
+function redactError(error: unknown): string {
+  return redact(error instanceof Error ? error.message : String(error));
+}
+
+function configureCdnFeed(): void {
+  configureGenericFeed(MACOS_UPDATE_CDN_URL);
+}
+
+function configureGithubFeed(): void {
+  autoUpdater.setFeedURL({ provider: "github", owner: MACOS_UPDATE_GITHUB_OWNER, repo: MACOS_UPDATE_GITHUB_REPO });
+}
+
+function configureGenericFeed(url: string): void {
+  autoUpdater.setFeedURL({ provider: "generic", url: validateHttpsUpdateFeed(url) });
+}
+
+function signedUpdateLabFeed(): string | null {
+  if (process.env.OPENDRSAI_MACOS_SIGNED_UPDATE_LAB !== "1" || process.env.OPENDRSAI_MACOS_PACKAGED_SCENARIO !== "online-update-lab") return null;
+  return process.env.OPENDRSAI_MACOS_UPDATE_FEED_URL?.trim() || null;
+}
+
+async function runtimeCompatibleWith(info: UpdateInfo): Promise<boolean> {
+  const metadata = info as UpdateInfo & { opendrsaiRuntimeVersion?: unknown; opendrsaiRuntimeSha256?: unknown };
+  return runtimeMetadataMatchesInstalled(metadata, await inspectInstalledRuntime());
 }
 
 function configureSignedUpdateLabFeed(): void {
@@ -152,7 +234,5 @@ function configureSignedUpdateLabFeed(): void {
   const raw = process.env.OPENDRSAI_MACOS_UPDATE_FEED_URL?.trim();
   const expectedHost = process.env.OPENDRSAI_MACOS_UPDATE_FEED_HOST?.trim();
   if (!raw || !expectedHost) throw new Error("Signed update lab requires an explicit HTTPS feed and expected host.");
-  const url = new URL(raw);
-  if (url.protocol !== "https:" || url.hostname !== expectedHost || url.username || url.password) throw new Error("Signed update lab feed is not an approved HTTPS origin.");
-  autoUpdater.setFeedURL({ provider: "generic", url: url.toString() });
+  configureGenericFeed(validateHttpsUpdateFeed(raw, expectedHost));
 }

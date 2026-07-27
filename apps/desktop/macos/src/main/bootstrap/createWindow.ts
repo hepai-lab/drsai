@@ -1,4 +1,4 @@
-import { BrowserWindow, shell, type RenderProcessGoneDetails, type WebContents } from "electron";
+import { BrowserWindow, screen, shell, type RenderProcessGoneDetails, type WebContents } from "electron";
 import { assertAllowedExternalUrl } from "../../../../shared/main/desktopPathPolicy";
 import { isAllowedRendererNavigation } from "../rendererNavigationPolicy";
 
@@ -14,14 +14,18 @@ export interface MacosMainWindowOptions {
 
 export function createMacosMainWindow(options: MacosMainWindowOptions): BrowserWindow {
   let cancelUpdateHealthConfirmation: () => void = () => undefined;
+  const workArea = screen.getPrimaryDisplay().workAreaSize;
+  const initialWidth = Math.min(1200, Math.max(960, Math.floor(workArea.width * 0.82)));
+  const initialHeight = Math.min(760, Math.max(640, Math.floor(workArea.height * 0.84)));
   const window = new BrowserWindow({
-    width: 1440,
-    height: 960,
+    width: initialWidth,
+    height: initialHeight,
     minWidth: 960,
     minHeight: 640,
+    center: true,
     show: false,
     titleBarStyle: "hiddenInset",
-    trafficLightPosition: { x: 16, y: 16 },
+    trafficLightPosition: { x: 16, y: 11 },
     webPreferences: {
       preload: options.preloadPath,
       contextIsolation: true,

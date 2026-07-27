@@ -1,5 +1,16 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { IpcRendererEvent } from "electron";
+
+const desktopPlatform = process.platform === "darwin" ? "macos" : "windows";
+const applyDesktopPlatformMarker = (): void => {
+  document.documentElement.dataset.desktopPlatform = desktopPlatform;
+};
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", applyDesktopPlatformMarker, { once: true });
+} else {
+  applyDesktopPlatformMarker();
+}
+
 import type {
   DesktopApi,
   DesktopOpenRequest,

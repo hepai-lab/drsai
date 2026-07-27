@@ -1,0 +1,12 @@
+extends: ./electron-builder.update.yml
+appId: com.hepai.opendrsai.macos.development
+productName: OpenDrSai
+directories:
+  output: release-unsigned-update
+mac:
+  identity: null
+  notarize: false
+publish:
+  provider: generic
+  url: https://updates.invalid/opendrsai/macos/arm64/
+  channel: latest

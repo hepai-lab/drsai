@@ -7,10 +7,20 @@ const read = (path) => readFileSync(resolve(root, path), "utf8");
 const builder = read("electron-builder.yml");
 const packageJson = JSON.parse(read("package.json"));
 const updater = read("src/main/updater.ts");
+const updateFeedPolicy = read("src/main/updateFeedPolicy.ts");
+const updateFeedVerifier = read("scripts/verify-update-feed-policy.mts");
+const promotionPolicy = read("scripts/update-promotion-policy.mjs");
+const promotionVerifier = read("scripts/verify-update-promotion-policy.mjs");
+const ossPublisher = read("scripts/publish-update-to-oss.mjs");
+const publishedVerifier = read("scripts/verify-published-update.mjs");
+const thinPackageVerifier = read("scripts/verify-thin-update-package.mjs");
+const metadataAnnotator = read("scripts/annotate-update-metadata.mjs");
 const runtimeInstaller = read("src/main/runtimeInstaller.ts");
 const runtimeBuilder = read("scripts/build-runtime-artifact.sh");
 const adhocHook = read("scripts/after-pack.cjs");
 const nativePermissionsHook = read("scripts/after-pack-native-permissions.cjs");
+const updatePackHook = read("scripts/after-pack-update.cjs");
+const updateBuilder = read("electron-builder.update.yml");
 const bootstrapEntry = read("src/main/bootstrapEntry.ts");
 const browserRuntimeLock = read("resources/runtime/browser-requirements.lock");
 const runtimeLock = read("resources/runtime/runtime-requirements.lock");
@@ -29,6 +39,7 @@ const updateWatchdog = read("resources/update/update-watchdog.sh");
 const desktopRoot = resolve(root, "..");
 const workflow = readFileSync(resolve(desktopRoot, "../../.github/workflows/macos-desktop.yml"), "utf8");
 const gateway = readFileSync(resolve(root, "../../../cores/python/packages/drsai/src/drsai/backend/gateway.py"), "utf8");
+const updateRunbook = read("docs/macos-update-production-runbook.zh-CN.md");
 
 for (const path of ["build/entitlements.mac.plist", "build/entitlements.mac.inherit.plist"]) {
   assert.ok(existsSync(resolve(root, path)), `missing macOS entitlement file: ${path}`);
@@ -64,8 +75,32 @@ assert.ok(packageJson.scripts.verify.indexOf("verify:coverage") >= 0 && packageJ
 for (const contract of ["checkForUpdates", "downloadUpdate", "CancellationToken", "quitAndInstall", "update-downloaded", "allowDowngrade = false"]) {
   assert.ok(updater.includes(contract), `macOS updater omits ${contract}`);
 }
+for (const contract of ["provider: generic", "https://download-opendrsai.ihep.ac.cn/channels/stable/macos/arm64/", "channel: latest"]) {
+  assert.ok(builder.includes(contract), `macOS builder CDN feed omits ${contract}`);
+}
+assert.equal(builder.includes("provider: github"), false, "The packaged macOS app must prefer the production CDN rather than GitHub.");
+for (const contract of ["MACOS_UPDATE_CDN_URL", "MACOS_UPDATE_GITHUB_OWNER", "MACOS_UPDATE_GITHUB_REPO", "validateFallbackCandidate", "source: \"github\"", "fallbackUsed: true", "macos-update-sources-failed", "macos-update-download-sources-failed"]) {
+  assert.ok(`${updater}\n${updateFeedPolicy}`.includes(contract), `macOS CDN/GitHub fallback contract omits ${contract}`);
+}
+for (const contract of ["http://", "user:secret@", "selected CDN version", "digests differ"]) assert.ok(updateFeedVerifier.includes(contract), `Unsigned update policy verifier omits ${contract}`);
+assert.ok(packageJson.scripts["verify:update-feed:unsigned"], "macOS package omits the unsigned update feed gate");
+for (const contract of ["signed-l6", "verify-dual-source-digests", "promote-stable-metadata", "publish-github-release", "verify-production-fallback", "productionPromotionBlocked: true"]) {
+  assert.ok(`${promotionPolicy}\n${promotionVerifier}`.includes(contract), `macOS promotion order gate omits ${contract}`);
+}
+assert.ok(packageJson.scripts["verify:update-promotion:unsigned"], "macOS package omits the unsigned promotion order gate");
+for (const contract of ["--preflight", "--assets-only", "--promote-metadata", "--snapshot-stable", "--rollback-metadata", 'spawnSync(binary, ["stat", target]', "Immutable OSS object already exists", "Unable to prove immutable OSS object is absent", '"--force", "--meta"', 'runRaw(["rm", stableTarget, "--force"])', "channels/history/macos/arm64", "channels/rollback/macos/arm64", "max-age=31536000, immutable", "max-age=30, must-revalidate"]) {
+  assert.ok(ossPublisher.includes(contract), `macOS OSS publisher omits ${contract}`);
+}
+for (const contract of ["method: \"HEAD\"", "Range: \"bytes=0-1\"", "content-range", "sha256", '"release", "download"', "--pre-promotion", "--metadata-only"]) {
+  assert.ok(publishedVerifier.includes(contract), `macOS published-origin verifier omits ${contract}`);
+}
+for (const contract of ["macos-production-release", "Verify OSS CLI and publication credentials", "--preflight", "Create immutable GitHub draft release", "--assets-only", "Verify staged CDN and GitHub draft byte identity", "Publish verified GitHub release before stable promotion", "Snapshot current stable metadata", "--snapshot-stable", "--promote-metadata", "Verify stable metadata", "--rollback-metadata"]) {
+  assert.ok(workflow.includes(contract), `macOS production publication workflow omits ${contract}`);
+}
+assert.ok(packageJson.scripts["verify:update-publish-plan"] && packageJson.scripts["publish:update:oss"] && packageJson.scripts["verify:update-published"], "macOS package omits production distribution commands");
+for (const contract of ["macos-production-release", "OPENDRSAI_OSSUTIL_BIN", "Developer ID Application", "previousExists=false", "--rollback-metadata", "opendrsaiRuntimeSha256", "production-promotion-blocked"]) assert.ok(updateRunbook.includes(contract), `macOS update production runbook omits ${contract}`);
 for (const contract of ["scheduleUpdateHealthConfirmation", "minimum = acceptance ? 1_000 : 30_000", "configureSignedUpdateLabFeed", 'url.protocol !== "https:"', "url.hostname !== expectedHost"]) {
-  assert.ok(updater.includes(contract), `macOS updater health/lab policy omits ${contract}`);
+  assert.ok(`${updater}\n${updateFeedPolicy}`.includes(contract), `macOS updater health/lab policy omits ${contract}`);
 }
 for (const contract of ["scheduleUpdateHealthConfirmation()", "onRendererGone:"]) {
   assert.ok(macMain.includes(contract), `macOS update health orchestration omits ${contract}`);
@@ -82,6 +117,15 @@ for (const contract of ["kill -0", "EXPECTED_VERSION", "MAX_ATTEMPTS", "grep -Fq
 for (const contract of ["sha256", "runtime-manifest.json", '"/usr/bin/tar"', '"import drsai"', ".previous", "rename(candidate, DRSAI_REPO)"]) {
   assert.ok(runtimeInstaller.includes(contract), `macOS Runtime installer omits ${contract}`);
 }
+for (const contract of ["afterPack: scripts/after-pack-update.cjs", "target: zip"]) assert.ok(updateBuilder.includes(contract), `Thin update builder omits ${contract}`);
+for (const contract of ["normalizeNativePermissions", 'name.endsWith(".tar.gz")', "rmSync", "runtime-manifest.json", "Thin update package still contains"]) assert.ok(updatePackHook.includes(contract), `Thin update packaging hook omits ${contract}`);
+for (const contract of ["readFileSync(bundledRuntimeManifestPath()", "isSafeRelativePath(manifest.archive)", "existsSync(resolveResource"]) assert.ok(runtimeInstaller.includes(contract), `Thin update Runtime availability policy omits ${contract}`);
+assert.ok(read("scripts/verify-update-assets.mjs").includes("2 * 1024 * 1024 * 1024"), "Update asset gate must enforce GitHub's 2 GiB per-file limit");
+for (const contract of ["Runtime compatibility metadata", 'manifest.archive.endsWith(".tar.gz")', "bundled archive absent by design", "64 * 1024 * 1024"]) assert.ok(thinPackageVerifier.includes(contract), `Thin update package verifier omits ${contract}`);
+assert.ok(packageJson.scripts["verify:update-thin-package"], "macOS package omits thin update structure verification");
+for (const contract of ["opendrsaiRuntimeVersion", "opendrsaiRuntimeSha256", "runtime-manifest.json"]) assert.ok(metadataAnnotator.includes(contract), `Update metadata annotator omits ${contract}`);
+for (const contract of ["runtimeCompatibleWith", "inspectInstalledRuntime", "macos-update-runtime-incompatible", "Install the full DMG", "archiveSha256"]) assert.ok(`${updater}\n${updateFeedPolicy}`.includes(contract), `Updater Runtime compatibility gate omits ${contract}`);
+assert.ok(packageJson.scripts["annotate:update-metadata"], "macOS package omits Runtime metadata annotation");
 for (const contract of ["OPENDRSAI_RUNTIME_PYTHON", 'EXPECTED_PYTHON="3.11.9"', "pip install", "shasum -a 256", 'uname -m']) {
   assert.ok(runtimeBuilder.includes(contract), `macOS Runtime artifact builder omits ${contract}`);
 }

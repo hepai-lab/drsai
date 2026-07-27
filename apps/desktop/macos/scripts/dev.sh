@@ -13,8 +13,15 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 DRSAI_HOME="${DRSAI_HOME:-$HOME/.drsai}"
 DRSAI_DEV_PYTHON="${OPENDRSAI_DEV_RUNTIME_PYTHON:-$DRSAI_HOME/drsai-agent/venv/bin/python}"
-DRSAI_API_PORT="${DRSAI_API_PORT:-8642}"
+DRSAI_API_PORT="${DRSAI_API_PORT:-18642}"
 API_URL="http://127.0.0.1:${DRSAI_API_PORT}"
+
+# Local macOS development should exercise the same production identity and
+# model routes as the released Windows/macOS apps unless a developer
+# explicitly opts into another environment.
+export OPENDRSAI_OIDC_ISSUER="${OPENDRSAI_OIDC_ISSUER:-https://ai.ihep.ac.cn/api}"
+export OPENDRSAI_PLATFORM_BASE_URL="${OPENDRSAI_PLATFORM_BASE_URL:-https://ai.ihep.ac.cn}"
+export DRSAI_API_PORT
 
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'
@@ -75,6 +82,6 @@ if [ "$(uname -s)" != "Darwin" ]; then
     exit 1
 fi
 cd "$REPO_ROOT/apps/desktop/macos"
-DRSAI_DEV_SKIP_INSTALL=1 npm run dev
+OPENDRSAI_BUILD_CHANNEL=development DRSAI_DEV_SKIP_INSTALL=1 npm run dev
 
 cleanup

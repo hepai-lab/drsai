@@ -308,6 +308,7 @@ notebooks/test.db
 # Locally downloaded, checksum-verified toolchains used to reproduce macOS artifacts.
 .runtime-tools/
 apps/desktop/macos/native/OpenDrSaiNativeHelper/.build/
+apps/desktop/macos/release-unsigned-update/
 
 # Android source and tests share names with generic generated-data rules above.
 !apps/android/app/src/main/java/ai/drsai/remote/data/

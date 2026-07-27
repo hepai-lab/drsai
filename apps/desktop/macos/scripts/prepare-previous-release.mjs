@@ -4,8 +4,8 @@ import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 if (process.platform !== "darwin" || process.arch !== "arm64") throw new Error("Previous macOS release preparation requires Apple Silicon macOS.");
-const currentTag = process.env.GITHUB_REF_NAME?.trim();
-assert.ok(currentTag, "GITHUB_REF_NAME is required");
+const currentTag = process.env.OPENDRSAI_RELEASE_TAG?.trim() || process.env.GITHUB_REF_NAME?.trim();
+assert.ok(currentTag, "OPENDRSAI_RELEASE_TAG or GITHUB_REF_NAME is required");
 const temp = resolve(process.env.RUNNER_TEMP || "/tmp", `opendrsai-previous-${process.env.GITHUB_RUN_ID || process.pid}`);
 mkdirSync(temp, { recursive: true });
 const releases = JSON.parse(run("gh", ["release", "list", "--limit", "50", "--json", "tagName,isDraft,isPrerelease,publishedAt"]));
