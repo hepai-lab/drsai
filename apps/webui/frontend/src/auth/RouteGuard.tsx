@@ -43,6 +43,7 @@ export const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
                         saveAuthSession(result.access_token, result.user_id);
                         localStorage.removeItem("drsai-mode-config");
                         localStorage.removeItem("drsai.recentAgents");
+                        localStorage.setItem("drsai_is_science_user", "1");
                         setUser({ name: result.user_id, email: result.user_id });
                         window.location.replace("/?menu=current_session&view=chat");
                     } catch (err: any) {
@@ -65,6 +66,7 @@ export const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
                     // 清除所有 DrSai 相关 localStorage，确保 science_user 以干净状态启动
                     localStorage.removeItem("drsai-mode-config");
                     localStorage.removeItem("drsai.recentAgents");
+                    localStorage.setItem("drsai_is_science_user", "1");
                     setUser({ name: result.user_id, email: result.user_id });
                     // 移除 tokenId / user_source，用 replace 强制整页刷新
                     // navigate 不能触发 useEffect 重跑（pathname 没变），所以用 location.replace

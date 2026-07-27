@@ -137,14 +137,18 @@ const TopNav: React.FC<TopNavProps> = ({ onToggleSidebar }) => {
                     icon: <User className="w-4 h-4" />,
                     onClick: () => setIsProfileModalOpen(true),
                   },
-                  { type: "divider" as const },
-                  {
-                    key: "logout",
-                    label: t("topnav.logout"),
-                    icon: <LogOut className="w-4 h-4" />,
-                    onClick: handleLogout,
-                    danger: true,
-                  },
+                  ...(localStorage.getItem("drsai_is_science_user") !== "1"
+                    ? [
+                        { type: "divider" as const },
+                        {
+                          key: "logout",
+                          label: t("topnav.logout"),
+                          icon: <LogOut className="w-4 h-4" />,
+                          onClick: handleLogout,
+                          danger: true,
+                        },
+                      ]
+                    : []),
                 ],
               }}
               placement="bottomRight"

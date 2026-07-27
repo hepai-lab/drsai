@@ -787,7 +787,8 @@ const RunView: React.FC<RunViewProps> = ({
   // Control right panel open state based on panel visibility
   useEffect(() => {
     const shouldShow = showPanel && !isPanelMinimized && agentConfig.panel.type !== 'none';
-    setIsRightPanelOpen(shouldShow);
+    const isNarrow = window.innerWidth < 480;
+    setIsRightPanelOpen(shouldShow && !isNarrow);
     return () => {
       setIsRightPanelOpen(false);
     };

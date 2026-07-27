@@ -156,10 +156,10 @@ export default function NewChatView({
                 <div className="mb-3 mt-4 flex w-full items-center gap-2 overflow-hidden">
                     <div className="flex flex-1 overflow-hidden">
                         <p
-                            className="font-agent-mono animate-marquee-x ml-auto whitespace-nowrap text-[10px] font-medium uppercase tracking-[0.22em] text-accent"
-                            style={{ '--marquee-duration': '16s' } as React.CSSProperties}
+                            className="font-agent-mono animate-marquee-x ml-auto whitespace-nowrap text-[10px] font-medium uppercase tracking-[0.22em] text-accent hover:[animation-play-state:paused]"
+                            style={{ '--marquee-duration': '26s' } as React.CSSProperties}
                         >
-                            {announcements.map((a) => parseAgentText(a, lang)).join('  ·  ')}
+                            {announcements.map((a) => parseAgentText(a, lang)).join('  🚀  ') + '  🚀  ' + announcements.map((a) => parseAgentText(a, lang)).join('  🚀  ')}
                         </p>
                     </div>
                     <button
