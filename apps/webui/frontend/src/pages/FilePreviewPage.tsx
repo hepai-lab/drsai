@@ -22,6 +22,11 @@ interface FilePreviewPageProps {
   readOnly?: boolean;
 }
 
+export interface FilePreviewPageHandle {
+  /** Return the current edited text content, or null if not a text file. */
+  getEditedContent: () => { text: string; name: string; mime_type: string } | null;
+}
+
 /* ============================================================
    WordEditor: Online .docx editor with STRUCTURED EDITS
    - Loads .docx via mammoth.js for display
@@ -485,7 +490,8 @@ const normalizeMarkdownForPreview = (raw: string): string => {
   return text.replace(/\n{3,}/g, "\n\n").trim();
 };
 
-const FilePreviewPage: React.FC<FilePreviewPageProps> = ({ file = null, sessionId, onFileEvent, readOnly = false }) => {
+const FilePreviewPage = React.forwardRef<FilePreviewPageHandle, FilePreviewPageProps>(
+  ({ file = null, sessionId, onFileEvent, readOnly = false }, ref) => {
   const { darkMode } = React.useContext(appContext);
   const isDark = darkMode === "dark";
   const location = useLocation();
@@ -506,8 +512,21 @@ const FilePreviewPage: React.FC<FilePreviewPageProps> = ({ file = null, sessionI
   const [isEditing, setIsEditing] = React.useState(true);
   const [showWordEditor, setShowWordEditor] = React.useState(false);
 
-  const dataUrl = React.useMemo(() => (file ? fileToDataUrl(file) : null), [file]);
   const textMode = React.useMemo(() => (file ? isTextFile(file) : false), [file]);
+
+  // Expose edited content to parent (for save-to-GFS button in toolbar)
+  React.useImperativeHandle(ref, () => ({
+    getEditedContent: () => {
+      if (!file) return null;
+      return {
+        text: editedText,
+        name: file.name,
+        mime_type: file.mime_type || 'text/plain',
+      };
+    },
+  }), [editedText, file]);
+
+  const dataUrl = React.useMemo(() => (file ? fileToDataUrl(file) : null), [file]);
   const markdownMode = React.useMemo(() => (file ? isMarkdownFile(file) : false), [file]);
   const imageMode = React.useMemo(() => (file ? isImageFile(file) : false), [file]);
   const pdfMode = React.useMemo(() => (file ? isPdfFile(file) : false), [file]);
@@ -698,42 +717,17 @@ const FilePreviewPage: React.FC<FilePreviewPageProps> = ({ file = null, sessionI
 
   return (
     <>
+      {/* 在线编辑功能暂时注释
       {showWordEditor && file && (
         <WordEditor key={Date.now()} file={file} onClose={() => setShowWordEditor(false)} onFileEvent={onFileEvent} />
       )}
+      */}
 
       <div className="h-full min-h-0 flex flex-col">
         <div className="flex-shrink-0 px-4 py-3 border-b border-border-primary/30 flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <h2 className="text-base font-semibold text-primary truncate">{file.name}</h2>
-            <p className="text-xs text-secondary mt-1 truncate">{file.description || "无描述"}</p>
-          </div>
-          {textMode && !readOnly && (
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setIsEditing((v) => !v)}
-                className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium bg-tertiary/20 text-primary hover:bg-tertiary/30"
-              >
-                {isEditing ? <Eye className="w-3.5 h-3.5" /> : <PencilLine className="w-3.5 h-3.5" />}
-                {isEditing ? "预览模式" : "编辑模式"}
-              </button>
-              <button
-                type="button"
-                onClick={downloadEdited}
-                disabled={!hasChanges}
-                className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium ${hasChanges
-                  ? "bg-accent/15 text-accent hover:bg-accent/25"
-                  : "bg-tertiary/20 text-secondary cursor-not-allowed"
-                  }`}
-              >
-                <Download className="w-3.5 h-3.5" />
-                保存为副本
-              </button>
-            </div>
-          )}
           {wordMode && !readOnly && (
             <div className="flex flex-shrink-0 items-center gap-2">
+              {/* 在线编辑功能暂时注释
               <button
                 type="button"
                 onClick={() => setShowWordEditor(true)}
@@ -742,14 +736,7 @@ const FilePreviewPage: React.FC<FilePreviewPageProps> = ({ file = null, sessionI
                 <PencilLine className="w-3.5 h-3.5" />
                 在线编辑
               </button>
-              <button
-                type="button"
-                onClick={returnToSessionLikeOverviewTab}
-                className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium bg-tertiary/20 text-secondary hover:bg-tertiary/30"
-              >
-                <ArrowLeft className="w-3.5 h-3.5" />
-                返回会话
-              </button>
+              */}
             </div>
           )}
         </div>
@@ -790,9 +777,13 @@ const FilePreviewPage: React.FC<FilePreviewPageProps> = ({ file = null, sessionI
             <div className="h-full">
               {wordLoading && <div className="text-sm text-secondary">正在加载文件内容...</div>}
               {wordError && <div className="text-sm text-red-500">{wordError}</div>}
+              <style>{`
+                .docx-wrapper { background: transparent !important; padding: 0 !important; }
+                .docx-wrapper > section.docx { box-shadow: 0 1px 4px rgba(0,0,0,0.15) !important; margin: 0 auto 16px !important; }
+              `}</style>
               <div
                 ref={wordContainerRef}
-                className={`h-full overflow-auto bg-white rounded-md border border-border-primary/30 p-4${wordLoading || wordError ? " hidden" : ""}`}
+                className={`h-full overflow-auto rounded-md border border-border-primary/30${wordLoading || wordError ? " hidden" : ""}`}
               />
             </div>
           )}
@@ -828,6 +819,6 @@ const FilePreviewPage: React.FC<FilePreviewPageProps> = ({ file = null, sessionI
       </div>
     </>
   );
-};
+});
 
 export default FilePreviewPage;

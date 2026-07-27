@@ -502,10 +502,6 @@ export class SettingsAPI {
                 headers: this.getHeaders(),
             }
         );
-        // For non-SSO / missing users, backend should return 4xx. Treat as "no settings".
-        if (response.status === 401 || response.status === 403 || response.status === 404 || response.status === 422) {
-            return {};
-        }
         const data = await response.json();
         if (!data.status)
             throw new Error(data.message || "Failed to fetch settings");
@@ -706,31 +702,7 @@ export class AgentWorkerAPI {
                 })
             }
         );
-        let data: any = {};
-        try {
-            data = await response.json();
-        } catch {
-            throw new Error("Failed to save remote agent");
-        }
-        if (!response.ok) {
-            const d = data?.detail;
-            let msg: string;
-            if (typeof d === "string") {
-                msg = d;
-            } else if (Array.isArray(d)) {
-                msg = d
-                    .map((x: unknown) => {
-                        if (x && typeof x === "object" && "msg" in x) {
-                            return String((x as { msg: unknown }).msg);
-                        }
-                        return typeof x === "string" ? x : JSON.stringify(x);
-                    })
-                    .join(", ");
-            } else {
-                msg = data?.message || `Request failed (${response.status})`;
-            }
-            throw new Error(msg);
-        }
+        const data = await response.json();
         if (!data.status)
             throw new Error(data.message || "Failed to save remote agent");
         return data;
@@ -865,7 +837,6 @@ export class AgentWorkerAPI {
         stored_default_agent_id: string | null;
         auto_load_default_agent?: boolean;
         default_agent_name?: string | null;
-        science_default_agent_name?: string | null;
     }> {
         const url = `${this.getBaseUrl()}/agentworker/user_default_agent?user_id=${encodeURIComponent(userId)}`;
         const response = await fetch(url, {
@@ -1229,21 +1200,6 @@ export class AuthAPI {
     async scienceUserLogin(tokenId: string): Promise<{ access_token: string; user_id: string }> {
         const params = new URLSearchParams({ token_id: tokenId });
         const response = await fetch(`${this.getBaseUrl()}/auth/science-user/token?${params.toString()}`, {
-            method: "POST",
-            headers: this.getHeaders(),
-            credentials: "include",
-        });
-        const data = await response.json();
-        if (!response.ok || !data.status) {
-            throw new Error(data.detail || data.message || `science_user_auth_failed`);
-        }
-        return data.data as { access_token: string; user_id: string };
-    }
-
-    /** 统一认证免密登录：用 IHEP access_token + username 换取本系统 JWT */
-    async scienceUserVerify(accessToken: string, username: string): Promise<{ access_token: string; user_id: string }> {
-        const params = new URLSearchParams({ access_token: accessToken, username });
-        const response = await fetch(`${this.getBaseUrl()}/auth/science-user/verify?${params.toString()}`, {
             method: "POST",
             headers: this.getHeaders(),
             credentials: "include",
@@ -1679,6 +1635,247 @@ export class DocMasterAPI {
             mine: data.data?.mine || [],
         };
     }
+
+    /** Seed server-side fixture files into the user's GFS bucket. Used by
+     * the right-panel 试用 buttons to bypass file upload during demos.
+     * Returns the same `{uploaded, errors}` shape as `cloudAPI.uploadFiles`,
+     * so callers can pipe the result through their existing handlers. */
+    async seedDemo(params: {
+        kind: "guanlianyewu" | "zonghe";
+        userId: string;
+    }): Promise<{ uploaded: { name: string; remote_path: string }[]; errors: { name: string; error: string }[] }> {
+        const qs = new URLSearchParams();
+        qs.set("kind", params.kind);
+        qs.set("user_id", params.userId);
+        const response = await fetch(
+            `${this.getBaseUrl()}/docmaster/demo/seed?${qs.toString()}`,
+            { method: "POST", headers: this.getHeaders() }
+        );
+        const data = await response.json();
+        if (!response.ok || !data.status) {
+            throw new Error(
+                typeof data.detail === "string" ? data.detail : data.message || "演示文件加载失败"
+            );
+        }
+        return {
+            uploaded: data.data?.uploaded || [],
+            errors: data.data?.errors || [],
+        };
+    }
 }
 
 export const docmasterAPI = new DocMasterAPI();
+
+// ── Cloud / GFS API ──────────────────────────────────────────────
+
+export interface CloudFileEntry {
+  name: string;
+  path: string;
+  size: number;
+  type: 'file' | 'directory';
+  suffix?: string;
+  syncStatus: 'synced' | 'syncing' | 'modified' | 'cloud-only' | 'error';
+  updatedAt?: string;
+  children?: CloudFileEntry[];
+}
+
+export interface CloudTemplateEntry {
+  name: string;
+  path: string;
+  description?: string;
+  suffix: string;
+}
+
+export interface CloudStatus {
+  connected: boolean;
+  mountPath: string;
+  lastSyncTime: string | null;
+}
+
+export class CloudAPI {
+  private getBaseUrl(): string {
+    return getServerUrl();
+  }
+
+  private getHeaders(): HeadersInit {
+    return { "Content-Type": "application/json" };
+  }
+
+  async provision(userId: string): Promise<{ endpoint: string; buckets: Array<{ bucket_name: string; access_key: string; secret_key: string }> }> {
+    const res = await fetch(`${this.getBaseUrl()}/cloud/provision`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ user_id: userId }),
+    });
+    const data = await res.json();
+    if (!data.status) throw new Error(data.detail || data.message || "GFS 配置失败");
+    return data.data;
+  }
+
+  async checkStatus(userId?: string): Promise<CloudStatus> {
+    const qs = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
+    const res = await fetch(`${this.getBaseUrl()}/cloud/status${qs}`, { headers: this.getHeaders() });
+    const data = await res.json();
+    if (!data.status) throw new Error(data.message || "检查连接状态失败");
+    return data.data;
+  }
+
+  /** Trigger a synchronous GFS→local reconcile. Resolves after the bucket
+   * has been re-walked and pulled, so callers can re-fetch the file list
+   * immediately and see fresh state. */
+  async refreshSync(userId?: string): Promise<{ synced: boolean; counts?: Record<string, number>; lastSyncTime?: string }> {
+    const qs = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
+    const res = await fetch(`${this.getBaseUrl()}/cloud/refresh${qs}`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+    });
+    const data = await res.json();
+    if (!data.status) throw new Error(data.message || "同步失败");
+    return data.data;
+  }
+
+  async listFiles(subPath?: string, userId?: string): Promise<CloudFileEntry[]> {
+    const qs = new URLSearchParams();
+    if (subPath) qs.set('path', subPath);
+    if (userId) qs.set('user_id', userId);
+    const qstr = qs.toString() ? `?${qs.toString()}` : '';
+    const res = await fetch(`${this.getBaseUrl()}/cloud/files${qstr}`, { headers: this.getHeaders() });
+    const data = await res.json();
+    if (!data.status) throw new Error(data.message || "获取文件列表失败");
+    return data.data;
+  }
+
+  async listTemplates(userId?: string): Promise<CloudTemplateEntry[]> {
+    const qs = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
+    const res = await fetch(`${this.getBaseUrl()}/cloud/templates${qs}`, { headers: this.getHeaders() });
+    const data = await res.json();
+    if (!data.status) throw new Error(data.message || "获取模板列表失败");
+    return data.data;
+  }
+
+  async sendToAgent(params: { filePaths: string[]; sessionId: string }): Promise<void> {
+    const res = await fetch(`${this.getBaseUrl()}/cloud/send-to-agent`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify(params),
+    });
+    const data = await res.json();
+    if (!data.status) throw new Error(data.message || "发送给 Agent 失败");
+  }
+
+  async applyTemplate(params: { templatePath: string; sessionId: string }): Promise<{ content: string }> {
+    const res = await fetch(`${this.getBaseUrl()}/cloud/apply-template`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify(params),
+    });
+    const data = await res.json();
+    if (!data.status) throw new Error(data.message || "应用模板失败");
+    return data.data;
+  }
+
+  async getFileUrl(filePath: string): Promise<{ url: string }> {
+    const res = await fetch(`${this.getBaseUrl()}/cloud/file-url`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ path: filePath }),
+    });
+    const data = await res.json();
+    if (!data.status) throw new Error(data.message || "获取文件链接失败");
+    return data.data;
+  }
+
+  /** Build a direct-download URL for a single GFS file.
+   *  GET /cloud/download serves the file bytes (FileResponse), unlike
+   *  /cloud/file-url which returns a GFS web-UI page URL. */
+  getDownloadUrl(filePath: string, userId?: string): string {
+    const normalized = filePath.replace(/^\/+/, '');
+    const qs = new URLSearchParams({ path: normalized });
+    if (userId) qs.set('user_id', userId);
+    return `${this.getBaseUrl()}/cloud/download?${qs.toString()}`;
+  }
+
+  /** 在 GFS 上新建空文件夹 */
+  async createFolder(parentPath: string, name: string, userId?: string): Promise<{ path: string; name: string }> {
+    const qs = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
+    const res = await fetch(`${this.getBaseUrl()}/cloud/folder${qs}`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ parentPath, name }),
+    });
+    const data = await res.json();
+    if (!data.status) throw new Error(data.message || "创建文件夹失败");
+    return data.data;
+  }
+
+  /** 重命名 GFS 文件或文件夹 */
+  async renameFile(oldPath: string, newName: string, userId?: string): Promise<{ renamed: string; to: string }> {
+    const qs = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
+    const res = await fetch(`${this.getBaseUrl()}/cloud/rename${qs}`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ oldPath, newName }),
+    });
+    const data = await res.json();
+    if (!data.status) throw new Error(data.message || "重命名失败");
+    return data.data;
+  }
+
+  /** 移动 GFS 文件/文件夹到目标目录（拖拽） */
+  async moveFile(sourcePath: string, targetDir: string, userId?: string): Promise<{ moved: boolean; renamed: string; to: string }> {
+    const qs = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
+    const res = await fetch(`${this.getBaseUrl()}/cloud/move${qs}`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ sourcePath, targetDir }),
+    });
+    const data = await res.json();
+    if (!data.status) throw new Error(data.message || "移动失败");
+    return data.data;
+  }
+
+  /** 把多个 GFS 文件拉到 DocMaster workspace，返回本地绝对路径 */
+  async pullToWorkspace(paths: string[], userId: string): Promise<{ files: { remote: string; local: string; name: string }[]; errors: { path: string; error: string }[] }> {
+    const res = await fetch(`${this.getBaseUrl()}/cloud/pull-to-workspace`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ paths, user_id: userId }),
+    });
+    const data = await res.json();
+    if (!data.status) throw new Error(data.message || "拉取文件失败");
+    return data.data;
+  }
+
+  /** 上传本地文件到 GFS 桶（可选目标目录） */
+  async uploadFiles(files: File[], destDir: string = "uploads", userId: string = ""): Promise<{ uploaded: { name: string; remote_path: string }[]; errors: { name: string; error: string }[] }> {
+    const formData = new FormData();
+    files.forEach((f) => formData.append("files", f));
+    const qs = new URLSearchParams();
+    if (userId) qs.set("user_id", userId);
+    if (destDir) qs.set("dest_dir", destDir);
+    const res = await fetch(`${this.getBaseUrl()}/cloud/upload?${qs.toString()}`, {
+      method: 'POST',
+      body: formData,
+      // Don't set Content-Type — browser will set multipart boundary
+    });
+    const data = await res.json();
+    if (!data.status) throw new Error(data.message || "上传失败");
+    return data.data;
+  }
+
+  /** 删除 GFS 文件或目录 */
+  async deleteFile(remotePath: string, opts: { userId?: string; recursive?: boolean } = {}): Promise<{ deleted: string }> {
+    const qs = new URLSearchParams({ path: remotePath });
+    if (opts.userId) qs.set("user_id", opts.userId);
+    if (opts.recursive) qs.set("recursive", "true");
+    const res = await fetch(`${this.getBaseUrl()}/cloud/files?${qs.toString()}`, {
+      method: 'DELETE',
+      headers: this.getHeaders(),
+    });
+    const data = await res.json();
+    if (!data.status) throw new Error(data.message || "删除失败");
+    return data.data;
+  }
+}
+
+export const cloudAPI = new CloudAPI();
