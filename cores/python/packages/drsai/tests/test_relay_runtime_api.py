@@ -18,9 +18,9 @@ def fixture():
     key = Ed25519PrivateKey.generate()
     public = base64.urlsafe_b64encode(key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)).rstrip(b"=").decode()
     runtime_id, token = registry.register(registry.issue_registration_code(), "PC", "1", public, "registration-key")
-    grant, _ = registry.issue_access_grant(runtime_id, token)
+    _, grant, _ = registry.issue_access_grant(runtime_id, token)
     registry.associate("alice", grant)
-    second_grant, _ = registry.issue_access_grant(runtime_id, token)
+    _, second_grant, _ = registry.issue_access_grant(runtime_id, token)
     registry.associate("bob", second_grant)
     registry.publish_workspaces(runtime_id, token, [Workspace(runtime_id=runtime_id, workspace_id="ws-a", display_name="Project")])
     authority = RuntimeAuthority(runtime_id)
@@ -87,18 +87,38 @@ def test_android_http_session_run_event_cancel_and_approval_e2e() -> None:
 
 
 def test_cross_workspace_session_and_android_path_fail_closed() -> None:
-    client, runtime_id, _ = fixture()
+    client, runtime_id, runtime = fixture()
     headers = {"x-subject": "alice"}
     session = client.post(f"/v1/runtimes/{runtime_id}/workspaces/ws-a/sessions", headers=headers, json={
         **control("session-idem"), "title": "Test", "agent_definition_id": "agent", "agent_definition_version": "1.2.3"
     }).json()
-    response = client.post(f"/v1/runtimes/{runtime_id}/workspaces/ws-other/sessions/{session['session_id']}/runs",
-                           headers=headers, json={**control("run-idem-x"), "message": "x", "attachment_refs": ["/sdcard/x"]})
-    assert response.status_code == 403
-    assert response.json()["code"] == "workspace_forbidden"
+    baseline_runs = len(runtime.runs)
+    attempts = [
+        client.post(
+            f"/v1/runtimes/missing-runtime/workspaces/ws-a/sessions/{session['session_id']}/runs",
+            headers=headers,
+            json={**control("run-idem-runtime"), "message": "x", "attachment_refs": []},
+        ),
+        client.post(
+            f"/v1/runtimes/{runtime_id}/workspaces/ws-other/sessions/{session['session_id']}/runs",
+            headers=headers,
+            json={**control("run-idem-workspace"), "message": "x", "attachment_refs": []},
+        ),
+        client.post(
+            f"/v1/runtimes/{runtime_id}/workspaces/ws-a/sessions/missing-session/runs",
+            headers=headers,
+            json={**control("run-idem-session"), "message": "x", "attachment_refs": []},
+        ),
+    ]
+    assert [(item.status_code, item.json()["code"]) for item in attempts] == [
+        (404, "runtime_not_found"),
+        (403, "workspace_forbidden"),
+        (404, "session_not_found"),
+    ]
+    assert len(runtime.runs) == baseline_runs
 
 
-def test_two_oidc_subjects_on_same_runtime_cannot_cross_session_or_run() -> None:
+def test_runtime_association_exposes_existing_active_sessions_to_each_associated_subject() -> None:
     client, runtime_id, _ = fixture()
     alice, bob = {"x-subject": "alice"}, {"x-subject": "bob"}
     session = client.post(f"/v1/runtimes/{runtime_id}/workspaces/ws-a/sessions", headers=alice, json={
@@ -108,12 +128,19 @@ def test_two_oidc_subjects_on_same_runtime_cannot_cross_session_or_run() -> None
     run = client.post(f"/v1/runtimes/{runtime_id}/workspaces/ws-a/sessions/{session['session_id']}/runs",
                       headers=alice, json={**control("alice-run"), "message": "private", "attachment_refs": []}).json()
 
-    assert client.get(f"/v1/runtimes/{runtime_id}/workspaces/ws-a/sessions", headers=bob).json()["items"] == []
-    forbidden_session = client.get(
+    listed = client.get(f"/v1/runtimes/{runtime_id}/workspaces/ws-a/sessions", headers=bob)
+    assert [item["session_id"] for item in listed.json()["items"]] == [session["session_id"]]
+    visible_session = client.get(
         f"/v1/runtimes/{runtime_id}/workspaces/ws-a/sessions/{session['session_id']}", headers=bob)
-    assert forbidden_session.status_code == 403 and forbidden_session.json()["code"] == "session_forbidden"
-    forbidden_run = client.get(f"/v1/runtimes/{runtime_id}/runs/{run['run_id']}", headers=bob)
-    assert forbidden_run.status_code == 403 and forbidden_run.json()["code"] == "run_forbidden"
+    assert visible_session.status_code == 200
+    visible_run = client.get(f"/v1/runtimes/{runtime_id}/runs/{run['run_id']}", headers=bob)
+    assert visible_run.status_code == 200
+    conversation = client.get(
+        f"/v1/runtimes/{runtime_id}/workspaces/ws-a/sessions/{session['session_id']}/conversation",
+        headers=bob,
+    )
+    assert conversation.status_code == 200
+    assert conversation.json()["items"][0]["kind"] == "message.user"
 
 
 def test_android_owop_binding_is_read_only_scoped_and_correlation_preserving() -> None:

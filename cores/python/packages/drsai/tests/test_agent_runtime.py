@@ -25,9 +25,9 @@ def load(name: str, filename: str):
     return module
 
 
-registry_module = load("m07_runtime_registry", "runtime_registry.py")
-engine_module = load("m07_runtime_engine", "runtime_engine.py")
-agent_module = load("m07_agent_runtime", "agent_runtime.py")
+registry_module = load("m07_runtime_registry", "runtime/registry.py")
+engine_module = load("m07_runtime_engine", "runtime/engine.py")
+agent_module = load("m07_agent_runtime", "runtime/agent.py")
 
 AgentDefinitionStore = agent_module.AgentDefinitionStore
 AgentBackend = agent_module.AgentBackend

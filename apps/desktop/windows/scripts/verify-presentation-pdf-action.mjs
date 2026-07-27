@@ -11,9 +11,9 @@ const css = read("../shared/renderer/src/styles.css");
 const sharedApi = read("../shared/api/desktopApi.ts");
 const preload = read("../shared/main/preload.ts");
 const main = read("src/main/index.ts");
-const generator = read("src/main/managerPresentation.ts");
+const generator = read("../shared/main/managerPresentation.ts");
 const parser = read("../shared/main/presentationPdf.ts");
-const taskStore = read("src/main/managerPresentationTasks.ts");
+const taskStore = read("../shared/main/managerPresentationTasks.ts");
 const backgroundTasks = read("src/main/backgroundTasks.ts");
 const e2eSmoke = read("src/main/e2eSmoke.ts");
 const skillSquare = read("../shared/renderer/src/components/SkillSquareView.tsx");
@@ -55,13 +55,13 @@ const checks = [
   ["requirement scope and outcome are visible to the user", panel.includes("manager-presentation-requirement-input") && panel.includes("应用到当前任务") && panel.includes("manager-presentation-applied-requirements")],
   ["packaged acceptance checks PPTX content provenance and late-update recovery", e2eSmoke.includes("requirementPresentInGeneratedPptx") && e2eSmoke.includes("requirementPersistedInManifest") && e2eSmoke.includes("lateRequirementRequiresRegeneration")],
   ["paused tasks expose resume and remain cancellable", panel.includes("resume-manager-presentation") && panel.includes("继续生成") && panel.includes("cancel-manager-presentation")],
-  ["unfinished presentation tasks are persisted atomically", taskStore.includes("manager-presentation-tasks.json") && taskStore.includes("renameSync(temporaryPath, TASKS_PATH)") && main.includes("recordManagerPresentationProgress")],
+  ["unfinished presentation tasks are persisted atomically", taskStore.includes("manager-presentation-tasks.json") && taskStore.includes("renameSync(temporaryPath, tasksPath)") && main.includes("recordManagerPresentationProgress")],
   ["recovery cleans only bounded PPTX partial artifacts", taskStore.includes("cleanupPartialArtifacts") && taskStore.includes("pathWithinWorkspace.startsWith") && taskStore.includes('extname(outputPath).toLowerCase() !== ".pptx"')],
   ["the PDF panel exposes an unfinished-task recovery action", sharedApi.includes("getManagerPresentationRecovery(") && preload.includes("desktop:manager-presentation-recovery") && panel.includes("继续未完成任务")],
   ["presentation generation is mirrored into the generic background queue", backgroundTasks.includes("upsertBackgroundTaskForManagerPresentation") && backgroundTasks.includes('kind: "presentation_generation"') && main.includes("upsertBackgroundTaskForManagerPresentation(request, progress)")],
   ["background tasks preserve progress completed steps and pending decisions", sharedApi.includes("completedSteps?: string[]") && sharedApi.includes("pendingDecisions?: string[]") && backgroundTasks.includes("completedPresentationSteps") && skillSquare.includes("Needs you:")],
   ["active work keeps running when the Windows window closes", main.includes('mainWindow.on("close"') && main.includes("event.preventDefault()") && main.includes("hasActiveForegroundIndependentWork()") && main.includes("mainWindow?.hide()")],
-  ["destroyed renderers fail closed instead of crashing sender validation", main.includes("function isTrustedSender") && main.includes("event.sender !== mainWindow.webContents") && main.includes("} catch {")],
+  ["destroyed renderers fail closed instead of controlling presentation work", main.includes("function canControlManagerPresentation") && main.includes("event.sender.isDestroyed()")],
 ];
 
 const failures = checks.filter(([, ok]) => !ok).map(([label]) => label);

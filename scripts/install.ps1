@@ -289,7 +289,13 @@ function Expand-SourceArchive {
 
     Write-Host "  Extracting bundled source archive..." -ForegroundColor Yellow
 
-    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $InstallDir
+    if (Test-Path $InstallDir) {
+        Remove-Item -Recurse -Force -ErrorAction Stop $InstallDir
+    }
+
+    if (Test-Path $InstallDir) {
+        throw "Existing installation could not be removed: $InstallDir"
+    }
 
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 
@@ -593,11 +599,30 @@ $VenvPython = if ($IsWindows -or $env:OS -eq "Windows_NT") {
 
 }
 
-if (Test-Path $VenvPython) {
+$VenvConfig = Join-Path $VenvDir "pyvenv.cfg"
+$VenvHealthy = (Test-Path $VenvPython) -and (Test-Path $VenvConfig)
+
+if ($VenvHealthy) {
+
+    & $VenvPython -c "import sys; raise SystemExit(0 if sys.prefix != sys.base_prefix else 1)" 2>$null
+
+    $VenvHealthy = ($LASTEXITCODE -eq 0)
+
+}
+
+if ($VenvHealthy) {
 
     Write-Host "  Reusing existing virtual environment: $VenvDir" -ForegroundColor Yellow
 
 } else {
+
+    if (Test-Path $VenvDir) {
+
+        Write-Host "  Replacing incomplete virtual environment: $VenvDir" -ForegroundColor Yellow
+
+        Remove-Item -Recurse -Force -ErrorAction Stop $VenvDir
+
+    }
 
     & $PythonBin -m venv $VenvDir
 

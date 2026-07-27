@@ -37,7 +37,7 @@ occupiedPort.unref();
 const modulePath = pathToFileURL(join(cache, "remoteWorkspace.mjs")).href;
 const remote = await import(modulePath + "?t=" + Date.now());
 const remotePeer = await import(modulePath + "?peer=" + Date.now());
-run("docker", ["cp", resolve(root, "../../../cores/python/packages/drsai/src/drsai/backend/remote_pty.py"), "opendrsai-remote-ssh-fixture:/tmp/remote_pty.py"]);
+run("docker", ["cp", resolve(root, "../../../cores/python/packages/drsai/src/drsai/backend/remote_ssh/pty.py"), "opendrsai-remote-ssh-fixture:/tmp/remote_pty.py"]);
 const ptyProbe = `import asyncio,importlib.util,pathlib,sys
 s=importlib.util.spec_from_file_location("rp","/tmp/remote_pty.py")
 m=importlib.util.module_from_spec(s);sys.modules["rp"]=m;s.loader.exec_module(m)

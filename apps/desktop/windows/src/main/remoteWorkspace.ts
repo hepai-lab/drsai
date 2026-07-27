@@ -1082,8 +1082,8 @@ export async function executeRemoteWorkspaceMutation(action: "stage-file" | "rev
     : { workspacePath: value.workspacePath, path: value.path, reverted: true, message: "Remote file reverted." };
 }
 
-export async function commitRemoteWorkspace(workspacePath: string, message: string, body?: string): Promise<void> {
-  await remotePost(workspacePath, "/git/commit", { message, body });
+export async function commitRemoteWorkspace(workspacePath: string, message: string, body?: string, approvalId?: string): Promise<void> {
+  await remotePost(workspacePath, "/git/commit", { message, body, idempotency_key: approvalId });
 }
 
 export async function listRemoteWorkspaceFiles(request: WorkspaceFileTreeRequest): Promise<WorkspaceFileTreeResult> {

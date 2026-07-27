@@ -50,7 +50,9 @@ jobs:
             $fullDownload = if ("${{ inputs.full_download }}" -eq "true") { "1" } else { "0" }
           }
 
-          "OPENDRSAI_RELEASE_BASE_URL=https://github.com/$env:OPENDRSAI_RELEASE_REPOSITORY/releases/download/$tag" >> $env:GITHUB_ENV
+          "OPENDRSAI_RELEASE_BASE_URL=https://download-opendrsai.ihep.ac.cn/releases/$tag/windows" >> $env:GITHUB_ENV
+          "OPENDRSAI_RELEASE_METADATA_BASE_URL=https://github.com/$env:OPENDRSAI_RELEASE_REPOSITORY/releases/download/$tag" >> $env:GITHUB_ENV
+          "OPENDRSAI_UPDATE_MANIFEST_URL=https://download-opendrsai.ihep.ac.cn/channels/beta/latest-windows.json" >> $env:GITHUB_ENV
           "VERIFY_PUBLIC_RELEASE_DOWNLOAD=$fullDownload" >> $env:GITHUB_ENV
 
       - name: Verify public Windows release

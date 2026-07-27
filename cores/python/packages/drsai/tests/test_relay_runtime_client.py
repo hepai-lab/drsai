@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
 
 from drsai.relay.device_identity import DeviceIdentityStore
+from drsai.relay.generated_contract import PROTOCOL_VERSION
 from drsai.relay.runtime_client import RuntimeCredential, RuntimeCredentialStore, RuntimeEnrollmentClient, RuntimeOutboundConnector
 from drsai.relay.enroll_cli import parser
 
@@ -110,6 +112,200 @@ def test_runtime_connector_dispatches_control_request_and_returns_response(tmp_p
                             "result": {"run_id": "run-one", "status": "completed"}}
     finally:
         FakeSocket.incoming = []
+
+
+def test_runtime_connector_supports_frozen_hai_http_frames(tmp_path: Path) -> None:
+    class Message:
+        type = __import__("aiohttp").WSMsgType.TEXT
+        data = json.dumps({
+            "type": "request",
+            "request_id": "request-hai",
+            "correlation_id": "correlation-hai",
+            "method": "GET",
+            "path": "/v1/sessions?workspace_id=workspace-one",
+            "body": None,
+        })
+
+    async def handler(method, path, body, correlation_id):
+        assert (method, path, body, correlation_id) == (
+            "GET",
+            "/v1/sessions?workspace_id=workspace-one",
+            None,
+            "correlation-hai",
+        )
+        return 200, {"data": [{"session_id": "session-one"}]}
+
+    FakeSocket.incoming = [Message()]
+    try:
+        identity = DeviceIdentityStore(tmp_path / "id", XorProtector()).load_or_create()
+        connector = RuntimeOutboundConnector(
+            "wss://ai-dev.ihep.ac.cn/api/runtime-relay/v1/runtime-connect",
+            RuntimeCredential("rt-one", "token"),
+            identity,
+            "instance-one",
+            "2.0.0",
+            session_factory=FakeSession,
+            http_request_handler=handler,
+            wire_protocol="hai-http",
+        )
+        asyncio.run(connector.run_once())
+        assert FakeSession.last.headers == {"X-Runtime-Token": "token"}
+        assert "runtime_id=rt-one" in FakeSession.last.url
+        assert "instance_id=instance-one" in FakeSession.last.url
+        assert "version=2.0.0" in FakeSession.last.url
+        assert FakeSession.last.socket.sent[0]["type"] == "heartbeat"
+        assert FakeSession.last.socket.sent[-1] == {
+            "type": "response",
+            "request_id": "request-hai",
+            "status": 200,
+            "body": {"data": [{"session_id": "session-one"}]},
+        }
+    finally:
+        FakeSocket.incoming = []
+
+
+def test_runtime_connector_forwards_hai_event_frames(tmp_path: Path) -> None:
+    async def scenario():
+        socket = FakeSocket()
+        calls = 0
+
+        async def events():
+            nonlocal calls
+            calls += 1
+            return [{
+                "event_id": "event-one",
+                "sequence": 1,
+                "runtime_id": "rt-one",
+                "workspace_id": "workspace-one",
+                "session_id": "session-one",
+                "run_id": "run-one",
+                "timestamp": "2026-07-26T00:00:00+00:00",
+                "kind": "message.delta",
+                "payload": {"delta": "hello"},
+            }]
+
+        identity = DeviceIdentityStore(tmp_path / "id", XorProtector()).load_or_create()
+        connector = RuntimeOutboundConnector(
+            "wss://relay.example/v1/runtime-connect",
+            RuntimeCredential("rt-one", "token"),
+            identity,
+            "instance-one",
+            "2.0.0",
+            event_provider=events,
+            wire_protocol="hai-http",
+        )
+        task = asyncio.create_task(connector._forward_events(socket))
+        await asyncio.sleep(0.01)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        assert calls == 1
+        assert socket.sent == [{
+            "type": "event",
+            "run_id": "run-one",
+            "event": {
+                "event_id": "event-one",
+                "sequence": 1,
+                "runtime_id": "rt-one",
+                "workspace_id": "workspace-one",
+                "session_id": "session-one",
+                "run_id": "run-one",
+                "timestamp": "2026-07-26T00:00:00+00:00",
+                "kind": "message.delta",
+                "payload": {"delta": "hello"},
+            },
+        }]
+
+    asyncio.run(scenario())
+
+
+def test_runtime_connector_normalizes_hai_http_error_envelope(tmp_path: Path) -> None:
+    async def scenario():
+        socket = FakeSocket()
+
+        async def handler(method, path, body, correlation_id):
+            return 404, {"error": {"code": "session_not_found", "message": "missing"}}
+
+        identity = DeviceIdentityStore(tmp_path / "id", XorProtector()).load_or_create()
+        connector = RuntimeOutboundConnector(
+            "wss://relay.example/v1/runtime-connect",
+            RuntimeCredential("rt-one", "token"),
+            identity,
+            "instance-one",
+            "2.0.0",
+            http_request_handler=handler,
+            wire_protocol="hai-http",
+        )
+        await connector._handle_http_request(socket, {
+            "type": "request",
+            "request_id": "request-error",
+            "correlation_id": "correlation-error",
+            "method": "GET",
+            "path": "/v1/sessions/missing",
+            "body": None,
+        })
+        response = socket.sent[0]
+        assert response["type"] == "response"
+        assert response["status"] == 404
+        assert response["error"] == {
+            "code": "session_not_found",
+            "message": "missing",
+            "correlation_id": "correlation-error",
+            "retryable": False,
+            "details": {},
+            "source": "runtime",
+        }
+        assert "body" not in response
+
+    asyncio.run(scenario())
+
+
+def test_runtime_connector_normalizes_loopback_runtime_identity_to_enrollment(tmp_path: Path) -> None:
+    async def scenario():
+        socket = FakeSocket()
+
+        async def handler(method, path, body, correlation_id):
+            assert (method, path, body) == ("GET", "/v1/runtime?detail=true", None)
+            return 200, {
+                "runtime_id": "loopback-installation-id",
+                "instance_id": "loopback-instance",
+                "version": "1.5.2",
+                "protocol_version": 1,
+                "platform": "win32",
+            }
+
+        identity = DeviceIdentityStore(tmp_path / "id", XorProtector()).load_or_create()
+        connector = RuntimeOutboundConnector(
+            "wss://relay.example/v1/runtime-connect",
+            RuntimeCredential("relay-enrollment-id", "token"),
+            identity,
+            "bridge-instance",
+            "2.0.0",
+            http_request_handler=handler,
+            wire_protocol="hai-http",
+        )
+        await connector._handle_http_request(socket, {
+            "type": "request",
+            "request_id": "request-runtime",
+            "correlation_id": "correlation-runtime",
+            "method": "GET",
+            "path": "/v1/runtime?detail=true",
+            "body": None,
+        })
+
+        assert socket.sent == [{
+            "type": "response",
+            "request_id": "request-runtime",
+            "status": 200,
+            "body": {
+                "runtime_id": "relay-enrollment-id",
+                "instance_id": "bridge-instance",
+                "version": "2.0.0",
+                "protocol_version": PROTOCOL_VERSION,
+                "platform": "win32",
+            },
+        }]
+
+    asyncio.run(scenario())
 
 
 def test_runtime_connector_publishes_authoritative_workspaces_after_handshake(tmp_path: Path) -> None:

@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
-from drsai.backend.workspace_paths import WorkspacePathError, relative_parts, resolve_workspace_path
+from drsai.backend.workspace.paths import WorkspacePathError, relative_parts, resolve_workspace_path
 from drsai.owop.protocol import OWOPError
 from drsai.owop.process_pty import LocalProcessPtyOperations
 from drsai.owop.workspace_checkpoints import WorkspaceCheckpointStore

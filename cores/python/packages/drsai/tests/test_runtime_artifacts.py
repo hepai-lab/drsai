@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from drsai.backend.runtime_artifacts import RuntimeArtifactError, RuntimeArtifactStore
+from drsai.backend.runtime.artifacts import RuntimeArtifactError, RuntimeArtifactStore
 
 
 def _context(workspace_id: str = "workspace-a"):

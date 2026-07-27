@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-const workerPath = join(root, "src", "python", "browser_use_worker", "worker.py");
+const workerPath = join(root, "..", "shared", "browser-use-worker", "worker.py");
 const python311 = "C:\\Python311\\python.exe";
 const pythonCommand =
   process.env.OPENDRSAI_BROWSER_USE_SMOKE_PYTHON ||

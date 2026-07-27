@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 from urllib.parse import urlparse
 
-from drsai.backend.agent_runtime import RuntimeExecutionError
+from drsai.backend.runtime.agent import RuntimeExecutionError
 
 
 MAX_BRIDGE_LINE_BYTES = 4 * 1024 * 1024

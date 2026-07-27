@@ -55,7 +55,7 @@ write_definition("escape", "1", [], {
 
 from fastapi.testclient import TestClient
 from drsai.backend import gateway
-from drsai.backend.agent_runtime import RuntimeToolDispatcher
+from drsai.backend.runtime.agent import RuntimeToolDispatcher
 
 
 def runtime_probe(kind):

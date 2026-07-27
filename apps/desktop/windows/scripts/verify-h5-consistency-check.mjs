@@ -14,7 +14,7 @@ const sourcePdf = resolve(process.env.OPENDRSAI_CERN_PDF || "C:/tmp/WLCG-2026071
 const staleReportPath = join(goldenDir, "stale-report.md");
 const currentDataPath = join(goldenDir, "current-data.csv");
 const python = resolve(process.env.OPENDRSAI_PDF_PYTHON || "C:/Users/win11/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe");
-const parser = join(repo, "cores/python/packages/drsai/src/drsai/backend/presentation_pdf.py");
+const parser = join(repo, "cores/python/packages/drsai/src/drsai/content/pdf/presentation.py");
 const fixture = JSON.parse(readFileSync(join(repo, "tests/fixtures/product/presentation-report-wlcg.json"), "utf8"));
 for (const path of [resultPath, manifestPath, sourcePdf, staleReportPath, currentDataPath]) {
   assert(existsSync(path), `H5 evidence is missing: ${path}. Run npm run verify:packaged-h5-consistency-check first.`);
@@ -65,7 +65,7 @@ assert(evaluate(noRecommendation).recommendationCoverage < 1, "H5 evaluator acce
 
 const api = readFileSync(join(root, "../shared/api/desktopApi.ts"), "utf8");
 const background = readFileSync(join(root, "src/main/backgroundTasks.ts"), "utf8");
-const generator = readFileSync(join(root, "src/main/managerPresentation.ts"), "utf8");
+const generator = readFileSync(join(root, "../shared/main/managerPresentation.ts"), "utf8");
 const app = readFileSync(join(root, "../shared/renderer/src/App.tsx"), "utf8");
 const styles = readFileSync(join(root, "../shared/renderer/src/styles.css"), "utf8");
 const smoke = readFileSync(join(root, "src/main/e2eSmoke.ts"), "utf8");

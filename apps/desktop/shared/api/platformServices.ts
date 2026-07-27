@@ -26,6 +26,7 @@ export interface DesktopCredentialService {
   available(): boolean;
   protect(secret: string): string | undefined;
   unprotect(protectedSecret: string | undefined): string | undefined;
+  remove?(protectedSecret: string | undefined): boolean;
 }
 
 export interface DesktopNotificationService {

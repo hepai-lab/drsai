@@ -19,7 +19,7 @@ def load(name: str, filename: str):
     return module
 
 
-target_module = load("workspace_target_under_test", "workspace_target.py")
+target_module = load("workspace_target_under_test", "workspace/target.py")
 
 
 class WorkspaceTargetTests(unittest.TestCase):

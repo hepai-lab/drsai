@@ -14,11 +14,10 @@ gaps, `[ ]` not implemented.
   device pairing, push notification routing, remote mobile send/read receipt
   reconciliation, and mobile-side task state sync.
 
-- [~] GitHub: local readiness is visible in Channels through
-  `listExternalConnectionReadiness()`, and the existing `github-connector`
-  supports local Git remote scope plus reviewed `.drsai/github-context.json`
-  issue/PR snapshot import. Remaining gaps: live GitHub OAuth/API sync, Actions
-  log download, PR/comment mutation, and provider-backed review workflows.
+- [~] GitHub: readiness distinguishes read-only local Git remote from verified
+  Device OAuth. The connector supports reviewed snapshots, live issue/PR reads,
+  and approval-gated comments with revoke and idempotency. Remaining gaps are
+  Actions log/retry orchestration, push/webhook sync, and mutations beyond comments.
 
 - [~] Chrome: local readiness is visible in Channels and ties together browser
   task approvals plus reviewed HAR, NetLog, trace, bookmark, cookie, and URL
@@ -26,27 +25,20 @@ gaps, `[ ]` not implemented.
   session reuse, interactive DOM/screenshot capture, and controlled browser
   automation beyond approval-gated tasks.
 
-- [~] Slack: local readiness is visible in Channels through
-  `listExternalConnectionReadiness()`, and the existing `slack-chat` adapter
-  supports reviewed `.drsai/slack-context.json` message snapshot import plus
-  approval-gated reply drafts. Remaining gaps: live Slack OAuth/session sync,
-  channel history and thread readback, remote send/update/delete mutation, and
-  delivery-status reconciliation.
+- [~] Slack: readiness distinguishes local snapshots from a verified bot token.
+  The adapter supports `auth.test`, live `conversations.history`, approval-gated
+  `chat.postMessage`, revoke, redaction and idempotency. Remaining gaps are thread
+  pagination/cursors, event subscriptions, and remote update/delete operations.
 
-- [~] Docs: local readiness is visible in Channels through
-  `listExternalConnectionReadiness()`, and the existing `docs-connector`
-  supports reviewed `.drsai/docs-context.json` document snapshot import plus
-  approval-gated edit drafts. Remaining gaps: live Docs provider authorization,
-  document comment/edit sync, remote file permissions, version history, and
-  mutation rollback.
+- [~] Docs: readiness distinguishes snapshots from a verified Google token with
+  document read/write scope. The connector supports live bounded reads and
+  approval-gated, revision-bound `batchUpdate` append with revoke and idempotency.
+  Remaining gaps are comments/suggestions, permissions, version history and push sync.
 
-- [~] Calendar: local readiness is visible in Channels through
-  `listExternalConnectionReadiness()`, and the existing `calendar-connector`
-  supports reviewed `.drsai/calendar-context.json` / `.drsai/calendar-context.ics`
-  agenda snapshot import, reviewed selected calendar CSV agenda previews, plus
-  scheduled follow-up task context. Remaining gaps: live Calendar OAuth/API
-  sync, attendee/free-busy readback, remote event create/update/delete mutation,
-  and calendar-specific conflict handling.
+- [~] Calendar: readiness distinguishes local JSON/ICS snapshots from a verified
+  Google Calendar token. The inbound-only connector supports bounded live
+  `events.list`, timed/all-day mapping, redaction, pagination, revoke and expiry.
+  Remaining gaps are attendee/free-busy details, push sync and remote event mutation.
 
 - [~] LaTeX: local readiness is visible in Channels and uses `file-input`
   previews for `.tex`, `.bib`, `.bibtex`, and `latexmkrc` snapshots without

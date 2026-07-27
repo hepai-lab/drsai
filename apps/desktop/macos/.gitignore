@@ -2,3 +2,5 @@ out/
 release/
 resources/runtime/*.tar.gz
 resources/runtime/runtime-manifest.json
+resources/runtime/runtime-sbom-*.json
+resources/runtime/runtime-provenance-*.json

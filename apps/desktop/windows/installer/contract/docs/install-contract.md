@@ -19,6 +19,10 @@ The Windows bootstrapper performs an elevated per-machine installation:
 - Cache: `%PROGRAMFILES%\OpenDrSai\cache`
 - Installer logs: `%PROGRAMDATA%\OpenDrSai\Installer\logs`
 
+When the user selects a different installation directory, every runtime stage
+and the uninstall action receive that resolved MSI `INSTALLFOLDER`; no stage
+falls back to `%PROGRAMFILES%\OpenDrSai`.
+
 The runtime archive must contain:
 
 - `opendrsai-runtime.json`
@@ -31,7 +35,18 @@ The installer writes `%PROGRAMFILES%\OpenDrSai\install-state.json` after a
 successful install. New app and agent runtime directories are expanded into
 staging first, then swapped into place after verification.
 
+Before an install or upgrade swaps runtime directories, it terminates process
+trees whose executables run from the managed installation root. Transient
+file-lock failures during replacement are retried with bounded backoff.
+
 The MSI registers a per-machine Windows Installer product named `OpenDrSai`.
 It must appear in Apps & features and Control Panel and support uninstall via
 the registered `msiexec /x {ProductCode}` command. Uninstall removes all managed
 files under `%PROGRAMFILES%\OpenDrSai` and preserves `%USERPROFILE%\.drsai`.
+Rebuilt packages may replace the same three-part product version so an installer
+repair can supersede an already-published package without requiring manual
+cleanup first.
+Uninstall terminates all process trees running executables from the managed
+installation root, retries transient deletion failures, and retains a
+timestamped log under `%PROGRAMDATA%\OpenDrSai\Installer\logs` when cleanup
+cannot complete.

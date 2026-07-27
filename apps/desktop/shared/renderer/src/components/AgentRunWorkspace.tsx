@@ -96,6 +96,7 @@ export function AgentRunWorkspace({
     },
   ]);
   const outputByRequest = useRef<Record<string, string>>({});
+  const recoveredThreadRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (initialTask) setTask(initialTask);
@@ -128,6 +129,14 @@ export function AgentRunWorkspace({
       applyAgentRunEvent(event);
     });
   });
+
+  useEffect(() => {
+    if (!threadId || recoveredThreadRef.current === threadId) return;
+    recoveredThreadRef.current = threadId;
+    void desktopApi.recoverAgentRun(threadId).then((events) => {
+      for (const event of events) applyAgentRunEvent(event);
+    }).catch(() => undefined);
+  }, [threadId]);
 
   async function submit(event: FormEvent): Promise<void> {
     event.preventDefault();

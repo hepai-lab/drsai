@@ -53,6 +53,7 @@ import type {
 import drsaiLogo from "../assets/drsai.png";
 import { desktopApi } from "../desktopApi";
 import { copyTextSafely } from "../clipboard";
+import { isTextCompositionEvent } from "../imeKeyboardPolicy";
 import { MENU_IDS, type AppLanguage, type NavId, type NavSection, type RightTab } from "../navigation";
 import {
   getConflictMarkerCount,
@@ -1379,6 +1380,7 @@ export function WorkspaceShell({
   }
 
   function handleCommandPaletteKeyDown(event: React.KeyboardEvent<HTMLInputElement>): void {
+    if (isTextCompositionEvent(event.nativeEvent)) return;
     if (event.key === "Escape") {
       event.preventDefault();
       closeCommandPalette();

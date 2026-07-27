@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from "crypto";
-import { mkdir, readFile, writeFile } from "fs/promises";
-import { dirname, join } from "path";
+import { join } from "path";
 import type {
   DesktopWorkflowRun,
   DesktopWorkflowRunRecipe,
@@ -13,8 +12,10 @@ import type {
   DesktopWorkflowRunStepStatus,
 } from "../shared/desktopApi";
 import { DRSAI_HOME } from "./paths";
+import { readDurableJson, writeDurableJson } from "../../../shared/main/durableJsonStore";
 
 const WORKFLOW_RUNS_FILE = join(DRSAI_HOME, "desktop", "workflow-runs.json");
+const MAX_WORKFLOW_RUN_STORE_BYTES = 32 * 1024 * 1024;
 const MAX_WORKFLOW_RUNS_PER_WORKSPACE = 100;
 const GLOBAL_WORKFLOW_RUN_KEY = "__global__";
 
@@ -68,6 +69,15 @@ export async function startWorkflowRun(
     throw new Error("Workflow run start request is incomplete.");
   }
 
+  const idempotencyKey = (request as { idempotencyKey?: unknown } | null)?.idempotencyKey;
+  if (idempotencyKey !== undefined && (typeof idempotencyKey !== "string" || !/^[a-f0-9]{64}$/.test(idempotencyKey))) {
+    throw new Error("Workflow run idempotency key is invalid.");
+  }
+  const store = await readWorkflowRunStore();
+  const key = workspaceKey(recipe.workspacePath);
+  const existing = idempotencyKey ? (store.workspaces[key] ?? []).find((run) => run.recipeId === recipe.id) : undefined;
+  if (existing) return createWorkflowRunStartResult(recipe, existing);
+
   const now = new Date().toISOString();
   const steps = recipe.steps.map((step) =>
     createInitialStepExecution(recipe, step, now),
@@ -88,20 +98,20 @@ export async function startWorkflowRun(
     verification: recipe.verification,
     message: getInitialRunMessage(recipe, steps),
   };
-  const store = await readWorkflowRunStore();
-  const key = workspaceKey(recipe.workspacePath);
   store.workspaces[key] = [run, ...(store.workspaces[key] ?? [])]
     .sort(compareWorkflowRuns)
     .slice(0, MAX_WORKFLOW_RUNS_PER_WORKSPACE);
   await writeWorkflowRunStore(store);
+  return createWorkflowRunStartResult(recipe, run);
+}
+
+function createWorkflowRunStartResult(recipe: DesktopWorkflowRunRecipe, run: DesktopWorkflowRun): DesktopWorkflowRunStartResult {
   return {
     run: cloneWorkflowRun(run),
-    chatCommands: getCommandsByKind(steps, "chat_command"),
-    terminalCommands: getCommandsByKind(steps, "terminal_command"),
+    chatCommands: getCommandsByKind(run.steps, "chat_command"),
+    terminalCommands: getCommandsByKind(run.steps, "terminal_command"),
     approvalIds: recipe.approvalId ? [recipe.approvalId] : [],
-    manualCheckpoints: steps
-      .filter((step) => step.kind === "manual_review")
-      .map((step) => step.title),
+    manualCheckpoints: run.steps.filter((step) => step.kind === "manual_review").map((step) => step.title),
   };
 }
 
@@ -133,11 +143,14 @@ export async function dispatchWorkflowRunStep(
   const result = buildWorkflowStepDispatchResult(run, step);
   if (result.dispatched && step.kind !== "terminal_command") {
     const now = new Date().toISOString();
+    const waitsForChatResult = step.kind === "chat_command";
     run.steps[stepIndex] = {
       ...step,
-      status: "completed",
-      completedAt: now,
-      message: result.message,
+      status: waitsForChatResult ? "running" : "completed",
+      ...(waitsForChatResult ? {} : { completedAt: now }),
+      message: waitsForChatResult
+        ? "Chat command prepared; confirm this step only after the chat action finishes."
+        : result.message,
     };
     run.updatedAt = now;
     run.currentStepId = run.steps.find((item) => item.status !== "completed")?.id;
@@ -190,8 +203,8 @@ export async function completeWorkflowRunStep(
   }
 
   const step = run.steps[stepIndex];
-  if (step.kind !== "terminal_command") {
-    throw new Error("Only terminal workflow steps can be completed from terminal results.");
+  if (step.kind !== "terminal_command" && step.kind !== "chat_command" && step.kind !== "external_runtime") {
+    throw new Error("Only dispatched terminal/chat steps or explicitly reconnected external runtimes can be completed.");
   }
   if (step.status === "completed") {
     return {
@@ -207,14 +220,24 @@ export async function completeWorkflowRunStep(
     typeof output === "string" && output.trim()
       ? ` Output: ${summarizeWorkflowStepOutput(output)}`
       : "";
+  const completable = step.status === "running" ||
+    (step.kind === "external_runtime" && step.status === "waiting_approval");
+  if (!completable) {
+    throw new Error("Only a running workflow step or waiting external runtime can be completed.");
+  }
   const succeeded = exitCode === 0;
+  const label = step.kind === "terminal_command"
+    ? "Terminal command"
+    : step.kind === "chat_command"
+      ? "Chat action"
+      : "External runtime reconnect";
   run.steps[stepIndex] = {
     ...step,
     status: succeeded ? "completed" : "blocked",
     ...(succeeded ? { completedAt: now } : {}),
     message: succeeded
-      ? `Terminal command completed with exit code 0.${outputSummary}`
-      : `Terminal command failed with exit code ${exitCode}.${outputSummary}`,
+      ? `${label} completed with exit code 0.${outputSummary}`
+      : `${label} failed with exit code ${exitCode}.${outputSummary}`,
   };
   run.updatedAt = now;
   run.currentStepId = run.steps.find((item) => item.status !== "completed")?.id;
@@ -651,11 +674,13 @@ function createWorkflowRunExecutionId(templateId: string, createdAt: string): st
 }
 
 async function readWorkflowRunStore(): Promise<WorkflowRunStore> {
-  try {
-    const parsed = JSON.parse(await readFile(WORKFLOW_RUNS_FILE, "utf8"));
-    if (!parsed || typeof parsed !== "object") return { workspaces: {} };
+  return (await readDurableJson(WORKFLOW_RUNS_FILE, decodeWorkflowRunStore, { maxBytes: MAX_WORKFLOW_RUN_STORE_BYTES }))?.value ?? { workspaces: {} };
+}
+
+function decodeWorkflowRunStore(parsed: unknown): WorkflowRunStore {
+    if (!parsed || typeof parsed !== "object") throw new Error("Workflow run store schema is invalid.");
     const rawWorkspaces = (parsed as WorkflowRunStore).workspaces;
-    if (!rawWorkspaces || typeof rawWorkspaces !== "object") return { workspaces: {} };
+    if (!rawWorkspaces || typeof rawWorkspaces !== "object" || Array.isArray(rawWorkspaces)) throw new Error("Workflow run store schema is invalid.");
     const workspaces: WorkflowRunStore["workspaces"] = {};
     for (const [key, runs] of Object.entries(rawWorkspaces)) {
       if (!Array.isArray(runs)) continue;
@@ -667,14 +692,10 @@ async function readWorkflowRunStore(): Promise<WorkflowRunStore> {
       if (validRuns.length) workspaces[key] = validRuns;
     }
     return { workspaces };
-  } catch {
-    return { workspaces: {} };
-  }
 }
 
 async function writeWorkflowRunStore(store: WorkflowRunStore): Promise<void> {
-  await mkdir(dirname(WORKFLOW_RUNS_FILE), { recursive: true });
-  await writeFile(WORKFLOW_RUNS_FILE, `${JSON.stringify(store, null, 2)}\n`, "utf8");
+  await writeDurableJson(WORKFLOW_RUNS_FILE, store, { maxBytes: MAX_WORKFLOW_RUN_STORE_BYTES });
 }
 
 function compareWorkflowRuns(
