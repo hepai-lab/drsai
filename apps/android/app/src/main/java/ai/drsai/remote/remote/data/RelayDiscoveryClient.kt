@@ -7,6 +7,9 @@ import ai.drsai.remote.remote.model.RemoteWorkspaceRef
 import ai.drsai.remote.remote.model.RuntimeId
 import ai.drsai.remote.remote.model.WorkspaceId
 import ai.drsai.remote.remote.model.activeOnly
+import ai.drsai.remote.remote.security.RelayDeviceProof
+import ai.drsai.remote.remote.security.authorizeRelayRequest
+import ai.drsai.remote.remote.security.relayAssociationDevice
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -26,6 +29,41 @@ data class DiscoveredRuntime(
     val capabilities: Set<String> = emptySet(),
 )
 
+internal const val MINIMUM_WINDOWS_RUNTIME_VERSION = "1.5.3"
+
+internal fun compatibleWindowsRuntimeVersion(version: String): Boolean {
+    fun parts(value: String): List<Int>? {
+        val core = value.trim().substringBefore('-')
+        val values = core.split('.')
+        if (values.size != 3 || values.any { it.isEmpty() || it.any { character -> !character.isDigit() } }) {
+            return null
+        }
+        return values.mapNotNull(String::toIntOrNull).takeIf { it.size == 3 }
+    }
+    val actual = parts(version) ?: return false
+    val minimum = checkNotNull(parts(MINIMUM_WINDOWS_RUNTIME_VERSION))
+    val comparison = actual.zip(minimum).firstOrNull { (left, right) -> left != right }
+        ?.let { (left, right) -> left > right }
+    return comparison ?: !version.trim().contains('-')
+}
+
+internal fun runtimeConnectionState(status: String, version: String): RemoteConnectionState {
+    val wireState = when (status) {
+        "online" -> RemoteConnectionState.ONLINE
+        "degraded" -> RemoteConnectionState.DEGRADED
+        "offline" -> RemoteConnectionState.OFFLINE
+        else -> RemoteConnectionState.INCOMPATIBLE
+    }
+    return if (
+        wireState in setOf(RemoteConnectionState.ONLINE, RemoteConnectionState.DEGRADED) &&
+        !compatibleWindowsRuntimeVersion(version)
+    ) {
+        RemoteConnectionState.INCOMPATIBLE
+    } else {
+        wireState
+    }
+}
+
 interface RelayDiscoveryService {
     suspend fun listRuntimes(cursor: String? = null, query: String? = null): Page<DiscoveredRuntime>
     suspend fun listWorkspaces(runtimeId: RuntimeId, cursor: String? = null, query: String? = null): Page<RemoteWorkspaceRef>
@@ -38,6 +76,7 @@ class HttpRelayDiscoveryService(
     private val accessToken: () -> String,
     private val refreshAfter: suspend (String) -> String? = { null },
     private val http: OkHttpClient = OkHttpClient(),
+    private val deviceProof: RelayDeviceProof? = null,
 ) : RelayDiscoveryService {
     private val root = baseUrl.trimEnd('/').toHttpUrl()
     private val pairingIssuer = "${root.scheme}://${root.host}"
@@ -46,18 +85,14 @@ class HttpRelayDiscoveryService(
         getPage("v1/runtimes", cursor, query) { item ->
             val identity = item.getJSONObject("runtime")
             val runtimeId = RuntimeId(identity.getString("runtime_id"))
+            val runtimeVersion = identity.getString("version")
             DiscoveredRuntime(
                 reference = RemoteRuntimeRef(runtimeId, item.getString("display_name")),
                 instanceId = identity.getString("instance_id"),
-                version = identity.getString("version"),
+                version = runtimeVersion,
                 protocolVersion = identity.getString("protocol_version"),
                 connectionGeneration = identity.getLong("connection_generation"),
-                state = when (identity.getString("status")) {
-                    "online" -> RemoteConnectionState.ONLINE
-                    "degraded" -> RemoteConnectionState.DEGRADED
-                    "offline" -> RemoteConnectionState.OFFLINE
-                    else -> RemoteConnectionState.INCOMPATIBLE
-                },
+                state = runtimeConnectionState(identity.getString("status"), runtimeVersion),
                 capabilities = item.optJSONArray("capabilities")
                     ?.let { values ->
                         (0 until values.length()).map(values::getString).toSet()
@@ -100,12 +135,23 @@ class HttpRelayDiscoveryService(
 
     override suspend fun associate(accessGrantPayload: String): RuntimeId = withContext(Dispatchers.IO) {
         val code = parseAccessGrantCode(accessGrantPayload, pairingIssuer)
+        val device = relayAssociationDevice(deviceProof)
         val body = JSONObject().put("request_id", java.util.UUID.randomUUID().toString())
-            .put("correlation_id", java.util.UUID.randomUUID().toString()).put("code", code)
+            .put("correlation_id", java.util.UUID.randomUUID().toString())
+            .put("code", code)
+            .put("device_id", device.deviceId)
+            .put("device_name", device.deviceName)
+            .put("device_public_key", device.devicePublicKey)
         val url = root.newBuilder().addPathSegments("v1/associations").build()
         val encodedBody = body.toString().toRequestBody("application/json".toMediaType())
-        fun execute(token: String) = http.newCall(Request.Builder().url(url)
-            .header("Authorization", "Bearer $token").post(encodedBody).build()).execute()
+        // Association creation is the only Bearer endpoint that cannot require
+        // an existing device proof. The one-time grant binds this public key.
+        fun execute(token: String) = http.newCall(
+            Request.Builder().url(url)
+                .header("Authorization", "Bearer $token")
+                .post(encodedBody)
+                .build()
+        ).execute()
         val initialToken = accessToken()
         var response = execute(initialToken)
         if (response.code == 401) {
@@ -126,10 +172,14 @@ class HttpRelayDiscoveryService(
             .addPathSegments("v1/associations/${runtimeId.value}")
             .build()
         fun execute(token: String) = http.newCall(
-            Request.Builder().url(url)
+            authorizeRelayRequest(
+                deviceProof,
+                Request.Builder().url(url)
                 .header("Authorization", "Bearer $token")
                 .delete()
-                .build()
+                .build(),
+                token,
+            )
         ).execute()
         val initialToken = accessToken()
         var response = execute(initialToken)
@@ -161,7 +211,14 @@ class HttpRelayDiscoveryService(
             }.build()
             val initialToken = accessToken()
             fun execute(token: String) = http.newCall(
-                Request.Builder().url(url).header("Authorization", "Bearer $token").get().build()
+                authorizeRelayRequest(
+                    deviceProof,
+                    Request.Builder().url(url)
+                        .header("Authorization", "Bearer $token")
+                        .get()
+                        .build(),
+                    token,
+                )
             ).execute()
             var response = execute(initialToken)
             if (response.code == 401) {

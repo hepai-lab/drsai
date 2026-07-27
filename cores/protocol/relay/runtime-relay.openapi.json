@@ -83,6 +83,27 @@
             "title": "Correlation Id",
             "type": "string"
           },
+          "device_id": {
+            "maxLength": 128,
+            "minLength": 16,
+            "pattern": "^[A-Za-z0-9._-]+$",
+            "title": "Device Id",
+            "type": "string"
+          },
+          "device_name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": ".*\\S.*",
+            "title": "Device Name",
+            "type": "string"
+          },
+          "device_public_key": {
+            "maxLength": 43,
+            "minLength": 43,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "Device Public Key",
+            "type": "string"
+          },
           "idempotency_key": {
             "anyOf": [
               {
@@ -105,7 +126,10 @@
         "required": [
           "request_id",
           "correlation_id",
-          "code"
+          "code",
+          "device_id",
+          "device_name",
+          "device_public_key"
         ],
         "title": "AssociationRequest",
         "type": "object"
@@ -120,6 +144,18 @@
           "created_at": {
             "format": "date-time",
             "title": "Created At",
+            "type": "string"
+          },
+          "device_name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": ".*\\S.*",
+            "title": "Device Name",
+            "type": "string"
+          },
+          "device_summary": {
+            "pattern": "^dev_[0-9a-f]{12}$",
+            "title": "Device Summary",
             "type": "string"
           },
           "revoked_at": {
@@ -153,6 +189,8 @@
           "association_id",
           "runtime_id",
           "subject_summary",
+          "device_summary",
+          "device_name",
           "status",
           "created_at"
         ],
@@ -728,6 +766,15 @@
             "required": true,
             "schema": {
               "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-relay-device-id",
+            "required": true,
+            "schema": {
+              "title": "X-Relay-Device-Id",
               "type": "string"
             }
           }

@@ -255,6 +255,8 @@ DRSAI.local.md
 ########################
 .magentic_ui_state.json
 debug
+!apps/android/app/src/debug/
+!apps/android/app/src/debug/**
 data
 !apps/android/app/src/main/java/ai/drsai/remote/workbench/data/
 !apps/android/app/src/main/java/ai/drsai/remote/workbench/data/**

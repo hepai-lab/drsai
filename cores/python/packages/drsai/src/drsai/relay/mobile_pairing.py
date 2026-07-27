@@ -18,6 +18,7 @@ GRANT_CODE = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
 GRANT_STATUS = frozenset({"pending", "consumed", "expired", "revoked"})
 ASSOCIATION_ID = re.compile(r"^[A-Za-z0-9_.:-]{3,160}$")
 SUBJECT_SUMMARY = re.compile(r"^sub_[0-9a-f]{12}$")
+DEVICE_SUMMARY = re.compile(r"^dev_[0-9a-f]{12}$")
 TRUSTED_RELAY_HOSTS = frozenset({"ai.ihep.ac.cn", "ai-dev.ihep.ac.cn"})
 
 
@@ -53,6 +54,8 @@ class MobilePairingGrant:
 class MobileAssociation:
     association_id: str
     subject_summary: str
+    device_summary: str
+    device_name: str
     status: str
     created_at: datetime
     revoked_at: datetime | None = None
@@ -61,6 +64,8 @@ class MobileAssociation:
         return {
             "association_id": self.association_id,
             "subject_summary": self.subject_summary,
+            "device_summary": self.device_summary,
+            "device_name": self.device_name,
             "status": self.status,
             "created_at": self.created_at.isoformat(),
             "revoked_at": self.revoked_at.isoformat() if self.revoked_at else None,
@@ -360,6 +365,8 @@ class AiohttpMobilePairingTransport:
             raise AiohttpMobilePairingTransport._invalid_response()
         association_id = str(body.get("association_id", ""))
         subject_summary = str(body.get("subject_summary", ""))
+        device_summary = str(body.get("device_summary", ""))
+        device_name = str(body.get("device_name", ""))
         status = str(body.get("status", ""))
         try:
             created_at = datetime.fromisoformat(
@@ -374,13 +381,22 @@ class AiohttpMobilePairingTransport:
         if (
             not ASSOCIATION_ID.fullmatch(association_id)
             or not SUBJECT_SUMMARY.fullmatch(subject_summary)
+            or not DEVICE_SUMMARY.fullmatch(device_summary)
+            or not 1 <= len(device_name) <= 128
+            or not device_name.strip()
             or status not in {"active", "revoked"}
             or (status == "active" and revoked_at is not None)
             or (status == "revoked" and revoked_at is None)
         ):
             raise AiohttpMobilePairingTransport._invalid_response()
         return MobileAssociation(
-            association_id, subject_summary, status, created_at, revoked_at
+            association_id=association_id,
+            subject_summary=subject_summary,
+            device_summary=device_summary,
+            device_name=device_name,
+            status=status,
+            created_at=created_at,
+            revoked_at=revoked_at,
         )
 
     @staticmethod

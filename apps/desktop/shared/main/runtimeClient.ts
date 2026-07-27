@@ -138,6 +138,46 @@ export interface RuntimeSessionList {
 export interface RuntimeSession { session_id: string; workspace_id: string; title: string; }
 export interface RuntimeAgentRun { run_id: string; session_id: string; workspace_id: string; backend_id: string; status: string; }
 export interface RuntimeAgentEvent { event_id: string; run_id: string; sequence: number; type: string; data: Record<string, unknown>; }
+export interface RuntimeConversationItem {
+  item_id: string;
+  session_id: string;
+  run_id: string | null;
+  kind: "message" | "reasoning" | "tool" | "approval" | "artifact" | "error";
+  role: "user" | "assistant" | "system" | "tool" | null;
+  revision: number;
+  session_sequence: number;
+  source_client: "windows" | "android" | "runtime";
+  source_message_id: string | null;
+  created_at: string;
+  updated_at: string;
+  payload: Record<string, unknown>;
+}
+export interface RuntimeConversationSnapshot {
+  session_id: string;
+  snapshot_sequence: number;
+  items: RuntimeConversationItem[];
+  next_cursor: string | null;
+}
+export interface RuntimeSessionEvent {
+  event_id: string;
+  runtime_id: string;
+  workspace_id: string;
+  session_id: string;
+  run_id: string | null;
+  session_sequence: number;
+  kind: string;
+  timestamp: string;
+  payload: Record<string, unknown>;
+}
+export interface RuntimeSessionEventPage {
+  object: "list";
+  data: RuntimeSessionEvent[];
+  next_sequence: number;
+}
+export interface RuntimeSessionEventStream {
+  response: Response;
+  events: ReadableStream<Uint8Array>;
+}
 
 export interface RuntimeRunRequest {
   model: string;
@@ -189,9 +229,17 @@ export interface RuntimeClient {
   listSessions(workspaceId: string): Promise<RuntimeSessionList>;
   createSession(workspaceId: string, title?: string): Promise<RuntimeSession>;
   updateSession(sessionId: string, updates: { archived?: boolean; title?: string }): Promise<RuntimeSession>;
+  getConversationSnapshot(sessionId: string): Promise<RuntimeConversationSnapshot>;
+  listSessionEvents(sessionId: string, afterSequence?: number, limit?: number): Promise<RuntimeSessionEventPage>;
+  openSessionEventStream(sessionId: string, afterSequence: number, signal: AbortSignal): Promise<RuntimeSessionEventStream>;
   getAgentRun(runId: string): Promise<RuntimeAgentRun>;
   createAgentRun(sessionId: string, agentDefinition: string, idempotencyKey: string): Promise<RuntimeAgentRun>;
-  executeAgentRun(runId: string, prompt: string, signal?: AbortSignal): Promise<{ run: RuntimeAgentRun; result: unknown }>;
+  executeAgentRun(
+    runId: string,
+    prompt: string,
+    signal?: AbortSignal,
+    provenance?: { sourceClient: "windows" | "android"; sourceMessageId: string; attachmentRefs?: string[] },
+  ): Promise<{ run: RuntimeAgentRun; result: unknown }>;
   cancelAgentRun(runId: string): Promise<RuntimeAgentRun>;
   listAgentRunEvents(runId: string, afterSequence?: number): Promise<RuntimeAgentEvent[]>;
   getAgentRunDiagnostics(runId: string): Promise<Record<string, unknown>>;
@@ -363,6 +411,35 @@ abstract class HttpRuntimeClient implements RuntimeClient {
     return this.requestJson(`/v1/sessions/${encodeURIComponent(sessionId)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updates) });
   }
 
+  getConversationSnapshot(sessionId: string): Promise<RuntimeConversationSnapshot> {
+    this.assertResourceId("Session", sessionId);
+    return this.requestJson(`/v1/sessions/${encodeURIComponent(sessionId)}/conversation-snapshot`);
+  }
+
+  listSessionEvents(sessionId: string, afterSequence = 0, limit = 500): Promise<RuntimeSessionEventPage> {
+    this.assertResourceId("Session", sessionId);
+    const cursor = Math.max(0, Math.trunc(afterSequence));
+    const pageSize = Math.max(1, Math.min(2000, Math.trunc(limit)));
+    return this.requestJson(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/events?after_sequence=${cursor}&limit=${pageSize}`,
+    );
+  }
+
+  async openSessionEventStream(
+    sessionId: string,
+    afterSequence: number,
+    signal: AbortSignal,
+  ): Promise<RuntimeSessionEventStream> {
+    this.assertResourceId("Session", sessionId);
+    const cursor = Math.max(0, Math.trunc(afterSequence));
+    const response = await this.request(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/events/stream?after_sequence=${cursor}`,
+      { headers: { Accept: "text/event-stream" }, signal },
+    );
+    if (!response.body) throw new Error("Runtime Session did not return an Event stream.");
+    return { response, events: response.body };
+  }
+
   getAgentRun(runId: string): Promise<RuntimeAgentRun> {
     return this.requestJson(`/v1/runs/${encodeURIComponent(runId)}`);
   }
@@ -373,9 +450,21 @@ abstract class HttpRuntimeClient implements RuntimeClient {
       body: JSON.stringify({ agent_definition: agentDefinition }) });
   }
 
-  executeAgentRun(runId: string, prompt: string, signal?: AbortSignal): Promise<{ run: RuntimeAgentRun; result: unknown }> {
+  executeAgentRun(
+    runId: string,
+    prompt: string,
+    signal?: AbortSignal,
+    provenance?: { sourceClient: "windows" | "android"; sourceMessageId: string; attachmentRefs?: string[] },
+  ): Promise<{ run: RuntimeAgentRun; result: unknown }> {
     return this.requestJson(`/v1/runs/${encodeURIComponent(runId)}/execute`, { method: "POST", signal,
-      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt }) });
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+        prompt,
+        metadata: provenance ? {
+          source_client: provenance.sourceClient,
+          source_message_id: provenance.sourceMessageId,
+          attachment_refs: provenance.attachmentRefs ?? [],
+        } : {},
+      }) });
   }
 
   cancelAgentRun(runId: string): Promise<RuntimeAgentRun> {

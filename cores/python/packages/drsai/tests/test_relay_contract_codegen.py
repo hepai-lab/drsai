@@ -6,7 +6,20 @@ import sys
 from pathlib import Path
 
 from jsonschema import Draft202012Validator
-from drsai.relay.models import RuntimeCapabilities, RuntimeIdentity, RuntimeSummary
+from drsai.relay.generated_contract import (
+    CAPABILITIES,
+    CAPABILITY_PROFILES,
+    MINIMUM_VERSIONS,
+    SESSION_EVENT_KINDS,
+)
+from drsai.relay.models import (
+    ConversationSnapshot,
+    RuntimeCapabilities,
+    RuntimeIdentity,
+    RuntimeSessionEventFrame,
+    RuntimeSummary,
+    SessionEvent,
+)
 
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -60,6 +73,91 @@ def test_v2_schema_freezes_hai_http_over_wss_frames() -> None:
     assert definitions["runtime_http_response_frame"]["properties"]["type"]["const"] == "response"
     assert definitions["runtime_heartbeat_frame"]["properties"]["type"]["const"] == "heartbeat"
     assert definitions["runtime_event_frame"]["properties"]["event"]["$ref"] == "#/$defs/event"
+
+
+def test_session_event_profile_is_declared_but_not_advertised_before_runtime_support() -> None:
+    schema = json.loads((ROOT / "cores/protocol/relay/runtime-relay.schema.json").read_text(encoding="utf-8"))
+    profile = schema["x-relay-capability-profiles"]["session-events/1"]
+    assert set(profile) == {
+        "conversation.snapshot",
+        "session.event.resume",
+        "session.event.stream",
+        "session.event.cursor_expired",
+    }
+    assert CAPABILITY_PROFILES["session-events/1"] == frozenset(profile)
+    assert CAPABILITY_PROFILES["session-events/1"].isdisjoint(CAPABILITIES)
+    assert MINIMUM_VERSIONS["session-events/1"] == {
+        "runtime": "1.5.3",
+        "android": "1.5.3",
+        "desktop": "1.5.3",
+    }
+    assert set(schema["x-session-event-kinds"]) == SESSION_EVENT_KINDS
+
+
+def test_session_conversation_fixture_validates_snapshot_event_and_runtime_frame() -> None:
+    schema = json.loads((ROOT / "cores/protocol/relay/runtime-relay.schema.json").read_text(encoding="utf-8"))
+    fixture = json.loads(
+        (ROOT / "cores/protocol/relay/session-conversation-fixtures.json").read_text(encoding="utf-8")
+    )
+    definitions = schema["$defs"]
+    resolver_schema = {
+        "$schema": schema["$schema"],
+        "$defs": definitions,
+        "$ref": "#/$defs/conversation_snapshot",
+    }
+    Draft202012Validator(resolver_schema).validate(fixture["snapshot"])
+    event_schema = {
+        "$schema": schema["$schema"],
+        "$defs": definitions,
+        "$ref": "#/$defs/session_event",
+    }
+    frame_schema = {
+        "$schema": schema["$schema"],
+        "$defs": definitions,
+        "$ref": "#/$defs/runtime_session_event_frame",
+    }
+    event_validator = Draft202012Validator(event_schema)
+    for event in fixture["events_after_snapshot"]:
+        event_validator.validate(event)
+    Draft202012Validator(frame_schema).validate(fixture["runtime_frame"])
+
+    snapshot = ConversationSnapshot.model_validate(fixture["snapshot"])
+    events = [SessionEvent.model_validate(item) for item in fixture["events_after_snapshot"]]
+    frame = RuntimeSessionEventFrame.model_validate(fixture["runtime_frame"])
+    assert snapshot.snapshot_sequence == 3
+    assert [item.session_sequence for item in events] == [4, 5]
+    assert frame.session_sequence == frame.event.session_sequence == 4
+
+
+def test_session_contract_rejects_revision_regression_unknown_kind_and_cross_sequence_frame() -> None:
+    fixture = json.loads(
+        (ROOT / "cores/protocol/relay/session-conversation-fixtures.json").read_text(encoding="utf-8")
+    )
+    invalid_item = dict(fixture["snapshot"]["items"][0], revision=0)
+    try:
+        ConversationSnapshot.model_validate(
+            dict(fixture["snapshot"], items=[invalid_item])
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("revision=0 must be rejected")
+
+    invalid_event = dict(fixture["events_after_snapshot"][0], kind="unknown")
+    try:
+        SessionEvent.model_validate(invalid_event)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("unknown Session Event kind must be rejected")
+
+    invalid_frame = dict(fixture["runtime_frame"], session_sequence=99)
+    try:
+        RuntimeSessionEventFrame.model_validate(invalid_frame)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("frame and event session_sequence must match")
 
 
 def test_v2_schema_freezes_revocation_privacy_and_cursor_expiry_contracts() -> None:

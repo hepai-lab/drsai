@@ -20,9 +20,24 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 data class RemoteCapabilityUi(val name: String, val available: Boolean)
 data class RemoteSessionUi(val reference: RemoteSessionRef, val lastRunStatus: String?, val updatedAtLabel: String,
                            val lifecycle: String = "active")
-fun activeRemoteSessions(items: List<RemoteSessionUi>): List<RemoteSessionUi> = items.filter {
-    it.lifecycle == "active" && it.reference.lifecycle == RemoteResourceLifecycle.ACTIVE
-}
+fun activeRemoteSessions(items: List<RemoteSessionUi>): List<RemoteSessionUi> =
+    items
+        .filter {
+            it.lifecycle == "active" &&
+                it.reference.lifecycle == RemoteResourceLifecycle.ACTIVE
+        }
+        .groupBy { it.reference.sessionId.value }
+        .values
+        .map { versions ->
+            versions.maxWith(
+                compareBy<RemoteSessionUi> { it.updatedAtLabel }
+                    .thenBy { it.reference.sessionId.value },
+            )
+        }
+        .sortedWith(
+            compareByDescending<RemoteSessionUi> { it.updatedAtLabel }
+                .thenBy { it.reference.sessionId.value },
+        )
 data class WorkspaceSessionsUiState(
     val runtimeName: String,
     val workspaceName: String,
@@ -195,11 +210,26 @@ fun RemoteChatScreen(state: RemoteChatUiState, onBack: () -> Unit, onSend: (Stri
         if (!state.online) Text("连接已中断，任务可能仍在运行", color = MaterialTheme.colorScheme.error)
         LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(state.messages, key = { it.id }) { message ->
-                Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
-                    Column(Modifier.fillMaxWidth().padding(12.dp)) {
-                        Text(remoteRoleLabel(message.role), fontWeight = FontWeight.SemiBold)
-                        Text(remoteMarkdown(message.text))
-                        message.progress?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                val isUser = message.role == "user"
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = if (isUser) Alignment.CenterEnd else Alignment.CenterStart,
+                ) {
+                    Surface(
+                        modifier = if (isUser) Modifier.widthIn(max = 620.dp) else Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        color = if (isUser) {
+                            MaterialTheme.colorScheme.primaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.surface
+                        },
+                        tonalElevation = 0.dp,
+                    ) {
+                        Column(Modifier.padding(if (isUser) 12.dp else 4.dp)) {
+                            Text(remoteRoleLabel(message.role), fontWeight = FontWeight.SemiBold)
+                            RemoteMarkdownContent(message.text)
+                            message.progress?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                        }
                     }
                 }
             }

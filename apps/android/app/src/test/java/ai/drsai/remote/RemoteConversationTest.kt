@@ -1,15 +1,28 @@
 package ai.drsai.remote
 
 import ai.drsai.remote.remote.model.*
+import ai.drsai.remote.remote.ui.RemoteMarkdownBlock
+import ai.drsai.remote.remote.ui.isTerminalRemoteRunStatus
+import ai.drsai.remote.remote.ui.isSafeMarkdownLink
+import ai.drsai.remote.remote.ui.parseRemoteMarkdown
 import ai.drsai.remote.remote.ui.remoteMarkdown
 import ai.drsai.remote.remote.ui.remoteRoleLabel
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RemoteConversationTest {
     private val identity = RemoteRunIdentity(RuntimeId("rt"), WorkspaceId("ws"), SessionId("session"), RunId("run"), "codex")
     private fun event(sequence: Long, type: String) = RemoteRuntimeEvent(EventId("event-$sequence"), identity, sequence, type, "now")
+
+    @Test fun `terminal run closes its event stream without degraded warning`() {
+        assertTrue(isTerminalRemoteRunStatus("completed"))
+        assertTrue(isTerminalRemoteRunStatus("FAILED"))
+        assertTrue(isTerminalRemoteRunStatus("cancelled"))
+        assertFalse(isTerminalRemoteRunStatus("running"))
+        assertFalse(isTerminalRemoteRunStatus("waiting_approval"))
+    }
 
     @Test fun `all runtime event kinds map without backend private ids`() {
         val values = listOf("run.queued", "run.started", "message.delta", "tool.started", "tool.finished",
@@ -105,12 +118,68 @@ class RemoteConversationTest {
     }
 
     @Test fun `offline markdown renderer styles without WebView or network`() {
-        val rendered = remoteMarkdown("# 标题\n**加粗** 与 `code`")
-        assertEquals("标题\n加粗 与 code", rendered.text)
-        assertEquals(3, rendered.spanStyles.size)
+        val rendered = remoteMarkdown("**加粗**、*斜体*、~~删除~~ 与 `code`")
+        assertEquals("加粗、斜体、删除 与 code", rendered.text)
+        assertEquals(4, rendered.spanStyles.size)
         assertEquals("你", remoteRoleLabel("user"))
         assertEquals("系统", remoteRoleLabel("system"))
         assertEquals("思考摘要", remoteRoleLabel("reasoning"))
         assertEquals("OpenDrSai", remoteRoleLabel("future"))
+    }
+
+    @Test fun `gfm block parser handles headings lists quotes rules and fenced code`() {
+        val blocks = parseRemoteMarkdown(
+            """
+            ## 二级标题
+
+            > 引用内容
+
+            - [x] 已完成
+            - 普通事项
+
+            3. 第三项
+            4. 第四项
+
+            ---
+
+            ```kotlin
+            val answer = 42
+            ```
+            """.trimIndent(),
+        )
+
+        assertEquals(2, (blocks[0] as RemoteMarkdownBlock.Heading).level)
+        assertEquals(listOf("引用内容"), (blocks[1] as RemoteMarkdownBlock.Quote).lines)
+        val bullets = blocks[2] as RemoteMarkdownBlock.BulletList
+        assertEquals(true, bullets.items[0].checked)
+        assertEquals(null, bullets.items[1].checked)
+        assertEquals(3, (blocks[3] as RemoteMarkdownBlock.OrderedList).start)
+        assertEquals(RemoteMarkdownBlock.Rule, blocks[4])
+        val code = blocks[5] as RemoteMarkdownBlock.Code
+        assertEquals("kotlin", code.language)
+        assertEquals("val answer = 42", code.code)
+    }
+
+    @Test fun `gfm table parser supports escaped pipes`() {
+        val blocks = parseRemoteMarkdown(
+            """
+            | 名称 | 值 |
+            | --- | ---: |
+            | A \| B | **42** |
+            """.trimIndent(),
+        )
+        val table = blocks.single() as RemoteMarkdownBlock.Table
+        assertEquals(listOf("名称", "值"), table.headers)
+        assertEquals(listOf("A | B", "**42**"), table.rows.single())
+    }
+
+    @Test fun `markdown links are annotated only for safe external protocols`() {
+        val safe = remoteMarkdown("[官网](https://ai.ihep.ac.cn)")
+        val unsafe = remoteMarkdown("[危险](javascript:alert(1))")
+        assertEquals("官网", safe.text)
+        assertEquals(1, safe.getStringAnnotations("markdown-link", 0, safe.length).size)
+        assertEquals(0, unsafe.getStringAnnotations("markdown-link", 0, unsafe.length).size)
+        assertEquals(true, isSafeMarkdownLink("mailto:user@example.test"))
+        assertEquals(false, isSafeMarkdownLink("file:///sdcard/secret"))
     }
 }

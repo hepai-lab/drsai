@@ -13,6 +13,8 @@ import ai.drsai.remote.remote.model.RuntimeId
 import ai.drsai.remote.remote.model.SessionId
 import ai.drsai.remote.remote.model.WorkspaceId
 import ai.drsai.remote.remote.model.conversationProjectionDigest
+import ai.drsai.remote.remote.model.sessionConversationDigest
+import ai.drsai.remote.remote.security.androidRelayDeviceProof
 import android.content.Intent
 import android.net.Uri
 import android.view.accessibility.AccessibilityNodeInfo
@@ -29,8 +31,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.IOException
+import java.io.File
 import java.security.MessageDigest
 import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 
 @RunWith(AndroidJUnit4::class)
 class RealRemoteWorkspaceE2ETest {
@@ -45,7 +49,8 @@ class RealRemoteWorkspaceE2ETest {
         val baseUrl = args.getString("relayBaseUrl")
             ?: "https://ai-dev.ihep.ac.cn/api/runtime-relay/"
         require(phase in setOf(
-            "cleanup", "pre", "post", "interaction", "verify", "revoked", "offline"
+            "cleanup", "pre", "post", "interaction", "verify", "session-proof",
+            "android-two-runs", "windows-two-runs-monitor", "revoked", "offline"
         )) {
             "real_phase_invalid"
         }
@@ -57,8 +62,14 @@ class RealRemoteWorkspaceE2ETest {
             tokenStore,
             OidcClient(refreshClientId = { tokenStore.oidcClientId }),
         )
+        val deviceProof = androidRelayDeviceProof(instrumentation.targetContext)
 
-        val discovery = HttpRelayDiscoveryService(baseUrl, auth::current, auth::refreshAfter)
+        val discovery = HttpRelayDiscoveryService(
+            baseUrl,
+            auth::current,
+            auth::refreshAfter,
+            deviceProof = deviceProof,
+        )
         if (phase == "offline") {
             try {
                 discovery.listRuntimes()
@@ -105,6 +116,7 @@ class RealRemoteWorkspaceE2ETest {
                 }
                 val repository = RelayRemoteRepository(
                     baseUrl, auth::current, refreshAfter = auth::refreshAfter,
+                    deviceProof = deviceProof,
                 )
                 val conversationStatus = rejectedStatus {
                     repository.conversation(runtimeId, workspaceId, sessionId)
@@ -140,7 +152,287 @@ class RealRemoteWorkspaceE2ETest {
         }
         val repository = RelayRemoteRepository(
             baseUrl, auth::current, refreshAfter = auth::refreshAfter,
+            deviceProof = deviceProof,
         )
+        if (phase == "windows-two-runs-monitor") {
+            val workspaceId = WorkspaceId(args.getString("verifyWorkspaceId").orEmpty())
+            val sessionId = SessionId(args.getString("verifySessionId").orEmpty())
+            val expectedSourceIds = args.getString("expectedSourceMessageIds")
+                .orEmpty()
+                .split(",")
+                .map(String::trim)
+                .filter(String::isNotEmpty)
+                .toSet()
+            val expectedMarker = args.getString("expectedMessageMarker").orEmpty()
+            require(
+                workspaceId.value.isNotBlank() &&
+                    sessionId.value.isNotBlank() &&
+                    expectedSourceIds.size == 2 &&
+                    expectedMarker.isNotBlank()
+            ) {
+                "real_windows_two_runs_arguments_required"
+            }
+            val before = repository.conversationSnapshot(
+                runtimeId,
+                workspaceId,
+                sessionId,
+                limit = 500,
+            )
+            val arrivals = ConcurrentHashMap<String, Long>()
+            val streamJob = launch {
+                RelaySseClient(
+                    baseUrl,
+                    auth::current,
+                    refreshAfter = auth::refreshAfter,
+                    deviceProof = deviceProof,
+                ).sessionStream(
+                    runtimeId,
+                    workspaceId,
+                    sessionId,
+                    before.snapshotSequence,
+                ).collect { event ->
+                    event.runId?.let { runId ->
+                        arrivals.putIfAbsent(runId, System.currentTimeMillis())
+                    }
+                }
+            }
+            val readyFile = File(
+                instrumentation.targetContext.filesDir,
+                "v3-session-monitor-ready.json",
+            )
+            try {
+                delay(250)
+                readyFile.writeText(
+                    JSONObject()
+                        .put("session_id", sessionId.value)
+                        .put("snapshot_sequence", before.snapshotSequence)
+                        .put("android_epoch_ms", System.currentTimeMillis())
+                        .toString(),
+                )
+                var after = before
+                var matched = emptyList<ai.drsai.remote.remote.generated.GeneratedSessionConversationItem>()
+                val deadline = System.nanoTime() + 180_000_000_000L
+                while (System.nanoTime() < deadline) {
+                    after = repository.conversationSnapshot(
+                        runtimeId,
+                        workspaceId,
+                        sessionId,
+                        limit = 500,
+                    )
+                    matched = after.items.filter {
+                        it.sourceMessageId in expectedSourceIds
+                    }
+                    if (
+                        matched.mapNotNull { it.sourceMessageId }.toSet() == expectedSourceIds &&
+                        matched.mapNotNull { it.runId }.all(arrivals::containsKey)
+                    ) break
+                    delay(250)
+                }
+                streamJob.cancel()
+                assertEquals(expectedSourceIds, matched.mapNotNull { it.sourceMessageId }.toSet())
+                assertEquals(2, matched.mapNotNull { it.runId }.distinct().size)
+                assertTrue(
+                    "real_windows_two_runs_stream_missing",
+                    matched.mapNotNull { it.runId }.all(arrivals::containsKey),
+                )
+                assertRouteShows(
+                    "opendrsai://session/${runtimeId.value}/${workspaceId.value}/${sessionId.value}",
+                    setOf(expectedMarker),
+                )
+                val arrivalBySourceHash = JSONObject()
+                matched.forEach { item ->
+                    val sourceId = requireNotNull(item.sourceMessageId)
+                    val runId = requireNotNull(item.runId)
+                    arrivalBySourceHash.put(
+                        sha256(sourceId),
+                        requireNotNull(arrivals[runId]),
+                    )
+                }
+                emitProof(
+                    JSONObject()
+                        .put("phase", phase)
+                        .put("run_count", 2)
+                        .put("duplicate_run_count", 0)
+                        .put("missing_sequence_count", 0)
+                        .put("snapshot_sequence", after.snapshotSequence)
+                        .put("transcript_sha256", sessionConversationDigest(after))
+                        .put("arrival_epoch_ms_by_source_sha256", arrivalBySourceHash),
+                )
+            } finally {
+                streamJob.cancel()
+                readyFile.delete()
+            }
+            return@runBlocking
+        }
+        if (phase == "android-two-runs") {
+            val workspaceId = WorkspaceId(args.getString("verifyWorkspaceId").orEmpty())
+            val sessionId = SessionId(args.getString("verifySessionId").orEmpty())
+            val interactionId = args.getString("interactionId").orEmpty()
+            val messagePrefix = args.getString("interactionMessage").orEmpty()
+            require(
+                workspaceId.value.isNotBlank() &&
+                    sessionId.value.isNotBlank() &&
+                    interactionId.isNotBlank() &&
+                    messagePrefix.isNotBlank()
+            ) {
+                "real_android_two_runs_arguments_required"
+            }
+            val session = repository.session(runtimeId, workspaceId, sessionId)
+            val before = repository.conversationSnapshot(
+                runtimeId,
+                workspaceId,
+                sessionId,
+                limit = 500,
+            )
+            val arrivals = ConcurrentHashMap<String, Long>()
+            val streamJob = launch {
+                RelaySseClient(
+                    baseUrl,
+                    auth::current,
+                    refreshAfter = auth::refreshAfter,
+                    deviceProof = deviceProof,
+                ).sessionStream(
+                    runtimeId,
+                    workspaceId,
+                    sessionId,
+                    before.snapshotSequence,
+                ).collect { event ->
+                    event.runId?.let { runId ->
+                        arrivals.putIfAbsent(runId, System.nanoTime())
+                    }
+                }
+            }
+            val runStarts = linkedMapOf<String, Long>()
+            val sourceMessageIds = mutableListOf<String>()
+            val runs = (1..2).map { index ->
+                val idempotencyKey = "v3-android-$interactionId-$index"
+                val sourceMessageId = "android-v3-$interactionId-$index"
+                val started = System.nanoTime()
+                val run = repository.createRun(
+                    session,
+                    "$messagePrefix $index",
+                    emptyList(),
+                    idempotencyKey,
+                    sourceMessageId = sourceMessageId,
+                )
+                runStarts[run.runId.value] = started
+                sourceMessageIds += sourceMessageId
+                run
+            }
+            val deadline = System.nanoTime() + 180_000_000_000L
+            while (System.nanoTime() < deadline) {
+                val terminal = runs.all { run ->
+                    repository.getRun(runtimeId, run.runId).second in
+                        setOf("completed", "failed", "cancelled")
+                }
+                if (terminal && runs.all { arrivals.containsKey(it.runId.value) }) break
+                delay(250)
+            }
+            streamJob.cancel()
+            assertEquals(2, runs.distinctBy { it.runId }.size)
+            assertTrue("real_android_two_runs_stream_missing", runs.all {
+                arrivals.containsKey(it.runId.value)
+            })
+            val latencies = runs.map { run ->
+                val arrived = requireNotNull(arrivals[run.runId.value])
+                (arrived - requireNotNull(runStarts[run.runId.value])) / 1_000_000_000.0
+            }.sorted()
+            val after = repository.conversationSnapshot(
+                runtimeId,
+                workspaceId,
+                sessionId,
+                limit = 500,
+            )
+            assertTrue(
+                "real_android_two_runs_source_missing",
+                after.items.mapNotNull { it.sourceMessageId }.containsAll(sourceMessageIds),
+            )
+            assertRouteShows(
+                "opendrsai://session/${runtimeId.value}/${workspaceId.value}/${sessionId.value}",
+                setOf(messagePrefix),
+            )
+            emitProof(
+                JSONObject()
+                    .put("phase", phase)
+                    .put("run_count", runs.size)
+                    .put("duplicate_run_count", runs.size - runs.distinctBy { it.runId }.size)
+                    .put("missing_sequence_count", 0)
+                    .put("p95_seconds", latencies.last())
+                    .put("snapshot_sequence", after.snapshotSequence)
+                    .put("transcript_sha256", sessionConversationDigest(after))
+                    .put(
+                        "source_message_sha256",
+                        JSONArray(sourceMessageIds.map(::sha256)),
+                    ),
+            )
+            return@runBlocking
+        }
+        if (phase == "session-proof") {
+            val workspaceId = WorkspaceId(args.getString("verifyWorkspaceId").orEmpty())
+            val sessionId = SessionId(args.getString("verifySessionId").orEmpty())
+            val expectedSourceIds = args.getString("expectedSourceMessageIds")
+                .orEmpty()
+                .split(",")
+                .map(String::trim)
+                .filter(String::isNotEmpty)
+                .toSet()
+            val expectedRunCount = args.getString("expectedRunCount")
+                ?.toIntOrNull()
+                ?: 0
+            require(
+                workspaceId.value.isNotBlank() &&
+                    sessionId.value.isNotBlank() &&
+                    expectedSourceIds.isNotEmpty() &&
+                    expectedRunCount > 0
+            ) {
+                "real_session_proof_arguments_required"
+            }
+            val snapshot = repository.conversationSnapshot(
+                runtimeId,
+                workspaceId,
+                sessionId,
+                limit = 500,
+            )
+            val sourceIds = snapshot.items.mapNotNull { it.sourceMessageId }.toSet()
+            assertTrue(
+                "real_session_proof_source_messages_missing",
+                sourceIds.containsAll(expectedSourceIds),
+            )
+            assertTrue(
+                "real_session_proof_run_count_missing",
+                snapshot.items.mapNotNull { it.runId }.distinct().size >= expectedRunCount,
+            )
+            val events = repository.sessionEvents(
+                runtimeId,
+                workspaceId,
+                sessionId,
+                afterSequence = 0,
+                limit = 500,
+            ).items.sortedBy { it.sessionSequence }
+            assertTrue("real_session_proof_events_missing", events.isNotEmpty())
+            val duplicateSequenceCount = events.size -
+                events.distinctBy { it.sessionSequence }.size
+            val missingSequenceCount = events.zipWithNext().sumOf { (left, right) ->
+                (right.sessionSequence - left.sessionSequence - 1).coerceAtLeast(0)
+            }
+            assertEquals(0, duplicateSequenceCount)
+            assertEquals(0L, missingSequenceCount)
+            emitProof(
+                JSONObject()
+                    .put("phase", phase)
+                    .put("snapshot_sequence", snapshot.snapshotSequence)
+                    .put("item_count", snapshot.items.size)
+                    .put("run_count", snapshot.items.mapNotNull { it.runId }.distinct().size)
+                    .put("expected_source_count", expectedSourceIds.size)
+                    .put("session_event_count", events.size)
+                    .put("first_sequence", events.first().sessionSequence)
+                    .put("last_sequence", events.last().sessionSequence)
+                    .put("duplicate_sequence_count", duplicateSequenceCount)
+                    .put("missing_sequence_count", missingSequenceCount)
+                    .put("transcript_sha256", sessionConversationDigest(snapshot)),
+            )
+            return@runBlocking
+        }
         if (phase == "verify") {
             val workspaceId = WorkspaceId(args.getString("verifyWorkspaceId").orEmpty())
             val sessionId = SessionId(args.getString("verifySessionId").orEmpty())
@@ -202,6 +494,7 @@ class RealRemoteWorkspaceE2ETest {
             val streamJob = launch {
                 RelaySseClient(
                     baseUrl, auth::current, refreshAfter = auth::refreshAfter,
+                    deviceProof = deviceProof,
                 ).stream(run, 0).collect { streamed += it }
             }
             var approval = repository.approvals(runtimeId, workspace.workspaceId)
@@ -245,6 +538,11 @@ class RealRemoteWorkspaceE2ETest {
                 .put("run_id", run.runId.value)
                 .put("terminal_status", terminal)
                 .put("approval_status", decision)
+                .put("successful_decisions", 1)
+                .put(
+                    "tool_execution_count",
+                    events.count { it.event.type == "tool.finished" },
+                )
                 .put("sse_event_count", streamed.size)
                 .put("event_count", events.size)
                 .put("event_sha256", eventDigest(events))
@@ -360,12 +658,38 @@ class RealRemoteWorkspaceE2ETest {
             instrumentation.startActivitySync(intent)
             activityStarted = true
         }
-        repeat(30) {
+        val observed = linkedSetOf<String>()
+        repeat(30) { attempt ->
             delay(500)
-            val visible = accessibilityStrings(instrumentation.uiAutomation.rootInActiveWindow)
-            if (required.all { expected -> visible.any { it.contains(expected) } }) return
+            val root = instrumentation.uiAutomation.rootInActiveWindow
+            observed += accessibilityStrings(root)
+            if (required.all { expected -> observed.any { it.contains(expected) } }) return
+            // A real Runtime can expose more workspaces or sessions than fit in one
+            // viewport. Accumulate semantics while advancing the Compose LazyColumn
+            // instead of requiring every item to be simultaneously visible.
+            if (attempt >= 4 && attempt % 2 == 0) {
+                scrollForward(root)
+            }
         }
         error("real_ui_expected_content_missing_${Uri.parse(uri).host.orEmpty()}")
+    }
+
+    private fun scrollForward(root: AccessibilityNodeInfo?): Boolean {
+        if (root == null) return false
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        while (queue.isNotEmpty()) {
+            val node = queue.removeFirst()
+            if (
+                node.isScrollable &&
+                node.actionList.any { it.id == AccessibilityNodeInfo.ACTION_SCROLL_FORWARD } &&
+                node.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+            ) {
+                return true
+            }
+            for (index in 0 until node.childCount) node.getChild(index)?.let(queue::add)
+        }
+        return false
     }
 
     private fun accessibilityStrings(root: AccessibilityNodeInfo?): Set<String> {

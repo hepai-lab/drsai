@@ -58,6 +58,8 @@ class FakeTransport:
         return [MobileAssociation(
             "assoc_" + "b" * 32,
             "sub_" + "c" * 12,
+            "dev_" + "d" * 12,
+            "Samsung SM-X936C",
             "active",
             datetime.now(UTC),
         )]
@@ -69,6 +71,8 @@ class FakeTransport:
         return MobileAssociation(
             association_id,
             "sub_" + "c" * 12,
+            "dev_" + "d" * 12,
+            "Samsung SM-X936C",
             "revoked",
             datetime.now(UTC),
             datetime.now(UTC),
@@ -241,6 +245,28 @@ def test_correlation_id_is_safe_and_propagated() -> None:
     assert "token" not in failure.value.message.lower()
 
 
+def test_association_decoder_requires_device_identity_fields() -> None:
+    created_at = datetime.now(UTC).isoformat()
+    decoded = AiohttpMobilePairingTransport._decode_association({
+        "association_id": "assoc_" + "a" * 32,
+        "subject_summary": "sub_" + "b" * 12,
+        "device_summary": "dev_" + "c" * 12,
+        "device_name": "Samsung SM-X936C",
+        "status": "active",
+        "created_at": created_at,
+        "revoked_at": None,
+    })
+    assert decoded.device_summary == "dev_" + "c" * 12
+    assert decoded.device_name == "Samsung SM-X936C"
+
+    for missing in ("device_summary", "device_name", "created_at"):
+        payload = decoded.public()
+        payload.pop(missing)
+        with pytest.raises(MobilePairingError) as failure:
+            AiohttpMobilePairingTransport._decode_association(payload)
+        assert failure.value.code == "relay_response_invalid"
+
+
 def test_transport_retries_once_with_correlation_and_disables_redirects() -> None:
     calls: list[dict] = []
     responses = [503, 200]
@@ -313,7 +339,13 @@ def test_runtime_payload_to_android_association_closed_loop(tmp_path: Path) -> N
     desktop_grant = asyncio.run(service.create())
     query = parse_qs(urlparse(desktop_grant.payload or "").query)
     assert query["v"] == ["1"] and query["environment"] == ["production"]
-    assert registry.associate("android-hepai-subject", query["code"][0]) == runtime_id
+    assert registry.associate(
+        "android-hepai-subject",
+        query["code"][0],
+        "android.test-device",
+        "Android test device",
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    ) == runtime_id
     assert asyncio.run(service.read(desktop_grant.grant_id)).status == "consumed"
     assert registry.list_runtimes("android-hepai-subject")[0][0].runtime.runtime_id == runtime_id
 

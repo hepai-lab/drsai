@@ -19,6 +19,7 @@ import ai.drsai.remote.remote.data.WorkspaceInstructionVersionStore
 import ai.drsai.remote.runtime.context.PromptFragment
 import ai.drsai.remote.remote.model.RuntimeId
 import ai.drsai.remote.remote.model.WorkspaceId
+import ai.drsai.remote.remote.security.androidRelayDeviceProof
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -31,6 +32,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+internal fun normalizedWorkspaceSessionQuery(query: String?): String? =
+    query?.trim()?.takeIf(String::isNotEmpty)
+
 class WorkspaceSessionsViewModel(
     app: Application,
     private val runtimeId: RuntimeId,
@@ -40,11 +44,22 @@ class WorkspaceSessionsViewModel(
 ) : AndroidViewModel(app) {
     private val tokenStore = SecureTokenStore(app)
     private val auth = AccessTokenCoordinator(tokenStore, OidcClient(refreshClientId = { tokenStore.oidcClientId }))
+    private val deviceProof = androidRelayDeviceProof(app)
     private val repository = RelayRemoteRepository(
-        BuildConfig.RELAY_BASE_URL, auth::current, refreshAfter = auth::refreshAfter,
+        BuildConfig.RELAY_BASE_URL,
+        auth::current,
+        refreshAfter = auth::refreshAfter,
+        deviceProof = deviceProof,
     )
     private val instructionLoader = RemoteProjectInstructionLoader(
-        RelayWorkspaceOperationsClient(HttpOwopRelayTransport(BuildConfig.RELAY_BASE_URL, runtimeId, auth::current)),
+        RelayWorkspaceOperationsClient(
+            HttpOwopRelayTransport(
+                BuildConfig.RELAY_BASE_URL,
+                runtimeId,
+                auth::current,
+                deviceProof = deviceProof,
+            )
+        ),
     )
     private val instructionVersionStore = WorkspaceInstructionVersionStore(app)
     private val mutableState = MutableStateFlow(
@@ -61,12 +76,15 @@ class WorkspaceSessionsViewModel(
 
     fun refresh(query: String? = mutableState.value.query) = viewModelScope.launch(Dispatchers.IO) {
         val requestGeneration = generation.incrementAndGet()
+        val normalizedQuery = normalizedWorkspaceSessionQuery(query)
         mutableState.update { it.copy(loading = true, error = null) }
         runCatching {
             coroutineScope {
                 val definitions = async { repository.agentDefinitions(runtimeId) }
                 val sessions = async {
-                    collectAllPages { cursor -> repository.sessions(runtimeId, workspaceId, cursor, query?.trim()) }
+                    collectAllPages { cursor ->
+                        repository.sessions(runtimeId, workspaceId, cursor, normalizedQuery)
+                    }
                 }
                 val approvals = async { repository.approvals(runtimeId, workspaceId) }
                 val instructions = async { runCatching { instructionLoader.load(workspaceId) } }
@@ -113,7 +131,7 @@ class WorkspaceSessionsViewModel(
                     instructionVersions = instructionVersions,
                     instructionStatus = instructionStatus,
                     instructionRefreshRequired = instructionRefreshRequired,
-                    query = query.orEmpty(), loading = false, creating = false) }
+                    query = normalizedQuery.orEmpty(), loading = false, creating = false) }
             }
         }.onFailure { failure ->
             if (requestGeneration == generation.get()) {

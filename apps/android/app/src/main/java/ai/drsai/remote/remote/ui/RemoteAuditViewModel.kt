@@ -14,6 +14,7 @@ import ai.drsai.remote.remote.data.RemoteAuditEntry
 import ai.drsai.remote.remote.model.RunId
 import ai.drsai.remote.remote.model.RuntimeId
 import ai.drsai.remote.remote.model.WorkspaceId
+import ai.drsai.remote.remote.security.androidRelayDeviceProof
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -39,8 +40,12 @@ class RemoteAuditViewModel(
 ) : AndroidViewModel(app) {
     private val tokens = SecureTokenStore(app)
     private val auth = AccessTokenCoordinator(tokens, OidcClient(refreshClientId = { tokens.oidcClientId }))
+    private val deviceProof = androidRelayDeviceProof(app)
     private val repository = RelayRemoteRepository(
-        BuildConfig.RELAY_BASE_URL, auth::current, refreshAfter = auth::refreshAfter,
+        BuildConfig.RELAY_BASE_URL,
+        auth::current,
+        refreshAfter = auth::refreshAfter,
+        deviceProof = deviceProof,
     )
     private val mutableState = MutableStateFlow(RemoteAuditUiState(runtimeName, workspaceName))
     val state: StateFlow<RemoteAuditUiState> = mutableState.asStateFlow()

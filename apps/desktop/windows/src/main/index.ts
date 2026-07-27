@@ -106,6 +106,10 @@ import {
   updateThread,
   updateThreadSnapshot,
 } from "./threads";
+import {
+  getRuntimeThreadSnapshot,
+  subscribeRuntimeThreadSnapshot,
+} from "../../../shared/main/threadRuntimeSubscription";
 import { setThreadArchived } from "./threadArchive";
 import {
   addProjectMemory,
@@ -453,6 +457,67 @@ import {
 } from "./managerPresentationTasks";
 
 let mainWindow: BrowserWindow | null = null;
+const runtimeThreadSubscriptions = new Map<string, { stop(): void }>();
+const runtimeThreadCatalogTimers = new Map<number, NodeJS.Timeout>();
+const runtimeThreadCatalogBusy = new Set<number>();
+
+function runtimeThreadSubscriptionKey(webContents: WebContents, threadId: string): string {
+  return `${webContents.id}:${threadId}`;
+}
+
+function stopRuntimeThreadSubscriptions(webContentsId?: number): void {
+  for (const [key, subscription] of runtimeThreadSubscriptions) {
+    if (webContentsId === undefined || key.startsWith(`${webContentsId}:`)) {
+      subscription.stop();
+      runtimeThreadSubscriptions.delete(key);
+    }
+  }
+  if (webContentsId !== undefined) {
+    const timer = runtimeThreadCatalogTimers.get(webContentsId);
+    if (timer) clearInterval(timer);
+    runtimeThreadCatalogTimers.delete(webContentsId);
+    runtimeThreadCatalogBusy.delete(webContentsId);
+  }
+}
+
+async function syncRuntimeThreadCatalog(
+  webContents: WebContents,
+  activeThreadId: string,
+): Promise<void> {
+  if (webContents.isDestroyed() || runtimeThreadCatalogBusy.has(webContents.id)) return;
+  runtimeThreadCatalogBusy.add(webContents.id);
+  try {
+    for (const thread of (await listThreads()).filter((item) => item.runtimeSessionId && !item.archived)) {
+      const snapshot = await getRuntimeThreadSnapshot(thread).catch(() => null);
+      if (!snapshot || snapshot.updatedAt <= Date.parse(thread.updatedAt)) continue;
+      const updated = await updateThread({
+        id: thread.id,
+        messageCount: snapshot.messageCount,
+        unread: thread.id !== activeThreadId,
+      });
+      if (!webContents.isDestroyed()) {
+        webContents.send("desktop:thread-catalog", {
+          thread: updated,
+          source: "runtime-session",
+        });
+      }
+    }
+  } finally {
+    runtimeThreadCatalogBusy.delete(webContents.id);
+  }
+}
+
+function startRuntimeThreadCatalogSync(webContents: WebContents, activeThreadId: string): void {
+  const current = runtimeThreadCatalogTimers.get(webContents.id);
+  if (current) clearInterval(current);
+  void syncRuntimeThreadCatalog(webContents, activeThreadId);
+  const timer = setInterval(
+    () => void syncRuntimeThreadCatalog(webContents, activeThreadId),
+    5_000,
+  );
+  timer.unref();
+  runtimeThreadCatalogTimers.set(webContents.id, timer);
+}
 configureChannelProviderAuth({ credentials: WINDOWS_CREDENTIAL_SERVICE });
 
 const interactiveDebugPolicy = new InteractiveDebugPolicyStore(join(DRSAI_HOME, "desktop", "interactive-debug-policy.json"));
@@ -4576,8 +4641,39 @@ function registerIpc(): void {
     return setThreadArchived(value.threadId, value.archived);
   });
   secureHandle("desktop:get-thread-snapshot", async (_event, threadId: string) =>
-    (await getRemoteThreadSnapshot(threadId)) || getThreadSnapshot(threadId),
+    (await getRemoteThreadSnapshot(threadId))
+    || (await listThreads().then(async (items) => {
+      const thread = items.find((item) => item.id === threadId);
+      return thread ? getRuntimeThreadSnapshot(thread).catch(() => null) : null;
+    }))
+    || getThreadSnapshot(threadId),
   );
+  secureHandle("desktop:subscribe-thread-snapshot", async (event, threadId: string) => {
+    if (typeof threadId !== "string") return false;
+    const thread = (await listThreads()).find((item) => item.id === threadId);
+    if (!thread) return false;
+    startRuntimeThreadCatalogSync(event.sender, threadId);
+    const key = runtimeThreadSubscriptionKey(event.sender, threadId);
+    runtimeThreadSubscriptions.get(key)?.stop();
+    runtimeThreadSubscriptions.delete(key);
+    const subscription = await subscribeRuntimeThreadSnapshot(thread, event.sender).catch(() => null);
+    if (!subscription) return false;
+    runtimeThreadSubscriptions.set(key, subscription);
+    event.sender.once("destroyed", () => stopRuntimeThreadSubscriptions(event.sender.id));
+    void subscription.done.finally(() => {
+      if (runtimeThreadSubscriptions.get(key) === subscription) {
+        runtimeThreadSubscriptions.delete(key);
+      }
+    });
+    return true;
+  });
+  secureHandle("desktop:unsubscribe-thread-snapshot", (event, threadId: string) => {
+    if (typeof threadId !== "string") return false;
+    const key = runtimeThreadSubscriptionKey(event.sender, threadId);
+    const subscription = runtimeThreadSubscriptions.get(key);
+    subscription?.stop();
+    return runtimeThreadSubscriptions.delete(key);
+  });
   secureHandle("desktop:search-thread-messages", async (_event, request: DesktopThreadContentSearchRequest) =>
     (await searchRemoteThreadMessages(request)) || searchThreadMessages(request),
   );

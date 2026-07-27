@@ -14,6 +14,7 @@ import ai.drsai.remote.data.SecureTokenStore
 import ai.drsai.remote.remote.data.*
 import ai.drsai.remote.remote.model.RuntimeId
 import ai.drsai.remote.remote.model.WorkspaceId
+import ai.drsai.remote.remote.security.androidRelayDeviceProof
 import java.util.UUID
 import java.io.File
 import java.security.MessageDigest
@@ -33,7 +34,15 @@ class WorkspaceFilesViewModel(
 ) : AndroidViewModel(app) {
     private val tokens = SecureTokenStore(app)
     private val auth = AccessTokenCoordinator(tokens, OidcClient(refreshClientId = { tokens.oidcClientId }))
-    private val client = RelayWorkspaceOperationsClient(HttpOwopRelayTransport(BuildConfig.RELAY_BASE_URL, runtimeId, auth::current))
+    private val deviceProof = androidRelayDeviceProof(app)
+    private val client = RelayWorkspaceOperationsClient(
+        HttpOwopRelayTransport(
+            BuildConfig.RELAY_BASE_URL,
+            runtimeId,
+            auth::current,
+            deviceProof = deviceProof,
+        )
+    )
     private val mutableState = MutableStateFlow(FileTreeUiState(workspaceName = workspaceName, loading = true,
         scopeKey = "${runtimeId.value}/${workspaceId.value}"))
     val state: StateFlow<FileTreeUiState> = mutableState.asStateFlow()
@@ -147,7 +156,15 @@ class WorkspaceGitViewModel(
 ) : AndroidViewModel(app) {
     private val tokens = SecureTokenStore(app)
     private val auth = AccessTokenCoordinator(tokens, OidcClient(refreshClientId = { tokens.oidcClientId }))
-    private val client = RelayWorkspaceOperationsClient(HttpOwopRelayTransport(BuildConfig.RELAY_BASE_URL, runtimeId, auth::current))
+    private val deviceProof = androidRelayDeviceProof(app)
+    private val client = RelayWorkspaceOperationsClient(
+        HttpOwopRelayTransport(
+            BuildConfig.RELAY_BASE_URL,
+            runtimeId,
+            auth::current,
+            deviceProof = deviceProof,
+        )
+    )
     private val mutableState = MutableStateFlow(GitReadUiState(GitStatusUi(null, "loading", emptyList())))
     val state: StateFlow<GitReadUiState> = mutableState.asStateFlow()
 

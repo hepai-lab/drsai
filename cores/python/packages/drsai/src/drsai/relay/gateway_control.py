@@ -83,6 +83,7 @@ class GatewayRuntimeControlHandler:
         self._execution_tasks: set[asyncio.Task[Any]] = set()
         self.execution_failures: dict[str, str] = {}
         self._relay_event_cursors: dict[str, int] = {}
+        self._relay_session_event_cursors: dict[str, int] = {}
         self._relay_terminal_runs: set[str] = set()
         self._approval_decision_lock = asyncio.Lock()
         self._initialize()
@@ -120,7 +121,8 @@ class GatewayRuntimeControlHandler:
         if method is None or operation not in {
             "list_agent_definitions", "list_sessions", "list_sessions_for_subject", "create_session", "get_session",
             "authorize_session", "list_runs", "list_runs_for_subject", "authorize_run",
-            "conversation_for_subject",
+            "conversation_for_subject", "conversation_snapshot_for_subject",
+            "session_events_for_subject",
             "idempotency_result", "create_run", "get_run", "list_events", "cancel_run",
             "pending_approvals", "pending_approvals_for_subject", "audit_entries", "audit_entries_for_subject",
             "execute_owop", "decide_approval",
@@ -252,6 +254,45 @@ class GatewayRuntimeControlHandler:
                         self._relay_terminal_runs.add(run_id)
         return forwarded
 
+    async def relay_session_events(self) -> list[dict[str, Any]]:
+        """Poll authoritative Session Journal events for Relay fan-out/replay."""
+        forwarded: list[dict[str, Any]] = []
+        for workspace in await self.published_workspaces():
+            if workspace["lifecycle"] != "active":
+                continue
+            workspace_id = str(workspace["workspace_id"])
+            sessions = await self.transport.request(
+                "GET",
+                f"/v1/sessions?workspace_id={quote(workspace_id, safe='')}&offset=0&limit=200",
+            )
+            for session in sessions.get("data", []):
+                session_id = str(session["session_id"])
+                after = self._relay_session_event_cursors.get(session_id, 0)
+                try:
+                    page = await self.transport.request(
+                        "GET",
+                        f"/v1/sessions/{quote(session_id, safe='')}/events"
+                        f"?after_sequence={after}&limit=2000",
+                    )
+                except GatewayControlError as exc:
+                    if exc.code != "cursor_expired":
+                        raise
+                    snapshot = await self.transport.request(
+                        "GET",
+                        f"/v1/sessions/{quote(session_id, safe='')}/conversation-snapshot",
+                    )
+                    self._relay_session_event_cursors[session_id] = int(
+                        snapshot["snapshot_sequence"]
+                    )
+                    continue
+                events = page.get("data", [])
+                if events:
+                    self._relay_session_event_cursors[session_id] = int(
+                        events[-1]["session_sequence"]
+                    )
+                    forwarded.extend(events)
+        return forwarded
+
     async def create_session(self, subject: str, workspace_id: str, *, title: str, definition_id: str,
                              definition_version: str, idempotency_key: str) -> dict[str, Any]:
         existing = self._binding_by_idempotency("relay_sessions", subject, idempotency_key)
@@ -344,6 +385,11 @@ class GatewayRuntimeControlHandler:
                                              "user_id": subject,
                                              "metadata": {
                                                  "attachment_refs": self._run_binding(run_id)["attachment_refs"],
+                                                 "source_client": "android",
+                                                 "source_message_id": (
+                                                     "android:"
+                                                     + str(self._run_binding(run_id)["idempotency_key"])
+                                                 ),
                                              },
                                          },
                                          headers=headers)
@@ -417,6 +463,35 @@ class GatewayRuntimeControlHandler:
                 "payload": payload,
             })
         return [items, page.get("next_cursor")]
+
+    async def conversation_snapshot_for_subject(
+        self,
+        subject: str,
+        workspace_id: str,
+        session_id: str,
+    ) -> dict[str, Any]:
+        await self.authorize_session(subject, workspace_id, session_id)
+        return await self.transport.request(
+            "GET",
+            f"/v1/sessions/{quote(session_id, safe='')}/conversation-snapshot",
+        )
+
+    async def session_events_for_subject(
+        self,
+        subject: str,
+        workspace_id: str,
+        session_id: str,
+        *,
+        after_sequence: int = 0,
+        limit: int = 500,
+    ) -> dict[str, Any]:
+        await self.authorize_session(subject, workspace_id, session_id)
+        return await self.transport.request(
+            "GET",
+            f"/v1/sessions/{quote(session_id, safe='')}/events"
+            f"?after_sequence={max(0, int(after_sequence))}"
+            f"&limit={max(1, min(2000, int(limit)))}",
+        )
 
     async def idempotency_result(self, subject: str, operation: str, idempotency_key: str) -> dict[str, Any]:
         table = {"session.create": "relay_sessions", "run.create": "relay_runs"}.get(operation)
@@ -617,15 +692,22 @@ class GatewayRuntimeControlHandler:
                     "Session Agent Definition is unavailable or unhealthy",
                     retryable=True,
                 )
-        elif len(healthy) == 1:
-            # Legacy Sessions created before authoritative Agent metadata can
-            # migrate only when the choice is unambiguous.
-            selected = healthy[0]
         else:
-            raise GatewayControlError(
-                "session_agent_definition_required",
-                "Existing Session has no unambiguous healthy Agent Definition",
-            )
+            # Legacy Sessions created before authoritative Agent metadata can
+            # migrate only when the choice is unambiguous. Prefer the
+            # Runtime-owned backend binding when it exists; unrelated healthy
+            # backends must not make an otherwise exact migration ambiguous.
+            candidates = [
+                row for row in healthy
+                if not backend_id or row["backend_id"] == backend_id
+            ]
+            if len(candidates) == 1:
+                selected = candidates[0]
+            else:
+                raise GatewayControlError(
+                    "session_agent_definition_required",
+                    "Existing Session has no unambiguous healthy Agent Definition",
+                )
         binding = _SessionBinding(
             session_id=session_id,
             subject=subject,

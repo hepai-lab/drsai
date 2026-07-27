@@ -12,7 +12,7 @@ object RelayContractGenerated {
         "approval_list" to "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/approvals",
         "association_create" to "POST /v1/associations",
         "association_revoke" to "DELETE /v1/associations/{runtime_id}",
-        "conversation_read" to "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/conversation",
+        "conversation_read" to "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/conversation-snapshot",
         "event_list" to "GET /v1/runtimes/{runtime_id}/runs/{run_id}/events",
         "event_stream" to "GET /v1/runtimes/{runtime_id}/runs/{run_id}/events/stream",
         "file_raw" to "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/files/raw",
@@ -29,6 +29,8 @@ object RelayContractGenerated {
         "runtime_list" to "GET /v1/runtimes",
         "runtime_rename" to "PATCH /v1/runtimes/{runtime_id}",
         "session_create" to "POST /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions",
+        "session_event_list" to "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/events",
+        "session_event_stream" to "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/events/stream",
         "session_list" to "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions",
         "session_read" to "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}",
         "workspace_list" to "GET /v1/runtimes/{runtime_id}/workspaces"
@@ -36,6 +38,7 @@ object RelayContractGenerated {
     val CAPABILITIES: Set<String> = setOf(
         "approval.decide",
         "approval.list",
+        "association.device-bound",
         "association.list",
         "association.revoke",
         "conversation.read",
@@ -55,6 +58,28 @@ object RelayContractGenerated {
         "session.list",
         "session.read",
         "workspace.list"
+    )
+    val CAPABILITY_PROFILES: Map<String, Set<String>> = mapOf(
+        "device-association/1" to setOf("association.device-bound", "association.list", "association.revoke"),
+        "session-events/1" to setOf("conversation.snapshot", "session.event.cursor_expired", "session.event.resume", "session.event.stream")
+    )
+    val MINIMUM_VERSIONS: Map<String, Map<String, String>> = mapOf(
+        "device-association/1" to mapOf("android" to "1.5.3", "relay" to "2.0.0", "runtime" to "1.5.3"),
+        "session-events/1" to mapOf("android" to "1.5.3", "desktop" to "1.5.3", "runtime" to "1.5.3")
+    )
+    val SESSION_EVENT_KINDS: Set<String> = setOf(
+        "approval.created",
+        "approval.decided",
+        "artifact.created",
+        "conversation.item.created",
+        "conversation.item.delta",
+        "conversation.item.upsert",
+        "run.created",
+        "run.state.changed",
+        "session.archived",
+        "session.removed",
+        "session.updated",
+        "tool.state.changed"
     )
 }
 
@@ -83,4 +108,46 @@ data class GeneratedRelayEvent(
     val timestamp: String,
     val kind: String,
     val payload: Map<String, Any?>,
+)
+
+data class GeneratedSessionConversationItem(
+    val itemId: String,
+    val sessionId: String,
+    val runId: String?,
+    val kind: String,
+    val role: String?,
+    val revision: Long,
+    val sessionSequence: Long,
+    val sourceClient: String,
+    val sourceMessageId: String?,
+    val createdAt: String,
+    val updatedAt: String,
+    val payload: Map<String, Any?>,
+)
+
+data class GeneratedConversationSnapshot(
+    val sessionId: String,
+    val snapshotSequence: Long,
+    val items: List<GeneratedSessionConversationItem>,
+    val nextCursor: String?,
+)
+
+data class GeneratedSessionEvent(
+    val eventId: String,
+    val runtimeId: String,
+    val workspaceId: String,
+    val sessionId: String,
+    val runId: String?,
+    val sessionSequence: Long,
+    val kind: String,
+    val timestamp: String,
+    val payload: Map<String, Any?>,
+)
+
+data class GeneratedRuntimeSessionEventFrame(
+    val type: String = "event",
+    val scope: String = "session",
+    val sessionId: String,
+    val sessionSequence: Long,
+    val event: GeneratedSessionEvent,
 )

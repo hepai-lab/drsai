@@ -541,6 +541,20 @@ const api: DesktopApi = {
   setThreadArchived: (request) => ipcRenderer.invoke("desktop:set-thread-archived", request),
   getThreadSnapshot: (threadId: string): Promise<DesktopThreadSnapshot | null> =>
     ipcRenderer.invoke("desktop:get-thread-snapshot", threadId),
+  subscribeThreadSnapshot: (threadId: string): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:subscribe-thread-snapshot", threadId),
+  unsubscribeThreadSnapshot: (threadId: string): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:unsubscribe-thread-snapshot", threadId),
+  onThreadSnapshot: (callback): (() => void) => {
+    const listener = (_event: IpcRendererEvent, event: Parameters<typeof callback>[0]): void => callback(event);
+    ipcRenderer.on("desktop:thread-snapshot", listener);
+    return () => ipcRenderer.removeListener("desktop:thread-snapshot", listener);
+  },
+  onThreadCatalogUpdate: (callback): (() => void) => {
+    const listener = (_event: IpcRendererEvent, value: Parameters<typeof callback>[0]): void => callback(value);
+    ipcRenderer.on("desktop:thread-catalog", listener);
+    return () => ipcRenderer.removeListener("desktop:thread-catalog", listener);
+  },
   searchThreadMessages: (
     request: DesktopThreadContentSearchRequest,
   ): Promise<DesktopThreadContentSearchResult[]> =>

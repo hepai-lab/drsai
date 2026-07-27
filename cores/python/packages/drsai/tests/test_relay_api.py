@@ -42,6 +42,20 @@ def control(idempotency: bool = False) -> dict[str, str]:
     return result
 
 
+def association_body(code: str, device_id: str = "android-device-0001") -> dict[str, str]:
+    public = Ed25519PrivateKey.generate().public_key().public_bytes(
+        serialization.Encoding.Raw,
+        serialization.PublicFormat.Raw,
+    )
+    return {
+        **control(),
+        "code": code,
+        "device_id": device_id,
+        "device_name": "Android Test Device",
+        "device_public_key": encoded(public),
+    }
+
+
 def register(client: TestClient):
     private = Ed25519PrivateKey.generate()
     public = encoded(private.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw))
@@ -57,7 +71,7 @@ def test_registration_association_heartbeat_and_discovery_flow() -> None:
     client = TestClient(_testing_app())
     private, runtime_id, token = register(client)
     grant = client.post(f"/v1/runtimes/{runtime_id}/access-grants", headers={"x-runtime-token": token}).json()["code"]
-    assert client.post("/v1/associations", headers={"x-subject": "alice"}, json={**control(), "code": grant}).status_code == 200
+    assert client.post("/v1/associations", headers={"x-subject": "alice"}, json=association_body(grant)).status_code == 200
     instance, nonce = "boot-01", "nonce-01"
     signature = encoded(private.sign(f"{runtime_id}\n{instance}\n{nonce}".encode()))
     heartbeat = client.post(f"/v1/runtime-connections/{runtime_id}/heartbeat", headers={"x-runtime-token": token}, json={
@@ -84,7 +98,7 @@ def test_access_grant_status_and_revoke_lifecycle() -> None:
     assert revoked.status_code == 200 and revoked.json()["status"] == "revoked"
     assert client.delete(status_url, headers=headers).json()["status"] == "revoked"
     assert client.post("/v1/associations", headers={"x-subject": "alice"},
-                       json={**control(), "code": body["code"]}).status_code == 400
+                       json=association_body(body["code"])).status_code == 400
 
 
 def test_association_and_enrollment_revocation_are_scoped_and_redacted() -> None:
@@ -97,7 +111,7 @@ def test_association_and_enrollment_revocation_are_scoped_and_redacted() -> None
     associated = client.post(
         "/v1/associations",
         headers={"x-subject": "alice"},
-        json={**control(), "code": grant["code"]},
+        json=association_body(grant["code"]),
     )
     assert associated.status_code == 200
 
@@ -113,10 +127,16 @@ def test_association_and_enrollment_revocation_are_scoped_and_redacted() -> None
     ).json()
     assert len(associations) == 1
     assert associations[0]["status"] == "active"
+    assert associations[0]["device_summary"].startswith("dev_")
+    assert associations[0]["device_name"] == "Android Test Device"
     assert "alice" not in json.dumps(associations)
 
     revoked = client.delete(
-        f"/v1/associations/{runtime_id}", headers={"x-subject": "alice"}
+        f"/v1/associations/{runtime_id}",
+        headers={
+            "x-subject": "alice",
+            "x-relay-device-id": "android-device-0001",
+        },
     )
     assert revoked.status_code == 200
     assert revoked.json()["status"] == "revoked"
@@ -139,6 +159,49 @@ def test_association_and_enrollment_revocation_are_scoped_and_redacted() -> None
     ).status_code == 401
 
 
+def test_same_subject_devices_have_independent_associations_and_revocation() -> None:
+    client = TestClient(_testing_app())
+    _, runtime_id, runtime_token = register(client)
+    runtime_headers = {"x-runtime-token": runtime_token}
+    for device_id in ("android-device-0001", "android-device-0002"):
+        grant = client.post(
+            f"/v1/runtimes/{runtime_id}/access-grants",
+            headers=runtime_headers,
+        ).json()["code"]
+        associated = client.post(
+            "/v1/associations",
+            headers={"x-subject": "alice"},
+            json=association_body(grant, device_id),
+        )
+        assert associated.status_code == 200
+
+    before = client.get(
+        f"/v1/runtimes/{runtime_id}/associations",
+        headers=runtime_headers,
+    ).json()
+    assert len(before) == 2
+    assert len({row["association_id"] for row in before}) == 2
+    assert len({row["device_summary"] for row in before}) == 2
+
+    revoked = client.delete(
+        f"/v1/associations/{runtime_id}",
+        headers={
+            "x-subject": "alice",
+            "x-relay-device-id": "android-device-0001",
+        },
+    )
+    assert revoked.status_code == 200
+    after = client.get(
+        f"/v1/runtimes/{runtime_id}/associations",
+        headers=runtime_headers,
+    ).json()
+    assert sorted(row["status"] for row in after) == ["active", "revoked"]
+    assert client.get(
+        f"/v1/runtimes/{runtime_id}/runtime",
+        headers={"x-subject": "alice"},
+    ).status_code == 200
+
+
 def test_runtime_display_name_is_safe_and_associated_user_can_rename() -> None:
     client = TestClient(_testing_app())
     _, runtime_id, runtime_token = register(client)
@@ -149,7 +212,7 @@ def test_runtime_display_name_is_safe_and_associated_user_can_rename() -> None:
     assert client.post(
         "/v1/associations",
         headers={"x-subject": "alice"},
-        json={**control(), "code": grant},
+        json=association_body(grant),
     ).status_code == 200
 
     renamed = client.patch(
@@ -193,7 +256,7 @@ def test_production_relay_derives_principal_from_verified_oidc_and_ignores_clien
     assert client.get("/v1/runtimes").status_code == 401
     assert client.get("/v1/runtimes", headers={"x-subject": subject}).status_code == 401
     headers = {"authorization": f"Bearer {oidc_token(subject, secret)}", "x-subject": str(uuid4())}
-    associated = client.post("/v1/associations", headers=headers, json={**control(), "code": grant})
+    associated = client.post("/v1/associations", headers=headers, json=association_body(grant))
     assert associated.status_code == 200 and associated.json()["runtime_id"] == runtime_id
     listed = client.get("/v1/runtimes", headers=headers)
     assert listed.status_code == 200 and listed.json()["items"][0]["runtime"]["runtime_id"] == runtime_id
@@ -252,7 +315,14 @@ def test_runtime_establishes_authenticated_outbound_websocket() -> None:
             "runtime_id": runtime_id, "workspace_id": "workspace-one", "display_name": "Project",
         }]})
     _, code, _ = client.app.state.registry.issue_access_grant(runtime_id, token)
-    client.app.state.registry.associate("alice", code)
+    device = association_body(code)
+    client.app.state.registry.associate(
+        "alice",
+        code,
+        device["device_id"],
+        device["device_name"],
+        device["device_public_key"],
+    )
     workspaces, _ = client.app.state.registry.list_workspaces("alice", runtime_id)
     assert [item.workspace_id for item in workspaces] == ["workspace-one"]
 

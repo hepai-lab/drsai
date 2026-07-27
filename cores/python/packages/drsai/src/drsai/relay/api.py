@@ -180,15 +180,28 @@ def create_relay_app(registry: RelayRegistry | None = None,
 
     @app.post("/v1/associations")
     async def associate(body: AssociationRequest, x_subject: str = Depends(oidc_subject)) -> dict[str, str]:
-        return {"runtime_id": store.associate(x_subject, body.code)}
+        return {
+            "runtime_id": store.associate(
+                x_subject,
+                body.code,
+                body.device_id,
+                body.device_name,
+                body.device_public_key,
+            )
+        }
 
     @app.delete("/v1/associations/{runtime_id}", response_model=AssociationResult)
     async def revoke_user_association(
         runtime_id: str,
         x_subject: str = Depends(oidc_subject),
+        x_relay_device_id: str = Header(),
     ) -> AssociationResult:
         return AssociationResult.model_validate(
-            store.revoke_association(x_subject, runtime_id)
+            store.revoke_association(
+                x_subject,
+                runtime_id,
+                x_relay_device_id,
+            )
         )
 
     @app.get(

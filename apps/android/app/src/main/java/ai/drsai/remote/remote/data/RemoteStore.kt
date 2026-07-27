@@ -9,6 +9,10 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.withTransaction
 import ai.drsai.remote.data.ChatDatabase
+import ai.drsai.remote.remote.generated.GeneratedConversationSnapshot
+import ai.drsai.remote.remote.generated.GeneratedSessionConversationItem
+import ai.drsai.remote.remote.generated.GeneratedSessionEvent
+import org.json.JSONObject
 
 @Entity(
     tableName = "remote_runtimes",
@@ -119,6 +123,61 @@ data class RemoteEventEntity(
 )
 
 @Entity(
+    tableName = "remote_conversation_items",
+    primaryKeys = ["subject", "organization", "runtimeId", "sessionId", "itemId"],
+    indices = [
+        Index("subject", "organization", "runtimeId", "sessionId", "sessionSequence"),
+        Index(
+            value = ["subject", "organization", "runtimeId", "sessionId", "sourceMessageId"],
+            unique = true,
+        ),
+    ],
+)
+data class RemoteConversationItemEntity(
+    val subject: String,
+    val organization: String,
+    val runtimeId: String,
+    val workspaceId: String,
+    val sessionId: String,
+    val itemId: String,
+    val runId: String?,
+    val kind: String,
+    val role: String?,
+    val revision: Long,
+    val sessionSequence: Long,
+    val sourceClient: String,
+    val sourceMessageId: String?,
+    val createdAt: String,
+    val updatedAt: String,
+    val payloadJson: String,
+    val optimistic: Boolean = false,
+)
+
+@Entity(
+    tableName = "remote_session_events",
+    primaryKeys = ["subject", "organization", "runtimeId", "sessionId", "eventId"],
+    indices = [
+        Index(
+            value = ["subject", "organization", "runtimeId", "sessionId", "sessionSequence"],
+            unique = true,
+        ),
+    ],
+)
+data class RemoteSessionEventEntity(
+    val subject: String,
+    val organization: String,
+    val runtimeId: String,
+    val workspaceId: String,
+    val sessionId: String,
+    val runId: String?,
+    val eventId: String,
+    val sessionSequence: Long,
+    val kind: String,
+    val timestamp: String,
+    val payloadJson: String,
+)
+
+@Entity(
     tableName = "pending_remote_approvals",
     primaryKeys = ["subject", "organization", "runtimeId", "approvalId"],
     indices = [Index("subject", "organization", "runtimeId", "runId")],
@@ -146,12 +205,27 @@ interface RemoteCacheDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertEvent(item: RemoteEventEntity): Long
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun saveCursor(item: RemoteEventCursorEntity)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun saveApproval(item: PendingRemoteApprovalEntity)
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun saveConversationItems(items: List<RemoteConversationItemEntity>)
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun saveConversationItem(item: RemoteConversationItemEntity)
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertSessionEvent(item: RemoteSessionEventEntity): Long
 
     @Query("SELECT * FROM remote_event_cursors WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND resourceType=:resourceType AND resourceId=:resourceId")
     suspend fun cursor(subject: String, organization: String, runtimeId: String, resourceType: String, resourceId: String): RemoteEventCursorEntity?
 
     @Query("SELECT * FROM remote_events WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND eventId=:eventId")
     suspend fun event(subject: String, organization: String, runtimeId: String, eventId: String): RemoteEventEntity?
+    @Query("SELECT * FROM remote_session_events WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND sessionId=:sessionId AND eventId=:eventId")
+    suspend fun sessionEvent(subject: String, organization: String, runtimeId: String, sessionId: String, eventId: String): RemoteSessionEventEntity?
+    @Query("SELECT * FROM remote_conversation_items WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND sessionId=:sessionId ORDER BY sessionSequence, createdAt, itemId")
+    suspend fun conversationItems(subject: String, organization: String, runtimeId: String, sessionId: String): List<RemoteConversationItemEntity>
+    @Query("SELECT * FROM remote_conversation_items WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND sessionId=:sessionId AND itemId=:itemId")
+    suspend fun conversationItem(subject: String, organization: String, runtimeId: String, sessionId: String, itemId: String): RemoteConversationItemEntity?
+    @Query("DELETE FROM remote_conversation_items WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND sessionId=:sessionId AND optimistic=0")
+    suspend fun clearAuthoritativeConversationItems(subject: String, organization: String, runtimeId: String, sessionId: String)
+    @Query("DELETE FROM remote_conversation_items WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND sessionId=:sessionId AND sourceMessageId=:sourceMessageId AND optimistic=1")
+    suspend fun clearOptimisticMessage(subject: String, organization: String, runtimeId: String, sessionId: String, sourceMessageId: String)
+    @Query("DELETE FROM remote_session_events WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND sessionId=:sessionId AND sessionSequence<=:throughSequence")
+    suspend fun clearSessionEventsThrough(subject: String, organization: String, runtimeId: String, sessionId: String, throughSequence: Long)
     @Query("SELECT * FROM remote_events WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND runId=:runId ORDER BY sequence")
     suspend fun runEvents(subject: String, organization: String, runtimeId: String, runId: String): List<RemoteEventEntity>
     @Query("DELETE FROM remote_events WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND runId=:runId")
@@ -175,6 +249,8 @@ interface RemoteCacheDao {
     suspend fun recoverableRuns(subject: String, organization: String): List<RemoteRunEntity>
 
     @Query("DELETE FROM remote_events WHERE subject=:subject AND organization=:organization") suspend fun clearEvents(subject: String, organization: String)
+    @Query("DELETE FROM remote_conversation_items WHERE subject=:subject AND organization=:organization") suspend fun clearConversationItems(subject: String, organization: String)
+    @Query("DELETE FROM remote_session_events WHERE subject=:subject AND organization=:organization") suspend fun clearSessionEvents(subject: String, organization: String)
     @Query("DELETE FROM remote_event_cursors WHERE subject=:subject AND organization=:organization") suspend fun clearCursors(subject: String, organization: String)
     @Query("DELETE FROM pending_remote_approvals WHERE subject=:subject AND organization=:organization") suspend fun clearApprovals(subject: String, organization: String)
     @Query("DELETE FROM remote_runs WHERE subject=:subject AND organization=:organization") suspend fun clearRuns(subject: String, organization: String)
@@ -197,6 +273,8 @@ interface RemoteCacheDao {
     @Query("SELECT COUNT(*) FROM remote_event_cursors WHERE subject=:subject AND organization=:organization")
     suspend fun cursorCount(subject: String, organization: String): Int
     @Query("DELETE FROM remote_events WHERE subject=:subject") suspend fun clearSubjectEvents(subject: String)
+    @Query("DELETE FROM remote_conversation_items WHERE subject=:subject") suspend fun clearSubjectConversationItems(subject: String)
+    @Query("DELETE FROM remote_session_events WHERE subject=:subject") suspend fun clearSubjectSessionEvents(subject: String)
     @Query("DELETE FROM remote_event_cursors WHERE subject=:subject") suspend fun clearSubjectCursors(subject: String)
     @Query("DELETE FROM pending_remote_approvals WHERE subject=:subject") suspend fun clearSubjectApprovals(subject: String)
     @Query("DELETE FROM remote_runs WHERE subject=:subject") suspend fun clearSubjectRuns(subject: String)
@@ -228,6 +306,117 @@ fun offlineRemotePolicy(online: Boolean): OfflineRemotePolicy = if (online) {
 }
 
 class RemoteCacheRepository(private val database: ChatDatabase) {
+    suspend fun sessionCursor(
+        subject: String,
+        organization: String,
+        runtimeId: String,
+        sessionId: String,
+    ): RemoteEventCursorEntity? =
+        database.remoteDao().cursor(subject, organization, runtimeId, "session", sessionId)
+
+    suspend fun sessionItems(
+        subject: String,
+        organization: String,
+        runtimeId: String,
+        sessionId: String,
+    ): List<RemoteConversationItemEntity> =
+        database.remoteDao().conversationItems(subject, organization, runtimeId, sessionId)
+
+    suspend fun replaceSessionSnapshot(
+        subject: String,
+        organization: String,
+        runtimeId: String,
+        workspaceId: String,
+        snapshot: GeneratedConversationSnapshot,
+        syncedAt: Long,
+    ) = database.withTransaction {
+        val dao = database.remoteDao()
+        require(snapshot.items.all { it.sessionId == snapshot.sessionId }) { "remote_session_scope_mismatch" }
+        val committed = dao.cursor(subject, organization, runtimeId, "session", snapshot.sessionId)
+            ?.lastSequence ?: 0L
+        require(snapshot.snapshotSequence >= committed) { "remote_session_snapshot_sequence_regression" }
+        val normalized = snapshot.items
+            .groupBy { it.itemId }
+            .map { (_, revisions) -> revisions.maxBy { it.revision } }
+            .sortedWith(compareBy<GeneratedSessionConversationItem> { it.sessionSequence }.thenBy { it.itemId })
+        dao.clearAuthoritativeConversationItems(subject, organization, runtimeId, snapshot.sessionId)
+        normalized.forEach { item ->
+            item.sourceMessageId?.let {
+                dao.clearOptimisticMessage(subject, organization, runtimeId, snapshot.sessionId, it)
+            }
+        }
+        dao.saveConversationItems(normalized.map {
+            it.toEntity(subject, organization, runtimeId, workspaceId)
+        })
+        dao.clearSessionEventsThrough(subject, organization, runtimeId, snapshot.sessionId, snapshot.snapshotSequence)
+        dao.saveCursor(
+            RemoteEventCursorEntity(
+                subject, organization, runtimeId, "session", snapshot.sessionId,
+                snapshot.snapshotSequence, snapshot.nextCursor, syncedAt,
+            ),
+        )
+    }
+
+    suspend fun saveOptimisticMessage(
+        subject: String,
+        organization: String,
+        runtimeId: String,
+        workspaceId: String,
+        sessionId: String,
+        sourceMessageId: String,
+        text: String,
+        syncedAt: Long,
+    ) = database.withTransaction {
+        val dao = database.remoteDao()
+        val sequence = (dao.cursor(subject, organization, runtimeId, "session", sessionId)?.lastSequence ?: 0L) + 1
+        dao.saveConversationItem(
+            RemoteConversationItemEntity(
+                subject, organization, runtimeId, workspaceId, sessionId,
+                "optimistic:$sourceMessageId", null, "message", "user", 0, sequence,
+                "android", sourceMessageId, syncedAt.toString(), syncedAt.toString(),
+                JSONObject().put("text", text).put("status", "sending").toString(), true,
+            ),
+        )
+    }
+
+    suspend fun applySessionEvent(
+        subject: String,
+        organization: String,
+        expectedRuntimeId: String,
+        expectedWorkspaceId: String,
+        expectedSessionId: String,
+        event: GeneratedSessionEvent,
+        syncedAt: Long,
+    ): EventDecision = database.withTransaction {
+        val dao = database.remoteDao()
+        if (event.runtimeId != expectedRuntimeId || event.workspaceId != expectedWorkspaceId ||
+            event.sessionId != expectedSessionId
+        ) error("remote_session_event_scope_mismatch")
+        val cursor = dao.cursor(subject, organization, expectedRuntimeId, "session", expectedSessionId)
+        val last = cursor?.lastSequence ?: 0L
+        val existing = dao.sessionEvent(subject, organization, expectedRuntimeId, expectedSessionId, event.eventId)
+        when {
+            existing != null && existing.sessionSequence != event.sessionSequence ->
+                error("remote_session_event_id_collision")
+            existing != null || event.sessionSequence <= last -> EventDecision.DUPLICATE
+            event.sessionSequence != last + 1 -> EventDecision.GAP
+            else -> {
+                check(dao.insertSessionEvent(event.toEntity(subject, organization)) != -1L) {
+                    "remote_session_event_insert_conflict"
+                }
+                event.payload["source_message_id"]?.toString()?.takeIf(String::isNotBlank)?.let {
+                    dao.clearOptimisticMessage(subject, organization, expectedRuntimeId, expectedSessionId, it)
+                }
+                dao.saveCursor(
+                    RemoteEventCursorEntity(
+                        subject, organization, expectedRuntimeId, "session", expectedSessionId,
+                        event.sessionSequence, event.sessionSequence.toString(), syncedAt,
+                    ),
+                )
+                EventDecision.APPLY
+            }
+        }
+    }
     suspend fun runCursor(
         subject: String,
         organization: String,
@@ -284,6 +473,8 @@ class RemoteCacheRepository(private val database: ChatDatabase) {
 
     suspend fun clearAccount(subject: String, organization: String) = database.withTransaction {
         database.remoteDao().apply {
+            clearConversationItems(subject, organization)
+            clearSessionEvents(subject, organization)
             clearEvents(subject, organization)
             clearCursors(subject, organization)
             clearApprovals(subject, organization)
@@ -296,6 +487,7 @@ class RemoteCacheRepository(private val database: ChatDatabase) {
 
     suspend fun clearSubject(subject: String) = database.withTransaction {
         database.remoteDao().apply {
+            clearSubjectConversationItems(subject); clearSubjectSessionEvents(subject)
             clearSubjectEvents(subject); clearSubjectCursors(subject); clearSubjectApprovals(subject)
             clearSubjectRuns(subject); clearSubjectSessions(subject); clearSubjectWorkspaces(subject); clearSubjectRuntimes(subject)
         }
@@ -317,3 +509,22 @@ class RemoteCacheRepository(private val database: ChatDatabase) {
         }
     }
 }
+
+private fun GeneratedSessionConversationItem.toEntity(
+    subject: String,
+    organization: String,
+    runtimeId: String,
+    workspaceId: String,
+) = RemoteConversationItemEntity(
+    subject, organization, runtimeId, workspaceId, sessionId, itemId, runId, kind, role,
+    revision, sessionSequence, sourceClient, sourceMessageId, createdAt, updatedAt,
+    JSONObject(payload).toString(), false,
+)
+
+private fun GeneratedSessionEvent.toEntity(
+    subject: String,
+    organization: String,
+) = RemoteSessionEventEntity(
+    subject, organization, runtimeId, workspaceId, sessionId, runId, eventId,
+    sessionSequence, kind, timestamp, JSONObject(payload).toString(),
+)

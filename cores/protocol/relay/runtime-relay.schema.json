@@ -11,8 +11,48 @@
     "run.list", "run.create", "run.read", "run.cancel",
     "event.resume", "event.stream", "event.cursor_expired",
     "approval.list", "approval.decide",
-    "association.revoke", "association.list", "enrollment.revoke",
+    "association.revoke", "association.list", "association.device-bound",
+    "enrollment.revoke",
     "file.raw.read"
+  ],
+  "x-relay-capability-profiles": {
+    "device-association/1": [
+      "association.device-bound",
+      "association.list",
+      "association.revoke"
+    ],
+    "session-events/1": [
+      "conversation.snapshot",
+      "session.event.resume",
+      "session.event.stream",
+      "session.event.cursor_expired"
+    ]
+  },
+  "x-relay-minimum-versions": {
+    "device-association/1": {
+      "android": "1.5.3",
+      "relay": "2.0.0",
+      "runtime": "1.5.3"
+    },
+    "session-events/1": {
+      "runtime": "1.5.3",
+      "android": "1.5.3",
+      "desktop": "1.5.3"
+    }
+  },
+  "x-session-event-kinds": [
+    "session.updated",
+    "run.created",
+    "run.state.changed",
+    "conversation.item.created",
+    "conversation.item.delta",
+    "conversation.item.upsert",
+    "tool.state.changed",
+    "approval.created",
+    "approval.decided",
+    "artifact.created",
+    "session.archived",
+    "session.removed"
   ],
   "x-relay-endpoints": {
     "access_grant_create": "POST /v1/runtimes/{runtime_id}/access-grants",
@@ -32,7 +72,9 @@
     "session_list": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions",
     "session_read": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}",
     "session_create": "POST /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions",
-    "conversation_read": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/conversation",
+    "conversation_read": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/conversation-snapshot",
+    "session_event_list": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/events",
+    "session_event_stream": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/events/stream",
     "run_list": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/runs",
     "run_create": "POST /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/runs",
     "run_read": "GET /v1/runtimes/{runtime_id}/runs/{run_id}",
@@ -96,6 +138,64 @@
       },
       "additionalProperties": false
     },
+    "session_conversation_item": {
+      "type": "object",
+      "required": [
+        "item_id", "session_id", "run_id", "kind", "role", "revision",
+        "session_sequence", "source_client", "source_message_id",
+        "created_at", "updated_at", "payload"
+      ],
+      "properties": {
+        "item_id": {"type": "string", "minLength": 1},
+        "session_id": {"type": "string", "minLength": 1},
+        "run_id": {
+          "oneOf": [
+            {"type": "string", "minLength": 1},
+            {"type": "null"}
+          ]
+        },
+        "kind": {
+          "enum": [
+            "message", "reasoning", "tool", "approval", "artifact", "error"
+          ]
+        },
+        "role": {
+          "enum": ["user", "assistant", "system", "tool", null]
+        },
+        "revision": {"type": "integer", "minimum": 1},
+        "session_sequence": {"type": "integer", "minimum": 1},
+        "source_client": {"enum": ["windows", "android", "runtime"]},
+        "source_message_id": {
+          "oneOf": [
+            {"type": "string", "minLength": 1},
+            {"type": "null"}
+          ]
+        },
+        "created_at": {"type": "string", "format": "date-time"},
+        "updated_at": {"type": "string", "format": "date-time"},
+        "payload": {"type": "object"}
+      },
+      "additionalProperties": false
+    },
+    "conversation_snapshot": {
+      "type": "object",
+      "required": ["session_id", "snapshot_sequence", "items", "next_cursor"],
+      "properties": {
+        "session_id": {"type": "string", "minLength": 1},
+        "snapshot_sequence": {"type": "integer", "minimum": 0},
+        "items": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/session_conversation_item"}
+        },
+        "next_cursor": {
+          "oneOf": [
+            {"type": "string", "minLength": 1},
+            {"type": "null"}
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
     "control_request": {
       "type": "object",
       "required": ["request_id", "correlation_id"],
@@ -129,10 +229,115 @@
       },
       "additionalProperties": false
     },
+    "session_event": {
+      "type": "object",
+      "required": [
+        "event_id", "runtime_id", "workspace_id", "session_id", "run_id",
+        "session_sequence", "kind", "timestamp", "payload"
+      ],
+      "properties": {
+        "event_id": {"type": "string", "minLength": 1},
+        "runtime_id": {"type": "string", "minLength": 1},
+        "workspace_id": {"type": "string", "minLength": 1},
+        "session_id": {"type": "string", "minLength": 1},
+        "run_id": {
+          "oneOf": [
+            {"type": "string", "minLength": 1},
+            {"type": "null"}
+          ]
+        },
+        "session_sequence": {"type": "integer", "minimum": 1},
+        "kind": {
+          "enum": [
+            "session.updated",
+            "run.created",
+            "run.state.changed",
+            "conversation.item.created",
+            "conversation.item.delta",
+            "conversation.item.upsert",
+            "tool.state.changed",
+            "approval.created",
+            "approval.decided",
+            "artifact.created",
+            "session.archived",
+            "session.removed"
+          ]
+        },
+        "timestamp": {"type": "string", "format": "date-time"},
+        "payload": {"type": "object"}
+      },
+      "additionalProperties": false
+    },
     "subject_summary": {
       "type": "string",
       "pattern": "^sub_[0-9a-f]{12}$",
       "description": "Irreversible subject summary. Raw OIDC subject is never returned."
+    },
+    "device_id": {
+      "type": "string",
+      "minLength": 16,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._-]+$",
+      "description": "Stable opaque Android installation identity."
+    },
+    "device_summary": {
+      "type": "string",
+      "pattern": "^dev_[0-9a-f]{12}$",
+      "description": "Irreversible device summary returned to the Runtime."
+    },
+    "device_public_key": {
+      "type": "string",
+      "minLength": 43,
+      "maxLength": 43,
+      "pattern": "^[A-Za-z0-9_-]{43}$",
+      "description": "Raw 32-byte Ed25519 public key encoded as unpadded Base64URL."
+    },
+    "device_association_request": {
+      "type": "object",
+      "required": [
+        "request_id", "correlation_id", "code", "device_id",
+        "device_name", "device_public_key"
+      ],
+      "properties": {
+        "request_id": {"type": "string", "format": "uuid"},
+        "correlation_id": {"type": "string", "minLength": 1},
+        "idempotency_key": {"type": "string", "minLength": 8},
+        "code": {"type": "string", "minLength": 16, "maxLength": 256},
+        "device_id": {"$ref": "#/$defs/device_id"},
+        "device_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": ".*\\S.*"
+        },
+        "device_public_key": {"$ref": "#/$defs/device_public_key"}
+      },
+      "additionalProperties": false
+    },
+    "device_proof": {
+      "type": "object",
+      "required": ["device_id", "timestamp", "nonce", "signature"],
+      "properties": {
+        "device_id": {"$ref": "#/$defs/device_id"},
+        "timestamp": {
+          "type": "integer",
+          "description": "Unix seconds within plus or minus 300 seconds."
+        },
+        "nonce": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128
+        },
+        "signature": {
+          "type": "string",
+          "minLength": 86,
+          "maxLength": 86,
+          "pattern": "^[A-Za-z0-9_-]{86}$",
+          "description": "Raw 64-byte Ed25519 signature encoded as unpadded Base64URL."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Mapped to X-Relay-Device-* headers. The signature binds method, full API path, canonical query, raw body hash, timestamp, nonce and access-token hash."
     },
     "access_grant_status": {
       "type": "object",
@@ -153,13 +358,19 @@
     "association": {
       "type": "object",
       "required": [
-        "association_id", "runtime_id", "subject_summary", "status",
-        "created_at", "revoked_at"
+        "association_id", "runtime_id", "subject_summary", "device_summary",
+        "device_name", "status", "created_at", "revoked_at"
       ],
       "properties": {
         "association_id": {"type": "string", "minLength": 1},
         "runtime_id": {"type": "string", "minLength": 1},
         "subject_summary": {"$ref": "#/$defs/subject_summary"},
+        "device_summary": {"$ref": "#/$defs/device_summary"},
+        "device_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
         "status": {"enum": ["active", "revoked"]},
         "created_at": {"type": "string", "format": "date-time"},
         "updated_at": {"type": ["string", "null"], "format": "date-time"},
@@ -187,6 +398,34 @@
                 "latest_sequence": {"type": "integer", "minimum": 1},
                 "runtime_id": {"type": "string", "minLength": 1},
                 "run_id": {"type": "string", "minLength": 1}
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      ]
+    },
+    "session_cursor_expired_error": {
+      "allOf": [
+        {"$ref": "#/$defs/error"},
+        {
+          "properties": {
+            "code": {"const": "cursor_expired"},
+            "retryable": {"const": false},
+            "details": {
+              "type": "object",
+              "required": [
+                "reason", "requested_sequence", "earliest_sequence",
+                "latest_sequence", "runtime_id", "workspace_id", "session_id"
+              ],
+              "properties": {
+                "reason": {"const": "history_truncated"},
+                "requested_sequence": {"type": "integer", "minimum": 0},
+                "earliest_sequence": {"type": "integer", "minimum": 1},
+                "latest_sequence": {"type": "integer", "minimum": 1},
+                "runtime_id": {"type": "string", "minLength": 1},
+                "workspace_id": {"type": "string", "minLength": 1},
+                "session_id": {"type": "string", "minLength": 1}
               },
               "additionalProperties": false
             }
@@ -251,6 +490,20 @@
         "type": {"const": "event"},
         "run_id": {"type": "string", "minLength": 1},
         "event": {"$ref": "#/$defs/event"}
+      },
+      "additionalProperties": false
+    },
+    "runtime_session_event_frame": {
+      "type": "object",
+      "required": [
+        "type", "scope", "session_id", "session_sequence", "event"
+      ],
+      "properties": {
+        "type": {"const": "event"},
+        "scope": {"const": "session"},
+        "session_id": {"type": "string", "minLength": 1},
+        "session_sequence": {"type": "integer", "minimum": 1},
+        "event": {"$ref": "#/$defs/session_event"}
       },
       "additionalProperties": false
     }

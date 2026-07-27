@@ -134,7 +134,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -167,6 +166,7 @@ import ai.drsai.remote.remote.ui.WorkspaceSessionsViewModel
 import ai.drsai.remote.remote.ui.RemoteAuditScreen
 import ai.drsai.remote.remote.ui.RemoteAuditViewModel
 import ai.drsai.remote.remote.ui.RemoteChatScreen
+import ai.drsai.remote.remote.ui.RemoteMarkdownContent
 import ai.drsai.remote.remote.ui.RemoteSessionViewModel
 import ai.drsai.remote.remote.ui.WorkspaceFilesScreen
 import ai.drsai.remote.remote.ui.WorkspaceFilesViewModel
@@ -1548,8 +1548,11 @@ private fun MessageBubble(message: ChatMessage, assistantName: String, retryAtta
                     MessageAttachments(message.attachments) { attachmentId -> retryAttachment(message.id, attachmentId) }
                     if (message.text.isNotBlank()) Spacer(Modifier.height(8.dp))
                 }
-                if (message.text.contains("```")) CodeAwareText(message.text)
-                else if (message.text.isNotBlank() || message.attachments.isEmpty()) Text(message.text.ifBlank { "正在思考…" })
+                if (message.text.isNotBlank()) {
+                    RemoteMarkdownContent(message.text)
+                } else if (message.attachments.isEmpty()) {
+                    Text("正在思考…")
+                }
                 if (!isUser && message.text.isNotBlank()) {
                     Spacer(Modifier.height(8.dp))
                     IconButton(
@@ -1649,24 +1652,6 @@ private fun MessageAttachments(attachments: List<ai.drsai.remote.data.MessageAtt
                     }) { Icon(Icons.Default.Download, "保存附件") }
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun CodeAwareText(text: String) {
-    val parts = text.split("```")
-    Column {
-        parts.forEachIndexed { index, part ->
-            if (index % 2 == 1) {
-                Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(8.dp)) {
-                    Text(
-                        part.trim().substringAfter('\n', part.trim()),
-                        Modifier.fillMaxWidth().padding(12.dp),
-                        fontFamily = FontFamily.Monospace,
-                    )
-                }
-            } else if (part.isNotBlank()) Text(part.trim())
         }
     }
 }

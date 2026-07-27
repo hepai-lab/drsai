@@ -71,6 +71,34 @@ class RelayRemoteRepositoryTest {
         }
     }
 
+    @Test fun `session snapshot and replay events preserve authoritative sequence`() = runTest {
+        server.enqueue(MockResponse().setBody("""{
+          "session_id":"session","snapshot_sequence":3,
+          "items":[{"item_id":"item-1","session_id":"session","run_id":"run-1","kind":"message",
+            "role":"user","revision":1,"session_sequence":1,"source_client":"windows",
+            "source_message_id":"windows-1","created_at":"now","updated_at":"now",
+            "payload":{"text":"hello"}}],"next_cursor":null
+        }"""))
+        val snapshot = repository.conversationSnapshot(
+            RuntimeId("rt"), WorkspaceId("ws"), SessionId("session"),
+        )
+        assertEquals(3, snapshot.snapshotSequence)
+        assertEquals("windows-1", snapshot.items.single().sourceMessageId)
+        assertTrue(server.takeRequest().path!!.endsWith("/conversation-snapshot?limit=100"))
+
+        server.enqueue(MockResponse().setBody("""{"items":[{
+          "event_id":"event-4","runtime_id":"rt","workspace_id":"ws","session_id":"session",
+          "run_id":"run-2","session_sequence":4,"kind":"run.created","timestamp":"now",
+          "payload":{"source_client":"android","source_message_id":"android-1"}
+        }],"next_cursor":null}"""))
+        val replay = repository.sessionEvents(
+            RuntimeId("rt"), WorkspaceId("ws"), SessionId("session"), 3,
+        )
+        assertEquals(4, replay.items.single().sessionSequence)
+        assertEquals("android-1", replay.items.single().payload["source_message_id"])
+        assertEquals("3", server.takeRequest().requestUrl?.queryParameter("after_sequence"))
+    }
+
     @Test fun `exact healthy definition creates session and stable idempotency header body`() = runTest {
         server.enqueue(MockResponse().setBody("""{"runtime_id":"rt","workspace_id":"ws","session_id":"s","title":"T","backend_id":"codex"}"""))
         val definition = RemoteAgentDefinition("a", "1.2.3", "Agent", "codex", "healthy", setOf("chat"))
@@ -82,7 +110,10 @@ class RelayRemoteRepositoryTest {
         val session = RemoteSessionRef(RuntimeId("rt"), WorkspaceId("ws"), SessionId("s"), "T", "codex")
         server.enqueue(MockResponse().setBody("""{"runtime_id":"rt","workspace_id":"ws","session_id":"s","run_id":"r","backend_id":"codex"}"""))
         val run = repository.createRun(session, "hi", listOf("att_1"), "idem-run")
-        assertFalse(server.takeRequest().body.readUtf8().contains("sdcard"))
+        val body = JSONObject(server.takeRequest().body.readUtf8())
+        assertFalse(body.toString().contains("sdcard"))
+        assertEquals("idem-run", body.getString("idempotency_key"))
+        assertEquals("idem-run", body.getString("source_message_id"))
         server.enqueue(MockResponse().setBody("{}")); repository.cancel(run)
         assertTrue(server.takeRequest().path!!.contains("/workspaces/ws/runs/r/cancel"))
     }
@@ -175,5 +206,27 @@ class RelayRemoteRepositoryTest {
         assertEquals("r", repository.createRun(session, "hello", emptyList(), "stable-run-key").runId.value)
         assertEquals("/v1/runtimes/rt/idempotency/run.create/stable-run-key", server.takeRequest().path)
         assertEquals(1, server.requestCount)
+    }
+
+    @Test fun `twenty caller retries keep one source message and idempotency identity`() = runTest {
+        val response = """{"runtime_id":"rt","workspace_id":"ws","session_id":"s","run_id":"same-run","backend_id":"opendrsai"}"""
+        repeat(20) { server.enqueue(MockResponse().setBody(response)) }
+        val session = RemoteSessionRef(
+            RuntimeId("rt"), WorkspaceId("ws"), SessionId("s"), "T", "opendrsai",
+        )
+
+        val runs = (1..20).map {
+            repository.createRun(
+                session, "hello", emptyList(), "stable-source-message",
+                sourceMessageId = "stable-source-message",
+            )
+        }
+
+        assertEquals(setOf("same-run"), runs.map { it.runId.value }.toSet())
+        repeat(20) {
+            val body = JSONObject(server.takeRequest().body.readUtf8())
+            assertEquals("stable-source-message", body.getString("idempotency_key"))
+            assertEquals("stable-source-message", body.getString("source_message_id"))
+        }
     }
 }

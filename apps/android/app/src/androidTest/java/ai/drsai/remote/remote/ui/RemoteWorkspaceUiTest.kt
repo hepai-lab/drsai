@@ -77,10 +77,55 @@ class RemoteWorkspaceUiTest {
         }
 
         composeRule.onNodeWithText("开发服务器").assertIsDisplayed()
-        composeRule.onNodeWithText("在线 · 刚刚").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("连接状态：在线").assertIsDisplayed()
+        composeRule.onNodeWithText("刚刚").assertIsDisplayed()
         composeRule.onNodeWithText("OpenDrSai 1.4.6").assertIsDisplayed()
         composeRule.onNodeWithText("OpenDrSai").assertIsDisplayed().performClick()
         composeRule.runOnIdle { assertEquals(workspace, opened) }
+    }
+
+    @Test
+    fun computerConnectionStatesUseAccessibleDotIndicators() {
+        composeRule.setContent {
+            MaterialTheme {
+                RemoteHomeScreen(
+                    state = RemoteHomeUiState(
+                        computers = listOf(
+                            RemoteComputerUi(
+                                RuntimeId("online"),
+                                "在线计算机",
+                                RemoteConnectionState.ONLINE,
+                                "刚刚连接",
+                                emptyList(),
+                            ),
+                            RemoteComputerUi(
+                                RuntimeId("offline"),
+                                "离线计算机",
+                                RemoteConnectionState.OFFLINE,
+                                "离线",
+                                emptyList(),
+                            ),
+                            RemoteComputerUi(
+                                RuntimeId("connecting"),
+                                "连接中计算机",
+                                RemoteConnectionState.CONNECTING,
+                                "",
+                                emptyList(),
+                            ),
+                        ),
+                    ),
+                    onBack = {},
+                    onAssociate = {},
+                    onRefresh = {},
+                    onOpenWorkspace = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithContentDescription("连接状态：在线").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("连接状态：离线").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("连接状态：正在连接").assertIsDisplayed()
+        composeRule.onNodeWithText("连接中…").assertIsDisplayed()
     }
 
     @Test fun associationQrDeepLinkExtractsOnlyOneTimeCode() {

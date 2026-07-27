@@ -303,8 +303,26 @@ fun renderAndroidRelayBindings(): String {
     val endpoints = (schema["x-relay-endpoints"] as Map<*, *>)
         .mapKeys { it.key.toString() }.mapValues { it.value.toString() }.toSortedMap()
     val capabilities = (schema["x-relay-capabilities"] as List<*>).map(Any?::toString).sorted()
+    val capabilityProfiles = (schema["x-relay-capability-profiles"] as Map<*, *>)
+        .entries.associate { entry ->
+            entry.key.toString() to (entry.value as List<*>).map(Any?::toString).sorted()
+        }.toSortedMap()
+    val minimumVersions = (schema["x-relay-minimum-versions"] as Map<*, *>)
+        .entries.associate { entry ->
+            entry.key.toString() to (entry.value as Map<*, *>)
+                .entries.associate { it.key.toString() to it.value.toString() }.toSortedMap()
+        }.toSortedMap()
+    val sessionEventKinds = (schema["x-session-event-kinds"] as List<*>)
+        .map(Any?::toString).sorted()
     val endpointLines = endpoints.entries.joinToString(",\n") { "        \"${it.key}\" to \"${it.value}\"" }
     val capabilityLines = capabilities.joinToString(",\n") { "        \"$it\"" }
+    val profileLines = capabilityProfiles.entries.joinToString(",\n") { (profile, values) ->
+        "        \"$profile\" to setOf(${values.joinToString(", ") { "\"$it\"" }})"
+    }
+    val minimumVersionLines = minimumVersions.entries.joinToString(",\n") { (profile, versions) ->
+        "        \"$profile\" to mapOf(${versions.entries.joinToString(", ") { "\"${it.key}\" to \"${it.value}\"" }})"
+    }
+    val sessionEventKindLines = sessionEventKinds.joinToString(",\n") { "        \"$it\"" }
     return """// Generated from cores/protocol/relay/runtime-relay.schema.json. Do not edit.
 package ai.drsai.remote.remote.generated
 
@@ -316,6 +334,15 @@ $endpointLines
     )
     val CAPABILITIES: Set<String> = setOf(
 $capabilityLines
+    )
+    val CAPABILITY_PROFILES: Map<String, Set<String>> = mapOf(
+$profileLines
+    )
+    val MINIMUM_VERSIONS: Map<String, Map<String, String>> = mapOf(
+$minimumVersionLines
+    )
+    val SESSION_EVENT_KINDS: Set<String> = setOf(
+$sessionEventKindLines
     )
 }
 
@@ -344,6 +371,48 @@ data class GeneratedRelayEvent(
     val timestamp: String,
     val kind: String,
     val payload: Map<String, Any?>,
+)
+
+data class GeneratedSessionConversationItem(
+    val itemId: String,
+    val sessionId: String,
+    val runId: String?,
+    val kind: String,
+    val role: String?,
+    val revision: Long,
+    val sessionSequence: Long,
+    val sourceClient: String,
+    val sourceMessageId: String?,
+    val createdAt: String,
+    val updatedAt: String,
+    val payload: Map<String, Any?>,
+)
+
+data class GeneratedConversationSnapshot(
+    val sessionId: String,
+    val snapshotSequence: Long,
+    val items: List<GeneratedSessionConversationItem>,
+    val nextCursor: String?,
+)
+
+data class GeneratedSessionEvent(
+    val eventId: String,
+    val runtimeId: String,
+    val workspaceId: String,
+    val sessionId: String,
+    val runId: String?,
+    val sessionSequence: Long,
+    val kind: String,
+    val timestamp: String,
+    val payload: Map<String, Any?>,
+)
+
+data class GeneratedRuntimeSessionEventFrame(
+    val type: String = "event",
+    val scope: String = "session",
+    val sessionId: String,
+    val sessionSequence: Long,
+    val event: GeneratedSessionEvent,
 )
 """
 }
@@ -399,6 +468,7 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
+    implementation("net.i2p.crypto:eddsa:0.3.0")
     implementation("androidx.room:room-runtime:2.7.2")
     implementation("androidx.room:room-ktx:2.7.2")
     kapt("androidx.room:room-compiler:2.7.2")

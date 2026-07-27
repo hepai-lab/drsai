@@ -122,6 +122,7 @@ from drsai.owop.process_pty import LocalProcessPtyOperations
 from drsai.owop.protocol import OWOPProtocol
 from drsai.owop.runtime_terminal import RuntimeTerminalOWOPOperations
 from drsai.backend.runtime.engine import RuntimeEngine, RuntimeEngineIdentity
+from drsai.backend.runtime.journal import SessionCursorExpired
 from drsai.backend.runtime.artifacts import RuntimeArtifactStore
 from drsai.backend.runtime.agent import (
     AgentDefinition,
@@ -136,6 +137,7 @@ from drsai.backend.runtime.agent import (
 )
 from drsai.backend.codex_adapter import build_codex_adapter
 from drsai.backend.runtime.conversation import StructuredConversationProjector
+from drsai.backend.runtime.desktop_threads import DesktopThreadProjection
 from drsai.backend.tui_gateway.adapter.event_translator import (
     TurnState as ConversationTranslationState,
     finalize as finalize_conversation_translation,
@@ -204,6 +206,7 @@ from drsai.backend.cli.history import CLISessionStore
 from drsai.platform_auth import (
     classify_model_error,
     context_from_bearer,
+    get_platform_auth,
     platform_auth_scope,
     verify_gateway_instance,
 )
@@ -1260,6 +1263,10 @@ _REMOTE_CAPABILITY_VERSIONS = {
     "workspace-permissions": 1,
     "security-approval": 1,
     "runtime-audit": 1,
+    "conversation.snapshot": 1,
+    "session.event.resume": 1,
+    "session.event.stream": 1,
+    "session.event.cursor_expired": 1,
 }
 
 
@@ -1267,7 +1274,11 @@ async def _start_runtime_relay_bridge():
     """Start the optional Runtime-initiated Relay connection in this Full Runtime process."""
     from drsai.relay.device_identity import DeviceIdentityStore
     from drsai.relay.gateway_control import AiohttpGatewayTransport, GatewayRuntimeControlHandler
-    from drsai.relay.runtime_client import RuntimeCredentialStore, RuntimeOutboundConnector
+    from drsai.relay.runtime_client import (
+        RuntimeCredentialStore,
+        RuntimeOutboundConnector,
+        resolve_runtime_version,
+    )
 
     state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
     relay_state = state_root / "runtime" / "relay"
@@ -1292,9 +1303,11 @@ async def _start_runtime_relay_bridge():
         )
         connector = RuntimeOutboundConnector(
             configured_url, credential, identity, runtime.instance_id,
-            os.environ.get("OPENDRSAI_RUNTIME_VERSION", "1.4.7"), request_handler=handler,
+            resolve_runtime_version(os.environ.get("OPENDRSAI_RUNTIME_VERSION")),
+            request_handler=handler,
             http_request_handler=handler.handle_http_request,
             event_provider=handler.relay_events,
+            session_event_provider=handler.relay_session_events,
             workspace_provider=handler.published_workspaces,
             backend_health={"opendrsai": "healthy"},
             wire_protocol=(
@@ -1415,6 +1428,42 @@ def _runtime_engine() -> RuntimeEngine:
     return _runtime_engine_instance
 
 
+def _desktop_thread_projection() -> DesktopThreadProjection:
+    state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
+    return DesktopThreadProjection(state_root)
+
+
+def _sync_desktop_sessions(workspace_id: str) -> tuple[DesktopThreadProjection, list[dict[str, Any]]]:
+    projection = _desktop_thread_projection()
+    workspace = _runtime_registry().get_workspace(workspace_id, include_closed=True)
+    if workspace is None or not workspace.open:
+        return projection, []
+    rows = projection.threads_for_workspace(workspace.path)
+    for row in rows:
+        _runtime_engine().import_session(
+            str(row["session_id"]),
+            workspace_id,
+            str(row["title"]),
+            agent_definition=row.get("agent_definition"),
+            backend_id=row.get("backend_id"),
+            created_at=str(row.get("created_at") or ""),
+            updated_at=str(row.get("updated_at") or ""),
+            archived=bool(row.get("archived")),
+        )
+    return projection, rows
+
+
+def _sync_desktop_session_id(session_id: str) -> DesktopThreadProjection:
+    projection = _desktop_thread_projection()
+    if not projection.has_thread(session_id):
+        return projection
+    for workspace in _runtime_registry().list_workspaces(include_closed=False):
+        _, rows = _sync_desktop_sessions(workspace.workspace_id)
+        if any(row["session_id"] == session_id for row in rows):
+            break
+    return projection
+
+
 def _runtime_tool_dispatcher() -> RuntimeToolDispatcher:
     global _runtime_tool_dispatcher_instance
     if _runtime_tool_dispatcher_instance is None:
@@ -1518,13 +1567,125 @@ def _controlled_runtime_model_turn(
     }
 
 
+class GatewayOpenDrSaiAgentBackend:
+    """Run the production Desktop OpenDrSai agent behind the Runtime contract."""
+
+    backend_id = "opendrsai"
+
+    def __init__(self, runner: Any = None):
+        self._runner = runner
+        self._closed = False
+        self._cancellations: dict[str, CancellationToken] = {}
+
+    async def execute(
+        self,
+        context: RuntimeRunContext,
+        definition: AgentDefinition,
+        prompt: str,
+        services: Any,
+    ) -> dict[str, Any]:
+        if self._closed:
+            raise RuntimeExecutionError("agent_backend_closed", "OpenDrSai Agent Backend is closed.")
+        auth = get_platform_auth()
+        if auth is None:
+            raise RuntimeExecutionError(
+                "model_unauthorized",
+                "A valid HepAI identity is required.",
+            )
+        cancellation = CancellationToken()
+        self._cancellations[context.run_id] = cancellation
+        state = ConversationTranslationState()
+        content_parts: list[str] = []
+        services.emit(context, "agent.started", {
+            "backend": self.backend_id,
+            "prompt_length": len(prompt),
+        })
+        try:
+            run_stream = self._runner or manager.run_stream
+            events = run_stream(
+                task=prompt,
+                thread_id=context.session_id,
+                user_id=auth.subject,
+                model_alias=definition.model,
+                work_dir=str(context.workspace_path),
+                cancellation_token=cancellation,
+            )
+            async for event in events:
+                for event_type, payload in translate_conversation_event(event, state):
+                    normalized_type, normalized_payload = self._normalize_event(event_type, payload)
+                    if normalized_type == "agent.message.delta":
+                        content_parts.append(str(normalized_payload.get("delta") or ""))
+                    services.emit(context, normalized_type, normalized_payload)
+            content = "".join(content_parts)
+            services.emit(context, "agent.completed", {"content": content})
+            return {"content": content}
+        except asyncio.CancelledError as exc:
+            raise RuntimeExecutionError("run_cancelled", "Run was cancelled.") from exc
+        except RuntimeExecutionError:
+            raise
+        except Exception as exc:
+            error = classify_model_error(exc)
+            raise RuntimeExecutionError(
+                str(error.get("code") or "agent_execution_failed"),
+                str(error.get("message") or "Agent execution failed."),
+                retryable=bool(error.get("retryable")),
+            ) from exc
+        finally:
+            self._cancellations.pop(context.run_id, None)
+
+    @staticmethod
+    def _normalize_event(event_type: str, payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+        if event_type == "message.delta":
+            return "agent.message.delta", {
+                **payload,
+                "delta": str(payload.get("text") or payload.get("delta") or ""),
+            }
+        if event_type == "tool.start":
+            return "tool.started", payload
+        if event_type == "tool.complete":
+            return "tool.completed", payload
+        return event_type, payload
+
+    async def cancel(self, run_id: str) -> None:
+        cancellation = self._cancellations.get(run_id)
+        if cancellation is not None:
+            cancellation.cancel()
+
+    async def respond_approval(self, run_id: str, approval_id: str, decision: str) -> None:
+        raise RuntimeExecutionError(
+            "approval_not_found",
+            "OpenDrSai Approval is no longer pending.",
+        )
+
+    async def recover(self, run_id: str) -> None:
+        if self._closed:
+            raise RuntimeExecutionError("agent_backend_closed", "OpenDrSai Agent Backend is closed.")
+
+    async def health(self) -> dict[str, Any]:
+        return {
+            "backend_id": self.backend_id,
+            "available": not self._closed,
+            "reason": "closed" if self._closed else None,
+        }
+
+    async def close(self) -> None:
+        self._closed = True
+        for cancellation in self._cancellations.values():
+            cancellation.cancel()
+        self._cancellations.clear()
+
+
 def _runtime_agent_service(auth_context: Any = None) -> RuntimeAgentService:
     """Return the process-owned Backend service; request identity is validated before dispatch."""
     global _runtime_agent_service_instance
     if _runtime_agent_service_instance is None:
         state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
         _ensure_builtin_agent_definitions(state_root)
-        backend = OpenDrSaiAgentBackend(_controlled_runtime_model_turn)
+        backend = (
+            OpenDrSaiAgentBackend(_controlled_runtime_model_turn)
+            if os.environ.get("DRSAI_RUNTIME_CONTROLLED_MODEL") == "1"
+            else GatewayOpenDrSaiAgentBackend()
+        )
         codex_backend = build_codex_adapter(state_root, _runtime_engine())
         _runtime_agent_service_instance = RuntimeAgentService(
             _runtime_engine(),
@@ -1555,6 +1716,11 @@ def _ensure_builtin_agent_definitions(state_root: Path) -> None:
         )
         os.replace(temporary, path)
 
+    ensure({
+        "id": "opendrsai", "version": "1", "backend": "opendrsai",
+        "instructions": "Use the production OpenDrSai Agent in this Windows Runtime Workspace.",
+        "permissions": [],
+    })
     ensure({
         "id": "codex", "version": "1", "backend": "codex", "model": "gpt-5.4",
         "instructions": "Work only inside the Runtime-authoritative Workspace and report verifiable results.",
@@ -1988,7 +2154,12 @@ def _trusted_mobile_pairing_relay(value: str) -> tuple[str, str]:
 async def runtime_mobile_pairing_register(request: MobilePairingRegistrationRequest):
     """Consume a short-lived code locally; the HepAI OIDC token never enters Runtime."""
     from drsai.relay.device_identity import DeviceIdentityStore
-    from drsai.relay.runtime_client import AiohttpRegistrationTransport, RuntimeCredentialStore, RuntimeEnrollmentClient
+    from drsai.relay.runtime_client import (
+        AiohttpRegistrationTransport,
+        RuntimeCredentialStore,
+        RuntimeEnrollmentClient,
+        resolve_runtime_version,
+    )
 
     relay_https, relay_wss = _trusted_mobile_pairing_relay(request.relay_https_url)
     state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
@@ -2001,7 +2172,7 @@ async def runtime_mobile_pairing_register(request: MobilePairingRegistrationRequ
         credential = await enrollment.enroll(
             request.registration_code,
             request.display_name.strip(),
-            os.environ.get("OPENDRSAI_RUNTIME_VERSION", "1.5.3"),
+            resolve_runtime_version(os.environ.get("OPENDRSAI_RUNTIME_VERSION")),
         )
         RuntimeCredentialStore(relay_state / "credential.dpapi").save(credential)
         relay_state.mkdir(parents=True, exist_ok=True)
@@ -2317,6 +2488,15 @@ async def runtime_session_create(request: RuntimeSessionCreateRequest):
 @app.get("/v1/sessions")
 async def runtime_session_list(workspace_id: str, offset: int = Query(default=0, ge=0), limit: int = Query(default=50, ge=1, le=200), archived: bool | None = False):
     try:
+        _, desktop_rows = _sync_desktop_sessions(workspace_id)
+        if desktop_rows:
+            selected = [
+                _runtime_engine().get_session(str(row["session_id"]))
+                for row in desktop_rows
+                if archived is None or bool(row["archived"]) is archived
+            ]
+            page = selected[offset:offset + limit]
+            return {"object": "list", "data": page, "total": len(selected), "offset": offset}
         return _runtime_engine().list_sessions(
             workspace_id, offset=offset, limit=limit, archived=archived
         )
@@ -2327,6 +2507,7 @@ async def runtime_session_list(workspace_id: str, offset: int = Query(default=0,
 @app.get("/v1/sessions/{session_id}")
 async def runtime_session_get(session_id: str):
     try:
+        _sync_desktop_session_id(session_id)
         return _runtime_engine().get_session(session_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -2339,6 +2520,7 @@ async def runtime_session_run_list(
     limit: int = Query(default=50, ge=1, le=200),
 ):
     try:
+        _sync_desktop_session_id(session_id)
         rows = _runtime_engine().list_session_runs(session_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -2353,11 +2535,139 @@ async def runtime_session_conversation(
     limit: int = Query(default=100, ge=1, le=500),
 ):
     try:
+        projection = _sync_desktop_session_id(session_id)
+        if projection.has_thread(session_id):
+            desktop_items = projection.conversation(session_id)
+            runtime_items: list[dict[str, Any]] = []
+            runtime_cursor = None
+            while len(runtime_items) < 5_000:
+                runtime_page = _runtime_engine().list_conversation(
+                    session_id, cursor=runtime_cursor, limit=500
+                )
+                runtime_items.extend(runtime_page["data"])
+                runtime_cursor = runtime_page.get("next_cursor")
+                if not runtime_cursor:
+                    break
+            combined = desktop_items + runtime_items
+            for sequence, item in enumerate(combined, start=1):
+                item["sequence"] = sequence
+            start = projection.decode_cursor(cursor)
+            page = combined[start:start + limit]
+            next_cursor = (
+                projection.encode_cursor(start + len(page))
+                if start + len(page) < len(combined) else None
+            )
+            return {"object": "list", "data": page, "next_cursor": next_cursor}
         return _runtime_engine().list_conversation(session_id, cursor=cursor, limit=limit)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/v1/sessions/{session_id}/conversation-snapshot")
+async def runtime_session_conversation_snapshot(session_id: str):
+    """Return the authoritative Item projection plus its Session waterline."""
+    try:
+        _sync_desktop_session_id(session_id)
+        return _runtime_engine().conversation_snapshot(session_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+def _session_cursor_expired(exc: SessionCursorExpired) -> HTTPException:
+    return HTTPException(
+        status_code=409,
+        detail={
+            "code": "cursor_expired",
+            "message": str(exc),
+            "retryable": False,
+            "details": exc.details,
+        },
+    )
+
+
+@app.get("/v1/sessions/{session_id}/events")
+async def runtime_session_event_list(
+    session_id: str,
+    after_sequence: int = Query(default=0, ge=0),
+    limit: int = Query(default=500, ge=1, le=2000),
+):
+    """Replay durable Session events after an exclusive sequence cursor."""
+    try:
+        _sync_desktop_session_id(session_id)
+        events = _runtime_engine().list_session_events(
+            session_id,
+            after_sequence=after_sequence,
+            limit=limit,
+        )
+        return {
+            "object": "list",
+            "data": events,
+            "next_sequence": (
+                int(events[-1]["session_sequence"]) if events else after_sequence
+            ),
+        }
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SessionCursorExpired as exc:
+        raise _session_cursor_expired(exc) from exc
+
+
+@app.get("/v1/sessions/{session_id}/events/stream")
+async def runtime_session_event_stream(
+    session_id: str,
+    raw_request: Request,
+    after_sequence: int = Query(default=0, ge=0),
+):
+    """Resume a Session Event stream without a snapshot/subscribe race."""
+    try:
+        _sync_desktop_session_id(session_id)
+        # Validate existence and retention before sending HTTP 200 headers.
+        _runtime_engine().list_session_events(
+            session_id,
+            after_sequence=after_sequence,
+            limit=1,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SessionCursorExpired as exc:
+        raise _session_cursor_expired(exc) from exc
+
+    async def stream():
+        cursor = after_sequence
+        while not await raw_request.is_disconnected():
+            try:
+                events = await asyncio.to_thread(
+                    _runtime_engine().wait_session_events,
+                    session_id,
+                    after_sequence=cursor,
+                    timeout=15.0,
+                    limit=500,
+                )
+            except SessionCursorExpired:
+                # A connected client fell behind retention. Closing forces a
+                # reconnect, where the pre-header check returns cursor_expired.
+                return
+            if not events:
+                yield ": heartbeat\n\n"
+                continue
+            for event in events:
+                cursor = int(event["session_sequence"])
+                payload = json.dumps(
+                    event, ensure_ascii=False, separators=(",", ":")
+                )
+                yield f"id: {cursor}\nevent: session.event\ndata: {payload}\n\n"
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.patch("/v1/sessions/{session_id}")
@@ -2391,6 +2701,7 @@ async def runtime_session_update(session_id: str, request: RuntimeSessionUpdateR
 @app.post("/v1/sessions/{session_id}/runs")
 async def runtime_run_create(session_id: str, request: RuntimeRunCreateRequest, http_request: Request):
     try:
+        _sync_desktop_session_id(session_id)
         state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
         definition = AgentDefinitionStore(state_root / "assets" / "agents").load(request.agent_definition)
         run, created = _runtime_engine().create_run(
@@ -2489,6 +2800,17 @@ async def runtime_run_execute(run_id: str, request: RuntimeRunExecuteRequest, ra
             request.prompt,
             attachment_refs=attachment_refs,
             correlation_id=correlation_id,
+            source_client=(
+                str(metadata.get("source_client"))
+                if metadata.get("source_client") in {"windows", "android"}
+                else "runtime"
+            ),
+            source_message_id=(
+                str(metadata.get("source_message_id"))
+                if isinstance(metadata.get("source_message_id"), str)
+                and metadata.get("source_message_id")
+                else None
+            ),
         )
         _runtime_engine().append_event(run_id, "trace.request.accepted", {
             "correlation_id": correlation_id,
@@ -2498,7 +2820,8 @@ async def runtime_run_execute(run_id: str, request: RuntimeRunExecuteRequest, ra
             "parent_span_id": str(getattr(raw_request.state, "diagnostic_parent_span_id", "")) or None,
             "clock_offset_ms": int(getattr(raw_request.state, "diagnostic_clock_offset_ms", 0)),
         })
-        return await _runtime_agent_service(auth_context).execute(run_id, request.prompt, correlation_id)
+        with platform_auth_scope(auth_context) if auth_context else nullcontext():
+            return await _runtime_agent_service(auth_context).execute(run_id, request.prompt, correlation_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except RuntimeExecutionError as exc:

@@ -16095,6 +16095,81 @@ button.structured-activity-detail:hover {
   color: var(--app-accent-strong);
 }
 
+.settings-integration-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-integration-actions > button {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--app-border-soft);
+  border-radius: 6px;
+  background: var(--app-subtle-bg);
+  color: var(--app-text-primary);
+  font-size: 12px;
+}
+
+.settings-integration-actions > button:hover:not(:disabled) {
+  background: #eef2f6;
+}
+
+.settings-integration-actions > button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.settings-integration-actions > button.danger {
+  color: var(--app-danger, #b42318);
+}
+
+.settings-integration-actions > button.settings-connection-switch {
+  position: relative;
+  width: 40px;
+  min-width: 40px;
+  min-height: 22px;
+  height: 22px;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  background: #cbd5e1;
+  box-shadow: inset 0 0 0 1px rgb(15 23 42 / 8%);
+  transition: background 160ms ease;
+}
+
+.settings-integration-actions > button.settings-connection-switch:hover:not(:disabled) {
+  background: #b8c4d3;
+}
+
+.settings-integration-actions > button.settings-connection-switch.is-enabled,
+.settings-integration-actions > button.settings-connection-switch.is-enabled:hover:not(:disabled) {
+  background: #3498f5;
+}
+
+.settings-connection-switch > span {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(15 23 42 / 24%);
+  transition: transform 160ms ease;
+}
+
+.settings-connection-switch.is-enabled > span {
+  transform: translateX(18px);
+}
+
+.settings-connection-switch:focus-visible {
+  outline: 2px solid var(--app-accent-strong);
+  outline-offset: 2px;
+}
+
 .settings-button-row {
   display: flex;
   flex-wrap: wrap;
@@ -17297,6 +17372,11 @@ button.structured-activity-detail:hover {
   .settings-row > button,
   .settings-integration-row > button {
     align-self: flex-start;
+  }
+
+  .settings-integration-actions {
+    width: 100%;
+    flex-wrap: wrap;
   }
 
   .right-tabs {

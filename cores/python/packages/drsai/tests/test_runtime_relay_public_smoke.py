@@ -38,3 +38,11 @@ def test_required_openapi_paths_cover_mobile_control_plane() -> None:
     assert "/runtimes" in MODULE.REQUIRED_OPENAPI_PATHS
     assert "/runtimes/{runtime_id}/workspaces" in MODULE.REQUIRED_OPENAPI_PATHS
     assert "/runtimes/{runtime_id}/runs/{run_id}/events/stream" in MODULE.REQUIRED_OPENAPI_PATHS
+    assert (
+        "/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/"
+        "{session_id}/conversation-snapshot"
+    ) in MODULE.REQUIRED_OPENAPI_PATHS
+    assert (
+        "/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/"
+        "{session_id}/events/stream"
+    ) in MODULE.REQUIRED_OPENAPI_PATHS

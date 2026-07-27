@@ -1,6 +1,12 @@
 package ai.drsai.remote.remote.ui
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,6 +21,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -46,6 +53,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
@@ -272,11 +281,7 @@ private fun RemoteComputerCard(
                     if (recentlyAssociated) {
                         Text("刚刚关联", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                     }
-                    Text(
-                        "${connectionLabel(computer.state)} · ${computer.lastSeenLabel}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    RemoteConnectionIndicator(computer.state, computer.lastSeenLabel)
                     if (computer.version.isNotBlank()) {
                         Text(
                             "OpenDrSai ${computer.version}",
@@ -315,8 +320,13 @@ private fun RemoteComputerCard(
             if (expanded) {
                 HorizontalDivider()
                 computer.workspaces.forEach { workspace ->
+                    val compatible = computer.state != RemoteConnectionState.INCOMPATIBLE
                     Row(
-                        Modifier.fillMaxWidth().clickable { onOpenWorkspace(workspace) }.padding(horizontal = 18.dp, vertical = 14.dp),
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable(enabled = compatible) { onOpenWorkspace(workspace) }
+                            .alpha(if (compatible) 1f else 0.55f)
+                            .padding(horizontal = 18.dp, vertical = 14.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Icon(Icons.Default.Folder, null, Modifier.size(20.dp))
@@ -346,6 +356,67 @@ private fun RemoteComputerCard(
                 TextButton(onClick = { confirmRevoke = false }) { Text("取消") }
             },
         )
+    }
+}
+
+@Composable
+private fun RemoteConnectionIndicator(
+    state: RemoteConnectionState,
+    lastSeenLabel: String,
+) {
+    val connecting = state == RemoteConnectionState.CONNECTING
+    val pulseAlpha = if (connecting) {
+        rememberInfiniteTransition(label = "remote-connection-pulse").animateFloat(
+            initialValue = 0.38f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 850),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "remote-connection-alpha",
+        ).value
+    } else {
+        1f
+    }
+    val color = when (state) {
+        RemoteConnectionState.ONLINE -> Color(0xFF2F7D5B)
+        RemoteConnectionState.OFFLINE -> MaterialTheme.colorScheme.outline
+        RemoteConnectionState.CONNECTING -> MaterialTheme.colorScheme.primary
+        RemoteConnectionState.DEGRADED,
+        RemoteConnectionState.INCOMPATIBLE -> Color(0xFFB7791F)
+        RemoteConnectionState.AUTH_REQUIRED -> MaterialTheme.colorScheme.error
+    }
+    val detail = when (state) {
+        RemoteConnectionState.ONLINE -> lastSeenLabel.takeUnless {
+            it.isBlank() || it == "在线"
+        }
+        RemoteConnectionState.OFFLINE -> null
+        RemoteConnectionState.CONNECTING -> "连接中…"
+        RemoteConnectionState.DEGRADED -> "连接异常"
+        RemoteConnectionState.AUTH_REQUIRED -> "需要登录"
+        RemoteConnectionState.INCOMPATIBLE -> "需要更新"
+    }
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.semantics {
+            contentDescription = "连接状态：${connectionLabel(state)}"
+        },
+    ) {
+        Box(
+            Modifier
+                .size(8.dp)
+                .alpha(pulseAlpha)
+                .background(color, CircleShape),
+        )
+        detail?.let {
+            Spacer(Modifier.width(6.dp))
+            Text(
+                it,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 

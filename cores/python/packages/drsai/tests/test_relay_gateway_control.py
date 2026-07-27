@@ -4,7 +4,9 @@ import asyncio
 import json
 from pathlib import Path
 
-from drsai.relay.gateway_control import GatewayRuntimeControlHandler
+import pytest
+
+from drsai.relay.gateway_control import GatewayControlError, GatewayRuntimeControlHandler
 
 
 class GatewayFixture:
@@ -14,9 +16,13 @@ class GatewayFixture:
         self.events: dict[str, list[dict]] = {}
         self.approvals: dict[str, dict] = {}
         self.calls: list[tuple[str, str]] = []
+        self.requests: list[dict] = []
 
     async def request(self, method, path, *, body=None, headers=None):
         self.calls.append((method, path))
+        self.requests.append(
+            {"method": method, "path": path, "body": body, "headers": headers}
+        )
         if path == "/v1/capabilities":
             return {"agent_backends": {"opendrsai": {"available": True}}}
         if path == "/v1/workspaces?include_closed=true":
@@ -109,11 +115,145 @@ class GatewayFixture:
         raise AssertionError((method, path, body, headers))
 
 
-def write_definition(root: Path) -> None:
-    path = root / "assets" / "agents" / "mobile" / "1.json"
+class SessionJournalGatewayFixture(GatewayFixture):
+    def __init__(self) -> None:
+        super().__init__()
+        self.sessions["session-one"] = {
+            "session_id": "session-one",
+            "workspace_id": "workspace-one",
+            "title": "Session one",
+            "updated_at": "2026-07-27T00:00:00+00:00",
+        }
+        self.session_events = [{
+            "event_id": "session-event-one",
+            "runtime_id": "runtime-one",
+            "workspace_id": "workspace-one",
+            "session_id": "session-one",
+            "run_id": None,
+            "session_sequence": 1,
+            "kind": "session.updated",
+            "timestamp": "2026-07-27T00:00:00+00:00",
+            "payload": {"title": "Session one"},
+        }]
+
+    async def request(self, method, path, *, body=None, headers=None):
+        if method == "GET" and "/events?after_sequence=" in path and path.startswith("/v1/sessions/"):
+            after = int(path.split("after_sequence=", 1)[1].split("&", 1)[0])
+            rows = [row for row in self.session_events if row["session_sequence"] > after]
+            return {"object": "list", "data": rows, "next_sequence": rows[-1]["session_sequence"] if rows else after}
+        if method == "GET" and path.endswith("/conversation-snapshot"):
+            return {
+                "session_id": "session-one",
+                "snapshot_sequence": 1,
+                "items": [],
+                "next_cursor": None,
+            }
+        return await super().request(method, path, body=body, headers=headers)
+
+
+def write_definition_asset(root: Path, definition_id: str, backend: str) -> None:
+    path = root / "assets" / "agents" / definition_id / "1.json"
     path.parent.mkdir(parents=True)
-    path.write_text(json.dumps({"id": "mobile", "version": "1", "name": "Mobile", "backend": "opendrsai",
+    path.write_text(json.dumps({"id": definition_id, "version": "1", "name": definition_id, "backend": backend,
                                 "instructions": "test", "permissions": ["chat"]}), encoding="utf-8")
+
+
+def test_session_journal_snapshot_replay_and_relay_cursor(tmp_path: Path) -> None:
+    async def scenario():
+        gateway = SessionJournalGatewayFixture()
+        handler = GatewayRuntimeControlHandler(
+            "runtime-one", gateway, tmp_path / "runtime"
+        )
+        first = await handler.relay_session_events()
+        assert [event["session_sequence"] for event in first] == [1]
+        assert await handler.relay_session_events() == []
+
+        snapshot = await handler.conversation_snapshot_for_subject(
+            "alice", "workspace-one", "session-one"
+        )
+        assert snapshot["snapshot_sequence"] == 1
+        page = await handler.session_events_for_subject(
+            "alice", "workspace-one", "session-one", after_sequence=0
+        )
+        assert page["data"] == first
+
+    asyncio.run(scenario())
+
+
+def write_definition(root: Path) -> None:
+    write_definition_asset(root, "mobile", "opendrsai")
+
+
+def test_legacy_windows_session_uses_its_unique_healthy_backend_definition(tmp_path: Path) -> None:
+    class MultiBackendGateway(GatewayFixture):
+        async def request(self, method, path, *, body=None, headers=None):
+            if path == "/v1/capabilities":
+                return {
+                    "agent_backends": {
+                        "opendrsai": {"available": True},
+                        "codex": {"available": True},
+                    }
+                }
+            return await super().request(method, path, body=body, headers=headers)
+
+    async def scenario() -> None:
+        write_definition_asset(tmp_path, "mobile", "opendrsai")
+        write_definition_asset(tmp_path, "codex", "codex")
+        gateway = MultiBackendGateway()
+        gateway.sessions["legacy-session"] = {
+            "session_id": "legacy-session",
+            "workspace_id": "workspace-one",
+            "title": "Windows legacy session",
+            "backend_id": "opendrsai",
+            "updated_at": "2026-07-17T00:00:00+00:00",
+        }
+        handler = GatewayRuntimeControlHandler("runtime-one", gateway, tmp_path / "runtime")
+
+        await handler.create_run(
+            "alice",
+            "workspace-one",
+            "legacy-session",
+            message="hello",
+            attachment_refs=[],
+            idempotency_key="legacy-run-key",
+            correlation_id="legacy-correlation",
+        )
+
+        migrated = await handler.get_session("workspace-one", "legacy-session")
+        assert migrated["agent_definition_id"] == "mobile"
+        assert migrated["agent_definition_version"] == "1"
+        assert migrated["backend_id"] == "opendrsai"
+
+    asyncio.run(scenario())
+
+
+def test_legacy_windows_session_fails_closed_when_backend_definition_is_ambiguous(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        write_definition_asset(tmp_path, "mobile-a", "opendrsai")
+        write_definition_asset(tmp_path, "mobile-b", "opendrsai")
+        gateway = GatewayFixture()
+        gateway.sessions["legacy-session"] = {
+            "session_id": "legacy-session",
+            "workspace_id": "workspace-one",
+            "title": "Ambiguous legacy session",
+            "backend_id": "opendrsai",
+            "updated_at": "2026-07-17T00:00:00+00:00",
+        }
+        handler = GatewayRuntimeControlHandler("runtime-one", gateway, tmp_path / "runtime")
+
+        with pytest.raises(GatewayControlError, match="unambiguous healthy Agent Definition") as error:
+            await handler.create_run(
+                "alice",
+                "workspace-one",
+                "legacy-session",
+                message="hello",
+                attachment_refs=[],
+                idempotency_key="ambiguous-run-key",
+                correlation_id="ambiguous-correlation",
+            )
+        assert error.value.code == "session_agent_definition_required"
+
+    asyncio.run(scenario())
 
 
 def test_hai_workspace_proxy_normalizes_contract_before_leaving_runtime(tmp_path: Path) -> None:
@@ -217,6 +357,19 @@ def test_gateway_handler_maps_relay_to_authoritative_runtime_and_recovers_metada
                 break
             await asyncio.sleep(0.01)
         assert run["status"] == "completed" and run["message"] == "hello"
+        execute_request = next(
+            request
+            for request in gateway.requests
+            if request["path"] == f"/v1/runs/{run['run_id']}/execute"
+        )
+        assert execute_request["body"]["metadata"]["source_client"] == "android"
+        assert (
+            execute_request["body"]["metadata"]["source_message_id"]
+            == "android:run-key"
+        )
+        assert execute_request["body"]["metadata"]["attachment_refs"] == [
+            "attachment-one"
+        ]
         assert (await handler("create_run", run_args))["run_id"] == run["run_id"]
         events, _ = await handler("list_events", {"args": [run["run_id"]], "kwargs": {}})
         assert [item["kind"] for item in events] == ["run.created", "message.delta"]

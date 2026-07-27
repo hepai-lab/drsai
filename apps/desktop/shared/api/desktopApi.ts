@@ -2963,6 +2963,18 @@ export interface DesktopThreadSnapshot {
   messageCount: number;
 }
 
+export interface DesktopThreadSnapshotEvent {
+  threadId: string;
+  runtimeSessionId: string;
+  sessionSequence: number;
+  snapshot: DesktopThreadSnapshot;
+}
+
+export interface DesktopThreadCatalogEvent {
+  thread: DesktopThread;
+  source: "runtime-session";
+}
+
 export interface DesktopThreadContentSearchRequest {
   query: string;
   threadIds?: string[];
@@ -4247,6 +4259,8 @@ export interface DesktopMobilePairingGrant {
 export interface DesktopMobileAssociation {
   association_id: string;
   subject_summary: string;
+  device_summary: string;
+  device_name: string;
   status: "active" | "revoked";
   created_at: string;
   revoked_at?: string | null;
@@ -4441,6 +4455,10 @@ export interface DesktopApi {
   deleteThread(threadId: string): Promise<boolean>;
   setThreadArchived(request: { threadId: string; archived: boolean }): Promise<DesktopThread>;
   getThreadSnapshot(threadId: string): Promise<DesktopThreadSnapshot | null>;
+  subscribeThreadSnapshot(threadId: string): Promise<boolean>;
+  unsubscribeThreadSnapshot(threadId: string): Promise<boolean>;
+  onThreadSnapshot(callback: (event: DesktopThreadSnapshotEvent) => void): () => void;
+  onThreadCatalogUpdate(callback: (event: DesktopThreadCatalogEvent) => void): () => void;
   searchThreadMessages(
     request: DesktopThreadContentSearchRequest,
   ): Promise<DesktopThreadContentSearchResult[]>;

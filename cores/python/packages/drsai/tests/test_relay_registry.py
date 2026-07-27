@@ -25,6 +25,28 @@ def registered(registry: RelayRegistry):
     return private, runtime_id, token
 
 
+def associate(
+    registry: RelayRegistry,
+    subject: str,
+    code: str,
+    device_id: str = "android-device-0001",
+) -> str:
+    private = Ed25519PrivateKey.generate()
+    public = b64(
+        private.public_key().public_bytes(
+            serialization.Encoding.Raw,
+            serialization.PublicFormat.Raw,
+        )
+    )
+    return registry.associate(
+        subject,
+        code,
+        device_id,
+        "Android Test Device",
+        public,
+    )
+
+
 def heartbeat(registry: RelayRegistry, private: Ed25519PrivateKey, runtime_id: str, token: str,
               instance: str = "instance-a", nonce: str = "nonce-a"):
     signature = b64(private.sign(f"{runtime_id}\n{instance}\n{nonce}".encode()))
@@ -50,10 +72,10 @@ def test_access_grant_only_associates_existing_runtime_and_is_single_use() -> No
     grant_id, code, expires = registry.issue_access_grant(runtime_id, token)
     assert expires > datetime.now(UTC)
     assert registry.access_grant_status(runtime_id, token, grant_id)[0] == "pending"
-    assert registry.associate("alice", code) == runtime_id
+    assert associate(registry, "alice", code) == runtime_id
     assert registry.access_grant_status(runtime_id, token, grant_id)[0] == "consumed"
     with pytest.raises(RelayRegistryError) as consumed:
-        registry.associate("bob", code)
+        associate(registry, "bob", code)
     assert consumed.value.code == "access_grant_consumed"
     assert [x.runtime.runtime_id for x in registry.list_runtimes("alice")[0]] == [runtime_id]
     assert registry.list_runtimes("bob")[0] == []
@@ -66,7 +88,12 @@ def test_access_grant_has_exactly_one_winner_under_concurrent_consumption() -> N
 
     def consume(index: int) -> tuple[str, str]:
         try:
-            return "ok", registry.associate(f"subject-{index}", code)
+            return "ok", associate(
+                registry,
+                f"subject-{index}",
+                code,
+                f"android-device-{index:04d}",
+            )
         except RelayRegistryError as exc:
             return "error", exc.code
 
@@ -87,8 +114,8 @@ def test_association_revocation_is_subject_and_runtime_scoped() -> None:
     _, runtime_b, token_b = registered(registry)
     grant_a, code_a, _ = registry.issue_access_grant(runtime_a, token_a)
     _, code_b, _ = registry.issue_access_grant(runtime_b, token_b)
-    registry.associate("alice", code_a)
-    registry.associate("alice", code_b)
+    associate(registry, "alice", code_a)
+    associate(registry, "alice", code_b)
 
     assert registry.access_grant_subject_summary(runtime_a, token_a, grant_a).startswith("sub_")
     association_a = registry.list_associations(runtime_a, token_a)[0]
@@ -99,11 +126,19 @@ def test_association_revocation_is_subject_and_runtime_scoped() -> None:
         )
     assert cross_runtime.value.code == "association_not_found"
 
-    revoked = registry.revoke_association("alice", runtime_a)
+    revoked = registry.revoke_association(
+        "alice",
+        runtime_a,
+        "android-device-0001",
+    )
     assert revoked["status"] == "revoked"
     assert registry.list_runtimes("alice")[0][0].runtime.runtime_id == runtime_b
     with pytest.raises(RelayRegistryError) as repeated:
-        registry.revoke_association("alice", runtime_a)
+        registry.revoke_association(
+            "alice",
+            runtime_a,
+            "android-device-0001",
+        )
     assert repeated.value.code == "association_required"
 
 
@@ -115,12 +150,12 @@ def test_access_grant_refresh_revokes_previous_and_revoke_is_idempotent() -> Non
     assert registry.access_grant_status(runtime_id, token, first_id)[0] == "revoked"
     assert registry.access_grant_status(runtime_id, token, second_id)[0] == "pending"
     with pytest.raises(RelayRegistryError) as revoked:
-        registry.associate("alice", first_code)
+        associate(registry, "alice", first_code)
     assert revoked.value.code == "access_grant_revoked"
     assert registry.revoke_access_grant(runtime_id, token, second_id)[0] == "revoked"
     assert registry.revoke_access_grant(runtime_id, token, second_id)[0] == "revoked"
     with pytest.raises(RelayRegistryError) as revoked_second:
-        registry.associate("alice", second_code)
+        associate(registry, "alice", second_code)
     assert revoked_second.value.code == "access_grant_revoked"
 
 
@@ -131,7 +166,7 @@ def test_access_grant_status_is_runtime_scoped_and_expires() -> None:
     grant_id, expired_code, _ = registry.issue_access_grant(runtime_id, token)
     assert registry.access_grant_status(runtime_id, token, grant_id)[0] == "expired"
     with pytest.raises(RelayRegistryError) as expired:
-        registry.associate("alice", expired_code)
+        associate(registry, "alice", expired_code)
     assert expired.value.code == "access_grant_expired"
     other = RelayRegistry()
     _, other_runtime, other_token = registered(other)
@@ -212,8 +247,8 @@ def test_workspace_scope_is_runtime_qualified_and_client_path_is_absent() -> Non
     _, runtime_b, token_b = registered(registry)
     _, code_a, _ = registry.issue_access_grant(runtime_a, token_a)
     _, code_b, _ = registry.issue_access_grant(runtime_b, token_b)
-    registry.associate("alice", code_a)
-    registry.associate("alice", code_b)
+    associate(registry, "alice", code_a)
+    associate(registry, "alice", code_b)
     registry.publish_workspaces(runtime_a, token_a, [Workspace(runtime_id=runtime_a, workspace_id="same", display_name="A")])
     registry.publish_workspaces(runtime_b, token_b, [Workspace(runtime_id=runtime_b, workspace_id="same", display_name="B")])
     assert registry.list_workspaces("alice", runtime_a)[0][0].display_name == "A"
@@ -226,7 +261,7 @@ def test_workspace_lifecycle_defaults_to_active_and_tombstones_do_not_reappear()
     registry = RelayRegistry()
     _, runtime_id, token = registered(registry)
     _, code, _ = registry.issue_access_grant(runtime_id, token)
-    registry.associate("alice", code)
+    associate(registry, "alice", code)
     registry.publish_workspaces(runtime_id, token, [
         Workspace(runtime_id=runtime_id, workspace_id="active", display_name="Active"),
         Workspace(runtime_id=runtime_id, workspace_id="archived", display_name="Archived",
@@ -249,7 +284,7 @@ def test_pagination_search_offline_and_revoke_audit() -> None:
     registry = RelayRegistry(offline_after_seconds=-1)
     private, runtime_id, token = registered(registry)
     _, grant, _ = registry.issue_access_grant(runtime_id, token)
-    registry.associate("alice", grant)
+    associate(registry, "alice", grant)
     heartbeat(registry, private, runtime_id, token)
     assert registry.identity("alice", runtime_id).status == RuntimeStatus.OFFLINE
     registry.publish_workspaces(runtime_id, token, [

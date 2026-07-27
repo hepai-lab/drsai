@@ -5,8 +5,6 @@ import { dirname } from "path";
 import type { ChatAttachment, ChatEvent, ChatMessage, ChatRequest, MaterialRoleItem } from "../api/desktopApi";
 import { invalidateAuthSession, refreshAuthContextAfterUnauthorized, requireAuthContext, type AuthContext } from "./auth";
 import { getPlatformAgentChatUrl, getPlatformAgentExecutionDescriptor, isPlatformAgentExecutionAvailable, respondToPlatformChatInput, stopPlatformChat } from "./agents";
-import { getGatewayRequestHeaders, startGateway } from "./gateway";
-import { getDefaultModelAlias, normalizeModelAlias } from "./modelDefaults";
 import {
   createChatToolTimelineAccumulator,
   createChatContentNormalizer,
@@ -31,6 +29,7 @@ import { analyzeMaterialRoles } from "./workspaceContext";
 import { assertAgentCircuitAvailable, recordAgentCircuitFailure, recordAgentCircuitSuccess } from "./agentCircuitBreaker";
 import { createFailureEscalation, getFailureRecovery } from "./failureRecovery";
 import { connectRuntimeClientForWorkspace, type RuntimeClient, type RuntimeAgentEvent } from "./runtimeClient";
+import { sessionPayloadHash, sessionSyncState } from "./sessionSyncState";
 import {
   RecoverableStreamError,
   appendResumedContent,
@@ -71,17 +70,11 @@ export interface ChatRemoteRouting {
   bindThread(threadId: string, workspaceId: string): void;
 }
 
-let remoteRouting: ChatRemoteRouting = {
-  resolveTarget: async () => "local_or_unknown",
-  getGatewayAccess: () => null,
-  bindThread: () => undefined,
-};
-
-export function configureChatRemoteRouting(routing: ChatRemoteRouting): void {
-  remoteRouting = routing;
+export function configureChatRemoteRouting(_routing: ChatRemoteRouting): void {
+  // RuntimeClient owns local/SSH Workspace routing. Keep this additive no-op
+  // until platform bootstraps stop importing the legacy Chat router hook.
 }
 
-const GATEWAY_BASE_URL = `http://127.0.0.1:${getGatewayPort()}`;
 const MAX_ACTIVE_CHATS = 3;
 const MAX_MESSAGES = 40;
 const MAX_MESSAGE_CHARS = 16_000;
@@ -206,7 +199,7 @@ export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEven
   if (eventTarget && activeChats.has(requestId)) activeChatEventTargets.set(requestId, eventTarget);
   const thread = (await listThreads()).find((candidate) => candidate.id === sessionId);
   if (!thread?.lastRunId) return [];
-  if (thread.boundAgentId !== "my-codex" || !thread.workspacePath) {
+  if (!thread.runtimeSessionId || !thread.workspacePath) {
     const journal = await listRecordedChatRunEvents(thread.lastRunId);
     const recovered = journal.map((event, index) => ({ ...event, requestId, sessionId, seq: index + 1 }));
     if (thread.status === "running" && !activeChats.has(thread.lastRequestId ?? requestId)) {
@@ -229,7 +222,7 @@ export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEven
   }
   if (events.some((event) => event.type === "run.completed")) push({ type: "done", runId: thread.lastRunId });
   else if (events.some((event) => event.type === "run.cancelled")) push({ type: "aborted", runId: thread.lastRunId });
-  else if (events.some((event) => event.type === "run.failed")) push({ type: "error", runId: thread.lastRunId, error: "Codex Run failed while the Desktop was reconnecting." });
+  else if (events.some((event) => event.type === "run.failed")) push({ type: "error", runId: thread.lastRunId, error: "Runtime Agent Run failed while the Desktop was reconnecting." });
   return recovered;
 }
 
@@ -457,7 +450,7 @@ async function runChat(
     boundAgentName,
     // Codex resolves legacy Runtime Session bindings from the previous Run.
     // Do not overwrite that recovery handle until its new Run exists.
-    lastRunId: isCodexBackend ? undefined : runId,
+    lastRunId: isCodexBackend || !platformDescriptor ? undefined : runId,
     lastRequestId: requestId,
     status: "running",
     messageCount: request.messages.length,
@@ -466,8 +459,15 @@ async function runChat(
 
   const timeout = setTimeout(() => controller.abort("timeout"), CHAT_TIMEOUT_MS);
   try {
-    if (isCodexBackend) {
-      await runCodexBackendChat(webContents, requestId, sessionId, request, controller);
+    if (!platformDescriptor) {
+      await runRuntimeBackendChat(
+        webContents,
+        requestId,
+        sessionId,
+        request,
+        controller,
+        isCodexBackend ? "codex@1" : "opendrsai@1",
+      );
       activeChats.delete(requestId);
       recordAgentTelemetry({ event: "execution_completed", agentId: boundAgentId, mode: "local", source: "local", durationMs: Date.now() - executionStartedAt });
       await upsertThreadFromRun({ id: sessionId, kind: "chat", title: deriveThreadTitle(request.messages),
@@ -476,34 +476,16 @@ async function runChat(
       emit(webContents, { requestId, sessionId, runId: codexChatTargets.get(requestId)?.runId ?? runId, type: "done" });
       return;
     }
-    // Platform agents execute in HAI and must never depend on a local or
-    // workspace gateway being installed/running. Gateway startup is reserved
-    // for My DrSai and remote-workspace local execution.
-    const remoteTarget = platformDescriptor ? "local_or_unknown" : await remoteRouting.resolveTarget(request.workspacePath, request.workspaceId);
-    if (remoteTarget === "remote_offline") {
-      throw new Error("Remote Workspace is offline; Agent Backend execution cannot fall back to Local Runtime.");
-    }
-    const remoteGateway = platformDescriptor ? null : remoteRouting.getGatewayAccess(request.workspacePath, request.workspaceId);
-    if (remoteGateway) remoteRouting.bindThread(sessionId, remoteGateway.workspaceId);
-    const ready = platformDescriptor || remoteGateway ? true : await startGateway();
-    writeChatDiagnostic(requestId, `stage: gateway ready=${ready}`);
-    if (!ready) {
-      throw new Error("Gateway is not ready. Install or start OpenDrSai first.");
-    }
-
-    const enrichedAttachments = await enrichAttachmentsWithMaterialRoles(request.attachments);
-    const attachmentContext = platformDescriptor || remoteGateway ? [] : await buildAttachmentContext(enrichedAttachments);
-    writeChatDiagnostic(requestId, `stage: attachment context built count=${attachmentContext.length}`);
-    const messages = withAttachmentContext(request.messages, attachmentContext);
-    const model = normalizeModelAlias(request.model) || getDefaultModelAlias() || "drsai";
+    // Only HAI Platform Agents reach this branch. My DrSai and Codex have
+    // already entered the Runtime-authoritative Session/Run path above.
+    const messages = request.messages;
     const resumeState: StreamResumeState = { content: "", fileEventKeys: new Set() };
     const recoveryStartedAt = Date.now();
     const send = async (authContext: AuthContext, recoveryAttempt: number): Promise<boolean> => {
-      if (platformDescriptor) {
-        if (!authContext.accessToken) {
-          throw new Error("Sign in with HepAI before using a platform agent.");
-        }
-        const response = await fetch(getPlatformAgentChatUrl(platformDescriptor.platformId), {
+      if (!authContext.accessToken) {
+        throw new Error("Sign in with HepAI before using a platform agent.");
+      }
+      const response = await fetch(getPlatformAgentChatUrl(platformDescriptor.platformId), {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -526,66 +508,17 @@ async function runChat(
             },
           }),
           signal: controller.signal,
-        });
-        if (response.status === 401) {
-          const authError = await formatHttpError(response);
-          if (authError instanceof ChatSseError && authError.code === "token_expired") {
-            // The Native API owns OIDC validation. Refresh once only when it
-            // explicitly reports an expired desktop access token; an upstream
-            // agent credential failure must retain its own error code.
-            throw new ChatSseError(authError.message, authError.code, true);
-          }
-          throw authError;
-        }
-        if (!response.ok || !response.body) {
-          if (response.status === 408 || response.status === 429 || response.status >= 500) {
-            throw new RecoverableStreamError(`Service temporarily unavailable (HTTP ${response.status}).`);
-          }
-          throw await formatHttpError(response);
-        }
-        return readSse(webContents, requestId, sessionId, runId, response.body, controller.signal, resumeState);
-      }
-      const gatewayBaseUrl = remoteGateway?.baseUrl || GATEWAY_BASE_URL;
-      const gatewayHeaders = remoteGateway
-        ? { "X-OpenDrSai-Gateway-Token": remoteGateway.token }
-        : getGatewayRequestHeaders();
-      writeChatDiagnostic(requestId, `stage: provider request ${gatewayBaseUrl}`);
-      const response = await fetch(`${gatewayBaseUrl}/v1/chat/completions`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...gatewayHeaders,
-          "X-OpenDrSai-User": authContext.userId,
-          "X-OpenDrSai-Auth-Mode": authContext.authMode,
-          ...(request.workspacePath ? { "X-OpenDrSai-Workspace": encodeURIComponent(request.workspacePath) } : {}),
-          ...(authContext.accessToken ? { Authorization: `Bearer ${authContext.accessToken}` } : {}),
-          "Idempotency-Key": `desktop-chat-${requestId}`,
-        },
-        body: JSON.stringify({
-          model,
-          messages,
-          stream: true,
-          user_id: authContext.userId,
-          thread_id: sessionId,
-          work_dir: request.workspacePath,
-          workspace_id: remoteGateway?.workspaceId,
-          metadata: {
-            ...(request.metadata || {}),
-            auth_mode: authContext.authMode,
-            run_id: runId,
-            desktop_request_id: requestId,
-            network_retry_attempt: recoveryAttempt,
-            resume_from_chars: resumeState.content.length,
-            attachments: enrichedAttachments,
-            files: enrichedAttachments,
-            attachment_context: attachmentContext,
-          },
-        }),
-        signal: controller.signal,
       });
+      if (response.status === 401) {
+        const authError = await formatHttpError(response);
+        if (authError instanceof ChatSseError && authError.code === "token_expired") {
+          throw new ChatSseError(authError.message, authError.code, true);
+        }
+        throw authError;
+      }
       if (!response.ok || !response.body) {
         if (response.status === 408 || response.status === 429 || response.status >= 500) {
-          throw new RecoverableStreamError(`Gateway temporarily unavailable (HTTP ${response.status}).`);
+          throw new RecoverableStreamError(`Service temporarily unavailable (HTTP ${response.status}).`);
         }
         throw await formatHttpError(response);
       }
@@ -605,9 +538,7 @@ async function runChat(
           webContents.send("desktop:auth-session-invalidated");
         }
         if (error instanceof ChatSseError && error.code === "token_expired" && error.retryable && !refreshedToken) {
-          auth = platformDescriptor
-            ? await refreshAuthContextAfterUnauthorized()
-            : await requireAuthContext();
+          auth = await refreshAuthContextAfterUnauthorized();
           refreshedToken = true;
           continue;
         }
@@ -629,7 +560,7 @@ async function runChat(
             attempt: recoveryAttempt,
             delayMs: retryDelayMs,
             timestamp: new Date().toISOString(),
-            source: remoteGateway ? "remote-gateway" : "gateway",
+            source: "gateway",
           },
         });
         emit(webContents, {
@@ -651,7 +582,7 @@ async function runChat(
           status: "restored",
           attempt: recoveryAttempt,
           timestamp: new Date().toISOString(),
-          source: remoteGateway ? "remote-gateway" : "gateway",
+          source: "gateway",
         },
       });
       emit(webContents, { requestId, sessionId, runId, type: "status", level: "INFO", content: "网络已恢复，回复已从保存位置继续。" });
@@ -713,10 +644,11 @@ async function runChat(
   }
 }
 
-async function runCodexBackendChat(
+async function runRuntimeBackendChat(
   webContents: ChatEventTarget, requestId: string, displaySessionId: string, request: ChatRequest, controller: AbortController,
+  agentDefinition: "codex@1" | "opendrsai@1",
 ): Promise<void> {
-  if (!request.workspacePath) throw new Error("Codex requires an open Workspace.");
+  if (!request.workspacePath) throw new Error("Runtime Agent requires an open Workspace.");
   const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
   const client = resolved.client;
   const existingThread = (await listThreads()).find((thread) => thread.id === displaySessionId);
@@ -729,7 +661,25 @@ async function runCodexBackendChat(
   if (!runtimeSessionId) {
     runtimeSessionId = (await client.createSession(resolved.workspaceId, deriveThreadTitle(request.messages))).session_id;
   }
-  const run = await client.createAgentRun(runtimeSessionId, "codex@1", `desktop-codex-${requestId}`);
+  const sourceMessageId = `desktop:${requestId}`;
+  const idempotencyKey = `desktop-runtime-${requestId}`;
+  await sessionSyncState.beginOutbox(runtimeSessionId, {
+    sourceMessageId,
+    idempotencyKey,
+    payloadHash: sessionPayloadHash({
+      messages: request.messages,
+      attachments: (request.attachments ?? []).map((item) => ({
+        kind: item.kind, path: item.path, name: item.name,
+      })),
+      agentDefinition,
+    }),
+  });
+  const run = await client.createAgentRun(
+    runtimeSessionId,
+    agentDefinition,
+    idempotencyKey,
+  );
+  await sessionSyncState.attachRun(runtimeSessionId, sourceMessageId, run.run_id);
   // Persist the Runtime Run ID before execution starts. If Electron restarts
   // while Codex is working, this is the recovery handle for its event log.
   await upsertThreadFromRun({
@@ -747,7 +697,16 @@ async function runCodexBackendChat(
   const prompt = request.messages.map((message) => `${message.role}: ${message.content}`).join("\n\n");
   let completed = false;
   let failure: unknown;
-  const execution = client.executeAgentRun(run.run_id, prompt, controller.signal)
+  const execution = client.executeAgentRun(
+    run.run_id,
+    prompt,
+    controller.signal,
+    {
+      sourceClient: "windows",
+      sourceMessageId,
+      attachmentRefs: (request.attachments ?? []).map((item) => item.path),
+    },
+  )
     .catch((error) => { failure = error; })
     .finally(() => { completed = true; });
   let after = 0;
@@ -777,6 +736,14 @@ async function runCodexBackendChat(
     if (!completed) await new Promise((resolve) => setTimeout(resolve, 100));
   }
   await execution;
+  if (
+    !failure
+    || await client.getConversationSnapshot(runtimeSessionId)
+      .then((snapshot) => snapshot.items.some((item) => item.source_message_id === sourceMessageId))
+      .catch(() => false)
+  ) {
+    await sessionSyncState.completeOutbox(runtimeSessionId, sourceMessageId);
+  }
   for (const event of await client.listAgentRunEvents(run.run_id, after).catch(() => [])) {
     emitCodexRuntimeEvent(webContents, requestId, displaySessionId, run.run_id, event, target);
   }
@@ -860,7 +827,7 @@ function deriveThreadTitle(messages: ChatMessage[]): string {
   return firstUser?.content.trim().slice(0, 80) || "New chat";
 }
 
-interface AttachmentContextItem {
+export interface AttachmentContextItem {
   kind: ChatAttachment["kind"];
   path: string;
   name: string;
@@ -873,7 +840,7 @@ interface AttachmentContextItem {
   content?: string;
 }
 
-async function enrichAttachmentsWithMaterialRoles(
+export async function enrichAttachmentsWithMaterialRoles(
   attachments: ChatRequest["attachments"],
 ): Promise<ChatAttachment[]> {
   if (!attachments?.length) return [];
@@ -921,7 +888,7 @@ function formatMaterialRole(role: MaterialRoleItem["role"]): string {
   return "Reference materials";
 }
 
-async function buildAttachmentContext(attachments: ChatRequest["attachments"]): Promise<AttachmentContextItem[]> {
+export async function buildAttachmentContext(attachments: ChatRequest["attachments"]): Promise<AttachmentContextItem[]> {
   if (!attachments?.length) return [];
   const context: AttachmentContextItem[] = [];
   let includedFiles = 0;
@@ -1049,7 +1016,7 @@ function fileMetadataContext(
   };
 }
 
-function withAttachmentContext(messages: ChatMessage[], context: AttachmentContextItem[]): ChatMessage[] {
+export function withAttachmentContext(messages: ChatMessage[], context: AttachmentContextItem[]): ChatMessage[] {
   const included = context.filter((item) => item.included && item.content);
   if (!included.length) return messages;
   const content = [
@@ -1607,7 +1574,7 @@ function getPositiveIntEnv(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
 }
 
-function getGatewayPort(): string {
+export function getGatewayPort(): string {
   const rawPort = process.env.OPENDRSAI_GATEWAY_PORT || process.env.DRSAI_API_PORT || "18642";
   const parsed = Number(rawPort);
   return Number.isInteger(parsed) && parsed > 0 && parsed < 65536 ? String(parsed) : "18642";

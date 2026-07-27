@@ -16,6 +16,7 @@ import ai.drsai.remote.remote.data.RuntimeInstanceTracker
 import ai.drsai.remote.remote.data.associationErrorMessage
 import ai.drsai.remote.remote.model.RemoteWorkspaceRef
 import ai.drsai.remote.remote.model.RemoteConnectionState
+import ai.drsai.remote.remote.security.androidRelayDeviceProof
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -30,7 +31,13 @@ import java.util.concurrent.atomic.AtomicLong
 class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
     private val tokenStore = SecureTokenStore(app)
     private val auth = AccessTokenCoordinator(tokenStore, OidcClient(refreshClientId = { tokenStore.oidcClientId }))
-    private val relay = HttpRelayDiscoveryService(BuildConfig.RELAY_BASE_URL, auth::current, auth::refreshAfter)
+    private val deviceProof = androidRelayDeviceProof(app)
+    private val relay = HttpRelayDiscoveryService(
+        BuildConfig.RELAY_BASE_URL,
+        auth::current,
+        auth::refreshAfter,
+        deviceProof = deviceProof,
+    )
     private val connectivity = AndroidRemoteConnectivity(app)
     private val lifecycleCoordinator = RemoteLifecycleCoordinator()
     private val instances = RuntimeInstanceTracker()

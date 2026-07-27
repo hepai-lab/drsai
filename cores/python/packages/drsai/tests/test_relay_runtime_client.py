@@ -9,8 +9,27 @@ import pytest
 
 from drsai.relay.device_identity import DeviceIdentityStore
 from drsai.relay.generated_contract import PROTOCOL_VERSION
-from drsai.relay.runtime_client import RuntimeCredential, RuntimeCredentialStore, RuntimeEnrollmentClient, RuntimeOutboundConnector
+from drsai.relay.runtime_client import (
+    RuntimeCredential,
+    RuntimeCredentialStore,
+    RuntimeEnrollmentClient,
+    RuntimeOutboundConnector,
+    resolve_runtime_version,
+)
 from drsai.relay.enroll_cli import parser
+
+
+def test_runtime_version_defaults_to_loaded_windows_runtime_and_allows_controlled_override():
+    from drsai.version import __version__
+
+    assert resolve_runtime_version() == __version__
+    assert resolve_runtime_version(" 9.8.7-rc1 ") == "9.8.7-rc1"
+
+
+@pytest.mark.parametrize("value", ["unknown", "1.5", "v1.5.3", "1.5.3+local", "1.5.3 bad"])
+def test_runtime_version_rejects_non_contract_values(value):
+    with pytest.raises(ValueError, match="runtime_version_invalid"):
+        resolve_runtime_version(value)
 
 
 class XorProtector:
@@ -218,6 +237,48 @@ def test_runtime_connector_forwards_hai_event_frames(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
+def test_runtime_connector_forwards_session_scoped_event_frames(tmp_path: Path) -> None:
+    async def scenario():
+        socket = FakeSocket()
+
+        async def events():
+            return [{
+                "event_id": "session-event-one",
+                "runtime_id": "rt-one",
+                "workspace_id": "workspace-one",
+                "session_id": "session-one",
+                "run_id": "run-one",
+                "session_sequence": 7,
+                "kind": "conversation.item.delta",
+                "timestamp": "2026-07-27T00:00:00+00:00",
+                "payload": {"item_id": "message-one", "revision": 2},
+            }]
+
+        identity = DeviceIdentityStore(tmp_path / "id", XorProtector()).load_or_create()
+        connector = RuntimeOutboundConnector(
+            "wss://relay.example/v1/runtime-connect",
+            RuntimeCredential("rt-one", "token"),
+            identity,
+            "instance-one",
+            "2.0.0",
+            session_event_provider=events,
+            wire_protocol="hai-http",
+        )
+        task = asyncio.create_task(connector._forward_session_events(socket))
+        await asyncio.sleep(0.01)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        assert socket.sent == [{
+            "type": "event",
+            "scope": "session",
+            "session_id": "session-one",
+            "session_sequence": 7,
+            "event": (await events())[0],
+        }]
+
+    asyncio.run(scenario())
+
+
 def test_runtime_connector_normalizes_hai_http_error_envelope(tmp_path: Path) -> None:
     async def scenario():
         socket = FakeSocket()
@@ -331,6 +392,32 @@ def test_runtime_connector_publishes_authoritative_workspaces_after_handshake(tm
         ]}
     finally:
         FakeSocket.incoming = []
+
+
+def test_runtime_connector_backs_off_after_clean_peer_disconnect(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        identity = DeviceIdentityStore(tmp_path / "id", XorProtector()).load_or_create()
+        connector = RuntimeOutboundConnector(
+            "wss://relay.example/v1/runtime-connect",
+            RuntimeCredential("rt-one", "token"),
+            identity,
+            "instance-one",
+            "1.5.3",
+        )
+        stop = asyncio.Event()
+        calls = 0
+
+        async def clean_disconnect() -> None:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                asyncio.get_running_loop().call_later(0.05, stop.set)
+
+        connector.run_once = clean_disconnect  # type: ignore[method-assign]
+        await asyncio.wait_for(connector.run_forever(stop), timeout=0.5)
+        assert calls == 1
+
+    asyncio.run(scenario())
 
 
 def test_runtime_credential_is_protected_and_cli_requires_distinct_registration_code(tmp_path: Path) -> None:

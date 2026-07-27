@@ -44,6 +44,25 @@ def test_session_lifecycle_pagination_and_workspace_binding(engine: RuntimeEngin
         db.execute("UPDATE runtime_runs SET worktree_id=NULL WHERE run_id=?", (run["run_id"],))
 
 
+def test_imported_desktop_session_preserves_identity_and_refreshes_metadata(engine: RuntimeEngine) -> None:
+    first, created = engine.import_session(
+        "thread-desktop", "workspace-one", "Desktop title",
+        agent_definition="codex@1", backend_id="codex",
+        created_at="2026-07-01T00:00:00Z", updated_at="2026-07-02T00:00:00Z",
+    )
+    refreshed, repeated = engine.import_session(
+        "thread-desktop", "workspace-one", "Renamed title",
+        agent_definition="codex@1", backend_id="codex",
+        created_at="2026-07-01T00:00:00Z", updated_at="2026-07-03T00:00:00Z",
+    )
+
+    assert created is True
+    assert repeated is False
+    assert first["session_id"] == refreshed["session_id"] == "thread-desktop"
+    assert refreshed["title"] == "Renamed title"
+    assert refreshed["updated_at"] == "2026-07-03T00:00:00Z"
+
+
 def test_session_agent_binding_removed_tombstone_and_revision(engine: RuntimeEngine) -> None:
     session = engine.create_session(
         "workspace-one",

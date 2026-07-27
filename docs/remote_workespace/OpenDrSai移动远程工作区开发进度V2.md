@@ -244,6 +244,7 @@ Opaque keyset cursor revision：`a0eeae1a7c47b9458ec283b948b0261c2c62a127`
 
 - 已生成 `release/product-evidence/mobile-remote-workspace-v2/acceptance.json`；
 - 严格对应方案中的 80 个功能点，当前 `local_pass=71`、`full_pass=0`、`unverified=9`；
+- 未验证的 9 项固定为：M01-F07、M05-F04、M09-F08、M10-F03、M10-F04、M10-F05、M10-F06、M10-F07、M10-F08；
 - 新增 `scripts/smoke_runtime_relay_public_v2.py`；ai-dev 匿名公网实测 health、V2 OpenAPI、v1/v2 401 错误信封及非法 WSS token 拒绝均通过，脱敏证据为 `ai-dev-public-smoke-anonymous.json`；
 - M10-F03 暂不计通过：仍需 Android OIDC bearer 完成签名分页游标与真实 Runtime Workspace 的非破坏性认证探测；
 - V2 WSS 无效 Runtime token 的 HTTP 500 已修复；v1/v2 公网复测均返回结构化 HTTP 401，匿名 smoke 当前全部通过；
@@ -269,7 +270,7 @@ Opaque keyset cursor revision：`a0eeae1a7c47b9458ec283b948b0261c2c62a127`
 - M10-F08 发布汇总器已强制解析 Python/Android JUnit XML；缺报告、测试数不足、XML 损坏或任一 failure/error 均阻止 80 项升级。当前证据为 Python JUnit `537 testcases`（`534 passed, 3 skipped`、另有 `81 subtests passed`）和 Android JVM JUnit `208 tests, 0 failures, 0 errors`；
 - 协议目录迁移到 `cores/protocol` 后的残留路径、monorepo `node-pty` 查找、GFS 截断元数据和 TUI 测试目录隔离已修复；
 - Android JVM 全套 `207 passed`，androidTest 编译与打包成功，最新 main/test APK 已覆盖安装到三星真机；
-- 三星真机已解锁验证过，但当前调试包的 OIDC access token 为空；已退出失效的残留用户状态并打开 HepAI 登录页。未完成真实重新登录前，M10-F04～F07 不提前计通过；
+- 三星真机已完成重新登录；真机复测不再因“未登录”阻塞。正确 Relay 根路径下的交互探测仍返回 401，定位为验收代码固定捕获旧 access token，未使用安全存储中的 refresh token，而不是重新登录页面未完成；
 - M09-F08 暂不计通过：监控器须在真实 association 建立后完整运行 3600 秒。
 - 新增真实设备配对驱动脚本：Runtime grant code/payload 只在进程内传给 ADB deep link，报告永不包含临时代码；登录完成后可自动等待 consumed 并输出脱敏证据。
 - 新增真实设备完整驱动 `accept_mobile_remote_workspace_real_device_v2.py`：登录后自动执行清理旧关联、扫码前不可见、两次真实 Grant、目录/Session/Conversation、跨 Runtime/Workspace IDOR、后台、杀进程、断网恢复、撤销后不可见及重新关联；当前未登录探测按设计在创建 Grant 前失败。
@@ -277,3 +278,77 @@ Opaque keyset cursor revision：`a0eeae1a7c47b9458ec283b948b0261c2c62a127`
 - `scripts/mobile_remote_workspace_acceptance_v2.py --check` 校验方案漂移、重复 ID、证据文件和 Secret；
 - `--require-release-ready` 在未达到 80/80、缺三端证据或缺 1 小时稳定性时强制失败；
 - 账本门禁专项测试：3/3 通过。
+
+## 第 3 轮：真实目录闭环与交互前置修复
+
+更新时间：2026-07-26
+
+### 已取得的真实链路证据
+
+- [x] Android OIDC 清理、重新登录及扫码前目标 Runtime 不可见。
+- [x] 同一 enrollment 的双 owner 根因已定位：安装版 Gateway（18642）与仓库开发 Gateway（18643）曾使用同一 `runtime_id` 抢占 ai-dev ownership；开发 Gateway PID 31300/41368 已停止，只保留安装版。
+- [x] 停止双 owner 后服务端连续 12 秒 generation 固定为 46066，Android 真机 `GET /v1/runtimes` 返回 200，并重新显示 `ZZD-Matebook-B7`。
+- [x] 真实 Android 关联后可见目标主机、4 个 active Workspace 和目标 Workspace 的未归档 Session。
+- [x] 真实 Workspace `limit=1` 分页返回签名 opaque cursor，篡改 cursor 被拒绝；目录 DTO 不包含 `path`。
+- [x] Runtime identity 已归一化为 enrollment `runtime_id`、connector `version=2.0.0`、`protocol_version=owop/1` 和当前 `instance_id`。
+- [x] 跨 Runtime 请求返回 403，跨 Workspace Session 请求返回 404，拒绝发生在执行和投影读取之前。
+- [x] Android 主机、Workspace、Session 路由已经由真实 Activity 与无障碍语义树验证可见。
+
+### 本轮真实联调发现并修复
+
+- [x] Windows Runtime 注册和 WSS presence 曾使用不同的默认版本：注册为 1.5.3，连接路径硬编码为 1.4.7。现统一由 `resolve_runtime_version()` 读取连接进程实际加载的 `drsai.version.__version__`，只有显式测试覆盖可以替代；Runtime 重启后 ai-dev 只读核验为唯一 owner、online、`version=1.5.3`，connection generation 从 46083 增至 46084。
+- [x] Android 增加最低 Windows Runtime 1.5.3 的 fail-closed 门禁：旧版本、非法版本及 `1.5.3-rc` 均显示 `INCOMPATIBLE` 并禁止进入 Workspace；真机新 debug APK 已安装，页面显示 OpenDrSai 1.5.3，且没有“需要更新”提示。
+- [x] ai-dev 的 RunCreate 路由已从错误的内部 HTTP 单跳转发修为 `runtime.request(operation=create_run)` 语义通道，避免把外部 `{message,...}` DTO 原样发送到只接受 `{agent_definition}` 的 Runtime 内部接口；语义通道已由 ai-dev 只读确认可用。
+- [x] Windows“设置 → 集成概览 → Android 端”现在以开关图标展示电脑级连接状态，并放在“连接 Android”左侧：打开表示已启用，关闭需二次确认并撤销此电脑，未启用时打开会进入连接流程。电脑级撤销从二维码弹窗移出，弹窗只保留扫码和逐个设备断开；状态每 5 秒从 Runtime readiness 刷新。
+- [x] 配对 URI 经过 ADB shell 时的 `&` 被解释为控制符：Python 真机驱动和独立配对脚本统一使用 shell quoting，并补回归测试。
+- [x] HAI Workspace 目录分页原先依赖上游 cursor：改为生命周期过滤后的本地稳定分页和 HMAC cursor。
+- [x] HAI Session DTO 缺 `runtime_id` 且存在内部字段泄露：list/read/create 均统一为冻结 DTO。
+- [x] HAI Conversation 返回 `{data}` 而 Android 合同要求 `{items}`：已统一 Conversation Projection 响应。
+- [x] Windows Runtime 新增 `/v1/agent-definitions` 和 Workspace Approval 查询，并对未知/关闭 Workspace 的 Session 查询返回 404。
+- [x] 受控验收 Agent `mobile-acceptance@1` 只在 `DRSAI_RUNTIME_CONTROLLED_MODEL=1` 时出现，使用 OpenDrSai backend、受控 Approval 和只读 Python 输出；不伪造本机不可用的 Codex backend。
+- [x] 真机 instrumentation 对 singleTask deep link 的 Activity 启动方式和参数 quoting 已修复。
+
+对应 HAI 增量 revision：
+
+- Workspace 分页：`03c18b3c67750b18b91d2d8037075e62b8f73a26`
+- Session DTO：`75f665d42b5a179699b130429adaee51d13d2f35`
+- Conversation DTO：`13f2a6163d85bb68053097283f2ec0f43945d998`
+
+### 已闭环前置项与当前未验收边界
+
+正常目录与只读链路已经通过。此前 Android access token 生命周期问题已完成代码闭环：
+
+1. 真机验收不再在测试开始时把 access token 固定为不可变值；
+2. `HttpRelayDiscoveryService`、`RelayRemoteRepository` 与 `RelaySseClient` 统一接入
+   `AccessTokenCoordinator`；
+3. 401 后只允许执行一次 OIDC refresh 和一次重试；
+4. 生产 RemoteSession、WorkspaceSessions、RemoteAudit ViewModel 与真机测试使用相同机制；
+5. Repository/SSE 已覆盖“旧 bearer 401 → 刷新 → 单次重试”回归；
+6. 最新 debug APK 已完成构建并安装，但仍需在真实 token 到期窗口验证一次自动恢复。
+
+版本一致性、最低 Runtime 门禁和 Relay RunCreate 语义路由已经分别通过专项测试：
+Python 35 passed，Android `RelayDiscoveryClientTest` 与构建通过，新 debug APK 已安装。
+但按当前联调节奏尚未重新发送唯一 canary，因此“发送消息 → Run → SSE → Approval →
+Windows 执行 → Conversation”仍保持未验收，不能仅凭语义通道可用升级 M10-F06。
+
+同时，现有完整驱动默认 Gateway 为 `127.0.0.1:18643`，并会执行 Runtime
+shutdown/restart。当前验收基线已切换为安装版 18642，因此在驱动增加 owner 冲突
+前置检测和“复用安装版/隔离开发实例”模式之前，不得直接运行会启动 18643 的完整驱动，
+否则会再次制造 generation 抖动和请求 timeout。
+
+### 环境归属与安全状态
+
+- `019f5208-0f19-7883-b3e2-4dcc8ffa4b61` 管理 `ai-dev.ihep.ac.cn`，是本方案唯一允许执行 ai-dev 部署、Redis/DB 核验和故障注入的任务。
+- `019f9a52-b494-7461-a589-27e24d64e526` 管理 `opendrsai-dev.ihep.ac.cn`；它此前对 ai-dev 的部署/验收声明已作废，不能作为最终证据。
+- ai-dev 受控故障注入当前为关闭状态；正常交互通过前不得开启。
+- Runtime registration token 继续只保存在 Windows DPAPI 中；文档、任务消息和验收报告不得记录 token 或 grant code。
+
+### 下一步执行顺序
+
+1. 为完整驱动增加 owner 冲突前置检测：18642 活跃时禁止用相同 `runtime_id` 启动 18643；
+2. 在唯一 owner、Runtime 1.5.3 基线上重新发送 canary，完成“创建 Session → 发消息 → SSE → Approval → Windows Tool → Conversation”；
+3. 在真实 token 到期窗口验证 Android 自动 refresh；
+4. 仅对目标 Runtime 临时开启 ai-dev 受控故障，运行适配安装版或完全隔离的真机驱动；
+5. 无论成功或失败，立即关闭故障注入并复核 Runtime presence；
+6. 完成 3600 秒稳定性门禁，重跑三端完整回归；
+7. 更新机器账本；只有证据齐全时才将 9 个 `unverified` 项升级，最终目标为 80/80。

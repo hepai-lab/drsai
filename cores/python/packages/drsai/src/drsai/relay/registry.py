@@ -40,6 +40,10 @@ class _Association:
     association_id: str
     subject: str
     subject_summary: str
+    device_id: str
+    device_summary: str
+    device_name: str
+    device_public_key: bytes
     created_at: datetime
     revoked_at: datetime | None = None
 
@@ -59,7 +63,7 @@ class _Runtime:
     backend_health: dict[str, str] = field(default_factory=dict)
     workspaces: dict[str, Workspace] = field(default_factory=dict)
     subjects: set[str] = field(default_factory=set)
-    associations: dict[str, _Association] = field(default_factory=dict)
+    associations: dict[tuple[str, str], _Association] = field(default_factory=dict)
     nonces: set[str] = field(default_factory=set)
     revoked: bool = False
 
@@ -85,6 +89,10 @@ class RelayRegistry:
     @classmethod
     def _subject_summary(cls, subject: str) -> str:
         return f"sub_{cls._digest(subject)[:12]}"
+
+    @classmethod
+    def _device_summary(cls, subject: str, device_id: str) -> str:
+        return f"dev_{cls._digest(subject + chr(0) + device_id)[:12]}"
 
     def issue_registration_code(self) -> str:
         code = secrets.token_urlsafe(18)
@@ -189,20 +197,48 @@ class RelayRegistry:
             return "expired"
         return "pending"
 
-    def associate(self, subject: str, code: str) -> str:
+    def associate(
+        self,
+        subject: str,
+        code: str,
+        device_id: str,
+        device_name: str,
+        device_public_key: str,
+    ) -> str:
         with self._lock:
             ticket = self._access_codes.get(self._digest(code))
             self._consume_access_grant(ticket)
             assert ticket and ticket.runtime_id
             runtime = self._require_runtime(ticket.runtime_id)
             summary = self._subject_summary(subject)
+            try:
+                public_key = base64.urlsafe_b64decode(
+                    device_public_key + "=" * (-len(device_public_key) % 4)
+                )
+                Ed25519PublicKey.from_public_bytes(public_key)
+            except Exception as exc:
+                raise RelayRegistryError(
+                    "device_public_key_invalid",
+                    "Invalid Ed25519 device public key",
+                ) from exc
+            safe_device_name = " ".join(device_name.split())
+            if not safe_device_name:
+                raise RelayRegistryError(
+                    "device_name_invalid",
+                    "Device name must not be blank",
+                )
             ticket.consumed_subject_summary = summary
-            existing = runtime.associations.get(subject)
+            association_key = (subject, device_id)
+            existing = runtime.associations.get(association_key)
             if existing is None or existing.revoked_at is not None:
-                runtime.associations[subject] = _Association(
+                runtime.associations[association_key] = _Association(
                     association_id=f"assoc_{uuid4().hex}",
                     subject=subject,
                     subject_summary=summary,
+                    device_id=device_id,
+                    device_summary=self._device_summary(subject, device_id),
+                    device_name=safe_device_name,
+                    device_public_key=public_key,
                     created_at=datetime.now(UTC),
                 )
             runtime.subjects.add(subject)
@@ -215,19 +251,30 @@ class RelayRegistry:
             "association_id": association.association_id,
             "runtime_id": runtime_id,
             "subject_summary": association.subject_summary,
+            "device_summary": association.device_summary,
+            "device_name": association.device_name,
             "status": "revoked" if association.revoked_at is not None else "active",
             "created_at": association.created_at.isoformat(),
             "revoked_at": association.revoked_at.isoformat() if association.revoked_at else None,
         }
 
-    def revoke_association(self, subject: str, runtime_id: str) -> dict[str, str | None]:
+    def revoke_association(
+        self,
+        subject: str,
+        runtime_id: str,
+        device_id: str,
+    ) -> dict[str, str | None]:
         with self._lock:
             runtime = self._require_runtime(runtime_id)
-            association = runtime.associations.get(subject)
+            association = runtime.associations.get((subject, device_id))
             if association is None or association.revoked_at is not None:
                 raise RelayRegistryError("association_required", "Runtime association is not active")
             association.revoked_at = datetime.now(UTC)
-            runtime.subjects.discard(subject)
+            if not any(
+                item.subject == subject and item.revoked_at is None
+                for item in runtime.associations.values()
+            ):
+                runtime.subjects.discard(subject)
             self.audit.append({
                 "action": "runtime.association.revoke",
                 "runtime_id": runtime_id,
@@ -262,7 +309,13 @@ class RelayRegistry:
                 raise RelayRegistryError("association_not_found", "Association was not found")
             if association.revoked_at is None:
                 association.revoked_at = datetime.now(UTC)
-                runtime.subjects.discard(association.subject)
+                if not any(
+                    item is not association
+                    and item.subject == association.subject
+                    and item.revoked_at is None
+                    for item in runtime.associations.values()
+                ):
+                    runtime.subjects.discard(association.subject)
                 self.audit.append({
                     "action": "runtime.association.revoke",
                     "runtime_id": runtime_id,

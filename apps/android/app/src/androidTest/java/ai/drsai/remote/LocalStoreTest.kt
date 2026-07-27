@@ -17,6 +17,7 @@ import ai.drsai.remote.data.MIGRATION_3_4
 import ai.drsai.remote.data.MIGRATION_4_5
 import ai.drsai.remote.data.MIGRATION_5_6
 import ai.drsai.remote.data.MIGRATION_6_7
+import ai.drsai.remote.data.MIGRATION_7_8
 import ai.drsai.remote.data.SecureTokenStore
 import ai.drsai.remote.remote.data.RemoteCacheRepository
 import ai.drsai.remote.remote.data.RemoteRuntimeEntity
@@ -436,7 +437,7 @@ class LocalStoreTest {
         }
 
         val migrated = Room.databaseBuilder(context, ChatDatabase::class.java, name)
-            .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+            .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
             .allowMainThreadQueries()
             .build()
         try {
@@ -474,7 +475,7 @@ class LocalStoreTest {
             legacy.version = 3
         }
         val migrated = Room.databaseBuilder(context, ChatDatabase::class.java, name)
-            .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+            .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
             .allowMainThreadQueries()
             .build()
         try {

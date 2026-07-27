@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +15,21 @@ import aiohttp
 from .device_identity import DeviceIdentity, DeviceIdentityStore
 from .generated_contract import CAPABILITIES, PROTOCOL_VERSION
 from .device_identity import SecretProtector, WindowsDpapiProtector
+
+_RUNTIME_VERSION_PATTERN = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
+
+
+def resolve_runtime_version(override: str | None = None) -> str:
+    """Resolve the version of the Runtime loaded by this Windows process."""
+    if override is not None and override.strip():
+        version = override.strip()
+    else:
+        from drsai.version import __version__
+
+        version = __version__.strip()
+    if not _RUNTIME_VERSION_PATTERN.fullmatch(version):
+        raise ValueError("runtime_version_invalid")
+    return version
 
 
 class RegistrationTransport(Protocol):
@@ -89,6 +105,7 @@ class RuntimeOutboundConnector:
                      [str, str, dict[str, Any] | None, str], Awaitable[tuple[int, Any]]
                  ] | None = None,
                  event_provider: Callable[[], Awaitable[list[dict[str, Any]]]] | None = None,
+                 session_event_provider: Callable[[], Awaitable[list[dict[str, Any]]]] | None = None,
                  workspace_provider: Callable[[], Awaitable[list[dict[str, str]]]] | None = None,
                  backend_health: dict[str, str] | None = None,
                  wire_protocol: str = "legacy-operation") -> None:
@@ -100,6 +117,7 @@ class RuntimeOutboundConnector:
         self.request_handler = request_handler
         self.http_request_handler = http_request_handler
         self.event_provider = event_provider
+        self.session_event_provider = session_event_provider
         self.workspace_provider = workspace_provider
         self.backend_health = dict(backend_health or {})
         if wire_protocol not in {"legacy-operation", "hai-http"}:
@@ -128,6 +146,8 @@ class RuntimeOutboundConnector:
                     background_tasks.append(asyncio.create_task(self._send_heartbeats(socket)))
                     if self.event_provider is not None:
                         background_tasks.append(asyncio.create_task(self._forward_events(socket)))
+                    if self.session_event_provider is not None:
+                        background_tasks.append(asyncio.create_task(self._forward_session_events(socket)))
                 else:
                     nonce = str(uuid4())
                     proof = f"{self.credential.runtime_id}\n{self.instance_id}\n{nonce}".encode()
@@ -175,6 +195,25 @@ class RuntimeOutboundConnector:
             except Exception:
                 # A failed poll must not tear down the control channel. The
                 # next iteration resumes from the Runtime-owned sequence.
+                pass
+            await asyncio.sleep(1)
+
+    async def _forward_session_events(self, socket: Any) -> None:
+        while True:
+            try:
+                for event in await self.session_event_provider():
+                    session_id = str(event.get("session_id") or "")
+                    sequence = int(event.get("session_sequence") or 0)
+                    if session_id and sequence > 0:
+                        await socket.send_json({
+                            "type": "event",
+                            "scope": "session",
+                            "session_id": session_id,
+                            "session_sequence": sequence,
+                            "event": event,
+                        })
+            except Exception:
+                # The next poll resumes from the Runtime-owned Session cursor.
                 pass
             await asyncio.sleep(1)
 
@@ -286,6 +325,14 @@ class RuntimeOutboundConnector:
             try:
                 await self.run_once()
                 backoff = 1.0
+                # A peer can accept the WebSocket handshake and immediately
+                # close it without raising an aiohttp exception. Do not spin a
+                # reconnect loop that can starve the co-hosted Gateway startup
+                # and request handling tasks.
+                try:
+                    await asyncio.wait_for(stop.wait(), timeout=backoff)
+                except TimeoutError:
+                    pass
             except (aiohttp.ClientError, TimeoutError):
                 try:
                     await asyncio.wait_for(stop.wait(), timeout=backoff)

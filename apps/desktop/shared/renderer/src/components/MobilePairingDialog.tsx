@@ -194,28 +194,6 @@ export function MobilePairingDialog({
     }
   }
 
-  async function revokeEnrollment(): Promise<void> {
-    const confirmed = window.confirm(zh
-      ? "这会断开所有 Android 设备并撤销此电脑的 Runtime 注册。确定继续吗？"
-      : "This disconnects every Android device and revokes this computer's Runtime enrollment. Continue?");
-    if (!confirmed) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await desktopApi.revokeMobileRuntimeEnrollment();
-      if (!mountedRef.current) return;
-      activeGrantRef.current = null;
-      setGrant(null);
-      setQrDataUrl(null);
-      setAssociations([]);
-      setReadiness({ state: "not_registered", action: "register_runtime" });
-    } catch (reason) {
-      if (mountedRef.current) setError(mobilePairingErrorText(reason, language));
-    } finally {
-      if (mountedRef.current) setBusy(false);
-    }
-  }
-
   const readinessText: Record<string, string> = zh ? {
     not_registered: "此电脑尚未注册到 HepAI，请先完成 Runtime 注册。",
     credential_invalid: "此电脑的 Relay 凭据不可用，请重新注册 Runtime。",
@@ -254,8 +232,8 @@ export function MobilePairingDialog({
             {associations.map((association) => (
               <div key={association.association_id} className="mobile-pairing-association">
                 <span>
-                  <strong>{zh ? "Android 设备" : "Android device"}</strong>
-                  <small>{association.subject_summary}</small>
+                  <strong>{association.device_name}</strong>
+                  <small>{association.device_summary} · {association.subject_summary}</small>
                 </span>
                 <button
                   type="button"
@@ -273,7 +251,6 @@ export function MobilePairingDialog({
         <p className="mobile-pairing-privacy">{zh ? "二维码仅包含短时、单次使用的授权码，不包含密码、工作区路径或 Runtime 凭据。" : "The QR contains only a short-lived, single-use grant. It contains no password, workspace path, or Runtime credential."}</p>
         <footer>
           <button type="button" onClick={() => void refresh()} disabled={busy || readiness?.state !== "ready"}>{zh ? "刷新二维码" : "Refresh QR code"}</button>
-          {readiness?.state === "ready" ? <button type="button" className="danger" data-testid="mobile-enrollment-revoke" onClick={() => void revokeEnrollment()} disabled={busy}>{zh ? "撤销此电脑" : "Revoke computer"}</button> : null}
           <button type="button" className="primary" onClick={onClose}>{grant?.status === "consumed" ? (zh ? "完成" : "Done") : (zh ? "取消" : "Cancel")}</button>
         </footer>
       </section>

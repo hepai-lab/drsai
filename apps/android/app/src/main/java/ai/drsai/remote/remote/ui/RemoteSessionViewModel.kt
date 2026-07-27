@@ -18,6 +18,7 @@ import ai.drsai.remote.data.MIGRATION_3_4
 import ai.drsai.remote.data.MIGRATION_4_5
 import ai.drsai.remote.data.MIGRATION_5_6
 import ai.drsai.remote.data.MIGRATION_6_7
+import ai.drsai.remote.data.MIGRATION_7_8
 import ai.drsai.remote.data.OidcClient
 import ai.drsai.remote.data.SecureTokenStore
 import ai.drsai.remote.remote.data.*
@@ -25,6 +26,11 @@ import android.content.Intent
 import android.util.Base64
 import java.io.File
 import ai.drsai.remote.remote.model.*
+import ai.drsai.remote.remote.generated.GeneratedConversationSnapshot
+import ai.drsai.remote.remote.generated.GeneratedSessionConversationItem
+import ai.drsai.remote.remote.generated.GeneratedSessionEvent
+import ai.drsai.remote.remote.security.androidRelayDeviceProof
+import org.json.JSONObject
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -47,15 +53,29 @@ class RemoteSessionViewModel(
 ) : AndroidViewModel(app) {
     private val tokens = SecureTokenStore(app)
     private val auth = AccessTokenCoordinator(tokens, OidcClient(refreshClientId = { tokens.oidcClientId }))
+    private val deviceProof = androidRelayDeviceProof(app)
     private val repository = RelayRemoteRepository(
-        BuildConfig.RELAY_BASE_URL, auth::current, refreshAfter = auth::refreshAfter,
+        BuildConfig.RELAY_BASE_URL,
+        auth::current,
+        refreshAfter = auth::refreshAfter,
+        deviceProof = deviceProof,
     )
     private val stream = RelaySseClient(
-        BuildConfig.RELAY_BASE_URL, auth::current, refreshAfter = auth::refreshAfter,
+        BuildConfig.RELAY_BASE_URL,
+        auth::current,
+        refreshAfter = auth::refreshAfter,
+        deviceProof = deviceProof,
     )
-    private val workspace = RelayWorkspaceOperationsClient(HttpOwopRelayTransport(BuildConfig.RELAY_BASE_URL, runtimeId, auth::current))
+    private val workspace = RelayWorkspaceOperationsClient(
+        HttpOwopRelayTransport(
+            BuildConfig.RELAY_BASE_URL,
+            runtimeId,
+            auth::current,
+            deviceProof = deviceProof,
+        )
+    )
     private val database = Room.databaseBuilder(app, ChatDatabase::class.java, "opendrsai.db")
-        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
         .build()
     private val cache = RemoteCacheRepository(database)
     private val connectivity = AndroidRemoteConnectivity(app)
@@ -70,7 +90,7 @@ class RemoteSessionViewModel(
     private var authRefreshAttempted = false
     private val lifecycleObserver = object : DefaultLifecycleObserver {
         override fun onStart(owner: LifecycleOwner) {
-            activeRun?.let(::reconcileAndRestart)
+            startSessionSync()
         }
     }
 
@@ -80,7 +100,7 @@ class RemoteSessionViewModel(
             connectivity.online.drop(1).collect { online ->
                 mutableState.update { it.copy(online = online,
                     connectionState = if (online) RemoteConnectionState.CONNECTING else RemoteConnectionState.OFFLINE) }
-                if (online) activeRun?.let(::reconcileAndRestart) else streamJob?.cancel()
+                if (online) startSessionSync() else streamJob?.cancel()
             }
         }
         refresh()
@@ -90,10 +110,14 @@ class RemoteSessionViewModel(
         runCatching {
             val session = repository.session(runtimeId, workspaceId, sessionId)
             require(session.lifecycle == RemoteResourceLifecycle.ACTIVE) { "remote_session_not_active" }
-            val conversation = loadConversation()
+            val snapshot = loadConversationSnapshot()
+            cache.replaceSessionSnapshot(
+                subject, organization, runtimeId.value, workspaceId.value,
+                snapshot, System.currentTimeMillis(),
+            )
             val runs = collectAllPages { cursor -> repository.runs(runtimeId, workspaceId, sessionId, cursor) }
             val latest = runs.lastOrNull()
-            val latestEvents = latest?.let { loadAllEvents(it) }.orEmpty()
+            val conversation = snapshot.toLegacyItems()
             val messages = projectConversationMessages(conversation).map {
                 RemoteMessageUi(it.id, it.role, it.text, it.progress)
             }
@@ -104,20 +128,10 @@ class RemoteSessionViewModel(
                 .toList()
             val pending = repository.approvals(runtimeId, workspaceId)
                 .firstOrNull { it.sessionId == sessionId && (latest == null || it.runId == latest.identity.runId) }
-            LoadedSession(session, runs, messages, artifacts, latestEvents, pending)
+            LoadedSession(session, runs, messages, artifacts, emptyList(), pending)
         }.onSuccess { loaded ->
             val latest = loaded.runs.lastOrNull()
             activeRun = latest?.identity
-            val fetchedSequence = loaded.latestEvents.maxOfOrNull { it.event.sequence } ?: 0
-            val cachedSequence = latest?.let {
-                cache.runCursor(subject, organization, runtimeId.value, it.identity.runId.value)?.lastSequence
-            } ?: 0
-            if (latest != null && loaded.latestEvents.isNotEmpty()) {
-                cache.replaceRunProjection(
-                    subject, organization, runtimeId.value, latest.identity.runId.value,
-                    loaded.latestEvents.map(::cacheEntity), System.currentTimeMillis(),
-                )
-            }
             mutableState.value = RemoteChatUiState(
                 runtimeName = runtimeName,
                 workspaceName = workspaceName,
@@ -137,9 +151,8 @@ class RemoteSessionViewModel(
                 scopeKey = scopeKey,
                 connectionState = RemoteConnectionState.ONLINE,
             )
-            if (latest != null && mutableState.value.running) {
-                startStream(latest.identity, maxOf(fetchedSequence, cachedSequence))
-            }
+            authRefreshAttempted = false
+            startSessionSync()
         }.onFailure { failure ->
             when {
                 recoverAuthentication(failure) -> refresh()
@@ -160,10 +173,19 @@ class RemoteSessionViewModel(
 
     fun send(message: String) = viewModelScope.launch(Dispatchers.IO) {
         if (message.isBlank() || mutableState.value.running) return@launch
+        val sourceMessageId = UUID.randomUUID().toString()
         runCatching {
             val session = repository.session(runtimeId, workspaceId, sessionId)
-            repository.createRun(session, message, emptyList(), UUID.randomUUID().toString())
-        }.onSuccess { refresh() }
+            cache.saveOptimisticMessage(
+                subject, organization, runtimeId.value, workspaceId.value, sessionId.value,
+                sourceMessageId, message, System.currentTimeMillis(),
+            )
+            renderCachedSessionItems()
+            repository.createRun(
+                session, message, emptyList(), sourceMessageId,
+                sourceMessageId = sourceMessageId,
+            )
+        }.onSuccess { reconcileSession() }
             .onFailure { failure -> mutableState.update { it.copy(messages = it.messages +
                 RemoteMessageUi("send-error-${UUID.randomUUID()}", "assistant", failure.message ?: "发送失败")) } }
     }
@@ -210,6 +232,195 @@ class RemoteSessionViewModel(
         }.onFailure { failure -> mutableState.update { state -> state.copy(artifacts = state.artifacts.map {
             if (it.artifactId == artifactId) it.copy(downloading = false, error = failure.message ?: "Artifact 下载失败") else it
         }) } }
+    }
+
+    private suspend fun loadConversationSnapshot(): GeneratedConversationSnapshot {
+        val items = mutableListOf<GeneratedSessionConversationItem>()
+        var cursor: String? = null
+        var snapshotSequence: Long? = null
+        do {
+            val page = repository.conversationSnapshot(runtimeId, workspaceId, sessionId, cursor)
+            if (snapshotSequence == null) snapshotSequence = page.snapshotSequence
+            require(page.snapshotSequence == snapshotSequence) { "conversation_snapshot_changed_during_paging" }
+            items += page.items
+            cursor = page.nextCursor
+        } while (cursor != null)
+        return GeneratedConversationSnapshot(
+            sessionId.value,
+            snapshotSequence ?: 0,
+            items.groupBy { it.itemId }.map { (_, values) -> values.maxBy { it.revision } }
+                .sortedBy { it.sessionSequence },
+            null,
+        )
+    }
+
+    private fun GeneratedConversationSnapshot.toLegacyItems(): List<RemoteConversationItem> =
+        items.mapIndexed { index, item -> item.toLegacyItem(index + 1L) }
+
+    private fun GeneratedSessionConversationItem.toLegacyItem(projectedSequence: Long) =
+        RemoteConversationItem(
+            eventId = itemId,
+            sequence = projectedSequence,
+            kind = if (kind == "message") "message.${role ?: "system"}" else kind,
+            timestamp = updatedAt,
+            payload = payload.toMutableMap().apply {
+                if (!containsKey("content") && containsKey("text")) put("content", get("text"))
+                runId?.let { put("run_id", it) }
+                sourceMessageId?.let { put("source_message_id", it) }
+            },
+        )
+
+    private fun RemoteConversationItemEntity.toLegacyItem(projectedSequence: Long): RemoteConversationItem {
+        val payload = JSONObject(payloadJson).keys().asSequence().associateWith {
+            JSONObject(payloadJson).opt(it).takeUnless { value -> value == JSONObject.NULL }
+        }.toMutableMap()
+        if (!payload.containsKey("content") && payload.containsKey("text")) {
+            payload["content"] = payload["text"]
+        }
+        runId?.let { payload["run_id"] = it }
+        sourceMessageId?.let { payload["source_message_id"] = it }
+        return RemoteConversationItem(
+            itemId, projectedSequence,
+            if (kind == "message") "message.${role ?: "system"}" else kind,
+            updatedAt, payload,
+        )
+    }
+
+    private suspend fun renderCachedSessionItems() {
+        val items = cache.sessionItems(
+            subject, organization, runtimeId.value, sessionId.value,
+        ).mapIndexed { index, item -> item.toLegacyItem(index + 1L) }
+        val messages = projectConversationMessages(items).map {
+            RemoteMessageUi(it.id, it.role, it.text, it.progress)
+        }
+        val artifacts = items.asSequence()
+            .filter { it.kind == "artifact.created" }
+            .mapNotNull(::conversationArtifact)
+            .distinctBy { it.artifactId }
+            .toList()
+        mutableState.update { it.copy(messages = messages, artifacts = artifacts) }
+    }
+
+    private suspend fun reloadSessionProjection() {
+        val snapshot = loadConversationSnapshot()
+        cache.replaceSessionSnapshot(
+            subject, organization, runtimeId.value, workspaceId.value,
+            snapshot, System.currentTimeMillis(),
+        )
+        renderCachedSessionItems()
+        val runs = collectAllPages { cursor ->
+            repository.runs(runtimeId, workspaceId, sessionId, cursor)
+        }
+        val latest = runs.lastOrNull()
+        activeRun = latest?.identity
+        val pending = repository.approvals(runtimeId, workspaceId)
+            .firstOrNull { it.sessionId == sessionId && (latest == null || it.runId == latest.identity.runId) }
+        mutableState.update { current ->
+            current.copy(
+                running = latest?.status in setOf(
+                    RemoteRunStatus.QUEUED,
+                    RemoteRunStatus.RUNNING,
+                    RemoteRunStatus.WAITING_APPROVAL,
+                ),
+                correlationId = latest?.correlationId,
+                activeRunId = latest?.identity?.runId,
+                approval = pending?.let { approval ->
+                    RemoteApprovalCard(
+                        approval.approvalId,
+                        latest?.identity ?: RemoteRunIdentity(
+                            runtimeId, workspaceId, sessionId, approval.runId, approval.backendId,
+                        ),
+                        runtimeName, workspaceName, current.sessionTitle, approval.operation,
+                        approval.riskSummary, approval.scope, approval.expiresAt, approval.correlationId,
+                    )
+                },
+                online = true,
+                connectionState = RemoteConnectionState.ONLINE,
+            )
+        }
+    }
+
+    private suspend fun reconcileSession() {
+        var after = cache.sessionCursor(
+            subject, organization, runtimeId.value, sessionId.value,
+        )?.lastSequence ?: 0L
+        var changed = false
+        while (true) {
+            val page = repository.sessionEvents(runtimeId, workspaceId, sessionId, after)
+            if (page.items.isEmpty()) break
+            for (event in page.items.sortedBy { it.sessionSequence }) {
+                when (
+                    cache.applySessionEvent(
+                        subject, organization, runtimeId.value, workspaceId.value,
+                        sessionId.value, event, System.currentTimeMillis(),
+                    )
+                ) {
+                    EventDecision.APPLY -> {
+                        after = event.sessionSequence
+                        changed = true
+                    }
+                    EventDecision.DUPLICATE, EventDecision.OUT_OF_ORDER -> {
+                        after = maxOf(after, event.sessionSequence)
+                    }
+                    EventDecision.GAP -> {
+                        reloadSessionProjection()
+                        return
+                    }
+                    EventDecision.CROSS_SCOPE -> error("remote_session_event_scope_mismatch")
+                }
+            }
+            if (page.items.size < 500) break
+        }
+        if (changed) reloadSessionProjection()
+    }
+
+    private fun startSessionSync() {
+        if (!connectivity.online.value) return
+        streamJob?.cancel()
+        streamJob = viewModelScope.launch(Dispatchers.IO) {
+            var attempt = 0
+            while (isActive) {
+                try {
+                    reconcileSession()
+                    val after = cache.sessionCursor(
+                        subject, organization, runtimeId.value, sessionId.value,
+                    )?.lastSequence ?: 0L
+                    mutableState.update {
+                        it.copy(online = true, connectionState = RemoteConnectionState.ONLINE)
+                    }
+                    attempt = 0
+                    stream.sessionStream(runtimeId, workspaceId, sessionId, after).collect { event ->
+                        when (
+                            cache.applySessionEvent(
+                                subject, organization, runtimeId.value, workspaceId.value,
+                                sessionId.value, event, System.currentTimeMillis(),
+                            )
+                        ) {
+                            EventDecision.APPLY -> reloadSessionProjection()
+                            EventDecision.GAP -> reloadSessionProjection()
+                            EventDecision.DUPLICATE, EventDecision.OUT_OF_ORDER -> Unit
+                            EventDecision.CROSS_SCOPE -> error("remote_session_event_scope_mismatch")
+                        }
+                        authRefreshAttempted = false
+                    }
+                    throw java.io.EOFException("relay_session_sse_eof")
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (failure: Throwable) {
+                    if (failure is RelayHttpException && failure.requiresSnapshotRecovery()) {
+                        reloadSessionProjection()
+                        continue
+                    }
+                    if (recoverAuthentication(failure)) continue
+                    if (mutableState.value.connectionState == RemoteConnectionState.AUTH_REQUIRED) break
+                    mutableState.update {
+                        it.copy(online = false, connectionState = RemoteConnectionState.DEGRADED)
+                    }
+                    delay((500L * (1L shl attempt.coerceAtMost(6))).coerceAtMost(30_000L))
+                    attempt += 1
+                }
+            }
+        }
     }
 
     private suspend fun loadAllEvents(run: RemoteRunSummary): List<RelayStreamEvent> {
@@ -274,6 +485,7 @@ class RemoteSessionViewModel(
                         sequence.accept(it)
                         authRefreshAttempted = false
                     }
+                    if (settleCompletedStream(identity, sequence)) break
                     throw java.io.EOFException("relay_sse_eof")
                 } catch (cancelled: kotlinx.coroutines.CancellationException) {
                     throw cancelled
@@ -284,12 +496,32 @@ class RemoteSessionViewModel(
                     }
                     if (recoverAuthentication(failure)) continue
                     if (mutableState.value.connectionState == RemoteConnectionState.AUTH_REQUIRED) break
+                    if (settleCompletedStream(identity, sequence)) break
                     mutableState.update { it.copy(online = false, connectionState = RemoteConnectionState.DEGRADED) }
                     delay((500L * (1L shl attempt.coerceAtMost(6))).coerceAtMost(30_000L))
                     attempt += 1
                 }
             }
         }
+    }
+
+    private suspend fun settleCompletedStream(
+        identity: RemoteRunIdentity,
+        sequence: RemoteSequenceSynchronizer,
+    ): Boolean {
+        if (!mutableState.value.running) {
+            mutableState.update {
+                it.copy(online = true, connectionState = RemoteConnectionState.ONLINE)
+            }
+            return true
+        }
+        return runCatching {
+            sequence.reconcile()
+            val status = repository.getRun(runtimeId, identity.runId).second
+            if (!isTerminalRemoteRunStatus(status)) return@runCatching false
+            rebuildProjection(identity)
+            true
+        }.getOrDefault(false)
     }
 
     private fun reconcileAndRestart(identity: RemoteRunIdentity) {
@@ -410,3 +642,6 @@ class RemoteSessionViewModel(
             }
     }
 }
+
+internal fun isTerminalRemoteRunStatus(status: String): Boolean =
+    status.uppercase() in setOf("COMPLETED", "FAILED", "CANCELLED")

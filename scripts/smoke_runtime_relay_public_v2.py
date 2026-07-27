@@ -24,6 +24,9 @@ REQUIRED_OPENAPI_PATHS = {
     "/runtimes",
     "/runtimes/{runtime_id}/workspaces",
     "/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions",
+    "/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/conversation-snapshot",
+    "/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/events",
+    "/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/events/stream",
     "/runtimes/{runtime_id}/runs/{run_id}/events/stream",
 }
 
@@ -150,6 +153,30 @@ async def run_smoke(
             if error_code(payload) != "invalid_token":
                 raise SmokeFailure(f"{version} anonymous error envelope is not invalid_token")
             checks.append(Check(f"{version}_anonymous_401", "passed", latency, "invalid_token"))
+
+        for name, suffix in (
+            (
+                "session_snapshot_anonymous_401",
+                "/v2/runtimes/runtime-public-smoke/workspaces/"
+                "workspace-public-smoke/sessions/session-public-smoke/"
+                "conversation-snapshot",
+            ),
+            (
+                "session_stream_anonymous_401",
+                "/v2/runtimes/runtime-public-smoke/workspaces/"
+                "workspace-public-smoke/sessions/session-public-smoke/"
+                "events/stream",
+            ),
+        ):
+            payload, latency = await _json_request(
+                session,
+                "GET",
+                f"{base_url}{suffix}",
+                expected_status=401,
+            )
+            if error_code(payload) != "invalid_token":
+                raise SmokeFailure(f"{name} error envelope is not invalid_token")
+            checks.append(Check(name, "passed", latency, "invalid_token"))
 
         started = time.perf_counter()
         try:

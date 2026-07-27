@@ -32,6 +32,7 @@ import ai.drsai.remote.data.MIGRATION_3_4
 import ai.drsai.remote.data.MIGRATION_4_5
 import ai.drsai.remote.data.MIGRATION_5_6
 import ai.drsai.remote.data.MIGRATION_6_7
+import ai.drsai.remote.data.MIGRATION_7_8
 import ai.drsai.remote.workbench.data.WorkbenchProjectionRepository
 import ai.drsai.remote.workbench.data.UnifiedWorkbenchRepository
 import ai.drsai.remote.workbench.data.SessionMutationResult
@@ -61,6 +62,7 @@ import ai.drsai.remote.data.selectLocalModelForAttachments
 import ai.drsai.remote.remote.data.RemoteCacheRepository
 import ai.drsai.remote.remote.data.RemoteSubscriptionRegistry
 import ai.drsai.remote.remote.data.HttpRelayDiscoveryService
+import ai.drsai.remote.remote.security.androidRelayDeviceProof
 import ai.drsai.remote.remote.data.RelayHttpException
 import ai.drsai.remote.remote.data.AssociationDeepLinkDecision
 import ai.drsai.remote.remote.data.AssociationDeepLinkGate
@@ -124,7 +126,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val oidcTransactions by lazy { OidcTransactionStore(app) }
     private val database by lazy {
         Room.databaseBuilder(app, ChatDatabase::class.java, "opendrsai.db")
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
             .build()
     }
     private val oidcClient by lazy { OidcClient(refreshClientId = { tokenStore.oidcClientId }) }
@@ -140,11 +142,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         })
     }
     private val tokenCoordinator by lazy { AccessTokenCoordinator(tokenStore, oidcClient) }
+    private val relayDeviceProof by lazy { androidRelayDeviceProof(app) }
     private val relayDiscovery by lazy {
         HttpRelayDiscoveryService(
             BuildConfig.RELAY_BASE_URL,
             tokenCoordinator::current,
             tokenCoordinator::refreshAfter,
+            deviceProof = relayDeviceProof,
         )
     }
     private val associationIssuer by lazy {

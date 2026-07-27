@@ -54,6 +54,7 @@ import type {
   DesktopVoiceRuntimeStatus,
   DesktopStreamingVoiceCapabilities,
   DesktopMcpContextResult,
+  DesktopMobilePairingReadiness,
   DesktopThread,
   DesktopWorktreeSummary,
   InstallProgress,
@@ -78,7 +79,7 @@ import { PreviewBrowserPanel } from "./components/PreviewBrowserPanel";
 import { ProviderAnalyticsView } from "./components/ProviderAnalyticsView";
 import { BackgroundTaskQueue, SkillSquareView } from "./components/SkillSquareView";
 import { TaskCenterView } from "./components/TaskCenterView";
-import { MobilePairingDialog } from "./components/MobilePairingDialog";
+import { MobilePairingDialog, mobilePairingErrorText } from "./components/MobilePairingDialog";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { DebugPanel } from "./components/DebugPanel";
 import { installDebugLogCapture } from "./debugLogStore";
@@ -632,6 +633,33 @@ function AuthenticatedApp({
   useEffect(() => desktopApi.onRemoteWorkspaceStatus((status) => {
     setStoredWorkspaces((current) => current.map((workspace) => workspace.id === status.workspaceId ? { ...workspace, remote: status, updatedAt: new Date().toISOString() } : workspace));
   }), []);
+  useEffect(() => desktopApi.onThreadSnapshot((event) => {
+    setThreadSnapshots((current) => ({
+      ...current,
+      [event.threadId]: event.snapshot,
+    }));
+  }), []);
+  useEffect(() => desktopApi.onThreadCatalogUpdate((event) => {
+    setThreads((current) => sortThreadsForSidebar([
+      event.thread,
+      ...current.filter((item) => item.id !== event.thread.id),
+    ]));
+  }), []);
+  useEffect(() => {
+    if (!activeThreadId) return;
+    let subscribed = false;
+    let disposed = false;
+    void desktopApi.subscribeThreadSnapshot(activeThreadId)
+      .then((value) => {
+        subscribed = value;
+        if (disposed && value) void desktopApi.unsubscribeThreadSnapshot(activeThreadId);
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+      if (subscribed) void desktopApi.unsubscribeThreadSnapshot(activeThreadId);
+    };
+  }, [activeThreadId]);
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -5156,6 +5184,9 @@ function SettingsPanel({
   const [streamingVoiceCapabilities, setStreamingVoiceCapabilities] = useState<DesktopStreamingVoiceCapabilities | null>(null);
   const [systemVoices, setSystemVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [remoteHostCount, setRemoteHostCount] = useState<number | null>(null);
+  const [mobilePairingReadiness, setMobilePairingReadiness] = useState<DesktopMobilePairingReadiness | null>(null);
+  const [mobileEnrollmentBusy, setMobileEnrollmentBusy] = useState(false);
+  const [mobileEnrollmentError, setMobileEnrollmentError] = useState<string | null>(null);
   const [agentConfigSaving, setAgentConfigSaving] = useState(false);
   const [agentConfigMessage, setAgentConfigMessage] = useState<string | null>(null);
   const [cleanupPreview, setCleanupPreview] = useState<DesktopDataCleanupPreview | null>(null);
@@ -5221,21 +5252,47 @@ function SettingsPanel({
     }
   }
 
+  async function revokeMobileEnrollment(): Promise<void> {
+    const confirmed = window.confirm(zh
+      ? "这会断开所有 Android 设备，并禁止它们继续连接此电脑。确定继续吗？"
+      : "This disconnects every Android device and prevents further connections to this computer. Continue?");
+    if (!confirmed) return;
+    setMobileEnrollmentBusy(true);
+    setMobileEnrollmentError(null);
+    try {
+      await desktopApi.revokeMobileRuntimeEnrollment();
+      setMobilePairingReadiness({ state: "not_registered", action: "register_runtime" });
+    } catch (reason) {
+      setMobileEnrollmentError(mobilePairingErrorText(reason, language));
+    } finally {
+      setMobileEnrollmentBusy(false);
+    }
+  }
+
   useEffect(() => {
     if (activePane !== "integrations") return;
     let cancelled = false;
-    void Promise.all([
-      featureCapabilities?.serialVoice === true || featureCapabilities?.streamingVoice === true
-        ? desktopApi.getVoiceRuntimeStatus().catch(() => null)
-        : Promise.resolve(null),
-      featureCapabilities?.remoteWorkspace === false ? Promise.resolve([]) : desktopApi.listSshHosts().catch(() => []),
-    ]).then(([voiceStatus, hosts]) => {
-      if (cancelled) return;
-      setVoiceIntegrationState(voiceStatus?.state ?? "unavailable");
-      setRemoteHostCount(hosts.length);
-    });
+    const refresh = (): void => {
+      void Promise.all([
+        featureCapabilities?.serialVoice === true || featureCapabilities?.streamingVoice === true
+          ? desktopApi.getVoiceRuntimeStatus().catch(() => null)
+          : Promise.resolve(null),
+        featureCapabilities?.remoteWorkspace === false ? Promise.resolve([]) : desktopApi.listSshHosts().catch(() => []),
+        featureCapabilities?.remoteWorkspace === true
+          ? desktopApi.getMobilePairingReadiness().catch(() => null)
+          : Promise.resolve(null),
+      ]).then(([voiceStatus, hosts, readiness]) => {
+        if (cancelled) return;
+        setVoiceIntegrationState(voiceStatus?.state ?? "unavailable");
+        setRemoteHostCount(hosts.length);
+        setMobilePairingReadiness(readiness);
+      });
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 5_000);
     return () => {
       cancelled = true;
+      window.clearInterval(timer);
     };
   }, [activePane, featureCapabilities]);
 
@@ -5667,7 +5724,32 @@ function SettingsPanel({
               {featureCapabilities?.browser === true && <div className="settings-integration-row"><Globe2 size={18} /><span><strong>{zh ? "浏览器" : "Browser"}</strong><small>{zh ? "使用右侧浏览器面板查看和附加网页上下文。" : "Use the right browser panel to inspect and attach web context."}</small></span><button type="button" onClick={onOpenBrowserPanel}>{zh ? "打开" : "Open"}</button></div>}
               {(featureCapabilities?.serialVoice === true || featureCapabilities?.streamingVoice === true) && <div className="settings-integration-row"><MessageSquare size={18} /><span><strong>{zh ? "语音" : "Voice"}</strong><small>{zh ? "聊天输入区使用的语音转写运行时。" : "Voice transcription runtime used by the chat composer."}</small></span><em>{voiceIntegrationState === null ? (zh ? "检查中" : "Checking") : voiceIntegrationState}</em></div>}
               {featureCapabilities?.remoteWorkspace === true && <div className="settings-integration-row"><TerminalIcon size={18} /><span><strong>{zh ? "远程计算机" : "Remote computers"}</strong><small>{zh ? "已配置、可用于远程工作区的计算机。" : "Configured computers available to remote workspaces."}</small></span><em>{remoteHostCount === null ? (zh ? "检查中" : "Checking") : zh ? `${remoteHostCount} 台计算机` : `${remoteHostCount} computers`}</em></div>}
-              {featureCapabilities?.remoteWorkspace === true && <div className="settings-integration-row" data-testid="android-pairing-entry"><Smartphone size={18} /><span><strong>{zh ? "Android 端" : "Android"}</strong><small>{zh ? "让 OpenDrSai Android 安全连接此电脑的 Runtime。" : "Securely connect OpenDrSai for Android to this computer's Runtime."}</small></span><button type="button" onClick={onOpenMobilePairing}>{zh ? "连接 Android" : "Connect Android"}</button></div>}
+              {featureCapabilities?.remoteWorkspace === true && <div className="settings-integration-row" data-testid="android-pairing-entry">
+                <Smartphone size={18} />
+                <span>
+                  <strong>{zh ? "Android 端" : "Android"}</strong>
+                  <small>{mobileEnrollmentError ?? (zh ? "让 OpenDrSai Android 安全连接此电脑的 Runtime。" : "Securely connect OpenDrSai for Android to this computer's Runtime.")}</small>
+                </span>
+                <div className="settings-integration-actions">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={mobilePairingReadiness?.state === "ready"}
+                    aria-label={zh ? "允许 Android 连接此电脑" : "Allow Android to connect to this computer"}
+                    title={mobilePairingReadiness?.state === "ready"
+                      ? (zh ? "已启用；关闭将撤销此电脑" : "Enabled; turn off to revoke this computer")
+                      : (zh ? "未启用；打开以连接 Android" : "Disabled; turn on to connect Android")}
+                    className={`settings-connection-switch ${mobilePairingReadiness?.state === "ready" ? "is-enabled" : ""}`}
+                    data-testid="mobile-connection-toggle"
+                    disabled={mobileEnrollmentBusy || mobilePairingReadiness === null}
+                    onClick={() => {
+                      if (mobilePairingReadiness?.state === "ready") void revokeMobileEnrollment();
+                      else onOpenMobilePairing();
+                    }}
+                  ><span aria-hidden="true" /></button>
+                  <button type="button" onClick={onOpenMobilePairing}>{zh ? "连接 Android" : "Connect Android"}</button>
+                </div>
+              </div>}
             </section>
           </>
         )}

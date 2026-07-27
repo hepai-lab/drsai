@@ -1615,6 +1615,8 @@ export function installMockDesktopApi(): void {
     listMobileAssociations: async () => [{
       association_id: "assoc_00000000000000000000000000000000",
       subject_summary: "sub_000000000000",
+      device_summary: "dev_000000000000",
+      device_name: "Samsung SM-X936C",
       status: "active",
       created_at: new Date().toISOString(),
       revoked_at: null,
@@ -1622,6 +1624,8 @@ export function installMockDesktopApi(): void {
     revokeMobileAssociation: async (associationId) => ({
       association_id: associationId,
       subject_summary: "sub_000000000000",
+      device_summary: "dev_000000000000",
+      device_name: "Samsung SM-X936C",
       status: "revoked",
       created_at: new Date().toISOString(),
       revoked_at: new Date().toISOString(),
@@ -1984,6 +1988,10 @@ export function installMockDesktopApi(): void {
       return thread;
     },
     getThreadSnapshot: async (threadId) => threadSnapshots[threadId] ?? null,
+    subscribeThreadSnapshot: async () => false,
+    unsubscribeThreadSnapshot: async () => false,
+    onThreadSnapshot: () => () => undefined,
+    onThreadCatalogUpdate: () => () => undefined,
     searchThreadMessages: async (request) => {
       const query = request.query.trim().toLowerCase();
       if (!query) return [];

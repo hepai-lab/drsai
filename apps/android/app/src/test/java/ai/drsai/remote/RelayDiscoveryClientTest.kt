@@ -4,6 +4,7 @@ import ai.drsai.remote.remote.data.HttpRelayDiscoveryService
 import ai.drsai.remote.remote.data.parseAccessGrantCode
 import ai.drsai.remote.remote.data.RelayHttpException
 import ai.drsai.remote.remote.data.associationErrorMessage
+import ai.drsai.remote.remote.data.compatibleWindowsRuntimeVersion
 import ai.drsai.remote.remote.model.RemoteConnectionState
 import ai.drsai.remote.remote.model.RuntimeId
 import kotlinx.coroutines.test.runTest
@@ -33,7 +34,7 @@ class RelayDiscoveryClientTest {
         val service = HttpRelayDiscoveryService(server.url("/api/runtime-relay").toString(), { "oidc-token" })
         val page = service.listRuntimes(cursor = "0", query = "Office")
         assertEquals("rt-a", page.items.single().reference.runtimeId.value)
-        assertEquals(RemoteConnectionState.DEGRADED, page.items.single().state)
+        assertEquals(RemoteConnectionState.INCOMPATIBLE, page.items.single().state)
         assertEquals(2, page.items.single().connectionGeneration)
         assertEquals("20", page.nextCursor)
         server.takeRequest().apply {
@@ -49,6 +50,15 @@ class RelayDiscoveryClientTest {
         val empty = service.listWorkspaces(RuntimeId("rt-a"))
         assertTrue(empty.items.isEmpty())
         assertNull(empty.nextCursor)
+    }
+
+    @Test fun `runtime compatibility follows the version declared by the connected windows owner`() {
+        assertTrue(compatibleWindowsRuntimeVersion("1.5.3"))
+        assertTrue(compatibleWindowsRuntimeVersion("1.5.4"))
+        assertTrue(compatibleWindowsRuntimeVersion("2.0.0"))
+        assertEquals(false, compatibleWindowsRuntimeVersion("1.4.7"))
+        assertEquals(false, compatibleWindowsRuntimeVersion("1.5.3-rc1"))
+        assertEquals(false, compatibleWindowsRuntimeVersion("unknown"))
     }
 
     @Test fun `workspace page sends bounded limit and opaque cursor`() = runTest {
