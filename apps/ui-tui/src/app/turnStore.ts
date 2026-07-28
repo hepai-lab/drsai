@@ -38,6 +38,7 @@
 import { atom } from 'nanostores'
 
 import type { AssistantTurn, Turn } from './types.js'
+import { getPartText } from './types.js'
 
 export const $transcript = atom<Turn[]>([])
 export const $current = atom<AssistantTurn | null>(null)
@@ -77,7 +78,13 @@ function truncateTurn(turn: Turn): Turn {
     return { ...turn, text: truncateText(turn.text, MAX_TRUNCATED_TEXT) }
   }
   // Assistant turn — clear reasoning entirely (biggest memory hog),
-  // truncate text, and truncate each tool result.
+  // truncate text, truncate tool results, and shrink contentParts to
+  // free the ordered text segments (old turns render from scrollback).
+  const truncatedParts = turn.contentParts?.map(p =>
+    p.kind === 'text'
+      ? { ...p, text: truncateText(getPartText(p), MAX_TRUNCATED_TEXT), chunks: [] }
+      : p,
+  ) ?? []
   return {
     ...turn,
     text: truncateText(turn.text, MAX_TRUNCATED_TEXT),
@@ -86,6 +93,7 @@ function truncateTurn(turn: Turn): Turn {
       ...t,
       result: t.result ? truncateText(t.result, MAX_TRUNCATED_TOOL) : t.result,
     })),
+    contentParts: truncatedParts,
   }
 }
 

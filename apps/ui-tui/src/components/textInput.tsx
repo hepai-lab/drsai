@@ -54,6 +54,10 @@ const BRACKET_PASTE_DETECT_RE = /\x1b?\[20[01]~/
 //     is in the background. Without this, users see a fake-looking
 //     pulse in the corner of an inactive window, which is more
 //     distracting than helpful.
+//   - Any key is pressed (cursor movement, typing, etc.) — real terminal
+//     hardware cursors stop blinking on keypress and resume after a
+//     short idle period (~2 s). This is implemented via the
+//     `pingActivity` ref + CURSOR_PAUSE_MS below.
 //
 // Caveats:
 //   - Every toggle triggers a re-render of the dynamic frame. We mitigate
@@ -61,20 +65,43 @@ const BRACKET_PASTE_DETECT_RE = /\x1b?\[20[01]~/
 //   - When the input is disabled OR unfocused, we render a steady dim
 //     block so users can still see *where* the cursor lives.
 const CURSOR_BLINK_MS = 530
+// How long the cursor stays steady after any keypress before resuming blink.
+const CURSOR_PAUSE_MS = 2000
 
-function useCursorBlink(active: boolean): boolean {
+function useCursorBlink(active: boolean): { on: boolean; pingActivity: () => void } {
   const termFocused = useStore($terminalFocused)
   const shouldBlink = active && termFocused
   const [on, setOn] = useState(true)
+  // Timestamp of the last keypress — used to pause blinking after activity.
+  const lastKeyRef = useRef(0)
+
+  // pingActivity is called on every keypress (typing, arrow keys, etc.)
+  // to temporarily stop the blink and show a steady block — matching
+  // real terminal hardware cursor behavior.
+  const pingActivity = useRef(() => {
+    lastKeyRef.current = Date.now()
+    setOn(true)
+  }).current
+
   useEffect(() => {
     if (!shouldBlink) {
       setOn(true)
       return
     }
-    const t = setInterval(() => setOn(o => !o), CURSOR_BLINK_MS)
+    // Blink interval: toggle visibility, but hold steady (on=true)
+    // if we're within CURSOR_PAUSE_MS of the last keypress.
+    const t = setInterval(() => {
+      const sinceKey = Date.now() - lastKeyRef.current
+      if (sinceKey < CURSOR_PAUSE_MS) {
+        setOn(true)  // keep steady during the pause window
+      } else {
+        setOn(o => !o)  // resume toggling after idle
+      }
+    }, CURSOR_BLINK_MS)
     return () => clearInterval(t)
   }, [shouldBlink])
-  return on
+
+  return { on, pingActivity }
 }
 
 function normalisePastedText(text: string): string {
@@ -391,6 +418,12 @@ export function TextInput({
     }
     
     if (disabled) return
+
+    // Any real keypress (typing, arrow keys, backspace, etc.) pauses
+    // cursor blinking for CURSOR_PAUSE_MS — matching real terminal
+    // hardware cursor behavior (stops blinking on keypress, resumes
+    // after a short idle period).
+    pingActivity()
 
     // Bracketed-paste and many terminals deliver a paste as one multi-character
     // input payload. Treat it as literal text insertion before key.return can
@@ -826,7 +859,7 @@ export function TextInput({
   // Disabled state shows a steady dim block instead of a blinking one so
   // users can still see *where* the cursor is during streaming, but it
   // does not pretend to accept input.
-  const blinkOn = useCursorBlink(!disabled && blink)
+  const { on: blinkOn, pingActivity } = useCursorBlink(!disabled && blink)
   const showCursorBlock = !disabled && blinkOn
 
   // ── Path mode: windowed vertical candidate list ─────────────────────
