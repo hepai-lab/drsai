@@ -59,6 +59,10 @@ mac:
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.inherit.plist
+  # Electron locale PAK files are resources covered by the enclosing framework
+  # signature. Re-signing them individually fails on current macOS/Xcode.
+  signIgnore:
+    - "/Resources/[^/]+\\.lproj/locale\\.pak$"
   notarize: true
   extendInfo:
     NSMicrophoneUsageDescription: OpenDrSai uses the microphone only when you start voice input.
