@@ -1,6 +1,7 @@
 import { execFile } from "child_process";
+import { randomUUID } from "crypto";
 import { existsSync } from "fs";
-import { mkdir, readFile, realpath, stat, writeFile } from "fs/promises";
+import { mkdir, readFile, realpath, rm, stat, writeFile } from "fs/promises";
 import { dirname, join, normalize } from "path";
 import type {
   CreateWorkspaceRequest,
@@ -14,6 +15,7 @@ import { DRSAI_HOME, DRSAI_REPO } from "./paths";
 import { backupLegacyWorkspaceDataOnce, migrateLegacyWorkspaceRecords, migrateWorkspaceToAuthoritativeId, recordWorkspaceIdMigration } from "./workspaceMigrations";
 import { LocalRuntimeClient } from "./runtimeClient";
 import { isRemoteAcceptanceWorkspace } from "./remoteWorkspaceRestorePolicy";
+import { replaceFileSafely } from "./atomicFileReplace";
 
 const WORKSPACES_FILE = join(DRSAI_HOME, "desktop", "workspaces.json");
 const WORKSPACES_LEGACY_BACKUP_FILE = join(DRSAI_HOME, "desktop", "workspaces.legacy-v1.backup.json");
@@ -204,7 +206,13 @@ async function writeWorkspaces(workspaces: WorkspaceProject[]): Promise<void> {
       autoReconnect: workspace.remote.autoReconnect === true,
     },
   } : workspace);
-  await writeFile(WORKSPACES_FILE, `${JSON.stringify(persisted, null, 2)}\n`, "utf8");
+  const temporary = `${WORKSPACES_FILE}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, `${JSON.stringify(persisted, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    await replaceFileSafely(temporary, WORKSPACES_FILE);
+  } finally {
+    await rm(temporary, { force: true });
+  }
 }
 
 async function validateCreateWorkspaceRequest(rawRequest: unknown): Promise<CreateWorkspaceRequest> {
