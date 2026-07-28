@@ -229,6 +229,7 @@ export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEven
   if (events.some((event) => event.type === "run.completed")) push({ type: "done", runId: thread.lastRunId });
   else if (events.some((event) => event.type === "run.cancelled")) push({ type: "aborted", runId: thread.lastRunId });
   else if (events.some((event) => event.type === "run.failed")) push({ type: "error", runId: thread.lastRunId, error: "Runtime Agent Run failed while the Desktop was reconnecting." });
+  else if (recorded.some((event) => event.type === "aborted")) push({ type: "aborted", runId: thread.lastRunId });
   return recovered;
 }
 
@@ -647,6 +648,7 @@ async function runChat(
             ? "user_cancelled"
             : "execution_error",
     });
+    const authoritativeRuntimeRunId = codexChatTargets.get(requestId)?.runId;
     await upsertThreadFromRun({
       id: sessionId,
       kind: "chat",
@@ -654,11 +656,14 @@ async function runChat(
       workspacePath: request.workspacePath,
       boundAgentId,
       boundAgentName,
-      lastRunId: codexChatTargets.get(requestId)?.runId ?? (isCodexBackend ? undefined : runId),
+      lastRunId: authoritativeRuntimeRunId ?? (isCodexBackend ? undefined : runId),
       lastRequestId: requestId,
       status: controller.signal.aborted && controller.signal.reason !== "timeout" ? "idle" : "error",
       messageCount: request.messages.length,
     });
+    if (authoritativeRuntimeRunId && controller.signal.aborted && controller.signal.reason !== "timeout") {
+      recordChatRunEvent({ requestId, sessionId, runId: authoritativeRuntimeRunId, type: "aborted" });
+    }
     throw error;
   } finally {
     clearTimeout(timeout);

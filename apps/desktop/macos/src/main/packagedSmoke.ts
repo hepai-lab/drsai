@@ -497,7 +497,10 @@ async function rendererScenario(scenario: PackagedScenario, config: PackagedScen
       if (recoveredChat.some((item) => item.type === "aborted")) break;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    if (!recoveredChat.some((item) => item.type === "start") || !recoveredChat.some((item) => item.type === "aborted") || new Set(recoveredChat.map((item) => item.seq)).size !== recoveredChat.length || await api.respondChatInput(chatRequestId, "late input")) throw new Error("cancelled Chat did not recover an ordered deduplicated journal or rejected late input");
+    const acceptedLateChatInput = await api.respondChatInput(chatRequestId, "late input");
+    if (!recoveredChat.some((item) => item.type === "start") || !recoveredChat.some((item) => item.type === "aborted") || new Set(recoveredChat.map((item) => item.seq)).size !== recoveredChat.length || acceptedLateChatInput) {
+      throw new Error(`cancelled Chat did not recover an ordered deduplicated journal or rejected late input: ${JSON.stringify({ events: recoveredChat.map((item) => ({ type: item.type, seq: item.seq, runId: item.runId })), acceptedLateChatInput })}`);
+    }
 
     const recoveryChatRequestId = "packaged_chat_recovery_001";
     const recoveryChatThreadId = "packaged-chat-recovery-thread-001";
