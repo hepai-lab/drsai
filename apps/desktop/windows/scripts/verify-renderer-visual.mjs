@@ -1008,6 +1008,11 @@ contextBridge.exposeInMainWorld("openDrSai", {
     return thread;
   },
   updateThreadSnapshot: async (snapshot) => snapshot,
+  getThreadSnapshot: async () => null,
+  subscribeThreadSnapshot: async () => true,
+  unsubscribeThreadSnapshot: async () => true,
+  onThreadSnapshot: () => () => undefined,
+  onThreadCatalogUpdate: () => () => undefined,
   getIdeContext: async () => ({ providers: [], contexts: [], generatedAt: new Date().toISOString() }),
   listProjectMemory: async () => [],
   addProjectMemory: async (request) => ({
