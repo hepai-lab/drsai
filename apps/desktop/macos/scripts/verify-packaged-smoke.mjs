@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawn } from "node:child_process";
+import { createServer } from "node:net";
 
 if (process.platform !== "darwin" || process.arch !== "arm64") throw new Error("Packaged macOS smoke must run on Apple Silicon macOS.");
 const root = resolve(new URL("..", import.meta.url).pathname);
@@ -16,8 +17,9 @@ const runtimeGiB = Math.ceil(runtimeArchive.size / (1024 ** 3));
 const timeoutMs = Math.min(360_000, 45_000 + runtimeGiB * 45_000);
 const temp = await mkdtemp(join(tmpdir(), "opendrsai-macos-packaged-"));
 const resultPath = join(temp, "result.json");
+const gatewayPort = await freePort();
 const child = spawn(executable, [], {
-  env: { ...process.env, DRSAI_HOME: join(temp, "home"), OPENDRSAI_RUNTIME_PERSIST: "0", OPENDRSAI_MACOS_PACKAGED_SMOKE_FILE: resultPath, ELECTRON_ENABLE_LOGGING: "1" },
+  env: { ...process.env, DRSAI_HOME: join(temp, "home"), DRSAI_API_PORT: String(gatewayPort), OPENDRSAI_RUNTIME_PERSIST: "0", OPENDRSAI_MACOS_PACKAGED_SMOKE_FILE: resultPath, ELECTRON_ENABLE_LOGGING: "1" },
   stdio: ["ignore", "pipe", "pipe"],
 });
 let stderr = "";
@@ -84,4 +86,17 @@ function waitForCleanClose(process, timeout, runtimeBytes) {
 function isProcessAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+function freePort() {
+  return new Promise((resolvePort, reject) => {
+    const server = createServer();
+    server.unref();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      server.close((error) => error ? reject(error) : port ? resolvePort(port) : reject(new Error("Could not reserve a Gateway port.")));
+    });
+  });
 }
