@@ -312,6 +312,10 @@ export function useDesktopChatAdapter({
 
   useEffect(() => {
     let cancelled = false;
+    if (!canChat) {
+      teamMemoryRef.current = [];
+      return () => { cancelled = true; };
+    }
     desktopApi.listTeamMemory({ limit: 20 }).then((entries) => {
       if (cancelled) return;
       teamMemoryRef.current = entries;
@@ -320,7 +324,7 @@ export function useDesktopChatAdapter({
       teamMemoryRef.current = [];
     });
     return () => { cancelled = true; };
-  }, [threadId, workspacePath]);
+  }, [canChat, threadId, workspacePath]);
 
   useEffect(() => {
     let cancelled = false;
