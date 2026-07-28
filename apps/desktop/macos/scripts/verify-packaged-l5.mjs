@@ -21,6 +21,9 @@ console.log(`L5 driver initialized (${runtimeGiB}GiB Runtime, ${coreTimeoutMs}ms
 const acceptance = join(root, "build", "acceptance");
 const temp = mkdtempSync(join(tmpdir(), "opendrsai-macos-l5-"));
 const keepTempOnFailure = process.env.OPENDRSAI_MACOS_L5_KEEP_TEMP_ON_FAILURE === "1";
+const powerAssertion = spawn("/usr/bin/caffeinate", ["-dimsu", "-w", String(process.pid)], {
+  stdio: "ignore",
+});
 let suitePassed = false;
 let suiteGatewayPort;
 const home = join(temp, "home");
@@ -207,6 +210,7 @@ try {
   suitePassed = true;
   console.log(`macOS packaged L5 passed (${iterations} restarts, one forced crash, ${stability.result.durationMs}ms stability).`);
 } finally {
+  if (powerAssertion.exitCode === null && powerAssertion.signalCode === null) powerAssertion.kill("SIGTERM");
   if (!suitePassed && keepTempOnFailure) console.error(`L5 preserved failed fixture at ${temp}`);
   else rmSync(temp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }
