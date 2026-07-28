@@ -179,7 +179,9 @@ export function abortChat(requestId: string): boolean {
   activeChats.delete(requestId);
   activeChatEventTargets.delete(requestId);
   platformChatTargets.delete(requestId);
-  codexChatTargets.delete(requestId);
+  // Keep the Runtime target until runChat reaches its finally block. The
+  // cancellation path still needs the authoritative Runtime Run ID when it
+  // persists the recoverable Thread binding.
   return true;
 }
 
@@ -217,6 +219,7 @@ export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEven
     recovered.push({ ...event, requestId, sessionId, seq: ++sequence });
   };
   const recorded = await listRecordedChatRunEvents(thread.lastRunId);
+  push({ type: "start", runId: thread.lastRunId });
   for (const event of recorded) if (event.type === "connection") push({ type: "connection", runId: thread.lastRunId, connection: event.connection });
   const target = { approvalId: undefined as string | undefined };
   for (const event of events) {
@@ -620,7 +623,7 @@ async function runChat(
       workspacePath: request.workspacePath,
       boundAgentId,
       boundAgentName,
-      lastRunId: isCodexBackend ? undefined : runId,
+      lastRunId: codexChatTargets.get(requestId)?.runId ?? (isCodexBackend ? undefined : runId),
       lastRequestId: requestId,
       status: "idle",
       messageCount: request.messages.length,
@@ -651,7 +654,7 @@ async function runChat(
       workspacePath: request.workspacePath,
       boundAgentId,
       boundAgentName,
-      lastRunId: isCodexBackend ? undefined : runId,
+      lastRunId: codexChatTargets.get(requestId)?.runId ?? (isCodexBackend ? undefined : runId),
       lastRequestId: requestId,
       status: controller.signal.aborted && controller.signal.reason !== "timeout" ? "idle" : "error",
       messageCount: request.messages.length,
