@@ -57,6 +57,7 @@ import type {
   DesktopMcpContextResult,
   DesktopMobileAssociation,
   DesktopMobilePairingReadiness,
+  DesktopMobilePairingTarget,
   DesktopThread,
   DesktopWorktreeSummary,
   InstallProgress,
@@ -1850,6 +1851,7 @@ function AuthenticatedApp({
         onNewAgentTask={() => void handleNewAgentTask()}
         onOpenMobilePairing={() => setMobilePairingOpen(true)}
         mobilePairingRefreshToken={mobilePairingRefreshToken}
+        mobilePairingTarget={{ workspaceId: effectiveRuntimeWorkspaceId, workspacePath: effectiveWorkspacePath }}
         onOpenBrowserPanel={() => {
           setActiveRightTab("browser");
           setRightPanelCollapsed(false);
@@ -2235,7 +2237,7 @@ function AuthenticatedApp({
       onWorkspaceChange={handleWorkspaceChange}
       onWorkspaceSortModeChange={setWorkspaceSortMode}
     />
-    {mobilePairingOpen ? <MobilePairingDialog language={language} onClose={() => setMobilePairingOpen(false)} onConnected={() => setMobilePairingRefreshToken((value) => value + 1)} /> : null}
+    {mobilePairingOpen ? <MobilePairingDialog language={language} target={{ workspaceId: effectiveRuntimeWorkspaceId, workspacePath: effectiveWorkspacePath }} onClose={() => setMobilePairingOpen(false)} onConnected={() => setMobilePairingRefreshToken((value) => value + 1)} /> : null}
     {remoteDialogOpen ? (
       <div style={{ position: "fixed", inset: 0, zIndex: 1000, display: "grid", placeItems: "center", background: "rgba(3, 7, 18, .68)" }}>
         <section role="dialog" aria-modal="true" aria-labelledby="remote-workspace-title" style={{ width: 520, maxWidth: "calc(100vw - 40px)", padding: 24, borderRadius: 14, background: "#111827", color: "#f9fafb", boxShadow: "0 24px 80px rgba(0,0,0,.5)" }}>
@@ -5152,6 +5154,7 @@ function SettingsPanel({
   language,
   models,
   mobilePairingRefreshToken,
+  mobilePairingTarget,
   myDrSaiConfig,
   onCheckUpdates,
   onAppearanceChange,
@@ -5205,6 +5208,7 @@ function SettingsPanel({
   language: AppLanguage;
   models: MyDrSaiModelConfig[];
   mobilePairingRefreshToken: number;
+  mobilePairingTarget: DesktopMobilePairingTarget;
   myDrSaiConfig: MyDrSaiConfig | null;
   onCheckUpdates: () => void;
   onAppearanceChange: (appearance: AppearanceMode) => void;
@@ -5330,7 +5334,7 @@ function SettingsPanel({
     setMobileEnrollmentBusy(true);
     setMobileEnrollmentError(null);
     try {
-      await desktopApi.revokeMobileRuntimeEnrollment();
+      await desktopApi.revokeMobileRuntimeEnrollment(mobilePairingTarget);
       setMobilePairingReadiness({ state: "not_registered", action: "register_runtime" });
       setMobileAssociations([]);
       setMobileAssociationsState("runtime-offline");
@@ -5346,14 +5350,14 @@ function SettingsPanel({
     setMobileEnrollmentError(null);
     let readiness: DesktopMobilePairingReadiness | null = null;
     try {
-      readiness = await desktopApi.getMobilePairingReadiness();
+      readiness = await desktopApi.getMobilePairingReadiness(mobilePairingTarget);
       setMobilePairingReadiness(readiness);
       if (readiness.state !== "ready") {
         setMobileAssociations([]);
         setMobileAssociationsState(readiness.state === "offline" ? "platform-offline" : "runtime-offline");
         return;
       }
-      const rows = await desktopApi.listMobileAssociations();
+      const rows = await desktopApi.listMobileAssociations(mobilePairingTarget);
       setMobileAssociations(rows.filter((item) => item.status === "active"));
       setMobileAssociationsState("ready");
     } catch (reason) {
@@ -5371,7 +5375,7 @@ function SettingsPanel({
     setMobileEnrollmentBusy(true);
     setMobileEnrollmentError(null);
     try {
-      await desktopApi.revokeMobileAssociation(association.association_id);
+      await desktopApi.revokeMobileAssociation(association.association_id, mobilePairingTarget);
       setMobileAssociations((items) => items.filter((item) => item.association_id !== association.association_id));
     } catch (reason) {
       setMobileEnrollmentError(mobilePairingErrorText(reason, language));

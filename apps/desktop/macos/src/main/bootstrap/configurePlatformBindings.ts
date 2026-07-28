@@ -10,7 +10,7 @@ import { configureMacosRemoteTerminalResolver } from "../terminal";
 interface RemoteWorkspaceBindings {
   getAccess(workspacePath?: string, workspaceId?: string): { baseUrl: string; token: string; workspaceId: string } | null;
   resolveTarget(workspacePath?: string, workspaceId?: string): Promise<"remote_online" | "remote_offline" | "local_or_unknown">;
-  bindThread(threadId: string, workspaceId: string): void;
+  bindThread(threadId: string, workspaceId: string, runtimeSessionId?: string): void;
 }
 
 export interface MacosPlatformBindingDependencies {
@@ -26,13 +26,14 @@ export async function configureMacosPlatformBindings(dependencies: MacosPlatform
   configureRuntimeWorkspaceRouting({
     getRemoteGatewayAccess: (workspacePath, workspaceId) => dependencies.remoteWorkspaces.getAccess(workspacePath, workspaceId) ?? undefined,
     findWorkspaceById: dependencies.findWorkspaceById,
+    bindRemoteThread: (threadId, workspaceId, runtimeSessionId) => dependencies.remoteWorkspaces.bindThread(threadId, workspaceId, runtimeSessionId),
   });
   const { configureChannelProviderAuth } = await import("../../../../shared/main/channelAdapters");
   configureChannelProviderAuth({ credentials: dependencies.platformServices.credentials });
   configureChatRemoteRouting({
     resolveTarget: (workspacePath, workspaceId) => dependencies.remoteWorkspaces.resolveTarget(workspacePath, workspaceId),
     getGatewayAccess: (workspacePath, workspaceId) => dependencies.remoteWorkspaces.getAccess(workspacePath, workspaceId),
-    bindThread: (threadId, workspaceId) => dependencies.remoteWorkspaces.bindThread(threadId, workspaceId),
+    bindThread: (threadId, workspaceId, runtimeSessionId) => dependencies.remoteWorkspaces.bindThread(threadId, workspaceId, runtimeSessionId),
   });
   configureWorkspaceFileDialogs({
     selectSavePath: async ({ title, suggestedName, extension }) => {

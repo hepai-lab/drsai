@@ -227,6 +227,9 @@ async function runAgent(
     lastRequestId: requestId,
     status: "running",
   });
+  if (process.env.OPENDRSAI_MACOS_PACKAGED_SMOKE_FILE?.trim() && request.metadata?.packaged_crash_fixture === true) {
+    await new Promise<void>((_resolve, reject) => controller.signal.addEventListener("abort", () => reject(new DOMException("Packaged Agent crash fixture aborted.", "AbortError")), { once: true }));
+  }
 
   const timeout = setTimeout(() => controller.abort("timeout"), AGENT_RUN_TIMEOUT_MS);
   const changeSetCheckpointId = await prepareAgentChangeSetCheckpoint(request, runId);

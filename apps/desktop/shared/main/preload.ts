@@ -425,20 +425,20 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:start-gateway"),
   stopGateway: (): Promise<boolean> =>
     ipcRenderer.invoke("desktop:stop-gateway"),
-  getMobilePairingReadiness: () =>
-    ipcRenderer.invoke("desktop:mobile-pairing-readiness"),
-  createMobilePairingGrant: () =>
-    ipcRenderer.invoke("desktop:mobile-pairing-create"),
-  getMobilePairingGrant: (grantId: string) =>
-    ipcRenderer.invoke("desktop:mobile-pairing-read", grantId),
-  revokeMobilePairingGrant: (grantId: string) =>
-    ipcRenderer.invoke("desktop:mobile-pairing-revoke", grantId),
-  listMobileAssociations: () =>
-    ipcRenderer.invoke("desktop:mobile-associations-list"),
-  revokeMobileAssociation: (associationId: string) =>
-    ipcRenderer.invoke("desktop:mobile-association-revoke", associationId),
-  revokeMobileRuntimeEnrollment: () =>
-    ipcRenderer.invoke("desktop:mobile-enrollment-revoke"),
+  getMobilePairingReadiness: (target) =>
+    ipcRenderer.invoke("desktop:mobile-pairing-readiness", target),
+  createMobilePairingGrant: (target) =>
+    ipcRenderer.invoke("desktop:mobile-pairing-create", target),
+  getMobilePairingGrant: (grantId: string, target) =>
+    ipcRenderer.invoke("desktop:mobile-pairing-read", grantId, target),
+  revokeMobilePairingGrant: (grantId: string, target) =>
+    ipcRenderer.invoke("desktop:mobile-pairing-revoke", grantId, target),
+  listMobileAssociations: (target) =>
+    ipcRenderer.invoke("desktop:mobile-associations-list", target),
+  revokeMobileAssociation: (associationId: string, target) =>
+    ipcRenderer.invoke("desktop:mobile-association-revoke", associationId, target),
+  revokeMobileRuntimeEnrollment: (target) =>
+    ipcRenderer.invoke("desktop:mobile-enrollment-revoke", target),
   listSshHosts: () => ipcRenderer.invoke("desktop:ssh-hosts"),
   diagnoseSshHost: (hostAlias: string) => ipcRenderer.invoke("desktop:ssh-diagnose", hostAlias),
   inspectSshHostKeys: (hostAlias: string) => ipcRenderer.invoke("desktop:ssh-host-keys", hostAlias),

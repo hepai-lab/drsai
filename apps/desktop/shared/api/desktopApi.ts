@@ -4247,7 +4247,15 @@ export interface DesktopMobilePairingReadiness {
   state: DesktopMobilePairingReadinessState;
   action: string;
   runtime_id?: string;
+  /** Runtime process identity used to prove Workspace/Session routing. */
+  gateway_runtime_id?: string;
   environment?: string;
+}
+
+/** Selects the Runtime whose Session the mobile device will join. */
+export interface DesktopMobilePairingTarget {
+  workspaceId: string;
+  workspacePath: string;
 }
 
 export type DesktopMobilePairingGrantStatus = "pending" | "consumed" | "expired" | "revoked";
@@ -4343,13 +4351,13 @@ export interface DesktopApi {
   openLogFolder(): Promise<string>;
   startGateway(): Promise<boolean>;
   stopGateway(): Promise<boolean>;
-  getMobilePairingReadiness(): Promise<DesktopMobilePairingReadiness>;
-  createMobilePairingGrant(): Promise<DesktopMobilePairingGrant>;
-  getMobilePairingGrant(grantId: string): Promise<DesktopMobilePairingGrant>;
-  revokeMobilePairingGrant(grantId: string): Promise<DesktopMobilePairingGrant>;
-  listMobileAssociations(): Promise<DesktopMobileAssociation[]>;
-  revokeMobileAssociation(associationId: string): Promise<DesktopMobileAssociation>;
-  revokeMobileRuntimeEnrollment(): Promise<DesktopRuntimeEnrollmentRevocation>;
+  getMobilePairingReadiness(target?: DesktopMobilePairingTarget): Promise<DesktopMobilePairingReadiness>;
+  createMobilePairingGrant(target?: DesktopMobilePairingTarget): Promise<DesktopMobilePairingGrant>;
+  getMobilePairingGrant(grantId: string, target?: DesktopMobilePairingTarget): Promise<DesktopMobilePairingGrant>;
+  revokeMobilePairingGrant(grantId: string, target?: DesktopMobilePairingTarget): Promise<DesktopMobilePairingGrant>;
+  listMobileAssociations(target?: DesktopMobilePairingTarget): Promise<DesktopMobileAssociation[]>;
+  revokeMobileAssociation(associationId: string, target?: DesktopMobilePairingTarget): Promise<DesktopMobileAssociation>;
+  revokeMobileRuntimeEnrollment(target?: DesktopMobilePairingTarget): Promise<DesktopRuntimeEnrollmentRevocation>;
   listSshHosts(): Promise<RemoteSshHost[]>;
   diagnoseSshHost(hostAlias: string): Promise<RemoteSshConnectivityResult>;
   inspectSshHostKeys(hostAlias: string): Promise<RemoteSshHostKey[]>;

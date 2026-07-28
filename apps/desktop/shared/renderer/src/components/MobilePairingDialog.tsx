@@ -5,6 +5,7 @@ import type {
   DesktopMobileAssociation,
   DesktopMobilePairingGrant,
   DesktopMobilePairingReadiness,
+  DesktopMobilePairingTarget,
 } from "@shared/desktopApi";
 import { desktopApi } from "../desktopApi";
 import { copyTextSafely } from "../clipboard";
@@ -45,14 +46,17 @@ export function mobilePairingErrorText(reason: unknown, language: Language): str
 
 export function MobilePairingDialog({
   language,
+  target,
   onClose,
   onConnected,
 }: {
   language: Language;
+  target: DesktopMobilePairingTarget;
   onClose: () => void;
   onConnected?: () => void;
 }): React.JSX.Element {
   const zh = language === "zh";
+  const pairingTarget = useMemo(() => ({ workspaceId: target.workspaceId, workspacePath: target.workspacePath }), [target.workspaceId, target.workspacePath]);
   const dialogRef = useRef<HTMLElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const activeGrantRef = useRef<DesktopMobilePairingGrant | null>(null);
@@ -72,11 +76,11 @@ export function MobilePairingDialog({
     activeGrantRef.current = null;
     if (active?.status !== "pending") return;
     try {
-      await desktopApi.revokeMobilePairingGrant(active.grant_id);
+      await desktopApi.revokeMobilePairingGrant(active.grant_id, pairingTarget);
     } catch {
       // The short Relay TTL remains the safety boundary while offline.
     }
-  }, []);
+  }, [pairingTarget]);
 
   const createGrant = useCallback(async (): Promise<void> => {
     setBusy(true);
@@ -84,7 +88,7 @@ export function MobilePairingDialog({
     setCopied(false);
     setQrDataUrl(null);
     try {
-      const currentReadiness = await desktopApi.getMobilePairingReadiness();
+      const currentReadiness = await desktopApi.getMobilePairingReadiness(pairingTarget);
       if (!mountedRef.current) return;
       setReadiness(currentReadiness);
       if (currentReadiness.state !== "ready") {
@@ -92,10 +96,10 @@ export function MobilePairingDialog({
         setAssociations([]);
         return;
       }
-      const linked = await desktopApi.listMobileAssociations().catch(() => []);
+      const linked = await desktopApi.listMobileAssociations(pairingTarget).catch(() => []);
       if (!mountedRef.current) return;
       setAssociations(linked.filter((item) => item.status === "active"));
-      const created = await desktopApi.createMobilePairingGrant();
+      const created = await desktopApi.createMobilePairingGrant(pairingTarget);
       if (!mountedRef.current) return;
       activeGrantRef.current = created;
       setGrant(created);
@@ -112,7 +116,7 @@ export function MobilePairingDialog({
     } finally {
       if (mountedRef.current) setBusy(false);
     }
-  }, [language, zh]);
+  }, [language, pairingTarget, zh]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -147,7 +151,7 @@ export function MobilePairingDialog({
     const poll = window.setInterval(() => {
       if (document.visibilityState !== "visible" || reading) return;
       reading = true;
-      void desktopApi.getMobilePairingGrant(grant.grant_id)
+      void desktopApi.getMobilePairingGrant(grant.grant_id, pairingTarget)
         .then((next) => {
           if (!mountedRef.current) return;
           activeGrantRef.current = next.status === "pending" ? next : null;
@@ -164,7 +168,7 @@ export function MobilePairingDialog({
         .finally(() => { reading = false; });
     }, 2_000);
     return () => window.clearInterval(poll);
-  }, [grant?.grant_id, grant?.status, language, onConnected]);
+  }, [grant?.grant_id, grant?.status, language, onConnected, pairingTarget]);
 
   const secondsLeft = grant ? Math.max(0, Math.ceil((Date.parse(grant.expires_at) - now) / 1_000)) : 0;
   const expired = grant?.status === "expired" || (grant?.status === "pending" && secondsLeft === 0);
@@ -190,7 +194,7 @@ export function MobilePairingDialog({
     setBusy(true);
     setError(null);
     try {
-      await desktopApi.revokeMobileAssociation(associationId);
+      await desktopApi.revokeMobileAssociation(associationId, pairingTarget);
       if (mountedRef.current) {
         setAssociations((items) => items.filter((item) => item.association_id !== associationId));
       }

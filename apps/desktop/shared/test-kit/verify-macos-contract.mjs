@@ -20,12 +20,15 @@ const processes = read("src/main/platformProcesses.ts");
 const terminalSessions = read("src/main/terminal.ts");
 const config = read("electron.vite.config.ts");
 const rendererApp = read("../shared/renderer/src/App.tsx");
+const portForwards = read("../shared/main/portForwards.ts");
+const remoteWorkspace = read("../shared/main/remoteWorkspaceController.ts");
+const remoteAccessIpc = read("src/main/ipc/registerRemoteAccessIpc.ts");
 
 assert.ok(platform.includes('id: "macos"') && platform.includes('defaultTerminalShell: "zsh"'));
 assert.ok(terminal.includes('"/bin/zsh"') && terminal.includes('"/bin/bash"'));
 assert.ok(legacyCredentials.includes('"/usr/bin/security"') && legacyCredentials.includes("add-generic-password") && legacyCredentials.includes("find-generic-password"), "Legacy Keychain reference compatibility is missing");
 assert.ok(credentials.includes("createNativeMacosCredentialService") && nativeCredentials.includes('invoke("keychain.put"') && nativeCredentials.includes("result.kind === \"unavailable\""), "Native Keychain adapter or fail-safe legacy fallback is missing");
-assert.ok(processes.includes("process.kill(-Math.abs(pid)") && processes.includes('"SIGTERM"'));
+assert.ok(processes.includes("const group = -Math.abs(pid)") && processes.includes("signalledGroup ? group : pid") && processes.includes('"SIGTERM"') && processes.includes('"SIGKILL"'), "macOS process cleanup must gracefully terminate a process group and safely fall back to the child PID");
 assert.ok(windowBootstrap.includes('titleBarStyle: "hiddenInset"') && windowBootstrap.includes("trafficLightPosition"));
 assert.ok(main.includes("createSecureIpcHandle") && main.includes("getTrustedWebContents"), "macOS IPC handlers must use the shared trust boundary");
 assert.ok(appServices.includes("createDesktopIpcAuditWriter") && appServices.includes('"desktop-ipc-audit.jsonl"') && main.includes("appServices = createMacosAppServices"), "macOS IPC audit log is not configured after app readiness");
@@ -113,4 +116,9 @@ for (const service of ["paths", "terminal", "credentials", "notifications", "pro
   assert.ok(services.includes(`${service}:`), `macOS platform services omit ${service}`);
 }
 assert.equal(/(?:windows\/|\\windows\\)/i.test([main, platform, services, terminal, credentials, processes].join("\n")), false);
+for (const [name, source] of [["Port Forward", portForwards], ["Remote Workspace", remoteWorkspace]]) {
+  assert.ok(source.includes('"-S", "none"'), `${name} long-lived tunnel must own an SSH process instead of exiting after registering with ControlMaster`);
+  assert.ok(source.includes('"ExitOnForwardFailure=yes"'), `${name} tunnel must fail closed when forwarding cannot be established`);
+}
+assert.ok(remoteAccessIpc.includes('source: "connector", actionKind: "external.service"'), "Remote Gateway Approval must use a valid source/action policy pair");
 console.log("macOS shell contract passed (window, shared renderer/preload, zsh/bash, Keychain, notifications, process lifecycle).")

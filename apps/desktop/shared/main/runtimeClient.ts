@@ -11,6 +11,8 @@ import type {
   WorkspaceProject,
 } from "../api/desktopApi";
 
+const packagedRecoveryRuns = new Map<string, { failures: number; events: RuntimeAgentEvent[] }>();
+
 interface RemoteGatewayAccess {
   baseUrl: string;
   token: string;
@@ -20,6 +22,7 @@ interface RemoteGatewayAccess {
 interface RuntimeWorkspaceRouting {
   getRemoteGatewayAccess(workspacePath: string, workspaceId?: string): RemoteGatewayAccess | undefined;
   findWorkspaceById(workspaceId: string): Promise<WorkspaceProject | undefined>;
+  bindRemoteThread?(threadId: string, workspaceId: string, runtimeSessionId: string): void;
 }
 
 let workspaceRouting: RuntimeWorkspaceRouting = {
@@ -29,6 +32,10 @@ let workspaceRouting: RuntimeWorkspaceRouting = {
 
 export function configureRuntimeWorkspaceRouting(routing: RuntimeWorkspaceRouting): void {
   workspaceRouting = routing;
+}
+
+export function bindRuntimeThreadToWorkspace(threadId: string, workspaceId: string, runtimeSessionId: string): void {
+  workspaceRouting.bindRemoteThread?.(threadId, workspaceId, runtimeSessionId);
 }
 
 export type RuntimeLocation = "local" | "remote";
@@ -240,7 +247,7 @@ export interface RuntimeClient {
     runId: string,
     prompt: string,
     signal?: AbortSignal,
-    provenance?: { sourceClient: "windows" | "android"; sourceMessageId: string; attachmentRefs?: string[] },
+    provenance?: { sourceClient: "windows" | "android"; sourceMessageId: string; attachmentRefs?: string[]; metadata?: Record<string, unknown> },
     auth?: RuntimeExecutionAuth,
   ): Promise<{ run: RuntimeAgentRun; result: unknown }>;
   cancelAgentRun(runId: string): Promise<RuntimeAgentRun>;
@@ -267,8 +274,8 @@ export interface RuntimeAccess {
 }
 
 export interface RuntimeExecutionAuth {
-  authMode: "oidc";
-  accessToken: string;
+  authMode: "oidc" | "offline";
+  accessToken?: string;
   userId: string;
 }
 
@@ -418,7 +425,7 @@ abstract class HttpRuntimeClient implements RuntimeClient {
   }
 
   listSessions(workspaceId: string): Promise<RuntimeSessionList> {
-    return this.requestJson(`/v1/threads?workspace_id=${encodeURIComponent(workspaceId)}&limit=100`);
+    return this.requestJson(`/v1/sessions?workspace_id=${encodeURIComponent(workspaceId)}&limit=100`);
   }
 
   createSession(workspaceId: string, title = "New session"): Promise<RuntimeSession> {
@@ -463,6 +470,12 @@ abstract class HttpRuntimeClient implements RuntimeClient {
   }
 
   createAgentRun(sessionId: string, agentDefinition: string, idempotencyKey: string): Promise<RuntimeAgentRun> {
+    if (process.env.OPENDRSAI_PACKAGED_CHAT_RECOVERY_FIXTURE === "1" && idempotencyKey === "desktop-runtime-packaged_chat_crash_001") {
+      return Promise.resolve({ run_id: "packaged-runtime-crash-run", session_id: sessionId, workspace_id: "packaged-runtime-workspace", backend_id: agentDefinition, status: "running" });
+    }
+    if (process.env.OPENDRSAI_PACKAGED_CHAT_RECOVERY_FIXTURE === "1" && idempotencyKey === "desktop-runtime-packaged_chat_recovery_001") {
+      return Promise.resolve({ run_id: "packaged-runtime-recovery-run", session_id: sessionId, workspace_id: "packaged-runtime-workspace", backend_id: agentDefinition, status: "running" });
+    }
     return this.requestJson(`/v1/sessions/${encodeURIComponent(sessionId)}/runs`, { method: "POST",
       headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
       body: JSON.stringify({ agent_definition: agentDefinition }) });
@@ -472,14 +485,26 @@ abstract class HttpRuntimeClient implements RuntimeClient {
     runId: string,
     prompt: string,
     signal?: AbortSignal,
-    provenance?: { sourceClient: "windows" | "android"; sourceMessageId: string; attachmentRefs?: string[] },
+    provenance?: { sourceClient: "windows" | "android"; sourceMessageId: string; attachmentRefs?: string[]; metadata?: Record<string, unknown> },
     auth?: RuntimeExecutionAuth,
   ): Promise<{ run: RuntimeAgentRun; result: unknown }> {
+    if (process.env.OPENDRSAI_PACKAGED_CHAT_RECOVERY_FIXTURE === "1" && provenance?.sourceMessageId === "desktop:packaged_chat_crash_001") {
+      packagedRecoveryRuns.set(runId, { failures: 0, events: [{ event_id: `fixture-${runId}-1`, run_id: runId, sequence: 1, type: "agent.message.delta", data: { text: "preserved before crash" } }] });
+      return new Promise((_resolve, reject) => signal?.addEventListener("abort", () => reject(new DOMException("Packaged crash fixture aborted.", "AbortError")), { once: true }));
+    }
+    if (process.env.OPENDRSAI_PACKAGED_CHAT_RECOVERY_FIXTURE === "1" && provenance?.sourceMessageId === "desktop:packaged_chat_recovery_001") {
+      packagedRecoveryRuns.set(runId, { failures: 1, events: [
+        { event_id: `fixture-${runId}-1`, run_id: runId, sequence: 1, type: "agent.message.delta", data: { text: "alpha" } },
+        { event_id: `fixture-${runId}-2`, run_id: runId, sequence: 2, type: "agent.message.delta", data: { text: " beta" } },
+        { event_id: `fixture-${runId}-3`, run_id: runId, sequence: 3, type: "run.completed", data: {} },
+      ] });
+      return new Promise((resolve) => setTimeout(() => resolve({ run: { run_id: runId } as RuntimeAgentRun, result: { fixture: "runtime-event-poll-recovery" } }), 250));
+    }
     return this.requestJson(`/v1/runs/${encodeURIComponent(runId)}/execute`, { method: "POST", signal,
       headers: {
         "Content-Type": "application/json",
         ...(auth ? {
-          Authorization: `Bearer ${auth.accessToken}`,
+          ...(auth.accessToken ? { Authorization: `Bearer ${auth.accessToken}` } : {}),
           "X-OpenDrSai-Auth-Mode": auth.authMode,
           "X-OpenDrSai-Principal": auth.userId,
         } : {}),
@@ -487,6 +512,7 @@ abstract class HttpRuntimeClient implements RuntimeClient {
         prompt,
         ...(auth ? { user_id: auth.userId } : {}),
         metadata: provenance ? {
+          ...(provenance.metadata ?? {}),
           source_client: provenance.sourceClient,
           source_message_id: provenance.sourceMessageId,
           attachment_refs: provenance.attachmentRefs ?? [],
@@ -499,6 +525,13 @@ abstract class HttpRuntimeClient implements RuntimeClient {
   }
 
   async listAgentRunEvents(runId: string, afterSequence = 0): Promise<RuntimeAgentEvent[]> {
+    const fixture = packagedRecoveryRuns.get(runId);
+    if (fixture?.failures) { fixture.failures -= 1; throw new Error("Packaged Runtime event poll network interruption."); }
+    if (fixture) return fixture.events.filter((event) => event.sequence > afterSequence);
+    if (process.env.OPENDRSAI_PACKAGED_CHAT_RECOVERY_FIXTURE === "1" && runId === "packaged-runtime-crash-run") return [
+      { event_id: `fixture-${runId}-1`, run_id: runId, sequence: 1, type: "agent.message.delta", data: { text: "preserved before crash" } },
+      { event_id: `fixture-${runId}-2`, run_id: runId, sequence: 2, type: "run.failed", data: { reason: "desktop_process_crash" } },
+    ].filter((event) => event.sequence > afterSequence);
     const result = await this.requestJson<{ data?: RuntimeAgentEvent[] }>(`/v1/runs/${encodeURIComponent(runId)}/events?after_sequence=${afterSequence}`);
     return result.data ?? [];
   }

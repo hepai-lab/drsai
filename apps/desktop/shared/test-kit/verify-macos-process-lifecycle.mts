@@ -13,6 +13,7 @@ for (const contract of ["gatewayStartPromise", "gatewayStopPromise", "checkGatew
 }
 assert.match(gateway, /gatewayProcess\.once\("error"/, "Gateway spawn errors must be observed.");
 assert.match(processes, /SIGTERM[\s\S]*SIGKILL/, "macOS process groups require graceful then forced termination.");
+assert.match(processes, /signalledGroup \? group : pid/, "macOS process cleanup must check the PID fallback when the child is not a process-group leader.");
 assert.match(terminal, /signalProcessGroup\(session\.pid, "SIGTERM"\)[\s\S]*signalProcessGroup\(session\.pid, "SIGKILL"\)/, "PTY process groups require graceful then forced termination.");
 assert.match(terminal, /process\.kill\(-Math\.abs\(pid\), signal\)/, "PTY signals must target the process group.");
 assert.match(terminal, /Promise\.race\(\[session\.exitPromise, delay\(TERMINATE_GRACE_MS\)\]\)/, "PTY cleanup must wait for graceful exit before forcing termination.");
@@ -21,7 +22,7 @@ for (const cleanup of ["terminal-sessions", "voice-files", "runtime-install", "g
   assert.ok(shutdownPlan.includes(`name: "${cleanup}"`), `App shutdown plan omits ${cleanup}.`);
 }
 assert.ok(main.includes("createMacosShutdownPlan({"), "App shutdown dependencies must be injected by the composition root.");
-assert.ok(main.includes("shutdownCoordinator.run(plan.map((step) => step.run))"), "App shutdown must run the named plan through the bounded coordinator.");
+assert.match(main, /shutdownCoordinator\.run\(plan\.map\(\(step\) => step\.run\), 15_000\)/, "App shutdown must run the named plan through the calibrated bounded coordinator.");
 assert.ok(main.includes("managedProcessRegistry.beginShutdown()"), "App shutdown must reject new managed child processes before cleanup starts.");
 
 const coordinator = new MacosAppShutdownCoordinator();

@@ -12,6 +12,7 @@ import { startAgentRun } from "../../../../shared/main/agentRuns";
 import { listThreads, updateThread } from "../../../../shared/main/threads";
 import { listRuntimeWorktrees } from "../../../../shared/main/worktrees";
 import { writeTerminalSession } from "../terminal";
+import { remoteWorkspaceController } from "../../../../shared/main/remoteWorkspaceController";
 import type { MacosServiceContainer } from "../serviceContainer";
 
 export interface MacosTrustIpcDependencies {
@@ -44,8 +45,9 @@ export function registerMacosTrustIpc(
   });
   ipcMain.handle("desktop:git-commit-approval", async (_event, rawRequest) => {
     const request = normalizeGitCommitApprovalRequest(rawRequest); const allowed = await roots();
-    assertAllowedDesktopPath(request.workspacePath, allowed, { directory: true });
-    return services.approvals.propose({ source: "git", actionKind: "git.commit", title: "Create git commit", detail: request.body ? `git commit -m ${request.message}\n\n${request.body}` : `git commit -m ${request.message}`, target: request.workspacePath, risk: "high", checklist: request.checklist, idempotencyKey: gitCommitApprovalIdempotencyKey(request) }, (approval) => executeLocalGitCommit(request, allowed, approval.id));
+    const remote = await services.workspace.isRemoteTarget(request.workspacePath);
+    if (!remote) assertAllowedDesktopPath(request.workspacePath, allowed, { directory: true });
+    return services.approvals.propose({ source: "git", actionKind: "git.commit", title: "Create git commit", detail: request.body ? `git commit -m ${request.message}\n\n${request.body}` : `git commit -m ${request.message}`, target: request.workspacePath, risk: "high", checklist: request.checklist, idempotencyKey: gitCommitApprovalIdempotencyKey(request) }, (approval) => remote ? remoteWorkspaceController.commitGit(request, approval.id) : executeLocalGitCommit(request, allowed, approval.id));
   });
   ipcMain.handle("desktop:fork-lifecycle-approval", async (_event, rawRequest) => {
     if (!rawRequest || typeof rawRequest !== "object") throw new Error("Fork lifecycle approval request must be an object.");

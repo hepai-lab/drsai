@@ -83,6 +83,7 @@ jobs:
           npm run verify:update-feed:unsigned --workspace opendrsai-macos-desktop
           npm run verify:update-promotion:unsigned --workspace opendrsai-macos-desktop
           npm run verify:update-publish-plan --workspace opendrsai-macos-desktop
+          npm run verify:runtime-remote-parity --workspace opendrsai-macos-desktop
           npm run verify:security-p2 --workspace opendrsai-macos-desktop
           npm run verify:contract --workspace opendrsai-macos-desktop
           npm run verify:macos-ux --workspace opendrsai-macos-desktop

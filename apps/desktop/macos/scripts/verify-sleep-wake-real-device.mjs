@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
+import { createServer } from "node:net";
 
 if (process.platform !== "darwin" || process.arch !== "arm64") throw new Error("Sleep/wake acceptance requires Apple Silicon macOS hardware.");
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -17,10 +18,12 @@ const temp = mkdtempSync("/private/tmp/odsw-");
 const resultPath = join(temp, "result.json");
 const readyPath = join(temp, "ready.json");
 const home = join(temp, "home");
+const gatewayPort = await freePort();
 const child = spawn(executable, [], {
   env: {
     ...process.env,
     DRSAI_HOME: home,
+    DRSAI_API_PORT: String(gatewayPort),
     OPENDRSAI_RUNTIME_PERSIST: "0",
     OPENDRSAI_DEV_AUTH_BYPASS: "1",
     OPENDRSAI_E2E_AUTH_USER_ID: "sleep-wake-device-user",
@@ -121,5 +124,18 @@ function waitForExit(process, timeoutMs) {
   return new Promise((resolveExit, reject) => {
     const timer = setTimeout(() => reject(new Error("Timed out waiting for OpenDrSai to exit.")), timeoutMs);
     process.once("exit", (code) => { clearTimeout(timer); resolveExit(code); });
+  });
+}
+
+function freePort() {
+  return new Promise((resolvePort, reject) => {
+    const server = createServer();
+    server.unref();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      server.close((error) => error ? reject(error) : port ? resolvePort(port) : reject(new Error("Could not reserve a Gateway port.")));
+    });
   });
 }

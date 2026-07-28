@@ -2240,7 +2240,12 @@ async def runtime_mobile_pairing_register(request: MobilePairingRegistrationRequ
 
 @app.get("/v1/mobile-pairing/status")
 async def runtime_mobile_pairing_status():
-    return _mobile_pairing_service().readiness()
+    result = _mobile_pairing_service().readiness()
+    # Relay enrollment identity and Gateway process identity serve different
+    # scopes. Exposing both lets Desktop prove that pairing was routed to the
+    # Runtime that owns the selected Workspace without disclosing credentials.
+    result["gateway_runtime_id"] = _runtime_registry().identity.runtime_id
+    return result
 
 
 @app.get("/v1/mobile-pairing/diagnostics/workspace-lifecycles")
@@ -2763,6 +2768,10 @@ async def runtime_run_create(session_id: str, request: RuntimeRunCreateRequest, 
     try:
         _sync_desktop_session_id(session_id)
         state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
+        # Run creation can be the first Agent API call made by a freshly
+        # installed remote Runtime. Seed the built-ins before resolving the
+        # requested definition instead of relying on AgentService startup.
+        _ensure_builtin_agent_definitions(state_root)
         definition = AgentDefinitionStore(state_root / "assets" / "agents").load(request.agent_definition)
         run, created = _runtime_engine().create_run(
             session_id,
@@ -2812,31 +2821,23 @@ async def runtime_run_execute(run_id: str, request: RuntimeRunExecuteRequest, ra
         and metadata.get("packaged_recovery_fixture") is True
     )
     if packaged_recovery_fixture:
-        retry_attempt = metadata.get("network_retry_attempt")
-        resume_from_chars = metadata.get("resume_from_chars")
-        if (retry_attempt, resume_from_chars) not in {(0, 0), (1, 5)}:
-            raise HTTPException(status_code=409, detail="Packaged Chat recovery attempt/cursor pair is inconsistent.")
-
-        async def packaged_recovery_sse():
-            yield f"data: {json.dumps({'choices': [{'delta': {'content': 'alpha'}}]})}\n\n"
-            if retry_attempt == 0:
-                # Deliberately end a real HTTP response without [DONE]. The
-                # Desktop must classify the incomplete stream as recoverable.
-                return
-            yield f"data: {json.dumps({'choices': [{'delta': {'content': ' beta'}}]})}\n\n"
-            yield "data: [DONE]\n\n"
-
-        return StreamingResponse(
-            packaged_recovery_sse(),
-            media_type="text/event-stream",
-            headers={
-                "X-Drsai-Session-Id": request.thread_id or fixture_request_id,
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-                "X-OpenDrSai-Packaged-Recovery-Fixture": "1",
-            },
+        fixture_run = _runtime_engine().get_run(run_id)
+        _runtime_engine().set_run_input(
+            run_id,
+            request.prompt,
+            source_client="windows",
+            source_message_id=str(metadata.get("source_message_id") or fixture_request_id),
         )
+        if fixture_run["status"] == "queued":
+            _runtime_engine().transition_run(run_id, "running")
+        _runtime_engine().append_backend_event(
+            run_id, "agent.message.delta", {"text": "alpha"}, f"fixture:{run_id}:alpha",
+        )
+        _runtime_engine().append_backend_event(
+            run_id, "agent.message.delta", {"text": " beta"}, f"fixture:{run_id}:beta",
+        )
+        completed_run = _runtime_engine().transition_run(run_id, "completed")
+        return {"run": completed_run, "result": {"fixture": "remote-runtime-events"}}
 
     auth_context = None
     if raw_request.headers.get("x-opendrsai-auth-mode") == "oidc":
@@ -3460,7 +3461,7 @@ async def remote_workspace_file(workspace_id: str, raw_request: Request, path: s
     except UnicodeDecodeError:
         content = ""
         binary = True
-    common = {"path": str(target.relative_to(_workspace_root(workspace_id))).replace("\\", "/"), "mime": mime, "truncated": size > max_bytes, "size": size, "modified_at": target.stat().st_mtime}
+    common = {"path": str(target.relative_to(_workspace_root(workspace_id))).replace("\\", "/"), "mime": mime, "truncated": size > max_bytes, "size": size, "modified_at": target.stat().st_mtime, "sha256": _stream_file_sha256(target)}
     if binary:
         return {**common, "data_url": f"data:{mime};base64,{base64.b64encode(sample).decode('ascii')}", "binary": True, "encoding": None}
     return {**common, "content": content, "binary": False, "encoding": "utf-8"}

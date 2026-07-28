@@ -28,7 +28,7 @@ import { recordAgentTelemetry } from "./agentTelemetry";
 import { analyzeMaterialRoles } from "./workspaceContext";
 import { assertAgentCircuitAvailable, recordAgentCircuitFailure, recordAgentCircuitSuccess } from "./agentCircuitBreaker";
 import { createFailureEscalation, getFailureRecovery } from "./failureRecovery";
-import { connectRuntimeClientForWorkspace, type RuntimeClient, type RuntimeAgentEvent } from "./runtimeClient";
+import { bindRuntimeThreadToWorkspace, connectRuntimeClientForWorkspace, type RuntimeClient, type RuntimeAgentEvent } from "./runtimeClient";
 import { sessionPayloadHash, sessionSyncState } from "./sessionSyncState";
 import {
   RecoverableStreamError,
@@ -67,7 +67,7 @@ function getChatEventDispatcher(target: ChatEventTarget): BoundedEventDispatcher
 export interface ChatRemoteRouting {
   resolveTarget(workspacePath?: string, workspaceId?: string): Promise<"remote_online" | "remote_offline" | "local_or_unknown">;
   getGatewayAccess(workspacePath?: string, workspaceId?: string): { baseUrl: string; token: string; workspaceId: string } | null;
-  bindThread(threadId: string, workspaceId: string): void;
+  bindThread(threadId: string, workspaceId: string, runtimeSessionId?: string): void;
 }
 
 export function configureChatRemoteRouting(_routing: ChatRemoteRouting): void {
@@ -216,6 +216,8 @@ export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEven
   const push = (event: Omit<ChatEvent, "requestId" | "sessionId" | "seq">) => {
     recovered.push({ ...event, requestId, sessionId, seq: ++sequence });
   };
+  const recorded = await listRecordedChatRunEvents(thread.lastRunId);
+  for (const event of recorded) if (event.type === "connection") push({ type: "connection", runId: thread.lastRunId, connection: event.connection });
   const target = { approvalId: undefined as string | undefined };
   for (const event of events) {
     const mapped = mapCodexRuntimeEvent(requestId, sessionId, thread.lastRunId, event, target);
@@ -680,6 +682,7 @@ async function runRuntimeBackendChat(
   if (!runtimeSessionId) {
     runtimeSessionId = (await client.createSession(resolved.workspaceId, deriveThreadTitle(request.messages))).session_id;
   }
+  bindRuntimeThreadToWorkspace(displaySessionId, resolved.workspaceId, runtimeSessionId);
   const sourceMessageId = `desktop:${requestId}`;
   const idempotencyKey = `desktop-runtime-${requestId}`;
   await sessionSyncState.beginOutbox(runtimeSessionId, {
@@ -726,10 +729,13 @@ async function runRuntimeBackendChat(
       sourceClient: "windows",
       sourceMessageId,
       attachmentRefs: (request.attachments ?? []).map((item) => item.path),
+      metadata: { ...(request.metadata ?? {}), desktop_request_id: requestId },
     },
     auth.authMode === "oidc" && auth.accessToken
       ? { authMode: "oidc", accessToken: auth.accessToken, userId: auth.userId }
-      : undefined,
+      : auth.authMode === "offline"
+        ? { authMode: "offline", userId: auth.userId }
+        : undefined,
   )
     .catch((error) => { failure = error; })
     .finally(() => { completed = true; });

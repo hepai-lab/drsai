@@ -21,6 +21,10 @@ extraResources:
     filter:
       - "*.py"
       - "requirements.txt"
+  - from: ../../../cores/python/packages/drsai/src/drsai/content/pdf/presentation.py
+    to: python/presentation_pdf.py
+  - from: ../windows/resources/presentation/manager-deck-template.pptx
+    to: presentation/manager-deck-template.pptx
   - from: resources/runtime
     to: runtime
     filter:

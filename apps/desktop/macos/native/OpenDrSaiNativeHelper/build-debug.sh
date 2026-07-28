@@ -17,9 +17,10 @@ if [[ ! -x "${SWIFTC}" ]]; then echo "Swift compiler is missing: ${SWIFTC}" >&2;
 mkdir -p "${OUTPUT}" "${CACHE}"
 "${SWIFTC}" -sdk "${SDK}" -module-cache-path "${CACHE}" -Onone -target arm64-apple-macosx11.0 \
   -Xlinker -no_uuid \
+  -Xlinker -install_name -Xlinker "@rpath/lib${MODULE}.dylib" \
   -emit-library -emit-module -module-name "${MODULE}" \
   -emit-module-path "${OUTPUT}/${MODULE}.swiftmodule" \
-  "${ROOT}/Sources/${MODULE}/NativeProtocol.swift" "${ROOT}/Sources/${MODULE}/Keychain.swift" "${ROOT}/Sources/${MODULE}/SystemPermissions.swift" -framework Security -framework AVFoundation -framework ApplicationServices -framework CoreGraphics -framework AppKit \
+  "${ROOT}/Sources/${MODULE}/NativeProtocol.swift" "${ROOT}/Sources/${MODULE}/Keychain.swift" "${ROOT}/Sources/${MODULE}/SystemPermissions.swift" -framework Security -framework AVFoundation -framework ApplicationServices -framework CoreGraphics -framework CoreServices -framework AppKit \
   -o "${OUTPUT}/lib${MODULE}.dylib"
 "${SWIFTC}" -sdk "${SDK}" -module-cache-path "${CACHE}" -Onone -target arm64-apple-macosx11.0 \
   -Xlinker -no_uuid \
