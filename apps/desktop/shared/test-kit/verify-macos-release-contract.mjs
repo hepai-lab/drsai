@@ -41,6 +41,10 @@ const workflow = readFileSync(resolve(desktopRoot, "../../.github/workflows/maco
 const gateway = readFileSync(resolve(root, "../../../cores/python/packages/drsai/src/drsai/backend/gateway.py"), "utf8");
 const updateRunbook = read("docs/macos-update-production-runbook.zh-CN.md");
 
+assert.ok(releaseL6.includes('const appExecutable = join(app, "Contents", "MacOS", "OpenDrSai")'), "L6 receipts must hash the App executable instead of reading the App directory.");
+assert.ok(releaseL6.includes("sha256(appExecutable)"), "L6 receipts must bind to the App executable digest.");
+assert.equal(releaseL6.includes("sha256(app)"), false, "L6 must not pass an App directory to readFileSync-based hashing.");
+
 for (const path of ["build/entitlements.mac.plist", "build/entitlements.mac.inherit.plist"]) {
   assert.ok(existsSync(resolve(root, path)), `missing macOS entitlement file: ${path}`);
   const source = read(path);
@@ -123,6 +127,7 @@ for (const contract of ["readFileSync(bundledRuntimeManifestPath()", "isSafeRela
 assert.ok(read("scripts/verify-update-assets.mjs").includes("2 * 1024 * 1024 * 1024"), "Update asset gate must enforce GitHub's 2 GiB per-file limit");
 for (const contract of ["Runtime compatibility metadata", 'manifest.archive.endsWith(".tar.gz")', "bundled archive absent by design", "64 * 1024 * 1024"]) assert.ok(thinPackageVerifier.includes(contract), `Thin update package verifier omits ${contract}`);
 assert.ok(packageJson.scripts["verify:update-thin-package"], "macOS package omits thin update structure verification");
+assert.ok(metadataAnnotator.includes('--compatible-runtime-manifest'), "Update metadata annotation cannot target the persisted Runtime required by a thin update");
 for (const contract of ["opendrsaiRuntimeVersion", "opendrsaiRuntimeSha256", "runtime-manifest.json"]) assert.ok(metadataAnnotator.includes(contract), `Update metadata annotator omits ${contract}`);
 for (const contract of ["runtimeCompatibleWith", "inspectInstalledRuntime", "macos-update-runtime-incompatible", "Install the full DMG", "archiveSha256"]) assert.ok(`${updater}\n${updateFeedPolicy}`.includes(contract), `Updater Runtime compatibility gate omits ${contract}`);
 assert.ok(packageJson.scripts["annotate:update-metadata"], "macOS package omits Runtime metadata annotation");
@@ -175,6 +180,9 @@ for (const contract of ["OPENDRSAI_MACOS_PACKAGED_SCENARIO", '"tcc"', "microphon
 }
 for (const contract of ["https:", "online-signed-update", "onlineUpdateInstalled: true", "healthConfirmed: true", "userDataPreserved: true", "installedAppExecutableSha256", "codesign"] ) {
   assert.ok(onlineUpdateL6.includes(contract), `macOS signed online update L6 omits ${contract}`);
+}
+for (const contract of ["runtime-bootstrap.json", 'OPENDRSAI_MACOS_PACKAGED_SCENARIO: "smoke"', "waitForVersion", "--user-data-dir=", 'spawnSync("/usr/bin/pkill"']) {
+  assert.ok(onlineUpdateL6.includes(contract), `macOS signed online update L6 does not initialize the previous release Runtime: ${contract}`);
 }
 for (const contract of ['scenario === "tcc"', 'requestSystemPermission("microphone")', 'requestSystemPermission("automation")', 'requestSystemPermission("notifications")', 'openSystemPermissionSettings("files")']) {
   assert.ok(read("src/main/packagedSmoke.ts").includes(contract), `macOS packaged TCC scenario omits ${contract}`);

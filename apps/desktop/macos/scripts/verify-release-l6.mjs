@@ -12,6 +12,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const release = join(root, "release");
 const acceptance = join(root, "build", "acceptance");
 const app = join(release, "mac-arm64", "OpenDrSai.app");
+const appExecutable = join(app, "Contents", "MacOS", "OpenDrSai");
 const dmg = singleArtifact(".dmg");
 const zip = singleArtifact(".zip");
 const latest = join(release, "latest-mac.yml");
@@ -22,16 +23,16 @@ const codesign = run("/usr/bin/codesign", ["--verify", "--deep", "--strict", "--
 const signature = run("/usr/bin/codesign", ["-d", "--verbose=4", app]);
 assert.match(signature, /Authority=Developer ID Application:/);
 assert.match(signature, /TeamIdentifier=[A-Z0-9]+/);
-receipt("codesign-strict", { featureIds: ["F12.2"], appSha256: sha256(app), verification: codesign.trim() || "codesign --strict passed", identity: signatureLines(signature) });
+receipt("codesign-strict", { featureIds: ["F12.2"], appSha256: sha256(appExecutable), verification: codesign.trim() || "codesign --strict passed", identity: signatureLines(signature) });
 
 const gatekeeper = run("/usr/sbin/spctl", ["--assess", "--type", "execute", "--verbose=4", app]);
 assert.match(gatekeeper, /accepted/i);
-receipt("gatekeeper", { featureIds: ["F12.3"], appSha256: sha256(app), assessment: gatekeeper.trim() });
+receipt("gatekeeper", { featureIds: ["F12.3"], appSha256: sha256(appExecutable), assessment: gatekeeper.trim() });
 
 const appStaple = run("/usr/bin/xcrun", ["stapler", "validate", app]);
 const dmgStaple = run("/usr/bin/xcrun", ["stapler", "validate", dmg]);
 assert.match(`${appStaple}\n${dmgStaple}`, /worked|valid/i);
-receipt("notarization-staple", { featureIds: ["F12.3"], appSha256: sha256(app), dmgSha256: sha256(dmg), appStaple: appStaple.trim(), dmgStaple: dmgStaple.trim() });
+receipt("notarization-staple", { featureIds: ["F12.3"], appSha256: sha256(appExecutable), dmgSha256: sha256(dmg), appStaple: appStaple.trim(), dmgStaple: dmgStaple.trim() });
 
 const clean = await verifyCleanInstall();
 receipt("clean-install", { featureIds: ["F12.4"], ...clean });
