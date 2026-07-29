@@ -25,7 +25,7 @@ assert.equal(zipName, `OpenDrSai-macOS-v${version}-arm64.zip`);
 const dmgName = `OpenDrSai-macOS-v${version}-arm64.dmg`;
 for (const name of [zipName, dmgName]) assert.ok(existsSync(join(release, name)), `Missing ${name}`);
 
-const versionPrefix = `releases/v${version}/macos/arm64`;
+const versionPrefix = `releases/v${version}/macos`;
 const channelPrefix = "channels/stable/macos/arm64";
 const historyKey = `channels/history/macos/arm64/v${version}/latest-mac.yml`;
 const stableTarget = `oss://${bucket}/${channelPrefix}/latest-mac.yml`;

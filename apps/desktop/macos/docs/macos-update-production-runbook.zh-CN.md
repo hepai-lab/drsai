@@ -36,7 +36,7 @@ Environment 应至少启用一名 required reviewer。`publish_release=true` 的
 发布身份只需要：
 
 - 读取/检查 `hepai-release` 中目标对象；
-- 创建当前版本的 `releases/v*/macos/arm64/*`；
+- 创建当前版本的 `releases/v*/macos/*`（文件名必须包含架构）；
 - 创建版本化 `channels/stable/macos/arm64/OpenDrSai-macOS-v*-arm64.zip`；
 - 创建 `channels/history/macos/arm64/v*/latest-mac.yml`；
 - 创建 `channels/rollback/macos/arm64/before-v*/latest-mac.yml`；

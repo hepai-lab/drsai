@@ -16,8 +16,8 @@
 /releases/v1.5.2/android/OpenDrSai-Android-v1.5.2.apk
 /channels/beta/latest-windows.json
 /channels/beta/latest-android.json
-/releases/v1.5.2/macos/arm64/OpenDrSai-macOS-v1.5.2-arm64.dmg
-/releases/v1.5.2/macos/arm64/OpenDrSai-macOS-v1.5.2-arm64.zip
+/releases/v1.5.2/macos/OpenDrSai-macOS-v1.5.2-arm64.dmg
+/releases/v1.5.2/macos/OpenDrSai-macOS-v1.5.2-arm64.zip
 /channels/stable/latest-windows.json
 /channels/stable/latest-android.json
 /channels/stable/macos/arm64/latest-mac.yml
@@ -26,7 +26,7 @@
 
 - Windows MSI 固定命名为 `OpenDrSai-Windows-Installer-x64.msi`；Runtime ZIP 使用 `OpenDrSai-Windows-v{version}-x64.zip`。
 - macOS 完整 DMG（含首次安装 Runtime）用于 CDN 首次安装；应用内更新 ZIP 不重复携带已持久化到 `~/.drsai` 的 Runtime，以满足 GitHub Release 单资产小于 2 GiB 的限制。ZIP 和 `latest-mac.yml` 同步发布到 CDN 与 GitHub；首发只支持 Apple Silicon arm64。
-- macOS Channel 目录保留同字节的版本化 ZIP 别名，使同一份相对 URL `latest-mac.yml` 可同时用于 Generic CDN 和 GitHub Release；该 ZIP 名含版本且不可覆盖，权威归档仍位于 `/releases/v版本/macos/arm64/`。
+- macOS Channel 目录保留同字节的版本化 ZIP 别名，使同一份相对 URL `latest-mac.yml` 可同时用于 Generic CDN 和 GitHub Release；该 ZIP 名含版本和架构且不可覆盖，权威归档位于 `/releases/v版本/macos/`。
 - `/releases/v版本/`：不可覆盖，缓存一年，发布后预热 MSI、ZIP、APK、DMG。
 - `/channels/stable/`：缓存 30～60 秒，不预热；更新清单最后上传。
 - 不对 MSI、ZIP、APK、DMG 做 CDN 动态压缩；客户端必须校验版本、文件大小和 SHA-256。macOS 还必须通过 Apple 代码签名验证后才允许安装。
