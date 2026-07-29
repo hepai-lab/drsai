@@ -56,7 +56,7 @@ assert.equal(evidence.sourceAggregateSha256, snapshot.aggregateSha256);
 assert.equal(evidence.platform, "darwin-arm64");
 assert.equal(evidence.passed, true);
 assertEvidenceFeatureCoverage(evidence);
-assert.deepEqual(evidence.tests.map((test) => test.testId).sort(), ["packaged-smoke", "runtime-reproducibility"]);
+assert.deepEqual(evidence.tests.map((test) => test.testId).sort(), ["catalog-l4-feature-suites", "packaged-smoke", "runtime-reproducibility"]);
 assert.ok(evidence.tests.every((test) => test.passed === true));
 assert.ok(Array.isArray(evidence.artifacts) && evidence.artifacts.length >= 2);
 for (const artifact of evidence.artifacts) {
@@ -70,8 +70,8 @@ console.log(`macOS L4 evidence passed: commit=${evidence.commit}, source=${evide
 
 let previous = evidence;
 for (const [level, requiredTests] of [
-  ["L5", ["packaged-core-journeys", "packaged-product-journeys", "restart-stability", "fault-injection"]],
-  ["L6", ["codesign-strict", "gatekeeper", "notarization-staple", "clean-install", "signed-update-rollback", "tcc-real-device"]],
+  ["L5", ["packaged-core-journeys", "packaged-product-journeys", "restart-stability", "fault-injection", "catalog-l5-feature-suites"]],
+  ["L6", ["codesign-strict", "gatekeeper", "notarization-staple", "clean-install", "signed-update-rollback", "tcc-real-device", "catalog-l6-feature-suites"]],
 ]) {
   const path = resolve(acceptanceRoot, `macos-${level.toLowerCase()}-evidence.json`);
   if (!existsSync(path)) {
