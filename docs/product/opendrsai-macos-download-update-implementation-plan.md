@@ -17,7 +17,7 @@
 
 ```text
 https://download-opendrsai.ihep.ac.cn/
-├── releases/v1.5.2/macos/arm64/
+├── releases/v1.5.2/macos/
 │   ├── OpenDrSai-macOS-v1.5.2-arm64.dmg
 │   └── OpenDrSai-macOS-v1.5.2-arm64.zip
 └── channels/stable/macos/arm64/
