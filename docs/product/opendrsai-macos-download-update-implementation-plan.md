@@ -123,7 +123,7 @@ fallback: https://github.com/hepai-lab/drsai/releases/latest/download/
 
 发布 Runner 只获得以下最小权限：
 
-- 写入当前版本的 `releases/vX/macos/arm64/*`；
+- 写入当前版本的 `releases/vX/macos/*`（文件名必须包含架构）；
 - 写入 `channels/stable/macos/arm64/latest-mac.yml.tmp-*`；
 - 在 promote job 中替换唯一 stable key；
 - 读取并校验既有版本资产；
