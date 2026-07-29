@@ -4,6 +4,7 @@ import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { currentCommit } from "./acceptanceEvidence.mjs";
+import { catalogLevelReceipt } from "./platformFeatureEvidence.mjs";
 
 if (process.platform !== "darwin" || process.arch !== "arm64") throw new Error("L6 evidence must be recorded on Apple Silicon macOS.");
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -26,6 +27,7 @@ const receipts = testIds.map((testId) => {
   assert.equal(receipt.passed, true);
   return { path, receipt };
 });
+const catalog = catalogLevelReceipt("L6", readJson("feature-test-results.json"));
 const signed = receipts.find(({ receipt }) => receipt.testId === "signed-update-rollback").receipt;
 assert.equal(signed.onlineUpdateInstalled, true);
 assert.equal(signed.healthConfirmed, true);
@@ -48,9 +50,9 @@ const evidence = {
   sourceAggregateSha256: snapshot.aggregateSha256,
   platform: "darwin-arm64",
   passed: true,
-  featureIds: verifiedFeatureIds(receipts.map(({ receipt }) => receipt)),
+  featureIds: verifiedFeatureIds([...receipts.map(({ receipt }) => receipt), catalog]),
   previousLevelEvidenceSha256: hash(l5),
-  tests: receipts.map(({ receipt }) => ({ testId: receipt.testId, passed: true, featureIds: receipt.featureIds, generatedAt: receipt.generatedAt })),
+  tests: [...receipts.map(({ receipt }) => ({ testId: receipt.testId, passed: true, featureIds: receipt.featureIds, generatedAt: receipt.generatedAt })), catalog],
   artifacts: receipts.map(({ path }) => artifact(path)),
   generatedAt: new Date().toISOString(),
 };
