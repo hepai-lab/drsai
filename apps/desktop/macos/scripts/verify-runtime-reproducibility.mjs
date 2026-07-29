@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { copyFileSync, createReadStream, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 if (process.platform !== "darwin" || process.arch !== "arm64") throw new Error("Runtime reproducibility must run on Apple Silicon macOS.");
@@ -50,7 +50,13 @@ function build() {
 
 function removeGeneratedRuntime() {
   const outputRoot = join(root, "resources/runtime");
-  for (const name of ["runtime-manifest.json", "runtime-sbom-1.5.1.json", "runtime-provenance-1.5.1.json", "opendrsai-runtime-macos-arm64-1.5.1.tar.gz"]) rmSync(join(outputRoot, name), { force: true });
+  for (const name of readdirSync(outputRoot)) {
+    if (
+      name === "runtime-manifest.json"
+      || /^runtime-(?:sbom|provenance)-\d+\.\d+\.\d+\.json$/.test(name)
+      || /^opendrsai-runtime-macos-arm64-\d+\.\d+\.\d+\.tar\.gz$/.test(name)
+    ) rmSync(join(outputRoot, name), { force: true });
+  }
 }
 
 function runGitHead() {

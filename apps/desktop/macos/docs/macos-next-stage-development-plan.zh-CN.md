@@ -1,11 +1,12 @@
 # OpenDrSai macOS 下一阶段开发计划
 
-更新时间：2026-07-28  
-基线分支：`feature/desktop`  
-基线提交：`3a6726cb`  
-macOS 版本：`1.5.1`  
-Windows 对照版本：`1.5.3`  
-当前发布判定：`distribution-ready / install-unverified / production-promotion-blocked`
+更新时间：2026-07-29<br>
+基线分支：`feature/desktop`<br>
+基线提交：`d2bbd033`<br>
+macOS 已发布版本：`1.5.1`<br>
+macOS 开发版本：`1.5.3`<br>
+Windows 对照版本：`1.5.3`<br>
+当前发布判定：`v1.5.1 production-published / v1.5.3 development`
 
 ## 1. 阶段目标
 

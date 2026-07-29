@@ -1,23 +1,45 @@
 # OpenDrSai macOS 下一阶段实施进度
 
-更新时间：2026-07-28  
-当前轮次：R12（进行中）  
-范围：非签名开发 4 个模块、11 个功能点  
-签名边界：Developer ID、公证、signed L6 和生产 stable 首发暂不计入本阶段进度
+## R34：v1.5.1 发布收口与 v1.5.3 开发版本启动
+
+### 已完成
+
+- 核验发布线程 `019f8aea-154f-7d03-8604-491848ca81ba`：v1.5.1 Developer ID 签名、公证、DMG、更新 ZIP、stable feed、OSS/CDN 与不可变 `release-info.json` 已发布并回读验证。
+- 当前 `feature/desktop` 已同步到发布提交 `d2bbd033`，工作区无未合并发布改动。
+- macOS 开发版本提升到 `1.5.3`，与 Windows 对照版本一致；workspace lockfile 同步更新。
+- Runtime 可复现性脚本移除 `1.5.1` 硬编码，按受限文件名模式清理任意语义版本的 manifest、SBOM、provenance 和 archive，防止版本升级后旧工件污染双构建。
+
+### 自动化结果
+
+- TypeScript typecheck：通过。
+- 更新 feed 策略契约：通过。
+- 完整 `verify:contract`：通过，包含安全 IPC、恢复、Keychain、系统权限、Runtime、文件与 workspace registry 并发原子性。
+
+### 当前进度
+
+- v1.5.1 已完成生产发布；v1.5.3 已进入开发与重新验收阶段。
+- 模块：3/4（75.00%）。
+- 功能点：10/11（90.91%）。
+- 下一步：提交版本升级，基于 clean v1.5.3 revision 重建 Runtime，生成新的 source/L4/L5/L6 证据并验证从 v1.5.1 到 v1.5.3 的签名更新链。
+
+更新时间：2026-07-29<br>
+当前轮次：R34（进行中）<br>
+范围：完整开发与发布验收，共 4 个模块、11 个功能点<br>
+发布基线：v1.5.1 已完成 Developer ID 签名、公证与生产 stable 首发；v1.5.3 正在开发
 
 ## 当前汇总
 
 | 指标 | 完成 | 总数 | 进度 |
 | --- | ---: | ---: | ---: |
-| 模块 | 1 | 4 | 25.00% |
-| 功能点 | 8 | 11 | 72.73% |
+| 模块 | 3 | 4 | 75.00% |
+| 功能点 | 10 | 11 | 90.91% |
 
 | 模块 | 功能点 | 状态 |
 | --- | ---: | --- |
 | M1 Runtime Conversation 与 Remote Workspace 对齐 | 5/5 | completed |
 | M2 macOS packaged 等价验收 | 3/4 | in_progress |
-| M3 clean L4 | 0/1 | pending |
-| M4 full unsigned L5 | 0/1 | pending |
+| M3 clean L4 | 1/1 | completed |
+| M4 full unsigned L5 | 1/1 | completed |
 
 ## R7：真实 OpenSSH transport 与长驻隧道修复（阶段报告 6）
 

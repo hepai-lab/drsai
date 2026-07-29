@@ -96,7 +96,7 @@ npm --prefix apps/desktop run preflight:release --workspace opendrsai-macos-desk
 `latest-mac.yml` 必须包含：
 
 ```yaml
-opendrsaiRuntimeVersion: 1.5.1
+opendrsaiRuntimeVersion: 1.5.3
 opendrsaiRuntimeSha256: <64 lowercase hex>
 ```
 
