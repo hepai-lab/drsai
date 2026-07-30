@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { IpcRendererEvent } from "electron";
 
 const desktopPlatform = process.platform === "darwin" ? "macos" : "windows";
@@ -738,6 +738,7 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:save-api-key", apiKey, defaultModel),
   pickFiles: () => ipcRenderer.invoke("desktop:pick-files"),
   pickFolder: () => ipcRenderer.invoke("desktop:pick-folder"),
+  getPathForFile: (file: File): string => webUtils.getPathForFile(file),
   getWorkspaceContextOverview: (
     workspacePath: string,
     workspaceId?: string,

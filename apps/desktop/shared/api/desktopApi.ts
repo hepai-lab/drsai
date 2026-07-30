@@ -533,6 +533,8 @@ export interface DesktopVoiceSynthesisRequest {
   voice?: string;
   speed?: number;
   format?: DesktopVoiceAudioFormat;
+  /** Optional runtime override; defaults to the globally configured runtime. */
+  runtime?: DesktopVoiceSynthesisRuntimeId;
 }
 
 export interface DesktopVoiceSynthesisStartResult {
@@ -3010,6 +3012,8 @@ export interface DesktopThreadMessageSnapshot extends ChatMessage {
   attachments?: ChatAttachment[];
   startedAt?: number;
   lastEventAt?: number;
+  /** Files/folders attached when the user sent this message. */
+  attachments?: ChatAttachment[];
 }
 
 export interface DesktopThreadSnapshot {
@@ -4608,6 +4612,7 @@ export interface DesktopApi {
   saveApiKey(apiKey: string, defaultModel?: string): Promise<SaveApiKeyResult>;
   pickFiles(): Promise<PickDialogResult>;
   pickFolder(): Promise<PickDialogResult>;
+  getPathForFile(file: File): string;
   checkBrowserUrl(url: string): Promise<BrowserUrlCheck>;
   requestBrowserAction(
     request: BrowserActionRequest,

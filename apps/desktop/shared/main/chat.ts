@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { appendFileSync, mkdirSync } from "fs";
-import { readFile, stat } from "fs/promises";
-import { dirname } from "path";
+import { readFile, stat, copyFile, mkdir, writeFile } from "fs/promises";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "path";
 import type { ChatAttachment, ChatEvent, ChatMessage, ChatRequest, MaterialRoleItem } from "../api/desktopApi";
 import { invalidateAuthSession, refreshAuthContextAfterUnauthorized, requireAuthContext, type AuthContext } from "./auth";
 import { getPlatformAgentChatUrl, getPlatformAgentExecutionDescriptor, isPlatformAgentExecutionAvailable, respondToPlatformChatInput, stopPlatformChat } from "./agents";
@@ -691,6 +691,149 @@ async function runChat(
   }
 }
 
+interface StagedAttachments {
+  attachments: ChatAttachment[];
+  /** Worktree-relative paths for Runtime attachmentRefs. */
+  refs: string[];
+  /** Prompt suffix describing the staged files (empty string if none). */
+  promptSuffix: string;
+}
+
+/**
+ * Stage file attachments into the workspace so the Agent can access them.
+ *
+ * Worktree-external files are copied into
+ * `<workspacePath>/.opendrsai/attachments/<runId>/<originalName>`.
+ * Files already inside the workspace are left in place and only their
+ * relative path is recorded.
+ *
+ * The `.opendrsai` directory is git-ignored on first write so workspace
+ * repos are not polluted.
+ *
+ * This function never throws — failed copies are recorded as a note on the
+ * attachment so the user can see what went wrong, but the chat proceeds.
+ *
+ * TODO: auto-cleanup of `<workspacePath>/.opendrsai/attachments/<runId>`
+ * after the run completes or is garbage-collected.
+ */
+async function stageAttachments(
+  rawAttachments: ChatRequest["attachments"],
+  workspacePath: string,
+  runId: string,
+): Promise<StagedAttachments> {
+  if (!rawAttachments?.length) {
+    return { attachments: [], refs: [], promptSuffix: "" };
+  }
+  const fileAttachments = rawAttachments.filter((a) => a.kind === "file");
+  if (!fileAttachments.length) {
+    return { attachments: [...rawAttachments], refs: [], promptSuffix: "" };
+  }
+
+  const root = resolve(workspacePath);
+  const promptLines: string[] = [];
+  const staged: ChatAttachment[] = [];
+  const refs: string[] = [];
+
+  for (const attachment of rawAttachments) {
+    if (attachment.kind !== "file") {
+      staged.push(attachment);
+      continue;
+    }
+    const sourcePath = attachment.path.trim();
+    if (!sourcePath) {
+      staged.push({ ...attachment, note: appendNote(attachment.note, "附件的路径为空。") });
+      continue;
+    }
+    try {
+      const sourceAbs = resolve(sourcePath);
+      const sourceRel = relative(root, sourceAbs);
+      // Already inside the workspace — no copy needed.
+      if (!isAbsolute(sourceRel) && !sourceRel.startsWith("..")) {
+        staged.push(attachment);
+        refs.push(sourceRel.replace(/\\/g, "/"));
+        const size = (await stat(sourceAbs).catch(() => null))?.size;
+        const sizeLabel = typeof size === "number" ? formatBytes(size) : "";
+        promptLines.push(`- ${sourceRel}${sizeLabel ? ` (${sizeLabel})` : ""}`);
+        continue;
+      }
+      // External file — copy into the workspace.
+      const destDir = join(root, ".opendrsai", "attachments", runId);
+      await ensureGitignored(root);
+      await mkdir(destDir, { recursive: true });
+      const destName = await uniqueName(destDir, basename(attachment.name || sourcePath));
+      const destPath = join(destDir, destName);
+      await copyFile(sourceAbs, destPath);
+      const destRel = relative(root, destPath).replace(/\\/g, "/");
+      const size = (await stat(destPath).catch(() => null))?.size;
+      const sizeLabel = typeof size === "number" ? formatBytes(size) : "";
+      staged.push({ ...attachment, path: destPath, name: destName });
+      refs.push(destRel);
+      promptLines.push(`- ${destRel}${sizeLabel ? ` (${sizeLabel})` : ""}`);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      staged.push({ ...attachment, note: appendNote(attachment.note, `附件复制失败：${reason}`) });
+    }
+  }
+
+  if (!promptLines.length) {
+    return { attachments: staged, refs, promptSuffix: "" };
+  }
+
+  const promptSuffix = [
+    "",
+    "---",
+    "用户为本次任务上传了以下文件（工作区相对路径，可直接读取）：",
+    ...promptLines,
+    "",
+  ].join("\n");
+
+  return { attachments: staged, refs, promptSuffix };
+}
+
+async function ensureGitignored(workspaceRoot: string): Promise<void> {
+  const dotDir = join(workspaceRoot, ".opendrsai");
+  const gitignore = join(dotDir, ".gitignore");
+  try {
+    await stat(gitignore);
+    return; // Already exists.
+  } catch {
+    // File doesn't exist — create it.
+  }
+  await mkdir(dotDir, { recursive: true });
+  await writeFile(gitignore, "*\n", { encoding: "utf8", mode: 0o644 });
+}
+
+async function uniqueName(dir: string, name: string): Promise<string> {
+  const candidate = join(dir, name);
+  try {
+    await stat(candidate);
+  } catch {
+    return name; // Doesn't exist, use as-is.
+  }
+  const base = name.replace(/(\.[^.]+)$/, "");
+  const ext = extname(name);
+  for (let i = 2; i < 1000; i += 1) {
+    const next = `${base}(${i})${ext}`;
+    try {
+      await stat(join(dir, next));
+    } catch {
+      return next;
+    }
+  }
+  // Fallback — append a short random suffix.
+  return `${base}-${randomUUID().slice(0, 8)}${ext}`;
+}
+
+function appendNote(existing: string | undefined, addition: string): string {
+  return [existing, addition].filter(Boolean).join(" ");
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 async function runRuntimeBackendChat(
   webContents: ChatEventTarget, requestId: string, displaySessionId: string, request: ChatRequest, controller: AbortController,
   agentDefinition: "codex@1" | "opendrsai@1",
@@ -743,9 +886,13 @@ async function runRuntimeBackendChat(
   });
   const target = { client: client as RuntimeClient, runId: run.run_id, approvalId: undefined as string | undefined };
   codexChatTargets.set(requestId, target);
-  const prompt = agentDefinition === "opendrsai@1"
+
+  // Stage file attachments into the workspace so the Agent can read them.
+  const staged = await stageAttachments(request.attachments, request.workspacePath, run.run_id);
+  const prompt = (agentDefinition === "opendrsai@1"
     ? latestUserPrompt(request.messages)
-    : request.messages.map((message) => `${message.role}: ${message.content}`).join("\n\n");
+    : request.messages.map((message) => `${message.role}: ${message.content}`).join("\n\n"))
+    + staged.promptSuffix;
   let completed = false;
   let failure: unknown;
   const execution = client.executeAgentRun(
@@ -755,7 +902,7 @@ async function runRuntimeBackendChat(
     {
       sourceClient: "windows",
       sourceMessageId,
-      attachmentRefs: (request.attachments ?? []).map((item) => item.path),
+      attachmentRefs: staged.refs,
       metadata: { ...(request.metadata ?? {}), desktop_request_id: requestId },
     },
     auth.authMode === "oidc" && auth.accessToken
