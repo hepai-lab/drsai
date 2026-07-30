@@ -3007,7 +3007,9 @@ html[data-desktop-platform="macos"] .workbench-menu-items,
 .main-content-area > .agent-square-panel,
 .main-content-area > .skills-square-panel,
 .main-content-area > .skills-manager-panel,
-.main-content-area > .gfs-view {
+.main-content-area > .gfs-view,
+.main-content-area > .task-center-view,
+.main-content-area > .results-center-view {
   padding-right: 52px;
 }
 

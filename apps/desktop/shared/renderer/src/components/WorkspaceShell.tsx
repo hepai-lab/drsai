@@ -2436,8 +2436,8 @@ export function WorkspaceShell({
         >
           <section className="main-content-area">
             {mainContent}
-            {/* Floating open/close control stays on the chat surface top-right. */}
-            {activeNav === MENU_IDS.currentSession && !isRightPanelExpanded && (
+            {/* Floating open/close control stays on the main surface top-right across left-nav views. */}
+            {!isRightPanelExpanded && (
               <button
                 className="titlebar-right-panel-toggle chat-right-panel-float-toggle"
                 type="button"
@@ -2479,7 +2479,7 @@ export function WorkspaceShell({
           {!rightPanelCollapsed ? (
             <aside className={rightPanelClassName}>
               <div className="right-tabs">
-                {/* Close control lives on the chat float button; only keep one here when panel is fullscreen. */}
+                {/* Close control lives on the main float button; only keep one here when panel is fullscreen. */}
                 {isRightPanelExpanded ? (
                   <button
                     className="titlebar-right-panel-toggle"
