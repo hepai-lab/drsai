@@ -11,6 +11,8 @@ interface ChatMessageContentProps {
   streaming?: boolean;
   language: "en" | "zh";
   onOpenLink: (href: string | undefined) => void;
+  /** When true, treat the whole string as markdown and do not emit nested reasoning blocks. */
+  plainMarkdown?: boolean;
 }
 
 function CopyButton({ value, label }: { value: string; label: string }): React.JSX.Element {
@@ -142,7 +144,17 @@ export const ChatMessageContent = memo(function ChatMessageContent({
   streaming = false,
   language,
   onOpenLink,
+  plainMarkdown = false,
 }: ChatMessageContentProps): React.JSX.Element {
+  if (plainMarkdown) {
+    return (
+      <div className="chat-output">
+        <div className="chat-markdown">
+          <MarkdownContent content={content} onOpenLink={onOpenLink} />
+        </div>
+      </div>
+    );
+  }
   const parts = parseChatOutput(content, { streaming });
   return (
     <div className="chat-output">

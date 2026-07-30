@@ -109,6 +109,7 @@ import {
   type ChatThreadSnapshot,
   useDesktopChatAdapter,
 } from "./adapters/useDesktopChatAdapter";
+import { stripAttachmentContextFromUserContent } from "@shared/attachmentContextDisplay";
 // Temporarily hide Skills management entry — keep for later reuse.
 // import type { ChatCommandAction } from "./chatCommands";
 import type { DesktopPlatformDescriptor } from "@shared/platform";
@@ -678,7 +679,7 @@ function AuthenticatedApp({
   useEffect(() => desktopApi.onThreadSnapshot((event) => {
     setThreadSnapshots((current) => ({
       ...current,
-      [event.threadId]: event.snapshot,
+      [event.threadId]: mergeThreadSnapshotForDisplay(event.snapshot, current[event.threadId]),
     }));
   }), []);
   useEffect(() => desktopApi.onThreadCatalogUpdate((event) => {
@@ -1202,10 +1203,16 @@ function AuthenticatedApp({
       if (!snapshot) return;
       setThreadSnapshots((current) => {
         const existing = current[threadId];
-        if (existing && existing.updatedAt >= snapshot.updatedAt) return current;
+        const merged = mergeThreadSnapshotForDisplay(snapshot, existing);
+        if (existing && existing.updatedAt >= merged.updatedAt) {
+          // Still scrub any leaked attachment injection from the local copy.
+          const scrubbed = mergeThreadSnapshotForDisplay(existing, existing);
+          if (scrubbed === existing) return current;
+          return { ...current, [threadId]: scrubbed };
+        }
         return {
           ...current,
-          [threadId]: snapshot,
+          [threadId]: merged,
         };
       });
     } catch {
@@ -2362,10 +2369,138 @@ function loadThreadSnapshots(): Record<string, ChatThreadSnapshot> {
     if (!raw) return {};
     const parsed = JSON.parse(raw) as Record<string, ChatThreadSnapshot>;
     if (!parsed || typeof parsed !== "object") return {};
-    return parsed;
+    const scrubbed: Record<string, ChatThreadSnapshot> = {};
+    for (const [threadId, snapshot] of Object.entries(parsed)) {
+      if (!snapshot || typeof snapshot !== "object") continue;
+      scrubbed[threadId] = mergeThreadSnapshotForDisplay(snapshot, snapshot);
+    }
+    return scrubbed;
   } catch {
     return {};
   }
+}
+
+/**
+ * Runtime conversation journal may contain the model prompt (attachment injection)
+ * and fragmented assistant items (reasoning / empty shells). Prefer local attachment
+ * chips, strip injection text, coalesce empty assistant shells, and keep a richer
+ * local transcript when Runtime only sends thin placeholders.
+ */
+function mergeThreadSnapshotForDisplay(
+  incoming: ChatThreadSnapshot,
+  existing?: ChatThreadSnapshot,
+): ChatThreadSnapshot {
+  const existingUserAttachments = (existing?.messages ?? [])
+    .filter((message) => message.role === "user" && Array.isArray(message.attachments) && message.attachments.length)
+    .map((message) => message.attachments!);
+  let userIndex = 0;
+  const scrubbedIncoming = incoming.messages.map((message) => {
+    if (message.role !== "user") return message;
+    const content = stripAttachmentContextFromUserContent(message.content);
+    const attachments = message.attachments?.length
+      ? message.attachments
+      : existingUserAttachments[userIndex];
+    userIndex += 1;
+    if (content === message.content && attachments === message.attachments) return message;
+    return {
+      ...message,
+      content,
+      ...(attachments?.length ? { attachments } : {}),
+    };
+  });
+
+  const coalescedIncoming = coalesceAssistantMessagesForDisplay(scrubbedIncoming);
+  const existingMessages = existing?.messages?.length
+    ? coalesceAssistantMessagesForDisplay(existing.messages.map((message) => (
+      message.role === "user"
+        ? { ...message, content: stripAttachmentContextFromUserContent(message.content) }
+        : message
+    )))
+    : [];
+
+  const messages = preferRicherTranscript(coalescedIncoming, existingMessages);
+  const firstUser = messages.find((message) => message.role === "user");
+  const titleFromUser = firstUser?.content.trim().slice(0, 48);
+  return {
+    ...incoming,
+    title: titleFromUser || incoming.title,
+    messages,
+    messageCount: messages.filter((message) => message.id !== "welcome").length,
+    updatedAt: Math.max(incoming.updatedAt, existing?.updatedAt ?? 0),
+  };
+}
+
+function coalesceAssistantMessagesForDisplay(
+  messages: ChatThreadSnapshot["messages"],
+): ChatThreadSnapshot["messages"] {
+  const merged: ChatThreadSnapshot["messages"] = [];
+  for (const message of messages) {
+    if (message.role !== "assistant") {
+      merged.push(message);
+      continue;
+    }
+    const body = [message.content, message.reasoningContent, message.statusContent]
+      .map((value) => value?.trim() ?? "")
+      .filter(Boolean)
+      .join("\n");
+    if (!body && !message.streaming && !message.error && !message.structuredTurn) continue;
+
+    const previous = merged[merged.length - 1];
+    const previousThin = previous?.role === "assistant" && !previous.content.trim();
+    const currentThin = !message.content.trim();
+    if (previous?.role === "assistant" && (previousThin || currentThin)) {
+      const preferCurrent = !previous.content.trim() && Boolean(message.content.trim());
+      merged[merged.length - 1] = {
+        ...previous,
+        id: preferCurrent ? message.id : previous.id,
+        content: previous.content.trim() || message.content,
+        reasoningContent: mergeDisplayText(previous.reasoningContent, message.reasoningContent),
+        statusContent: mergeDisplayText(previous.statusContent, message.statusContent),
+        streaming: Boolean(previous.streaming || message.streaming),
+        error: Boolean(previous.error || message.error),
+        attachments: previous.attachments?.length ? previous.attachments : message.attachments,
+        structuredTurn: previous.structuredTurn ?? message.structuredTurn,
+        startedAt: Math.min(previous.startedAt ?? Number.MAX_SAFE_INTEGER, message.startedAt ?? Number.MAX_SAFE_INTEGER),
+        lastEventAt: Math.max(previous.lastEventAt ?? 0, message.lastEventAt ?? 0),
+      };
+      continue;
+    }
+    merged.push(message);
+  }
+  return merged;
+}
+
+function mergeDisplayText(left?: string, right?: string): string | undefined {
+  const a = left?.trim() ?? "";
+  const b = right?.trim() ?? "";
+  if (!a) return b || undefined;
+  if (!b) return a || undefined;
+  if (a.includes(b) || b.includes(a)) return a.length >= b.length ? a : b;
+  return `${a}\n\n${b}`;
+}
+
+function transcriptRichness(messages: ChatThreadSnapshot["messages"]): number {
+  return messages.reduce((score, message) => {
+    if (message.role !== "assistant") return score;
+    let next = score;
+    if (message.content.trim()) next += 4;
+    if (message.reasoningContent?.trim()) next += 2;
+    if (message.structuredTurn?.parts?.length) next += 3;
+    if (message.attachments?.length) next += 1;
+    return next;
+  }, 0);
+}
+
+function preferRicherTranscript(
+  incoming: ChatThreadSnapshot["messages"],
+  existing: ChatThreadSnapshot["messages"],
+): ChatThreadSnapshot["messages"] {
+  if (!existing.length) return incoming;
+  if (!incoming.length) return existing;
+  // Keep the local renderer transcript when Runtime only returns thin shells
+  // (empty assistants / detached reasoning) after a successful local stream.
+  if (transcriptRichness(existing) > transcriptRichness(incoming)) return existing;
+  return incoming;
 }
 
 function loadWorkspaceSortMode(): WorkspaceSortMode {

@@ -1909,7 +1909,7 @@ export function ChatWorkspace({
       )}
       {!emptyChat && (
       <div className="message-list" ref={messageListRef} onScroll={handleMessageListScroll}>
-        {messages.filter((message) => message.id !== "welcome").map((message) => {
+        {messages.filter((message) => message.id !== "welcome" && !isEmptyAssistantShell(message)).map((message) => {
           const assistantContent = message.role === "assistant"
             ? getAssistantDisplayContent(message)
             : message.content;
@@ -3128,9 +3128,10 @@ function StreamingStatus({
   message: UiMessage;
   now: number;
   zh: boolean;
-}): React.JSX.Element {
+}): React.JSX.Element | null {
   if (!message.streaming) {
-    return <p>{"No response content."}</p>;
+    // Empty completed shells are filtered elsewhere; never show the literal placeholder.
+    return null;
   }
 
   const startedAt = message.startedAt ?? now;
@@ -3939,6 +3940,17 @@ function getSlashCommandDescription(command: ChatCommandName): string {
     fork: "Prepare isolated follow-up work.",
     status: "Summarize chat, context, and runtime status.",
   }[command];
+}
+
+function isEmptyAssistantShell(message: UiMessage): boolean {
+  if (message.role !== "assistant") return false;
+  if (message.streaming || message.error || message.replyFailed) return false;
+  if (message.structuredTurn?.parts?.length) return false;
+  const body = [message.content, message.reasoningContent, message.statusContent]
+    .map((value) => value?.trim() ?? "")
+    .filter(Boolean)
+    .join("");
+  return !body;
 }
 
 function getAssistantDisplayContent(message: UiMessage): string {

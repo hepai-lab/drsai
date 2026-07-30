@@ -1,9 +1,15 @@
 import { createHash } from "node:crypto";
+import { basename } from "node:path";
 import type {
+  ChatAttachment,
   DesktopThread,
   DesktopThreadMessageSnapshot,
   DesktopThreadSnapshot,
 } from "../api/desktopApi";
+import {
+  attachmentNameFromPath,
+  stripAttachmentContextFromUserContent,
+} from "../api/attachmentContextDisplay";
 import type { RuntimeConversationItem } from "./runtimeClient";
 
 function canonicalJson(value: unknown): string {
@@ -48,14 +54,36 @@ function text(payload: Record<string, unknown>): string {
   return typeof value === "string" ? value : "";
 }
 
+function attachmentsFromPayload(payload: Record<string, unknown>): ChatAttachment[] | undefined {
+  const refs = payload.attachment_refs;
+  if (!Array.isArray(refs) || !refs.length) return undefined;
+  const attachments = refs
+    .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    .slice(0, 40)
+    .map((path): ChatAttachment => {
+      const normalized = path.trim();
+      const name = attachmentNameFromPath(normalized);
+      // Runtime only stores paths; folders still render as file chips which is acceptable.
+      return { kind: "file", path: normalized, name: name || basename(normalized) || "attachment" };
+    });
+  return attachments.length ? attachments : undefined;
+}
+
 function toMessage(item: RuntimeConversationItem): DesktopThreadMessageSnapshot | null {
   const at = timestamp(item.updated_at);
   if (item.kind === "message") {
     const role = item.role === "user" || item.role === "system" ? item.role : "assistant";
+    const rawContent = text(item.payload);
+    const content = role === "user" ? stripAttachmentContextFromUserContent(rawContent) : rawContent;
+    const attachments = role === "user" ? attachmentsFromPayload(item.payload) : undefined;
     return {
-      id: item.item_id, role, content: text(item.payload),
+      id: item.item_id,
+      role,
+      content,
       streaming: role === "assistant" && item.payload.status !== "completed",
-      startedAt: timestamp(item.created_at), lastEventAt: at,
+      ...(attachments ? { attachments } : {}),
+      startedAt: timestamp(item.created_at),
+      lastEventAt: at,
     };
   }
   if (item.kind === "reasoning") {
@@ -86,15 +114,84 @@ export function projectRuntimeThreadSnapshot(
   thread: DesktopThread,
   items: Iterable<RuntimeConversationItem>,
 ): DesktopThreadSnapshot {
-  const messages = [...items]
+  const projected = [...items]
     .sort((left, right) => left.session_sequence - right.session_sequence || left.item_id.localeCompare(right.item_id))
     .map(toMessage)
     .filter((item): item is DesktopThreadMessageSnapshot => item !== null);
+  const messages = coalesceRuntimeAssistantMessages(projected);
   return {
     threadId: thread.id,
     title: thread.title,
     messages,
-    updatedAt: Math.max(timestamp(thread.updatedAt), ...messages.map((message) => message.lastEventAt || 0)),
+    updatedAt: Math.max(timestamp(thread.updatedAt), ...messages.map((message) => message.lastEventAt || 0), 0),
     messageCount: messages.length,
   };
+}
+
+function assistantBody(message: DesktopThreadMessageSnapshot): string {
+  return [
+    message.content,
+    message.reasoningContent,
+    message.statusContent,
+  ].map((value) => value?.trim() ?? "").filter(Boolean).join("\n");
+}
+
+function isThinAssistant(message: DesktopThreadMessageSnapshot): boolean {
+  return message.role === "assistant" && !message.content.trim();
+}
+
+function mergeReasoningText(left?: string, right?: string): string | undefined {
+  const a = left?.trim() ?? "";
+  const b = right?.trim() ?? "";
+  if (!a) return b || undefined;
+  if (!b) return a || undefined;
+  if (a.includes(b) || b.includes(a)) return a.length >= b.length ? a : b;
+  return `${a}\n\n${b}`;
+}
+
+function mergeAssistantSnapshots(
+  primary: DesktopThreadMessageSnapshot,
+  secondary: DesktopThreadMessageSnapshot,
+): DesktopThreadMessageSnapshot {
+  const preferSecondaryContent = !primary.content.trim() && Boolean(secondary.content.trim());
+  return {
+    ...primary,
+    id: preferSecondaryContent ? secondary.id : primary.id,
+    content: primary.content.trim() || secondary.content,
+    reasoningContent: mergeReasoningText(primary.reasoningContent, secondary.reasoningContent),
+    statusContent: mergeReasoningText(primary.statusContent, secondary.statusContent),
+    streaming: Boolean(primary.streaming || secondary.streaming),
+    error: Boolean(primary.error || secondary.error),
+    attachments: primary.attachments?.length ? primary.attachments : secondary.attachments,
+    structuredTurn: primary.structuredTurn ?? secondary.structuredTurn,
+    startedAt: Math.min(primary.startedAt ?? Number.MAX_SAFE_INTEGER, secondary.startedAt ?? Number.MAX_SAFE_INTEGER),
+    lastEventAt: Math.max(primary.lastEventAt ?? 0, secondary.lastEventAt ?? 0),
+  };
+}
+
+/**
+ * Runtime journals reasoning / tool / message as separate items. Fold adjacent
+ * assistant fragments into one bubble so the UI does not show empty
+ * "No response content." shells plus a detached reasoning block.
+ */
+export function coalesceRuntimeAssistantMessages(
+  messages: DesktopThreadMessageSnapshot[],
+): DesktopThreadMessageSnapshot[] {
+  const merged: DesktopThreadMessageSnapshot[] = [];
+  for (const message of messages) {
+    if (message.role !== "assistant") {
+      merged.push(message);
+      continue;
+    }
+    if (!assistantBody(message) && !message.streaming && !message.error) {
+      continue;
+    }
+    const previous = merged[merged.length - 1];
+    if (previous?.role === "assistant" && (isThinAssistant(previous) || isThinAssistant(message))) {
+      merged[merged.length - 1] = mergeAssistantSnapshots(previous, message);
+      continue;
+    }
+    merged.push(message);
+  }
+  return merged;
 }

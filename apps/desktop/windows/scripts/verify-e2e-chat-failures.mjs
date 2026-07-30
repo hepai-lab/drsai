@@ -315,10 +315,16 @@ function assertAttachmentBody(body, attachmentFixture) {
   if (!String(fileContext.content || "").includes(ATTACHMENT_SENTINEL)) return -7;
   if (!folderContext || folderContext.name !== "project") return -8;
   const messages = body?.messages;
-  if (!Array.isArray(messages) || messages.length < 2) return -9;
-  if (messages[0]?.role !== "system" || !String(messages[0]?.content || "").includes(ATTACHMENT_SENTINEL)) return -13;
-  if (!String(messages[0]?.content || "").includes("notes.md")) return -14;
-  if (!messages.some((message) => message?.role === "user" && message?.content === "use attached files")) return -15;
+  if (!Array.isArray(messages) || messages.length < 1) return -9;
+  // Attachment content must be embedded in the last user message (Gateway/Runtime
+  // only forward that message as the agent task; a system message is ignored).
+  const lastUser = [...messages].reverse().find((message) => message?.role === "user");
+  if (!lastUser) return -13;
+  const userContent = String(lastUser.content || "");
+  if (!userContent.includes("use attached files")) return -15;
+  if (!userContent.includes(ATTACHMENT_SENTINEL)) return -13;
+  if (!userContent.includes("notes.md")) return -14;
+  if (!userContent.includes("The user attached the following local context.")) return -16;
   return attachments.length;
 }
 

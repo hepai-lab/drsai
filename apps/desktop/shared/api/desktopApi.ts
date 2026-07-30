@@ -3006,6 +3006,8 @@ export interface DesktopThreadMessageSnapshot extends ChatMessage {
   /** Canonical structured display representation; legacy fields remain during migration. */
   parts?: ChatMessagePart[];
   structuredTurn?: StructuredTurnState;
+  /** User-visible attachment chips; not part of the model prompt text. */
+  attachments?: ChatAttachment[];
   startedAt?: number;
   lastEventAt?: number;
 }

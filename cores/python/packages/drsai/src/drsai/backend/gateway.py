@@ -2856,9 +2856,16 @@ async def runtime_run_execute(run_id: str, request: RuntimeRunExecuteRequest, ra
         attachment_refs = metadata.get("attachment_refs")
         if not isinstance(attachment_refs, list) or not all(isinstance(item, str) for item in attachment_refs):
             attachment_refs = []
+        # Persist display text only. The agent still receives the full prompt
+        # (which may include desktop-injected attachment contents).
+        display_prompt = metadata.get("user_display_text")
+        if not isinstance(display_prompt, str) or not display_prompt.strip():
+            display_prompt = _strip_local_attachment_context(request.prompt)
+        else:
+            display_prompt = display_prompt.strip()
         _runtime_engine().set_run_input(
             run_id,
-            request.prompt,
+            display_prompt,
             attachment_refs=attachment_refs,
             correlation_id=correlation_id,
             source_client=(
@@ -4245,32 +4252,99 @@ def _task_with_runtime_mode(task: str, metadata: dict[str, Any] | None) -> str:
     return "\n".join(lines)
 
 
+def _strip_local_attachment_context(task: str) -> str:
+    marker = "The user attached the following local context."
+    index = task.find(marker)
+    if index < 0:
+        return task
+    return task[:index].rstrip()
+
+
 def _task_with_remote_attachments(task: str, metadata: dict[str, Any] | None, workspace_id: str | None) -> str:
-    if not workspace_id or not isinstance(metadata, dict): return task
+    if not isinstance(metadata, dict):
+        return task
+
+    # Desktop may pre-read local attachments into attachment_context. Prefer that
+    # so uploaded files outside the workspace are still visible to the agent.
+    # Skip when desktop already embedded the same block into the last user message.
+    prebuilt = metadata.get("attachment_context")
+    if (
+        isinstance(prebuilt, list)
+        and prebuilt
+        and "The user attached the following local context." not in task
+    ):
+        blocks: list[str] = []
+        total = 0
+        for item in prebuilt[:20]:
+            if not isinstance(item, dict):
+                continue
+            if not item.get("included"):
+                continue
+            content = str(item.get("content") or "").strip()
+            if not content:
+                continue
+            name = str(item.get("name") or "attachment")[:200]
+            kind = str(item.get("kind") or "file")[:40]
+            path = str(item.get("path") or "")[:2048]
+            remaining = 50000 - total
+            if remaining <= 0:
+                break
+            content = content[:remaining]
+            total += len(content)
+            blocks.append(
+                f"Attachment: {name} ({kind})\nPath: {path}\nContent:\n{content}"
+            )
+        if blocks:
+            return (
+                f"{task}\n\nThe user attached the following local context. "
+                "Answer using these attachments directly when the user asks about "
+                "\"the file\", \"this file\", or similar.\n\n"
+                + "\n\n".join(blocks)
+            )
+
+    if not workspace_id:
+        return task
     attachments = metadata.get("attachments")
-    if not isinstance(attachments, list): return task
-    blocks: list[str] = []
+    if not isinstance(attachments, list):
+        return task
+    blocks = []
     total = 0
     for item in attachments[:20]:
-        if not isinstance(item, dict): continue
-        kind = str(item.get("kind") or ""); name = str(item.get("name") or "attachment")[:200]
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind") or "")
+        name = str(item.get("name") or "attachment")[:200]
         if kind in {"browser", "terminal", "selection"}:
             content = str(item.get("visibleText") or item.get("note") or "")[:12000]
         elif kind == "file":
             try:
                 target = _workspace_child(workspace_id, str(item.get("path") or ""))
                 raw = target.read_bytes()[:262144]
-                content = raw.decode("utf-8", errors="replace") if b"\x00" not in raw[:8192] else "[binary file omitted]"
-            except (HTTPException, OSError): content = "[file unavailable]"
+                content = (
+                    raw.decode("utf-8", errors="replace")
+                    if b"\x00" not in raw[:8192]
+                    else "[binary file omitted]"
+                )
+            except (HTTPException, OSError):
+                content = "[file unavailable]"
         elif kind == "folder":
             try:
                 directory = _workspace_child(workspace_id, str(item.get("path") or ""))
-                content = "\n".join(str(path.relative_to(directory)) for path in directory.rglob("*") if path.is_file())[:24000]
-            except (HTTPException, OSError): content = "[folder unavailable]"
-        else: continue
+                content = "\n".join(
+                    str(path.relative_to(directory))
+                    for path in directory.rglob("*")
+                    if path.is_file()
+                )[:24000]
+            except (HTTPException, OSError):
+                content = "[folder unavailable]"
+        else:
+            continue
         remaining = 50000 - total
-        if remaining <= 0: break
-        content = content[:remaining]; total += len(content); blocks.append(f"Attachment: {name} ({kind})\n{content}")
+        if remaining <= 0:
+            break
+        content = content[:remaining]
+        total += len(content)
+        blocks.append(f"Attachment: {name} ({kind})\n{content}")
     return task if not blocks else f"{task}\n\nRemote workspace attachment context:\n" + "\n\n".join(blocks)
 
 

@@ -31,6 +31,7 @@ import {
   type StructuredConversationEvent,
   type StructuredTurnState,
 } from "@shared/structuredConversation";
+import { stripAttachmentContextFromUserContent } from "@shared/attachmentContextDisplay";
 import {
   parseChatCommand,
   parseForkQueueEntries,
@@ -2343,7 +2344,12 @@ function createWelcomeMessage(language: "en" | "zh", preferences: DesktopUserPre
 }
 
 function hydrateStructuredMessages(messages: UiMessage[]): UiMessage[] {
-  return messages.map((message) => {
+  const coalesced = coalesceUiAssistantMessages(messages);
+  return coalesced.map((message) => {
+    if (message.role === "user") {
+      const content = stripAttachmentContextFromUserContent(message.content);
+      return content === message.content ? message : { ...message, content };
+    }
     if (message.role !== "assistant") return message;
     if (message.structuredTurn) return sanitizeStructuredAssistantMessage(message);
     return sanitizeStructuredAssistantMessage({
@@ -2360,6 +2366,49 @@ function hydrateStructuredMessages(messages: UiMessage[]): UiMessage[] {
       }),
     });
   });
+}
+
+function coalesceUiAssistantMessages(messages: UiMessage[]): UiMessage[] {
+  const merged: UiMessage[] = [];
+  for (const message of messages) {
+    if (message.role !== "assistant") {
+      merged.push(message);
+      continue;
+    }
+    const body = [message.content, message.reasoningContent, message.statusContent]
+      .map((value) => value?.trim() ?? "")
+      .filter(Boolean)
+      .join("\n");
+    if (!body && !message.streaming && !message.error && !message.structuredTurn) continue;
+    const previous = merged[merged.length - 1];
+    const previousThin = previous?.role === "assistant" && !previous.content.trim();
+    const currentThin = !message.content.trim();
+    if (previous?.role === "assistant" && (previousThin || currentThin)) {
+      const preferCurrent = !previous.content.trim() && Boolean(message.content.trim());
+      merged[merged.length - 1] = {
+        ...previous,
+        id: preferCurrent ? message.id : previous.id,
+        content: previous.content.trim() || message.content,
+        reasoningContent: [previous.reasoningContent, message.reasoningContent]
+          .map((value) => value?.trim() ?? "")
+          .filter(Boolean)
+          .join("\n\n") || undefined,
+        statusContent: [previous.statusContent, message.statusContent]
+          .map((value) => value?.trim() ?? "")
+          .filter(Boolean)
+          .join("\n\n") || undefined,
+        streaming: Boolean(previous.streaming || message.streaming),
+        error: Boolean(previous.error || message.error),
+        attachments: previous.attachments?.length ? previous.attachments : message.attachments,
+        structuredTurn: previous.structuredTurn ?? message.structuredTurn,
+        startedAt: Math.min(previous.startedAt ?? Number.MAX_SAFE_INTEGER, message.startedAt ?? Number.MAX_SAFE_INTEGER),
+        lastEventAt: Math.max(previous.lastEventAt ?? 0, message.lastEventAt ?? 0),
+      };
+      continue;
+    }
+    merged.push(message);
+  }
+  return merged;
 }
 
 function appendAssistantChunk(
