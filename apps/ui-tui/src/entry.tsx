@@ -14,6 +14,7 @@ import { render } from 'ink'
 
 import { App } from './app.js'
 import { GatewayClient } from './gatewayClient.js'
+import { setInkInstance } from './app/inkInstanceRef.js'
 import { initTerminalSize } from './hooks/terminalSizeStore.js'
 import {
   disableAltScreen,
@@ -198,6 +199,7 @@ if (!process.stdin.isTTY) {
   initTerminalSize()
 
   inkInstance = render(<App gw={gw} />, { exitOnCtrlC: false })
+  setInkInstance(inkInstance)
   inkInstance.waitUntilExit().then(() => {
     restoreTerminal()
     gw.kill()

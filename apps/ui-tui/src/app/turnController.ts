@@ -20,6 +20,7 @@ import { $isStreaming, $current, appendTurn, setCurrent } from './turnStore.js'
 import { $memoryPreview } from './uiStore.js'
 import { newAssistantTurn } from './types.js'
 import { clearHeightCache } from './heightCache.js'
+import { cancelPendingInkThrottles } from './inkInstanceRef.js'
 
 export interface ImageAttachment {
   /** Original file path (for display / debugging). */
@@ -91,6 +92,13 @@ export class TurnController {
 
   /** Move the in-flight turn into the transcript and clear streaming state. */
   finalize(): void {
+    // Cancel any pending throttledLog/throttledOnRender trailing calls
+    // from the last streaming render. If left pending, the trailing
+    // call fires AFTER onImmediateRender writes the new (small) frame,
+    // overwriting it with the old (large) streaming frame — causing
+    // text overlap and bottom blank space.
+    cancelPendingInkThrottles()
+
     const cur = $current.get()
     if (cur) {
       const finalized = {
