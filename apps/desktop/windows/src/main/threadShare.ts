@@ -245,7 +245,7 @@ async function writePublicShareCacheEntry(
   if (keys.length > 200) {
     const sorted = keys.sort(
       (left, right) =>
-        Date.parse(cache[right]?.updatedAt || 0) - Date.parse(cache[left]?.updatedAt || 0),
+        Date.parse(cache[right]?.updatedAt || "0") - Date.parse(cache[left]?.updatedAt || "0"),
     );
     for (const stale of sorted.slice(200)) delete cache[stale];
   }

@@ -1,1 +1,1 @@
-﻿export * from "../../../shared/api/threadShareHtml.ts";
+﻿export * from "../../../shared/api/threadShareHtml";

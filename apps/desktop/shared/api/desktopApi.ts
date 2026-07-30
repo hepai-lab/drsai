@@ -533,6 +533,8 @@ export interface DesktopVoiceSynthesisRequest {
   voice?: string;
   speed?: number;
   format?: DesktopVoiceAudioFormat;
+  /** Optional runtime override; defaults to the globally configured runtime. */
+  runtime?: DesktopVoiceSynthesisRuntimeId;
 }
 
 export interface DesktopVoiceSynthesisStartResult {
@@ -3008,6 +3010,8 @@ export interface DesktopThreadMessageSnapshot extends ChatMessage {
   structuredTurn?: StructuredTurnState;
   startedAt?: number;
   lastEventAt?: number;
+  /** Files/folders attached when the user sent this message. */
+  attachments?: ChatAttachment[];
 }
 
 export interface DesktopThreadSnapshot {
