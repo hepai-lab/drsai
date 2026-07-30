@@ -2541,6 +2541,9 @@ export function installMockDesktopApi(): void {
       canceled: false,
       paths: ["C:\\Users\\Demo\\Documents\\research-folder"],
     }),
+    getPathForFile: (file: File): string => {
+      return `C:\\Users\\Demo\\Downloads\\${file.name}`;
+    },
     getWorkspaceContextOverview: async (workspacePath) =>
       createMockWorkspaceOverview(workspacePath),
     listWorkspaceFiles: async (request) =>

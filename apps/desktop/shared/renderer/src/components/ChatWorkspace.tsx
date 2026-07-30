@@ -492,6 +492,35 @@ export function ChatWorkspace({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLFormElement | null>(null);
+  const composerDropRef = useCallback((form: HTMLFormElement | null) => {
+    composerRef.current = form;
+    if (!form) return;
+    const onDrag = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    const onDrop = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!e.dataTransfer?.files.length) return;
+      const getPath = hasDesktopApi()
+        ? (f: File): string => desktopApi.getPathForFile(f)
+        : (f: File): string => `C:\\Users\\Demo\\Downloads\\${f.name}`;
+      const added: ComposerAttachment[] = [];
+      for (const f of Array.from(e.dataTransfer.files)) {
+        const p = getPath(f);
+        if (!p) continue;
+        added.push({ id: crypto.randomUUID(), kind: "file", path: p, name: f.name || p.split(/[\\/]/).pop() || "unknown", importFile: { path: p, name: f.name || p.split(/[\\/]/).pop() || "unknown", extension: (f.name || "").includes(".") ? ((f.name || "").split(".").pop() || "") : "", category: "other", status: "ready" } });
+      }
+      if (!added.length) return;
+      setAttachments((c) => { const ex = new Set(c.map((i) => i.path)); return [...c, ...added.filter((a) => !ex.has(a.path))]; });
+      setToolsOpen(false);
+    };
+    form.addEventListener("dragover", onDrag, true);
+    form.addEventListener("drop", onDrop, true);
+    (form as any).__drsaiDropOff = () => { form.removeEventListener("dragover", onDrag, true); form.removeEventListener("drop", onDrop, true); };
+    return () => { (form as any).__drsaiDropOff?.(); };
+  }, []);
   const attachmentButtonRef = useRef<HTMLButtonElement | null>(null);
   const toolsMenuRef = useRef<HTMLDivElement | null>(null);
   const introPickerRef = useRef<HTMLDivElement | null>(null);
@@ -2161,7 +2190,7 @@ export function ChatWorkspace({
         </section>
       )}
       <form
-        ref={composerRef}
+        ref={composerDropRef}
         className="composer"
         data-voice-turn-phase={displayedVoicePhase}
         data-streaming-speech-segments={assistantSpeechSegments.segments.length}
