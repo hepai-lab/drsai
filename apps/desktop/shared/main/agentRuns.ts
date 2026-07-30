@@ -29,6 +29,8 @@ import {
   waitForNetworkRetry,
   type StreamResumeState,
 } from "./networkRecovery";
+import { listRecordedAgentRunEvents, recordAgentRunEvent } from "./agentRunJournal";
+import { BoundedEventDispatcher } from "./boundedEventDispatcher";
 
 const GATEWAY_BASE_URL = `http://127.0.0.1:${getGatewayPort()}`;
 const MAX_ACTIVE_RUNS = 3;
@@ -44,12 +46,28 @@ const RUN_ID_PATTERN = /^[a-zA-Z0-9_.:-]{1,160}$/;
 interface ActiveAgentRun {
   controller: AbortController;
   request: AgentRunRequest;
+  webContents: WebContents;
 }
 
 type AgentRunLifecycleListener = (event: AgentRunEvent, request: AgentRunRequest) => void;
 
 const activeRuns = new Map<string, ActiveAgentRun>();
 const lifecycleListeners = new Set<AgentRunLifecycleListener>();
+const agentEventDispatchers = new WeakMap<WebContents, BoundedEventDispatcher<AgentRunEvent>>();
+
+function getAgentEventDispatcher(webContents: WebContents): BoundedEventDispatcher<AgentRunEvent> {
+  const existing = agentEventDispatchers.get(webContents);
+  if (existing) return existing;
+  const dispatcher = new BoundedEventDispatcher<AgentRunEvent>({
+    capacity: 256,
+    deliver: (event) => { if (!webContents.isDestroyed()) webContents.send("desktop:agent-run-event", event); },
+    merge: (previous, next) => previous.requestId === next.requestId && previous.type === "chunk" && next.type === "chunk"
+      ? { ...next, content: `${previous.content ?? ""}${next.content ?? ""}` }
+      : null,
+  });
+  agentEventDispatchers.set(webContents, dispatcher);
+  return dispatcher;
+}
 
 export function hasActiveAgentRuns(): boolean {
   return activeRuns.size > 0;
@@ -77,7 +95,7 @@ export async function startAgentRun(
 
   const auth = await requireAuthContext();
   const controller = new AbortController();
-  activeRuns.set(requestId, { controller, request });
+  activeRuns.set(requestId, { controller, request, webContents });
 
   runAgent(webContents, requestId, sessionId, runId, request, auth, controller).catch((error) => {
     const timedOut = controller.signal.aborted && controller.signal.reason === "timeout";
@@ -105,6 +123,26 @@ export function abortAgentRun(requestId: string): boolean {
   if (!active) return false;
   active.controller.abort("user");
   return true;
+}
+
+export async function recoverAgentRun(rawThreadId: unknown, eventTarget?: WebContents): Promise<AgentRunEvent[]> {
+  if (typeof rawThreadId !== "string" || !RUN_ID_PATTERN.test(rawThreadId)) return [];
+  const thread = (await listThreads()).find((candidate) => candidate.id === rawThreadId);
+  if (!thread?.lastRunId || !thread.lastRequestId) return [];
+  const active = activeRuns.get(thread.lastRequestId);
+  if (active && eventTarget) active.webContents = eventTarget;
+  const events = await listRecordedAgentRunEvents(thread.lastRunId);
+  if (active) return events;
+  if (thread.status !== "running") return events;
+  const interrupted: AgentRunEvent = {
+    requestId: thread.lastRequestId,
+    sessionId: thread.id,
+    runId: thread.lastRunId,
+    type: "error",
+    error: "Agent run was interrupted by an application restart. Review recovered output before running again.",
+  };
+  await updateThread({ id: thread.id, status: "error" });
+  return [...events.filter((event) => !["done", "aborted", "error"].includes(event.type)), interrupted];
 }
 
 function validateAgentRunRequest(rawRequest: unknown): AgentRunRequest {
@@ -189,6 +227,9 @@ async function runAgent(
     lastRequestId: requestId,
     status: "running",
   });
+  if (process.env.OPENDRSAI_MACOS_PACKAGED_SMOKE_FILE?.trim() && request.metadata?.packaged_crash_fixture === true) {
+    await new Promise<void>((_resolve, reject) => controller.signal.addEventListener("abort", () => reject(new DOMException("Packaged Agent crash fixture aborted.", "AbortError")), { once: true }));
+  }
 
   const timeout = setTimeout(() => controller.abort("timeout"), AGENT_RUN_TIMEOUT_MS);
   const changeSetCheckpointId = await prepareAgentChangeSetCheckpoint(request, runId);
@@ -680,7 +721,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function emit(webContents: WebContents, event: AgentRunEvent): void {
-  if (!webContents.isDestroyed()) webContents.send("desktop:agent-run-event", event);
+  recordAgentRunEvent(event);
+  const currentTarget = activeRuns.get(event.requestId)?.webContents ?? webContents;
+  if (!currentTarget.isDestroyed()) getAgentEventDispatcher(currentTarget).enqueue(event);
   const request = activeRuns.get(event.requestId)?.request;
   if (!request) return;
   for (const listener of lifecycleListeners) {

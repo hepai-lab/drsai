@@ -116,16 +116,14 @@ jobs:
             $channel = "dev"
             $requireSignedRelease = "0"
           } else {
-            $baseUrl = "https://github.com/$env:OPENDRSAI_RELEASE_REPOSITORY/releases/download/$tag"
-            # beta.1 shipped with releases/latest and the stable channel baked in.
-            # Publish prerelease-version compatibility builds through that channel
-            # until the signed stable release replaces them.
-            $channel = "stable"
+            $baseUrl = "https://download-opendrsai.ihep.ac.cn/releases/$tag/windows"
+            $channel = "beta"
             $requireSignedRelease = if ($package.version -match "-") { "0" } else { "1" }
           }
 
           "OPENDRSAI_RELEASE_TAG=$tag" >> $env:GITHUB_ENV
           "OPENDRSAI_RELEASE_BASE_URL=$baseUrl" >> $env:GITHUB_ENV
+          "OPENDRSAI_RUNTIME_ARCHIVE_NAME=OpenDrSai-Windows-v$($package.version)-x64.zip" >> $env:GITHUB_ENV
           "OPENDRSAI_UPDATE_CHANNEL=$channel" >> $env:GITHUB_ENV
           "OPENDRSAI_REQUIRE_SIGNED_RELEASE=$requireSignedRelease" >> $env:GITHUB_ENV
 
@@ -171,8 +169,8 @@ jobs:
         shell: pwsh
         run: |
           powershell -ExecutionPolicy Bypass -File installer\build-msi.ps1 `
-            -RuntimePath release\bootstrapper\OpenDrSaiRuntime-win-x64.zip `
-            -RuntimeUrl "$env:OPENDRSAI_RELEASE_BASE_URL/OpenDrSaiRuntime-win-x64.zip"
+            -RuntimePath "release\bootstrapper\$env:OPENDRSAI_RUNTIME_ARCHIVE_NAME" `
+            -RuntimeUrl "$env:OPENDRSAI_RELEASE_BASE_URL/$env:OPENDRSAI_RUNTIME_ARCHIVE_NAME"
 
       - name: Sign bootstrapper MSI
         env:
@@ -217,8 +215,8 @@ jobs:
         with:
           name: opendrsai-windows-desktop
           path: |
-            apps/desktop/windows/release/bootstrapper/OpenDrSaiSetup-win-x64.msi
-            apps/desktop/windows/release/bootstrapper/OpenDrSaiRuntime-win-x64.zip
+            apps/desktop/windows/release/bootstrapper/OpenDrSai-Windows-Installer-x64.msi
+            apps/desktop/windows/release/bootstrapper/${{ env.OPENDRSAI_RUNTIME_ARCHIVE_NAME }}
             apps/desktop/windows/release/latest-windows.json
             apps/desktop/windows/release/release-summary.json
             apps/desktop/windows/release/product-evidence/remote-workspace/windows-signatures.json
@@ -233,8 +231,8 @@ jobs:
           prerelease: false
           make_latest: true
           files: |
-            apps/desktop/windows/release/bootstrapper/OpenDrSaiSetup-win-x64.msi
-            apps/desktop/windows/release/bootstrapper/OpenDrSaiRuntime-win-x64.zip
+            apps/desktop/windows/release/bootstrapper/OpenDrSai-Windows-Installer-x64.msi
+            apps/desktop/windows/release/bootstrapper/${{ env.OPENDRSAI_RUNTIME_ARCHIVE_NAME }}
             apps/desktop/windows/release/latest-windows.json
             apps/desktop/windows/release/release-summary.json
             apps/desktop/windows/release/product-evidence/remote-workspace/windows-signatures.json

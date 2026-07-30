@@ -3,6 +3,7 @@ package ai.drsai.remote.remote.ui
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -20,6 +21,24 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 data class RemoteCapabilityUi(val name: String, val available: Boolean)
 data class RemoteSessionUi(val reference: RemoteSessionRef, val lastRunStatus: String?, val updatedAtLabel: String,
                            val lifecycle: String = "active")
+fun activeRemoteSessions(items: List<RemoteSessionUi>): List<RemoteSessionUi> =
+    items
+        .filter {
+            it.lifecycle == "active" &&
+                it.reference.lifecycle == RemoteResourceLifecycle.ACTIVE
+        }
+        .groupBy { it.reference.sessionId.value }
+        .values
+        .map { versions ->
+            versions.maxWith(
+                compareBy<RemoteSessionUi> { it.updatedAtLabel }
+                    .thenBy { it.reference.sessionId.value },
+            )
+        }
+        .sortedWith(
+            compareByDescending<RemoteSessionUi> { it.updatedAtLabel }
+                .thenBy { it.reference.sessionId.value },
+        )
 data class WorkspaceSessionsUiState(
     val runtimeName: String,
     val workspaceName: String,
@@ -42,6 +61,7 @@ fun WorkspaceSessionsScreen(state: WorkspaceSessionsUiState, onBack: () -> Unit,
                             onOpen: (RemoteSessionRef) -> Unit, onResume: () -> Unit = onRefresh,
                             onOpenCapability: (String) -> Unit = {}, onConfirmInstructions: () -> Unit = {}) {
     var agentPickerOpen by remember { mutableStateOf(false) }
+    val activeSessions = activeRemoteSessions(state.sessions)
     LifecycleEventEffect(Lifecycle.Event.ON_START) { onResume() }
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -83,13 +103,12 @@ fun WorkspaceSessionsScreen(state: WorkspaceSessionsUiState, onBack: () -> Unit,
         state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(state.sessions, key = { it.reference.sessionId.value }) { session ->
-                Card(onClick = { onOpen(session.reference) }, enabled = session.lifecycle == "active") {
+            items(activeSessions, key = { it.reference.sessionId.value }) { session ->
+                Card(onClick = { onOpen(session.reference) }) {
                     Column(Modifier.fillMaxWidth().padding(14.dp)) {
                         Text(session.reference.title, fontWeight = FontWeight.SemiBold)
                         Text("${session.reference.backendId} · ${session.lastRunStatus ?: "尚未运行"} · ${session.updatedAtLabel}",
                             style = MaterialTheme.typography.bodySmall)
-                        if (session.lifecycle != "active") Text(session.lifecycle, color = MaterialTheme.colorScheme.error)
                     }
                 }
             }
@@ -172,6 +191,7 @@ data class RemoteChatUiState(
     val activeRunId: RunId? = null,
     val artifacts: List<RemoteArtifactUi> = emptyList(),
     val scopeKey: String = "",
+    val connectionState: RemoteConnectionState = RemoteConnectionState.ONLINE,
 )
 
 @Composable
@@ -179,6 +199,14 @@ fun RemoteChatScreen(state: RemoteChatUiState, onBack: () -> Unit, onSend: (Stri
                      onCancelRun: () -> Unit, onApproval: (String, String) -> Unit, onOpenAudit: () -> Unit,
                      onOpenArtifact: (String) -> Unit = {}) {
     var input by remember(state.scopeKey) { mutableStateOf("") }
+    val transcriptListState = rememberLazyListState()
+    val transcriptItemCount =
+        state.messages.size + state.artifacts.size + if (state.approval == null) 0 else 1
+    LaunchedEffect(state.scopeKey, transcriptItemCount) {
+        if (transcriptItemCount > 0) {
+            transcriptListState.scrollToItem(transcriptItemCount - 1)
+        }
+    }
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onBack) { Text("返回") }
@@ -189,13 +217,32 @@ fun RemoteChatScreen(state: RemoteChatUiState, onBack: () -> Unit, onSend: (Stri
             state.correlationId?.let { TextButton(onClick = onOpenAudit) { Text("审计") } }
         }
         if (!state.online) Text("连接已中断，任务可能仍在运行", color = MaterialTheme.colorScheme.error)
-        LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyColumn(
+            Modifier.weight(1f),
+            state = transcriptListState,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             items(state.messages, key = { it.id }) { message ->
-                Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
-                    Column(Modifier.fillMaxWidth().padding(12.dp)) {
-                        Text(if (message.role == "user") "你" else "OpenDrSai", fontWeight = FontWeight.SemiBold)
-                        Text(message.text)
-                        message.progress?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                val isUser = message.role == "user"
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = if (isUser) Alignment.CenterEnd else Alignment.CenterStart,
+                ) {
+                    Surface(
+                        modifier = if (isUser) Modifier.widthIn(max = 620.dp) else Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        color = if (isUser) {
+                            MaterialTheme.colorScheme.primaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.surface
+                        },
+                        tonalElevation = 0.dp,
+                    ) {
+                        Column(Modifier.padding(if (isUser) 12.dp else 4.dp)) {
+                            Text(remoteRoleLabel(message.role), fontWeight = FontWeight.SemiBold)
+                            RemoteMarkdownContent(message.text)
+                            message.progress?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                        }
                     }
                 }
             }

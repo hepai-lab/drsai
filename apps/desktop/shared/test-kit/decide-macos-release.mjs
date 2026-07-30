@@ -1,0 +1,27 @@
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { currentCommit } from "./acceptanceEvidence.mjs";
+
+const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const repoRoot = resolve(desktopRoot, "../..");
+const acceptance = resolve(desktopRoot, "macos/build/acceptance");
+const read = (name) => existsSync(resolve(acceptance, name)) ? JSON.parse(readFileSync(resolve(acceptance, name), "utf8")) : null;
+const snapshot = read("source-snapshot.json");
+const levels = { L4: read("macos-l4-evidence.json"), L5: read("macos-l5-evidence.json"), L6: read("macos-l6-evidence.json") };
+const commit = currentCommit(repoRoot);
+const sourceBound = Boolean(snapshot && snapshot.commit === commit && snapshot.clean === true);
+const levelBound = Object.fromEntries(Object.entries(levels).map(([level, value]) => [level, Boolean(value && value.passed === true && value.commit === commit && snapshot && value.sourceAggregateSha256 === snapshot.aggregateSha256)]));
+const p2 = read("macos-phase-2-acceptance.json");
+const product = read("macos-feature-acceptance.json");
+const defect = read("p0-p1-defects.json");
+const allAccepted = p2?.summary?.accepted === 50 && product?.summary?.accepted === 72;
+const defectsClear = defect?.passed === true && defect?.openP0P1 === 0;
+const releasable = sourceBound && levelBound.L4 && levelBound.L5 && levelBound.L6 && allAccepted && defectsClear;
+const status = releasable ? "releasable" : levelBound.L4 || levelBound.L5 ? "unsigned-validated" : "blocked-on-signing";
+const decision = { schemaVersion: 1, status, releasable, commit, sourceBound, levelBound, acceptance: { phase2: p2?.summary ?? null, product: product?.summary ?? null, defectsClear }, evidenceSha256: Object.fromEntries(Object.entries(levels).filter(([, value]) => value).map(([level, value]) => [level, createHash("sha256").update(JSON.stringify(value)).digest("hex")])), blockers: [!sourceBound && "clean-source-evidence", !levelBound.L4 && "L4", !levelBound.L5 && "L5", !levelBound.L6 && "signed-L6", !allAccepted && "acceptance", !defectsClear && "defects"].filter(Boolean), generatedAt: new Date().toISOString() };
+mkdirSync(acceptance, { recursive: true });
+writeFileSync(resolve(acceptance, "release-decision.json"), `${JSON.stringify(decision, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+console.log(`macOS release decision: ${status}; blockers=${decision.blockers.join(",") || "none"}.`);
+if (process.argv.includes("--require-releasable") && !releasable) process.exitCode = 2;

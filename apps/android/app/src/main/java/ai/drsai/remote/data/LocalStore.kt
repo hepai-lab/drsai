@@ -21,6 +21,8 @@ import ai.drsai.remote.remote.data.PendingRemoteApprovalEntity
 import ai.drsai.remote.remote.data.RemoteCacheDao
 import ai.drsai.remote.remote.data.RemoteEventCursorEntity
 import ai.drsai.remote.remote.data.RemoteEventEntity
+import ai.drsai.remote.remote.data.RemoteConversationItemEntity
+import ai.drsai.remote.remote.data.RemoteSessionEventEntity
 import ai.drsai.remote.remote.data.RemoteRunEntity
 import ai.drsai.remote.remote.data.RemoteRuntimeEntity
 import ai.drsai.remote.remote.data.RemoteSessionEntity
@@ -236,16 +238,37 @@ interface ChatDao {
         ConversationSummaryEntity::class, ToolArtifactEntity::class, AgentCatalogEntity::class,
         RemoteRuntimeEntity::class, RemoteWorkspaceEntity::class, RemoteSessionEntity::class, RemoteRunEntity::class,
         RemoteEventCursorEntity::class, RemoteEventEntity::class, PendingRemoteApprovalEntity::class,
+        RemoteConversationItemEntity::class, RemoteSessionEventEntity::class,
         WorkbenchWorkspaceEntity::class, WorkbenchSessionEntity::class, WorkbenchRunEntity::class,
         WorkbenchEventEntity::class, WorkbenchApprovalEntity::class, WorkbenchApprovalGrantEntity::class,
         WorkbenchAuditEntity::class],
-    version = 6,
+    version = 8,
     exportSchema = false,
 )
 abstract class ChatDatabase : RoomDatabase() {
     abstract fun dao(): ChatDao
     abstract fun remoteDao(): RemoteCacheDao
     abstract fun workbenchDao(): WorkbenchDao
+}
+
+val MIGRATION_7_8 = object : Migration(7, 8) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS remote_conversation_items (subject TEXT NOT NULL, organization TEXT NOT NULL, runtimeId TEXT NOT NULL, workspaceId TEXT NOT NULL, sessionId TEXT NOT NULL, itemId TEXT NOT NULL, runId TEXT, kind TEXT NOT NULL, role TEXT, revision INTEGER NOT NULL, sessionSequence INTEGER NOT NULL, sourceClient TEXT NOT NULL, sourceMessageId TEXT, createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL, payloadJson TEXT NOT NULL, optimistic INTEGER NOT NULL, PRIMARY KEY(subject, organization, runtimeId, sessionId, itemId))")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_remote_conversation_items_subject_organization_runtimeId_sessionId_sessionSequence ON remote_conversation_items(subject, organization, runtimeId, sessionId, sessionSequence)")
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_remote_conversation_items_subject_organization_runtimeId_sessionId_sourceMessageId ON remote_conversation_items(subject, organization, runtimeId, sessionId, sourceMessageId)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS remote_session_events (subject TEXT NOT NULL, organization TEXT NOT NULL, runtimeId TEXT NOT NULL, workspaceId TEXT NOT NULL, sessionId TEXT NOT NULL, runId TEXT, eventId TEXT NOT NULL, sessionSequence INTEGER NOT NULL, kind TEXT NOT NULL, timestamp TEXT NOT NULL, payloadJson TEXT NOT NULL, PRIMARY KEY(subject, organization, runtimeId, sessionId, eventId))")
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_remote_session_events_subject_organization_runtimeId_sessionId_sessionSequence ON remote_session_events(subject, organization, runtimeId, sessionId, sessionSequence)")
+    }
+}
+
+val MIGRATION_6_7 = object : Migration(6, 7) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE remote_workspaces ADD COLUMN lifecycle TEXT NOT NULL DEFAULT 'active'")
+        db.execSQL("ALTER TABLE remote_workspaces ADD COLUMN revision INTEGER NOT NULL DEFAULT 1")
+        db.execSQL("ALTER TABLE remote_workspaces ADD COLUMN updatedAt TEXT NOT NULL DEFAULT ''")
+        db.execSQL("ALTER TABLE remote_sessions ADD COLUMN lifecycle TEXT NOT NULL DEFAULT 'active'")
+        db.execSQL("ALTER TABLE remote_sessions ADD COLUMN updatedAt TEXT NOT NULL DEFAULT ''")
+    }
 }
 
 class MemorySettingsStore(context: Context) {

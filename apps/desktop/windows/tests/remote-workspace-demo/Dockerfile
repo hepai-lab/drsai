@@ -10,7 +10,7 @@ RUN useradd -m -s /bin/bash vscode \
     && chmod 700 /home/vscode/.ssh
 
 COPY cores/python/packages/drsai /opt/drsai
-COPY protocol /protocol
+COPY cores/protocol /protocol
 RUN python3 -m pip install --break-system-packages --no-cache-dir /opt/drsai
 
 RUN su - vscode -c 'cd /home/vscode/workspace && git init -q && git config user.email demo@opendrsai.local && git config user.name OpenDrSai-Demo && printf "# OpenDrSai Remote Workspace Demo\n\nThis file lives inside the Linux container.\n" > README.md && printf "remote demo\n" > remote.txt && git add . && git commit -qm initial' \

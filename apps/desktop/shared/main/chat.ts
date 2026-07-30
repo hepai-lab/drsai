@@ -5,8 +5,6 @@ import { dirname } from "path";
 import type { ChatAttachment, ChatEvent, ChatMessage, ChatRequest, MaterialRoleItem } from "../api/desktopApi";
 import { invalidateAuthSession, refreshAuthContextAfterUnauthorized, requireAuthContext, type AuthContext } from "./auth";
 import { getPlatformAgentChatUrl, getPlatformAgentExecutionDescriptor, isPlatformAgentExecutionAvailable, respondToPlatformChatInput, stopPlatformChat } from "./agents";
-import { getGatewayRequestHeaders, startGateway } from "./gateway";
-import { getDefaultModelAlias, normalizeModelAlias } from "./modelDefaults";
 import {
   createChatToolTimelineAccumulator,
   createChatContentNormalizer,
@@ -23,14 +21,15 @@ import {
   parseProviderUsageAnalyticsSseFrame,
   parseAgentRunSseFileEvents,
 } from "./sseParser";
-import { listThreads, upsertThreadFromRun } from "./threads";
+import { listThreads, updateThread, upsertThreadFromRun } from "./threads";
 import { persistProviderErrorAnalytics } from "./providerErrorAnalytics";
 import { persistProviderUsageAnalytics } from "./providerUsageAnalytics";
 import { recordAgentTelemetry } from "./agentTelemetry";
 import { analyzeMaterialRoles } from "./workspaceContext";
 import { assertAgentCircuitAvailable, recordAgentCircuitFailure, recordAgentCircuitSuccess } from "./agentCircuitBreaker";
 import { createFailureEscalation, getFailureRecovery } from "./failureRecovery";
-import { connectRuntimeClientForWorkspace, type RuntimeClient, type RuntimeAgentEvent } from "./runtimeClient";
+import { bindRuntimeThreadToWorkspace, connectRuntimeClientForWorkspace, type RuntimeClient, type RuntimeAgentEvent } from "./runtimeClient";
+import { sessionPayloadHash, sessionSyncState } from "./sessionSyncState";
 import {
   RecoverableStreamError,
   appendResumedContent,
@@ -41,28 +40,41 @@ import {
   type StreamResumeState,
 } from "./networkRecovery";
 import { desktopDiagnostics, type DiagnosticOperationHandle } from "./diagnostics";
+import { BoundedEventDispatcher } from "./boundedEventDispatcher";
+import { listRecordedChatRunEvents, recordChatRunEvent } from "./chatRunJournal";
 
 export interface ChatEventTarget {
   send(channel: string, ...args: unknown[]): void;
 }
 
+const chatEventDispatchers = new WeakMap<ChatEventTarget, BoundedEventDispatcher<ChatEvent>>();
+
+function getChatEventDispatcher(target: ChatEventTarget): BoundedEventDispatcher<ChatEvent> {
+  const existing = chatEventDispatchers.get(target);
+  if (existing) return existing;
+  const dispatcher = new BoundedEventDispatcher<ChatEvent>({
+    capacity: 256,
+    deliver: (event) => target.send("desktop:chat-event", event),
+    merge: (previous, next) => {
+      if (previous.requestId !== next.requestId || previous.type !== next.type || (next.type !== "chunk" && next.type !== "reasoning")) return null;
+      return { ...next, content: `${previous.content ?? ""}${next.content ?? ""}` };
+    },
+  });
+  chatEventDispatchers.set(target, dispatcher);
+  return dispatcher;
+}
+
 export interface ChatRemoteRouting {
   resolveTarget(workspacePath?: string, workspaceId?: string): Promise<"remote_online" | "remote_offline" | "local_or_unknown">;
   getGatewayAccess(workspacePath?: string, workspaceId?: string): { baseUrl: string; token: string; workspaceId: string } | null;
-  bindThread(threadId: string, workspaceId: string): void;
+  bindThread(threadId: string, workspaceId: string, runtimeSessionId?: string): void;
 }
 
-let remoteRouting: ChatRemoteRouting = {
-  resolveTarget: async () => "local_or_unknown",
-  getGatewayAccess: () => null,
-  bindThread: () => undefined,
-};
-
-export function configureChatRemoteRouting(routing: ChatRemoteRouting): void {
-  remoteRouting = routing;
+export function configureChatRemoteRouting(_routing: ChatRemoteRouting): void {
+  // RuntimeClient owns local/SSH Workspace routing. Keep this additive no-op
+  // until platform bootstraps stop importing the legacy Chat router hook.
 }
 
-const GATEWAY_BASE_URL = `http://127.0.0.1:${getGatewayPort()}`;
 const MAX_ACTIVE_CHATS = 3;
 const MAX_MESSAGES = 40;
 const MAX_MESSAGE_CHARS = 16_000;
@@ -70,6 +82,7 @@ const MAX_TOTAL_CHARS = 80_000;
 const MAX_MODEL_CHARS = 120;
 const MAX_AGENT_ID_CHARS = 160;
 const MAX_WORKSPACE_PATH_CHARS = 2048;
+const MAX_WORKSPACE_NAME_CHARS = 120;
 const MAX_ATTACHMENTS = 20;
 const MAX_ATTACHMENT_PATH_CHARS = 2048;
 const MAX_ATTACHMENT_NAME_CHARS = 260;
@@ -84,6 +97,7 @@ const NETWORK_RECOVERY_WINDOW_MS = getPositiveIntEnv("OPENDRSAI_NETWORK_RECOVERY
 const REQUEST_ID_PATTERN = /^[a-zA-Z0-9_-]{8,80}$/;
 const SESSION_ID_PATTERN = /^[a-zA-Z0-9_.:-]{1,160}$/;
 const activeChats = new Map<string, AbortController>();
+const activeChatEventTargets = new Map<string, ChatEventTarget>();
 const platformChatTargets = new Map<string, { agentId: string; threadId: string }>();
 const codexChatTargets = new Map<string, { client: RuntimeClient; runId: string; approvalId?: string }>();
 const chatEventSequences = new Map<string, number>();
@@ -99,11 +113,13 @@ export function startChat(webContents: ChatEventTarget, request: unknown): strin
   }
   const validated = validateChatRequest(request);
   const requestId = validated.requestId || randomUUID();
+  const runRequest: ChatRequest = { ...validated, runId: validated.runId || randomUUID() };
   if (activeChats.has(requestId)) {
     throw new Error("Chat request is already active.");
   }
   const controller = new AbortController();
   activeChats.set(requestId, controller);
+  activeChatEventTargets.set(requestId, webContents);
   chatEventSequences.set(requestId, 0);
   chatDiagnosticOperations.set(requestId, desktopDiagnostics.start({
     traceId: requestId,
@@ -117,8 +133,9 @@ export function startChat(webContents: ChatEventTarget, request: unknown): strin
     attributes: { route: validated.agentId === "my-codex" ? "codex" : "opendrsai" },
   }));
 
-  runChat(webContents, requestId, validated, controller).catch(async (error) => {
+  runChat(webContents, requestId, runRequest, controller).catch(async (error) => {
     activeChats.delete(requestId);
+    activeChatEventTargets.delete(requestId);
     platformChatTargets.delete(requestId);
     const timedOut = controller.signal.aborted && controller.signal.reason === "timeout";
     const cancelledByUser = controller.signal.aborted && !timedOut;
@@ -137,6 +154,8 @@ export function startChat(webContents: ChatEventTarget, request: unknown): strin
     }
     emit(webContents, {
       requestId,
+      sessionId: runRequest.sessionId,
+      runId: runRequest.runId,
       type: cancelledByUser ? "aborted" : "error",
       error: errorMessage,
       failureRecovery: getFailureRecovery(error),
@@ -158,8 +177,11 @@ export function abortChat(requestId: string): boolean {
   if (codexTarget) void codexTarget.client.cancelAgentRun(codexTarget.runId).catch(() => undefined);
   controller.abort("user");
   activeChats.delete(requestId);
+  activeChatEventTargets.delete(requestId);
   platformChatTargets.delete(requestId);
-  codexChatTargets.delete(requestId);
+  // Keep the Runtime target until runChat reaches its finally block. The
+  // cancellation path still needs the authoritative Runtime Run ID when it
+  // persists the recoverable Thread binding.
   return true;
 }
 
@@ -168,7 +190,7 @@ export function abortChat(requestId: string): boolean {
  * The authoritative Run and its event log remain in the Runtime, so recovery
  * must read them there instead of treating a renderer reload as a failed run.
  */
-export async function recoverChatRun(rawRequest: unknown): Promise<ChatEvent[]> {
+export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEventTarget): Promise<ChatEvent[]> {
   if (!rawRequest || typeof rawRequest !== "object") return [];
   const request = rawRequest as { requestId?: unknown; sessionId?: unknown };
   if (
@@ -177,8 +199,18 @@ export async function recoverChatRun(rawRequest: unknown): Promise<ChatEvent[]> 
   ) return [];
   const requestId = request.requestId;
   const sessionId = request.sessionId;
+  if (eventTarget && activeChats.has(requestId)) activeChatEventTargets.set(requestId, eventTarget);
   const thread = (await listThreads()).find((candidate) => candidate.id === sessionId);
-  if (!thread || thread.boundAgentId !== "my-codex" || !thread.lastRunId || !thread.workspacePath) return [];
+  if (!thread?.lastRunId) return [];
+  if (!thread.runtimeSessionId || !thread.workspacePath) {
+    const journal = await listRecordedChatRunEvents(thread.lastRunId);
+    const recovered = journal.map((event, index) => ({ ...event, requestId, sessionId, seq: index + 1 }));
+    if (thread.status === "running" && !activeChats.has(thread.lastRequestId ?? requestId)) {
+      recovered.push({ requestId, sessionId, runId: thread.lastRunId, seq: recovered.length + 1, type: "error", error: "Chat run was interrupted by an application restart. Recovered output is preserved." });
+      await updateThread({ id: thread.id, status: "error" });
+    }
+    return recovered;
+  }
   const resolved = await connectRuntimeClientForWorkspace(thread.workspacePath, thread.execution?.workspaceId);
   const events = await resolved.client.listAgentRunEvents(thread.lastRunId, 0);
   const recovered: ChatEvent[] = [];
@@ -186,6 +218,9 @@ export async function recoverChatRun(rawRequest: unknown): Promise<ChatEvent[]> 
   const push = (event: Omit<ChatEvent, "requestId" | "sessionId" | "seq">) => {
     recovered.push({ ...event, requestId, sessionId, seq: ++sequence });
   };
+  const recorded = await listRecordedChatRunEvents(thread.lastRunId);
+  push({ type: "start", runId: thread.lastRunId });
+  for (const event of recorded) if (event.type === "connection") push({ type: "connection", runId: thread.lastRunId, connection: event.connection });
   const target = { approvalId: undefined as string | undefined };
   for (const event of events) {
     const mapped = mapCodexRuntimeEvent(requestId, sessionId, thread.lastRunId, event, target);
@@ -193,7 +228,8 @@ export async function recoverChatRun(rawRequest: unknown): Promise<ChatEvent[]> 
   }
   if (events.some((event) => event.type === "run.completed")) push({ type: "done", runId: thread.lastRunId });
   else if (events.some((event) => event.type === "run.cancelled")) push({ type: "aborted", runId: thread.lastRunId });
-  else if (events.some((event) => event.type === "run.failed")) push({ type: "error", runId: thread.lastRunId, error: "Codex Run failed while the Desktop was reconnecting." });
+  else if (events.some((event) => event.type === "run.failed")) push({ type: "error", runId: thread.lastRunId, error: "Runtime Agent Run failed while the Desktop was reconnecting." });
+  else if (recorded.some((event) => event.type === "aborted")) push({ type: "aborted", runId: thread.lastRunId });
   return recovered;
 }
 
@@ -250,6 +286,20 @@ function validateChatRequest(rawRequest: unknown): ChatRequest {
     throw new Error("Chat workspace path is invalid.");
   }
   if (
+    request.workspaceId !== undefined &&
+    (typeof request.workspaceId !== "string" || !SESSION_ID_PATTERN.test(request.workspaceId))
+  ) {
+    throw new Error("Chat workspace id is invalid.");
+  }
+  if (
+    request.workspaceName !== undefined &&
+    (typeof request.workspaceName !== "string" ||
+      request.workspaceName.length > MAX_WORKSPACE_NAME_CHARS ||
+      /[\r\n\0]/.test(request.workspaceName))
+  ) {
+    throw new Error("Chat workspace name is invalid.");
+  }
+  if (
     request.threadId !== undefined &&
     (typeof request.threadId !== "string" || !SESSION_ID_PATTERN.test(request.threadId))
   ) {
@@ -298,6 +348,8 @@ function validateChatRequest(rawRequest: unknown): ChatRequest {
     agentId: request.agentId?.trim() || undefined,
     model: request.model?.trim() || undefined,
     workspacePath: request.workspacePath?.trim() || undefined,
+    workspaceId: request.workspaceId?.trim() || undefined,
+    workspaceName: request.workspaceName?.trim() || undefined,
     threadId: request.threadId?.trim() || undefined,
     sessionId: request.sessionId?.trim() || undefined,
     runId: request.runId?.trim() || undefined,
@@ -421,7 +473,7 @@ async function runChat(
     boundAgentName,
     // Codex resolves legacy Runtime Session bindings from the previous Run.
     // Do not overwrite that recovery handle until its new Run exists.
-    lastRunId: isCodexBackend ? undefined : runId,
+    lastRunId: isCodexBackend || !platformDescriptor ? undefined : runId,
     lastRequestId: requestId,
     status: "running",
     messageCount: request.messages.length,
@@ -430,8 +482,16 @@ async function runChat(
 
   const timeout = setTimeout(() => controller.abort("timeout"), CHAT_TIMEOUT_MS);
   try {
-    if (isCodexBackend) {
-      await runCodexBackendChat(webContents, requestId, sessionId, request, controller);
+    if (!platformDescriptor) {
+      await runRuntimeBackendChat(
+        webContents,
+        requestId,
+        sessionId,
+        request,
+        controller,
+        isCodexBackend ? "codex@1" : "opendrsai@1",
+        auth,
+      );
       activeChats.delete(requestId);
       recordAgentTelemetry({ event: "execution_completed", agentId: boundAgentId, mode: "local", source: "local", durationMs: Date.now() - executionStartedAt });
       await upsertThreadFromRun({ id: sessionId, kind: "chat", title: deriveThreadTitle(request.messages),
@@ -440,34 +500,16 @@ async function runChat(
       emit(webContents, { requestId, sessionId, runId: codexChatTargets.get(requestId)?.runId ?? runId, type: "done" });
       return;
     }
-    // Platform agents execute in HAI and must never depend on a local or
-    // workspace gateway being installed/running. Gateway startup is reserved
-    // for My DrSai and remote-workspace local execution.
-    const remoteTarget = platformDescriptor ? "local_or_unknown" : await remoteRouting.resolveTarget(request.workspacePath, request.workspaceId);
-    if (remoteTarget === "remote_offline") {
-      throw new Error("Remote Workspace is offline; Agent Backend execution cannot fall back to Local Runtime.");
-    }
-    const remoteGateway = platformDescriptor ? null : remoteRouting.getGatewayAccess(request.workspacePath, request.workspaceId);
-    if (remoteGateway) remoteRouting.bindThread(sessionId, remoteGateway.workspaceId);
-    const ready = platformDescriptor || remoteGateway ? true : await startGateway();
-    writeChatDiagnostic(requestId, `stage: gateway ready=${ready}`);
-    if (!ready) {
-      throw new Error("Gateway is not ready. Install or start OpenDrSai first.");
-    }
-
-    const enrichedAttachments = await enrichAttachmentsWithMaterialRoles(request.attachments);
-    const attachmentContext = platformDescriptor || remoteGateway ? [] : await buildAttachmentContext(enrichedAttachments);
-    writeChatDiagnostic(requestId, `stage: attachment context built count=${attachmentContext.length}`);
-    const messages = withAttachmentContext(request.messages, attachmentContext);
-    const model = normalizeModelAlias(request.model) || getDefaultModelAlias() || "drsai";
+    // Only HAI Platform Agents reach this branch. My DrSai and Codex have
+    // already entered the Runtime-authoritative Session/Run path above.
+    const messages = request.messages;
     const resumeState: StreamResumeState = { content: "", fileEventKeys: new Set() };
     const recoveryStartedAt = Date.now();
     const send = async (authContext: AuthContext, recoveryAttempt: number): Promise<boolean> => {
-      if (platformDescriptor) {
-        if (!authContext.accessToken) {
-          throw new Error("Sign in with HepAI before using a platform agent.");
-        }
-        const response = await fetch(getPlatformAgentChatUrl(platformDescriptor.platformId), {
+      if (!authContext.accessToken) {
+        throw new Error("Sign in with HepAI before using a platform agent.");
+      }
+      const response = await fetch(getPlatformAgentChatUrl(platformDescriptor.platformId), {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -490,66 +532,17 @@ async function runChat(
             },
           }),
           signal: controller.signal,
-        });
-        if (response.status === 401) {
-          const authError = await formatHttpError(response);
-          if (authError instanceof ChatSseError && authError.code === "token_expired") {
-            // The Native API owns OIDC validation. Refresh once only when it
-            // explicitly reports an expired desktop access token; an upstream
-            // agent credential failure must retain its own error code.
-            throw new ChatSseError(authError.message, authError.code, true);
-          }
-          throw authError;
-        }
-        if (!response.ok || !response.body) {
-          if (response.status === 408 || response.status === 429 || response.status >= 500) {
-            throw new RecoverableStreamError(`Service temporarily unavailable (HTTP ${response.status}).`);
-          }
-          throw await formatHttpError(response);
-        }
-        return readSse(webContents, requestId, sessionId, runId, response.body, controller.signal, resumeState);
-      }
-      const gatewayBaseUrl = remoteGateway?.baseUrl || GATEWAY_BASE_URL;
-      const gatewayHeaders = remoteGateway
-        ? { "X-OpenDrSai-Gateway-Token": remoteGateway.token }
-        : getGatewayRequestHeaders();
-      writeChatDiagnostic(requestId, `stage: provider request ${gatewayBaseUrl}`);
-      const response = await fetch(`${gatewayBaseUrl}/v1/chat/completions`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...gatewayHeaders,
-          "X-OpenDrSai-User": authContext.userId,
-          "X-OpenDrSai-Auth-Mode": authContext.authMode,
-          ...(request.workspacePath ? { "X-OpenDrSai-Workspace": encodeURIComponent(request.workspacePath) } : {}),
-          ...(authContext.accessToken ? { Authorization: `Bearer ${authContext.accessToken}` } : {}),
-          "Idempotency-Key": `desktop-chat-${requestId}`,
-        },
-        body: JSON.stringify({
-          model,
-          messages,
-          stream: true,
-          user_id: authContext.userId,
-          thread_id: sessionId,
-          work_dir: request.workspacePath,
-          workspace_id: remoteGateway?.workspaceId,
-          metadata: {
-            ...(request.metadata || {}),
-            auth_mode: authContext.authMode,
-            run_id: runId,
-            desktop_request_id: requestId,
-            network_retry_attempt: recoveryAttempt,
-            resume_from_chars: resumeState.content.length,
-            attachments: enrichedAttachments,
-            files: enrichedAttachments,
-            attachment_context: attachmentContext,
-          },
-        }),
-        signal: controller.signal,
       });
+      if (response.status === 401) {
+        const authError = await formatHttpError(response);
+        if (authError instanceof ChatSseError && authError.code === "token_expired") {
+          throw new ChatSseError(authError.message, authError.code, true);
+        }
+        throw authError;
+      }
       if (!response.ok || !response.body) {
         if (response.status === 408 || response.status === 429 || response.status >= 500) {
-          throw new RecoverableStreamError(`Gateway temporarily unavailable (HTTP ${response.status}).`);
+          throw new RecoverableStreamError(`Service temporarily unavailable (HTTP ${response.status}).`);
         }
         throw await formatHttpError(response);
       }
@@ -569,9 +562,7 @@ async function runChat(
           webContents.send("desktop:auth-session-invalidated");
         }
         if (error instanceof ChatSseError && error.code === "token_expired" && error.retryable && !refreshedToken) {
-          auth = platformDescriptor
-            ? await refreshAuthContextAfterUnauthorized()
-            : await requireAuthContext();
+          auth = await refreshAuthContextAfterUnauthorized();
           refreshedToken = true;
           continue;
         }
@@ -593,7 +584,7 @@ async function runChat(
             attempt: recoveryAttempt,
             delayMs: retryDelayMs,
             timestamp: new Date().toISOString(),
-            source: remoteGateway ? "remote-gateway" : "gateway",
+            source: "gateway",
           },
         });
         emit(webContents, {
@@ -615,7 +606,7 @@ async function runChat(
           status: "restored",
           attempt: recoveryAttempt,
           timestamp: new Date().toISOString(),
-          source: remoteGateway ? "remote-gateway" : "gateway",
+          source: "gateway",
         },
       });
       emit(webContents, { requestId, sessionId, runId, type: "status", level: "INFO", content: "网络已恢复，回复已从保存位置继续。" });
@@ -633,7 +624,7 @@ async function runChat(
       workspacePath: request.workspacePath,
       boundAgentId,
       boundAgentName,
-      lastRunId: isCodexBackend ? undefined : runId,
+      lastRunId: codexChatTargets.get(requestId)?.runId ?? (isCodexBackend ? undefined : runId),
       lastRequestId: requestId,
       status: "idle",
       messageCount: request.messages.length,
@@ -657,6 +648,7 @@ async function runChat(
             ? "user_cancelled"
             : "execution_error",
     });
+    const authoritativeRuntimeRunId = codexChatTargets.get(requestId)?.runId;
     await upsertThreadFromRun({
       id: sessionId,
       kind: "chat",
@@ -664,11 +656,14 @@ async function runChat(
       workspacePath: request.workspacePath,
       boundAgentId,
       boundAgentName,
-      lastRunId: isCodexBackend ? undefined : runId,
+      lastRunId: authoritativeRuntimeRunId ?? (isCodexBackend ? undefined : runId),
       lastRequestId: requestId,
       status: controller.signal.aborted && controller.signal.reason !== "timeout" ? "idle" : "error",
       messageCount: request.messages.length,
     });
+    if (authoritativeRuntimeRunId && controller.signal.aborted && controller.signal.reason !== "timeout") {
+      recordChatRunEvent({ requestId, sessionId, runId: authoritativeRuntimeRunId, type: "aborted" });
+    }
     throw error;
   } finally {
     clearTimeout(timeout);
@@ -677,11 +672,13 @@ async function runChat(
   }
 }
 
-async function runCodexBackendChat(
+async function runRuntimeBackendChat(
   webContents: ChatEventTarget, requestId: string, displaySessionId: string, request: ChatRequest, controller: AbortController,
+  agentDefinition: "codex@1" | "opendrsai@1",
+  auth: AuthContext,
 ): Promise<void> {
-  if (!request.workspacePath) throw new Error("Codex requires an open Workspace.");
-  const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
+  if (!request.workspacePath) throw new Error("Runtime Agent requires an open Workspace.");
+  const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId, request.workspaceName);
   const client = resolved.client;
   const existingThread = (await listThreads()).find((thread) => thread.id === displaySessionId);
   let runtimeSessionId = existingThread?.runtimeSessionId;
@@ -693,7 +690,26 @@ async function runCodexBackendChat(
   if (!runtimeSessionId) {
     runtimeSessionId = (await client.createSession(resolved.workspaceId, deriveThreadTitle(request.messages))).session_id;
   }
-  const run = await client.createAgentRun(runtimeSessionId, "codex@1", `desktop-codex-${requestId}`);
+  bindRuntimeThreadToWorkspace(displaySessionId, resolved.workspaceId, runtimeSessionId);
+  const sourceMessageId = `desktop:${requestId}`;
+  const idempotencyKey = `desktop-runtime-${requestId}`;
+  await sessionSyncState.beginOutbox(runtimeSessionId, {
+    sourceMessageId,
+    idempotencyKey,
+    payloadHash: sessionPayloadHash({
+      messages: request.messages,
+      attachments: (request.attachments ?? []).map((item) => ({
+        kind: item.kind, path: item.path, name: item.name,
+      })),
+      agentDefinition,
+    }),
+  });
+  const run = await client.createAgentRun(
+    runtimeSessionId,
+    agentDefinition,
+    idempotencyKey,
+  );
+  await sessionSyncState.attachRun(runtimeSessionId, sourceMessageId, run.run_id);
   // Persist the Runtime Run ID before execution starts. If Electron restarts
   // while Codex is working, this is the recovery handle for its event log.
   await upsertThreadFromRun({
@@ -708,10 +724,27 @@ async function runCodexBackendChat(
   });
   const target = { client: client as RuntimeClient, runId: run.run_id, approvalId: undefined as string | undefined };
   codexChatTargets.set(requestId, target);
-  const prompt = request.messages.map((message) => `${message.role}: ${message.content}`).join("\n\n");
+  const prompt = agentDefinition === "opendrsai@1"
+    ? latestUserPrompt(request.messages)
+    : request.messages.map((message) => `${message.role}: ${message.content}`).join("\n\n");
   let completed = false;
   let failure: unknown;
-  const execution = client.executeAgentRun(run.run_id, prompt, controller.signal)
+  const execution = client.executeAgentRun(
+    run.run_id,
+    prompt,
+    controller.signal,
+    {
+      sourceClient: "windows",
+      sourceMessageId,
+      attachmentRefs: (request.attachments ?? []).map((item) => item.path),
+      metadata: { ...(request.metadata ?? {}), desktop_request_id: requestId },
+    },
+    auth.authMode === "oidc" && auth.accessToken
+      ? { authMode: "oidc", accessToken: auth.accessToken, userId: auth.userId }
+      : auth.authMode === "offline"
+        ? { authMode: "offline", userId: auth.userId }
+        : undefined,
+  )
     .catch((error) => { failure = error; })
     .finally(() => { completed = true; });
   let after = 0;
@@ -741,6 +774,14 @@ async function runCodexBackendChat(
     if (!completed) await new Promise((resolve) => setTimeout(resolve, 100));
   }
   await execution;
+  if (
+    !failure
+    || await client.getConversationSnapshot(runtimeSessionId)
+      .then((snapshot) => snapshot.items.some((item) => item.source_message_id === sourceMessageId))
+      .catch(() => false)
+  ) {
+    await sessionSyncState.completeOutbox(runtimeSessionId, sourceMessageId);
+  }
   for (const event of await client.listAgentRunEvents(run.run_id, after).catch(() => [])) {
     emitCodexRuntimeEvent(webContents, requestId, displaySessionId, run.run_id, event, target);
   }
@@ -764,7 +805,7 @@ function mapCodexRuntimeEvent(
   requestId: string, sessionId: string, runId: string,
   event: RuntimeAgentEvent, target: { approvalId?: string },
 ): Omit<ChatEvent, "seq"> | null {
-  const content = typeof event.data.content === "string" ? event.data.content : undefined;
+  const content = runtimeEventText(event.data);
   if (event.type === "agent.message.delta") return { requestId, sessionId, runId, type: "chunk", content };
   if (event.type === "agent.item.reasoning") {
     const reasoning = codexItemText(event.data);
@@ -824,7 +865,23 @@ function deriveThreadTitle(messages: ChatMessage[]): string {
   return firstUser?.content.trim().slice(0, 80) || "New chat";
 }
 
-interface AttachmentContextItem {
+function runtimeEventText(data: Record<string, unknown>): string | undefined {
+  for (const key of ["content", "delta", "text"]) {
+    const value = data[key];
+    if (typeof value === "string") return value;
+  }
+  return undefined;
+}
+
+function latestUserPrompt(messages: ChatMessage[]): string {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role === "user" && message.content.trim()) return message.content;
+  }
+  return messages.at(-1)?.content ?? "";
+}
+
+export interface AttachmentContextItem {
   kind: ChatAttachment["kind"];
   path: string;
   name: string;
@@ -837,7 +894,7 @@ interface AttachmentContextItem {
   content?: string;
 }
 
-async function enrichAttachmentsWithMaterialRoles(
+export async function enrichAttachmentsWithMaterialRoles(
   attachments: ChatRequest["attachments"],
 ): Promise<ChatAttachment[]> {
   if (!attachments?.length) return [];
@@ -885,7 +942,7 @@ function formatMaterialRole(role: MaterialRoleItem["role"]): string {
   return "Reference materials";
 }
 
-async function buildAttachmentContext(attachments: ChatRequest["attachments"]): Promise<AttachmentContextItem[]> {
+export async function buildAttachmentContext(attachments: ChatRequest["attachments"]): Promise<AttachmentContextItem[]> {
   if (!attachments?.length) return [];
   const context: AttachmentContextItem[] = [];
   let includedFiles = 0;
@@ -1013,7 +1070,7 @@ function fileMetadataContext(
   };
 }
 
-function withAttachmentContext(messages: ChatMessage[], context: AttachmentContextItem[]): ChatMessage[] {
+export function withAttachmentContext(messages: ChatMessage[], context: AttachmentContextItem[]): ChatMessage[] {
   const included = context.filter((item) => item.included && item.content);
   if (!included.length) return messages;
   const content = [
@@ -1401,10 +1458,14 @@ async function readLimitedText(response: Response, maxBytes: number): Promise<st
 function emit(webContents: ChatEventTarget, event: ChatEvent): void {
   const seq = (chatEventSequences.get(event.requestId) ?? 0) + 1;
   chatEventSequences.set(event.requestId, seq);
-  webContents.send("desktop:chat-event", { ...event, seq });
+  const sequenced = { ...event, seq };
+  const currentTarget = activeChatEventTargets.get(event.requestId) ?? webContents;
+  getChatEventDispatcher(currentTarget).enqueue(sequenced);
+  recordChatRunEvent(sequenced);
   void recordChatDiagnosticEvent(event, seq);
   if (event.type === "done" || event.type === "error" || event.type === "aborted") {
     chatEventSequences.delete(event.requestId);
+    activeChatEventTargets.delete(event.requestId);
   }
 }
 
@@ -1567,7 +1628,7 @@ function getPositiveIntEnv(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
 }
 
-function getGatewayPort(): string {
+export function getGatewayPort(): string {
   const rawPort = process.env.OPENDRSAI_GATEWAY_PORT || process.env.DRSAI_API_PORT || "18642";
   const parsed = Number(rawPort);
   return Number.isInteger(parsed) && parsed > 0 && parsed < 65536 ? String(parsed) : "18642";

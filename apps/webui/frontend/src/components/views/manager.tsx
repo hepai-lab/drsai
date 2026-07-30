@@ -3,7 +3,7 @@ import { useLang } from "@/i18n/useLang";
 import { Dropdown, Input, message, Modal, Popconfirm, Spin, Button } from "antd";
 import React, { Suspense, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { MoreVertical, Search, Share2, Trash2, Library, Plus, Upload, X } from "lucide-react";
+import { MoreVertical, Search, Share2, Trash2, Plus, Upload, X, ChevronDown, ChevronRight, Library } from "lucide-react";
 import { parse } from "yaml";
 import { useConfigStore } from "../../hooks/store";
 import { useModeConfigStore } from "../../store/modeConfig";
@@ -12,7 +12,10 @@ import { useAgentInfo } from "../features/Agents/useAgentInfo";
 import PlanList from "../features/Plans/PlanList";
 import { GeneralConfig, useSettingsStore } from "../store";
 import type { Session, FilesEvent, MessageFileItem } from "../types/datamodel";
-import { sessionAPI, settingsAPI, userAPI, docmasterAPI, type DocMasterTemplateEntry, type DocMasterPptxPreviewSlide } from "./api";
+import { sessionAPI, settingsAPI, userAPI, docmasterAPI, fileAPI, cloudAPI, type DocMasterTemplateEntry, type DocMasterPptxPreviewSlide } from "./api";
+import { getServerUrl } from "../utils";
+import GuanlianyewuPanel, { type UploadedFile, buildAuditPrompt } from "../../pages/guanlianyewu/GuanlianyewuPanel";
+import ZongheCailiaoPanel, { buildZongheCailiaoPrompt } from "../../pages/guanlianyewu/ZongheCailiaoPanel";
 import ChatView from "../../pages/chat/chat";
 import NewChatView from "../../pages/chat/NewChatView";
 import { useAgentManager } from "./hooks/useAgentManager";
@@ -26,7 +29,6 @@ import FilePreviewPage from "../../pages/FilePreviewPage";
 import LogsPage from "../../pages/settings/LogsPage";
 import Config from "../../pages/settings/Config";
 import UserManagementPage from "../../pages/UserManagementPage";
-import type { ServerUploadedFileInfo } from "../../pages/chat/chat/hooks/useFileUpload";
 import {
   MENU_LABELS,
   MENU_IDS,
@@ -54,7 +56,7 @@ const AgentSquare = React.lazy(() =>
 );
 const SkillsSquarePage = React.lazy(() => import("../../pages/SkillsSquarePage"));
 const UsageAnalyticsPage = React.lazy(() => import("../../pages/settings/UsageAnalyticsPage"));
-const LibraryPage = React.lazy(() => import("../../pages/library/LibraryPage"));
+const CloudPage = React.lazy(() => import("../../pages/CloudPage"));
 
 const MenuPanelFallback = () => (
   <div className="flex h-full items-center justify-center text-secondary">
@@ -84,6 +86,119 @@ const isImageMessageFile = (file: MessageFileItem): boolean => {
   return RIGHT_PANEL_IMAGE_EXT.has(extensionFromFilename((file.name || "").trim()));
 };
 
+interface GeneratedFileCardProps {
+  file: MessageFileItem;
+  timeMs: number;
+  href: string | null;
+  onPreview: () => void;
+  userId: string;
+}
+
+const GeneratedFileCard: React.FC<GeneratedFileCardProps> = ({ file, timeMs, href, onPreview, userId }) => {
+  const [saving, setSaving] = React.useState(false);
+  const [saved, setSaved] = React.useState(false);
+  const [saveError, setSaveError] = React.useState<string | null>(null);
+
+  const fmtSize = (size: number | null | undefined) => {
+    if (typeof size !== "number" || !Number.isFinite(size) || size <= 0) return "-";
+    if (size < 1024) return `${size} B`;
+    if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+    return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const handleSaveToGfs = async () => {
+    if (saving || saved) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      let blob: Blob;
+      if (file.download_method === "url" && file.url) {
+        const resp = await fetch(file.url);
+        if (!resp.ok) throw new Error(`fetch failed: ${resp.status}`);
+        blob = await resp.blob();
+      } else if (file.download_method === "base64" && file.base64_content) {
+        const mime = file.mime_type || "application/octet-stream";
+        const bytes = Uint8Array.from(atob(file.base64_content), (c) => c.charCodeAt(0));
+        blob = new Blob([bytes], { type: mime });
+      } else {
+        throw new Error("无可用文件内容");
+      }
+      const destDir = "favorites";
+      const fileName = file.name || "file";
+      const f = new File([blob], fileName, { type: file.mime_type || "application/octet-stream" });
+      const { errors } = await cloudAPI.uploadFiles([f], destDir, userId);
+      if (errors.length > 0) throw new Error(errors.map((e) => e.error).join("; "));
+      setSaved(true);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-border-primary/30 bg-tertiary/10 p-3">
+      <button
+        type="button"
+        onClick={onPreview}
+        className="text-sm font-medium text-primary break-all text-left hover:text-accent transition-colors w-full"
+        title="点击预览"
+      >
+        {file.name || "文件"}
+      </button>
+      <div className="mt-1 text-xs text-secondary">
+        {timeMs > 0 ? formatUnixForDisplayZhCN(timeMs) : "—"} · {fmtSize(file.size)}
+      </div>
+      {href && isImageMessageFile(file) && (
+        <button
+          type="button"
+          onClick={onPreview}
+          className="mt-2 w-full h-20 flex items-center justify-center rounded-md overflow-hidden border border-border-primary/25 bg-tertiary/15"
+          title="点击查看完整预览"
+        >
+          <img src={href} alt={file.name || "图片预览"} className="max-h-full max-w-full object-contain" loading="lazy" />
+        </button>
+      )}
+      <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+        <button
+          type="button"
+          onClick={onPreview}
+          className="inline-flex items-center rounded-md px-2 py-1 text-xs font-medium bg-tertiary/20 text-primary hover:bg-tertiary/30 transition-colors"
+        >
+          预览/编辑
+        </button>
+        {href && (
+          <a
+            href={href}
+            download={file.name || "file"}
+            target={file.download_method === "url" ? "_blank" : undefined}
+            rel={file.download_method === "url" ? "noreferrer" : undefined}
+            className="inline-flex items-center rounded-md px-2 py-1 text-xs font-medium bg-accent/15 text-accent hover:bg-accent/25 transition-colors"
+          >
+            下载
+          </a>
+        )}
+        <button
+          type="button"
+          onClick={handleSaveToGfs}
+          disabled={saving || saved}
+          className={`inline-flex items-center rounded-md px-2 py-1 text-xs font-medium transition-colors ${
+            saved
+              ? "bg-green-500/15 text-green-600"
+              : saving
+              ? "bg-tertiary/10 text-secondary cursor-not-allowed"
+              : "bg-tertiary/15 text-secondary hover:bg-tertiary/25 hover:text-primary"
+          }`}
+          title="收藏"
+        >
+          {saved ? "已保存" : saving ? "保存中…" : "收藏"}
+        </button>
+      </div>
+      {saveError && <div className="mt-1 text-[10px] text-red-500 break-all">{saveError}</div>}
+    </div>
+  );
+};
+
 export const SessionManager: React.FC = () => {
   const { t } = useLang();
   const [isEditorOpen, setIsEditorOpen] = useState(false);
@@ -93,17 +208,11 @@ export const SessionManager: React.FC = () => {
   const [historySearchQuery, setHistorySearchQuery] = useState("");
   const historyScrollRef = useRef<HTMLDivElement | null>(null);
   const historyScrollTopRef = useRef(0);
-  /** 从「库」带入聊天输入框的已上传文件（短时清空引用，避免重复注入） */
-  const [libraryAttachPrefill, setLibraryAttachPrefill] = useState<
-    ServerUploadedFileInfo[] | null
-  >(null);
   /** Survives NewChatView → ChatView/WelcomeScreen so example chips do not flash on first send */
   const [sampleTasksDismissed, setSampleTasksDismissed] = useState(false);
   const [messageApi, contextHolder] = message.useMessage();
   const [baseUrl, setBaseUrl] = useState<string | undefined>();
   const [sessionFileEvents, setSessionFileEvents] = useState<Record<number, FilesEvent[]>>({});
-  const [selectedPreviewFile, setSelectedPreviewFile] = useState<MessageFileItem | null>(null);
-  const [previewReadOnly, setPreviewReadOnly] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
   const [pendingMenuId, setPendingMenuId] = useState<MenuId | null>(null);
@@ -156,6 +265,76 @@ export const SessionManager: React.FC = () => {
     [location.search, navigate]
   );
 
+  // Refs for values declared later in the component — see userRef sync below.
+  const userRef = useRef<{ email?: string } | null>(null);
+
+  // Store accessors needed by the GFS preview effect below.
+  // Must be declared before the useEffect that references them.
+  const setPreviewFile = useRightPanelStore((s) => s.setPreviewFile);
+  const previewFile = useRightPanelStore((s) => s.previewFile);
+  const isRightPanelOpen = useRightPanelStore((s) => s.isRightPanelOpen);
+  const setRightPanelOpen = useRightPanelStore((s) => s.setRightPanelOpen);
+
+  // Collapse both sidebars when a file preview opens. Right panel restores
+  // when preview closes; left sidebar stays collapsed until the user reopens it.
+  // Only restore the right panel if still on DocMaster (switching away during
+  // preview should keep it closed).
+  const savedSidebarState = useRef<{ right: boolean } | null>(null);
+  useEffect(() => {
+    if (previewFile) {
+      savedSidebarState.current = { right: isRightPanelOpen };
+      setIsSidebarOpen(false);
+      setRightPanelOpen(false);
+    } else if (savedSidebarState.current) {
+      // isDocMaster is defined later in the component — safe to read here because
+      // this effect runs after render completes and all variables are initialised.
+      if (isDocMaster) {
+        setRightPanelOpen(savedSidebarState.current.right);
+      }
+      savedSidebarState.current = null;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewFile]);
+
+  // GFS file preview — listen for clicks in the right-rail files tab.
+  useEffect(() => {
+    const handler = async (e: Event) => {
+      const detail = (e as CustomEvent<{ name: string; remotePath: string; size?: number; suffix?: string }>).detail;
+      if (!detail?.remotePath) return;
+      try {
+        // Pass user_id so the backend can resolve GFS credentials from the user's DB record.
+        // Append a timestamp so the browser never serves a stale cached copy
+        // — important when the file was edited externally via NetMount.
+        const cacheBust = Date.now();
+        // Normalize: strip leading slash(es) — backend rejects paths like "/foo.txt"
+        const normalizedPath = detail.remotePath.replace(/^\/+/, '');
+        const url = `${getServerUrl()}/cloud/download?path=${encodeURIComponent(normalizedPath)}&user_id=${encodeURIComponent(userRef.current?.email ?? '')}&_=${cacheBust}`;
+        const mime = detail.suffix === 'pdf'
+          ? 'application/pdf'
+          : detail.suffix === 'docx'
+            ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+            : detail.suffix === 'pptx'
+              ? 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+              : 'application/octet-stream';
+        const previewFile: MessageFileItem = {
+          name: detail.name,
+          url,
+          base64_content: '',
+          size: detail.size ?? 0,
+          mime_type: mime,
+          description: `GFS: ${normalizedPath}`,
+          download_method: 'url',
+        };
+        // Show preview in canvas split view
+        setPreviewFile(previewFile);
+      } catch (err) {
+        console.error('GFS preview failed:', err);
+      }
+    };
+    window.addEventListener('drsai:cloud:previewFile', handler as EventListener);
+    return () => window.removeEventListener('drsai:cloud:previewFile', handler as EventListener);
+  }, [setPreviewFile]);
+
   useEffect(() => {
     if (isCompact) {
       setIsSidebarOpen(false);
@@ -181,6 +360,8 @@ export const SessionManager: React.FC = () => {
   );
 
   const { user, darkMode } = useContext(appContext);
+  // Keep userRef in sync so the GFS preview effect (declared above) always has the latest user.
+  userRef.current = user;
   const rightPanelTab = useRightPanelStore((s) => s.layoutTab);
   const [showAdminNav, setShowAdminNav] = useState(false);
 
@@ -361,14 +542,6 @@ export const SessionManager: React.FC = () => {
       fetchSessions();
     });
   }, [user?.email, fetchSessions, deferAfterPaint]);
-
-  // 库 → 聊天 时把文件放在 state 里传给 NewChatView；不要用短时定时器清空，否则智能体信息未加载完时
-  // NewChatView 尚未挂载，prefill 已被清空，输入框收不到附件。
-  useEffect(() => {
-    if (activeSubMenuItem === MENU_IDS.currentSession) return;
-    if (!libraryAttachPrefill) return;
-    setLibraryAttachPrefill(null);
-  }, [activeSubMenuItem, libraryAttachPrefill]);
 
   // Handle agent click
   const handleAgentClick = useCallback(async (agent: Agent) => {
@@ -580,16 +753,18 @@ export const SessionManager: React.FC = () => {
   useEffect(() => {
 
     // Only enforce the chat menu when the user is already on chat.
-    // Otherwise (e.g. agent_management), keep the current menu on refresh.
+    // Skip when previewing a file in canvas — otherwise navigateToMenu would
+    // reset view back to "chat" and clobber the preview.
     if (
       activeSubMenuItem === MENU_IDS.currentSession &&
+      activeCanvasView === "chat" &&
       !session &&
       selectedAgent &&
       selectedAgent.name
     ) {
       navigateToMenu(MENU_IDS.currentSession);
     }
-  }, [activeSubMenuItem, session, selectedAgent, navigateToMenu]);
+  }, [activeSubMenuItem, activeCanvasView, session, selectedAgent, navigateToMenu]);
 
   // Chat views
   const chatViews = useMemo(() => {
@@ -619,9 +794,6 @@ export const SessionManager: React.FC = () => {
               session?.id === s.id &&
               (sampleTasksDismissed || !!pendingFirstMessage)
             }
-            libraryServerFilesPrefill={
-              session?.id === s.id ? libraryAttachPrefill : null
-            }
             onFileEventsChange={handleFileEventsChange}
           />
         </div>
@@ -635,7 +807,6 @@ export const SessionManager: React.FC = () => {
     updateSessionRunStatus,
     pendingFirstMessage,
     sampleTasksDismissed,
-    libraryAttachPrefill,
     handleFileEventsChange,
   ]);
 
@@ -666,70 +837,14 @@ export const SessionManager: React.FC = () => {
         {fileRows.map(({ file, timeMs }, index) => {
           const href = buildDownloadHref(file);
           return (
-            <div
+            <GeneratedFileCard
               key={`${file.name}-${index}`}
-              className="rounded-lg border border-border-primary/30 bg-tertiary/10 p-3"
-            >
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedPreviewFile(file);
-                  setPreviewReadOnly(false);
-                  navigateToView("file_preview");
-                }}
-                className="text-sm font-medium text-primary break-all text-left hover:text-accent transition-colors"
-                title="点击预览并编辑"
-              >
-                {file.name || `file-${index + 1}`}
-              </button>
-              <div className="mt-1 text-xs text-secondary">
-                {timeMs > 0 ? formatUnixForDisplayZhCN(timeMs) : "—"}  · {formatFileSize(file.size)}
-              </div>
-              {href && isImageMessageFile(file) ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedPreviewFile(file);
-                    navigateToView("file_preview");
-                  }}
-                  className="mt-3 w-full h-20 flex items-center justify-center rounded-md overflow-hidden border border-border-primary/25 bg-tertiary/15 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-                  title="点击查看完整预览"
-                >
-                  <img
-                    src={href}
-                    alt={file.name || "图片预览"}
-                    className="max-h-full max-w-full object-contain"
-                    loading="lazy"
-                  />
-                </button>
-              ) : null}
-              <div className="mt-2 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedPreviewFile(file);
-                    setPreviewReadOnly(false);
-                    navigateToView("file_preview");
-                  }}
-                  className="inline-flex items-center rounded-md px-2.5 py-1.5 text-xs font-medium bg-tertiary/20 text-primary hover:bg-tertiary/30 transition-colors"
-                >
-                  预览/编辑
-                </button>
-                {href ? (
-                  <a
-                    href={href}
-                    download={file.name || `file-${index + 1}`}
-                    target={file.download_method === "url" ? "_blank" : undefined}
-                    rel={file.download_method === "url" ? "noreferrer" : undefined}
-                    className="inline-flex items-center rounded-md px-2.5 py-1.5 text-xs font-medium bg-accent/15 text-accent hover:bg-accent/25 transition-colors"
-                  >
-                    下载文件
-                  </a>
-                ) : (
-                  <span className="text-xs text-secondary">暂无可用下载链接</span>
-                )}
-              </div>
-            </div>
+              file={file}
+              timeMs={timeMs}
+              href={href}
+              onPreview={() => setPreviewFile(file)}
+              userId={user?.email ?? ""}
+            />
           );
         })}
       </div>
@@ -739,8 +854,15 @@ export const SessionManager: React.FC = () => {
     sessionFileEvents,
     buildDownloadHref,
     formatFileSize,
-    navigateToView,
+    setPreviewFile,
   ]);
+
+  const generatedFilesCount = useMemo(() => {
+    const currentSessionId = session?.id;
+    if (!currentSessionId) return 0;
+    const events = sessionFileEvents[currentSessionId] || [];
+    return events.reduce((sum, e) => sum + (e.content?.files?.length ?? 0), 0);
+  }, [session?.id, sessionFileEvents]);
 
   // Templates tab (DocMaster only) ------------------------------------------------
   const isDocMaster = useMemo(() => {
@@ -750,6 +872,15 @@ export const SessionManager: React.FC = () => {
       "";
     return name === "DocMaster";
   }, [agentInfo, selectedAgent]);
+
+  // Auto-open right panel when DocMaster agent is selected, close when switching away.
+  useEffect(() => {
+    if (isDocMaster) {
+      setRightPanelOpen(true);
+    } else {
+      setRightPanelOpen(false);
+    }
+  }, [isDocMaster, setRightPanelOpen]);
 
   const [docmasterTemplates, setDocmasterTemplates] = useState<{
     shared: DocMasterTemplateEntry[];
@@ -834,9 +965,7 @@ export const SessionManager: React.FC = () => {
           preview_slides: preview.slides,
           previewSlides: preview.slides,
         };
-        setSelectedPreviewFile(previewFile);
-        setPreviewReadOnly(true);
-        navigateToView("file_preview");
+        setPreviewFile(previewFile);
       } catch (err) {
         messageApi.error(err instanceof Error ? err.message : "PPTX 预览加载失败");
       }
@@ -858,10 +987,8 @@ export const SessionManager: React.FC = () => {
       description: entry.description || "模板预览（只读）",
       download_method: "url",
     };
-    setSelectedPreviewFile(previewFile);
-    setPreviewReadOnly(true);
-    navigateToView("file_preview");
-  }, [navigateToView, user?.email, messageApi]);
+    setPreviewFile(previewFile);
+  }, [setPreviewFile, user?.email, messageApi]);
 
   // --- Add / delete template flows --------------------------------------------
   const [addTemplateOpen, setAddTemplateOpen] = useState(false);
@@ -872,6 +999,11 @@ export const SessionManager: React.FC = () => {
   const [addTemplateAliases, setAddTemplateAliases] = useState("");
   const [addTemplateFile, setAddTemplateFile] = useState<File | null>(null);
   const [addTemplateSubmitting, setAddTemplateSubmitting] = useState(false);
+
+  // Collapse state for the two template sub-sections inside 模板库. Both
+  // default to expanded so the user sees their templates immediately.
+  const [sharedExpanded, setSharedExpanded] = useState(true);
+  const [mineExpanded, setMineExpanded] = useState(true);
   const [deletingTemplateId, setDeletingTemplateId] = useState<string | null>(null);
 
   const resetAddTemplateForm = useCallback(() => {
@@ -968,25 +1100,24 @@ export const SessionManager: React.FC = () => {
 
     const isDark = darkMode === "dark";
     const cardBase = isDark
-      ? "rounded-lg border border-border-primary/30 bg-tertiary/10 p-3 hover:bg-tertiary/20"
-      : "rounded-lg border border-gray-200/70 bg-white/70 p-3 hover:bg-gray-100/60";
-    const chipBase = isDark
-      ? "inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] bg-white/[0.06] text-secondary"
-      : "inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] bg-gray-100 text-gray-600";
+      ? "rounded-md border border-border-primary/30 bg-tertiary/10 p-2 hover:bg-tertiary/20"
+      : "rounded-md border border-gray-200/70 bg-white/70 p-2 hover:bg-gray-100/60";
     const aliasChip = isDark
-      ? "inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] bg-accent/15 text-accent"
-      : "inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] bg-violet-100 text-violet-700";
+      ? "inline-flex items-center rounded px-1 py-0 text-[10px] bg-accent/15 text-accent"
+      : "inline-flex items-center rounded px-1 py-0 text-[10px] bg-violet-100 text-violet-700";
 
     const actionBtn = isDark
-      ? "inline-flex items-center rounded-md px-2 py-1 text-[11px] font-medium bg-white/[0.06] text-primary hover:bg-white/[0.12]"
-      : "inline-flex items-center rounded-md px-2 py-1 text-[11px] font-medium bg-gray-100 text-gray-700 hover:bg-gray-200";
+      ? "inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-white/[0.06] text-primary hover:bg-white/[0.12]"
+      : "inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-gray-100 text-gray-700 hover:bg-gray-200";
     const actionBtnAccent = isDark
-      ? "inline-flex items-center rounded-md px-2 py-1 text-[11px] font-medium bg-accent/15 text-accent hover:bg-accent/25"
-      : "inline-flex items-center rounded-md px-2 py-1 text-[11px] font-medium bg-violet-100 text-violet-700 hover:bg-violet-200";
+      ? "inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-accent/15 text-accent hover:bg-accent/25"
+      : "inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-violet-100 text-violet-700 hover:bg-violet-200";
 
     const renderEntry = (entry: DocMasterTemplateEntry, idx: number) => {
       const aliases = Array.isArray(entry.aliases) ? entry.aliases.filter(Boolean) : [];
-      const tags = Array.isArray(entry.tags) ? entry.tags.filter(Boolean) : [];
+      // Show at most one alias to keep cards compact
+      const firstAlias = aliases[0];
+      const extraAliases = aliases.length - 1;
       return (
         <div
           key={`${entry.name || "tpl"}-${idx}`}
@@ -1000,34 +1131,25 @@ export const SessionManager: React.FC = () => {
             }
           }}
           className={`block w-full text-left transition-colors cursor-pointer ${cardBase}`}
-          title="点击预览模板内容"
+          title={entry.description || "点击预览模板内容"}
         >
-          <div className="text-sm font-medium text-primary break-all">
+          <div className="text-[11px] font-medium text-primary break-all line-clamp-1">
             {entry.name || `模板 ${idx + 1}`}
           </div>
           {entry.description && (
-            <div className="mt-1 text-xs text-secondary break-all line-clamp-2">
+            <div className="mt-0.5 text-[10px] text-secondary break-all line-clamp-1">
               {entry.description}
             </div>
           )}
-          {(entry.category || tags.length > 0) && (
-            <div className="mt-1.5 flex flex-wrap gap-1">
-              {entry.category && (
-                <span className={chipBase}>{entry.category}</span>
+          {firstAlias && (
+            <div className="mt-1 flex flex-wrap gap-1 items-center">
+              <span className={aliasChip}>{firstAlias}</span>
+              {extraAliases > 0 && (
+                <span className="text-[10px] text-tertiary">+{extraAliases}</span>
               )}
-              {tags.map((t) => (
-                <span key={t} className={chipBase}>#{t}</span>
-              ))}
             </div>
           )}
-          {aliases.length > 0 && (
-            <div className="mt-2 flex flex-wrap gap-1">
-              {aliases.map((a) => (
-                <span key={a} className={aliasChip}>{a}</span>
-              ))}
-            </div>
-          )}
-          <div className="mt-2 flex items-center gap-1.5">
+          <div className="mt-1.5 flex items-center gap-1">
             <button
               type="button"
               onClick={(e) => {
@@ -1065,14 +1187,14 @@ export const SessionManager: React.FC = () => {
                 <button
                   type="button"
                   onClick={(e) => e.stopPropagation()}
-                  className={`ml-auto inline-flex items-center rounded-md px-2 py-1 text-[11px] font-medium transition-colors ${
+                  className={`ml-auto inline-flex items-center rounded px-1 py-0.5 text-[10px] font-medium transition-colors ${
                     isDark
                       ? "text-red-300/80 hover:text-red-300 hover:bg-red-500/10"
                       : "text-red-500/80 hover:text-red-600 hover:bg-red-50"
-                  }`}
+                    }`}
                   title="删除该模板"
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
+                  <Trash2 className="w-3 h-3" />
                 </button>
               </Popconfirm>
             )}
@@ -1081,76 +1203,91 @@ export const SessionManager: React.FC = () => {
       );
     };
 
-    const sectionHeader = (text: string, count: number) => (
-      <div className="flex items-center justify-between px-1 mb-2">
-        <span className="text-xs font-semibold text-secondary tracking-wide uppercase">
-          {text}
+    const sectionHeader = (
+      text: string,
+      count: number,
+      expanded: boolean,
+      onToggle: () => void,
+    ) => (
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex items-center justify-between w-full px-0.5 py-0.5 mb-1 hover:bg-tertiary/10 rounded transition-colors"
+      >
+        <span className="flex items-center gap-1">
+          {expanded ? (
+            <ChevronDown className="w-3 h-3 text-secondary" />
+          ) : (
+            <ChevronRight className="w-3 h-3 text-secondary" />
+          )}
+          <span className="text-[10px] font-semibold text-secondary tracking-wide uppercase">
+            {text}
+          </span>
         </span>
-        <span className="text-[11px] text-secondary opacity-70">{count}</span>
-      </div>
+        <span className="text-[10px] text-secondary opacity-70">{count}</span>
+      </button>
     );
 
     const { shared, mine } = docmasterTemplates;
     const hasAny = shared.length > 0 || mine.length > 0;
 
     return (
-      <div className="h-full flex flex-col min-h-0">
-        <div className="flex-shrink-0 flex items-center justify-between px-3 pt-3 pb-2">
-          <div className="text-[11px] text-secondary opacity-70">
-            点击条目预览 · “使用” 写入聊天输入框
-          </div>
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={openAddTemplate}
-              className={`text-[11px] rounded-md px-2 py-1 inline-flex items-center gap-1 transition-colors ${
-                isDark
-                  ? "text-accent hover:bg-accent/10"
-                  : "text-violet-700 hover:bg-violet-100"
-              }`}
-              title="上传新模板到我的模板库"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              添加
-            </button>
-            <button
-              type="button"
-              onClick={() => void fetchTemplates()}
-              disabled={templatesLoading}
-              className={`text-[11px] rounded-md px-2 py-1 transition-colors ${
-                templatesLoading
-                  ? "opacity-40 cursor-not-allowed"
-                  : isDark
-                    ? "text-secondary hover:text-primary hover:bg-white/5"
-                    : "text-gray-500 hover:text-gray-800 hover:bg-gray-100/60"
-              }`}
-            >
-              {templatesLoading ? "加载中…" : "刷新"}
-            </button>
-          </div>
+      <div className="flex flex-col min-h-0 max-h-full">
+        <div className="flex-shrink-0 flex items-center justify-end px-2 pt-1.5 pb-1 gap-1">
+          <button
+            type="button"
+            onClick={openAddTemplate}
+            className={`text-[10px] rounded px-1.5 py-0.5 inline-flex items-center gap-0.5 transition-colors ${
+              isDark
+                ? "text-accent hover:bg-accent/10"
+                : "text-violet-700 hover:bg-violet-100"
+            }`}
+            title="上传新模板到我的模板库"
+          >
+            <Plus className="w-3 h-3" />
+            添加
+          </button>
+          <button
+            type="button"
+            onClick={() => void fetchTemplates()}
+            disabled={templatesLoading}
+            className={`text-[10px] rounded px-1.5 py-0.5 transition-colors ${
+              templatesLoading
+                ? "opacity-40 cursor-not-allowed"
+                : isDark
+                  ? "text-secondary hover:text-primary hover:bg-white/5"
+                  : "text-gray-500 hover:text-gray-800 hover:bg-gray-100/60"
+            }`}
+          >
+            {templatesLoading ? "加载中…" : "刷新"}
+          </button>
         </div>
-        <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-3 space-y-4">
+        <div className="min-h-0 overflow-y-auto px-2 pb-2 space-y-2">
           {templatesError && (
-            <div className="text-xs text-red-500/90 px-1">{templatesError}</div>
+            <div className="text-[10px] text-red-500/90 px-1">{templatesError}</div>
           )}
           {!templatesError && !templatesLoading && !hasAny && (
-            <div className="flex items-center justify-center h-full text-secondary">
+            <div className="flex items-center justify-center py-6 text-secondary">
               <div className="text-center">
-                <Library className="w-8 h-8 mx-auto mb-3 opacity-30" />
-                <p className="text-sm opacity-50">暂无模板</p>
+                <Library className="w-6 h-6 mx-auto mb-2 opacity-30" />
+                <p className="text-[11px] opacity-50">暂无模板</p>
               </div>
             </div>
           )}
           {shared.length > 0 && (
             <div>
-              {sectionHeader("共享模板", shared.length)}
-              <div className="space-y-2">{shared.map(renderEntry)}</div>
+              {sectionHeader("共享模板", shared.length, sharedExpanded, () => setSharedExpanded((v) => !v))}
+              {sharedExpanded && (
+                <div className="space-y-1">{shared.map(renderEntry)}</div>
+              )}
             </div>
           )}
           {mine.length > 0 && (
             <div>
-              {sectionHeader("我的模板", mine.length)}
-              <div className="space-y-2">{mine.map(renderEntry)}</div>
+              {sectionHeader("我的模板", mine.length, mineExpanded, () => setMineExpanded((v) => !v))}
+              {mineExpanded && (
+                <div className="space-y-1">{mine.map(renderEntry)}</div>
+              )}
             </div>
           )}
         </div>
@@ -1168,7 +1305,171 @@ export const SessionManager: React.FC = () => {
     deletingTemplateId,
     openAddTemplate,
     fetchTemplates,
+    sharedExpanded,
+    mineExpanded,
   ]);
+
+  // ─── Guanlianyewu —关联业务审核 ─────────────────────────────────────────────
+  const [glyFiles, setGlyFiles] = useState<UploadedFile[]>([]);
+  const [glyAuditRunning, setGlyAuditRunning] = useState(false);
+
+  const handleGlyRequestUpload = useCallback(
+    async (files: File[]) => {
+      const userId = user?.email ?? "";
+      try {
+        const { uploaded, errors } = await cloudAPI.uploadFiles(files, "uploads", userId);
+        const newFiles: UploadedFile[] = uploaded.map((u) => ({
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          name: u.name,
+          serverPath: u.remote_path,
+          tag: "",
+          sizeMb: 0,
+        }));
+        setGlyFiles((prev) => [...prev, ...newFiles]);
+        if (errors.length > 0) {
+          messageApi.error(
+            `部分文件上传失败：${errors.map((e) => `${e.name}: ${e.error}`).join("；")}`
+          );
+        }
+      } catch (err) {
+        messageApi.error(err instanceof Error ? err.message : "上传失败");
+      }
+    },
+    [user?.email, messageApi]
+  );
+
+  const handleGlyRemoveFile = useCallback((id: string) => {
+    setGlyFiles((prev) => prev.filter((f) => f.id !== id));
+  }, []);
+
+  const handleGlyUpdateTag = useCallback((id: string, tag: string) => {
+    setGlyFiles((prev) =>
+      prev.map((f) => (f.id === id ? { ...f, tag: f.tag === tag ? "" : tag } : f))
+    );
+  }, []);
+
+  const handleGlySubmitAudit = useCallback(
+    (prompt: string) => {
+      setGlyAuditRunning(true);
+      window.dispatchEvent(
+        new CustomEvent("drsai:chatinput:setValue", { detail: { text: prompt } })
+      );
+      navigateToMenu(MENU_IDS.currentSession);
+      navigateToView("chat");
+      // Reset audit flag once chat view is active
+      setTimeout(() => setGlyAuditRunning(false), 500);
+    },
+    [navigateToMenu, navigateToView]
+  );
+
+  // 试用 buttons next to 申请资料审查 / 综合材料撰写 — pull demo files from
+  // workspace/关联业务测试/ via the backend's seed route, populate glyFiles
+  // with the resulting serverPaths (so the panel UI reflects the demo state),
+  // then dispatch the same prompt the manual flow would build.
+  const handleTryGuanlianyewu = useCallback(async () => {
+    const userId = user?.email ?? "";
+    if (!userId) {
+      messageApi.error("请先登录后再试用");
+      return;
+    }
+    try {
+      const { uploaded, errors } = await docmasterAPI.seedDemo({
+        kind: "guanlianyewu",
+        userId,
+      });
+      if (errors.length > 0) {
+        messageApi.warning(
+          `部分演示文件加载失败：${errors.map((e) => `${e.name}: ${e.error}`).join("；")}`
+        );
+      }
+      if (uploaded.length === 0) {
+        messageApi.error("演示文件加载失败");
+        return;
+      }
+      const seeded: UploadedFile[] = uploaded.map((u) => ({
+        id: `demo-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        name: u.name,
+        serverPath: u.remote_path,
+        tag: "",
+        sizeMb: 0,
+      }));
+      setGlyFiles(seeded);
+      handleGlySubmitAudit(buildAuditPrompt(seeded));
+    } catch (err) {
+      messageApi.error(err instanceof Error ? err.message : "演示文件加载失败");
+    }
+  }, [user?.email, messageApi, handleGlySubmitAudit]);
+
+  const handleTryZonghe = useCallback(async () => {
+    const userId = user?.email ?? "";
+    if (!userId) {
+      messageApi.error("请先登录后再试用");
+      return;
+    }
+    try {
+      const { uploaded, errors } = await docmasterAPI.seedDemo({
+        kind: "zonghe",
+        userId,
+      });
+      if (errors.length > 0) {
+        messageApi.warning(
+          `部分演示文件加载失败：${errors.map((e) => `${e.name}: ${e.error}`).join("；")}`
+        );
+      }
+      if (uploaded.length === 0) {
+        messageApi.error("演示文件加载失败");
+        return;
+      }
+      const seeded: UploadedFile[] = uploaded.map((u) => ({
+        id: `demo-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        name: u.name,
+        serverPath: u.remote_path,
+        tag: "",
+        sizeMb: 0,
+      }));
+      setGlyFiles(seeded);
+      // Use defaults for the form fields (empty field query, no applicant
+      // dept hint, top-5 experts) — matches what the panel would dispatch
+      // if the user clicked submit without filling anything in.
+      handleGlySubmitAudit(buildZongheCailiaoPrompt(seeded, "", "", 5));
+    } catch (err) {
+      messageApi.error(err instanceof Error ? err.message : "演示文件加载失败");
+    }
+  }, [user?.email, messageApi, handleGlySubmitAudit]);
+
+  const rightPanelGuanlianyewu = useMemo(() => {
+    if (!isDocMaster) return null;
+    return (
+      <GuanlianyewuPanel
+        onSubmitAudit={handleGlySubmitAudit}
+        uploadedFiles={glyFiles}
+        onRequestUpload={handleGlyRequestUpload}
+        onRemoveFile={handleGlyRemoveFile}
+        onUpdateTag={handleGlyUpdateTag}
+        auditRunning={glyAuditRunning}
+      />
+    );
+  }, [
+    isDocMaster,
+    glyFiles,
+    glyAuditRunning,
+    handleGlySubmitAudit,
+    handleGlyRequestUpload,
+    handleGlyRemoveFile,
+    handleGlyUpdateTag,
+  ]);
+
+  // ─── Zonghe cailiao —综合材料撰写 (reuses glyFiles from step 1) ──────────────
+  const rightPanelZongheCailiao = useMemo(() => {
+    if (!isDocMaster) return null;
+    return (
+      <ZongheCailiaoPanel
+        uploadedFiles={glyFiles}
+        onSubmit={handleGlySubmitAudit}
+        running={glyAuditRunning}
+      />
+    );
+  }, [isDocMaster, glyFiles, glyAuditRunning, handleGlySubmitAudit]);
 
   const rightPanelHistory = useMemo(() => {
     const sortedSessions = Array.isArray(sessions)
@@ -1199,7 +1500,7 @@ export const SessionManager: React.FC = () => {
 
     return (
       <div className="h-full flex flex-col min-h-0">
-        <div className="flex-shrink-0 px-3 pt-3 pb-2">
+        {/* <div className="flex-shrink-0 px-3 pt-3 pb-2">
           <label className="sr-only" htmlFor="history-session-search">
             搜索会话
           </label>
@@ -1218,7 +1519,7 @@ export const SessionManager: React.FC = () => {
               className={`w-full rounded-lg pl-9 pr-3 py-2 text-sm border outline-none transition-shadow ${inputRing}`}
             />
           </div>
-        </div>
+        </div> */}
         <div
           ref={setHistoryScrollContainer}
           onScroll={(e) => {
@@ -1344,31 +1645,18 @@ export const SessionManager: React.FC = () => {
         activeMenuLabel={activeMenuLabel}
         onSubMenuChange={handleSubMenuChange}
         showAdminNav={showAdminNav}
-        canvasActiveView={activeCanvasView}
-        onCanvasViewChange={navigateToView}
-        canvasFilePreviewContent={<FilePreviewPage file={selectedPreviewFile} sessionId={session?.id ?? null} readOnly={previewReadOnly} onFileEvent={(evt) => {
-          const sid = session?.id;
-          if (!sid) return;
-          setSessionFileEvents((prev) => ({
-            ...prev,
-            [sid]: [...(prev[sid] || []), evt],
-          }));
-        }} />}
-        rightPanelHistory={rightPanelHistory}
-        rightPanelFiles={rightPanelFiles}
+        leftMenuHistory={rightPanelHistory}
         rightPanelTemplates={isDocMaster ? rightPanelTemplates : undefined}
-        onRightPanelTabChange={(tab) => {
-          if (tab === "files" || tab === "templates") {
-            // Keep the current canvas view when switching to a non-chat side tab.
-            // The canvas should switch only on explicit user action (e.g. file preview).
-            return;
-          }
-          navigateToView("chat");
-        }}
+        rightPanelGuanlianyewu={rightPanelGuanlianyewu}
+        rightPanelZongheCailiao={rightPanelZongheCailiao}
+        onTryGuanlianyewu={isDocMaster ? handleTryGuanlianyewu : undefined}
+        onTryZonghe={isDocMaster ? handleTryZonghe : undefined}
+        isDocMasterAgent={isDocMaster}
+        generatedFilesContent={rightPanelFiles ?? undefined}
+        generatedFilesCount={generatedFilesCount}
         onNewSession={() => {
-          navigateToMenu(MENU_IDS.currentSession);
-          navigateToView("chat");
           handleClearCurrentSession();
+          navigateToMenu(MENU_IDS.currentSession);
         }}
         showNewSessionButton={Boolean(session)}
       >
@@ -1382,7 +1670,6 @@ export const SessionManager: React.FC = () => {
               return (
                 <NewChatView
                   agent={chatAgent}
-                  serverFilesPrefill={libraryAttachPrefill}
                   suppressSampleTasks={sampleTasksDismissed}
                   onDismissSampleTasks={() => setSampleTasksDismissed(true)}
                   onSubmit={async (agent, query, files, plan, llm) => {
@@ -1452,6 +1739,10 @@ export const SessionManager: React.FC = () => {
           <Suspense fallback={<MenuPanelFallback />}>
             <SkillsSquarePage />
           </Suspense>
+        ) : activeSubMenuItem === MENU_IDS.cloud ? (
+          <Suspense fallback={<MenuPanelFallback />}>
+            <CloudPage />
+          </Suspense>
         ) : activeSubMenuItem === MENU_IDS.channels ? (
           <ChannelsPage />
         ) : activeSubMenuItem === MENU_IDS.logs ? (
@@ -1473,27 +1764,6 @@ export const SessionManager: React.FC = () => {
               onSelectSession={handleSelectSession}
               onCreateSessionFromPlan={handleCreateSessionFromPlan}
             />
-          </div>
-        ) : activeSubMenuItem === MENU_IDS.library ? (
-          <div className="h-full min-h-0 overflow-hidden">
-            <Suspense fallback={<MenuPanelFallback />}>
-            <LibraryPage
-              onStartChat={async (files, query) => {
-                const chatAgent = (agentInfo || selectedAgent) as import("../../types/common").Agent;
-                if (!chatAgent) return;
-                // 把文件放进 prefill 以便 ChatView 回显（不重新上传）
-                flushSync(() => setLibraryAttachPrefill(files));
-                // 直接创建会话并发送首条消息，跳过 NewChatView
-                await createNewChatSession(chatAgent, query, files);
-                // Use live URL after clearCurrentSession so sessionId is not re-applied from stale React location
-                const withMenu = createSearchWithMenu(
-                  window.location.search,
-                  MENU_IDS.currentSession
-                );
-                navigate(createSearchWithView(withMenu, "chat"));
-              }}
-            />
-            </Suspense>
           </div>
         ) : (
           <div className="flex items-center justify-center h-full text-secondary">

@@ -5,8 +5,10 @@ import ai.drsai.remote.remote.model.*
 import kotlinx.coroutines.test.runTest
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.SocketPolicy
 import okhttp3.OkHttpClient
 import java.net.SocketTimeoutException
+import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -25,6 +27,102 @@ class RelayRemoteRepositoryTest {
         assertEquals("Bearer token", server.takeRequest().getHeader("Authorization"))
     }
 
+    @Test fun `repository refreshes one expired bearer and retries once`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(401).setBody("""{"code":"invalid_token"}"""))
+        server.enqueue(MockResponse().setBody("""{"items":[],"next_cursor":null}"""))
+        repository = RelayRemoteRepository(
+            server.url("/").toString(),
+            { "expired" },
+            refreshAfter = { failed -> if (failed == "expired") "refreshed" else null },
+        )
+
+        assertTrue(repository.agentDefinitions(RuntimeId("rt")).isEmpty())
+        assertEquals("Bearer expired", server.takeRequest().getHeader("Authorization"))
+        assertEquals("Bearer refreshed", server.takeRequest().getHeader("Authorization"))
+    }
+
+    @Test fun `safe get retries once on transient transport failure`() = runTest {
+        var failFirstGet = true
+        val transientClient = OkHttpClient.Builder().addInterceptor { chain ->
+            if (failFirstGet && chain.request().method == "GET") {
+                failFirstGet = false
+                throw SocketTimeoutException("transient response timeout")
+            }
+            chain.proceed(chain.request())
+        }.build()
+        repository = RelayRemoteRepository(
+            server.url("/").toString(),
+            { "token" },
+            transientClient,
+        )
+        server.enqueue(
+            MockResponse().setBody(
+                """{"items":[{"definition_id":"agent","version":"1","display_name":"Agent","backend_id":"opendrsai","backend_health":"healthy","capabilities":[]}]}"""
+            )
+        )
+
+        assertEquals("agent", repository.agentDefinitions(RuntimeId("rt")).single().id)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test fun `session lifecycle parsing filters archived and removed rows`() = runTest {
+        server.enqueue(MockResponse().setBody("""{"items":[
+            {"runtime_id":"rt","workspace_id":"ws","session_id":"active","title":"Active","backend_id":"opendrsai","agent_definition_id":"a","agent_definition_version":"1","last_run_status":"running","updated_at":"2026-07-26T10:00:00Z","lifecycle":"active"},
+            {"runtime_id":"rt","workspace_id":"ws","session_id":"archived","title":"Archived","backend_id":"opendrsai","agent_definition_id":"a","agent_definition_version":"1","last_run_status":null,"updated_at":"2026-07-26T09:00:00Z","lifecycle":"archived"},
+            {"runtime_id":"rt","workspace_id":"ws","session_id":"removed","title":"Removed","backend_id":"opendrsai","agent_definition_id":"a","agent_definition_version":"1","last_run_status":null,"updated_at":"2026-07-26T08:00:00Z","lifecycle":"removed"}
+        ],"next_cursor":null}"""))
+
+        val page = repository.sessions(RuntimeId("rt"), WorkspaceId("ws"))
+
+        assertEquals(listOf("active"), page.items.map { it.reference.sessionId.value })
+        assertEquals("active", server.takeRequest().requestUrl?.queryParameter("lifecycle"))
+    }
+
+    @Test fun `conversation endpoint loads stable paged Windows transcript`() = runTest {
+        server.enqueue(MockResponse().setBody("""{"items":[
+            {"item_id":"user:run-1","sequence":1,"kind":"message.user","timestamp":"2026-07-26T10:00:00Z","payload":{"content":"Windows question","run_id":"run-1"}},
+            {"item_id":"event-1","sequence":2,"kind":"message.delta","timestamp":"2026-07-26T10:00:01Z","payload":{"delta":"Windows answer","run_id":"run-1"}}
+        ],"next_cursor":"2"}"""))
+
+        val page = repository.conversation(RuntimeId("rt"), WorkspaceId("ws"), SessionId("session"), limit = 100)
+
+        assertEquals(listOf("message.user", "message.delta"), page.items.map { it.kind })
+        assertEquals("Windows question", page.items.first().payload["content"])
+        assertEquals("2", page.nextCursor)
+        server.takeRequest().apply {
+            assertEquals("/v1/runtimes/rt/workspaces/ws/sessions/session/conversation?limit=100", path)
+            assertEquals("Bearer token", getHeader("Authorization"))
+        }
+    }
+
+    @Test fun `session snapshot and replay events preserve authoritative sequence`() = runTest {
+        server.enqueue(MockResponse().setBody("""{
+          "session_id":"session","snapshot_sequence":3,
+          "items":[{"item_id":"item-1","session_id":"session","run_id":"run-1","kind":"message",
+            "role":"user","revision":1,"session_sequence":1,"source_client":"windows",
+            "source_message_id":"windows-1","created_at":"now","updated_at":"now",
+            "payload":{"text":"hello"}}],"next_cursor":null
+        }"""))
+        val snapshot = repository.conversationSnapshot(
+            RuntimeId("rt"), WorkspaceId("ws"), SessionId("session"),
+        )
+        assertEquals(3, snapshot.snapshotSequence)
+        assertEquals("windows-1", snapshot.items.single().sourceMessageId)
+        assertTrue(server.takeRequest().path!!.endsWith("/conversation-snapshot?limit=100"))
+
+        server.enqueue(MockResponse().setBody("""{"items":[{
+          "event_id":"event-4","runtime_id":"rt","workspace_id":"ws","session_id":"session",
+          "run_id":"run-2","session_sequence":4,"kind":"run.created","timestamp":"now",
+          "payload":{"source_client":"android","source_message_id":"android-1"}
+        }],"next_cursor":null}"""))
+        val replay = repository.sessionEvents(
+            RuntimeId("rt"), WorkspaceId("ws"), SessionId("session"), 3,
+        )
+        assertEquals(4, replay.items.single().sessionSequence)
+        assertEquals("android-1", replay.items.single().payload["source_message_id"])
+        assertEquals("3", server.takeRequest().requestUrl?.queryParameter("after_sequence"))
+    }
+
     @Test fun `exact healthy definition creates session and stable idempotency header body`() = runTest {
         server.enqueue(MockResponse().setBody("""{"runtime_id":"rt","workspace_id":"ws","session_id":"s","title":"T","backend_id":"codex"}"""))
         val definition = RemoteAgentDefinition("a", "1.2.3", "Agent", "codex", "healthy", setOf("chat"))
@@ -36,7 +134,10 @@ class RelayRemoteRepositoryTest {
         val session = RemoteSessionRef(RuntimeId("rt"), WorkspaceId("ws"), SessionId("s"), "T", "codex")
         server.enqueue(MockResponse().setBody("""{"runtime_id":"rt","workspace_id":"ws","session_id":"s","run_id":"r","backend_id":"codex"}"""))
         val run = repository.createRun(session, "hi", listOf("att_1"), "idem-run")
-        assertFalse(server.takeRequest().body.readUtf8().contains("sdcard"))
+        val body = JSONObject(server.takeRequest().body.readUtf8())
+        assertFalse(body.toString().contains("sdcard"))
+        assertEquals("idem-run", body.getString("idempotency_key"))
+        assertEquals("idem-run", body.getString("source_message_id"))
         server.enqueue(MockResponse().setBody("{}")); repository.cancel(run)
         assertTrue(server.takeRequest().path!!.contains("/workspaces/ws/runs/r/cancel"))
     }
@@ -84,6 +185,21 @@ class RelayRemoteRepositoryTest {
         assertTrue(server.takeRequest().path!!.endsWith("/audit?run_id=r"))
     }
 
+    @Test fun `approval lost response retries with one stable idempotency key`() = runTest {
+        server.enqueue(MockResponse().setBody("""{"status":"approved"}""")
+            .setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST))
+        server.enqueue(MockResponse().setBody("""{"status":"approved"}"""))
+
+        assertEquals("approved", repository.decide(RuntimeId("rt"), ApprovalId("approval-1"), "approve"))
+
+        val first = JSONObject(server.takeRequest().body.readUtf8())
+        val second = JSONObject(server.takeRequest().body.readUtf8())
+        assertEquals("approval:approval-1:approve", first.getString("idempotency_key"))
+        assertEquals(first.getString("idempotency_key"), second.getString("idempotency_key"))
+        assertNotEquals(first.getString("request_id"), second.getString("request_id"))
+        assertEquals(2, server.requestCount)
+    }
+
     @Test fun `session run history and rest events retain complete authority scope`() = runTest {
         server.enqueue(MockResponse().setBody("""{"runtime_id":"rt","workspace_id":"ws","session_id":"s","title":"Remote","backend_id":"opendrsai","agent_definition_id":"a","agent_definition_version":"1","updated_at":"now","lifecycle":"active","last_run_status":"completed"}"""))
         assertEquals("Remote", repository.session(RuntimeId("rt"), WorkspaceId("ws"), SessionId("s")).title)
@@ -114,5 +230,27 @@ class RelayRemoteRepositoryTest {
         assertEquals("r", repository.createRun(session, "hello", emptyList(), "stable-run-key").runId.value)
         assertEquals("/v1/runtimes/rt/idempotency/run.create/stable-run-key", server.takeRequest().path)
         assertEquals(1, server.requestCount)
+    }
+
+    @Test fun `twenty caller retries keep one source message and idempotency identity`() = runTest {
+        val response = """{"runtime_id":"rt","workspace_id":"ws","session_id":"s","run_id":"same-run","backend_id":"opendrsai"}"""
+        repeat(20) { server.enqueue(MockResponse().setBody(response)) }
+        val session = RemoteSessionRef(
+            RuntimeId("rt"), WorkspaceId("ws"), SessionId("s"), "T", "opendrsai",
+        )
+
+        val runs = (1..20).map {
+            repository.createRun(
+                session, "hello", emptyList(), "stable-source-message",
+                sourceMessageId = "stable-source-message",
+            )
+        }
+
+        assertEquals(setOf("same-run"), runs.map { it.runId.value }.toSet())
+        repeat(20) {
+            val body = JSONObject(server.takeRequest().body.readUtf8())
+            assertEquals("stable-source-message", body.getString("idempotency_key"))
+            assertEquals("stable-source-message", body.getString("source_message_id"))
+        }
     }
 }

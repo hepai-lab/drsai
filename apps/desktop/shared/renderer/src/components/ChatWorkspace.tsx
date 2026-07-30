@@ -41,10 +41,12 @@ import {
   Telescope,
   Volume2,
   X,
-  Zap,
+  // Temporarily unused while composer Skills picker is hidden — keep for later reuse.
+  // Zap,
 } from "lucide-react";
 import drsaiLogo from "../assets/drsai.png";
 import { canHandleMemoryRequestLocally } from "../userPreferenceIntent";
+import { isTextCompositionEvent, shouldSubmitTextInput } from "../imeKeyboardPolicy";
 import type {
   ChatMessage,
   DesktopAgent,
@@ -1204,7 +1206,7 @@ export function ChatWorkspace({
   }
 
   function handleKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>): void {
-    if (event.key !== "Enter" || event.shiftKey) return;
+    if (!shouldSubmitTextInput(event.nativeEvent)) return;
     event.preventDefault();
     void submitWithAttachments();
   }
@@ -1849,6 +1851,7 @@ export function ChatWorkspace({
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
             onKeyDown={(event) => {
+              if (isTextCompositionEvent(event.nativeEvent)) return;
               if (event.key === "Escape") {
                 event.preventDefault();
                 closeSearch();
@@ -2575,6 +2578,7 @@ export function ChatWorkspace({
                 />
               ) : (
                 <div className="composer-editor">
+                  {/* Temporarily hide composer Skills picker — keep for later reuse.
                   {selectedSkillName ? (
                     <div className="composer-skill-tags" aria-label={zh ? "已选技能" : "Selected skill"}>
                       <span className="composer-skill-tag" data-testid="composer-skill-tag">
@@ -2591,6 +2595,7 @@ export function ChatWorkspace({
                       </span>
                     </div>
                   ) : null}
+                  */}
                   <textarea
                     data-testid="composer-input"
                     ref={textareaRef}
@@ -2755,6 +2760,7 @@ export function ChatWorkspace({
                   </div>
                 )}
               </div>
+              {/* Temporarily hide composer Skills picker — keep for later reuse.
               <div className="composer-meta-item" data-meta-menu="skill">
                 <button
                   className={`composer-meta-chip composer-meta-button${selectedSkillName ? " active" : ""}`}
@@ -2796,6 +2802,7 @@ export function ChatWorkspace({
                   </div>
                 )}
               </div>
+              */}
               <div className="composer-meta-item" data-meta-menu="thinking">
               <button
                 className="composer-meta-chip composer-meta-button"

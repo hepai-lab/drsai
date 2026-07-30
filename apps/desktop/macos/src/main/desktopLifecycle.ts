@@ -1,12 +1,13 @@
 import { existsSync } from "node:fs";
-import type { DesktopBootstrapResult, DesktopHealth, InstallStatus, PrerequisiteStatus } from "../../../shared/api/desktopApi";
+import type { DesktopBootstrapResult, DesktopHealth, InstallProgress, InstallStatus, PrerequisiteStatus } from "../../../shared/api/desktopApi";
 import { requireAuthContext } from "../../../shared/main/auth";
 import { getGatewayModels, getGatewayStatus, startGateway } from "./gateway";
 import { DRSAI_CONFIG_FILE, DRSAI_ENV_FILE, DRSAI_HOME, DRSAI_PYTHON, DRSAI_REPO, DRSAI_SCRIPT } from "../../../shared/main/paths";
 import { getUpdateStatus } from "./updater";
-import { ensureBundledRuntimeInstalled, hasBundledRuntime } from "./runtimeInstaller";
+import { ensureBundledRuntimeInstalled, hasBundledRuntime, inspectInstalledRuntime } from "./runtimeInstaller";
 
 export async function getInstallStatus(): Promise<InstallStatus> {
+  const runtime = await inspectInstalledRuntime();
   const prerequisites: PrerequisiteStatus = {
     pythonOnPath: existsSync(DRSAI_PYTHON),
     pythonVersion: null,
@@ -23,14 +24,14 @@ export async function getInstallStatus(): Promise<InstallStatus> {
     existsSync(DRSAI_SCRIPT) ? null : "drsai-cli",
   ].filter((item): item is string => Boolean(item));
   return {
-    installed: missing.length === 0,
+    installed: missing.length === 0 && runtime.healthy,
     home: DRSAI_HOME,
     repoPath: DRSAI_REPO,
     pythonPath: DRSAI_PYTHON,
     scriptPath: DRSAI_SCRIPT,
-    version: null,
+    version: runtime.version,
     expectedVersion: null,
-    backendNeedsRepair: false,
+    backendNeedsRepair: missing.length === 0 && !runtime.healthy,
     bundledBackendAvailable: hasBundledRuntime(),
     configExists: existsSync(DRSAI_CONFIG_FILE),
     envExists: existsSync(DRSAI_ENV_FILE),
@@ -73,6 +74,6 @@ export async function bootstrapDesktop(): Promise<DesktopBootstrapResult> {
   };
 }
 
-export async function installBundledRuntime(): Promise<void> {
-  if (!(await ensureBundledRuntimeInstalled())) throw new Error("This build does not contain a verified macOS Runtime artifact.");
+export async function installBundledRuntime(onProgress?: (progress: InstallProgress) => void): Promise<void> {
+  if (!(await ensureBundledRuntimeInstalled(onProgress, true))) throw new Error("This build does not contain a verified macOS Runtime artifact.");
 }

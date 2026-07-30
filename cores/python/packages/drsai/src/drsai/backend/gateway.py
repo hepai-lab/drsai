@@ -46,16 +46,9 @@ Endpoints:
 
     POST /v1/threads/{thread_id}/stop          (stop & save state)
 
-    GET  /v1/gfs/health                        (GFS cloud disk probe)
-    POST /v1/gfs/list|stat|read|write|upload|download|delete|share-url
-
     GET  /v1/skills                            (list installed skills)
-    GET  /v1/skills/available                  (list bundled/available skills)
+
     GET  /v1/skills/{skill_path:path}          (get skill content)
-    POST /v1/skills/install                    (create/install a skill)
-    PUT  /v1/skills/{skill_name}               (update skill SKILL.md)
-    DELETE /v1/skills/{skill_name}             (uninstall a skill)
-    POST /v1/skills/reload                     (hot-reload via DrSaiAssistant.update_user_skills)
 
     GET  /v1/memory                            (get memory/user profile)
 
@@ -105,6 +98,8 @@ from pathlib import Path
 
 from typing import Any, Optional
 
+from urllib.parse import urlparse
+
 
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
@@ -117,18 +112,19 @@ from loguru import logger
 
 from pydantic import BaseModel, Field
 
-from drsai.backend.remote_workspace import PROTOCOL_VERSION, canonical_workspace, ensure_protocol, workspace_child
-from drsai.backend.remote_checkpoints import accept_checkpoint, create_checkpoint, list_checkpoints, preview_checkpoint, restore_checkpoint
-from drsai.backend.runtime_registry import RuntimeRegistry
-from drsai.backend.git_worktree_service import GitWorktreeError, GitWorktreeOWOPOperations, GitWorktreeService
-from drsai.backend.terminal_state_service import TerminalStateService, TerminalWorkspaceBinding
+from drsai.backend.remote_ssh.workspace import PROTOCOL_VERSION, canonical_workspace, ensure_protocol, workspace_child
+from drsai.backend.remote_ssh.checkpoints import accept_checkpoint, create_checkpoint, list_checkpoints, preview_checkpoint, restore_checkpoint
+from drsai.backend.runtime.registry import RuntimeRegistry
+from drsai.backend.workspace.git_worktree_service import GitWorktreeError, GitWorktreeOWOPOperations, GitWorktreeService
+from drsai.backend.runtime.terminal.state_service import TerminalStateService, TerminalWorkspaceBinding
 from drsai.owop.local_workspace import LocalWorkspaceOperations, WorkspaceWatchJournal
 from drsai.owop.process_pty import LocalProcessPtyOperations
 from drsai.owop.protocol import OWOPProtocol
 from drsai.owop.runtime_terminal import RuntimeTerminalOWOPOperations
-from drsai.backend.runtime_engine import RuntimeEngine, RuntimeEngineIdentity
-from drsai.backend.runtime_artifacts import RuntimeArtifactStore
-from drsai.backend.agent_runtime import (
+from drsai.backend.runtime.engine import RuntimeEngine, RuntimeEngineIdentity
+from drsai.backend.runtime.journal import SessionCursorExpired
+from drsai.backend.runtime.artifacts import RuntimeArtifactStore
+from drsai.backend.runtime.agent import (
     AgentDefinition,
     AgentDefinitionStore,
     HAIModelAdapter,
@@ -140,13 +136,14 @@ from drsai.backend.agent_runtime import (
     RuntimeToolDispatcher,
 )
 from drsai.backend.codex_adapter import build_codex_adapter
-from drsai.backend.structured_conversation import StructuredConversationProjector
+from drsai.backend.runtime.conversation import StructuredConversationProjector
+from drsai.backend.runtime.desktop_threads import DesktopThreadProjection
 from drsai.backend.tui_gateway.adapter.event_translator import (
     TurnState as ConversationTranslationState,
     finalize as finalize_conversation_translation,
     translate as translate_conversation_event,
 )
-from drsai.backend.runtime_security import (
+from drsai.backend.runtime.security import (
     ApprovalRegistry,
     ApprovalRequired,
     AuditLog,
@@ -209,6 +206,7 @@ from drsai.backend.cli.history import CLISessionStore
 from drsai.platform_auth import (
     classify_model_error,
     context_from_bearer,
+    get_platform_auth,
     platform_auth_scope,
     verify_gateway_instance,
 )
@@ -326,38 +324,7 @@ def _normalize_default_model_alias(alias: object) -> str:
     return normalized or DEFAULT_CONFIG_NAME
 
 
-async def _apply_agent_model(agent: Any, model_alias: str | None) -> str | None:
-    """Ensure ``agent`` is bound to ``model_alias`` when one is requested.
 
-    Returns the effective alias after any switch (or the agent's current alias).
-    """
-    if not model_alias:
-        current = getattr(agent, "_defult_config_name", None)
-        return current if isinstance(current, str) and current.strip() else None
-
-    current = getattr(agent, "_defult_config_name", None)
-    if current == model_alias:
-        return model_alias
-
-    set_fn = getattr(agent, "_set_model_client", None)
-    switch_fn = getattr(agent, "switch_model", None)
-    if not callable(set_fn) or not callable(switch_fn):
-        logger.warning(
-            f"Cannot apply model '{model_alias}': agent lacks switch_model support"
-        )
-        return current if isinstance(current, str) and current.strip() else model_alias
-
-    try:
-        new_client = set_fn(model_alias)
-        maybe = switch_fn(new_client)
-        if inspect.isawaitable(maybe):
-            await maybe
-        agent._defult_config_name = model_alias
-        logger.info(f"Applied requested model '{model_alias}' (was '{current}')")
-        return model_alias
-    except Exception as exc:
-        logger.warning(f"Failed to apply requested model '{model_alias}': {exc}")
-        return current if isinstance(current, str) and current.strip() else None
 
 
 # ââ Logging ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
@@ -466,16 +433,6 @@ class SkillInstallRequest(BaseModel):
     source: str | None = Field(default=None, description="Source collection name for installing from bundled skills")
 
 
-class SkillUpdateRequest(BaseModel):
-    name: str = Field(..., description="Skill name (directory name)")
-    content: str = Field(..., description="Full SKILL.md content")
-
-
-class SkillReloadRequest(BaseModel):
-    thread_id: str | None = Field(default=None, description="Active thread/session to hot-reload; omit to reload all agents for the user")
-    user_id: str | None = Field(default=None, description="User id owning the skills directory")
-
-
 class ToolEntry(BaseModel):
     """A single tool entry in TOOLS_CONFIG.json.
 
@@ -574,7 +531,7 @@ async def _load_remote_hepai_tools(force: bool = False) -> tuple[list[Any], list
         return list(tools), [dict(row) for row in rows]
     from hepai import HepAI
     from hepai.tools.get_woker_functions import get_worker_sync_functions
-    from drsai.backend.remote_hepai import discover_enabled_worker_tools
+    from drsai.backend.integrations.hepai import discover_enabled_worker_tools
     api_key = os.environ.get("HEPAI_API_KEY")
     base_url = os.environ.get("HEPAI_BASE_URL")
     client = HepAI(api_key=api_key)
@@ -614,8 +571,6 @@ class AgentManager:
         self._agents: dict[str, Any] = {}            # "{user_id}:{thread_id}" â agent
 
         self._model_aliases: dict[str, str] = {}     # key â current model alias
-
-        self._work_dirs: dict[str, str] = {}         # key â work_dir used at create time
 
         self._locks: dict[str, asyncio.Lock] = {}    # key â request lock
 
@@ -852,50 +807,15 @@ class AgentManager:
 
             current_alias = self._model_aliases.get(key)
 
-            current_work_dir = self._work_dirs.get(key) if hasattr(self, "_work_dirs") else None
 
-            if not hasattr(self, "_work_dirs"):
-                self._work_dirs = {}
 
-            desired_work_dir = (work_dir or "").strip() or os.getcwd()
-
-            work_dir_changed = False
-            if agent is not None and desired_work_dir:
-                if not current_work_dir:
-                    # Cached agent from before work_dir tracking — rebind once.
-                    work_dir_changed = True
-                else:
-                    work_dir_changed = (
-                        os.path.normcase(os.path.normpath(desired_work_dir))
-                        != os.path.normcase(os.path.normpath(current_work_dir))
-                    )
-
-            if agent is None or (model_alias and model_alias != current_alias) or work_dir_changed:
-
-                model_changed = bool(agent is not None and model_alias and model_alias != current_alias)
-                if (work_dir_changed or model_changed) and agent is not None:
-                    reason = "work_dir" if work_dir_changed else "model"
-                    logger.info(
-                        f"Recreating agent for {reason} change: "
-                        f"model {current_alias} -> {model_alias}, "
-                        f"work_dir {current_work_dir} -> {desired_work_dir} ({key})"
-                    )
-                    try:
-                        if hasattr(agent, "close"):
-                            maybe = agent.close()
-                            if inspect.isawaitable(maybe):
-                                await maybe
-                    except Exception as exc:
-                        logger.warning(f"Failed to close agent before recreate: {exc}")
-                    self._agents.pop(key, None)
-                    self._model_aliases.pop(key, None)
-                    self._work_dirs.pop(key, None)
+            if agent is None or (model_alias and model_alias != current_alias):
 
                 logger.info(
 
                     f"Creating agent: user_id={uid}, thread_id={tid}, "
 
-                    f"model={model_alias}, work_dir={desired_work_dir}"
+                    f"model={model_alias}, work_dir={work_dir}"
 
                 )
 
@@ -908,7 +828,7 @@ class AgentManager:
                     user_id=uid,
                     db_manager=_get_db(),
                     defult_config_name=model_alias or _get_default_model_alias(),
-                    work_dir=desired_work_dir,
+                    work_dir=work_dir or os.getcwd(),
                 )
                 try:
                     remote_tools, _ = await _load_remote_hepai_tools()
@@ -934,42 +854,26 @@ class AgentManager:
 
 
                 # 3. Load saved state from Thread.state
-                # When the desktop UI sends an explicit model alias, do not let
-                # the previous session model overwrite that selection.
 
                 state_dict = await self._load_thread_state(tid, uid)
 
                 if state_dict and hasattr(agent, "load_state"):
-                    load_state = agent.load_state
-                    try:
-                        await load_state(state_dict, restore_model=not bool(model_alias))
-                    except TypeError:
-                        # Older agents without the restore_model kwarg.
-                        await load_state(state_dict)
+
+                    await agent.load_state(state_dict)
 
                     logger.info(f"Loaded saved state for {key}")
-
-                effective_alias = await _apply_agent_model(agent, model_alias)
 
 
 
                 # 4. Get-or-create Thread record
 
-                await self._get_or_create_thread(tid, uid, desired_work_dir)
+                await self._get_or_create_thread(tid, uid, work_dir)
 
 
 
                 self._agents[key] = agent
 
-                self._model_aliases[key] = effective_alias or model_alias
-
-                self._work_dirs[key] = desired_work_dir
-
-            elif model_alias:
-                # Cache hit: still honor a per-request model override in case
-                # a prior load_state left the agent on a different model.
-                effective_alias = await _apply_agent_model(agent, model_alias)
-                self._model_aliases[key] = effective_alias or model_alias
+                self._model_aliases[key] = model_alias
 
 
 
@@ -1150,51 +1054,6 @@ class AgentManager:
 
 
 
-    def reload_user_skills(
-        self,
-        user_id: str | None = None,
-        thread_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Call ``DrSaiAssistant.update_user_skills()`` on live agent(s).
-
-        Mirrors TUI ``skills.manage`` action=reload. When ``thread_id`` is set,
-        only that session is refreshed; otherwise every in-memory agent for the
-        user is refreshed.
-        """
-        uid = user_id or _get_user_id()
-        reloaded: list[str] = []
-        errors: list[str] = []
-
-        if thread_id:
-            keys = [self._make_key(uid, thread_id)]
-        else:
-            prefix = f"{uid}:"
-            keys = [k for k in self._agents if k.startswith(prefix)]
-
-        for key in keys:
-            agent = self._agents.get(key)
-            if agent is None:
-                continue
-            if not hasattr(agent, "update_user_skills"):
-                continue
-            try:
-                _loader, err = agent.update_user_skills()
-                if err:
-                    errors.append(f"{key}: {err}")
-                else:
-                    reloaded.append(key)
-                    logger.info(f"skills: reloaded agent skills for {key}")
-            except Exception as e:
-                errors.append(f"{key}: {e}")
-                logger.exception(f"skills: update_user_skills failed for {key}")
-
-        return {
-            "ok": not errors,
-            "reloaded": bool(reloaded),
-            "agents": reloaded,
-            "errors": errors,
-        }
-
     async def stop_agent(self, thread_id: str, user_id: str | None = None) -> bool:
 
         """Stop an agent, save its final state, and remove from pool."""
@@ -1206,8 +1065,6 @@ class AgentManager:
         agent = self._agents.pop(key, None)
 
         self._model_aliases.pop(key, None)
-
-        self._work_dirs.pop(key, None)
 
         if agent is None:
 
@@ -1270,7 +1127,6 @@ class AgentManager:
             for k in keys:
                 agent = self._agents.pop(k, None)
                 self._model_aliases.pop(k, None)
-                self._work_dirs.pop(k, None)
                 if agent is not None and hasattr(agent, "close"):
                     try:
                         await agent.close()
@@ -1320,27 +1176,6 @@ async def lifespan(app: FastAPI):
 
     logger.info(f"OpenDrSai API Server starting on {DEFAULT_HOST}:{DEFAULT_PORT}")
 
-    # Load ~/.drsai/.env so GFS_* / HEPAI_* credentials are visible to tools
-    # and /v1/gfs routes even when the process was not launched from that cwd.
-    try:
-        from dotenv import load_dotenv
-
-        env_path = Path(FS_DIR) / ".env"
-        if env_path.is_file():
-            load_dotenv(env_path, override=False)
-            logger.info(f"Loaded env file: {env_path}")
-        # Dev convenience: also pick up repo-root .env when present (no override).
-        # gateway.py lives at cores/python/packages/drsai/src/drsai/backend/
-        repo_env = Path(__file__).resolve().parents[7] / ".env"
-        if repo_env.is_file():
-            load_dotenv(repo_env, override=False)
-            logger.info(f"Loaded env file: {repo_env}")
-        from drsai.backend.gfs_api import _normalize_gfs_env_aliases
-
-        _normalize_gfs_env_aliases()
-    except Exception as exc:
-        logger.warning(f"Failed to load GFS-related env files: {exc}")
-
     # Initialize DB eagerly so first request doesn't pay the cost
 
     _get_db()
@@ -1352,6 +1187,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"Default user: {_get_user_id()}")
 
     relay_stop, relay_task = await _start_runtime_relay_bridge()
+    logger.info("OpenDrSai API Server startup hooks complete")
 
     yield
 
@@ -1393,13 +1229,11 @@ app = FastAPI(
 
 )
 
-from drsai.backend.gfs_api import register_gfs_routes
-
-register_gfs_routes(app)
-
 _REMOTE_PROTOCOL_VERSION = PROTOCOL_VERSION
 _remote_workspaces: dict[str, Path] = {}
 _runtime_registry_instance: RuntimeRegistry | None = None
+_runtime_relay_connector: Any | None = None
+_mobile_pairing_service_instance = None
 _runtime_engine_instance: RuntimeEngine | None = None
 _runtime_tool_dispatcher_instance: RuntimeToolDispatcher | None = None
 _runtime_security_instance: RuntimeSecurity | None = None
@@ -1431,6 +1265,10 @@ _REMOTE_CAPABILITY_VERSIONS = {
     "workspace-permissions": 1,
     "security-approval": 1,
     "runtime-audit": 1,
+    "conversation.snapshot": 1,
+    "session.event.resume": 1,
+    "session.event.stream": 1,
+    "session.event.cursor_expired": 1,
 }
 
 
@@ -1438,7 +1276,11 @@ async def _start_runtime_relay_bridge():
     """Start the optional Runtime-initiated Relay connection in this Full Runtime process."""
     from drsai.relay.device_identity import DeviceIdentityStore
     from drsai.relay.gateway_control import AiohttpGatewayTransport, GatewayRuntimeControlHandler
-    from drsai.relay.runtime_client import RuntimeCredentialStore, RuntimeOutboundConnector
+    from drsai.relay.runtime_client import (
+        RuntimeCredentialStore,
+        RuntimeOutboundConnector,
+        resolve_runtime_version,
+    )
 
     state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
     relay_state = state_root / "runtime" / "relay"
@@ -1463,17 +1305,51 @@ async def _start_runtime_relay_bridge():
         )
         connector = RuntimeOutboundConnector(
             configured_url, credential, identity, runtime.instance_id,
-            os.environ.get("OPENDRSAI_RUNTIME_VERSION", "1.4.7"), request_handler=handler,
+            resolve_runtime_version(os.environ.get("OPENDRSAI_RUNTIME_VERSION")),
+            request_handler=handler,
+            http_request_handler=handler.handle_http_request,
+            event_provider=handler.relay_events,
+            session_event_provider=handler.relay_session_events,
             workspace_provider=handler.published_workspaces,
             backend_health={"opendrsai": "healthy"},
+            wire_protocol=(
+                "hai-http"
+                if "/api/runtime-relay/" in urlparse(configured_url).path
+                else "legacy-operation"
+            ),
         )
+        global _runtime_relay_connector
+        _runtime_relay_connector = connector
         stop = asyncio.Event()
-        task = asyncio.create_task(connector.run_forever(stop), name="runtime-relay-bridge")
+
+        async def run_after_server_startup() -> None:
+            # Uvicorn opens the listening socket before the FastAPI lifespan
+            # startup phase has completed.  The Relay connector immediately
+            # polls this Gateway through that socket after WSS attach.  Give
+            # Uvicorn one short startup window so those loopback requests do
+            # not queue behind the still-running lifespan hook.
+            await asyncio.sleep(10)
+            await connector.run_forever(stop)
+
+        task = asyncio.create_task(
+            run_after_server_startup(),
+            name="runtime-relay-bridge",
+        )
         logger.info(f"Runtime Relay bridge enabled for {credential.runtime_id}")
         return stop, task
     except Exception as exc:
         logger.error(f"Runtime Relay bridge could not start: {exc}")
         return None, None
+
+
+def _mark_workspace_catalog_changed() -> None:
+    connector = _runtime_relay_connector
+    if connector is None:
+        return
+    try:
+        connector.mark_workspaces_dirty()
+    except Exception as exc:
+        logger.warning(f"Runtime workspace catalog dirty mark failed: {type(exc).__name__}")
 
 
 def _runtime_registry() -> RuntimeRegistry:
@@ -1482,6 +1358,15 @@ def _runtime_registry() -> RuntimeRegistry:
         state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
         _runtime_registry_instance = RuntimeRegistry(state_root / "runtime" / "runtime.sqlite3")
     return _runtime_registry_instance
+
+
+def _mobile_pairing_service():
+    global _mobile_pairing_service_instance
+    if _mobile_pairing_service_instance is None:
+        from drsai.relay.mobile_pairing import MobilePairingService
+        state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
+        _mobile_pairing_service_instance = MobilePairingService(state_root)
+    return _mobile_pairing_service_instance
 
 
 def _git_worktree_service() -> GitWorktreeService:
@@ -1548,7 +1433,7 @@ def _active_worktree_resources(workspace_id: str) -> list[dict[str, Any]]:
     for terminal in _terminal_state_service().list(workspace_id):
         if terminal["status"] in {"starting", "running", "detached", "reconnecting"}:
             resources.append({"kind": "terminal", "id": terminal["terminal_id"]})
-    remote_pty = sys.modules.get("drsai.backend.remote_pty")
+    remote_pty = sys.modules.get("drsai.backend.remote_ssh.pty")
     manager_instance = getattr(remote_pty, "manager", None) if remote_pty else None
     for terminal in getattr(manager_instance, "sessions", {}).values():
         if terminal.workspace_id == workspace_id and not terminal.exited:
@@ -1568,6 +1453,57 @@ def _runtime_engine() -> RuntimeEngine:
             lambda workspace_id: (record.worktree_id if (record := registry.get_worktree_by_workspace(workspace_id)) else None),
         )
     return _runtime_engine_instance
+
+
+def _desktop_thread_projection() -> DesktopThreadProjection:
+    state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
+    return DesktopThreadProjection(state_root)
+
+
+def _sync_desktop_sessions(workspace_id: str) -> tuple[DesktopThreadProjection, list[dict[str, Any]]]:
+    projection = _desktop_thread_projection()
+    workspace = _runtime_registry().get_workspace(workspace_id, include_closed=True)
+    if workspace is None or not workspace.open:
+        return projection, []
+    rows = projection.threads_for_workspace(workspace.path)
+    for row in rows:
+        _runtime_engine().import_session(
+            str(row["session_id"]),
+            workspace_id,
+            str(row["title"]),
+            agent_definition=row.get("agent_definition"),
+            backend_id=row.get("backend_id"),
+            created_at=str(row.get("created_at") or ""),
+            updated_at=str(row.get("updated_at") or ""),
+            archived=bool(row.get("archived")),
+        )
+    return projection, rows
+
+
+def _sync_desktop_session_id(session_id: str) -> DesktopThreadProjection:
+    projection = _desktop_thread_projection()
+    if not projection.has_thread(session_id):
+        return projection
+    for workspace in _runtime_registry().list_workspaces(include_closed=False):
+        rows = projection.threads_for_workspace(workspace.path)
+        row = next(
+            (item for item in rows if item["session_id"] == session_id),
+            None,
+        )
+        if row is None:
+            continue
+        _runtime_engine().import_session(
+            session_id,
+            workspace.workspace_id,
+            str(row["title"]),
+            agent_definition=row.get("agent_definition"),
+            backend_id=row.get("backend_id"),
+            created_at=str(row.get("created_at") or ""),
+            updated_at=str(row.get("updated_at") or ""),
+            archived=bool(row.get("archived")),
+        )
+        break
+    return projection
 
 
 def _runtime_tool_dispatcher() -> RuntimeToolDispatcher:
@@ -1673,13 +1609,127 @@ def _controlled_runtime_model_turn(
     }
 
 
+class GatewayOpenDrSaiAgentBackend:
+    """Run the production Desktop OpenDrSai agent behind the Runtime contract."""
+
+    backend_id = "opendrsai"
+
+    def __init__(self, runner: Any = None):
+        self._runner = runner
+        self._closed = False
+        self._cancellations: dict[str, CancellationToken] = {}
+
+    async def execute(
+        self,
+        context: RuntimeRunContext,
+        definition: AgentDefinition,
+        prompt: str,
+        services: Any,
+    ) -> dict[str, Any]:
+        if self._closed:
+            raise RuntimeExecutionError("agent_backend_closed", "OpenDrSai Agent Backend is closed.")
+        auth = get_platform_auth()
+        if auth is None:
+            raise RuntimeExecutionError(
+                "model_unauthorized",
+                "A valid HepAI identity is required.",
+            )
+        cancellation = CancellationToken()
+        self._cancellations[context.run_id] = cancellation
+        state = ConversationTranslationState()
+        content_parts: list[str] = []
+        services.emit(context, "agent.started", {
+            "backend": self.backend_id,
+            "prompt_length": len(prompt),
+        })
+        try:
+            run_stream = self._runner or manager.run_stream
+            events = run_stream(
+                task=prompt,
+                thread_id=context.session_id,
+                user_id=auth.subject,
+                model_alias=definition.model,
+                work_dir=str(context.workspace_path),
+                cancellation_token=cancellation,
+            )
+            async for event in events:
+                for event_type, payload in translate_conversation_event(event, state):
+                    normalized_type, normalized_payload = self._normalize_event(event_type, payload)
+                    if normalized_type == "agent.message.delta":
+                        content_parts.append(str(normalized_payload.get("delta") or ""))
+                    services.emit(context, normalized_type, normalized_payload)
+            content = "".join(content_parts)
+            services.emit(context, "agent.completed", {"content": content})
+            return {"content": content}
+        except asyncio.CancelledError as exc:
+            raise RuntimeExecutionError("run_cancelled", "Run was cancelled.") from exc
+        except RuntimeExecutionError:
+            raise
+        except Exception as exc:
+            error = classify_model_error(exc)
+            raise RuntimeExecutionError(
+                str(error.get("code") or "agent_execution_failed"),
+                str(error.get("message") or "Agent execution failed."),
+                retryable=bool(error.get("retryable")),
+            ) from exc
+        finally:
+            self._cancellations.pop(context.run_id, None)
+
+    @staticmethod
+    def _normalize_event(event_type: str, payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+        if event_type == "message.delta":
+            delta = str(payload.get("text") or payload.get("delta") or payload.get("content") or "")
+            return "agent.message.delta", {
+                **payload,
+                "delta": delta,
+                "content": delta,
+            }
+        if event_type == "tool.start":
+            return "tool.started", payload
+        if event_type == "tool.complete":
+            return "tool.completed", payload
+        return event_type, payload
+
+    async def cancel(self, run_id: str) -> None:
+        cancellation = self._cancellations.get(run_id)
+        if cancellation is not None:
+            cancellation.cancel()
+
+    async def respond_approval(self, run_id: str, approval_id: str, decision: str) -> None:
+        raise RuntimeExecutionError(
+            "approval_not_found",
+            "OpenDrSai Approval is no longer pending.",
+        )
+
+    async def recover(self, run_id: str) -> None:
+        if self._closed:
+            raise RuntimeExecutionError("agent_backend_closed", "OpenDrSai Agent Backend is closed.")
+
+    async def health(self) -> dict[str, Any]:
+        return {
+            "backend_id": self.backend_id,
+            "available": not self._closed,
+            "reason": "closed" if self._closed else None,
+        }
+
+    async def close(self) -> None:
+        self._closed = True
+        for cancellation in self._cancellations.values():
+            cancellation.cancel()
+        self._cancellations.clear()
+
+
 def _runtime_agent_service(auth_context: Any = None) -> RuntimeAgentService:
     """Return the process-owned Backend service; request identity is validated before dispatch."""
     global _runtime_agent_service_instance
     if _runtime_agent_service_instance is None:
         state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
         _ensure_builtin_agent_definitions(state_root)
-        backend = OpenDrSaiAgentBackend(_controlled_runtime_model_turn)
+        backend = (
+            OpenDrSaiAgentBackend(_controlled_runtime_model_turn)
+            if os.environ.get("DRSAI_RUNTIME_CONTROLLED_MODEL") == "1"
+            else GatewayOpenDrSaiAgentBackend()
+        )
         codex_backend = build_codex_adapter(state_root, _runtime_engine())
         _runtime_agent_service_instance = RuntimeAgentService(
             _runtime_engine(),
@@ -1692,19 +1742,69 @@ def _runtime_agent_service(auth_context: Any = None) -> RuntimeAgentService:
 
 
 def _ensure_builtin_agent_definitions(state_root: Path) -> None:
-    path = state_root / "assets" / "agents" / "codex" / "1.json"
-    if path.exists():
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
+    def ensure(payload: dict[str, Any]) -> None:
+        path = (
+            state_root
+            / "assets"
+            / "agents"
+            / str(payload["id"])
+            / f"{payload['version']}.json"
+        )
+        if path.exists():
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        os.replace(temporary, path)
+
+    ensure({
+        "id": "opendrsai", "version": "1", "backend": "opendrsai",
+        "instructions": "Use the production OpenDrSai Agent in this Windows Runtime Workspace.",
+        "permissions": [],
+    })
+    ensure({
         "id": "codex", "version": "1", "backend": "codex", "model": "gpt-5.4",
         "instructions": "Work only inside the Runtime-authoritative Workspace and report verifiable results.",
         "permissions": ["workspace:read", "workspace:write", "files:write", "process:execute", "permissions:grant"],
         "backend_config": {"approvalPolicy": "on-request", "sandbox": "workspace-write"},
-    }
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-    os.replace(temporary, path)
+    })
+    if os.environ.get("DRSAI_RUNTIME_CONTROLLED_MODEL") == "1":
+        ensure({
+            "id": "mobile-acceptance",
+            "version": "1",
+            "name": "Mobile Acceptance",
+            "backend": "opendrsai",
+            "instructions": "Run only the controlled, read-only mobile acceptance plan.",
+            "permissions": ["shell:python"],
+            "controlled_plan": {
+                "calls": [
+                    {
+                        "kind": "approval",
+                        "name": "shell:python",
+                        "arguments": {
+                            "risk_summary": "Allow controlled read-only shell output",
+                            "scope": "workspace",
+                            "timeout_seconds": 300,
+                        },
+                    },
+                    {
+                        "kind": "shell",
+                        "name": "python",
+                        "arguments": {
+                            "command": [
+                                sys.executable,
+                                "-c",
+                                "print('opendrsai-mobile-acceptance')",
+                            ]
+                        },
+                    },
+                ],
+                "content": "mobile acceptance completed",
+            },
+        })
 
 
 def _restore_runtime_workspaces() -> None:
@@ -1742,6 +1842,11 @@ class RemoteWorkspaceOpenRequest(BaseModel):
 
 class RuntimeWorkspaceOpenRequest(BaseModel):
     path: str = Field(min_length=1, max_length=4096)
+    display_name: str | None = Field(default=None, min_length=1, max_length=120, pattern=r"^[^\r\n\x00]*\S[^\r\n\x00]*$")
+
+
+class RuntimeWorkspaceRenameRequest(BaseModel):
+    display_name: str = Field(min_length=1, max_length=120, pattern=r"^[^\r\n\x00]*\S[^\r\n\x00]*$")
 
 
 class RemoteWorktreeRequest(BaseModel):
@@ -1780,11 +1885,14 @@ class RuntimeWorktreeArchiveRequest(BaseModel):
 class RuntimeSessionCreateRequest(BaseModel):
     workspace_id: str = Field(min_length=1, max_length=160)
     title: str = Field(default="New session", max_length=240)
+    agent_definition: str | None = Field(default=None, min_length=1, max_length=500)
+    backend_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class RuntimeSessionUpdateRequest(BaseModel):
     title: str | None = Field(default=None, max_length=240)
     archived: bool | None = None
+    lifecycle: str | None = Field(default=None, pattern="^(active|archived|removed)$")
 
 
 class RuntimeRunCreateRequest(BaseModel):
@@ -1798,6 +1906,8 @@ class RuntimeRunTransitionRequest(BaseModel):
 class RuntimeRunExecuteRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=200_000)
     user_id: str | None = Field(default=None, max_length=200)
+    thread_id: str | None = Field(default=None, max_length=256)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class BackendAccountLoginRequest(BaseModel):
@@ -1806,6 +1916,16 @@ class BackendAccountLoginRequest(BaseModel):
 
 class BackendAccountLoginCancelRequest(BaseModel):
     login_id: str = Field(min_length=1, max_length=256)
+
+
+class MobilePairingRegistrationRequest(BaseModel):
+    registration_code: str = Field(min_length=16, max_length=2048, pattern=r"^[^\r\n\x00]+$")
+    relay_https_url: str = Field(min_length=1, max_length=512)
+    display_name: str = Field(min_length=1, max_length=120, pattern=r"^[^\r\n\x00]*\S[^\r\n\x00]*$")
+
+
+class MobilePairingFaultRequest(BaseModel):
+    ttl_seconds: int = Field(default=5, ge=1, le=30)
 
 
 class RuntimeEventAppendRequest(BaseModel):
@@ -1846,6 +1966,7 @@ class RemoteGitFileRequest(BaseModel):
 class RemoteGitCommitRequest(BaseModel):
     message: str = Field(min_length=1, max_length=240)
     body: str | None = Field(default=None, max_length=10000)
+    idempotency_key: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_.:-]{1,200}$")
 
 
 class RemoteGitPushRequest(BaseModel):
@@ -2020,6 +2141,202 @@ async def runtime_capabilities():
     }
 
 
+@app.get("/v1/agent-definitions")
+async def runtime_agent_definitions():
+    """Publish only immutable, selectable Agent Definition metadata."""
+    service = _runtime_agent_service()
+    health = await service.health()
+    rows = []
+    root = service.definitions.root
+    for path in sorted(root.glob("*/*.json")) if root.exists() else ():
+        try:
+            definition = service.definitions.load(f"{path.parent.name}@{path.stem}")
+        except RuntimeExecutionError:
+            continue
+        backend = health.get(definition.backend, {})
+        rows.append(
+            {
+                "definition_id": definition.asset_id,
+                "version": definition.version,
+                "display_name": str(
+                    definition.raw.get("name") or definition.asset_id
+                ),
+                "backend_id": definition.backend,
+                "backend_health": (
+                    "healthy" if backend.get("available") else "unavailable"
+                ),
+                "capabilities": sorted(definition.permissions),
+            }
+        )
+    return {"items": rows}
+
+
+def _mobile_pairing_http_error(exc):
+    status = 404 if exc.code in {"runtime_not_registered", "access_grant_not_found"} else \
+        401 if exc.code == "runtime_credential_invalid" else \
+        403 if exc.code in {"runtime_access_forbidden", "fault_injection_disabled"} else \
+        429 if exc.code == "pairing_rate_limited" else \
+        503 if exc.retryable else 409
+    return HTTPException(status_code=status, detail={
+        "code": exc.code, "message": exc.message, "retryable": exc.retryable,
+        "correlation_id": exc.correlation_id,
+        "detail": {"action": exc.action},
+    })
+
+
+def _trusted_mobile_pairing_relay(value: str) -> tuple[str, str]:
+    parsed = urlparse(value.strip())
+    host = (parsed.hostname or "").lower()
+    try:
+        port = parsed.port
+    except ValueError:
+        port = -1
+    if (parsed.scheme != "https" or parsed.username or parsed.password or
+            port not in {None, 443} or host not in {"ai.ihep.ac.cn", "ai-dev.ihep.ac.cn"} or
+            parsed.path.rstrip("/") != "/api/runtime-relay" or parsed.query or parsed.fragment):
+        raise HTTPException(status_code=400, detail={"code": "relay_url_not_trusted",
+                                                    "message": "Runtime Relay URL is not trusted."})
+    root = f"https://{host}/api/runtime-relay"
+    return root, f"wss://{host}/api/runtime-relay/v1/runtime-connect"
+
+
+@app.post("/v1/mobile-pairing/register")
+async def runtime_mobile_pairing_register(request: MobilePairingRegistrationRequest):
+    """Consume a short-lived code locally; the HepAI OIDC token never enters Runtime."""
+    from drsai.relay.device_identity import DeviceIdentityStore
+    from drsai.relay.runtime_client import (
+        AiohttpRegistrationTransport,
+        RuntimeCredentialStore,
+        RuntimeEnrollmentClient,
+        resolve_runtime_version,
+    )
+
+    relay_https, relay_wss = _trusted_mobile_pairing_relay(request.relay_https_url)
+    state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
+    relay_state = state_root / "runtime" / "relay"
+    try:
+        enrollment = RuntimeEnrollmentClient(
+            DeviceIdentityStore(relay_state / "device-identity.dpapi"),
+            AiohttpRegistrationTransport(relay_https),
+        )
+        credential = await enrollment.enroll(
+            request.registration_code,
+            request.display_name.strip(),
+            resolve_runtime_version(os.environ.get("OPENDRSAI_RUNTIME_VERSION")),
+        )
+        RuntimeCredentialStore(relay_state / "credential.dpapi").save(credential)
+        relay_state.mkdir(parents=True, exist_ok=True)
+        temporary = relay_state / "relay-wss-url.tmp"
+        temporary.write_text(relay_wss, encoding="utf-8")
+        temporary.replace(relay_state / "relay-wss-url")
+        return {"registered": True, "runtime_id": credential.runtime_id}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("Runtime Relay enrollment failed")
+        raise HTTPException(status_code=502, detail={"code": "runtime_registration_failed",
+                                                    "message": "Runtime Relay registration failed."}) from exc
+
+
+@app.get("/v1/mobile-pairing/status")
+async def runtime_mobile_pairing_status():
+    result = _mobile_pairing_service().readiness()
+    # Relay enrollment identity and Gateway process identity serve different
+    # scopes. Exposing both lets Desktop prove that pairing was routed to the
+    # Runtime that owns the selected Workspace without disclosing credentials.
+    result["gateway_runtime_id"] = _runtime_registry().identity.runtime_id
+    return result
+
+
+@app.get("/v1/mobile-pairing/diagnostics/workspace-lifecycles")
+async def runtime_mobile_pairing_workspace_lifecycles():
+    """Return path-free Runtime lifecycle counts for local acceptance tooling."""
+    counts = {"active": 0, "archived": 0, "removed": 0}
+    for record in _runtime_registry().list_workspaces(include_closed=True):
+        if record.lifecycle not in counts:
+            raise HTTPException(
+                status_code=500,
+                detail={"code": "workspace_lifecycle_invalid"},
+            )
+        counts[record.lifecycle] += 1
+    return {"counts": counts, "total": sum(counts.values())}
+
+
+@app.post("/v1/mobile-pairing/grants")
+async def runtime_mobile_pairing_create():
+    from drsai.relay.mobile_pairing import MobilePairingError
+    try:
+        return (await _mobile_pairing_service().create()).public()
+    except MobilePairingError as exc:
+        raise _mobile_pairing_http_error(exc) from exc
+
+
+@app.get("/v1/mobile-pairing/grants/{grant_id}")
+async def runtime_mobile_pairing_read(grant_id: str):
+    from drsai.relay.mobile_pairing import MobilePairingError
+    try:
+        return (await _mobile_pairing_service().read(grant_id)).public()
+    except MobilePairingError as exc:
+        raise _mobile_pairing_http_error(exc) from exc
+
+
+@app.delete("/v1/mobile-pairing/grants/{grant_id}")
+async def runtime_mobile_pairing_revoke(grant_id: str):
+    from drsai.relay.mobile_pairing import MobilePairingError
+    try:
+        return (await _mobile_pairing_service().revoke(grant_id)).public()
+    except MobilePairingError as exc:
+        raise _mobile_pairing_http_error(exc) from exc
+
+
+@app.get("/v1/mobile-pairing/associations")
+async def runtime_mobile_pairing_associations():
+    from drsai.relay.mobile_pairing import MobilePairingError
+    try:
+        return {"items": [
+            item.public() for item in await _mobile_pairing_service().associations()
+        ]}
+    except MobilePairingError as exc:
+        raise _mobile_pairing_http_error(exc) from exc
+
+
+@app.delete("/v1/mobile-pairing/associations/{association_id}")
+async def runtime_mobile_pairing_revoke_association(association_id: str):
+    from drsai.relay.mobile_pairing import MobilePairingError
+    try:
+        return (
+            await _mobile_pairing_service().revoke_association(association_id)
+        ).public()
+    except MobilePairingError as exc:
+        raise _mobile_pairing_http_error(exc) from exc
+
+
+@app.delete("/v1/mobile-pairing/enrollment")
+async def runtime_mobile_pairing_revoke_enrollment():
+    from drsai.relay.mobile_pairing import MobilePairingError
+    try:
+        return await _mobile_pairing_service().revoke_enrollment()
+    except MobilePairingError as exc:
+        raise _mobile_pairing_http_error(exc) from exc
+
+
+@app.post(
+    "/v1/mobile-pairing/fault-injections/connection-owner-restart",
+    status_code=202,
+)
+async def runtime_mobile_pairing_inject_connection_owner_restart(
+    request: MobilePairingFaultRequest,
+):
+    """Test-only relay fault; local instance-token middleware remains mandatory."""
+    from drsai.relay.mobile_pairing import MobilePairingError
+    try:
+        return await _mobile_pairing_service().inject_connection_owner_restart(
+            request.ttl_seconds
+        )
+    except MobilePairingError as exc:
+        raise _mobile_pairing_http_error(exc) from exc
+
+
 def _backend_account_http_error(exc: RuntimeExecutionError) -> HTTPException:
     status = 404 if exc.code == "agent_backend_not_found" else 503 if exc.retryable or exc.code in {
         "codex_backend_unavailable", "codex_app_server_start_failed", "codex_connection_eof",
@@ -2070,7 +2387,7 @@ async def remote_pty_socket(websocket: WebSocket):
         await websocket.close(code=4401); return
     if sys.platform == "win32":
         await websocket.close(code=4400, reason="Remote PTY requires Linux"); return
-    from drsai.backend.remote_pty import manager as pty_manager
+    from drsai.backend.remote_ssh.pty import manager as pty_manager
     authorized_pty_scope: tuple[str, str, str] | None = None
     if _security_enabled():
         try:
@@ -2162,7 +2479,7 @@ async def remote_handshake(req: RemoteHandshakeRequest):
 async def runtime_workspace_open(req: RuntimeWorkspaceOpenRequest, raw_request: Request):
     principal = _principal_from_request(raw_request) if _security_enabled() else None
     try:
-        record = _runtime_registry().open_workspace(req.path)
+        record = _runtime_registry().open_workspace(req.path, display_name=req.display_name)
     except (FileNotFoundError, OSError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     root = Path(record.path)
@@ -2170,6 +2487,20 @@ async def runtime_workspace_open(req: RuntimeWorkspaceOpenRequest, raw_request: 
     if principal:
         _runtime_security().permissions.set_role(record.workspace_id, principal.principal_id, "owner")
     _remote_audit("workspace.open", workspace_id=record.workspace_id, path=record.path)
+    _mark_workspace_catalog_changed()
+    return record.as_dict()
+
+
+@app.put("/v1/workspaces/{workspace_id}/display-name")
+async def runtime_workspace_display_name_update(workspace_id: str, req: RuntimeWorkspaceRenameRequest, raw_request: Request):
+    if _security_enabled():
+        _authorize_request(raw_request, workspace_id, "workspace.write", {"operation": "workspace.rename"})
+    try:
+        record = _runtime_registry().update_workspace_display_name(workspace_id, req.display_name)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    _remote_audit("workspace.rename", workspace_id=record.workspace_id)
+    _mark_workspace_catalog_changed()
     return record.as_dict()
 
 
@@ -2213,33 +2544,219 @@ async def runtime_workspace_list(include_closed: bool = False):
 @app.post("/v1/sessions")
 async def runtime_session_create(request: RuntimeSessionCreateRequest):
     try:
-        return _runtime_engine().create_session(request.workspace_id, request.title)
+        return _runtime_engine().create_session(
+            request.workspace_id,
+            request.title,
+            agent_definition=request.agent_definition,
+            backend_id=request.backend_id,
+        )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/v1/sessions")
 async def runtime_session_list(workspace_id: str, offset: int = Query(default=0, ge=0), limit: int = Query(default=50, ge=1, le=200), archived: bool | None = False):
-    return _runtime_engine().list_sessions(workspace_id, offset=offset, limit=limit, archived=archived)
+    try:
+        # Desktop Threads are one producer of authoritative Runtime Sessions,
+        # not a replacement catalog. Import their latest metadata first, then
+        # list the unified engine store so Sessions created by Android/SDK
+        # remain visible to every client.
+        _sync_desktop_sessions(workspace_id)
+        return _runtime_engine().list_sessions(
+            workspace_id, offset=offset, limit=limit, archived=archived
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/v1/sessions/{session_id}")
 async def runtime_session_get(session_id: str):
     try:
+        _sync_desktop_session_id(session_id)
         return _runtime_engine().get_session(session_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/v1/sessions/{session_id}/runs")
+async def runtime_session_run_list(
+    session_id: str,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+):
+    try:
+        _sync_desktop_session_id(session_id)
+        rows = _runtime_engine().list_session_runs(session_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    page = rows[offset:offset + limit]
+    return {"object": "list", "data": page, "total": len(rows), "offset": offset}
+
+
+@app.get("/v1/sessions/{session_id}/conversation")
+async def runtime_session_conversation(
+    session_id: str,
+    cursor: str | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+):
+    try:
+        projection = _sync_desktop_session_id(session_id)
+        if projection.has_thread(session_id):
+            desktop_items = projection.conversation(session_id)
+            runtime_items: list[dict[str, Any]] = []
+            runtime_cursor = None
+            while len(runtime_items) < 5_000:
+                runtime_page = _runtime_engine().list_conversation(
+                    session_id, cursor=runtime_cursor, limit=500
+                )
+                runtime_items.extend(runtime_page["data"])
+                runtime_cursor = runtime_page.get("next_cursor")
+                if not runtime_cursor:
+                    break
+            combined = desktop_items + runtime_items
+            for sequence, item in enumerate(combined, start=1):
+                item["sequence"] = sequence
+            start = projection.decode_cursor(cursor)
+            page = combined[start:start + limit]
+            next_cursor = (
+                projection.encode_cursor(start + len(page))
+                if start + len(page) < len(combined) else None
+            )
+            return {"object": "list", "data": page, "next_cursor": next_cursor}
+        return _runtime_engine().list_conversation(session_id, cursor=cursor, limit=limit)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/v1/sessions/{session_id}/conversation-snapshot")
+async def runtime_session_conversation_snapshot(session_id: str):
+    """Return the authoritative Item projection plus its Session waterline."""
+    try:
+        _sync_desktop_session_id(session_id)
+        return _runtime_engine().conversation_snapshot(session_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+def _session_cursor_expired(exc: SessionCursorExpired) -> HTTPException:
+    return HTTPException(
+        status_code=409,
+        detail={
+            "code": "cursor_expired",
+            "message": str(exc),
+            "retryable": False,
+            "details": exc.details,
+        },
+    )
+
+
+@app.get("/v1/sessions/{session_id}/events")
+async def runtime_session_event_list(
+    session_id: str,
+    after_sequence: int = Query(default=0, ge=0),
+    limit: int = Query(default=500, ge=1, le=2000),
+):
+    """Replay durable Session events after an exclusive sequence cursor."""
+    try:
+        _sync_desktop_session_id(session_id)
+        events = _runtime_engine().list_session_events(
+            session_id,
+            after_sequence=after_sequence,
+            limit=limit,
+        )
+        return {
+            "object": "list",
+            "data": events,
+            "next_sequence": (
+                int(events[-1]["session_sequence"]) if events else after_sequence
+            ),
+        }
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SessionCursorExpired as exc:
+        raise _session_cursor_expired(exc) from exc
+
+
+@app.get("/v1/sessions/{session_id}/events/stream")
+async def runtime_session_event_stream(
+    session_id: str,
+    raw_request: Request,
+    after_sequence: int = Query(default=0, ge=0),
+):
+    """Resume a Session Event stream without a snapshot/subscribe race."""
+    try:
+        _sync_desktop_session_id(session_id)
+        # Validate existence and retention before sending HTTP 200 headers.
+        _runtime_engine().list_session_events(
+            session_id,
+            after_sequence=after_sequence,
+            limit=1,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SessionCursorExpired as exc:
+        raise _session_cursor_expired(exc) from exc
+
+    async def stream():
+        cursor = after_sequence
+        while not await raw_request.is_disconnected():
+            try:
+                events = await asyncio.to_thread(
+                    _runtime_engine().wait_session_events,
+                    session_id,
+                    after_sequence=cursor,
+                    timeout=15.0,
+                    limit=500,
+                )
+            except SessionCursorExpired:
+                # A connected client fell behind retention. Closing forces a
+                # reconnect, where the pre-header check returns cursor_expired.
+                return
+            if not events:
+                yield ": heartbeat\n\n"
+                continue
+            for event in events:
+                cursor = int(event["session_sequence"])
+                payload = json.dumps(
+                    event, ensure_ascii=False, separators=(",", ":")
+                )
+                yield f"id: {cursor}\nevent: session.event\ndata: {payload}\n\n"
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.patch("/v1/sessions/{session_id}")
 async def runtime_session_update(session_id: str, request: RuntimeSessionUpdateRequest):
     try:
         session = _runtime_engine().get_session(session_id)
-        if request.archived is not None and request.archived != session["archived"]:
+        wanted_lifecycle = request.lifecycle or (
+            "archived" if request.archived is True else
+            "active" if request.archived is False else
+            session["lifecycle"]
+        )
+        if wanted_lifecycle in {"active", "archived"} and wanted_lifecycle != session["lifecycle"]:
             # Mirror to the owning Agent Backend first.  If its remote archive
             # request fails, the Runtime Session remains unchanged and retryable.
-            await _runtime_agent_service().archive_session(session_id, archived=request.archived)
-        return _runtime_engine().update_session(session_id, title=request.title, archived=request.archived)
+            await _runtime_agent_service().archive_session(
+                session_id,
+                archived=wanted_lifecycle == "archived",
+            )
+        return _runtime_engine().update_session(
+            session_id,
+            title=request.title,
+            archived=request.archived,
+            lifecycle=request.lifecycle,
+        )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except RuntimeExecutionError as exc:
@@ -2249,7 +2766,12 @@ async def runtime_session_update(session_id: str, request: RuntimeSessionUpdateR
 @app.post("/v1/sessions/{session_id}/runs")
 async def runtime_run_create(session_id: str, request: RuntimeRunCreateRequest, http_request: Request):
     try:
+        _sync_desktop_session_id(session_id)
         state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
+        # Run creation can be the first Agent API call made by a freshly
+        # installed remote Runtime. Seed the built-ins before resolving the
+        # requested definition instead of relying on AgentService startup.
+        _ensure_builtin_agent_definitions(state_root)
         definition = AgentDefinitionStore(state_root / "assets" / "agents").load(request.agent_definition)
         run, created = _runtime_engine().create_run(
             session_id,
@@ -2288,6 +2810,35 @@ async def runtime_run_transition(run_id: str, request: RuntimeRunTransitionReque
 
 @app.post("/v1/runs/{run_id}/execute")
 async def runtime_run_execute(run_id: str, request: RuntimeRunExecuteRequest, raw_request: Request):
+    metadata = request.metadata if isinstance(request.metadata, dict) else {}
+    fixture_request_id = str(metadata.get("desktop_request_id") or "")
+    packaged_recovery_fixture = (
+        os.getenv("OPENDRSAI_PACKAGED_CHAT_RECOVERY_FIXTURE") == "1"
+        and os.getenv("OPENDRSAI_DEV_AUTH_BYPASS") == "1"
+        and raw_request.headers.get("x-opendrsai-auth-mode") == "offline"
+        and request.user_id == "packaged-l5-user"
+        and fixture_request_id == "packaged_chat_recovery_001"
+        and metadata.get("packaged_recovery_fixture") is True
+    )
+    if packaged_recovery_fixture:
+        fixture_run = _runtime_engine().get_run(run_id)
+        _runtime_engine().set_run_input(
+            run_id,
+            request.prompt,
+            source_client="windows",
+            source_message_id=str(metadata.get("source_message_id") or fixture_request_id),
+        )
+        if fixture_run["status"] == "queued":
+            _runtime_engine().transition_run(run_id, "running")
+        _runtime_engine().append_backend_event(
+            run_id, "agent.message.delta", {"text": "alpha"}, f"fixture:{run_id}:alpha",
+        )
+        _runtime_engine().append_backend_event(
+            run_id, "agent.message.delta", {"text": " beta"}, f"fixture:{run_id}:beta",
+        )
+        completed_run = _runtime_engine().transition_run(run_id, "completed")
+        return {"run": completed_run, "result": {"fixture": "remote-runtime-events"}}
+
     auth_context = None
     if raw_request.headers.get("x-opendrsai-auth-mode") == "oidc":
         try:
@@ -2302,6 +2853,26 @@ async def runtime_run_execute(run_id: str, request: RuntimeRunExecuteRequest, ra
     _authorize_request(raw_request, str(run_record["workspace_id"]), "run.execute", {"run_id": run_id})
     try:
         correlation_id = str(getattr(raw_request.state, "correlation_id", "")) or None
+        attachment_refs = metadata.get("attachment_refs")
+        if not isinstance(attachment_refs, list) or not all(isinstance(item, str) for item in attachment_refs):
+            attachment_refs = []
+        _runtime_engine().set_run_input(
+            run_id,
+            request.prompt,
+            attachment_refs=attachment_refs,
+            correlation_id=correlation_id,
+            source_client=(
+                str(metadata.get("source_client"))
+                if metadata.get("source_client") in {"windows", "android"}
+                else "runtime"
+            ),
+            source_message_id=(
+                str(metadata.get("source_message_id"))
+                if isinstance(metadata.get("source_message_id"), str)
+                and metadata.get("source_message_id")
+                else None
+            ),
+        )
         _runtime_engine().append_event(run_id, "trace.request.accepted", {
             "correlation_id": correlation_id,
             "run_id": run_id,
@@ -2310,7 +2881,8 @@ async def runtime_run_execute(run_id: str, request: RuntimeRunExecuteRequest, ra
             "parent_span_id": str(getattr(raw_request.state, "diagnostic_parent_span_id", "")) or None,
             "clock_offset_ms": int(getattr(raw_request.state, "diagnostic_clock_offset_ms", 0)),
         })
-        return await _runtime_agent_service(auth_context).execute(run_id, request.prompt, correlation_id)
+        with platform_auth_scope(auth_context) if auth_context else nullcontext():
+            return await _runtime_agent_service(auth_context).execute(run_id, request.prompt, correlation_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except RuntimeExecutionError as exc:
@@ -2387,12 +2959,64 @@ async def runtime_approval_decision(approval_id: str, request: RuntimeApprovalDe
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+@app.get("/v1/approvals/{approval_id}")
+async def runtime_approval_read(approval_id: str):
+    try:
+        return _runtime_engine().get_approval(approval_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @app.get("/v1/approvals")
 async def runtime_approval_list(status: str | None = None, run_id: str | None = None):
     if status not in {None, "pending"}:
         raise HTTPException(status_code=400, detail="Only pending Approval listing is supported")
     rows = _runtime_engine().list_pending_approvals(run_id)
     return {"object": "list", "data": rows, "total": len(rows)}
+
+
+@app.get("/v1/workspaces/{workspace_id}/approvals")
+async def runtime_workspace_approval_list(workspace_id: str):
+    workspace = _runtime_registry().get_workspace(workspace_id)
+    if workspace is None or not workspace.open:
+        raise HTTPException(status_code=404, detail="Unknown or closed Workspace")
+    engine = _runtime_engine()
+    rows = []
+    for approval in engine.list_pending_approvals():
+        try:
+            run = engine.get_run(str(approval["run_id"]))
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=500, detail="Approval references an unknown Run"
+            ) from exc
+        if run["workspace_id"] != workspace_id:
+            continue
+        request = approval.get("request")
+        if not isinstance(request, dict):
+            raise HTTPException(status_code=500, detail="Approval request is invalid")
+        rows.append(
+            {
+                "runtime_id": run["runtime_id"],
+                "workspace_id": run["workspace_id"],
+                "session_id": run["session_id"],
+                "run_id": run["run_id"],
+                "approval_id": approval["approval_id"],
+                "backend_id": run["backend_id"],
+                "operation": str(
+                    request.get("operation") or request.get("tool") or "runtime.operation"
+                ),
+                "risk_summary": str(
+                    request.get("risk_summary")
+                    or request.get("reason")
+                    or "Review required"
+                ),
+                "scope": str(request.get("scope") or "workspace"),
+                "expires_at": approval.get("deadline_at") or "",
+                "correlation_id": run.get("correlation_id") or "",
+                "status": approval["status"],
+            }
+        )
+    return {"items": rows}
 
 
 @app.post("/v1/runs/{run_id}/approvals/{approval_id}/decision")
@@ -2445,6 +3069,24 @@ async def runtime_workspace_close(workspace_id: str):
         raise HTTPException(status_code=404, detail="Workspace is not registered")
     _remote_workspaces.pop(workspace_id, None)
     _remote_audit("workspace.close", workspace_id=workspace_id)
+    _mark_workspace_catalog_changed()
+    return record.as_dict()
+
+
+@app.post("/v1/workspaces/{workspace_id}/remove")
+async def runtime_workspace_remove(workspace_id: str):
+    active = _runtime_engine().active_workspace_resources(workspace_id)
+    if active:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "workspace_has_active_resources", "resources": active[:100]},
+        )
+    record = _runtime_registry().remove_workspace(workspace_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Workspace is not registered")
+    _remote_workspaces.pop(workspace_id, None)
+    _remote_audit("workspace.remove", workspace_id=workspace_id)
+    _mark_workspace_catalog_changed()
     return record.as_dict()
 
 
@@ -2536,6 +3178,7 @@ async def remote_workspace_worktree_create(workspace_id: str, request: RemoteWor
         parent_workspace_id=workspace_id, worktree_id=worktree.worktree_id,
         path=worktree.canonical_path,
     )
+    _mark_workspace_catalog_changed()
     return {
         "worktree_id": worktree.worktree_id,
         "workspace_id": worktree.workspace_id,
@@ -2581,6 +3224,7 @@ async def runtime_worktree_adopt(workspace_id: str, request: RuntimeWorktreeAdop
         raise _worktree_http_error(exc) from exc
     if record.workspace_id:
         _remote_workspaces[record.workspace_id] = Path(record.canonical_path)
+        _mark_workspace_catalog_changed()
     _remote_audit(
         "workspace.worktree.adopt", workspace_id=workspace_id,
         worktree_id=record.worktree_id, path=record.canonical_path,
@@ -2656,6 +3300,7 @@ async def runtime_worktree_merge(workspace_id: str, worktree_id: str, request: R
         "workspace.worktree.merge", workspace_id=workspace_id, worktree_id=worktree_id,
         status=record.status, derived_workspace_id=record.workspace_id,
     )
+    _mark_workspace_catalog_changed()
     return {"worktree": _git_worktree_service().project(record)}
 
 
@@ -2671,6 +3316,7 @@ async def runtime_worktree_archive(workspace_id: str, worktree_id: str, request:
         "workspace.worktree.archive", workspace_id=workspace_id,
         worktree_id=worktree_id, branch=record.branch,
     )
+    _mark_workspace_catalog_changed()
     return {"worktree": _git_worktree_service().project(record)}
 
 
@@ -2692,6 +3338,7 @@ async def runtime_worktree_remove(workspace_id: str, worktree_id: str, request: 
         "workspace.worktree.remove", workspace_id=workspace_id,
         worktree_id=worktree_id, derived_workspace_id=record.workspace_id,
     )
+    _mark_workspace_catalog_changed()
     return {"worktree": _git_worktree_service().project(record)}
 
 
@@ -2814,7 +3461,7 @@ async def remote_workspace_file(workspace_id: str, raw_request: Request, path: s
     except UnicodeDecodeError:
         content = ""
         binary = True
-    common = {"path": str(target.relative_to(_workspace_root(workspace_id))).replace("\\", "/"), "mime": mime, "truncated": size > max_bytes, "size": size, "modified_at": target.stat().st_mtime}
+    common = {"path": str(target.relative_to(_workspace_root(workspace_id))).replace("\\", "/"), "mime": mime, "truncated": size > max_bytes, "size": size, "modified_at": target.stat().st_mtime, "sha256": _stream_file_sha256(target)}
     if binary:
         return {**common, "data_url": f"data:{mime};base64,{base64.b64encode(sample).decode('ascii')}", "binary": True, "encoding": None}
     return {**common, "content": content, "binary": False, "encoding": "utf-8"}
@@ -3113,14 +3760,24 @@ async def remote_workspace_git_unstage(workspace_id: str, request: RemoteGitFile
 @app.post("/v1/workspaces/{workspace_id}/git/commit")
 async def remote_workspace_git_commit(workspace_id: str, request: RemoteGitCommitRequest, raw_request: Request):
     _authorize_request(raw_request, workspace_id, "git.write", {"operation": "commit", "message_hash": hashlib.sha256(request.message.encode()).hexdigest()})
-    root = _workspace_root(workspace_id); args = ["git", "-C", str(root), "commit", "-m", request.message]
+    root = _workspace_root(workspace_id)
+    marker = f"OpenDrSai-Approval: {request.idempotency_key}" if request.idempotency_key else None
+    if marker:
+        history = subprocess.run(["git", "-C", str(root), "log", "--all", "-n", "200", "--format=%H%x00%B%x00"], capture_output=True, text=True, timeout=15, check=False)
+        if history.returncode == 0:
+            parts = history.stdout.split("\x00")
+            for index in range(0, len(parts) - 1, 2):
+                if any(line.strip() == marker for line in parts[index + 1].splitlines()):
+                    return {"workspace_id": workspace_id, "committed": True, "replayed": True, "revision": parts[index].strip(), "exit_code": 0, "stdout": "", "stderr": ""}
+    args = ["git", "-C", str(root), "commit", "-m", request.message]
     if request.body and request.body.strip(): args += ["-m", request.body.strip()]
+    if marker: args += ["-m", marker]
     completed = subprocess.run(args, capture_output=True, text=True, timeout=60, check=False)
     if completed.returncode != 0:
         combined = (completed.stderr.strip() or completed.stdout.strip() or "Git commit failed")[-4000:]
         raise HTTPException(status_code=409, detail={"code": "git_commit_failed", "message": combined, "retryable": False, "detail": {"exit_code": completed.returncode}})
     revision = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True, timeout=10, check=False).stdout.strip()
-    return {"workspace_id": workspace_id, "committed": True, "revision": revision, "exit_code": completed.returncode, "stdout": completed.stdout[-4000:], "stderr": completed.stderr[-4000:]}
+    return {"workspace_id": workspace_id, "committed": True, "replayed": False, "revision": revision, "exit_code": completed.returncode, "stdout": completed.stdout[-4000:], "stderr": completed.stderr[-4000:]}
 
 
 @app.post("/v1/workspaces/{workspace_id}/git/push")
@@ -3589,95 +4246,32 @@ def _task_with_runtime_mode(task: str, metadata: dict[str, Any] | None) -> str:
 
 
 def _task_with_remote_attachments(task: str, metadata: dict[str, Any] | None, workspace_id: str | None) -> str:
-    if not isinstance(metadata, dict):
-        return task
-
-    # Desktop may pre-read local attachments into attachment_context. Prefer that
-    # so uploaded files outside the workspace are still visible to the agent.
-    # Skip when desktop already embedded the same block into the last user message.
-    prebuilt = metadata.get("attachment_context")
-    if (
-        isinstance(prebuilt, list)
-        and prebuilt
-        and "The user attached the following local context." not in task
-    ):
-        blocks: list[str] = []
-        total = 0
-        for item in prebuilt[:20]:
-            if not isinstance(item, dict):
-                continue
-            if not item.get("included"):
-                continue
-            content = str(item.get("content") or "").strip()
-            if not content:
-                continue
-            name = str(item.get("name") or "attachment")[:200]
-            kind = str(item.get("kind") or "file")[:40]
-            path = str(item.get("path") or "")[:2048]
-            remaining = 50000 - total
-            if remaining <= 0:
-                break
-            content = content[:remaining]
-            total += len(content)
-            blocks.append(
-                f"Attachment: {name} ({kind})\nPath: {path}\nContent:\n{content}"
-            )
-        if blocks:
-            return (
-                f"{task}\n\nThe user attached the following local context. "
-                "Answer using these attachments directly when the user asks about "
-                "\"the file\", \"this file\", or similar.\n\n"
-                + "\n\n".join(blocks)
-            )
-
-    if not workspace_id:
-        return task
+    if not workspace_id or not isinstance(metadata, dict): return task
     attachments = metadata.get("attachments")
-    if not isinstance(attachments, list):
-        return task
-    blocks = []
+    if not isinstance(attachments, list): return task
+    blocks: list[str] = []
     total = 0
     for item in attachments[:20]:
-        if not isinstance(item, dict):
-            continue
-        kind = str(item.get("kind") or "")
-        name = str(item.get("name") or "attachment")[:200]
+        if not isinstance(item, dict): continue
+        kind = str(item.get("kind") or ""); name = str(item.get("name") or "attachment")[:200]
         if kind in {"browser", "terminal", "selection"}:
             content = str(item.get("visibleText") or item.get("note") or "")[:12000]
         elif kind == "file":
             try:
                 target = _workspace_child(workspace_id, str(item.get("path") or ""))
                 raw = target.read_bytes()[:262144]
-                content = (
-                    raw.decode("utf-8", errors="replace")
-                    if b"\x00" not in raw[:8192]
-                    else "[binary file omitted]"
-                )
-            except (HTTPException, OSError):
-                content = "[file unavailable]"
+                content = raw.decode("utf-8", errors="replace") if b"\x00" not in raw[:8192] else "[binary file omitted]"
+            except (HTTPException, OSError): content = "[file unavailable]"
         elif kind == "folder":
             try:
                 directory = _workspace_child(workspace_id, str(item.get("path") or ""))
-                content = "\n".join(
-                    str(path.relative_to(directory))
-                    for path in directory.rglob("*")
-                    if path.is_file()
-                )[:24000]
-            except (HTTPException, OSError):
-                content = "[folder unavailable]"
-        else:
-            continue
+                content = "\n".join(str(path.relative_to(directory)) for path in directory.rglob("*") if path.is_file())[:24000]
+            except (HTTPException, OSError): content = "[folder unavailable]"
+        else: continue
         remaining = 50000 - total
-        if remaining <= 0:
-            break
-        content = content[:remaining]
-        total += len(content)
-        blocks.append(f"Attachment: {name} ({kind})\n{content}")
-    return (
-        task
-        if not blocks
-        else f"{task}\n\nRemote workspace attachment context:\n" + "\n\n".join(blocks)
-    )
+        if remaining <= 0: break
+        content = content[:remaining]; total += len(content); blocks.append(f"Attachment: {name} ({kind})\n{content}")
+    return task if not blocks else f"{task}\n\nRemote workspace attachment context:\n" + "\n\n".join(blocks)
 
 
 @app.post("/v1/chat/completions")
@@ -3699,6 +4293,43 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
     as task â the agent's internal context handles the rest.
 
     """
+
+    metadata = request.metadata if isinstance(request.metadata, dict) else {}
+    fixture_request_id = str(metadata.get("desktop_request_id") or "")
+    packaged_recovery_fixture = (
+        os.getenv("OPENDRSAI_PACKAGED_CHAT_RECOVERY_FIXTURE") == "1"
+        and os.getenv("OPENDRSAI_DEV_AUTH_BYPASS") == "1"
+        and raw_request.headers.get("x-opendrsai-auth-mode") == "offline"
+        and request.user_id == "packaged-l5-user"
+        and fixture_request_id == "packaged_chat_recovery_001"
+        and metadata.get("packaged_recovery_fixture") is True
+    )
+    if packaged_recovery_fixture:
+        retry_attempt = metadata.get("network_retry_attempt")
+        resume_from_chars = metadata.get("resume_from_chars")
+        if (retry_attempt, resume_from_chars) not in {(0, 0), (1, 5)}:
+            raise HTTPException(status_code=409, detail="Packaged Chat recovery attempt/cursor pair is inconsistent.")
+
+        async def packaged_chat_recovery_sse():
+            if retry_attempt == 0:
+                yield f"data: {json.dumps({'choices': [{'delta': {'content': 'alpha'}}]})}\n\n"
+                # End the real HTTP response without [DONE] so Desktop recovery
+                # must resume from the persisted five-character cursor.
+                return
+            yield f"data: {json.dumps({'choices': [{'delta': {'content': ' beta'}}]})}\n\n"
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(
+            packaged_chat_recovery_sse(),
+            media_type="text/event-stream",
+            headers={
+                "X-Drsai-Session-Id": request.thread_id or fixture_request_id,
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+                "X-OpenDrSai-Packaged-Recovery-Fixture": "1",
+            },
+        )
 
     auth_context = None
     if raw_request.headers.get("x-opendrsai-auth-mode") == "oidc":
@@ -3854,13 +4485,13 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
                 current_error = current_error.__cause__ or current_error.__context__
             diagnostic = " <- ".join(diagnostic_parts)
             error = {**error, "message": f"{error['message']} [{diagnostic}]"}
-            logger.exception(
-                "Agent error for session {}: code={} diagnostic={} message={}",
+            logger.error(
+                "Agent error for session %s: code=%s diagnostic=%s",
                 thread_id,
                 error["code"],
                 diagnostic,
-                error.get("message"),
             )
+            logger.debug(traceback.format_exc())
             for frame in conversation_projector.encode(
                 conversation_projector.complete(
                     {"message": error.get("message") or "Agent turn failed."},
@@ -4134,78 +4765,28 @@ async def rename_thread(
 
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Skills — HTTP surface mirroring TUI ``skills.manage`` + DrSaiAssistant
-# Storage: ~/.drsai/workspace/runs/<user>/configs/skills/<name>/SKILL.md
-# Hot-reload: AgentManager.reload_user_skills → update_user_skills()
-# ═══════════════════════════════════════════════════════════════════════════
 
-_SKILL_FILENAME = "SKILL.md"
-_VALID_SKILL_NAME_RE = re.compile(r"^[a-zA-Z0-9_\-]+$")
-_MAX_SKILL_CONTENT_BYTES = 4 * 1024 * 1024  # 4 MB (same as TUI)
+# âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+
+# Skills
+
+# âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+
 
 
 def _get_skills_dir(user_id: str | None = None) -> Path:
-    """Resolve the skills directory for a user.
 
-    Aligned with ``UserProfileManager.skills_dir`` and TUI
-    ``_get_user_skills_dir``: ``WORKDIR / user_id / configs / skills``.
-    """
+    """Resolve the skills directory for a user."""
+
     uid = user_id or _get_user_id()
+
+    # Aligned with create_agent's storage_dir: WORKDIR / user_id
+
     from drsai.backend.run_drsai_agent_factory import WORKDIR
+
+    # Aligned with UserProfileManager: skills_dir = config_path / "skills"
+    #   where config_path = WORKDIR / user_id / "configs"
     return Path(WORKDIR) / uid / "configs" / "skills"
-
-
-def _migrate_legacy_os_user_skills(user_id: str | None = None) -> list[str]:
-    """Copy skills from the OS-username tree into the auth user tree once.
-
-    Desktop Skills UI historically omitted ``user_id``, so skills were written
-    under ``WORKDIR/<OS_USERNAME>/configs/skills`` while chat agents use the
-    OIDC/SSO subject under ``WORKDIR/<auth_user_id>/configs/skills``. Without
-    this migration, Skills Manager shows skills the agent cannot load.
-    """
-    import shutil
-
-    uid = (user_id or _get_user_id()).strip()
-    legacy_uid = (_DEFAULT_USER_ID or "").strip()
-    if not uid or not legacy_uid or uid == legacy_uid:
-        return []
-
-    from drsai.backend.run_drsai_agent_factory import WORKDIR
-
-    legacy_dir = Path(WORKDIR) / legacy_uid / "configs" / "skills"
-    target_dir = Path(WORKDIR) / uid / "configs" / "skills"
-    if not legacy_dir.exists():
-        return []
-
-    migrated: list[str] = []
-    target_dir.mkdir(parents=True, exist_ok=True)
-    for skill_dir in sorted(legacy_dir.iterdir()):
-        if not skill_dir.is_dir():
-            continue
-        skill_md = skill_dir / _SKILL_FILENAME
-        if not skill_md.exists():
-            continue
-        dest = target_dir / skill_dir.name
-        if dest.exists():
-            continue
-        try:
-            shutil.copytree(skill_dir, dest)
-            migrated.append(skill_dir.name)
-            logger.info(
-                "skills: migrated '%s' from legacy user '%s' to '%s'",
-                skill_dir.name,
-                legacy_uid,
-                uid,
-            )
-        except Exception:
-            logger.exception(
-                "skills: failed to migrate '%s' from '%s' to '%s'",
-                skill_dir.name,
-                legacy_uid,
-                uid,
-            )
-    return migrated
 
 
 def _get_config_dir(user_id: str | None = None) -> Path:
@@ -4213,66 +4794,6 @@ def _get_config_dir(user_id: str | None = None) -> Path:
     from drsai.backend.run_drsai_agent_factory import WORKDIR
     uid = user_id or _get_user_id()
     return Path(WORKDIR) / uid / "configs"
-
-
-def _validate_skill_name(name: str) -> None:
-    """Raise HTTPException if skill name is invalid (TUI parity)."""
-    if not name:
-        raise HTTPException(status_code=400, detail="skill name is required")
-    if not _VALID_SKILL_NAME_RE.match(name):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"invalid skill name '{name}': "
-                "only letters, digits, hyphens and underscores are allowed"
-            ),
-        )
-    if len(name) > 64:
-        raise HTTPException(
-            status_code=400,
-            detail=f"skill name too long ({len(name)} chars, max 64)",
-        )
-
-
-def _require_valid_skill_md(content: str, *, fallback_name: str | None = None) -> tuple[str, dict[str, str]]:
-    """Validate SKILL.md has YAML frontmatter.
-
-    Returns ``(normalized_content, meta)``. When frontmatter ``name`` is empty
-    but ``fallback_name`` is provided (desktop create flow), injects the name.
-    """
-    if not content or not content.strip():
-        raise HTTPException(status_code=400, detail="content is required")
-    if len(content.encode("utf-8")) > _MAX_SKILL_CONTENT_BYTES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"content too large (max {_MAX_SKILL_CONTENT_BYTES // 1024} KB)",
-        )
-    if not content.lstrip().startswith("---"):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "content must be a valid SKILL.md with YAML frontmatter "
-                "containing 'name' and 'description' fields"
-            ),
-        )
-    name, description, category = _parse_skill_frontmatter(content)
-    normalized = content
-    if not name and fallback_name:
-        # Sync directory name into frontmatter (desktop editor keeps them separate).
-        # Use [ \t]* not \s* — \s matches newlines and would swallow the next YAML line.
-        normalized = re.sub(
-            r"(?m)^(name:[ \t]*).*$",
-            rf"\1{fallback_name}",
-            content,
-            count=1,
-        )
-        name = fallback_name
-    if not name:
-        raise HTTPException(
-            status_code=400,
-            detail="SKILL.md frontmatter must include a 'name' field",
-        )
-    return normalized, {"name": name, "description": description or "", "category": category or ""}
 
 
 def _get_available_skills_dirs() -> list[Path]:
@@ -4293,8 +4814,9 @@ def _get_available_skills_dirs() -> list[Path]:
                 if p.exists() and p.is_dir():
                     dirs.append(p.resolve())
 
+    # Also scan project-root agent_skills/ collections
     project_root_candidates = [
-        Path(__file__).resolve().parents[6],
+        Path(__file__).resolve().parents[6],  # gateway → backend → drsai → src → pkg → python → project
         Path.cwd(),
     ]
     for root in project_root_candidates:
@@ -4310,51 +4832,91 @@ def _get_available_skills_dirs() -> list[Path]:
 
 
 def _find_bundled_skill_md(name: str, source: str | None = None) -> Path | None:
-    """Find a SKILL.md in the bundled skill collections."""
+    """Find a SKILL.md in the bundled skill collections.
+
+    Args:
+        name: Skill name (directory name).
+        source: Optional collection name to restrict the search.
+            If not provided, all collections are scanned.
+
+    Returns:
+        Path to SKILL.md if found, else None.
+    """
     for skills_dir in _get_available_skills_dirs():
         if source and skills_dir.name != source:
             continue
-        candidate = skills_dir / name / _SKILL_FILENAME
+        candidate = skills_dir / name / "SKILL.md"
         if candidate.exists():
             return candidate
     return None
 
 
+
+
+
 @app.get("/v1/skills")
+
 async def list_skills(
+
     user_id: str | None = Query(default=None),
+
 ):
-    """List installed skills for the given user (TUI ``skills.manage`` action=list)."""
-    _migrate_legacy_os_user_skills(user_id)
+
+    """List installed skills for the given user."""
+
     skills_dir = _get_skills_dir(user_id)
+
     skills: list[dict] = []
 
+
+
     if skills_dir.exists():
+
         for skill_dir in sorted(skills_dir.iterdir()):
+
             if not skill_dir.is_dir():
+
                 continue
-            skill_md = skill_dir / _SKILL_FILENAME
+
+            skill_md = skill_dir / "SKILL.md"
+
             if not skill_md.exists():
+
                 continue
+
             try:
+
                 content = skill_md.read_text(encoding="utf-8", errors="replace")[:4000]
+
                 name, description, category = _parse_skill_frontmatter(content)
-                st = skill_md.stat()
+
                 skills.append({
+
                     "name": name or skill_dir.name,
-                    "category": category or "user",
+
+                    "category": category or "",
+
                     "description": description or "",
+
                     "path": str(skill_dir),
-                    "size": st.st_size,
-                    "mtime": st.st_mtime,
+
                 })
+
             except Exception:
+
                 skills.append({
+
                     "name": skill_dir.name,
-                    "category": "user",
+
+                    "category": "",
+
                     "description": "",
+
                     "path": str(skill_dir),
+
                 })
+
+
 
     return {"object": "list", "data": sorted(skills, key=lambda s: (s["category"], s["name"]))}
 
@@ -4363,13 +4925,17 @@ async def list_skills(
 async def list_available_skills(
     user_id: str | None = Query(default=None),
 ):
-    """List bundled/available skills from agent_skills collections."""
-    _migrate_legacy_os_user_skills(user_id)
+    """List bundled/available skills from agent_skills collections.
+
+    Returns all skills from system collections with an ``installed`` flag
+    indicating whether the skill already exists in the user's skills dir.
+    """
+    # Resolve installed set
     installed_names: set[str] = set()
     user_skills_dir = _get_skills_dir(user_id)
     if user_skills_dir.exists():
         for d in user_skills_dir.iterdir():
-            if d.is_dir() and (d / _SKILL_FILENAME).exists():
+            if d.is_dir() and (d / "SKILL.md").exists():
                 installed_names.add(d.name)
 
     results: list[dict] = []
@@ -4380,7 +4946,7 @@ async def list_available_skills(
         for skill_dir in sorted(skills_dir.iterdir()):
             if not skill_dir.is_dir():
                 continue
-            skill_md = skill_dir / _SKILL_FILENAME
+            skill_md = skill_dir / "SKILL.md"
             if not skill_md.exists():
                 continue
             try:
@@ -4392,8 +4958,7 @@ async def list_available_skills(
                     "description": description or "",
                     "category": source_name,
                     "source": source_name,
-                    "path": str(skill_dir),
-                    "installed": name in installed_names or skill_dir.name in installed_names,
+                    "installed": name in installed_names,
                 })
             except Exception:
                 results.append({
@@ -4401,10 +4966,10 @@ async def list_available_skills(
                     "description": "",
                     "category": source_name,
                     "source": source_name,
-                    "path": str(skill_dir),
                     "installed": skill_dir.name in installed_names,
                 })
 
+    # Deduplicate by name (first occurrence wins)
     seen: set[str] = set()
     deduped: list[dict] = []
     for r in results:
@@ -4415,19 +4980,55 @@ async def list_available_skills(
     return {"object": "list", "data": sorted(deduped, key=lambda s: (s["category"], s["name"]))}
 
 
+@app.get("/v1/skills/{skill_path:path}")
+
+async def get_skill_content(skill_path: str):
+
+    """Get the full SKILL.md content for a skill."""
+
+    path = Path(skill_path)
+
+    if not path.is_absolute():
+
+        # Resolve relative to skills dir
+
+        path = _get_skills_dir() / skill_path
+
+    skill_md = path / "SKILL.md" if path.is_dir() else path
+
+    if not skill_md.exists():
+
+        raise HTTPException(status_code=404, detail="Skill not found")
+
+    try:
+
+        content = skill_md.read_text(encoding="utf-8", errors="replace")
+
+        return {"path": str(skill_md), "content": content}
+
+    except Exception as e:
+
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/v1/skills/install")
 async def install_skill(
     req: SkillInstallRequest,
     user_id: str | None = Query(default=None),
 ):
-    """Create/install a skill (TUI ``skills.manage`` action=create)."""
-    _validate_skill_name(req.name)
-    _migrate_legacy_os_user_skills(user_id)
+    """Install a skill by writing SKILL.md to the user's skills directory.
+
+    If ``source`` is provided, the backend reads SKILL.md from the
+    bundled ``agent_skills/{source}/{name}/`` directory and copies it.
+    Otherwise, ``content`` is written directly.
+    """
     skills_dir = _get_skills_dir(user_id)
     skill_dir = skills_dir / req.name
 
+    # Determine content: from bundled source or from request body
     content = req.content
     if req.source and not content:
+        # Install from a bundled collection
         bundled_skill_md = _find_bundled_skill_md(req.name, req.source)
         if bundled_skill_md is None:
             raise HTTPException(
@@ -4436,61 +5037,12 @@ async def install_skill(
             )
         content = bundled_skill_md.read_text(encoding="utf-8", errors="replace")
 
-    content, _meta = _require_valid_skill_md(content, fallback_name=req.name)
+    if not content:
+        raise HTTPException(status_code=400, detail="content must not be empty")
 
-    if skill_dir.exists():
-        raise HTTPException(
-            status_code=409,
-            detail=f"skill '{req.name}' already exists; use PUT to overwrite",
-        )
-
-    skills_dir.mkdir(parents=True, exist_ok=True)
-    skill_dir.mkdir(parents=True, exist_ok=False)
-    skill_file = skill_dir / _SKILL_FILENAME
-    skill_file.write_text(content, encoding="utf-8")
-    logger.info(f"skills.install: created skill '{req.name}' for user {user_id or _get_user_id()}")
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(content, encoding="utf-8")
     return {"status": "ok", "name": req.name, "path": str(skill_dir)}
-
-
-@app.post("/v1/skills/reload")
-async def reload_skills(req: SkillReloadRequest = SkillReloadRequest()):
-    """Hot-reload skills on live DrSaiAssistant agent(s) (TUI action=reload).
-
-    Registered before ``GET /v1/skills/{skill_path}`` so ``reload`` is never
-    mistaken for a skill path (which would yield HTTP 405 on POST).
-    """
-    _migrate_legacy_os_user_skills(req.user_id)
-    result = manager.reload_user_skills(
-        user_id=req.user_id,
-        thread_id=req.thread_id,
-    )
-    return result
-
-
-@app.put("/v1/skills/{skill_name}")
-async def update_skill(
-    skill_name: str,
-    req: SkillUpdateRequest,
-    user_id: str | None = Query(default=None),
-):
-    """Update an existing skill's SKILL.md (TUI ``skills.manage`` action=update)."""
-    _validate_skill_name(skill_name)
-    if req.name and req.name != skill_name:
-        raise HTTPException(status_code=400, detail="body name must match path skill_name")
-    content, _meta = _require_valid_skill_md(req.content, fallback_name=skill_name)
-
-    skills_dir = _get_skills_dir(user_id)
-    skill_dir = skills_dir / skill_name
-    skill_file = skill_dir / _SKILL_FILENAME
-    if not skill_file.exists():
-        raise HTTPException(
-            status_code=404,
-            detail=f"skill '{skill_name}' not found; use POST /v1/skills/install to create it",
-        )
-
-    skill_file.write_text(content, encoding="utf-8")
-    logger.info(f"skills.update: updated skill '{skill_name}' for user {user_id or _get_user_id()}")
-    return {"status": "ok", "name": skill_name, "path": str(skill_dir)}
 
 
 @app.delete("/v1/skills/{skill_name}")
@@ -4498,84 +5050,75 @@ async def uninstall_skill(
     skill_name: str,
     user_id: str | None = Query(default=None),
 ):
-    """Uninstall a skill by removing its directory (TUI action=delete)."""
+    """Uninstall a skill by removing its directory."""
     import shutil
-
-    _validate_skill_name(skill_name)
     skills_dir = _get_skills_dir(user_id)
     skill_dir = skills_dir / skill_name
     if not skill_dir.exists():
         raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
     shutil.rmtree(skill_dir)
-    logger.info(f"skills.delete: deleted skill '{skill_name}' for user {user_id or _get_user_id()}")
     return {"status": "ok", "name": skill_name}
 
 
-@app.get("/v1/skills/{skill_path:path}")
-async def get_skill_content(skill_path: str):
-    """Get the full SKILL.md content for a skill (TUI action=show)."""
-    # Reserve API suffixes that are not skill directories.
-    if skill_path in {"available", "install", "reload"} or skill_path.startswith(("available/", "install/", "reload/")):
-        raise HTTPException(status_code=404, detail="Skill not found")
-
-    path = Path(skill_path)
-    if not path.is_absolute():
-        path = _get_skills_dir() / skill_path
-
-    skill_md = path / _SKILL_FILENAME if path.is_dir() else path
-    if not skill_md.exists():
-        raise HTTPException(status_code=404, detail="Skill not found")
-
-    try:
-        content = skill_md.read_text(encoding="utf-8", errors="replace")
-        return {"path": str(skill_md), "content": content}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
-
-
 def _parse_skill_frontmatter(content: str) -> tuple[str, str, str]:
+
     """Parse SKILL.md frontmatter for name, description, and category."""
+
     name, description, category = "", "", ""
 
     if not content.startswith("---"):
+
+        # Fall back to first heading and paragraph
+
+        import re
+
         heading = re.search(r"^#\s+(.+)", content, re.MULTILINE)
+
         if heading:
+
             name = heading.group(1).strip()
+
         para = re.search(r"^(?!#)(?!---).+", content, re.MULTILINE)
+
         if para:
+
             description = para.group(0).strip()[:120]
+
         return name, description, category
 
+
+
     end_idx = content.find("---", 3)
+
     if end_idx == -1:
+
         return name, description, category
+
+
 
     frontmatter = content[3:end_idx]
 
-    try:
-        import yaml
-
-        metadata = yaml.safe_load(frontmatter) or {}
-        if isinstance(metadata, dict):
-            if metadata.get("name") is not None:
-                name = str(metadata["name"]).strip()
-            if metadata.get("description") is not None:
-                description = str(metadata["description"]).strip()
-            if metadata.get("category") is not None:
-                category = str(metadata["category"]).strip()
-            return name, description, category
-    except Exception:
-        pass
+    import re
 
     name_match = re.search(r"^\s*name:\s*[\"']?([^\"'\n]+)[\"']?\s*$", frontmatter, re.MULTILINE)
+
     if name_match:
+
         name = name_match.group(1).strip()
+
     desc_match = re.search(r"^\s*description:\s*[\"']?([^\"'\n]+)[\"']?\s*$", frontmatter, re.MULTILINE)
+
     if desc_match:
+
         description = desc_match.group(1).strip()
+
     cat_match = re.search(r"^\s*category:\s*[\"']?([^\"'\n]+)[\"']?\s*$", frontmatter, re.MULTILINE)
+
     if cat_match:
+
         category = cat_match.group(1).strip()
+
+
 
     return name, description, category
 

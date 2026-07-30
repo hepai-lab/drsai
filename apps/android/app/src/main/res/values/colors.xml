@@ -1,7 +1,7 @@
 <resources>
-    <color name="ink">#18211D</color>
-    <color name="paper">#F5F2E9</color>
-    <color name="moss">#2F6B4F</color>
-    <color name="lime">#C9F46C</color>
+    <color name="ink">#202733</color>
+    <color name="paper">#FAFAFE</color>
+    <color name="moss">#8B5CF6</color>
+    <color name="lime">#F1EEF7</color>
     <color name="launcher_background">#FFFFFF</color>
 </resources>

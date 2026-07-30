@@ -8,7 +8,7 @@ const repo = resolve(here, "../../../..");
 const evidenceDir = resolve(process.env.OPENDRSAI_CERN_PPTX_DIR || join(here, "../release/product-evidence/cern-manager-deck"));
 const pptx = join(evidenceDir, "cern-wlcg-manager-zh.pptx");
 const manifest = join(evidenceDir, "provenance.json");
-const checker = join(repo, "cores/python/packages/drsai/src/drsai/backend/presentation_pptx_acceptance.py");
+const checker = join(repo, "scripts/acceptance/presentation/verify_pptx.py");
 const runtimePython = "C:/Users/win11/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe";
 const python = process.env.OPENDRSAI_PDF_PYTHON || (existsSync(runtimePython) ? runtimePython : "python");
 

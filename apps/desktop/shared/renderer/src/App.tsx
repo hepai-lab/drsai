@@ -10,8 +10,10 @@ import {
   Lightbulb,
   MessageSquare,
   Plug,
+  RefreshCw,
   Settings,
   ShieldCheck,
+  Smartphone,
   Sparkles,
   Terminal as TerminalIcon,
   Volume2,
@@ -53,6 +55,9 @@ import type {
   DesktopVoiceRuntimeStatus,
   DesktopStreamingVoiceCapabilities,
   DesktopMcpContextResult,
+  DesktopMobileAssociation,
+  DesktopMobilePairingReadiness,
+  DesktopMobilePairingTarget,
   DesktopThread,
   DesktopWorktreeSummary,
   InstallProgress,
@@ -75,10 +80,14 @@ import { ChannelsView } from "./components/ChannelsView";
 import { ChatWorkspace, type ThinkingEffort } from "./components/ChatWorkspace";
 import { PreviewBrowserPanel } from "./components/PreviewBrowserPanel";
 import { ProviderAnalyticsView } from "./components/ProviderAnalyticsView";
-import { BackgroundTaskQueue, SkillSquareView } from "./components/SkillSquareView";
-import { SkillsManager } from "./components/SkillsManager";
-import { GfsView } from "./components/GfsView";
+import { BackgroundTaskQueue } from "./components/SkillSquareView";
+// Temporarily hide Skills management UI — keep for later reuse.
+// import { SkillSquareView } from "./components/SkillSquareView";
+// import { SkillsManager } from "./components/SkillsManager";
+// Temporarily hide GFS cloud UI — keep for later reuse.
+// import { GfsView } from "./components/GfsView";
 import { TaskCenterView } from "./components/TaskCenterView";
+import { MobilePairingDialog, mobilePairingErrorText } from "./components/MobilePairingDialog";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { DebugPanel } from "./components/DebugPanel";
 import { installDebugLogCapture } from "./debugLogStore";
@@ -100,7 +109,8 @@ import {
   type ChatThreadSnapshot,
   useDesktopChatAdapter,
 } from "./adapters/useDesktopChatAdapter";
-import type { ChatCommandAction } from "./chatCommands";
+// Temporarily hide Skills management entry — keep for later reuse.
+// import type { ChatCommandAction } from "./chatCommands";
 import type { DesktopPlatformDescriptor } from "@shared/platform";
 import { useDesktopHealthAdapter } from "./adapters/useDesktopHealthAdapter";
 import { resolveAvailableVoiceName, useVoicePreferences } from "./voice/useVoicePreferences";
@@ -224,10 +234,15 @@ function AuthenticatedApp({
   sessionRestoring: boolean;
 }): React.JSX.Element {
   const auth = useAuth();
+  const nativePlatformId = document.documentElement.dataset.desktopPlatform === "macos" || /Macintosh|Mac OS X/i.test(navigator.userAgent)
+    ? "macos"
+    : "windows";
   const [language, setLanguage] = useState<AppLanguage>(() => loadLanguage());
   const [platformDescriptor, setPlatformDescriptor] = useState<DesktopPlatformDescriptor | null>(null);
   const developerMode = import.meta.env.DEV && loadDeveloperMode();
   const [activeNav, setActiveNav] = useState<NavId>(MENU_IDS.currentSession);
+  const [mobilePairingOpen, setMobilePairingOpen] = useState(false);
+  const [mobilePairingRefreshToken, setMobilePairingRefreshToken] = useState(0);
   const [awaySummary, setAwaySummary] = useState<AwaySummary | null>(null);
   const [deliveryTask, setDeliveryTask] = useState<DesktopBackgroundTask | null>(null);
   const [networkConnectivity, setNetworkConnectivity] = useState<NetworkConnectivityState>(() =>
@@ -264,8 +279,9 @@ function AuthenticatedApp({
       window.removeEventListener("online", handleOnline);
     };
   }, []);
-  const [skillSquareCommandTarget, setSkillSquareCommandTarget] =
-    useState<Extract<ChatCommandAction, { type: "open-view" }>["target"] | null>(null);
+  // Temporarily hide Skills management entry — keep for later reuse.
+  // const [skillSquareCommandTarget, setSkillSquareCommandTarget] =
+  //   useState<Extract<ChatCommandAction, { type: "open-view" }>["target"] | null>(null);
   const [navHistory, setNavHistory] = useState<NavId[]>([
     MENU_IDS.currentSession,
   ]);
@@ -275,6 +291,7 @@ function AuthenticatedApp({
   const [storedWorkspaces, setStoredWorkspaces] = useState<WorkspaceProject[]>(
     [],
   );
+  const [workspacesLoaded, setWorkspacesLoaded] = useState(false);
   const [remoteDialogOpen, setRemoteDialogOpen] = useState(false);
   const [workspaceLocationChoice, setWorkspaceLocationChoice] = useState<"remote" | null>(null);
   const [remoteWorkspaceStep, setRemoteWorkspaceStep] = useState<"computer" | "directory">("computer");
@@ -344,9 +361,13 @@ function AuthenticatedApp({
   const navItems = getNavItems(language);
   const rightTabs = useMemo(
     () => getRightTabs(language).filter(({ id }) =>
-      id === "templates" ? false : rightSidebarComponents[id],
+      id === "templates" ? false
+        : id === "browser" && platformDescriptor?.capabilities.features.browser !== true ? false
+        : id === "debug" && platformDescriptor?.capabilities.features.debugger !== true ? false
+        : id === "terminal" && platformDescriptor?.capabilities.features.terminal !== true ? false
+        : rightSidebarComponents[id],
     ),
-    [language, rightSidebarComponents],
+    [language, platformDescriptor, rightSidebarComponents],
   );
   const firstVisibleRightTab = rightTabs[0]?.id;
   const title =
@@ -355,14 +376,14 @@ function AuthenticatedApp({
   const { health } = desktop;
   const [codexStatus, setCodexStatus] = useState<CodexBackendStatus | null>(null);
   useEffect(() => {
-    if (!health?.gatewayReady) { setCodexStatus(null); return; }
+    if (!health?.gatewayReady || platformDescriptor?.capabilities.features.codexBackend !== true) { setCodexStatus(null); return; }
     let active = true;
     void desktopApi.getCodexBackendStatus().then((status) => { if (active) setCodexStatus(status); }).catch(() => {
       if (active) setCodexStatus({ backendId: "codex", state: "fault", available: false, version: null,
         loggedIn: false, authMode: null, accountLabel: null, reason: "runtime_unavailable", retryable: true, action: "restart" });
     });
     return () => { active = false; };
-  }, [health?.gatewayReady]);
+  }, [health?.gatewayReady, platformDescriptor]);
   const workspacePath = health?.install.repoPath || health?.install.home || "";
   const currentWorkspaceTime = "1970-01-01T00:00:00.000Z";
   const currentWorkspace: WorkspaceProject = {
@@ -537,10 +558,12 @@ function AuthenticatedApp({
       showCompletionNotification(completionNotifications, language, false);
     },
     onForkThreadCreated: handleForkThreadCreated,
-    onOpenSkillsSquare: (target) => {
-      setSkillSquareCommandTarget(target ?? null);
-      setActiveNav(MENU_IDS.skillsSquare);
-    },
+    // Temporarily hide Skills management entry — keep for later reuse.
+    // onOpenSkillsSquare: (target) => {
+    //   setSkillSquareCommandTarget(target ?? null);
+    //   setActiveNav(MENU_IDS.skillsSquare);
+    // },
+    onOpenSkillsSquare: () => undefined,
     onSelectAgent: handleChatAgentSelect,
     onSelectModel: handleChatModelSelect,
     onThreadUpdated: handleThreadUpdated,
@@ -549,6 +572,7 @@ function AuthenticatedApp({
     threadSnapshot: threadSnapshots[activeThreadId] ?? null,
     workspaceInstructions: effectiveWorkspaceInstructions,
     workspaceId: effectiveRuntimeWorkspaceId,
+    workspaceName: effectiveWorkspace.name,
     workspacePath: effectiveWorkspacePath,
   });
 
@@ -624,9 +648,60 @@ function AuthenticatedApp({
     void refreshWorkspaces();
   }, []);
 
+  useEffect(() => {
+    if (!workspacesLoaded || !health?.gatewayReady || !workspacePath) return;
+    if (storedWorkspaces.some((workspace) => getComparablePath(workspace.path) === getComparablePath(workspacePath))) return;
+    let cancelled = false;
+    void desktopApi.createWorkspace({
+      source: "existing",
+      path: workspacePath,
+      name: getWorkspaceName(workspacePath) || (language === "zh" ? "默认" : "Default"),
+      description: language === "zh" ? "当前项目" : "Current project",
+      trusted: true,
+      pinned: true,
+    }).then((workspace) => {
+      if (cancelled) return;
+      setStoredWorkspaces((current) => [
+        workspace,
+        ...current.filter((item) => item.id !== workspace.id && getComparablePath(item.path) !== getComparablePath(workspace.path)),
+      ]);
+    }).catch(() => {
+      // Runtime health and workspace registration can briefly race during startup.
+      // A later health transition or manual workspace refresh will retry safely.
+    });
+    return () => { cancelled = true; };
+  }, [health?.gatewayReady, language, storedWorkspaces, workspacePath, workspacesLoaded]);
+
   useEffect(() => desktopApi.onRemoteWorkspaceStatus((status) => {
     setStoredWorkspaces((current) => current.map((workspace) => workspace.id === status.workspaceId ? { ...workspace, remote: status, updatedAt: new Date().toISOString() } : workspace));
   }), []);
+  useEffect(() => desktopApi.onThreadSnapshot((event) => {
+    setThreadSnapshots((current) => ({
+      ...current,
+      [event.threadId]: event.snapshot,
+    }));
+  }), []);
+  useEffect(() => desktopApi.onThreadCatalogUpdate((event) => {
+    setThreads((current) => sortThreadsForSidebar([
+      event.thread,
+      ...current.filter((item) => item.id !== event.thread.id),
+    ]));
+  }), []);
+  useEffect(() => {
+    if (!activeThreadId) return;
+    let subscribed = false;
+    let disposed = false;
+    void desktopApi.subscribeThreadSnapshot(activeThreadId)
+      .then((value) => {
+        subscribed = value;
+        if (disposed && value) void desktopApi.unsubscribeThreadSnapshot(activeThreadId);
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+      if (subscribed) void desktopApi.unsubscribeThreadSnapshot(activeThreadId);
+    };
+  }, [activeThreadId]);
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -817,6 +892,30 @@ function AuthenticatedApp({
     [navHistoryIndex],
   );
 
+  useEffect(() => desktopApi.onOpenRequest((request) => {
+    if (request.kind === "thread") {
+      setActiveThreadId(request.threadId);
+      navigateTo(MENU_IDS.currentSession);
+      return;
+    }
+    if (request.kind === "file") {
+      setFilesPanelFocusPath(request.path);
+      setActiveRightTab("files");
+      setRightPanelCollapsed(false);
+      navigateTo(MENU_IDS.currentSession);
+      return;
+    }
+    if (request.kind === "settings") {
+      navigateTo(MENU_IDS.profile);
+      return;
+    }
+    void desktop.refreshHealth();
+  }), [desktop, navigateTo]);
+
+  useEffect(() => desktopApi.onLifecycleEvent(() => {
+    void desktop.refreshHealth();
+  }), [desktop]);
+
   const goBack = useCallback((): void => {
     setNavHistoryIndex((current) => {
       if (current <= 0) return current;
@@ -1002,31 +1101,35 @@ function AuthenticatedApp({
   }
 
   async function refreshWorkspaces(): Promise<void> {
-    const remoteWorkspaces = await desktopApi.listWorkspaces();
-    const migrated =
-      window.localStorage.getItem(WORKSPACE_MIGRATION_KEY) === "true";
-    const legacyWorkspaces = migrated ? [] : loadLegacyWorkspaces();
-    if (legacyWorkspaces.length > 0) {
-      const created: WorkspaceProject[] = [];
-      for (const legacy of legacyWorkspaces) {
-        try {
-          created.push(
-            await desktopApi.createWorkspace({
-              path: legacy.path,
-              name: legacy.name,
-              description: legacy.description,
-              trusted: true,
-            }),
-          );
-        } catch {
-          // Ignore stale legacy folders; the user can add them again from the picker.
+    try {
+      const remoteWorkspaces = await desktopApi.listWorkspaces();
+      const migrated =
+        window.localStorage.getItem(WORKSPACE_MIGRATION_KEY) === "true";
+      const legacyWorkspaces = migrated ? [] : loadLegacyWorkspaces();
+      if (legacyWorkspaces.length > 0) {
+        const created: WorkspaceProject[] = [];
+        for (const legacy of legacyWorkspaces) {
+          try {
+            created.push(
+              await desktopApi.createWorkspace({
+                path: legacy.path,
+                name: legacy.name,
+                description: legacy.description,
+                trusted: true,
+              }),
+            );
+          } catch {
+            // Ignore stale legacy folders; the user can add them again from the picker.
+          }
         }
+        window.localStorage.setItem(WORKSPACE_MIGRATION_KEY, "true");
+        setStoredWorkspaces([...created, ...remoteWorkspaces]);
+        return;
       }
-      window.localStorage.setItem(WORKSPACE_MIGRATION_KEY, "true");
-      setStoredWorkspaces([...created, ...remoteWorkspaces]);
-      return;
+      setStoredWorkspaces(remoteWorkspaces);
+    } finally {
+      setWorkspacesLoaded(true);
     }
-    setStoredWorkspaces(remoteWorkspaces);
   }
 
   async function handleNewChat(): Promise<void> {
@@ -1586,11 +1689,11 @@ function AuthenticatedApp({
           onSelectWorkspace={(workspaceId) => void handleEmptyChatWorkspaceSelect(workspaceId)}
           onSelectModel={handleChatModelSelect}
           onOpenExternal={(url) => desktopApi.openExternal(url)}
-          onOpenDebug={() => {
+          onOpenDebug={platformDescriptor?.capabilities.features.debugger !== true ? undefined : () => {
             setActiveRightTab("debug");
             setRightPanelCollapsed(false);
           }}
-          onOpenPreviewBrowser={openPreviewBrowser}
+          onOpenPreviewBrowser={platformDescriptor?.capabilities.features.browser !== true ? undefined : openPreviewBrowser}
           onOpenWorkspaceArtifact={(path) => {
             setFilesPanelFocusPath(path);
             setActiveRightTab("files");
@@ -1661,12 +1764,14 @@ function AuthenticatedApp({
         />
       </section>
     ) : activeNav === MENU_IDS.skillsSquare ? (
-      <section className="skills-square-panel skills-manager-panel">
-        <SkillsManager
-          activeThreadId={activeThreadId}
-          language={language}
-        />
-      </section>
+      // Temporarily hide Skills management page — keep for later reuse.
+      // <section className="skills-square-panel skills-manager-panel">
+      //   <SkillsManager
+      //     activeThreadId={activeThreadId}
+      //     language={language}
+      //   />
+      // </section>
+      null
     ) : activeNav === MENU_IDS.myAgents ? (
       <AgentRunWorkspace
         fileContextAttachments={workspaceContextAttachments}
@@ -1722,7 +1827,9 @@ function AuthenticatedApp({
     ) : activeNav === MENU_IDS.usageAnalytics ? (
       <ProviderAnalyticsView language={language} />
     ) : activeNav === MENU_IDS.library ? (
-      <GfsView language={language} />
+      // Temporarily hide GFS cloud page — keep for later reuse.
+      // <GfsView language={language} />
+      null
     ) : activeNav === MENU_IDS.profile ? (
       <SettingsPanel
         agents={availableChatAgents}
@@ -1736,12 +1843,13 @@ function AuthenticatedApp({
           />
         )}
         channelsPanel={(
-          <ChannelsView
+          platformDescriptor?.capabilities.features.channels !== true ? null : <ChannelsView
             language={language}
             onAttachImportedContext={attachImportedChannelContext}
             workspacePath={effectiveWorkspacePath}
           />
         )}
+        featureCapabilities={platformDescriptor?.capabilities.features}
         completionNotifications={completionNotifications}
         defaultThinkingEffort={defaultThinkingEffort}
         health={health}
@@ -1763,6 +1871,9 @@ function AuthenticatedApp({
         onLanguageChange={setLanguage}
         onLogout={onLogout}
         onNewAgentTask={() => void handleNewAgentTask()}
+        onOpenMobilePairing={() => setMobilePairingOpen(true)}
+        mobilePairingRefreshToken={mobilePairingRefreshToken}
+        mobilePairingTarget={{ workspaceId: effectiveRuntimeWorkspaceId, workspacePath: effectiveWorkspacePath }}
         onOpenBrowserPanel={() => {
           setActiveRightTab("browser");
           setRightPanelCollapsed(false);
@@ -1817,6 +1928,7 @@ function AuthenticatedApp({
       busy={desktop.busy}
       health={health}
       codexStatus={codexStatus}
+      codexEnabled={platformDescriptor?.capabilities.features.codexBackend === true}
       installProgress={desktop.installProgress}
       language={language}
       onCancelInstall={desktop.cancelInstall}
@@ -2040,8 +2152,10 @@ function AuthenticatedApp({
       setRightPanelCollapsed(false);
       navigateTo(MENU_IDS.currentSession);
     } else {
-      setSkillSquareCommandTarget({ query: task.targetId || task.title, source: "slash_command" });
-      navigateTo(MENU_IDS.skillsSquare);
+      // Temporarily hide Skills management entry — keep for later reuse.
+      // setSkillSquareCommandTarget({ query: task.targetId || task.title, source: "slash_command" });
+      // navigateTo(MENU_IDS.skillsSquare);
+      navigateTo(MENU_IDS.currentSession);
     }
     setAwaySummary(null);
   }
@@ -2094,6 +2208,7 @@ function AuthenticatedApp({
       mainContent={mainContent}
       navIcons={navIcons}
       navSections={navSections}
+      platformId={platformDescriptor?.id ?? nativePlatformId}
       recentThreads={recentThreads}
       searchableThreads={searchableThreads}
       rightPanel={rightPanelContent}
@@ -2147,6 +2262,7 @@ function AuthenticatedApp({
       onWorkspaceChange={handleWorkspaceChange}
       onWorkspaceSortModeChange={setWorkspaceSortMode}
     />
+    {mobilePairingOpen ? <MobilePairingDialog language={language} target={{ workspaceId: effectiveRuntimeWorkspaceId, workspacePath: effectiveWorkspacePath }} onClose={() => setMobilePairingOpen(false)} onConnected={() => setMobilePairingRefreshToken((value) => value + 1)} /> : null}
     {remoteDialogOpen ? (
       <div style={{ position: "fixed", inset: 0, zIndex: 1000, display: "grid", placeItems: "center", background: "rgba(3, 7, 18, .68)" }}>
         <section role="dialog" aria-modal="true" aria-labelledby="remote-workspace-title" style={{ width: 520, maxWidth: "calc(100vw - 40px)", padding: 24, borderRadius: 14, background: "#111827", color: "#f9fafb", boxShadow: "0 24px 80px rgba(0,0,0,.5)" }}>
@@ -2157,10 +2273,10 @@ function AuthenticatedApp({
                 <strong style={{ display: "block" }}>{language === "zh" ? "本地" : "Local"}</strong>
                 <small>{language === "zh" ? "选择这台电脑上的文件夹" : "Choose a folder on this computer"}</small>
               </button>
-              <button type="button" style={{ minHeight: 92, padding: 14 }} onClick={() => void beginRemoteWorkspace()}>
+              {platformDescriptor?.capabilities.features.remoteWorkspace === true && <button type="button" style={{ minHeight: 92, padding: 14 }} onClick={() => void beginRemoteWorkspace()}>
                 <strong style={{ display: "block" }}>{language === "zh" ? "远程" : "Remote"}</strong>
                 <small>{language === "zh" ? "选择另一台计算机上的文件夹" : "Choose a folder on another computer"}</small>
-              </button>
+              </button>}
             </div>
           ) : <div style={{ paddingTop: 8 }}>
             <p style={{ marginTop: 0, color: "#cbd5e1" }}>
@@ -4695,6 +4811,7 @@ function DesktopStatusPanel({
   busy,
   health,
   codexStatus,
+  codexEnabled,
   installProgress,
   language,
   onCancelInstall,
@@ -4712,6 +4829,7 @@ function DesktopStatusPanel({
   busy: boolean;
   health: DesktopHealth | null;
   codexStatus: CodexBackendStatus | null;
+  codexEnabled: boolean;
   installProgress: InstallProgress | null;
   language: AppLanguage;
   onCancelInstall: () => void;
@@ -4800,7 +4918,7 @@ function DesktopStatusPanel({
         </div>
       </dl>
 
-      <section className="about-section">
+      {codexEnabled && <section className="about-section">
         <div className="about-section-title" data-testid="codex-backend-status">
           <strong>Codex Agent Backend</strong>
           <span data-testid={`codex-state-${codexStatus?.state ?? "loading"}`}>
@@ -4816,7 +4934,7 @@ function DesktopStatusPanel({
           {codexStatus?.action === "restart" && <span data-testid="codex-restart-action">{zh ? "请重启 Runtime 后重试" : "Restart Runtime and retry"}</span>}
         </div>
         {codexLogin?.userCode && <div role="status" data-testid="codex-device-code">{zh ? "设备码" : "Device code"}: {codexLogin.userCode}</div>}
-      </section>
+      </section>}
 
       <section className="about-section">
         <div className="about-section-title">
@@ -5016,13 +5134,42 @@ function formatUpdateStatus(
   return zh ? "未检查" : "not checked";
 }
 
-type SettingsPane = "general" | "voice" | "agent-defaults" | "agent-task" | "approvals" | "analytics" | "integrations" | "channels" | "other";
+type SettingsPane = "general" | "voice" | "agent-defaults" | "agent-task" | "approvals" | "analytics" | "integrations" | "remote-workspace" | "channels" | "other";
+type AndroidDeviceLoadState = "idle" | "loading" | "ready" | "runtime-offline" | "platform-offline" | "permission-denied" | "failed";
+
+function isPermissionError(reason: unknown): boolean {
+  const raw = reason instanceof Error ? reason.message : String(reason);
+  return /401|403|forbidden|permission|unauthorized|oidc|auth/i.test(raw);
+}
+
+function classifyAndroidDeviceError(reason: unknown, readiness: DesktopMobilePairingReadiness | null): AndroidDeviceLoadState {
+  if (readiness?.state === "offline") return "platform-offline";
+  if (readiness?.state === "not_registered" || readiness?.state === "credential_invalid") return "runtime-offline";
+  if (isPermissionError(reason)) return "permission-denied";
+  return "failed";
+}
+
+function androidRelativeTime(raw: string | null | undefined, language: AppLanguage): string {
+  if (!raw) return language === "zh" ? "从未在线" : "never seen";
+  const then = Date.parse(raw);
+  if (!Number.isFinite(then)) return language === "zh" ? "时间未知" : "unknown";
+  const seconds = Math.max(0, Math.floor((Date.now() - then) / 1000));
+  if (seconds < 60) return language === "zh" ? "刚刚" : "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return language === "zh" ? `${minutes}分钟前` : `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return language === "zh" ? `${hours}小时前` : `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return language === "zh" ? "昨天" : "yesterday";
+  return language === "zh" ? `${days}天前` : `${days}d ago`;
+}
 
 function SettingsPanel({
   agents,
   appearance,
   approvalCenterPanel,
   channelsPanel,
+  featureCapabilities,
   completionNotifications,
   defaultThinkingEffort,
   developerMode,
@@ -5031,6 +5178,8 @@ function SettingsPanel({
   ideContext,
   language,
   models,
+  mobilePairingRefreshToken,
+  mobilePairingTarget,
   myDrSaiConfig,
   onCheckUpdates,
   onAppearanceChange,
@@ -5041,6 +5190,7 @@ function SettingsPanel({
   onLanguageChange,
   onLogout,
   onNewAgentTask,
+  onOpenMobilePairing,
   onOpenBrowserPanel,
   onOpenPath,
   onResetPreferences,
@@ -5073,6 +5223,7 @@ function SettingsPanel({
   appearance: AppearanceMode;
   approvalCenterPanel: React.ReactNode;
   channelsPanel: React.ReactNode;
+  featureCapabilities?: DesktopPlatformDescriptor["capabilities"]["features"];
   completionNotifications: boolean;
   defaultThinkingEffort: ThinkingEffort;
   developerMode: boolean;
@@ -5081,6 +5232,8 @@ function SettingsPanel({
   ideContext: DesktopIdeContextSnapshot | null;
   language: AppLanguage;
   models: MyDrSaiModelConfig[];
+  mobilePairingRefreshToken: number;
+  mobilePairingTarget: DesktopMobilePairingTarget;
   myDrSaiConfig: MyDrSaiConfig | null;
   onCheckUpdates: () => void;
   onAppearanceChange: (appearance: AppearanceMode) => void;
@@ -5091,6 +5244,7 @@ function SettingsPanel({
   onLanguageChange: (language: AppLanguage) => void;
   onLogout: () => Promise<void>;
   onNewAgentTask: () => void;
+  onOpenMobilePairing: () => void;
   onOpenBrowserPanel: () => void;
   onOpenPath: (path: string) => void;
   onResetPreferences: () => void;
@@ -5127,6 +5281,11 @@ function SettingsPanel({
   const [streamingVoiceCapabilities, setStreamingVoiceCapabilities] = useState<DesktopStreamingVoiceCapabilities | null>(null);
   const [systemVoices, setSystemVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [remoteHostCount, setRemoteHostCount] = useState<number | null>(null);
+  const [mobilePairingReadiness, setMobilePairingReadiness] = useState<DesktopMobilePairingReadiness | null>(null);
+  const [mobileAssociations, setMobileAssociations] = useState<DesktopMobileAssociation[]>([]);
+  const [mobileAssociationsState, setMobileAssociationsState] = useState<AndroidDeviceLoadState>("idle");
+  const [mobileEnrollmentBusy, setMobileEnrollmentBusy] = useState(false);
+  const [mobileEnrollmentError, setMobileEnrollmentError] = useState<string | null>(null);
   const [agentConfigSaving, setAgentConfigSaving] = useState(false);
   const [agentConfigMessage, setAgentConfigMessage] = useState<string | null>(null);
   const [cleanupPreview, setCleanupPreview] = useState<DesktopDataCleanupPreview | null>(null);
@@ -5192,21 +5351,103 @@ function SettingsPanel({
     }
   }
 
+  async function revokeMobileEnrollment(): Promise<void> {
+    const confirmed = window.confirm(zh
+      ? "这会断开所有 Android 设备，并禁止它们继续连接此电脑。确定继续吗？"
+      : "This disconnects every Android device and prevents further connections to this computer. Continue?");
+    if (!confirmed) return;
+    setMobileEnrollmentBusy(true);
+    setMobileEnrollmentError(null);
+    try {
+      await desktopApi.revokeMobileRuntimeEnrollment(mobilePairingTarget);
+      setMobilePairingReadiness({ state: "not_registered", action: "register_runtime" });
+      setMobileAssociations([]);
+      setMobileAssociationsState("runtime-offline");
+    } catch (reason) {
+      setMobileEnrollmentError(mobilePairingErrorText(reason, language));
+    } finally {
+      setMobileEnrollmentBusy(false);
+    }
+  }
+
+  async function refreshAndroidDevices(): Promise<void> {
+    setMobileAssociationsState("loading");
+    setMobileEnrollmentError(null);
+    let readiness: DesktopMobilePairingReadiness | null = null;
+    try {
+      readiness = await desktopApi.getMobilePairingReadiness(mobilePairingTarget);
+      setMobilePairingReadiness(readiness);
+      if (readiness.state !== "ready") {
+        setMobileAssociations([]);
+        setMobileAssociationsState(readiness.state === "offline" ? "platform-offline" : "runtime-offline");
+        return;
+      }
+      const rows = await desktopApi.listMobileAssociations(mobilePairingTarget);
+      setMobileAssociations(rows.filter((item) => item.status === "active"));
+      setMobileAssociationsState("ready");
+    } catch (reason) {
+      setMobileAssociations([]);
+      setMobileAssociationsState(classifyAndroidDeviceError(reason, readiness));
+      setMobileEnrollmentError(mobilePairingErrorText(reason, language));
+    }
+  }
+
+  async function revokeAndroidDevice(association: DesktopMobileAssociation): Promise<void> {
+    const confirmed = window.confirm(zh
+      ? `撤销 ${association.device_name} 对此电脑的远程访问？`
+      : `Revoke remote access for ${association.device_name}?`);
+    if (!confirmed) return;
+    setMobileEnrollmentBusy(true);
+    setMobileEnrollmentError(null);
+    try {
+      await desktopApi.revokeMobileAssociation(association.association_id, mobilePairingTarget);
+      setMobileAssociations((items) => items.filter((item) => item.association_id !== association.association_id));
+    } catch (reason) {
+      setMobileEnrollmentError(mobilePairingErrorText(reason, language));
+    } finally {
+      setMobileEnrollmentBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (activePane !== "remote-workspace") return;
+    let cancelled = false;
+    const refresh = (): void => {
+      void (featureCapabilities?.remoteWorkspace === false
+        ? Promise.resolve([])
+        : desktopApi.listSshHosts().catch(() => [])
+      ).then((hosts) => {
+        if (cancelled) return;
+        setRemoteHostCount(hosts.length);
+        if (featureCapabilities?.remoteWorkspace === true) void refreshAndroidDevices();
+      });
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [activePane, featureCapabilities]);
+
+  useEffect(() => {
+    if (mobilePairingRefreshToken <= 0 || activePane !== "remote-workspace") return;
+    void refreshAndroidDevices();
+  }, [mobilePairingRefreshToken, activePane]);
+
   useEffect(() => {
     if (activePane !== "integrations") return;
+    if (featureCapabilities?.serialVoice !== true && featureCapabilities?.streamingVoice !== true) return;
     let cancelled = false;
-    void Promise.all([
-      desktopApi.getVoiceRuntimeStatus().catch(() => null),
-      desktopApi.listSshHosts().catch(() => []),
-    ]).then(([voiceStatus, hosts]) => {
-      if (cancelled) return;
-      setVoiceIntegrationState(voiceStatus?.state ?? "unavailable");
-      setRemoteHostCount(hosts.length);
+    void desktopApi.getVoiceRuntimeStatus().then((status) => {
+      if (!cancelled) setVoiceIntegrationState(status.state);
+    }).catch(() => {
+      if (!cancelled) setVoiceIntegrationState("unavailable");
     });
     return () => {
       cancelled = true;
     };
-  }, [activePane]);
+  }, [activePane, featureCapabilities]);
 
   useEffect(() => {
     if (activePane !== "voice" || !("speechSynthesis" in window)) return;
@@ -5221,14 +5462,14 @@ function SettingsPanel({
     let cancelled = false;
     void Promise.all([
       desktopApi.getVoiceRuntimeStatus().catch(() => null),
-      desktopApi.getStreamingVoiceCapabilities().catch(() => null),
+      featureCapabilities?.streamingVoice === false ? Promise.resolve(null) : desktopApi.getStreamingVoiceCapabilities().catch(() => null),
     ]).then(([status, capabilities]) => {
       if (cancelled) return;
       setVoiceRuntimeStatus(status);
       setStreamingVoiceCapabilities(capabilities);
     });
     return () => { cancelled = true; };
-  }, [activePane]);
+  }, [activePane, featureCapabilities]);
 
   const voiceModeCapabilities = deriveVoiceModeCapabilities(voiceRuntimeStatus, {
     audioWorklet: typeof AudioWorkletNode !== "undefined",
@@ -5270,6 +5511,7 @@ function SettingsPanel({
       label: zh ? "集成" : "Integrations",
       items: [
         { id: "integrations", label: zh ? "集成概览" : "Overview", icon: Plug },
+        { id: "remote-workspace", label: zh ? "远程工作区" : "Remote Workspace", icon: TerminalIcon },
         { id: "channels", label: zh ? "频道" : "Channels", icon: MessageSquare },
       ],
     },
@@ -5278,12 +5520,60 @@ function SettingsPanel({
       items: [{ id: "other", label: zh ? "系统与路径" : "System and paths", icon: FileText }],
     },
   ];
+  const visibleGroups = groups.map((group) => ({
+    ...group,
+    items: group.items.filter((item) => {
+      if (item.id === "voice") return featureCapabilities?.serialVoice === true || featureCapabilities?.streamingVoice === true;
+      if (item.id === "agent-defaults" || item.id === "agent-task") return featureCapabilities?.agents === true;
+      if (item.id === "approvals") return featureCapabilities?.approvals === true;
+      if (item.id === "analytics") return featureCapabilities?.diagnostics === true;
+      if (item.id === "remote-workspace") return featureCapabilities?.remoteWorkspace === true;
+      if (item.id === "channels") return featureCapabilities?.channels === true;
+      return true;
+    }),
+  })).filter((group) => group.items.length > 0);
+  const visiblePaneIds = visibleGroups.flatMap((group) => group.items.map((item) => item.id));
+  useEffect(() => {
+    if (visiblePaneIds.includes(activePane)) return;
+    setActivePane("general");
+  }, [activePane, visiblePaneIds.join("|")]);
+  const activeAndroidAssociations = mobileAssociations.filter((item) => item.status === "active");
+  const androidOnlineDeviceCount = new Set(
+    activeAndroidAssociations
+      .filter((item) => item.access_state === "online" || item.access_state === "accessing")
+      .map((item) => item.device_summary),
+  ).size;
+  const androidRemoteEnabled = mobilePairingReadiness?.state === "ready";
+  const androidDeviceStateText: Record<DesktopMobileAssociation["access_state"], string> = zh ? {
+    accessing: "正在访问",
+    online: "在线",
+    offline: "离线",
+    revoked: "已撤销",
+  } : {
+    accessing: "Accessing",
+    online: "Online",
+    offline: "Offline",
+    revoked: "Revoked",
+  };
+  const androidPanelMessage = mobileAssociationsState === "loading"
+    ? null
+    : mobileAssociationsState === "runtime-offline"
+      ? (zh ? "此电脑尚未允许远程连接，或 Runtime Host enrollment 不可用。" : "Remote connection is not enabled for this computer, or Runtime Host enrollment is unavailable.")
+      : mobileAssociationsState === "platform-offline"
+        ? (zh ? "暂时无法连接 HepAI Platform Relay，请稍后重试。" : "HepAI Platform Relay is currently unreachable. Try again later.")
+        : mobileAssociationsState === "permission-denied"
+          ? (zh ? "当前账号没有查看此 Host Android 设备的权限。" : "This account cannot view Android devices for this Host.")
+          : mobileAssociationsState === "failed"
+            ? (mobileEnrollmentError ?? (zh ? "请求 Android 设备列表失败。" : "Could not load Android devices."))
+            : activeAndroidAssociations.length === 0
+              ? (zh ? "暂无已授权 Android 设备。" : "No authorized Android devices yet.")
+              : null;
 
   return (
     <div className="settings-view">
       <aside className="settings-navigation" aria-label={zh ? "设置分组" : "Settings groups"}>
         <h1>{zh ? "设置" : "Settings"}</h1>
-        {groups.map((group) => (
+        {visibleGroups.map((group) => (
           <section key={group.label}>
             <h2>{group.label}</h2>
             {group.items.map((item) => {
@@ -5366,7 +5656,9 @@ function SettingsPanel({
                 <strong>{zh ? "左侧栏组件" : "Sidebar components"}</strong>
                 <label className="settings-toggle"><span><strong>{zh ? "广场" : "Square"}</strong><small>{zh ? "显示或隐藏整个广场分组。" : "Show or hide the entire Square group."}</small></span><input type="checkbox" checked={sidebarComponents.square} onChange={(event) => onSidebarComponentsChange((current) => ({ ...current, square: event.target.checked }))} /></label>
                 <label className="settings-toggle"><span><strong>{zh ? "智能体" : "Agents"}</strong><small>{zh ? "在广场分组中显示智能体入口。" : "Show Agents inside the Square group."}</small></span><input type="checkbox" checked={sidebarComponents.agents} onChange={(event) => onSidebarComponentsChange((current) => ({ ...current, agents: event.target.checked }))} /></label>
+                {/* Temporarily hide Skills management entry — keep for later reuse.
                 <label className="settings-toggle"><span><strong>{zh ? "技能" : "Skills"}</strong><small>{zh ? "在广场分组中显示技能入口。" : "Show Skills inside the Square group."}</small></span><input type="checkbox" checked={sidebarComponents.skills} onChange={(event) => onSidebarComponentsChange((current) => ({ ...current, skills: event.target.checked }))} /></label>
+                */}
               </div>
               <div className="settings-component-list">
                 <strong>{zh ? "右侧栏组件" : "Right sidebar components"}</strong>
@@ -5614,12 +5906,54 @@ function SettingsPanel({
               <p>{zh ? "管理外部消息、工具和桌面上下文入口。" : "Manage external messaging, tools, and desktop context."}</p>
             </header>
             <section className="settings-section settings-integration-list">
-              <div className="settings-integration-row"><MessageSquare size={18} /><span><strong>{zh ? "频道" : "Channels"}</strong><small>{zh ? "连接消息渠道并导入只读上下文。" : "Connect message channels and import reviewed context."}</small></span><button type="button" onClick={() => setActivePane("channels")}>{zh ? "管理" : "Manage"}</button></div>
-              <div className="settings-integration-row"><Plug size={18} /><span><strong>{zh ? "工具连接" : "MCP"}</strong><small>{zh ? "在审批中心管理外部工具连接和操作确认。" : "Manage MCP sessions and tool approvals in Approval Center."}</small></span><button type="button" onClick={() => setActivePane("approvals")}>{zh ? "管理" : "Manage"}</button></div>
+              {featureCapabilities?.channels === true && <div className="settings-integration-row"><MessageSquare size={18} /><span><strong>{zh ? "频道" : "Channels"}</strong><small>{zh ? "连接消息渠道并导入只读上下文。" : "Connect message channels and import reviewed context."}</small></span><button type="button" onClick={() => setActivePane("channels")}>{zh ? "管理" : "Manage"}</button></div>}
+              {featureCapabilities?.mcp === true && featureCapabilities?.approvals === true && <div className="settings-integration-row"><Plug size={18} /><span><strong>{zh ? "工具连接" : "MCP"}</strong><small>{zh ? "在审批中心管理外部工具连接和操作确认。" : "Manage MCP sessions and tool approvals in Approval Center."}</small></span><button type="button" onClick={() => setActivePane("approvals")}>{zh ? "管理" : "Manage"}</button></div>}
               <div className="settings-integration-row"><FileText size={18} /><span><strong>IDE</strong><small>{ideContext?.currentFile?.path || (zh ? "当前没有 IDE 文件上下文" : "No IDE file context is active")}</small></span><em>{ideContext ? (zh ? "已连接" : "Connected") : (zh ? "未连接" : "Not connected")}</em></div>
-              <div className="settings-integration-row"><Globe2 size={18} /><span><strong>{zh ? "浏览器" : "Browser"}</strong><small>{zh ? "使用右侧浏览器面板查看和附加网页上下文。" : "Use the right browser panel to inspect and attach web context."}</small></span><button type="button" onClick={onOpenBrowserPanel}>{zh ? "打开" : "Open"}</button></div>
-              <div className="settings-integration-row"><MessageSquare size={18} /><span><strong>{zh ? "语音" : "Voice"}</strong><small>{zh ? "聊天输入区使用的语音转写运行时。" : "Voice transcription runtime used by the chat composer."}</small></span><em>{voiceIntegrationState === null ? (zh ? "检查中" : "Checking") : voiceIntegrationState}</em></div>
-              <div className="settings-integration-row"><TerminalIcon size={18} /><span><strong>{zh ? "远程计算机" : "Remote computers"}</strong><small>{zh ? "已配置、可用于远程工作区的计算机。" : "Configured computers available to remote workspaces."}</small></span><em>{remoteHostCount === null ? (zh ? "检查中" : "Checking") : zh ? `${remoteHostCount} 台计算机` : `${remoteHostCount} computers`}</em></div>
+              {featureCapabilities?.browser === true && <div className="settings-integration-row"><Globe2 size={18} /><span><strong>{zh ? "浏览器" : "Browser"}</strong><small>{zh ? "使用右侧浏览器面板查看和附加网页上下文。" : "Use the right browser panel to inspect and attach web context."}</small></span><button type="button" onClick={onOpenBrowserPanel}>{zh ? "打开" : "Open"}</button></div>}
+              {(featureCapabilities?.serialVoice === true || featureCapabilities?.streamingVoice === true) && <div className="settings-integration-row"><MessageSquare size={18} /><span><strong>{zh ? "语音" : "Voice"}</strong><small>{zh ? "聊天输入区使用的语音转写运行时。" : "Voice transcription runtime used by the chat composer."}</small></span><em>{voiceIntegrationState === null ? (zh ? "检查中" : "Checking") : voiceIntegrationState}</em></div>}
+            </section>
+          </>
+        )}
+
+        {activePane === "remote-workspace" && (
+          <>
+            <header className="settings-content-header">
+              <h2>{zh ? "远程工作区" : "Remote Workspace"}</h2>
+              <p>{zh ? "管理可用于远程工作区的计算机，以及 Android 端访问此电脑的连接。" : "Manage computers available to remote workspaces and Android access to this computer."}</p>
+            </header>
+            <section className="settings-section settings-integration-list" data-testid="remote-workspace-settings">
+              <div className="settings-integration-row" data-testid="remote-computers-entry"><TerminalIcon size={18} /><span><strong>{zh ? "远程计算机" : "Remote computers"}</strong><small>{zh ? "已配置、可用于远程工作区的计算机。" : "Configured computers available to remote workspaces."}</small></span><em>{remoteHostCount === null ? (zh ? "检查中" : "Checking") : zh ? `${remoteHostCount} 台计算机` : `${remoteHostCount} computers`}</em></div>
+              <div className="android-remote-panel" data-testid="android-remote-panel">
+                <div className="android-remote-header">
+                  <Smartphone size={18} />
+                  <span>
+                    <strong>Android</strong>
+                    <small>{zh ? "OpenDrSai Android 远程连接与设备管理。" : "OpenDrSai Android remote connection and device management."}</small>
+                  </span>
+                  <div className="settings-integration-actions">
+                    <button type="button" role="switch" aria-checked={androidRemoteEnabled} aria-label={zh ? "允许远程连接" : "Allow remote connection"} className={`settings-connection-switch ${androidRemoteEnabled ? "is-enabled" : ""}`} data-testid="android-remote-toggle" disabled={mobileEnrollmentBusy || mobileAssociationsState === "loading"} onClick={() => { if (androidRemoteEnabled) void revokeMobileEnrollment(); else onOpenMobilePairing(); }}><span aria-hidden="true" /></button>
+                    <button type="button" className={`android-refresh-button ${mobileAssociationsState === "loading" ? "is-loading" : ""}`} onClick={() => void refreshAndroidDevices()} disabled={mobileAssociationsState === "loading"} aria-label={zh ? "刷新 Android 设备" : "Refresh Android devices"} aria-busy={mobileAssociationsState === "loading"} title={zh ? "刷新" : "Refresh"} data-testid="android-refresh"><RefreshCw size={15} aria-hidden="true" /></button>
+                    <button type="button" onClick={onOpenMobilePairing} data-testid="android-connect">{zh ? "连接 Android" : "Connect Android"}</button>
+                  </div>
+                </div>
+                <div className="android-remote-counts" data-testid="android-device-counts">
+                  <span>{zh ? `已授权设备 ${activeAndroidAssociations.length}` : `Authorized devices ${activeAndroidAssociations.length}`}</span>
+                  <span>{zh ? `当前在线 ${androidOnlineDeviceCount}` : `Online now ${androidOnlineDeviceCount}`}</span>
+                </div>
+                {androidPanelMessage ? <p className="android-remote-message" data-state={mobileAssociationsState} data-testid="android-device-state">{androidPanelMessage}</p> : null}
+                {activeAndroidAssociations.length > 0 ? (
+                  <div className="android-device-list" data-testid="android-device-list">
+                    {activeAndroidAssociations.map((association) => (
+                      <div key={association.association_id} className="android-device-row" data-state={association.access_state} data-testid="android-device-row">
+                        <span className="android-device-presence" aria-hidden="true" />
+                        <span><strong>{association.device_name}</strong><small>{association.device_summary}</small></span>
+                        <em data-testid="android-device-status">{androidDeviceStateText[association.access_state]}{association.last_seen_at ? ` · ${androidRelativeTime(association.last_seen_at, language)}` : ""}</em>
+                        <button type="button" className="danger" disabled={mobileEnrollmentBusy} data-testid="android-device-revoke" onClick={() => void revokeAndroidDevice(association)}>{zh ? "撤销" : "Revoke"}</button>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
             </section>
           </>
         )}

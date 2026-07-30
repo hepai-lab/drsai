@@ -1,0 +1,2644 @@
+{
+  "components": {
+    "schemas": {
+      "AccessGrantResult": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "grant_id": {
+            "title": "Grant Id",
+            "type": "string"
+          },
+          "status": {
+            "pattern": "^(pending|consumed|expired|revoked)$",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "grant_id",
+          "code",
+          "expires_at",
+          "status"
+        ],
+        "title": "AccessGrantResult",
+        "type": "object"
+      },
+      "AccessGrantStatusResult": {
+        "additionalProperties": false,
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "grant_id": {
+            "title": "Grant Id",
+            "type": "string"
+          },
+          "status": {
+            "pattern": "^(pending|consumed|expired|revoked)$",
+            "title": "Status",
+            "type": "string"
+          },
+          "subject_summary": {
+            "anyOf": [
+              {
+                "pattern": "^sub_[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Summary"
+          }
+        },
+        "required": [
+          "grant_id",
+          "expires_at",
+          "status"
+        ],
+        "title": "AccessGrantStatusResult",
+        "type": "object"
+      },
+      "AssociationPresenceRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "accessing": {
+            "default": false,
+            "title": "Accessing",
+            "type": "boolean"
+          }
+        },
+        "title": "AssociationPresenceRequest",
+        "type": "object"
+      },
+      "AssociationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "correlation_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "device_id": {
+            "maxLength": 128,
+            "minLength": 16,
+            "pattern": "^[A-Za-z0-9._-]+$",
+            "title": "Device Id",
+            "type": "string"
+          },
+          "device_name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": ".*\\S.*",
+            "title": "Device Name",
+            "type": "string"
+          },
+          "device_public_key": {
+            "maxLength": 43,
+            "minLength": 43,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "Device Public Key",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 8,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "correlation_id",
+          "code",
+          "device_id",
+          "device_name",
+          "device_public_key"
+        ],
+        "title": "AssociationRequest",
+        "type": "object"
+      },
+      "AssociationResult": {
+        "additionalProperties": false,
+        "properties": {
+          "access_state": {
+            "pattern": "^(online|offline|accessing|revoked)$",
+            "title": "Access State",
+            "type": "string"
+          },
+          "association_id": {
+            "title": "Association Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "device_name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": ".*\\S.*",
+            "title": "Device Name",
+            "type": "string"
+          },
+          "device_summary": {
+            "pattern": "^dev_[0-9a-f]{12}$",
+            "title": "Device Summary",
+            "type": "string"
+          },
+          "last_seen_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen At"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "runtime_id": {
+            "title": "Runtime Id",
+            "type": "string"
+          },
+          "status": {
+            "pattern": "^(active|revoked)$",
+            "title": "Status",
+            "type": "string"
+          },
+          "subject_summary": {
+            "pattern": "^sub_[0-9a-f]{12}$",
+            "title": "Subject Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "association_id",
+          "runtime_id",
+          "subject_summary",
+          "device_summary",
+          "device_name",
+          "status",
+          "access_state",
+          "created_at"
+        ],
+        "title": "AssociationResult",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HeartbeatRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "backend_health": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Backend Health",
+            "type": "object"
+          },
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Capabilities",
+            "type": "array",
+            "uniqueItems": true
+          },
+          "correlation_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 8,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          },
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "nonce": {
+            "title": "Nonce",
+            "type": "string"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "signature": {
+            "title": "Signature",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "correlation_id",
+          "instance_id",
+          "version",
+          "capabilities",
+          "signature",
+          "nonce"
+        ],
+        "title": "HeartbeatRequest",
+        "type": "object"
+      },
+      "RegistrationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "correlation_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 8,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          },
+          "public_key": {
+            "title": "Public Key",
+            "type": "string"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "correlation_id",
+          "display_name",
+          "version",
+          "public_key"
+        ],
+        "title": "RegistrationRequest",
+        "type": "object"
+      },
+      "RegistrationResult": {
+        "additionalProperties": false,
+        "properties": {
+          "registration_token": {
+            "title": "Registration Token",
+            "type": "string"
+          },
+          "runtime_id": {
+            "title": "Runtime Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runtime_id",
+          "registration_token"
+        ],
+        "title": "RegistrationResult",
+        "type": "object"
+      },
+      "ResourceLifecycle": {
+        "enum": [
+          "active",
+          "archived",
+          "removed"
+        ],
+        "title": "ResourceLifecycle",
+        "type": "string"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "Workspace": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "lifecycle": {
+            "$ref": "#/components/schemas/ResourceLifecycle",
+            "default": "active"
+          },
+          "revision": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "runtime_id": {
+            "title": "Runtime Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runtime_id",
+          "workspace_id",
+          "display_name"
+        ],
+        "title": "Workspace",
+        "type": "object"
+      },
+      "WorkspacePublishRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "correlation_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 8,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "workspaces": {
+            "items": {
+              "$ref": "#/components/schemas/Workspace"
+            },
+            "title": "Workspaces",
+            "type": "array"
+          }
+        },
+        "required": [
+          "request_id",
+          "correlation_id",
+          "workspaces"
+        ],
+        "title": "WorkspacePublishRequest",
+        "type": "object"
+      },
+      "_ApprovalDecision": {
+        "additionalProperties": false,
+        "properties": {
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "decision": {
+            "title": "Decision",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "correlation_id",
+          "decision"
+        ],
+        "title": "_ApprovalDecision",
+        "type": "object"
+      },
+      "_OwopRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "operation": {
+            "title": "Operation",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": true,
+            "title": "Params",
+            "type": "object"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "request_id",
+          "correlation_id",
+          "operation",
+          "params"
+        ],
+        "title": "_OwopRequest",
+        "type": "object"
+      },
+      "_RunCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "attachment_refs": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Attachment Refs",
+            "type": "array"
+          },
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "retry_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry Of"
+          }
+        },
+        "required": [
+          "request_id",
+          "correlation_id",
+          "idempotency_key",
+          "message"
+        ],
+        "title": "_RunCreate",
+        "type": "object"
+      },
+      "_RuntimeRename": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "display_name"
+        ],
+        "title": "_RuntimeRename",
+        "type": "object"
+      },
+      "_SessionCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_definition_id": {
+            "title": "Agent Definition Id",
+            "type": "string"
+          },
+          "agent_definition_version": {
+            "title": "Agent Definition Version",
+            "type": "string"
+          },
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "correlation_id",
+          "idempotency_key",
+          "title",
+          "agent_definition_id",
+          "agent_definition_version"
+        ],
+        "title": "_SessionCreate",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "OpenDrSai Runtime Relay",
+    "version": "2.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/v1/admin/registration-code": {
+      "get": {
+        "operationId": "issue_registration_code_v1_admin_registration_code_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Issue Registration Code V1 Admin Registration Code Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Issue Registration Code"
+      }
+    },
+    "/v1/admin/runtimes/{runtime_id}": {
+      "delete": {
+        "operationId": "revoke_v1_admin_runtimes__runtime_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke"
+      }
+    },
+    "/v1/associations": {
+      "post": {
+        "operationId": "associate_v1_associations_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssociationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Associate V1 Associations Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Associate"
+      }
+    },
+    "/v1/associations/{runtime_id}": {
+      "delete": {
+        "operationId": "revoke_user_association_v1_associations__runtime_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-relay-device-id",
+            "required": true,
+            "schema": {
+              "title": "X-Relay-Device-Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssociationResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke User Association"
+      }
+    },
+    "/v1/associations/{runtime_id}/presence": {
+      "post": {
+        "operationId": "record_user_association_presence_v1_associations__runtime_id__presence_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-relay-device-id",
+            "required": true,
+            "schema": {
+              "title": "X-Relay-Device-Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssociationPresenceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssociationResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Record User Association Presence"
+      }
+    },
+    "/v1/runtime-connections/{runtime_id}/heartbeat": {
+      "post": {
+        "operationId": "heartbeat_v1_runtime_connections__runtime_id__heartbeat_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-runtime-token",
+            "required": true,
+            "schema": {
+              "title": "X-Runtime-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HeartbeatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Heartbeat"
+      }
+    },
+    "/v1/runtime-connections/{runtime_id}/workspaces": {
+      "put": {
+        "operationId": "publish_workspaces_v1_runtime_connections__runtime_id__workspaces_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-runtime-token",
+            "required": true,
+            "schema": {
+              "title": "X-Runtime-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspacePublishRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Publish Workspaces"
+      }
+    },
+    "/v1/runtimes": {
+      "get": {
+        "operationId": "list_runtimes_v1_runtimes_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Query"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Runtimes"
+      }
+    },
+    "/v1/runtimes/register": {
+      "post": {
+        "operationId": "register_v1_runtimes_register_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-registration-code",
+            "required": true,
+            "schema": {
+              "title": "X-Registration-Code",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegistrationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegistrationResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Register"
+      }
+    },
+    "/v1/runtimes/{runtime_id}": {
+      "patch": {
+        "operationId": "rename_runtime_v1_runtimes__runtime_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_RuntimeRename"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Rename Runtime V1 Runtimes  Runtime Id  Patch",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rename Runtime"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/access-grants": {
+      "post": {
+        "operationId": "access_grant_v1_runtimes__runtime_id__access_grants_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-runtime-token",
+            "required": true,
+            "schema": {
+              "title": "X-Runtime-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessGrantResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Access Grant"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/access-grants/{grant_id}": {
+      "delete": {
+        "operationId": "revoke_access_grant_v1_runtimes__runtime_id__access_grants__grant_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "grant_id",
+            "required": true,
+            "schema": {
+              "title": "Grant Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-runtime-token",
+            "required": true,
+            "schema": {
+              "title": "X-Runtime-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessGrantStatusResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Access Grant"
+      },
+      "get": {
+        "operationId": "access_grant_status_v1_runtimes__runtime_id__access_grants__grant_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "grant_id",
+            "required": true,
+            "schema": {
+              "title": "Grant Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-runtime-token",
+            "required": true,
+            "schema": {
+              "title": "X-Runtime-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessGrantStatusResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Access Grant Status"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/agent-definitions": {
+      "get": {
+        "operationId": "agent_definitions_v1_runtimes__runtime_id__agent_definitions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Agent Definitions"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/approvals/{approval_id}/decision": {
+      "post": {
+        "operationId": "decide_v1_runtimes__runtime_id__approvals__approval_id__decision_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "approval_id",
+            "required": true,
+            "schema": {
+              "title": "Approval Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_ApprovalDecision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Decide"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/associations": {
+      "get": {
+        "operationId": "runtime_associations_v1_runtimes__runtime_id__associations_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-runtime-token",
+            "required": true,
+            "schema": {
+              "title": "X-Runtime-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AssociationResult"
+                  },
+                  "title": "Response Runtime Associations V1 Runtimes  Runtime Id  Associations Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Runtime Associations"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/associations/{association_id}": {
+      "delete": {
+        "operationId": "revoke_runtime_association_v1_runtimes__runtime_id__associations__association_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "association_id",
+            "required": true,
+            "schema": {
+              "title": "Association Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-runtime-token",
+            "required": true,
+            "schema": {
+              "title": "X-Runtime-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssociationResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Runtime Association"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/capabilities": {
+      "get": {
+        "operationId": "capabilities_v1_runtimes__runtime_id__capabilities_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Capabilities"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/enrollment": {
+      "delete": {
+        "operationId": "revoke_runtime_enrollment_v1_runtimes__runtime_id__enrollment_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-runtime-token",
+            "required": true,
+            "schema": {
+              "title": "X-Runtime-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "title": "Response Revoke Runtime Enrollment V1 Runtimes  Runtime Id  Enrollment Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Runtime Enrollment"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/idempotency/{operation}/{idempotency_key}": {
+      "get": {
+        "operationId": "idempotency_result_v1_runtimes__runtime_id__idempotency__operation___idempotency_key__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "operation",
+            "required": true,
+            "schema": {
+              "title": "Operation",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "idempotency_key",
+            "required": true,
+            "schema": {
+              "title": "Idempotency Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Idempotency Result"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/runs/{run_id}": {
+      "get": {
+        "operationId": "get_run_v1_runtimes__runtime_id__runs__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Run"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/runs/{run_id}/events": {
+      "get": {
+        "operationId": "events_v1_runtimes__runtime_id__runs__run_id__events_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_sequence",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "After Sequence",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Events"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/runs/{run_id}/events/stream": {
+      "get": {
+        "operationId": "event_stream_v1_runtimes__runtime_id__runs__run_id__events_stream_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_sequence",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "After Sequence",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Event Stream"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/runtime": {
+      "get": {
+        "operationId": "identity_v1_runtimes__runtime_id__runtime_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Identity"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/workspaces": {
+      "get": {
+        "operationId": "workspaces_v1_runtimes__runtime_id__workspaces_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Query"
+            }
+          },
+          {
+            "in": "query",
+            "name": "lifecycle",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ResourceLifecycle"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": "active",
+              "title": "Lifecycle"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Workspaces"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/approvals": {
+      "get": {
+        "operationId": "approvals_v1_runtimes__runtime_id__workspaces__workspace_id__approvals_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Approvals"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/audit": {
+      "get": {
+        "operationId": "audit_v1_runtimes__runtime_id__workspaces__workspace_id__audit_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "run_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Audit"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/owop": {
+      "post": {
+        "operationId": "owop_v1_runtimes__runtime_id__workspaces__workspace_id__owop_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_OwopRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Owop"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/runs/{run_id}/cancel": {
+      "post": {
+        "operationId": "cancel_run_v1_runtimes__runtime_id__workspaces__workspace_id__runs__run_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Run"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions": {
+      "get": {
+        "operationId": "sessions_v1_runtimes__runtime_id__workspaces__workspace_id__sessions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Query"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Sessions"
+      },
+      "post": {
+        "operationId": "create_session_v1_runtimes__runtime_id__workspaces__workspace_id__sessions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_SessionCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Session"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}": {
+      "get": {
+        "operationId": "session_v1_runtimes__runtime_id__workspaces__workspace_id__sessions__session_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Session"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/conversation": {
+      "get": {
+        "operationId": "conversation_v1_runtimes__runtime_id__workspaces__workspace_id__sessions__session_id__conversation_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Conversation"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/runs": {
+      "get": {
+        "operationId": "runs_v1_runtimes__runtime_id__workspaces__workspace_id__sessions__session_id__runs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Runs"
+      },
+      "post": {
+        "operationId": "create_run_v1_runtimes__runtime_id__workspaces__workspace_id__sessions__session_id__runs_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_RunCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Run"
+      }
+    }
+  }
+}

@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const read = (path) => readFileSync(resolve(root, path), "utf8");
-const tasks = read("src/main/managerPresentationTasks.ts");
+const tasks = read("../shared/main/managerPresentationTasks.ts");
 const filesUi = read("../shared/renderer/src/components/files/FilesContextPanel.tsx");
 const api = read("../shared/api/desktopApi.ts");
 const preload = read("../shared/main/preload.ts");
@@ -24,7 +24,7 @@ const checks = {
   recoveryScopedToMaterial: tasks.includes("samePath(candidate.workspacePath, workspacePath)") && tasks.includes("samePath(candidate.sourcePath, sourcePath)"),
   partialCleanupWorkspaceBounded: tasks.includes('pathWithinWorkspace.startsWith("..")') && tasks.includes('extname(outputPath).toLowerCase() !== ".pptx"'),
   sourcePreservationMessage: tasks.includes("原始材料和已完成成果均已保留"),
-  atomicBackupFallback: tasks.includes('`${TASKS_PATH}.bak`') && tasks.includes("renameSync(TASKS_PATH, backupPath)") && tasks.includes("renameSync(backupPath, TASKS_PATH)"),
+  atomicBackupFallback: tasks.includes('`${tasksPath}.bak`') && tasks.includes("renameSync(tasksPath, backupPath)") && tasks.includes("renameSync(backupPath, tasksPath)"),
   realForcedKill: runner.includes('child.kill("SIGKILL")') && runner.includes('OPENDRSAI_E2E_PRESENTATION_SCENARIO: "strong-kill-wait"'),
   killAfterPersistedCheckpoint: runner.includes("task.progress >= 12") && runner.includes("taskPersisted"),
   threePackagedDecisions: ["strong-kill-resume", "strong-kill-restart", "strong-kill-abandon"].every((value) => runner.includes(value)),

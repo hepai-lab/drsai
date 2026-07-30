@@ -13,6 +13,11 @@ object WorkbenchDeepLinkParser {
         if (uri.scheme != "opendrsai") return null
         val segments = uri.path.orEmpty().split('/').filter(String::isNotBlank)
         when (uri.host) {
+            "remote" -> AppRoute.RemoteHome.takeIf { segments.isEmpty() }
+            "workspace" -> {
+                require(segments.size == 2) { "workspace_deep_link_identity_required" }
+                AppRoute.WorkspaceSessions(RuntimeId(segments[0]), WorkspaceId(segments[1]))
+            }
             "session" -> {
                 require(segments.size == 3) { "session_deep_link_identity_required" }
                 AppRoute.RemoteSession(RuntimeId(segments[0]), WorkspaceId(segments[1]), SessionId(segments[2]))

@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 
 const root = resolve(new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
 const source = readFileSync(resolve(root, "../shared/main/runtimeClient.ts"), "utf8");
+const chatSource = readFileSync(resolve(root, "../shared/main/chat.ts"), "utf8");
 
 for (const marker of [
   "interface RuntimeClient",
@@ -41,6 +42,27 @@ for (const marker of [
   "RuntimeRunStream",
   "Remote Runtime must use an SSH loopback tunnel",
 ]) assert(source.includes(marker), `Runtime Client contract lacks ${marker}`);
+
+for (const marker of [
+  "interface RuntimeExecutionAuth",
+  "Authorization: `Bearer ${auth.accessToken}`",
+  "\"X-OpenDrSai-Auth-Mode\": auth.authMode",
+  "\"X-OpenDrSai-Principal\": auth.userId",
+  "...(auth ? { user_id: auth.userId } : {})",
+]) assert(source.includes(marker), `Runtime Agent execution auth bridge lacks ${marker}`);
+
+for (const marker of [
+  "auth: AuthContext",
+  "auth.authMode === \"oidc\" && auth.accessToken",
+  "accessToken: auth.accessToken",
+  "userId: auth.userId",
+]) assert(chatSource.includes(marker), `Runtime Agent chat auth caller lacks ${marker}`);
+
+for (const marker of [
+  "function runtimeEventText",
+  "\"content\", \"delta\", \"text\"",
+  "event.type === \"agent.message.delta\"",
+]) assert(chatSource.includes(marker), `Runtime Agent event text bridge lacks ${marker}`);
 
 console.log("Unified Runtime Client contract verification passed.");
 

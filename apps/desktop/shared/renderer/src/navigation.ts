@@ -106,8 +106,9 @@ const navDefinitions: Array<{
   {
     id: "workspace",
     items: [
-      { id: MENU_IDS.skillsSquare, enabled: true },
-      { id: MENU_IDS.library, enabled: true },
+      // Temporarily hide Skills / GFS from the primary sidebar — keep entries for later reuse.
+      // { id: MENU_IDS.skillsSquare, enabled: true },
+      // { id: MENU_IDS.library, enabled: true },
       { id: MENU_IDS.approvalCenter, enabled: false },
       { id: MENU_IDS.usageAnalytics, enabled: false },
       { id: MENU_IDS.channels, enabled: false },

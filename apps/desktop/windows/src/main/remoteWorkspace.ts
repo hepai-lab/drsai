@@ -1082,8 +1082,8 @@ export async function executeRemoteWorkspaceMutation(action: "stage-file" | "rev
     : { workspacePath: value.workspacePath, path: value.path, reverted: true, message: "Remote file reverted." };
 }
 
-export async function commitRemoteWorkspace(workspacePath: string, message: string, body?: string): Promise<void> {
-  await remotePost(workspacePath, "/git/commit", { message, body });
+export async function commitRemoteWorkspace(workspacePath: string, message: string, body?: string, approvalId?: string): Promise<void> {
+  await remotePost(workspacePath, "/git/commit", { message, body, idempotency_key: approvalId });
 }
 
 export async function listRemoteWorkspaceFiles(request: WorkspaceFileTreeRequest): Promise<WorkspaceFileTreeResult> {
@@ -1166,17 +1166,11 @@ export async function listRemoteThreads(workspaceId: string): Promise<DesktopThr
   if (!response.ok) throw new Error(`Remote thread list failed (${response.status}).`);
   const payload = await response.json() as { data?: Array<Record<string, unknown>> };
   return (payload.data || []).flatMap((row) => {
-    const thread = mapSessionToThread(row, {
-      workspacePath: connection.status.canonicalPath,
-      defaultKind: "chat",
-    });
-    if (!thread) return [];
-    // Prefer gateway title; fall back to a clearer remote default than mapSessionToThread's "Untitled".
-    if (!row.name && !row.title) {
-      thread.title = "Remote session";
-    }
-    remoteThreadWorkspaces.set(thread.id, workspaceId);
-    return [thread];
+    const id = typeof row.thread_id === "string" ? row.thread_id : typeof row.session_id === "string" ? row.session_id : "";
+    if (!id) return [];
+    remoteThreadWorkspaces.set(id, workspaceId);
+    const updated = typeof row.updated_at === "string" ? row.updated_at : new Date().toISOString();
+    return [{ id, kind: "chat" as const, title: typeof row.name === "string" ? row.name : "Remote session", workspacePath: connection.status.canonicalPath, createdAt: updated, updatedAt: updated, status: "idle" as const, messageCount: typeof row.message_count === "number" ? row.message_count : 0 }];
   });
 }
 

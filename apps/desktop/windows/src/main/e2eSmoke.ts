@@ -5046,7 +5046,7 @@ async function runChatFailureSmoke(window: BrowserWindow): Promise<SmokeResult> 
         checks.abortStart = outcome.events.some((event) => event.type === "start");
         checks.abortEvent = outcome.events.some((event) => event.type === "aborted");
         checks.abortTerminal = details.abort.terminalEventType === "aborted";
-        checks.abortThreadError = details.abort.thread && details.abort.thread.status === "error";
+        checks.abortThreadIdle = details.abort.thread && details.abort.thread.status === "idle";
         checks.abortNoDone = !outcome.events.some((event) => event.type === "done");
         checks.abortNoError = !outcome.events.some((event) => event.type === "error");
       } else if (scenario === "sse-error") {

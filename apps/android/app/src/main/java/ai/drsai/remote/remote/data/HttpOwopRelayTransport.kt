@@ -1,6 +1,8 @@
 package ai.drsai.remote.remote.data
 
 import ai.drsai.remote.remote.model.RuntimeId
+import ai.drsai.remote.remote.security.RelayDeviceProof
+import ai.drsai.remote.remote.security.authorizeRelayRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -16,6 +18,7 @@ class HttpOwopRelayTransport(
     private val runtimeId: RuntimeId,
     private val accessToken: () -> String,
     private val http: OkHttpClient = OkHttpClient(),
+    private val deviceProof: RelayDeviceProof? = null,
 ) : OwopRelayTransport {
     private val root = baseUrl.trimEnd('/').toHttpUrl()
 
@@ -27,8 +30,16 @@ class HttpOwopRelayTransport(
         val url = root.newBuilder().addPathSegments(
             "v1/runtimes/${runtimeId.value}/workspaces/${request.workspaceId.value}/owop",
         ).build()
-        http.newCall(Request.Builder().url(url).header("Authorization", "Bearer ${accessToken()}")
-            .post(body.toString().toRequestBody("application/json".toMediaType())).build()).execute().use { response ->
+        val token = accessToken()
+        val authorized = authorizeRelayRequest(
+            deviceProof,
+            Request.Builder().url(url)
+                .header("Authorization", "Bearer $token")
+                .post(body.toString().toRequestBody("application/json".toMediaType()))
+                .build(),
+            token,
+        )
+        http.newCall(authorized).execute().use { response ->
             val payload = JSONObject(response.body?.string() ?: error("relay_empty_response"))
             if (!response.isSuccessful) {
                 return@withContext OwopResult.Failure(request.requestId, payload.optString("code", "owop_failed"),

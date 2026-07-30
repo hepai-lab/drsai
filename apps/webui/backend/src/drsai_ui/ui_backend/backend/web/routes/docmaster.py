@@ -20,8 +20,10 @@ import tempfile
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
+
+from ..deps import get_db
 
 router = APIRouter()
 
@@ -93,7 +95,7 @@ def _resolve_template_result(template_id: str, source: str, user_id: Optional[st
         raise HTTPException(status_code=400, detail="user_id is required when source='mine'")
 
     workspace_dir = str(docmaster_dir / "workspace")
-    skill = cls(workspace_dir=workspace_dir)
+    skill = cls(workspace_dir=workspace_dir, user_id=user_id)
     result = skill.get_path(template_id, user_id=user_id if source == "mine" else None)
     if not result.get("success"):
         raise HTTPException(status_code=404, detail=result.get("message", "Template not found"))
@@ -189,7 +191,7 @@ async def list_templates(
         )
 
     workspace_dir = str(docmaster_dir / "workspace")
-    skill = cls(workspace_dir=workspace_dir)
+    skill = cls(workspace_dir=workspace_dir, user_id=user_id)
     result = skill.list(user_id=user_id, category=category, query=query)
     return {
         "status": bool(result.get("success", True)),
@@ -323,7 +325,7 @@ async def save_template(
         with open(tmp_name, "wb") as f:
             f.write(contents)
         workspace_dir = str(docmaster_dir / "workspace")
-        skill = cls(workspace_dir=workspace_dir)
+        skill = cls(workspace_dir=workspace_dir, user_id=user_id)
         result = skill.save(
             source_path=tmp_name,
             user_id=user_id,
@@ -365,7 +367,7 @@ async def delete_template(
             detail="DocMaster workspace not found; set DOCMASTER_DIR env var to override.",
         )
     workspace_dir = str(docmaster_dir / "workspace")
-    skill = cls(workspace_dir=workspace_dir)
+    skill = cls(workspace_dir=workspace_dir, user_id=user_id)
     result = skill.delete(template_id=template_id, user_id=user_id)
     if not result.get("success"):
         raise HTTPException(status_code=404, detail=result.get("message", "删除模板失败"))
@@ -373,4 +375,114 @@ async def delete_template(
         "status": True,
         "message": result.get("message", ""),
         "data": {"removed_id": result.get("removed_id")},
+    }
+
+
+# ── Demo seeding ──────────────────────────────────────────────────────────────
+# Server-side fixture files used by the right-panel 试用 buttons. The buttons
+# stand in for "user uploads three documents and clicks submit" so a demo can
+# show the agent end-to-end without the user having any files locally.
+
+_DEMO_SOURCE_SUBDIR = "workspace/关联业务测试"
+
+# Each demo kind copies the same source files but builds a different prompt
+# downstream. Keeping the file lists keyed by kind (rather than reading the
+# source dir blindly) means we can later vary the fixtures per task without
+# changing the route shape.
+_DEMO_KIND_FILES = {
+    "guanlianyewu": [
+        "1.5GHz超导腔非标制造 关联业务申报书.docx",
+        "1.5GHz超导腔非标制造 关联业务承诺书.jpg",
+        "HT-IHEP-JQ-03282024 合同.pdf",
+    ],
+    "zonghe": [
+        "1.5GHz超导腔非标制造 关联业务申报书.docx",
+        "1.5GHz超导腔非标制造 关联业务承诺书.jpg",
+        "HT-IHEP-JQ-03282024 合同.pdf",
+    ],
+}
+
+
+@router.post("/demo/seed", response_model=dict)
+async def seed_demo_files(
+    background: BackgroundTasks,
+    kind: str = Query(..., description="'guanlianyewu' or 'zonghe' — selects which fixture set"),
+    user_id: str = Query(..., description="Caller email; required for GFS upload"),
+    db=Depends(get_db),
+) -> dict:
+    """Copy fixture files into the user's GFS upload area and return the
+    {uploaded:[{name, remote_path}]} payload the frontend already knows how
+    to consume (same shape as POST /cloud/upload).
+
+    Used by the 试用 buttons next to 申请资料审查 / 综合材料撰写 — instead of
+    asking the demo viewer to upload anything, we seed real files server-side
+    and hand the frontend the same `serverPath`s a real upload would produce.
+    The agent then reads those paths exactly as it would in a normal session.
+    """
+    if not user_id:
+        raise HTTPException(status_code=400, detail="user_id is required")
+    if kind not in _DEMO_KIND_FILES:
+        raise HTTPException(status_code=400, detail=f"unknown demo kind: {kind!r}")
+
+    docmaster_dir = _resolve_docmaster_dir()
+    if docmaster_dir is None:
+        raise HTTPException(status_code=404, detail="DocMaster workspace not found")
+    source_dir = docmaster_dir / _DEMO_SOURCE_SUBDIR
+    if not source_dir.is_dir():
+        raise HTTPException(status_code=404, detail=f"demo fixture dir missing: {source_dir}")
+
+    # GFS direct upload — same pattern /cloud/upload uses (no mirror layer)
+    from .gfs_utils import get_gfs_config, get_gfs_bucket_configs, gfs_put
+
+    cfg = get_gfs_config(db, user_id)
+    if not cfg:
+        raise HTTPException(status_code=404, detail="未找到 GFS 配置")
+
+    bucket_cfgs = get_gfs_bucket_configs(cfg)
+    if not bucket_cfgs:
+        raise HTTPException(status_code=404, detail="未找到 GFS bucket 配置")
+    bucket_cfg = bucket_cfgs[0]  # use first bucket for demo uploads
+
+    uploaded: list[dict] = []
+    errors: list[dict] = []
+    prefix = "uploads/"  # match the destination the real /cloud/upload uses
+
+    # Copy fixtures to temp files and upload directly to GFS
+    import tempfile as _tempfile_mod
+    tmp_dir = Path(_tempfile_mod.mkdtemp(prefix="docmaster_demo_"))
+
+    def _cleanup_tmp():
+        shutil.rmtree(str(tmp_dir), ignore_errors=True)
+
+    for filename in _DEMO_KIND_FILES[kind]:
+        src = source_dir / filename
+        if not src.is_file():
+            errors.append({"name": filename, "error": "fixture file missing"})
+            continue
+        # Sanitize same way /cloud/upload does, so jcli round-trips reliably.
+        from .cloud import _sanitize_gfs_filename  # local import to avoid cycle
+        safe_name = _sanitize_gfs_filename(filename)
+        remote_path = f"{prefix}{safe_name}"
+        tmp_dest = tmp_dir / safe_name
+        try:
+            shutil.copyfile(str(src), str(tmp_dest))
+            ok = gfs_put(str(tmp_dest), remote_path, bucket_cfg)
+            if not ok:
+                errors.append({"name": filename, "error": "上传到 GFS 失败"})
+                continue
+        except Exception as e:
+            errors.append({"name": filename, "error": f"上传失败: {str(e)[:200]}"})
+            continue
+        uploaded.append({
+            "name": safe_name,
+            "remote_path": remote_path,
+            "original_name": filename,
+        })
+
+    background.add_task(_cleanup_tmp)
+
+    return {
+        "status": True,
+        "message": f"seeded {len(uploaded)} demo file(s)",
+        "data": {"uploaded": uploaded, "errors": errors},
     }

@@ -17,7 +17,7 @@ from typing import Any, Callable, Mapping, Sequence
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-from drsai.backend.agent_runtime import RuntimeExecutionError
+from drsai.backend.runtime.agent import RuntimeExecutionError
 
 
 _VERSION = re.compile(r"(?:codex-cli\s+)?(?P<version>\d+\.\d+\.\d+)(?:\s|$)")

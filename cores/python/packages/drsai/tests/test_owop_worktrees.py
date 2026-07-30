@@ -1,39 +1,17 @@
 from __future__ import annotations
 
 import asyncio
-import importlib.util
 import subprocess
-import sys
-import types
 from pathlib import Path
+
+from drsai.backend.runtime import registry as registry_module
+from drsai.backend.workspace import git_worktree_service as service_module
+from drsai.owop import bindings as bindings_module
+from drsai.owop import protocol as protocol_module
 
 
 ROOT = Path(__file__).resolve().parents[5]
-BACKEND = ROOT / "cores" / "python" / "packages" / "drsai" / "src" / "drsai" / "backend"
-OWOP = ROOT / "cores" / "python" / "packages" / "drsai" / "src" / "drsai" / "owop"
-SCHEMA = ROOT / "protocol" / "owop" / "owop.schema.json"
-
-for package_name, package_path in (
-    ("drsai", BACKEND.parent), ("drsai.backend", BACKEND), ("drsai.owop", OWOP),
-):
-    package = types.ModuleType(package_name)
-    package.__path__ = [str(package_path)]
-    sys.modules.setdefault(package_name, package)
-
-
-def load(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-protocol_module = load("drsai.owop.protocol", OWOP / "protocol.py")
-bindings_module = load("drsai.owop.bindings", OWOP / "bindings.py")
-registry_module = load("drsai.backend.runtime_registry", BACKEND / "runtime_registry.py")
-service_module = load("drsai.backend.git_worktree_service", BACKEND / "git_worktree_service.py")
+SCHEMA = ROOT / "cores" / "protocol" / "owop" / "owop.schema.json"
 
 
 def git(cwd: Path, *args: str) -> str:

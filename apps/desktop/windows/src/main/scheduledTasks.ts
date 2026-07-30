@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from "crypto";
-import { mkdir, readFile, writeFile } from "fs/promises";
-import { dirname, join } from "path";
+import { join } from "path";
 import type {
   DesktopScheduledTask,
   DesktopScheduledTaskCadence,
@@ -27,8 +26,11 @@ import {
   DEFAULT_MISSED_RUN_POLICY,
   getNextRunAfterTrigger,
 } from "../../../shared/main/scheduleTiming";
+import { redactDesktopSecrets } from "../../../shared/main/secretRedaction";
+import { readDurableJson, writeDurableJson } from "../../../shared/main/durableJsonStore";
 
 const SCHEDULED_TASKS_FILE = join(DRSAI_HOME, "desktop", "scheduled-tasks.json");
+const MAX_SCHEDULED_TASK_STORE_BYTES = 16 * 1024 * 1024;
 const MAX_SCHEDULED_TASKS_PER_WORKSPACE = 100;
 const GLOBAL_SCHEDULED_TASK_KEY = "__global__";
 let scheduledTaskRunQueue: Promise<void> = Promise.resolve();
@@ -39,10 +41,10 @@ interface ScheduledTaskStore {
 
 interface ScheduledTaskRuntime {
   prepareWorkflowRun(
-    request: DesktopWorkflowRunPrepareRequest,
+    request: DesktopWorkflowRunPrepareRequest & { triggerKey: string },
   ): Promise<DesktopWorkflowRunPrepareResult>;
   startWorkflowRun(
-    request: DesktopWorkflowRunStartRequest,
+    request: DesktopWorkflowRunStartRequest & { idempotencyKey: string },
   ): Promise<DesktopWorkflowRunStartResult>;
   listWorkflowRuns?(workspacePath?: string): Promise<DesktopWorkflowRun[]>;
   onWorkflowRun?(run: DesktopScheduledTaskRunResult["runs"][number]): Promise<void>;
@@ -220,12 +222,18 @@ async function runDueScheduledTasksUnlocked(
       if (!isTaskDue(task, now)) continue;
       checked += 1;
       const taskIndex = tasks.findIndex((item) => item.id === task.id);
-      const result = await runSingleScheduledTask(task, generatedAt, runtime);
-      items.push(result.item);
-      if (result.run) runs.push(result.run);
-      if (taskIndex >= 0) {
-        tasks[taskIndex] = result.task;
+      try {
+        const result = await runSingleScheduledTask(task, generatedAt, runtime);
+        items.push(result.item);
+        if (result.run) runs.push(result.run);
+        if (taskIndex >= 0) tasks[taskIndex] = result.task;
+      } catch (error) {
+        const triggerAudit = createScheduledTriggerAudit(task, generatedAt);
+        const message = redactDesktopSecrets(error instanceof Error ? error.message : "Scheduled Workflow trigger failed.").slice(0, 1000);
+        if (taskIndex >= 0) tasks[taskIndex] = { ...task, updatedAt: generatedAt, lastTriggerAudit: triggerAudit, message: `Scheduled Workflow trigger failed and remains due for retry: ${message}` };
+        items.push({ taskId: task.id, title: task.title, status: "failed", message, reason: "workflow_trigger_failed", triggerAudit });
       }
+      await writeScheduledTaskStore(store);
     }
     store.workspaces[key] = tasks
       .sort(compareScheduledTasks)
@@ -241,6 +249,7 @@ async function runDueScheduledTasksUnlocked(
     ).length,
     reconnected: items.filter((item) => item.status === "reconnected").length,
     skipped: items.filter((item) => item.status === "skipped").length,
+    failed: items.filter((item) => item.status === "failed").length,
     blocked: items.filter((item) => item.status === "blocked").length,
     items,
     runs,
@@ -285,6 +294,7 @@ export function startScheduledTaskWorker(
         triggered: result.triggered,
         reconnected: result.reconnected,
         skipped: result.skipped,
+        failed: result.failed,
         blocked: result.blocked,
       };
       return result;
@@ -441,7 +451,9 @@ async function runSingleScheduledTask(
   const prepared = await runtime.prepareWorkflowRun({
     templateId: dispatchTask.workflowTemplateId,
     ...(dispatchTask.workspacePath ? { workspacePath: dispatchTask.workspacePath } : {}),
+    triggerKey: triggerAudit.triggerKey,
   });
+  prepared.recipe.id = scheduledRecipeId(dispatchTask.workflowTemplateId, triggerAudit.triggerKey);
   if (prepared.blocked || prepared.recipe.status === "blocked") {
     return {
       task: {
@@ -464,8 +476,16 @@ async function runSingleScheduledTask(
     };
   }
 
+  if (prepared.queued || prepared.recipe.status === "approval_queued") {
+    return {
+      task: { ...dispatchTask, updatedAt: now, message: "Waiting for Workflow approval; scheduled time is retained.", verification: prepared.recipe.verification, lastTriggerAudit: triggerAudit },
+      item: { taskId: dispatchTask.id, title: dispatchTask.title, status: "queued_approval", message: prepared.reason, ...(prepared.recipe.approvalId ? { approvalId: prepared.recipe.approvalId } : {}), triggerAudit },
+    };
+  }
+
   const started = await runtime.startWorkflowRun({
     recipe: prepared.recipe,
+    idempotencyKey: triggerAudit.triggerKey,
   });
   const nextRunAt = nextRunAfterTrigger;
   const status =
@@ -541,13 +561,13 @@ function clearActiveWorkflowRun(
 }
 
 async function readScheduledTaskStore(): Promise<ScheduledTaskStore> {
-  try {
-    const parsed = JSON.parse(await readFile(SCHEDULED_TASKS_FILE, "utf8"));
-    if (!parsed || typeof parsed !== "object") return { workspaces: {} };
+  return (await readDurableJson(SCHEDULED_TASKS_FILE, decodeScheduledTaskStore, { maxBytes: MAX_SCHEDULED_TASK_STORE_BYTES }))?.value ?? { workspaces: {} };
+}
+
+function decodeScheduledTaskStore(parsed: unknown): ScheduledTaskStore {
+    if (!parsed || typeof parsed !== "object") throw new Error("Scheduled task store schema is invalid.");
     const rawWorkspaces = (parsed as ScheduledTaskStore).workspaces;
-    if (!rawWorkspaces || typeof rawWorkspaces !== "object") {
-      return { workspaces: {} };
-    }
+    if (!rawWorkspaces || typeof rawWorkspaces !== "object" || Array.isArray(rawWorkspaces)) throw new Error("Scheduled task store schema is invalid.");
     const workspaces: ScheduledTaskStore["workspaces"] = {};
     for (const [key, tasks] of Object.entries(rawWorkspaces)) {
       if (!Array.isArray(tasks)) continue;
@@ -559,14 +579,10 @@ async function readScheduledTaskStore(): Promise<ScheduledTaskStore> {
       if (validTasks.length) workspaces[key] = validTasks;
     }
     return { workspaces };
-  } catch {
-    return { workspaces: {} };
-  }
 }
 
 async function writeScheduledTaskStore(store: ScheduledTaskStore): Promise<void> {
-  await mkdir(dirname(SCHEDULED_TASKS_FILE), { recursive: true });
-  await writeFile(SCHEDULED_TASKS_FILE, `${JSON.stringify(store, null, 2)}\n`, "utf8");
+  await writeDurableJson(SCHEDULED_TASKS_FILE, store, { maxBytes: MAX_SCHEDULED_TASK_STORE_BYTES });
 }
 
 function normalizeListRequest(request: unknown): DesktopScheduledTaskListRequest {
@@ -885,6 +901,11 @@ function compareScheduledTasks(
 
 function createScheduledTaskId(kind: string, createdAt: string): string {
   return `scheduled-task:${kind}:${Date.parse(createdAt).toString(36)}:${randomUUID()}`;
+}
+
+function scheduledRecipeId(templateId: string, triggerKey: string): string {
+  const hex = triggerKey.slice(0, 32);
+  return `workflow:${templateId}:${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 function workspaceKey(workspacePath?: string): string {

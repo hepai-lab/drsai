@@ -1,71 +1,52 @@
 #!/usr/bin/env bash
-# ─────────────────────────────────────────────────────────────────────────────
-# DrSai Desktop — macOS Dev Setup Stub
-# ==========================================
-# Creates stub files in ~/.drsai so the Electron app finds DRSAI_PYTHON
-# without running the full installer.  Run once, then use dev.sh / start.sh.
-#
-# Usage:
-#   ./apps/desktop/macos/scripts/setup-dev.sh
-# ─────────────────────────────────────────────────────────────────────────────
+# Prepare a real, isolated macOS development Runtime and desktop dependency tree.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-CYAN='\033[0;36m'
-NC='\033[0m'
-
-# ── Find Python ─────────────────────────────────────────────────────────────
-PYTHON_PATH="$(command -v python3 || command -v python || true)"
-if [ -z "$PYTHON_PATH" ]; then
-    echo -e "${RED}ERROR: python not found. Activate your venv/conda first!${NC}"
-    exit 1
-fi
-echo -e "${GREEN}Python: $PYTHON_PATH${NC}"
-
-# ── Auto-detect project root ────────────────────────────────────────────────
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
-echo -e "${GREEN}Project: $REPO_ROOT${NC}"
+PACKAGE_ROOT="$REPO_ROOT/cores/python/packages/drsai"
+DESKTOP_ROOT="$REPO_ROOT/apps/desktop"
+DRSAI_HOME="${DRSAI_HOME:-$HOME/.drsai}"
+RUNTIME_ROOT="$DRSAI_HOME/drsai-agent"
+VENV_ROOT="$RUNTIME_ROOT/venv"
+PYTHON="$VENV_ROOT/bin/python"
+DRSAI_CLI="$RUNTIME_ROOT/drsai"
 
-# ── Create stub directories ─────────────────────────────────────────────────
-STUB_BIN="$HOME/.drsai/drsai-agent/venv/bin"
-DOT_LOCAL_BIN="$HOME/.local/bin"
-mkdir -p "$STUB_BIN" "$DOT_LOCAL_BIN"
-
-# ── python stub ─────────────────────────────────────────────────────────────
-PYTHON_STUB="$STUB_BIN/python"
-if [ ! -e "$PYTHON_STUB" ]; then
-    ln -sf "$PYTHON_PATH" "$PYTHON_STUB"
-    echo -e "${GREEN}python stub → $PYTHON_STUB${NC}"
-else
-    echo -e "${GREEN}python stub already exists${NC}"
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  echo "setup-dev.sh supports macOS only." >&2
+  exit 1
 fi
 
-# ── drsai CLI stub ──────────────────────────────────────────────────────────
-DRSAI_STUB="$DOT_LOCAL_BIN/drsai"
-cat > "$DRSAI_STUB" << 'PYEOF'
-#!/usr/bin/env bash
-exec python3 -m drsai.backend.run_cli "$@"
-PYEOF
-chmod +x "$DRSAI_STUB"
-echo -e "${GREEN}drsai CLI → $DRSAI_STUB${NC}"
-
-# ── DRSAI_HOME ──────────────────────────────────────────────────────────────
-export DRSAI_HOME="$HOME/.drsai"
-mkdir -p "$DRSAI_HOME"
-
-# Write to shell profile if not already there
-SHELL_RC=""
-case "$SHELL" in
-    */zsh) SHELL_RC="$HOME/.zshrc" ;;
-    */bash) SHELL_RC="$HOME/.bashrc" ;;
-esac
-if [ -n "$SHELL_RC" ] && ! grep -q "DRSAI_HOME" "$SHELL_RC" 2>/dev/null; then
-    echo "export DRSAI_HOME=\"\$HOME/.drsai\"" >> "$SHELL_RC"
-    echo -e "${CYAN}Added DRSAI_HOME to $SHELL_RC${NC}"
+SYSTEM_PYTHON="${OPENDRSAI_DEV_PYTHON:-$(command -v python3 || true)}"
+if [[ -z "$SYSTEM_PYTHON" ]]; then
+  echo "Python 3.11 or newer is required." >&2
+  exit 1
 fi
 
-echo ""
-echo -e "${CYAN}Done! Stub install created.${NC}"
-echo -e "Now run: ${GREEN}./apps/desktop/macos/scripts/dev.sh${NC} (hot reload) or ${GREEN}./apps/desktop/macos/scripts/start.sh${NC} (one-click)"
+PYTHON_VERSION="$($SYSTEM_PYTHON -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+PYTHON_MAJOR="${PYTHON_VERSION%%.*}"
+PYTHON_MINOR="${PYTHON_VERSION#*.}"
+if (( PYTHON_MAJOR != 3 || PYTHON_MINOR < 11 )); then
+  echo "Python 3.11 or newer is required; found $PYTHON_VERSION." >&2
+  exit 1
+fi
+
+mkdir -p "$RUNTIME_ROOT"
+if [[ ! -x "$PYTHON" ]]; then
+  "$SYSTEM_PYTHON" -m venv "$VENV_ROOT"
+fi
+
+"$PYTHON" -m pip install --disable-pip-version-check --upgrade pip
+"$PYTHON" -m pip install --disable-pip-version-check --editable "$PACKAGE_ROOT"
+ln -f "$VENV_ROOT/bin/drsai" "$DRSAI_CLI"
+chmod 700 "$DRSAI_CLI"
+
+"$PYTHON" -c 'import drsai, fastapi, uvicorn; print(drsai.__file__)'
+"$DRSAI_CLI" --help >/dev/null
+
+cd "$DESKTOP_ROOT"
+npm ci
+npm run typecheck --workspace opendrsai-macos-desktop
+
+echo "macOS development Runtime is ready: $RUNTIME_ROOT"
+echo "Start with: $SCRIPT_DIR/dev.sh"

@@ -51,8 +51,9 @@ import { ChannelsView } from "./components/ChannelsView";
 import { ChatWorkspace } from "./components/ChatWorkspace";
 import { PreviewBrowserPanel } from "./components/PreviewBrowserPanel";
 import { ProviderAnalyticsView } from "./components/ProviderAnalyticsView";
-import { SkillsManager } from "./components/SkillsManager";
-import { GfsView } from "./components/GfsView";
+// Temporarily hide Skills / GFS UI — keep for later reuse.
+// import { SkillsManager } from "./components/SkillsManager";
+// import { GfsView } from "./components/GfsView";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { DebugPanel } from "./components/DebugPanel";
 import { installDebugLogCapture } from "./debugLogStore";
@@ -1199,6 +1200,7 @@ function AuthenticatedApp({
         </section>
       ) : null}
 
+      {/* Temporarily hide Skills management page — keep for later reuse.
       {activeNav === MENU_IDS.skillsSquare ? (
         <section className="skills-square-panel skills-manager-panel">
           <SkillsManager
@@ -1207,6 +1209,7 @@ function AuthenticatedApp({
           />
         </section>
       ) : null}
+      */}
 
       {activeNav === MENU_IDS.approvalCenter ? (
         <ApprovalCenterView
@@ -1229,9 +1232,11 @@ function AuthenticatedApp({
         <ProviderAnalyticsView language={language} />
       ) : null}
 
+      {/* Temporarily hide GFS cloud page — keep for later reuse.
       {activeNav === MENU_IDS.library ? (
         <GfsView language={language} />
       ) : null}
+      */}
 
       {activeNav === MENU_IDS.profile ? (
         <SettingsPanel

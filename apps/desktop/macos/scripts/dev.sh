@@ -11,8 +11,17 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
-DRSAI_API_PORT="${DRSAI_API_PORT:-8642}"
+DRSAI_HOME="${DRSAI_HOME:-$HOME/.drsai}"
+DRSAI_DEV_PYTHON="${OPENDRSAI_DEV_RUNTIME_PYTHON:-$DRSAI_HOME/drsai-agent/venv/bin/python}"
+DRSAI_API_PORT="${DRSAI_API_PORT:-18642}"
 API_URL="http://127.0.0.1:${DRSAI_API_PORT}"
+
+# Local macOS development should exercise the same production identity and
+# model routes as the released Windows/macOS apps unless a developer
+# explicitly opts into another environment.
+export OPENDRSAI_OIDC_ISSUER="${OPENDRSAI_OIDC_ISSUER:-https://ai.ihep.ac.cn/api}"
+export OPENDRSAI_PLATFORM_BASE_URL="${OPENDRSAI_PLATFORM_BASE_URL:-https://ai.ihep.ac.cn}"
+export DRSAI_API_PORT
 
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'
@@ -22,11 +31,17 @@ NC='\033[0m'
 echo -e "${CYAN}🔧 DrSai Desktop — Development Mode${NC}"
 echo ""
 
+if [ ! -x "$DRSAI_DEV_PYTHON" ]; then
+    echo "Development Runtime is missing. Run $SCRIPT_DIR/setup-dev.sh first." >&2
+    exit 1
+fi
+
 cleanup() {
+    local exit_code="${1:-0}"
     if [ -n "${DRSAI_API_PID:-}" ]; then
         kill "$DRSAI_API_PID" 2>/dev/null || true
     fi
-    exit 0
+    exit "$exit_code"
 }
 trap cleanup INT TERM
 
@@ -34,7 +49,7 @@ trap cleanup INT TERM
 echo -e "${CYAN}Starting API gateway (with hot reload)...${NC}"
 PYTHONPATH="$REPO_ROOT/cores/python/packages/drsai/src${PYTHONPATH:+:$PYTHONPATH}" \
 DRSAI_API_PORT="$DRSAI_API_PORT" \
-uvicorn drsai.backend.gateway:app \
+"$DRSAI_DEV_PYTHON" -m uvicorn drsai.backend.gateway:app \
     --host 127.0.0.1 \
     --port "$DRSAI_API_PORT" \
     --reload \
@@ -52,6 +67,11 @@ for i in $(seq 1 30); do
     sleep 1
 done
 
+if ! kill -0 "$DRSAI_API_PID" 2>/dev/null || ! curl -fsS "${API_URL}/health" >/dev/null 2>&1; then
+    echo "API gateway did not become healthy within 30 seconds." >&2
+    cleanup 1
+fi
+
 # Start Electron dev
 # DRSAI_DEV_SKIP_INSTALL=1 tells the Electron app to skip the bootstrap
 # (git clone → venv → pip install). The gateway is already running locally
@@ -62,6 +82,6 @@ if [ "$(uname -s)" != "Darwin" ]; then
     exit 1
 fi
 cd "$REPO_ROOT/apps/desktop/macos"
-DRSAI_DEV_SKIP_INSTALL=1 npm run dev
+OPENDRSAI_BUILD_CHANNEL=development DRSAI_DEV_SKIP_INSTALL=1 npm run dev
 
 cleanup

@@ -104,6 +104,7 @@ export function useDesktopChatAdapter({
   threadSnapshot,
   workspaceInstructions,
   workspaceId,
+  workspaceName,
   workspacePath,
 }: {
   availableAgents?: DesktopAgent[];
@@ -121,6 +122,7 @@ export function useDesktopChatAdapter({
   threadSnapshot?: ChatThreadSnapshot | null;
   workspaceInstructions?: WorkspaceInstructionSummary[];
   workspaceId?: string;
+  workspaceName?: string;
   workspacePath?: string;
 }): DesktopChatAdapter {
   const [input, setInput] = useState("");
@@ -141,6 +143,8 @@ export function useDesktopChatAdapter({
   const restoredSnapshotThreadRef = useRef<string | null>(null);
   const pendingStructuredEventsByRequest = useRef<Record<string, StructuredConversationEvent[]>>({});
   const structuredFlushTimerRef = useRef<number | null>(null);
+  const appliedSnapshotUpdatedAtRef = useRef(0);
+  const lastPublishedSnapshotAtRef = useRef(0);
   const threadIdRef = useRef(threadId);
   const languageRef = useRef(language);
   const developerModeRef = useRef(developerMode);
@@ -265,6 +269,10 @@ export function useDesktopChatAdapter({
     clearStructuredFlush();
     clearRecoveryTimers();
     restoredSnapshotThreadRef.current = null;
+    appliedSnapshotUpdatedAtRef.current = threadSnapshot?.threadId === threadId
+      ? threadSnapshot.updatedAt
+      : 0;
+    lastPublishedSnapshotAtRef.current = 0;
     if (deltaFlushTimerRef.current !== null) {
       window.clearTimeout(deltaFlushTimerRef.current);
       deltaFlushTimerRef.current = null;
@@ -304,6 +312,10 @@ export function useDesktopChatAdapter({
 
   useEffect(() => {
     let cancelled = false;
+    if (!canChat) {
+      teamMemoryRef.current = [];
+      return () => { cancelled = true; };
+    }
     desktopApi.listTeamMemory({ limit: 20 }).then((entries) => {
       if (cancelled) return;
       teamMemoryRef.current = entries;
@@ -312,7 +324,7 @@ export function useDesktopChatAdapter({
       teamMemoryRef.current = [];
     });
     return () => { cancelled = true; };
-  }, [threadId, workspacePath]);
+  }, [canChat, threadId, workspacePath]);
 
   useEffect(() => {
     let cancelled = false;
@@ -354,6 +366,9 @@ export function useDesktopChatAdapter({
 
   useEffect(() => {
     if (threadSnapshot?.threadId !== threadId) return;
+    if (activeRequestId) return;
+    if (threadSnapshot.updatedAt <= appliedSnapshotUpdatedAtRef.current) return;
+    if (threadSnapshot.updatedAt <= lastPublishedSnapshotAtRef.current) return;
     const restoredMessages = threadSnapshot.messages.length
       ? hydrateStructuredMessages(threadSnapshot.messages).filter((message) => message.id !== "welcome")
       : [createWelcomeMessage(language, userPreferencesRef.current)];
@@ -361,8 +376,9 @@ export function useDesktopChatAdapter({
       restoreActiveStructuredTurns(restoredMessages);
       restoredSnapshotThreadRef.current = threadId;
     }
+    appliedSnapshotUpdatedAtRef.current = threadSnapshot.updatedAt;
     setMessages(restoredMessages);
-  }, [language, threadId, threadSnapshot]);
+  }, [activeRequestId, language, threadId, threadSnapshot]);
 
   useEffect(() => {
     if (threadSnapshot?.messages?.length) return;
@@ -553,6 +569,7 @@ export function useDesktopChatAdapter({
         sessionId: threadIdRef.current,
         runId: requestId,
         workspaceId,
+        workspaceName,
         workspacePath,
         attachments,
         model: options?.model?.trim() || undefined,
@@ -571,7 +588,7 @@ export function useDesktopChatAdapter({
         },
         messages: buildRequestMessages(
           [...messages, userMessage]
-            .filter((message) => !message.error && message.content.trim().length > 0)
+            .filter((message) => message.id !== "welcome" && !message.error && message.content.trim().length > 0)
             .map(({ role, content }) => ({ role, content })),
           workspaceInstructions,
           projectMemoryRef.current,
@@ -913,11 +930,14 @@ export function useDesktopChatAdapter({
     const nonWelcome = nextMessages.filter((message) => message.id !== "welcome");
     if (!nonWelcome.length) return;
     const firstUser = nonWelcome.find((message) => message.role === "user");
+    const updatedAt = Math.max(Date.now(), lastPublishedSnapshotAtRef.current + 1);
+    lastPublishedSnapshotAtRef.current = updatedAt;
+    appliedSnapshotUpdatedAtRef.current = updatedAt;
     onThreadUpdated?.({
       threadId: threadIdRef.current,
       title: firstUser?.content.slice(0, 48) || (languageRef.current === "zh" ? "新会话" : "New chat"),
       messages: nextMessages,
-      updatedAt: Date.now(),
+      updatedAt,
       messageCount: nonWelcome.length,
     });
   }
@@ -960,9 +980,10 @@ export function useDesktopChatAdapter({
       return;
     }
     if (action.type === "open-view") {
-      if (action.viewId === "skills_square") {
-        onOpenSkillsSquare?.(action.target);
-      }
+      // Temporarily hide Skills management entry — keep for later reuse.
+      // if (action.viewId === "skills_square") {
+      //   onOpenSkillsSquare?.(action.target);
+      // }
       return;
     }
     if (action.type === "set-input") {

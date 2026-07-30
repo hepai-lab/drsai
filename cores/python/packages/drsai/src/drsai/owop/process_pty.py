@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, BinaryIO, Callable, Mapping
 
-from drsai.backend.workspace_paths import WorkspacePathError, relative_parts
+from drsai.backend.workspace.paths import WorkspacePathError, relative_parts
 from drsai.owop.protocol import OWOPError
 
 

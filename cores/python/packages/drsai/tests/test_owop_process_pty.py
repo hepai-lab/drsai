@@ -106,7 +106,11 @@ def test_windows_process_lifecycle_and_tree_cleanup(tmp_path: Path):
 
 def test_windows_real_conpty_write_resize_attach_kill_and_truncation(tmp_path: Path):
     repo_root = Path(__file__).resolve().parents[5]
-    node_pty = repo_root / "apps" / "desktop" / "windows" / "node_modules" / "node-pty"
+    candidates = (
+        repo_root / "apps" / "desktop" / "windows" / "node_modules" / "node-pty",
+        repo_root / "apps" / "desktop" / "node_modules" / "node-pty",
+    )
+    node_pty = next((candidate for candidate in candidates if candidate.is_dir()), candidates[0])
     assert node_pty.is_dir(), "node-pty must be present in the Windows Desktop dependency tree"
     operations = LocalProcessPtyOperations(tmp_path, node_pty_module=node_pty)
     try:

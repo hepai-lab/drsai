@@ -1,0 +1,333 @@
+name: macOS Desktop
+
+on:
+  push:
+    branches: [main, feature/desktop]
+    tags: ["v*"]
+    paths:
+      - "apps/desktop/macos/**"
+      - "apps/desktop/shared/**"
+      - "apps/desktop/package-lock.json"
+      - ".github/workflows/macos-desktop.yml"
+  pull_request:
+    paths:
+      - "apps/desktop/macos/**"
+      - "apps/desktop/shared/**"
+      - "apps/desktop/package-lock.json"
+      - ".github/workflows/macos-desktop.yml"
+  schedule:
+    - cron: "0 16 * * *"
+  workflow_dispatch:
+    inputs:
+      run_signed_release:
+        description: "Run the signed real-device RC and release gates"
+        required: false
+        default: false
+        type: boolean
+      publish_release:
+        description: "Publish artifacts after all L0-L6 gates pass"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: macos-desktop-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  verify-macos-unsigned:
+    name: Unsigned Apple Silicon verification
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Setup Runtime Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11.9"
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Verify phase-2 catalog and architecture
+        run: |
+          npm run verify:p2-catalog --workspace opendrsai-macos-desktop
+          npm run verify:architecture
+
+      - name: Build and test unsigned Swift Native Helper
+        run: npm run test:native-helper --workspace opendrsai-macos-desktop
+
+      - name: Generate clean source snapshot
+        if: ${{ !github.event.pull_request.head.repo.fork }}
+        run: node shared/test-kit/generate-source-snapshot.mjs --require-clean
+
+      - name: Typecheck, build and verify shared contracts
+        run: |
+          npm run typecheck --workspace opendrsai-macos-desktop
+          npm run verify:update-feed:unsigned --workspace opendrsai-macos-desktop
+          npm run verify:update-promotion:unsigned --workspace opendrsai-macos-desktop
+          npm run verify:update-publish-plan --workspace opendrsai-macos-desktop
+          npm run verify:runtime-remote-parity --workspace opendrsai-macos-desktop
+          npm run verify:security-p2 --workspace opendrsai-macos-desktop
+          npm run verify:contract --workspace opendrsai-macos-desktop
+          npm run verify:macos-ux --workspace opendrsai-macos-desktop
+          npm run verify:coverage --workspace opendrsai-macos-desktop
+          npm run verify:defects --workspace opendrsai-macos-desktop
+
+      - name: Build Runtime twice and record reproducibility evidence
+        working-directory: apps/desktop/macos
+        env:
+          SOURCE_DATE_EPOCH: "1704067200"
+        run: |
+          npm run prepare:runtime:macos
+          mkdir -p build/runtime-first
+          cp resources/runtime/runtime-manifest.json build/runtime-first/runtime-manifest.json
+          cp resources/runtime/*.tar.gz build/runtime-first/
+          npm run prepare:runtime:macos
+          npm run verify:runtime-reproducibility --workspace opendrsai-macos-desktop
+
+      - name: Build unsigned directory package
+        run: npm run build:mac:dir:unsigned --workspace opendrsai-macos-desktop
+
+      - name: Verify unsigned packaged smoke
+        run: npm run verify:packaged --workspace opendrsai-macos-desktop
+
+      - name: Package and verify unsigned update artifacts
+        run: |
+          npm run package:mac:update:unsigned --workspace opendrsai-macos-desktop
+          npm run verify:update-thin-package --workspace opendrsai-macos-desktop
+          npm run verify:update-assets:unsigned --workspace opendrsai-macos-desktop
+
+      - name: Record L4 evidence
+        run: |
+          npm run record:l4-evidence --workspace opendrsai-macos-desktop
+          npm run verify:platform-evidence --workspace opendrsai-macos-desktop
+          npm run verify:acceptance --workspace opendrsai-macos-desktop
+          npm run record:p2-acceptance --workspace opendrsai-macos-desktop
+          npm run decide:release --workspace opendrsai-macos-desktop
+
+      - name: Upload unsigned verification evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-unsigned-evidence-${{ github.sha }}
+          if-no-files-found: error
+          path: |
+            apps/desktop/macos/build/acceptance/**
+            apps/desktop/macos/out/build-metadata.json
+            apps/desktop/macos/release/mac-arm64/**
+            apps/desktop/macos/release-unsigned-update/latest-mac.yml
+
+  verify-macos-nightly:
+    name: Unsigned real-device L5 stability
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    needs: verify-macos-unsigned
+    runs-on: [self-hosted, macOS, ARM64, opendrsai-nightly]
+    timeout-minutes: 240
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11.9"
+      - run: npm ci
+      - name: Rebuild unsigned artifact on the evidence host
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          npm run prepare:runtime:macos --workspace opendrsai-macos-desktop
+          npm run build:mac:dir --workspace opendrsai-macos-desktop
+          npm run record:l4-evidence --workspace opendrsai-macos-desktop
+      - name: Run packaged L5 journeys and stability
+        env:
+          OPENDRSAI_MACOS_L5_RESTART_ITERATIONS: "100"
+          OPENDRSAI_MACOS_L5_STABILITY_MS: "7200000"
+        run: |
+          npm run verify:packaged:l5 --workspace opendrsai-macos-desktop
+          npm run record:l5-evidence --workspace opendrsai-macos-desktop
+          npm run verify:acceptance --workspace opendrsai-macos-desktop -- --require-l4 --require-l5
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-l5-evidence-${{ github.sha }}
+          if-no-files-found: error
+          path: apps/desktop/macos/build/acceptance/**
+
+  release-macos-l6-real-device:
+    name: Signed RC L6 real-device verification
+    if: startsWith(github.ref, 'refs/tags/') || inputs.run_signed_release
+    needs: [verify-macos-unsigned]
+    runs-on: [self-hosted, macOS, ARM64, opendrsai-release]
+    timeout-minutes: 240
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11.9"
+      - run: npm ci
+      - name: Resolve immutable release tag
+        run: |
+          version=$(node -p "require('./macos/package.json').version")
+          tag="v$version"
+          if [[ "${{ github.ref }}" == refs/tags/* ]] && [[ "${{ github.ref_name }}" != "$tag" ]]; then
+            echo "Tag ${{ github.ref_name }} must match package version $tag."
+            exit 1
+          fi
+          echo "OPENDRSAI_RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+      - name: Build signed and notarized arm64 artifacts
+        env:
+          MACOS_CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
+          MACOS_CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          npm run preflight:release --workspace opendrsai-macos-desktop
+          npm run prepare:runtime:macos --workspace opendrsai-macos-desktop
+          npm run build:mac:arm64 --workspace opendrsai-macos-desktop
+          npm run record:l4-evidence --workspace opendrsai-macos-desktop
+          npm run verify:packaged:l5 --workspace opendrsai-macos-desktop
+          npm run record:l5-evidence --workspace opendrsai-macos-desktop
+      - name: Verify signed release, Gatekeeper and clean install
+        run: npm run verify:release:l6-auto --workspace opendrsai-macos-desktop
+      - name: Verify update metadata and immutable asset contract
+        run: npm run verify:update-assets --workspace opendrsai-macos-desktop
+      - name: Stage isolated signed update feed
+        run: npm run stage:update-lab-feed --workspace opendrsai-macos-desktop
+      - name: Verify signed online update
+        run: |
+          npm run prepare:previous-release --workspace opendrsai-macos-desktop
+          npm run verify:online-update:l6 --workspace opendrsai-macos-desktop
+          npm run record:signed-update-evidence --workspace opendrsai-macos-desktop
+      - name: Verify real-device TCC and notification behavior
+        run: npm run verify:tcc:l6 --workspace opendrsai-macos-desktop
+      - name: Record L6 evidence
+        run: |
+          npm run record:l6-evidence --workspace opendrsai-macos-desktop
+          npm run verify:acceptance --workspace opendrsai-macos-desktop -- --require-l4 --require-l5 --require-l6
+          npm run record:p2-acceptance --workspace opendrsai-macos-desktop
+          npm run decide:release --workspace opendrsai-macos-desktop -- --require-releasable
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-signed-l6-${{ github.sha }}
+          if-no-files-found: error
+          path: |
+            apps/desktop/macos/build/acceptance/**
+            apps/desktop/macos/release/*.dmg
+            apps/desktop/macos/release/*.zip
+
+  publish-macos-release:
+    name: Publish only after all L0-L6 gates pass
+    if: github.repository == 'hepai-lab/drsai' && (startsWith(github.ref, 'refs/tags/') || inputs.publish_release)
+    needs: [release-macos-l6-real-device]
+    runs-on: [self-hosted, macOS, ARM64, opendrsai-release]
+    environment: macos-production-release
+    env:
+      GH_TOKEN: ${{ github.token }}
+      OPENDRSAI_RELEASE_REPOSITORY: hepai-lab/drsai
+      OPENDRSAI_OSS_BUCKET: hepai-release
+      OPENDRSAI_OSSUTIL_BIN: ${{ vars.OPENDRSAI_OSSUTIL_BIN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - run: npm ci
+        working-directory: apps/desktop
+      - name: Resolve and authorize immutable release tag
+        working-directory: apps/desktop
+        run: |
+          version=$(node -p "require('./macos/package.json').version")
+          tag="v$version"
+          if [[ "${{ github.ref }}" == refs/tags/* ]] && [[ "${{ github.ref_name }}" != "$tag" ]]; then
+            echo "Tag ${{ github.ref_name }} must match package version $tag."
+            exit 1
+          fi
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]] && [[ "${{ github.ref_name }}" != "main" ]]; then
+            echo "Manual production publication must run from main."
+            exit 1
+          fi
+          echo "OPENDRSAI_RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-signed-l6-${{ github.sha }}
+          path: signed-release
+      - name: Verify downloaded update assets
+        working-directory: apps/desktop/macos
+        run: npm run verify:update-assets -- --release-dir "$GITHUB_WORKSPACE/signed-release/apps/desktop/macos/release"
+      - name: Verify OSS CLI and publication credentials
+        working-directory: apps/desktop/macos
+        run: |
+          test -x "$OPENDRSAI_OSSUTIL_BIN"
+          "$OPENDRSAI_OSSUTIL_BIN" --version
+          npm run publish:update:oss -- --execute --preflight --release-dir "$GITHUB_WORKSPACE/signed-release/apps/desktop/macos/release"
+      - name: Create immutable GitHub draft release
+        run: |
+          if gh release view "$OPENDRSAI_RELEASE_TAG" --repo "$OPENDRSAI_RELEASE_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release already exists; refusing to overwrite immutable assets."
+            exit 1
+          fi
+          gh release create "$OPENDRSAI_RELEASE_TAG" \
+            --repo "$OPENDRSAI_RELEASE_REPOSITORY" \
+            --draft \
+            --verify-tag \
+            --title "OpenDrSai $OPENDRSAI_RELEASE_TAG" \
+            --generate-notes \
+            signed-release/apps/desktop/macos/release/*.zip \
+            signed-release/apps/desktop/macos/release/latest-mac.yml
+      - name: Upload immutable OSS assets without changing stable
+        working-directory: apps/desktop/macos
+        run: npm run publish:update:oss -- --execute --assets-only --release-dir "$GITHUB_WORKSPACE/signed-release/apps/desktop/macos/release"
+      - name: Verify staged CDN and GitHub draft byte identity
+        working-directory: apps/desktop/macos
+        run: npm run verify:update-published -- --pre-promotion --tag "$OPENDRSAI_RELEASE_TAG" --release-dir "$GITHUB_WORKSPACE/signed-release/apps/desktop/macos/release"
+      - name: Publish verified GitHub release before stable promotion
+        run: gh release edit "$OPENDRSAI_RELEASE_TAG" --repo "$OPENDRSAI_RELEASE_REPOSITORY" --draft=false
+      - name: Snapshot current stable metadata
+        working-directory: apps/desktop/macos
+        run: npm run publish:update:oss -- --execute --snapshot-stable --state-file "$RUNNER_TEMP/opendrsai-macos-stable-state.json" --release-dir "$GITHUB_WORKSPACE/signed-release/apps/desktop/macos/release"
+      - name: Promote stable metadata after staged verification
+        working-directory: apps/desktop/macos
+        run: npm run publish:update:oss -- --execute --promote-metadata --release-dir "$GITHUB_WORKSPACE/signed-release/apps/desktop/macos/release"
+      - name: Verify stable metadata
+        working-directory: apps/desktop/macos
+        run: |
+          if ! npm run verify:update-published -- --metadata-only --tag "$OPENDRSAI_RELEASE_TAG" --release-dir "$GITHUB_WORKSPACE/signed-release/apps/desktop/macos/release"; then
+            npm run publish:update:oss -- --execute --rollback-metadata --state-file "$RUNNER_TEMP/opendrsai-macos-stable-state.json" --release-dir "$GITHUB_WORKSPACE/signed-release/apps/desktop/macos/release"
+            exit 1
+          fi

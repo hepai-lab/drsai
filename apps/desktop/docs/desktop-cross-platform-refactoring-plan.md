@@ -9,6 +9,8 @@
 
 范围调整：当前没有可用的 macOS 设备，因此本阶段以“跨平台代码重构、Windows 回归、macOS 工程与 CI 准备完成”为终点。macOS 真机运行、Apple 凭据签名、公证、DMG 安装、系统权限、升级和回滚不作为本阶段完成阻塞项，也不得据此宣称 macOS 已达到正式发布条件；这些项目统一移入 M7。
 
+这里的“本阶段完成”不代表 macOS 已实现 Windows 全部产品功能。2026-07-22 的代码级差距审计显示 macOS main 仅注册 77 个 IPC handler，Windows 为 252 个；完整功能补齐范围、优先级和验收定义见 [`macos/docs/macos-full-function-development-plan.zh-CN.md`](../macos/docs/macos-full-function-development-plan.zh-CN.md)。
+
 - M0：完成。重构工作位于 `feature/desktop`，基线与 Windows 回归门禁已冻结。
 - M1：完成。`shared/api`、`shared/test-kit`、迁移清单和架构边界验证已落地。
 - M2：完成。Windows/macOS 共用一个 renderer 和 preload API。

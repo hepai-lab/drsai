@@ -73,6 +73,7 @@ import logging
 import os
 import re
 import shutil
+import sys
 import tempfile
 from datetime import date
 from pathlib import Path
@@ -95,7 +96,11 @@ _ASCII_LETTER_RE = re.compile(r"[a-zA-Z0-9]")
 class TemplateLibrarySkill:
     """Filesystem catalog for DocMaster reusable templates."""
 
-    def __init__(self, workspace_dir: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        workspace_dir: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         if workspace_dir is None:
             workspace_dir = str(Path(__file__).resolve().parent.parent / "workspace")
         self.workspace_dir = Path(workspace_dir)
@@ -104,6 +109,43 @@ class TemplateLibrarySkill:
             self.root = Path(override)
         else:
             self.root = self.workspace_dir / "templates"
+
+        # Per-user storage backend. When user_id is provided AND we can
+        # resolve a `GfsUserClient` (via GfsProvisioner reading from the
+        # GFS OpenAPI), the user's templates live at
+        # `gfs://<bucket>/模板库/` instead of under self.root/users/<id>/.
+        # Shared templates always stay on local FS — they're admin-curated.
+        self._user_storage = None
+        if user_id:
+            try:
+                # Load the sibling module by file path so this also works
+                # when the skill itself is loaded via importlib.util (which
+                # is how docmaster.py's `_load_template_library_skill`
+                # mounts us — relative imports don't resolve in that case).
+                import importlib.util as _il_util
+                gfs_module_key = "drsai_ui._docmaster_gfs_template_storage"
+                if gfs_module_key in sys.modules:
+                    _gfs_mod = sys.modules[gfs_module_key]
+                else:
+                    _gfs_path = Path(__file__).resolve().parent / "gfs_template_storage.py"
+                    _spec = _il_util.spec_from_file_location(gfs_module_key, _gfs_path)
+                    _gfs_mod = _il_util.module_from_spec(_spec)
+                    sys.modules[gfs_module_key] = _gfs_mod
+                    _spec.loader.exec_module(_gfs_mod)
+                GfsTemplateStorage = _gfs_mod.GfsTemplateStorage
+                self._user_storage = GfsTemplateStorage(user_id)
+            except LookupError as exc:
+                logger.debug(
+                    "GFS storage unavailable for %s; falling back to local FS: %s",
+                    user_id,
+                    exc,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "GFS storage init failed for %s; falling back to local FS: %s",
+                    user_id,
+                    exc,
+                )
 
     # ------------------------------------------------------------------ #
     # Public API                                                          #
@@ -116,9 +158,7 @@ class TemplateLibrarySkill:
         query: Optional[str] = None,
     ) -> Dict[str, Any]:
         shared_entries = self._load_catalog(self._shared_catalog_path())
-        user_entries = (
-            self._load_catalog(self._user_catalog_path(user_id)) if user_id else []
-        )
+        user_entries = self._load_user_catalog(user_id) if user_id else []
         shared_view = [
             self._public_view(e, "shared")
             for e in shared_entries
@@ -182,12 +222,15 @@ class TemplateLibrarySkill:
         hit = candidates[0]
         entry = hit["entry"]
         source = hit["source"]
-        catalog_dir = (
-            self._shared_dir() if source == "shared"
-            else self._user_dir(user_id)
-        )
         rel_file = entry.get("file") or f"{entry['id']}/{_DEFAULT_TEMPLATE_FILENAME}"
-        full_path = (catalog_dir / rel_file).resolve()
+        if source == "mine" and self._user_storage is not None:
+            full_path = self._user_storage.resolve_template_path(rel_file).resolve()
+        else:
+            catalog_dir = (
+                self._shared_dir() if source == "shared"
+                else self._user_dir(user_id)
+            )
+            full_path = (catalog_dir / rel_file).resolve()
         if not full_path.exists():
             return {
                 "success": False,
@@ -238,21 +281,30 @@ class TemplateLibrarySkill:
                 "success": False,
                 "message": "name 不能为空 —— 模板要有一个显示名称。",
             }
-        existing = self._load_catalog(self._user_catalog_path(user_id))
+        existing = self._load_user_catalog(user_id)
         existing_ids = {e["id"] for e in existing}
         chosen_id = (template_id or "").strip() or self._slugify(name)
         if chosen_id in existing_ids:
             chosen_id = self._unique_id(chosen_id, existing_ids)
-        target_dir = self._user_dir(user_id) / chosen_id
-        target_dir.mkdir(parents=True, exist_ok=True)
-        target_file = target_dir / f"template{suffix}"
-        try:
-            shutil.copyfile(src, target_file)
-        except Exception as exc:
-            return {
-                "success": False,
-                "message": f"复制模板文件失败: {exc}",
-            }
+        if self._user_storage is not None:
+            try:
+                target_file = self._user_storage.import_template(chosen_id, str(src), suffix)
+            except Exception as exc:
+                return {
+                    "success": False,
+                    "message": f"复制模板文件失败: {exc}",
+                }
+        else:
+            target_dir = self._user_dir(user_id) / chosen_id
+            target_dir.mkdir(parents=True, exist_ok=True)
+            target_file = target_dir / f"template{suffix}"
+            try:
+                shutil.copyfile(src, target_file)
+            except Exception as exc:
+                return {
+                    "success": False,
+                    "message": f"复制模板文件失败: {exc}",
+                }
         entry: Dict[str, Any] = {
             "id": chosen_id,
             "name": name.strip(),
@@ -270,7 +322,7 @@ class TemplateLibrarySkill:
             if entry.get(k) is None:
                 entry.pop(k, None)
         existing.append(entry)
-        self._save_catalog(self._user_catalog_path(user_id), existing)
+        self._save_user_catalog(user_id, existing)
         return {
             "success": True,
             "template_id": chosen_id,
@@ -285,7 +337,7 @@ class TemplateLibrarySkill:
                 "success": False,
                 "message": "user_id 不能为空 —— 不能删除共享模板。",
             }
-        entries = self._load_catalog(self._user_catalog_path(user_id))
+        entries = self._load_user_catalog(user_id)
         keep: List[Dict[str, Any]] = []
         removed: Optional[Dict[str, Any]] = None
         for e in entries:
@@ -298,13 +350,19 @@ class TemplateLibrarySkill:
                 "success": False,
                 "message": f"你的模板库里没有 id='{template_id}' 的模板。共享模板不能删除。",
             }
-        target_dir = self._user_dir(user_id) / template_id
-        try:
-            if target_dir.exists():
-                shutil.rmtree(target_dir)
-        except Exception as exc:
-            logger.warning("failed to remove template dir %s: %s", target_dir, exc)
-        self._save_catalog(self._user_catalog_path(user_id), keep)
+        if self._user_storage is not None:
+            try:
+                self._user_storage.remove_template(template_id)
+            except Exception as exc:
+                logger.warning("GFS template removal failed for %s/%s: %s", user_id, template_id, exc)
+        else:
+            target_dir = self._user_dir(user_id) / template_id
+            try:
+                if target_dir.exists():
+                    shutil.rmtree(target_dir)
+            except Exception as exc:
+                logger.warning("failed to remove template dir %s: %s", target_dir, exc)
+        self._save_user_catalog(user_id, keep)
         return {
             "success": True,
             "removed_id": template_id,
@@ -328,6 +386,28 @@ class TemplateLibrarySkill:
 
     def _user_catalog_path(self, user_id: Optional[str]) -> Path:
         return self._user_dir(user_id) / _CATALOG_FILENAME
+
+    def _load_user_catalog(self, user_id: Optional[str]) -> List[Dict[str, Any]]:
+        """Read the user's catalog. Routed through GFS storage when available,
+        local FS fallback otherwise. Always returns a list (possibly empty)."""
+        if self._user_storage is not None:
+            try:
+                return self._user_storage.load_catalog()
+            except Exception as exc:
+                logger.warning("GFS catalog read failed; falling back to local: %s", exc)
+        if not user_id:
+            return []
+        return self._load_catalog(self._user_catalog_path(user_id))
+
+    def _save_user_catalog(self, user_id: str, entries: List[Dict[str, Any]]) -> None:
+        """Persist the user's catalog. GFS-first when available."""
+        if self._user_storage is not None:
+            try:
+                self._user_storage.save_catalog(entries)
+                return
+            except Exception as exc:
+                logger.error("GFS catalog write failed; falling back to local: %s", exc)
+        self._save_catalog(self._user_catalog_path(user_id), entries)
 
     def _load_catalog(self, catalog_path: Path) -> List[Dict[str, Any]]:
         if not catalog_path.exists():
@@ -396,9 +476,7 @@ class TemplateLibrarySkill:
         """
         ref_lower = ref.lower()
         shared = self._load_catalog(self._shared_catalog_path())
-        user = (
-            self._load_catalog(self._user_catalog_path(user_id)) if user_id else []
-        )
+        user = self._load_user_catalog(user_id) if user_id else []
 
         def _by_id(entries: List[Dict[str, Any]], rid: str) -> Optional[Dict[str, Any]]:
             for e in entries:

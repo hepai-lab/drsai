@@ -6,8 +6,10 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import androidx.work.WorkManager
+import ai.drsai.remote.remote.data.AndroidDevicePresence
 import ai.drsai.remote.data.AppDestination
 import ai.drsai.remote.data.AppState
+import ai.drsai.remote.data.AssociationState
 import ai.drsai.remote.data.AccessTokenCoordinator
 import ai.drsai.remote.data.Agent
 import ai.drsai.remote.data.AgentRepository
@@ -30,6 +32,8 @@ import ai.drsai.remote.data.MIGRATION_2_3
 import ai.drsai.remote.data.MIGRATION_3_4
 import ai.drsai.remote.data.MIGRATION_4_5
 import ai.drsai.remote.data.MIGRATION_5_6
+import ai.drsai.remote.data.MIGRATION_6_7
+import ai.drsai.remote.data.MIGRATION_7_8
 import ai.drsai.remote.workbench.data.WorkbenchProjectionRepository
 import ai.drsai.remote.workbench.data.UnifiedWorkbenchRepository
 import ai.drsai.remote.workbench.data.SessionMutationResult
@@ -58,6 +62,11 @@ import ai.drsai.remote.data.localAgentFor
 import ai.drsai.remote.data.selectLocalModelForAttachments
 import ai.drsai.remote.remote.data.RemoteCacheRepository
 import ai.drsai.remote.remote.data.RemoteSubscriptionRegistry
+import ai.drsai.remote.remote.data.HttpRelayDiscoveryService
+import ai.drsai.remote.remote.security.androidRelayDeviceProof
+import ai.drsai.remote.remote.data.RelayHttpException
+import ai.drsai.remote.remote.data.AssociationDeepLinkDecision
+import ai.drsai.remote.remote.data.AssociationDeepLinkGate
 import ai.drsai.remote.remote.navigation.WorkbenchDeepLinkParser
 import ai.drsai.remote.runtime.v2.RunCommand
 import ai.drsai.remote.runtime.v2.RunCheckpoint
@@ -118,7 +127,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val oidcTransactions by lazy { OidcTransactionStore(app) }
     private val database by lazy {
         Room.databaseBuilder(app, ChatDatabase::class.java, "opendrsai.db")
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
             .build()
     }
     private val oidcClient by lazy { OidcClient(refreshClientId = { tokenStore.oidcClientId }) }
@@ -134,6 +143,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         })
     }
     private val tokenCoordinator by lazy { AccessTokenCoordinator(tokenStore, oidcClient) }
+    private val relayDeviceProof by lazy { androidRelayDeviceProof(app) }
+    private val relayDiscovery by lazy {
+        HttpRelayDiscoveryService(
+            BuildConfig.RELAY_BASE_URL,
+            tokenCoordinator::current,
+            tokenCoordinator::refreshAfter,
+            deviceProof = relayDeviceProof,
+        )
+    }
+    private val associationIssuer by lazy {
+        java.net.URI(BuildConfig.RELAY_BASE_URL).let { "${it.scheme}://${it.host}" }
+    }
+    private val associationGate by lazy { AssociationDeepLinkGate(associationIssuer) }
     private val platformClient by lazy { PlatformAgentClient(tokenCoordinator) }
     private val agentRepository by lazy { AgentRepository(platformClient, database.dao()) }
     private val platformRuntime by lazy { PlatformAgentRuntime(tokenCoordinator, database.dao()) }
@@ -185,6 +207,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val state: StateFlow<AppState> = mutableState.asStateFlow()
 
     private var loginJob: Job? = null
+    private var pendingAssociationCode: String? = null
+    private var associationJob: Job? = null
     private var oidcSession: OidcLoginSession? = null
     private var runJob: Job? = null
     private var approvalJob: Job? = null
@@ -283,7 +307,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 oidcSession = null
                 tokenStore.save(auth)
                 tokenStore.oidcClientId = session.transaction.clientId
+                AndroidDevicePresence.authenticationChanged()
                 loadWorkspace(auth.user)
+                consumePendingAssociation()
             }
             .onFailure { error ->
                 oidcTransactions.clear()
@@ -382,6 +408,72 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun handleDeepLink(uri: Uri?) {
         val route = uri?.toString()?.let(WorkbenchDeepLinkParser::route) ?: return
         update { it.copy(requestedRoutePath = route.path) }
+    }
+
+    fun handleAssociationDeepLink(uri: Uri?) {
+        if (uri == null || uri.scheme != "opendrsai" || uri.host != "associate") return
+        val code = when (val decision = associationGate.evaluate(uri.toString())) {
+            is AssociationDeepLinkDecision.Accept -> decision.code
+            AssociationDeepLinkDecision.Duplicate -> return
+            AssociationDeepLinkDecision.Reject -> {
+                update { state ->
+                    state.copy(
+                        associationState = AssociationState.FAILED,
+                        error = "关联二维码无效，请在电脑端刷新后重试",
+                    )
+                }
+                return
+            }
+        }
+        pendingAssociationCode = code
+        if (tokenStore.user() == null || tokenStore.accessToken.isNullOrBlank()) {
+            update {
+                it.copy(
+                    destination = AppDestination.Login,
+                    associationState = AssociationState.PENDING_LOGIN,
+                )
+            }
+            return
+        }
+        consumePendingAssociation()
+    }
+
+    private fun consumePendingAssociation() {
+        val code = pendingAssociationCode ?: return
+        if (associationJob?.isActive == true) return
+        associationJob = viewModelScope.launch(Dispatchers.IO) {
+            update { it.copy(associationState = AssociationState.ASSOCIATING, error = null) }
+            runCatching { relayDiscovery.associate(code) }
+                .onSuccess { runtimeId ->
+                    runCatching { relayDiscovery.recordPresence(runtimeId) }
+                    pendingAssociationCode = null
+                    update {
+                        it.copy(
+                            associationState = AssociationState.ASSOCIATED,
+                            requestedRoutePath = ai.drsai.remote.remote.navigation.AppRoute.RemoteHome.path,
+                        )
+                    }
+                }
+                .onFailure { failure ->
+                    if (failure is RelayHttpException && failure.status == 401) {
+                        update {
+                            it.copy(
+                                destination = AppDestination.Login,
+                                associationState = AssociationState.AUTH_REQUIRED,
+                                error = "HepAI 登录已过期，请重新登录",
+                            )
+                        }
+                    } else {
+                        pendingAssociationCode = null
+                        update {
+                            it.copy(
+                                associationState = AssociationState.FAILED,
+                                error = "远程工作区关联失败，请刷新二维码后重试",
+                            )
+                        }
+                    }
+                }
+        }
     }
 
     fun consumeRequestedRoute() = update { it.copy(requestedRoutePath = null) }
@@ -1211,6 +1303,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun setTheme(value: Boolean?) = update { it.copy(darkTheme = value) }
 
     fun logout() {
+        AndroidDevicePresence.logout()
         val remoteSubject = mutableState.value.user?.id
         remoteSubject?.let(RemoteSubscriptionRegistry::cancelSubject)
         activeRunId?.let { runId ->

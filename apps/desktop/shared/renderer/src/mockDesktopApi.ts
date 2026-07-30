@@ -74,6 +74,7 @@ import type {
   GatewaySkill,
 } from "@shared/desktopApi";
 import type { StructuredConversationEvent } from "@shared/structuredConversation";
+import { FULL_DESKTOP_FEATURE_CAPABILITIES } from "@shared/platform";
 import drsaiImageUrl from "./assets/drsai.png";
 
 type Listener<T> = (value: T) => void;
@@ -149,6 +150,8 @@ const initialHealth: DesktopHealth = {
     errorCode: null,
     error: null,
     recovery: null,
+    source: null,
+    fallbackUsed: false,
   },
 };
 
@@ -177,10 +180,11 @@ const mockChannelAdapters: DesktopChannelAdapterListResult = {
         "Import local mobile handoff",
         "Continue desktop threads from phone",
         "Attach mobile context",
+        "Use dedicated Mobile Pairing for device authorization",
       ],
       description: "Mobile entry contract for reviewed phone-originated messages and approval-aware outbound drafts.",
       setupHint:
-        "Local .drsai/mobile-context.json handoff is available now; live device pairing and notification routing remain pending.",
+        "Use the dedicated Mobile Pairing flow for device authorization; reviewed .drsai/mobile-context.json remains the Channel handoff contract.",
     },
     {
       id: "slack-chat",
@@ -193,13 +197,15 @@ const mockChannelAdapters: DesktopChannelAdapterListResult = {
       requiresApproval: true,
       capabilities: [
         "Read workspace-local Slack snapshots",
+        "Read live channel history with a verified bot token",
+        "Send approved messages through chat.postMessage",
         "Draft replies",
         "Route approvals",
       ],
       description:
         "Connector contract for Slack conversations, workspace-local message snapshots, and approval-aware outbound drafts.",
       setupHint:
-        "Local .drsai/slack-context.json handoff is available now; live OAuth reads and sends remain pending.",
+        "Use a reviewed Slack bot token stored by the platform credential service; local .drsai/slack-context.json remains available for offline handoff.",
     },
     {
       id: "github-connector",
@@ -213,13 +219,15 @@ const mockChannelAdapters: DesktopChannelAdapterListResult = {
       capabilities: [
         "Read local Git remote context",
         "Read issue and PR snapshots",
+        "Sync live issues and pull requests with Device OAuth",
+        "Send approved issue and pull request comments",
         "Create review context",
         "Open follow-up tasks",
       ],
       description:
         "Connector contract for repository conversations, PR review, issue triage, read-only local Git remote context, and bounded issue/PR snapshot imports.",
       setupHint:
-        "Use local Git remote now; live OAuth issue/PR sync can hand off a workspace-local .drsai/github-context.json snapshot.",
+        "Use local Git remote for read-only context or GitHub Device OAuth for live issue/PR sync and approved comments.",
     },
     {
       id: "docs-connector",
@@ -233,13 +241,15 @@ const mockChannelAdapters: DesktopChannelAdapterListResult = {
       capabilities: [
         "Read selected docs",
         "Read workspace-local doc snapshots",
+        "Read live Google documents",
+        "Append approved revision-bound edits",
         "Draft edits",
         "Attach document context",
       ],
       description:
         "Connector contract for document context, workspace-local doc snapshot imports, and approval-gated edits.",
       setupHint:
-        "Live provider access needs authorization; local handoff can use .drsai/docs-context.json now.",
+        "Use a reviewed Google OAuth access token with Docs read/write scope; local .drsai/docs-context.json remains available offline.",
     },
     {
       id: "calendar-connector",
@@ -253,13 +263,14 @@ const mockChannelAdapters: DesktopChannelAdapterListResult = {
       capabilities: [
         "Summarize agenda",
         "Read workspace-local agenda snapshots",
+        "Read bounded live Google Calendar events",
         "Create task context",
         "Schedule follow-up",
       ],
       description:
         "Connector contract for meeting context, workspace-local agenda snapshot imports, and scheduled follow-up tasks.",
       setupHint:
-        "Live provider access needs authorization; local handoff can use .drsai/calendar-context.json now.",
+        "Use a reviewed Google OAuth access token with Calendar read scope; local JSON/ICS handoff remains available offline.",
     },
     {
       id: "database-connector",
@@ -315,7 +326,7 @@ const mockChannelAdapters: DesktopChannelAdapterListResult = {
       ],
       description: "Input adapter contract for local voice prompts and reviewed transcript attachments.",
       setupHint:
-        "Live capture still needs device selection and transcription runtime; local .drsai/voice-context.json handoff is available now.",
+        "Use the Voice controls for live capture when a transcription runtime is configured; local .drsai/voice-context.json remains available for reviewed transcript handoff.",
     },
     {
       id: "file-input",
@@ -360,12 +371,12 @@ const mockExternalConnectionReadiness: DesktopExternalConnectionReadinessResult 
       status: "partial",
       configured: false,
       readOnly: true,
-      capabilitySources: ["github-connector", "local Git remote scope", ".drsai/github-context.json"],
-      evidence: ["Local Git remote setup path exists", "Issue and pull request snapshot import is bounded"],
-      gaps: ["Live GitHub OAuth/API sync", "Remote PR/comment mutation"],
+      capabilitySources: ["github-connector", "local Git remote scope", "GitHub Device OAuth", "live issue/PR sync", "approval-gated comments", ".drsai/github-context.json"],
+      evidence: ["GitHub supports read-only local Git or verified Device OAuth", "Issue/PR reads and approved comments have deterministic mock fixtures"],
+      gaps: ["Actions log and retry orchestration", "Webhook/push synchronization", "Mutations beyond approved comments"],
       approvalBoundary:
-        "Read-only context import is allowed after visible review; outbound drafts require Approval Center.",
-      verification: "Mock readiness uses local fixture data only.",
+        "Local Git stays read-only; OAuth comments require Approval Center.",
+      verification: "Mock readiness mirrors Device OAuth, live issue/PR reads, approved comments, revoke and idempotency.",
     },
     {
       id: "chrome",
@@ -385,11 +396,11 @@ const mockExternalConnectionReadiness: DesktopExternalConnectionReadinessResult 
       status: "partial",
       configured: false,
       readOnly: true,
-      capabilitySources: ["slack-chat", ".drsai/slack-context.json", "approval-gated reply drafts"],
-      evidence: ["Slack channel adapter contract is cataloged", "Local Slack snapshots are reviewed before attach"],
-      gaps: ["Live Slack OAuth/session sync", "Remote message mutation"],
-      approvalBoundary: "Slack replies remain drafts until approval and live delivery are available.",
-      verification: "Mock readiness performs no Slack API call.",
+      capabilitySources: ["slack-chat", ".drsai/slack-context.json", "verified bot token", "conversations.history", "approval-gated chat.postMessage"],
+      evidence: ["Slack supports reviewed snapshots or verified live provider fixtures", "Approved sends remain idempotent"],
+      gaps: ["Thread pagination and cursors", "Event subscriptions", "Remote update/delete"],
+      approvalBoundary: "Live Slack sends require a verified mock token and Approval Center decision.",
+      verification: "Mock readiness mirrors auth.test, conversations.history, chat.postMessage, revoke and idempotency.",
     },
     {
       id: "docs",
@@ -397,11 +408,11 @@ const mockExternalConnectionReadiness: DesktopExternalConnectionReadinessResult 
       status: "partial",
       configured: false,
       readOnly: true,
-      capabilitySources: ["docs-connector", ".drsai/docs-context.json", "approval-gated edit drafts"],
-      evidence: ["Docs connector snapshot contract is cataloged", "Document context uses bounded local handoff files"],
-      gaps: ["Live Docs provider authorization", "Remote comment/edit sync"],
-      approvalBoundary: "Docs readiness does not read, write, share, or comment on provider files.",
-      verification: "Mock readiness performs no Docs provider API call.",
+      capabilitySources: ["docs-connector", ".drsai/docs-context.json", "verified Google token", "live document read", "revision-bound batchUpdate"],
+      evidence: ["Docs supports bounded snapshots or verified live provider fixtures", "Approved append is revision-bound"],
+      gaps: ["Comments and suggestions", "Permissions and version history", "Push revision sync"],
+      approvalBoundary: "Live Docs append requires a verified mock token and Approval Center decision.",
+      verification: "Mock readiness mirrors scope checks, live read, revision-bound batchUpdate, revoke and expiry.",
     },
     {
       id: "calendar",
@@ -409,11 +420,11 @@ const mockExternalConnectionReadiness: DesktopExternalConnectionReadinessResult 
       status: "partial",
       configured: false,
       readOnly: true,
-      capabilitySources: ["calendar-connector", ".drsai/calendar-context.json", ".drsai/calendar-context.ics"],
-      evidence: ["Calendar connector snapshot contract is cataloged", "Agenda handoff files stay local"],
-      gaps: ["Live Calendar OAuth/API sync", "Remote event mutation"],
-      approvalBoundary: "Calendar readiness does not read or change remote events.",
-      verification: "Mock readiness performs no Calendar API call.",
+      capabilitySources: ["calendar-connector", ".drsai/calendar-context.json", ".drsai/calendar-context.ics", "verified Google token", "bounded events.list"],
+      evidence: ["Calendar supports reviewed snapshots or verified live inbound fixtures", "Remote mutation is intentionally absent"],
+      gaps: ["Attendee/free-busy detail", "Push synchronization", "Remote event mutation"],
+      approvalBoundary: "Calendar remains inbound-only for snapshot and live event reads.",
+      verification: "Mock readiness mirrors bounded events.list, redaction, pagination, revoke and expiry.",
     },
     {
       id: "latex",
@@ -488,18 +499,49 @@ function buildMockReconnectReadinessChecks(
 ): string[] {
   return [
     connection.configured
-      ? "Mock local snapshot or session stub is configured"
-      : "Mock setup is still local-only and requires user review",
+      ? "Mock verified provider credential or local adapter configuration is present"
+      : "Mock connection setup requires explicit user review",
     "Mock adapter contract is cataloged",
     "Mock remaining live-runtime gaps are visible before reconnect",
     "Mock verification confirms no credential, network, or runtime action ran",
   ];
 }
 
+function buildMockExternalConnectionReadiness(workspacePath?: string): DesktopExternalConnectionReadinessResult {
+  const adapterByConnection = { github: "github-connector", slack: "slack-chat", docs: "docs-connector", calendar: "calendar-connector" } as const;
+  const connections = mockExternalConnectionReadiness.connections.map((base) => {
+    const adapterId = adapterByConnection[base.id as keyof typeof adapterByConnection];
+    const adapter = adapterId ? mockChannelAdapters.adapters.find((item) => item.id === adapterId) : undefined;
+    const configured = adapter ? adapter.configured : base.configured;
+    const liveWritable = configured && (adapter?.authMode === "oauth" || adapter?.authMode === "provider_token") && base.id !== "calendar";
+    const connection = {
+      ...base,
+      ...(adapter ? { configured, status: configured ? "available" as const : "partial" as const, readOnly: !liveWritable } : {}),
+      capabilitySources: [...base.capabilitySources],
+      evidence: [...base.evidence],
+      gaps: [...base.gaps],
+    };
+    return {
+      ...connection,
+      reconnectReadinessChecks: buildMockReconnectReadinessChecks(connection),
+      reconnectPolicy: connection.reconnectPolicy ?? buildMockExternalReconnectPolicy(connection.id),
+    };
+  });
+  return {
+    ...mockExternalConnectionReadiness,
+    workspacePath,
+    generatedAt: new Date().toISOString(),
+    readyCount: connections.filter((item) => item.status === "available").length,
+    partialCount: connections.filter((item) => item.status === "partial").length,
+    plannedCount: connections.filter((item) => item.status === "planned").length,
+    connections,
+  };
+}
+
 const mockWorkflowMarketplace: DesktopWorkflowMarketplaceListResult = {
   generatedAt: new Date().toISOString(),
-  availableCount: 3,
-  approvalRequiredCount: 3,
+  availableCount: 4,
+  approvalRequiredCount: 1,
   templates: [
     {
       id: "plan-review-fix",
@@ -535,8 +577,8 @@ const mockWorkflowMarketplace: DesktopWorkflowMarketplaceListResult = {
         "Queue the commit approval.",
       ],
       requiredCapabilities: ["terminal verification", "git diff preflight", "approval center"],
-      approvalRequired: true,
-      verification: "Use verify:approval-center and verify:execution-policy.",
+      approvalRequired: false,
+      verification: "Use verify:approval-center and verify:execution-policy; the /commit step owns the write approval.",
       risk: "high",
     },
     {
@@ -562,20 +604,20 @@ const mockWorkflowMarketplace: DesktopWorkflowMarketplaceListResult = {
       id: "connector-digest",
       name: "Connector digest",
       category: "research",
-      status: "planned",
+      status: "available",
       summary:
-        "Import read-only connector context and prepare a task brief for the active thread.",
-      trigger: "Channels view connector import",
+        "Turn explicitly reviewed, read-only Channel context into a task brief without silently fetching or sending provider data.",
+      trigger: "Channels view reviewed context",
       steps: [
-        "Check configured connector accounts.",
-        "Request read-only import approval.",
-        "Normalize imported context.",
-        "Insert a task brief.",
+        "Load and visibly review Channel context.",
+        "Draft a task brief from the reviewed attachments.",
+        "Verify citations and provider boundaries.",
       ],
-      requiredCapabilities: ["channel adapters", "approval center", "context injection"],
-      approvalRequired: true,
-      verification: "Add connector runtime verifier after live OAuth is wired.",
-      risk: "high",
+      requiredCapabilities: ["channel adapters", "reviewed context attachments", "chat context injection"],
+      approvalRequired: false,
+      verification:
+        "Run workflow and Channel adapter verification; confirm the brief only cites visible reviewed attachments.",
+      risk: "medium",
     },
     {
       id: "external-runtime-reconnect",
@@ -598,6 +640,43 @@ const mockWorkflowMarketplace: DesktopWorkflowMarketplaceListResult = {
     },
   ],
 };
+
+function buildMockWorkflowRunSteps(
+  template?: DesktopWorkflowTemplate,
+): DesktopWorkflowRunPrepareResult["recipe"]["steps"] {
+  if (!template) return [];
+  if (template.id === "test-and-commit") {
+    return [
+      { id: "test", kind: "chat_command", title: "Run focused tests", detail: "Infer and run focused verification.", command: "/test", requiresApproval: false },
+      { id: "capture", kind: "manual_review", title: "Capture test evidence", detail: "Confirm terminal evidence is recorded.", requiresApproval: false },
+      { id: "preflight", kind: "manual_review", title: "Inspect staged diff", detail: "Review staged files, risk, secrets, and message.", requiresApproval: false },
+      { id: "commit", kind: "chat_command", title: "Request commit approval", detail: "Replace the placeholder and use Approval Center.", command: "/commit <message>", requiresApproval: false },
+    ];
+  }
+  if (template.id === "memory-to-skill") {
+    return [
+      { id: "retrospective", kind: "chat_command", title: "Save retrospective", detail: "Replace the placeholder with a durable lesson.", command: "/memory retrospective <lesson>", requiresApproval: false },
+      { id: "draft", kind: "manual_review", title: "Create skill draft", detail: "Create a project skill draft in Skills.", requiresApproval: false },
+      { id: "review-skill", kind: "manual_review", title: "Review SKILL.md", detail: "Review scope, instructions, and secret scan.", requiresApproval: false },
+      { id: "install-skill", kind: "manual_review", title: "Install after approval", detail: "Use the project skill install approval flow.", requiresApproval: false },
+    ];
+  }
+  if (template.id === "external-runtime-reconnect") {
+    return [
+      { id: "prepare", kind: "chat_command", title: "Prepare runtime context", detail: "Gather restart and provider scope.", command: "/plan external runtime reconnect", requiresApproval: false },
+      { id: "runtime", kind: "external_runtime", title: "Reconnect external runtime", detail: "Reconnect through the provider control plane without automatic process execution.", requiresApproval: true },
+      { id: "verify-runtime", kind: "manual_review", title: "Verify runtime result", detail: "Review provider output and background state.", requiresApproval: false },
+    ];
+  }
+  if (template.id === "connector-digest") {
+    return [
+      { id: "review-context", kind: "manual_review", title: "Review Channel context", detail: "Open Channels, load read-only provider context, and visibly review the attachments. The workflow does not fetch provider data itself.", requiresApproval: false },
+      { id: "draft-brief", kind: "chat_command", title: "Draft connector brief", detail: "Synthesize only reviewed Channel attachments visible in the active thread.", command: "Prepare a concise task brief using only visible reviewed Channel attachments. Cite each attachment, separate facts from inferences, and do not fetch or send provider data.", requiresApproval: false },
+      { id: "verify-brief", kind: "manual_review", title: "Verify brief boundaries", detail: "Confirm claims are traceable and no provider write or hidden fetch occurred.", requiresApproval: false },
+    ];
+  }
+  return template.steps.map((detail, index) => ({ id: `step-${index + 1}`, kind: "manual_review", title: `Step ${index + 1}`, detail, requiresApproval: false }));
+}
 
 export function installMockDesktopApi(): void {
   if (window.openDrSai) return;
@@ -635,7 +714,10 @@ export function installMockDesktopApi(): void {
   const interactiveDebugListeners = new Set<Listener<InteractiveDebugSession>>();
   let diagnosticEvents: DiagnosticEvent[] = [];
   let interactiveDebugSessions: InteractiveDebugSession[] = [];
+  let interactiveDebugPolicy: { enabled: boolean; source: "default" | "user" | "environment"; locked: boolean } = { enabled: false, source: "default", locked: false };
   let pendingApprovals: DesktopPendingApproval[] = [];
+  const approvedScheduledWorkflowApprovals = new Set<string>();
+  const rejectedScheduledWorkflowApprovals = new Set<string>();
   let mockChannelOutboundDeliveries: DesktopChannelOutboundDelivery[] = [];
   let mockChannelInboundEvents: DesktopChannelInboundEvent[] = [];
   let mockMcpExecutionAudits: DesktopMcpToolExecutionAuditEntry[] = [];
@@ -1040,8 +1122,19 @@ export function installMockDesktopApi(): void {
         permissions: true,
         install: true,
         update: true,
+        features: FULL_DESKTOP_FEATURE_CAPABILITIES,
       },
     }),
+    onOpenRequest: () => () => undefined,
+    onLifecycleEvent: () => () => undefined,
+    getSystemPermissions: async () => [
+      { kind: "microphone", state: "granted", canRequest: false, canOpenSettings: true, message: "Microphone access is granted." },
+      { kind: "notifications", state: "granted", canRequest: false, canOpenSettings: true, message: "Notification access is granted." },
+      { kind: "files", state: "unknown", canRequest: false, canOpenSettings: true, message: "File access is controlled by system settings." },
+      { kind: "automation", state: "unknown", canRequest: false, canOpenSettings: true, message: "Automation access is controlled by system settings." },
+    ],
+    requestSystemPermission: async (kind) => ({ kind, state: "granted", canRequest: false, canOpenSettings: true, message: `${kind} access is granted.` }),
+    openSystemPermissionSettings: async () => true,
     recordDiagnostic: async (input) => {
       const id = input.id || crypto.randomUUID();
       const event: DiagnosticEvent = {
@@ -1134,6 +1227,12 @@ export function installMockDesktopApi(): void {
       message: "Mock source opened.",
     }),
     updateDiagnosticIssue: async (request) => ({ updated: true, message: `Mock diagnostic issue ${request.action} completed.` }),
+    getInteractiveDebugPolicy: async () => interactiveDebugPolicy,
+    updateInteractiveDebugPolicy: async (request) => {
+      interactiveDebugPolicy = { enabled: request.enabled, source: "user" as const, locked: false };
+      if (!request.enabled) interactiveDebugSessions = [];
+      return interactiveDebugPolicy;
+    },
     listInteractiveDebugTargets: async () => [{ id: "electron-renderer", kind: "electron-renderer", name: "Electron Renderer", description: "Mock renderer debug target", available: true, remote: false, capabilities: { supportsPause: true, supportsStep: true, supportsConditionalBreakpoints: true, supportsHitConditionalBreakpoints: true, supportsLogPoints: true, supportsEvaluateForHovers: true, supportsSetVariable: false, supportsTerminateRequest: true, supportsRemoteTargets: false } }],
     listInteractiveDebugSessions: async () => interactiveDebugSessions,
     startInteractiveDebugSession: async (request) => {
@@ -1423,6 +1522,8 @@ export function installMockDesktopApi(): void {
           errorCode: null,
           error: null,
           recovery: null,
+          source: "cdn",
+          fallbackUsed: false,
         },
       };
       emit(updateListeners, health.update);
@@ -1500,6 +1601,55 @@ export function installMockDesktopApi(): void {
       };
       return true;
     },
+    getMobilePairingReadiness: async () => ({
+      state: "ready",
+      action: "scan",
+      runtime_id: "runtime_mock",
+      environment: "development",
+    }),
+    createMobilePairingGrant: async () => ({
+      grant_id: "ag_00000000000000000000000000000000",
+      expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),
+      status: "pending",
+      payload: "opendrsai://associate?v=1&environment=development&issuer=https%3A%2F%2Fai-dev.ihep.ac.cn&code=ABCDEFGHJKLMNPQR",
+    }),
+    getMobilePairingGrant: async (grantId) => ({
+      grant_id: grantId,
+      expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),
+      status: "consumed",
+    }),
+    revokeMobilePairingGrant: async (grantId) => ({
+      grant_id: grantId,
+      expires_at: new Date().toISOString(),
+      status: "revoked",
+    }),
+    listMobileAssociations: async () => [{
+      association_id: "assoc_00000000000000000000000000000000",
+      subject_summary: "sub_000000000000",
+      device_summary: "dev_000000000000",
+      device_name: "Samsung SM-X936C",
+      status: "active",
+      access_state: "online",
+      created_at: new Date().toISOString(),
+      last_seen_at: new Date().toISOString(),
+      revoked_at: null,
+    }],
+    revokeMobileAssociation: async (associationId) => ({
+      association_id: associationId,
+      subject_summary: "sub_000000000000",
+      device_summary: "dev_000000000000",
+      device_name: "Samsung SM-X936C",
+      status: "revoked",
+      access_state: "revoked",
+      created_at: new Date().toISOString(),
+      last_seen_at: new Date().toISOString(),
+      revoked_at: new Date().toISOString(),
+    }),
+    revokeMobileRuntimeEnrollment: async () => ({
+      runtime_id: "runtime_mock",
+      status: "revoked",
+      revoked_at: new Date().toISOString(),
+    }),
     listSshHosts: async () => [],
     diagnoseSshHost: async (hostAlias) => ({ hostAlias, state: "reachable", elapsedMs: 1 }),
     inspectSshHostKeys: async (hostAlias) => [{ hostAlias, hostname: "127.0.0.1", port: 22, algorithm: "ssh-ed25519", fingerprint: "SHA256:mock" }],
@@ -1838,9 +1988,11 @@ export function installMockDesktopApi(): void {
       return thread;
     },
     deleteThread: async (threadId) => {
+      const exists = threads.some((thread) => thread.id === threadId);
       threads = threads.filter((thread) => thread.id !== threadId);
-      const { [threadId]: _removed, ...remaining } = threadSnapshots;
-      threadSnapshots = remaining;
+      const { [threadId]: _deletedSnapshot, ...remainingSnapshots } = threadSnapshots;
+      threadSnapshots = remainingSnapshots;
+      return exists;
     },
     setThreadArchived: async ({ threadId, archived }) => {
       const existing = threads.find((thread) => thread.id === threadId);
@@ -1851,6 +2003,10 @@ export function installMockDesktopApi(): void {
       return thread;
     },
     getThreadSnapshot: async (threadId) => threadSnapshots[threadId] ?? null,
+    subscribeThreadSnapshot: async () => false,
+    unsubscribeThreadSnapshot: async () => false,
+    onThreadSnapshot: () => () => undefined,
+    onThreadCatalogUpdate: () => () => undefined,
     searchThreadMessages: async (request) => {
       const query = request.query.trim().toLowerCase();
       if (!query) return [];
@@ -1950,6 +2106,24 @@ export function installMockDesktopApi(): void {
       return { status: "ok", name: request.name };
     },
     reloadSkills: async () => ({ ok: true, reloaded: true }),
+    gfsList: async () => ({ items: [], prefix: "", truncated: false }),
+    gfsStat: async (request) => ({
+      path: request.path,
+      size: 0,
+      etag: "",
+      modifiedMs: 0,
+      isDir: request.path.endsWith("/"),
+    }),
+    gfsRead: async (request) => ({ path: request.path, content: "" }),
+    gfsWrite: async (request) => ({ path: request.path, etag: "mock" }),
+    gfsUploadFile: async (request) => ({ path: request.remotePath, size: 0 }),
+    gfsDownloadFile: async (request) => ({ localPath: request.localPath, size: 0 }),
+    gfsDelete: async (request) => ({ path: request.path }),
+    gfsShareUrl: async () => ({
+      url: "https://example.invalid/mock-gfs-share",
+      expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+    }),
+    gfsHealthcheck: async () => ({ ok: true, mode: "mock" }),
     prepareForkWorktree: async (request) => {
       const slug = (request.intent || "subtask")
         .toLowerCase()
@@ -2337,6 +2511,7 @@ export function installMockDesktopApi(): void {
       });
       return true;
     },
+    recoverAgentRun: async () => [],
     saveApiKey: async (apiKey) => {
       const ok = Boolean(apiKey.trim()) && !/[\r\n]/.test(apiKey);
       health = {
@@ -3266,41 +3441,7 @@ export function installMockDesktopApi(): void {
         ...(request.workspacePath ? { workspacePath: request.workspacePath } : {}),
         status: "blocked",
         createdAt,
-        steps:
-          template?.id === "external-runtime-reconnect"
-            ? [
-                {
-                  id: "prepare",
-                  kind: "chat_command",
-                  title: "Prepare runtime context",
-                  detail: "Gather restart and provider-runtime scope.",
-                  command: "/plan external runtime reconnect",
-                  requiresApproval: false,
-                },
-                {
-                  id: "runtime",
-                  kind: "external_runtime",
-                  title: "Reconnect external runtime",
-                  detail:
-                    "Reconnect or restart the provider-owned runtime without automatic execution after restart.",
-                  requiresApproval: true,
-                },
-                {
-                  id: "verify",
-                  kind: "manual_review",
-                  title: "Confirm runtime result",
-                  detail: "Review runtime output and background task state.",
-                  requiresApproval: false,
-                },
-              ]
-            : (template?.steps ?? []).map((step, index) => ({
-                id: `step-${index + 1}`,
-                kind: index === 0 ? "chat_command" : "manual_review",
-                title: `Step ${index + 1}`,
-                detail: step,
-                command: index === 0 ? template?.trigger : undefined,
-                requiresApproval: Boolean(template?.approvalRequired),
-              })),
+        steps: buildMockWorkflowRunSteps(template),
         verification: template?.verification ?? "No verifier is available.",
         message: "Workflow template is not available.",
       };
@@ -3454,6 +3595,15 @@ export function installMockDesktopApi(): void {
         };
       }
       if (step.kind === "terminal_command") {
+        const now = new Date().toISOString();
+        run.steps[stepIndex] = {
+          ...step,
+          status: "running",
+          message: "Mock terminal command dispatched; waiting for its exit result.",
+        };
+        run.updatedAt = now;
+        workflowRuns = workflowRuns.map((item, index) => index === runIndex ? run : item);
+        upsertMockBackgroundTaskForWorkflowRun(run);
         return {
           run,
           dispatched: Boolean(step.command),
@@ -3475,11 +3625,11 @@ export function installMockDesktopApi(): void {
       const now = new Date().toISOString();
       run.steps[stepIndex] = {
         ...step,
-        status: "completed",
-        completedAt: now,
+        status: step.kind === "chat_command" ? "running" : "completed",
+        ...(step.kind === "chat_command" ? {} : { completedAt: now }),
         message:
           step.kind === "chat_command" && step.command
-            ? `Mock dispatched to the chat bar: ${step.command}`
+            ? "Mock chat command prepared; confirm this step only after the chat action finishes."
             : "Mock manual checkpoint completed.",
       };
       run.updatedAt = now;
@@ -3513,18 +3663,26 @@ export function installMockDesktopApi(): void {
       const stepIndex = run.steps.findIndex((step) => step.id === request.stepId);
       if (stepIndex < 0) throw new Error("Mock workflow run step was not found.");
       const step = run.steps[stepIndex];
-      if (step.kind !== "terminal_command") {
-        throw new Error("Mock workflow step completion only accepts terminal commands.");
+      const completable =
+        (step.kind === "external_runtime" && step.status === "waiting_approval") ||
+        ((step.kind === "terminal_command" || step.kind === "chat_command") && step.status === "running");
+      if (!completable) {
+        throw new Error("Mock workflow step completion only accepts dispatched terminal/chat steps or an explicitly reconnected external runtime.");
       }
       const now = new Date().toISOString();
       const succeeded = request.exitCode === 0;
+      const label = step.kind === "terminal_command"
+        ? "terminal workflow command"
+        : step.kind === "chat_command"
+          ? "chat workflow action"
+          : "external runtime reconnect";
       run.steps[stepIndex] = {
         ...step,
         status: succeeded ? "completed" : "blocked",
         ...(succeeded ? { completedAt: now } : {}),
         message: succeeded
-          ? "Mock terminal workflow command completed."
-          : `Mock terminal workflow command failed with exit code ${request.exitCode}.`,
+          ? `Mock ${label} completed.`
+          : `Mock ${label} failed with exit code ${request.exitCode}.`,
       };
       run.updatedAt = now;
       run.currentStepId = run.steps.find((item) => item.status !== "completed")?.id;
@@ -3604,6 +3762,22 @@ export function installMockDesktopApi(): void {
         item.id === updated.id ? updated : item,
       );
       return updated;
+    },
+    cancelBackgroundTask: async (request) => {
+      const task = backgroundTasks.find((item) => item.id === request.taskId);
+      if (!task || task.status === "completed") throw new Error("Mock background task cannot be cancelled.");
+      const now = new Date().toISOString(); const updated = { ...task, status: "cancelled" as const, updatedAt: now, cancelledAt: now, message: request.reason ?? "Mock background task was cancelled." };
+      backgroundTasks = backgroundTasks.map((item) => item.id === updated.id ? updated : item); return updated;
+    },
+    retryBackgroundTask: async (request) => {
+      const task = backgroundTasks.find((item) => item.id === request.taskId);
+      if (!task || !["failed", "blocked", "cancelled"].includes(task.status)) throw new Error("Mock background task cannot be retried.");
+      const updated = { ...task, status: "queued" as const, updatedAt: new Date().toISOString(), attempt: (task.attempt ?? 1) + 1, retryOfTaskId: task.retryOfTaskId ?? task.id, progress: 0, message: request.reason ?? "Mock background task retry is queued." };
+      backgroundTasks = backgroundTasks.map((item) => item.id === updated.id ? updated : item); return updated;
+    },
+    recoverBackgroundTasks: async () => {
+      const generatedAt = new Date().toISOString(); const tasks = backgroundTasks.filter((task) => ["queued", "running", "waiting_approval"].includes(task.status)).map((task) => ({ ...task, status: task.status === "running" ? "queued" as const : task.status, updatedAt: generatedAt, recoveredAt: generatedAt }));
+      backgroundTasks = backgroundTasks.map((task) => tasks.find((item) => item.id === task.id) ?? task); return { generatedAt, recovered: tasks.length, tasks };
     },
     createShare: async (request) => {
       const source = backgroundTasks.find((item) => item.id === request.sourceTaskId);
@@ -4028,9 +4202,14 @@ export function installMockDesktopApi(): void {
           continue;
         }
         const approvalId = template.approvalRequired
-          ? `workflow:workflow.run:${template.id}`
+          ? `workflow:workflow.run:${template.id}:${triggerAudits.get(task.id)?.triggerKey}`
           : undefined;
-        if (approvalId) {
+        if (approvalId && rejectedScheduledWorkflowApprovals.has(approvalId)) {
+          items.push({ taskId: task.id, title: task.title, status: "blocked", message: "Scheduled Workflow approval was rejected.", approvalId, reason: "workflow_approval_rejected" });
+          scheduledTasks = scheduledTasks.map((item) => item.id === task.id ? { ...item, status: "blocked", updatedAt: generatedAt, message: "Scheduled Workflow approval was rejected." } : item);
+          continue;
+        }
+        if (approvalId && !approvedScheduledWorkflowApprovals.has(approvalId)) {
           pendingApprovals = [
             {
               id: approvalId,
@@ -4044,6 +4223,9 @@ export function installMockDesktopApi(): void {
             },
             ...pendingApprovals.filter((item) => item.id !== approvalId),
           ];
+          items.push({ taskId: task.id, title: task.title, status: "queued_approval", message: "Mock scheduled Workflow is waiting in Approval Center.", approvalId });
+          scheduledTasks = scheduledTasks.map((item) => item.id === task.id ? { ...item, updatedAt: generatedAt, message: "Waiting for Workflow approval; scheduled time is retained.", verification: template.verification } : item);
+          continue;
         }
         const run: DesktopWorkflowRun = {
           id: `mock-workflow-run-${crypto.randomUUID()}`,
@@ -4051,15 +4233,12 @@ export function installMockDesktopApi(): void {
           templateId: template.id,
           name: template.name,
           ...(task.workspacePath ? { workspacePath: task.workspacePath } : {}),
-          status: approvalId ? "waiting_approval" : "running",
+          status: "running",
           createdAt: generatedAt,
           updatedAt: generatedAt,
-          ...(approvalId ? { approvalId } : {}),
           steps: [],
           verification: template.verification,
-          message: approvalId
-            ? "Mock scheduled workflow run is waiting for Approval Center."
-            : "Mock scheduled workflow run started.",
+          message: "Mock scheduled workflow run started.",
         };
         workflowRuns = [run, ...workflowRuns].slice(0, 20);
         upsertMockBackgroundTaskForWorkflowRun(run);
@@ -4067,11 +4246,10 @@ export function installMockDesktopApi(): void {
         items.push({
           taskId: task.id,
           title: task.title,
-          status: approvalId ? "queued_approval" : "started",
+          status: "started",
           message: run.message,
           ...(nextRunAt ? { nextRunAt } : {}),
           workflowRunId: run.id,
-          ...(approvalId ? { approvalId } : {}),
         });
         scheduledTasks = scheduledTasks.map((item) =>
           item.id === task.id
@@ -4083,9 +4261,7 @@ export function installMockDesktopApi(): void {
                 activeWorkflowRunId: run.id,
                 activeWorkflowRunStatus: run.status,
                 activeWorkflowRunUpdatedAt: run.updatedAt,
-                message: approvalId
-                  ? "Scheduled task queued a workflow run that is waiting in Approval Center."
-                  : "Scheduled task started an approval-gated workflow run.",
+                message: "Scheduled task started an approval-gated workflow run.",
                 verification: template.verification,
               }
             : item,
@@ -4107,6 +4283,7 @@ export function installMockDesktopApi(): void {
         ).length,
         reconnected: items.filter((item) => item.status === "reconnected").length,
         skipped: items.filter((item) => item.status === "skipped").length,
+        failed: items.filter((item) => item.status === "failed").length,
         blocked: items.filter((item) => item.status === "blocked").length,
         items,
         runs,
@@ -4123,6 +4300,7 @@ export function installMockDesktopApi(): void {
           triggered: result.triggered,
           reconnected: result.reconnected,
           skipped: result.skipped,
+          failed: result.failed,
           blocked: result.blocked,
         },
         message: "Mock scheduled task worker is waiting for the next due scan.",
@@ -4135,21 +4313,7 @@ export function installMockDesktopApi(): void {
       generatedAt: new Date().toISOString(),
       adapters: mockChannelAdapters.adapters.map((adapter) => ({ ...adapter })),
     }),
-    listExternalConnectionReadiness: async (workspacePath?: string) => ({
-      ...mockExternalConnectionReadiness,
-      workspacePath,
-      generatedAt: new Date().toISOString(),
-      connections: mockExternalConnectionReadiness.connections.map((connection) => ({
-        ...connection,
-        capabilitySources: [...connection.capabilitySources],
-        evidence: [...connection.evidence],
-        gaps: [...connection.gaps],
-        reconnectReadinessChecks: connection.reconnectReadinessChecks
-          ? [...connection.reconnectReadinessChecks]
-          : buildMockReconnectReadinessChecks(connection),
-        reconnectPolicy: connection.reconnectPolicy ?? buildMockExternalReconnectPolicy(connection.id),
-      })),
-    }),
+    listExternalConnectionReadiness: async (workspacePath?: string) => buildMockExternalConnectionReadiness(workspacePath),
     configureChannelAdapter: async (request): Promise<DesktopChannelAdapterConfigureResult> => {
       const adapter = mockChannelAdapters.adapters.find(
         (item) => item.id === request.adapterId,
@@ -4158,44 +4322,8 @@ export function installMockDesktopApi(): void {
         throw new Error("Mock channel adapter was not found.");
       }
       const now = new Date().toISOString();
-      if (request.mode === "session_stub") {
-        if (!["slack-chat", "github-connector", "docs-connector", "calendar-connector"].includes(adapter.id)) {
-          throw new Error("Mock channel session configuration only supports chat and connector adapters.");
-        }
-        const accountLabel = request.accountLabel || `${adapter.name} account`;
-        const scopeLabel = request.scopeLabel || `${adapter.provider}:workspace`;
-        const credentialState = request.credentialState || "placeholder";
-        adapter.status = "available";
-        adapter.configured = true;
-        adapter.authMode = "session_stub";
-        adapter.accountLabel = accountLabel;
-        adapter.scopeLabel = scopeLabel;
-        adapter.credentialState = credentialState;
-        adapter.configuredAt = now;
-        mockChannelAdapters.configuredCount = mockChannelAdapters.adapters.filter(
-          (item) => item.configured,
-        ).length;
-        mockChannelAdapters.availableCount = mockChannelAdapters.adapters.filter(
-          (item) => item.status === "available",
-        ).length;
-        return {
-          adapter: { ...adapter },
-          connection: {
-            adapterId: adapter.id,
-            workspacePath: request.workspacePath,
-            provider: adapter.provider,
-            mode: "session_stub",
-            configuredAt: now,
-            updatedAt: now,
-            accountLabel,
-            scopeLabel,
-            credentialState,
-            readOnly: adapter.direction === "inbound",
-          },
-          message: `Mock configured ${adapter.name} session stub for ${scopeLabel}.`,
-          verification:
-            "Mock session configuration stores workspace-scoped metadata only and performs no OAuth or network call.",
-        };
+      if ((request as { mode?: string }).mode === "session_stub") {
+        throw new Error("Mock channel session placeholders cannot be configured; use a verified provider credential or dedicated pairing flow.");
       }
       if (adapter.id !== "github-connector") {
         throw new Error("Mock channel adapter only configures github-connector for local Git remote.");
@@ -4239,9 +4367,7 @@ export function installMockDesktopApi(): void {
       if (!adapter) {
         throw new Error("Mock channel adapter was not found.");
       }
-      if (!["mobile-chat", "slack-chat", "github-connector", "docs-connector", "calendar-connector"].includes(adapter.id)) {
-        throw new Error("Mock channel authorization only supports connector and mobile adapters.");
-      }
+      if (adapter.id !== "github-connector") throw new Error("This adapter uses its real provider-token or dedicated pairing flow.");
       const now = new Date();
       const expiresAt = new Date(now.getTime() + 15 * 60 * 1000).toISOString();
       const userCode = `${adapter.provider.slice(0, 3).toUpperCase()}-MOCK-0001`;
@@ -4254,14 +4380,15 @@ export function installMockDesktopApi(): void {
             : adapter.provider === "mobile"
               ? ["mobile:chat", "mobile:notify"]
               : [`${adapter.provider}:readonly`];
-      adapter.status = "available";
-      adapter.configured = true;
+      adapter.status = "config_required";
+      adapter.configured = false;
       adapter.authMode = "session_stub";
       adapter.accountLabel = `${adapter.name} authorization pending`;
       adapter.scopeLabel = scopes.join(" ");
       adapter.credentialState = "placeholder";
       adapter.sessionExpiresAt = expiresAt;
       adapter.authPreparedAt = now.toISOString();
+      adapter.authOperationId = "channel-auth:00000000-0000-4000-8000-000000000001";
       mockChannelAdapters.configuredCount = mockChannelAdapters.adapters.filter(
         (item) => item.configured,
       ).length;
@@ -4279,10 +4406,37 @@ export function installMockDesktopApi(): void {
         expiresAt,
         intervalSeconds: 5,
         scopes,
+        operationId: adapter.id === "github-connector" ? "channel-auth:00000000-0000-4000-8000-000000000001" : undefined,
         message: `Mock prepared ${adapter.name} authorization for review.`,
         verification:
           "Mock connector authorization preparation stores workspace-scoped metadata only and performs no browser launch, provider network call, token storage, or live send.",
       };
+    },
+    pollChannelAdapterAuth: async (request) => {
+      if (request.adapterId !== "github-connector" || !/^channel-auth:/.test(request.operationId)) throw new Error("Mock GitHub authorization operation is invalid.");
+      const adapter = mockChannelAdapters.adapters.find((item) => item.id === "github-connector")!;
+      adapter.status = "available"; adapter.configured = true; adapter.authMode = "oauth"; adapter.credentialState = "configured"; adapter.accountLabel = "octo-reviewer"; adapter.configuredAt = new Date().toISOString(); adapter.authOperationId = undefined; adapter.authPreparedAt = undefined;
+      mockChannelAdapters.configuredCount = mockChannelAdapters.adapters.filter((item) => item.configured).length;
+      mockChannelAdapters.availableCount = mockChannelAdapters.adapters.filter((item) => item.status === "available").length;
+      return { adapterId: request.adapterId, status: "complete", operationId: request.operationId, accountLabel: "octo-reviewer", message: "Mock GitHub connector authorization completed." };
+    },
+    revokeChannelAdapterAuth: async (request) => {
+      if (!["github-connector", "slack-chat", "docs-connector", "calendar-connector"].includes(request.adapterId)) throw new Error("Mock provider authorization is unsupported.");
+      const adapter = mockChannelAdapters.adapters.find((item) => item.id === request.adapterId)!;
+      const revoked = adapter.authMode === "oauth" || adapter.authMode === "provider_token" || Boolean(adapter.authOperationId); adapter.status = "config_required"; adapter.configured = false; adapter.authMode = "not_configured"; adapter.credentialState = "missing"; adapter.accountLabel = undefined; adapter.configuredAt = undefined; adapter.authOperationId = undefined; adapter.authPreparedAt = undefined;
+      mockChannelAdapters.configuredCount = mockChannelAdapters.adapters.filter((item) => item.configured).length;
+      mockChannelAdapters.availableCount = mockChannelAdapters.adapters.filter((item) => item.status === "available").length;
+      return { adapterId: request.adapterId, revoked, message: revoked ? `Mock ${adapter.provider} authorization revoked.` : "No mock authorization." };
+    },
+    configureChannelProviderToken: async (request) => {
+      if (request.adapterId === "slack-chat" && !request.token.startsWith("xoxb-")) throw new Error("Mock Slack bot token is invalid.");
+      if (request.adapterId === "docs-connector" && !request.token.startsWith("ya29.")) throw new Error("Mock Google OAuth token is invalid.");
+      if (request.adapterId === "calendar-connector" && !request.token.startsWith("ya29.")) throw new Error("Mock Google OAuth token is invalid.");
+      const adapter = mockChannelAdapters.adapters.find((item) => item.id === request.adapterId)!;
+      const accountLabel = request.adapterId === "slack-chat" ? "Mock Slack / bot" : request.adapterId === "docs-connector" ? "docs@example.test" : "calendar@example.test";
+      const configuredAt = new Date().toISOString(); adapter.status = "available"; adapter.configured = true; adapter.authMode = "provider_token"; adapter.credentialState = "configured"; adapter.accountLabel = accountLabel; adapter.configuredAt = configuredAt;
+      mockChannelAdapters.configuredCount = mockChannelAdapters.adapters.filter((item) => item.configured).length; mockChannelAdapters.availableCount = mockChannelAdapters.adapters.filter((item) => item.status === "available").length;
+      return { adapterId: request.adapterId, accountLabel, configuredAt, ...(request.adapterId !== "slack-chat" ? { expiresAt: new Date(Date.now() + 3600_000).toISOString() } : {}), message: `Mock ${request.adapterId} connector authorized.` };
     },
     importChannelContext: async (request): Promise<DesktopChannelContextImportResult> => {
       const workspacePath = request.workspacePath || "C:\\Users\\Demo\\Projects\\workspace";
@@ -4640,6 +4794,10 @@ export function installMockDesktopApi(): void {
         verification:
           "Mock read-only channel import keeps selected file context explicit before chat send.",
       });
+    },
+    syncLiveChannelContext: async (request): Promise<DesktopChannelContextImportResult> => {
+      const item = request.adapterId === "calendar-connector" ? { id: `calendar-live:${request.calendarId}:event-1`, adapterId: "calendar-connector", provider: "calendar" as const, kind: "meeting" as const, title: "Mock calendar meeting", path: "https://calendar.google.com/event?eid=mock", relativePath: `${request.calendarId}#event-1`, summary: "Start: 2026-07-23T09:00:00.000Z\nEnd: 2026-07-23T10:00:00.000Z", mime: "application/vnd.google-apps.calendar.event+json", truncated: false } : request.adapterId === "docs-connector" ? { id: `docs-live:${request.documentId}`, adapterId: "docs-connector", provider: "docs" as const, kind: "document" as const, title: "Mock Google document", path: `https://docs.google.com/document/d/${request.documentId}/edit`, relativePath: request.documentId ?? "document", summary: "Mock bounded Google document text.", mime: "application/vnd.google-apps.document", truncated: false } : request.adapterId === "slack-chat" ? { id: `slack-live:${request.channelId}:1760000000.1`, adapterId: "slack-chat", provider: "slack" as const, kind: "slack_message" as const, title: "Mock Slack message", path: `slack://${request.channelId}/1760000000.1`, relativePath: `${request.channelId}#1760000000.1`, summary: "Mock Slack history message.", mime: "application/vnd.slack.message+json", truncated: false } : { id: `github-live:${request.repository}:42`, adapterId: "github-connector", provider: "github" as const, kind: "issue" as const, title: "Mock live provider issue", path: `https://github.com/${request.repository}/issues/42`, relativePath: `${request.repository}#42`, summary: "Issue #42: Mock live provider issue\nState: open; author: octo-reviewer", mime: "application/vnd.github+json", truncated: false };
+      return recordMockChannelInboundImport({ adapterId: request.adapterId, workspacePath: request.workspacePath, importedAt: new Date().toISOString(), items: [item], truncated: false, message: `Mock imported live ${request.adapterId} context.`, verification: "Mock live sync uses deterministic fixture data." });
     },
     syncChannelSnapshots: async (request): Promise<DesktopChannelSnapshotSyncResult> => {
       const workspacePath = request.workspacePath || "C:\\Users\\Demo\\Projects\\workspace";
@@ -5076,6 +5234,10 @@ export function installMockDesktopApi(): void {
     decidePendingApproval: async (request) => {
       const before = pendingApprovals.length;
       pendingApprovals = pendingApprovals.filter((item) => item.id !== request.id);
+      if (request.id.startsWith("workflow:workflow.run:") && request.id.split(":").length >= 4) {
+        if (request.approved) approvedScheduledWorkflowApprovals.add(request.id);
+        else rejectedScheduledWorkflowApprovals.add(request.id);
+      }
       const channelDraft = pendingChannelOutboundDraftApprovals[request.id];
       if (channelDraft) {
         const now = new Date().toISOString();

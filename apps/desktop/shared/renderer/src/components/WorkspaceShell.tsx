@@ -5,7 +5,8 @@ import {
   ArrowRight,
   CalendarClock,
   ChevronDown,
-  Cloud,
+  // Temporarily unused while GFS cloud entry is hidden — keep for later reuse.
+  // Cloud,
   Copy,
   FileText,
   Monitor,
@@ -35,6 +36,7 @@ import {
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import type { DesktopPlatformId } from "@shared/platform";
 import type {
   AuthUser,
   CreateWorkspaceRequest,
@@ -54,6 +56,7 @@ import type {
 import drsaiLogo from "../assets/drsai.png";
 import { desktopApi } from "../desktopApi";
 import { copyTextSafely } from "../clipboard";
+import { isTextCompositionEvent } from "../imeKeyboardPolicy";
 import { loadThreadMessages } from "../adapters/threadMessages";
 import {
   copyThreadShareLinkClient,
@@ -136,6 +139,7 @@ interface WorkspaceShellProps {
   mainContent: React.ReactNode;
   navIcons: Record<NavId, LucideIcon>;
   navSections: NavSection[];
+  platformId: DesktopPlatformId;
   recentThreads: WorkspaceThread[];
   searchableThreads: WorkspaceThread[];
   rightPanel: React.ReactNode;
@@ -232,6 +236,7 @@ export function WorkspaceShell({
   mainContent,
   navIcons,
   navSections,
+  platformId,
   recentThreads,
   searchableThreads,
   rightPanel,
@@ -323,8 +328,6 @@ export function WorkspaceShell({
     y: number;
   } | null>(null);
   const [deleteConfirmThread, setDeleteConfirmThread] = useState<WorkspaceThread | null>(null);
-  const [renameThreadTarget, setRenameThreadTarget] = useState<WorkspaceThread | null>(null);
-  const [renameThreadTitle, setRenameThreadTitle] = useState("");
   const [shareDialog, setShareDialog] = useState<{
     thread: WorkspaceThread;
     loading: boolean;
@@ -341,7 +344,6 @@ export function WorkspaceShell({
     message: string;
   } | null>(null);
   const shareToastTimerRef = useRef<number | null>(null);
-  const renameInputRef = useRef<HTMLInputElement | null>(null);
   const [forkConflictPreview, setForkConflictPreview] = useState<{
     key: string;
     path: string;
@@ -645,12 +647,6 @@ export function WorkspaceShell({
   }, [commandPaletteOpen]);
 
   useEffect(() => {
-    if (!renameThreadTarget) return;
-    renameInputRef.current?.focus();
-    renameInputRef.current?.select();
-  }, [renameThreadTarget?.id]);
-
-  useEffect(() => {
     setCommandPaletteSelectedIndex(0);
   }, [commandPaletteQuery, commandPaletteOpen]);
 
@@ -854,14 +850,6 @@ export function WorkspaceShell({
           if (activeWorkspace?.path) void onOpenWorkspacePath(activeWorkspace.path);
         },
       },
-      {
-        id: "command:settings",
-        group: "recommendations",
-        label: zh ? "设置" : "Settings",
-        shortcut: "Ctrl+,",
-        icon: Settings,
-        run: () => onNavChange(MENU_IDS.profile),
-      },
     ];
 
     return [...chatItems, ...recommendationItems];
@@ -935,7 +923,7 @@ export function WorkspaceShell({
     event.preventDefault();
     event.stopPropagation();
     const menuWidth = 260;
-    const menuHeight = thread.fork ? 590 : 336;
+    const menuHeight = thread.fork ? 560 : 306;
     setThreadMenu({
       thread,
       x: Math.min(event.clientX, Math.max(12, window.innerWidth - menuWidth - 12)),
@@ -947,30 +935,10 @@ export function WorkspaceShell({
     setThreadMenu(null);
   }
 
-  function openRenameThreadDialog(thread: WorkspaceThread): void {
-    setRenameThreadTarget(thread);
-    setRenameThreadTitle(thread.title);
-  }
-
-  function closeRenameThreadDialog(): void {
-    setRenameThreadTarget(null);
-    setRenameThreadTitle("");
-  }
-
-  function submitRenameThread(): void {
-    if (!renameThreadTarget) return;
-    const nextTitle = renameThreadTitle.trim();
-    if (!nextTitle || nextTitle === renameThreadTarget.title) {
-      closeRenameThreadDialog();
-      return;
-    }
-    void onThreadUpdate(renameThreadTarget.id, { title: nextTitle }).finally(() => {
-      closeRenameThreadDialog();
-    });
-  }
-
   function renameThread(thread: WorkspaceThread): void {
-    openRenameThreadDialog(thread);
+    const nextTitle = window.prompt(zh ? "重命名对话" : "Rename conversation", thread.title);
+    if (!nextTitle || nextTitle.trim() === thread.title) return;
+    void onThreadUpdate(thread.id, { title: nextTitle.trim() });
   }
 
   function closeShareDialog(): void {
@@ -1228,12 +1196,17 @@ export function WorkspaceShell({
     return extractShareMessageText(message);
   }
 
+
   function copyText(text: string): void {
     void copyTextSafely(text);
   }
 
   function getThreadWorkspacePath(thread: WorkspaceThread): string {
     return thread.workspacePath || activeWorkspace?.path || "";
+  }
+
+  function getThreadDeepLink(thread: WorkspaceThread): string {
+    return `opendrsai://thread/${encodeURIComponent(thread.id)}`;
   }
 
   function renderWorkspaceThread(thread: WorkspaceThread): React.JSX.Element {
@@ -1697,6 +1670,7 @@ export function WorkspaceShell({
   }
 
   function handleCommandPaletteKeyDown(event: React.KeyboardEvent<HTMLInputElement>): void {
+    if (isTextCompositionEvent(event.nativeEvent)) return;
     if (event.key === "Escape") {
       event.preventDefault();
       closeCommandPalette();
@@ -1733,9 +1707,7 @@ export function WorkspaceShell({
           ? "Ctrl+N"
           : key === "o"
             ? "Ctrl+O"
-            : event.key === ","
-              ? "Ctrl+,"
-              : null;
+            : null;
       const item = shortcut
         ? visibleCommandPaletteItems.find((candidate) => candidate.shortcut === shortcut)
         : null;
@@ -2041,7 +2013,7 @@ export function WorkspaceShell({
 
   return (
     <div
-      className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}
+      className={`app-shell platform-${platformId} ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}
       style={{
         "--sidebar-width": `${sidebarWidth}px`,
         "--right-panel-width": `${rightPanelWidth}px`,
@@ -2299,8 +2271,10 @@ export function WorkspaceShell({
             </div>
           )}
 
-          {workspaceItems.map(({ id, label }) => {
-            const Icon = id === MENU_IDS.library ? Cloud : navIcons[id];
+            {workspaceItems.map(({ id, label }) => {
+            // Temporarily hide GFS cloud icon special-case — keep for later reuse.
+            // const Icon = id === MENU_IDS.library ? Cloud : navIcons[id];
+            const Icon = navIcons[id];
             return (
               <SidebarButton
                 key={id}
@@ -2440,7 +2414,9 @@ export function WorkspaceShell({
               </div>
             )}
           </div>
+
         </nav>
+
       </aside>
       {!sidebarCollapsed && (
         <div
@@ -2584,7 +2560,7 @@ export function WorkspaceShell({
             <button type="button" role="menuitem" onClick={() => runThreadMenuAction(() => renameThread(threadMenu.thread))}>
               {zh ? "重命名对话" : "Rename conversation"}
             </button>
-            {/* <button
+            <button
               type="button"
               role="menuitem"
               onClick={() =>
@@ -2594,7 +2570,7 @@ export function WorkspaceShell({
               }
             >
               {threadMenu.thread.archived ? (zh ? "取消归档对话" : "Unarchive conversation") : (zh ? "归档对话" : "Archive conversation")}
-            </button> */}
+            </button>
             <button
               type="button"
               role="menuitem"
@@ -2606,6 +2582,7 @@ export function WorkspaceShell({
             >
               {threadMenu.thread.unread ? (zh ? "标记为已读" : "Mark as read") : (zh ? "标记为未读" : "Mark as unread")}
             </button>
+            {/* Temporarily hide share conversation — keep for later reuse.
             <button
               type="button"
               role="menuitem"
@@ -2613,41 +2590,7 @@ export function WorkspaceShell({
             >
               {zh ? "分享对话" : "Share conversation"}
             </button>
-            <div className="thread-context-separator" />
-            <button
-              type="button"
-              role="menuitem"
-              disabled={!getThreadWorkspacePath(threadMenu.thread)}
-              onClick={() =>
-                runThreadMenuAction(() => {
-                  const path = getThreadWorkspacePath(threadMenu.thread);
-                  if (path) void onOpenWorkspacePath(path);
-                })
-              }
-            >
-              {zh ? "在资源管理器中打开" : "Open in File Explorer"}
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              disabled={!getThreadWorkspacePath(threadMenu.thread)}
-              onClick={() => runThreadMenuAction(() => copyText(getThreadWorkspacePath(threadMenu.thread)))}
-            >
-              {zh ? "复制工作目录" : "Copy working directory"}
-            </button>
-            <div className="thread-context-separator" />
-            <button
-              type="button"
-              role="menuitem"
-              className="thread-context-danger"
-              onClick={() =>
-                runThreadMenuAction(() => {
-                  setDeleteConfirmThread(threadMenu.thread);
-                })
-              }
-            >
-              {zh ? "删除对话" : "Delete conversation"}
-            </button>
+            */}
             {threadMenu.thread.fork && (
               <>
                 <div className="thread-context-separator" />
@@ -3090,59 +3033,56 @@ export function WorkspaceShell({
                 </button>
               </>
             )}
+            <div className="thread-context-separator" />
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() =>
+                runThreadMenuAction(() => {
+                  const path = getThreadWorkspacePath(threadMenu.thread);
+                  if (path) void onOpenWorkspacePath(path);
+                })
+              }
+            >
+              {zh ? "在资源管理器中打开" : "Open in File Explorer"}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => runThreadMenuAction(() => copyText(getThreadWorkspacePath(threadMenu.thread)))}
+            >
+              {zh ? "复制工作目录" : "Copy working directory"}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => runThreadMenuAction(() => copyText(threadMenu.thread.id))}
+            >
+              {zh ? "复制会话 ID" : "Copy conversation ID"}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => runThreadMenuAction(() => copyText(getThreadDeepLink(threadMenu.thread)))}
+            >
+              {zh ? "复制深度链接" : "Copy deep link"}
+            </button>
+            <div className="thread-context-separator" />
+            {/* Temporarily hide delete conversation — keep for later reuse.
+            <button
+              type="button"
+              role="menuitem"
+              className="thread-context-danger"
+              onClick={() =>
+                runThreadMenuAction(() => {
+                  setDeleteConfirmThread(threadMenu.thread);
+                })
+              }
+            >
+              {zh ? "删除对话" : "Delete conversation"}
+            </button>
+            */}
           </div>
-        </div>
-      )}
-      {renameThreadTarget && (
-        <div
-          className="thread-delete-confirm-overlay"
-          role="presentation"
-          onMouseDown={closeRenameThreadDialog}
-        >
-          <section
-            className="thread-delete-confirm-dialog thread-rename-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="thread-rename-title"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <div className="thread-delete-confirm-copy">
-              <h2 id="thread-rename-title">{zh ? "重命名对话" : "Rename conversation"}</h2>
-              <label className="thread-rename-form">
-                <span>{zh ? "对话名称" : "Conversation name"}</span>
-                <input
-                  ref={renameInputRef}
-                  value={renameThreadTitle}
-                  onChange={(event) => setRenameThreadTitle(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      submitRenameThread();
-                    }
-                    if (event.key === "Escape") {
-                      event.preventDefault();
-                      closeRenameThreadDialog();
-                    }
-                  }}
-                  maxLength={120}
-                  placeholder={zh ? "输入新的对话名称" : "Enter a new conversation name"}
-                />
-              </label>
-            </div>
-            <div className="thread-delete-confirm-actions">
-              <button type="button" className="thread-delete-confirm-cancel" onClick={closeRenameThreadDialog}>
-                {zh ? "取消" : "Cancel"}
-              </button>
-              <button
-                type="button"
-                className="thread-rename-confirm-save"
-                onClick={submitRenameThread}
-                disabled={!renameThreadTitle.trim()}
-              >
-                {zh ? "保存" : "Save"}
-              </button>
-            </div>
-          </section>
         </div>
       )}
       {shareDialog && (

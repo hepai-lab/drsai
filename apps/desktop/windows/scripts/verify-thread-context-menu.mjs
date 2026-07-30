@@ -47,8 +47,7 @@ const checks = [
   ],
   [
     "thread snapshot ipc handlers are registered",
-    main.includes("getThreadSnapshot,") &&
-      main.includes('secureHandle("desktop:get-thread-snapshot"') &&
+    main.includes('secureHandle("desktop:get-thread-snapshot"') &&
       main.includes('secureHandle("desktop:update-thread-snapshot"'),
   ],
   [
@@ -103,8 +102,10 @@ const checks = [
   ],
   [
     "chat adapter refreshes displayed messages when the selected thread snapshot changes",
-    chatAdapter.includes("setMessages(threadSnapshot?.messages?.length ? threadSnapshot.messages") &&
-      chatAdapter.includes("[language, threadId, threadSnapshot]"),
+    chatAdapter.includes("if (threadSnapshot?.threadId !== threadId) return") &&
+      chatAdapter.includes("hydrateStructuredMessages(threadSnapshot.messages)") &&
+      chatAdapter.includes("setMessages(restoredMessages)") &&
+      chatAdapter.includes("[activeRequestId, language, threadId, threadSnapshot]"),
   ],
   [
     "sidebar supports a right click context menu on conversations",
@@ -136,82 +137,6 @@ const checks = [
       shell.includes("{ unread: !threadMenu.thread.unread }"),
   ],
   [
-    "share conversation action opens Doubao-style read-only share dialog",
-    shell.includes("分享对话") &&
-      shell.includes("function openShareDialog") &&
-      shell.includes("thread-share-dialog") &&
-      shell.includes("只能查看聊天记录") &&
-      shell.includes("复制链接") &&
-      shell.includes("打开预览") &&
-      !shell.includes("打开文件位置") &&
-      !shell.includes("参考豆包分享") &&
-      !shell.includes("thread-share-banner") &&
-      shell.includes("ChatMessageContent") &&
-      shell.includes("getAssistantVisibleAnswer") &&
-      shell.includes("复制成功") &&
-      shell.includes("复制失败") &&
-      shell.includes("showShareToast") &&
-      shell.includes("createThreadShareClient") &&
-      shell.includes("openThreadShareClient") &&
-      shell.includes("copyThreadShareLinkClient"),
-  ],
-  [
-    "shared api exposes thread share contract",
-    sharedApi.includes("export interface CreateThreadShareRequest") &&
-      sharedApi.includes("export interface DesktopThreadShareResult") &&
-      sharedApi.includes("createThreadShare(request: CreateThreadShareRequest)") &&
-      sharedApi.includes("openThreadShare(filePath: string)") &&
-      sharedApi.includes("revealThreadShare(filePath: string)") &&
-      sharedApi.includes("readOnly: true"),
-  ],
-  [
-    "renderer share client falls back when preload bridge is stale",
-    (() => {
-      const client = read("src/renderer/src/threadShareClient.ts");
-      return (
-        client.includes("hasThreadShareBridge") &&
-        client.includes("createThreadShareClient") &&
-        client.includes('mode: "local"') &&
-        client.includes("URL.createObjectURL")
-      );
-    })(),
-  ],
-  [
-    "main process generates read-only share html without chat composer",
-    (() => {
-      const share = read("src/main/threadShare.ts");
-      const html = read("../shared/api/threadShareHtml.ts");
-      return (
-        html.includes("只读分享") &&
-        html.includes("无法发起新对话") &&
-        html.includes("--app-accent: #8b5cf6") &&
-        html.includes("brand-mark") &&
-        share.includes("renderThreadShareHtml") &&
-        share.includes("export async function createThreadShare") &&
-        main.includes('secureHandle("desktop:create-thread-share"') &&
-        main.includes('secureHandle("desktop:open-thread-share"') &&
-        main.includes('secureHandle("desktop:reveal-thread-share"')
-      );
-    })(),
-  ],
-  [
-    "preload and mock expose thread share methods",
-    preload.includes("createThreadShare:") &&
-      preload.includes("openThreadShare:") &&
-      preload.includes("revealThreadShare:") &&
-      mock.includes("createThreadShare:") &&
-      mock.includes("openThreadShare:") &&
-      mock.includes("revealThreadShare:") &&
-      mock.includes("readOnly: true"),
-  ],
-  [
-    "share dialog visual styles exist",
-    css.includes(".thread-share-dialog") &&
-      css.includes(".thread-share-banner") &&
-      css.includes(".thread-share-messages") &&
-      css.includes(".thread-share-primary"),
-  ],
-  [
     "open in file explorer action uses the existing open path callback",
     shell.includes("在资源管理器中打开") &&
       shell.includes("onOpenWorkspacePath(path)"),
@@ -219,8 +144,19 @@ const checks = [
   [
     "copy working directory action uses the clipboard",
     shell.includes("复制工作目录") &&
-      shell.includes("copyText(getThreadWorkspacePath(threadMenu.thread))") &&
-      shell.includes("getThreadWorkspacePath(threadMenu.thread)"),
+      shell.includes("copyTextSafely(text)") &&
+      shell.includes("copyText(getThreadWorkspacePath(threadMenu.thread))"),
+  ],
+  [
+    "copy conversation id action uses the clipboard",
+    shell.includes("复制会话 ID") &&
+      shell.includes("copyText(threadMenu.thread.id)"),
+  ],
+  [
+    "copy deep link action uses a stable opendrsai thread URL",
+    shell.includes("复制深度链接") &&
+      shell.includes("opendrsai://thread/") &&
+      shell.includes("encodeURIComponent(thread.id)"),
   ],
   [
     "context menu visual styles and unread pinned markers exist",

@@ -12,8 +12,8 @@ const checks = {
   failureClassification: /kind: "file_busy"/.test(read("../shared/main/failureRecovery.ts"))
     && /kind: "external_service"/.test(read("../shared/main/failureRecovery.ts"))
     && /kind: "network"/.test(read("../shared/main/failureRecovery.ts")),
-  fileWriteRetryLimit: /fileWriteRetryLimit/.test(read("src/main/managerPresentation.ts"))
-    && /FileWriteRetryExhaustedError/.test(read("src/main/managerPresentation.ts")),
+  fileWriteRetryLimit: /fileWriteRetryLimit/.test(read("../shared/main/managerPresentation.ts"))
+    && /FileWriteRetryExhaustedError/.test(read("../shared/main/managerPresentation.ts")),
   chatRetryIsExposed: /event\.failureRecovery\?\.retryable/.test(read("../shared/renderer/src/adapters/useDesktopChatAdapter.ts")),
   agentGuidanceIsVisible: /failureRecovery\.suggestedAction/.test(read("../shared/renderer/src/components/AgentRunWorkspace.tsx")),
   presentationGuidanceIsVisible: /manager-presentation-failure-recovery/.test(read("../shared/renderer/src/components/files/FilesContextPanel.tsx")),

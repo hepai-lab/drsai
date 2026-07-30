@@ -8,7 +8,7 @@ param(
     [string]$ExtraInstallArgs = "",
     [string]$WixDir = "",
     [ValidatePattern('^[A-Za-z0-9._-]+\.msi$')]
-    [string]$OutputName = "OpenDrSaiSetup-win-x64.msi"
+    [string]$OutputName = "OpenDrSai-Windows-Installer-x64.msi"
 )
 
 $ErrorActionPreference = "Stop"
@@ -118,7 +118,7 @@ foreach ($requiredTool in @($dtfAssembly, $makeSfxCa, $sfxCa, $csc)) {
     }
 }
 if (-not $RuntimeUrl) {
-    $RuntimeUrl = "https://github.com/hepai-lab/drsai/releases/download/v$BootstrapperVersion/OpenDrSaiRuntime-win-x64.zip"
+    $RuntimeUrl = "https://download-opendrsai.ihep.ac.cn/releases/v$BootstrapperVersion/windows/OpenDrSai-Windows-v$BootstrapperVersion-x64.zip"
 }
 
 $actionsDll = Join-Path $objDir "OpenDrSaiInstallerActions.dll"
@@ -145,7 +145,7 @@ if ($LASTEXITCODE -ne 0 -or -not (Test-Path $packedActionsDll)) {
 }
 
 if (-not $RuntimePath) {
-    $candidateRuntime = Join-Path $outDir "OpenDrSaiRuntime-win-x64.zip"
+    $candidateRuntime = Join-Path $outDir "OpenDrSai-Windows-v$BootstrapperVersion-x64.zip"
     if (Test-Path $candidateRuntime) {
         $RuntimePath = $candidateRuntime
     }

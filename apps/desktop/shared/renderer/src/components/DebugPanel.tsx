@@ -20,7 +20,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import type { DiagnosticEvent, DiagnosticPackagePreview, DiagnosticSnapshot, DiagnosticSourceContext, DiagnosticSourceContextRequest, DiagnosticSourceLocation, DiagnosticTrace, InteractiveDebugScope, InteractiveDebugSession, InteractiveDebugTarget, InteractiveDebugVariable, ProductionDiagnosticStatus } from "@shared/diagnostics";
+import type { DiagnosticEvent, DiagnosticPackagePreview, DiagnosticSnapshot, DiagnosticSourceContext, DiagnosticSourceContextRequest, DiagnosticSourceLocation, DiagnosticTrace, InteractiveDebugPolicy, InteractiveDebugScope, InteractiveDebugSession, InteractiveDebugTarget, InteractiveDebugVariable, ProductionDiagnosticStatus } from "@shared/diagnostics";
 import {
   clearDebugLogs,
   getDebugLogs,
@@ -183,6 +183,7 @@ function ProductionDiagnosticsWorkbench({ zh, onMessage }: { zh: boolean; onMess
 }
 
 function InteractiveDebugWorkbench({ zh, onOpenSource, onMessage }: { zh: boolean; onOpenSource: (source: DiagnosticSourceLocation) => void; onMessage: (message: string) => void }): React.JSX.Element {
+  const [policy, setPolicy] = useState<InteractiveDebugPolicy | null>(null);
   const [targets, setTargets] = useState<InteractiveDebugTarget[]>([]);
   const [sessions, setSessions] = useState<InteractiveDebugSession[]>([]);
   const [targetId, setTargetId] = useState("");
@@ -200,9 +201,9 @@ function InteractiveDebugWorkbench({ zh, onOpenSource, onMessage }: { zh: boolea
 
   useEffect(() => {
     let cancelled = false;
-    void Promise.all([window.openDrSai.listInteractiveDebugTargets(), window.openDrSai.listInteractiveDebugSessions()]).then(([nextTargets, nextSessions]) => {
+    void Promise.all([window.openDrSai.getInteractiveDebugPolicy(), window.openDrSai.listInteractiveDebugTargets(), window.openDrSai.listInteractiveDebugSessions()]).then(([nextPolicy, nextTargets, nextSessions]) => {
       if (cancelled) return;
-      setTargets(nextTargets); setSessions(nextSessions); setTargetId((current) => current || nextTargets.find((item) => item.available)?.id || nextTargets[0]?.id || "");
+      setPolicy(nextPolicy); setTargets(nextTargets); setSessions(nextSessions); setTargetId((current) => current || nextTargets.find((item) => item.available)?.id || nextTargets[0]?.id || "");
     }).catch((error) => onMessage(error instanceof Error ? error.message : String(error)));
     const unsubscribe = window.openDrSai.onInteractiveDebugEvent((session) => setSessions((current) => [session, ...current.filter((item) => item.id !== session.id)]));
     return () => { cancelled = true; unsubscribe(); };
@@ -210,6 +211,16 @@ function InteractiveDebugWorkbench({ zh, onOpenSource, onMessage }: { zh: boolea
 
   const selectedTarget = targets.find((item) => item.id === targetId);
   const active = sessions[0];
+
+  async function setDebuggingEnabled(enabled: boolean): Promise<void> {
+    if (enabled && !window.confirm(zh ? "交互调试可以启动或连接本地进程，并读取暂停时的变量。仅在你信任当前工作区时启用。是否继续？" : "Interactive debugging can launch or attach to local processes and inspect paused variables. Enable it only for a workspace you trust. Continue?")) return;
+    try {
+      const nextPolicy = await window.openDrSai.updateInteractiveDebugPolicy({ enabled, acknowledgedRisk: true });
+      const [nextTargets, nextSessions] = await Promise.all([window.openDrSai.listInteractiveDebugTargets(), window.openDrSai.listInteractiveDebugSessions()]);
+      setPolicy(nextPolicy); setTargets(nextTargets); setSessions(nextSessions);
+      onMessage(enabled ? (zh ? "交互调试已启用。" : "Interactive debugging enabled.") : (zh ? "交互调试已关闭，活动会话已安全终止。" : "Interactive debugging disabled; active sessions were safely terminated."));
+    } catch (error) { onMessage(error instanceof Error ? error.message : String(error)); }
+  }
 
   async function start(): Promise<void> {
     try {
@@ -244,6 +255,7 @@ function InteractiveDebugWorkbench({ zh, onOpenSource, onMessage }: { zh: boolea
   }
 
   return <div className="interactive-debug-workbench">
+    <section className="interactive-debug-policy" data-testid="interactive-debug-policy"><h3>{zh ? "安全策略" : "Safety policy"}</h3><label><span><strong>{zh ? "允许交互调试" : "Allow interactive debugging"}</strong><small>{policy?.locked ? (zh ? "由环境策略锁定" : "Locked by environment policy") : (zh ? "默认关闭；仅对受信任工作区显式启用。" : "Off by default; enable explicitly for trusted workspaces only.")}</small></span><input type="checkbox" checked={policy?.enabled === true} disabled={!policy || policy.locked} onChange={(event) => void setDebuggingEnabled(event.target.checked)} /></label></section>
     <section className="interactive-debug-launch"><h3>{zh ? "调试目标" : "Debug target"}</h3><select value={targetId} onChange={(event) => setTargetId(event.target.value)}>{targets.map((target) => <option key={target.id} value={target.id}>{target.name}{target.available ? "" : ` — ${zh ? "不可用" : "unavailable"}`}</option>)}</select>{selectedTarget?.kind === "python" && <input value={program} onChange={(event) => setProgram(event.target.value)} placeholder={zh ? "Python 程序路径" : "Python program path"} />}{selectedTarget?.kind === "node" && <input value={inspectorUrl} onChange={(event) => setInspectorUrl(event.target.value)} placeholder="ws://127.0.0.1:9229/..." />}{selectedTarget?.kind === "remote-python" && <div><input value={remoteHost} onChange={(event) => setRemoteHost(event.target.value)} aria-label="Remote Python tunnel host" /><input type="number" min="1" max="65535" value={remotePort} onChange={(event) => setRemotePort(event.target.value)} aria-label="Remote Python tunnel port" /></div>}<p>{selectedTarget?.reason || selectedTarget?.description}</p><button type="button" disabled={!selectedTarget?.available} onClick={() => void start()}>{zh ? "启动调试" : "Start debugging"}</button></section>
     {active && <>
       <section className={`interactive-debug-session ${active.state}`}><header><span className="diagnostic-state-dot" /><span><strong>{active.target.name}</strong><small>{active.state} · {active.pausedReason || active.message}</small></span></header><div className="interactive-debug-controls"><button type="button" onClick={() => void control(active.state === "paused" ? "continue" : "pause")}>{active.state === "paused" ? (zh ? "继续" : "Continue") : (zh ? "暂停" : "Pause")}</button><button type="button" disabled={active.state !== "paused"} onClick={() => void control("next")}>{zh ? "跳过" : "Step over"}</button><button type="button" disabled={active.state !== "paused"} onClick={() => void control("step-in")}>{zh ? "进入" : "Step in"}</button><button type="button" disabled={active.state !== "paused"} onClick={() => void control("step-out")}>{zh ? "跳出" : "Step out"}</button><button type="button" onClick={() => void control("disconnect")}>{zh ? "安全分离" : "Detach"}</button></div></section>

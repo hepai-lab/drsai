@@ -1,4 +1,4 @@
-// Generated from protocol/owop/owop.schema.json. Do not edit.
+// Generated from cores/protocol/owop/owop.schema.json. Do not edit.
 package ai.drsai.remote.remote.generated
 
 object OwopSchemaGenerated {

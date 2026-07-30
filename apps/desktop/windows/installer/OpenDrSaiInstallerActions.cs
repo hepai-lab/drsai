@@ -73,7 +73,9 @@ namespace OpenDrSai.Installer
                 string setupDirectory = Path.GetDirectoryName(Path.GetFullPath(sourcePath));
                 if (!string.IsNullOrEmpty(setupDirectory))
                 {
-                    string adjacentRuntime = Path.Combine(setupDirectory, "OpenDrSaiRuntime-win-x64.zip");
+                    string adjacentRuntime = Path.Combine(
+                        setupDirectory,
+                        string.Format(CultureInfo.InvariantCulture, "OpenDrSai-Windows-v{0}-x64.zip", session.CustomActionData["BootstrapperVersion"]));
                     if (File.Exists(adjacentRuntime))
                     {
                         session.Log("Using OpenDrSai Runtime package beside Setup: " + adjacentRuntime);

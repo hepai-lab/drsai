@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from drsai.backend.runtime_engine import RuntimeEngine, RuntimeEngineIdentity
+from drsai.backend.runtime.engine import RuntimeEngine, RuntimeEngineIdentity
 from drsai.backend.codex_adapter.app_server_process import redact_secrets
 from drsai.backend.codex_adapter.event_mapper import CodexEventMapper
 

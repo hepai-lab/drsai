@@ -2,11 +2,27 @@
 
 该目录是正式 macOS 产品壳。业务 API、主进程公共逻辑和 React UI 分别来自 `../shared/api`、`../shared/main` 与 `../shared/renderer`；这里仅维护 macOS 窗口、菜单、Keychain、通知、进程/终端适配和 Apple 发布配置。
 
-当前阶段只完成工程实现、跨主机静态门禁和 CI 准备。因暂无可用 macOS 设备，真机运行、签名、公证、DMG 安装、系统权限、升级和回滚验收已延期；完成这些验收前不得宣称 macOS 已达到正式发布条件。
+当前已有 Apple Silicon macOS 开发机，可以执行无签名开发、目录包、原生 Helper、PTY、生命周期和部分系统能力验证；但本机尚无 Developer ID 签名。签名身份相关的 Keychain/TCC 持久性、公证、stapling、Gatekeeper、正式 DMG、在线升级和回滚仍未验收；完成这些门禁前不得宣称 macOS 已达到正式发布条件。
+
+当前能力审计、与 Windows 的差距以及达到完整产品功能的分阶段计划见 [macOS 全功能开发计划](docs/macos-full-function-development-plan.zh-CN.md)。
+
+在全功能产品范围之上，第二阶段将保持 Electron/React 为主要框架，拆分主进程组合根，并按需引入 Swift 原生辅助层。固定工程范围、无签名开发边界和自动化验收方案见 [macOS 第二阶段开发计划](docs/macos-phase-2-development-plan.zh-CN.md)。
+
+第二阶段逐轮实现、测试证据、模块燃尽和签名阻塞状态见 [macOS 第二阶段实施进度](docs/macos-phase-2-progress.zh-CN.md)。
+
+跨机器继续开发前，请先阅读 [macOS 开发交接与恢复说明](docs/macos-development-handoff.zh-CN.md)。该文档标记了最后一次全绿基线、当前未验收的 R113 修改、工作树迁移风险以及 Apple Silicon 上的恢复与验收顺序。
 
 ## 开发与验证
 
-平台脚本位于 `scripts/`：`dev.sh` 启动本地 Gateway 与 Electron 热更新，`start.sh` 启动正式 macOS workspace，`setup-dev.sh` 准备本地开发桩。
+平台脚本位于 `scripts/`：`dev.sh` 启动本地 Gateway 与 Electron 热更新，`start.sh` 启动正式 macOS workspace，`setup-dev.sh` 在 `~/.drsai/drsai-agent` 创建隔离 venv、以 editable 模式安装真实 Python Runtime、验证 CLI/import，并安装和 typecheck Desktop 依赖。它不再创建可误报就绪状态的开发桩。
+
+与 Windows 根目录启动器对应的一键开发入口为：
+
+```bash
+./apps/desktop/macos-desktop-dev.sh
+```
+
+GitHub Channel 真实授权使用 Device OAuth。开发/打包环境必须提供 OAuth App 的 `OPENDRSAI_GITHUB_CLIENT_ID`；未配置时授权入口失败关闭。Device code 和 access token 不写入 Channel JSON，macOS 仅保存 Keychain reference；授权完成前 adapter 保持 `config_required`。
 
 在 `apps/desktop` 目录运行：
 
@@ -47,6 +63,8 @@ Runtime artifact 只能在 Apple Silicon macOS 构建。它包含隔离的 Pytho
 卸载应用只移除 `/Applications/OpenDrSai.app`，默认保留 `~/.drsai` 中的工作区、用户材料和登录外的本地数据；用户明确选择“删除全部本地数据”后才允许清理应用数据。更新器禁止降级安装，自动回滚只恢复上一个已签名 App，不回退或删除用户数据格式。
 
 应用更新使用 `electron-updater` 和签名 GitHub release 元数据，支持检查、下载、取消与退出安装。上一稳定版本回装、失败更新恢复和数据降级兼容仍必须在干净真机演练；静态契约不等于回滚验收已交付。
+
+CDN 优先、GitHub 回退、薄更新 Runtime 兼容策略、OSS 最小权限和首发/回滚操作见 [macOS 更新生产配置与首发手册](docs/macos-update-production-runbook.zh-CN.md)。
 
 ## 权限原则
 
