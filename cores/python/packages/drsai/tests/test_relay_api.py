@@ -14,6 +14,8 @@ from fastapi.testclient import TestClient
 
 from drsai.relay.api import create_relay_app
 from drsai.relay.generated_contract import CAPABILITIES, PROTOCOL_VERSION
+from drsai.relay.models import ResourceLifecycle, Workspace
+from drsai.relay.registry import RelayRegistryError
 
 
 def _testing_app():
@@ -387,6 +389,182 @@ def test_runtime_workspace_catalog_from_old_generation_is_ignored() -> None:
                 if time.time() > deadline:
                     assert [item.workspace_id for item in workspaces] == ["current-workspace"]
                 time.sleep(0.01)
+
+
+def test_runtime_workspace_catalog_sync_replaces_projection_and_filters_default_active() -> None:
+    class SyncHub:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def request_http_current(self, runtime_id: str, method: str, path: str, **kwargs):
+            self.calls += 1
+            assert method == "GET"
+            assert path == "/v1/workspaces?include_closed=true"
+            return {
+                "status": 200,
+                "body": {
+                    "data": [
+                        {
+                            "runtime_id": runtime_id,
+                            "workspace_id": "active-workspace",
+                            "display_name": "默认",
+                            "lifecycle": "active",
+                            "revision": 7,
+                            "updated_at": "2026-07-27T19:00:00Z",
+                        },
+                        {
+                            "runtime_id": runtime_id,
+                            "workspace_id": "archived-workspace",
+                            "display_name": "Archive",
+                            "lifecycle": "archived",
+                            "revision": 8,
+                            "updated_at": "2026-07-27T19:01:00Z",
+                        },
+                        {
+                            "runtime_id": runtime_id,
+                            "workspace_id": "removed-workspace",
+                            "display_name": "Removed",
+                            "lifecycle": "removed",
+                            "revision": 9,
+                            "updated_at": "2026-07-27T19:02:00Z",
+                        },
+                    ],
+                },
+            }, "generation-one"
+
+        async def is_current(self, runtime_id: str, generation: str) -> bool:
+            return generation == "generation-one"
+
+    hub = SyncHub()
+    client = TestClient(create_relay_app(channels=hub, principal_resolver=lambda request: request.headers.get("x-subject", "")))
+    _, runtime_id, token = register(client)
+    _, code, _ = client.app.state.registry.issue_access_grant(runtime_id, token)
+    device = association_body(code)
+    client.app.state.registry.associate(
+        "alice",
+        code,
+        device["device_id"],
+        device["device_name"],
+        device["device_public_key"],
+    )
+    client.app.state.registry.publish_workspaces(runtime_id, token, [
+        Workspace.model_validate({
+            "runtime_id": runtime_id,
+            "workspace_id": "stale-workspace",
+            "display_name": "Stale",
+        })
+    ])
+    response = client.post(
+        f"/v1/runtimes/{runtime_id}/workspaces/sync",
+        headers={"x-subject": "alice"},
+        json={},
+    )
+    assert response.status_code == 200
+    assert hub.calls == 1
+    body = response.json()
+    assert body["catalog_revision"] == 9
+    assert body["runtime_id"] == runtime_id
+    assert body["synced_at"]
+    assert [item["workspace_id"] for item in body["items"]] == ["active-workspace"]
+    assert "path" not in json.dumps(body)
+    active, _ = client.app.state.registry.list_workspaces("alice", runtime_id)
+    assert [item.workspace_id for item in active] == ["active-workspace"]
+    archived, _ = client.app.state.registry.list_workspaces(
+        "alice",
+        runtime_id,
+        lifecycle=ResourceLifecycle.ARCHIVED,
+    )
+    assert [item.workspace_id for item in archived] == ["archived-workspace"]
+
+
+def test_runtime_workspace_catalog_sync_rejects_sensitive_fields() -> None:
+    class LeakyHub:
+        async def request_http_current(self, runtime_id: str, method: str, path: str, **kwargs):
+            return {
+                "status": 200,
+                "body": {
+                    "data": [{
+                        "runtime_id": runtime_id,
+                        "workspace_id": "leaky",
+                        "display_name": "Leaky",
+                        "path": "C:/secret",
+                    }],
+                },
+            }, "generation-one"
+
+        async def is_current(self, runtime_id: str, generation: str) -> bool:
+            return True
+
+    client = TestClient(create_relay_app(channels=LeakyHub(), principal_resolver=lambda request: request.headers.get("x-subject", "")))
+    _, runtime_id, token = register(client)
+    _, code, _ = client.app.state.registry.issue_access_grant(runtime_id, token)
+    device = association_body(code)
+    client.app.state.registry.associate(
+        "alice",
+        code,
+        device["device_id"],
+        device["device_name"],
+        device["device_public_key"],
+    )
+    response = client.post(
+        f"/v1/runtimes/{runtime_id}/workspaces/sync",
+        headers={"x-subject": "alice"},
+        json={},
+    )
+    assert response.status_code == 400
+    assert response.json()["code"] == "workspace_catalog_sync_invalid"
+
+
+def test_runtime_workspace_catalog_sync_requires_strict_empty_body() -> None:
+    client = TestClient(_testing_app())
+    _, runtime_id, _ = register(client)
+    response = client.post(
+        f"/v1/runtimes/{runtime_id}/workspaces/sync",
+        headers={"x-subject": "alice"},
+        json={"request_id": "not-accepted"},
+    )
+    assert response.status_code == 422
+
+
+def test_runtime_workspace_catalog_sync_error_contract() -> None:
+    class ErrorHub:
+        def __init__(self, code: str) -> None:
+            self.code = code
+
+        async def request_http_current(self, runtime_id: str, method: str, path: str, **kwargs):
+            raise RelayRegistryError(self.code, self.code, retryable=True, source="runtime")
+
+        async def is_current(self, runtime_id: str, generation: str) -> bool:
+            return True
+
+    for code, status in {
+        "host_offline": 503,
+        "catalog_sync_timeout": 503,
+        "stale_runtime_generation": 409,
+    }.items():
+        client = TestClient(create_relay_app(
+            channels=ErrorHub(code),
+            principal_resolver=lambda request: request.headers.get("x-subject", ""),
+        ))
+        _, runtime_id, token = register(client)
+        _, grant, _ = client.app.state.registry.issue_access_grant(runtime_id, token)
+        device = association_body(grant)
+        client.app.state.registry.associate(
+            "alice",
+            grant,
+            device["device_id"],
+            device["device_name"],
+            device["device_public_key"],
+        )
+        response = client.post(
+            f"/v1/runtimes/{runtime_id}/workspaces/sync",
+            headers={"x-subject": "alice"},
+            json={},
+        )
+        assert response.status_code == status
+        body = response.json()
+        assert body["code"] == code
+        assert body["retryable"] is True
 
 
 def test_runtime_websocket_rejects_unauthenticated_client() -> None:

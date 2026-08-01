@@ -136,6 +136,12 @@ export function LoginScreen(): React.JSX.Element {
           </label>
         </form>
 
+        {auth.loginFailed && (
+          <div className="login-message login-error-message" role="alert" data-testid="login-error-message">
+            {zh ? "登录失败，按F12调试。" : "Sign-in failed. Press F12 to debug."}
+          </div>
+        )}
+
         {(import.meta.env.DEV || new URLSearchParams(window.location.search).get("structuredVisualFixture") === "1") && (
           <button
             className="developer-bypass"

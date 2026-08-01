@@ -44,6 +44,12 @@ export interface ChatSsePayload {
   tool_event?: unknown;
   tool_events?: unknown;
   metadata?: {
+    event_type?: unknown;
+    id?: unknown;
+    step_id?: unknown;
+    title?: unknown;
+    status?: unknown;
+    content?: unknown;
     file_event?: unknown;
     file_events?: unknown;
     plan_adjustment?: unknown;
@@ -52,6 +58,7 @@ export interface ChatSsePayload {
     tool_calls?: unknown;
     tool_event?: unknown;
     tool_events?: unknown;
+    tool?: unknown;
   };
 }
 
@@ -168,8 +175,16 @@ function longestTokenPrefixSuffix(value: string, tokens: readonly string[]): str
 }
 
 export interface AgentInputRequestSsePayload {
+  version: 1;
+  requestId: string;
+  chatId?: string;
+  runId?: string;
   prompt: string;
-  inputType: "text_input" | "approval";
+  inputType: "text_input" | "approval" | "choice" | "confirmation";
+  options?: Array<{ id: string; label: string; value?: string }>;
+  defaultValue?: string;
+  allowCustom?: boolean;
+  timeoutAt?: string;
 }
 
 export interface ProviderUsageAnalyticsEvent {
@@ -296,9 +311,42 @@ export function parseAgentInputRequestSseFrame(frame: string): AgentInputRequest
   if (!payload || payload === "[DONE]") return null;
   try {
     const parsed = JSON.parse(payload) as Record<string, unknown>;
-    const prompt = typeof parsed.prompt === "string" ? parsed.prompt.trim() : "";
+    const prompt = typeof parsed.prompt === "string" ? parsed.prompt.trim().slice(0, 20_000) : "";
     if (!prompt) return null;
-    return { prompt, inputType: parsed.input_type === "approval" ? "approval" : "text_input" };
+    const inputType = ["text_input", "approval", "choice", "confirmation"].includes(String(parsed.input_type))
+      ? parsed.input_type as AgentInputRequestSsePayload["inputType"]
+      : "text_input";
+    const requestId = typeof parsed.request_id === "string" && parsed.request_id.trim()
+      ? parsed.request_id.trim().slice(0, 200)
+      : "";
+    const rawOptions = Array.isArray(parsed.options) ? parsed.options.slice(0, 50) : [];
+    const seenOptionIds = new Set<string>();
+    const options = rawOptions.flatMap((value) => {
+      if (!value || typeof value !== "object") return [];
+      const option = value as Record<string, unknown>;
+      const idSource = typeof option.id === "string" ? option.id : typeof option.value === "string" ? option.value : "";
+      const id = idSource.trim().slice(0, 200);
+      const label = typeof option.label === "string" ? option.label.trim().slice(0, 1_000) : "";
+      if (!id || !label || seenOptionIds.has(id)) return [];
+      seenOptionIds.add(id);
+      return [{
+        id,
+        label,
+        ...(typeof option.value === "string" ? { value: option.value.slice(0, 10_000) } : {}),
+      }];
+    });
+    return {
+      version: 1,
+      requestId,
+      ...(typeof parsed.chat_id === "string" ? { chatId: parsed.chat_id.slice(0, 200) } : {}),
+      ...(typeof parsed.run_id === "string" ? { runId: parsed.run_id.slice(0, 200) } : {}),
+      prompt,
+      inputType,
+      ...(options.length ? { options } : {}),
+      ...(typeof parsed.default === "string" ? { defaultValue: parsed.default.slice(0, 10_000) } : {}),
+      ...(typeof parsed.allow_custom === "boolean" ? { allowCustom: parsed.allow_custom } : {}),
+      ...(typeof parsed.timeout_at === "string" ? { timeoutAt: parsed.timeout_at.slice(0, 100) } : {}),
+    };
   } catch {
     return null;
   }
@@ -486,13 +534,56 @@ function collectChatToolTimelineCandidates(
     candidates.push(parsed);
   }
 
-  return candidates.map((item, index) => ({ item, eventName, index }));
+  const normalized = candidates.map((item, index) => ({ item, eventName, index }));
+  const metadata = readObject(value.metadata);
+  if (readString(metadata?.event_type).toLowerCase() === "step") {
+    const status = readString(metadata?.status).toLowerCase();
+    normalized.push({
+      item: {
+        ...metadata,
+        id: readString(metadata?.id) || readString(metadata?.step_id),
+      },
+      eventName: status === "completed" || status === "failed" ? "tool.result" : "tool.progress",
+      index: normalized.length,
+    });
+  }
+  if (readString(metadata?.event_type).toLowerCase() === "tool") {
+    const tool = readObject(metadata?.tool);
+    if (tool) {
+      const phase = readString(tool.phase).toLowerCase();
+      normalized.push({
+        item: {
+          ...tool,
+          status: metadata?.status ?? tool.status,
+        },
+        eventName: phase === "result" ? "tool.result" : "tool.call",
+        index: normalized.length,
+      });
+    }
+  }
+  return normalized;
 }
 
 export function isCompletionDoneFrame(frame: string): boolean {
-  return frame
+  if (frame
     .split(/\r?\n/)
-    .some((line) => line.startsWith("data:") && line.slice(5).trim() === "[DONE]");
+    .some((line) => line.startsWith("data:") && line.slice(5).trim() === "[DONE]")) {
+    return true;
+  }
+  const payload = getSseData(frame);
+  if (!payload) return false;
+  try {
+    const value = JSON.parse(payload) as {
+      choices?: Array<{ finish_reason?: unknown }>;
+      metadata?: { event_type?: unknown; status?: unknown };
+    };
+    if (value.choices?.some((choice) => typeof choice.finish_reason === "string" && choice.finish_reason.length > 0)) {
+      return true;
+    }
+    return value.metadata?.event_type === "terminal" && value.metadata.status === "completed";
+  } catch {
+    return false;
+  }
 }
 
 export const parseChatSseFrame = parseCompletionSseFrame;
@@ -1024,6 +1115,7 @@ function normalizeToolEventStatus(rawStatus: unknown): ChatToolTimelineEvent["st
   if (status === "started" || status === "running" || status === "completed" || status === "failed") return status;
   if (status === "error") return "failed";
   if (status === "done" || status === "complete" || status === "success" || status === "succeeded") return "completed";
+  if (status === "queued") return "started";
   if (status === "pending" || status === "in_progress") return "running";
   return undefined;
 }
@@ -1036,7 +1128,7 @@ function readChatSseError(value: unknown): { message: string; code?: string; ret
   const record = readObject(value);
   if (!record) return null;
   const directError = normalizeChatSseErrorPayload(record.error);
-  if (directError) return directError;
+  if (directError) return appendErrorCorrelation(directError, record);
 
   const response = readObject(record.response);
   const responseError = normalizeChatSseErrorPayload(response?.error);
@@ -1054,6 +1146,19 @@ function readChatSseError(value: unknown): { message: string; code?: string; ret
     };
   }
   return null;
+}
+
+function appendErrorCorrelation(
+  error: { message: string; code?: string; retryable: boolean },
+  envelope: Record<string, unknown>,
+): { message: string; code?: string; retryable: boolean } {
+  const requestId = readString(envelope.request_id);
+  const invokeId = readString(envelope.invoke_id);
+  const correlation = [
+    requestId ? `request_id: ${requestId}` : "",
+    invokeId ? `invoke_id: ${invokeId}` : "",
+  ].filter(Boolean).join(", ");
+  return correlation ? { ...error, message: `${error.message} (${correlation})` } : error;
 }
 
 function normalizeChatSseErrorPayload(

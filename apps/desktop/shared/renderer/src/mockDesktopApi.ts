@@ -1607,6 +1607,12 @@ export function installMockDesktopApi(): void {
       runtime_id: "runtime_mock",
       environment: "development",
     }),
+    enableMobileRemoteAccess: async () => ({
+      state: "ready",
+      action: "scan",
+      runtime_id: "runtime_mock",
+      environment: "development",
+    }),
     createMobilePairingGrant: async () => ({
       grant_id: "ag_00000000000000000000000000000000",
       expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),
@@ -2183,6 +2189,26 @@ export function installMockDesktopApi(): void {
         type: "part.started",
         part: { id: `${turnId}:progress`, kind: "progress", status: "running", summary: "Preparing the result" },
       });
+      if (visualFixture) {
+        sendStructured({
+          type: "activity.updated",
+          activity: {
+            id: `${turnId}:activity:inspect`, turnId, timestamp: new Date().toISOString(), source: "mock-desktop",
+            status: "completed", title: "Inspect workspace", kind: "tool", toolName: "read_workspace",
+            callId: "call-inspect", input: { path: request.workspacePath || "C:\\workspace" },
+            output: { files: 12, summary: "Workspace inspection completed." }, durationMs: 420,
+          },
+        });
+        sendStructured({
+          type: "activity.updated",
+          activity: {
+            id: `${turnId}:activity:reflect`, turnId, timestamp: new Date().toISOString(), source: "mock-desktop",
+            status: "error", title: "Reflector response", kind: "tool", toolName: "reflector",
+            callId: "call-reflector", input: { stage: "review" },
+            output: { code: "REFLECTOR_TIMEOUT", message: "The reflector did not respond before the deadline." }, durationMs: 1500,
+          },
+        });
+      }
       for (const content of visualFixture ? [markdownContent] : [
         "Mock **desktop** chat stream.\n\n",
         "| item | status |\n| --- | --- |\n| renderer | ok |\n\n",

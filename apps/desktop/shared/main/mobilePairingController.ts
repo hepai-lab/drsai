@@ -37,6 +37,12 @@ export class MobilePairingController {
 
   async readiness(): Promise<DesktopMobilePairingReadiness> {
     this.assertOpen();
+    const client = await this.connect();
+    return client.getMobilePairingReadiness();
+  }
+
+  async enable(): Promise<DesktopMobilePairingReadiness> {
+    this.assertOpen();
     const initial = await this.invoke((client) => client.getMobilePairingReadiness());
     if (initial.value.state === "ready" || !this.recover) return initial.value;
     const recovered = await this.recover(initial.value);

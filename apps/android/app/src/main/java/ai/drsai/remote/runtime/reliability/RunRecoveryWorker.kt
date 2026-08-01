@@ -29,6 +29,7 @@ import ai.drsai.remote.data.MIGRATION_4_5
 import ai.drsai.remote.data.MIGRATION_5_6
 import ai.drsai.remote.data.MIGRATION_6_7
 import ai.drsai.remote.data.MIGRATION_7_8
+import ai.drsai.remote.data.MIGRATION_8_9
 import ai.drsai.remote.workbench.model.WorkbenchId
 
 const val ACTION_OPEN_RECOVERABLE_RUN = "ai.drsai.remote.action.OPEN_RECOVERABLE_RUN"
@@ -63,7 +64,7 @@ class RunRecoveryWorker(context: Context, parameters: WorkerParameters) : Corout
         val runId = inputData.getString(KEY_RUN_ID).orEmpty()
         if (subject.isBlank() || runId.isBlank()) return Result.failure()
         val database = Room.databaseBuilder(applicationContext, ChatDatabase::class.java, "opendrsai.db")
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
             .build()
         val run = try {
             database.workbenchDao().runById(runId)

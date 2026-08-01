@@ -443,6 +443,16 @@ class RelayRegistry:
             runtime = self._authenticated(runtime_id, registration_token)
             runtime.workspaces = {item.workspace_id: item for item in workspaces}
 
+    def authenticate_runtime(self, runtime_id: str, registration_token: str) -> None:
+        self._authenticated(runtime_id, registration_token)
+
+    def replace_workspace_projection(self, runtime_id: str, workspaces: list[Workspace]) -> None:
+        if any(item.runtime_id != runtime_id for item in workspaces):
+            raise RelayRegistryError("workspace_scope_mismatch", "Workspace belongs to another runtime")
+        with self._lock:
+            runtime = self._require_runtime(runtime_id)
+            runtime.workspaces = {item.workspace_id: item for item in workspaces}
+
     def list_runtimes(self, subject: str, *, cursor: str | None = None, limit: int = 20, query: str | None = None) -> tuple[list[RuntimeSummary], str | None]:
         items = [r for r in self._runtimes.values() if subject in r.subjects and not r.revoked]
         if query:

@@ -66,6 +66,7 @@ class RemoteWorkspaceUiTest {
                                 instanceId = "boot-2",
                                 connectionGeneration = 2,
                                 workspaces = listOf(workspace),
+                                workspaceSyncStatus = "已同步 07-28 12:00",
                             )
                         )
                     ),
@@ -82,6 +83,7 @@ class RemoteWorkspaceUiTest {
         composeRule.onNodeWithContentDescription("连接状态：在线").assertIsDisplayed()
         composeRule.onNodeWithText("刚刚").assertIsDisplayed()
         composeRule.onNodeWithText("OpenDrSai 1.4.6").assertIsDisplayed()
+        composeRule.onNodeWithText("已同步 07-28 12:00").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("刷新 开发服务器 的工作区")
             .assertIsDisplayed()
             .performClick()

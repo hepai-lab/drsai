@@ -120,6 +120,8 @@ class RuntimeOutboundConnector:
         self.session_event_provider = session_event_provider
         self.workspace_provider = workspace_provider
         self._workspace_dirty = asyncio.Event()
+        self._workspace_sync_lock = asyncio.Lock()
+        self._workspace_sync_task: asyncio.Task[list[dict[str, Any]]] | None = None
         self._workspace_revision = 0
         self._workspace_published_revision = -1
         self.backend_health = dict(backend_health or {})
@@ -205,7 +207,7 @@ class RuntimeOutboundConnector:
             return True
         target_revision = self._workspace_revision
         try:
-            workspaces = await self.workspace_provider()
+            workspaces = await self._workspace_catalog_snapshot()
             await socket.send_json({"type": "runtime.workspaces", "workspaces": workspaces})
         except Exception:
             self._workspace_dirty.set()
@@ -216,6 +218,35 @@ class RuntimeOutboundConnector:
         else:
             self._workspace_dirty.set()
         return True
+
+    async def _workspace_catalog_snapshot(self) -> list[dict[str, Any]]:
+        if self.workspace_provider is None:
+            raise RuntimeError("workspace_catalog_sync_unsupported")
+        async with self._workspace_sync_lock:
+            task = self._workspace_sync_task
+            if task is None or task.done():
+                task = asyncio.create_task(asyncio.wait_for(self.workspace_provider(), timeout=5.0))
+                self._workspace_sync_task = task
+        try:
+            return await task
+        finally:
+            async with self._workspace_sync_lock:
+                if self._workspace_sync_task is task and task.done():
+                    self._workspace_sync_task = None
+
+    async def _sync_workspace_catalog(self) -> dict[str, Any]:
+        workspaces = await self._workspace_catalog_snapshot()
+        return {
+            "runtime_id": self.credential.runtime_id,
+            "workspaces": workspaces,
+            "catalog_revision": max(
+                [self._workspace_revision, *[
+                    int(item.get("revision") or 0)
+                    for item in workspaces
+                    if isinstance(item, dict)
+                ]],
+            ),
+        }
 
     async def _forward_workspaces(self, socket: Any, *, publish_initial: bool = True) -> None:
         if publish_initial:
@@ -269,9 +300,12 @@ class RuntimeOutboundConnector:
         if not request_id or not operation or not isinstance(arguments, dict):
             return
         try:
-            if self.request_handler is None:
+            if operation == "workspace.catalog.sync":
+                result = await self._sync_workspace_catalog()
+            elif self.request_handler is None:
                 raise RuntimeError("runtime_operation_unsupported")
-            result = await self.request_handler(operation, arguments)
+            else:
+                result = await self.request_handler(operation, arguments)
             response = {"type": "runtime.response", "request_id": request_id, "ok": True, "result": result}
         except Exception as exc:
             code = getattr(exc, "code", None) or str(exc) or "runtime_request_failed"

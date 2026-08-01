@@ -30,6 +30,7 @@ data class RemoteRuntimeEntity(
     val capabilitiesJson: String,
     val lastSyncedAt: Long,
     val authoritative: Boolean = false,
+    @ColumnInfo(defaultValue = "''") val workspaceCatalogRevision: String = "",
 )
 
 @Entity(
@@ -200,6 +201,14 @@ data class PendingRemoteApprovalEntity(
 interface RemoteCacheDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun saveRuntimes(items: List<RemoteRuntimeEntity>)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun saveWorkspaces(items: List<RemoteWorkspaceEntity>)
+    @Query("UPDATE remote_runtimes SET workspaceCatalogRevision=:catalogRevision, lastSyncedAt=:syncedAt WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId")
+    suspend fun saveWorkspaceCatalogRevision(
+        subject: String,
+        organization: String,
+        runtimeId: String,
+        catalogRevision: String,
+        syncedAt: Long,
+    )
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun saveSessions(items: List<RemoteSessionEntity>)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun saveRun(item: RemoteRunEntity)
     @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertEvent(item: RemoteEventEntity): Long

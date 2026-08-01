@@ -19,6 +19,7 @@ import ai.drsai.remote.data.MIGRATION_4_5
 import ai.drsai.remote.data.MIGRATION_5_6
 import ai.drsai.remote.data.MIGRATION_6_7
 import ai.drsai.remote.data.MIGRATION_7_8
+import ai.drsai.remote.data.MIGRATION_8_9
 import ai.drsai.remote.data.OidcClient
 import ai.drsai.remote.data.SecureTokenStore
 import ai.drsai.remote.remote.data.*
@@ -77,7 +78,7 @@ class RemoteSessionViewModel(
         )
     )
     private val database = Room.databaseBuilder(app, ChatDatabase::class.java, "opendrsai.db")
-        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
         .build()
     private val cache = RemoteCacheRepository(database)
     private val connectivity = AndroidRemoteConnectivity(app)

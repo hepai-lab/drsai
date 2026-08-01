@@ -14,6 +14,7 @@ import ai.drsai.remote.data.MIGRATION_4_5
 import ai.drsai.remote.data.MIGRATION_5_6
 import ai.drsai.remote.data.MIGRATION_6_7
 import ai.drsai.remote.data.MIGRATION_7_8
+import ai.drsai.remote.data.MIGRATION_8_9
 import ai.drsai.remote.data.OidcClient
 import ai.drsai.remote.data.SecureTokenStore
 import ai.drsai.remote.remote.data.HttpRelayDiscoveryService
@@ -57,7 +58,7 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
     private val database = Room.databaseBuilder(app, ChatDatabase::class.java, "opendrsai.db")
         .addMigrations(
             MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
-            MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8,
+            MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
         )
         .build()
     private val directory = RemoteDirectoryLoader(
@@ -205,11 +206,18 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
                 it.copy(
                     refreshingRuntimeIds = it.refreshingRuntimeIds + runtimeId,
                     error = null,
+                    computers = it.computers.map { computer ->
+                        if (computer.runtimeId == runtimeId) {
+                            computer.copy(workspaceSyncStatus = null, workspaceSyncFailed = false)
+                        } else {
+                            computer
+                        }
+                    },
                 )
             }
             AndroidDevicePresence.markAccessing(runtimeId)
-            runCatching { directory.refreshWorkspaces(subject, runtimeId) }
-                .onSuccess { workspaces ->
+            runCatching { directory.forceSyncWorkspaces(subject, runtimeId) }
+                .onSuccess { result ->
                     mutableState.update { state ->
                         val query = state.query.trim()
                         state.copy(
@@ -219,16 +227,19 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
                                     query.isEmpty() ||
                                     computer.displayName.contains(query, ignoreCase = true)
                                 ) {
-                                    workspaces
+                                    result.items
                                 } else {
-                                    workspaces.filter {
+                                    result.items.filter {
                                         it.displayName.contains(query, ignoreCase = true)
                                     }
                                 }
+                                val syncedAtMillis = java.time.Instant.parse(result.syncedAt).toEpochMilli()
                                 computer.copy(
                                     workspaces = visible,
                                     workspacesCached = false,
-                                    lastSyncedAtMillis = System.currentTimeMillis(),
+                                    lastSyncedAtMillis = syncedAtMillis,
+                                    workspaceSyncStatus = "已同步 ${formatSyncTime(syncedAtMillis)}",
+                                    workspaceSyncFailed = false,
                                 )
                             },
                             refreshingRuntimeIds = state.refreshingRuntimeIds - runtimeId,
@@ -245,15 +256,19 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
                             computers = if (forbidden) {
                                 state.computers.filterNot { it.runtimeId == runtimeId }
                             } else {
-                                state.computers
+                                state.computers.map { computer ->
+                                    if (computer.runtimeId == runtimeId) {
+                                        computer.copy(
+                                            workspaceSyncStatus = workspaceCatalogSyncErrorMessage(failure),
+                                            workspaceSyncFailed = true,
+                                        )
+                                    } else {
+                                        computer
+                                    }
+                                }
                             },
                             refreshingRuntimeIds = state.refreshingRuntimeIds - runtimeId,
-                            error = when {
-                                forbidden -> "这台远程电脑的访问授权已撤销"
-                                failure is RelayHttpException && failure.status == 401 ->
-                                    "HepAI 登录已过期，请重新登录"
-                                else -> "工作区刷新失败，当前继续显示上次同步内容"
-                            },
+                            error = if (forbidden) "这台远程电脑的访问授权已撤销" else null,
                         )
                     }
                 }
@@ -316,4 +331,23 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
         database.close()
         super.onCleared()
     }
+}
+
+internal fun workspaceCatalogSyncErrorMessage(failure: Throwable): String = when {
+    failure is RelayHttpException && failure.status == 401 ->
+        "HepAI 登录已过期，请重新登录"
+    failure is java.net.SocketTimeoutException ||
+        failure is RelayHttpException && (
+            failure.errorCode == "catalog_sync_timeout" ||
+                failure.status == 504
+            ) ->
+        "同步超时；继续显示上次内容"
+    failure is RelayHttpException && failure.errorCode == "host_offline" ->
+        "远程电脑离线，未同步；继续显示上次内容"
+    failure is RelayHttpException && failure.errorCode == "stale_runtime_generation" ->
+        "远程电脑刚刚重连，请稍后重试；继续显示上次内容"
+    failure is java.io.IOException ->
+        "网络连接失败，未同步；继续显示上次内容"
+    else ->
+        "工作区同步失败；继续显示上次内容"
 }

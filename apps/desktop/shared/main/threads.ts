@@ -434,6 +434,7 @@ function sanitizeSnapshotMessage(rawMessage: unknown, index: number): DesktopThr
       ? message.id.trim().slice(0, 160)
       : `message-${index + 1}`;
   const structuredTurn = sanitizeStructuredTurnState(message.structuredTurn);
+  const inputRequest = sanitizeSnapshotInputRequest(message.inputRequest);
   return {
     id,
     role: message.role,
@@ -453,12 +454,48 @@ function sanitizeSnapshotMessage(rawMessage: unknown, index: number): DesktopThr
       ? { parts: message.parts.slice(0, 64).flatMap(sanitizeMessagePart) }
       : {}),
     ...(structuredTurn ? { structuredTurn } : {}),
+    ...(inputRequest ? { inputRequest } : {}),
     ...(typeof message.startedAt === "number" && Number.isFinite(message.startedAt)
       ? { startedAt: message.startedAt }
       : {}),
     ...(typeof message.lastEventAt === "number" && Number.isFinite(message.lastEventAt)
       ? { lastEventAt: message.lastEventAt }
       : {}),
+  };
+}
+
+function sanitizeSnapshotInputRequest(
+  raw: DesktopThreadMessageSnapshot["inputRequest"],
+): DesktopThreadMessageSnapshot["inputRequest"] {
+  if (!raw || typeof raw !== "object") return undefined;
+  const inputTypes = ["text_input", "approval", "choice", "confirmation"] as const;
+  if (
+    typeof raw.requestId !== "string"
+    || !raw.requestId.trim()
+    || typeof raw.prompt !== "string"
+    || !(inputTypes as readonly string[]).includes(raw.inputType)
+  ) return undefined;
+  const options = Array.isArray(raw.options)
+    ? raw.options.slice(0, 50).flatMap((option) => {
+        if (!option || typeof option !== "object" || typeof option.id !== "string" || typeof option.label !== "string") return [];
+        const id = option.id.trim().slice(0, 200);
+        const label = option.label.trim().slice(0, 1_000);
+        if (!id || !label) return [];
+        return [{
+          id,
+          label,
+          ...(typeof option.value === "string" ? { value: option.value.slice(0, 10_000) } : {}),
+        }];
+      })
+    : undefined;
+  return {
+    requestId: raw.requestId.trim().slice(0, 200),
+    prompt: raw.prompt.slice(0, MAX_STATUS_CHARS),
+    inputType: raw.inputType,
+    ...(options?.length ? { options } : {}),
+    ...(typeof raw.defaultValue === "string" ? { defaultValue: raw.defaultValue.slice(0, 10_000) } : {}),
+    ...(raw.allowCustom === true ? { allowCustom: true } : {}),
+    ...(typeof raw.timeoutAt === "string" ? { timeoutAt: raw.timeoutAt.slice(0, 80) } : {}),
   };
 }
 
@@ -531,10 +568,10 @@ function sanitizeThreadId(value: unknown): string {
 
 function sanitizeTitle(title: unknown): string | undefined {
   if (title === undefined) return undefined;
-  if (typeof title !== "string" || /[\r\n]/.test(title)) {
+  if (typeof title !== "string") {
     throw new Error("Thread title is invalid.");
   }
-  return title.trim().slice(0, MAX_TITLE_CHARS) || undefined;
+  return title.replace(/[\r\n\u2028\u2029]+/g, " ").trim().slice(0, MAX_TITLE_CHARS) || undefined;
 }
 
 function sanitizeWorkspacePath(path: unknown): string | undefined {

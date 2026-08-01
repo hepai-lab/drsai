@@ -34,10 +34,26 @@ assert(preload.includes('ipcRenderer.invoke("desktop:set-default-agent"') && pre
 assert(shared.includes("agentId?: string;") && adapter.includes("agentId: options?.agentId?.trim()"), "D1 explicit agentId is missing from chat requests");
 assert(chat.includes('request.agentId !== "my-drsai"') && chat.includes("GATEWAY_BASE_URL"), "D3 local routing compatibility is missing");
 assert(chat.includes("getPlatformAgentChatUrl(platformDescriptor.platformId)") && chat.includes("readSse(webContents"), "D4 platform routing does not reuse the SSE reader");
+assert(
+  chat.includes("model: platformDescriptor.platformId"),
+  "D4 DDF execution does not route chat by the selected platform agent ID",
+);
+assert(
+  agents.includes('`${ACTIVE_PLATFORM.baseUrl}/chat/completions`'),
+  "D4 DDF execution does not use the active platform base_url",
+);
 assert(chat.includes("platformDescriptor || remoteGateway ? true : await startGateway()"), "platform chat still depends on the local gateway");
 assert(agents.includes('capabilities.includes("agent-chat")'), "platform chat capability gate is missing");
 assert(threads.includes("boundAgentId") && threads.includes("boundAgentName"), "D2 thread agent binding is missing");
 assert(app.includes("changesBoundAgent") && app.includes("window.confirm") && app.includes("Start a new conversation"), "D5 switch protection is missing");
+assert(
+  app.includes("persistInBackground: true") && app.includes("Keep navigation responsive"),
+  "starting an agent chat still blocks navigation on thread persistence",
+);
+assert(
+  workspace.includes('data-testid="composer-input"') && workspace.includes("autoFocus"),
+  "starting an agent chat does not focus the empty composer",
+);
 assert(workspace.includes("chat-agent-input-request") && workspace.includes("respondChatInput"), "E5 native input request UI is missing");
 assert(chat.includes("stopPlatformChat") && chat.includes("parseAgentInputRequestSseFrame"), "D6 stop/input SSE handling is missing");
 assert(telemetry.includes("User messages, URLs, tokens and config are not accepted") && !telemetry.includes("messages:"), "F4 privacy-safe telemetry boundary is missing");

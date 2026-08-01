@@ -18,6 +18,7 @@ import ai.drsai.remote.data.MIGRATION_4_5
 import ai.drsai.remote.data.MIGRATION_5_6
 import ai.drsai.remote.data.MIGRATION_6_7
 import ai.drsai.remote.data.MIGRATION_7_8
+import ai.drsai.remote.data.MIGRATION_8_9
 import ai.drsai.remote.data.SecureTokenStore
 import ai.drsai.remote.remote.data.RemoteCacheRepository
 import ai.drsai.remote.remote.data.RemoteRuntimeEntity
@@ -32,6 +33,7 @@ import ai.drsai.remote.remote.data.RoomRemoteDirectoryCache
 import ai.drsai.remote.remote.data.WorkspaceInstructionVersionStore
 import ai.drsai.remote.remote.model.RuntimeId
 import ai.drsai.remote.remote.model.WorkspaceId
+import ai.drsai.remote.remote.model.RemoteWorkspaceRef
 import ai.drsai.remote.remote.data.RelayRemoteRepository
 import ai.drsai.remote.runtime.v2.EventAppendDecision
 import ai.drsai.remote.runtime.v2.RunCommand
@@ -169,6 +171,55 @@ class LocalStoreTest {
         assertTrue(dao.runtimes("alice", "").isEmpty())
         assertTrue(dao.workspaces("alice", "", "runtime-a").isEmpty())
         assertTrue(dao.sessions("alice", "", "runtime-a", "workspace-a").isEmpty())
+    }
+
+    @Test fun forceSyncAtomicallyReplacesWorkspaceRowsAndCatalogRevision() = runBlocking {
+        val dao = database.remoteDao()
+        dao.saveRuntimes(
+            listOf(
+                RemoteRuntimeEntity(
+                    "alice", "", "runtime-a", "Computer", "instance", "1.5.3",
+                    "ONLINE", "[]", 1, false,
+                )
+            )
+        )
+        dao.saveWorkspaces(
+            listOf(
+                RemoteWorkspaceEntity(
+                    "alice", "", "runtime-a", "removed-by-sync", "Old",
+                    1, false,
+                )
+            )
+        )
+        dao.saveSessions(
+            listOf(
+                RemoteSessionEntity(
+                    "alice", "", "runtime-a", "removed-by-sync", "session-old",
+                    "Old conversation", "opendrsai", 1, false,
+                )
+            )
+        )
+
+        RoomRemoteDirectoryCache(database).replaceWorkspaces(
+            subject = "alice",
+            organization = "",
+            runtimeId = RuntimeId("runtime-a"),
+            workspaces = listOf(
+                RemoteWorkspaceRef(
+                    RuntimeId("runtime-a"),
+                    WorkspaceId("current"),
+                    "Current",
+                    revision = 7,
+                    updatedAt = "1785180000",
+                )
+            ),
+            syncedAt = 1785180000000,
+            catalogRevision = "catalog:42",
+        )
+
+        assertEquals(listOf("current"), dao.workspaces("alice", "", "runtime-a").map { it.workspaceId })
+        assertTrue(dao.sessions("alice", "", "runtime-a", "removed-by-sync").isEmpty())
+        assertEquals("catalog:42", dao.runtimes("alice", "").single().workspaceCatalogRevision)
     }
 
     @Test fun runtime_v2_journal_atomically_persists_event_and_checkpoint() = runBlocking {
@@ -477,7 +528,7 @@ class LocalStoreTest {
         }
 
         val migrated = Room.databaseBuilder(context, ChatDatabase::class.java, name)
-            .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+            .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
             .allowMainThreadQueries()
             .build()
         try {
@@ -515,7 +566,7 @@ class LocalStoreTest {
             legacy.version = 3
         }
         val migrated = Room.databaseBuilder(context, ChatDatabase::class.java, name)
-            .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+            .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
             .allowMainThreadQueries()
             .build()
         try {

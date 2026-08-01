@@ -12,7 +12,7 @@ const fixture = JSON.parse(readFileSync(join(root, "tests/fixtures/platform-agen
 const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },
 }).outputText;
-const { fetchPlatformAgents, setPlatformDefaultAgent, recordPlatformAgentUsage, stopPlatformAgentThread, respondPlatformAgentInput } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`);
+const { fetchPlatformAgents, setPlatformDefaultAgent, recordPlatformAgentUsage, stopPlatformAgentThread, respondPlatformAgentInput, respondDdfAgentInput } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`);
 
 function response(status, body = {}) {
   return new Response(JSON.stringify(body), {
@@ -33,7 +33,7 @@ function harness(responses, { refreshFails = false } = {}) {
       baseUrl: "https://ai-dev.ihep.ac.cn",
       now: () => new Date("2026-07-14T00:00:00.000Z"),
       fetchImpl: async (url, init) => {
-        calls.push({ url, authorization: init.headers.Authorization, method: init.method, body: init.body });
+        calls.push({ url, authorization: init.headers.Authorization, idempotencyKey: init.headers["Idempotency-Key"], method: init.method, body: init.body });
         const next = responses.shift();
         if (!next) throw new Error("unexpected extra request");
         return next;
@@ -139,6 +139,56 @@ function harness(responses, { refreshFails = false } = {}) {
   test.options.refresh = true;
   await fetchPlatformAgents(test.options);
   assert.equal(test.calls[0].url, "https://ai-dev.ihep.ac.cn/api/native/v1/agents?refresh=true");
+}
+
+{
+  const test = harness([response(200)]);
+  test.options.catalogBaseUrl = "https://ai-dev.ihep.ac.cn/apiv2";
+  const result = await respondDdfAgentInput(test.options, {
+    model: "drsai_v3_test",
+    chatId: "chat-1",
+    runId: "run-1",
+    requestId: "input-1",
+    response: { option_id: "mumu", value: "mumu" },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(test.calls[0].url, "https://ai-dev.ihep.ac.cn/apiv2/agents/input");
+  assert.equal(test.calls[0].authorization, "Bearer access-token-1");
+  assert.equal(test.calls[0].idempotencyKey, "input-1");
+  assert.equal(test.calls[0].body, JSON.stringify({
+    model: "drsai_v3_test",
+    chat_id: "chat-1",
+    run_id: "run-1",
+    request_id: "input-1",
+    response: { option_id: "mumu", value: "mumu" },
+  }));
+}
+
+{
+  const test = harness([
+    response(200, {
+      data: [{
+        id: "drsai_v3_test",
+        owner: "zdzhang@ihep.ac.cn",
+        examples: {
+          zh: ["检查 BESIII 事例选择", "生成 BESIII 分析方案"],
+          en: ["Review BESIII event selection", "Create a BESIII analysis plan"],
+        },
+      }],
+    }),
+    response(200, fixture),
+  ]);
+  test.options.catalogBaseUrl = "https://ai-dev.ihep.ac.cn/apiv2";
+  test.options.refresh = true;
+  const result = await fetchPlatformAgents(test.options);
+  assert.equal(test.calls[0].url, "https://ai-dev.ihep.ac.cn/apiv2/agents/list_agents?refresh=true");
+  assert.equal(test.calls[1].url, "https://ai-dev.ihep.ac.cn/api/native/v1/agents");
+  assert.deepEqual(result.agents.map((agent) => agent.id), ["platform:drsai_v3_test"]);
+  assert.deepEqual(result.agents[0].examples, [
+    { zh: "检查 BESIII 事例选择", en: "Review BESIII event selection" },
+    { zh: "生成 BESIII 分析方案", en: "Create a BESIII analysis plan" },
+  ]);
+  assert.deepEqual(result.status.capabilities, ["agents", "agent-details"]);
 }
 
 {

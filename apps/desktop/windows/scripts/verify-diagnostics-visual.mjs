@@ -41,6 +41,13 @@ try {
   await page.getByRole("button", { name: /进入开发者工作区|Enter developer workspace/ }).click();
   await page.locator("textarea").last().waitFor({ state: "visible" });
   await page.evaluate(async () => {
+    await window.openDrSai.startChat({
+      requestId: "activity-visual-request",
+      runId: "activity-visual-turn",
+      messages: [{ role: "user", content: "__STRUCTURED_VISUAL_FIXTURE__" }],
+    });
+  });
+  await page.evaluate(async () => {
     const timestamp = new Date(Date.now() - 15_000).toISOString();
     const root = { schemaVersion: 1, id: "event-root", traceId: "trace-visual", spanId: "span-root", timestamp, kind: "operation", level: "info", status: "started", module: "runtime", component: "runtime-engine", operation: "chat.run", message: "Chat run started" };
     const waiting = { schemaVersion: 1, id: "event-wait", traceId: "trace-visual", spanId: "span-gateway", parentSpanId: "span-root", timestamp, kind: "snapshot", level: "warn", status: "waiting", module: "runtime", component: "gateway", operation: "chat.connection", message: "Waiting for Gateway response" };
@@ -71,7 +78,7 @@ try {
   assert.equal(await page.getByText("chat.run", { exact: true }).count() > 0, true);
   await page.getByRole("tab", { name: /错误|Errors/ }).click();
   await page.getByText("Agent execution failed", { exact: true }).first().waitFor({ state: "visible" });
-  assert.equal(await page.getByText(/agent_runtime\.py:614/).count() > 0, true);
+  assert.equal(await page.getByText(/agent\.py:614/).count() > 0, true);
   await page.getByRole("button", { name: /查看代码位置|View source/ }).click();
   await page.getByRole("complementary", { name: /源码查看器|Source inspector/ }).waitFor({ state: "visible" });
   assert.equal(await page.getByText(/源码位置|Source location/, { exact: true }).count() > 0, true);
@@ -105,6 +112,13 @@ try {
   await page.getByText("SHA-256", { exact: true }).waitFor({ state: "visible" });
   const productionScreenshot = await page.screenshot({ path: join(evidenceDir, "diagnostics-production-governance.png") });
   assert.ok(productionScreenshot.length > 20_000, "Production diagnostics screenshot is unexpectedly small.");
+  await page.getByRole("tab", { name: /活动|Activity/ }).click();
+  await page.getByText("Reflector response", { exact: true }).waitFor({ state: "visible" });
+  await page.getByText(/错误详情|Error details/, { exact: true }).waitFor({ state: "visible" });
+  assert.equal(await page.getByText("REFLECTOR_TIMEOUT", { exact: false }).count() > 0, true);
+  assert.equal(await page.getByText(/调用 ID|Call ID/, { exact: true }).count() > 0, true);
+  const activityScreenshot = await page.screenshot({ path: join(evidenceDir, "diagnostics-activity-details.png") });
+  assert.ok(activityScreenshot.length > 20_000, "Activity detail screenshot is unexpectedly small.");
   console.log(`Diagnostics visual verification passed (screenshot: ${join(evidenceDir, "diagnostics-errors.png")}).`);
 } finally {
   await browser.close();

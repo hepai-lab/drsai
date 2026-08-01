@@ -4,7 +4,7 @@ import { readFile, stat, copyFile, mkdir, writeFile } from "fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "path";
 import type { ChatAttachment, ChatEvent, ChatMessage, ChatRequest, MaterialRoleItem } from "../api/desktopApi";
 import { invalidateAuthSession, refreshAuthContextAfterUnauthorized, requireAuthContext, type AuthContext } from "./auth";
-import { getPlatformAgentChatUrl, getPlatformAgentExecutionDescriptor, isPlatformAgentExecutionAvailable, respondToPlatformChatInput, stopPlatformChat } from "./agents";
+import { getPlatformAgentChatUrl, getPlatformAgentExecutionDescriptor, isPlatformAgentExecutionAvailable, respondToDdfChatInput, respondToPlatformChatInput, stopPlatformChat } from "./agents";
 import {
   createChatToolTimelineAccumulator,
   createChatContentNormalizer,
@@ -99,6 +99,7 @@ const SESSION_ID_PATTERN = /^[a-zA-Z0-9_.:-]{1,160}$/;
 const activeChats = new Map<string, AbortController>();
 const activeChatEventTargets = new Map<string, ChatEventTarget>();
 const platformChatTargets = new Map<string, { agentId: string; threadId: string }>();
+const platformInputTargets = new Map<string, { agentId: string; chatId: string; runId: string }>();
 const codexChatTargets = new Map<string, { client: RuntimeClient; runId: string; approvalId?: string }>();
 const chatEventSequences = new Map<string, number>();
 const chatDiagnosticOperations = new Map<string, Promise<DiagnosticOperationHandle>>();
@@ -240,6 +241,18 @@ export async function respondChatInput(
   if (typeof requestId !== "string" || !REQUEST_ID_PATTERN.test(requestId)) return false;
   const target = platformChatTargets.get(requestId);
   if (target) return respondToPlatformChatInput(target.agentId, target.threadId, response);
+  const inputTarget = platformInputTargets.get(requestId);
+  if (inputTarget) {
+    const accepted = await respondToDdfChatInput(
+      inputTarget.agentId,
+      inputTarget.chatId,
+      inputTarget.runId,
+      requestId,
+      response,
+    );
+    if (accepted) platformInputTargets.delete(requestId);
+    return accepted;
+  }
   const codex = codexChatTargets.get(requestId);
   if (!codex?.approvalId) return false;
   const value = typeof response === "string" ? response : String(response.decision ?? response.approved ?? "");
@@ -522,7 +535,10 @@ async function runChat(
             stream: true,
             thread_id: sessionId,
             run_id: runId,
-            model: request.model || platformDescriptor.model,
+            // For a DDF platform agent the catalog ID is the routable worker
+            // model name. Never let the chat UI's ordinary LLM selection
+            // replace it (for example with deepseek-ai/deepseek-v4-pro).
+            model: platformDescriptor.platformId,
             attachments: request.attachments || [],
             metadata: {
               ...(request.metadata || {}),
@@ -541,7 +557,18 @@ async function runChat(
         throw authError;
       }
       if (!response.ok || !response.body) {
-        if (response.status === 408 || response.status === 429 || response.status >= 500) {
+        // A generic HTTP 500 from DDF means the selected worker invocation
+        // already failed. Retrying it as a transport interruption keeps the
+        // UI waiting for the full recovery window and can duplicate work.
+        // Only statuses that explicitly describe a temporary edge/gateway
+        // condition participate in automatic stream recovery.
+        if (
+          response.status === 408
+          || response.status === 429
+          || response.status === 502
+          || response.status === 503
+          || response.status === 504
+        ) {
           throw new RecoverableStreamError(`Service temporarily unavailable (HTTP ${response.status}).`);
         }
         throw await formatHttpError(response);
@@ -1271,6 +1298,33 @@ async function readSse(
     });
   };
 
+  const emitTimelineEvents = (frame: string): boolean => {
+    let emitted = false;
+    for (const fileEvent of parseAgentRunSseFileEvents(frame)) {
+      const key = `file:${JSON.stringify(fileEvent)}`;
+      if (!resumeState.fileEventKeys.has(key)) {
+        resumeState.fileEventKeys.add(key);
+        emit(webContents, {
+          requestId,
+          sessionId,
+          runId,
+          type: "tool_timeline",
+          toolTimeline: toChatFileTimelineEvent(fileEvent),
+        });
+        emitted = true;
+      }
+    }
+    for (const toolTimeline of toolTimelineAccumulator.parseFrame(frame)) {
+      const key = `tool:${JSON.stringify(toolTimeline)}`;
+      if (!resumeState.fileEventKeys.has(key)) {
+        resumeState.fileEventKeys.add(key);
+        emit(webContents, { requestId, sessionId, runId, type: "tool_timeline", toolTimeline });
+        emitted = true;
+      }
+    }
+    return emitted;
+  };
+
   while (!signal.aborted) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -1297,13 +1351,27 @@ async function readSse(
       }
       const inputRequest = parseAgentInputRequestSseFrame(frame);
       if (inputRequest) {
+        const interactionRequestId = inputRequest.requestId || requestId;
+        const platformTarget = platformChatTargets.get(requestId);
+        if (platformTarget && inputRequest.requestId) {
+          platformInputTargets.set(interactionRequestId, {
+            agentId: platformTarget.agentId,
+            chatId: inputRequest.chatId || sessionId,
+            runId: inputRequest.runId || runId,
+          });
+        }
         emit(webContents, {
           requestId,
           sessionId,
           runId,
           type: "input_request",
           prompt: inputRequest.prompt,
+          inputRequestId: interactionRequestId,
           inputType: inputRequest.inputType,
+          inputOptions: inputRequest.options,
+          inputDefault: inputRequest.defaultValue,
+          inputAllowCustom: inputRequest.allowCustom,
+          inputTimeoutAt: inputRequest.timeoutAt,
         });
         continue;
       }
@@ -1327,6 +1395,9 @@ async function readSse(
         recordProviderErrorAnalytics(requestId, sessionId, runId, frame);
         throw streamError;
       }
+      if (emitTimelineEvents(frame)) {
+        continue;
+      }
       const providerStatus = parseProviderStatusSseFrame(frame);
       if (providerStatus) {
         recordProviderUsageAnalytics(requestId, sessionId, runId, frame);
@@ -1339,26 +1410,6 @@ async function readSse(
           level: providerStatus.level,
         });
         continue;
-      }
-      for (const fileEvent of parseAgentRunSseFileEvents(frame)) {
-        const key = `file:${JSON.stringify(fileEvent)}`;
-        if (!resumeState.fileEventKeys.has(key)) {
-          resumeState.fileEventKeys.add(key);
-          emit(webContents, {
-            requestId,
-            sessionId,
-            runId,
-            type: "tool_timeline",
-            toolTimeline: toChatFileTimelineEvent(fileEvent),
-          });
-        }
-      }
-      for (const toolTimeline of toolTimelineAccumulator.parseFrame(frame)) {
-        const key = `tool:${JSON.stringify(toolTimeline)}`;
-        if (!resumeState.fileEventKeys.has(key)) {
-          resumeState.fileEventKeys.add(key);
-          emit(webContents, { requestId, sessionId, runId, type: "tool_timeline", toolTimeline });
-        }
       }
       try {
         parseChatSseFrame(frame).forEach((content) => {
@@ -1390,13 +1441,27 @@ async function readSse(
     }
     const inputRequest = parseAgentInputRequestSseFrame(buffer);
     if (inputRequest) {
+      const interactionRequestId = inputRequest.requestId || requestId;
+      const platformTarget = platformChatTargets.get(requestId);
+      if (platformTarget && inputRequest.requestId) {
+        platformInputTargets.set(interactionRequestId, {
+          agentId: platformTarget.agentId,
+          chatId: inputRequest.chatId || sessionId,
+          runId: inputRequest.runId || runId,
+        });
+      }
       emit(webContents, {
         requestId,
         sessionId,
         runId,
         type: "input_request",
         prompt: inputRequest.prompt,
+        inputRequestId: interactionRequestId,
         inputType: inputRequest.inputType,
+        inputOptions: inputRequest.options,
+        inputDefault: inputRequest.defaultValue,
+        inputAllowCustom: inputRequest.allowCustom,
+        inputTimeoutAt: inputRequest.timeoutAt,
       });
       return sawDone;
     }
@@ -1420,6 +1485,9 @@ async function readSse(
       recordProviderErrorAnalytics(requestId, sessionId, runId, buffer);
       throw streamError;
     }
+    if (emitTimelineEvents(buffer)) {
+      return sawDone;
+    }
     const providerStatus = parseProviderStatusSseFrame(buffer);
     if (providerStatus) {
       recordProviderUsageAnalytics(requestId, sessionId, runId, buffer);
@@ -1432,26 +1500,6 @@ async function readSse(
         level: providerStatus.level,
       });
       return sawDone;
-    }
-    for (const fileEvent of parseAgentRunSseFileEvents(buffer)) {
-      const key = `file:${JSON.stringify(fileEvent)}`;
-      if (!resumeState.fileEventKeys.has(key)) {
-        resumeState.fileEventKeys.add(key);
-        emit(webContents, {
-          requestId,
-          sessionId,
-          runId,
-          type: "tool_timeline",
-          toolTimeline: toChatFileTimelineEvent(fileEvent),
-        });
-      }
-    }
-    for (const toolTimeline of toolTimelineAccumulator.parseFrame(buffer)) {
-      const key = `tool:${JSON.stringify(toolTimeline)}`;
-      if (!resumeState.fileEventKeys.has(key)) {
-        resumeState.fileEventKeys.add(key);
-        emit(webContents, { requestId, sessionId, runId, type: "tool_timeline", toolTimeline });
-      }
     }
     try {
       parseChatSseFrame(buffer).forEach((content) => {
@@ -1564,9 +1612,15 @@ function extractStructuredError(value: unknown): { code: string; message: string
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
   const candidate = (record.error && typeof record.error === "object" ? record.error : record.detail) as Record<string, unknown> | undefined;
-  if (!candidate || typeof candidate.code !== "string") return null;
+  if (!candidate) return null;
+  const code = typeof candidate.code === "string"
+    ? candidate.code
+    : typeof candidate.error_code === "string"
+      ? candidate.error_code
+      : "";
+  if (!code) return null;
   return {
-    code: candidate.code,
+    code,
     message: typeof candidate.message === "string" ? candidate.message : "HepAI request failed.",
     retryable: candidate.retryable === true,
   };

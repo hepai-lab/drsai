@@ -20,11 +20,13 @@ import type {
   OidcLoginDebugEvent,
 } from "../api/desktopApi";
 import { DRSAI_HOME } from "./paths";
+import { isDesktopDevelopment } from "./desktopRuntimeMode";
+import { getActivePlatformConfig } from "./platformConfig";
 import { normalizeModelAlias } from "./modelDefaults";
 import { saveApiKeyAndDefaultModel } from "./settings";
 import { sanitizeDiagnosticUrl } from "./secretRedaction";
 
-const IS_DESKTOP_DEV = process.env.NODE_ENV === "development" || Boolean(process.env.ELECTRON_RENDERER_URL);
+const IS_DESKTOP_DEV = isDesktopDevelopment();
 let credentialService: DesktopCredentialService | null = null;
 let openExternalUrl: (url: string) => Promise<void> = async () => {
   throw new Error("Desktop external URL service is not configured.");
@@ -48,13 +50,8 @@ const ACCESS_TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
 const DESKTOP_AUTH_BASE_URL =
   process.env.OPENDRSAI_AUTH_BASE_URL?.replace(/\/+$/, "") ||
   "https://opendrsai.ihep.ac.cn";
-const CONFIGURED_OIDC_ISSUER =
-  process.env.OPENDRSAI_OIDC_ISSUER?.replace(/\/+$/, "") ||
-  process.env.HAI_OIDC_ISSUER?.replace(/\/+$/, "");
-const DEFAULT_OIDC_ORIGIN = IS_DESKTOP_DEV
-  ? "https://ai-dev.ihep.ac.cn"
-  : "https://ai.ihep.ac.cn";
-const OIDC_ISSUER = CONFIGURED_OIDC_ISSUER || `${DEFAULT_OIDC_ORIGIN}/api`;
+const ACTIVE_PLATFORM = getActivePlatformConfig();
+const OIDC_ISSUER = ACTIVE_PLATFORM.oidcIssuer;
 const OIDC_DISCOVERY_URL =
   process.env.OPENDRSAI_OIDC_DISCOVERY_URL?.trim() ||
   `${OIDC_ISSUER}/.well-known/openid-configuration`;
@@ -96,6 +93,7 @@ export interface AuthContext {
   userId: string;
   accessToken?: string;
   authMode: NonNullable<AuthSession["authMode"]>;
+  issuer?: string;
 }
 
 export async function getAuthSession(): Promise<AuthSession> {
@@ -144,6 +142,7 @@ export async function requireAuthContext(): Promise<AuthContext> {
     userId: refreshed.user.id || refreshed.user.email,
     accessToken: refreshed.accessToken,
     authMode: refreshed.authMode,
+    issuer: refreshed.issuer,
   };
 }
 
@@ -989,6 +988,7 @@ export async function refreshAuthContextAfterUnauthorized(): Promise<AuthContext
       userId: refreshed.user.id || refreshed.user.email,
       accessToken: refreshed.accessToken,
       authMode: refreshed.authMode,
+      issuer: refreshed.issuer,
     };
   } catch {
     clearStoredSession(false);

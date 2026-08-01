@@ -250,3 +250,14 @@ class HeartbeatRequest(ControlRequest):
 
 class WorkspacePublishRequest(ControlRequest):
     workspaces: list[Workspace]
+
+
+class WorkspaceCatalogSyncRequest(StrictModel):
+    pass
+
+
+class WorkspaceCatalogSyncResult(StrictModel):
+    runtime_id: str
+    catalog_revision: int = Field(default=0, ge=0)
+    synced_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    items: list[Workspace]

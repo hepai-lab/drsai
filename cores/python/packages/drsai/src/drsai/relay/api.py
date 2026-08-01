@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from uuid import uuid4
 from dataclasses import asdict
 
@@ -21,13 +22,15 @@ from .models import (
     RegistrationRequest,
     RegistrationResult,
     WorkspacePublishRequest,
+    WorkspaceCatalogSyncRequest,
+    WorkspaceCatalogSyncResult,
     Workspace,
     ResourceLifecycle,
 )
 from .registry import RelayRegistry, RelayRegistryError
 from .runtime_domain import RuntimeAuthority
 from .runtime_channel import RuntimeChannelHub
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 
 class _StrictBody(BaseModel):
@@ -81,6 +84,7 @@ def create_relay_app(registry: RelayRegistry | None = None,
     authorities = runtimes or {}
     channel_hub = channels or RuntimeChannelHub()
     app.state.runtime_channels = channel_hub
+    workspace_sync_tasks: dict[str, asyncio.Task[WorkspaceCatalogSyncResult]] = {}
 
     def oidc_subject(request: Request) -> str:
         if principal_resolver is not None:
@@ -128,7 +132,9 @@ def create_relay_app(registry: RelayRegistry | None = None,
         correlation_id = request.headers.get("x-correlation-id", str(uuid4()))
         error = ErrorEnvelope(code=exc.code, message=exc.message, correlation_id=correlation_id,
                               retryable=exc.retryable, details={}, source=exc.source)
-        status = 401 if exc.code in {"oidc_auth_invalid", "runtime_auth_invalid"} else 403 if (
+        status = 503 if exc.code in {"host_offline", "catalog_sync_timeout"} else 409 if (
+            exc.code == "stale_runtime_generation"
+        ) else 401 if exc.code in {"oidc_auth_invalid", "runtime_auth_invalid"} else 403 if (
             exc.code.endswith("forbidden") or exc.code == "association_required"
         ) else 404 if exc.code in {
             "runtime_not_found", "access_grant_not_found", "association_not_found",
@@ -265,6 +271,71 @@ def create_relay_app(registry: RelayRegistry | None = None,
     @app.put("/v1/runtime-connections/{runtime_id}/workspaces", status_code=204)
     async def publish_workspaces(runtime_id: str, body: WorkspacePublishRequest, x_runtime_token: str = Header()):
         store.publish_workspaces(runtime_id, x_runtime_token, body.workspaces)
+
+    async def sync_workspace_catalog_once(
+        runtime_id: str,
+        subject: str,
+    ) -> WorkspaceCatalogSyncResult:
+        store.identity(subject, runtime_id)
+        response, generation = await channel_hub.request_http_current(
+            runtime_id,
+            "GET",
+            "/v1/workspaces?include_closed=true",
+            timeout_code="catalog_sync_timeout",
+        )
+        body = response.get("body") if isinstance(response, dict) else None
+        rows = body.get("data") if isinstance(body, dict) else None
+        if not isinstance(rows, list):
+            raise RelayRegistryError("workspace_catalog_sync_invalid", "Runtime returned an invalid Workspace Catalog",
+                                     source="runtime")
+        try:
+            workspaces = [Workspace.model_validate(row) for row in rows]
+        except ValidationError as exc:
+            raise RelayRegistryError("workspace_catalog_sync_invalid",
+                                     "Runtime returned an invalid Workspace Catalog",
+                                     source="runtime") from exc
+        if any(item.runtime_id != runtime_id for item in workspaces):
+            raise RelayRegistryError("workspace_scope_mismatch", "Workspace belongs to another runtime")
+        if not await channel_hub.is_current(runtime_id, generation):
+            raise RelayRegistryError("stale_runtime_generation", "Runtime generation changed during Workspace sync",
+                                     retryable=True, source="runtime")
+        store.replace_workspace_projection(runtime_id, workspaces)
+        active_items = [
+            item
+            for item in workspaces
+            if item.lifecycle == ResourceLifecycle.ACTIVE
+        ]
+        return WorkspaceCatalogSyncResult(
+            runtime_id=runtime_id,
+            catalog_revision=max(
+                [item.revision for item in workspaces],
+                default=0,
+            ),
+            items=active_items,
+        )
+
+    @app.post(
+        "/v1/runtimes/{runtime_id}/workspaces/sync",
+        response_model=WorkspaceCatalogSyncResult,
+    )
+    async def sync_workspaces(
+        runtime_id: str,
+        body: WorkspaceCatalogSyncRequest,
+        x_subject: str = Depends(oidc_subject),
+    ) -> WorkspaceCatalogSyncResult:
+        store.identity(x_subject, runtime_id)
+        task = workspace_sync_tasks.get(runtime_id)
+        if task is None or task.done():
+            task = asyncio.create_task(sync_workspace_catalog_once(
+                runtime_id,
+                x_subject,
+            ))
+            workspace_sync_tasks[runtime_id] = task
+        try:
+            return await task
+        finally:
+            if workspace_sync_tasks.get(runtime_id) is task and task.done():
+                workspace_sync_tasks.pop(runtime_id, None)
 
     @app.get("/v1/runtimes")
     async def list_runtimes(x_subject: str = Depends(oidc_subject), cursor: str | None = None,
@@ -458,7 +529,7 @@ def create_relay_app(registry: RelayRegistry | None = None,
                 message = await socket.receive_json()
                 if message.get("type") == "pong":
                     continue
-                if message.get("type") == "runtime.response":
+                if message.get("type") in {"runtime.response", "response"}:
                     channel_hub.accept_response(hello["runtime_id"], message)
                 elif message.get("type") == "runtime.workspaces":
                     rows = message.get("workspaces")

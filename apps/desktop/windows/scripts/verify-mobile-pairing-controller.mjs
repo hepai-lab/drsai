@@ -89,7 +89,10 @@ const recoveredController = new MobilePairingController(
     return client;
   },
 );
-assert.equal((await recoveredController.readiness()).state, "ready", "missing Runtime route must be retried after recovery");
+await assert.rejects(() => recoveredController.readiness(), /Not Found/,
+  "passive readiness must not repair or enroll the Runtime");
+assert.equal(recoveryCalls, 0, "passive readiness must not trigger recovery");
+assert.equal((await recoveredController.enable()).state, "ready", "explicit enable must retry after Runtime recovery");
 assert.equal(recoveryCalls, 1, "one failed operation must trigger exactly one recovery");
 await recoveredController.close();
 
@@ -108,8 +111,11 @@ const registrationController = new MobilePairingController(
     return client;
   },
 );
-assert.equal((await registrationController.readiness()).state, "ready",
-  "an unregistered Runtime must be retried after OIDC enrollment");
+assert.equal((await registrationController.readiness()).state, "not_registered",
+  "passive readiness must preserve the disabled enrollment state");
+assert.equal(registrationRecoveries, 0);
+assert.equal((await registrationController.enable()).state, "ready",
+  "explicit enable must retry after OIDC enrollment");
 assert.equal(registrationRecoveries, 1);
 await registrationController.close();
 
