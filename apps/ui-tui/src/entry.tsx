@@ -14,6 +14,7 @@ import { render } from 'ink'
 
 import { App } from './app.js'
 import { GatewayClient } from './gatewayClient.js'
+import { initTerminalSize } from './hooks/terminalSizeStore.js'
 import {
   disableAltScreen,
   disableFocusReporting,
@@ -174,7 +175,7 @@ if (!process.stdin.isTTY) {
   enableFocusReporting()
 
   // ── Banner (pre-print) ──────────────────────────────────────────────
-  // Print the "⚡ DrSai" banner ONCE via raw stdout BEFORE Ink takes over
+  // Print the "⚡ OpenDrSai" banner ONCE via raw stdout BEFORE Ink takes over
   // the dynamic frame.  Previously the banner lived inside <AppLayout>'s
   // dynamic frame, which meant Ink re-rendered it on every state update
   // (spinner tick, streaming flush, status change).  On terminals where
@@ -187,7 +188,14 @@ if (!process.stdin.isTTY) {
   // rendering below it and never touches it again.
   //
   // Color: #FFD700 (gold) = theme.primary, applied via ANSI true-colour.
-  process.stdout.write('\x1b[1m\x1b[38;2;255;215;0m⚡ DrSai\x1b[0m\n')
+  process.stdout.write('\x1b[1m\x1b[38;2;255;215;0m⚡ OpenDrSai\x1b[0m\n')
+
+  // Install the single global resize listener BEFORE mounting the app,
+  // so all components can subscribe via the nanostore atom instead of
+  // each adding their own EventEmitter listener (which caused
+  // MaxListenersExceededWarning when >10 MarkdownRenderer instances
+  // were mounted simultaneously).
+  initTerminalSize()
 
   inkInstance = render(<App gw={gw} />, { exitOnCtrlC: false })
   inkInstance.waitUntilExit().then(() => {

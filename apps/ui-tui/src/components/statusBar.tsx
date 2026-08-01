@@ -17,7 +17,7 @@
 import { useStore } from '@nanostores/react'
 import { Box, Text } from 'ink'
 
-import { useTerminalWidth } from '../hooks/useTerminalWidth.js'
+import { useTerminalWidth } from '../hooks/terminalSizeStore.js'
 import { $isStreaming } from '../app/turnStore.js'
 import { $connectionStatus, $copyMode, $lastUsage, $sessionMeta, $statusLine, $userId } from '../app/uiStore.js'
 import { theme } from '../theme.js'

@@ -38,8 +38,10 @@ export interface TerminalSize {
 export function useTerminalSize(fallback: TerminalSize = { cols: 80, rows: 24 }): TerminalSize {
   const { stdout } = useStdout()
   const [size, setSize] = useState<TerminalSize>(() => ({
-    cols: stdout?.columns ?? fallback.cols,
-    rows: stdout?.rows ?? fallback.rows,
+    // Use || instead of ?? so that a reported 0 (some terminal drivers
+    // report 0 before the real size arrives) falls back to the default.
+    cols: stdout?.columns || fallback.cols,
+    rows: stdout?.rows || fallback.rows,
   }))
   const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -49,8 +51,8 @@ export function useTerminalSize(fallback: TerminalSize = { cols: 80, rows: 24 })
     function commit() {
       pendingTimerRef.current = null
       setSize(prev => {
-        const cols = stdout.columns ?? fallback.cols
-        const rows = stdout.rows ?? fallback.rows
+        const cols = stdout.columns || fallback.cols
+        const rows = stdout.rows || fallback.rows
         if (prev.cols === cols && prev.rows === rows) return prev
         return { cols, rows }
       })
@@ -60,6 +62,10 @@ export function useTerminalSize(fallback: TerminalSize = { cols: 80, rows: 24 })
       if (pendingTimerRef.current) return
       pendingTimerRef.current = setTimeout(commit, RESIZE_THROTTLE_MS)
     }
+
+    // Sync once on mount — stdout.rows may have been 0/undefined at
+    // useState init time and corrected by the time the effect runs.
+    commit()
 
     stdout.on('resize', onResize)
     return () => {

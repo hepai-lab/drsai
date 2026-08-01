@@ -86,70 +86,73 @@ export type AuthVerifyResult =
 
 /** Use httpOnly refresh-token cookie to obtain a new access token (SSO production). */
 export async function refreshAccessToken(): Promise<AuthVerifyResult> {
+  let response: Response;
   try {
-    const response = await fetch(`${getServerUrl()}/auth/refresh`, {
+    response = await fetch(`${getServerUrl()}/auth/refresh`, {
       method: "POST",
       credentials: "include",
     });
-    if (!response.ok) {
-      return { ok: false };
-    }
-
-    const payload = await response.json();
-    const accessToken = payload?.data?.access_token as string | undefined;
-    const userEmail = payload?.data?.user_id as string | undefined;
-    if (!accessToken || !userEmail) {
-      return { ok: false };
-    }
-
-    saveAuthSession(accessToken, userEmail);
-    return { ok: true, userEmail, accessToken };
   } catch {
     return { ok: false };
   }
+
+  if (!response.ok) {
+    return { ok: false };
+  }
+
+  const payload = await response.json();
+  const accessToken = payload?.data?.access_token as string | undefined;
+  const userEmail = payload?.data?.user_id as string | undefined;
+  if (!accessToken || !userEmail) {
+    return { ok: false };
+  }
+
+  saveAuthSession(accessToken, userEmail);
+  return { ok: true, userEmail, accessToken };
 }
 
 /** Validate Bearer token; refresh via cookie when expired or missing access token. */
 export async function verifyAuthSession(): Promise<AuthVerifyResult> {
-  try {
-    const token = getAuthToken();
-    if (!token) {
-      const refreshed = await refreshAccessToken();
-      return refreshed.ok ? refreshed : { ok: false };
-    }
+  const token = getAuthToken();
+  if (!token) {
+    const refreshed = await refreshAccessToken();
+    return refreshed.ok ? refreshed : { ok: false };
+  }
 
-    const meResponse = await fetch(`${getServerUrl()}/auth/me`, {
+  let meResponse: Response;
+  try {
+    meResponse = await fetch(`${getServerUrl()}/auth/me`, {
       headers: {
         Authorization: `Bearer ${token}`,
       },
       credentials: "include",
     });
-
-    if (meResponse.ok) {
-      const payload = await meResponse.json();
-      const userEmail =
-        (payload?.data?.user_id as string | undefined) || getUserEmail();
-      if (!userEmail) {
-        clearAuthSession();
-        return { ok: false };
-      }
-      saveAuthSession(token, userEmail);
-      return { ok: true, userEmail, accessToken: token };
-    }
-
-    if (meResponse.status === 401) {
-      const refreshed = await refreshAccessToken();
-      if (refreshed.ok) {
-        return refreshed;
-      }
-    }
-
+  } catch {
     clearAuthSession();
     return { ok: false };
-  } catch {
-    // Network / CORS / mixed-content failures must not crash public pages like /share.
-    return { ok: false };
   }
+
+  if (meResponse.ok) {
+    const payload = await meResponse.json();
+    const userEmail =
+      (payload?.data?.user_id as string | undefined) || getUserEmail();
+    if (!userEmail) {
+      clearAuthSession();
+      return { ok: false };
+    }
+    saveAuthSession(token, userEmail);
+    return { ok: true, userEmail, accessToken: token };
+  }
+
+  if (meResponse.status === 401) {
+    const refreshed = await refreshAccessToken();
+    if (refreshed.ok) {
+      return refreshed;
+    }
+  }
+
+  clearAuthSession();
+  return { ok: false };
 }
 
 /**
@@ -171,16 +174,7 @@ export function startAuthRefreshLoop(): void {
     if (document.visibilityState !== "visible") {
       return;
     }
-    // Never force auth probes on anonymous share pages.
-    try {
-      const path = window.location.pathname.replace(/\/+$/, "") || "/";
-      if (path === "/share" || path.startsWith("/share/")) {
-        return;
-      }
-    } catch {
-      // ignore
-    }
-    void verifyAuthSession().catch(() => undefined);
+    void verifyAuthSession();
   });
 }
 
