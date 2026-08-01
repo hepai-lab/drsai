@@ -1,6 +1,6 @@
 # OpenDrSai Agent Event Protocol（OAEP）
 
-状态：Draft v1.0  
+状态：Draft v1.0
 协议目录：`cores/protocol/oaep`
 
 ## 定义

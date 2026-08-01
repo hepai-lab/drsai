@@ -256,4 +256,3 @@ The conversation shows only the prompt, options, selected response, and status.
 - Gate H4: Desktop renders, persists, responds, retries, and restores.
 - Gate H5: real three-service choice, approval, text, cancel, restart, and
   protocol-violation tests pass.
-

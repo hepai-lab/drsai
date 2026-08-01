@@ -1,7 +1,7 @@
 # Desktop → DDF → Remote Agent 联调验收报告
 
-更新时间：2026-07-29  
-目标智能体：`drsai_v3_test`  
+更新时间：2026-07-29
+目标智能体：`drsai_v3_test`
 开发平台：`https://ai-dev.ihep.ac.cn/apiv2`
 
 ## 当前结论
