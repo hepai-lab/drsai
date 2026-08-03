@@ -15,10 +15,10 @@ import { appContext } from "../hooks/provider";
 
 const WINDOWS_DOWNLOAD_URL =
   process.env.GATSBY_WINDOWS_DOWNLOAD_URL ||
-  "https://download-opendrsai.ihep.ac.cn/releases/v1.5.3/windows/OpenDrSai-Windows-Installer-x64.msi";
+  "https://download-opendrsai.ihep.ac.cn/releases/v1.5.5/windows/OpenDrSai-Windows-Installer-x64.msi";
 const ANDROID_DOWNLOAD_URL =
   process.env.GATSBY_ANDROID_DOWNLOAD_URL ||
-  "https://download-opendrsai.ihep.ac.cn/releases/v1.5.3/android/OpenDrSai-Android-v1.5.3.apk";
+  "https://download-opendrsai.ihep.ac.cn/releases/v1.5.5/android/OpenDrSai-Android-v1.5.5.apk";
 const TUI_UNIX_COMMAND =
   "curl -fsSL https://ihepbox.ihep.ac.cn/ihepbox/index.php/s/vQFBjvXqAhxdPFb/download | bash";
 const TUI_WINDOWS_COMMAND =
@@ -699,23 +699,23 @@ const ClientDetails = ({
     windows: {
       icon: <WindowsLogo />,
       title: "OpenDrSai for Windows",
-      version: "v1.5.3",
+      version: "v1.5.5 Beta",
       file: "OpenDrSai-Windows-Installer-x64.msi",
       sizeBytes: 647168,
       sha256:
-        "07b2b300df27811519eea9d9e9df744933f2b3986e816a2e4171a8e52f817e99",
-      programFile: "OpenDrSai-Windows-v1.5.3-x64.zip",
-      programSizeBytes: 233589539,
+        "682d930676e2299fd6b13fe131af13bad771d04b290c430652802466f496902f",
+      programFile: "OpenDrSai-Windows-v1.5.5-x64.zip",
+      programSizeBytes: 254032550,
       href: WINDOWS_DOWNLOAD_URL,
     },
     android: {
       icon: <AndroidLogo />,
       title: "OpenDrSai for Android",
-      version: "v1.5.3",
-      file: "OpenDrSai-Android-v1.5.3.apk",
-      sizeBytes: 3076779,
+      version: "v1.5.5 Beta",
+      file: "OpenDrSai-Android-v1.5.5.apk",
+      sizeBytes: 26370437,
       sha256:
-        "74fcb63c37ed5777196681b0b98d390ab74ba92c52b309e12c86778ba4051f8e",
+        "d52b7df0cee4fab11fa817e0ba25be4db7e67a2ca3e3a4596c205e1a641321a6",
       href: ANDROID_DOWNLOAD_URL,
     },
   };
@@ -805,7 +805,10 @@ const ClientDetails = ({
   const release = latestRelease
     ? {
         ...fallbackRelease,
-        version: `v${latestRelease.version}`,
+        version:
+          latestRelease.channel === "beta"
+            ? `v${latestRelease.version} Beta`
+            : `v${latestRelease.version}`,
         file: latestRelease.download.file,
         sizeBytes: latestRelease.download.sizeBytes,
         sha256:
