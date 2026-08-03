@@ -112,6 +112,7 @@ assert.equal(migrated.activities.length, 2);
 
 const oversized = {
   ...state,
+  meta: { backend: "codex".repeat(100), workspaceLabel: "workspace".repeat(100), durationMs: 28000 },
   parts: [{ id: "large", kind: "markdown", status: "completed", markdown: "x".repeat(250_000) }],
   activities: [{
     id: "large-tool", turnId: state.turnId, timestamp: "2026-07-17T00:00:00Z", source: "test",
@@ -123,5 +124,8 @@ const sanitized = sanitizeStructuredTurnState(oversized);
 assert.equal(sanitized.parts[0].markdown.length, 200_000);
 assert.equal(sanitized.activities[0].output.truncated, true);
 assert.deepEqual(sanitized.parts[0].citationIds, undefined);
+assert.equal(sanitized.meta.backend.length, 200);
+assert.equal(sanitized.meta.workspaceLabel.length, 500);
+assert.equal(sanitized.meta.durationMs, 28000);
 
 console.log("Structured conversation V2 verification passed.");

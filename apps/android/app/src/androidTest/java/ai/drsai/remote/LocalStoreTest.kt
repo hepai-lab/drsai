@@ -16,6 +16,11 @@ import ai.drsai.remote.data.MIGRATION_2_3
 import ai.drsai.remote.data.MIGRATION_3_4
 import ai.drsai.remote.data.MIGRATION_4_5
 import ai.drsai.remote.data.MIGRATION_5_6
+import ai.drsai.remote.data.MIGRATION_6_7
+import ai.drsai.remote.data.MIGRATION_7_8
+import ai.drsai.remote.data.MIGRATION_8_9
+import ai.drsai.remote.data.MIGRATION_9_10
+import ai.drsai.remote.data.MIGRATION_10_11
 import ai.drsai.remote.data.SecureTokenStore
 import ai.drsai.remote.remote.data.RemoteCacheRepository
 import ai.drsai.remote.remote.data.RemoteRuntimeEntity
@@ -25,10 +30,13 @@ import ai.drsai.remote.remote.data.PendingRemoteApprovalEntity
 import ai.drsai.remote.remote.data.RemoteRunEntity
 import ai.drsai.remote.remote.data.RemoteWorkspaceEntity
 import ai.drsai.remote.remote.data.RemoteSessionEntity
+import ai.drsai.remote.remote.data.RemoteConversationItemEntity
 import ai.drsai.remote.remote.data.RemoteProcessRecovery
+import ai.drsai.remote.remote.data.RoomRemoteDirectoryCache
 import ai.drsai.remote.remote.data.WorkspaceInstructionVersionStore
 import ai.drsai.remote.remote.model.RuntimeId
 import ai.drsai.remote.remote.model.WorkspaceId
+import ai.drsai.remote.remote.model.RemoteWorkspaceRef
 import ai.drsai.remote.remote.data.RelayRemoteRepository
 import ai.drsai.remote.runtime.v2.EventAppendDecision
 import ai.drsai.remote.runtime.v2.RunCommand
@@ -48,6 +56,8 @@ import ai.drsai.remote.runtime.security.ApprovalDecision
 import ai.drsai.remote.runtime.security.ApprovalDecisionResult
 import ai.drsai.remote.runtime.security.ApprovalRepository
 import ai.drsai.remote.runtime.security.CreateApprovalCommand
+import ai.drsai.remote.runtime.python.HostSideEffectAudit
+import ai.drsai.remote.runtime.python.RoomPythonSideEffectAudit
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -127,6 +137,94 @@ class LocalStoreTest {
         RemoteCacheRepository(database).clearSubject("alice")
         assertTrue(dao.runtimes("alice", "ihep").isEmpty())
         assertEquals(listOf("bob"), dao.runtimes("bob", "ihep").map { it.subject })
+    }
+
+    @Test fun authoritativeEmptyDeviceCatalogPurgesHostWorkspaceAndSessionProjections() = runBlocking {
+        val dao = database.remoteDao()
+        dao.saveRuntimes(
+            listOf(
+                RemoteRuntimeEntity(
+                    "alice", "", "runtime-a", "Computer", "instance", "1.5.3",
+                    "ONLINE", "[]", 1, false,
+                )
+            )
+        )
+        dao.saveWorkspaces(
+            listOf(
+                RemoteWorkspaceEntity(
+                    "alice", "", "runtime-a", "workspace-a", "Project",
+                    1, false,
+                )
+            )
+        )
+        dao.saveSessions(
+            listOf(
+                RemoteSessionEntity(
+                    "alice", "", "runtime-a", "workspace-a", "session-a",
+                    "Conversation", "opendrsai", 1, false,
+                )
+            )
+        )
+
+        RoomRemoteDirectoryCache(database).reconcileRuntimes(
+            subject = "alice",
+            organization = "",
+            runtimes = emptyList(),
+            syncedAt = 2,
+        )
+
+        assertTrue(dao.runtimes("alice", "").isEmpty())
+        assertTrue(dao.workspaces("alice", "", "runtime-a").isEmpty())
+        assertTrue(dao.sessions("alice", "", "runtime-a", "workspace-a").isEmpty())
+    }
+
+    @Test fun forceSyncAtomicallyReplacesWorkspaceRowsAndCatalogRevision() = runBlocking {
+        val dao = database.remoteDao()
+        dao.saveRuntimes(
+            listOf(
+                RemoteRuntimeEntity(
+                    "alice", "", "runtime-a", "Computer", "instance", "1.5.3",
+                    "ONLINE", "[]", 1, false,
+                )
+            )
+        )
+        dao.saveWorkspaces(
+            listOf(
+                RemoteWorkspaceEntity(
+                    "alice", "", "runtime-a", "removed-by-sync", "Old",
+                    1, false,
+                )
+            )
+        )
+        dao.saveSessions(
+            listOf(
+                RemoteSessionEntity(
+                    "alice", "", "runtime-a", "removed-by-sync", "session-old",
+                    "Old conversation", "opendrsai", 1, false,
+                )
+            )
+        )
+
+        RoomRemoteDirectoryCache(database).replaceWorkspaces(
+            subject = "alice",
+            organization = "",
+            runtimeId = RuntimeId("runtime-a"),
+            workspaces = listOf(
+                RemoteWorkspaceRef(
+                    RuntimeId("runtime-a"),
+                    WorkspaceId("current"),
+                    "Current",
+                    revision = 7,
+                    updatedAt = "1785180000",
+                )
+            ),
+            syncedAt = 1785180000000,
+            catalogRevision = "catalog:42",
+        )
+
+        assertEquals(listOf("current"), dao.workspaces("alice", "", "runtime-a").map { it.workspaceId })
+        assertTrue(dao.sessions("alice", "", "runtime-a", "removed-by-sync").isEmpty())
+        assertEquals("catalog:42", dao.runtimes("alice", "").single().workspaceCatalogRevision)
     }
 
     @Test fun runtime_v2_journal_atomically_persists_event_and_checkpoint() = runBlocking {
@@ -360,9 +458,9 @@ class LocalStoreTest {
 
     @Test fun database_downgrade_is_rejected_without_destructive_fallback() {
         val context = ApplicationProvider.getApplicationContext<Context>()
-        val name = "future-v7.db"
+        val name = "future-v8.db"
         context.deleteDatabase(name)
-        SQLiteDatabase.openOrCreateDatabase(context.getDatabasePath(name), null).use { it.version = 7 }
+        SQLiteDatabase.openOrCreateDatabase(context.getDatabasePath(name), null).use { it.version = 8 }
         val failure = runCatching {
             Room.databaseBuilder(context, ChatDatabase::class.java, name).allowMainThreadQueries().build().openHelper.writableDatabase
         }.exceptionOrNull()
@@ -400,6 +498,25 @@ class LocalStoreTest {
         assertEquals("files.write", dao.approvals(subject, organization, "rt-b").single().operation)
     }
 
+    @Test fun remote_workspace_and_session_queries_only_return_active_lifecycle() = runBlocking {
+        val dao = database.remoteDao()
+        dao.saveWorkspaces(listOf(
+            RemoteWorkspaceEntity("alice", "ihep", "rt", "active", "Active", 1, lifecycle = "active", revision = 2),
+            RemoteWorkspaceEntity("alice", "ihep", "rt", "archived", "Archived", 1, lifecycle = "archived", revision = 3),
+            RemoteWorkspaceEntity("alice", "ihep", "rt", "removed", "Removed", 1, lifecycle = "removed", revision = 4),
+        ))
+        dao.saveSessions(listOf(
+            RemoteSessionEntity("alice", "ihep", "rt", "active", "s-active", "Active", "opendrsai", 1, lifecycle = "active"),
+            RemoteSessionEntity("alice", "ihep", "rt", "active", "s-archived", "Archived", "opendrsai", 1, lifecycle = "archived"),
+            RemoteSessionEntity("alice", "ihep", "rt", "active", "s-removed", "Removed", "opendrsai", 1, lifecycle = "removed"),
+        ))
+
+        assertEquals(listOf("active"), dao.workspaces("alice", "ihep", "rt").map { it.workspaceId })
+        assertEquals(listOf("active", "archived", "removed"), dao.allWorkspaces("alice", "ihep", "rt").map { it.workspaceId })
+        assertEquals(listOf("s-active"), dao.sessions("alice", "ihep", "rt", "active").map { it.sessionId })
+        assertEquals(3, dao.allSessions("alice", "ihep", "rt", "active").size)
+    }
+
     @Test fun migration_2_to_3_preserves_conversation_and_binds_local_agent() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val name = "migration-v2-v3.db"
@@ -416,7 +533,7 @@ class LocalStoreTest {
         }
 
         val migrated = Room.databaseBuilder(context, ChatDatabase::class.java, name)
-            .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+            .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
             .allowMainThreadQueries()
             .build()
         try {
@@ -454,7 +571,7 @@ class LocalStoreTest {
             legacy.version = 3
         }
         val migrated = Room.databaseBuilder(context, ChatDatabase::class.java, name)
-            .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+            .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
             .allowMainThreadQueries()
             .build()
         try {
@@ -462,6 +579,59 @@ class LocalStoreTest {
             assertEquals("hello", dao.visibleMessageSnapshot("c1").single().content)
             dao.saveAttachments(listOf(MessageAttachmentEntity("a1", "m1", "c1", null, "x.txt", "text/plain", 1, "file", null, null, "h")))
             assertEquals("x.txt", dao.attachmentSnapshot("c1").single().name)
+        } finally {
+            migrated.close()
+            context.deleteDatabase(name)
+        }
+    }
+
+    @Test fun side_effect_audit_is_idempotent_and_queryable_by_run() = runBlocking {
+        val command = RunCommand(
+            "alice", "ihep", RuntimeBinding.AndroidLocal,
+            WorkbenchId("local"), WorkbenchId("session"), WorkbenchId("audit-run"),
+            "opendrsai", "audit-send-once", "hello",
+        )
+        RoomRunJournal(database).createIfAbsent(command)
+        val audit = RoomPythonSideEffectAudit(database)
+        listOf("intent", "execution", "receipt", "replay", "terminal").forEach { phase ->
+            audit.append(HostSideEffectAudit("audit-run", "call-1", "tool", phase, "passed"))
+        }
+        audit.append(HostSideEffectAudit("audit-run", "call-1", "tool", "receipt", "passed"))
+        val rows = database.workbenchDao().auditForRun("alice", "ihep", "android-local", "audit-run")
+        assertEquals(
+            listOf("side_effect.intent", "side_effect.execution", "side_effect.receipt", "side_effect.replay", "side_effect.terminal"),
+            rows.map { it.action },
+        )
+    }
+
+    @Test fun migration_10_to_11_preserves_v3_projection_and_adds_oaep_tables() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val name = "migration-v10-v11.db"
+        context.deleteDatabase(name)
+        val current = Room.databaseBuilder(context, ChatDatabase::class.java, name)
+            .allowMainThreadQueries().build()
+        current.remoteDao().saveConversationItem(RemoteConversationItemEntity(
+            "alice", "ihep", "rt", "ws", "session", "legacy-item", "run",
+            "message", "user", 1, 1, "windows", "source", "now", "now",
+            "{\"text\":\"preserved\"}", false,
+        ))
+        current.close()
+        SQLiteDatabase.openDatabase(
+            context.getDatabasePath(name).path, null, SQLiteDatabase.OPEN_READWRITE,
+        ).use { legacy ->
+            legacy.execSQL("DROP TABLE remote_oaep_events")
+            legacy.execSQL("DROP TABLE remote_oaep_items")
+            legacy.execSQL("DROP TABLE remote_oaep_runs")
+            legacy.version = 10
+        }
+        val migrated = Room.databaseBuilder(context, ChatDatabase::class.java, name)
+            .addMigrations(MIGRATION_10_11).allowMainThreadQueries().build()
+        try {
+            assertEquals(
+                "legacy-item",
+                migrated.remoteDao().conversationItems("alice", "ihep", "rt", "session").single().itemId,
+            )
+            assertTrue(migrated.remoteDao().oaepItems("alice", "ihep", "rt", "session").isEmpty())
         } finally {
             migrated.close()
             context.deleteDatabase(name)

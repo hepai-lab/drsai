@@ -11,10 +11,19 @@ export const getServerUrl = () => {
     return url;
   }
 
-  // 2. DEV 模式（前端 4290 与后端 4291 分离）：用浏览器当前 hostname 推导后端地址。
-  //    读 window.location.hostname（地址栏里那个 IP），与容器内网卡 IP 无关——
-  //    无论 drsai 跑在容器还是宿主机，都能指向「你用来访问它的那个 IP」的后端端口。
+  // 2. DEV mode:
+  //    - Direct access on a development port (for example localhost:4290)
+  //      connects to the backend port on the same host.
+  //    - Access through a standard HTTP(S) reverse proxy uses same-origin
+  //      /api, so deployments do not need to hard-code their public domain.
   if (process.env.NODE_ENV === "development" && typeof window !== "undefined") {
+    if (
+      !window.location.port ||
+      window.location.port === "80" ||
+      window.location.port === "443"
+    ) {
+      return "/api";
+    }
     const port = process.env.GATSBY_DEV_API_PORT || "4291";
     return `${window.location.protocol}//${window.location.hostname}:${port}/api`;
   }
@@ -176,4 +185,3 @@ export const fetchVersion = () => {
       return null;
     });
 };
-

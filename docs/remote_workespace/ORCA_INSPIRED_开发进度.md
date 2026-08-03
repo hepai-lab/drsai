@@ -105,7 +105,7 @@
 
 ## 第 1 轮变更
 
-- 新增 `protocol/orca-inspired/domain.schema.json` 和跨语言 Fixture；
+- 新增 `cores/protocol/orca-inspired/domain.schema.json` 和跨语言 Fixture；
 - 新增 TypeScript `workspaceResources.ts`；
 - 新增 Python `workspace_resources.py`；
 - 新增 5 个 Python 领域契约测试；

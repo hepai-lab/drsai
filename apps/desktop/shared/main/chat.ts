@@ -1,12 +1,10 @@
 import { randomUUID } from "crypto";
 import { appendFileSync, mkdirSync } from "fs";
-import { readFile, stat } from "fs/promises";
-import { dirname } from "path";
+import { readFile, stat, copyFile, mkdir, writeFile } from "fs/promises";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "path";
 import type { ChatAttachment, ChatEvent, ChatMessage, ChatRequest, MaterialRoleItem } from "../api/desktopApi";
 import { invalidateAuthSession, refreshAuthContextAfterUnauthorized, requireAuthContext, type AuthContext } from "./auth";
-import { getPlatformAgentChatUrl, getPlatformAgentExecutionDescriptor, isPlatformAgentExecutionAvailable, respondToPlatformChatInput, stopPlatformChat } from "./agents";
-import { getGatewayRequestHeaders, startGateway } from "./gateway";
-import { getDefaultModelAlias, normalizeModelAlias } from "./modelDefaults";
+import { getPlatformAgentChatUrl, getPlatformAgentExecutionDescriptor, isPlatformAgentExecutionAvailable, respondToDdfChatInput, respondToPlatformChatInput, stopPlatformChat } from "./agents";
 import {
   createChatToolTimelineAccumulator,
   createChatContentNormalizer,
@@ -23,14 +21,15 @@ import {
   parseProviderUsageAnalyticsSseFrame,
   parseAgentRunSseFileEvents,
 } from "./sseParser";
-import { listThreads, upsertThreadFromRun } from "./threads";
+import { listThreads, updateThread, upsertThreadFromRun } from "./threads";
 import { persistProviderErrorAnalytics } from "./providerErrorAnalytics";
 import { persistProviderUsageAnalytics } from "./providerUsageAnalytics";
 import { recordAgentTelemetry } from "./agentTelemetry";
 import { analyzeMaterialRoles } from "./workspaceContext";
 import { assertAgentCircuitAvailable, recordAgentCircuitFailure, recordAgentCircuitSuccess } from "./agentCircuitBreaker";
 import { createFailureEscalation, getFailureRecovery } from "./failureRecovery";
-import { connectRuntimeClientForWorkspace, type RuntimeClient, type RuntimeAgentEvent } from "./runtimeClient";
+import { bindRuntimeThreadToWorkspace, connectRuntimeClientForWorkspace, type OaepEvent, type OaepItem, type RuntimeClient } from "./runtimeClient";
+import { sessionPayloadHash, sessionSyncState } from "./sessionSyncState";
 import {
   RecoverableStreamError,
   appendResumedContent,
@@ -41,28 +40,49 @@ import {
   type StreamResumeState,
 } from "./networkRecovery";
 import { desktopDiagnostics, type DiagnosticOperationHandle } from "./diagnostics";
+import { BoundedEventDispatcher } from "./boundedEventDispatcher";
+import { listRecordedChatRunEvents, recordChatRunEvent } from "./chatRunJournal";
+import { requiresCodexSessionResume } from "./codexSessionResumePolicy";
+import { selectCurrentUserInput } from "./chatInput";
+import { reduceOaepEvent, subscribeOaepSession } from "./oaepSessionStream";
+import {
+  createOaepPresentationProjection,
+  projectOaepEventForPresentation,
+  type OaepPresentationProjection,
+} from "./oaepPresentationProjector";
 
 export interface ChatEventTarget {
   send(channel: string, ...args: unknown[]): void;
 }
 
+const chatEventDispatchers = new WeakMap<ChatEventTarget, BoundedEventDispatcher<ChatEvent>>();
+
+function getChatEventDispatcher(target: ChatEventTarget): BoundedEventDispatcher<ChatEvent> {
+  const existing = chatEventDispatchers.get(target);
+  if (existing) return existing;
+  const dispatcher = new BoundedEventDispatcher<ChatEvent>({
+    capacity: 256,
+    deliver: (event) => target.send("desktop:chat-event", event),
+    merge: (previous, next) => {
+      if (previous.requestId !== next.requestId || previous.type !== next.type || (next.type !== "chunk" && next.type !== "reasoning")) return null;
+      return { ...next, content: `${previous.content ?? ""}${next.content ?? ""}` };
+    },
+  });
+  chatEventDispatchers.set(target, dispatcher);
+  return dispatcher;
+}
+
 export interface ChatRemoteRouting {
   resolveTarget(workspacePath?: string, workspaceId?: string): Promise<"remote_online" | "remote_offline" | "local_or_unknown">;
   getGatewayAccess(workspacePath?: string, workspaceId?: string): { baseUrl: string; token: string; workspaceId: string } | null;
-  bindThread(threadId: string, workspaceId: string): void;
+  bindThread(threadId: string, workspaceId: string, runtimeSessionId?: string): void;
 }
 
-let remoteRouting: ChatRemoteRouting = {
-  resolveTarget: async () => "local_or_unknown",
-  getGatewayAccess: () => null,
-  bindThread: () => undefined,
-};
-
-export function configureChatRemoteRouting(routing: ChatRemoteRouting): void {
-  remoteRouting = routing;
+export function configureChatRemoteRouting(_routing: ChatRemoteRouting): void {
+  // RuntimeClient owns local/SSH Workspace routing. Keep this additive no-op
+  // until platform bootstraps stop importing the legacy Chat router hook.
 }
 
-const GATEWAY_BASE_URL = `http://127.0.0.1:${getGatewayPort()}`;
 const MAX_ACTIVE_CHATS = 3;
 const MAX_MESSAGES = 40;
 const MAX_MESSAGE_CHARS = 16_000;
@@ -70,6 +90,7 @@ const MAX_TOTAL_CHARS = 80_000;
 const MAX_MODEL_CHARS = 120;
 const MAX_AGENT_ID_CHARS = 160;
 const MAX_WORKSPACE_PATH_CHARS = 2048;
+const MAX_WORKSPACE_NAME_CHARS = 120;
 const MAX_ATTACHMENTS = 20;
 const MAX_ATTACHMENT_PATH_CHARS = 2048;
 const MAX_ATTACHMENT_NAME_CHARS = 260;
@@ -84,8 +105,23 @@ const NETWORK_RECOVERY_WINDOW_MS = getPositiveIntEnv("OPENDRSAI_NETWORK_RECOVERY
 const REQUEST_ID_PATTERN = /^[a-zA-Z0-9_-]{8,80}$/;
 const SESSION_ID_PATTERN = /^[a-zA-Z0-9_.:-]{1,160}$/;
 const activeChats = new Map<string, AbortController>();
+const activeChatEventTargets = new Map<string, ChatEventTarget>();
 const platformChatTargets = new Map<string, { agentId: string; threadId: string }>();
-const codexChatTargets = new Map<string, { client: RuntimeClient; runId: string; approvalId?: string }>();
+const platformInputTargets = new Map<string, { agentId: string; chatId: string; runId: string }>();
+interface CodexProjectionTarget {
+  approvalId?: string;
+  projection: OaepPresentationProjection;
+}
+
+interface CodexChatTarget extends CodexProjectionTarget {
+  client: RuntimeClient;
+  runId: string;
+}
+
+const codexChatTargets = new Map<string, CodexChatTarget>();
+// A Runtime terminal already projected as StructuredConversation must not be
+// followed by a second, legacy done/error terminal.
+const structuredTerminalRequests = new Set<string>();
 const chatEventSequences = new Map<string, number>();
 const chatDiagnosticOperations = new Map<string, Promise<DiagnosticOperationHandle>>();
 
@@ -99,11 +135,13 @@ export function startChat(webContents: ChatEventTarget, request: unknown): strin
   }
   const validated = validateChatRequest(request);
   const requestId = validated.requestId || randomUUID();
+  const runRequest: ChatRequest = { ...validated, runId: validated.runId || randomUUID() };
   if (activeChats.has(requestId)) {
     throw new Error("Chat request is already active.");
   }
   const controller = new AbortController();
   activeChats.set(requestId, controller);
+  activeChatEventTargets.set(requestId, webContents);
   chatEventSequences.set(requestId, 0);
   chatDiagnosticOperations.set(requestId, desktopDiagnostics.start({
     traceId: requestId,
@@ -117,8 +155,9 @@ export function startChat(webContents: ChatEventTarget, request: unknown): strin
     attributes: { route: validated.agentId === "my-codex" ? "codex" : "opendrsai" },
   }));
 
-  runChat(webContents, requestId, validated, controller).catch(async (error) => {
+  runChat(webContents, requestId, runRequest, controller).catch(async (error) => {
     activeChats.delete(requestId);
+    activeChatEventTargets.delete(requestId);
     platformChatTargets.delete(requestId);
     const timedOut = controller.signal.aborted && controller.signal.reason === "timeout";
     const cancelledByUser = controller.signal.aborted && !timedOut;
@@ -135,12 +174,17 @@ export function startChat(webContents: ChatEventTarget, request: unknown): strin
     if (!cancelledByUser) {
       await chatDiagnosticOperations.get(requestId)?.then((operation) => operation.fail(error, timedOut ? "CHAT_TIMEOUT" : undefined)).catch(() => undefined);
     }
-    emit(webContents, {
-      requestId,
-      type: cancelledByUser ? "aborted" : "error",
-      error: errorMessage,
-      failureRecovery: getFailureRecovery(error),
-    });
+    const terminalAlreadyProjected = structuredTerminalRequests.delete(requestId);
+    if (!terminalAlreadyProjected) {
+      emit(webContents, {
+        requestId,
+        sessionId: runRequest.sessionId,
+        runId: runRequest.runId,
+        type: cancelledByUser ? "aborted" : "error",
+        error: errorMessage,
+        failureRecovery: getFailureRecovery(error),
+      });
+    }
   });
 
   return requestId;
@@ -158,8 +202,11 @@ export function abortChat(requestId: string): boolean {
   if (codexTarget) void codexTarget.client.cancelAgentRun(codexTarget.runId).catch(() => undefined);
   controller.abort("user");
   activeChats.delete(requestId);
+  activeChatEventTargets.delete(requestId);
   platformChatTargets.delete(requestId);
-  codexChatTargets.delete(requestId);
+  // Keep the Runtime target until runChat reaches its finally block. The
+  // cancellation path still needs the authoritative Runtime Run ID when it
+  // persists the recoverable Thread binding.
   return true;
 }
 
@@ -168,7 +215,7 @@ export function abortChat(requestId: string): boolean {
  * The authoritative Run and its event log remain in the Runtime, so recovery
  * must read them there instead of treating a renderer reload as a failed run.
  */
-export async function recoverChatRun(rawRequest: unknown): Promise<ChatEvent[]> {
+export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEventTarget): Promise<ChatEvent[]> {
   if (!rawRequest || typeof rawRequest !== "object") return [];
   const request = rawRequest as { requestId?: unknown; sessionId?: unknown };
   if (
@@ -177,23 +224,51 @@ export async function recoverChatRun(rawRequest: unknown): Promise<ChatEvent[]> 
   ) return [];
   const requestId = request.requestId;
   const sessionId = request.sessionId;
+  if (eventTarget && activeChats.has(requestId)) activeChatEventTargets.set(requestId, eventTarget);
   const thread = (await listThreads()).find((candidate) => candidate.id === sessionId);
-  if (!thread || thread.boundAgentId !== "my-codex" || !thread.lastRunId || !thread.workspacePath) return [];
+  if (!thread?.lastRunId) return [];
+  if (!thread.runtimeSessionId || !thread.workspacePath) {
+    const journal = await listRecordedChatRunEvents(thread.lastRunId);
+    const recovered = journal.map((event, index) => ({ ...event, requestId, sessionId, seq: index + 1 }));
+    if (thread.status === "running" && !activeChats.has(thread.lastRequestId ?? requestId)) {
+      recovered.push({ requestId, sessionId, runId: thread.lastRunId, seq: recovered.length + 1, type: "error", error: "Chat run was interrupted by an application restart. Recovered output is preserved." });
+      await updateThread({ id: thread.id, status: "error" });
+    }
+    return recovered;
+  }
   const resolved = await connectRuntimeClientForWorkspace(thread.workspacePath, thread.execution?.workspaceId);
-  const events = await resolved.client.listAgentRunEvents(thread.lastRunId, 0);
+  const events = (await resolved.client.listOaepEvents(thread.runtimeSessionId, 0)).data
+    .filter((event) => event.run_id === thread.lastRunId);
   const recovered: ChatEvent[] = [];
   let sequence = 0;
   const push = (event: Omit<ChatEvent, "requestId" | "sessionId" | "seq">) => {
     recovered.push({ ...event, requestId, sessionId, seq: ++sequence });
   };
-  const target = { approvalId: undefined as string | undefined };
+  const recorded = await listRecordedChatRunEvents(thread.lastRunId);
+  push({ type: "start", runId: thread.lastRunId });
+  for (const event of recorded) if (event.type === "connection") push({ type: "connection", runId: thread.lastRunId, connection: event.connection });
+  const target: CodexProjectionTarget = {
+    projection: createOaepPresentationProjection(requestId, basename(thread.workspacePath)),
+  };
+  const replayItems = new Map<string, OaepItem>();
+  const replayRuns = new Map();
   for (const event of events) {
-    const mapped = mapCodexRuntimeEvent(requestId, sessionId, thread.lastRunId, event, target);
-    if (mapped) push(mapped);
+    reduceOaepEvent(replayItems, replayRuns, event);
+    for (const mapped of mapCodexOaepEvent(
+      requestId, sessionId, thread.lastRunId, event, target,
+      event.item_id ? replayItems.get(event.item_id) : undefined,
+    )) push(mapped);
   }
-  if (events.some((event) => event.type === "run.completed")) push({ type: "done", runId: thread.lastRunId });
-  else if (events.some((event) => event.type === "run.cancelled")) push({ type: "aborted", runId: thread.lastRunId });
-  else if (events.some((event) => event.type === "run.failed")) push({ type: "error", runId: thread.lastRunId, error: "Codex Run failed while the Desktop was reconnecting." });
+  const hasOaepTerminal = events.some((event) => [
+    "event.run.completed",
+    "event.run.cancelled",
+    "event.run.failed",
+  ].includes(event.type));
+  // OAEP terminals were already projected as StructuredConversation events.
+  // Keep only the compatibility fallback for a pre-OAEP interrupted Run.
+  if (!hasOaepTerminal && recorded.some((event) => event.type === "aborted")) {
+    push({ type: "aborted", runId: thread.lastRunId });
+  }
   return recovered;
 }
 
@@ -204,6 +279,18 @@ export async function respondChatInput(
   if (typeof requestId !== "string" || !REQUEST_ID_PATTERN.test(requestId)) return false;
   const target = platformChatTargets.get(requestId);
   if (target) return respondToPlatformChatInput(target.agentId, target.threadId, response);
+  const inputTarget = platformInputTargets.get(requestId);
+  if (inputTarget) {
+    const accepted = await respondToDdfChatInput(
+      inputTarget.agentId,
+      inputTarget.chatId,
+      inputTarget.runId,
+      requestId,
+      response,
+    );
+    if (accepted) platformInputTargets.delete(requestId);
+    return accepted;
+  }
   const codex = codexChatTargets.get(requestId);
   if (!codex?.approvalId) return false;
   const value = typeof response === "string" ? response : String(response.decision ?? response.approved ?? "");
@@ -248,6 +335,20 @@ function validateChatRequest(rawRequest: unknown): ChatRequest {
       /[\r\n]/.test(request.workspacePath))
   ) {
     throw new Error("Chat workspace path is invalid.");
+  }
+  if (
+    request.workspaceId !== undefined &&
+    (typeof request.workspaceId !== "string" || !SESSION_ID_PATTERN.test(request.workspaceId))
+  ) {
+    throw new Error("Chat workspace id is invalid.");
+  }
+  if (
+    request.workspaceName !== undefined &&
+    (typeof request.workspaceName !== "string" ||
+      request.workspaceName.length > MAX_WORKSPACE_NAME_CHARS ||
+      /[\r\n\0]/.test(request.workspaceName))
+  ) {
+    throw new Error("Chat workspace name is invalid.");
   }
   if (
     request.threadId !== undefined &&
@@ -298,6 +399,8 @@ function validateChatRequest(rawRequest: unknown): ChatRequest {
     agentId: request.agentId?.trim() || undefined,
     model: request.model?.trim() || undefined,
     workspacePath: request.workspacePath?.trim() || undefined,
+    workspaceId: request.workspaceId?.trim() || undefined,
+    workspaceName: request.workspaceName?.trim() || undefined,
     threadId: request.threadId?.trim() || undefined,
     sessionId: request.sessionId?.trim() || undefined,
     runId: request.runId?.trim() || undefined,
@@ -421,7 +524,7 @@ async function runChat(
     boundAgentName,
     // Codex resolves legacy Runtime Session bindings from the previous Run.
     // Do not overwrite that recovery handle until its new Run exists.
-    lastRunId: isCodexBackend ? undefined : runId,
+    lastRunId: isCodexBackend || !platformDescriptor ? undefined : runId,
     lastRequestId: requestId,
     status: "running",
     messageCount: request.messages.length,
@@ -430,44 +533,36 @@ async function runChat(
 
   const timeout = setTimeout(() => controller.abort("timeout"), CHAT_TIMEOUT_MS);
   try {
-    if (isCodexBackend) {
-      await runCodexBackendChat(webContents, requestId, sessionId, request, controller);
+    if (!platformDescriptor) {
+      await runRuntimeBackendChat(
+        webContents,
+        requestId,
+        sessionId,
+        request,
+        controller,
+        isCodexBackend ? "codex@1" : "opendrsai@1",
+        auth,
+      );
       activeChats.delete(requestId);
       recordAgentTelemetry({ event: "execution_completed", agentId: boundAgentId, mode: "local", source: "local", durationMs: Date.now() - executionStartedAt });
       await upsertThreadFromRun({ id: sessionId, kind: "chat", title: deriveThreadTitle(request.messages),
         workspacePath: request.workspacePath, boundAgentId, boundAgentName, lastRunId: codexChatTargets.get(requestId)?.runId ?? runId,
         lastRequestId: requestId, status: "idle", messageCount: request.messages.length });
-      emit(webContents, { requestId, sessionId, runId: codexChatTargets.get(requestId)?.runId ?? runId, type: "done" });
+      // OAEP event.run.* is the only Runtime terminal source. The shared
+      // projector already sent the terminal Structured Event.
+      structuredTerminalRequests.delete(requestId);
       return;
     }
-    // Platform agents execute in HAI and must never depend on a local or
-    // workspace gateway being installed/running. Gateway startup is reserved
-    // for My DrSai and remote-workspace local execution.
-    const remoteTarget = platformDescriptor ? "local_or_unknown" : await remoteRouting.resolveTarget(request.workspacePath, request.workspaceId);
-    if (remoteTarget === "remote_offline") {
-      throw new Error("Remote Workspace is offline; Agent Backend execution cannot fall back to Local Runtime.");
-    }
-    const remoteGateway = platformDescriptor ? null : remoteRouting.getGatewayAccess(request.workspacePath, request.workspaceId);
-    if (remoteGateway) remoteRouting.bindThread(sessionId, remoteGateway.workspaceId);
-    const ready = platformDescriptor || remoteGateway ? true : await startGateway();
-    writeChatDiagnostic(requestId, `stage: gateway ready=${ready}`);
-    if (!ready) {
-      throw new Error("Gateway is not ready. Install or start OpenDrSai first.");
-    }
-
-    const enrichedAttachments = await enrichAttachmentsWithMaterialRoles(request.attachments);
-    const attachmentContext = platformDescriptor || remoteGateway ? [] : await buildAttachmentContext(enrichedAttachments);
-    writeChatDiagnostic(requestId, `stage: attachment context built count=${attachmentContext.length}`);
-    const messages = withAttachmentContext(request.messages, attachmentContext);
-    const model = normalizeModelAlias(request.model) || getDefaultModelAlias() || "drsai";
+    // Only HAI Platform Agents reach this branch. My DrSai and Codex have
+    // already entered the Runtime-authoritative Session/Run path above.
+    const messages = request.messages;
     const resumeState: StreamResumeState = { content: "", fileEventKeys: new Set() };
     const recoveryStartedAt = Date.now();
     const send = async (authContext: AuthContext, recoveryAttempt: number): Promise<boolean> => {
-      if (platformDescriptor) {
-        if (!authContext.accessToken) {
-          throw new Error("Sign in with HepAI before using a platform agent.");
-        }
-        const response = await fetch(getPlatformAgentChatUrl(platformDescriptor.platformId), {
+      if (!authContext.accessToken) {
+        throw new Error("Sign in with HepAI before using a platform agent.");
+      }
+      const response = await fetch(getPlatformAgentChatUrl(platformDescriptor.platformId), {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -480,7 +575,10 @@ async function runChat(
             stream: true,
             thread_id: sessionId,
             run_id: runId,
-            model: request.model || platformDescriptor.model,
+            // For a DDF platform agent the catalog ID is the routable worker
+            // model name. Never let the chat UI's ordinary LLM selection
+            // replace it (for example with deepseek-ai/deepseek-v4-pro).
+            model: platformDescriptor.platformId,
             attachments: request.attachments || [],
             metadata: {
               ...(request.metadata || {}),
@@ -490,66 +588,28 @@ async function runChat(
             },
           }),
           signal: controller.signal,
-        });
-        if (response.status === 401) {
-          const authError = await formatHttpError(response);
-          if (authError instanceof ChatSseError && authError.code === "token_expired") {
-            // The Native API owns OIDC validation. Refresh once only when it
-            // explicitly reports an expired desktop access token; an upstream
-            // agent credential failure must retain its own error code.
-            throw new ChatSseError(authError.message, authError.code, true);
-          }
-          throw authError;
-        }
-        if (!response.ok || !response.body) {
-          if (response.status === 408 || response.status === 429 || response.status >= 500) {
-            throw new RecoverableStreamError(`Service temporarily unavailable (HTTP ${response.status}).`);
-          }
-          throw await formatHttpError(response);
-        }
-        return readSse(webContents, requestId, sessionId, runId, response.body, controller.signal, resumeState);
-      }
-      const gatewayBaseUrl = remoteGateway?.baseUrl || GATEWAY_BASE_URL;
-      const gatewayHeaders = remoteGateway
-        ? { "X-OpenDrSai-Gateway-Token": remoteGateway.token }
-        : getGatewayRequestHeaders();
-      writeChatDiagnostic(requestId, `stage: provider request ${gatewayBaseUrl}`);
-      const response = await fetch(`${gatewayBaseUrl}/v1/chat/completions`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...gatewayHeaders,
-          "X-OpenDrSai-User": authContext.userId,
-          "X-OpenDrSai-Auth-Mode": authContext.authMode,
-          ...(request.workspacePath ? { "X-OpenDrSai-Workspace": encodeURIComponent(request.workspacePath) } : {}),
-          ...(authContext.accessToken ? { Authorization: `Bearer ${authContext.accessToken}` } : {}),
-          "Idempotency-Key": `desktop-chat-${requestId}`,
-        },
-        body: JSON.stringify({
-          model,
-          messages,
-          stream: true,
-          user_id: authContext.userId,
-          thread_id: sessionId,
-          work_dir: request.workspacePath,
-          workspace_id: remoteGateway?.workspaceId,
-          metadata: {
-            ...(request.metadata || {}),
-            auth_mode: authContext.authMode,
-            run_id: runId,
-            desktop_request_id: requestId,
-            network_retry_attempt: recoveryAttempt,
-            resume_from_chars: resumeState.content.length,
-            attachments: enrichedAttachments,
-            files: enrichedAttachments,
-            attachment_context: attachmentContext,
-          },
-        }),
-        signal: controller.signal,
       });
+      if (response.status === 401) {
+        const authError = await formatHttpError(response);
+        if (authError instanceof ChatSseError && authError.code === "token_expired") {
+          throw new ChatSseError(authError.message, authError.code, true);
+        }
+        throw authError;
+      }
       if (!response.ok || !response.body) {
-        if (response.status === 408 || response.status === 429 || response.status >= 500) {
-          throw new RecoverableStreamError(`Gateway temporarily unavailable (HTTP ${response.status}).`);
+        // A generic HTTP 500 from DDF means the selected worker invocation
+        // already failed. Retrying it as a transport interruption keeps the
+        // UI waiting for the full recovery window and can duplicate work.
+        // Only statuses that explicitly describe a temporary edge/gateway
+        // condition participate in automatic stream recovery.
+        if (
+          response.status === 408
+          || response.status === 429
+          || response.status === 502
+          || response.status === 503
+          || response.status === 504
+        ) {
+          throw new RecoverableStreamError(`Service temporarily unavailable (HTTP ${response.status}).`);
         }
         throw await formatHttpError(response);
       }
@@ -569,9 +629,7 @@ async function runChat(
           webContents.send("desktop:auth-session-invalidated");
         }
         if (error instanceof ChatSseError && error.code === "token_expired" && error.retryable && !refreshedToken) {
-          auth = platformDescriptor
-            ? await refreshAuthContextAfterUnauthorized()
-            : await requireAuthContext();
+          auth = await refreshAuthContextAfterUnauthorized();
           refreshedToken = true;
           continue;
         }
@@ -593,7 +651,7 @@ async function runChat(
             attempt: recoveryAttempt,
             delayMs: retryDelayMs,
             timestamp: new Date().toISOString(),
-            source: remoteGateway ? "remote-gateway" : "gateway",
+            source: "gateway",
           },
         });
         emit(webContents, {
@@ -615,7 +673,7 @@ async function runChat(
           status: "restored",
           attempt: recoveryAttempt,
           timestamp: new Date().toISOString(),
-          source: remoteGateway ? "remote-gateway" : "gateway",
+          source: "gateway",
         },
       });
       emit(webContents, { requestId, sessionId, runId, type: "status", level: "INFO", content: "网络已恢复，回复已从保存位置继续。" });
@@ -633,7 +691,7 @@ async function runChat(
       workspacePath: request.workspacePath,
       boundAgentId,
       boundAgentName,
-      lastRunId: isCodexBackend ? undefined : runId,
+      lastRunId: codexChatTargets.get(requestId)?.runId ?? (isCodexBackend ? undefined : runId),
       lastRequestId: requestId,
       status: "idle",
       messageCount: request.messages.length,
@@ -657,6 +715,7 @@ async function runChat(
             ? "user_cancelled"
             : "execution_error",
     });
+    const authoritativeRuntimeRunId = codexChatTargets.get(requestId)?.runId;
     await upsertThreadFromRun({
       id: sessionId,
       kind: "chat",
@@ -664,11 +723,14 @@ async function runChat(
       workspacePath: request.workspacePath,
       boundAgentId,
       boundAgentName,
-      lastRunId: isCodexBackend ? undefined : runId,
+      lastRunId: authoritativeRuntimeRunId ?? (isCodexBackend ? undefined : runId),
       lastRequestId: requestId,
       status: controller.signal.aborted && controller.signal.reason !== "timeout" ? "idle" : "error",
       messageCount: request.messages.length,
     });
+    if (authoritativeRuntimeRunId && controller.signal.aborted && controller.signal.reason !== "timeout") {
+      recordChatRunEvent({ requestId, sessionId, runId: authoritativeRuntimeRunId, type: "aborted" });
+    }
     throw error;
   } finally {
     clearTimeout(timeout);
@@ -677,11 +739,156 @@ async function runChat(
   }
 }
 
-async function runCodexBackendChat(
+interface StagedAttachments {
+  attachments: ChatAttachment[];
+  /** Worktree-relative paths for Runtime attachmentRefs. */
+  refs: string[];
+  /** Prompt suffix describing the staged files (empty string if none). */
+  promptSuffix: string;
+}
+
+/**
+ * Stage file attachments into the workspace so the Agent can access them.
+ *
+ * Worktree-external files are copied into
+ * `<workspacePath>/.opendrsai/attachments/<runId>/<originalName>`.
+ * Files already inside the workspace are left in place and only their
+ * relative path is recorded.
+ *
+ * The `.opendrsai` directory is git-ignored on first write so workspace
+ * repos are not polluted.
+ *
+ * This function never throws — failed copies are recorded as a note on the
+ * attachment so the user can see what went wrong, but the chat proceeds.
+ *
+ * TODO: auto-cleanup of `<workspacePath>/.opendrsai/attachments/<runId>`
+ * after the run completes or is garbage-collected.
+ */
+async function stageAttachments(
+  rawAttachments: ChatRequest["attachments"],
+  workspacePath: string,
+  runId: string,
+): Promise<StagedAttachments> {
+  if (!rawAttachments?.length) {
+    return { attachments: [], refs: [], promptSuffix: "" };
+  }
+  const fileAttachments = rawAttachments.filter((a) => a.kind === "file");
+  if (!fileAttachments.length) {
+    return { attachments: [...rawAttachments], refs: [], promptSuffix: "" };
+  }
+
+  const root = resolve(workspacePath);
+  const promptLines: string[] = [];
+  const staged: ChatAttachment[] = [];
+  const refs: string[] = [];
+
+  for (const attachment of rawAttachments) {
+    if (attachment.kind !== "file") {
+      staged.push(attachment);
+      continue;
+    }
+    const sourcePath = attachment.path.trim();
+    if (!sourcePath) {
+      staged.push({ ...attachment, note: appendNote(attachment.note, "附件的路径为空。") });
+      continue;
+    }
+    try {
+      const sourceAbs = resolve(sourcePath);
+      const sourceRel = relative(root, sourceAbs);
+      // Already inside the workspace — no copy needed.
+      if (!isAbsolute(sourceRel) && !sourceRel.startsWith("..")) {
+        staged.push(attachment);
+        refs.push(sourceRel.replace(/\\/g, "/"));
+        const size = (await stat(sourceAbs).catch(() => null))?.size;
+        const sizeLabel = typeof size === "number" ? formatBytes(size) : "";
+        promptLines.push(`- ${sourceRel}${sizeLabel ? ` (${sizeLabel})` : ""}`);
+        continue;
+      }
+      // External file — copy into the workspace.
+      const destDir = join(root, ".opendrsai", "attachments", runId);
+      await ensureGitignored(root);
+      await mkdir(destDir, { recursive: true });
+      const destName = await uniqueName(destDir, basename(attachment.name || sourcePath));
+      const destPath = join(destDir, destName);
+      await copyFile(sourceAbs, destPath);
+      const destRel = relative(root, destPath).replace(/\\/g, "/");
+      const size = (await stat(destPath).catch(() => null))?.size;
+      const sizeLabel = typeof size === "number" ? formatBytes(size) : "";
+      staged.push({ ...attachment, path: destPath, name: destName });
+      refs.push(destRel);
+      promptLines.push(`- ${destRel}${sizeLabel ? ` (${sizeLabel})` : ""}`);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      staged.push({ ...attachment, note: appendNote(attachment.note, `附件复制失败：${reason}`) });
+    }
+  }
+
+  if (!promptLines.length) {
+    return { attachments: staged, refs, promptSuffix: "" };
+  }
+
+  const promptSuffix = [
+    "",
+    "---",
+    "用户为本次任务上传了以下文件（工作区相对路径，可直接读取）：",
+    ...promptLines,
+    "",
+  ].join("\n");
+
+  return { attachments: staged, refs, promptSuffix };
+}
+
+async function ensureGitignored(workspaceRoot: string): Promise<void> {
+  const dotDir = join(workspaceRoot, ".opendrsai");
+  const gitignore = join(dotDir, ".gitignore");
+  try {
+    await stat(gitignore);
+    return; // Already exists.
+  } catch {
+    // File doesn't exist — create it.
+  }
+  await mkdir(dotDir, { recursive: true });
+  await writeFile(gitignore, "*\n", { encoding: "utf8", mode: 0o644 });
+}
+
+async function uniqueName(dir: string, name: string): Promise<string> {
+  const candidate = join(dir, name);
+  try {
+    await stat(candidate);
+  } catch {
+    return name; // Doesn't exist, use as-is.
+  }
+  const base = name.replace(/(\.[^.]+)$/, "");
+  const ext = extname(name);
+  for (let i = 2; i < 1000; i += 1) {
+    const next = `${base}(${i})${ext}`;
+    try {
+      await stat(join(dir, next));
+    } catch {
+      return next;
+    }
+  }
+  // Fallback — append a short random suffix.
+  return `${base}-${randomUUID().slice(0, 8)}${ext}`;
+}
+
+function appendNote(existing: string | undefined, addition: string): string {
+  return [existing, addition].filter(Boolean).join(" ");
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+async function runRuntimeBackendChat(
   webContents: ChatEventTarget, requestId: string, displaySessionId: string, request: ChatRequest, controller: AbortController,
+  agentDefinition: "codex@1" | "opendrsai@1",
+  auth: AuthContext,
 ): Promise<void> {
-  if (!request.workspacePath) throw new Error("Codex requires an open Workspace.");
-  const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
+  if (!request.workspacePath) throw new Error("Runtime Agent requires an open Workspace.");
+  const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId, request.workspaceName);
   const client = resolved.client;
   const existingThread = (await listThreads()).find((thread) => thread.id === displaySessionId);
   let runtimeSessionId = existingThread?.runtimeSessionId;
@@ -690,10 +897,98 @@ async function runCodexBackendChat(
       .then((run) => run.session_id)
       .catch(() => undefined);
   }
+  const requiresImportedCodexResume = requiresCodexSessionResume(existingThread, agentDefinition);
+  if (!runtimeSessionId && requiresImportedCodexResume && existingThread) {
+    runtimeSessionId = await client.syncBackendSessions(resolved.workspaceId, "codex")
+      .then((sync) => sync.sessions.find((session) => session.session_id === existingThread.id)?.session_id)
+      .catch(() => undefined);
+    if (runtimeSessionId) {
+      await updateThread({ id: existingThread.id, runtimeSessionId });
+    }
+  }
+  if (
+    !runtimeSessionId
+    && requiresImportedCodexResume
+  ) {
+    throw new Error("codex_session_resume_required: sync the workspace or explicitly create a new task");
+  }
   if (!runtimeSessionId) {
     runtimeSessionId = (await client.createSession(resolved.workspaceId, deriveThreadTitle(request.messages))).session_id;
   }
-  const run = await client.createAgentRun(runtimeSessionId, "codex@1", `desktop-codex-${requestId}`);
+  bindRuntimeThreadToWorkspace(displaySessionId, resolved.workspaceId, runtimeSessionId);
+  const sourceMessageId = `desktop:${requestId}`;
+  const idempotencyKey = `desktop-runtime-${requestId}`;
+  await sessionSyncState.beginOutbox(runtimeSessionId, {
+    sourceMessageId,
+    idempotencyKey,
+    payloadHash: sessionPayloadHash({
+      messages: request.messages,
+      attachments: (request.attachments ?? []).map((item) => ({
+        kind: item.kind, path: item.path, name: item.name,
+      })),
+      agentDefinition,
+    }),
+  });
+  let activeRuntimeRunId: string | undefined;
+  let resolveRuntimeTerminal!: () => void;
+  const runtimeTerminal = new Promise<void>((resolve) => { resolveRuntimeTerminal = resolve; });
+  const liveProjectionTarget: CodexProjectionTarget = {
+    projection: createOaepPresentationProjection(
+      requestId,
+      request.workspaceName || basename(request.workspacePath),
+    ),
+  };
+  const liveSubscription = await subscribeOaepSession(client as RuntimeClient, runtimeSessionId, {
+    onEvent(event, state) {
+      if (!activeRuntimeRunId || event.run_id !== activeRuntimeRunId) return;
+      emitCodexOaepEvent(
+        webContents, requestId, displaySessionId, activeRuntimeRunId, event, liveProjectionTarget,
+        event.item_id ? state.items.get(event.item_id) : undefined,
+      );
+      if (["event.run.completed", "event.run.failed", "event.run.cancelled"].includes(event.type)) {
+        structuredTerminalRequests.add(requestId);
+        resolveRuntimeTerminal();
+      }
+    },
+    onConnection(status, attempt) {
+      if (!activeRuntimeRunId) return;
+      emit(webContents, { requestId, sessionId: displaySessionId, runId: activeRuntimeRunId, type: "connection", connection: {
+        status: status === "connected" ? "restored" : "retrying",
+        attempt, delayMs: status === "retrying" ? Math.min(2000, 100 * 2 ** Math.min(4, Math.max(0, attempt - 1))) : undefined,
+        timestamp: new Date().toISOString(), source: "codex-runtime",
+      } });
+    },
+  });
+  let run;
+  try {
+    run = await client.createAgentRun(
+      runtimeSessionId,
+      agentDefinition,
+      idempotencyKey,
+    );
+  } catch (error) {
+    liveSubscription.stop();
+    throw error;
+  }
+  activeRuntimeRunId = run.run_id;
+  const diagnosticOperation = await chatDiagnosticOperations.get(requestId);
+  await desktopDiagnostics.record({
+    traceId: requestId,
+    parentSpanId: diagnosticOperation?.spanId,
+    module: "runtime",
+    component: "runtime-engine",
+    operation: "agent.run.created",
+    message: "Runtime Agent Run created",
+    status: "completed",
+    domain: "agent",
+    agentPhase: "connecting",
+    visibility: "milestone",
+    sessionId: runtimeSessionId,
+    runId: run.run_id,
+    backendId: agentDefinition === "codex@1" ? "codex" : "opendrsai",
+    attributes: { model: request.model || "default" },
+  });
+  await sessionSyncState.attachRun(runtimeSessionId, sourceMessageId, run.run_id);
   // Persist the Runtime Run ID before execution starts. If Electron restarts
   // while Codex is working, this is the recovery handle for its event log.
   await upsertThreadFromRun({
@@ -706,44 +1001,68 @@ async function runCodexBackendChat(
     status: "running",
     messageCount: request.messages.length,
   });
-  const target = { client: client as RuntimeClient, runId: run.run_id, approvalId: undefined as string | undefined };
+  const target: CodexChatTarget = {
+    client: client as RuntimeClient,
+    runId: run.run_id,
+    projection: liveProjectionTarget.projection,
+  };
   codexChatTargets.set(requestId, target);
-  const prompt = request.messages.map((message) => `${message.role}: ${message.content}`).join("\n\n");
-  let completed = false;
+
+  // Stage file attachments into the workspace so the Agent can read them.
+  const staged = await stageAttachments(request.attachments, request.workspacePath, run.run_id);
+  const prompt = selectCurrentUserInput(request.messages) + staged.promptSuffix;
   let failure: unknown;
-  const execution = client.executeAgentRun(run.run_id, prompt, controller.signal)
-    .catch((error) => { failure = error; })
-    .finally(() => { completed = true; });
-  let after = 0;
-  let pollFailures = 0;
-  while (!completed) {
-    let events: RuntimeAgentEvent[];
-    try {
-      events = await client.listAgentRunEvents(run.run_id, after);
-      if (pollFailures > 0) {
-        emit(webContents, { requestId, sessionId: displaySessionId, runId: run.run_id, type: "connection", connection: {
-          status: "restored", attempt: pollFailures, timestamp: new Date().toISOString(), source: "codex-runtime",
-        } });
-        pollFailures = 0;
-      }
-    } catch {
-      pollFailures += 1;
-      emit(webContents, { requestId, sessionId: displaySessionId, runId: run.run_id, type: "connection", connection: {
-        status: "retrying", attempt: pollFailures, delayMs: 100, timestamp: new Date().toISOString(), source: "codex-runtime",
-      } });
-      if (!completed) await new Promise((resolve) => setTimeout(resolve, 100));
-      continue;
-    }
-    for (const event of events) {
-      after = Math.max(after, event.sequence);
-      emitCodexRuntimeEvent(webContents, requestId, displaySessionId, run.run_id, event, target);
-    }
-    if (!completed) await new Promise((resolve) => setTimeout(resolve, 100));
-  }
+  const execution = client.executeAgentRun(
+    run.run_id,
+    prompt,
+    controller.signal,
+    {
+      sourceClient: "windows",
+      sourceMessageId,
+      attachmentRefs: staged.refs,
+      metadata: { ...(request.metadata ?? {}), desktop_request_id: requestId },
+    },
+    isPlatformBearerAuth(auth)
+      ? { authMode: "oidc", accessToken: auth.accessToken, userId: auth.userId }
+      : auth.authMode === "offline"
+        ? { authMode: "offline", userId: auth.userId }
+        : undefined,
+  )
+    .catch((error) => { failure = error; });
+  await desktopDiagnostics.record({
+    traceId: requestId,
+    parentSpanId: diagnosticOperation?.spanId,
+    module: "runtime",
+    component: agentDefinition === "codex@1" ? "codex-adapter" : "opendrsai-backend",
+    operation: "agent.waiting-model",
+    message: `Waiting for ${agentDefinition === "codex@1" ? "Codex" : "My DrSai"} backend model response`,
+    status: "waiting",
+    level: "warn",
+    domain: "agent",
+    agentPhase: "waiting_model",
+    visibility: "milestone",
+    sessionId: runtimeSessionId,
+    runId: run.run_id,
+    backendId: agentDefinition === "codex@1" ? "codex" : "opendrsai",
+    attributes: { model: request.model || "default", waitingFor: "first_backend_event" },
+  });
   await execution;
-  for (const event of await client.listAgentRunEvents(run.run_id, after).catch(() => [])) {
-    emitCodexRuntimeEvent(webContents, requestId, displaySessionId, run.run_id, event, target);
+  await Promise.race([
+    runtimeTerminal,
+    new Promise<void>((_resolve, reject) => setTimeout(
+      () => reject(new Error("oaep_run_terminal_missing: Runtime execution ended without an OAEP Run terminal")),
+      10_000,
+    )),
+  ]).catch((error) => { if (!failure) failure = error; });
+  if (
+    !failure
+    || await client.getConversationSnapshot(runtimeSessionId)
+      .then((snapshot) => snapshot.items.some((item) => item.source_message_id === sourceMessageId))
+      .catch(() => false)
+  ) {
+    await sessionSyncState.completeOutbox(runtimeSessionId, sourceMessageId);
   }
+  liveSubscription.stop();
   if (failure) {
     const diagnosticPromise = chatDiagnosticOperations.get(requestId);
     const diagnosticOperation = await diagnosticPromise?.catch(() => undefined);
@@ -752,67 +1071,35 @@ async function runCodexBackendChat(
   }
 }
 
-function emitCodexRuntimeEvent(
+function emitCodexOaepEvent(
   webContents: ChatEventTarget, requestId: string, sessionId: string, runId: string,
-  event: RuntimeAgentEvent, target: { approvalId?: string },
+  event: OaepEvent, target: CodexProjectionTarget, currentItem?: OaepItem,
 ): void {
-  const mapped = mapCodexRuntimeEvent(requestId, sessionId, runId, event, target);
-  if (mapped) emit(webContents, mapped);
+  for (const mapped of mapCodexOaepEvent(requestId, sessionId, runId, event, target, currentItem)) {
+    emit(webContents, mapped);
+  }
 }
 
-function mapCodexRuntimeEvent(
+function mapCodexOaepEvent(
   requestId: string, sessionId: string, runId: string,
-  event: RuntimeAgentEvent, target: { approvalId?: string },
-): Omit<ChatEvent, "seq"> | null {
-  const content = typeof event.data.content === "string" ? event.data.content : undefined;
-  if (event.type === "agent.message.delta") return { requestId, sessionId, runId, type: "chunk", content };
-  if (event.type === "agent.item.reasoning") {
-    const reasoning = codexItemText(event.data);
-    return reasoning ? { requestId, sessionId, runId, type: "reasoning", content: reasoning } : null;
+  event: OaepEvent, target: CodexProjectionTarget, currentItem?: OaepItem,
+): Array<Omit<ChatEvent, "seq">> {
+  const item = isOaepItem(event.data.item) ? event.data.item : currentItem;
+  if (item?.type === "interaction" && item.status === "waiting") {
+    target.approvalId = String(item.content.approval_id ?? "");
   }
-  else if (event.type === "audit.codex.approval.requested") {
-    target.approvalId = String(event.data.approval_id ?? "");
-    return { requestId, sessionId, runId, type: "input_request", inputType: "approval",
-      prompt: String((event.data.request as Record<string, unknown> | undefined)?.reason ?? "Review the Codex operation in Approval Center.") };
-  } else if (event.type === "agent.item.file_change" || event.type === "item.file_change" || event.type === "item.patch") {
-    const item = codexItem(event.data);
-    const path = codexItemString(item, "path") || String(event.data.path ?? "Workspace change");
-    return { requestId, sessionId, runId, type: "tool_timeline", toolTimeline: {
-      id: event.event_id, kind: "diff", title: path, status: codexEventStatus(event.data),
-      content: codexItemString(item, "diff") ?? (typeof event.data.diff === "string" ? event.data.diff : undefined), path,
-    } };
-  } else if (event.type === "agent.item.command" || event.type === "agent.item.tool" || event.type.startsWith("item.") || event.type.startsWith("tool.")) {
-    const item = codexItem(event.data);
-    const title = codexItemString(item, "command") || codexItemString(item, "name") || codexItemString(item, "title")
-      || String(event.data.operation ?? event.data.method ?? event.type);
-    return { requestId, sessionId, runId, type: "tool_timeline", toolTimeline: {
-      id: event.event_id, kind: "tool_call", title, status: codexEventStatus(event.data),
-      content: codexItemText(event.data) || (typeof event.data.summary === "string" ? event.data.summary : undefined),
-    } };
-  }
-  return null;
+  return projectOaepEventForPresentation(event, target.projection, currentItem).map((structuredEvent) => ({
+    requestId,
+    sessionId,
+    runId,
+    type: "structured",
+    structuredEvent,
+  }));
 }
 
-function codexItem(data: Record<string, unknown>): Record<string, unknown> {
-  const item = data.item;
-  return item && typeof item === "object" && !Array.isArray(item) ? item as Record<string, unknown> : {};
-}
-
-function codexItemString(item: Record<string, unknown>, key: string): string | undefined {
-  const value = item[key];
-  return typeof value === "string" && value.trim() ? value : undefined;
-}
-
-function codexItemText(data: Record<string, unknown>): string | undefined {
-  const item = codexItem(data);
-  return codexItemString(item, "text") || codexItemString(item, "content") || codexItemString(item, "summary")
-    || (typeof data.summary === "string" && data.summary.trim() ? data.summary : undefined);
-}
-
-function codexEventStatus(data: Record<string, unknown>): "running" | "completed" | "failed" {
-  if (data.phase === "started") return "running";
-  if (data.phase === "failed") return "failed";
-  return "completed";
+function isOaepItem(value: unknown): value is OaepItem {
+  return isRecord(value) && typeof value.id === "string" && typeof value.type === "string"
+    && typeof value.status === "string" && isRecord(value.content);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -824,7 +1111,11 @@ function deriveThreadTitle(messages: ChatMessage[]): string {
   return firstUser?.content.trim().slice(0, 80) || "New chat";
 }
 
-interface AttachmentContextItem {
+function isPlatformBearerAuth(auth: AuthContext): auth is AuthContext & { accessToken: string } {
+  return (auth.authMode === "oidc" || auth.authMode === "sso") && Boolean(auth.accessToken);
+}
+
+export interface AttachmentContextItem {
   kind: ChatAttachment["kind"];
   path: string;
   name: string;
@@ -837,7 +1128,7 @@ interface AttachmentContextItem {
   content?: string;
 }
 
-async function enrichAttachmentsWithMaterialRoles(
+export async function enrichAttachmentsWithMaterialRoles(
   attachments: ChatRequest["attachments"],
 ): Promise<ChatAttachment[]> {
   if (!attachments?.length) return [];
@@ -885,7 +1176,7 @@ function formatMaterialRole(role: MaterialRoleItem["role"]): string {
   return "Reference materials";
 }
 
-async function buildAttachmentContext(attachments: ChatRequest["attachments"]): Promise<AttachmentContextItem[]> {
+export async function buildAttachmentContext(attachments: ChatRequest["attachments"]): Promise<AttachmentContextItem[]> {
   if (!attachments?.length) return [];
   const context: AttachmentContextItem[] = [];
   let includedFiles = 0;
@@ -1013,7 +1304,7 @@ function fileMetadataContext(
   };
 }
 
-function withAttachmentContext(messages: ChatMessage[], context: AttachmentContextItem[]): ChatMessage[] {
+export function withAttachmentContext(messages: ChatMessage[], context: AttachmentContextItem[]): ChatMessage[] {
   const included = context.filter((item) => item.included && item.content);
   if (!included.length) return messages;
   const content = [
@@ -1067,6 +1358,33 @@ async function readSse(
     });
   };
 
+  const emitTimelineEvents = (frame: string): boolean => {
+    let emitted = false;
+    for (const fileEvent of parseAgentRunSseFileEvents(frame)) {
+      const key = `file:${JSON.stringify(fileEvent)}`;
+      if (!resumeState.fileEventKeys.has(key)) {
+        resumeState.fileEventKeys.add(key);
+        emit(webContents, {
+          requestId,
+          sessionId,
+          runId,
+          type: "tool_timeline",
+          toolTimeline: toChatFileTimelineEvent(fileEvent),
+        });
+        emitted = true;
+      }
+    }
+    for (const toolTimeline of toolTimelineAccumulator.parseFrame(frame)) {
+      const key = `tool:${JSON.stringify(toolTimeline)}`;
+      if (!resumeState.fileEventKeys.has(key)) {
+        resumeState.fileEventKeys.add(key);
+        emit(webContents, { requestId, sessionId, runId, type: "tool_timeline", toolTimeline });
+        emitted = true;
+      }
+    }
+    return emitted;
+  };
+
   while (!signal.aborted) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -1093,13 +1411,27 @@ async function readSse(
       }
       const inputRequest = parseAgentInputRequestSseFrame(frame);
       if (inputRequest) {
+        const interactionRequestId = inputRequest.requestId || requestId;
+        const platformTarget = platformChatTargets.get(requestId);
+        if (platformTarget && inputRequest.requestId) {
+          platformInputTargets.set(interactionRequestId, {
+            agentId: platformTarget.agentId,
+            chatId: inputRequest.chatId || sessionId,
+            runId: inputRequest.runId || runId,
+          });
+        }
         emit(webContents, {
           requestId,
           sessionId,
           runId,
           type: "input_request",
           prompt: inputRequest.prompt,
+          inputRequestId: interactionRequestId,
           inputType: inputRequest.inputType,
+          inputOptions: inputRequest.options,
+          inputDefault: inputRequest.defaultValue,
+          inputAllowCustom: inputRequest.allowCustom,
+          inputTimeoutAt: inputRequest.timeoutAt,
         });
         continue;
       }
@@ -1123,6 +1455,9 @@ async function readSse(
         recordProviderErrorAnalytics(requestId, sessionId, runId, frame);
         throw streamError;
       }
+      if (emitTimelineEvents(frame)) {
+        continue;
+      }
       const providerStatus = parseProviderStatusSseFrame(frame);
       if (providerStatus) {
         recordProviderUsageAnalytics(requestId, sessionId, runId, frame);
@@ -1135,26 +1470,6 @@ async function readSse(
           level: providerStatus.level,
         });
         continue;
-      }
-      for (const fileEvent of parseAgentRunSseFileEvents(frame)) {
-        const key = `file:${JSON.stringify(fileEvent)}`;
-        if (!resumeState.fileEventKeys.has(key)) {
-          resumeState.fileEventKeys.add(key);
-          emit(webContents, {
-            requestId,
-            sessionId,
-            runId,
-            type: "tool_timeline",
-            toolTimeline: toChatFileTimelineEvent(fileEvent),
-          });
-        }
-      }
-      for (const toolTimeline of toolTimelineAccumulator.parseFrame(frame)) {
-        const key = `tool:${JSON.stringify(toolTimeline)}`;
-        if (!resumeState.fileEventKeys.has(key)) {
-          resumeState.fileEventKeys.add(key);
-          emit(webContents, { requestId, sessionId, runId, type: "tool_timeline", toolTimeline });
-        }
       }
       try {
         parseChatSseFrame(frame).forEach((content) => {
@@ -1186,13 +1501,27 @@ async function readSse(
     }
     const inputRequest = parseAgentInputRequestSseFrame(buffer);
     if (inputRequest) {
+      const interactionRequestId = inputRequest.requestId || requestId;
+      const platformTarget = platformChatTargets.get(requestId);
+      if (platformTarget && inputRequest.requestId) {
+        platformInputTargets.set(interactionRequestId, {
+          agentId: platformTarget.agentId,
+          chatId: inputRequest.chatId || sessionId,
+          runId: inputRequest.runId || runId,
+        });
+      }
       emit(webContents, {
         requestId,
         sessionId,
         runId,
         type: "input_request",
         prompt: inputRequest.prompt,
+        inputRequestId: interactionRequestId,
         inputType: inputRequest.inputType,
+        inputOptions: inputRequest.options,
+        inputDefault: inputRequest.defaultValue,
+        inputAllowCustom: inputRequest.allowCustom,
+        inputTimeoutAt: inputRequest.timeoutAt,
       });
       return sawDone;
     }
@@ -1216,6 +1545,9 @@ async function readSse(
       recordProviderErrorAnalytics(requestId, sessionId, runId, buffer);
       throw streamError;
     }
+    if (emitTimelineEvents(buffer)) {
+      return sawDone;
+    }
     const providerStatus = parseProviderStatusSseFrame(buffer);
     if (providerStatus) {
       recordProviderUsageAnalytics(requestId, sessionId, runId, buffer);
@@ -1228,26 +1560,6 @@ async function readSse(
         level: providerStatus.level,
       });
       return sawDone;
-    }
-    for (const fileEvent of parseAgentRunSseFileEvents(buffer)) {
-      const key = `file:${JSON.stringify(fileEvent)}`;
-      if (!resumeState.fileEventKeys.has(key)) {
-        resumeState.fileEventKeys.add(key);
-        emit(webContents, {
-          requestId,
-          sessionId,
-          runId,
-          type: "tool_timeline",
-          toolTimeline: toChatFileTimelineEvent(fileEvent),
-        });
-      }
-    }
-    for (const toolTimeline of toolTimelineAccumulator.parseFrame(buffer)) {
-      const key = `tool:${JSON.stringify(toolTimeline)}`;
-      if (!resumeState.fileEventKeys.has(key)) {
-        resumeState.fileEventKeys.add(key);
-        emit(webContents, { requestId, sessionId, runId, type: "tool_timeline", toolTimeline });
-      }
     }
     try {
       parseChatSseFrame(buffer).forEach((content) => {
@@ -1360,9 +1672,15 @@ function extractStructuredError(value: unknown): { code: string; message: string
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
   const candidate = (record.error && typeof record.error === "object" ? record.error : record.detail) as Record<string, unknown> | undefined;
-  if (!candidate || typeof candidate.code !== "string") return null;
+  if (!candidate) return null;
+  const code = typeof candidate.code === "string"
+    ? candidate.code
+    : typeof candidate.error_code === "string"
+      ? candidate.error_code
+      : "";
+  if (!code) return null;
   return {
-    code: candidate.code,
+    code,
     message: typeof candidate.message === "string" ? candidate.message : "HepAI request failed.",
     retryable: candidate.retryable === true,
   };
@@ -1401,10 +1719,14 @@ async function readLimitedText(response: Response, maxBytes: number): Promise<st
 function emit(webContents: ChatEventTarget, event: ChatEvent): void {
   const seq = (chatEventSequences.get(event.requestId) ?? 0) + 1;
   chatEventSequences.set(event.requestId, seq);
-  webContents.send("desktop:chat-event", { ...event, seq });
+  const sequenced = { ...event, seq };
+  const currentTarget = activeChatEventTargets.get(event.requestId) ?? webContents;
+  getChatEventDispatcher(currentTarget).enqueue(sequenced);
+  recordChatRunEvent(sequenced);
   void recordChatDiagnosticEvent(event, seq);
   if (event.type === "done" || event.type === "error" || event.type === "aborted") {
     chatEventSequences.delete(event.requestId);
+    activeChatEventTargets.delete(event.requestId);
   }
 }
 
@@ -1496,13 +1818,17 @@ async function ingestRuntimeDiagnostics(
       if (runtimeEvent.type !== "agent.failed") continue;
       const error = data.error && typeof data.error === "object" ? data.error as Record<string, unknown> : {};
       const diagnostic = data.diagnostic && typeof data.diagnostic === "object" ? data.diagnostic as Record<string, unknown> : {};
+      const agentDefinitionId = typeof data.agent_definition_id === "string" ? data.agent_definition_id
+        : typeof diagnostic.agent_definition_id === "string" ? diagnostic.agent_definition_id
+        : "";
+      const backendId = agentDefinitionId.startsWith("codex") ? "codex" : "opendrsai";
       const stack = Array.isArray(diagnostic.stack) ? diagnostic.stack.map(toRuntimeStackFrame).filter((frame) => frame !== null) : [];
       const source = diagnostic.source && typeof diagnostic.source === "object" ? toRuntimeStackFrame(diagnostic.source) : null;
       await desktopDiagnostics.record({
         traceId,
         parentSpanId,
         module: "backend",
-        component: "codex-adapter",
+        component: backendId === "codex" ? "codex-adapter" : "opendrsai-backend",
         operation: "runtime.agent.failed",
         kind: "error",
         level: "error",
@@ -1510,7 +1836,10 @@ async function ingestRuntimeDiagnostics(
         message: typeof error.message === "string" ? error.message : "Runtime agent execution failed",
         errorCode: typeof error.code === "string" ? error.code : "AGENT_EXECUTION_FAILED",
         runId,
-        backendId: "codex",
+        backendId,
+        domain: "agent",
+        agentPhase: "failed",
+        visibility: "milestone",
         ...(source ? { source } : {}),
         ...(stack.length ? { stack } : {}),
       });
@@ -1567,7 +1896,7 @@ function getPositiveIntEnv(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
 }
 
-function getGatewayPort(): string {
+export function getGatewayPort(): string {
   const rawPort = process.env.OPENDRSAI_GATEWAY_PORT || process.env.DRSAI_API_PORT || "18642";
   const parsed = Number(rawPort);
   return Number.isInteger(parsed) && parsed > 0 && parsed < 65536 ? String(parsed) : "18642";

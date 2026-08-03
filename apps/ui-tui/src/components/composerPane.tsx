@@ -17,7 +17,7 @@ import { $activeOverlay, $showReasoning } from '../app/uiStore.js'
 import type { SessionInfo, SessionListResult } from '../gatewayTypes.js'
 import { theme } from '../theme.js'
 
-import { ModelEditor, type ModelEditorValues } from './modelEditor.js'
+import { ModelEditor, type ModelEditorValues, type ModelProviderPreset } from './modelEditor.js'
 import { ModelPicker, type ModelEntry } from './modelPicker.js'
 import { SessionPicker } from './sessionPicker.js'
 import { SmartSearchPane } from './smartSearchPane.js'
@@ -245,9 +245,11 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
         isNew: boolean
         originalAlias?: string
         initial?: Partial<ModelEditorValues>
+        revision?: string
       }
     | null
   >(null)
+  const [modelProviderPresets, setModelProviderPresets] = useState<ModelProviderPreset[]>([])
   const [completions, setCompletions] = useState<string[]>([])
   const [initialHistory] = useState(() => loadPromptHistory())
   const historyRef = useRef<string[]>(initialHistory)
@@ -302,6 +304,14 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
     return () => {
       cancelled = true
     }
+  }, [controller])
+
+  useEffect(() => {
+    let cancelled = false
+    controller.gw.request<{ presets: ModelProviderPreset[] }>('model.config.presets', {})
+      .then(result => { if (!cancelled) setModelProviderPresets(result.presets || []) })
+      .catch(() => { if (!cancelled) setModelProviderPresets([]) })
+    return () => { cancelled = true }
   }, [controller])
 
   // While streaming, capture Ctrl+C to cancel without exiting the app.
@@ -359,7 +369,18 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
         'model.options',
         {},
       )
-      setModelPicker({ models: result.models || [], currentAlias: result.current })
+      let models = result.models || []
+      try {
+        const active = await controller.gw.request<{ model_provider: string }>('model.config.get', {})
+        const discovered = await controller.gw.request<{ ok: boolean; models?: string[] }>(
+          'model.config.models', { provider: active.model_provider },
+        )
+        const known = new Set(models.map(item => item.alias))
+        models = [...models, ...(discovered.models || []).filter(alias => !known.has(alias)).map(alias => ({ alias, provider: active.model_provider }))]
+      } catch {
+        // Discovery is optional; manual and configured model entries remain usable.
+      }
+      setModelPicker({ models, currentAlias: result.current })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       showSlashOutput(`Error loading models: ${msg}`, 5000)
@@ -372,32 +393,31 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
       setModelEditor({ isNew: true })
       return
     }
-    // Fetch the current entry to pre-fill the form.
+    // The compact editor always edits the active Provider/model. The picker
+    // alias is only used as a suggested model when it differs from current.
     try {
       const result = await controller.gw.request<{
-        alias: string
         model: string
-        token_limit: number
-        max_tokens: number
-        client_type: 'auto' | 'openai' | 'anthropic'
-        reasoning: { supported: boolean; effort_levels: string[]; param_type: string }
-      }>('model.get', { alias })
+        model_provider: string
+        provider: {
+          name: string
+          base_url: string
+          wire_api: 'openai' | 'anthropic'
+          requires_api_key: boolean
+        }
+        revision?: string
+      }>('model.config.get', {})
       setModelEditor({
         isNew: false,
         originalAlias: alias,
         initial: {
-          alias: result.alias,
-          model: result.model,
-          token_limit: result.token_limit,
-          max_tokens: result.max_tokens,
-          client_type: result.client_type,
-          reasoning: {
-            supported: result.reasoning.supported,
-            effort_levels: result.reasoning.effort_levels,
-            // Cast: backend has already validated against the enum.
-            param_type: result.reasoning.param_type as ModelEditorValues['reasoning']['param_type'],
-          },
+          provider: result.model_provider,
+          model: alias || result.model,
+          base_url: result.provider.base_url,
+          wire_api: result.provider.wire_api,
+          requires_api_key: result.provider.requires_api_key,
         },
+        revision: result.revision,
       })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -429,15 +449,14 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
   }
 
   async function deleteModelWithConfirm(alias: string) {
-    // Single-step delete with explicit confirm in the toast.
     try {
-      const result = await controller.gw.request<{ ok: boolean; fell_back_to: string | null }>(
-        'model.delete',
-        { alias, session_id: sessionId },
+      const active = await controller.gw.request<{ model_provider: string; revision?: string }>('model.config.get', {})
+      const result = await controller.gw.request<{ ok: boolean; active: string }>(
+        'model.config.delete',
+        { provider: active.model_provider, session_id: sessionId, expected_revision: active.revision },
       )
       if (result.ok) {
-        const tail = result.fell_back_to ? ` (now on ${result.fell_back_to})` : ''
-        showSlashOutput(`Deleted ${alias}${tail}`, 4000)
+        showSlashOutput(`Deleted provider ${active.model_provider}; active provider is ${result.active}`, 4000)
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -502,6 +521,46 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
   function resetPasteSnips() {
     pasteSnipsRef.current = []
     pasteCounterRef.current = 0
+  }
+
+  /**
+   * Path completion callback for the TextInput @-mode.
+   *
+   * Splits the user's prefix into a directory part and a name part,
+   * resolves the directory to an absolute path (using DRSAI_USER_CWD
+   * so relative paths map to the user's real cwd, not the ui-tui
+   * package dir), and calls the ``complete.path`` RPC.
+   *
+   * Returns items whose ``text`` is relative to the resolved directory,
+   * so the TextInput can build the full path as ``dirPart + candidate.text``.
+   */
+  async function completePath(prefix: string): Promise<Array<{
+    text: string; display: string; meta: string
+  }>> {
+    const baseCwd = process.env.DRSAI_USER_CWD?.trim() || process.cwd()
+
+    // Split "src/app" → dir="src/", name="app"
+    // Split "src/"   → dir="src/", name=""
+    // Split "app"    → dir="",     name="app"
+    let dir = ''
+    let name = prefix
+    const lastSlash = prefix.lastIndexOf('/')
+    if (lastSlash >= 0) {
+      dir = prefix.substring(0, lastSlash + 1)
+      name = prefix.substring(lastSlash + 1)
+    }
+
+    // Resolve the directory part to an absolute path
+    const absCwd = dir ? resolveFilePath(dir) : baseCwd
+
+    try {
+      const result = await controller.gw.request<{
+        items: Array<{ text: string; display: string; meta: string }>
+      }>('complete.path', { prefix: name, cwd: absCwd })
+      return result.items || []
+    } catch {
+      return []
+    }
   }
 
   async function handleSubmit(text: string) {
@@ -591,12 +650,14 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
   Ctrl+C (2x)     - Exit TUI
   Ctrl+D          - Exit TUI
   Tab             - Autocomplete slash commands
+  @ <path>        - Insert file/directory path (Tab/↑↓ navigate)
 
 🖱️  Mouse:
   Scroll wheel    - Native terminal scrollback
   Drag select     - In copy mode (Ctrl+Y) to copy text
 
 💡 Tips:
+  • Type @ to browse files — images (@/path/to.png) are sent as multimodal
   • Completed turns flow into terminal scrollback (scroll natively)
   • Token usage shown in status bar
   • History loads automatically on restart
@@ -779,7 +840,7 @@ For more info: https://github.com/yourusername/drsai
             const presetAlias = (result as { alias?: string }).alias
             setModelEditor({
               isNew: true,
-              initial: presetAlias ? { alias: presetAlias } : undefined,
+              initial: presetAlias ? { model: presetAlias } : undefined,
             })
             return
           }
@@ -1027,19 +1088,35 @@ For more info: https://github.com/yourusername/drsai
         isNew={modelEditor.isNew}
         originalAlias={modelEditor.originalAlias}
         initial={modelEditor.initial}
+        presets={modelProviderPresets}
         onCancel={() => setModelEditor(null)}
+        onTest={async values => {
+          try {
+            const result = await controller.gw.request<{ ok: boolean; error?: string; guidance?: { title?: string; actions?: string[] } }>(
+              'model.config.test_draft',
+              { ...values },
+            )
+            return result.ok ? { ok: true } : { ok: false, error: result.guidance ? `${result.guidance.title}: ${(result.guidance.actions || []).join(' / ')}` : result.error }
+          } catch (err) {
+            return { ok: false, error: err instanceof Error ? err.message : String(err) }
+          }
+        }}
         onSubmit={async values => {
           try {
             const result = await controller.gw.request<{
               ok: boolean
-              alias: string
-              is_new: boolean
-              switched_to: string | null
-            }>('model.save', { ...values, session_id: sessionId })
+              model: string
+              model_provider: string
+              runtime_applied?: boolean
+              warning?: string
+            }>('model.config.save', { ...values, session_id: sessionId, expected_revision: modelEditor.revision })
             setModelEditor(null)
-            const switched = result.switched_to ? ` (switched to ${result.switched_to})` : ''
-            const verb = result.is_new ? 'Saved' : 'Updated'
-            showSlashOutput(`${verb} model ${result.alias}${switched}`, 4000)
+            showSlashOutput(
+              result.runtime_applied === false
+                ? (result.warning || `Saved ${result.model}, but the current session kept its previous model`)
+                : `Saved ${result.model} via ${result.model_provider}`,
+              5000,
+            )
             return { ok: true }
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err)
@@ -1124,12 +1201,13 @@ For more info: https://github.com/yourusername/drsai
         isActive={activeOverlay === null}
         placeholder={isStreaming
           ? '⏳ streaming… (Ctrl+C to cancel)'
-          : 'Send a message · Ctrl+O newline · / commands · Tab complete · Ctrl+P/N history'}
+          : 'Send a message · @ files · / commands · Tab complete · Ctrl+O newline'}
         onSubmit={handleSubmit}
         completions={completions}
         history={historyRef.current}
         onHistoryChange={savePromptHistory}
         onPaste={maybeCollapsePaste}
+        onCompletePath={completePath}
       />
     </Box>
   )

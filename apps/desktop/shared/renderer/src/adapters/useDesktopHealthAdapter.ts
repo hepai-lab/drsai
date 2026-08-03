@@ -148,7 +148,9 @@ export function useDesktopHealthAdapter(language: "en" | "zh" = "zh"): DesktopHe
       );
       setActionMessage(
         update.available
-          ? zh ? `发现可用更新：${update.version ?? "新版本"}。` : `Update available: ${update.version ?? "new version"}.`
+          ? update.fallbackUsed
+            ? zh ? `CDN 不可用，已从 GitHub 备用源发现更新：${update.version ?? "新版本"}。` : `CDN unavailable; update ${update.version ?? "new version"} found on the GitHub fallback.`
+            : zh ? `发现可用更新：${update.version ?? "新版本"}。` : `Update available: ${update.version ?? "new version"}.`
           : zh ? "暂无可用更新。" : "No update available.",
       );
     } catch (error) {
@@ -165,7 +167,9 @@ export function useDesktopHealthAdapter(language: "en" | "zh" = "zh"): DesktopHe
       const update = await desktopApi.downloadUpdate();
       setHealth((current) => current ? { ...current, update } : { ...createFallbackHealth(), update });
       setActionMessage(update.canInstall
-        ? zh ? "更新已下载并验证，可以重启安装。" : "The update is verified and ready to install."
+        ? update.fallbackUsed
+          ? zh ? "CDN 下载失败，已从 GitHub 备用源下载并验证，可以重启安装。" : "The CDN download failed; the GitHub fallback is verified and ready to install."
+          : zh ? "更新已下载并验证，可以重启安装。" : "The update is verified and ready to install."
         : update.error ?? null);
     } catch (error) {
       setActionMessage(error instanceof Error ? error.message : zh ? "更新下载失败。" : "Update download failed.");
@@ -293,6 +297,8 @@ export function createFallbackHealth(): DesktopHealth {
     errorCode: "status-unavailable",
     error: "状态不可用。",
     recovery: null,
+    source: null,
+    fallbackUsed: false,
   };
   return {
     installed: false,

@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "valid": [
+    {
+      "name": "production",
+      "payload": "opendrsai://associate?v=1&environment=production&issuer=https%3A%2F%2Fai.ihep.ac.cn&code=A_secure-code_123456",
+      "environment": "production",
+      "issuer": "https://ai.ihep.ac.cn",
+      "code": "A_secure-code_123456"
+    },
+    {
+      "name": "development",
+      "payload": "opendrsai://associate?v=1&environment=development&issuer=https%3A%2F%2Fai-dev.ihep.ac.cn&code=Dev_secure-code_1234",
+      "environment": "development",
+      "issuer": "https://ai-dev.ihep.ac.cn",
+      "code": "Dev_secure-code_1234"
+    }
+  ],
+  "legacy": [
+    {
+      "name": "raw-code",
+      "payload": "Legacy_code_123456",
+      "code": "Legacy_code_123456"
+    }
+  ],
+  "invalid": [
+    "opendrsai://associate?v=2&environment=production&issuer=https%3A%2F%2Fai.ihep.ac.cn&code=A_secure-code_123456",
+    "opendrsai://associate?v=1&environment=development&issuer=https%3A%2F%2Fai-dev.ihep.ac.cn&code=A_secure-code_123456",
+    "opendrsai://associate?v=1&environment=production&issuer=http%3A%2F%2Fai.ihep.ac.cn&code=A_secure-code_123456",
+    "opendrsai://associate?v=1&environment=production&issuer=https%3A%2F%2Fevil.example&code=A_secure-code_123456",
+    "opendrsai://associate?v=1&environment=production&issuer=https%3A%2F%2Fai.ihep.ac.cn&code=short",
+    "opendrsai://associate?v=1&environment=production&issuer=https%3A%2F%2Fai.ihep.ac.cn&code=A_secure-code_123456&code=Duplicate_code_123"
+  ]
+}

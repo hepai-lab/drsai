@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-02T09:16:26.201233+00:00",
+  "environment": {
+    "kind": "physical_device",
+    "serial": "R5GYB3S8ACH",
+    "manufacturer": "samsung",
+    "brand": "samsung",
+    "model": "SM-X936C",
+    "api": 36,
+    "abi": "arm64-v8a",
+    "physical_samsung_arm64_verified": true,
+    "identity_checks": {
+      "adb_online": true,
+      "physical": true,
+      "samsung": true,
+      "arm64": true,
+      "supported_api": true
+    }
+  },
+  "sample_count": 10,
+  "instrumentation_tests": 96,
+  "metrics": {
+    "cold_start_ms": [
+      513,
+      516,
+      521,
+      508,
+      514,
+      528,
+      521,
+      513,
+      511,
+      514
+    ],
+    "cold_start_p95_ms": 528,
+    "foreground_pss_mb": [
+      112.12109375,
+      111.7763671875,
+      111.595703125,
+      111.7607421875,
+      111.7578125,
+      111.7939453125,
+      112.01171875,
+      111.79296875,
+      111.671875,
+      111.666015625
+    ],
+    "foreground_pss_p95_mb": 112.12109375,
+    "peak_pss_mb": 112.12109375,
+    "cpu_percent": [
+      42.8849902534113,
+      40.69767441860465,
+      40.30710172744722,
+      43.30708661417323,
+      44.747081712062254,
+      43.56060606060606,
+      40.30710172744722,
+      42.8849902534113,
+      43.05283757338552,
+      44.747081712062254
+    ],
+    "cpu_p95_percent": 44.747081712062254,
+    "storage_mb": 114.25090980529785,
+    "battery_percent": 87,
+    "battery_temperature_c": 30.1,
+    "thermal_status": 0,
+    "runtime_release_verified": true,
+    "anr": 0,
+    "crashes": 0
+  },
+  "gates": {
+    "instrumentation": true,
+    "cold_start_p95_under_3s": true,
+    "foreground_pss_p95_under_220mb": true,
+    "peak_pss_under_320mb": true,
+    "storage_under_220mb": true,
+    "zero_anr": true,
+    "zero_crashes": true,
+    "runtime_release_verified": true,
+    "device_secret_scan": true
+  },
+  "result": "passed"
+}

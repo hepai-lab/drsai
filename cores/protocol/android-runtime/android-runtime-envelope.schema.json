@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opendrsai.ihep.ac.cn/schemas/android-runtime-envelope-v1.json",
+  "title": "OpenDrSai Android Runtime Envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocol_version", "message_type", "request_id", "run_id", "session_id", "sequence", "idempotency_key", "payload"],
+  "properties": {
+    "protocol_version": { "const": 1 },
+    "message_type": {
+      "enum": [
+        "start_run", "cancel_run", "resume_run", "model_chunk", "model_completed",
+        "model_failed", "tool_result", "approval_result", "artifact_result", "lifecycle_changed",
+        "runtime_event", "model_request", "tool_call_request", "approval_request",
+        "checkpoint_request", "artifact_request"
+      ]
+    },
+    "request_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "run_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "session_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "sequence": { "type": "integer", "minimum": 0 },
+    "idempotency_key": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "payload": { "type": "object" }
+  }
+}

@@ -148,15 +148,26 @@ class DrSaiCLIAssistant(DrSaiAssistant):
             "dangerous_allowed": self._get_dangerous_allowed(),
         }
 
-    async def load_state(self, state: Mapping[str, Any]) -> None:
+    async def load_state(self, state: Mapping[str, Any], *, restore_model: bool = True) -> None:
         """Restore session-local configuration then llm_context.
 
         Backward-compatible: old states that lack the extra keys are handled
         gracefully (model/inject/reasoning simply stay at their defaults).
+
+        When ``restore_model`` is False (desktop chat passes an explicit
+        per-request model alias), keep the agent model that was just created
+        and only restore conversation history / inject / reasoning. Otherwise
+        a prior session model (e.g. deepseek-v4-pro) would overwrite the UI
+        selection after gateway recreate + load_state.
         """
         # ── 1. Restore model client if saved config differs ────────────────
         saved_config = state.get("defult_config_name")
-        if saved_config and saved_config != self._defult_config_name and self._set_model_client:
+        if (
+            restore_model
+            and saved_config
+            and saved_config != self._defult_config_name
+            and self._set_model_client
+        ):
             try:
                 new_client = self._set_model_client(saved_config)
                 await self.switch_model(new_client)

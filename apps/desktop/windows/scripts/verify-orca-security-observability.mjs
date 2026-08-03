@@ -6,10 +6,10 @@ const app = resolve(new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z
 const root = resolve(app, "../../..");
 const read = (path) => readFile(resolve(root, path), "utf8");
 
-const security = await read("cores/python/packages/drsai/src/drsai/backend/runtime_security.py");
-const observability = await read("cores/python/packages/drsai/src/drsai/backend/runtime_observability.py");
+const security = await read("cores/python/packages/drsai/src/drsai/backend/runtime/security.py");
+const observability = await read("cores/python/packages/drsai/src/drsai/backend/runtime/observability.py");
 const codex = await read("cores/python/packages/drsai/src/drsai/backend/codex_adapter/backend_client.py");
-const gates = JSON.parse(await read("protocol/orca-inspired/compatibility-gates.json"));
+const gates = JSON.parse(await read("cores/protocol/orca-inspired/compatibility-gates.json"));
 const boundary = await read("apps/desktop/windows/scripts/verify-orca-inspired-boundaries.mjs");
 
 for (const action of ["worktree.write", "pty.execute", "file.write", "shell.execute"]) {

@@ -3,9 +3,17 @@ import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const rendererHtml = join(root, "out", "renderer", "index.html");
+const electronCli = createRequire(import.meta.url).resolve("electron/cli.js");
+const rendererHtml = process.env.OPENDRSAI_RENDERER_HTML || join(root, "out", "renderer", "index.html");
+const l3Only = process.env.OPENDRSAI_RENDERER_L3_ONLY === "1";
+const modelProviderOnly = process.argv.includes("--model-provider-only");
+const axePath = join(root, "node_modules", "axe-core", "axe.min.js");
+const disabledFeatures = new Set((process.env.OPENDRSAI_RENDERER_DISABLED_FEATURES || "").split(",").map((value) => value.trim()).filter(Boolean));
+const featureKeys = ["auth", "runtime", "chat", "agents", "threads", "workspaceFiles", "git", "terminal", "serialVoice", "streamingVoice", "approvals", "browser", "debugger", "mcp", "remoteWorkspace", "portForwarding", "checkpoints", "worktrees", "automation", "collaboration", "channels", "diagnostics", "codexBackend"];
+const featureCapabilities = Object.fromEntries(featureKeys.map((key) => [key, !disabledFeatures.has(key)]));
 const artifactDir =
   process.env.OPENDRSAI_VISUAL_ARTIFACT_DIR ||
   join(root, "release", "visual-checks");
@@ -18,9 +26,9 @@ const tempDir = mkdtempSync(join(tmpdir(), "opendrsai-visual-"));
 const mainPath = join(tempDir, "main.cjs");
 const preloadPath = join(tempDir, "preload.cjs");
 
-writeFileSync(preloadPath, preloadSource(), "utf8");
+writeFileSync(preloadPath, preloadSource(featureCapabilities), "utf8");
 mkdirSync(artifactDir, { recursive: true });
-writeFileSync(mainPath, mainSource({ root, rendererHtml, preloadPath, artifactDir, m9Only: process.env.OPENDRSAI_M9_ONLY === "1" }), "utf8");
+writeFileSync(mainPath, mainSource({ root, rendererHtml, preloadPath, artifactDir, axePath, disabledFeatures: [...disabledFeatures], l3Only, modelProviderOnly, m9Only: process.env.OPENDRSAI_M9_ONLY === "1", pairingOnly: process.argv.includes("--pairing-only") }), "utf8");
 
 try {
   await runElectron(mainPath);
@@ -42,7 +50,7 @@ function cleanupTempDir(path) {
 function runElectron(scriptPath) {
   return new Promise((resolvePromise, reject) => {
     let settled = false;
-    const child = spawn(process.execPath, [join(root, "node_modules", "electron", "cli.js"), scriptPath], {
+    const child = spawn(process.execPath, [electronCli, scriptPath], {
       cwd: root,
       env: {
         ...process.env,
@@ -101,7 +109,7 @@ function killProcessTree(pid) {
   }
 }
 
-function mainSource({ rendererHtml: htmlPath, preloadPath: preload, artifactDir: screenshots, m9Only }) {
+function mainSource({ rendererHtml: htmlPath, preloadPath: preload, artifactDir: screenshots, axePath, disabledFeatures, l3Only, modelProviderOnly, m9Only, pairingOnly }) {
   return String.raw`
 const { app, BrowserWindow } = require("electron");
 const path = require("path");
@@ -111,6 +119,11 @@ const rendererHtml = ${JSON.stringify(htmlPath)};
 const preloadPath = ${JSON.stringify(preload)};
 const artifactDir = ${JSON.stringify(screenshots)};
 const m9Only = ${JSON.stringify(m9Only)};
+const pairingOnly = ${JSON.stringify(pairingOnly)};
+const l3Only = ${JSON.stringify(l3Only)};
+const modelProviderOnly = ${JSON.stringify(modelProviderOnly)};
+const disabledFeatures = ${JSON.stringify(disabledFeatures)};
+const axeSource = fs.readFileSync(${JSON.stringify(axePath)}, "utf8");
 const userDataDir = path.join(path.dirname(preloadPath), "user-data");
 
 app.disableHardwareAcceleration();
@@ -135,7 +148,7 @@ function sanitizeName(name) {
   return name.replace(/[^a-z0-9._-]+/gi, "-").replace(/^-+|-+$/g, "");
 }
 
-async function createWindow(width, height, withBridge = true) {
+async function createWindow(width, height, withBridge = true, partition) {
   const win = new BrowserWindow({
     show: false,
     width,
@@ -148,6 +161,7 @@ async function createWindow(width, height, withBridge = true) {
       sandbox: false,
       backgroundThrottling: false,
       preload: withBridge ? preloadPath : undefined,
+      ...(partition ? { partition } : {}),
     },
   });
   await withTimeout(win.loadFile(rendererHtml), "load renderer");
@@ -414,7 +428,7 @@ async function run() {
   await captureVisual(languageWin, "language-switch");
   if (!languageAudit.text.includes("Desktop Status")) fail("English desktop status did not render");
   if (!languageAudit.text.includes("Check Updates")) fail("English action labels did not render");
-  if (!languageAudit.buttons.some((button) => button.text === "New chat" || button.text === "Settings")) fail("English navigation did not render");
+  if (!languageAudit.buttons.some((button) => button.text === "New task" || button.text === "Settings")) fail("English navigation did not render");
   languageWin.close();
 
   if (failures.length) {
@@ -430,7 +444,7 @@ async function run() {
 
 async function runCurrentVisual() {
   const text = {
-    newChatZh: "\u5f00\u59cb\u804a\u5929",
+    newTaskZh: "\u65b0\u5efa\u4efb\u52a1",
     searchZh: "\u641c\u7d22",
     scheduledZh: "\u5df2\u5b89\u6392",
     agentsZh: "\u667a\u80fd\u4f53",
@@ -443,6 +457,287 @@ async function runCurrentVisual() {
   };
 
   const includesAny = (haystack, values) => values.some((value) => haystack.includes(value));
+
+  if (modelProviderOnly) {
+    console.log("Checking model Provider user journeys...");
+    let win = await createWindow(1280, 800, true);
+    const menuOpened = await win.webContents.executeJavaScript("(() => { const menu=document.querySelector('[data-testid=user-menu-button]'); menu?.click(); return Boolean(menu); })()");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const settingsOpened = await win.webContents.executeJavaScript("(() => { const settings=document.querySelector('[data-testid=user-menu-settings]'); settings?.click(); return Boolean(settings); })()");
+    if (!menuOpened || !settingsOpened) fail("could not open settings for model Provider journey");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const initial = await auditWindow(win, "model-provider-initial");
+    if (!initial.text.includes("模型服务") && !initial.text.includes("Model service")) fail("model Provider settings did not render");
+
+    const keySourceChecks = await win.webContents.executeJavaScript("(async () => { const select=document.querySelector('[data-testid=model-provider-key-source]'); const setter=Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value')?.set; const choose=async(value)=>{ setter?.call(select,value); select?.dispatchEvent(new Event('change',{bubbles:true})); await new Promise(resolve=>setTimeout(resolve,20)); return {value:select?.value,secure:Boolean(document.querySelector('[data-testid=model-provider-api-key]')),env:Boolean(document.querySelector('[data-testid=model-provider-api-key-env]'))}; }; return [await choose('secure'),await choose('env'),await choose('none')]; })()");
+    if (!keySourceChecks[0].secure || keySourceChecks[0].env || keySourceChecks[1].secure || !keySourceChecks[1].env || keySourceChecks[2].secure || keySourceChecks[2].env) fail("key sources are not mutually exclusive");
+
+    const basicClicked = await win.webContents.executeJavaScript("(() => { const button=document.querySelector('[data-testid=model-provider-test-basic]'); button?.click(); return Boolean(button); })()");
+    if (!basicClicked) fail("basic connection action is missing");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    let textAfterAction = await win.webContents.executeJavaScript("document.body.innerText");
+    if (!textAfterAction.includes("基础连接成功") && !textAfterAction.includes("Basic connection succeeded")) fail("basic connection result was not distinguished from a model call");
+    if (!textAfterAction.includes("基础连接 · OK") && !textAfterAction.includes("basic connection · OK")) fail("status card did not record basic connection mode");
+
+    const modelClicked = await win.webContents.executeJavaScript("(() => { const button=document.querySelector('[data-testid=model-provider-test-model]'); button?.click(); return Boolean(button); })()");
+    if (!modelClicked) fail("model call action is missing");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const feeDialog = await win.webContents.executeJavaScript("(() => { const dialog=document.querySelector('[data-testid=model-provider-test-dialog]'); return { visible:Boolean(dialog), text:dialog?.innerText || '' }; })()");
+    if (!feeDialog.visible || (!feeDialog.text.includes("可能产生少量费用") && !feeDialog.text.includes("may incur a small charge"))) fail("model call fee confirmation was not shown");
+    await win.webContents.executeJavaScript("document.querySelector('[data-testid=model-provider-test-model-cancel]')?.click()");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    if (await win.webContents.executeJavaScript("Boolean(document.querySelector('[data-testid=model-provider-test-dialog]'))")) fail("model call cancel did not close the dialog");
+    if (!(await win.webContents.executeJavaScript("window.openDrSai.getModelProviderVisualState().modelTestCalls === 0"))) fail("cancelling the fee dialog called the model endpoint");
+
+    await win.webContents.executeJavaScript("document.querySelector('[data-testid=model-provider-test-model]')?.click()");
+    await win.webContents.executeJavaScript("document.querySelector('[data-testid=model-provider-test-model-confirm]')?.click()");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    textAfterAction = await win.webContents.executeJavaScript("document.body.innerText");
+    if (!textAfterAction.includes("模型调用成功") && !textAfterAction.includes("Model call succeeded")) fail("confirmed model call result did not render");
+    if (!textAfterAction.includes("模型调用 · OK") && !textAfterAction.includes("model call · OK")) fail("status card did not record model call mode");
+
+    const deleteOpened = await win.webContents.executeJavaScript("(() => { const buttons=[...document.querySelectorAll('button')]; const button=buttons.find(item => ['删除 Provider','Delete Provider'].includes(item.innerText.trim())); button?.click(); return Boolean(button); })()");
+    if (!deleteOpened) fail("delete Provider action is missing");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    if (!(await win.webContents.executeJavaScript("Boolean(document.querySelector('[data-testid=model-provider-delete-dialog]'))"))) fail("delete Provider dialog did not open");
+    await win.webContents.executeJavaScript("document.querySelector('[data-testid=model-provider-delete-cancel]')?.click()");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    if (await win.webContents.executeJavaScript("Boolean(document.querySelector('[data-testid=model-provider-delete-dialog]'))")) fail("delete Provider cancel did not close the dialog");
+    if (!(await win.webContents.executeJavaScript("window.openDrSai.getModelProviderVisualState().deleteCalls === 0"))) fail("delete Provider cancel mutated backend state");
+
+    const setInput = async (label, value) => win.webContents.executeJavaScript(${"`"}(() => {
+      const labelNode = [...document.querySelectorAll('.model-provider-grid label')].find((node) => node.querySelector('span')?.innerText.trim() === ${"${"}JSON.stringify(label)});
+      const input = labelNode?.querySelector('input');
+      if (!input) return false;
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter?.call(input, ${"${"}JSON.stringify(value)});
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
+    })()${"`"});
+    const clickAction = async (names) => win.webContents.executeJavaScript(${"`"}(() => {
+      const candidates = ${"${"}JSON.stringify(names)};
+      const button = [...document.querySelectorAll('.model-provider-actions button')].find((node) => candidates.includes(node.innerText.trim()));
+      button?.click();
+      return Boolean(button);
+    })()${"`"});
+
+    if (!(await setInput("模型", "fail-model")) && !(await setInput("Model", "fail-model"))) fail("could not enter failing model draft");
+    await clickAction(["基础连接测试", "Test basic connection"]);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    textAfterAction = await win.webContents.executeJavaScript("document.body.innerText");
+    if (!textAfterAction.includes("synthetic_probe_failure")) fail("failed draft probe did not render its stable error");
+    let providerState = await win.webContents.executeJavaScript("window.openDrSai.getModelProviderVisualState()");
+    if (providerState.saveCalls !== 0 || providerState.revision !== "a".repeat(64)) fail("failed draft probe persisted configuration or changed revision");
+
+    const staleWin = await createWindow(1100, 760, true);
+    await staleWin.webContents.executeJavaScript("document.querySelector('[data-testid=user-menu-button]')?.click()");
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    await staleWin.webContents.executeJavaScript("document.querySelector('[data-testid=user-menu-settings]')?.click()");
+    await new Promise((resolve) => setTimeout(resolve, 70));
+
+    if (!(await setInput("模型", "saved-model")) && !(await setInput("Model", "saved-model"))) fail("could not enter saved model draft");
+    await clickAction(["保存并使用", "Save and use"]);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    textAfterAction = await win.webContents.executeJavaScript("document.body.innerText");
+    providerState = await win.webContents.executeJavaScript("window.openDrSai.getModelProviderVisualState()");
+    if (!textAfterAction.includes("模型服务配置已保存") && !textAfterAction.includes("Model service configuration saved")) fail("successful save did not render");
+    if (providerState.saveCalls !== 1 || providerState.activeModel !== "saved-model" || providerState.revision === "a".repeat(64)) fail("successful save did not update model and revision exactly once");
+
+    const staleSaveClicked = await staleWin.webContents.executeJavaScript("(() => { const input=document.querySelector('[data-testid=model-provider-model]'); const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')?.set; setter?.call(input,'stale-window-model'); input?.dispatchEvent(new Event('input',{bubbles:true})); const button=[...document.querySelectorAll('.model-provider-actions button')].find(node=>['保存并使用','Save and use'].includes(node.innerText.trim())); button?.click(); return Boolean(input && button); })()");
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    textAfterAction = await staleWin.webContents.executeJavaScript("document.body.innerText");
+    providerState = await win.webContents.executeJavaScript("window.openDrSai.getModelProviderVisualState()");
+    if (!staleSaveClicked || !textAfterAction.includes("config_conflict")) fail("two-window revision conflict was not surfaced to the stale window");
+    if (providerState.saveCalls !== 1 || providerState.activeModel !== "saved-model") fail("revision conflict overwrote the active model");
+    const conflictReloaded = await staleWin.webContents.executeJavaScript("(() => { const button=document.querySelector('[data-testid=model-provider-conflict-reload]'); button?.click(); return Boolean(button); })()");
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    textAfterAction = await staleWin.webContents.executeJavaScript("document.body.innerText");
+    if (!conflictReloaded || (!textAfterAction.includes("已重新加载最新模型服务配置") && !textAfterAction.includes("Latest model service configuration reloaded"))) fail("revision conflict did not provide a working reload recovery action");
+    if (!textAfterAction.includes("saved-model")) fail("stale window reload did not receive the winning model configuration");
+    staleWin.close();
+
+    await clickAction(["删除 Provider", "Delete Provider"]);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await win.webContents.executeJavaScript("document.querySelector('[data-testid=model-provider-delete-keep-credential]')?.click()");
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    providerState = await win.webContents.executeJavaScript("window.openDrSai.getModelProviderVisualState()");
+    if (providerState.deleteCalls !== 1 || providerState.lastDeleteCredential !== false) fail("delete-only path did not retain the credential");
+
+    await win.webContents.executeJavaScript("window.openDrSai.resetModelProviderVisualState()");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    if (!(await setInput("服务名称", "visual-provider")) && !(await setInput("Service name", "visual-provider"))) fail("could not restore Provider draft for credential deletion");
+    await clickAction(["删除 Provider", "Delete Provider"]);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await win.webContents.executeJavaScript("document.querySelector('[data-testid=model-provider-delete-with-credential]')?.click()");
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    providerState = await win.webContents.executeJavaScript("window.openDrSai.getModelProviderVisualState()");
+    if (providerState.deleteCalls !== 2 || providerState.lastDeleteCredential !== true) fail("delete-with-credential path did not request credential deletion");
+
+    const ollamaSelected = await win.webContents.executeJavaScript("(() => { const select=document.querySelector('[data-testid=model-provider-preset]'); const setter=Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value')?.set; setter?.call(select,'ollama'); select?.dispatchEvent(new Event('change',{bubbles:true})); return Boolean(select); })()");
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    const ollamaDraft = await win.webContents.executeJavaScript("(() => ({ provider:document.querySelector('[data-testid=model-provider-name]')?.value, keySource:document.querySelector('[data-testid=model-provider-key-source]')?.value, hasBaseUrl:Boolean([...document.querySelectorAll('.model-provider-grid label')].find(node=>node.querySelector('span')?.innerText==='Base URL')) }))()");
+    if (!ollamaSelected || ollamaDraft.provider !== "ollama" || ollamaDraft.keySource !== "none" || !ollamaDraft.hasBaseUrl) fail("Ollama preset did not configure a visible no-key local service");
+    await clickAction(["发现模型", "Discover models"]);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    textAfterAction = await win.webContents.executeJavaScript("document.body.innerText");
+    if (!textAfterAction.includes("个模型可用") && !textAfterAction.includes("models discovered")) fail("Ollama model discovery did not complete");
+
+    await setInput("模型", "unknown-local-model") || await setInput("Model", "unknown-local-model");
+    await clickAction(["保存并使用", "Save and use"]);
+    await new Promise((resolve) => setTimeout(resolve, 70));
+    if (!(await win.webContents.executeJavaScript("Boolean(document.querySelector('[data-testid=model-provider-unknown-model-warning]'))"))) fail("unknown model warning did not render after save");
+
+    providerState = await win.webContents.executeJavaScript("window.openDrSai.getModelProviderVisualState()");
+    const savesBeforeGatewayFailure = providerState.saveCalls;
+    await setInput("模型", "gateway-down") || await setInput("Model", "gateway-down");
+    await clickAction(["基础连接测试", "Test basic connection"]);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    textAfterAction = await win.webContents.executeJavaScript("document.body.innerText");
+    providerState = await win.webContents.executeJavaScript("window.openDrSai.getModelProviderVisualState()");
+    if (!textAfterAction.includes("My DrSai is not running") || providerState.saveCalls !== savesBeforeGatewayFailure) fail("Gateway failure did not remain recoverable and side-effect free");
+
+    await setInput("模型", "restart-persisted-model") || await setInput("Model", "restart-persisted-model");
+    await clickAction(["保存并使用", "Save and use"]);
+    await new Promise((resolve) => setTimeout(resolve, 70));
+    win.close();
+    win = await createWindow(1280, 800, true);
+    await win.webContents.executeJavaScript("document.querySelector('[data-testid=user-menu-button]')?.click()");
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    await win.webContents.executeJavaScript("document.querySelector('[data-testid=user-menu-settings]')?.click()");
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    textAfterAction = await win.webContents.executeJavaScript("document.body.innerText");
+    if (!textAfterAction.includes("restart-persisted-model")) fail("saved model did not survive a Renderer window restart");
+    await captureVisual(win, "model-provider-two-level-tests");
+    win.close();
+    if (failures.length) {
+      for (const failure of failures) console.error("- " + failure);
+      app.exit(1);
+      return;
+    }
+    clearTimeout(watchdog);
+    console.log("Model Provider Electron UI E2E passed.");
+    app.exit(0);
+    return;
+  }
+
+  if (l3Only) {
+    console.log("Checking L3 renderer capability, keyboard and accessibility gates...");
+    const win = await createWindow(1280, 800, true);
+    const focusTrace = [];
+    let openedSettings = false;
+    let openedUserMenu = false;
+    for (let index = 0; index < 100; index += 1) {
+      win.webContents.sendInputEvent({ type: "keyDown", keyCode: "TAB" });
+      win.webContents.sendInputEvent({ type: "keyUp", keyCode: "TAB" });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      const focus = await win.webContents.executeJavaScript("(() => { const el=document.activeElement; return { tag: el?.tagName || '', name: el?.getAttribute?.('aria-label') || el?.getAttribute?.('title') || el?.innerText?.trim?.() || '', disabled: Boolean(el?.disabled) }; })()");
+      if (focus.name) focusTrace.push(focus);
+      if (!openedUserMenu && ["用户菜单", "User menu"].includes(focus.name)) {
+        win.webContents.sendInputEvent({ type: "keyDown", keyCode: "ENTER" });
+        win.webContents.sendInputEvent({ type: "keyUp", keyCode: "ENTER" });
+        openedUserMenu = true;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        let expanded = await win.webContents.executeJavaScript("document.querySelector('[data-testid=user-menu-button]')?.getAttribute('aria-expanded')");
+        if (expanded !== "true") {
+          win.webContents.sendInputEvent({ type: "keyDown", keyCode: "SPACE" });
+          win.webContents.sendInputEvent({ type: "keyUp", keyCode: "SPACE" });
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          expanded = await win.webContents.executeJavaScript("document.querySelector('[data-testid=user-menu-button]')?.getAttribute('aria-expanded')");
+        }
+        if (expanded !== "true") fail("Enter did not open the focused user menu");
+        continue;
+      }
+      if (["设置", "Settings"].includes(focus.name)) {
+        win.webContents.sendInputEvent({ type: "keyDown", keyCode: "SPACE" });
+        win.webContents.sendInputEvent({ type: "keyUp", keyCode: "SPACE" });
+        openedSettings = true;
+        break;
+      }
+    }
+    if (!openedSettings) fail("keyboard traversal could not reach Settings: " + JSON.stringify(focusTrace.slice(0, 30)));
+    if (focusTrace.length < 6 || focusTrace.some((item) => item.disabled)) fail("keyboard traversal did not produce a usable focus sequence");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    let openedIntegrations = false;
+    for (let index = 0; index < 30; index += 1) {
+      win.webContents.sendInputEvent({ type: "keyDown", keyCode: "TAB" });
+      win.webContents.sendInputEvent({ type: "keyUp", keyCode: "TAB" });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      const focus = await win.webContents.executeJavaScript("document.activeElement?.innerText?.trim?.() || document.activeElement?.getAttribute?.('aria-label') || ''");
+      if (["集成概览", "Overview"].includes(focus)) {
+        win.webContents.sendInputEvent({ type: "keyDown", keyCode: "SPACE" });
+        win.webContents.sendInputEvent({ type: "keyUp", keyCode: "SPACE" });
+        openedIntegrations = true;
+        break;
+      }
+    }
+    if (!openedIntegrations) fail("keyboard traversal could not open Integration overview; active=" + await win.webContents.executeJavaScript("document.activeElement?.outerHTML || ''"));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const gateAudit = await win.webContents.executeJavaScript(${"`"}(() => ({
+      rightTabs: Array.from(document.querySelectorAll('.right-tabs button')).map((button) => button.getAttribute('aria-label') || button.innerText.trim()),
+      settingsPanes: Array.from(document.querySelectorAll('[data-testid^=settings-pane-]')).map((button) => button.getAttribute('data-testid')),
+      integrations: Array.from(document.querySelectorAll('.settings-integration-row strong')).map((item) => item.textContent.trim()),
+      horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+    }))()${"`"});
+    const forbidden = {
+      browser: ["Browser", "浏览器"], debugger: ["Debug", "调试"], terminal: ["Terminal", "终端"],
+      channels: ["Channels", "频道"], mcp: ["MCP", "工具连接"], remoteWorkspace: ["Remote computers", "远程计算机", "Android", "Android 端"],
+      serialVoice: ["Voice", "语音"], agents: ["Agent tasks", "智能体任务"], approvals: ["Approval Center", "审批中心"], diagnostics: ["Usage analytics", "使用分析"],
+    };
+    for (const feature of disabledFeatures) {
+      const labels = forbidden[feature] || [];
+      if ([...gateAudit.rightTabs, ...gateAudit.integrations].some((value) => labels.includes(value))) fail(feature + " remained actionable while capability=false");
+    }
+    if (disabledFeatures.includes("channels") && gateAudit.settingsPanes.includes("settings-pane-channels")) fail("Channels settings pane remained visible while disabled");
+    if (disabledFeatures.includes("agents") && gateAudit.settingsPanes.includes("settings-pane-agent-task")) fail("Agent settings remained visible while disabled");
+    if (disabledFeatures.includes("approvals") && gateAudit.settingsPanes.includes("settings-pane-approvals")) fail("Approval settings remained visible while disabled");
+    if (disabledFeatures.includes("diagnostics") && gateAudit.settingsPanes.includes("settings-pane-analytics")) fail("Analytics settings remained visible while disabled");
+    if (gateAudit.horizontalOverflow) fail("L3 viewport has horizontal overflow");
+    await win.webContents.executeJavaScript(axeSource);
+    const axe = await win.webContents.executeJavaScript("axe.run(document, { resultTypes: ['violations'], runOnly: { type: 'tag', values: ['wcag2a','wcag2aa','wcag21a','wcag21aa'] } }).then((result) => result.violations.map((item) => ({ id:item.id, impact:item.impact, nodes:item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })))");
+    const severe = axe.filter((item) => item.impact === "critical" || item.impact === "serious");
+    if (severe.length) fail("axe serious/critical violations: " + JSON.stringify(severe));
+    await captureVisual(win, "l3-capability-gating");
+    win.close();
+    if (failures.length) { for (const failure of failures) console.error("- " + failure); app.exit(1); return; }
+    clearTimeout(watchdog);
+    console.log("L3 renderer integration passed (keyboard-only navigation, fail-closed capabilities, responsive layout, axe serious/critical=0)." );
+    app.exit(0);
+    return;
+  }
+
+  if (pairingOnly) {
+    console.log("Checking Android pairing dialog...");
+    const win = await createWindow(1024, 760, true);
+    if (!(await clickByAnyText(win, ["Visual User", "User menu"]))) fail("could not open user menu for Android pairing");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    if (!(await clickByAnyText(win, [text.settingsZh, "Settings"]))) fail("could not open settings for Android pairing");
+    await win.webContents.executeJavaScript("document.querySelector('[data-testid=settings-pane-integrations]')?.click()");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    if (!(await clickByAnyText(win, ["连接 Android", "Connect Android"]))) fail("could not open Android pairing dialog");
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const audit = await win.webContents.executeJavaScript("(() => { const dialog = document.querySelector('[data-testid=mobile-pairing-dialog]'); const image = dialog?.querySelector('img'); const style = dialog ? getComputedStyle(dialog) : null; return { text: dialog?.innerText || '', hasDialog: Boolean(dialog), qrWidth: image?.naturalWidth || 0, background: style?.backgroundColor || '', color: style?.color || '', opacity: style?.opacity || '' }; })()");
+    await captureVisual(win, "android-pairing-dialog");
+    if (!audit.hasDialog || !(audit.text.includes("手工配对码") || audit.text.includes("Manual pairing code"))) fail("Android pairing content did not render");
+    if (audit.qrWidth < 200) fail("Android pairing QR image did not render");
+    if (audit.background === "rgba(0, 0, 0, 0)" || audit.background === "transparent") fail("Android pairing dialog surface is transparent");
+    if (audit.opacity !== "1") fail("Android pairing dialog opacity dims its own content");
+    await win.webContents.executeJavaScript("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    if (!(await win.webContents.executeJavaScript("!document.querySelector('[data-testid=mobile-pairing-dialog]')"))) fail("Escape did not close Android pairing dialog");
+    await win.webContents.executeJavaScript("window.dispatchEvent(new KeyboardEvent('keydown', { key: '/', code: 'Slash', ctrlKey: true, shiftKey: true, bubbles: true }))");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const shortcutAudit = await win.webContents.executeJavaScript("(() => { const dialog = document.querySelector('.shortcut-settings-modal'); const style = dialog ? getComputedStyle(dialog) : null; return { visible: Boolean(dialog), background: style?.backgroundColor || '', color: style?.color || '', opacity: style?.opacity || '' }; })()");
+    await captureVisual(win, "keyboard-shortcuts-dialog");
+    if (!shortcutAudit.visible) fail("Keyboard shortcuts dialog did not open from its default shortcut");
+    if (shortcutAudit.background === "rgba(0, 0, 0, 0)" || shortcutAudit.background === "transparent") fail("Keyboard shortcuts dialog surface is transparent");
+    if (shortcutAudit.opacity !== "1") fail("Keyboard shortcuts dialog opacity dims its own content");
+    win.close();
+    if (failures.length) { for (const failure of failures) console.error("- " + failure); app.exit(1); return; }
+    clearTimeout(watchdog);
+    console.log("Android pairing visual verification passed.");
+    app.exit(0);
+    return;
+  }
 
   if (!m9Only) {
   console.log("Checking bridge fallback...");
@@ -471,14 +766,14 @@ async function runCurrentVisual() {
       );
     }
     if (!audit.text.includes("OpenDrSai")) fail(audit.label + " is missing brand text");
-    if (!includesAny(audit.text, [text.newChatZh, "New chat"])) fail(audit.label + " is missing new chat action");
+    if (!includesAny(audit.text, [text.newTaskZh, "New task"])) fail(audit.label + " is missing new task action");
     if (!includesAny([audit.text, ...audit.inputPlaceholders].join(" "), [text.searchZh, "Search"])) {
       fail(audit.label + " is missing search action");
     }
     if (!includesAny(audit.text, [text.workspaceZh, "Workspace"])) fail(audit.label + " is missing workspace section");
     if (!audit.hasTextarea) fail(audit.label + " is missing chat textarea");
     const accessibleNav = audit.buttons.filter((button) =>
-      [text.newChatZh, text.searchZh, text.scheduledZh, text.agentsZh, text.skillsZh, text.settingsZh, "New chat", "Search", "Scheduled", "Agents", "Skills", "Settings"].includes(
+      [text.newTaskZh, text.searchZh, text.scheduledZh, text.agentsZh, text.skillsZh, text.settingsZh, "New task", "Search", "Scheduled", "Agents", "Skills", "Settings"].includes(
         button.text,
       ),
     );
@@ -550,6 +845,30 @@ async function runCurrentVisual() {
   }
   interactive.close();
 
+  console.log("Checking conversation turn rail...");
+  const turnRailWin = await createWindow(1800, 760, true, "visual-turn-rail");
+  for (let index = 1; index <= 8; index += 1) {
+    if (!(await fillTextarea(turnRailWin, "visual rail turn " + index))) fail("could not fill turn rail message " + index);
+    if (!(await clickByAnyText(turnRailWin, [text.sendZh, "Send"]))) fail("could not send turn rail message " + index);
+    await new Promise((resolve) => setTimeout(resolve, 180));
+  }
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  const turnRailAudit = await turnRailWin.webContents.executeJavaScript("(() => { const rail=document.querySelector('.conversation-turn-rail'); const titlebar=document.querySelector('.conversation-titlebar'); const composer=document.querySelector('.chat-primary-pane:not(.empty-chat) .composer'); const buttons=[...(rail?.querySelectorAll('button[data-turn-id]') || [])]; const railRect=rail?.getBoundingClientRect(); const titlebarRect=titlebar?.getBoundingClientRect(); const composerRect=composer?.getBoundingClientRect(); const rects=buttons.map((button) => button.getBoundingClientRect()); const centers=rects.map((rect) => rect.top + rect.height / 2); const gaps=centers.slice(1).map((center,index) => center - centers[index]); const target=buttons[3]; const targetRect=rects[3]; const hit=target && targetRect ? document.elementFromPoint(targetRect.left + targetRect.width / 2, targetRect.top + targetRect.height * 0.18) : null; hit?.click(); return { visible:Boolean(rail && getComputedStyle(rail).display === 'grid'), unobscured:Boolean(railRect && titlebarRect && composerRect && railRect.top >= titlebarRect.bottom && railRect.bottom <= composerRect.top), count:buttons.length, minGap:gaps.length ? Math.min(...gaps) : 0, maxGap:gaps.length ? Math.max(...gaps) : 0, minHitHeight:rects.length ? Math.min(...rects.map((rect) => rect.height)) : 0, hitTurnId:hit?.getAttribute?.('data-turn-id') || '', targetTurnId:target?.getAttribute('data-turn-id') || '', lineHeight:target ? parseFloat(getComputedStyle(target, '::after').height) : 0 }; })()");
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  const turnRailClickAudit = await turnRailWin.webContents.executeJavaScript("(() => { const active=document.querySelector('.conversation-turn-rail button.active'); active?.focus(); active?.dispatchEvent(new KeyboardEvent('keydown', { key:'ArrowDown', bubbles:true })); return { activeId:active?.getAttribute('data-turn-id') || '' }; })()");
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  const turnRailKeyboardAudit = await turnRailWin.webContents.executeJavaScript("(() => { const active=document.querySelector('.conversation-turn-rail button.active'); return { activeId:active?.getAttribute('data-turn-id') || '', focusedId:document.activeElement?.getAttribute?.('data-turn-id') || '' }; })()");
+  await captureVisual(turnRailWin, "conversation-turn-rail");
+  if (!turnRailAudit.visible) fail("conversation turn rail is not visible at a wide viewport");
+  if (!turnRailAudit.unobscured) fail("conversation turn rail extends beneath the titlebar or composer");
+  if (turnRailAudit.count !== 8) fail("conversation turn rail rendered " + turnRailAudit.count + " markers instead of 8");
+  if (turnRailAudit.maxGap - turnRailAudit.minGap > 1) fail("conversation turn rail markers are not evenly distributed");
+  if (turnRailAudit.minHitHeight <= turnRailAudit.lineHeight * 2) fail("conversation turn rail hit regions are not larger than their visual lines");
+  if (!turnRailAudit.hitTurnId || turnRailAudit.hitTurnId !== turnRailAudit.targetTurnId) fail("conversation turn rail blank-space click did not hit its turn segment");
+  if (turnRailClickAudit.activeId !== turnRailAudit.targetTurnId) fail("conversation turn rail click did not activate immediately");
+  if (!turnRailKeyboardAudit.activeId || turnRailKeyboardAudit.activeId !== turnRailKeyboardAudit.focusedId || turnRailKeyboardAudit.activeId === turnRailClickAudit.activeId) fail("conversation turn rail keyboard navigation did not move focus and selection: " + JSON.stringify({ click: turnRailClickAudit, keyboard: turnRailKeyboardAudit }));
+  turnRailWin.close();
+
   console.log("Checking language switch...");
   const languageWin = await createWindow(1280, 720, true);
   if (!(await clickByAnyText(languageWin, ["Visual User", "User menu"]))) fail("could not open user menu for language switch");
@@ -558,7 +877,7 @@ async function runCurrentVisual() {
   await new Promise((resolve) => setTimeout(resolve, 50));
   const languageAudit = await auditWindow(languageWin, "language-switch");
   await captureVisual(languageWin, "language-switch");
-  if (!languageAudit.text.includes("New chat")) fail("English new chat action did not render");
+  if (!languageAudit.text.includes("New task")) fail("English new task action did not render");
   if (!languageAudit.text.includes("Settings")) fail("English settings navigation did not render");
   if (!languageAudit.text.includes("Workspace")) fail("English workspace section did not render");
   languageWin.close();
@@ -581,15 +900,31 @@ app.whenReady().then(runCurrentVisual).catch((error) => {
 `;
 }
 
-function preloadSource() {
+function preloadSource(featureCapabilities) {
   return String.raw`
 const { contextBridge } = require("electron");
+const fs = require("fs");
+const path = require("path");
 
 const chatListeners = new Set();
 const agentRunListeners = new Set();
 const installListeners = new Set();
 const updateListeners = new Set();
 let threads = [];
+const modelStatePath = path.join(__dirname, "model-provider-state.json");
+const initialModelConnection = {
+  model: "visual-model",
+  model_provider: "visual-provider",
+  revision: "a".repeat(64),
+  provider: { name: "visual-provider", base_url: "https://visual.example/v1", wire_api: "openai", requires_api_key: false, has_api_key: false, api_key_source: "none" },
+  runtime: { runtime_status: "applied", configured_revision: "a".repeat(64), running_revision: "a".repeat(64) },
+  last_test: null,
+  metadata: { known_model: true },
+};
+let modelConnection = fs.existsSync(modelStatePath) ? JSON.parse(fs.readFileSync(modelStatePath, "utf8")) : initialModelConnection;
+function persistModelConnection() { fs.writeFileSync(modelStatePath, JSON.stringify(modelConnection), { encoding: "utf8", mode: 0o600 }); }
+function refreshModelConnection() { if (fs.existsSync(modelStatePath)) modelConnection = JSON.parse(fs.readFileSync(modelStatePath, "utf8")); return modelConnection; }
+const modelProviderVisualState = { basicTestCalls: 0, modelTestCalls: 0, saveCalls: 0, deleteCalls: 0, lastDeleteCredential: null };
 
 let health = {
   installed: true,
@@ -657,6 +992,19 @@ function subscribe(listeners, callback) {
 }
 
 contextBridge.exposeInMainWorld("openDrSai", {
+  getModelProviderVisualState: () => ({ ...modelProviderVisualState, activeModel: modelConnection.model, activeProvider: modelConnection.model_provider, revision: modelConnection.revision }),
+  resetModelProviderVisualState: () => {
+    modelConnection = { ...modelConnection, model: "saved-model", model_provider: "visual-provider", provider: { name: "visual-provider", base_url: "https://visual.example/v1", wire_api: "openai", requires_api_key: false, has_api_key: false, api_key_source: "none" } };
+    persistModelConnection();
+    return true;
+  },
+  getPlatformDescriptor: async () => ({ id: "windows", defaultTerminalShell: "powershell", capabilities: { terminal: true, credentials: true, notifications: true, permissions: true, install: true, update: true, features: ${JSON.stringify(featureCapabilities)} } }),
+  onOpenRequest: () => () => undefined,
+  onLifecycleEvent: () => () => undefined,
+  onDiagnosticEvent: () => () => undefined,
+  onRuntimeLogEvent: () => () => undefined,
+  recordDiagnostic: async (event) => ({ ...event, id: "visual-diagnostic", timestamp: new Date().toISOString() }),
+  getDiagnosticSnapshot: async () => ({ generatedAt: new Date().toISOString(), events: [], traces: [], health: [], findings: [], deepTracing: { performance: [], resources: [], activeCheckpoints: [], clockOffsets: [] }, rootCause: { analyses: [], clusters: [], generatedAt: new Date().toISOString() }, droppedEvents: 0, storage: { eventCount: 0, maxEvents: 500, persisted: false } }),
   getAuthSession: async () => ({
     authenticated: true,
     user: {
@@ -776,6 +1124,15 @@ contextBridge.exposeInMainWorld("openDrSai", {
   cancelInstall: async () => true,
   startGateway: async () => true,
   stopGateway: async () => true,
+  getMobilePairingReadiness: async () => ({ state: "ready", action: "scan", runtime_id: "runtime_visual", environment: "production" }),
+  createMobilePairingGrant: async () => ({
+    grant_id: "ag_00000000000000000000000000000000",
+    expires_at: new Date(Date.now() + 120000).toISOString(),
+    status: "pending",
+    payload: "opendrsai://associate?v=1&environment=production&issuer=https%3A%2F%2Fai.ihep.ac.cn&code=ABCDEFGHJKLMNPQR",
+  }),
+  getMobilePairingGrant: async (grantId) => ({ grant_id: grantId, expires_at: new Date(Date.now() + 120000).toISOString(), status: "pending" }),
+  revokeMobilePairingGrant: async (grantId) => ({ grant_id: grantId, expires_at: new Date().toISOString(), status: "revoked" }),
   onRemoteGatewayOperation: () => () => undefined,
   onRemoteWorkspaceStatus: () => () => undefined,
   onWorkspaceFileChanges: () => () => undefined,
@@ -785,8 +1142,35 @@ contextBridge.exposeInMainWorld("openDrSai", {
     agents: [],
     skills: [],
     workflows: [],
+    modelConnection: refreshModelConnection(),
     updatedAt: new Date().toISOString(),
   }),
+  listMyDrSaiModelProviderPresets: async () => [{ id: "visual-provider", label: "Visual Provider", base_url: "https://visual.example/v1", wire_api: "openai", requires_api_key: false }, { id: "ollama", label: "Ollama", base_url: "http://127.0.0.1:11434/v1", wire_api: "openai", requires_api_key: false }],
+  testMyDrSaiModelDraft: async (request, mode = "basic") => {
+    if (request.model === "gateway-down") throw new Error("My DrSai is not running.");
+    if (mode === "model") modelProviderVisualState.modelTestCalls += 1;
+    else modelProviderVisualState.basicTestCalls += 1;
+    const ok = request.model !== "fail-model";
+    modelConnection = { ...modelConnection, last_test: { provider: request.model_provider, mode, ok, tested_at: new Date().toISOString(), ...(ok ? {} : { error: "synthetic_probe_failure" }) } };
+    return { ok, provider: request.model_provider, wire_api: request.wire_api || "openai", persisted: false, ...(ok ? {} : { error: "synthetic_probe_failure" }) };
+  },
+  discoverMyDrSaiProviderModels: async (provider) => ({ ok: true, provider, models: provider === "ollama" ? ["llama-test"] : ["visual-model"], cached: false }),
+  updateMyDrSaiModelConnection: async (request) => {
+    const latest = refreshModelConnection();
+    if (request.expected_revision && request.expected_revision !== latest.revision) throw new Error("config_conflict: configuration changed; reload and retry");
+    modelProviderVisualState.saveCalls += 1;
+    const nextRevision = String.fromCharCode(97 + modelProviderVisualState.saveCalls).repeat(64);
+    modelConnection = { ...modelConnection, model: request.model, model_provider: request.model_provider, revision: nextRevision, metadata: { known_model: !request.model.startsWith("unknown-") } };
+    persistModelConnection();
+    return modelConnection;
+  },
+  deleteMyDrSaiModelProvider: async (_provider, deleteCredential = true) => {
+    modelProviderVisualState.deleteCalls += 1;
+    modelProviderVisualState.lastDeleteCredential = deleteCredential;
+    modelConnection = { ...modelConnection, model: "deepseek-v4-pro", model_provider: "hepai", provider: { name: "hepai", base_url: "https://aiapi.ihep.ac.cn/v1", wire_api: "openai", requires_api_key: true, has_api_key: true, api_key_source: "secure" } };
+    persistModelConnection();
+    return { ok: true, active: "hepai" };
+  },
   bootstrapDesktop: async () => ({
     ready: true,
     message: "OpenDrSai visual runtime is ready.",
@@ -806,6 +1190,10 @@ contextBridge.exposeInMainWorld("openDrSai", {
     providerDisclosure: "Visual fixture transcription is active.",
     message: "Visual fixture voice runtime is ready.",
   }),
+  onStreamingVoiceTranscriptionEvent: () => () => undefined,
+  getStreamingVoiceCapabilities: async () => null,
+  recoverChatRun: async () => [],
+  listSshHosts: async () => [],
   listWorkspaces: async () => [],
   createWorkspace: async (request) => ({
     id: "workspace-" + crypto.randomUUID(),
@@ -859,6 +1247,11 @@ contextBridge.exposeInMainWorld("openDrSai", {
     return thread;
   },
   updateThreadSnapshot: async (snapshot) => snapshot,
+  getThreadSnapshot: async () => null,
+  subscribeThreadSnapshot: async () => true,
+  unsubscribeThreadSnapshot: async () => true,
+  onThreadSnapshot: () => () => undefined,
+  onThreadCatalogUpdate: () => () => undefined,
   getIdeContext: async () => ({ providers: [], contexts: [], generatedAt: new Date().toISOString() }),
   listProjectMemory: async () => [],
   addProjectMemory: async (request) => ({
@@ -942,6 +1335,12 @@ contextBridge.exposeInMainWorld("openDrSai", {
   startChat: async (request) => {
     const requestId = request.requestId || crypto.randomUUID();
     emit(chatListeners, { requestId, seq: 1, type: "start" });
+    const latestMessage = Array.isArray(request.messages) ? request.messages.at(-1)?.content || "" : "";
+    if (latestMessage.includes("visual rail turn")) {
+      setTimeout(() => emit(chatListeners, { requestId, seq: 2, type: "chunk", content: "Rail response." }), 20);
+      setTimeout(() => emit(chatListeners, { requestId, seq: 3, type: "done" }), 45);
+      return requestId;
+    }
     setTimeout(() => emit(chatListeners, { requestId, seq: 2, type: "reasoning", content: "Checking renderer constraints." }), 700);
     setTimeout(() => emit(chatListeners, { requestId, seq: 3, type: "tool_timeline", toolTimeline: { id: "visual-read", kind: "tool_call", title: "Read workspace file", toolName: "read_file", status: "completed", content: "src/main.ts" } }), 900);
     setTimeout(() => emit(chatListeners, { requestId, seq: 4, type: "chunk", content: "Mock **desktop** chat stream.\n\n" }), 1200);

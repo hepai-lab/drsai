@@ -13,7 +13,6 @@ import {
   Search,
   Send,
   Sparkles,
-  Star,
   Terminal,
   Trash2,
   UploadCloud,
@@ -32,67 +31,28 @@ import type {
 } from "@shared/desktopApi";
 import { desktopApi } from "../desktopApi";
 import type { AppLanguage } from "../navigation";
-
-type SkillStatus = "installed" | "available";
-
-interface SkillCardData {
-  id: string;
-  name: string;
-  description: string;
-  category: string;
-  status: SkillStatus;
-  featured?: boolean;
-}
+// Temporarily hide Skills management UI — keep for later reuse.
+// import { SkillsManager } from "./SkillsManager";
 
 interface SkillSquareFocusTarget {
   query: string;
   source: "slash_command";
 }
 
-const SKILLS: SkillCardData[] = [
-  {
-    id: "academic-search",
-    name: "Academic Search",
-    description: "Search, rank, and summarize papers for research workflows.",
-    category: "Research",
-    status: "installed",
-    featured: true,
-  },
-  {
-    id: "ragflow-knowledge",
-    name: "RAGFlow Knowledge",
-    description: "Build and query local knowledge bases from documents.",
-    category: "Knowledge",
-    status: "installed",
-  },
-  {
-    id: "playwright-cli",
-    name: "Playwright CLI",
-    description: "Inspect, test, and automate browser workflows.",
-    category: "Automation",
-    status: "available",
-  },
-  {
-    id: "image-process",
-    name: "Image Process",
-    description: "Process local images and prepare visual assets.",
-    category: "Media",
-    status: "available",
-  },
-];
 
 export function SkillSquareView({
+  activeThreadId,
   initialFocus,
   language,
   workspacePath,
 }: {
+  activeThreadId?: string;
   initialFocus?: SkillSquareFocusTarget;
   language: AppLanguage;
   workspacePath?: string;
 }): React.JSX.Element {
   const zh = language === "zh";
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | SkillStatus>("all");
   const [refreshing, setRefreshing] = useState(false);
   const [projectMemory, setProjectMemory] = useState<DesktopProjectMemoryEntry[]>([]);
   const [skillDrafts, setSkillDrafts] = useState<DesktopProjectSkillDraft[]>([]);
@@ -121,18 +81,6 @@ export function SkillSquareView({
   const [memoryMessage, setMemoryMessage] = useState<string | null>(null);
   const normalizedFocusQuery = normalizeSkillSquareQuery(initialFocus?.query ?? "");
 
-  const filteredSkills = useMemo(() => {
-    const normalizedSearch = search.trim().toLowerCase();
-    return SKILLS.filter((skill) => {
-      if (statusFilter !== "all" && skill.status !== statusFilter) return false;
-      if (!normalizedSearch) return true;
-      return [skill.name, skill.description, skill.category]
-        .join(" ")
-        .toLowerCase()
-        .includes(normalizedSearch);
-    });
-  }, [search, statusFilter]);
-
   const filteredWorkflowTemplates = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
     if (!normalizedSearch) return workflowTemplates;
@@ -145,7 +93,6 @@ export function SkillSquareView({
     const query = initialFocus?.query.trim();
     if (!query) return;
     setSearch(query);
-    setStatusFilter("all");
     setWorkflowMessage(
       `Focused from /skills: ${query}. Review the highlighted skill or workflow before starting any run.`,
     );
@@ -356,7 +303,7 @@ export function SkillSquareView({
       await refreshBackgroundTasks();
       await refreshScheduledWorkerStatus();
       setWorkflowMessage(
-        `Scheduled scan checked ${result.checked} due task(s), triggered ${result.triggered}, reconnected ${result.reconnected}, skipped ${result.skipped}, blocked ${result.blocked}.`,
+        `Scheduled scan checked ${result.checked} due task(s), triggered ${result.triggered}, reconnected ${result.reconnected}, skipped ${result.skipped}, failed ${result.failed}, blocked ${result.blocked}.`,
       );
     } catch (error) {
       setWorkflowMessage(
@@ -490,6 +437,33 @@ export function SkillSquareView({
         error instanceof Error
           ? error.message
           : "Failed to dispatch workflow step.",
+      );
+    } finally {
+      setWorkflowDispatchBusyId(null);
+    }
+  }
+
+  async function completeWorkflowStep(
+    run: DesktopWorkflowRun,
+    stepId: string,
+  ): Promise<void> {
+    setWorkflowDispatchBusyId(`${run.id}:${stepId}`);
+    setWorkflowMessage(null);
+    try {
+      const result = await desktopApi.completeWorkflowRunStep({
+        runId: run.id,
+        stepId,
+        exitCode: 0,
+        output: run.steps.find((step) => step.id === stepId)?.kind === "external_runtime"
+          ? "Operator confirmed the provider runtime was reconnected."
+          : "Confirmed after the chat action finished.",
+      });
+      setWorkflowRun(result.run);
+      await refreshBackgroundTasks();
+      setWorkflowMessage(result.message);
+    } catch (error) {
+      setWorkflowMessage(
+        error instanceof Error ? error.message : "Failed to complete workflow step.",
       );
     } finally {
       setWorkflowDispatchBusyId(null);
@@ -719,9 +693,6 @@ export function SkillSquareView({
       <div className="skill-square-toolbar">
         <div className="skill-square-title-block">
           <strong>{zh ? "技能" : "Skills"}</strong>
-          <span>
-            {filteredSkills.length}/{SKILLS.length}
-          </span>
         </div>
         <label className="skill-square-search">
           <Search size={15} />
@@ -732,25 +703,6 @@ export function SkillSquareView({
           />
         </label>
         <div className="skill-square-actions">
-          <div
-            className="skill-square-segmented"
-            aria-label={zh ? "筛选技能" : "Filter skills"}
-          >
-            {([
-              ["all", zh ? "全部" : "All"],
-              ["installed", zh ? "已安装" : "Installed"],
-              ["available", zh ? "可安装" : "Available"],
-            ] as const).map(([key, label]) => (
-              <button
-                key={key}
-                type="button"
-                className={statusFilter === key ? "active" : ""}
-                onClick={() => setStatusFilter(key)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
           <button className="skill-square-refresh" type="button" onClick={refreshSkills}>
             <RefreshCw size={14} className={refreshing ? "spinning" : ""} />
             {zh ? "刷新" : "Refresh"}
@@ -997,6 +949,7 @@ export function SkillSquareView({
               run={workflowRun}
               busyStepKey={workflowDispatchBusyId}
               onDispatch={dispatchWorkflowStep}
+              onComplete={completeWorkflowStep}
             />
           ) : null}
           {workflowRun &&
@@ -1073,21 +1026,10 @@ export function SkillSquareView({
             )}
           </div>
         </section>
-        <section className="skill-square-section">
-          <h3>
-            <Star size={14} fill="currentColor" />
-            {zh ? "推荐技能" : "Featured"}
-          </h3>
-          <div className="skill-square-grid">
-            {filteredSkills.map((skill) => (
-              <SkillCard
-                focused={Boolean(normalizedFocusQuery) && matchesSkill(skill, normalizedFocusQuery)}
-                key={skill.id}
-                skill={skill}
-                zh={zh}
-              />
-            ))}
-          </div>
+        <section className="skill-square-section skill-manager-section">
+          {/* Temporarily hide Skills management UI — keep for later reuse.
+          <SkillsManager activeThreadId={activeThreadId} language={language} />
+          */}
         </section>
       </div>
     </section>
@@ -1454,10 +1396,12 @@ function WorkflowRunExecution({
   run,
   busyStepKey,
   onDispatch,
+  onComplete,
 }: {
   run: DesktopWorkflowRun;
   busyStepKey: string | null;
   onDispatch: (run: DesktopWorkflowRun, stepId: string) => void;
+  onComplete: (run: DesktopWorkflowRun, stepId: string) => void;
 }): React.JSX.Element {
   return (
     <div className={`workflow-run-execution ${run.status}`} aria-label="Workflow run status">
@@ -1489,12 +1433,14 @@ function WorkflowRunExecution({
               type="button"
               className="workflow-step-dispatch"
               disabled={!canDispatchWorkflowStep(step) || busyStepKey === `${run.id}:${step.id}`}
-              onClick={() => onDispatch(run, step.id)}
+              onClick={() => isCompletableWorkflowStep(step)
+                ? onComplete(run, step.id)
+                : onDispatch(run, step.id)}
               title={getWorkflowDispatchTitle(step)}
             >
               {getWorkflowDispatchIcon(step)}
               {busyStepKey === `${run.id}:${step.id}`
-                ? "Dispatching"
+                ? isCompletableWorkflowStep(step) ? "Confirming" : "Dispatching"
                 : getWorkflowDispatchLabel(step)}
             </button>
           </li>
@@ -1505,15 +1451,17 @@ function WorkflowRunExecution({
 }
 
 function canDispatchWorkflowStep(step: DesktopWorkflowRun["steps"][number]): boolean {
-  return (
-    step.status !== "blocked" &&
-    step.status !== "waiting_approval" &&
-    step.status !== "completed" &&
-    step.kind !== "approval"
-  );
+  return step.status === "ready" || isCompletableWorkflowStep(step);
+}
+
+function isCompletableWorkflowStep(step: DesktopWorkflowRun["steps"][number]): boolean {
+  return (step.kind === "chat_command" && step.status === "running") ||
+    (step.kind === "external_runtime" && step.status === "waiting_approval");
 }
 
 function getWorkflowDispatchLabel(step: DesktopWorkflowRun["steps"][number]): string {
+  if (step.kind === "chat_command" && step.status === "running") return "Confirm chat complete";
+  if (step.kind === "external_runtime" && step.status === "waiting_approval") return "Confirm runtime reconnected";
   if (step.resumeAction === "dispatch_chat") return "Resume chat";
   if (step.resumeAction === "prepare_terminal") return "Resume terminal";
   if (step.resumeAction === "reconnect_external") return "Reconnect runtime";
@@ -1620,50 +1568,8 @@ function WorkflowTemplateCard({
   );
 }
 
-function SkillCard({
-  focused,
-  skill,
-  zh,
-}: {
-  focused: boolean;
-  skill: SkillCardData;
-  zh: boolean;
-}): React.JSX.Element {
-  const installed = skill.status === "installed";
-  return (
-    <article className={`skill-card ${focused ? "focused" : ""}`}>
-      <div className="skill-card-top">
-        <span className={`skill-status-pill ${skill.status}`}>
-          {installed ? <BookOpen size={12} /> : <Download size={12} />}
-          {installed ? (zh ? "已安装" : "Installed") : (zh ? "可安装" : "Available")}
-        </span>
-        {skill.featured && (
-          <span className="skill-featured-star" title={zh ? "推荐" : "Featured"}>
-            <Sparkles size={15} />
-          </span>
-        )}
-      </div>
-      <div className="skill-card-main">
-        <span className="skill-logo">{skill.name.slice(0, 1)}</span>
-        <div>
-          <h4>{skill.name}</h4>
-          <span>{skill.category}</span>
-        </div>
-      </div>
-      <p>{skill.description}</p>
-    </article>
-  );
-}
-
 function normalizeSkillSquareQuery(value: string): string {
   return value.trim().toLowerCase();
-}
-
-function matchesSkill(skill: SkillCardData, normalizedQuery: string): boolean {
-  return [skill.id, skill.name, skill.description, skill.category]
-    .join(" ")
-    .toLowerCase()
-    .includes(normalizedQuery);
 }
 
 function matchesWorkflowTemplate(

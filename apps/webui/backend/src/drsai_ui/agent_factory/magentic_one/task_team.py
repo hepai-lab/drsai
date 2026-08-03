@@ -26,6 +26,7 @@ from ..local_agents.ragflow_agent import RAGFlowAgent
 from drsai.modules.baseagent import DrSaiUserProxyAgent # DrSaiAgent,
 from .agents.user_proxy import RoundbinDrSaiUserProxyAgent
 from drsai.modules.agents import HepAIWorkerAgent
+from drsai_ui.platform_config import get_active_platform
 # from drsai.modules.components.memory.ragflow_memory import RAGFlowMemory, RAGFlowMemoryConfig
 
 from ...ui_backend.input_func import InputFuncType, make_agentchat_input_func
@@ -454,12 +455,13 @@ async def create_magentic_round_team(
         # )
     
     elif agent_mode == "custom":
+        platform_base_url = get_active_platform().base_url
 
         model_config_default = {
             'provider': 'drsai.HepAIChatCompletionClient', 
             'config': {
                 'model': 'deepseek-ai/deepseek-v3:671b', 
-                'base_url': 'https://aiapi.ihep.ac.cn/apiv2', 
+                'base_url': platform_base_url,
                 'api_key': api_key, 
                 'max_retries': 10
             }
@@ -468,7 +470,7 @@ async def create_magentic_round_team(
         model_client = agent_config.get("model_client")
         if model_client is not None:
             model_config_default["config"]["model"] = model_client.get("model")
-            model_config_default["config"]["base_url"] = model_client.get("base_url") or "https://aiapi.ihep.ac.cn/apiv2"
+            model_config_default["config"]["base_url"] = model_client.get("base_url") or platform_base_url
             model_config_default["config"]["api_key"] = model_client.get("api_key") or api_key
 
         ragflow_configs = agent_config.get("ragflow_configs")

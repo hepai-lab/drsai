@@ -2,6 +2,7 @@ import {
   FormEvent,
   ClipboardEvent as ReactClipboardEvent,
   KeyboardEvent as ReactKeyboardEvent,
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -18,6 +19,7 @@ import {
   ChevronRight,
   ClipboardList,
   FileCode2,
+  FileText,
   Folder,
   FolderPlus,
   Gauge,
@@ -40,9 +42,12 @@ import {
   Telescope,
   Volume2,
   X,
+  // Temporarily unused while composer Skills picker is hidden — keep for later reuse.
+  // Zap,
 } from "lucide-react";
 import drsaiLogo from "../assets/drsai.png";
 import { canHandleMemoryRequestLocally } from "../userPreferenceIntent";
+import { isTextCompositionEvent, shouldSubmitTextInput } from "../imeKeyboardPolicy";
 import type {
   ChatMessage,
   DesktopAgent,
@@ -52,6 +57,7 @@ import type {
   DesktopVoiceInteractionMode,
   DesktopVoiceRuntimeStatus,
   DesktopStreamingVoiceCapabilities,
+  DesktopThreadHistoryState,
   DesktopVoiceTranscriptionResult,
   ChatToolTimelineEvent,
   ChatMessagePart,
@@ -67,12 +73,18 @@ import type {
   WorkspaceFolderSummaryResult,
   WorkspaceInstructionSummary,
   WorkspaceProject,
+  GatewaySkill,
 } from "@shared/desktopApi";
-import type { ChatAttachment } from "@shared/desktopApi";
-import type { ArtifactPart, CitationPart, InteractionPart, StructuredTurnState } from "@shared/structuredConversation";
+import type { ChatAttachment, InteractionOption } from "@shared/desktopApi";
+import type { ArtifactPart, CitationPart, InteractionPart, StructuredAssistantPart, StructuredTurnState } from "@shared/structuredConversation";
 import type { AppLanguage } from "../navigation";
+import { getAgentEmptyChatPrompts, parseCatalogAgentExamples } from "../agentExamplePrompts";
 import { desktopApi, hasDesktopApi } from "../desktopApi";
 import { copyTextSafely } from "../clipboard";
+import {
+  resolveTurnRailNavigationIndex,
+  type TurnRailNavigationKey,
+} from "../conversationTurnRail";
 import {
   CHAT_COMMAND_NAMES,
   parseForkQueueEntries,
@@ -123,10 +135,18 @@ export type UiMessage = ChatMessage & {
   structuredTurn?: StructuredTurnState;
   startedAt?: number;
   lastEventAt?: number;
+  firstFeedbackAt?: number;
+  firstDeltaAt?: number;
+  /** Files/folders attached when the user sent this message (shown as chips in the bubble). */
+  attachments?: ChatAttachment[];
   inputRequest?: {
     requestId: string;
     prompt: string;
-    inputType: "text_input" | "approval";
+    inputType: "text_input" | "approval" | "choice" | "confirmation";
+    options?: InteractionOption[];
+    defaultValue?: string;
+    allowCustom?: boolean;
+    timeoutAt?: string;
   };
 };
 
@@ -165,6 +185,11 @@ const THINKING_EFFORTS: ThinkingEffort[] = ["low", "medium", "high", "xhigh"];
 const MAX_CLIPBOARD_IMAGE_BYTES = 1_250_000;
 const MAX_CLIPBOARD_IMAGE_COUNT = 4;
 const MAX_CLIPBOARD_PATH_MENTIONS = 6;
+function useEventCallback<Args extends unknown[], Result>(callback: (...args: Args) => Result): (...args: Args) => Result {
+  const callbackRef = useRef(callback);
+  callbackRef.current = callback;
+  return useCallback((...args: Args) => callbackRef.current(...args), []);
+}
 
 export interface ChatForkQueueAgentAssignment {
   queueIndex: number;
@@ -178,6 +203,7 @@ export interface ChatSubmitOptions {
   forkQueueAgentAssignments?: ChatForkQueueAgentAssignment[];
   model?: string;
   runtimeMode?: ChatRuntimeMode | null;
+  skillName?: string | null;
   thinkingEffort: ThinkingEffort;
 }
 
@@ -186,7 +212,10 @@ interface ChatWorkspaceProps {
   canChat: boolean;
   chatUnavailableReason?: string;
   conversationId: string;
+  conversationTitle?: string;
   conversationHistoryPending?: boolean;
+  conversationHistory?: DesktopThreadHistoryState;
+  continuesExistingTask?: boolean;
   health: DesktopHealth | null;
   input: string;
   language: AppLanguage;
@@ -229,18 +258,22 @@ interface ChatWorkspaceProps {
   onAttachIdeCurrentFile?: () => void;
   onAttachIdeCurrentSelection?: () => void;
   onRefreshIdeContext?: () => void;
+  onRetryMessage?: (assistantMessageId: string, mode: "same_session" | "new_session") => void | Promise<void>;
   onSubmit: (
     attachments?: ChatAttachment[],
     options?: ChatSubmitOptions,
   ) => Promise<boolean>;
 }
 
-export function ChatWorkspace({
+function ChatWorkspaceImpl({
   activeRequestId,
   canChat,
   chatUnavailableReason,
   conversationId,
+  conversationTitle,
   conversationHistoryPending = false,
+  conversationHistory,
+  continuesExistingTask = false,
   input,
   language,
   messages,
@@ -280,11 +313,13 @@ export function ChatWorkspace({
   onAttachIdeCurrentFile,
   onAttachIdeCurrentSelection,
   onRefreshIdeContext,
+  onRetryMessage,
   onSubmit,
 }: ChatWorkspaceProps): React.JSX.Element {
   const [toolsOpen, setToolsOpen] = useState(false);
   const [highlightedTurnId, setHighlightedTurnId] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  const [interactionDraft, setInteractionDraft] = useState("");
   const [materialRoleAnalysis, setMaterialRoleAnalysis] = useState<MaterialRoleAnalysisResult | null>(null);
   const [materialRolePhase, setMaterialRolePhase] = useState<"idle" | "analyzing" | "ready" | "failed">("idle");
   const [materialConsistencyAnalysis, setMaterialConsistencyAnalysis] = useState<MaterialConsistencyAnalysisResult | null>(null);
@@ -295,11 +330,16 @@ export function ChatWorkspace({
   const materialConsistencyRequestRef = useRef(0);
   const [thinkingEffort, setThinkingEffort] = useState<ThinkingEffort>(defaultThinkingEffort);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [metaMenuOpen, setMetaMenuOpen] = useState<"agent" | "model" | "thinking" | null>(null);
+  const [metaMenuOpen, setMetaMenuOpen] = useState<"agent" | "model" | "thinking" | "skill" | null>(null);
+  const [installedSkills, setInstalledSkills] = useState<GatewaySkill[]>([]);
+  const [skillsLoading, setSkillsLoading] = useState(false);
+  const [skillsLoadError, setSkillsLoadError] = useState<string | null>(null);
+  const [selectedSkillName, setSelectedSkillName] = useState<string | null>(null);
   const [introMenuOpen, setIntroMenuOpen] = useState<"workspace" | "agent" | null>(null);
   const [introSearchQuery, setIntroSearchQuery] = useState("");
   const [forkQueueAgentSelections, setForkQueueAgentSelections] = useState<Record<number, string>>({});
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchDate, setSearchDate] = useState("");
   const [activeMatchIndex, setActiveMatchIndex] = useState(0);
   const [voiceReviewText, setVoiceReviewText] = useState<string | null>(null);
   const [voiceReviewSource, setVoiceReviewSource] = useState<"serial" | "streaming" | null>(null);
@@ -475,12 +515,44 @@ export function ChatWorkspace({
     transcribe: transcribeVoiceBlob,
   } = useVoiceTranscription(setVoiceProgressMessage);
   const [respondedInputRequests, setRespondedInputRequests] = useState<Set<string>>(() => new Set());
-  const [turnRailMarkers, setTurnRailMarkers] = useState<Array<{ id: string; top: number }>>([]);
   const [activeTurnRailId, setActiveTurnRailId] = useState<string | null>(null);
+  const [awayFromLatest, setAwayFromLatest] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const messageListRef = useRef<HTMLDivElement | null>(null);
+  const turnRailNavigationTargetRef = useRef<string | null>(null);
+  const turnRailNavigationTimerRef = useRef<number | null>(null);
   const composerRef = useRef<HTMLFormElement | null>(null);
+  const composerDropRef = useCallback((form: HTMLFormElement | null) => {
+    composerRef.current = form;
+    if (!form) return;
+    const onDrag = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    const onDrop = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!e.dataTransfer?.files.length) return;
+      const getPath = hasDesktopApi()
+        ? (f: File): string => desktopApi.getPathForFile(f)
+        : (f: File): string => `C:\\Users\\Demo\\Downloads\\${f.name}`;
+      const added: ComposerAttachment[] = [];
+      for (const f of Array.from(e.dataTransfer.files)) {
+        const p = getPath(f);
+        if (!p) continue;
+        added.push({ id: crypto.randomUUID(), kind: "file", path: p, name: f.name || p.split(/[\\/]/).pop() || "unknown", importFile: { path: p, name: f.name || p.split(/[\\/]/).pop() || "unknown", extension: (f.name || "").includes(".") ? ((f.name || "").split(".").pop() || "") : "", category: "other", status: "ready" } });
+      }
+      if (!added.length) return;
+      setAttachments((c) => { const ex = new Set(c.map((i) => i.path)); return [...c, ...added.filter((a) => !ex.has(a.path))]; });
+      setToolsOpen(false);
+    };
+    form.addEventListener("dragover", onDrag, true);
+    form.addEventListener("drop", onDrop, true);
+    (form as any).__drsaiDropOff = () => { form.removeEventListener("dragover", onDrag, true); form.removeEventListener("drop", onDrop, true); };
+    return () => { (form as any).__drsaiDropOff?.(); };
+  }, []);
   const attachmentButtonRef = useRef<HTMLButtonElement | null>(null);
+  const toolsMenuRef = useRef<HTMLDivElement | null>(null);
   const introPickerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -495,8 +567,25 @@ export function ChatWorkspace({
         window.requestAnimationFrame(() => attachmentButtonRef.current?.focus());
       }
     };
+    const handlePointerDown = (event: PointerEvent): void => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (toolsOpen && !toolsMenuRef.current?.contains(target)) {
+        setToolsOpen(false);
+      }
+      if (metaMenuOpen) {
+        // Only keep the active meta menu open when clicking its own chip/panel —
+        // not the whole meta bar (voice controls / send would otherwise block dismiss).
+        const inActiveMenu = target.closest(`[data-meta-menu="${metaMenuOpen}"]`);
+        if (!inActiveMenu) setMetaMenuOpen(null);
+      }
+    };
     window.addEventListener("keydown", handleEscape);
-    return () => window.removeEventListener("keydown", handleEscape);
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      window.removeEventListener("keydown", handleEscape);
+      window.removeEventListener("pointerdown", handlePointerDown);
+    };
   }, [metaMenuOpen, toolsOpen]);
 
   useEffect(() => {
@@ -540,16 +629,28 @@ export function ChatWorkspace({
     if (response?.trim()) void respondToAgentInput(request, response.trim());
   }
 
-  function respondToStructuredInteraction(part: InteractionPart, response: { approved: boolean }): void {
+  const respondToStructuredInteraction = useEventCallback((part: InteractionPart, response: { approved?: boolean; decision?: "accept" | "acceptForSession" | "decline" }): void => {
     void respondToAgentInput({
       requestId: part.requestId,
       prompt: part.prompt,
       inputType: part.interactionType === "approval" ? "approval" : "text_input",
     }, response);
+  });
+
+  const requestStructuredTextInput = useEventCallback((part: InteractionPart): void => {
+    requestTextAgentInput({ requestId: part.requestId, prompt: part.prompt, inputType: "text_input" });
+  });
+
+  function respondToActiveInput(response: string | Record<string, unknown>): void {
+    if (!activeInputRequest) return;
+    void respondToAgentInput(activeInputRequest, response);
   }
 
-  function requestStructuredTextInput(part: InteractionPart): void {
-    requestTextAgentInput({ requestId: part.requestId, prompt: part.prompt, inputType: "text_input" });
+  function submitInteractionDraft(): void {
+    const response = interactionDraft.trim();
+    if (!response) return;
+    respondToActiveInput(response);
+    setInteractionDraft("");
   }
   const shouldFollowOutputRef = useRef(true);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
@@ -564,9 +665,33 @@ export function ChatWorkspace({
   const lastAutoReadMessageIdRef = useRef<string | null>(null);
   const zh = language === "zh";
   const [now, setNow] = useState(Date.now());
+  const activeInputRequest = useMemo(
+    () => [...messages]
+      .reverse()
+      .map((message) => message.inputRequest)
+      .find((request): request is NonNullable<UiMessage["inputRequest"]> =>
+        Boolean(request && !respondedInputRequests.has(request.requestId)),
+      ) ?? null,
+    [messages, respondedInputRequests],
+  );
+
+  useEffect(() => {
+    setInteractionDraft(activeInputRequest?.defaultValue ?? "");
+  }, [activeInputRequest?.requestId, activeInputRequest?.defaultValue]);
   const hasStreamingMessage = messages.some((message) => message.streaming);
   const showStop = Boolean(activeRequestId || hasStreamingMessage);
   const emptyChat = messages.every((message) => message.id === "welcome");
+  const conversationMessages = useMemo(
+    () => messages.filter((message) => message.id !== "welcome"),
+    [messages],
+  );
+  const visibleMessages = conversationMessages;
+  const turnRailMarkers = useMemo(
+    () => visibleMessages
+      .filter((message) => message.role === "user")
+      .map((message) => ({ id: message.id })),
+    [visibleMessages],
+  );
   const canSaveLocalPreference = canHandleMemoryRequestLocally(input);
   const canAnswerMaterialInventoryLocally = Boolean(materialRoleAnalysis?.items.length) && isMaterialInventoryQuestion(input);
   const canAnswerMaterialQuestionLocally = Boolean(materialRoleAnalysis?.items.length) && isNaturalMaterialQuestion(input);
@@ -597,12 +722,12 @@ export function ChatWorkspace({
   const hasAgentOptions = agentOptions.length > 0;
   const hasModelOptions = modelOptions.length > 0;
   const parsedSamplePrompts = useMemo(
-    () => parseAgentExamples(samplePrompts, language),
+    () => parseCatalogAgentExamples(samplePrompts, language),
     [samplePrompts, language],
   );
   const emptyChatPrompts = useMemo(
-    () => getEmptyChatPrompts(parsedSamplePrompts, zh),
-    [parsedSamplePrompts, zh],
+    () => getAgentEmptyChatPrompts(parsedSamplePrompts, language),
+    [parsedSamplePrompts, language],
   );
   const activeWorkspaceName = workspaceName?.trim() || getWorkspaceDisplayName(workspacePath, zh);
   const normalizedIntroSearch = introSearchQuery.trim().toLocaleLowerCase();
@@ -970,8 +1095,23 @@ export function ChatWorkspace({
   const closeSearch = useCallback(() => {
     setSearchOpen(false);
     setSearchQuery("");
+    setSearchDate("");
     setActiveMatchIndex(0);
   }, []);
+
+  function locateConversationDate(value: string): void {
+    setSearchDate(value);
+    if (!value) return;
+    const start = new Date(`${value}T00:00:00`).getTime();
+    const end = start + 24 * 60 * 60 * 1000;
+    const match = conversationMessages.find((message) => {
+      const at = message.startedAt ?? message.lastEventAt ?? 0;
+      return at >= start && at < end;
+    });
+    if (!match) return;
+    window.requestAnimationFrame(() => document.querySelector(`[data-message-id="${match.id}"]`)
+      ?.scrollIntoView({ block: "center", behavior: "smooth" }));
+  }
 
   const selectNextMatch = useCallback(() => {
     setActiveMatchIndex((current) =>
@@ -990,16 +1130,22 @@ export function ChatWorkspace({
   useEffect(() => {
     const textarea = textareaRef.current;
     if (!textarea) return;
-    textarea.style.height = "52px";
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 120)}px`;
+    textarea.style.height = "40px";
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 116)}px`;
   }, [input]);
 
   useEffect(() => {
     const composer = composerRef.current;
     const messageList = messageListRef.current;
     if (!composer || !messageList || emptyChat) return;
+    const chatPane = messageList.parentElement;
     const updateComposerHeight = (): void => {
-      messageList.style.setProperty("--chat-composer-height", `${composer.offsetHeight}px`);
+      const height = `${composer.offsetHeight}px`;
+      messageList.style.setProperty("--chat-composer-height", height);
+      chatPane?.style.setProperty("--chat-composer-height", height);
+      if (shouldFollowOutputRef.current) {
+        window.requestAnimationFrame(() => scrollMessageListToLatest("auto"));
+      }
     };
     let frame = window.requestAnimationFrame(updateComposerHeight);
     const scheduleComposerHeight = (): void => {
@@ -1012,6 +1158,7 @@ export function ChatWorkspace({
       window.cancelAnimationFrame(frame);
       observer.disconnect();
       messageList.style.removeProperty("--chat-composer-height");
+      chatPane?.style.removeProperty("--chat-composer-height");
     };
   }, [emptyChat]);
 
@@ -1021,8 +1168,9 @@ export function ChatWorkspace({
 
   useEffect(() => {
     if (!activeMatchId) return;
-    const node = document.querySelector(`[data-message-id="${activeMatchId}"]`);
-    node?.scrollIntoView({ block: "center", behavior: "smooth" });
+    const reveal = () => document.querySelector(`[data-message-id="${activeMatchId}"]`)
+      ?.scrollIntoView({ block: "center", behavior: "smooth" });
+    reveal();
   }, [activeMatchId]);
 
   useEffect(() => {
@@ -1076,56 +1224,57 @@ export function ChatWorkspace({
     return () => window.clearInterval(timer);
   }, [messages]);
 
-  useEffect(() => {
-    const list = messageListRef.current;
-    if (!list || !shouldFollowOutputRef.current) return;
-    list.scrollTo({ top: list.scrollHeight, behavior: messages.some((message) => message.streaming) ? "auto" : "smooth" });
-  }, [messages]);
+  function getMessageListMaxScrollTop(list: HTMLDivElement): number {
+    return Math.max(0, list.scrollHeight - list.clientHeight);
+  }
 
-  const updateTurnRail = useCallback((): void => {
+  function scrollMessageListToLatest(behavior: ScrollBehavior = "auto"): void {
     const list = messageListRef.current;
     if (!list) return;
-    const nodes = [...list.querySelectorAll<HTMLElement>(".message.user[data-message-id]")];
-    const scrollHeight = Math.max(list.scrollHeight, 1);
-    const viewportCenter = list.scrollTop + list.clientHeight / 2;
-    let nearestId: string | null = null;
-    let nearestDistance = Number.POSITIVE_INFINITY;
-    const markers = nodes.flatMap((node) => {
-      const id = node.dataset.messageId;
-      if (!id) return [];
-      const center = node.offsetTop + node.offsetHeight / 2;
-      const distance = Math.abs(center - viewportCenter);
-      if (distance < nearestDistance) {
-        nearestDistance = distance;
-        nearestId = id;
+    const target = getMessageListMaxScrollTop(list);
+    list.scrollTo({ top: target, behavior });
+    window.requestAnimationFrame(() => {
+      if (!shouldFollowOutputRef.current) return;
+      const nextTarget = getMessageListMaxScrollTop(list);
+      if (Math.abs(list.scrollTop - nextTarget) > 2) {
+        list.scrollTop = nextTarget;
       }
-      return [{ id, top: Math.max(1, Math.min(99, (center / scrollHeight) * 100)) }];
     });
-    setTurnRailMarkers(markers);
-    setActiveTurnRailId(nearestId);
-  }, []);
+  }
+
+  useEffect(() => {
+    if (!messageListRef.current || !shouldFollowOutputRef.current) return;
+    scrollMessageListToLatest(messages.some((message) => message.streaming) ? "auto" : "smooth");
+  }, [messages]);
 
   useEffect(() => {
     const list = messageListRef.current;
     if (!list || emptyChat) {
-      setTurnRailMarkers([]);
       setActiveTurnRailId(null);
       return undefined;
     }
-    let frame = window.requestAnimationFrame(updateTurnRail);
-    const scheduleTurnRail = (): void => {
-      window.cancelAnimationFrame(frame);
-      frame = window.requestAnimationFrame(updateTurnRail);
-    };
-    const observer = new ResizeObserver(scheduleTurnRail);
-    observer.observe(list);
-    window.addEventListener("resize", scheduleTurnRail);
+    const visibleTurns = new Map<string, IntersectionObserverEntry>();
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        const id = (entry.target as HTMLElement).dataset.messageId;
+        if (!id) continue;
+        if (entry.isIntersecting) visibleTurns.set(id, entry);
+        else visibleTurns.delete(id);
+      }
+      if (turnRailNavigationTargetRef.current || visibleTurns.size === 0) return;
+      const center = list.getBoundingClientRect().top + list.clientHeight / 2;
+      const nearest = [...visibleTurns.entries()].reduce<{ id: string; distance: number } | null>((best, [id, entry]) => {
+        const entryCenter = entry.boundingClientRect.top + entry.boundingClientRect.height / 2;
+        const distance = Math.abs(entryCenter - center);
+        return !best || distance < best.distance ? { id, distance } : best;
+      }, null);
+      if (nearest) setActiveTurnRailId((current) => current === nearest.id ? current : nearest.id);
+    }, { root: list, threshold: [0, 0.01, 0.5, 1] });
+    list.querySelectorAll<HTMLElement>(".message.user[data-message-id]").forEach((message) => observer.observe(message));
     return () => {
-      window.cancelAnimationFrame(frame);
       observer.disconnect();
-      window.removeEventListener("resize", scheduleTurnRail);
     };
-  }, [emptyChat, messages, updateTurnRail]);
+  }, [emptyChat, visibleMessages]);
 
   function scrollToUserTurn(messageId: string): void {
     const list = messageListRef.current;
@@ -1134,15 +1283,54 @@ export function ChatWorkspace({
     );
     if (!list || !message) return;
     shouldFollowOutputRef.current = false;
+    turnRailNavigationTargetRef.current = messageId;
+    if (turnRailNavigationTimerRef.current !== null) {
+      window.clearTimeout(turnRailNavigationTimerRef.current);
+    }
     setActiveTurnRailId(messageId);
     list.scrollTo({ top: Math.max(0, message.offsetTop - 18), behavior: "smooth" });
+    turnRailNavigationTimerRef.current = window.setTimeout(() => {
+      turnRailNavigationTargetRef.current = null;
+      turnRailNavigationTimerRef.current = null;
+    }, 600);
+  }
+
+  useEffect(() => () => {
+    if (turnRailNavigationTimerRef.current !== null) {
+      window.clearTimeout(turnRailNavigationTimerRef.current);
+    }
+  }, []);
+
+  function handleTurnRailKeyDown(
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+    currentIndex: number,
+  ): void {
+    if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
+    const nextIndex = resolveTurnRailNavigationIndex(
+      currentIndex,
+      turnRailMarkers.length,
+      event.key as TurnRailNavigationKey,
+    );
+    if (nextIndex === null) return;
+    const nextMarker = turnRailMarkers[nextIndex];
+    if (!nextMarker) return;
+    event.preventDefault();
+    scrollToUserTurn(nextMarker.id);
+    const buttons = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>("button[data-turn-id]");
+    buttons?.[nextIndex]?.focus();
   }
 
   function handleMessageListScroll(): void {
     const list = messageListRef.current;
     if (!list) return;
-    shouldFollowOutputRef.current = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
-    updateTurnRail();
+    shouldFollowOutputRef.current = getMessageListMaxScrollTop(list) - list.scrollTop < 80;
+    setAwayFromLatest((current) => current === !shouldFollowOutputRef.current ? current : !shouldFollowOutputRef.current);
+  }
+
+  function scrollToLatest(): void {
+    shouldFollowOutputRef.current = true;
+    setAwayFromLatest(false);
+    scrollMessageListToLatest("smooth");
   }
 
   useEffect(() => {
@@ -1176,7 +1364,7 @@ export function ChatWorkspace({
   }
 
   function handleKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>): void {
-    if (event.key !== "Enter" || event.shiftKey) return;
+    if (!shouldSubmitTextInput(event.nativeEvent)) return;
     event.preventDefault();
     void submitWithAttachments();
   }
@@ -1227,12 +1415,14 @@ export function ChatWorkspace({
         ),
         model: selectedModelName,
         runtimeMode: currentRuntimeMode,
+        skillName: selectedSkillName,
         thinkingEffort,
       },
     );
     if (submitted) {
       setAttachments([]);
       onClearExternalAttachments?.();
+      setSelectedSkillName(null);
       if (isVoiceSubmission) dispatchVoiceTurn({ type: "response_started" });
       if (isStreamingVoiceSubmission) {
         streamingVoiceInput.acceptReview();
@@ -1519,8 +1709,59 @@ export function ChatWorkspace({
     textareaRef.current?.focus();
   }
 
-  function toggleMetaMenu(menu: "agent" | "model" | "thinking"): void {
-    setMetaMenuOpen((current) => (current === menu ? null : menu));
+  function toggleMetaMenu(menu: "agent" | "model" | "thinking" | "skill"): void {
+    setMetaMenuOpen((current) => {
+      const next = current === menu ? null : menu;
+      if (next === "skill") void loadInstalledSkillsForPicker();
+      return next;
+    });
+  }
+
+  async function loadInstalledSkillsForPicker(): Promise<void> {
+    if (!hasDesktopApi() || typeof desktopApi.listInstalledSkills !== "function") {
+      setInstalledSkills([]);
+      setSkillsLoadError(zh ? "当前环境不支持读取 Skills。" : "Skills are unavailable in this environment.");
+      return;
+    }
+    setSkillsLoading(true);
+    setSkillsLoadError(null);
+    try {
+      const skills = await desktopApi.listInstalledSkills();
+      setInstalledSkills(Array.isArray(skills) ? skills : []);
+    } catch (error) {
+      setInstalledSkills([]);
+      setSkillsLoadError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSkillsLoading(false);
+    }
+  }
+
+  function stripSkillPrefixFromInput(value: string, skillName?: string | null): string {
+    const specific = skillName?.trim()
+      ? zh
+        ? new RegExp(`^用\\s+${escapeRegExp(skillName.trim())}\\s*`)
+        : new RegExp(`^Use\\s+${escapeRegExp(skillName.trim())}\\s+skill\\s+to\\s*`, "i")
+      : null;
+    if (specific?.test(value)) return value.replace(specific, "");
+    const generic = zh
+      ? /^(用\s+)[A-Za-z0-9_\-]+(\s+|$)/
+      : /^(Use\s+)[A-Za-z0-9_\-]+(\s+skill\s+to\s+)/i;
+    return generic.test(value) ? value.replace(generic, "") : value;
+  }
+
+  function applySkillToComposer(skillName: string): void {
+    const cleaned = stripSkillPrefixFromInput(input, selectedSkillName).replace(/^\s+/, "");
+    if (cleaned !== input) onInputChange(cleaned);
+    setSelectedSkillName(skillName);
+    setMetaMenuOpen(null);
+    textareaRef.current?.focus();
+  }
+
+  function clearSelectedSkill(): void {
+    const cleaned = stripSkillPrefixFromInput(input, selectedSkillName);
+    if (cleaned !== input) onInputChange(cleaned);
+    setSelectedSkillName(null);
+    textareaRef.current?.focus();
   }
 
   function selectAgent(agentId: string): void {
@@ -1699,12 +1940,12 @@ export function ChatWorkspace({
     }
   }
 
-  function openPreviewBrowser(url?: string): void {
+  const openPreviewBrowser = useEventCallback((url?: string): void => {
     onOpenPreviewBrowser?.(url);
     setToolsOpen(false);
-  }
+  });
 
-  function handleMarkdownLink(href: string | undefined): void {
+  const handleMarkdownLink = useEventCallback((href: string | undefined): void => {
     if (!href) return;
     let protocol: string;
     try {
@@ -1718,23 +1959,23 @@ export function ChatWorkspace({
       return;
     }
     onOpenExternal(href);
-  }
+  });
 
-  function openStructuredArtifact(part: ArtifactPart): void {
+  const openStructuredArtifact = useEventCallback((part: ArtifactPart): void => {
     if (part.url && isSafeWebUrl(part.url)) {
       openPreviewBrowser(part.url);
       return;
     }
     if (part.path) onOpenWorkspaceArtifact?.(part.path);
-  }
+  });
 
-  function openStructuredCitation(part: CitationPart): void {
+  const openStructuredCitation = useEventCallback((part: CitationPart): void => {
     if (part.url && isSafeWebUrl(part.url)) {
       openPreviewBrowser(part.url);
       return;
     }
     if (part.path) onOpenWorkspaceArtifact?.(part.path);
-  }
+  });
 
   return (
     <div className="chat-workspace">
@@ -1768,6 +2009,7 @@ export function ChatWorkspace({
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
             onKeyDown={(event) => {
+              if (isTextCompositionEvent(event.nativeEvent)) return;
               if (event.key === "Escape") {
                 event.preventDefault();
                 closeSearch();
@@ -1781,6 +2023,14 @@ export function ChatWorkspace({
             }}
             placeholder={zh ? "搜索当前会话..." : "Search current chat..."}
             aria-label={zh ? "搜索当前会话" : "Search current chat"}
+          />
+          <input
+            type="date"
+            className="chat-search-date"
+            value={searchDate}
+            onChange={(event) => locateConversationDate(event.target.value)}
+            aria-label={zh ? "按日期定位" : "Go to date"}
+            title={zh ? "按日期定位" : "Go to date"}
           />
           <span className="chat-search-count">
             {searchQuery.trim()
@@ -1824,29 +2074,89 @@ export function ChatWorkspace({
         </div>
       )}
       {!emptyChat && (
-      <div className="message-list" ref={messageListRef} onScroll={handleMessageListScroll}>
-        {messages.filter((message) => message.id !== "welcome").map((message) => {
+      <header className="conversation-titlebar" data-testid="conversation-titlebar">
+        <div className="conversation-titlebar-main">
+          <strong title={conversationTitle || conversationId}>{conversationTitle || conversationId.slice(0, 12)}</strong>
+          {conversationHistory?.source === "codex" || continuesExistingTask ? <span className="conversation-backend-badge">Codex</span> : null}
+          <small className={`conversation-sync-status state-${conversationHistory?.state || (conversationHistoryPending ? "loading" : "ready")}`} data-testid="conversation-sync-status">{conversationHistoryPending
+          ? (zh ? "正在同步" : "Syncing")
+          : conversationHistory?.state === "partial"
+            ? (zh ? "部分同步" : "Partially synced")
+            : conversationHistory?.state === "error"
+              ? (zh ? "同步失败" : "Sync failed")
+              : conversationHistory?.source === "codex"
+                ? (zh ? `已同步 · ${conversationHistory.loadedRuns} 轮` : `Synced · ${conversationHistory.loadedRuns} turns`)
+                : (zh ? "已就绪" : "Ready")}</small>
+        </div>
+        <div className="conversation-titlebar-actions">
+          <details className="conversation-titlebar-details">
+            <summary title={zh ? "会话详情" : "Chat details"} aria-label={zh ? "会话详情" : "Chat details"}>•••</summary>
+            <dl>
+              <div><dt>{zh ? "工作区" : "Workspace"}</dt><dd>{workspaceName || "—"}</dd></div>
+              <div><dt>{zh ? "后端" : "Backend"}</dt><dd>{conversationHistory?.source === "codex" || continuesExistingTask ? "Codex" : selectedAgentName || "OpenDrSai"}</dd></div>
+              <div><dt>{zh ? "会话 ID" : "Session ID"}</dt><dd title={conversationId}>{conversationId}</dd></div>
+              {conversationHistory ? <div><dt>{zh ? "已加载" : "Loaded"}</dt><dd>{conversationHistory.loadedRuns} {zh ? "轮" : "turns"}</dd></div> : null}
+              {continuesExistingTask ? <div><dt>{zh ? "继续方式" : "Continuation"}</dt><dd>{zh ? "在当前 Codex 任务中继续" : "Continue in the current Codex task"}</dd></div> : null}
+            </dl>
+          </details>
+        </div>
+      </header>
+      )}
+      {!emptyChat && awayFromLatest ? <button
+        type="button"
+        className="conversation-jump-latest"
+        data-testid="conversation-jump-latest"
+        onClick={scrollToLatest}
+      >{zh ? "回到最新消息" : "Jump to latest"}</button> : null}
+      {workspaceLocation === "remote" ? <div className="remote-session-migration-notice" role="note" data-testid="remote-session-migration-notice">
+        {zh ? "这是远程工作区。为避免上下文串线，本地会话不会自动绑定到远程 Runtime；请在远程工作区中新建会话，或使用明确的迁移流程。" : "This is a remote workspace. Local sessions are never auto-bound to the remote Runtime; start a remote session or use an explicit migration flow."}
+      </div> : null}
+      {!emptyChat && (
+      <div
+        className="message-list"
+        ref={messageListRef}
+        onScroll={handleMessageListScroll}
+      >
+        {visibleMessages.map((message, messageIndex) => {
           const assistantContent = message.role === "assistant"
             ? getAssistantDisplayContent(message)
             : message.content;
           return (
-          <article
+          <VirtualizedMessage
             key={message.id}
+            message={message}
             className={`message ${message.role} ${message.error ? "error" : ""} ${searchMatches.includes(message.id) ? "search-match" : ""} ${activeMatchId === message.id ? "search-active" : ""} ${message.structuredTurn?.turnId === highlightedTurnId ? "structured-turn-focus" : ""}`}
-            data-message-id={message.id}
-            data-structured-turn-id={message.structuredTurn?.turnId}
+            pinned={message.streaming === true || visibleMessages.length - messageIndex <= 12}
+            scrollRootRef={messageListRef}
           >
-            <strong className="message-author">{message.role === "user" ? "You" : "OpenDrSai"}</strong>
+            {message.role === "user" || !message.structuredTurn ? <strong className="message-author">{message.role === "user" ? "You" : "OpenDrSai"}</strong> : null}
             <div className="message-body">
+              {message.role === "user" && message.attachments?.length ? (
+                <div className="message-attachment-badges" aria-label={zh ? "附件" : "Attachments"}>
+                  {message.attachments.map((attachment, index) => (
+                    <span
+                      className="message-attachment-badge"
+                      key={`${message.id}-attachment-${index}-${attachment.path || attachment.name}`}
+                      title={attachment.path || attachment.name}
+                    >
+                      {renderMessageAttachmentIcon(attachment.kind)}
+                      <span>{attachment.name}</span>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
               {message.role === "assistant" && message.replyFailed ? (
-                <button type="button" className="chat-reply-failed" onClick={onOpenDebug}>
-                  <Bug size={14} aria-hidden />
-                  <span>{zh ? "回复未完成 · 查看调试" : "Reply incomplete · View debug"}</span>
-                </button>
+                <div className="chat-reply-failed">
+                  <button type="button" onClick={onOpenDebug}><Bug size={14} aria-hidden /><span>{zh ? "回复未完成 · 查看调试" : "Reply incomplete · View debug"}</span></button>
+                  {onRetryMessage ? <span className="chat-retry-actions">
+                    <button type="button" onClick={() => void onRetryMessage(message.id, "same_session")}>{zh ? "在当前会话重试" : "Retry in this session"}</button>
+                    <button type="button" onClick={() => void onRetryMessage(message.id, "new_session")}>{zh ? "分支到新会话" : "Branch to a new session"}</button>
+                  </span> : null}
+                </div>
               ) : message.content && message.role === "user" ? (
                 <p>{highlightPlainText(message.content, searchQuery)}</p>
               ) : message.role === "assistant" && message.structuredTurn ? (
-                message.structuredTurn.parts.length ? (
+                message.structuredTurn.parts.length || message.structuredTurn.activities.length ? (
                   <StructuredMessageParts
                     turn={message.structuredTurn}
                     language={language}
@@ -1859,6 +2169,7 @@ export function ChatWorkspace({
                     onOpenDebug={onOpenDebug}
                     now={now}
                     startedAt={message.startedAt}
+                    completedAt={message.lastEventAt}
                   />
                 ) : (
                   <StreamingStatus message={message} now={now} zh={zh} />
@@ -1870,7 +2181,7 @@ export function ChatWorkspace({
                   language={language}
                   onOpenLink={handleMarkdownLink}
                 />
-              ) : (
+              ) : message.role === "user" && message.attachments?.length ? null : (
                 <StreamingStatus message={message} now={now} zh={zh} />
               )}
               {!message.structuredTurn && message.reasoningContent && (
@@ -1919,13 +2230,17 @@ export function ChatWorkspace({
                 />
               ) : null}
             </div>
-          </article>
+          </VirtualizedMessage>
           );
         })}
       </div>
       )}
       {!emptyChat && turnRailMarkers.length > 0 ? (
-        <nav className="conversation-turn-rail" aria-label={zh ? "用户输入定位" : "User message navigation"}>
+        <nav
+          className="conversation-turn-rail"
+          aria-label={zh ? "用户输入定位" : "User message navigation"}
+          style={{ gridTemplateRows: `repeat(${turnRailMarkers.length}, minmax(0, 1fr))` }}
+        >
           {turnRailMarkers.map((marker, index) => {
             const message = messages.find((item) => item.id === marker.id);
             const label = message?.content.trim().replace(/\s+/g, " ") || `${zh ? "用户输入" : "User message"} ${index + 1}`;
@@ -1934,16 +2249,25 @@ export function ChatWorkspace({
                 key={marker.id}
                 type="button"
                 className={marker.id === activeTurnRailId ? "active" : ""}
-                style={{ top: `${marker.top}%` }}
+                data-turn-id={marker.id}
                 title={label}
                 aria-label={`${zh ? "定位到用户输入" : "Go to user message"} ${index + 1}: ${label.slice(0, 80)}`}
+                tabIndex={marker.id === activeTurnRailId || (!activeTurnRailId && index === 0) ? 0 : -1}
                 onClick={() => scrollToUserTurn(marker.id)}
+                onKeyDown={(event) => handleTurnRailKeyDown(event, index)}
               />
             );
           })}
         </nav>
       ) : null}
-      {emptyChat && (
+      {emptyChat && conversationHistoryPending && (
+        <div className="empty-chat-history-loading" role="status" aria-live="polite">
+          <span className="chat-loading-indicator" aria-hidden />
+          <strong>{zh ? "正在加载 Codex 会话…" : "Loading Codex session…"}</strong>
+          <small>{zh ? "首次打开较长会话可能需要几秒钟。" : "A long conversation can take a few seconds the first time it is opened."}</small>
+        </div>
+      )}
+      {emptyChat && !conversationHistoryPending && (
         <div className="empty-chat-intro" role="group" aria-label={zh ? "新建会话" : "New conversation"}>
           <img className="empty-chat-logo" src={drsaiLogo} alt="OpenDrSai" />
           <h1>
@@ -2043,7 +2367,7 @@ export function ChatWorkspace({
           ) : null}
         </div>
       )}
-      {emptyChat && (
+      {emptyChat && !conversationHistoryPending && (
         <section className="sample-prompts" aria-label={zh ? "示例任务" : "Example tasks"}>
           {emptyChatPrompts.map((prompt, index) => {
             const PromptIcon = [Telescope, Hammer, ScanSearch, Bug][index] ?? Telescope;
@@ -2063,7 +2387,7 @@ export function ChatWorkspace({
         </section>
       )}
       <form
-        ref={composerRef}
+        ref={composerDropRef}
         className="composer"
         data-voice-turn-phase={displayedVoicePhase}
         data-streaming-speech-segments={assistantSpeechSegments.segments.length}
@@ -2195,7 +2519,9 @@ export function ChatWorkspace({
               </div>
               {materialRolePhase === "ready" && materialRoleAnalysis ? (
                 <div className="material-role-groups">
-                  {(["previous_report", "latest_data", "result_image", "reference_material"] as const).map((role) => (
+                  {(["previous_report", "latest_data", "result_image", "reference_material"] as const)
+                    .filter((role) => (materialRoleAnalysis.roleCounts[role] || 0) > 0)
+                    .map((role) => (
                     <article
                       key={role}
                       data-material-role={role}
@@ -2392,7 +2718,7 @@ export function ChatWorkspace({
 
           <div className="composer-box">
             <div className="composer-input-row">
-              <div className="composer-tools">
+              <div className="composer-tools" ref={toolsMenuRef}>
                 <button
                   ref={attachmentButtonRef}
                   type="button"
@@ -2450,7 +2776,51 @@ export function ChatWorkspace({
                 )}
               </div>
 
-              {voiceReviewText !== null ? (
+              {activeInputRequest ? (
+                <section className="chat-agent-input-request composer-agent-interaction" data-testid="composer-agent-interaction" aria-label={zh ? "智能体请求输入" : "Agent input request"}>
+                  <strong>{zh ? "智能体需要你的输入" : "Agent needs your input"}</strong>
+                  <p>{activeInputRequest.prompt}</p>
+                  {activeInputRequest.inputType === "approval" ? (
+                    <div>
+                      <button type="button" onClick={() => respondToActiveInput({ approved: false })}>{zh ? "拒绝" : "Reject"}</button>
+                      <button type="button" onClick={() => respondToActiveInput({ approved: true })}>{zh ? "批准" : "Approve"}</button>
+                    </div>
+                  ) : activeInputRequest.inputType === "confirmation" ? (
+                    <div>
+                      <button type="button" onClick={() => respondToActiveInput({ confirmed: false })}>{zh ? "取消" : "Cancel"}</button>
+                      <button type="button" onClick={() => respondToActiveInput({ confirmed: true })}>{zh ? "确认" : "Confirm"}</button>
+                    </div>
+                  ) : activeInputRequest.inputType === "choice" && activeInputRequest.options?.length ? (
+                    <div>
+                      {activeInputRequest.options.map((option) => (
+                        <button
+                          type="button"
+                          key={option.id}
+                          onClick={() => respondToActiveInput({ choice: option.value ?? option.id, choice_id: option.id })}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="composer-editor">
+                      <textarea
+                        data-testid="composer-agent-interaction-input"
+                        value={interactionDraft}
+                        onChange={(event) => setInteractionDraft(event.target.value)}
+                        onKeyDown={(event) => {
+                          if ((event.ctrlKey || event.metaKey) && event.key === "Enter") submitInteractionDraft();
+                        }}
+                        placeholder={zh ? "输入给智能体的回复..." : "Reply to the agent..."}
+                        rows={1}
+                      />
+                      <button type="button" className="composer-submit" disabled={!interactionDraft.trim()} onClick={submitInteractionDraft}>
+                        <Send size={16} />
+                      </button>
+                    </div>
+                  )}
+                </section>
+              ) : voiceReviewText !== null ? (
                 <VoiceReviewBar
                   value={voiceReviewText}
                   disclosure={voiceRuntimeDisclosure}
@@ -2477,20 +2847,40 @@ export function ChatWorkspace({
                   onStop={voiceState === "processing" ? cancelVoiceTranscription : () => stopVoiceRecording("transcribe")}
                 />
               ) : (
-                <textarea
-                  data-testid="composer-input"
-                ref={textareaRef}
-                value={input}
-                onChange={(event) => onInputChange(event.target.value)}
-                onKeyDown={handleKeyDown}
-                onPaste={handlePaste}
-                placeholder={
-                  canChat
-                    ? zh ? "向 OpenDrSai 提问..." : "Ask OpenDrSai..."
-                    : chatUnavailableReason ?? (zh ? "请稍候，当前任务正在处理..." : "Please wait while the current task is running...")
-                }
-                rows={1}
-              />
+                <div className="composer-editor">
+                  {/* Temporarily hide composer Skills picker — keep for later reuse.
+                  {selectedSkillName ? (
+                    <div className="composer-skill-tags" aria-label={zh ? "已选技能" : "Selected skill"}>
+                      <span className="composer-skill-tag" data-testid="composer-skill-tag">
+                        <Zap size={12} aria-hidden="true" />
+                        <span className="composer-skill-tag-label">{selectedSkillName}</span>
+                        <button
+                          type="button"
+                          aria-label={zh ? `移除技能 ${selectedSkillName}` : `Remove skill ${selectedSkillName}`}
+                          title={zh ? "移除技能" : "Remove skill"}
+                          onClick={clearSelectedSkill}
+                        >
+                          <X size={12} />
+                        </button>
+                      </span>
+                    </div>
+                  ) : null}
+                  */}
+                  <textarea
+                    data-testid="composer-input"
+                    ref={textareaRef}
+                    value={input}
+                    onChange={(event) => onInputChange(event.target.value)}
+                    onKeyDown={handleKeyDown}
+                    onPaste={handlePaste}
+                    placeholder={
+                      canChat
+                        ? zh ? "向 OpenDrSai 提问..." : "Ask OpenDrSai..."
+                        : chatUnavailableReason ?? (zh ? "请稍候，当前任务正在处理..." : "Please wait while the current task is running...")
+                    }
+                    rows={1}
+                  />
+                </div>
               )}
 
             </div>
@@ -2584,7 +2974,7 @@ export function ChatWorkspace({
                   </span>
                 </div>
               )}
-              <div className="composer-meta-item">
+              <div className="composer-meta-item" data-meta-menu="agent">
                 <button
                   className="composer-meta-chip composer-meta-button"
                   type="button"
@@ -2612,7 +3002,7 @@ export function ChatWorkspace({
                   </div>
                 )}
               </div>
-              <div className="composer-meta-item">
+              <div className="composer-meta-item" data-meta-menu="model">
                 <button
                   className="composer-meta-chip composer-meta-button"
                   type="button"
@@ -2640,7 +3030,50 @@ export function ChatWorkspace({
                   </div>
                 )}
               </div>
-              <div className="composer-meta-item">
+              {/* Temporarily hide composer Skills picker — keep for later reuse.
+              <div className="composer-meta-item" data-meta-menu="skill">
+                <button
+                  className={`composer-meta-chip composer-meta-button${selectedSkillName ? " active" : ""}`}
+                  type="button"
+                  aria-expanded={metaMenuOpen === "skill"}
+                  onClick={() => toggleMetaMenu("skill")}
+                  title={zh ? "从 Skills 管理中选择技能" : "Pick a skill from Skills manager"}
+                >
+                  <Zap size={14} />
+                  {zh ? "技能" : "Skill"}
+                  <ChevronDown size={13} />
+                </button>
+                {metaMenuOpen === "skill" && (
+                  <div className="composer-meta-menu wide" role="listbox" aria-label={zh ? "已安装技能" : "Installed skills"}>
+                    {skillsLoading ? (
+                      <p className="composer-meta-menu-empty">{zh ? "正在加载 Skills…" : "Loading skills…"}</p>
+                    ) : skillsLoadError ? (
+                      <p className="composer-meta-menu-empty">{skillsLoadError}</p>
+                    ) : installedSkills.length ? (
+                      installedSkills.map((skill) => (
+                        <button
+                          key={skill.path || skill.name}
+                          type="button"
+                          role="option"
+                          className={skill.name === selectedSkillName ? "active" : ""}
+                          onClick={() => applySkillToComposer(skill.name)}
+                        >
+                          <span>{skill.name}</span>
+                          <small>{skill.description || skill.category || (zh ? "用户技能" : "User skill")}</small>
+                        </button>
+                      ))
+                    ) : (
+                      <p className="composer-meta-menu-empty">
+                        {zh
+                          ? "还没有已安装技能。可到左侧 Skills 管理中新建。"
+                          : "No installed skills yet. Create one in Skills manager."}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+              */}
+              <div className="composer-meta-item" data-meta-menu="thinking">
               <button
                 className="composer-meta-chip composer-meta-button"
                 type="button"
@@ -2760,6 +3193,132 @@ export function ChatWorkspace({
       </form>
       </div>
     </div>
+  );
+}
+
+function shallowArrayEqual(left: readonly unknown[] | undefined, right: readonly unknown[] | undefined): boolean {
+  if (left === right) return true;
+  if (!left || !right || left.length !== right.length) return false;
+  return left.every((item, index) => Object.is(item, right[index]));
+}
+
+function chatWorkspacePropsEqual(previous: ChatWorkspaceProps, next: ChatWorkspaceProps): boolean {
+  const arrayProps = new Set<keyof ChatWorkspaceProps>([
+    "messages", "agentOptions", "modelOptions", "samplePrompts", "externalAttachments",
+    "workspaceInstructions", "workspaceOptions",
+  ]);
+  return (Object.keys(next) as Array<keyof ChatWorkspaceProps>).every((key) => {
+    const nextValue = next[key];
+    if (typeof nextValue === "function") return true;
+    const previousValue = previous[key];
+    if (arrayProps.has(key)) {
+      return shallowArrayEqual(previousValue as readonly unknown[] | undefined, nextValue as readonly unknown[] | undefined);
+    }
+    return Object.is(previousValue, nextValue);
+  });
+}
+
+export const ChatWorkspace = memo(ChatWorkspaceImpl, chatWorkspacePropsEqual);
+
+const virtualMessageHeightCache = new Map<string, number>();
+const MAX_VIRTUAL_MESSAGE_HEIGHTS = 2_000;
+
+function rememberVirtualMessageHeight(messageId: string, height: number): void {
+  if (!Number.isFinite(height) || height < 1) return;
+  virtualMessageHeightCache.delete(messageId);
+  virtualMessageHeightCache.set(messageId, Math.ceil(height));
+  while (virtualMessageHeightCache.size > MAX_VIRTUAL_MESSAGE_HEIGHTS) {
+    const oldest = virtualMessageHeightCache.keys().next().value;
+    if (typeof oldest !== "string") break;
+    virtualMessageHeightCache.delete(oldest);
+  }
+}
+
+function estimateVirtualMessageHeight(message: UiMessage): number {
+  const estimateText = [message.content ?? "", message.structuredTurn ? getStructuredTurnEstimateText(message.structuredTurn) : ""]
+    .filter(Boolean)
+    .join("\n\n");
+  const textLength = estimateText.length;
+  const newlineCount = estimateText ? (estimateText.match(/\n/g)?.length ?? 0) : 0;
+  if (message.role === "user") {
+    return Math.min(260, Math.max(76, 62 + newlineCount * 18 + Math.ceil(textLength / 90) * 20));
+  }
+  const structuredWeight = message.structuredTurn
+    ? (message.structuredTurn.parts.length * 46) + Math.min(180, message.structuredTurn.activities.length * 10)
+    : 0;
+  return Math.min(3_200, Math.max(220, 150 + newlineCount * 18 + Math.ceil(textLength / 78) * 22 + structuredWeight));
+}
+
+function getStructuredTurnEstimateText(turn: StructuredTurnState): string {
+  return turn.parts.map(getStructuredPartEstimateText).filter(Boolean).join("\n\n");
+}
+
+function getStructuredPartEstimateText(part: StructuredAssistantPart): string {
+  if (part.kind === "markdown") return part.markdown;
+  if (part.kind === "reasoning") return [part.summary, ...part.segments.map((segment) => segment.text)].filter(Boolean).join("\n");
+  if (part.kind === "progress") return part.summary;
+  if (part.kind === "artifact") return [part.name, part.summary].filter(Boolean).join("\n");
+  if (part.kind === "citation") return [part.title, part.excerpt].filter(Boolean).join("\n");
+  if (part.kind === "interaction") return part.prompt;
+  if (part.kind === "subtask") return [part.title, part.summary].filter(Boolean).join("\n");
+  return part.message;
+}
+
+function VirtualizedMessage({
+  message,
+  className,
+  pinned,
+  scrollRootRef,
+  children,
+}: {
+  message: UiMessage;
+  className: string;
+  pinned: boolean;
+  scrollRootRef: React.RefObject<HTMLDivElement | null>;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  const elementRef = useRef<HTMLElement | null>(null);
+  const [renderContent, setRenderContent] = useState(pinned);
+
+  useEffect(() => {
+    if (pinned) setRenderContent(true);
+  }, [pinned]);
+
+  useEffect(() => {
+    const element = elementRef.current;
+    const root = scrollRootRef.current;
+    if (!element || !root || pinned) return undefined;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (!entry) return;
+      setRenderContent((current) => entry.isIntersecting ? true : current && false);
+    }, { root, rootMargin: "900px 0px", threshold: 0 });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [message.id, pinned, scrollRootRef]);
+
+  useEffect(() => {
+    const element = elementRef.current;
+    if (!element || !renderContent) return undefined;
+    const observer = new ResizeObserver(([entry]) => {
+      const height = entry?.borderBoxSize?.[0]?.blockSize ?? entry?.contentRect.height;
+      if (height) rememberVirtualMessageHeight(message.id, height);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [message.id, renderContent]);
+
+  const placeholderHeight = virtualMessageHeightCache.get(message.id) ?? estimateVirtualMessageHeight(message);
+  return (
+    <article
+      ref={elementRef}
+      className={`${className} ${renderContent ? "virtual-message-rendered" : "virtual-message-placeholder"}`}
+      data-message-id={message.id}
+      data-structured-turn-id={message.structuredTurn?.turnId}
+      style={renderContent ? undefined : { height: placeholderHeight }}
+      aria-hidden={renderContent ? undefined : true}
+    >
+      {renderContent ? children : null}
+    </article>
   );
 }
 
@@ -2967,14 +3526,23 @@ function StreamingStatus({
   zh: boolean;
 }): React.JSX.Element {
   if (!message.streaming) {
-    return <p>{"No response content."}</p>;
+    if (message.error) {
+      return <p>{zh ? "回复失败。请查看调试信息。" : "Reply failed. View debug details."}</p>;
+    }
+    return <p>{zh ? "暂无可显示的回复内容。" : "No response content yet."}</p>;
   }
 
   const startedAt = message.startedAt ?? now;
   const elapsedSeconds = Math.max(0, Math.floor((now - startedAt) / 1000));
   const lastEventAt = message.lastEventAt ?? startedAt;
   const idleSeconds = Math.max(0, Math.floor((now - lastEventAt) / 1000));
-  const detail = elapsedSeconds < 3
+  const detail = elapsedSeconds >= 120
+    ? zh ? "任务仍在运行；你可以继续等待、停止，或打开调试信息" : "The task is still running; you can keep waiting, stop it, or open diagnostics"
+    : elapsedSeconds >= 60
+      ? zh ? "模型仍在处理长任务，连接保持正常" : "The model is still processing this long task; the connection remains active"
+      : elapsedSeconds >= 30
+        ? zh ? "这一步比平时更久，正在继续等待模型" : "This step is taking longer than usual; still waiting for the model"
+    : elapsedSeconds < 3
     ? zh ? "正在连接本地运行时..." : "Connecting to the local runtime..."
     : idleSeconds >= 10
       ? zh ? "正在等待模型输出" : "Waiting for model output"
@@ -2985,6 +3553,8 @@ function StreamingStatus({
       <span className="streaming-dot" aria-hidden />
       <span>{detail}</span>
       <time>{zh ? `已执行 ${elapsedSeconds} 秒` : `Running ${elapsedSeconds}s`}</time>
+      {message.firstFeedbackAt && message.startedAt ? <small>{zh ? "首个状态" : "First status"} {message.firstFeedbackAt - message.startedAt}ms</small> : null}
+      {message.firstDeltaAt && message.startedAt ? <small>{zh ? "首个模型片段" : "First model delta"} {message.firstDeltaAt - message.startedAt}ms</small> : null}
     </div>
   );
 }
@@ -3009,10 +3579,23 @@ function MessageActions({
   zh: boolean;
 }): React.JSX.Element {
   const [copied, setCopied] = useState(false);
+  const [localPending, setLocalPending] = useState(false);
   const isActive = playback.activeMessageId === messageId;
   const isPlaying = isActive && playback.phase === "playing";
   const isPaused = isActive && playback.phase === "paused";
-  const isSynthesizing = isActive && playback.phase === "synthesizing";
+  const isSynthesizing = localPending || (isActive && playback.phase === "synthesizing");
+
+  useEffect(() => {
+    if (!localPending) return;
+    if (playback.activeMessageId === messageId && playback.phase !== "idle") {
+      setLocalPending(false);
+      return;
+    }
+    if (playback.error && playback.phase === "failed") {
+      setLocalPending(false);
+    }
+  }, [localPending, messageId, playback.activeMessageId, playback.error, playback.phase]);
+
   async function handleCopy(): Promise<void> {
     try {
       if (!await copyTextSafely(content)) return;
@@ -3022,8 +3605,23 @@ function MessageActions({
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1500);
   }
+
+  function handleReadAloud(): void {
+    setLocalPending(true);
+    try {
+      playback.play(messageId, content, zh ? "zh" : "en", {
+        mode: synthesisMode,
+        rate: playbackRate,
+        voiceName,
+      });
+    } catch (error) {
+      setLocalPending(false);
+      console.error("voice playback failed to start", error);
+    }
+  }
+
   return (
-    <div className={`message-actions ${isActive || playback.error ? "active" : ""}`} aria-live="polite">
+    <div className={`message-actions ${isActive || isSynthesizing || playback.error ? "active" : ""}`} aria-live="polite">
       <button type="button" onClick={() => void handleCopy()} title={zh ? "复制回答" : "Copy response"}>
         {copied ? "✓" : <ClipboardList size={13} />}
         <span>{copied ? (zh ? "已复制" : "Copied") : (zh ? "复制" : "Copy")}</span>
@@ -3047,20 +3645,33 @@ function MessageActions({
         <button
           type="button"
           disabled={playbackDisabled || !playback.isAvailable}
-          onClick={() => playback.play(messageId, content, zh ? "zh" : "en", { mode: synthesisMode, rate: playbackRate, voiceName })}
-          title={zh ? "朗读回复" : "Read response aloud"}
+          onClick={handleReadAloud}
+          title={
+            playbackDisabled
+              ? (zh ? "录音进行中，暂不可朗读" : "Unavailable while recording")
+              : !playback.isAvailable
+                ? (zh ? "当前环境不支持朗读" : "Speech playback unavailable")
+                : (zh ? "朗读回复" : "Read response aloud")
+          }
         >
           <Volume2 size={13} />
           <span>{zh ? "朗读" : "Read"}</span>
         </button>
       )}
-      {isActive ? (
-        <button type="button" onClick={playback.stop} title={zh ? "停止朗读" : "Stop reading"}>
+      {isActive || isSynthesizing ? (
+        <button
+          type="button"
+          onClick={() => {
+            setLocalPending(false);
+            playback.stop();
+          }}
+          title={zh ? "停止朗读" : "Stop reading"}
+        >
           <Square size={12} />
           <span>{zh ? "停止" : "Stop"}</span>
         </button>
       ) : null}
-      {playback.error && !playback.activeMessageId ? (
+      {playback.error ? (
         <span className="message-action-error" role="status">{playback.error}</span>
       ) : null}
     </div>
@@ -3139,6 +3750,24 @@ function formatBytes(size: number): string {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function renderMessageAttachmentIcon(kind: ChatAttachment["kind"]): React.JSX.Element {
+  const Icon =
+    kind === "folder"
+      ? FolderPlus
+      : kind === "terminal"
+        ? Terminal
+        : kind === "selection"
+          ? ClipboardList
+          : kind === "browser"
+            ? Globe2
+            : FileText;
+  return <Icon size={14} aria-hidden="true" />;
 }
 
 function mergeUniqueAttachments(attachments: ChatAttachment[]): ChatAttachment[] {
@@ -3723,86 +4352,10 @@ function getAssistantDisplayContent(message: UiMessage): string {
   return getAssistantSpeechText(message, getVisibleChatText);
 }
 
-function parseAgentExamples(
-  raw: DesktopAgent["examples"] | undefined,
-  language: AppLanguage,
-): string[] {
-  if (!raw) return [];
-  if (typeof raw === "string") {
-    const parsed = parseJsonIfObject(raw);
-    if (isLocalizedExample(parsed)) {
-      const localized = pickLocalizedExample(parsed, language);
-      return localized ? [localized] : [];
-    }
-    const trimmed = raw.trim();
-    return trimmed ? [trimmed] : [];
-  }
-  if (!Array.isArray(raw)) return [];
-  const hasLocalized = raw.some((item) => isLocalizedExample(item));
-  return raw
-    .map((item) => {
-      if (typeof item === "string") {
-        const parsed = parseJsonIfObject(item);
-        if (hasLocalized && isLocalizedExample(parsed)) {
-          return pickLocalizedExample(parsed, language);
-        }
-        return item.trim();
-      }
-      if (isLocalizedExample(item)) return pickLocalizedExample(item, language);
-      return "";
-    })
-    .filter((item) => item.length > 0);
-}
-
-function getEmptyChatPrompts(agentPrompts: string[], zh: boolean): string[] {
-  const fallbacks = zh
-    ? [
-        "探索并理解当前工作区",
-        "构建新功能、应用或工具",
-        "审查现有内容并提出改进建议",
-        "定位并修复问题或失败",
-      ]
-    : [
-        "Explore and understand this workspace",
-        "Build a new feature, app, or tool",
-        "Review the current work and suggest improvements",
-        "Find and fix a problem or failure",
-      ];
-  return [...new Set([...agentPrompts, ...fallbacks])].slice(0, 4);
-}
-
 function getWorkspaceDisplayName(workspacePath: string | undefined, zh: boolean): string {
   const normalized = workspacePath?.trim().replace(/[\\/]+$/, "") ?? "";
   const name = normalized.split(/[\\/]/).filter(Boolean).at(-1);
   return name || (zh ? "当前" : "current workspace");
-}
-
-function parseJsonIfObject(value: string): unknown {
-  const trimmed = value.trim();
-  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return value;
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    return value;
-  }
-}
-
-function isLocalizedExample(value: unknown): value is { en?: string; zh?: string } {
-  return (
-    Boolean(value) &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    (typeof (value as { en?: unknown }).en === "string" ||
-      typeof (value as { zh?: unknown }).zh === "string")
-  );
-}
-
-function pickLocalizedExample(
-  item: { en?: string; zh?: string },
-  language: AppLanguage,
-): string {
-  const text = language === "zh" ? item.zh ?? item.en : item.en ?? item.zh;
-  return text?.trim() ?? "";
 }
 
 function isPreviewBrowserUrl(href: string): boolean {

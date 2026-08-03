@@ -12,6 +12,10 @@ sealed interface AppRoute {
         override val path: String = "chat"
     }
 
+    data object Search : AppRoute {
+        override val path: String = "search"
+    }
+
     data object RemoteHome : AppRoute {
         override val path: String = "remote"
     }
@@ -79,6 +83,7 @@ sealed interface AppRoute {
     companion object {
         fun parse(path: String): AppRoute? {
             if (path == Chat.path) return Chat
+            if (path == Search.path) return Search
             if (path == RemoteHome.path) return RemoteHome
             if (path == Scheduled.path) return Scheduled
             if (path == Results.path) return Results

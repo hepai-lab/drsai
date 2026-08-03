@@ -1,11 +1,14 @@
 import { execFile, spawn, type ChildProcess } from "child_process";
 import { randomBytes } from "crypto";
 import { get } from "http";
+import { connect as connectTcp } from "net";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
-import type { GatewayStatus } from "../api/desktopApi";
+import type { GatewayEndpointStatus, GatewayStatus } from "../api/desktopApi";
 import type { DesktopProcessService } from "../api";
 import { DRSAI_HOME, DRSAI_PYTHON, DRSAI_REPO, getEnhancedPath } from "./paths";
+import { managedProcessRegistry, type ManagedProcessRegistration } from "./managedProcessRegistry";
+import { redactDesktopSecrets } from "./secretRedaction";
 
 let processService: DesktopProcessService | null = null;
 let desktopAppRuntime = {
@@ -44,6 +47,23 @@ let lastGatewayLog = "";
 let gatewayStopPromise: Promise<boolean> | null = null;
 let gatewayStartPromise: Promise<boolean> | null = null;
 let adoptedPersistentRuntime = false;
+let gatewaySpawnError: Error | null = null;
+let gatewayRegistration: ManagedProcessRegistration | null = null;
+
+interface GatewayEndpointProbe extends GatewayEndpointStatus {
+  error?: string;
+}
+
+interface GatewayProbe {
+  ready: boolean;
+  reachable: boolean;
+  portOpen: boolean;
+  unauthorized: boolean;
+  health: GatewayEndpointProbe;
+  models: GatewayEndpointProbe;
+  diagnosticCode: string;
+  diagnosticMessage: string;
+}
 
 function loadGatewayInstanceToken(): string {
   const configured = process.env.OPENDRSAI_GATEWAY_INSTANCE_TOKEN?.trim();
@@ -74,34 +94,30 @@ export function checkGatewayReady(): Promise<boolean> {
   return checkGatewayEndpoints();
 }
 
-function checkGatewayEndpoints(): Promise<boolean> {
-  return Promise.all([
-    requestJson(`${GATEWAY_BASE_URL}/health`, getGatewayRequestHeaders()),
-    requestJson(`${GATEWAY_BASE_URL}/v1/models`, getGatewayRequestHeaders()),
-  ]).then(([health, models]) =>
-    Boolean(
-      health.ok &&
-        models.ok &&
-        models.body &&
-        models.body.object === "list" &&
-        Array.isArray(models.body.data),
-    ),
-  );
+async function checkGatewayEndpoints(): Promise<boolean> {
+  return (await probeGatewayEndpoints()).ready;
 }
 
 export async function getGatewayStatus(): Promise<GatewayStatus> {
-  const externalReady = await checkGatewayEndpoints();
+  const probe = await probeGatewayEndpoints();
   const processManaged = isManagedGatewayRunning();
   const externalMode = getGatewayStartupMode() === "external";
-  const managed = processManaged || adoptedPersistentRuntime || ((DEV_MANAGED_EXTERNAL_GATEWAY || externalMode) && externalReady);
+  const managed = processManaged || adoptedPersistentRuntime || ((DEV_MANAGED_EXTERNAL_GATEWAY || externalMode) && probe.ready);
   return {
-    ready: managed && externalReady,
+    ready: managed && probe.ready,
     managed,
-    externalReady,
-    externalConflict: externalReady && !managed && !externalMode,
+    externalReady: probe.ready,
+    externalConflict: probe.portOpen && !managed && !externalMode,
     baseUrl: GATEWAY_BASE_URL,
     pid: gatewayProcess?.pid ?? null,
     lastLog: lastGatewayLog,
+    portOpen: probe.portOpen,
+    diagnosticCode: probe.diagnosticCode,
+    diagnosticMessage: probe.diagnosticMessage,
+    endpoints: {
+      health: publicEndpointStatus(probe.health),
+      models: publicEndpointStatus(probe.models),
+    },
   };
 }
 
@@ -123,6 +139,9 @@ export function getGatewaySnapshot(): GatewayStatus {
     baseUrl: GATEWAY_BASE_URL,
     pid: gatewayProcess?.pid ?? null,
     lastLog: lastGatewayLog,
+    portOpen: false,
+    diagnosticCode: "gateway_not_checked",
+    diagnosticMessage: "Gateway has not completed endpoint probing yet.",
   };
 }
 
@@ -197,14 +216,21 @@ async function killPortOccupant(port: string): Promise<boolean> {
 }
 
 async function startGatewayOnce(): Promise<boolean> {
+  if (!managedProcessRegistry.accepting) return false;
   if (await checkGatewayReady()) return true;
-  const externalReady = await checkGatewayEndpoints();
+  const preflight = await probeGatewayEndpoints();
   if (getGatewayStartupMode() === "external") {
-    return externalReady;
+    return preflight.ready;
   }
-  if (externalReady) {
+  if (preflight.ready) {
     adoptedPersistentRuntime = true;
     return true;
+  }
+  if (preflight.portOpen && !isManagedGatewayRunning()) {
+    appendGatewayLog(Buffer.from(
+      `\nGateway port ${GATEWAY_PORT} is occupied but not usable: ${preflight.diagnosticCode}. ${preflight.diagnosticMessage}`,
+    ));
+    return false;
   }
   if (gatewayProcess && !gatewayProcess.killed) return false;
   if (!existsSync(DRSAI_PYTHON)) return false;
@@ -224,12 +250,14 @@ async function startGatewayOnce(): Promise<boolean> {
 
   const localCodexEnv = await getLocalCodexDevelopmentEnv();
 
+  gatewaySpawnError = null;
   gatewayProcess = spawn(DRSAI_PYTHON, args, {
     cwd: existsSync(DRSAI_REPO) ? DRSAI_REPO : undefined,
     env: {
       ...process.env,
       DRSAI_HOME,
       DRSAI_API_PORT: GATEWAY_PORT,
+      PYTHONDONTWRITEBYTECODE: "1",
       OPENDRSAI_GATEWAY_INSTANCE_TOKEN: GATEWAY_INSTANCE_TOKEN,
       ...(NODE_PTY_MODULE ? { OPENDRSAI_NODE_PTY_MODULE: NODE_PTY_MODULE } : {}),
       ...localCodexEnv,
@@ -239,9 +267,26 @@ async function startGatewayOnce(): Promise<boolean> {
     detached: PERSIST_RUNTIME,
     stdio: PERSIST_RUNTIME ? "ignore" : ["ignore", "pipe", "pipe"],
   });
+  if (gatewayProcess.pid) {
+    const registeredProcess = gatewayProcess;
+    gatewayRegistration = managedProcessRegistry.register({
+      id: "gateway:local", kind: "gateway", owner: "desktop-runtime", pid: gatewayProcess.pid, detached: PERSIST_RUNTIME,
+      stop: async () => { await terminateGatewayProcessTree(registeredProcess); },
+      forceStop: () => { if (!registeredProcess.killed) registeredProcess.kill("SIGKILL"); },
+      alive: () => isProcessRunning(registeredProcess),
+    });
+    if (!PERSIST_RUNTIME) gatewayRegistration.transition("running");
+  }
   gatewayProcess.stdout?.on("data", appendGatewayLog);
   gatewayProcess.stderr?.on("data", appendGatewayLog);
-  gatewayProcess.once("exit", () => {
+  gatewayProcess.once("error", (error) => {
+    gatewaySpawnError = error;
+    appendGatewayLog(Buffer.from(`\nGateway process failed to start: ${error.message}`));
+  });
+  gatewayProcess.once("exit", (code, signal) => {
+    if (code === 0 || signal === "SIGTERM") gatewayRegistration?.exited(code, signal);
+    else gatewayRegistration?.crashed(code, signal);
+    gatewayRegistration = null;
     gatewayProcess = null;
     adoptedPersistentRuntime = false;
   });
@@ -250,6 +295,10 @@ async function startGatewayOnce(): Promise<boolean> {
   const deadline = Date.now() + GATEWAY_START_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (await checkGatewayReady()) return true;
+    if (gatewaySpawnError || !isProcessRunning(gatewayProcess)) {
+      appendGatewayLog(Buffer.from("\nGateway exited before its health checks became ready."));
+      return false;
+    }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   lastGatewayLog = `${lastGatewayLog}\nGateway did not become ready within ${GATEWAY_START_TIMEOUT_MS} ms; stopping the spawned process tree.`.slice(-12000);
@@ -306,14 +355,75 @@ function isManagedGatewayRunning(): boolean {
 }
 
 function appendGatewayLog(chunk: Buffer): void {
-  lastGatewayLog = `${lastGatewayLog}${chunk.toString()}`.slice(-12000);
+  lastGatewayLog = redactDesktopSecrets(`${lastGatewayLog}${chunk.toString()}`).slice(-12000);
+}
+
+async function probeGatewayEndpoints(): Promise<GatewayProbe> {
+  const [health, models] = await Promise.all([
+    requestJson(`${GATEWAY_BASE_URL}/health`, getGatewayRequestHeaders()),
+    requestJson(`${GATEWAY_BASE_URL}/v1/models`, getGatewayRequestHeaders()),
+  ]);
+  const modelsReady = Boolean(
+    models.ok &&
+    models.body &&
+    models.body.object === "list" &&
+    Array.isArray(models.body.data),
+  );
+  const ready = health.ok && modelsReady;
+  const reachable = health.statusCode !== null || models.statusCode !== null;
+  const portOpen = reachable || await isTcpPortOpen(GATEWAY_HOST, Number(GATEWAY_PORT));
+  const unauthorized = health.state === "unauthorized" || models.state === "unauthorized";
+  const diagnosticCode = ready ? "gateway_ready"
+    : unauthorized ? "gateway_unauthorized"
+    : health.state === "timeout" || models.state === "timeout" ? "gateway_probe_timeout"
+    : !reachable && portOpen ? "gateway_port_occupied"
+    : !reachable ? "gateway_unreachable"
+    : !health.ok ? `gateway_health_${health.state}`
+    : !modelsReady ? `gateway_models_${models.state === "ok" ? "invalid_response" : models.state}`
+    : "gateway_unavailable";
+  const diagnosticMessage = ready ? "Gateway health and model endpoints are ready."
+    : unauthorized ? "A process is listening on the Gateway port, but it rejected this Desktop instance token."
+    : !reachable && portOpen ? "A non-OpenDrSai process is listening on the Gateway port."
+    : !reachable ? "No process responded on the Gateway port."
+    : !health.ok ? `Gateway /health is not ready (${health.state}${health.statusCode ? ` ${health.statusCode}` : ""}).`
+    : `Gateway /v1/models is not ready (${models.state}${models.statusCode ? ` ${models.statusCode}` : ""}).`;
+  return { ready, reachable, portOpen, unauthorized, health, models, diagnosticCode, diagnosticMessage };
+}
+
+function isTcpPortOpen(host: string, port: number): Promise<boolean> {
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const socket = connectTcp({ host, port });
+    let settled = false;
+    const finish = (open: boolean) => {
+      if (settled) return;
+      settled = true;
+      socket.removeAllListeners();
+      socket.destroy();
+      resolve(open);
+    };
+    socket.setTimeout(300, () => finish(false));
+    socket.once("connect", () => finish(true));
+    socket.once("error", () => finish(false));
+  });
+}
+
+function publicEndpointStatus(endpoint: GatewayEndpointProbe): GatewayEndpointStatus {
+  return { ok: endpoint.ok, statusCode: endpoint.statusCode, state: endpoint.state };
 }
 
 function requestJson(
   url: string,
   headers: Record<string, string> = {},
-): Promise<{ ok: boolean; body: Record<string, unknown> | null }> {
+): Promise<GatewayEndpointProbe & { body: Record<string, unknown> | null }> {
   return new Promise((resolve) => {
+    let settled = false;
+    let timedOut = false;
+    const finish = (result: GatewayEndpointProbe & { body: Record<string, unknown> | null }) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
     const req = get(url, { headers }, (res) => {
       let body = "";
       res.setEncoding("utf8");
@@ -321,26 +431,41 @@ function requestJson(
         body = `${body}${chunk}`.slice(0, 64 * 1024);
       });
       res.on("end", () => {
+        const statusCode = res.statusCode ?? null;
         if (res.statusCode !== 200) {
-          resolve({ ok: false, body: null });
+          finish({
+            ok: false,
+            body: null,
+            statusCode,
+            state: statusCode === 401 || statusCode === 403 ? "unauthorized" : "http_error",
+          });
           return;
         }
         try {
           const parsed = JSON.parse(body);
-          resolve({
+          finish({
             ok: true,
             body: typeof parsed === "object" && parsed !== null ? parsed : null,
+            statusCode,
+            state: "ok",
           });
         } catch {
-          resolve({ ok: false, body: null });
+          finish({ ok: false, body: null, statusCode, state: "invalid_response" });
         }
       });
     });
     req.setTimeout(1200, () => {
+      timedOut = true;
       req.destroy();
-      resolve({ ok: false, body: null });
+      finish({ ok: false, body: null, statusCode: null, state: "timeout" });
     });
-    req.on("error", () => resolve({ ok: false, body: null }));
+    req.on("error", (error) => finish({
+      ok: false,
+      body: null,
+      statusCode: null,
+      state: timedOut ? "timeout" : "unreachable",
+      error: error.message,
+    }));
   });
 }
 

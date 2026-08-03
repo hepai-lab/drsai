@@ -3,20 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import hashlib
 import json
 from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from drsai.backend.agent_backend_bindings import (
+from drsai.backend.runtime.agent_bindings import (
     AgentBackendBindingError,
     AgentBackendBindingOperation,
     AgentBackendBindingStore,
     AgentBackendRunBinding,
     AgentBackendSessionBinding,
 )
-from drsai.backend.agent_runtime import (
+from drsai.backend.runtime.agent import (
     AgentDefinition,
     AgentExecutionServices,
     RuntimeExecutionError,
@@ -25,14 +27,44 @@ from drsai.backend.agent_runtime import (
 from drsai.backend.codex_adapter.jsonrpc_client import CodexJSONRPCClient
 from drsai.backend.codex_adapter.models import CodexModelCatalog
 from drsai.backend.codex_adapter.event_mapper import CodexEventMapper
+from drsai.backend.codex_adapter.native_decoder import CodexNativeEventDecoder
 from drsai.backend.codex_adapter.security import CodexAccountManager
 from drsai.backend.codex_adapter.security import CodexApprovalBridge
-
-
+from drsai.backend.codex_adapter.version import CODEX_ADAPTER_MAPPING_VERSION
 _AMBIGUOUS_ERRORS = frozenset({
     "codex_request_timeout", "codex_connection_eof", "codex_reader_failed",
     "codex_json_invalid", "codex_message_invalid", "codex_response_invalid",
 })
+
+
+def _codex_timestamp(value: Any) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    if isinstance(value, (int, float)) and value > 0:
+        seconds = float(value) / 1000 if value > 10_000_000_000 else float(value)
+        try:
+            return datetime.fromtimestamp(seconds, timezone.utc).isoformat()
+        except (OSError, OverflowError, ValueError):
+            return None
+    return None
+
+
+def _codex_turn_timing(turn: Mapping[str, Any]) -> tuple[str | None, str | None, int | None]:
+    """Normalize current and legacy Codex Turn timing without inventing import time."""
+    started_at = _codex_timestamp(
+        turn.get("startedAt") or turn.get("started_at")
+        or turn.get("createdAt") or turn.get("created_at")
+    )
+    completed_at = _codex_timestamp(turn.get("completedAt") or turn.get("completed_at"))
+    raw_duration = turn.get("durationMs") if turn.get("durationMs") is not None else turn.get("duration_ms")
+    duration_ms = int(raw_duration) if isinstance(raw_duration, (int, float)) and raw_duration >= 0 else None
+    if duration_ms is not None and started_at and not completed_at:
+        completed_at = (datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+                        + timedelta(milliseconds=duration_ms)).isoformat()
+    elif duration_ms is not None and completed_at and not started_at:
+        started_at = (datetime.fromisoformat(completed_at.replace("Z", "+00:00"))
+                      - timedelta(milliseconds=duration_ms)).isoformat()
+    return started_at, completed_at, duration_ms
 _TERMINAL = frozenset({"completed", "failed", "interrupted"})
 _BACKEND_CONFIG_FIELDS = frozenset({"personality", "approvalPolicy", "sandbox", "reasoningEffort"})
 
@@ -118,6 +150,9 @@ class CodexAgentBackendClient:
         request = {
             "cwd": str(context.workspace_path), "model": model,
             "developerInstructions": definition.instructions,
+            # OpenDrSai owns the user interaction and audit trail. Never let a
+            # host-level Codex auto-review setting bypass Approval Bridge.
+            "approvalsReviewer": "user",
             **{key: value for key, value in config.items() if key in {"personality", "approvalPolicy", "sandbox"}},
         }
         operation = self.bindings.prepare_operation("session", context.session_id, "thread/start", _digest(request))
@@ -181,6 +216,22 @@ class CodexAgentBackendClient:
             turn_future: asyncio.Future = asyncio.get_running_loop().create_future()
             pending_notifications: list[Mapping[str, Any]] = []
             turn_identity: dict[str, str | None] = {"id": None}
+            delta_flush_tasks: dict[tuple[str, str], asyncio.Task[None]] = {}
+
+            def schedule_delta_flush(turn_id: str, item_id: str) -> None:
+                key = (turn_id, item_id)
+                current = delta_flush_tasks.get(key)
+                if current is not None and not current.done():
+                    return
+
+                async def flush_after_max_wait() -> None:
+                    try:
+                        await asyncio.sleep(self.event_mapper.max_wait_ms / 1000)
+                        self.event_mapper.flush_item(context, services, turn_id, item_id)
+                    finally:
+                        delta_flush_tasks.pop(key, None)
+
+                delta_flush_tasks[key] = asyncio.create_task(flush_after_max_wait())
 
             async def receive(message: Mapping[str, Any]) -> None:
                 params = message.get("params") if isinstance(message.get("params"), Mapping) else {}
@@ -191,7 +242,16 @@ class CodexAgentBackendClient:
                     return
                 if notification_turn and notification_turn != turn_identity["id"]:
                     return
-                self.event_mapper.handle(context, services, message)
+                try:
+                    self.event_mapper.handle(context, services, message)
+                except Exception as error:
+                    self.event_mapper.record_mapping_error(error)
+                    raise
+                if str(message.get("method") or "") == "item/agentMessage/delta":
+                    item = params.get("item") if isinstance(params.get("item"), Mapping) else {}
+                    notification_item = str(params.get("itemId") or item.get("id") or "")
+                    if notification_turn and notification_item:
+                        schedule_delta_flush(notification_turn, notification_item)
                 if str(message.get("method") or "") == "turn/completed" and not turn_future.done():
                     turn_future.set_result(dict(params))
 
@@ -205,9 +265,6 @@ class CodexAgentBackendClient:
                 self.bindings.mark_operation_response("run", context.run_id, turn_id)
                 self.fault_injector("after_turn_response_before_bind")
                 run_binding = self._complete_run(context, session)
-                services.emit_backend(context, "agent.started", {
-                    "backend": "codex", "backend_metadata": {"thread_id": session.backend_session_id, "turn_id": turn_id}
-                }, f"codex:{turn_id}:turn/started")
                 for notification in pending_notifications:
                     await receive(notification)
                 terminal = await turn_future
@@ -219,6 +276,8 @@ class CodexAgentBackendClient:
                 unsubscribe()
                 raise
             unsubscribe()
+            for task in delta_flush_tasks.values():
+                task.cancel()
             return self._terminal_result(context, services, run_binding, terminal)
         raise RuntimeExecutionError(
             "codex_turn_recovery_required",
@@ -239,8 +298,6 @@ class CodexAgentBackendClient:
         metadata = {"thread_id": self.bindings.get_session(context.session_id).backend_session_id,
                     "turn_id": binding.backend_run_id}
         if status == "completed":
-            services.emit_backend(context, "agent.completed", {"backend": "codex", "backend_metadata": metadata},
-                                  f"codex:{binding.backend_run_id}:turn/completed")
             return {"status": "completed", "backend": "codex", "backend_metadata": metadata}
         if status == "interrupted":
             raise RuntimeExecutionError("run_cancelled", "Codex Turn was interrupted.", detail={"backend_metadata": metadata})
@@ -322,7 +379,136 @@ class CodexAgentBackendClient:
                 }
             except RuntimeExecutionError as exc:
                 health = {**health, "available": False, "reason": exc.code, "retryable": exc.retryable}
-        return {**health, "connection_state": self.rpc._state}
+        return {
+            **health,
+            "connection_state": self.rpc._state,
+            "app_server_state": "running" if health.get("available") and health.get("reason") != "ready_not_started" else "stopped",
+            "transport": "local-process",
+            "adapter_version": CODEX_ADAPTER_MAPPING_VERSION,
+            "oaep_metrics": self.event_mapper.diagnostics_snapshot(),
+        }
+
+    async def restart_backend(self) -> Mapping[str, Any]:
+        initialized = await self.rpc.reconnect()
+        health = await self.health()
+        return {
+            **health,
+            "restarted": True,
+            "protocol_version": initialized.get("protocolVersion") if isinstance(initialized, Mapping) else None,
+        }
+
+    async def discover_sessions(self, workspace_path: str) -> list[Mapping[str, Any]]:
+        await self.rpc.connect()
+        expected = os.path.normcase(str(Path(workspace_path).resolve(strict=False)))
+        discovered: dict[str, dict[str, Any]] = {}
+        for archived in (False, True):
+            cursor: str | None = None
+            for _ in range(100):
+                params: dict[str, Any] = {"limit": 100, "archived": archived}
+                if cursor:
+                    params["cursor"] = cursor
+                response = await self.rpc.request("thread/list", params)
+                rows = response.get("data") if isinstance(response, Mapping) else None
+                if not isinstance(rows, list):
+                    rows = response.get("threads") if isinstance(response, Mapping) else []
+                for raw in rows if isinstance(rows, list) else []:
+                    if not isinstance(raw, Mapping):
+                        continue
+                    thread_id = str(raw.get("id") or "").strip()
+                    cwd = str(raw.get("cwd") or raw.get("workdir") or "").strip()
+                    if not thread_id or not cwd:
+                        continue
+                    try:
+                        actual = os.path.normcase(str(Path(cwd).resolve(strict=False)))
+                    except OSError:
+                        continue
+                    if actual != expected:
+                        continue
+                    title = str(raw.get("name") or raw.get("title") or "Codex session").strip()[:240] or "Codex session"
+                    discovered[thread_id] = {
+                        "backend_session_id": thread_id,
+                        "title": title,
+                        "archived": archived,
+                        "created_at": _codex_timestamp(raw.get("createdAt") or raw.get("created_at")),
+                        "updated_at": _codex_timestamp(raw.get("updatedAt") or raw.get("updated_at")),
+                    }
+                next_cursor = response.get("nextCursor") if isinstance(response, Mapping) else None
+                cursor = str(next_cursor).strip() if next_cursor else None
+                if not cursor:
+                    break
+        return sorted(discovered.values(), key=lambda item: str(item.get("updated_at") or ""), reverse=True)
+
+    async def bind_imported_session(
+        self, session_id: str, workspace_id: str, runtime_id: str, backend_session_id: str,
+        *, backend_version: str | None = None,
+    ) -> None:
+        existing = self.bindings.find_session_by_backend_id("codex", backend_session_id)
+        if existing is not None:
+            if existing.session_id != session_id or existing.workspace_id != workspace_id:
+                raise RuntimeExecutionError("codex_import_binding_conflict", "Codex Thread is already bound to another Session or Workspace.")
+            return
+        if backend_version is None:
+            health = await self.health()
+            backend_version = str(health.get("version") or "unknown")
+        self.bindings.bind_session(
+            session_id=session_id,
+            workspace_id=workspace_id,
+            backend_id="codex",
+            agent_backend_runtime_id=runtime_id,
+            workspace_runtime_id=runtime_id,
+            backend_session_id=backend_session_id,
+            backend_version=backend_version,
+        )
+
+    async def read_imported_session_history(self, session_id: str) -> list[Mapping[str, Any]]:
+        """Read a Codex Thread as bounded, normalized historical Turns."""
+        binding = self.bindings.get_session(session_id)
+        backend_session_id = binding.backend_session_id
+        await self.rpc.connect()
+        result = await self.rpc.request(
+            "thread/read", {"threadId": backend_session_id, "includeTurns": True}
+        )
+        thread = result.get("thread") if isinstance(result, Mapping) and isinstance(result.get("thread"), Mapping) else {}
+        turns = thread.get("turns") if isinstance(thread.get("turns"), list) else []
+        decoder = CodexNativeEventDecoder()
+        history: list[Mapping[str, Any]] = []
+        for turn_index, raw_turn in enumerate(turns[:10_000]):
+            if not isinstance(raw_turn, Mapping):
+                continue
+            turn_id = str(raw_turn.get("id") or f"turn-{turn_index}")
+            started_at, completed_at, duration_ms = _codex_turn_timing(raw_turn)
+            raw_items = raw_turn.get("items") if isinstance(raw_turn.get("items"), list) else []
+            items: list[dict[str, Any]] = []
+            for item_index, raw_item in enumerate(raw_items[:20_000]):
+                if not isinstance(raw_item, Mapping):
+                    continue
+                native_item = dict(raw_item)
+                native_item.setdefault("id", f"item-{turn_index}-{item_index}-{hashlib.sha256(json.dumps(native_item, sort_keys=True, default=str).encode()).hexdigest()[:16]}")
+                decoded = decoder.decode({
+                    "method": "item/completed",
+                    "params": {"threadId": backend_session_id, "turnId": turn_id, "item": native_item},
+                })
+                if decoded is None or decoded.item_type is None:
+                    continue
+                payload = dict(decoded.payload)
+                payload["status"] = str(payload.get("status") or "completed")
+                items.append({
+                    "item_id": str(native_item["id"]),
+                    "kind": decoded.item_type.value,
+                    "role": payload.get("role"),
+                    "status": payload["status"],
+                    "payload": payload,
+                })
+            history.append({
+                "backend_run_id": turn_id,
+                "backend_run_index": turn_index,
+                "status": str(raw_turn.get("status") or "completed"),
+                "created_at": started_at,
+                "completed_at": completed_at,
+                "duration_ms": duration_ms,
+                "items": items,
+            })
+        return history
 
     async def close(self) -> None:
         if self._closed:
@@ -349,7 +535,8 @@ class CodexAgentBackendClient:
         if self._resumed_generation.get(context.session_id) == self.rpc._generation:
             return
         result = await self.rpc.request("thread/resume", {
-            "threadId": binding.backend_session_id, "cwd": str(context.workspace_path)
+            "threadId": binding.backend_session_id, "cwd": str(context.workspace_path),
+            "approvalsReviewer": "user",
         })
         returned = self._response_id(result, "thread")
         if returned != binding.backend_session_id:

@@ -19,7 +19,7 @@ def load(name: str, filename: str):
     return module
 
 
-paths = load("workspace_paths_under_test", "workspace_paths.py")
+paths = load("workspace_paths_under_test", "workspace/paths.py")
 
 
 class WorkspacePathTests(unittest.TestCase):

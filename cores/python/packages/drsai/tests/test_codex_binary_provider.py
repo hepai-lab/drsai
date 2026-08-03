@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import os
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -11,11 +12,12 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from drsai.backend.agent_runtime import RuntimeExecutionError
+from drsai.backend.runtime.agent import RuntimeExecutionError
 from drsai.backend.codex_adapter.binary_provider import (
     CodexArtifactStore,
     CodexBinaryProvider,
     CodexPlatformLauncher,
+    discover_windows_codex_desktop,
     verify_codex_compatibility,
     load_trusted_publishers,
 )
@@ -115,6 +117,55 @@ def test_development_provider_reports_cli_version(tmp_path: Path):
     binary = provider.resolve()
     assert binary.version == "0.144.5"
     assert binary.source == "CODEX_BIN" and binary.release_safe is False
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Codex Desktop discovery is Windows-specific")
+def test_product_discovers_latest_signed_codex_desktop_without_environment_override(tmp_path: Path):
+    root = tmp_path / "OpenAI" / "Codex" / "bin"
+    older = root / "a1b2c3d4" / "codex.exe"
+    latest = root / "d7e8094cfb76a267" / "codex.exe"
+    older.parent.mkdir(parents=True)
+    latest.parent.mkdir(parents=True)
+    older.write_bytes(b"older")
+    latest.write_bytes(b"latest")
+    now = time.time_ns()
+    os.utime(older, ns=(now - 2_000_000_000, now - 2_000_000_000))
+    os.utime(latest, ns=(now, now))
+
+    assert discover_windows_codex_desktop({"LOCALAPPDATA": str(tmp_path)}) == latest.resolve()
+    provider = CodexBinaryProvider(
+        CodexArtifactStore(tmp_path / "managed", {}),
+        mode="product",
+        environ={"LOCALAPPDATA": str(tmp_path)},
+        desktop_signature_verifier=lambda path: path == latest.resolve(),
+    )
+    with patch("drsai.backend.codex_adapter.binary_provider._probe_codex_version", return_value="0.146.0"):
+        binary = provider.resolve()
+    assert binary.path == latest.resolve()
+    assert binary.version == "0.146.0"
+    assert binary.source == "codex-desktop" and binary.release_safe is True
+    with patch("drsai.backend.codex_adapter.binary_provider.subprocess.run") as run:
+        run.return_value = type("Result", (), {"returncode": 0, "stdout": "codex-cli 0.146.0", "stderr": ""})()
+        assert verify_codex_compatibility(binary) == "0.146.0"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Codex Desktop discovery is Windows-specific")
+def test_product_rejects_alias_untrusted_signature_and_malformed_desktop_layout(tmp_path: Path):
+    malformed = tmp_path / "OpenAI" / "Codex" / "bin" / "current" / "codex.exe"
+    malformed.parent.mkdir(parents=True)
+    malformed.write_bytes(b"invalid")
+    assert discover_windows_codex_desktop({"LOCALAPPDATA": str(tmp_path)}) is None
+
+    candidate = tmp_path / "OpenAI" / "Codex" / "bin" / "12345678" / "codex.exe"
+    candidate.parent.mkdir(parents=True)
+    candidate.write_bytes(b"unsigned")
+    provider = CodexBinaryProvider(
+        CodexArtifactStore(tmp_path / "managed", {}), mode="product",
+        environ={"LOCALAPPDATA": str(tmp_path)}, desktop_signature_verifier=lambda _: False,
+    )
+    with pytest.raises(RuntimeExecutionError) as caught:
+        provider.resolve()
+    assert caught.value.code == "codex_desktop_signature_invalid"
 
 
 def test_signature_digest_publisher_platform_and_schema_tampering_are_rejected(tmp_path: Path, trust):

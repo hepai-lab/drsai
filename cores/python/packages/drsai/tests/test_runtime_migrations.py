@@ -3,9 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from drsai.backend.runtime_engine import RuntimeEngine, RuntimeEngineIdentity
-from drsai.backend.runtime_migrations import LegacySessionMigrator
-from drsai.backend.runtime_registry import RuntimeRegistry
+from drsai.backend.runtime.engine import RuntimeEngine, RuntimeEngineIdentity
+from drsai.backend.runtime.migrations import LegacySessionMigrator
+from drsai.backend.runtime.registry import RuntimeRegistry
 
 
 def build(tmp_path: Path):

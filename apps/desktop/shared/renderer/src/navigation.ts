@@ -34,9 +34,9 @@ export const MENU_LABELS: Record<AppLanguage, Record<NavId, string>> = {
     [MENU_IDS.myAgents]: "我的智能体",
     [MENU_IDS.agentSquare]: "智能体",
     [MENU_IDS.savedPlan]: "已保存计划",
-    [MENU_IDS.skillsSquare]: "技能",
+    [MENU_IDS.skillsSquare]: "Skills",
     [MENU_IDS.plugins]: "插件",
-    [MENU_IDS.library]: "资料库",
+    [MENU_IDS.library]: "GFS 云盘",
     [MENU_IDS.profile]: "设置",
     [MENU_IDS.usageAnalytics]: "使用分析",
     [MENU_IDS.channels]: "频道",
@@ -52,7 +52,7 @@ export const MENU_LABELS: Record<AppLanguage, Record<NavId, string>> = {
     [MENU_IDS.savedPlan]: "Saved Plans",
     [MENU_IDS.skillsSquare]: "Skills",
     [MENU_IDS.plugins]: "Plugins",
-    [MENU_IDS.library]: "Library",
+    [MENU_IDS.library]: "GFS Storage",
     [MENU_IDS.approvalCenter]: "Approval Center",
     [MENU_IDS.profile]: "Settings",
     [MENU_IDS.usageAnalytics]: "Usage Analytics",
@@ -108,22 +108,21 @@ const navDefinitions: Array<{
     items: [
       { id: MENU_IDS.agentSquare, enabled: true },
       { id: MENU_IDS.skillsSquare, enabled: true },
-      { id: MENU_IDS.plugins, enabled: false },
     ],
   },
   {
     id: "workspace",
     items: [
-      { id: MENU_IDS.library, enabled: false },
       { id: MENU_IDS.approvalCenter, enabled: false },
       { id: MENU_IDS.usageAnalytics, enabled: false },
       { id: MENU_IDS.channels, enabled: false },
       { id: MENU_IDS.logs, enabled: false },
     ],
   },
+  // Settings stays reachable from the titlebar user menu, not the primary sidebar.
   {
     id: "settings",
-    items: [{ id: MENU_IDS.profile, enabled: true }],
+    items: [{ id: MENU_IDS.profile, enabled: false }],
   },
 ];
 

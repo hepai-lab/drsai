@@ -149,6 +149,8 @@ class ToolRegistry(
         .map(Registration::definition)
         .filter { ToolPermissionPolicy.decide(it, context) != ToolPolicyDecision.DENY }
 
+    fun definition(toolId: String): ToolDefinition? = registrations[toolId]?.definition
+
     suspend fun execute(context: ToolExecutionContext, toolId: String, rawArguments: String): ToolExecutionOutcome {
         val registration = registrations[toolId] ?: return rejected(context, toolId, "tool_not_registered")
         val definition = registration.definition

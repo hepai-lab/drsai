@@ -52,8 +52,8 @@ class LocalToolRegistry(
     suspend fun execute(userId: String, call: CompletedToolCall, runId: String? = null, sessionId: String? = null): String =
         executeDetailed(userId, call, runId, sessionId).output
 
-    suspend fun executeDetailed(userId: String, call: CompletedToolCall, runId: String? = null, sessionId: String? = null): Result {
-        val context = ToolExecutionContext(userId, capabilities(userId), runId = runId, sessionId = sessionId, toolCallId = call.id)
+    suspend fun executeDetailed(userId: String, call: CompletedToolCall, runId: String? = null, sessionId: String? = null, approved: Boolean = false): Result {
+        val context = ToolExecutionContext(userId, capabilities(userId), approved = approved, runId = runId, sessionId = sessionId, toolCallId = call.id)
         return when (val outcome = registry.execute(context, call.name, call.arguments)) {
             is ToolExecutionOutcome.Success -> Result(outcome.output, true)
             is ToolExecutionOutcome.ApprovalRequired -> {
@@ -73,6 +73,15 @@ class LocalToolRegistry(
             }
             is ToolExecutionOutcome.Rejected -> rejected(outcome.code, "工具 ${call.name} 被拒绝：${outcome.code}")
         }.let { it.copy(output = it.output.take(MAX_TOOL_OUTPUT_CHARS)) }
+    }
+
+    fun definitions(userId: String) = registry.definitions(ToolExecutionContext(userId, capabilities(userId)))
+
+    suspend fun awaitApproval(userId: String, call: CompletedToolCall, runId: String, sessionId: String): Boolean {
+        val gateway = approvals ?: return false
+        val definition = registry.definition(call.name) ?: return false
+        val context = ToolExecutionContext(userId, capabilities(userId), runId = runId, sessionId = sessionId, toolCallId = call.id)
+        return gateway.awaitApproval(context, runId, sessionId, call.id, definition, call.arguments)
     }
 
     private fun rejected(code: String, message: String) = Result(

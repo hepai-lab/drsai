@@ -10,30 +10,40 @@ import { fileURLToPath } from "node:url";
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const baseUrl = String(process.env.OPENDRSAI_RELEASE_BASE_URL || "").replace(/\/+$/, "");
+const metadataBaseUrl = String(process.env.OPENDRSAI_RELEASE_METADATA_BASE_URL || baseUrl).replace(/\/+$/, "");
+const manifestUrl = String(
+  process.env.OPENDRSAI_UPDATE_MANIFEST_URL ||
+  "https://download-opendrsai.ihep.ac.cn/channels/beta/latest-windows.json",
+);
 const fullDownload = process.env.VERIFY_PUBLIC_RELEASE_DOWNLOAD === "1";
 const expectedThumbprint = normalizeThumbprint(process.env.EXPECTED_WINDOWS_SIGNER_THUMBPRINT || "");
-if (!/^https:\/\/github\.com\/hepai-lab\/drsai\/releases\/download\/[^/]+$/i.test(baseUrl)) {
-  throw new Error("OPENDRSAI_RELEASE_BASE_URL must be a versioned hepai-lab/drsai GitHub Release URL.");
+if (!new RegExp(`^https://download-opendrsai\\.ihep\\.ac\\.cn/releases/v${escapeRegExp(packageJson.version)}/windows$`, "i").test(baseUrl)) {
+  throw new Error("OPENDRSAI_RELEASE_BASE_URL must be the versioned OpenDrSai Windows CDN directory.");
 }
 
-const manifest = await fetchJson(`${baseUrl}/latest-windows.json`);
-const summary = await fetchJson(`${baseUrl}/release-summary.json`);
+const runtimeArchiveName = `OpenDrSai-Windows-v${packageJson.version}-x64.zip`;
+const installerName = "OpenDrSai-Windows-Installer-x64.msi";
+const manifest = await fetchJson(manifestUrl);
+const summary = await fetchJson(`${metadataBaseUrl}/release-summary.json`);
 assert(manifest.schemaVersion === 1, "Public update manifest schema is unsupported.");
 assert(manifest.version === packageJson.version, "Public update manifest version does not match package.json.");
 const isPrereleaseVersion = packageJson.version.includes("-");
+const expectedReleaseTier = isPrereleaseVersion || manifest.channel !== "stable"
+  ? manifest.channel
+  : "stable";
 assert(
   manifest.channel !== "stable" || isPrereleaseVersion || manifest.requireSignature === true,
   "Stable-version public update does not require signatures.",
 );
-assert(manifest.runtime?.url === `${baseUrl}/OpenDrSaiRuntime-win-x64.zip`, "Runtime URL is not the immutable versioned Release URL.");
+assert(manifest.runtime?.url === `${baseUrl}/${runtimeArchiveName}`, "Runtime URL is not the immutable versioned CDN URL.");
 assert(summary.version === manifest.version, "Public release summary version does not match the update manifest.");
 assert(summary.distribution?.publicDistributionReady === true, "Public release summary does not permit distribution.");
-assert(summary.distribution?.releaseTier === (isPrereleaseVersion ? "preview" : "stable"), "Public release tier is incorrect.");
+assert(summary.distribution?.releaseTier === expectedReleaseTier, "Public release tier is incorrect.");
 
 const summaryArtifacts = new Map((summary.artifacts || []).map((item) => [item.path, item]));
 const assets = [
-  { name: "OpenDrSaiSetup-win-x64.msi", summaryPath: "bootstrapper/OpenDrSaiSetup-win-x64.msi" },
-  { name: "OpenDrSaiRuntime-win-x64.zip", summaryPath: "bootstrapper/OpenDrSaiRuntime-win-x64.zip" },
+  { name: installerName, summaryPath: `bootstrapper/${installerName}` },
+  { name: runtimeArchiveName, summaryPath: `bootstrapper/${runtimeArchiveName}` },
 ];
 for (const asset of assets) {
   assert(summaryArtifacts.has(asset.summaryPath), `Release summary is missing ${asset.summaryPath}.`);
@@ -50,7 +60,7 @@ if (fullDownload) {
       const hash = await sha256(destination);
       assert(statSync(destination).size === described.sizeBytes, `${asset.name} size does not match release-summary.json.`);
       assert(hash === described.sha256, `${asset.name} SHA-256 does not match release-summary.json.`);
-      if (asset.name.endsWith("Runtime-win-x64.zip")) {
+      if (asset.name === runtimeArchiveName) {
         assert(statSync(destination).size === manifest.runtime.sizeBytes, "Runtime size does not match latest-windows.json.");
         assert(hash === manifest.runtime.sha256, "Runtime SHA-256 does not match latest-windows.json.");
       }
@@ -91,13 +101,13 @@ async function sha256(path) {
 function verifyDownloadedSignatures(work, thumbprint) {
   if (process.platform !== "win32") throw new Error("Stable Windows signatures must be verified on Windows.");
   if (!thumbprint) throw new Error("EXPECTED_WINDOWS_SIGNER_THUMBPRINT is required for stable public verification.");
-  const runtime = join(work, "OpenDrSaiRuntime-win-x64.zip");
+  const runtime = join(work, runtimeArchiveName);
   const appExe = join(work, "OpenDrSai.exe");
   const command = [
     "Add-Type -AssemblyName System.IO.Compression.FileSystem",
     `$z=[IO.Compression.ZipFile]::OpenRead(${quote(runtime)})`,
     `try{$e=@($z.Entries|Where-Object{($_.FullName -replace '\\\\','/') -eq 'app/OpenDrSai.exe'})[0];if(-not $e){throw 'Runtime app executable missing.'};[IO.Compression.ZipFileExtensions]::ExtractToFile($e,${quote(appExe)},$true)}finally{$z.Dispose()}`,
-    `$paths=@(${quote(join(work, "OpenDrSaiSetup-win-x64.msi"))},${quote(appExe)})`,
+    `$paths=@(${quote(join(work, installerName))},${quote(appExe)})`,
     `foreach($p in $paths){$s=Get-AuthenticodeSignature -LiteralPath $p;if($s.Status -ne 'Valid' -or -not $s.SignerCertificate){throw \"Invalid signature: $p ($($s.Status))\"};if(($s.SignerCertificate.Thumbprint -replace '[^0-9A-Fa-f]','').ToUpperInvariant() -ne '${thumbprint}'){throw \"Unexpected signer: $p\"}}`,
   ].join("; ");
   execFileSync("powershell.exe", ["-NoProfile", "-Command", command], { windowsHide: true, stdio: "inherit" });
@@ -105,4 +115,5 @@ function verifyDownloadedSignatures(work, thumbprint) {
 
 function normalizeThumbprint(value) { return value.replace(/[^0-9a-f]/gi, "").toUpperCase(); }
 function quote(value) { return `'${value.replace(/'/g, "''")}'`; }
+function escapeRegExp(value) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 function assert(condition, message) { if (!condition) throw new Error(message); }

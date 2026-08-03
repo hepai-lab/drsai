@@ -7,9 +7,10 @@ import { fileURLToPath } from "node:url";
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const releaseDir = join(root, "release");
 const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+const runtimeArchiveName = `OpenDrSai-Windows-v${packageJson.version}-x64.zip`;
 const artifacts = [
-  join("bootstrapper", "OpenDrSaiSetup-win-x64.msi"),
-  join("bootstrapper", "OpenDrSaiRuntime-win-x64.zip"),
+  join("bootstrapper", "OpenDrSai-Windows-Installer-x64.msi"),
+  join("bootstrapper", runtimeArchiveName),
   "latest-windows.json",
 ];
 
@@ -42,7 +43,7 @@ function describeArtifact(relativePath) {
     sha256: createHash("sha256").update(bytes).digest("hex"),
     signatureStatus: relativePath.endsWith(".msi")
       ? getSignatureStatus(fullPath)
-      : relativePath.endsWith("OpenDrSaiRuntime-win-x64.zip")
+      : relativePath.endsWith(runtimeArchiveName)
         ? getRuntimeExecutableSignatureStatus(fullPath)
         : null,
   };
@@ -64,14 +65,15 @@ function getSignatureStatus(path) {
 function describeDistribution(describedArtifacts, version) {
   const signedArtifacts = describedArtifacts.filter(
     (artifact) => artifact.exists &&
-      (artifact.path.endsWith(".msi") || artifact.path.endsWith("OpenDrSaiRuntime-win-x64.zip")),
+      (artifact.path.endsWith(".msi") || artifact.path.endsWith(runtimeArchiveName)),
   );
   const unsigned = signedArtifacts.filter(
     (artifact) => artifact.signatureStatus !== "Valid",
   );
-  const preview = version.includes("-");
+  const releaseChannel = String(process.env.OPENDRSAI_UPDATE_CHANNEL || "stable").toLowerCase();
+  const preview = version.includes("-") || releaseChannel !== "stable";
   return {
-    releaseTier: preview ? "preview" : "stable",
+    releaseTier: preview ? releaseChannel : "stable",
     publicDistributionReady: unsigned.length === 0 || preview,
     requiresSignedInstallers: !preview,
     unsignedArtifacts: unsigned.map((artifact) => ({

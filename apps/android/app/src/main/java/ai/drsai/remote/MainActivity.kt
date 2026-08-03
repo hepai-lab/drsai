@@ -7,9 +7,11 @@ import androidx.activity.viewModels
 import androidx.activity.compose.setContent
 import ai.drsai.remote.ui.OpenDrSaiApp
 import ai.drsai.remote.data.installAndroidUpdateLifecycle
+import ai.drsai.remote.data.AndroidUpdateManager
 import ai.drsai.remote.runtime.device.ACTION_STOP_LOCAL_RUN
 import ai.drsai.remote.runtime.device.EXTRA_RUN_ID
 import ai.drsai.remote.runtime.reliability.ACTION_OPEN_RECOVERABLE_RUN
+import ai.drsai.remote.remote.data.AndroidDevicePresence
 
 class MainActivity : ComponentActivity() {
     private val appViewModel: AppViewModel by viewModels()
@@ -17,17 +19,16 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         installAndroidUpdateLifecycle(application)
+        AndroidDevicePresence.install(application)
         setContent { OpenDrSaiApp(appViewModel) }
-        appViewModel.handleOidcRedirect(intent?.data)
-        appViewModel.handleDeepLink(intent?.data)
+        handleViewIntent(intent)
         handleRunAction(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        appViewModel.handleOidcRedirect(intent.data)
-        appViewModel.handleDeepLink(intent.data)
+        handleViewIntent(intent)
         handleRunAction(intent)
     }
 
@@ -37,12 +38,22 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleRunAction(intent: Intent?) {
-        if (intent?.action == ACTION_STOP_LOCAL_RUN && !intent.getStringExtra(EXTRA_RUN_ID).isNullOrBlank()) {
+        if (intent?.action == AndroidUpdateManager.ACTION_OPEN_UPDATE) {
+            appViewModel.toggleProfile(true)
+            intent.action = null
+        } else if (intent?.action == ACTION_STOP_LOCAL_RUN && !intent.getStringExtra(EXTRA_RUN_ID).isNullOrBlank()) {
             appViewModel.stop()
             intent.action = null
         } else if (intent?.action == ACTION_OPEN_RECOVERABLE_RUN && !intent.getStringExtra(EXTRA_RUN_ID).isNullOrBlank()) {
             appViewModel.openRecoverableRun(intent.getStringExtra(EXTRA_RUN_ID)!!)
             intent.action = null
         }
+    }
+
+    private fun handleViewIntent(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_VIEW) return
+        appViewModel.handleOidcRedirect(intent.data)
+        appViewModel.handleAssociationDeepLink(intent.data)
+        appViewModel.handleDeepLink(intent.data)
     }
 }

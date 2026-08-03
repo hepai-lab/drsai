@@ -9,15 +9,14 @@
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
-        android:label="@string/app_name"
+        android:label="${appLabel}"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:theme="@style/Theme.DrSaiRemote"
         android:usesCleartextTraffic="${usesCleartextTraffic}">
         <activity
-            android:name=".MainActivity"
+            android:name=".ExternalEntryActivity"
             android:exported="true"
-            android:launchMode="singleTask"
-            android:windowSoftInputMode="adjustResize">
+            android:noHistory="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -26,7 +25,18 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="opendrsai" android:host="oauth2redirect" />
+                <data android:scheme="opendrsai" android:host="associate" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="opendrsai" android:host="remote" />
+                <data android:scheme="opendrsai" android:host="workspace" />
+                <data android:scheme="opendrsai" android:host="session" />
+                <data android:scheme="opendrsai" android:host="run" />
+                <data android:scheme="opendrsai" android:host="approval" />
+                <data android:scheme="opendrsai" android:host="artifact" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -35,6 +45,11 @@
                 <data android:scheme="ai.drsai.remote" />
             </intent-filter>
         </activity>
+        <activity
+            android:name=".MainActivity"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize" />
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.files"
@@ -48,5 +63,10 @@
             android:name=".runtime.device.LocalRunForegroundService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <service
+            android:name=".runtime.python.PythonRuntimeService"
+            android:exported="false"
+            android:process=":runtime"
+            android:stopWithTask="false" />
     </application>
 </manifest>

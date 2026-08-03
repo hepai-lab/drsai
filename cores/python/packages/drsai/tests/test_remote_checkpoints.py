@@ -5,7 +5,14 @@ import subprocess
 from pathlib import Path
 
 
-MODULE = Path(__file__).parents[1] / "src" / "drsai" / "backend" / "remote_checkpoints.py"
+MODULE = (
+    Path(__file__).parents[1]
+    / "src"
+    / "drsai"
+    / "backend"
+    / "remote_ssh"
+    / "checkpoints.py"
+)
 SPEC = importlib.util.spec_from_file_location("remote_checkpoints", MODULE)
 assert SPEC and SPEC.loader
 checkpoints = importlib.util.module_from_spec(SPEC)

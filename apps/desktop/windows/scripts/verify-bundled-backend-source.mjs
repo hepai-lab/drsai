@@ -26,6 +26,8 @@ const sha256 = createHash("sha256").update(archive).digest("hex");
 assert(sha256 === manifest.sha256, "backend source archive sha256 does not match manifest");
 assert(archive.includes(Buffer.from("cores/python/packages/drsai/pyproject.toml")), "backend source archive omits drsai pyproject");
 assert(archive.includes(Buffer.from("cores/python/packages/drsai/src/drsai/backend/run_cli.py")), "backend source archive omits backend CLI source");
+assert(archive.includes(Buffer.from("cores/protocol/owop/owop.schema.json")), "backend source archive omits the OWOP schema required by the Python wheel build");
+assert(archive.includes(Buffer.from("cores/protocol/relay/runtime-relay.schema.json")), "backend source archive omits the Relay contract");
 
 console.log("Bundled backend source verification passed.");
 

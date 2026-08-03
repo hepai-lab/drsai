@@ -13,7 +13,7 @@ const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
 const cacheDir = join(repo, ".tmp/product-fixtures");
 const cachedPdf = join(cacheDir, manifest.source.filename);
 const pdfPath = resolve(process.env.OPENDRSAI_CERN_PDF || cachedPdf);
-const extractor = join(repo, "cores/python/packages/drsai/src/drsai/backend/presentation_pdf.py");
+const extractor = join(repo, "cores/python/packages/drsai/src/drsai/content/pdf/presentation.py");
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);

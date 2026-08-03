@@ -45,6 +45,17 @@ const server = createServer(async (request, response) => {
   state.authorizedRequests += 1;
   const body = JSON.parse(await readBody(request));
   state.requestBodies.push(body);
+  if (body.metadata?.worker_failure_test) {
+    response.writeHead(500, { "content-type": "application/json" });
+    response.end(JSON.stringify({
+      detail: {
+        error_code: "INTERNAL_ERROR",
+        message: "服务内部错误，请稍后重试",
+        original_error: "",
+      },
+    }));
+    return;
+  }
   response.writeHead(200, {
     "content-type": "text/event-stream",
     "cache-control": "no-cache",
@@ -56,7 +67,8 @@ const server = createServer(async (request, response) => {
   response.write('event: agent.input_request\ndata: {"type":"input_request","input_type":"approval","prompt":"Continue?"}\n\n');
   await waitFor(() => state.inputResponses.length > 0, 3000);
   response.write('data: {"file_events":[{"action":"artifact","path":"result.txt","name":"result.txt"}]}\n\n');
-  response.write('data: {"tool_event":{"id":"tool-1","kind":"tool_result","title":"Tool result","status":"completed","content":"ok"}}\n\n');
+  response.write('data: {"choices":[{"delta":{}}],"metadata":{"chat_id":"thread-cloud-1","event_type":"tool","status":"in_progress","tool":{"id":"tool-worker-health-0001","name":"worker_health_check","phase":"start"}}}\n\n');
+  response.write('data: {"choices":[{"delta":{}}],"metadata":{"chat_id":"thread-cloud-1","event_type":"tool","status":"completed","tool":{"id":"tool-worker-health-0001","name":"worker_health_check","phase":"result","result":{"status":"ok","agent":"drsai_v3_test"}}}}\n\n');
   response.write('data: {"choices":[{"delta":{"content":"answer"}}]}\n\n');
   response.end('data: [DONE]\n\n');
 });
@@ -93,6 +105,7 @@ try {
   chat.startChat(webContents, {
     requestId,
     agentId: "platform:test-agent",
+    model: "deepseek-ai/deepseek-v4-pro",
     threadId: "thread-cloud-1",
     messages: [{ role: "user", content: "Use the cloud agent." }],
   });
@@ -103,9 +116,45 @@ try {
   );
   assert.equal(state.chatRequests, 2, "platform chat must retry one HTTP 401 exactly once");
   assert.equal(state.authorizedRequests, 1);
+  const toolEvents = events
+    .filter((event) => event.type === "tool_timeline" && event.toolTimeline?.id === "tool-worker-health-0001")
+    .map((event) => event.toolTimeline);
+  assert.deepEqual(
+    toolEvents.map(({ id, kind, status }) => ({ id, kind, status })),
+    [
+      { id: "tool-worker-health-0001", kind: "tool_call", status: "running" },
+      { id: "tool-worker-health-0001", kind: "tool_result", status: "completed" },
+    ],
+    "real worker metadata.tool start/result frames must survive generic status parsing",
+  );
   assert.deepEqual(state.inputResponses, [{ response: { approved: true } }]);
   assert.equal(state.requestBodies[0].thread_id, "thread-cloud-1");
+  assert.equal(
+    state.requestBodies[0].model,
+    "test-agent",
+    "platform-agent requests must route by the remote agent ID, not the selected LLM model",
+  );
   assert(!JSON.stringify(state.requestBodies[0]).includes("private-config-secret"));
+
+  const failureEvents = [];
+  const dispatchedBodiesBeforeFailure = state.requestBodies.length;
+  chat.startChat({ send: (_channel, event) => failureEvents.push(event) }, {
+    requestId: "cloud-route-failure-0001",
+    agentId: "platform:test-agent",
+    threadId: "thread-cloud-failure-1",
+    metadata: { worker_failure_test: true },
+    messages: [{ role: "user", content: "Fail this cloud run." }],
+  });
+  await waitFor(() => failureEvents.some((event) => event.type === "error"), 3000);
+  assert.equal(
+    state.requestBodies.length,
+    dispatchedBodiesBeforeFailure + 1,
+    "DDF HTTP 500 must not be retried as a network interruption",
+  );
+  assert.equal(
+    failureEvents.find((event) => event.type === "error")?.error,
+    "服务内部错误，请稍后重试",
+  );
 
   const cancelEvents = [];
   const cancelRequestId = "cloud-route-0002";
@@ -145,11 +194,13 @@ function stubMainDependencies() {
       export function getPlatformAgentChatUrl(){ return globalThis.__agentCloudBase + "/chat"; }
       export function isPlatformAgentExecutionAvailable(){ return true; }
       export async function respondToPlatformChatInput(_agent,_thread,response){ const result=await fetch(globalThis.__agentCloudBase+"/input",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({response})}); return result.ok; }
+      export async function respondToDdfChatInput(_agent,_chat,_run,_request,response){ const result=await fetch(globalThis.__agentCloudBase+"/input",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({response})}); return result.ok; }
       export async function stopPlatformChat(){ const result=await fetch(globalThis.__agentCloudBase+"/stop",{method:"POST"}); return result.ok; }
     `],
     ["./gateway", `export function getGatewayRequestHeaders(){return {}}; export async function startGateway(){throw new Error("platform chat must not start the local gateway")}`],
     ["./modelDefaults", `export function getDefaultModelAlias(){return "drsai";} export function normalizeModelAlias(value){return value || "";}`],
-    ["./threads", `export async function listThreads(){return [];} export async function upsertThreadFromRun(){return {};}`],
+    ["./chatRunJournal", `export async function listRecordedChatRunEvents(){return [];} export async function recordChatRunEvent(){}`],
+    ["./threads", `export async function listThreads(){return [];} export async function updateThread(){return null;} export async function upsertThreadFromRun(){return {};}`],
     ["./providerErrorAnalytics", `export async function persistProviderErrorAnalytics(){}`],
     ["./providerUsageAnalytics", `export async function persistProviderUsageAnalytics(){}`],
     ["./remoteWorkspace", `export function bindRemoteThread(){}; export function getRemoteGatewayAccess(){return null;} export function resolveRemoteWorkspaceTarget(){return null;}`],

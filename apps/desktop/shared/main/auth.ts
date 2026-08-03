@@ -20,10 +20,13 @@ import type {
   OidcLoginDebugEvent,
 } from "../api/desktopApi";
 import { DRSAI_HOME } from "./paths";
+import { isDesktopDevelopment } from "./desktopRuntimeMode";
+import { getActivePlatformConfig } from "./platformConfig";
 import { normalizeModelAlias } from "./modelDefaults";
 import { saveApiKeyAndDefaultModel } from "./settings";
+import { sanitizeDiagnosticUrl } from "./secretRedaction";
 
-const IS_DESKTOP_DEV = process.env.NODE_ENV === "development" || Boolean(process.env.ELECTRON_RENDERER_URL);
+const IS_DESKTOP_DEV = isDesktopDevelopment();
 let credentialService: DesktopCredentialService | null = null;
 let openExternalUrl: (url: string) => Promise<void> = async () => {
   throw new Error("Desktop external URL service is not configured.");
@@ -47,13 +50,8 @@ const ACCESS_TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
 const DESKTOP_AUTH_BASE_URL =
   process.env.OPENDRSAI_AUTH_BASE_URL?.replace(/\/+$/, "") ||
   "https://opendrsai.ihep.ac.cn";
-const CONFIGURED_OIDC_ISSUER =
-  process.env.OPENDRSAI_OIDC_ISSUER?.replace(/\/+$/, "") ||
-  process.env.HAI_OIDC_ISSUER?.replace(/\/+$/, "");
-const DEFAULT_OIDC_ORIGIN = IS_DESKTOP_DEV
-  ? "https://ai-dev.ihep.ac.cn"
-  : "https://ai.ihep.ac.cn";
-const OIDC_ISSUER = CONFIGURED_OIDC_ISSUER || `${DEFAULT_OIDC_ORIGIN}/api`;
+const ACTIVE_PLATFORM = getActivePlatformConfig();
+const OIDC_ISSUER = ACTIVE_PLATFORM.oidcIssuer;
 const OIDC_DISCOVERY_URL =
   process.env.OPENDRSAI_OIDC_DISCOVERY_URL?.trim() ||
   `${OIDC_ISSUER}/.well-known/openid-configuration`;
@@ -95,6 +93,7 @@ export interface AuthContext {
   userId: string;
   accessToken?: string;
   authMode: NonNullable<AuthSession["authMode"]>;
+  issuer?: string;
 }
 
 export async function getAuthSession(): Promise<AuthSession> {
@@ -143,6 +142,7 @@ export async function requireAuthContext(): Promise<AuthContext> {
     userId: refreshed.user.id || refreshed.user.email,
     accessToken: refreshed.accessToken,
     authMode: refreshed.authMode,
+    issuer: refreshed.issuer,
   };
 }
 
@@ -188,12 +188,10 @@ export async function login(rawRequest: unknown): Promise<LoginResult> {
   }
 
   if (request.email && request.password) {
-    const session = createPasswordPlaceholderSession(request.email, request.rememberMe);
-    writeStoredSession(session);
     return {
-      ok: true,
-      session: toPublicSession(session),
-      message: "Signed in locally. Remote password verification is not connected yet.",
+      ok: false,
+      session: null,
+      message: "Password sign-in is unavailable because this desktop build has no password verification service. Use HepAI OIDC or a development API key.",
     };
   }
 
@@ -215,7 +213,7 @@ export async function startOidcLogin(
   const nonce = generateTokenPart(32);
   let callback: Awaited<ReturnType<typeof createLoopbackCallback>> | null = null;
   const emitDebug = (event: Omit<OidcLoginDebugEvent, "at">): void => {
-    debug?.({ ...event, at: new Date().toISOString() });
+    debug?.({ ...event, ...(event.url ? { url: sanitizeDiagnosticUrl(event.url) } : {}), at: new Date().toISOString() });
   };
 
   try {
@@ -542,24 +540,6 @@ function createApiKeySession(apiKey: string, rememberMe = true): StoredAuthSessi
   };
 }
 
-function createPasswordPlaceholderSession(email: string, rememberMe = true): StoredAuthSession {
-  const now = new Date().toISOString();
-  const id = createHash("sha256").update(email.toLowerCase()).digest("hex").slice(0, 12);
-  return {
-    authenticated: true,
-    sessionId: randomUUID(),
-    createdAt: now,
-    expiresAt: getExpiryDate(rememberMe ? SESSION_DAYS : 1),
-    authMode: "password",
-    user: {
-      id: `local-user-${id}`,
-      email,
-      name: email.split("@")[0] || "OpenDrSai User",
-      role: "user",
-    },
-  };
-}
-
 function createSsoSession(
   userId: string,
   accessToken: string,
@@ -689,6 +669,17 @@ function readStoredSession(): StoredAuthSession | null {
     if ((parsed.authMode === "oidc" || parsed.authMode === "sso") && !parsed.accessToken) {
       return null;
     }
+    if (
+      (parsed.authMode === "oidc" || parsed.authMode === "sso") &&
+      parsed.issuer &&
+      parsed.issuer.replace(/\/+$/, "") !== OIDC_ISSUER
+    ) {
+      // Never reuse a development-environment token after the Desktop has
+      // switched to production (or vice versa). The issuers route model calls
+      // to different gateways and their credentials are not interchangeable.
+      clearStoredSession(false);
+      return null;
+    }
     if (sourceFile === LEGACY_AUTH_SESSION_FILE) {
       writeStoredSession(parsed);
       rmSync(LEGACY_AUTH_SESSION_FILE, { force: true });
@@ -703,10 +694,13 @@ function readStoredSession(): StoredAuthSession | null {
 function writeStoredSession(session: StoredAuthSession): void {
   mkdirSync(dirname(AUTH_SESSION_FILE), { recursive: true });
   const temporaryFile = `${AUTH_SESSION_FILE}.${process.pid}.${randomUUID()}.tmp`;
+  const previousReferences = readCredentialReferences(AUTH_SESSION_FILE);
+  let serialized: SerializedStoredAuthSession;
   try {
+    serialized = serializeStoredSession(session);
     writeFileSync(
       temporaryFile,
-      `${JSON.stringify(serializeStoredSession(session), null, 2)}\n`,
+      `${JSON.stringify(serialized, null, 2)}\n`,
       { encoding: "utf8", mode: 0o600 },
     );
     renameSync(temporaryFile, AUTH_SESSION_FILE);
@@ -715,6 +709,8 @@ function writeStoredSession(session: StoredAuthSession): void {
     } catch {
       // Windows ACLs are enforced by the user's profile; chmod is best effort.
     }
+    const retained = new Set(credentialReferences(serialized));
+    for (const reference of previousReferences) if (!retained.has(reference)) credentialService?.remove?.(reference);
   } finally {
     rmSync(temporaryFile, { force: true });
   }
@@ -722,28 +718,20 @@ function writeStoredSession(session: StoredAuthSession): void {
 
 function serializeStoredSession(session: StoredAuthSession): SerializedStoredAuthSession {
   const serialized: SerializedStoredAuthSession = { ...session };
-  if (session.accessToken) {
-    const encrypted = encryptSecret(session.accessToken);
-    if (encrypted) {
-      serialized.encryptedAccessToken = encrypted;
-      delete serialized.accessToken;
+  const created: string[] = [];
+  try {
+    for (const [plain, encrypted] of [["accessToken", "encryptedAccessToken"], ["refreshToken", "encryptedRefreshToken"], ["idToken", "encryptedIdToken"]] as const) {
+      const secret = session[plain];
+      if (!secret) continue;
+      const reference = encryptSecret(secret);
+      if (credentialService?.available() && !reference) throw new Error("The system credential store is unavailable or locked.");
+      if (reference) { serialized[encrypted] = reference; delete serialized[plain]; created.push(reference); }
     }
+    return serialized;
+  } catch (error) {
+    for (const reference of created) credentialService?.remove?.(reference);
+    throw error;
   }
-  if (session.refreshToken) {
-    const encrypted = encryptSecret(session.refreshToken);
-    if (encrypted) {
-      serialized.encryptedRefreshToken = encrypted;
-      delete serialized.refreshToken;
-    }
-  }
-  if (session.idToken) {
-    const encrypted = encryptSecret(session.idToken);
-    if (encrypted) {
-      serialized.encryptedIdToken = encrypted;
-      delete serialized.idToken;
-    }
-  }
-  return serialized;
 }
 
 function deserializeStoredSession(serialized: SerializedStoredAuthSession): StoredAuthSession {
@@ -765,12 +753,24 @@ function decryptSecret(encrypted: string | undefined): string | undefined {
 
 function clearStoredSession(clearLocalData: boolean): void {
   try {
+    const references = [...readCredentialReferences(AUTH_SESSION_FILE), ...readCredentialReferences(LEGACY_AUTH_SESSION_FILE)];
     rmSync(AUTH_SESSION_FILE, { force: true });
     rmSync(LEGACY_AUTH_SESSION_FILE, { force: true });
+    for (const reference of references) credentialService?.remove?.(reference);
     if (clearLocalData) oidcMetadataCache = null;
   } catch {
     // Best-effort cleanup; logout should still clear renderer state.
   }
+}
+
+function credentialReferences(serialized: SerializedStoredAuthSession): string[] {
+  return [serialized.encryptedAccessToken, serialized.encryptedRefreshToken, serialized.encryptedIdToken]
+    .filter((value): value is string => typeof value === "string" && value.length > 0);
+}
+
+function readCredentialReferences(path: string): string[] {
+  try { return credentialReferences(JSON.parse(readFileSync(path, "utf8")) as SerializedStoredAuthSession); }
+  catch { return []; }
 }
 
 function isExpired(session: AuthSession): boolean {
@@ -988,6 +988,7 @@ export async function refreshAuthContextAfterUnauthorized(): Promise<AuthContext
       userId: refreshed.user.id || refreshed.user.email,
       accessToken: refreshed.accessToken,
       authMode: refreshed.authMode,
+      issuer: refreshed.issuer,
     };
   } catch {
     clearStoredSession(false);

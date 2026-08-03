@@ -26,7 +26,8 @@ function removeDuplicatedReasoning(content: string, reasoning: string): string {
   const visible = content.trim();
   const thought = reasoning.trim();
   if (!visible || !thought) return visible;
-  if (normalizeChatText(visible) === normalizeChatText(thought)) return "";
+  // Same text in both fields → still read it once (do not wipe speech text).
+  if (normalizeChatText(visible) === normalizeChatText(thought)) return visible;
   if (normalizeChatText(visible).startsWith(normalizeChatText(thought))) {
     const directPrefix = visible.slice(0, thought.length);
     if (normalizeChatText(directPrefix) === normalizeChatText(thought)) {

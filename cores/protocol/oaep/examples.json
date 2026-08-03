@@ -1,0 +1,342 @@
+{
+  "version": "1.0",
+  "session": {
+    "id": "session-1",
+    "workspace_id": "workspace-1",
+    "title": "OAEP fixture session",
+    "status": "active",
+    "backend": "opendrsai",
+    "created_at": "2026-08-02T10:00:00Z",
+    "updated_at": "2026-08-02T10:00:12Z"
+  },
+  "runs": [
+    {
+      "id": "run-1",
+      "session_id": "session-1",
+      "parent_run_id": null,
+      "status": "failed",
+      "created_at": "2026-08-02T10:00:00Z",
+      "updated_at": "2026-08-02T10:00:12Z",
+      "completed_at": "2026-08-02T10:00:12Z"
+    }
+  ],
+  "items": [
+    {
+      "id": "message-user-1",
+      "session_id": "session-1",
+      "run_id": "run-1",
+      "type": "message",
+      "status": "completed",
+      "sequence": 1,
+      "created_at": "2026-08-02T10:00:00Z",
+      "updated_at": "2026-08-02T10:00:00Z",
+      "source": { "backend": "opendrsai", "backend_item_id": "message-user-1" },
+      "content": { "role": "user", "phase": "final", "text": "请检查项目并运行测试。", "citations": [] }
+    },
+    {
+      "id": "reasoning-1",
+      "session_id": "session-1",
+      "run_id": "run-1",
+      "type": "reasoning",
+      "status": "completed",
+      "sequence": 2,
+      "created_at": "2026-08-02T10:00:01Z",
+      "updated_at": "2026-08-02T10:00:02Z",
+      "source": { "backend": "opendrsai", "backend_item_id": "reasoning-1" },
+      "content": { "segments": [{ "id": "reasoning-1:text", "text": "先检查 Runtime 事件映射。" }] }
+    },
+    {
+      "id": "command-1",
+      "session_id": "session-1",
+      "run_id": "run-1",
+      "type": "command_execution",
+      "status": "completed",
+      "sequence": 3,
+      "created_at": "2026-08-02T10:00:03Z",
+      "updated_at": "2026-08-02T10:00:05Z",
+      "source": { "backend": "opendrsai", "backend_item_id": "command-1" },
+      "content": {
+        "command": ["pytest", "-q"],
+        "display_command": "pytest -q",
+        "cwd": ".",
+        "output": "15 passed",
+        "exit_code": 0,
+        "duration_ms": 1200
+      }
+    },
+    {
+      "id": "tool-1",
+      "session_id": "session-1",
+      "run_id": "run-1",
+      "type": "tool_call",
+      "status": "completed",
+      "sequence": 4,
+      "created_at": "2026-08-02T10:00:06Z",
+      "updated_at": "2026-08-02T10:00:07Z",
+      "source": { "backend": "opendrsai", "backend_item_id": "tool-1" },
+      "content": {
+        "tool_kind": "mcp",
+        "tool_name": "github.search_code",
+        "server": "github",
+        "call_id": "call-1",
+        "arguments": { "query": "OAEP" },
+        "result": { "count": 2 },
+        "duration_ms": 320
+      }
+    },
+    {
+      "id": "interaction-1",
+      "session_id": "session-1",
+      "run_id": "run-1",
+      "type": "interaction",
+      "status": "completed",
+      "sequence": 5,
+      "created_at": "2026-08-02T10:00:08Z",
+      "updated_at": "2026-08-02T10:00:09Z",
+      "source": { "backend": "opendrsai", "backend_item_id": "interaction-1" },
+      "content": {
+        "interaction_type": "approval",
+        "prompt": "是否允许执行测试？",
+        "options": [{ "id": "accept", "label": "允许" }, { "id": "decline", "label": "拒绝" }],
+        "related_item_id": "command-1",
+        "response": { "decision": "accept" }
+      }
+    },
+    {
+      "id": "notice-1",
+      "session_id": "session-1",
+      "run_id": "run-1",
+      "type": "notice",
+      "status": "failed",
+      "sequence": 6,
+      "created_at": "2026-08-02T10:00:10Z",
+      "updated_at": "2026-08-02T10:00:10Z",
+      "source": { "backend": "opendrsai", "backend_item_id": "notice-1" },
+      "content": {
+        "level": "error",
+        "code": "tool_failed",
+        "message": "工具执行失败。",
+        "details": { "retryable": false }
+      }
+    },
+    {
+      "id": "artifact-1",
+      "session_id": "session-1",
+      "run_id": "run-1",
+      "type": "artifact",
+      "status": "completed",
+      "sequence": 7,
+      "created_at": "2026-08-02T10:00:11Z",
+      "updated_at": "2026-08-02T10:00:11Z",
+      "source": { "backend": "opendrsai", "backend_item_id": "artifact-1" },
+      "content": {
+        "artifact_id": "artifact-1",
+        "artifact_type": "report",
+        "name": "测试报告",
+        "path": "reports/test.md",
+        "mime_type": "text/markdown",
+        "summary": "自动验收结果",
+        "resource_refs": [{
+          "protocol": "owop/1",
+          "workspace_id": "workspace-1",
+          "resource_type": "artifact",
+          "resource_id": "artifact-1",
+          "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }]
+      }
+    },
+    {
+      "id": "file-change-1",
+      "session_id": "session-1",
+      "run_id": "run-1",
+      "type": "file_change",
+      "status": "completed",
+      "sequence": 8,
+      "created_at": "2026-08-02T10:00:12Z",
+      "updated_at": "2026-08-02T10:00:12Z",
+      "source": { "backend": "opendrsai", "backend_item_id": "file-change-1" },
+      "content": {
+        "changes": [{ "path": "src/event_mapper.py", "operation": "modify" }],
+        "summary": "完善事件映射"
+      }
+    },
+    {
+      "id": "plan-1",
+      "session_id": "session-1",
+      "run_id": "run-1",
+      "type": "plan",
+      "status": "completed",
+      "sequence": 9,
+      "created_at": "2026-08-02T10:00:13Z",
+      "updated_at": "2026-08-02T10:00:13Z",
+      "source": { "backend": "opendrsai", "backend_item_id": "plan-1" },
+      "content": {
+        "text": "完成协议收敛计划",
+        "steps": [{ "id": "step-1", "title": "验证 OAEP", "status": "completed" }]
+      }
+    },
+    {
+      "id": "subtask-1",
+      "session_id": "session-1",
+      "run_id": "run-1",
+      "type": "subtask",
+      "status": "completed",
+      "sequence": 10,
+      "created_at": "2026-08-02T10:00:14Z",
+      "updated_at": "2026-08-02T10:00:14Z",
+      "source": { "backend": "opendrsai", "backend_item_id": "subtask-1" },
+      "content": {
+        "title": "端侧投影",
+        "summary": "Android 与 Desktop 使用同一 OAEP 语义"
+      }
+    }
+  ],
+  "events": [
+    {
+      "version": "1.0",
+      "event_id": "event-1",
+      "session_id": "session-1",
+      "run_id": "run-1",
+      "sequence": 1,
+      "type": "event.run.started",
+      "timestamp": "2026-08-02T10:00:00Z",
+      "dedupe_key": "run-1:started",
+      "source": { "backend": "opendrsai" },
+      "data": {}
+    },
+    {
+      "version": "1.0",
+      "event_id": "event-2",
+      "session_id": "session-1",
+      "run_id": "run-1",
+      "item_id": "message-user-1",
+      "sequence": 2,
+      "type": "event.item.completed",
+      "timestamp": "2026-08-02T10:00:00Z",
+      "dedupe_key": "run-1:message-user-1:completed",
+      "source": { "backend": "opendrsai", "backend_item_id": "message-user-1" },
+      "data": { "item": { "$ref": "items[0]" } }
+    },
+    {
+      "version": "1.0",
+      "event_id": "event-3",
+      "session_id": "session-1",
+      "run_id": "run-1",
+      "item_id": "reasoning-1",
+      "sequence": 3,
+      "type": "event.item.delta",
+      "timestamp": "2026-08-02T10:00:02Z",
+      "dedupe_key": "run-1:reasoning-1:delta:1",
+      "source": { "backend": "opendrsai", "backend_item_id": "reasoning-1" },
+      "data": { "delta": { "kind": "reasoning.text.append", "text": "先检查 Runtime 事件映射。" } }
+    },
+    {
+      "version": "1.0",
+      "event_id": "event-4",
+      "session_id": "session-1",
+      "run_id": "run-1",
+      "item_id": "command-1",
+      "sequence": 4,
+      "type": "event.item.delta",
+      "timestamp": "2026-08-02T10:00:05Z",
+      "dedupe_key": "run-1:command-1:stdout:1",
+      "source": { "backend": "opendrsai", "backend_item_id": "command-1" },
+      "data": { "delta": { "kind": "command.output.append", "stream": "stdout", "text": "15 passed" } }
+    },
+    {
+      "version": "1.0",
+      "event_id": "event-5",
+      "session_id": "session-1",
+      "run_id": "run-1",
+      "item_id": "tool-1",
+      "sequence": 5,
+      "type": "event.item.completed",
+      "timestamp": "2026-08-02T10:00:07Z",
+      "dedupe_key": "run-1:tool-1:completed",
+      "source": { "backend": "opendrsai", "backend_item_id": "tool-1" },
+      "data": { "item": { "$ref": "items[3]" } }
+    },
+    {
+      "version": "1.0",
+      "event_id": "event-6",
+      "session_id": "session-1",
+      "run_id": "run-1",
+      "item_id": "interaction-1",
+      "sequence": 6,
+      "type": "event.item.completed",
+      "timestamp": "2026-08-02T10:00:09Z",
+      "dedupe_key": "run-1:interaction-1:completed",
+      "source": { "backend": "opendrsai", "backend_item_id": "interaction-1" },
+      "data": { "item": { "$ref": "items[4]" } }
+    },
+    {
+      "version": "1.0",
+      "event_id": "event-7",
+      "session_id": "session-1",
+      "run_id": "run-1",
+      "item_id": "notice-1",
+      "sequence": 7,
+      "type": "event.item.failed",
+      "timestamp": "2026-08-02T10:00:10Z",
+      "dedupe_key": "run-1:notice-1:failed",
+      "source": { "backend": "opendrsai", "backend_item_id": "notice-1" },
+      "data": {
+        "item": { "$ref": "items[5]" },
+        "error": { "code": "tool_failed", "message": "工具执行失败。", "retryable": false, "details": {} }
+      }
+    },
+    {
+      "version": "1.0",
+      "event_id": "event-8",
+      "session_id": "session-1",
+      "run_id": "run-1",
+      "sequence": 8,
+      "type": "event.run.failed",
+      "timestamp": "2026-08-02T10:00:12Z",
+      "dedupe_key": "run-1:failed",
+      "source": { "backend": "opendrsai" },
+      "data": {
+        "error": { "code": "run_failed", "message": "Run 未能完成。", "retryable": true, "details": {} }
+      }
+    },
+    {
+      "version": "1.0",
+      "event_id": "event-9",
+      "session_id": "session-1",
+      "run_id": "run-1",
+      "item_id": "file-change-1",
+      "sequence": 9,
+      "type": "event.item.completed",
+      "timestamp": "2026-08-02T10:00:12Z",
+      "dedupe_key": "run-1:file-change-1:completed",
+      "source": { "backend": "opendrsai", "backend_item_id": "file-change-1" },
+      "data": { "item": { "$ref": "items[7]" } }
+    },
+    {
+      "version": "1.0",
+      "event_id": "event-10",
+      "session_id": "session-1",
+      "run_id": "run-1",
+      "item_id": "plan-1",
+      "sequence": 10,
+      "type": "event.item.completed",
+      "timestamp": "2026-08-02T10:00:13Z",
+      "dedupe_key": "run-1:plan-1:completed",
+      "source": { "backend": "opendrsai", "backend_item_id": "plan-1" },
+      "data": { "item": { "$ref": "items[8]" } }
+    },
+    {
+      "version": "1.0",
+      "event_id": "event-11",
+      "session_id": "session-1",
+      "run_id": "run-1",
+      "item_id": "subtask-1",
+      "sequence": 11,
+      "type": "event.item.completed",
+      "timestamp": "2026-08-02T10:00:14Z",
+      "dedupe_key": "run-1:subtask-1:completed",
+      "source": { "backend": "opendrsai", "backend_item_id": "subtask-1" },
+      "data": { "item": { "$ref": "items[9]" } }
+    }
+  ]
+}

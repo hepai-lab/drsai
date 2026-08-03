@@ -69,6 +69,12 @@ interface ModelGateway {
         toolsEnabled: Boolean,
         onDelta: suspend (ModelDelta) -> Unit,
     )
+    suspend fun streamCompletionWithTools(
+        model: String,
+        messages: List<RuntimeMessage>,
+        tools: JSONArray,
+        onDelta: suspend (ModelDelta) -> Unit,
+    ) = streamCompletion(model, messages, tools.length() > 0, onDelta)
     fun cancelActive()
     suspend fun logout()
 }
@@ -123,14 +129,30 @@ class HaiModelClient(
         messages: List<RuntimeMessage>,
         toolsEnabled: Boolean,
         onDelta: suspend (ModelDelta) -> Unit,
+    ) = streamCompletionInternal(
+        model, messages, if (toolsEnabled) toolDefinitions(availableToolNames()) else null, onDelta,
+    )
+
+    override suspend fun streamCompletionWithTools(
+        model: String,
+        messages: List<RuntimeMessage>,
+        tools: JSONArray,
+        onDelta: suspend (ModelDelta) -> Unit,
+    ) = streamCompletionInternal(model, messages, tools.toHaiToolDefinitions(), onDelta)
+
+    private suspend fun streamCompletionInternal(
+        model: String,
+        messages: List<RuntimeMessage>,
+        tools: JSONArray?,
+        onDelta: suspend (ModelDelta) -> Unit,
     ) = withContext(Dispatchers.IO) {
         val body = JSONObject()
             .put("model", model)
             .put("messages", JSONArray(messages.map(::messageJson)))
             .put("stream", true)
             .put("max_tokens", 2048)
-        if (toolsEnabled) {
-            body.put("tools", toolDefinitions(availableToolNames()))
+        if (tools != null && tools.length() > 0) {
+            body.put("tools", tools)
             body.put("tool_choice", "auto")
         }
         val response = authenticatedResponse { token ->
@@ -312,6 +334,27 @@ class HaiModelClient(
 private fun JSONObject.stringOrNull(name: String): String? {
     if (!has(name) || isNull(name)) return null
     return opt(name) as? String
+}
+
+private fun JSONArray.toHaiToolDefinitions(): JSONArray = JSONArray().also { output ->
+    repeat(length()) { index ->
+        val source = getJSONObject(index)
+        if (source.optString("type") == "function" && source.optJSONObject("function") != null) {
+            output.put(source)
+        } else {
+            val name = source.getString("name")
+            val parameters = source.optJSONObject("parameters")
+                ?: JSONObject().put("type", "object").put("properties", JSONObject())
+            output.put(
+                JSONObject().put("type", "function").put(
+                    "function",
+                    JSONObject().put("name", name)
+                        .put("description", source.optString("description", name))
+                        .put("parameters", parameters),
+                )
+            )
+        }
+    }
 }
 
 internal fun selectPreferredModel(models: List<ModelInfo>): ModelInfo {

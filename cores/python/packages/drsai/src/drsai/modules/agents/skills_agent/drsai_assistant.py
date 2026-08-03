@@ -704,6 +704,46 @@ class DrSaiAssistant(DrSaiAgent):
             return True
         return False
 
+    def _skills_tree_mtime(self, skills_dir: Path) -> float:
+        """Max mtime across skills dir + skill folders + SKILL.md files.
+
+        On Windows, creating/updating a nested ``skills/<name>/SKILL.md`` often
+        does not bump the parent directory mtime, so a plain ``stat`` on
+        ``skills_dir`` can miss newly installed skills.
+        """
+        try:
+            mtimes = [skills_dir.stat().st_mtime]
+        except OSError:
+            return -1.0
+        try:
+            for child in skills_dir.iterdir():
+                if not child.is_dir():
+                    continue
+                try:
+                    mtimes.append(child.stat().st_mtime)
+                except OSError:
+                    continue
+                skill_md = child / "SKILL.md"
+                try:
+                    if skill_md.exists():
+                        mtimes.append(skill_md.stat().st_mtime)
+                except OSError:
+                    continue
+        except OSError:
+            pass
+        return max(mtimes) if mtimes else -1.0
+
+    def _skills_dir_changed(self, skills_dir: Path) -> bool:
+        """Like ``_file_changed`` but sensitive to nested skill file updates."""
+        mtime = self._skills_tree_mtime(skills_dir)
+        if mtime < 0:
+            return True
+        key = str(skills_dir)
+        if self._config_mtimes.get(key) != mtime:
+            self._config_mtimes[key] = mtime
+            return True
+        return False
+
     async def _emit_notification(self, content: str) -> TextMessage:
         """Yield a notification to the user and inject it into the model context."""
         await self._model_context.add_message(
@@ -774,9 +814,9 @@ class DrSaiAssistant(DrSaiAgent):
                 )
 
         # load/update skills only if skills directories changed
-        skills_changed = self._file_changed(self._user_profile_manager.skills_dir)
+        skills_changed = self._skills_dir_changed(self._user_profile_manager.skills_dir)
         if self._skills_dir:
-            skills_changed = skills_changed or any(self._file_changed(Path(d)) for d in self._skills_dir)
+            skills_changed = skills_changed or any(self._skills_dir_changed(Path(d)) for d in self._skills_dir)
         if skills_changed or self._cached_skills_loader is None:
             skills_loader, skill_error = self.update_user_skills()
             if skill_error:
@@ -979,6 +1019,15 @@ class DrSaiAssistant(DrSaiAgent):
                 self._agent_skills_tools = [get_agent_skills_tool(descriptions=skills_loader.get_descriptions())]
             else:
                 self._agent_skills_tools = []
+
+            # Keep the runtime Skill tool executor in sync with hot-reload.
+            # Without this, /v1/skills/reload updates tool *descriptions* but
+            # leaves _cached_skills_loader stale, so Skill("meeting_notes") fails.
+            self._cached_skills_loader = skills_loader
+            try:
+                self._config_mtimes[str(user_skills_dir)] = self._skills_tree_mtime(user_skills_dir)
+            except Exception:
+                pass
 
         except Exception as e:
             error_msg = f"Failed to load skills: {str(e)}"

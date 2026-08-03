@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 
 const root = resolve(new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
 const read = (path) => readFileSync(resolve(root, path), "utf8");
-const service = read("../../../cores/python/packages/drsai/src/drsai/backend/git_worktree_service.py");
+const service = read("../../../cores/python/packages/drsai/src/drsai/backend/workspace/git_worktree_service.py");
 const gateway = read("../../../cores/python/packages/drsai/src/drsai/backend/gateway.py");
 const facade = read("src/main/forkWorktrees.ts");
 const threads = read("../shared/main/threads.ts");

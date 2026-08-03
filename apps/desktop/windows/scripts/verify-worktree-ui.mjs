@@ -34,8 +34,13 @@ try {
   );
   assert(blocked.readiness.status === "blocked" && blocked.conflict.active, "conflict must block merge readiness");
   const shell = readFileSync(join(root, "../shared/renderer/src/components/WorkspaceShell.tsx"), "utf8");
+  const styles = readFileSync(join(root, "../shared/renderer/src/styles.css"), "utf8");
   assert(shell.includes("onListWorktreeEvents"), "Worktree UI does not consume Runtime events");
   assert(shell.includes("worktreeEventCursor.current"), "Worktree UI does not maintain an incremental event cursor");
+  assert(shell.includes("setWorktreesDegraded"), "Worktree UI must retain Runtime degraded event state");
+  assert(shell.includes("batch.degraded"), "Worktree UI must consume degraded Runtime event batches");
+  assert(shell.includes('data-testid="worktree-degraded-status"'), "Worktree degraded status needs a stable test id");
+  assert(styles.includes(".worktree-warning"), "Worktree degraded status is missing visual styling");
   assert(shell.includes('document.visibilityState !== "visible"'), "Worktree event polling must pause while the app is hidden");
   assert(shell.includes("5_000"), "Worktree event polling interval must remain resource-conscious");
   assert(!shell.includes("git worktree list"), "Renderer must not poll Git to infer Worktree state");

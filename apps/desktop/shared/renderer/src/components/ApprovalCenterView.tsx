@@ -243,7 +243,9 @@ export function ApprovalCenterView({
         window.dispatchEvent(new CustomEvent("drsai:threads-updated"));
       }
       setApprovalMessage(
-        approved
+        approval.executionState === "ambiguous"
+          ? (zh ? "已确认结果不确定；工具调用未被重放。" : "Ambiguous outcome acknowledged; the tool call was not replayed.")
+          : approved
           ? (zh ? "已允许，操作将按上述范围执行一次。" : "Allowed. The operation will run once within the scope shown above.")
           : reason === "cancel"
             ? (zh ? "已取消，操作不会执行。" : "Cancelled. The operation will not run.")
@@ -383,6 +385,8 @@ export function ApprovalCenterView({
         ) : (
           <div className="approval-pending-list">
             {pendingApprovals.map((approval) => {
+              const ambiguousMcp = approval.executionState === "ambiguous";
+              const executingMcp = approval.executionState === "executing";
               const commitReviewRequired = requiresCommitReviewGate(approval);
               const commitReviewComplete = isCommitReviewComplete(approval);
               const businessAction = approvalBusinessAction(approval, zh);
@@ -392,7 +396,7 @@ export function ApprovalCenterView({
               const risk = approvalRiskPresentation(approval.risk, zh);
               return (
                 <article
-                  className={`approval-pending-row ${approval.risk}`}
+                  className={`approval-pending-row ${approval.risk}${ambiguousMcp ? " ambiguous" : ""}`}
                   key={approval.id}
                   data-testid="business-approval-card"
                   data-approval-id={approval.id}
@@ -441,7 +445,7 @@ export function ApprovalCenterView({
                     <button
                       type="button"
                       className="approve"
-                      disabled={commitReviewRequired && !commitReviewComplete}
+                      disabled={executingMcp || (commitReviewRequired && !commitReviewComplete)}
                       title={
                         commitReviewRequired && !commitReviewComplete
                           ? "Complete the commit review checklist first."
@@ -451,12 +455,12 @@ export function ApprovalCenterView({
                       aria-label={zh ? `允许并执行：${businessAction}` : `Allow and run: ${businessAction}`}
                     >
                       <Check size={14} />
-                      {zh ? "允许并执行" : "Allow and run"}
+                      {executingMcp ? (zh ? "正在执行" : "Execution in progress") : ambiguousMcp ? (zh ? "确认，不要重放" : "Acknowledge; do not replay") : (zh ? "允许并执行" : "Allow and run")}
                     </button>
                     {commitReviewRequired && !commitReviewComplete ? (
                       <small className="approval-review-gate">Review checklist incomplete</small>
                     ) : null}
-                    {isMcpPendingApproval(approval) ? (
+                    {isMcpPendingApproval(approval) && !ambiguousMcp && !executingMcp ? (
                       <button
                         type="button"
                         className="cancel"
@@ -466,7 +470,7 @@ export function ApprovalCenterView({
                         {zh ? "取消工具连接" : "Cancel MCP"}
                       </button>
                     ) : null}
-                    <button
+                    {!ambiguousMcp && !executingMcp ? <button
                       type="button"
                       className="reject"
                       onClick={() => void decidePendingApproval(approval, false)}
@@ -474,7 +478,7 @@ export function ApprovalCenterView({
                     >
                       <XCircle size={14} />
                       {zh ? "拒绝并停止" : "Reject and stop"}
-                    </button>
+                    </button> : null}
                   </div>
                 </article>
               );

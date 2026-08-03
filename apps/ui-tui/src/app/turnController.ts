@@ -19,6 +19,7 @@ import type { GatewayClient } from '../gatewayClient.js'
 import { $isStreaming, $current, appendTurn, setCurrent } from './turnStore.js'
 import { $memoryPreview } from './uiStore.js'
 import { newAssistantTurn } from './types.js'
+import { clearHeightCache } from './heightCache.js'
 
 export interface ImageAttachment {
   /** Original file path (for display / debugging). */
@@ -56,6 +57,7 @@ export class TurnController {
     // Lock in user turn + start a placeholder assistant turn.
     appendTurn({ role: 'user', text: opts.displayText?.trim() || trimmed, ts: Date.now() })
     setCurrent(newAssistantTurn())
+    clearHeightCache()  // reset height cache for the new streaming turn
     $isStreaming.set(true)
 
     // Fire and forget: the RPC just kicks off the turn on the gateway side.

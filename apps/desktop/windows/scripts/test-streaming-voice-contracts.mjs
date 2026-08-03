@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 
-const { BoundedStreamingAudioQueue } = await import("../src/main/voiceStreaming/audioQueue.ts");
-const { StreamingVoiceSessionRegistry } = await import("../src/main/voiceStreaming/sessionRegistry.ts");
-const { FixtureStreamingTranscriptionRuntime } = await import("../src/main/voiceStreaming/fixtureStreamingRuntime.ts");
-const { StreamingVoiceEventCursor } = await import("../src/main/voiceStreaming/eventCursor.ts");
+const { BoundedStreamingAudioQueue } = await import("../../shared/main/voiceStreaming/audioQueue.ts");
+const { StreamingVoiceSessionRegistry } = await import("../../shared/main/voiceStreaming/sessionRegistry.ts");
+const { FixtureStreamingTranscriptionRuntime } = await import("../../shared/main/voiceStreaming/fixtureStreamingRuntime.ts");
+const { StreamingVoiceEventCursor } = await import("../../shared/main/voiceStreaming/eventCursor.ts");
 const {
   MAX_STREAMING_AUDIO_CHUNK_BYTES,
   validateStreamingVoiceAudioChunk,
   validateStreamingVoiceStartRequest,
-} = await import("../src/main/voiceStreaming/validation.ts");
+} = await import("../../shared/main/voiceStreaming/validation.ts");
 
 function chunk(sequence, durationMs = 100, overrides = {}) {
   return {

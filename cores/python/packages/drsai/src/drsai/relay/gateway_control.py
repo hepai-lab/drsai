@@ -6,11 +6,13 @@ from dataclasses import dataclass
 from pathlib import Path
 import asyncio
 from typing import Any, Protocol
+from urllib.parse import quote
 from uuid import uuid4
 
 import aiohttp
 
-from drsai.backend.agent_runtime import AgentDefinitionStore, RuntimeExecutionError
+from drsai.backend.runtime.agent import AgentDefinitionStore, RuntimeExecutionError
+from drsai.relay.security import redact_secrets
 
 
 class GatewayControlError(RuntimeError):
@@ -35,6 +37,18 @@ class AiohttpGatewayTransport:
 
     async def request(self, method: str, path: str, *, body: dict[str, Any] | None = None,
                       headers: dict[str, str] | None = None) -> Any:
+        status, result = await self.proxy(method, path, body=body, headers=headers)
+        if status >= 400:
+            detail = result.get("detail", result) if isinstance(result, dict) else {}
+            if not isinstance(detail, dict):
+                detail = {"message": str(detail)}
+            raise GatewayControlError(str(detail.get("code") or f"runtime_http_{status}"),
+                                      str(detail.get("message") or "Runtime request failed"),
+                                      retryable=status >= 500)
+        return result
+
+    async def proxy(self, method: str, path: str, *, body: dict[str, Any] | None = None,
+                    headers: dict[str, str] | None = None) -> tuple[int, Any]:
         values = {"X-OpenDrSai-Gateway-Token": self.instance_token, **(headers or {})}
         timeout = aiohttp.ClientTimeout(total=120)
         async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -43,14 +57,7 @@ class AiohttpGatewayTransport:
                     result = await response.json()
                 except (aiohttp.ContentTypeError, json.JSONDecodeError) as exc:
                     raise GatewayControlError("runtime_response_invalid", "Runtime returned an invalid response") from exc
-                if response.status >= 400:
-                    detail = result.get("detail", result) if isinstance(result, dict) else {}
-                    if not isinstance(detail, dict):
-                        detail = {"message": str(detail)}
-                    raise GatewayControlError(str(detail.get("code") or f"runtime_http_{response.status}"),
-                                              str(detail.get("message") or "Runtime request failed"),
-                                              retryable=response.status >= 500)
-                return result
+                return response.status, result
 
 
 @dataclass(frozen=True)
@@ -72,8 +79,18 @@ class GatewayRuntimeControlHandler:
         self.state_dir = Path(state_dir)
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.database = self.state_dir / "relay-control.sqlite3"
+        self.journal_database = self.state_dir / "engine.sqlite3"
         self.definitions = AgentDefinitionStore(self.state_dir.parent / "assets" / "agents")
         self._execution_tasks: set[asyncio.Task[Any]] = set()
+        self.execution_failures: dict[str, str] = {}
+        self._relay_event_cursors: dict[str, int] = {}
+        self._relay_session_event_cursors: dict[str, int] = {}
+        self._relay_oaep_event_cursors: dict[str, int] = {}
+        self._relay_session_scan_offsets: dict[str, int] = {}
+        self._relay_terminal_runs: set[str] = set()
+        self._session_waterlines_available = False
+        self._oaep_waterlines_available = False
+        self._approval_decision_lock = asyncio.Lock()
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
@@ -92,9 +109,249 @@ class GatewayRuntimeControlHandler:
               CREATE TABLE IF NOT EXISTS relay_runs(
                 run_id TEXT PRIMARY KEY, subject TEXT NOT NULL, workspace_id TEXT NOT NULL, session_id TEXT NOT NULL,
                 correlation_id TEXT NOT NULL, message TEXT NOT NULL, attachment_refs_json TEXT NOT NULL,
-                retry_of TEXT, idempotency_key TEXT NOT NULL, UNIQUE(subject,idempotency_key)
+                retry_of TEXT, idempotency_key TEXT NOT NULL, source_message_id TEXT,
+                UNIQUE(subject,idempotency_key)
+              );
+              CREATE TABLE IF NOT EXISTS relay_approval_decisions(
+                subject TEXT NOT NULL, idempotency_key TEXT NOT NULL, approval_id TEXT NOT NULL,
+                decision TEXT NOT NULL, result_json TEXT NOT NULL,
+                PRIMARY KEY(subject,idempotency_key)
+              );
+              CREATE TABLE IF NOT EXISTS relay_session_event_cursors(
+                session_id TEXT PRIMARY KEY,
+                after_sequence INTEGER NOT NULL CHECK(after_sequence >= 0)
+              );
+              CREATE TABLE IF NOT EXISTS relay_oaep_event_cursors(
+                session_id TEXT PRIMARY KEY,
+                after_sequence INTEGER NOT NULL CHECK(after_sequence >= 0)
+              );
+              CREATE TABLE IF NOT EXISTS relay_run_event_cursors(
+                run_id TEXT PRIMARY KEY,
+                after_sequence INTEGER NOT NULL CHECK(after_sequence >= 0),
+                terminal INTEGER NOT NULL DEFAULT 0 CHECK(terminal IN (0,1))
               );
             """)
+            columns = {
+                str(row["name"])
+                for row in db.execute("PRAGMA table_info(relay_runs)")
+            }
+            if "source_message_id" not in columns:
+                db.execute("ALTER TABLE relay_runs ADD COLUMN source_message_id TEXT")
+            self._relay_session_event_cursors.update(
+                {
+                    str(row["session_id"]): int(row["after_sequence"])
+                    for row in db.execute(
+                        "SELECT session_id,after_sequence FROM relay_session_event_cursors"
+                    )
+                }
+            )
+            self._relay_oaep_event_cursors.update(
+                {
+                    str(row["session_id"]): int(row["after_sequence"])
+                    for row in db.execute(
+                        "SELECT session_id,after_sequence FROM relay_oaep_event_cursors"
+                    )
+                }
+            )
+            for row in db.execute(
+                "SELECT run_id,after_sequence,terminal FROM relay_run_event_cursors"
+            ):
+                run_id = str(row["run_id"])
+                self._relay_event_cursors[run_id] = int(row["after_sequence"])
+                if int(row["terminal"]):
+                    self._relay_terminal_runs.add(run_id)
+        self._bootstrap_existing_session_cursors()
+
+    def _bootstrap_existing_session_cursors(self) -> None:
+        """Seed waterlines for Sessions that predate this connector process."""
+        if not self.journal_database.is_file():
+            return
+        try:
+            with sqlite3.connect(self.journal_database, timeout=5) as journal:
+                legacy = [
+                    (str(session_id), int(sequence))
+                    for session_id, sequence in journal.execute(
+                        "SELECT session_id,last_sequence FROM runtime_session_sequences"
+                    )
+                ]
+                oaep = [
+                    (str(session_id), int(sequence))
+                    for session_id, sequence in journal.execute(
+                        "SELECT q.session_id,COALESCE((SELECT MAX(o.session_sequence) "
+                        "FROM runtime_oaep_events o WHERE o.session_id=q.session_id),0) "
+                        "FROM runtime_session_sequences q"
+                    )
+                ]
+                runs = [
+                    (str(run_id), int(sequence), str(status))
+                    for run_id, sequence, status in journal.execute(
+                        "SELECT r.run_id,COALESCE((SELECT MAX(e.sequence) "
+                        "FROM runtime_events e WHERE e.run_id=r.run_id),0),r.status "
+                        "FROM runtime_runs r"
+                    )
+                ]
+        except sqlite3.Error:
+            return
+        self._session_waterlines_available = True
+        self._oaep_waterlines_available = True
+        with self._connect() as control:
+            control.executemany(
+                "INSERT INTO relay_session_event_cursors(session_id,after_sequence) "
+                "VALUES(?,?) ON CONFLICT(session_id) DO NOTHING",
+                legacy,
+            )
+            control.executemany(
+                "INSERT INTO relay_oaep_event_cursors(session_id,after_sequence) "
+                "VALUES(?,?) ON CONFLICT(session_id) DO NOTHING",
+                oaep,
+            )
+            control.executemany(
+                "INSERT INTO relay_run_event_cursors(run_id,after_sequence,terminal) "
+                "VALUES(?,?,?) ON CONFLICT(run_id) DO NOTHING",
+                [
+                    (run_id, sequence, int(status in {"completed", "failed", "cancelled"}))
+                    for run_id, sequence, status in runs
+                ],
+            )
+        for session_id, sequence in legacy:
+            self._relay_session_event_cursors.setdefault(session_id, sequence)
+        for session_id, sequence in oaep:
+            self._relay_oaep_event_cursors.setdefault(session_id, sequence)
+        for run_id, sequence, status in runs:
+            self._relay_event_cursors.setdefault(run_id, sequence)
+            if status in {"completed", "failed", "cancelled"}:
+                self._relay_terminal_runs.add(run_id)
+
+    def _store_run_event_cursor(
+        self, run_id: str, sequence: int, *, terminal: bool,
+    ) -> None:
+        value = max(0, int(sequence))
+        with self._connect() as db:
+            db.execute(
+                "INSERT INTO relay_run_event_cursors(run_id,after_sequence,terminal) "
+                "VALUES(?,?,?) ON CONFLICT(run_id) DO UPDATE SET "
+                "after_sequence=MAX(relay_run_event_cursors.after_sequence,excluded.after_sequence),"
+                "terminal=MAX(relay_run_event_cursors.terminal,excluded.terminal)",
+                (run_id, value, int(terminal)),
+            )
+        self._relay_event_cursors[run_id] = max(
+            value, self._relay_event_cursors.get(run_id, 0)
+        )
+        if terminal:
+            self._relay_terminal_runs.add(run_id)
+
+    def _store_session_event_cursor(self, session_id: str, sequence: int) -> None:
+        value = max(0, int(sequence))
+        with self._connect() as db:
+            db.execute(
+                """
+                INSERT INTO relay_session_event_cursors(session_id,after_sequence)
+                VALUES(?,?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                  after_sequence=MAX(relay_session_event_cursors.after_sequence,excluded.after_sequence)
+                """,
+                (session_id, value),
+            )
+            stored = db.execute(
+                "SELECT after_sequence FROM relay_session_event_cursors WHERE session_id=?",
+                (session_id,),
+            ).fetchone()
+        self._relay_session_event_cursors[session_id] = int(stored["after_sequence"])
+
+    def _store_oaep_event_cursor(self, session_id: str, sequence: int) -> None:
+        value = max(0, int(sequence))
+        with self._connect() as db:
+            db.execute(
+                """
+                INSERT INTO relay_oaep_event_cursors(session_id,after_sequence)
+                VALUES(?,?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                  after_sequence=MAX(relay_oaep_event_cursors.after_sequence,excluded.after_sequence)
+                """,
+                (session_id, value),
+            )
+            stored = db.execute(
+                "SELECT after_sequence FROM relay_oaep_event_cursors WHERE session_id=?",
+                (session_id,),
+            ).fetchone()
+        self._relay_oaep_event_cursors[session_id] = int(stored["after_sequence"])
+
+    def ack_relay_oaep_event(self, session_id: str, sequence: int) -> None:
+        """Commit an OAEP cursor only after its WSS frame was written."""
+        self._store_oaep_event_cursor(session_id, sequence)
+
+    def _sessions_with_pending_journal_events(self) -> list[str]:
+        """Read Runtime waterlines without scanning every Session over HTTP."""
+        if not self.journal_database.is_file():
+            return []
+        try:
+            with sqlite3.connect(self.journal_database, timeout=5) as db:
+                rows = db.execute(
+                    "SELECT q.session_id,q.last_sequence,COALESCE(j.rowid,0) "
+                    "FROM runtime_session_sequences q "
+                    "LEFT JOIN runtime_session_journal j "
+                    "ON j.session_id=q.session_id "
+                    "AND j.session_sequence=q.last_sequence"
+                ).fetchall()
+        except sqlite3.Error:
+            # The HTTP hot/cold scan remains the fail-safe fallback while a
+            # migration or a short SQLite lock is in progress.
+            return []
+        pending = [
+            (int(latest_rowid), str(session_id))
+            for session_id, last_sequence, latest_rowid in rows
+            if int(last_sequence)
+            > self._relay_session_event_cursors.get(str(session_id), 0)
+        ]
+        pending.sort(reverse=True)
+        return [session_id for _, session_id in pending]
+
+    def _sessions_with_pending_oaep_events(self) -> list[str]:
+        """Find canonical OAEP waterlines without translating legacy rows."""
+        if not self.journal_database.is_file():
+            return []
+        try:
+            with sqlite3.connect(self.journal_database, timeout=5) as db:
+                rows = db.execute(
+                    "SELECT q.session_id,q.last_sequence,COALESCE(o.rowid,0) "
+                    "FROM runtime_session_sequences q "
+                    "LEFT JOIN runtime_oaep_events o "
+                    "ON o.session_id=q.session_id "
+                    "AND o.session_sequence=q.last_sequence"
+                ).fetchall()
+        except sqlite3.Error:
+            return []
+        pending = [
+            (int(latest_rowid), str(session_id))
+            for session_id, last_sequence, latest_rowid in rows
+            if int(last_sequence) > self._relay_oaep_event_cursors.get(str(session_id), 0)
+        ]
+        pending.sort(reverse=True)
+        return [session_id for _, session_id in pending]
+
+    async def _ensure_session_event_cursor(self, session_id: str) -> int:
+        existing = self._relay_session_event_cursors.get(session_id)
+        if existing is not None:
+            return existing
+        snapshot = await self.transport.request(
+            "GET",
+            f"/v1/sessions/{quote(session_id, safe='')}/conversation-snapshot",
+        )
+        sequence = int(snapshot.get("snapshot_sequence") or 0)
+        self._store_session_event_cursor(session_id, sequence)
+        return sequence
+
+    async def _ensure_oaep_event_cursor(self, session_id: str) -> int:
+        existing = self._relay_oaep_event_cursors.get(session_id)
+        if existing is not None:
+            return existing
+        snapshot = await self.transport.request(
+            "GET",
+            f"/v1/sessions/{quote(session_id, safe='')}/oaep-snapshot",
+        )
+        sequence = int(snapshot.get("snapshot_sequence") or 0)
+        self._store_oaep_event_cursor(session_id, sequence)
+        return sequence
 
     async def __call__(self, operation: str, arguments: dict[str, Any]) -> Any:
         args, kwargs = arguments.get("args", []), arguments.get("kwargs", {})
@@ -104,12 +361,66 @@ class GatewayRuntimeControlHandler:
         if method is None or operation not in {
             "list_agent_definitions", "list_sessions", "list_sessions_for_subject", "create_session", "get_session",
             "authorize_session", "list_runs", "list_runs_for_subject", "authorize_run",
+            "conversation_for_subject", "conversation_snapshot_for_subject",
+            "session_events_for_subject", "oaep_snapshot_for_subject", "oaep_events_for_subject",
             "idempotency_result", "create_run", "get_run", "list_events", "cancel_run",
             "pending_approvals", "pending_approvals_for_subject", "audit_entries", "audit_entries_for_subject",
             "execute_owop", "decide_approval",
         }:
             raise GatewayControlError("runtime_operation_unsupported", "Runtime operation is unsupported")
         return await method(*args, **kwargs)
+
+    async def handle_http_request(
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None,
+        correlation_id: str,
+    ) -> tuple[int, Any]:
+        """Proxy HAI's frozen HTTP-over-WSS frame to the loopback Runtime."""
+        normalized_method = method.upper()
+        if normalized_method not in {"GET", "POST", "PATCH", "PUT", "DELETE"}:
+            raise GatewayControlError("runtime_method_invalid", "Runtime proxy method is invalid")
+        if not path.startswith("/v1/") or "://" in path or "#" in path:
+            raise GatewayControlError("runtime_path_invalid", "Runtime proxy path is invalid")
+        proxy = getattr(self.transport, "proxy", None)
+        if proxy is None:
+            raise GatewayControlError("runtime_http_proxy_unsupported", "Runtime HTTP proxy is unavailable")
+        status, result = await proxy(
+            normalized_method,
+            path,
+            body=body,
+            headers={"X-Correlation-ID": correlation_id},
+        )
+        if (
+            status < 400
+            and normalized_method == "GET"
+            and path.partition("?")[0] == "/v1/workspaces"
+            and isinstance(result, dict)
+            and isinstance(result.get("data"), list)
+        ):
+            rows: list[dict[str, Any]] = []
+            for item in result["data"]:
+                if not isinstance(item, dict) or not item.get("workspace_id"):
+                    continue
+                workspace_id = str(item["workspace_id"])
+                raw_path = str(item.get("path") or "")
+                rows.append({
+                    "runtime_id": self.runtime_id,
+                    "workspace_id": workspace_id,
+                    "display_name": str(item.get("display_name") or Path(raw_path).name or workspace_id),
+                    "lifecycle": item.get("lifecycle") or (
+                        "active" if item.get("open", True) else "archived"
+                    ),
+                    "revision": int(item.get("revision") or 1),
+                    "updated_at": (
+                        item.get("updated_at")
+                        or item.get("last_opened_at")
+                        or item.get("created_at")
+                    ),
+                })
+            result = {"data": rows, "next_cursor": result.get("next_cursor")}
+        return status, result
 
     async def list_agent_definitions(self) -> list[dict[str, Any]]:
         capabilities = await self.transport.request("GET", "/v1/capabilities")
@@ -131,13 +442,457 @@ class GatewayRuntimeControlHandler:
             })
         return rows
 
-    async def published_workspaces(self) -> list[dict[str, str]]:
-        page = await self.transport.request("GET", "/v1/workspaces")
+    async def published_workspaces(self) -> list[dict[str, Any]]:
+        page = await self.transport.request("GET", "/v1/workspaces?include_closed=true")
         return [{
             "runtime_id": self.runtime_id,
             "workspace_id": str(item["workspace_id"]),
-            "display_name": Path(str(item["path"])).name or str(item["workspace_id"]),
-        } for item in page.get("data", []) if item.get("open", True)]
+            "display_name": str(item.get("display_name") or item["workspace_id"]),
+            "lifecycle": item.get("lifecycle") or ("active" if item.get("open", True) else "archived"),
+            "revision": int(item.get("revision") or 1),
+            "updated_at": item.get("updated_at") or item.get("last_opened_at") or item.get("created_at"),
+        } for item in page.get("data", [])]
+
+    async def relay_events(self) -> list[dict[str, Any]]:
+        """Poll authoritative Runtime events for HAI's bounded SSE replay buffer."""
+        if not self._session_waterlines_available:
+            self._bootstrap_existing_session_cursors()
+        forwarded: list[dict[str, Any]] = []
+        indexed_rows: list[tuple[Any, ...]] | None = None
+        if self.journal_database.is_file():
+            try:
+                with sqlite3.connect(self.journal_database, timeout=5) as journal:
+                    indexed_rows = list(journal.execute(
+                        "SELECT r.run_id,r.session_id,r.workspace_id,r.backend_id,"
+                        "r.status,r.created_at,"
+                        "COALESCE((SELECT MAX(e.sequence) FROM runtime_events e "
+                        "WHERE e.run_id=r.run_id),0) AS latest_sequence,"
+                        "COALESCE((SELECT MAX(e.rowid) FROM runtime_events e "
+                        "WHERE e.run_id=r.run_id),0) AS latest_rowid "
+                        "FROM runtime_runs r"
+                    ))
+            except sqlite3.Error:
+                indexed_rows = None
+
+        if indexed_rows is not None:
+            pending = [
+                row for row in indexed_rows
+                if str(row[0]) not in self._relay_terminal_runs
+                and int(row[6]) > self._relay_event_cursors.get(str(row[0]), 0)
+            ]
+            if not pending:
+                return []
+            pending.sort(key=lambda row: int(row[7]), reverse=True)
+            active_workspace_ids = {
+                str(workspace["workspace_id"])
+                for workspace in await self.published_workspaces()
+                if workspace["lifecycle"] == "active"
+            }
+            for row in [
+                candidate for candidate in pending
+                if str(candidate[2]) in active_workspace_ids
+            ][:16]:
+                run_id = str(row[0])
+                after = self._relay_event_cursors.get(run_id, 0)
+                events = await self.transport.request(
+                    "GET",
+                    f"/v1/runs/{quote(run_id, safe='')}/events"
+                    f"?after_sequence={after}&limit=2000",
+                )
+                item = {
+                    "run_id": run_id,
+                    "session_id": str(row[1]),
+                    "workspace_id": str(row[2]),
+                    "backend_id": str(row[3]),
+                    "status": str(row[4]),
+                    "created_at": str(row[5]),
+                }
+                projected = [
+                    self._event_projection(event, self._run_binding_optional(run_id, item), run_id)
+                    for event in events.get("data", [])
+                ]
+                if projected:
+                    terminal = (
+                        item["status"] in {"completed", "failed", "cancelled"}
+                        and len(projected) < 2000
+                    )
+                    self._store_run_event_cursor(
+                        run_id, int(projected[-1]["sequence"]), terminal=terminal,
+                    )
+                    forwarded.extend(projected)
+            return forwarded
+
+        # Compatibility fallback for transports without the local Runtime DB.
+        published = await self.published_workspaces()
+        active_workspace_ids = {
+            str(workspace["workspace_id"])
+            for workspace in published
+            if workspace["lifecycle"] == "active"
+        }
+        # The Runtime event table is the authoritative change index. Forward
+        # newly appended events before walking historical Workspace catalogs;
+        # otherwise a short controlled Run can finish before its SSE replay
+        # buffer is populated.
+        if active_workspace_ids:
+            try:
+                placeholders = ",".join("?" for _ in active_workspace_ids)
+                with sqlite3.connect(self.journal_database, timeout=5) as journal:
+                    changed_runs = list(
+                        journal.execute(
+                            "SELECT r.run_id,r.session_id,r.workspace_id,r.backend_id,"
+                            "r.status,r.created_at,MAX(e.sequence) AS latest_sequence,"
+                            "MAX(e.rowid) AS latest_rowid "
+                            "FROM runtime_runs r JOIN runtime_events e ON e.run_id=r.run_id "
+                            f"WHERE r.workspace_id IN ({placeholders}) "
+                            "GROUP BY r.run_id ORDER BY latest_rowid DESC LIMIT 16",
+                            tuple(active_workspace_ids),
+                        )
+                    )
+            except sqlite3.Error:
+                changed_runs = []
+            for row in changed_runs:
+                run_id = str(row[0])
+                latest_sequence = int(row[6])
+                after = self._relay_event_cursors.get(run_id, 0)
+                if run_id in self._relay_terminal_runs or latest_sequence <= after:
+                    continue
+                events = await self.transport.request(
+                    "GET",
+                    f"/v1/runs/{quote(run_id, safe='')}/events"
+                    f"?after_sequence={after}&limit=2000",
+                )
+                item = {
+                    "run_id": run_id,
+                    "session_id": str(row[1]),
+                    "workspace_id": str(row[2]),
+                    "backend_id": str(row[3]),
+                    "status": str(row[4]),
+                    "created_at": str(row[5]),
+                }
+                binding = self._run_binding_optional(run_id, item)
+                projected = [
+                    self._event_projection(event, binding, run_id)
+                    for event in events.get("data", [])
+                ]
+                if projected:
+                    self._relay_event_cursors[run_id] = int(projected[-1]["sequence"])
+                    forwarded.extend(projected)
+                if (
+                    item["status"] in {"completed", "failed", "cancelled"}
+                    and len(projected) < 2000
+                ):
+                    self._relay_terminal_runs.add(run_id)
+            if forwarded:
+                return forwarded
+
+        for workspace in published:
+            if workspace["lifecycle"] != "active":
+                continue
+            workspace_id = str(workspace["workspace_id"])
+            sessions = await self.transport.request(
+                "GET",
+                f"/v1/sessions?workspace_id={quote(workspace_id, safe='')}&offset=0&limit=200",
+            )
+            for session in sessions.get("data", []):
+                session_id = str(session["session_id"])
+                runs = await self.transport.request(
+                    "GET",
+                    f"/v1/sessions/{quote(session_id, safe='')}/runs?offset=0&limit=200",
+                )
+                for run in runs.get("data", []):
+                    run_id = str(run["run_id"])
+                    if run_id in self._relay_terminal_runs:
+                        continue
+                    after = self._relay_event_cursors.get(run_id, 0)
+                    events = await self.transport.request(
+                        "GET",
+                        f"/v1/runs/{quote(run_id, safe='')}/events?after_sequence={after}&limit=2000",
+                    )
+                    binding = self._run_binding_optional(run_id, run)
+                    projected = [
+                        self._event_projection(item, binding, run_id)
+                        for item in events.get("data", [])
+                    ]
+                    if projected:
+                        self._relay_event_cursors[run_id] = int(projected[-1]["sequence"])
+                        forwarded.extend(projected)
+                    if (
+                        str(run.get("status")) in {"completed", "failed", "cancelled"}
+                        and len(projected) < 2000
+                    ):
+                        self._relay_terminal_runs.add(run_id)
+        return forwarded
+
+    async def relay_session_events(self) -> list[dict[str, Any]]:
+        """Poll authoritative Session Journal events for Relay fan-out/replay."""
+        if not self._session_waterlines_available:
+            self._bootstrap_existing_session_cursors()
+        forwarded: list[dict[str, Any]] = []
+        # Keep loopback polling parallel enough to avoid serial startup scans,
+        # but bounded below the Gateway's shared DB/HTTP capacity.  A burst of
+        # one request per historical Session can otherwise monopolize the
+        # co-hosted server and delay interactive/mobile traffic.
+        concurrency = asyncio.Semaphore(4)
+        pending_session_ids = self._sessions_with_pending_journal_events()
+        if not pending_session_ids and self._session_waterlines_available:
+            return []
+
+        async def poll_session(session: dict[str, Any]) -> list[dict[str, Any]]:
+            session_id = str(session["session_id"])
+            async with concurrency:
+                if session_id not in self._relay_session_event_cursors:
+                    if self._session_waterlines_available:
+                        self._store_session_event_cursor(session_id, 0)
+                    else:
+                        await self._ensure_session_event_cursor(session_id)
+                        return []
+                after = self._relay_session_event_cursors[session_id]
+                try:
+                    page = await self.transport.request(
+                        "GET",
+                        f"/v1/sessions/{quote(session_id, safe='')}/events"
+                        f"?after_sequence={after}&limit=2000",
+                    )
+                except GatewayControlError as exc:
+                    if exc.code != "cursor_expired":
+                        raise
+                    snapshot = await self.transport.request(
+                        "GET",
+                        f"/v1/sessions/{quote(session_id, safe='')}/conversation-snapshot",
+                    )
+                    self._store_session_event_cursor(
+                        session_id, int(snapshot["snapshot_sequence"])
+                    )
+                    return []
+                events = page.get("data", [])
+                if events:
+                    self._store_session_event_cursor(
+                        session_id, int(events[-1]["session_sequence"])
+                    )
+                return events
+
+        published = await self.published_workspaces()
+        active_workspace_ids = {
+            str(workspace["workspace_id"])
+            for workspace in published
+            if workspace["lifecycle"] == "active"
+        }
+        # Changed Sessions are the latency-sensitive path. The Runtime DB
+        # already binds each Session to a Workspace, so avoid waiting for every
+        # Workspace catalog and cold-session scan before forwarding a newly
+        # committed Journal event.
+        if pending_session_ids and active_workspace_ids:
+            placeholders = ",".join("?" for _ in pending_session_ids)
+            try:
+                with sqlite3.connect(self.journal_database, timeout=5) as journal:
+                    eligible = [
+                        {"session_id": str(row[0])}
+                        for row in journal.execute(
+                            "SELECT session_id FROM runtime_sessions "
+                            f"WHERE session_id IN ({placeholders}) "
+                            f"AND workspace_id IN ({','.join('?' for _ in active_workspace_ids)})",
+                            (*pending_session_ids, *active_workspace_ids),
+                        )
+                    ][:8]
+            except sqlite3.Error:
+                eligible = []
+            if eligible:
+                pages = await asyncio.gather(
+                    *(poll_session(session) for session in eligible)
+                )
+                for events in pages:
+                    forwarded.extend(events)
+                if forwarded:
+                    return forwarded
+
+        for workspace in published:
+            if workspace["lifecycle"] != "active":
+                continue
+            workspace_id = str(workspace["workspace_id"])
+            sessions = await self.transport.request(
+                "GET",
+                f"/v1/sessions?workspace_id={quote(workspace_id, safe='')}&offset=0&limit=200",
+            )
+            session_items = list(sessions.get("data", []))
+            unknown = [
+                session
+                for session in session_items
+                if str(session["session_id"]) not in self._relay_session_event_cursors
+            ]
+            sessions_by_id = {
+                str(session["session_id"]): session for session in session_items
+            }
+            changed = [
+                sessions_by_id[session_id]
+                for session_id in pending_session_ids
+                if session_id in sessions_by_id
+            ][:4]
+            hot = session_items[:4]
+            cold = session_items[4:]
+            cold_offset = self._relay_session_scan_offsets.get(workspace_id, 0)
+            rotating = (
+                [
+                    cold[(cold_offset + index) % len(cold)]
+                    for index in range(min(4, len(cold)))
+                ]
+                if cold
+                else []
+            )
+            if cold:
+                self._relay_session_scan_offsets[workspace_id] = (
+                    cold_offset + len(rotating)
+                ) % len(cold)
+            selected: list[dict[str, Any]] = []
+            selected_ids: set[str] = set()
+            for session in [*changed, *hot, *rotating, *unknown]:
+                session_id = str(session["session_id"])
+                if session_id not in selected_ids:
+                    selected.append(session)
+                    selected_ids.add(session_id)
+            pages = await asyncio.gather(
+                *(poll_session(session) for session in selected)
+            )
+            for events in pages:
+                forwarded.extend(events)
+        return forwarded
+
+    async def relay_oaep_events(self) -> list[dict[str, Any]]:
+        """Poll canonical OAEP Events and return strict Runtime WSS envelopes.
+
+        OAEP and V3 cursors are physically separate.  That keeps fallback
+        clients operational while preventing a legacy payload from being
+        relabelled as OAEP during rollout.
+        """
+        if not self._oaep_waterlines_available:
+            self._bootstrap_existing_session_cursors()
+        forwarded: list[dict[str, Any]] = []
+        concurrency = asyncio.Semaphore(4)
+        pending_session_ids = self._sessions_with_pending_oaep_events()
+        if not pending_session_ids and self._oaep_waterlines_available:
+            return []
+
+        async def poll_session(session: dict[str, Any], workspace_id: str) -> list[dict[str, Any]]:
+            session_id = str(session["session_id"])
+            async with concurrency:
+                if session_id not in self._relay_oaep_event_cursors:
+                    if self._oaep_waterlines_available:
+                        self._store_oaep_event_cursor(session_id, 0)
+                    else:
+                        await self._ensure_oaep_event_cursor(session_id)
+                        return []
+                after = self._relay_oaep_event_cursors[session_id]
+                try:
+                    page = await self.transport.request(
+                        "GET",
+                        f"/v1/sessions/{quote(session_id, safe='')}/oaep-events"
+                        f"?after_sequence={after}&limit=2000",
+                    )
+                except GatewayControlError as exc:
+                    if exc.code != "cursor_expired":
+                        raise
+                    snapshot = await self.transport.request(
+                        "GET",
+                        f"/v1/sessions/{quote(session_id, safe='')}/oaep-snapshot",
+                    )
+                    self._store_oaep_event_cursor(
+                        session_id, int(snapshot["snapshot_sequence"])
+                    )
+                    return []
+                events = page.get("data", [])
+                return [
+                    {
+                        "runtime_id": self.runtime_id,
+                        "workspace_id": workspace_id,
+                        "session_id": session_id,
+                        "sequence": int(event["sequence"]),
+                        "event": event,
+                    }
+                    for event in events
+                ]
+
+        published = await self.published_workspaces()
+        active = {
+            str(workspace["workspace_id"]): workspace
+            for workspace in published
+            if workspace["lifecycle"] == "active"
+        }
+        # Pending canonical rows are the latency-sensitive path and are safe to
+        # bind from the local Runtime DB before the rotating catalog scan.
+        if pending_session_ids and active and self.journal_database.is_file():
+            placeholders = ",".join("?" for _ in pending_session_ids)
+            workspace_placeholders = ",".join("?" for _ in active)
+            try:
+                with sqlite3.connect(self.journal_database, timeout=5) as journal:
+                    eligible = [
+                        {
+                            "session_id": str(row[0]),
+                            "workspace_id": str(row[1]),
+                        }
+                        for row in journal.execute(
+                            "SELECT session_id,workspace_id FROM runtime_sessions "
+                            f"WHERE session_id IN ({placeholders}) "
+                            f"AND workspace_id IN ({workspace_placeholders})",
+                            (*pending_session_ids, *active),
+                        )
+                    ][:8]
+            except sqlite3.Error:
+                eligible = []
+            if eligible:
+                pages = await asyncio.gather(*(
+                    poll_session(session, str(session["workspace_id"]))
+                    for session in eligible
+                ))
+                for events in pages:
+                    forwarded.extend(events)
+                if forwarded:
+                    return forwarded
+
+        for workspace_id in active:
+            sessions = await self.transport.request(
+                "GET",
+                f"/v1/sessions?workspace_id={quote(workspace_id, safe='')}&offset=0&limit=200",
+            )
+            session_items = list(sessions.get("data", []))
+            unknown = [
+                session for session in session_items
+                if str(session["session_id"]) not in self._relay_oaep_event_cursors
+            ]
+            sessions_by_id = {
+                str(session["session_id"]): session for session in session_items
+            }
+            changed = [
+                sessions_by_id[session_id]
+                for session_id in pending_session_ids
+                if session_id in sessions_by_id
+            ][:4]
+            hot = session_items[:4]
+            cold = session_items[4:]
+            offset_key = f"oaep:{workspace_id}"
+            cold_offset = self._relay_session_scan_offsets.get(offset_key, 0)
+            rotating = (
+                [
+                    cold[(cold_offset + index) % len(cold)]
+                    for index in range(min(4, len(cold)))
+                ]
+                if cold else []
+            )
+            if cold:
+                self._relay_session_scan_offsets[offset_key] = (
+                    cold_offset + len(rotating)
+                ) % len(cold)
+            selected: list[dict[str, Any]] = []
+            selected_ids: set[str] = set()
+            for session in [*changed, *hot, *rotating, *unknown]:
+                session_id = str(session["session_id"])
+                if session_id not in selected_ids:
+                    selected.append(session)
+                    selected_ids.add(session_id)
+            pages = await asyncio.gather(*(
+                poll_session(session, workspace_id) for session in selected
+            ))
+            for events in pages:
+                forwarded.extend(events)
+        return forwarded
 
     async def create_session(self, subject: str, workspace_id: str, *, title: str, definition_id: str,
                              definition_version: str, idempotency_key: str) -> dict[str, Any]:
@@ -148,39 +903,41 @@ class GatewayRuntimeControlHandler:
         capabilities = await self.transport.request("GET", "/v1/capabilities")
         if not capabilities.get("agent_backends", {}).get(definition.backend, {}).get("available"):
             raise GatewayControlError("backend_unavailable", "Selected Backend is not healthy", retryable=True)
-        item = await self.transport.request("POST", "/v1/sessions", body={"workspace_id": workspace_id, "title": title})
+        item = await self.transport.request(
+            "POST",
+            "/v1/sessions",
+            body={
+                "workspace_id": workspace_id,
+                "title": title,
+                "agent_definition": f"{definition_id}@{definition_version}",
+                "backend_id": definition.backend,
+            },
+        )
         with self._connect() as db:
             db.execute("INSERT INTO relay_sessions VALUES(?,?,?,?,?,?,?)", (
                 item["session_id"], subject, workspace_id, definition_id, definition_version,
                 definition.backend, idempotency_key,
             ))
+        await self._ensure_session_event_cursor(str(item["session_id"]))
         return self._session(item, self._binding(str(item["session_id"])))
 
     async def get_session(self, workspace_id: str, session_id: str) -> dict[str, Any]:
-        binding = self._binding(session_id)
-        if binding.workspace_id != workspace_id:
-            raise GatewayControlError("session_not_found", "Session was not found in this Workspace")
         item = await self.transport.request("GET", f"/v1/sessions/{session_id}")
-        return self._session(item, binding)
+        if str(item["workspace_id"]) != workspace_id:
+            raise GatewayControlError("session_not_found", "Session was not found in this Workspace")
+        return self._session(item, self._binding_optional(session_id))
 
     async def authorize_session(self, subject: str, workspace_id: str, session_id: str) -> None:
-        binding = self._binding(session_id)
-        if binding.subject != subject or binding.workspace_id != workspace_id:
+        item = await self.transport.request("GET", f"/v1/sessions/{session_id}")
+        if str(item["workspace_id"]) != workspace_id or bool(item.get("archived")):
             raise GatewayControlError("session_forbidden", "Session is not authorized")
 
     async def list_sessions_for_subject(self, subject: str, workspace_id: str, *, cursor: str | None = None,
                                         limit: int = 20, query: str | None = None):
-        offset = max(0, int(cursor or 0))
-        with self._connect() as db:
-            ids = [str(row[0]) for row in db.execute(
-                "SELECT session_id FROM relay_sessions WHERE subject=? AND workspace_id=? ORDER BY rowid",
-                (subject, workspace_id),
-            )]
-        rows = [await self.get_session(workspace_id, session_id) for session_id in ids]
-        if query:
-            rows = [item for item in rows if query.casefold() in item["title"].casefold()]
-        page = rows[offset:offset + limit]
-        return [page, str(offset + limit) if offset + limit < len(rows) else None]
+        # The Full Runtime Session store is authoritative. A Runtime association
+        # grants visibility to its active Sessions, including Sessions created
+        # earlier by Windows; relay_sessions is only creation/idempotency metadata.
+        return await self.list_sessions(workspace_id, cursor=cursor, limit=limit, query=query)
 
     async def list_sessions(self, workspace_id: str, *, cursor: str | None = None, limit: int = 20,
                             query: str | None = None):
@@ -188,22 +945,20 @@ class GatewayRuntimeControlHandler:
         page = await self.transport.request("GET", f"/v1/sessions?workspace_id={workspace_id}&offset={offset}&limit={limit}")
         mapped = []
         for item in page.get("data", []):
-            try:
-                binding = self._binding(str(item["session_id"]))
-            except GatewayControlError:
-                continue
             if not query or query.casefold() in str(item.get("title", "")).casefold():
-                mapped.append(self._session(item, binding))
+                mapped.append(self._session(item, self._binding_optional(str(item["session_id"]))))
         consumed = offset + len(page.get("data", []))
         return [mapped, str(consumed) if consumed < int(page.get("total", consumed)) else None]
 
     async def create_run(self, subject: str, workspace_id: str, session_id: str, *, message: str,
                          attachment_refs: list[str], idempotency_key: str, correlation_id: str,
-                         retry_of: str | None = None, _authorization: str | None = None) -> dict[str, Any]:
+                         retry_of: str | None = None, source_message_id: str | None = None,
+                         _authorization: str | None = None) -> dict[str, Any]:
         existing = self._binding_by_idempotency("relay_runs", subject, idempotency_key)
         if existing:
             return await self.get_run(str(existing["run_id"]))
-        binding = self._binding(session_id)
+        session = await self.transport.request("GET", f"/v1/sessions/{session_id}")
+        binding = await self._ensure_session_binding(subject, session)
         if binding.workspace_id != workspace_id:
             raise GatewayControlError("session_not_found", "Session was not found in this Workspace")
         reference = f"{binding.definition_id}@{binding.definition_version}"
@@ -211,10 +966,17 @@ class GatewayRuntimeControlHandler:
                                             body={"agent_definition": reference},
                                             headers={"Idempotency-Key": idempotency_key})
         with self._connect() as db:
-            db.execute("INSERT INTO relay_runs VALUES(?,?,?,?,?,?,?,?,?)", (
-                item["run_id"], subject, workspace_id, session_id, correlation_id, message,
+            db.execute(
+                "INSERT INTO relay_runs("
+                "run_id,subject,workspace_id,session_id,correlation_id,message,"
+                "attachment_refs_json,retry_of,idempotency_key,source_message_id"
+                ") VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (
+                item["run_id"], subject, workspace_id, session_id, correlation_id, redact_secrets(message),
                 json.dumps(attachment_refs), retry_of, idempotency_key,
-            ))
+                source_message_id or idempotency_key,
+                ),
+            )
         task = asyncio.create_task(self._execute_run(
             str(item["run_id"]), message, subject, correlation_id, _authorization))
         self._execution_tasks.add(task)
@@ -228,15 +990,30 @@ class GatewayRuntimeControlHandler:
             if authorization and authorization.startswith("Bearer "):
                 headers.update({"Authorization": authorization, "X-OpenDrSai-Auth-Mode": "oidc"})
             await self.transport.request("POST", f"/v1/runs/{run_id}/execute",
-                                         body={"prompt": message, "user_id": subject},
+                                         body={
+                                             "prompt": message,
+                                             "user_id": subject,
+                                             "metadata": {
+                                                 "attachment_refs": self._run_binding(run_id)["attachment_refs"],
+                                                 "source_client": "android",
+                                                 "source_message_id": str(
+                                                     self._run_binding(run_id)["source_message_id"]
+                                                     or self._run_binding(run_id)["idempotency_key"]
+                                                 ),
+                                             },
+                                         },
                                          headers=headers)
-        except Exception:
-            # The Full Runtime records the authoritative failure Event/status.
+        except Exception as exc:
+            # Keep a bounded diagnostic projection for health/acceptance. The
+            # Full Runtime remains authoritative for the Run's durable status.
+            self.execution_failures[run_id] = f"{type(exc).__name__}: {exc}"[:1000]
+            if len(self.execution_failures) > 100:
+                self.execution_failures.pop(next(iter(self.execution_failures)))
             return
 
     async def get_run(self, run_id: str) -> dict[str, Any]:
         item = await self.transport.request("GET", f"/v1/runs/{run_id}")
-        return self._run(item, self._run_binding(run_id))
+        return self._run(item, self._run_binding_optional(run_id, item))
 
     async def list_runs(self, workspace_id: str, session_id: str, *, cursor: str | None = None, limit: int = 20):
         # Runtime has an authoritative point lookup; Relay metadata indexes only IDs it created.
@@ -251,17 +1028,112 @@ class GatewayRuntimeControlHandler:
                                     cursor: str | None = None, limit: int = 20):
         await self.authorize_session(subject, workspace_id, session_id)
         offset = max(0, int(cursor or 0))
-        with self._connect() as db:
-            ids = [str(row[0]) for row in db.execute(
-                "SELECT run_id FROM relay_runs WHERE subject=? AND workspace_id=? AND session_id=? ORDER BY rowid",
-                (subject, workspace_id, session_id),
-            )]
-        rows = [await self.get_run(run_id) for run_id in ids[offset:offset + limit]]
-        return [rows, str(offset + limit) if offset + limit < len(ids) else None]
+        page = await self.transport.request(
+            "GET", f"/v1/sessions/{session_id}/runs?offset={offset}&limit={limit}")
+        rows = [self._run(item, self._run_binding_optional(str(item["run_id"]), item))
+                for item in page.get("data", [])]
+        consumed = offset + len(rows)
+        return [rows, str(consumed) if consumed < int(page.get("total", consumed)) else None]
 
     async def authorize_run(self, subject: str, run_id: str) -> None:
-        if self._run_binding(run_id)["subject"] != subject:
-            raise GatewayControlError("run_forbidden", "Run is not authorized")
+        item = await self.transport.request("GET", f"/v1/runs/{run_id}")
+        await self.authorize_session(subject, str(item["workspace_id"]), str(item["session_id"]))
+
+    async def conversation_for_subject(
+        self,
+        subject: str,
+        workspace_id: str,
+        session_id: str,
+        *,
+        cursor: str | None = None,
+        limit: int = 100,
+    ):
+        await self.authorize_session(subject, workspace_id, session_id)
+        query = f"?limit={limit}"
+        if cursor:
+            query += f"&cursor={quote(cursor, safe='')}"
+        page = await self.transport.request(
+            "GET",
+            f"/v1/sessions/{session_id}/conversation{query}",
+        )
+        items: list[dict[str, Any]] = []
+        for raw in page.get("data", []):
+            kind = str(raw["kind"])
+            payload = dict(raw.get("payload", {}))
+            if kind == "agent.message.delta":
+                kind = "message.delta"
+                payload["delta"] = str(payload.get("delta", payload.get("content", "")))
+            elif kind == "tool.completed":
+                kind = "tool.finished"
+            items.append({
+                "item_id": str(raw["item_id"]),
+                "sequence": int(raw["sequence"]),
+                "kind": kind,
+                "timestamp": str(raw["timestamp"]),
+                "payload": payload,
+            })
+        return [items, page.get("next_cursor")]
+
+    async def conversation_snapshot_for_subject(
+        self,
+        subject: str,
+        workspace_id: str,
+        session_id: str,
+        *,
+        limit: int = 500,
+    ) -> dict[str, Any]:
+        await self.authorize_session(subject, workspace_id, session_id)
+        return await self.transport.request(
+            "GET",
+            f"/v1/sessions/{quote(session_id, safe='')}/conversation-snapshot"
+            f"?limit={max(1, min(2000, int(limit)))}",
+        )
+
+    async def session_events_for_subject(
+        self,
+        subject: str,
+        workspace_id: str,
+        session_id: str,
+        *,
+        after_sequence: int = 0,
+        limit: int = 500,
+    ) -> dict[str, Any]:
+        await self.authorize_session(subject, workspace_id, session_id)
+        return await self.transport.request(
+            "GET",
+            f"/v1/sessions/{quote(session_id, safe='')}/events"
+            f"?after_sequence={max(0, int(after_sequence))}"
+            f"&limit={max(1, min(2000, int(limit)))}",
+        )
+
+    async def oaep_snapshot_for_subject(
+        self,
+        subject: str,
+        workspace_id: str,
+        session_id: str,
+    ) -> dict[str, Any]:
+        await self.authorize_session(subject, workspace_id, session_id)
+        return await self.transport.request(
+            "GET",
+            f"/v1/sessions/{quote(session_id, safe='')}/oaep-snapshot",
+        )
+
+    async def oaep_events_for_subject(
+        self,
+        subject: str,
+        workspace_id: str,
+        session_id: str,
+        *,
+        after_sequence: int = 0,
+        limit: int = 500,
+    ) -> dict[str, Any]:
+        await self.authorize_session(subject, workspace_id, session_id)
+        return await self.transport.request(
+            "GET",
+            f"/v1/sessions/{quote(session_id, safe='')}/oaep-events"
+            f"?after_sequence={max(0, int(after_sequence))}"
+            f"&limit={max(1, min(2000, int(limit)))}",
+        )
 
     async def idempotency_result(self, subject: str, operation: str, idempotency_key: str) -> dict[str, Any]:
         table = {"session.create": "relay_sessions", "run.create": "relay_runs"}.get(operation)
@@ -274,7 +1146,8 @@ class GatewayRuntimeControlHandler:
                       else self.get_session(str(row["workspace_id"]), str(row["session_id"])))
 
     async def list_events(self, run_id: str, *, after_sequence: int = 0, limit: int = 500):
-        run = self._run_binding(run_id)
+        item = await self.transport.request("GET", f"/v1/runs/{run_id}")
+        run = self._run_binding_optional(run_id, item)
         page = await self.transport.request("GET", f"/v1/runs/{run_id}/events?after_sequence={after_sequence}&limit={limit}")
         items = [self._event_projection(item, run, run_id) for item in page.get("data", [])]
         return [items, str(items[-1]["sequence"]) if len(items) == limit else None]
@@ -310,25 +1183,54 @@ class GatewayRuntimeControlHandler:
         return [item for item in await self.pending_approvals(workspace_id)
                 if self._run_binding(item["run_id"])["subject"] == subject]
 
-    async def decide_approval(self, subject: str, approval_id: str, decision: str) -> dict[str, Any]:
+    async def decide_approval(
+        self, subject: str, approval_id: str, decision: str, idempotency_key: str | None = None
+    ) -> dict[str, Any]:
         mapped = {"approve": "approved", "deny": "denied", "cancel": "denied"}.get(decision)
         if mapped is None:
             raise GatewayControlError("approval_decision_invalid", "Invalid approval decision")
-        page = await self.transport.request("GET", "/v1/approvals?status=pending")
-        candidates = page.get("data", page if isinstance(page, list) else [])
-        candidate = next((item for item in candidates if str(item.get("approval_id")) == approval_id), None)
-        if candidate is None:
-            raise GatewayControlError("approval_not_found", "Approval is no longer pending")
-        await self.authorize_run(subject, str(candidate["run_id"]))
-        item = await self.transport.request("POST", f"/v1/approvals/{approval_id}/decision",
-                                            body={"decision": mapped, "detail": {"subject": subject}})
-        try:
-            await self.transport.request("POST", f"/v1/runs/{item['run_id']}/approvals/{approval_id}/decision",
-                                         body={"decision": mapped, "detail": {"subject": subject}})
-        except GatewayControlError as exc:
-            if exc.code not in {"approval_not_found", "approval_not_supported"}:
-                raise
-        return self._approval(item)
+        stable_key = idempotency_key or f"legacy:{approval_id}:{decision}"
+        async with self._approval_decision_lock:
+            with self._connect() as db:
+                prior = db.execute(
+                    "SELECT * FROM relay_approval_decisions WHERE subject=? AND idempotency_key=?",
+                    (subject, stable_key),
+                ).fetchone()
+            if prior is not None:
+                if str(prior["approval_id"]) != approval_id or str(prior["decision"]) != decision:
+                    raise GatewayControlError("idempotency_conflict", "Idempotency key was reused with another decision")
+                return json.loads(str(prior["result_json"]))
+            page = await self.transport.request("GET", "/v1/approvals?status=pending")
+            candidates = page.get("data", page if isinstance(page, list) else [])
+            candidate = next((item for item in candidates if str(item.get("approval_id")) == approval_id), None)
+            if candidate is None:
+                try:
+                    candidate = await self.transport.request("GET", f"/v1/approvals/{approval_id}")
+                except GatewayControlError as exc:
+                    if exc.code == "runtime_http_404":
+                        raise GatewayControlError("approval_not_found", "Approval is no longer pending") from exc
+                    raise
+            await self.authorize_run(subject, str(candidate["run_id"]))
+            detail = {"subject": subject, "idempotency_key": stable_key}
+            item = await self.transport.request(
+                "POST", f"/v1/approvals/{approval_id}/decision",
+                body={"decision": mapped, "detail": detail},
+            )
+            try:
+                await self.transport.request(
+                    "POST", f"/v1/runs/{item['run_id']}/approvals/{approval_id}/decision",
+                    body={"decision": mapped, "detail": detail},
+                )
+            except GatewayControlError as exc:
+                if exc.code not in {"approval_not_found", "approval_not_supported"}:
+                    raise
+            result = self._approval(item)
+            with self._connect() as db:
+                db.execute(
+                    "INSERT INTO relay_approval_decisions VALUES(?,?,?,?,?)",
+                    (subject, stable_key, approval_id, decision, json.dumps(result, separators=(",", ":"))),
+                )
+            return result
 
     async def audit_entries(self, workspace_id: str, run_id: str | None = None) -> list[dict[str, Any]]:
         run_ids = [run_id] if run_id else self._workspace_run_ids(workspace_id)
@@ -397,6 +1299,79 @@ class GatewayRuntimeControlHandler:
             raise GatewayControlError("session_not_found", "Session was not created through this Relay")
         return _SessionBinding(**dict(row))
 
+    def _binding_optional(self, session_id: str) -> _SessionBinding | None:
+        try:
+            return self._binding(session_id)
+        except GatewayControlError as exc:
+            if exc.code != "session_not_found":
+                raise
+            return None
+
+    async def _ensure_session_binding(self, subject: str, item: dict[str, Any]) -> _SessionBinding:
+        session_id = str(item["session_id"])
+        existing = self._binding_optional(session_id)
+        if existing is not None:
+            await self._ensure_session_event_cursor(session_id)
+            return existing
+        definitions = await self.list_agent_definitions()
+        healthy = [row for row in definitions if row["backend_health"] == "healthy"]
+        reference = str(item.get("agent_definition") or "")
+        backend_id = str(item.get("backend_id") or "")
+        selected = None
+        if "@" in reference:
+            definition_id, definition_version = reference.rsplit("@", 1)
+            selected = next(
+                (
+                    row for row in healthy
+                    if row["definition_id"] == definition_id
+                    and row["version"] == definition_version
+                    and (not backend_id or row["backend_id"] == backend_id)
+                ),
+                None,
+            )
+            if selected is None:
+                raise GatewayControlError(
+                    "session_agent_definition_unavailable",
+                    "Session Agent Definition is unavailable or unhealthy",
+                    retryable=True,
+                )
+        else:
+            # Legacy Sessions created before authoritative Agent metadata can
+            # migrate only when the choice is unambiguous. Prefer the
+            # Runtime-owned backend binding when it exists; unrelated healthy
+            # backends must not make an otherwise exact migration ambiguous.
+            candidates = [
+                row for row in healthy
+                if not backend_id or row["backend_id"] == backend_id
+            ]
+            if len(candidates) == 1:
+                selected = candidates[0]
+            else:
+                raise GatewayControlError(
+                    "session_agent_definition_required",
+                    "Existing Session has no unambiguous healthy Agent Definition",
+                )
+        binding = _SessionBinding(
+            session_id=session_id,
+            subject=subject,
+            workspace_id=str(item["workspace_id"]),
+            definition_id=str(selected["definition_id"]),
+            definition_version=str(selected["version"]),
+            backend_id=str(selected["backend_id"]),
+            idempotency_key=f"discovered:{session_id}",
+        )
+        with self._connect() as db:
+            db.execute(
+                "INSERT OR IGNORE INTO relay_sessions VALUES(?,?,?,?,?,?,?)",
+                (
+                    binding.session_id, binding.subject, binding.workspace_id,
+                    binding.definition_id, binding.definition_version,
+                    binding.backend_id, binding.idempotency_key,
+                ),
+            )
+        await self._ensure_session_event_cursor(session_id)
+        return self._binding(session_id)
+
     def _run_binding(self, run_id: str) -> dict[str, Any]:
         with self._connect() as db:
             row = db.execute("SELECT * FROM relay_runs WHERE run_id=?", (run_id,)).fetchone()
@@ -406,6 +1381,28 @@ class GatewayRuntimeControlHandler:
         result["attachment_refs"] = json.loads(result.pop("attachment_refs_json"))
         return result
 
+    def _run_binding_optional(self, run_id: str, item: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return self._run_binding(run_id)
+        except GatewayControlError as exc:
+            if exc.code != "run_not_found":
+                raise
+            return {
+                "run_id": run_id,
+                "subject": "runtime",
+                "workspace_id": str(item["workspace_id"]),
+                "session_id": str(item["session_id"]),
+                "correlation_id": str(item.get("correlation_id") or f"runtime:{run_id}"),
+                "message": str(item.get("input_message") or ""),
+                "attachment_refs": (
+                    json.loads(str(item.get("attachment_refs_json") or "[]"))
+                    if not isinstance(item.get("attachment_refs"), list)
+                    else item["attachment_refs"]
+                ),
+                "retry_of": None,
+                "idempotency_key": str(item.get("idempotency_key") or f"runtime:{run_id}"),
+            }
+
     def _binding_by_idempotency(self, table: str, subject: str, key: str):
         with self._connect() as db:
             return db.execute(f"SELECT * FROM {table} WHERE subject=? AND idempotency_key=?", (subject, key)).fetchone()
@@ -414,11 +1411,18 @@ class GatewayRuntimeControlHandler:
         with self._connect() as db:
             return [str(row[0]) for row in db.execute("SELECT run_id FROM relay_runs WHERE workspace_id=?", (workspace_id,))]
 
-    def _session(self, item: dict[str, Any], binding: _SessionBinding) -> dict[str, Any]:
-        return {"runtime_id": self.runtime_id, "workspace_id": binding.workspace_id,
-                "session_id": binding.session_id, "title": item["title"],
-                "agent_definition_id": binding.definition_id, "agent_definition_version": binding.definition_version,
-                "backend_id": binding.backend_id, "updated_at": item["updated_at"], "lifecycle": "active",
+    def _session(self, item: dict[str, Any], binding: _SessionBinding | None) -> dict[str, Any]:
+        reference = str(item.get("agent_definition") or "")
+        definition_id, definition_version = ("", "")
+        if "@" in reference:
+            definition_id, definition_version = reference.rsplit("@", 1)
+        return {"runtime_id": self.runtime_id, "workspace_id": str(item["workspace_id"]),
+                "session_id": str(item["session_id"]), "title": item["title"],
+                "agent_definition_id": binding.definition_id if binding else definition_id,
+                "agent_definition_version": binding.definition_version if binding else definition_version,
+                "backend_id": binding.backend_id if binding else str(item.get("backend_id") or ""),
+                "updated_at": item["updated_at"],
+                "lifecycle": str(item.get("lifecycle") or ("archived" if item.get("archived") else "active")),
                 "last_run_status": None}
 
     def _run(self, item: dict[str, Any], binding: dict[str, Any]) -> dict[str, Any]:

@@ -3,8 +3,8 @@ param([string]$OutputFile)
 $ErrorActionPreference = "Stop"
 $project = Split-Path -Parent $PSScriptRoot
 $repo = Resolve-Path (Join-Path $project "..\..")
-$plan = Join-Path $repo "docs\android\ANDROID_UNIFIED_WORKBENCH_RUNTIME_V2_DEVELOPMENT_PLAN.md"
-$acceptance = Join-Path $repo "docs\android\acceptance\stage5"
+$plan = Join-Path $repo "docs\android\plans\runtime\ANDROID_UNIFIED_WORKBENCH_RUNTIME_V2_DEVELOPMENT_PLAN.md"
+$acceptance = Join-Path $repo "docs\android\testing\acceptance\stage5"
 if ([string]::IsNullOrWhiteSpace($OutputFile)) { $OutputFile = Join-Path $acceptance "feature-evidence.json" }
 
 function Assert-JsonPassed([string]$Path) {
@@ -45,7 +45,7 @@ foreach ($image in @("stage5-phone-portrait.png", "stage5-phone-landscape.png", 
 
 $moduleEvidence = @{
     M01 = @("apps/android/app/src/main/java/ai/drsai/remote/workbench/model/WorkbenchModels.kt; apps/android/app/src/main/java/ai/drsai/remote/workbench/data/WorkbenchStore.kt", "WorkbenchModelsTest; LocalStoreTest; ArchitectureBoundaryTest")
-    M02 = @("apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt", "MainInterfaceTest; docs/android/acceptance/stage5/device/tablet-layout-report.json")
+    M02 = @("apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt", "MainInterfaceTest; docs/android/testing/acceptance/stage5/device/tablet-layout-report.json")
     M03 = @("apps/android/app/src/main/java/ai/drsai/remote/workbench/data/WorkbenchStore.kt; apps/android/app/src/main/java/ai/drsai/remote/workbench/model/WorkbenchModels.kt", "LocalStoreTest; MainInterfaceTest; WorkspaceActionPolicyTest")
     M04 = @("apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt; apps/android/app/src/main/java/ai/drsai/remote/remote/navigation/AppRoute.kt", "MainInterfaceTest; AppRouteTest; LocalStoreTest")
     M05 = @("apps/android/app/src/main/java/ai/drsai/remote/runtime/v2/RuntimeV2.kt; apps/android/app/src/main/java/ai/drsai/remote/data/LocalRuntimeV2Recorder.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/coordinator/ChatExecutionRouter.kt", "RuntimeV2Test; ChatExecutionRouterTest; LocalStoreTest")
@@ -59,7 +59,7 @@ $moduleEvidence = @{
 }
 
 $specialM12Tests = @{
-    "M12-F01" = "LocalStoreTest migrations; docs/android/acceptance/stage5/upgrade/upgrade-1.4.6-to-1.5.0.json"
+    "M12-F01" = "LocalStoreTest migrations; docs/android/testing/acceptance/stage5/upgrade/upgrade-1.4.6-to-1.5.0.json"
     "M12-F02" = "apps/android/app/build/test-results/testDebugUnitTest (166/166)"
     "M12-F03" = "emulator-results API30 67/67 and API35 67/67; device screenshots; tablet-layout-report.json"
     "M12-F04" = "RuntimeV2Test; ChatExecutionRouterTest; LocalStoreTest runtime journal/recovery"

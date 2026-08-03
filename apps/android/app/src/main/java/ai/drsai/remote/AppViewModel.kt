@@ -6,8 +6,10 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import androidx.work.WorkManager
+import ai.drsai.remote.remote.data.AndroidDevicePresence
 import ai.drsai.remote.data.AppDestination
 import ai.drsai.remote.data.AppState
+import ai.drsai.remote.data.AssociationState
 import ai.drsai.remote.data.AccessTokenCoordinator
 import ai.drsai.remote.data.Agent
 import ai.drsai.remote.data.AgentRepository
@@ -30,6 +32,11 @@ import ai.drsai.remote.data.MIGRATION_2_3
 import ai.drsai.remote.data.MIGRATION_3_4
 import ai.drsai.remote.data.MIGRATION_4_5
 import ai.drsai.remote.data.MIGRATION_5_6
+import ai.drsai.remote.data.MIGRATION_6_7
+import ai.drsai.remote.data.MIGRATION_7_8
+import ai.drsai.remote.data.MIGRATION_8_9
+import ai.drsai.remote.data.MIGRATION_9_10
+import ai.drsai.remote.data.MIGRATION_10_11
 import ai.drsai.remote.workbench.data.WorkbenchProjectionRepository
 import ai.drsai.remote.workbench.data.UnifiedWorkbenchRepository
 import ai.drsai.remote.workbench.data.SessionMutationResult
@@ -58,6 +65,11 @@ import ai.drsai.remote.data.localAgentFor
 import ai.drsai.remote.data.selectLocalModelForAttachments
 import ai.drsai.remote.remote.data.RemoteCacheRepository
 import ai.drsai.remote.remote.data.RemoteSubscriptionRegistry
+import ai.drsai.remote.remote.data.HttpRelayDiscoveryService
+import ai.drsai.remote.remote.security.androidRelayDeviceProof
+import ai.drsai.remote.remote.data.RelayHttpException
+import ai.drsai.remote.remote.data.AssociationDeepLinkDecision
+import ai.drsai.remote.remote.data.AssociationDeepLinkGate
 import ai.drsai.remote.remote.navigation.WorkbenchDeepLinkParser
 import ai.drsai.remote.runtime.v2.RunCommand
 import ai.drsai.remote.runtime.v2.RunCheckpoint
@@ -118,7 +130,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val oidcTransactions by lazy { OidcTransactionStore(app) }
     private val database by lazy {
         Room.databaseBuilder(app, ChatDatabase::class.java, "opendrsai.db")
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
             .build()
     }
     private val oidcClient by lazy { OidcClient(refreshClientId = { tokenStore.oidcClientId }) }
@@ -134,6 +146,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         })
     }
     private val tokenCoordinator by lazy { AccessTokenCoordinator(tokenStore, oidcClient) }
+    private val relayDeviceProof by lazy { androidRelayDeviceProof(app) }
+    private val relayDiscovery by lazy {
+        HttpRelayDiscoveryService(
+            BuildConfig.RELAY_BASE_URL,
+            tokenCoordinator::current,
+            tokenCoordinator::refreshAfter,
+            deviceProof = relayDeviceProof,
+        )
+    }
+    private val associationIssuer by lazy {
+        java.net.URI(BuildConfig.RELAY_BASE_URL).let { "${it.scheme}://${it.host}" }
+    }
+    private val associationGate by lazy { AssociationDeepLinkGate(associationIssuer) }
     private val platformClient by lazy { PlatformAgentClient(tokenCoordinator) }
     private val agentRepository by lazy { AgentRepository(platformClient, database.dao()) }
     private val platformRuntime by lazy { PlatformAgentRuntime(tokenCoordinator, database.dao()) }
@@ -144,17 +169,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val safWorkspaceGateway by lazy { SafWorkspaceGateway(app, safWorkspaceStore) }
     private val runNotifications by lazy { LocalRunNotificationController(app) }
     private val runRecoveryScheduler by lazy { RunRecoveryScheduler(WorkManager.getInstance(app)) }
-    private val runtime by lazy {
-        val registry = defaultLocalToolRegistry(
+    private val productionToolRegistry by lazy {
+        defaultLocalToolRegistry(
             database.dao(),
             RoomToolOutputArtifactSink(database.dao()),
             RoomToolAuditSink(database.workbenchDao()),
         ).also {
             registerAndroidDeviceTools(it, SafeDeviceInfoProvider(app), safWorkspaceGateway)
         }
-        val tools = ai.drsai.remote.data.LocalToolRegistry(
+    }
+    private val localTools by lazy {
+        ai.drsai.remote.data.LocalToolRegistry(
             database.dao(),
-            registry,
+            productionToolRegistry,
             capabilities = { subject ->
                 buildSet {
                     add(ai.drsai.remote.workbench.model.RuntimeCapability.CHAT)
@@ -168,8 +195,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             },
             approvals = RoomToolApprovalGateway(database, approvalRepository),
         )
+    }
+    private val runtime by lazy {
         LocalAgentRuntime(
-            modelClient, database.dao(), tools, attachmentRepository,
+            modelClient, database.dao(), localTools, attachmentRepository,
             projectInstructions = { subject -> safWorkspaceGateway.projectInstructions(subject) },
             memoryEnabled = memorySettings::enabled,
         )
@@ -177,7 +206,124 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val workbenchProjection by lazy { WorkbenchProjectionRepository(database.workbenchDao()) }
     private val unifiedWorkbench by lazy { UnifiedWorkbenchRepository(database) }
     private val runtimeV2Recorder by lazy { RuntimeV2EventRecorder(RoomRunJournal(database)) }
-    private val chatExecution by lazy { ChatExecutionRouter(runtime, platformRuntime) }
+    private val pythonRuntimeMetrics by lazy { ai.drsai.remote.runtime.python.SharedPreferencesPythonRuntimeMetrics(app) }
+    private val pythonRuntimeClient by lazy { ai.drsai.remote.runtime.python.PythonRuntimeClient(app, pythonRuntimeMetrics) }
+    private val pythonRuntimePreference by lazy {
+        ai.drsai.remote.runtime.python.PythonRuntimePreferenceStore(app, BuildConfig.PYTHON_LOCAL_RUNTIME_ENABLED)
+    }
+    private val runtimePolicyClient by lazy {
+        BuildConfig.RUNTIME_POLICY_PUBLIC_KEY.takeIf(String::isNotBlank)?.let { publicKey ->
+            ai.drsai.remote.runtime.python.RuntimeRolloutPolicyClient(
+                BuildConfig.RUNTIME_POLICY_URL,
+                ai.drsai.remote.runtime.python.Ed25519RuntimePolicySignatureVerifier(publicKey),
+                pythonRuntimePreference,
+            )
+        }
+    }
+    @Volatile private var pythonRuntimeHealthy = true
+    private val pythonChatEngine by lazy {
+        ai.drsai.remote.runtime.python.PythonSharedCoreChatEngine(
+            bridge = pythonRuntimeClient,
+            modelGateway = modelClient,
+            dao = database.dao(),
+            portsFactory = ai.drsai.remote.runtime.python.PythonHostPortsFactory { request ->
+                val approvalGrants = ai.drsai.remote.runtime.python.PythonApprovalGrantTracker()
+                ai.drsai.remote.runtime.python.PythonRuntimeHostPorts(
+                    model = ai.drsai.remote.runtime.python.HaiPythonModelHostPort(modelClient),
+                    stateStore = ai.drsai.remote.runtime.python.RoomPythonCheckpointStore(database),
+                    tools = ai.drsai.remote.runtime.python.AndroidPythonToolHostPort(
+                        ai.drsai.remote.runtime.python.LocalToolRegistryPythonExecutor(
+                            localTools, request.accountSubject, request.runId, request.conversation.id, approvalGrants,
+                        )
+                    ),
+                    approval = ai.drsai.remote.runtime.python.LocalToolRegistryPythonApprovalPort(
+                        localTools, request.accountSubject, request.runId, request.conversation.id, approvalGrants,
+                    ),
+                    artifacts = ai.drsai.remote.runtime.python.ScopedPythonArtifactHostPort(
+                        database.dao(), request.accountSubject, request.runId, request.conversation.id, request.attachments,
+                    ),
+                    lifecycle = ai.drsai.remote.runtime.python.AndroidPythonLifecycleHostPort(app),
+                    audit = ai.drsai.remote.runtime.python.RoomPythonSideEffectAudit(database),
+                )
+            },
+            toolSchemas = { subject ->
+                val local = localTools.definitions(subject).map { definition ->
+                    org.json.JSONObject()
+                        .put("name", definition.id)
+                        .put("description", definition.description)
+                        .put("parameters", org.json.JSONObject().put("type", "object")
+                            .put("properties", org.json.JSONObject()).put("required", org.json.JSONArray(definition.requiredArguments)))
+                        .put("risk", definition.risk.name.lowercase())
+                        .put("requires_approval", definition.risk in setOf(
+                            ai.drsai.remote.runtime.tools.ToolRisk.EXTERNAL_WRITE,
+                            ai.drsai.remote.runtime.tools.ToolRisk.SENSITIVE,
+                        ))
+                        .put("title", definition.description)
+                        .put("summary", "Allow ${definition.id} to run on this device")
+                }
+                val delegate = org.json.JSONObject()
+                    .put("name", "delegate")
+                    .put("description", "Run up to three focused logical subagents and summarize their results")
+                    .put("requires_approval", false)
+                    .put("risk", "read_only")
+                    .put("parameters", org.json.JSONObject().put("type", "object")
+                        .put("properties", org.json.JSONObject()
+                            .put("tasks", org.json.JSONObject().put("type", "array").put("maxItems", 3)
+                                .put("items", org.json.JSONObject().put("type", "object")
+                                    .put("properties", org.json.JSONObject()
+                                        .put("task_id", org.json.JSONObject().put("type", "string"))
+                                        .put("prompt", org.json.JSONObject().put("type", "string")))
+                                    .put("required", org.json.JSONArray(listOf("task_id", "prompt"))))))
+                        .put("required", org.json.JSONArray(listOf("tasks"))))
+                val coreTextStats = org.json.JSONObject()
+                    .put("name", "core.text_stats")
+                    .put("description", "Count characters, words, and lines in text inside the shared Python Core")
+                    .put("requires_approval", false)
+                    .put("risk", "read_only")
+                    .put("parameters", org.json.JSONObject().put("type", "object")
+                        .put("properties", org.json.JSONObject().put("text", org.json.JSONObject()
+                            .put("type", "string").put("maxLength", 10_000)))
+                        .put("required", org.json.JSONArray(listOf("text"))))
+                org.json.JSONArray(local + listOf(coreTextStats, delegate))
+            },
+            skillSchemas = { request ->
+                org.json.JSONArray(skillCatalog.pin(request.runId, emptySet()).skills.map { skill ->
+                    org.json.JSONObject()
+                        .put("id", skill.id)
+                        .put("version", skill.version)
+                        .put("name", skill.displayName)
+                        .put("capabilities", org.json.JSONArray(skill.requiredCapabilities.map { it.name.lowercase() }))
+                        .put("availability", when {
+                            skill.executableOnAndroid -> "local"
+                            skill.source == SkillSource.PLATFORM || skill.source == SkillSource.REMOTE_READ_ONLY -> "remote-required"
+                            else -> "unsupported"
+                        })
+                })
+            },
+            onFailure = { pythonRuntimeHealthy = false },
+            metrics = pythonRuntimeMetrics,
+        )
+    }
+    private val chatExecution by lazy {
+        val selectable = ai.drsai.remote.runtime.python.SelectableLocalChatEngine(
+            ai.drsai.remote.runtime.coordinator.LocalChatEngine(runtime),
+            pythonChatEngine,
+            metrics = pythonRuntimeMetrics,
+        ) {
+            ai.drsai.remote.runtime.python.PythonRuntimeRolloutState(
+                BuildConfig.PYTHON_LOCAL_RUNTIME_ENABLED,
+                pythonRuntimePreference.enabled,
+                pythonRuntimeHealthy,
+                pythonRuntimePreference.policyEnabled || BuildConfig.BUILD_TYPE == "acceptance",
+            )
+        }
+        ChatExecutionRouter(
+            listOf(
+                selectable,
+                ai.drsai.remote.runtime.coordinator.PlatformChatEngine(platformRuntime),
+            )
+        )
+    }
     private val journaledChatExecution by lazy { JournaledChatExecutionCoordinator(chatExecution, runtimeV2Recorder) }
     private val skillCatalog = SkillCatalog()
     private val approvalRepository by lazy { ApprovalRepository(database) }
@@ -185,12 +331,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val state: StateFlow<AppState> = mutableState.asStateFlow()
 
     private var loginJob: Job? = null
+    private var pendingAssociationCode: String? = null
+    private var associationJob: Job? = null
     private var oidcSession: OidcLoginSession? = null
     private var runJob: Job? = null
     private var approvalJob: Job? = null
     private var workbenchSearchJob: Job? = null
     private var workbenchSearchGeneration: Long = 0
     private var activeRunId: String? = null
+    @Volatile private var cancelInProgress = false
     private var activeRunAuthority: RuntimeAuthority = RuntimeAuthority.LOCAL_DEVICE
     private var streamText = ""
     private var recoverableRun: RunCheckpoint? = null
@@ -225,6 +374,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun bootstrap() = viewModelScope.launch(Dispatchers.IO) {
         update { it.copy(destination = AppDestination.Splash, error = null) }
+        runtimePolicyClient?.refresh() ?: pythonRuntimePreference.clearPolicy()
+        val policyDiagnostic = pythonRuntimePreference.policyDiagnostic()
+        update { state -> state.copy(runtimePolicyDiagnostic = policyDiagnostic?.let {
+            ai.drsai.remote.data.RuntimePolicyDiagnosticUi(
+                it.status, it.policyVersion, it.reason, it.rolloutPercent,
+                it.emergencyDisabled, it.recordedAtEpochSeconds,
+            )
+        }) }
         val user = tokenStore.user()
         if (tokenStore.accessToken.isNullOrBlank() || user == null) {
             update { it.copy(destination = AppDestination.Login) }
@@ -283,7 +440,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 oidcSession = null
                 tokenStore.save(auth)
                 tokenStore.oidcClientId = session.transaction.clientId
+                AndroidDevicePresence.authenticationChanged()
                 loadWorkspace(auth.user)
+                consumePendingAssociation()
             }
             .onFailure { error ->
                 oidcTransactions.clear()
@@ -377,11 +536,78 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 skills = skillCatalog.snapshot().map(::toSkillUiItem),
             )
         }
+        update { state -> state.copy(runtimeStatus = recoverableRun?.let(::recoveryUiStatus)) }
     }
 
     fun handleDeepLink(uri: Uri?) {
         val route = uri?.toString()?.let(WorkbenchDeepLinkParser::route) ?: return
         update { it.copy(requestedRoutePath = route.path) }
+    }
+
+    fun handleAssociationDeepLink(uri: Uri?) {
+        if (uri == null || uri.scheme != "opendrsai" || uri.host != "associate") return
+        val code = when (val decision = associationGate.evaluate(uri.toString())) {
+            is AssociationDeepLinkDecision.Accept -> decision.code
+            AssociationDeepLinkDecision.Duplicate -> return
+            AssociationDeepLinkDecision.Reject -> {
+                update { state ->
+                    state.copy(
+                        associationState = AssociationState.FAILED,
+                        error = "关联二维码无效，请在电脑端刷新后重试",
+                    )
+                }
+                return
+            }
+        }
+        pendingAssociationCode = code
+        if (tokenStore.user() == null || tokenStore.accessToken.isNullOrBlank()) {
+            update {
+                it.copy(
+                    destination = AppDestination.Login,
+                    associationState = AssociationState.PENDING_LOGIN,
+                )
+            }
+            return
+        }
+        consumePendingAssociation()
+    }
+
+    private fun consumePendingAssociation() {
+        val code = pendingAssociationCode ?: return
+        if (associationJob?.isActive == true) return
+        associationJob = viewModelScope.launch(Dispatchers.IO) {
+            update { it.copy(associationState = AssociationState.ASSOCIATING, error = null) }
+            runCatching { relayDiscovery.associate(code) }
+                .onSuccess { runtimeId ->
+                    runCatching { relayDiscovery.recordPresence(runtimeId) }
+                    pendingAssociationCode = null
+                    update {
+                        it.copy(
+                            associationState = AssociationState.ASSOCIATED,
+                            requestedRoutePath = ai.drsai.remote.remote.navigation.AppRoute.RemoteHome.path,
+                        )
+                    }
+                }
+                .onFailure { failure ->
+                    if (failure is RelayHttpException && failure.status == 401) {
+                        update {
+                            it.copy(
+                                destination = AppDestination.Login,
+                                associationState = AssociationState.AUTH_REQUIRED,
+                                error = "HepAI 登录已过期，请重新登录",
+                            )
+                        }
+                    } else {
+                        pendingAssociationCode = null
+                        update {
+                            it.copy(
+                                associationState = AssociationState.FAILED,
+                                error = "远程工作区关联失败，请刷新二维码后重试",
+                            )
+                        }
+                    }
+                }
+        }
     }
 
     fun consumeRequestedRoute() = update { it.copy(requestedRoutePath = null) }
@@ -501,7 +727,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 hasImages,
             )
         }
-        if ((clean.isEmpty() && drafts.isEmpty() && resumedAttachments.isEmpty()) || snapshot.streaming) return
+        if ((clean.isEmpty() && drafts.isEmpty() && resumedAttachments.isEmpty()) || snapshot.streaming ||
+            (snapshot.recovering && resumeCheckpoint == null)) return
         if (!agent.available || !agent.chatSupported) {
             update { it.copy(error = "${agent.name} 暂不支持 Android 对话") }
             return
@@ -534,7 +761,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         runJob = viewModelScope.launch {
             var attemptedRunId: String? = resumeCheckpoint?.command?.runId?.value
             try {
-                update { it.copy(streaming = true, runtimeStatus = if (drafts.isNotEmpty()) "正在上传附件…" else null, error = null) }
+                update { it.copy(streaming = true, recovering = false, runtimeStatus = if (drafts.isNotEmpty()) "正在上传附件…" else null, error = null) }
                 var conversation = snapshot.currentConversation
                 if (conversation == null) {
                     val now = System.currentTimeMillis()
@@ -674,7 +901,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     when (event) {
                         is RuntimeEvent.Started -> { activeRunId = event.runId; runNotifications.show(event.runId, "正在思考…") }
                         is RuntimeEvent.TextDelta -> { streamText += event.text; replaceLast(streamText); update { it.copy(runtimeStatus = null) } }
-                        is RuntimeEvent.ToolStarted -> { runNotifications.show(runId, toolLabel(event.name)); update { it.copy(runtimeStatus = toolLabel(event.name)) } }
+                        is RuntimeEvent.ToolStarted -> { runNotifications.show(runId, safeToolLabel(event.name)); update { it.copy(runtimeStatus = safeToolLabel(event.name)) } }
                         is RuntimeEvent.ToolFinished -> update { it.copy(runtimeStatus = "正在整理工具结果…") }
                         is RuntimeEvent.ToolFailed -> reportRuntimeFailure(
                             IllegalStateException(event.code), runId, activeRunAuthority,
@@ -699,7 +926,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
             } catch (error: kotlinx.coroutines.CancellationException) {
-                update { it.copy(streaming = false, runtimeStatus = null) }
+                update { it.copy(streaming = false, recovering = cancelInProgress, runtimeStatus = if (cancelInProgress) "正在停止…" else null) }
             } catch (error: Throwable) {
                 attemptedRunId?.let(skillCatalog::release)
                 reportRuntimeFailure(error, attemptedRunId, activeRunAuthority)
@@ -736,6 +963,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         update {
             it.copy(
                 streaming = false,
+                recovering = false,
                 runtimeStatus = null,
                 error = "$displayMessage · ${classified.userAction}",
                 diagnostic = RuntimeDiagnosticUi(
@@ -816,7 +1044,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun finishRun(conversationId: String) {
         reloadMessages(conversationId)
         val artifacts = mutableState.value.user?.id?.let { loadWorkbenchArtifacts(it) }.orEmpty()
-        update { it.copy(streaming = false, runtimeStatus = null, workbenchArtifacts = artifacts) }
+        update { it.copy(streaming = false, recovering = false, runtimeStatus = null, workbenchArtifacts = artifacts) }
     }
 
     private suspend fun loadWorkbenchArtifacts(subject: String): List<WorkbenchArtifactItem> {
@@ -923,19 +1151,26 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun stop() {
-        val runId = activeRunId
-        runId?.let {
+        val active = activeRunId
+        val runId = active ?: recoverableRun?.command?.runId?.value
+        active?.let {
             chatExecution.stop(activeRunAuthority, it)
         }
         runJob?.cancel()
+        cancelInProgress = runId != null
+        update { it.copy(recovering = runId != null, runtimeStatus = if (runId == null) null else "正在停止…") }
         if (runId != null) viewModelScope.launch(Dispatchers.IO) {
-            runCatching { runtimeV2Recorder.cancel(WorkbenchId(runId)) }
-            skillCatalog.release(runId)
-            runNotifications.dismiss(runId)
-            mutableState.value.user?.id?.let { runRecoveryScheduler.cancel(it, WorkbenchId(runId)) }
-            recoverableRun = null
+            try {
+                runCatching { runtimeV2Recorder.cancel(WorkbenchId(runId)) }
+                skillCatalog.release(runId)
+                runNotifications.dismiss(runId)
+                mutableState.value.user?.id?.let { runRecoveryScheduler.cancel(it, WorkbenchId(runId)) }
+                recoverableRun = null
+            } finally {
+                cancelInProgress = false
+                update { it.copy(streaming = false, recovering = false, runtimeStatus = null) }
+            }
         }
-        update { it.copy(runtimeStatus = "正在停止…") }
     }
 
     fun pauseForBackground() {
@@ -958,15 +1193,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun retry() {
+        if (mutableState.value.streaming || mutableState.value.recovering) return
         val paused = recoverableRun
         val current = mutableState.value.currentConversation
         if (paused != null && current?.id == paused.command.sessionId.value) {
             viewModelScope.launch(Dispatchers.IO) {
+                update { it.copy(recovering = true, runtimeStatus = "正在恢复…", error = null) }
                 val attachments = database.dao().attachmentSnapshot(current.id)
                     .filter { it.messageId == paused.command.idempotencyKey }
                     .map { it.toMessageAttachment() }
-                runtimeV2Recorder.resume(paused.command.runId)
-                sendMessage(paused.command.input, paused, attachments)
+                runCatching { runtimeV2Recorder.resume(paused.command.runId) }
+                    .onSuccess { sendMessage(paused.command.input, paused, attachments) }
+                    .onFailure { error ->
+                        update { it.copy(
+                            streaming = false,
+                            recovering = false,
+                            runtimeStatus = "恢复失败",
+                            error = "恢复失败，可重试或取消：${error.message ?: "unknown"}",
+                        ) }
+                    }
             }
             return
         }
@@ -985,7 +1230,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun newConversation() {
-        if (mutableState.value.streaming) return
+        if (mutableState.value.streaming || mutableState.value.recovering) return
         mutableState.value.attachmentDrafts.forEach(attachmentProcessor::delete)
         recoverableRun = null
         update { it.copy(currentConversation = null, messages = emptyList(), attachmentDrafts = emptyList(), historyOpen = false, error = null) }
@@ -993,7 +1238,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun selectAgent(id: String) {
         val snapshot = mutableState.value
-        if (snapshot.streaming) return
+        if (snapshot.streaming || snapshot.recovering) return
         val agent = snapshot.agents.firstOrNull { it.id == id } ?: return
         if (!agent.available || !agent.chatSupported) {
             update { it.copy(error = "${agent.name} 暂不支持 Android 对话") }
@@ -1113,7 +1358,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun openConversation(id: String) = viewModelScope.launch(Dispatchers.IO) {
-        if (mutableState.value.streaming) return@launch
+        if (mutableState.value.streaming || mutableState.value.recovering) return@launch
         val conversation = mutableState.value.conversations.firstOrNull { it.id == id } ?: return@launch
         val messages = loadMessages(id)
         mutableState.value.user?.let { database.workbenchDao().setSessionUnread(it.id, id, false) }
@@ -1142,6 +1387,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 workbenchWorkspaces = tree,
             )
         }
+        update { state -> state.copy(runtimeStatus = recoverableRun?.let(::recoveryUiStatus)) }
     }
 
     fun toggleHistory(open: Boolean) = update { it.copy(historyOpen = open) }
@@ -1211,6 +1457,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun setTheme(value: Boolean?) = update { it.copy(darkTheme = value) }
 
     fun logout() {
+        AndroidDevicePresence.logout()
         val remoteSubject = mutableState.value.user?.id
         remoteSubject?.let(RemoteSubscriptionRegistry::cancelSubject)
         activeRunId?.let { runId ->
@@ -1222,6 +1469,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         approvalJob = null
         runJob = null
         activeRunId = null
+        pythonRuntimeClient.close()
         oidcClient.cancel(oidcSession)
         oidcTransactions.clear()
         loginJob?.cancel()
@@ -1231,6 +1479,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 runCatching { attachmentRepository.delete(remote) }
             }
             runCatching { modelClient.logout() }
+            remoteSubject?.let { subject ->
+                runtimeV2Recorder.recover(subject).forEach { checkpoint ->
+                    runCatching { runtimeV2Recorder.cancel(checkpoint.command.runId) }
+                    runRecoveryScheduler.cancel(subject, checkpoint.command.runId)
+                }
+                safWorkspaceStore.clear(subject)
+            }
+            pythonRuntimePreference.clearPolicy()
             remoteSubject?.let { runCatching { RemoteCacheRepository(database).clearSubject(it) } }
             tokenStore.clear()
             update { AppState(destination = AppDestination.Login) }
@@ -1375,6 +1631,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         createdAt = createdAt,
         updatedAt = conversation.updatedAt,
     )
+
+    private fun recoveryUiStatus(checkpoint: RunCheckpoint): String = when {
+        checkpoint.failureCode == "side_effect_unknown" -> "需要确认副作用结果"
+        checkpoint.status.name == "WAITING_APPROVAL" -> "等待审批"
+        checkpoint.status.name == "RUNNING" || checkpoint.status.name == "QUEUED" -> "任务可恢复"
+        checkpoint.status.name == "PAUSED" -> "任务已暂停，可继续"
+        else -> "恢复失败"
+    }
+
+    private fun safeToolLabel(name: String) = when (name) {
+        "get_current_time" -> "正在读取当前时间…"
+        "save_memory" -> "正在保存本地记忆…"
+        "search_memory" -> "正在查询本地记忆…"
+        else -> "正在使用本地工具…"
+    }
 
     private fun toolLabel(name: String) = when (name) {
         "get_current_time" -> "正在读取当前时间…"

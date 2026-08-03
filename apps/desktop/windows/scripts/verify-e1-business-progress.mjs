@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const read = (path) => readFileSync(join(root, path), "utf8");
 const api = read("../shared/api/desktopApi.ts");
-const generator = read("src/main/managerPresentation.ts");
+const generator = read("../shared/main/managerPresentation.ts");
 const renderer = read("../shared/renderer/src/components/files/FilesContextPanel.tsx");
 const agentRenderer = read("../shared/renderer/src/components/AgentRunWorkspace.tsx");
 const styles = read("../shared/renderer/src/styles.css");

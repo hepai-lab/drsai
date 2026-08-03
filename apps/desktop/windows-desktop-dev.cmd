@@ -2,5 +2,5 @@
 setlocal
 
 set "SCRIPT_DIR=%~dp0"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%windows\scripts\dev.ps1" %*
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%windows\scripts\dev.ps1" -WithGateway %*
 exit /b %ERRORLEVEL%

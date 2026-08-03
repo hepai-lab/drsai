@@ -9,7 +9,7 @@ from typing import Any, Mapping
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_SCHEMA = ROOT / "protocol" / "owop" / "owop.schema.json"
+DEFAULT_SCHEMA = ROOT / "cores" / "protocol" / "owop" / "owop.schema.json"
 DEFAULT_PYTHON = ROOT / "cores" / "python" / "packages" / "drsai" / "src" / "drsai" / "owop" / "generated.py"
 DEFAULT_TYPESCRIPT = ROOT / "apps" / "desktop" / "shared" / "api" / "owop.generated.ts"
 
@@ -99,7 +99,7 @@ def generate_python(schema: Mapping[str, Any], digest: str) -> str:
     capabilities = schema["x-owop-capabilities"]
     bindings = schema["x-owop-bindings"]
     lines = [
-        '"""Generated from protocol/owop/owop.schema.json; do not edit."""',
+        '"""Generated from cores/protocol/owop/owop.schema.json; do not edit."""',
         "",
         "from __future__ import annotations",
         "",
@@ -191,7 +191,7 @@ def generate_typescript(schema: Mapping[str, Any], digest: str) -> str:
     bindings = schema["x-owop-bindings"]
     union = lambda values: " | ".join(json.dumps(value) for value in values)
     lines = [
-        "// Generated from protocol/owop/owop.schema.json; do not edit.",
+        "// Generated from cores/protocol/owop/owop.schema.json; do not edit.",
         f'export const OWOP_SCHEMA_SHA256 = "{digest}" as const;',
         f'export const OWOP_VERSION = {json.dumps(schema["version"])} as const;',
         f"export type OWOPCapability = {union(capabilities)};",

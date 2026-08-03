@@ -4,7 +4,7 @@ import sys
 import pytest
 
 from drsai.backend.codex_adapter.factory import build_codex_adapter
-from drsai.backend.runtime_engine import RuntimeEngine, RuntimeEngineIdentity
+from drsai.backend.runtime.engine import RuntimeEngine, RuntimeEngineIdentity
 
 
 @pytest.fixture

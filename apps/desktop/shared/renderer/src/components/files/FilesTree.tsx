@@ -30,10 +30,10 @@ export function FilesTree({
 }: {
   autoExpand?: boolean;
   nodes: WorkspaceFileNode[];
-  selectedForContext: Set<string>;
+  selectedForContext?: Set<string>;
   selectedPath?: string;
   onSelect: (node: WorkspaceFileNode) => void;
-  onToggleContext: (node: WorkspaceFileNode) => void;
+  onToggleContext?: (node: WorkspaceFileNode) => void;
 }): React.JSX.Element {
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
 
@@ -82,17 +82,18 @@ function FilesTreeRow({
   depth: number;
   expandedPaths: Set<string>;
   node: WorkspaceFileNode;
-  selectedForContext: Set<string>;
+  selectedForContext?: Set<string>;
   selectedPath?: string;
   onSelect: (node: WorkspaceFileNode) => void;
   onToggleExpanded: (node: WorkspaceFileNode) => void;
-  onToggleContext: (node: WorkspaceFileNode) => void;
+  onToggleContext?: (node: WorkspaceFileNode) => void;
 }): React.JSX.Element {
   const Icon = node.type === "directory" ? Folder : getPreviewIcon(node.previewKind);
   const gitStatus = node.gitStatus && node.gitStatus !== "clean" ? node.gitStatus : null;
   const hasChildren = Boolean(node.children?.length);
   const expanded = node.type === "directory" && expandedPaths.has(node.path);
   const Chevron = expanded ? ChevronDown : ChevronRight;
+  const showContextToggle = Boolean(onToggleContext);
 
   function handleRowClick(): void {
     onSelect(node);
@@ -110,16 +111,18 @@ function FilesTreeRow({
         onClick={handleRowClick}
         title={node.relativePath}
       >
-        <input
-          type="checkbox"
-          checked={selectedForContext.has(node.path)}
-          onChange={(event) => {
-            event.stopPropagation();
-            onToggleContext(node);
-          }}
-          onClick={(event) => event.stopPropagation()}
-          aria-label={`Select ${node.name} for context`}
-        />
+        {showContextToggle ? (
+          <input
+            type="checkbox"
+            checked={selectedForContext?.has(node.path) ?? false}
+            onChange={(event) => {
+              event.stopPropagation();
+              onToggleContext?.(node);
+            }}
+            onClick={(event) => event.stopPropagation()}
+            aria-label={`Select ${node.name} for context`}
+          />
+        ) : null}
         {node.type === "directory" ? (
           <span
             aria-label={expanded ? `Collapse ${node.name}` : `Expand ${node.name}`}

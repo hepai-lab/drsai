@@ -50,6 +50,7 @@ class RemoteWorkspaceUiTest {
     @Test
     fun computerExpandsWorkspaceAndRoutesByReference() {
         var opened: RemoteWorkspaceRef? = null
+        var refreshed: RuntimeId? = null
         val workspace = RemoteWorkspaceRef(RuntimeId("runtime-a"), WorkspaceId("workspace-a"), "OpenDrSai")
         composeRule.setContent {
             MaterialTheme {
@@ -65,26 +66,112 @@ class RemoteWorkspaceUiTest {
                                 instanceId = "boot-2",
                                 connectionGeneration = 2,
                                 workspaces = listOf(workspace),
+                                workspaceSyncStatus = "已同步 07-28 12:00",
                             )
                         )
                     ),
                     onBack = {},
                     onAssociate = {},
                     onRefresh = {},
+                    onRefreshWorkspaces = { refreshed = it },
                     onOpenWorkspace = { opened = it },
                 )
             }
         }
 
         composeRule.onNodeWithText("开发服务器").assertIsDisplayed()
-        composeRule.onNodeWithText("在线 · 刚刚").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("连接状态：在线").assertIsDisplayed()
+        composeRule.onNodeWithText("刚刚").assertIsDisplayed()
         composeRule.onNodeWithText("OpenDrSai 1.4.6").assertIsDisplayed()
+        composeRule.onNodeWithText("已同步 07-28 12:00").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("刷新 开发服务器 的工作区")
+            .assertIsDisplayed()
+            .performClick()
         composeRule.onNodeWithText("OpenDrSai").assertIsDisplayed().performClick()
-        composeRule.runOnIdle { assertEquals(workspace, opened) }
+        composeRule.runOnIdle {
+            assertEquals(RuntimeId("runtime-a"), refreshed)
+            assertEquals(workspace, opened)
+        }
+    }
+
+    @Test
+    fun computerConnectionStatesUseAccessibleDotIndicators() {
+        composeRule.setContent {
+            MaterialTheme {
+                RemoteHomeScreen(
+                    state = RemoteHomeUiState(
+                        computers = listOf(
+                            RemoteComputerUi(
+                                RuntimeId("online"),
+                                "在线计算机",
+                                RemoteConnectionState.ONLINE,
+                                "刚刚连接",
+                                emptyList(),
+                            ),
+                            RemoteComputerUi(
+                                RuntimeId("offline"),
+                                "离线计算机",
+                                RemoteConnectionState.OFFLINE,
+                                "缓存 · 上次同步 07-28 10:30",
+                                listOf(
+                                    RemoteWorkspaceRef(
+                                        RuntimeId("offline"),
+                                        WorkspaceId("cached"),
+                                        "缓存项目",
+                                    )
+                                ),
+                                workspacesCached = true,
+                            ),
+                            RemoteComputerUi(
+                                RuntimeId("connecting"),
+                                "连接中计算机",
+                                RemoteConnectionState.CONNECTING,
+                                "",
+                                emptyList(),
+                            ),
+                        ),
+                    ),
+                    onBack = {},
+                    onAssociate = {},
+                    onRefresh = {},
+                    onOpenWorkspace = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithContentDescription("连接状态：在线").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("连接状态：离线").assertIsDisplayed()
+        composeRule.onNodeWithText("缓存 · 上次同步 07-28 10:30").assertIsDisplayed()
+        composeRule.onNodeWithText("缓存项目").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("连接状态：正在连接").assertIsDisplayed()
+        composeRule.onNodeWithText("连接中…").assertIsDisplayed()
     }
 
     @Test fun associationQrDeepLinkExtractsOnlyOneTimeCode() {
-        assertEquals("abcdefghijklmnop", parseAccessGrantCode("opendrsai://associate?code=abcdefghijklmnop"))
+        assertEquals(
+            "abcdefghijklmnop",
+            parseAccessGrantCode(
+                "opendrsai://associate?v=1&environment=production&issuer=https%3A%2F%2Fai.ihep.ac.cn&code=abcdefghijklmnop",
+            ),
+        )
+    }
+
+    @Test fun newlyAssociatedComputerIsHighlightedAfterRefresh() {
+        val runtimeId = RuntimeId("runtime-new")
+        composeRule.setContent {
+            MaterialTheme {
+                RemoteHomeScreen(
+                    state = RemoteHomeUiState(
+                        computers = listOf(RemoteComputerUi(runtimeId, "刚关联的电脑", RemoteConnectionState.ONLINE,
+                            "刚刚连接", emptyList())),
+                        recentlyAssociatedRuntimeId = runtimeId,
+                    ),
+                    onBack = {}, onAssociate = {}, onRefresh = {}, onOpenWorkspace = {},
+                )
+            }
+        }
+        composeRule.onNodeWithText("刚关联的电脑").assertIsDisplayed()
+        composeRule.onNodeWithText("刚刚关联").assertIsDisplayed()
     }
 
     @Test fun directorySearchIsVisibleAndForwardsInput() {

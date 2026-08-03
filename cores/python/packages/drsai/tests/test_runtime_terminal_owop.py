@@ -7,14 +7,14 @@ from pathlib import Path
 import time
 
 import pytest
-from drsai.backend.terminal_state_service import TerminalStateService, TerminalWorkspaceBinding
+from drsai.backend.runtime.terminal.state_service import TerminalStateService, TerminalWorkspaceBinding
 from drsai.owop.process_pty import LocalProcessPtyOperations
 from drsai.owop.protocol import OWOPProtocol
 from drsai.owop.runtime_terminal import RuntimeTerminalOWOPOperations
 
 
 ROOT = Path(__file__).resolve().parents[5]
-SCHEMA = ROOT / "protocol" / "owop" / "owop.schema.json"
+SCHEMA = ROOT / "cores" / "protocol" / "owop" / "owop.schema.json"
 
 
 class FakeHandle:
@@ -127,7 +127,11 @@ def test_runtime_terminal_owop_contract_and_workspace_isolation(tmp_path: Path) 
 
 @pytest.mark.skipif(os.name != "nt", reason="Runtime-owned Local Terminal uses Windows ConPTY")
 def test_runtime_terminal_service_owns_real_windows_conpty(tmp_path: Path) -> None:
-    node_pty = ROOT / "apps" / "desktop" / "windows" / "node_modules" / "node-pty"
+    candidates = (
+        ROOT / "apps" / "desktop" / "windows" / "node_modules" / "node-pty",
+        ROOT / "apps" / "desktop" / "node_modules" / "node-pty",
+    )
+    node_pty = next((candidate for candidate in candidates if candidate.is_dir()), candidates[0])
     assert node_pty.is_dir(), "node-pty must be installed for the real ConPTY acceptance test"
     provider = LocalProcessPtyOperations(tmp_path, node_pty_module=node_pty)
     service = TerminalStateService(

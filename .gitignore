@@ -6,7 +6,8 @@
 ########################
 # 项目特定文件
 ########################
-.github
+release
+.tmp-runtime-inspect
 .pnpm-store
 .tmp-gateway.pid
 .tmp/
@@ -87,6 +88,12 @@ __pycache__/
 # Distribution / packaging
 .Python
 build/
+!/apps/desktop/macos/build/
+!/apps/desktop/macos/build/entitlements.mac.plist
+!/apps/desktop/macos/build/entitlements.mac.inherit.plist
+apps/desktop/macos/build/*
+!/apps/desktop/macos/build/entitlements.mac.plist
+!/apps/desktop/macos/build/entitlements.mac.inherit.plist
 develop-eggs/
 dist/
 downloads/
@@ -248,6 +255,8 @@ DRSAI.local.md
 ########################
 .magentic_ui_state.json
 debug
+!apps/android/app/src/debug/
+!apps/android/app/src/debug/**
 data
 !apps/android/app/src/main/java/ai/drsai/remote/workbench/data/
 !apps/android/app/src/main/java/ai/drsai/remote/workbench/data/**
@@ -296,6 +305,11 @@ notebooks/test.db
 # Backup copies of desktop assets are not release resources.
 **/*.bak.*
 
+# Locally downloaded, checksum-verified toolchains used to reproduce macOS artifacts.
+.runtime-tools/
+apps/desktop/macos/native/OpenDrSaiNativeHelper/.build/
+apps/desktop/macos/release-unsigned-update/
+
 # Android source and tests share names with generic generated-data rules above.
 !apps/android/app/src/main/java/ai/drsai/remote/data/
 !apps/android/app/src/main/java/ai/drsai/remote/data/**
@@ -303,5 +317,11 @@ notebooks/test.db
 !apps/android/app/src/test/**
 
 # Android acceptance-test artifacts and device screenshots are generated locally.
-docs/android/acceptance/**/device/*.png
-docs/android/acceptance/**/emulator-results/
+docs/android/testing/acceptance/**/device/*.png
+docs/android/testing/acceptance/**/emulator-results/
+device.png
+
+# Local validation evidence and approval notes; never commit runtime databases,
+# captured schemas, or machine-specific proof files.
+.artifacts/
+approval-proof.txt

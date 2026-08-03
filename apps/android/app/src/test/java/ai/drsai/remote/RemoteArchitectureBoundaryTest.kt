@@ -30,7 +30,9 @@ class RemoteArchitectureBoundaryTest {
     @Test
     fun androidRemoteMainSourceDoesNotDependOnCodexPrivateProtocol() {
         val root = File("src/main/java/ai/drsai/remote/remote")
-        val privateProtocolTokens = listOf("threadId", "turnId", "itemId", "CodexAppServer", "app-server")
+        // itemId is now part of the frozen, backend-neutral Session Conversation
+        // contract. Codex-private thread/turn/app-server identities remain banned.
+        val privateProtocolTokens = listOf("threadId", "turnId", "CodexAppServer", "app-server")
         val violations = root.walkTopDown()
             .filter { it.isFile && it.extension == "kt" }
             .flatMap { file -> privateProtocolTokens.asSequence().filter { token -> token in file.readText() }.map { file to it } }

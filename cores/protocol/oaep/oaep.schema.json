@@ -1,0 +1,545 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opendrsai.local/cores/protocol/oaep/1.0/oaep.schema.json",
+  "title": "OpenDrSai Agent Event Protocol",
+  "version": "1.0",
+  "x-status": "stable",
+  "description": "OAEP v1 Session/Run/Item resources and internal event envelopes. A Delta is never a top-level message; it exists only as event.item.delta data.delta.",
+  "x-oaep-profiles": {
+    "oaep.session-stream/1": {
+      "event_sequence_scope": "session",
+      "item_sequence_scope": "run",
+      "cursor_semantics": "exclusive"
+    }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/session" },
+    { "$ref": "#/$defs/run" },
+    { "$ref": "#/$defs/item" },
+    { "$ref": "#/$defs/event" },
+    { "$ref": "#/$defs/snapshot" },
+    { "$ref": "#/$defs/eventPage" }
+  ],
+  "$defs": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "source": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["backend"],
+      "properties": {
+        "backend": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "backend_item_id": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "backend_event_id": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "client": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "message_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "runtime_id": { "$ref": "#/$defs/id" },
+        "backend_version": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "adapter": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "adapter_version": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "mapping_version": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "backend_run_id": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "backend_run_index": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["code", "message", "retryable"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "message": { "type": "string", "minLength": 1, "maxLength": 8000 },
+        "retryable": { "type": "boolean" },
+        "details": { "type": "object" }
+      }
+    },
+    "session": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "workspace_id", "status", "created_at", "updated_at"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "workspace_id": { "$ref": "#/$defs/id" },
+        "title": { "type": "string", "maxLength": 1000 },
+        "status": { "enum": ["active", "archived", "deleted"] },
+        "backend": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "created_at": { "$ref": "#/$defs/timestamp" },
+        "updated_at": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": true,
+      "not": { "required": ["type", "source", "content"] },
+      "required": ["id", "session_id", "status", "created_at", "updated_at"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "session_id": { "$ref": "#/$defs/id" },
+        "parent_run_id": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+        "sequence": { "type": "integer", "minimum": 1, "description": "Stable display order of this Run inside its Session." },
+        "source": { "$ref": "#/$defs/source" },
+        "status": { "enum": ["queued", "running", "waiting", "completed", "failed", "cancelled"] },
+        "created_at": { "$ref": "#/$defs/timestamp" },
+        "updated_at": { "$ref": "#/$defs/timestamp" },
+        "completed_at": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] }
+      }
+    },
+    "itemStatus": { "enum": ["pending", "running", "waiting", "completed", "failed", "cancelled"] },
+    "itemType": {
+      "enum": [
+        "message",
+        "reasoning",
+        "plan",
+        "command_execution",
+        "file_change",
+        "tool_call",
+        "artifact",
+        "interaction",
+        "subtask",
+        "notice"
+      ]
+    },
+    "operationRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "operation_id", "workspace_id", "operation", "correlation_id"],
+      "properties": {
+        "protocol": { "const": "owop/1" },
+        "operation_id": { "$ref": "#/$defs/id" },
+        "workspace_id": { "$ref": "#/$defs/id" },
+        "operation": { "type": "string", "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_.]*$", "maxLength": 128 },
+        "correlation_id": { "$ref": "#/$defs/id" }
+      }
+    },
+    "resourceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "workspace_id", "resource_type", "resource_id"],
+      "properties": {
+        "protocol": { "const": "owop/1" },
+        "workspace_id": { "$ref": "#/$defs/id" },
+        "resource_type": { "enum": ["workspace", "worktree", "file", "git", "process", "pty", "checkpoint", "artifact"] },
+        "resource_id": { "$ref": "#/$defs/id" },
+        "operation_id": { "$ref": "#/$defs/id" },
+        "label": { "type": "string", "maxLength": 512 },
+        "digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      }
+    },
+    "contentReferences": {
+      "type": "object",
+      "properties": {
+        "operation_ref": { "$ref": "#/$defs/operationRef" },
+        "resource_refs": {
+          "type": "array",
+          "maxItems": 100,
+          "items": { "$ref": "#/$defs/resourceRef" }
+        }
+      }
+    },
+    "messageContent": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "allOf": [
+        { "$ref": "#/$defs/contentReferences" },
+        {
+          "type": "object",
+          "required": ["role", "text"],
+          "properties": {
+            "role": { "enum": ["user", "assistant", "system"] },
+            "phase": { "enum": ["commentary", "final"] },
+            "text": { "type": "string" },
+            "parts": {
+              "type": "array",
+              "maxItems": 100,
+              "items": {
+                "type": "object",
+                "additionalProperties": true,
+                "required": ["type"],
+                "properties": {
+                  "type": { "enum": ["text", "image", "audio", "file", "resource_ref"] },
+                  "text": { "type": "string" },
+                  "url": { "type": "string", "maxLength": 16384 },
+                  "name": { "type": "string", "maxLength": 512 },
+                  "mime_type": { "type": "string", "maxLength": 256 },
+                  "resource_ref": { "$ref": "#/$defs/resourceRef" }
+                }
+              }
+            },
+            "citations": { "type": "array", "items": { "type": "object" } }
+          }
+        }
+      ]
+    },
+    "reasoningContent": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "allOf": [
+        { "$ref": "#/$defs/contentReferences" },
+        {
+          "type": "object",
+          "required": ["segments"],
+          "properties": {
+            "segments": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "text"],
+                "properties": { "id": { "$ref": "#/$defs/id" }, "text": { "type": "string" } }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "planContent": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "allOf": [
+        { "$ref": "#/$defs/contentReferences" },
+        {
+          "type": "object",
+          "required": ["text", "steps"],
+          "properties": {
+            "explanation": { "type": "string" },
+            "text": { "type": "string" },
+            "steps": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "title", "status"],
+                "properties": {
+                  "id": { "$ref": "#/$defs/id" },
+                  "title": { "type": "string" },
+                  "status": { "enum": ["pending", "running", "completed", "failed", "cancelled"] }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "commandExecutionContent": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "allOf": [
+        { "$ref": "#/$defs/contentReferences" },
+        {
+          "type": "object",
+          "required": ["command", "display_command", "cwd", "output"],
+          "properties": {
+            "command": { "type": "array", "maxItems": 100, "items": { "type": "string", "maxLength": 4000 } },
+            "display_command": { "type": "string", "maxLength": 8000 },
+            "cwd": { "$ref": "#/$defs/safeRelativePath" },
+            "output": { "type": "string" },
+            "stdout_tail": { "type": "string" },
+            "stderr_tail": { "type": "string" },
+            "exit_code": { "type": ["integer", "null"] },
+            "duration_ms": { "type": ["integer", "number", "null"], "minimum": 0 }
+          }
+        }
+      ]
+    },
+    "toolCallContent": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "allOf": [
+        { "$ref": "#/$defs/contentReferences" },
+        {
+          "type": "object",
+          "required": ["tool_kind", "tool_name", "call_id", "arguments", "result"],
+          "properties": {
+            "tool_kind": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "tool_name": { "type": "string", "minLength": 1, "maxLength": 256 },
+            "server": { "type": ["string", "null"], "maxLength": 256 },
+            "call_id": { "$ref": "#/$defs/id" },
+            "arguments": { "type": "object" },
+            "result": {},
+            "duration_ms": { "type": ["integer", "number", "null"], "minimum": 0 }
+          }
+        }
+      ]
+    },
+    "fileChangeContent": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "allOf": [
+        { "$ref": "#/$defs/contentReferences" },
+        {
+          "type": "object",
+          "required": ["changes", "summary"],
+          "properties": {
+            "summary": { "type": "string" },
+            "changes": {
+              "type": "array",
+              "maxItems": 200,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["operation"],
+                "properties": {
+                  "operation": { "enum": ["create", "modify", "move", "remove", "rename"] },
+                  "path": { "$ref": "#/$defs/safeRelativePath" },
+                  "old_path": { "$ref": "#/$defs/safeRelativePath" },
+                  "new_path": { "$ref": "#/$defs/safeRelativePath" },
+                  "diff_summary": { "type": "string", "maxLength": 4000 }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "artifactContent": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "allOf": [
+        { "$ref": "#/$defs/contentReferences" },
+        {
+          "type": "object",
+          "required": ["artifact_id", "artifact_type", "name", "summary"],
+          "properties": {
+            "artifact_id": { "$ref": "#/$defs/id" },
+            "artifact_type": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "name": { "type": "string", "minLength": 1, "maxLength": 512 },
+            "path": { "oneOf": [{ "$ref": "#/$defs/safeRelativePath" }, { "type": "null" }] },
+            "mime_type": { "type": ["string", "null"], "maxLength": 256 },
+            "summary": { "type": "string" },
+            "size": { "type": ["integer", "null"], "minimum": 0 },
+            "sha256": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" },
+            "previewable": { "type": "boolean" },
+            "downloadable": { "type": "boolean" }
+          }
+        }
+      ]
+    },
+    "interactionContent": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "allOf": [
+        { "$ref": "#/$defs/contentReferences" },
+        {
+          "type": "object",
+          "required": ["interaction_type", "prompt", "options"],
+          "properties": {
+            "interaction_type": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "approval_id": { "type": ["string", "null"], "maxLength": 256 },
+            "operation": { "type": "string", "maxLength": 256 },
+            "prompt": { "type": "string", "minLength": 1 },
+            "options": { "type": "array", "items": { "type": "object" } },
+            "request_summary": { "type": "object" },
+            "related_item_id": { "type": ["string", "null"], "maxLength": 256 },
+            "response": {},
+            "deadline_at": { "type": ["string", "null"], "format": "date-time" }
+          }
+        }
+      ]
+    },
+    "subtaskContent": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "allOf": [
+        { "$ref": "#/$defs/contentReferences" },
+        {
+          "type": "object",
+          "required": ["title", "summary"],
+          "properties": {
+            "title": { "type": "string", "minLength": 1 },
+            "agent_name": { "type": ["string", "null"], "maxLength": 256 },
+            "child_run_id": { "type": ["string", "null"], "maxLength": 256 },
+            "summary": { "type": "string" },
+            "result": {}
+          }
+        }
+      ]
+    },
+    "noticeContent": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "allOf": [
+        { "$ref": "#/$defs/contentReferences" },
+        {
+          "type": "object",
+          "required": ["level", "code", "message"],
+          "properties": {
+            "level": { "enum": ["info", "warning", "error"] },
+            "code": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "message": { "type": "string" },
+            "error": { "$ref": "#/$defs/error" },
+            "details": { "type": "object" }
+          }
+        }
+      ]
+    },
+    "safeRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^(?!/)(?![A-Za-z]:[\\\\/])(?!\\\\\\\\)(?!.*(?:^|/)\\.\\.(?:/|$))(?![A-Za-z][A-Za-z0-9+.-]*:).+$"
+    },
+    "item": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "session_id", "run_id", "type", "status", "sequence", "created_at", "updated_at", "source", "content"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "session_id": { "$ref": "#/$defs/id" },
+        "run_id": { "$ref": "#/$defs/id" },
+        "type": { "$ref": "#/$defs/itemType" },
+        "status": { "$ref": "#/$defs/itemStatus" },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Stable display order of this Item inside its Run; it is not an Event replay cursor."
+        },
+        "created_at": { "$ref": "#/$defs/timestamp" },
+        "updated_at": { "$ref": "#/$defs/timestamp" },
+        "source": { "$ref": "#/$defs/source" },
+        "content": { "type": "object" }
+      },
+      "allOf": [
+        { "if": { "properties": { "type": { "const": "message" } }, "required": ["type"] }, "then": { "properties": { "content": { "$ref": "#/$defs/messageContent" } } } },
+        { "if": { "properties": { "type": { "const": "reasoning" } }, "required": ["type"] }, "then": { "properties": { "content": { "$ref": "#/$defs/reasoningContent" } } } },
+        { "if": { "properties": { "type": { "const": "plan" } }, "required": ["type"] }, "then": { "properties": { "content": { "$ref": "#/$defs/planContent" } } } },
+        { "if": { "properties": { "type": { "const": "command_execution" } }, "required": ["type"] }, "then": { "properties": { "content": { "$ref": "#/$defs/commandExecutionContent" } } } },
+        { "if": { "properties": { "type": { "const": "tool_call" } }, "required": ["type"] }, "then": { "properties": { "content": { "$ref": "#/$defs/toolCallContent" } } } },
+        { "if": { "properties": { "type": { "const": "file_change" } }, "required": ["type"] }, "then": { "properties": { "content": { "$ref": "#/$defs/fileChangeContent" } } } },
+        { "if": { "properties": { "type": { "const": "artifact" } }, "required": ["type"] }, "then": { "properties": { "content": { "$ref": "#/$defs/artifactContent" } } } },
+        { "if": { "properties": { "type": { "const": "interaction" } }, "required": ["type"] }, "then": { "properties": { "content": { "$ref": "#/$defs/interactionContent" } } } },
+        { "if": { "properties": { "type": { "const": "subtask" } }, "required": ["type"] }, "then": { "properties": { "content": { "$ref": "#/$defs/subtaskContent" } } } },
+        { "if": { "properties": { "type": { "const": "notice" } }, "required": ["type"] }, "then": { "properties": { "content": { "$ref": "#/$defs/noticeContent" } } } }
+      ]
+    },
+    "eventType": {
+      "enum": [
+        "event.session.created",
+        "event.session.updated",
+        "event.session.archived",
+        "event.session.unarchived",
+        "event.session.deleted",
+        "event.run.created",
+        "event.run.started",
+        "event.run.waiting",
+        "event.run.resumed",
+        "event.run.completed",
+        "event.run.failed",
+        "event.run.cancelled",
+        "event.item.created",
+        "event.item.started",
+        "event.item.delta",
+        "event.item.updated",
+        "event.item.completed",
+        "event.item.failed",
+        "event.item.cancelled"
+      ]
+    },
+    "deltaKind": {
+      "enum": [
+        "message.text.append",
+        "reasoning.segment.added",
+        "reasoning.text.append",
+        "plan.text.append",
+        "command.output.append",
+        "tool.output.append",
+        "subtask.summary.append"
+      ]
+    },
+    "delta": {
+      "type": "object",
+      "description": "An Item increment carried only inside event.item.delta data.delta. It has no independent identity, sequence, timestamp, cursor, or transport lifecycle.",
+      "additionalProperties": true,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "$ref": "#/$defs/deltaKind" },
+        "text": { "type": "string" },
+        "segment_id": { "type": "string", "minLength": 1 },
+        "stream": { "enum": ["stdout", "stderr", "combined"] }
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["version", "event_id", "session_id", "sequence", "type", "timestamp", "dedupe_key", "source", "data"],
+      "properties": {
+        "version": { "const": "1.0" },
+        "event_id": { "$ref": "#/$defs/id" },
+        "session_id": { "$ref": "#/$defs/id" },
+        "run_id": { "$ref": "#/$defs/id" },
+        "item_id": { "$ref": "#/$defs/id" },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Strictly increasing replay cursor within the Event's Session for profile oaep.session-stream/1."
+        },
+        "type": { "$ref": "#/$defs/eventType" },
+        "timestamp": { "$ref": "#/$defs/timestamp" },
+        "dedupe_key": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "source": { "$ref": "#/$defs/source" },
+        "data": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "item": { "$ref": "#/$defs/item" },
+            "delta": { "$ref": "#/$defs/delta" },
+            "error": { "$ref": "#/$defs/error" }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "pattern": "^event\\.item\\." } }, "required": ["type"] },
+          "then": { "required": ["run_id", "item_id"] }
+        },
+        {
+          "if": { "properties": { "type": { "const": "event.item.delta" } }, "required": ["type"] },
+          "then": { "properties": { "data": { "required": ["delta"] } } },
+          "else": {
+            "properties": {
+              "data": {
+                "not": { "required": ["delta"] }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "enum": ["event.item.completed", "event.item.failed"] } }, "required": ["type"] },
+          "then": { "properties": { "data": { "required": ["item"] } } }
+        }
+      ]
+    },
+    "snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "session", "runs", "items", "snapshot_sequence"],
+      "properties": {
+        "version": { "const": "1.0" },
+        "session": { "$ref": "#/$defs/session" },
+        "runs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/run" }
+        },
+        "items": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/item" }
+        },
+        "snapshot_sequence": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "eventPage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "object", "data", "next_sequence", "has_more"],
+      "properties": {
+        "version": { "const": "1.0" },
+        "object": { "const": "list" },
+        "data": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/event" }
+        },
+        "next_sequence": { "type": "integer", "minimum": 0 },
+        "has_more": { "type": "boolean" }
+      }
+    }
+  }
+}

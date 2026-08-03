@@ -6,13 +6,14 @@ import { fileURLToPath } from "node:url";
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const releaseDir = join(root, "release");
 const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+const runtimeArchiveName = `OpenDrSai-Windows-v${packageJson.version}-x64.zip`;
 const requirePublicDistribution =
   process.env.REQUIRE_SIGNED_WINDOWS_ARTIFACTS === "1" ||
   process.env.OPENDRSAI_REQUIRE_SIGNED_RELEASE === "1";
 
 const required = [
-  join("bootstrapper", "OpenDrSaiSetup-win-x64.msi"),
-  join("bootstrapper", "OpenDrSaiRuntime-win-x64.zip"),
+  join("bootstrapper", "OpenDrSai-Windows-Installer-x64.msi"),
+  join("bootstrapper", runtimeArchiveName),
   "latest-windows.json",
   "release-summary.json",
 ];
@@ -27,18 +28,20 @@ for (const relativePath of required) {
   }
 }
 
-const runtimeZip = join(releaseDir, "bootstrapper", "OpenDrSaiRuntime-win-x64.zip");
+const runtimeZip = join(releaseDir, "bootstrapper", runtimeArchiveName);
 const runtimeBytes = readFileSync(runtimeZip);
 if (!runtimeBytes.length) {
-  throw new Error("OpenDrSaiRuntime-win-x64.zip is empty.");
+  throw new Error(`${runtimeArchiveName} is empty.`);
 }
 
 const summary = JSON.parse(readFileSync(join(releaseDir, "release-summary.json"), "utf8"));
 if (summary.version !== packageJson.version) {
   throw new Error(`release-summary.json version ${summary.version} does not match package ${packageJson.version}.`);
 }
-const preview = packageJson.version.includes("-");
-if (!summary.distribution || summary.distribution.releaseTier !== (preview ? "preview" : "stable")) {
+const releaseChannel = String(process.env.OPENDRSAI_UPDATE_CHANNEL || "stable").toLowerCase();
+const preview = packageJson.version.includes("-") || releaseChannel !== "stable";
+const expectedReleaseTier = preview ? releaseChannel : "stable";
+if (!summary.distribution || summary.distribution.releaseTier !== expectedReleaseTier) {
   throw new Error("release-summary.json is missing installer signing distribution policy.");
 }
 if (summary.distribution.requiresSignedInstallers !== !preview) {

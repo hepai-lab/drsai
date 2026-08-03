@@ -42,6 +42,7 @@ import {
 } from "../chatCommands";
 import type { ChatSubmitOptions, UiMessage } from "../components/ChatWorkspace";
 import { desktopApi } from "../desktopApi";
+import { describeUserFacingError } from "../userFacingErrors";
 import { emitAssistantSpeechStreamEvent } from "../voice/streaming/assistantSpeechStream";
 import {
   formatRecentTerminalTestResult,
@@ -104,6 +105,7 @@ export function useDesktopChatAdapter({
   threadSnapshot,
   workspaceInstructions,
   workspaceId,
+  workspaceName,
   workspacePath,
 }: {
   availableAgents?: DesktopAgent[];
@@ -121,11 +123,13 @@ export function useDesktopChatAdapter({
   threadSnapshot?: ChatThreadSnapshot | null;
   workspaceInstructions?: WorkspaceInstructionSummary[];
   workspaceId?: string;
+  workspaceName?: string;
   workspacePath?: string;
 }): DesktopChatAdapter {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<UiMessage[]>([createWelcomeMessage(language, [])]);
   const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
+  const activeRequestIdRef = useRef<string | null>(null);
   const [currentRuntimeMode, setCurrentRuntimeMode] = useState<ChatRuntimeMode | null>(null);
   const [commandAttachments, setCommandAttachments] = useState<ChatAttachment[]>([]);
   const [customCommands, setCustomCommands] = useState<DesktopCustomCommand[]>([]);
@@ -141,6 +145,8 @@ export function useDesktopChatAdapter({
   const restoredSnapshotThreadRef = useRef<string | null>(null);
   const pendingStructuredEventsByRequest = useRef<Record<string, StructuredConversationEvent[]>>({});
   const structuredFlushTimerRef = useRef<number | null>(null);
+  const appliedSnapshotUpdatedAtRef = useRef(0);
+  const lastPublishedSnapshotAtRef = useRef(0);
   const threadIdRef = useRef(threadId);
   const languageRef = useRef(language);
   const developerModeRef = useRef(developerMode);
@@ -265,6 +271,10 @@ export function useDesktopChatAdapter({
     clearStructuredFlush();
     clearRecoveryTimers();
     restoredSnapshotThreadRef.current = null;
+    appliedSnapshotUpdatedAtRef.current = threadSnapshot?.threadId === threadId
+      ? threadSnapshot.updatedAt
+      : 0;
+    lastPublishedSnapshotAtRef.current = 0;
     if (deltaFlushTimerRef.current !== null) {
       window.clearTimeout(deltaFlushTimerRef.current);
       deltaFlushTimerRef.current = null;
@@ -304,6 +314,10 @@ export function useDesktopChatAdapter({
 
   useEffect(() => {
     let cancelled = false;
+    if (!canChat) {
+      teamMemoryRef.current = [];
+      return () => { cancelled = true; };
+    }
     desktopApi.listTeamMemory({ limit: 20 }).then((entries) => {
       if (cancelled) return;
       teamMemoryRef.current = entries;
@@ -312,7 +326,7 @@ export function useDesktopChatAdapter({
       teamMemoryRef.current = [];
     });
     return () => { cancelled = true; };
-  }, [threadId, workspacePath]);
+  }, [canChat, threadId, workspacePath]);
 
   useEffect(() => {
     let cancelled = false;
@@ -354,6 +368,9 @@ export function useDesktopChatAdapter({
 
   useEffect(() => {
     if (threadSnapshot?.threadId !== threadId) return;
+    if (activeRequestId) return;
+    if (threadSnapshot.updatedAt <= appliedSnapshotUpdatedAtRef.current) return;
+    if (threadSnapshot.updatedAt <= lastPublishedSnapshotAtRef.current) return;
     const restoredMessages = threadSnapshot.messages.length
       ? hydrateStructuredMessages(threadSnapshot.messages).filter((message) => message.id !== "welcome")
       : [createWelcomeMessage(language, userPreferencesRef.current)];
@@ -361,8 +378,9 @@ export function useDesktopChatAdapter({
       restoreActiveStructuredTurns(restoredMessages);
       restoredSnapshotThreadRef.current = threadId;
     }
+    appliedSnapshotUpdatedAtRef.current = threadSnapshot.updatedAt;
     setMessages(restoredMessages);
-  }, [language, threadId, threadSnapshot]);
+  }, [activeRequestId, language, threadId, threadSnapshot]);
 
   useEffect(() => {
     if (threadSnapshot?.messages?.length) return;
@@ -389,8 +407,21 @@ export function useDesktopChatAdapter({
     attachments: ChatAttachment[] = [],
     options?: ChatSubmitOptions,
   ): Promise<boolean> {
-    const text = input.trim();
-    if (!text || activeRequestId) return false;
+    const skillName = options?.skillName?.trim();
+    const skillPrefix = skillName
+      ? languageRef.current === "zh"
+        ? `用 ${skillName} `
+        : `Use ${skillName} skill to `
+      : "";
+    const rawInput = input.trim();
+    const alreadyPrefixed = Boolean(
+      skillName &&
+        (languageRef.current === "zh"
+          ? new RegExp(`^用\\s+${skillName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(rawInput)
+          : new RegExp(`^Use\\s+${skillName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+skill\\s+to\\b`, "i").test(rawInput)),
+    );
+    const text = (skillPrefix && !alreadyPrefixed ? `${skillPrefix}${rawInput}` : rawInput).trim();
+    if (!text || activeRequestId || activeRequestIdRef.current) return false;
 
     const materialPaths = [...new Set(attachments
       .filter((attachment) => attachment.kind === "file" && !attachment.blockedReason && attachment.path)
@@ -398,7 +429,7 @@ export function useDesktopChatAdapter({
     if (materialPaths.length > 0 && isMaterialInventoryIntent(text)) {
       try {
         const analysis = await desktopApi.analyzeMaterialRoles({ paths: materialPaths });
-        publishLocalAssistantResult(text, formatMaterialInventoryAnswer(analysis, languageRef.current));
+        publishLocalAssistantResult(text, formatMaterialInventoryAnswer(analysis, languageRef.current), attachments);
         setInput("");
         return true;
       } catch {
@@ -408,7 +439,7 @@ export function useDesktopChatAdapter({
     if (materialPaths.length > 0 && isNaturalMaterialQueryIntent(text)) {
       try {
         const result = await desktopApi.queryMaterials({ paths: materialPaths, question: text });
-        publishLocalAssistantResult(text, formatMaterialQueryAnswer(result, languageRef.current));
+        publishLocalAssistantResult(text, formatMaterialQueryAnswer(result, languageRef.current), attachments);
         setInput("");
         return true;
       } catch {
@@ -510,9 +541,11 @@ export function useDesktopChatAdapter({
       id: crypto.randomUUID(),
       role: "user",
       content: text,
+      ...(attachments.length ? { attachments } : {}),
     };
     const assistantId = crypto.randomUUID();
     const requestId = crypto.randomUUID();
+    activeRequestIdRef.current = requestId;
     const nextMessages: UiMessage[] = [
       ...messages.filter((message) => message.id !== "welcome"),
       userMessage,
@@ -539,6 +572,7 @@ export function useDesktopChatAdapter({
         sessionId: threadIdRef.current,
         runId: requestId,
         workspaceId,
+        workspaceName,
         workspacePath,
         attachments,
         model: options?.model?.trim() || undefined,
@@ -557,7 +591,7 @@ export function useDesktopChatAdapter({
         },
         messages: buildRequestMessages(
           [...messages, userMessage]
-            .filter((message) => !message.error && message.content.trim().length > 0)
+            .filter((message) => message.id !== "welcome" && !message.error && message.content.trim().length > 0)
             .map(({ role, content }) => ({ role, content })),
           workspaceInstructions,
           projectMemoryRef.current,
@@ -577,6 +611,7 @@ export function useDesktopChatAdapter({
         "chat",
       );
       setActiveRequestId(null);
+      activeRequestIdRef.current = null;
       delete streamingAssistantByRequest.current[requestId];
       setMessages((current) => current.filter((item) => item.id !== assistantId));
       setInput(text);
@@ -603,6 +638,7 @@ export function useDesktopChatAdapter({
         })),
       ));
       setActiveRequestId((current) => current === requestId ? null : current);
+      activeRequestIdRef.current = null;
     } catch (error) {
       appendDebugLog(
         "error",
@@ -634,7 +670,7 @@ export function useDesktopChatAdapter({
       delete recoveryTimersRef.current[event.requestId];
     }
     if (event.type === "start") {
-      touchStreamingAssistant(event.requestId);
+      touchStreamingAssistant(event.requestId, "feedback");
       setActiveRequestId(event.requestId);
       return;
     }
@@ -642,6 +678,7 @@ export function useDesktopChatAdapter({
       structuredRequests.current.add(event.requestId);
       delete pendingDeltasByRequest.current[event.requestId];
       const structuredEvent = event.structuredEvent;
+      if (structuredEvent.type === "part.delta") touchStreamingAssistant(event.requestId, "delta");
       const recoveryTimer = recoveryTimersRef.current[event.requestId];
       if (recoveryTimer !== undefined) {
         window.clearTimeout(recoveryTimer);
@@ -679,6 +716,7 @@ export function useDesktopChatAdapter({
         structuredEvent.type === "turn.cancelled" ||
         structuredEvent.type === "turn.error"
       ) {
+        if (activeRequestIdRef.current === event.requestId) activeRequestIdRef.current = null;
         emitAssistantSpeechStreamEvent({
           type: structuredEvent.type === "turn.completed" ? "done" : structuredEvent.type === "turn.cancelled" ? "aborted" : "error",
           requestId: event.requestId,
@@ -687,8 +725,16 @@ export function useDesktopChatAdapter({
         setActiveRequestId((current) => current === event.requestId ? null : current);
         if (!completedStructuredRequests.current.has(event.requestId)) {
           completedStructuredRequests.current.add(event.requestId);
+          if (completedStructuredRequests.current.size > 128) {
+            const oldest = completedStructuredRequests.current.values().next().value;
+            if (oldest) completedStructuredRequests.current.delete(oldest);
+          }
           onChatComplete();
         }
+        structuredRequests.current.delete(event.requestId);
+        delete streamingAssistantByRequest.current[event.requestId];
+        delete lastSequenceByRequest.current[event.requestId];
+        delete pendingDeltasByRequest.current[event.requestId];
       }
       return;
     }
@@ -723,9 +769,10 @@ export function useDesktopChatAdapter({
     }
     if (
       structuredRequests.current.has(event.requestId) &&
-      (event.type === "chunk" || event.type === "reasoning" || event.type === "status" || event.type === "tool_timeline")
+      (event.type === "chunk" || event.type === "reasoning" || event.type === "status")
     ) return;
     if (event.type === "chunk") {
+      touchStreamingAssistant(event.requestId, "delta");
       emitAssistantSpeechStreamEvent({ type: "chunk", requestId: event.requestId, content: event.content ?? "", at: Date.now() });
       queueAssistantDelta(event.requestId, "text", event.content ?? "");
       return;
@@ -746,6 +793,7 @@ export function useDesktopChatAdapter({
         formatToolTimelineDebugLog(toolTimeline),
         "chat",
       );
+      appendStructuredActivityLog(createStructuredToolActivity(event.requestId, toolTimeline));
       setMessages((current) =>
         publishAndReturn(
           appendAssistantToolTimeline(
@@ -764,9 +812,13 @@ export function useDesktopChatAdapter({
           updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
             ...message,
             inputRequest: {
-              requestId: event.requestId,
+              requestId: event.inputRequestId || event.requestId,
               prompt: event.prompt || "Input required",
               inputType: event.inputType || "text_input",
+              options: event.inputOptions,
+              defaultValue: event.inputDefault,
+              allowCustom: event.inputAllowCustom,
+              timeoutAt: event.inputTimeoutAt,
             },
           })),
         ),
@@ -774,6 +826,11 @@ export function useDesktopChatAdapter({
       return;
     }
     if (event.type === "done" || event.type === "aborted") {
+      if (completedStructuredRequests.current.delete(event.requestId)) {
+        delete lastSequenceByRequest.current[event.requestId];
+        return;
+      }
+      if (activeRequestIdRef.current === event.requestId) activeRequestIdRef.current = null;
       emitAssistantSpeechStreamEvent({ type: event.type, requestId: event.requestId, at: Date.now() });
       flushPendingDeltas();
       if (structuredRequests.current.has(event.requestId)) {
@@ -783,6 +840,7 @@ export function useDesktopChatAdapter({
           updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
             ...message,
             streaming: false,
+            inputRequest: undefined,
             structuredTurn: finalizeStructuredTurn(
               message.structuredTurn,
               message.id,
@@ -806,6 +864,7 @@ export function useDesktopChatAdapter({
           updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
             ...message,
             streaming: false,
+            inputRequest: undefined,
             structuredTurn: finalizeStructuredTurn(
               message.structuredTurn,
               message.id,
@@ -822,9 +881,25 @@ export function useDesktopChatAdapter({
       return;
     }
     if (event.type === "error") {
+      if (completedStructuredRequests.current.delete(event.requestId)) {
+        delete lastSequenceByRequest.current[event.requestId];
+        return;
+      }
+      if (activeRequestIdRef.current === event.requestId) activeRequestIdRef.current = null;
       emitAssistantSpeechStreamEvent({ type: "error", requestId: event.requestId, at: Date.now() });
       flushPendingDeltas();
+      const rawError = event.failureRecovery?.message || event.error || "Chat failed.";
+      const friendlyError = describeUserFacingError(rawError, languageRef.current);
+      const runtimeVisibleError = `${friendlyError.title} ${friendlyError.action}`;
       if (structuredRequests.current.has(event.requestId)) {
+        const assistantId = streamingAssistantByRequest.current[event.requestId];
+        setMessages((current) =>
+          publishAndReturn(settleAssistantAfterHiddenError(
+            current,
+            assistantId,
+            formatAssistantError(runtimeVisibleError, developerModeRef.current, languageRef.current),
+          )),
+        );
         structuredRequests.current.delete(event.requestId);
         completedStructuredRequests.current.delete(event.requestId);
         delete streamingAssistantByRequest.current[event.requestId];
@@ -834,16 +909,17 @@ export function useDesktopChatAdapter({
         return;
       }
       const assistantId = streamingAssistantByRequest.current[event.requestId];
-      const userFacingError = event.failureRecovery?.message
-        || event.error
-        || (languageRef.current === "zh" ? "聊天失败。" : "Chat failed.");
       appendDebugLog(
         "error",
-        `${formatAssistantError(userFacingError, false, languageRef.current)}\n\n${userFacingError}`,
+        `${formatAssistantError(runtimeVisibleError, false, languageRef.current)}\n\n${runtimeVisibleError}`,
         "chat",
       );
       setMessages((current) =>
-        publishAndReturn(settleAssistantAfterHiddenError(current, assistantId)),
+        publishAndReturn(settleAssistantAfterHiddenError(
+          current,
+          assistantId,
+          formatAssistantError(runtimeVisibleError, developerModeRef.current, languageRef.current),
+        )),
       );
       delete streamingAssistantByRequest.current[event.requestId];
       delete lastSequenceByRequest.current[event.requestId];
@@ -880,12 +956,17 @@ export function useDesktopChatAdapter({
     });
   }
 
-  function touchStreamingAssistant(requestId: string): void {
+  function touchStreamingAssistant(requestId: string, metric?: "feedback" | "delta"): void {
     const assistantId = streamingAssistantByRequest.current[requestId];
     const timestamp = Date.now();
     setMessages((current) =>
       current.map((message) =>
-        message.id === assistantId ? { ...message, lastEventAt: timestamp } : message,
+        message.id === assistantId ? {
+          ...message,
+          lastEventAt: timestamp,
+          ...(metric === "feedback" && !message.firstFeedbackAt ? { firstFeedbackAt: timestamp } : {}),
+          ...(metric === "delta" && !message.firstDeltaAt ? { firstDeltaAt: timestamp } : {}),
+        } : message,
       ),
     );
   }
@@ -899,22 +980,31 @@ export function useDesktopChatAdapter({
     const nonWelcome = nextMessages.filter((message) => message.id !== "welcome");
     if (!nonWelcome.length) return;
     const firstUser = nonWelcome.find((message) => message.role === "user");
+    const updatedAt = Math.max(Date.now(), lastPublishedSnapshotAtRef.current + 1);
+    lastPublishedSnapshotAtRef.current = updatedAt;
+    appliedSnapshotUpdatedAtRef.current = updatedAt;
     onThreadUpdated?.({
       threadId: threadIdRef.current,
-      title: firstUser?.content.slice(0, 48) || (languageRef.current === "zh" ? "新会话" : "New chat"),
+      title: firstUser?.content.replace(/[\r\n]+/g, " ").trim().slice(0, 48)
+        || (languageRef.current === "zh" ? "新会话" : "New chat"),
       messages: nextMessages,
-      updatedAt: Date.now(),
+      updatedAt,
       messageCount: nonWelcome.length,
     });
   }
 
-  function publishLocalAssistantResult(userText: string, assistantText: string): void {
+  function publishLocalAssistantResult(
+    userText: string,
+    assistantText: string,
+    attachments: ChatAttachment[] = [],
+  ): void {
     const commandMessages: UiMessage[] = [
       ...messages.filter((message) => message.id !== "welcome"),
       {
         id: crypto.randomUUID(),
         role: "user",
         content: userText,
+        ...(attachments.length ? { attachments } : {}),
       },
       {
         id: crypto.randomUUID(),
@@ -941,9 +1031,10 @@ export function useDesktopChatAdapter({
       return;
     }
     if (action.type === "open-view") {
-      if (action.viewId === "skills_square") {
-        onOpenSkillsSquare?.(action.target);
-      }
+      // Temporarily hide Skills management entry — keep for later reuse.
+      // if (action.viewId === "skills_square") {
+      //   onOpenSkillsSquare?.(action.target);
+      // }
       return;
     }
     if (action.type === "set-input") {
@@ -2303,7 +2394,7 @@ function createWelcomeMessage(language: "en" | "zh", preferences: DesktopUserPre
 }
 
 function hydrateStructuredMessages(messages: UiMessage[]): UiMessage[] {
-  return messages.map((message) => {
+  const hydrated = messages.map((message) => {
     if (message.role !== "assistant") return message;
     if (message.structuredTurn) return sanitizeStructuredAssistantMessage(message);
     return sanitizeStructuredAssistantMessage({
@@ -2319,6 +2410,72 @@ function hydrateStructuredMessages(messages: UiMessage[]): UiMessage[] {
         toolTimeline: message.toolTimeline as Array<Record<string, unknown>> | undefined,
       }),
     });
+  });
+  return consolidateHydratedAssistantRuns(hydrated);
+}
+
+function consolidateHydratedAssistantRuns(messages: UiMessage[]): UiMessage[] {
+  const consolidated: UiMessage[] = [];
+  const assistantIndexByRun = new Map<string, number>();
+  for (const message of messages) {
+    if (message.role !== "assistant") {
+      assistantIndexByRun.clear();
+      consolidated.push(message);
+      continue;
+    }
+    const runId = readPersistedRunId(message.id);
+    if (!runId) {
+      consolidated.push(message);
+      continue;
+    }
+    const existingIndex = assistantIndexByRun.get(runId);
+    if (existingIndex === undefined) {
+      assistantIndexByRun.set(runId, consolidated.length);
+      consolidated.push(message);
+      continue;
+    }
+    consolidated[existingIndex] = mergeHydratedAssistantMessages(consolidated[existingIndex], message);
+  }
+  return consolidated;
+}
+
+function readPersistedRunId(messageId: string): string | undefined {
+  return messageId.match(/(?:^|:)run-[A-Za-z0-9-]{8,}(?=:|$)/)?.[0].replace(/^:/, "");
+}
+
+function mergeHydratedAssistantMessages(primary: UiMessage, secondary: UiMessage): UiMessage {
+  const primaryTurn = primary.structuredTurn;
+  const secondaryTurn = secondary.structuredTurn;
+  if (!primaryTurn || !secondaryTurn) return primary;
+  const partIds = new Set(primaryTurn.parts.map((part) => part.id));
+  const activityIds = new Set(primaryTurn.activities.map((activity) => activity.id));
+  const parts = [
+    ...primaryTurn.parts,
+    ...secondaryTurn.parts.filter((part) => !partIds.has(part.id)),
+  ];
+  const activities = [
+    ...primaryTurn.activities,
+    ...secondaryTurn.activities
+      .filter((activity) => !activityIds.has(activity.id))
+      .map((activity) => ({ ...activity, turnId: primaryTurn.turnId })),
+  ];
+  const structuredTurn: StructuredTurnState = {
+    ...primaryTurn,
+    parts,
+    activities,
+    lastSequence: Math.max(primaryTurn.lastSequence, secondaryTurn.lastSequence),
+    seenDedupeKeys: [...new Set([...primaryTurn.seenDedupeKeys, ...secondaryTurn.seenDedupeKeys])],
+    protocolIssues: [...primaryTurn.protocolIssues, ...secondaryTurn.protocolIssues],
+  };
+  const secondaryContent = secondary.content.trim();
+  return sanitizeStructuredAssistantMessage({
+    ...primary,
+    content: secondaryContent && !primary.content.includes(secondaryContent)
+      ? [primary.content, secondary.content].filter(Boolean).join("\n\n")
+      : primary.content,
+    reasoningContent: [primary.reasoningContent, secondary.reasoningContent].filter(Boolean).join(""),
+    structuredTurn,
+    lastEventAt: Math.max(primary.lastEventAt ?? 0, secondary.lastEventAt ?? 0) || undefined,
   });
 }
 
@@ -2409,19 +2566,30 @@ function appendStructuredActivity(
   if (state.status === "pending") state = applyLocalStructuredEvent(state, { type: "turn.started" });
   return applyLocalStructuredEvent(state, {
     type: "activity.updated",
-    activity: {
-      id: event.id,
-      turnId,
-      timestamp: event.timestamp ?? new Date().toISOString(),
-      source: "desktop-sse",
-      status: event.status === "failed" ? "error" : event.status === "completed" ? "completed" : "running",
-      title: event.title,
-      kind: "tool",
-      toolName: event.toolName ?? event.title,
-      callId: event.id,
-      ...(event.content ? { output: event.content } : {}),
-    },
+    activity: createStructuredToolActivity(state.turnId, event),
   });
+}
+
+function createStructuredToolActivity(
+  turnId: string,
+  event: NonNullable<ChatEvent["toolTimeline"]>,
+): Extract<StructuredActivityEvent, { kind: "tool" }> {
+  return {
+    id: event.id,
+    turnId,
+    timestamp: event.timestamp?.trim() || new Date().toISOString(),
+    source: "desktop-sse",
+    status: event.status === "failed" ? "error" : event.status === "completed" ? "completed" : "running",
+    title: event.title,
+    kind: "tool",
+    toolName: event.toolName ?? event.title,
+    callId: event.id,
+    ...(event.content
+      ? event.kind === "tool_call"
+        ? { input: event.content }
+        : { output: event.content }
+      : {}),
+  };
 }
 
 function appendConnectionActivity(
@@ -2496,15 +2664,14 @@ function applyStructuredEventToMessage(
     reasoningContent,
     streaming: structuredTurn.status === "pending" || structuredTurn.status === "running",
     error: structuredTurn.status === "error" || message.error,
-    ...(activeInteraction
+    inputRequest: activeInteraction
       ? {
-          inputRequest: {
-            requestId: activeInteraction.requestId,
-            prompt: activeInteraction.prompt,
-            inputType: activeInteraction.interactionType === "approval" ? "approval" as const : "text_input" as const,
-          },
+          requestId: activeInteraction.requestId,
+          prompt: activeInteraction.prompt,
+          inputType: activeInteraction.interactionType,
+          options: activeInteraction.options,
         }
-      : {}),
+      : undefined,
     lastEventAt: Date.now(),
   });
 }
@@ -2655,12 +2822,27 @@ function updateAssistantByIdOrLatestStreaming(
 function settleAssistantAfterHiddenError(
   messages: UiMessage[],
   assistantId: string | undefined,
+  visibleError?: string,
 ): UiMessage[] {
   const next = [...messages];
   const index = findAssistantIndex(next, assistantId);
   if (index === -1) return next;
   const message = next[index];
   if (!message.content.trim()) {
+    if (visibleError?.trim()) {
+      next[index] = {
+        ...message,
+        content: visibleError,
+        replyFailed: false,
+        streaming: false,
+        error: true,
+        structuredTurn: message.structuredTurn
+          ? finalizeStructuredTurn(message.structuredTurn, message.id, "cancelled")
+          : undefined,
+        lastEventAt: Date.now(),
+      };
+      return next;
+    }
     next[index] = {
       ...message,
       replyFailed: true,

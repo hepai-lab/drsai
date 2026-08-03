@@ -9,7 +9,8 @@ import type {
 } from "./browser/types";
 import type { ExecutionActionKind } from "./executionPolicy";
 import type { DesktopPlatformDescriptor } from "./platform";
-import type { StructuredConversationEvent, StructuredTurnState } from "./structuredConversation";
+import type { InteractionOption, StructuredConversationEvent, StructuredTurnState } from "./structuredConversation";
+export type { InteractionOption } from "./structuredConversation";
 import type {
   DiagnosticClearResult,
   DiagnosticEvent,
@@ -20,6 +21,8 @@ import type {
   DiagnosticIssueUpdateRequest,
   DiagnosticIssueUpdateResult,
   InteractiveDebugBreakpointRequest,
+  InteractiveDebugPolicy,
+  InteractiveDebugPolicyUpdateRequest,
   InteractiveDebugControlRequest,
   InteractiveDebugEvaluateRequest,
   InteractiveDebugEvaluateResult,
@@ -61,6 +64,8 @@ export type {
   DiagnosticStatus,
   DiagnosticTrace,
   InteractiveDebugBreakpoint,
+  InteractiveDebugPolicy,
+  InteractiveDebugPolicyUpdateRequest,
   InteractiveDebugBreakpointRequest,
   InteractiveDebugCapabilities,
   InteractiveDebugControlRequest,
@@ -150,6 +155,27 @@ export interface GatewayStatus {
   baseUrl: string;
   pid: number | null;
   lastLog: string;
+  portOpen?: boolean;
+  diagnosticCode?: string;
+  diagnosticMessage?: string;
+  endpoints?: {
+    health: GatewayEndpointStatus;
+    models: GatewayEndpointStatus;
+  };
+}
+
+export type GatewayEndpointState =
+  | "ok"
+  | "unauthorized"
+  | "unreachable"
+  | "timeout"
+  | "invalid_response"
+  | "http_error";
+
+export interface GatewayEndpointStatus {
+  ok: boolean;
+  statusCode: number | null;
+  state: GatewayEndpointState;
 }
 
 export interface UpdateStatus {
@@ -181,6 +207,8 @@ export interface UpdateStatus {
   errorCode: string | null;
   error: string | null;
   recovery: "automatic-rollback" | null;
+  source: "cdn" | "github" | "test" | null;
+  fallbackUsed: boolean;
 }
 
 export type CodexBackendState = "available" | "not_installed" | "version_incompatible" | "not_logged_in" | "fault";
@@ -196,6 +224,10 @@ export interface CodexBackendStatus {
   reason: string | null;
   retryable: boolean;
   action: "none" | "install" | "upgrade" | "login" | "restart";
+  appServerState?: "running" | "stopped" | "fault";
+  connectionState?: string;
+  transport?: "local-process" | "ssh" | string;
+  adapterVersion?: string;
 }
 
 export interface CodexBackendLogin {
@@ -527,6 +559,8 @@ export interface DesktopVoiceSynthesisRequest {
   voice?: string;
   speed?: number;
   format?: DesktopVoiceAudioFormat;
+  /** Optional runtime override; defaults to the globally configured runtime. */
+  runtime?: DesktopVoiceSynthesisRuntimeId;
 }
 
 export interface DesktopVoiceSynthesisStartResult {
@@ -622,6 +656,7 @@ export interface ChatRequest {
   model?: string;
   workspacePath?: string;
   workspaceId?: string;
+  workspaceName?: string;
   threadId?: string;
   sessionId?: string;
   runId?: string;
@@ -680,7 +715,12 @@ export interface ChatEvent {
   level?: "INFO" | "WARNING" | "ERROR" | "DEBUG" | "TRACE" | "FATAL" | string;
   toolTimeline?: ChatToolTimelineEvent;
   prompt?: string;
-  inputType?: "text_input" | "approval";
+  inputRequestId?: string;
+  inputType?: "text_input" | "approval" | "choice" | "confirmation";
+  inputOptions?: InteractionOption[];
+  inputDefault?: string;
+  inputAllowCustom?: boolean;
+  inputTimeoutAt?: string;
   sessionId?: string;
   runId?: string;
   failureRecovery?: DesktopFailureRecovery;
@@ -761,6 +801,7 @@ export interface DesktopPendingApproval {
   impact?: string;
   createdAt: string;
   risk: "low" | "medium" | "high";
+  executionState?: "executing" | "ambiguous";
   checklist?: DesktopCommitApprovalChecklist;
   taskId?: string;
   actionId?: string;
@@ -796,6 +837,7 @@ export interface DesktopApprovalProposalRequest {
 export interface DesktopApprovalProposalResult {
   queued: boolean;
   approval?: DesktopPendingApproval;
+  alreadyExecuted?: boolean;
   allowed: boolean;
   requiresApproval: boolean;
   blocked: boolean;
@@ -924,6 +966,7 @@ export interface DesktopProjectMemoryEntry {
 export interface DesktopProjectMemoryListRequest {
   workspacePath: string;
   limit?: number;
+  query?: string;
 }
 
 export interface DesktopProjectMemoryAddRequest {
@@ -961,6 +1004,7 @@ export interface DesktopTeamMemoryEntry {
 export interface DesktopTeamMemoryListRequest {
   teamId?: string;
   limit?: number;
+  query?: string;
 }
 
 export interface DesktopTeamMemoryAddRequest {
@@ -1099,6 +1143,8 @@ export interface DesktopProjectSkillInstallResult {
   installedAt: string;
   installPath: string;
   alreadyInstalled: boolean;
+  approvalId?: string;
+  approvalQueued?: boolean;
 }
 
 export interface DesktopProjectSkillPublishRequest {
@@ -1118,6 +1164,60 @@ export interface DesktopProjectSkillPublishResult {
   submissionPath: string;
   alreadyPublished: boolean;
   verification: string;
+  approvalId?: string;
+  approvalQueued?: boolean;
+}
+
+
+export interface GatewaySkill {
+  name: string;
+  category: string;
+  description: string;
+  path: string;
+  size?: number;
+  mtime?: number;
+}
+
+export interface GatewayAvailableSkill extends GatewaySkill {
+  source: string;
+  installed: boolean;
+}
+
+export interface GatewaySkillInstallRequest {
+  name: string;
+  content?: string;
+  source?: string;
+  userId?: string;
+}
+
+export interface GfsObjectInfo {
+  path: string;
+  size: number;
+  etag: string;
+  modifiedMs: number;
+  isDir: boolean;
+}
+
+export interface GfsListRequest {
+  prefix?: string;
+  recursive?: boolean;
+  maxItems?: number;
+}
+
+export interface GfsListResult {
+  items: GfsObjectInfo[];
+  prefix: string;
+  truncated: boolean;
+}
+
+export interface GfsUploadRequest {
+  localPath: string;
+  remotePath: string;
+}
+
+export interface GfsDownloadRequest {
+  remotePath: string;
+  localPath: string;
 }
 
 export type DesktopWorkflowTemplateStatus =
@@ -1372,6 +1472,7 @@ export interface DesktopBackgroundTask {
   createdAt: string;
   updatedAt: string;
   workspacePath?: string;
+  threadId?: string;
   targetId?: string;
   approvalId?: string;
   currentStep?: string;
@@ -1383,6 +1484,12 @@ export interface DesktopBackgroundTask {
   message: string;
   verification: string;
   deliverySummary?: DesktopTaskDeliverySummary;
+  idempotencyKey?: string;
+  attempt?: number;
+  maxAttempts?: number;
+  retryOfTaskId?: string;
+  recoveredAt?: string;
+  cancelledAt?: string;
 }
 
 export type DesktopTaskImportance = "high" | "medium" | "low";
@@ -1947,6 +2054,7 @@ export interface DesktopBackgroundTaskEnqueueRequest {
   source: DesktopBackgroundTaskSource;
   title: string;
   workspacePath?: string;
+  threadId?: string;
   targetId?: string;
   approvalId?: string;
   currentStep?: string;
@@ -1959,6 +2067,8 @@ export interface DesktopBackgroundTaskEnqueueRequest {
   verification?: string;
   status?: DesktopBackgroundTaskStatus;
   deliverySummary?: DesktopTaskDeliverySummary;
+  idempotencyKey?: string;
+  maxAttempts?: number;
 }
 
 export interface DesktopBackgroundTaskUpdateRequest {
@@ -2171,6 +2281,7 @@ export type DesktopScheduledTaskRunItemStatus =
   | "queued_approval"
   | "reconnected"
   | "skipped"
+  | "failed"
   | "blocked";
 
 export interface DesktopScheduledTaskRunRequest {
@@ -2197,6 +2308,7 @@ export interface DesktopScheduledTaskRunResult {
   triggered: number;
   reconnected: number;
   skipped: number;
+  failed: number;
   blocked: number;
   items: DesktopScheduledTaskRunItem[];
   runs: DesktopWorkflowRun[];
@@ -2217,6 +2329,7 @@ export interface DesktopScheduledTaskWorkerStatus {
     triggered: number;
     reconnected: number;
     skipped: number;
+    failed?: number;
     blocked: number;
   };
   lastError?: string;
@@ -2258,14 +2371,15 @@ export interface DesktopChannelAdapter {
   capabilities: string[];
   description: string;
   setupHint?: string;
-  authMode?: "not_configured" | "local_git_remote" | "oauth" | "session_stub";
+  authMode?: "not_configured" | "local_git_remote" | "oauth" | "provider_token" | "session_stub";
   accountLabel?: string;
   scopeLabel?: string;
   configuredAt?: string;
   lastImportAt?: string;
-  credentialState?: "missing" | "placeholder" | "configured";
+  credentialState?: "missing" | "placeholder" | "configured" | "expired";
   sessionExpiresAt?: string;
   authPreparedAt?: string;
+  authOperationId?: string;
 }
 
 export interface DesktopChannelAdapterListResult {
@@ -2278,11 +2392,7 @@ export interface DesktopChannelAdapterListResult {
 export interface DesktopChannelAdapterConfigureRequest {
   adapterId: string;
   workspacePath: string;
-  mode?: "local_git_remote" | "session_stub";
-  accountLabel?: string;
-  scopeLabel?: string;
-  credentialState?: "missing" | "placeholder" | "configured";
-  sessionExpiresAt?: string;
+  mode?: "local_git_remote";
 }
 
 export interface DesktopChannelAdapterAuthStartRequest {
@@ -2302,15 +2412,23 @@ export interface DesktopChannelAdapterAuthStartResult {
   expiresAt: string;
   intervalSeconds: number;
   scopes: string[];
+  operationId?: string;
   message: string;
   verification: string;
 }
+
+export interface DesktopChannelAdapterAuthPollRequest { adapterId: string; workspacePath: string; operationId: string; }
+export interface DesktopChannelAdapterAuthPollResult { adapterId: string; status: "pending" | "slow_down" | "complete" | "expired" | "denied"; operationId: string; intervalSeconds?: number; expiresAt?: string; accountLabel?: string; message: string; }
+export interface DesktopChannelAdapterAuthRevokeRequest { adapterId: string; workspacePath: string; }
+export interface DesktopChannelAdapterAuthRevokeResult { adapterId: string; revoked: boolean; message: string; }
+export interface DesktopChannelProviderTokenConfigureRequest { adapterId: "slack-chat" | "docs-connector" | "calendar-connector"; workspacePath: string; token: string; }
+export interface DesktopChannelProviderTokenConfigureResult { adapterId: "slack-chat" | "docs-connector" | "calendar-connector"; accountLabel: string; configuredAt: string; expiresAt?: string; message: string; }
 
 export interface DesktopChannelConnection {
   adapterId: string;
   workspacePath: string;
   provider: DesktopChannelAdapterProvider;
-  mode: "local_git_remote" | "session_stub";
+  mode: "local_git_remote" | "oauth" | "provider_token" | "session_stub";
   configuredAt: string;
   updatedAt: string;
   accountLabel: string;
@@ -2321,6 +2439,7 @@ export interface DesktopChannelConnection {
   credentialState?: "missing" | "placeholder" | "configured";
   sessionExpiresAt?: string;
   authPreparedAt?: string;
+  authOperationId?: string;
   readOnly: boolean;
 }
 
@@ -2343,6 +2462,8 @@ export interface DesktopChannelContextImportRequest {
   voiceTranscriptPath?: string;
   logMonitorPath?: string;
 }
+
+export interface DesktopChannelLiveSyncRequest { adapterId: string; workspacePath: string; repository?: string; channelId?: string; documentId?: string; calendarId?: string; timeMin?: string; timeMax?: string; limit?: number; }
 
 export type DesktopChannelContextItemKind =
   | "file"
@@ -2456,6 +2577,7 @@ export interface DesktopChannelOutboundDraftResult {
 }
 
 export type DesktopChannelOutboundDeliveryStatus =
+  | "pending"
   | "blocked"
   | "rejected"
   | "sent"
@@ -2470,7 +2592,7 @@ export interface DesktopChannelOutboundDelivery {
   target: string;
   subject?: string;
   status: DesktopChannelOutboundDeliveryStatus;
-  runtime?: "missing_live_provider" | "workspace_local_outbox";
+  runtime?: "missing_live_provider" | "workspace_local_outbox" | "github_api" | "slack_api" | "google_docs_api";
   outboxPath?: string;
   createdAt: string;
   updatedAt: string;
@@ -2618,7 +2740,7 @@ export interface DesktopMcpToolExecutionApprovalResult {
   workspacePath: string;
   server: string;
   tool: string;
-  status?: "approval_queued" | "completed" | "blocked" | "cancelled";
+  status?: "approval_queued" | "completed" | "already_executed" | "blocked" | "cancelled";
   approvalId?: string;
   queued: boolean;
   blocked: boolean;
@@ -2636,6 +2758,7 @@ export interface DesktopMcpToolExecutionApprovalResult {
 export type DesktopMcpToolExecutionAuditStatus =
   | "completed"
   | "failed"
+  | "ambiguous"
   | "rejected"
   | "cancelled";
 
@@ -2671,6 +2794,7 @@ export type DesktopMcpSessionAuditStatus =
   | "started"
   | "completed"
   | "failed"
+  | "ambiguous"
   | "timed_out"
   | "rejected"
   | "cancelled"
@@ -2874,7 +2998,83 @@ export interface MyDrSaiConfig {
   config: MyDrSaiCliConfig;
   models: MyDrSaiModelConfig[];
   defaultModelAlias?: string;
+  modelConnection?: MyDrSaiModelConnection;
   error?: string;
+}
+
+export interface CodexWorkspaceSessionSyncResult {
+  workspaceId: string;
+  discovered: number;
+  active: number;
+  archived: number;
+  created: number;
+  updated: number;
+  skipped: number;
+  conflicts?: number;
+  threads: DesktopThread[];
+}
+
+export interface MyDrSaiModelProvider {
+  name: string;
+  base_url: string;
+  wire_api: "openai" | "anthropic";
+  requires_api_key: boolean;
+  has_api_key: boolean;
+  api_key_source?: string;
+}
+
+export interface MyDrSaiModelConnection {
+  model: string;
+  model_provider: string;
+  provider: MyDrSaiModelProvider;
+  path?: string;
+  metadata?: { known_model?: boolean; metadata_source?: string; token_limit?: number; max_tokens?: number; vision?: boolean };
+  revision?: string;
+  warnings?: string[];
+  runtime?: { configured_revision: string; runtime_revisions: string[]; runtime_status: "not_started" | "applied" | "partially_applied" | "pending_next_turn"; active_runtime_count: number };
+  last_test?: { provider: string; mode: string; ok: boolean; tested_at: string; error?: string; status_code?: number } | null;
+}
+
+export interface MyDrSaiProviderPreset {
+  id: string;
+  label: string;
+  base_url: string;
+  wire_api: "openai" | "anthropic";
+  requires_api_key: boolean;
+  api_key_env?: string;
+  base_url_editable: boolean;
+  supports_model_discovery: boolean;
+}
+
+export interface MyDrSaiModelDiscoveryResult {
+  ok: boolean;
+  provider?: string;
+  models: string[];
+  cached?: boolean;
+  error?: string;
+}
+
+export interface UpdateMyDrSaiModelConnectionRequest {
+  model: string;
+  model_provider: string;
+  base_url?: string;
+  api_key?: string;
+  api_key_env?: string;
+  api_key_credential?: string;
+  wire_api?: "openai" | "anthropic";
+  requires_api_key?: boolean;
+  expected_revision?: string;
+}
+
+export interface MyDrSaiProviderTestResult {
+  ok: boolean;
+  provider?: string;
+  wire_api?: string;
+  error?: "timeout" | "connection_failed" | "authentication_failed" | "permission_denied" | "endpoint_not_found" | "model_not_found" | "invalid_response";
+  status_code?: number;
+  persisted?: boolean;
+  may_incur_cost?: boolean;
+  guidance?: { code: string; title: string; message: string; actions: string[]; retryable: boolean; localizations?: Record<string, { title: string; message: string; actions: string[] }> };
 }
 
 export interface UpdateMyDrSaiConfigRequest {
@@ -2917,8 +3117,19 @@ export interface DesktopThreadMessageSnapshot extends ChatMessage {
   /** Canonical structured display representation; legacy fields remain during migration. */
   parts?: ChatMessagePart[];
   structuredTurn?: StructuredTurnState;
+  inputRequest?: {
+    requestId: string;
+    prompt: string;
+    inputType: "text_input" | "approval" | "choice" | "confirmation";
+    options?: InteractionOption[];
+    defaultValue?: string;
+    allowCustom?: boolean;
+    timeoutAt?: string;
+  };
   startedAt?: number;
   lastEventAt?: number;
+  /** Files/folders attached when the user sent this message. */
+  attachments?: ChatAttachment[];
 }
 
 export interface DesktopThreadSnapshot {
@@ -2927,6 +3138,56 @@ export interface DesktopThreadSnapshot {
   messages: DesktopThreadMessageSnapshot[];
   updatedAt: number;
   messageCount: number;
+  history?: DesktopThreadHistoryState;
+}
+
+export interface DesktopThreadHistoryState {
+  state: "loading" | "ready" | "partial" | "error";
+  source: "opendrsai" | "codex";
+  syncedAt?: string;
+  loadedRuns: number;
+  totalRuns: number;
+  loadedItems: number;
+  totalItems: number;
+  correctedItems?: number;
+  warningCount?: number;
+  message?: string;
+}
+
+export interface DesktopThreadSnapshotEvent {
+  threadId: string;
+  runtimeSessionId: string;
+  sessionSequence: number;
+  snapshot: DesktopThreadSnapshot;
+}
+
+export type DesktopRuntimeLogProtocol = "runtime" | "oaep/1" | "conversation/1";
+export type DesktopRuntimeLogPhase = "capability" | "snapshot" | "replay" | "stream" | "event" | "cursor" | "retry" | "lifecycle";
+
+/** Read-only, sanitized evidence describing how Desktop consumes Runtime protocols. */
+export interface DesktopRuntimeLogEvent {
+  id: string;
+  timestamp: string;
+  level: "debug" | "info" | "warn" | "error";
+  status: "started" | "running" | "waiting" | "completed" | "failed" | "cancelled";
+  protocol: DesktopRuntimeLogProtocol;
+  phase: DesktopRuntimeLogPhase;
+  operation: string;
+  message: string;
+  threadId: string;
+  sessionId: string;
+  runId?: string;
+  itemId?: string;
+  eventType?: string;
+  sequence?: number;
+  cursor?: number;
+  source?: string;
+  details?: Record<string, unknown>;
+}
+
+export interface DesktopThreadCatalogEvent {
+  thread: DesktopThread;
+  source: "runtime-session";
 }
 
 export interface DesktopThreadContentSearchRequest {
@@ -3015,6 +3276,11 @@ export interface DesktopWorktreeEventBatch {
     data: Record<string, unknown>;
   }>;
   nextSequence: number;
+  degraded?: {
+    code: string;
+    message: string;
+    retryable: boolean;
+  };
 }
 
 export interface DesktopWorktreeSummary {
@@ -3925,6 +4191,35 @@ export interface UpdateThreadRequest {
   unread?: boolean;
 }
 
+/** Read-only conversation share (local HTML preview + optional WebUI public link). */
+export interface CreateThreadShareRequest {
+  threadId: string;
+  /** When omitted, all non-system messages are included. */
+  messageIds?: string[];
+  title?: string;
+}
+
+export interface DesktopThreadShareResult {
+  shareId: string;
+  threadId: string;
+  title: string;
+  messageCount: number;
+  filePath: string;
+  /** file:// URL for opening a local preview in a browser */
+  fileUrl: string;
+  /**
+   * Public WebUI share URL (`/share?token=...`) when publish succeeded.
+   * Prefer this for "Copy link" so others can open it.
+   */
+  publicShareUrl?: string;
+  shareToken?: string;
+  /** Present when local HTML was saved but WebUI publish failed. */
+  publishError?: string;
+  deepLink: string;
+  createdAt: string;
+  readOnly: true;
+}
+
 export interface AgentRunEvent {
   requestId: string;
   sessionId: string;
@@ -4158,8 +4453,91 @@ export interface TerminalExitEvent {
 
 export type DesktopEditCommand = "undo" | "redo" | "cut" | "copy" | "paste" | "delete" | "selectAll";
 
+export type DesktopOpenRequest =
+  | { kind: "auth-complete"; source: "protocol" | "second-instance"; url: string }
+  | { kind: "thread"; source: "protocol" | "second-instance"; url: string; threadId: string }
+  | { kind: "file"; source: "finder" | "second-instance"; path: string }
+  | { kind: "settings"; source: "menu" };
+
+export interface DesktopLifecycleEvent {
+  reason: "resume" | "network-online" | "display-change" | "renderer-recovered" | "gpu-recovered";
+  recoveredGateway: boolean;
+  at: string;
+}
+
+export interface DesktopBackgroundTaskActionRequest { taskId: string; reason?: string }
+export interface DesktopBackgroundTaskRecoveryResult {
+  generatedAt: string;
+  recovered: number;
+  tasks: DesktopBackgroundTask[];
+}
+
+export type DesktopSystemPermissionKind = "microphone" | "notifications" | "files" | "automation" | "accessibility" | "screen-recording";
+export type DesktopSystemPermissionState = "granted" | "denied" | "restricted" | "not-determined" | "unknown";
+export interface DesktopSystemPermissionStatus {
+  kind: DesktopSystemPermissionKind;
+  state: DesktopSystemPermissionState;
+  canRequest: boolean;
+  canOpenSettings: boolean;
+  message: string;
+  source?: "native-helper" | "electron" | "system-settings";
+}
+
+export type DesktopMobilePairingReadinessState =
+  | "ready"
+  | "not_registered"
+  | "credential_invalid"
+  | "offline";
+
+export interface DesktopMobilePairingReadiness {
+  state: DesktopMobilePairingReadinessState;
+  action: string;
+  runtime_id?: string;
+  /** Runtime process identity used to prove Workspace/Session routing. */
+  gateway_runtime_id?: string;
+  environment?: string;
+}
+
+/** Selects the Runtime whose Session the mobile device will join. */
+export interface DesktopMobilePairingTarget {
+  workspaceId: string;
+  workspacePath: string;
+}
+
+export type DesktopMobilePairingGrantStatus = "pending" | "consumed" | "expired" | "revoked";
+
+export interface DesktopMobilePairingGrant {
+  grant_id: string;
+  expires_at: string;
+  status: DesktopMobilePairingGrantStatus;
+  payload?: string;
+}
+
+export interface DesktopMobileAssociation {
+  association_id: string;
+  subject_summary: string;
+  device_summary: string;
+  device_name: string;
+  status: "active" | "revoked";
+  access_state: "online" | "offline" | "accessing" | "revoked";
+  created_at: string;
+  last_seen_at?: string | null;
+  revoked_at?: string | null;
+}
+
+export interface DesktopRuntimeEnrollmentRevocation {
+  runtime_id: string;
+  status: "revoked";
+  revoked_at?: string | null;
+}
+
 export interface DesktopApi {
   getPlatformDescriptor(): Promise<DesktopPlatformDescriptor>;
+  onOpenRequest(callback: (request: DesktopOpenRequest) => void): () => void;
+  onLifecycleEvent(callback: (event: DesktopLifecycleEvent) => void): () => void;
+  getSystemPermissions(): Promise<DesktopSystemPermissionStatus[]>;
+  requestSystemPermission(kind: DesktopSystemPermissionKind): Promise<DesktopSystemPermissionStatus>;
+  openSystemPermissionSettings(kind: DesktopSystemPermissionKind): Promise<boolean>;
   recordDiagnostic(event: DiagnosticEventInput): Promise<DiagnosticEvent>;
   getDiagnosticSnapshot(query?: DiagnosticQuery): Promise<DiagnosticSnapshot>;
   clearDiagnostics(): Promise<DiagnosticClearResult>;
@@ -4168,6 +4546,8 @@ export interface DesktopApi {
   getDiagnosticSourceContext(request: DiagnosticSourceContextRequest): Promise<DiagnosticSourceContext>;
   openDiagnosticSource(request: DiagnosticSourceOpenRequest): Promise<DiagnosticSourceOpenResult>;
   updateDiagnosticIssue(request: DiagnosticIssueUpdateRequest): Promise<DiagnosticIssueUpdateResult>;
+  getInteractiveDebugPolicy(): Promise<InteractiveDebugPolicy>;
+  updateInteractiveDebugPolicy(request: InteractiveDebugPolicyUpdateRequest): Promise<InteractiveDebugPolicy>;
   listInteractiveDebugTargets(): Promise<InteractiveDebugTarget[]>;
   listInteractiveDebugSessions(): Promise<InteractiveDebugSession[]>;
   startInteractiveDebugSession(request: InteractiveDebugStartRequest): Promise<InteractiveDebugSession>;
@@ -4201,6 +4581,8 @@ export interface DesktopApi {
   getInstallStatus(): Promise<InstallStatus>;
   getGatewayStatus(): Promise<GatewayStatus>;
   getCodexBackendStatus(refresh?: boolean): Promise<CodexBackendStatus>;
+  restartCodexBackend(): Promise<CodexBackendStatus>;
+  syncCodexWorkspaceSessions(workspaceId: string, workspacePath: string): Promise<CodexWorkspaceSessionSyncResult>;
   startCodexBackendLogin(type?: "chatgpt" | "chatgptDeviceCode"): Promise<CodexBackendLogin>;
   cancelCodexBackendLogin(loginId: string): Promise<boolean>;
   logoutCodexBackend(): Promise<boolean>;
@@ -4217,6 +4599,14 @@ export interface DesktopApi {
   openLogFolder(): Promise<string>;
   startGateway(): Promise<boolean>;
   stopGateway(): Promise<boolean>;
+  getMobilePairingReadiness(target?: DesktopMobilePairingTarget): Promise<DesktopMobilePairingReadiness>;
+  enableMobileRemoteAccess(target?: DesktopMobilePairingTarget): Promise<DesktopMobilePairingReadiness>;
+  createMobilePairingGrant(target?: DesktopMobilePairingTarget): Promise<DesktopMobilePairingGrant>;
+  getMobilePairingGrant(grantId: string, target?: DesktopMobilePairingTarget): Promise<DesktopMobilePairingGrant>;
+  revokeMobilePairingGrant(grantId: string, target?: DesktopMobilePairingTarget): Promise<DesktopMobilePairingGrant>;
+  listMobileAssociations(target?: DesktopMobilePairingTarget): Promise<DesktopMobileAssociation[]>;
+  revokeMobileAssociation(associationId: string, target?: DesktopMobilePairingTarget): Promise<DesktopMobileAssociation>;
+  revokeMobileRuntimeEnrollment(target?: DesktopMobilePairingTarget): Promise<DesktopRuntimeEnrollmentRevocation>;
   listSshHosts(): Promise<RemoteSshHost[]>;
   diagnoseSshHost(hostAlias: string): Promise<RemoteSshConnectivityResult>;
   inspectSshHostKeys(hostAlias: string): Promise<RemoteSshHostKey[]>;
@@ -4322,14 +4712,29 @@ export interface DesktopApi {
   getPlatformAgentStatus(): Promise<PlatformAgentStatus>;
   getMyDrSaiConfig(workspacePath?: string): Promise<MyDrSaiConfig>;
   updateMyDrSaiConfig(request: UpdateMyDrSaiConfigRequest): Promise<MyDrSaiConfig>;
+  updateMyDrSaiModelConnection(request: UpdateMyDrSaiModelConnectionRequest): Promise<MyDrSaiModelConnection>;
+  testMyDrSaiModelProvider(provider: string, model?: string): Promise<MyDrSaiProviderTestResult>;
+  testMyDrSaiModelDraft(request: UpdateMyDrSaiModelConnectionRequest, mode?: "basic" | "model"): Promise<MyDrSaiProviderTestResult>;
+  listMyDrSaiModelProviderPresets(): Promise<MyDrSaiProviderPreset[]>;
+  discoverMyDrSaiProviderModels(provider: string, refresh?: boolean): Promise<MyDrSaiModelDiscoveryResult>;
+  deleteMyDrSaiModelProvider(provider: string, deleteCredential?: boolean): Promise<{ ok: boolean; active?: string }>;
   createThread(request: CreateThreadRequest): Promise<DesktopThread>;
   updateThread(request: UpdateThreadRequest): Promise<DesktopThread>;
+  deleteThread(threadId: string): Promise<boolean>;
   setThreadArchived(request: { threadId: string; archived: boolean }): Promise<DesktopThread>;
   getThreadSnapshot(threadId: string): Promise<DesktopThreadSnapshot | null>;
+  subscribeThreadSnapshot(threadId: string): Promise<boolean>;
+  unsubscribeThreadSnapshot(threadId: string): Promise<boolean>;
+  onThreadSnapshot(callback: (event: DesktopThreadSnapshotEvent) => void): () => void;
+  onRuntimeLogEvent(callback: (event: DesktopRuntimeLogEvent) => void): () => void;
+  onThreadCatalogUpdate(callback: (event: DesktopThreadCatalogEvent) => void): () => void;
   searchThreadMessages(
     request: DesktopThreadContentSearchRequest,
   ): Promise<DesktopThreadContentSearchResult[]>;
   updateThreadSnapshot(snapshot: DesktopThreadSnapshot): Promise<DesktopThreadSnapshot>;
+  createThreadShare(request: CreateThreadShareRequest): Promise<DesktopThreadShareResult>;
+  openThreadShare(filePath: string): Promise<boolean>;
+  revealThreadShare(filePath: string): Promise<boolean>;
   prepareForkWorktree(
     request: DesktopForkWorktreeRequest,
   ): Promise<DesktopForkWorktreeResult>;
@@ -4343,6 +4748,7 @@ export interface DesktopApi {
     request: AgentRunRequest,
   ): Promise<{ requestId: string; sessionId: string; runId: string }>;
   abortAgentRun(requestId: string): Promise<boolean>;
+  recoverAgentRun(threadId: string): Promise<AgentRunEvent[]>;
   startVoiceTranscription(
     request: DesktopVoiceTranscriptionRequest,
   ): Promise<DesktopVoiceTranscriptionStartResult>;
@@ -4375,6 +4781,7 @@ export interface DesktopApi {
   saveApiKey(apiKey: string, defaultModel?: string): Promise<SaveApiKeyResult>;
   pickFiles(): Promise<PickDialogResult>;
   pickFolder(): Promise<PickDialogResult>;
+  getPathForFile(file: File): string;
   checkBrowserUrl(url: string): Promise<BrowserUrlCheck>;
   requestBrowserAction(
     request: BrowserActionRequest,
@@ -4498,6 +4905,9 @@ export interface DesktopApi {
   updateBackgroundTask(
     request: DesktopBackgroundTaskUpdateRequest,
   ): Promise<DesktopBackgroundTask>;
+  cancelBackgroundTask(request: DesktopBackgroundTaskActionRequest): Promise<DesktopBackgroundTask>;
+  retryBackgroundTask(request: DesktopBackgroundTaskActionRequest): Promise<DesktopBackgroundTask>;
+  recoverBackgroundTasks(): Promise<DesktopBackgroundTaskRecoveryResult>;
   listReusableTasks(): Promise<DesktopReusableTask[]>;
   saveReusableTask(
     request: DesktopReusableTaskSaveRequest,
@@ -4534,9 +4944,13 @@ export interface DesktopApi {
   startChannelAdapterAuth(
     request: DesktopChannelAdapterAuthStartRequest,
   ): Promise<DesktopChannelAdapterAuthStartResult>;
+  pollChannelAdapterAuth(request: DesktopChannelAdapterAuthPollRequest): Promise<DesktopChannelAdapterAuthPollResult>;
+  revokeChannelAdapterAuth(request: DesktopChannelAdapterAuthRevokeRequest): Promise<DesktopChannelAdapterAuthRevokeResult>;
+  configureChannelProviderToken(request: DesktopChannelProviderTokenConfigureRequest): Promise<DesktopChannelProviderTokenConfigureResult>;
   importChannelContext(
     request: DesktopChannelContextImportRequest,
   ): Promise<DesktopChannelContextImportResult>;
+  syncLiveChannelContext(request: DesktopChannelLiveSyncRequest): Promise<DesktopChannelContextImportResult>;
   syncChannelSnapshots(
     request: DesktopChannelSnapshotSyncRequest,
   ): Promise<DesktopChannelSnapshotSyncResult>;
@@ -4610,4 +5024,32 @@ export interface DesktopApi {
   onTerminalData(callback: (event: TerminalDataEvent) => void): () => void;
   onTerminalExit(callback: (event: TerminalExitEvent) => void): () => void;
   onBrowserTaskEvent(callback: (event: BrowserTaskEvent) => void): () => void;
+
+  // Skills (gateway-managed)
+  listInstalledSkills(request?: { userId?: string }): Promise<GatewaySkill[]>;
+  listAvailableSkills(request?: { userId?: string }): Promise<GatewayAvailableSkill[]>;
+  getSkillContent(request: { skillPath: string }): Promise<{ path: string; content: string }>;
+  installSkill(request: GatewaySkillInstallRequest): Promise<{ status: string; name: string; path: string }>;
+  updateSkill(request: { name: string; content: string; userId?: string }): Promise<{ status: string; name: string; path: string }>;
+  uninstallSkill(request: { name: string; userId?: string }): Promise<{ status: string; name: string }>;
+  reloadSkills(request?: { threadId?: string; userId?: string }): Promise<{ ok: boolean; reloaded: boolean }>;
+
+  // GFS cloud storage
+  gfsList(request: GfsListRequest): Promise<GfsListResult>;
+  gfsStat(request: { path: string }): Promise<GfsObjectInfo>;
+  gfsRead(request: { path: string }): Promise<{ path: string; content: string }>;
+  gfsWrite(request: {
+    path: string;
+    content: string;
+    contentType?: string;
+  }): Promise<{ path: string; etag: string }>;
+  gfsUploadFile(request: GfsUploadRequest): Promise<{ path: string; size: number }>;
+  gfsDownloadFile(request: GfsDownloadRequest): Promise<{ localPath: string; size: number }>;
+  gfsDelete(request: { path: string }): Promise<{ path: string }>;
+  gfsShareUrl(request: {
+    path: string;
+    ttlMinutes?: number;
+    responseContentType?: string;
+  }): Promise<{ url: string; expiresAt: string }>;
+  gfsHealthcheck(): Promise<{ ok: boolean; bucket?: string; mode?: string; reason?: string }>;
 }

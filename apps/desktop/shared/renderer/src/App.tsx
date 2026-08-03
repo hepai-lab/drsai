@@ -10,8 +10,10 @@ import {
   Lightbulb,
   MessageSquare,
   Plug,
+  RefreshCw,
   Settings,
   ShieldCheck,
+  Smartphone,
   Sparkles,
   Terminal as TerminalIcon,
   Volume2,
@@ -53,10 +55,15 @@ import type {
   DesktopVoiceRuntimeStatus,
   DesktopStreamingVoiceCapabilities,
   DesktopMcpContextResult,
+  DesktopMobileAssociation,
+  DesktopMobilePairingReadiness,
+  DesktopMobilePairingTarget,
   DesktopThread,
   DesktopWorktreeSummary,
   InstallProgress,
   MyDrSaiModelConfig,
+  MyDrSaiModelConnection,
+  MyDrSaiProviderPreset,
   MyDrSaiConfig,
   RemoteSshHost,
   RemoteSshHostKey,
@@ -66,6 +73,7 @@ import type {
 } from "@shared/desktopApi";
 import { desktopApi } from "./desktopApi";
 import { copyTextSafely } from "./clipboard";
+import { describeUserFacingError } from "./userFacingErrors";
 import { LoginScreen } from "./auth/LoginScreen";
 import { useAuth } from "./auth/AuthProvider";
 import { AgentSquareView } from "./components/AgentSquareView";
@@ -75,11 +83,16 @@ import { ChannelsView } from "./components/ChannelsView";
 import { ChatWorkspace, type ThinkingEffort } from "./components/ChatWorkspace";
 import { PreviewBrowserPanel } from "./components/PreviewBrowserPanel";
 import { ProviderAnalyticsView } from "./components/ProviderAnalyticsView";
-import { BackgroundTaskQueue, SkillSquareView } from "./components/SkillSquareView";
+import { BackgroundTaskQueue } from "./components/SkillSquareView";
+// Temporarily hide Skills management UI — keep for later reuse.
+// import { SkillSquareView } from "./components/SkillSquareView";
+// import { SkillsManager } from "./components/SkillsManager";
+// Temporarily hide GFS cloud UI — keep for later reuse.
+// import { GfsView } from "./components/GfsView";
 import { TaskCenterView } from "./components/TaskCenterView";
+import { MobilePairingDialog, mobilePairingErrorText } from "./components/MobilePairingDialog";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { DebugPanel } from "./components/DebugPanel";
-import { installDebugLogCapture } from "./debugLogStore";
 import { FilesContextPanel } from "./components/files/FilesContextPanel";
 import {
   createAgentRunContextTraceEvents,
@@ -98,9 +111,14 @@ import {
   type ChatThreadSnapshot,
   useDesktopChatAdapter,
 } from "./adapters/useDesktopChatAdapter";
-import type { ChatCommandAction } from "./chatCommands";
+// Temporarily hide Skills management entry — keep for later reuse.
+// import type { ChatCommandAction } from "./chatCommands";
 import type { DesktopPlatformDescriptor } from "@shared/platform";
 import { useDesktopHealthAdapter } from "./adapters/useDesktopHealthAdapter";
+import {
+  deriveThreadActivity,
+  indexBackgroundTasksByThread,
+} from "./threadActivity";
 import { resolveAvailableVoiceName, useVoicePreferences } from "./voice/useVoicePreferences";
 import { deriveVoiceModeCapabilities, getVoiceModeAvailability } from "./voice/voiceMode";
 import {
@@ -145,8 +163,6 @@ const rightTabIcons: Record<RightTab, LucideIcon> = {
   debug: Bug,
 };
 
-installDebugLogCapture();
-
 const WORKSPACE_STORAGE_KEY = "opendrsai.workspaces";
 const WORKSPACE_MIGRATION_KEY = "opendrsai.workspaces.migrated";
 const THREAD_SNAPSHOT_STORAGE_KEY = "opendrsai.threadSnapshots";
@@ -155,6 +171,7 @@ const DEVELOPER_MODE_STORAGE_KEY = "opendrsai.developerMode";
 const LANGUAGE_STORAGE_KEY = "opendrsai.language";
 const SESSION_SCOPE_STORAGE_KEY = "opendrsai.sessionScope";
 const DEFAULT_AGENT_STORAGE_KEY = "opendrsai.defaultAgent";
+const WORKSPACE_AGENT_STORAGE_KEY = "opendrsai.workspaceDefaultAgents";
 const DEFAULT_MODEL_STORAGE_KEY = "opendrsai.defaultModel";
 const THINKING_EFFORT_STORAGE_KEY = "opendrsai.thinkingEffort";
 const RESTORE_SESSION_STORAGE_KEY = "opendrsai.restoreLastSession";
@@ -222,10 +239,15 @@ function AuthenticatedApp({
   sessionRestoring: boolean;
 }): React.JSX.Element {
   const auth = useAuth();
+  const nativePlatformId = document.documentElement.dataset.desktopPlatform === "macos" || /Macintosh|Mac OS X/i.test(navigator.userAgent)
+    ? "macos"
+    : "windows";
   const [language, setLanguage] = useState<AppLanguage>(() => loadLanguage());
   const [platformDescriptor, setPlatformDescriptor] = useState<DesktopPlatformDescriptor | null>(null);
   const developerMode = import.meta.env.DEV && loadDeveloperMode();
   const [activeNav, setActiveNav] = useState<NavId>(MENU_IDS.currentSession);
+  const [mobilePairingOpen, setMobilePairingOpen] = useState(false);
+  const [mobilePairingRefreshToken, setMobilePairingRefreshToken] = useState(0);
   const [awaySummary, setAwaySummary] = useState<AwaySummary | null>(null);
   const [deliveryTask, setDeliveryTask] = useState<DesktopBackgroundTask | null>(null);
   const [networkConnectivity, setNetworkConnectivity] = useState<NetworkConnectivityState>(() =>
@@ -262,17 +284,20 @@ function AuthenticatedApp({
       window.removeEventListener("online", handleOnline);
     };
   }, []);
-  const [skillSquareCommandTarget, setSkillSquareCommandTarget] =
-    useState<Extract<ChatCommandAction, { type: "open-view" }>["target"] | null>(null);
+  // Temporarily hide Skills management entry — keep for later reuse.
+  // const [skillSquareCommandTarget, setSkillSquareCommandTarget] =
+  //   useState<Extract<ChatCommandAction, { type: "open-view" }>["target"] | null>(null);
   const [navHistory, setNavHistory] = useState<NavId[]>([
     MENU_IDS.currentSession,
   ]);
   const [navHistoryIndex, setNavHistoryIndex] = useState(0);
   const [activeRightTab, setActiveRightTab] = useState<RightTab>("files");
+  const [debugViewRequest, setDebugViewRequest] = useState<{ view: "activity"; nonce: number } | null>(null);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState(() => loadRestoredWorkspaceId());
   const [storedWorkspaces, setStoredWorkspaces] = useState<WorkspaceProject[]>(
     [],
   );
+  const [workspacesLoaded, setWorkspacesLoaded] = useState(false);
   const [remoteDialogOpen, setRemoteDialogOpen] = useState(false);
   const [workspaceLocationChoice, setWorkspaceLocationChoice] = useState<"remote" | null>(null);
   const [remoteWorkspaceStep, setRemoteWorkspaceStep] = useState<"computer" | "directory">("computer");
@@ -281,16 +306,22 @@ function AuthenticatedApp({
   const [remotePath, setRemotePath] = useState("/home/vscode");
   const [remoteDialogError, setRemoteDialogError] = useState("");
   const [remoteConnecting, setRemoteConnecting] = useState(false);
+  const [workspaceSessionSyncMessage, setWorkspaceSessionSyncMessage] = useState<string | null>(null);
+  const [workspaceSessionSyncing, setWorkspaceSessionSyncing] = useState(false);
+  const workspaceSessionSyncGenerationRef = useRef(0);
   const [remoteNeedsHostTrust, setRemoteNeedsHostTrust] = useState(false);
   const [remoteHostKeys, setRemoteHostKeys] = useState<RemoteSshHostKey[]>([]);
   const [remoteDirectories, setRemoteDirectories] = useState<RemoteDirectoryEntry[]>([]);
   const [remoteShowHidden, setRemoteShowHidden] = useState(false);
   const [remoteRecentPaths, setRemoteRecentPaths] = useState<string[]>(() => loadRemoteRecentPaths());
   const [threads, setThreads] = useState<DesktopThread[]>([]);
+  const [threadBackgroundTasks, setThreadBackgroundTasks] = useState<DesktopBackgroundTask[]>([]);
   const [activeThreadId, setActiveThreadId] = useState(() => loadRestoredThreadId());
   const [threadSnapshots, setThreadSnapshots] = useState<
     Record<string, ChatThreadSnapshot>
   >(() => loadThreadSnapshots());
+  const [hydratingThreadId, setHydratingThreadId] = useState<string | null>(null);
+  const [threadHydrationError, setThreadHydrationError] = useState<{ threadId: string; message: string } | null>(null);
   const [workspaceSortMode, setWorkspaceSortMode] = useState<WorkspaceSortMode>(
     () => loadWorkspaceSortMode(),
   );
@@ -313,13 +344,14 @@ function AuthenticatedApp({
   const [selectedChatExamples, setSelectedChatExamples] = useState<
     DesktopAgent["examples"]
   >();
+  const selectedChatAgent = availableChatAgents.find((agent) => agent.id === selectedChatAgentId);
   const chatModelOptions = useMemo(
     () => getAgentModelOptions(
       availableChatModels,
-      availableChatAgents.find((agent) => agent.id === selectedChatAgentId),
+      selectedChatAgent,
       selectedChatModel,
     ),
-    [availableChatAgents, availableChatModels, selectedChatAgentId, selectedChatModel],
+    [availableChatModels, selectedChatAgent, selectedChatModel],
   );
   const [pendingChatInput, setPendingChatInput] = useState<string | null>(null);
   const [resultsScopeRequestKey, setResultsScopeRequestKey] = useState(0);
@@ -342,9 +374,13 @@ function AuthenticatedApp({
   const navItems = getNavItems(language);
   const rightTabs = useMemo(
     () => getRightTabs(language).filter(({ id }) =>
-      id === "templates" ? false : rightSidebarComponents[id],
+      id === "templates" ? false
+        : id === "browser" && platformDescriptor?.capabilities.features.browser !== true ? false
+        : id === "debug" && platformDescriptor?.capabilities.features.debugger !== true ? false
+        : id === "terminal" && platformDescriptor?.capabilities.features.terminal !== true ? false
+        : rightSidebarComponents[id],
     ),
-    [language, rightSidebarComponents],
+    [language, platformDescriptor, rightSidebarComponents],
   );
   const firstVisibleRightTab = rightTabs[0]?.id;
   const title =
@@ -353,14 +389,14 @@ function AuthenticatedApp({
   const { health } = desktop;
   const [codexStatus, setCodexStatus] = useState<CodexBackendStatus | null>(null);
   useEffect(() => {
-    if (!health?.gatewayReady) { setCodexStatus(null); return; }
+    if (!health?.gatewayReady || platformDescriptor?.capabilities.features.codexBackend !== true) { setCodexStatus(null); return; }
     let active = true;
     void desktopApi.getCodexBackendStatus().then((status) => { if (active) setCodexStatus(status); }).catch(() => {
       if (active) setCodexStatus({ backendId: "codex", state: "fault", available: false, version: null,
         loggedIn: false, authMode: null, accountLabel: null, reason: "runtime_unavailable", retryable: true, action: "restart" });
     });
     return () => { active = false; };
-  }, [health?.gatewayReady]);
+  }, [health?.gatewayReady, platformDescriptor]);
   const workspacePath = health?.install.repoPath || health?.install.home || "";
   const currentWorkspaceTime = "1970-01-01T00:00:00.000Z";
   const currentWorkspace: WorkspaceProject = {
@@ -448,6 +484,30 @@ function AuthenticatedApp({
     if (document.visibilityState === "visible") void handleVisibilityChange();
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
   }, []);
+  const backgroundTaskByThreadId = useMemo(
+    () => indexBackgroundTasksByThread(threads, threadBackgroundTasks),
+    [threadBackgroundTasks, threads],
+  );
+  const toWorkspaceThread = (thread: DesktopThread): WorkspaceThread => ({
+    id: thread.id,
+    title: thread.title,
+    timeLabel: formatThreadTime(thread.updatedAt, language),
+    workspaceId: thread.execution?.workspaceId || (thread.workspacePath ? getWorkspaceId(thread.workspacePath) : "current"),
+    workspacePath: thread.workspacePath,
+    fork: thread.fork,
+    active: thread.id === activeThreadId,
+    pinned: thread.pinned,
+    archived: thread.archived,
+    unread: thread.unread,
+    activity: deriveThreadActivity({
+      thread,
+      snapshot: threadSnapshots[thread.id],
+      backgroundTask: backgroundTaskByThreadId.get(thread.id),
+    }),
+    source: workspaces.find((workspace) => getComparablePath(workspace.path) === getComparablePath(thread.workspacePath || ""))?.location === "remote"
+      ? "remote"
+      : thread.archiveSource === "codex" || thread.boundAgentId === "my-codex" ? "codex" : "opendrsai",
+  });
   const scopedThreads =
     sessionScope === "all"
       ? threads
@@ -461,47 +521,21 @@ function AuthenticatedApp({
   );
   const recentThreads: WorkspaceThread[] = visibleThreads
     .slice(0, 12)
-    .map((thread) => ({
-      id: thread.id,
-      title: thread.title,
-      timeLabel: formatThreadTime(thread.updatedAt, language),
-      workspaceId: thread.execution?.workspaceId || (thread.workspacePath ? getWorkspaceId(thread.workspacePath) : "current"),
-      workspacePath: thread.workspacePath,
-      fork: thread.fork,
-      active: thread.id === activeThreadId,
-      pinned: thread.pinned,
-      archived: thread.archived,
-      unread: thread.unread,
-    }));
-  const searchableThreads: WorkspaceThread[] = visibleThreads.map((thread) => ({
-    id: thread.id,
-    title: thread.title,
-    timeLabel: formatThreadTime(thread.updatedAt, language),
-    workspaceId: thread.execution?.workspaceId || (thread.workspacePath ? getWorkspaceId(thread.workspacePath) : "current"),
-    workspacePath: thread.workspacePath,
-    fork: thread.fork,
-    active: thread.id === activeThreadId,
-    pinned: thread.pinned,
-    archived: thread.archived,
-    unread: thread.unread,
-  }));
+    .map(toWorkspaceThread);
+  const searchableThreads: WorkspaceThread[] = visibleThreads.map(toWorkspaceThread);
   const workspaceThreads: WorkspaceThread[] = threads
     .filter((thread) => !thread.archived)
-    .map((thread) => ({
-      id: thread.id,
-      title: thread.title,
-      timeLabel: formatThreadTime(thread.updatedAt, language),
-      workspaceId: thread.execution?.workspaceId || (thread.workspacePath ? getWorkspaceId(thread.workspacePath) : "current"),
-      workspacePath: thread.workspacePath,
-      fork: thread.fork,
-      active: thread.id === activeThreadId,
-      pinned: thread.pinned,
-      archived: thread.archived,
-      unread: thread.unread,
-    }));
-  const servicePreparing = auth.serviceBusy || !auth.serviceReady;
-  const runtimeAvailable = Boolean(health?.installed || health?.gateway?.externalReady);
-  const chatUnavailableReason = auth.serviceBusy
+    .map(toWorkspaceThread);
+  const remotePlatformChatAvailable = Boolean(
+    selectedChatAgent?.source === "remote"
+    && selectedChatAgent.available !== false
+    && selectedChatAgent.status === "running",
+  );
+  const servicePreparing = !remotePlatformChatAvailable && (auth.serviceBusy || !auth.serviceReady);
+  const runtimeAvailable = remotePlatformChatAvailable || Boolean(health?.installed || health?.gateway?.externalReady);
+  const chatUnavailableReason = remotePlatformChatAvailable
+    ? undefined
+    : auth.serviceBusy
     ? language === "zh"
       ? "正在后台检查模型服务，完成后即可发送。"
       : "Checking model services in the background. Sending will be available shortly."
@@ -535,10 +569,12 @@ function AuthenticatedApp({
       showCompletionNotification(completionNotifications, language, false);
     },
     onForkThreadCreated: handleForkThreadCreated,
-    onOpenSkillsSquare: (target) => {
-      setSkillSquareCommandTarget(target ?? null);
-      setActiveNav(MENU_IDS.skillsSquare);
-    },
+    // Temporarily hide Skills management entry — keep for later reuse.
+    // onOpenSkillsSquare: (target) => {
+    //   setSkillSquareCommandTarget(target ?? null);
+    //   setActiveNav(MENU_IDS.skillsSquare);
+    // },
+    onOpenSkillsSquare: () => undefined,
     onSelectAgent: handleChatAgentSelect,
     onSelectModel: handleChatModelSelect,
     onThreadUpdated: handleThreadUpdated,
@@ -547,6 +583,7 @@ function AuthenticatedApp({
     threadSnapshot: threadSnapshots[activeThreadId] ?? null,
     workspaceInstructions: effectiveWorkspaceInstructions,
     workspaceId: effectiveRuntimeWorkspaceId,
+    workspaceName: effectiveWorkspace.name,
     workspacePath: effectiveWorkspacePath,
   });
 
@@ -622,9 +659,97 @@ function AuthenticatedApp({
     void refreshWorkspaces();
   }, []);
 
+  useEffect(() => {
+    if (!workspacesLoaded || !health?.gatewayReady || !workspacePath) return;
+    if (storedWorkspaces.some((workspace) => getComparablePath(workspace.path) === getComparablePath(workspacePath))) return;
+    let cancelled = false;
+    void desktopApi.createWorkspace({
+      source: "existing",
+      path: workspacePath,
+      name: getWorkspaceName(workspacePath) || (language === "zh" ? "默认" : "Default"),
+      description: language === "zh" ? "当前项目" : "Current project",
+      trusted: true,
+      pinned: true,
+    }).then((workspace) => {
+      if (cancelled) return;
+      setStoredWorkspaces((current) => [
+        workspace,
+        ...current.filter((item) => item.id !== workspace.id && getComparablePath(item.path) !== getComparablePath(workspace.path)),
+      ]);
+    }).catch(() => {
+      // Runtime health and workspace registration can briefly race during startup.
+      // A later health transition or manual workspace refresh will retry safely.
+    });
+    return () => { cancelled = true; };
+  }, [health?.gatewayReady, language, storedWorkspaces, workspacePath, workspacesLoaded]);
+
   useEffect(() => desktopApi.onRemoteWorkspaceStatus((status) => {
     setStoredWorkspaces((current) => current.map((workspace) => workspace.id === status.workspaceId ? { ...workspace, remote: status, updatedAt: new Date().toISOString() } : workspace));
   }), []);
+  useEffect(() => desktopApi.onThreadSnapshot((event) => {
+    setThreadSnapshots((current) => ({
+      ...current,
+      [event.threadId]: event.snapshot,
+    }));
+  }), []);
+  useEffect(() => desktopApi.onThreadCatalogUpdate((event) => {
+    setThreads((current) => sortThreadsForSidebar([
+      event.thread,
+      ...current.filter((item) => item.id !== event.thread.id),
+    ]));
+  }), []);
+  useEffect(() => {
+    let disposed = false;
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+
+    async function refreshThreadBackgroundTasks(): Promise<void> {
+      try {
+        const next = await desktopApi.listBackgroundTasks({ limit: 100 });
+        if (disposed) return;
+        setThreadBackgroundTasks((current) =>
+          haveSameThreadTaskActivity(current, next) ? current : next,
+        );
+      } catch {
+        // Thread snapshots and persisted thread status remain valid fallbacks.
+      } finally {
+        if (!disposed) {
+          refreshTimer = setTimeout(
+            () => void refreshThreadBackgroundTasks(),
+            document.visibilityState === "visible" ? 1_000 : 15_000,
+          );
+        }
+      }
+    }
+
+    function refreshWhenVisible(): void {
+      if (document.visibilityState !== "visible") return;
+      if (refreshTimer) clearTimeout(refreshTimer);
+      void refreshThreadBackgroundTasks();
+    }
+
+    void refreshThreadBackgroundTasks();
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      disposed = true;
+      if (refreshTimer) clearTimeout(refreshTimer);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, []);
+  useEffect(() => {
+    if (!activeThreadId) return;
+    let subscribed = false;
+    let disposed = false;
+    void desktopApi.subscribeThreadSnapshot(activeThreadId)
+      .then((value) => {
+        subscribed = value;
+        if (disposed && value) void desktopApi.unsubscribeThreadSnapshot(activeThreadId);
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+      if (subscribed) void desktopApi.unsubscribeThreadSnapshot(activeThreadId);
+    };
+  }, [activeThreadId]);
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -770,7 +895,10 @@ function AuthenticatedApp({
           agents.find((agent) => agent.id === "my-drsai") ??
           agents.find((agent) => agent.status === "running") ??
           agents[0];
-        const preferredAgent = agents.find((agent) => agent.id === selectedChatAgentId) ?? defaultAgent;
+        const workspaceAgentId = loadWorkspaceAgentPreference(activeWorkspaceId);
+        const preferredAgent = agents.find((agent) => agent.id === workspaceAgentId)
+          ?? agents.find((agent) => agent.id === selectedChatAgentId)
+          ?? defaultAgent;
         setSelectedChatAgentId(preferredAgent.id);
         setSelectedChatAgentName(preferredAgent.name);
         setSelectedChatModel((current) => {
@@ -793,7 +921,7 @@ function AuthenticatedApp({
     return () => {
       cancelled = true;
     };
-  }, [effectiveWorkspacePath, health?.gatewayReady]);
+  }, [activeWorkspaceId, effectiveWorkspacePath, health?.gatewayReady]);
 
   useEffect(() => {
     setWorkspaceContextAttachmentsByThread({});
@@ -814,6 +942,30 @@ function AuthenticatedApp({
     },
     [navHistoryIndex],
   );
+
+  useEffect(() => desktopApi.onOpenRequest((request) => {
+    if (request.kind === "thread") {
+      setActiveThreadId(request.threadId);
+      navigateTo(MENU_IDS.currentSession);
+      return;
+    }
+    if (request.kind === "file") {
+      setFilesPanelFocusPath(request.path);
+      setActiveRightTab("files");
+      setRightPanelCollapsed(false);
+      navigateTo(MENU_IDS.currentSession);
+      return;
+    }
+    if (request.kind === "settings") {
+      navigateTo(MENU_IDS.profile);
+      return;
+    }
+    void desktop.refreshHealth();
+  }), [desktop, navigateTo]);
+
+  useEffect(() => desktopApi.onLifecycleEvent(() => {
+    void desktop.refreshHealth();
+  }), [desktop]);
 
   const goBack = useCallback((): void => {
     setNavHistoryIndex((current) => {
@@ -933,6 +1085,41 @@ function AuthenticatedApp({
     });
     setActiveWorkspaceId(workspace.id);
     navigateTo(MENU_IDS.currentSession);
+    await syncWorkspaceSessions(workspace);
+  }
+
+  async function syncWorkspaceSessions(workspace: WorkspaceProject): Promise<void> {
+    if (workspace.location === "remote") return;
+    const generation = ++workspaceSessionSyncGenerationRef.current;
+    setWorkspaceSessionSyncing(true);
+    setWorkspaceSessionSyncMessage(language === "zh" ? "正在同步 Codex 会话…" : "Syncing Codex sessions…");
+    try {
+      const sync = await desktopApi.syncCodexWorkspaceSessions(workspace.id, workspace.path);
+      if (generation !== workspaceSessionSyncGenerationRef.current) return;
+      if (sync.threads.length) {
+        setThreads((current) => sortThreadsForSidebar([
+          ...sync.threads,
+          ...current.filter((thread) => !sync.threads.some((imported) => imported.id === thread.id)),
+        ]));
+      }
+      setWorkspaceSessionSyncMessage(language === "zh"
+        ? `Codex 会话同步完成：${sync.active} 个活跃，${sync.archived} 个归档，${sync.skipped} 个跳过${sync.conflicts ? `，保留 ${sync.conflicts} 个较新的本机归档操作` : ""}。`
+        : `Codex session sync complete: ${sync.active} active, ${sync.archived} archived, ${sync.skipped} skipped${sync.conflicts ? `; kept ${sync.conflicts} newer local archive action(s)` : ""}.`);
+    } catch (error) {
+      if (generation !== workspaceSessionSyncGenerationRef.current) return;
+      const friendly = describeUserFacingError(error, language);
+      setWorkspaceSessionSyncMessage(language === "zh"
+        ? `工作区已添加；${friendly.title}${friendly.action}`
+        : `Workspace added. ${friendly.title} ${friendly.action}`);
+    } finally {
+      if (generation === workspaceSessionSyncGenerationRef.current) setWorkspaceSessionSyncing(false);
+    }
+  }
+
+  function cancelWorkspaceSessionSync(): void {
+    workspaceSessionSyncGenerationRef.current += 1;
+    setWorkspaceSessionSyncing(false);
+    setWorkspaceSessionSyncMessage(language === "zh" ? "已取消本次 Codex 会话同步。" : "Codex session sync cancelled.");
   }
 
   async function handlePickWorkspaceFolder(): Promise<string | null> {
@@ -1000,31 +1187,35 @@ function AuthenticatedApp({
   }
 
   async function refreshWorkspaces(): Promise<void> {
-    const remoteWorkspaces = await desktopApi.listWorkspaces();
-    const migrated =
-      window.localStorage.getItem(WORKSPACE_MIGRATION_KEY) === "true";
-    const legacyWorkspaces = migrated ? [] : loadLegacyWorkspaces();
-    if (legacyWorkspaces.length > 0) {
-      const created: WorkspaceProject[] = [];
-      for (const legacy of legacyWorkspaces) {
-        try {
-          created.push(
-            await desktopApi.createWorkspace({
-              path: legacy.path,
-              name: legacy.name,
-              description: legacy.description,
-              trusted: true,
-            }),
-          );
-        } catch {
-          // Ignore stale legacy folders; the user can add them again from the picker.
+    try {
+      const remoteWorkspaces = await desktopApi.listWorkspaces();
+      const migrated =
+        window.localStorage.getItem(WORKSPACE_MIGRATION_KEY) === "true";
+      const legacyWorkspaces = migrated ? [] : loadLegacyWorkspaces();
+      if (legacyWorkspaces.length > 0) {
+        const created: WorkspaceProject[] = [];
+        for (const legacy of legacyWorkspaces) {
+          try {
+            created.push(
+              await desktopApi.createWorkspace({
+                path: legacy.path,
+                name: legacy.name,
+                description: legacy.description,
+                trusted: true,
+              }),
+            );
+          } catch {
+            // Ignore stale legacy folders; the user can add them again from the picker.
+          }
         }
+        window.localStorage.setItem(WORKSPACE_MIGRATION_KEY, "true");
+        setStoredWorkspaces([...created, ...remoteWorkspaces]);
+        return;
       }
-      window.localStorage.setItem(WORKSPACE_MIGRATION_KEY, "true");
-      setStoredWorkspaces([...created, ...remoteWorkspaces]);
-      return;
+      setStoredWorkspaces(remoteWorkspaces);
+    } finally {
+      setWorkspacesLoaded(true);
     }
-    setStoredWorkspaces(remoteWorkspaces);
   }
 
   async function handleNewChat(): Promise<void> {
@@ -1092,9 +1283,11 @@ function AuthenticatedApp({
   }
 
   async function hydrateThreadSnapshot(threadId: string): Promise<void> {
+    setHydratingThreadId(threadId);
+    setThreadHydrationError((current) => current?.threadId === threadId ? null : current);
     try {
       const snapshot = await desktopApi.getThreadSnapshot(threadId);
-      if (!snapshot) return;
+      if (!snapshot) throw new Error(language === "zh" ? "未能读取该 Codex 会话的历史内容。" : "The Codex session history could not be loaded.");
       setThreadSnapshots((current) => {
         const existing = current[threadId];
         if (existing && existing.updatedAt >= snapshot.updatedAt) return current;
@@ -1103,8 +1296,14 @@ function AuthenticatedApp({
           [threadId]: snapshot,
         };
       });
-    } catch {
-      // Older app data may only have localStorage snapshots; keep the current view responsive.
+    } catch (error) {
+      const friendly = describeUserFacingError(error, language);
+      setThreadHydrationError({
+        threadId,
+        message: `${friendly.title} ${friendly.action}`,
+      });
+    } finally {
+      setHydratingThreadId((current) => current === threadId ? null : current);
     }
   }
 
@@ -1113,6 +1312,7 @@ function AuthenticatedApp({
     setSelectedChatAgentName(agent.name);
     setSelectedChatModel(agent.model || agent.models?.[0] || selectedChatModel);
     setSelectedChatExamples(agent.examples);
+    persistWorkspaceAgentPreference(activeWorkspaceId, agent.id);
   }
 
   async function handleNewWorktreeChat(worktree: DesktopWorktreeSummary): Promise<void> {
@@ -1161,9 +1361,18 @@ function AuthenticatedApp({
     navigateTo(MENU_IDS.currentSession);
   }
 
-  async function selectChatAgent(agentId: string): Promise<boolean> {
-    const agent = availableChatAgents.find((item) => item.id === agentId);
+  async function selectChatAgent(
+    agentId: string,
+    options: { persistInBackground?: boolean; agent?: DesktopAgent } = {},
+  ): Promise<boolean> {
+    const agent = options.agent ?? availableChatAgents.find((item) => item.id === agentId);
     if (!agent) return false;
+    if (options.agent) {
+      setAvailableChatAgents((current) => [
+        agent,
+        ...current.filter((item) => item.id !== agent.id),
+      ]);
+    }
     const activeThread = threads.find((thread) => thread.id === activeThreadId);
     const snapshotCount = threadSnapshots[activeThreadId]?.messageCount ?? 0;
     const hasConversation = (activeThread?.messageCount ?? 0) > 0 || snapshotCount > 0;
@@ -1189,8 +1398,18 @@ function AuthenticatedApp({
     }
     applyChatAgent(agent);
     if (activeThread && !hasConversation) {
-      const updated = await desktopApi.updateThread({ id: activeThread.id, boundAgentId: agent.id, boundAgentName: agent.name });
-      setThreads((current) => current.map((item) => item.id === updated.id ? updated : item));
+      const persistSelection = desktopApi
+        .updateThread({ id: activeThread.id, boundAgentId: agent.id, boundAgentName: agent.name })
+        .then((updated) => {
+          setThreads((current) => current.map((item) => item.id === updated.id ? updated : item));
+        });
+      if (options.persistInBackground) {
+        void persistSelection.catch(() => {
+          // Keep navigation responsive; the selected agent remains applied in renderer state.
+        });
+      } else {
+        await persistSelection;
+      }
     }
     return true;
   }
@@ -1219,6 +1438,14 @@ function AuthenticatedApp({
 
   function handleChatModelSelect(model: string): void {
     setSelectedChatModel(model);
+  }
+
+  async function handleDeleteThread(threadId: string): Promise<void> {
+    await desktopApi.deleteThread(threadId);
+    setThreads((current) => current.filter((thread) => thread.id !== threadId));
+    if (activeThreadId === threadId) {
+      void handleNewChat();
+    }
   }
 
   async function handleThreadUpdate(
@@ -1534,13 +1761,26 @@ function AuthenticatedApp({
         />
       ) : (
         <section className="conversation-panel">
+        {threadHydrationError?.threadId === activeThreadId ? (
+          <div className="conversation-history-error" role="alert">
+            <span>{threadHydrationError.message}</span>
+            <button type="button" onClick={() => void hydrateThreadSnapshot(activeThreadId)}>{language === "zh" ? "重试" : "Retry"}</button>
+          </div>
+        ) : null}
         <ChatWorkspace
           activeRequestId={chat.activeRequestId}
           canChat={canChat}
           chatUnavailableReason={chatUnavailableReason}
           conversationId={activeThreadId}
+          conversationTitle={activeThread?.title}
           conversationHistoryPending={Boolean(
-            (activeThread?.messageCount ?? 0) > 0 && !threadSnapshots[activeThreadId],
+            hydratingThreadId === activeThreadId
+            || ((activeThread?.messageCount ?? 0) > 0 && !threadSnapshots[activeThreadId]),
+          )}
+          conversationHistory={threadSnapshots[activeThreadId]?.history}
+          continuesExistingTask={Boolean(
+            activeThread?.runtimeSessionId
+            && (activeThread.boundAgentId === "my-codex" || activeThread.archiveSource === "codex")
           )}
           health={health}
           input={chat.input}
@@ -1553,7 +1793,7 @@ function AuthenticatedApp({
           selectedModelName={selectedChatModel ?? undefined}
           agentOptions={availableChatAgents}
           modelOptions={chatModelOptions}
-          samplePrompts={selectedChatExamples}
+          samplePrompts={selectedChatAgent?.examples ?? selectedChatExamples}
           structuredTurnFocus={structuredTurnFocus}
           externalAttachments={externalChatAttachments}
           ideContext={ideContext}
@@ -1576,11 +1816,23 @@ function AuthenticatedApp({
           onSelectWorkspace={(workspaceId) => void handleEmptyChatWorkspaceSelect(workspaceId)}
           onSelectModel={handleChatModelSelect}
           onOpenExternal={(url) => desktopApi.openExternal(url)}
-          onOpenDebug={() => {
+          onOpenDebug={platformDescriptor?.capabilities.features.debugger !== true ? undefined : () => {
+            setDebugViewRequest((current) => ({ view: "activity", nonce: (current?.nonce ?? 0) + 1 }));
             setActiveRightTab("debug");
             setRightPanelCollapsed(false);
           }}
-          onOpenPreviewBrowser={openPreviewBrowser}
+          onRetryMessage={async (assistantMessageId, mode) => {
+            const assistantIndex = chat.messages.findIndex((message) => message.id === assistantMessageId);
+            let originalInput = "";
+            for (let index = assistantIndex - 1; index >= 0; index -= 1) {
+              const message = chat.messages[index];
+              if (message?.role === "user" && message.content.trim()) { originalInput = message.content; break; }
+            }
+            if (!originalInput) return;
+            if (mode === "new_session") await handleNewChat();
+            chat.setInput(originalInput);
+          }}
+          onOpenPreviewBrowser={platformDescriptor?.capabilities.features.browser !== true ? undefined : openPreviewBrowser}
           onOpenWorkspaceArtifact={(path) => {
             setFilesPanelFocusPath(path);
             setActiveRightTab("files");
@@ -1635,29 +1887,28 @@ function AuthenticatedApp({
           userGroups={user?.groups ?? []}
           workspacePath={effectiveWorkspacePath}
           selectedAgentId={selectedChatAgentId}
-          onSetDefault={(agent) => void selectChatAgent(agent.id)}
+          onSetDefault={(agent) => void selectChatAgent(agent.id, { agent })}
           onStartChat={(agent) => {
-            void selectChatAgent(agent.id).then((selected) => {
+            void selectChatAgent(agent.id, {
+              persistInBackground: true,
+              agent,
+            }).then((selected) => {
               if (!selected) return;
               setRightPanelCollapsed(true);
-              setPendingChatInput(
-                language === "zh"
-                  ? `我想使用 ${agent.name} 处理一个任务：`
-                  : `I want to use ${agent.name} for a task:`,
-              );
               navigateTo(MENU_IDS.currentSession);
             });
           }}
         />
       </section>
     ) : activeNav === MENU_IDS.skillsSquare ? (
-      <section className="skills-square-panel">
-        <SkillSquareView
-          initialFocus={skillSquareCommandTarget ?? undefined}
-          language={language}
-          workspacePath={effectiveWorkspacePath}
-        />
-      </section>
+      // Temporarily hide Skills management page — keep for later reuse.
+      // <section className="skills-square-panel skills-manager-panel">
+      //   <SkillsManager
+      //     activeThreadId={activeThreadId}
+      //     language={language}
+      //   />
+      // </section>
+      null
     ) : activeNav === MENU_IDS.myAgents ? (
       <AgentRunWorkspace
         fileContextAttachments={workspaceContextAttachments}
@@ -1712,6 +1963,10 @@ function AuthenticatedApp({
       />
     ) : activeNav === MENU_IDS.usageAnalytics ? (
       <ProviderAnalyticsView language={language} />
+    ) : activeNav === MENU_IDS.library ? (
+      // Temporarily hide GFS cloud page — keep for later reuse.
+      // <GfsView language={language} />
+      null
     ) : activeNav === MENU_IDS.profile ? (
       <SettingsPanel
         agents={availableChatAgents}
@@ -1725,12 +1980,13 @@ function AuthenticatedApp({
           />
         )}
         channelsPanel={(
-          <ChannelsView
+          platformDescriptor?.capabilities.features.channels !== true ? null : <ChannelsView
             language={language}
             onAttachImportedContext={attachImportedChannelContext}
             workspacePath={effectiveWorkspacePath}
           />
         )}
+        featureCapabilities={platformDescriptor?.capabilities.features}
         completionNotifications={completionNotifications}
         defaultThinkingEffort={defaultThinkingEffort}
         health={health}
@@ -1743,7 +1999,20 @@ function AuthenticatedApp({
         onCompletionNotificationsChange={(enabled) => {
           setCompletionNotifications(enabled);
         }}
-        onCopyDiagnostics={() => void copyTextSafely(JSON.stringify({ health, workspace: effectiveWorkspacePath, user: user?.email ?? null }, null, 2))}
+        onCopyDiagnostics={() => void copyTextSafely(JSON.stringify({
+          generatedAt: new Date().toISOString(),
+          desktop: { version: health?.version ?? "unknown", installed: health?.installed ?? false },
+          runtime: { ready: health?.gatewayReady ?? false, externalReady: health?.gateway?.externalReady ?? false },
+          codex: codexStatus ? {
+            available: codexStatus.available,
+            connectionState: codexStatus.state,
+            version: codexStatus.version,
+            loggedIn: codexStatus.loggedIn,
+            authMode: codexStatus.authMode,
+          } : null,
+          correlation: { workspaceId: effectiveRuntimeWorkspaceId, threadId: activeThreadId },
+          privacy: "Prompts, credentials, user identity, logs, and absolute workspace paths are intentionally excluded.",
+        }, null, 2))}
         onDeveloperModeChange={(enabled) => {
           window.localStorage.setItem(DEVELOPER_MODE_STORAGE_KEY, String(enabled));
           window.location.reload();
@@ -1752,6 +2021,9 @@ function AuthenticatedApp({
         onLanguageChange={setLanguage}
         onLogout={onLogout}
         onNewAgentTask={() => void handleNewAgentTask()}
+        onOpenMobilePairing={() => setMobilePairingOpen(true)}
+        mobilePairingRefreshToken={mobilePairingRefreshToken}
+        mobilePairingTarget={{ workspaceId: effectiveRuntimeWorkspaceId, workspacePath: effectiveWorkspacePath }}
         onOpenBrowserPanel={() => {
           setActiveRightTab("browser");
           setRightPanelCollapsed(false);
@@ -1765,13 +2037,19 @@ function AuthenticatedApp({
         onSelectModel={handleChatModelSelect}
         onSessionScopeChange={setSessionScope}
         threads={threads}
-        onArchiveThread={(threadId, archived) => void handleThreadUpdate(threadId, { archived })}
+        onArchiveThread={(threadId, archived) => handleThreadUpdate(threadId, { archived })}
+        workspaces={sortedWorkspaces}
+        onSyncWorkspaceSessions={syncWorkspaceSessions}
         onSidebarComponentsChange={setSidebarComponents}
         onThinkingEffortChange={setDefaultThinkingEffort}
         onWorkspaceSortModeChange={setWorkspaceSortMode}
         onUpdateAgentConfig={async (updates) => {
           const next = await desktopApi.updateMyDrSaiConfig(updates);
           setMyDrSaiConfig(next);
+        }}
+        onModelConnectionUpdated={(connection) => {
+          setMyDrSaiConfig((current) => current ? { ...current, modelConnection: connection, defaultModelAlias: connection.model } : current);
+          setSelectedChatModel(connection.model);
         }}
         developerMode={developerMode}
         developerModeAvailable={import.meta.env.DEV}
@@ -1806,6 +2084,7 @@ function AuthenticatedApp({
       busy={desktop.busy}
       health={health}
       codexStatus={codexStatus}
+      codexEnabled={platformDescriptor?.capabilities.features.codexBackend === true}
       installProgress={desktop.installProgress}
       language={language}
       onCancelInstall={desktop.cancelInstall}
@@ -1816,6 +2095,8 @@ function AuthenticatedApp({
       onOpenPath={(path) => desktopApi.openPath(path)}
       onRefresh={desktop.refreshHealth}
       onCodexRefresh={async () => setCodexStatus(await desktopApi.getCodexBackendStatus(true))}
+      onCodexRestart={async () => setCodexStatus(await desktopApi.restartCodexBackend())}
+      onCodexRepair={() => desktop.startInstall(false)}
       onCodexLogin={async (type) => desktopApi.startCodexBackendLogin(type)}
       onCodexLogout={async () => { await desktopApi.logoutCodexBackend(); setCodexStatus(await desktopApi.getCodexBackendStatus(true)); }}
     />
@@ -1825,7 +2106,22 @@ function AuthenticatedApp({
     activeRightTab === "debug" ? (
       <DebugPanel
         language={language}
+        requestedView={debugViewRequest}
         onSelectTurn={(turnId) => setStructuredTurnFocus((current) => ({ turnId, nonce: (current?.nonce ?? 0) + 1 }))}
+        onPrepareRerun={(runId) => {
+          const turnIndex = chat.messages.findIndex((message) => message.structuredTurn?.turnId === runId);
+          const searchFrom = turnIndex >= 0 ? turnIndex - 1 : chat.messages.length - 1;
+          let originalInput = "";
+          for (let index = searchFrom; index >= 0; index -= 1) {
+            const message = chat.messages[index];
+            if (message?.role === "user" && message.content.trim()) { originalInput = message.content; break; }
+          }
+          if (!originalInput) return false;
+          chat.setInput(originalInput);
+          navigateTo(MENU_IDS.currentSession);
+          setRightPanelCollapsed(true);
+          return true;
+        }}
       />
     ) : activeRightTab === "terminal" && platformDescriptor?.capabilities.terminal !== false ? (
       <TerminalPanel
@@ -2029,8 +2325,10 @@ function AuthenticatedApp({
       setRightPanelCollapsed(false);
       navigateTo(MENU_IDS.currentSession);
     } else {
-      setSkillSquareCommandTarget({ query: task.targetId || task.title, source: "slash_command" });
-      navigateTo(MENU_IDS.skillsSquare);
+      // Temporarily hide Skills management entry — keep for later reuse.
+      // setSkillSquareCommandTarget({ query: task.targetId || task.title, source: "slash_command" });
+      // navigateTo(MENU_IDS.skillsSquare);
+      navigateTo(MENU_IDS.currentSession);
     }
     setAwaySummary(null);
   }
@@ -2083,6 +2381,7 @@ function AuthenticatedApp({
       mainContent={mainContent}
       navIcons={navIcons}
       navSections={navSections}
+      platformId={platformDescriptor?.id ?? nativePlatformId}
       recentThreads={recentThreads}
       searchableThreads={searchableThreads}
       rightPanel={rightPanelContent}
@@ -2119,6 +2418,7 @@ function AuthenticatedApp({
       onOpenWorkspacePath={handleOpenWorkspacePath}
       onPickWorkspaceFolder={handlePickWorkspaceFolder}
       onRefreshWorkspaces={refreshWorkspaces}
+      onSyncWorkspaceSessions={syncWorkspaceSessions}
       onRemoveWorkspace={handleRemoveWorkspace}
       onRequestForkLifecycle={handleForkLifecycleRequest}
       onRightTabChange={setActiveRightTab}
@@ -2129,12 +2429,18 @@ function AuthenticatedApp({
         desktopApi.searchThreadMessages({ query, threadIds, limit: 24 })
       }
       onThreadUpdate={handleThreadUpdate}
+      onDeleteThread={handleDeleteThread}
       onToggleRightPanel={() => setRightPanelCollapsed((current) => !current)}
       onToggleSidebar={() => setSidebarCollapsed((current) => !current)}
       onUpdateWorkspace={handleUpdateWorkspace}
       onWorkspaceChange={handleWorkspaceChange}
       onWorkspaceSortModeChange={setWorkspaceSortMode}
     />
+    {workspaceSessionSyncMessage ? <div className="workspace-session-sync-status" role="status" data-testid="workspace-session-sync-status">
+      <span>{workspaceSessionSyncMessage}</span>
+      <button type="button" aria-label={workspaceSessionSyncing ? (language === "zh" ? "取消同步" : "Cancel sync") : (language === "zh" ? "关闭同步提示" : "Dismiss sync status")} onClick={() => workspaceSessionSyncing ? cancelWorkspaceSessionSync() : setWorkspaceSessionSyncMessage(null)}>{workspaceSessionSyncing ? (language === "zh" ? "取消" : "Cancel") : "×"}</button>
+    </div> : null}
+    {mobilePairingOpen ? <MobilePairingDialog language={language} target={{ workspaceId: effectiveRuntimeWorkspaceId, workspacePath: effectiveWorkspacePath }} onClose={() => setMobilePairingOpen(false)} onConnected={() => setMobilePairingRefreshToken((value) => value + 1)} /> : null}
     {remoteDialogOpen ? (
       <div style={{ position: "fixed", inset: 0, zIndex: 1000, display: "grid", placeItems: "center", background: "rgba(3, 7, 18, .68)" }}>
         <section role="dialog" aria-modal="true" aria-labelledby="remote-workspace-title" style={{ width: 520, maxWidth: "calc(100vw - 40px)", padding: 24, borderRadius: 14, background: "#111827", color: "#f9fafb", boxShadow: "0 24px 80px rgba(0,0,0,.5)" }}>
@@ -2145,10 +2451,10 @@ function AuthenticatedApp({
                 <strong style={{ display: "block" }}>{language === "zh" ? "本地" : "Local"}</strong>
                 <small>{language === "zh" ? "选择这台电脑上的文件夹" : "Choose a folder on this computer"}</small>
               </button>
-              <button type="button" style={{ minHeight: 92, padding: 14 }} onClick={() => void beginRemoteWorkspace()}>
+              {platformDescriptor?.capabilities.features.remoteWorkspace === true && <button type="button" style={{ minHeight: 92, padding: 14 }} onClick={() => void beginRemoteWorkspace()}>
                 <strong style={{ display: "block" }}>{language === "zh" ? "远程" : "Remote"}</strong>
                 <small>{language === "zh" ? "选择另一台计算机上的文件夹" : "Choose a folder on another computer"}</small>
-              </button>
+              </button>}
             </div>
           ) : <div style={{ paddingTop: 8 }}>
             <p style={{ marginTop: 0, color: "#cbd5e1" }}>
@@ -2335,6 +2641,35 @@ function persistOptionalSetting(key: string, value: string | null): void {
   else window.localStorage.removeItem(key);
 }
 
+function loadWorkspaceAgentPreference(workspaceId: string): string | null {
+  if (!/^[A-Za-z0-9_.:-]{1,200}$/.test(workspaceId)) return null;
+  try {
+    const value = JSON.parse(window.localStorage.getItem(WORKSPACE_AGENT_STORAGE_KEY) ?? "null") as unknown;
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const selected = (value as Record<string, unknown>)[workspaceId];
+    return typeof selected === "string" && /^[A-Za-z0-9_.:-]{1,200}$/.test(selected) ? selected : null;
+  } catch {
+    return null;
+  }
+}
+
+function persistWorkspaceAgentPreference(workspaceId: string, agentId: string): void {
+  if (!/^[A-Za-z0-9_.:-]{1,200}$/.test(workspaceId) || !/^[A-Za-z0-9_.:-]{1,200}$/.test(agentId)) return;
+  let preferences: Record<string, string> = {};
+  try {
+    const value = JSON.parse(window.localStorage.getItem(WORKSPACE_AGENT_STORAGE_KEY) ?? "null") as unknown;
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      preferences = Object.fromEntries(Object.entries(value as Record<string, unknown>)
+        .filter(([key, item]) => /^[A-Za-z0-9_.:-]{1,200}$/.test(key) && typeof item === "string" && /^[A-Za-z0-9_.:-]{1,200}$/.test(item))
+        .slice(-100)) as Record<string, string>;
+    }
+  } catch {
+    // Replace malformed preference data with a bounded valid map.
+  }
+  preferences[workspaceId] = agentId;
+  window.localStorage.setItem(WORKSPACE_AGENT_STORAGE_KEY, JSON.stringify(preferences));
+}
+
 function loadThinkingEffort(): ThinkingEffort {
   const value = window.localStorage.getItem(THINKING_EFFORT_STORAGE_KEY);
   return value === "low" || value === "high" || value === "xhigh" ? value : "medium";
@@ -2418,6 +2753,23 @@ function sortThreadsForSidebar(threads: DesktopThread[]): DesktopThread[] {
 
 function createLocalThreadId(): string {
   return `thread-${crypto.randomUUID()}`;
+}
+
+function haveSameThreadTaskActivity(
+  current: DesktopBackgroundTask[],
+  next: DesktopBackgroundTask[],
+): boolean {
+  if (current.length !== next.length) return false;
+  return current.every((task, index) => {
+    const candidate = next[index];
+    return candidate?.id === task.id
+      && candidate.updatedAt === task.updatedAt
+      && candidate.status === task.status
+      && candidate.threadId === task.threadId
+      && candidate.targetId === task.targetId
+      && candidate.approvalId === task.approvalId
+      && (candidate.pendingDecisions?.length ?? 0) === (task.pendingDecisions?.length ?? 0);
+  });
 }
 
 function formatThreadTime(updatedAt: string, language: AppLanguage): string {
@@ -4683,6 +5035,7 @@ function DesktopStatusPanel({
   busy,
   health,
   codexStatus,
+  codexEnabled,
   installProgress,
   language,
   onCancelInstall,
@@ -4693,6 +5046,8 @@ function DesktopStatusPanel({
   onOpenPath,
   onRefresh,
   onCodexRefresh,
+  onCodexRestart,
+  onCodexRepair,
   onCodexLogin,
   onCodexLogout,
 }: {
@@ -4700,6 +5055,7 @@ function DesktopStatusPanel({
   busy: boolean;
   health: DesktopHealth | null;
   codexStatus: CodexBackendStatus | null;
+  codexEnabled: boolean;
   installProgress: InstallProgress | null;
   language: AppLanguage;
   onCancelInstall: () => void;
@@ -4710,11 +5066,36 @@ function DesktopStatusPanel({
   onOpenPath: (path: string) => void;
   onRefresh: () => void;
   onCodexRefresh: () => void | Promise<void>;
+  onCodexRestart: () => void | Promise<void>;
+  onCodexRepair: () => void | Promise<void>;
   onCodexLogin: (type: "chatgpt" | "chatgptDeviceCode") => Promise<CodexBackendLogin>;
   onCodexLogout: () => void | Promise<void>;
 }): React.JSX.Element {
   const zh = language === "zh";
   const [codexLogin, setCodexLogin] = useState<CodexBackendLogin | null>(null);
+  const [diagnosticCopied, setDiagnosticCopied] = useState(false);
+  async function copyCodexDiagnostic(): Promise<void> {
+    const report = {
+      product: "OpenDrSai Desktop",
+      desktopVersion: health?.update.currentVersion ?? "unknown",
+      runtimeReady: health?.gatewayReady ?? false,
+      runtimeMode: health?.mode ?? "local",
+      codex: codexStatus ? {
+        state: codexStatus.state,
+        version: codexStatus.version,
+        loggedIn: codexStatus.loggedIn,
+        appServerState: codexStatus.appServerState,
+        connectionState: codexStatus.connectionState,
+        transport: codexStatus.transport,
+        adapterVersion: codexStatus.adapterVersion,
+        retryable: codexStatus.retryable,
+      } : null,
+      generatedAt: new Date().toISOString(),
+    };
+    await copyTextSafely(JSON.stringify(report, null, 2));
+    setDiagnosticCopied(true);
+    window.setTimeout(() => setDiagnosticCopied(false), 2_000);
+  }
   // The About card describes the Desktop application, not the independently
   // installed Python Runtime. The updater identity is always sourced from
   // Electron's app.getVersion(), including development builds.
@@ -4788,23 +5169,46 @@ function DesktopStatusPanel({
         </div>
       </dl>
 
-      <section className="about-section">
+      {codexEnabled && <section className="about-section">
         <div className="about-section-title" data-testid="codex-backend-status">
           <strong>Codex Agent Backend</strong>
           <span data-testid={`codex-state-${codexStatus?.state ?? "loading"}`}>
             {codexStatus ? `${codexStatus.state}${codexStatus.version ? ` · ${codexStatus.version}` : ""}` : (zh ? "正在读取 Runtime capability" : "Reading Runtime capability")}
           </span>
         </div>
+        <dl className="codex-health-layers" data-testid="codex-health-layers">
+          <div><dt>Desktop → Runtime</dt><dd>{health?.gatewayReady ? (zh ? "已连接" : "Connected") : (zh ? "未连接" : "Disconnected")}</dd></div>
+          <div><dt>Runtime → Codex</dt><dd>{codexStatus?.available ? (zh ? "可用" : "Available") : (codexStatus?.reason || (zh ? "不可用" : "Unavailable"))}</dd></div>
+          <div><dt>{zh ? "Codex → 账号/模型" : "Codex → account/model"}</dt><dd>{codexStatus?.loggedIn && codexStatus.state === "available" ? (zh ? "账号已登录，模型可用" : "Signed in; models available") : (zh ? "需要检查账号或模型" : "Account or model check required")}</dd></div>
+          <div><dt>App Server</dt><dd>{codexStatus?.appServerState === "running" ? (zh ? "运行中" : "Running") : (zh ? "按需启动" : "Starts on demand")}</dd></div>
+          <div><dt>{zh ? "连接方式" : "Transport"}</dt><dd>{codexStatus?.transport === "ssh" ? (zh ? "远程 SSH" : "Remote SSH") : (zh ? "本机进程" : "Local process")}</dd></div>
+          <div><dt>{zh ? "适配器" : "Adapter"}</dt><dd>{codexStatus?.adapterVersion || (zh ? "等待检测" : "Pending check")}</dd></div>
+        </dl>
         <div className="about-action-grid">
           <button type="button" onClick={() => void onCodexRefresh()}>{zh ? "刷新 Codex" : "Refresh Codex"}</button>
           {codexStatus?.action === "login" && <button type="button" data-testid="codex-login" onClick={() => void onCodexLogin("chatgptDeviceCode").then(setCodexLogin)}>{zh ? "登录 ChatGPT" : "Sign in to ChatGPT"}</button>}
           {codexStatus?.loggedIn && <button type="button" data-testid="codex-logout" onClick={() => void onCodexLogout()}>{zh ? "退出 Codex" : "Sign out of Codex"}</button>}
-          {codexStatus?.action === "install" && <span data-testid="codex-install-action">{zh ? "请安装受管 Codex 制品" : "Install the managed Codex artifact"}</span>}
-          {codexStatus?.action === "upgrade" && <span data-testid="codex-upgrade-action">{zh ? "请升级 Codex 制品" : "Upgrade the Codex artifact"}</span>}
-          {codexStatus?.action === "restart" && <span data-testid="codex-restart-action">{zh ? "请重启 Runtime 后重试" : "Restart Runtime and retry"}</span>}
+          {codexStatus?.action === "install" && <button type="button" disabled={busy} data-testid="codex-install-action" onClick={() => void onCodexRepair()}>{zh ? "安装并修复 Codex" : "Install and repair Codex"}</button>}
+          {codexStatus?.action === "upgrade" && <button type="button" disabled={busy} data-testid="codex-upgrade-action" onClick={() => void onCodexRepair()}>{zh ? "升级 Codex Backend" : "Upgrade Codex Backend"}</button>}
+          {codexStatus?.action === "restart" && <button type="button" data-testid="codex-restart-action" onClick={() => void onCodexRestart()}>{zh ? "重启 Codex Backend" : "Restart Codex Backend"}</button>}
+          <button type="button" data-testid="copy-codex-diagnostic" onClick={() => void copyCodexDiagnostic()}>{diagnosticCopied ? (zh ? "已复制" : "Copied") : (zh ? "复制脱敏诊断" : "Copy redacted diagnostics")}</button>
         </div>
+        <ol className="codex-setup-steps" data-testid="codex-setup-steps" aria-label={zh ? "Codex 首次使用向导" : "Codex first-use setup"}>
+          <li data-state={codexStatus?.state === "not_installed" ? "current" : "complete"}>
+            <strong>{zh ? "1. 检查或安装 Codex" : "1. Check or install Codex"}</strong>
+            <span>{codexStatus?.version ? `${zh ? "已找到版本" : "Found version"} ${codexStatus.version}` : (zh ? "等待检查" : "Waiting for check")}</span>
+          </li>
+          <li data-state={codexStatus?.loggedIn ? "complete" : codexStatus?.available ? "current" : "pending"}>
+            <strong>{zh ? "2. 登录 ChatGPT" : "2. Sign in to ChatGPT"}</strong>
+            <span>{codexStatus?.loggedIn ? (codexStatus.accountLabel || (zh ? "已登录" : "Signed in")) : (zh ? "需要登录后才能对话" : "Sign in before chatting")}</span>
+          </li>
+          <li data-state={codexStatus?.state === "available" ? "complete" : "pending"}>
+            <strong>{zh ? "3. 新建 Codex 会话" : "3. Start a Codex conversation"}</strong>
+            <span>{codexStatus?.state === "available" ? (zh ? "已就绪，可返回工作区新建会话" : "Ready; return to a workspace and start a conversation") : (zh ? "完成前两步后自动就绪" : "Ready automatically after the first two steps")}</span>
+          </li>
+        </ol>
         {codexLogin?.userCode && <div role="status" data-testid="codex-device-code">{zh ? "设备码" : "Device code"}: {codexLogin.userCode}</div>}
-      </section>
+      </section>}
 
       <section className="about-section">
         <div className="about-section-title">
@@ -5004,13 +5408,42 @@ function formatUpdateStatus(
   return zh ? "未检查" : "not checked";
 }
 
-type SettingsPane = "general" | "voice" | "agent-defaults" | "agent-task" | "approvals" | "analytics" | "integrations" | "channels" | "other";
+type SettingsPane = "general" | "voice" | "agent-defaults" | "agent-task" | "approvals" | "analytics" | "integrations" | "remote-workspace" | "channels" | "other";
+type AndroidDeviceLoadState = "idle" | "loading" | "ready" | "runtime-offline" | "platform-offline" | "management-unavailable" | "failed";
+
+function isPermissionError(reason: unknown): boolean {
+  const raw = reason instanceof Error ? reason.message : String(reason);
+  return /401|403|forbidden|permission|unauthorized|oidc|auth/i.test(raw);
+}
+
+function classifyAndroidDeviceError(reason: unknown, readiness: DesktopMobilePairingReadiness | null): AndroidDeviceLoadState {
+  if (readiness?.state === "offline") return "platform-offline";
+  if (readiness?.state === "not_registered" || readiness?.state === "credential_invalid") return "runtime-offline";
+  if (isPermissionError(reason)) return "management-unavailable";
+  return "failed";
+}
+
+function androidRelativeTime(raw: string | null | undefined, language: AppLanguage): string {
+  if (!raw) return language === "zh" ? "从未在线" : "never seen";
+  const then = Date.parse(raw);
+  if (!Number.isFinite(then)) return language === "zh" ? "时间未知" : "unknown";
+  const seconds = Math.max(0, Math.floor((Date.now() - then) / 1000));
+  if (seconds < 60) return language === "zh" ? "刚刚" : "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return language === "zh" ? `${minutes}分钟前` : `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return language === "zh" ? `${hours}小时前` : `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return language === "zh" ? "昨天" : "yesterday";
+  return language === "zh" ? `${days}天前` : `${days}d ago`;
+}
 
 function SettingsPanel({
   agents,
   appearance,
   approvalCenterPanel,
   channelsPanel,
+  featureCapabilities,
   completionNotifications,
   defaultThinkingEffort,
   developerMode,
@@ -5019,6 +5452,8 @@ function SettingsPanel({
   ideContext,
   language,
   models,
+  mobilePairingRefreshToken,
+  mobilePairingTarget,
   myDrSaiConfig,
   onCheckUpdates,
   onAppearanceChange,
@@ -5029,6 +5464,7 @@ function SettingsPanel({
   onLanguageChange,
   onLogout,
   onNewAgentTask,
+  onOpenMobilePairing,
   onOpenBrowserPanel,
   onOpenPath,
   onResetPreferences,
@@ -5039,10 +5475,13 @@ function SettingsPanel({
   onSelectModel,
   onSessionScopeChange,
   onArchiveThread,
+  workspaces,
+  onSyncWorkspaceSessions,
   onSidebarComponentsChange,
   onThinkingEffortChange,
   onWorkspaceSortModeChange,
   onUpdateAgentConfig,
+  onModelConnectionUpdated,
   restoreLastSession,
   restoreLastWorkspace,
   rightSidebarComponents,
@@ -5061,6 +5500,7 @@ function SettingsPanel({
   appearance: AppearanceMode;
   approvalCenterPanel: React.ReactNode;
   channelsPanel: React.ReactNode;
+  featureCapabilities?: DesktopPlatformDescriptor["capabilities"]["features"];
   completionNotifications: boolean;
   defaultThinkingEffort: ThinkingEffort;
   developerMode: boolean;
@@ -5069,6 +5509,8 @@ function SettingsPanel({
   ideContext: DesktopIdeContextSnapshot | null;
   language: AppLanguage;
   models: MyDrSaiModelConfig[];
+  mobilePairingRefreshToken: number;
+  mobilePairingTarget: DesktopMobilePairingTarget;
   myDrSaiConfig: MyDrSaiConfig | null;
   onCheckUpdates: () => void;
   onAppearanceChange: (appearance: AppearanceMode) => void;
@@ -5079,6 +5521,7 @@ function SettingsPanel({
   onLanguageChange: (language: AppLanguage) => void;
   onLogout: () => Promise<void>;
   onNewAgentTask: () => void;
+  onOpenMobilePairing: () => void;
   onOpenBrowserPanel: () => void;
   onOpenPath: (path: string) => void;
   onResetPreferences: () => void;
@@ -5088,11 +5531,14 @@ function SettingsPanel({
   onSelectAgent: (agentId: string) => void;
   onSelectModel: (model: string) => void;
   onSessionScopeChange: (scope: "workspace" | "all") => void;
-  onArchiveThread: (threadId: string, archived: boolean) => void;
+  onArchiveThread: (threadId: string, archived: boolean) => void | Promise<void>;
+  workspaces: WorkspaceProject[];
+  onSyncWorkspaceSessions: (workspace: WorkspaceProject) => void | Promise<void>;
   onSidebarComponentsChange: React.Dispatch<React.SetStateAction<SidebarComponentVisibility>>;
   onThinkingEffortChange: (effort: ThinkingEffort) => void;
   onWorkspaceSortModeChange: (mode: WorkspaceSortMode) => void;
   onUpdateAgentConfig: (updates: { plan_mode?: boolean; workspace_enabled?: boolean }) => Promise<void>;
+  onModelConnectionUpdated: (connection: MyDrSaiModelConnection) => void;
   restoreLastSession: boolean;
   restoreLastWorkspace: boolean;
   rightSidebarComponents: RightSidebarComponentVisibility;
@@ -5115,8 +5561,28 @@ function SettingsPanel({
   const [streamingVoiceCapabilities, setStreamingVoiceCapabilities] = useState<DesktopStreamingVoiceCapabilities | null>(null);
   const [systemVoices, setSystemVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [remoteHostCount, setRemoteHostCount] = useState<number | null>(null);
+  const [mobilePairingReadiness, setMobilePairingReadiness] = useState<DesktopMobilePairingReadiness | null>(null);
+  const [mobileAssociations, setMobileAssociations] = useState<DesktopMobileAssociation[]>([]);
+  const [mobileAssociationsState, setMobileAssociationsState] = useState<AndroidDeviceLoadState>("idle");
+  const [mobileEnrollmentBusy, setMobileEnrollmentBusy] = useState(false);
+  const [mobileEnrollmentError, setMobileEnrollmentError] = useState<string | null>(null);
   const [agentConfigSaving, setAgentConfigSaving] = useState(false);
   const [agentConfigMessage, setAgentConfigMessage] = useState<string | null>(null);
+  const [modelDraft, setModelDraft] = useState("");
+  const [providerDraft, setProviderDraft] = useState("");
+  const [baseUrlDraft, setBaseUrlDraft] = useState("");
+  const [apiKeyDraft, setApiKeyDraft] = useState("");
+  const [apiKeyEnvDraft, setApiKeyEnvDraft] = useState("");
+  const [wireApiDraft, setWireApiDraft] = useState<"openai" | "anthropic">("openai");
+  const [keySourceDraft, setKeySourceDraft] = useState<"secure" | "env" | "none">("secure");
+  const [modelAdvancedOpen, setModelAdvancedOpen] = useState(false);
+  const [modelConfigBusy, setModelConfigBusy] = useState(false);
+  const [modelConfigMessage, setModelConfigMessage] = useState<string | null>(null);
+  const [modelConfigConflict, setModelConfigConflict] = useState(false);
+  const [providerPendingDeletion, setProviderPendingDeletion] = useState<string | null>(null);
+  const [modelTestConfirmationOpen, setModelTestConfirmationOpen] = useState(false);
+  const [modelProviderPresets, setModelProviderPresets] = useState<MyDrSaiProviderPreset[]>([]);
+  const [discoveredModels, setDiscoveredModels] = useState<string[]>([]);
   const [cleanupPreview, setCleanupPreview] = useState<DesktopDataCleanupPreview | null>(null);
   const [cleanupConfirmation, setCleanupConfirmation] = useState("");
   const [cleanupBusy, setCleanupBusy] = useState(false);
@@ -5125,6 +5591,124 @@ function SettingsPanel({
   const archivedThreads = threads.filter((thread) => thread.archived).filter((thread) =>
     thread.title.toLocaleLowerCase().includes(archiveSearch.trim().toLocaleLowerCase()),
   );
+
+  useEffect(() => {
+    const connection = myDrSaiConfig?.modelConnection;
+    if (!connection) return;
+    setModelDraft(connection.model);
+    setProviderDraft(connection.model_provider);
+    setBaseUrlDraft(connection.provider.base_url);
+    setApiKeyDraft("");
+    setApiKeyEnvDraft(connection.provider.api_key_source?.startsWith("env:") ? connection.provider.api_key_source.slice(4) : "");
+    setWireApiDraft(connection.provider.wire_api);
+    setKeySourceDraft(connection.provider.requires_api_key ? (connection.provider.api_key_source?.startsWith("env:") ? "env" : "secure") : "none");
+  }, [myDrSaiConfig?.modelConnection]);
+
+  useEffect(() => {
+    void desktopApi.listMyDrSaiModelProviderPresets().then(setModelProviderPresets).catch(() => setModelProviderPresets([]));
+  }, []);
+
+  function applyModelProviderPreset(presetId: string): void {
+    const preset = modelProviderPresets.find((item) => item.id === presetId);
+    if (!preset) return;
+    setProviderDraft(preset.id.startsWith("custom-") ? "custom" : preset.id);
+    setBaseUrlDraft(preset.base_url);
+    setWireApiDraft(preset.wire_api);
+    setKeySourceDraft(preset.requires_api_key ? "secure" : "none");
+    setApiKeyDraft("");
+    setApiKeyEnvDraft("");
+    setDiscoveredModels([]);
+  }
+
+  async function discoverModels(): Promise<void> {
+    setModelConfigBusy(true); setModelConfigMessage(null);
+    try {
+      const result = await desktopApi.discoverMyDrSaiProviderModels(providerDraft.trim(), true);
+      setDiscoveredModels(result.models);
+      setModelConfigMessage(result.ok ? `${result.models.length} ${zh ? "个模型可用" : "models discovered"}` : `${zh ? "模型发现失败，可继续手工输入" : "Discovery failed; manual model entry remains available"}: ${result.error || "unknown"}`);
+    } catch (error) { setModelConfigMessage(error instanceof Error ? error.message : String(error)); }
+    finally { setModelConfigBusy(false); }
+  }
+
+  async function saveModelConnection(): Promise<void> {
+    setModelConfigBusy(true); setModelConfigMessage(null); setModelConfigConflict(false);
+    try {
+      const connection = await desktopApi.updateMyDrSaiModelConnection({ model: modelDraft.trim(), model_provider: providerDraft.trim(), ...(baseUrlDraft.trim() ? { base_url: baseUrlDraft.trim() } : {}), ...(keySourceDraft === "secure" && apiKeyDraft.trim() ? { api_key: apiKeyDraft.trim() } : {}), ...(keySourceDraft === "env" && apiKeyEnvDraft.trim() ? { api_key_env: apiKeyEnvDraft.trim() } : {}), wire_api: wireApiDraft, requires_api_key: keySourceDraft !== "none", ...(myDrSaiConfig?.modelConnection?.revision ? { expected_revision: myDrSaiConfig.modelConnection.revision } : {}) });
+      onModelConnectionUpdated(connection); setApiKeyDraft(""); setModelConfigMessage(zh ? "模型服务配置已保存。" : "Model service configuration saved.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setModelConfigConflict(message.includes("config_conflict") || message.includes("409"));
+      setModelConfigMessage(message);
+    }
+    finally { setModelConfigBusy(false); }
+  }
+
+  async function reloadModelConnectionAfterConflict(): Promise<void> {
+    setModelConfigBusy(true);
+    try {
+      const refreshed = await desktopApi.getMyDrSaiConfig();
+      if (refreshed.modelConnection) {
+        onModelConnectionUpdated(refreshed.modelConnection);
+        setModelConfigConflict(false);
+        setModelConfigMessage(zh ? "已重新加载最新模型服务配置，请检查后再次保存。" : "Latest model service configuration reloaded. Review it before saving again.");
+      }
+    } catch (error) { setModelConfigMessage(error instanceof Error ? error.message : String(error)); }
+    finally { setModelConfigBusy(false); }
+  }
+
+  async function testModelConnection(mode: "basic" | "model"): Promise<void> {
+    setModelConfigBusy(true); setModelConfigMessage(null);
+    try {
+      const result = await desktopApi.testMyDrSaiModelDraft({ model: modelDraft.trim(), model_provider: providerDraft.trim(), ...(baseUrlDraft.trim() ? { base_url: baseUrlDraft.trim() } : {}), ...(keySourceDraft === "secure" && apiKeyDraft.trim() ? { api_key: apiKeyDraft.trim() } : {}), ...(keySourceDraft === "env" && apiKeyEnvDraft.trim() ? { api_key_env: apiKeyEnvDraft.trim() } : {}), wire_api: wireApiDraft, requires_api_key: keySourceDraft !== "none" }, mode);
+      const refreshed = await desktopApi.getMyDrSaiConfig();
+      if (refreshed.modelConnection) onModelConnectionUpdated(refreshed.modelConnection);
+      const localizedGuidance = result.guidance?.localizations?.[zh ? "zh" : "en"];
+      setModelConfigMessage(result.ok
+        ? mode === "model"
+          ? (zh ? "模型调用成功（草稿尚未保存，可能已产生少量费用）。" : "Model call succeeded (draft not saved; a small charge may have occurred).")
+          : (zh ? "基础连接成功（草稿尚未保存；尚未验证指定模型调用）。" : "Basic connection succeeded (draft not saved; the selected model has not been called).")
+        : `${localizedGuidance?.title || result.guidance?.title || (zh ? "连接测试失败" : "Connection test failed")}: ${localizedGuidance?.actions?.join(" / ") || result.guidance?.actions?.join(" / ") || result.error || "unknown"}`);
+      if (mode === "model") setModelTestConfirmationOpen(false);
+    }
+    catch (error) { setModelConfigMessage(error instanceof Error ? error.message : String(error)); }
+    finally { setModelConfigBusy(false); }
+  }
+
+  function requestModelProviderDeletion(): void {
+    const provider = providerDraft.trim();
+    if (!provider || provider === "hepai") return;
+    setProviderPendingDeletion(provider);
+  }
+
+  async function deleteModelProvider(deleteCredential: boolean): Promise<void> {
+    const provider = providerPendingDeletion;
+    if (!provider || provider === "hepai") return;
+    setModelConfigBusy(true); setModelConfigMessage(null);
+    try {
+      const result = await desktopApi.deleteMyDrSaiModelProvider(provider, deleteCredential);
+      const next = await desktopApi.getMyDrSaiConfig();
+      if (next.modelConnection) onModelConnectionUpdated(next.modelConnection);
+      setProviderPendingDeletion(null);
+      const active = result.active || next.modelConnection?.model_provider;
+      const activeMessage = active === "hepai"
+        ? (zh ? "当前连接已切换为 HepAI。" : "HepAI is now active.")
+        : (zh ? `当前连接仍为 ${active || "原 Provider"}。` : `The active connection remains ${active || "the previous Provider"}.`);
+      setModelConfigMessage(deleteCredential
+        ? (zh ? `Provider“${provider}”及其安全凭据已删除。${activeMessage}` : `Provider “${provider}” and its secure credential were deleted. ${activeMessage}`)
+        : (zh ? `Provider“${provider}”已删除，安全凭据已保留。${activeMessage}` : `Provider “${provider}” was deleted and its secure credential was retained. ${activeMessage}`));
+    }
+    catch (error) { setModelConfigMessage(error instanceof Error ? error.message : String(error)); }
+    finally { setModelConfigBusy(false); }
+  }
+
+  async function restoreHepAiDefault(): Promise<void> {
+    setModelConfigBusy(true); setModelConfigMessage(null);
+    try {
+      const connection = await desktopApi.updateMyDrSaiModelConnection({ model: "deepseek-v4-pro", model_provider: "hepai", ...(myDrSaiConfig?.modelConnection?.revision ? { expected_revision: myDrSaiConfig.modelConnection.revision } : {}) });
+      onModelConnectionUpdated(connection); setModelDraft(connection.model); setProviderDraft("hepai"); setBaseUrlDraft(connection.provider.base_url); setModelConfigMessage(zh ? "已恢复 HepAI 默认模型；自定义 Provider 未被删除。" : "HepAI defaults restored; custom Providers were not deleted.");
+    } catch (error) { setModelConfigMessage(error instanceof Error ? error.message : String(error)); }
+    finally { setModelConfigBusy(false); }
+  }
 
   async function openDataCleanup(scope: DesktopDataCleanupScope): Promise<void> {
     setCleanupBusy(true);
@@ -5180,21 +5764,122 @@ function SettingsPanel({
     }
   }
 
+  async function revokeMobileEnrollment(): Promise<void> {
+    const confirmed = window.confirm(zh
+      ? "这会断开所有 Android 设备，并禁止它们继续连接此电脑。确定继续吗？"
+      : "This disconnects every Android device and prevents further connections to this computer. Continue?");
+    if (!confirmed) return;
+    setMobileEnrollmentBusy(true);
+    setMobileEnrollmentError(null);
+    try {
+      await desktopApi.revokeMobileRuntimeEnrollment(mobilePairingTarget);
+      setMobilePairingReadiness({ state: "not_registered", action: "register_runtime" });
+      setMobileAssociations([]);
+      setMobileAssociationsState("runtime-offline");
+    } catch (reason) {
+      setMobileEnrollmentError(mobilePairingErrorText(reason, language));
+    } finally {
+      setMobileEnrollmentBusy(false);
+    }
+  }
+
+  async function enableMobileRemoteAccess(): Promise<void> {
+    setMobileEnrollmentBusy(true);
+    setMobileEnrollmentError(null);
+    try {
+      const readiness = await desktopApi.enableMobileRemoteAccess();
+      setMobilePairingReadiness(readiness);
+      setMobileAssociationsState(readiness.state === "ready" ? "ready" : "runtime-offline");
+      if (readiness.state === "ready") {
+        await refreshAndroidDevices();
+      }
+    } catch (reason) {
+      setMobileAssociationsState("runtime-offline");
+      setMobileEnrollmentError(mobilePairingErrorText(reason, language));
+    } finally {
+      setMobileEnrollmentBusy(false);
+    }
+  }
+
+  async function refreshAndroidDevices(): Promise<void> {
+    setMobileAssociationsState("loading");
+    setMobileEnrollmentError(null);
+    let readiness: DesktopMobilePairingReadiness | null = null;
+    try {
+      readiness = await desktopApi.getMobilePairingReadiness(mobilePairingTarget);
+      setMobilePairingReadiness(readiness);
+      if (readiness.state !== "ready") {
+        setMobileAssociations([]);
+        setMobileAssociationsState(readiness.state === "offline" ? "platform-offline" : "runtime-offline");
+        return;
+      }
+      const rows = await desktopApi.listMobileAssociations(mobilePairingTarget);
+      setMobileAssociations(rows.filter((item) => item.status === "active"));
+      setMobileAssociationsState("ready");
+    } catch (reason) {
+      setMobileAssociations([]);
+      const state = classifyAndroidDeviceError(reason, readiness);
+      setMobileAssociationsState(state);
+      setMobileEnrollmentError(state === "management-unavailable" ? null : mobilePairingErrorText(reason, language));
+    }
+  }
+
+  async function revokeAndroidDevice(association: DesktopMobileAssociation): Promise<void> {
+    const confirmed = window.confirm(zh
+      ? `撤销 ${association.device_name} 对此电脑的远程访问？`
+      : `Revoke remote access for ${association.device_name}?`);
+    if (!confirmed) return;
+    setMobileEnrollmentBusy(true);
+    setMobileEnrollmentError(null);
+    try {
+      await desktopApi.revokeMobileAssociation(association.association_id, mobilePairingTarget);
+      setMobileAssociations((items) => items.filter((item) => item.association_id !== association.association_id));
+    } catch (reason) {
+      setMobileEnrollmentError(mobilePairingErrorText(reason, language));
+    } finally {
+      setMobileEnrollmentBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (activePane !== "remote-workspace") return;
+    let cancelled = false;
+    const refresh = (): void => {
+      void (featureCapabilities?.remoteWorkspace === false
+        ? Promise.resolve([])
+        : desktopApi.listSshHosts().catch(() => [])
+      ).then((hosts) => {
+        if (cancelled) return;
+        setRemoteHostCount(hosts.length);
+        if (featureCapabilities?.remoteWorkspace === true) void refreshAndroidDevices();
+      });
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [activePane, featureCapabilities]);
+
+  useEffect(() => {
+    if (mobilePairingRefreshToken <= 0 || activePane !== "remote-workspace") return;
+    void refreshAndroidDevices();
+  }, [mobilePairingRefreshToken, activePane]);
+
   useEffect(() => {
     if (activePane !== "integrations") return;
+    if (featureCapabilities?.serialVoice !== true && featureCapabilities?.streamingVoice !== true) return;
     let cancelled = false;
-    void Promise.all([
-      desktopApi.getVoiceRuntimeStatus().catch(() => null),
-      desktopApi.listSshHosts().catch(() => []),
-    ]).then(([voiceStatus, hosts]) => {
-      if (cancelled) return;
-      setVoiceIntegrationState(voiceStatus?.state ?? "unavailable");
-      setRemoteHostCount(hosts.length);
+    void desktopApi.getVoiceRuntimeStatus().then((status) => {
+      if (!cancelled) setVoiceIntegrationState(status.state);
+    }).catch(() => {
+      if (!cancelled) setVoiceIntegrationState("unavailable");
     });
     return () => {
       cancelled = true;
     };
-  }, [activePane]);
+  }, [activePane, featureCapabilities]);
 
   useEffect(() => {
     if (activePane !== "voice" || !("speechSynthesis" in window)) return;
@@ -5209,14 +5894,14 @@ function SettingsPanel({
     let cancelled = false;
     void Promise.all([
       desktopApi.getVoiceRuntimeStatus().catch(() => null),
-      desktopApi.getStreamingVoiceCapabilities().catch(() => null),
+      featureCapabilities?.streamingVoice === false ? Promise.resolve(null) : desktopApi.getStreamingVoiceCapabilities().catch(() => null),
     ]).then(([status, capabilities]) => {
       if (cancelled) return;
       setVoiceRuntimeStatus(status);
       setStreamingVoiceCapabilities(capabilities);
     });
     return () => { cancelled = true; };
-  }, [activePane]);
+  }, [activePane, featureCapabilities]);
 
   const voiceModeCapabilities = deriveVoiceModeCapabilities(voiceRuntimeStatus, {
     audioWorklet: typeof AudioWorkletNode !== "undefined",
@@ -5258,6 +5943,7 @@ function SettingsPanel({
       label: zh ? "集成" : "Integrations",
       items: [
         { id: "integrations", label: zh ? "集成概览" : "Overview", icon: Plug },
+        { id: "remote-workspace", label: zh ? "远程工作区" : "Remote Workspace", icon: TerminalIcon },
         { id: "channels", label: zh ? "频道" : "Channels", icon: MessageSquare },
       ],
     },
@@ -5266,12 +5952,63 @@ function SettingsPanel({
       items: [{ id: "other", label: zh ? "系统与路径" : "System and paths", icon: FileText }],
     },
   ];
+  const visibleGroups = groups.map((group) => ({
+    ...group,
+    items: group.items.filter((item) => {
+      if (item.id === "voice") return featureCapabilities?.serialVoice === true || featureCapabilities?.streamingVoice === true;
+      if (item.id === "agent-defaults" || item.id === "agent-task") return featureCapabilities?.agents === true;
+      if (item.id === "approvals") return featureCapabilities?.approvals === true;
+      if (item.id === "analytics") return featureCapabilities?.diagnostics === true;
+      if (item.id === "remote-workspace") return featureCapabilities?.remoteWorkspace === true;
+      if (item.id === "channels") return featureCapabilities?.channels === true;
+      return true;
+    }),
+  })).filter((group) => group.items.length > 0);
+  const visiblePaneIds = visibleGroups.flatMap((group) => group.items.map((item) => item.id));
+  useEffect(() => {
+    if (visiblePaneIds.includes(activePane)) return;
+    setActivePane("general");
+  }, [activePane, visiblePaneIds.join("|")]);
+  const activeAndroidAssociations = mobileAssociations.filter((item) => item.status === "active");
+  const androidOnlineDeviceCount = new Set(
+    activeAndroidAssociations
+      .filter((item) => item.access_state === "online" || item.access_state === "accessing")
+      .map((item) => item.device_summary),
+  ).size;
+  const androidRemoteEnabled = mobilePairingReadiness?.state === "ready"
+    || (mobilePairingReadiness?.state === "offline" && Boolean(mobilePairingReadiness.runtime_id));
+  const androidDeviceStateText: Record<DesktopMobileAssociation["access_state"], string> = zh ? {
+    accessing: "正在访问",
+    online: "在线",
+    offline: "离线",
+    revoked: "已撤销",
+  } : {
+    accessing: "Accessing",
+    online: "Online",
+    offline: "Offline",
+    revoked: "Revoked",
+  };
+  const androidPanelMessage = mobileAssociationsState === "loading"
+    ? null
+    : mobileAssociationsState === "runtime-offline"
+      ? (!androidRemoteEnabled
+          ? (zh ? "Android 远程连接已关闭。" : "Android remote connection is disabled.")
+          : (zh ? "Runtime Host enrollment 暂时不可用。" : "Runtime Host enrollment is temporarily unavailable."))
+      : mobileAssociationsState === "platform-offline"
+        ? (zh ? "暂时无法连接 HepAI Platform Relay，请稍后重试。" : "HepAI Platform Relay is currently unreachable. Try again later.")
+        : mobileAssociationsState === "management-unavailable"
+          ? (zh ? "已允许 Android 连接，但当前 Relay 暂不支持查看和管理设备列表。" : "Android connections are allowed, but the current Relay does not support viewing or managing the device list.")
+          : mobileAssociationsState === "failed"
+            ? (mobileEnrollmentError ?? (zh ? "请求 Android 设备列表失败。" : "Could not load Android devices."))
+            : activeAndroidAssociations.length === 0
+              ? (zh ? "暂无已授权 Android 设备。" : "No authorized Android devices yet.")
+              : null;
 
   return (
     <div className="settings-view">
       <aside className="settings-navigation" aria-label={zh ? "设置分组" : "Settings groups"}>
         <h1>{zh ? "设置" : "Settings"}</h1>
-        {groups.map((group) => (
+        {visibleGroups.map((group) => (
           <section key={group.label}>
             <h2>{group.label}</h2>
             {group.items.map((item) => {
@@ -5301,6 +6038,56 @@ function SettingsPanel({
               <h2>{zh ? "常规" : "General"}</h2>
               <p>{zh ? "管理账户和桌面端的基础偏好。" : "Manage your account and desktop preferences."}</p>
             </header>
+            <section className="settings-section model-provider-settings" data-testid="model-provider-settings">
+              <div><h2>{zh ? "模型服务" : "Model service"}</h2><p>{zh ? "保存到 ~/.drsai/config.toml。API Key 不会返回到界面。" : "Saved to ~/.drsai/config.toml. API keys are never returned to the UI."}</p></div>
+              {myDrSaiConfig?.modelConnection && <div className="model-provider-status-card" data-testid="model-provider-status-card">
+                <strong>{myDrSaiConfig.modelConnection.model} · {myDrSaiConfig.modelConnection.model_provider}</strong>
+                <span>{myDrSaiConfig.modelConnection.provider.base_url}</span>
+                <span>{zh ? "凭据" : "Credential"}: {myDrSaiConfig.modelConnection.provider.requires_api_key ? (myDrSaiConfig.modelConnection.provider.api_key_source || (zh ? "未配置" : "not configured")) : (zh ? "无需密钥" : "not required")}</span>
+                <span>{zh ? "运行状态" : "Runtime"}: {myDrSaiConfig.modelConnection.runtime?.runtime_status || "unknown"}</span>
+                <span>{zh ? "配置版本" : "Config revision"}: {myDrSaiConfig.modelConnection.revision?.slice(0, 12) || "unknown"}</span>
+                <span>{zh ? "最近测试" : "Last test"}: {myDrSaiConfig.modelConnection.last_test ? `${myDrSaiConfig.modelConnection.last_test.mode === "model" ? (zh ? "模型调用" : "model call") : (zh ? "基础连接" : "basic connection")} · ${myDrSaiConfig.modelConnection.last_test.ok ? "OK" : myDrSaiConfig.modelConnection.last_test.error || "failed"} · ${new Date(myDrSaiConfig.modelConnection.last_test.tested_at).toLocaleString()}` : (zh ? "尚未测试" : "not tested")}</span>
+              </div>}
+              <div className="model-provider-grid">
+                <label><span>{zh ? "服务预设" : "Service preset"}</span><select data-testid="model-provider-preset" defaultValue="" onChange={(event) => applyModelProviderPreset(event.target.value)}><option value="">{zh ? "自定义/当前配置" : "Custom/current"}</option>{modelProviderPresets.map((preset) => <option key={preset.id} value={preset.id}>{preset.label}</option>)}</select></label>
+                <label><span>{zh ? "模型" : "Model"}</span><input data-testid="model-provider-model" list="discovered-model-options" value={modelDraft} onChange={(event) => setModelDraft(event.target.value)} placeholder="deepseek-chat" /><datalist id="discovered-model-options">{discoveredModels.map((model) => <option key={model} value={model} />)}</datalist></label>
+                <label><span>{zh ? "服务名称" : "Service name"}</span><input data-testid="model-provider-name" value={providerDraft} onChange={(event) => setProviderDraft(event.target.value)} placeholder="custom" /></label>
+                {(modelAdvancedOpen || providerDraft === "ollama" || !["hepai", "openai", "anthropic", "deepseek"].includes(providerDraft)) && <label className="model-provider-wide"><span>Base URL</span><input value={baseUrlDraft} onChange={(event) => setBaseUrlDraft(event.target.value)} placeholder="https://api.example.com/v1" /></label>}
+                <label><span>{zh ? "密钥来源" : "Key source"}</span><select data-testid="model-provider-key-source" value={keySourceDraft} onChange={(event) => { const source = event.target.value as "secure" | "env" | "none"; setKeySourceDraft(source); setApiKeyDraft(""); if (source !== "env") setApiKeyEnvDraft(""); }}><option value="secure">{zh ? "系统安全保存（推荐）" : "Secure storage (recommended)"}</option><option value="env">{zh ? "环境变量" : "Environment variable"}</option><option value="none">{zh ? "无需 Key" : "No key required"}</option></select></label>
+                {keySourceDraft === "secure" && <label><span>API Key</span><input data-testid="model-provider-api-key" type="password" value={apiKeyDraft} onChange={(event) => setApiKeyDraft(event.target.value)} placeholder={myDrSaiConfig?.modelConnection?.provider.has_api_key ? "•••••••• (configured)" : "sk-..."} /></label>}
+                {keySourceDraft === "env" && <label><span>{zh ? "密钥环境变量" : "Key environment variable"}</span><input data-testid="model-provider-api-key-env" value={apiKeyEnvDraft} onChange={(event) => setApiKeyEnvDraft(event.target.value)} placeholder="OPENAI_API_KEY" /></label>}
+                {modelAdvancedOpen && <label><span>{zh ? "协议" : "Protocol"}</span><select value={wireApiDraft} onChange={(event) => setWireApiDraft(event.target.value as "openai" | "anthropic")}><option value="openai">OpenAI compatible</option><option value="anthropic">Anthropic compatible</option></select></label>}
+              </div>
+              {myDrSaiConfig?.modelConnection?.metadata?.known_model === false && <p className="model-provider-hint" data-testid="model-provider-unknown-model-warning">{zh ? "该模型未登记，能力参数尚未校准；将使用安全的通用默认值。" : "This model is not registered; capabilities are uncalibrated and safe generic defaults will be used."}</p>}
+              <button type="button" className="model-provider-advanced-toggle" onClick={() => setModelAdvancedOpen(value => !value)}>{modelAdvancedOpen ? (zh ? "收起高级设置" : "Hide advanced settings") : (zh ? "高级设置" : "Advanced settings")}</button>
+              <div className="model-provider-actions"><button type="button" disabled={modelConfigBusy || !modelDraft.trim() || !providerDraft.trim()} onClick={() => void saveModelConnection()}>{modelConfigBusy ? (zh ? "处理中…" : "Working…") : (zh ? "保存并使用" : "Save and use")}</button><button type="button" disabled={modelConfigBusy || !providerDraft.trim()} data-testid="model-provider-test-basic" onClick={() => void testModelConnection("basic")}>{zh ? "基础连接测试" : "Test basic connection"}</button><button type="button" disabled={modelConfigBusy || !modelDraft.trim() || !providerDraft.trim()} data-testid="model-provider-test-model" onClick={() => setModelTestConfirmationOpen(true)}>{zh ? "测试模型调用" : "Test model call"}</button><button type="button" disabled={modelConfigBusy || !providerDraft.trim()} onClick={() => void discoverModels()}>{zh ? "发现模型" : "Discover models"}</button><button type="button" disabled={modelConfigBusy || providerDraft === "hepai"} onClick={requestModelProviderDeletion}>{zh ? "删除 Provider" : "Delete Provider"}</button><button type="button" disabled={modelConfigBusy || providerDraft === "hepai"} onClick={() => void restoreHepAiDefault()}>{zh ? "恢复 HepAI 默认" : "Restore HepAI defaults"}</button>{myDrSaiConfig?.modelConnection?.path && <button type="button" onClick={() => onOpenPath(myDrSaiConfig.modelConnection!.path!)}>{zh ? "打开配置文件" : "Open config"}</button>}</div>
+              {modelConfigMessage && <div className="settings-message">{modelConfigMessage}{modelConfigConflict && <button type="button" data-testid="model-provider-conflict-reload" disabled={modelConfigBusy} onClick={() => void reloadModelConnectionAfterConflict()}>{zh ? "重新加载配置" : "Reload configuration"}</button>}</div>}
+            </section>
+            {providerPendingDeletion && (
+              <div className="model-provider-delete-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !modelConfigBusy) setProviderPendingDeletion(null); }} onKeyDown={(event) => { if (event.key === "Escape" && !modelConfigBusy) setProviderPendingDeletion(null); }}>
+                <section className="model-provider-delete-dialog" role="alertdialog" aria-modal="true" aria-labelledby="model-provider-delete-title" aria-describedby="model-provider-delete-description" data-testid="model-provider-delete-dialog">
+                  <h2 id="model-provider-delete-title">{zh ? `删除 Provider“${providerPendingDeletion}”？` : `Delete Provider “${providerPendingDeletion}”?`}</h2>
+                  <p id="model-provider-delete-description">{zh ? "请选择是否同时删除系统安全存储中的凭据。取消不会修改 Provider、凭据或当前连接。" : "Choose whether to remove its credential from secure storage. Cancel leaves the Provider, credential, and active connection unchanged."}</p>
+                  <div className="model-provider-delete-actions">
+                    <button type="button" className="danger" disabled={modelConfigBusy} data-testid="model-provider-delete-with-credential" onClick={() => void deleteModelProvider(true)}>{zh ? "删除 Provider 和凭据" : "Delete Provider and credential"}</button>
+                    <button type="button" disabled={modelConfigBusy} data-testid="model-provider-delete-keep-credential" onClick={() => void deleteModelProvider(false)}>{zh ? "仅删除 Provider" : "Delete Provider only"}</button>
+                    <button type="button" autoFocus disabled={modelConfigBusy} data-testid="model-provider-delete-cancel" onClick={() => setProviderPendingDeletion(null)}>{zh ? "取消" : "Cancel"}</button>
+                  </div>
+                </section>
+              </div>
+            )}
+            {modelTestConfirmationOpen && (
+              <div className="model-provider-delete-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !modelConfigBusy) setModelTestConfirmationOpen(false); }} onKeyDown={(event) => { if (event.key === "Escape" && !modelConfigBusy) setModelTestConfirmationOpen(false); }}>
+                <section className="model-provider-test-dialog" role="dialog" aria-modal="true" aria-labelledby="model-provider-test-title" aria-describedby="model-provider-test-description" data-testid="model-provider-test-dialog">
+                  <h2 id="model-provider-test-title">{zh ? `调用模型“${modelDraft.trim()}”？` : `Call model “${modelDraft.trim()}”?`}</h2>
+                  <p id="model-provider-test-description">{zh ? "这会向服务商发送一次最小模型请求，可能产生少量费用。测试只使用当前草稿，不会保存配置或切换当前会话。" : "This sends one minimal request to the provider and may incur a small charge. It tests the current draft without saving it or switching the active session."}</p>
+                  <div className="model-provider-delete-actions">
+                    <button type="button" disabled={modelConfigBusy} data-testid="model-provider-test-model-confirm" onClick={() => void testModelConnection("model")}>{modelConfigBusy ? (zh ? "测试中…" : "Testing…") : (zh ? "确认并测试" : "Confirm and test")}</button>
+                    <button type="button" autoFocus disabled={modelConfigBusy} data-testid="model-provider-test-model-cancel" onClick={() => setModelTestConfirmationOpen(false)}>{zh ? "取消" : "Cancel"}</button>
+                  </div>
+                </section>
+              </div>
+            )}
             <section className="settings-section">
               <div>
                 <h2>{zh ? "HepAI 账号" : "HepAI account"}</h2>
@@ -5331,7 +6118,18 @@ function SettingsPanel({
               <div className="settings-component-list">
                 <input value={archiveSearch} onChange={(event) => setArchiveSearch(event.target.value)} placeholder={zh ? "搜索已归档会话" : "Search archived sessions"} />
                 {archivedThreads.length === 0 ? <small>{zh ? "没有匹配的已归档会话。" : "No archived sessions match."}</small> : archivedThreads.map((thread) => (
-                  <div className="settings-row" key={thread.id}><span><strong>{thread.title}</strong><small>{thread.archiveSource === "codex" ? "Codex" : "OpenDrSai"}</small></span><button type="button" onClick={() => onArchiveThread(thread.id, false)}>{zh ? "取消归档" : "Unarchive"}</button></div>
+                  <div className="settings-row" key={thread.id}><span><strong>{thread.title}</strong><small>{thread.archiveSource === "codex" ? "Codex" : "OpenDrSai"}</small></span><button type="button" onClick={() => void Promise.resolve(onArchiveThread(thread.id, false)).catch((error) => window.alert(error instanceof Error ? error.message : (zh ? "取消归档失败，请重试。" : "Unarchive failed. Please retry.")))}>{zh ? "取消归档" : "Unarchive"}</button></div>
+                ))}
+              </div>
+            </section>
+            <section className="settings-section" data-testid="codex-workspace-sync-settings">
+              <div><h2>{zh ? "Codex 会话同步" : "Codex session sync"}</h2><p>{zh ? "按工作区路径重新读取 Codex 的活跃与已归档会话。" : "Reload active and archived Codex sessions matched by workspace path."}</p></div>
+              <div className="settings-component-list">
+                {workspaces.filter((workspace) => workspace.location !== "remote").map((workspace) => (
+                  <div className="settings-row" key={workspace.id}>
+                    <span><strong>{workspace.name}</strong><small>{workspace.path}</small></span>
+                    <button type="button" onClick={() => void onSyncWorkspaceSessions(workspace)}>{zh ? "重新同步" : "Resync"}</button>
+                  </div>
                 ))}
               </div>
             </section>
@@ -5354,7 +6152,9 @@ function SettingsPanel({
                 <strong>{zh ? "左侧栏组件" : "Sidebar components"}</strong>
                 <label className="settings-toggle"><span><strong>{zh ? "广场" : "Square"}</strong><small>{zh ? "显示或隐藏整个广场分组。" : "Show or hide the entire Square group."}</small></span><input type="checkbox" checked={sidebarComponents.square} onChange={(event) => onSidebarComponentsChange((current) => ({ ...current, square: event.target.checked }))} /></label>
                 <label className="settings-toggle"><span><strong>{zh ? "智能体" : "Agents"}</strong><small>{zh ? "在广场分组中显示智能体入口。" : "Show Agents inside the Square group."}</small></span><input type="checkbox" checked={sidebarComponents.agents} onChange={(event) => onSidebarComponentsChange((current) => ({ ...current, agents: event.target.checked }))} /></label>
+                {/* Temporarily hide Skills management entry — keep for later reuse.
                 <label className="settings-toggle"><span><strong>{zh ? "技能" : "Skills"}</strong><small>{zh ? "在广场分组中显示技能入口。" : "Show Skills inside the Square group."}</small></span><input type="checkbox" checked={sidebarComponents.skills} onChange={(event) => onSidebarComponentsChange((current) => ({ ...current, skills: event.target.checked }))} /></label>
+                */}
               </div>
               <div className="settings-component-list">
                 <strong>{zh ? "右侧栏组件" : "Right sidebar components"}</strong>
@@ -5602,12 +6402,54 @@ function SettingsPanel({
               <p>{zh ? "管理外部消息、工具和桌面上下文入口。" : "Manage external messaging, tools, and desktop context."}</p>
             </header>
             <section className="settings-section settings-integration-list">
-              <div className="settings-integration-row"><MessageSquare size={18} /><span><strong>{zh ? "频道" : "Channels"}</strong><small>{zh ? "连接消息渠道并导入只读上下文。" : "Connect message channels and import reviewed context."}</small></span><button type="button" onClick={() => setActivePane("channels")}>{zh ? "管理" : "Manage"}</button></div>
-              <div className="settings-integration-row"><Plug size={18} /><span><strong>{zh ? "工具连接" : "MCP"}</strong><small>{zh ? "在审批中心管理外部工具连接和操作确认。" : "Manage MCP sessions and tool approvals in Approval Center."}</small></span><button type="button" onClick={() => setActivePane("approvals")}>{zh ? "管理" : "Manage"}</button></div>
+              {featureCapabilities?.channels === true && <div className="settings-integration-row"><MessageSquare size={18} /><span><strong>{zh ? "频道" : "Channels"}</strong><small>{zh ? "连接消息渠道并导入只读上下文。" : "Connect message channels and import reviewed context."}</small></span><button type="button" onClick={() => setActivePane("channels")}>{zh ? "管理" : "Manage"}</button></div>}
+              {featureCapabilities?.mcp === true && featureCapabilities?.approvals === true && <div className="settings-integration-row"><Plug size={18} /><span><strong>{zh ? "工具连接" : "MCP"}</strong><small>{zh ? "在审批中心管理外部工具连接和操作确认。" : "Manage MCP sessions and tool approvals in Approval Center."}</small></span><button type="button" onClick={() => setActivePane("approvals")}>{zh ? "管理" : "Manage"}</button></div>}
               <div className="settings-integration-row"><FileText size={18} /><span><strong>IDE</strong><small>{ideContext?.currentFile?.path || (zh ? "当前没有 IDE 文件上下文" : "No IDE file context is active")}</small></span><em>{ideContext ? (zh ? "已连接" : "Connected") : (zh ? "未连接" : "Not connected")}</em></div>
-              <div className="settings-integration-row"><Globe2 size={18} /><span><strong>{zh ? "浏览器" : "Browser"}</strong><small>{zh ? "使用右侧浏览器面板查看和附加网页上下文。" : "Use the right browser panel to inspect and attach web context."}</small></span><button type="button" onClick={onOpenBrowserPanel}>{zh ? "打开" : "Open"}</button></div>
-              <div className="settings-integration-row"><MessageSquare size={18} /><span><strong>{zh ? "语音" : "Voice"}</strong><small>{zh ? "聊天输入区使用的语音转写运行时。" : "Voice transcription runtime used by the chat composer."}</small></span><em>{voiceIntegrationState === null ? (zh ? "检查中" : "Checking") : voiceIntegrationState}</em></div>
-              <div className="settings-integration-row"><TerminalIcon size={18} /><span><strong>{zh ? "远程计算机" : "Remote computers"}</strong><small>{zh ? "已配置、可用于远程工作区的计算机。" : "Configured computers available to remote workspaces."}</small></span><em>{remoteHostCount === null ? (zh ? "检查中" : "Checking") : zh ? `${remoteHostCount} 台计算机` : `${remoteHostCount} computers`}</em></div>
+              {featureCapabilities?.browser === true && <div className="settings-integration-row"><Globe2 size={18} /><span><strong>{zh ? "浏览器" : "Browser"}</strong><small>{zh ? "使用右侧浏览器面板查看和附加网页上下文。" : "Use the right browser panel to inspect and attach web context."}</small></span><button type="button" onClick={onOpenBrowserPanel}>{zh ? "打开" : "Open"}</button></div>}
+              {(featureCapabilities?.serialVoice === true || featureCapabilities?.streamingVoice === true) && <div className="settings-integration-row"><MessageSquare size={18} /><span><strong>{zh ? "语音" : "Voice"}</strong><small>{zh ? "聊天输入区使用的语音转写运行时。" : "Voice transcription runtime used by the chat composer."}</small></span><em>{voiceIntegrationState === null ? (zh ? "检查中" : "Checking") : voiceIntegrationState}</em></div>}
+            </section>
+          </>
+        )}
+
+        {activePane === "remote-workspace" && (
+          <>
+            <header className="settings-content-header">
+              <h2>{zh ? "远程工作区" : "Remote Workspace"}</h2>
+              <p>{zh ? "管理可用于远程工作区的计算机，以及 Android 端访问此电脑的连接。" : "Manage computers available to remote workspaces and Android access to this computer."}</p>
+            </header>
+            <section className="settings-section settings-integration-list" data-testid="remote-workspace-settings">
+              <div className="settings-integration-row" data-testid="remote-computers-entry"><TerminalIcon size={18} /><span><strong>{zh ? "远程计算机" : "Remote computers"}</strong><small>{zh ? "已配置、可用于远程工作区的计算机。" : "Configured computers available to remote workspaces."}</small></span><em>{remoteHostCount === null ? (zh ? "检查中" : "Checking") : zh ? `${remoteHostCount} 台计算机` : `${remoteHostCount} computers`}</em></div>
+              <div className="android-remote-panel" data-testid="android-remote-panel">
+                <div className="android-remote-header">
+                  <Smartphone size={18} />
+                  <span>
+                    <strong>Android</strong>
+                    <small>{zh ? "OpenDrSai Android 远程连接与设备管理。" : "OpenDrSai Android remote connection and device management."}</small>
+                  </span>
+                  <div className="settings-integration-actions">
+                    <button type="button" role="switch" aria-checked={androidRemoteEnabled} aria-label={androidRemoteEnabled ? (zh ? "不允许 Android 连接" : "Disallow Android connections") : (zh ? "允许 Android 连接" : "Allow Android connections")} className={`settings-connection-switch ${androidRemoteEnabled ? "is-enabled" : ""}`} data-testid="android-remote-toggle" disabled={mobileEnrollmentBusy || mobileAssociationsState === "loading"} onClick={() => { if (androidRemoteEnabled) void revokeMobileEnrollment(); else void enableMobileRemoteAccess(); }}><span aria-hidden="true" /></button>
+                    <button type="button" className={`android-refresh-button ${mobileAssociationsState === "loading" ? "is-loading" : ""}`} onClick={() => void refreshAndroidDevices()} disabled={mobileAssociationsState === "loading"} aria-label={zh ? "刷新 Android 设备" : "Refresh Android devices"} aria-busy={mobileAssociationsState === "loading"} title={zh ? "刷新" : "Refresh"} data-testid="android-refresh"><RefreshCw size={15} aria-hidden="true" /></button>
+                    <button type="button" onClick={onOpenMobilePairing} disabled={!androidRemoteEnabled || mobileEnrollmentBusy} data-testid="android-connect">{zh ? "连接 Android" : "Connect Android"}</button>
+                  </div>
+                </div>
+                <div className="android-remote-counts" data-testid="android-device-counts">
+                  <span>{zh ? `已授权设备 ${activeAndroidAssociations.length}` : `Authorized devices ${activeAndroidAssociations.length}`}</span>
+                  <span>{zh ? `当前在线 ${androidOnlineDeviceCount}` : `Online now ${androidOnlineDeviceCount}`}</span>
+                </div>
+                {androidPanelMessage ? <p className="android-remote-message" data-state={mobileAssociationsState} data-testid="android-device-state">{androidPanelMessage}</p> : null}
+                {activeAndroidAssociations.length > 0 ? (
+                  <div className="android-device-list" data-testid="android-device-list">
+                    {activeAndroidAssociations.map((association) => (
+                      <div key={association.association_id} className="android-device-row" data-state={association.access_state} data-testid="android-device-row">
+                        <span className="android-device-presence" aria-hidden="true" />
+                        <span><strong>{association.device_name}</strong><small>{association.device_summary}</small></span>
+                        <em data-testid="android-device-status">{androidDeviceStateText[association.access_state]}{association.last_seen_at ? ` · ${androidRelativeTime(association.last_seen_at, language)}` : ""}</em>
+                        <button type="button" className="danger" disabled={mobileEnrollmentBusy} data-testid="android-device-revoke" onClick={() => void revokeAndroidDevice(association)}>{zh ? "撤销" : "Revoke"}</button>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
             </section>
           </>
         )}

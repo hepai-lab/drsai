@@ -1,0 +1,61 @@
+"""Fail-closed release policy for retiring OAEP legacy projections."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+
+@dataclass(frozen=True)
+class LegacyRemovalMetrics:
+    release_cycles: int
+    observation_days: int
+    oaep_client_ratio: float
+    migration_ratio: float
+    legacy_request_ratio: float
+    fallback_error_rate: float
+    rollback_artifact_verified: bool
+
+    @classmethod
+    def from_mapping(cls, value: dict[str, Any]) -> "LegacyRemovalMetrics":
+        required = {
+            "release_cycles", "observation_days", "oaep_client_ratio",
+            "migration_ratio", "legacy_request_ratio", "fallback_error_rate",
+            "rollback_artifact_verified",
+        }
+        missing = sorted(required - value.keys())
+        if missing:
+            raise ValueError(f"oaep_legacy_removal_metrics_missing:{','.join(missing)}")
+        metrics = cls(
+            release_cycles=int(value["release_cycles"]),
+            observation_days=int(value["observation_days"]),
+            oaep_client_ratio=float(value["oaep_client_ratio"]),
+            migration_ratio=float(value["migration_ratio"]),
+            legacy_request_ratio=float(value["legacy_request_ratio"]),
+            fallback_error_rate=float(value["fallback_error_rate"]),
+            rollback_artifact_verified=value["rollback_artifact_verified"] is True,
+        )
+        for name in (
+            "oaep_client_ratio", "migration_ratio", "legacy_request_ratio",
+            "fallback_error_rate",
+        ):
+            if not 0 <= getattr(metrics, name) <= 1:
+                raise ValueError(f"oaep_legacy_removal_metric_invalid:{name}")
+        return metrics
+
+
+def legacy_removal_decision(metrics: LegacyRemovalMetrics) -> dict[str, Any]:
+    checks = {
+        "two_release_cycles": metrics.release_cycles >= 2,
+        "fourteen_observation_days": metrics.observation_days >= 14,
+        "oaep_clients_99_percent": metrics.oaep_client_ratio >= 0.99,
+        "migration_complete": metrics.migration_ratio == 1.0,
+        "legacy_requests_below_1_percent": metrics.legacy_request_ratio <= 0.01,
+        "fallback_errors_below_0_1_percent": metrics.fallback_error_rate <= 0.001,
+        "rollback_artifact_verified": metrics.rollback_artifact_verified,
+    }
+    return {
+        "allowed": all(checks.values()),
+        "checks": checks,
+        "failed": sorted(name for name, passed in checks.items() if not passed),
+    }

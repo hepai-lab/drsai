@@ -1,6 +1,31 @@
 export const DIAGNOSTIC_SCHEMA_VERSION = 1 as const;
 
+export interface InteractiveDebugPolicy {
+  enabled: boolean;
+  source: "default" | "user" | "environment";
+  updatedAt?: string;
+  locked: boolean;
+}
+
+export interface InteractiveDebugPolicyUpdateRequest {
+  enabled: boolean;
+  acknowledgedRisk: true;
+}
+
 export type DiagnosticLevel = "debug" | "info" | "warn" | "error";
+export type DiagnosticDomain = "agent" | "app" | "protocol";
+export type AgentDiagnosticPhase =
+  | "preparing"
+  | "connecting"
+  | "waiting_model"
+  | "reasoning"
+  | "calling_tool"
+  | "waiting_approval"
+  | "responding"
+  | "completed"
+  | "failed"
+  | "cancelled";
+export type DiagnosticVisibility = "milestone" | "detail" | "raw";
 export type DiagnosticStatus =
   | "started"
   | "running"
@@ -118,6 +143,10 @@ export interface DiagnosticEvent {
   component: string;
   operation: string;
   message: string;
+  domain: DiagnosticDomain;
+  visibility: DiagnosticVisibility;
+  agentPhase?: AgentDiagnosticPhase;
+  fingerprint?: string;
   source?: DiagnosticSourceLocation;
   stack?: DiagnosticStackFrame[];
   errorCode?: string;
@@ -151,6 +180,10 @@ export interface DiagnosticQuery {
   component?: string;
   status?: DiagnosticStatus;
   level?: DiagnosticLevel;
+  domain?: DiagnosticDomain;
+  visibility?: DiagnosticVisibility;
+  sessionId?: string;
+  runId?: string;
   since?: string;
   limit?: number;
 }
@@ -168,6 +201,54 @@ export interface DiagnosticTrace {
   criticalPathMs?: number;
   recovered?: boolean;
   machineIds?: string[];
+}
+
+export type AgentDiagnosticConnectionState = "unknown" | "connecting" | "connected" | "retrying" | "disconnected";
+
+export interface AgentRunDiagnosticState {
+  id: string;
+  traceId: string;
+  sessionId?: string;
+  runId?: string;
+  backendId?: string;
+  model?: string;
+  status: DiagnosticStatus;
+  phase: AgentDiagnosticPhase;
+  action: string;
+  startedAt: string;
+  phaseStartedAt: string;
+  lastEventAt: string;
+  elapsedMs: number;
+  phaseElapsedMs: number;
+  connectionState: AgentDiagnosticConnectionState;
+  currentTool?: string;
+  firstFailure?: DiagnosticEvent;
+  recentEvents: DiagnosticEvent[];
+}
+
+export interface DiagnosticIncident {
+  id: string;
+  fingerprint: string;
+  domain: "agent" | "app";
+  severity: "warning" | "error" | "critical";
+  title: string;
+  message: string;
+  component: string;
+  operation: string;
+  traceId: string;
+  sessionId?: string;
+  runId?: string;
+  errorCode?: string;
+  agentPhase?: AgentDiagnosticPhase;
+  source?: DiagnosticSourceLocation;
+  stack: DiagnosticStackFrame[];
+  impact: string;
+  suggestedActions: string[];
+  count: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  contextBefore: DiagnosticEvent[];
+  contextAfter: DiagnosticEvent[];
 }
 
 export interface DiagnosticPerformanceSummary {
@@ -492,6 +573,8 @@ export interface DiagnosticFinding {
 export interface DiagnosticSnapshot {
   generatedAt: string;
   events: DiagnosticEvent[];
+  agentRuns?: AgentRunDiagnosticState[];
+  incidents?: DiagnosticIncident[];
   traces: DiagnosticTrace[];
   health: DiagnosticComponentHealth[];
   findings: DiagnosticFinding[];

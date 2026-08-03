@@ -8,7 +8,7 @@ $ErrorActionPreference = "Stop"
 $project = Split-Path -Parent $PSScriptRoot
 $repo = Resolve-Path (Join-Path $project "..\..")
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
-    $OutputRoot = Join-Path $repo "docs\android\acceptance\stage5\emulator-results"
+    $OutputRoot = Join-Path $repo "docs\android\testing\acceptance\stage5\emulator-results"
 }
 $gradlew = Join-Path $project "gradlew.bat"
 $rawResults = Join-Path $project "app\build\outputs\androidTest-results\connected\debug"

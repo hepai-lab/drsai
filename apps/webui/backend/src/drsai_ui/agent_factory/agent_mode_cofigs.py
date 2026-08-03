@@ -14,6 +14,7 @@ import uuid
 from dotenv import load_dotenv
 load_dotenv()
 import logging
+from drsai_ui.platform_config import get_active_platform
 
 logger = logging.getLogger(__name__)
 
@@ -283,6 +284,7 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refr
     '''
     user_ddf_agents: UserDDFAgents | None = None
     agents_old: List[Dict[str, Any]] = []
+    platform = get_active_platform()
     try:
         # Check cache first
         response = db.get(UserDDFAgents, filters={"user_id": user_id})
@@ -296,9 +298,14 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refr
                 # Check if cache is still valid (less than 2 hours old)
                 if user_ddf_agents.updated_at:
                     time_diff = datetime.now() - user_ddf_agents.updated_at.replace(tzinfo=None)
-                    if time_diff < timedelta(hours=2):
-                        # Return cached data
-                        return {"status": True, "data": agents_old}
+                cached_platform_urls = {
+                    str((agent.get("config") or {}).get("url") or "").rstrip("/")
+                    for agent in agents_old
+                }
+                cache_matches_platform = cached_platform_urls == {platform.base_url}
+                if time_diff < timedelta(hours=2) and cache_matches_platform:
+                    # Return cached data
+                    return {"status": True, "data": agents_old}
 
         apikey = _resolve_platform_api_key(
             authorization, user_id=user_id, is_refresh=is_refresh
@@ -308,7 +315,7 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refr
 
         client = HepAI(
             api_key=apikey,
-            base_url="https://aiapi.ihep.ac.cn/apiv2"
+            base_url=platform.base_url,
         )
         models = client.agents.list()
 
@@ -322,7 +329,7 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refr
                     worker = HRModel.connect(
                         name=model_id,
                         api_key=apikey,
-                        base_url="https://aiapi.ihep.ac.cn/apiv2",
+                        base_url=platform.base_url,
                     )
                     agent_info: dict | WorkerInfo = await asyncio.wait_for(
                         asyncio.to_thread(worker.get_info),
@@ -333,6 +340,14 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refr
                 logger.info(f"get_ddf_agents: worker.get_info() for '{model_id}' = {json.dumps(agent_info, ensure_ascii=False)}")
                 agent_info.update({"mode": "ddf"})
                 agent_info.update({"owner": agent_info.get("author")})
+                agent_info.update(
+                    {
+                        "config": {
+                            "name": agent_info.get("name"),
+                            "url": platform.base_url,
+                        }
+                    }
+                )
                 if agent_info.get("name") in agents_name_old:
                     agent_info.update({"id": agents_name_old[agent_info.get("name")]["id"]})
                 else:
@@ -465,6 +480,7 @@ async def get_user_agents(
         }
     '''
     
+    platform = get_active_platform()
     agents_list = []
     # 获取默认的远程智能体
     agents_list.extend(
@@ -479,7 +495,7 @@ async def get_user_agents(
             agent.update(
                 {"config": {
                     "name": agent.get("name"),
-                    "url": "https://aiapi.ihep.ac.cn/apiv2",
+                    "url": platform.base_url,
                 }})
         if not agent.get("id"):
             agent.update({"id": str(uuid.uuid4())})

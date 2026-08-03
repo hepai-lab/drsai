@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -53,7 +54,7 @@ def _read_response(proc, rid: str, timeout: float = 10.0):
 
 
 @pytest.fixture
-def gateway_proc():
+def gateway_proc(tmp_path: Path):
     """Start the gateway subprocess and tear it down at end of test."""
     proc = subprocess.Popen(
         [sys.executable, "-m", "drsai.backend.tui_gateway.entry"],
@@ -64,7 +65,7 @@ def gateway_proc():
         encoding="utf-8",
         errors="replace",
         bufsize=1,
-        env=_gateway_env(),
+        env=_gateway_env({"DRSAI_HOME": str(tmp_path / "drsai-home")}),
     )
 
     # Wait for gateway.ready event
@@ -91,6 +92,8 @@ def _request(proc, method: str, params: dict, rid: str | None = None):
 
 
 def _start_gateway(extra_env: dict[str, str] | None = None):
+    temporary_home = tempfile.TemporaryDirectory(prefix="drsai-tui-test-")
+    isolated_env = {"DRSAI_HOME": temporary_home.name, **(extra_env or {})}
     proc = subprocess.Popen(
         [sys.executable, "-m", "drsai.backend.tui_gateway.entry"],
         stdin=subprocess.PIPE,
@@ -100,11 +103,12 @@ def _start_gateway(extra_env: dict[str, str] | None = None):
         encoding="utf-8",
         errors="replace",
         bufsize=1,
-        env=_gateway_env(extra_env),
+        env=_gateway_env(isolated_env),
     )
     frame = _read_frame(proc)
     assert frame.get("method") == "event"
     assert frame["params"]["type"] == "gateway.ready"
+    proc._drsai_temporary_home = temporary_home
     return proc
 
 

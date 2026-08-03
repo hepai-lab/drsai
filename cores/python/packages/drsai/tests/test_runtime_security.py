@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 
-MODULE = Path(__file__).parents[1] / "src" / "drsai" / "backend" / "runtime_security.py"
+MODULE = Path(__file__).parents[1] / "src" / "drsai" / "backend" / "runtime" / "security.py"
 SPEC = importlib.util.spec_from_file_location("runtime_security_test_module", MODULE)
 assert SPEC and SPEC.loader
 security = importlib.util.module_from_spec(SPEC)

@@ -1,4 +1,4 @@
-"""Generated from protocol/owop/owop.schema.json; do not edit."""
+"""Generated from cores/protocol/owop/owop.schema.json; do not edit."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ try:
 except ImportError:  # Python 3.9 compatibility for tooling hosts
     from typing_extensions import NotRequired, Required, TypeAlias
 
-SCHEMA_SHA256 = "d6ee1ded7f01f15bc412053c132c914bf9dafce3ba192dd872ce7269a28b555c"
+SCHEMA_SHA256 = "a28d3495df280792eef80ce3c932525cc98f9d09601342b0f400009bb137fe9f"
 OWOP_VERSION = '1.0'
 OWOPCapability: TypeAlias = Literal['workspace', 'worktree', 'files', 'search', 'watch', 'git', 'process', 'pty', 'checkpoint', 'artifact']
 OWOPBindingKind: TypeAlias = Literal['in_process', 'local_ipc', 'ssh', 'hepai_if', 'mcp', 'ddf', 'relay']

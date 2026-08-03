@@ -57,8 +57,26 @@ try {
   await page.getByRole("button", { name: /发送|Send/, exact: true }).click();
   await page.locator('.structured-message-parts[data-turn-status="completed"]').last().waitFor({ state: "visible" });
   await page.locator(".chat-markdown-image").last().waitFor({ state: "visible" });
+  const completedTurn = page.locator('.structured-message-parts[data-turn-status="completed"]').last();
+  const conversationTitlebar = page.locator(".conversation-titlebar");
+  const statusRow = completedTurn.locator(".structured-run-status");
+  const process = completedTurn.locator(".structured-process");
+  const resultLayer = completedTurn.locator(".structured-result-layer");
+  assert.equal(await conversationTitlebar.count(), 1, "An active conversation must have exactly one fixed title bar.");
+  assert.equal(await statusRow.count(), 1, "The OAEP run status layer must render exactly once.");
+  assert.equal(await process.count(), 1, "The OAEP process layer must render exactly once.");
+  assert.equal(await resultLayer.count(), 1, "The OAEP result layer must render exactly once.");
+  assert.equal(await process.locator("summary.structured-run-status").count(), 1, "Process disclosure must be the run status row, not a second row.");
+  assert.equal(await statusRow.locator(".structured-process-label").count(), 1, "The merged status row must expose the process label.");
+  assert.equal(await process.evaluate((node) => node.hasAttribute("open")), false, "A completed process must be collapsed by default.");
+  assert.match(await resultLayer.innerText(), /Final answer|最终回答/, "The final answer must remain visible outside process details.");
+  await process.locator("summary").click();
+  assert.equal(await process.evaluate((node) => node.hasAttribute("open")), true, "The completed process must be expandable.");
+  const processText = await process.innerText();
+  assert.match(processText, /Analysis summary|分析摘要/, "Reasoning must be labeled as an analysis summary.");
+  assert.match(processText, /Result ready/, "Completed progress commentary must remain available in history.");
+  assert.match(processText, /Actions and changes|操作与变更/, "Tool and file activity must be available inside the process layer.");
   await page.addStyleTag({ content: `
-    .message-list > .message { content-visibility: visible !important; contain-intrinsic-block-size: none !important; }
     *, *::before, *::after { animation: none !important; transition: none !important; }
   ` });
 
@@ -82,6 +100,11 @@ try {
       const image = turn?.querySelector(".chat-markdown-image");
       const turnRect = turn?.getBoundingClientRect();
       const imageRect = image?.getBoundingClientRect();
+      const status = turn?.querySelector(".structured-run-status");
+      const statusRect = status?.getBoundingClientRect();
+      const statusChildren = status ? Array.from(status.children).map((child) => child.getBoundingClientRect()) : [];
+      const titlebarRect = document.querySelector(".conversation-titlebar")?.getBoundingClientRect();
+      const messageListRect = document.querySelector(".message-list")?.getBoundingClientRect();
       return {
         viewportWidth: window.innerWidth,
         documentWidth: document.documentElement.scrollWidth,
@@ -96,6 +119,8 @@ try {
         codeFitsTurn: Boolean(codeBlock && turnRect && codeBlock.getBoundingClientRect().right <= turnRect.right + 1),
         imageLoaded: image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0,
         imageFitsTurn: Boolean(imageRect && turnRect && imageRect.width <= turnRect.width + 1 && imageRect.right <= turnRect.right + 1),
+        statusSingleLine: Boolean(statusRect && statusChildren.every((rect) => rect.top >= statusRect.top - 1 && rect.bottom <= statusRect.bottom + 1)),
+        titlebarDoesNotOverlapMessages: Boolean(titlebarRect && messageListRect && messageListRect.top >= titlebarRect.bottom - 1),
       };
     });
     console.log(`${scenario.name}: ${JSON.stringify(metrics)}`);
@@ -107,6 +132,8 @@ try {
     assert.equal(metrics.codeFitsTurn, true, `${scenario.name}: code block escaped the response column.`);
     assert.equal(metrics.imageLoaded, true, `${scenario.name}: fixture image did not load.`);
     assert.equal(metrics.imageFitsTurn, true, `${scenario.name}: image escaped the response column.`);
+    assert.equal(metrics.statusSingleLine, true, `${scenario.name}: run status must remain on one line.`);
+    assert.equal(metrics.titlebarDoesNotOverlapMessages, true, `${scenario.name}: conversation title bar overlaps the message list.`);
 
     const screenshotPath = join(evidenceDir, `${scenario.name}.png`);
     const screenshot = await page.screenshot({ path: screenshotPath, fullPage: false });
@@ -118,6 +145,7 @@ try {
       ["table", ".chat-table-block"],
       ["code", ".chat-code-block"],
       ["image", ".chat-markdown-image"],
+      ["process", ".structured-process"],
     ]) {
       const contentPath = join(evidenceDir, `${scenario.name}-${kind}.png`);
       await page.evaluate((targetSelector) => {
@@ -152,4 +180,4 @@ try {
 
 const reportPath = join(evidenceDir, "report.json");
 writeFileSync(reportPath, `${JSON.stringify({ ok: true, generatedAt: new Date().toISOString(), results }, null, 2)}\n`);
-console.log(`Structured visual verification passed (${results.length * 4} screenshots, report: ${reportPath}).`);
+console.log(`Structured visual verification passed (${results.length * 5} screenshots, OAEP four-layer layout, report: ${reportPath}).`);

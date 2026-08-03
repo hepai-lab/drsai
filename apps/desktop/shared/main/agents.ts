@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
 import { join } from "path";
 import type {
@@ -13,10 +14,12 @@ import {
 } from "./auth";
 import { getGatewayStatus } from "./gateway";
 import { DRSAI_HOME } from "./paths";
+import { getActivePlatformConfig } from "./platformConfig";
 import {
   fetchPlatformAgents,
   recordPlatformAgentUsage,
   respondPlatformAgentInput,
+  respondDdfAgentInput,
   setPlatformDefaultAgent,
   stopPlatformAgentThread,
   type PlatformAgentClientOptions,
@@ -31,12 +34,16 @@ import { recordAgentTelemetry } from "./agentTelemetry";
 import { LocalRuntimeClient } from "./runtimeClient";
 
 const LOCAL_AGENT_ID = "my-drsai";
-const PLATFORM_BASE_URL =
-  process.env.OPENDRSAI_PLATFORM_BASE_URL?.trim().replace(/\/+$/, "") ||
-  (process.env.NODE_ENV === "development" ? "https://ai-dev.ihep.ac.cn" : "https://ai.ihep.ac.cn");
+const ACTIVE_PLATFORM = getActivePlatformConfig();
+const PLATFORM_BASE_URL = ACTIVE_PLATFORM.portalUrl;
 const PLATFORM_AGENTS_ENABLED = !["0", "false", "off", "no"].includes((process.env.OPENDRSAI_PLATFORM_AGENTS_ENABLED || "true").toLowerCase());
 const PLATFORM_CHAT_ENABLED = !["0", "false", "off", "no"].includes((process.env.OPENDRSAI_PLATFORM_AGENT_CHAT_ENABLED || "true").toLowerCase());
-const PLATFORM_CACHE_PATH = join(DRSAI_HOME, "cache", "platform-agents.v1.json");
+const PLATFORM_CACHE_ID = createHash("sha256").update(PLATFORM_BASE_URL).digest("hex").slice(0, 12);
+const PLATFORM_CACHE_PATH = join(
+  DRSAI_HOME,
+  "cache",
+  `platform-agents.${ACTIVE_PLATFORM.name}.${PLATFORM_CACHE_ID}.v1.json`,
+);
 const PLATFORM_CACHE_TTL_MS = positiveIntegerEnv("OPENDRSAI_AGENT_CACHE_TTL_MS", 2 * 60 * 60 * 1000);
 
 let platformExecutionDescriptors = new Map<string, PlatformAgentExecutionDescriptor>();
@@ -83,8 +90,11 @@ export function getPlatformAgentExecutionDescriptor(
   return descriptor ? { ...descriptor } : null;
 }
 
-export function getPlatformAgentChatUrl(platformId: string): string {
-  return `${PLATFORM_BASE_URL}/api/native/v1/agents/${encodeURIComponent(platformId)}/chat`;
+export function getPlatformAgentChatUrl(_platformId: string): string {
+  // Agents discovered through HepAI's base_url are DDF runtime/model IDs.
+  // Execute them through the matching OpenAI-compatible endpoint; the portal
+  // Native API may expose a different catalog and cannot resolve these IDs.
+  return `${ACTIVE_PLATFORM.baseUrl}/chat/completions`;
 }
 
 export function isPlatformAgentExecutionAvailable(): boolean {
@@ -127,6 +137,24 @@ export async function respondToPlatformChatInput(
   const descriptor = getPlatformAgentExecutionDescriptor(agentId);
   if (!descriptor) return false;
   return (await respondPlatformAgentInput(platformClientOptions(), descriptor.platformId, threadId, response)).ok;
+}
+
+export async function respondToDdfChatInput(
+  agentId: string,
+  chatId: string,
+  runId: string,
+  requestId: string,
+  response: string | Record<string, unknown>,
+): Promise<boolean> {
+  const descriptor = getPlatformAgentExecutionDescriptor(agentId);
+  if (!descriptor) return false;
+  return (await respondDdfAgentInput(platformClientOptions(), {
+    model: descriptor.model || descriptor.platformId,
+    chatId,
+    runId,
+    requestId,
+    response,
+  })).ok;
 }
 
 async function listLocalAgents(): Promise<DesktopAgent[]> {
@@ -226,6 +254,7 @@ async function listPlatformAgents(options: DesktopAgentListOptions): Promise<Des
 function platformClientOptions(refresh = false): PlatformAgentClientOptions {
   return {
     baseUrl: PLATFORM_BASE_URL,
+    catalogBaseUrl: ACTIVE_PLATFORM.baseUrl,
     refresh,
     auth: {
       getAccessToken: async () => {

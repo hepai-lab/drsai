@@ -11,7 +11,7 @@ from drsai.owop.protocol import OWOPProtocol
 
 ROOT = Path(__file__).resolve().parents[5]
 GENERATOR = ROOT / "scripts" / "generate-owop-types.py"
-SCHEMA = ROOT / "protocol" / "owop" / "owop.schema.json"
+SCHEMA = ROOT / "cores" / "protocol" / "owop" / "owop.schema.json"
 
 
 def test_generated_python_and_typescript_have_zero_drift() -> None:

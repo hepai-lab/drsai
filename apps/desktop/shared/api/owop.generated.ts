@@ -1,5 +1,5 @@
-// Generated from protocol/owop/owop.schema.json; do not edit.
-export const OWOP_SCHEMA_SHA256 = "d6ee1ded7f01f15bc412053c132c914bf9dafce3ba192dd872ce7269a28b555c" as const;
+// Generated from cores/protocol/owop/owop.schema.json; do not edit.
+export const OWOP_SCHEMA_SHA256 = "a28d3495df280792eef80ce3c932525cc98f9d09601342b0f400009bb137fe9f" as const;
 export const OWOP_VERSION = "1.0" as const;
 export type OWOPCapability = "workspace" | "worktree" | "files" | "search" | "watch" | "git" | "process" | "pty" | "checkpoint" | "artifact";
 export type OWOPBindingKind = "in_process" | "local_ipc" | "ssh" | "hepai_if" | "mcp" | "ddf" | "relay";

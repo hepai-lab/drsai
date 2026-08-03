@@ -2,6 +2,7 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends git python3 python3-pip ca-certificates && rm -rf /var/lib/apt/lists/*
 RUN useradd -m -s /bin/bash vscode && mkdir -p /home/vscode/workspace && chown -R vscode:vscode /home/vscode
 COPY cores/python/packages/drsai /opt/drsai
+COPY cores/protocol /cores/protocol
 RUN python3 -m pip install --break-system-packages --no-cache-dir /opt/drsai
 RUN su - vscode -c 'cd /home/vscode/workspace && git init -q && git config user.email e2e@example.test && git config user.name E2E && printf "tracked\n" > tracked.txt && git add tracked.txt && git commit -qm initial'
 CMD ["sleep", "infinity"]

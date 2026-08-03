@@ -247,6 +247,40 @@ select_install_dir() {
 }
 
 # ==============================================================================
+#  2b. CHECK FOR RUNNING DRSAI PROCESSES
+# ==============================================================================
+check_running() {
+    section "Checking for Running DrSai Processes"
+
+    local running_pids=""
+
+    # Method 1: pgrep (fast, available on Linux + macOS)
+    if command -v pgrep >/dev/null 2>&1; then
+        running_pids="$(pgrep -f 'opendrsai' 2>/dev/null || true)"
+        running_pids="$running_pids $(pgrep -f 'drsai\.backend' 2>/dev/null || true)"
+        running_pids="$running_pids $(pgrep -f 'entry\.mjs' 2>/dev/null || true)"
+    fi
+
+    # Method 2: ps + grep fallback (if pgrep unavailable or found nothing)
+    if [ -z "$(echo "$running_pids" | tr -d ' \n')" ] && command -v ps >/dev/null 2>&1; then
+        running_pids="$(ps aux 2>/dev/null | grep -E 'opendrsai|drsai\.backend|entry\.mjs' | grep -v grep | awk '{print $2}' || true)"
+    fi
+
+    # Filter: remove empty lines, this script's PID, and deduplicate
+    running_pids=$(echo "$running_pids" | tr ' ' '\n' | grep -v '^$' | grep -v "^$$\$" | sort -u 2>/dev/null || true)
+
+    if [ -n "$running_pids" ]; then
+        warn "DrSai is currently running. Please stop ALL instances before updating:"
+        echo "$running_pids" | while read -r pid; do
+            [ -n "$pid" ] && warn "  PID $pid: $(ps -p "$pid" -o command= 2>/dev/null | head -1 || echo 'unknown')"
+        done
+        die "Please close all running DrSai terminals/processes, then re-run this installer."
+    else
+        ok "No running DrSai processes found"
+    fi
+}
+
+# ==============================================================================
 #  3. EXISTING INSTALLATION CHECK
 # ==============================================================================
 check_existing() {
@@ -706,6 +740,7 @@ main() {
 
     detect_platform
     select_install_dir
+    check_running
     detect_system_deps
     check_existing
     download_files

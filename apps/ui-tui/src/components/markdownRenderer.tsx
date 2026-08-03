@@ -20,7 +20,7 @@ import { Box, Text } from 'ink'
 import { memo } from 'react'
 import type { ReactElement } from 'react'
 
-import { useTerminalWidth } from '../hooks/useTerminalWidth.js'
+import { useTerminalWidth } from '../hooks/terminalSizeStore.js'
 import { theme } from '../theme.js'
 
 // ─── Props ────────────────────────────────────────────────────────

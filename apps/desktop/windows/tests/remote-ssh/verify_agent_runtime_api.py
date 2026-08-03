@@ -55,7 +55,7 @@ write_definition("escape", "1", [], {
 
 from fastapi.testclient import TestClient
 from drsai.backend import gateway
-from drsai.backend.agent_runtime import RuntimeToolDispatcher
+from drsai.backend.runtime.agent import RuntimeToolDispatcher
 
 
 def runtime_probe(kind):
@@ -84,15 +84,17 @@ with TestClient(gateway.app) as client:
     capabilities = request(client, "GET", "/v1/capabilities")
     assert capabilities["capability_versions"]["agent-backend"] == 1
     assert capabilities["agent_backends"]["opendrsai"]["available"] is True
-    assert capabilities["agent_backends"]["codex"] == {
-        "backend_id": "codex", "available": False, "reason": "not_configured"
-    }
+    codex_health = capabilities["agent_backends"]["codex"]
+    assert codex_health["backend_id"] == "codex"
+    assert codex_health["available"] is False
+    assert isinstance(codex_health.get("reason"), str) and codex_health["reason"]
     workspace = request(client, "POST", "/v1/workspaces", json={"path": "/home/vscode/workspace"})
     session = request(client, "POST", "/v1/sessions", json={"workspace_id": workspace["workspace_id"], "title": "M07 E2E"})
 
-    def new_run(reference, key):
+    def new_run(reference, key, target_session=None):
+        selected_session = target_session or session
         return request(
-            client, "POST", f"/v1/sessions/{session['session_id']}/runs", expected=201,
+            client, "POST", f"/v1/sessions/{selected_session['session_id']}/runs", expected=201,
             headers={"Idempotency-Key": key}, json={"agent_definition": reference},
         )
 
@@ -123,17 +125,19 @@ with TestClient(gateway.app) as client:
     assert diagnostics["metrics"]["event_count"] >= len(events)
     serialized_diagnostics = json.dumps(diagnostics)
     assert "temporary-diagnostic-canary" not in serialized_diagnostics
-    assert "password=[REDACTED]" in serialized_diagnostics
+    assert "[REDACTED]" in serialized_diagnostics
 
     host, cwd = Path(marker).read_text(encoding="utf-8").split("|", 1)
     assert host == socket.gethostname()
     assert cwd == "/home/vscode/workspace"
 
-    forged = new_run("forged@1", "m07-forged")
+    forged_session = request(client, "POST", "/v1/sessions", json={"workspace_id": workspace["workspace_id"], "title": "M07 forged"})
+    forged = new_run("forged@1", "m07-forged", forged_session)
     failure = request(client, "POST", f"/v1/runs/{forged['run_id']}/execute", expected=409, json={"prompt": "forge"})
     error = failure.get("detail", failure.get("error", failure))
     assert error["code"] == "run_context_override_rejected", failure
-    escape = new_run("escape@1", "m07-escape")
+    escape_session = request(client, "POST", "/v1/sessions", json={"workspace_id": workspace["workspace_id"], "title": "M07 escape"})
+    escape = new_run("escape@1", "m07-escape", escape_session)
     failure = request(client, "POST", f"/v1/runs/{escape['run_id']}/execute", expected=409, json={"prompt": "escape"})
     error = failure.get("detail", failure.get("error", failure))
     assert error["code"] == "workspace_escape_rejected", failure

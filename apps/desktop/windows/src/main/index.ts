@@ -24,6 +24,7 @@ import {
   type WebContents,
 } from "electron";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "path";
+import { hostname } from "os";
 import { pathToFileURL } from "url";
 import { is } from "@electron-toolkit/utils";
 import { cancelInstall, startInstall } from "./install";
@@ -37,11 +38,15 @@ import {
 import { getDesktopHealth, getInstallStatus } from "./status";
 import { bootstrapDesktop } from "./bootstrap";
 import { LocalRuntimeClient } from "./runtimeClient";
+import { MobilePairingController } from "../../../shared/main/mobilePairingController";
+import { RemoteProtocolError } from "../../../shared/api/remoteSshProtocol";
 import { desktopDiagnostics } from "./diagnostics";
-import { productionDiagnostics } from "./productionDiagnostics";
-import { DiagnosticSourceNavigator } from "./sourceNavigation";
+import { productionDiagnostics } from "../../../shared/main/productionDiagnostics";
+import { DiagnosticSourceNavigator } from "../../../shared/main/sourceNavigation";
 import { extractDiagnosticContext, runWithDiagnosticContext } from "../../../shared/main/diagnosticContext";
+import { isTrustedDesktopIpcSender } from "../../../shared/main/secureIpc";
 import { InteractiveDebuggerService } from "./interactiveDebugger";
+import { InteractiveDebugPolicyStore } from "../../../shared/main/interactiveDebugPolicy";
 import type { DiagnosticEventInput, DiagnosticIssueUpdateRequest, DiagnosticQuery, DiagnosticSourceOpenRequest, DiagnosticSourceContextRequest, ProductionDiagnosticSettings } from "../../../shared/api/diagnostics";
 
 process.setSourceMapsEnabled?.(true);
@@ -70,6 +75,7 @@ import { listProviderUsageAnalytics } from "./providerUsageAnalytics";
 import {
   abortAgentRun,
   hasActiveAgentRuns,
+  recoverAgentRun,
   startAgentRun,
   subscribeAgentRunLifecycle,
 } from "./agentRuns";
@@ -86,40 +92,71 @@ import {
   getWorktreeMigrationDiagnostics,
   prepareForkWorktree,
 } from "./forkWorktrees";
-import { getMyDrSaiConfig, updateMyDrSaiConfig } from "./myDrSaiConfig";
+import { deleteMyDrSaiModelProvider, discoverMyDrSaiProviderModels, getMyDrSaiConfig, listMyDrSaiModelProviderPresets, testMyDrSaiModelDraft, testMyDrSaiModelProvider, updateMyDrSaiConfig, updateMyDrSaiModelConnection } from "../../../shared/main/myDrSaiConfig";
 import {
   assertExecutionAllowed,
   getDesktopExecutionPolicy,
 } from "./executionPolicyGate";
 import {
   createThread,
+  deleteThread,
   getThreadSnapshot,
   listThreads,
   searchThreadMessages,
   updateThread,
   updateThreadSnapshot,
+  upsertThreadFromRun,
 } from "./threads";
+import {
+  createThreadShare,
+  openThreadShare,
+  revealThreadShare,
+} from "./threadShare";
+import {
+  listInstalledSkills,
+  listAvailableSkills,
+  getSkillContent,
+  installSkill,
+  uninstallSkill,
+  updateSkill,
+  reloadSkills,
+} from "./skills";
+import {
+  gfsList,
+  gfsStat,
+  gfsRead,
+  gfsWrite,
+  gfsUploadFile,
+  gfsDownloadFile,
+  gfsDelete,
+  gfsShareUrl,
+  gfsHealthcheck,
+} from "./gfs";
+import {
+  getRuntimeThreadSnapshot,
+  subscribeRuntimeThreadSnapshot,
+} from "../../../shared/main/threadRuntimeSubscription";
 import { setThreadArchived } from "./threadArchive";
 import {
   addProjectMemory,
   clearProjectMemory,
   listProjectMemory,
   updateProjectMemory,
-} from "./projectMemory";
-import { deleteUserPreference, listUserPreferences, upsertUserPreference } from "./userPreferences";
-import { addTeamMemory, deleteTeamMemory, listTeamMemory } from "./teamMemory";
+} from "../../../shared/main/projectMemory";
+import { deleteUserPreference, listUserPreferences, upsertUserPreference } from "../../../shared/main/userPreferences";
+import { addTeamMemory, deleteTeamMemory, listTeamMemory } from "../../../shared/main/teamMemory";
 import { listReusableTasks, prepareReusableTaskRun, saveReusableTask } from "./reusableTasks";
 import {
   deleteCustomCommand,
   listCustomCommands,
   upsertCustomCommand,
-} from "./customCommands";
+} from "../../../shared/main/customCommands";
 import {
   createProjectSkillDraft,
   installProjectSkillDraft,
   listProjectSkillDrafts,
   publishProjectSkillDraft,
-} from "./projectSkills";
+} from "../../../shared/main/projectSkills";
 import {
   createWorkflowRunRecipe,
   getWorkflowTemplate,
@@ -136,12 +173,17 @@ import {
 } from "./workflowRuns";
 import {
   enqueueBackgroundTask,
+  cancelBackgroundTask,
   listOwnedBackgroundTasks,
+  recoverBackgroundTasksAfterRestart,
+  retryBackgroundTask,
   updateBackgroundTask,
   upsertBackgroundTaskForAgentRun,
   upsertBackgroundTaskForManagerPresentation,
   upsertBackgroundTaskForWorkflowRun,
 } from "./backgroundTasks";
+import { DesktopApprovalStateStore, type DesktopApprovalPayload, type DesktopApprovalPayloadKind } from "./desktopApprovalState";
+import { protectDesktopApprovalPayload, unprotectDesktopApprovalPayload } from "./desktopApprovalPayloadProtection";
 import {
   createScheduledTask,
   deleteScheduledTask,
@@ -153,18 +195,25 @@ import {
 } from "./scheduledTasks";
 import { addShareComment, completeShareCommentTask, continueSharedTask, createShare, createShareCommentTask, downloadSharedArtifact, inspectShare, inspectShareVersion, listIncomingShares, listOutgoingShares, listShareAudit, listShareComments, listShareCommentTasks, openSharedObject, previewShareCommentTask, publishShareVersion, revokeShare, updateShareCommentTask, updateSharePermission } from "./shares";
 import {
+  configureChannelProviderAuth,
   configureChannelAdapter,
   createChannelOutboundDraftApproval,
-  executeChannelOutboundDelivery,
+  executeChannelOutboundDeliveryAsync,
   importChannelContext,
   listChannelAdapters,
   listChannelInboundEvents,
   listChannelOutboundDeliveries,
   routeChannelInboundEvent,
+  pollChannelAdapterAuth,
+  revokeChannelAdapterAuth,
   startChannelAdapterAuth,
+  configureChannelProviderToken,
   syncChannelSnapshots,
+  syncLiveChannelContext,
 } from "./channelAdapters";
+import { WINDOWS_CREDENTIAL_SERVICE } from "./platformCredentials";
 import { importMcpContext } from "./mcpContext";
+import { decideMcpAtMostOnce, recoverAmbiguousMcpApproval } from "./mcpApprovalRecovery";
 import { listExternalConnectionReadiness } from "./externalConnectionReadiness";
 import {
   createMcpEnumerationBlockedResult,
@@ -181,6 +230,7 @@ import {
   listMcpToolExecutionAudits,
   recordCancelledMcpLiveEnumerationAudit,
   recordCancelledMcpToolExecutionAudit,
+  recordAmbiguousMcpToolExecutionAudit,
   recordRejectedMcpToolExecutionAudit,
 } from "./mcpLiveBridge";
 import {
@@ -241,7 +291,7 @@ import {
   resumePortForward,
   removePortForward,
 } from "./remoteWorkspace";
-import { getIdeContext } from "./ideContext";
+import { getIdeContext } from "../../../shared/main/ideContext";
 import {
   getWorkspaceContextOverview,
   getWorkspaceGitFileAtRef,
@@ -295,6 +345,7 @@ import {
   logout,
   pollDesktopSsoLogin,
   refreshAuthSession,
+  refreshAuthContextAfterUnauthorized,
   requireAuthContext,
   startDesktopSsoLogin,
   startOidcLogin,
@@ -312,21 +363,14 @@ import {
   writeTerminalSession,
 } from "./terminal";
 import type { TerminalCreateOptions } from "./terminal";
-import { approveBrowserActionRequest } from "./browser/actionApproval";
-import { checkBrowserUrlSync } from "./browser/urlPolicy";
 import { registerBrowserController } from "./browser/browserControllerRegistry";
 import { ElectronWebviewController } from "./browser/adapters/electronWebviewController";
 import { BrowserUseController } from "./browser/adapters/browserUseController";
-import { BrowserUseWorkerClient } from "./browser/browserUse/workerClient";
-import { createBrowserUseTaskCommand } from "./browser/browserUse/protocol";
-import {
-  appendBrowserTaskTraceEvent,
-  initializeBrowserTaskTrace,
-} from "./browser/browserTaskTrace";
+import { BrowserTaskService } from "../../../shared/main/browser/browserTaskService";
+import { BrowserUseWorkerClient } from "../../../shared/main/browser/workerClient";
+import { checkBrowserUrlSync } from "../../../shared/main/browser/urlPolicy";
 import type {
   BrowserTaskEvent,
-  BrowserTaskApprovalRequest,
-  BrowserTaskStartRequest,
 } from "../shared/browser/types";
 import type {
   CompletionNotificationPreference,
@@ -335,7 +379,11 @@ import type {
   DesktopA5ServiceGuidanceScenario,
   DesktopChannelAdapterConfigureRequest,
   DesktopChannelAdapterAuthStartRequest,
+  DesktopChannelAdapterAuthPollRequest,
+  DesktopChannelAdapterAuthRevokeRequest,
   DesktopChannelContextImportRequest,
+  DesktopChannelLiveSyncRequest,
+  DesktopChannelProviderTokenConfigureRequest,
   DesktopChannelInboundEventListRequest,
   DesktopChannelInboundEventRouteRequest,
   DesktopChannelOutboundDelivery,
@@ -409,6 +457,7 @@ import type {
   InteractiveDebugEvaluateRequest,
   InteractiveDebugStartRequest,
   UpdateMyDrSaiConfigRequest,
+  UpdateMyDrSaiModelConnectionRequest,
 } from "../shared/desktopApi";
 import {
   evaluateExecutionPermission,
@@ -420,12 +469,14 @@ import {
   ManagerPresentationCancelledError,
 } from "./managerPresentation";
 import { buildFailureRecovery } from "../../../shared/main/failureRecovery";
+import { applyAnomalyDecision as applySharedAnomalyDecision } from "../../../shared/main/anomalyDecision";
 import {
   configureCompletionNotifications,
   notifyBackgroundTaskCompleted,
   restoreCompletionNotificationPreference,
   setCompletionNotificationPreference,
 } from "./completionNotifications";
+import { WINDOWS_NOTIFICATION_SERVICE } from "./platformNotifications";
 import {
   getManagerPresentationRecovery,
   resolveManagerPresentationRecovery,
@@ -434,9 +485,79 @@ import {
 } from "./managerPresentationTasks";
 
 let mainWindow: BrowserWindow | null = null;
+const runtimeThreadSubscriptions = new Map<string, { stop(): void }>();
+const runtimeThreadCatalogTimers = new Map<number, NodeJS.Timeout>();
+const runtimeThreadCatalogBusy = new Set<number>();
+
+function runtimeThreadSubscriptionKey(webContents: WebContents, threadId: string): string {
+  return `${webContents.id}:${threadId}`;
+}
+
+function stopRuntimeThreadSubscriptions(webContentsId?: number): void {
+  for (const [key, subscription] of runtimeThreadSubscriptions) {
+    if (webContentsId === undefined || key.startsWith(`${webContentsId}:`)) {
+      try {
+        subscription.stop();
+      } catch {
+        // The owning WebContents may already be destroyed during app quit.
+      }
+      runtimeThreadSubscriptions.delete(key);
+    }
+  }
+  if (webContentsId !== undefined) {
+    const timer = runtimeThreadCatalogTimers.get(webContentsId);
+    if (timer) clearInterval(timer);
+    runtimeThreadCatalogTimers.delete(webContentsId);
+    runtimeThreadCatalogBusy.delete(webContentsId);
+  }
+}
+
+async function syncRuntimeThreadCatalog(
+  webContents: WebContents,
+  activeThreadId: string,
+): Promise<void> {
+  if (webContents.isDestroyed() || runtimeThreadCatalogBusy.has(webContents.id)) return;
+  runtimeThreadCatalogBusy.add(webContents.id);
+  try {
+    for (const thread of (await listThreads()).filter((item) => item.runtimeSessionId && !item.archived)) {
+      const snapshot = await getRuntimeThreadSnapshot(thread).catch(() => null);
+      if (!snapshot || snapshot.updatedAt <= Date.parse(thread.updatedAt)) continue;
+      const updated = await updateThread({
+        id: thread.id,
+        messageCount: snapshot.messageCount,
+        unread: thread.id !== activeThreadId,
+      });
+      if (!webContents.isDestroyed()) {
+        webContents.send("desktop:thread-catalog", {
+          thread: updated,
+          source: "runtime-session",
+        });
+      }
+    }
+  } finally {
+    runtimeThreadCatalogBusy.delete(webContents.id);
+  }
+}
+
+function startRuntimeThreadCatalogSync(webContents: WebContents, activeThreadId: string): void {
+  const current = runtimeThreadCatalogTimers.get(webContents.id);
+  if (current) clearInterval(current);
+  void syncRuntimeThreadCatalog(webContents, activeThreadId);
+  const timer = setInterval(
+    () => void syncRuntimeThreadCatalog(webContents, activeThreadId),
+    5_000,
+  );
+  timer.unref();
+  runtimeThreadCatalogTimers.set(webContents.id, timer);
+}
+configureChannelProviderAuth({ credentials: WINDOWS_CREDENTIAL_SERVICE });
+
+const interactiveDebugPolicy = new InteractiveDebugPolicyStore(join(DRSAI_HOME, "desktop", "interactive-debug-policy.json"));
 const interactiveDebugger = new InteractiveDebuggerService(
   () => mainWindow?.webContents,
   process.env.OPENDRSAI_PYTHON_PATH || join(DRSAI_HOME, "drsai-agent", "venv", "Scripts", "python.exe"),
+  async () => true,
+  () => interactiveDebugPolicy.isEnabled(),
 );
 let scheduledTaskWorker: ScheduledTaskWorkerHandle | null = null;
 let browserWebContentsPolicyRegistered = false;
@@ -479,6 +600,7 @@ function sendManagerPresentationProgress(progress: ManagerPresentationProgressEv
 }
 
 function canControlManagerPresentation(event: IpcMainInvokeEvent, run: ManagerPresentationRun): boolean {
+  if (event.sender.isDestroyed()) return false;
   return event.sender.id === run.webContentsId
     || Boolean(mainWindow && !mainWindow.isDestroyed() && event.sender.id === mainWindow.webContents.id);
 }
@@ -519,12 +641,74 @@ protocol.registerSchemesAsPrivileged([
   },
 ]);
 const browserUseWorkerClient = new BrowserUseWorkerClient();
-const pendingBrowserTaskApprovals = new Map<
-  string,
-  Extract<BrowserTaskEvent, { type: "action.proposed" }>
->();
+const browserTaskService = new BrowserTaskService({
+  worker: browserUseWorkerClient,
+  workerOptions: async () => {
+    const install = await getInstallStatus();
+    return {
+      pythonCommand: resolveBrowserUsePythonCommand(install.pythonPath || install.prerequisites.pythonCommand),
+      workerPath: app.isPackaged
+        ? join(process.resourcesPath, "browser-use-worker", "worker.py")
+        : join(app.getAppPath(), "..", "shared", "browser-use-worker", "worker.py"),
+      dataRoot: join(app.getPath("userData"), "browser-use"),
+    };
+  },
+  traceRoot: join(app.getPath("userData"), "browser-use", "traces"),
+  publish: (event) => {
+    updatePendingBrowserTaskApprovals(event);
+    void recordBrowserTaskDiagnostic(event);
+    for (const subscriber of [...browserTaskSubscribers]) {
+      if (subscriber.isDestroyed()) browserTaskSubscribers.delete(subscriber);
+      else subscriber.send("desktop:browser-task-event", event);
+    }
+  },
+  recordError: (line) => console.warn("[browser-use worker]", line),
+});
 const pendingDesktopApprovals = new Map<string, DesktopPendingApproval>();
 const executedDesktopApprovalIds = new Set<string>();
+const pendingDesktopApprovalPayloads = new Map<string, DesktopApprovalPayload>();
+function desktopApprovalPayloadKey(approvalId: string, kind: DesktopApprovalPayloadKind): string { return `${approvalId}\u0000${kind}`; }
+const desktopApprovalStateStore = new DesktopApprovalStateStore();
+async function restoreDesktopApprovalState(): Promise<void> {
+  const state = await desktopApprovalStateStore.load();
+  let migratedLegacyPayload = false;
+  for (const approval of state.pending) pendingDesktopApprovals.set(approval.id, approval);
+  for (const decision of state.executed) executedDesktopApprovalIds.add(decision.id);
+  for (const payload of state.payloads) {
+    if (!pendingDesktopApprovals.has(payload.approvalId)) continue;
+    pendingDesktopApprovalPayloads.set(desktopApprovalPayloadKey(payload.approvalId, payload.kind), payload);
+    restoreDesktopApprovalPayloadOwner(payload);
+    if (!isProtectedDesktopApprovalEnvelope(payload.value)) {
+      setProtectedDesktopApprovalPayload(payload.approvalId, payload.kind, payload.value);
+      migratedLegacyPayload = true;
+    }
+  }
+  let recoveredAmbiguousMcp = false;
+  for (const approvalId of executedDesktopApprovalIds) {
+    const request = pendingMcpToolExecutions.get(approvalId);
+    const approval = pendingDesktopApprovals.get(approvalId);
+    if (!request || !approval) continue;
+    pendingDesktopApprovals.set(approvalId, recoverAmbiguousMcpApproval(approval, request));
+    try { recordAmbiguousMcpToolExecutionAudit(request, approvalId); } catch { /* Workspace may be unavailable; the durable card remains authoritative. */ }
+    recoveredAmbiguousMcp = true;
+  }
+  if (migratedLegacyPayload || recoveredAmbiguousMcp) await persistDesktopApprovalState();
+}
+function persistDesktopApprovalState(): Promise<void> { return desktopApprovalStateStore.save(pendingDesktopApprovals.values(), executedDesktopApprovalIds.values(), pendingDesktopApprovalPayloads.values()); }
+async function registerDesktopApprovalPayload(approvalId: string, kind: DesktopApprovalPayloadKind, value: unknown): Promise<void> {
+  setProtectedDesktopApprovalPayload(approvalId, kind, value);
+  await persistDesktopApprovalState();
+}
+function isProtectedDesktopApprovalEnvelope(value: unknown): boolean { return Boolean(value && typeof value === "object" && typeof (value as { protectedPayload?: unknown }).protectedPayload === "string"); }
+function setProtectedDesktopApprovalPayload(approvalId: string, kind: DesktopApprovalPayloadKind, value: unknown): void {
+  const envelope = protectDesktopApprovalPayload(WINDOWS_CREDENTIAL_SERVICE, value);
+  pendingDesktopApprovalPayloads.set(desktopApprovalPayloadKey(approvalId, kind), { approvalId, kind, value: envelope ?? { protectedPayload: "unavailable" } });
+}
+async function registerProtectedDesktopApprovalPayload(approvalId: string, kind: "channel_outbound" | "mcp_enumeration" | "mcp_tool_execution", value: unknown): Promise<void> {
+  setProtectedDesktopApprovalPayload(approvalId, kind, value);
+  await persistDesktopApprovalState();
+}
+function deleteDesktopApprovalPayloads(approvalId: string): void { for (const [key, payload] of pendingDesktopApprovalPayloads) if (payload.approvalId === approvalId) pendingDesktopApprovalPayloads.delete(key); }
 const pendingF2ApprovalEffects = new Map<string, { key: string; phase: "reject" | "control" }>();
 const pendingF3ApprovalEffects = new Map<string, { key: string; phase: "reject" | "control" }>();
 const pendingShellCommandApprovals = new Map<
@@ -673,34 +857,89 @@ const pendingMcpToolExecutions = new Map<
   string,
   DesktopMcpToolExecutionApprovalRequest
 >();
-
-browserUseWorkerClient.on("event", (event) => {
-  updatePendingBrowserTaskApprovals(event);
-  appendBrowserTaskTraceEvent(event);
-  void recordBrowserTaskDiagnostic(event);
-  for (const subscriber of [...browserTaskSubscribers]) {
-    if (subscriber.isDestroyed()) {
-      browserTaskSubscribers.delete(subscriber);
-      continue;
-    }
-    subscriber.send("desktop:browser-task-event", event);
+function restoreDesktopApprovalPayloadOwner(payload: DesktopApprovalPayload): void {
+  const { approvalId } = payload;
+  let value = payload.value;
+  if (isProtectedDesktopApprovalEnvelope(value)) {
+    value = unprotectDesktopApprovalPayload(WINDOWS_CREDENTIAL_SERVICE, value);
+    if (value === null) return;
   }
-});
+  if (payload.kind === "approval_review" || payload.kind === "channel_outbound" || payload.kind === "mcp_enumeration" || payload.kind === "mcp_tool_execution") {
+    if (payload.kind === "approval_review") {
+      const review = value as Partial<DesktopPendingApproval>;
+      if (review.id === approvalId && typeof review.title === "string" && typeof review.detail === "string" && typeof review.createdAt === "string") {
+        pendingDesktopApprovals.set(approvalId, review as DesktopPendingApproval);
+      }
+      return;
+    }
+    restoreProtectedDesktopApprovalReview(approvalId, payload.kind, value);
+  }
+  switch (payload.kind) {
+    case "workspace_mutation": {
+      const row = value as { action?: unknown; request?: unknown };
+      if (["stage-file", "revert-file", "stage-hunk", "revert-hunk"].includes(String(row?.action))) {
+        pendingWorkspaceMutationApprovals.set(approvalId, { action: row.action as WorkspaceMutationAction, request: row.request });
+      }
+      return;
+    }
+    case "workspace_checkpoint_restore": pendingWorkspaceCheckpointRestores.set(approvalId, value as WorkspaceCheckpointRestoreRequest); return;
+    case "git_commit": pendingGitCommitApprovals.set(approvalId, value as DesktopGitCommitApprovalRequest); return;
+    case "remote_gateway_install": pendingRemoteGatewayInstallApprovals.set(approvalId, value as RemoteGatewayInstallRequest); return;
+    case "fork_lifecycle": pendingForkLifecycleApprovals.set(approvalId, value as DesktopForkLifecycleApprovalRequest); return;
+    case "fork_queue_start": pendingForkQueueStartApprovals.set(approvalId, value as DesktopForkQueueStartApprovalRequest); return;
+    case "fork_conflict_draft": pendingForkConflictDraftWrites.set(approvalId, value as DesktopForkConflictDraftWriteRequest); return;
+    case "channel_outbound": pendingChannelOutboundDrafts.set(approvalId, value as DesktopChannelOutboundDraftRequest); return;
+    case "mcp_enumeration": pendingMcpLiveEnumerations.set(approvalId, value as DesktopMcpLiveEnumerationRequest); return;
+    case "mcp_tool_execution": pendingMcpToolExecutions.set(approvalId, value as DesktopMcpToolExecutionApprovalRequest); return;
+  }
+}
+function restoreProtectedDesktopApprovalReview(
+  approvalId: string,
+  kind: "channel_outbound" | "mcp_enumeration" | "mcp_tool_execution",
+  value: unknown,
+): void {
+  const current = pendingDesktopApprovals.get(approvalId);
+  if (!current || !value || typeof value !== "object") return;
+  try {
+    if (kind === "channel_outbound") {
+      const proposal = createChannelOutboundDraftApproval(value as DesktopChannelOutboundDraftRequest);
+      pendingDesktopApprovals.set(approvalId, { ...current, title: proposal.title, detail: proposal.detail, target: proposal.target });
+      return;
+    }
+    if (kind === "mcp_enumeration") {
+      const request = value as DesktopMcpLiveEnumerationRequest;
+      pendingDesktopApprovals.set(approvalId, {
+        ...current, title: "Enumerate live MCP server context",
+        detail: ["Approve a bounded stdio MCP resources/list and tools/list enumeration.", `Server selector: ${request.server || "all configured servers"}`, "Results are written to .drsai/mcp-context.json for explicit reviewed import."].join("\n"),
+        target: request.workspacePath,
+      });
+      return;
+    }
+    const request = value as DesktopMcpToolExecutionApprovalRequest;
+    pendingDesktopApprovals.set(approvalId, {
+      ...current, title: `Execute MCP tool: ${request.tool}`,
+      detail: ["Approve a bounded stdio MCP tools/call execution for the selected server/tool.", `Server: ${request.server}`, `Tool: ${request.tool}`, request.input ? `Input preview: ${request.input.slice(0, 1200)}` : "Input preview: none", "Approved results are written to .drsai/mcp-context.json for reviewed import."].join("\n"),
+      target: request.workspacePath,
+    });
+  } catch { /* Corrupt or stale protected payload remains fail-closed. */ }
+}
+// Indexes Browser Task approvals exposed through the generic approval inbox.
+// BrowserTaskService remains the source of truth for whether an action can run.
+const pendingBrowserDesktopApprovalIds = new Map<string, string>();
 
 function updatePendingBrowserTaskApprovals(event: BrowserTaskEvent): void {
   if (event.type === "action.proposed" && event.requiresApproval) {
-    pendingBrowserTaskApprovals.set(event.actionId, event);
-    pendingDesktopApprovals.set(
-      createBrowserTaskApprovalId(event.taskId, event.actionId),
-      toDesktopBrowserTaskApproval(event),
-    );
+    const approvalId = createBrowserTaskApprovalId(event.taskId, event.actionId);
+    pendingDesktopApprovals.set(approvalId, toDesktopBrowserTaskApproval(event));
+    pendingBrowserDesktopApprovalIds.set(approvalId, event.taskId);
+    void persistDesktopApprovalState().catch(() => undefined);
     return;
   }
   if (event.type === "action.completed") {
-    pendingBrowserTaskApprovals.delete(event.actionId);
-    pendingDesktopApprovals.delete(
-      createBrowserTaskApprovalId(event.taskId, event.actionId),
-    );
+    const approvalId = createBrowserTaskApprovalId(event.taskId, event.actionId);
+    pendingDesktopApprovals.delete(approvalId);
+    pendingBrowserDesktopApprovalIds.delete(approvalId);
+    void persistDesktopApprovalState().catch(() => undefined);
     return;
   }
   if (
@@ -708,14 +947,13 @@ function updatePendingBrowserTaskApprovals(event: BrowserTaskEvent): void {
     event.type === "task.failed" ||
     event.type === "task.cancelled"
   ) {
-    for (const [actionId, approval] of pendingBrowserTaskApprovals) {
-      if (approval.taskId === event.taskId) {
-        pendingBrowserTaskApprovals.delete(actionId);
-        pendingDesktopApprovals.delete(
-          createBrowserTaskApprovalId(approval.taskId, approval.actionId),
-        );
+    for (const [approvalId, taskId] of pendingBrowserDesktopApprovalIds) {
+      if (taskId === event.taskId) {
+        pendingDesktopApprovals.delete(approvalId);
+        pendingBrowserDesktopApprovalIds.delete(approvalId);
       }
     }
+    void persistDesktopApprovalState().catch(() => undefined);
   }
 }
 
@@ -846,6 +1084,7 @@ function executeF3ApprovalEffect(approvalId: string, effect: { key: string; phas
 
 async function prepareWorkflowRun(
   request: unknown,
+  scheduledTriggerKey?: string,
 ): Promise<Awaited<ReturnType<typeof createWorkflowRunRecipe>>> {
   const typed = normalizeWorkflowRunPrepareRequest(request);
   if (!typed) {
@@ -873,6 +1112,7 @@ async function prepareWorkflowRun(
       "workflow",
       template.id,
       typed.workspacePath ? stableApprovalHash(typed.workspacePath) : "global",
+      scheduledTriggerKey ?? "interactive",
     ].join(":"),
   });
   return createWorkflowRunRecipe(typed, proposal);
@@ -926,12 +1166,13 @@ async function requestMcpLiveEnumeration(
       stableApprovalHash(typed.workspacePath),
       stableApprovalHash(typed.server ?? "all"),
     ].join(":"),
-  });
+  }, { deferPersistence: true });
   if (proposal.blocked || !proposal.allowed) {
     return createMcpEnumerationBlockedResult(typed, proposal.reason);
   }
   if (proposal.queued && proposal.approval) {
     pendingMcpLiveEnumerations.set(proposal.approval.id, typed);
+    await registerProtectedDesktopApprovalPayload(proposal.approval.id, "mcp_enumeration", typed);
     return createMcpEnumerationQueuedResult(
       typed,
       proposal.approval.id,
@@ -1010,9 +1251,10 @@ async function requestMcpToolExecutionApproval(
       stableApprovalHash(typed.tool),
       stableApprovalHash(typed.input ?? ""),
     ].join(":"),
-  });
+  }, { deferPersistence: true });
   if (proposal.queued && proposal.approval) {
     pendingMcpToolExecutions.set(proposal.approval.id, typed);
+    await registerProtectedDesktopApprovalPayload(proposal.approval.id, "mcp_tool_execution", typed);
   }
   if (!proposal.queued && proposal.allowed && !proposal.blocked) {
     return executeMcpToolAfterApproval(typed);
@@ -1030,7 +1272,7 @@ async function runDueScheduledTasksAndMirror(
   request: unknown,
 ): Promise<Awaited<ReturnType<typeof runDueScheduledTasks>>> {
   const result = await runDueScheduledTasks(request, {
-    prepareWorkflowRun,
+    prepareWorkflowRun: (scheduledRequest) => prepareWorkflowRun(scheduledRequest, scheduledRequest.triggerKey),
     startWorkflowRun,
     listWorkflowRuns,
   });
@@ -1148,6 +1390,7 @@ function normalizeMcpToolExecutionApprovalRequest(
 
 async function proposeDesktopApproval(
   request: unknown,
+  options: { deferPersistence?: boolean } = {},
 ): Promise<DesktopApprovalProposalResult> {
   if (!request || typeof request !== "object") {
     return blockedApprovalProposal("Approval proposal must be an object.");
@@ -1212,6 +1455,8 @@ async function proposeDesktopApproval(
     };
   }
   pendingDesktopApprovals.set(approval.id, approval);
+  setProtectedDesktopApprovalPayload(approval.id, "approval_review", approval);
+  if (!options.deferPersistence) await persistDesktopApprovalState();
   registerF2ApprovalEffect(typed, approval.id);
   registerF3ApprovalEffect(typed, approval.id);
   return {
@@ -1314,6 +1559,7 @@ async function requestGitCommitApproval(
 
   if (proposal.queued && proposal.approval) {
     pendingGitCommitApprovals.set(proposal.approval.id, typed);
+    await registerDesktopApprovalPayload(proposal.approval.id, "git_commit", typed);
     return proposal;
   }
 
@@ -1362,6 +1608,7 @@ async function requestForkLifecycleApproval(
 
   if (proposal.queued && proposal.approval) {
     pendingForkLifecycleApprovals.set(proposal.approval.id, typed);
+    await registerDesktopApprovalPayload(proposal.approval.id, "fork_lifecycle", typed);
     return {
       queued: true,
       approval: proposal.approval,
@@ -1425,6 +1672,7 @@ async function requestForkQueueStartApproval(
 
   if (proposal.queued && proposal.approval) {
     pendingForkQueueStartApprovals.set(proposal.approval.id, typed);
+    await registerDesktopApprovalPayload(proposal.approval.id, "fork_queue_start", typed);
     const threads = await updateForkQueueThreads(
       typed.threadIds,
       "waiting_approval",
@@ -1885,17 +2133,29 @@ function getGitCommitIdempotencyKey(
 
 async function executeGitCommit(
   request: DesktopGitCommitApprovalRequest,
+  approvalId?: string,
 ): Promise<void> {
   if ((await resolveRemoteWorkspaceTarget(request.workspacePath)) !== "local_or_unknown") {
-    await commitRemoteWorkspace(request.workspacePath, request.message, request.body);
+    await commitRemoteWorkspace(request.workspacePath, request.message, request.body, approvalId);
     return;
   }
   if (!(await isAllowedOpenPath(request.workspacePath))) {
     throw new Error("Git commit workspace is not registered or allowed.");
   }
+  const marker = approvalId ? gitCommitApprovalTrailer(approvalId) : undefined;
+  if (marker) {
+    const history = await execGit(["-C", request.workspacePath, "log", "--all", "-n", "200", "--format=%B%x00"], request.workspacePath, 30000);
+    if (history.split("\0").some((message) => message.split(/\r?\n/).some((line) => line.trim() === marker))) return;
+  }
   const args = ["-C", request.workspacePath, "commit", "-m", request.message];
   if (request.body?.trim()) args.push("-m", request.body.trim());
+  if (marker) args.push("-m", marker);
   await execGit(args, request.workspacePath, 60000);
+}
+
+function gitCommitApprovalTrailer(approvalId: string): string {
+  if (!/^[A-Za-z0-9_.:-]{1,200}$/.test(approvalId)) throw new Error("Git commit approval id is invalid.");
+  return `OpenDrSai-Approval: ${approvalId}`;
 }
 
 async function execGit(
@@ -1944,6 +2204,7 @@ async function requestWorkspaceMutationApproval(
       action,
       request,
     });
+    await registerDesktopApprovalPayload(proposal.approval.id, "workspace_mutation", { action, request });
     return createQueuedWorkspaceMutationResult(action, request, proposal.approval.id);
   }
 
@@ -1982,13 +2243,15 @@ async function requestWorkspaceCheckpointRestore(
     throw new Error(proposal.reason);
   }
   if (proposal.queued && proposal.approval) {
-    pendingWorkspaceCheckpointRestores.set(proposal.approval.id, {
+    const restoreRequest: WorkspaceCheckpointRestoreRequest = {
       workspacePath,
       ...(workspaceId ? { workspaceId } : {}),
       checkpointId,
       operationId,
       ...(includePaths ? { includePaths } : {}),
-    });
+    };
+    pendingWorkspaceCheckpointRestores.set(proposal.approval.id, restoreRequest);
+    await registerDesktopApprovalPayload(proposal.approval.id, "workspace_checkpoint_restore", restoreRequest);
     return {
       workspacePath,
       checkpointId,
@@ -2073,6 +2336,7 @@ async function requestForkConflictDraftWrite(
   };
   if (proposal.queued && proposal.approval) {
     pendingForkConflictDraftWrites.set(proposal.approval.id, normalizedRequest);
+    await registerDesktopApprovalPayload(proposal.approval.id, "fork_conflict_draft", normalizedRequest);
     return {
       threadId: typed.threadId,
       workspacePath: typed.workspacePath,
@@ -2191,12 +2455,14 @@ async function proposeChannelOutboundDraft(
   try {
     const proposal = await proposeDesktopApproval(
       createChannelOutboundDraftApproval(typed),
+      { deferPersistence: true },
     );
     let delivery: DesktopChannelOutboundDelivery | undefined;
     if (proposal.approval) {
       pendingChannelOutboundDrafts.set(proposal.approval.id, typed);
+      await registerProtectedDesktopApprovalPayload(proposal.approval.id, "channel_outbound", typed);
     } else if (proposal.allowed && !proposal.blocked) {
-      delivery = executeChannelOutboundDelivery(
+      delivery = await executeChannelOutboundDeliveryAsync(
         typed,
         `connector:auto:${Date.now()}`,
         true,
@@ -2316,10 +2582,6 @@ async function executeWorkspaceMutation(
   if (action === "stage-hunk") return stageWorkspaceHunk(request);
   return revertWorkspaceHunk(request);
 }
-
-browserUseWorkerClient.on("error-line", (line) => {
-  console.warn("[browser-use worker]", line);
-});
 
 function recordBrowserTaskDiagnostic(event: BrowserTaskEvent): Promise<unknown> {
   const rootSpanId = `browser-task:${event.taskId}`;
@@ -2589,6 +2851,7 @@ async function requestRemoteGatewayInstallApproval(
   if (proposal.blocked || !proposal.allowed) return proposal;
   if (proposal.queued && proposal.approval) {
     pendingRemoteGatewayInstallApprovals.set(proposal.approval.id, request);
+    await registerDesktopApprovalPayload(proposal.approval.id, "remote_gateway_install", request);
     return proposal;
   }
   await assertExecutionAllowed("external.service", { approved: true });
@@ -2839,16 +3102,11 @@ function isAllowedRendererNavigationUrl(rawUrl: string): boolean {
 }
 
 function isTrustedSender(event: IpcMainInvokeEvent): boolean {
-  try {
-    if (!mainWindow || event.sender !== mainWindow.webContents) return false;
-    const frameUrl = event.senderFrame?.url;
-    if (!frameUrl) return false;
-    if (frameUrl === mainWindow.webContents.getURL()) return true;
-    if (is.dev) return isAllowedDevRendererUrl(frameUrl);
-    return false;
-  } catch {
-    return false;
-  }
+  return isTrustedDesktopIpcSender(
+    event,
+    mainWindow?.webContents,
+    is.dev ? isAllowedDevRendererUrl : undefined,
+  );
 }
 
 function getStringArrayProperty(request: unknown, key: string): string[] | undefined {
@@ -2906,6 +3164,185 @@ function secureHandle<T extends unknown[]>(
       clearTimeout(waitTimer);
     }
   });
+}
+
+const mobilePairingControllers = new Map<number, MobilePairingController>();
+let mobilePairingRuntimeRepair: Promise<LocalRuntimeClient> | null = null;
+
+function isMobilePairingRegistrationRequired(reason: unknown): reason is { state: string } {
+  return Boolean(reason && typeof reason === "object"
+    && "state" in reason
+    && (reason.state === "not_registered" || reason.state === "credential_invalid"));
+}
+
+function mobilePairingRelayBaseUrl(issuer?: string): string {
+  const configured = process.env.OPENDRSAI_RUNTIME_RELAY_BASE_URL?.trim().replace(/\/+$/, "");
+  let issuerOrigin: string | undefined;
+  if (!configured && issuer) {
+    const parsedIssuer = new URL(issuer);
+    if (parsedIssuer.protocol !== "https:"
+      || parsedIssuer.port
+      || !["ai.ihep.ac.cn", "ai-dev.ihep.ac.cn"].includes(parsedIssuer.hostname)
+      || parsedIssuer.username || parsedIssuer.password) {
+      throw new Error("mobile_pairing_oidc_issuer_not_trusted");
+    }
+    issuerOrigin = parsedIssuer.origin;
+  }
+  const value = configured || `${issuerOrigin || (is.dev ? "https://ai-dev.ihep.ac.cn" : "https://ai.ihep.ac.cn")}/api/runtime-relay`;
+  const parsed = new URL(value);
+  if (parsed.protocol !== "https:"
+    || parsed.port
+    || !["ai.ihep.ac.cn", "ai-dev.ihep.ac.cn"].includes(parsed.hostname)
+    || parsed.pathname.replace(/\/+$/, "") !== "/api/runtime-relay"
+    || parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new Error("mobile_pairing_relay_url_not_trusted");
+  }
+  return `${parsed.origin}/api/runtime-relay`;
+}
+
+async function issueMobilePairingRegistrationCode(): Promise<{ code: string; relayBaseUrl: string }> {
+  let auth = await requireAuthContext();
+  if (auth.authMode !== "oidc" || !auth.accessToken) {
+    throw new Error("mobile_pairing_oidc_login_required");
+  }
+  const relayBaseUrl = mobilePairingRelayBaseUrl(auth.issuer);
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), 15_000);
+  try {
+    const request = (accessToken: string): Promise<Response> => fetch(`${relayBaseUrl}/v1/registration-codes`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+        redirect: "error",
+        signal: abort.signal,
+      });
+    let response = await request(auth.accessToken);
+    let errorCode = response.ok ? null : await mobilePairingRelayErrorCode(response);
+    if (response.status === 401 && errorCode !== "device_proof_required") {
+      auth = await refreshAuthContextAfterUnauthorized();
+      if (auth.authMode !== "oidc" || !auth.accessToken) {
+        throw new Error("mobile_pairing_oidc_login_required");
+      }
+      response = await request(auth.accessToken);
+      errorCode = response.ok ? null : await mobilePairingRelayErrorCode(response);
+    }
+    if (!response.ok) {
+      if (errorCode === "device_proof_required") {
+        throw new Error("mobile_pairing_registration_device_proof_misconfigured");
+      }
+      throw new Error(response.status === 401
+        ? "mobile_pairing_oidc_session_rejected"
+        : `mobile_pairing_registration_code_failed:${response.status}`);
+    }
+    const body = await response.json() as Record<string, unknown>;
+    const code = typeof body.registration_code === "string" ? body.registration_code.trim() : "";
+    if (code.length < 16 || code.length > 2_048 || /[\r\n\0]/.test(code)) {
+      throw new Error("mobile_pairing_registration_code_invalid");
+    }
+    return { code, relayBaseUrl };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function mobilePairingRelayErrorCode(response: Response): Promise<string | null> {
+  try {
+    const body = await response.clone().json() as Record<string, unknown>;
+    const detail = body.detail && typeof body.detail === "object"
+      ? body.detail as Record<string, unknown>
+      : body;
+    return typeof detail.code === "string" && /^[a-z][a-z0-9_]{1,63}$/.test(detail.code)
+      ? detail.code
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function isMissingMobilePairingRuntimeRoute(reason: unknown): boolean {
+  return reason instanceof RemoteProtocolError
+    && reason.status === 404
+    && reason.code === "http_404"
+    && /^not found\.?$/i.test(reason.message.trim());
+}
+
+async function repairMobilePairingRuntime(
+  sender: WebContents,
+  reason: unknown,
+): Promise<LocalRuntimeClient | null> {
+  if (!isMissingMobilePairingRuntimeRoute(reason) && !isMobilePairingRegistrationRequired(reason)) return null;
+  if (getGatewayStartupMode() === "external") {
+    throw new Error("mobile_pairing_runtime_external_update_required");
+  }
+  if (mobilePairingRuntimeRepair) return mobilePairingRuntimeRepair;
+
+  mobilePairingRuntimeRepair = (async () => {
+    let client: LocalRuntimeClient;
+    if (isMissingMobilePairingRuntimeRoute(reason)) {
+      // A healthy persistent Runtime can belong to the previous Desktop release.
+      // Stop it before reinstalling the signed/bundled backend so Windows does not
+      // keep serving an old FastAPI route table from memory.
+      await stopGateway();
+      await startInstall(sender, { installPrerequisites: false });
+      if (!(await startGateway())) throw new Error("mobile_pairing_runtime_repair_failed");
+      client = await LocalRuntimeClient.connect();
+    } else {
+      client = await LocalRuntimeClient.connect();
+    }
+
+    let readiness;
+    try {
+      readiness = await client.getMobilePairingReadiness();
+    } catch (verificationError) {
+      if (isMissingMobilePairingRuntimeRoute(verificationError)) {
+        throw new Error("mobile_pairing_runtime_repair_failed");
+      }
+      throw verificationError;
+    }
+    if (!isMobilePairingRegistrationRequired(readiness)) return client;
+
+    const { code: registrationCode, relayBaseUrl } = await issueMobilePairingRegistrationCode();
+    await client.registerMobilePairingRuntime({
+      registrationCode,
+      relayHttpsUrl: relayBaseUrl,
+      displayName: hostname()
+        .trim()
+        .replace(/[^A-Za-z0-9._-]/g, "-")
+        .slice(0, 64) || "Windows",
+    });
+
+    // Registration is persisted by Runtime. Restart once so its outbound WSS
+    // connector starts with the new DPAPI-protected credential.
+    await stopGateway();
+    if (!(await startGateway())) throw new Error("mobile_pairing_runtime_restart_failed");
+    const registered = await LocalRuntimeClient.connect();
+    const verified = await registered.getMobilePairingReadiness();
+    if (verified.state !== "ready") throw new Error("mobile_pairing_runtime_registration_failed");
+    return registered;
+  })().finally(() => {
+    mobilePairingRuntimeRepair = null;
+  });
+  return mobilePairingRuntimeRepair;
+}
+
+function mobilePairingControllerFor(sender: WebContents): MobilePairingController {
+  const existing = mobilePairingControllers.get(sender.id);
+  if (existing) return existing;
+  const controller = new MobilePairingController(
+    () => LocalRuntimeClient.connect(),
+    (reason) => repairMobilePairingRuntime(sender, reason),
+  );
+  mobilePairingControllers.set(sender.id, controller);
+  sender.once("destroyed", () => {
+    mobilePairingControllers.delete(sender.id);
+    void controller.close();
+  });
+  return controller;
+}
+
+async function closeMobilePairingControllers(): Promise<void> {
+  const controllers = [...mobilePairingControllers.values()];
+  mobilePairingControllers.clear();
+  await Promise.allSettled(controllers.map((controller) => controller.close()));
 }
 
 function classifyDiagnosticChannel(channel: string): { module: string; component: string } {
@@ -3311,6 +3748,9 @@ async function applyAnomalyDecision(request: DesktopAnomalyDecisionApplyRequest)
   return result;
 }
 
+// Kept temporarily for legacy source-verification scripts; runtime IPC uses the shared implementation above.
+void applyAnomalyDecision;
+
 const PICKED_FILE_CATEGORIES: Array<{ extensions: ReadonlySet<string>; category: PickedFileDescriptor["category"] }> = [
   { extensions: new Set([".pdf"]), category: "pdf" },
   { extensions: new Set([".doc", ".docx"]), category: "word" },
@@ -3429,6 +3869,22 @@ async function describePickedFiles(paths: string[], canceled: boolean): Promise<
 
 function registerIpc(): void {
   secureHandle("desktop:platform-descriptor", () => WINDOWS_PLATFORM_DESCRIPTOR);
+  secureHandle("desktop:system-permissions-get", () => [
+    { kind: "microphone", state: "unknown", canRequest: false, canOpenSettings: true, message: "Microphone access is controlled by Windows Settings." },
+    { kind: "notifications", state: "unknown", canRequest: false, canOpenSettings: true, message: "Notification access is controlled by Windows Settings." },
+    { kind: "files", state: "unknown", canRequest: false, canOpenSettings: true, message: "File access is controlled by Windows Settings." },
+    { kind: "automation", state: "unknown", canRequest: false, canOpenSettings: false, message: "Automation access is managed per application." },
+  ]);
+  secureHandle("desktop:system-permission-request", async (_event, kind) => {
+    const normalized = kind === "microphone" || kind === "notifications" || kind === "files" || kind === "automation" ? kind : "files";
+    if (normalized !== "automation") await shell.openExternal(normalized === "microphone" ? "ms-settings:privacy-microphone" : normalized === "notifications" ? "ms-settings:notifications" : "ms-settings:privacy-broadfilesystemaccess");
+    return { kind: normalized, state: "unknown", canRequest: false, canOpenSettings: normalized !== "automation", message: `${normalized} access is controlled by Windows Settings.` };
+  });
+  secureHandle("desktop:system-permission-settings", async (_event, kind) => {
+    if (kind === "automation") return false;
+    await shell.openExternal(kind === "microphone" ? "ms-settings:privacy-microphone" : kind === "notifications" ? "ms-settings:notifications" : "ms-settings:privacy-broadfilesystemaccess");
+    return true;
+  });
   registerBrowserController(new ElectronWebviewController());
   registerBrowserController(new BrowserUseController(browserUseWorkerClient));
   const diagnosticSourceNavigator = new DiagnosticSourceNavigator({
@@ -3507,6 +3963,12 @@ function registerIpc(): void {
     desktopDiagnostics.updateIssue(request),
   );
   secureHandle("desktop:interactive-debug-targets", () => interactiveDebugger.listTargets());
+  secureHandle("desktop:interactive-debug-policy", () => interactiveDebugPolicy.get());
+  secureHandle("desktop:interactive-debug-policy-update", async (_event, request) => {
+    const policy = await interactiveDebugPolicy.update(request);
+    if (!policy.enabled) await interactiveDebugger.shutdown();
+    return policy;
+  });
   secureHandle("desktop:interactive-debug-sessions", () => interactiveDebugger.listSessions());
   secureHandle("desktop:interactive-debug-start", (_event, request: InteractiveDebugStartRequest) => interactiveDebugger.start(request));
   secureHandle("desktop:interactive-debug-breakpoint", (_event, request: InteractiveDebugBreakpointRequest) => interactiveDebugger.setBreakpoint(request));
@@ -3619,6 +4081,39 @@ function registerIpc(): void {
     const externalUrl = result.authUrl ?? result.verificationUrl;
     if (externalUrl && isAllowedExternalUrl(externalUrl)) await shell.openExternal(externalUrl);
     return { type: result.type, loginId: result.loginId, verificationUrl: result.verificationUrl, userCode: result.userCode };
+  });
+  secureHandle("desktop:restart-codex-backend", async () => {
+    const client = await LocalRuntimeClient.connect();
+    await client.restartBackend("codex");
+    const capability = (await client.getCapabilities()).agent_backends?.codex;
+    return presentCodexBackendStatus(capability, await client.getBackendAccount("codex", true));
+  });
+  secureHandle("desktop:sync-codex-workspace-sessions", async (_event, workspaceId: string, workspacePath: string) => {
+    if (!/^[A-Za-z0-9_.:-]{1,160}$/.test(workspaceId) || typeof workspacePath !== "string" || workspacePath.length > 2048 || /[\r\n\0]/.test(workspacePath)) {
+      throw new Error("Workspace identity for Codex Session sync is invalid.");
+    }
+    const result = await (await LocalRuntimeClient.connect()).syncBackendSessions(workspaceId, "codex");
+    const threads: Awaited<ReturnType<typeof updateThread>>[] = [];
+    for (const session of result.sessions) {
+      const thread = await upsertThreadFromRun({
+        id: session.session_id,
+        kind: "chat",
+        title: session.title,
+        workspacePath,
+        boundAgentId: "my-codex",
+        boundAgentName: "Codex",
+        runtimeSessionId: session.session_id,
+        status: "idle",
+        messageCount: typeof session.message_count === "number" ? session.message_count : 0,
+      });
+      threads.push(await updateThread({
+        id: thread.id,
+        archived: session.archived === true,
+        archiveSource: session.archived === true ? "codex" : undefined,
+      }));
+    }
+    return { workspaceId, discovered: result.discovered, active: result.active, archived: result.archived,
+      created: result.created, updated: result.updated, skipped: result.skipped, conflicts: result.conflicts, threads };
   });
   secureHandle("desktop:cancel-codex-backend-login", async (_event, loginId: string) => {
     await (await LocalRuntimeClient.connect()).cancelBackendLogin("codex", loginId);
@@ -3738,6 +4233,30 @@ function registerIpc(): void {
 
   secureHandle("desktop:start-gateway", () => startGateway());
   secureHandle("desktop:stop-gateway", () => stopGateway());
+  secureHandle("desktop:mobile-pairing-readiness", (event) =>
+    mobilePairingControllerFor(event.sender).readiness(),
+  );
+  secureHandle("desktop:mobile-remote-enable", (event) =>
+    mobilePairingControllerFor(event.sender).enable(),
+  );
+  secureHandle("desktop:mobile-pairing-create", (event) =>
+    mobilePairingControllerFor(event.sender).create(),
+  );
+  secureHandle("desktop:mobile-pairing-read", (event, grantId: string) =>
+    mobilePairingControllerFor(event.sender).read(grantId),
+  );
+  secureHandle("desktop:mobile-pairing-revoke", (event, grantId: string) =>
+    mobilePairingControllerFor(event.sender).revoke(grantId),
+  );
+  secureHandle("desktop:mobile-associations-list", (event) =>
+    mobilePairingControllerFor(event.sender).associations(),
+  );
+  secureHandle("desktop:mobile-association-revoke", (event, associationId: string) =>
+    mobilePairingControllerFor(event.sender).revokeAssociation(associationId),
+  );
+  secureHandle("desktop:mobile-enrollment-revoke", (event) =>
+    mobilePairingControllerFor(event.sender).revokeEnrollment(),
+  );
   secureHandle(
     "desktop:terminal-create",
     async (event, options: TerminalCreateOptions | undefined) => {
@@ -3844,7 +4363,7 @@ function registerIpc(): void {
     (await resolveRemoteWorkspaceTarget(request?.workspacePath, request?.workspaceId)) !== "local_or_unknown" ? writeRemoteWorkspaceFile(request) : writeWorkspaceFile(request),
   );
   secureHandle("desktop:apply-anomaly-decision", (_event, request: DesktopAnomalyDecisionApplyRequest) =>
-    applyAnomalyDecision(request),
+    applySharedAnomalyDecision(request),
   );
   secureHandle("desktop:manager-presentation-generate", async (event, request: ManagerPresentationGenerateRequest) => {
     if (!(await isAllowedOpenPath(request?.workspacePath))) {
@@ -3939,6 +4458,7 @@ function registerIpc(): void {
           ));
         sendManagerPresentationProgress(progress);
       }, {
+        templatePath: join(app.getAppPath(), "resources", "presentation", "manager-deck-template.pptx"),
         signal: controller.signal,
         phaseDelayMs,
         failAtPhase,
@@ -4218,26 +4738,141 @@ function registerIpc(): void {
   secureHandle("desktop:update-my-drsai-config", (_event, request: UpdateMyDrSaiConfigRequest) =>
     updateMyDrSaiConfig(request),
   );
+  secureHandle("desktop:update-my-drsai-model-connection", (_event, request: UpdateMyDrSaiModelConnectionRequest) =>
+    updateMyDrSaiModelConnection(request),
+  );
+  secureHandle("desktop:test-my-drsai-model-provider", (_event, provider: string, model?: string) =>
+    testMyDrSaiModelProvider(provider, model),
+  );
+  secureHandle("desktop:test-my-drsai-model-draft", (_event, request: UpdateMyDrSaiModelConnectionRequest, mode?: "basic" | "model") => testMyDrSaiModelDraft(request, mode));
+  secureHandle("desktop:list-my-drsai-model-provider-presets", () => listMyDrSaiModelProviderPresets());
+  secureHandle("desktop:discover-my-drsai-provider-models", (_event, provider: string, refresh?: boolean) => discoverMyDrSaiProviderModels(provider, refresh));
+  secureHandle("desktop:delete-my-drsai-model-provider", (_event, provider: string, deleteCredential?: boolean) =>
+    deleteMyDrSaiModelProvider(provider, deleteCredential),
+  );
   secureHandle("desktop:create-thread", (_event, request) =>
     createThread(request),
   );
   secureHandle("desktop:update-thread", (_event, request) =>
     updateThread(request),
   );
+  secureHandle("desktop:delete-thread", (_event, threadId) => deleteThread(threadId));
   secureHandle("desktop:set-thread-archived", (_event, request) => {
     const value = request as { threadId?: unknown; archived?: unknown };
     if (typeof value?.threadId !== "string" || typeof value.archived !== "boolean") throw new Error("Archive request is invalid.");
     return setThreadArchived(value.threadId, value.archived);
   });
-  secureHandle("desktop:get-thread-snapshot", async (_event, threadId: string) =>
-    (await getRemoteThreadSnapshot(threadId)) || getThreadSnapshot(threadId),
-  );
+  secureHandle("desktop:get-thread-snapshot", async (_event, threadId: string) => {
+    const remote = await getRemoteThreadSnapshot(threadId);
+    if (remote) return remote;
+    const thread = (await listThreads()).find((item) => item.id === threadId);
+    if (thread?.runtimeSessionId) {
+      const runtime = await getRuntimeThreadSnapshot(thread);
+      if (runtime) return runtime;
+    }
+    return getThreadSnapshot(threadId);
+  });
+  secureHandle("desktop:subscribe-thread-snapshot", async (event, threadId: string) => {
+    if (typeof threadId !== "string") return false;
+    const thread = (await listThreads()).find((item) => item.id === threadId);
+    if (!thread) return false;
+    startRuntimeThreadCatalogSync(event.sender, threadId);
+    const key = runtimeThreadSubscriptionKey(event.sender, threadId);
+    runtimeThreadSubscriptions.get(key)?.stop();
+    runtimeThreadSubscriptions.delete(key);
+    const subscription = await subscribeRuntimeThreadSnapshot(thread, event.sender).catch(() => null);
+    if (!subscription) return false;
+    runtimeThreadSubscriptions.set(key, subscription);
+    event.sender.once("destroyed", () => stopRuntimeThreadSubscriptions(event.sender.id));
+    void subscription.done.finally(() => {
+      if (runtimeThreadSubscriptions.get(key) === subscription) {
+        runtimeThreadSubscriptions.delete(key);
+      }
+    });
+    return true;
+  });
+  secureHandle("desktop:unsubscribe-thread-snapshot", (event, threadId: string) => {
+    if (typeof threadId !== "string") return false;
+    const key = runtimeThreadSubscriptionKey(event.sender, threadId);
+    const subscription = runtimeThreadSubscriptions.get(key);
+    subscription?.stop();
+    return runtimeThreadSubscriptions.delete(key);
+  });
   secureHandle("desktop:search-thread-messages", async (_event, request: DesktopThreadContentSearchRequest) =>
     (await searchRemoteThreadMessages(request)) || searchThreadMessages(request),
   );
   secureHandle("desktop:update-thread-snapshot", (_event, snapshot) =>
     updateThreadSnapshot(snapshot),
   );
+  secureHandle("desktop:create-thread-share", (_event, request) =>
+    createThreadShare(request),
+  );
+  secureHandle("desktop:open-thread-share", (_event, filePath) =>
+    openThreadShare(filePath),
+  );
+  secureHandle("desktop:reveal-thread-share", (_event, filePath) =>
+    revealThreadShare(filePath),
+  );
+
+  // Skills (gateway-managed)
+  secureHandle("desktop:list-installed-skills", (_event, request) =>
+    listInstalledSkills((request as { userId?: string } | undefined)?.userId),
+  );
+  secureHandle("desktop:list-available-skills", (_event, request) =>
+    listAvailableSkills((request as { userId?: string } | undefined)?.userId),
+  );
+  secureHandle("desktop:get-skill-content", (_event, request) =>
+    getSkillContent((request as { skillPath: string }).skillPath),
+  );
+  secureHandle("desktop:install-skill", (_event, request) =>
+    installSkill(request as Parameters<typeof installSkill>[0]),
+  );
+  secureHandle("desktop:uninstall-skill", (_event, request) => {
+    const r = request as { name: string; userId?: string };
+    return uninstallSkill(r.name, r.userId);
+  });
+  secureHandle("desktop:update-skill", (_event, request) => {
+    const r = request as { name: string; content: string; userId?: string };
+    return updateSkill(r.name, r.content, r.userId);
+  });
+  secureHandle("desktop:reload-skills", (_event, request) => {
+    const r = (request ?? {}) as { threadId?: string; userId?: string };
+    return reloadSkills(r.threadId, r.userId);
+  });
+
+  // GFS cloud storage
+  secureHandle("desktop:gfs-list", (_event, request) =>
+    gfsList(request as Parameters<typeof gfsList>[0]),
+  );
+  secureHandle("desktop:gfs-stat", (_event, request) =>
+    gfsStat((request as { path: string }).path),
+  );
+  secureHandle("desktop:gfs-read", (_event, request) =>
+    gfsRead((request as { path: string }).path),
+  );
+  secureHandle("desktop:gfs-write", (_event, request) => {
+    const r = request as { path: string; content: string; contentType?: string };
+    return gfsWrite(r.path, r.content, r.contentType);
+  });
+  secureHandle("desktop:gfs-upload-file", (_event, request) =>
+    gfsUploadFile(request as Parameters<typeof gfsUploadFile>[0]),
+  );
+  secureHandle("desktop:gfs-download-file", (_event, request) =>
+    gfsDownloadFile(request as Parameters<typeof gfsDownloadFile>[0]),
+  );
+  secureHandle("desktop:gfs-delete", (_event, request) =>
+    gfsDelete((request as { path: string }).path),
+  );
+  secureHandle("desktop:gfs-share-url", (_event, request) => {
+    const r = request as {
+      path: string;
+      ttlMinutes?: number;
+      responseContentType?: string;
+    };
+    return gfsShareUrl(r.path, r.ttlMinutes, r.responseContentType);
+  });
+  secureHandle("desktop:gfs-healthcheck", () => gfsHealthcheck());
+
   secureHandle("desktop:prepare-fork-worktree", async (_event, request) => {
     const workspacePath = getStringProperty(request, "workspacePath");
     if ((await resolveRemoteWorkspaceTarget(workspacePath, getStringProperty(request, "workspaceId"))) !== "local_or_unknown") return prepareRemoteForkWorktree(workspacePath, getStringProperty(request, "intent"));
@@ -4325,6 +4960,9 @@ function registerIpc(): void {
   secureHandle("desktop:background-task-update", (_event, request) =>
     updateBackgroundTask(request),
   );
+  secureHandle("desktop:background-task-cancel", (_event, request) => cancelBackgroundTask(request));
+  secureHandle("desktop:background-task-retry", (_event, request) => retryBackgroundTask(request));
+  secureHandle("desktop:background-tasks-recover", () => recoverBackgroundTasksAfterRestart());
   secureHandle("desktop:reusable-tasks-list", () => listReusableTasks());
   secureHandle("desktop:reusable-task-save", (_event, request) => saveReusableTask(request));
   secureHandle("desktop:reusable-task-run-prepare", (_event, request) => prepareReusableTaskRun(request));
@@ -4458,7 +5096,7 @@ function registerIpc(): void {
     }
     return startChat(event.sender, request);
   });
-  secureHandle("desktop:recover-chat-run", (_event, request) => recoverChatRun(request));
+  secureHandle("desktop:recover-chat-run", (event, request) => recoverChatRun(request, event.sender));
   secureHandle("desktop:abort-chat", (_event, requestId: string) =>
     abortChat(requestId),
   );
@@ -4547,6 +5185,11 @@ function registerIpc(): void {
   secureHandle("desktop:abort-agent-run", (_event, requestId: string) =>
     abortAgentRun(requestId),
   );
+  secureHandle("desktop:channel-live-sync", (_event, request: DesktopChannelLiveSyncRequest) => syncLiveChannelContext(request));
+  secureHandle("desktop:channel-adapter-auth-poll", (_event, request: DesktopChannelAdapterAuthPollRequest) => pollChannelAdapterAuth(request));
+  secureHandle("desktop:channel-adapter-auth-revoke", (_event, request: DesktopChannelAdapterAuthRevokeRequest) => revokeChannelAdapterAuth(request));
+  secureHandle("desktop:channel-provider-token-configure", (_event, request: DesktopChannelProviderTokenConfigureRequest) => configureChannelProviderToken(request));
+  secureHandle("desktop:recover-agent-run", (event, threadId: string) => recoverAgentRun(threadId, event.sender));
   secureHandle("desktop:save-api-key", (_event, apiKey: string, defaultModel?: string) => {
     if (!is.dev) {
       return { ok: false, message: "This build receives service authorization through HepAI OIDC." };
@@ -4621,40 +5264,14 @@ function registerIpc(): void {
     });
     return { canceled: result.canceled, paths: result.filePaths };
   });
-  secureHandle("desktop:browser-check-url", (_event, rawUrl: string) =>
-    checkBrowserUrlSync(rawUrl),
-  );
-  secureHandle("desktop:browser-action-request", (_event, request) =>
-    approveBrowserActionRequest(request),
-  );
+  secureHandle("desktop:browser-check-url", (_event, rawUrl: string) => browserTaskService.checkUrl(rawUrl));
+  secureHandle("desktop:browser-action-request", (_event, request) => browserTaskService.requestAction(request));
   secureHandle("desktop:browser-task-start", async (event, request) => {
-    const startRequest = toBrowserTaskStartRequest(request);
-    if (!startRequest) {
-      throw new Error("Invalid browser task start request.");
-    }
     browserTaskSubscribers.add(event.sender);
-    const install = await getInstallStatus();
-    const pythonCommand = resolveBrowserUsePythonCommand(
-      install.pythonPath || install.prerequisites.pythonCommand,
-    );
-    browserUseWorkerClient.start(pythonCommand);
-    const command = createBrowserUseTaskCommand(startRequest);
-    initializeBrowserTaskTrace(command.taskId, startRequest);
-    browserUseWorkerClient.send(command);
-    return { taskId: command.taskId };
+    return browserTaskService.start(request);
   });
-  secureHandle("desktop:browser-task-stop", (_event, request) => {
-    if (!request || typeof request !== "object") return false;
-    const taskId = (request as { taskId?: unknown }).taskId;
-    if (typeof taskId !== "string" || !taskId.trim()) return false;
-    browserUseWorkerClient.send({ type: "task.stop", taskId });
-    return true;
-  });
-  secureHandle("desktop:browser-task-pending-approvals", () =>
-    [...pendingBrowserTaskApprovals.values()].sort((left, right) =>
-      right.timestamp.localeCompare(left.timestamp),
-    ),
-  );
+  secureHandle("desktop:browser-task-stop", (_event, request) => browserTaskService.stop(request));
+  secureHandle("desktop:browser-task-pending-approvals", () => browserTaskService.pendingApprovals());
   secureHandle("desktop:propose-approval", (_event, request) =>
     proposeDesktopApproval(request),
   );
@@ -4681,81 +5298,74 @@ function registerIpc(): void {
   secureHandle("desktop:decide-approval", (event, request) =>
     decidePendingDesktopApproval(event, request),
   );
-  secureHandle("desktop:browser-task-approve", (_event, request) => {
-    const approvalRequest = toBrowserTaskApprovalRequest(request);
-    if (!approvalRequest) return false;
-    pendingBrowserTaskApprovals.delete(approvalRequest.actionId);
-    pendingDesktopApprovals.delete(
-      createBrowserTaskApprovalId(
-        approvalRequest.taskId,
-        approvalRequest.actionId,
-      ),
-    );
-    browserUseWorkerClient.send({
-      type: "action.approve",
-      taskId: approvalRequest.taskId,
-      actionId: approvalRequest.actionId,
-      approved: approvalRequest.approved,
-    });
-    return true;
+  secureHandle("desktop:browser-task-approve", async (_event, request) => {
+    const approved = browserTaskService.approve(request);
+    if (approved && request && typeof request === "object") {
+      const row = request as { taskId?: string; actionId?: string };
+      if (row.taskId && row.actionId) {
+        pendingDesktopApprovals.delete(createBrowserTaskApprovalId(row.taskId, row.actionId));
+        await persistDesktopApprovalState();
+      }
+    }
+    return approved;
   });
 }
 
-async function decidePendingDesktopApproval(
+let desktopApprovalDecisionQueue = Promise.resolve();
+async function decidePendingDesktopApproval(event: IpcMainInvokeEvent, request: unknown): Promise<boolean> {
+  const previous = desktopApprovalDecisionQueue;
+  let release!: () => void;
+  desktopApprovalDecisionQueue = new Promise<void>((resolve) => { release = resolve; });
+  await previous;
+  try { return await decidePendingDesktopApprovalUnlocked(event, request); }
+  finally { release(); }
+}
+
+async function decidePendingDesktopApprovalUnlocked(
   event: IpcMainInvokeEvent,
   request: unknown,
 ): Promise<boolean> {
   if (!request || typeof request !== "object") return false;
-  const typed = request as { id?: unknown; approved?: unknown };
-  if (typeof typed.id !== "string" || typeof typed.approved !== "boolean") {
+  const candidate = request as { id?: unknown; approved?: unknown };
+  if (typeof candidate.id !== "string" || typeof candidate.approved !== "boolean") {
     return false;
   }
+  const typed = { id: candidate.id, approved: candidate.approved };
   const decisionReason =
     (request as { reason?: unknown }).reason === "cancel" ? "cancel" : "reject";
   const approval = pendingDesktopApprovals.get(typed.id);
   if (!approval) return false;
-  pendingDesktopApprovals.delete(typed.id);
-  if (typed.approved && executedDesktopApprovalIds.has(typed.id)) {
+  if (typed.approved && executedDesktopApprovalIds.has(typed.id) && !pendingGitCommitApprovals.has(typed.id) && !pendingMcpToolExecutions.has(typed.id)) {
+    pendingDesktopApprovals.delete(typed.id);
+    deleteDesktopApprovalPayloads(typed.id);
+    await persistDesktopApprovalState();
     return true;
   }
+  for (const persistedPayload of pendingDesktopApprovalPayloads.values()) {
+    if (persistedPayload.approvalId === typed.id) restoreDesktopApprovalPayloadOwner(persistedPayload);
+  }
   const pendingShellCommand = pendingShellCommandApprovals.get(typed.id);
-  pendingShellCommandApprovals.delete(typed.id);
   const pendingWorkspaceMutation = pendingWorkspaceMutationApprovals.get(typed.id);
-  pendingWorkspaceMutationApprovals.delete(typed.id);
   const pendingWorkspaceCheckpointRestore = pendingWorkspaceCheckpointRestores.get(typed.id);
-  pendingWorkspaceCheckpointRestores.delete(typed.id);
   const pendingGitCommit = pendingGitCommitApprovals.get(typed.id);
-  pendingGitCommitApprovals.delete(typed.id);
   const pendingRemoteGatewayInstall = pendingRemoteGatewayInstallApprovals.get(typed.id);
-  pendingRemoteGatewayInstallApprovals.delete(typed.id);
   const pendingForkLifecycle = pendingForkLifecycleApprovals.get(typed.id);
-  pendingForkLifecycleApprovals.delete(typed.id);
   const pendingForkQueueStart = pendingForkQueueStartApprovals.get(typed.id);
-  pendingForkQueueStartApprovals.delete(typed.id);
   const pendingForkConflictDraftWrite = pendingForkConflictDraftWrites.get(typed.id);
-  pendingForkConflictDraftWrites.delete(typed.id);
   const pendingChannelOutboundDraft = pendingChannelOutboundDrafts.get(typed.id);
-  pendingChannelOutboundDrafts.delete(typed.id);
   const pendingMcpLiveEnumeration = pendingMcpLiveEnumerations.get(typed.id);
-  pendingMcpLiveEnumerations.delete(typed.id);
   const pendingMcpToolExecution = pendingMcpToolExecutions.get(typed.id);
-  pendingMcpToolExecutions.delete(typed.id);
   const pendingF2ApprovalEffect = pendingF2ApprovalEffects.get(typed.id);
-  pendingF2ApprovalEffects.delete(typed.id);
   const pendingF3ApprovalEffect = pendingF3ApprovalEffects.get(typed.id);
-  pendingF3ApprovalEffects.delete(typed.id);
+  let decided: boolean;
+  try {
+    decided = await (async () => {
   if (
     approval.source === "browser_task" &&
     approval.taskId &&
     approval.actionId
   ) {
-    pendingBrowserTaskApprovals.delete(approval.actionId);
-    browserUseWorkerClient.send({
-      type: "action.approve",
-      taskId: approval.taskId,
-      actionId: approval.actionId,
-      approved: typed.approved,
-    });
+    return browserTaskService.approve({ taskId: approval.taskId, actionId: approval.actionId, approved: typed.approved });
   }
   if (pendingShellCommand) {
     if (!typed.approved) return true;
@@ -4794,8 +5404,9 @@ async function decidePendingDesktopApproval(
   if (pendingGitCommit) {
     if (!typed.approved) return true;
     executedDesktopApprovalIds.add(typed.id);
+    await persistDesktopApprovalState();
     await assertExecutionAllowed("git.commit", { approved: true });
-    await executeGitCommit(pendingGitCommit);
+    await executeGitCommit(pendingGitCommit, typed.id);
     return true;
   }
   if (pendingRemoteGatewayInstall) {
@@ -4828,12 +5439,12 @@ async function decidePendingDesktopApproval(
       executedDesktopApprovalIds.add(typed.id);
       await assertExecutionAllowed("external.service", { approved: true });
     }
-    executeChannelOutboundDelivery(
+    const delivery = await executeChannelOutboundDeliveryAsync(
       pendingChannelOutboundDraft,
       typed.id,
       typed.approved,
     );
-    return true;
+    return !typed.approved || delivery.status !== "failed";
   }
   if (pendingMcpLiveEnumeration) {
     if (!typed.approved) {
@@ -4848,7 +5459,13 @@ async function decidePendingDesktopApproval(
     return true;
   }
   if (pendingMcpToolExecution) {
-    if (!typed.approved) {
+    const atMostOnceDecision = decideMcpAtMostOnce(executedDesktopApprovalIds.has(typed.id), typed.approved);
+    if (atMostOnceDecision === "acknowledge") {
+      recordAmbiguousMcpToolExecutionAudit(pendingMcpToolExecution, typed.id);
+      return true;
+    }
+    if (atMostOnceDecision === "keep") return false;
+    if (atMostOnceDecision === "reject") {
       if (decisionReason === "cancel") {
         recordCancelledMcpToolExecutionAudit(pendingMcpToolExecution, typed.id);
       } else {
@@ -4857,6 +5474,8 @@ async function decidePendingDesktopApproval(
       return true;
     }
     executedDesktopApprovalIds.add(typed.id);
+    pendingDesktopApprovals.set(typed.id, { ...approval, executionState: "executing" });
+    await persistDesktopApprovalState();
     await assertExecutionAllowed("external.service", { approved: true });
     await executeMcpToolAfterApproval(pendingMcpToolExecution, typed.id);
     return true;
@@ -4873,6 +5492,41 @@ async function decidePendingDesktopApproval(
     executeF3ApprovalEffect(typed.id, pendingF3ApprovalEffect);
     return true;
   }
+    return !typed.approved;
+    })();
+  } catch (error) {
+    const mcpRequest = pendingMcpToolExecutions.get(typed.id);
+    if (mcpRequest && executedDesktopApprovalIds.has(typed.id)) {
+      const current = pendingDesktopApprovals.get(typed.id);
+      if (current) pendingDesktopApprovals.set(typed.id, recoverAmbiguousMcpApproval(current, mcpRequest));
+      try { recordAmbiguousMcpToolExecutionAudit(mcpRequest, typed.id); } catch { /* Keep the durable ambiguous approval even if workspace audit is unavailable. */ }
+    } else {
+      executedDesktopApprovalIds.delete(typed.id);
+    }
+    await persistDesktopApprovalState();
+    throw error;
+  }
+  if (!decided) {
+    executedDesktopApprovalIds.delete(typed.id);
+    await persistDesktopApprovalState();
+    return false;
+  }
+  pendingDesktopApprovals.delete(typed.id);
+  pendingShellCommandApprovals.delete(typed.id);
+  pendingWorkspaceMutationApprovals.delete(typed.id);
+  pendingWorkspaceCheckpointRestores.delete(typed.id);
+  pendingGitCommitApprovals.delete(typed.id);
+  pendingRemoteGatewayInstallApprovals.delete(typed.id);
+  pendingForkLifecycleApprovals.delete(typed.id);
+  pendingForkQueueStartApprovals.delete(typed.id);
+  pendingForkConflictDraftWrites.delete(typed.id);
+  pendingChannelOutboundDrafts.delete(typed.id);
+  pendingMcpLiveEnumerations.delete(typed.id);
+  pendingMcpToolExecutions.delete(typed.id);
+  pendingF2ApprovalEffects.delete(typed.id);
+  pendingF3ApprovalEffects.delete(typed.id);
+  deleteDesktopApprovalPayloads(typed.id);
+  await persistDesktopApprovalState();
   return true;
 }
 
@@ -4897,38 +5551,6 @@ function resolveBrowserUsePythonCommand(preferredPython?: string | null): string
   const python311 = "C:\\Python311\\python.exe";
   if (existsSync(python311)) return python311;
   return preferredPython || process.env.PYTHON || "python";
-}
-
-function toBrowserTaskStartRequest(
-  request: unknown,
-): BrowserTaskStartRequest | null {
-  if (!request || typeof request !== "object") return null;
-  const typed = request as Partial<BrowserTaskStartRequest>;
-  if (typeof typed.instruction !== "string" || !typed.instruction.trim()) {
-    return null;
-  }
-  return {
-    taskId: typeof typed.taskId === "string" ? typed.taskId : undefined,
-    instruction: typed.instruction,
-    url: typeof typed.url === "string" ? typed.url : undefined,
-    engine: typed.engine === "browser-use" || typed.engine === "electron-webview" ? typed.engine : "browser-use",
-    workspacePath: typeof typed.workspacePath === "string" ? typed.workspacePath : undefined,
-  };
-}
-
-function toBrowserTaskApprovalRequest(
-  request: unknown,
-): BrowserTaskApprovalRequest | null {
-  if (!request || typeof request !== "object") return null;
-  const typed = request as Partial<BrowserTaskApprovalRequest>;
-  if (typeof typed.taskId !== "string" || !typed.taskId.trim()) return null;
-  if (typeof typed.actionId !== "string" || !typed.actionId.trim()) return null;
-  if (typeof typed.approved !== "boolean") return null;
-  return {
-    taskId: typed.taskId,
-    actionId: typed.actionId,
-    approved: typed.approved,
-  };
 }
 
 async function autoStartGatewayWhenInstalled(): Promise<void> {
@@ -4962,6 +5584,7 @@ async function startDeferredStartupTasks(): Promise<void> {
 app.whenReady().then(async () => {
   recordStartupMilestone("electron-ready");
   configureCompletionNotifications({
+    notifications: WINDOWS_NOTIFICATION_SERVICE,
     focusApp: focusMainWindow,
     publishClick: (event) => {
       for (const window of BrowserWindow.getAllWindows()) {
@@ -4977,6 +5600,7 @@ app.whenReady().then(async () => {
     },
   });
   await restoreCompletionNotificationPreference();
+  await restoreDesktopApprovalState();
   confirmPendingUpdateLaunch();
   restorePreparedUpdate();
   cleanupExpiredVoiceTempFiles();
@@ -4992,7 +5616,7 @@ app.whenReady().then(async () => {
   registerDeepLinkProtocol();
   registerRendererProtocol();
   await desktopDiagnostics.initialize();
-  await productionDiagnostics.initialize();
+  await Promise.all([productionDiagnostics.initialize(), interactiveDebugPolicy.initialize()]);
   desktopDiagnostics.setPublisher((event) => {
     productionDiagnostics.observeEvent(Buffer.byteLength(JSON.stringify(event), "utf8"), event.workspaceId);
     for (const window of BrowserWindow.getAllWindows()) {
@@ -5243,7 +5867,7 @@ function publicSessionLooksHeadlessOidc(
   const asRecord = session as unknown as Record<string, unknown>;
   const strictFakeUser =
     !process.env.OPENDRSAI_E2E_OIDC_EXTERNAL_ISSUER &&
-    session.user?.id === "e2e-hai-user" &&
+    session.user?.id === "1f4b65b9-9f5d-4dfc-8d7d-10a61cd9f651" &&
     session.user?.email === "e2e-hai-user@ihep.ac.cn";
   const externalIssuerUser =
     Boolean(process.env.OPENDRSAI_E2E_OIDC_EXTERNAL_ISSUER) &&
@@ -5329,13 +5953,15 @@ app.on("before-quit", (event) => {
     cancelStreamingVoiceSessionsForSender(mainWindow.webContents);
   }
   stopScheduledTaskWorker();
+  browserTaskService.shutdown();
   killAllTerminalSessions();
   stopAllRemoteWorkspaces();
   if (gatewayShutdownComplete) return;
   event.preventDefault();
   if (gatewayShutdownStarted) return;
   gatewayShutdownStarted = true;
-  void shutdownGateway(true)
+  void closeMobilePairingControllers()
+    .then(() => shutdownGateway(true))
     .catch((error) => {
       console.error("[desktop] Failed to stop gateway during shutdown:", error);
     })

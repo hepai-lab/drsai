@@ -14,6 +14,7 @@ import { render } from 'ink'
 
 import { App } from './app.js'
 import { GatewayClient } from './gatewayClient.js'
+import { initTerminalSize } from './hooks/terminalSizeStore.js'
 import {
   disableAltScreen,
   disableFocusReporting,
@@ -188,6 +189,13 @@ if (!process.stdin.isTTY) {
   //
   // Color: #FFD700 (gold) = theme.primary, applied via ANSI true-colour.
   process.stdout.write('\x1b[1m\x1b[38;2;255;215;0m⚡ OpenDrSai\x1b[0m\n')
+
+  // Install the single global resize listener BEFORE mounting the app,
+  // so all components can subscribe via the nanostore atom instead of
+  // each adding their own EventEmitter listener (which caused
+  // MaxListenersExceededWarning when >10 MarkdownRenderer instances
+  // were mounted simultaneously).
+  initTerminalSize()
 
   inkInstance = render(<App gw={gw} />, { exitOnCtrlC: false })
   inkInstance.waitUntilExit().then(() => {

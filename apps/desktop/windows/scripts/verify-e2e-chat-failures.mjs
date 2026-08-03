@@ -98,7 +98,9 @@ function assertThreadPersistence(scenario, result, appHome) {
     "chunk-disconnect": "e2e-failure-disconnect",
     attachments: "e2e-attachments",
   }[scenario];
-  const expectedStatus = scenario === "empty-done" || scenario === "attachments" ? "idle" : "error";
+  const expectedStatus = scenario === "abort" || scenario === "empty-done" || scenario === "attachments"
+    ? "idle"
+    : "error";
   const summary = result?.details?.[detailKey];
   if (summary?.thread && (summary.thread.id !== requestId || summary.thread.status !== expectedStatus)) {
     throw new Error(`${scenario}: listThreads did not persist terminal thread status ${expectedStatus}:\n${JSON.stringify(summary, null, 2)}`);

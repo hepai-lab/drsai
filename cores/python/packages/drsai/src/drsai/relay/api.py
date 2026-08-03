@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from uuid import uuid4
 from dataclasses import asdict
 
@@ -9,21 +10,30 @@ import json
 from typing import Callable
 
 from drsai.platform_auth import context_from_bearer
+from drsai.oaep.generated import OaepEvent, OaepEventPage, OaepSnapshot
+from drsai.oaep.protocol import OAEPValidationError
 
 from .models import (
     AccessGrantResult,
+    AccessGrantStatusResult,
+    AssociationResult,
+    AssociationPresenceRequest,
     AssociationRequest,
     ErrorEnvelope,
     HeartbeatRequest,
     RegistrationRequest,
     RegistrationResult,
     WorkspacePublishRequest,
+    WorkspaceCatalogSyncRequest,
+    WorkspaceCatalogSyncResult,
     Workspace,
+    ResourceLifecycle,
 )
 from .registry import RelayRegistry, RelayRegistryError
 from .runtime_domain import RuntimeAuthority
 from .runtime_channel import RuntimeChannelHub
-from pydantic import BaseModel, ConfigDict
+from .oaep_replay import OAEPReplayHub
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 
 class _StrictBody(BaseModel):
@@ -52,6 +62,7 @@ class _ApprovalDecision(_StrictBody):
     request_id: str
     correlation_id: str
     decision: str
+    idempotency_key: str | None = None
 
 
 class _OwopRequest(_StrictBody):
@@ -62,16 +73,52 @@ class _OwopRequest(_StrictBody):
     params: dict
 
 
+class _RuntimeRename(_StrictBody):
+    display_name: str
+
+
 def create_relay_app(registry: RelayRegistry | None = None,
                      runtimes: dict[str, RuntimeAuthority] | None = None,
                      channels: RuntimeChannelHub | None = None,
                      principal_resolver: Callable[[Request], str] | None = None) -> FastAPI:
     store = registry or RelayRegistry()
-    app = FastAPI(title="OpenDrSai Runtime Relay", version="1.0.0")
+    app = FastAPI(title="OpenDrSai Runtime Relay", version="2.0.0")
     app.state.registry = store
     authorities = runtimes or {}
     channel_hub = channels or RuntimeChannelHub()
     app.state.runtime_channels = channel_hub
+    oaep_replay = OAEPReplayHub()
+    app.state.oaep_replay = oaep_replay
+
+    def validated_oaep_snapshot(
+        value: object, *, workspace_id: str, session_id: str
+    ) -> dict:
+        if not isinstance(value, dict):
+            raise RelayRegistryError("oaep_snapshot_invalid", "Runtime OAEP Snapshot is invalid")
+        try:
+            oaep_replay.protocol.validate_snapshot(value)
+        except OAEPValidationError as exc:
+            raise RelayRegistryError("oaep_snapshot_invalid", "Runtime OAEP Snapshot is invalid") from exc
+        session = value.get("session")
+        if not isinstance(session, dict) or session.get("id") != session_id or session.get("workspace_id") != workspace_id:
+            raise RelayRegistryError("oaep_identity_mismatch", "Runtime OAEP Snapshot identity is invalid")
+        return value
+
+    def validated_oaep_page(value: object, *, session_id: str) -> dict:
+        if not isinstance(value, dict):
+            raise RelayRegistryError("oaep_event_page_invalid", "Runtime OAEP Event page is invalid")
+        try:
+            oaep_replay.protocol.validate_event_page(value)
+        except OAEPValidationError as exc:
+            raise RelayRegistryError("oaep_event_page_invalid", "Runtime OAEP Event page is invalid") from exc
+        if any(event.get("session_id") != session_id for event in value["data"]):
+            raise RelayRegistryError("oaep_identity_mismatch", "Runtime OAEP Event identity is invalid")
+        return value
+
+    @app.get("/v1/metrics/oaep")
+    async def oaep_metrics():
+        return oaep_replay.metrics()
+    workspace_sync_tasks: dict[str, asyncio.Task[WorkspaceCatalogSyncResult]] = {}
 
     def oidc_subject(request: Request) -> str:
         if principal_resolver is not None:
@@ -118,8 +165,15 @@ def create_relay_app(registry: RelayRegistry | None = None,
     async def registry_error(request: Request, exc: RelayRegistryError) -> JSONResponse:
         correlation_id = request.headers.get("x-correlation-id", str(uuid4()))
         error = ErrorEnvelope(code=exc.code, message=exc.message, correlation_id=correlation_id,
-                              retryable=exc.retryable, details={}, source=exc.source)
-        status = 401 if exc.code == "oidc_auth_invalid" else 403 if exc.code.endswith(("forbidden", "auth_invalid")) else 404 if exc.code == "runtime_not_found" else 400
+                              retryable=exc.retryable, details=exc.details, source=exc.source)
+        status = 503 if exc.code in {"host_offline", "catalog_sync_timeout"} else 409 if (
+            exc.code in {"stale_runtime_generation", "cursor_expired"}
+        ) else 401 if exc.code in {"oidc_auth_invalid", "runtime_auth_invalid"} else 403 if (
+            exc.code.endswith("forbidden") or exc.code == "association_required"
+        ) else 404 if exc.code in {
+            "runtime_not_found", "access_grant_not_found", "association_not_found",
+            "session_not_found", "run_not_found", "approval_not_found",
+        } else 400
         return JSONResponse(status_code=status, content=error.model_dump(mode="json"))
 
     @app.get("/v1/admin/registration-code")
@@ -136,12 +190,111 @@ def create_relay_app(registry: RelayRegistry | None = None,
 
     @app.post("/v1/runtimes/{runtime_id}/access-grants", response_model=AccessGrantResult)
     async def access_grant(runtime_id: str, x_runtime_token: str = Header()) -> AccessGrantResult:
-        code, expires_at = store.issue_access_grant(runtime_id, x_runtime_token)
-        return AccessGrantResult(code=code, expires_at=expires_at)
+        grant_id, code, expires_at = store.issue_access_grant(runtime_id, x_runtime_token)
+        return AccessGrantResult(grant_id=grant_id, code=code, expires_at=expires_at, status="pending")
+
+    @app.get("/v1/runtimes/{runtime_id}/access-grants/{grant_id}", response_model=AccessGrantStatusResult)
+    async def access_grant_status(runtime_id: str, grant_id: str,
+                                  x_runtime_token: str = Header()) -> AccessGrantStatusResult:
+        status, expires_at = store.access_grant_status(runtime_id, x_runtime_token, grant_id)
+        return AccessGrantStatusResult(
+            grant_id=grant_id,
+            expires_at=expires_at,
+            status=status,
+            subject_summary=store.access_grant_subject_summary(
+                runtime_id, x_runtime_token, grant_id
+            ),
+        )
+
+    @app.delete("/v1/runtimes/{runtime_id}/access-grants/{grant_id}", response_model=AccessGrantStatusResult)
+    async def revoke_access_grant(runtime_id: str, grant_id: str,
+                                  x_runtime_token: str = Header()) -> AccessGrantStatusResult:
+        status, expires_at = store.revoke_access_grant(runtime_id, x_runtime_token, grant_id)
+        return AccessGrantStatusResult(
+            grant_id=grant_id,
+            expires_at=expires_at,
+            status=status,
+            subject_summary=store.access_grant_subject_summary(
+                runtime_id, x_runtime_token, grant_id
+            ),
+        )
 
     @app.post("/v1/associations")
     async def associate(body: AssociationRequest, x_subject: str = Depends(oidc_subject)) -> dict[str, str]:
-        return {"runtime_id": store.associate(x_subject, body.code)}
+        return {
+            "runtime_id": store.associate(
+                x_subject,
+                body.code,
+                body.device_id,
+                body.device_name,
+                body.device_public_key,
+            )
+        }
+
+    @app.delete("/v1/associations/{runtime_id}", response_model=AssociationResult)
+    async def revoke_user_association(
+        runtime_id: str,
+        x_subject: str = Depends(oidc_subject),
+        x_relay_device_id: str = Header(),
+    ) -> AssociationResult:
+        return AssociationResult.model_validate(
+            store.revoke_association(
+                x_subject,
+                runtime_id,
+                x_relay_device_id,
+            )
+        )
+
+    @app.post("/v1/associations/{runtime_id}/presence", response_model=AssociationResult)
+    async def record_user_association_presence(
+        runtime_id: str,
+        body: AssociationPresenceRequest,
+        x_subject: str = Depends(oidc_subject),
+        x_relay_device_id: str = Header(),
+    ) -> AssociationResult:
+        return AssociationResult.model_validate(
+            store.record_device_presence(
+                x_subject,
+                runtime_id,
+                x_relay_device_id,
+                accessing=body.accessing,
+            )
+        )
+
+    @app.get(
+        "/v1/runtimes/{runtime_id}/associations",
+        response_model=list[AssociationResult],
+    )
+    async def runtime_associations(
+        runtime_id: str,
+        x_runtime_token: str = Header(),
+    ) -> list[AssociationResult]:
+        return [
+            AssociationResult.model_validate(item)
+            for item in store.list_associations(runtime_id, x_runtime_token)
+        ]
+
+    @app.delete(
+        "/v1/runtimes/{runtime_id}/associations/{association_id}",
+        response_model=AssociationResult,
+    )
+    async def revoke_runtime_association(
+        runtime_id: str,
+        association_id: str,
+        x_runtime_token: str = Header(),
+    ) -> AssociationResult:
+        return AssociationResult.model_validate(
+            store.revoke_runtime_association(
+                runtime_id, x_runtime_token, association_id
+            )
+        )
+
+    @app.delete("/v1/runtimes/{runtime_id}/enrollment")
+    async def revoke_runtime_enrollment(
+        runtime_id: str,
+        x_runtime_token: str = Header(),
+    ) -> dict[str, str | None]:
+        return store.revoke_enrollment(runtime_id, x_runtime_token)
 
     @app.post("/v1/runtime-connections/{runtime_id}/heartbeat")
     async def heartbeat(runtime_id: str, body: HeartbeatRequest, x_runtime_token: str = Header()):
@@ -153,6 +306,71 @@ def create_relay_app(registry: RelayRegistry | None = None,
     async def publish_workspaces(runtime_id: str, body: WorkspacePublishRequest, x_runtime_token: str = Header()):
         store.publish_workspaces(runtime_id, x_runtime_token, body.workspaces)
 
+    async def sync_workspace_catalog_once(
+        runtime_id: str,
+        subject: str,
+    ) -> WorkspaceCatalogSyncResult:
+        store.identity(subject, runtime_id)
+        response, generation = await channel_hub.request_http_current(
+            runtime_id,
+            "GET",
+            "/v1/workspaces?include_closed=true",
+            timeout_code="catalog_sync_timeout",
+        )
+        body = response.get("body") if isinstance(response, dict) else None
+        rows = body.get("data") if isinstance(body, dict) else None
+        if not isinstance(rows, list):
+            raise RelayRegistryError("workspace_catalog_sync_invalid", "Runtime returned an invalid Workspace Catalog",
+                                     source="runtime")
+        try:
+            workspaces = [Workspace.model_validate(row) for row in rows]
+        except ValidationError as exc:
+            raise RelayRegistryError("workspace_catalog_sync_invalid",
+                                     "Runtime returned an invalid Workspace Catalog",
+                                     source="runtime") from exc
+        if any(item.runtime_id != runtime_id for item in workspaces):
+            raise RelayRegistryError("workspace_scope_mismatch", "Workspace belongs to another runtime")
+        if not await channel_hub.is_current(runtime_id, generation):
+            raise RelayRegistryError("stale_runtime_generation", "Runtime generation changed during Workspace sync",
+                                     retryable=True, source="runtime")
+        store.replace_workspace_projection(runtime_id, workspaces)
+        active_items = [
+            item
+            for item in workspaces
+            if item.lifecycle == ResourceLifecycle.ACTIVE
+        ]
+        return WorkspaceCatalogSyncResult(
+            runtime_id=runtime_id,
+            catalog_revision=max(
+                [item.revision for item in workspaces],
+                default=0,
+            ),
+            items=active_items,
+        )
+
+    @app.post(
+        "/v1/runtimes/{runtime_id}/workspaces/sync",
+        response_model=WorkspaceCatalogSyncResult,
+    )
+    async def sync_workspaces(
+        runtime_id: str,
+        body: WorkspaceCatalogSyncRequest,
+        x_subject: str = Depends(oidc_subject),
+    ) -> WorkspaceCatalogSyncResult:
+        store.identity(x_subject, runtime_id)
+        task = workspace_sync_tasks.get(runtime_id)
+        if task is None or task.done():
+            task = asyncio.create_task(sync_workspace_catalog_once(
+                runtime_id,
+                x_subject,
+            ))
+            workspace_sync_tasks[runtime_id] = task
+        try:
+            return await task
+        finally:
+            if workspace_sync_tasks.get(runtime_id) is task and task.done():
+                workspace_sync_tasks.pop(runtime_id, None)
+
     @app.get("/v1/runtimes")
     async def list_runtimes(x_subject: str = Depends(oidc_subject), cursor: str | None = None,
                             limit: int = Query(20, ge=1, le=100), query: str | None = None):
@@ -163,14 +381,24 @@ def create_relay_app(registry: RelayRegistry | None = None,
     async def identity(runtime_id: str, x_subject: str = Depends(oidc_subject)):
         return store.identity(x_subject, runtime_id)
 
+    @app.patch("/v1/runtimes/{runtime_id}")
+    async def rename_runtime(
+        runtime_id: str,
+        body: _RuntimeRename,
+        x_subject: str = Depends(oidc_subject),
+    ) -> dict[str, str]:
+        return store.rename_runtime(x_subject, runtime_id, body.display_name)
+
     @app.get("/v1/runtimes/{runtime_id}/capabilities")
     async def capabilities(runtime_id: str, x_subject: str = Depends(oidc_subject)):
         return store.capabilities(x_subject, runtime_id)
 
     @app.get("/v1/runtimes/{runtime_id}/workspaces")
     async def workspaces(runtime_id: str, x_subject: str = Depends(oidc_subject), cursor: str | None = None,
-                         limit: int = Query(20, ge=1, le=100), query: str | None = None):
-        items, next_cursor = store.list_workspaces(x_subject, runtime_id, cursor=cursor, limit=limit, query=query)
+                         limit: int = Query(20, ge=1, le=100), query: str | None = None,
+                         lifecycle: ResourceLifecycle | None = ResourceLifecycle.ACTIVE):
+        items, next_cursor = store.list_workspaces(
+            x_subject, runtime_id, cursor=cursor, limit=limit, query=query, lifecycle=lifecycle)
         return {"items": [item.model_dump(mode="json") for item in items], "next_cursor": next_cursor}
 
     @app.get("/v1/runtimes/{runtime_id}/agent-definitions")
@@ -208,6 +436,203 @@ def create_relay_app(registry: RelayRegistry | None = None,
         rows, next_cursor = await runtime_call(runtime_id, "list_runs_for_subject", x_subject, workspace_id,
                                                session_id, cursor=cursor, limit=limit)
         return {"items": [json_dataclass(item) for item in rows], "next_cursor": next_cursor}
+
+    @app.get("/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/conversation")
+    async def conversation(
+        runtime_id: str,
+        workspace_id: str,
+        session_id: str,
+        x_subject: str = Depends(oidc_subject),
+        cursor: str | None = None,
+        limit: int = Query(100, ge=1, le=500),
+    ):
+        authorize_workspace(x_subject, runtime_id, workspace_id)
+        rows, next_cursor = await runtime_call(
+            runtime_id, "conversation_for_subject", x_subject, workspace_id, session_id,
+            cursor=cursor, limit=limit)
+        return {"items": rows, "next_cursor": next_cursor}
+
+    @app.get("/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/conversation-snapshot")
+    async def conversation_snapshot(
+        runtime_id: str,
+        workspace_id: str,
+        session_id: str,
+        x_subject: str = Depends(oidc_subject),
+    ):
+        authorize_workspace(x_subject, runtime_id, workspace_id)
+        return await runtime_call(
+            runtime_id, "conversation_snapshot_for_subject", x_subject, workspace_id, session_id,
+        )
+
+    @app.get(
+        "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/oaep-snapshot",
+        response_model=OaepSnapshot,
+    )
+    async def oaep_snapshot(
+        runtime_id: str,
+        workspace_id: str,
+        session_id: str,
+        x_subject: str = Depends(oidc_subject),
+    ):
+        authorize_workspace(x_subject, runtime_id, workspace_id)
+        return validated_oaep_snapshot(
+            await runtime_call(
+                runtime_id, "oaep_snapshot_for_subject", x_subject, workspace_id, session_id,
+            ),
+            workspace_id=workspace_id,
+            session_id=session_id,
+        )
+
+    @app.get("/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/events")
+    async def session_events(
+        runtime_id: str,
+        workspace_id: str,
+        session_id: str,
+        x_subject: str = Depends(oidc_subject),
+        after_sequence: int = Query(0, ge=0),
+        limit: int = Query(500, ge=1, le=500),
+    ):
+        authorize_workspace(x_subject, runtime_id, workspace_id)
+        return await runtime_call(
+            runtime_id, "session_events_for_subject", x_subject, workspace_id, session_id,
+            after_sequence=after_sequence, limit=limit,
+        )
+
+    @app.get(
+        "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/oaep-events",
+        response_model=OaepEventPage,
+    )
+    async def oaep_events(
+        runtime_id: str,
+        workspace_id: str,
+        session_id: str,
+        x_subject: str = Depends(oidc_subject),
+        after_sequence: int = Query(0, ge=0),
+        limit: int = Query(500, ge=1, le=500),
+    ):
+        authorize_workspace(x_subject, runtime_id, workspace_id)
+        cached = await oaep_replay.page(
+            runtime_id,
+            workspace_id,
+            session_id,
+            after_sequence=after_sequence,
+            limit=limit,
+        )
+        if cached is not None:
+            return cached
+        return validated_oaep_page(
+            await runtime_call(
+                runtime_id, "oaep_events_for_subject", x_subject, workspace_id, session_id,
+                after_sequence=after_sequence, limit=limit,
+            ),
+            session_id=session_id,
+        )
+
+    @app.get("/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/events/stream")
+    async def session_event_stream(
+        runtime_id: str,
+        workspace_id: str,
+        session_id: str,
+        x_subject: str = Depends(oidc_subject),
+        after_sequence: int = Query(0, ge=0),
+    ):
+        authorize_workspace(x_subject, runtime_id, workspace_id)
+        page = await runtime_call(
+            runtime_id, "session_events_for_subject", x_subject, workspace_id, session_id,
+            after_sequence=after_sequence, limit=500,
+        )
+
+        def encoded_session_events():
+            for item in page.get("items", []):
+                data = json.dumps(item, ensure_ascii=False, separators=(",", ":"))
+                yield (
+                    f"id: {item['session_sequence']}\nevent: {item['kind']}\n"
+                    f"data: {data}\n\n"
+                ).encode()
+            yield b": keep-alive\n\n"
+
+        return StreamingResponse(
+            encoded_session_events(), media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @app.get(
+        "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/oaep-events/stream",
+        responses={
+            200: {
+                "description": "OAEP Event stream",
+                "content": {
+                    "text/event-stream": {
+                        "schema": {"$ref": "#/components/schemas/OaepEvent"}
+                    }
+                },
+            }
+        },
+    )
+    async def oaep_event_stream(
+        runtime_id: str,
+        workspace_id: str,
+        session_id: str,
+        raw_request: Request,
+        x_subject: str = Depends(oidc_subject),
+        after_sequence: int = Query(0, ge=0),
+    ):
+        authorize_workspace(x_subject, runtime_id, workspace_id)
+        queue = await oaep_replay.subscribe(runtime_id, session_id)
+        try:
+            cached = await oaep_replay.page(
+                runtime_id,
+                workspace_id,
+                session_id,
+                after_sequence=after_sequence,
+                limit=500,
+            )
+            if cached is None:
+                cached = validated_oaep_page(
+                    await runtime_call(
+                        runtime_id,
+                        "oaep_events_for_subject",
+                        x_subject,
+                        workspace_id,
+                        session_id,
+                        after_sequence=after_sequence,
+                        limit=500,
+                    ),
+                    session_id=session_id,
+                )
+        except Exception:
+            await oaep_replay.unsubscribe(runtime_id, session_id, queue)
+            raise
+
+        async def encoded_oaep_events():
+            cursor = after_sequence
+            try:
+                for event in cached["data"]:
+                    cursor = int(event["sequence"])
+                    data = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
+                    yield f"id: {cursor}\nevent: oaep.event\ndata: {data}\n\n".encode()
+                while not await raw_request.is_disconnected():
+                    try:
+                        event = await asyncio.wait_for(queue.get(), timeout=15)
+                    except TimeoutError:
+                        yield b": heartbeat\n\n"
+                        continue
+                    sequence = int(event["sequence"])
+                    if sequence <= cursor:
+                        continue
+                    if sequence != cursor + 1:
+                        return
+                    cursor = sequence
+                    data = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
+                    yield f"id: {cursor}\nevent: oaep.event\ndata: {data}\n\n".encode()
+            finally:
+                await oaep_replay.unsubscribe(runtime_id, session_id, queue)
+
+        return StreamingResponse(
+            encoded_oaep_events(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     @app.get("/v1/runtimes/{runtime_id}/idempotency/{operation}/{idempotency_key}")
     async def idempotency_result(runtime_id: str, operation: str, idempotency_key: str,
@@ -288,7 +713,9 @@ def create_relay_app(registry: RelayRegistry | None = None,
     @app.post("/v1/runtimes/{runtime_id}/approvals/{approval_id}/decision")
     async def decide(runtime_id: str, approval_id: str, body: _ApprovalDecision, x_subject: str = Depends(oidc_subject)):
         store.identity(x_subject, runtime_id)
-        return json_dataclass(await runtime_call(runtime_id, "decide_approval", x_subject, approval_id, body.decision))
+        return json_dataclass(await runtime_call(
+            runtime_id, "decide_approval", x_subject, approval_id, body.decision, body.idempotency_key
+        ))
 
     @app.delete("/v1/admin/runtimes/{runtime_id}", status_code=204)
     async def revoke(runtime_id: str):
@@ -314,23 +741,36 @@ def create_relay_app(registry: RelayRegistry | None = None,
             )
             await socket.send_json({"type": "runtime.connected", "runtime": identity.model_dump(mode="json")})
             generation = await channel_hub.attach(hello["runtime_id"], socket)
+            await oaep_replay.attach(hello["runtime_id"], generation)
             while True:
                 message = await socket.receive_json()
                 if message.get("type") == "pong":
                     continue
-                if message.get("type") == "runtime.response":
+                if message.get("type") in {"runtime.response", "response"}:
                     channel_hub.accept_response(hello["runtime_id"], message)
                 elif message.get("type") == "runtime.workspaces":
                     rows = message.get("workspaces")
                     if not isinstance(rows, list):
                         await socket.close(code=4400, reason="runtime_workspaces_invalid")
                         return
+                    if not await channel_hub.is_current(hello["runtime_id"], generation):
+                        continue
                     store.publish_workspaces(hello["runtime_id"], token,
                                              [Workspace.model_validate(row) for row in rows])
+                elif message.get("type") == "event" and message.get("protocol") == "oaep/1":
+                    if not await channel_hub.is_current(hello["runtime_id"], generation):
+                        await socket.close(code=4409, reason="stale_runtime_generation")
+                        return
+                    try:
+                        await oaep_replay.accept(hello["runtime_id"], generation, message)
+                    except RelayRegistryError as exc:
+                        await socket.close(code=4400, reason=exc.code)
+                        return
         except WebSocketDisconnect:
             return
         finally:
             if "generation" in locals() and "hello" in locals():
+                await oaep_replay.detach(hello.get("runtime_id", ""), generation)
                 await channel_hub.detach(hello.get("runtime_id", ""), generation)
 
     return app
