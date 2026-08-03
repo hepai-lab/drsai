@@ -11,6 +11,15 @@ fun oaepItemsDigest(items: List<OaepItem>): String {
         .sortedWith(compareBy<OaepItem> { it.runId }.thenBy { it.sequence }.thenBy { it.id })
         .map { item ->
             val json = OaepJsonCodec.itemJson(item)
+            val content = json.getJSONObject("content").also { value ->
+                // The Android model materializes an absent optional `parts`
+                // field as an empty list. OAEP's canonical digest preserves
+                // the wire-level semantic projection used by Python and the
+                // desktop, where an absent field must stay absent.
+                if (item.type == "message" && value.optJSONArray("parts")?.length() == 0) {
+                    value.remove("parts")
+                }
+            }
             linkedMapOf(
                 "id" to item.id,
                 "session_id" to item.sessionId,
@@ -19,7 +28,7 @@ fun oaepItemsDigest(items: List<OaepItem>): String {
                 "status" to item.status,
                 "sequence" to item.sequence,
                 "source" to json.getJSONObject("source"),
-                "content" to json.getJSONObject("content"),
+                "content" to content,
             )
         })
     return MessageDigest.getInstance("SHA-256")

@@ -38,8 +38,10 @@ const summary = JSON.parse(readFileSync(join(releaseDir, "release-summary.json")
 if (summary.version !== packageJson.version) {
   throw new Error(`release-summary.json version ${summary.version} does not match package ${packageJson.version}.`);
 }
-const preview = packageJson.version.includes("-");
-if (!summary.distribution || summary.distribution.releaseTier !== (preview ? "preview" : "stable")) {
+const releaseChannel = String(process.env.OPENDRSAI_UPDATE_CHANNEL || "stable").toLowerCase();
+const preview = packageJson.version.includes("-") || releaseChannel !== "stable";
+const expectedReleaseTier = preview ? releaseChannel : "stable";
+if (!summary.distribution || summary.distribution.releaseTier !== expectedReleaseTier) {
   throw new Error("release-summary.json is missing installer signing distribution policy.");
 }
 if (summary.distribution.requiresSignedInstallers !== !preview) {
